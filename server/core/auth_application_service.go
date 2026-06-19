@@ -47,6 +47,8 @@ const (
 	AuthModeLookupIdentity AuthMode = "lookup-identity"
 	// AuthModeListAccounts runs the account-provider listing path.
 	AuthModeListAccounts AuthMode = "list-accounts"
+
+	authModeNoAuth = "no-auth"
 )
 
 // AuthDecision is the terminal application-level authentication decision.
@@ -63,6 +65,26 @@ const (
 	AuthDecisionTempFail AuthDecision = "tempfail"
 )
 
+const (
+	authInputFieldUsername        = "username"
+	authInputReasonRequired       = "required"
+	authResponseJSONErrorsKey     = "errors"
+	authStatusMessageOK           = "OK"
+	authUnsupportedAuthorization  = "missing or invalid authorization header"
+	claimAddressFormatted         = "formatted"
+	claimGroupDistinguishedNames  = definitions.LuaBackendResultGroupDistinguishedNames
+	defaultClientIPAny            = "0.0.0.0"
+	ldapAttributeObjectClass      = "objectClass"
+	rblReasonDNSSuchHost          = "dns_no_such_host"
+	webAuthnDebugAAGUID           = "aaguid"
+	webAuthnDebugCredentialIDHash = "credential_id_hash"
+	webAuthnDebugFlagsUP          = "flags_up"
+	webAuthnDebugFlagsUV          = "flags_uv"
+	webAuthnDebugIsResidentKey    = "is_resident_key"
+	webAuthnDebugSignCount        = "sign_count"
+	webAuthnDebugSignCountZero    = "sign_count_zero"
+)
+
 // AuthInput contains transport-neutral authentication input.
 type AuthInput struct {
 	Credentials      Credentials
@@ -74,23 +96,23 @@ type AuthInput struct {
 
 // AuthOutcome contains the captured terminal authentication result.
 type AuthOutcome struct {
-	Attributes           bktype.AttributeMapping
-	Decision             AuthDecision
-	TerminalState        string
-	Session              string
-	AccountField         string
-	TOTPSecretField      string
-	TOTPRecoveryField    string
-	UniqueUserIDField    string
-	DisplayNameField     string
-	StatusMessage        string
-	StatusMessageI18NKey string
-	ResponseLanguage     string
-	Error                string
-	Groups               []string
-	GroupDNS             []string
-	Backend              definitions.Backend
-	HTTPStatus           int
+	Attributes              bktype.AttributeMapping
+	Decision                AuthDecision
+	TerminalState           string
+	Session                 string
+	AccountField            string
+	TOTPSecretField         string
+	TOTPRecoveryField       string
+	UniqueUserIDField       string
+	DisplayNameField        string
+	StatusMessage           string
+	StatusMessageI18NKey    string
+	ResponseLanguage        string
+	Error                   string
+	Groups                  []string
+	GroupDistinguishedNames []string
+	Backend                 definitions.Backend
+	HTTPStatus              int
 }
 
 // ListAccountsOutcome contains the account-provider response.
@@ -311,7 +333,7 @@ func validateAuthenticateInput(input AuthInput) error {
 	}
 
 	if input.Credentials.Password.IsZero() {
-		return &AuthInputError{Field: "password", Reason: "required"}
+		return &AuthInputError{Field: "password", Reason: authInputReasonRequired}
 	}
 
 	return nil
@@ -323,11 +345,11 @@ func validateLookupIdentityInput(input AuthInput) error {
 
 func validateUsernameInput(input AuthInput) error {
 	if input.Credentials.Username == "" {
-		return &AuthInputError{Field: "username", Reason: "required"}
+		return &AuthInputError{Field: authInputFieldUsername, Reason: authInputReasonRequired}
 	}
 
 	if !util.ValidateUsername(input.Credentials.Username) {
-		return &AuthInputError{Field: "username", Reason: "invalid"}
+		return &AuthInputError{Field: authInputFieldUsername, Reason: "invalid"}
 	}
 
 	return nil
@@ -402,6 +424,7 @@ func (s *authApplicationService) effectiveDeps() (AuthDeps, error) {
 
 func newApplicationGinContext(parent context.Context, input AuthInput) *gin.Context {
 	path := "/grpc/auth/v1/Authenticate"
+
 	switch input.Mode {
 	case AuthModeLookupIdentity:
 		path = "/grpc/auth/v1/LookupIdentity?mode=no-auth"
@@ -417,6 +440,7 @@ func newApplicationGinContext(parent context.Context, input AuthInput) *gin.Cont
 	ginCtx.Set(definitions.CtxGUIDKey, ksuid.New().String())
 	ginCtx.Set(definitions.CtxLocalCacheAuthKey, false)
 	ginCtx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+
 	if claims := parent.Value(authApplicationOIDCClaimsKey); claims != nil {
 		ginCtx.Set(definitions.CtxOIDCClaimsKey, claims)
 	}
@@ -426,23 +450,23 @@ func newApplicationGinContext(parent context.Context, input AuthInput) *gin.Cont
 
 func authOutcomeFromCaptured(captured CapturedAuthOutcome) *AuthOutcome {
 	return &AuthOutcome{
-		Attributes:           captured.Attributes,
-		Decision:             authDecisionFromCaptured(captured.Decision),
-		TerminalState:        captured.TerminalState,
-		Session:              captured.Session,
-		AccountField:         captured.AccountField,
-		TOTPSecretField:      captured.TOTPSecretField,
-		TOTPRecoveryField:    captured.TOTPRecoveryField,
-		UniqueUserIDField:    captured.UniqueUserIDField,
-		DisplayNameField:     captured.DisplayNameField,
-		StatusMessage:        captured.StatusMessage,
-		StatusMessageI18NKey: captured.StatusMessageI18NKey,
-		ResponseLanguage:     captured.ResponseLanguage,
-		Error:                captured.Error,
-		Groups:               append([]string(nil), captured.Groups...),
-		GroupDNS:             append([]string(nil), captured.GroupDNS...),
-		Backend:              captured.Backend,
-		HTTPStatus:           captured.HTTPStatus,
+		Attributes:              captured.Attributes,
+		Decision:                authDecisionFromCaptured(captured.Decision),
+		TerminalState:           captured.TerminalState,
+		Session:                 captured.Session,
+		AccountField:            captured.AccountField,
+		TOTPSecretField:         captured.TOTPSecretField,
+		TOTPRecoveryField:       captured.TOTPRecoveryField,
+		UniqueUserIDField:       captured.UniqueUserIDField,
+		DisplayNameField:        captured.DisplayNameField,
+		StatusMessage:           captured.StatusMessage,
+		StatusMessageI18NKey:    captured.StatusMessageI18NKey,
+		ResponseLanguage:        captured.ResponseLanguage,
+		Error:                   captured.Error,
+		Groups:                  append([]string(nil), captured.Groups...),
+		GroupDistinguishedNames: append([]string(nil), captured.GroupDistinguishedNames...),
+		Backend:                 captured.Backend,
+		HTTPStatus:              captured.HTTPStatus,
 	}
 }
 

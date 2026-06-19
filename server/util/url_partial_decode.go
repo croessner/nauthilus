@@ -13,6 +13,7 @@ func URLPartialDecode(value string) string {
 	}
 
 	needsDecode := false
+
 	for i := 0; i < len(value); i++ {
 		if value[i] == '%' {
 			needsDecode = true

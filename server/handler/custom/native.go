@@ -138,6 +138,7 @@ func newNativeHookIndex(hooks []NativeHook) *nativeHookIndex {
 		}
 
 		hook.Descriptor.Path = path
+
 		key := nativeHookKey(path, hook.Descriptor.Method)
 		if !index.addHookBinding(key, hook) {
 			continue
@@ -530,6 +531,7 @@ func safeNativeHookResponseHeaders(headers map[string][]string, cfg config.File)
 	}
 
 	secretHeaders := nativeHookResponseSecretHeaders(cfg)
+
 	output := make(http.Header, len(headers))
 	for key, values := range headers {
 		canonical := http.CanonicalHeaderKey(strings.TrimSpace(key))

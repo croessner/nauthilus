@@ -47,6 +47,7 @@ func TestPolicyEmitterRecordsRegisteredLuaAttribute(t *testing.T) {
 			},
 		},
 	})
+
 	L := lua.NewState()
 	defer L.Close()
 
@@ -86,6 +87,7 @@ policy.emit_attribute({
 
 func TestPolicyEmitterRejectsUnknownLuaAttribute(t *testing.T) {
 	policyCtx := policyEmitterTestContext(nil)
+
 	L := lua.NewState()
 	defer L.Close()
 
@@ -117,6 +119,7 @@ func TestPolicyEmitterRejectsStageMismatch(t *testing.T) {
 			Source:     policyregistry.SourceLua,
 		},
 	})
+
 	L := lua.NewState()
 	defer L.Close()
 

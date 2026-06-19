@@ -35,6 +35,7 @@ import (
 
 // --- Public module loaders ---
 
+// OTELManager describes the exported OTELManager type.
 type OTELManager struct {
 	*BaseManager
 	enabled bool
@@ -175,6 +176,7 @@ func (s *OTELManager) luaBaggageSet(L *lua.LState) int {
 	key := stack.CheckString(1)
 	val := stack.CheckString(2)
 	m := baggage.FromContext(s.Ctx)
+
 	mem, err := baggage.NewMember(key, val)
 	if err == nil {
 		nb, err2 := baggage.New(append(m.Members(), mem)...)
@@ -383,6 +385,7 @@ func tracerWithSpan(L *lua.LState) int {
 	if !tr.state.enabled {
 		// no-op: call fn without span
 		base := stack.GetTop()
+
 		L.Push(fn)
 
 		if err := L.PCall(0, lua.MultRet, nil); err != nil {
@@ -414,12 +417,14 @@ func tracerWithSpan(L *lua.LState) int {
 	L.SetMetatable(spanUD, L.GetTypeMetatable(definitions.LuaUDSpan))
 
 	base := stack.GetTop()
+
 	L.Push(fn)
 	L.Push(spanUD)
 	err := L.PCall(1, lua.MultRet, nil)
 
 	// Restore context and end span
 	tr.state.Ctx = prev
+
 	sp.End()
 
 	if err != nil {
@@ -667,6 +672,7 @@ func attrsFromTable(_ *lua.LState, tbl *lua.LTable) []attribute.KeyValue {
 		if !ok {
 			return
 		}
+
 		if kv, good := kvFromLValue(string(ks), v); good {
 			out = append(out, kv)
 		}

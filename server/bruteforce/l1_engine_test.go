@@ -30,7 +30,7 @@ func TestL1Engine(t *testing.T) {
 
 	t.Run("Set and Get Block Decision", func(t *testing.T) {
 		key := l1.KeyNetwork("1.2.3.0/24")
-		dec := l1.L1Decision{Blocked: true, Rule: "test-rule"}
+		dec := l1.Decision{Blocked: true, Rule: "test-rule"}
 		engine.Set(ctx, key, dec, 100*time.Millisecond)
 
 		got, ok := engine.Get(ctx, key)
@@ -41,7 +41,7 @@ func TestL1Engine(t *testing.T) {
 
 	t.Run("Set and Get Allow Decision", func(t *testing.T) {
 		key := l1.KeyWhitelist("1.1.1.1")
-		dec := l1.L1Decision{Allowed: true, Reason: "Whitelist"}
+		dec := l1.Decision{Allowed: true, Reason: "Whitelist"}
 		engine.Set(ctx, key, dec, 100*time.Millisecond)
 
 		got, ok := engine.Get(ctx, key)
@@ -52,7 +52,7 @@ func TestL1Engine(t *testing.T) {
 
 	t.Run("Expiration", func(t *testing.T) {
 		key := "temp-key"
-		engine.Set(ctx, key, l1.L1Decision{Blocked: true}, 10*time.Millisecond)
+		engine.Set(ctx, key, l1.Decision{Blocked: true}, 10*time.Millisecond)
 
 		_, ok := engine.Get(ctx, key)
 		assert.True(t, ok)
@@ -65,7 +65,7 @@ func TestL1Engine(t *testing.T) {
 
 	t.Run("Reputation", func(t *testing.T) {
 		key := l1.KeyReputation("2.2.2.2")
-		rep := l1.L1Reputation{Positive: 50, Negative: 2}
+		rep := l1.Reputation{Positive: 50, Negative: 2}
 		engine.SetReputation(ctx, key, rep, 100*time.Millisecond)
 
 		got, ok := engine.GetReputation(ctx, key)

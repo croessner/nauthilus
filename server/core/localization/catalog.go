@@ -119,6 +119,7 @@ func (c *ManagerCatalog) Lookup(tag language.Tag, key string) (string, bool) {
 	}
 
 	localizer := goi18n.NewLocalizer(c.manager.GetBundle(), tag.String())
+
 	message, resolvedTag, err := localizer.LocalizeWithTag(&goi18n.LocalizeConfig{MessageID: key})
 	if err != nil || resolvedTag != tag {
 		return "", false
@@ -224,6 +225,7 @@ func (b *effectiveCatalogBuilder) applyOverlay(overlay CatalogOverlay) ([]Catalo
 		}
 
 		languageKey := tag.String()
+
 		b.tagSet[languageKey] = tag
 		if b.entries[languageKey] == nil {
 			b.entries[languageKey] = make(map[string]catalogEntry)
@@ -312,6 +314,7 @@ func sortedKeys[T any](values map[string]T) []string {
 
 func sortedTags(tags map[string]language.Tag) []language.Tag {
 	keys := sortedKeys(tags)
+
 	output := make([]language.Tag, 0, len(keys))
 	for _, key := range keys {
 		output = append(output, tags[key])

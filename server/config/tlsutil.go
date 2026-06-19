@@ -98,8 +98,10 @@ func buildClientTLSConfig(provider tlsClientConfigProvider) (*tls.Config, error)
 		return nil, nil
 	}
 
-	var certs []tls.Certificate
-	var caPool *x509.CertPool
+	var (
+		certs  []tls.Certificate
+		caPool *x509.CertPool
+	)
 
 	if provider.GetCAFile() != "" {
 		pem, err := os.ReadFile(provider.GetCAFile())
@@ -136,7 +138,7 @@ func buildClientTLSConfig(provider tlsClientConfigProvider) (*tls.Config, error)
 // TLSMinVersionValue converts a configured TLS version label into the tls package constant.
 func TLSMinVersionValue(version string) uint16 {
 	switch version {
-	case "TLS1.3":
+	case TLSVersion13:
 		return tls.VersionTLS13
 	case defaultTLSMinVersion:
 		return tls.VersionTLS12
@@ -175,7 +177,7 @@ func ValidateTLSCipherSuites(path, minTLSVersion string, suites []string) error 
 		return nil
 	}
 
-	if minTLSVersion == "TLS1.3" {
+	if minTLSVersion == TLSVersion13 {
 		return fmt.Errorf("%s must be empty when %s is TLS1.3; cipher_suites only applies to TLS 1.2", path, joinConfigPath(strings.TrimSuffix(path, ".cipher_suites"), "min_tls_version"))
 	}
 

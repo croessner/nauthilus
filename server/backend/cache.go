@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package backend provides backend functionality.
 package backend
 
 import (
@@ -131,6 +132,7 @@ func LoadCacheFromRedisWithSF(ctx context.Context, cfg config.File, logger *slog
 
 	val, err, _ := cacheSF.Do(key, func() (any, error) {
 		resUCP := &bktype.PositivePasswordCache{}
+
 		isRErr, loadErr := LoadCacheFromRedis(ctx, cfg, logger, redisClient, key, resUCP)
 		if loadErr != nil {
 			return nil, loadErr
@@ -138,7 +140,6 @@ func LoadCacheFromRedisWithSF(ctx context.Context, cfg config.File, logger *slog
 
 		return &result{isRedisErr: isRErr, ucp: resUCP}, nil
 	})
-
 	if err != nil {
 		return false, err
 	}
@@ -149,7 +150,7 @@ func LoadCacheFromRedisWithSF(ctx context.Context, cfg config.File, logger *slog
 	// Deep copy attributes map to avoid shared mutation between concurrent requests
 	ucp.Attributes = res.ucp.Attributes.Clone()
 	ucp.Groups = slices.Clone(res.ucp.Groups)
-	ucp.GroupDNs = slices.Clone(res.ucp.GroupDNs)
+	ucp.GroupDistinguishedNames = slices.Clone(res.ucp.GroupDistinguishedNames)
 
 	return res.isRedisErr, nil
 }
@@ -213,6 +214,7 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 	if totpSecretField, ok := hashValues["totp_secret_field"]; ok {
 		ucp.TOTPSecretField, _ = sm.Decrypt(totpSecretField)
 	}
+
 	if totpRecoveryField, ok := hashValues["totp_recovery_field"]; ok {
 		ucp.TOTPRecoveryField, _ = sm.Decrypt(totpRecoveryField)
 	}
@@ -249,27 +251,29 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 		ucp.Attributes = make(bktype.AttributeMapping)
 	}
 
-	if groups, parseErr := loadEncryptedStringSliceField(hashValues, "groups", sm); parseErr != nil {
+	groups, parseErr := loadEncryptedStringSliceField(hashValues, "groups", sm)
+	if parseErr != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Failed to unmarshal groups",
 			definitions.LogKeyError, parseErr,
 		)
 
 		return false, parseErr
-	} else {
-		ucp.Groups = groups
 	}
 
-	if groupDNs, parseErr := loadEncryptedStringSliceField(hashValues, "group_dns", sm); parseErr != nil {
+	ucp.Groups = groups
+
+	groupDistinguishedNames, parseErr := loadEncryptedStringSliceField(hashValues, "group_dns", sm)
+	if parseErr != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Failed to unmarshal group_dns",
 			definitions.LogKeyError, parseErr,
 		)
 
 		return false, parseErr
-	} else {
-		ucp.GroupDNs = groupDNs
 	}
+
+	ucp.GroupDistinguishedNames = groupDistinguishedNames
 
 	util.DebugModuleWithCfg(ctx, cfg, logger,
 		definitions.DbgCache,
@@ -352,7 +356,7 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 		return
 	}
 
-	if err := storeEncryptedStringSliceField(hashFields, "group_dns", cache.GroupDNs, sm); err != nil {
+	if err := storeEncryptedStringSliceField(hashFields, "group_dns", cache.GroupDistinguishedNames, sm); err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "Failed to marshal group_dns",
@@ -455,8 +459,8 @@ func GetCacheNames(cfg config.File, channel Channel, requestedProtocol string, b
 
 // GetWebAuthnFromRedis retrieves a User object from Redis Hash using the provided unique user ID.
 // Returns the User object or an error if retrieval or unmarshaling fails.
-func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, uniqueUserId string) (user *User, err error) {
-	key := cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserId
+func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, uniqueUserID string) (user *User, err error) {
+	key := cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserID
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -486,10 +490,10 @@ func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Log
 
 	// Set simple fields
 	if id, ok := hashValues["id"]; ok {
-		user.Id = id
+		user.ID = id
 	} else {
-		// Use the uniqueUserId if id field is not present
-		user.Id = uniqueUserId
+		// Use the uniqueUserID if id field is not present
+		user.ID = uniqueUserID
 	}
 
 	if name, ok := hashValues["name"]; ok {
@@ -528,13 +532,13 @@ func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Log
 // SaveWebAuthnToRedis saves a user's WebAuthn credentials to Redis with a specified TTL using Redis Hash.
 // Returns an error if serialization or Redis storage operation fails.
 func SaveWebAuthnToRedis(ctx context.Context, logger *slog.Logger, cfg config.File, redisClient rediscli.Client, user *User, ttl time.Duration) error {
-	key := cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + user.Id
+	key := cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + user.ID
 
 	// Create a map for the hash fields
 	hashFields := make(map[string]any)
 
 	// Add simple fields
-	hashFields["id"] = user.Id
+	hashFields["id"] = user.ID
 	hashFields["name"] = user.Name
 	hashFields["display_name"] = user.DisplayName
 
@@ -636,7 +640,6 @@ func GetUserAccountFromCache(ctx context.Context, cfg config.File, logger *slog.
 
 		return res, nil
 	})
-
 	if err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,

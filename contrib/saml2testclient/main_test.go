@@ -19,7 +19,10 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 )
 
-const testContainerListenAddress = "0.0.0.0:19095"
+const (
+	testContainerListenAddress = "0.0.0.0:19095"
+	testIDPSLOURL              = "https://auth.example.com/saml/slo"
+)
 
 func TestBuildLogoutInitiationRedirect(t *testing.T) {
 	t.Parallel()
@@ -227,11 +230,11 @@ func newTestIDPMetadata() *saml.EntityDescriptor {
 					SingleLogoutServices: []saml.Endpoint{
 						{
 							Binding:  saml.HTTPRedirectBinding,
-							Location: "https://auth.example.com/saml/slo",
+							Location: testIDPSLOURL,
 						},
 						{
 							Binding:  saml.HTTPPostBinding,
-							Location: "https://auth.example.com/saml/slo",
+							Location: testIDPSLOURL,
 						},
 					},
 				},

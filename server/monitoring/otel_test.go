@@ -35,8 +35,10 @@ func (p providerMock) GetInstanceName() string     { return p.instanceName }
 // helper to save/restore global OTel state per test
 func withGlobalOtelSaved(t *testing.T, fn func()) {
 	t.Helper()
+
 	prevTP := otel.GetTracerProvider()
 	prevProp := otel.GetTextMapPropagator()
+
 	t.Cleanup(func() {
 		otel.SetTracerProvider(prevTP)
 		otel.SetTextMapPropagator(prevProp)
@@ -52,6 +54,7 @@ func TestStartDisabledNoop(t *testing.T) {
 			tracing:      &config.Tracing{Enabled: false},
 		})
 		tm.Start(context.Background(), "test-version")
+
 		if tm.started {
 			t.Fatalf("expected telemetry not started when disabled")
 		}
@@ -72,6 +75,7 @@ func TestStartEnabledSetsProviderAndPropagators(t *testing.T) {
 		})
 
 		tm.Start(context.Background(), "v0.0.1")
+
 		if !tm.started || tm.tp == nil {
 			t.Fatalf("telemetry should be started with a tracer provider")
 		}
@@ -82,6 +86,7 @@ func TestStartEnabledSetsProviderAndPropagators(t *testing.T) {
 		if otel.GetTextMapPropagator() == nil {
 			t.Fatalf("expected propagator to be set")
 		}
+
 		tm.Shutdown(context.Background())
 	})
 }
@@ -98,9 +103,11 @@ func TestSamplerRatioClamp(t *testing.T) {
 			},
 		})
 		tm.Start(context.Background(), "v0.0.1")
+
 		if !tm.started {
 			t.Fatalf("telemetry should be started")
 		}
+
 		tm.Shutdown(context.Background())
 	})
 }

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package definitions provides definitions functionality.
 package definitions
 
 import "time"
@@ -122,13 +123,13 @@ const (
 	// Used when redirecting back to /login after MFA verification fails due to wrong initial credentials.
 	SessionKeyLoginError = "login_error"
 
-	// SessionKeyIDPAuthStatusMessage stores the fallback text for a policy-selected IdP auth failure.
+	// SessionKeyIDPAuthStatusMessage stores the fallback text for a policy-selected IDP auth failure.
 	SessionKeyIDPAuthStatusMessage = "idp_auth_status_message"
 
-	// SessionKeyIDPAuthStatusI18NKey stores the i18n key for a policy-selected IdP auth failure.
+	// SessionKeyIDPAuthStatusI18NKey stores the i18n key for a policy-selected IDP auth failure.
 	SessionKeyIDPAuthStatusI18NKey = "idp_auth_status_i18n_key"
 
-	// SessionKeyIDPAuthStatusLanguage stores the policy-selected response language for a policy-selected IdP auth failure.
+	// SessionKeyIDPAuthStatusLanguage stores the policy-selected response language for a policy-selected IDP auth failure.
 	SessionKeyIDPAuthStatusLanguage = "idp_auth_status_language"
 
 	// SessionKeySubject stores the OIDC subject if computed in-session.
@@ -174,58 +175,58 @@ const (
 	// Format example: {"client-a":1735689600,"client-b":1738291200} (unix seconds).
 	SessionKeyOIDCConsentExpiries = "oidc_consent_expiries"
 
-	// SessionKeyIdPFlowType stores the type of IdP flow (oidc or saml).
-	SessionKeyIdPFlowType = "idp_flow_type"
+	// SessionKeyIDPFlowType stores the type of IDP flow (oidc or saml).
+	SessionKeyIDPFlowType = "idp_flow_type"
 
-	// SessionKeyIdPFlowID stores the opaque flow identifier used as reference to external state.
-	SessionKeyIdPFlowID = "idp_flow_id"
+	// SessionKeyIDPFlowID stores the opaque flow identifier used as reference to external state.
+	SessionKeyIDPFlowID = "idp_flow_id"
 
-	// SessionKeyIdPAuthOutcome stores the first-factor outcome for the active IdP flow.
+	// SessionKeyIDPAuthOutcome stores the first-factor outcome for the active IDP flow.
 	// Values are managed by the flow FSM (e.g. unknown, ok, fail_latched).
-	SessionKeyIdPAuthOutcome = "idp_auth_outcome"
+	SessionKeyIDPAuthOutcome = "idp_auth_outcome"
 
-	// SessionKeyIdPAuthOutcomeHMAC stores the HMAC-SHA256 integrity tag for idp_auth_outcome.
+	// SessionKeyIDPAuthOutcomeHMAC stores the HMAC-SHA256 integrity tag for idp_auth_outcome.
 	// Binds auth_outcome to flow_id and timestamp to prevent tampering.
-	SessionKeyIdPAuthOutcomeHMAC = "idp_auth_outcome_hmac"
+	SessionKeyIDPAuthOutcomeHMAC = "idp_auth_outcome_hmac"
 
-	// SessionKeyIdPClientID stores the OIDC client_id for the current flow.
-	SessionKeyIdPClientID = "idp_client_id"
+	// SessionKeyIDPClientID stores the OIDC client_id for the current flow.
+	SessionKeyIDPClientID = "idp_client_id"
 
-	// SessionKeyIdPRedirectURI stores the validated redirect_uri for OIDC flows.
-	SessionKeyIdPRedirectURI = "idp_redirect_uri"
+	// SessionKeyIDPRedirectURI stores the validated redirect_uri for OIDC flows.
+	SessionKeyIDPRedirectURI = "idp_redirect_uri"
 
-	// SessionKeyIdPScope stores the requested OIDC scopes.
-	SessionKeyIdPScope = "idp_scope"
+	// SessionKeyIDPScope stores the requested OIDC scopes.
+	SessionKeyIDPScope = "idp_scope"
 
-	// SessionKeyIdPState stores the OIDC state parameter.
-	SessionKeyIdPState = "idp_state"
+	// SessionKeyIDPState stores the OIDC state parameter.
+	SessionKeyIDPState = "idp_state"
 
-	// SessionKeyIdPNonce stores the OIDC nonce parameter.
-	SessionKeyIdPNonce = "idp_nonce"
+	// SessionKeyIDPNonce stores the OIDC nonce parameter.
+	SessionKeyIDPNonce = "idp_nonce"
 
-	// SessionKeyIdPResponseType stores the OIDC response_type parameter.
-	SessionKeyIdPResponseType = "idp_response_type"
+	// SessionKeyIDPResponseType stores the OIDC response_type parameter.
+	SessionKeyIDPResponseType = "idp_response_type"
 
-	// SessionKeyIdPPrompt stores the OIDC prompt parameter.
-	SessionKeyIdPPrompt = "idp_prompt"
+	// SessionKeyIDPPrompt stores the OIDC prompt parameter.
+	SessionKeyIDPPrompt = "idp_prompt"
 
-	// SessionKeyIdPCodeChallenge stores the OIDC PKCE code_challenge parameter.
-	SessionKeyIdPCodeChallenge = "idp_code_challenge"
+	// SessionKeyIDPCodeChallenge stores the OIDC PKCE code_challenge parameter.
+	SessionKeyIDPCodeChallenge = "idp_code_challenge"
 
-	// SessionKeyIdPCodeChallengeMethod stores the OIDC PKCE code_challenge_method parameter.
-	SessionKeyIdPCodeChallengeMethod = "idp_code_challenge_method"
+	// SessionKeyIDPCodeChallengeMethod stores the OIDC PKCE code_challenge_method parameter.
+	SessionKeyIDPCodeChallengeMethod = "idp_code_challenge_method"
 
-	// SessionKeyIdPSAMLRequest stores the serialized SAML AuthnRequest for SAML flows.
-	SessionKeyIdPSAMLRequest = "idp_saml_request"
+	// SessionKeyIDPSAMLRequest stores the serialized SAML AuthnRequest for SAML flows.
+	SessionKeyIDPSAMLRequest = "idp_saml_request"
 
-	// SessionKeyIdPSAMLRelayState stores the SAML RelayState parameter.
-	SessionKeyIdPSAMLRelayState = "idp_saml_relay_state"
+	// SessionKeyIDPSAMLRelayState stores the SAML RelayState parameter.
+	SessionKeyIDPSAMLRelayState = "idp_saml_relay_state"
 
-	// SessionKeyIdPSAMLEntityID stores the SAML SP EntityID.
-	SessionKeyIdPSAMLEntityID = "idp_saml_entity_id"
+	// SessionKeyIDPSAMLEntityID stores the SAML SP EntityID.
+	SessionKeyIDPSAMLEntityID = "idp_saml_entity_id"
 
-	// SessionKeyIdPOriginalURL stores the original request URL for resuming the flow after login.
-	SessionKeyIdPOriginalURL = "idp_original_url"
+	// SessionKeyIDPOriginalURL stores the original request URL for resuming the flow after login.
+	SessionKeyIDPOriginalURL = "idp_original_url"
 
 	// SessionKeyDeviceCode stores the device code string during the device code MFA flow.
 	SessionKeyDeviceCode = "device_code"
@@ -241,14 +242,14 @@ const (
 	SessionKeyMFAMethod = "mfa_method"
 
 	// SessionKeyRequireMFAFlow indicates that the user must register missing MFA methods
-	// before the IdP flow can be completed.
+	// before the IDP flow can be completed.
 	SessionKeyRequireMFAFlow = "require_mfa_flow"
 
 	// SessionKeyRequireMFAPending holds the MFA methods still requiring registration,
 	// encoded as a comma-separated string (e.g. "totp,webauthn" or "webauthn").
 	SessionKeyRequireMFAPending = "require_mfa_pending"
 
-	// SessionKeyRequireMFAParentFlowID stores the original IdP flow id while the
+	// SessionKeyRequireMFAParentFlowID stores the original IDP flow id while the
 	// temporary require_mfa sub-flow is active.
 	SessionKeyRequireMFAParentFlowID = "require_mfa_parent_flow_id"
 )
@@ -493,8 +494,8 @@ const (
 	// LogKeyRateLimitReason represents the reason for a 429 Too Many Requests response.
 	LogKeyRateLimitReason = "ratelimit_reason"
 
-	// LogKeyUriPath represents the URI path of a request.
-	LogKeyUriPath = "uri_path"
+	// LogKeyURIPath represents the URI path of a request.
+	LogKeyURIPath = "uri_path"
 
 	// LogKeyMethod represents the HTTP method for request logging.
 	LogKeyMethod = "http_method"
@@ -1003,8 +1004,8 @@ const (
 	// ServLoad is a constant representing the "load" service category.
 	ServLoad = "load"
 
-	// ServIdP is a constant for the "idp" service.
-	ServIdP = "idp"
+	// ServIDP is a constant for the "idp" service.
+	ServIDP = "idp"
 )
 
 // MFARoot is the root path for the multi-factor authentication (MFA) endpoints.
@@ -1242,7 +1243,7 @@ const (
 	// DbgHTTP represents the debug module for HTTP-related operations.
 	DbgHTTP
 
-	// DbgIdp represents the debug module for IdP (OIDC/SAML) related operations.
+	// DbgIdp represents the debug module for IDP (OIDC/SAML) related operations.
 	DbgIdp
 
 	// DbgAccount represents the debug module for tracing how/where the
@@ -1310,7 +1311,7 @@ const (
 	// DbgHTTPName is the debug identifier for HTTP
 	DbgHTTPName = "http"
 
-	// DbgIdpName is the debug identifier for IdP
+	// DbgIdpName is the debug identifier for IDP
 	DbgIdpName = "idp"
 
 	// DbgAccountName is the debug identifier for account tracing
@@ -2196,8 +2197,8 @@ const (
 
 // Standard OpenID Connect scopes.
 const (
-	// ScopeOpenId is the mandatory OpenID Connect scope.
-	ScopeOpenId = "openid"
+	// ScopeOpenID is the mandatory OpenID Connect scope.
+	ScopeOpenID = "openid"
 
 	// ScopeOfflineAccess enables refresh tokens.
 	ScopeOfflineAccess = "offline_access"
@@ -2347,8 +2348,8 @@ const (
 	// LuaBackendResultGroups represents the field name for groups in a Lua backend result.
 	LuaBackendResultGroups = "groups"
 
-	// LuaBackendResultGroupDNs represents the field name for group DNs in a Lua backend result.
-	LuaBackendResultGroupDNs = "group_dns"
+	// LuaBackendResultGroupDistinguishedNames represents the field name for group DNs in a Lua backend result.
+	LuaBackendResultGroupDistinguishedNames = "group_dns"
 )
 
 const (

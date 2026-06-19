@@ -332,9 +332,7 @@ func useRecoveryCodeConcurrently(
 
 	var wg sync.WaitGroup
 	for range attempts {
-
 		wg.Go(func() {
-
 			<-start
 
 			result, err := service.UseRecoveryCode(context.Background(), input)

@@ -25,8 +25,12 @@ linters:
     goconst:
       min-len: 2
       min-occurrences: 2
+      ignore-tests: true
     gocyclo:
       min-complexity: 12
+    errcheck:
+      exclude-functions:
+        - (github.com/croessner/nauthilus/v3/server/log/level.Logger).Log
   exclusions:
     paths:
       - vendor/

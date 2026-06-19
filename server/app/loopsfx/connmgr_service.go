@@ -124,6 +124,7 @@ func (s *ConnMgrService) Stop(stopCtx context.Context) error {
 	}
 
 	done := make(chan struct{})
+
 	go func() {
 		s.wg.Wait()
 		close(done)

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package logfx provides logfx functionality.
 package logfx
 
 import (
@@ -30,10 +31,12 @@ type FxEventLogger struct {
 	logger *slog.Logger
 }
 
+// NewFxEventLogger provides the exported NewFxEventLogger function.
 func NewFxEventLogger(logger *slog.Logger) fxevent.Logger {
 	return &FxEventLogger{logger: logger}
 }
 
+// LogEvent provides the exported LogEvent method.
 func (l *FxEventLogger) LogEvent(event fxevent.Event) {
 	if l == nil || l.logger == nil {
 		return

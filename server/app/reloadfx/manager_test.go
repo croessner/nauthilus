@@ -42,6 +42,7 @@ func (r *fakeReloader) Current() configfx.Snapshot {
 
 func (r *fakeReloader) Reload() (configfx.Snapshot, error) {
 	r.calls.Add(1)
+
 	if r.enter != nil {
 		select {
 		case r.enter <- struct{}{}:

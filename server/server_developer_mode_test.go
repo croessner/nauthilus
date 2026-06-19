@@ -61,6 +61,7 @@ func TestValidateDeveloperModeBindAddress(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
 				}
+
 				if tt.errorContain != "" && !strings.Contains(err.Error(), tt.errorContain) {
 					t.Fatalf("error %q does not contain %q", err.Error(), tt.errorContain)
 				}

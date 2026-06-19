@@ -47,12 +47,12 @@ func ManagementJSON() []byte {
 	return cloneSpecBytes(managementSpecJSON)
 }
 
-// IDPYAML returns the embedded public IdP OpenAPI document in YAML format.
+// IDPYAML returns the embedded public IDP OpenAPI document in YAML format.
 func IDPYAML() []byte {
 	return cloneSpecBytes(idpSpecYAML)
 }
 
-// IDPJSON returns the embedded public IdP OpenAPI document rendered as JSON.
+// IDPJSON returns the embedded public IDP OpenAPI document rendered as JSON.
 func IDPJSON() []byte {
 	return cloneSpecBytes(idpSpecJSON)
 }

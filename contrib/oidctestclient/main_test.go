@@ -18,6 +18,7 @@ package main
 import (
 	"testing"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -34,18 +35,18 @@ func TestParseScopesFromEnv(t *testing.T) {
 		},
 		{
 			name:     "single scope",
-			envValue: "openid",
-			expected: []string{"openid"},
+			envValue: oidc.ScopeOpenID,
+			expected: []string{oidc.ScopeOpenID},
 		},
 		{
 			name:     "comma separated scopes",
 			envValue: "openid,profile,email",
-			expected: []string{"openid", "profile", "email"},
+			expected: []string{oidc.ScopeOpenID, scopeProfile, scopeEmail},
 		},
 		{
 			name:     "comma separated with spaces",
 			envValue: "openid, profile, email",
-			expected: []string{"openid", "profile", "email"},
+			expected: []string{oidc.ScopeOpenID, scopeProfile, scopeEmail},
 		},
 		{
 			name:     "whitespace only returns defaults",
@@ -55,12 +56,12 @@ func TestParseScopesFromEnv(t *testing.T) {
 		{
 			name:     "trailing comma ignored",
 			envValue: "openid,profile,",
-			expected: []string{"openid", "profile"},
+			expected: []string{oidc.ScopeOpenID, scopeProfile},
 		},
 		{
 			name:     "leading comma ignored",
 			envValue: ",openid,profile",
-			expected: []string{"openid", "profile"},
+			expected: []string{oidc.ScopeOpenID, scopeProfile},
 		},
 	}
 
@@ -88,17 +89,17 @@ func TestParsePKCEModeFromEnv(t *testing.T) {
 		},
 		{
 			name:     "explicit disabled",
-			envValue: "disabled",
+			envValue: string(PKCEModeDisabled),
 			expected: PKCEModeDisabled,
 		},
 		{
 			name:     "off alias",
-			envValue: "off",
+			envValue: pkceModeOff,
 			expected: PKCEModeDisabled,
 		},
 		{
 			name:     "s256 lowercase",
-			envValue: "s256",
+			envValue: pkceModeS256Lower,
 			expected: PKCEModeS256,
 		},
 		{
@@ -108,7 +109,7 @@ func TestParsePKCEModeFromEnv(t *testing.T) {
 		},
 		{
 			name:     "true alias",
-			envValue: "true",
+			envValue: envBoolTrue,
 			expected: PKCEModeS256,
 		},
 		{

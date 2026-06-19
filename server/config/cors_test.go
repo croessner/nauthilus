@@ -41,9 +41,11 @@ func TestSetDefaultSecuritySettings_CORS(t *testing.T) {
 	if assert.Len(t, cors.Policies, 1) {
 		policy := cors.Policies[0]
 		assert.Equal(t, defaultCORSPolicyName, policy.Name)
+
 		if assert.NotNil(t, policy.Enabled) {
 			assert.True(t, *policy.Enabled)
 		}
+
 		assert.Equal(t, defaultCORSPathPrefixes, policy.PathPrefixes)
 		assert.Equal(t, defaultCORSAllowMethods, policy.AllowMethods)
 		assert.Equal(t, defaultCORSAllowHeaders, policy.AllowHeaders)
@@ -89,17 +91,21 @@ func TestSetDefaultSecuritySettings_PreservesCustomCORS(t *testing.T) {
 	if assert.Len(t, cors.Policies, 1) {
 		policy := cors.Policies[0]
 		assert.Equal(t, "api", policy.Name)
+
 		if assert.NotNil(t, policy.Enabled) {
 			assert.True(t, *policy.Enabled)
 		}
+
 		assert.Equal(t, []string{"/api/v1/mfa"}, policy.PathPrefixes)
 		assert.Equal(t, []string{customCORSOrigin}, policy.AllowOrigins)
 		assert.Equal(t, []string{"GET"}, policy.AllowMethods)
 		assert.Equal(t, []string{"Authorization"}, policy.AllowHeaders)
 		assert.Equal(t, []string{"X-Request-ID"}, policy.ExposeHeaders)
+
 		if assert.NotNil(t, policy.AllowCredentials) {
 			assert.True(t, *policy.AllowCredentials)
 		}
+
 		assert.EqualValues(t, 3600, policy.MaxAge)
 	}
 }

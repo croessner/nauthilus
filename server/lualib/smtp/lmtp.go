@@ -39,10 +39,11 @@ var _ GenericClient = (*LMTPClient)(nil)
 // NewLMTPClient initializes a new LMTPClient using the provided network connection and returns it or an error if failed.
 func NewLMTPClient(conn net.Conn) (*LMTPClient, error) {
 	textConn := textproto.NewConn(conn)
+
 	internalClient, err := smtp.NewClient(conn, "")
 	if err != nil {
 		if textConn != nil {
-			textConn.Close()
+			_ = textConn.Close()
 		}
 
 		return nil, err
@@ -127,7 +128,7 @@ func (l *LMTPClient) Quit() error {
 		return err
 	}
 
-	l.text.Close()
+	_ = l.text.Close()
 
 	return err
 }
@@ -165,8 +166,8 @@ func runSendLMTPMail(lmtpServer string, heloName string, _ smtp.Auth, from strin
 		return err
 	}
 
-	defer genericClient.Quit()
-	defer genericClient.Close()
+	defer func() { _ = genericClient.Quit() }()
+	defer func() { _ = genericClient.Close() }()
 
 	if err = genericClient.Hello(heloName); err != nil {
 		return err

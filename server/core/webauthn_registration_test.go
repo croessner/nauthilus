@@ -71,6 +71,7 @@ func (m *mockCookieManager) GetString(key string, defaultValue string) string {
 			return s
 		}
 	}
+
 	return defaultValue
 }
 
@@ -80,6 +81,7 @@ func (m *mockCookieManager) GetInt(key string, defaultValue int) int {
 			return i
 		}
 	}
+
 	return defaultValue
 }
 
@@ -89,6 +91,7 @@ func (m *mockCookieManager) GetInt64(key string, defaultValue int64) int64 {
 			return i
 		}
 	}
+
 	return defaultValue
 }
 
@@ -98,6 +101,7 @@ func (m *mockCookieManager) GetUint8(key string, defaultValue uint8) uint8 {
 			return i
 		}
 	}
+
 	return defaultValue
 }
 
@@ -107,6 +111,7 @@ func (m *mockCookieManager) GetBool(key string, defaultValue bool) bool {
 			return b
 		}
 	}
+
 	return defaultValue
 }
 
@@ -116,6 +121,7 @@ func (m *mockCookieManager) GetStringSlice(key string, defaultValue []string) []
 			return s
 		}
 	}
+
 	return defaultValue
 }
 
@@ -125,6 +131,7 @@ func (m *mockCookieManager) GetDuration(key string, defaultValue time.Duration) 
 			return d
 		}
 	}
+
 	return defaultValue
 }
 
@@ -134,6 +141,7 @@ func (m *mockCookieManager) GetBytes(key string, defaultValue []byte) []byte {
 			return b
 		}
 	}
+
 	return defaultValue
 }
 
@@ -186,7 +194,7 @@ func TestIsWebAuthnRegistrationAuthenticated(t *testing.T) {
 		},
 		{
 			name:  "missing auth result and account",
-			setup: func(mgr *mockCookieManager) {},
+			setup: func(_ *mockCookieManager) {},
 			want:  false,
 		},
 	}
@@ -225,7 +233,7 @@ func TestRestoreWebAuthnRegistrationIdentityFromFlowState(t *testing.T) {
 		definitions.SessionKeyAccount: testUser,
 	}}
 	state := &flowdomain.State{
-		FlowType: flowdomain.FlowTypeRequireMFA,
+		Type: flowdomain.FlowTypeRequireMFA,
 		Metadata: map[string]string{
 			flowdomain.FlowMetadataUniqueUserID: testUniqueUserID,
 			flowdomain.FlowMetadataDisplayName:  testDisplayName,

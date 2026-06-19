@@ -36,6 +36,7 @@ func (z zstdReadCloser) Read(p []byte) (int, error) {
 
 func (z zstdReadCloser) Close() error {
 	z.dec.Close()
+
 	if z.src != nil {
 		return z.src.Close()
 	}
@@ -61,7 +62,7 @@ func DecompressZstdRequestMiddleware(cfg config.File) gin.HandlerFunc {
 		if enc == "zstd" || enc == "zst" || enc == "zstandard" {
 			dec, err := zstd.NewReader(c.Request.Body)
 			if err != nil {
-				c.AbortWithError(http.StatusBadRequest, fmt.Errorf("failed to decompress zstd request body: %w", err))
+				_ = c.AbortWithError(http.StatusBadRequest, fmt.Errorf("failed to decompress zstd request body: %w", err))
 
 				return
 			}

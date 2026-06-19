@@ -15,24 +15,24 @@
 
 package flow
 
-// FlowType identifies the functional flow that is orchestrated in the IdP.
-type FlowType string
+// Type identifies the functional flow that is orchestrated in the IDP.
+type Type string
 
 const (
 	// FlowTypeUnknown marks an unclassified or invalid flow type.
-	FlowTypeUnknown FlowType = "unknown"
+	FlowTypeUnknown Type = "unknown"
 	// FlowTypeOIDCAuthorization is the OIDC authorization-code browser flow.
-	FlowTypeOIDCAuthorization FlowType = "oidc_authorization_code"
+	FlowTypeOIDCAuthorization Type = "oidc_authorization_code"
 	// FlowTypeOIDCDeviceCode is the OIDC device-code user-verification flow.
-	FlowTypeOIDCDeviceCode FlowType = "oidc_device_code"
+	FlowTypeOIDCDeviceCode Type = "oidc_device_code"
 	// FlowTypeSAML is the SAML SSO browser flow.
-	FlowTypeSAML FlowType = "saml"
+	FlowTypeSAML Type = "saml"
 	// FlowTypeRequireMFA is the internal mandatory-MFA completion flow.
-	FlowTypeRequireMFA FlowType = "require_mfa"
+	FlowTypeRequireMFA Type = "require_mfa"
 )
 
 // Valid reports whether the flow type is a known value.
-func (f FlowType) Valid() bool {
+func (f Type) Valid() bool {
 	switch f {
 	case FlowTypeOIDCAuthorization, FlowTypeOIDCDeviceCode, FlowTypeSAML, FlowTypeRequireMFA:
 		return true
@@ -41,22 +41,22 @@ func (f FlowType) Valid() bool {
 	}
 }
 
-// FlowProtocol identifies the protocol class a flow belongs to.
-type FlowProtocol string
+// Protocol identifies the protocol class a flow belongs to.
+type Protocol string
 
 const (
 	// FlowProtocolUnknown marks an unclassified or invalid protocol.
-	FlowProtocolUnknown FlowProtocol = "unknown"
+	FlowProtocolUnknown Protocol = "unknown"
 	// FlowProtocolOIDC denotes an OpenID Connect based flow.
-	FlowProtocolOIDC FlowProtocol = "oidc"
+	FlowProtocolOIDC Protocol = "oidc"
 	// FlowProtocolSAML denotes a SAML based flow.
-	FlowProtocolSAML FlowProtocol = "saml"
+	FlowProtocolSAML Protocol = "saml"
 	// FlowProtocolInternal denotes an internal, non-external-protocol flow.
-	FlowProtocolInternal FlowProtocol = "internal"
+	FlowProtocolInternal Protocol = "internal"
 )
 
 // Valid reports whether the protocol is a known value.
-func (p FlowProtocol) Valid() bool {
+func (p Protocol) Valid() bool {
 	switch p {
 	case FlowProtocolOIDC, FlowProtocolSAML, FlowProtocolInternal:
 		return true
@@ -65,28 +65,28 @@ func (p FlowProtocol) Valid() bool {
 	}
 }
 
-// FlowAction identifies a user/system action on a step.
-type FlowAction string
+// Action identifies a user/system action on a step.
+type Action string
 
 const (
 	// FlowActionStart initializes a new flow instance.
-	FlowActionStart FlowAction = "start"
+	FlowActionStart Action = "start"
 	// FlowActionAdvance transitions forward to the next step.
-	FlowActionAdvance FlowAction = "advance"
+	FlowActionAdvance Action = "advance"
 	// FlowActionResume reconstructs the next redirect for an existing step.
-	FlowActionResume FlowAction = "resume"
+	FlowActionResume Action = "resume"
 	// FlowActionBack transitions to a previous allowed step.
-	FlowActionBack FlowAction = "back"
+	FlowActionBack Action = "back"
 	// FlowActionCancel terminates the flow by user/system cancellation.
-	FlowActionCancel FlowAction = "cancel"
+	FlowActionCancel Action = "cancel"
 	// FlowActionComplete finalizes a successful flow.
-	FlowActionComplete FlowAction = "complete"
+	FlowActionComplete Action = "complete"
 	// FlowActionAbort forcefully terminates the flow due to errors or policy.
-	FlowActionAbort FlowAction = "abort"
+	FlowActionAbort Action = "abort"
 )
 
 // Valid reports whether the action is a known value.
-func (a FlowAction) Valid() bool {
+func (a Action) Valid() bool {
 	switch a {
 	case FlowActionStart, FlowActionAdvance, FlowActionResume, FlowActionBack, FlowActionCancel, FlowActionComplete, FlowActionAbort:
 		return true
@@ -95,32 +95,32 @@ func (a FlowAction) Valid() bool {
 	}
 }
 
-// FlowStep identifies one abstract step in a flow.
-type FlowStep string
+// Step identifies one abstract step in a flow.
+type Step string
 
 const (
 	// FlowStepStart is the initial pre-authentication step.
-	FlowStepStart FlowStep = "start"
+	FlowStepStart Step = "start"
 	// FlowStepLogin is the primary credential authentication step.
-	FlowStepLogin FlowStep = "login"
+	FlowStepLogin Step = "login"
 	// FlowStepRegistration is the optional account registration step.
-	FlowStepRegistration FlowStep = "registration"
+	FlowStepRegistration Step = "registration"
 	// FlowStepMFA is the multi-factor authentication step.
-	FlowStepMFA FlowStep = "mfa"
+	FlowStepMFA Step = "mfa"
 	// FlowStepConsent is the user consent step.
-	FlowStepConsent FlowStep = "consent"
+	FlowStepConsent Step = "consent"
 	// FlowStepDeviceVerification is the user verification step for device code.
-	FlowStepDeviceVerification FlowStep = "device_verification"
+	FlowStepDeviceVerification Step = "device_verification"
 	// FlowStepRequireMFAChallenge is the enforced MFA registration/challenge step.
-	FlowStepRequireMFAChallenge FlowStep = "require_mfa_challenge"
+	FlowStepRequireMFAChallenge Step = "require_mfa_challenge"
 	// FlowStepCallback is the protocol callback/response preparation step.
-	FlowStepCallback FlowStep = "callback"
+	FlowStepCallback Step = "callback"
 	// FlowStepDone is the terminal state after successful completion.
-	FlowStepDone FlowStep = "done"
+	FlowStepDone Step = "done"
 )
 
 // Valid reports whether the step is a known value.
-func (s FlowStep) Valid() bool {
+func (s Step) Valid() bool {
 	switch s {
 	case FlowStepStart,
 		FlowStepLogin,

@@ -52,7 +52,7 @@ var (
 			Name: "idp_saml_slo_requests_total",
 			Help: "Total number of SAML SLO endpoint requests by binding, message type, and outcome.",
 		},
-		[]string{"binding", "message_type", "outcome"},
+		[]string{samlMetricLabelBinding, samlMetricLabelMessageType, samlMetricLabelOutcome},
 	)
 
 	sloValidationErrorsTotal = promauto.NewCounterVec(
@@ -60,7 +60,7 @@ var (
 			Name: "idp_saml_slo_validation_errors_total",
 			Help: "Total number of SAML SLO validation errors by binding, message type, and stage.",
 		},
-		[]string{"binding", "message_type", "stage"},
+		[]string{samlMetricLabelBinding, samlMetricLabelMessageType, "stage"},
 	)
 
 	sloAbuseRejectionsTotal = promauto.NewCounterVec(
@@ -68,7 +68,7 @@ var (
 			Name: "idp_saml_slo_abuse_rejections_total",
 			Help: "Total number of SAML SLO endpoint requests rejected by abuse guards.",
 		},
-		[]string{"reason", "binding"},
+		[]string{"reason", samlMetricLabelBinding},
 	)
 
 	sloTerminalStatusTotal = promauto.NewCounterVec(
@@ -76,7 +76,7 @@ var (
 			Name: "idp_saml_slo_terminal_status_total",
 			Help: "Total number of terminal SAML SLO transaction results by direction and status.",
 		},
-		[]string{"direction", "status"},
+		[]string{"direction", samlMetricLabelStatus},
 	)
 
 	sloDurationSeconds = promauto.NewHistogramVec(
@@ -85,11 +85,11 @@ var (
 			Help:    "SAML SLO endpoint latency in seconds by binding, message type, and outcome.",
 			Buckets: prometheus.ExponentialBuckets(0.001, 1.8, 14),
 		},
-		[]string{"binding", "message_type", "outcome"},
+		[]string{samlMetricLabelBinding, "message_type", "outcome"},
 	)
 )
 
-func observeSLORequest(binding slodomain.SLOBinding, messageType sloMessageType, outcome string, duration time.Duration) {
+func observeSLORequest(binding slodomain.Binding, messageType sloMessageType, outcome string, duration time.Duration) {
 	bindingLabel := sloMetricBinding(binding)
 	messageTypeLabel := sloMetricMessageType(messageType)
 	outcomeLabel := normalizeSLOLabelValue(outcome)
@@ -98,7 +98,7 @@ func observeSLORequest(binding slodomain.SLOBinding, messageType sloMessageType,
 	sloDurationSeconds.WithLabelValues(bindingLabel, messageTypeLabel, outcomeLabel).Observe(duration.Seconds())
 }
 
-func recordSLOValidationError(stage string, messageType sloMessageType, binding slodomain.SLOBinding) {
+func recordSLOValidationError(stage string, messageType sloMessageType, binding slodomain.Binding) {
 	sloValidationErrorsTotal.WithLabelValues(
 		sloMetricBinding(binding),
 		sloMetricMessageType(messageType),
@@ -106,14 +106,14 @@ func recordSLOValidationError(stage string, messageType sloMessageType, binding 
 	).Inc()
 }
 
-func recordSLOAbuseRejection(reason string, binding slodomain.SLOBinding) {
+func recordSLOAbuseRejection(reason string, binding slodomain.Binding) {
 	sloAbuseRejectionsTotal.WithLabelValues(
 		normalizeSLOLabelValue(reason),
 		sloMetricBinding(binding),
 	).Inc()
 }
 
-func recordSLOTerminalStatus(direction slodomain.SLODirection, status slodomain.SLOStatus) {
+func recordSLOTerminalStatus(direction slodomain.Direction, status slodomain.Status) {
 	sloTerminalStatusTotal.WithLabelValues(
 		sloMetricDirection(direction),
 		sloMetricStatus(status),
@@ -135,7 +135,7 @@ func sloRequestOutcomeFromHTTPStatus(httpStatus int) string {
 	}
 }
 
-func sloTerminalStatusFromCleanup(cleanupResult sloLocalCleanupResult) slodomain.SLOStatus {
+func sloTerminalStatusFromCleanup(cleanupResult sloLocalCleanupResult) slodomain.Status {
 	switch {
 	case cleanupResult.ParticipantCleanupErr != nil:
 		return slodomain.SLOStatusPartial
@@ -146,7 +146,7 @@ func sloTerminalStatusFromCleanup(cleanupResult sloLocalCleanupResult) slodomain
 	}
 }
 
-func sloMetricBinding(binding slodomain.SLOBinding) string {
+func sloMetricBinding(binding slodomain.Binding) string {
 	switch binding {
 	case slodomain.SLOBindingRedirect:
 		return string(slodomain.SLOBindingRedirect)
@@ -168,7 +168,7 @@ func sloMetricMessageType(messageType sloMessageType) string {
 	}
 }
 
-func sloMetricDirection(direction slodomain.SLODirection) string {
+func sloMetricDirection(direction slodomain.Direction) string {
 	switch direction {
 	case slodomain.SLODirectionSPInitiated:
 		return string(slodomain.SLODirectionSPInitiated)
@@ -179,7 +179,7 @@ func sloMetricDirection(direction slodomain.SLODirection) string {
 	}
 }
 
-func sloMetricStatus(status slodomain.SLOStatus) string {
+func sloMetricStatus(status slodomain.Status) string {
 	switch status {
 	case slodomain.SLOStatusDone:
 		return string(slodomain.SLOStatusDone)

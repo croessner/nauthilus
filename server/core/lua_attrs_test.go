@@ -36,10 +36,10 @@ func TestBuildAttributeMappingFromLuaFlattensAndExtractsGroups(t *testing.T) {
 		"nested":   []any{[]any{"a", "b"}},
 	}
 
-	attributes, groups, groupDNs := buildAttributeMappingFromLua(luaAttributes)
+	attributes, groups, groupDistinguishedNames := buildAttributeMappingFromLua(luaAttributes)
 
 	assert.Equal(t, []string{"a", "b"}, anySliceToStrings(attributes["nested"]))
 	assert.Equal(t, []string{"admins", "dev", "ops"}, groups)
-	assert.Equal(t, []string{"cn=admins,ou=groups,dc=example,dc=com", "cn=legacy,ou=groups,dc=example,dc=com"}, groupDNs)
+	assert.Equal(t, []string{"cn=admins,ou=groups,dc=example,dc=com", "cn=legacy,ou=groups,dc=example,dc=com"}, groupDistinguishedNames)
 	assert.Equal(t, []string{"platform"}, anySliceToStrings(attributes["roles"]))
 }

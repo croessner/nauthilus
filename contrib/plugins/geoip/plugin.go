@@ -251,6 +251,7 @@ func (p *Plugin) currentConfig() (moduleConfig, bool) {
 // lookupRecord runs database and ASN lookups while protecting replaceable readers from replacement.
 func (p *Plugin) lookupRecord(ctx context.Context, addr netip.Addr) (geoRecord, bool, error) {
 	p.mu.RLock()
+
 	if p.database == nil {
 		p.mu.RUnlock()
 

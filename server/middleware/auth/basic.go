@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package auth provides auth functionality.
 package auth
 
 import (
@@ -32,6 +33,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
+)
+
+const (
+	authBypassHealthPath  = "/healthz"
+	authBypassMetricsPath = "/metrics"
+	authBypassPingPath    = "/ping"
 )
 
 // secureCompare compares two strings in constant time by hashing them first.
@@ -64,6 +71,7 @@ func ValidateBasicAuthCredentials(basicAuth *config.BasicAuth, username, passwor
 	}
 
 	expectedPassword := ""
+
 	basicAuth.GetPassword().WithString(func(value string) {
 		expectedPassword = value
 	})
@@ -94,6 +102,7 @@ const (
 // Returns (exceeded, remainingBlockDuration).
 func authRateLimitExceededForIP(ip string) (bool, time.Duration) {
 	now := time.Now()
+
 	var st *failState
 	if v, found := authFailCache.Get(ip); found {
 		st = v.(*failState)
@@ -186,11 +195,12 @@ func noteAuthFailureForIP(ip string) {
 // MaybeThrottleAuthByIP checks if the client IP is temporarily blocked and, if so, responds with 429 and a Retry-After header.
 // It only enforces throttling if the brute-force control is enabled in the configuration.
 func MaybeThrottleAuthByIP(ctx *gin.Context, cfg config.File) bool {
-	if ctx.FullPath() == "/ping" || ctx.FullPath() == "/healthz" || ctx.FullPath() == "/metrics" {
+	if ctx.FullPath() == authBypassPingPath || ctx.FullPath() == authBypassHealthPath || ctx.FullPath() == authBypassMetricsPath {
 		return false
 	}
 
 	ip := requestClientIP(ctx, cfg)
+
 	exceeded, remaining := MaybeThrottleAuthByIPValue(ip, cfg)
 	if exceeded {
 		ctx.Set(definitions.CtxRateLimitReasonKey, "brute-force")
@@ -254,6 +264,7 @@ func CheckAndRequireBasicAuth(ctx *gin.Context, cfg config.File) bool {
 	return CheckAndRequireBasicAuthWithCfg(ctx, cfg)
 }
 
+// CheckAndRequireBasicAuthWithCfg provides the exported CheckAndRequireBasicAuthWithCfg function.
 func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 	if cfg == nil {
 		return true
@@ -319,6 +330,7 @@ func AuthorizeBasicAuthWithDeps(ctx *gin.Context, cfg config.File, logger *slog.
 			"category", cat,
 			"service", svc,
 		)
+
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
 		return false

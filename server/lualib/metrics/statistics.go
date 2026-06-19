@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package metrics provides metrics functionality.
 package metrics
 
 import (
@@ -203,6 +204,7 @@ func (m *PrometheusManager) startSumaryTimer(L *lua.LState) int {
 	}
 
 	labelValues := make(map[string]string)
+
 	labels.ForEach(func(key, value lua.LValue) {
 		labelValues[key.String()] = value.String()
 	})
@@ -228,6 +230,7 @@ func (m *PrometheusManager) startHistogramTimer(L *lua.LState) int {
 	}
 
 	labelValues := make(map[string]string)
+
 	labels.ForEach(func(key, value lua.LValue) {
 		labelValues[key.String()] = value.String()
 	})
@@ -276,6 +279,7 @@ func (m *PrometheusManager) incrementCounter(L *lua.LState) int {
 	}
 
 	labelValues := make(map[string]string)
+
 	labels.ForEach(func(key, value lua.LValue) {
 		labelValues[key.String()] = value.String()
 	})
@@ -300,6 +304,7 @@ func (m *PrometheusManager) addGauge(L *lua.LState) int {
 	}
 
 	labelValues := make(map[string]string)
+
 	labels.ForEach(func(key, value lua.LValue) {
 		labelValues[key.String()] = value.String()
 	})
@@ -324,6 +329,7 @@ func (m *PrometheusManager) subGauge(L *lua.LState) int {
 	}
 
 	labelValues := make(map[string]string)
+
 	labels.ForEach(func(key, value lua.LValue) {
 		labelValues[key.String()] = value.String()
 	})
@@ -348,6 +354,7 @@ func (m *PrometheusManager) setGauge(L *lua.LState) int {
 	}
 
 	labelValues := make(map[string]string)
+
 	labels.ForEach(func(key, value lua.LValue) {
 		labelValues[key.String()] = value.String()
 	})
@@ -371,6 +378,7 @@ func (m *PrometheusManager) incrementGauge(L *lua.LState) int {
 	}
 
 	labelValues := make(map[string]string)
+
 	labels.ForEach(func(key, value lua.LValue) {
 		labelValues[key.String()] = value.String()
 	})
@@ -394,6 +402,7 @@ func (m *PrometheusManager) decrementGauge(L *lua.LState) int {
 	}
 
 	labelValues := make(map[string]string)
+
 	labels.ForEach(func(key, value lua.LValue) {
 		labelValues[key.String()] = value.String()
 	})
@@ -418,6 +427,7 @@ func (m *PrometheusManager) touchCounter(L *lua.LState) int {
 	}
 
 	labelValues := make(map[string]string)
+
 	labels.ForEach(func(key, value lua.LValue) {
 		labelValues[key.String()] = value.String()
 	})

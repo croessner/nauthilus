@@ -58,6 +58,7 @@ func TestNewManager(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, m)
+
 				if tt.languages != nil {
 					assert.Equal(t, len(tt.languages), len(m.GetTags()))
 				} else {

@@ -95,7 +95,7 @@ func NewManagementValidator(t testing.TB) *Validator {
 	return &Validator{Validator: validator}
 }
 
-// NewIDPValidator loads the IdP OpenAPI document.
+// NewIDPValidator loads the IDP OpenAPI document.
 func NewIDPValidator(t testing.TB) *Validator {
 	t.Helper()
 

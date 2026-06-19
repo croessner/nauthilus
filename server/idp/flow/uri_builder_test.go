@@ -23,7 +23,7 @@ func TestURIBuilderResolve(t *testing.T) {
 	testCases := []struct {
 		name     string
 		state    *State
-		action   FlowAction
+		action   Action
 		expected string
 	}{
 		{
@@ -45,7 +45,7 @@ func TestURIBuilderResolve(t *testing.T) {
 		},
 		{
 			name:     "cancel fallback",
-			state:    &State{FlowType: FlowTypeSAML, CurrentStep: FlowStepLogin},
+			state:    &State{Type: FlowTypeSAML, CurrentStep: FlowStepLogin},
 			action:   FlowActionCancel,
 			expected: "/",
 		},

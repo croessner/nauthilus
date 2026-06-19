@@ -62,8 +62,8 @@ func uniqueCustomScopeNames(scopes []Oauth2CustomScope) (map[string]struct{}, st
 	return seen, "", true
 }
 
-// validateIdPMFASettings ensures require_mfa is a subset of supported_mfa when supported_mfa is configured.
-func (f *FileSettings) validateIdPMFASettings() error {
+// validateIDPMFASettings ensures require_mfa is a subset of supported_mfa when supported_mfa is configured.
+func (f *FileSettings) validateIDPMFASettings() error {
 	if f == nil || f.IDP == nil {
 		return nil
 	}
@@ -83,14 +83,15 @@ func (f *FileSettings) validateIdPMFASettings() error {
 	return nil
 }
 
-// validateIdPOIDCCustomScopes ensures OIDC custom scope names are unique and warns when
+// validateIDPOIDCCustomScopes ensures OIDC custom scope names are unique and warns when
 // a client-level custom scope intentionally overrides a global scope of the same name.
-func (f *FileSettings) validateIdPOIDCCustomScopes() error {
+func (f *FileSettings) validateIDPOIDCCustomScopes() error {
 	if f == nil || f.IDP == nil {
 		return nil
 	}
 
 	oidc := f.IDP.OIDC
+
 	globalNames, duplicate, ok := uniqueCustomScopeNames(oidc.CustomScopes)
 	if !ok {
 		return fmt.Errorf("identity.oidc.custom_scopes: duplicate scope name '%s'", duplicate)
@@ -118,9 +119,9 @@ func (f *FileSettings) validateIdPOIDCCustomScopes() error {
 	return nil
 }
 
-// validateIdPSAMLSigningSettings ensures SAML SP signing requirements have the
+// validateIDPSAMLSigningSettings ensures SAML SP signing requirements have the
 // required certificate material available and parseable at startup.
-func (f *FileSettings) validateIdPSAMLSigningSettings() error {
+func (f *FileSettings) validateIDPSAMLSigningSettings() error {
 	if f == nil || f.IDP == nil || !f.IDP.SAML2.Enabled {
 		return nil
 	}
@@ -171,8 +172,8 @@ func (f *FileSettings) validateIdPSAMLSigningSettings() error {
 	return nil
 }
 
-// validateIdPSAML2SLOSettings ensures SAML SLO configuration values are within safe ranges.
-func (f *FileSettings) validateIdPSAML2SLOSettings() error {
+// validateIDPSAML2SLOSettings ensures SAML SLO configuration values are within safe ranges.
+func (f *FileSettings) validateIDPSAML2SLOSettings() error {
 	if f == nil || f.IDP == nil || !f.IDP.SAML2.Enabled {
 		return nil
 	}
@@ -208,8 +209,8 @@ func parseFirstPEMCertificate(certPEM string) (*x509.Certificate, error) {
 	return cert, nil
 }
 
-// IdPSection represents the configuration for the internal Identity Provider.
-type IdPSection struct {
+// IDPSection represents the configuration for the internal Identity Provider.
+type IDPSection struct {
 	OIDC                 OIDCConfig    `mapstructure:"oidc"`
 	SAML2                SAML2Config   `mapstructure:"saml2"`
 	WebAuthn             WebAuthn      `mapstructure:"webauthn"`
@@ -219,13 +220,13 @@ type IdPSection struct {
 	PasswordForgottenURL string        `mapstructure:"password_forgotten_url"`
 }
 
-func (i *IdPSection) String() string {
+func (i *IDPSection) String() string {
 	if i == nil {
-		return "IdPSection: <nil>"
+		return "IDPSection: <nil>"
 	}
 
 	return fmt.Sprintf(
-		"IdPSection: {OIDC:%s SAML2:%s WebAuthn:%s RememberMeTTL:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s PasswordForgottenURL:%s}",
+		"IDPSection: {OIDC:%s SAML2:%s WebAuthn:%s RememberMeTTL:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s PasswordForgottenURL:%s}",
 		i.OIDC.String(),
 		i.SAML2.String(),
 		i.WebAuthn.String(),
@@ -236,8 +237,8 @@ func (i *IdPSection) String() string {
 	)
 }
 
-// GetRememberMeTTL returns the global "remember me" session TTL for IdP logins.
-func (i *IdPSection) GetRememberMeTTL() time.Duration {
+// GetRememberMeTTL returns the global "remember me" session TTL for IDP logins.
+func (i *IDPSection) GetRememberMeTTL() time.Duration {
 	if i == nil {
 		return 0
 	}
@@ -246,12 +247,13 @@ func (i *IdPSection) GetRememberMeTTL() time.Duration {
 }
 
 // warnUnsupported returns a list of warnings for unsupported Identity Provider configuration parameters.
-func (i *IdPSection) warnUnsupported() []string {
+func (i *IDPSection) warnUnsupported() []string {
 	if i == nil {
 		return nil
 	}
 
 	var warnings []string
+
 	warnings = append(warnings, i.OIDC.warnUnsupported()...)
 	warnings = append(warnings, i.SAML2.warnUnsupported()...)
 
@@ -291,16 +293,16 @@ func (w *WebAuthn) GetAuthenticatorAttachment() string {
 // Valid values are "discouraged", "preferred", and "required". Defaults to "discouraged".
 func (w *WebAuthn) GetResidentKey() string {
 	if w == nil {
-		return "discouraged"
+		return defaultWebAuthnResidentKey
 	}
 
 	value := strings.ToLower(w.ResidentKey)
 
 	switch value {
-	case "discouraged", "preferred", "required":
+	case defaultWebAuthnResidentKey, defaultWebAuthnUserVerification, webAuthnRequirementRequired:
 		return value
 	default:
-		return "discouraged"
+		return defaultWebAuthnResidentKey
 	}
 }
 
@@ -308,16 +310,16 @@ func (w *WebAuthn) GetResidentKey() string {
 // Valid values are "discouraged", "preferred", and "required". Defaults to "preferred".
 func (w *WebAuthn) GetUserVerification() string {
 	if w == nil {
-		return "preferred"
+		return defaultWebAuthnUserVerification
 	}
 
 	value := strings.ToLower(w.UserVerification)
 
 	switch value {
-	case "discouraged", "preferred", "required":
+	case defaultWebAuthnResidentKey, defaultWebAuthnUserVerification, webAuthnRequirementRequired:
 		return value
 	default:
-		return "preferred"
+		return defaultWebAuthnUserVerification
 	}
 }
 
@@ -373,7 +375,7 @@ func (o OIDCKey) GetAlgorithm() string {
 		return strings.ToUpper(o.Algorithm)
 	}
 
-	return "RS256"
+	return oidcSigningAlgRS256
 }
 
 func (o *OIDCConfig) String() string {
@@ -403,7 +405,7 @@ func (o *OIDCConfig) GetScopesSupported() []string {
 	}
 
 	return []string{
-		definitions.ScopeOpenId,
+		definitions.ScopeOpenID,
 		definitions.ScopeProfile,
 		definitions.ScopeEmail,
 		definitions.ScopeGroups,
@@ -417,13 +419,13 @@ func (o *OIDCConfig) GetResponseTypesSupported() []string {
 		return o.ResponseTypesSupported
 	}
 
-	return []string{"code"}
+	return []string{oidcResponseTypeCode}
 }
 
 // GetGrantTypesSupported returns the grant types supported by the token endpoint.
 func (o *OIDCConfig) GetGrantTypesSupported() []string {
 	return []string{
-		"authorization_code",
+		definitions.OIDCFlowAuthorizationCode,
 		"refresh_token",
 		"client_credentials",
 		definitions.OIDCGrantTypeDeviceCode,
@@ -436,7 +438,7 @@ func (o *OIDCConfig) GetSubjectTypesSupported() []string {
 		return o.SubjectTypesSupported
 	}
 
-	return []string{"public"}
+	return []string{oidcSubjectTypePublic}
 }
 
 // GetIDTokenSigningAlgValuesSupported returns the supported ID token signing algorithms.
@@ -445,7 +447,7 @@ func (o *OIDCConfig) GetIDTokenSigningAlgValuesSupported() []string {
 		return o.IDTokenSigningAlgValuesSupported
 	}
 
-	return []string{"RS256", "EdDSA"}
+	return []string{oidcSigningAlgRS256, oidcSigningAlgEdDSA}
 }
 
 // GetTokenEndpointAuthMethodsSupported returns the supported token endpoint auth methods.
@@ -454,15 +456,15 @@ func (o *OIDCConfig) GetTokenEndpointAuthMethodsSupported() []string {
 		return o.TokenEndpointAuthMethodsSupported
 	}
 
-	return []string{"client_secret_post", "client_secret_basic", "private_key_jwt", "none"}
+	return []string{AuthorityClientSecretPostAuth, AuthorityClientSecretBasicAuth, AuthorityPrivateKeyJWTAuth, oidcAuthMethodNone}
 }
 
 // GetTokenEndpointAuthSigningAlgValuesSupported returns the signing algorithms
 // supported for private_key_jwt client authentication at the token endpoint.
 // The metadata value is only relevant when private_key_jwt is advertised.
 func (o *OIDCConfig) GetTokenEndpointAuthSigningAlgValuesSupported() []string {
-	if slices.Contains(o.GetTokenEndpointAuthMethodsSupported(), "private_key_jwt") {
-		return []string{"RS256", "EdDSA"}
+	if slices.Contains(o.GetTokenEndpointAuthMethodsSupported(), AuthorityPrivateKeyJWTAuth) {
+		return []string{oidcSigningAlgRS256, oidcSigningAlgEdDSA}
 	}
 
 	return nil
@@ -471,15 +473,15 @@ func (o *OIDCConfig) GetTokenEndpointAuthSigningAlgValuesSupported() []string {
 // GetIntrospectionEndpointAuthMethodsSupported returns the client
 // authentication methods accepted by the introspection endpoint.
 func (o *OIDCConfig) GetIntrospectionEndpointAuthMethodsSupported() []string {
-	return []string{"client_secret_post", "client_secret_basic", "private_key_jwt"}
+	return []string{AuthorityClientSecretPostAuth, AuthorityClientSecretBasicAuth, AuthorityPrivateKeyJWTAuth}
 }
 
 // GetIntrospectionEndpointAuthSigningAlgValuesSupported returns the signing
 // algorithms supported for private_key_jwt client authentication at the
 // introspection endpoint.
 func (o *OIDCConfig) GetIntrospectionEndpointAuthSigningAlgValuesSupported() []string {
-	if slices.Contains(o.GetIntrospectionEndpointAuthMethodsSupported(), "private_key_jwt") {
-		return []string{"RS256", "EdDSA"}
+	if slices.Contains(o.GetIntrospectionEndpointAuthMethodsSupported(), AuthorityPrivateKeyJWTAuth) {
+		return []string{oidcSigningAlgRS256, oidcSigningAlgEdDSA}
 	}
 
 	return nil
@@ -488,7 +490,7 @@ func (o *OIDCConfig) GetIntrospectionEndpointAuthSigningAlgValuesSupported() []s
 // GetCodeChallengeMethodsSupported returns the supported PKCE code challenge methods.
 // Only S256 is supported; plain is rejected as it provides no additional security.
 func (o *OIDCConfig) GetCodeChallengeMethodsSupported() []string {
-	return []string{"S256"}
+	return []string{oidcPKCEChallengeS256}
 }
 
 // GetClaimsSupported returns the supported claims.
@@ -497,7 +499,7 @@ func (o *OIDCConfig) GetClaimsSupported() []string {
 		return o.ClaimsSupported
 	}
 
-	return []string{"sub", "name", "preferred_username", "email"}
+	return []string{oidcClaimSubject, definitions.ClaimName, definitions.ClaimPreferredUserName, definitions.ClaimEmail}
 }
 
 // GetFrontChannelLogoutSupported returns true if front-channel logout is supported.
@@ -579,6 +581,14 @@ const (
 	OIDCConsentModeAllOrNothing = "all_or_nothing"
 	// OIDCConsentModeGranularOptional allows opting out of optional scopes while required scopes remain mandatory.
 	OIDCConsentModeGranularOptional = "granular_optional"
+
+	oidcClaimSubject      = "sub"
+	oidcResponseTypeCode  = "code"
+	oidcSubjectTypePublic = "public"
+	oidcSigningAlgRS256   = "RS256"
+	oidcSigningAlgEdDSA   = "EdDSA"
+	oidcAuthMethodNone    = "none"
+	oidcPKCEChallengeS256 = "S256"
 )
 
 // GetConsentMode returns the configured global consent mode.
@@ -596,7 +606,7 @@ func (o *OIDCConfig) GetConsentMode() string {
 // GetAccessTokenType returns the configured access token type (jwt or opaque).
 func (o *OIDCConfig) GetAccessTokenType() string {
 	if o.AccessTokenType == "" {
-		return "jwt"
+		return defaultOIDCAccessTokenType
 	}
 
 	return strings.ToLower(o.AccessTokenType)
@@ -673,7 +683,7 @@ func (o *OIDCConfig) GetSigningKeyID() string {
 		}
 	}
 
-	return "default"
+	return RemoteBackendDefaultName
 }
 
 // warnUnsupported returns a list of warnings for unsupported OIDC configuration parameters.
@@ -686,24 +696,24 @@ func (o *OIDCConfig) warnUnsupported() []string {
 
 	if len(o.ResponseTypesSupported) > 0 {
 		for _, rt := range o.ResponseTypesSupported {
-			if rt != "code" {
-				warnings = append(warnings, fmt.Sprintf("oidc.response_types_supported: '%s' is currently not supported (only 'code' is supported)", rt))
+			if rt != oidcResponseTypeCode {
+				warnings = append(warnings, fmt.Sprintf("oidc.response_types_supported: '%s' is currently not supported (only '%s' is supported)", rt, oidcResponseTypeCode))
 			}
 		}
 	}
 
 	if len(o.SubjectTypesSupported) > 0 {
 		for _, st := range o.SubjectTypesSupported {
-			if st != "public" {
-				warnings = append(warnings, fmt.Sprintf("oidc.subject_types_supported: '%s' is currently not supported (only 'public' is supported)", st))
+			if st != oidcSubjectTypePublic {
+				warnings = append(warnings, fmt.Sprintf("oidc.subject_types_supported: '%s' is currently not supported (only '%s' is supported)", st, oidcSubjectTypePublic))
 			}
 		}
 	}
 
 	if len(o.IDTokenSigningAlgValuesSupported) > 0 {
 		for _, alg := range o.IDTokenSigningAlgValuesSupported {
-			if alg != "RS256" && alg != "EdDSA" {
-				warnings = append(warnings, fmt.Sprintf("oidc.id_token_signing_alg_values_supported: '%s' is currently not supported (only 'RS256' and 'EdDSA' are supported)", alg))
+			if alg != oidcSigningAlgRS256 && alg != oidcSigningAlgEdDSA {
+				warnings = append(warnings, fmt.Sprintf("oidc.id_token_signing_alg_values_supported: '%s' is currently not supported (only '%s' and '%s' are supported)", alg, oidcSigningAlgRS256, oidcSigningAlgEdDSA))
 			}
 		}
 	}
@@ -749,7 +759,7 @@ type OIDCClient struct {
 	ClientPublicKey          string              `mapstructure:"client_public_key"`
 	ClientPublicKeyFile      string              `mapstructure:"client_public_key_file"`
 	ClientPublicKeyAlgorithm string              `mapstructure:"client_public_key_algorithm"`
-	IdTokenClaims            IdTokenClaims       `mapstructure:"id_token_claims"`
+	IDTokenClaims            IDTokenClaims       `mapstructure:"id_token_claims"`
 	AccessTokenClaims        AccessTokenClaims   `mapstructure:"access_token_claims"`
 	// Deprecated: use identity.session.remember_me_ttl instead.
 	RememberMeTTL                       time.Duration `mapstructure:"remember_me_ttl"`
@@ -827,7 +837,7 @@ func (c *OIDCClient) IsPublicClient() bool {
 		return false
 	}
 
-	return c.ClientSecret.IsZero() || c.TokenEndpointAuthMethod == "none"
+	return c.ClientSecret.IsZero() || c.TokenEndpointAuthMethod == oidcAuthMethodNone
 }
 
 // AllowsRefreshTokenCombinedClientAuth reports whether this client is allowed
@@ -853,7 +863,7 @@ func (c *OIDCClient) GetRevokeRefreshToken(defaultValue bool) bool {
 
 func (c *OIDCClient) String() string {
 	if c == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return fmt.Sprintf("OIDCClient{Name:%s ClientID:%s ClientSecret:<hidden> RedirectURIs:%v GrantTypes:%v TokenEndpointAuthMethod:%s}", c.Name, c.ClientID, c.RedirectURIs, c.GrantTypes, c.TokenEndpointAuthMethod)
@@ -887,7 +897,7 @@ func (c *OIDCClient) GetAllowedScopes() []string {
 
 	if len(c.Scopes) == 0 {
 		return []string{
-			definitions.ScopeOpenId,
+			definitions.ScopeOpenID,
 			definitions.ScopeProfile,
 			definitions.ScopeEmail,
 			definitions.ScopeGroups,
@@ -951,6 +961,7 @@ func (c *OIDCClient) GetConsentMode(defaultMode string) string {
 		if clientMode == OIDCConsentModeGranularOptional {
 			return OIDCConsentModeGranularOptional
 		}
+
 		if clientMode == OIDCConsentModeAllOrNothing {
 			return OIDCConsentModeAllOrNothing
 		}
@@ -976,7 +987,7 @@ func (c *OIDCClient) GetGrantTypes() []string {
 	}
 
 	if len(c.GrantTypes) == 0 {
-		return []string{"authorization_code"}
+		return []string{definitions.OIDCFlowAuthorizationCode}
 	}
 
 	return c.GrantTypes
@@ -1004,7 +1015,7 @@ func (c *OIDCClient) GetClientPublicKey() (string, error) {
 // Defaults to "RS256" if not configured.
 func (c *OIDCClient) GetClientPublicKeyAlgorithm() string {
 	if c == nil || c.ClientPublicKeyAlgorithm == "" {
-		return "RS256"
+		return oidcSigningAlgRS256
 	}
 
 	return c.ClientPublicKeyAlgorithm
@@ -1025,6 +1036,7 @@ type SAML2Config struct {
 	SLO               SAML2SLOConfig         `mapstructure:"slo"`
 }
 
+// SAML2SLOConfig describes the exported SAML2SLOConfig type.
 type SAML2SLOConfig struct {
 	Enabled               *bool         `mapstructure:"enabled"`
 	FrontChannelEnabled   *bool         `mapstructure:"front_channel_enabled"`
@@ -1068,7 +1080,7 @@ func (s *SAML2Config) GetSignatureMethod() string {
 		return s.SignatureMethod
 	}
 
-	return "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
+	return defaultSAMLSignatureMethod
 }
 
 // GetDefaultExpireTime returns the default expire time.
@@ -1086,7 +1098,7 @@ func (s *SAML2Config) GetNameIDFormat() string {
 		return s.NameIDFormat
 	}
 
-	return "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+	return defaultSAMLNameIDFormat
 }
 
 // GetSLOEnabled returns true when protocol-aware SAML SLO handling is enabled.
@@ -1193,6 +1205,7 @@ func (s *SAML2Config) warnUnsupported() []string {
 	return warnings
 }
 
+// GetContent provides the exported GetContent function.
 func GetContent(raw any, path string) (string, error) {
 	switch value := raw.(type) {
 	case string:
@@ -1381,10 +1394,10 @@ func (s *SAML2ServiceProvider) IsDelayedResponse() bool {
 	return s.DelayedResponse
 }
 
-// GetIdP retrieves the IdPSection from the FileSettings instance. Returns nil if the FileSettings is nil.
-func (f *FileSettings) GetIdP() *IdPSection {
+// GetIDP retrieves the IDPSection from the FileSettings instance. Returns nil if the FileSettings is nil.
+func (f *FileSettings) GetIDP() *IDPSection {
 	if f == nil {
-		return &IdPSection{}
+		return &IDPSection{}
 	}
 
 	if f.IDP == nil {
@@ -1392,7 +1405,7 @@ func (f *FileSettings) GetIdP() *IdPSection {
 	}
 
 	if f.IDP == nil {
-		return &IdPSection{}
+		return &IDPSection{}
 	}
 
 	return f.IDP

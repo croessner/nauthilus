@@ -25,8 +25,8 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
-// FlowReferenceAdapter stores only minimal flow reference data in the session cookie.
-type FlowReferenceAdapter struct {
+// ReferenceAdapter stores only minimal flow reference data in the session cookie.
+type ReferenceAdapter struct {
 	mgr sessionManager
 }
 
@@ -39,19 +39,19 @@ type sessionManager interface {
 	ComputeHMAC(data []byte) []byte
 }
 
-// NewFlowReferenceAdapter creates an adapter that stores only flow reference
+// NewReferenceAdapter creates an adapter that stores only flow reference
 // information in the session cookie.
-func NewFlowReferenceAdapter(mgr sessionManager) *FlowReferenceAdapter {
-	return &FlowReferenceAdapter{mgr: mgr}
+func NewReferenceAdapter(mgr sessionManager) *ReferenceAdapter {
+	return &ReferenceAdapter{mgr: mgr}
 }
 
 // Load reconstructs a lightweight flow state from cookie-backed session data.
-func (a *FlowReferenceAdapter) Load(_ context.Context, _ string) (*State, error) {
+func (a *ReferenceAdapter) Load(_ context.Context, _ string) (*State, error) {
 	if a == nil || a.mgr == nil {
 		return nil, nil
 	}
 
-	flowID := a.mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := a.mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID == "" {
 		return nil, nil
 	}
@@ -59,24 +59,24 @@ func (a *FlowReferenceAdapter) Load(_ context.Context, _ string) (*State, error)
 	return &State{
 		FlowID:      flowID,
 		GrantType:   a.mgr.GetString(definitions.SessionKeyOIDCGrantType, ""),
-		FlowType:    a.resolveFlowType(),
+		Type:        a.resolveFlowType(),
 		Protocol:    a.resolveProtocol(),
 		CurrentStep: a.resolveCurrentStep(),
 		AuthOutcome: a.resolveAuthOutcome(),
 		PendingMFA:  a.mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false),
 		Metadata: map[string]string{
 			FlowMetadataResumeTarget:        a.resolveResumeTarget(),
-			FlowMetadataClientID:            a.mgr.GetString(definitions.SessionKeyIdPClientID, ""),
-			FlowMetadataRedirectURI:         a.mgr.GetString(definitions.SessionKeyIdPRedirectURI, ""),
-			FlowMetadataScope:               a.mgr.GetString(definitions.SessionKeyIdPScope, ""),
-			FlowMetadataState:               a.mgr.GetString(definitions.SessionKeyIdPState, ""),
-			FlowMetadataNonce:               a.mgr.GetString(definitions.SessionKeyIdPNonce, ""),
-			FlowMetadataResponseType:        a.mgr.GetString(definitions.SessionKeyIdPResponseType, ""),
-			FlowMetadataPrompt:              a.mgr.GetString(definitions.SessionKeyIdPPrompt, ""),
-			FlowMetadataCodeChallenge:       a.mgr.GetString(definitions.SessionKeyIdPCodeChallenge, ""),
-			FlowMetadataCodeChallengeMethod: a.mgr.GetString(definitions.SessionKeyIdPCodeChallengeMethod, ""),
-			FlowMetadataSAMLEntityID:        a.mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, ""),
-			FlowMetadataOriginalURL:         a.mgr.GetString(definitions.SessionKeyIdPOriginalURL, ""),
+			FlowMetadataClientID:            a.mgr.GetString(definitions.SessionKeyIDPClientID, ""),
+			FlowMetadataRedirectURI:         a.mgr.GetString(definitions.SessionKeyIDPRedirectURI, ""),
+			FlowMetadataScope:               a.mgr.GetString(definitions.SessionKeyIDPScope, ""),
+			FlowMetadataState:               a.mgr.GetString(definitions.SessionKeyIDPState, ""),
+			FlowMetadataNonce:               a.mgr.GetString(definitions.SessionKeyIDPNonce, ""),
+			FlowMetadataResponseType:        a.mgr.GetString(definitions.SessionKeyIDPResponseType, ""),
+			FlowMetadataPrompt:              a.mgr.GetString(definitions.SessionKeyIDPPrompt, ""),
+			FlowMetadataCodeChallenge:       a.mgr.GetString(definitions.SessionKeyIDPCodeChallenge, ""),
+			FlowMetadataCodeChallengeMethod: a.mgr.GetString(definitions.SessionKeyIDPCodeChallengeMethod, ""),
+			FlowMetadataSAMLEntityID:        a.mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""),
+			FlowMetadataOriginalURL:         a.mgr.GetString(definitions.SessionKeyIDPOriginalURL, ""),
 			FlowMetadataDeviceCode:          a.mgr.GetString(definitions.SessionKeyDeviceCode, ""),
 		},
 	}, nil
@@ -84,63 +84,64 @@ func (a *FlowReferenceAdapter) Load(_ context.Context, _ string) (*State, error)
 
 // Save persists flow reference data derived from the full state into the
 // cookie-backed session.
-func (a *FlowReferenceAdapter) Save(_ context.Context, state *State) error {
+func (a *ReferenceAdapter) Save(_ context.Context, state *State) error {
 	if a == nil || a.mgr == nil || state == nil {
 		return nil
 	}
 
-	a.mgr.Set(definitions.SessionKeyIdPFlowType, a.flowTypeToSession(state.Protocol))
-	a.mgr.Set(definitions.SessionKeyIdPFlowID, state.FlowID)
+	a.mgr.Set(definitions.SessionKeyIDPFlowType, a.flowTypeToSession(state.Protocol))
+	a.mgr.Set(definitions.SessionKeyIDPFlowID, state.FlowID)
 	a.mgr.Set(definitions.SessionKeyRequireMFAFlow, state.PendingMFA)
+
 	authOutcome := state.AuthOutcome
 	if !authOutcome.Valid() {
 		authOutcome = AuthOutcomeUnknown
 	}
 
-	a.mgr.Set(definitions.SessionKeyIdPAuthOutcome, string(authOutcome))
-	a.mgr.Set(definitions.SessionKeyIdPAuthOutcomeHMAC, buildAuthOutcomeHMACPayload(a.mgr, state.FlowID, authOutcome))
+	a.mgr.Set(definitions.SessionKeyIDPAuthOutcome, string(authOutcome))
+	a.mgr.Set(definitions.SessionKeyIDPAuthOutcomeHMAC, buildAuthOutcomeHMACPayload(a.mgr, state.FlowID, authOutcome))
 
 	if state.GrantType != "" {
 		a.mgr.Set(definitions.SessionKeyOIDCGrantType, state.GrantType)
 	}
 
-	a.setStringIfNonEmpty(definitions.SessionKeyIdPClientID, state.metadataValue(FlowMetadataClientID))
-	a.setStringIfNonEmpty(definitions.SessionKeyIdPRedirectURI, state.metadataValue(FlowMetadataRedirectURI))
-	a.setStringIfNonEmpty(definitions.SessionKeyIdPScope, state.metadataValue(FlowMetadataScope))
-	a.setStringIfNonEmpty(definitions.SessionKeyIdPState, state.metadataValue(FlowMetadataState))
-	a.setStringIfNonEmpty(definitions.SessionKeyIdPNonce, state.metadataValue(FlowMetadataNonce))
-	a.setStringIfNonEmpty(definitions.SessionKeyIdPResponseType, state.metadataValue(FlowMetadataResponseType))
-	a.setStringIfNonEmpty(definitions.SessionKeyIdPPrompt, state.metadataValue(FlowMetadataPrompt))
-	a.setStringIfNonEmpty(definitions.SessionKeyIdPCodeChallenge, state.metadataValue(FlowMetadataCodeChallenge))
-	a.setStringIfNonEmpty(definitions.SessionKeyIdPCodeChallengeMethod, state.metadataValue(FlowMetadataCodeChallengeMethod))
-	a.setStringIfNonEmpty(definitions.SessionKeyIdPSAMLEntityID, state.metadataValue(FlowMetadataSAMLEntityID))
-	a.setStringIfNonEmpty(definitions.SessionKeyIdPOriginalURL, state.metadataValue(FlowMetadataOriginalURL))
+	a.setStringIfNonEmpty(definitions.SessionKeyIDPClientID, state.metadataValue(FlowMetadataClientID))
+	a.setStringIfNonEmpty(definitions.SessionKeyIDPRedirectURI, state.metadataValue(FlowMetadataRedirectURI))
+	a.setStringIfNonEmpty(definitions.SessionKeyIDPScope, state.metadataValue(FlowMetadataScope))
+	a.setStringIfNonEmpty(definitions.SessionKeyIDPState, state.metadataValue(FlowMetadataState))
+	a.setStringIfNonEmpty(definitions.SessionKeyIDPNonce, state.metadataValue(FlowMetadataNonce))
+	a.setStringIfNonEmpty(definitions.SessionKeyIDPResponseType, state.metadataValue(FlowMetadataResponseType))
+	a.setStringIfNonEmpty(definitions.SessionKeyIDPPrompt, state.metadataValue(FlowMetadataPrompt))
+	a.setStringIfNonEmpty(definitions.SessionKeyIDPCodeChallenge, state.metadataValue(FlowMetadataCodeChallenge))
+	a.setStringIfNonEmpty(definitions.SessionKeyIDPCodeChallengeMethod, state.metadataValue(FlowMetadataCodeChallengeMethod))
+	a.setStringIfNonEmpty(definitions.SessionKeyIDPSAMLEntityID, state.metadataValue(FlowMetadataSAMLEntityID))
+	a.setStringIfNonEmpty(definitions.SessionKeyIDPOriginalURL, state.metadataValue(FlowMetadataOriginalURL))
 	a.setStringIfNonEmpty(definitions.SessionKeyDeviceCode, state.metadataValue(FlowMetadataDeviceCode))
 
 	return nil
 }
 
 // Delete removes all cookie-backed flow reference keys.
-func (a *FlowReferenceAdapter) Delete(_ context.Context, _ string) error {
+func (a *ReferenceAdapter) Delete(_ context.Context, _ string) error {
 	if a == nil || a.mgr == nil {
 		return nil
 	}
 
-	a.mgr.Delete(definitions.SessionKeyIdPFlowType)
-	a.mgr.Delete(definitions.SessionKeyIdPFlowID)
-	a.mgr.Delete(definitions.SessionKeyIdPAuthOutcome)
-	a.mgr.Delete(definitions.SessionKeyIdPAuthOutcomeHMAC)
+	a.mgr.Delete(definitions.SessionKeyIDPFlowType)
+	a.mgr.Delete(definitions.SessionKeyIDPFlowID)
+	a.mgr.Delete(definitions.SessionKeyIDPAuthOutcome)
+	a.mgr.Delete(definitions.SessionKeyIDPAuthOutcomeHMAC)
 	a.mgr.Delete(definitions.SessionKeyRequireMFAFlow)
 
 	return nil
 }
 
 // TouchTTL is a no-op for cookie-backed flow references.
-func (a *FlowReferenceAdapter) TouchTTL(_ context.Context, _ string, _ time.Duration) error {
+func (a *ReferenceAdapter) TouchTTL(_ context.Context, _ string, _ time.Duration) error {
 	return nil
 }
 
-func (a *FlowReferenceAdapter) resolveFlowType() FlowType {
+func (a *ReferenceAdapter) resolveFlowType() Type {
 	if a.mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
 		return FlowTypeRequireMFA
 	}
@@ -152,15 +153,15 @@ func (a *FlowReferenceAdapter) resolveFlowType() FlowType {
 		return FlowTypeOIDCDeviceCode
 	}
 
-	if a.mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "") != "" {
+	if a.mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "") != "" {
 		return FlowTypeSAML
 	}
 
 	return FlowTypeUnknown
 }
 
-func (a *FlowReferenceAdapter) resolveProtocol() FlowProtocol {
-	switch a.mgr.GetString(definitions.SessionKeyIdPFlowType, "") {
+func (a *ReferenceAdapter) resolveProtocol() Protocol {
+	switch a.mgr.GetString(definitions.SessionKeyIDPFlowType, "") {
 	case definitions.ProtoOIDC:
 		return FlowProtocolOIDC
 	case definitions.ProtoSAML:
@@ -174,7 +175,7 @@ func (a *FlowReferenceAdapter) resolveProtocol() FlowProtocol {
 	return FlowProtocolUnknown
 }
 
-func (a *FlowReferenceAdapter) flowTypeToSession(protocol FlowProtocol) string {
+func (a *ReferenceAdapter) flowTypeToSession(protocol Protocol) string {
 	switch protocol {
 	case FlowProtocolOIDC:
 		return definitions.ProtoOIDC
@@ -185,7 +186,7 @@ func (a *FlowReferenceAdapter) flowTypeToSession(protocol FlowProtocol) string {
 	}
 }
 
-func (a *FlowReferenceAdapter) resolveCurrentStep() FlowStep {
+func (a *ReferenceAdapter) resolveCurrentStep() Step {
 	flowType := a.resolveFlowType()
 
 	switch flowType {
@@ -198,13 +199,13 @@ func (a *FlowReferenceAdapter) resolveCurrentStep() FlowStep {
 	}
 }
 
-func (a *FlowReferenceAdapter) resolveAuthOutcome() AuthOutcome {
-	flowID := a.mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+func (a *ReferenceAdapter) resolveAuthOutcome() AuthOutcome {
+	flowID := a.mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID == "" {
 		return AuthOutcomeUnknown
 	}
 
-	outcome := AuthOutcome(a.mgr.GetString(definitions.SessionKeyIdPAuthOutcome, ""))
+	outcome := AuthOutcome(a.mgr.GetString(definitions.SessionKeyIDPAuthOutcome, ""))
 	if !outcome.Valid() {
 		return AuthOutcomeUnknown
 	}
@@ -216,22 +217,23 @@ func (a *FlowReferenceAdapter) resolveAuthOutcome() AuthOutcome {
 	return outcome
 }
 
-func (a *FlowReferenceAdapter) resolveResumeTarget() string {
+func (a *ReferenceAdapter) resolveResumeTarget() string {
 	switch a.resolveFlowType() {
 	case FlowTypeOIDCAuthorization:
 		return a.oidcAuthorizeResumeTarget()
 	case FlowTypeOIDCDeviceCode:
 		return a.oidcDeviceResumeTarget()
 	case FlowTypeSAML:
-		return a.mgr.GetString(definitions.SessionKeyIdPOriginalURL, "")
+		return a.mgr.GetString(definitions.SessionKeyIDPOriginalURL, "")
 	default:
 		return ""
 	}
 }
 
-func (a *FlowReferenceAdapter) oidcAuthorizeResumeTarget() string {
-	clientID := a.mgr.GetString(definitions.SessionKeyIdPClientID, "")
-	redirectURI := a.mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
+func (a *ReferenceAdapter) oidcAuthorizeResumeTarget() string {
+	clientID := a.mgr.GetString(definitions.SessionKeyIDPClientID, "")
+
+	redirectURI := a.mgr.GetString(definitions.SessionKeyIDPRedirectURI, "")
 	if clientID == "" || redirectURI == "" {
 		return ""
 	}
@@ -240,38 +242,38 @@ func (a *FlowReferenceAdapter) oidcAuthorizeResumeTarget() string {
 	values.Set("client_id", clientID)
 	values.Set("redirect_uri", redirectURI)
 
-	if scope := a.mgr.GetString(definitions.SessionKeyIdPScope, ""); scope != "" {
+	if scope := a.mgr.GetString(definitions.SessionKeyIDPScope, ""); scope != "" {
 		values.Set("scope", scope)
 	}
 
-	if state := a.mgr.GetString(definitions.SessionKeyIdPState, ""); state != "" {
+	if state := a.mgr.GetString(definitions.SessionKeyIDPState, ""); state != "" {
 		values.Set("state", state)
 	}
 
-	if nonce := a.mgr.GetString(definitions.SessionKeyIdPNonce, ""); nonce != "" {
+	if nonce := a.mgr.GetString(definitions.SessionKeyIDPNonce, ""); nonce != "" {
 		values.Set("nonce", nonce)
 	}
 
-	if responseType := a.mgr.GetString(definitions.SessionKeyIdPResponseType, ""); responseType != "" {
+	if responseType := a.mgr.GetString(definitions.SessionKeyIDPResponseType, ""); responseType != "" {
 		values.Set("response_type", responseType)
 	}
 
-	if prompt := a.mgr.GetString(definitions.SessionKeyIdPPrompt, ""); prompt != "" {
+	if prompt := a.mgr.GetString(definitions.SessionKeyIDPPrompt, ""); prompt != "" {
 		values.Set("prompt", prompt)
 	}
 
-	if codeChallenge := a.mgr.GetString(definitions.SessionKeyIdPCodeChallenge, ""); codeChallenge != "" {
+	if codeChallenge := a.mgr.GetString(definitions.SessionKeyIDPCodeChallenge, ""); codeChallenge != "" {
 		values.Set("code_challenge", codeChallenge)
 	}
 
-	if codeChallengeMethod := a.mgr.GetString(definitions.SessionKeyIdPCodeChallengeMethod, ""); codeChallengeMethod != "" {
+	if codeChallengeMethod := a.mgr.GetString(definitions.SessionKeyIDPCodeChallengeMethod, ""); codeChallengeMethod != "" {
 		values.Set("code_challenge_method", codeChallengeMethod)
 	}
 
 	return "/oidc/authorize?" + values.Encode()
 }
 
-func (a *FlowReferenceAdapter) oidcDeviceResumeTarget() string {
+func (a *ReferenceAdapter) oidcDeviceResumeTarget() string {
 	if a.mgr.GetString(definitions.SessionKeyDeviceCode, "") == "" {
 		return ""
 	}
@@ -296,7 +298,7 @@ func verifyAuthOutcome(mgr sessionManager, flowID string, outcome AuthOutcome) b
 		return true
 	}
 
-	payload := mgr.GetBytes(definitions.SessionKeyIdPAuthOutcomeHMAC, nil)
+	payload := mgr.GetBytes(definitions.SessionKeyIDPAuthOutcomeHMAC, nil)
 	if len(payload) < 8+32 {
 		return false
 	}
@@ -327,7 +329,7 @@ func (s *State) metadataValue(key string) string {
 	return s.Metadata[key]
 }
 
-func (a *FlowReferenceAdapter) setStringIfNonEmpty(key string, value string) {
+func (a *ReferenceAdapter) setStringIfNonEmpty(key string, value string) {
 	if value != "" {
 		a.mgr.Set(key, value)
 	}

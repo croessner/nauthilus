@@ -74,8 +74,8 @@ type LuaBackendResult struct {
 	// Groups holds resolved group names.
 	Groups []string
 
-	// GroupDNs holds resolved group distinguished names.
-	GroupDNs []string
+	// GroupDistinguishedNames holds resolved group distinguished names.
+	GroupDistinguishedNames []string
 
 	// Logs is a pointer to a custom log key-value pair associated with the Lua script.
 	Logs *CustomLogKeyValue
@@ -251,12 +251,15 @@ func (m *BackendResultManager) GetSetWebAuthnCredentials(L *lua.LState) int {
 
 	if stack.GetTop() == 2 {
 		table := stack.CheckTable(2)
+
 		var credentials []string
+
 		table.ForEach(func(_, v lua.LValue) {
 			if str, ok := v.(lua.LString); ok {
 				credentials = append(credentials, string(str))
 			}
 		})
+
 		backendResult.WebAuthnCredentials = credentials
 
 		return 0
@@ -316,8 +319,8 @@ func (m *BackendResultManager) GetSetGroups(L *lua.LState) int {
 	return stack.PushResult(convert.GoToLuaValue(L, backendResult.Groups))
 }
 
-// GetSetGroupDNs sets or retrieves the GroupDNs field.
-func (m *BackendResultManager) GetSetGroupDNs(L *lua.LState) int {
+// GetSetGroupDistinguishedNames sets or retrieves the GroupDistinguishedNames field.
+func (m *BackendResultManager) GetSetGroupDistinguishedNames(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 
 	backendResult := m.checkBackendResult(L)
@@ -327,20 +330,20 @@ func (m *BackendResultManager) GetSetGroupDNs(L *lua.LState) int {
 
 	if stack.GetTop() == 2 {
 		table := stack.CheckTable(2)
-		groupDNs := make([]string, 0, table.Len())
+		groupDistinguishedNames := make([]string, 0, table.Len())
 
 		table.ForEach(func(_, value lua.LValue) {
 			if str, ok := value.(lua.LString); ok {
-				groupDNs = append(groupDNs, string(str))
+				groupDistinguishedNames = append(groupDistinguishedNames, string(str))
 			}
 		})
 
-		backendResult.GroupDNs = groupDNs
+		backendResult.GroupDistinguishedNames = groupDistinguishedNames
 
 		return 0
 	}
 
-	return stack.PushResult(convert.GoToLuaValue(L, backendResult.GroupDNs))
+	return stack.PushResult(convert.GoToLuaValue(L, backendResult.GroupDistinguishedNames))
 }
 
 // LoaderModBackendResult initializes and loads the backend result module for Lua.
@@ -353,17 +356,17 @@ func LoaderModBackendResult(ctx context.Context, cfg config.File, logger *slog.L
 		mt := L.NewTypeMetatable(definitions.LuaBackendResultTypeName)
 
 		L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaBackendResultAuthenticated:       manager.GetSetAuthenticated,
-			definitions.LuaBackendResultUserFound:           manager.GetSetUserFound,
-			definitions.LuaBackendResultAccountField:        manager.GetSetAccountField,
-			definitions.LuaBackendResultTOTPSecretField:     manager.GetSetTOTPSecretField,
-			definitions.LuaBackendResultTOTPRecoveryField:   manager.GetSetTOTPRecoveryField,
-			definitions.LuaBAckendResultUniqueUserIDField:   manager.GetSetUniqueUserIDField,
-			definitions.LuaBackendResultDisplayNameField:    manager.GetSetDisplayNameField,
-			definitions.LuaBackendResultWebAuthnCredentials: manager.GetSetWebAuthnCredentials,
-			definitions.LuaBackendResultAttributes:          manager.GetSetAttributes,
-			definitions.LuaBackendResultGroups:              manager.GetSetGroups,
-			definitions.LuaBackendResultGroupDNs:            manager.GetSetGroupDNs,
+			definitions.LuaBackendResultAuthenticated:           manager.GetSetAuthenticated,
+			definitions.LuaBackendResultUserFound:               manager.GetSetUserFound,
+			definitions.LuaBackendResultAccountField:            manager.GetSetAccountField,
+			definitions.LuaBackendResultTOTPSecretField:         manager.GetSetTOTPSecretField,
+			definitions.LuaBackendResultTOTPRecoveryField:       manager.GetSetTOTPRecoveryField,
+			definitions.LuaBAckendResultUniqueUserIDField:       manager.GetSetUniqueUserIDField,
+			definitions.LuaBackendResultDisplayNameField:        manager.GetSetDisplayNameField,
+			definitions.LuaBackendResultWebAuthnCredentials:     manager.GetSetWebAuthnCredentials,
+			definitions.LuaBackendResultAttributes:              manager.GetSetAttributes,
+			definitions.LuaBackendResultGroups:                  manager.GetSetGroups,
+			definitions.LuaBackendResultGroupDistinguishedNames: manager.GetSetGroupDistinguishedNames,
 		}))
 
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package opsfx provides opsfx functionality.
 package opsfx
 
 import "sync"

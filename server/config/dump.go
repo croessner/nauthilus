@@ -38,10 +38,22 @@ type configDumpValueProvider func() any
 const (
 	redactedConfigValue             = "***REDACTED***"
 	configDumpNullValue             = "null"
+	configStringNil                 = "<nil>"
+	defaultLDAPServerURI            = "ldap://localhost"
+	defaultRedisKeyPrefix           = "nt:"
+	defaultPolicyModeEnforce        = "enforce"
+	defaultOIDCAccessTokenType      = "jwt"
 	defaultWebAuthnResidentKey      = "discouraged"
 	defaultWebAuthnUserVerification = "preferred"
+	webAuthnRequirementRequired     = "required"
 	defaultSAMLSignatureMethod      = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
+	defaultSAMLNameIDFormat         = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+	defaultLDAPCacheImpl            = "ttl"
+	defaultFrontendTOTPIssuer       = "Nauthilus"
 	developerModeConfigKey          = "developer_mode"
+	mimeApplicationJSON             = "application/json"
+	uriSchemeHTTP                   = "http"
+	uriSchemeHTTPS                  = "https"
 	passwordConfigLeaf              = "password"
 	passwordEncodedConfigLeaf       = "password_encoded"
 	passwordNonceConfigLeaf         = "password_nonce"
@@ -90,6 +102,7 @@ func RenderDefaultConfigDumpWithFormat(format DumpFormat) (string, error) {
 	}
 
 	defaultProviders := configDumpDefaultProviders()
+
 	if format == DumpFormatCanonical {
 		lines := make([]string, 0)
 
@@ -222,6 +235,7 @@ func renderStructuredConfigDump(format DumpFormat, defaultsMode bool, data map[s
 	default:
 		return "", fmt.Errorf("unsupported structured dump format %q", format)
 	}
+
 	if err != nil {
 		return "", err
 	}
@@ -310,8 +324,10 @@ func buildStructuredNonDefaultConfigDumpValue(
 		})
 
 		result := make(map[string]any)
+
 		for _, entry := range entries {
 			childPath := joinConfigPath(prefix, entry.key)
+
 			childNode, ok := node.fieldByConfigName[entry.key]
 			if ok {
 				childValue, keep := buildStructuredNonDefaultConfigDumpValue(childNode, entry.value, childPath, defaults)
@@ -324,6 +340,7 @@ func buildStructuredNonDefaultConfigDumpValue(
 
 			if node.matchExtraKey != nil && node.matchExtraKey(entry.key) {
 				normalized := normalizeStructuredConfigDumpValue(childPath, entry.value)
+
 				pruned, keep := pruneStructuredConfigDumpValue(normalized)
 				if keep {
 					result[entry.key] = pruned
@@ -618,6 +635,7 @@ func collectConfiguredObjectValues(node *configSchemaNode, value any, prefix str
 
 	for _, entry := range entries {
 		childPath := joinConfigPath(prefix, entry.key)
+
 		childNode, ok := node.fieldByConfigName[entry.key]
 		if ok {
 			collectConfiguredConfigDumpValues(childNode, entry.value, childPath, out)
@@ -680,6 +698,7 @@ func collectDynamicConfigDumpValues(value any, prefix string, out map[string]str
 		}
 	case map[any]any:
 		keys := make([]string, 0, len(typed))
+
 		values := make(map[string]any, len(typed))
 		for key, nested := range typed {
 			keyStr := fmt.Sprintf("%v", key)
@@ -1015,7 +1034,7 @@ func configDumpRuntimeDefaults() map[string]configDumpValueProvider {
 func configDumpAuthPolicyDefaults() map[string]configDumpValueProvider {
 	return map[string]configDumpValueProvider{
 		"auth.backends.remote":                  func() any { return map[string]any{} },
-		"auth.policy.mode":                      func() any { return "enforce" },
+		"auth.policy.mode":                      func() any { return defaultPolicyModeEnforce },
 		"auth.policy.default_policy":            func() any { return defaultAuthPolicyName },
 		"auth.policy.registry_scripts":          func() any { return []any{} },
 		"auth.policy.sets.networks":             func() any { return map[string]any{} },
@@ -1040,7 +1059,7 @@ func configDumpRedisDefaults() map[string]configDumpValueProvider {
 		"storage.redis.conn_max_idle_time":                   func() any { return 90 * time.Second },
 		"storage.redis.max_retries":                          func() any { return 1 },
 		"storage.redis.protocol":                             func() any { return 2 },
-		"storage.redis.prefix":                               func() any { return "nt:" },
+		"storage.redis.prefix":                               func() any { return defaultRedisKeyPrefix },
 		"storage.redis.batching.max_batch_size":              func() any { return 16 },
 		"storage.redis.batching.max_wait":                    func() any { return 2 * time.Millisecond },
 		"storage.redis.batching.queue_capacity":              func() any { return 8192 },
@@ -1069,7 +1088,7 @@ func configDumpIdentityDefaults() map[string]configDumpValueProvider {
 		"identity.oidc.device_flow.user_code_length":          func() any { return definitions.OIDCDeviceCodeDefaultUserCodeLength },
 		"identity.saml.signature_method":                      func() any { return defaultSAMLSignatureMethod },
 		"identity.saml.default_expire_time":                   func() any { return 1 * time.Hour },
-		"identity.saml.name_id_format":                        func() any { return "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent" },
+		"identity.saml.name_id_format":                        func() any { return defaultSAMLNameIDFormat },
 		"identity.saml.slo.enabled":                           func() any { return defaultSLOEnabled },
 		"identity.saml.slo.front_channel_enabled":             func() any { return defaultSLOFrontChannel },
 		"identity.saml.slo.back_channel_enabled":              func() any { return defaultSLOBackChannel },
@@ -1116,6 +1135,6 @@ func configDumpLDAPDefaults() map[string]configDumpValueProvider {
 		"auth.backends.ldap.default.negative_cache_ttl":    func() any { return 20 * time.Second },
 		"auth.backends.ldap.default.membership_cache_ttl":  func() any { return 2 * time.Minute },
 		"auth.backends.ldap.default.cache_max_entries":     func() any { return 5000 },
-		"auth.backends.ldap.default.cache_impl":            func() any { return "ttl" },
+		"auth.backends.ldap.default.cache_impl":            func() any { return defaultLDAPCacheImpl },
 	}
 }

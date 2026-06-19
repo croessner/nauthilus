@@ -99,6 +99,7 @@ func buildSnapshotParts(ctx context.Context, file config.File, policyConfig conf
 	}
 
 	checkTypes := builtinCheckTypeRegistry()
+
 	attributes, checks, requestAttrs, err := compileAttributeRegistry(ctx, file, policyConfig, checkTypes)
 	if err != nil {
 		return compiledSnapshotParts{}, err
@@ -115,6 +116,7 @@ func buildSnapshotParts(ctx context.Context, file config.File, policyConfig conf
 
 	fsmEvents := builtinFSMEventRegistry()
 	responses := builtinResponseRegistry()
+
 	obligations := builtinObligationRegistry()
 	if err := registerNativePluginEffects(obligations); err != nil {
 		return compiledSnapshotParts{}, err
@@ -310,7 +312,7 @@ func effectivePolicyConfig(file config.File) config.AuthPolicySection {
 	}
 
 	return config.AuthPolicySection{
-		Mode:          "enforce",
+		Mode:          policyModeEnforce,
 		DefaultPolicy: policy.BuiltinDefaultSet,
 		Report: config.PolicyReportConfig{
 			IncludeFSM:    true,
@@ -321,7 +323,7 @@ func effectivePolicyConfig(file config.File) config.AuthPolicySection {
 
 func validateHeader(policyConfig config.AuthPolicySection) error {
 	switch policyConfig.Mode {
-	case "enforce", "observe":
+	case policyModeEnforce, policyModeObserve:
 	default:
 		return configPathError("auth.policy.mode", "must be one of enforce or observe")
 	}

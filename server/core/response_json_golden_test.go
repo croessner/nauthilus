@@ -35,6 +35,7 @@ import (
 func setupMinimalConfigForJSON(t *testing.T) {
 	t.Helper()
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+
 	cfg := &config.FileSettings{Server: &config.ServerSection{}}
 	config.SetTestFile(cfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
@@ -46,6 +47,7 @@ func TestResponseWriter_OK_JSONBodyMatchesGolden(t *testing.T) {
 	setupMinimalConfigForJSON(t)
 
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
@@ -68,10 +70,12 @@ func TestResponseWriter_OK_JSONBodyMatchesGolden(t *testing.T) {
 
 	// Load golden file
 	goldenPath := filepath.Join("testdata", "response_json_ok.golden")
+
 	expectBytes, err := os.ReadFile(goldenPath)
 	if err != nil {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
+
 	expect := strings.TrimSpace(string(expectBytes))
 
 	if !bytes.Equal([]byte(got), []byte(expect)) {

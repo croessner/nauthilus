@@ -119,5 +119,5 @@ func (s *StatsService) Start(parent context.Context) error {
 //
 // It attempts to stop within the provided context deadline.
 func (s *StatsService) Stop(stopCtx context.Context) error {
-	return stopLoop(&s.mu, &s.running, &s.cancel, &s.ticker, &s.ctx, &s.wg, stopCtx)
+	return stopLoop(stopCtx, &s.mu, &s.running, &s.cancel, &s.ticker, &s.ctx, &s.wg)
 }

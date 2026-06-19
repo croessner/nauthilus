@@ -79,7 +79,7 @@ func ContextWithHTTPRequestCancellation(parent context.Context, req *http.Reques
 
 // DetachedHTTPRequest clones req onto a long-lived parent context.
 // This is used for background work that must not inherit client disconnects.
-func DetachedHTTPRequest(req *http.Request, parent context.Context) *http.Request {
+func DetachedHTTPRequest(parent context.Context, req *http.Request) *http.Request {
 	if req == nil {
 		return nil
 	}

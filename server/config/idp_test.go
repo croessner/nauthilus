@@ -32,31 +32,32 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestGetIdP(t *testing.T) {
+func TestGetIDP(t *testing.T) {
 	t.Run("NilFileSettings", func(t *testing.T) {
 		var f *FileSettings
-		idp := f.GetIdP()
+
+		idp := f.GetIDP()
 		assert.NotNil(t, idp)
 		assert.False(t, idp.OIDC.Enabled)
 	})
 
-	t.Run("NilIdPSection", func(t *testing.T) {
+	t.Run("NilIDPSection", func(t *testing.T) {
 		f := &FileSettings{IDP: nil}
-		idp := f.GetIdP()
+		idp := f.GetIDP()
 		assert.NotNil(t, idp)
 		assert.False(t, idp.OIDC.Enabled)
 	})
 
-	t.Run("ValidIdPSection", func(t *testing.T) {
+	t.Run("ValidIDPSection", func(t *testing.T) {
 		f := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				OIDC: OIDCConfig{
 					Enabled: true,
 					Issuer:  "https://test.example.com",
 				},
 			},
 		}
-		idp := f.GetIdP()
+		idp := f.GetIDP()
 		assert.NotNil(t, idp)
 		assert.True(t, idp.OIDC.Enabled)
 		assert.Equal(t, "https://test.example.com", idp.OIDC.Issuer)
@@ -78,12 +79,13 @@ func TestOIDCConfig_GetSigningKey(t *testing.T) {
 	t.Run("from file in list", func(t *testing.T) {
 		tmpFile, err := os.CreateTemp("", "signing_key")
 		assert.NoError(t, err)
-		defer os.Remove(tmpFile.Name())
+
+		defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 		content := "file-key"
 		_, err = tmpFile.WriteString(content)
 		assert.NoError(t, err)
-		tmpFile.Close()
+		assert.NoError(t, tmpFile.Close())
 
 		cfg := OIDCConfig{
 			SigningKeys: []OIDCKey{
@@ -114,15 +116,19 @@ func TestSAML2Config_GetCertAndKey(t *testing.T) {
 	t.Run("from file", func(t *testing.T) {
 		tmpCert, err := os.CreateTemp("", "cert")
 		assert.NoError(t, err)
-		defer os.Remove(tmpCert.Name())
+
+		defer func() { _ = os.Remove(tmpCert.Name()) }()
+
 		_, _ = tmpCert.WriteString("file-cert")
-		tmpCert.Close()
+		assert.NoError(t, tmpCert.Close())
 
 		tmpKey, err := os.CreateTemp("", "key")
 		assert.NoError(t, err)
-		defer os.Remove(tmpKey.Name())
+
+		defer func() { _ = os.Remove(tmpKey.Name()) }()
+
 		_, _ = tmpKey.WriteString("file-key")
-		tmpKey.Close()
+		assert.NoError(t, tmpKey.Close())
 
 		cfg := SAML2Config{
 			CertFile: tmpCert.Name(),
@@ -185,22 +191,22 @@ func TestSAML2Config_SLOSettings(t *testing.T) {
 	})
 }
 
-func TestFileSettings_validateIdPSAML2SLOSettings(t *testing.T) {
+func TestFileSettings_validateIDPSAML2SLOSettings(t *testing.T) {
 	t.Run("accepts defaults and zero values", func(t *testing.T) {
 		fileCfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 				},
 			},
 		}
 
-		assert.NoError(t, fileCfg.validateIdPSAML2SLOSettings())
+		assert.NoError(t, fileCfg.validateIDPSAML2SLOSettings())
 	})
 
 	t.Run("rejects negative nested timeout", func(t *testing.T) {
 		fileCfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					SLO: SAML2SLOConfig{
@@ -210,14 +216,14 @@ func TestFileSettings_validateIdPSAML2SLOSettings(t *testing.T) {
 			},
 		}
 
-		err := fileCfg.validateIdPSAML2SLOSettings()
+		err := fileCfg.validateIDPSAML2SLOSettings()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "identity.saml.slo.request_timeout")
 	})
 
 	t.Run("rejects negative max participants", func(t *testing.T) {
 		fileCfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					SLO: SAML2SLOConfig{
@@ -227,18 +233,17 @@ func TestFileSettings_validateIdPSAML2SLOSettings(t *testing.T) {
 			},
 		}
 
-		err := fileCfg.validateIdPSAML2SLOSettings()
+		err := fileCfg.validateIDPSAML2SLOSettings()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "identity.saml.slo.max_participants")
 	})
-
 }
 
-func TestIdPConfig_Validation(t *testing.T) {
+func TestIDPConfig_Validation(t *testing.T) {
 	validate := validator.New(validator.WithRequiredStructEnabled())
 
-	t.Run("DisabledIdP_EmptySAML", func(t *testing.T) {
-		cfg := IdPSection{
+	t.Run("DisabledIDP_EmptySAML", func(t *testing.T) {
+		cfg := IDPSection{
 			OIDC: OIDCConfig{
 				Enabled: true,
 				Issuer:  "https://auth.example.com",
@@ -255,7 +260,7 @@ func TestIdPConfig_Validation(t *testing.T) {
 	})
 
 	t.Run("EnabledSAML_MissingCertAndKey", func(t *testing.T) {
-		cfg := IdPSection{
+		cfg := IDPSection{
 			SAML2: SAML2Config{
 				Enabled:  true,
 				EntityID: "https://auth.example.com/saml",
@@ -266,7 +271,7 @@ func TestIdPConfig_Validation(t *testing.T) {
 	})
 
 	t.Run("EnabledSAML_WithCertOnly", func(t *testing.T) {
-		cfg := IdPSection{
+		cfg := IDPSection{
 			SAML2: SAML2Config{
 				Enabled:  true,
 				EntityID: "https://auth.example.com/saml",
@@ -279,7 +284,7 @@ func TestIdPConfig_Validation(t *testing.T) {
 	})
 
 	t.Run("EnabledSAML_WithCertFileOnly", func(t *testing.T) {
-		cfg := IdPSection{
+		cfg := IDPSection{
 			SAML2: SAML2Config{
 				Enabled:  true,
 				EntityID: "https://auth.example.com/saml",
@@ -531,10 +536,10 @@ func TestOIDCClient_OptionalScopesValidation(t *testing.T) {
 	})
 }
 
-func TestValidateIdPMFASettings(t *testing.T) {
+func TestValidateIDPMFASettings(t *testing.T) {
 	t.Run("oidc require_mfa subset of supported_mfa", func(t *testing.T) {
 		cfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				OIDC: OIDCConfig{
 					Clients: []OIDCClient{
 						{
@@ -547,12 +552,12 @@ func TestValidateIdPMFASettings(t *testing.T) {
 			},
 		}
 
-		assert.NoError(t, cfg.validateIdPMFASettings())
+		assert.NoError(t, cfg.validateIDPMFASettings())
 	})
 
 	t.Run("oidc require_mfa outside supported_mfa returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				OIDC: OIDCConfig{
 					Clients: []OIDCClient{
 						{
@@ -565,12 +570,12 @@ func TestValidateIdPMFASettings(t *testing.T) {
 			},
 		}
 
-		assert.Error(t, cfg.validateIdPMFASettings())
+		assert.Error(t, cfg.validateIDPMFASettings())
 	})
 
 	t.Run("saml require_mfa outside supported_mfa returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				SAML2: SAML2Config{
 					ServiceProviders: []SAML2ServiceProvider{
 						{
@@ -584,14 +589,14 @@ func TestValidateIdPMFASettings(t *testing.T) {
 			},
 		}
 
-		assert.Error(t, cfg.validateIdPMFASettings())
+		assert.Error(t, cfg.validateIDPMFASettings())
 	})
 }
 
-func TestValidateIdPOIDCCustomScopes(t *testing.T) {
+func TestValidateIDPOIDCCustomScopes(t *testing.T) {
 	t.Run("valid client and global custom scopes", func(t *testing.T) {
 		cfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				OIDC: OIDCConfig{
 					CustomScopes: []Oauth2CustomScope{
 						{Name: "resource", Description: "global", Claims: []OIDCCustomClaim{{Name: "resource.role", Type: definitions.ClaimTypeString}}},
@@ -609,12 +614,12 @@ func TestValidateIdPOIDCCustomScopes(t *testing.T) {
 			},
 		}
 
-		assert.NoError(t, cfg.validateIdPOIDCCustomScopes())
+		assert.NoError(t, cfg.validateIDPOIDCCustomScopes())
 	})
 
 	t.Run("duplicate global custom scope name returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				OIDC: OIDCConfig{
 					CustomScopes: []Oauth2CustomScope{
 						{Name: "resource", Description: "a", Claims: []OIDCCustomClaim{{Name: "a", Type: definitions.ClaimTypeString}}},
@@ -624,12 +629,12 @@ func TestValidateIdPOIDCCustomScopes(t *testing.T) {
 			},
 		}
 
-		assert.ErrorContains(t, cfg.validateIdPOIDCCustomScopes(), "identity.oidc.custom_scopes")
+		assert.ErrorContains(t, cfg.validateIDPOIDCCustomScopes(), "identity.oidc.custom_scopes")
 	})
 
 	t.Run("duplicate client custom scope name returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				OIDC: OIDCConfig{
 					Clients: []OIDCClient{
 						{
@@ -644,28 +649,28 @@ func TestValidateIdPOIDCCustomScopes(t *testing.T) {
 			},
 		}
 
-		assert.ErrorContains(t, cfg.validateIdPOIDCCustomScopes(), "identity.oidc.clients[0].custom_scopes")
+		assert.ErrorContains(t, cfg.validateIDPOIDCCustomScopes(), "identity.oidc.clients[0].custom_scopes")
 	})
 }
 
-func TestValidateIdPSAMLSigningSettings(t *testing.T) {
+func TestValidateIDPSAMLSigningSettings(t *testing.T) {
 	t.Run("nil config", func(t *testing.T) {
 		var cfg *FileSettings
-		assert.NoError(t, cfg.validateIdPSAMLSigningSettings())
+		assert.NoError(t, cfg.validateIDPSAMLSigningSettings())
 	})
 
 	t.Run("disabled saml", func(t *testing.T) {
 		cfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				SAML2: SAML2Config{Enabled: false},
 			},
 		}
-		assert.NoError(t, cfg.validateIdPSAMLSigningSettings())
+		assert.NoError(t, cfg.validateIDPSAMLSigningSettings())
 	})
 
 	t.Run("authn request signing disabled does not require cert", func(t *testing.T) {
 		cfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					ServiceProviders: []SAML2ServiceProvider{
@@ -677,12 +682,12 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 				},
 			},
 		}
-		assert.NoError(t, cfg.validateIdPSAMLSigningSettings())
+		assert.NoError(t, cfg.validateIDPSAMLSigningSettings())
 	})
 
 	t.Run("missing cert with authn request signing enabled returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					ServiceProviders: []SAML2ServiceProvider{
@@ -696,14 +701,14 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 			},
 		}
 
-		err := cfg.validateIdPSAMLSigningSettings()
+		err := cfg.validateIDPSAMLSigningSettings()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "authn_requests_signed requires cert or cert_file")
 	})
 
 	t.Run("invalid cert with authn request signing enabled returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					ServiceProviders: []SAML2ServiceProvider{
@@ -718,14 +723,14 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 			},
 		}
 
-		err := cfg.validateIdPSAMLSigningSettings()
+		err := cfg.validateIDPSAMLSigningSettings()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid cert for authn request signature validation")
 	})
 
 	t.Run("valid inline cert with authn request signing enabled", func(t *testing.T) {
 		cfg := &FileSettings{
-			IDP: &IdPSection{
+			IDP: &IDPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					ServiceProviders: []SAML2ServiceProvider{
@@ -740,7 +745,7 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 			},
 		}
 
-		assert.NoError(t, cfg.validateIdPSAMLSigningSettings())
+		assert.NoError(t, cfg.validateIDPSAMLSigningSettings())
 	})
 
 	t.Run("missing cert with logout signing enabled returns error", func(t *testing.T) {
@@ -772,7 +777,7 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				cfg := &FileSettings{
-					IDP: &IdPSection{
+					IDP: &IDPSection{
 						SAML2: SAML2Config{
 							Enabled: true,
 							ServiceProviders: []SAML2ServiceProvider{
@@ -782,17 +787,12 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 					},
 				}
 
-				err := cfg.validateIdPSAMLSigningSettings()
+				err := cfg.validateIDPSAMLSigningSettings()
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
 			})
 		}
 	})
-}
-
-//go:fix inline
-func boolPtr(value bool) *bool {
-	return new(value)
 }
 
 func testCertificatePEM(t *testing.T) string {
@@ -890,10 +890,10 @@ func TestSAML2ServiceProvider_GetCert(t *testing.T) {
 		tmpFile, err := os.CreateTemp("", "sp-cert")
 		assert.NoError(t, err)
 
-		defer os.Remove(tmpFile.Name())
+		defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 		_, _ = tmpFile.WriteString("file-cert-content")
-		tmpFile.Close()
+		assert.NoError(t, tmpFile.Close())
 
 		sp := &SAML2ServiceProvider{
 			CertFile: tmpFile.Name(),
@@ -992,7 +992,7 @@ func TestWebAuthn_GetUserVerification(t *testing.T) {
 	}
 }
 
-func TestIdPConfig_WarnUnsupported(t *testing.T) {
+func TestIDPConfig_WarnUnsupported(t *testing.T) {
 	t.Run("OIDC unsupported", func(t *testing.T) {
 		cfg := &OIDCConfig{
 			Enabled:                          true,
@@ -1022,7 +1022,7 @@ func TestIdPConfig_WarnUnsupported(t *testing.T) {
 	})
 
 	t.Run("All supported", func(t *testing.T) {
-		cfg := &IdPSection{
+		cfg := &IDPSection{
 			OIDC: OIDCConfig{
 				Enabled:                          true,
 				ResponseTypesSupported:           []string{"code"},

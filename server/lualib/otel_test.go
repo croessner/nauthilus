@@ -112,9 +112,11 @@ func TestOTEL_WithSpan_Basic(t *testing.T) {
 	}
 
 	var found bool
+
 	for _, sp := range coll.spans {
 		if sp.Name() == "client.op" {
 			found = true
+
 			if want := trace.SpanKindClient; sp.SpanKind() != want {
 				t.Fatalf("span kind mismatch: want %v got %v", want, sp.SpanKind())
 			}
@@ -123,13 +125,16 @@ func TestOTEL_WithSpan_Basic(t *testing.T) {
 			hasPeer := false
 			hasTries := false
 			hasOk := false
+
 			for _, a := range attrs {
 				if string(a.Key) == "peer.service" && a.Value.AsString() == "http" {
 					hasPeer = true
 				}
+
 				if string(a.Key) == "tries" && a.Value.AsFloat64() == 1 {
 					hasTries = true
 				}
+
 				if string(a.Key) == "ok" && a.Value.AsBool() {
 					hasOk = true
 				}
@@ -180,11 +185,13 @@ func TestOTEL_Span_Finish(t *testing.T) {
 	}
 
 	var found bool
+
 	for _, sp := range coll.spans {
 		if sp.Name() == "manual.op" {
 			found = true
 			attrs := sp.Attributes()
 			hasManual := false
+
 			for _, a := range attrs {
 				if string(a.Key) == "manual" && a.Value.AsBool() {
 					hasManual = true
@@ -236,6 +243,7 @@ func TestOTEL_BaggageAndPropagation(t *testing.T) {
 
 	// Verify headers were populated with trace context and baggage
 	tbl := L.GetGlobal("headers")
+
 	ht, ok := tbl.(*lua.LTable)
 	if !ok {
 		t.Fatalf("headers table not found")
@@ -243,6 +251,7 @@ func TestOTEL_BaggageAndPropagation(t *testing.T) {
 
 	// Look for typical keys
 	var haveTraceparent, haveBaggage bool
+
 	ht.ForEach(func(k, v lua.LValue) {
 		if ks, ok := k.(lua.LString); ok {
 			switch string(ks) {
@@ -261,6 +270,7 @@ func TestOTEL_BaggageAndPropagation(t *testing.T) {
 	if !haveTraceparent {
 		t.Fatalf("traceparent not injected into headers")
 	}
+
 	if !haveBaggage {
 		t.Fatalf("baggage not injected into headers")
 	}
@@ -304,10 +314,12 @@ func TestOTEL_SemconvHelpers_And_NoOp(t *testing.T) {
 	}
 
 	var okHTTP, okDB, okNet bool
+
 	for _, sp := range coll.spans {
 		if sp.Name() != "test.semconv" {
 			continue
 		}
+
 		for _, a := range sp.Attributes() {
 			switch string(a.Key) {
 			case "http.method":

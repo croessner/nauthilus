@@ -185,6 +185,7 @@ func newAuthDebugLogFixture(t *testing.T) (*gin.Context, *AuthState, *bytes.Buff
 	var logBuf bytes.Buffer
 
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
 	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
 
 	verbosity := config.Verbosity{}

@@ -49,9 +49,15 @@ const (
 	obligationBruteForceUpdate       = policy.ObligationBruteForceUpdate
 	obligationLuaActionDispatch      = policy.ObligationLuaActionDispatch
 	obligationLuaPostActionEnqueue   = policy.ObligationLuaPostActionEnqueue
+	detailStatusMessage              = "status_message"
+	luaAttributeSuffixError          = ".error"
 	mismatchNone                     = "none"
 	mismatchMultiple                 = "multiple"
 	defaultMode                      = "enforce"
+	observeReasonNotSafe             = "not_observe_safe"
+	outcomeMarkerDefaultDeny         = "auth.outcome.default_deny"
+	outcomeMarkerPreAuthOK           = "auth.outcome.pre_auth_ok"
+	requireResultSatisfied           = "satisfied"
 	maxSelectedResponseMessageLength = 256
 )
 
@@ -194,6 +200,7 @@ func selectedPreAuthMarker(policyReport *report.DecisionReport) string {
 	}
 
 	marker := ""
+
 	for _, decision := range policyReport.Policies {
 		if decision.Stage == policy.StagePreAuth && decision.FSMEventMarker != "" {
 			marker = decision.FSMEventMarker
@@ -219,6 +226,7 @@ func evaluatePreAuth(policyReport *report.DecisionReport, operation policy.Opera
 
 		decision := rule.selectDecision(policyReport)
 		appendDecision(policyReport, decision)
+
 		if strings.HasSuffix(rule.name, "_abort") {
 			return nil
 		}
@@ -232,7 +240,7 @@ func evaluatePreAuth(policyReport *report.DecisionReport, operation policy.Opera
 		name:          "implicit_pre_auth_pass",
 		stage:         policy.StagePreAuth,
 		effect:        policy.DecisionNeutral,
-		outcomeMarker: "auth.outcome.pre_auth_ok",
+		outcomeMarker: outcomeMarkerPreAuthOK,
 		fsmMarker:     fsmMarkerPreAuthOK,
 		operations:    allOps,
 	}.selectDecision(policyReport)
@@ -591,8 +599,9 @@ func unknownRelayDomain(policyReport *report.DecisionReport) bool {
 func luaEnvironmentRules(policyReport *report.DecisionReport, operation policy.Operation) []standardRule {
 	operations := []policy.Operation{operation}
 	rules := make([]standardRule, 0)
+
 	for _, checkResult := range sortedChecks(policyReport, policy.CheckTypeLuaEnvironment) {
-		name := luaScriptName(checkResult, "auth.lua.environment.", []string{".error", ".triggered", ".abort"}, "lua_environment_")
+		name := luaScriptName(checkResult, "auth.lua.environment.", []string{luaAttributeSuffixError, ".triggered", ".abort"}, "lua_environment_")
 		if name == "" {
 			continue
 		}
@@ -635,7 +644,7 @@ func luaEnvironmentRules(policyReport *report.DecisionReport, operation policy.O
 				name:           "standard_lua_environment_" + name + "_abort",
 				stage:          policy.StagePreAuth,
 				effect:         policy.DecisionNeutral,
-				outcomeMarker:  "auth.outcome.pre_auth_ok",
+				outcomeMarker:  outcomeMarkerPreAuthOK,
 				fsmMarker:      fsmMarkerPreAuthOK,
 				operations:     operations,
 				requiredChecks: []string{checkResult.Name},
@@ -664,8 +673,9 @@ func luaActionEffectArgs(action string, extra map[string]any) map[string]any {
 func luaSubjectRules(policyReport *report.DecisionReport, operation policy.Operation) []standardRule {
 	operations := []policy.Operation{operation}
 	rules := make([]standardRule, 0)
+
 	for _, checkResult := range sortedChecks(policyReport, policy.CheckTypeLuaSubjectSource) {
-		name := luaScriptName(checkResult, "auth.lua.subject.", []string{".error", ".rejected"}, "lua_subject_")
+		name := luaScriptName(checkResult, "auth.lua.subject.", []string{luaAttributeSuffixError, ".rejected"}, "lua_subject_")
 		if name == "" {
 			continue
 		}
@@ -728,7 +738,7 @@ func defaultDenyRule() standardRule {
 		name:           "standard_default_deny",
 		stage:          policy.StageAuthDecision,
 		effect:         policy.DecisionDeny,
-		outcomeMarker:  "auth.outcome.default_deny",
+		outcomeMarker:  outcomeMarkerDefaultDeny,
 		fsmMarker:      fsmMarkerAuthDeny,
 		responseMarker: responseMarkerFail,
 		operations:     allOps,
@@ -789,6 +799,7 @@ func finalDecisionFromPolicy(d report.PolicyDecision) *report.FinalDecision {
 func appendDecision(policyReport *report.DecisionReport, decision report.PolicyDecision) {
 	policyReport.Policies = append(policyReport.Policies, decision)
 	policyReport.Stage = decision.Stage
+
 	final := finalDecisionFromPolicy(decision)
 	if final.Effect != policy.DecisionNeutral {
 		policyReport.Final = final
@@ -855,6 +866,7 @@ func sortedChecks(policyReport *report.DecisionReport, checkType string) []repor
 	}
 
 	checks := make([]report.CheckResult, 0)
+
 	for _, checkResult := range policyReport.Checks {
 		if checkResult.Type == checkType {
 			checks = append(checks, checkResult)
@@ -872,18 +884,18 @@ func attributeMessage(attributeID string, fallback string) func(*report.Decision
 	return func(policyReport *report.DecisionReport, responseMarker string) *report.ResponseMessageSelection {
 		attributeValue, ok := policyReport.Attributes[attributeID]
 		if ok {
-			if detail, detailOK := attributeValue.Details["status_message"]; detailOK {
+			if detail, detailOK := attributeValue.Details[detailStatusMessage]; detailOK {
 				if detail.Sensitivity == report.SensitivityPublic && detail.Purpose == report.PurposeResponseMessage {
 					if value, stringOK := detail.Value.(string); stringOK && strings.TrimSpace(value) != "" {
 						detail.Selected = true
-						attributeValue.Details["status_message"] = detail
+						attributeValue.Details[detailStatusMessage] = detail
 						policyReport.Attributes[attributeID] = attributeValue
 
 						return &report.ResponseMessageSelection{
 							Source:      policy.ResponseSourceAttributeDetail,
 							Message:     sanitizeResponseMessage(value, maxSelectedResponseMessageLength),
 							AttributeID: attributeID,
-							Detail:      "status_message",
+							Detail:      detailStatusMessage,
 						}
 					}
 				}
@@ -895,7 +907,7 @@ func attributeMessage(attributeID string, fallback string) func(*report.Decision
 				Source:       policy.ResponseSourceAttributeDetail,
 				Message:      sanitizeResponseMessage(fallback, maxSelectedResponseMessageLength),
 				AttributeID:  attributeID,
-				Detail:       "status_message",
+				Detail:       detailStatusMessage,
 				Fallback:     fallback,
 				FallbackUsed: true,
 			}
@@ -907,6 +919,7 @@ func attributeMessage(attributeID string, fallback string) func(*report.Decision
 
 func defaultResponseMessage(responseMarker string) *report.ResponseMessageSelection {
 	message := ""
+
 	switch responseMarker {
 	case responseMarkerFail:
 		message = definitions.PasswordFail
@@ -939,6 +952,7 @@ func sanitizeResponseMessageWithState(message string, maxLength int) (string, bo
 
 	builder := strings.Builder{}
 	truncated := false
+
 	for _, r := range message {
 		if r == '\n' || r == '\r' || r == 0 {
 			continue
@@ -949,6 +963,7 @@ func sanitizeResponseMessageWithState(message string, maxLength int) (string, bo
 		}
 
 		builder.WriteRune(r)
+
 		if builder.Len() >= maxLength {
 			truncated = len(message) > builder.Len()
 

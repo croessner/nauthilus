@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package security provides security functionality.
 package security
 
 import (
@@ -53,6 +54,7 @@ func NewManager(secret secret.Value, opts ...Option) *Manager {
 	for _, opt := range opts {
 		opt(m)
 	}
+
 	return m
 }
 
@@ -71,17 +73,23 @@ func (m *Manager) Encrypt(plaintext string) (string, error) {
 		return plaintext, nil
 	}
 
-	var ciphertext []byte
-	var encErr error
+	var (
+		ciphertext []byte
+		encErr     error
+	)
+
 	m.secret.WithBytes(func(secretBytes []byte) {
 		if len(secretBytes) == 0 {
 			return
 		}
+
 		ciphertext, encErr = crypto.EncryptString(plaintext, secretBytes)
 	})
+
 	if encErr != nil {
 		return "", encErr
 	}
+
 	if len(ciphertext) == 0 {
 		return "", nil
 	}
@@ -108,21 +116,28 @@ func (m *Manager) Decrypt(encodedCiphertext string) (string, error) {
 		if m.allowPlaintext {
 			return encodedCiphertext, nil
 		}
+
 		return "", err
 	}
 
-	var plaintext string
-	var decErr error
+	var (
+		plaintext string
+		decErr    error
+	)
+
 	m.secret.WithBytes(func(secretBytes []byte) {
 		if len(secretBytes) == 0 {
 			return
 		}
+
 		plaintext, decErr = crypto.DecryptString(ciphertext, secretBytes)
 	})
+
 	if decErr != nil {
 		if m.allowPlaintext {
 			return encodedCiphertext, nil
 		}
+
 		return "", decErr
 	}
 
@@ -138,5 +153,6 @@ func (m *Manager) ensureSecret() error {
 	if m.secret.IsZero() && !m.allowEmptySecret {
 		return fmt.Errorf("encryption secret is required")
 	}
+
 	return nil
 }

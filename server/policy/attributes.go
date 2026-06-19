@@ -34,6 +34,7 @@ const (
 // IdentifierSegment normalizes a configuration name into one safe policy attribute path segment.
 func IdentifierSegment(input string) string {
 	var builder strings.Builder
+
 	previousUnderscore := false
 
 	for _, current := range strings.TrimSpace(input) {
@@ -50,12 +51,14 @@ func IdentifierSegment(input string) string {
 			}
 
 			previousUnderscore = true
+
 			builder.WriteByte(normalized)
 
 			continue
 		}
 
 		previousUnderscore = false
+
 		builder.WriteByte(normalized)
 	}
 

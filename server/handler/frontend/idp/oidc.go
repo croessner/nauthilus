@@ -101,6 +101,10 @@ const (
 	oidcErrorInvalidGrant          = "invalid_grant"
 	oidcErrorUnauthorizedClient    = "unauthorized_client"
 	oidcErrorServerError           = sloRequestOutcomeServerError
+	oidcErrorExpiredToken          = "expired_token"
+	oidcErrorSlowDown              = "slow_down"
+	oidcErrorAuthorizationPending  = "authorization_pending"
+	oidcErrorAccessDenied          = "access_denied"
 )
 
 var oidcTokenSingleValueParameters = []string{
@@ -153,7 +157,7 @@ func oidcRequestValues(ctx *gin.Context, key string) []string {
 // OIDCHandler handles OIDC protocol requests.
 type OIDCHandler struct {
 	deps        *deps.Deps
-	idp         *idp.NauthilusIdP
+	idp         *idp.NauthilusIDP
 	storage     *idp.RedisTokenStorage
 	deviceStore idp.DeviceCodeStore
 	userCodeGen idp.UserCodeGenerator
@@ -187,7 +191,7 @@ type frontChannelLogoutTask struct {
 }
 
 // NewOIDCHandler creates a new OIDCHandler.
-func NewOIDCHandler(d *deps.Deps, idpInstance *idp.NauthilusIdP, frontendHandler *FrontendHandler) *OIDCHandler {
+func NewOIDCHandler(d *deps.Deps, idpInstance *idp.NauthilusIDP, frontendHandler *FrontendHandler) *OIDCHandler {
 	prefix := d.Cfg.GetServer().GetRedis().GetPrefix()
 
 	return &OIDCHandler{
@@ -204,11 +208,12 @@ func NewOIDCHandler(d *deps.Deps, idpInstance *idp.NauthilusIdP, frontendHandler
 // Register registers the OIDC routes.
 func (h *OIDCHandler) Register(router gin.IRouter) {
 	router.Use(func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxServiceKey, definitions.ServIdP)
+		ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 		ctx.Next()
-	}, mdlua.LuaContextMiddleware())
+	}, mdlua.ContextMiddleware())
 
 	var frontendSecret []byte
+
 	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithBytes(func(value []byte) {
 		if len(value) == 0 {
 			return
@@ -225,23 +230,25 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	router.GET("/oidc/authorize", securityMW, secureMW, i18nMW, h.Authorize)
 	router.GET("/oidc/authorize/:languageTag", securityMW, secureMW, i18nMW, h.Authorize)
 	router.POST("/oidc/token", h.Token)
-	if h.deps.Cfg.GetIdP().OIDC.IsTokenEndpointGETAllowed() {
+
+	if h.deps.Cfg.GetIDP().OIDC.IsTokenEndpointGETAllowed() {
 		router.GET("/oidc/token", h.Token)
 	}
+
 	router.GET("/oidc/userinfo", h.UserInfo)
 	router.POST("/oidc/introspect", h.Introspect)
 	router.GET("/oidc/jwks", h.JWKS)
 	router.POST("/oidc/device", h.DeviceAuthorization)
-	router.GET("/oidc/device/verify", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
-	router.GET("/oidc/device/verify/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
+	router.GET(frontendDeviceVerifyPath, securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
+	router.GET(frontendDeviceVerifyPath+"/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
 	router.GET("/oidc/device/verify/failed", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyFailedPage)
 	router.GET("/oidc/device/verify/failed/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyFailedPage)
-	router.POST("/oidc/device/verify", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerify)
-	router.POST("/oidc/device/verify/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerify)
-	router.GET("/oidc/device/consent", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentGET)
-	router.GET("/oidc/device/consent/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentGET)
-	router.POST("/oidc/device/consent", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentPOST)
-	router.POST("/oidc/device/consent/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentPOST)
+	router.POST(frontendDeviceVerifyPath, securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerify)
+	router.POST(frontendDeviceVerifyPath+"/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerify)
+	router.GET(frontendDeviceConsentPath, securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentGET)
+	router.GET(frontendDeviceConsentPath+"/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentGET)
+	router.POST(frontendDeviceConsentPath, securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentPOST)
+	router.POST(frontendDeviceConsentPath+"/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentPOST)
 	router.GET("/oidc/logout", securityMW, secureMW, h.Logout)
 	router.GET("/logout", securityMW, secureMW, h.Logout)
 	router.GET("/oidc/consent", securityMW, csrfMW, secureMW, i18nMW, h.ConsentGET)
@@ -252,7 +259,7 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 
 // Discovery returns the OIDC discovery document.
 func (h *OIDCHandler) Discovery(ctx *gin.Context) {
-	oidcCfg := h.deps.Cfg.GetIdP().OIDC
+	oidcCfg := h.deps.Cfg.GetIDP().OIDC
 	issuer := oidcCfg.Issuer
 
 	scopesSupported := oidcCfg.GetScopesSupported()
@@ -376,6 +383,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 			if bClientID != "" {
 				clientID = bClientID
 			}
+
 			clientSecret = bClientSecret
 		}
 	}
@@ -407,15 +415,15 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 		authSource = clientauth.MethodClientSecretPost
 	}
 
-	if authSource == "" && bClientID != "" && (client.TokenEndpointAuthMethod == "none" || client.IsPublicClient()) {
-		authSource = "none"
+	if authSource == "" && bClientID != "" && (client.TokenEndpointAuthMethod == oidcClientAuthMethodNone || client.IsPublicClient()) {
+		authSource = oidcClientAuthMethodNone
 	}
 
 	if client.IsPublicClient() && clientID == client.ClientID {
 		if authSource == clientauth.MethodClientSecretBasic || authSource == clientauth.MethodClientSecretPost {
 			// Public clients cannot keep a secret. Some clients still include
 			// one for compatibility; ignore it and treat the request as "none".
-			authSource = "none"
+			authSource = oidcClientAuthMethodNone
 			clientSecret = ""
 		}
 	}
@@ -427,6 +435,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	// Enforce TokenEndpointAuthMethod if configured
 	if client.TokenEndpointAuthMethod != "" {
 		allowed := false
+
 		switch client.TokenEndpointAuthMethod {
 		case clientauth.MethodClientSecretBasic:
 			if authSource == clientauth.MethodClientSecretBasic {
@@ -436,8 +445,8 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 			if authSource == clientauth.MethodClientSecretPost {
 				allowed = true
 			}
-		case "none":
-			if authSource == "none" {
+		case oidcClientAuthMethodNone:
+			if authSource == oidcClientAuthMethodNone {
 				allowed = true
 			}
 		default:
@@ -464,7 +473,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 		}
 	}
 
-	if authSource == "none" {
+	if authSource == oidcClientAuthMethodNone {
 		return client, true
 	}
 
@@ -475,6 +484,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	}
 
 	var expectedSecret []byte
+
 	client.ClientSecret.WithBytes(func(value []byte) {
 		if len(value) == 0 {
 			return
@@ -665,7 +675,6 @@ func (h *OIDCHandler) verifyPrivateKeyJWTClientAssertion(ctx *gin.Context, reque
 		ClientAssertion:     request.assertion,
 		TokenEndpointURL:    request.audience,
 	})
-
 	if err != nil {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
@@ -717,7 +726,7 @@ func (h *OIDCHandler) verifyPrivateKeyJWTClientAssertion(ctx *gin.Context, reque
 
 // oidcEndpointURL builds a public endpoint URL from the configured issuer.
 func (h *OIDCHandler) oidcEndpointURL(path string) string {
-	return h.deps.Cfg.GetIdP().OIDC.Issuer + path
+	return h.deps.Cfg.GetIDP().OIDC.Issuer + path
 }
 
 // buildClientVerifier creates a signing.Verifier for the client's public key.
@@ -819,7 +828,7 @@ func oidcTokenAuthMethod(ctx *gin.Context) string {
 	}
 
 	if formValue(ctx, oidcParamClientID) != "" {
-		return "none"
+		return oidcClientAuthMethodNone
 	}
 
 	return ""
@@ -899,6 +908,7 @@ func oidcTokenDataContext(ctx *gin.Context) *lualib.Context {
 	}
 
 	luaCtx, ok := ctx.Get(definitions.CtxDataExchangeKey)
+
 	contextData, _ := luaCtx.(*lualib.Context)
 	if !ok || contextData == nil {
 		return lualib.NewContext()
@@ -1046,6 +1056,7 @@ func (h *OIDCHandler) runOIDCTokenPostAction(
 	}
 
 	authRaw := core.NewAuthStateFromContextWithDeps(ctx, h.deps.Auth())
+
 	auth, ok := authRaw.(*core.AuthState)
 	if !ok || auth == nil {
 		return
@@ -1053,7 +1064,7 @@ func (h *OIDCHandler) runOIDCTokenPostAction(
 
 	service := ctx.GetString(definitions.CtxServiceKey)
 	if service == "" {
-		service = definitions.ServIdP
+		service = definitions.ServIDP
 	}
 
 	failureReason := oidcTokenFailureReason(ctx)
@@ -1062,7 +1073,7 @@ func (h *OIDCHandler) runOIDCTokenPostAction(
 
 	args := core.PostActionArgs{
 		Context:       oidcTokenDataContext(ctx),
-		HTTPRequest:   util.DetachedHTTPRequest(ctx.Request, nil),
+		HTTPRequest:   util.DetachedHTTPRequest(context.TODO(), ctx.Request),
 		ParentSpan:    trace.SpanContextFromContext(ctx.Request.Context()),
 		StatusMessage: oidcTokenStatusMessageWithReason(result, httpStatus, failureReason),
 		Request:       h.buildOIDCTokenPostActionRequest(ctx, auth, service, grantType, clientID, authMethod, httpStatus, result, latency),
@@ -1146,9 +1157,9 @@ func (h *OIDCHandler) sendTokenResponse(ctx *gin.Context, clientID, grantType st
 	stats.GetMetrics().GetIdpTokensIssuedTotal().WithLabelValues("oidc", clientID, grantType).Inc()
 
 	result := gin.H{
-		"access_token": resp.accessToken,
-		"token_type":   "Bearer",
-		"expires_in":   int(resp.expiresIn.Seconds()),
+		oidcJSONFieldAccessToken: resp.accessToken,
+		oidcJSONFieldTokenType:   oidcJSONTokenTypeBearer,
+		oidcJSONFieldExpiresIn:   int(resp.expiresIn.Seconds()),
 	}
 
 	// Per OIDC Core 1.0 §3.1.2.1: id_token is only present when "openid" scope was requested.
@@ -1192,8 +1203,10 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	}()
 
 	// Try private_key_jwt first if client_assertion is present
-	var client *config.OIDCClient
-	var ok bool
+	var (
+		client *config.OIDCClient
+		ok     bool
+	)
 
 	if formValue(ctx, oidcParamClientAssertion) != "" {
 		client, ok = h.authenticateClientPrivateKeyJWT(ctx, h.oidcEndpointURL(oidcEndpointPathToken))
@@ -1258,7 +1271,7 @@ func (h *OIDCHandler) UserInfo(ctx *gin.Context) {
 
 	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-	// Validate token and retrieve IdTokenClaims for the UserInfo endpoint.
+	// Validate token and retrieve IDTokenClaims for the UserInfo endpoint.
 	claims, err := h.idp.ValidateTokenForUserInfo(ctx.Request.Context(), tokenString)
 	if err != nil {
 		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: "invalid_token"})
@@ -1266,7 +1279,7 @@ func (h *OIDCHandler) UserInfo(ctx *gin.Context) {
 		return
 	}
 
-	// Return user info from IdToken claims
+	// Return user info from IDToken claims
 	ctx.JSON(http.StatusOK, claims)
 }
 
@@ -1282,7 +1295,7 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 
 	token := ctx.PostForm("token")
 	if token == "" {
-		ctx.JSON(http.StatusOK, gin.H{"active": false})
+		ctx.JSON(http.StatusOK, gin.H{oidcJSONFieldActive: false})
 
 		return
 	}
@@ -1299,7 +1312,7 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 			definitions.LogKeyError, err,
 		)
 
-		ctx.JSON(http.StatusOK, gin.H{"active": false})
+		ctx.JSON(http.StatusOK, gin.H{oidcJSONFieldActive: false})
 
 		return
 	}
@@ -1307,13 +1320,13 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 	// Verify that the token was issued to the client making the request,
 	// or that the client is otherwise authorized to introspect this token.
 	if aud, ok := claims["aud"].(string); ok && aud != client.ClientID {
-		ctx.JSON(http.StatusOK, gin.H{"active": false})
+		ctx.JSON(http.StatusOK, gin.H{oidcJSONFieldActive: false})
 
 		return
 	}
 
 	response := gin.H{
-		"active": true,
+		oidcJSONFieldActive: true,
 	}
 
 	maps.Copy(response, claims)
@@ -1347,12 +1360,12 @@ func (h *OIDCHandler) JWKS(ctx *gin.Context) {
 		e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(publicKey.E)).Bytes())
 
 		keys = append(keys, gin.H{
-			"kty": "RSA",
-			"alg": "RS256",
-			"use": "sig",
-			"kid": kid,
-			"n":   n,
-			"e":   e,
+			oidcJSONFieldKeyType:   oidcJSONWebKeyTypeRSA,
+			oidcJSONFieldAlgorithm: oidcJSONWebKeyAlgorithmRS256,
+			oidcJSONFieldKeyUse:    oidcJSONWebKeyUseSignature,
+			oidcJSONFieldKeyID:     kid,
+			"n":                    n,
+			"e":                    e,
 		})
 	}
 
@@ -1363,12 +1376,12 @@ func (h *OIDCHandler) JWKS(ctx *gin.Context) {
 			x := base64.RawURLEncoding.EncodeToString(pubKey)
 
 			keys = append(keys, gin.H{
-				"kty": "OKP",
-				"alg": "EdDSA",
-				"use": "sig",
-				"kid": kid,
-				"crv": "Ed25519",
-				"x":   x,
+				oidcJSONFieldKeyType:   oidcJSONWebKeyTypeOKP,
+				oidcJSONFieldAlgorithm: oidcJSONWebKeyAlgorithmEdDSA,
+				oidcJSONFieldKeyUse:    oidcJSONWebKeyUseSignature,
+				oidcJSONFieldKeyID:     kid,
+				"crv":                  "Ed25519",
+				"x":                    x,
 			})
 		}
 	}
@@ -1394,6 +1407,7 @@ func (h *OIDCHandler) calculateLogoutTarget(client *config.OIDCClient, sessionCl
 
 func appendStateToLogoutTarget(target, state string) string {
 	target = strings.TrimSpace(target)
+
 	state = strings.TrimSpace(state)
 	if target == "" || state == "" {
 		return target
@@ -1523,7 +1537,6 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 	}
 
 	result, err := samlHandler.orchestrateIDPInitiatedSLOFanout(ctx, sloTransaction, account)
-
 	if err == nil {
 		if stateErr := samlHandler.storeSLOFanoutTransactionState(ctx, sloTransaction, result); stateErr != nil {
 			util.DebugModuleWithCfg(
@@ -1760,16 +1773,16 @@ func (h *OIDCHandler) doBackChannelLogout(clientID, userID, logoutURI string) {
 		return
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 }
 
-// CleanupIdPFlowState removes all temporary IdP flow state keys from the cookie.
+// CleanupIDPFlowState removes all temporary IDP flow state keys from the cookie.
 // These keys are only needed during the login redirect cycle
 // (e.g. /oidc/authorize → /login → /oidc/authorize or /saml/sso → /login → /saml/sso)
 // and should be cleaned up after the flow completes successfully.
 // This covers OIDC (authorization code, device code) and SAML flows.
-func CleanupIdPFlowState(mgr cookie.Manager) {
-	flow.CleanupIdPState(mgr)
+func CleanupIDPFlowState(mgr cookie.Manager) {
+	flow.CleanupIDPState(mgr)
 }
 
 // CleanupMFAState removes all temporary MFA flow keys from the cookie.

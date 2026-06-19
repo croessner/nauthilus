@@ -23,7 +23,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 )
 
-func TestInitWebAuthnSkipsWhenIdPAndFrontendDisabled(t *testing.T) {
+func TestInitWebAuthnSkipsWhenIDPAndFrontendDisabled(t *testing.T) {
 	env := config.NewTestEnvironmentConfig()
 	config.SetTestEnvironmentConfig(env)
 

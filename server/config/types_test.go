@@ -33,6 +33,7 @@ func TestResolveLDAPSearchPoolName(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected pool to resolve")
 	}
+
 	if poolName != definitions.DefaultBackendName {
 		t.Fatalf("expected default pool, got %s", poolName)
 	}

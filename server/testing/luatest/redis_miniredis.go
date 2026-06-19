@@ -229,6 +229,7 @@ func seedLegacyRedisResponses(ctx context.Context, client *redis.Client, respons
 func wrapRedisModuleFunctions(L *lua.LState, mod *lua.LTable, mockData *RedisMock) {
 	mod.ForEach(func(key, value lua.LValue) {
 		methodName := key.String()
+
 		originalFn, ok := value.(*lua.LFunction)
 		if !ok {
 			return
@@ -248,6 +249,7 @@ func wrapRedisModuleFunctions(L *lua.LState, mod *lua.LTable, mockData *RedisMoc
 			}
 
 			top := L.GetTop()
+
 			args := make([]lua.LValue, 0, top)
 			for i := 1; i <= top; i++ {
 				args = append(args, L.Get(i))

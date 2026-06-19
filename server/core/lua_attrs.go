@@ -49,9 +49,9 @@ func flattenLuaAttributeValue(value any) []any {
 }
 
 // parseLuaGroupValues extracts group names and DNs from a slice of group strings.
-func parseLuaGroupValues(values []string) (groups []string, groupDNs []string) {
+func parseLuaGroupValues(values []string) (groups []string, groupDistinguishedNames []string) {
 	groups = make([]string, 0, len(values))
-	groupDNs = make([]string, 0, len(values))
+	groupDistinguishedNames = make([]string, 0, len(values))
 
 	for _, value := range values {
 		trimmed := strings.TrimSpace(value)
@@ -60,7 +60,7 @@ func parseLuaGroupValues(values []string) (groups []string, groupDNs []string) {
 		}
 
 		if strings.Contains(trimmed, "=") && strings.Contains(trimmed, ",") {
-			groupDNs = append(groupDNs, trimmed)
+			groupDistinguishedNames = append(groupDistinguishedNames, trimmed)
 
 			parsed, err := ldap.ParseDN(trimmed)
 			if err == nil && parsed != nil && len(parsed.RDNs) > 0 && len(parsed.RDNs[0].Attributes) > 0 {
@@ -73,11 +73,11 @@ func parseLuaGroupValues(values []string) (groups []string, groupDNs []string) {
 		groups = append(groups, trimmed)
 	}
 
-	return normalizeStringSet(groups), normalizeStringSet(groupDNs)
+	return normalizeStringSet(groups), normalizeStringSet(groupDistinguishedNames)
 }
 
 // buildAttributeMappingFromLua converts a Lua table (map) into a Go AttributeMapping and extracts groups.
-func buildAttributeMappingFromLua(luaAttributes map[any]any) (attributes bktype.AttributeMapping, groups []string, groupDNs []string) {
+func buildAttributeMappingFromLua(luaAttributes map[any]any) (attributes bktype.AttributeMapping, groups []string, groupDistinguishedNames []string) {
 	if luaAttributes == nil {
 		return nil, nil, nil
 	}
@@ -99,14 +99,14 @@ func buildAttributeMappingFromLua(luaAttributes map[any]any) (attributes bktype.
 	}
 
 	groups = getNormalizedAttributeStrings(attributes, "groups")
-	groupDNs = getNormalizedAttributeStrings(attributes, "group_dns")
+	groupDistinguishedNames = getNormalizedAttributeStrings(attributes, "group_dns")
 
 	memberOfValues := getNormalizedAttributeStrings(attributes, "memberOf")
 	if len(memberOfValues) > 0 {
-		memberOfGroups, memberOfGroupDNs := parseLuaGroupValues(memberOfValues)
+		memberOfGroups, memberOfGroupDistinguishedNames := parseLuaGroupValues(memberOfValues)
 		groups = mergeNormalizedStringSlices(groups, memberOfGroups)
-		groupDNs = mergeNormalizedStringSlices(groupDNs, memberOfGroupDNs)
+		groupDistinguishedNames = mergeNormalizedStringSlices(groupDistinguishedNames, memberOfGroupDistinguishedNames)
 	}
 
-	return attributes, groups, groupDNs
+	return attributes, groups, groupDistinguishedNames
 }

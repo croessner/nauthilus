@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package metrics provides metrics functionality.
 package metrics
 
 import (
@@ -50,12 +51,12 @@ func PrometheusMiddleware(cfg config.File) gin.HandlerFunc {
 		stopTimer := stats.PrometheusTimer(cfg, definitions.PromRequest, fmt.Sprintf("request%s%s_total", uScore, strings.ReplaceAll(mode, "-", "_")), path)
 
 		if enableTimer {
-			timer = prometheus.NewTimer(stats.GetMetrics().GetHttpResponseTimeSeconds().WithLabelValues(path))
+			timer = prometheus.NewTimer(stats.GetMetrics().GetHTTPResponseTimeSeconds().WithLabelValues(path))
 		}
 
 		ctx.Next()
 
-		stats.GetMetrics().GetHttpRequestsTotal().WithLabelValues(path).Inc()
+		stats.GetMetrics().GetHTTPRequestsTotal().WithLabelValues(path).Inc()
 
 		if enableTimer && timer != nil {
 			timer.ObserveDuration()

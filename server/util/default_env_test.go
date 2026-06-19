@@ -1,3 +1,4 @@
+// Package util provides util functionality.
 package util
 
 import "github.com/croessner/nauthilus/v3/server/config"

@@ -78,11 +78,14 @@ func TestRedisPFAdd(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -92,7 +95,7 @@ func TestRedisPFAdd(t *testing.T) {
 
 			var valueStr strings.Builder
 			for _, v := range tt.values {
-				valueStr.WriteString(fmt.Sprintf(", %s", formatLuaValue(v)))
+				fmt.Fprintf(&valueStr, ", %s", formatLuaValue(v))
 			}
 
 			if err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_pfadd("default", key%s)`, valueStr.String())); err != nil {
@@ -155,11 +158,14 @@ func TestRedisPFCount(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -170,6 +176,7 @@ func TestRedisPFCount(t *testing.T) {
 			}
 
 			var keysLua string
+
 			for i := range tt.keys {
 				if i == 0 {
 					keysLua = "k1"
@@ -232,22 +239,27 @@ func TestRedisPFMerge(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
 			rediscli.NewTestClient(db)
 
 			L.SetGlobal("dest", lua.LString(tt.dest))
+
 			for i, s := range tt.sources {
 				L.SetGlobal(fmt.Sprintf("s%d", i+1), lua.LString(s))
 			}
 
 			var sourcesLua string
+
 			for i := range tt.sources {
 				if i == 0 {
 					sourcesLua = "s1"

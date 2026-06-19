@@ -82,6 +82,7 @@ func TestGetAllHTTPRequestHeaders(t *testing.T) {
 			}
 
 			lengthTable := 0
+
 			lTable.ForEach(func(_ lua.LValue, _ lua.LValue) {
 				lengthTable++
 			})

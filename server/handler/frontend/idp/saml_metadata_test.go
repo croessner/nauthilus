@@ -77,7 +77,7 @@ func TestSAMLHandler_GetServiceProvider_IncludesSingleLogoutServices(t *testing.
 		},
 	}
 
-	handler := NewSAMLHandler(dependencies, serveridp.NewNauthilusIdP(dependencies))
+	handler := NewSAMLHandler(dependencies, serveridp.NewNauthilusIDP(dependencies))
 
 	metadata, err := handler.GetServiceProvider(
 		httptest.NewRequest("GET", "/saml/metadata", nil),

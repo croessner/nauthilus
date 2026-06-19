@@ -20,7 +20,6 @@ import (
 	stderrors "errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"net"
 	"net/url"
 	"strconv"
@@ -66,6 +65,7 @@ type LDAPPool interface {
 	Close()
 }
 
+// Token describes the exported Token type.
 type Token struct{}
 
 // ldapPoolImpl represents a pool of LDAP connections.
@@ -205,7 +205,7 @@ func (l *ldapPoolImpl) Close() {
 		if l.conn[index].GetConn() != nil {
 			_ = l.conn[index].Unbind()
 			if l.conn[index].GetConn() != nil {
-				l.conn[index].GetConn().Close()
+				_ = l.conn[index].GetConn().Close()
 			}
 
 			util.DebugModuleWithCfg(
@@ -275,6 +275,7 @@ func (tb *tokenBucket) allow() bool {
 	defer tb.mu.Unlock()
 
 	now := time.Now()
+
 	elapsed := now.Sub(tb.last).Seconds()
 	if elapsed > 0 {
 		tb.tokens += elapsed * tb.rate
@@ -305,11 +306,12 @@ func getNegCache(pool string, conf *config.LDAPConf) localcache.SimpleCache {
 	}
 
 	var c localcache.SimpleCache
+
 	if conf != nil && conf.GetCacheImpl() == "lru" {
 		lru := localcache.NewLRU(conf.GetCacheMaxEntries())
 
 		// Increment eviction metrics for this pool when entries are evicted.
-		lru.SetOnEvict(func(key string, value any) {
+		lru.SetOnEvict(func(_ string, _ any) {
 			stats.GetMetrics().GetLdapCacheEvictionsTotal().WithLabelValues(pool, "neg").Inc()
 		})
 
@@ -401,6 +403,7 @@ func NewPool(ctx context.Context, cfg config.File, logger *slog.Logger, poolType
 
 	case definitions.LDAPPoolAuth:
 		name = "auth"
+
 		if poolName == definitions.DefaultBackendName {
 			poolSize = cfg.GetLDAPConfigAuthPoolSize()
 			idlePoolSize = cfg.GetLDAPConfigAuthIdlePoolSize()
@@ -584,7 +587,7 @@ func (l *ldapPoolImpl) closeSingleIdleConnection(index int) bool {
 	}
 
 	if c := l.conn[index].GetConn(); c != nil {
-		c.Close()
+		_ = c.Close()
 	}
 
 	l.conn[index].SetState(definitions.LDAPStateClosed)
@@ -745,8 +748,10 @@ func (l *ldapPoolImpl) logConnectionError(guid string, err error) {
 // for the given connection index. If the URI does not include an explicit port,
 // the default is inferred from the scheme: 389 for ldap, 636 for ldaps.
 func (l *ldapPoolImpl) serverAddrPort(index int) (string, int) {
-	var srvAddr string
-	var srvPort int
+	var (
+		srvAddr string
+		srvPort int
+	)
 
 	if l.conf != nil && index < len(l.conf) && l.conf[index] != nil {
 		uris := l.conf[index].GetServerURIs()
@@ -778,7 +783,7 @@ func (l *ldapPoolImpl) serverAddrPort(index int) (string, int) {
 					// No explicit port provided; infer by scheme
 					srvAddr = host
 
-					if u.Scheme == "ldaps" {
+					if u.Scheme == ldapSchemeLDAPS {
 						srvPort = 636
 					} else {
 						srvPort = 389
@@ -1039,7 +1044,7 @@ func (l *ldapPoolImpl) checkConnection(guid string, index int) (err error) {
 		)
 
 		if l.conn[index].GetConn() != nil {
-			l.conn[index].GetConn().Close()
+			_ = l.conn[index].GetConn().Close()
 		}
 
 		if err = l.conn[index].Connect(guid, l.cfg, l.logger, l.conf[index]); err != nil {
@@ -1048,7 +1053,7 @@ func (l *ldapPoolImpl) checkConnection(guid string, index int) (err error) {
 
 		if l.poolType == definitions.LDAPPoolLookup || l.poolType == definitions.LDAPPoolUnknown {
 			if err = l.conn[index].Bind(context.Background(), guid, l.cfg, l.logger, l.conf[index]); err != nil {
-				l.conn[index].GetConn().Close()
+				_ = l.conn[index].GetConn().Close()
 
 				return
 			}
@@ -1074,6 +1079,7 @@ func sendLDAPReplyAndUnlockState[T bktype.PoolRequest[T]](ldapPool *ldapPoolImpl
 
 	// 1.5) Trace release under the request context if available
 	var rctx context.Context
+
 	switch v := any(request).(type) {
 	case *bktype.LDAPRequest:
 		rctx = v.HTTPClientContext
@@ -1089,6 +1095,7 @@ func sendLDAPReplyAndUnlockState[T bktype.PoolRequest[T]](ldapPool *ldapPoolImpl
 		attribute.Int("index", index),
 	)
 	_ = xctx
+
 	xsp.End()
 
 	// 2) Deliver reply without risking a permanent block
@@ -1193,6 +1200,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 	if v, ok := cache.Get(negKey); ok {
 		// Cache hit (negative)
 		_ = v // value unused; presence is enough
+
 		stats.GetMetrics().GetLdapCacheHitsTotal().WithLabelValues(l.name, "neg").Inc()
 		stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
 
@@ -1220,9 +1228,11 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 	}
 
 	val, _, _ := negSF.Do(negKey, func() (any, error) {
-		var e error
-		var r bktype.AttributeMapping
-		var raw []*ldap.Entry
+		var (
+			e   error
+			r   bktype.AttributeMapping
+			raw []*ldap.Entry
+		)
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			r, raw, e = l.conn[index].Search(ldapRequest.HTTPClientContext, l.cfg, l.logger, ldapRequest)
@@ -1232,7 +1242,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 
 			// retry on transient errors only
 			stats.GetMetrics().GetLdapRetriesTotal().WithLabelValues(l.name, "search").Inc()
-			time.Sleep(jitterBackoffDuration(base, attempt, maxBackoff))
+			time.Sleep(jitterBackoff(base, attempt, maxBackoff))
 		}
 
 		return &sfRes{res: r, raw: raw, err: e}, nil
@@ -1252,6 +1262,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
 			if ldapError.ResultCode != uint16(ldap.LDAPResultNoSuchObject) {
 				doLog = true
+
 				if isTimeoutErr(err) || ldapError.ResultCode == uint16(ldap.LDAPResultTimeLimitExceeded) {
 					ldapReply.Err = errors.ErrLDAPSearchTimeout.WithDetail(err.Error())
 				} else {
@@ -1269,6 +1280,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 			}
 		} else {
 			doLog = true
+
 			if isTimeoutErr(err) {
 				ldapReply.Err = errors.ErrLDAPSearchTimeout.WithDetail(err.Error())
 			} else {
@@ -1578,24 +1590,4 @@ func isTransientNetworkError(err error) bool {
 	}
 
 	return false
-}
-
-// jitterBackoffDuration calculates a jittered backoff duration for retries based on base, attempt, and max durations.
-// The base duration is doubled with each attempt, capped at max, and random jitter is applied within the calculated bound.
-func jitterBackoffDuration(base time.Duration, attempt int, max time.Duration) time.Duration {
-	if base <= 0 {
-		base = 200 * time.Millisecond
-	}
-
-	if max <= 0 {
-		max = 2 * time.Second
-	}
-
-	b := min(base*time.Duration(1<<attempt), max)
-
-	if b <= 0 {
-		return 0
-	}
-
-	return time.Duration(rand.Int63n(int64(b) + 1))
 }

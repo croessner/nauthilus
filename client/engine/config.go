@@ -113,13 +113,13 @@ func DefaultConfig() *Config {
 		AutoBackoff:               0.7,
 		AutoMaxErr:                1.0,
 		AutoMinSample:             200,
-		AutoFocus:                 "rps",
+		AutoFocus:                 autoFocusRPS,
 		AutoPlateauWindows:        3,
 		AutoPlateauGain:           5.0,
-		AutoPlateauAction:         "freeze",
+		AutoPlateauAction:         autoPlateauActionFreeze,
 		AutoPlateauCooldown:       2,
 		AutoPlateauTrackThreshold: 0.9,
 		AutoPlateauTrackWindows:   0,
-		AutoPlateauTrackAction:    "freeze",
+		AutoPlateauTrackAction:    autoPlateauActionFreeze,
 	}
 }

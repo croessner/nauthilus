@@ -38,14 +38,14 @@ var cpuStealUsage = promauto.NewGauge(prometheus.GaugeOpts{
 	Help: "CPU steal usage in percent",
 })
 
-func setNewStats(oldCpu, newCpu *cpu.Stats, total float64) {
-	cpuUserUsage.Set(float64(newCpu.User-oldCpu.User) / total * 100)
-	cpuSystemUsage.Set(float64(newCpu.System-oldCpu.System) / total * 100)
+func setNewStats(oldCPU, newCPU *cpu.Stats, total float64) {
+	cpuUserUsage.Set(float64(newCPU.User-oldCPU.User) / total * 100)
+	cpuSystemUsage.Set(float64(newCPU.System-oldCPU.System) / total * 100)
 
-	idlePercent := float64(newCpu.Idle-oldCpu.Idle) / total * 100
+	idlePercent := float64(newCPU.Idle-oldCPU.Idle) / total * 100
 	cpuIdleUsage.Set(idlePercent)
 
-	cpuNiceUsage.Set(float64(newCpu.Nice-oldCpu.Nice) / total * 100)
-	cpuIowaitUsage.Set(float64(newCpu.Iowait-oldCpu.Iowait) / total * 100)
-	cpuStealUsage.Set(float64(newCpu.Steal-oldCpu.Steal) / total * 100)
+	cpuNiceUsage.Set(float64(newCPU.Nice-oldCPU.Nice) / total * 100)
+	cpuIowaitUsage.Set(float64(newCPU.Iowait-oldCPU.Iowait) / total * 100)
+	cpuStealUsage.Set(float64(newCPU.Steal-oldCPU.Steal) / total * 100)
 }

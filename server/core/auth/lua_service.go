@@ -17,6 +17,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	stderrors "errors"
 	"fmt"
 
@@ -157,12 +158,12 @@ func (DefaultLuaSubject) Analyze(ctx *gin.Context, view *core.StateView, passDBR
 				}
 			}
 
-			if len((*luaBackendResult).Groups) > 0 || len((*luaBackendResult).GroupDNs) > 0 {
+			if len((*luaBackendResult).Groups) > 0 || len((*luaBackendResult).GroupDistinguishedNames) > 0 {
 				mergedGroups := append(auth.GetGroups(), (*luaBackendResult).Groups...)
-				mergedGroupDNs := append(auth.GetGroupDNs(), (*luaBackendResult).GroupDNs...)
-				auth.SetResolvedGroups(mergedGroups, mergedGroupDNs)
+				mergedGroupDistinguishedNames := append(auth.GetGroupDistinguishedNames(), (*luaBackendResult).GroupDistinguishedNames...)
+				auth.SetResolvedGroups(mergedGroups, mergedGroupDistinguishedNames)
 				passDBResult.Groups = auth.GetGroups()
-				passDBResult.GroupDNs = auth.GetGroupDNs()
+				passDBResult.GroupDistinguishedNames = auth.GetGroupDistinguishedNames()
 			}
 		}
 
@@ -199,7 +200,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		return
 	}
 
-	postActionRequest := util.DetachedHTTPRequest(auth.Request.HTTPClientRequest, nil)
+	postActionRequest := util.DetachedHTTPRequest(context.TODO(), auth.Request.HTTPClientRequest)
 	if util.IsHTTPRequestCanceled(auth.Logger(), postActionRequest, auth.Runtime.GUID, "schedule.lua_post_action") {
 		return
 	}
@@ -245,7 +246,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 
 	if auth.Runtime.StatusMessage == "" {
 		if cr.Authenticated {
-			auth.Runtime.StatusMessage = "OK"
+			auth.Runtime.StatusMessage = authStatusMessageOK
 		} else {
 			auth.Runtime.StatusMessage = definitions.PasswordFail
 		}

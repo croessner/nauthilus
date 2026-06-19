@@ -64,6 +64,7 @@ func TestGenerateSelfSignedCert(t *testing.T) {
 
 	// Verify cert
 	block, _ := pem.Decode([]byte(certPEM))
+
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		t.Fatalf("failed to parse certificate: %v", err)
@@ -75,6 +76,7 @@ func TestGenerateSelfSignedCert(t *testing.T) {
 
 	// Verify key
 	block, _ = pem.Decode([]byte(keyPEM))
+
 	privKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
 		t.Fatalf("failed to parse private key: %v", err)

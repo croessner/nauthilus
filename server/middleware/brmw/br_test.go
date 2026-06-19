@@ -39,7 +39,7 @@ func TestBrotliMiddleware_NoAcceptEncoding_NoCompression(t *testing.T) {
 
 	called := 0
 	origFactory := newEncoder
-	newEncoder = func(w io.Writer, lvl Level) (BrotliEncoder, error) {
+	newEncoder = func(_ io.Writer, _ Level) (BrotliEncoder, error) {
 		called++
 
 		return &fakeEncoder{}, nil
@@ -73,7 +73,7 @@ func TestBrotliMiddleware_AcceptsBrotli_CompressesAndSetsHeaders(t *testing.T) {
 	fe := &fakeEncoder{}
 	origFactory := newEncoder
 
-	newEncoder = func(w io.Writer, lvl Level) (BrotliEncoder, error) {
+	newEncoder = func(_ io.Writer, _ Level) (BrotliEncoder, error) {
 		return fe, nil
 	}
 
@@ -119,7 +119,7 @@ func TestBrotliMiddleware_NoBodyStatuses_NoEncoder(t *testing.T) {
 	called := 0
 	origFactory := newEncoder
 
-	newEncoder = func(w io.Writer, lvl Level) (BrotliEncoder, error) {
+	newEncoder = func(_ io.Writer, _ Level) (BrotliEncoder, error) {
 		called++
 
 		return &fakeEncoder{}, nil
@@ -153,7 +153,7 @@ func TestBrotliWithOptionsBuilder_ExcludePath_SkipsCompression(t *testing.T) {
 
 	called := 0
 	origFactory := newEncoder
-	newEncoder = func(w io.Writer, lvl Level) (BrotliEncoder, error) {
+	newEncoder = func(_ io.Writer, _ Level) (BrotliEncoder, error) {
 		called++
 
 		return &fakeEncoder{}, nil

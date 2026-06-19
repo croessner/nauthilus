@@ -181,7 +181,6 @@ func (v *RS256Verifier) Verify(tokenString string) (jwt.MapClaims, error) {
 
 		return v.key, nil
 	}, jwt.WithoutClaimsValidation())
-
 	if err != nil {
 		return nil, fmt.Errorf("RS256 verification failed: %w", err)
 	}
@@ -218,7 +217,6 @@ func (v *EdDSAVerifier) Verify(tokenString string) (jwt.MapClaims, error) {
 
 		return v.key, nil
 	}, jwt.WithoutClaimsValidation())
-
 	if err != nil {
 		return nil, fmt.Errorf("EdDSA verification failed: %w", err)
 	}

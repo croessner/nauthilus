@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package keygen provides keygen functionality.
 package keygen
 
 import (
@@ -25,6 +26,8 @@ import (
 	"time"
 )
 
+const rsaPrivateKeyPEMType = "RSA PRIVATE KEY"
+
 // GenerateRSAKey generates a new RSA private key and returns it as a PEM string.
 func GenerateRSAKey(bits int) (string, error) {
 	key, err := rsa.GenerateKey(rand.Reader, bits)
@@ -33,7 +36,7 @@ func GenerateRSAKey(bits int) (string, error) {
 	}
 
 	keyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
+		Type:  rsaPrivateKeyPEMType,
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	})
 
@@ -51,6 +54,7 @@ func GenerateSelfSignedCert(commonName string, bits int, years int) (string, str
 	notAfter := notBefore.Add(365 * 24 * time.Hour * time.Duration(years))
 
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
 		return "", "", err

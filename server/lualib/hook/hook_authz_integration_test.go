@@ -47,6 +47,7 @@ func setupHookTestConfig(t *testing.T) config.File {
 	t.Helper()
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
 			Redis: config.Redis{
@@ -64,13 +65,16 @@ func withIsolatedHookRoles(t *testing.T) {
 	t.Helper()
 
 	mu.Lock()
+
 	orig := make(map[string][]string, len(hookScopes))
 	for k, v := range hookScopes {
 		clone := append([]string(nil), v...)
 		orig[k] = clone
 	}
+
 	origAliases := make(map[string]string, len(hookAliasLocations))
 	maps.Copy(origAliases, hookAliasLocations)
+
 	origLocation := customLocation
 	hookScopes = make(map[string][]string)
 	hookAliasLocations = make(map[string]string)
@@ -88,6 +92,7 @@ func withIsolatedHookRoles(t *testing.T) {
 
 func setHookScopes(location, method string, scopes []string) {
 	mu.Lock()
+
 	hookScopes[getHookKey(location, method)] = append([]string(nil), scopes...)
 	mu.Unlock()
 }
@@ -107,6 +112,7 @@ func writeHookScript(t *testing.T) string {
 	t.Helper()
 
 	path := filepath.Join(t.TempDir(), "hook.lua")
+
 	content := []byte(`function nauthilus_run_hook(request)
 	return {}
 end

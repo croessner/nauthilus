@@ -37,6 +37,7 @@ func registerGeneratedSubjectAttributes(
 	seen := make(map[string]string, len(exports))
 	for index, exportConfig := range exports {
 		path := indexedPath(subjectAttributeExportConfigPath, index)
+
 		identifier, err := subjectAttributeIdentifier(exportConfig, path, seen)
 		if err != nil {
 			return err

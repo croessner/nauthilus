@@ -46,8 +46,8 @@ func TestRestoreFlowCookieContext(t *testing.T) {
 
 	RestoreFlowCookieContext(mgr, definitions.ProtoOIDC, definitions.OIDCFlowAuthorizationCode)
 
-	if mgr.data[definitions.SessionKeyIdPFlowType] != definitions.ProtoOIDC {
-		t.Fatalf("expected %s to be restored", definitions.SessionKeyIdPFlowType)
+	if mgr.data[definitions.SessionKeyIDPFlowType] != definitions.ProtoOIDC {
+		t.Fatalf("expected %s to be restored", definitions.SessionKeyIDPFlowType)
 	}
 
 	if mgr.data[definitions.SessionKeyOIDCGrantType] != definitions.OIDCFlowAuthorizationCode {

@@ -33,104 +33,106 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const redisMetricLabelInstance = "instance"
+
 var (
 	// Redis server metrics
 	redisConnectedClients = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_connected_clients",
 			Help: "Number of client connections (excluding connections from replicas)",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisUsedMemory = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_used_memory_bytes",
 			Help: "Total number of bytes allocated by Redis using its allocator",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisUsedMemoryRss = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_used_memory_rss_bytes",
 			Help: "Number of bytes that Redis allocated as seen by the operating system",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisMemFragmentationRatio = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_mem_fragmentation_ratio",
 			Help: "Ratio between used_memory_rss and used_memory",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisCommandsProcessed = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_commands_processed_total",
 			Help: "Total number of commands processed by the server",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisKeyspaceHits = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_keyspace_hits_total",
 			Help: "Number of successful lookup of keys in the main dictionary",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisKeyspaceMisses = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_keyspace_misses_total",
 			Help: "Number of failed lookup of keys in the main dictionary",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisKeyspaceHitRate = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_keyspace_hit_rate",
 			Help: "Ratio of keyspace hits to total keyspace hits and misses",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisEvictedKeys = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_evicted_keys_total",
 			Help: "Number of evicted keys due to maxmemory limit",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisExpiredKeys = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_expired_keys_total",
 			Help: "Number of key expiration events",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisRejectedConnections = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_rejected_connections_total",
 			Help: "Number of connections rejected because of maxclients limit",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisInstantaneousOpsPerSec = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_instantaneous_ops_per_sec",
 			Help: "Number of commands processed per second",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisInstantaneousInputKbps = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_instantaneous_input_kbps",
 			Help: "The network's read rate per second in KB/sec",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisInstantaneousOutputKbps = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "redis_instantaneous_output_kbps",
 			Help: "The network's write rate per second in KB/sec",
-		}, []string{"instance"},
+		}, []string{redisMetricLabelInstance},
 	)
 
 	redisLatencyMs = promauto.NewGaugeVec(

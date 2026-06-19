@@ -63,6 +63,7 @@ func (a *AuthState) filterActiveBruteForceRules(ctx *gin.Context, tr monittrace.
 	activeRules := make([]config.BruteForceRule, 0, len(rules))
 
 	var ipFamily string
+
 	switch {
 	case ip != nil && ip.To4() != nil:
 		ipFamily = "ipv4"
@@ -167,6 +168,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	bfCfg := cfg.GetBruteForce()
 	if bfCfg != nil && bfCfg.HasSoftWhitelist() {
 		engine := l1.GetEngine()
+
 		swlKey := l1.KeySoftWhitelist(a.Request.Username, a.Request.ClientIP)
 		if dec, ok := engine.Get(cctx, swlKey); ok && dec.Allowed {
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
@@ -184,7 +186,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted"))
 
 			// Cache result in L1 for 1 second to handle burst requests without hitting Redis
-			engine.Set(cctx, swlKey, l1.L1Decision{Allowed: true, Reason: "SoftWhitelist"}, time.Second)
+			engine.Set(cctx, swlKey, l1.Decision{Allowed: true, Reason: "SoftWhitelist"}, time.Second)
 
 			return false
 		}
@@ -192,6 +194,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	if bfCfg != nil && len(bfCfg.GetIPWhitelist()) > 0 {
 		engine := l1.GetEngine()
+
 		wlKey := l1.KeyWhitelist(a.Request.ClientIP)
 		if dec, ok := engine.Get(cctx, wlKey); ok && dec.Allowed {
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
@@ -209,7 +212,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted"))
 
 			// Cache result in L1 for 1 second to handle burst requests without hitting Redis
-			engine.Set(cctx, wlKey, l1.L1Decision{Allowed: true, Reason: "IPWhitelist"}, time.Second)
+			engine.Set(cctx, wlKey, l1.Decision{Allowed: true, Reason: "IPWhitelist"}, time.Second)
 
 			return false
 		}
@@ -247,6 +250,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	a.logBruteForceDebug(ctx.Request.Context())
 
 	bruteForceProtocolEnabled := false
+
 	for _, bruteForceService := range cfg.GetServer().GetBruteForceProtocols() {
 		if bruteForceService.Get() != a.Request.Protocol.Get() {
 			continue
@@ -428,12 +432,14 @@ func markBruteForceBucketPolicyFacts(
 	}
 
 	updated := false
+
 	for i := range marked {
 		if marked[i].Name != rule.Name {
 			continue
 		}
 
 		markBruteForceBucketPolicyFact(&marked[i], alreadyTriggered, ruleTriggered, network)
+
 		updated = true
 	}
 
@@ -581,6 +587,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	}
 
 	bruteForceEnabled := false
+
 	for _, bruteForceService := range a.cfg().GetServer().GetBruteForceProtocols() {
 		if bruteForceService.Get() != a.Request.Protocol.Get() {
 			continue

@@ -43,16 +43,33 @@ type compilePolicyInput struct {
 }
 
 const (
-	policyFieldAttribute = "attribute"
-	policyFieldFallback  = "fallback"
-	policyFieldI18NKey   = "i18n_key"
-	policyFieldLanguage  = "language"
+	operatorCIDRContains     = "cidr_contains"
+	operatorContains         = "contains"
+	operatorContainsAll      = "contains_all"
+	operatorContainsAny      = "contains_any"
+	operatorContainsNone     = "contains_none"
+	operatorExists           = "exists"
+	operatorGT               = "gt"
+	operatorGTE              = "gte"
+	operatorIn               = "in"
+	operatorLT               = "lt"
+	operatorLTE              = "lte"
+	operatorMatches          = "matches"
+	operatorNotIn            = "not_in"
+	operatorWithinTimeWindow = "within_time_window"
+	policyFieldAttribute     = "attribute"
+	policyFieldFallback      = "fallback"
+	policyFieldI18NKey       = "i18n_key"
+	policyFieldLanguage      = "language"
+	policyModeEnforce        = "enforce"
+	policyModeObserve        = "observe"
 )
 
 func compilePolicies(input compilePolicyInput) ([]policyruntime.CompiledPolicy, error) {
 	policies := make([]policyruntime.CompiledPolicy, 0, len(input.configs))
 	for index, policyConfig := range input.configs {
 		path := indexedPath("auth.policy.policies", index)
+
 		compiled, err := compilePolicy(policyConfig, path, input)
 		if err != nil {
 			return nil, err
@@ -225,6 +242,7 @@ func compileConditionWithOptions(
 
 func conditionKind(condition config.PolicyConditionConfig, path string) (policyruntime.ExprKind, error) {
 	count := 0
+
 	var kind policyruntime.ExprKind
 
 	if condition.Attribute != "" {
@@ -370,6 +388,7 @@ func validateProducerPlan(
 
 	hasActiveProducer := false
 	hasRequiredProducer := false
+
 	for _, checkName := range ctx.requireChecks {
 		check, ok := ctx.checksByName[checkName]
 		if !ok {
@@ -414,25 +433,29 @@ func selectedOperator(
 		{name: "is", value: condition.Is, present: condition.Is != nil},
 		{name: "eq", value: condition.Eq, present: condition.Eq != nil},
 		{name: "ne", value: condition.Ne, present: condition.Ne != nil},
-		{name: "in", value: condition.In, present: condition.In != nil},
-		{name: "not_in", value: condition.NotIn, present: condition.NotIn != nil},
-		{name: "matches", value: condition.Matches, present: condition.Matches != ""},
-		{name: "exists", value: condition.Exists, present: condition.Exists != nil},
-		{name: "contains", value: condition.Contains, present: condition.Contains != nil},
-		{name: "contains_any", value: condition.ContainsAny, present: condition.ContainsAny != nil},
-		{name: "contains_all", value: condition.ContainsAll, present: condition.ContainsAll != nil},
-		{name: "contains_none", value: condition.ContainsNone, present: condition.ContainsNone != nil},
-		{name: "gt", value: condition.GT, present: condition.GT != nil},
-		{name: "gte", value: condition.GTE, present: condition.GTE != nil},
-		{name: "lt", value: condition.LT, present: condition.LT != nil},
-		{name: "lte", value: condition.LTE, present: condition.LTE != nil},
-		{name: "cidr_contains", value: condition.CIDRContains, present: condition.CIDRContains != ""},
-		{name: "within_time_window", value: condition.WithinTimeWindow, present: condition.WithinTimeWindow != ""},
+		{name: operatorIn, value: condition.In, present: condition.In != nil},
+		{name: operatorNotIn, value: condition.NotIn, present: condition.NotIn != nil},
+		{name: operatorMatches, value: condition.Matches, present: condition.Matches != ""},
+		{name: operatorExists, value: condition.Exists, present: condition.Exists != nil},
+		{name: operatorContains, value: condition.Contains, present: condition.Contains != nil},
+		{name: operatorContainsAny, value: condition.ContainsAny, present: condition.ContainsAny != nil},
+		{name: operatorContainsAll, value: condition.ContainsAll, present: condition.ContainsAll != nil},
+		{name: operatorContainsNone, value: condition.ContainsNone, present: condition.ContainsNone != nil},
+		{name: operatorGT, value: condition.GT, present: condition.GT != nil},
+		{name: operatorGTE, value: condition.GTE, present: condition.GTE != nil},
+		{name: operatorLT, value: condition.LT, present: condition.LT != nil},
+		{name: operatorLTE, value: condition.LTE, present: condition.LTE != nil},
+		{name: operatorCIDRContains, value: condition.CIDRContains, present: condition.CIDRContains != ""},
+		{name: operatorWithinTimeWindow, value: condition.WithinTimeWindow, present: condition.WithinTimeWindow != ""},
 	}
 
-	var selected string
-	var value any
+	var (
+		selected string
+		value    any
+	)
+
 	count := 0
+
 	for _, candidate := range candidates {
 		if !candidate.present {
 			continue
@@ -447,7 +470,7 @@ func selectedOperator(
 		return "", nil, configPathError(path, "must contain exactly one operator")
 	}
 
-	if selected == "exists" {
+	if selected == operatorExists {
 		if ptr, ok := value.(*bool); ok {
 			value = *ptr
 		}
@@ -698,6 +721,7 @@ func compileListValue(
 	compiled := make([]any, 0, len(values))
 	for index, value := range values {
 		itemPath := indexedPath(childPath(path, string(operator)), index)
+
 		item, err := compileScalarValueAtPath(value, valueType, itemPath)
 		if err != nil {
 			return policyruntime.TypedValue{}, err
@@ -748,6 +772,7 @@ func compileNetworkOperand(
 
 	if after, ok0 := strings.CutPrefix(value, "@network."); ok0 {
 		name := after
+
 		prefixes, ok := sets.Networks[name]
 		if !ok {
 			return policyruntime.TypedValue{}, configPathError(path, "references unknown network set")
@@ -779,6 +804,7 @@ func compileTimeWindowOperand(
 	}
 
 	name := strings.TrimPrefix(value, "@time_window.")
+
 	window, ok := sets.TimeWindows[name]
 	if !ok {
 		return policyruntime.TypedValue{}, configPathError(path, "references unknown time-window set")
@@ -896,11 +922,11 @@ func defaultFSMEventMarker(stage policy.Stage, decision policy.Decision) string 
 func defaultResponseMarker(decision policy.Decision) string {
 	switch decision {
 	case policy.DecisionPermit:
-		return "auth.response.ok"
+		return policy.ResponseMarkerOK
 	case policy.DecisionDeny:
-		return "auth.response.fail"
+		return policy.ResponseMarkerFail
 	case policy.DecisionTempFail:
-		return "auth.response.tempfail"
+		return policy.ResponseMarkerTempFail
 	default:
 		return ""
 	}
@@ -1117,6 +1143,7 @@ func compileAttributeResponseLanguage(
 	}
 
 	fallback := ""
+
 	if strings.TrimSpace(responseLanguage.Fallback) != "" {
 		tag, err := parsePolicyLanguageTag(responseLanguage.Fallback)
 		if err != nil {

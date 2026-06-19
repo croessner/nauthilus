@@ -9,6 +9,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/idp"
+	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/gin-gonic/gin"
 )
@@ -52,7 +53,7 @@ func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData
 		authHeader := ctx.GetHeader("Authorization")
 		if after, ok := strings.CutPrefix(authHeader, "Bearer "); ok {
 			tokenString := after
-			idpInstance := idp.NewNauthilusIdP(h.deps)
+			idpInstance := idp.NewNauthilusIDP(h.deps)
 
 			claims, err := idpInstance.ValidateToken(ctx.Request.Context(), tokenString)
 			if err == nil {
@@ -68,6 +69,7 @@ func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData
 	}
 
 	authDeps := h.deps.Auth()
+
 	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
 	if state == nil {
 		return nil, nil
@@ -133,7 +135,7 @@ func (h *FrontendHandler) applyPublicMFAState(ctx *gin.Context, data *UserBacken
 
 	if data.HaveWebAuthn {
 		user := &backend.User{
-			Id:          data.UniqueUserID,
+			ID:          data.UniqueUserID,
 			Name:        data.Username,
 			DisplayName: data.DisplayName,
 			Credentials: state.WebAuthnCredentials,
@@ -176,6 +178,7 @@ func (h *FrontendHandler) publicMFAStateProvider(authState *core.AuthState) (cor
 	return provider, ok
 }
 
+// resolveWebAuthnUser resolves WebAuthn credentials from cache or backend state.
 func (h *FrontendHandler) resolveWebAuthnUser(ctx *gin.Context, mgr cookie.Manager, data *UserBackendData, provider webAuthnCredentialProvider) {
 	if data == nil || provider == nil {
 		return
@@ -206,7 +209,7 @@ func (h *FrontendHandler) resolveWebAuthnUser(ctx *gin.Context, mgr cookie.Manag
 	}
 
 	user := &backend.User{
-		Id:          data.UniqueUserID,
+		ID:          data.UniqueUserID,
 		Name:        data.Username,
 		DisplayName: data.DisplayName,
 		Credentials: credentials,
@@ -219,12 +222,18 @@ func (h *FrontendHandler) resolveWebAuthnUser(ctx *gin.Context, mgr cookie.Manag
 		return
 	}
 
-	backend.SaveWebAuthnToRedis(
+	if err = backend.SaveWebAuthnToRedis(
 		ctx.Request.Context(),
 		h.deps.Logger,
 		h.deps.Cfg,
 		h.deps.Redis,
 		user,
 		h.deps.Cfg.GetServer().GetRedis().GetPosCacheTTL(),
-	)
+	); err != nil {
+		level.Warn(h.deps.Logger).Log(
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Failed to cache WebAuthn backend user data",
+			definitions.LogKeyError, err,
+		)
+	}
 }

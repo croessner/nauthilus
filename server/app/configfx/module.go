@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package configfx provides configfx functionality.
 package configfx
 
 import "go.uber.org/fx"

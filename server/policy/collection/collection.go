@@ -690,9 +690,11 @@ func (a *ActiveCheck) Finish(result CheckResult) {
 	if result.Duration > 0 {
 		duration = result.Duration
 	}
+
 	if result.Status == "" {
 		result.Status = policy.CheckStatusOK
 	}
+
 	if result.Err != nil {
 		result.Status = policy.CheckStatusError
 		if result.Reason == "" {

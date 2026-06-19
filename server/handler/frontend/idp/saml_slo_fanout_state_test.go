@@ -26,8 +26,8 @@ import (
 func TestNewSLOFanoutTransactionState(t *testing.T) {
 	now := time.Date(2026, time.March, 19, 12, 0, 0, 0, time.UTC)
 
-	baseParticipant := func(entityID, requestID string) slodomain.SLOParticipant {
-		return slodomain.SLOParticipant{
+	baseParticipant := func(entityID, requestID string) slodomain.Participant {
+		return slodomain.Participant{
 			EntityID:  entityID,
 			RequestID: requestID,
 			Binding:   slodomain.SLOBindingRedirect,
@@ -36,7 +36,7 @@ func TestNewSLOFanoutTransactionState(t *testing.T) {
 
 	testCases := []struct {
 		name        string
-		transaction *slodomain.SLOTransaction
+		transaction *slodomain.Transaction
 		result      *sloFanoutResult
 		wantErr     string
 		wantNil     bool
@@ -81,7 +81,7 @@ func TestNewSLOFanoutTransactionState(t *testing.T) {
 		},
 		{
 			name: "state built with pre counts",
-			transaction: mustNewFanoutRunningTransactionWithParticipants(t, now, []slodomain.SLOParticipant{
+			transaction: mustNewFanoutRunningTransactionWithParticipants(t, now, []slodomain.Participant{
 				baseParticipant("https://sp-a.example.com", "id-req-a"),
 				baseParticipant("https://sp-b.example.com", "id-req-b"),
 				baseParticipant("https://sp-c.example.com", "id-req-c"),
@@ -109,7 +109,6 @@ func TestNewSLOFanoutTransactionState(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			state, err := newSLOFanoutTransactionState(tc.transaction, tc.result, now)
 			if tc.wantErr != "" {
@@ -160,7 +159,7 @@ func TestAggregateSLOFanoutTerminalStatus(t *testing.T) {
 		name         string
 		successCount int
 		failureCount int
-		want         slodomain.SLOStatus
+		want         slodomain.Status
 	}{
 		{name: "done", successCount: 2, failureCount: 0, want: slodomain.SLOStatusDone},
 		{name: "failed", successCount: 0, failureCount: 2, want: slodomain.SLOStatusFailed},
@@ -168,7 +167,6 @@ func TestAggregateSLOFanoutTerminalStatus(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			status := aggregateSLOFanoutTerminalStatus(tc.successCount, tc.failureCount)
 			assert.Equal(t, tc.want, status)
@@ -176,7 +174,7 @@ func TestAggregateSLOFanoutTerminalStatus(t *testing.T) {
 	}
 }
 
-func mustNewValidatedTransaction(t *testing.T, now time.Time) *slodomain.SLOTransaction {
+func mustNewValidatedTransaction(t *testing.T, now time.Time) *slodomain.Transaction {
 	t.Helper()
 
 	tx, err := slodomain.NewTransaction(
@@ -197,7 +195,7 @@ func mustNewValidatedTransaction(t *testing.T, now time.Time) *slodomain.SLOTran
 	return tx
 }
 
-func mustNewFanoutRunningTransaction(t *testing.T, now time.Time) *slodomain.SLOTransaction {
+func mustNewFanoutRunningTransaction(t *testing.T, now time.Time) *slodomain.Transaction {
 	t.Helper()
 
 	return mustNewFanoutRunningTransactionWithParticipants(t, now, nil)
@@ -206,8 +204,8 @@ func mustNewFanoutRunningTransaction(t *testing.T, now time.Time) *slodomain.SLO
 func mustNewFanoutRunningTransactionWithParticipants(
 	t *testing.T,
 	now time.Time,
-	participants []slodomain.SLOParticipant,
-) *slodomain.SLOTransaction {
+	participants []slodomain.Participant,
+) *slodomain.Transaction {
 	t.Helper()
 
 	tx := mustNewValidatedTransaction(t, now)

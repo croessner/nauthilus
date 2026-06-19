@@ -30,6 +30,7 @@ func TestSetupMockModulesDoesNotExposeNauthilusLog(t *testing.T) {
 
 	mockData := &MockData{}
 	logger := &MockLogger{}
+
 	cleanup, err := SetupMockModules(L, mockData, logger)
 	if err != nil {
 		t.Fatalf("SetupMockModules failed: %v", err)
@@ -47,6 +48,7 @@ func TestSetupMockModulesDoesNotExposeNauthilusLog(t *testing.T) {
 	if definitions.LuaDefaultTable != "nauthilus_builtin" {
 		t.Fatalf("unexpected builtin table name: %s", definitions.LuaDefaultTable)
 	}
+
 	if L.GetGlobal(definitions.LuaDefaultTable).Type() != lua.LTTable {
 		t.Fatalf("%s should be a table", definitions.LuaDefaultTable)
 	}
@@ -58,6 +60,7 @@ func TestSetupMockModulesPublishesBackendResultGlobal(t *testing.T) {
 
 	mockData := &MockData{}
 	logger := &MockLogger{}
+
 	cleanup, err := SetupMockModules(L, mockData, logger)
 	if err != nil {
 		t.Fatalf("SetupMockModules failed: %v", err)

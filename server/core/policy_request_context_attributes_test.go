@@ -145,6 +145,7 @@ func TestRequestContextTrustedProxyHeaderIsExplicitlyTrusted(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
 	cfg.Server.TrustedProxies = []string{"198.51.100.10"}
 	cfg.Server.DefaultHTTPRequestHeader.ClientIP = requestContextClientIPHeader
+
 	activatePolicySnapshotForTest(t, requestContextSnapshotForTest())
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
@@ -164,6 +165,7 @@ func TestRequestContextUntrustedHeaderCandidateIsNotTrusted(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
 	cfg.Server.TrustedProxies = []string{"198.51.100.10"}
 	cfg.Server.DefaultHTTPRequestHeader.ClientIP = requestContextClientIPHeader
+
 	activatePolicySnapshotForTest(t, requestContextSnapshotForTest())
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)

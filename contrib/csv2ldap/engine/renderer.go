@@ -52,6 +52,7 @@ func (tr *TemplateRenderer) Render(r *Record) (string, error) {
 		if err != nil {
 			return "", err
 		}
+
 		pw = encPw
 	}
 

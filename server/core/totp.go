@@ -138,7 +138,7 @@ func removeTOTPSeparators(value string) string {
 }
 
 // TotpValidation validates a TOTP code for a given account. It also checks for backup/recovery codes.
-func TotpValidation(ctx *gin.Context, auth *AuthState, code string, deps AuthDeps) error {
+func TotpValidation(_ *gin.Context, auth *AuthState, code string, deps AuthDeps) error {
 	totpSecret := auth.GetTOTPSecret()
 
 	// Check for backup/recovery codes first

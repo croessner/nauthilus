@@ -154,6 +154,7 @@ func TestSafeRecorderIsNoopForNil(_ *testing.T) {
 
 func TestPrometheusRecorderUsesBoundedLabels(t *testing.T) {
 	registry := prometheus.NewRegistry()
+
 	recorder, err := NewPrometheusRecorder(registry)
 	if err != nil {
 		t.Fatalf("NewPrometheusRecorder returned error: %v", err)

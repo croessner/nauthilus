@@ -37,7 +37,7 @@ var flowStaleIDTotal = promauto.NewCounter(
 
 func reportTransitionViolation(transitionErr TransitionError) {
 	flowTransitionViolationTotal.WithLabelValues(
-		string(transitionErr.FlowType),
+		string(transitionErr.Type),
 		string(transitionErr.From),
 		string(transitionErr.To),
 		string(transitionErr.Action),

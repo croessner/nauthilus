@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package l1 provides l1 functionality.
 package l1
 
 import (
@@ -26,16 +27,16 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// L1Decision captures a local decision result.
-type L1Decision struct {
+// Decision captures a local decision result.
+type Decision struct {
 	Rule    string
 	Reason  string
 	Allowed bool
 	Blocked bool
 }
 
-// L1Reputation captures local reputation data for an IP.
-type L1Reputation struct {
+// Reputation captures local reputation data for an IP.
+type Reputation struct {
 	Positive int64
 	Negative int64
 }
@@ -65,92 +66,101 @@ func GetEngine() *Engine {
 }
 
 // Get retrieves a decision from the L1 cache for the given key.
-func (e *Engine) Get(ctx context.Context, key string) (L1Decision, bool) {
-	if e == nil || e.cache == nil {
-		return L1Decision{}, false
-	}
-
-	tr := monittrace.New("nauthilus/bruteforce/l1")
-	_, sp := tr.Start(ctx, "l1.get", attribute.String("key", key))
-	defer sp.End()
-
-	val, ok := e.cache.Get(key)
-	if !ok {
-		return L1Decision{}, false
-	}
-
-	dec, ok := val.(L1Decision)
-
-	sp.SetAttributes(
-		attribute.Bool("hit", ok),
-		attribute.Bool("blocked", dec.Blocked),
-		attribute.String("rule", dec.Rule),
-	)
-
-	return dec, ok
+func (e *Engine) Get(ctx context.Context, key string) (Decision, bool) {
+	return getCached(ctx, e, key, "l1.get", decisionCacheAttributes)
 }
 
 // Set stores a decision in the L1 cache for the given key with a specific TTL.
 // If ttl is 0, the cache's default TTL is used.
-func (e *Engine) Set(ctx context.Context, key string, decision L1Decision, ttl time.Duration) {
-	if e == nil || e.cache == nil {
-		return
-	}
-
-	tr := monittrace.New("nauthilus/bruteforce/l1")
-	_, sp := tr.Start(ctx, "l1.set",
-		attribute.String("key", key),
-		attribute.String("ttl", ttl.String()),
-		attribute.Bool("blocked", decision.Blocked),
-		attribute.String("rule", decision.Rule),
-	)
-	defer sp.End()
-
-	e.cache.Set(key, decision, ttl)
+func (e *Engine) Set(ctx context.Context, key string, decision Decision, ttl time.Duration) {
+	setCached(ctx, e, key, "l1.set", decision, ttl, decisionSetAttributes)
 }
 
 // GetReputation retrieves reputation data from the L1 cache for the given key.
-func (e *Engine) GetReputation(ctx context.Context, key string) (L1Reputation, bool) {
-	if e == nil || e.cache == nil {
-		return L1Reputation{}, false
-	}
-
-	tr := monittrace.New("nauthilus/bruteforce/l1")
-	_, sp := tr.Start(ctx, "l1.get_reputation", attribute.String("key", key))
-	defer sp.End()
-
-	val, ok := e.cache.Get(key)
-	if !ok {
-		return L1Reputation{}, false
-	}
-
-	rep, ok := val.(L1Reputation)
-
-	sp.SetAttributes(
-		attribute.Bool("hit", ok),
-		attribute.Int64("positive", rep.Positive),
-		attribute.Int64("negative", rep.Negative),
-	)
-
-	return rep, ok
+func (e *Engine) GetReputation(ctx context.Context, key string) (Reputation, bool) {
+	return getCached(ctx, e, key, "l1.get_reputation", reputationCacheAttributes)
 }
 
 // SetReputation stores reputation data in the L1 cache for the given key with a specific TTL.
-func (e *Engine) SetReputation(ctx context.Context, key string, reputation L1Reputation, ttl time.Duration) {
-	if e == nil || e.cache == nil {
+func (e *Engine) SetReputation(ctx context.Context, key string, reputation Reputation, ttl time.Duration) {
+	setCached(ctx, e, key, "l1.set_reputation", reputation, ttl, reputationSetAttributes)
+}
+
+// getCached reads a typed cache value and records common trace attributes.
+func getCached[T any](ctx context.Context, engine *Engine, key string, spanName string, attributes func(T, bool) []attribute.KeyValue) (T, bool) {
+	var zero T
+
+	if engine == nil || engine.cache == nil {
+		return zero, false
+	}
+
+	tr := monittrace.New("nauthilus/bruteforce/l1")
+
+	_, sp := tr.Start(ctx, spanName, attribute.String("key", key))
+	defer sp.End()
+
+	val, ok := engine.cache.Get(key)
+	if !ok {
+		return zero, false
+	}
+
+	typedValue, ok := val.(T)
+	sp.SetAttributes(attributes(typedValue, ok)...)
+
+	return typedValue, ok
+}
+
+// setCached stores a typed cache value and records common trace attributes.
+func setCached[T any](ctx context.Context, engine *Engine, key string, spanName string, value T, ttl time.Duration, attributes func(T) []attribute.KeyValue) {
+	if engine == nil || engine.cache == nil {
 		return
 	}
 
 	tr := monittrace.New("nauthilus/bruteforce/l1")
-	_, sp := tr.Start(ctx, "l1.set_reputation",
+
+	spanAttributes := append([]attribute.KeyValue{
 		attribute.String("key", key),
 		attribute.String("ttl", ttl.String()),
-		attribute.Int64("positive", reputation.Positive),
-		attribute.Int64("negative", reputation.Negative),
-	)
+	}, attributes(value)...)
+
+	_, sp := tr.Start(ctx, spanName, spanAttributes...)
 	defer sp.End()
 
-	e.cache.Set(key, reputation, ttl)
+	engine.cache.Set(key, value, ttl)
+}
+
+// decisionCacheAttributes formats trace attributes for cached decisions.
+func decisionCacheAttributes(decision Decision, hit bool) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.Bool("hit", hit),
+		attribute.Bool("blocked", decision.Blocked),
+		attribute.String("rule", decision.Rule),
+	}
+}
+
+// decisionSetAttributes formats trace attributes for stored decisions.
+func decisionSetAttributes(decision Decision) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.Bool("blocked", decision.Blocked),
+		attribute.String("rule", decision.Rule),
+	}
+}
+
+// reputationCacheAttributes formats trace attributes for cached reputation.
+func reputationCacheAttributes(reputation Reputation, hit bool) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.Bool("hit", hit),
+		attribute.Int64("positive", reputation.Positive),
+		attribute.Int64("negative", reputation.Negative),
+	}
+}
+
+// reputationSetAttributes formats trace attributes for stored reputation.
+func reputationSetAttributes(reputation Reputation) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.Int64("positive", reputation.Positive),
+		attribute.Int64("negative", reputation.Negative),
+	}
 }
 
 // KeyNetwork generates a key for a network-based L1 decision.

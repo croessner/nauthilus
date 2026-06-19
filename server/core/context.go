@@ -108,26 +108,32 @@ func NewAuthContext(opts ...AuthContextOption) AuthContext {
 	return c
 }
 
+// WithMethod provides the exported WithMethod function.
 func WithMethod(m string) AuthContextOption {
 	return func(c *AuthContext) { c.Method = m }
 }
 
+// WithUserAgent provides the exported WithUserAgent function.
 func WithUserAgent(ua string) AuthContextOption {
 	return func(c *AuthContext) { c.UserAgent = ua }
 }
 
+// WithClientIP provides the exported WithClientIP function.
 func WithClientIP(ip string) AuthContextOption {
 	return func(c *AuthContext) { c.ClientIP = ip }
 }
 
+// WithClientPort provides the exported WithClientPort function.
 func WithClientPort(p string) AuthContextOption {
 	return func(c *AuthContext) { c.ClientPort = p }
 }
 
+// WithClientHostname provides the exported WithClientHostname function.
 func WithClientHostname(h string) AuthContextOption {
 	return func(c *AuthContext) { c.ClientHostname = h }
 }
 
+// WithClientID provides the exported WithClientID function.
 func WithClientID(id string) AuthContextOption {
 	return func(c *AuthContext) { c.ClientID = id }
 }
@@ -137,82 +143,102 @@ func WithExternalSessionID(id string) AuthContextOption {
 	return func(c *AuthContext) { c.ExternalSessionID = normalizeExternalSessionID(id) }
 }
 
+// WithLocalIP provides the exported WithLocalIP function.
 func WithLocalIP(ip string) AuthContextOption {
 	return func(c *AuthContext) { c.LocalIP = ip }
 }
 
+// WithLocalPort provides the exported WithLocalPort function.
 func WithLocalPort(p string) AuthContextOption {
 	return func(c *AuthContext) { c.LocalPort = p }
 }
 
+// WithProtocol provides the exported WithProtocol function.
 func WithProtocol(proto string) AuthContextOption {
 	return func(c *AuthContext) { c.Protocol = proto }
 }
 
+// WithXSSL provides the exported WithXSSL function.
 func WithXSSL(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSL = v }
 }
 
+// WithXSSLSessionID provides the exported WithXSSLSessionID function.
 func WithXSSLSessionID(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLSessionID = v }
 }
 
+// WithXSSLClientVerify provides the exported WithXSSLClientVerify function.
 func WithXSSLClientVerify(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLClientVerify = v }
 }
 
+// WithXSSLClientDN provides the exported WithXSSLClientDN function.
 func WithXSSLClientDN(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLClientDN = v }
 }
 
+// WithXSSLClientCN provides the exported WithXSSLClientCN function.
 func WithXSSLClientCN(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLClientCN = v }
 }
 
+// WithXSSLIssuer provides the exported WithXSSLIssuer function.
 func WithXSSLIssuer(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLIssuer = v }
 }
 
+// WithXSSLClientNotBefore provides the exported WithXSSLClientNotBefore function.
 func WithXSSLClientNotBefore(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLClientNotBefore = v }
 }
 
+// WithXSSLClientNotAfter provides the exported WithXSSLClientNotAfter function.
 func WithXSSLClientNotAfter(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLClientNotAfter = v }
 }
 
+// WithXSSLSubjectDN provides the exported WithXSSLSubjectDN function.
 func WithXSSLSubjectDN(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLSubjectDN = v }
 }
 
+// WithXSSLIssuerDN provides the exported WithXSSLIssuerDN function.
 func WithXSSLIssuerDN(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLIssuerDN = v }
 }
 
+// WithXSSLClientSubjectDN provides the exported WithXSSLClientSubjectDN function.
 func WithXSSLClientSubjectDN(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLClientSubjectDN = v }
 }
 
+// WithXSSLClientIssuerDN provides the exported WithXSSLClientIssuerDN function.
 func WithXSSLClientIssuerDN(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLClientIssuerDN = v }
 }
 
+// WithXSSLProtocol provides the exported WithXSSLProtocol function.
 func WithXSSLProtocol(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLProtocol = v }
 }
 
+// WithXSSLCipher provides the exported WithXSSLCipher function.
 func WithXSSLCipher(v string) AuthContextOption {
 	return func(c *AuthContext) { c.XSSLCipher = v }
 }
 
+// WithSSLSerial provides the exported WithSSLSerial function.
 func WithSSLSerial(v string) AuthContextOption {
 	return func(c *AuthContext) { c.SSLSerial = v }
 }
 
+// WithSSLFingerprint provides the exported WithSSLFingerprint function.
 func WithSSLFingerprint(v string) AuthContextOption {
 	return func(c *AuthContext) { c.SSLFingerprint = v }
 }
 
+// WithOIDCCID provides the exported WithOIDCCID function.
 func WithOIDCCID(v string) AuthContextOption {
 	return func(c *AuthContext) { c.OIDCCID = v }
 }

@@ -92,9 +92,14 @@ func RegisterBruteForceService(b BruteForceService) { regBF = b }
 
 // Exported getters for tests and callers that need direct access.
 
+// GetBruteForceService provides the exported GetBruteForceService function.
 func GetBruteForceService() BruteForceService { return getBruteForceService() }
-func GetCacheService() CacheService           { return getCacheService() }
-func GetPasswordVerifier() PasswordVerifier   { return getPasswordVerifier() }
+
+// GetCacheService provides the exported GetCacheService function.
+func GetCacheService() CacheService { return getCacheService() }
+
+// GetPasswordVerifier provides the exported GetPasswordVerifier function.
+func GetPasswordVerifier() PasswordVerifier { return getPasswordVerifier() }
 
 // GetEnvironmentEngine returns the registered Lua environment source evaluator.
 func GetEnvironmentEngine() EnvironmentEngine { return getEnvironmentEngine() }

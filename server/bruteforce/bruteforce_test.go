@@ -60,6 +60,7 @@ func initTestConfig() config.File {
 	backend := mustBackend(definitions.BackendCacheName)
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+
 	testFile := &config.FileSettings{
 		Server: &config.ServerSection{
 			RuntimeModules: []*config.RuntimeModule{runtimeModule},
@@ -82,16 +83,20 @@ func initTestConfig() config.File {
 	util.SetDefaultConfigFile(testFile)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
+
 	return testFile
 }
 
 func setupSubtest(cfg config.File) (redismock.ClientMock, tolerate.Tolerate) {
 	rediscli.ClearScriptCache()
 	l1.GetEngine().Clear()
+
 	db, mock := redismock.NewClientMock()
 	rediscli.NewTestClient(db)
+
 	tol := tolerate.NewTolerateWithDeps(cfg, log.GetLogger(), rediscli.GetClient(), 0)
 	tolerate.SetTolerate(tol)
+
 	return mock, tol
 }
 
@@ -105,13 +110,17 @@ func mockNoisy(mock redismock.ClientMock) {
 
 func TestBruteForceScenarios(t *testing.T) {
 	cfg := initTestConfig()
-	const attackerIP = "1.2.3.4"
-	const accountName = "user1"
-	const password = "password123"
+
+	const (
+		attackerIP  = "1.2.3.4"
+		accountName = "user1"
+		password    = "password123"
+	)
 
 	t.Run("Scenario 1: Known user, same password (Brute force triggered)", func(t *testing.T) {
 		mock, tol := setupSubtest(cfg)
 		mockNoisy(mock)
+
 		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen1", attackerIP, bruteforce.BucketManagerDeps{
 			Cfg:      cfg,
 			Logger:   log.GetLogger(),
@@ -173,6 +182,7 @@ func TestBruteForceScenarios(t *testing.T) {
 	t.Run("Scenario 2: Known user, different passwords (Brute force triggered)", func(t *testing.T) {
 		mock, tol := setupSubtest(cfg)
 		mockNoisy(mock)
+
 		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen2", attackerIP, bruteforce.BucketManagerDeps{
 			Cfg:      cfg,
 			Logger:   log.GetLogger(),
@@ -217,6 +227,7 @@ func TestBruteForceScenarios(t *testing.T) {
 	t.Run("Scenario 2b: Ban write failure does not trigger", func(t *testing.T) {
 		mock, tol := setupSubtest(cfg)
 		mockNoisy(mock)
+
 		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen2b", attackerIP, bruteforce.BucketManagerDeps{
 			Cfg:      cfg,
 			Logger:   log.GetLogger(),
@@ -249,6 +260,7 @@ func TestBruteForceScenarios(t *testing.T) {
 	t.Run("Scenario 3: Different users, same password (Brute force)", func(t *testing.T) {
 		mock, tol := setupSubtest(cfg)
 		mockNoisy(mock)
+
 		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen3", attackerIP, bruteforce.BucketManagerDeps{
 			Cfg:      cfg,
 			Logger:   log.GetLogger(),
@@ -284,6 +296,7 @@ func TestBruteForceScenarios(t *testing.T) {
 	t.Run("Scenario 4: Different users, different passwords (Brute force)", func(t *testing.T) {
 		mock, tol := setupSubtest(cfg)
 		mockNoisy(mock)
+
 		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen4", attackerIP, bruteforce.BucketManagerDeps{
 			Cfg:      cfg,
 			Logger:   log.GetLogger(),
@@ -380,6 +393,7 @@ func TestProcessPWHistIndexesNewAffectedAccount(t *testing.T) {
 
 func TestBruteForceLogic(t *testing.T) {
 	cfg := initTestConfig()
+
 	const testIP = "192.168.1.1"
 
 	t.Run("IP already identified as brute forcer", func(t *testing.T) {
@@ -396,7 +410,9 @@ func TestBruteForceLogic(t *testing.T) {
 		mock.ExpectExists(banKey).SetVal(1)
 
 		network := &net.IPNet{}
+
 		var message string
+
 		withError, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(cfg.GetBruteForceRules(), &network, &message)
 
 		assert.False(t, withError)
@@ -426,10 +442,12 @@ func TestBruteForceLogic(t *testing.T) {
 			SetVal([]any{"15", int64(1), "4"})
 
 		var message string
+
 		withError, ruleTriggered, _ := bm.CheckBucketOverLimit(rules, &message)
 
 		assert.False(t, withError)
 		assert.True(t, ruleTriggered)
+
 		facts := bm.GetBucketPolicyFacts()
 		if assert.Len(t, facts, 1) {
 			assert.True(t, facts[0].Matched)
@@ -439,6 +457,7 @@ func TestBruteForceLogic(t *testing.T) {
 			assert.True(t, facts[0].OverLimit)
 			assert.True(t, facts[0].Repeating)
 		}
+
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }

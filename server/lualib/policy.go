@@ -87,6 +87,7 @@ func (e *PolicyEmitter) emitAttribute(L *lua.LState) int {
 	}
 
 	table := L.CheckTable(1)
+
 	id := strings.TrimSpace(luaPolicyStringField(table, "id"))
 	if id == "" {
 		L.ArgError(1, "id must be a non-empty string")
@@ -393,13 +394,16 @@ func luaPolicyDetails(
 	}
 
 	details := make(map[string]policycollection.DetailValue)
+
 	var parseErr error
+
 	table.ForEach(func(key lua.LValue, detailValue lua.LValue) {
 		if parseErr != nil {
 			return
 		}
 
 		name := strings.TrimSpace(key.String())
+
 		definition, ok := definitions[name]
 		if !ok {
 			parseErr = fmt.Errorf("policy attribute %q detail %q is not registered", id, name)
@@ -426,6 +430,7 @@ func luaPolicyDetails(
 			Purpose:     report.DetailPurpose(definition.Purpose),
 		}
 	})
+
 	if parseErr != nil {
 		return nil, parseErr
 	}

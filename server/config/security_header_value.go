@@ -270,12 +270,14 @@ func NewStrictTransportSecurityValueFromObject(
 	}
 
 	var clonedIncludeSubDomains *bool
+
 	if includeSubDomains != nil {
 		value := *includeSubDomains
 		clonedIncludeSubDomains = &value
 	}
 
 	var clonedPreload *bool
+
 	if preload != nil {
 		value := *preload
 		clonedPreload = &value
@@ -367,85 +369,66 @@ func (s StrictTransportSecurityValue) String() string {
 
 // processContentSecurityPolicyValue decodes CSP values from string, list, or object input.
 func processContentSecurityPolicyValue(input any) (any, error) {
-	switch data := input.(type) {
-	case string:
-		return NewContentSecurityPolicyValueFromString(data), nil
-	case []string:
-		return NewContentSecurityPolicyValueFromPartials(data), nil
-	case []any:
-		partials, err := stringSliceFromAnySlice(data, securityHeadersCSPKey)
-		if err != nil {
-			return nil, err
-		}
-
-		return NewContentSecurityPolicyValueFromPartials(partials), nil
-	case map[string]any:
-		return parseContentSecurityPolicyObject(data)
-	case map[any]any:
-		converted, err := mapAnyToStringAny(data, securityHeadersCSPKey)
-		if err != nil {
-			return nil, err
-		}
-
-		return parseContentSecurityPolicyObject(converted)
-	default:
-		return nil, fmt.Errorf("%s must be a string, list of strings, or object, got %T", securityHeadersCSPKey, data)
-	}
+	return processSecurityHeaderValue(input, securityHeaderValueDecoder[ContentSecurityPolicyValue]{
+		key:          securityHeadersCSPKey,
+		fromString:   NewContentSecurityPolicyValueFromString,
+		fromPartials: NewContentSecurityPolicyValueFromPartials,
+		fromObject:   parseContentSecurityPolicyObject,
+	})
 }
 
 // processPermissionsPolicyValue decodes Permissions-Policy values from string, list, or object input.
 func processPermissionsPolicyValue(input any) (any, error) {
-	switch data := input.(type) {
-	case string:
-		return NewPermissionsPolicyValueFromString(data), nil
-	case []string:
-		return NewPermissionsPolicyValueFromPartials(data), nil
-	case []any:
-		partials, err := stringSliceFromAnySlice(data, securityHeadersPermissionsKey)
-		if err != nil {
-			return nil, err
-		}
-
-		return NewPermissionsPolicyValueFromPartials(partials), nil
-	case map[string]any:
-		return parsePermissionsPolicyObject(data)
-	case map[any]any:
-		converted, err := mapAnyToStringAny(data, securityHeadersPermissionsKey)
-		if err != nil {
-			return nil, err
-		}
-
-		return parsePermissionsPolicyObject(converted)
-	default:
-		return nil, fmt.Errorf("%s must be a string, list of strings, or object, got %T", securityHeadersPermissionsKey, data)
-	}
+	return processSecurityHeaderValue(input, securityHeaderValueDecoder[PermissionsPolicyValue]{
+		key:          securityHeadersPermissionsKey,
+		fromString:   NewPermissionsPolicyValueFromString,
+		fromPartials: NewPermissionsPolicyValueFromPartials,
+		fromObject:   parsePermissionsPolicyObject,
+	})
 }
 
 // processStrictTransportSecurityValue decodes HSTS values from string, list, or object input.
 func processStrictTransportSecurityValue(input any) (any, error) {
+	return processSecurityHeaderValue(input, securityHeaderValueDecoder[StrictTransportSecurityValue]{
+		key:          securityHeadersSTSKey,
+		fromString:   NewStrictTransportSecurityValueFromString,
+		fromPartials: NewStrictTransportSecurityValueFromPartials,
+		fromObject:   parseStrictTransportSecurityObject,
+	})
+}
+
+type securityHeaderValueDecoder[T any] struct {
+	key          string
+	fromString   func(string) T
+	fromPartials func([]string) T
+	fromObject   func(map[string]any) (T, error)
+}
+
+// processSecurityHeaderValue decodes shared security-header input shapes.
+func processSecurityHeaderValue[T any](input any, decoder securityHeaderValueDecoder[T]) (any, error) {
 	switch data := input.(type) {
 	case string:
-		return NewStrictTransportSecurityValueFromString(data), nil
+		return decoder.fromString(data), nil
 	case []string:
-		return NewStrictTransportSecurityValueFromPartials(data), nil
+		return decoder.fromPartials(data), nil
 	case []any:
-		partials, err := stringSliceFromAnySlice(data, securityHeadersSTSKey)
+		partials, err := stringSliceFromAnySlice(data, decoder.key)
 		if err != nil {
 			return nil, err
 		}
 
-		return NewStrictTransportSecurityValueFromPartials(partials), nil
+		return decoder.fromPartials(partials), nil
 	case map[string]any:
-		return parseStrictTransportSecurityObject(data)
+		return decoder.fromObject(data)
 	case map[any]any:
-		converted, err := mapAnyToStringAny(data, securityHeadersSTSKey)
+		converted, err := mapAnyToStringAny(data, decoder.key)
 		if err != nil {
 			return nil, err
 		}
 
-		return parseStrictTransportSecurityObject(converted)
+		return decoder.fromObject(converted)
 	default:
-		return nil, fmt.Errorf("%s must be a string, list of strings, or object, got %T", securityHeadersSTSKey, data)
+		return nil, fmt.Errorf("%s must be a string, list of strings, or object, got %T", decoder.key, data)
 	}
 }
 
@@ -569,7 +552,7 @@ func parseStrictTransportSecurityObject(input map[string]any) (StrictTransportSe
 			}
 
 			includeSubDomains = &parsedValue
-		case "preload":
+		case strictTransportSecurityPreload:
 			parsedValue, ok := value.(bool)
 			if !ok {
 				return StrictTransportSecurityValue{}, fmt.Errorf("%s.preload must be a bool, got %T", securityHeadersSTSKey, value)

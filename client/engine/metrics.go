@@ -27,6 +27,7 @@ type MetricsPoller struct {
 	regexes  []*regexp.Regexp
 }
 
+// NewMetricsPoller provides the exported NewMetricsPoller function.
 func NewMetricsPoller(client *http.Client, endpoint string, header http.Header, interval time.Duration) *MetricsPoller {
 	if interval <= 0 {
 		interval = 5 * time.Second
@@ -54,6 +55,7 @@ func NewMetricsPoller(client *http.Client, endpoint string, header http.Header, 
 	return p
 }
 
+// Run provides the exported Run method.
 func (p *MetricsPoller) Run(ctx context.Context) {
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
@@ -67,16 +69,19 @@ func (p *MetricsPoller) Run(ctx context.Context) {
 			if line == "" {
 				line = "[metrics: n/a]"
 			}
+
 			p.line.Store(line)
 		}
 	}
 }
 
+// GetLine provides the exported GetLine method.
 func (p *MetricsPoller) GetLine() string {
 	val := p.line.Load()
 	if s, ok := val.(string); ok {
 		return s
 	}
+
 	return ""
 }
 
@@ -95,26 +100,30 @@ func (p *MetricsPoller) fetchAndFormat(ctx context.Context) string {
 			req.Header.Add(k, vv)
 		}
 	}
+
 	req.Header.Set("Accept", "text/plain; version=0.0.4")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return ""
 	}
 
 	depthByBackend := map[string]float64{}
+
 	var waitSum, waitCount float64
+
 	droppedByBackend := map[string]float64{}
 	vmInUseByKey := map[string]float64{}
 	replacedByKey := map[string]float64{}
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" || line[0] == '#' {
@@ -122,12 +131,14 @@ func (p *MetricsPoller) fetchAndFormat(ctx context.Context) string {
 		}
 
 		matched := false
+
 		for _, re := range p.regexes {
 			if re.MatchString(line) {
 				matched = true
 				break
 			}
 		}
+
 		if !matched {
 			continue
 		}
@@ -138,6 +149,7 @@ func (p *MetricsPoller) fetchAndFormat(ctx context.Context) string {
 		}
 
 		head := parts[0]
+
 		val, err := strconv.ParseFloat(parts[1], 64)
 		if err != nil {
 			continue
@@ -145,8 +157,10 @@ func (p *MetricsPoller) fetchAndFormat(ctx context.Context) string {
 
 		name := head
 		labels := map[string]string{}
+
 		if i := strings.IndexByte(head, '{'); i >= 0 {
 			name = head[:i]
+
 			j := strings.LastIndexByte(head, '}')
 			if j > i {
 				labels = parseLabels(head[i : j+1])
@@ -184,12 +198,16 @@ func (p *MetricsPoller) fetchAndFormat(ctx context.Context) string {
 			if v <= 0 {
 				continue
 			}
+
 			a = append(a, kv{k, v})
 		}
+
 		sort.Slice(a, func(i, j int) bool { return a[i].v > a[j].v })
+
 		if n > 0 && len(a) > n {
 			a = a[:n]
 		}
+
 		return a
 	}
 
@@ -212,25 +230,30 @@ func (p *MetricsPoller) fetchAndFormat(ctx context.Context) string {
 	}
 
 	droppedDeltaTotal := 0.0
+
 	for b, cur := range droppedByBackend {
 		prev := p.lastDrop[b]
 		if cur >= prev {
 			droppedDeltaTotal += cur - prev
 		}
+
 		p.lastDrop[b] = cur
 	}
 
 	replacedDeltaTotal := 0.0
+
 	for k, cur := range replacedByKey {
 		prev := p.lastRepl[k]
 		if cur >= prev {
 			replacedDeltaTotal += cur - prev
 		}
+
 		p.lastRepl[k] = cur
 	}
 
 	var sb strings.Builder
 	sb.WriteString("[lua qDepth: ")
+
 	if len(topsDepth) == 0 {
 		sb.WriteString("-")
 	} else {
@@ -238,17 +261,18 @@ func (p *MetricsPoller) fetchAndFormat(ctx context.Context) string {
 			if i > 0 {
 				sb.WriteString(",")
 			}
-			sb.WriteString(fmt.Sprintf("%s=%.0f", kv.k, kv.v))
+
+			fmt.Fprintf(&sb, "%s=%.0f", kv.k, kv.v)
 		}
 	}
 
-	sb.WriteString(fmt.Sprintf(" | total=%.0f] ", depthTotal))
+	fmt.Fprintf(&sb, " | total=%.0f] ", depthTotal)
 	sb.WriteString("[qWait(avg)=")
-	sb.WriteString(fmt.Sprintf("%.1fms] ", avgWaitMs))
+	fmt.Fprintf(&sb, "%.1fms] ", avgWaitMs)
 	sb.WriteString("[dropped(\u0394)=")
-	sb.WriteString(fmt.Sprintf("%.0f] ", droppedDeltaTotal))
+	fmt.Fprintf(&sb, "%.0f] ", droppedDeltaTotal)
 	sb.WriteString("[vmRepl(\u0394)=")
-	sb.WriteString(fmt.Sprintf("%.0f] ", replacedDeltaTotal))
+	fmt.Fprintf(&sb, "%.0f] ", replacedDeltaTotal)
 	sb.WriteString("[vmInUse: ")
 
 	if len(topsVM) == 0 {
@@ -258,10 +282,12 @@ func (p *MetricsPoller) fetchAndFormat(ctx context.Context) string {
 			if i > 0 {
 				sb.WriteString(",")
 			}
-			sb.WriteString(fmt.Sprintf("%s=%.0f", kv.k, kv.v))
+
+			fmt.Fprintf(&sb, "%s=%.0f", kv.k, kv.v)
 		}
 	}
-	sb.WriteString(fmt.Sprintf(" | total=%.0f]", vmInUseTotal))
+
+	fmt.Fprintf(&sb, " | total=%.0f]", vmInUseTotal)
 
 	return sb.String()
 }
@@ -278,24 +304,29 @@ func deriveMetricsURL(apiURL string) string {
 	} else {
 		u.Path = "/metrics"
 	}
+
 	return u.String()
 }
 
 func parseLabels(s string) map[string]string {
 	m := make(map[string]string)
+
 	s = strings.Trim(s, "{}")
 	if s == "" {
 		return m
 	}
 
-	var key, val string
-	var inVal bool
-	var escaped bool
+	var (
+		key, val string
+		inVal    bool
+		escaped  bool
+	)
 
 	add := func() {
 		if key != "" {
 			m[key] = val
 		}
+
 		key, val = "", ""
 		inVal, escaped = false, false
 	}
@@ -304,30 +335,39 @@ func parseLabels(s string) map[string]string {
 		if escaped {
 			val += string(r)
 			escaped = false
+
 			continue
 		}
+
 		if r == '\\' {
 			escaped = true
 			continue
 		}
+
 		if r == '"' {
 			inVal = !inVal
 			continue
 		}
+
 		if !inVal {
 			if r == ',' {
 				add()
 				continue
 			}
+
 			if r == '=' {
 				continue
 			}
+
 			if unicode.IsSpace(r) {
 				continue
 			}
+
 			key += string(r)
+
 			continue
 		}
+
 		val += string(r)
 	}
 

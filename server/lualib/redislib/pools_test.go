@@ -29,6 +29,7 @@ func TestRegisterRedisConnection(t *testing.T) {
 
 	L := lua.NewState()
 	defer L.Close()
+
 	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), nil))
 
 	tests := []struct {
@@ -92,6 +93,7 @@ func TestRegisterRedisConnection(t *testing.T) {
 				if gotResult.Type() != tt.want[0].Type() || gotResult.String() != tt.want[0].String() {
 					t.Errorf("register_redis_pool() result = %v, want %v", gotResult, tt.want[0])
 				}
+
 				if len(tt.want) > 1 {
 					if gotErr.Type() != tt.want[1].Type() || gotErr.String() != tt.want[1].String() {
 						t.Errorf("register_redis_pool() error = %v, want %v", gotErr, tt.want[1])

@@ -252,7 +252,7 @@ func RegisterRedisPool(L *lua.LState) int {
 		}
 
 		redisPools[name] = newRedisClient(conf)
-	case "sentinel", "sentinel_replica":
+	case redisLuaPoolModeSentinel, redisLuaPoolModeSentinelRO:
 		if _, okay := redisFailoverPools[failoverPool{name: name}]; okay {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(errMsg))
@@ -261,7 +261,7 @@ func RegisterRedisPool(L *lua.LState) int {
 		}
 
 		readOnly := false
-		if mode == "sentinel_replica" {
+		if mode == redisLuaPoolModeSentinelRO {
 			readOnly = true
 		}
 
@@ -300,7 +300,7 @@ func GetRedisConnection(L *lua.LState) int {
 	name := L.CheckString(1)
 
 	// Special case for "default" pool - use the system-wide client
-	if name == "default" {
+	if name == redisLuaPoolDefault {
 		client = getDefaultClient().GetWriteHandle()
 	} else if client, okay = redisPools[name]; !okay {
 		if client, okay = redisFailoverPools[failoverPool{name: name}]; !okay {

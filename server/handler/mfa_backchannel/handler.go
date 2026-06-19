@@ -39,6 +39,7 @@ func New(deps *handlerdeps.Deps) *Handler {
 	return &Handler{deps: deps}
 }
 
+// Register provides the exported Register method.
 func (h *Handler) Register(router gin.IRouter) {
 	group := router.Group("/mfa-backchannel")
 
@@ -141,6 +142,7 @@ func parseCredential(raw string) (*mfa.PersistentCredential, error) {
 	return &credential, nil
 }
 
+// AddTOTP provides the exported AddTOTP method.
 func (h *Handler) AddTOTP(ctx *gin.Context) {
 	executeMFAOp(h, ctx,
 		func(p totpRequest) string {
@@ -189,37 +191,37 @@ func executeMFAOp[T mfaPayload](
 	var payload T
 
 	if err := ctx.ShouldBindJSON(&payload); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
+		ctx.JSON(http.StatusBadRequest, gin.H{mfaBackchannelResponseKeyError: mfaBackchannelInvalidJSON})
 
 		return
 	}
 
 	if msg := validate(payload); msg != "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": msg})
+		ctx.JSON(http.StatusBadRequest, gin.H{mfaBackchannelResponseKeyError: msg})
 
 		return
 	}
 
 	mgr, authState, err := h.resolveBackend(ctx, payload.getBackend(), payload.getBackendName(), payload.getUsername(), payload.getExternalSessionID())
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{mfaBackchannelResponseKeyError: err.Error()})
 
 		return
 	}
 
 	if err := operate(mgr, authState, payload); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{mfaBackchannelResponseKeyError: err.Error()})
 
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+	ctx.JSON(http.StatusOK, gin.H{mfaBackchannelResponseKeyStatus: mfaBackchannelStatusOK})
 }
 
 // requireUsername validates that the username field is present.
 func requireUsername[T mfaPayload](p T) string {
 	if p.getUsername() == "" {
-		return "username is required"
+		return mfaBackchannelUsernameRequired
 	}
 
 	return ""
@@ -237,7 +239,7 @@ func executeWebAuthnOp(
 		func(mgr core.BackendManager, auth *core.AuthState, p webauthnRequest) error {
 			credential, err := parseCredential(p.Credential)
 			if err != nil {
-				ctx.JSON(http.StatusBadRequest, gin.H{"error": "credential must be valid JSON"})
+				ctx.JSON(http.StatusBadRequest, gin.H{mfaBackchannelResponseKeyError: mfaBackchannelCredentialJSONRequired})
 
 				return nil
 			}
@@ -247,6 +249,7 @@ func executeWebAuthnOp(
 	)
 }
 
+// DeleteTOTP provides the exported DeleteTOTP method.
 func (h *Handler) DeleteTOTP(ctx *gin.Context) {
 	executeMFAOp(h, ctx,
 		requireUsername[totpRequest],
@@ -256,6 +259,7 @@ func (h *Handler) DeleteTOTP(ctx *gin.Context) {
 	)
 }
 
+// AddRecoveryCodes provides the exported AddRecoveryCodes method.
 func (h *Handler) AddRecoveryCodes(ctx *gin.Context) {
 	executeMFAOp(h, ctx,
 		func(p recoveryCodesRequest) string {
@@ -271,6 +275,7 @@ func (h *Handler) AddRecoveryCodes(ctx *gin.Context) {
 	)
 }
 
+// DeleteRecoveryCodes provides the exported DeleteRecoveryCodes method.
 func (h *Handler) DeleteRecoveryCodes(ctx *gin.Context) {
 	executeMFAOp(h, ctx,
 		requireUsername[recoveryCodesRequest],
@@ -280,24 +285,25 @@ func (h *Handler) DeleteRecoveryCodes(ctx *gin.Context) {
 	)
 }
 
+// GetWebAuthnCredential provides the exported GetWebAuthnCredential method.
 func (h *Handler) GetWebAuthnCredential(ctx *gin.Context) {
 	username := ctx.Query("username")
 	if username == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "username is required"})
+		ctx.JSON(http.StatusBadRequest, gin.H{mfaBackchannelResponseKeyError: mfaBackchannelUsernameRequired})
 
 		return
 	}
 
 	mgr, authState, err := h.resolveBackend(ctx, ctx.Query("backend"), ctx.Query("backend_name"), username, ctx.Query("external_session_id"))
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{mfaBackchannelResponseKeyError: err.Error()})
 
 		return
 	}
 
 	credentials, err := mgr.GetWebAuthnCredentials(authState)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{mfaBackchannelResponseKeyError: err.Error()})
 
 		return
 	}
@@ -306,7 +312,7 @@ func (h *Handler) GetWebAuthnCredential(ctx *gin.Context) {
 	for _, credential := range credentials {
 		credBytes, err := json.Marshal(credential)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			ctx.JSON(http.StatusInternalServerError, gin.H{mfaBackchannelResponseKeyError: err.Error()})
 
 			return
 		}
@@ -317,11 +323,12 @@ func (h *Handler) GetWebAuthnCredential(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"credentials": encoded})
 }
 
+// SaveWebAuthnCredential provides the exported SaveWebAuthnCredential method.
 func (h *Handler) SaveWebAuthnCredential(ctx *gin.Context) {
 	executeWebAuthnOp(h, ctx,
 		func(p webauthnRequest) string {
 			if p.Username == "" || p.Credential == "" {
-				return "username and credential are required"
+				return mfaBackchannelUsernameCredentialRequired
 			}
 
 			return ""
@@ -332,55 +339,57 @@ func (h *Handler) SaveWebAuthnCredential(ctx *gin.Context) {
 	)
 }
 
+// UpdateWebAuthnCredential provides the exported UpdateWebAuthnCredential method.
 func (h *Handler) UpdateWebAuthnCredential(ctx *gin.Context) {
 	var payload webauthnRequest
 	if err := ctx.ShouldBindJSON(&payload); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
+		ctx.JSON(http.StatusBadRequest, gin.H{mfaBackchannelResponseKeyError: mfaBackchannelInvalidJSON})
 
 		return
 	}
 
 	if payload.Username == "" || payload.Credential == "" || payload.OldCredential == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "username, credential, and old_credential are required"})
+		ctx.JSON(http.StatusBadRequest, gin.H{mfaBackchannelResponseKeyError: "username, credential, and old_credential are required"})
 
 		return
 	}
 
 	mgr, authState, err := h.resolveBackend(ctx, payload.Backend, payload.BackendName, payload.Username, payload.ExternalSessionID)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{mfaBackchannelResponseKeyError: err.Error()})
 
 		return
 	}
 
 	credential, err := parseCredential(payload.Credential)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "credential must be valid JSON"})
+		ctx.JSON(http.StatusBadRequest, gin.H{mfaBackchannelResponseKeyError: mfaBackchannelCredentialJSONRequired})
 
 		return
 	}
 
 	oldCredential, err := parseCredential(payload.OldCredential)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "old_credential must be valid JSON"})
+		ctx.JSON(http.StatusBadRequest, gin.H{mfaBackchannelResponseKeyError: "old_credential must be valid JSON"})
 
 		return
 	}
 
 	if err := mgr.UpdateWebAuthnCredential(authState, oldCredential, credential); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{mfaBackchannelResponseKeyError: err.Error()})
 
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+	ctx.JSON(http.StatusOK, gin.H{mfaBackchannelResponseKeyStatus: mfaBackchannelStatusOK})
 }
 
+// DeleteWebAuthnCredential provides the exported DeleteWebAuthnCredential method.
 func (h *Handler) DeleteWebAuthnCredential(ctx *gin.Context) {
 	executeWebAuthnOp(h, ctx,
 		func(p webauthnRequest) string {
 			if p.Username == "" || p.Credential == "" {
-				return "username and credential are required"
+				return mfaBackchannelUsernameCredentialRequired
 			}
 
 			return ""

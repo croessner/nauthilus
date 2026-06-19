@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package deps provides deps functionality.
 package deps
 
 import (
@@ -46,6 +47,7 @@ func NewDefaultServices(deps *Deps) *DefaultServices {
 	return &DefaultServices{deps: deps}
 }
 
+// Auth provides the exported Auth method.
 func (d *Deps) Auth() core.AuthDeps {
 	return core.AuthDeps{
 		Cfg:          d.Cfg,
@@ -57,6 +59,7 @@ func (d *Deps) Auth() core.AuthDeps {
 	}
 }
 
+// AuthPtr provides the exported AuthPtr method.
 func (d *Deps) AuthPtr() *core.AuthDeps {
 	auth := d.Auth()
 
@@ -77,6 +80,6 @@ type Deps struct {
 	Svc          Services
 	LangManager  language.Manager
 	TokenFlusher core.TokenFlusher
-	// MessageResolver resolves policy-selected status messages for IdP UI rendering.
+	// MessageResolver resolves policy-selected status messages for IDP UI rendering.
 	MessageResolver localization.MessageResolver
 }

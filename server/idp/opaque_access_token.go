@@ -69,9 +69,9 @@ func (t *OpaqueAccessToken) Validate(ctx context.Context, tokenString string) (j
 // ClaimsFromSession builds access-token claims from an already validated opaque-token session.
 func (t *OpaqueAccessToken) ClaimsFromSession(session *OIDCSession) jwt.MapClaims {
 	claims := jwt.MapClaims{
-		"sub":   session.UserID,
-		"aud":   session.ClientID,
-		"scope": strings.Join(session.Scopes, " "),
+		oidcClaimSubject:  session.UserID,
+		oidcClaimAudience: session.ClientID,
+		oidcClaimScope:    strings.Join(session.Scopes, " "),
 	}
 
 	maps.Copy(claims, session.AccessTokenClaims)
@@ -79,7 +79,7 @@ func (t *OpaqueAccessToken) ClaimsFromSession(session *OIDCSession) jwt.MapClaim
 	return claims
 }
 
-// ValidateForUserInfo verifies an opaque access token and returns IdTokenClaims (for the UserInfo endpoint).
+// ValidateForUserInfo verifies an opaque access token and returns IDTokenClaims (for the UserInfo endpoint).
 func (t *OpaqueAccessToken) ValidateForUserInfo(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
 	session, err := t.storage.GetAccessToken(ctx, tokenString)
 	if err != nil {
@@ -92,10 +92,10 @@ func (t *OpaqueAccessToken) ValidateForUserInfo(ctx context.Context, tokenString
 // UserInfoClaimsFromSession builds UserInfo claims from an already validated opaque-token session.
 func (t *OpaqueAccessToken) UserInfoClaimsFromSession(session *OIDCSession) jwt.MapClaims {
 	claims := jwt.MapClaims{
-		"sub": session.UserID,
+		oidcClaimSubject: session.UserID,
 	}
 
-	maps.Copy(claims, session.IdTokenClaims)
+	maps.Copy(claims, session.IDTokenClaims)
 
 	return claims
 }

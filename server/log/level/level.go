@@ -175,6 +175,7 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 	// Search only for "msg" to avoid full iteration if possible
 	// and collect attributes directly.
 	pc := uintptr(0)
+
 	if s.addSource {
 		if p, _, _, ok := runtime.Caller(2); ok {
 			pc = p

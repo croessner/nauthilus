@@ -25,11 +25,11 @@ import (
 
 // IdentityAttributeRequest describes backend identity data needed by edge-side claim materialization.
 type IdentityAttributeRequest struct {
-	Names                   []string
-	IncludeStandardIdentity bool
-	IncludeGroups           bool
-	IncludeGroupDNS         bool
-	ReportMissing           bool
+	Names                          []string
+	IncludeStandardIdentity        bool
+	IncludeGroups                  bool
+	IncludeGroupDistinguishedNames bool
+	ReportMissing                  bool
 }
 
 // Clone returns a detached copy of the request.
@@ -39,11 +39,11 @@ func (r *IdentityAttributeRequest) Clone() *IdentityAttributeRequest {
 	}
 
 	return &IdentityAttributeRequest{
-		Names:                   append([]string(nil), r.Names...),
-		IncludeStandardIdentity: r.IncludeStandardIdentity,
-		IncludeGroups:           r.IncludeGroups,
-		IncludeGroupDNS:         r.IncludeGroupDNS,
-		ReportMissing:           r.ReportMissing,
+		Names:                          append([]string(nil), r.Names...),
+		IncludeStandardIdentity:        r.IncludeStandardIdentity,
+		IncludeGroups:                  r.IncludeGroups,
+		IncludeGroupDistinguishedNames: r.IncludeGroupDistinguishedNames,
+		ReportMissing:                  r.ReportMissing,
 	}
 }
 
@@ -60,7 +60,7 @@ func NewOIDCIdentityAttributeRequest(
 
 	collector := newIdentityAttributeCollector(request)
 	scopeManager := NewScopeManager(requestedScopes, customScopes)
-	collector.collectOIDCMappings(client.IdTokenClaims.GetMappings(), scopeManager)
+	collector.collectOIDCMappings(client.IDTokenClaims.GetMappings(), scopeManager)
 	collector.collectOIDCMappings(client.AccessTokenClaims.GetMappings(), scopeManager)
 	collector.finalize()
 
@@ -125,8 +125,8 @@ func (c *identityAttributeCollector) addSource(name string) {
 	switch name {
 	case definitions.ClaimGroups:
 		c.request.IncludeGroups = true
-	case definitions.LuaBackendResultGroupDNs:
-		c.request.IncludeGroupDNS = true
+	case definitions.LuaBackendResultGroupDistinguishedNames:
+		c.request.IncludeGroupDistinguishedNames = true
 	default:
 		c.names[name] = struct{}{}
 	}

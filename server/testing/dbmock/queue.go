@@ -110,12 +110,14 @@ func (q *ExpectationQueue) MatchNext(call Call) (Expectation, error) {
 
 		expected := describeExpectation(q.items[0])
 		q.mu.Unlock()
+
 		return nil, fmt.Errorf("%w: expected=%s actual=%s reason=no unordered expectation matched", ErrUnexpectedCall, expected, describeCall(call))
 	}
 
 	exp := q.items[0]
 	if err := exp.Match(call); err != nil {
 		q.mu.Unlock()
+
 		return nil, fmt.Errorf(
 			"%w: expected=%s actual=%s reason=%s",
 			ErrUnexpectedCall,

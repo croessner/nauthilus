@@ -55,6 +55,7 @@ func TestStatsServiceStartStop(t *testing.T) {
 
 func TestBackendMonitoringServiceStartStopWhenDisabled(t *testing.T) {
 	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+
 	snap := configfx.Snapshot{File: config.GetFile()}
 
 	svc := NewBackendMonitoringService(10*time.Millisecond, &mockCfgProvider{snap: snap}, slog.Default())
@@ -83,6 +84,7 @@ func TestBackendMonitoringServiceRestartStopsWhenDisabled(t *testing.T) {
 	_ = f.Set(definitions.ServiceBackendHealthChecks)
 
 	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{RuntimeModules: []*config.RuntimeModule{f}}})
+
 	snap := configfx.Snapshot{File: config.GetFile()}
 
 	svc := NewBackendMonitoringService(10*time.Millisecond, &mockCfgProvider{snap: snap}, slog.Default())
@@ -98,6 +100,7 @@ func TestBackendMonitoringServiceRestartStopsWhenDisabled(t *testing.T) {
 	}
 
 	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+
 	svc.cfgProvider = &mockCfgProvider{snap: configfx.Snapshot{File: config.GetFile()}}
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 250*time.Millisecond)

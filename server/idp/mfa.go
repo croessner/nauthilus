@@ -174,7 +174,7 @@ func (s *MFAService) VerifyTOTP(ctx *gin.Context, username string, code string, 
 		return false, err
 	}
 
-	idpInstance := NewNauthilusIdP(s.deps)
+	idpInstance := NewNauthilusIDP(s.deps)
 	oidcCID, samlEntityID := flowClientIdentifiers(ctx)
 
 	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
@@ -308,7 +308,8 @@ func (s *MFAService) UseRecoveryCode(ctx *gin.Context, username string, code str
 	// In the current architecture, we get them by doing a "Password login" without actual password verification
 	// or by fetching the user attributes.
 	// Since we are already authenticated (password-wise), we can just get the user.
-	idpInstance := NewNauthilusIdP(s.deps)
+	idpInstance := NewNauthilusIDP(s.deps)
+
 	user, err := idpInstance.GetUserByUsername(ctx, username, "", "")
 	if err != nil {
 		return false, err
@@ -362,7 +363,7 @@ func (s *MFAService) getAuthState(ctx *gin.Context, username string) (*core.Auth
 
 	svc := ctx.GetString(definitions.CtxServiceKey)
 	if svc == "" {
-		svc = definitions.ServIdP
+		svc = definitions.ServIDP
 	}
 
 	authState.SetStatusCodes(svc)
@@ -507,7 +508,7 @@ func (s *MFAService) loadRemoteTOTPFlowState(ctx *gin.Context) (*flowdomain.Stat
 		return nil, nil, false
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID == "" {
 		return nil, nil, false
 	}
@@ -548,11 +549,11 @@ func flowClientIdentifiers(ctx *gin.Context) (string, string) {
 		return "", ""
 	}
 
-	switch mgr.GetString(definitions.SessionKeyIdPFlowType, "") {
+	switch mgr.GetString(definitions.SessionKeyIDPFlowType, "") {
 	case definitions.ProtoOIDC:
-		return mgr.GetString(definitions.SessionKeyIdPClientID, ""), ""
+		return mgr.GetString(definitions.SessionKeyIDPClientID, ""), ""
 	case definitions.ProtoSAML:
-		return "", mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+		return "", mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
 	default:
 		return "", ""
 	}

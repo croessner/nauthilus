@@ -14,7 +14,7 @@ import (
 	"github.com/yuin/gopher-lua"
 )
 
-func bindLDAPRuntimeContextForTest(L *lua.LState, ctx context.Context) {
+func bindLDAPRuntimeContextForTest(ctx context.Context, L *lua.LState) {
 	reqEnv := L.NewTable()
 	L.SetGlobal("__NAUTH_REQ_ENV", reqEnv)
 
@@ -80,7 +80,8 @@ func newModifyTable(L *lua.LState) *lua.LTable {
 func TestLuaLDAPSearch_RawResult(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
-	bindLDAPRuntimeContextForTest(L, context.Background())
+
+	bindLDAPRuntimeContextForTest(context.Background(), L)
 
 	entry := &ldap.Entry{
 		DN: "uid=jdoe,dc=example,dc=org",
@@ -93,6 +94,7 @@ func TestLuaLDAPSearch_RawResult(t *testing.T) {
 	}
 
 	enqueuer := &testLDAPEnqueuer{t: t, reply: &bktype.LDAPReply{RawResult: []*ldap.Entry{entry}}}
+
 	SetLuaLDAPQueue(enqueuer)
 	defer SetLuaLDAPQueue(nil)
 
@@ -111,6 +113,7 @@ func TestLuaLDAPSearch_RawResult(t *testing.T) {
 	result := L.Get(-1)
 	resultTable, ok := result.(*lua.LTable)
 	assert.True(t, ok)
+
 	if !ok {
 		return
 	}
@@ -118,6 +121,7 @@ func TestLuaLDAPSearch_RawResult(t *testing.T) {
 	entryValue := resultTable.RawGetInt(1)
 	entryTable, ok := entryValue.(*lua.LTable)
 	assert.True(t, ok)
+
 	if !ok {
 		return
 	}
@@ -128,6 +132,7 @@ func TestLuaLDAPSearch_RawResult(t *testing.T) {
 	attributes := L.GetField(entryTable, "attributes")
 	attrsTable, ok := attributes.(*lua.LTable)
 	assert.True(t, ok)
+
 	if !ok {
 		return
 	}
@@ -135,6 +140,7 @@ func TestLuaLDAPSearch_RawResult(t *testing.T) {
 	uidValues := attrsTable.RawGetString("uid")
 	uidTable, ok := uidValues.(*lua.LTable)
 	assert.True(t, ok)
+
 	if ok {
 		assert.Equal(t, lua.LString("jdoe"), uidTable.RawGetInt(1))
 	}
@@ -143,9 +149,11 @@ func TestLuaLDAPSearch_RawResult(t *testing.T) {
 func TestLuaLDAPSearch_ErrorReply(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
-	bindLDAPRuntimeContextForTest(L, context.Background())
+
+	bindLDAPRuntimeContextForTest(context.Background(), L)
 
 	enqueuer := &testLDAPEnqueuer{t: t, reply: &bktype.LDAPReply{Err: errors.New("boom")}}
+
 	SetLuaLDAPQueue(enqueuer)
 	defer SetLuaLDAPQueue(nil)
 
@@ -163,9 +171,11 @@ func TestLuaLDAPSearch_ErrorReply(t *testing.T) {
 func TestLuaLDAPModify_OK(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
-	bindLDAPRuntimeContextForTest(L, context.Background())
+
+	bindLDAPRuntimeContextForTest(context.Background(), L)
 
 	enqueuer := &testLDAPEnqueuer{t: t, reply: &bktype.LDAPReply{}}
+
 	SetLuaLDAPQueue(enqueuer)
 	defer SetLuaLDAPQueue(nil)
 
@@ -214,6 +224,7 @@ func TestLuaLDAPEndpoint_DefaultAndLDAPI(t *testing.T) {
 		defer L.Close()
 
 		fn := LuaLDAPEndpoint(cfg)
+
 		L.Push(lua.LString("mail"))
 		ret := fn(L)
 

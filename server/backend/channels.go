@@ -23,6 +23,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
+// TrySignalDone provides the exported TrySignalDone function.
 func TrySignalDone(ch chan bktype.Done) {
 	if ch == nil {
 		return
@@ -146,6 +147,7 @@ func (c *ldapChannelImpl) AddChannel(poolName string) error {
 
 var _ LDAPChannel = &ldapChannelImpl{}
 
+// NewLDAPChannel provides the exported NewLDAPChannel function.
 func NewLDAPChannel(poolName string) LDAPChannel {
 	lookupEndChan := make(map[string]chan bktype.Done)
 	authEndChan := make(map[string]chan bktype.Done)
@@ -172,6 +174,7 @@ type LuaChannel interface {
 	AddChannel(backendName string) error
 }
 
+// LuaChannelImpl describes the exported LuaChannelImpl type.
 type LuaChannelImpl struct {
 	lookupEndChan map[string]chan bktype.Done
 }

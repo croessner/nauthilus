@@ -48,6 +48,7 @@ func setupTestConfigWithBackends(t *testing.T, backendNames ...string) {
 	t.Helper()
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
 			Redis: config.Redis{
@@ -136,6 +137,7 @@ func setupEngineWithMock(t *testing.T, tokenFlusher ...TokenFlusher) (*gin.Engin
 	// router
 	composer := NewDefaultRouterComposer(deps)
 	r := composer.ComposeEngine()
+
 	NewDefaultBootstrap(deps).InitGinLogging()
 
 	// Minimal route setup to avoid import cycle with handler/backchannel
@@ -211,6 +213,7 @@ func TestProcessBruteForceRules_WildcardSkipsBanRead(t *testing.T) {
 	ctx := newTestGinContext()
 	rules := config.GetFile().GetBruteForceRules()
 	bm := createBucketManager(ctx.Request.Context(), deps, "guid-1", "1.2.3.4", "", "")
+
 	mock.MatchExpectationsInOrder(false)
 
 	banKey, network, err := bm.GetBruteForceBanRedisKey(&rules[0])
@@ -266,6 +269,7 @@ func TestProcessBruteForceRules_DeduplicatesDerivedTargets(t *testing.T) {
 	ctx := newTestGinContext()
 	rules := config.GetFile().GetBruteForceRules()
 	bm := createBucketManager(ctx.Request.Context(), deps, "guid-2", "1.2.3.4", "", "")
+
 	mock.MatchExpectationsInOrder(false)
 
 	banKey, network, err := bm.GetBruteForceBanRedisKey(&rules[0])
@@ -405,6 +409,7 @@ func TestCacheFlushSync_WithMapping_OK(t *testing.T) {
 	// processUserCmd: UNLINK PW_HIST_IPS sets, SREM affected accounts
 	userHistSet := bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())
 	mappedHistSet := bruteforce.GetPWHistIPsRedisKey(mappedAccount, config.GetFile())
+
 	mock.ExpectUnlink(userHistSet).SetVal(1)
 	mock.ExpectUnlink(mappedHistSet).SetVal(1)
 
@@ -415,6 +420,7 @@ func TestCacheFlushSync_WithMapping_OK(t *testing.T) {
 	// removeUserFromCache pipeline: HDEL USER hash fields and UNLINK default positive cache keys
 	defaultPosUser := prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user
 	defaultPosMapped := prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + mappedAccount
+
 	mock.ExpectHDel(shardKey, user, mappingField).SetVal(2)
 	mock.ExpectUnlink(defaultPosUser).SetVal(1)
 	mock.ExpectUnlink(defaultPosMapped).SetVal(1)
@@ -522,6 +528,7 @@ func TestAsyncJobStatus_OK(t *testing.T) {
 
 func TestApplyAsyncJobTransition_NotFound(t *testing.T) {
 	setupMinimalTestConfig(t)
+
 	db, mock := redismock.NewClientMock()
 
 	jobID := "missing-job"

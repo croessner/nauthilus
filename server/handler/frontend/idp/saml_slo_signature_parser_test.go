@@ -33,7 +33,7 @@ func TestDecodeLogoutRequestXML(t *testing.T) {
 
 	testCases := []struct {
 		name    string
-		binding slodomain.SLOBinding
+		binding slodomain.Binding
 		payload string
 		wantErr string
 	}{
@@ -61,14 +61,13 @@ func TestDecodeLogoutRequestXML(t *testing.T) {
 		},
 		{
 			name:    "unsupported binding rejected",
-			binding: slodomain.SLOBinding("soap"),
+			binding: slodomain.Binding("soap"),
 			payload: base64.StdEncoding.EncodeToString(rawXML),
 			wantErr: "unsupported SLO binding",
 		},
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			decoded, err := decodeLogoutRequestXML(tc.binding, tc.payload)
 			if tc.wantErr != "" {
@@ -102,9 +101,11 @@ func TestDecodeLogoutRequestPayload(t *testing.T) {
 
 	assert.Equal(t, rawXML, decodedXML)
 	assert.Equal(t, "id-test-request", decodedRequest.ID)
+
 	if assert.NotNil(t, decodedRequest.Issuer) {
 		assert.Equal(t, "https://sp.example.com/saml/metadata", decodedRequest.Issuer.Value)
 	}
+
 	if assert.NotNil(t, decodedRequest.NameID) {
 		assert.Equal(t, "alice@example.com", decodedRequest.NameID.Value)
 	}
@@ -126,6 +127,7 @@ func TestDecodeLogoutResponsePayload(t *testing.T) {
 	assert.Equal(t, rawXML, decodedXML)
 	assert.Equal(t, "id-test-response", decodedResponse.ID)
 	assert.Equal(t, "id-test-request", decodedResponse.InResponseTo)
+
 	if assert.NotNil(t, decodedResponse.Issuer) {
 		assert.Equal(t, "https://sp.example.com/saml/metadata", decodedResponse.Issuer.Value)
 	}
@@ -188,7 +190,6 @@ func TestRawQueryParameterStrictSLO(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			value, found, err := rawQueryParameterStrictSLO(tc.rawQuery, tc.key)
 			if tc.wantErr != "" {
@@ -286,6 +287,7 @@ func mustDeflateBytes(t *testing.T, content []byte) []byte {
 	t.Helper()
 
 	var compressed bytes.Buffer
+
 	writer, err := flate.NewWriter(&compressed, flate.BestCompression)
 	if err != nil {
 		t.Fatalf("failed to create flate writer: %v", err)

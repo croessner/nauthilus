@@ -75,7 +75,7 @@ async function main() {
 
   try {
     await runAuthorizationCodeFlow(browser);
-    await runNegativeIdPChecks(browser);
+    await runNegativeIDPChecks(browser);
     await runDeviceCodeFlow(browser);
     const webAuthnCredentials = await runRequiredMFAFlows(browser);
     await runMultiEdgeContinuity(browser);
@@ -104,7 +104,7 @@ async function runAuthorizationCodeFlow(browser) {
   await context.close();
 }
 
-async function runNegativeIdPChecks(browser) {
+async function runNegativeIDPChecks(browser) {
   await runAuthorizeParameterFailures(browser);
   await runDirectLoginFailure(browser);
   await runPasswordLoginFailure(browser);

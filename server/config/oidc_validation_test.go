@@ -24,10 +24,7 @@ import (
 )
 
 func TestOauth2CustomScope_NameValidation_AllowsScopeToken(t *testing.T) {
-	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterValidation("scope_token", isScopeToken)
-	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
-	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+	validate := newOIDCScopeValidator(t)
 
 	scope := Oauth2CustomScope{
 		Name:        "custom:scope-v1",
@@ -42,10 +39,7 @@ func TestOauth2CustomScope_NameValidation_AllowsScopeToken(t *testing.T) {
 }
 
 func TestOauth2CustomScope_NameValidation_RejectsInvalidScopeToken(t *testing.T) {
-	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterValidation("scope_token", isScopeToken)
-	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
-	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+	validate := newOIDCScopeValidator(t)
 
 	scope := Oauth2CustomScope{
 		Name:        "bad scope",
@@ -60,9 +54,7 @@ func TestOauth2CustomScope_NameValidation_RejectsInvalidScopeToken(t *testing.T)
 }
 
 func TestOIDCCustomClaim_NameValidation_AllowsUnicode(t *testing.T) {
-	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
-	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+	validate := newOIDCClaimValidator(t)
 
 	claim := OIDCCustomClaim{
 		Name: "größe",
@@ -74,9 +66,7 @@ func TestOIDCCustomClaim_NameValidation_AllowsUnicode(t *testing.T) {
 }
 
 func TestOIDCClaimType_RejectsInvalidType(t *testing.T) {
-	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
-	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+	validate := newOIDCClaimValidator(t)
 
 	claim := OIDCCustomClaim{
 		Name: "custom.claim",
@@ -88,9 +78,7 @@ func TestOIDCClaimType_RejectsInvalidType(t *testing.T) {
 }
 
 func TestOIDCClaimMapping_TypeValidation(t *testing.T) {
-	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
-	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+	validate := newOIDCClaimValidator(t)
 
 	mapping := OIDCClaimMapping{
 		Claim:     "custom.claim",
@@ -103,9 +91,7 @@ func TestOIDCClaimMapping_TypeValidation(t *testing.T) {
 }
 
 func TestOIDCClaimMapping_FromGroupsValidation(t *testing.T) {
-	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
-	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+	validate := newOIDCClaimValidator(t)
 
 	mapping := OIDCClaimMapping{
 		Claim: "groups",
@@ -118,9 +104,7 @@ func TestOIDCClaimMapping_FromGroupsValidation(t *testing.T) {
 }
 
 func TestOIDCClaimMapping_RejectsAttributeAndFromTogether(t *testing.T) {
-	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
-	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+	validate := newOIDCClaimValidator(t)
 
 	mapping := OIDCClaimMapping{
 		Claim:     "groups",
@@ -134,9 +118,7 @@ func TestOIDCClaimMapping_RejectsAttributeAndFromTogether(t *testing.T) {
 }
 
 func TestOIDCClaimMapping_RejectsMissingSource(t *testing.T) {
-	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
-	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+	validate := newOIDCClaimValidator(t)
 
 	mapping := OIDCClaimMapping{
 		Claim: "groups",
@@ -145,4 +127,25 @@ func TestOIDCClaimMapping_RejectsMissingSource(t *testing.T) {
 
 	err := validate.Struct(mapping)
 	assert.Error(t, err)
+}
+
+// newOIDCScopeValidator creates a test validator with scope and claim rules.
+func newOIDCScopeValidator(t *testing.T) *validator.Validate {
+	t.Helper()
+
+	validate := newOIDCClaimValidator(t)
+	assert.NoError(t, validate.RegisterValidation("scope_token", isScopeToken))
+
+	return validate
+}
+
+// newOIDCClaimValidator creates a test validator with OIDC claim rules.
+func newOIDCClaimValidator(t *testing.T) *validator.Validate {
+	t.Helper()
+
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	assert.NoError(t, validate.RegisterValidation("oidc_claim_name", isOIDCClaimName))
+	assert.NoError(t, validate.RegisterValidation("oidc_claim_type", isOIDCClaimType))
+
+	return validate
 }

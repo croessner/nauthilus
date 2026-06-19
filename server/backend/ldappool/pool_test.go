@@ -52,7 +52,6 @@ func (m *mockLDAPConnection) SetConn(_ *ldap.Conn) {}
 func (m *mockLDAPConnection) IsClosing() bool { return false }
 
 func (m *mockLDAPConnection) Search(_ context.Context, _ config.File, _ *slog.Logger, req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
-
 	// Count calls for tests that need to assert cache hits/misses.
 	atomic.AddInt32(&m.searchCalls, 1)
 
@@ -199,16 +198,17 @@ func TestHandleLookupRequest(t *testing.T) {
 			stats.GetMetrics().GetLdapPoolStatus().WithLabelValues(pool.name).Set(0)
 
 			// Call the method
-			pool.HandleLookupRequest(&bktype.LDAPRequest{
+			assert.NoError(t, pool.HandleLookupRequest(&bktype.LDAPRequest{
 				GUID:              tc.name,
 				HTTPClientContext: ctx,
-			})
+			}))
 
 			// Give goroutines time to execute
 			time.Sleep(50 * time.Millisecond)
 
 			// Validate states of connections
 			busyCount := 0
+
 			for _, conn := range mockConns {
 				if conn.(*mockLDAPConnection).GetState() == definitions.LDAPStateBusy {
 					busyCount++

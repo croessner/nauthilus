@@ -131,7 +131,37 @@ var (
 )
 
 const (
+	metricBackendLabel          = "backend"
+	metricBucketLabel           = "bucket"
+	metricClientIDLabel         = "client_id"
+	metricCodeLabel             = "code"
+	metricDescriptionLabel      = "description"
+	metricDimensionLabel        = "dimension"
+	metricDirectionLabel        = "direction"
+	metricEventLabel            = "event"
+	metricFromLabel             = "from"
+	metricGrantTypeLabel        = "grant_type"
+	metricInstanceNameLabel     = "instance_name"
+	metricKeyLabel              = "key"
+	metricKindLabel             = "kind"
+	metricLoginsLabel           = "logins"
 	metricMethodLabel           = "method"
+	metricOpLabel               = "op"
+	metricPathLabel             = "path"
+	metricPhaseLabel            = "phase"
+	metricPoolLabel             = "pool"
+	metricPoolNameLabel         = "pool_name"
+	metricProtocolLabel         = "protocol"
+	metricResourceLabel         = "resource"
+	metricRBLLabel              = "rbl"
+	metricServerStatusLabel     = "server_status"
+	metricServiceLabel          = "service"
+	metricStatusLabel           = "status"
+	metricTargetLabel           = "target"
+	metricTaskLabel             = "task"
+	metricToLabel               = "to"
+	metricTypeLabel             = "type"
+	metricVersionLabel          = "version"
 	pluginCallMetricResultLabel = "result"
 )
 
@@ -166,11 +196,11 @@ type Metrics interface {
 	// GetCurrentRequests is a Prometheus Gauge metric that tracks the number of current requests being processed by the server.
 	GetCurrentRequests() prometheus.Gauge
 
-	// GetHttpRequestsTotal returns a Prometheus CounterVec that tracks the total HTTP requests processed, with a "path" label.
-	GetHttpRequestsTotal() *prometheus.CounterVec
+	// GetHTTPRequestsTotal returns a Prometheus CounterVec that tracks the total HTTP requests processed, with a "path" label.
+	GetHTTPRequestsTotal() *prometheus.CounterVec
 
-	// GetHttpResponseTimeSeconds provides a Prometheus HistogramVec that tracks HTTP response times, with a "path" label.
-	GetHttpResponseTimeSeconds() *prometheus.HistogramVec
+	// GetHTTPResponseTimeSeconds provides a Prometheus HistogramVec that tracks HTTP response times, with a "path" label.
+	GetHTTPResponseTimeSeconds() *prometheus.HistogramVec
 
 	// GetLoginsCounter tracks the total number of login attempts (failed and successful) as a Prometheus CounterVec.
 	GetLoginsCounter() *prometheus.CounterVec
@@ -292,16 +322,16 @@ type Metrics interface {
 	// GetRedisRoundtripsTotal counts Redis roundtrips attributable to the brute-force path, labeled by kind.
 	GetRedisRoundtripsTotal() *prometheus.CounterVec
 
-	// GetIdpLoginsTotal tracks the total number of IdP logins.
+	// GetIdpLoginsTotal tracks the total number of IDP logins.
 	GetIdpLoginsTotal() *prometheus.CounterVec
 
-	// GetIdpTokensIssuedTotal tracks the total number of IdP tokens issued.
+	// GetIdpTokensIssuedTotal tracks the total number of IDP tokens issued.
 	GetIdpTokensIssuedTotal() *prometheus.CounterVec
 
-	// GetIdpConsentTotal tracks the total number of IdP consent operations.
+	// GetIdpConsentTotal tracks the total number of IDP consent operations.
 	GetIdpConsentTotal() *prometheus.CounterVec
 
-	// GetIdpMfaOperationsTotal tracks the total number of IdP MFA operations.
+	// GetIdpMfaOperationsTotal tracks the total number of IDP MFA operations.
 	GetIdpMfaOperationsTotal() *prometheus.CounterVec
 
 	// GetAuthFSMTransitionsTotal tracks auth FSM transitions labeled by from/event/to.
@@ -386,13 +416,13 @@ func (m *metricsImpl) GetCurrentRequests() prometheus.Gauge {
 	return m.currentRequests
 }
 
-// GetHttpRequestsTotal returns the httpRequestsTotal field.
-func (m *metricsImpl) GetHttpRequestsTotal() *prometheus.CounterVec {
+// GetHTTPRequestsTotal returns the httpRequestsTotal field.
+func (m *metricsImpl) GetHTTPRequestsTotal() *prometheus.CounterVec {
 	return m.httpRequestsTotal
 }
 
-// GetHttpResponseTimeSeconds returns the httpResponseTimeSeconds field.
-func (m *metricsImpl) GetHttpResponseTimeSeconds() *prometheus.HistogramVec {
+// GetHTTPResponseTimeSeconds returns the httpResponseTimeSeconds field.
+func (m *metricsImpl) GetHTTPResponseTimeSeconds() *prometheus.HistogramVec {
 	return m.httpResponseTimeSeconds
 }
 
@@ -666,13 +696,14 @@ func (m *metricsImpl) GetPluginCallDurationSeconds() *prometheus.HistogramVec {
 	return m.pluginCallDurationSeconds
 }
 
+// NewMetrics provides the exported NewMetrics function.
 func NewMetrics() Metrics {
 	return &metricsImpl{
 		instanceInfo: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "nauthilus_version_info",
 				Help: "Information about the version.",
-			}, []string{"instance_name", "version"},
+			}, []string{metricInstanceNameLabel, metricVersionLabel},
 		),
 		currentRequests: promauto.NewGauge(
 			prometheus.GaugeOpts{
@@ -684,19 +715,19 @@ func NewMetrics() Metrics {
 			prometheus.CounterOpts{
 				Name: "http_requests_total",
 				Help: "Number of HTTP requests.",
-			}, []string{"path"},
+			}, []string{metricPathLabel},
 		),
 		httpResponseTimeSeconds: promauto.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name: "http_response_time_seconds",
 				Help: "Duration of HTTP requests.",
-			}, []string{"path"},
+			}, []string{metricPathLabel},
 		),
 		loginsCounter: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "logins_total",
 				Help: "Number of failed and successful login attempts.",
-			}, []string{"logins"},
+			}, []string{metricLoginsLabel},
 		),
 		redisReadCounter: promauto.NewCounter(
 			prometheus.CounterOpts{
@@ -715,14 +746,14 @@ func NewMetrics() Metrics {
 				Name:    "function_duration_seconds",
 				Help:    "Time spent in function",
 				Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
-			}, []string{"service", "task", "resource"},
+			}, []string{metricServiceLabel, metricTaskLabel, metricResourceLabel},
 		),
 		rblDuration: promauto.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "rbl_duration_seconds",
 				Help:    "Time spent for RBL lookups",
 				Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
-			}, []string{"rbl"},
+			}, []string{metricRBLLabel},
 		),
 		cacheHits: promauto.NewCounter(
 			prometheus.CounterOpts{
@@ -740,221 +771,221 @@ func NewMetrics() Metrics {
 			prometheus.CounterOpts{
 				Name: "redis_connection_hits_total",
 				Help: "The total number of times a free connection was found in the pool",
-			}, []string{"pool_name"},
+			}, []string{metricPoolNameLabel},
 		),
 		redisMisses: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "redis_connection_misses_total",
 				Help: "The total number of times a free connection was NOT found in the pool",
-			}, []string{"pool_name"},
+			}, []string{metricPoolNameLabel},
 		),
 		redisTimeouts: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "redis_connection_timeouts_total",
 				Help: "The total number of times a wait timeout occurred",
-			}, []string{"pool_name"},
+			}, []string{metricPoolNameLabel},
 		),
 		redisTotalConns: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "redis_pool_total_connections",
 				Help: "The total number of connections in the pool",
-			}, []string{"pool_name"},
+			}, []string{metricPoolNameLabel},
 		),
 		redisIdleConns: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "redis_pool_idle_connections",
 				Help: "The total number of idle connections in the pool",
-			}, []string{"pool_name"},
+			}, []string{metricPoolNameLabel},
 		),
 		redisStaleConns: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "redis_pool_stale_connections",
 				Help: "The total number of stale connections removed from the pool",
-			}, []string{"pool_name"},
+			}, []string{metricPoolNameLabel},
 		),
 		bruteForceRejected: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "bruteforce_rejected_total",
 				Help: "The total number of brute force rejected attempts",
-			}, []string{"bucket"},
+			}, []string{metricBucketLabel},
 		),
 		bruteForceHits: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "bruteforce_hits_total",
 				Help: "The total number of brute force hits before rejection",
-			}, []string{"bucket"},
+			}, []string{metricBucketLabel},
 		),
 		rejectedProtocols: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "rejected_protocols_total",
 				Help: "The total number of rejects per protocol",
-			}, []string{"protocol"},
+			}, []string{metricProtocolLabel},
 		),
 		acceptedProtocols: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "accepted_protocols_total",
 				Help: "The total number of acceptances per protocol",
-			}, []string{"protocol"},
+			}, []string{metricProtocolLabel},
 		),
 		backendServerStatus: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "backend_servers_status",
 				Help: "Status of monitored backend servers",
-			}, []string{"server_status"},
+			}, []string{metricServerStatusLabel},
 		),
 		ldapPoolStatus: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "ldap_pool_connections_total",
 				Help: "Number of actively used connections in the LDAP pool",
-			}, []string{"pool"},
+			}, []string{metricPoolLabel},
 		),
 		ldapOpenConnections: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "ldap_pool_open_connections_total",
 				Help: "Number of currently opened connections",
-			}, []string{"pool"},
+			}, []string{metricPoolLabel},
 		),
 		ldapStaleConnections: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "ldap_pool_stale_connections_total",
 				Help: "Number of currently staled connections",
-			}, []string{"pool"},
+			}, []string{metricPoolLabel},
 		),
 		ldapPoolSize: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "ldap_pool_size",
 				Help: "Size of LDAP pool",
-			}, []string{"pool"},
+			}, []string{metricPoolLabel},
 		),
 		ldapIdlePoolSize: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "ldap_idle_pool_size",
 				Help: "Size of idle LDAP pool",
-			}, []string{"pool"},
+			}, []string{metricPoolLabel},
 		),
 		ldapQueueDepth: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "ldap_queue_depth",
 				Help: "Current LDAP queue depth",
-			}, []string{"pool", "type"},
+			}, []string{metricPoolLabel, metricTypeLabel},
 		),
 		ldapQueueWaitSeconds: promauto.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "ldap_queue_wait_seconds",
 				Help:    "Time spent waiting in LDAP queues",
 				Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
-			}, []string{"pool", "type"},
+			}, []string{metricPoolLabel, metricTypeLabel},
 		),
 		ldapQueueDroppedTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "ldap_queue_dropped_total",
 				Help: "Total LDAP requests dropped due to queue overflow",
-			}, []string{"pool", "type"},
+			}, []string{metricPoolLabel, metricTypeLabel},
 		),
 		ldapBreakerState: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "ldap_breaker_state",
 				Help: "Circuit breaker state per LDAP target (0=closed,1=open,2=half-open)",
-			}, []string{"pool", "target"},
+			}, []string{metricPoolLabel, metricTargetLabel},
 		),
 		ldapTargetHealth: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "ldap_target_health",
 				Help: "LDAP target health status (1=healthy,0=unhealthy)",
-			}, []string{"pool", "target"},
+			}, []string{metricPoolLabel, metricTargetLabel},
 		),
 		ldapTargetInflight: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "ldap_target_inflight",
 				Help: "Current in-flight requests per LDAP target",
-			}, []string{"pool", "target"},
+			}, []string{metricPoolLabel, metricTargetLabel},
 		),
 		// A8 cache metrics
 		ldapCacheHitsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "ldap_cache_hits_total",
 				Help: "Total LDAP cache hits",
-			}, []string{"pool", "type"},
+			}, []string{metricPoolLabel, metricTypeLabel},
 		),
 		ldapCacheMissesTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "ldap_cache_misses_total",
 				Help: "Total LDAP cache misses",
-			}, []string{"pool", "type"},
+			}, []string{metricPoolLabel, metricTypeLabel},
 		),
 		ldapCacheEntries: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "ldap_cache_entries",
 				Help: "Number of entries in LDAP caches",
-			}, []string{"pool", "type"},
+			}, []string{metricPoolLabel, metricTypeLabel},
 		),
 		ldapCacheEvictionsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "ldap_cache_evictions_total",
 				Help: "Total LDAP cache evictions",
-			}, []string{"pool", "type"},
+			}, []string{metricPoolLabel, metricTypeLabel},
 		),
 		ldapErrorsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "ldap_errors_total",
 				Help: "Total LDAP errors by operation and LDAP result code",
-			}, []string{"pool", "op", "code"},
+			}, []string{metricPoolLabel, metricOpLabel, metricCodeLabel},
 		),
 		ldapRetriesTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "ldap_retries_total",
 				Help: "Total LDAP retries by operation",
-			}, []string{"pool", "op"},
+			}, []string{metricPoolLabel, metricOpLabel},
 		),
 		ldapAuthRateLimitedTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "ldap_auth_rate_limited_total",
 				Help: "Total LDAP auth requests rate-limited",
-			}, []string{"pool", "dimension"},
+			}, []string{metricPoolLabel, metricDimensionLabel},
 		),
 		rblRejected: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "rbl_rejected_total",
 				Help: "The total number of rejected RBL requests",
-			}, []string{"rbl"},
+			}, []string{metricRBLLabel},
 		),
 		genericConnections: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "generic_connections",
 				Help: "Current number of established connections to a target",
-			}, []string{"description", "target", "direction"},
+			}, []string{metricDescriptionLabel, metricTargetLabel, metricDirectionLabel},
 		),
 		// Lua metrics
 		luaQueueDepth: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "lua_queue_depth",
 				Help: "Current Lua queue depth",
-			}, []string{"backend"},
+			}, []string{metricBackendLabel},
 		),
 		luaQueueWaitSeconds: promauto.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "lua_queue_wait_seconds",
 				Help:    "Time spent waiting in Lua queues",
 				Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
-			}, []string{"backend"},
+			}, []string{metricBackendLabel},
 		),
 		luaQueueDroppedTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lua_queue_dropped_total",
 				Help: "Total Lua requests dropped due to queue overflow",
-			}, []string{"backend"},
+			}, []string{metricBackendLabel},
 		),
 		luaVMInUse: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "lua_vm_in_use",
 				Help: "Number of Lua VMs currently in use",
-			}, []string{"key"},
+			}, []string{metricKeyLabel},
 		),
 		luaVMReplacedTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lua_vm_replaced_total",
 				Help: "Total Lua VMs replaced due to errors or timeouts",
-			}, []string{"key"},
+			}, []string{metricKeyLabel},
 		),
 		// Brute-force path metrics (centralized here)
 		bruteForceEvalSeconds: promauto.NewHistogram(
@@ -970,14 +1001,14 @@ func NewMetrics() Metrics {
 				Help:    "Duration by phase in brute-force evaluation",
 				Buckets: prometheus.ExponentialBuckets(0.0005, 1.7, 16),
 			},
-			[]string{"phase"},
+			[]string{metricPhaseLabel},
 		),
 		bruteForceCacheHitsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "bruteforce_cache_hits_total",
 				Help: "Total cache hits in brute-force path",
 			},
-			[]string{"kind"},
+			[]string{metricKindLabel},
 		),
 		bruteForceRulesMatchedTot: promauto.NewCounter(
 			prometheus.CounterOpts{
@@ -990,38 +1021,38 @@ func NewMetrics() Metrics {
 				Name: "bruteforce_redis_roundtrips_total",
 				Help: "Total Redis roundtrips by kind in brute-force path",
 			},
-			[]string{"kind"},
+			[]string{metricKindLabel},
 		),
 		idpLoginsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "idp_logins_total",
-				Help: "The total number of IdP logins",
-			}, []string{"protocol", "status"},
+				Help: "The total number of IDP logins",
+			}, []string{metricProtocolLabel, metricStatusLabel},
 		),
 		idpTokensIssuedTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "idp_tokens_issued_total",
-				Help: "The total number of IdP tokens issued",
-			}, []string{"protocol", "client_id", "grant_type"},
+				Help: "The total number of IDP tokens issued",
+			}, []string{metricProtocolLabel, metricClientIDLabel, metricGrantTypeLabel},
 		),
 		idpConsentTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "idp_consent_total",
-				Help: "The total number of IdP consent operations",
-			}, []string{"client_id", "status"},
+				Help: "The total number of IDP consent operations",
+			}, []string{metricClientIDLabel, metricStatusLabel},
 		),
 		idpMfaOperationsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "idp_mfa_operations_total",
-				Help: "The total number of IdP MFA operations",
-			}, []string{"type", metricMethodLabel, "status"},
+				Help: "The total number of IDP MFA operations",
+			}, []string{metricTypeLabel, metricMethodLabel, metricStatusLabel},
 		),
 		authFSMTransitionsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "auth_fsm_transitions_total",
 				Help: "Total number of auth FSM transitions",
 			},
-			[]string{"from", "event", "to"},
+			[]string{metricFromLabel, metricEventLabel, metricToLabel},
 		),
 		pluginCallsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
@@ -1052,7 +1083,7 @@ func GetMetrics() Metrics {
 	return metrics
 }
 
-var oldCpu cpu.Stats
+var oldCPU cpu.Stats
 
 var (
 	// cpuUserUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, to measure CPU user usage in percent.
@@ -1083,7 +1114,7 @@ func MeasureCPU(ctx context.Context) {
 		default:
 			time.Sleep(2 * time.Second)
 
-			newCpu, err := cpu.Get()
+			newCPU, err := cpu.Get()
 			if err != nil {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyMsg, "Failed to get CPU usage statistics",
@@ -1093,11 +1124,11 @@ func MeasureCPU(ctx context.Context) {
 				return
 			}
 
-			total := float64(newCpu.Total - oldCpu.Total)
+			total := float64(newCPU.Total - oldCPU.Total)
 
-			setNewStats(&oldCpu, newCpu, total)
+			setNewStats(&oldCPU, newCPU, total)
 
-			oldCpu = *newCpu
+			oldCPU = *newCPU
 		}
 	}
 }
@@ -1151,6 +1182,7 @@ func PrintStats(logger *slog.Logger) {
 	)
 }
 
+// HavePrometheusLabelEnabled provides the exported HavePrometheusLabelEnabled function.
 func HavePrometheusLabelEnabled(cfg config.File, prometheusLabel string) bool {
 	if cfg == nil || !cfg.GetServer().GetPrometheusTimer().IsEnabled() {
 		return false

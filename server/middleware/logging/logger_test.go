@@ -19,6 +19,7 @@ func TestLoggerMiddlewareIncludesExternalSessionWhenSet(t *testing.T) {
 	const externalSessionID = "external-session-1"
 
 	var buf bytes.Buffer
+
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	router := gin.New()

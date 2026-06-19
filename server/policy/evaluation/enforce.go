@@ -42,6 +42,7 @@ func EvaluateConfiguredPreAuth(
 	recorder := observability.SafeRecorder(input.Recorder)
 	tracer := observability.NewTracer()
 	start := time.Now()
+
 	spanCtx, span := tracer.Start(ctx, "policy.evaluate")
 	defer span.End()
 
@@ -68,6 +69,7 @@ func EvaluateConfiguredAuth(
 	recorder := observability.SafeRecorder(input.Recorder)
 	tracer := observability.NewTracer()
 	start := time.Now()
+
 	spanCtx, span := tracer.Start(ctx, "policy.evaluate")
 	defer span.End()
 
@@ -166,6 +168,7 @@ func selectConfiguredAuth(
 
 func appendConfiguredPreAuth(policyReport *report.DecisionReport, decision report.PolicyDecision) {
 	policyReport.Policies = append(policyReport.Policies, decision)
+
 	policyReport.Stage = decision.Stage
 	if decision.Effect == policy.DecisionNeutral {
 		return
@@ -203,6 +206,7 @@ func recordConfiguredDecision(
 		Operation: operation,
 		Stage:     stage,
 	})
+
 	if final == nil {
 		return
 	}
@@ -222,6 +226,7 @@ func recordConfiguredDecision(
 		Operation:      operation,
 		Stage:          final.Stage,
 	})
+
 	if input.Surface == "" {
 		return
 	}

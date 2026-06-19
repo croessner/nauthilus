@@ -16,8 +16,6 @@
 package core
 
 import (
-	stdlog "log"
-	"sync"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/v3/server/backend"
@@ -32,7 +30,6 @@ type channelHolder struct {
 }
 
 var defaultChannel atomic.Value
-var warnMissingChannelOnce sync.Once
 
 func init() {
 	defaultChannel.Store(channelHolder{ch: nil})
@@ -41,20 +38,4 @@ func init() {
 // SetDefaultChannel sets the process-wide default channel for core.
 func SetDefaultChannel(ch backend.Channel) {
 	defaultChannel.Store(channelHolder{ch: ch})
-}
-
-func getDefaultChannel() backend.Channel {
-	if v := defaultChannel.Load(); v != nil {
-		if h, ok := v.(channelHolder); ok {
-			if h.ch != nil {
-				return h.ch
-			}
-		}
-	}
-
-	warnMissingChannelOnce.Do(func() {
-		stdlog.Printf("ERROR: core default channel is not configured. Ensure the boundary calls core.SetDefaultChannel(...)\n")
-	})
-
-	panic("core: default channel not configured")
 }

@@ -50,33 +50,33 @@ func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
 	defer h.logCompletedOIDCFlowRequest(ctx, "device_authorization", "", clientID)
 
 	if clientID == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": "client_id is required"})
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidRequest, oidcJSONErrorDescriptionKey: "client_id is required"})
 
 		return
 	}
 
 	client, ok := h.idp.FindClient(clientID)
 	if !ok {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidClient})
 
 		return
 	}
 
 	if !client.SupportsGrantType(definitions.OIDCGrantTypeDeviceCode) {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "unauthorized_client", "error_description": "client does not support device code grant"})
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorUnauthorizedClient, oidcJSONErrorDescriptionKey: "client does not support device code grant"})
 
 		return
 	}
 
-	sp.SetAttributes(attribute.String("client_id", clientID))
+	sp.SetAttributes(attribute.String(oidcParamClientID, clientID))
 
-	oidcCfg := h.deps.Cfg.GetIdP().OIDC
+	oidcCfg := h.deps.Cfg.GetIDP().OIDC
 	requestedScopes := strings.Fields(ctx.PostForm("scope"))
 	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
 
 	userCode, deviceCode, deviceRequest, err := h.createDeviceCodeRequest(ctx, client, &oidcCfg, filteredScopes)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+		ctx.JSON(http.StatusInternalServerError, gin.H{frontChannelLogoutTaskStatusError: oidcErrorServerError})
 
 		return
 	}
@@ -93,14 +93,14 @@ func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
 	)
 
 	issuer := oidcCfg.Issuer
-	verificationURI := issuer + "/oidc/device/verify"
+	verificationURI := issuer + frontendDeviceVerifyPath
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"device_code":               deviceCode,
 		"user_code":                 userCode,
 		"verification_uri":          verificationURI,
 		"verification_uri_complete": verificationURI + "?user_code=" + userCode,
-		"expires_in":                int(time.Until(deviceRequest.ExpiresAt).Seconds()),
+		oidcJSONFieldExpiresIn:      int(time.Until(deviceRequest.ExpiresAt).Seconds()),
 		"interval":                  deviceRequest.Interval,
 	})
 }
@@ -145,21 +145,21 @@ func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *co
 	deviceCode := formValue(ctx, "device_code")
 
 	if deviceCode == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": "device_code is required"})
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidRequest, oidcJSONErrorDescriptionKey: "device_code is required"})
 
 		return
 	}
 
 	request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "expired_token", "error_description": "device code has expired"})
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorExpiredToken, oidcJSONErrorDescriptionKey: "device code has expired"})
 
 		return
 	}
 
 	// Verify client_id matches
 	if request.ClientID != client.ClientID {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidGrant})
 
 		return
 	}
@@ -167,14 +167,14 @@ func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *co
 	// Check expiration
 	if time.Now().After(request.ExpiresAt) {
 		_ = h.deviceStore.DeleteDeviceCode(ctx.Request.Context(), deviceCode)
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "expired_token"})
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorExpiredToken})
 
 		return
 	}
 
 	// Enforce polling interval (slow_down per RFC 8628 §3.5)
 	if !request.LastPoll.IsZero() && time.Since(request.LastPoll) < time.Duration(request.Interval)*time.Second {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "slow_down"})
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorSlowDown})
 
 		return
 	}
@@ -185,11 +185,11 @@ func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *co
 
 	switch request.Status {
 	case idp.DeviceCodeStatusPending:
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "authorization_pending"})
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorAuthorizationPending})
 
 	case idp.DeviceCodeStatusDenied:
 		_ = h.deviceStore.DeleteDeviceCode(ctx.Request.Context(), deviceCode)
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "access_denied"})
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorAccessDenied})
 
 	case idp.DeviceCodeStatusAuthorized:
 		h.issueDeviceCodeTokens(ctx, deviceCode, request, client)
@@ -206,7 +206,7 @@ func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *co
 			"status", request.Status,
 		)
 
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+		ctx.JSON(http.StatusInternalServerError, gin.H{frontChannelLogoutTaskStatusError: oidcErrorServerError})
 	}
 }
 
@@ -214,7 +214,7 @@ func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *co
 func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string, request *idp.DeviceCodeRequest, client *config.OIDCClient) {
 	setOIDCTokenPostActionMFAOverrides(ctx, request.MFACompleted, request.MFAMethod)
 
-	if request.IdTokenClaims == nil || request.AccessTokenClaims == nil {
+	if request.IDTokenClaims == nil || request.AccessTokenClaims == nil {
 		if err := h.recoverMissingDeviceRequestClaims(ctx, deviceCode, request, client); err != nil {
 			util.DebugModuleWithCfg(
 				ctx.Request.Context(),
@@ -229,7 +229,7 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 				"error", err,
 			)
 
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			ctx.JSON(http.StatusInternalServerError, gin.H{frontChannelLogoutTaskStatusError: oidcErrorServerError})
 
 			return
 		}
@@ -245,7 +245,7 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 		AuthTime:          time.Now(),
 		MFACompleted:      request.MFACompleted,
 		MFAMethod:         request.MFAMethod,
-		IdTokenClaims:     request.IdTokenClaims,
+		IDTokenClaims:     request.IDTokenClaims,
 		AccessTokenClaims: request.AccessTokenClaims,
 	}
 
@@ -277,9 +277,9 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 	stats.GetMetrics().GetIdpTokensIssuedTotal().WithLabelValues("oidc", request.ClientID, definitions.OIDCGrantTypeDeviceCode).Inc()
 
 	resp := gin.H{
-		"access_token": accessToken,
-		"token_type":   "Bearer",
-		"expires_in":   int(expiresIn.Seconds()),
+		oidcJSONFieldAccessToken: accessToken,
+		oidcJSONFieldTokenType:   oidcJSONTokenTypeBearer,
+		oidcJSONFieldExpiresIn:   int(expiresIn.Seconds()),
 	}
 
 	if idToken != "" {
@@ -351,7 +351,7 @@ func (h *OIDCHandler) backfillDeviceRequestSnapshot(ctx *gin.Context, request *i
 
 func hydrateDeviceRequestClaims(
 	ctx *gin.Context,
-	idpInstance *idp.NauthilusIdP,
+	idpInstance *idp.NauthilusIDP,
 	request *idp.DeviceCodeRequest,
 	client *config.OIDCClient,
 	user *backend.User,
@@ -382,7 +382,7 @@ func hydrateDeviceRequestClaims(
 		return err
 	}
 
-	request.IdTokenClaims = idTokenClaims
+	request.IDTokenClaims = idTokenClaims
 	request.AccessTokenClaims = accessTokenClaims
 
 	return nil
@@ -414,9 +414,11 @@ func (h *OIDCHandler) DeviceVerifyFailedPage(ctx *gin.Context) {
 	}
 
 	errorMessage := "Invalid login or password"
+
 	if mgr := cookie.GetManager(ctx); mgr != nil {
 		if loginError := mgr.GetString(definitions.SessionKeyLoginError, ""); loginError != "" {
 			errorMessage = loginError
+
 			mgr.Delete(definitions.SessionKeyLoginError)
 		}
 	}
@@ -487,6 +489,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 	)
 
 	mgr := cookie.GetManager(ctx)
+
 	redisPrefix := h.deps.Cfg.GetServer().GetRedis().GetPrefix()
 	if outcome, ok := getFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix); ok && outcome == flowdomain.AuthOutcomeFailLatched {
 		request.Status = idp.DeviceCodeStatusDenied
@@ -513,12 +516,14 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 	// if password auth fails but MFA is available, continue with MFA and defer
 	// the final decision until flow completion.
 	authResult := definitions.AuthResultOK
+
 	var authErr error
-	user, err := h.idp.Authenticate(ctx, username, password, request.ClientID, "")
+
+	_, err = h.idp.Authenticate(ctx, username, password, request.ClientID, "")
 	if err != nil {
 		authErr = err
 		authResult = definitions.AuthResultFail
-		user = nil
+		delayedResponseAllowed := false
 
 		if idpAuthFailureAllowsDelayedResponse(err) && h.idp.IsDelayedResponse(request.ClientID, "") {
 			if delayedUser, userErr := h.idp.GetUserByUsernameForOIDCClaims(ctx, username, client, request.Scopes); userErr == nil && delayedUser != nil {
@@ -531,12 +536,12 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 				availability := h.frontend.getMFAAvailabilityWithBackendRef(ctx, factorUser, protocol, cookie.GetManager(ctx), factorRef)
 				if availability.count > 0 {
-					user = delayedUser
+					delayedResponseAllowed = true
 				}
 			}
 		}
 
-		if user == nil {
+		if !delayedResponseAllowed {
 			request.Status = idp.DeviceCodeStatusDenied
 			_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
 			abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
@@ -550,7 +555,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		}
 	}
 
-	user, err = h.idp.GetUserByUsernameForOIDCClaims(ctx, username, client, request.Scopes)
+	user, err := h.idp.GetUserByUsernameForOIDCClaims(ctx, username, client, request.Scopes)
 	if err != nil {
 		h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
 
@@ -623,8 +628,8 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 		controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 		oidcFlowContext := newOIDCDeviceFlowContext(mgr)
-		existingFlowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
-		existingFlowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+		existingFlowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+		existingFlowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 		existingGrantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
 		createdFlowID := ksuid.New().String()
 
@@ -655,7 +660,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 		decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
 			FlowID:       createdFlowID,
-			FlowType:     flowdomain.FlowTypeOIDCDeviceCode,
+			Type:         flowdomain.FlowTypeOIDCDeviceCode,
 			Protocol:     flowdomain.FlowProtocolOIDC,
 			CurrentStep:  flowdomain.FlowStepStart,
 			GrantType:    definitions.OIDCFlowDeviceCode,
@@ -698,7 +703,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 		oidcFlowContext.StoreMFAContext(
 			username,
-			user.Id,
+			user.ID,
 			deviceCode,
 			request.ClientID,
 			protocol,
@@ -748,8 +753,8 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		}
 
 		controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-		existingFlowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
-		existingFlowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+		existingFlowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+		existingFlowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 		existingGrantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
 		createdFlowID := ksuid.New().String()
 
@@ -780,7 +785,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 		decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
 			FlowID:       createdFlowID,
-			FlowType:     flowdomain.FlowTypeOIDCDeviceCode,
+			Type:         flowdomain.FlowTypeOIDCDeviceCode,
 			Protocol:     flowdomain.FlowProtocolOIDC,
 			CurrentStep:  flowdomain.FlowStepStart,
 			GrantType:    definitions.OIDCFlowDeviceCode,
@@ -830,7 +835,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 			return
 		}
 
-		oidcFlowContext.StoreConsentContext(deviceCode, request.ClientID, user.Id)
+		oidcFlowContext.StoreConsentContext(deviceCode, request.ClientID, user.ID)
 
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
@@ -871,7 +876,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, "Device code authorized (no MFA, consent skipped)",
 		"client_id", request.ClientID,
-		"user_id", user.Id,
+		"user_id", user.ID,
 		"user_code", request.UserCode,
 	)
 
@@ -941,10 +946,10 @@ func (h *OIDCHandler) deviceConsentPath(ctx *gin.Context) string {
 	lang := ctx.Param("languageTag")
 
 	if lang != "" {
-		return "/oidc/device/consent/" + lang
+		return frontendDeviceConsentPath + "/" + lang
 	}
 
-	return "/oidc/device/consent"
+	return frontendDeviceConsentPath
 }
 
 // DeviceConsentGET renders the consent page for the device code flow (RFC 8628 §3.3).
@@ -956,22 +961,23 @@ func (h *OIDCHandler) DeviceConsentGET(ctx *gin.Context) {
 
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {
-		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
 
 		return
 	}
 
 	oidcFlowContext := newOIDCDeviceFlowContext(mgr)
+
 	deviceCode := oidcFlowContext.DeviceCode()
 	if deviceCode == "" {
-		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
 
 		return
 	}
 
 	request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
 	if err != nil || request == nil {
-		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
 
 		return
 	}
@@ -993,22 +999,23 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {
-		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
 
 		return
 	}
 
 	oidcFlowContext := newOIDCDeviceFlowContext(mgr)
+
 	deviceCode := oidcFlowContext.DeviceCode()
 	if deviceCode == "" {
-		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
 
 		return
 	}
 
 	request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
 	if err != nil || request == nil {
-		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
 
 		return
 	}
@@ -1017,7 +1024,7 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 
 	sp.SetAttributes(attribute.String("client_id", request.ClientID))
 
-	if submit != "allow" {
+	if submit != oidcConsentDecisionAllow {
 		// User denied consent
 		request.Status = idp.DeviceCodeStatusDenied
 		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
@@ -1058,7 +1065,7 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 		return
 	}
 
-	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "allow").Inc()
+	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, oidcConsentDecisionAllow).Inc()
 
 	client, ok := h.idp.FindClient(request.ClientID)
 	if !ok {
@@ -1071,12 +1078,14 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 	if request.UserID == "" {
 		request.UserID = oidcFlowContext.UniqueUserID()
 	}
+
 	applyDeviceCodeMFASessionState(mgr, request)
 
-	consentMode := client.GetConsentMode(h.deps.Cfg.GetIdP().OIDC.GetConsentMode())
+	consentMode := client.GetConsentMode(h.deps.Cfg.GetIDP().OIDC.GetConsentMode())
 
 	if consentMode == config.OIDCConsentModeGranularOptional {
-		plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), request.Scopes)
+		plan := buildConsentScopePlan(client, h.deps.Cfg.GetIDP().OIDC.GetConsentMode(), request.Scopes)
+
 		grantedScopes, resolveErr := plan.ResolveGranted(ctx.PostFormArray("optional_scope"))
 		if resolveErr != nil {
 			h.renderDeviceVerifyError(ctx, request.UserCode, "Invalid optional scope selection")
@@ -1143,8 +1152,8 @@ func (h *OIDCHandler) buildDeviceConsentPageData(ctx *gin.Context, request *idp.
 	data["Deny"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Deny")
 
 	client, _ := h.idp.FindClient(request.ClientID)
-	plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), request.Scopes)
-	customScopes := h.deps.Cfg.GetIdP().OIDC.GetEffectiveCustomScopes(client)
+	plan := buildConsentScopePlan(client, h.deps.Cfg.GetIDP().OIDC.GetConsentMode(), request.Scopes)
+	customScopes := h.deps.Cfg.GetIDP().OIDC.GetEffectiveCustomScopes(client)
 	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, customScopes, plan.Required)
 	optionalScopeChoices := make([]gin.H, 0, len(plan.Optional))
 	lang := consentLanguage(ctx)
@@ -1156,9 +1165,9 @@ func (h *OIDCHandler) buildDeviceConsentPageData(ctx *gin.Context, request *idp.
 		}
 
 		optionalScopeChoices = append(optionalScopeChoices, gin.H{
-			"Name":        scope,
-			"Description": description,
-			"Checked":     true,
+			templateDataName:        scope,
+			templateDataDescription: description,
+			templateDataChecked:     true,
 		})
 	}
 
@@ -1235,10 +1244,10 @@ func renderDeviceCodeError(ctx *gin.Context, d *deps.Deps, userCode string, erro
 func deviceVerifyPathFromContext(ctx *gin.Context) string {
 	lang := ctx.Param("languageTag")
 	if lang != "" {
-		return "/oidc/device/verify/" + lang
+		return frontendDeviceVerifyPath + "/" + lang
 	}
 
-	return "/oidc/device/verify"
+	return frontendDeviceVerifyPath
 }
 
 func applyDeviceCodeMFASessionState(mgr cookie.Manager, request *idp.DeviceCodeRequest) {

@@ -45,7 +45,7 @@ func TestLoginWebAuthnBeginUsesSessionUniqueUserID(t *testing.T) {
 }
 
 // TestIsMFAAuthResultValid tests the authentication result validation after MFA verification.
-// This test ensures that "Fall B Punkt 1" from the IdP login flow specification is correctly
+// This test ensures that "Fall B Punkt 1" from the IDP login flow specification is correctly
 // implemented: if the initial credentials were wrong (delayed response), the user must be
 // rejected even after successful MFA verification.
 //
@@ -74,7 +74,7 @@ func TestIsMFAAuthResultValid(t *testing.T) {
 		},
 		{
 			name: "No AuthResult set should reject login (default-deny)",
-			setup: func(mgr *mockCookieManager) {
+			setup: func(_ *mockCookieManager) {
 				// No AuthResult set at all
 			},
 			expected: false,
@@ -190,7 +190,7 @@ func TestDelayedResponseWithCorrectCredentialsAllowAfterMFA(t *testing.T) {
 func TestPersistWebAuthnLoginUpdateFailsClosedOnRejectedPersistence(t *testing.T) {
 	persistenceErr := errors.New("authority rejected WebAuthn update")
 	user := &backend.User{
-		Id:   "uid-123",
+		ID:   "uid-123",
 		Name: "testuser-closed",
 		Credentials: []mfa.PersistentCredential{
 			{

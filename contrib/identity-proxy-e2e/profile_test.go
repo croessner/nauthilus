@@ -287,7 +287,7 @@ func TestBrowserAutomationUsesCDPVirtualAuthenticator(t *testing.T) {
 		"hasUserVerification",
 		"completeRecoveryRegistration",
 		"completeRecoveryLogin",
-		"runNegativeIdPChecks",
+		"runNegativeIDPChecks",
 		"runNegativeMFAChecks",
 		"runCSRFAndSessionAttackFailures",
 		"deviceAttackerClient",

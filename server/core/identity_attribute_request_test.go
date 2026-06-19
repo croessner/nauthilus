@@ -24,23 +24,23 @@ import (
 )
 
 const (
-	identityAttributeMail             = "mail"
-	identityAttributeDepartmentNumber = "departmentNumber"
-	identityAttributeEmployeeNumber   = "employeeNumber"
-	identityClaimGroupDNS             = "group_dns"
-	identityClaimResourceRole         = "resource.role"
-	identityClaimUngranted            = "ungranted.claim"
-	identityScopeResource             = "resource"
+	identityAttributeMail                = "mail"
+	identityAttributeDepartmentNumber    = "departmentNumber"
+	identityAttributeEmployeeNumber      = "employeeNumber"
+	identityClaimGroupDistinguishedNames = "group_dns"
+	identityClaimResourceRole            = "resource.role"
+	identityClaimUngranted               = "ungranted.claim"
+	identityScopeResource                = "resource"
 )
 
 func TestOIDCIdentityAttributeRequestUsesGrantedScopes(t *testing.T) {
 	client := &config.OIDCClient{
 		ClientID: "claims-client",
-		IdTokenClaims: config.IdTokenClaims{
+		IDTokenClaims: config.IDTokenClaims{
 			Mappings: []config.OIDCClaimMapping{
 				{Claim: definitions.ClaimEmail, Attribute: identityAttributeMail, Type: definitions.ClaimTypeString},
 				{Claim: definitions.ClaimGroups, From: definitions.ClaimGroups, Type: definitions.ClaimTypeStringArray},
-				{Claim: identityClaimGroupDNS, From: definitions.LuaBackendResultGroupDNs, Type: definitions.ClaimTypeStringArray},
+				{Claim: identityClaimGroupDistinguishedNames, From: definitions.LuaBackendResultGroupDistinguishedNames, Type: definitions.ClaimTypeStringArray},
 			},
 		},
 		AccessTokenClaims: config.AccessTokenClaims{
@@ -66,13 +66,13 @@ func TestOIDCIdentityAttributeRequestUsesGrantedScopes(t *testing.T) {
 		{
 			Name: definitions.ScopeGroups,
 			Claims: []config.OIDCCustomClaim{
-				{Name: identityClaimGroupDNS, Type: definitions.ClaimTypeStringArray},
+				{Name: identityClaimGroupDistinguishedNames, Type: definitions.ClaimTypeStringArray},
 			},
 		},
 	}
 
 	request := NewOIDCIdentityAttributeRequest(client, []string{
-		definitions.ScopeOpenId,
+		definitions.ScopeOpenID,
 		definitions.ScopeEmail,
 		definitions.ScopeGroups,
 		identityScopeResource,
@@ -81,7 +81,7 @@ func TestOIDCIdentityAttributeRequestUsesGrantedScopes(t *testing.T) {
 	assert.Equal(t, []string{identityAttributeDepartmentNumber, identityAttributeMail}, request.Names)
 	assert.True(t, request.IncludeStandardIdentity)
 	assert.True(t, request.IncludeGroups)
-	assert.True(t, request.IncludeGroupDNS)
+	assert.True(t, request.IncludeGroupDistinguishedNames)
 	assert.True(t, request.ReportMissing)
 }
 
@@ -91,7 +91,7 @@ func TestSAMLIdentityAttributeRequestUsesAllowedAttributeMapping(t *testing.T) {
 		AllowedAttributes: []string{
 			identityAttributeMail,
 			definitions.ClaimGroups,
-			definitions.LuaBackendResultGroupDNs,
+			definitions.LuaBackendResultGroupDistinguishedNames,
 			identityAttributeMail,
 			identityAttributeEmployeeNumber,
 		},
@@ -102,6 +102,6 @@ func TestSAMLIdentityAttributeRequestUsesAllowedAttributeMapping(t *testing.T) {
 	assert.Equal(t, []string{identityAttributeEmployeeNumber, identityAttributeMail}, request.Names)
 	assert.True(t, request.IncludeStandardIdentity)
 	assert.True(t, request.IncludeGroups)
-	assert.True(t, request.IncludeGroupDNS)
+	assert.True(t, request.IncludeGroupDistinguishedNames)
 	assert.True(t, request.ReportMissing)
 }

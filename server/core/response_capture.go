@@ -40,23 +40,23 @@ const (
 
 // CapturedAuthOutcome stores the transport-neutral terminal auth outcome.
 type CapturedAuthOutcome struct {
-	Attributes           bktype.AttributeMapping
-	Decision             CapturedAuthDecision
-	TerminalState        string
-	Session              string
-	AccountField         string
-	TOTPSecretField      string
-	TOTPRecoveryField    string
-	UniqueUserIDField    string
-	DisplayNameField     string
-	StatusMessage        string
-	StatusMessageI18NKey string
-	ResponseLanguage     string
-	Error                string
-	Groups               []string
-	GroupDNS             []string
-	Backend              definitions.Backend
-	HTTPStatus           int
+	Attributes              bktype.AttributeMapping
+	Decision                CapturedAuthDecision
+	TerminalState           string
+	Session                 string
+	AccountField            string
+	TOTPSecretField         string
+	TOTPRecoveryField       string
+	UniqueUserIDField       string
+	DisplayNameField        string
+	StatusMessage           string
+	StatusMessageI18NKey    string
+	ResponseLanguage        string
+	Error                   string
+	Groups                  []string
+	GroupDistinguishedNames []string
+	Backend                 definitions.Backend
+	HTTPStatus              int
 }
 
 // CaptureResponseWriter captures auth terminal outcomes without rendering HTTP.
@@ -89,7 +89,7 @@ func (w *CaptureResponseWriter) Outcome() CapturedAuthOutcome {
 	out := w.outcome
 	out.Attributes = cloneAttributeMapping(out.Attributes)
 	out.Groups = append([]string(nil), out.Groups...)
-	out.GroupDNS = append([]string(nil), out.GroupDNS...)
+	out.GroupDistinguishedNames = append([]string(nil), out.GroupDistinguishedNames...)
 
 	return out
 }
@@ -124,6 +124,7 @@ func (w *CaptureResponseWriter) TempFail(ctx *gin.Context, view *StateView, reas
 
 	auth := view.auth
 	auth.prepareAuthTempFail(reason)
+
 	if auth.shouldLogAuthTempFail() {
 		auth.logAuthTempFail(ctx, w.logger)
 	}
@@ -143,23 +144,23 @@ func (w *CaptureResponseWriter) captureOutcome(
 	}
 
 	w.outcome = CapturedAuthOutcome{
-		Attributes:           auth.GetAttributesCopy(),
-		Decision:             decision,
-		TerminalState:        string(terminalState),
-		Session:              auth.Runtime.GUID,
-		AccountField:         auth.Runtime.AccountField,
-		TOTPSecretField:      auth.Runtime.TOTPSecretField,
-		TOTPRecoveryField:    auth.Runtime.TOTPRecoveryField,
-		UniqueUserIDField:    auth.Runtime.UniqueUserIDField,
-		DisplayNameField:     auth.Runtime.DisplayNameField,
-		StatusMessage:        auth.Runtime.StatusMessage,
-		StatusMessageI18NKey: auth.Runtime.StatusMessageI18NKey,
-		ResponseLanguage:     auth.Runtime.ResponseLanguage,
-		Error:                reason,
-		Groups:               auth.GetGroups(),
-		GroupDNS:             auth.GetGroupDNs(),
-		Backend:              auth.Runtime.SourcePassDBBackend,
-		HTTPStatus:           status,
+		Attributes:              auth.GetAttributesCopy(),
+		Decision:                decision,
+		TerminalState:           string(terminalState),
+		Session:                 auth.Runtime.GUID,
+		AccountField:            auth.Runtime.AccountField,
+		TOTPSecretField:         auth.Runtime.TOTPSecretField,
+		TOTPRecoveryField:       auth.Runtime.TOTPRecoveryField,
+		UniqueUserIDField:       auth.Runtime.UniqueUserIDField,
+		DisplayNameField:        auth.Runtime.DisplayNameField,
+		StatusMessage:           auth.Runtime.StatusMessage,
+		StatusMessageI18NKey:    auth.Runtime.StatusMessageI18NKey,
+		ResponseLanguage:        auth.Runtime.ResponseLanguage,
+		Error:                   reason,
+		Groups:                  auth.GetGroups(),
+		GroupDistinguishedNames: auth.GetGroupDistinguishedNames(),
+		Backend:                 auth.Runtime.SourcePassDBBackend,
+		HTTPStatus:              status,
 	}
 }
 

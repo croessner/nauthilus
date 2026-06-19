@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package main provides the docker healthcheck command.
 package main
 
 import (
@@ -83,7 +84,7 @@ func (c *Client) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -109,6 +110,7 @@ func (c *Client) Run(ctx context.Context) error {
 		if c.cfg.Verbose {
 			c.logger.Info("Healthz OK", "url", c.cfg.URL, "status", status)
 		}
+
 		return nil
 	case "degraded":
 		c.logger.Warn("Healthz degraded", "url", c.cfg.URL, "status", status)
@@ -125,6 +127,7 @@ func main() {
 	pflag.BoolP("verbose", "v", false, "Be verbose")
 	pflag.BoolP("tls-skip-verify", "t", false, "Skip TLS server certificate verification")
 	pflag.Parse()
+
 	_ = viper.BindPFlags(pflag.CommandLine)
 
 	cfg := Config{

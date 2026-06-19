@@ -60,7 +60,7 @@ type OIDCSession struct {
 	CodeChallenge       string         `json:"code_challenge,omitempty"`
 	CodeChallengeMethod string         `json:"code_challenge_method,omitempty"`
 	AccessToken         string         `json:"access_token,omitempty"`
-	IdTokenClaims       map[string]any `json:"id_token_claims"`
+	IDTokenClaims       map[string]any `json:"id_token_claims"`
 	AccessTokenClaims   map[string]any `json:"access_token_claims"`
 }
 
@@ -145,6 +145,7 @@ func (s *RedisTokenStorage) StoreSession(ctx context.Context, code string, sessi
 	}
 
 	key := s.prefix + fmt.Sprintf("oidc:code:%s", code)
+
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
@@ -154,6 +155,7 @@ func (s *RedisTokenStorage) StoreSession(ctx context.Context, code string, sessi
 // GetSession retrieves an OIDC session from Redis.
 func (s *RedisTokenStorage) GetSession(ctx context.Context, code string) (*OIDCSession, error) {
 	key := s.prefix + fmt.Sprintf("oidc:code:%s", code)
+
 	readCtx, cancel := s.redisReadContext(ctx)
 	defer cancel()
 
@@ -178,6 +180,7 @@ func (s *RedisTokenStorage) GetSession(ctx context.Context, code string) (*OIDCS
 // DeleteSession removes an OIDC session from Redis.
 func (s *RedisTokenStorage) DeleteSession(ctx context.Context, code string) error {
 	key := s.prefix + fmt.Sprintf("oidc:code:%s", code)
+
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
@@ -198,6 +201,7 @@ func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string,
 
 	key := s.prefix + fmt.Sprintf("oidc:refresh_token:%s", token)
 	userKey := s.prefix + fmt.Sprintf("oidc:user_refresh_tokens:%s", session.UserID)
+
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
@@ -215,6 +219,7 @@ func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string,
 // GetRefreshToken retrieves a refresh token session from Redis.
 func (s *RedisTokenStorage) GetRefreshToken(ctx context.Context, token string) (*OIDCSession, error) {
 	key := s.prefix + fmt.Sprintf("oidc:refresh_token:%s", token)
+
 	readCtx, cancel := s.redisReadContext(ctx)
 	defer cancel()
 
@@ -243,10 +248,12 @@ func (s *RedisTokenStorage) DeleteRefreshToken(ctx context.Context, token string
 		userKey := s.prefix + fmt.Sprintf("oidc:user_refresh_tokens:%s", session.UserID)
 		writeCtx, cancel := s.redisWriteContext(ctx)
 		_ = s.redis.GetWriteHandle().SRem(writeCtx, userKey, token).Err()
+
 		cancel()
 	}
 
 	key := s.prefix + fmt.Sprintf("oidc:refresh_token:%s", token)
+
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
@@ -263,7 +270,9 @@ func (s *RedisTokenStorage) DeleteUserRefreshTokens(ctx context.Context, userID 
 	readCtx, readCancel := s.redisReadContext(ctx)
 
 	tokens, err := s.redis.GetReadHandle().SMembers(readCtx, userKey).Result()
+
 	readCancel()
+
 	if err != nil {
 		return err
 	}
@@ -302,6 +311,7 @@ func (s *RedisTokenStorage) StoreAccessToken(ctx context.Context, token string, 
 
 	key := s.prefix + fmt.Sprintf("oidc:access_token:%s", token)
 	userKey := s.prefix + fmt.Sprintf("oidc:user_access_tokens:%s", session.UserID)
+
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
@@ -319,6 +329,7 @@ func (s *RedisTokenStorage) StoreAccessToken(ctx context.Context, token string, 
 // GetAccessToken retrieves an opaque access token session from Redis.
 func (s *RedisTokenStorage) GetAccessToken(ctx context.Context, token string) (*OIDCSession, error) {
 	key := s.prefix + fmt.Sprintf("oidc:access_token:%s", token)
+
 	readCtx, cancel := s.redisReadContext(ctx)
 	defer cancel()
 
@@ -347,10 +358,12 @@ func (s *RedisTokenStorage) DeleteAccessToken(ctx context.Context, token string)
 		userKey := s.prefix + fmt.Sprintf("oidc:user_access_tokens:%s", session.UserID)
 		writeCtx, cancel := s.redisWriteContext(ctx)
 		_ = s.redis.GetWriteHandle().SRem(writeCtx, userKey, token).Err()
+
 		cancel()
 	}
 
 	key := s.prefix + fmt.Sprintf("oidc:access_token:%s", token)
+
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
@@ -365,6 +378,7 @@ func (s *RedisTokenStorage) DenyJWTAccessToken(ctx context.Context, token string
 	}
 
 	key := s.prefix + fmt.Sprintf("oidc:denied_access_token:%s", token)
+
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
@@ -374,6 +388,7 @@ func (s *RedisTokenStorage) DenyJWTAccessToken(ctx context.Context, token string
 // IsJWTAccessTokenDenied checks whether a JWT access token has been denied (invalidated).
 func (s *RedisTokenStorage) IsJWTAccessTokenDenied(ctx context.Context, token string) bool {
 	key := s.prefix + fmt.Sprintf("oidc:denied_access_token:%s", token)
+
 	readCtx, cancel := s.redisReadContext(ctx)
 	defer cancel()
 
@@ -392,7 +407,9 @@ func (s *RedisTokenStorage) DeleteUserAccessTokens(ctx context.Context, userID s
 	readCtx, readCancel := s.redisReadContext(ctx)
 
 	tokens, err := s.redis.GetReadHandle().SMembers(readCtx, userKey).Result()
+
 	readCancel()
+
 	if err != nil {
 		return err
 	}
@@ -436,7 +453,9 @@ func (s *RedisTokenStorage) ListUserSessions(ctx context.Context, userID string)
 	readCtx, cancel := s.redisReadContext(ctx)
 
 	tokens, err := s.redis.GetReadHandle().SMembers(readCtx, userKey).Result()
+
 	cancel()
+
 	if err != nil {
 		return nil, err
 	}
@@ -451,6 +470,7 @@ func (s *RedisTokenStorage) ListUserSessions(ctx context.Context, userID string)
 			// Clean up expired token from set
 			writeCtx, cancel := s.redisWriteContext(ctx)
 			_ = s.redis.GetWriteHandle().SRem(writeCtx, userKey, token).Err()
+
 			cancel()
 		}
 	}

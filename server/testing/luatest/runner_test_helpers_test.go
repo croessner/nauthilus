@@ -28,6 +28,7 @@ func runLuaMockFixture(t *testing.T, scriptName, callbackType, script, mock stri
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, scriptName)
 	mockPath := filepath.Join(dir, "mock.json")
+
 	writeLuaMockTestFile(t, scriptPath, script)
 	writeLuaMockTestFile(t, mockPath, mock)
 

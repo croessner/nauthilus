@@ -55,5 +55,6 @@ func (p *Pool) Put(obj any) {
 	if resettable, ok := obj.(Resettable); ok {
 		resettable.Reset()
 	}
+
 	p.pool.Put(obj)
 }

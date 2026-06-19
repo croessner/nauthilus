@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package devui provides devui functionality.
 package devui
 
 import (
@@ -37,16 +38,41 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// DevUIHandler handles the development UI for previewing templates.
-type DevUIHandler struct {
+const (
+	devUIDeviceCodeExample     = "ABCD-EFGH"
+	devUILoggedOutPath         = "/logged_out"
+	devUILogoutTaskKeyID       = "id"
+	devUILogoutTaskKeyName     = "display_name"
+	devUILogoutTaskKeyMethod   = "method"
+	devUILogoutTaskKeyProtocol = "protocol"
+	devUIMethodGet             = "GET"
+	devUIMethodGetPost         = "GET/POST"
+	devUIMethodPost            = "POST"
+	devUIMFAMethodTOTP         = "totp"
+	devUIPreviewKeyChecked     = "Checked"
+	devUIPreviewKeyCreatedAt   = "CreatedAt"
+	devUIPreviewKeyDescription = "Description"
+	devUIPreviewKeyID          = "ID"
+	devUIPreviewKeyLastUsed    = "LastUsed"
+	devUIPreviewKeyName        = "Name"
+	devUIProtocolOIDC          = "oidc"
+	devUIRecoveryCodeFirst     = "ABCD-1234"
+	devUIRecoveryCodeFourth    = "MNOP-3456"
+	devUIRecoveryCodeSecond    = "EFGH-5678"
+	devUIRecoveryCodeThird     = "IJKL-9012"
+	devUISampleErrorMessage    = "This is a sample error message for dev preview."
+)
+
+// Handler handles the development UI for previewing templates.
+type Handler struct {
 	deps    *deps.Deps
 	version int64
 	mu      sync.RWMutex
 }
 
-// New returns a new DevUIHandler.
-func New(deps *deps.Deps) *DevUIHandler {
-	h := &DevUIHandler{
+// New returns a new Handler.
+func New(deps *deps.Deps) *Handler {
+	h := &Handler{
 		deps:    deps,
 		version: time.Now().UnixNano(),
 	}
@@ -56,7 +82,7 @@ func New(deps *deps.Deps) *DevUIHandler {
 	return h
 }
 
-func (h *DevUIHandler) startWatcher() {
+func (h *Handler) startWatcher() {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Printf("DevUI: failed to create watcher: %v", err)
@@ -65,7 +91,7 @@ func (h *DevUIHandler) startWatcher() {
 	}
 
 	go func() {
-		defer watcher.Close()
+		defer func() { _ = watcher.Close() }()
 
 		for {
 			select {
@@ -90,14 +116,14 @@ func (h *DevUIHandler) startWatcher() {
 	}()
 
 	path := h.deps.Cfg.GetServer().Frontend.GetHTMLStaticContentPath()
-	err = watcher.Add(path)
 
+	err = watcher.Add(path)
 	if err != nil {
 		log.Printf("DevUI: failed to add path to watcher: %v", err)
 	}
 }
 
-// Endpoint represents an IdP endpoint for the dev UI list.
+// Endpoint represents an IDP endpoint for the dev UI list.
 type Endpoint struct {
 	Method   string
 	Path     string
@@ -105,7 +131,7 @@ type Endpoint struct {
 }
 
 // Register adds the dev UI routes to the router.
-func (h *DevUIHandler) Register(router gin.IRouter) {
+func (h *Handler) Register(router gin.IRouter) {
 	// DevUI uses its own cookie (nauthilus_dev) for development purposes
 	devCookieMW := func(ctx *gin.Context) {
 		mgr := cookie.NewSecureManager([]byte(definitions.DevCookieSecret), definitions.DevCookieName, h.deps.Cfg, h.deps.Env)
@@ -126,7 +152,7 @@ func (h *DevUIHandler) Register(router gin.IRouter) {
 }
 
 // GetVersion returns the current template version.
-func (h *DevUIHandler) GetVersion(ctx *gin.Context) {
+func (h *Handler) GetVersion(ctx *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -134,27 +160,27 @@ func (h *DevUIHandler) GetVersion(ctx *gin.Context) {
 }
 
 // Index renders the main dev UI page.
-func (h *DevUIHandler) Index(ctx *gin.Context) {
+func (h *Handler) Index(ctx *gin.Context) {
 	endpoints := []Endpoint{
-		{Method: "GET/POST", Path: "/login", Template: "idp_login.html"},
-		{Method: "GET", Path: "/login/mfa", Template: "idp_mfa_select.html"},
-		{Method: "GET/POST", Path: "/login/totp", Template: "idp_totp_verify.html"},
-		{Method: "GET", Path: "/login/webauthn", Template: "idp_webauthn_verify.html"},
-		{Method: "GET/POST", Path: "/login/recovery", Template: "idp_recovery_login.html"},
-		{Method: "GET", Path: "/mfa/register/home", Template: "idp_2fa_home.html"},
-		{Method: "GET/POST", Path: "/mfa/totp/register", Template: "idp_totp_register.html"},
-		{Method: "GET", Path: "/mfa/webauthn/register", Template: "idp_webauthn_register.html"},
-		{Method: "GET", Path: "/mfa/webauthn/devices", Template: "idp_2fa_webauthn_devices.html"},
-		{Method: "GET/POST", Path: "/mfa/recovery/register", Template: "idp_recovery_codes_register.html"},
-		{Method: "POST", Path: "/mfa/recovery/generate", Template: "idp_recovery_codes_modal.html"},
-		{Method: "GET", Path: "/logged_out", Template: "idp_logged_out.html"},
-		{Method: "GET", Path: "/oidc/consent", Template: "idp_consent.html"},
-		{Method: "GET", Path: "/oidc/logout", Template: "idp_logout_frames.html"},
-		{Method: "GET", Path: "/saml/sso", Template: "idp_saml_post.html"},
-		{Method: "GET", Path: "/error", Template: "idp_error_modal.html"},
-		{Method: "GET/POST", Path: "/oidc/device/verify", Template: "idp_device_verify.html"},
-		{Method: "GET", Path: "/oidc/device/verify/success", Template: "idp_device_verify_success.html"},
-		{Method: "GET", Path: "/oidc/device/verify/failed", Template: "idp_device_verify_failed.html"},
+		{Method: devUIMethodGetPost, Path: "/login", Template: "idp_login.html"},
+		{Method: devUIMethodGet, Path: "/login/mfa", Template: "idp_mfa_select.html"},
+		{Method: devUIMethodGetPost, Path: "/login/totp", Template: "idp_totp_verify.html"},
+		{Method: devUIMethodGet, Path: "/login/webauthn", Template: "idp_webauthn_verify.html"},
+		{Method: devUIMethodGetPost, Path: "/login/recovery", Template: "idp_recovery_login.html"},
+		{Method: devUIMethodGet, Path: "/mfa/register/home", Template: "idp_2fa_home.html"},
+		{Method: devUIMethodGetPost, Path: "/mfa/totp/register", Template: "idp_totp_register.html"},
+		{Method: devUIMethodGet, Path: "/mfa/webauthn/register", Template: "idp_webauthn_register.html"},
+		{Method: devUIMethodGet, Path: "/mfa/webauthn/devices", Template: "idp_2fa_webauthn_devices.html"},
+		{Method: devUIMethodGetPost, Path: "/mfa/recovery/register", Template: "idp_recovery_codes_register.html"},
+		{Method: devUIMethodPost, Path: "/mfa/recovery/generate", Template: "idp_recovery_codes_modal.html"},
+		{Method: devUIMethodGet, Path: devUILoggedOutPath, Template: "idp_logged_out.html"},
+		{Method: devUIMethodGet, Path: "/oidc/consent", Template: "idp_consent.html"},
+		{Method: devUIMethodGet, Path: "/oidc/logout", Template: "idp_logout_frames.html"},
+		{Method: devUIMethodGet, Path: "/saml/sso", Template: "idp_saml_post.html"},
+		{Method: devUIMethodGet, Path: "/error", Template: "idp_error_modal.html"},
+		{Method: devUIMethodGetPost, Path: "/oidc/device/verify", Template: "idp_device_verify.html"},
+		{Method: devUIMethodGet, Path: "/oidc/device/verify/success", Template: "idp_device_verify_success.html"},
+		{Method: devUIMethodGet, Path: "/oidc/device/verify/failed", Template: "idp_device_verify_failed.html"},
 	}
 
 	// Sort by path, then method
@@ -170,8 +196,8 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 
 	for _, tag := range h.deps.LangManager.GetTags() {
 		languages = append(languages, map[string]string{
-			"Tag":  tag.String(),
-			"Name": tag.String(), // Could be improved with display name
+			"Tag":               tag.String(),
+			devUIPreviewKeyName: tag.String(), // Could be improved with display name
 		})
 	}
 
@@ -198,7 +224,7 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 </head>
 <body>
     <div id="sidebar">
-        <h2>IdP Endpoints</h2>
+        <h2>IDP Endpoints</h2>
         {{range .Endpoints}}
         <div class="endpoint" onclick="loadTemplate('{{.Template}}', this)">
             <span class="method">{{.Method}}</span>
@@ -265,6 +291,7 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 </body>
 </html>
 `
+
 	tmpl, err := template.New("index").Parse(html)
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, err.Error())
@@ -277,6 +304,7 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 	h.mu.RUnlock()
 
 	ctx.Status(http.StatusOK)
+
 	err = tmpl.Execute(ctx.Writer, gin.H{
 		"Endpoints": endpoints,
 		"Version":   version,
@@ -288,7 +316,7 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 }
 
 // RenderTemplate renders a specific template with dummy data.
-func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
+func (h *Handler) RenderTemplate(ctx *gin.Context) {
 	templateName := ctx.Param("template")
 	templatePath := filepath.Join(h.deps.Cfg.GetServer().Frontend.GetHTMLStaticContentPath(), templateName)
 
@@ -375,25 +403,25 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["LogoutAttempt"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Attempt")
 	data["FrontChannelLogoutTasks"] = []map[string]string{
 		{
-			"id":           "oidc-1",
-			"display_name": "OIDC app 1",
-			"protocol":     "oidc",
-			"method":       "GET",
-			"url":          "https://app1.example.com/logout",
+			devUILogoutTaskKeyID:       "oidc-1",
+			devUILogoutTaskKeyName:     "OIDC app 1",
+			devUILogoutTaskKeyProtocol: devUIProtocolOIDC,
+			devUILogoutTaskKeyMethod:   devUIMethodGet,
+			"url":                      "https://app1.example.com/logout",
 		},
 		{
-			"id":             "saml-1",
-			"display_name":   "SAML SP 1",
-			"protocol":       "saml",
-			"method":         "POST",
-			"payload_base64": "PGh0bWw+PGJvZHk+U0FNTCBQT1NUIHBheWxvYWQ8L2JvZHk+PC9odG1sPg==",
+			devUILogoutTaskKeyID:       "saml-1",
+			devUILogoutTaskKeyName:     "SAML SP 1",
+			devUILogoutTaskKeyProtocol: "saml",
+			devUILogoutTaskKeyMethod:   devUIMethodPost,
+			"payload_base64":           "PGh0bWw+PGJvZHk+U0FNTCBQT1NUIHBheWxvYWQ8L2JvZHk+PC9odG1sPg==",
 		},
 	}
 	data["FrontChannelLogoutTaskConfig"] = `[{"id":"oidc-1","display_name":"OIDC app 1","protocol":"oidc","method":"GET","url":"https://app1.example.com/logout"},{"id":"saml-1","display_name":"SAML SP 1","protocol":"saml","method":"POST","payload_base64":"PGh0bWw+PGJvZHk+U0FNTCBQT1NUIHBheWxvYWQ8L2JvZHk+PC9odG1sPg=="}]`
 	data["FrontChannelLogoutTimeoutMS"] = 4000
 	data["FrontChannelLogoutMaxRetries"] = 1
 	data["FrontChannelLogoutRedirectDelayMS"] = 1500
-	data["LogoutTarget"] = "/logged_out"
+	data["LogoutTarget"] = devUILoggedOutPath
 	data["SAMLPostTitle"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Signing you in")
 	data["SAMLPostMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You are being redirected to the application.")
 	data["SAMLPostHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "If this does not happen automatically, click Continue.")
@@ -412,7 +440,7 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
 	data["RequireMFAFlow"] = true
 	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
-	data["Codes"] = []string{"ABCD-1234", "EFGH-5678", "IJKL-9012", "MNOP-3456"}
+	data["Codes"] = []string{devUIRecoveryCodeFirst, devUIRecoveryCodeSecond, devUIRecoveryCodeThird, devUIRecoveryCodeFourth}
 	data["Close"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Close")
 
 	data["WebAuthnVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please use your security key to login")
@@ -428,9 +456,9 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	// Device code verification
 	data["DeviceVerifyDescription"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Enter the code displayed on your device and sign in to authorize it.")
 	data["UserCodeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Device Code")
-	data["UserCodePlaceholder"] = "ABCD-EFGH"
+	data["UserCodePlaceholder"] = devUIDeviceCodeExample
 	data["PostDeviceVerifyEndpoint"] = "#"
-	data["UserCode"] = "ABCD-EFGH"
+	data["UserCode"] = devUIDeviceCodeExample
 	data["DeviceVerifySuccessMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your device has been successfully authorized.")
 	data["DeviceVerifySuccessHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You can close this window and return to your device.")
 	data["DeviceVerifyFailedMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Authorization denied")
@@ -452,13 +480,13 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["PostRecoveryVerifyEndpoint"] = "#"
 	data["ReturnTo"] = ""
 	data["QueryString"] = ""
-	data["Protocol"] = "oidc"
-	data["LastMFAMethod"] = "totp"
-	data["RecommendedMethod"] = "totp"
+	data["Protocol"] = devUIProtocolOIDC
+	data["LastMFAMethod"] = devUIMFAMethodTOTP
+	data["RecommendedMethod"] = devUIMFAMethodTOTP
 	data["HasOtherMethods"] = true
 	data["HaveError"] = true
-	data["Message"] = "This is a sample error message for dev preview."
-	data["ErrorMessage"] = "This is a sample error message for dev preview."
+	data["Message"] = devUISampleErrorMessage
+	data["ErrorMessage"] = devUISampleErrorMessage
 	data["BackendErrorMessage"] = "This is a sample backend error message for dev preview."
 	data["Success"] = "This is a sample success message for dev preview."
 	data["IsTOTP"] = true
@@ -466,7 +494,7 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["TOTPEnabled"] = true
 	data["WebAuthnEnabled"] = true
 	data["ShowRecoveryCodes"] = true
-	data["RecoveryCodesList"] = []string{"ABCD-1234", "EFGH-5678", "IJKL-9012", "MNOP-3456", "QRST-7890"}
+	data["RecoveryCodesList"] = []string{devUIRecoveryCodeFirst, devUIRecoveryCodeSecond, devUIRecoveryCodeThird, devUIRecoveryCodeFourth, "QRST-7890"}
 	data["NumRecoveryCodes"] = 5
 	data["HaveTOTP"] = true
 	data["HaveWebAuthn"] = true
@@ -478,12 +506,12 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["PasswordForgottenURL"] = "https://example.com/forgot-password"
 	data["PasswordForgottenLabel"] = "Forgot password?"
 	data["WebAuthnAuthenticators"] = []gin.H{
-		{"ID": "1", "Name": "YubiKey 5C", "CreatedAt": time.Now().Add(-24 * time.Hour).Format(time.RFC822)},
-		{"ID": "2", "Name": "Android Phone", "CreatedAt": time.Now().Add(-48 * time.Hour).Format(time.RFC822)},
+		{devUIPreviewKeyID: "1", devUIPreviewKeyName: "YubiKey 5C", devUIPreviewKeyCreatedAt: time.Now().Add(-24 * time.Hour).Format(time.RFC822)},
+		{devUIPreviewKeyID: "2", devUIPreviewKeyName: "Android Phone", devUIPreviewKeyCreatedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC822)},
 	}
 	data["Devices"] = []gin.H{
-		{"ID": "MTIzNDU2Nzg5MA", "LastUsed": time.Now().Add(-1 * time.Hour).Format("2006-01-02 15:04:05")},
-		{"ID": "YWJjZGVmZ2hpams", "LastUsed": "Never"},
+		{devUIPreviewKeyID: "MTIzNDU2Nzg5MA", devUIPreviewKeyLastUsed: time.Now().Add(-1 * time.Hour).Format("2006-01-02 15:04:05")},
+		{devUIPreviewKeyID: "YWJjZGVmZ2hpams", devUIPreviewKeyLastUsed: "Never"},
 	}
 	data["QRCode"] = "otpauth://totp/Nauthilus:dev-user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Nauthilus"
 	data["Secret"] = "JBSWY3DPEHPK3PXP"
@@ -510,19 +538,19 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	}
 	data["OptionalScopeChoices"] = []gin.H{
 		{
-			"Name":        "email",
-			"Description": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your email address"),
-			"Checked":     true,
+			devUIPreviewKeyName:        "email",
+			devUIPreviewKeyDescription: frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your email address"),
+			devUIPreviewKeyChecked:     true,
 		},
 		{
-			"Name":        "groups",
-			"Description": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your group memberships"),
-			"Checked":     true,
+			devUIPreviewKeyName:        "groups",
+			devUIPreviewKeyDescription: frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your group memberships"),
+			devUIPreviewKeyChecked:     true,
 		},
 		{
-			"Name":        "offline_access",
-			"Description": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Maintain access when you are offline"),
-			"Checked":     false,
+			devUIPreviewKeyName:        "offline_access",
+			devUIPreviewKeyDescription: frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Maintain access when you are offline"),
+			devUIPreviewKeyChecked:     false,
 		},
 	}
 
@@ -557,7 +585,6 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	pattern := filepath.Join(h.deps.Cfg.GetServer().Frontend.GetHTMLStaticContentPath(), "*.html")
 
 	tmpl, err := tmpl.ParseGlob(pattern)
-
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Template parse error: %v", err)
 
@@ -567,7 +594,6 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 
 	err = tmpl.ExecuteTemplate(ctx.Writer, templateName, data)
-
 	if err != nil {
 		_ = ctx.Error(err)
 	}

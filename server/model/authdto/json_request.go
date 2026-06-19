@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package authdto provides authdto functionality.
 package authdto
 
 // Request is a data structure containing the details of a client's request in JSON format.

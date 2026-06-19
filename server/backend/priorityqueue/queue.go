@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package priorityqueue provides priorityqueue functionality.
 package priorityqueue
 
 import (
@@ -301,25 +302,11 @@ func (q *LDAPRequestQueue) AddPoolName(poolName string) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	if q.poolNames[poolName] {
-		q.workerPools[poolName] = true
-		delete(q.warnedNoWorker, poolName)
-
+	if markWorkerPoolLocked(q.poolNames, q.workerPools, q.warnedNoWorker, poolName) {
 		return
 	}
 
-	q.poolNames[poolName] = true
-	q.workerPools[poolName] = true
-	delete(q.warnedNoWorker, poolName)
-	pq := make(LDAPRequestPriorityQueue, 0)
-
-	heap.Init(&pq)
-
-	q.pools[poolName] = &ldapRequestPool{
-		queue:    pq,
-		notEmpty: sync.NewCond(&q.mutex),
-		notify:   make(chan struct{}, 1),
-	}
+	q.pools[poolName] = newLDAPRequestPool(&q.mutex)
 }
 
 // GetPoolNames returns the pool names in the LDAPRequestQueue
@@ -340,25 +327,11 @@ func (q *LDAPAuthRequestQueue) AddPoolName(poolName string) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	if q.poolNames[poolName] {
-		q.workerPools[poolName] = true
-		delete(q.warnedNoWorker, poolName)
-
+	if markWorkerPoolLocked(q.poolNames, q.workerPools, q.warnedNoWorker, poolName) {
 		return
 	}
 
-	q.poolNames[poolName] = true
-	q.workerPools[poolName] = true
-	delete(q.warnedNoWorker, poolName)
-	pq := make(LDAPAuthRequestPriorityQueue, 0)
-
-	heap.Init(&pq)
-
-	q.pools[poolName] = &ldapAuthRequestPool{
-		queue:    pq,
-		notEmpty: sync.NewCond(&q.mutex),
-		notify:   make(chan struct{}, 1),
-	}
+	q.pools[poolName] = newLDAPAuthRequestPool(&q.mutex)
 }
 
 // GetPoolNames returns the pool names in the LDAPAuthRequestQueue
@@ -382,6 +355,42 @@ func (q *LuaRequestQueue) AddBackendName(backendName string) {
 	q.backendNames[backendName] = true
 	q.workerBackends[backendName] = true
 	delete(q.warnedNoWorker, backendName)
+}
+
+// markWorkerPoolLocked records a pool/backend with an active worker.
+func markWorkerPoolLocked(names map[string]bool, workerNames map[string]bool, warnedNoWorker map[string]bool, name string) bool {
+	existed := names[name]
+	names[name] = true
+	workerNames[name] = true
+	delete(warnedNoWorker, name)
+
+	return existed
+}
+
+// newLDAPRequestPool creates the lookup queue state for one LDAP pool.
+func newLDAPRequestPool(locker sync.Locker) *ldapRequestPool {
+	pq := make(LDAPRequestPriorityQueue, 0)
+
+	heap.Init(&pq)
+
+	return &ldapRequestPool{
+		queue:    pq,
+		notEmpty: sync.NewCond(locker),
+		notify:   make(chan struct{}, 1),
+	}
+}
+
+// newLDAPAuthRequestPool creates the auth queue state for one LDAP pool.
+func newLDAPAuthRequestPool(locker sync.Locker) *ldapAuthRequestPool {
+	pq := make(LDAPAuthRequestPriorityQueue, 0)
+
+	heap.Init(&pq)
+
+	return &ldapAuthRequestPool{
+		queue:    pq,
+		notEmpty: sync.NewCond(locker),
+		notify:   make(chan struct{}, 1),
+	}
 }
 
 func (q *LDAPRequestQueue) warnMissingWorkerLocked(poolName string) {
@@ -442,18 +451,11 @@ func (q *LDAPRequestQueue) Push(request *bktype.LDAPRequest, priority int) {
 
 	poolName := request.PoolName
 	q.warnMissingWorkerLocked(poolName)
+
 	p, ok := q.pools[poolName]
 	if !ok {
 		// initialize on the fly if not present
-		pq := make(LDAPRequestPriorityQueue, 0)
-
-		heap.Init(&pq)
-
-		p = &ldapRequestPool{
-			queue:    pq,
-			notEmpty: sync.NewCond(&q.mutex),
-			notify:   make(chan struct{}, 1),
-		}
+		p = newLDAPRequestPool(&q.mutex)
 		q.pools[poolName] = p
 		q.poolNames[poolName] = true
 	}
@@ -501,15 +503,7 @@ func (q *LDAPRequestQueue) Pop(poolName string) *bktype.LDAPRequest {
 
 	p, ok := q.pools[poolName]
 	if !ok {
-		pq := make(LDAPRequestPriorityQueue, 0)
-
-		heap.Init(&pq)
-
-		p = &ldapRequestPool{
-			queue:    pq,
-			notEmpty: sync.NewCond(&q.mutex),
-			notify:   make(chan struct{}, 1),
-		}
+		p = newLDAPRequestPool(&q.mutex)
 		q.pools[poolName] = p
 		q.poolNames[poolName] = true
 	}
@@ -555,15 +549,7 @@ func (q *LDAPRequestQueue) PopWithContext(ctx context.Context, poolName string) 
 
 	p, ok := q.pools[poolName]
 	if !ok {
-		pq := make(LDAPRequestPriorityQueue, 0)
-
-		heap.Init(&pq)
-
-		p = &ldapRequestPool{
-			queue:    pq,
-			notEmpty: sync.NewCond(&q.mutex),
-			notify:   make(chan struct{}, 1),
-		}
+		p = newLDAPRequestPool(&q.mutex)
 		q.pools[poolName] = p
 		q.poolNames[poolName] = true
 	}
@@ -571,6 +557,7 @@ func (q *LDAPRequestQueue) PopWithContext(ctx context.Context, poolName string) 
 	for {
 		for p.queue.Len() == 0 {
 			q.mutex.Unlock()
+
 			select {
 			case <-ctx.Done():
 				q.mutex.Lock()
@@ -578,6 +565,7 @@ func (q *LDAPRequestQueue) PopWithContext(ctx context.Context, poolName string) 
 				return nil
 			case <-p.notify:
 			}
+
 			q.mutex.Lock()
 		}
 
@@ -609,17 +597,10 @@ func (q *LDAPAuthRequestQueue) Push(request *bktype.LDAPAuthRequest, priority in
 
 	poolName := request.PoolName
 	q.warnMissingWorkerLocked(poolName)
+
 	p, ok := q.pools[poolName]
 	if !ok {
-		pq := make(LDAPAuthRequestPriorityQueue, 0)
-
-		heap.Init(&pq)
-
-		p = &ldapAuthRequestPool{
-			queue:    pq,
-			notEmpty: sync.NewCond(&q.mutex),
-			notify:   make(chan struct{}, 1),
-		}
+		p = newLDAPAuthRequestPool(&q.mutex)
 		q.pools[poolName] = p
 		q.poolNames[poolName] = true
 	}
@@ -667,15 +648,7 @@ func (q *LDAPAuthRequestQueue) Pop(poolName string) *bktype.LDAPAuthRequest {
 
 	p, ok := q.pools[poolName]
 	if !ok {
-		pq := make(LDAPAuthRequestPriorityQueue, 0)
-
-		heap.Init(&pq)
-
-		p = &ldapAuthRequestPool{
-			queue:    pq,
-			notEmpty: sync.NewCond(&q.mutex),
-			notify:   make(chan struct{}, 1),
-		}
+		p = newLDAPAuthRequestPool(&q.mutex)
 		q.pools[poolName] = p
 		q.poolNames[poolName] = true
 	}
@@ -721,15 +694,7 @@ func (q *LDAPAuthRequestQueue) PopWithContext(ctx context.Context, poolName stri
 
 	p, ok := q.pools[poolName]
 	if !ok {
-		pq := make(LDAPAuthRequestPriorityQueue, 0)
-
-		heap.Init(&pq)
-
-		p = &ldapAuthRequestPool{
-			queue:    pq,
-			notEmpty: sync.NewCond(&q.mutex),
-			notify:   make(chan struct{}, 1),
-		}
+		p = newLDAPAuthRequestPool(&q.mutex)
 		q.pools[poolName] = p
 		q.poolNames[poolName] = true
 	}
@@ -737,6 +702,7 @@ func (q *LDAPAuthRequestQueue) PopWithContext(ctx context.Context, poolName stri
 	for {
 		for p.queue.Len() == 0 {
 			q.mutex.Unlock()
+
 			select {
 			case <-ctx.Done():
 				q.mutex.Lock()
@@ -744,6 +710,7 @@ func (q *LDAPAuthRequestQueue) PopWithContext(ctx context.Context, poolName stri
 				return nil
 			case <-p.notify:
 			}
+
 			q.mutex.Lock()
 		}
 
@@ -775,6 +742,7 @@ func (q *LuaRequestQueue) Push(request *bktype.LuaRequest, priority int) {
 
 	backendName := request.BackendName
 	q.warnMissingWorkerLocked(backendName)
+
 	b, ok := q.backends[backendName]
 	if !ok {
 		pq := make(LuaRequestPriorityQueue, 0)
@@ -903,6 +871,7 @@ func (q *LuaRequestQueue) PopWithContext(ctx context.Context, backendName string
 	for {
 		for b.queue.Len() == 0 {
 			q.mutex.Unlock()
+
 			select {
 			case <-ctx.Done():
 				q.mutex.Lock()
@@ -910,6 +879,7 @@ func (q *LuaRequestQueue) PopWithContext(ctx context.Context, backendName string
 				return nil
 			case <-b.notify:
 			}
+
 			q.mutex.Lock()
 		}
 

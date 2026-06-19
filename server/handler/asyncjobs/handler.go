@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package asyncjobs provides asyncjobs functionality.
 package asyncjobs
 
 import (
@@ -30,6 +31,7 @@ type Handler struct {
 // New constructs the async jobs handler with injected dependencies.
 func New(deps *handlerdeps.Deps) *Handler { return &Handler{deps: deps} }
 
+// Register provides the exported Register method.
 func (h *Handler) Register(router gin.IRouter) {
 	ag := router.Group("/async")
 

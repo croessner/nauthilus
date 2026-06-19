@@ -58,7 +58,7 @@ func TestSetStatusMessage(t *testing.T) {
 	}
 }
 
-func TestCommonRequestResetIdPFields(t *testing.T) {
+func TestCommonRequestResetIDPFields(t *testing.T) {
 	cr := &CommonRequest{
 		GrantType:               "authorization_code",
 		OIDCClientName:          "Test Client",
@@ -110,7 +110,7 @@ func TestCommonRequestResetIdPFields(t *testing.T) {
 	}
 }
 
-func TestCommonRequestSetupRequestIdPFields(t *testing.T) {
+func TestCommonRequestSetupRequestIDPFields(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
 
@@ -189,7 +189,7 @@ func TestCommonRequestSetupRequestIdPFields(t *testing.T) {
 	}
 }
 
-func TestCommonRequestSetupRequestIdPFieldsEmpty(t *testing.T) {
+func TestCommonRequestSetupRequestIDPFieldsEmpty(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
 
@@ -220,7 +220,7 @@ func TestCommonRequestSetupRequestIdPFieldsEmpty(t *testing.T) {
 	}
 }
 
-func TestCommonRequestPoolIdPFields(t *testing.T) {
+func TestCommonRequestPoolIDPFields(t *testing.T) {
 	cr := GetCommonRequest()
 	cr.GrantType = "device_code"
 	cr.MFACompleted = true

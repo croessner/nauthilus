@@ -24,6 +24,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+// CustomLogKeyValue describes the exported CustomLogKeyValue type.
 type CustomLogKeyValue []any
 
 // Set appends a key-value pair to the CustomLogKeyValue slice. If the receiver pointer c is nil, no action is taken.
@@ -103,6 +104,7 @@ func MergeStatusAndLogs(statusSet *bool, reqLogs **CustomLogKeyValue, reqStatus 
 		if *reqLogs == nil {
 			*reqLogs = new(CustomLogKeyValue)
 		}
+
 		**reqLogs = append(**reqLogs, scriptLogs...)
 	}
 }

@@ -30,6 +30,7 @@ func TestCheckBackendConnectionUsesConfiguredConnectTimeout(t *testing.T) {
 	t.Parallel()
 
 	wantTimeout := 150 * time.Millisecond
+
 	var gotTimeout time.Duration
 
 	cfg := &config.FileSettings{
@@ -73,7 +74,6 @@ func TestConnectProbeDoesNotRunDeepProtocolCheck(t *testing.T) {
 	err := checkBackendConnectionWithDialer(cfg, slog.Default(), server, backendCheckPhaseConnect, func(_ string, _ string, _ time.Duration) (net.Conn, error) {
 		return &probeOnlyConn{}, nil
 	})
-
 	if err != nil {
 		t.Fatalf("connect probe should not execute SMTP deep check: %v", err)
 	}

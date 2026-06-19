@@ -42,6 +42,7 @@ func setupBruteForceListTestConfig(t *testing.T, bucketName string, banTime time
 	t.Helper()
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
 			Redis: config.Redis{Prefix: "t:"},
@@ -68,8 +69,10 @@ func setupBruteForceListTestConfig(t *testing.T, bucketName string, banTime time
 }
 
 func TestListBlockedIPAddressesUsesIndexWithoutKeyspaceScan(t *testing.T) {
-	const bucketName = "b_1m_ipv6_128_mail"
-	const network = "2a05:aec0:abcd:1::4711/128"
+	const (
+		bucketName = "b_1m_ipv6_128_mail"
+		network    = "2a05:aec0:abcd:1::4711/128"
+	)
 
 	banTime := 2 * time.Hour
 	ttl := time.Hour

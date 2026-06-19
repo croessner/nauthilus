@@ -125,7 +125,7 @@ func logValidationFailure(ctx *gin.Context, logger *slog.Logger, operationID str
 	logger.Warn(
 		"OpenAPI runtime request validation failed",
 		definitions.LogKeyMethod, ctx.Request.Method,
-		definitions.LogKeyUriPath, ctx.Request.URL.Path,
+		definitions.LogKeyURIPath, ctx.Request.URL.Path,
 		"operation_id", operationID,
 		definitions.LogKeyError, err.Error(),
 	)

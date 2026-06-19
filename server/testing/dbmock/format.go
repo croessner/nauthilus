@@ -20,11 +20,17 @@ import (
 	"strings"
 )
 
+const (
+	dbmockCallModeDirect   = "direct"
+	dbmockCallModePrepared = "prepared"
+)
+
 func describeCall(call Call) string {
 	query := normalizeSQL(call.Query)
-	mode := "direct"
+
+	mode := dbmockCallModeDirect
 	if call.Prepared {
-		mode = "prepared"
+		mode = dbmockCallModePrepared
 	}
 
 	if len(call.Args) == 0 {

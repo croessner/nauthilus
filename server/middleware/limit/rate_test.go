@@ -70,6 +70,7 @@ func TestIPRateLimiter_Middleware(t *testing.T) {
 
 func BenchmarkIPRateLimiter_Middleware(b *testing.B) {
 	gin.SetMode(gin.ReleaseMode)
+
 	r := gin.New()
 	limiter := NewIPRateLimiter(rate.Limit(1000000), 1000000)
 	r.Use(limiter.Middleware())
@@ -81,6 +82,7 @@ func BenchmarkIPRateLimiter_Middleware(b *testing.B) {
 	req.RemoteAddr = "127.0.0.1:1234"
 
 	b.ResetTimer()
+
 	for n := 0; n < b.N; n++ {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)

@@ -114,7 +114,6 @@ func (a *AuthState) EnvironmentLua(ctx *gin.Context) (triggered bool, skipRemain
 	}
 
 	triggered, skipRemainingEnvironment, err = fr.CallEnvironmentLua(ctx, a.Cfg(), a.Logger(), a.Redis())
-
 	if err != nil {
 		return
 	}
@@ -202,6 +201,7 @@ func (a *AuthState) relayDomainPolicyFact(
 
 	domain, present := usernameDomain(username)
 	fact.Value = domain
+
 	fact.Present = present
 	if !present {
 		return fact
@@ -294,6 +294,7 @@ func (a *AuthState) evaluateRBLService(ctx *gin.Context, span trace.Span) (bool,
 		attribute.Int("score", score),
 		attribute.Bool("matched", matched),
 	)
+
 	if !matched {
 		return false, nil
 	}
@@ -501,6 +502,7 @@ func (a *AuthState) checkRBLEnvironment(ctx *gin.Context) (triggered bool, err e
 
 		if isWhitelisted() {
 			a.logEnvironmentControlAllowlisting(definitions.ControlRBL)
+
 			rbls := a.cfg().GetRBLs()
 			if rbls != nil {
 				a.Runtime.RBLPolicy = RBLPolicyFact{
@@ -535,6 +537,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 	}
 
 	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
+
 	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromAction, luaActionName, resource)
 	if stopTimer != nil {
 		defer stopTimer()
@@ -607,6 +610,7 @@ func (a *AuthState) startEnvironmentEvaluation(ctx *gin.Context) trace.Span {
 func (a *AuthState) handleLuaEnvironmentResult(ctx *gin.Context, span trace.Span) (definitions.AuthResult, bool) {
 	if triggered, skipRemainingEnvironment, err := a.checkLuaEnvironmentSource(ctx); err != nil {
 		span.RecordError(err)
+
 		if result, handled := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
 			current:  definitions.AuthResultTempFail,
 			decision: environmentDecisionTempFail,
@@ -733,6 +737,7 @@ func (a *AuthState) handleRBLEnvironmentResult(ctx *gin.Context, span trace.Span
 	if err != nil {
 		a.recordPolicyRBL(ctx, triggered, err)
 		span.RecordError(err)
+
 		if result, handled := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
 			current:            definitions.AuthResultTempFail,
 			decision:           environmentDecisionTempFail,
@@ -746,6 +751,7 @@ func (a *AuthState) handleRBLEnvironmentResult(ctx *gin.Context, span trace.Span
 
 	if triggered {
 		a.recordPolicyRBL(ctx, triggered, nil)
+
 		if result, handled := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
 			current:            definitions.AuthResultPreAuthRBL,
 			decision:           environmentDecisionRBL,

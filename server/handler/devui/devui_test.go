@@ -54,7 +54,7 @@ func TestDevUIHandler_GetVersion(t *testing.T) {
 	r := gin.New()
 
 	env := config.NewTestEnvironmentConfig()
-	h := &DevUIHandler{
+	h := &Handler{
 		deps: &deps.Deps{
 			Cfg:         &config.FileSettings{},
 			Env:         env,
@@ -87,7 +87,7 @@ func TestDevUIHandler_Index(t *testing.T) {
 	r := gin.New()
 
 	env := config.NewTestEnvironmentConfig()
-	h := &DevUIHandler{
+	h := &Handler{
 		deps: &deps.Deps{
 			Cfg:         &config.FileSettings{},
 			Env:         env,

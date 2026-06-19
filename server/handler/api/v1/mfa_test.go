@@ -75,6 +75,7 @@ func (m *mockCookieManager) GetString(key string, defaultValue string) string {
 			return s
 		}
 	}
+
 	return defaultValue
 }
 
@@ -84,6 +85,7 @@ func (m *mockCookieManager) GetInt(key string, defaultValue int) int {
 			return i
 		}
 	}
+
 	return defaultValue
 }
 
@@ -93,6 +95,7 @@ func (m *mockCookieManager) GetInt64(key string, defaultValue int64) int64 {
 			return i
 		}
 	}
+
 	return defaultValue
 }
 
@@ -102,6 +105,7 @@ func (m *mockCookieManager) GetUint8(key string, defaultValue uint8) uint8 {
 			return i
 		}
 	}
+
 	return defaultValue
 }
 
@@ -111,6 +115,7 @@ func (m *mockCookieManager) GetBool(key string, defaultValue bool) bool {
 			return b
 		}
 	}
+
 	return defaultValue
 }
 
@@ -120,6 +125,7 @@ func (m *mockCookieManager) GetStringSlice(key string, defaultValue []string) []
 			return s
 		}
 	}
+
 	return defaultValue
 }
 
@@ -129,6 +135,7 @@ func (m *mockCookieManager) GetDuration(key string, defaultValue time.Duration) 
 			return d
 		}
 	}
+
 	return defaultValue
 }
 
@@ -138,6 +145,7 @@ func (m *mockCookieManager) GetBytes(key string, defaultValue []byte) []byte {
 			return b
 		}
 	}
+
 	return defaultValue
 }
 
@@ -195,6 +203,7 @@ func (m *mockMFAProvider) DeleteWebAuthnCredential(_ *gin.Context, _ string, _ s
 
 func setupTestRouterWithMockCookie(d *deps.Deps, mgr cookie.Manager) *gin.Engine {
 	gin.SetMode(gin.TestMode)
+
 	r := gin.New()
 
 	// Add middleware that sets up the mock cookie manager
@@ -205,6 +214,7 @@ func setupTestRouterWithMockCookie(d *deps.Deps, mgr cookie.Manager) *gin.Engine
 
 	api := NewMFAAPI(d)
 	api.Register(r)
+
 	return r
 }
 
@@ -212,8 +222,8 @@ func setupTestRouterWithMockCookie(d *deps.Deps, mgr cookie.Manager) *gin.Engine
 func newOIDCSessionData(account, scope string) map[string]any {
 	return map[string]any{
 		definitions.SessionKeyAccount:     account,
-		definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
-		definitions.SessionKeyIdPScope:    scope,
+		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+		definitions.SessionKeyIDPScope:    scope,
 	}
 }
 
@@ -221,8 +231,8 @@ func newOIDCSessionData(account, scope string) map[string]any {
 func newSAMLSessionData(account, entityID string) map[string]any {
 	return map[string]any{
 		definitions.SessionKeyAccount:         account,
-		definitions.SessionKeyIdPFlowType:     definitions.ProtoSAML,
-		definitions.SessionKeyIdPSAMLEntityID: entityID,
+		definitions.SessionKeyIDPFlowType:     definitions.ProtoSAML,
+		definitions.SessionKeyIDPSAMLEntityID: entityID,
 	}
 }
 
@@ -243,7 +253,7 @@ func TestMFAAPI_SetupTOTP_Unauthenticated(t *testing.T) {
 
 func TestMFAAPI_SetupTOTP_Success(t *testing.T) {
 	cfg := &config.FileSettings{
-		IDP: &config.IdPSection{
+		IDP: &config.IDPSection{
 			OIDC: config.OIDCConfig{
 				Enabled: true,
 			},
@@ -267,6 +277,7 @@ func TestMFAAPI_SetupTOTP_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]string
+
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, resp["secret"])

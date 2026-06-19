@@ -133,8 +133,8 @@ func handleAttributeValue(ctx *gin.Context, name string, value []any) {
 	var headerValue string
 
 	if valueLen := len(value); valueLen > 0 {
-		switch {
-		case valueLen == 1:
+		switch valueLen {
+		case 1:
 			headerValue = fmt.Sprintf("%v", value[definitions.LDAPSingleValue])
 		default:
 			stringValues := formatValues(value)

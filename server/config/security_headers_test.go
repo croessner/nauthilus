@@ -34,6 +34,7 @@ func TestSetDefaultFrontendSettings_SecurityHeaders(t *testing.T) {
 	if assert.NotNil(t, headers.Enabled) {
 		assert.True(t, *headers.Enabled)
 	}
+
 	assert.Contains(t, headers.GetContentSecurityPolicy(), "script-src 'self' 'nonce-{{nonce}}'")
 	assert.Contains(t, headers.GetContentSecurityPolicy(), "style-src 'self' 'unsafe-inline'")
 	assert.NotContains(t, headers.GetContentSecurityPolicy(), "style-src 'self' 'nonce-{{nonce}}'")
@@ -80,6 +81,7 @@ func TestSetDefaultFrontendSettings_PreservesCustomSecurityHeaders(t *testing.T)
 	if assert.NotNil(t, headers.Enabled) {
 		assert.False(t, *headers.Enabled)
 	}
+
 	assert.Equal(t, "default-src 'none'", headers.GetContentSecurityPolicy())
 	assert.Equal(t, "max-age=100", headers.GetStrictTransportSecurity())
 	assert.Equal(t, "custom", headers.XContentTypeOptions)
@@ -118,14 +120,4 @@ func TestFrontendSecurityHeaders_ValidateTags_AllowStructuredHeaderValues(t *tes
 
 	assert.NoError(t, validate.Struct(headers))
 	assert.NoError(t, headers.ValidateComposedValues())
-}
-
-//go:fix inline
-func stringPointer(value string) *string {
-	return new(value)
-}
-
-//go:fix inline
-func boolPointer(value bool) *bool {
-	return new(value)
 }

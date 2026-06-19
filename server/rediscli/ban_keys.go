@@ -37,6 +37,7 @@ func GetBruteForceBanKeyPattern(prefix string) string {
 // ParseBruteForceBanKey extracts the network part from a brute force ban key.
 func ParseBruteForceBanKey(prefix, key string) (string, bool) {
 	banPrefix := prefix + definitions.RedisBruteForceBanPrefix
+
 	network, ok := strings.CutPrefix(key, banPrefix)
 	if !ok || network == "" {
 		return "", false

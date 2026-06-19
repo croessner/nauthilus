@@ -240,6 +240,7 @@ func buildLevels(nodes []Node) ([][]PlannedNode, error) {
 		level := make([]PlannedNode, 0, len(levelNodes))
 		for _, node := range levelNodes {
 			visited++
+
 			level = append(level, PlannedNode{
 				Name:      node.Name,
 				DependsOn: append([]string(nil), node.DependsOn...),
@@ -330,6 +331,7 @@ func cyclePath(nodes []Node) string {
 	stack := make([]string, 0, len(nodes))
 
 	var walk func(string) []string
+
 	walk = func(name string) []string {
 		if visiting[name] {
 			for index, stackName := range stack {

@@ -13,6 +13,7 @@ func extractHashTag(t *testing.T, key string) string {
 	t.Helper()
 
 	start := strings.IndexByte(key, '{')
+
 	end := strings.IndexByte(key, '}')
 	if start == -1 || end == -1 || end <= start+1 {
 		t.Fatalf("key has no valid hash-tag: %q", key)
@@ -54,6 +55,7 @@ func TestRedisClusterHashTags(t *testing.T) {
 		WithUsername("user").
 		WithProtocol("imap").
 		WithOIDCCID("cid123")
+
 	impl, ok := bm.(*bucketManagerImpl)
 	if !ok {
 		t.Fatalf("unexpected bucket manager implementation: %T", bm)
@@ -69,6 +71,7 @@ func TestRedisClusterHashTags(t *testing.T) {
 	if extractHashTag(t, k1) != "10.0.1.0/24" {
 		t.Fatalf("unexpected bucket hash-tag for r1: %q", k1)
 	}
+
 	if extractHashTag(t, k2) != "10.0.0.0/16" {
 		t.Fatalf("unexpected bucket hash-tag for r2: %q", k2)
 	}

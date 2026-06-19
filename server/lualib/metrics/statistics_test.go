@@ -51,7 +51,6 @@ func TestCreateAndUseSummaryVec(t *testing.T) {
 		-- Stop timer
 		prometheus.stop_timer(timer)
 	`)
-
 	if err != nil {
 		t.Fatalf("Lua code execution failed: %v", err)
 	}
@@ -83,7 +82,6 @@ func TestCreateAndUseCounterVec(t *testing.T) {
 		-- Increment counter
 		prometheus.increment_counter("test_counter", {label1="value1", label2="value2"})
 	`)
-
 	if err != nil {
 		t.Fatalf("Lua code execution failed: %v", err)
 	}
@@ -119,7 +117,6 @@ func TestCreateAndUseHistogramVec(t *testing.T) {
 		-- Stop timer
 		prometheus.stop_timer(timer)
 	`)
-
 	if err != nil {
 		t.Fatalf("Lua code execution failed: %v", err)
 	}
@@ -151,7 +148,6 @@ func TestCreateAndUseGaugeVec(t *testing.T) {
 		-- Set gauge value
 		prometheus.set_gauge("test_gauge", 5.5, {label1 = "value1", label2 = "value2"})
 	`)
-
 	if err != nil {
 		t.Fatalf("Lua code execution failed: %v", err)
 	}

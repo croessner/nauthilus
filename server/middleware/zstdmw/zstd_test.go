@@ -39,7 +39,7 @@ func TestZstdMiddleware_NoAcceptEncoding_NoCompression(t *testing.T) {
 
 	called := 0
 	origFactory := newEncoder
-	newEncoder = func(w io.Writer, lvl Level) (ZstdEncoder, error) {
+	newEncoder = func(_ io.Writer, _ Level) (ZstdEncoder, error) {
 		called++
 
 		return &fakeEncoder{}, nil
@@ -73,7 +73,7 @@ func TestZstdMiddleware_AcceptsZstd_CompressesAndSetsHeaders(t *testing.T) {
 	fe := &fakeEncoder{}
 	origFactory := newEncoder
 
-	newEncoder = func(w io.Writer, lvl Level) (ZstdEncoder, error) {
+	newEncoder = func(_ io.Writer, _ Level) (ZstdEncoder, error) {
 		return fe, nil
 	}
 
@@ -119,7 +119,7 @@ func TestZstdMiddleware_NoBodyStatuses_NoEncoder(t *testing.T) {
 	called := 0
 	origFactory := newEncoder
 
-	newEncoder = func(w io.Writer, lvl Level) (ZstdEncoder, error) {
+	newEncoder = func(_ io.Writer, _ Level) (ZstdEncoder, error) {
 		called++
 
 		return &fakeEncoder{}, nil
@@ -153,7 +153,7 @@ func TestZstdWithOptionsBuilder_ExcludePath_SkipsCompression(t *testing.T) {
 
 	called := 0
 	origFactory := newEncoder
-	newEncoder = func(w io.Writer, lvl Level) (ZstdEncoder, error) {
+	newEncoder = func(_ io.Writer, _ Level) (ZstdEncoder, error) {
 		called++
 
 		return &fakeEncoder{}, nil

@@ -414,7 +414,7 @@ func (a *AuthState) requestTransportKind() string {
 	switch a.Request.Service {
 	case definitions.ServGRPC:
 		return requestPolicyTransportGRPC
-	case definitions.ServIdP:
+	case definitions.ServIDP:
 		return requestPolicyTransportIDP
 	case definitions.ServBasic, definitions.ServCBOR, definitions.ServHeader, definitions.ServJSON, definitions.ServNginx:
 		return requestPolicyTransportHTTP
@@ -431,7 +431,7 @@ func (a *AuthState) requestListenerName() string {
 	switch a.Request.Service {
 	case definitions.ServGRPC:
 		return requestPolicyListenerGRPCAuthority
-	case definitions.ServIdP:
+	case definitions.ServIDP:
 		return requestPolicyListenerIDP
 	case definitions.ServBasic, definitions.ServCBOR, definitions.ServHeader, definitions.ServJSON, definitions.ServNginx:
 		return requestPolicyListenerHTTP

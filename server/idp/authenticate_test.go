@@ -37,6 +37,7 @@ import (
 func TestMain(m *testing.M) {
 	// Provide a minimal test configuration to avoid panics from core.getDefault...
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+
 	cfg := &config.FileSettings{Server: &config.ServerSection{}}
 	config.SetTestFile(cfg)
 
@@ -64,7 +65,7 @@ func TestPrepareUserLookupAuthStateKeepsExplicitUsername(t *testing.T) {
 	body := strings.NewReader("username=target%40example.test%2Amaster%40example.test&password=secret")
 	ctx.Request = httptest.NewRequest("POST", "/login", body)
 	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	setupMockContext(ctx, "test-lookup-username-guid", definitions.ServIdP)
+	setupMockContext(ctx, "test-lookup-username-guid", definitions.ServIDP)
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
@@ -87,7 +88,7 @@ func TestPrepareUserLookupAuthStateKeepsExplicitUsername(t *testing.T) {
 	assert.True(t, authState.Request.NoAuth)
 }
 
-func TestNauthilusIdP_Authenticate_Integration(t *testing.T) {
+func TestNauthilusIDP_Authenticate_Integration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	db, mock := redismock.NewClientMock()
@@ -106,14 +107,14 @@ func TestNauthilusIdP_Authenticate_Integration(t *testing.T) {
 		Redis:        redisClient,
 		AccountCache: accountcache.NewManager(cfg),
 	}
-	idp := NewNauthilusIdP(d)
+	idp := NewNauthilusIDP(d)
 
 	t.Run("OIDC Authentication Flow Setup", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(w)
 		ctx.Request = httptest.NewRequest("POST", "/login", nil)
 		ctx.Request.RemoteAddr = "192.168.1.100:12345"
-		setupMockContext(ctx, "test-oidc-guid", definitions.ServIdP)
+		setupMockContext(ctx, "test-oidc-guid", definitions.ServIDP)
 
 		// Mock Redis lookup for user account
 		userKey := "test:user:{55}" // Shard for user1 with prefix test:
@@ -134,7 +135,7 @@ func TestNauthilusIdP_Authenticate_Integration(t *testing.T) {
 		ctx, _ := gin.CreateTestContext(w)
 		ctx.Request = httptest.NewRequest("POST", "/login", nil)
 		ctx.Request.RemoteAddr = "192.168.1.101:54321"
-		setupMockContext(ctx, "test-saml-guid", definitions.ServIdP)
+		setupMockContext(ctx, "test-saml-guid", definitions.ServIDP)
 
 		// Mock Redis lookup for user account
 		userKey := "test:user:{ef}" // Shard for user2 with prefix test:
@@ -151,7 +152,7 @@ func TestNauthilusIdP_Authenticate_Integration(t *testing.T) {
 		w := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(w)
 		ctx.Request = httptest.NewRequest("GET", "/user", nil)
-		setupMockContext(ctx, "test-getuser-guid", definitions.ServIdP)
+		setupMockContext(ctx, "test-getuser-guid", definitions.ServIDP)
 
 		user, err := idp.GetUserByUsername(ctx, "user3", "client1", "")
 

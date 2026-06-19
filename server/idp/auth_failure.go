@@ -17,7 +17,7 @@ package idp
 
 import "strings"
 
-// AuthFailureStatus carries policy-selected status metadata across IdP auth boundaries.
+// AuthFailureStatus carries policy-selected status metadata across IDP auth boundaries.
 type AuthFailureStatus struct {
 	// StatusMessage is the safe fallback text selected by policy.
 	StatusMessage string
@@ -32,7 +32,7 @@ type AuthFailureStatus struct {
 	PolicyTerminal bool
 
 	// DelayedResponseEligible reports that the failure is a normal password
-	// failure that an IdP client may defer until after MFA.
+	// failure that an IDP client may defer until after MFA.
 	DelayedResponseEligible bool
 }
 

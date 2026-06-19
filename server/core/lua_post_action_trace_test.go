@@ -32,6 +32,7 @@ import (
 
 func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
 	_ = action.NewWorker(config.GetFile(), log.GetLogger(), rediscli.GetClient(), util.GetDefaultEnvironment())
 
 	// Use definitions to avoid unused import
@@ -47,12 +48,14 @@ func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
 	}
 
 	ctx := trace.ContextWithSpanContext(context.Background(), parent)
+
 	expected := trace.SpanContextFromContext(ctx)
 	if !expected.IsValid() {
 		t.Fatalf("expected extracted SpanContext to be valid")
 	}
 
 	done := make(chan struct{})
+
 	go func() {
 		act := <-action.RequestChan
 		if act == nil {
@@ -75,6 +78,7 @@ func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
 		}
 
 		act.FinishedChan <- action.Done{}
+
 		close(done)
 	}()
 

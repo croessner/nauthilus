@@ -29,6 +29,7 @@ import (
 func (rm *RedisManager) RedisMGet(L *lua.LState) int {
 	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		top := stack.GetTop()
+
 		var keys []string
 
 		if top == 2 && stack.L.Get(2).Type() == lua.LTTable {
@@ -52,6 +53,7 @@ func (rm *RedisManager) RedisMGet(L *lua.LState) int {
 		}
 
 		result := L.NewTable()
+
 		for i, val := range cmd.Val() {
 			if val == nil {
 				result.RawSetString(keys[i], lua.LNil)
@@ -68,6 +70,7 @@ func (rm *RedisManager) RedisMGet(L *lua.LState) int {
 func (rm *RedisManager) RedisMSet(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		top := stack.GetTop()
+
 		var kvpairs []any
 
 		if top == 2 && stack.L.Get(2).Type() == lua.LTTable {
@@ -153,6 +156,7 @@ func (rm *RedisManager) RedisScan(L *lua.LState) int {
 		for i, key := range keys {
 			keysTable.RawSetInt(i+1, lua.LString(key))
 		}
+
 		result.RawSetString("keys", keysTable)
 
 		return stack.PushResults(result, lua.LNil)

@@ -110,6 +110,7 @@ func stripPolicyReportFSMFields(diagnostic *policyDiagnosticReport) {
 	}
 
 	stripPolicyFinalFSMField(diagnostic.Final)
+
 	if diagnostic.Observe == nil {
 		return
 	}

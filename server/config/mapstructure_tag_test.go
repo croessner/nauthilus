@@ -31,6 +31,7 @@ func TestConfigStructFieldsHaveExplicitMapstructureTags(t *testing.T) {
 	t.Helper()
 
 	fset := token.NewFileSet()
+
 	files, err := configSourceFiles()
 	if err != nil {
 		t.Fatalf("list config package files: %v", err)

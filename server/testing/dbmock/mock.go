@@ -141,6 +141,7 @@ func (m *Mock) ExpectationsWereMet() error {
 	}
 
 	calls := m.Calls()
+
 	descriptions := make([]string, 0, len(remaining))
 	for i, exp := range remaining {
 		descriptions = append(descriptions, fmt.Sprintf("#%d %s", i+1, describeExpectation(exp)))
@@ -184,6 +185,7 @@ func (c *Conn) Query(query string, args ...any) (Rows, error) {
 // Prepare matches the next prepare expectation and returns a statement handle.
 func (c *Conn) Prepare(query string, args ...any) (*Stmt, error) {
 	call := NewCall(CallPrepare, query, args...)
+
 	exp, err := c.mock.matchAndRecord(call)
 	if err != nil {
 		return nil, err

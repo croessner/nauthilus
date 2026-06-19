@@ -31,6 +31,7 @@ func buildStagePlans(
 	for operation := range operations {
 		for stage := range stages {
 			selectedChecks := checksForPlan(checks, operation, stage)
+
 			selectedPolicies := policiesForPlan(policies, operation, stage)
 			if len(selectedChecks) == 0 && len(selectedPolicies) == 0 {
 				continue
@@ -61,6 +62,7 @@ func operationSet(
 	policies []policyruntime.CompiledPolicy,
 ) map[policy.Operation]struct{} {
 	operations := make(map[policy.Operation]struct{})
+
 	for _, check := range checks {
 		for _, operation := range check.Operations {
 			operations[operation] = struct{}{}
@@ -98,6 +100,7 @@ func policiesForPlan(
 	stage policy.Stage,
 ) []policyruntime.CompiledPolicy {
 	selected := make([]policyruntime.CompiledPolicy, 0)
+
 	for _, compiledPolicy := range policies {
 		if compiledPolicy.Stage == stage && operationsContain(compiledPolicy.Operations, operation) {
 			selected = append(selected, compiledPolicy)
@@ -111,12 +114,14 @@ func orderedChecksForPlan(checks []policyruntime.CompiledCheck) ([]policyruntime
 	temporary := make(map[string]bool, len(checks))
 	permanent := make(map[string]bool, len(checks))
 	byName := make(map[string]policyruntime.CompiledCheck, len(checks))
+
 	ordered := make([]policyruntime.CompiledCheck, 0, len(checks))
 	for _, check := range checks {
 		byName[check.Name] = check
 	}
 
 	var visit func(policyruntime.CompiledCheck) error
+
 	visit = func(check policyruntime.CompiledCheck) error {
 		if permanent[check.Name] {
 			return nil

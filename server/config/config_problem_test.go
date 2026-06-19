@@ -115,6 +115,7 @@ func TestHandleFile_ValidationErrorsUseCanonicalPathsOnly(t *testing.T) {
 	setValidationErrorTestConfig()
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want validation error")
@@ -160,6 +161,7 @@ func TestHandleFile_RejectsLegacyHTTPClientSkipVerify(t *testing.T) {
 	})
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want legacy field rejection")
@@ -199,6 +201,7 @@ func TestHandleFile_RejectsRemovedRuntimeListenAndHTTPPaths(t *testing.T) {
 	})
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want removed runtime path rejection")
@@ -217,6 +220,7 @@ func TestHandleFile_RejectsEnabledGRPCAuthorityWithoutBackchannelAuth(t *testing
 	setGRPCAuthorityValidationTestConfig("127.0.0.1:9444")
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want gRPC authority backchannel auth configuration error")
@@ -250,6 +254,7 @@ func TestHandleFile_RejectsLegacyGRPCAuthPath(t *testing.T) {
 	})
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want legacy gRPC auth path rejection")
@@ -272,6 +277,7 @@ func TestHandleFile_RejectsPlaintextGRPCAuthorityOnNonLoopback(t *testing.T) {
 	setGRPCAuthBasicBackchannelTestConfig()
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want plaintext gRPC bind validation error")
@@ -292,16 +298,18 @@ func TestHandleFile_AcceptsGRPCAuthorityMinTLSVersion(t *testing.T) {
 	t.Cleanup(viper.Reset)
 
 	certFile, keyFile := writeTestTLSKeyPair(t)
+
 	setGRPCAuthorityValidationTestConfig("0.0.0.0:9444")
 	setGRPCAuthBasicBackchannelTestConfig()
 	viper.Set("runtime.servers.grpc.authority.tls", map[string]any{
 		"enabled":         true,
 		"cert":            certFile,
 		"key":             keyFile,
-		"min_tls_version": "TLS1.3",
+		"min_tls_version": TLSVersion13,
 	})
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err != nil {
 		t.Fatalf("HandleFile() error = %v, want gRPC min_tls_version to be accepted", err)
@@ -320,6 +328,7 @@ func TestHandleFile_RejectsHTTPServerTLS13CipherSuites(t *testing.T) {
 	})
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want HTTP TLS 1.3 cipher suite validation error")
@@ -340,11 +349,12 @@ func TestHandleFile_RejectsHTTPServerCipherSuitesWithTLS13Minimum(t *testing.T) 
 	t.Cleanup(viper.Reset)
 
 	certFile, keyFile := writeTestTLSKeyPair(t)
-	setHTTPServerTLSValidationTestConfig(certFile, keyFile, "TLS1.3", []string{
+	setHTTPServerTLSValidationTestConfig(certFile, keyFile, TLSVersion13, []string{
 		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
 	})
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want HTTP TLS cipher suite validation error")
@@ -354,7 +364,7 @@ func TestHandleFile_RejectsHTTPServerCipherSuitesWithTLS13Minimum(t *testing.T) 
 	assertContainsAll(t, got, []string{
 		"runtime.servers.http.tls.cipher_suites",
 		"runtime.servers.http.tls.min_tls_version",
-		"TLS1.3",
+		TLSVersion13,
 	})
 }
 
@@ -370,6 +380,7 @@ func TestHandleFile_RejectsUnknownHTTPServerCipherSuites(t *testing.T) {
 	})
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want HTTP TLS unknown cipher suite validation error")
@@ -399,6 +410,7 @@ func TestHandleFile_RejectsGRPCAuthorityWithIncompleteBasicBackchannelAuth(t *te
 	})
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want incomplete gRPC Basic backchannel auth configuration error")
@@ -422,6 +434,7 @@ func TestHandleFile_RejectsGRPCAuthorityClientCertWithoutTLS(t *testing.T) {
 	viper.Set("runtime.servers.grpc.authority.tls.require_client_cert", true)
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want gRPC client certificate TLS configuration error")

@@ -51,13 +51,13 @@ func (a *OIDCSessionsAPI) Register(router gin.IRouter) {
 func (a *OIDCSessionsAPI) ListSessions(ctx *gin.Context) {
 	userID := ctx.Param("user_id")
 	if userID == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		ctx.JSON(http.StatusBadRequest, gin.H{apiResponseKeyError: apiResponseUserIDRequired})
 		return
 	}
 
 	sessions, err := a.storage.ListUserSessions(ctx.Request.Context(), userID)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: err.Error()})
 		return
 	}
 
@@ -68,20 +68,20 @@ func (a *OIDCSessionsAPI) ListSessions(ctx *gin.Context) {
 func (a *OIDCSessionsAPI) DeleteAllSessions(ctx *gin.Context) {
 	userID := ctx.Param("user_id")
 	if userID == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		ctx.JSON(http.StatusBadRequest, gin.H{apiResponseKeyError: apiResponseUserIDRequired})
 		return
 	}
 
 	// Also delete refresh tokens as they are part of the "session" in a broader sense
 	err := a.storage.DeleteUserRefreshTokens(ctx.Request.Context(), userID)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: err.Error()})
 		return
 	}
 
 	sessions, err := a.storage.ListUserSessions(ctx.Request.Context(), userID)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: err.Error()})
 		return
 	}
 
@@ -96,13 +96,13 @@ func (a *OIDCSessionsAPI) DeleteAllSessions(ctx *gin.Context) {
 func (a *OIDCSessionsAPI) DeleteSession(ctx *gin.Context) {
 	token := ctx.Param("token")
 	if token == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+		ctx.JSON(http.StatusBadRequest, gin.H{apiResponseKeyError: "token is required"})
 		return
 	}
 
 	err := a.storage.DeleteAccessToken(ctx.Request.Context(), token)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: err.Error()})
 		return
 	}
 

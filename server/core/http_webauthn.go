@@ -32,8 +32,9 @@ import (
 // from the environment/config. The legacy behavior (logging on error) is preserved.
 func (b DefaultBootstrap) InitWebAuthn() error {
 	var err error
+
 	cfg := b.cfg
-	idpCfg := cfg.GetIdP()
+	idpCfg := cfg.GetIDP()
 	serverCfg := cfg.GetServer()
 
 	hasFrontend := serverCfg.Frontend.Enabled
@@ -47,7 +48,7 @@ func (b DefaultBootstrap) InitWebAuthn() error {
 	rpID := idpCfg.WebAuthn.RPID
 	origins := idpCfg.WebAuthn.RPOrigins
 
-	// If RPID is localhost (our new default) or empty, try to get a better one from IdP issuer
+	// If RPID is localhost (our new default) or empty, try to get a better one from IDP issuer
 	if rpID == "" || rpID == "localhost" {
 		issuer := idpCfg.OIDC.Issuer
 		if issuer != "" {
@@ -99,7 +100,6 @@ func (b DefaultBootstrap) InitWebAuthn() error {
 			},
 		},
 	})
-
 	if err != nil {
 		level.Error(b.logger).Log(
 			definitions.LogKeyMsg, "Failed to create WebAuthn from environment",

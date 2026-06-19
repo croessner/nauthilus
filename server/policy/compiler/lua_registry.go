@@ -51,6 +51,7 @@ func runLuaRegistryScript(scriptPath string, registry *policyregistry.AttributeR
 	module := L.NewTable()
 	L.SetField(module, "register_attribute", L.NewFunction(func(L *lua.LState) int {
 		table := L.CheckTable(1)
+
 		definition, err := luaAttributeDefinition(table)
 		if err != nil {
 			L.RaiseError("%s", err.Error())
@@ -142,6 +143,7 @@ func luaOperations(value lua.LValue) ([]policy.Operation, error) {
 	}
 
 	operations := make([]policy.Operation, 0, table.Len())
+
 	seen := make(map[policy.Operation]struct{}, table.Len())
 	for index := 1; index <= table.Len(); index++ {
 		operation := policy.Operation(table.RawGetInt(index).String())
@@ -223,13 +225,16 @@ func luaDetails(value lua.LValue) (map[string]policyregistry.DetailDefinition, e
 	}
 
 	details := make(map[string]policyregistry.DetailDefinition)
+
 	var parseErr error
+
 	table.ForEach(func(key lua.LValue, value lua.LValue) {
 		if parseErr != nil {
 			return
 		}
 
 		name := key.String()
+
 		detail, err := luaDetailDefinition(value)
 		if err != nil {
 			parseErr = fmt.Errorf("%s: %w", name, err)
@@ -239,6 +244,7 @@ func luaDetails(value lua.LValue) (map[string]policyregistry.DetailDefinition, e
 
 		details[name] = detail
 	})
+
 	if parseErr != nil {
 		return nil, parseErr
 	}

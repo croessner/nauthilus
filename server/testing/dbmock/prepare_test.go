@@ -37,6 +37,7 @@ func TestPrepareExecChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stmt exec returned error: %v", err)
 	}
+
 	if result.RowsAffected != 1 {
 		t.Fatalf("expected rows_affected=1, got %d", result.RowsAffected)
 	}
@@ -64,6 +65,7 @@ func TestPrepareQueryChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stmt query returned error: %v", err)
 	}
+
 	if len(result.Data) != 1 {
 		t.Fatalf("expected one row, got %d", len(result.Data))
 	}

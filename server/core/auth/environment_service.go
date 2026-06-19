@@ -55,6 +55,7 @@ func (DefaultEnvironmentEngine) Evaluate(ctx *gin.Context, view *core.StateView)
 
 	// Provide logs and status
 	var logs []any
+
 	if environmentRequest.Logs != nil {
 		for i := range *environmentRequest.Logs {
 			logs = append(logs, (*environmentRequest.Logs)[i])

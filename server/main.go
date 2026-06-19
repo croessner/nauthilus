@@ -182,6 +182,7 @@ func runConfigDumpDefaults(stdout io.Writer, stderr io.Writer) int {
 	}
 
 	dumpFormat := bootfx.GetConfigDumpFormat()
+
 	output, err := config.RenderDefaultConfigDumpWithFormat(dumpFormat)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "configuration dump failed: %v\n", err)

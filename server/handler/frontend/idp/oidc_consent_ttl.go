@@ -22,7 +22,7 @@ import (
 )
 
 func consentTTLForClient(cfg config.File, client *config.OIDCClient) time.Duration {
-	defaultTTL := cfg.GetIdP().OIDC.GetConsentTTL()
+	defaultTTL := cfg.GetIDP().OIDC.GetConsentTTL()
 
 	if client == nil {
 		return defaultTTL

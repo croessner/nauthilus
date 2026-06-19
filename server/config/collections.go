@@ -42,7 +42,7 @@ func (s *StringSet) GetStringSlice() []string {
 
 func (s *StringSet) String() string {
 	if s == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return fmt.Sprintf("StringSet: [%s]", strings.Join(s.GetStringSlice(), ", "))

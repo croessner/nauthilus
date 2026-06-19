@@ -51,6 +51,7 @@ func (rm *RedisManager) RedisHSet(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		hash := stack.CheckString(2)
 		top := stack.GetTop()
+
 		var values []any
 
 		if top < 3 {
@@ -146,6 +147,7 @@ func (rm *RedisManager) RedisHMGet(L *lua.LState) int {
 	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		hash := stack.CheckString(2)
 		top := stack.GetTop()
+
 		var fields []string
 
 		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {

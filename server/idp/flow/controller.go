@@ -46,17 +46,18 @@ func (c *Controller) PreviewStart(state *State, now time.Time) (Decision, error)
 	}
 
 	state.Normalize(now)
+
 	if err := state.Validate(); err != nil {
 		return Decision{}, err
 	}
 
-	policy, err := PolicyForFlowType(state.FlowType)
+	policy, err := PolicyForFlowType(state.Type)
 	if err != nil {
 		return Decision{}, err
 	}
 
 	if !policy.AllowsAction(state.CurrentStep, FlowActionStart) {
-		return Decision{}, TransitionError{FlowType: state.FlowType, From: state.CurrentStep, To: state.CurrentStep, Action: FlowActionStart}
+		return Decision{}, TransitionError{Type: state.Type, From: state.CurrentStep, To: state.CurrentStep, Action: FlowActionStart}
 	}
 
 	return Decision{Type: DecisionTypeRedirect, RedirectURI: c.uriBuilder.Resolve(state, FlowActionStart), Reason: string(FlowActionStart)}, nil
@@ -81,12 +82,12 @@ func (c *Controller) Start(ctx context.Context, state *State, now time.Time) (De
 }
 
 // Advance transitions the flow to the requested next step.
-func (c *Controller) Advance(ctx context.Context, flowID string, to FlowStep, now time.Time) (Decision, error) {
+func (c *Controller) Advance(ctx context.Context, flowID string, to Step, now time.Time) (Decision, error) {
 	return c.transition(ctx, flowID, to, FlowActionAdvance, now)
 }
 
 // Back transitions the flow to a valid previous step.
-func (c *Controller) Back(ctx context.Context, flowID string, to FlowStep, now time.Time) (Decision, error) {
+func (c *Controller) Back(ctx context.Context, flowID string, to Step, now time.Time) (Decision, error) {
 	return c.transition(ctx, flowID, to, FlowActionBack, now)
 }
 
@@ -101,13 +102,13 @@ func (c *Controller) Cancel(ctx context.Context, flowID string) (Decision, error
 		return Decision{}, fmt.Errorf("flow controller: %w", ErrFlowNotFound)
 	}
 
-	policy, err := PolicyForFlowType(state.FlowType)
+	policy, err := PolicyForFlowType(state.Type)
 	if err != nil {
 		return Decision{}, err
 	}
 
 	if !policy.AllowsAction(state.CurrentStep, FlowActionCancel) {
-		return Decision{}, TransitionError{FlowType: state.FlowType, From: state.CurrentStep, To: state.CurrentStep, Action: FlowActionCancel}
+		return Decision{}, TransitionError{Type: state.Type, From: state.CurrentStep, To: state.CurrentStep, Action: FlowActionCancel}
 	}
 
 	if err := c.store.Delete(ctx, flowID); err != nil {
@@ -128,17 +129,17 @@ func (c *Controller) Complete(ctx context.Context, flowID string) (Decision, err
 		return Decision{}, fmt.Errorf("flow controller: %w", ErrFlowNotFound)
 	}
 
-	policy, err := PolicyForFlowType(state.FlowType)
+	policy, err := PolicyForFlowType(state.Type)
 	if err != nil {
 		return Decision{}, err
 	}
 
 	if !policy.AllowsAction(state.CurrentStep, FlowActionComplete) {
-		return Decision{}, TransitionError{FlowType: state.FlowType, From: state.CurrentStep, To: state.CurrentStep, Action: FlowActionComplete}
+		return Decision{}, TransitionError{Type: state.Type, From: state.CurrentStep, To: state.CurrentStep, Action: FlowActionComplete}
 	}
 
 	if state.AuthOutcome == AuthOutcomeFailLatched {
-		return Decision{}, TransitionError{FlowType: state.FlowType, From: state.CurrentStep, To: state.CurrentStep, Action: FlowActionComplete}
+		return Decision{}, TransitionError{Type: state.Type, From: state.CurrentStep, To: state.CurrentStep, Action: FlowActionComplete}
 	}
 
 	if err := c.store.Delete(ctx, flowID); err != nil {
@@ -159,7 +160,7 @@ func (c *Controller) Resume(ctx context.Context, flowID string) (Decision, error
 		return Decision{}, fmt.Errorf("flow controller: %w", ErrFlowNotFound)
 	}
 
-	policy, err := PolicyForFlowType(state.FlowType)
+	policy, err := PolicyForFlowType(state.Type)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -269,7 +270,7 @@ func (c *Controller) Recover(ctx context.Context, flowID string, cause error) (D
 	return Decision{}, cause
 }
 
-func (c *Controller) transition(ctx context.Context, flowID string, to FlowStep, action FlowAction, now time.Time) (Decision, error) {
+func (c *Controller) transition(ctx context.Context, flowID string, to Step, action Action, now time.Time) (Decision, error) {
 	state, err := c.store.Load(ctx, flowID)
 	if err != nil {
 		return Decision{}, err
@@ -279,17 +280,17 @@ func (c *Controller) transition(ctx context.Context, flowID string, to FlowStep,
 		return Decision{}, fmt.Errorf("flow controller: %w", ErrFlowNotFound)
 	}
 
-	policy, err := PolicyForFlowType(state.FlowType)
+	policy, err := PolicyForFlowType(state.Type)
 	if err != nil {
 		return Decision{}, err
 	}
 
 	if !policy.AllowsAction(state.CurrentStep, action) || !policy.CanTransition(state.CurrentStep, to) {
-		return Decision{}, TransitionError{FlowType: state.FlowType, From: state.CurrentStep, To: to, Action: action}
+		return Decision{}, TransitionError{Type: state.Type, From: state.CurrentStep, To: to, Action: action}
 	}
 
 	if state.AuthOutcome == AuthOutcomeFailLatched && to != FlowStepLogin {
-		return Decision{}, TransitionError{FlowType: state.FlowType, From: state.CurrentStep, To: to, Action: action}
+		return Decision{}, TransitionError{Type: state.Type, From: state.CurrentStep, To: to, Action: action}
 	}
 
 	state.CurrentStep = to

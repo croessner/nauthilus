@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package health provides health functionality.
 package health
 
 import (
@@ -32,10 +33,12 @@ type Handler struct {
 	redis  rediscli.Client
 }
 
+// New provides the exported New function.
 func New(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
 	return &Handler{cfg: cfg, logger: logger, redis: redis}
 }
 
+// Register provides the exported Register method.
 func (h *Handler) Register(router gin.IRouter) {
 	deps := HealthzDeps{Cfg: h.cfg, Logger: h.logger, Redis: h.redis}
 

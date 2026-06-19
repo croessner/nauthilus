@@ -59,24 +59,26 @@ func (m *MailManager) SendMail(L *lua.LState) int {
 	lmtp := getBoolFromTable(tbl, "lmtp")
 
 	portVal := tbl.RawGetString("port")
+
 	port, ok := portVal.(lua.LNumber)
 	if !ok {
 		return stack.PushResult(lua.LString("'port' must be a number"))
 	}
 
 	tableVal := tbl.RawGet(lua.LString("to"))
+
 	recipientTable, ok := tableVal.(*lua.LTable)
 	if !ok {
 		return stack.PushResult(lua.LString("'to' must be a table"))
 	}
 
 	to := make([]string, 0)
+
 	recipientTable.ForEach(func(_ lua.LValue, v lua.LValue) {
 		to = append(to, v.String())
 	})
 
 	err := m.smtpClient.SendMail(smtp.NewMailOptions(server, int(port), heloName, username, password, from, to, subject, body, tls, startTLS, lmtp))
-
 	if err != nil {
 		return stack.PushResult(lua.LString(err.Error()))
 	}

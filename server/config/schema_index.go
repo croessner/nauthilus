@@ -235,6 +235,7 @@ func parseMapstructureTag(field reflect.StructField) (string, []string, error) {
 	}
 
 	parts := strings.Split(tagValue, ",")
+
 	name := parts[0]
 	if name == "" && len(parts) == 1 {
 		return "", nil, fmt.Errorf("field %s.%s has an empty mapstructure tag", field.Type, field.Name)
@@ -255,6 +256,7 @@ func unknownConfigParameters(settings map[string]any) ([]string, error) {
 
 	unknown := make([]string, 0)
 	schemaIndex.root.collectUnknown(settings, "", &unknown, make(map[uintptr]struct{}))
+
 	if len(unknown) == 0 {
 		return nil, nil
 	}
@@ -282,6 +284,7 @@ func (n *configSchemaNode) collectUnknown(value any, prefix string, out *[]strin
 
 		for _, entry := range entries {
 			childPath := joinConfigPath(prefix, entry.key)
+
 			childNode, ok := n.fieldByConfigName[entry.key]
 			if ok {
 				childNode.collectUnknown(entry.value, childPath, out, visited)

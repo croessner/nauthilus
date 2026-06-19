@@ -224,6 +224,7 @@ func TestDecisionContextSchedulerGuardSkipsCheckBeforeAdapter(t *testing.T) {
 	}
 
 	report := ctx.Report()
+
 	checkResult := report.Checks[testTLSCheckName]
 	if checkResult.Status != policy.CheckStatusSkipped {
 		t.Fatalf("check status = %q, want %q", checkResult.Status, policy.CheckStatusSkipped)
@@ -364,6 +365,7 @@ func TestDecisionContextDefaultSetAuthorityIsStageScoped(t *testing.T) {
 
 	withPreAuthRule := testObserveSnapshot()
 	withPreAuthRule.Mode = modeEnforce
+
 	ctx = NewDecisionContext(withPreAuthRule, policy.OperationAuthenticate, nil)
 	if ctx.BuiltinDefaultAuthoritativeForStage(policy.StagePreAuth) {
 		t.Fatal("default set should not own pre-auth when pre-auth rules are configured")
@@ -389,6 +391,7 @@ func TestDecisionContextConfiguredPreAuthAuthorityUsesEnforceMode(t *testing.T) 
 
 	snapshot := testObserveSnapshot()
 	snapshot.Mode = modeEnforce
+
 	ctx = NewDecisionContext(snapshot, policy.OperationAuthenticate, nil)
 	if !ctx.ConfiguredPreAuthAuthoritative() {
 		t.Fatal("enforce mode should let configured pre-auth rules decide production output")

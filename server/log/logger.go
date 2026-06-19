@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package log provides log functionality.
 package log
 
 import (
@@ -191,7 +192,7 @@ func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource 
 	}
 
 	// ReplaceAttr maps custom level values to well-known names (e.g., NOTICE instead of INFO+2).
-	replaceAttr := func(groups []string, a slog.Attr) slog.Attr {
+	replaceAttr := func(_ []string, a slog.Attr) slog.Attr {
 		if a.Key == slog.LevelKey {
 			if lv, ok := a.Value.Any().(slog.Level); ok {
 				if lv == slog.LevelInfo+definitions.SlogNoticeLevelOffset {
@@ -234,6 +235,7 @@ func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource 
 	}
 
 	rootLogger.inner.Store(&handlerHolder{h: handler})
+
 	if Logger == nil {
 		Logger = slog.New(&dynamicHandler{root: rootLogger})
 	}

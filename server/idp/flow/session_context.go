@@ -47,7 +47,7 @@ func RestoreFlowCookieContext(mgr sessionContextSetter, flowType string, grantTy
 	}
 
 	if flowType != "" {
-		mgr.Set(definitions.SessionKeyIdPFlowType, flowType)
+		mgr.Set(definitions.SessionKeyIDPFlowType, flowType)
 	}
 
 	if grantType != "" {

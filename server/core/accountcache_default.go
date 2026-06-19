@@ -13,11 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package core provides core functionality.
 package core
 
 import (
-	stdlog "log"
-	"sync"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
@@ -32,7 +31,6 @@ type accountCacheHolder struct {
 }
 
 var defaultAccountCache atomic.Value
-var warnMissingAccountCacheOnce sync.Once
 
 func init() {
 	defaultAccountCache.Store(accountCacheHolder{ac: nil})
@@ -41,20 +39,4 @@ func init() {
 // SetDefaultAccountCache sets the process-wide default account cache for core.
 func SetDefaultAccountCache(ac *accountcache.Manager) {
 	defaultAccountCache.Store(accountCacheHolder{ac: ac})
-}
-
-func getDefaultAccountCache() *accountcache.Manager {
-	if v := defaultAccountCache.Load(); v != nil {
-		if h, ok := v.(accountCacheHolder); ok {
-			if h.ac != nil {
-				return h.ac
-			}
-		}
-	}
-
-	warnMissingAccountCacheOnce.Do(func() {
-		stdlog.Printf("ERROR: core default account cache is not configured. Ensure the boundary calls core.SetDefaultAccountCache(...)\n")
-	})
-
-	panic("core: default account cache not configured")
 }

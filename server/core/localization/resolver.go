@@ -122,6 +122,7 @@ func (r *Resolver) ResolveStatusMessage(_ context.Context, selection StatusMessa
 	}
 
 	selectedTag := r.selectLanguage(preference)
+
 	languageName := selectedTag.String()
 	if message, ok := r.catalog.Lookup(selectedTag, key); ok {
 		return ResolvedStatusMessage{
@@ -230,6 +231,7 @@ func limitString(value string, maxLength int) string {
 	}
 
 	var builder strings.Builder
+
 	count := 0
 
 	for _, r := range value {
@@ -238,6 +240,7 @@ func limitString(value string, maxLength int) string {
 		}
 
 		builder.WriteRune(r)
+
 		count++
 	}
 

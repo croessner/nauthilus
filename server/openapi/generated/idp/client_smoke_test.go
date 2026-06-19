@@ -46,12 +46,12 @@ func TestGeneratedIDPClientUsesDiscoveryContract(t *testing.T) {
 
 	client, err := NewClientWithResponses("https://nauthilus.example.test", WithHTTPClient(doer))
 	if err != nil {
-		t.Fatalf("create generated IdP client: %v", err)
+		t.Fatalf("create generated IDP client: %v", err)
 	}
 
 	response, err := client.GetOIDCDiscoveryWithResponse(context.Background())
 	if err != nil {
-		t.Fatalf("call generated IdP client: %v", err)
+		t.Fatalf("call generated IDP client: %v", err)
 	}
 
 	assertIDPDiscoveryClientSmokeResponse(t, response)

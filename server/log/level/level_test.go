@@ -35,14 +35,15 @@ type memHandler struct {
 	records []rec
 }
 
-func newMemHandler(min slog.Leveler) *memHandler {
-	return &memHandler{level: min, records: make([]rec, 0, 8)}
+func newMemHandler(minLevel slog.Leveler) *memHandler {
+	return &memHandler{level: minLevel, records: make([]rec, 0, 8)}
 }
 
 func (h *memHandler) Enabled(_ context.Context, lvl slog.Level) bool {
 	if h.level == nil {
 		return true
 	}
+
 	return lvl >= h.level.Level()
 }
 
@@ -62,6 +63,7 @@ func (h *memHandler) Handle(ctx context.Context, r slog.Record) error {
 		Message: r.Message,
 		Attrs:   attrs,
 	})
+
 	return nil
 }
 
@@ -79,19 +81,23 @@ func TestInfoLogWithMessage(t *testing.T) {
 	if len(h.records) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(h.records))
 	}
+
 	r := h.records[0]
 	if r.Level != slog.LevelInfo {
 		t.Errorf("expected level info, got %v", r.Level)
 	}
+
 	if r.Message != "hello" {
 		t.Errorf("expected message 'hello', got %q", r.Message)
 	}
 	// Check attrs include k=v and n=1
 	want := map[string]string{"k": "v", "n": "1"}
+
 	got := map[string]string{}
 	for _, a := range r.Attrs {
 		got[a.Key] = a.Value.String()
 	}
+
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("attr %q mismatch: want %v got %v", k, v, got[k])
@@ -106,16 +112,20 @@ func TestWarnLogWithoutMessageDefaults(t *testing.T) {
 	if err := Warn(logger).Log("k", "v"); err != nil {
 		t.Fatalf("Log returned error: %v", err)
 	}
+
 	if len(h.records) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(h.records))
 	}
+
 	r := h.records[0]
 	if r.Level != slog.LevelWarn {
 		t.Errorf("expected level warn, got %v", r.Level)
 	}
+
 	if r.Message != "warn" {
 		t.Errorf("expected default message 'warn', got %q", r.Message)
 	}
+
 	if len(r.Attrs) != 1 || r.Attrs[0].Key != "k" || r.Attrs[0].Value.String() != "v" {
 		t.Errorf("unexpected attrs: %+v", r.Attrs)
 	}
@@ -129,17 +139,21 @@ func TestOddKeyvalsAreIgnoredGracefully(t *testing.T) {
 	if err := Debug(logger).Log("msg", "m", "ok", 1, 123, "x", "trailing"); err != nil {
 		t.Fatalf("Log returned error: %v", err)
 	}
+
 	if len(h.records) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(h.records))
 	}
+
 	r := h.records[0]
 	if r.Message != "m" {
 		t.Errorf("expected message 'm', got %q", r.Message)
 	}
+
 	got := map[string]string{}
 	for _, a := range r.Attrs {
 		got[a.Key] = a.Value.String()
 	}
+
 	if len(got) != 1 || got["ok"] != "1" {
 		t.Errorf("unexpected attrs: %+v", got)
 	}
@@ -150,13 +164,16 @@ type testCtxKey struct{}
 func TestWithContextPropagatesToHandler(t *testing.T) {
 	h := newMemHandler(slog.LevelDebug)
 	logger := slog.New(h)
+
 	ctx := context.WithValue(context.Background(), testCtxKey{}, "val")
 	if err := WithContext(ctx, logger).Log("k", "v"); err != nil {
 		t.Fatalf("Log returned error: %v", err)
 	}
+
 	if len(h.records) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(h.records))
 	}
+
 	if h.records[0].Ctx == nil {
 		t.Fatalf("expected context to be forwarded to handler")
 	}

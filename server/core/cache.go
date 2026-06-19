@@ -114,9 +114,10 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			passDBResult.BackendName = ppc.BackendName
 			passDBResult.Attributes = ppc.Attributes
 			passDBResult.Groups = slices.Clone(ppc.Groups)
-			passDBResult.GroupDNs = slices.Clone(ppc.GroupDNs)
+			passDBResult.GroupDistinguishedNames = slices.Clone(ppc.GroupDistinguishedNames)
 
 			var pwShort string
+
 			auth.Request.Password.WithBytes(func(value []byte) {
 				if len(value) == 0 {
 					return
@@ -127,6 +128,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 
 				pwShort = util.GetHashBytes(prepared)
 			})
+
 			if auth.Request.NoAuth || ppc.Password == pwShort {
 				passDBResult.Authenticated = true
 			}

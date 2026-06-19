@@ -35,6 +35,7 @@ func (rm *RedisManager) RedisSAdd(L *lua.LState) int {
 func (rm *RedisManager) RedisSIsMember(L *lua.LState) int {
 	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		key := stack.CheckString(2)
+
 		val, err := convert.LuaValue(stack.CheckAny(3))
 		if err != nil {
 			return stack.PushError(err)

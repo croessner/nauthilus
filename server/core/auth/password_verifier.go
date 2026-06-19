@@ -27,6 +27,7 @@ import (
 //goland:nointerface
 type DefaultPasswordVerifier struct{}
 
+// Verify provides the exported Verify method.
 func (DefaultPasswordVerifier) Verify(ctx *gin.Context, auth *core.AuthState, passDBs []*core.PassDBMap) (*core.PassDBResult, error) {
 	return core.VerifyPasswordPipeline(ctx, auth, passDBs)
 }

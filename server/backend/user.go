@@ -23,22 +23,22 @@ import (
 
 // User represents the user model
 type User struct {
-	Id          string `redis:"Id"`
+	ID          string `redis:"Id"`
 	Name        string `redis:"name"`
 	DisplayName string `redis:"display_name"`
 
-	Credentials       []mfa.PersistentCredential `redis:"credentials"`
-	Attributes        bktype.AttributeMapping    `redis:"-"`
-	Groups            []string                   `redis:"-"`
-	GroupDNs          []string                   `redis:"-"`
-	TOTPSecretField   string                     `redis:"totp_secret_field"`
-	TOTPRecoveryField string                     `redis:"totp_recovery_field"`
+	Credentials             []mfa.PersistentCredential `redis:"credentials"`
+	Attributes              bktype.AttributeMapping    `redis:"-"`
+	Groups                  []string                   `redis:"-"`
+	GroupDistinguishedNames []string                   `redis:"-"`
+	TOTPSecretField         string                     `redis:"totp_secret_field"`
+	TOTPRecoveryField       string                     `redis:"totp_recovery_field"`
 }
 
 // NewUser creates and returns a new User
 func NewUser(name string, displayName string, id string) *User {
 	user := &User{}
-	user.Id = id
+	user.ID = id
 	user.Name = name
 	user.DisplayName = displayName
 	// user.Credentials = []webauthn.Credential{}
@@ -48,7 +48,7 @@ func NewUser(name string, displayName string, id string) *User {
 
 // WebAuthnID returns the user's ID
 func (u *User) WebAuthnID() []byte {
-	return []byte(u.Id)
+	return []byte(u.ID)
 }
 
 // WebAuthnName returns the user's username

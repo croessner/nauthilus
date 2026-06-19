@@ -17,6 +17,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"net"
 	"net/http"
 
@@ -33,7 +34,7 @@ import (
 )
 
 // StoreCompletedIDPMFASession replaces the temporary MFA state with the final
-// authenticated IdP session while preserving the completed MFA metadata.
+// authenticated IDP session while preserving the completed MFA metadata.
 func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method string) {
 	if mgr == nil || user == nil {
 		return
@@ -43,7 +44,7 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 
 	protocol := mgr.GetString(definitions.SessionKeyProtocol, "")
 	if protocol == "" {
-		protocol = mgr.GetString(definitions.SessionKeyIdPFlowType, definitions.ProtoIDP)
+		protocol = mgr.GetString(definitions.SessionKeyIDPFlowType, definitions.ProtoIDP)
 	}
 
 	rememberMeTTL := mgr.GetInt(definitions.SessionKeyRememberTTL, 0)
@@ -51,9 +52,9 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 	flow.CleanupMFAState(mgr)
 
 	mgr.Set(definitions.SessionKeyAccount, finalUser.Name)
-	mgr.Set(definitions.SessionKeyUniqueUserID, finalUser.Id)
+	mgr.Set(definitions.SessionKeyUniqueUserID, finalUser.ID)
 	mgr.Set(definitions.SessionKeyDisplayName, finalUser.DisplayName)
-	mgr.Set(definitions.SessionKeySubject, finalUser.Id)
+	mgr.Set(definitions.SessionKeySubject, finalUser.ID)
 	mgr.Set(definitions.SessionKeyProtocol, protocol)
 	mgr.Set(definitions.SessionKeyMFACompleted, true)
 
@@ -80,7 +81,7 @@ func ResolveCompletedIDPMFAUser(mgr cookie.Manager, user *backend.User) *backend
 }
 
 // StorePendingIDPMFAIdentity records the canonical user identity that should
-// become the final IdP session after a successful MFA verification.
+// become the final IDP session after a successful MFA verification.
 func StorePendingIDPMFAIdentity(mgr cookie.Manager, user *backend.User) {
 	storePendingIDPMFAUser(
 		mgr,
@@ -112,8 +113,8 @@ func storePendingIDPMFAUser(mgr cookie.Manager, user *backend.User, accountKey s
 		mgr.Set(accountKey, user.Name)
 	}
 
-	if user.Id != "" {
-		mgr.Set(uniqueUserIDKey, user.Id)
+	if user.ID != "" {
+		mgr.Set(uniqueUserIDKey, user.ID)
 	}
 
 	if user.DisplayName != "" {
@@ -131,7 +132,7 @@ func completedIDPMFAUser(mgr cookie.Manager, user *backend.User) backend.User {
 	}
 
 	if uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, ""); uniqueUserID != "" {
-		finalUser.Id = uniqueUserID
+		finalUser.ID = uniqueUserID
 	}
 
 	if displayName := mgr.GetString(definitions.SessionKeyMFADisplayName, ""); displayName != "" {
@@ -157,9 +158,9 @@ func QueueCompletedIDPMFAPostAction(ctx *gin.Context, deps AuthDeps, user *backe
 
 	go auth.RunLuaPostAction(PostActionArgs{
 		Context:       auth.Runtime.Context,
-		HTTPRequest:   util.DetachedHTTPRequest(ctx.Request, nil),
+		HTTPRequest:   util.DetachedHTTPRequest(context.TODO(), ctx.Request),
 		ParentSpan:    trace.SpanContextFromContext(ctx.Request.Context()),
-		StatusMessage: "OK",
+		StatusMessage: authStatusMessageOK,
 		Request:       requestCopy,
 	})
 
@@ -167,13 +168,14 @@ func QueueCompletedIDPMFAPostAction(ctx *gin.Context, deps AuthDeps, user *backe
 }
 
 // LogIDPMFAuthResult writes a Notice log for the result of a second-factor verification
-// during the IdP login flow. It is intentionally not gated behind debug modules.
+// during the IDP login flow. It is intentionally not gated behind debug modules.
 func LogIDPMFAuthResult(ctx *gin.Context, deps AuthDeps, username, method, statusMessage string, successful bool) {
 	if ctx == nil || ctx.Request == nil || deps.Cfg == nil || deps.Logger == nil {
 		return
 	}
 
 	authStateRaw := NewAuthStateFromContextWithDeps(ctx, deps)
+
 	auth, ok := authStateRaw.(*AuthState)
 	if !ok || auth == nil {
 		return
@@ -185,9 +187,10 @@ func LogIDPMFAuthResult(ctx *gin.Context, deps AuthDeps, username, method, statu
 	auth.WithXSSL(ctx)
 
 	auth.Runtime.GUID = ctx.GetString(definitions.CtxGUIDKey)
+
 	auth.Request.Service = ctx.GetString(definitions.CtxServiceKey)
 	if auth.Request.Service == "" {
-		auth.Request.Service = definitions.ServIdP
+		auth.Request.Service = definitions.ServIDP
 	}
 
 	protocolName, oidcClientID, samlEntityID := idpPostActionSessionState(ctx)
@@ -209,7 +212,7 @@ func LogIDPMFAuthResult(ctx *gin.Context, deps AuthDeps, username, method, statu
 	message := "Second-factor authentication has failed"
 
 	if successful {
-		status = "ok"
+		status = environmentDecisionOK
 		message = "Second-factor authentication was successful"
 	}
 
@@ -239,9 +242,10 @@ func normalizeMFAMethodForLogging(method string) string {
 }
 
 // newCompletedIDPMFAPostActionAuth builds the authenticated request state used
-// by Lua post-actions after a successful IdP MFA challenge.
+// by Lua post-actions after a successful IDP MFA challenge.
 func newCompletedIDPMFAPostActionAuth(ctx *gin.Context, deps AuthDeps, user *backend.User) *AuthState {
 	authRaw := NewAuthStateFromContextWithDeps(ctx, deps)
+
 	auth, ok := authRaw.(*AuthState)
 	if !ok || auth == nil {
 		return nil
@@ -249,7 +253,7 @@ func newCompletedIDPMFAPostActionAuth(ctx *gin.Context, deps AuthDeps, user *bac
 
 	service := ctx.GetString(definitions.CtxServiceKey)
 	if service == "" {
-		service = definitions.ServIdP
+		service = definitions.ServIDP
 	}
 
 	protocolName, oidcClientID, samlEntityID := idpPostActionSessionState(ctx)
@@ -273,7 +277,7 @@ func newCompletedIDPMFAPostActionAuth(ctx *gin.Context, deps AuthDeps, user *bac
 	auth.SetSAMLEntityID(samlEntityID)
 	auth.SetProtocol(config.NewProtocol(protocolName))
 	auth.ReplaceAllAttributes(user.Attributes)
-	auth.SetResolvedGroups(user.Groups, user.GroupDNs)
+	auth.SetResolvedGroups(user.Groups, user.GroupDistinguishedNames)
 
 	return auth
 }
@@ -288,12 +292,12 @@ func idpPostActionSessionState(ctx *gin.Context) (protocolName, oidcClientID, sa
 
 	protocolName = mgr.GetString(definitions.SessionKeyProtocol, "")
 	if protocolName == "" {
-		protocolName = mgr.GetString(definitions.SessionKeyIdPFlowType, definitions.ProtoIDP)
+		protocolName = mgr.GetString(definitions.SessionKeyIDPFlowType, definitions.ProtoIDP)
 	}
 
 	return protocolName,
-		mgr.GetString(definitions.SessionKeyIdPClientID, ""),
-		mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+		mgr.GetString(definitions.SessionKeyIDPClientID, ""),
+		mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
 }
 
 func completedIDPMFAPostActionRequest(auth *AuthState, user *backend.User) lualib.CommonRequest {
@@ -310,7 +314,7 @@ func completedIDPMFAPostActionRequest(auth *AuthState, user *backend.User) luali
 	}
 
 	if requestCopy.UniqueUserID == "" {
-		requestCopy.UniqueUserID = user.Id
+		requestCopy.UniqueUserID = user.ID
 	}
 
 	if requestCopy.DisplayName == "" {
@@ -330,6 +334,7 @@ func idpPostActionLuaContext(ctx *gin.Context) *lualib.Context {
 	}
 
 	luaCtx, ok := ctx.Get(definitions.CtxDataExchangeKey)
+
 	contextData, _ := luaCtx.(*lualib.Context)
 	if !ok || contextData == nil {
 		return lualib.NewContext()

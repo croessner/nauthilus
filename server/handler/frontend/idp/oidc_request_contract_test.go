@@ -190,11 +190,11 @@ func runLoginFormResponseContract(t *testing.T, validator *requesttest.Validator
 	t.Helper()
 
 	router := newLoginResponseContractRouter(t, map[string]any{
-		definitions.SessionKeyIdPFlowID:      "flow-form",
-		definitions.SessionKeyIdPFlowType:    definitions.ProtoOIDC,
+		definitions.SessionKeyIDPFlowID:      "flow-form",
+		definitions.SessionKeyIDPFlowType:    definitions.ProtoOIDC,
 		definitions.SessionKeyOIDCGrantType:  definitions.OIDCFlowAuthorizationCode,
-		definitions.SessionKeyIdPClientID:    latchedConsentClientID,
-		definitions.SessionKeyIdPRedirectURI: oidcContractRedirectURI,
+		definitions.SessionKeyIDPClientID:    latchedConsentClientID,
+		definitions.SessionKeyIDPRedirectURI: oidcContractRedirectURI,
 	})
 
 	request := httptest.NewRequest(http.MethodGet, "/login", nil)
@@ -220,14 +220,14 @@ func runLoggedInLoginRedirectContract(t *testing.T, validator *requesttest.Valid
 
 	router := newLoginResponseContractRouter(t, map[string]any{
 		definitions.SessionKeyAccount:         frontendTestAccount,
-		definitions.SessionKeyIdPFlowID:       "flow-redirect",
-		definitions.SessionKeyIdPFlowType:     definitions.ProtoOIDC,
+		definitions.SessionKeyIDPFlowID:       "flow-redirect",
+		definitions.SessionKeyIDPFlowType:     definitions.ProtoOIDC,
 		definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
-		definitions.SessionKeyIdPClientID:     latchedConsentClientID,
-		definitions.SessionKeyIdPRedirectURI:  oidcContractRedirectURI,
-		definitions.SessionKeyIdPScope:        oidcContractScope,
-		definitions.SessionKeyIdPState:        oidcContractState,
-		definitions.SessionKeyIdPResponseType: oidcParamCode,
+		definitions.SessionKeyIDPClientID:     latchedConsentClientID,
+		definitions.SessionKeyIDPRedirectURI:  oidcContractRedirectURI,
+		definitions.SessionKeyIDPScope:        oidcContractScope,
+		definitions.SessionKeyIDPState:        oidcContractState,
+		definitions.SessionKeyIDPResponseType: oidcParamCode,
 	})
 
 	request := httptest.NewRequest(http.MethodGet, "/login", nil)

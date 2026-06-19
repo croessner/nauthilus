@@ -100,7 +100,6 @@ func TestSAMLHandler_validateInboundLogoutResponseSignature_Redirect(t *testing.
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.target, nil)
 
@@ -281,7 +280,6 @@ func TestSAMLHandler_validateInboundLogoutResponseProtocol_FieldValidation(t *te
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			response := baseResponse()
 			tc.mutate(response)
@@ -301,10 +299,11 @@ func TestSAMLHandler_applySLOFanoutLogoutResponse_AggregatesFinalStatus(t *testi
 		entityID      = "https://sp.example.com/saml/metadata"
 	)
 
-	baseTransaction := func(t *testing.T) slodomain.SLOTransaction {
+	baseTransaction := func(t *testing.T) slodomain.Transaction {
 		t.Helper()
 
 		now := time.Date(2026, time.March, 19, 9, 0, 0, 0, time.UTC)
+
 		tx, err := slodomain.NewTransaction(
 			transactionID,
 			"id-root-request",
@@ -328,7 +327,7 @@ func TestSAMLHandler_applySLOFanoutLogoutResponse_AggregatesFinalStatus(t *testi
 			t.Fatalf("cannot transition to fanout_running: %v", err)
 		}
 
-		tx.Participants = []slodomain.SLOParticipant{
+		tx.Participants = []slodomain.Participant{
 			{
 				EntityID:  entityID,
 				RequestID: requestID,
@@ -344,7 +343,7 @@ func TestSAMLHandler_applySLOFanoutLogoutResponse_AggregatesFinalStatus(t *testi
 		preSuccess     int
 		preFailure     int
 		responseStatus string
-		wantStatus     slodomain.SLOStatus
+		wantStatus     slodomain.Status
 		wantSuccess    int
 		wantFailure    int
 	}{
@@ -378,7 +377,6 @@ func TestSAMLHandler_applySLOFanoutLogoutResponse_AggregatesFinalStatus(t *testi
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			redisClient := rediscli.NewTestClient(db)
@@ -393,7 +391,7 @@ func TestSAMLHandler_applySLOFanoutLogoutResponse_AggregatesFinalStatus(t *testi
 			transaction := baseTransaction(t)
 			state := &sloFanoutTransactionState{
 				Transaction: transaction,
-				Pending: map[string]slodomain.SLOParticipant{
+				Pending: map[string]slodomain.Participant{
 					requestID: {
 						EntityID:  entityID,
 						RequestID: requestID,
@@ -471,6 +469,7 @@ func TestSAMLHandler_storeSLOFanoutTransactionState_PersistsPendingRequests(t *t
 	}, nil)
 
 	now := time.Date(2026, time.March, 19, 11, 0, 0, 0, time.UTC)
+
 	tx, err := slodomain.NewTransaction(
 		transactionID,
 		"id-root-store",
@@ -494,7 +493,7 @@ func TestSAMLHandler_storeSLOFanoutTransactionState_PersistsPendingRequests(t *t
 		return
 	}
 
-	tx.Participants = []slodomain.SLOParticipant{
+	tx.Participants = []slodomain.Participant{
 		{
 			EntityID:  entityID,
 			RequestID: requestID,
@@ -553,6 +552,7 @@ func TestSAMLHandler_SLO_LogoutResponse_CompletesFanout(t *testing.T) {
 	}, nil)
 
 	now := time.Date(2026, time.March, 19, 10, 0, 0, 0, time.UTC)
+
 	tx, err := slodomain.NewTransaction(
 		transactionID,
 		"id-root-end-to-end",
@@ -576,7 +576,7 @@ func TestSAMLHandler_SLO_LogoutResponse_CompletesFanout(t *testing.T) {
 		return
 	}
 
-	tx.Participants = []slodomain.SLOParticipant{
+	tx.Participants = []slodomain.Participant{
 		{
 			EntityID:  entityID,
 			RequestID: requestID,
@@ -586,7 +586,7 @@ func TestSAMLHandler_SLO_LogoutResponse_CompletesFanout(t *testing.T) {
 
 	state := &sloFanoutTransactionState{
 		Transaction: *tx,
-		Pending: map[string]slodomain.SLOParticipant{
+		Pending: map[string]slodomain.Participant{
 			requestID: tx.Participants[0],
 		},
 		Outcomes:        map[string]sloFanoutParticipantOutcome{},
@@ -689,6 +689,7 @@ func mustMutateRedirectSAMLResponseTarget(t *testing.T, target string, mutate fu
 	}
 
 	query := parsedTarget.Query()
+
 	rawPayloadB64 := query.Get("SAMLResponse")
 	if rawPayloadB64 == "" {
 		t.Fatal("redirect target is missing SAMLResponse")
@@ -702,6 +703,7 @@ func mustMutateRedirectSAMLResponseTarget(t *testing.T, target string, mutate fu
 	reader := flate.NewReader(bytes.NewReader(rawPayload))
 	xmlPayload, err := io.ReadAll(reader)
 	_ = reader.Close()
+
 	if err != nil {
 		t.Fatalf("failed to inflate SAMLResponse payload: %v", err)
 	}
@@ -709,7 +711,9 @@ func mustMutateRedirectSAMLResponseTarget(t *testing.T, target string, mutate fu
 	xmlPayload = mutate(xmlPayload)
 
 	var encoded bytes.Buffer
+
 	encoder := base64.NewEncoder(base64.StdEncoding, &encoded)
+
 	deflater, err := flate.NewWriter(encoder, 9)
 	if err != nil {
 		t.Fatalf("failed to create deflater: %v", err)

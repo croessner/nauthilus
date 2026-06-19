@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Package idp contains frontend handlers for IdP browser flows.
+// Package idp contains frontend handlers for IDP browser flows.
 package idp
 
 import (
@@ -175,6 +175,7 @@ func renderStoredIDPAuthStatusBridgeMessage(
 ) string {
 	status, ok := loadIDPAuthStatusBridge(mgr)
 	clearIDPAuthStatusBridge(mgr)
+
 	if !ok {
 		return localizedIDPGenericMessage(ctx, d, genericMessage)
 	}

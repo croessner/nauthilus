@@ -19,33 +19,33 @@ import "fmt"
 
 // Policy defines flow-specific rules for actions and transitions.
 type Policy interface {
-	FlowType() FlowType
-	AllowsStep(step FlowStep) bool
-	AllowsAction(step FlowStep, action FlowAction) bool
-	CanTransition(from FlowStep, to FlowStep) bool
+	Type() Type
+	AllowsStep(step Step) bool
+	AllowsAction(step Step, action Action) bool
+	CanTransition(from Step, to Step) bool
 }
 
 type staticPolicy struct {
-	flowType        FlowType
-	allowedActions  map[FlowStep]map[FlowAction]struct{}
-	allowedSteps    map[FlowStep]struct{}
-	allowedNextStep map[FlowStep]map[FlowStep]struct{}
+	flowType        Type
+	allowedActions  map[Step]map[Action]struct{}
+	allowedSteps    map[Step]struct{}
+	allowedNextStep map[Step]map[Step]struct{}
 }
 
-// FlowType returns the flow type this static policy applies to.
-func (p staticPolicy) FlowType() FlowType {
+// Type returns the flow type this static policy applies to.
+func (p staticPolicy) Type() Type {
 	return p.flowType
 }
 
 // AllowsStep reports whether a step is valid for this flow type.
-func (p staticPolicy) AllowsStep(step FlowStep) bool {
+func (p staticPolicy) AllowsStep(step Step) bool {
 	_, ok := p.allowedSteps[step]
 
 	return ok
 }
 
 // AllowsAction reports whether an action is allowed at the given step.
-func (p staticPolicy) AllowsAction(step FlowStep, action FlowAction) bool {
+func (p staticPolicy) AllowsAction(step Step, action Action) bool {
 	actions, ok := p.allowedActions[step]
 	if !ok {
 		return false
@@ -57,7 +57,7 @@ func (p staticPolicy) AllowsAction(step FlowStep, action FlowAction) bool {
 }
 
 // CanTransition reports whether a transition from one step to another is allowed.
-func (p staticPolicy) CanTransition(from FlowStep, to FlowStep) bool {
+func (p staticPolicy) CanTransition(from Step, to Step) bool {
 	steps, ok := p.allowedNextStep[from]
 	if !ok {
 		return false
@@ -69,8 +69,8 @@ func (p staticPolicy) CanTransition(from FlowStep, to FlowStep) bool {
 }
 
 // DefaultPolicies provides baseline rules for the initial supported flow types.
-func DefaultPolicies() map[FlowType]Policy {
-	return map[FlowType]Policy{
+func DefaultPolicies() map[Type]Policy {
+	return map[Type]Policy{
 		FlowTypeOIDCAuthorization: oidcAuthorizationPolicy(),
 		FlowTypeOIDCDeviceCode:    oidcDevicePolicy(),
 		FlowTypeSAML:              samlPolicy(),
@@ -79,7 +79,7 @@ func DefaultPolicies() map[FlowType]Policy {
 }
 
 // PolicyForFlowType returns a baseline policy for a known flow type.
-func PolicyForFlowType(flowType FlowType) (Policy, error) {
+func PolicyForFlowType(flowType Type) (Policy, error) {
 	policies := DefaultPolicies()
 
 	policy, ok := policies[flowType]
@@ -93,7 +93,7 @@ func PolicyForFlowType(flowType FlowType) (Policy, error) {
 func oidcAuthorizationPolicy() Policy {
 	return staticPolicy{
 		flowType: FlowTypeOIDCAuthorization,
-		allowedActions: map[FlowStep]map[FlowAction]struct{}{
+		allowedActions: map[Step]map[Action]struct{}{
 			FlowStepStart: {
 				FlowActionStart:   {},
 				FlowActionAdvance: {},
@@ -118,7 +118,7 @@ func oidcAuthorizationPolicy() Policy {
 			},
 		},
 		allowedSteps: stepsToSet(FlowStepStart, FlowStepLogin, FlowStepMFA, FlowStepConsent, FlowStepCallback, FlowStepDone),
-		allowedNextStep: map[FlowStep]map[FlowStep]struct{}{
+		allowedNextStep: map[Step]map[Step]struct{}{
 			FlowStepStart:    stepsToSet(FlowStepLogin),
 			FlowStepLogin:    stepsToSet(FlowStepMFA, FlowStepConsent, FlowStepCallback),
 			FlowStepMFA:      stepsToSet(FlowStepConsent, FlowStepCallback, FlowStepLogin),
@@ -131,7 +131,7 @@ func oidcAuthorizationPolicy() Policy {
 func oidcDevicePolicy() Policy {
 	return staticPolicy{
 		flowType: FlowTypeOIDCDeviceCode,
-		allowedActions: map[FlowStep]map[FlowAction]struct{}{
+		allowedActions: map[Step]map[Action]struct{}{
 			FlowStepStart: {
 				FlowActionStart:   {},
 				FlowActionAdvance: {},
@@ -160,7 +160,7 @@ func oidcDevicePolicy() Policy {
 			},
 		},
 		allowedSteps: stepsToSet(FlowStepStart, FlowStepDeviceVerification, FlowStepLogin, FlowStepMFA, FlowStepConsent, FlowStepCallback, FlowStepDone),
-		allowedNextStep: map[FlowStep]map[FlowStep]struct{}{
+		allowedNextStep: map[Step]map[Step]struct{}{
 			FlowStepStart:              stepsToSet(FlowStepDeviceVerification),
 			FlowStepDeviceVerification: stepsToSet(FlowStepLogin),
 			FlowStepLogin:              stepsToSet(FlowStepMFA, FlowStepConsent, FlowStepCallback),
@@ -174,7 +174,7 @@ func oidcDevicePolicy() Policy {
 func samlPolicy() Policy {
 	return staticPolicy{
 		flowType: FlowTypeSAML,
-		allowedActions: map[FlowStep]map[FlowAction]struct{}{
+		allowedActions: map[Step]map[Action]struct{}{
 			FlowStepStart: {
 				FlowActionStart:   {},
 				FlowActionAdvance: {},
@@ -194,7 +194,7 @@ func samlPolicy() Policy {
 			},
 		},
 		allowedSteps: stepsToSet(FlowStepStart, FlowStepLogin, FlowStepMFA, FlowStepCallback, FlowStepDone),
-		allowedNextStep: map[FlowStep]map[FlowStep]struct{}{
+		allowedNextStep: map[Step]map[Step]struct{}{
 			FlowStepStart:    stepsToSet(FlowStepLogin),
 			FlowStepLogin:    stepsToSet(FlowStepMFA, FlowStepCallback),
 			FlowStepMFA:      stepsToSet(FlowStepCallback, FlowStepLogin),
@@ -206,7 +206,7 @@ func samlPolicy() Policy {
 func requireMFAPolicy() Policy {
 	return staticPolicy{
 		flowType: FlowTypeRequireMFA,
-		allowedActions: map[FlowStep]map[FlowAction]struct{}{
+		allowedActions: map[Step]map[Action]struct{}{
 			FlowStepStart: {
 				FlowActionStart:   {},
 				FlowActionAdvance: {},
@@ -221,7 +221,7 @@ func requireMFAPolicy() Policy {
 			},
 		},
 		allowedSteps: stepsToSet(FlowStepStart, FlowStepRequireMFAChallenge, FlowStepCallback, FlowStepDone),
-		allowedNextStep: map[FlowStep]map[FlowStep]struct{}{
+		allowedNextStep: map[Step]map[Step]struct{}{
 			FlowStepStart:               stepsToSet(FlowStepRequireMFAChallenge),
 			FlowStepRequireMFAChallenge: stepsToSet(FlowStepCallback),
 			FlowStepCallback:            stepsToSet(FlowStepDone),

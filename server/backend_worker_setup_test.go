@@ -23,7 +23,9 @@ func TestSetupWorkersTreatsTestBackendAsNoop(t *testing.T) {
 			Backends: []*config.Backend{&backend},
 		},
 	}
+
 	var logs bytes.Buffer
+
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 
 	setupWorkers(context.Background(), &contextStore{}, nil, cfg, logger, nil, nil)

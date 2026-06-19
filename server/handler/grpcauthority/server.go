@@ -186,6 +186,7 @@ func serveGRPCAuthority(
 		<-ctx.Done()
 
 		stopped := make(chan struct{})
+
 		go func() {
 			server.GracefulStop()
 			close(stopped)
@@ -295,7 +296,7 @@ func (d ServerDeps) effectiveOIDCValidator() oidcbearer.TokenValidator {
 		Channel:      d.Channel,
 	}
 
-	return idp.NewNauthilusIdP(deps)
+	return idp.NewNauthilusIDP(deps)
 }
 
 func buildServerTLSConfig(tlsSection *config.RuntimeGRPCTLSSection) (*tls.Config, error) {
@@ -309,6 +310,7 @@ func buildServerTLSConfig(tlsSection *config.RuntimeGRPCTLSSection) (*tls.Config
 	}
 
 	var clientCAs *x509.CertPool
+
 	if tlsSection.GetClientCA() != "" {
 		pem, err := os.ReadFile(tlsSection.GetClientCA())
 		if err != nil {
@@ -708,6 +710,7 @@ func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string)
 	}
 
 	basicEnabled := cfg.GetServer().GetBasicAuth().IsEnabled()
+
 	oidcEnabled := cfg.GetServer().GetOIDCAuth().IsEnabled()
 	if !basicEnabled && !oidcEnabled {
 		return callerAuthResult{}, status.Error(codes.Unauthenticated, "backchannel authentication is not configured")
@@ -745,6 +748,7 @@ func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string)
 	}
 
 	var permissionErr error
+
 	for _, value := range values {
 		scheme, payload, ok := splitAuthorization(value)
 		if !ok || scheme != "bearer" {

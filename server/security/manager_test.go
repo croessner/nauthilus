@@ -28,6 +28,7 @@ func TestManagerEncryptDecryptRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected encryption to succeed, got error: %v", err)
 	}
+
 	if encrypted == "" {
 		t.Fatalf("expected encrypted value to be set")
 	}
@@ -36,6 +37,7 @@ func TestManagerEncryptDecryptRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected decryption to succeed, got error: %v", err)
 	}
+
 	if decrypted != "totp-secret" {
 		t.Fatalf("expected decrypted value to match, got %q", decrypted)
 	}

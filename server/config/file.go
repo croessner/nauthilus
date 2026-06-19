@@ -345,8 +345,8 @@ type File interface {
 	// GetLDAP returns the LDAPSection object containing configuration and search definitions for LDAP operations.
 	GetLDAP() *LDAPSection
 
-	// GetIdP returns the IdPSection object containing configuration for the internal Identity Provider.
-	GetIdP() *IdPSection
+	// GetIDP returns the IDPSection object containing configuration for the internal Identity Provider.
+	GetIDP() *IDPSection
 
 	// GetPlugins returns native plugin loader configuration.
 	GetPlugins() *PluginsSection
@@ -370,7 +370,7 @@ type FileSettings struct {
 	BruteForce              *BruteForceSection       `mapstructure:"-" validate:"-"`
 	Lua                     *LuaSection              `mapstructure:"-" validate:"-"`
 	LDAP                    *LDAPSection             `mapstructure:"-" validate:"-"`
-	IDP                     *IdPSection              `mapstructure:"-" validate:"-"`
+	IDP                     *IDPSection              `mapstructure:"-" validate:"-"`
 	Other                   map[string]any           `mapstructure:",remain"`
 	Mu                      sync.Mutex               `mapstructure:"-"`
 }
@@ -854,19 +854,19 @@ func (f *FileSettings) GetLDAPConfigTLSClientKey() string {
 // GetLDAPConfigServerURIs retrieves the LDAP server URIs from the configuration or returns "ldap://localhost" as a default value.
 func (f *FileSettings) GetLDAPConfigServerURIs() []string {
 	if f == nil {
-		return []string{"ldap://localhost"}
+		return []string{defaultLDAPServerURI}
 	}
 
 	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
-		return []string{"ldap://localhost"}
+		return []string{defaultLDAPServerURI}
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.GetServerURIs()
 	}
 
-	return []string{"ldap://localhost"}
+	return []string{defaultLDAPServerURI}
 }
 
 // GetLDAPSearchProtocol retrieves the LDAPSearchProtocol configuration based on the specified protocol.
@@ -891,8 +891,8 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 		// Historically, the configuration defaulted to `__meta_default__`, while runtime
 		// pooling uses `default`. Accept both as equivalent to keep configs without
 		// explicit `pool_name` working.
-		if (configPoolName == definitions.DefaultBackendName && reqPoolName == "default") ||
-			(configPoolName == "default" && reqPoolName == definitions.DefaultBackendName) {
+		if (configPoolName == definitions.DefaultBackendName && reqPoolName == RemoteBackendDefaultName) ||
+			(configPoolName == RemoteBackendDefaultName && reqPoolName == definitions.DefaultBackendName) {
 			return true
 		}
 
@@ -948,6 +948,7 @@ func ResolveLDAPSearchPoolName(cfg File, protocol string) (string, bool) {
 	}
 
 	matches := make(map[string]struct{})
+
 	for index := range ldapProtocols {
 		protocols := ldapProtocols[index].GetProtocols()
 		if slices.Contains(protocols, protocol) {
@@ -1075,6 +1076,7 @@ func (f *FileSettings) GetLuaHookVMPoolSize() int {
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
 		return luaConf.GetHookVMPoolSize()
 	}
+
 	return definitions.DefaultNumberOfWorkers
 }
 
@@ -1952,6 +1954,7 @@ func (f *FileSettings) validatePassDBBackends() error {
 			}
 
 			requiresEncryptionSecret := false
+
 			for _, protocol := range f.GetLDAP().GetSearch() {
 				if protocol.GetTotpSecretField() != "" || protocol.GetTotpRecoveryField() != "" {
 					requiresEncryptionSecret = true
@@ -1973,7 +1976,6 @@ func (f *FileSettings) validatePassDBBackends() error {
 // checkAddress verifies the validity of a network address, returning an error if it is improperly formatted.
 func checkAddress(address string) error {
 	_, _, err := net.SplitHostPort(address)
-
 	if err != nil {
 		return fmt.Errorf("invalid address: %w", err)
 	}
@@ -2007,8 +2009,8 @@ func (f *FileSettings) setDefaultInstanceName() error {
 	return nil
 }
 
-// setDefaultDnsTimeout sets the default DNS timeout value for the file's server if not already specified.
-func (f *FileSettings) setDefaultDnsTimeout() error {
+// setDefaultDNSTimeout sets the default DNS timeout value for the file's server if not already specified.
+func (f *FileSettings) setDefaultDNSTimeout() error {
 	if f == nil || f.Server == nil {
 		return nil
 	}
@@ -2305,7 +2307,7 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 	}
 
 	if f.Server.Frontend.TotpIssuer == "" {
-		f.Server.Frontend.TotpIssuer = "Nauthilus"
+		f.Server.Frontend.TotpIssuer = defaultFrontendTOTPIssuer
 	}
 
 	headers := &f.Server.Frontend.SecurityHeaders
@@ -2339,11 +2341,11 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 	}
 
 	if headers.CrossOriginOpenerPolicy == "" {
-		headers.CrossOriginOpenerPolicy = "same-origin"
+		headers.CrossOriginOpenerPolicy = securityHeaderValueSameOrigin
 	}
 
 	if headers.CrossOriginResourcePolicy == "" {
-		headers.CrossOriginResourcePolicy = "same-origin"
+		headers.CrossOriginResourcePolicy = securityHeaderValueSameOrigin
 	}
 
 	if headers.CrossOriginEmbedderPolicy == "" {
@@ -2351,7 +2353,7 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 	}
 
 	if headers.XPermittedCrossDomainPolicies == "" {
-		headers.XPermittedCrossDomainPolicies = "none"
+		headers.XPermittedCrossDomainPolicies = securityHeaderValueNone
 	}
 
 	if headers.XDNSPrefetchControl == "" {
@@ -2361,8 +2363,8 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 	return nil
 }
 
-// setDefaultIdPSettings sets the default IdP settings if they are not already configured.
-func (f *FileSettings) setDefaultIdPSettings() error {
+// setDefaultIDPSettings sets the default IDP settings if they are not already configured.
+func (f *FileSettings) setDefaultIDPSettings() error {
 	if f == nil || f.IDP == nil {
 		return nil
 	}
@@ -2443,7 +2445,7 @@ func (f *FileSettings) validate() (err error) {
 
 		// Without errors, but fixing things
 		f.setDefaultInstanceName,
-		f.setDefaultDnsTimeout,
+		f.setDefaultDNSTimeout,
 		f.setDefaultPosCacheTTL,
 		f.setDefaultNegCacheTTL,
 		f.setDefaultMasterUserFormat,
@@ -2456,11 +2458,11 @@ func (f *FileSettings) validate() (err error) {
 		f.setDefaultBackendServerSettings,
 		f.setDefaultSecuritySettings,
 		f.setDefaultFrontendSettings,
-		f.setDefaultIdPSettings,
-		f.validateIdPMFASettings,
-		f.validateIdPOIDCCustomScopes,
-		f.validateIdPSAMLSigningSettings,
-		f.validateIdPSAML2SLOSettings,
+		f.setDefaultIDPSettings,
+		f.validateIDPMFASettings,
+		f.validateIDPOIDCCustomScopes,
+		f.validateIDPSAMLSigningSettings,
+		f.validateIDPSAML2SLOSettings,
 		f.validateLuaHooks,
 		f.setDefaultTrustedProxies,
 		f.validateSecurityTxt,
@@ -2855,7 +2857,7 @@ func ValidateGRPCAuthServerConfig(provider RuntimeGRPCAuthServerProvider) error 
 			return fmt.Errorf("runtime.servers.grpc.authority.tls.cert and runtime.servers.grpc.authority.tls.key are required when gRPC TLS is enabled")
 		}
 
-		if tlsConfig.GetMinTLSVersion() != "TLS1.2" && tlsConfig.GetMinTLSVersion() != "TLS1.3" {
+		if tlsConfig.GetMinTLSVersion() != "TLS1.2" && tlsConfig.GetMinTLSVersion() != TLSVersion13 {
 			return fmt.Errorf("runtime.servers.grpc.authority.tls.min_tls_version must be TLS1.2 or TLS1.3")
 		}
 
@@ -2896,6 +2898,7 @@ func (f *FileSettings) validateSecurityTxt() error {
 	}
 
 	expires := strings.TrimSpace(securityTxt.GetExpires())
+
 	expiresAfter := securityTxt.GetExpiresAfter()
 	switch {
 	case expiresAfter < 0:
@@ -2965,6 +2968,7 @@ func validateSecurityTxtFields(securityTxt SecurityTxt) error {
 
 func validateSecurityTxtServedFile(field string, filePath string, publicURI string) error {
 	filePath = strings.TrimSpace(filePath)
+
 	publicURI = strings.TrimSpace(publicURI)
 	if filePath == "" && publicURI == "" {
 		return nil
@@ -3037,7 +3041,7 @@ func validateSecurityTxtURIs(field string, values []string) error {
 			return fmt.Errorf("runtime.servers.http.security_txt.%s[%d] must be a URI", field, index)
 		}
 
-		if (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Scheme != "https" {
+		if (parsed.Scheme == uriSchemeHTTP || parsed.Scheme == uriSchemeHTTPS) && parsed.Scheme != uriSchemeHTTPS {
 			return fmt.Errorf("runtime.servers.http.security_txt.%s[%d] web URI must use https", field, index)
 		}
 	}
@@ -3051,6 +3055,7 @@ func (f *FileSettings) validateLuaHooks() error {
 	}
 
 	aliases := make(map[string]int)
+
 	for idx, luaHook := range f.GetLua().GetHooks() {
 		aliasLocation := strings.TrimSpace(luaHook.GetAliasLocation())
 		if aliasLocation == "" {
@@ -3061,6 +3066,7 @@ func (f *FileSettings) validateLuaHooks() error {
 		if aliasLocation == canonicalLocation {
 			return fmt.Errorf("auth.controls.lua.hooks[%d].http_alias_location duplicates canonical hook location %q", idx, canonicalLocation)
 		}
+
 		if strings.HasPrefix(aliasLocation, "/api/v1/custom/") {
 			return fmt.Errorf("auth.controls.lua.hooks[%d].http_alias_location must not use reserved custom hook prefix %q", idx, "/api/v1/custom/")
 		}
@@ -3184,8 +3190,8 @@ func (f *FileSettings) warnDeprecatedConfig() {
 		}
 	}
 
-	// IdP remember_me_ttl moved from per-client/per-SP settings to a global IdP setting.
-	warnDeprecatedIdPRememberMe(f.GetIdP())
+	// IDP remember_me_ttl moved from per-client/per-SP settings to a global IDP setting.
+	warnDeprecatedIDPRememberMe(f.GetIDP())
 }
 
 // warnUnsupportedConfig logs warnings for unsupported configuration parameters.
@@ -3194,7 +3200,7 @@ func (f *FileSettings) warnUnsupportedConfig() {
 		return
 	}
 
-	for _, warning := range f.GetIdP().warnUnsupported() {
+	for _, warning := range f.GetIDP().warnUnsupported() {
 		safeWarn("msg", "unsupported configuration parameter", "warning", warning)
 	}
 }
@@ -3362,6 +3368,7 @@ func warnDeprecatedDedup(d *Dedup) {
 	if d == nil {
 		return
 	}
+
 	if d.DistributedEnabled {
 		safeWarn(
 			"component", "config",
@@ -3379,7 +3386,6 @@ func warnDeprecatedDedup(d *Dedup) {
 			"msg", "'runtime.servers.http.dedup.in_process_enabled' is deprecated and ignored – in-process dedup has been removed",
 		)
 	}
-
 }
 
 func warnDeprecatedRBL(index int, r *RBL) {
@@ -3412,30 +3418,13 @@ func warnDeprecatedTimeout(t *Timeouts) {
 	}
 }
 
-func warnDeprecatedAlias(oldPath string, newPath string, location string) {
-	if !viper.IsSet(oldPath) {
-		return
-	}
-
-	msg := fmt.Sprintf("'%s' is deprecated – please use '%s'", oldPath, newPath)
-	if viper.IsSet(newPath) {
-		msg += fmt.Sprintf(" (legacy value is ignored because %s is set)", newPath)
-	}
-
-	safeWarn(
-		"component", "config",
-		"location", location,
-		"deprecated", oldPath,
-		"msg", msg,
-	)
-}
-
-func warnDeprecatedIdPRememberMe(idpCfg *IdPSection) {
+func warnDeprecatedIDPRememberMe(idpCfg *IDPSection) {
 	if idpCfg == nil {
 		return
 	}
 
 	globalSet := idpCfg.RememberMeTTL > 0
+
 	msg := "'remember_me_ttl' is deprecated at client/service-provider level – please use 'identity.session.remember_me_ttl'"
 	if globalSet {
 		msg += " (legacy value is ignored because global identity.session.remember_me_ttl is set)"
@@ -3493,11 +3482,7 @@ func (f *FileSettings) ShouldRunControl(runtimeModule string, noAuth bool) bool 
 
 	for _, item := range f.GetServer().RuntimeModules {
 		if item.Get() == runtimeModule {
-			if noAuth {
-				return false
-			}
-
-			return true
+			return !noAuth
 		}
 	}
 
@@ -3641,29 +3626,29 @@ func createDecoderOption() viper.DecoderConfigOption {
 	return func(config *mapstructure.DecoderConfig) {
 		config.DecodeHook = mapstructure.ComposeDecodeHookFunc(
 			config.DecodeHook,
-			func(from reflect.Type, to reflect.Type, data any) (any, error) {
-				switch {
-				case to == verbosityType:
+			func(_ reflect.Type, to reflect.Type, data any) (any, error) {
+				switch to {
+				case verbosityType:
 					return processVerboseLevel(data)
-				case to == debugModulesType:
+				case debugModulesType:
 					return processDebugModules(data)
-				case to == runtimeModulesType:
+				case runtimeModulesType:
 					return processRuntimeModules(data)
-				case to == controlsType:
+				case controlsType:
 					return processControls(data)
-				case to == servicesType:
+				case servicesType:
 					return processServices(data)
-				case to == protocolsType:
+				case protocolsType:
 					return processProtocols(data)
-				case to == backendsType:
+				case backendsType:
 					return processBackends(data)
-				case to == contentSecurityPolicyType:
+				case contentSecurityPolicyType:
 					return processContentSecurityPolicyValue(data)
-				case to == permissionsPolicyType:
+				case permissionsPolicyType:
 					return processPermissionsPolicyValue(data)
-				case to == strictTransportSecurityType:
+				case strictTransportSecurityType:
 					return processStrictTransportSecurityValue(data)
-				case to == secretType:
+				case secretType:
 					switch value := data.(type) {
 					case string:
 						return secret.New(value), nil
@@ -3736,6 +3721,7 @@ func (f *FileSettings) HandleFile() (err error) {
 		}
 
 		var value []byte
+
 		secretValue.WithBytes(func(s []byte) {
 			if len(s) == 0 {
 				return
@@ -3747,24 +3733,55 @@ func (f *FileSettings) HandleFile() (err error) {
 		return string(value)
 	}, secret.Value{}, &secret.Value{})
 
-	validate.RegisterValidation("secret_required", secretRequired)
-	validate.RegisterValidation("secret_min", secretMin)
-	validate.RegisterValidation("secret_excludesall", secretExcludesAll)
-	validate.RegisterValidation("secret_required_if_enabled", secretRequiredIfEnabled)
-	validate.RegisterValidation("validateAuthPoolRequired", validateAuthPoolRequired)
-	validate.RegisterValidation("validatDefaultBackendName", validatDefaultBackendName)
-	// Register custom validator for alphanumeric characters and symbols
-	validate.RegisterValidation("alphanumsymbol", isAlphanumSymbol)
-	validate.RegisterValidation("scope_token", isScopeToken)
-	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
-	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+	if err = registerValidation(validate, "secret_required", secretRequired); err != nil {
+		return err
+	}
 
-	if err = validate.RegisterValidation("master_user_format", isMasterUserFormat); err != nil {
+	if err = registerValidation(validate, "secret_min", secretMin); err != nil {
+		return err
+	}
+
+	if err = registerValidation(validate, "secret_excludesall", secretExcludesAll); err != nil {
+		return err
+	}
+
+	if err = registerValidation(validate, "secret_required_if_enabled", secretRequiredIfEnabled); err != nil {
+		return err
+	}
+
+	if err = registerValidation(validate, "validateAuthPoolRequired", validateAuthPoolRequired); err != nil {
+		return err
+	}
+
+	if err = registerValidation(validate, "validatDefaultBackendName", validatDefaultBackendName); err != nil {
+		return err
+	}
+
+	// Register custom validator for alphanumeric characters and symbols
+	if err = registerValidation(validate, "alphanumsymbol", isAlphanumSymbol); err != nil {
+		return err
+	}
+
+	if err = registerValidation(validate, "scope_token", isScopeToken); err != nil {
+		return err
+	}
+
+	if err = registerValidation(validate, "oidc_claim_name", isOIDCClaimName); err != nil {
+		return err
+	}
+
+	if err = registerValidation(validate, "oidc_claim_type", isOIDCClaimType); err != nil {
+		return err
+	}
+
+	if err = registerValidation(validate, "master_user_format", isMasterUserFormat); err != nil {
 		return err
 	}
 
 	// Register custom hostname validator that allows optional trailing dot
-	validate.RegisterValidation("hostname_rfc1123_with_opt_trailing_dot", hostnameRFC1123WithOptionalTrailingDot)
+	if err = registerValidation(validate, "hostname_rfc1123_with_opt_trailing_dot", hostnameRFC1123WithOptionalTrailingDot); err != nil {
+		return err
+	}
 
 	if err = validate.Struct(f); err != nil {
 		if validationErrors, ok := stderrors.AsType[validator.ValidationErrors](err); ok {
@@ -3786,6 +3803,15 @@ func (f *FileSettings) HandleFile() (err error) {
 
 	// Throw away unsupported keys
 	f.Other = nil
+
+	return nil
+}
+
+// registerValidation registers a named validator and adds context to setup errors.
+func registerValidation(validate *validator.Validate, tag string, fn validator.Func) error {
+	if err := validate.RegisterValidation(tag, fn); err != nil {
+		return fmt.Errorf("register validator %q: %w", tag, err)
+	}
 
 	return nil
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/lualib/convert"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
@@ -36,6 +37,13 @@ import (
 var (
 	trOps = monittrace.New("nauthilus/ldap_ops")
 	trLua = monittrace.New("nauthilus/ldap_lua")
+)
+
+const (
+	luaLDAPFieldAttributes  = "attributes"
+	luaLDAPFieldPoolName    = "pool_name"
+	luaLDAPFieldSession     = "session"
+	luaLDAPPoolAliasDefault = "default"
 )
 
 // LDAPMainWorker orchestrates LDAP lookup operations, manages a connection pool, and processes incoming requests in a loop.
@@ -53,13 +61,18 @@ func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
 
-	ldapPool.SetIdleConnections(true)
+	if err := ldapPool.SetIdleConnections(true); err != nil {
+		level.Error(logger).Log(definitions.LogKeyMsg, "Failed to initialize LDAP lookup idle connections", definitions.LogKeyLDAPPoolName, poolName, definitions.LogKeyError, err)
+
+		return
+	}
 
 	// Add the pool name to the queue
 	queue.AddPoolName(poolName)
 
 	// Configure queue length limit from config (0 = unlimited)
 	lookupLimit := 0
+
 	if poolName == definitions.DefaultBackendName {
 		if ldapCfg := cfg.GetLDAP().GetConfig(); ldapCfg != nil {
 			if c, ok := ldapCfg.(*config.LDAPConf); ok {
@@ -80,17 +93,8 @@ func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 	runLDAPWorkerLoop(ctx, ldapPool, poolName, ldapWorkerCallbacks{
 		spanName:   "ldap.worker.process",
 		idleExpand: true,
-		popRequest: func() (guid string, httpCtx context.Context, replyChan chan *bktype.LDAPReply, handle func() error) {
-			req := queue.PopWithContext(ctx, poolName)
-			if req == nil {
-				return "", nil, nil, nil
-			}
-
-			return req.GUID, req.HTTPClientContext, req.LDAPReplyChan, func() error {
-				return ldapPool.HandleLookupRequest(req)
-			}
-		},
-		doneChan: channel.GetLdapChannel().GetLookupEndChan(poolName),
+		popRequest: lookupPopRequest(ctx, queue, ldapPool, poolName),
+		doneChan:   channel.GetLdapChannel().GetLookupEndChan(poolName),
 	})
 }
 
@@ -106,13 +110,18 @@ func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
 
-	ldapPool.SetIdleConnections(false)
+	if err := ldapPool.SetIdleConnections(false); err != nil {
+		level.Error(logger).Log(definitions.LogKeyMsg, "Failed to initialize LDAP auth idle connections", definitions.LogKeyLDAPPoolName, poolName, definitions.LogKeyError, err)
+
+		return
+	}
 
 	// Add the pool name to the queue
 	authQueue.AddPoolName(poolName)
 
 	// Configure auth queue length limit from config (0 = unlimited)
 	authLimit := 0
+
 	if poolName == definitions.DefaultBackendName {
 		if ldapCfg := cfg.GetLDAP().GetConfig(); ldapCfg != nil {
 			if c, ok := ldapCfg.(*config.LDAPConf); ok {
@@ -133,17 +142,8 @@ func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 	runLDAPWorkerLoop(ctx, ldapPool, poolName, ldapWorkerCallbacks{
 		spanName:   "ldap.worker.process_auth",
 		idleExpand: false,
-		popRequest: func() (guid string, httpCtx context.Context, replyChan chan *bktype.LDAPReply, handle func() error) {
-			req := authQueue.PopWithContext(ctx, poolName)
-			if req == nil {
-				return "", nil, nil, nil
-			}
-
-			return req.GUID, req.HTTPClientContext, req.LDAPReplyChan, func() error {
-				return ldapPool.HandleAuthRequest(req)
-			}
-		},
-		doneChan: channel.GetLdapChannel().GetAuthEndChan(poolName),
+		popRequest: authPopRequest(ctx, authQueue, ldapPool, poolName),
+		doneChan:   channel.GetLdapChannel().GetAuthEndChan(poolName),
 	})
 }
 
@@ -151,10 +151,67 @@ func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 type ldapWorkerCallbacks struct {
 	// popRequest pops the next request from the queue and returns its fields.
 	// A nil handle return signals the queue is closed.
-	popRequest func() (guid string, httpCtx context.Context, replyChan chan *bktype.LDAPReply, handle func() error)
+	popRequest ldapPopRequestFunc
 	doneChan   chan bktype.Done
 	spanName   string
 	idleExpand bool
+}
+
+// ldapPopRequestFunc adapts queue-specific LDAP requests for the shared worker loop.
+type ldapPopRequestFunc func() (guid string, httpCtx context.Context, replyChan chan *bktype.LDAPReply, handle func() error)
+
+// lookupPopRequest adapts lookup queue items for the shared worker loop.
+func lookupPopRequest(ctx context.Context, queue LDAPQueue, pool ldappool.LDAPPool, poolName string) ldapPopRequestFunc {
+	return wrapLDAPPopRequest(func() ldapRequestFields {
+		req := queue.PopWithContext(ctx, poolName)
+		if req == nil {
+			return ldapRequestFields{}
+		}
+
+		return ldapRequestFields{
+			guid:      req.GUID,
+			httpCtx:   req.HTTPClientContext,
+			replyChan: req.LDAPReplyChan,
+			handle: func() error {
+				return pool.HandleLookupRequest(req)
+			},
+		}
+	})
+}
+
+// authPopRequest adapts authentication queue items for the shared worker loop.
+func authPopRequest(ctx context.Context, queue LDAPAuthQueue, pool ldappool.LDAPPool, poolName string) ldapPopRequestFunc {
+	return wrapLDAPPopRequest(func() ldapRequestFields {
+		req := queue.PopWithContext(ctx, poolName)
+		if req == nil {
+			return ldapRequestFields{}
+		}
+
+		return ldapRequestFields{
+			guid:      req.GUID,
+			httpCtx:   req.HTTPClientContext,
+			replyChan: req.LDAPReplyChan,
+			handle: func() error {
+				return pool.HandleAuthRequest(req)
+			},
+		}
+	})
+}
+
+type ldapRequestFields struct {
+	httpCtx   context.Context
+	replyChan chan *bktype.LDAPReply
+	handle    func() error
+	guid      string
+}
+
+// wrapLDAPPopRequest converts request fields into the worker-loop callback shape.
+func wrapLDAPPopRequest(pop func() ldapRequestFields) ldapPopRequestFunc {
+	return func() (guid string, httpCtx context.Context, replyChan chan *bktype.LDAPReply, handle func() error) {
+		fields := pop()
+
+		return fields.guid, fields.httpCtx, fields.replyChan, fields.handle
+	}
 }
 
 // runLDAPWorkerLoop starts worker goroutines that pop requests from a queue and process them.
@@ -163,7 +220,6 @@ func runLDAPWorkerLoop(ctx context.Context, ldapPool ldappool.LDAPPool, poolName
 	var wg sync.WaitGroup
 
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
-
 		wg.Go(func() {
 			for {
 				select {
@@ -215,7 +271,9 @@ func convertScopeStringToLDAP(toString string) (*config.LDAPScope, error) {
 
 	scope := &config.LDAPScope{}
 	if toString == "" {
-		scope.Set("sub")
+		if err = scope.Set("sub"); err != nil {
+			return nil, fmt.Errorf("LDAP scope not detected: sub")
+		}
 	} else {
 		if err = scope.Set(toString); err != nil {
 			return nil, fmt.Errorf("LDAP scope not detected: %s", toString)
@@ -240,12 +298,14 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 		}
 
 		defer cancel()
+
 		table := L.CheckTable(1)
 
 		trCtx, span := trLua.Start(callCtx, "ldap.lua.search")
 		defer span.End()
 
 		_, pSpan := trLua.Start(trCtx, "ldap.lua.search.prepare")
+
 		fieldValues := prepareAndValidateSearchFields(L, table)
 		if fieldValues == nil {
 			pSpan.End()
@@ -257,13 +317,14 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 		setDefaultPoolName(fieldValues)
 		pSpan.End()
 
-		ldapRequest := createLDAPRequest(L, fieldValues, trCtx, definitions.LDAPSearch)
+		ldapRequest := createLDAPRequest(trCtx, L, fieldValues, definitions.LDAPSearch)
 
 		// Determine priority (using low priority for Lua-initiated requests)
 		priority := priorityqueue.PriorityLow
 
 		// Use priority queue instead of channel
 		_, qSpan := trLua.Start(trCtx, "ldap.lua.search.enqueue")
+
 		luaLDAPQueue.Push(ldapRequest, priority)
 		qSpan.End()
 
@@ -288,12 +349,14 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 		}
 
 		defer cancel()
+
 		table := L.CheckTable(1)
 
 		trCtx, span := trLua.Start(callCtx, "ldap.lua.modify")
 		defer span.End()
 
 		_, pSpan := trLua.Start(trCtx, "ldap.lua.modify.prepare")
+
 		fieldValues := prepareAndValidateModifyFields(L, table)
 		if fieldValues == nil {
 			pSpan.End()
@@ -305,17 +368,19 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 		setDefaultPoolName(fieldValues)
 		pSpan.End()
 
-		ldapRequest := createLDAPRequest(L, fieldValues, trCtx, definitions.LDAPModify)
+		ldapRequest := createLDAPRequest(trCtx, L, fieldValues, definitions.LDAPModify)
 
 		// Determine priority (using low priority for Lua-initiated requests)
 		priority := priorityqueue.PriorityLow
 
 		// Use priority queue instead of channel
 		_, qSpan := trLua.Start(trCtx, "ldap.lua.modify.enqueue")
+
 		luaLDAPQueue.Push(ldapRequest, priority)
 		qSpan.End()
 
 		var ldapReply *bktype.LDAPReply
+
 		_, wSpan := trLua.Start(trCtx, "ldap.lua.modify.wait")
 		defer wSpan.End()
 
@@ -346,15 +411,16 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 // It also accepts an optional "raw_result" boolean field to indicate if the raw LDAP result should be returned.
 func prepareAndValidateSearchFields(L *lua.LState, table *lua.LTable) map[string]lua.LValue {
 	expectedFields := map[string]string{
-		"pool_name":  definitions.LuaLiteralString,
-		"session":    definitions.LuaLiteralString,
-		"basedn":     definitions.LuaLiteralString,
-		"filter":     definitions.LuaLiteralString,
-		"scope":      definitions.LuaLiteralString,
-		"attributes": definitions.LuaLiteralTable,
+		luaLDAPFieldPoolName:   definitions.LuaLiteralString,
+		luaLDAPFieldSession:    definitions.LuaLiteralString,
+		"basedn":               definitions.LuaLiteralString,
+		"filter":               definitions.LuaLiteralString,
+		"scope":                definitions.LuaLiteralString,
+		luaLDAPFieldAttributes: definitions.LuaLiteralTable,
 	}
 
 	fieldValues := make(map[string]lua.LValue)
+
 	for field, typeExpected := range expectedFields {
 		if !validateField(L, table, field, typeExpected) {
 			return nil
@@ -384,14 +450,15 @@ func prepareAndValidateSearchFields(L *lua.LState, table *lua.LTable) map[string
 // Returns a map of extracted field values on success or nil if validation fails.
 func prepareAndValidateModifyFields(L *lua.LState, table *lua.LTable) map[string]lua.LValue {
 	expectedFields := map[string]string{
-		"pool_name":  definitions.LuaLiteralString,
-		"session":    definitions.LuaLiteralString,
-		"operation":  definitions.LuaLiteralString,
-		"dn":         definitions.LuaLiteralString,
-		"attributes": definitions.LuaLiteralTable,
+		luaLDAPFieldPoolName:   definitions.LuaLiteralString,
+		luaLDAPFieldSession:    definitions.LuaLiteralString,
+		"operation":            definitions.LuaLiteralString,
+		"dn":                   definitions.LuaLiteralString,
+		luaLDAPFieldAttributes: definitions.LuaLiteralTable,
 	}
 
 	fieldValues := make(map[string]lua.LValue)
+
 	for field, typeExpected := range expectedFields {
 		if !validateField(L, table, field, typeExpected) {
 			return nil
@@ -405,8 +472,8 @@ func prepareAndValidateModifyFields(L *lua.LState, table *lua.LTable) map[string
 
 // setDefaultPoolName sets a default pool name if the "pool_name" field in the provided map is an empty string.
 func setDefaultPoolName(fieldValues map[string]lua.LValue) {
-	if fieldValues["pool_name"].String() == "default" {
-		fieldValues["pool_name"] = lua.LString(definitions.DefaultBackendName)
+	if fieldValues[luaLDAPFieldPoolName].String() == luaLDAPPoolAliasDefault {
+		fieldValues[luaLDAPFieldPoolName] = lua.LString(definitions.DefaultBackendName)
 	}
 }
 
@@ -433,7 +500,7 @@ func validateField(L *lua.LState, table *lua.LTable, fieldName string, fieldType
 }
 
 // createLDAPRequest initializes an LDAPRequest with provided field values, scope, and context for an LDAP search operation.
-func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx context.Context, command definitions.LDAPCommand) *bktype.LDAPRequest {
+func createLDAPRequest(ctx context.Context, L *lua.LState, fieldValues map[string]lua.LValue, command definitions.LDAPCommand) *bktype.LDAPRequest {
 	var (
 		basedn           string
 		filter           string
@@ -454,13 +521,14 @@ func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx con
 		basedn = fieldValues["basedn"].String()
 		filter = fieldValues["filter"].String()
 
-		if ldapScope, err := convertScopeStringToLDAP(fieldValues["scope"].String()); err != nil {
+		ldapScope, err := convertScopeStringToLDAP(fieldValues["scope"].String())
+		if err != nil {
 			L.RaiseError("%s", err.Error())
 
 			return nil
-		} else {
-			scope = ldapScope
 		}
+
+		scope = ldapScope
 
 		searchAttributes = extractAttributes(attrTable)
 	case definitions.LDAPModify:
@@ -481,6 +549,7 @@ func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx con
 		}
 
 		modifyAttributes = make(bktype.LDAPModifyAttributes)
+
 		attrTable.ForEach(func(key lua.LValue, value lua.LValue) {
 			modifyAttributes[key.String()] = []string{value.String()}
 		})
@@ -517,7 +586,7 @@ func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx con
 // extractAttributes extracts string attributes from a Lua table and returns them as a slice of strings.
 func extractAttributes(attrTable *lua.LTable) []string {
 	attributes := make([]string, 0, attrTable.Len())
-	attrTable.ForEach(func(index lua.LValue, value lua.LValue) {
+	attrTable.ForEach(func(_ lua.LValue, value lua.LValue) {
 		attributes = append(attributes, value.String())
 	})
 
@@ -593,9 +662,7 @@ func processReply(ctx context.Context, L *lua.LState, ldapReplyChan chan *bktype
 	for key, values := range ldapReply.Result {
 		list := make([]any, len(values))
 
-		for i, val := range values {
-			list[i] = val
-		}
+		copy(list, values)
 
 		convertedMap[key] = list
 	}

@@ -105,6 +105,7 @@ func (c *LRUCache) Get(key string) (any, bool) {
 	if c.cap == 0 {
 		return nil, false
 	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
+// BruteForceSection describes the exported BruteForceSection type.
 type BruteForceSection struct {
 	IPWhitelist                []string         `mapstructure:"ip_allowlist" validate:"omitempty,dive,ip_addr|cidr"`
 	Buckets                    []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
@@ -55,7 +56,7 @@ type IPScoping struct {
 
 func (b *BruteForceSection) String() string {
 	if b == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return fmt.Sprintf("Buckets: %+v, IP-Whitelist: %+v", b.Buckets, b.IPWhitelist)
@@ -368,7 +369,7 @@ type BruteForceRule struct {
 
 func (b *BruteForceRule) String() string {
 	if b == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return fmt.Sprintf("Name: %s, Period: %s, BanTime: %s, CIDR: %d, IPv4: %t, IPv6: %t, FailedRequests: %d", b.Name, b.Period, b.GetBanTime(), b.CIDR, b.IPv4, b.IPv6, b.FailedRequests)

@@ -40,8 +40,8 @@ func TestWithIDPOpenAPI_ServesPublicSpecDocuments(t *testing.T) {
 
 	router := NewRouter(nil).WithIDPOpenAPI().Build()
 
-	assertOpenAPIDocument(t, router, "/.well-known/openapi.yaml", "application/yaml; charset=utf-8", "Nauthilus IdP API")
-	assertOpenAPIDocument(t, router, "/.well-known/openapi.json", "application/json; charset=utf-8", `"title": "Nauthilus IdP API"`)
+	assertOpenAPIDocument(t, router, "/.well-known/openapi.yaml", "application/yaml; charset=utf-8", "Nauthilus IDP API")
+	assertOpenAPIDocument(t, router, "/.well-known/openapi.json", "application/json; charset=utf-8", `"title": "Nauthilus IDP API"`)
 }
 
 func assertOpenAPIDocument(t *testing.T, router http.Handler, path string, contentType string, bodySubstring string) {

@@ -17,6 +17,7 @@ package config
 
 import "fmt"
 
+// Oauth2CustomScope describes the exported Oauth2CustomScope type.
 type Oauth2CustomScope struct {
 	Name        string            `mapstructure:"name" validate:"required,scope_token"`
 	Description string            `mapstructure:"description" validate:"required"`
@@ -64,11 +65,13 @@ func (s *Oauth2CustomScope) GetOther() map[string]any {
 	return s.Other
 }
 
+// OIDCCustomClaim describes the exported OIDCCustomClaim type.
 type OIDCCustomClaim struct {
 	Name string `mapstructure:"name" validate:"required,oidc_claim_name"`
 	Type string `mapstructure:"type" validate:"required,oidc_claim_type"`
 }
 
+// OIDCClaimMapping describes the exported OIDCClaimMapping type.
 type OIDCClaimMapping struct {
 	Claim     string `mapstructure:"claim" validate:"required,oidc_claim_name"`
 	Attribute string `mapstructure:"attribute" validate:"required_without=From,excluded_with=From,omitempty,printascii,excludesall= "`
@@ -96,21 +99,22 @@ func (c *OIDCCustomClaim) GetType() string {
 	return c.Type
 }
 
-type IdTokenClaims struct {
+// IDTokenClaims describes the exported IDTokenClaims type.
+type IDTokenClaims struct {
 	Mappings []OIDCClaimMapping `mapstructure:"mappings" validate:"omitempty,dive"`
 }
 
-func (i *IdTokenClaims) String() string {
+func (i *IDTokenClaims) String() string {
 	if i == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
-	return fmt.Sprintf("{IdTokenClaims: %+v}", *i)
+	return fmt.Sprintf("{IDTokenClaims: %+v}", *i)
 }
 
-// GetMappings retrieves the claim mappings from the IdTokenClaims.
-// Returns nil if the IdTokenClaims is nil.
-func (i *IdTokenClaims) GetMappings() []OIDCClaimMapping {
+// GetMappings retrieves the claim mappings from the IDTokenClaims.
+// Returns nil if the IDTokenClaims is nil.
+func (i *IDTokenClaims) GetMappings() []OIDCClaimMapping {
 	if i == nil {
 		return nil
 	}
@@ -125,7 +129,7 @@ type AccessTokenClaims struct {
 
 func (a *AccessTokenClaims) String() string {
 	if a == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return fmt.Sprintf("{AccessTokenClaims: %+v}", *a)

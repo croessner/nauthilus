@@ -49,24 +49,24 @@ const (
 
 // DeviceCodeRequest represents the stored data for a device authorization request.
 type DeviceCodeRequest struct {
-	ClientID           string                  `json:"client_id"`
-	Scopes             []string                `json:"scopes"`
-	UserCode           string                  `json:"user_code"`
-	Status             DeviceCodeStatus        `json:"status"`
-	UserID             string                  `json:"user_id,omitempty"`
-	Username           string                  `json:"username,omitempty"`
-	DisplayName        string                  `json:"display_name,omitempty"`
-	UserAttributes     bktype.AttributeMapping `json:"user_attributes,omitempty"`
-	UserGroups         []string                `json:"user_groups,omitempty"`
-	UserGroupDNs       []string                `json:"user_group_dns,omitempty"`
-	IdTokenClaims      map[string]any          `json:"id_token_claims,omitempty"`
-	AccessTokenClaims  map[string]any          `json:"access_token_claims,omitempty"`
-	MFACompleted       bool                    `json:"mfa_completed,omitempty"`
-	MFAMethod          string                  `json:"mfa_method,omitempty"`
-	ExpiresAt          time.Time               `json:"expires_at"`
-	Interval           int                     `json:"interval"`
-	LastPoll           time.Time               `json:"last_poll,omitzero"`
-	VerificationLocked bool                    `json:"verification_locked"`
+	ClientID                    string                  `json:"client_id"`
+	Scopes                      []string                `json:"scopes"`
+	UserCode                    string                  `json:"user_code"`
+	Status                      DeviceCodeStatus        `json:"status"`
+	UserID                      string                  `json:"user_id,omitempty"`
+	Username                    string                  `json:"username,omitempty"`
+	DisplayName                 string                  `json:"display_name,omitempty"`
+	UserAttributes              bktype.AttributeMapping `json:"user_attributes,omitempty"`
+	UserGroups                  []string                `json:"user_groups,omitempty"`
+	UserGroupDistinguishedNames []string                `json:"user_group_dns,omitempty"`
+	IDTokenClaims               map[string]any          `json:"id_token_claims,omitempty"`
+	AccessTokenClaims           map[string]any          `json:"access_token_claims,omitempty"`
+	MFACompleted                bool                    `json:"mfa_completed,omitempty"`
+	MFAMethod                   string                  `json:"mfa_method,omitempty"`
+	ExpiresAt                   time.Time               `json:"expires_at"`
+	Interval                    int                     `json:"interval"`
+	LastPoll                    time.Time               `json:"last_poll,omitzero"`
+	VerificationLocked          bool                    `json:"verification_locked"`
 }
 
 // StoreUserSnapshot copies user identity data into the request.
@@ -75,12 +75,12 @@ func (r *DeviceCodeRequest) StoreUserSnapshot(user *backend.User) {
 		return
 	}
 
-	r.UserID = user.Id
+	r.UserID = user.ID
 	r.Username = user.Name
 	r.DisplayName = user.DisplayName
 	r.UserAttributes = user.Attributes.Clone()
 	r.UserGroups = append([]string(nil), user.Groups...)
-	r.UserGroupDNs = append([]string(nil), user.GroupDNs...)
+	r.UserGroupDistinguishedNames = append([]string(nil), user.GroupDistinguishedNames...)
 }
 
 // UserFromSnapshot rebuilds a backend user from the stored snapshot.
@@ -92,7 +92,7 @@ func (r *DeviceCodeRequest) UserFromSnapshot() *backend.User {
 	user := backend.NewUser(r.Username, r.DisplayName, r.UserID)
 	user.Attributes = r.UserAttributes.Clone()
 	user.Groups = append([]string(nil), r.UserGroups...)
-	user.GroupDNs = append([]string(nil), r.UserGroupDNs...)
+	user.GroupDistinguishedNames = append([]string(nil), r.UserGroupDistinguishedNames...)
 
 	return user
 }
@@ -187,6 +187,7 @@ func (s *RedisDeviceCodeStore) StoreDeviceCode(ctx context.Context, deviceCode s
 
 	// Store the device code entry
 	deviceKey := s.deviceCodeKey(deviceCode)
+
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
@@ -210,6 +211,7 @@ func (s *RedisDeviceCodeStore) StoreDeviceCode(ctx context.Context, deviceCode s
 // GetDeviceCode retrieves a device code request from Redis.
 func (s *RedisDeviceCodeStore) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCodeRequest, error) {
 	key := s.deviceCodeKey(deviceCode)
+
 	readCtx, cancel := s.redisReadContext(ctx)
 	defer cancel()
 
@@ -251,7 +253,9 @@ func (s *RedisDeviceCodeStore) GetDeviceCodeByUserCode(ctx context.Context, user
 	readCtx, cancel := s.redisReadContext(ctx)
 
 	deviceCode, err := s.redis.GetReadHandle().Get(readCtx, userCodeKey).Result()
+
 	cancel()
+
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return "", nil, fmt.Errorf("user code not found or expired")
@@ -275,7 +279,9 @@ func (s *RedisDeviceCodeStore) UpdateDeviceCode(ctx context.Context, deviceCode 
 
 	// Get remaining TTL
 	ttl, err := s.redis.GetReadHandle().TTL(readCtx, key).Result()
+
 	readCancel()
+
 	if err != nil || ttl <= 0 {
 		return fmt.Errorf("device code not found or expired")
 	}
@@ -304,10 +310,12 @@ func (s *RedisDeviceCodeStore) DeleteDeviceCode(ctx context.Context, deviceCode 
 		userCodeKey := s.userCodeKey(request.UserCode)
 		writeCtx, cancel := s.redisWriteContext(ctx)
 		_ = s.redis.GetWriteHandle().Del(writeCtx, userCodeKey).Err()
+
 		cancel()
 	}
 
 	deviceKey := s.deviceCodeKey(deviceCode)
+
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 

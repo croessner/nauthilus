@@ -118,7 +118,7 @@ func requestDeviceAuthorization(deviceEndpoint string, scopes []string) *deviceA
 		log.Fatalf("Device authorization request failed: %v", err)
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -243,7 +243,7 @@ func requestDeviceToken(tokenEndpoint, deviceCode string) *deviceTokenResponse {
 		log.Fatalf("Token request failed: %v", err)
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

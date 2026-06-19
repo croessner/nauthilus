@@ -28,8 +28,8 @@ import (
 func (h *OIDCHandler) handleClientCredentialsTokenExchange(ctx *gin.Context, client *config.OIDCClient, grantType string) {
 	clientID := client.ClientID
 
-	if !client.SupportsGrantType("client_credentials") {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "unauthorized_client"})
+	if !client.SupportsGrantType(oidcGrantTypeClientCredentials) {
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorUnauthorizedClient})
 
 		return
 	}

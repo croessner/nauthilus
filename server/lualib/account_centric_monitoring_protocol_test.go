@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package lualib provides lualib functionality.
 package lualib
 
 import (
@@ -34,33 +35,38 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 			"getenv": func(L *lua.LState) int {
 				def := L.OptString(2, "")
 				L.Push(lua.LString(def))
+
 				return 1
 			},
 			"toboolean": func(L *lua.LState) int {
 				v := L.ToString(1)
 				L.Push(lua.LBool(v == "true" || v == "1"))
+
 				return 1
 			},
 			"get_redis_key": func(L *lua.LState) int {
 				key := L.CheckString(2)
 				L.Push(lua.LString(key))
+
 				return 1
 			},
 			"if_error_raise": func(L *lua.LState) int {
 				if L.Get(1) != lua.LNil {
 					L.RaiseError("unexpected error")
 				}
+
 				return 0
 			},
 			"is_table": func(L *lua.LState) int {
 				L.Push(lua.LBool(L.Get(1).Type() == lua.LTTable))
 				return 1
 			},
-			"log_info": func(L *lua.LState) int {
+			"log_info": func(_ *lua.LState) int {
 				return 0
 			},
 		})
 		L.Push(mod)
+
 		return 1
 	})
 
@@ -71,6 +77,7 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 			return 1
 		}))
 		L.Push(mod)
+
 		return 1
 	})
 
@@ -79,15 +86,19 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 		mod.RawSetString("redis_run_script", L.NewFunction(func(L *lua.LState) int {
 			keys := L.CheckTable(4)
 			L.SetGlobal("last_keys", keys)
+
 			res := L.NewTable()
 			for range 9 {
 				res.Append(lua.LNumber(0))
 			}
+
 			L.Push(res)
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 		L.Push(mod)
+
 		return 1
 	})
 
@@ -122,6 +133,7 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 			return 1
 		}))
 		L.Push(mod)
+
 		return 1
 	})
 
@@ -132,6 +144,7 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 			return 1
 		}))
 		L.Push(mod)
+
 		return 1
 	})
 
@@ -140,7 +153,7 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 	builtin := L.NewTable()
 	builtin.RawSetString("SUBJECT_ACCEPT", lua.LBool(false))
 	builtin.RawSetString("SUBJECT_RESULT_OK", lua.LNumber(0))
-	builtin.RawSetString("custom_log_add", L.NewFunction(func(L *lua.LState) int {
+	builtin.RawSetString("custom_log_add", L.NewFunction(func(_ *lua.LState) int {
 		return 0
 	}))
 	L.SetGlobal("nauthilus_builtin", builtin)
@@ -167,16 +180,21 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 	}
 
 	keysVal := L.GetGlobal("last_keys")
+
 	keysTbl, ok := keysVal.(*lua.LTable)
 	if !ok {
 		t.Fatalf("expected keys table, got %v", keysVal.Type())
 	}
 
 	expectedSegment := ":proto:imap"
+
 	var missing []string
+
 	count := 0
+
 	keysTbl.ForEach(func(_ lua.LValue, v lua.LValue) {
 		count++
+
 		key := v.String()
 		if !strings.Contains(key, expectedSegment) {
 			missing = append(missing, key)
@@ -186,6 +204,7 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 	if count == 0 {
 		t.Fatal("no keys captured")
 	}
+
 	if len(missing) > 0 {
 		t.Fatalf("keys missing protocol segment: %v", missing)
 	}

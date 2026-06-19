@@ -33,11 +33,14 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 	if db == nil || mock == nil {
 		t.Fatalf("Failed to create Redis mock client.")
 	}
+
 	client := rediscli.NewTestClient(db)
 	SetDefaultClient(client)
+
 	L := lua.NewState()
 	defer L.Close()
-	bindRedisRuntimeContextForTest(L, context.Background())
+
+	bindRedisRuntimeContextForTest(context.Background(), L)
 	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 
@@ -83,6 +86,7 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 		if v.Type() != lua.LTTable {
 			t.Fatalf("result[%d] expected table, got %v", i, v.Type())
 		}
+
 		return v.(*lua.LTable)
 	}
 	// 1) set => ok=true, value="OK"
@@ -91,6 +95,7 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 		if it.RawGetString("ok") != lua.LTrue {
 			t.Errorf("result[1].ok = %v, want true", it.RawGetString("ok"))
 		}
+
 		if it.RawGetString("value").String() != "OK" {
 			t.Errorf("result[1].value = %v, want OK", it.RawGetString("value"))
 		}
@@ -101,6 +106,7 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 		if it.RawGetString("ok") != lua.LTrue {
 			t.Errorf("result[2].ok = %v, want true", it.RawGetString("ok"))
 		}
+
 		if it.RawGetString("value").String() != "1" {
 			t.Errorf("result[2].value = %v, want 1", it.RawGetString("value"))
 		}
@@ -111,6 +117,7 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 		if it.RawGetString("ok") != lua.LTrue {
 			t.Errorf("result[3].ok = %v, want true", it.RawGetString("ok"))
 		}
+
 		v := it.RawGetString("value")
 		if v.Type() != lua.LTNumber || int(lua.LVAsNumber(v)) != 1 {
 			t.Errorf("result[3].value = %v, want 1", v)
@@ -122,6 +129,7 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 		if it.RawGetString("ok") != lua.LTrue {
 			t.Errorf("result[4].ok = %v, want true", it.RawGetString("ok"))
 		}
+
 		v := it.RawGetString("value")
 		if v.Type() != lua.LTNumber || int(lua.LVAsNumber(v)) != 1 {
 			t.Errorf("result[4].value = %v, want 1", v)
@@ -133,6 +141,7 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 		if it.RawGetString("ok") != lua.LTrue {
 			t.Errorf("result[5].ok = %v, want true", it.RawGetString("ok"))
 		}
+
 		if it.RawGetString("value").String() != "v" {
 			t.Errorf("result[5].value = %v, want v", it.RawGetString("value"))
 		}
@@ -143,6 +152,7 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 		if it.RawGetString("ok") != lua.LTrue {
 			t.Errorf("result[6].ok = %v, want true", it.RawGetString("ok"))
 		}
+
 		localVal := it.RawGetString("value")
 		if localVal.Type() != lua.LTTable {
 			t.Errorf("result[6].value expected table, got %v", localVal.Type())
@@ -151,6 +161,7 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 			if arr.RawGetInt(1).String() != "v1" {
 				t.Errorf("result[6].value[1] = %v, want v1", arr.RawGetInt(1))
 			}
+
 			if arr.RawGetInt(2) != lua.LNil {
 				t.Errorf("result[6].value[2] = %v, want nil", arr.RawGetInt(2))
 			}
@@ -163,16 +174,18 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 }
 
 func TestRedisPipeline_UnsupportedCommand(t *testing.T) {
-
 	db, mock := redismock.NewClientMock()
 	if db == nil || mock == nil {
 		t.Fatalf("Failed to create Redis mock client.")
 	}
+
 	client := rediscli.NewTestClient(db)
 	SetDefaultClient(client)
+
 	L := lua.NewState()
 	defer L.Close()
-	bindRedisRuntimeContextForTest(L, context.Background())
+
+	bindRedisRuntimeContextForTest(context.Background(), L)
 	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 
@@ -206,16 +219,18 @@ func TestRedisPipeline_UnsupportedCommand(t *testing.T) {
 }
 
 func TestRedisPipeline_RunScriptUnknownName(t *testing.T) {
-
 	db, mock := redismock.NewClientMock()
 	if db == nil || mock == nil {
 		t.Fatalf("Failed to create Redis mock client.")
 	}
+
 	client := rediscli.NewTestClient(db)
 	SetDefaultClient(client)
+
 	L := lua.NewState()
 	defer L.Close()
-	bindRedisRuntimeContextForTest(L, context.Background())
+
+	bindRedisRuntimeContextForTest(context.Background(), L)
 	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 
@@ -250,16 +265,18 @@ func TestRedisPipeline_RunScriptUnknownName(t *testing.T) {
 }
 
 func TestRedisPipeline_HMGET(t *testing.T) {
-
 	db, mock := redismock.NewClientMock()
 	if db == nil || mock == nil {
 		t.Fatalf("Failed to create Redis mock client.")
 	}
+
 	client := rediscli.NewTestClient(db)
 	SetDefaultClient(client)
+
 	L := lua.NewState()
 	defer L.Close()
-	bindRedisRuntimeContextForTest(L, context.Background())
+
+	bindRedisRuntimeContextForTest(context.Background(), L)
 	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 
@@ -288,18 +305,22 @@ func TestRedisPipeline_HMGET(t *testing.T) {
 	}
 
 	resTbl := gotResult.(*lua.LTable)
+
 	v := resTbl.RawGetInt(1)
 	if v.Type() != lua.LTTable {
 		t.Fatalf("Expected first entry to be table, got %v", v.Type())
 	}
+
 	entry := v.(*lua.LTable)
 	if entry.RawGetString("ok") != lua.LTrue {
 		t.Fatalf("expected ok=true, got %v", entry.RawGetString("ok"))
 	}
+
 	val := entry.RawGetString("value")
 	if val.Type() != lua.LTTable {
 		t.Fatalf("expected value to be table, got %v", val.Type())
 	}
+
 	arr := val.(*lua.LTable)
 	if arr.RawGetInt(1).String() != "v1" {
 		t.Errorf("value[1] = %v, want v1", arr.RawGetInt(1))
@@ -308,6 +329,7 @@ func TestRedisPipeline_HMGET(t *testing.T) {
 	if arr.RawGetInt(2).String() != "v3" {
 		t.Errorf("value[2] = %v, want v3", arr.RawGetInt(2))
 	}
+
 	if arr.RawGetInt(3) != lua.LNil {
 		t.Errorf("value[3] = %v, want nil", arr.RawGetInt(3))
 	}

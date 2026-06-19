@@ -146,12 +146,14 @@ func TestRedisSet_WithOptionsTable(t *testing.T) {
 			}
 
 			tt.expect(mock)
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
 
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("k", lua.LString("k"))
@@ -199,12 +201,14 @@ func TestRedisSet_WithOptionsTable_NilSemantics(t *testing.T) {
 			}
 
 			mock.ExpectSetArgs("k", "v", tt.setArgs).RedisNil()
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
 
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("k", lua.LString("k"))
@@ -220,6 +224,7 @@ func TestRedisSet_WithOptionsTable_NilSemantics(t *testing.T) {
 			if got != lua.LNil {
 				t.Errorf("expected result nil, got %v", got)
 			}
+
 			gotErr := L.GetGlobal("err")
 			if gotErr != lua.LNil {
 				t.Errorf("expected err nil, got %v", gotErr)

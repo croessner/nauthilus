@@ -67,13 +67,14 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 		httpRequest = a.Request.HTTPClientRequest
 	}
 
-	postActionRequest := util.DetachedHTTPRequest(httpRequest, nil)
+	postActionRequest := util.DetachedHTTPRequest(context.TODO(), httpRequest)
 
 	if util.IsHTTPRequestCanceled(a.Logger(), postActionRequest, args.Request.Session, "enqueue.lua_post_action") {
 		return
 	}
 
 	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
+
 	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromPostAction, "lua_post_action_request_total", resource)
 	if stopTimer != nil {
 		defer stopTimer()
@@ -111,6 +112,7 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 	} else {
 		cr.Password = nil
 	}
+
 	cr.ClientNet = clientNet
 	cr.Repeating = repeating
 	// Deep copy StatusMessage string if it exists
@@ -143,6 +145,7 @@ func ComputeBruteForceHints(ctx context.Context, cfg config.File, redisClient re
 	}
 
 	tr := monittrace.New("nauthilus/auth")
+
 	_, sp := tr.Start(ctx, "auth.bruteforce.hints",
 		attribute.String("client_ip", clientIP),
 		attribute.String("protocol", protocol),
@@ -152,6 +155,7 @@ func ComputeBruteForceHints(ctx context.Context, cfg config.File, redisClient re
 
 	// Check whether the protocol is enabled for brute-force processing
 	bfProtoEnabled := false
+
 	for _, p := range cfg.GetServer().GetBruteForceProtocols() {
 		if p.Get() == protocol {
 			bfProtoEnabled = true
@@ -175,8 +179,8 @@ func ComputeBruteForceHints(ctx context.Context, cfg config.File, redisClient re
 	var (
 		foundRepeatingNet string
 		foundRepeating    bool
-		bestCIDRRepeating uint = 0 // prefer most specific repeating
-		bestCIDRFallback  uint = 0 // prefer most specific fallback
+		bestCIDRRepeating uint // prefer most specific repeating
+		bestCIDRFallback  uint // prefer most specific fallback
 		considered        int
 	)
 
@@ -225,6 +229,7 @@ func ComputeBruteForceHints(ctx context.Context, cfg config.File, redisClient re
 
 	if foundRepeating {
 		repeating = true
+
 		if foundRepeatingNet != "" {
 			clientNet = foundRepeatingNet
 		}

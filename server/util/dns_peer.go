@@ -49,6 +49,7 @@ func DNSResolverPeerFromAddress(addr string) (host string, port int, ok bool) {
 
 	host = strings.TrimPrefix(host, "[")
 	host = strings.TrimSuffix(host, "]")
+
 	host = strings.TrimSpace(host)
 	if host == "" {
 		return "", 0, false

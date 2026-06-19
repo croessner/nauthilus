@@ -25,12 +25,14 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+// LuaLDAPEndpoint provides the exported LuaLDAPEndpoint function.
 func LuaLDAPEndpoint(cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		poolName := definitions.DefaultBackendName
+
 		if L.GetTop() >= 1 {
 			poolNameArg := L.CheckString(1)
-			if poolNameArg != "" && poolNameArg != "default" {
+			if poolNameArg != "" && poolNameArg != luaLDAPPoolAliasDefault {
 				poolName = poolNameArg
 			}
 		}

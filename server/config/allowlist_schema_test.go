@@ -107,6 +107,7 @@ func TestHandleFile_LegacyAllowlistNamesAreRejected(t *testing.T) {
 	})
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("expected legacy soft_allowlist to be rejected")

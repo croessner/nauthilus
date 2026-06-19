@@ -45,8 +45,8 @@ func runSendSMTPMail(smtpServer string, heloName string, auth smtp.Auth, from st
 			return err
 		}
 
-		defer genericClient.Quit()
-		defer genericClient.Close()
+		defer func() { _ = genericClient.Quit() }()
+		defer func() { _ = genericClient.Close() }()
 
 		if err = genericClient.Hello(heloName); err != nil {
 			return err
@@ -73,8 +73,8 @@ func runSendSMTPMail(smtpServer string, heloName string, auth smtp.Auth, from st
 			return err
 		}
 
-		defer genericClient.Quit()
-		defer genericClient.Close()
+		defer func() { _ = genericClient.Quit() }()
+		defer func() { _ = genericClient.Close() }()
 	}
 
 	if err = genericClient.Hello(heloName); err != nil {

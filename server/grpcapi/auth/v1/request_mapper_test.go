@@ -26,6 +26,7 @@ func TestAuthRequestToDTOMapsEveryField(t *testing.T) {
 	t.Parallel()
 
 	got := AuthRequestToDTO(newPopulatedAuthRequest())
+
 	expected := expectedAuthDTO()
 	if !reflect.DeepEqual(got, expected) {
 		t.Fatalf("unexpected DTO mapping:\n got: %+v\nwant: %+v", got, expected)

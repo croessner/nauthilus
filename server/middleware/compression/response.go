@@ -63,6 +63,7 @@ func useZstdCompression(router *gin.Engine, alg string, cmp *config.Compression,
 
 	// map int to zstdmw.Level
 	var lvl zstdmw.Level
+
 	switch zlvl {
 	case 1:
 		lvl = zstdmw.BestSpeed
@@ -99,6 +100,7 @@ func useBrotliCompression(router *gin.Engine, alg string, cmp *config.Compressio
 
 	// map int to zstdmw.Level
 	var lvl brmw.Level
+
 	switch brlvl {
 	case 1:
 		lvl = brmw.BestSpeed

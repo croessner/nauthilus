@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package bruteforce provides bruteforce functionality.
 package bruteforce
 
 import (
@@ -33,28 +34,28 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// BruteForceManager manages brute force protection operations for Lua.
-type BruteForceManager struct {
+// Manager manages brute force protection operations for Lua.
+type Manager struct {
 	*lualib.BaseManager
 	redis    rediscli.Client
 	tolerate tolerate.Tolerate
 }
 
-// NewBruteForceManager creates a new BruteForceManager.
-func NewBruteForceManager(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, t tolerate.Tolerate) *BruteForceManager {
-	return &BruteForceManager{
+// NewBruteForceManager creates a new Manager.
+func NewBruteForceManager(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, t tolerate.Tolerate) *Manager {
+	return &Manager{
 		BaseManager: lualib.NewBaseManager(ctx, cfg, logger),
 		redis:       redis,
 		tolerate:    t,
 	}
 }
 
-func (m *BruteForceManager) currentContext(L *lua.LState) context.Context {
+func (m *Manager) currentContext(L *lua.LState) context.Context {
 	return lualib.RequireRuntimeContext(L, definitions.LuaModBruteForce)
 }
 
 // SetCustomTolerations sets custom toleration configurations for IP-based limits from a Lua table parameter.
-func (m *BruteForceManager) SetCustomTolerations(L *lua.LState) int {
+func (m *Manager) SetCustomTolerations(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	tolerations := stack.CheckTable(1)
 
@@ -103,7 +104,7 @@ func (m *BruteForceManager) SetCustomTolerations(L *lua.LState) int {
 }
 
 // SetCustomToleration sets a custom toleration for an IP address with a specific percentage and TTL using Lua inputs.
-func (m *BruteForceManager) SetCustomToleration(L *lua.LState) int {
+func (m *Manager) SetCustomToleration(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	tolerationTable := stack.CheckTable(1)
 
@@ -125,7 +126,7 @@ func (m *BruteForceManager) SetCustomToleration(L *lua.LState) int {
 }
 
 // DeleteCustomToleration removes the custom toleration configuration for a given IP address from the system.
-func (m *BruteForceManager) DeleteCustomToleration(L *lua.LState) int {
+func (m *Manager) DeleteCustomToleration(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	ip := stack.CheckString(1)
 
@@ -135,7 +136,7 @@ func (m *BruteForceManager) DeleteCustomToleration(L *lua.LState) int {
 }
 
 // GetCustomTolerations retrieves custom toleration settings and returns them as a Lua table accessible to the Lua state.
-func (m *BruteForceManager) GetCustomTolerations(L *lua.LState) int {
+func (m *Manager) GetCustomTolerations(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	tolerations := tolerate.GetTolerate().GetCustomTolerations()
 	resultTable := L.NewTable()
@@ -154,7 +155,7 @@ func (m *BruteForceManager) GetCustomTolerations(L *lua.LState) int {
 }
 
 // GetTolerateMap retrieves a Lua table containing authentication data for the provided IP address from the toleration system.
-func (m *BruteForceManager) GetTolerateMap(L *lua.LState) int {
+func (m *Manager) GetTolerateMap(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	ipAddress := stack.CheckString(1)
 	ctx := m.currentContext(L)
@@ -170,9 +171,11 @@ func (m *BruteForceManager) GetTolerateMap(L *lua.LState) int {
 }
 
 // IsIPAddressBlocked checks if an IP address is blocked and returns a list of buckets causing the block or nil if not blocked.
-func (m *BruteForceManager) IsIPAddressBlocked(L *lua.LState) int {
+func (m *Manager) IsIPAddressBlocked(L *lua.LState) int {
 	stack := luastack.NewManager(L)
+
 	var guid string
+
 	ctx := m.currentContext(L)
 
 	ipAddress := stack.CheckString(1)
@@ -221,7 +224,7 @@ func LoaderModBruteForce(ctx context.Context, cfg config.File, logger *slog.Logg
 		})
 
 		if ctx != nil {
-			lualib.BindRequestRuntimeContext(L, mod, ctx)
+			lualib.BindRequestRuntimeContext(ctx, L, mod)
 		}
 
 		return stack.PushResult(mod)

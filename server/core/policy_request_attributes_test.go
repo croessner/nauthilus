@@ -226,6 +226,7 @@ func recordFailedBackendForRequestAttributeTest(t *testing.T, auth *AuthState, c
 	passDBResult.Authenticated = false
 	passDBResult.UserFound = true
 	passDBResult.Backend = definitions.BackendTest
+
 	t.Cleanup(func() {
 		PutPassDBResultToPool(passDBResult)
 	})

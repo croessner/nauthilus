@@ -56,6 +56,7 @@ func (m *ContextManager) ContextSet(L *lua.LState) int {
 func (m *ContextManager) ContextGet(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	key := stack.CheckString(1)
+
 	var value any
 
 	if luaCtx := m.currentContext(L); luaCtx != nil {

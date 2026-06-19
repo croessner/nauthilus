@@ -35,7 +35,7 @@ type JSONErrorMsg struct {
 // getErrorMsg returns a user-friendly error message based on the validation error received.
 func getErrorMsg(fe validator.FieldError) string {
 	switch fe.Tag() {
-	case "required":
+	case authInputReasonRequired:
 		return "This field is required"
 	case "ip":
 		return "This field must be a valid IP address"
@@ -53,18 +53,18 @@ func HandleJSONError(ctx *gin.Context, err error) {
 			errorMsgList[i] = JSONErrorMsg{validationError.Field(), getErrorMsg(validationError)}
 		}
 
-		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"errors": errorMsgList})
+		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{authResponseJSONErrorsKey: errorMsgList})
 
 		return
 	}
 
-	ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{policyAttributeSuffixError: err.Error()})
 }
 
 // HandleJSONValidationError handles manual validation errors by returning a JSON response in the same format as Gin's validation errors.
 func HandleJSONValidationError(ctx *gin.Context, field, message string) {
 	ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-		"errors": []JSONErrorMsg{
+		authResponseJSONErrorsKey: []JSONErrorMsg{
 			{Field: field, Message: message},
 		},
 	})

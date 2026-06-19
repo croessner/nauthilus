@@ -49,6 +49,7 @@ func TestDefaultActionDispatcher_SkipsCanceledRequest(t *testing.T) {
 	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultEnvironment(envCfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
+
 	_ = action.NewWorker(cfg, log.GetLogger(), rediscli.GetClient(), envCfg)
 
 	reqCtx, cancel := context.WithCancel(context.Background())

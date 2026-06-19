@@ -136,8 +136,10 @@ func TestSelectBackendServer(t *testing.T) { //nolint:funlen
 
 			defer L.Close()
 
-			var server *string
-			var port *int
+			var (
+				server *string
+				port   *int
+			)
 
 			request := &Request{
 				UsedBackendAddr: server,
@@ -153,7 +155,6 @@ func TestSelectBackendServer(t *testing.T) { //nolint:funlen
 				NRet:    0,
 				Protect: true,
 			}, L.Get(-2), L.Get(-1))
-
 			if err != nil {
 				if !tt.wantErr {
 					t.Errorf("Unexpected error: %v", err)
@@ -559,6 +560,7 @@ func TestCallSubjectLuaRejectsDependencyCycle(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	request := newSubjectTestRequest(nil, nil)
+
 	_, _, _, err := request.CallSubjectLua(newSubjectTestContext(), newSubjectTestConfig(), logger, nil)
 	if err == nil {
 		t.Fatal("expected dependency cycle error")

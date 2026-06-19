@@ -46,6 +46,13 @@ var (
 	initCleaner sync.Once
 )
 
+const (
+	tolerateAdaptiveMode = "adaptive"
+	tolerateNegativeFlag = ":N"
+	toleratePositiveFlag = ":P"
+	tolerateStaticMode   = "static"
+)
+
 // Shared IP scoper for tolerations context
 var tolScoper = ipscoper.NewIPScoper()
 
@@ -344,11 +351,11 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 	redisKey := t.getRedisKey(ipAddress)
 	now := time.Now().Unix()
 
-	flag := ":P"
+	flag := toleratePositiveFlag
 	label := "positive"
 
 	if !authenticated {
-		flag = ":N"
+		flag = tolerateNegativeFlag
 		label = "negative"
 	}
 
@@ -393,6 +400,7 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 // PolicyFact returns the policy-visible toleration state for the specified IP address.
 func (t *tolerateImpl) PolicyFact(ctx context.Context, ipAddress string) PolicyFact {
 	tr := monittrace.New("nauthilus/tolerate")
+
 	tctx, tsp := tr.Start(ctx, "tolerate.is_tolerated",
 		attribute.String("ip_address", ipAddress),
 	)
@@ -478,9 +486,10 @@ func (t *tolerateImpl) adaptivePolicyFactFromResult(
 	maxNegative := resultArray[1]
 	positive := resultArray[2]
 	negative := resultArray[3]
-	mode := "static"
+
+	mode := tolerateStaticMode
 	if resultArray[4] == 1 {
-		mode = "adaptive"
+		mode = tolerateAdaptiveMode
 	}
 
 	fact := PolicyFact{
@@ -499,7 +508,7 @@ func (t *tolerateImpl) adaptivePolicyFactFromResult(
 		return fact
 	}
 
-	l1.GetEngine().SetReputation(ctx, l1.KeyReputation(ipAddress), l1.L1Reputation{
+	l1.GetEngine().SetReputation(ctx, l1.KeyReputation(ipAddress), l1.Reputation{
 		Positive: positive,
 		Negative: negative,
 	}, 0)
@@ -516,6 +525,7 @@ func (t *tolerateImpl) adaptiveTolerationResult(
 	settings policySettings,
 ) ([]int64, bool) {
 	redisKey := t.getRedisKey(ipAddress)
+
 	stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, t.deps.cfg)
@@ -533,6 +543,7 @@ func (t *tolerateImpl) adaptiveTolerationResult(
 			1,
 		)
 	})
+
 	cancel()
 
 	if err != nil {
@@ -629,6 +640,7 @@ func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
 
 				dCtxRead, cancelRead := util.GetCtxWithDeadlineRedisRead(t.houseKeeperContext, t.deps.cfg)
 				keysExists := t.deps.redis.GetReadHandle().Exists(dCtxRead, redisKey+flag).Val()
+
 				cancelRead()
 
 				if keysExists == 0 {
@@ -647,6 +659,7 @@ func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
 					"-inf",
 					strconv.FormatInt(now-int64(tolerateTTL.Seconds()), 10),
 				).Result()
+
 				cancelWrite()
 
 				if err != nil {
@@ -764,11 +777,7 @@ func (t *tolerateImpl) findIP(ipOrNet, ipAddress string) bool {
 
 	address := net.ParseIP(ipOrNet)
 	if address != nil {
-		if address.Equal(cmpAddress) {
-			return true
-		}
-
-		return false
+		return address.Equal(cmpAddress)
 	}
 
 	_, network, err := net.ParseCIDR(ipOrNet)
@@ -779,6 +788,7 @@ func (t *tolerateImpl) findIP(ipOrNet, ipAddress string) bool {
 	return network.Contains(cmpAddress)
 }
 
+// NewTolerateWithDeps provides the exported NewTolerateWithDeps function.
 func NewTolerateWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client, pctTolerated uint8) Tolerate {
 	t := &tolerateImpl{
 		pctTolerated:    pctTolerated,
@@ -794,10 +804,12 @@ func NewTolerateWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Cl
 	return t
 }
 
+// SetTolerate provides the exported SetTolerate function.
 func SetTolerate(t Tolerate) {
 	tolerate = t
 }
 
+// GetTolerate provides the exported GetTolerate function.
 func GetTolerate() Tolerate {
 	return tolerate
 }

@@ -28,6 +28,10 @@ import (
 type ScriptKind string
 
 const (
+	scriptDetailReasonCode    = "reason_code"
+	scriptDetailStatusMessage = "status_message"
+	scriptReasonLuaError      = "lua_error"
+
 	// ScriptKindEnvironment identifies a Lua environment attribute source.
 	ScriptKindEnvironment ScriptKind = "environment"
 
@@ -127,6 +131,7 @@ func (c *DecisionContext) scriptPlan(kind ScriptKind, authState AuthState, recor
 	}
 
 	selector := ScriptResult{Kind: kind}.selector()
+
 	checks := c.stageChecks(selector.Stage)
 	if len(checks) == 0 {
 		return ScriptSchedulePlan{}
@@ -141,6 +146,7 @@ func (c *DecisionContext) scriptPlan(kind ScriptKind, authState AuthState, recor
 		}
 
 		configured = true
+
 		name := scriptNameFromCheck(kind, check)
 		if name == "" || !c.scriptCheckScheduled(check, authState, recordSkips) {
 			continue
@@ -289,7 +295,7 @@ func (r ScriptResult) environmentResult(operation policy.Operation) CheckResult 
 
 	if r.Err != nil {
 		attributes = append(attributes, BoolAttribute(scriptAttributeID(r.Kind, r.Name, "error"), policy.StagePreAuth, operation, true, map[string]DetailValue{
-			"reason_code": InternalDetail("lua_error"),
+			scriptDetailReasonCode: InternalDetail(scriptReasonLuaError),
 		}))
 	}
 
@@ -311,7 +317,7 @@ func (r ScriptResult) subjectResult(operation policy.Operation) CheckResult {
 
 	if r.Err != nil {
 		attributes = append(attributes, BoolAttribute(scriptAttributeID(r.Kind, r.Name, "error"), policy.StageSubjectAnalysis, operation, true, map[string]DetailValue{
-			"reason_code": InternalDetail("lua_error"),
+			scriptDetailReasonCode: InternalDetail(scriptReasonLuaError),
 		}))
 	}
 
@@ -341,7 +347,7 @@ func statusMessageDetails(message string) map[string]DetailValue {
 	}
 
 	return map[string]DetailValue{
-		"status_message": PublicMessageDetail(message),
+		scriptDetailStatusMessage: PublicMessageDetail(message),
 	}
 }
 

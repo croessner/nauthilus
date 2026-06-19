@@ -42,17 +42,17 @@ func DecompressRequestMiddleware(cfg config.File) gin.HandlerFunc {
 			// Get the compressed body
 			compressedBody := c.Request.Body
 
-			defer compressedBody.Close()
+			defer func() { _ = compressedBody.Close() }()
 
 			// Create a gzip reader
 			gzipReader, err := gzip.NewReader(compressedBody)
 			if err != nil {
-				c.AbortWithError(http.StatusBadRequest, fmt.Errorf("failed to decompress request body: %w", err))
+				_ = c.AbortWithError(http.StatusBadRequest, fmt.Errorf("failed to decompress request body: %w", err))
 
 				return
 			}
 
-			defer gzipReader.Close()
+			defer func() { _ = gzipReader.Close() }()
 
 			// Replace the request body with the decompressed content
 			c.Request.Body = gzipReader

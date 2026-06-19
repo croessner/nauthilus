@@ -170,6 +170,7 @@ func compileTimeIntervals(
 	intervals := make([]policyruntime.CompiledTimeInterval, 0, len(values))
 	for index, value := range values {
 		intervalPath := indexedPath(path, index)
+
 		startMinute, err := parseClockMinute(value.Start)
 		if err != nil {
 			return nil, configPathError(childPath(intervalPath, "start"), "must use HH:MM")

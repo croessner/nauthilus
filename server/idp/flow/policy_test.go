@@ -23,7 +23,7 @@ import (
 func TestPolicyForFlowType(t *testing.T) {
 	tests := []struct {
 		name     string
-		flowType FlowType
+		flowType Type
 		errWant  error
 	}{
 		{name: "oidc auth", flowType: FlowTypeOIDCAuthorization},
@@ -41,8 +41,8 @@ func TestPolicyForFlowType(t *testing.T) {
 					t.Fatalf("unexpected error: %v", err)
 				}
 
-				if policy.FlowType() != tc.flowType {
-					t.Fatalf("unexpected flow type: %s", policy.FlowType())
+				if policy.Type() != tc.flowType {
+					t.Fatalf("unexpected flow type: %s", policy.Type())
 				}
 
 				return
@@ -58,11 +58,11 @@ func TestPolicyForFlowType(t *testing.T) {
 func TestPolicyRules(t *testing.T) {
 	tests := []struct {
 		name          string
-		flowType      FlowType
-		step          FlowStep
-		action        FlowAction
-		from          FlowStep
-		to            FlowStep
+		flowType      Type
+		step          Step
+		action        Action
+		from          Step
+		to            Step
 		stepAllowed   bool
 		actionAllowed bool
 		transitionOK  bool

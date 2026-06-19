@@ -42,6 +42,7 @@ type HTTPRequestMeta interface {
 // httpRequestMeta wraps a real *http.Request
 type httpRequestMeta struct{ req *http.Request }
 
+// NewHTTPMetaFromRequest provides the exported NewHTTPMetaFromRequest function.
 func NewHTTPMetaFromRequest(req *http.Request) HTTPRequestMeta { return &httpRequestMeta{req: req} }
 
 // Header returns the HTTP headers of the wrapped HTTP request. If the request is nil, an empty header is returned.
@@ -94,7 +95,6 @@ type HTTPRequestManager struct{}
 
 // NewHTTPRequestManager creates a new HTTPRequestManager.
 func NewHTTPRequestManager() *HTTPRequestManager {
-
 	return &HTTPRequestManager{}
 }
 

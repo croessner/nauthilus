@@ -755,6 +755,7 @@ func standardReport(
 	attributes ...report.AttributeValue,
 ) *report.DecisionReport {
 	policyReport := report.NewDecisionReport()
+
 	policyReport.Operation = operation
 	if checkResult.Name != "" {
 		policyReport.Checks[checkResult.Name] = checkResult
@@ -805,11 +806,6 @@ func stringAttr(
 		Operation: operation,
 		Value:     value,
 	}
-}
-
-//go:fix inline
-func stringPtr(value string) *string {
-	return new(value)
 }
 
 func observeSnapshotWithCustomDecision(compiled policyruntime.CompiledPolicy) *policyruntime.Snapshot {

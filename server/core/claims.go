@@ -19,9 +19,9 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 )
 
-// FillIdTokenClaims populates a map of claims from IdTokenClaims configuration.
-func (a *AuthState) FillIdTokenClaims(
-	cfgClaims *config.IdTokenClaims,
+// FillIDTokenClaims populates a map of claims from IDTokenClaims configuration.
+func (a *AuthState) FillIDTokenClaims(
+	cfgClaims *config.IDTokenClaims,
 	claims map[string]any,
 	requestedScopes []string,
 	customScopes []config.Oauth2CustomScope,

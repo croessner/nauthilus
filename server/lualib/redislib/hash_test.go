@@ -83,6 +83,7 @@ func TestRedisHGet(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 
 			SetDefaultClient(client)
@@ -90,7 +91,8 @@ func TestRedisHGet(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
@@ -165,6 +167,7 @@ func TestRedisHSet(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 
 			SetDefaultClient(client)
@@ -172,7 +175,8 @@ func TestRedisHSet(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
@@ -190,7 +194,7 @@ func TestRedisHSet(t *testing.T) {
 				field := formatLuaValue(tt.kvPairs[i])
 				value := formatLuaValue(tt.kvPairs[i+1])
 
-				kvPairsStr.WriteString(fmt.Sprintf(", %s, %s", field, value))
+				fmt.Fprintf(&kvPairsStr, ", %s, %s", field, value)
 			}
 
 			luaScript := fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hset("default", key%s)`, kvPairsStr.String())
@@ -270,7 +274,8 @@ func TestRedisHDel(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
@@ -285,7 +290,6 @@ func TestRedisHDel(t *testing.T) {
 			}
 
 			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hdel("default", key, %s)`, strings.Join(tt.fields, ", ")))
-
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -350,11 +354,14 @@ func TestRedisHLen(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -431,11 +438,14 @@ func TestRedisHGetAll(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -461,6 +471,7 @@ func TestRedisHGetAll(t *testing.T) {
 				}
 
 				gotTable := make(map[string]string)
+
 				gotResult.ForEach(func(value lua.LValue, value2 lua.LValue) {
 					gotTable[value.String()] = value2.String()
 				})
@@ -531,11 +542,14 @@ func TestRedisHIncrBy(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -624,11 +638,14 @@ func TestRedisHIncrByFloat(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -713,11 +730,14 @@ func TestRedisHExists(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -800,11 +820,14 @@ func TestRedisHMGet(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -814,11 +837,13 @@ func TestRedisHMGet(t *testing.T) {
 			// Prepare fields as Lua variables
 			var luaCode strings.Builder
 			luaCode.WriteString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hmget("default", key`)
+
 			for i, f := range tt.fields {
 				varName := "f" + string(rune('0'+i))
 				L.SetGlobal(varName, lua.LString(f))
 				luaCode.WriteString(", " + varName)
 			}
+
 			luaCode.WriteString(")")
 
 			if err := L.DoString(luaCode.String()); err != nil {
@@ -832,6 +857,7 @@ func TestRedisHMGet(t *testing.T) {
 				if gotResult.Type() != lua.LTTable {
 					t.Fatalf("expected table, got %v", gotResult.Type())
 				}
+
 				tbl := gotResult.(*lua.LTable)
 				for field, exp := range tt.expectedResult {
 					v := tbl.RawGetString(field)
@@ -845,11 +871,13 @@ func TestRedisHMGet(t *testing.T) {
 						}
 					}
 				}
+
 				checkLuaError(t, gotErr, lua.LNil)
 			} else {
 				if gotResult.Type() != lua.LTNil {
 					t.Errorf("expected result=nil on error, got %v", gotResult.Type())
 				}
+
 				checkLuaError(t, gotErr, tt.expectedErr)
 			}
 

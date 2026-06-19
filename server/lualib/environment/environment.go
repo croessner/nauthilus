@@ -69,6 +69,7 @@ func PreCompileLuaEnvironmentSources(cfg config.File, _ *slog.Logger) (err error
 			var luaEnvironmentSource *LuaEnvironmentSource
 
 			cfgSource := sources[index]
+
 			luaEnvironmentSource, err = NewLuaEnvironmentSource(cfgSource.Name, cfgSource.ScriptPath)
 			if err != nil {
 				return err
@@ -259,6 +260,7 @@ func (r *Request) CallEnvironmentLua(ctx *gin.Context, cfg config.File, logger *
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
+
 		if r.Logs == nil {
 			r.Logs = new(lualib.CustomLogKeyValue)
 		}
@@ -322,6 +324,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 		attribute.Int("scripts", pipeline.PlannedNodeCount(plan)),
 		attribute.String("mode", modeText),
 	)
+
 	if err != nil {
 		pspan.RecordError(err)
 		pspan.End()
@@ -455,11 +458,12 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					attribute.String("mode", modeText),
 					attribute.Int("level", levelIndex),
 				)
+
 				luapool.PrepareRequestEnv(Llocal)
 
 				modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
 
-				modManager.BindAllDefault(Llocal, localRequest.Context, luaCtx, tolerate.GetTolerate())
+				modManager.BindAllDefault(luaCtx, Llocal, localRequest.Context, tolerate.GetTolerate())
 				modManager.BindModule(
 					Llocal,
 					definitions.LuaModPolicy,
@@ -484,6 +488,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				)
 
 				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.package_path")
+
 				if e := lualib.PackagePath(Llocal, cfg); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, source.Name, stopTimer)
 					packagePathSpan.RecordError(e)
@@ -498,6 +503,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				packagePathSpan.End()
 
 				_, loadSpan := scriptTrace.Start(execCtx, "lua.script.load_chunk")
+
 				if e := lualib.DoCompiledFile(Llocal, source.CompiledScript); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, source.Name, stopTimer)
 					loadSpan.RecordError(e)
@@ -515,6 +521,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					attribute.String("lua.entrypoint", definitions.LuaFnCallEnvironment),
 				)
 				callEnvironmentFunc := lua.LNil
+
 				if v := Llocal.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
 					if fn := Llocal.GetField(v, definitions.LuaFnCallEnvironment); fn != nil {
 						callEnvironmentFunc = fn
@@ -544,6 +551,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				_, callSpan := scriptTrace.Start(execCtx, "lua.script.call",
 					attribute.String("lua.entrypoint", definitions.LuaFnCallEnvironment),
 				)
+
 				if e := Llocal.CallByParam(lua.P{Fn: callEnvironmentFunc, NRet: 3, Protect: true}, request); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, source.Name, stopTimer)
 					callSpan.RecordError(e)
@@ -564,6 +572,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				Llocal.Pop(1)
 				tr := Llocal.ToBool(-1)
 				Llocal.Pop(1)
+
 				fr.ret = ret
 				fr.abort = ab
 				fr.triggered = tr
@@ -584,7 +593,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				fr.contextDelta = localRequest.Diff(contextBefore)
 				logs := []any{
 					definitions.LogKeyGUID, r.Session,
-					"name", source.Name,
+					luaLogKeyName, source.Name,
 					definitions.LogKeyMsg, "Lua environment source finished",
 					"triggered", fr.triggered,
 					"abort_environment_sources", fr.abort,
@@ -606,6 +615,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				r.recordEnvironmentScriptResult(egCtx, source.Name, fr.triggered, fr.abort, statusText(localStatus), time.Since(scriptStarted), nil)
 
 				mu.Lock()
+
 				levelResults = append(levelResults, fr)
 				mu.Unlock()
 

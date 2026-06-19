@@ -175,7 +175,7 @@ func (h *SAMLHandler) validateInboundLogoutResponseSignature(req *http.Request, 
 	return logoutResponse, nil
 }
 
-func shouldValidateInboundLogoutRequestSignature(binding slodomain.SLOBinding, rawQuery string, requestXML []byte, required bool) (bool, error) {
+func shouldValidateInboundLogoutRequestSignature(binding slodomain.Binding, rawQuery string, requestXML []byte, required bool) (bool, error) {
 	switch binding {
 	case slodomain.SLOBindingRedirect:
 		hasSignature, err := redirectSLOHasDetachedSignature(rawQuery)
@@ -196,7 +196,7 @@ func shouldValidateInboundLogoutRequestSignature(binding slodomain.SLOBinding, r
 	}
 }
 
-func shouldValidateInboundLogoutResponseSignature(binding slodomain.SLOBinding, rawQuery string, responseXML []byte, required bool) (bool, error) {
+func shouldValidateInboundLogoutResponseSignature(binding slodomain.Binding, rawQuery string, responseXML []byte, required bool) (bool, error) {
 	switch binding {
 	case slodomain.SLOBindingRedirect:
 		hasDetachedSignature, err := redirectSLOHasDetachedSignature(rawQuery)
@@ -222,7 +222,7 @@ func shouldValidateInboundLogoutResponseSignature(binding slodomain.SLOBinding, 
 	}
 }
 
-func decodeLogoutRequestPayload(binding slodomain.SLOBinding, payload string) ([]byte, *saml.LogoutRequest, error) {
+func decodeLogoutRequestPayload(binding slodomain.Binding, payload string) ([]byte, *saml.LogoutRequest, error) {
 	requestXML, err := decodeLogoutRequestXML(binding, payload)
 	if err != nil {
 		return nil, nil, err
@@ -241,7 +241,7 @@ func decodeLogoutRequestPayload(binding slodomain.SLOBinding, payload string) ([
 	return requestXML, &logoutRequest, nil
 }
 
-func decodeLogoutResponsePayload(binding slodomain.SLOBinding, payload string) ([]byte, *saml.LogoutResponse, error) {
+func decodeLogoutResponsePayload(binding slodomain.Binding, payload string) ([]byte, *saml.LogoutResponse, error) {
 	responseXML, err := decodeLogoutResponseXML(binding, payload)
 	if err != nil {
 		return nil, nil, err
@@ -260,7 +260,7 @@ func decodeLogoutResponsePayload(binding slodomain.SLOBinding, payload string) (
 	return responseXML, &logoutResponse, nil
 }
 
-func decodeLogoutRequestXML(binding slodomain.SLOBinding, payload string) ([]byte, error) {
+func decodeLogoutRequestXML(binding slodomain.Binding, payload string) ([]byte, error) {
 	payload = strings.TrimSpace(payload)
 	if payload == "" {
 		return nil, fmt.Errorf("logout request payload is empty")
@@ -281,13 +281,13 @@ func decodeLogoutRequestXML(binding slodomain.SLOBinding, payload string) ([]byt
 	}
 }
 
-func decodeLogoutResponseXML(binding slodomain.SLOBinding, payload string) ([]byte, error) {
+func decodeLogoutResponseXML(binding slodomain.Binding, payload string) ([]byte, error) {
 	return decodeLogoutRequestXML(binding, payload)
 }
 
 func inflateSAMLRedirectPayload(rawPayload []byte) ([]byte, error) {
 	reader := &sloSaferFlateReader{reader: flate.NewReader(bytes.NewReader(rawPayload))}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	xmlPayload, err := io.ReadAll(reader)
 	if err != nil {
@@ -318,7 +318,7 @@ func (h *SAMLHandler) resolveLogoutRequestSigningCerts(issuer string) ([]*x509.C
 		}
 	}
 
-	samlCfg := h.deps.Cfg.GetIdP().SAML2
+	samlCfg := h.deps.Cfg.GetIDP().SAML2
 
 	for i := range samlCfg.ServiceProviders {
 		sp := &samlCfg.ServiceProviders[i]
@@ -351,7 +351,7 @@ func parseMetadataSigningCertificates(entityDescriptor *saml.EntityDescriptor) (
 	var certs []*x509.Certificate
 
 	for _, ssoDescriptor := range entityDescriptor.SPSSODescriptors {
-		for _, keyDescriptor := range ssoDescriptor.RoleDescriptor.KeyDescriptors {
+		for _, keyDescriptor := range ssoDescriptor.KeyDescriptors {
 			switch keyDescriptor.Use {
 			case "", "signing":
 			default:
@@ -455,6 +455,7 @@ func validateRedirectLogoutRequestSignature(rawQuery string, certs []*x509.Certi
 	if hasRelayState {
 		signedContent += "&RelayState=" + rawRelayState
 	}
+
 	signedContent += "&SigAlg=" + rawSigAlg
 
 	sigAlgValue, err := url.QueryUnescape(rawSigAlg)
@@ -486,9 +487,9 @@ func validateRedirectLogoutRequestSignature(rawQuery string, certs []*x509.Certi
 
 		if err := cert.CheckSignature(algorithm, []byte(signedContent), signature); err == nil {
 			return nil
-		} else {
-			verifyErr = err
 		}
+
+		verifyErr = err
 	}
 
 	if verifyErr == nil {
@@ -539,6 +540,7 @@ func validateRedirectLogoutResponseSignature(rawQuery string, responseXML []byte
 	if hasRelayState {
 		signedContent += "&RelayState=" + rawRelayState
 	}
+
 	signedContent += "&SigAlg=" + rawSigAlg
 
 	sigAlgValue, err := url.QueryUnescape(rawSigAlg)
@@ -630,7 +632,8 @@ func validateXMLLogoutRequestSignature(requestXML []byte, certs []*x509.Certific
 	}
 
 	validationContext := dsig.NewDefaultValidationContext(&certificateStore)
-	validationContext.IdAttribute = "ID"
+
+	validationContext.IdAttribute = samlXMLIDAttribute
 	if saml.Clock != nil {
 		validationContext.Clock = saml.Clock
 	}
@@ -712,7 +715,8 @@ func validateXMLLogoutResponseSignature(responseXML []byte, certs []*x509.Certif
 	}
 
 	validationContext := dsig.NewDefaultValidationContext(&certificateStore)
-	validationContext.IdAttribute = "ID"
+
+	validationContext.IdAttribute = samlXMLIDAttribute
 	if saml.Clock != nil {
 		validationContext.Clock = saml.Clock
 	}

@@ -40,6 +40,7 @@ func registerGeneratedBruteForceBucketAttributes(
 	}
 
 	seen := make(map[string]string)
+
 	for index, rule := range bruteForce.GetBuckets() {
 		name := strings.TrimSpace(rule.Name)
 		if name == "" {

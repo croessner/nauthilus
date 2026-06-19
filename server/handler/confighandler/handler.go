@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package confighandler provides confighandler functionality.
 package confighandler
 
 import (
@@ -38,6 +39,7 @@ func New(deps *handlerdeps.Deps) *Handler {
 	return &Handler{deps: deps}
 }
 
+// Register provides the exported Register method.
 func (h *Handler) Register(r gin.IRouter) {
 	cg := r.Group("/" + definitions.CatConfig)
 

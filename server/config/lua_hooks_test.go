@@ -113,6 +113,7 @@ func TestValidateLuaHooks_RejectsReservedCustomHookAliasPrefix(t *testing.T) {
 
 func TestLuaHooksValidation_RequiresAbsoluteAliasLocation(t *testing.T) {
 	validate := validator.New(validator.WithRequiredStructEnabled())
+
 	scriptPath := filepath.Join(t.TempDir(), "hook.lua")
 	if err := os.WriteFile(scriptPath, []byte("return true\n"), 0o600); err != nil {
 		t.Fatalf("write hook script: %v", err)

@@ -35,6 +35,7 @@ import (
 func TestAuthApplicationService_AuthenticateCapturesOutcomeWithoutHTTPRendering(t *testing.T) {
 	deps, mock := setupPhase4AuthApplicationServiceTest(t, "test(phase4_auth_ok)")
 	deps.Resp = panicResponseWriter{}
+
 	expectPhase4UserAccountMapping(t, mock, "phase4-auth-ok@example.test", "imap")
 
 	service := NewAuthApplicationService(deps)
@@ -81,6 +82,7 @@ func TestAuthApplicationService_AuthenticateCapturesOutcomeWithoutHTTPRendering(
 func TestAuthApplicationService_LookupIdentityUsesNoAuthBoundary(t *testing.T) {
 	deps, mock := setupPhase4AuthApplicationServiceTest(t, "test(phase4_lookup_identity)")
 	deps.Resp = panicResponseWriter{}
+
 	expectPhase4UserAccountMapping(t, mock, "phase4-lookup@example.test", "imap")
 
 	service := NewAuthApplicationService(deps)
@@ -116,6 +118,7 @@ func TestAuthApplicationService_LookupIdentityUsesNoAuthBoundary(t *testing.T) {
 
 func TestAuthApplicationService_LookupIdentityCapturesDomainFailure(t *testing.T) {
 	deps, mock := setupPhase4AuthApplicationServiceTest(t, "test(phase6_lookup_identity_fail)")
+
 	RegisterPasswordVerifier(failingPasswordVerifier{})
 	expectPhase4UserAccountLookup(t, mock, "phase6-lookup-fail@example.test", "imap")
 
@@ -147,6 +150,7 @@ func TestAuthApplicationService_LookupIdentityCapturesDomainFailure(t *testing.T
 
 func TestAuthApplicationService_LookupIdentityCapturesTempFail(t *testing.T) {
 	deps, _ := setupPhase4AuthApplicationServiceTest(t, "test(phase6_lookup_identity_tempfail)")
+
 	RegisterPasswordVerifier(tempfailPasswordVerifier{})
 
 	service := NewAuthApplicationService(deps)
@@ -173,6 +177,7 @@ func TestAuthApplicationService_LookupIdentityCapturesTempFail(t *testing.T) {
 
 func TestAuthApplicationService_AuthenticateCapturesDomainFailure(t *testing.T) {
 	deps, mock := setupPhase4AuthApplicationServiceTest(t, "test(phase4_auth_fail)")
+
 	RegisterPasswordVerifier(failingPasswordVerifier{})
 	expectPhase4UserAccountLookup(t, mock, "phase4-auth-fail@example.test", "imap")
 
@@ -204,6 +209,7 @@ func TestAuthApplicationService_AuthenticateCapturesDomainFailure(t *testing.T) 
 
 func TestAuthApplicationService_AuthenticateCapturesTempFail(t *testing.T) {
 	deps, _ := setupPhase4AuthApplicationServiceTest(t, "test(phase4_auth_tempfail)")
+
 	RegisterPasswordVerifier(tempfailPasswordVerifier{})
 
 	service := NewAuthApplicationService(deps)
@@ -290,7 +296,6 @@ func TestAuthApplicationService_ValidatesRequiredInputs(t *testing.T) {
 	}
 
 	for _, testCase := range cases {
-
 		t.Run(testCase.name, func(t *testing.T) {
 			_, err := testCase.run(context.Background(), testCase.input)
 			if err == nil {
@@ -394,11 +399,13 @@ func setupPhase4AuthApplicationServiceTest(t *testing.T, backendName string) (Au
 	}
 
 	cfg.Server.Backends = []*config.Backend{&backend}
+
 	util.SetDefaultConfigFile(config.GetFile())
 	util.SetDefaultEnvironment(config.GetEnvironment())
 
 	previousVerifier := getPasswordVerifier()
 	previousFilter := getLuaSubject()
+
 	RegisterPasswordVerifier(testPasswordVerifier{})
 	RegisterLuaSubject(testLuaSubject{})
 

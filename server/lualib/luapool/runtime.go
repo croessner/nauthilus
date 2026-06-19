@@ -224,6 +224,7 @@ func ensureDynamicLoaderStub(L *lua.LState) {
 		caller := L.Where(1)
 
 		frames := make([]string, 0, 4)
+
 		for i := 1; i <= 4; i++ {
 			if w := L.Where(i); w != "" {
 				frames = append(frames, w)

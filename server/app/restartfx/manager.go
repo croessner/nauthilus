@@ -77,6 +77,7 @@ func (m *Manager) Restart(ctx context.Context) error {
 		}
 
 		var errs []error
+
 		for _, r := range m.restartables {
 			if r == nil {
 				continue
@@ -89,6 +90,7 @@ func (m *Manager) Restart(ctx context.Context) error {
 			if err := r.Restart(ctx); err != nil {
 				wrapped := fmt.Errorf("restartable %s restart failed: %w", r.Name(), err)
 				errs = append(errs, wrapped)
+
 				m.logger.Error("restart failed", slog.String("component", r.Name()), slog.Any("error", err))
 
 				continue

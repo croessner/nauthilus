@@ -37,10 +37,12 @@ type Handler struct {
 	redis  rediscli.Client
 }
 
+// New provides the exported New function.
 func New(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
 	return &Handler{cfg: cfg, logger: logger, redis: redis}
 }
 
+// Register provides the exported Register method.
 func (h *Handler) Register(router gin.IRouter) {
 	router.GET("/metrics", func(ctx *gin.Context) {
 		if !h.authorize(ctx) {

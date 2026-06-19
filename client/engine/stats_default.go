@@ -9,6 +9,7 @@ import (
 
 const maxLatencyMs = 60000
 
+// DefaultStatsCollector describes the exported DefaultStatsCollector type.
 type DefaultStatsCollector struct {
 	total              atomic.Int64
 	matched            atomic.Int64
@@ -31,33 +32,42 @@ type DefaultStatsCollector struct {
 	statusCounts       [600]atomic.Int64
 }
 
+// NewDefaultStatsCollector provides the exported NewDefaultStatsCollector function.
 func NewDefaultStatsCollector() *DefaultStatsCollector {
 	s := &DefaultStatsCollector{
 		startTime: time.Now(),
 	}
 	s.minLat.Store(math.MaxInt64)
+
 	return s
 }
 
-func (s *DefaultStatsCollector) AddSample(latency time.Duration, _ bool, isMatch bool, isHttpErr bool, isAborted bool, isSkipped bool, isToleratedBF bool, isTooManyRequests bool, statusCode int) {
+// AddSample provides the exported AddSample method.
+func (s *DefaultStatsCollector) AddSample(latency time.Duration, _ bool, isMatch bool, isHTTPErr bool, isAborted bool, isSkipped bool, isToleratedBF bool, isTooManyRequests bool, statusCode int) {
 	s.total.Add(1)
+
 	if isAborted {
 		s.aborted.Add(1)
 		return
 	}
+
 	if isSkipped {
 		s.skipped.Add(1)
 		return
 	}
+
 	if statusCode >= 0 && statusCode < 600 {
 		s.statusCounts[statusCode].Add(1)
 	}
-	if isHttpErr {
+
+	if isHTTPErr {
 		s.httpErrs.Add(1)
 	}
+
 	if isToleratedBF {
 		s.toleratedBF.Add(1)
 	}
+
 	if isTooManyRequests {
 		s.tooManyRequests.Add(1)
 	}
@@ -72,6 +82,7 @@ func (s *DefaultStatsCollector) AddSample(latency time.Duration, _ bool, isMatch
 	if latNs < s.minLat.Load() {
 		s.minLat.Store(latNs)
 	}
+
 	if latNs > s.maxLat.Load() {
 		s.maxLat.Store(latNs)
 	}
@@ -84,28 +95,34 @@ func (s *DefaultStatsCollector) AddSample(latency time.Duration, _ bool, isMatch
 	}
 }
 
+// SetTargetRPS provides the exported SetTargetRPS method.
 func (s *DefaultStatsCollector) SetTargetRPS(rps float64) {
 	s.mu.Lock()
 	s.targetRPS = rps
 	s.mu.Unlock()
 }
 
+// SetConcurrency provides the exported SetConcurrency method.
 func (s *DefaultStatsCollector) SetConcurrency(c int64) {
 	atomic.StoreInt64(&s.concurrency, c)
 }
 
+// SetPlateauActive provides the exported SetPlateauActive method.
 func (s *DefaultStatsCollector) SetPlateauActive(active bool) {
 	s.plateauActive.Store(active)
 }
 
+// IncParallelMatched provides the exported IncParallelMatched method.
 func (s *DefaultStatsCollector) IncParallelMatched() {
 	s.parallelMatched.Add(1)
 }
 
+// IncParallelMismatched provides the exported IncParallelMismatched method.
 func (s *DefaultStatsCollector) IncParallelMismatched() {
 	s.parallelMismatched.Add(1)
 }
 
+// Snapshot provides the exported Snapshot method.
 func (s *DefaultStatsCollector) Snapshot() Stats {
 	s.mu.RLock()
 	trps := s.targetRPS
@@ -118,7 +135,7 @@ func (s *DefaultStatsCollector) Snapshot() Stats {
 		Total:              s.total.Load(),
 		Matched:            s.matched.Load(),
 		Mismatched:         s.mismatched.Load(),
-		HttpErrs:           s.httpErrs.Load(),
+		HTTPErrs:           s.httpErrs.Load(),
 		Aborted:            s.aborted.Load(),
 		Skipped:            s.skipped.Load(),
 		ToleratedBF:        s.toleratedBF.Load(),
@@ -143,6 +160,7 @@ func (s *DefaultStatsCollector) Snapshot() Stats {
 	if stats.Min == math.MaxInt64 {
 		stats.Min = 0
 	}
+
 	stats.Max = time.Duration(s.maxLat.Load())
 
 	// Compute percentiles
@@ -151,17 +169,21 @@ func (s *DefaultStatsCollector) Snapshot() Stats {
 	return stats
 }
 
+// Buckets provides the exported Buckets method.
 func (s *DefaultStatsCollector) Buckets() []atomic.Int64 {
 	return s.latBuckets[:]
 }
 
+// Overflow provides the exported Overflow method.
 func (s *DefaultStatsCollector) Overflow() int64 {
 	return s.latOverflow.Load()
 }
 
 func (s *DefaultStatsCollector) computePercentiles() (p50, p90, p95, p99, avg time.Duration) {
-	var totalMs int64
-	var count int64
+	var (
+		totalMs int64
+		count   int64
+	)
 
 	// We need a consistent snapshot of buckets
 	buckets := make([]int64, maxLatencyMs+1)
@@ -171,6 +193,7 @@ func (s *DefaultStatsCollector) computePercentiles() (p50, p90, p95, p99, avg ti
 		count += v
 		totalMs += v * int64(i)
 	}
+
 	overflow := s.latOverflow.Load()
 	count += overflow
 	totalMs += overflow * (maxLatencyMs + 1)
@@ -183,6 +206,7 @@ func (s *DefaultStatsCollector) computePercentiles() (p50, p90, p95, p99, avg ti
 
 	getPercentile := func(p float64) time.Duration {
 		target := int64(math.Ceil(float64(count) * p))
+
 		var current int64
 		for i := 0; i <= maxLatencyMs; i++ {
 			current += buckets[i]
@@ -190,6 +214,7 @@ func (s *DefaultStatsCollector) computePercentiles() (p50, p90, p95, p99, avg ti
 				return time.Duration(i) * time.Millisecond
 			}
 		}
+
 		return time.Duration(maxLatencyMs) * time.Millisecond
 	}
 
@@ -201,6 +226,7 @@ func (s *DefaultStatsCollector) computePercentiles() (p50, p90, p95, p99, avg ti
 	return
 }
 
+// Reset provides the exported Reset method.
 func (s *DefaultStatsCollector) Reset() {
 	s.total.Store(0)
 	s.matched.Store(0)
@@ -212,12 +238,15 @@ func (s *DefaultStatsCollector) Reset() {
 	s.tooManyRequests.Store(0)
 	s.parallelMatched.Store(0)
 	s.parallelMismatched.Store(0)
+
 	for i := 0; i <= maxLatencyMs; i++ {
 		s.latBuckets[i].Store(0)
 	}
+
 	for i := range 600 {
 		s.statusCounts[i].Store(0)
 	}
+
 	s.latOverflow.Store(0)
 	s.minLat.Store(math.MaxInt64)
 	s.maxLat.Store(0)

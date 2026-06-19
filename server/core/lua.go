@@ -141,6 +141,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 
 	// Derive a timeout context for Lua backend work
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
+
 	ctxLua, cancelLua := context.WithTimeout(auth.Ctx(), dLua)
 	defer cancelLua()
 
@@ -239,12 +240,12 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	}
 
 	if luaBackendResult.Attributes != nil {
-		passDBResult.Attributes, passDBResult.Groups, passDBResult.GroupDNs = buildAttributeMappingFromLua(luaBackendResult.Attributes)
+		passDBResult.Attributes, passDBResult.Groups, passDBResult.GroupDistinguishedNames = buildAttributeMappingFromLua(luaBackendResult.Attributes)
 	}
 
-	if len(luaBackendResult.Groups) > 0 || len(luaBackendResult.GroupDNs) > 0 {
+	if len(luaBackendResult.Groups) > 0 || len(luaBackendResult.GroupDistinguishedNames) > 0 {
 		passDBResult.Groups = mergeNormalizedStringSlices(passDBResult.Groups, luaBackendResult.Groups)
-		passDBResult.GroupDNs = mergeNormalizedStringSlices(passDBResult.GroupDNs, luaBackendResult.GroupDNs)
+		passDBResult.GroupDistinguishedNames = mergeNormalizedStringSlices(passDBResult.GroupDistinguishedNames, luaBackendResult.GroupDistinguishedNames)
 	}
 
 	// Outcome attributes
@@ -310,6 +311,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 
 	// Derive a timeout context for Lua backend work (list accounts) using service-scoped context
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
+
 	ctxLua, cancelLua := context.WithTimeout(svcctx.Get(), dLua)
 	defer cancelLua()
 
@@ -416,6 +418,7 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 
 	// Derive a timeout context for Lua backend work (add TOTP)
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
+
 	ctxLua, cancelLua := context.WithTimeout(auth.Ctx(), dLua)
 	defer cancelLua()
 
@@ -436,6 +439,7 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	if !auth.Request.NoAuth {
 		priority = priorityqueue.PriorityMedium
 	}
+
 	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 		priority = priorityqueue.PriorityHigh
 	}
@@ -510,6 +514,7 @@ func (lm *luaManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 
 	// Derive a timeout context for Lua backend work (delete TOTP)
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
+
 	ctxLua, cancelLua := context.WithTimeout(auth.Ctx(), dLua)
 	defer cancelLua()
 
@@ -529,6 +534,7 @@ func (lm *luaManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 	if !auth.Request.NoAuth {
 		priority = priorityqueue.PriorityMedium
 	}
+
 	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 		priority = priorityqueue.PriorityHigh
 	}
@@ -617,6 +623,7 @@ func (lm *luaManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.TO
 
 	_, wSpan := tr.Start(lctx, "lua.add_totp_recovery.wait")
 	luaBackendResult = <-luaReplyChan
+
 	wSpan.End()
 
 	if luaBackendResult.Err != nil {
@@ -695,6 +702,7 @@ func (lm *luaManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err error) {
 
 	_, wSpan := tr.Start(lctx, "lua.delete_totp_recovery.wait")
 	luaBackendResult = <-luaReplyChan
+
 	wSpan.End()
 
 	if luaBackendResult.Err != nil {

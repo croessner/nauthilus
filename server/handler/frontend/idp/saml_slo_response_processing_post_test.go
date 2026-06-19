@@ -70,6 +70,7 @@ func TestSAMLHandler_SLO_LogoutResponse_CompletesFanout_POST(t *testing.T) {
 	}, nil)
 
 	now := time.Date(2026, time.March, 19, 13, 0, 0, 0, time.UTC)
+
 	tx, err := slodomain.NewTransaction(
 		transactionID,
 		"id-root-end-to-end-post",
@@ -93,7 +94,7 @@ func TestSAMLHandler_SLO_LogoutResponse_CompletesFanout_POST(t *testing.T) {
 		return
 	}
 
-	tx.Participants = []slodomain.SLOParticipant{
+	tx.Participants = []slodomain.Participant{
 		{
 			EntityID:  entityID,
 			RequestID: requestID,
@@ -103,7 +104,7 @@ func TestSAMLHandler_SLO_LogoutResponse_CompletesFanout_POST(t *testing.T) {
 
 	state := &sloFanoutTransactionState{
 		Transaction: *tx,
-		Pending: map[string]slodomain.SLOParticipant{
+		Pending: map[string]slodomain.Participant{
 			requestID: tx.Participants[0],
 		},
 		Outcomes:        map[string]sloFanoutParticipantOutcome{},

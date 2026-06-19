@@ -40,6 +40,7 @@ func registerGeneratedRBLListAttributes(
 	}
 
 	seen := make(map[string]string)
+
 	for index, rbl := range rblSection.GetLists() {
 		name := strings.TrimSpace(rbl.Name)
 		if name == "" {
@@ -94,16 +95,16 @@ func generatedRBLListAttribute(
 
 func generatedRBLListDetails() map[string]policyregistry.DetailDefinition {
 	return map[string]policyregistry.DetailDefinition{
-		"list":          {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
-		"list_id":       {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
-		"host":          {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
-		"query":         {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
-		"return_code":   {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
-		"reason_code":   {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
-		"ip_family":     {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
-		"listed":        {Type: policyregistry.AttributeTypeBool, Sensitivity: policyregistry.DetailSensitivityInternal},
-		"error":         {Type: policyregistry.AttributeTypeBool, Sensitivity: policyregistry.DetailSensitivityInternal},
-		"allow_failure": {Type: policyregistry.AttributeTypeBool, Sensitivity: policyregistry.DetailSensitivityInternal},
-		"weight":        {Type: policyregistry.AttributeTypeNumber, Sensitivity: policyregistry.DetailSensitivityInternal},
+		"list":           {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
+		"list_id":        {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
+		"host":           {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
+		"query":          {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
+		"return_code":    {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
+		detailReasonCode: {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
+		"ip_family":      {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
+		"listed":         {Type: policyregistry.AttributeTypeBool, Sensitivity: policyregistry.DetailSensitivityInternal},
+		"error":          {Type: policyregistry.AttributeTypeBool, Sensitivity: policyregistry.DetailSensitivityInternal},
+		"allow_failure":  {Type: policyregistry.AttributeTypeBool, Sensitivity: policyregistry.DetailSensitivityInternal},
+		"weight":         {Type: policyregistry.AttributeTypeNumber, Sensitivity: policyregistry.DetailSensitivityInternal},
 	}
 }

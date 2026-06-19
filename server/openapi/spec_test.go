@@ -124,7 +124,7 @@ func TestManagementSpecYAMLDocumentsStableMachineAPIs(t *testing.T) {
 func TestIDPSpecYAMLDocumentsStableIDPEndpoints(t *testing.T) {
 	doc := parseYAMLSpec(t, IDPYAML())
 
-	assertSpecDocumentsOperations(t, doc, "IdP", stableIDPOperations)
+	assertSpecDocumentsOperations(t, doc, "IDP", stableIDPOperations)
 }
 
 func TestIDPSpecDocumentsClientCredentialsGrant(t *testing.T) {

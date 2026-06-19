@@ -63,7 +63,9 @@ func TestInvalidateScript(t *testing.T) {
 			InvalidateScript(tt.invalidate)
 
 			scriptsMutex.RLock()
+
 			_, exists := scripts[tt.invalidate]
+
 			scriptsMutex.RUnlock()
 
 			assert.False(t, exists, "script should be gone from cache after InvalidateScript")
@@ -116,7 +118,7 @@ func TestGetReadHandles_RedisClient(t *testing.T) {
 
 			// Clean up
 			if tt.writeHandle != nil {
-				tt.writeHandle.Close()
+				_ = tt.writeHandle.Close()
 			}
 		})
 	}
@@ -127,8 +129,8 @@ func TestGetReadHandles_ExcludesWriteHandle(t *testing.T) {
 	writeClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 	readClient := redis.NewClient(&redis.Options{Addr: "localhost:6380"})
 
-	defer writeClient.Close()
-	defer readClient.Close()
+	defer func() { _ = writeClient.Close() }()
+	defer func() { _ = readClient.Close() }()
 
 	clt := &redisClient{
 		writeHandle: writeClient,

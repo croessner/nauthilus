@@ -50,6 +50,7 @@ func NewCSVSource(cfg Config) (*CSVSource, error) {
 	}
 
 	idx := map[string]int{}
+
 	for i, h := range header {
 		k := strings.ToLower(strings.TrimSpace(h))
 		if _, exists := idx[k]; !exists {

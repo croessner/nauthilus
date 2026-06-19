@@ -29,6 +29,10 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+type runtimeContextTestKey string
+
+const runtimeContextTestRequestIDKey runtimeContextTestKey = "request_id"
+
 func newRuntimeContextTestState(t *testing.T) *lua.LState {
 	t.Helper()
 
@@ -97,13 +101,13 @@ func bindRuntimeTestHTTPResponse(t *testing.T, L *lua.LState, ginCtx *gin.Contex
 	BindModuleIntoReq(L, definitions.LuaModHTTPResponse, mod)
 }
 
-func bindRuntimeTestRuntimeModule(t *testing.T, L *lua.LState, ctx context.Context) {
+func bindRuntimeTestRuntimeModule(ctx context.Context, t *testing.T, L *lua.LState) {
 	t.Helper()
 
 	mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 		"get_value": func(L *lua.LState) int {
 			currentCtx := lualib.RequireRuntimeContext(L, "runtime_helper")
-			value, _ := currentCtx.Value("request_id").(string)
+			value, _ := currentCtx.Value(runtimeContextTestRequestIDKey).(string)
 
 			L.Push(lua.LString(value))
 
@@ -111,7 +115,7 @@ func bindRuntimeTestRuntimeModule(t *testing.T, L *lua.LState, ctx context.Conte
 		},
 	})
 
-	lualib.BindRequestRuntimeContext(L, mod, ctx)
+	lualib.BindRequestRuntimeContext(ctx, L, mod)
 	BindModuleIntoReq(L, "runtime_helper", mod)
 }
 
@@ -130,7 +134,7 @@ func TestContextModuleFailsClosedWithoutRequestBinding(t *testing.T) {
 func TestRuntimeModuleFailsClosedWithoutRequestBinding(t *testing.T) {
 	L := newRuntimeContextTestState(t)
 	PrepareRequestEnv(L)
-	bindRuntimeTestRuntimeModule(t, L, context.WithValue(context.Background(), "request_id", "first"))
+	bindRuntimeTestRuntimeModule(context.WithValue(context.Background(), runtimeContextTestRequestIDKey, "first"), t, L)
 
 	ResetLuaState(L)
 	PrepareRequestEnv(L)
@@ -218,7 +222,7 @@ func TestResetLuaStateScrubsCachedModuleBindings(t *testing.T) {
 			bindingKey: "__NAUTH_REQ_RUNTIME_CONTEXT",
 			bind: func(t *testing.T, L *lua.LState) {
 				t.Helper()
-				bindRuntimeTestRuntimeModule(t, L, context.WithValue(t.Context(), "request_id", "first"))
+				bindRuntimeTestRuntimeModule(context.WithValue(t.Context(), runtimeContextTestRequestIDKey, "first"), t, L)
 			},
 			loadModule: `
 				package.preload["module_holder"] = function()
@@ -489,8 +493,8 @@ func TestCachedRuntimeContextModuleUsesCurrentRequestContextAfterReset(t *testin
 	L := newRuntimeContextTestState(t)
 	PrepareRequestEnv(L)
 
-	firstRuntimeContext := context.WithValue(context.Background(), "request_id", "first")
-	bindRuntimeTestRuntimeModule(t, L, firstRuntimeContext)
+	firstRuntimeContext := context.WithValue(context.Background(), runtimeContextTestRequestIDKey, "first")
+	bindRuntimeTestRuntimeModule(firstRuntimeContext, t, L)
 
 	if err := L.DoString(`
 		package.preload["runtime_holder"] = function()
@@ -510,8 +514,8 @@ func TestCachedRuntimeContextModuleUsesCurrentRequestContextAfterReset(t *testin
 	ResetLuaState(L)
 	PrepareRequestEnv(L)
 
-	secondRuntimeContext := context.WithValue(context.Background(), "request_id", "second")
-	bindRuntimeTestRuntimeModule(t, L, secondRuntimeContext)
+	secondRuntimeContext := context.WithValue(context.Background(), runtimeContextTestRequestIDKey, "second")
+	bindRuntimeTestRuntimeModule(secondRuntimeContext, t, L)
 
 	if err := L.DoString(`
 		local holder = require("runtime_holder")

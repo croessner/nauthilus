@@ -82,6 +82,7 @@ func (p *PersistentCredential) UnmarshalJSON(data []byte) error {
 
 	p.Credential = credential
 	p.Name = metadata.Name
+
 	p.LastUsed = metadata.LastUsed
 	if metadata.SignCount != nil {
 		p.Authenticator.SignCount = *metadata.SignCount

@@ -54,6 +54,7 @@ import (
 	"golang.org/x/net/http2"
 )
 
+// HTTPDeps describes the exported HTTPDeps type.
 type HTTPDeps struct {
 	Cfg          config.File
 	Logger       *slog.Logger
@@ -71,6 +72,7 @@ type DefaultBootstrap struct {
 	accountCache *accountcache.Manager
 }
 
+// NewDefaultBootstrap provides the exported NewDefaultBootstrap function.
 func NewDefaultBootstrap(deps HTTPDeps) DefaultBootstrap {
 	return DefaultBootstrap{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis, accountCache: deps.AccountCache}
 }
@@ -97,6 +99,7 @@ type DefaultRouterComposer struct {
 	accountCache *accountcache.Manager
 }
 
+// NewDefaultRouterComposer provides the exported NewDefaultRouterComposer function.
 func NewDefaultRouterComposer(deps HTTPDeps) DefaultRouterComposer {
 	return DefaultRouterComposer{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis, accountCache: deps.AccountCache}
 }
@@ -209,12 +212,12 @@ func (c DefaultRouterComposer) ApplyCoreMiddlewares(r *gin.Engine) {
 }
 
 // RegisterRoutes wires health and metrics routes, then (if enabled) the frontend
-// routes (IdP) and finally the backchannel routes. The
+// routes (IDP) and finally the backchannel routes. The
 // order is kept to preserve exact behavior of the legacy implementation.
 func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 	setupHealth func(*gin.Engine),
 	setupMetrics func(*gin.Engine),
-	setupIdP func(*gin.Engine),
+	setupIDP func(*gin.Engine),
 	setupBackchannel func(*gin.Engine),
 ) {
 	if setupHealth != nil {
@@ -257,11 +260,11 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 
 		r.LoadHTMLGlob(c.cfg.GetServer().Frontend.GetHTMLStaticContentPath() + "/*.html")
 
-		if setupIdP != nil {
+		if setupIDP != nil {
 			rb.WithIDPOpenAPI()
 		}
 
-		rb.WithFrontend(setupIdP)
+		rb.WithFrontend(setupIDP)
 	}
 
 	rb.WithBackchannel(setupBackchannel)
@@ -289,6 +292,7 @@ type DefaultHTTPServerFactory struct {
 	redis  rediscli.Client
 }
 
+// NewDefaultHTTPServerFactory provides the exported NewDefaultHTTPServerFactory function.
 func NewDefaultHTTPServerFactory(deps HTTPDeps) DefaultHTTPServerFactory {
 	return DefaultHTTPServerFactory{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
 }
@@ -341,6 +345,7 @@ type HAProxyListenerProvider struct {
 	redis  rediscli.Client
 }
 
+// NewHAProxyListenerProvider provides the exported NewHAProxyListenerProvider function.
 func NewHAProxyListenerProvider(deps HTTPDeps) HAProxyListenerProvider {
 	return HAProxyListenerProvider{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
 }
@@ -359,7 +364,7 @@ func (p HAProxyListenerProvider) Get() *proxyproto.Listener {
 
 	return &proxyproto.Listener{
 		Listener: listener,
-		ConnPolicy: func(connPolicyOptions proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+		ConnPolicy: func(_ proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
 			return proxyproto.REQUIRE, nil
 		},
 	}
@@ -373,6 +378,7 @@ type DefaultTLSConfigurator struct {
 	redis  rediscli.Client
 }
 
+// NewDefaultTLSConfigurator provides the exported NewDefaultTLSConfigurator function.
 func NewDefaultTLSConfigurator(deps HTTPDeps) DefaultTLSConfigurator {
 	return DefaultTLSConfigurator{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
 }
@@ -385,9 +391,11 @@ func (c DefaultTLSConfigurator) Build() *tls.Config {
 		return nil
 	}
 
-	var caCertPool *x509.CertPool
-	var cipherSuites []uint16
-	var minTLSVersion uint16
+	var (
+		caCertPool    *x509.CertPool
+		cipherSuites  []uint16
+		minTLSVersion uint16
+	)
 
 	if c.cfg.GetServer().GetTLS().GetCAFile() != "" {
 		caCert, err := os.ReadFile(c.cfg.GetServer().GetTLS().GetCAFile())
@@ -472,6 +480,7 @@ type DefaultTransportRunner struct {
 	redis  rediscli.Client
 }
 
+// NewDefaultTransportRunner provides the exported NewDefaultTransportRunner function.
 func NewDefaultTransportRunner(deps HTTPDeps) DefaultTransportRunner {
 	return DefaultTransportRunner{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
 }
@@ -610,7 +619,7 @@ func NewDefaultHTTPApp(deps HTTPDeps) *DefaultHTTPApp {
 func (a *DefaultHTTPApp) Start(ctx context.Context,
 	setupHealth func(*gin.Engine),
 	setupMetrics func(*gin.Engine),
-	setupIdP func(*gin.Engine),
+	setupIDP func(*gin.Engine),
 	setupBackchannel func(*gin.Engine),
 	signals ServerSignals,
 ) {
@@ -635,7 +644,7 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	srv := a.HTTPServerFactory.New(router)
 
 	a.RouterComposer.ApplyCoreMiddlewares(router)
-	a.RouterComposer.RegisterRoutes(router, setupHealth, setupMetrics, setupIdP, setupBackchannel)
+	a.RouterComposer.RegisterRoutes(router, setupHealth, setupMetrics, setupIDP, setupBackchannel)
 
 	proxy := a.ProxyProvider.Get()
 	if proxy != nil {
@@ -643,6 +652,7 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	}
 
 	var cert, key string
+
 	if a.cfg.GetServer().GetTLS().IsEnabled() {
 		srv.TLSConfig = a.TLSConfigurator.Build()
 		cert = a.cfg.GetServer().GetTLS().GetCert()

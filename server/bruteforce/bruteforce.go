@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package bruteforce provides bruteforce functionality.
 package bruteforce
 
 import (
@@ -51,6 +52,12 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+const (
+	ipFamilyIPv4    = "ipv4"
+	ipFamilyIPv6    = "ipv6"
+	ipFamilyUnknown = "unknown"
+)
+
 // containsString reports whether s is present in the slice.
 // Kept unexported and simple to avoid allocations and stay DRY for common membership checks.
 func containsString(ss []string, s string) bool {
@@ -66,7 +73,7 @@ type BlockMessage struct {
 
 // UpdateL1Cache updates the local L1 decision engine with a global decision.
 func UpdateL1Cache(ctx context.Context, key string, block bool, rule string) {
-	l1.GetEngine().Set(ctx, key, l1.L1Decision{Blocked: block, Rule: rule}, 0)
+	l1.GetEngine().Set(ctx, key, l1.Decision{Blocked: block, Rule: rule}, 0)
 }
 
 // BroadcastBlock sends a block event to all Nauthilus instances via Redis Pub/Sub.
@@ -412,6 +419,7 @@ func (bm *bucketManagerImpl) getBruteForceBucketBaseKey(rule *config.BruteForceR
 	}
 
 	protocolPart := ""
+
 	if len(rule.GetFilterByProtocol()) > 0 && bm.protocol != "" {
 		if containsString(rule.FilterByProtocol, bm.protocol) {
 			protocolPart = bm.protocol
@@ -419,6 +427,7 @@ func (bm *bucketManagerImpl) getBruteForceBucketBaseKey(rule *config.BruteForceR
 	}
 
 	oidcCIDPart := ""
+
 	if len(rule.GetFilterByOIDCCID()) > 0 && bm.oidcCID != "" {
 		if containsString(rule.FilterByOIDCCID, bm.oidcCID) {
 			oidcCIDPart = bm.oidcCID
@@ -522,6 +531,7 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 	}
 
 	tr := monittrace.New("nauthilus/bruteforce")
+
 	_, sp := tr.Start(bm.ctx, "bruteforce.load_all_password_histories",
 		attribute.String("username", bm.username),
 		attribute.String("client_ip", bm.clientIP),
@@ -538,6 +548,7 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 		_, _ = bm.redis().GetReadHandle().Get(dCtx, key).Result()
+
 		cancel()
 	}
 
@@ -546,6 +557,7 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 		_, _ = bm.redis().GetReadHandle().Get(dCtx, key).Result()
+
 		cancel()
 	}
 
@@ -554,6 +566,7 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		var passwordHash string
+
 		bm.password.WithBytes(func(value []byte) {
 			if len(value) == 0 {
 				return
@@ -573,6 +586,7 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 		if isMember, err := bm.redis().GetReadHandle().SIsMember(dCtx, key, passwordHash).Result(); err == nil && isMember {
 			bm.loginAttempts = 1
 		}
+
 		cancel()
 	}
 
@@ -584,6 +598,7 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 // Returns whether an error occurred, if a rule was already triggered, and the triggering rule index.
 func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int) {
 	tr := monittrace.New("nauthilus/bruteforce")
+
 	ctx, sp := tr.Start(bm.ctx, "auth.bruteforce.repeating_check",
 		attribute.String("protocol", bm.protocol),
 		attribute.String("oidc_cid", bm.oidcCID),
@@ -593,6 +608,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 
 	// Propagate span context to all downstream operations inside this method.
 	prevCtx := bm.ctx
+
 	bm.ctx = ctx
 	defer func() {
 		bm.ctx = prevCtx
@@ -602,12 +618,13 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		bm.PrepareNetcalc(rules)
 	}
 
-	ipFamily := "unknown"
+	ipFamily := ipFamilyUnknown
+
 	switch {
 	case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
-		ipFamily = "ipv4"
+		ipFamily = ipFamilyIPv4
 	case bm.parsedIP != nil && bm.parsedIP.To16() != nil:
-		ipFamily = "ipv6"
+		ipFamily = ipFamilyIPv6
 	}
 
 	sp.SetAttributes(attribute.String("ip_family", ipFamily))
@@ -617,6 +634,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 
 	// L1 Decision Engine fast path: reuse a very recent decision for identical semantic request key.
 	_, msp := tr.Start(bm.ctx, "auth.bruteforce.repeating_check.l1_engine")
+
 	dec, ok := l1.GetEngine().Get(bm.ctx, l1.KeyBurst(bm.bfBurstKey()))
 	if !ok {
 		// Try network-based L1 check if available
@@ -625,6 +643,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 				if d, okNet := l1.GetEngine().Get(bm.ctx, l1.KeyNetwork(n.String())); okNet && d.Blocked {
 					dec = d
 					ok = true
+
 					break
 				}
 			}
@@ -645,6 +664,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 
 				bm.bruteForceName = dec.Rule
 				*message = "Brute force attack detected (L1 engine)"
+
 				stats.GetMetrics().GetBruteForceCacheHitsTotal().WithLabelValues("micro").Inc()
 				sp.SetAttributes(
 					attribute.Bool("triggered", true),
@@ -656,6 +676,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 			}
 		}
 	}
+
 	msp.End()
 
 	sp.SetAttributes(attribute.Bool("micro_cache.hit", false))
@@ -674,6 +695,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		idx   int
 		field string
 	}
+
 	candidates := make([]cand, 0, len(rules))
 
 	// Gather candidates
@@ -704,6 +726,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		}
 
 		matchedAnyRule = true
+
 		candidates = append(candidates, cand{idx: i, field: n.String()})
 	}
 
@@ -780,6 +803,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 // CollectBucketPolicyFacts reads the current state for all configured brute-force buckets.
 func (bm *bucketManagerImpl) CollectBucketPolicyFacts(rules []config.BruteForceRule) ([]BucketPolicyFact, error) {
 	tr := monittrace.New("nauthilus/bruteforce")
+
 	ctx, sp := tr.Start(bm.ctx, "auth.bruteforce.bucket_policy_facts",
 		attribute.String("protocol", bm.protocol),
 		attribute.String("oidc_cid", bm.oidcCID),
@@ -789,6 +813,7 @@ func (bm *bucketManagerImpl) CollectBucketPolicyFacts(rules []config.BruteForceR
 
 	// Propagate span context to all downstream operations inside this method.
 	prevCtx := bm.ctx
+
 	bm.ctx = ctx
 	defer func() {
 		bm.ctx = prevCtx
@@ -840,6 +865,7 @@ func (bm *bucketManagerImpl) collectBucketPolicyFacts(
 // Returns flags indicating errors, if a rule was triggered, and the index of the rule that triggered the detection.
 func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
 	tr := monittrace.New("nauthilus/bruteforce")
+
 	ctx, sp := tr.Start(bm.ctx, "auth.bruteforce.bucket_over_limit",
 		attribute.String("protocol", bm.protocol),
 		attribute.String("oidc_cid", bm.oidcCID),
@@ -849,17 +875,19 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 
 	// Propagate span context to all downstream operations inside this method.
 	prevCtx := bm.ctx
+
 	bm.ctx = ctx
 	defer func() {
 		bm.ctx = prevCtx
 	}()
 
-	ipFamily := "unknown"
+	ipFamily := ipFamilyUnknown
+
 	switch {
 	case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
-		ipFamily = "ipv4"
+		ipFamily = ipFamilyIPv4
 	case bm.parsedIP != nil && bm.parsedIP.To16() != nil:
-		ipFamily = "ipv6"
+		ipFamily = ipFamilyIPv6
 	}
 
 	sp.SetAttributes(attribute.String("ip_family", ipFamily))
@@ -1048,6 +1076,7 @@ func (bm *bucketManagerImpl) readBucketPolicyCounters(
 	}
 
 	logger := bm.logger()
+
 	scriptSHA, errUpload := rediscli.UploadScript(bm.ctx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"])
 	if errUpload != nil {
 		_ = level.Error(logger).Log(
@@ -1062,6 +1091,7 @@ func (bm *bucketManagerImpl) readBucketPolicyCounters(
 	_, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
 	stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_eval_bucket_counter").Inc()
 
 	cmds, errP := bm.execBucketCounterPipeline(cands, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
@@ -1119,6 +1149,7 @@ func (bm *bucketManagerImpl) applyBucketPolicyCounterResult(
 	}
 
 	effectiveLimit := math.Max(0, float64(rules[index].FailedRequests)-1)
+
 	if len(resParts) >= 3 {
 		if effectiveLimitStr, ok := resParts[2].(string); ok {
 			if parsed, parseErr := strconv.ParseFloat(effectiveLimitStr, 64); parseErr == nil {
@@ -1266,6 +1297,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 	}
 
 	tr := monittrace.New("nauthilus/bruteforce")
+
 	ctx, sp := tr.Start(bm.ctx, "auth.bruteforce.process",
 		attribute.String("protocol", bm.protocol),
 		attribute.String("oidc_cid", bm.oidcCID),
@@ -1276,12 +1308,14 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 	// Propagate span context to all downstream operations inside this method.
 	prevCtx := bm.ctx
+
 	bm.ctx = ctx
 	defer func() {
 		bm.ctx = prevCtx
 	}()
 
 	ipFamily := "unknown"
+
 	switch {
 	case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
 		ipFamily = "ipv4"
@@ -1347,6 +1381,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 			// Broadcast both the user-specific burst block and the network-wide block
 			BroadcastBlock(bm.ctx, bm.redis(), bm.cfg(), l1.KeyBurst(bm.bfBurstKey()), bm.bruteForceName)
+
 			if network != nil {
 				BroadcastBlock(bm.ctx, bm.redis(), bm.cfg(), l1.KeyNetwork(network.String()), bm.bruteForceName)
 			}
@@ -1367,7 +1402,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		bm.environmentName = definitions.ControlBruteForce
 
 		// Store L1 decision for a very short time to absorb bursts (read-path only)
-		l1.GetEngine().Set(bm.ctx, l1.KeyBurst(bm.bfBurstKey()), l1.L1Decision{Blocked: true, Rule: bm.bruteForceName}, 0)
+		l1.GetEngine().Set(bm.ctx, l1.KeyBurst(bm.bfBurstKey()), l1.Decision{Blocked: true, Rule: bm.bruteForceName}, 0)
 
 		sp.SetAttributes(attribute.Bool("triggered", true))
 
@@ -1375,7 +1410,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 	}
 
 	// Also cache negative decision (allow) to avoid immediate redundant HMGET/MGET for identical attempts
-	l1.GetEngine().Set(bm.ctx, l1.KeyBurst(bm.bfBurstKey()), l1.L1Decision{Blocked: false, Rule: ""}, 0)
+	l1.GetEngine().Set(bm.ctx, l1.KeyBurst(bm.bfBurstKey()), l1.Decision{Blocked: false, Rule: ""}, 0)
 
 	sp.SetAttributes(attribute.Bool("triggered", false))
 
@@ -1409,7 +1444,6 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 	logger := bm.logger()
 
 	alreadyLearned, err = bm.redis().GetReadHandle().SIsMember(dCtx, key, bm.clientIP).Result()
-
 	if err != nil {
 		if !errors2.Is(err, redis.Nil) {
 			level.Error(logger).Log(
@@ -1443,7 +1477,6 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 
 		return nil
 	})
-
 	if err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
@@ -1485,6 +1518,7 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 	// the Lua script will bring it up before the normal increment to compensate for
 	// attempts that were tolerated during the RWP grace period.
 	rwpFloor := 0
+
 	if increment > 0 {
 		if bfCfg := bm.cfg().GetBruteForce(); bfCfg != nil {
 			rwpFloor = int(bfCfg.GetRWPAllowedUniqueHashes())
@@ -1531,6 +1565,7 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 	}
 
 	var passwordHash string
+
 	bm.password.WithBytes(func(value []byte) {
 		if len(value) == 0 {
 			return
@@ -1541,9 +1576,11 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 
 		passwordHash = util.GetHashBytes(prepared)
 	})
+
 	if passwordHash == "" {
 		return
 	}
+
 	ttl := bm.cfg().GetServer().GetRedis().GetNegCacheTTL()
 	maxEntries := bm.cfg().GetServer().GetMaxPasswordHistoryEntries()
 
@@ -1564,6 +1601,7 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 		// We use a simple script to add to set and expire, but also respect maxEntries if possible.
 		// Since it's now a Set, we don't track counters per password, just existence.
 		res, err := rediscli.ExecuteScript(dCtx, bm.redis(), "AddToSetAndExpireLimit", rediscli.LuaScripts["AddToSetAndExpireLimit"], []string{key}, passwordHash, strconv.FormatInt(int64(ttl.Seconds()), 10), strconv.Itoa(int(maxEntries)))
+
 		cancel()
 
 		stats.GetMetrics().GetRedisWriteCounter().Add(1)
@@ -1662,6 +1700,7 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 
 	dCtxR, cancelR := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 	current, err := redisClient.GetReadHandle().Get(dCtxR, banKey).Result()
+
 	cancelR()
 
 	if err != nil && !errors2.Is(err, redis.Nil) {
@@ -1716,6 +1755,7 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 	}
 
 	tr := monittrace.New("nauthilus/bruteforce")
+
 	ctx, sp := tr.Start(bm.ctx, "bruteforce.is_ip_blocked", attribute.String("client_ip", bm.clientIP))
 	defer sp.End()
 
@@ -1886,6 +1926,7 @@ func (bm *bucketManagerImpl) CommitRWPSlidingWindow() {
 		[]string{args.allowKey},
 		args.passwordHash, args.argNow, args.argTTL, args.argThreshold,
 	)
+
 	cancel()
 
 	if execErr != nil {
@@ -1980,6 +2021,7 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		[]string{args.allowKey},
 		args.passwordHash, args.argNow, args.argTTL, args.argThreshold,
 	)
+
 	cancel()
 
 	if execErr != nil {
@@ -2000,6 +2042,7 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 
 		dCtx, cancel = util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 		isMember, _ := bm.redis().GetReadHandle().SIsMember(dCtx, acctKey, args.passwordHash).Result()
+
 		cancel()
 
 		if isMember {
@@ -2043,7 +2086,6 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 
 		- On any error that might occur during these checks, do NOT increase buckets (fail safe).
 	*/
-
 	if bm.accountName == "" {
 		return true, nil
 	}
@@ -2078,6 +2120,7 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (network *n
 	}
 
 	bits := 0
+
 	if bm.ipIsV4 || (!bm.ipIsV6 && ipAddress.To4() != nil) {
 		bm.ipIsV4 = true
 		bm.ipIsV6 = false
@@ -2138,6 +2181,7 @@ func (bm *bucketManagerImpl) PrepareNetcalc(rules []config.BruteForceRule) {
 	}
 
 	tr := monittrace.New("nauthilus/auth")
+
 	_, span := tr.Start(bm.ctx, "bm.preparenetcalc")
 	defer span.End()
 
@@ -2228,6 +2272,7 @@ func (bm *bucketManagerImpl) getPasswordHistoryBaseRedisKey(baseKey string, with
 	}
 
 	hashTag := scoped
+
 	var sb strings.Builder
 
 	sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
@@ -2283,6 +2328,7 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 // It retrieves the bucket counter from Redis, logs the operation, and updates the in-memory counter mapping for the rule.
 func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForceRule) {
 	tr := monittrace.New("nauthilus/bruteforce")
+
 	ctx, sp := tr.Start(bm.ctx, "bruteforce.load_bucket_counter", attribute.String("rule", rule.Name))
 	defer sp.End()
 
@@ -2320,6 +2366,7 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 	}
 
 	total := uint(0)
+
 	if resParts, ok := res.([]any); ok && len(resParts) > 0 {
 		if totalStr, ok := resParts[0].(string); ok {
 			totalFloat, _ := strconv.ParseFloat(totalStr, 64)
@@ -2341,6 +2388,7 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 // It returns whether a ban is active (created or already present) and any error encountered.
 func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForceRule) (bool, error) {
 	tr := monittrace.New("nauthilus/bruteforce")
+
 	ctx, sp := tr.Start(bm.ctx, "bruteforce.set_pre_result", attribute.String("rule", rule.Name))
 	defer sp.End()
 
@@ -2433,6 +2481,7 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 	}
 
 	tr := monittrace.New("nauthilus/bruteforce")
+
 	ctx, sp := tr.Start(bm.ctx, "bruteforce.update_affected_account", attribute.String("account", accountName))
 	defer sp.End()
 

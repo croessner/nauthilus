@@ -33,6 +33,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+const redisCommandClient = "client"
+
 // BatchingHook implements redis.Hook and batches individual Process calls
 // into short-lived pipelines to reduce network round-trips.
 //
@@ -67,6 +69,7 @@ type batchItem struct {
 	done chan error
 }
 
+// NewBatchingHook provides the exported NewBatchingHook function.
 func NewBatchingHook(logger *slog.Logger, client redis.UniversalClient, cfg *config.RedisBatching) *BatchingHook {
 	if client == nil || cfg == nil || !cfg.IsBatchingEnabled() {
 		return nil
@@ -81,7 +84,7 @@ func NewBatchingHook(logger *slog.Logger, client redis.UniversalClient, cfg *con
 		"subscribe", "psubscribe", "ssubscribe",
 		// Transactions and scripting are generally safe to batch, but leave them to the caller
 		// when already in pipeline/tx mode.
-		"hello", "client", "config", "script",
+		"hello", redisCommandClient, "config", "script",
 	}
 
 	skip := make(map[string]struct{}, len(defaults)+len(cfg.GetSkipCommands()))
@@ -136,6 +139,7 @@ func (h *BatchingHook) run() {
 
 		// Collect until size threshold or time threshold
 		timeout := time.NewTimer(h.maxWait)
+
 		collect := true
 		for collect {
 			if len(batch) >= h.maxBatch {

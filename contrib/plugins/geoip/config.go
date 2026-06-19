@@ -159,63 +159,96 @@ func parseDatabaseFormat(value string, databasePath string) (string, error) {
 
 // parseASNLookupConfig applies local ASN routing snapshot defaults.
 func parseASNLookupConfig(raw rawASNLookupConfig) (asnLookupConfig, error) {
-	refreshInterval, err := parseDefaultedDuration("asn_lookup.refresh_interval", raw.RefreshInterval, defaultASNLookupRefreshInterval)
+	sourceConfig, err := parseASNSourceConfig(
+		"asn_lookup",
+		raw.Enabled,
+		raw.RefreshInterval,
+		defaultASNLookupRefreshInterval,
+		raw.Timeout,
+		defaultASNLookupTimeout,
+		raw.SourceURLs,
+		defaultASNLookupSourceURLs,
+	)
 	if err != nil {
 		return asnLookupConfig{}, err
-	}
-
-	timeout, err := parsePositiveDefaultedDuration("asn_lookup.timeout", raw.Timeout, defaultASNLookupTimeout)
-	if err != nil {
-		return asnLookupConfig{}, err
-	}
-
-	sourceURLs := append([]string{}, raw.SourceURLs...)
-	if raw.Enabled && len(sourceURLs) == 0 {
-		sourceURLs = defaultASNLookupSourceURLs()
-	}
-
-	for index, sourceURL := range sourceURLs {
-		if err := validateHTTPSourceURL(sourceURL); err != nil {
-			return asnLookupConfig{}, fmt.Errorf("asn_lookup.source_urls[%d]: %w", index, err)
-		}
 	}
 
 	return asnLookupConfig{
-		Enabled:         raw.Enabled,
-		RefreshInterval: refreshInterval,
-		Timeout:         timeout,
-		SourceURLs:      sourceURLs,
+		Enabled:         sourceConfig.enabled,
+		RefreshInterval: sourceConfig.refreshInterval,
+		Timeout:         sourceConfig.timeout,
+		SourceURLs:      sourceConfig.sourceURLs,
 	}, nil
 }
 
 // parseASNRegistryConfig applies registry defaults and validates registry source URLs.
 func parseASNRegistryConfig(raw rawASNRegistryConfig) (asnRegistryConfig, error) {
-	refreshInterval, err := parseDefaultedDuration("asn_registry.refresh_interval", raw.RefreshInterval, defaultASNRegistryRefreshInterval)
+	sourceConfig, err := parseASNSourceConfig(
+		"asn_registry",
+		raw.Enabled,
+		raw.RefreshInterval,
+		defaultASNRegistryRefreshInterval,
+		raw.Timeout,
+		defaultASNRegistryTimeout,
+		raw.SourceURLs,
+		defaultASNRegistrySourceURLs,
+	)
 	if err != nil {
 		return asnRegistryConfig{}, err
 	}
 
-	timeout, err := parsePositiveDefaultedDuration("asn_registry.timeout", raw.Timeout, defaultASNRegistryTimeout)
+	return asnRegistryConfig{
+		Enabled:         sourceConfig.enabled,
+		RefreshInterval: sourceConfig.refreshInterval,
+		Timeout:         sourceConfig.timeout,
+		SourceURLs:      sourceConfig.sourceURLs,
+	}, nil
+}
+
+type asnSourceConfig struct {
+	sourceURLs      []string
+	refreshInterval time.Duration
+	timeout         time.Duration
+	enabled         bool
+}
+
+// parseASNSourceConfig applies shared ASN source defaults and URL validation.
+func parseASNSourceConfig(
+	prefix string,
+	enabled bool,
+	refreshIntervalValue string,
+	defaultRefreshInterval time.Duration,
+	timeoutValue string,
+	defaultTimeout time.Duration,
+	rawSourceURLs []string,
+	defaultSourceURLs func() []string,
+) (asnSourceConfig, error) {
+	refreshInterval, err := parseDefaultedDuration(prefix+".refresh_interval", refreshIntervalValue, defaultRefreshInterval)
 	if err != nil {
-		return asnRegistryConfig{}, err
+		return asnSourceConfig{}, err
 	}
 
-	sourceURLs := append([]string{}, raw.SourceURLs...)
-	if raw.Enabled && len(sourceURLs) == 0 {
-		sourceURLs = defaultASNRegistrySourceURLs()
+	timeout, err := parsePositiveDefaultedDuration(prefix+".timeout", timeoutValue, defaultTimeout)
+	if err != nil {
+		return asnSourceConfig{}, err
+	}
+
+	sourceURLs := append([]string{}, rawSourceURLs...)
+	if enabled && len(sourceURLs) == 0 {
+		sourceURLs = defaultSourceURLs()
 	}
 
 	for index, sourceURL := range sourceURLs {
 		if err := validateHTTPSourceURL(sourceURL); err != nil {
-			return asnRegistryConfig{}, fmt.Errorf("asn_registry.source_urls[%d]: %w", index, err)
+			return asnSourceConfig{}, fmt.Errorf("%s.source_urls[%d]: %w", prefix, index, err)
 		}
 	}
 
-	return asnRegistryConfig{
-		Enabled:         raw.Enabled,
-		RefreshInterval: refreshInterval,
-		Timeout:         timeout,
-		SourceURLs:      sourceURLs,
+	return asnSourceConfig{
+		enabled:         enabled,
+		refreshInterval: refreshInterval,
+		timeout:         timeout,
+		sourceURLs:      sourceURLs,
 	}, nil
 }
 

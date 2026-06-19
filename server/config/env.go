@@ -77,7 +77,7 @@ func setDefaultEnvVars() {
 // String returns the name of the Config object.
 func (env *EnvironmentSettings) String() string {
 	if env == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return fmt.Sprintf("DevMode='%v'", env.DevMode)

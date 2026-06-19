@@ -280,6 +280,7 @@ func (c *CommonRequest) Reset() {
 	c.Account = ""
 	c.AccountField = ""
 	c.UniqueUserID = ""
+
 	c.DisplayName = ""
 	if len(c.Password) > 0 {
 		clear(c.Password)
@@ -388,13 +389,16 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 	request.RawSetString(definitions.LuaRequestAccountField, lua.LString(c.AccountField))
 	request.RawSetString(definitions.LuaRequestUniqueUserID, lua.LString(c.UniqueUserID))
 	request.RawSetString(definitions.LuaRequestDisplayName, lua.LString(c.DisplayName))
+
 	if len(c.TOTPRecoveryCodes) > 0 {
 		recoveryTable := L.NewTable()
 		for _, code := range c.TOTPRecoveryCodes {
 			recoveryTable.Append(lua.LString(code))
 		}
+
 		request.RawSetString(definitions.LuaRequestTOTPRecoveryCodes, recoveryTable)
 	}
+
 	request.RawSetString(definitions.LuaRequestPassword, lua.LString(string(c.Password)))
 	request.RawSetString(definitions.LuaRequestWebAuthnCredential, lua.LString(c.WebAuthnCredential))
 	request.RawSetString(definitions.LuaRequestWebAuthnOldCredential, lua.LString(c.WebAuthnOldCredential))
@@ -416,9 +420,11 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 
 	request.RawSetString(definitions.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
 	request.RawSetString(definitions.LuaRequestEnvironment, lua.LString(c.EnvironmentName))
+
 	if c.StatusMessage != nil {
 		request.RawSetString(definitions.LuaRequestStatusMessage, lua.LString(*c.StatusMessage))
 	}
+
 	request.RawSetString(definitions.LuaRequestXSSL, lua.LString(c.XSSL))
 	request.RawSetString(definitions.LuaRequestXSSSLSessionID, lua.LString(c.XSSLSessionID))
 	request.RawSetString(definitions.LuaRequestXSSLClientVerify, lua.LString(c.XSSLClientVerify))

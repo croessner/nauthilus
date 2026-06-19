@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// AutoController describes the exported AutoController type.
 type AutoController struct {
 	config    *Config
 	collector StatsCollector
@@ -13,6 +14,7 @@ type AutoController struct {
 	app       *App
 }
 
+// NewAutoController provides the exported NewAutoController function.
 func NewAutoController(cfg *Config, collector StatsCollector, pacer *Pacer, app *App) *AutoController {
 	return &AutoController{
 		config:    cfg,
@@ -22,11 +24,13 @@ func NewAutoController(cfg *Config, collector StatsCollector, pacer *Pacer, app 
 	}
 }
 
+// Run provides the exported Run method.
 func (c *AutoController) Run(ctx context.Context) {
 	// Control cadence: at most every 5s to ramp faster regardless of progress interval
 	ctrlEvery := max(min(c.config.ProgressEvery, 5*time.Second), 1*time.Second)
 
 	maxR := c.config.AutoMaxRPS
+
 	maxC := c.config.AutoMaxConc
 	if maxC <= 0 {
 		maxC = c.config.Concurrency
@@ -38,15 +42,19 @@ func (c *AutoController) Run(ctx context.Context) {
 		c.collector.SetTargetRPS(currR)
 	}
 
-	var lastTotal int64
-	var lastErrs int64
+	var (
+		lastTotal int64
+		lastErrs  int64
+	)
 
 	tk := time.NewTicker(ctrlEvery)
 	defer tk.Stop()
 
-	var prevRPS float64
-	var plateauStreak int
-	var freezeWins int
+	var (
+		prevRPS       float64
+		plateauStreak int
+		freezeWins    int
+	)
 
 	for {
 		select {
@@ -55,7 +63,7 @@ func (c *AutoController) Run(ctx context.Context) {
 		case <-tk.C:
 			stats := c.collector.Snapshot()
 			tNow := stats.Total
-			eNow := stats.HttpErrs + stats.Aborted
+			eNow := stats.HTTPErrs + stats.Aborted
 			dt := tNow - lastTotal
 			de := eNow - lastErrs
 			lastTotal = tNow
@@ -65,32 +73,37 @@ func (c *AutoController) Run(ctx context.Context) {
 
 			if dt < effMin {
 				// Too few samples: ramp up optimistically
-				if c.config.AutoFocus != "concurrency" {
+				if c.config.AutoFocus != autoFocusConcurrency {
 					currR += c.config.AutoStepRPS
 					if maxR > 0 && currR > maxR {
 						currR = maxR
 					}
+
 					if c.pacer != nil {
 						c.pacer.SetRPS(currR)
 						c.collector.SetTargetRPS(currR)
 					}
 				}
-				if c.config.AutoFocus != "rps" {
+
+				if c.config.AutoFocus != autoFocusRPS {
 					oldC := stats.Concurrency
 					if oldC < int64(maxC) {
 						inc := c.config.AutoStepConc
 						if int64(maxC)-oldC < int64(inc) {
 							inc = int(int64(maxC) - oldC)
 						}
+
 						c.app.SpawnWorkers(ctx, inc)
 						c.collector.SetConcurrency(oldC + int64(inc))
 					}
 				}
+
 				continue
 			}
 
 			// Judge based on metrics
 			p95 := stats.P95
+
 			errRate := 0.0
 			if dt > 0 {
 				errRate = float64(de) / float64(dt) * 100.0
@@ -112,24 +125,29 @@ func (c *AutoController) Run(ctx context.Context) {
 
 			if shouldBackoff {
 				plateauStreak = 0
-				if c.config.AutoFocus != "concurrency" {
+
+				if c.config.AutoFocus != autoFocusConcurrency {
 					currR = math.Floor(currR * c.config.AutoBackoff)
 					if currR < 1 {
 						currR = 1
 					}
+
 					if c.pacer != nil {
 						c.pacer.SetRPS(currR)
 						c.collector.SetTargetRPS(currR)
 					}
 				}
-				if c.config.AutoFocus != "rps" {
+
+				if c.config.AutoFocus != autoFocusRPS {
 					oldC := stats.Concurrency
+
 					newC := max(int64(math.Ceil(float64(oldC)*c.config.AutoBackoff)), 1)
 					if oldC > newC {
 						c.app.ReduceWorkers(int(oldC - newC))
 						c.collector.SetConcurrency(newC)
 					}
 				}
+
 				continue
 			}
 
@@ -141,15 +159,18 @@ func (c *AutoController) Run(ctx context.Context) {
 					plateauStreak = 0
 				}
 			}
+
 			prevRPS = actualRPS
 
 			if c.config.AutoPlateau && plateauStreak >= c.config.AutoPlateauWindows {
 				c.collector.SetPlateauActive(true)
-				if c.config.AutoPlateauAction == "freeze" {
+
+				if c.config.AutoPlateauAction == autoPlateauActionFreeze {
 					if freezeWins < c.config.AutoPlateauCooldown {
 						freezeWins++
 						continue
 					}
+
 					freezeWins = 0
 					plateauStreak = 0
 				}
@@ -158,23 +179,26 @@ func (c *AutoController) Run(ctx context.Context) {
 			}
 
 			// Ramp up
-			if c.config.AutoFocus != "concurrency" {
+			if c.config.AutoFocus != autoFocusConcurrency {
 				currR += c.config.AutoStepRPS
 				if maxR > 0 && currR > maxR {
 					currR = maxR
 				}
+
 				if c.pacer != nil {
 					c.pacer.SetRPS(currR)
 					c.collector.SetTargetRPS(currR)
 				}
 			}
-			if c.config.AutoFocus != "rps" {
+
+			if c.config.AutoFocus != autoFocusRPS {
 				oldC := stats.Concurrency
 				if oldC < int64(maxC) {
 					inc := c.config.AutoStepConc
 					if int64(maxC)-oldC < int64(inc) {
 						inc = int(int64(maxC) - oldC)
 					}
+
 					c.app.SpawnWorkers(ctx, inc)
 					c.collector.SetConcurrency(oldC + int64(inc))
 				}

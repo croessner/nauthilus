@@ -78,6 +78,7 @@ func EnsureKeysInSameSlot(keys []string, hashTag string) []string {
 
 	// Check if all keys already have the same hash tag
 	hasCommonTag := true
+
 	var commonTag string
 
 	for i, key := range keys {
@@ -114,6 +115,7 @@ func EnsureKeysInSameSlot(keys []string, hashTag string) []string {
 		if strings.Contains(key, "{") && strings.Contains(key, "}") {
 			// Replace existing hash tag with the specified one
 			startIdx := strings.Index(key, "{")
+
 			endIdx := strings.Index(key, "}")
 			if startIdx != -1 && endIdx != -1 && startIdx < endIdx {
 				modifiedKeys[i] = key[:startIdx] + hashTag + key[endIdx+1:]
@@ -159,7 +161,9 @@ func uploadScriptToReadHandles(ctx context.Context, client Client, scriptName, s
 func UploadScript(ctx context.Context, client Client, scriptName, scriptContent string) (string, error) {
 	// Check if the script is already uploaded
 	scriptsMutex.RLock()
+
 	sha1, exists := scripts[scriptName]
+
 	scriptsMutex.RUnlock()
 
 	if exists {
@@ -231,11 +235,14 @@ func ExecuteScript(ctx context.Context, client Client, scriptName, scriptContent
 
 	// Attach context for downstream EvalSha/Upload
 	_ = sctx
+
 	defer sp.End()
 
 	// Get the SHA1 hash for the script
 	scriptsMutex.RLock()
+
 	sha1, exists := scripts[scriptName]
+
 	scriptsMutex.RUnlock()
 
 	if !exists {
@@ -359,6 +366,7 @@ func UploadAllScripts(ctx context.Context, logger *slog.Logger, client Client) e
 		uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 
 		_, err := UploadScript(uploadCtx, client, scriptName, scriptContent)
+
 		cancel()
 
 		if err != nil {

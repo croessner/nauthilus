@@ -136,7 +136,7 @@ func TestMFAService_VerifyAndSaveTOTP_LDAP(t *testing.T) {
 	ctx.Request = httptest.NewRequest("POST", "/", strings.NewReader("{}"))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	ctx.Request.RemoteAddr = "127.0.0.1:12345"
-	setupMfaMockContext(ctx, "test-guid", definitions.ServIdP)
+	setupMfaMockContext(ctx, "test-guid", definitions.ServIDP)
 
 	priorityqueue.LDAPQueue.AddPoolName(definitions.DefaultBackendName)
 
@@ -184,7 +184,7 @@ func TestMFAServiceVerifyAndSaveTOTPNormalizesRegistrationCode(t *testing.T) {
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("POST", "/", strings.NewReader("{}"))
-	setupMfaMockContext(ctx, "test-guid", definitions.ServIdP)
+	setupMfaMockContext(ctx, "test-guid", definitions.ServIDP)
 
 	groupedCode := code[:3] + " " + code[3:]
 	err = service.VerifyAndSaveTOTP(ctx, mfaLDAPTestUser, secret, groupedCode, 255)
@@ -237,7 +237,7 @@ func TestMFAService_DeleteTOTP_LDAP(t *testing.T) {
 	ctx.Request = httptest.NewRequest("POST", "/", strings.NewReader("{}"))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	ctx.Request.RemoteAddr = "127.0.0.1:12345"
-	setupMfaMockContext(ctx, "test-guid", definitions.ServIdP)
+	setupMfaMockContext(ctx, "test-guid", definitions.ServIDP)
 
 	priorityqueue.LDAPQueue.AddPoolName(definitions.DefaultBackendName)
 
@@ -246,6 +246,7 @@ func TestMFAService_DeleteTOTP_LDAP(t *testing.T) {
 		if req != nil {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyDelete, req.SubCommand)
+
 			req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 		}
 	}()
@@ -273,7 +274,7 @@ func TestMFAServiceRemoteTOTPRegistrationFallsBackToFlowState(t *testing.T) {
 	ctx := newMFATestContext()
 	mgr := cookie.NewSecureManager([]byte("test-secret-32bytes-1234567890!!"), definitions.SecureDataCookieName, cfg, env)
 	flowID := "remote-totp-flow"
-	mgr.Set(definitions.SessionKeyIdPFlowID, flowID)
+	mgr.Set(definitions.SessionKeyIDPFlowID, flowID)
 	ctx.Set(definitions.CtxSecureDataKey, mgr)
 
 	key := "edge:idp:flow:" + flowID
@@ -358,7 +359,7 @@ func newRemoteTOTPFlowState(flowID string, metadata map[string]string) *flowdoma
 	return &flowdomain.State{
 		FlowID:      flowID,
 		Metadata:    metadata,
-		FlowType:    flowdomain.FlowTypeOIDCAuthorization,
+		Type:        flowdomain.FlowTypeOIDCAuthorization,
 		Protocol:    flowdomain.FlowProtocolOIDC,
 		CurrentStep: flowdomain.FlowStepMFA,
 		AuthOutcome: flowdomain.AuthOutcomeOK,
@@ -580,7 +581,7 @@ func newMFATestContext() *gin.Context {
 	ctx.Request = httptest.NewRequest("POST", "/", strings.NewReader("{}"))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	ctx.Request.RemoteAddr = "127.0.0.1:12345"
-	setupMfaMockContext(ctx, "baseline-mfa-guid", definitions.ServIdP)
+	setupMfaMockContext(ctx, "baseline-mfa-guid", definitions.ServIDP)
 
 	return ctx
 }

@@ -30,7 +30,9 @@ func (r *Router) WithRecovery() *Router {
 
 // WithTrustedProxies configures the trusted proxies for the underlying engine.
 func (r *Router) WithTrustedProxies() *Router {
-	r.Engine.SetTrustedProxies(r.Cfg.GetServer().GetTrustedProxies())
+	if err := r.Engine.SetTrustedProxies(r.Cfg.GetServer().GetTrustedProxies()); err != nil {
+		panic(err)
+	}
 
 	return r
 }
@@ -89,9 +91,9 @@ func (r *Router) WithStatic(setup func(*gin.Engine)) *Router {
 }
 
 // WithFrontend calls the provided setup function to register the frontend pages.
-func (r *Router) WithFrontend(setupIdP func(*gin.Engine)) *Router {
-	if setupIdP != nil {
-		setupIdP(r.Engine)
+func (r *Router) WithFrontend(setupIDP func(*gin.Engine)) *Router {
+	if setupIDP != nil {
+		setupIDP(r.Engine)
 	}
 
 	return r

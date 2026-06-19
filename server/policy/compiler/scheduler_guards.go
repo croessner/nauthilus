@@ -54,6 +54,7 @@ func compileSchedulerGuards(
 	guards := make(map[string]policyruntime.CompiledSchedulerGuard, len(configs))
 	for _, name := range sortedSchedulerGuardNames(configs) {
 		path := childPath("auth.policy.scheduler_guards", name)
+
 		guard, err := compileSchedulerGuard(name, configs[name], path, attributes, sets)
 		if err != nil {
 			return nil, err

@@ -13,12 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package errors provides errors functionality.
 package errors
 
 import (
 	"errors"
 )
 
+// DetailedError describes the exported DetailedError type.
 type DetailedError struct {
 	err      error
 	guid     string
@@ -51,6 +53,7 @@ func (d *DetailedError) Is(target error) bool {
 	return false
 }
 
+// WithGUID provides the exported WithGUID method.
 func (d *DetailedError) WithGUID(guid string) *DetailedError {
 	if d == nil {
 		return nil
@@ -59,6 +62,7 @@ func (d *DetailedError) WithGUID(guid string) *DetailedError {
 	return &DetailedError{err: d.err, guid: guid, details: d.details, instance: d.instance}
 }
 
+// WithDetail provides the exported WithDetail method.
 func (d *DetailedError) WithDetail(detail string) *DetailedError {
 	if d == nil {
 		return nil
@@ -67,6 +71,7 @@ func (d *DetailedError) WithDetail(detail string) *DetailedError {
 	return &DetailedError{err: d.err, guid: d.guid, details: detail, instance: d.instance}
 }
 
+// WithInstance provides the exported WithInstance method.
 func (d *DetailedError) WithInstance(instance string) *DetailedError {
 	if d == nil {
 		return nil
@@ -75,18 +80,22 @@ func (d *DetailedError) WithInstance(instance string) *DetailedError {
 	return &DetailedError{err: d.err, guid: d.guid, details: d.details, instance: instance}
 }
 
+// GetGUID provides the exported GetGUID method.
 func (d *DetailedError) GetGUID() string {
 	return d.guid
 }
 
+// GetDetails provides the exported GetDetails method.
 func (d *DetailedError) GetDetails() string {
 	return d.details
 }
 
+// GetInstance provides the exported GetInstance method.
 func (d *DetailedError) GetInstance() string {
 	return d.instance
 }
 
+// NewDetailedError provides the exported NewDetailedError function.
 func NewDetailedError(err string) *DetailedError {
 	return &DetailedError{err: errors.New(err)}
 }
@@ -143,13 +152,20 @@ var (
 // ldap.
 
 var (
-	ErrLDAPConnect        = NewDetailedError("ldap_servers_connect_error")
-	ErrLDAPConfig         = NewDetailedError("ldap_config_error")
+	// ErrLDAPConnect is an exported package value.
+	ErrLDAPConnect = NewDetailedError("ldap_servers_connect_error")
+	// ErrLDAPConfig is an exported package value.
+	ErrLDAPConfig = NewDetailedError("ldap_config_error")
+	// ErrNoLDAPSearchResult reports that an LDAP search returned no matching entry.
 	ErrNoLDAPSearchResult = NewDetailedError("ldap_no_search_result")
+	// ErrLDAPConnectTimeout reports that an LDAP connection attempt timed out.
 	ErrLDAPConnectTimeout = NewDetailedError("ldap_connect_timeout")
-	ErrLDAPSearchTimeout  = NewDetailedError("ldap_search_timeout")
-	ErrLDAPBindTimeout    = NewDetailedError("ldap_bind_timeout")
-	ErrLDAPModify         = NewDetailedError("ldap_modify_error")
+	// ErrLDAPSearchTimeout reports that an LDAP search operation timed out.
+	ErrLDAPSearchTimeout = NewDetailedError("ldap_search_timeout")
+	// ErrLDAPBindTimeout reports that an LDAP bind operation timed out.
+	ErrLDAPBindTimeout = NewDetailedError("ldap_bind_timeout")
+	// ErrLDAPModify reports that an LDAP modify operation failed.
+	ErrLDAPModify = NewDetailedError("ldap_modify_error")
 	// ErrLDAPPoolExhausted indicates that the LDAP pool could not serve the request
 	// within the allotted time (capacity token acquisition or waiting for a free
 	// connection timed out). Callers should treat this as a temporary failure and
@@ -163,69 +179,93 @@ var (
 // lua.
 
 var (
-	ErrLuaConfig               = NewDetailedError("lua_config_error")
+	// ErrLuaConfig is an exported package value.
+	ErrLuaConfig = NewDetailedError("lua_config_error")
+	// ErrBackendLuaWrongUserData is an exported package value.
 	ErrBackendLuaWrongUserData = NewDetailedError("wrong_user_data_result")
-	ErrBackendLua              = NewDetailedError("script_execution_failed")
+	// ErrBackendLua reports a Lua script execution failure.
+	ErrBackendLua = NewDetailedError("script_execution_failed")
 )
 
 // util.
 
 var (
-	ErrUnsupportedAlgorithm      = errors.New("unsupported hash algorithm")
+	// ErrUnsupportedAlgorithm is an exported package value.
+	ErrUnsupportedAlgorithm = errors.New("unsupported hash algorithm")
+	// ErrUnsupportedPasswordOption is an exported package value.
 	ErrUnsupportedPasswordOption = errors.New("unsupported password option")
 )
 
 // common.
 
 var (
-	ErrNoPassDBResult  = errors.New("no pass Database result")
-	ErrUnknownCause    = errors.New("something went wrong")
+	// ErrNoPassDBResult is an exported package value.
+	ErrNoPassDBResult = errors.New("no pass Database result")
+	// ErrUnknownCause is an exported package value.
+	ErrUnknownCause = errors.New("something went wrong")
+	// ErrDurationTooHigh reports an out-of-range duration value.
 	ErrDurationTooHigh = errors.New("duration of too high")
 )
 
 // bruteforce.
 
 var (
-	ErrRuleNoIPv4AndIPv6      = errors.New("do not set 'ipv4' and 'ipv6' at the same time in a rule")
+	// ErrRuleNoIPv4AndIPv6 is an exported package value.
+	ErrRuleNoIPv4AndIPv6 = errors.New("do not set 'ipv4' and 'ipv6' at the same time in a rule")
+	// ErrRuleMissingIPv4AndIPv6 is an exported package value.
 	ErrRuleMissingIPv4AndIPv6 = errors.New("neither 'ipv4' nor 'ipv6' specified in rule")
-	ErrWrongIPAddress         = errors.New("unable to parse IP address")
+	// ErrWrongIPAddress reports an invalid IP address value.
+	ErrWrongIPAddress = errors.New("unable to parse IP address")
 )
 
 // auth.
 
 var (
-	ErrNoAccount        = errors.New("no account found")
-	ErrNoTLS            = errors.New("no tls connection")
-	ErrTOTPCodeInvalid  = errors.New("totp code invalid")
-	ErrNoTOTPCode       = errors.New("totp code not found")
+	// ErrNoAccount is an exported package value.
+	ErrNoAccount = errors.New("no account found")
+	// ErrNoTLS is an exported package value.
+	ErrNoTLS = errors.New("no tls connection")
+	// ErrTOTPCodeInvalid reports an invalid TOTP code.
+	ErrTOTPCodeInvalid = errors.New("totp code invalid")
+	// ErrNoTOTPCode reports that no TOTP code was provided.
+	ErrNoTOTPCode = errors.New("totp code not found")
+	// ErrBruteForceAttack reports that brute-force protections blocked the request.
 	ErrBruteForceAttack = errors.New("please contact the support")
 )
 
 // DNS and runtime controls.
 
 var (
+	// ErrDNSResolver is an exported package value.
 	ErrDNSResolver = errors.New("resolver failed")
 )
 
 // http.
 
 var (
+	// ErrLanguageNotFound is an exported package value.
 	ErrLanguageNotFound = errors.New("requested language not found")
-	ErrUnauthorized     = errors.New("unauthorized")
+	// ErrUnauthorized is an exported package value.
+	ErrUnauthorized = errors.New("unauthorized")
 )
 
 // register.
 
 var (
+	// ErrNotLoggedIn is an exported package value.
 	ErrNotLoggedIn = errors.New("user not logged in")
-	ErrNoTOTPURL   = errors.New("no TOTP URL found")
+	// ErrNoTOTPURL is an exported package value.
+	ErrNoTOTPURL = errors.New("no TOTP URL found")
 )
 
 // webauthn.
 
 var (
-	ErrWebAuthnSessionData    = errors.New("no webauthn session data found")
-	ErrNoDisplayName          = errors.New("no display name found")
+	// ErrWebAuthnSessionData is an exported package value.
+	ErrWebAuthnSessionData = errors.New("no webauthn session data found")
+	// ErrNoDisplayName is an exported package value.
+	ErrNoDisplayName = errors.New("no display name found")
+	// ErrUnknownDatabaseBackend reports an unsupported database backend.
 	ErrUnknownDatabaseBackend = errors.New("unknown Database backend")
 )
 
@@ -258,12 +298,15 @@ var (
 // misc.
 
 var (
+	// ErrNotImplemented is an exported package value.
 	ErrNotImplemented = errors.New("not implemented yet")
-	ErrInvalidRange   = errors.New("invalid range")
+	// ErrInvalidRange is an exported package value.
+	ErrInvalidRange = errors.New("invalid range")
 )
 
 // connection.
 
 var (
+	// ErrMissingTLS is an exported package value.
 	ErrMissingTLS = errors.New("missing TLS connection")
 )

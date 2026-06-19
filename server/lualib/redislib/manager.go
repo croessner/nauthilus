@@ -49,7 +49,7 @@ func (rm *RedisManager) currentContext(L *lua.LState) context.Context {
 // getConn retrieves the Redis connection from the Lua stack or falls back to the default handle.
 func (rm *RedisManager) getConn(L *lua.LState, fallback redis.UniversalClient) redis.UniversalClient {
 	ud := L.Get(1)
-	if ud.Type() == lua.LTString && ud.String() == "default" {
+	if ud.Type() == lua.LTString && ud.String() == redisLuaPoolDefault {
 		return fallback
 	}
 

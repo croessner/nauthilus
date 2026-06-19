@@ -50,6 +50,7 @@ func (h *SAMLHandler) respondToLogoutRequest(
 	}
 
 	status := samlLogoutResponseStatusFromCleanup(cleanupResult)
+
 	response, err := h.buildSignedLogoutResponse(logoutRequest, status)
 	if err != nil {
 		return err
@@ -111,7 +112,7 @@ func (h *SAMLHandler) buildSignedLogoutResponse(logoutRequest *saml.LogoutReques
 		return nil, err
 	}
 
-	idpObj, err := h.getSAMLIdP()
+	idpObj, err := h.getSAMLIDP()
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +124,7 @@ func (h *SAMLHandler) buildSignedLogoutResponse(logoutRequest *saml.LogoutReques
 	response := &saml.LogoutResponse{
 		ID:           "id-" + ksuid.New().String(),
 		InResponseTo: requestID,
-		Version:      "2.0",
+		Version:      samlProtocolVersion,
 		IssueInstant: saml.TimeNow().UTC(),
 		Destination:  destination,
 		Issuer: &saml.Issuer{
@@ -156,7 +157,7 @@ func (h *SAMLHandler) signLogoutResponse(response *saml.LogoutResponse, idpObj *
 
 	signatureMethod := strings.TrimSpace(idpObj.SignatureMethod)
 	if signatureMethod == "" {
-		signatureMethod = h.deps.Cfg.GetIdP().SAML2.GetSignatureMethod()
+		signatureMethod = h.deps.Cfg.GetIDP().SAML2.GetSignatureMethod()
 	}
 
 	if isWeakSHA1SignatureMethodSLO(signatureMethod) {
@@ -179,7 +180,7 @@ func (h *SAMLHandler) signLogoutResponse(response *saml.LogoutResponse, idpObj *
 func (h *SAMLHandler) writeSignedLogoutResponse(
 	ctx *gin.Context,
 	response *saml.LogoutResponse,
-	binding slodomain.SLOBinding,
+	binding slodomain.Binding,
 	relayState string,
 ) error {
 	if ctx == nil {
@@ -209,7 +210,7 @@ func (h *SAMLHandler) writeSignedLogoutResponse(
 	return nil
 }
 
-func resolveLogoutResponseBinding(binding slodomain.SLOBinding) slodomain.SLOBinding {
+func resolveLogoutResponseBinding(binding slodomain.Binding) slodomain.Binding {
 	switch binding {
 	case slodomain.SLOBindingPost, slodomain.SLOBindingRedirect:
 		return binding
@@ -247,7 +248,7 @@ func (h *SAMLHandler) findConfiguredSAMLServiceProvider(entityID string) (*confi
 		return nil, false
 	}
 
-	return config.FindSAMLServiceProviderByEntityID(h.deps.Cfg.GetIdP().SAML2.ServiceProviders, entityID)
+	return config.FindSAMLServiceProviderByEntityID(h.deps.Cfg.GetIDP().SAML2.ServiceProviders, entityID)
 }
 
 func parseAbsoluteURL(rawURL string) (*url.URL, error) {

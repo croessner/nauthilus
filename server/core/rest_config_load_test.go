@@ -28,6 +28,7 @@ func newRestAdminDepsForConfigLoadTests(cfg *config.FileSettings) restAdminDeps 
 
 func newConfigLoadContext() (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/config/load", nil)

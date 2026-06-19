@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package backchannel provides backchannel functionality.
 package backchannel
 
 import (
@@ -49,8 +50,10 @@ import (
 var errBackchannelAuthNotConfigured = errors.New("backchannel setup requires at least one configured authentication method: auth.backchannel.basic_auth.enabled=true or auth.backchannel.oidc_bearer.enabled=true")
 
 const (
-	openAPICategory = "openapi"
-	openAPIService  = "spec"
+	backchannelAuthNotConfigured = "backchannel authentication is not configured"
+	backchannelResponseKeyError  = "error"
+	openAPICategory              = "openapi"
+	openAPIService               = "spec"
 )
 
 func ensureBackchannelAuthConfigured(cfg config.File, developerMode bool) error {
@@ -127,15 +130,16 @@ func authorizeBackchannelRequest(
 	logger *slog.Logger,
 ) bool {
 	if cfg == nil || cfg.GetServer() == nil {
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "backchannel authentication is not configured"})
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{backchannelResponseKeyError: backchannelAuthNotConfigured})
 
 		return false
 	}
 
 	basicEnabled := cfg.GetServer().GetBasicAuth().IsEnabled()
+
 	oidcEnabled := cfg.GetServer().GetOIDCAuth().IsEnabled()
 	if !basicEnabled && !oidcEnabled {
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "backchannel authentication is not configured"})
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{backchannelResponseKeyError: backchannelAuthNotConfigured})
 
 		return false
 	}
@@ -164,6 +168,7 @@ func authorizeBackchannelRequest(
 
 func authorizationHeaderScheme(ctx *gin.Context) string {
 	header := strings.TrimSpace(ctx.GetHeader("Authorization"))
+
 	scheme, _, ok := strings.Cut(header, " ")
 	if !ok {
 		return ""
@@ -189,25 +194,27 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 	developerMode := deps.Env != nil && deps.Env.GetDevMode()
 
 	// Main API group with configured authentication (mandatory token)
-	var nauthilusIdP oidcbearer.TokenValidator
-	var authenticatedGroup *gin.RouterGroup
+	var (
+		nauthilusIDP       oidcbearer.TokenValidator
+		authenticatedGroup *gin.RouterGroup
+	)
 
 	if hasBackchannelProtectedRouteAuth(cfg, developerMode) {
 		authenticatedGroup = router.Group("/api/v1")
 		authenticatedGroup.Use(openAPIContextMiddleware())
 
 		// OIDC Bearer token middleware (replaces the legacy JWT mechanism).
-		// Uses the IdP's ValidateToken to verify RS256-signed tokens from client_credentials grant.
+		// Uses the IDP's ValidateToken to verify RS256-signed tokens from client_credentials grant.
 		// Controlled by auth.backchannel.oidc_bearer.enabled, independent of identity.oidc.enabled.
 		if cfg.GetServer().GetOIDCAuth().IsEnabled() {
-			nauthilusIdP = idp.NewNauthilusIdP(deps)
+			nauthilusIDP = idp.NewNauthilusIDP(deps)
 		}
 
 		if hasConfiguredBackchannelAuth(cfg) {
-			authenticatedGroup.Use(backchannelAuthMiddleware(cfg, nauthilusIdP, deps.Logger))
+			authenticatedGroup.Use(backchannelAuthMiddleware(cfg, nauthilusIDP, deps.Logger))
 		}
 
-		authenticatedGroup.Use(mdlua.LuaContextMiddleware())
+		authenticatedGroup.Use(mdlua.ContextMiddleware())
 
 		openAPIValidationMiddleware, err := mdopenapivalidation.NewManagementMiddleware(
 			cfg.GetServer().GetOpenAPIValidation(),
@@ -241,13 +248,13 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 	// hooks that define required scopes perform token extraction, validation, and
 	// scope checking; hooks without scopes are publicly accessible.
 	hookGroup := router.Group("/api/v1")
-	hookGroup.Use(mdlua.LuaContextMiddleware())
+	hookGroup.Use(mdlua.ContextMiddleware())
 
 	custom.New(
 		deps.CfgProvider,
 		deps.Logger,
 		deps.Redis,
-		nauthilusIdP,
+		nauthilusIDP,
 		custom.WithNativeHooks(nativeHookBindings()),
 	).Register(hookGroup)
 

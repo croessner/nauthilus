@@ -66,6 +66,7 @@ func (a *AuthState) configuredPolicyPreAuthResult(ctx *gin.Context, current defi
 
 	a.applyPolicyResponseMessage(final)
 	a.applyPolicyObligations(ctx, final)
+
 	if configuredPreAuthControl(final) {
 		return definitions.AuthResultOK, true
 	}
@@ -156,7 +157,7 @@ func (a *AuthState) ConfiguredPolicyTerminalDecision(ctx *gin.Context) (*report.
 
 // ConfiguredPolicyAllowsIDPDelayedResponse reports whether the selected
 // configured terminal decision is the ordinary password-failure fallback.
-// IdP delayed_response must still defer that case until after MFA.
+// IDP delayed_response must still defer that case until after MFA.
 func (a *AuthState) ConfiguredPolicyAllowsIDPDelayedResponse(ctx *gin.Context) bool {
 	final, ok := a.ConfiguredPolicyTerminalDecision(ctx)
 	if !ok {
@@ -193,7 +194,7 @@ func (a *AuthState) applyConfiguredPreAuthDecision(ctx *gin.Context) bool {
 	return true
 }
 
-func (a *AuthState) applyConfiguredPreAuthControl(ctx *gin.Context, current definitions.AuthResult) bool {
+func (a *AuthState) applyConfiguredPreAuthControl(ctx *gin.Context, _ definitions.AuthResult) bool {
 	final, ok := a.configuredPolicyPreAuthDecision(ctx)
 	if !ok || !configuredPreAuthControl(final) {
 		return false
@@ -250,6 +251,7 @@ func (a *AuthState) configuredPolicyDecision(ctx *gin.Context, resolver configur
 	}
 
 	mode, defaultPolicy, generation := policyCtx.SnapshotMetadata()
+
 	result := resolver.evaluate(contextFromGin(ctx), policyCtx.Snapshot(), policyCtx.Report(), evaluation.CompareInput{
 		Mode:       mode,
 		Set:        defaultPolicy,
@@ -423,6 +425,7 @@ func (a *AuthState) applyPolicyResponseMessage(final *report.FinalDecision) {
 	}
 
 	a.Runtime.StatusMessage = final.ResponseMessage.Message
+
 	a.Runtime.StatusMessageI18NKey = final.ResponseMessage.I18NKey
 	if final.ResponseMessage.I18NKey != "" && final.ResponseLanguage != nil {
 		a.Runtime.ResponseLanguage = final.ResponseLanguage.Language
@@ -460,6 +463,7 @@ func takePolicyPostActionResult(ctx *gin.Context) (*PassDBResult, bool) {
 	}
 
 	ctx.Set(policyPostActionResultContextKey, nil)
+
 	result, ok := value.(*PassDBResult)
 
 	return result, ok && result != nil
@@ -474,7 +478,7 @@ func releasePolicyPostActionResult(ctx *gin.Context) {
 func preAuthResultFromPolicy(final *report.FinalDecision, current definitions.AuthResult) definitions.AuthResult {
 	switch final.FSMEventMarker {
 	case policy.FSMEventMarkerPreAuthDeny:
-		return preAuthDenyResult(final, current)
+		return preAuthDenyResult(final)
 	case policy.FSMEventMarkerPreAuthTempFail:
 		if final.ResponseMarker == policy.ResponseMarkerTempFailNoTLS {
 			return definitions.AuthResultPreAuthTLS
@@ -488,7 +492,7 @@ func preAuthResultFromPolicy(final *report.FinalDecision, current definitions.Au
 	}
 }
 
-func preAuthDenyResult(final *report.FinalDecision, current definitions.AuthResult) definitions.AuthResult {
+func preAuthDenyResult(final *report.FinalDecision) definitions.AuthResult {
 	name := final.PolicyName
 	switch {
 	case strings.Contains(name, "_relay_domain_"):

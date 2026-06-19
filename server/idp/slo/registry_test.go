@@ -41,6 +41,7 @@ func TestSessionRegistry_UpsertParticipant(t *testing.T) {
 	ttl := 2 * time.Hour
 	participantKey := registry.participantKey(session.Account, session.SPEntityID)
 	indexKey := registry.accountIndexKey(session.Account)
+
 	expectedRaw, err := jsoniter.ConfigFastest.Marshal(session)
 	if !assert.NoError(t, err) {
 		return

@@ -212,6 +212,7 @@ func (p *Pool) Release(L *lua.LState) {
 	if n < 0 {
 		// Should not happen; self-heal to zero
 		atomic.StoreInt64(&p.inUse, 0)
+
 		n = 0
 	}
 
@@ -240,6 +241,7 @@ func (p *Pool) Replace(L *lua.LState) {
 	}
 
 	stats.GetMetrics().GetLuaVMReplacedTotal().WithLabelValues(string(p.key)).Inc()
+
 	select {
 	case p.states <- luapool.NewLuaState(p.httpClient, p.opts.Config):
 	default:
@@ -250,6 +252,7 @@ func (p *Pool) Replace(L *lua.LState) {
 	n := atomic.AddInt64(&p.inUse, -1)
 	if n < 0 {
 		atomic.StoreInt64(&p.inUse, 0)
+
 		n = 0
 	}
 

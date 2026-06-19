@@ -53,6 +53,7 @@ func (DefaultCacheService) OnSuccess(auth *core.AuthState, accountName string) e
 	}
 
 	ppc := auth.CreatePositivePasswordCache()
+
 	var sb strings.Builder
 
 	sb.WriteString(auth.Cfg().GetServer().GetRedis().GetPrefix())

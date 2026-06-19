@@ -24,6 +24,7 @@ type AuthResult uint8
 // LDAPCommand represents the LDAP operation like search, add or modify.
 type LDAPCommand uint8
 
+// LDAPSubCommand describes the exported LDAPSubCommand type.
 type LDAPSubCommand uint8
 
 // LDAPState is the tri-state flag for the LDAPPool

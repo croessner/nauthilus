@@ -67,7 +67,7 @@ func newCanceledTokenContext(t *testing.T) *gin.Context {
 	req.RemoteAddr = "192.0.2.10:12345"
 	ctx.Request = req
 	ctx.Set(definitions.CtxGUIDKey, "token-post-action-test")
-	ctx.Set(definitions.CtxServiceKey, definitions.ServIdP)
+	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 
 	return ctx
@@ -102,6 +102,7 @@ func TestRunOIDCTokenPostActionQueuesActionWhenRequestContextCanceled(t *testing
 	requestChan := make(chan *action.Action, 1)
 	originalRequestChan := action.RequestChan
 	action.RequestChan = requestChan
+
 	t.Cleanup(func() {
 		action.RequestChan = originalRequestChan
 	})
@@ -128,6 +129,7 @@ func TestRunOIDCTokenPostActionCopiesMFASessionState(t *testing.T) {
 	requestChan := make(chan *action.Action, 1)
 	originalRequestChan := action.RequestChan
 	action.RequestChan = requestChan
+
 	t.Cleanup(func() {
 		action.RequestChan = originalRequestChan
 	})
@@ -159,6 +161,7 @@ func TestRunOIDCTokenPostActionCopiesMFASessionState(t *testing.T) {
 		assert.True(t, act.MFACompleted)
 		assert.False(t, act.EnvironmentStageExpected)
 		assert.False(t, act.SubjectStageExpected)
+
 		act.FinishedChan <- action.Done{}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected post action to be queued")
@@ -171,6 +174,7 @@ func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {
 	requestChan := make(chan *action.Action, 1)
 	originalRequestChan := action.RequestChan
 	action.RequestChan = requestChan
+
 	t.Cleanup(func() {
 		action.RequestChan = originalRequestChan
 	})
@@ -200,6 +204,7 @@ func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {
 		assert.True(t, act.MFACompleted)
 		assert.False(t, act.EnvironmentStageExpected)
 		assert.False(t, act.SubjectStageExpected)
+
 		act.FinishedChan <- action.Done{}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected post action to be queued")
@@ -212,6 +217,7 @@ func TestRunOIDCTokenPostActionCopiesOIDCSessionSubject(t *testing.T) {
 	requestChan := make(chan *action.Action, 1)
 	originalRequestChan := action.RequestChan
 	action.RequestChan = requestChan
+
 	t.Cleanup(func() {
 		action.RequestChan = originalRequestChan
 	})
@@ -249,6 +255,7 @@ func TestRunOIDCTokenPostActionCopiesOIDCSessionSubject(t *testing.T) {
 		assert.Equal(t, "webauthn", act.MFAMethod)
 		assert.True(t, act.MFACompleted)
 		assert.True(t, act.UserFound)
+
 		act.FinishedChan <- action.Done{}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected post action to be queued")

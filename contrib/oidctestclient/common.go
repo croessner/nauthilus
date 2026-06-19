@@ -35,18 +35,18 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// FlowType represents the OAuth 2.0 / OIDC grant type to execute.
-type FlowType string
+// Type represents the OAuth 2.0 / OIDC grant type to execute.
+type Type string
 
 const (
 	// FlowAuthorizationCode is the standard Authorization Code Grant flow.
-	FlowAuthorizationCode FlowType = "authorization_code"
+	FlowAuthorizationCode Type = "authorization_code"
 
 	// FlowDeviceCode is the Device Authorization Grant flow (RFC 8628).
-	FlowDeviceCode FlowType = "device_code"
+	FlowDeviceCode Type = "device_code"
 
 	// FlowClientCredentials is the Client Credentials Grant flow.
-	FlowClientCredentials FlowType = "client_credentials"
+	FlowClientCredentials Type = "client_credentials"
 
 	// PKCEModeDisabled disables PKCE for Authorization Code flow.
 	PKCEModeDisabled PKCEMode = "disabled"
@@ -56,10 +56,17 @@ const (
 
 	// listenAddr is the default address the test client listens on.
 	listenAddr = "127.0.0.1:9094"
+
+	scopeProfile = "profile"
+	scopeEmail   = "email"
+
+	pkceModeS256Lower = "s256"
+	pkceModeOff       = "off"
+	envBoolTrue       = "true"
 )
 
 // defaultScopes defines the default OIDC scopes used when the OAUTH2_SCOPES environment variable is not set.
-var defaultScopes = []string{oidc.ScopeOpenID, "profile", "email", "groups", "offline", "offline_access", "nauthilus:mfa:manage"}
+var defaultScopes = []string{oidc.ScopeOpenID, scopeProfile, scopeEmail, "groups", "offline", "offline_access", "nauthilus:mfa:manage"}
 
 var (
 	openIDProvider = os.Getenv("OPENID_PROVIDER")
@@ -137,12 +144,12 @@ func parseScopesFromEnv() []string {
 }
 
 // parseFlowTypeFromEnv reads the OAUTH2_FLOW environment variable and returns
-// the selected FlowType. Valid values are "authorization_code" (default),
+// the selected Type. Valid values are "authorization_code" (default),
 // "device_code", and "client_credentials".
-func parseFlowTypeFromEnv() FlowType {
+func parseFlowTypeFromEnv() Type {
 	raw := strings.TrimSpace(os.Getenv("OAUTH2_FLOW"))
 
-	switch FlowType(raw) {
+	switch Type(raw) {
 	case FlowDeviceCode:
 		return FlowDeviceCode
 	case FlowClientCredentials:
@@ -168,9 +175,9 @@ func parsePKCEModeFromEnv() PKCEMode {
 	}
 
 	switch strings.ToLower(raw) {
-	case "disabled", "off", "false", "0", "none":
+	case string(PKCEModeDisabled), pkceModeOff, "false", "0", "none":
 		return PKCEModeDisabled
-	case "s256", "true", "1":
+	case pkceModeS256Lower, envBoolTrue, "1":
 		return PKCEModeS256
 	default:
 		log.Printf("Warning: unknown OAUTH2_PKCE %q, falling back to %s", raw, PKCEModeDisabled)
@@ -253,7 +260,7 @@ func fetchJWKS(jwksURI string) string {
 		return ""
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 
@@ -328,7 +335,7 @@ func performIntrospection(introspectionEndpoint, accessToken string) *json.RawMe
 		return nil
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

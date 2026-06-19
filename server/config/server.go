@@ -370,20 +370,33 @@ func boolOrDefaultTrue(v *bool) bool {
 	return *v
 }
 
-func (m *Middlewares) IsLoggingEnabled() bool        { return boolOrDefaultTrue(m.Logging) }
-func (m *Middlewares) IsLimitEnabled() bool          { return boolOrDefaultTrue(m.Limit) }
-func (m *Middlewares) IsRecoveryEnabled() bool       { return boolOrDefaultTrue(m.Recovery) }
+// IsLoggingEnabled provides the exported IsLoggingEnabled method.
+func (m *Middlewares) IsLoggingEnabled() bool { return boolOrDefaultTrue(m.Logging) }
+
+// IsLimitEnabled provides the exported IsLimitEnabled method.
+func (m *Middlewares) IsLimitEnabled() bool { return boolOrDefaultTrue(m.Limit) }
+
+// IsRecoveryEnabled provides the exported IsRecoveryEnabled method.
+func (m *Middlewares) IsRecoveryEnabled() bool { return boolOrDefaultTrue(m.Recovery) }
+
+// IsTrustedProxiesEnabled provides the exported IsTrustedProxiesEnabled method.
 func (m *Middlewares) IsTrustedProxiesEnabled() bool { return boolOrDefaultTrue(m.TrustedProxies) }
+
+// IsRequestDecompressionEnabled provides the exported IsRequestDecompressionEnabled method.
 func (m *Middlewares) IsRequestDecompressionEnabled() bool {
 	return boolOrDefaultTrue(m.RequestDecompression)
 }
 
+// IsResponseCompressionEnabled provides the exported IsResponseCompressionEnabled method.
 func (m *Middlewares) IsResponseCompressionEnabled() bool {
 	return boolOrDefaultTrue(m.ResponseCompression)
 }
 
+// IsMetricsEnabled provides the exported IsMetricsEnabled method.
 func (m *Middlewares) IsMetricsEnabled() bool { return boolOrDefaultTrue(m.Metrics) }
-func (m *Middlewares) IsRateEnabled() bool    { return boolOrDefaultTrue(m.Rate) }
+
+// IsRateEnabled provides the exported IsRateEnabled method.
+func (m *Middlewares) IsRateEnabled() bool { return boolOrDefaultTrue(m.Rate) }
 
 // GetCORS returns the CORS configuration section or a zero-value if nil.
 func (s *ServerSection) GetCORS() *CORS {
@@ -1123,6 +1136,7 @@ func (t *TLS) GetMinTLSVersion() string {
 	return t.MinTLSVersion
 }
 
+// HTTPClient describes the exported HTTPClient type.
 type HTTPClient struct {
 	MaxConnsPerHost     int           `mapstructure:"max_connections_per_host" validate:"omitempty,gte=1"`
 	MaxIdleConns        int           `mapstructure:"max_idle_connections" validate:"omitempty,gte=1"`
@@ -1294,8 +1308,8 @@ func (b *BasicAuth) GetPassword() secret.Value {
 
 // OIDCAuth represents the configuration for OIDC Bearer token authentication
 // on the backchannel API. When enabled, the OIDC Bearer middleware validates
-// tokens issued by the built-in IdP (client_credentials flow) for /api/v1/* routes.
-// This is independent of identity.oidc.enabled, which controls whether the IdP itself is active.
+// tokens issued by the built-in IDP (client_credentials flow) for /api/v1/* routes.
+// This is independent of identity.oidc.enabled, which controls whether the IDP itself is active.
 type OIDCAuth struct {
 	Enabled bool `mapstructure:"enabled"`
 }
@@ -1710,7 +1724,7 @@ func (r *Redis) GetPrefix() string {
 	}
 
 	if r.Prefix == "" {
-		return "nt:"
+		return defaultRedisKeyPrefix
 	}
 
 	return r.Prefix
@@ -1792,6 +1806,7 @@ func (b *RedisBatching) GetMaxBatchSize() int {
 	if b.MaxBatchSize < 2 {
 		return 2
 	}
+
 	if b.MaxBatchSize > 1024 {
 		return 1024
 	}
@@ -1986,6 +2001,7 @@ func (r *Redis) GetAccountLocalCache() *AccountLocalCache {
 	return &r.AccountLocalCache
 }
 
+// IsEnabled provides the exported IsEnabled method.
 func (a *AccountLocalCache) IsEnabled() bool {
 	if a == nil {
 		return false
@@ -1994,6 +2010,7 @@ func (a *AccountLocalCache) IsEnabled() bool {
 	return a.Enabled
 }
 
+// GetTTL provides the exported GetTTL method.
 func (a *AccountLocalCache) GetTTL() time.Duration {
 	if a == nil || a.TTL <= 0 {
 		return 60 * time.Second
@@ -2002,6 +2019,7 @@ func (a *AccountLocalCache) GetTTL() time.Duration {
 	return a.TTL
 }
 
+// GetShards provides the exported GetShards method.
 func (a *AccountLocalCache) GetShards() int {
 	if a == nil || a.Shards <= 0 {
 		return 32
@@ -2010,6 +2028,7 @@ func (a *AccountLocalCache) GetShards() int {
 	return a.Shards
 }
 
+// GetCleanupInterval provides the exported GetCleanupInterval method.
 func (a *AccountLocalCache) GetCleanupInterval() time.Duration {
 	if a == nil || a.CleanUp <= 0 {
 		return 10 * time.Minute
@@ -2018,6 +2037,7 @@ func (a *AccountLocalCache) GetCleanupInterval() time.Duration {
 	return a.CleanUp
 }
 
+// GetMaxItems provides the exported GetMaxItems method.
 func (a *AccountLocalCache) GetMaxItems() int {
 	if a == nil || a.MaxItems < 0 {
 		return 0
@@ -2655,6 +2675,7 @@ func fieldStringValue(field reflect.Value) string {
 	if field.Type() == secretValueType {
 		if value, ok := field.Interface().(secret.Value); ok {
 			var secretBytes []byte
+
 			value.WithBytes(func(data []byte) {
 				if len(data) == 0 {
 					return
@@ -2813,6 +2834,7 @@ func hostnameRFC1123WithOptionalTrailingDot(fl validator.FieldLevel) bool {
 
 	// Reuse the standard validator's built-in hostname_rfc1123 rule
 	v := validator.New()
+
 	return v.Var(s, "hostname_rfc1123") == nil
 }
 
@@ -3456,6 +3478,7 @@ func (t *Timeouts) GetLuaBackend() time.Duration {
 	return t.LuaBackend
 }
 
+// GetLuaScript provides the exported GetLuaScript method.
 func (t *Timeouts) GetLuaScript() time.Duration {
 	if t.LuaScript == 0 {
 		return 30 * time.Second
@@ -3464,6 +3487,7 @@ func (t *Timeouts) GetLuaScript() time.Duration {
 	return t.LuaScript
 }
 
+// GetTrustedProxies provides the exported GetTrustedProxies method.
 func (s *ServerSection) GetTrustedProxies() []string {
 	if s == nil {
 		return []string{}
@@ -3472,10 +3496,12 @@ func (s *ServerSection) GetTrustedProxies() []string {
 	return s.TrustedProxies
 }
 
+// GetEnvironment provides the exported GetEnvironment method.
 func (s *ServerSection) GetEnvironment() Environment {
 	return GetEnvironment()
 }
 
+// GetTimeouts provides the exported GetTimeouts method.
 func (s *ServerSection) GetTimeouts() *Timeouts {
 	if s == nil {
 		return &Timeouts{}

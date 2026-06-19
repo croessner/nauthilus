@@ -80,6 +80,7 @@ func TestComputeBruteForceHints_PositiveRepeatViaRedis(t *testing.T) {
 
 	// Start a gin context for consistency (not required for the function)
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	_, _ = gin.CreateTestContext(w)
 
@@ -92,6 +93,7 @@ func TestComputeBruteForceHints_PositiveRepeatViaRedis(t *testing.T) {
 	mock.ExpectExists(banKey).SetVal(1)
 
 	ctx := context.Background()
+
 	cn, rep := corepkg.ComputeBruteForceHints(ctx, config.GetFile(), rediscli.GetClient(), "203.0.113.1", "imap", "")
 	if !rep {
 		t.Fatalf("expected repeating=true from redis hit")

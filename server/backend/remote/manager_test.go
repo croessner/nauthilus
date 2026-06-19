@@ -225,10 +225,10 @@ func TestManagerPassDBResolvesSAMLRequestedAttributesThroughAuthority(t *testing
 	auth.Request.Protocol.Set(definitions.ProtoSAML)
 	auth.Request.SAMLEntityID = "https://sp.example.test/metadata"
 	auth.Runtime.IdentityAttributeRequest = &core.IdentityAttributeRequest{
-		Names:                   []string{remoteTestEmployeeNumber, remoteTestAccountField},
-		IncludeStandardIdentity: true,
-		IncludeGroupDNS:         true,
-		ReportMissing:           true,
+		Names:                          []string{remoteTestEmployeeNumber, remoteTestAccountField},
+		IncludeStandardIdentity:        true,
+		IncludeGroupDistinguishedNames: true,
+		ReportMissing:                  true,
 	}
 
 	result, err := manager.PassDB(auth)
@@ -251,7 +251,7 @@ func TestManagerPassDBResolvesSAMLRequestedAttributesThroughAuthority(t *testing
 		)
 	}
 
-	if got := result.GroupDNs; !slices.Equal(got, []string{remoteTestSAMLGroupDN}) {
+	if got := result.GroupDistinguishedNames; !slices.Equal(got, []string{remoteTestSAMLGroupDN}) {
 		t.Fatalf("group DNs = %#v, want first-class SAML group DNs", got)
 	}
 }
@@ -914,7 +914,7 @@ func newResolveUserAuthorityClient(
 	protocol string,
 	attributes map[string]*commonv1.AttributeValues,
 	groups []string,
-	groupDNS []string,
+	groupDistinguishedNames []string,
 ) *fakeAuthorityClient {
 	return &fakeAuthorityClient{
 		resolveResponse: &identityv1.UserSnapshotResponse{
@@ -926,7 +926,7 @@ func newResolveUserAuthorityClient(
 				DisplayName:  remoteTestDisplayName,
 				Attributes:   attributes,
 				Groups:       groups,
-				GroupDns:     groupDNS,
+				GroupDns:     groupDistinguishedNames,
 				Backend: &commonv1.BackendRef{
 					Type:        remoteTestAuthorityBackendType,
 					Name:        remoteTestAuthorityBackendName,

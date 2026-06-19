@@ -27,9 +27,9 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// TestFillIdPFieldsPopulatesUserGroupsFromState verifies that fillIdPFields populates the
+// TestFillIDPFieldsPopulatesUserGroupsFromState verifies that fillIDPFields populates the
 // UserGroups field in the CommonRequest from the AuthState.
-func TestFillIdPFieldsPopulatesUserGroupsFromState(t *testing.T) {
+func TestFillIDPFieldsPopulatesUserGroupsFromState(t *testing.T) {
 	t.Parallel()
 
 	ctx, _ := gin.CreateTestContext(nil)
@@ -42,14 +42,14 @@ func TestFillIdPFieldsPopulatesUserGroupsFromState(t *testing.T) {
 	auth.SetResolvedGroups([]string{"team-b", "team-a"}, nil)
 
 	request := &lualib.CommonRequest{}
-	auth.fillIdPFields(request)
+	auth.fillIDPFields(request)
 
 	assert.Equal(t, []string{"team-a", "team-b"}, request.UserGroups)
 }
 
-// TestFillIdPFieldsUsesEmptyUserGroupsWhenNotSet ensures that fillIdPFields handles the case
+// TestFillIDPFieldsUsesEmptyUserGroupsWhenNotSet ensures that fillIDPFields handles the case
 // where no groups are resolved in the AuthState.
-func TestFillIdPFieldsUsesEmptyUserGroupsWhenNotSet(t *testing.T) {
+func TestFillIDPFieldsUsesEmptyUserGroupsWhenNotSet(t *testing.T) {
 	t.Parallel()
 
 	ctx, _ := gin.CreateTestContext(nil)
@@ -61,7 +61,7 @@ func TestFillIdPFieldsUsesEmptyUserGroupsWhenNotSet(t *testing.T) {
 	}
 
 	request := &lualib.CommonRequest{}
-	auth.fillIdPFields(request)
+	auth.fillIDPFields(request)
 
 	assert.Nil(t, request.UserGroups)
 }
@@ -104,6 +104,7 @@ func TestSetAuthenticationFieldsMapsExternalSessionFromJSONRequest(t *testing.T)
 
 func TestSetAuthenticationFieldsMapsLoginAttemptFromJSONRequest(t *testing.T) {
 	setupMinimalTestConfig(t)
+
 	auth := &AuthState{deps: setupAuthDeps()}
 
 	ApplyStructuredAuthRequest(auth, &authdto.Request{

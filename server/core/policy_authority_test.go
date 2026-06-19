@@ -39,6 +39,7 @@ const (
 func TestAuthBoundaryDefaultSetSelectsPreAuthDecisionDuringEnvironmentHandling(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
+
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
 		Generation:    101,
 		Mode:          "enforce",
@@ -46,6 +47,7 @@ func TestAuthBoundaryDefaultSetSelectsPreAuthDecisionDuringEnvironmentHandling(t
 	})
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
 	got := auth.HandleEnvironment(ctx)
 	if got != definitions.AuthResultPreAuthTLS {
 		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultPreAuthTLS)
@@ -77,6 +79,7 @@ func TestAuthBoundaryDefaultSetSelectsFinalDecisionDuringPasswordHandling(t *tes
 	passDBResult := GetPassDBResultFromPool()
 	passDBResult.Authenticated = false
 	passDBResult.UserFound = true
+
 	passDBResult.Backend = definitions.BackendTest
 	defer PutPassDBResultToPool(passDBResult)
 
@@ -114,7 +117,7 @@ func TestAuthBoundaryStandardAuthFailureAllowsIDPDelayedResponse(t *testing.T) {
 	})
 
 	if !auth.ConfiguredPolicyAllowsIDPDelayedResponse(ctx) {
-		t.Fatal("standard password failures must stay eligible for IdP delayed_response")
+		t.Fatal("standard password failures must stay eligible for IDP delayed_response")
 	}
 }
 
@@ -158,6 +161,7 @@ func TestAuthBoundaryDefaultSetAuthDecisionDoesNotEmitObserveReportInEnforceMode
 	passDBResult := GetPassDBResultFromPool()
 	passDBResult.Authenticated = false
 	passDBResult.UserFound = true
+
 	passDBResult.Backend = definitions.BackendTest
 	defer PutPassDBResultToPool(passDBResult)
 
@@ -183,9 +187,11 @@ func TestAuthBoundaryDefaultSetAuthDecisionDoesNotEmitObserveReportInEnforceMode
 func TestAuthBoundaryDefaultPreAuthAppliesWhenConfiguredFinalRulesExist(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
+
 	activatePolicySnapshotForTest(t, customEnforceAuthSnapshotForTest())
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
 	got := auth.HandleEnvironment(ctx)
 	if got != definitions.AuthResultPreAuthTLS {
 		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultPreAuthTLS)
@@ -209,6 +215,7 @@ func TestAuthBoundaryDefaultFinalDecisionAppliesWhenConfiguredPreAuthRulesExist(
 	passDBResult := GetPassDBResultFromPool()
 	passDBResult.Authenticated = false
 	passDBResult.UserFound = true
+
 	passDBResult.Backend = definitions.BackendTest
 	defer PutPassDBResultToPool(passDBResult)
 
@@ -237,6 +244,7 @@ func TestAuthBoundaryConfiguredFinalDecisionOverridesBackendSuccess(t *testing.T
 	passDBResult := GetPassDBResultFromPool()
 	passDBResult.Authenticated = true
 	passDBResult.UserFound = true
+
 	passDBResult.Backend = definitions.BackendTest
 	defer PutPassDBResultToPool(passDBResult)
 
@@ -286,6 +294,7 @@ func TestAuthBoundaryConfiguredFinalDecisionAppliesResponseMetadata(t *testing.T
 	passDBResult := GetPassDBResultFromPool()
 	passDBResult.Authenticated = true
 	passDBResult.UserFound = true
+
 	passDBResult.Backend = definitions.BackendTest
 	defer PutPassDBResultToPool(passDBResult)
 
@@ -320,6 +329,7 @@ func TestAuthBoundaryConfiguredFinalDecisionRunsPostActionObligation(t *testing.
 
 	postAction := &countingPostAction{}
 	previousPostAction := getPostAction()
+
 	RegisterPostAction(postAction)
 	t.Cleanup(func() {
 		RegisterPostAction(previousPostAction)
@@ -329,6 +339,7 @@ func TestAuthBoundaryConfiguredFinalDecisionRunsPostActionObligation(t *testing.
 	passDBResult := GetPassDBResultFromPool()
 	passDBResult.Authenticated = true
 	passDBResult.UserFound = true
+
 	passDBResult.Backend = definitions.BackendTest
 	defer PutPassDBResultToPool(passDBResult)
 
@@ -352,10 +363,12 @@ func TestAuthBoundaryConfiguredPreAuthDecisionWithoutLuaActionObligationSkipsSyn
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 	cfg.Lua = policyActionTestLuaConfig(definitions.LuaActionTLSName)
+
 	activatePolicySnapshotForTest(t, customEnforceTLSSnapshot(customEnforceTLSDenyPolicy(false)))
 
 	dispatcher := &recordingActionDispatcher{}
 	previous := getActionDispatcher()
+
 	RegisterActionDispatcher(dispatcher)
 	t.Cleanup(func() {
 		RegisterActionDispatcher(previous)
@@ -388,6 +401,7 @@ func TestAuthBoundaryConfiguredPreAuthDecisionRunsSelectedLuaActionObligationOnc
 
 	dispatcher := &recordingActionDispatcher{}
 	previous := getActionDispatcher()
+
 	RegisterActionDispatcher(dispatcher)
 	t.Cleanup(func() {
 		RegisterActionDispatcher(previous)
@@ -523,6 +537,7 @@ func TestPolicyBruteForceLuaActionPreservesCommonRequestShape(t *testing.T) {
 
 	cfg := newCurrentBehaviorConfig(t)
 	cfg.Lua = policyActionTestLuaConfig(definitions.LuaActionBruteForceName)
+
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
 		Generation:    107,
 		Mode:          "enforce",
@@ -531,6 +546,7 @@ func TestPolicyBruteForceLuaActionPreservesCommonRequestShape(t *testing.T) {
 
 	dispatcher := &recordingActionDispatcher{}
 	previous := getActionDispatcher()
+
 	RegisterActionDispatcher(dispatcher)
 	t.Cleanup(func() {
 		RegisterActionDispatcher(previous)
@@ -705,8 +721,10 @@ func (d *recordingActionDispatcher) Dispatch(view *StateView, environmentName st
 	defer d.mu.Unlock()
 
 	call := recordedActionDispatch{environment: environmentName, action: luaAction}
+
 	if view != nil {
 		auth := view.Auth()
+
 		commonRequest := lualib.GetCommonRequest()
 		defer lualib.PutCommonRequest(commonRequest)
 

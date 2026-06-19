@@ -35,9 +35,11 @@ func TestMockExecReturnsConfiguredResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exec returned error: %v", err)
 	}
+
 	if result.RowsAffected != 1 {
 		t.Fatalf("expected rows_affected=1, got %d", result.RowsAffected)
 	}
+
 	if result.LastInsertID != 42 {
 		t.Fatalf("expected last_insert_id=42, got %d", result.LastInsertID)
 	}
@@ -66,6 +68,7 @@ func TestMockQueryReturnsConfiguredRows(t *testing.T) {
 	if len(result.Columns) != 2 || result.Columns[0] != "id" || result.Columns[1] != "email" {
 		t.Fatalf("unexpected columns: %#v", result.Columns)
 	}
+
 	if len(result.Data) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(result.Data))
 	}
@@ -97,6 +100,7 @@ func TestExpectationsWereMetFailsWhenPending(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected unmet expectation error")
 	}
+
 	if !strings.Contains(err.Error(), "pending=[") || !strings.Contains(err.Error(), "last_call=") {
 		t.Fatalf("expected diagnostic details, got: %v", err)
 	}
@@ -117,6 +121,7 @@ func TestCallsHistoryCapturesMatchedCalls(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call in history, got %d", len(calls))
 	}
+
 	if calls[0].Kind != CallExec {
 		t.Fatalf("expected call kind exec, got %q", calls[0].Kind)
 	}
@@ -142,6 +147,7 @@ func TestCallsHistoryMarksPreparedCalls(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("expected 2 calls in history, got %d", len(calls))
 	}
+
 	if calls[1].Kind != CallQuery || !calls[1].Prepared {
 		t.Fatalf("expected prepared query call, got kind=%q prepared=%t", calls[1].Kind, calls[1].Prepared)
 	}

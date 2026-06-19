@@ -31,6 +31,8 @@ import (
 	"github.com/pires/go-proxyproto"
 )
 
+const monitoringProtocolSieve = "sieve"
+
 // Monitor defines an interface for monitoring and checking backend server connections.
 // It provides a method to verify connectivity using specified configurations.
 type Monitor interface {
@@ -95,6 +97,7 @@ func checkBackendConnection(cfg config.File, logger *slog.Logger, server *config
 
 func checkBackendConnectionWithDialer(cfg config.File, logger *slog.Logger, server *config.BackendServer, phase BackendCheckPhase, dialer backendDialer) error {
 	monitoringCfg := monitoringConfig(cfg)
+
 	conn, err := dialBackendConnection(logger, server, phase, monitoringCfg, dialer)
 	if err != nil {
 		return err
@@ -122,6 +125,7 @@ func dialBackendConnection(logger *slog.Logger, server *config.BackendServer, ph
 	}
 
 	connectTimeout := monitoringCfg.GetServerConnectTimeout(server)
+
 	conn, err := dialer("tcp", net.JoinHostPort(server.Host, fmt.Sprintf("%d", server.Port)), connectTimeout)
 	if err != nil {
 		_ = level.Error(logger).Log(
@@ -148,7 +152,7 @@ func prepareBackendConnection(cfg config.File, logger *slog.Logger, server *conf
 		}
 	}
 
-	if !server.TLS || strings.ToLower(server.Protocol) == "sieve" {
+	if !server.TLS || strings.ToLower(server.Protocol) == monitoringProtocolSieve {
 		return conn, nil
 	}
 

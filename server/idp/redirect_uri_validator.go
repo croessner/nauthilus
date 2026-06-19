@@ -164,6 +164,7 @@ func normalizeRedirectURIWithoutPort(redirectURI *url.URL) string {
 	}
 
 	clone := *redirectURI
+
 	hostname := redirectURI.Hostname()
 	if hostname == "" {
 		return ""

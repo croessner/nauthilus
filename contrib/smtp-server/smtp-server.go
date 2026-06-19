@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package main provides the smtp server command.
 package main
 
 import (
@@ -51,21 +52,23 @@ func (bkd *Backend) NewSession(conn *smtp.Conn) (smtp.Session, error) {
 
 var _ smtp.Backend = (*Backend)(nil)
 
+const authMechanismPlain = "PLAIN"
+
 // A Session is returned after EHLO.
 type Session struct {
 	auth bool
 }
 
 func (s *Session) AuthMechanisms() []string {
-	return []string{"PLAIN"}
+	return []string{authMechanismPlain}
 }
 
 func (s *Session) Auth(mech string) (sasl.Server, error) {
-	if mech != "PLAIN" {
+	if mech != authMechanismPlain {
 		return nil, smtp.ErrAuthUnsupported
 	}
 
-	saslServer := sasl.NewPlainServer(func(identity, username, password string) error {
+	saslServer := sasl.NewPlainServer(func(_, username, _ string) error {
 		s.auth = true
 
 		log.Printf("AUTH username=<%s>", username)
@@ -133,7 +136,7 @@ var _ net.Listener = (*ProxyAndTLSListener)(nil)
 func NewProxyAndTLSListener(rawListener net.Listener, tlsConfig *tls.Config) net.Listener {
 	proxyListener := &proxyproto.Listener{
 		Listener: rawListener,
-		ConnPolicy: func(opts proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+		ConnPolicy: func(_ proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
 			return proxyproto.REQUIRE, nil
 		},
 	}
@@ -213,7 +216,7 @@ func (s *SMTPServer) Start(wg *sync.WaitGroup) {
 	} else {
 		listener = &proxyproto.Listener{
 			Listener: rawListener,
-			ConnPolicy: func(opts proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+			ConnPolicy: func(_ proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
 				return proxyproto.REQUIRE, nil
 			},
 		}

@@ -49,12 +49,12 @@ func (t *JWTAccessToken) Issue(_ context.Context) (string, time.Duration, error)
 	now := time.Now()
 
 	accessClaims := jwt.MapClaims{
-		"iss":   t.issuer,
-		"sub":   t.session.UserID,
-		"aud":   t.session.ClientID,
-		"exp":   now.Add(t.lifetime).Unix(),
-		"iat":   now.Unix(),
-		"scope": strings.Join(t.session.Scopes, " "),
+		oidcClaimIssuer:    t.issuer,
+		oidcClaimSubject:   t.session.UserID,
+		oidcClaimAudience:  t.session.ClientID,
+		oidcClaimExpiresAt: now.Add(t.lifetime).Unix(),
+		oidcClaimIssuedAt:  now.Unix(),
+		oidcClaimScope:     strings.Join(t.session.Scopes, " "),
 	}
 
 	maps.Copy(accessClaims, t.session.AccessTokenClaims)
@@ -67,7 +67,7 @@ func (t *JWTAccessToken) Issue(_ context.Context) (string, time.Duration, error)
 	return accessTokenString, t.lifetime, nil
 }
 
-// Validate is not implemented here as it's handled by NauthilusIdP for now.
+// Validate is not implemented here as it's handled by NauthilusIDP for now.
 func (t *JWTAccessToken) Validate(_ context.Context, _ string) (jwt.MapClaims, error) {
-	return nil, fmt.Errorf("use NauthilusIdP.ValidateToken for JWT validation")
+	return nil, fmt.Errorf("use NauthilusIDP.ValidateToken for JWT validation")
 }

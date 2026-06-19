@@ -99,6 +99,7 @@ func TestParseSubmittedMasterUserRejectsUncanonicalizedDefaultFormat(t *testing.
 
 func TestBasePageData(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
 	cfg := &mockFrontendCfg{}
 
 	t.Run("Basic Session Data", func(t *testing.T) {
@@ -128,10 +129,10 @@ func TestBasePageData(t *testing.T) {
 		r.ServeHTTP(w, req)
 	})
 
-	t.Run("Includes legal links from IdP config", func(t *testing.T) {
+	t.Run("Includes legal links from IDP config", func(t *testing.T) {
 		cfgWithLegalLinks := &mockFrontendCfg{
 			FileSettings: config.FileSettings{
-				IDP: &config.IdPSection{
+				IDP: &config.IDPSection{
 					TermsOfServiceURL:    "https://example.com/legal",
 					PrivacyPolicyURL:     "https://example.com/privacy",
 					PasswordForgottenURL: "https://example.com/forgot",
@@ -171,7 +172,7 @@ func TestBasePageData(t *testing.T) {
 			name: "OIDC Client Name",
 			cfg: &mockFrontendCfg{
 				FileSettings: config.FileSettings{
-					IDP: &config.IdPSection{
+					IDP: &config.IDPSection{
 						OIDC: config.OIDCConfig{
 							Clients: []config.OIDCClient{
 								{ClientID: "client-1", Name: "Client One"},
@@ -181,8 +182,8 @@ func TestBasePageData(t *testing.T) {
 				},
 			},
 			sessionData: map[string]any{
-				definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
-				definitions.SessionKeyIdPClientID: "client-1",
+				definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+				definitions.SessionKeyIDPClientID: "client-1",
 			},
 			expectedName: "Client One",
 		},
@@ -190,7 +191,7 @@ func TestBasePageData(t *testing.T) {
 			name: "SAML Service Provider Name",
 			cfg: &mockFrontendCfg{
 				FileSettings: config.FileSettings{
-					IDP: &config.IdPSection{
+					IDP: &config.IDPSection{
 						SAML2: config.SAML2Config{
 							ServiceProviders: []config.SAML2ServiceProvider{
 								{EntityID: "sp-1", Name: "Example SP"},
@@ -200,8 +201,8 @@ func TestBasePageData(t *testing.T) {
 				},
 			},
 			sessionData: map[string]any{
-				definitions.SessionKeyIdPFlowType:     definitions.ProtoSAML,
-				definitions.SessionKeyIdPSAMLEntityID: "sp-1",
+				definitions.SessionKeyIDPFlowType:     definitions.ProtoSAML,
+				definitions.SessionKeyIDPSAMLEntityID: "sp-1",
 			},
 			expectedName: "Example SP",
 		},
@@ -220,7 +221,7 @@ func TestBasePageData(t *testing.T) {
 				c.Set(definitions.CtxLocalizedKey, localizer)
 
 				data := BasePageData(c, tt.cfg, lm)
-				assert.Equal(t, tt.expectedName, data["IdPClientName"])
+				assert.Equal(t, tt.expectedName, data["IDPClientName"])
 				c.Status(http.StatusOK)
 			})
 
@@ -233,6 +234,7 @@ func TestBasePageData(t *testing.T) {
 
 func TestURLParamsPreservation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
 	h := &FrontendHandler{}
 
 	t.Run("getLoginURL with params", func(t *testing.T) {
@@ -280,6 +282,7 @@ func TestMFASelectTemplateRecommended(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
+
 	err := tmpl.Execute(&buf, data)
 	assert.NoError(t, err)
 
@@ -311,6 +314,7 @@ func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
+
 	err := tmpl.Execute(&buf, data)
 	assert.NoError(t, err)
 
@@ -429,6 +433,7 @@ func renderIDPLoginTemplate(t *testing.T, tmpl *template.Template, passwordForgo
 	}
 
 	var buf bytes.Buffer
+
 	err := tmpl.Execute(&buf, data)
 	assert.NoError(t, err)
 
@@ -446,6 +451,7 @@ func renderIDPFooterTemplate(t *testing.T, tmpl *template.Template, termsOfServi
 	}
 
 	var buf bytes.Buffer
+
 	err := tmpl.Execute(&buf, data)
 	assert.NoError(t, err)
 
@@ -462,23 +468,23 @@ func TestGetFlowClientIdentifiers(t *testing.T) {
 		{
 			name: "OIDC flow returns client ID",
 			sessionData: map[string]any{
-				definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
-				definitions.SessionKeyIdPClientID: "oidc-client",
+				definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+				definitions.SessionKeyIDPClientID: "oidc-client",
 			},
 			expectedOIDCCID: "oidc-client",
 		},
 		{
 			name: "SAML flow returns entity ID",
 			sessionData: map[string]any{
-				definitions.SessionKeyIdPFlowType:     definitions.ProtoSAML,
-				definitions.SessionKeyIdPSAMLEntityID: "sp-entity",
+				definitions.SessionKeyIDPFlowType:     definitions.ProtoSAML,
+				definitions.SessionKeyIDPSAMLEntityID: "sp-entity",
 			},
 			expectedSAMLEntID: "sp-entity",
 		},
 		{
 			name: "Unknown flow returns empty identifiers",
 			sessionData: map[string]any{
-				definitions.SessionKeyIdPFlowType: "invalid",
+				definitions.SessionKeyIDPFlowType: "invalid",
 			},
 		},
 	}
@@ -510,7 +516,7 @@ func TestGetRememberMeTTL(t *testing.T) {
 			deps: &deps.Deps{
 				Cfg: &mockFrontendCfg{
 					FileSettings: config.FileSettings{
-						IDP: &config.IdPSection{
+						IDP: &config.IDPSection{
 							RememberMeTTL: 2 * time.Hour,
 							OIDC: config.OIDCConfig{
 								Clients: []config.OIDCClient{
@@ -542,7 +548,7 @@ func TestGetRememberMeTTL(t *testing.T) {
 			deps: &deps.Deps{
 				Cfg: &mockFrontendCfg{
 					FileSettings: config.FileSettings{
-						IDP: &config.IdPSection{
+						IDP: &config.IDPSection{
 							OIDC: config.OIDCConfig{
 								Clients: []config.OIDCClient{
 									{ClientID: "oidc-client", RememberMeTTL: 30 * time.Minute},
@@ -566,7 +572,7 @@ func TestGetRememberMeTTL(t *testing.T) {
 			deps: &deps.Deps{
 				Cfg: &mockFrontendCfg{
 					FileSettings: config.FileSettings{
-						IDP: &config.IdPSection{
+						IDP: &config.IDPSection{
 							SAML2: config.SAML2Config{
 								ServiceProviders: []config.SAML2ServiceProvider{
 									{EntityID: "sp-entity", RememberMeTTL: time.Hour},
@@ -590,7 +596,7 @@ func TestGetRememberMeTTL(t *testing.T) {
 			deps: &deps.Deps{
 				Cfg: &mockFrontendCfg{
 					FileSettings: config.FileSettings{
-						IDP: &config.IdPSection{},
+						IDP: &config.IDPSection{},
 					},
 				},
 				Env:         config.NewTestEnvironmentConfig(),
@@ -609,7 +615,7 @@ func TestIsMFAMethodSupported(t *testing.T) {
 		deps: &deps.Deps{
 			Cfg: &mockFrontendCfg{
 				FileSettings: config.FileSettings{
-					IDP: &config.IdPSection{
+					IDP: &config.IDPSection{
 						OIDC: config.OIDCConfig{
 							Clients: []config.OIDCClient{
 								{
@@ -628,8 +634,8 @@ func TestIsMFAMethodSupported(t *testing.T) {
 	}
 
 	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
-		definitions.SessionKeyIdPClientID: "oidc-client",
+		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID: "oidc-client",
 	}}
 
 	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn))
@@ -641,7 +647,7 @@ func TestIsMFAMethodSupported_DefaultsToAllWhenUnset(t *testing.T) {
 		deps: &deps.Deps{
 			Cfg: &mockFrontendCfg{
 				FileSettings: config.FileSettings{
-					IDP: &config.IdPSection{
+					IDP: &config.IDPSection{
 						OIDC: config.OIDCConfig{
 							Clients: []config.OIDCClient{
 								{
@@ -659,8 +665,8 @@ func TestIsMFAMethodSupported_DefaultsToAllWhenUnset(t *testing.T) {
 	}
 
 	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
-		definitions.SessionKeyIdPClientID: "oidc-client",
+		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID: "oidc-client",
 	}}
 
 	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn))
@@ -679,7 +685,7 @@ func TestCheckRequireMFARegistrationAndRedirectClearsStaleSessionState(t *testin
 		deps: &deps.Deps{
 			Cfg: &mockFrontendCfg{
 				FileSettings: config.FileSettings{
-					IDP: &config.IdPSection{
+					IDP: &config.IDPSection{
 						OIDC: config.OIDCConfig{
 							Clients: []config.OIDCClient{{
 								ClientID:     "different-client",
@@ -698,11 +704,11 @@ func TestCheckRequireMFARegistrationAndRedirectClearsStaleSessionState(t *testin
 	}
 
 	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyIdPFlowID:         "flow-require-mfa",
+		definitions.SessionKeyIDPFlowID:         "flow-require-mfa",
 		definitions.SessionKeyRequireMFAFlow:    true,
 		definitions.SessionKeyRequireMFAPending: definitions.MFAMethodRecoveryCodes,
-		definitions.SessionKeyIdPFlowType:       definitions.ProtoOIDC,
-		definitions.SessionKeyIdPClientID:       "stale-client",
+		definitions.SessionKeyIDPFlowType:       definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID:       "stale-client",
 		definitions.SessionKeyAccount:           "testuser",
 	}}
 
@@ -711,8 +717,8 @@ func TestCheckRequireMFARegistrationAndRedirectClearsStaleSessionState(t *testin
 	assert.False(t, redirected)
 	assert.False(t, mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false))
 	assert.Empty(t, mgr.GetString(definitions.SessionKeyRequireMFAPending, ""))
-	assert.Equal(t, "flow-require-mfa", mgr.GetString(definitions.SessionKeyIdPFlowID, ""))
-	assert.Equal(t, definitions.ProtoOIDC, mgr.GetString(definitions.SessionKeyIdPFlowType, ""))
+	assert.Equal(t, "flow-require-mfa", mgr.GetString(definitions.SessionKeyIDPFlowID, ""))
+	assert.Equal(t, definitions.ProtoOIDC, mgr.GetString(definitions.SessionKeyIDPFlowType, ""))
 	assert.Empty(t, recorder.Header().Get("Location"))
 	assert.Equal(t, http.StatusOK, recorder.Code)
 }
@@ -907,12 +913,14 @@ func loadMFASelectTemplate(t *testing.T) *template.Template {
 	t.Helper()
 
 	path := filepath.Join("..", "..", "..", "..", "static", "templates", "idp_mfa_select.html")
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read template: %v", err)
 	}
 
 	tmpl := template.New("idp_mfa_select.html")
+
 	_, err = tmpl.Parse("{{ define \"idp_header.html\" }}header{{ end }}{{ define \"idp_footer.html\" }}footer{{ end }}")
 	if err != nil {
 		t.Fatalf("failed to parse base templates: %v", err)
@@ -930,12 +938,14 @@ func loadIDPLoginTemplate(t *testing.T) *template.Template {
 	t.Helper()
 
 	path := filepath.Join("..", "..", "..", "..", "static", "templates", "idp_login.html")
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read template: %v", err)
 	}
 
 	tmpl := template.New("idp_login.html")
+
 	_, err = tmpl.Parse("{{ define \"idp_header.html\" }}header{{ end }}{{ define \"idp_footer.html\" }}footer{{ end }}")
 	if err != nil {
 		t.Fatalf("failed to parse base templates: %v", err)
@@ -953,12 +963,14 @@ func loadIDPFooterTemplate(t *testing.T) *template.Template {
 	t.Helper()
 
 	path := filepath.Join("..", "..", "..", "..", "static", "templates", "idp_footer.html")
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read template: %v", err)
 	}
 
 	tmpl := template.New("idp_footer.html")
+
 	_, err = tmpl.Parse(string(content))
 	if err != nil {
 		t.Fatalf("failed to parse footer template: %v", err)
@@ -971,6 +983,7 @@ func loadIDPUIScript(t *testing.T) string {
 	t.Helper()
 
 	path := filepath.Join("..", "..", "..", "..", "static", "js", "idp_ui.js")
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read script: %v", err)
@@ -983,6 +996,7 @@ func loadStaticTemplate(t *testing.T, name string) string {
 	t.Helper()
 
 	path := filepath.Join("..", "..", "..", "..", "static", "templates", name)
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read template %s: %v", name, err)
@@ -1031,7 +1045,7 @@ func TestRestoreRequireMFAIdentityContextFromFlowState(t *testing.T) {
 		definitions.SessionKeyUniqueUserID: "uid-before",
 	}}
 	state := &flowdomain.State{
-		FlowType: flowdomain.FlowTypeRequireMFA,
+		Type: flowdomain.FlowTypeRequireMFA,
 		Metadata: map[string]string{
 			flowdomain.FlowMetadataAccount:      frontendTestAccount,
 			flowdomain.FlowMetadataUniqueUserID: "uid-after",
@@ -1112,8 +1126,10 @@ func TestLoggedOutRoute_DoesNotSetSecureDataCookie(t *testing.T) {
 
 	for _, c := range resp.Result().Cookies() {
 		assert.NotEqual(t, definitions.SecureDataCookieName, c.Name)
+
 		if c.Name == definitions.LanguageCookieName {
 			seenLanguageCookie = true
+
 			assert.Equal(t, "en", c.Value)
 			assert.Greater(t, c.MaxAge, 0)
 		}

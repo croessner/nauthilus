@@ -55,11 +55,13 @@ var (
 // compileScript compiles the Lua cache flush script and caches the result.
 func compileScript(scriptPath string) (*lua.FunctionProto, error) {
 	compileMu.RLock()
+
 	if compiledScript != nil {
 		defer compileMu.RUnlock()
 
 		return compiledScript, nil
 	}
+
 	compileMu.RUnlock()
 
 	compileMu.Lock()
@@ -117,9 +119,11 @@ func RunCacheFlushScript(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
 
-	modManager.BindAllDefault(L, lualib.NewContext(), luaCtx, tolerate.GetTolerate())
+	modManager.BindAllDefault(luaCtx, L, lualib.NewContext(), tolerate.GetTolerate())
 	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
+
 	logs := new(lualib.CustomLogKeyValue)
+
 	var statusMessage *string
 
 	lualib.SetBuiltinTableForCacheFlush(

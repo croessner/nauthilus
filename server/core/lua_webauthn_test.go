@@ -32,7 +32,9 @@ import (
 
 func TestLuaGetWebAuthnCredentials(t *testing.T) {
 	mcfg := new(mockConfig)
+
 	var verbosity config.Verbosity
+
 	_ = verbosity.Set("debug")
 
 	mcfg.On("GetServer").Return(&config.ServerSection{
@@ -175,6 +177,7 @@ func TestLuaSaveDeleteWebAuthnCredential(t *testing.T) {
 					assert.NotEmpty(t, req.WebAuthnCredential)
 
 					var credPopped webauthn.Credential
+
 					_ = json.Unmarshal([]byte(req.WebAuthnCredential), &credPopped)
 					assert.True(t, bytes.Equal(cred.ID, credPopped.ID))
 
@@ -192,7 +195,9 @@ func TestLuaSaveDeleteWebAuthnCredential(t *testing.T) {
 
 func TestLuaUpdateWebAuthnCredential(t *testing.T) {
 	mcfg := new(mockConfig)
+
 	var verbosity config.Verbosity
+
 	_ = verbosity.Set("debug")
 
 	mcfg.On("GetServer").Return(&config.ServerSection{
@@ -243,10 +248,14 @@ func TestLuaUpdateWebAuthnCredential(t *testing.T) {
 			assert.NotEmpty(t, req.WebAuthnCredential)
 			assert.NotEmpty(t, req.WebAuthnOldCredential)
 
-			var oldCredPopped webauthn.Credential
-			var newCredPopped webauthn.Credential
+			var (
+				oldCredPopped webauthn.Credential
+				newCredPopped webauthn.Credential
+			)
+
 			_ = json.Unmarshal([]byte(req.WebAuthnOldCredential), &oldCredPopped)
 			_ = json.Unmarshal([]byte(req.WebAuthnCredential), &newCredPopped)
+
 			assert.True(t, bytes.Equal(oldCred.ID, oldCredPopped.ID))
 			assert.True(t, bytes.Equal(newCred.ID, newCredPopped.ID))
 

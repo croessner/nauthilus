@@ -57,6 +57,7 @@ func prepareLuaPostActionTest(t *testing.T) *config.FileSettings {
 	config.SetTestFile(cfg)
 	corepkg.SetDefaultConfigFile(cfg)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
 	_ = action.NewWorker(cfg, log.GetLogger(), rediscli.GetClient(), util.GetDefaultEnvironment())
 
 	return cfg
@@ -86,6 +87,7 @@ func startLuaPostActionReader() (chan *action.Action, chan struct{}) {
 		select {
 		case act := <-action.RequestChan:
 			gotAction <- act
+
 			if act != nil {
 				act.FinishedChan <- action.Done{}
 			}
@@ -100,6 +102,7 @@ func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
 	cfg := prepareLuaPostActionTest(t)
 
 	done := make(chan struct{})
+
 	go func() {
 		act := <-action.RequestChan
 		if act == nil {
@@ -131,6 +134,7 @@ func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
 
 		// unblock RunLuaPostAction
 		act.FinishedChan <- action.Done{}
+
 		close(done)
 	}()
 

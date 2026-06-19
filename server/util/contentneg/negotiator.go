@@ -173,7 +173,6 @@ func parseQuality(raw string) float64 {
 	}
 
 	q, err := strconv.ParseFloat(raw, 64)
-
 	if err != nil {
 		return 1.0
 	}

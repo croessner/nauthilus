@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestClickhouseActionIncludesIdPFieldsInInsertedRow(t *testing.T) {
+func TestClickhouseActionIncludesIDPFieldsInInsertedRow(t *testing.T) {
 	runner := runClickhouseFixture(t, "action_wrapper.lua", "action_success.json", "action")
 	request := firstCapturedHTTPRequest(t, runner)
 	row := decodeJSONEachRowLine(t, request.Body)
@@ -30,6 +30,7 @@ func TestClickhouseActionIncludesOIDCTokenPostActionRows(t *testing.T) {
 
 func TestClickhouseActionKeepsRowInCacheWhenBatchNotReached(t *testing.T) {
 	runner := runClickhouseFixture(t, "action_wrapper.lua", "action_cache_only.json", "action")
+
 	captured := capturedHTTPRequests(t, runner)
 	if len(captured) != 0 {
 		t.Fatalf("expected no HTTP calls when batch size is not reached, got %d", len(captured))
@@ -60,7 +61,7 @@ func TestClickhouseActionKeepsRowInCacheWhenBatchNotReached(t *testing.T) {
 	assertStringField(t, row, "mfa_method", "webauthn")
 }
 
-func TestClickhouseQuerySelectContainsIdPFields(t *testing.T) {
+func TestClickhouseQuerySelectContainsIDPFields(t *testing.T) {
 	runner := runClickhouseFixture(t, "query_wrapper.lua", "query_success.json", "hook")
 	request := firstCapturedHTTPRequest(t, runner)
 	sql := request.Body

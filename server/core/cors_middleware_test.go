@@ -85,7 +85,7 @@ func TestDefaultRouterComposer_ApplyCoreMiddlewares_AppliesCORS(t *testing.T) {
 	assert.Equal(t, coreTestCORSOrigin, optionsResp.Header().Get("Access-Control-Allow-Origin"))
 }
 
-func TestDefaultRouterComposer_RegisterRoutes_RegistersPublicIdPOpenAPISpec(t *testing.T) {
+func TestDefaultRouterComposer_RegisterRoutes_RegistersPublicIDPOpenAPISpec(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	templateDir := frontendTemplateDir(t)
@@ -112,10 +112,10 @@ func TestDefaultRouterComposer_RegisterRoutes_RegistersPublicIdPOpenAPISpec(t *t
 	r.ServeHTTP(recorder, request)
 
 	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "Nauthilus IdP API")
+	assert.Contains(t, recorder.Body.String(), "Nauthilus IDP API")
 }
 
-func TestDefaultRouterComposer_RegisterRoutes_SkipsPublicIdPOpenAPIWithoutIdPSetup(t *testing.T) {
+func TestDefaultRouterComposer_RegisterRoutes_SkipsPublicIDPOpenAPIWithoutIDPSetup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	templateDir := frontendTemplateDir(t)

@@ -55,6 +55,7 @@ func TestApplyStructuredAuthRequestMapsAllFields(t *testing.T) {
 // request setup path still maps all structured fields into AuthState.
 func TestNewAuthStateWithSetupWithDepsMapsAllJSONFields(t *testing.T) {
 	request := fullStructuredRequestFixture()
+
 	payload, err := json.Marshal(request)
 	if err != nil {
 		t.Fatalf("failed to marshal JSON payload: %v", err)
@@ -69,6 +70,7 @@ func TestNewAuthStateWithSetupWithDepsMapsAllJSONFields(t *testing.T) {
 // request setup path still maps all structured fields into AuthState.
 func TestNewAuthStateWithSetupWithDepsMapsAllCBORFields(t *testing.T) {
 	request := fullStructuredRequestFixture()
+
 	payload, err := cbor.Marshal(request)
 	if err != nil {
 		t.Fatalf("failed to marshal CBOR payload: %v", err)
@@ -195,6 +197,7 @@ func assertAuthStateMatchesStructuredRequest(t *testing.T, auth *AuthState, expe
 	assert.Equal(t, expected.AuthLoginAttempt, auth.Request.AuthLoginAttempt)
 
 	var password string
+
 	auth.GetPassword().WithString(func(value string) {
 		password = value
 	})

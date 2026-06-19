@@ -611,6 +611,7 @@ func TestHandler_Reason(t *testing.T) {
 					reason = c.reason
 				}
 			}
+
 			ctx.String(FailureCode, "failed")
 			ctx.Abort()
 		}),

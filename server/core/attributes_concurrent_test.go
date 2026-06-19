@@ -78,6 +78,7 @@ func TestAuthState_Attributes_Concurrent(t *testing.T) {
 
 	// Basic sanity: verify map invariants under read lock
 	a.Attributes.attributesMu.RLock()
+
 	for k, v := range a.Attributes.Attributes {
 		if k == "" {
 			t.Fatalf("empty key found")

@@ -18,14 +18,16 @@ import (
 	jsoniter "github.com/json-iterator/go"
 )
 
-var fastJson = jsoniter.ConfigFastest
+var fastJSON = jsoniter.ConfigFastest
 
+// AuthClient describes the exported AuthClient type.
 type AuthClient struct {
 	config       *Config
 	httpClient   *http.Client
 	bfHeaderName string
 }
 
+// NewAuthClient provides the exported NewAuthClient function.
 func NewAuthClient(cfg *Config) *AuthClient {
 	bfHeaderName := strings.TrimSpace(os.Getenv("BRUTEFORCE_HEADER_NAME"))
 	if bfHeaderName == "" {
@@ -60,9 +62,9 @@ func NewAuthClient(cfg *Config) *AuthClient {
 	}
 }
 
+// BaseHeader provides the exported BaseHeader method.
 func (c *AuthClient) BaseHeader() http.Header {
 	h := make(http.Header)
-
 	if c.config.HeadersList != "" {
 		pairs := strings.SplitSeq(c.config.HeadersList, "||")
 		for p := range pairs {
@@ -86,10 +88,12 @@ func (c *AuthClient) BaseHeader() http.Header {
 	return h
 }
 
+// HTTPClient provides the exported HTTPClient method.
 func (c *AuthClient) HTTPClient() *http.Client {
 	return c.httpClient
 }
 
+// Stop provides the exported Stop method.
 func (c *AuthClient) Stop() {
 	if transport, ok := c.httpClient.Transport.(*http.Transport); ok {
 		transport.DisableKeepAlives = true
@@ -97,7 +101,8 @@ func (c *AuthClient) Stop() {
 	}
 }
 
-func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch bool, isHttpErr bool, isTooManyRequests bool, isToleratedBF bool, isAborted bool, latency time.Duration, respBody []byte, statusCode int, err error) {
+// DoRequest provides the exported DoRequest method.
+func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch bool, isHTTPErr bool, isTooManyRequests bool, isToleratedBF bool, isAborted bool, latency time.Duration, respBody []byte, statusCode int, err error) {
 	reqCtx, reqCancel := context.WithCancel(ctx)
 	defer reqCancel()
 
@@ -113,12 +118,12 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 
 	// Random effects (pre-determined by row flags)
 	if row.BadPass {
-		if _, ok := payload["password"]; ok {
-			payload["password"] = "wrong-password-" + hex.EncodeToString(sha256.New().Sum(nil)[:4])
+		if _, ok := payload[csvFieldPassword]; ok {
+			payload[csvFieldPassword] = "wrong-password-" + hex.EncodeToString(sha256.New().Sum(nil)[:4])
 		}
 	}
 
-	body, _ := fastJson.Marshal(payload)
+	body, _ := fastJSON.Marshal(payload)
 
 	reqURL := c.config.Endpoint
 	if row.NoAuth {
@@ -162,6 +167,7 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 
 	resp, err := c.httpClient.Do(req)
 	latency = time.Since(start)
+
 	if err != nil {
 		aborted := false
 		if ctx.Err() != nil || reqCtx.Err() != nil {
@@ -170,9 +176,11 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 
 		return false, false, !aborted, false, false, aborted, latency, nil, 0, err
 	}
-	defer resp.Body.Close()
+
+	defer func() { _ = resp.Body.Close() }()
 
 	statusCode = resp.StatusCode
+
 	respBody, err = io.ReadAll(resp.Body)
 	if err != nil {
 		aborted := false
@@ -191,6 +199,7 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 		var res struct {
 			OK bool `json:"ok"`
 		}
+
 		_ = jsoniter.Unmarshal(respBody, &res)
 		ok = res.OK
 	} else {
@@ -204,18 +213,21 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 
 	isMatch = ok == effectiveExpectOK
 	isToleratedBF = resp.Header.Get(c.bfHeaderName) != ""
-	isHttpErr = (!isMatch && !isToleratedBF) || (resp.StatusCode >= 500)
+	isHTTPErr = (!isMatch && !isToleratedBF) || (resp.StatusCode >= 500)
 
-	return ok, isMatch, isHttpErr, false, isToleratedBF, false, latency, respBody, statusCode, nil
+	return ok, isMatch, isHTTPErr, false, isToleratedBF, false, latency, respBody, statusCode, nil
 }
 
 func (c *AuthClient) makePayload(fields map[string]string) map[string]any {
 	p := make(map[string]any)
+
 	for k, v := range fields {
-		if k == "expected_ok" {
+		if k == csvFieldExpectedOK {
 			continue
 		}
+
 		p[k] = v
 	}
+
 	return p
 }

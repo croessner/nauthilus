@@ -56,6 +56,8 @@ import (
 // Legal characters for IMAP username based on RFC 9051: Any character except "(", ")", "{", SP, CTL, "%", "\"", "\"". Master-user formats can reserve additional literal separators.
 var usernamePattern = regexp.MustCompile(`^[^\x00-\x1F\x7F(){}%"\\ ]+$`)
 
+const forwardedProtoHTTPS = "https"
+
 // RedisLogger implements the interface redis.Logging
 type RedisLogger struct {
 	logger *slog.Logger
@@ -204,6 +206,7 @@ func serverPasswordError(err error) error {
 	}
 }
 
+// PreparePassword provides the exported PreparePassword function.
 func PreparePassword(password string) string {
 	prepared := PreparePasswordBytes([]byte(password))
 	defer clear(prepared)
@@ -211,8 +214,10 @@ func PreparePassword(password string) string {
 	return string(prepared)
 }
 
+// PreparePasswordBytes provides the exported PreparePasswordBytes function.
 func PreparePasswordBytes(password []byte) []byte {
 	var nonce []byte
+
 	getDefaultConfigFile().GetServer().GetRedis().GetPasswordNonce().WithBytes(func(value []byte) {
 		if len(value) == 0 {
 			return
@@ -220,6 +225,7 @@ func PreparePasswordBytes(password []byte) []byte {
 
 		nonce = bytes.Clone(value)
 	})
+
 	if len(nonce) > 0 {
 		defer clear(nonce)
 	}
@@ -232,6 +238,7 @@ func GetHash(value string) string {
 	return pluginpassword.ShortHash([]byte(value), getDefaultEnvironment().GetDevMode())
 }
 
+// GetHashBytes provides the exported GetHashBytes function.
 func GetHashBytes(value []byte) string {
 	return pluginpassword.ShortHash(value, getDefaultEnvironment().GetDevMode())
 }
@@ -280,6 +287,7 @@ func ResolveIPAddress(ctx context.Context, cfg config.File, address string) (hos
 	return hostname
 }
 
+// ProtoErrToFields provides the exported ProtoErrToFields function.
 func ProtoErrToFields(err error) (fields []zap.Field) {
 	if err == nil {
 		return nil
@@ -297,6 +305,7 @@ func ProtoErrToFields(err error) (fields []zap.Field) {
 	return nil
 }
 
+// RemoveCRLFFromQueryOrFilter provides the exported RemoveCRLFFromQueryOrFilter function.
 func RemoveCRLFFromQueryOrFilter(value string, sep string) string {
 	re := regexp.MustCompile(`\s*[\r\n]+\s*`)
 
@@ -323,10 +332,12 @@ func init() {
 	defaultLog.Store(loggerHolder{logger: nil})
 }
 
+// SetDefaultConfigFile provides the exported SetDefaultConfigFile function.
 func SetDefaultConfigFile(cfg config.File) {
 	defaultCfg.Store(cfgHolder{cfg: cfg})
 }
 
+// SetDefaultLogger provides the exported SetDefaultLogger function.
 func SetDefaultLogger(logger *slog.Logger) {
 	defaultLog.Store(loggerHolder{logger: logger})
 }
@@ -347,6 +358,7 @@ func getDefaultConfigFile() config.File {
 	panic("util: default config snapshot not configured")
 }
 
+// DebugModule provides the exported DebugModule function.
 func DebugModule(ctx context.Context, cfg config.File, logger *slog.Logger, module definitions.DbgModule, keyvals ...any) {
 	DebugModuleWithCfg(ctx, cfg, logger, module, keyvals...)
 }
@@ -373,6 +385,7 @@ func DebugModuleWithCfg(ctx context.Context, cfg config.File, logger *slog.Logge
 	}
 
 	enabled := false
+
 	for _, dbgModule := range logCfg.GetDebugModules() {
 		mod := dbgModule.GetModule()
 		if mod == definitions.DbgAll || mod == module {
@@ -461,6 +474,7 @@ func IsInNetwork(ctx context.Context, cfg config.File, logger *slog.Logger, netw
 	return IsInNetworkWithCfg(ctx, cfg, logger, networkList, guid, clientIP)
 }
 
+// IsInNetworkWithCfg provides the exported IsInNetworkWithCfg function.
 func IsInNetworkWithCfg(ctx context.Context, cfg config.File, logger *slog.Logger, networkList []string, guid, clientIP string) (matchIP bool) {
 	ipAddress := net.ParseIP(clientIP)
 
@@ -482,6 +496,7 @@ func IsInNetworkWithCfg(ctx context.Context, cfg config.File, logger *slog.Logge
 			}
 		} else {
 			logIPChecking(ctx, cfg, logger, guid, ipOrNet, clientIP)
+
 			if clientIP == ipOrNet {
 				matchIP = true
 
@@ -560,7 +575,7 @@ func ProcessXForwardedFor(ctx *gin.Context, cfg config.File, logger *slog.Logger
 	proto := strings.ToLower(strings.TrimSpace(ctx.GetHeader("X-Forwarded-Proto")))
 
 	// Gate for accepting forwarded headers
-	acceptForwarded := isTrustedProxy && proto == "https" && isLocalHTTPS
+	acceptForwarded := isTrustedProxy && proto == forwardedProtoHTTPS && isLocalHTTPS
 
 	if fwdAddress != "" {
 		logForwarderFound(ctx.Request.Context(), cfg, logger, guid)
@@ -752,7 +767,7 @@ func NewDNSResolver(cfg config.File) (resolver *net.Resolver) {
 	} else {
 		resolver = &net.Resolver{
 			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
 				dialer := net.Dialer{
 					Timeout: cfg.GetServer().GetDNS().GetTimeout(),
 				}

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package zstdmw provides zstdmw functionality.
 package zstdmw
 
 import (
@@ -29,10 +30,14 @@ import (
 type Level int
 
 const (
+	// DefaultCompression is an exported package constant.
 	DefaultCompression Level = iota
+	// BestSpeed is an exported package constant.
 	BestSpeed
-	BetterCompression // reasonable ratio with good speed
-	BestCompression   // maximum compression, slower
+	// BetterCompression provides a reasonable ratio with good speed.
+	BetterCompression
+	// BestCompression provides maximum compression at lower speed.
+	BestCompression
 )
 
 // ZstdEncoder is the minimal interface implemented by a Zstandard encoder used by this package.
@@ -249,9 +254,11 @@ func (w *zstdResponseWriter) WriteHeader(code int) {
 // Write writes the input byte slice to the response, leveraging Zstandard encoding if initialized, or direct writing otherwise.
 func (w *zstdResponseWriter) Write(b []byte) (int, error) {
 	w.start()
+
 	if w.enc == nil {
 		return w.ResponseWriter.Write(b)
 	}
+
 	return w.enc.Write(b)
 }
 
@@ -260,6 +267,7 @@ func (w *zstdResponseWriter) start() {
 	if w.started {
 		return
 	}
+
 	w.started = true
 
 	// Skip compression for statuses with no body.
@@ -271,6 +279,7 @@ func (w *zstdResponseWriter) start() {
 	h := w.Header()
 	h.Del("Content-Length")
 	h.Set("Content-Encoding", "zstd")
+
 	vary := h.Get("Vary")
 	if vary == "" {
 		h.Set("Vary", "Accept-Encoding")

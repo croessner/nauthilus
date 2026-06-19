@@ -89,6 +89,7 @@ func (p *TestFixedLuaStatePool) GetState() *lua.LState {
 		if len(p.states) < p.minAvail {
 			p.triggerReplenishment()
 		}
+
 		return state
 	default:
 		// If no states are available, create a new one
@@ -254,6 +255,7 @@ func BenchmarkRealWorldScenario(b *testing.B) {
 		b.ReportAllocs()
 
 		pool := NewTestFixedLuaStatePool(100, 20)
+
 		var wg sync.WaitGroup
 
 		// Simulate 10 concurrent requests

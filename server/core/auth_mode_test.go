@@ -29,6 +29,7 @@ import (
 func TestSetOperationMode_ListAccountsSetsProtocol(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
+
 	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()

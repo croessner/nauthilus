@@ -22,21 +22,35 @@ import (
 
 const (
 	// FlowIDRequireMFA identifies the durable flow used by required MFA registration.
-	FlowIDRequireMFA                           = "require-mfa-flow"
-	FlowMetadataResumeTarget                   = "resume_target"
+	FlowIDRequireMFA = "require-mfa-flow"
+	// FlowMetadataResumeTarget is an exported package constant.
+	FlowMetadataResumeTarget = "resume_target"
+	// FlowMetadataResumeTargetDeviceCodeComplete is an exported package constant.
 	FlowMetadataResumeTargetDeviceCodeComplete = "nauthilus://idp/device-code/complete"
-	FlowMetadataClientID                       = "client_id"
-	FlowMetadataRedirectURI                    = "redirect_uri"
-	FlowMetadataScope                          = "scope"
-	FlowMetadataState                          = "state"
-	FlowMetadataNonce                          = "nonce"
-	FlowMetadataResponseType                   = "response_type"
-	FlowMetadataPrompt                         = "prompt"
-	FlowMetadataCodeChallenge                  = "code_challenge"
-	FlowMetadataCodeChallengeMethod            = "code_challenge_method"
-	FlowMetadataSAMLEntityID                   = "saml_entity_id"
-	FlowMetadataOriginalURL                    = "original_url"
-	FlowMetadataDeviceCode                     = "device_code"
+	// FlowMetadataClientID stores the OIDC client identifier.
+	FlowMetadataClientID = "client_id"
+	// FlowMetadataRedirectURI stores the OIDC redirect URI.
+	FlowMetadataRedirectURI = "redirect_uri"
+	// FlowMetadataScope stores the requested OIDC scope string.
+	FlowMetadataScope = "scope"
+	// FlowMetadataState stores the OIDC state value.
+	FlowMetadataState = "state"
+	// FlowMetadataNonce stores the OIDC nonce value.
+	FlowMetadataNonce = "nonce"
+	// FlowMetadataResponseType stores the OIDC response type.
+	FlowMetadataResponseType = "response_type"
+	// FlowMetadataPrompt stores the OIDC prompt value.
+	FlowMetadataPrompt = "prompt"
+	// FlowMetadataCodeChallenge stores the PKCE code challenge.
+	FlowMetadataCodeChallenge = "code_challenge"
+	// FlowMetadataCodeChallengeMethod stores the PKCE code challenge method.
+	FlowMetadataCodeChallengeMethod = "code_challenge_method"
+	// FlowMetadataSAMLEntityID stores the SAML entity identifier.
+	FlowMetadataSAMLEntityID = "saml_entity_id"
+	// FlowMetadataOriginalURL stores the original frontend URL.
+	FlowMetadataOriginalURL = "original_url"
+	// FlowMetadataDeviceCode stores the OAuth 2.0 device code.
+	FlowMetadataDeviceCode = "device_code"
 	// FlowMetadataAccount stores the authenticated account name across required MFA hops.
 	FlowMetadataAccount = "account"
 	// FlowMetadataUniqueUserID stores the backend unique user id across required MFA hops.
@@ -45,16 +59,16 @@ const (
 	FlowMetadataDisplayName = "display_name"
 )
 
-// State stores the domain-level state of an IdP flow.
+// State stores the domain-level state of an IDP flow.
 type State struct {
 	FlowID       string            `json:"flow_id"`
 	GrantType    string            `json:"grant_type,omitzero"`
 	CancelTarget string            `json:"cancel_target,omitzero"`
 	ReturnTarget string            `json:"return_target,omitzero"`
 	Metadata     map[string]string `json:"metadata,omitzero"`
-	FlowType     FlowType          `json:"flow_type"`
-	Protocol     FlowProtocol      `json:"protocol"`
-	CurrentStep  FlowStep          `json:"current_step"`
+	Type         Type              `json:"flow_type"`
+	Protocol     Protocol          `json:"protocol"`
+	CurrentStep  Step              `json:"current_step"`
 	AuthOutcome  AuthOutcome       `json:"auth_outcome,omitzero"`
 	CreatedAt    time.Time         `json:"created_at,omitzero"`
 	UpdatedAt    time.Time         `json:"updated_at,omitzero"`
@@ -110,8 +124,8 @@ func (s *State) Validate() error {
 		return fmt.Errorf("flow state: %w", ErrEmptyFlowID)
 	}
 
-	if !s.FlowType.Valid() {
-		return fmt.Errorf("flow state: %w (%s)", ErrInvalidFlowType, s.FlowType)
+	if !s.Type.Valid() {
+		return fmt.Errorf("flow state: %w (%s)", ErrInvalidFlowType, s.Type)
 	}
 
 	if !s.Protocol.Valid() {

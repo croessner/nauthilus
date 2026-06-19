@@ -18,15 +18,26 @@ package dbmock
 import "errors"
 
 var (
-	ErrUnexpectedCall             = errors.New("unexpected call")
-	ErrKindMismatch               = errors.New("call kind mismatch")
-	ErrPreparedModeMismatch       = errors.New("prepared mode mismatch")
-	ErrSQLMismatch                = errors.New("sql mismatch")
-	ErrArgCountMismatch           = errors.New("argument count mismatch")
-	ErrArgMismatch                = errors.New("argument mismatch")
-	ErrPlaceholderCountMismatch   = errors.New("placeholder count mismatch")
+	// ErrUnexpectedCall is an exported package value.
+	ErrUnexpectedCall = errors.New("unexpected call")
+	// ErrKindMismatch is an exported package value.
+	ErrKindMismatch = errors.New("call kind mismatch")
+	// ErrPreparedModeMismatch reports an unexpected prepared statement mode.
+	ErrPreparedModeMismatch = errors.New("prepared mode mismatch")
+	// ErrSQLMismatch reports an unexpected SQL statement.
+	ErrSQLMismatch = errors.New("sql mismatch")
+	// ErrArgCountMismatch reports an unexpected argument count.
+	ErrArgCountMismatch = errors.New("argument count mismatch")
+	// ErrArgMismatch reports an unexpected argument value.
+	ErrArgMismatch = errors.New("argument mismatch")
+	// ErrPlaceholderCountMismatch reports a placeholder and argument count mismatch.
+	ErrPlaceholderCountMismatch = errors.New("placeholder count mismatch")
+	// ErrExpectationAlreadyConsumed reports a reused expectation.
 	ErrExpectationAlreadyConsumed = errors.New("expectation already consumed")
-	ErrEmptyExpectationQueue      = errors.New("expectation queue is empty")
-	ErrStatementClosed            = errors.New("statement is closed")
-	ErrTransactionDone            = errors.New("transaction is already finalized")
+	// ErrEmptyExpectationQueue reports that no expectation is available.
+	ErrEmptyExpectationQueue = errors.New("expectation queue is empty")
+	// ErrStatementClosed reports use of a closed statement.
+	ErrStatementClosed = errors.New("statement is closed")
+	// ErrTransactionDone reports use of an already finalized transaction.
+	ErrTransactionDone = errors.New("transaction is already finalized")
 )

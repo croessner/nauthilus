@@ -38,8 +38,11 @@ import (
 	"github.com/croessner/nauthilus/v3/server/util"
 )
 
-// testBackendCachePrefix namespaces cache entries for test backend users.
-const testBackendCachePrefix = "test_backend"
+const (
+	// testBackendCachePrefix namespaces cache entries for test backend users.
+	testBackendCachePrefix = "test_backend"
+	testBackendFieldUID    = "uid"
+)
 
 // testBackendUser represents an in-memory account with optional MFA data.
 type testBackendUser struct {
@@ -199,11 +202,11 @@ func (tm *testBackendManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBR
 	user := tm.store.withUser(tm.backendName, username, password, nil)
 
 	passDBResult.UserFound = true
-	passDBResult.AccountField = "uid"
+	passDBResult.AccountField = testBackendFieldUID
 	passDBResult.Account = username
 	passDBResult.TOTPSecretField = "test_totp_secret"
 	passDBResult.TOTPRecoveryField = "test_totp_recovery"
-	passDBResult.UniqueUserIDField = "uid"
+	passDBResult.UniqueUserIDField = testBackendFieldUID
 	passDBResult.DisplayNameField = "displayName"
 	passDBResult.Backend = definitions.BackendTest
 	passDBResult.BackendName = tm.backendName

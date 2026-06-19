@@ -133,6 +133,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_Redirect(t *testing.T) {
 	}
 
 	assert.Equal(t, slodomain.SLOStatusFanoutRunning, transaction.Status)
+
 	if assert.NotNil(t, result) {
 		assert.Len(t, result.Dispatches, 2)
 		assert.Len(t, result.Failures, 1)
@@ -146,7 +147,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_Redirect(t *testing.T) {
 	assert.Equal(t, "https://sp-a.example.com/metadata", result.Dispatches[0].Participant.EntityID)
 	assert.Equal(t, "https://sp-b.example.com/metadata", result.Dispatches[1].Participant.EntityID)
 
-	participantByEntity := map[string]slodomain.SLOParticipant{}
+	participantByEntity := map[string]slodomain.Participant{}
 	for _, participant := range transaction.Participants {
 		participantByEntity[participant.EntityID] = participant
 	}
@@ -215,6 +216,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_POST(t *testing.T) {
 		AuthnInstant: time.Date(2026, time.March, 18, 9, 0, 0, 0, time.UTC),
 	}
 	participantKey := sloTestParticipantKey("test:", account, participant.SPEntityID)
+
 	rawParticipant, err := json.Marshal(participant)
 	if !assert.NoError(t, err) {
 		return
@@ -267,9 +269,11 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_POST(t *testing.T) {
 
 	assert.NotNil(t, logoutRequest.Signature)
 	assert.Equal(t, "bob-name-id", logoutRequest.NameID.Value)
+
 	if assert.NotNil(t, logoutRequest.SessionIndex) {
 		assert.Equal(t, "session-post", logoutRequest.SessionIndex.Value)
 	}
+
 	assert.Equal(t, dispatch.Participant.RequestID, logoutRequest.ID)
 	assert.NoError(t, validateXMLLogoutRequestSignature(rawRequestXML, []*x509.Certificate{idpCert}))
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -325,6 +329,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_BackChannelSuccess(t *test
 	idpKeyPEM := mustEncodeRSAPrivateKeyPEM(t, idpKey)
 
 	receivedForm := make(chan url.Values, 1)
+
 	backChannelServer := httptest.NewServer(http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
 			resp.WriteHeader(http.StatusMethodNotAllowed)
@@ -339,6 +344,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_BackChannelSuccess(t *test
 		}
 
 		receivedForm <- req.PostForm
+
 		resp.WriteHeader(http.StatusOK)
 	}))
 	defer backChannelServer.Close()
@@ -378,6 +384,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_BackChannelSuccess(t *test
 		AuthnInstant: time.Date(2026, time.March, 18, 10, 0, 0, 0, time.UTC),
 	}
 	participantKey := sloTestParticipantKey("test:", account, participant.SPEntityID)
+
 	rawParticipant, err := json.Marshal(participant)
 	if !assert.NoError(t, err) {
 		return
@@ -405,6 +412,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_BackChannelSuccess(t *test
 	assert.Empty(t, result.Dispatches)
 	assert.Empty(t, result.Failures)
 	assert.Equal(t, slodomain.SLOStatusDone, transaction.Status)
+
 	if !assert.Len(t, transaction.Participants, 1) {
 		return
 	}
@@ -415,6 +423,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_BackChannelSuccess(t *test
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected one back-channel SLO request")
 	}
+
 	assert.Equal(t, transaction.TransactionID, form.Get("RelayState"))
 
 	rawRequestXML, err := base64.StdEncoding.DecodeString(form.Get("SAMLRequest"))
@@ -439,6 +448,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_BackChannelFallbackToFront
 	idpKeyPEM := mustEncodeRSAPrivateKeyPEM(t, idpKey)
 
 	var attempts atomic.Int32
+
 	backChannelServer := httptest.NewServer(http.HandlerFunc(func(resp http.ResponseWriter, _ *http.Request) {
 		attempts.Add(1)
 		resp.WriteHeader(http.StatusBadGateway)
@@ -481,6 +491,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_BackChannelFallbackToFront
 		AuthnInstant: time.Date(2026, time.March, 18, 11, 0, 0, 0, time.UTC),
 	}
 	participantKey := sloTestParticipantKey("test:", account, participant.SPEntityID)
+
 	rawParticipant, err := json.Marshal(participant)
 	if !assert.NoError(t, err) {
 		return
@@ -552,6 +563,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_DisabledChannels(t *testin
 		AuthnInstant: time.Date(2026, time.March, 18, 11, 10, 0, 0, time.UTC),
 	}
 	participantKey := sloTestParticipantKey("test:", account, participant.SPEntityID)
+
 	rawParticipant, err := json.Marshal(participant)
 	if !assert.NoError(t, err) {
 		return
@@ -632,6 +644,7 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_MaxParticipantsLimit(t *te
 
 	keyA := sloTestParticipantKey("test:", account, participantA.SPEntityID)
 	keyB := sloTestParticipantKey("test:", account, participantB.SPEntityID)
+
 	rawA, err := json.Marshal(participantA)
 	if !assert.NoError(t, err) {
 		return
@@ -689,7 +702,7 @@ func mustDecodeRedirectLogoutRequest(t *testing.T, encodedRequest string) *saml.
 	}
 
 	reader := flate.NewReader(bytes.NewReader(rawDeflatedRequest))
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	requestXML, err := io.ReadAll(reader)
 	if err != nil {

@@ -30,7 +30,7 @@ type HTTPApplication interface {
 	Start(ctx context.Context,
 		setupHealth func(*gin.Engine),
 		setupMetrics func(*gin.Engine),
-		setupIdP func(*gin.Engine),
+		setupIDP func(*gin.Engine),
 		setupBackchannel func(*gin.Engine),
 		signals ServerSignals,
 	)
@@ -44,7 +44,7 @@ type RouterComposer interface {
 	RegisterRoutes(r *gin.Engine,
 		setupHealth func(*gin.Engine),
 		setupMetrics func(*gin.Engine),
-		setupIdP func(*gin.Engine),
+		setupIDP func(*gin.Engine),
 		setupBackchannel func(*gin.Engine),
 	)
 }

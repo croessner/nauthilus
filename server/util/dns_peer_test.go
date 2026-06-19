@@ -44,6 +44,7 @@ func TestDNSResolverPeerFromAddressParsesHostPort(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected ok=true")
 	}
+
 	if h != "10.0.0.10" || p != 5353 {
 		t.Fatalf("expected 10.0.0.10:5353, got %q:%d", h, p)
 	}
@@ -56,6 +57,7 @@ func TestDNSResolverPeerFromAddressDefaultsPort53(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected ok=true")
 	}
+
 	if h != "dns.example" || p != 53 {
 		t.Fatalf("expected dns.example:53, got %q:%d", h, p)
 	}

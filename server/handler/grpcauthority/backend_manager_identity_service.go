@@ -260,15 +260,15 @@ func userSnapshotFromOutcomeWithAttributes(
 	}
 
 	return &AuthorityUserSnapshot{
-		Username:     input.Username,
-		Account:      backend.Account,
-		UniqueUserID: uniqueUserID,
-		DisplayName:  displayName,
-		Attributes:   attributes,
-		Groups:       groupsForRequest(outcome.Groups, input.Attributes),
-		GroupDNS:     groupDNSForRequest(outcome.GroupDNS, input.Attributes),
-		Backend:      backend,
-		MFA:          mfaState,
+		Username:                input.Username,
+		Account:                 backend.Account,
+		UniqueUserID:            uniqueUserID,
+		DisplayName:             displayName,
+		Attributes:              attributes,
+		Groups:                  groupsForRequest(outcome.Groups, input.Attributes),
+		GroupDistinguishedNames: groupDistinguishedNamesForRequest(outcome.GroupDistinguishedNames, input.Attributes),
+		Backend:                 backend,
+		MFA:                     mfaState,
 	}
 }
 
@@ -360,7 +360,7 @@ func (s *backendManagerIdentityService) FinishTOTPRegistration(_ context.Context
 	return changedMFAResult(input.Backend), nil
 }
 
-func (s *backendManagerIdentityService) VerifyTOTP(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
+func (s *backendManagerIdentityService) VerifyTOTP(_ context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
 	auth, manager, err := s.authAndManager(input)
 	if err != nil {
 		return nil, err
@@ -792,9 +792,9 @@ func groupsForRequest(groups []string, request *identityv1.AttributeRequest) []s
 	return nil
 }
 
-func groupDNSForRequest(groupDNS []string, request *identityv1.AttributeRequest) []string {
+func groupDistinguishedNamesForRequest(groupDistinguishedNames []string, request *identityv1.AttributeRequest) []string {
 	if request != nil && request.GetIncludeGroupDns() {
-		return append([]string(nil), groupDNS...)
+		return append([]string(nil), groupDistinguishedNames...)
 	}
 
 	return nil
@@ -858,7 +858,7 @@ func applyPassDBResult(auth *core.AuthState, result *core.PassDBResult) {
 	auth.Runtime.UserFound = result.UserFound
 	auth.ReplaceAllAttributes(result.Attributes)
 	auth.Groups.Groups = append([]string(nil), result.Groups...)
-	auth.Groups.GroupDNs = append([]string(nil), result.GroupDNs...)
+	auth.Groups.GroupDistinguishedNames = append([]string(nil), result.GroupDistinguishedNames...)
 }
 
 func authDecisionStatus(decision core.AuthDecision, message string, errText string) *commonv1.OperationStatus {

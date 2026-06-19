@@ -140,7 +140,9 @@ end
 	}
 
 	db, _ := redismock.NewClientMock()
+
 	var out bytes.Buffer
+
 	logger := slog.New(slog.NewTextHandler(&out, nil))
 
 	_, err := RunCacheFlushScript(

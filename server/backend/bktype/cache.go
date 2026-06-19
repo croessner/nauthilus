@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package bktype provides bktype functionality.
 package bktype
 
 import "github.com/croessner/nauthilus/v3/server/definitions"
@@ -22,15 +23,15 @@ import "github.com/croessner/nauthilus/v3/server/definitions"
 // refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from the cache to force a refresh
 // of the user data from underlying databases.
 type PositivePasswordCache struct {
-	Backend           definitions.Backend `json:"passdb_backend"`
-	BackendName       string              `json:"backend_name"`
-	Password          string              `json:"password,omitempty"`
-	AccountField      string              `json:"account_field"`
-	TOTPSecretField   string              `json:"totp_secret_field"`
-	TOTPRecoveryField string              `json:"totp_recovery_field"`
-	UniqueUserIDField string              `json:"webauth_userid_field"`
-	DisplayNameField  string              `json:"display_name_field"`
-	Attributes        AttributeMapping    `json:"attributes"`
-	Groups            []string            `json:"groups"`
-	GroupDNs          []string            `json:"group_dns"`
+	Backend                 definitions.Backend `json:"passdb_backend"`
+	BackendName             string              `json:"backend_name"`
+	Password                string              `json:"password,omitempty"`
+	AccountField            string              `json:"account_field"`
+	TOTPSecretField         string              `json:"totp_secret_field"`
+	TOTPRecoveryField       string              `json:"totp_recovery_field"`
+	UniqueUserIDField       string              `json:"webauth_userid_field"`
+	DisplayNameField        string              `json:"display_name_field"`
+	Attributes              AttributeMapping    `json:"attributes"`
+	Groups                  []string            `json:"groups"`
+	GroupDistinguishedNames []string            `json:"group_dns"`
 }

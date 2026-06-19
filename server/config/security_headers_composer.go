@@ -26,6 +26,14 @@ const (
 	defaultStrictTransportSecurity = "max-age=31536000; includeSubDomains"
 	defaultPermissionsPolicy       = "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
 	cspFormActionDirectiveName     = "form-action"
+	cspSourceSelf                  = "'self'"
+	cspSourceNone                  = "'none'"
+	cspSourceHTTPS                 = "https:"
+	permissionsPolicyEmpty         = "()"
+	securityHeaderValueSameOrigin  = "same-origin"
+	securityHeaderValueNone        = "none"
+	strictTransportSecurityMaxAge  = "max-age=31536000"
+	strictTransportSecurityPreload = "preload"
 
 	securityHeadersCSPKey         = "identity.frontend.security_headers.content_security_policy"
 	securityHeadersPermissionsKey = "identity.frontend.security_headers.permissions_policy"
@@ -43,28 +51,28 @@ type permissionsDirective struct {
 }
 
 var defaultContentSecurityPolicyDirectives = []cspDirective{
-	{name: "default-src", sources: []string{"'self'"}},
-	{name: "script-src", sources: []string{"'self'", "'nonce-{{nonce}}'"}},
-	{name: "style-src", sources: []string{"'self'", "'unsafe-inline'"}},
-	{name: "img-src", sources: []string{"'self'", "data:"}},
-	{name: "font-src", sources: []string{"'self'"}},
-	{name: "connect-src", sources: []string{"'self'"}},
-	{name: "frame-src", sources: []string{"'self'", "https:"}},
-	{name: "object-src", sources: []string{"'none'"}},
-	{name: "base-uri", sources: []string{"'none'"}},
-	{name: "frame-ancestors", sources: []string{"'none'"}},
-	{name: cspFormActionDirectiveName, sources: []string{"'self'", "https:"}},
+	{name: "default-src", sources: []string{cspSourceSelf}},
+	{name: "script-src", sources: []string{cspSourceSelf, "'nonce-{{nonce}}'"}},
+	{name: "style-src", sources: []string{cspSourceSelf, "'unsafe-inline'"}},
+	{name: "img-src", sources: []string{cspSourceSelf, "data:"}},
+	{name: "font-src", sources: []string{cspSourceSelf}},
+	{name: "connect-src", sources: []string{cspSourceSelf}},
+	{name: "frame-src", sources: []string{cspSourceSelf, cspSourceHTTPS}},
+	{name: "object-src", sources: []string{cspSourceNone}},
+	{name: "base-uri", sources: []string{cspSourceNone}},
+	{name: "frame-ancestors", sources: []string{cspSourceNone}},
+	{name: cspFormActionDirectiveName, sources: []string{cspSourceSelf, cspSourceHTTPS}},
 }
 
 var supportedContentSecurityPolicyDirectiveNames = collectSupportedCSPDirectiveNames()
 var supportedContentSecurityPolicyDirectiveSet = buildSupportedCSPDirectiveSet()
 
 var defaultPermissionsPolicyDirectives = []permissionsDirective{
-	{feature: "geolocation", value: "()"},
-	{feature: "microphone", value: "()"},
-	{feature: "camera", value: "()"},
-	{feature: "payment", value: "()"},
-	{feature: "usb", value: "()"},
+	{feature: "geolocation", value: permissionsPolicyEmpty},
+	{feature: "microphone", value: permissionsPolicyEmpty},
+	{feature: "camera", value: permissionsPolicyEmpty},
+	{feature: "payment", value: permissionsPolicyEmpty},
+	{feature: "usb", value: permissionsPolicyEmpty},
 }
 
 // SecurityHeaderComposer composes frontend security header values from strings, legacy list partials, or structured objects.
@@ -196,6 +204,7 @@ func composeContentSecurityPolicyFromPartials(partials []string, optionalFormAct
 			}
 
 			name := strings.ToLower(fields[0])
+
 			normalizedName := normalizeCSPDirectiveName(name)
 			if normalizedName == cspFormActionDirectiveName {
 				formActionOverridden = true
@@ -322,7 +331,7 @@ func composePermissionsPolicyFromFeatureMap(featureOverrides map[string]string) 
 
 // composeStrictTransportSecurityFromPartials builds a final HSTS header from partial tokens and defaults.
 func composeStrictTransportSecurityFromPartials(partials []string) string {
-	maxAge := "max-age=31536000"
+	maxAge := strictTransportSecurityMaxAge
 	includeSubDomains := true
 	preload := false
 
@@ -340,7 +349,7 @@ func composeStrictTransportSecurityFromPartials(partials []string) string {
 				}
 			case lowerToken == "includesubdomains":
 				includeSubDomains = true
-			case lowerToken == "preload":
+			case lowerToken == strictTransportSecurityPreload:
 				preload = true
 			default:
 				if _, seen := customSeen[token]; seen {
@@ -360,7 +369,7 @@ func composeStrictTransportSecurityFromPartials(partials []string) string {
 	}
 
 	if preload {
-		tokens = append(tokens, "preload")
+		tokens = append(tokens, strictTransportSecurityPreload)
 	}
 
 	tokens = append(tokens, customTokens...)
@@ -370,7 +379,7 @@ func composeStrictTransportSecurityFromPartials(partials []string) string {
 
 // composeStrictTransportSecurityFromObject builds a final HSTS header from structured object input and defaults.
 func composeStrictTransportSecurityFromObject(options strictTransportSecurityObject) string {
-	maxAge := "max-age=31536000"
+	maxAge := strictTransportSecurityMaxAge
 	includeSubDomains := true
 	preload := false
 	extraTokens := compactStringList(options.extraTokens)
@@ -397,7 +406,7 @@ func composeStrictTransportSecurityFromObject(options strictTransportSecurityObj
 	}
 
 	if preload {
-		tokens = append(tokens, "preload")
+		tokens = append(tokens, strictTransportSecurityPreload)
 	}
 
 	tokens = append(tokens, extraTokens...)
@@ -442,7 +451,7 @@ func finalizeFormActionDirective(
 	}
 
 	if formActionIndex == -1 {
-		defaultFormActionSources := []string{"'self'", "https:"}
+		defaultFormActionSources := []string{cspSourceSelf, cspSourceHTTPS}
 		if len(normalizedURIs) > 0 {
 			defaultFormActionSources = []string{"'self'"}
 		}
@@ -597,6 +606,7 @@ func indexPermissionsDirectives(directives []permissionsDirective) map[string]in
 // renderCSPDirectives renders normalized CSP directives into a header string.
 func renderCSPDirectives(directives []cspDirective) string {
 	var builder strings.Builder
+
 	firstDirective := true
 
 	for _, directive := range directives {
@@ -610,6 +620,7 @@ func renderCSPDirectives(directives []cspDirective) string {
 		}
 
 		firstDirective = false
+
 		builder.WriteString(name)
 
 		for _, source := range compactStringList(directive.sources) {
@@ -624,10 +635,12 @@ func renderCSPDirectives(directives []cspDirective) string {
 // renderPermissionsPolicyDirectives renders normalized Permissions-Policy directives into a header string.
 func renderPermissionsPolicyDirectives(directives []permissionsDirective) string {
 	var builder strings.Builder
+
 	firstDirective := true
 
 	for _, directive := range directives {
 		feature := strings.TrimSpace(directive.feature)
+
 		value := strings.TrimSpace(directive.value)
 		if feature == "" || value == "" {
 			continue
@@ -638,6 +651,7 @@ func renderPermissionsPolicyDirectives(directives []permissionsDirective) string
 		}
 
 		firstDirective = false
+
 		builder.WriteString(feature)
 		builder.WriteByte('=')
 		builder.WriteString(value)
@@ -649,6 +663,7 @@ func renderPermissionsPolicyDirectives(directives []permissionsDirective) string
 // renderTokens renders tokens with a fixed separator, skipping empty/duplicate entries.
 func renderTokens(tokens []string, separator string) string {
 	var builder strings.Builder
+
 	firstToken := true
 
 	for _, token := range compactStringList(tokens) {
@@ -657,6 +672,7 @@ func renderTokens(tokens []string, separator string) string {
 		}
 
 		firstToken = false
+
 		builder.WriteString(token)
 	}
 

@@ -43,6 +43,7 @@ func (m *mockConfig) GetLDAPSearchProtocol(protocol string, poolName string) (*c
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
+
 	return args.Get(0).(*config.LDAPSearchProtocol), args.Error(1)
 }
 
@@ -276,6 +277,7 @@ func TestLDAPGetWebAuthnCredentialsDefaultsPoolName(t *testing.T) {
 	auth.Request.Protocol.Set("oidc")
 
 	poolNameChan := make(chan string, 1)
+
 	go func() {
 		popCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -352,6 +354,7 @@ func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 		if req != nil {
 			assert.Equal(t, definitions.LDAPSearch, req.Command)
 			assert.Equal(t, []string{"objectClass"}, req.SearchAttributes)
+
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{
 					Result: bktype.AttributeMapping{
@@ -367,6 +370,7 @@ func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
 			assert.Equal(t, []string{"nauthilusFido2Account"}, req.ModifyAttributes["objectClass"])
+
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -378,6 +382,7 @@ func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
 			assert.Contains(t, req.ModifyAttributes, "nauthilusFido2Credential")
+
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -439,6 +444,7 @@ func TestLDAPDeleteWebAuthnCredential(t *testing.T) {
 			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
 			_, hasObjectClass := req.ModifyAttributes["objectClass"]
 			assert.False(t, hasObjectClass)
+
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -503,6 +509,7 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 		req := priorityqueue.LDAPQueue.Pop("test")
 		if req != nil {
 			assert.Equal(t, definitions.LDAPSearch, req.Command)
+
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{
 					Result: bktype.AttributeMapping{
@@ -518,6 +525,7 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
 			assert.Equal(t, []string{"nauthilusFido2Account"}, req.ModifyAttributes["objectClass"])
+
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -531,6 +539,7 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
 			_, hasObjectClass := req.ModifyAttributes["objectClass"]
 			assert.False(t, hasObjectClass)
+
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -544,6 +553,7 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
 			_, hasObjectClass := req.ModifyAttributes["objectClass"]
 			assert.False(t, hasObjectClass)
+
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}

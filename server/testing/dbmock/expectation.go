@@ -56,6 +56,7 @@ func (b *baseExpectation) Match(call Call) error {
 
 	if b.requiresQueryMatch() {
 		expected := normalizeSQL(b.query)
+
 		actual := normalizeSQL(call.Query)
 		if actual != expected {
 			return fmt.Errorf("%w: expected %q, got %q", ErrSQLMismatch, expected, actual)
@@ -71,6 +72,7 @@ func (b *baseExpectation) Match(call Call) error {
 			if !matcher.Match(call.Args[i]) {
 				return fmt.Errorf("%w at index %d: matcher %s did not match value %#v", ErrArgMismatch, i, matcher.Describe(), call.Args[i])
 			}
+
 			continue
 		}
 

@@ -19,6 +19,7 @@ func (m *manualMockSource) Next() (Row, bool) {
 	if m.nextFunc != nil {
 		return m.nextFunc()
 	}
+
 	return Row{}, false
 }
 
@@ -32,6 +33,7 @@ func (m *manualMockSource) Total() int {
 	if m.totalFunc != nil {
 		return m.totalFunc()
 	}
+
 	return 0
 }
 

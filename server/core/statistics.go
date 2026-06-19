@@ -67,13 +67,16 @@ func LoadStatsFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 	counterTypes := []string{definitions.LabelSuccess, definitions.LabelFailure}
 
 	// Use pipelining to batch Redis operations and reduce network round trips
-	var cmds []redis.Cmder
-	var err error
+	var (
+		cmds []redis.Cmder
+		err  error
+	)
 
 	cmds, err = rediscli.ExecuteReadPipeline(ctx, redisClient, func(pipe redis.Pipeliner) error {
 		for _, counterType := range counterTypes {
 			pipe.HGet(ctx, redisLoginsCounterKey, counterType)
 		}
+
 		return nil
 	})
 
@@ -142,9 +145,9 @@ func SaveStatsToRedis(ctx context.Context, cfg config.File, logger *slog.Logger,
 		for index := range metrics {
 			pipe.HSet(ctx, redisLoginsCounterKey, metrics[index].Label, metrics[index].Value)
 		}
+
 		return nil
 	})
-
 	if err != nil {
 		level.Error(logger).Log(definitions.LogKeyMsg, "Execute write pipeline failed", definitions.LogKeyError, err)
 

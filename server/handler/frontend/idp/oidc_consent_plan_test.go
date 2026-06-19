@@ -27,21 +27,21 @@ func TestBuildConsentScopePlan(t *testing.T) {
 	t.Run("all_or_nothing keeps all requested required", func(t *testing.T) {
 		client := &config.OIDCClient{ConsentMode: config.OIDCConsentModeAllOrNothing}
 		plan := buildConsentScopePlan(client, config.OIDCConsentModeAllOrNothing, []string{
-			definitions.ScopeOpenId, definitions.ScopeProfile, definitions.ScopeEmail,
+			definitions.ScopeOpenID, definitions.ScopeProfile, definitions.ScopeEmail,
 		})
 
 		assert.Equal(t, config.OIDCConsentModeAllOrNothing, plan.Mode)
-		assert.Equal(t, []string{definitions.ScopeOpenId, definitions.ScopeProfile, definitions.ScopeEmail}, plan.Required)
+		assert.Equal(t, []string{definitions.ScopeOpenID, definitions.ScopeProfile, definitions.ScopeEmail}, plan.Required)
 		assert.Empty(t, plan.Optional)
 	})
 
 	t.Run("granular mode defaults openid to required", func(t *testing.T) {
 		client := &config.OIDCClient{ConsentMode: config.OIDCConsentModeGranularOptional}
 		plan := buildConsentScopePlan(client, config.OIDCConsentModeAllOrNothing, []string{
-			definitions.ScopeOpenId, definitions.ScopeProfile, definitions.ScopeEmail,
+			definitions.ScopeOpenID, definitions.ScopeProfile, definitions.ScopeEmail,
 		})
 
-		assert.Equal(t, []string{definitions.ScopeOpenId}, plan.Required)
+		assert.Equal(t, []string{definitions.ScopeOpenID}, plan.Required)
 		assert.Equal(t, []string{definitions.ScopeProfile, definitions.ScopeEmail}, plan.Optional)
 	})
 
@@ -53,10 +53,10 @@ func TestBuildConsentScopePlan(t *testing.T) {
 		}
 
 		plan := buildConsentScopePlan(client, config.OIDCConsentModeAllOrNothing, []string{
-			definitions.ScopeOpenId, definitions.ScopeProfile, definitions.ScopeEmail, definitions.ScopeGroups,
+			definitions.ScopeOpenID, definitions.ScopeProfile, definitions.ScopeEmail, definitions.ScopeGroups,
 		})
 
-		assert.Equal(t, []string{definitions.ScopeOpenId, definitions.ScopeProfile, definitions.ScopeGroups}, plan.Required)
+		assert.Equal(t, []string{definitions.ScopeOpenID, definitions.ScopeProfile, definitions.ScopeGroups}, plan.Required)
 		assert.Equal(t, []string{definitions.ScopeEmail}, plan.Optional)
 	})
 }
@@ -64,8 +64,8 @@ func TestBuildConsentScopePlan(t *testing.T) {
 func TestConsentScopePlanResolveGranted(t *testing.T) {
 	plan := consentScopePlan{
 		Mode:      config.OIDCConsentModeGranularOptional,
-		Requested: []string{definitions.ScopeOpenId, definitions.ScopeProfile, definitions.ScopeEmail},
-		Required:  []string{definitions.ScopeOpenId},
+		Requested: []string{definitions.ScopeOpenID, definitions.ScopeProfile, definitions.ScopeEmail},
+		Required:  []string{definitions.ScopeOpenID},
 		Optional:  []string{definitions.ScopeProfile, definitions.ScopeEmail},
 	}
 
@@ -74,7 +74,8 @@ func TestConsentScopePlanResolveGranted(t *testing.T) {
 		if !assert.NoError(t, err) {
 			return
 		}
-		assert.Equal(t, []string{definitions.ScopeOpenId, definitions.ScopeEmail}, granted)
+
+		assert.Equal(t, []string{definitions.ScopeOpenID, definitions.ScopeEmail}, granted)
 	})
 
 	t.Run("rejects unknown optional scope", func(t *testing.T) {

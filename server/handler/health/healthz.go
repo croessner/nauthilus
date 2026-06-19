@@ -43,8 +43,13 @@ const (
 	healthzStatusDown     = "down"
 	healthzStatusDegraded = "degraded"
 	healthzStatusSkipped  = "skipped"
+	healthzMetaLatencyMS  = "latency_ms"
+	healthzMetaTarget     = "target"
+	healthzLDAPConfigNone = "ldap config not available"
+	healthzRedisClientNil = "redis client not configured"
 )
 
+// HealthzDeps describes the exported HealthzDeps type.
 type HealthzDeps struct {
 	Cfg         config.File
 	Logger      *slog.Logger
@@ -52,17 +57,20 @@ type HealthzDeps struct {
 	Redis       rediscli.Client
 }
 
+// HealthzCheck describes the exported HealthzCheck type.
 type HealthzCheck struct {
 	Status string         `json:"status"`
 	Error  string         `json:"error,omitempty"`
 	Meta   map[string]any `json:"meta,omitzero"`
 }
 
+// HealthzResult describes the exported HealthzResult type.
 type HealthzResult struct {
 	Status string                   `json:"status"`
 	Checks map[string]*HealthzCheck `json:"checks"`
 }
 
+// ReadinessCheck provides the exported ReadinessCheck function.
 func ReadinessCheck(ctx *gin.Context, deps HealthzDeps) {
 	if deps.Logger == nil {
 		deps.Logger = slog.Default()
@@ -123,6 +131,7 @@ func checkTestBackend(deps HealthzDeps, result *HealthzResult) {
 		Cfg:    deps.Cfg,
 		Logger: deps.Logger,
 	})
+
 	passResult, err := backend.PassDB(authState)
 	if err != nil {
 		result.Checks["test_backend"] = &HealthzCheck{
@@ -221,7 +230,7 @@ func checkTestBackend(deps HealthzDeps, result *HealthzResult) {
 	result.Checks["test_backend"] = &HealthzCheck{
 		Status: healthzStatusUp,
 		Meta: map[string]any{
-			"latency_ms": time.Since(start).Milliseconds(),
+			healthzMetaLatencyMS: time.Since(start).Milliseconds(),
 		},
 	}
 }
@@ -230,11 +239,11 @@ func checkRedis(deps HealthzDeps, result *HealthzResult) {
 	if deps.Redis == nil {
 		result.Checks["redis_write"] = &HealthzCheck{
 			Status: healthzStatusSkipped,
-			Error:  "redis client not configured",
+			Error:  healthzRedisClientNil,
 		}
 		result.Checks["redis_read"] = &HealthzCheck{
 			Status: healthzStatusSkipped,
-			Error:  "redis client not configured",
+			Error:  healthzRedisClientNil,
 		}
 
 		return
@@ -269,7 +278,7 @@ func checkRedisHandle(name string, handle redis.UniversalClient, timeout time.Du
 			Status: healthzStatusDown,
 			Error:  err.Error(),
 			Meta: map[string]any{
-				"latency_ms": latency,
+				healthzMetaLatencyMS: latency,
 			},
 		}
 
@@ -279,7 +288,7 @@ func checkRedisHandle(name string, handle redis.UniversalClient, timeout time.Du
 	result.Checks[name] = &HealthzCheck{
 		Status: healthzStatusUp,
 		Meta: map[string]any{
-			"latency_ms": latency,
+			healthzMetaLatencyMS: latency,
 		},
 	}
 }
@@ -294,7 +303,7 @@ func checkLDAP(deps HealthzDeps, result *HealthzResult) {
 	if ldapSection == nil {
 		result.Checks["ldap"] = &HealthzCheck{
 			Status: healthzStatusDown,
-			Error:  "ldap config not available",
+			Error:  healthzLDAPConfigNone,
 		}
 
 		return
@@ -306,7 +315,7 @@ func checkLDAP(deps HealthzDeps, result *HealthzResult) {
 	if !ok || ldapConf == nil {
 		result.Checks["ldap"] = &HealthzCheck{
 			Status: healthzStatusDown,
-			Error:  "ldap config not available",
+			Error:  healthzLDAPConfigNone,
 		}
 
 		return
@@ -341,7 +350,7 @@ func checkLDAP(deps HealthzDeps, result *HealthzResult) {
 			Status: healthzStatusDown,
 			Error:  err.Error(),
 			Meta: map[string]any{
-				"target": target,
+				healthzMetaTarget: target,
 			},
 		}
 
@@ -355,8 +364,8 @@ func checkLDAP(deps HealthzDeps, result *HealthzResult) {
 	result.Checks["ldap"] = &HealthzCheck{
 		Status: healthzStatusUp,
 		Meta: map[string]any{
-			"latency_ms": time.Since(start).Milliseconds(),
-			"target":     target,
+			healthzMetaLatencyMS: time.Since(start).Milliseconds(),
+			healthzMetaTarget:    target,
 		},
 	}
 }

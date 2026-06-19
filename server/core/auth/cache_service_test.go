@@ -44,6 +44,7 @@ func TestDefaultCacheService_OnSuccess_WritesRedisHashAndTTL(t *testing.T) {
 			},
 		},
 	}
+
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
 	config.SetTestFile(cfg)
 	util.SetDefaultConfigFile(cfg)

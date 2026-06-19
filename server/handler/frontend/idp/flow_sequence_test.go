@@ -21,15 +21,15 @@ func TestResumeFlowSequences(t *testing.T) {
 
 	t.Run("OIDC authorization resume", func(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyIdPFlowID:       "flow-oidc",
-			definitions.SessionKeyIdPFlowType:     definitions.ProtoOIDC,
+			definitions.SessionKeyIDPFlowID:       "flow-oidc",
+			definitions.SessionKeyIDPFlowType:     definitions.ProtoOIDC,
 			definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
-			definitions.SessionKeyIdPClientID:     "client-1",
-			definitions.SessionKeyIdPRedirectURI:  "https://rp.example/cb",
-			definitions.SessionKeyIdPScope:        "openid profile",
-			definitions.SessionKeyIdPState:        "state-1",
-			definitions.SessionKeyIdPNonce:        "nonce-1",
-			definitions.SessionKeyIdPResponseType: "code",
+			definitions.SessionKeyIDPClientID:     "client-1",
+			definitions.SessionKeyIDPRedirectURI:  "https://rp.example/cb",
+			definitions.SessionKeyIDPScope:        "openid profile",
+			definitions.SessionKeyIDPState:        "state-1",
+			definitions.SessionKeyIDPNonce:        "nonce-1",
+			definitions.SessionKeyIDPResponseType: "code",
 		}}
 
 		decision, err := resumeFlow(context.Background(), mgr, nil, "")
@@ -48,10 +48,10 @@ func TestResumeFlowSequences(t *testing.T) {
 
 	t.Run("SAML resume", func(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyIdPFlowID:       "flow-saml",
-			definitions.SessionKeyIdPFlowType:     definitions.ProtoSAML,
-			definitions.SessionKeyIdPSAMLEntityID: "sp-1",
-			definitions.SessionKeyIdPOriginalURL:  "/saml/sso?SAMLRequest=abc",
+			definitions.SessionKeyIDPFlowID:       "flow-saml",
+			definitions.SessionKeyIDPFlowType:     definitions.ProtoSAML,
+			definitions.SessionKeyIDPSAMLEntityID: "sp-1",
+			definitions.SessionKeyIDPOriginalURL:  "/saml/sso?SAMLRequest=abc",
 		}}
 
 		decision, err := resumeFlow(context.Background(), mgr, nil, "")
@@ -66,8 +66,8 @@ func TestResumeFlowSequences(t *testing.T) {
 
 	t.Run("Device code completion marker", func(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyIdPFlowID:     "flow-device",
-			definitions.SessionKeyIdPFlowType:   definitions.ProtoOIDC,
+			definitions.SessionKeyIDPFlowID:     "flow-device",
+			definitions.SessionKeyIDPFlowType:   definitions.ProtoOIDC,
 			definitions.SessionKeyOIDCGrantType: definitions.OIDCFlowDeviceCode,
 			definitions.SessionKeyDeviceCode:    "device-1",
 		}}
@@ -95,10 +95,10 @@ func TestResumeFlowStaleIDRecovery(t *testing.T) {
 	mock.ExpectGet("test:idp:flow:" + flowID).RedisNil()
 
 	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyIdPFlowID:     flowID,
-		definitions.SessionKeyIdPFlowType:   definitions.ProtoOIDC,
+		definitions.SessionKeyIDPFlowID:     flowID,
+		definitions.SessionKeyIDPFlowType:   definitions.ProtoOIDC,
 		definitions.SessionKeyOIDCGrantType: definitions.OIDCFlowAuthorizationCode,
-		definitions.SessionKeyIdPClientID:   "client-1",
+		definitions.SessionKeyIDPClientID:   "client-1",
 	}}
 
 	decision, err := resumeFlow(context.Background(), mgr, rClient, redisPrefix)
@@ -143,13 +143,13 @@ func TestContinueRequiredMFARegistrationFlow(t *testing.T) {
 		ctx, _ := gin.CreateTestContext(recorder)
 		ctx.Request = httptest.NewRequest(http.MethodGet, "/mfa/register/continue", nil)
 		ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyIdPFlowID:       "flow-parent",
-			definitions.SessionKeyIdPFlowType:     definitions.ProtoOIDC,
+			definitions.SessionKeyIDPFlowID:       "flow-parent",
+			definitions.SessionKeyIDPFlowType:     definitions.ProtoOIDC,
 			definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
-			definitions.SessionKeyIdPClientID:     "client-1",
-			definitions.SessionKeyIdPRedirectURI:  "https://rp.example/cb",
-			definitions.SessionKeyIdPScope:        "openid",
-			definitions.SessionKeyIdPResponseType: "code",
+			definitions.SessionKeyIDPClientID:     "client-1",
+			definitions.SessionKeyIDPRedirectURI:  "https://rp.example/cb",
+			definitions.SessionKeyIDPScope:        "openid",
+			definitions.SessionKeyIDPResponseType: "code",
 		}})
 
 		h := &FrontendHandler{
@@ -185,15 +185,15 @@ func TestContinueRequiredMFARegistrationFlow(t *testing.T) {
 		ctx, _ := gin.CreateTestContext(recorder)
 		ctx.Request = httptest.NewRequest(http.MethodGet, "/mfa/register/continue", nil)
 		ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyIdPFlowID:              "require-mfa-flow",
+			definitions.SessionKeyIDPFlowID:              "require-mfa-flow",
 			definitions.SessionKeyRequireMFAParentFlowID: "flow-parent",
 			definitions.SessionKeyRequireMFAFlow:         true,
-			definitions.SessionKeyIdPFlowType:            definitions.ProtoOIDC,
+			definitions.SessionKeyIDPFlowType:            definitions.ProtoOIDC,
 			definitions.SessionKeyOIDCGrantType:          definitions.OIDCFlowAuthorizationCode,
-			definitions.SessionKeyIdPClientID:            "client-1",
-			definitions.SessionKeyIdPRedirectURI:         "https://rp.example/cb",
-			definitions.SessionKeyIdPScope:               "openid",
-			definitions.SessionKeyIdPResponseType:        "code",
+			definitions.SessionKeyIDPClientID:            "client-1",
+			definitions.SessionKeyIDPRedirectURI:         "https://rp.example/cb",
+			definitions.SessionKeyIDPScope:               "openid",
+			definitions.SessionKeyIDPResponseType:        "code",
 			definitions.SessionKeyRequireMFAPending:      "",
 		}})
 

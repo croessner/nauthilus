@@ -72,8 +72,8 @@ type mockSAMLCfg struct {
 	sloBackChannelRetries int
 }
 
-func (m *mockSAMLCfg) GetIdP() *config.IdPSection {
-	return &config.IdPSection{
+func (m *mockSAMLCfg) GetIDP() *config.IDPSection {
+	return &config.IDPSection{
 		OIDC: config.OIDCConfig{
 			Issuer: "https://auth.example.com",
 		},
@@ -115,7 +115,7 @@ func TestSAMLHandler_Metadata(t *testing.T) {
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
-			Organization: []string{"Test IdP"},
+			Organization: []string{"Test IDP"},
 		},
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().Add(time.Hour),
@@ -214,6 +214,7 @@ func TestBuildSPKeyDescriptors(t *testing.T) {
 
 func TestSAML_Routes_HaveLuaContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
 	cfg := &mockSAMLCfg{entityID: "test", certificate: "test"}
 	d := &deps.Deps{Cfg: cfg}
 	h := NewSAMLHandler(d, nil)
@@ -226,7 +227,9 @@ func TestSAML_Routes_HaveLuaContext(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			// Let's define r and the test to be more precise
 			r := gin.New()
+
 			var capturedCtx *gin.Context
+
 			r.Use(func(c *gin.Context) {
 				c.Next()
 				capturedCtx = c
@@ -241,7 +244,7 @@ func TestSAML_Routes_HaveLuaContext(t *testing.T) {
 			assert.True(t, exists, "Lua context should be set for path: %s", path)
 
 			svc, _ := capturedCtx.Get(definitions.CtxServiceKey)
-			assert.Equal(t, definitions.ServIdP, svc)
+			assert.Equal(t, definitions.ServIDP, svc)
 		})
 	}
 }
@@ -422,7 +425,6 @@ func TestRouteSLOInboundMessage(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -565,7 +567,7 @@ func mustDecodeRedirectLogoutResponse(t *testing.T, encodedResponse string) *sam
 	}
 
 	reader := flate.NewReader(bytes.NewReader(rawResponse))
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	xmlPayload, err := io.ReadAll(reader)
 	if err != nil {
@@ -602,6 +604,7 @@ func mustExtractHiddenFormValue(t *testing.T, responseHTML string, fieldName str
 	t.Helper()
 
 	pattern := regexp.MustCompile(`name="` + regexp.QuoteMeta(fieldName) + `" value="([^"]*)"`)
+
 	match := pattern.FindStringSubmatch(responseHTML)
 	if len(match) != 2 {
 		t.Fatalf("failed to extract hidden form field %q", fieldName)
@@ -795,7 +798,6 @@ func TestSAMLHandler_validateInboundLogoutRequestProtocol_FieldValidation(t *tes
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			request := baseRequest()
 			tc.mutate(request)
@@ -926,7 +928,6 @@ func TestSAMLHandler_validateInboundLogoutRequestProtocol_RegistryAndReplay(t *t
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			redisClient := rediscli.NewTestClient(db)
@@ -1049,7 +1050,6 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_Redirect(t *testing.T
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.target, nil)
 
@@ -1225,7 +1225,6 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_POST(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/saml/slo", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1387,6 +1386,7 @@ func TestSAMLHandler_SLOPayloadValidationAndDispatch(t *testing.T) {
 
 		assert.Equal(t, http.StatusFound, w.Code)
 		location := w.Header().Get("Location")
+
 		locationURL, err := url.Parse(location)
 		if !assert.NoError(t, err) {
 			return
@@ -1403,9 +1403,11 @@ func TestSAMLHandler_SLOPayloadValidationAndDispatch(t *testing.T) {
 		response := mustDecodeRedirectLogoutResponse(t, rawSAMLResponse)
 		assert.Equal(t, requestID, response.InResponseTo)
 		assert.Equal(t, spSLOURL, response.Destination)
+
 		if assert.NotNil(t, response.Issuer) {
 			assert.Equal(t, "https://auth.example.com/saml/metadata", response.Issuer.Value)
 		}
+
 		assert.Equal(t, saml.StatusSuccess, response.Status.StatusCode.Value)
 		assert.NotNil(t, response.Signature)
 
@@ -1533,9 +1535,11 @@ func TestSAMLHandler_SLOSignedLogoutResponse_POST(t *testing.T) {
 	response := mustDecodePostLogoutResponse(t, rawSAMLResponse)
 	assert.Equal(t, logoutRequest.ID, response.InResponseTo)
 	assert.Equal(t, spSLOURL, response.Destination)
+
 	if assert.NotNil(t, response.Issuer) {
 		assert.Equal(t, "https://auth.example.com/saml/metadata", response.Issuer.Value)
 	}
+
 	assert.Equal(t, saml.StatusSuccess, response.Status.StatusCode.Value)
 	assert.NotNil(t, response.Signature)
 
@@ -1640,6 +1644,7 @@ func TestSAMLHandler_SLOSignedLogoutResponse_PartialLogoutStatus(t *testing.T) {
 
 	assert.Equal(t, http.StatusFound, w.Code)
 	location := w.Header().Get("Location")
+
 	locationURL, err := url.Parse(location)
 	if !assert.NoError(t, err) {
 		return
@@ -1656,9 +1661,11 @@ func TestSAMLHandler_SLOSignedLogoutResponse_PartialLogoutStatus(t *testing.T) {
 	response := mustDecodeRedirectLogoutResponse(t, rawSAMLResponse)
 	assert.Equal(t, requestID, response.InResponseTo)
 	assert.Equal(t, saml.StatusResponder, response.Status.StatusCode.Value)
+
 	if assert.NotNil(t, response.Status.StatusCode.StatusCode) {
 		assert.Equal(t, saml.StatusPartialLogout, response.Status.StatusCode.StatusCode.Value)
 	}
+
 	assert.NotNil(t, response.Signature)
 
 	validatorSP := mustBuildSPLogoutResponseValidator(
@@ -1720,9 +1727,9 @@ func TestSAMLHandler_performLocalSLOCleanup_Idempotent(t *testing.T) {
 
 	mgr := &mockCookieManager{data: map[string]any{
 		definitions.SessionKeyAccount:                "alice@example.com",
-		definitions.SessionKeyIdPFlowID:              "flow-local-cleanup",
-		definitions.SessionKeyIdPFlowType:            definitions.ProtoSAML,
-		definitions.SessionKeyIdPSAMLEntityID:        "https://sp.example.com/saml/metadata",
+		definitions.SessionKeyIDPFlowID:              "flow-local-cleanup",
+		definitions.SessionKeyIDPFlowType:            definitions.ProtoSAML,
+		definitions.SessionKeyIDPSAMLEntityID:        "https://sp.example.com/saml/metadata",
 		definitions.SessionKeyUsername:               "alice",
 		definitions.SessionKeyMFAMethod:              "totp",
 		definitions.SessionKeyRequireMFAFlow:         true,
@@ -1767,8 +1774,8 @@ func TestSAMLHandler_performLocalSLOCleanup_Idempotent(t *testing.T) {
 	assert.Equal(t, "/logged_out", w.Header().Get("Location"))
 	assert.Equal(t, slodomain.SLOStatusLocalDone, transaction.Status)
 	assert.Empty(t, mgr.GetString(definitions.SessionKeyAccount, ""))
-	assert.Empty(t, mgr.GetString(definitions.SessionKeyIdPFlowID, ""))
-	assert.Empty(t, mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, ""))
+	assert.Empty(t, mgr.GetString(definitions.SessionKeyIDPFlowID, ""))
+	assert.Empty(t, mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""))
 	assert.Empty(t, mgr.GetString(definitions.SessionKeyUsername, ""))
 	assert.Empty(t, mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""))
 	assert.NoError(t, mock.ExpectationsWereMet())

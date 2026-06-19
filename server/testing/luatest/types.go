@@ -30,6 +30,7 @@ func resetCallState(callIndex *int, runtimeErr *string) {
 	if callIndex != nil {
 		*callIndex = 0
 	}
+
 	if runtimeErr != nil {
 		*runtimeErr = ""
 	}
@@ -235,17 +236,24 @@ type ContextMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *ContextMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *ContextMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("context", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *ContextMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("context", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -260,17 +268,24 @@ type RedisMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *RedisMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *RedisMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("redis", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *RedisMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("redis", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -306,17 +321,24 @@ type LDAPMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *LDAPMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *LDAPMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("ldap", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *LDAPMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("ldap", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -346,17 +368,21 @@ func (m *BackendMock) ResetRuntimeState() {
 	m.RuntimeRemovedFromAttributes = nil
 }
 
+// RecordCall provides the exported RecordCall method.
 func (m *BackendMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("backend", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
 
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *BackendMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("backend", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -382,17 +408,24 @@ type MiscMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *MiscMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *MiscMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("misc", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *MiscMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("misc", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -407,17 +440,24 @@ type PasswordMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *PasswordMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *PasswordMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("password", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *PasswordMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("password", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -430,17 +470,24 @@ type SoftWhitelistMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *SoftWhitelistMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *SoftWhitelistMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("soft_whitelist", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *SoftWhitelistMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("soft_whitelist", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -453,17 +500,24 @@ type MailMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *MailMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *MailMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("mail", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *MailMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("mail", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -476,17 +530,24 @@ type DNSMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *DNSMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *DNSMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("dns", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *DNSMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("dns", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -498,17 +559,24 @@ type OpenTelemetryMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *OpenTelemetryMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *OpenTelemetryMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("opentelemetry", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *OpenTelemetryMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("opentelemetry", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -522,17 +590,24 @@ type BruteForceMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *BruteForceMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *BruteForceMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("brute_force", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *BruteForceMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("brute_force", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -545,17 +620,24 @@ type PsnetMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *PsnetMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *PsnetMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("psnet", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *PsnetMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("psnet", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -567,17 +649,24 @@ type PrometheusMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *PrometheusMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *PrometheusMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("prometheus", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *PrometheusMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("prometheus", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -590,17 +679,24 @@ type UtilMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *UtilMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *UtilMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("util", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *UtilMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("util", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -613,17 +709,24 @@ type CacheMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *CacheMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *CacheMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("cache", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *CacheMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("cache", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -766,17 +869,24 @@ type BackendResultMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *BackendResultMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *BackendResultMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("backend_result", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *BackendResultMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("backend_result", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -792,17 +902,24 @@ type HTTPRequestMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *HTTPRequestMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *HTTPRequestMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("http_request", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *HTTPRequestMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("http_request", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
@@ -817,17 +934,24 @@ type HTTPResponseMock struct {
 	runtimeErr string `json:"-"`
 }
 
+// ResetRuntimeState provides the exported ResetRuntimeState method.
 func (m *HTTPResponseMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
+
+// RecordCall provides the exported RecordCall method.
 func (m *HTTPResponseMock) RecordCall(method, args string) error {
 	if m == nil {
 		return nil
 	}
+
 	return recordModuleCall("http_response", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
 }
+
+// ValidateComplete provides the exported ValidateComplete method.
 func (m *HTTPResponseMock) ValidateComplete() error {
 	if m == nil {
 		return nil
 	}
+
 	return validateModuleCalls("http_response", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 

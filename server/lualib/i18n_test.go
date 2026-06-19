@@ -265,6 +265,7 @@ func newI18NTestRuntime(t *testing.T, overlays ...localization.CatalogOverlay) *
 			luaI18NKey: luaI18NGerman,
 		},
 	})
+
 	registry, err := localization.NewCatalogRegistry(system, overlays...)
 	if err != nil {
 		t.Fatalf("create catalog registry: %v", err)

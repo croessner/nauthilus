@@ -34,6 +34,13 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+const (
+	luaTestMockMethodClose  = "close"
+	luaTestMockMethodExec   = "exec"
+	luaTestMockMethodQuery  = "query"
+	luaTestMockUniqueUserID = "unique_user_id"
+)
+
 // LoaderModContextMock creates a mock nauthilus_context module.
 func LoaderModContextMock(mockData *ContextMock) lua.LGFunction {
 	return func(L *lua.LState) int {
@@ -42,12 +49,14 @@ func LoaderModContextMock(mockData *ContextMock) lua.LGFunction {
 		// Bind context get/set/delete functions using ContextManager
 		// which will look up the context from the global request environment
 		manager := lualib.NewContextManager()
+
 		L.SetField(mod, definitions.LuaFnCtxSet, L.NewFunction(func(L *lua.LState) int {
 			key := L.CheckString(1)
 			if err := mockData.RecordCall(definitions.LuaFnCtxSet, key); err != nil {
 				L.RaiseError("%s", err.Error())
 				return 0
 			}
+
 			return manager.ContextSet(L)
 		}))
 		L.SetField(mod, definitions.LuaFnCtxGet, L.NewFunction(func(L *lua.LState) int {
@@ -56,6 +65,7 @@ func LoaderModContextMock(mockData *ContextMock) lua.LGFunction {
 				L.RaiseError("%s", err.Error())
 				return 0
 			}
+
 			return manager.ContextGet(L)
 		}))
 		L.SetField(mod, definitions.LuaFnCtxDelete, L.NewFunction(func(L *lua.LState) int {
@@ -64,6 +74,7 @@ func LoaderModContextMock(mockData *ContextMock) lua.LGFunction {
 				L.RaiseError("%s", err.Error())
 				return 0
 			}
+
 			return manager.ContextDelete(L)
 		}))
 
@@ -80,6 +91,7 @@ func LoaderModPolicyMock(mockData *PolicyMock) lua.LGFunction {
 		L.SetFuncs(mod, map[string]lua.LGFunction{
 			definitions.LuaFnPolicyEmitAttribute: func(L *lua.LState) int {
 				table := L.CheckTable(1)
+
 				emission := policyEmissionFromTable(table)
 				if emission.ID == "" {
 					L.ArgError(1, "id must be a non-empty string")
@@ -137,6 +149,7 @@ func policyEmissionArgs(emission PolicyEmission) string {
 	for key := range emission.Details {
 		keys = append(keys, key)
 	}
+
 	sort.Strings(keys)
 
 	for _, key := range keys {
@@ -153,6 +166,7 @@ func LoaderModI18NMock(mockData *I18NMock) lua.LGFunction {
 		L.SetFuncs(mod, map[string]lua.LGFunction{
 			definitions.LuaFnI18NRegisterCatalog: func(L *lua.LState) int {
 				table := L.CheckTable(1)
+
 				registration := i18NCatalogFromTable(table)
 				if registration.Language == "" {
 					L.ArgError(1, "language must be a non-empty string")
@@ -177,6 +191,7 @@ func LoaderModI18NMock(mockData *I18NMock) lua.LGFunction {
 				table := L.CheckTable(1)
 				key := strings.TrimSpace(luaValueString(table.RawGetString("i18n_key")))
 				fallback := luaValueString(table.RawGetString("fallback"))
+
 				language := strings.TrimSpace(luaValueString(table.RawGetString("language")))
 				if language == "" {
 					language = "en"
@@ -236,6 +251,7 @@ func i18NCatalogArgs(registration I18NCatalogRegistration) string {
 	for key := range registration.Entries {
 		keys = append(keys, key)
 	}
+
 	sort.Strings(keys)
 
 	for _, key := range keys {
@@ -312,6 +328,7 @@ func LoaderModLDAPMock(mockData *LDAPMock) lua.LGFunction {
 			if err := mockData.RecordCall(definitions.LuaFnLDAPSearch, "search"); err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
 
@@ -328,6 +345,7 @@ func LoaderModLDAPMock(mockData *LDAPMock) lua.LGFunction {
 				for index, value := range values {
 					valueTable.RawSetInt(index+1, lua.LString(value))
 				}
+
 				result.RawSetString(attrName, valueTable)
 			}
 
@@ -340,6 +358,7 @@ func LoaderModLDAPMock(mockData *LDAPMock) lua.LGFunction {
 			if err := mockData.RecordCall(definitions.LuaFnLDAPModify, "modify"); err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
 
@@ -367,6 +386,7 @@ func LoaderModLDAPMock(mockData *LDAPMock) lua.LGFunction {
 				L.Push(lua.LNil)
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
+
 				return 3
 			}
 
@@ -456,6 +476,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			}
 
 			lastInsertID := int64(0)
+
 			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(query)), "insert ") {
 				conn.lastInsert++
 				lastInsertID = conn.lastInsert
@@ -476,9 +497,11 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			if conn == nil {
 				return lua.LNil, fmt.Errorf("invalid mock db connection")
 			}
+
 			if conn.closed {
 				return lua.LNil, fmt.Errorf("mock db connection is closed")
 			}
+
 			if conn.execError != "" {
 				return lua.LNil, fmt.Errorf("%s", conn.execError)
 			}
@@ -489,12 +512,14 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				if errExec != nil {
 					return lua.LNil, errExec
 				}
+
 				rowsAffected = result.RowsAffected
 				lastInsertID = result.LastInsertID
 			}
 
 			luaResult := L.NewTable()
 			luaResult.RawSetString("rows_affected", lua.LNumber(rowsAffected))
+
 			if lastInsertID > 0 {
 				luaResult.RawSetString("last_insert_id", lua.LNumber(lastInsertID))
 			}
@@ -506,9 +531,11 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			if stmt == nil || stmt.conn == nil {
 				return lua.LNil, fmt.Errorf("invalid mock db statement")
 			}
+
 			if stmt.closed {
 				return lua.LNil, fmt.Errorf("invalid mock db statement")
 			}
+
 			if stmt.conn.execError != "" {
 				return lua.LNil, fmt.Errorf("%s", stmt.conn.execError)
 			}
@@ -525,6 +552,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			}
 
 			lastInsertID := int64(0)
+
 			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(stmt.query)), "insert ") {
 				stmt.conn.lastInsert++
 				lastInsertID = stmt.conn.lastInsert
@@ -537,6 +565,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			if declarativeMode {
 				luaResult := L.NewTable()
 				luaResult.RawSetString("rows_affected", lua.LNumber(rowsAffected))
+
 				if lastInsertID > 0 {
 					luaResult.RawSetString("last_insert_id", lua.LNumber(lastInsertID))
 				}
@@ -545,6 +574,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			}
 
 			stmt.prepareExp.ExpectExec(args...).WillReturnResult(rowsAffected, lastInsertID)
+
 			result, errExec := stmt.stmt.Exec(args...)
 			if errExec != nil {
 				return lua.LNil, errExec
@@ -552,6 +582,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 
 			luaResult := L.NewTable()
 			luaResult.RawSetString("rows_affected", lua.LNumber(result.RowsAffected))
+
 			if result.LastInsertID > 0 {
 				luaResult.RawSetString("last_insert_id", lua.LNumber(result.LastInsertID))
 			}
@@ -563,14 +594,17 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			if conn == nil {
 				return lua.LNil, fmt.Errorf("invalid mock db connection")
 			}
+
 			if conn.closed {
 				return lua.LNil, fmt.Errorf("mock db connection is closed")
 			}
+
 			if conn.queryError != "" {
 				return lua.LNil, fmt.Errorf("%s", conn.queryError)
 			}
 
 			rowsResult := dbmock.NewRows()
+
 			if expected := mockData.LastMatchedCall(); expected != nil {
 				if len(expected.Columns) > 0 {
 					rowsResult = dbmock.NewRows(expected.Columns...)
@@ -585,20 +619,24 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 
 			if len(rowsResult.Columns) == 0 && len(rowsResult.Data) > 0 {
 				columnCount := len(rowsResult.Data[0])
+
 				columns := make([]string, 0, columnCount)
 				for idx := range columnCount {
 					columns = append(columns, fmt.Sprintf("col_%d", idx+1))
 				}
+
 				filled := dbmock.NewRows(columns...)
 				for _, row := range rowsResult.Data {
 					filled = filled.AddRow(row...)
 				}
+
 				rowsResult = filled
 			}
 
 			result := rowsResult
 			if !declarativeMode {
 				conn.mock.ExpectQuery(query, args...).WillReturnRows(rowsResult)
+
 				queryResult, errQuery := conn.conn.Query(query, args...)
 				if errQuery != nil {
 					return lua.LNil, errQuery
@@ -613,6 +651,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				for colIndex, value := range row {
 					rowTable.RawSetInt(colIndex+1, convert.GoToLuaValue(L, value))
 				}
+
 				rowsTable.RawSetInt(rowIndex+1, rowTable)
 			}
 
@@ -624,6 +663,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			luaResult := L.NewTable()
 			luaResult.RawSetString("rows", rowsTable)
 			luaResult.RawSetString("columns", columnsTable)
+
 			return luaResult, nil
 		}
 
@@ -631,14 +671,17 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			if stmt == nil || stmt.conn == nil {
 				return lua.LNil, fmt.Errorf("invalid mock db statement")
 			}
+
 			if stmt.closed {
 				return lua.LNil, fmt.Errorf("invalid mock db statement")
 			}
+
 			if stmt.conn.queryError != "" {
 				return lua.LNil, fmt.Errorf("%s", stmt.conn.queryError)
 			}
 
 			rowsResult := dbmock.NewRows()
+
 			if expected := mockData.LastMatchedCall(); expected != nil {
 				if len(expected.Columns) > 0 {
 					rowsResult = dbmock.NewRows(expected.Columns...)
@@ -653,20 +696,24 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 
 			if len(rowsResult.Columns) == 0 && len(rowsResult.Data) > 0 {
 				columnCount := len(rowsResult.Data[0])
+
 				columns := make([]string, 0, columnCount)
 				for idx := range columnCount {
 					columns = append(columns, fmt.Sprintf("col_%d", idx+1))
 				}
+
 				filled := dbmock.NewRows(columns...)
 				for _, row := range rowsResult.Data {
 					filled = filled.AddRow(row...)
 				}
+
 				rowsResult = filled
 			}
 
 			result := rowsResult
 			if !declarativeMode {
 				stmt.prepareExp.ExpectQuery(args...).WillReturnRows(rowsResult)
+
 				queryResult, errQuery := stmt.stmt.Query(args...)
 				if errQuery != nil {
 					return lua.LNil, errQuery
@@ -681,6 +728,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				for colIndex, value := range row {
 					rowTable.RawSetInt(colIndex+1, convert.GoToLuaValue(L, value))
 				}
+
 				rowsTable.RawSetInt(rowIndex+1, rowTable)
 			}
 
@@ -692,16 +740,17 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			luaResult := L.NewTable()
 			luaResult.RawSetString("rows", rowsTable)
 			luaResult.RawSetString("columns", columnsTable)
+
 			return luaResult, nil
 		}
 
 		L.SetField(dbMT, "__index", L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			"exec": func(L *lua.LState) int {
+			luaTestMockMethodExec: func(L *lua.LState) int {
 				connUD := L.CheckUserData(1)
 				query := strings.TrimSpace(L.CheckString(2))
 				args := collectArgs(L, 3)
 
-				if err := mockData.RecordCall("exec", query); err != nil {
+				if err := mockData.RecordCall(luaTestMockMethodExec, query); err != nil {
 					L.Push(lua.LNil)
 					L.Push(lua.LString(err.Error()))
 
@@ -720,18 +769,20 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				if errExec != nil {
 					L.Push(lua.LNil)
 					L.Push(lua.LString(errExec.Error()))
+
 					return 2
 				}
 
 				L.Push(result)
+
 				return 1
 			},
-			"query": func(L *lua.LState) int {
+			luaTestMockMethodQuery: func(L *lua.LState) int {
 				connUD := L.CheckUserData(1)
 				query := strings.TrimSpace(L.CheckString(2))
 				args := collectArgs(L, 3)
 
-				if err := mockData.RecordCall("query", query); err != nil {
+				if err := mockData.RecordCall(luaTestMockMethodQuery, query); err != nil {
 					L.Push(lua.LNil)
 					L.Push(lua.LString(err.Error()))
 
@@ -750,10 +801,12 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				if errQuery != nil {
 					L.Push(lua.LNil)
 					L.Push(lua.LString(errQuery.Error()))
+
 					return 2
 				}
 
 				L.Push(result)
+
 				return 1
 			},
 			"stmt": func(L *lua.LState) int {
@@ -763,6 +816,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				if err := mockData.RecordCall("stmt", query); err != nil {
 					L.Push(lua.LNil)
 					L.Push(lua.LString(err.Error()))
+
 					return 2
 				}
 
@@ -770,12 +824,14 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				if !ok || conn == nil {
 					L.Push(lua.LNil)
 					L.Push(lua.LString("invalid mock db connection"))
+
 					return 2
 				}
 
 				if conn.closed {
 					L.Push(lua.LNil)
 					L.Push(lua.LString("mock db connection is closed"))
+
 					return 2
 				}
 
@@ -787,10 +843,12 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 
 				if !declarativeMode {
 					prepareExp := conn.mock.ExpectPrepare(query)
+
 					preparedStmt, errPrepare := conn.conn.Prepare(query)
 					if errPrepare != nil {
 						L.Push(lua.LNil)
 						L.Push(lua.LString(errPrepare.Error()))
+
 						return 2
 					}
 
@@ -802,16 +860,18 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				stmtUD.Value = stmt
 				L.SetMetatable(stmtUD, stmtMT)
 				L.Push(stmtUD)
+
 				return 1
 			},
-			"close": func(L *lua.LState) int {
-				if err := mockData.RecordCall("close", ""); err != nil {
+			luaTestMockMethodClose: func(L *lua.LState) int {
+				if err := mockData.RecordCall(luaTestMockMethodClose, ""); err != nil {
 					L.Push(lua.LString(err.Error()))
 
 					return 1
 				}
 
 				connUD := L.CheckUserData(1)
+
 				conn, ok := connUD.Value.(*mockDBConn)
 				if !ok || conn == nil {
 					L.Push(lua.LString("invalid mock db connection"))
@@ -828,10 +888,12 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 		L.SetField(stmtMT, "__index", L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			"exec": func(L *lua.LState) int {
 				stmtUD := L.CheckUserData(1)
+
 				stmt, ok := stmtUD.Value.(*mockDBStmt)
 				if !ok || stmt == nil || stmt.conn == nil || stmt.closed {
 					L.Push(lua.LNil)
 					L.Push(lua.LString("invalid mock db statement"))
+
 					return 2
 				}
 
@@ -840,6 +902,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				if err := mockData.RecordCall("exec", stmt.query); err != nil {
 					L.Push(lua.LNil)
 					L.Push(lua.LString(err.Error()))
+
 					return 2
 				}
 
@@ -847,18 +910,22 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				if errExec != nil {
 					L.Push(lua.LNil)
 					L.Push(lua.LString(errExec.Error()))
+
 					return 2
 				}
 
 				L.Push(result)
+
 				return 1
 			},
 			"query": func(L *lua.LState) int {
 				stmtUD := L.CheckUserData(1)
+
 				stmt, ok := stmtUD.Value.(*mockDBStmt)
 				if !ok || stmt == nil || stmt.conn == nil || stmt.closed {
 					L.Push(lua.LNil)
 					L.Push(lua.LString("invalid mock db statement"))
+
 					return 2
 				}
 
@@ -867,6 +934,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				if err := mockData.RecordCall("query", stmt.query); err != nil {
 					L.Push(lua.LNil)
 					L.Push(lua.LString(err.Error()))
+
 					return 2
 				}
 
@@ -874,14 +942,17 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				if errQuery != nil {
 					L.Push(lua.LNil)
 					L.Push(lua.LString(errQuery.Error()))
+
 					return 2
 				}
 
 				L.Push(result)
+
 				return 1
 			},
 			"close": func(L *lua.LState) int {
 				stmtUD := L.CheckUserData(1)
+
 				stmt, ok := stmtUD.Value.(*mockDBStmt)
 				if !ok || stmt == nil {
 					L.Push(lua.LString("invalid mock db statement"))
@@ -892,6 +963,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 				if stmt.stmt != nil {
 					stmt.stmt.Close()
 				}
+
 				return 0
 			},
 		}))
@@ -907,6 +979,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			}
 
 			_ = L.CheckString(1) // driver
+
 			_ = L.CheckString(2) // connection string
 			if L.GetTop() > 2 {
 				_ = L.CheckTable(3)
@@ -1007,7 +1080,9 @@ func LoaderModBackendMock(mockData *BackendMock) lua.LGFunction {
 				L.RaiseError("%s", err.Error())
 				return 0
 			}
+
 			servers := L.NewTable()
+
 			for index := range mockData.BackendServers {
 				server := mockData.BackendServers[index]
 				ud := L.NewUserData()
@@ -1015,19 +1090,24 @@ func LoaderModBackendMock(mockData *BackendMock) lua.LGFunction {
 				L.SetMetatable(ud, L.GetTypeMetatable(definitions.LuaBackendServerTypeName))
 				servers.Append(ud)
 			}
+
 			L.Push(servers)
+
 			return 1
 		}))
 
 		L.SetField(mod, definitions.LuaFnSelectBackendServer, L.NewFunction(func(L *lua.LState) int {
 			host := L.CheckString(1)
+
 			port := L.CheckInt(2)
 			if err := mockData.RecordCall(definitions.LuaFnSelectBackendServer, host); err != nil {
 				L.RaiseError("%s", err.Error())
 				return 0
 			}
+
 			mockData.RuntimeSelectedHost = host
 			mockData.RuntimeSelectedPort = &port
+
 			return 0
 		}))
 
@@ -1036,6 +1116,7 @@ func LoaderModBackendMock(mockData *BackendMock) lua.LGFunction {
 				L.RaiseError("%s", err.Error())
 				return 0
 			}
+
 			value := L.CheckAny(1)
 			switch v := value.(type) {
 			case *lua.LUserData:
@@ -1046,15 +1127,17 @@ func LoaderModBackendMock(mockData *BackendMock) lua.LGFunction {
 						definitions.LuaBackendResultAccountField:      br.AccountField,
 						definitions.LuaBackendResultTOTPSecretField:   br.TOTPSecretField,
 						definitions.LuaBackendResultTOTPRecoveryField: br.TOTPRecoveryField,
-						"unique_user_id": br.UniqueUserIDField,
-						definitions.LuaBackendResultDisplayNameField: br.DisplayNameField,
+						luaTestMockUniqueUserID:                       br.UniqueUserIDField,
+						definitions.LuaBackendResultDisplayNameField:  br.DisplayNameField,
 					}
 					if br.Attributes != nil {
 						out[definitions.LuaBackendResultAttributes] = br.Attributes
 					}
+
 					if len(br.WebAuthnCredentials) > 0 {
 						out[definitions.LuaBackendResultWebAuthnCredentials] = br.WebAuthnCredentials
 					}
+
 					mockData.RuntimeAppliedBackendResult = out
 				}
 			case *lua.LTable:
@@ -1064,9 +1147,11 @@ func LoaderModBackendMock(mockData *BackendMock) lua.LGFunction {
 					for key, val := range asMap {
 						out[fmt.Sprintf("%v", key)] = val
 					}
+
 					mockData.RuntimeAppliedBackendResult = out
 				}
 			}
+
 			return 0
 		}))
 
@@ -1076,15 +1161,20 @@ func LoaderModBackendMock(mockData *BackendMock) lua.LGFunction {
 				L.RaiseError("%s", err.Error())
 				return 0
 			}
+
 			removeAttrs := make([]string, 0)
+
 			tbl.ForEach(func(_, value lua.LValue) {
 				removeAttrs = append(removeAttrs, value.String())
 			})
+
 			mockData.RuntimeRemovedFromAttributes = removeAttrs
+
 			return 0
 		}))
 
 		L.Push(mod)
+
 		return 1
 	}
 }
@@ -1105,17 +1195,22 @@ func LoaderModBackendResultMock(mockData *BackendResultMock) lua.LGFunction {
 					L.RaiseError("%s", err.Error())
 					return 0
 				}
+
 				userData := L.CheckUserData(1)
+
 				value, _ := userData.Value.(*backendResultMockValue)
 				if value == nil {
 					L.ArgError(1, "backend_result expected")
 					return 0
 				}
+
 				if L.GetTop() == 2 {
 					value.Authenticated = L.CheckBool(2)
 					return 0
 				}
+
 				L.Push(lua.LBool(value.Authenticated))
+
 				return 1
 			},
 			definitions.LuaBackendResultUserFound: func(L *lua.LState) int {
@@ -1123,17 +1218,22 @@ func LoaderModBackendResultMock(mockData *BackendResultMock) lua.LGFunction {
 					L.RaiseError("%s", err.Error())
 					return 0
 				}
+
 				userData := L.CheckUserData(1)
+
 				value, _ := userData.Value.(*backendResultMockValue)
 				if value == nil {
 					L.ArgError(1, "backend_result expected")
 					return 0
 				}
+
 				if L.GetTop() == 2 {
 					value.UserFound = L.CheckBool(2)
 					return 0
 				}
+
 				L.Push(lua.LBool(value.UserFound))
+
 				return 1
 			},
 			definitions.LuaBackendResultAccountField: func(L *lua.LState) int {
@@ -1141,17 +1241,22 @@ func LoaderModBackendResultMock(mockData *BackendResultMock) lua.LGFunction {
 					L.RaiseError("%s", err.Error())
 					return 0
 				}
+
 				userData := L.CheckUserData(1)
+
 				value, _ := userData.Value.(*backendResultMockValue)
 				if value == nil {
 					L.ArgError(1, "backend_result expected")
 					return 0
 				}
+
 				if L.GetTop() == 2 {
 					value.AccountField = L.CheckString(2)
 					return 0
 				}
+
 				L.Push(lua.LString(value.AccountField))
+
 				return 1
 			},
 			definitions.LuaBackendResultTOTPSecretField: func(L *lua.LState) int {
@@ -1159,17 +1264,22 @@ func LoaderModBackendResultMock(mockData *BackendResultMock) lua.LGFunction {
 					L.RaiseError("%s", err.Error())
 					return 0
 				}
+
 				userData := L.CheckUserData(1)
+
 				value, _ := userData.Value.(*backendResultMockValue)
 				if value == nil {
 					L.ArgError(1, "backend_result expected")
 					return 0
 				}
+
 				if L.GetTop() == 2 {
 					value.TOTPSecretField = L.CheckString(2)
 					return 0
 				}
+
 				L.Push(lua.LString(value.TOTPSecretField))
+
 				return 1
 			},
 			definitions.LuaBackendResultTOTPRecoveryField: func(L *lua.LState) int {
@@ -1177,17 +1287,22 @@ func LoaderModBackendResultMock(mockData *BackendResultMock) lua.LGFunction {
 					L.RaiseError("%s", err.Error())
 					return 0
 				}
+
 				userData := L.CheckUserData(1)
+
 				value, _ := userData.Value.(*backendResultMockValue)
 				if value == nil {
 					L.ArgError(1, "backend_result expected")
 					return 0
 				}
+
 				if L.GetTop() == 2 {
 					value.TOTPRecoveryField = L.CheckString(2)
 					return 0
 				}
+
 				L.Push(lua.LString(value.TOTPRecoveryField))
+
 				return 1
 			},
 			definitions.LuaBAckendResultUniqueUserIDField: func(L *lua.LState) int {
@@ -1195,17 +1310,22 @@ func LoaderModBackendResultMock(mockData *BackendResultMock) lua.LGFunction {
 					L.RaiseError("%s", err.Error())
 					return 0
 				}
+
 				userData := L.CheckUserData(1)
+
 				value, _ := userData.Value.(*backendResultMockValue)
 				if value == nil {
 					L.ArgError(1, "backend_result expected")
 					return 0
 				}
+
 				if L.GetTop() == 2 {
 					value.UniqueUserIDField = L.CheckString(2)
 					return 0
 				}
+
 				L.Push(lua.LString(value.UniqueUserIDField))
+
 				return 1
 			},
 			definitions.LuaBackendResultDisplayNameField: func(L *lua.LState) int {
@@ -1213,17 +1333,22 @@ func LoaderModBackendResultMock(mockData *BackendResultMock) lua.LGFunction {
 					L.RaiseError("%s", err.Error())
 					return 0
 				}
+
 				userData := L.CheckUserData(1)
+
 				value, _ := userData.Value.(*backendResultMockValue)
 				if value == nil {
 					L.ArgError(1, "backend_result expected")
 					return 0
 				}
+
 				if L.GetTop() == 2 {
 					value.DisplayNameField = L.CheckString(2)
 					return 0
 				}
+
 				L.Push(lua.LString(value.DisplayNameField))
+
 				return 1
 			},
 			definitions.LuaBackendResultWebAuthnCredentials: func(L *lua.LState) int {
@@ -1231,26 +1356,35 @@ func LoaderModBackendResultMock(mockData *BackendResultMock) lua.LGFunction {
 					L.RaiseError("%s", err.Error())
 					return 0
 				}
+
 				userData := L.CheckUserData(1)
+
 				value, _ := userData.Value.(*backendResultMockValue)
 				if value == nil {
 					L.ArgError(1, "backend_result expected")
 					return 0
 				}
+
 				if L.GetTop() == 2 {
 					table := L.CheckTable(2)
 					credentials := make([]string, 0)
+
 					table.ForEach(func(_, item lua.LValue) {
 						credentials = append(credentials, item.String())
 					})
+
 					value.WebAuthnCredentials = credentials
+
 					return 0
 				}
+
 				table := L.NewTable()
 				for _, cred := range value.WebAuthnCredentials {
 					table.Append(lua.LString(cred))
 				}
+
 				L.Push(table)
+
 				return 1
 			},
 			definitions.LuaBackendResultAttributes: func(L *lua.LState) int {
@@ -1258,12 +1392,15 @@ func LoaderModBackendResultMock(mockData *BackendResultMock) lua.LGFunction {
 					L.RaiseError("%s", err.Error())
 					return 0
 				}
+
 				userData := L.CheckUserData(1)
+
 				value, _ := userData.Value.(*backendResultMockValue)
 				if value == nil {
 					L.ArgError(1, "backend_result expected")
 					return 0
 				}
+
 				if L.GetTop() == 2 {
 					table := L.CheckTable(2)
 					if attrs, ok := convert.LuaValueToGo(table).(map[any]any); ok {
@@ -1271,9 +1408,12 @@ func LoaderModBackendResultMock(mockData *BackendResultMock) lua.LGFunction {
 					} else {
 						value.Attributes = map[any]any{}
 					}
+
 					return 0
 				}
+
 				L.Push(convert.GoToLuaValue(L, value.Attributes))
+
 				return 1
 			},
 		}))
@@ -1317,6 +1457,7 @@ func LoaderModBackendResultMock(mockData *BackendResultMock) lua.LGFunction {
 				L.RaiseError("%s", err.Error())
 				return 0
 			}
+
 			result := &backendResultMockValue{
 				Authenticated:     mockData.Authenticated,
 				UserFound:         mockData.UserFound,
@@ -1358,7 +1499,9 @@ func LoaderModHTTPRequestMock(mockData *HTTPRequestMock) lua.LGFunction {
 
 		method := "GET"
 		path := "/"
+
 		var headers map[string]string
+
 		body := ""
 
 		if mockData != nil {
@@ -1379,7 +1522,9 @@ func LoaderModHTTPRequestMock(mockData *HTTPRequestMock) lua.LGFunction {
 				L.Push(lua.LNil)
 				return 1
 			}
+
 			L.Push(lua.LString(method))
+
 			return 1
 		}))
 
@@ -1388,7 +1533,9 @@ func LoaderModHTTPRequestMock(mockData *HTTPRequestMock) lua.LGFunction {
 				L.Push(lua.LNil)
 				return 1
 			}
+
 			L.Push(lua.LString(path))
+
 			return 1
 		}))
 
@@ -1397,7 +1544,9 @@ func LoaderModHTTPRequestMock(mockData *HTTPRequestMock) lua.LGFunction {
 				L.Push(lua.LNil)
 				return 1
 			}
+
 			L.Push(lua.LString(body))
+
 			return 1
 		}))
 
@@ -1421,6 +1570,7 @@ func LoaderModHTTPRequestMock(mockData *HTTPRequestMock) lua.LGFunction {
 			}
 
 			L.Push(lua.LString(value))
+
 			return 1
 		}))
 
@@ -1430,13 +1580,16 @@ func LoaderModHTTPRequestMock(mockData *HTTPRequestMock) lua.LGFunction {
 				L.Push(lua.LNil)
 				return 1
 			}
+
 			if headers != nil {
 				if val, ok := headers[key]; ok {
 					L.Push(lua.LString(val))
 					return 1
 				}
 			}
+
 			L.Push(lua.LNil)
+
 			return 1
 		}))
 
@@ -1446,16 +1599,19 @@ func LoaderModHTTPRequestMock(mockData *HTTPRequestMock) lua.LGFunction {
 				L.Push(lua.LNil)
 				return 1
 			}
+
 			if headers != nil {
 				if val, ok := headers[key]; ok {
 					result := L.NewTable()
 					result.RawSetInt(1, lua.LString(val))
 					L.Push(result)
+
 					return 1
 				}
 			}
 
 			L.Push(lua.LNil)
+
 			return 1
 		}))
 
@@ -1464,6 +1620,7 @@ func LoaderModHTTPRequestMock(mockData *HTTPRequestMock) lua.LGFunction {
 			for k, v := range headers {
 				L.SetField(headersTable, k, lua.LString(v))
 			}
+
 			L.SetField(mod, "headers", headersTable)
 		}
 
@@ -1527,6 +1684,7 @@ func pushMockHTTPError(L *lua.LState, errMessage string) int {
 
 func pushMockHTTPResponse(L *lua.LState, response HTTPClientResponse) int {
 	responseTable := L.NewTable()
+
 	statusCode := response.StatusCode
 	if statusCode == 0 {
 		statusCode = stdhttp.StatusOK
@@ -1653,22 +1811,23 @@ func LoaderModOTELMock(mockData *OpenTelemetryMock) lua.LGFunction {
 
 		newSpan := func() *lua.LTable {
 			span := L.NewTable()
-			L.SetField(span, "set_attributes", L.NewFunction(func(L *lua.LState) int {
+			L.SetField(span, "set_attributes", L.NewFunction(func(_ *lua.LState) int {
 				_ = mockData.RecordCall("set_attributes", "")
 				return 0
 			}))
-			L.SetField(span, "record_error", L.NewFunction(func(L *lua.LState) int {
+			L.SetField(span, "record_error", L.NewFunction(func(_ *lua.LState) int {
 				_ = mockData.RecordCall("record_error", "")
 				return 0
 			}))
-			L.SetField(span, "set_status", L.NewFunction(func(L *lua.LState) int {
+			L.SetField(span, "set_status", L.NewFunction(func(_ *lua.LState) int {
 				_ = mockData.RecordCall("set_status", "")
 				return 0
 			}))
-			L.SetField(span, "finish", L.NewFunction(func(L *lua.LState) int {
+			L.SetField(span, "finish", L.NewFunction(func(_ *lua.LState) int {
 				_ = mockData.RecordCall("finish", "")
 				return 0
 			}))
+
 			return span
 		}
 
@@ -1676,7 +1835,9 @@ func LoaderModOTELMock(mockData *OpenTelemetryMock) lua.LGFunction {
 			tracer := L.NewTable()
 			L.SetField(tracer, "start_span", L.NewFunction(func(L *lua.LState) int {
 				_ = mockData.RecordCall("start_span", "")
+
 				L.Push(newSpan())
+
 				return 1
 			}))
 			L.SetField(tracer, "with_span", L.NewFunction(func(L *lua.LState) int {
@@ -1697,11 +1858,13 @@ func LoaderModOTELMock(mockData *OpenTelemetryMock) lua.LGFunction {
 
 				return L.GetTop() - topBefore
 			}))
+
 			return tracer
 		}
 
 		L.SetField(mod, "is_enabled", L.NewFunction(func(L *lua.LState) int {
 			_ = mockData.RecordCall("is_enabled", "")
+
 			L.Push(lua.LBool(false))
 
 			return 1
@@ -1710,13 +1873,17 @@ func LoaderModOTELMock(mockData *OpenTelemetryMock) lua.LGFunction {
 		L.SetField(mod, "tracer", L.NewFunction(func(L *lua.LState) int {
 			_ = L.OptString(1, "")
 			_ = mockData.RecordCall("tracer", "")
+
 			L.Push(newTracer())
+
 			return 1
 		}))
 
 		L.SetField(mod, "default_tracer", L.NewFunction(func(L *lua.LState) int {
 			_ = mockData.RecordCall("default_tracer", "")
+
 			L.Push(newTracer())
+
 			return 1
 		}))
 
@@ -1744,10 +1911,12 @@ func LoaderModBruteForceMock(mockData *BruteForceMock) lua.LGFunction {
 
 		L.SetField(mod, "increment", L.NewFunction(func(L *lua.LState) int {
 			_ = mockData.RecordCall("increment", "")
+
 			incrementBy := 1
 			if mockData != nil && mockData.IncrementBy > 0 {
 				incrementBy = mockData.IncrementBy
 			}
+
 			L.Push(lua.LNumber(incrementBy))
 
 			return 1
@@ -1766,6 +1935,7 @@ func LoaderModPsnetMock(mockData *PsnetMock) lua.LGFunction {
 
 		L.SetField(mod, "get_stats", L.NewFunction(func(L *lua.LState) int {
 			target := L.OptString(1, "")
+
 			_ = mockData.RecordCall("get_stats", target)
 			if mockData != nil && mockData.Stats != nil {
 				L.Push(convert.GoToLuaValue(L, mockData.Stats))
@@ -1790,7 +1960,7 @@ func LoaderModPrometheusMock(mockData *PrometheusMock) lua.LGFunction {
 		mod := L.NewTable()
 
 		noop := func(name string) *lua.LFunction {
-			return L.NewFunction(func(L *lua.LState) int {
+			return L.NewFunction(func(_ *lua.LState) int {
 				_ = mockData.RecordCall(name, "")
 				return 0
 			})
@@ -1809,6 +1979,7 @@ func LoaderModPrometheusMock(mockData *PrometheusMock) lua.LGFunction {
 			timer := L.NewTable()
 			L.SetField(timer, "_mock_timer", lua.LBool(true))
 			L.Push(timer)
+
 			return 1
 		}))
 
@@ -1817,6 +1988,7 @@ func LoaderModPrometheusMock(mockData *PrometheusMock) lua.LGFunction {
 			timer := L.NewTable()
 			L.SetField(timer, "_mock_timer", lua.LBool(true))
 			L.Push(timer)
+
 			return 1
 		}))
 
@@ -1846,45 +2018,59 @@ func LoaderModMiscMock(mockData *MiscMock) lua.LGFunction {
 			if err := mockData.RecordCall(definitions.LuaFnGetCountryName, isoCode); err != nil {
 				L.Push(lua.LString("Unknown"))
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
+
 			L.Push(lua.LString("MockCountry"))
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 
 		L.SetField(mod, definitions.LuaFnWaitRandom, L.NewFunction(func(L *lua.LState) int {
-			min := L.CheckInt(1)
-			max := L.CheckInt(2)
-			if err := mockData.RecordCall(definitions.LuaFnWaitRandom, fmt.Sprintf("%d:%d", min, max)); err != nil {
+			minValue := L.CheckInt(1)
+
+			maxValue := L.CheckInt(2)
+			if err := mockData.RecordCall(definitions.LuaFnWaitRandom, fmt.Sprintf("%d:%d", minValue, maxValue)); err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
-			if min >= max {
+
+			if minValue >= maxValue {
 				L.Push(lua.LNil)
 				L.Push(lua.LString("invalid wait range"))
+
 				return 2
 			}
-			L.Push(lua.LNumber(min))
+
+			L.Push(lua.LNumber(minValue))
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 
 		L.SetField(mod, definitions.LuaFnScopedIP, L.NewFunction(func(L *lua.LState) int {
 			_ = L.CheckAny(1)
+
 			ip := L.CheckString(2)
 			if err := mockData.RecordCall(definitions.LuaFnScopedIP, ip); err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
+
 			L.Push(lua.LString(ip))
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 
 		L.Push(mod)
+
 		return 1
 	}
 }
@@ -1896,35 +2082,45 @@ func LoaderModPasswordMock(mockData *PasswordMock) lua.LGFunction {
 
 		L.SetField(mod, definitions.LuaFnComparePasswords, L.NewFunction(func(L *lua.LState) int {
 			hash := L.CheckString(1)
+
 			plain := L.CheckString(2)
 			if err := mockData.RecordCall(definitions.LuaFnComparePasswords, hash+":"+plain); err != nil {
 				L.Push(lua.LBool(false))
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
+
 			result := false
 			if mockData != nil {
 				result = mockData.CompareResult
 			}
+
 			L.Push(lua.LBool(result))
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 
 		L.SetField(mod, definitions.LuaFnCheckPasswordPolicy, L.NewFunction(func(L *lua.LState) int {
 			_ = L.CheckTable(1)
+
 			password := L.CheckString(2)
 			if err := mockData.RecordCall(definitions.LuaFnCheckPasswordPolicy, password); err != nil {
 				L.Push(lua.LBool(false))
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
+
 			result := true
 			if mockData != nil {
 				result = mockData.PolicyResult
 			}
+
 			L.Push(lua.LBool(result))
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 
@@ -1933,18 +2129,23 @@ func LoaderModPasswordMock(mockData *PasswordMock) lua.LGFunction {
 			if err := mockData.RecordCall(definitions.LuaFnGeneratePasswordHash, password); err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
+
 			generatedHash := "mock$hash"
 			if mockData != nil && mockData.GeneratedHash != "" {
 				generatedHash = mockData.GeneratedHash
 			}
+
 			L.Push(lua.LString(generatedHash))
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 
 		L.Push(mod)
+
 		return 1
 	}
 }
@@ -1962,61 +2163,80 @@ func LoaderModSoftWhitelistMock(mockData *SoftWhitelistMock) lua.LGFunction {
 		L.SetField(mod, definitions.LuaFnSoftWhitelistSet, L.NewFunction(func(L *lua.LState) int {
 			username := L.CheckString(1)
 			network := L.CheckString(2)
+
 			environmentName := L.CheckString(3)
 			if err := mockData.RecordCall(definitions.LuaFnSoftWhitelistSet, username+":"+environmentName); err != nil {
 				L.Push(lua.LString(""))
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
+
 			key := environmentName + ":" + username
 			entries[key] = append(entries[key], network)
+
 			L.Push(lua.LString("OK"))
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 
 		L.SetField(mod, definitions.LuaFnSoftWhitelistGet, L.NewFunction(func(L *lua.LState) int {
 			username := L.CheckString(1)
+
 			environmentName := L.CheckString(2)
 			if err := mockData.RecordCall(definitions.LuaFnSoftWhitelistGet, username+":"+environmentName); err != nil {
 				L.Push(L.NewTable())
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
+
 			key := environmentName + ":" + username
+
 			result := L.NewTable()
 			for i, network := range entries[key] {
 				result.RawSetInt(i+1, lua.LString(network))
 			}
+
 			L.Push(result)
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 
 		L.SetField(mod, definitions.LuaFnSoftWhitelistDelete, L.NewFunction(func(L *lua.LState) int {
 			username := L.CheckString(1)
 			network := L.CheckString(2)
+
 			environmentName := L.CheckString(3)
 			if err := mockData.RecordCall(definitions.LuaFnSoftWhitelistDelete, username+":"+environmentName); err != nil {
 				L.Push(lua.LString(""))
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
+
 			key := environmentName + ":" + username
 			current := entries[key]
+
 			next := make([]string, 0, len(current))
 			for _, item := range current {
 				if item != network {
 					next = append(next, item)
 				}
 			}
+
 			entries[key] = next
+
 			L.Push(lua.LString("OK"))
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 
 		L.Push(mod)
+
 		return 1
 	}
 }
@@ -2027,19 +2247,24 @@ func LoaderModMailMock(mockData *MailMock) lua.LGFunction {
 		mod := L.NewTable()
 		L.SetField(mod, definitions.LuaFnSendMail, L.NewFunction(func(L *lua.LState) int {
 			tbl := L.CheckTable(1)
+
 			server := tbl.RawGetString("server").String()
 			if err := mockData.RecordCall(definitions.LuaFnSendMail, server); err != nil {
 				L.Push(lua.LString(err.Error()))
 				return 1
 			}
+
 			if mockData != nil && mockData.SendError != "" {
 				L.Push(lua.LString(mockData.SendError))
 				return 1
 			}
+
 			L.Push(lua.LNil)
+
 			return 1
 		}))
 		L.Push(mod)
+
 		return 1
 	}
 }
@@ -2061,27 +2286,33 @@ func LoaderModHTTPResponseMock(mockData *HTTPResponseMock) lua.LGFunction {
 		L.SetField(mod, "html", L.NewFunction(func(L *lua.LState) int {
 			status := L.CheckInt(1)
 			_ = L.CheckString(2)
+
 			if err := mockData.RecordCall("html", strconv.Itoa(status)); err != nil {
 				return 0
 			}
+
 			return 0
 		}))
 
 		L.SetField(mod, "set_http_response_header", L.NewFunction(func(L *lua.LState) int {
 			key := L.CheckString(1)
 			_ = L.CheckString(2)
+
 			if err := mockData.RecordCall("set_http_response_header", key); err != nil {
 				return 0
 			}
+
 			return 0
 		}))
 
 		L.SetField(mod, "json", L.NewFunction(func(L *lua.LState) int {
 			status := L.CheckInt(1)
 			_ = L.CheckTable(2)
+
 			if err := mockData.RecordCall("json", strconv.Itoa(status)); err != nil {
 				return 0
 			}
+
 			return 0
 		}))
 
@@ -2103,19 +2334,23 @@ func LoaderModUtilMock(mockData *UtilMock) lua.LGFunction {
 
 		L.SetField(mod, "getenv", L.NewFunction(func(L *lua.LState) int {
 			name := L.CheckString(1)
-			default_val := L.OptString(2, "")
+			defaultVal := L.OptString(2, "")
+
 			_ = mockData.RecordCall("getenv", name)
 			if value, ok := envs[name]; ok {
 				L.Push(lua.LString(value))
 				return 1
 			}
-			L.Push(lua.LString(default_val))
+
+			L.Push(lua.LString(defaultVal))
+
 			return 1
 		}))
 
 		L.SetField(mod, "log", L.NewFunction(func(L *lua.LState) int {
 			level := L.OptString(2, "")
 			_ = mockData.RecordCall("log", level)
+
 			return 0
 		}))
 
@@ -2144,6 +2379,7 @@ func LoaderModUtilMock(mockData *UtilMock) lua.LGFunction {
 			_ = mockData.RecordCall("get_redis_key", key)
 
 			prefix := ""
+
 			if tbl, ok := request.(*lua.LTable); ok {
 				if raw := tbl.RawGetString("redis_prefix"); raw.Type() == lua.LTString {
 					prefix = raw.String()
@@ -2151,6 +2387,7 @@ func LoaderModUtilMock(mockData *UtilMock) lua.LGFunction {
 			}
 
 			L.Push(lua.LString(prefix + key))
+
 			return 1
 		}))
 
@@ -2165,7 +2402,7 @@ func LoaderModUtilMock(mockData *UtilMock) lua.LGFunction {
 			return 0
 		}))
 
-		L.SetField(mod, "print_result", L.NewFunction(func(L *lua.LState) int {
+		L.SetField(mod, "print_result", L.NewFunction(func(_ *lua.LState) int {
 			_ = mockData.RecordCall("print_result", "")
 			return 0
 		}))
@@ -2174,6 +2411,7 @@ func LoaderModUtilMock(mockData *UtilMock) lua.LGFunction {
 			_ = mockData.RecordCall("is_table", "")
 			_, ok := L.CheckAny(1).(*lua.LTable)
 			L.Push(lua.LBool(ok))
+
 			return 1
 		}))
 
@@ -2181,16 +2419,20 @@ func LoaderModUtilMock(mockData *UtilMock) lua.LGFunction {
 			_ = mockData.RecordCall("table_length", "")
 			tbl := L.CheckTable(1)
 			length := 0
+
 			tbl.ForEach(func(_ lua.LValue, _ lua.LValue) {
 				length++
 			})
 			L.Push(lua.LNumber(length))
+
 			return 1
 		}))
 
 		L.SetField(mod, "is_string", L.NewFunction(func(L *lua.LState) int {
 			_ = mockData.RecordCall("is_string", "")
+
 			L.Push(lua.LBool(L.CheckAny(1).Type() == lua.LTString))
+
 			return 1
 		}))
 
@@ -2206,6 +2448,7 @@ func LoaderModCacheMock(mockData *CacheMock) lua.LGFunction {
 		mod := L.NewTable()
 
 		cache := map[string]any{}
+
 		if mockData != nil {
 			if mockData.Entries == nil {
 				mockData.Entries = map[string]any{}
@@ -2221,17 +2464,20 @@ func LoaderModCacheMock(mockData *CacheMock) lua.LGFunction {
 			value := convert.LuaValueToGo(L.CheckAny(2))
 			_ = mockData.RecordCall(definitions.LuaFnCacheSet, key)
 			cache[key] = value
+
 			return 0
 		}))
 
 		L.SetField(mod, "cache_get", L.NewFunction(func(L *lua.LState) int {
 			key := L.CheckString(1)
+
 			_ = mockData.RecordCall(definitions.LuaFnCacheGet, key)
 			if val, ok := cache[key]; ok {
 				L.Push(convert.GoToLuaValue(L, val))
 			} else {
 				L.Push(lua.LNil)
 			}
+
 			return 1
 		}))
 
@@ -2241,6 +2487,7 @@ func LoaderModCacheMock(mockData *CacheMock) lua.LGFunction {
 			_, existed := cache[key]
 			delete(cache, key)
 			L.Push(lua.LBool(existed))
+
 			return 1
 		}))
 
@@ -2249,6 +2496,7 @@ func LoaderModCacheMock(mockData *CacheMock) lua.LGFunction {
 			_ = mockData.RecordCall(definitions.LuaFnCacheExists, key)
 			_, exists := cache[key]
 			L.Push(lua.LBool(exists))
+
 			return 1
 		}))
 
@@ -2257,46 +2505,59 @@ func LoaderModCacheMock(mockData *CacheMock) lua.LGFunction {
 			updater := L.CheckFunction(2)
 			_ = mockData.RecordCall(definitions.LuaFnCacheUpdate, key)
 			old := cache[key]
-			var oldValue lua.LValue = lua.LNil
+
+			var oldValue = lua.LNil
 			if old != nil {
 				oldValue = convert.GoToLuaValue(L, old)
 			}
+
 			if err := L.CallByParam(lua.P{Fn: updater, NRet: 1, Protect: true}, oldValue); err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
+
 				return 2
 			}
+
 			newValue := L.Get(-1)
 			L.Pop(1)
+
 			cache[key] = convert.LuaValueToGo(newValue)
 			L.Push(newValue)
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 
 		L.SetField(mod, definitions.LuaFnCacheKeys, L.NewFunction(func(L *lua.LState) int {
 			_ = mockData.RecordCall(definitions.LuaFnCacheKeys, "")
 			keys := L.NewTable()
+
 			i := 1
 			for key := range cache {
 				keys.RawSetInt(i, lua.LString(key))
 				i++
 			}
+
 			L.Push(keys)
+
 			return 1
 		}))
 
 		L.SetField(mod, definitions.LuaFnCacheSize, L.NewFunction(func(L *lua.LState) int {
 			_ = mockData.RecordCall(definitions.LuaFnCacheSize, "")
+
 			L.Push(lua.LNumber(len(cache)))
+
 			return 1
 		}))
 
-		L.SetField(mod, definitions.LuaFnCacheFlush, L.NewFunction(func(L *lua.LState) int {
+		L.SetField(mod, definitions.LuaFnCacheFlush, L.NewFunction(func(_ *lua.LState) int {
 			_ = mockData.RecordCall(definitions.LuaFnCacheFlush, "")
+
 			for key := range cache {
 				delete(cache, key)
 			}
+
 			return 0
 		}))
 
@@ -2304,19 +2565,25 @@ func LoaderModCacheMock(mockData *CacheMock) lua.LGFunction {
 			key := L.CheckString(1)
 			value := convert.LuaValueToGo(L.CheckAny(2))
 			_ = mockData.RecordCall(definitions.LuaFnCachePush, key)
+
 			current, ok := cache[key]
 			if !ok {
 				cache[key] = []any{value}
+
 				L.Push(lua.LNumber(1))
+
 				return 1
 			}
+
 			list, ok := current.([]any)
 			if !ok {
 				list = []any{current}
 			}
+
 			list = append(list, value)
 			cache[key] = list
 			L.Push(lua.LNumber(len(list)))
+
 			return 1
 		}))
 
@@ -2325,11 +2592,13 @@ func LoaderModCacheMock(mockData *CacheMock) lua.LGFunction {
 			_ = mockData.RecordCall(definitions.LuaFnCachePopAll, key)
 			current, ok := cache[key]
 			delete(cache, key)
+
 			result := L.NewTable()
 			if !ok {
 				L.Push(result)
 				return 1
 			}
+
 			if list, ok := current.([]any); ok {
 				for i, value := range list {
 					result.RawSetInt(i+1, convert.GoToLuaValue(L, value))
@@ -2337,7 +2606,9 @@ func LoaderModCacheMock(mockData *CacheMock) lua.LGFunction {
 			} else {
 				result.RawSetInt(1, convert.GoToLuaValue(L, current))
 			}
+
 			L.Push(result)
+
 			return 1
 		}))
 
@@ -2345,13 +2616,6 @@ func LoaderModCacheMock(mockData *CacheMock) lua.LGFunction {
 
 		return 1
 	}
-}
-
-// bindRequestValue binds a Go value to a Lua table with a specific key.
-func bindRequestValue(L *lua.LState, mod *lua.LTable, key string, value any) {
-	ud := L.NewUserData()
-	ud.Value = value
-	L.SetField(mod, key, ud)
 }
 
 // bindRequestValueToEnv binds a Go value to the request environment table.
@@ -2449,6 +2713,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if dbMock == nil {
 		dbMock = &DBMock{}
 	}
+
 	mockData.DB = dbMock
 	dbMock.ResetRuntimeState()
 	L.PreloadModule("db", LoaderModDBMock(dbMock))
@@ -2457,6 +2722,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if backendMock == nil {
 		backendMock = &BackendMock{}
 	}
+
 	mockData.Backend = backendMock
 	backendMock.ResetRuntimeState()
 
@@ -2469,6 +2735,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if redisMock == nil {
 		redisMock = &RedisMock{}
 	}
+
 	mockData.Redis = redisMock
 	redisMock.ResetRuntimeState()
 
@@ -2478,12 +2745,14 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 
 		return nil, fmt.Errorf("failed to setup miniredis runtime: %w", err)
 	}
+
 	cleanupFns = append(cleanupFns, redisRuntime.Close)
 
 	policyMock := mockData.Policy
 	if policyMock == nil {
 		policyMock = &PolicyMock{}
 	}
+
 	mockData.Policy = policyMock
 	policyMock.ResetRuntimeState()
 
@@ -2491,6 +2760,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if i18nMock == nil {
 		i18nMock = &I18NMock{}
 	}
+
 	mockData.I18N = i18nMock
 	i18nMock.ResetRuntimeState()
 
@@ -2498,6 +2768,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if ldapMock == nil {
 		ldapMock = &LDAPMock{}
 	}
+
 	mockData.LDAP = ldapMock
 	ldapMock.ResetRuntimeState()
 
@@ -2505,6 +2776,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if backendResultMock == nil {
 		backendResultMock = &BackendResultMock{}
 	}
+
 	mockData.BackendResult = backendResultMock
 	backendResultMock.ResetRuntimeState()
 
@@ -2512,6 +2784,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if httpRequestMock == nil {
 		httpRequestMock = &HTTPRequestMock{}
 	}
+
 	mockData.HTTPRequest = httpRequestMock
 	httpRequestMock.ResetRuntimeState()
 
@@ -2519,6 +2792,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if httpResponseMock == nil {
 		httpResponseMock = &HTTPResponseMock{}
 	}
+
 	mockData.HTTPResponse = httpResponseMock
 	httpResponseMock.ResetRuntimeState()
 
@@ -2534,6 +2808,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if dnsMock == nil {
 		dnsMock = &DNSMock{}
 	}
+
 	mockData.DNS = dnsMock
 	dnsMock.ResetRuntimeState()
 
@@ -2541,6 +2816,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if otelMock == nil {
 		otelMock = &OpenTelemetryMock{}
 	}
+
 	mockData.OpenTelemetry = otelMock
 	otelMock.ResetRuntimeState()
 
@@ -2548,6 +2824,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if bruteForceMock == nil {
 		bruteForceMock = &BruteForceMock{}
 	}
+
 	mockData.BruteForce = bruteForceMock
 	bruteForceMock.ResetRuntimeState()
 
@@ -2555,6 +2832,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if psnetMock == nil {
 		psnetMock = &PsnetMock{}
 	}
+
 	mockData.Psnet = psnetMock
 	psnetMock.ResetRuntimeState()
 
@@ -2562,6 +2840,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if prometheusMock == nil {
 		prometheusMock = &PrometheusMock{}
 	}
+
 	mockData.Prometheus = prometheusMock
 	prometheusMock.ResetRuntimeState()
 
@@ -2569,6 +2848,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if utilMock == nil {
 		utilMock = &UtilMock{}
 	}
+
 	mockData.Util = utilMock
 	utilMock.ResetRuntimeState()
 
@@ -2576,6 +2856,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if cacheMock == nil {
 		cacheMock = &CacheMock{}
 	}
+
 	mockData.Cache = cacheMock
 	cacheMock.ResetRuntimeState()
 
@@ -2583,6 +2864,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if miscMock == nil {
 		miscMock = &MiscMock{}
 	}
+
 	mockData.Misc = miscMock
 	miscMock.ResetRuntimeState()
 
@@ -2590,6 +2872,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if passwordMock == nil {
 		passwordMock = &PasswordMock{}
 	}
+
 	mockData.Password = passwordMock
 	passwordMock.ResetRuntimeState()
 
@@ -2597,6 +2880,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if softWhitelistMock == nil {
 		softWhitelistMock = &SoftWhitelistMock{}
 	}
+
 	mockData.SoftWhitelist = softWhitelistMock
 	softWhitelistMock.ResetRuntimeState()
 
@@ -2604,6 +2888,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	if mailMock == nil {
 		mailMock = &MailMock{}
 	}
+
 	mockData.Mail = mailMock
 	mailMock.ResetRuntimeState()
 
@@ -2652,8 +2937,10 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	L.PreloadModule(definitions.LuaModContext, LoaderModContextMock(contextMock))
 	L.PreloadModule(definitions.LuaModRedis, redisRuntime.Loader(context.Background(), resolveLuaTestConfig(), redisMock))
 	L.PreloadModule(definitions.LuaModBackend, LoaderModBackendMock(backendMock))
+
 	backendResultLoader := LoaderModBackendResultMock(backendResultMock)
 	L.PreloadModule(definitions.LuaBackendResultTypeName, backendResultLoader)
+
 	if err = L.CallByParam(lua.P{
 		Fn:      L.NewFunction(backendResultLoader),
 		NRet:    1,
@@ -2663,6 +2950,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 
 		return nil, fmt.Errorf("failed to bind backend result test module: %w", err)
 	}
+
 	L.SetGlobal(definitions.LuaBackendResultTypeName, L.Get(-1))
 	L.Pop(1)
 	L.PreloadModule(definitions.LuaModHTTPRequest, LoaderModHTTPRequestMock(httpRequestMock))

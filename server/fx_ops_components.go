@@ -86,6 +86,7 @@ func (r *reloadOrchestrator) ApplyConfig(ctx context.Context, snap configfx.Snap
 	// runtime config changes that do not require stopping backends.
 	_ = prev
 	_ = opCtx
+
 	r.reloadLogging(snap.File)
 
 	bootfx.DebugLoadableConfig(snap.File, logger)
@@ -144,6 +145,7 @@ func (r *reloadOrchestrator) stopLDAP(ctx context.Context, cfg config.File) {
 	}
 
 	stopContext(r.store.ldapAuth)
+
 	for _, poolName := range poolNames {
 		if !cfg.LDAPHavePoolOnly(poolName) {
 			select {
@@ -190,8 +192,10 @@ func (r *reloadOrchestrator) startWorkersForConfig(ctx context.Context, cfg conf
 		return
 	}
 
-	var ldapStarted bool
-	var luaStarted bool
+	var (
+		ldapStarted bool
+		luaStarted  bool
+	)
 
 	for _, backendType := range cfg.GetServer().GetBackends() {
 		switch backendType.Get() {
@@ -200,14 +204,15 @@ func (r *reloadOrchestrator) startWorkersForConfig(ctx context.Context, cfg conf
 				continue
 			}
 
-			go setupLDAPWorker(r.store, ctx, cfg, getLogger(r.store), r.store.channel)
+			go setupLDAPWorker(ctx, r.store, cfg, getLogger(r.store), r.store.channel)
+
 			ldapStarted = true
 		case definitions.BackendLua:
 			if luaStarted {
 				continue
 			}
 
-			setupLuaWorker(r.store, ctx, cfg, getLogger(r.store), r.store.redisClient, r.store.channel)
+			setupLuaWorker(ctx, r.store, cfg, getLogger(r.store), r.store.redisClient, r.store.channel)
 
 			luaStarted = true
 		case definitions.BackendCache, definitions.BackendTest:
@@ -265,6 +270,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	logger := getLogger(r.store)
 	level.Info(logger).Log(definitions.LogKeyMsg, "Restarting Nauthilus", "signal", "SIGUSR1")
+
 	start := time.Now()
 	step := "init"
 
@@ -273,6 +279,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 	}()
 
 	var restartErr error
+
 	stoppedHTTP := false
 
 	defer func() {
@@ -290,7 +297,9 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 	// Stop HTTP first to avoid serving requests with a partially restarted dependency graph.
 	if r.store != nil && r.store.server != nil {
 		step = "stop_http"
+
 		stopContext(r.store.server)
+
 		stoppedHTTP = true
 
 		if r.store.signals != nil && r.store.signals.HTTPDone() != nil {
@@ -330,6 +339,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 	// Stop loops early to reduce load while dependencies restart.
 	if r.statsSvc != nil {
 		step = "stop_stats"
+
 		if err := r.statsSvc.Stop(opCtx); err != nil {
 			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop stats service", definitions.LogKeyError, err)
 		}
@@ -337,6 +347,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	if r.monitoringSvc != nil {
 		step = "stop_backend_monitoring"
+
 		if err := r.monitoringSvc.Stop(opCtx); err != nil {
 			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop backend monitoring service", definitions.LogKeyError, err)
 		}
@@ -344,6 +355,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	if r.connMgrSvc != nil {
 		step = "stop_connmgr"
+
 		if err := r.connMgrSvc.Stop(opCtx); err != nil {
 			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop connection manager service", definitions.LogKeyError, err)
 		}
@@ -353,17 +365,21 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	// Stop workers (LDAP/Lua) and action workers before rebuilding Redis.
 	step = "stop_workers"
+
 	reloader.stopWorkersForConfig(opCtx, getConfigFile(r.store))
 
 	if r.store != nil && r.store.action != nil {
 		step = "stop_action_workers"
+
 		stopContext(r.store.action)
+
 		for i := 0; i < len(r.actionWorkers); i++ {
 			select {
 			case <-r.actionWorkers[i].DoneChan:
 			case <-opCtx.Done():
 				step = "wait_action_workers_done"
 				restartErr = opCtx.Err()
+
 				return restartErr
 			}
 		}
@@ -389,6 +405,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 	defer redisReadyCancel()
 
 	step = "setup_redis"
+
 	if err := setupRedis(redisReadyCtx, r.ctx, cfg, logger, r.store.redisClient); err != nil {
 		// Best-effort: Redis readiness issues must not keep HTTP down indefinitely.
 		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during restart", definitions.LogKeyError, err)
@@ -397,10 +414,12 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	// Start workers (LDAP/Lua) and action workers after Redis is ready.
 	step = "start_workers"
+
 	reloader.startWorkersForConfig(r.ctx, getConfigFile(r.store))
 
 	if r.store != nil && r.store.action != nil {
 		step = "start_action_workers"
+
 		r.store.action.ctx, r.store.action.cancel = context.WithCancel(r.ctx)
 		for i := 0; i < len(r.actionWorkers); i++ {
 			go r.actionWorkers[i].Work(r.store.action.ctx)
@@ -409,6 +428,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	if r.connMgrSvc != nil {
 		step = "start_connmgr"
+
 		if err := r.connMgrSvc.Start(r.ctx); err != nil {
 			level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start connection manager service", definitions.LogKeyError, err)
 
@@ -420,6 +440,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	if r.monitoringSvc != nil {
 		step = "start_backend_monitoring"
+
 		if err := r.monitoringSvc.Start(r.ctx); err != nil {
 			level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start backend monitoring service", definitions.LogKeyError, err)
 
@@ -431,6 +452,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	if r.statsSvc != nil {
 		step = "start_stats"
+
 		if err := r.statsSvc.Start(r.ctx); err != nil {
 			level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start stats service", definitions.LogKeyError, err)
 
@@ -442,6 +464,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	// If HTTP was stopped, it will be started in the deferred cleanup above.
 	step = "done"
+
 	return restartErr
 }
 
@@ -515,6 +538,7 @@ func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*
 				return
 			}
 		}
+
 		if signals != nil && signals.HTTP3Done() != nil {
 			select {
 			case <-signals.HTTP3Done():

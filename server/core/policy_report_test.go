@@ -51,6 +51,7 @@ func TestPolicyReportEnabledEmitsDefaultPolicyDebugReport(t *testing.T) {
 	passDBResult := GetPassDBResultFromPool()
 	passDBResult.Authenticated = false
 	passDBResult.UserFound = true
+
 	passDBResult.Backend = definitions.BackendTest
 	defer PutPassDBResultToPool(passDBResult)
 

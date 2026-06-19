@@ -69,7 +69,7 @@ func newMFAPostActionTestContext(t *testing.T, mgr *mockCookieManager) *gin.Cont
 	req.Header.Set("User-Agent", "mfa-post-action-test")
 	ctx.Request = req
 	ctx.Set(definitions.CtxGUIDKey, "mfa-post-action-guid")
-	ctx.Set(definitions.CtxServiceKey, definitions.ServIdP)
+	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 	ctx.Set(definitions.CtxSecureDataKey, mgr)
 
@@ -121,8 +121,8 @@ func TestFinalizeMFALoginPreservesMFAMethodAndQueuesPostAction(t *testing.T) {
 	mgr := &mockCookieManager{data: map[string]any{
 		definitions.SessionKeyMFAMethod:   "totp",
 		definitions.SessionKeyProtocol:    definitions.ProtoOIDC,
-		definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
-		definitions.SessionKeyIdPClientID: "test-client",
+		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID: "test-client",
 	}}
 	ctx := newMFAPostActionTestContext(t, mgr)
 	user := backend.NewUser("alice", "Alice Example", "uid-1")
@@ -141,10 +141,11 @@ func TestFinalizeMFALoginPreservesMFAMethodAndQueuesPostAction(t *testing.T) {
 	assert.False(t, act.SubjectStageExpected)
 	assert.Equal(t, "alice", act.Account)
 	assert.Equal(t, "uid-1", act.UniqueUserID)
+
 	act.FinishedChan <- action.Done{}
 }
 
-func TestQueueCompletedIdPMFAPostActionUsesCurrentProtocolState(t *testing.T) {
+func TestQueueCompletedIDPMFAPostActionUsesCurrentProtocolState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
@@ -173,6 +174,7 @@ func TestQueueCompletedIdPMFAPostActionUsesCurrentProtocolState(t *testing.T) {
 			requestChan := make(chan *action.Action, 1)
 			originalRequestChan := action.RequestChan
 			action.RequestChan = requestChan
+
 			t.Cleanup(func() {
 				action.RequestChan = originalRequestChan
 			})
@@ -180,11 +182,11 @@ func TestQueueCompletedIdPMFAPostActionUsesCurrentProtocolState(t *testing.T) {
 			d := newMFACompletionDeps()
 			mgr := &mockCookieManager{data: map[string]any{
 				definitions.SessionKeyProtocol:        tt.flowType,
-				definitions.SessionKeyIdPFlowType:     tt.flowType,
+				definitions.SessionKeyIDPFlowType:     tt.flowType,
 				definitions.SessionKeyMFAMethod:       tt.method,
 				definitions.SessionKeyMFACompleted:    true,
-				definitions.SessionKeyIdPClientID:     tt.oidcClientID,
-				definitions.SessionKeyIdPSAMLEntityID: tt.samlEntityID,
+				definitions.SessionKeyIDPClientID:     tt.oidcClientID,
+				definitions.SessionKeyIDPSAMLEntityID: tt.samlEntityID,
 			}}
 			ctx := newMFAPostActionTestContext(t, mgr)
 			user := backend.NewUser("alice", "Alice Example", "uid-1")
@@ -201,12 +203,13 @@ func TestQueueCompletedIdPMFAPostActionUsesCurrentProtocolState(t *testing.T) {
 			assert.Equal(t, tt.samlEntityID, act.SAMLEntityID)
 			assert.False(t, act.EnvironmentStageExpected)
 			assert.False(t, act.SubjectStageExpected)
+
 			act.FinishedChan <- action.Done{}
 		})
 	}
 }
 
-func TestQueueCompletedIdPMFAPostActionUsesTrustedForwardedClientIP(t *testing.T) {
+func TestQueueCompletedIDPMFAPostActionUsesTrustedForwardedClientIP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	requestChan := make(chan *action.Action, 1)
@@ -223,10 +226,10 @@ func TestQueueCompletedIdPMFAPostActionUsesTrustedForwardedClientIP(t *testing.T
 
 	mgr := &mockCookieManager{data: map[string]any{
 		definitions.SessionKeyProtocol:     definitions.ProtoOIDC,
-		definitions.SessionKeyIdPFlowType:  definitions.ProtoOIDC,
+		definitions.SessionKeyIDPFlowType:  definitions.ProtoOIDC,
 		definitions.SessionKeyMFAMethod:    definitions.MFAMethodTOTP,
 		definitions.SessionKeyMFACompleted: true,
-		definitions.SessionKeyIdPClientID:  "test-client",
+		definitions.SessionKeyIDPClientID:  "test-client",
 	}}
 	ctx := newMFAPostActionTestContext(t, mgr)
 	ctx.Request.RemoteAddr = "192.168.0.5:44321"

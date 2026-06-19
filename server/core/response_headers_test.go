@@ -32,6 +32,7 @@ import (
 func setupMinimalConfig(t *testing.T) {
 	t.Helper()
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+
 	cfg := &config.FileSettings{Server: &config.ServerSection{}}
 	config.SetTestFile(cfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
@@ -55,6 +56,7 @@ func TestResponseWriter_OK_NginxSetsHeaders(t *testing.T) {
 	corepkg.BackendServers.Update([]*config.BackendServer{{Host: "127.0.0.1", Port: 993, Protocol: "imap"}})
 
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
@@ -74,15 +76,19 @@ func TestResponseWriter_OK_NginxSetsHeaders(t *testing.T) {
 	if got := w.Header().Get("Auth-Status"); got != "OK" {
 		t.Fatalf("Auth-Status header = %q, want %q", got, "OK")
 	}
+
 	if got := w.Header().Get("X-Nauthilus-Session"); got != a.Runtime.GUID {
 		t.Fatalf("X-Nauthilus-Session = %q, want %q", got, a.Runtime.GUID)
 	}
+
 	if got := w.Header().Get("X-Nauthilus-Memory-Cache"); got != "Miss" {
 		t.Fatalf("X-Nauthilus-Memory-Cache = %q, want %q", got, "Miss")
 	}
+
 	if got := w.Header().Get("Auth-Server"); got != a.Runtime.UsedBackendIP {
 		t.Fatalf("Auth-Server = %q, want %q", got, a.Runtime.UsedBackendIP)
 	}
+
 	if got := w.Header().Get("Auth-Port"); got != "993" {
 		t.Fatalf("Auth-Port = %q, want %q", got, "993")
 	}
@@ -92,6 +98,7 @@ func TestResponseWriter_OK_JSONBodyIncludesOK(t *testing.T) {
 	setupMinimalConfig(t)
 
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
@@ -121,9 +128,11 @@ func TestResponseWriter_OK_JSONBodyIncludesOK(t *testing.T) {
 	if okVal, ok := body["ok"]; !ok || okVal != true {
 		t.Fatalf("expected ok=true field, got %v (present=%v)", okVal, ok)
 	}
+
 	if af, ok := body["account_field"].(string); !ok || af != "uid" {
 		t.Fatalf("expected account_field=uid, got %v (present=%v)", body["account_field"], ok)
 	}
+
 	if attrs, ok := body["attributes"]; !ok || attrs == nil {
 		t.Fatalf("expected attributes field to be present, got %T", body["attributes"])
 	}
@@ -133,6 +142,7 @@ func TestResponseWriter_OK_CBORBodyIncludesOK(t *testing.T) {
 	setupMinimalConfig(t)
 
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)

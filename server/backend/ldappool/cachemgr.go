@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package ldappool provides ldappool functionality.
 package ldappool
 
 import (
@@ -41,6 +42,7 @@ func StartSharedTTLCache(ctx context.Context) {
 		// Stop janitor when context is done
 		go func() {
 			<-ctx.Done()
+
 			if sharedTTLCache != nil {
 				sharedTTLCache.Stop()
 			}

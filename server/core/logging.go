@@ -62,7 +62,7 @@ func handleLogging(ctx *gin.Context, auth *AuthState) {
 
 	status := func() string {
 		if !auth.Request.NoAuth {
-			return "ok"
+			return environmentDecisionOK
 		}
 
 		return ""
@@ -100,12 +100,12 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 
 func (a *AuthState) fillLogLineTemplate(keyvals []any, status string, endpoint string) []any {
 	if a.Runtime.StatusMessage == "" {
-		a.Runtime.StatusMessage = "OK"
+		a.Runtime.StatusMessage = authStatusMessageOK
 	}
 
-	mode := "auth"
+	mode := string(AuthModeAuthenticate)
 	if a.Request.NoAuth {
-		mode = "no-auth"
+		mode = authModeNoAuth
 	}
 
 	backendName := definitions.NotAvailable
@@ -140,7 +140,7 @@ func (a *AuthState) fillLogLineTemplate(keyvals []any, status string, endpoint s
 		definitions.LogKeyEnvironmentName, util.WithNotAvailable(a.Runtime.EnvironmentName),
 		definitions.LogKeyStatusMessage, util.WithNotAvailable(a.Runtime.StatusMessage),
 		definitions.LogKeyBFRWP, a.Runtime.BFRWP,
-		definitions.LogKeyUriPath, endpoint,
+		definitions.LogKeyURIPath, endpoint,
 		definitions.LogKeyStatus, util.WithNotAvailable(status),
 		definitions.LogKeyAuthorized, a.Runtime.Authorized,
 		definitions.LogKeyAuthenticatedBool, a.Runtime.Authenticated,
@@ -167,7 +167,7 @@ func (a *AuthState) LogLineProcessingTemplate(endpoint string) []any {
 func (a *AuthState) fillLogLineProcessingTemplate(keyvals []any, endpoint string) []any {
 	mode := "auth"
 	if a.Request.NoAuth {
-		mode = "no-auth"
+		mode = authModeNoAuth
 	}
 
 	keyvals = append(keyvals,
@@ -187,7 +187,7 @@ func (a *AuthState) fillLogLineProcessingTemplate(keyvals []any, endpoint string
 		definitions.LogKeyUsername, util.WithNotAvailable(a.Request.Username),
 		definitions.LogKeyUserAgent, util.WithNotAvailable(a.Request.UserAgent),
 		definitions.LogKeyClientID, util.WithNotAvailable(a.Request.XClientID),
-		definitions.LogKeyUriPath, endpoint,
+		definitions.LogKeyURIPath, endpoint,
 	)
 
 	keyvals = appendExternalSessionLogValue(keyvals, a.Request.ExternalSessionID)

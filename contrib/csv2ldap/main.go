@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package main provides the csv2ldap command.
 package main
 
 import (
@@ -72,6 +73,7 @@ func main() {
 
 	// Select password encoder per config
 	var enc engine.PasswordEncoder
+
 	switch strings.ToLower(strings.TrimSpace(cfg.PasswordFormat)) {
 	case "sha", "sha1":
 		enc = &engine.SHAEncoder{Encoding: cfg.SSHAEncoding}
@@ -103,6 +105,7 @@ func splitCSV(s string) []string {
 	if strings.TrimSpace(s) == "" {
 		return nil
 	}
+
 	parts := strings.Split(s, ",")
 	out := make([]string, 0, len(parts))
 
@@ -120,6 +123,7 @@ func fatalIf(err error) {
 	if err != nil {
 		// Print a user-friendly error and exit non-zero
 		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
+
 		os.Exit(1)
 	}
 }

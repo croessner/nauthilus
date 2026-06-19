@@ -44,6 +44,7 @@ const (
 func TestAuthPathCollectsTLSCheckWithoutChangingPreAuthDecision(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
+
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
 		Generation:    73,
 		Mode:          "enforce",
@@ -68,6 +69,7 @@ func TestAuthPathCollectsTLSCheckWithoutChangingPreAuthDecision(t *testing.T) {
 	})
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
 	got := auth.HandleEnvironment(ctx)
 	if got != definitions.AuthResultPreAuthTLS {
 		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultPreAuthTLS)
@@ -91,9 +93,11 @@ func TestAuthPathCollectsTLSCheckWithoutChangingPreAuthDecision(t *testing.T) {
 func TestAuthPathSchedulerGuardSkipsTLSAdapter(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
+
 	activatePolicySnapshotForTest(t, schedulerGuardTLSSnapshot("enforce"))
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
 	got := auth.HandleEnvironment(ctx)
 	if got != definitions.AuthResultOK {
 		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultOK)
@@ -105,6 +109,7 @@ func TestAuthPathSchedulerGuardSkipsTLSAdapter(t *testing.T) {
 	}
 
 	report := policyCtx.Report()
+
 	check := report.Checks[definitions.ControlTLSEncryption]
 	if check.Status != policy.CheckStatusSkipped {
 		t.Fatalf("tls check status = %q, want %q", check.Status, policy.CheckStatusSkipped)
@@ -122,9 +127,11 @@ func TestAuthPathSchedulerGuardSkipsTLSAdapter(t *testing.T) {
 func TestAuthPathObserveSchedulerGuardDoesNotSkipTLSAdapter(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
+
 	activatePolicySnapshotForTest(t, schedulerGuardTLSSnapshot("observe"))
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
 	got := auth.HandleEnvironment(ctx)
 	if got != definitions.AuthResultPreAuthTLS {
 		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultPreAuthTLS)
@@ -136,6 +143,7 @@ func TestAuthPathObserveSchedulerGuardDoesNotSkipTLSAdapter(t *testing.T) {
 	}
 
 	report := policyCtx.Report()
+
 	check := report.Checks[definitions.ControlTLSEncryption]
 	if check.Status != policy.CheckStatusOK {
 		t.Fatalf("tls check status = %q, want %q", check.Status, policy.CheckStatusOK)
@@ -203,6 +211,7 @@ func TestAuthPathRunsConfiguredPluginEnvironmentBridge(t *testing.T) {
 func TestAuthBoundaryCustomObserveDoesNotChangeDefaultDecision(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
+
 	activatePolicySnapshotForTest(t, customObserveTLSSnapshot())
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
@@ -237,6 +246,7 @@ func TestAuthBoundaryCustomObserveDoesNotChangeDefaultDecision(t *testing.T) {
 func TestAuthBoundaryConfiguredPreAuthEnforceOverridesCurrentTLSResult(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
+
 	activatePolicySnapshotForTest(t, customEnforceTLSSnapshot(customEnforceTLSDenyPolicy(false)))
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
@@ -267,6 +277,7 @@ func TestAuthBoundaryConfiguredPreAuthEnforceOverridesCurrentTLSResult(t *testin
 func TestAuthBoundaryConfiguredPreAuthEnforceLetsUnmatchedTLSContinue(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
+
 	activatePolicySnapshotForTest(t, customEnforceTLSSnapshot(customEnforceTLSDenyPolicy(true)))
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
@@ -289,6 +300,7 @@ func TestAuthBoundaryConfiguredPreAuthEnforceLetsUnmatchedTLSContinue(t *testing
 func TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
+
 	activatePolicySnapshotForTest(t, customEnforcePreAuthControlSnapshot())
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
@@ -550,6 +562,7 @@ func TestRecordPolicyBackendResultExportsConfiguredSubjectAttributes(t *testing.
 	}
 
 	report := policyCtx.Report()
+
 	status := report.Attributes["auth.subject.attribute.account_status"]
 	if got := status.Value; got != true {
 		t.Fatalf("account status present = %#v, want true", got)
@@ -780,6 +793,7 @@ func activatePolicySnapshotForTest(t *testing.T, snapshot *policyruntime.Snapsho
 	t.Helper()
 
 	store := policyruntime.DefaultStore()
+
 	previous := store.Active()
 	if err := store.Activate(snapshot); err != nil {
 		t.Fatalf("activate policy snapshot: %v", err)

@@ -227,6 +227,7 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 
 			bootfx.EnableBlockProfile(snap.File)
 			bootfx.InitializeBruteForceTolerate(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
+
 			if err := lualib.ConfigureDefaultI18NRuntime(
 				localization.NewManagerCatalog(p.LangManager),
 				snap.File.GetServer().Frontend.GetDefaultLanguage(),

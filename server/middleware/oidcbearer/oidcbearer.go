@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // Package oidcbearer provides a Gin middleware that validates Bearer tokens
-// issued by the Nauthilus IdP (client_credentials flow). It replaces the
+// issued by the Nauthilus IDP (client_credentials flow). It replaces the
 // legacy HS256 JWT mechanism for backchannel API authentication.
 package oidcbearer
 
@@ -33,11 +33,17 @@ import (
 )
 
 // TokenValidator abstracts the token validation interface so the middleware
-// can be tested without a full NauthilusIdP instance.
+// can be tested without a full NauthilusIDP instance.
 type TokenValidator interface {
 	ValidateToken(ctx context.Context, tokenString string) (jwt.MapClaims, error)
 }
 
+const (
+	oidcBearerResponseKeyError    = "error"
+	oidcBearerUnauthorizedMessage = "missing or invalid authorization header"
+)
+
+// EnforceBearerScopeAuthOptions describes the exported EnforceBearerScopeAuthOptions type.
 type EnforceBearerScopeAuthOptions struct {
 	RequiredScopes         []string
 	MissingScopeMessage    string
@@ -45,7 +51,7 @@ type EnforceBearerScopeAuthOptions struct {
 }
 
 // Middleware returns a Gin middleware that extracts a Bearer token from the
-// Authorization header, validates it via the IdP, and stores the resulting
+// Authorization header, validates it via the IDP, and stores the resulting
 // claims in the Gin context under definitions.CtxOIDCClaimsKey.
 //
 // The middleware also verifies that the token contains the "nauthilus:authenticate"
@@ -89,6 +95,7 @@ func AuthorizeAuthenticateScope(
 	return true
 }
 
+// EnforceBearerScopeAuth provides the exported EnforceBearerScopeAuth function.
 func EnforceBearerScopeAuth(
 	ctx *gin.Context,
 	validator TokenValidator,
@@ -105,7 +112,7 @@ func EnforceBearerScopeAuth(
 			mdauth.ApplyAuthBackoffOnFailureWithCfg(ctx, cfg)
 		}
 
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid authorization header"})
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{oidcBearerResponseKeyError: oidcBearerUnauthorizedMessage})
 
 		return nil, false
 	}
@@ -125,7 +132,7 @@ func EnforceBearerScopeAuth(
 			msg = "insufficient permissions"
 		}
 
-		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": msg})
+		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{oidcBearerResponseKeyError: msg})
 
 		return nil, false
 	}

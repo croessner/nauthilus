@@ -360,6 +360,7 @@ func TestUnaryServerInterceptorThrottlesInvalidCallerAuthByPeerIP(t *testing.T) 
 //nolint:funlen
 func TestLoggingTracingInterceptorIncludesAuthorityFields(t *testing.T) {
 	var logBuffer bytes.Buffer
+
 	logger := slog.New(slog.NewJSONHandler(&logBuffer, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	interceptor := loggingTracingInterceptor(ServerDeps{
 		Cfg:    grpcAuthDebugLogConfig(t, definitions.DbgAuthName),
@@ -507,6 +508,7 @@ func TestLoggingTracingInterceptorUsesAuthDebugModule(t *testing.T) {
 
 	t.Run("suppresses completion log without auth debug module", func(t *testing.T) {
 		var logBuffer bytes.Buffer
+
 		logger := slog.New(slog.NewJSONHandler(&logBuffer, &slog.HandlerOptions{Level: slog.LevelDebug}))
 		interceptor := loggingTracingInterceptor(ServerDeps{
 			Cfg:    grpcAuthDebugLogConfig(t, definitions.DbgHTTPName),
@@ -527,6 +529,7 @@ func TestLoggingTracingInterceptorUsesAuthDebugModule(t *testing.T) {
 
 	t.Run("writes completion log with auth debug module", func(t *testing.T) {
 		var logBuffer bytes.Buffer
+
 		logger := slog.New(slog.NewJSONHandler(&logBuffer, &slog.HandlerOptions{Level: slog.LevelDebug}))
 		interceptor := loggingTracingInterceptor(ServerDeps{
 			Cfg:    grpcAuthDebugLogConfig(t, definitions.DbgAuthName),
@@ -563,6 +566,7 @@ func TestNewServerRegistersAuthService(t *testing.T) {
 
 func TestBuildServerTLSConfigUsesConfiguredMinimumVersion(t *testing.T) {
 	certFile, keyFile := writeGRPCTestTLSKeyPair(t)
+
 	tlsConfig, err := buildServerTLSConfig(&config.RuntimeGRPCTLSSection{
 		Enabled:       true,
 		Cert:          certFile,
@@ -626,7 +630,6 @@ func TestBufconnAuthServiceAuthenticateDomainOutcomes(t *testing.T) {
 	}
 
 	for _, testCase := range cases {
-
 		t.Run(testCase.name, func(t *testing.T) {
 			service := &recordingService{authOutcome: testCase.outcome}
 			client := newBufconnAuthServiceClient(t, service)
@@ -681,7 +684,6 @@ func TestBufconnAuthServiceLookupIdentityDomainOutcomes(t *testing.T) {
 	}
 
 	for _, testCase := range cases {
-
 		t.Run(testCase.name, func(t *testing.T) {
 			service := &recordingService{lookupOutcome: testCase.outcome}
 			client := newBufconnAuthServiceClient(t, service)
@@ -771,6 +773,7 @@ func TestBufconnAuthServiceListAccountsPolicyDenialUsesResponseMetadata(t *testi
 	}
 	client := newBufconnAuthServiceClient(t, service)
 	ctx := outgoingBasicAuthContext(context.Background())
+
 	var header metadata.MD
 
 	response, err := client.ListAccounts(ctx, &authv1.ListAccountsRequest{
@@ -860,6 +863,7 @@ func newBufconnAuthServiceClient(t *testing.T, service core.AuthApplicationServi
 	t.Helper()
 
 	listener := bufconn.Listen(1024 * 1024)
+
 	server, err := NewServer(ServerDeps{
 		Cfg:         grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
 		Logger:      slog.Default(),
@@ -870,6 +874,7 @@ func newBufconnAuthServiceClient(t *testing.T, service core.AuthApplicationServi
 	}
 
 	serveErr := make(chan error, 1)
+
 	go func() {
 		err := server.Serve(listener)
 		if err != nil && !errors.Is(err, grpc.ErrServerStopped) && !errors.Is(err, net.ErrClosed) {
@@ -890,13 +895,17 @@ func newBufconnAuthServiceClient(t *testing.T, service core.AuthApplicationServi
 	)
 	if err != nil {
 		server.Stop()
+
 		_ = listener.Close()
+
 		t.Fatalf("bufconn dial failed: %v", err)
 	}
 
 	t.Cleanup(func() {
 		_ = conn.Close()
+
 		server.Stop()
+
 		_ = listener.Close()
 
 		select {
@@ -1025,6 +1034,7 @@ func decodeSlogJSONRecord(t *testing.T, data []byte) map[string]any {
 	t.Helper()
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
+
 	record := make(map[string]any)
 	if err := decoder.Decode(&record); err != nil {
 		t.Fatalf("decode log record: %v; raw=%q", err, string(data))

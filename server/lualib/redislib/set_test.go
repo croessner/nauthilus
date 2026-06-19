@@ -87,11 +87,14 @@ func TestRedisSAdd(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -101,7 +104,7 @@ func TestRedisSAdd(t *testing.T) {
 
 			var valueStr strings.Builder
 			for _, v := range tt.values {
-				valueStr.WriteString(fmt.Sprintf(", %s", formatLuaValue(v)))
+				fmt.Fprintf(&valueStr, ", %s", formatLuaValue(v))
 			}
 
 			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_sadd("default", key%s)`, valueStr.String()))
@@ -170,11 +173,14 @@ func TestRedisSIsMember(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -245,11 +251,14 @@ func TestRedisSMembers(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -335,11 +344,14 @@ func TestRedisSRem(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -349,7 +361,7 @@ func TestRedisSRem(t *testing.T) {
 
 			var valueStr strings.Builder
 			for _, v := range tt.values {
-				valueStr.WriteString(fmt.Sprintf(", %s", formatLuaValue(v)))
+				fmt.Fprintf(&valueStr, ", %s", formatLuaValue(v))
 			}
 
 			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_srem("default", key%s)`, valueStr.String()))
@@ -414,11 +426,14 @@ func TestRedisSCard(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)

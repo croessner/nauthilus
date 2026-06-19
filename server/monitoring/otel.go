@@ -71,6 +71,7 @@ func (defaultProvider) GetInstanceName() string {
 func (t *Telemetry) SetProvider(p TelemetryConfigProvider) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
 	t.prov = p
 }
 
@@ -80,6 +81,7 @@ func (t *Telemetry) Start(ctx context.Context, appVersion string) {
 	if prov == nil {
 		prov = defaultProvider{}
 	}
+
 	cfg := prov.GetTracing()
 	if cfg == nil || !cfg.IsEnabled() {
 		return
@@ -248,6 +250,7 @@ func buildPropagators(names []string) propagation.TextMapPropagator {
 	}
 
 	var list []propagation.TextMapPropagator
+
 	for _, n := range names {
 		switch strings.ToLower(strings.TrimSpace(n)) {
 		case "tracecontext":

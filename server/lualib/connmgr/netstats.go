@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package connmgr provides connmgr functionality.
 package connmgr
 
 import (
@@ -308,6 +309,7 @@ func (m *ConnectionManager) UpdateCounts(ctx context.Context) {
 		}
 
 		count := 0
+
 		for _, conn := range connections {
 			var addr psnet.Addr
 
@@ -422,7 +424,7 @@ func LoaderModPsnet(ctx context.Context, cfg config.File, logger *slog.Logger) l
 		})
 
 		if ctx != nil {
-			lualib.BindRequestRuntimeContext(L, mod, ctx)
+			lualib.BindRequestRuntimeContext(ctx, L, mod)
 		}
 
 		return stack.PushResult(mod)

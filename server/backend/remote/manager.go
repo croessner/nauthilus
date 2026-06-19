@@ -791,7 +791,7 @@ func defaultIdentityAttributeRequest(auth *core.AuthState) *core.IdentityAttribu
 	request := &core.IdentityAttributeRequest{IncludeStandardIdentity: true}
 	if auth == nil || auth.Request.Protocol == nil || auth.Request.Protocol.Get() == definitions.ProtoIDP {
 		request.IncludeGroups = true
-		request.IncludeGroupDNS = true
+		request.IncludeGroupDistinguishedNames = true
 	}
 
 	return request
@@ -806,7 +806,7 @@ func identityAttributeRequestToProto(request *core.IdentityAttributeRequest) *id
 		Names:                   append([]string(nil), request.Names...),
 		IncludeStandardIdentity: request.IncludeStandardIdentity,
 		IncludeGroups:           request.IncludeGroups,
-		IncludeGroupDns:         request.IncludeGroupDNS,
+		IncludeGroupDns:         request.IncludeGroupDistinguishedNames,
 		ReportMissing:           request.ReportMissing,
 	}
 }
@@ -887,7 +887,7 @@ func (m *Manager) passDBResultFromUserSnapshot(response *identityv1.UserSnapshot
 	result.DisplayNameField = remoteIdentityDisplayNameField
 	result.Attributes = userSnapshotAttributes(user)
 	result.Groups = append([]string(nil), user.GetGroups()...)
-	result.GroupDNs = append([]string(nil), user.GetGroupDns()...)
+	result.GroupDistinguishedNames = append([]string(nil), user.GetGroupDns()...)
 	result.BackendRef = backendRef
 
 	return result, nil

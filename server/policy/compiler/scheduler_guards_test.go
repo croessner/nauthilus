@@ -319,6 +319,7 @@ func tlsEncryptionCheckWithSkipIf(skipIf ...string) config.PolicyCheckConfig {
 		Stage:     string(policy.StagePreAuth),
 		ConfigRef: testPolicyCheckTLSEncryptionConfigRef,
 	}
+
 	check.SkipIf = append([]string(nil), skipIf...)
 
 	return check
@@ -327,6 +328,7 @@ func tlsEncryptionCheckWithSkipIf(skipIf ...string) config.PolicyCheckConfig {
 func rblCheckAfter(after string, skipIf ...string) config.PolicyCheckConfig {
 	check := rblCheck()
 	check.After = []string{after}
+
 	check.SkipIf = append([]string(nil), skipIf...)
 
 	return check

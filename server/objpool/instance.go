@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package objpool provides objpool functionality.
 package objpool
 
 import (
@@ -43,5 +44,6 @@ func GetPassDBResultPool() *PassDBResultPool {
 	if passDBResultPoolInstance == nil {
 		panic(fmt.Errorf("passDBResultPoolInstance is nil, call SetPassDBResultPoolNewFunc first"))
 	}
+
 	return passDBResultPoolInstance
 }

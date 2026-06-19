@@ -28,9 +28,10 @@ func TestResetFlowAuthOutcomeForRetryClearsFailLatchedCookieFlow(t *testing.T) {
 
 	mgr := &mockCookieManager{data: map[string]any{}}
 	controller := newFlowController(mgr, nil, "")
+
 	_, err := controller.Start(t.Context(), &flowdomain.State{
 		FlowID:      flowID,
-		FlowType:    flowdomain.FlowTypeOIDCAuthorization,
+		Type:        flowdomain.FlowTypeOIDCAuthorization,
 		Protocol:    flowdomain.FlowProtocolOIDC,
 		CurrentStep: flowdomain.FlowStepStart,
 		GrantType:   definitions.OIDCFlowAuthorizationCode,
@@ -69,9 +70,10 @@ func TestResetFlowAuthOutcomeForLoginAttemptAllowsCorrectRetryAfterFailLatched(t
 
 	mgr := &mockCookieManager{data: map[string]any{}}
 	controller := newFlowController(mgr, nil, "")
+
 	_, err := controller.Start(t.Context(), &flowdomain.State{
 		FlowID:      flowID,
-		FlowType:    flowdomain.FlowTypeOIDCAuthorization,
+		Type:        flowdomain.FlowTypeOIDCAuthorization,
 		Protocol:    flowdomain.FlowProtocolOIDC,
 		CurrentStep: flowdomain.FlowStepStart,
 		GrantType:   definitions.OIDCFlowAuthorizationCode,

@@ -17,6 +17,7 @@ func TestGate_WithLockSerializes(t *testing.T) {
 		_ = gate.WithLock(func() error {
 			close(enteredFirst)
 			<-releaseFirst
+
 			return nil
 		})
 	}()

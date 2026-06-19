@@ -186,7 +186,7 @@ func buildIDPContractRouter(t *testing.T) *gin.Engine {
 	frontend := handleridp.NewFrontendHandler(deps)
 	frontend.Register(engine)
 
-	nauthilusIDP := idp.NewNauthilusIdP(deps)
+	nauthilusIDP := idp.NewNauthilusIDP(deps)
 	handleridp.NewOIDCHandler(deps, nauthilusIDP, frontend).Register(engine)
 	handleridp.NewSAMLHandler(deps, nauthilusIDP).Register(engine)
 
@@ -208,7 +208,7 @@ func routeContractConfig() *config.FileSettings {
 				DefaultLanguage:       "en",
 			},
 		},
-		IDP: &config.IdPSection{
+		IDP: &config.IDPSection{
 			OIDC: config.OIDCConfig{
 				Enabled: true,
 				Issuer:  "https://nauthilus.example.com",

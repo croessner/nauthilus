@@ -23,13 +23,13 @@ const (
 
 // URIBuilder resolves navigation targets for flow decisions.
 type URIBuilder struct {
-	transitions map[FlowType]map[FlowStep]map[FlowAction]string
+	transitions map[Type]map[Step]map[Action]string
 }
 
 // NewURIBuilder returns a default URI builder with flow-specific navigation rules.
 func NewURIBuilder() *URIBuilder {
 	return &URIBuilder{
-		transitions: map[FlowType]map[FlowStep]map[FlowAction]string{
+		transitions: map[Type]map[Step]map[Action]string{
 			FlowTypeOIDCAuthorization: {
 				FlowStepLogin: {
 					FlowActionCancel: defaultCancelURI,
@@ -55,7 +55,7 @@ func NewURIBuilder() *URIBuilder {
 }
 
 // Resolve computes the redirect target for the given action and state.
-func (b *URIBuilder) Resolve(state *State, action FlowAction) string {
+func (b *URIBuilder) Resolve(state *State, action Action) string {
 	if state == nil {
 		return defaultErrorURI
 	}
@@ -82,7 +82,7 @@ func (b *URIBuilder) Resolve(state *State, action FlowAction) string {
 	}
 
 	if b != nil {
-		if steps, ok := b.transitions[state.FlowType]; ok {
+		if steps, ok := b.transitions[state.Type]; ok {
 			if actions, ok := steps[state.CurrentStep]; ok {
 				if uri, ok := actions[action]; ok {
 					return uri

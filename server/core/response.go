@@ -331,6 +331,7 @@ func renderResponseStatusMessage(
 	}
 
 	fallback := auth.Runtime.StatusMessage
+
 	key := strings.TrimSpace(auth.Runtime.StatusMessageI18NKey)
 	if key == "" || resolver == nil {
 		return fallback

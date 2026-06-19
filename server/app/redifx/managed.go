@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package redifx provides redifx functionality.
 package redifx
 
 import (
@@ -49,6 +50,7 @@ type clientHolder struct {
 var _ rediscli.Client = (*ManagedClient)(nil)
 var _ Rebuilder = (*ManagedClient)(nil)
 
+// NewManagedClient provides the exported NewManagedClient function.
 func NewManagedClient(initial rediscli.Client) *ManagedClient {
 	m := &ManagedClient{}
 	// atomic.Value must store a consistent concrete type
@@ -71,6 +73,7 @@ func (m *ManagedClient) get() rediscli.Client {
 	return nil
 }
 
+// GetWriteHandle provides the exported GetWriteHandle method.
 func (m *ManagedClient) GetWriteHandle() redis.UniversalClient {
 	if c := m.get(); c != nil {
 		return c.GetWriteHandle()
@@ -79,6 +82,7 @@ func (m *ManagedClient) GetWriteHandle() redis.UniversalClient {
 	return nil
 }
 
+// GetReadHandle provides the exported GetReadHandle method.
 func (m *ManagedClient) GetReadHandle() redis.UniversalClient {
 	if c := m.get(); c != nil {
 		return c.GetReadHandle()
@@ -96,6 +100,7 @@ func (m *ManagedClient) GetReadHandles() []redis.UniversalClient {
 	return nil
 }
 
+// GetWritePipeline provides the exported GetWritePipeline method.
 func (m *ManagedClient) GetWritePipeline() redis.Pipeliner {
 	if c := m.get(); c != nil {
 		return c.GetWritePipeline()
@@ -104,6 +109,7 @@ func (m *ManagedClient) GetWritePipeline() redis.Pipeliner {
 	return nil
 }
 
+// GetReadPipeline provides the exported GetReadPipeline method.
 func (m *ManagedClient) GetReadPipeline() redis.Pipeliner {
 	if c := m.get(); c != nil {
 		return c.GetReadPipeline()
@@ -112,12 +118,14 @@ func (m *ManagedClient) GetReadPipeline() redis.Pipeliner {
 	return nil
 }
 
+// Close provides the exported Close method.
 func (m *ManagedClient) Close() {
 	if c := m.get(); c != nil {
 		c.Close()
 	}
 }
 
+// GetSecurityManager provides the exported GetSecurityManager method.
 func (m *ManagedClient) GetSecurityManager() *rediscli.SecurityManager {
 	if c := m.get(); c != nil {
 		return c.GetSecurityManager()
@@ -126,6 +134,7 @@ func (m *ManagedClient) GetSecurityManager() *rediscli.SecurityManager {
 	return nil
 }
 
+// Rebuild provides the exported Rebuild method.
 func (m *ManagedClient) Rebuild(cfg config.File, logger *slog.Logger) error {
 	if cfg == nil {
 		return errors.New("config is nil")

@@ -32,6 +32,7 @@ import (
 // GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the Lua backend.
 func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials []mfa.PersistentCredential, err error) {
 	tr := monittrace.New("nauthilus/lua_backend")
+
 	lctx, lsp := tr.Start(auth.Ctx(), "lua.get_webauthn_credentials",
 		attribute.String("backend_name", lm.backendName),
 		attribute.String("username", auth.Request.Username),
@@ -52,6 +53,7 @@ func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials [
 	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
 
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
+
 	ctxLua, cancelLua := context.WithTimeout(lctx, dLua)
 	defer cancelLua()
 
@@ -78,6 +80,7 @@ func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials [
 	if luaBackendResult.Err != nil {
 		err = luaBackendResult.Err
 		lsp.RecordError(err)
+
 		return
 	}
 
@@ -100,6 +103,7 @@ func (lm *luaManagerImpl) executeWebAuthnCredentialOp(
 	command definitions.LuaCommand,
 ) (err error) {
 	tr := monittrace.New("nauthilus/lua_backend")
+
 	lctx, lsp := tr.Start(auth.Ctx(), spanName,
 		attribute.String("backend_name", lm.backendName),
 		attribute.String("username", auth.Request.Username),
@@ -129,6 +133,7 @@ func (lm *luaManagerImpl) executeWebAuthnCredentialOp(
 	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
 
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
+
 	ctxLua, cancelLua := context.WithTimeout(lctx, dLua)
 	defer cancelLua()
 
@@ -178,6 +183,7 @@ func (lm *luaManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential *
 // UpdateWebAuthnCredential updates an existing WebAuthn credential for the user in the Lua backend.
 func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error) {
 	tr := monittrace.New("nauthilus/lua_backend")
+
 	lctx, lsp := tr.Start(auth.Ctx(), "lua.update_webauthn_credential",
 		attribute.String("backend_name", lm.backendName),
 		attribute.String("username", auth.Request.Username),
@@ -217,6 +223,7 @@ func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredentia
 	commonRequest.WebAuthnOldCredential = string(oldCredBytes)
 
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
+
 	ctxLua, cancelLua := context.WithTimeout(lctx, dLua)
 	defer cancelLua()
 
@@ -245,6 +252,7 @@ func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredentia
 	if luaBackendResult.Err != nil {
 		err = luaBackendResult.Err
 		lsp.RecordError(err)
+
 		return
 	}
 

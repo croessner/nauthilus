@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package brmw provides brmw functionality.
 package brmw
 
 import (
@@ -29,10 +30,14 @@ import (
 type Level int
 
 const (
+	// DefaultCompression is an exported package constant.
 	DefaultCompression Level = iota
+	// BestSpeed is an exported package constant.
 	BestSpeed
-	BetterCompression // reasonable ratio with good speed
-	BestCompression   // maximum compression, slower
+	// BetterCompression provides a reasonable ratio with good speed.
+	BetterCompression
+	// BestCompression provides maximum compression at lower speed.
+	BestCompression
 )
 
 // BrotliEncoder is the minimal interface implemented by a Brotli encoder used by this package.

@@ -41,6 +41,7 @@ func TestIdentifierSegment(t *testing.T) {
 
 func TestBruteForceBucketAttributeID(t *testing.T) {
 	got := BruteForceBucketAttributeID("imap_short", "ratio")
+
 	want := "auth.brute_force.bucket.imap_short.ratio"
 	if got != want {
 		t.Fatalf("BruteForceBucketAttributeID() = %q, want %q", got, want)

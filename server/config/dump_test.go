@@ -72,14 +72,14 @@ func TestRenderNonDefaultConfigDump_SuppressesDefaultsAndKeepsChanges(t *testing
 						"limit":   false,
 					},
 					"tls": map[string]any{
-						"min_tls_version": "TLS1.3",
+						"min_tls_version": TLSVersion13,
 					},
 				},
 				"grpc": map[string]any{
 					"authority": map[string]any{
 						"address": "127.0.0.1:9445",
 						"tls": map[string]any{
-							"min_tls_version": "TLS1.3",
+							"min_tls_version": TLSVersion13,
 						},
 					},
 				},

@@ -152,6 +152,7 @@ end
 	withTestLuaEnvironmentSources(t, first, second)
 
 	request := newEnvironmentTestRequest()
+
 	triggered, skipRemainingEnvironment, err := request.CallEnvironmentLua(newEnvironmentTestContext(), newEnvironmentTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatalf("CallEnvironmentLua returned error: %v", err)
@@ -198,6 +199,7 @@ end
 	withTestLuaEnvironmentSources(t, first, second)
 
 	request := newEnvironmentTestRequest()
+
 	triggered, skipRemainingEnvironment, err := request.CallEnvironmentLua(newEnvironmentTestContext(), newEnvironmentTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatalf("CallEnvironmentLua returned error: %v", err)
@@ -245,6 +247,7 @@ end
 	withTestLuaEnvironmentSources(t, first, second)
 
 	request := newEnvironmentTestRequest()
+
 	_, _, err := request.CallEnvironmentLua(newEnvironmentTestContext(), newEnvironmentTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err == nil {
 		t.Fatal("expected dependency cycle error")

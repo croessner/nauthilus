@@ -246,6 +246,7 @@ func TestXorBytes(t *testing.T) {
 
 	// XOR again should restore original
 	xorBytes(data, key)
+
 	original := []byte{0x12, 0x34, 0x56, 0x78}
 
 	for i := range data {

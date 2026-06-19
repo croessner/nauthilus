@@ -45,6 +45,7 @@ const (
 func setupConfigForResponseTests(t *testing.T) {
 	t.Helper()
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+
 	cfg := &config.FileSettings{Server: &config.ServerSection{}}
 	config.SetTestFile(cfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
@@ -83,6 +84,7 @@ func newResponseAuthState(
 func TestResponseWriter_Fail_JSONBodyNullAndHeaders(t *testing.T) {
 	setupConfigForResponseTests(t)
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
@@ -111,6 +113,7 @@ func TestResponseWriter_Fail_JSONBodyNullAndHeaders(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid JSON body: %v", err)
 	}
+
 	if body != nil {
 		t.Fatalf("expected JSON null body, got %#v", body)
 	}
@@ -119,6 +122,7 @@ func TestResponseWriter_Fail_JSONBodyNullAndHeaders(t *testing.T) {
 func TestResponseWriter_Fail_LocalizesPolicyI18NStatusFromAcceptLanguage(t *testing.T) {
 	setupConfigForResponseTests(t)
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
@@ -164,6 +168,7 @@ func TestResponseWriter_Fail_LocalizesPolicyI18NStatusFromAcceptLanguage(t *test
 func TestResponseWriter_Fail_KeepsPlainStatusMessageWithoutI18NKey(t *testing.T) {
 	setupConfigForResponseTests(t)
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
@@ -189,6 +194,7 @@ func TestResponseWriter_Fail_KeepsPlainStatusMessageWithoutI18NKey(t *testing.T)
 func TestResponseWriter_Fail_UsesPolicyI18NFallbackWhenTranslationIsMissing(t *testing.T) {
 	setupConfigForResponseTests(t)
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
@@ -228,6 +234,7 @@ func TestResponseWriter_Fail_UsesPolicyI18NFallbackWhenTranslationIsMissing(t *t
 func TestResponseWriter_TempFail_JSONErrorBody(t *testing.T) {
 	setupConfigForResponseTests(t)
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
@@ -246,6 +253,7 @@ func TestResponseWriter_TempFail_JSONErrorBody(t *testing.T) {
 	if got := w.Header().Get("Auth-Status"); got != reason {
 		t.Fatalf("Auth-Status header = %q, want %q", got, reason)
 	}
+
 	if got := w.Header().Get("X-Nauthilus-Session"); got != a.Runtime.GUID {
 		t.Fatalf("X-Nauthilus-Session = %q, want %q", got, a.Runtime.GUID)
 	}
@@ -254,6 +262,7 @@ func TestResponseWriter_TempFail_JSONErrorBody(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid JSON body: %v", err)
 	}
+
 	if msg, ok := body[jsonErrorField].(string); !ok || msg != reason {
 		t.Fatalf("expected error field %q, got %v (present=%v)", reason, body[jsonErrorField], ok)
 	}
@@ -262,6 +271,7 @@ func TestResponseWriter_TempFail_JSONErrorBody(t *testing.T) {
 func TestResponseWriter_Fail_CBORBodyNullAndHeaders(t *testing.T) {
 	setupConfigForResponseTests(t)
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
@@ -297,6 +307,7 @@ func TestResponseWriter_Fail_CBORBodyNullAndHeaders(t *testing.T) {
 func TestResponseWriter_TempFail_CBORErrorBody(t *testing.T) {
 	setupConfigForResponseTests(t)
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
@@ -333,6 +344,7 @@ func TestResponseWriter_TempFail_CBORErrorBody(t *testing.T) {
 func TestResponseWriter_TempFail_LocalizesPolicyI18NStatusWithPolicyLanguage(t *testing.T) {
 	setupConfigForResponseTests(t)
 	gin.SetMode(gin.TestMode)
+
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)

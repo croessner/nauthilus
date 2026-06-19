@@ -29,16 +29,63 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const frontendLoginPath = "/login"
+const (
+	frontendDefaultLanguageTag = "en"
+	frontendLoginPath          = "/login"
+	frontendDeviceVerifyPath   = "/oidc/device/verify"
+	frontendDeviceConsentPath  = "/oidc/device/consent"
+	frontendSAMLLogoutPath     = "/saml/slo"
 
-// newFlowController builds an IdP flow controller with Redis-backed state
+	templateDataCSPNonce            = "CSPNonce"
+	templateDataChecked             = "Checked"
+	templateDataConfirmNo           = "ConfirmNo"
+	templateDataConfirmTitle        = "ConfirmTitle"
+	templateDataConfirmYes          = "ConfirmYes"
+	templateDataDescription         = "Description"
+	templateDataIDPClientName       = "IDPClientName"
+	templateDataLanguageCurrentName = "LanguageCurrentName"
+	templateDataLanguagePassive     = "LanguagePassive"
+	templateDataLanguageTag         = "LanguageTag"
+	templateDataName                = "Name"
+
+	mfaMethodRecovery = "recovery"
+	mfaMethodTOTP     = "totp"
+	mfaMethodWebAuthn = "webauthn"
+
+	oidcClientAuthMethodNone     = "none"
+	oidcJSONFieldAccessToken     = "access_token"
+	oidcJSONFieldActive          = "active"
+	oidcJSONFieldAlgorithm       = "alg"
+	oidcJSONFieldExpiresIn       = "expires_in"
+	oidcJSONFieldKeyID           = "kid"
+	oidcJSONFieldKeyType         = "kty"
+	oidcJSONFieldKeyUse          = "use"
+	oidcJSONFieldTokenType       = "token_type"
+	oidcJSONTokenTypeBearer      = "Bearer"
+	oidcJSONWebKeyAlgorithmEdDSA = "EdDSA"
+	oidcJSONWebKeyAlgorithmRS256 = "RS256"
+	oidcJSONWebKeyTypeOKP        = "OKP"
+	oidcJSONWebKeyTypeRSA        = "RSA"
+	oidcJSONWebKeyUseSignature   = "sig"
+	oidcPKCEChallengeMethodS256  = "S256"
+	oidcConsentDecisionAllow     = "allow"
+
+	samlMetricLabelBinding     = "binding"
+	samlMetricLabelMessageType = "message_type"
+	samlMetricLabelOutcome     = "outcome"
+	samlMetricLabelStatus      = "status"
+	samlProtocolVersion        = "2.0"
+	samlXMLIDAttribute         = "ID"
+)
+
+// newFlowController builds an IDP flow controller with Redis-backed state
 // when available and cookie-reference fallback when Redis is unavailable.
 func newFlowController(mgr cookie.Manager, redisClient rediscli.Client, redisPrefix string) *flowdomain.Controller {
 	if redisClient == nil || redisClient.GetWriteHandle() == nil {
-		return flowdomain.NewController(flowdomain.NewFlowReferenceAdapter(mgr))
+		return flowdomain.NewController(flowdomain.NewReferenceAdapter(mgr))
 	}
 
-	referenceStore := flowdomain.NewFlowReferenceAdapter(mgr)
+	referenceStore := flowdomain.NewReferenceAdapter(mgr)
 	stateStore := flowdomain.NewRedisStore(redisClient.GetWriteHandle(), redisPrefix+"idp:flow", 0)
 
 	return flowdomain.NewController(flowdomain.NewHybridStore(referenceStore, stateStore))
@@ -47,12 +94,12 @@ func newFlowController(mgr cookie.Manager, redisClient rediscli.Client, redisPre
 // advanceFlow advances the current flow to the given step.
 // Errors are intentionally ignored: the flow controller is an enhancement
 // and failing to advance must not break the login flow.
-func advanceFlow(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Client, redisPrefix string, to flowdomain.FlowStep) {
+func advanceFlow(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Client, redisPrefix string, to flowdomain.Step) {
 	if mgr == nil {
 		return
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID == "" {
 		return
 	}
@@ -63,38 +110,38 @@ func advanceFlow(ctx context.Context, mgr cookie.Manager, redisClient rediscli.C
 }
 
 // completeFlow completes the current flow: deletes the Redis state via
-// the controller and then removes all IdP cookie keys.
+// the controller and then removes all IDP cookie keys.
 func completeFlow(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Client, redisPrefix string) {
 	if mgr == nil {
 		return
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID != "" {
 		controller := newFlowController(mgr, redisClient, redisPrefix)
 
 		_, _ = controller.Complete(ctx, flowID)
 	}
 
-	flowdomain.CleanupIdPState(mgr)
+	flowdomain.CleanupIDPState(mgr)
 }
 
 // abortFlow unconditionally deletes the flow state from Redis and cleans
-// up all IdP cookie keys.  Use this for denied consent or error paths
+// up all IDP cookie keys.  Use this for denied consent or error paths
 // where the policy might not allow a regular Complete.
 func abortFlow(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Client, redisPrefix string) {
 	if mgr == nil {
 		return
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID != "" {
 		controller := newFlowController(mgr, redisClient, redisPrefix)
 
 		_, _ = controller.Abort(ctx, flowID)
 	}
 
-	flowdomain.CleanupIdPState(mgr)
+	flowdomain.CleanupIDPState(mgr)
 }
 
 // resumeFlow resolves the persisted flow state and returns the next resume
@@ -104,7 +151,7 @@ func resumeFlow(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Cl
 		return flowdomain.Decision{Type: flowdomain.DecisionTypeRedirect, RedirectURI: "/"}, nil
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID == "" {
 		return flowdomain.Decision{Type: flowdomain.DecisionTypeRedirect, RedirectURI: "/"}, nil
 	}
@@ -129,12 +176,13 @@ func getFlowAuthOutcome(ctx context.Context, mgr cookie.Manager, redisClient red
 		return flowdomain.AuthOutcomeUnknown, false
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID == "" {
 		return flowdomain.AuthOutcomeUnknown, false
 	}
 
 	controller := newFlowController(mgr, redisClient, redisPrefix)
+
 	state, err := controller.State(ctx, flowID)
 	if err != nil || state == nil {
 		return flowdomain.AuthOutcomeUnknown, false
@@ -154,7 +202,7 @@ func resetFlowAuthOutcomeForRetry(ctx context.Context, mgr cookie.Manager, redis
 		return false
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID == "" {
 		return false
 	}
@@ -177,7 +225,7 @@ func setFlowAuthOutcome(ctx context.Context, mgr cookie.Manager, redisClient red
 		return false
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID == "" {
 		return false
 	}
@@ -187,9 +235,9 @@ func setFlowAuthOutcome(ctx context.Context, mgr cookie.Manager, redisClient red
 	return controller.SetAuthOutcome(ctx, flowID, outcome, time.Now()) == nil
 }
 
-// resumeIdPFlow resumes an interrupted IdP flow and performs the redirect
+// resumeIDPFlow resumes an interrupted IDP flow and performs the redirect
 // implied by the flow decision.
-func (h *FrontendHandler) resumeIdPFlow(ctx *gin.Context, mgr cookie.Manager) {
+func (h *FrontendHandler) resumeIDPFlow(ctx *gin.Context, mgr cookie.Manager) {
 	var (
 		redisClient rediscli.Client
 		redisPrefix string

@@ -116,7 +116,7 @@ func (s *HybridStore) Save(ctx context.Context, state *State) error {
 		reference := &State{
 			FlowID:     state.FlowID,
 			GrantType:  state.GrantType,
-			FlowType:   state.FlowType,
+			Type:       state.Type,
 			Protocol:   state.Protocol,
 			Metadata:   state.Metadata,
 			PendingMFA: state.PendingMFA,

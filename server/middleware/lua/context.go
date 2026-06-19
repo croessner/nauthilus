@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package lua provides lua functionality.
 package lua
 
 import (
@@ -21,8 +22,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// LuaContextMiddleware sets up a Lua context and adds it to the Gin context for use throughout the request lifecycle.
-func LuaContextMiddleware() gin.HandlerFunc {
+// ContextMiddleware sets up a Lua context and adds it to the Gin context for use throughout the request lifecycle.
+func ContextMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 

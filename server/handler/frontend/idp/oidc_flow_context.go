@@ -199,6 +199,7 @@ func (c *oidcAuthorizeFlowContext) getConsentExpiries() map[string][]oidcConsent
 			for i := range grants {
 				grants[i].Scopes = normalizeScopes(grants[i].Scopes)
 			}
+
 			consents[clientID] = grants
 		}
 
@@ -218,6 +219,7 @@ func (c *oidcAuthorizeFlowContext) getConsentExpiries() map[string][]oidcConsent
 
 	// Backward compatibility: old CSV form "client=unix,client2=unix".
 	consents = make(map[string][]oidcConsentGrant)
+
 	for pair := range strings.SplitSeq(raw, ",") {
 		clientID, expRaw, ok := strings.Cut(pair, "=")
 		if !ok || clientID == "" {
@@ -287,6 +289,7 @@ func normalizeScopes(scopes []string) []string {
 		if scope == "" {
 			continue
 		}
+
 		if _, exists := seen[scope]; exists {
 			continue
 		}
@@ -307,8 +310,8 @@ func (c *oidcAuthorizeFlowContext) ResumeAuthorizeURL() string {
 		return ""
 	}
 
-	clientID := c.mgr.GetString(definitions.SessionKeyIdPClientID, "")
-	redirectURI := c.mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
+	clientID := c.mgr.GetString(definitions.SessionKeyIDPClientID, "")
+	redirectURI := c.mgr.GetString(definitions.SessionKeyIDPRedirectURI, "")
 
 	if clientID == "" || redirectURI == "" {
 		return ""
@@ -317,27 +320,27 @@ func (c *oidcAuthorizeFlowContext) ResumeAuthorizeURL() string {
 	authorizeURL := "/oidc/authorize?client_id=" + url.QueryEscape(clientID)
 	authorizeURL += "&redirect_uri=" + url.QueryEscape(redirectURI)
 
-	if scope := c.mgr.GetString(definitions.SessionKeyIdPScope, ""); scope != "" {
+	if scope := c.mgr.GetString(definitions.SessionKeyIDPScope, ""); scope != "" {
 		authorizeURL += "&scope=" + url.QueryEscape(scope)
 	}
 
-	if state := c.mgr.GetString(definitions.SessionKeyIdPState, ""); state != "" {
+	if state := c.mgr.GetString(definitions.SessionKeyIDPState, ""); state != "" {
 		authorizeURL += "&state=" + url.QueryEscape(state)
 	}
 
-	if nonce := c.mgr.GetString(definitions.SessionKeyIdPNonce, ""); nonce != "" {
+	if nonce := c.mgr.GetString(definitions.SessionKeyIDPNonce, ""); nonce != "" {
 		authorizeURL += "&nonce=" + url.QueryEscape(nonce)
 	}
 
-	if responseType := c.mgr.GetString(definitions.SessionKeyIdPResponseType, ""); responseType != "" {
+	if responseType := c.mgr.GetString(definitions.SessionKeyIDPResponseType, ""); responseType != "" {
 		authorizeURL += "&response_type=" + url.QueryEscape(responseType)
 	}
 
-	if codeChallenge := c.mgr.GetString(definitions.SessionKeyIdPCodeChallenge, ""); codeChallenge != "" {
+	if codeChallenge := c.mgr.GetString(definitions.SessionKeyIDPCodeChallenge, ""); codeChallenge != "" {
 		authorizeURL += "&code_challenge=" + url.QueryEscape(codeChallenge)
 	}
 
-	if codeChallengeMethod := c.mgr.GetString(definitions.SessionKeyIdPCodeChallengeMethod, ""); codeChallengeMethod != "" {
+	if codeChallengeMethod := c.mgr.GetString(definitions.SessionKeyIDPCodeChallengeMethod, ""); codeChallengeMethod != "" {
 		authorizeURL += "&code_challenge_method=" + url.QueryEscape(codeChallengeMethod)
 	}
 
@@ -380,6 +383,7 @@ func (c *oidcDeviceFlowContext) StoreMFAContext(
 	cookie.SetAuthResult(c.mgr, username, authResult)
 	c.mgr.Set(definitions.SessionKeyProtocol, protocol)
 	c.mgr.Set(definitions.SessionKeyMFAMulti, multi)
+
 	_ = clientID
 	_ = deviceCode
 }
@@ -391,6 +395,7 @@ func (c *oidcDeviceFlowContext) StoreConsentContext(deviceCode, clientID, userID
 	}
 
 	c.mgr.Set(definitions.SessionKeyUniqueUserID, userID)
+
 	_ = clientID
 	_ = deviceCode
 }

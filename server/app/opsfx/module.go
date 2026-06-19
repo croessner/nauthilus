@@ -17,6 +17,7 @@ package opsfx
 
 import "go.uber.org/fx"
 
+// Module provides the exported Module function.
 func Module() fx.Option {
 	return fx.Options(
 		fx.Provide(NewGate),

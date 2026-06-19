@@ -245,16 +245,17 @@ func (lm *ldapManagerImpl) newLDAPModifyRequest(input ldapModifyRequestInput) *b
 }
 
 // startSpan starts a tracing span and returns a closure to end it.
-func startSpan(tr monittrace.Tracer, ctx context.Context, name string) (context.Context, spanEnder) {
+func startSpan(ctx context.Context, tr monittrace.Tracer, name string) (context.Context, spanEnder) {
 	ctx, span := tr.Start(ctx, name)
 
 	return ctx, func() { span.End() }
 }
 
 // waitLDAPReply waits for a reply and wraps the wait with a tracing span.
-func waitLDAPReply(tr monittrace.Tracer, ctx context.Context, name string, replyChan <-chan *bktype.LDAPReply) *bktype.LDAPReply {
-	_, endSpan := startSpan(tr, ctx, name)
+func waitLDAPReply(ctx context.Context, tr monittrace.Tracer, name string, replyChan <-chan *bktype.LDAPReply) *bktype.LDAPReply {
+	_, endSpan := startSpan(ctx, tr, name)
 	reply := <-replyChan
+
 	endSpan()
 
 	return reply
@@ -344,12 +345,14 @@ func decryptLDAPAttributeValue(manager *security.Manager, value any) (any, error
 				if err != nil {
 					return nil, err
 				}
+
 				decrypted[index] = plaintext
 			case []byte:
 				plaintext, err := manager.Decrypt(string(entryValue))
 				if err != nil {
 					return nil, err
 				}
+
 				decrypted[index] = plaintext
 			default:
 				decrypted[index] = entry
@@ -364,6 +367,7 @@ func decryptLDAPAttributeValue(manager *security.Manager, value any) (any, error
 			if err != nil {
 				return nil, err
 			}
+
 			decrypted[index] = plaintext
 		}
 
@@ -444,7 +448,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
-	_, endPrepare := startSpan(tr, lctx, "ldap.passdb.search.prepare")
+	_, endPrepare := startSpan(lctx, tr, "ldap.passdb.search.prepare")
 
 	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
 		requireProtocol:       true,
@@ -477,6 +481,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	// Derive a timeout context for LDAP search
 	dSearch := lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPSearch()
+
 	ctxSearch, cancelSearch := context.WithTimeout(auth.Ctx(), dSearch)
 	defer cancelSearch()
 
@@ -505,7 +510,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	// Use priority queue instead of channel
 	lm.ldapQueue().Push(ldapRequest, priority)
 
-	ldapReply = waitLDAPReply(tr, lctx, "ldap.passdb.search.wait", ldapReplyChan)
+	ldapReply = waitLDAPReply(lctx, tr, "ldap.passdb.search.wait", ldapReplyChan)
 
 	if ldapReply.Err != nil {
 		lspan.RecordError(ldapReply.Err)
@@ -582,7 +587,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	}
 
 	if passDBResult.Attributes != nil {
-		passDBResult.Groups, passDBResult.GroupDNs = lm.resolveGroups(auth, protocol, passDBResult.Attributes, accountField, lm.effectiveLogger())
+		passDBResult.Groups, passDBResult.GroupDistinguishedNames = lm.resolveGroups(auth, protocol, passDBResult.Attributes, accountField, lm.effectiveLogger())
 	}
 
 	if securityManager != nil && totpSecretPre != nil {
@@ -606,14 +611,16 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	if !auth.Request.NoAuth {
 		ldapReplyChan = make(chan *bktype.LDAPReply, 1)
 
-		_, endAuthPrepare := startSpan(tr, lctx, "ldap.passdb.auth.prepare")
+		_, endAuthPrepare := startSpan(lctx, tr, "ldap.passdb.auth.prepare")
 
 		// Derive a timeout context for LDAP bind/auth
 		dBind := lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPBind()
+
 		ctxBind, cancelBind := context.WithTimeout(auth.Ctx(), dBind)
 		defer cancelBind()
 
 		var bindPassword string
+
 		auth.Request.Password.WithString(func(value string) {
 			bindPassword = value
 		})
@@ -635,7 +642,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		// Use priority queue instead of channel
 		lm.ldapAuthQueue().Push(ldapUserBindRequest, priority)
 
-		ldapReply = waitLDAPReply(tr, lctx, "ldap.passdb.auth.wait", ldapReplyChan)
+		ldapReply = waitLDAPReply(lctx, tr, "ldap.passdb.auth.wait", ldapReplyChan)
 
 		if ldapReply.Err != nil {
 			util.DebugModuleWithCfg(
@@ -717,7 +724,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
-	_, endPrepare := startSpan(tr, actx, "ldap.accountdb.prepare")
+	_, endPrepare := startSpan(actx, tr, "ldap.accountdb.prepare")
 
 	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
 		filterGetter:        (*config.LDAPSearchProtocol).GetListAccountsFilter,
@@ -764,7 +771,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	lm.ldapQueue().Push(ldapRequest, priorityqueue.PriorityMedium)
 
-	ldapReply = waitLDAPReply(tr, actx, "ldap.accountdb.wait", ldapReplyChan)
+	ldapReply = waitLDAPReply(actx, tr, "ldap.accountdb.wait", ldapReplyChan)
 
 	if ldapReply.Err != nil {
 		if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
@@ -830,7 +837,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
-	_, endPrepare := startSpan(tr, mctx, "ldap.add_totp.prepare")
+	_, endPrepare := startSpan(mctx, tr, "ldap.add_totp.prepare")
 
 	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
 		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
@@ -862,8 +869,8 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	}
 
 	securityManager := security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
-	encryptedSecret, encryptErr := securityManager.Encrypt(totp.GetValue())
 
+	encryptedSecret, encryptErr := securityManager.Encrypt(totp.GetValue())
 	if encryptErr != nil {
 		endPrepare()
 
@@ -897,12 +904,12 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		})
 
 		ocRequest.ModifyAttributes = bktype.LDAPModifyAttributes{
-			"objectClass": []string{totpObjectClass},
+			ldapAttributeObjectClass: []string{totpObjectClass},
 		}
 
 		lm.ldapQueue().Push(ocRequest, priority)
 
-		ocReply := waitLDAPReply(tr, mctx, "ldap.add_totp.objectclass", objectClassReplyChan)
+		ocReply := waitLDAPReply(mctx, tr, "ldap.add_totp.objectclass", objectClassReplyChan)
 		if ocReply.Err != nil && !isAttributeOrValueExistsError(ocReply.Err) {
 			msp.RecordError(ocReply.Err)
 
@@ -931,7 +938,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	lm.ldapQueue().Push(ldapRequest, priority)
 
-	ldapReply = waitLDAPReply(tr, mctx, "ldap.add_totp.wait", ldapReplyChan)
+	ldapReply = waitLDAPReply(mctx, tr, "ldap.add_totp.wait", ldapReplyChan)
 
 	if ldapReply.Err != nil {
 		msp.RecordError(ldapReply.Err)
@@ -983,7 +990,7 @@ func (lm *ldapManagerImpl) deleteLDAPField(auth *AuthState, params deleteLDAPFie
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
-	_, endPrepare := startSpan(tr, mctx, params.prepareSpan)
+	_, endPrepare := startSpan(mctx, tr, params.prepareSpan)
 
 	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
 		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
@@ -1039,7 +1046,7 @@ func (lm *ldapManagerImpl) deleteLDAPField(auth *AuthState, params deleteLDAPFie
 	// Use priority queue instead of channel
 	lm.ldapQueue().Push(ldapRequest, priority)
 
-	ldapReply = waitLDAPReply(tr, mctx, params.waitSpan, ldapReplyChan)
+	ldapReply = waitLDAPReply(mctx, tr, params.waitSpan, ldapReplyChan)
 
 	if isNoSuchAttributeError(ldapReply.Err) {
 		return nil
@@ -1097,7 +1104,7 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
-	_, endPrepare := startSpan(tr, mctx, "ldap.add_totp_recovery.prepare")
+	_, endPrepare := startSpan(mctx, tr, "ldap.add_totp_recovery.prepare")
 
 	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
 		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
@@ -1130,6 +1137,7 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 
 	securityManager := security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
 	codes := recovery.GetCodes()
+
 	encryptedCodes := make([]string, len(codes))
 	for index, code := range codes {
 		encryptedCode, encryptErr := securityManager.Encrypt(code)
@@ -1167,6 +1175,7 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 
 	if totpRecoveryObjectClass != "" {
 		objectClassReplyChan := make(chan *bktype.LDAPReply, 1)
+
 		ctxAddObjectClass, cancelAddObjectClass := lm.ldapModifyContext()
 		defer cancelAddObjectClass()
 
@@ -1180,10 +1189,11 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 			replyChan:  objectClassReplyChan,
 		})
 		objectClassRequest.ModifyAttributes = bktype.LDAPModifyAttributes{
-			"objectClass": []string{totpRecoveryObjectClass},
+			ldapAttributeObjectClass: []string{totpRecoveryObjectClass},
 		}
 
 		lm.ldapQueue().Push(objectClassRequest, priority)
+
 		objectClassReply := <-objectClassReplyChan
 		if objectClassReply.Err != nil && !isAttributeOrValueExistsError(objectClassReply.Err) {
 			msp.RecordError(objectClassReply.Err)
@@ -1197,7 +1207,7 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 	// Use priority queue instead of channel
 	lm.ldapQueue().Push(ldapRequest, priority)
 
-	ldapReply = waitLDAPReply(tr, mctx, "ldap.add_totp_recovery.wait", ldapReplyChan)
+	ldapReply = waitLDAPReply(mctx, tr, "ldap.add_totp_recovery.wait", ldapReplyChan)
 
 	if ldapReply.Err != nil {
 		msp.RecordError(ldapReply.Err)

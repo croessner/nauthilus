@@ -34,6 +34,7 @@ func TestExpectationQueueEnqueuePeekDequeue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("peek returned error: %v", err)
 	}
+
 	if peeked != exp {
 		t.Fatalf("peeked expectation mismatch")
 	}
@@ -42,6 +43,7 @@ func TestExpectationQueueEnqueuePeekDequeue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dequeue returned error: %v", err)
 	}
+
 	if dequeued != exp {
 		t.Fatalf("dequeued expectation mismatch")
 	}
@@ -71,16 +73,20 @@ func TestExpectationQueueMatchNextSuccess(t *testing.T) {
 	queue.Enqueue(exp)
 
 	call := NewCall(CallExec, "update users set enabled = ? where id = ?", true, "u-1")
+
 	matched, err := queue.MatchNext(call)
 	if err != nil {
 		t.Fatalf("expected match success, got error: %v", err)
 	}
+
 	if matched != exp {
 		t.Fatalf("matched expectation mismatch")
 	}
+
 	if !exp.IsSatisfied() {
 		t.Fatalf("expected expectation to be satisfied")
 	}
+
 	if queue.Len() != 0 {
 		t.Fatalf("expected len=0 after consume, got %d", queue.Len())
 	}
@@ -95,12 +101,15 @@ func TestExpectationQueueMatchNextMismatchKeepsQueue(t *testing.T) {
 	if !errors.Is(err, ErrUnexpectedCall) {
 		t.Fatalf("expected ErrUnexpectedCall, got: %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "expected=") || !strings.Contains(err.Error(), "actual=") {
 		t.Fatalf("expected mismatch details in error, got: %v", err)
 	}
+
 	if queue.Len() != 1 {
 		t.Fatalf("queue should keep expectation on mismatch")
 	}
+
 	if exp.IsSatisfied() {
 		t.Fatalf("expectation must not be satisfied on mismatch")
 	}

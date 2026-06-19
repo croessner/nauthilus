@@ -118,6 +118,7 @@ func policyConfigDecodeFixture(t *testing.T) map[string]any {
 
 func assertDecodedPolicyConfig(t *testing.T, cfg *FileSettings) {
 	t.Helper()
+
 	if cfg.Auth == nil {
 		t.Fatal("auth config is nil")
 	}
@@ -190,6 +191,7 @@ func TestAuthPolicyConfigRejectsRemovedSchedulerKeys(t *testing.T) {
 	})
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want removed scheduler key rejection")

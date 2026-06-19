@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package hook provides hook functionality.
 package hook
 
 import (
@@ -45,6 +46,8 @@ import (
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
 )
+
+const luaHookResponseKeyError = "error"
 
 var (
 	// LuaScripts is a map that stores precompiled Lua scripts, allowing safe concurrent access and manipulation.
@@ -103,16 +106,16 @@ func NewLuaHook(filePath string) (*PrecompiledLuaScript, error) {
 	}, nil
 }
 
-// HttpMethod represents the HTTP methods used in HTTP requests.
-type HttpMethod string
+// HTTPMethod represents the HTTP methods used in HTTP requests.
+type HTTPMethod string
 
 // CustomHook maps an HTTP method to its corresponding precompiled Lua script for handling specific requests.
-type CustomHook map[HttpMethod]*PrecompiledLuaScript
+type CustomHook map[HTTPMethod]*PrecompiledLuaScript
 
 // GetScript retrieves the precompiled Lua script associated with the specified HTTP method from the CustomHook.
 // Returns the Lua script if found, otherwise returns nil.
 func (h CustomHook) GetScript(method string) *PrecompiledLuaScript {
-	if script, found := h[HttpMethod(method)]; found {
+	if script, found := h[HTTPMethod(method)]; found {
 		return script
 	}
 
@@ -121,14 +124,14 @@ func (h CustomHook) GetScript(method string) *PrecompiledLuaScript {
 
 // SetScript associates a precompiled Lua script with a specific HTTP method in the CustomHook.
 func (h CustomHook) SetScript(method string, script *PrecompiledLuaScript) {
-	h[HttpMethod(method)] = script
+	h[HTTPMethod(method)] = script
 }
 
 // NewCustomHook creates a new CustomHook with the specified HTTP method and precompiled Lua script.
 func NewCustomHook(httpMethod string, script *PrecompiledLuaScript) CustomHook {
 	hook := make(CustomHook)
 
-	hook[HttpMethod(httpMethod)] = script
+	hook[HTTPMethod(httpMethod)] = script
 
 	return hook
 }
@@ -207,7 +210,9 @@ func GetHookScopes(location, method string) []string {
 	hookKey := getHookKey(location, method)
 
 	mu.RLock()
+
 	scopes := hookScopes[hookKey]
+
 	mu.RUnlock()
 
 	return scopes
@@ -218,7 +223,9 @@ func ResolveAliasLocation(location, method string) (string, bool) {
 	aliasKey := getHookAliasKey(location, method)
 
 	mu.RLock()
+
 	canonicalLocation, found := hookAliasLocations[aliasKey]
+
 	mu.RUnlock()
 
 	return canonicalLocation, found
@@ -311,10 +318,11 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 	})
 	if !ok {
 		if ctx.Writer.Status() == http.StatusUnauthorized {
-			nextState, err = nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventTokenMissing)
+			_, err = nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventTokenMissing)
 		} else {
-			nextState, err = nextHookAuthzFSMState(hookAuthzStateTokenChecked, hookAuthzEventScopeMiss)
+			_, err = nextHookAuthzFSMState(hookAuthzStateTokenChecked, hookAuthzEventScopeMiss)
 		}
+
 		if err != nil {
 			ctx.AbortWithStatus(http.StatusInternalServerError)
 		}
@@ -322,14 +330,14 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 		return false
 	}
 
-	nextState, err = nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventTokenValid)
+	tokenCheckedState, err := nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventTokenValid)
 	if err != nil {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
 		return false
 	}
 
-	nextState, err = nextHookAuthzFSMState(nextState, hookAuthzEventScopeMatch)
+	_, err = nextHookAuthzFSMState(tokenCheckedState, hookAuthzEventScopeMatch)
 	if err != nil {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
@@ -351,9 +359,9 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 func abortOnHookAuthzState(ctx *gin.Context, state hookAuthzFSMState, msg string) {
 	switch state {
 	case hookAuthzStateUnauthorized:
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": msg})
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{luaHookResponseKeyError: msg})
 	case hookAuthzStateForbidden:
-		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": msg})
+		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{luaHookResponseKeyError: msg})
 	default:
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 	}
@@ -405,6 +413,7 @@ func PreCompileLuaScript(cfg config.File, filePath string) (err error) {
 		if err != nil {
 			sp.RecordError(err)
 		}
+
 		sp.End()
 	}()
 
@@ -453,6 +462,7 @@ func PreCompileLuaHooks(cfg config.File) error {
 			if cfg != nil && cfg.HaveLuaHooks() {
 				return len(cfg.GetLua().Hooks)
 			}
+
 			return 0
 		}()),
 	)
@@ -478,6 +488,7 @@ func PreCompileLuaHooks(cfg config.File) error {
 			nextLocation.SetScript(hook.Location, hook.Method, script)
 
 			hookKey := getHookKey(hook.Location, hook.Method)
+
 			nextScopes[hookKey] = hook.GetScopes()
 			if aliasLocation := strings.TrimSpace(hook.GetAliasLocation()); aliasLocation != "" {
 				nextAliases[getHookAliasKey(aliasLocation, hook.Method)] = hook.Location
@@ -511,6 +522,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 			// leave as attribute to avoid double logging
 			csp.SetAttributes(attribute.String("panic", "true"))
 		}
+
 		csp.End()
 	}()
 
@@ -564,11 +576,12 @@ func bindCommonLuaModules(
 	luapool.PrepareRequestEnv(L)
 
 	modManager := luamod.NewModuleManager(luaCtx, cfg, logger, redis)
+
 	if i18nRuntime == nil {
 		i18nRuntime = lualib.DefaultI18NRuntime().NewCatalogSession()
 	}
 
-	modManager.BindAllDefault(L, lualib.NewContext(), luaCtx, tolerate.GetTolerate())
+	modManager.BindAllDefault(luaCtx, L, lualib.NewContext(), tolerate.GetTolerate())
 	modManager.BindI18NRuntime(L, i18nRuntime, lualib.I18NModeStartup)
 	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
 }
@@ -689,7 +702,7 @@ func bindCustomLuaModules(luaCtx context.Context, ctx *gin.Context, cfg config.F
 
 	modManager := luamod.NewModuleManager(ctx, cfg, logger, redis)
 
-	modManager.BindAllDefault(L, lualib.NewContext(), luaCtx, tolerate.GetTolerate())
+	modManager.BindAllDefault(luaCtx, L, lualib.NewContext(), tolerate.GetTolerate())
 	modManager.BindHTTP(L, lualib.NewHTTPMetaFromRequest(ctx.Request))
 	modManager.BindHTTPResponse(L, ctx)
 	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
@@ -746,6 +759,7 @@ func RunLuaHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, redis re
 	return runLuaCustomWrapper(ctx, cfg, logger, redis)
 }
 
+// RunLuaInit provides the exported RunLuaInit function.
 func RunLuaInit(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string) error {
 	i18nRuntime := lualib.DefaultI18NRuntime().NewCatalogSession()
 	if err := runLuaCommonWrapper(ctx, cfg, logger, redis, hook, i18nRuntime); err != nil {
@@ -785,6 +799,7 @@ func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript 
 	// Because the script chunk is executed under __NAUTH_REQ_ENV (via DoCompiledFile + SetFEnv),
 	// global assignments inside the script land in the reqEnv table, not in _G.
 	runHookFn := lua.LNil
+
 	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
 		if fn := L.GetField(v, definitions.LuaFnRunHook); fn != nil {
 			runHookFn = fn

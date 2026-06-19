@@ -47,8 +47,8 @@ type sloFanoutParticipantOutcome struct {
 }
 
 type sloFanoutTransactionState struct {
-	Transaction     slodomain.SLOTransaction               `json:"transaction"`
-	Pending         map[string]slodomain.SLOParticipant    `json:"pending"`
+	Transaction     slodomain.Transaction                  `json:"transaction"`
+	Pending         map[string]slodomain.Participant       `json:"pending"`
 	Outcomes        map[string]sloFanoutParticipantOutcome `json:"outcomes,omitempty"`
 	PreSuccessCount int                                    `json:"pre_success_count"`
 	PreFailureCount int                                    `json:"pre_failure_count"`
@@ -62,13 +62,13 @@ type sloFanoutAggregationResult struct {
 	SuccessCount      int
 	FailureCount      int
 	PendingCount      int
-	Status            slodomain.SLOStatus
+	Status            slodomain.Status
 	Final             bool
 }
 
 func (h *SAMLHandler) storeSLOFanoutTransactionState(
 	ctx context.Context,
-	transaction *slodomain.SLOTransaction,
+	transaction *slodomain.Transaction,
 	result *sloFanoutResult,
 ) error {
 	state, err := newSLOFanoutTransactionState(transaction, result, time.Now().UTC())
@@ -108,7 +108,7 @@ func (h *SAMLHandler) storeSLOFanoutTransactionState(
 }
 
 func newSLOFanoutTransactionState(
-	transaction *slodomain.SLOTransaction,
+	transaction *slodomain.Transaction,
 	result *sloFanoutResult,
 	now time.Time,
 ) (*sloFanoutTransactionState, error) {
@@ -126,7 +126,7 @@ func newSLOFanoutTransactionState(
 
 	state := &sloFanoutTransactionState{
 		Transaction: *transaction,
-		Pending:     make(map[string]slodomain.SLOParticipant, len(result.Dispatches)),
+		Pending:     make(map[string]slodomain.Participant, len(result.Dispatches)),
 		Outcomes:    make(map[string]sloFanoutParticipantOutcome),
 		UpdatedAt:   now.UTC(),
 	}
@@ -236,10 +236,9 @@ func (h *SAMLHandler) applySLOFanoutLogoutResponse(
 	state.UpdatedAt = time.Now().UTC()
 
 	final := len(state.Pending) == 0
-	finalStatus := state.Transaction.Status
 
 	if final {
-		finalStatus = aggregateSLOFanoutTerminalStatus(successCount, failureCount)
+		finalStatus := aggregateSLOFanoutTerminalStatus(successCount, failureCount)
 		if err = state.Transaction.TransitionTo(finalStatus, time.Now().UTC()); err != nil {
 			return nil, err
 		}
@@ -251,7 +250,7 @@ func (h *SAMLHandler) applySLOFanoutLogoutResponse(
 			transactionID,
 			requestID,
 			participant.EntityID,
-			"status", finalStatus,
+			samlMetricLabelStatus, finalStatus,
 			"success_count", successCount,
 			"failure_count", failureCount,
 			"pending", len(state.Pending),
@@ -307,6 +306,7 @@ func (h *SAMLHandler) loadSLOFanoutTransactionState(
 	}
 
 	requestKey := h.sloFanoutRequestKey(requestID)
+
 	transactionID, err := handle.Get(ctx, requestKey).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", nil, fmt.Errorf("%w: %q", errSLOFanoutResponseUnmatched, requestID)
@@ -322,6 +322,7 @@ func (h *SAMLHandler) loadSLOFanoutTransactionState(
 	}
 
 	transactionKey := h.sloFanoutStateKey(transactionID)
+
 	rawState, err := handle.Get(ctx, transactionKey).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return "", nil, fmt.Errorf("%w: transaction %q", errSLOFanoutResponseUnmatched, transactionID)
@@ -384,7 +385,7 @@ func (s *sloFanoutTransactionState) outcomeCounts() (successCount, failureCount 
 	return successCount, failureCount
 }
 
-func aggregateSLOFanoutTerminalStatus(successCount, failureCount int) slodomain.SLOStatus {
+func aggregateSLOFanoutTerminalStatus(successCount, failureCount int) slodomain.Status {
 	switch {
 	case failureCount == 0:
 		return slodomain.SLOStatusDone

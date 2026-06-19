@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package rest provides rest functionality.
 package rest
 
 // Result is a handleAuthentication JSON result object for the Nauthilus REST API.

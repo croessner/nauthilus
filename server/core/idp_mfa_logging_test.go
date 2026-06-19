@@ -67,12 +67,12 @@ func newIDPMFALogContext(t *testing.T) (*gin.Context, *bytes.Buffer) {
 	req.Header.Set("X-Forwarded-For", "203.0.113.10")
 	ctx.Request = req
 	ctx.Set(definitions.CtxGUIDKey, "mfa-guid")
-	ctx.Set(definitions.CtxServiceKey, definitions.ServIdP)
+	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 	ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
 		definitions.SessionKeyProtocol:    definitions.ProtoOIDC,
-		definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
-		definitions.SessionKeyIdPClientID: "test-client",
+		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID: "test-client",
 	}})
 
 	return ctx, logBuf

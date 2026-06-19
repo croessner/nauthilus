@@ -64,8 +64,8 @@ func TestResolveGroupsMemberOfOnly(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	groups, groupDNs := lm.resolveGroups(auth, searchProtocol, attributes, "uid", logger)
+	groups, groupDistinguishedNames := lm.resolveGroups(auth, searchProtocol, attributes, "uid", logger)
 
 	assert.Equal(t, []string{"admins", "devs"}, groups)
-	assert.Equal(t, []string{"cn=admins,ou=groups,dc=example,dc=com"}, groupDNs)
+	assert.Equal(t, []string{"cn=admins,ou=groups,dc=example,dc=com"}, groupDistinguishedNames)
 }

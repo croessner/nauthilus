@@ -22,20 +22,23 @@ func TestCommonRequestPoolSafety(t *testing.T) {
 
 	// Parallel-Test für Race Conditions und Datenmischung
 	var wg sync.WaitGroup
+
 	numGoroutines := 100
 	wg.Add(numGoroutines)
 
-	for i := range numGoroutines {
-		go func(id int) {
+	for range numGoroutines {
+		go func() {
 			defer wg.Done()
+
 			for range 100 {
 				cr := lualib.GetCommonRequest()
 				assert.Equal(t, "", cr.Username)
 				cr.Username = "test"
 				lualib.PutCommonRequest(cr)
 			}
-		}(i)
+		}()
 	}
+
 	wg.Wait()
 }
 

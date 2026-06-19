@@ -54,7 +54,7 @@ func LoaderModLDAP(ctx context.Context, cfg config.File) lua.LGFunction {
 		})
 
 		if ctx != nil {
-			lualib.BindRequestRuntimeContext(L, mod, ctx)
+			lualib.BindRequestRuntimeContext(ctx, L, mod)
 		}
 
 		L.Push(mod)
@@ -133,6 +133,7 @@ func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, re
 
 	// Configure queue length limit from config (0 = unlimited)
 	queueLen := 0
+
 	if backendName == definitions.DefaultBackendName {
 		if c, ok := cfg.GetLua().GetConfig().(*config.LuaConf); ok {
 			queueLen = c.GetQueueLength()
@@ -230,7 +231,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	// Bind per-request modules into reqEnv so that require() resolves to the bound versions.
 	modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
 
-	modManager.BindAllDefault(L, luaRequest.Context, luaRequest.HTTPClientContext, tolerate.GetTolerate())
+	modManager.BindAllDefault(luaRequest.HTTPClientContext, L, luaRequest.Context, tolerate.GetTolerate())
 
 	if luaRequest.HTTPClientRequest != nil {
 		modManager.BindHTTP(L, lualib.NewHTTPMetaFromRequest(luaRequest.HTTPClientRequest))
@@ -256,7 +257,6 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	luaCommand, nret = setLuaRequestParameters(cfg, L, luaRequest, request)
 
 	err := executeAndHandleError(cfg, logger, compiledScript, luaCommand, luaRequest, L, request, nret, logs)
-
 	if err != nil {
 		leaseErr = err
 	}

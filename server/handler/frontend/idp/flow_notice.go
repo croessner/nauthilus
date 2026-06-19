@@ -60,7 +60,7 @@ func (h *SAMLHandler) logCompletedSAMLFlowRequest(ctx *gin.Context, flow string,
 	logCompletedIDPFlowRequest(ctx, h.deps.Cfg, h.deps.Logger, "saml", flow, "", entityID, "")
 }
 
-// logIncomingIDPFlowRequest emits the start notice for an IdP protocol flow.
+// logIncomingIDPFlowRequest emits the start notice for an IDP protocol flow.
 func logIncomingIDPFlowRequest(
 	ctx *gin.Context,
 	cfg config.File,
@@ -81,7 +81,7 @@ func logIncomingIDPFlowRequest(
 	_ = level.Notice(logger).WithContext(ctx).Log(keyvals...)
 }
 
-// logCompletedIDPFlowRequest emits the completion notice for an IdP protocol flow.
+// logCompletedIDPFlowRequest emits the completion notice for an IDP protocol flow.
 func logCompletedIDPFlowRequest(
 	ctx *gin.Context,
 	cfg config.File,
@@ -114,7 +114,7 @@ func logCompletedIDPFlowRequest(
 	_ = level.Notice(logger).WithContext(ctx).Log(keyvals...)
 }
 
-// idpFlowNoticeFields builds shared structured fields for IdP flow notices.
+// idpFlowNoticeFields builds shared structured fields for IDP flow notices.
 func idpFlowNoticeFields(
 	ctx *gin.Context,
 	cfg config.File,
@@ -130,7 +130,7 @@ func idpFlowNoticeFields(
 		definitions.LogKeyProtocol, util.WithNotAvailable(strings.TrimSpace(protocol)),
 		definitions.LogKeyMethod, util.WithNotAvailable(strings.TrimSpace(ctx.Request.Method)),
 		definitions.LogKeyClientIP, util.WithNotAvailable(strings.TrimSpace(util.RequestClientIPWithConfig(ctx, cfg, logger))),
-		definitions.LogKeyUriPath, util.WithNotAvailable(strings.TrimSpace(ctx.Request.URL.Path)),
+		definitions.LogKeyURIPath, util.WithNotAvailable(strings.TrimSpace(ctx.Request.URL.Path)),
 		"idp_flow", util.WithNotAvailable(strings.TrimSpace(flow)),
 		definitions.LogKeyOIDCCID, util.WithNotAvailable(strings.TrimSpace(clientID)),
 		definitions.LogKeySAMLEntityID, util.WithNotAvailable(strings.TrimSpace(samlEntityID)),
@@ -151,10 +151,10 @@ func idpFlowCompletionResult(ctx *gin.Context) (int, string, string) {
 	}
 
 	if httpStatus >= http.StatusOK && httpStatus < http.StatusBadRequest {
-		return httpStatus, "ok", "IdP request was successful"
+		return httpStatus, "ok", "IDP request was successful"
 	}
 
-	return httpStatus, "fail", "IdP request has failed"
+	return httpStatus, "fail", "IDP request has failed"
 }
 
 func oidcTokenRequestClientID(ctx *gin.Context) string {

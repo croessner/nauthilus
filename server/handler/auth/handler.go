@@ -39,6 +39,7 @@ func New(deps *handlerdeps.Deps) *Handler {
 	return &Handler{deps: deps}
 }
 
+// Register provides the exported Register method.
 func (h *Handler) Register(router gin.IRouter) {
 	authGroup := router.Group("/" + definitions.CatAuth)
 
@@ -109,6 +110,7 @@ func (h *Handler) header(ctx *gin.Context) {
 
 	// Minimal custom span analogous to JSON handler
 	tr := monittrace.New("nauthilus/rest")
+
 	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_header")
 	defer sp.End()
 
@@ -127,6 +129,7 @@ func (h *Handler) nginx(ctx *gin.Context) {
 
 	// Minimal custom span analogous to JSON handler
 	tr := monittrace.New("nauthilus/rest")
+
 	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_nginx")
 	defer sp.End()
 

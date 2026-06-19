@@ -22,7 +22,7 @@ import (
 	generatedidp "github.com/croessner/nauthilus/v3/server/openapi/generated/idp"
 )
 
-// SupportedIDPDiscoveryClient is the production-supported generated IdP
+// SupportedIDPDiscoveryClient is the production-supported generated IDP
 // discovery client boundary.
 type SupportedIDPDiscoveryClient interface {
 	GetPublicOpenAPIJSON(context.Context, ...generatedidp.RequestEditorFn) (*generatedidp.GetPublicIdPOpenAPIJSONResponse, error)
@@ -38,7 +38,7 @@ type generatedIDPClient interface {
 }
 
 // IDPDiscoveryClient wraps the supported public discovery subset of the
-// generated IdP OpenAPI client.
+// generated IDP OpenAPI client.
 type IDPDiscoveryClient struct {
 	generated generatedIDPClient
 }
@@ -48,7 +48,7 @@ var (
 	_ generatedIDPClient          = (*generatedidp.ClientWithResponses)(nil)
 )
 
-// NewIDPDiscoveryClient creates the supported generated IdP discovery client.
+// NewIDPDiscoveryClient creates the supported generated IDP discovery client.
 func NewIDPDiscoveryClient(server string, options ...generatedidp.ClientOption) (*IDPDiscoveryClient, error) {
 	generated, err := generatedidp.NewClientWithResponses(server, options...)
 	if err != nil {
@@ -58,7 +58,7 @@ func NewIDPDiscoveryClient(server string, options ...generatedidp.ClientOption) 
 	return NewIDPDiscoveryClientFromGenerated(generated)
 }
 
-// NewIDPDiscoveryClientFromGenerated wraps an existing generated IdP client for
+// NewIDPDiscoveryClientFromGenerated wraps an existing generated IDP client for
 // dependency injection.
 func NewIDPDiscoveryClientFromGenerated(generated generatedIDPClient) (*IDPDiscoveryClient, error) {
 	if generated == nil {
@@ -68,7 +68,7 @@ func NewIDPDiscoveryClientFromGenerated(generated generatedIDPClient) (*IDPDisco
 	return &IDPDiscoveryClient{generated: generated}, nil
 }
 
-// GetPublicOpenAPIJSON downloads the public IdP OpenAPI JSON document through
+// GetPublicOpenAPIJSON downloads the public IDP OpenAPI JSON document through
 // the generated client contract.
 func (client *IDPDiscoveryClient) GetPublicOpenAPIJSON(
 	ctx context.Context,
@@ -82,7 +82,7 @@ func (client *IDPDiscoveryClient) GetPublicOpenAPIJSON(
 	return generated.GetPublicIdPOpenAPIJSONWithResponse(ctx, requestEditors...)
 }
 
-// GetPublicOpenAPIYAML downloads the public IdP OpenAPI YAML document as a raw
+// GetPublicOpenAPIYAML downloads the public IDP OpenAPI YAML document as a raw
 // generated client response.
 func (client *IDPDiscoveryClient) GetPublicOpenAPIYAML(
 	ctx context.Context,

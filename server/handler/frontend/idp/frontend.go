@@ -51,7 +51,7 @@ import (
 	"golang.org/x/text/language/display"
 )
 
-// FrontendHandler handles general IdP frontend pages like login and consent.
+// FrontendHandler handles general IDP frontend pages like login and consent.
 type FrontendHandler struct {
 	deps        *deps.Deps
 	mfa         idp.MFAProvider
@@ -96,7 +96,7 @@ func (h *FrontendHandler) getLoginPath(ctx *gin.Context) string {
 		return "/login/" + lang
 	}
 
-	return "/login"
+	return frontendLoginPath
 }
 
 // deviceVerifyPath returns the device verify page path with optional language tag.
@@ -104,10 +104,10 @@ func (h *FrontendHandler) deviceVerifyPath(ctx *gin.Context) string {
 	lang := ctx.Param("languageTag")
 
 	if lang != "" {
-		return "/oidc/device/verify/" + lang
+		return frontendDeviceVerifyPath + "/" + lang
 	}
 
-	return "/oidc/device/verify"
+	return frontendDeviceVerifyPath
 }
 
 func (h *FrontendHandler) getMFASelectPath(ctx *gin.Context) string {
@@ -134,24 +134,24 @@ func (h *FrontendHandler) appendQueryString(path string, query string) string {
 	return path + separator + query
 }
 
-// isValidIdPFlow checks if an active IdP flow exists in the secure session cookie.
-// A valid IdP flow is either an OIDC request (authorization code or device code grant)
+// isValidIDPFlow checks if an active IDP flow exists in the secure session cookie.
+// A valid IDP flow is either an OIDC request (authorization code or device code grant)
 // or a SAML2 SSO request.
-// The /login endpoint MUST NOT be accessed directly without a proper IdP flow.
+// The /login endpoint MUST NOT be accessed directly without a proper IDP flow.
 // All flow state is stored in the encrypted cookie - no URL parameters are used for security.
-func (h *FrontendHandler) isValidIdPFlow(ctx *gin.Context) bool {
+func (h *FrontendHandler) isValidIDPFlow(ctx *gin.Context) bool {
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {
 		return false
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID == "" {
 		return false
 	}
 
 	// Verify the flow type is valid (OIDC or SAML)
-	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+	flowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 	if flowType != definitions.ProtoOIDC && flowType != definitions.ProtoSAML {
 		return false
 	}
@@ -160,21 +160,22 @@ func (h *FrontendHandler) isValidIdPFlow(ctx *gin.Context) bool {
 	if flowType == definitions.ProtoOIDC {
 		oidcFlowCtx := newOIDCAuthorizeFlowContext(mgr)
 		grantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
-		clientID := mgr.GetString(definitions.SessionKeyIdPClientID, "")
+		clientID := mgr.GetString(definitions.SessionKeyIDPClientID, "")
 
-		if grantType == definitions.OIDCFlowDeviceCode {
+		switch grantType {
+		case definitions.OIDCFlowDeviceCode:
 			// Device Code flow requires device code and client ID
 			deviceFlowCtx := newOIDCDeviceFlowContext(mgr)
 
 			if deviceFlowCtx.DeviceCode() == "" || clientID == "" {
 				return false
 			}
-		} else if grantType == definitions.OIDCFlowAuthorizationCode {
+		case definitions.OIDCFlowAuthorizationCode:
 			// Authorization Code flow requires a reconstructable authorize URL
 			if oidcFlowCtx.ResumeAuthorizeURL() == "" {
 				return false
 			}
-		} else {
+		default:
 			return false
 		}
 	}
@@ -191,13 +192,13 @@ func (h *FrontendHandler) isValidIdPFlow(ctx *gin.Context) bool {
 	return true
 }
 
-// renderNoFlowError renders an error page when the /login endpoint is accessed without a valid IdP flow.
+// renderNoFlowError renders an error page when the /login endpoint is accessed without a valid IDP flow.
 func (h *FrontendHandler) renderNoFlowError(ctx *gin.Context) {
 	// Check if deps is available (may not be in tests)
 	if h.deps == nil || h.deps.Cfg == nil {
 		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"message": "This login page can only be accessed through a valid OIDC or SAML2 authentication flow.",
+			frontChannelLogoutTaskStatusError: "invalid_request",
+			"message":                         "This login page can only be accessed through a valid OIDC or SAML2 authentication flow.",
 		})
 
 		return
@@ -227,11 +228,12 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	router.Static("/static/fonts", filepath.Join(assetBase, "fonts"))
 
 	router.Use(func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxServiceKey, definitions.ServIdP)
+		ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 		ctx.Next()
-	}, mdlua.LuaContextMiddleware())
+	}, mdlua.ContextMiddleware())
 
 	var frontendSecret []byte
+
 	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithBytes(func(value []byte) {
 		if len(value) == 0 {
 			return
@@ -244,9 +246,9 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	csrfMW := csrf.New()
 	securityMW := securityheaders.New(securityheaders.MiddlewareConfig{Config: h.deps.Cfg}).Handler()
 
-	router.GET("/login", securityMW, csrfMW, secureMW, i18nMW, h.Login)
+	router.GET(frontendLoginPath, securityMW, csrfMW, secureMW, i18nMW, h.Login)
 	router.GET("/login/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.Login)
-	router.POST("/login", securityMW, csrfMW, secureMW, i18nMW, h.PostLogin)
+	router.POST(frontendLoginPath, securityMW, csrfMW, secureMW, i18nMW, h.PostLogin)
 	router.POST("/login/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.PostLogin)
 	router.GET("/login/totp", securityMW, csrfMW, secureMW, i18nMW, h.LoginTOTP)
 	router.GET("/login/totp/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.LoginTOTP)
@@ -308,7 +310,7 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 }
 
 // AuthMiddleware ensures the user is logged in for protected pages like 2FA Self-Service.
-// Users must already have a valid session from a completed IdP flow.
+// Users must already have a valid session from a completed IDP flow.
 // Direct access without a prior login redirects to an error page.
 func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
@@ -321,7 +323,7 @@ func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 
 		if account == "" {
 			// User is not logged in - show error page instead of redirect to login.
-			// The 2FA Self-Service pages are only accessible after a completed IdP flow.
+			// The 2FA Self-Service pages are only accessible after a completed IDP flow.
 			h.renderNoFlowError(ctx)
 			ctx.Abort()
 
@@ -346,7 +348,7 @@ func (h *FrontendHandler) setLoginRememberData(ctx *gin.Context, data gin.H, oid
 	data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
 }
 
-// BasePageData returns the common data for all IdP frontend pages.
+// BasePageData returns the common data for all IDP frontend pages.
 func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manager) gin.H {
 	mgr := cookie.GetManager(ctx)
 	lang := strings.TrimSpace(ctx.Param("languageTag"))
@@ -368,18 +370,18 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 
 	if mgr != nil {
 		username = mgr.GetString(definitions.SessionKeyAccount, "")
-		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+		flowType = mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 
 		switch flowType {
 		case definitions.ProtoOIDC:
-			oidcClientID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
+			oidcClientID = mgr.GetString(definitions.SessionKeyIDPClientID, "")
 		case definitions.ProtoSAML:
-			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+			samlEntityID = mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
 		}
 	}
 
 	if lang == "" {
-		lang = "en"
+		lang = frontendDefaultLanguageTag
 	}
 
 	tag := language.Make(lang)
@@ -391,6 +393,7 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 
 	if len(parts) > 1 {
 		lastPart := parts[len(parts)-1]
+
 		for _, t := range languageTags {
 			b, _ := t.Base()
 			if b.String() == lastPart {
@@ -401,18 +404,18 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		}
 	}
 
-	idpClientName := resolveIdPClientName(cfg, flowType, oidcClientID, samlEntityID)
+	idpClientName := resolveIDPClientName(cfg, flowType, oidcClientID, samlEntityID)
 	data := gin.H{
-		"LanguageTag":         lang,
-		"LanguageCurrentName": currentName,
-		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, path, languageTags, currentName),
-		"Username":            username,
-		"CSPNonce":            securityheaders.NonceFromContext(ctx),
-		"ConfirmTitle":        frontend.GetLocalized(ctx, cfg, nil, "Confirmation"),
-		"ConfirmYes":          frontend.GetLocalized(ctx, cfg, nil, "Yes"),
-		"ConfirmNo":           frontend.GetLocalized(ctx, cfg, nil, "Cancel"),
-		"Logout":              frontend.GetLocalized(ctx, cfg, nil, "Logout"),
-		"IdPClientName":       idpClientName,
+		templateDataLanguageTag:         lang,
+		templateDataLanguageCurrentName: currentName,
+		templateDataLanguagePassive:     frontend.CreateLanguagePassive(ctx, path, languageTags, currentName),
+		"Username":                      username,
+		templateDataCSPNonce:            securityheaders.NonceFromContext(ctx),
+		templateDataConfirmTitle:        frontend.GetLocalized(ctx, cfg, nil, "Confirmation"),
+		templateDataConfirmYes:          frontend.GetLocalized(ctx, cfg, nil, "Yes"),
+		templateDataConfirmNo:           frontend.GetLocalized(ctx, cfg, nil, "Cancel"),
+		"Logout":                        frontend.GetLocalized(ctx, cfg, nil, "Logout"),
+		templateDataIDPClientName:       idpClientName,
 	}
 
 	setLegalLinksData(ctx, cfg, data)
@@ -422,7 +425,7 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 
 func setLegalLinksData(ctx *gin.Context, cfg config.File, data gin.H) {
 	if cfg != nil {
-		idpCfg := cfg.GetIdP()
+		idpCfg := cfg.GetIDP()
 		if idpCfg != nil {
 			data["TermsOfServiceURL"] = idpCfg.TermsOfServiceURL
 			data["PrivacyPolicyURL"] = idpCfg.PrivacyPolicyURL
@@ -435,9 +438,9 @@ func setLegalLinksData(ctx *gin.Context, cfg config.File, data gin.H) {
 	data["PasswordForgottenLabel"] = frontend.GetLocalized(ctx, cfg, nil, "Forgot password?")
 }
 
-func resolveIdPClientName(cfg config.File, flowType string, oidcClientID string, samlEntityID string) string {
+func resolveIDPClientName(cfg config.File, flowType string, oidcClientID string, samlEntityID string) string {
 	if flowType == definitions.ProtoOIDC && oidcClientID != "" {
-		clients := cfg.GetIdP().OIDC.Clients
+		clients := cfg.GetIDP().OIDC.Clients
 		for i := range clients {
 			if clients[i].ClientID == oidcClientID {
 				return clients[i].Name
@@ -446,7 +449,7 @@ func resolveIdPClientName(cfg config.File, flowType string, oidcClientID string,
 	}
 
 	if flowType == definitions.ProtoSAML && samlEntityID != "" {
-		for _, sp := range cfg.GetIdP().SAML2.ServiceProviders {
+		for _, sp := range cfg.GetIDP().SAML2.ServiceProviders {
 			if sp.EntityID == samlEntityID {
 				return sp.Name
 			}
@@ -457,11 +460,11 @@ func resolveIdPClientName(cfg config.File, flowType string, oidcClientID string,
 }
 
 // Login renders the modern login page.
-// This endpoint is ONLY for IdP flows (OIDC/SAML2). Direct access without a proper flow is rejected.
+// This endpoint is ONLY for IDP flows (OIDC/SAML2). Direct access without a proper flow is rejected.
 // All flow state is read from the secure encrypted cookie - no URL parameters are used.
 func (h *FrontendHandler) Login(ctx *gin.Context) {
-	// Validate that this is a proper IdP flow (checks cookie for active flow)
-	if !h.isValidIdPFlow(ctx) {
+	// Validate that this is a proper IDP flow (checks cookie for active flow)
+	if !h.isValidIDPFlow(ctx) {
 		h.renderNoFlowError(ctx)
 
 		return
@@ -475,24 +478,24 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	samlEntityID := ""
 
 	if mgr != nil {
-		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+		flowType = mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 
 		switch flowType {
 		case definitions.ProtoOIDC:
-			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
+			oidcCID = mgr.GetString(definitions.SessionKeyIDPClientID, "")
 		case definitions.ProtoSAML:
-			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+			samlEntityID = mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
 			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML
 			}
 		}
 	}
 
-	// If user is already logged in with a valid session, redirect back to the IdP endpoint.
+	// If user is already logged in with a valid session, redirect back to the IDP endpoint.
 	// Check first whether required MFA methods still need to be registered.
 	if mgr != nil && mgr.GetString(definitions.SessionKeyAccount, "") != "" {
 		if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
-			h.resumeIdPFlow(ctx, mgr)
+			h.resumeIDPFlow(ctx, mgr)
 		}
 
 		return
@@ -520,7 +523,7 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 		h.deps.Logger,
 		definitions.DbgIdp,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "IdP Login page request",
+		definitions.LogKeyMsg, "IDP Login page request",
 		"flow_type", flowType,
 	)
 
@@ -564,7 +567,7 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 // It mirrors the consent logic from the authorization code grant: consent is needed when
 // the client has not set skip_consent and the user has not previously consented in this session.
 func (h *FrontendHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string, requestedScopes []string) bool {
-	idpInstance := idp.NewNauthilusIdP(h.deps)
+	idpInstance := idp.NewNauthilusIDP(h.deps)
 
 	client, ok := idpInstance.FindClient(clientID)
 	if !ok {
@@ -628,7 +631,7 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 	// Check if consent is needed before authorizing
 	if h.deviceCodeNeedsConsent(ctx, request.ClientID, request.Scopes) {
 		lang := ctx.Param("languageTag")
-		consentPath := "/oidc/device/consent"
+		consentPath := frontendDeviceConsentPath
 
 		if lang != "" {
 			consentPath += "/" + lang
@@ -649,7 +652,8 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 		return
 	}
 
-	idpInstance := idp.NewNauthilusIdP(h.deps)
+	idpInstance := idp.NewNauthilusIDP(h.deps)
+
 	client, ok := idpInstance.FindClient(request.ClientID)
 	if !ok {
 		request.Status = idp.DeviceCodeStatusDenied
@@ -821,7 +825,7 @@ func (h *FrontendHandler) handleDelayedResponseFailure(ctx *gin.Context, sess *m
 	if lang != "" {
 		data["PostLoginEndpoint"] = "/login/" + lang
 	} else {
-		data["PostLoginEndpoint"] = "/login"
+		data["PostLoginEndpoint"] = frontendLoginPath
 	}
 
 	data["HaveError"] = true
@@ -859,7 +863,7 @@ func (h *FrontendHandler) resetDelayedResponseFailureForRetry(ctx *gin.Context, 
 	return resetFlowAuthOutcomeForRetry(ctx.Request.Context(), mgr, redisClient, redisPrefix)
 }
 
-// renderPostLoginFailure renders the IdP login form with a generic authentication error.
+// renderPostLoginFailure renders the IDP login form with a generic authentication error.
 func (h *FrontendHandler) renderPostLoginFailure(ctx *gin.Context, oidcCID string, samlEntityID string, message string) {
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
@@ -949,7 +953,7 @@ func (h *FrontendHandler) parseSubmittedMasterUser(submittedUsername string, tar
 // resolveMFAFactorUser loads the Master-User account when the submitted login uses master mode.
 func (h *FrontendHandler) resolveMFAFactorUser(
 	ctx *gin.Context,
-	idpInstance *idp.NauthilusIdP,
+	idpInstance *idp.NauthilusIDP,
 	submittedUsername string,
 	targetUser *backend.User,
 	oidcCID string,
@@ -965,7 +969,7 @@ func (h *FrontendHandler) resolveMFAFactorUser(
 	}
 
 	if idpInstance == nil {
-		return nil, true, core.RemoteBackendRef{}, stderrors.New("missing IdP instance")
+		return nil, true, core.RemoteBackendRef{}, stderrors.New("missing IDP instance")
 	}
 
 	mgr := cookie.GetManager(ctx)
@@ -996,14 +1000,14 @@ func (h *FrontendHandler) resolveMFAFactorUser(
 }
 
 // PostLogin handles the login submission.
-// This endpoint is ONLY for IdP flows (OIDC/SAML2). Direct access without a proper flow is rejected.
+// This endpoint is ONLY for IDP flows (OIDC/SAML2). Direct access without a proper flow is rejected.
 // All flow state is read from the secure encrypted cookie - no form parameters for flow state.
 func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login")
 	defer sp.End()
 
-	// Validate that this is a proper IdP flow (checks cookie for active flow)
-	if !h.isValidIdPFlow(ctx) {
+	// Validate that this is a proper IDP flow (checks cookie for active flow)
+	if !h.isValidIDPFlow(ctx) {
 		h.renderNoFlowError(ctx)
 
 		return
@@ -1017,13 +1021,13 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	samlEntityID := ""
 
 	if mgr != nil {
-		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+		flowType = mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 
 		switch flowType {
 		case definitions.ProtoOIDC:
-			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
+			oidcCID = mgr.GetString(definitions.SessionKeyIDPClientID, "")
 		case definitions.ProtoSAML:
-			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+			samlEntityID = mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
 			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML
 			}
@@ -1047,12 +1051,12 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		h.deps.Logger,
 		definitions.DbgIdp,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "IdP Login attempt",
+		definitions.LogKeyMsg, "IDP Login attempt",
 		"username", username,
 		"flow_type", flowType,
 	)
 
-	idpInstance := idp.NewNauthilusIdP(h.deps)
+	idpInstance := idp.NewNauthilusIDP(h.deps)
 	redisPrefix := h.deps.Cfg.GetServer().GetRedis().GetPrefix()
 	_ = resetFlowAuthOutcomeForLoginAttempt(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
 	clearIDPAuthStatusBridge(mgr)
@@ -1196,9 +1200,9 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 
 	if mgr != nil {
 		mgr.Set(definitions.SessionKeyAccount, user.Name)
-		mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+		mgr.Set(definitions.SessionKeyUniqueUserID, user.ID)
 		mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
-		mgr.Set(definitions.SessionKeySubject, user.Id)
+		mgr.Set(definitions.SessionKeySubject, user.ID)
 		mgr.Set(definitions.SessionKeyProtocol, protocol)
 		_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeOK)
 
@@ -1213,9 +1217,9 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
-	// Redirect back to IdP endpoint; check for mandatory MFA registration first.
+	// Redirect back to IDP endpoint; check for mandatory MFA registration first.
 	if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
-		h.resumeIdPFlow(ctx, mgr)
+		h.resumeIDPFlow(ctx, mgr)
 	}
 }
 
@@ -1268,6 +1272,7 @@ func (h *FrontendHandler) hasWebAuthnWithProviderAndBackendRef(ctx *gin.Context,
 
 	if provider == nil {
 		authDeps := h.deps.Auth()
+
 		state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
 		if state == nil {
 			return false
@@ -1299,7 +1304,7 @@ func (h *FrontendHandler) hasWebAuthnWithProviderAndBackendRef(ctx *gin.Context,
 	data := &UserBackendData{
 		Username:     user.Name,
 		DisplayName:  user.DisplayName,
-		UniqueUserID: user.Id,
+		UniqueUserID: user.ID,
 	}
 
 	h.resolveWebAuthnUser(ctx, nil, data, provider)
@@ -1345,7 +1350,8 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 		if factorUser := mgr.GetString(definitions.SessionKeyMFAFactorAccount, ""); factorUser != "" {
 			username = factorUser
 		}
-		protocol = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+
+		protocol = mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 	}
 
 	if username == "" {
@@ -1355,10 +1361,10 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	}
 
 	// Get user to check available MFA methods
-	idpInstance := idp.NewNauthilusIdP(h.deps)
+	idpInstance := idp.NewNauthilusIDP(h.deps)
 	oidcCID, samlEntityID := h.getFlowClientIdentifiers(mgr)
-	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
 
+	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
 	if err != nil {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
@@ -1400,17 +1406,17 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	recommendedMethod := ""
 
 	switch lastMFA {
-	case "totp":
+	case mfaMethodTOTP:
 		if availability.haveTOTP {
-			recommendedMethod = "totp"
+			recommendedMethod = mfaMethodTOTP
 		}
-	case "webauthn":
+	case mfaMethodWebAuthn:
 		if availability.haveWebAuthn {
-			recommendedMethod = "webauthn"
+			recommendedMethod = mfaMethodWebAuthn
 		}
-	case "recovery":
+	case mfaMethodRecovery:
 		if availability.haveRecoveryCodes {
-			recommendedMethod = "recovery"
+			recommendedMethod = mfaMethodRecovery
 		}
 	}
 
@@ -1486,13 +1492,13 @@ func (h *FrontendHandler) extractMFASessionAndUser(ctx *gin.Context) (*mfaSessio
 		factorUser = mgr.GetString(definitions.SessionKeyMFAFactorAccount, "")
 		hasAuthResult = mgr.HasKey(definitions.SessionKeyAuthResult)
 
-		flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+		flowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 
 		switch flowType {
 		case definitions.ProtoOIDC:
-			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
+			oidcCID = mgr.GetString(definitions.SessionKeyIDPClientID, "")
 		case definitions.ProtoSAML:
-			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+			samlEntityID = mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
 			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML
 			}
@@ -1521,7 +1527,7 @@ func (h *FrontendHandler) extractMFASessionAndUser(ctx *gin.Context) (*mfaSessio
 
 	user := &backend.User{
 		Name:        mgr.GetString(definitions.SessionKeyMFAAccount, username),
-		Id:          mgr.GetString(definitions.SessionKeyUniqueUserID, ""),
+		ID:          mgr.GetString(definitions.SessionKeyUniqueUserID, ""),
 		DisplayName: mgr.GetString(definitions.SessionKeyMFADisplayName, ""),
 	}
 
@@ -1539,7 +1545,7 @@ func (h *FrontendHandler) loadCompletedMFAUser(ctx *gin.Context, sess *mfaSessio
 		return fallback, nil
 	}
 
-	idpInstance := idp.NewNauthilusIdP(h.deps)
+	idpInstance := idp.NewNauthilusIDP(h.deps)
 
 	user, err := idpInstance.GetUserByUsername(ctx, username, sess.oidcCID, sess.samlEntityID)
 	if err != nil {
@@ -1574,7 +1580,6 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 	}
 
 	success, err := h.mfa.UseRecoveryCode(ctx, sess.factorUser, code, sourceBackend)
-
 	if err != nil {
 		h.deps.Logger.Error("Failed to use recovery code", "error", err)
 	}
@@ -1687,7 +1692,7 @@ func (h *FrontendHandler) getMFARedirectURLFromCookie(ctx *gin.Context, user *ba
 	protocolParam := ""
 
 	if mgr != nil {
-		protocolParam = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+		protocolParam = mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 	}
 
 	availability := h.getMFAAvailability(ctx, user, protocolParam, mgr)
@@ -1741,7 +1746,7 @@ func (h *FrontendHandler) getLoginMFABackURLFromCookie(ctx *gin.Context) string 
 	return h.getMFASelectPath(ctx)
 }
 
-// finalizeMFALogin completes the MFA login process and redirects to the IdP endpoint.
+// finalizeMFALogin completes the MFA login process and redirects to the IDP endpoint.
 // All flow state is read from the encrypted cookie - no URL parameters are used.
 func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User) {
 	mgr := cookie.GetManager(ctx)
@@ -1755,9 +1760,9 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User)
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
-	// Redirect back to IdP endpoint; check for mandatory MFA registration first.
+	// Redirect back to IDP endpoint; check for mandatory MFA registration first.
 	if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
-		h.resumeIdPFlow(ctx, mgr)
+		h.resumeIDPFlow(ctx, mgr)
 	}
 }
 
@@ -1917,7 +1922,7 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 		h.deps.Logger,
 		definitions.DbgIdp,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "IdP 2FA Self-Service home request",
+		definitions.LogKeyMsg, "IDP 2FA Self-Service home request",
 	)
 
 	mgr := cookie.GetManager(ctx)
@@ -2087,7 +2092,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 
 	// In a forced-registration flow the pending list must be updated and the browser
 	// must be sent to the continue endpoint so that the next required method (if any)
-	// is registered before the IdP flow resumes.
+	// is registered before the IDP flow resumes.
 	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
 		flowdomain.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodTOTP)
 
@@ -2129,7 +2134,7 @@ func (h *FrontendHandler) RegisterRecoveryCodes(ctx *gin.Context) {
 		return
 	}
 
-	if mgr != nil && !requireFlow && mgr.GetString(definitions.SessionKeyIdPFlowID, "") != "" {
+	if mgr != nil && !requireFlow && mgr.GetString(definitions.SessionKeyIDPFlowID, "") != "" {
 		required := h.getRequiredMFAMethods(mgr)
 
 		if len(required) > 0 {
@@ -2154,6 +2159,7 @@ func (h *FrontendHandler) RegisterRecoveryCodes(ctx *gin.Context) {
 
 			if len(missing) > 0 {
 				requireFlow = true
+
 				flowdomain.SetRequireMFAPending(mgr, strings.Join(missing, ","))
 			}
 		}
@@ -2281,6 +2287,7 @@ func (h *FrontendHandler) SaveRecoveryCodes(ctx *gin.Context) {
 		mgr.Delete(definitions.SessionKeyRecoveryCodes)
 		mgr.Delete(definitions.SessionKeyRecoveryCodesRemoteGenerated)
 		mgr.Set(definitions.SessionKeyRecoveryCodesSaved, true)
+
 		if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
 			flowdomain.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodRecoveryCodes)
 		}
@@ -2339,12 +2346,12 @@ func (h *FrontendHandler) PostRegisterRecoveryCodes(ctx *gin.Context) {
 		return
 	}
 
-	if mgr != nil && mgr.GetString(definitions.SessionKeyIdPFlowID, "") != "" {
+	if mgr != nil && mgr.GetString(definitions.SessionKeyIDPFlowID, "") != "" {
 		if h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
 			return
 		}
 
-		h.resumeIdPFlow(ctx, mgr)
+		h.resumeIDPFlow(ctx, mgr)
 
 		return
 	}
@@ -2655,6 +2662,7 @@ func (h *FrontendHandler) WebAuthnDevices(ctx *gin.Context) {
 	}
 
 	var devices []device
+
 	if userData.WebAuthnUser != nil {
 		for _, cred := range userData.WebAuthnUser.Credentials {
 			name := strings.TrimSpace(cred.Name)
@@ -2712,6 +2720,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 
 	// Find the credential
 	var targetCred *mfa.PersistentCredential
+
 	for _, cred := range userData.WebAuthnUser.Credentials {
 		if bytes.Equal(cred.ID, decodedID) {
 			targetCred = &cred
@@ -2758,6 +2767,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 				newCreds = append(newCreds, c)
 			}
 		}
+
 		userData.WebAuthnUser.Credentials = newCreds
 
 		// Update Redis cache (with original TTL or default)

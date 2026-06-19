@@ -97,6 +97,7 @@ func DispatchAlias(ctx *gin.Context) bool {
 	aliasDispatcher.RLock()
 	handler := aliasDispatcher.handler
 	aliasDispatcher.RUnlock()
+
 	if handler == nil {
 		return false
 	}

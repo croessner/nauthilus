@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package engine provides engine functionality.
 package engine
 
 import (
@@ -45,6 +46,7 @@ func (a *App) Run() (int, error) {
 		if errors.Is(err, io.EOF) {
 			break
 		}
+
 		if err != nil {
 			// tolerant: skip broken rows
 			fmt.Printf("warn: read record failed: %v\n", err)

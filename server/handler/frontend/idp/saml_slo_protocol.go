@@ -174,13 +174,13 @@ func (h *SAMLHandler) expectedLogoutRequestDestination() (string, error) {
 		return "", fmt.Errorf("SAML handler configuration is not available")
 	}
 
-	samlCfg := h.deps.Cfg.GetIdP().SAML2
+	samlCfg := h.deps.Cfg.GetIDP().SAML2
 
 	entityID := strings.TrimSpace(samlCfg.EntityID)
 	if entityID != "" {
 		entityURL, err := url.Parse(entityID)
 		if err == nil && entityURL.Scheme != "" && entityURL.Host != "" {
-			entityURL.Path = "/saml/slo"
+			entityURL.Path = frontendSAMLLogoutPath
 			entityURL.RawQuery = ""
 			entityURL.Fragment = ""
 
@@ -188,7 +188,7 @@ func (h *SAMLHandler) expectedLogoutRequestDestination() (string, error) {
 		}
 	}
 
-	issuer := strings.TrimSpace(h.deps.Cfg.GetIdP().OIDC.Issuer)
+	issuer := strings.TrimSpace(h.deps.Cfg.GetIDP().OIDC.Issuer)
 	if issuer == "" {
 		return "", fmt.Errorf("idp issuer is not configured")
 	}
@@ -199,7 +199,7 @@ func (h *SAMLHandler) expectedLogoutRequestDestination() (string, error) {
 	}
 
 	basePath := strings.TrimSuffix(issuerURL.Path, "/")
-	issuerURL.Path = basePath + "/saml/slo"
+	issuerURL.Path = basePath + frontendSAMLLogoutPath
 	issuerURL.RawQuery = ""
 	issuerURL.Fragment = ""
 
@@ -316,7 +316,7 @@ func (h *SAMLHandler) sloReplayTTL() time.Duration {
 		return defaultSLOReplayTTL
 	}
 
-	ttl := h.deps.Cfg.GetIdP().SAML2.GetDefaultExpireTime()
+	ttl := h.deps.Cfg.GetIDP().SAML2.GetDefaultExpireTime()
 	if ttl <= 0 {
 		return defaultSLOReplayTTL
 	}

@@ -30,6 +30,7 @@ type CatalogRegistry struct {
 // NewCatalogRegistry creates a registry with an atomically published initial catalog.
 func NewCatalogRegistry(system Catalog, overlays ...CatalogOverlay) (*CatalogRegistry, error) {
 	detached := cloneCatalogOverlays(overlays)
+
 	effective, _, err := NewEffectiveCatalog(system, detached...)
 	if err != nil {
 		return nil, err
@@ -103,6 +104,7 @@ func (r *CatalogRegistry) Reload(overlays ...CatalogOverlay) ([]CatalogOverride,
 	defer r.mu.Unlock()
 
 	next := cloneCatalogOverlays(overlays)
+
 	effective, overrides, err := NewEffectiveCatalog(r.system, next...)
 	if err != nil {
 		return nil, err
@@ -119,6 +121,7 @@ func (r *CatalogRegistry) Reload(overlays ...CatalogOverlay) ([]CatalogOverride,
 
 func (r *CatalogRegistry) candidateWithLocked(overlays []CatalogOverlay) ([]CatalogOverlay, *EffectiveCatalog, []CatalogOverride, error) {
 	next := append(cloneCatalogOverlays(r.overlays), cloneCatalogOverlays(overlays)...)
+
 	effective, overrides, err := NewEffectiveCatalog(r.system, next...)
 	if err != nil {
 		return nil, nil, nil, err

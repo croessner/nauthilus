@@ -20,7 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// IdentityProvider defines the interface for our internal IdP services.
+// IdentityProvider defines the interface for our internal IDP services.
 type IdentityProvider interface {
 	// Authenticate performs user authentication using Nauthilus core logic.
 	Authenticate(ctx *gin.Context, username, password string, oidcCID string, samlEntityID string) (*backend.User, error)

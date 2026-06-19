@@ -32,9 +32,11 @@ import (
 
 func setupOIDCSessionsRouter(d *deps.Deps, storage *idp.RedisTokenStorage) *gin.Engine {
 	gin.SetMode(gin.TestMode)
+
 	r := gin.New()
 	api := NewOIDCSessionsAPI(d, storage)
 	api.Register(r)
+
 	return r
 }
 
@@ -58,8 +60,9 @@ func TestOIDCSessionsAPI_ListSessions(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		// Should be empty because decryption failed
 		assert.Empty(t, resp)
 	})

@@ -15,16 +15,17 @@
 
 //go:build !linux
 
+// Package stats provides stats functionality.
 package stats
 
 import (
 	"github.com/mackerelio/go-osstat/cpu"
 )
 
-func setNewStats(oldCpu, newCpu *cpu.Stats, total float64) {
-	cpuUserUsage.Set(float64(newCpu.User-oldCpu.User) / total * 100)
-	cpuSystemUsage.Set(float64(newCpu.System-oldCpu.System) / total * 100)
+func setNewStats(oldCPU, newCPU *cpu.Stats, total float64) {
+	cpuUserUsage.Set(float64(newCPU.User-oldCPU.User) / total * 100)
+	cpuSystemUsage.Set(float64(newCPU.System-oldCPU.System) / total * 100)
 
-	idlePercent := float64(newCpu.Idle-oldCpu.Idle) / total * 100
+	idlePercent := float64(newCPU.Idle-oldCPU.Idle) / total * 100
 	cpuIdleUsage.Set(idlePercent)
 }

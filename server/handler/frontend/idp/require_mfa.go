@@ -34,19 +34,19 @@ import (
 const requireMFAFlowID = flowdomain.FlowIDRequireMFA
 
 // getRequiredMFAMethods returns the list of MFA methods configured as mandatory
-// for the current IdP client or SAML service provider read from the cookie.
+// for the current IDP client or SAML service provider read from the cookie.
 // Returns nil when no requirement is configured or the flow type is unknown.
 func (h *FrontendHandler) getRequiredMFAMethods(mgr cookie.Manager) []string {
 	if mgr == nil || h.deps == nil {
 		return nil
 	}
 
-	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
-	idpInstance := idp.NewNauthilusIdP(h.deps)
+	flowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
+	idpInstance := idp.NewNauthilusIDP(h.deps)
 
 	switch flowType {
 	case definitions.ProtoOIDC:
-		clientID := mgr.GetString(definitions.SessionKeyIdPClientID, "")
+		clientID := mgr.GetString(definitions.SessionKeyIDPClientID, "")
 		if clientID == "" {
 			return nil
 		}
@@ -59,7 +59,7 @@ func (h *FrontendHandler) getRequiredMFAMethods(mgr cookie.Manager) []string {
 		return client.GetRequireMFA()
 
 	case definitions.ProtoSAML:
-		entityID := mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+		entityID := mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
 		if entityID == "" {
 			return nil
 		}
@@ -76,18 +76,18 @@ func (h *FrontendHandler) getRequiredMFAMethods(mgr cookie.Manager) []string {
 }
 
 // getSupportedMFAMethods returns the list of MFA methods supported for the current
-// IdP client or SAML service provider. Empty means all methods are supported.
+// IDP client or SAML service provider. Empty means all methods are supported.
 func (h *FrontendHandler) getSupportedMFAMethods(mgr cookie.Manager) []string {
 	if mgr == nil || h.deps == nil {
 		return nil
 	}
 
-	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
-	idpInstance := idp.NewNauthilusIdP(h.deps)
+	flowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
+	idpInstance := idp.NewNauthilusIDP(h.deps)
 
 	switch flowType {
 	case definitions.ProtoOIDC:
-		clientID := mgr.GetString(definitions.SessionKeyIdPClientID, "")
+		clientID := mgr.GetString(definitions.SessionKeyIDPClientID, "")
 		if clientID == "" {
 			return nil
 		}
@@ -100,7 +100,7 @@ func (h *FrontendHandler) getSupportedMFAMethods(mgr cookie.Manager) []string {
 		return client.GetSupportedMFA()
 
 	case definitions.ProtoSAML:
-		entityID := mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+		entityID := mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
 		if entityID == "" {
 			return nil
 		}
@@ -132,13 +132,13 @@ func (h *FrontendHandler) getFlowClientIdentifiers(mgr cookie.Manager) (string, 
 		return "", ""
 	}
 
-	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+	flowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 
 	switch flowType {
 	case definitions.ProtoOIDC:
-		return mgr.GetString(definitions.SessionKeyIdPClientID, ""), ""
+		return mgr.GetString(definitions.SessionKeyIDPClientID, ""), ""
 	case definitions.ProtoSAML:
-		return "", mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+		return "", mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
 	default:
 		return "", ""
 	}
@@ -153,21 +153,23 @@ func (h *FrontendHandler) getRememberMeTTL(oidcCID, samlEntityID string) time.Du
 		return 0
 	}
 
-	globalTTL := h.deps.Cfg.GetIdP().GetRememberMeTTL()
+	globalTTL := h.deps.Cfg.GetIDP().GetRememberMeTTL()
 	if globalTTL > 0 {
 		return globalTTL
 	}
 
-	idpInstance := idp.NewNauthilusIdP(h.deps)
+	idpInstance := idp.NewNauthilusIDP(h.deps)
 
 	if oidcCID != "" {
 		if client, ok := idpInstance.FindClient(oidcCID); ok {
+			//nolint:staticcheck // Legacy client fallback is required until deprecated per-client TTL support is removed.
 			return client.RememberMeTTL
 		}
 	}
 
 	if samlEntityID != "" {
 		if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
+			//nolint:staticcheck // Legacy service-provider fallback is required until deprecated per-SP TTL support is removed.
 			return sp.RememberMeTTL
 		}
 	}
@@ -184,18 +186,18 @@ func (h *FrontendHandler) clearRequireMFARegistrationState(mgr cookie.Manager) {
 		return
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID != requireMFAFlowID {
 		flowdomain.ClearRequireMFAContext(mgr)
 
 		return
 	}
 
-	// Preserve the original IdP flow type and grant type before aborting the
-	// require-mfa sub-flow, because Abort → Delete removes SessionKeyIdPFlowType
+	// Preserve the original IDP flow type and grant type before aborting the
+	// require-mfa sub-flow, because Abort → Delete removes SessionKeyIDPFlowType
 	// from the cookie. Without restoring these keys, the resumed parent flow loses
 	// protocol context and cannot be continued deterministically.
-	savedFlowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+	savedFlowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 	savedGrantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
 	savedParentFlowID := mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, "")
 
@@ -207,18 +209,19 @@ func (h *FrontendHandler) clearRequireMFARegistrationState(mgr cookie.Manager) {
 		return
 	}
 
-	// Restore the original IdP flow context so that the caller can still
-	// redirect back to the correct IdP endpoint (OIDC authorize, SAML SSO, etc.).
+	// Restore the original IDP flow context so that the caller can still
+	// redirect back to the correct IDP endpoint (OIDC authorize, SAML SSO, etc.).
 	flowdomain.RestoreFlowCookieContext(mgr, savedFlowType, savedGrantType)
+
 	if savedParentFlowID != "" {
-		mgr.Set(definitions.SessionKeyIdPFlowID, savedParentFlowID)
+		mgr.Set(definitions.SessionKeyIDPFlowID, savedParentFlowID)
 	}
 
 	flowdomain.SetRequireMFAPending(mgr, "")
 }
 
 // checkRequireMFARegistrationAndRedirect compares the mandatory MFA methods for the
-// current IdP flow against the methods already registered by the user.
+// current IDP flow against the methods already registered by the user.
 // If one or more methods are missing the function:
 //  1. Writes SessionKeyRequireMFAFlow and SessionKeyRequireMFAPending to the cookie.
 //  2. Redirects the browser to the first missing method's registration page.
@@ -230,7 +233,7 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 		return false
 	}
 
-	if mgr.GetString(definitions.SessionKeyIdPFlowID, "") == "" {
+	if mgr.GetString(definitions.SessionKeyIDPFlowID, "") == "" {
 		return false
 	}
 
@@ -254,7 +257,7 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 		return false
 	}
 
-	idpInstance := idp.NewNauthilusIdP(h.deps)
+	idpInstance := idp.NewNauthilusIDP(h.deps)
 	oidcCID, samlEntityID := h.getFlowClientIdentifiers(mgr)
 
 	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
@@ -303,7 +306,8 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 	}
 
 	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-	parentFlowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+
+	parentFlowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if parentFlowID != "" && parentFlowID != requireMFAFlowID {
 		mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
 	}
@@ -317,7 +321,7 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 
 	decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
 		FlowID:       requireMFAFlowID,
-		FlowType:     flowdomain.FlowTypeRequireMFA,
+		Type:         flowdomain.FlowTypeRequireMFA,
 		Protocol:     flowProtocol,
 		CurrentStep:  flowdomain.FlowStepStart,
 		ReturnTarget: nextTarget,
@@ -367,8 +371,8 @@ func requireMFAFlowMetadata(mgr cookie.Manager, user *backend.User, missing stri
 			metadata[flowdomain.FlowMetadataAccount] = user.Name
 		}
 
-		if metadata[flowdomain.FlowMetadataUniqueUserID] == "" && user.Id != "" {
-			metadata[flowdomain.FlowMetadataUniqueUserID] = user.Id
+		if metadata[flowdomain.FlowMetadataUniqueUserID] == "" && user.ID != "" {
+			metadata[flowdomain.FlowMetadataUniqueUserID] = user.ID
 		}
 
 		if metadata[flowdomain.FlowMetadataDisplayName] == "" && user.DisplayName != "" {
@@ -404,7 +408,7 @@ func requireMFAFlowIDFromSession(mgr cookie.Manager) string {
 		return ""
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID != "" {
 		return flowID
 	}
@@ -417,7 +421,7 @@ func requireMFAFlowIDFromSession(mgr cookie.Manager) string {
 }
 
 func restoreRequireMFAIdentityContext(mgr cookie.Manager, state *flowdomain.State) {
-	if mgr == nil || state == nil || state.FlowType != flowdomain.FlowTypeRequireMFA || state.Metadata == nil {
+	if mgr == nil || state == nil || state.Type != flowdomain.FlowTypeRequireMFA || state.Metadata == nil {
 		return
 	}
 
@@ -551,7 +555,7 @@ func (h *FrontendHandler) redirectToNextRequiredMFARegistration(ctx *gin.Context
 // ContinueRequiredMFARegistration is the GET handler for /mfa/register/continue.
 // It is called after each individual MFA registration step in a forced-registration
 // flow to decide whether another method still needs to be registered or whether the
-// original IdP flow can be resumed.
+// original IDP flow can be resumed.
 func (h *FrontendHandler) ContinueRequiredMFARegistration(ctx *gin.Context) {
 	mgr := cookie.GetManager(ctx)
 
@@ -566,9 +570,9 @@ func (h *FrontendHandler) ContinueRequiredMFARegistration(ctx *gin.Context) {
 	pending := mgr.GetString(definitions.SessionKeyRequireMFAPending, "")
 
 	if pending == "" {
-		// All required methods registered — clean up and resume the IdP flow.
+		// All required methods registered — clean up and resume the IDP flow.
 		h.clearRequireMFARegistrationState(mgr)
-		h.resumeIdPFlow(ctx, mgr)
+		h.resumeIDPFlow(ctx, mgr)
 
 		return
 	}
@@ -579,7 +583,7 @@ func (h *FrontendHandler) ContinueRequiredMFARegistration(ctx *gin.Context) {
 
 // CancelRequiredMFARegistration is the GET handler for /mfa/register/cancel.
 // The user declined to register a required MFA method, so the entire session is
-// invalidated:  the forced-registration state is removed, the IdP flow state is
+// invalidated:  the forced-registration state is removed, the IDP flow state is
 // cleaned up, and the user is logged out before being sent to /logged_out.
 func (h *FrontendHandler) CancelRequiredMFARegistration(ctx *gin.Context) {
 	core.SessionCleaner(ctx)

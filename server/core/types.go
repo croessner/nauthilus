@@ -65,7 +65,7 @@ type BackendManager interface {
 	UpdateWebAuthnCredential(auth *AuthState, oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error)
 }
 
-// PublicMFAState contains public MFA metadata that is safe to expose to an IdP edge.
+// PublicMFAState contains public MFA metadata that is safe to expose to an IDP edge.
 type PublicMFAState struct {
 	WebAuthnCredentials []mfa.PersistentCredential
 	RecoveryCodeCount   int

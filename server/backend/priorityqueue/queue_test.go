@@ -143,6 +143,7 @@ func TestLuaQueueRouting(t *testing.T) {
 
 func TestLDAPQueueWarnsWithoutWorker(t *testing.T) {
 	var buf bytes.Buffer
+
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	q := NewLDAPRequestQueue(logger)
@@ -164,6 +165,7 @@ func TestLDAPQueueWarnsWithoutWorker(t *testing.T) {
 
 func TestLuaQueueWarnsWithoutWorker(t *testing.T) {
 	var buf bytes.Buffer
+
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	q := NewLuaRequestQueue(logger)

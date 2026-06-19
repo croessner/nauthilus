@@ -118,7 +118,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	}
 
 	if account == "" {
-		if prompt == "none" {
+		if prompt == oidcClientAuthMethodNone {
 			target := fmt.Sprintf("%s?error=login_required", redirectURI)
 			if state != "" {
 				target += "&state=" + url.QueryEscape(state)
@@ -131,11 +131,11 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 
 		// User not logged in - store OIDC flow state in secure cookie and redirect to login.
 		// This prevents open redirect vulnerabilities by not passing return_to in URL.
-		redirectTarget := "/login"
+		redirectTarget := frontendLoginPath
 
 		if mgr != nil {
-			existingFlowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
-			existingFlowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+			existingFlowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+			existingFlowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 			existingGrantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
 			createdFlowID := ksuid.New().String()
 
@@ -166,11 +166,11 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 
 			decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
 				FlowID:       createdFlowID,
-				FlowType:     flowdomain.FlowTypeOIDCAuthorization,
+				Type:         flowdomain.FlowTypeOIDCAuthorization,
 				Protocol:     flowdomain.FlowProtocolOIDC,
 				CurrentStep:  flowdomain.FlowStepStart,
 				GrantType:    definitions.OIDCFlowAuthorizationCode,
-				ReturnTarget: "/login",
+				ReturnTarget: frontendLoginPath,
 				Metadata: map[string]string{
 					flowdomain.FlowMetadataClientID:            clientID,
 					flowdomain.FlowMetadataRedirectURI:         redirectURI,
@@ -258,7 +258,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 
 	oidcSession := &idp.OIDCSession{
 		ClientID:            clientID,
-		UserID:              user.Id,
+		UserID:              user.ID,
 		Username:            user.Name,
 		DisplayName:         user.DisplayName,
 		Scopes:              filteredScopes,
@@ -269,7 +269,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		Nonce:               nonce,
 		CodeChallenge:       codeChallenge,
 		CodeChallengeMethod: codeChallengeMethod,
-		IdTokenClaims:       idTokenClaims,
+		IDTokenClaims:       idTokenClaims,
 		AccessTokenClaims:   accessTokenClaims,
 	}
 
@@ -280,19 +280,20 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	}
 
 	if needsConsent {
-		if prompt == "none" {
+		if prompt == oidcClientAuthMethodNone {
 			target := fmt.Sprintf("%s?error=consent_required", redirectURI)
 			if state != "" {
 				target += "&state=" + url.QueryEscape(state)
 			}
+
 			ctx.Redirect(http.StatusFound, target)
 
 			return
 		}
 
 		consentChallenge := ksuid.New().String()
-		err := h.storage.StoreSession(ctx.Request.Context(), "consent:"+consentChallenge, oidcSession, 10*time.Minute)
 
+		err := h.storage.StoreSession(ctx.Request.Context(), "consent:"+consentChallenge, oidcSession, 10*time.Minute)
 		if err != nil {
 			ctx.String(http.StatusInternalServerError, "Internal error storing consent session")
 
@@ -489,8 +490,8 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 	}
 
 	client, _ := h.idp.FindClient(session.ClientID)
-	plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), session.Scopes)
-	customScopes := h.deps.Cfg.GetIdP().OIDC.GetEffectiveCustomScopes(client)
+	plan := buildConsentScopePlan(client, h.deps.Cfg.GetIDP().OIDC.GetConsentMode(), session.Scopes)
+	customScopes := h.deps.Cfg.GetIDP().OIDC.GetEffectiveCustomScopes(client)
 	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, customScopes, plan.Required)
 	optionalScopeChoices := make([]gin.H, 0, len(plan.Optional))
 	lang := consentLanguage(ctx)
@@ -502,9 +503,9 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 		}
 
 		optionalScopeChoices = append(optionalScopeChoices, gin.H{
-			"Name":        scope,
-			"Description": description,
-			"Checked":     true,
+			templateDataName:        scope,
+			templateDataDescription: description,
+			templateDataChecked:     true,
 		})
 	}
 
@@ -535,6 +536,7 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	if state == "" {
 		state = ctx.Query(oidcParamState)
 	}
+
 	submit := ctx.PostForm("submit")
 
 	session, err := h.storage.GetSession(ctx.Request.Context(), "consent:"+consentChallenge)
@@ -546,9 +548,10 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 
 	sp.SetAttributes(attribute.String(definitions.LogKeyClientID, session.ClientID))
 
-	if submit != "allow" {
+	if submit != oidcConsentDecisionAllow {
 		// Denied
 		_ = h.storage.DeleteSession(ctx.Request.Context(), "consent:"+consentChallenge)
+
 		stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(session.ClientID, "deny").Inc()
 		ctx.String(http.StatusForbidden, "Consent denied")
 
@@ -565,7 +568,7 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 		return
 	}
 
-	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(session.ClientID, "allow").Inc()
+	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(session.ClientID, oidcConsentDecisionAllow).Inc()
 
 	client, ok := h.idp.FindClient(session.ClientID)
 	if !ok {
@@ -574,9 +577,10 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 		return
 	}
 
-	consentMode := client.GetConsentMode(h.deps.Cfg.GetIdP().OIDC.GetConsentMode())
+	consentMode := client.GetConsentMode(h.deps.Cfg.GetIDP().OIDC.GetConsentMode())
 	if consentMode == config.OIDCConsentModeGranularOptional {
-		plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), session.Scopes)
+		plan := buildConsentScopePlan(client, h.deps.Cfg.GetIDP().OIDC.GetConsentMode(), session.Scopes)
+
 		grantedScopes, resolveErr := plan.ResolveGranted(ctx.PostFormArray("optional_scope"))
 		if resolveErr != nil {
 			ctx.String(http.StatusBadRequest, "Invalid optional scope selection")
@@ -599,7 +603,7 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 		}
 
 		session.Scopes = grantedScopes
-		session.IdTokenClaims = idTokenClaims
+		session.IDTokenClaims = idTokenClaims
 		session.AccessTokenClaims = accessTokenClaims
 	}
 
@@ -660,6 +664,7 @@ func (h *OIDCHandler) flowRedisPrefix() string {
 
 func normalizeCodeChallengeMethod(codeChallenge, codeChallengeMethod string) (string, error) {
 	method := strings.TrimSpace(codeChallengeMethod)
+
 	challenge := strings.TrimSpace(codeChallenge)
 	if challenge == "" {
 		if method != "" {
@@ -669,11 +674,11 @@ func normalizeCodeChallengeMethod(codeChallenge, codeChallengeMethod string) (st
 		return "", nil
 	}
 
-	if !strings.EqualFold(method, "s256") {
+	if !strings.EqualFold(method, oidcPKCEChallengeMethodS256) {
 		return "", fmt.Errorf("unsupported code_challenge_method: only S256 is allowed")
 	}
 
-	return "S256", nil
+	return oidcPKCEChallengeMethodS256, nil
 }
 
 func validatePKCEVerifier(codeChallenge, codeChallengeMethod, codeVerifier string) error {
@@ -687,7 +692,7 @@ func validatePKCEVerifier(codeChallenge, codeChallengeMethod, codeVerifier strin
 		return fmt.Errorf("invalid code_verifier")
 	}
 
-	if codeChallengeMethod != "S256" {
+	if codeChallengeMethod != oidcPKCEChallengeMethodS256 {
 		return fmt.Errorf("unsupported code_challenge_method: only S256 is allowed")
 	}
 
@@ -710,9 +715,11 @@ func isValidCodeVerifier(verifier string) bool {
 		if char >= 'A' && char <= 'Z' {
 			continue
 		}
+
 		if char >= 'a' && char <= 'z' {
 			continue
 		}
+
 		if char >= '0' && char <= '9' {
 			continue
 		}

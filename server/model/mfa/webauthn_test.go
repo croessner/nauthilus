@@ -53,6 +53,7 @@ func TestPersistentCredentialMarshalIncludesSignCount(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected authenticator object in JSON")
 	}
+
 	if authenticator["signCount"] != float64(7) {
 		t.Fatalf("expected authenticator signCount 7, got %#v", authenticator["signCount"])
 	}

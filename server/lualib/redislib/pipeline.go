@@ -82,37 +82,45 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.Set(dCtx, key, val, exp)
+
 			writeOps++
 		case "ping":
 			pipe.Ping(dCtx)
+
 			readOps++
 		case "incr":
 			key := rowTbl.RawGetInt(2).String()
 			pipe.Incr(dCtx, key)
+
 			writeOps++
 		case "get":
 			key := rowTbl.RawGetInt(2).String()
 			pipe.Get(dCtx, key)
+
 			readOps++
 		case "del":
 			key := rowTbl.RawGetInt(2).String()
 			pipe.Del(dCtx, key)
+
 			writeOps++
 		case "expire":
 			key := rowTbl.RawGetInt(2).String()
 			sec := int64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 			pipe.Expire(dCtx, key, time.Duration(sec)*time.Second)
+
 			writeOps++
 		case "hget":
 			hash := rowTbl.RawGetInt(2).String()
 			field := rowTbl.RawGetInt(3).String()
 			pipe.HGet(dCtx, hash, field)
+
 			readOps++
 		case "hset":
 			hash := rowTbl.RawGetInt(2).String()
 			field := rowTbl.RawGetInt(3).String()
 			val, _ := convert.LuaValue(rowTbl.RawGetInt(4))
 			pipe.HSet(dCtx, hash, field, val)
+
 			writeOps++
 		case "hmget":
 			hash := rowTbl.RawGetInt(2).String()
@@ -139,79 +147,94 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.HMGet(dCtx, hash, fields...)
+
 			readOps++
 		case "hgetall":
 			hash := rowTbl.RawGetInt(2).String()
 			pipe.HGetAll(dCtx, hash)
+
 			readOps++
 		case "hexists":
 			hash := rowTbl.RawGetInt(2).String()
 			field := rowTbl.RawGetInt(3).String()
 			pipe.HExists(dCtx, hash, field)
+
 			readOps++
 		case "hincrby":
 			hash := rowTbl.RawGetInt(2).String()
 			field := rowTbl.RawGetInt(3).String()
 			inc := int64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 			pipe.HIncrBy(dCtx, hash, field, inc)
+
 			writeOps++
 		case "sadd":
 			key := rowTbl.RawGetInt(2).String()
 			member := rowTbl.RawGetInt(3).String()
 			pipe.SAdd(dCtx, key, member)
+
 			writeOps++
 		case "sismember":
 			key := rowTbl.RawGetInt(2).String()
 			member := rowTbl.RawGetInt(3).String()
 			pipe.SIsMember(dCtx, key, member)
+
 			readOps++
 		case "smembers":
 			key := rowTbl.RawGetInt(2).String()
 			pipe.SMembers(dCtx, key)
+
 			readOps++
 		case "zadd":
 			key := rowTbl.RawGetInt(2).String()
 			score := float64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 			member := rowTbl.RawGetInt(4).String()
 			pipe.ZAdd(dCtx, key, redis.Z{Score: score, Member: member})
+
 			writeOps++
 		case "zrem":
 			key := rowTbl.RawGetInt(2).String()
 			member := rowTbl.RawGetInt(3).String()
 			pipe.ZRem(dCtx, key, member)
+
 			writeOps++
 		case "zremrangebyscore":
 			key := rowTbl.RawGetInt(2).String()
 			minStr := rowTbl.RawGetInt(3).String()
 			maxStr := rowTbl.RawGetInt(4).String()
 			pipe.ZRemRangeByScore(dCtx, key, minStr, maxStr)
+
 			writeOps++
 		case "zremrangebyrank":
 			key := rowTbl.RawGetInt(2).String()
 			start := int64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 			stop := int64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 			pipe.ZRemRangeByRank(dCtx, key, start, stop)
+
 			writeOps++
 		case "zcount":
 			key := rowTbl.RawGetInt(2).String()
 			minStr := rowTbl.RawGetInt(3).String()
 			maxStr := rowTbl.RawGetInt(4).String()
 			pipe.ZCount(dCtx, key, minStr, maxStr)
+
 			readOps++
 		case "zscore":
 			key := rowTbl.RawGetInt(2).String()
 			member := rowTbl.RawGetInt(3).String()
 			pipe.ZScore(dCtx, key, member)
+
 			readOps++
 		case "zincrby":
 			key := rowTbl.RawGetInt(2).String()
 			score := float64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 			member := rowTbl.RawGetInt(4).String()
 			pipe.ZIncrBy(dCtx, key, score, member)
+
 			writeOps++
 		case "exists":
 			key := rowTbl.RawGetInt(2).String()
 			pipe.Exists(dCtx, key)
+
 			readOps++
 		case "hdel":
 			hash := rowTbl.RawGetInt(2).String()
@@ -238,21 +261,25 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.HDel(dCtx, hash, fields...)
+
 			writeOps++
 		case "hlen":
 			hash := rowTbl.RawGetInt(2).String()
 			pipe.HLen(dCtx, hash)
+
 			readOps++
 		case "hincrbyfloat":
 			hash := rowTbl.RawGetInt(2).String()
 			field := rowTbl.RawGetInt(3).String()
 			inc := float64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 			pipe.HIncrByFloat(dCtx, hash, field, inc)
+
 			writeOps++
 		case "rename":
 			oldKey := rowTbl.RawGetInt(2).String()
 			newKey := rowTbl.RawGetInt(3).String()
 			pipe.Rename(dCtx, oldKey, newKey)
+
 			writeOps++
 		case "srem":
 			key := rowTbl.RawGetInt(2).String()
@@ -275,32 +302,38 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.SRem(dCtx, key, members...)
+
 			writeOps++
 		case "scard":
 			key := rowTbl.RawGetInt(2).String()
 			pipe.SCard(dCtx, key)
+
 			readOps++
 		case "zrank":
 			key := rowTbl.RawGetInt(2).String()
 			member := rowTbl.RawGetInt(3).String()
 			pipe.ZRank(dCtx, key, member)
+
 			readOps++
 		case "zrevrank":
 			key := rowTbl.RawGetInt(2).String()
 			member := rowTbl.RawGetInt(3).String()
 			pipe.ZRevRank(dCtx, key, member)
+
 			readOps++
 		case "zrange":
 			key := rowTbl.RawGetInt(2).String()
 			start := int64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 			stop := int64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 			pipe.ZRange(dCtx, key, start, stop)
+
 			readOps++
 		case "zrevrange":
 			key := rowTbl.RawGetInt(2).String()
 			start := int64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 			stop := int64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 			pipe.ZRevRange(dCtx, key, start, stop)
+
 			readOps++
 		case "zrangebyscore":
 			key := rowTbl.RawGetInt(2).String()
@@ -320,6 +353,7 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.ZRangeByScore(dCtx, key, opts)
+
 			readOps++
 		case "lpush":
 			key := rowTbl.RawGetInt(2).String()
@@ -346,6 +380,7 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.LPush(dCtx, key, values...)
+
 			writeOps++
 		case "rpush":
 			key := rowTbl.RawGetInt(2).String()
@@ -372,27 +407,33 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.RPush(dCtx, key, values...)
+
 			writeOps++
 		case "lpop":
 			key := rowTbl.RawGetInt(2).String()
 			pipe.LPop(dCtx, key)
+
 			writeOps++
 		case "rpop":
 			key := rowTbl.RawGetInt(2).String()
 			pipe.RPop(dCtx, key)
+
 			writeOps++
 		case "lrange":
 			key := rowTbl.RawGetInt(2).String()
 			start := int64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 			stop := int64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 			pipe.LRange(dCtx, key, start, stop)
+
 			readOps++
 		case "llen":
 			key := rowTbl.RawGetInt(2).String()
 			pipe.LLen(dCtx, key)
+
 			readOps++
 		case "mget":
 			var keys []string
+
 			j := 2
 			for {
 				v := rowTbl.RawGetInt(j)
@@ -410,6 +451,7 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.MGet(dCtx, keys...)
+
 			readOps++
 		case "mset":
 			var kv []any
@@ -432,10 +474,12 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.MSet(dCtx, kv...)
+
 			writeOps++
 		case "keys":
 			pattern := rowTbl.RawGetInt(2).String()
 			pipe.Keys(dCtx, pattern)
+
 			readOps++
 		case "scan":
 			cursor := uint64(lua.LVAsNumber(rowTbl.RawGetInt(2)))
@@ -451,6 +495,7 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.Scan(dCtx, cursor, match, count)
+
 			readOps++
 		case "pfadd":
 			key := rowTbl.RawGetInt(2).String()
@@ -474,6 +519,7 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.PFAdd(dCtx, key, values...)
+
 			writeOps++
 		case "pfcount":
 			var keys2 []string
@@ -496,6 +542,7 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.PFCount(dCtx, keys2...)
+
 			readOps++
 		case "pfmerge":
 			dest := rowTbl.RawGetInt(2).String()
@@ -520,6 +567,7 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			pipe.PFMerge(dCtx, dest, sources...)
+
 			writeOps++
 		case "run_script":
 			script := rowTbl.RawGetInt(2).String()
@@ -530,11 +578,13 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 			}
 
 			var keys []string
+
 			if kt, ok := rowTbl.RawGetInt(4).(*lua.LTable); ok {
 				kt.ForEach(func(_, v lua.LValue) { keys = append(keys, v.String()) })
 			}
 
 			var args []any
+
 			if at, ok := rowTbl.RawGetInt(5).(*lua.LTable); ok {
 				at.ForEach(func(_, v lua.LValue) {
 					gv, _ := convert.LuaValue(v)
@@ -561,6 +611,7 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 	if readOps > 0 {
 		stats.GetMetrics().GetRedisReadCounter().Add(float64(readOps))
 	}
+
 	if writeOps > 0 {
 		stats.GetMetrics().GetRedisWriteCounter().Add(float64(writeOps))
 	}
@@ -612,10 +663,12 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 						item.RawSetString("err", lua.LString(err.Error()))
 					} else {
 						valTbl := L.NewTable()
+
 						keysTbl := L.NewTable()
 						for _, k := range keys {
 							keysTbl.Append(lua.LString(k))
 						}
+
 						valTbl.RawSetString("keys", keysTbl)
 						valTbl.RawSetString("cursor", lua.LNumber(cursor))
 						item.RawSetString("value", valTbl)

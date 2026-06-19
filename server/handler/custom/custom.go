@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package custom provides custom functionality.
 package custom
 
 import (
@@ -31,9 +32,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// CustomRequestHandler mirrors the original logic for executing custom Lua hooks.
+// RequestHandler mirrors the original logic for executing custom Lua hooks.
 // The validator may be nil when OIDC authentication is not configured.
-func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client, validator oidcbearer.TokenValidator) gin.HandlerFunc {
+func RequestHandler(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client, validator oidcbearer.TokenValidator) gin.HandlerFunc {
 	return RequestHandlerWithNative(cfgProvider, logger, redis, validator, nil)
 }
 

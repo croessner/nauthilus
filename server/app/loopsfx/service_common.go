@@ -26,13 +26,13 @@ import (
 // It stops the ticker, cancels the context and waits for all goroutines to
 // finish, attempting to honor the provided stop deadline.
 func stopLoop(
+	stopCtx context.Context,
 	mu *sync.Mutex,
 	running *bool,
 	cancelPtr *context.CancelFunc,
 	tickerPtr **time.Ticker,
 	ctxPtr *context.Context,
 	wg *sync.WaitGroup,
-	stopCtx context.Context,
 ) error {
 	mu.Lock()
 
@@ -60,6 +60,7 @@ func stopLoop(
 	}
 
 	done := make(chan struct{})
+
 	go func() {
 		wg.Wait()
 		close(done)

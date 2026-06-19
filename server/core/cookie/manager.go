@@ -225,6 +225,7 @@ func (m *SecureManager) Load(ctx *gin.Context) error {
 
 		return nil
 	}
+
 	m.hadCookie = true
 
 	for _, cookie := range cookies {

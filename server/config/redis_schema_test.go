@@ -34,6 +34,7 @@ func TestHandleFile_RedisMasterIsRejected(t *testing.T) {
 	})
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("expected legacy storage.redis.master to be rejected")

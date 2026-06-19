@@ -48,7 +48,7 @@ func TestStoreCompletedIDPMFASessionUsesCanonicalMFAIdentity(t *testing.T) {
 	}}
 
 	StoreCompletedIDPMFASession(mgr, &backend.User{
-		Id:          testIDPMFATargetUniqueID,
+		ID:          testIDPMFATargetUniqueID,
 		Name:        testIDPMFAFormattedLogin,
 		DisplayName: "Master formatted login",
 	}, definitions.MFAMethodWebAuthn)

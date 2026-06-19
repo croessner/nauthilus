@@ -17,6 +17,12 @@ package engine
 
 import "path/filepath"
 
+const (
+	passwordFormatSSHA512 = "ssha512"
+	passwordEncodingB64   = "b64"
+	passwordEncodingHex   = "hex"
+)
+
 // Config carries file paths, CSV column names and filter settings.
 type Config struct {
 	// Paths
@@ -61,8 +67,8 @@ func DefaultConfig() Config {
 		ColExpectedOK:       "expected_ok",
 		ExpectTrueValue:     "true",
 		AllowedProtocols:    []string{"imap", "smtp"},
-		PasswordFormat:      "ssha512",
-		SSHAEncoding:        "b64",
+		PasswordFormat:      passwordFormatSSHA512,
+		SSHAEncoding:        passwordEncodingB64,
 		ArgonTime:           2,
 		ArgonMemoryKiB:      65536,
 		ArgonParallelism:    1,

@@ -37,6 +37,7 @@ func GenerateBackupCodes() (*mfa.TOTPRecovery, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		codes[i] = code
 	}
 

@@ -208,6 +208,7 @@ func (m *CBORManager) fromLuaTable(table *lua.LTable) (any, error) {
 	}
 
 	values := make(map[string]any)
+
 	var convErr error
 
 	table.ForEach(func(key lua.LValue, value lua.LValue) {

@@ -18,24 +18,31 @@ package flow
 import "errors"
 
 var (
-	ErrEmptyFlowID        = errors.New("empty flow id")
-	ErrFlowNotFound       = errors.New("flow not found")
-	ErrInvalidFlowType    = errors.New("invalid flow type")
-	ErrInvalidProtocol    = errors.New("invalid protocol")
-	ErrInvalidStep        = errors.New("invalid step")
-	ErrInvalidAction      = errors.New("invalid action")
+	// ErrEmptyFlowID is an exported package value.
+	ErrEmptyFlowID = errors.New("empty flow id")
+	// ErrFlowNotFound is an exported package value.
+	ErrFlowNotFound = errors.New("flow not found")
+	// ErrInvalidFlowType reports an unsupported flow type.
+	ErrInvalidFlowType = errors.New("invalid flow type")
+	// ErrInvalidProtocol reports an unsupported flow protocol.
+	ErrInvalidProtocol = errors.New("invalid protocol")
+	// ErrInvalidStep reports an unsupported flow step.
+	ErrInvalidStep = errors.New("invalid step")
+	// ErrInvalidAction reports an unsupported flow action.
+	ErrInvalidAction = errors.New("invalid action")
+	// ErrInvalidAuthOutcome reports an unsupported auth outcome marker.
 	ErrInvalidAuthOutcome = errors.New("invalid auth outcome")
 )
 
 // TransitionError reports invalid transitions for a specific flow/step pair.
 type TransitionError struct {
-	FlowType FlowType
-	From     FlowStep
-	To       FlowStep
-	Action   FlowAction
+	Type   Type
+	From   Step
+	To     Step
+	Action Action
 }
 
 // Error returns the transition violation as a stable diagnostic string.
 func (e TransitionError) Error() string {
-	return "invalid transition: flow=" + string(e.FlowType) + " from=" + string(e.From) + " to=" + string(e.To) + " action=" + string(e.Action)
+	return "invalid transition: flow=" + string(e.Type) + " from=" + string(e.From) + " to=" + string(e.To) + " action=" + string(e.Action)
 }

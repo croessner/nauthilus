@@ -56,7 +56,7 @@ func NewManagementValidator() (*Validator, error) {
 	return NewValidator("management", openapi.ManagementYAML())
 }
 
-// NewIDPValidator loads the IdP OpenAPI document.
+// NewIDPValidator loads the IDP OpenAPI document.
 func NewIDPValidator() (*Validator, error) {
 	return NewValidator("idp", openapi.IDPYAML())
 }

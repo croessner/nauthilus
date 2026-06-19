@@ -71,11 +71,14 @@ func TestRedisMGet(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -168,11 +171,14 @@ func TestRedisMSet(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -189,9 +195,11 @@ func TestRedisMSet(t *testing.T) {
 			for key, value := range tt.keyValues {
 				keyVarName := "key" + string(rune('0'+i))
 				valueVarName := "value" + string(rune('0'+i))
+
 				L.SetGlobal(keyVarName, lua.LString(key))
 				L.SetGlobal(valueVarName, value)
 				luaCode.WriteString(", " + keyVarName + ", " + valueVarName)
+
 				i++
 			}
 
@@ -258,11 +266,14 @@ func TestRedisKeys(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -366,11 +377,14 @@ func TestRedisScan(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)

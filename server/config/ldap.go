@@ -27,11 +27,18 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
+// LDAPSection describes the exported LDAPSection type.
 type LDAPSection struct {
 	Config            *LDAPConf            `mapstructure:"config" validate:"required"`
 	OptionalLDAPPools map[string]*LDAPConf `mapstructure:"optional_ldap_pools" validate:"omitempty,validatDefaultBackendName,dive"`
 	Search            []LDAPSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
 }
+
+const (
+	ldapGroupStrategyHybrid   = "hybrid"
+	ldapGroupStrategyMemberOf = "member_of"
+	ldapGroupStrategySearch   = "search"
+)
 
 // validatDefaultBackendName ensures the backend name is not set to "default" or the predefined DefaultBackendName constant.
 func validatDefaultBackendName(fl validator.FieldLevel) bool {
@@ -41,7 +48,7 @@ func validatDefaultBackendName(fl validator.FieldLevel) bool {
 	}
 
 	for backendName := range pools {
-		if backendName == "default" || backendName == definitions.DefaultBackendName {
+		if backendName == RemoteBackendDefaultName || backendName == definitions.DefaultBackendName {
 			return false
 		}
 	}
@@ -107,6 +114,7 @@ func (l *LDAPSection) GetSearch() []LDAPSearchProtocol {
 	return l.Search
 }
 
+// LDAPConf describes the exported LDAPConf type.
 type LDAPConf struct {
 	// Deprecated: use lookup_pool_only
 	PoolOnly       bool `mapstructure:"pool_only"`
@@ -185,7 +193,7 @@ func validateAuthPoolRequired(fl validator.FieldLevel) bool {
 
 func (l *LDAPConf) String() string {
 	if l == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	var result strings.Builder
@@ -392,17 +400,19 @@ func (l *LDAPConf) GetConnectAbortTimeout() time.Duration {
 // Returns []string{"ldap://localhost"} slice if the LDAPConf is nil.
 func (l *LDAPConf) GetServerURIs() []string {
 	if l == nil {
-		return []string{"ldap://localhost"}
+		return []string{defaultLDAPServerURI}
 	}
 
 	return l.ServerURIs
 }
 
+// LDAPFilter describes the exported LDAPFilter type.
 type LDAPFilter struct {
 	User         string `mapstructure:"user" validate:"omitempty"`
 	ListAccounts string `mapstructure:"list_accounts" validate:"omitempty"`
 }
 
+// LDAPAttributeMapping describes the exported LDAPAttributeMapping type.
 type LDAPAttributeMapping struct {
 	AccountField            string `mapstructure:"account_field" validate:"required"` // Webauthn is not implemented, yet.
 	TOTPSecretField         string `mapstructure:"totp_secret_field" validate:"omitempty"`
@@ -527,6 +537,7 @@ func (m *LDAPAttributeMapping) GetAllMappedFields() []string {
 	return fields
 }
 
+// LDAPSearchProtocol describes the exported LDAPSearchProtocol type.
 type LDAPSearchProtocol struct {
 	Protocols []string `mapstructure:"protocol" validate:"required"`
 	CacheName string   `mapstructure:"cache_name" validate:"required,printascii,excludesall= "`
@@ -577,9 +588,9 @@ func (g *LDAPGroups) GetStrategy() string {
 	if strategy == "" {
 		switch {
 		case g.Filter != "" || g.BaseDN != "":
-			return "search"
+			return ldapGroupStrategySearch
 		case g.Attribute != "":
-			return "member_of"
+			return ldapGroupStrategyMemberOf
 		default:
 			return ""
 		}
@@ -591,7 +602,7 @@ func (g *LDAPGroups) GetStrategy() string {
 // UsesMemberOf reports whether the strategy reads the user membership attribute.
 func (g *LDAPGroups) UsesMemberOf() bool {
 	switch g.GetStrategy() {
-	case "member_of", "hybrid":
+	case ldapGroupStrategyMemberOf, ldapGroupStrategyHybrid:
 		return true
 	default:
 		return false
@@ -649,13 +660,13 @@ func (g *LDAPGroups) GetScope() *LDAPScope {
 	scope := &LDAPScope{}
 
 	if g == nil || strings.TrimSpace(g.Scope) == "" {
-		scope.Set("sub")
+		_ = scope.Set("sub")
 
 		return scope
 	}
 
 	if err := scope.Set(g.Scope); err != nil {
-		scope.Set("sub")
+		_ = scope.Set("sub")
 	}
 
 	return scope
@@ -783,13 +794,17 @@ func (p *LDAPSearchProtocol) GetScope() (*LDAPScope, error) {
 
 	scope := &LDAPScope{}
 	if p == nil {
-		scope.Set("sub")
+		if err = scope.Set("sub"); err != nil {
+			return nil, err
+		}
 
 		return scope, nil
 	}
 
 	if p.Scope == "" {
-		scope.Set("sub")
+		if err = scope.Set("sub"); err != nil {
+			return nil, err
+		}
 
 		return scope, nil
 	}
@@ -1058,7 +1073,7 @@ func (l *LDAPConf) GetCacheMaxEntries() int {
 // GetCacheImpl returns selected cache implementation: "lru" or "ttl". Default "ttl".
 func (l *LDAPConf) GetCacheImpl() string {
 	if l == nil || l.CacheImpl == "" {
-		return "ttl"
+		return defaultLDAPCacheImpl
 	}
 
 	return l.CacheImpl

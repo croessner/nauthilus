@@ -50,7 +50,8 @@ const (
 	MaxAge = 365 * 24 * 60 * 60
 
 	// csrfContextKey is the key used to store CSRF context in Gin context.
-	csrfContextKey = "csrf_context"
+	csrfContextKey  = "csrf_context"
+	csrfSchemeHTTPS = "https"
 )
 
 // safeMethods are HTTP methods that don't require CSRF validation.
@@ -211,6 +212,7 @@ func (h *DefaultHandler) Middleware() gin.HandlerFunc {
 		// Validate origin/referer
 		if err := h.validateSameOrigin(ctx); err != nil {
 			csrfCtx.reason = err
+
 			h.failureHandler(ctx)
 
 			return
@@ -221,6 +223,7 @@ func (h *DefaultHandler) Middleware() gin.HandlerFunc {
 
 		if !h.validator.Validate(realToken, sentToken) {
 			csrfCtx.reason = ErrBadToken
+
 			h.failureHandler(ctx)
 
 			return
@@ -381,8 +384,8 @@ func (h *DefaultHandler) validateSameOrigin(ctx *gin.Context) error {
 	}
 
 	// Assume HTTPS for most production scenarios
-	if ctx.Request.TLS != nil || ctx.GetHeader("X-Forwarded-Proto") == "https" {
-		selfOrigin.Scheme = "https"
+	if ctx.Request.TLS != nil || ctx.GetHeader("X-Forwarded-Proto") == csrfSchemeHTTPS {
+		selfOrigin.Scheme = csrfSchemeHTTPS
 	}
 
 	// Check Sec-Fetch-Site header first (modern browsers)

@@ -36,7 +36,7 @@ func RegisterManagementOpenAPI(router gin.IRouter) {
 	router.GET(managementOpenAPIJSONPath, serveOpenAPI("application/json; charset=utf-8", openapi.ManagementJSON))
 }
 
-// WithIDPOpenAPI registers the public IdP API contract.
+// WithIDPOpenAPI registers the public IDP API contract.
 func (r *Router) WithIDPOpenAPI() *Router {
 	r.Engine.GET(idPOpenAPIYAMLPath, serveOpenAPI("application/yaml; charset=utf-8", openapi.IDPYAML))
 	r.Engine.GET(idPOpenAPIJSONPath, serveOpenAPI("application/json; charset=utf-8", openapi.IDPJSON))

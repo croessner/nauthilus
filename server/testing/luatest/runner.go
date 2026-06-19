@@ -131,126 +131,147 @@ func (tr *TestRunner) Run() (*TestResult, error) {
 				if tr.mockData.Context != nil {
 					return tr.mockData.Context.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.Redis != nil {
 					return tr.mockData.Redis.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.Policy != nil {
 					return tr.mockData.Policy.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.I18N != nil {
 					return tr.mockData.I18N.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.LDAP != nil {
 					return tr.mockData.LDAP.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.Backend != nil {
 					return tr.mockData.Backend.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.BackendResult != nil {
 					return tr.mockData.BackendResult.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.HTTPRequest != nil {
 					return tr.mockData.HTTPRequest.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.HTTPResponse != nil {
 					return tr.mockData.HTTPResponse.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.HTTPClient != nil {
 					return tr.mockData.HTTPClient.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.DNS != nil {
 					return tr.mockData.DNS.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.OpenTelemetry != nil {
 					return tr.mockData.OpenTelemetry.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.BruteForce != nil {
 					return tr.mockData.BruteForce.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.Psnet != nil {
 					return tr.mockData.Psnet.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.Prometheus != nil {
 					return tr.mockData.Prometheus.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.Util != nil {
 					return tr.mockData.Util.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.Cache != nil {
 					return tr.mockData.Cache.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.Misc != nil {
 					return tr.mockData.Misc.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.Password != nil {
 					return tr.mockData.Password.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.SoftWhitelist != nil {
 					return tr.mockData.SoftWhitelist.ValidateComplete()
 				}
+
 				return nil
 			},
 			func() error {
 				if tr.mockData.Mail != nil {
 					return tr.mockData.Mail.ValidateComplete()
 				}
+
 				return nil
 			},
 		}
@@ -284,6 +305,7 @@ func (tr *TestRunner) configureLuaPackagePath(L *lua.LState) {
 	}
 
 	pkg := L.GetGlobal("package")
+
 	pkgTbl, ok := pkg.(*lua.LTable)
 	if !ok {
 		return
@@ -342,6 +364,7 @@ func (tr *TestRunner) createRequestTable(L *lua.LState) *lua.LTable {
 		} else {
 			L.SetField(requestTable, "log_level", lua.LString("info"))
 		}
+
 		L.SetField(requestTable, "log_format", lua.LString("json"))
 
 		// Keep old nested shape for backwards compatibility.
@@ -964,6 +987,7 @@ func (tr *TestRunner) validateOutput(result *TestResult) {
 	if expected.StatusMessageContain != nil {
 		for _, expectedStatus := range expected.StatusMessageContain {
 			found := false
+
 			for _, status := range result.StatusMessages {
 				if strings.Contains(status, expectedStatus) {
 					found = true
@@ -986,6 +1010,7 @@ func (tr *TestRunner) validateOutput(result *TestResult) {
 					result.Success = false
 					result.Errors = append(result.Errors,
 						fmt.Errorf("unexpected status message found: %s", unexpectedStatus))
+
 					break
 				}
 			}
@@ -996,12 +1021,14 @@ func (tr *TestRunner) validateOutput(result *TestResult) {
 	if expected.LogsContain != nil {
 		for _, expectedLog := range expected.LogsContain {
 			found := false
+
 			for _, log := range result.Logs {
 				if strings.Contains(log, expectedLog) {
 					found = true
 					break
 				}
 			}
+
 			if !found {
 				result.Success = false
 				result.Errors = append(result.Errors,
@@ -1018,6 +1045,7 @@ func (tr *TestRunner) validateOutput(result *TestResult) {
 					result.Success = false
 					result.Errors = append(result.Errors,
 						fmt.Errorf("unexpected log found: %s", unexpectedLog))
+
 					break
 				}
 			}
@@ -1043,56 +1071,74 @@ func (tr *TestRunner) PrintResult(result *TestResult) {
 	if result.SubjectResult != nil {
 		fmt.Printf("Subject Result: %d\n", *result.SubjectResult)
 	}
+
 	if result.SubjectRejected != nil {
 		fmt.Printf("Subject Rejected: %t\n", *result.SubjectRejected)
 	}
+
 	if result.EnvironmentTriggered != nil {
 		fmt.Printf("Environment Triggered: %t\n", *result.EnvironmentTriggered)
 	}
+
 	if result.EnvironmentAbort != nil {
 		fmt.Printf("Environment Abort: %t\n", *result.EnvironmentAbort)
 	}
+
 	if result.EnvironmentResult != nil {
 		fmt.Printf("Environment Result: %d\n", *result.EnvironmentResult)
 	}
+
 	if result.ActionResult != nil {
 		fmt.Printf("Action Result: %t\n", *result.ActionResult)
 	}
+
 	if result.BackendResult != nil {
 		fmt.Printf("Backend Result: %t\n", *result.BackendResult)
 	}
+
 	if result.BackendReturnCode != nil {
 		fmt.Printf("Backend Return Code: %d\n", *result.BackendReturnCode)
 	}
+
 	if result.BackendAuthenticated != nil {
 		fmt.Printf("Backend Authenticated: %t\n", *result.BackendAuthenticated)
 	}
+
 	if result.BackendUserFound != nil {
 		fmt.Printf("Backend User Found: %t\n", *result.BackendUserFound)
 	}
+
 	if result.BackendAccountField != nil {
 		fmt.Printf("Backend Account Field: %s\n", *result.BackendAccountField)
 	}
+
 	if result.BackendDisplayName != nil {
 		fmt.Printf("Backend Display Name: %s\n", *result.BackendDisplayName)
 	}
+
 	if result.BackendUniqueUserID != nil {
 		fmt.Printf("Backend Unique User ID: %s\n", *result.BackendUniqueUserID)
 	}
+
 	if result.UsedBackendAddress != nil {
 		fmt.Printf("Used Backend Address: %s\n", *result.UsedBackendAddress)
 	}
+
 	if result.UsedBackendPort != nil {
 		fmt.Printf("Used Backend Port: %d\n", *result.UsedBackendPort)
 	}
+
 	if len(result.CacheFlushAdditionalKeys) > 0 {
 		fmt.Printf("Cache Flush Additional Keys: %v\n", result.CacheFlushAdditionalKeys)
 	}
+
 	if result.CacheFlushAccountName != nil {
 		fmt.Printf("Cache Flush Account Name: %s\n", *result.CacheFlushAccountName)
 	}
+
 	if len(result.StatusMessages) > 0 {
 		fmt.Println("\nStatus Messages:")
+
 		for _, status := range result.StatusMessages {
 			fmt.Printf("  [STATUS] %s\n", status)
 		}
@@ -1100,6 +1146,7 @@ func (tr *TestRunner) PrintResult(result *TestResult) {
 
 	if len(result.Logs) > 0 {
 		fmt.Println("\nLogs:")
+
 		for _, log := range result.Logs {
 			fmt.Printf("  %s\n", log)
 		}
@@ -1107,6 +1154,7 @@ func (tr *TestRunner) PrintResult(result *TestResult) {
 
 	if len(result.Errors) > 0 {
 		fmt.Println("\nErrors:")
+
 		for _, err := range result.Errors {
 			fmt.Printf("  ✗ %s\n", err)
 		}

@@ -40,14 +40,20 @@ import (
 )
 
 const (
-	policyCollectionContextKey = "policy_collection"
-	policyAttributeSuffixError = "error"
-	policyConfigRefBruteForce  = "auth.controls.brute_force"
-	policyConfigRefRBL         = "auth.controls.rbl"
-	policyConfigRefRelay       = "auth.controls.relay_domains"
-	policyConfigRefTLS         = "auth.controls.tls_encryption"
-	policyDetailError          = "error"
-	policyModeObserve          = "observe"
+	policyCollectionContextKey  = "policy_collection"
+	policyAttributeSuffixError  = "error"
+	policyConfigRefBruteForce   = "auth.controls.brute_force"
+	policyConfigRefRBL          = "auth.controls.rbl"
+	policyConfigRefRelay        = "auth.controls.relay_domains"
+	policyConfigRefTLS          = "auth.controls.tls_encryption"
+	policyDetailBackend         = "backend"
+	policyDetailCount           = "count"
+	policyDetailError           = "error"
+	policyDetailHTTPJSON        = "http_json"
+	policyDetailReasonCode      = "reason_code"
+	policyDetailRetryable       = "retryable"
+	policyDetailSoftAllowlisted = "soft_allowlisted"
+	policyModeObserve           = "observe"
 )
 
 type policyCheckResult struct {
@@ -267,7 +273,7 @@ func (a *AuthState) observeConfiguredPolicyDecision(ctx *gin.Context) {
 
 func (a *AuthState) policyResponseSurface() string {
 	if a == nil {
-		return "http_json"
+		return policyDetailHTTPJSON
 	}
 
 	if a.Request.ListAccounts {
@@ -291,7 +297,7 @@ func (a *AuthState) policyResponseSurface() string {
 		return "http_header"
 	case definitions.ServGRPC:
 		return "grpc_auth_service"
-	case definitions.ServIdP:
+	case definitions.ServIDP:
 		return "idp_browser"
 	case definitions.ServJSON:
 		return "http_json"
@@ -373,12 +379,12 @@ func (a *AuthState) recordPolicyRelayDomains(ctx *gin.Context, triggered bool) {
 
 func relayDomainPolicyDetails(fact RelayDomainPolicyFact) map[string]policycollection.DetailValue {
 	details := map[string]policycollection.DetailValue{
-		"configured_count": policycollection.InternalDetail(float64(fact.ConfiguredCount)),
-		"present":          policycollection.InternalDetail(fact.Present),
-		"known":            policycollection.InternalDetail(fact.Known),
-		"rejected":         policycollection.InternalDetail(fact.Rejected),
-		"static_match":     policycollection.InternalDetail(fact.StaticMatch),
-		"soft_allowlisted": policycollection.InternalDetail(fact.SoftAllowlisted),
+		"configured_count":          policycollection.InternalDetail(float64(fact.ConfiguredCount)),
+		"present":                   policycollection.InternalDetail(fact.Present),
+		"known":                     policycollection.InternalDetail(fact.Known),
+		"rejected":                  policycollection.InternalDetail(fact.Rejected),
+		"static_match":              policycollection.InternalDetail(fact.StaticMatch),
+		policyDetailSoftAllowlisted: policycollection.InternalDetail(fact.SoftAllowlisted),
 	}
 
 	if fact.Value != "" {
@@ -395,6 +401,7 @@ func relayDomainPolicyDetails(fact RelayDomainPolicyFact) map[string]policycolle
 func (a *AuthState) recordPolicyRBL(ctx *gin.Context, triggered bool, err error) {
 	status := policy.CheckStatusOK
 	reason := ""
+
 	fact := a.Runtime.RBLPolicy
 	if fact.Threshold == 0 {
 		if rbls := a.cfg().GetRBLs(); rbls != nil {
@@ -421,8 +428,8 @@ func (a *AuthState) recordPolicyRBL(ctx *gin.Context, triggered bool, err error)
 		status = policy.CheckStatusError
 		reason = "rbl_error"
 		attributes = append(attributes, policycollection.BoolAttribute(policy.AttributeRBLError, policy.StagePreAuth, a.policyOperation(), true, map[string]policycollection.DetailValue{
-			"reason_code": policycollection.InternalDetail(reason),
-			"retryable":   policycollection.InternalDetail(true),
+			policyDetailReasonCode: policycollection.InternalDetail(reason),
+			policyDetailRetryable:  policycollection.InternalDetail(true),
 		}))
 	} else {
 		attributes = append(attributes, policycollection.BoolAttribute(policy.AttributeRBLError, policy.StagePreAuth, a.policyOperation(), false, nil))
@@ -507,6 +514,7 @@ func rblListPolicyDetails(identifier string, fact RBLListPolicyFact) map[string]
 func (a *AuthState) recordPolicyBruteForce(ctx *gin.Context, triggered bool) {
 	operation := a.policyOperation()
 	summary := summarizeBruteForceBucketFacts(a.Runtime.BruteForceBuckets)
+
 	details := map[string]policycollection.DetailValue{}
 	if a.Security.BruteForceName != "" {
 		details["rule"] = policycollection.InternalDetail(a.Security.BruteForceName)
@@ -686,9 +694,9 @@ func (a *AuthState) recordPolicyBackendResult(ctx *gin.Context, authResult defin
 		status = policy.CheckStatusError
 		reason = "backend_tempfail"
 		attributes = append(attributes, policycollection.BoolAttribute(policy.AttributeBackendTempFail, policy.StageAuthBackend, a.policyOperation(), true, map[string]policycollection.DetailValue{
-			"backend":     policycollection.InternalDetail(name),
-			"reason_code": policycollection.InternalDetail(reason),
-			"retryable":   policycollection.InternalDetail(true),
+			policyDetailBackend:    policycollection.InternalDetail(name),
+			policyDetailReasonCode: policycollection.InternalDetail(reason),
+			policyDetailRetryable:  policycollection.InternalDetail(true),
 		}))
 	} else {
 		attributes = append(attributes, policycollection.BoolAttribute(policy.AttributeBackendTempFail, policy.StageAuthBackend, a.policyOperation(), false, details))
@@ -719,7 +727,7 @@ func (a *AuthState) recordPolicyAccountProvider(ctx *gin.Context, count int, err
 	reason := ""
 	attributes := []policycollection.AttributeValue{
 		policycollection.BoolAttribute(policy.AttributeAccountProviderCompleted, policy.StageAccountProvider, policy.OperationListAccounts, !errSeen, map[string]policycollection.DetailValue{
-			"count": policycollection.InternalDetail(count),
+			policyDetailCount: policycollection.InternalDetail(count),
 		}),
 	}
 
@@ -971,6 +979,7 @@ func subjectAttributePolicyAttributes(
 	}
 
 	operation := auth.policyOperation()
+
 	attributes := make([]policycollection.AttributeValue, 0, len(exports))
 	for _, exportConfig := range exports {
 		attributes = append(attributes, subjectAttributePolicyAttribute(exportConfig, source, operation))

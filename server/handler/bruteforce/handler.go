@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package bruteforce provides bruteforce functionality.
 package bruteforce
 
 import (
@@ -22,14 +23,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Handler describes the exported Handler type.
 type Handler struct {
 	deps *handlerdeps.Deps
 }
 
+// New provides the exported New function.
 func New(deps *handlerdeps.Deps) *Handler {
 	return &Handler{deps: deps}
 }
 
+// Register provides the exported Register method.
 func (h *Handler) Register(router gin.IRouter) {
 	bg := router.Group("/" + definitions.CatBruteForce)
 

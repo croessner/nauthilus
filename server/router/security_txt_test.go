@@ -34,6 +34,7 @@ func TestWithSecurityTxt_RegistersConfiguredEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	policyPath := filepath.Join(dir, "security-policy.md")
 	keyPath := filepath.Join(dir, "security.asc")
+
 	writeSecurityTxtTestFile(t, policyPath, []byte("# Security Policy\n"))
 	writeSecurityTxtTestFile(t, keyPath, []byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\n"))
 
@@ -85,6 +86,7 @@ func TestWithSecurityTxt_ServesConfiguredFiles(t *testing.T) {
 	dir := t.TempDir()
 	policyPath := filepath.Join(dir, "security-policy.md")
 	keyPath := filepath.Join(dir, "security.asc")
+
 	writeSecurityTxtTestFile(t, policyPath, []byte("# Security Policy\n"))
 	writeSecurityTxtTestFile(t, keyPath, []byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\n"))
 

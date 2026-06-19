@@ -87,6 +87,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 		ctx = WithPreviousSnapshot(ctx, prev)
 
 		var errs []error
+
 		for _, r := range m.reloadables {
 			if r == nil {
 				continue
@@ -95,6 +96,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 			if err := r.ApplyConfig(ctx, snap); err != nil {
 				wrapped := fmt.Errorf("reloadable %s apply config failed: %w", r.Name(), err)
 				errs = append(errs, wrapped)
+
 				m.logger.Error("apply config failed", slog.String("component", r.Name()), slog.Any("error", err))
 			}
 		}

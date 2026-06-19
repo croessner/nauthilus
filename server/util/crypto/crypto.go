@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package crypto provides crypto functionality.
 package crypto
 
 import (
@@ -25,8 +26,10 @@ import (
 )
 
 var (
+	// ErrInvalidKeySize is an exported package value.
 	ErrInvalidKeySize = errors.New("crypto: invalid key size")
-	ErrDecryption     = errors.New("crypto: decryption failed")
+	// ErrDecryption is an exported package value.
+	ErrDecryption = errors.New("crypto: decryption failed")
 )
 
 // DeriveKey derives a 32-byte key from a secret using SHA-256.
@@ -38,6 +41,7 @@ func DeriveKey(secret []byte) []byte {
 // Encrypt encrypts data using ChaCha20-Poly1305 and a secret.
 func Encrypt(data []byte, secret []byte) ([]byte, error) {
 	key := DeriveKey(secret)
+
 	aead, err := chacha20poly1305.New(key)
 	if err != nil {
 		return nil, err
@@ -55,6 +59,7 @@ func Encrypt(data []byte, secret []byte) ([]byte, error) {
 // Decrypt decrypts data using ChaCha20-Poly1305 and a secret.
 func Decrypt(data []byte, secret []byte) ([]byte, error) {
 	key := DeriveKey(secret)
+
 	aead, err := chacha20poly1305.New(key)
 	if err != nil {
 		return nil, err
@@ -66,6 +71,7 @@ func Decrypt(data []byte, secret []byte) ([]byte, error) {
 	}
 
 	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+
 	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return nil, ErrDecryption
@@ -85,5 +91,6 @@ func DecryptString(ciphertext []byte, secret []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return string(plaintext), nil
 }

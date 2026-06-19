@@ -322,7 +322,7 @@ func cloneLuaBackendResult(source *lualib.LuaBackendResult) *lualib.LuaBackendRe
 	clone := *source
 	clone.WebAuthnCredentials = append([]string(nil), source.WebAuthnCredentials...)
 	clone.Groups = append([]string(nil), source.Groups...)
-	clone.GroupDNs = append([]string(nil), source.GroupDNs...)
+	clone.GroupDistinguishedNames = append([]string(nil), source.GroupDistinguishedNames...)
 
 	if source.Attributes != nil {
 		clone.Attributes = make(map[any]any, len(source.Attributes))
@@ -378,7 +378,7 @@ func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc,
 
 				return ""
 			}(),
-			"name", scriptName,
+			luaSubjectLogKeyName, scriptName,
 			definitions.LogKeyMsg, "Lua subject source failed",
 			definitions.LogKeyError, ae.Error(),
 			"stacktrace", ae.StackTrace,
@@ -553,9 +553,9 @@ func (m *BackendManager) applyBackendResult(L *lua.LState) int {
 	// Ensure destination exists
 	if *m.backendResult == nil {
 		*m.backendResult = &lualib.LuaBackendResult{
-			Attributes: make(map[any]any),
-			Groups:     []string{},
-			GroupDNs:   []string{},
+			Attributes:              make(map[any]any),
+			Groups:                  []string{},
+			GroupDistinguishedNames: []string{},
 		}
 	}
 
@@ -566,7 +566,7 @@ func (m *BackendManager) applyBackendResult(L *lua.LState) int {
 	// Merge attributes (overwrite on conflict)
 	maps.Copy((*m.backendResult).Attributes, luaBackendResult.Attributes)
 	(*m.backendResult).Groups = mergeSortedUniqueStrings((*m.backendResult).Groups, luaBackendResult.Groups)
-	(*m.backendResult).GroupDNs = mergeSortedUniqueStrings((*m.backendResult).GroupDNs, luaBackendResult.GroupDNs)
+	(*m.backendResult).GroupDistinguishedNames = mergeSortedUniqueStrings((*m.backendResult).GroupDistinguishedNames, luaBackendResult.GroupDistinguishedNames)
 
 	return 0
 }
@@ -574,6 +574,7 @@ func (m *BackendManager) applyBackendResult(L *lua.LState) int {
 // removeFromBackendResult populates a given slice with strings from a Lua table passed as an argument.
 func (m *BackendManager) removeFromBackendResult(L *lua.LState) int {
 	stack := luastack.NewManager(L)
+
 	if m.removeAttributes == nil {
 		return 0
 	}
@@ -698,6 +699,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 
 	defer func() {
 		latency := time.Since(startTime)
+
 		if r.Logs == nil {
 			r.Logs = new(lualib.CustomLogKeyValue)
 		}
@@ -716,6 +718,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 	mode := subjectModeText(modeMask)
 	authState := requestPolicyAuthState(r)
 	scriptPlan := policySubjectScriptPlan(r, authState)
+
 	runnable := countSubjectSourcesForMode(LuaSubjectSources.LuaScripts, modeMask)
 	if scriptPlan.Configured {
 		runnable = len(scriptPlan.Schedules)
@@ -770,6 +773,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 		attribute.Int("scripts", plannedCount),
 		attribute.String("mode", mode),
 	)
+
 	if err != nil {
 		pspan.RecordError(err)
 		pspan.End()
@@ -782,9 +786,9 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 	// If no scripts should run in this mode, return early with empty aggregates.
 	if plannedCount == 0 {
 		mergedBackendResult := &lualib.LuaBackendResult{
-			Attributes: make(map[any]any),
-			Groups:     []string{},
-			GroupDNs:   []string{},
+			Attributes:              make(map[any]any),
+			Groups:                  []string{},
+			GroupDistinguishedNames: []string{},
 		}
 
 		return false, mergedBackendResult, nil, nil
@@ -795,9 +799,9 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 	pool := vmpool.GetManager().GetOrCreate("subject:default", vmpool.PoolOptions{MaxVMs: cfg.GetLuaSubjectSourceVMPoolSize(), Config: cfg})
 
 	mergedBackendResult := &lualib.LuaBackendResult{
-		Attributes: make(map[any]any),
-		Groups:     []string{},
-		GroupDNs:   []string{},
+		Attributes:              make(map[any]any),
+		Groups:                  []string{},
+		GroupDistinguishedNames: []string{},
 	}
 	mergedRemoveAttributes := config.NewStringSet()
 
@@ -845,6 +849,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					attribute.Int("level", levelIndex),
 				)
 				lease, acqErr := pool.AcquireLease(actx)
+
 				asp.End()
 
 				if acqErr != nil {
@@ -865,13 +870,17 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 
 				// Local log and status to avoid races on r.Logs / r.StatusMessage
 				localLogs := new(lualib.CustomLogKeyValue)
+
 				var localStatus *string
 
 				// Local backend result and remove-attributes that this subject source may set
 				localBackendResult := cloneLuaBackendResult(mergedBackendResult)
 				localRemoveAttrs := make([]string, 0)
-				var localUsedBackendAddr *string
-				var localUsedBackendPort *int
+
+				var (
+					localUsedBackendAddr *string
+					localUsedBackendPort *int
+				)
 
 				if r.UsedBackendAddr != nil {
 					addrValue := *r.UsedBackendAddr
@@ -968,6 +977,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					attribute.String("mode", mode),
 					attribute.Int("level", levelIndex),
 				)
+
 				luapool.PrepareRequestEnv(Llocal)
 
 				// Bind request-scoped modules into reqEnv so that require() resolves correctly.
@@ -1128,6 +1138,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 				)
 
 				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.package_path")
+
 				if e := lualib.PackagePath(Llocal, cfg); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 					packagePathSpan.RecordError(e)
@@ -1142,6 +1153,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 				packagePathSpan.End()
 
 				_, loadSpan := scriptTrace.Start(execCtx, "lua.script.load_chunk")
+
 				if e := lualib.DoCompiledFile(Llocal, sc.CompiledScript); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 					loadSpan.RecordError(e)
@@ -1160,6 +1172,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					attribute.String("lua.entrypoint", definitions.LuaFnCallSubject),
 				)
 				subjectFunc := lua.LNil
+
 				if v := Llocal.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
 					if fn := Llocal.GetField(v, definitions.LuaFnCallSubject); fn != nil {
 						subjectFunc = fn
@@ -1189,6 +1202,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 				_, callSpan := scriptTrace.Start(execCtx, "lua.script.call",
 					attribute.String("lua.entrypoint", definitions.LuaFnCallSubject),
 				)
+
 				if e := Llocal.CallByParam(lua.P{Fn: subjectFunc, NRet: 2, Protect: true}, request); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 					callSpan.RecordError(e)
@@ -1207,6 +1221,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 				Llocal.Pop(1)
 				takeAction := Llocal.ToBool(-1)
 				Llocal.Pop(1)
+
 				fr.ret = ret
 				fr.action = takeAction
 
@@ -1245,12 +1260,12 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 				}
 
 				// Emit debug log for this subject source
-				logs := []any{definitions.LogKeyGUID, r.Session, "name", sc.Name, definitions.LogKeyMsg, "Lua subject source finished", "action", fr.action, "result", func() string {
+				logs := []any{definitions.LogKeyGUID, r.Session, luaSubjectLogKeyName, sc.Name, definitions.LogKeyMsg, "Lua subject source finished", "action", fr.action, "result", func() string {
 					switch fr.ret {
 					case 0:
-						return "ok"
+						return luaSubjectResultOK
 					case 1:
-						return "fail"
+						return luaSubjectResultFail
 					default:
 						return fmt.Sprintf("unknown(%d)", fr.ret)
 					}
@@ -1271,6 +1286,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 				r.recordSubjectScriptResult(egCtx, sc.Name, fr.action, subjectStatusText(localStatus), time.Since(scriptStarted), nil)
 
 				mu.Lock()
+
 				levelResults = append(levelResults, fr)
 				mu.Unlock()
 
@@ -1321,7 +1337,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 
 			if fr.backendResult != nil {
 				mergedBackendResult.Groups = mergeSortedUniqueStrings(mergedBackendResult.Groups, fr.backendResult.Groups)
-				mergedBackendResult.GroupDNs = mergeSortedUniqueStrings(mergedBackendResult.GroupDNs, fr.backendResult.GroupDNs)
+				mergedBackendResult.GroupDistinguishedNames = mergeSortedUniqueStrings(mergedBackendResult.GroupDistinguishedNames, fr.backendResult.GroupDistinguishedNames)
 			}
 
 			for _, attr := range fr.removeAttrsList {

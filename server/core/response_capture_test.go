@@ -147,6 +147,7 @@ func TestCaptureResponseWriter_TempFailCapturesOutcomeWithoutHTTPRendering(t *te
 func TestCaptureResponseWriter_EnvironmentRejectionPreservesPostActionAndCapturesFail(t *testing.T) {
 	postAction := &countingPostAction{}
 	previousPostAction := getPostAction()
+
 	RegisterPostAction(postAction)
 	t.Cleanup(func() {
 		RegisterPostAction(previousPostAction)
@@ -198,6 +199,7 @@ func newCaptureWriterTestState(
 	t.Helper()
 
 	setupMinimalTestConfig(t)
+
 	if cfg, ok := config.GetFile().(*config.FileSettings); ok {
 		cfg.Server.MaxLoginAttempts = 5
 	}
@@ -218,6 +220,7 @@ func newCaptureWriterTestState(
 		Logger: logger,
 		Resp:   writer,
 	}).(*AuthState)
+
 	auth.Request.Service = definitions.ServJSON
 	if path == "/api/v1/auth/cbor" {
 		auth.Request.Service = definitions.ServCBOR

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package auth provides auth functionality.
 package auth
 
 import (
@@ -23,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/util"
 )
 
+// DefaultActionDispatcher describes the exported DefaultActionDispatcher type.
 type DefaultActionDispatcher struct{}
 
 // Dispatch sends an action to the Lua execution pipeline, initializing context and preparing authentication details.

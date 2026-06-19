@@ -30,9 +30,12 @@ import (
 )
 
 var (
-	ErrEmptyAccount    = errors.New("empty slo account")
+	// ErrEmptyAccount is an exported package value.
+	ErrEmptyAccount = errors.New("empty slo account")
+	// ErrEmptySPEntityID is an exported package value.
 	ErrEmptySPEntityID = errors.New("empty slo service provider entity id")
-	ErrInvalidTTL      = errors.New("invalid slo participant ttl")
+	// ErrInvalidTTL reports an invalid SLO participant TTL.
+	ErrInvalidTTL = errors.New("invalid slo participant ttl")
 )
 
 const defaultRegistryPrefix = "idp:saml:slo"

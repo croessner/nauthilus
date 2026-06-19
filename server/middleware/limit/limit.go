@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package limit provides limit functionality.
 package limit
 
 import (
@@ -31,37 +32,45 @@ import (
 	"github.com/segmentio/ksuid"
 )
 
-// LimitCounter tracks the current number of active connections and limits them based on a specified maximum.
-type LimitCounter struct {
+const (
+	limitBypassHealthPath  = "/healthz"
+	limitBypassMetricsPath = "/metrics"
+	limitBypassPingPath    = "/ping"
+	limitResponseKeyScope  = "scope"
+	limitScopeConcurrency  = "concurrency"
+)
+
+// Counter tracks the current number of active connections and limits them based on a specified maximum.
+type Counter struct {
 	// MaxConnections defines the maximum number of concurrent connections allowed.
 	MaxConnections int32
 
-	// CurrentConnections tracks the current number of active connections in the LimitCounter middleware.
+	// CurrentConnections tracks the current number of active connections in the Counter middleware.
 	CurrentConnections int32
 }
 
-// NewLimitCounter creates a new LimitCounter instance with the specified maximum number of concurrent connections.
-func NewLimitCounter(maxConnections int32) *LimitCounter {
-	return &LimitCounter{
+// NewLimitCounter creates a new Counter instance with the specified maximum number of concurrent connections.
+func NewLimitCounter(maxConnections int32) *Counter {
+	return &Counter{
 		MaxConnections: maxConnections,
 	}
 }
 
 // Middleware limits the number of concurrent connections handled by the server based on MaxConnections.
 // It is context-aware and prioritizes certain types of requests.
-func (lc *LimitCounter) Middleware() gin.HandlerFunc {
+func (lc *Counter) Middleware() gin.HandlerFunc {
 	return lc.MiddlewareWithLogger(slog.Default())
 }
 
 // MiddlewareWithLogger is the logger-injected variant of Middleware.
-func (lc *LimitCounter) MiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
+func (lc *Counter) MiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	return func(ctx *gin.Context) {
 		// Always allow health check and metrics endpoints regardless of connection limits
-		if ctx.FullPath() == "/ping" || ctx.FullPath() == "/healthz" || ctx.FullPath() == "/metrics" {
+		if ctx.FullPath() == limitBypassPingPath || ctx.FullPath() == limitBypassHealthPath || ctx.FullPath() == limitBypassMetricsPath {
 			ctx.Next()
 
 			return
@@ -70,12 +79,12 @@ func (lc *LimitCounter) MiddlewareWithLogger(logger *slog.Logger) gin.HandlerFun
 		// Check if we're at the connection limit
 		currentConnections := atomic.LoadInt32(&lc.CurrentConnections)
 		if currentConnections >= lc.MaxConnections {
-			ctx.Set(definitions.CtxRateLimitReasonKey, "concurrency")
+			ctx.Set(definitions.CtxRateLimitReasonKey, limitScopeConcurrency)
 
 			// For API requests, return 429 status code
 			ctx.JSON(http.StatusTooManyRequests, gin.H{
 				definitions.LogKeyMsg: "Too many requests",
-				"scope":               "concurrency",
+				limitResponseKeyScope: limitScopeConcurrency,
 				"current":             currentConnections,
 				"max":                 lc.MaxConnections,
 			})

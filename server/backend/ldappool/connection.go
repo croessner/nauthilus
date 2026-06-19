@@ -40,6 +40,8 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
+const ldapSchemeLDAPS = "ldaps"
+
 // LDAPConnection defines behaviors for managing and interacting with an LDAP connection.
 type LDAPConnection interface {
 	// SetState sets the current state of the LDAP connection to the specified LDAPState value.
@@ -113,6 +115,7 @@ func (l *LDAPConnectionImpl) GetConn() *ldap.Conn {
 	return l.conn
 }
 
+// GetMutex provides the exported GetMutex method.
 func (l *LDAPConnectionImpl) GetMutex() *sync.Mutex {
 	return &l.mu
 }
@@ -158,7 +161,7 @@ EndlessLoop:
 			l.logURIInfo(context.Background(), cfg, logger, guid, ldapConf, idx, retryCount)
 
 			u, _ := url.Parse(target)
-			if u.Scheme == "ldaps" || ldapConf.StartTLS {
+			if u.Scheme == ldapSchemeLDAPS || ldapConf.StartTLS {
 				tlsConfig, err = l.setTLSConfig(u, ldapConf)
 				if err != nil {
 					break EndlessLoop
@@ -166,6 +169,7 @@ EndlessLoop:
 			}
 
 			incInflight(pool, target)
+
 			err = l.dialAndStartTLS(context.Background(), cfg, logger, guid, ldapConf, idx, tlsConfig)
 			if err != nil {
 				decInflight(pool, target)
@@ -207,6 +211,7 @@ EndlessLoop:
 	}
 
 	connectTicker.Stop()
+
 	tickerEndChan <- bktype.Done{}
 
 	return err
@@ -661,6 +666,7 @@ func startHealthLoop(pool string, ldapConf *config.LDAPConf) {
 		c, err := ldap.DialURL(target, opts...)
 		if err == nil {
 			_ = c.Close()
+
 			setHealth(pool, target, true)
 
 			return
@@ -684,18 +690,18 @@ func startHealthLoop(pool string, ldapConf *config.LDAPConf) {
 // jitterBackoff applies exponential backoff with capped jitter to calculate the next retry duration.
 // base specifies the initial delay duration.
 // attempt is the current retry attempt count, used to calculate the exponential backoff.
-// max is the maximum delay duration to cap the backoff.
-func jitterBackoff(base time.Duration, attempt int, max time.Duration) time.Duration {
+// maxDelay is the maximum delay duration to cap the backoff.
+func jitterBackoff(base time.Duration, attempt int, maxDelay time.Duration) time.Duration {
 	if base <= 0 {
 		base = 200 * time.Millisecond
 	}
 
-	if max <= 0 {
-		max = 2 * time.Second
+	if maxDelay <= 0 {
+		maxDelay = 2 * time.Second
 	}
 
 	// exponential backoff
-	b := min(base*time.Duration(1<<attempt), max)
+	b := min(base*time.Duration(1<<attempt), maxDelay)
 
 	if b <= 0 {
 		return 0
@@ -760,7 +766,7 @@ func (l *LDAPConnectionImpl) setTLSConfig(u *url.URL, ldapConf *config.LDAPConf)
 		RootCAs:            caCertPool,
 		InsecureSkipVerify: ldapConf.TLSSkipVerify,
 		ServerName:         host,
-		VerifyPeerCertificate: func(certificates [][]byte, verifiedChains [][]*x509.Certificate) error {
+		VerifyPeerCertificate: func(certificates [][]byte, _ [][]*x509.Certificate) error {
 			for _, certBytes := range certificates {
 				certificate, err := x509.ParseCertificate(certBytes)
 				if err != nil {
@@ -792,7 +798,6 @@ func (l *LDAPConnectionImpl) dialAndStartTLS(ctx context.Context, cfg config.Fil
 
 	if ldapConf.StartTLS {
 		err = l.conn.StartTLS(tlsConfig)
-
 		if err != nil {
 			return err
 		}
@@ -853,6 +858,7 @@ func (l *LDAPConnectionImpl) simpleBind(ctx context.Context, cfg config.File, lo
 	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_dn", ldapConf.BindDN)
 
 	var bindPassword string
+
 	ldapConf.BindPW.WithString(func(value string) {
 		bindPassword = value
 	})
@@ -865,7 +871,6 @@ func (l *LDAPConnectionImpl) simpleBind(ctx context.Context, cfg config.File, lo
 		Username: ldapConf.BindDN,
 		Password: bindPassword,
 	})
-
 	if err != nil {
 		return err
 	}

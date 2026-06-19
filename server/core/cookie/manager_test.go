@@ -451,7 +451,7 @@ func TestSecureManager_IsSensitiveKey(t *testing.T) {
 	assert.False(t, mgr.isSensitiveKey("display_name"))
 }
 
-func TestSecureManager_Debug(t *testing.T) {
+func TestSecureManager_Debug(_ *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	mgr := newTestManager("test_cookie", false)
@@ -582,6 +582,7 @@ func TestManagerInterface(t *testing.T) {
 	var _ Manager = (*SecureManager)(nil)
 
 	mgr := newTestManager("test_cookie", false)
+
 	var iface Manager = mgr
 
 	iface.Set("key", "value")

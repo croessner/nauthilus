@@ -32,7 +32,7 @@ func TestStateValidate(t *testing.T) {
 			name: "valid",
 			state: &State{
 				FlowID:      "f-1",
-				FlowType:    FlowTypeOIDCAuthorization,
+				Type:        FlowTypeOIDCAuthorization,
 				Protocol:    FlowProtocolOIDC,
 				CurrentStep: FlowStepLogin,
 				AuthOutcome: AuthOutcomeUnknown,
@@ -42,7 +42,7 @@ func TestStateValidate(t *testing.T) {
 		{
 			name: "empty flow id",
 			state: &State{
-				FlowType:    FlowTypeOIDCAuthorization,
+				Type:        FlowTypeOIDCAuthorization,
 				Protocol:    FlowProtocolOIDC,
 				CurrentStep: FlowStepLogin,
 			},
@@ -52,7 +52,7 @@ func TestStateValidate(t *testing.T) {
 			name: "invalid flow type",
 			state: &State{
 				FlowID:      "f-1",
-				FlowType:    FlowTypeUnknown,
+				Type:        FlowTypeUnknown,
 				Protocol:    FlowProtocolOIDC,
 				CurrentStep: FlowStepLogin,
 			},
@@ -62,7 +62,7 @@ func TestStateValidate(t *testing.T) {
 			name: "invalid protocol",
 			state: &State{
 				FlowID:      "f-1",
-				FlowType:    FlowTypeOIDCAuthorization,
+				Type:        FlowTypeOIDCAuthorization,
 				Protocol:    FlowProtocolUnknown,
 				CurrentStep: FlowStepLogin,
 			},
@@ -72,9 +72,9 @@ func TestStateValidate(t *testing.T) {
 			name: "invalid step",
 			state: &State{
 				FlowID:      "f-1",
-				FlowType:    FlowTypeOIDCAuthorization,
+				Type:        FlowTypeOIDCAuthorization,
 				Protocol:    FlowProtocolOIDC,
-				CurrentStep: FlowStep("invalid"),
+				CurrentStep: Step("invalid"),
 				AuthOutcome: AuthOutcomeUnknown,
 			},
 			errWant: ErrInvalidStep,
@@ -83,7 +83,7 @@ func TestStateValidate(t *testing.T) {
 			name: "invalid auth outcome",
 			state: &State{
 				FlowID:      "f-1",
-				FlowType:    FlowTypeOIDCAuthorization,
+				Type:        FlowTypeOIDCAuthorization,
 				Protocol:    FlowProtocolOIDC,
 				CurrentStep: FlowStepLogin,
 				AuthOutcome: AuthOutcome("bad"),
@@ -140,7 +140,7 @@ func TestStateJSONRoundTrip(t *testing.T) {
 		Metadata: map[string]string{
 			"client_id": "nauthilus",
 		},
-		FlowType:    FlowTypeOIDCAuthorization,
+		Type:        FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		CurrentStep: FlowStepConsent,
 		AuthOutcome: AuthOutcomeFailLatched,
@@ -159,7 +159,7 @@ func TestStateJSONRoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 
-	if decoded.FlowID != state.FlowID || decoded.FlowType != state.FlowType || decoded.CurrentStep != state.CurrentStep {
+	if decoded.FlowID != state.FlowID || decoded.Type != state.Type || decoded.CurrentStep != state.CurrentStep {
 		t.Fatalf("decoded core values mismatch: got %+v want %+v", decoded, state)
 	}
 
@@ -175,7 +175,7 @@ func TestStateJSONRoundTrip(t *testing.T) {
 func TestStateUpdateAuthOutcome(t *testing.T) {
 	state := &State{
 		FlowID:      "f-1",
-		FlowType:    FlowTypeOIDCAuthorization,
+		Type:        FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		CurrentStep: FlowStepLogin,
 		AuthOutcome: AuthOutcomeUnknown,

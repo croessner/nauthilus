@@ -270,15 +270,15 @@ func (r *AuthorityIdentityResult) GetChanged() bool {
 
 // AuthorityUserSnapshot contains released identity data for gRPC identity responses.
 type AuthorityUserSnapshot struct {
-	Attributes   map[string][]string
-	Backend      BackendRefPayload
-	MFA          AuthorityMFAState
-	Username     string
-	Account      string
-	UniqueUserID string
-	DisplayName  string
-	Groups       []string
-	GroupDNS     []string
+	Attributes              map[string][]string
+	Backend                 BackendRefPayload
+	MFA                     AuthorityMFAState
+	Username                string
+	Account                 string
+	UniqueUserID            string
+	DisplayName             string
+	Groups                  []string
+	GroupDistinguishedNames []string
 }
 
 // AuthorityMFAState contains public MFA state only.

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package main provides the imap server command.
 package main
 
 import (
@@ -127,7 +128,7 @@ var _ net.Listener = (*ProxyAndTLSListener)(nil)
 func NewProxyAndTLSListener(rawListener net.Listener, tlsConfig *tls.Config) net.Listener {
 	proxyListener := &proxyproto.Listener{
 		Listener: rawListener,
-		ConnPolicy: func(opts proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+		ConnPolicy: func(_ proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
 			return proxyproto.REQUIRE, nil
 		},
 	}
@@ -186,7 +187,7 @@ func (s *IMAPServer) Start(wg *sync.WaitGroup) {
 	} else {
 		listener = &proxyproto.Listener{
 			Listener: rawListener,
-			ConnPolicy: func(opts proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+			ConnPolicy: func(_ proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
 				return proxyproto.REQUIRE, nil
 			},
 		}

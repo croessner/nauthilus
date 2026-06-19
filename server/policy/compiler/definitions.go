@@ -48,7 +48,11 @@ const (
 	effectKindPostAction = "post_action"
 	effectKindAdvice     = "advice"
 
+	detailReasonCode          = "reason_code"
 	detailStatusMessage       = "status_message"
+	policyProfileGRPCList     = "grpc_list_accounts"
+	policyProfileHTTPList     = "http_list_accounts"
+	policyAdviceAuditReason   = "auth.advice.audit_reason"
 	pluginModuleConfigRefRoot = "plugins.modules."
 )
 
@@ -138,14 +142,14 @@ func backendCheckTypes() map[string]policyruntime.CheckTypeDefinition {
 			Stage:              policy.StageAuthBackend,
 			Operations:         []policy.Operation{policy.OperationAuthenticate, policy.OperationLookupIdentity},
 			ConfigRefPrefix:    "auth.backends.ldap",
-			MinimumAttributes:  []string{"auth.authenticated", "auth.identity.found", "auth.backend.tempfail", "auth.backend.empty_username", "auth.backend.empty_password"},
+			MinimumAttributes:  backendMinimumAttributes(),
 			ObserveSafeDefault: false,
 		},
 		checkTypeLuaBackend: {
 			Stage:                      policy.StageAuthBackend,
 			Operations:                 []policy.Operation{policy.OperationAuthenticate, policy.OperationLookupIdentity},
 			ConfigRefPrefix:            "auth.backends.lua.backend",
-			MinimumAttributes:          []string{"auth.authenticated", "auth.identity.found", "auth.backend.tempfail", "auth.backend.empty_username", "auth.backend.empty_password"},
+			MinimumAttributes:          backendMinimumAttributes(),
 			ObserveSafeDefault:         false,
 			AllowsObserveSafeAssertion: true,
 		},
@@ -201,10 +205,10 @@ func builtinResponseRegistry() map[string]policyruntime.ResponseDefinition {
 		"nginx_auth_request",
 		"http_header",
 		"http_plain",
-		"http_list_accounts",
+		policyProfileHTTPList,
 		"grpc_auth_service",
 		"grpc_lookup_identity",
-		"grpc_list_accounts",
+		policyProfileGRPCList,
 		"idp_browser",
 		"idp_oidc",
 		"idp_saml",
@@ -212,30 +216,30 @@ func builtinResponseRegistry() map[string]policyruntime.ResponseDefinition {
 	}
 
 	return map[string]policyruntime.ResponseDefinition{
-		"auth.response.ok": {
-			ID:       "auth.response.ok",
+		policy.ResponseMarkerOK: {
+			ID:       policy.ResponseMarkerOK,
 			Effect:   policy.DecisionPermit,
 			Profiles: append([]string(nil), commonProfiles...),
 		},
-		"auth.response.fail": {
-			ID:       "auth.response.fail",
+		policy.ResponseMarkerFail: {
+			ID:       policy.ResponseMarkerFail,
 			Effect:   policy.DecisionDeny,
 			Profiles: append([]string(nil), commonProfiles...),
 		},
-		"auth.response.tempfail": {
-			ID:       "auth.response.tempfail",
+		policy.ResponseMarkerTempFail: {
+			ID:       policy.ResponseMarkerTempFail,
 			Effect:   policy.DecisionTempFail,
 			Profiles: append([]string(nil), commonProfiles...),
 		},
-		"auth.response.tempfail.no_tls": {
-			ID:       "auth.response.tempfail.no_tls",
+		policy.ResponseMarkerTempFailNoTLS: {
+			ID:       policy.ResponseMarkerTempFailNoTLS,
 			Effect:   policy.DecisionTempFail,
 			Profiles: append([]string(nil), commonProfiles...),
 		},
-		"auth.response.list_accounts.ok": {
-			ID:       "auth.response.list_accounts.ok",
+		policy.ResponseMarkerListAccountsOK: {
+			ID:       policy.ResponseMarkerListAccountsOK,
 			Effect:   policy.DecisionPermit,
-			Profiles: []string{"http_list_accounts", "grpc_list_accounts"},
+			Profiles: []string{policyProfileHTTPList, policyProfileGRPCList},
 		},
 	}
 }
@@ -250,7 +254,18 @@ func builtinObligationRegistry() map[string]policyruntime.EffectDefinition {
 
 func builtinAdviceRegistry() map[string]policyruntime.EffectDefinition {
 	return map[string]policyruntime.EffectDefinition{
-		"auth.advice.audit_reason": {ID: "auth.advice.audit_reason", Kind: effectKindAdvice},
+		policyAdviceAuditReason: {ID: policyAdviceAuditReason, Kind: effectKindAdvice},
+	}
+}
+
+// backendMinimumAttributes returns the required backend fact IDs for backend-stage checks.
+func backendMinimumAttributes() []string {
+	return []string{
+		policy.AttributeAuthenticated,
+		policy.AttributeIdentityFound,
+		policy.AttributeBackendTempFail,
+		policy.AttributeBackendEmptyUsername,
+		policy.AttributeBackendEmptyPassword,
 	}
 }
 

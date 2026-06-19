@@ -64,6 +64,7 @@ func TestDecisionReportRedactionExcludesSensitiveDetails(t *testing.T) {
 	}
 
 	redacted := report.Redacted()
+
 	payload, err := json.Marshal(redacted)
 	if err != nil {
 		t.Fatalf("marshal redacted report: %v", err)

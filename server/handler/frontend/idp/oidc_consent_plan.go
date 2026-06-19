@@ -53,15 +53,18 @@ func buildConsentScopePlan(client *config.OIDCClient, globalMode string, request
 		return plan
 	}
 
-	var requiredScopes []string
-	var optionalScopes []string
+	var (
+		requiredScopes []string
+		optionalScopes []string
+	)
+
 	if client != nil {
 		requiredScopes = uniqueScopes(client.RequiredScopes)
 		optionalScopes = uniqueScopes(client.OptionalScopes)
 	}
 
-	if !slices.Contains(requiredScopes, definitions.ScopeOpenId) {
-		requiredScopes = append(requiredScopes, definitions.ScopeOpenId)
+	if !slices.Contains(requiredScopes, definitions.ScopeOpenID) {
+		requiredScopes = append(requiredScopes, definitions.ScopeOpenID)
 	}
 
 	requiredMap := scopeToSet(requiredScopes)
@@ -70,7 +73,7 @@ func buildConsentScopePlan(client *config.OIDCClient, globalMode string, request
 
 	for _, scope := range normalizedRequested {
 		switch {
-		case scope == definitions.ScopeOpenId:
+		case scope == definitions.ScopeOpenID:
 			plan.Required = append(plan.Required, scope)
 		case requiredMap[scope]:
 			plan.Required = append(plan.Required, scope)
@@ -121,6 +124,7 @@ func uniqueScopes(scopes []string) []string {
 		if normalized == "" {
 			continue
 		}
+
 		if _, ok := seen[normalized]; ok {
 			continue
 		}

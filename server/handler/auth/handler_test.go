@@ -31,6 +31,7 @@ func TestHandlerRegistersCBORAuthEndpoint(t *testing.T) {
 	New(nil).Register(api)
 
 	routes := registeredRoutes(router)
+
 	for _, method := range []string{http.MethodGet, http.MethodPost} {
 		key := method + " /api/v1/auth/cbor"
 		if !routes[key] {

@@ -39,8 +39,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// NauthilusIdP implements the IdentityProvider interface using Nauthilus core.
-type NauthilusIdP struct {
+// NauthilusIDP implements the IdentityProvider interface using Nauthilus core.
+type NauthilusIDP struct {
 	deps     *deps.Deps
 	storage  *RedisTokenStorage
 	tracer   monittrace.Tracer
@@ -55,9 +55,9 @@ var (
 	ErrRefreshTokenClientMismatch = errors.New("refresh token client mismatch")
 )
 
-// NewNauthilusIdP creates a new instance of NauthilusIdP.
-func NewNauthilusIdP(d *deps.Deps) *NauthilusIdP {
-	return &NauthilusIdP{
+// NewNauthilusIDP creates a new instance of NauthilusIDP.
+func NewNauthilusIDP(d *deps.Deps) *NauthilusIDP {
+	return &NauthilusIDP{
 		deps:     d,
 		storage:  NewRedisTokenStorageWithConfig(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix(), d.Cfg),
 		tracer:   monittrace.New("nauthilus/idp"),
@@ -67,12 +67,12 @@ func NewNauthilusIdP(d *deps.Deps) *NauthilusIdP {
 }
 
 // GetKeyManager returns the OIDC key manager.
-func (n *NauthilusIdP) GetKeyManager() *oidckeys.Manager {
+func (n *NauthilusIDP) GetKeyManager() *oidckeys.Manager {
 	return n.keyMgr
 }
 
 // FilterScopes filters the requested scopes against the allowed scopes for the client.
-func (n *NauthilusIdP) FilterScopes(client *config.OIDCClient, requestedScopes []string) []string {
+func (n *NauthilusIDP) FilterScopes(client *config.OIDCClient, requestedScopes []string) []string {
 	allowed := client.GetAllowedScopes()
 	allowedMap := make(map[string]struct{}, len(allowed))
 	impliedScopes := client.GetImpliedScopes()
@@ -142,8 +142,8 @@ func (n *NauthilusIdP) FilterScopes(client *config.OIDCClient, requestedScopes [
 }
 
 // FindClient returns an OIDC client by its ID.
-func (n *NauthilusIdP) FindClient(clientID string) (*config.OIDCClient, bool) {
-	clients := n.deps.Cfg.GetIdP().OIDC.Clients
+func (n *NauthilusIDP) FindClient(clientID string) (*config.OIDCClient, bool) {
+	clients := n.deps.Cfg.GetIDP().OIDC.Clients
 	for i := range clients {
 		if clients[i].ClientID == clientID {
 			return &clients[i], true
@@ -154,12 +154,12 @@ func (n *NauthilusIdP) FindClient(clientID string) (*config.OIDCClient, bool) {
 }
 
 // FindSAMLServiceProvider returns a SAML service provider by its entity ID.
-func (n *NauthilusIdP) FindSAMLServiceProvider(entityID string) (*config.SAML2ServiceProvider, bool) {
-	return config.FindSAMLServiceProviderByEntityID(n.deps.Cfg.GetIdP().SAML2.ServiceProviders, entityID)
+func (n *NauthilusIDP) FindSAMLServiceProvider(entityID string) (*config.SAML2ServiceProvider, bool) {
+	return config.FindSAMLServiceProviderByEntityID(n.deps.Cfg.GetIDP().SAML2.ServiceProviders, entityID)
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for the given client.
-func (n *NauthilusIdP) IsDelayedResponse(clientID string, samlEntityID string) bool {
+func (n *NauthilusIDP) IsDelayedResponse(clientID string, samlEntityID string) bool {
 	if clientID != "" {
 		if client, ok := n.FindClient(clientID); ok {
 			return client.IsDelayedResponse()
@@ -176,7 +176,7 @@ func (n *NauthilusIdP) IsDelayedResponse(clientID string, samlEntityID string) b
 }
 
 // ValidateRedirectURI checks if the given redirect URI is valid for the client.
-func (n *NauthilusIdP) ValidateRedirectURI(client *config.OIDCClient, redirectURI string) bool {
+func (n *NauthilusIDP) ValidateRedirectURI(client *config.OIDCClient, redirectURI string) bool {
 	if client == nil {
 		return false
 	}
@@ -185,7 +185,7 @@ func (n *NauthilusIdP) ValidateRedirectURI(client *config.OIDCClient, redirectUR
 }
 
 // ValidatePostLogoutRedirectURI checks if the given post-logout redirect URI is valid for the client.
-func (n *NauthilusIdP) ValidatePostLogoutRedirectURI(client *config.OIDCClient, redirectURI string) bool {
+func (n *NauthilusIDP) ValidatePostLogoutRedirectURI(client *config.OIDCClient, redirectURI string) bool {
 	if redirectURI == "" {
 		return true
 	}
@@ -196,7 +196,7 @@ func (n *NauthilusIdP) ValidatePostLogoutRedirectURI(client *config.OIDCClient, 
 // IssueTokens generates tokens for the given OIDC session.
 // Per OIDC Core 1.0 §3.1.2.1, an ID token is only issued when the "openid" scope is present.
 // Without "openid", this behaves as a pure OAuth 2.0 token response (access_token only).
-func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (string, string, string, time.Duration, error) {
+func (n *NauthilusIDP) IssueTokens(ctx context.Context, session *OIDCSession) (string, string, string, time.Duration, error) {
 	client, ok := n.FindClient(session.ClientID)
 	if !ok {
 		return "", "", "", 0, fmt.Errorf("client not found")
@@ -205,7 +205,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	return n.issueTokensForClient(ctx, client, session, "")
 }
 
-func (n *NauthilusIdP) issueTokensForClient(
+func (n *NauthilusIDP) issueTokensForClient(
 	ctx context.Context,
 	client *config.OIDCClient,
 	session *OIDCSession,
@@ -233,7 +233,7 @@ func (n *NauthilusIdP) issueTokensForClient(
 	return idTokenString, accessTokenString, refreshTokenString, accessTokenLifetime, nil
 }
 
-func (n *NauthilusIdP) issueIDAndAccessTokens(
+func (n *NauthilusIDP) issueIDAndAccessTokens(
 	ctx context.Context,
 	client *config.OIDCClient,
 	session *OIDCSession,
@@ -246,10 +246,10 @@ func (n *NauthilusIdP) issueIDAndAccessTokens(
 
 	accessTokenLifetime := client.AccessTokenLifetime
 	if accessTokenLifetime == 0 {
-		accessTokenLifetime = n.deps.Cfg.GetIdP().OIDC.GetDefaultAccessTokenLifetime()
+		accessTokenLifetime = n.deps.Cfg.GetIDP().OIDC.GetDefaultAccessTokenLifetime()
 	}
 
-	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
+	issuer := n.deps.Cfg.GetIDP().OIDC.Issuer
 
 	signer, err := n.keyMgr.GetActiveSigner(ctx, "")
 	if err != nil {
@@ -267,11 +267,11 @@ func (n *NauthilusIdP) issueIDAndAccessTokens(
 
 	// Access Token
 	tokenIssuer := NewTokenIssuer(issuer, signer, session, n.storage, n.tokenGen)
-	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIdP().OIDC.GetAccessTokenType())
+	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIDP().OIDC.GetAccessTokenType())
 
 	var accessTokenString string
 
-	if accessTokenType == "opaque" {
+	if accessTokenType == accessTokenTypeOpaque {
 		accessTokenString, _, err = tokenIssuer.IssueOpaque(ctx, accessTokenLifetime)
 	} else {
 		accessTokenString, _, err = tokenIssuer.IssueJWT(ctx, accessTokenLifetime)
@@ -286,24 +286,24 @@ func (n *NauthilusIdP) issueIDAndAccessTokens(
 	return idTokenString, accessTokenString, accessTokenLifetime, nil
 }
 
-func (n *NauthilusIdP) issueIDToken(
+func (n *NauthilusIDP) issueIDToken(
 	session *OIDCSession,
 	signer signing.Signer,
 	issuer string,
 	now time.Time,
 	accessTokenLifetime time.Duration,
 ) (string, error) {
-	if !slices.Contains(session.Scopes, definitions.ScopeOpenId) {
+	if !slices.Contains(session.Scopes, definitions.ScopeOpenID) {
 		return "", nil
 	}
 
 	idClaims := jwt.MapClaims{
-		"iss":       issuer,
-		"sub":       session.UserID,
-		"aud":       session.ClientID,
-		"exp":       now.Add(accessTokenLifetime).Unix(),
-		"iat":       now.Unix(),
-		"auth_time": session.AuthTime.Unix(),
+		oidcClaimIssuer:    issuer,
+		oidcClaimSubject:   session.UserID,
+		oidcClaimAudience:  session.ClientID,
+		oidcClaimExpiresAt: now.Add(accessTokenLifetime).Unix(),
+		oidcClaimIssuedAt:  now.Unix(),
+		"auth_time":        session.AuthTime.Unix(),
 	}
 
 	if session.Nonce != "" {
@@ -311,7 +311,7 @@ func (n *NauthilusIdP) issueIDToken(
 	}
 
 	// Add mapped claims from session
-	maps.Copy(idClaims, session.IdTokenClaims)
+	maps.Copy(idClaims, session.IDTokenClaims)
 
 	idTokenString, err := signer.Sign(idClaims)
 	if err != nil {
@@ -321,7 +321,7 @@ func (n *NauthilusIdP) issueIDToken(
 	return idTokenString, nil
 }
 
-func (n *NauthilusIdP) storeRefreshTokenSession(
+func (n *NauthilusIDP) storeRefreshTokenSession(
 	ctx context.Context,
 	client *config.OIDCClient,
 	refreshToken string,
@@ -334,7 +334,7 @@ func (n *NauthilusIdP) storeRefreshTokenSession(
 
 	refreshTokenLifetime := client.RefreshTokenLifetime
 	if refreshTokenLifetime == 0 {
-		refreshTokenLifetime = n.deps.Cfg.GetIdP().OIDC.GetDefaultRefreshTokenLifetime()
+		refreshTokenLifetime = n.deps.Cfg.GetIDP().OIDC.GetDefaultRefreshTokenLifetime()
 	}
 
 	// Link the access token to the refresh token session so it can be
@@ -351,7 +351,7 @@ func (n *NauthilusIdP) storeRefreshTokenSession(
 
 // IssueClientCredentialsToken generates an access token for the Client Credentials Grant.
 // Per RFC 6749 §4.4, only an access token is returned (no id_token, no refresh_token).
-func (n *NauthilusIdP) IssueClientCredentialsToken(ctx context.Context, clientID string, scopes []string) (string, time.Duration, error) {
+func (n *NauthilusIDP) IssueClientCredentialsToken(ctx context.Context, clientID string, scopes []string) (string, time.Duration, error) {
 	_, sp := n.tracer.Start(ctx, "idp.issue_client_credentials_token",
 		attribute.String("client_id", clientID),
 	)
@@ -368,10 +368,10 @@ func (n *NauthilusIdP) IssueClientCredentialsToken(ctx context.Context, clientID
 
 	accessTokenLifetime := client.AccessTokenLifetime
 	if accessTokenLifetime == 0 {
-		accessTokenLifetime = n.deps.Cfg.GetIdP().OIDC.GetDefaultAccessTokenLifetime()
+		accessTokenLifetime = n.deps.Cfg.GetIDP().OIDC.GetDefaultAccessTokenLifetime()
 	}
 
-	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
+	issuer := n.deps.Cfg.GetIDP().OIDC.Issuer
 
 	signer, err := n.keyMgr.GetActiveSigner(ctx, "")
 	if err != nil {
@@ -391,11 +391,11 @@ func (n *NauthilusIdP) IssueClientCredentialsToken(ctx context.Context, clientID
 
 	// Access Token
 	tokenIssuer := NewTokenIssuer(issuer, signer, session, n.storage, n.tokenGen)
-	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIdP().OIDC.GetAccessTokenType())
+	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIDP().OIDC.GetAccessTokenType())
 
 	var accessTokenString string
 
-	if accessTokenType == "opaque" {
+	if accessTokenType == accessTokenTypeOpaque {
 		accessTokenString, _, err = tokenIssuer.IssueOpaque(ctx, accessTokenLifetime)
 	} else {
 		accessTokenString, _, err = tokenIssuer.IssueJWT(ctx, accessTokenLifetime)
@@ -411,7 +411,7 @@ func (n *NauthilusIdP) IssueClientCredentialsToken(ctx context.Context, clientID
 }
 
 // ExchangeRefreshToken exchanges a refresh token for a new set of tokens.
-func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken string, clientID string) (*OIDCSession, string, string, string, time.Duration, error) {
+func (n *NauthilusIDP) ExchangeRefreshToken(ctx context.Context, refreshToken string, clientID string) (*OIDCSession, string, string, string, time.Duration, error) {
 	_, sp := n.tracer.Start(ctx, "idp.exchange_refresh_token",
 		attribute.String("client_id", clientID),
 	)
@@ -431,7 +431,7 @@ func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 		return nil, "", "", "", 0, fmt.Errorf("client not found")
 	}
 
-	rotateRefreshTokens := client.GetRevokeRefreshToken(n.deps.Cfg.GetIdP().OIDC.GetRevokeRefreshToken())
+	rotateRefreshTokens := client.GetRevokeRefreshToken(n.deps.Cfg.GetIDP().OIDC.GetRevokeRefreshToken())
 
 	// Invalidate the access token that was last bound to this refresh token
 	// session before issuing the replacement access token.
@@ -460,7 +460,7 @@ func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 // invalidateOldAccessToken removes the previous access token that was linked
 // to the refresh token session. For opaque tokens it deletes the Redis entry;
 // for JWT tokens it adds the token to a denylist with the remaining lifetime.
-func (n *NauthilusIdP) invalidateOldAccessToken(ctx context.Context, session *OIDCSession, clientID string) {
+func (n *NauthilusIDP) invalidateOldAccessToken(ctx context.Context, session *OIDCSession, clientID string) {
 	oldAccessToken := session.AccessToken
 
 	if oldAccessToken == "" {
@@ -484,14 +484,14 @@ func (n *NauthilusIdP) invalidateOldAccessToken(ctx context.Context, session *OI
 	ttl := client.AccessTokenLifetime
 
 	if ttl == 0 {
-		ttl = n.deps.Cfg.GetIdP().OIDC.GetDefaultAccessTokenLifetime()
+		ttl = n.deps.Cfg.GetIDP().OIDC.GetDefaultAccessTokenLifetime()
 	}
 
 	_ = n.storage.DenyJWTAccessToken(ctx, oldAccessToken, ttl)
 }
 
 // IssueLogoutToken generates a logout token for the given client and user.
-func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, userID string) (string, error) {
+func (n *NauthilusIDP) IssueLogoutToken(ctx context.Context, clientID string, userID string) (string, error) {
 	_, sp := n.tracer.Start(ctx, "idp.issue_logout_token",
 		attribute.String("client_id", clientID),
 		attribute.String("user_id", userID),
@@ -503,14 +503,14 @@ func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, us
 		return "", err
 	}
 
-	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
+	issuer := n.deps.Cfg.GetIDP().OIDC.Issuer
 
 	claims := jwt.MapClaims{
-		"iss": issuer,
-		"sub": userID,
-		"aud": clientID,
-		"iat": time.Now().Unix(),
-		"jti": n.tokenGen.GenerateToken(""),
+		oidcClaimIssuer:   issuer,
+		oidcClaimSubject:  userID,
+		oidcClaimAudience: clientID,
+		oidcClaimIssuedAt: time.Now().Unix(),
+		"jti":             n.tokenGen.GenerateToken(""),
 		"events": map[string]any{
 			"http://schemas.openid.net/event/backchannel-logout": map[string]any{},
 		},
@@ -520,7 +520,7 @@ func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, us
 }
 
 // ValidateToken parses and validates an access token (JWT or opaque).
-func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
+func (n *NauthilusIDP) ValidateToken(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
 	ctx, sp := n.tracer.Start(ctx, "idp.validate_token")
 	defer sp.End()
 
@@ -550,10 +550,10 @@ func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (j
 
 	// Fallback to JWT. Verify first so malformed input cannot force Redis denylist reads.
 	verifyCtx, verifySpan := n.tracer.Start(ctx, "idp.validate_token.jwt.verify")
+
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		return n.resolveJWTPublicKey(verifyCtx, token)
 	})
-
 	if err != nil {
 		verifySpan.RecordError(err)
 	}
@@ -592,10 +592,10 @@ func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (j
 	return nil, fmt.Errorf("invalid token")
 }
 
-// ValidateTokenForUserInfo validates an access token and returns IdTokenClaims suitable for the UserInfo endpoint.
-// For opaque tokens it reads the IdTokenClaims from the stored session.
+// ValidateTokenForUserInfo validates an access token and returns IDTokenClaims suitable for the UserInfo endpoint.
+// For opaque tokens it reads the IDTokenClaims from the stored session.
 // For JWT tokens it falls back to standard JWT validation (claims are already embedded in the token).
-func (n *NauthilusIdP) ValidateTokenForUserInfo(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
+func (n *NauthilusIDP) ValidateTokenForUserInfo(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
 	ctx, sp := n.tracer.Start(ctx, "idp.validate_token_for_userinfo")
 	defer sp.End()
 
@@ -628,7 +628,7 @@ func (n *NauthilusIdP) ValidateTokenForUserInfo(ctx context.Context, tokenString
 }
 
 // resolveJWTPublicKey returns the public key for verifying a JWT based on its algorithm and kid header.
-func (n *NauthilusIdP) resolveJWTPublicKey(ctx context.Context, token *jwt.Token) (any, error) {
+func (n *NauthilusIDP) resolveJWTPublicKey(ctx context.Context, token *jwt.Token) (any, error) {
 	kid, _ := token.Header["kid"].(string)
 
 	_, sp := n.tracer.Start(ctx, "idp.validate_token.jwt.key_resolve",
@@ -662,7 +662,7 @@ func (n *NauthilusIdP) resolveJWTPublicKey(ctx context.Context, token *jwt.Token
 }
 
 // resolveRSAPublicKey finds the RSA public key matching the given kid.
-func (n *NauthilusIdP) resolveRSAPublicKey(ctx context.Context, kid string) (any, error) {
+func (n *NauthilusIDP) resolveRSAPublicKey(ctx context.Context, kid string) (any, error) {
 	if kid != "" {
 		key, err := n.keyMgr.GetRSAKeyByID(ctx, kid)
 		if err != nil {
@@ -682,7 +682,7 @@ func (n *NauthilusIdP) resolveRSAPublicKey(ctx context.Context, kid string) (any
 }
 
 // resolveEdDSAPublicKey finds the Ed25519 public key matching the given kid.
-func (n *NauthilusIdP) resolveEdDSAPublicKey(ctx context.Context, kid string) (any, error) {
+func (n *NauthilusIDP) resolveEdDSAPublicKey(ctx context.Context, kid string) (any, error) {
 	if kid != "" {
 		key, err := n.keyMgr.GetEdKeyByID(ctx, kid)
 		if err != nil {
@@ -702,7 +702,7 @@ func (n *NauthilusIdP) resolveEdDSAPublicKey(ctx context.Context, kid string) (a
 }
 
 // Authenticate performs user authentication using AuthState.
-func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string, oidcCID string, samlEntityID string) (*backend.User, error) {
+func (n *NauthilusIDP) Authenticate(ctx *gin.Context, username, password string, oidcCID string, samlEntityID string) (*backend.User, error) {
 	_, sp := n.tracer.Start(ctx.Request.Context(), "idp.authenticate",
 		attribute.String("username", username),
 		attribute.String("oidc_cid", oidcCID),
@@ -711,6 +711,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 	defer sp.End()
 
 	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
+
 	auth, ok := authRaw.(*core.AuthState)
 	if !ok || auth == nil {
 		err := fmt.Errorf("failed to create AuthState")
@@ -797,12 +798,12 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 }
 
 // GetUserByUsername retrieves user details and attributes without performing password authentication.
-func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidcCID string, samlEntityID string) (*backend.User, error) {
+func (n *NauthilusIDP) GetUserByUsername(ctx *gin.Context, username string, oidcCID string, samlEntityID string) (*backend.User, error) {
 	return n.getUserByUsername(ctx, username, oidcCID, samlEntityID, nil)
 }
 
 // GetUserByUsernameForOIDCClaims retrieves user data needed for OIDC claim materialization.
-func (n *NauthilusIdP) GetUserByUsernameForOIDCClaims(
+func (n *NauthilusIDP) GetUserByUsernameForOIDCClaims(
 	ctx *gin.Context,
 	username string,
 	client *config.OIDCClient,
@@ -812,14 +813,14 @@ func (n *NauthilusIdP) GetUserByUsernameForOIDCClaims(
 		return n.getUserByUsername(ctx, username, "", "", nil)
 	}
 
-	effectiveScopes := n.deps.Cfg.GetIdP().OIDC.GetEffectiveCustomScopes(client)
+	effectiveScopes := n.deps.Cfg.GetIDP().OIDC.GetEffectiveCustomScopes(client)
 	request := core.NewOIDCIdentityAttributeRequest(client, scopes, effectiveScopes)
 
 	return n.getUserByUsername(ctx, username, client.ClientID, "", request)
 }
 
 // GetUserByUsernameForSAML retrieves user data needed for SAML attribute materialization.
-func (n *NauthilusIdP) GetUserByUsernameForSAML(
+func (n *NauthilusIDP) GetUserByUsernameForSAML(
 	ctx *gin.Context,
 	username string,
 	sp *config.SAML2ServiceProvider,
@@ -833,7 +834,7 @@ func (n *NauthilusIdP) GetUserByUsernameForSAML(
 	return n.getUserByUsername(ctx, username, "", sp.EntityID, request)
 }
 
-func (n *NauthilusIdP) getUserByUsername(
+func (n *NauthilusIDP) getUserByUsername(
 	ctx *gin.Context,
 	username string,
 	oidcCID string,
@@ -909,7 +910,7 @@ func prepareUserLookupAuthState(
 	auth.SetNoAuth(true)
 }
 
-func (n *NauthilusIdP) userFromAuthState(auth *core.AuthState) (*backend.User, error) {
+func (n *NauthilusIDP) userFromAuthState(auth *core.AuthState) (*backend.User, error) {
 	accountName, ok := auth.GetAccountOk()
 	if !ok {
 		return nil, fmt.Errorf("failed to get account name")
@@ -921,14 +922,14 @@ func (n *NauthilusIdP) userFromAuthState(auth *core.AuthState) (*backend.User, e
 	user := backend.NewUser(accountName, displayName, uniqueID)
 	user.Attributes = auth.GetAttributes()
 	user.Groups = auth.GetGroups()
-	user.GroupDNs = auth.GetGroupDNs()
+	user.GroupDistinguishedNames = auth.GetGroupDistinguishedNames()
 	user.TOTPSecretField = auth.GetTOTPSecretField()
 	user.TOTPRecoveryField = auth.GetTOTPRecoveryField()
 
 	return user, nil
 }
 
-func (n *NauthilusIdP) authFailureError(ctx *gin.Context, auth *core.AuthState, err error) error {
+func (n *NauthilusIDP) authFailureError(ctx *gin.Context, auth *core.AuthState, err error) error {
 	if auth == nil {
 		return err
 	}
@@ -951,9 +952,10 @@ func (n *NauthilusIdP) authFailureError(ctx *gin.Context, auth *core.AuthState, 
 
 // GetClaims retrieves user attributes and maps them to OIDC/SAML claims for a specific client.
 
-func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client any, scopes []string) (map[string]any, map[string]any, error) {
+// GetClaims provides the exported GetClaims method.
+func (n *NauthilusIDP) GetClaims(ctx *gin.Context, user *backend.User, client any, scopes []string) (map[string]any, map[string]any, error) {
 	idTokenClaims := map[string]any{
-		"sub":                user.Id,
+		oidcClaimSubject:     user.ID,
 		"name":               user.DisplayName,
 		"preferred_username": user.Name,
 	}
@@ -961,11 +963,12 @@ func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client an
 
 	// Map attributes from backend using claim mappings when client is OIDCClient.
 	if oidcClient, ok := client.(*config.OIDCClient); ok {
-		effectiveCustomScopes := n.deps.Cfg.GetIdP().OIDC.GetEffectiveCustomScopes(oidcClient)
+		effectiveCustomScopes := n.deps.Cfg.GetIDP().OIDC.GetEffectiveCustomScopes(oidcClient)
 
-		// We need an AuthState to use FillIdTokenClaims
+		// We need an AuthState to use FillIDTokenClaims
 		// We can create a lightweight AuthState just for mapping
 		authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
+
 		auth, ok := authRaw.(*core.AuthState)
 		if !ok || auth == nil {
 			return nil, nil, fmt.Errorf("failed to create AuthState for mapping")
@@ -976,9 +979,9 @@ func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client an
 		}
 
 		auth.ReplaceAllAttributes(user.Attributes)
-		auth.SetResolvedGroups(user.Groups, user.GroupDNs)
+		auth.SetResolvedGroups(user.Groups, user.GroupDistinguishedNames)
 
-		auth.FillIdTokenClaims(&oidcClient.IdTokenClaims, idTokenClaims, scopes, effectiveCustomScopes)
+		auth.FillIDTokenClaims(&oidcClient.IDTokenClaims, idTokenClaims, scopes, effectiveCustomScopes)
 		auth.FillAccessTokenClaims(&oidcClient.AccessTokenClaims, accessTokenClaims, scopes, effectiveCustomScopes)
 	}
 

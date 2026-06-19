@@ -108,6 +108,7 @@ func TestValidatePassword(t *testing.T) {
 			L.SetGlobal("passwordPolicy", tt.table)
 			L.Push(tt.table)
 			L.Push(lua.LString(tt.password))
+
 			m := NewPasswordManager(context.TODO(), nil, nil)
 			m.validatePassword(L)
 
@@ -224,6 +225,7 @@ func TestGetCountryName(t *testing.T) {
 			defer L.Close()
 
 			L.Push(lua.LString(tt.isoCode))
+
 			m := NewMiscManager(context.TODO(), nil, nil)
 			m.getCountryName(L)
 
@@ -288,6 +290,7 @@ func TestWaitRandom(t *testing.T) {
 
 			L.Push(tt.minWait)
 			L.Push(tt.maxWait)
+
 			m := NewMiscManager(context.TODO(), nil, nil)
 			m.waitRandom(L)
 

@@ -39,12 +39,14 @@ func TestRedisSecurity(t *testing.T) {
 
 		L := lua.NewState()
 		defer L.Close()
+
 		L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 		err := L.DoString(`local nr = require("nauthilus_redis"); enabled = nr.redis_is_encryption_enabled("default")`)
 		if err != nil {
 			t.Fatalf("Lua failed: %v", err)
 		}
+
 		if L.GetGlobal("enabled") != lua.LTrue {
 			t.Error("Expected encryption to be enabled")
 		}
@@ -57,12 +59,14 @@ func TestRedisSecurity(t *testing.T) {
 
 		L := lua.NewState()
 		defer L.Close()
+
 		L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 		err := L.DoString(`local nr = require("nauthilus_redis"); enabled = nr.redis_is_encryption_enabled("default")`)
 		if err != nil {
 			t.Fatalf("Lua failed: %v", err)
 		}
+
 		if L.GetGlobal("enabled") != lua.LFalse {
 			t.Error("Expected encryption to be disabled")
 		}
@@ -75,6 +79,7 @@ func TestRedisSecurity(t *testing.T) {
 
 		L := lua.NewState()
 		defer L.Close()
+
 		L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 		err := L.DoString(`
@@ -91,6 +96,7 @@ func TestRedisSecurity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Lua failed: %v", err)
 		}
+
 		if L.GetGlobal("final").String() != "hello world" {
 			t.Errorf("Expected 'hello world', got %s", L.GetGlobal("final").String())
 		}

@@ -18,13 +18,25 @@ package registry
 import "github.com/croessner/nauthilus/v3/server/policy"
 
 const (
-	producerBruteForce      = policy.CheckTypeBruteForce
-	producerTLSEncryption   = policy.CheckTypeTLSEncryption
-	producerRelayDomains    = policy.CheckTypeRelayDomains
-	producerRBL             = policy.CheckTypeRBL
-	producerLDAPBackend     = policy.CheckTypeLDAPBackend
-	producerLuaBackend      = policy.CheckTypeLuaBackend
-	producerAccountProvider = policy.CheckTypeAccountProvider
+	detailBackend             = "backend"
+	detailBruteBucketCount    = "bucket_count"
+	detailBruteBucketID       = "bucket_id"
+	detailBruteBucketRatio    = "bucket_ratio"
+	detailBruteClientNet      = "client_net"
+	detailBruteEffectiveLimit = "effective_limit"
+	detailBruteRepeating      = "repeating"
+	detailBruteRule           = "rule"
+	detailBruteRWPActive      = "rwp_active"
+	detailReasonCode          = "reason_code"
+	detailRetryable           = "retryable"
+	detailSoftAllowlisted     = "soft_allowlisted"
+	producerBruteForce        = policy.CheckTypeBruteForce
+	producerTLSEncryption     = policy.CheckTypeTLSEncryption
+	producerRelayDomains      = policy.CheckTypeRelayDomains
+	producerRBL               = policy.CheckTypeRBL
+	producerLDAPBackend       = policy.CheckTypeLDAPBackend
+	producerLuaBackend        = policy.CheckTypeLuaBackend
+	producerAccountProvider   = policy.CheckTypeAccountProvider
 )
 
 // NewBuiltinAttributeRegistry returns the minimum Go-owned attribute registry.
@@ -108,14 +120,14 @@ func preAuthAttributes(authOnly []policy.Operation, authLookup []policy.Operatio
 			Type:          AttributeTypeBool,
 			Source:        SourceBuiltin,
 			Details: map[string]DetailDefinition{
-				"rule":            {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
-				"bucket_id":       {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
-				"client_net":      {Type: AttributeTypeCIDR, Sensitivity: DetailSensitivityInternal},
-				"repeating":       {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
-				"rwp_active":      {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
-				"bucket_count":    {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
-				"bucket_ratio":    {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
-				"effective_limit": {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
+				detailBruteRule:           {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
+				detailBruteBucketID:       {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
+				detailBruteClientNet:      {Type: AttributeTypeCIDR, Sensitivity: DetailSensitivityInternal},
+				detailBruteRepeating:      {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
+				detailBruteRWPActive:      {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
+				detailBruteBucketCount:    {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
+				detailBruteBucketRatio:    {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
+				detailBruteEffectiveLimit: {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
 			},
 		},
 		bruteForceBoolAttribute(
@@ -483,9 +495,9 @@ func backendTempfailAttribute(operations []policy.Operation) AttributeDefinition
 		Type:          AttributeTypeBool,
 		Source:        SourceBuiltin,
 		Details: map[string]DetailDefinition{
-			"backend":     {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
-			"reason_code": {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
-			"retryable":   {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
+			detailBackend:    {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
+			detailReasonCode: {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
+			detailRetryable:  {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
 		},
 	}
 }
@@ -534,11 +546,11 @@ func backendAttribute(
 
 func errorDetails(includeRetryable bool) map[string]DetailDefinition {
 	details := map[string]DetailDefinition{
-		"reason_code": {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
+		detailReasonCode: {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
 	}
 
 	if includeRetryable {
-		details["retryable"] = DetailDefinition{Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal}
+		details[detailRetryable] = DetailDefinition{Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal}
 	}
 
 	return details
@@ -546,14 +558,14 @@ func errorDetails(includeRetryable bool) map[string]DetailDefinition {
 
 func domainDetails() map[string]DetailDefinition {
 	return map[string]DetailDefinition{
-		"domain":           {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
-		"matched_domain":   {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
-		"configured_count": {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
-		"present":          {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
-		"known":            {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
-		"rejected":         {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
-		"static_match":     {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
-		"soft_allowlisted": {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
+		"domain":              {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
+		"matched_domain":      {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
+		"configured_count":    {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
+		"present":             {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
+		"known":               {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
+		"rejected":            {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
+		"static_match":        {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
+		detailSoftAllowlisted: {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
 	}
 }
 
@@ -566,7 +578,7 @@ func rblSummaryDetails() map[string]DetailDefinition {
 		"list_count":                {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
 		"allow_failure_error_count": {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
 		"effective_error":           {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
-		"soft_allowlisted":          {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
+		detailSoftAllowlisted:       {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
 		"ip_allowlisted":            {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
 	}
 }

@@ -30,6 +30,7 @@ func (rm *RedisManager) RedisZAdd(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		key := stack.CheckString(2)
 		top := stack.GetTop()
+
 		var zValues []redis.Z
 
 		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {

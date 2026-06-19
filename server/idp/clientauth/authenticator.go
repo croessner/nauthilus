@@ -124,6 +124,7 @@ func (a *ClientSecretAuthenticator) Authenticate(request *AuthRequest) error {
 	})
 
 	var providedSecret []byte
+
 	request.ClientSecret.WithBytes(func(value []byte) {
 		if len(value) == 0 {
 			return

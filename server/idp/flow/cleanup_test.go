@@ -84,30 +84,30 @@ func TestCleanupMFAState(t *testing.T) {
 	})
 }
 
-func TestCleanupIdPState(t *testing.T) {
+func TestCleanupIDPState(t *testing.T) {
 	t.Run("nil manager does not panic", func(t *testing.T) {
-		assert.NotPanics(t, func() { CleanupIdPState(nil) })
+		assert.NotPanics(t, func() { CleanupIDPState(nil) })
 	})
 
-	t.Run("deletes all IdP flow state keys", func(t *testing.T) {
+	t.Run("deletes all IDP flow state keys", func(t *testing.T) {
 		mgr := &mockKeyManager{data: map[string]bool{
-			definitions.SessionKeyIdPFlowType:            true,
-			definitions.SessionKeyIdPFlowID:              true,
-			definitions.SessionKeyIdPAuthOutcome:         true,
-			definitions.SessionKeyIdPAuthOutcomeHMAC:     true,
+			definitions.SessionKeyIDPFlowType:            true,
+			definitions.SessionKeyIDPFlowID:              true,
+			definitions.SessionKeyIDPAuthOutcome:         true,
+			definitions.SessionKeyIDPAuthOutcomeHMAC:     true,
 			definitions.SessionKeyOIDCGrantType:          true,
-			definitions.SessionKeyIdPClientID:            true,
-			definitions.SessionKeyIdPRedirectURI:         true,
-			definitions.SessionKeyIdPScope:               true,
-			definitions.SessionKeyIdPState:               true,
-			definitions.SessionKeyIdPNonce:               true,
-			definitions.SessionKeyIdPResponseType:        true,
-			definitions.SessionKeyIdPPrompt:              true,
+			definitions.SessionKeyIDPClientID:            true,
+			definitions.SessionKeyIDPRedirectURI:         true,
+			definitions.SessionKeyIDPScope:               true,
+			definitions.SessionKeyIDPState:               true,
+			definitions.SessionKeyIDPNonce:               true,
+			definitions.SessionKeyIDPResponseType:        true,
+			definitions.SessionKeyIDPPrompt:              true,
 			definitions.SessionKeyDeviceCode:             true,
-			definitions.SessionKeyIdPSAMLRequest:         true,
-			definitions.SessionKeyIdPSAMLRelayState:      true,
-			definitions.SessionKeyIdPSAMLEntityID:        true,
-			definitions.SessionKeyIdPOriginalURL:         true,
+			definitions.SessionKeyIDPSAMLRequest:         true,
+			definitions.SessionKeyIDPSAMLRelayState:      true,
+			definitions.SessionKeyIDPSAMLEntityID:        true,
+			definitions.SessionKeyIDPOriginalURL:         true,
 			definitions.SessionKeyRequireMFAFlow:         true,
 			definitions.SessionKeyRequireMFAPending:      true,
 			definitions.SessionKeyRequireMFAParentFlowID: true,
@@ -115,9 +115,9 @@ func TestCleanupIdPState(t *testing.T) {
 			definitions.SessionKeyUsername: true,
 		}}
 
-		CleanupIdPState(mgr)
+		CleanupIDPState(mgr)
 
-		// All IdP flow keys should be removed.
+		// All IDP flow keys should be removed.
 		assert.Len(t, mgr.data, 1)
 		assert.True(t, mgr.data[definitions.SessionKeyUsername])
 	})

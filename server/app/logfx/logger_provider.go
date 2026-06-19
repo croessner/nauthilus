@@ -35,7 +35,7 @@ func NewLogger() *slog.Logger {
 // This is executed in an fx lifecycle hook to ensure the logger is available.
 func BridgeStdLog(lc fx.Lifecycle, logger *slog.Logger) {
 	lc.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
+		OnStart: func(_ context.Context) error {
 			if logger == nil {
 				return nil
 			}

@@ -36,6 +36,7 @@ func compileChecks(
 
 	for index, checkConfig := range configChecks {
 		path := indexedPath("auth.policy.checks", index)
+
 		check, err := compileCheck(checkConfig, path, checkTypes)
 		if err != nil {
 			return nil, err
@@ -44,6 +45,7 @@ func compileChecks(
 		if _, exists := seenNames[check.Name]; exists {
 			return nil, configPathError(childPath(path, "name"), "must be unique")
 		}
+
 		seenNames[check.Name] = struct{}{}
 
 		if check.Output != "" {
@@ -149,6 +151,7 @@ func compileOperations(
 	}
 
 	operations := make([]policy.Operation, 0, len(configured))
+
 	seen := make(map[policy.Operation]struct{}, len(configured))
 	for index, value := range configured {
 		operation := policy.Operation(strings.TrimSpace(value))
@@ -177,6 +180,7 @@ func compileSkipIfReferences(configured []string, path string) ([]string, error)
 	}
 
 	references := make([]string, 0, len(configured))
+
 	seen := make(map[string]struct{}, len(configured))
 	for index, value := range configured {
 		reference := strings.TrimSpace(value)
@@ -264,6 +268,7 @@ func runIfCovers(left string, right string) bool {
 
 func operationSetFromChecks(checks []policyruntime.CompiledCheck) map[policy.Operation]struct{} {
 	operations := make(map[policy.Operation]struct{})
+
 	for _, check := range checks {
 		for _, operation := range check.Operations {
 			operations[operation] = struct{}{}
@@ -288,6 +293,7 @@ func checksForPlan(
 	stage policy.Stage,
 ) []policyruntime.CompiledCheck {
 	selected := make([]policyruntime.CompiledCheck, 0)
+
 	for _, check := range checks {
 		if check.Stage == stage && operationsContain(check.Operations, operation) {
 			selected = append(selected, check)
@@ -300,12 +306,14 @@ func checksForPlan(
 func sortChecksForPlan(checks []policyruntime.CompiledCheck) error {
 	temporary := make(map[string]bool, len(checks))
 	permanent := make(map[string]bool, len(checks))
+
 	byName := make(map[string]policyruntime.CompiledCheck, len(checks))
 	for _, check := range checks {
 		byName[check.Name] = check
 	}
 
 	var visit func(policyruntime.CompiledCheck) error
+
 	visit = func(check policyruntime.CompiledCheck) error {
 		if permanent[check.Name] {
 			return nil
@@ -480,7 +488,7 @@ func generatedLuaErrorAttribute(
 		Type:          policyregistry.AttributeTypeBool,
 		Source:        policyregistry.SourceBuiltin,
 		Details: map[string]policyregistry.DetailDefinition{
-			"reason_code": {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
+			detailReasonCode: {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
 		},
 	}
 }

@@ -50,8 +50,8 @@ type defaultLoginAttemptManager struct {
 }
 
 // newLoginAttemptManager creates and returns a new defaultLoginAttemptManager with the specified maximum login attempts.
-func newLoginAttemptManager(max uint) *defaultLoginAttemptManager {
-	return &defaultLoginAttemptManager{max: max}
+func newLoginAttemptManager(maxAttempts uint) *defaultLoginAttemptManager {
+	return &defaultLoginAttemptManager{max: maxAttempts}
 }
 
 // InitFromHeader initializes the login attempt manager using a header value representing the ordinal of login attempts.

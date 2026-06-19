@@ -127,7 +127,7 @@ func TestGetUserBackendDataUsesRemoteAuthorityMFAStateWithoutLocalBackends(t *te
 	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoIDP, backendDataUsername)
 	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoIDP, backendDataUsername)
 	fixture.expectSavedWebAuthnCache(t, &backend.User{
-		Id:          backendDataUniqueUserID,
+		ID:          backendDataUniqueUserID,
 		Name:        backendDataUsername,
 		DisplayName: backendDataDisplayName,
 		Credentials: []mfa.PersistentCredential{credential},
@@ -212,7 +212,7 @@ func runGetUserBackendDataRequest(t *testing.T, handler *FrontendHandler) (*User
 	router := gin.New()
 	router.GET("/test", func(ctx *gin.Context) {
 		ctx.Set(definitions.CtxGUIDKey, "baseline-backend-data-guid")
-		ctx.Set(definitions.CtxServiceKey, definitions.ServIdP)
+		ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 		ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 		ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
 			definitions.SessionKeyAccount: backendDataUsername,
@@ -344,6 +344,7 @@ func TestResolveWebAuthnUserFallbacksToBackend(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
 	if assert.NotNil(t, data) {
 		assert.Equal(t, uniqueUserID, data.UniqueUserID)
 		assert.True(t, data.HaveWebAuthn)
@@ -413,7 +414,7 @@ func TestHasWebAuthnWithProviderFallbacksToBackend(t *testing.T) {
 	r := gin.New()
 
 	r.GET("/test", func(c *gin.Context) {
-		user := &backend.User{Id: uniqueUserID, Name: "test1", DisplayName: "Test User"}
+		user := &backend.User{ID: uniqueUserID, Name: "test1", DisplayName: "Test User"}
 		haveWebAuthn := h.hasWebAuthnWithProvider(c, user, "", provider)
 		assert.True(t, haveWebAuthn)
 		c.Status(http.StatusOK)
@@ -659,9 +660,9 @@ func (f *backendDataBaseFixture) expectSavedWebAuthnCache(t *testing.T, user *ba
 		credentialsValue = encrypted
 	}
 
-	key := f.cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + user.Id
+	key := f.cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + user.ID
 	f.mock.ExpectHSet(key, map[string]any{
-		"id":           user.Id,
+		"id":           user.ID,
 		"name":         user.Name,
 		"display_name": user.DisplayName,
 		"credentials":  credentialsValue,
@@ -680,7 +681,7 @@ func (f *backendDataLDAPFixture) expectBackendDataRequestFlow(t *testing.T, cred
 	f.expectAccountMapping(backendDataUsername, definitions.ProtoIDP, backendDataUsername)
 	f.expectEmptyWebAuthnCache(backendDataUniqueUserID)
 	f.expectSavedWebAuthnCache(t, &backend.User{
-		Id:          backendDataUniqueUserID,
+		ID:          backendDataUniqueUserID,
 		Name:        backendDataUsername,
 		DisplayName: backendDataDisplayName,
 		Credentials: []mfa.PersistentCredential{credential},

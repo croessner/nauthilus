@@ -1,3 +1,4 @@
+// Package oidckeys provides oidckeys functionality.
 package oidckeys
 
 import (
@@ -23,10 +24,14 @@ import (
 )
 
 const (
-	RedisKeyOIDCKeys     = "oidc:keys"
-	RedisKeyOIDCActive   = "oidc:active_kid"
+	// RedisKeyOIDCKeys is an exported package constant.
+	RedisKeyOIDCKeys = "oidc:keys"
+	// RedisKeyOIDCActive is an exported package constant.
+	RedisKeyOIDCActive = "oidc:active_kid"
+	// RedisKeyOIDCEdActive stores the active EdDSA OIDC signing key identifier.
 	RedisKeyOIDCEdActive = "oidc:active_ed_kid"
-	RedisKeyOIDCEdKeys   = "oidc:ed_keys"
+	// RedisKeyOIDCEdKeys stores EdDSA OIDC signing key material.
+	RedisKeyOIDCEdKeys = "oidc:ed_keys"
 )
 
 // KeyMetadata stores metadata about an OIDC signing key.
@@ -94,7 +99,9 @@ func (m *Manager) getActiveEdDSASigner(ctx context.Context) (signing.Signer, err
 	// 1. Try Redis
 	readCtx, cancel := m.redisReadContext(ctx)
 	kid, err := m.deps.Redis.GetReadHandle().Get(readCtx, m.redisPrefix()+RedisKeyOIDCEdActive).Result()
+
 	cancel()
+
 	if err == nil && kid != "" {
 		pemData, err := m.getEncryptedEdKeyFromRedis(ctx, kid)
 		if err == nil {
@@ -106,7 +113,7 @@ func (m *Manager) getActiveEdDSASigner(ctx context.Context) (signing.Signer, err
 	}
 
 	// 2. Auto-generate if rotation is enabled
-	if m.deps.Cfg.GetIdP().OIDC.AutoKeyRotation {
+	if m.deps.Cfg.GetIDP().OIDC.AutoKeyRotation {
 		kid, err = m.GenerateNewEdKey(ctx)
 		if err == nil {
 			pemData, err := m.getEncryptedEdKeyFromRedis(ctx, kid)
@@ -120,7 +127,7 @@ func (m *Manager) getActiveEdDSASigner(ctx context.Context) (signing.Signer, err
 	}
 
 	// 3. Fallback to static configuration
-	oidcCfg := m.deps.Cfg.GetIdP().OIDC
+	oidcCfg := m.deps.Cfg.GetIDP().OIDC
 
 	for _, sk := range oidcCfg.SigningKeys {
 		if sk.Active && sk.GetAlgorithm() == signing.AlgorithmEdDSA {
@@ -146,7 +153,9 @@ func (m *Manager) GetActiveKey(ctx context.Context) (*rsa.PrivateKey, string, er
 	// 1. Try to get active key from Redis
 	readCtx, cancel := m.redisReadContext(ctx)
 	kid, err := m.deps.Redis.GetReadHandle().Get(readCtx, m.redisPrefix()+RedisKeyOIDCActive).Result()
+
 	cancel()
+
 	if err == nil && kid != "" {
 		pemData, err := m.getEncryptedKeyFromRedis(ctx, kid)
 		if err == nil {
@@ -158,7 +167,7 @@ func (m *Manager) GetActiveKey(ctx context.Context) (*rsa.PrivateKey, string, er
 	}
 
 	// 2. If auto-rotation is enabled and no active key in Redis, generate one
-	if m.deps.Cfg.GetIdP().OIDC.AutoKeyRotation {
+	if m.deps.Cfg.GetIDP().OIDC.AutoKeyRotation {
 		kid, err = m.GenerateNewKey(ctx)
 		if err == nil {
 			pemData, err := m.getEncryptedKeyFromRedis(ctx, kid)
@@ -172,7 +181,7 @@ func (m *Manager) GetActiveKey(ctx context.Context) (*rsa.PrivateKey, string, er
 	}
 
 	// 3. Fallback to static configuration
-	oidcCfg := m.deps.Cfg.GetIdP().OIDC
+	oidcCfg := m.deps.Cfg.GetIDP().OIDC
 
 	signingKey, err := oidcCfg.GetSigningKey()
 	if err == nil && signingKey != "" {
@@ -190,7 +199,7 @@ func (m *Manager) GetAllKeys(ctx context.Context) (map[string]*rsa.PrivateKey, e
 	keys := make(map[string]*rsa.PrivateKey)
 
 	// 1. Load RSA keys from static configuration
-	oidcCfg := m.deps.Cfg.GetIdP().OIDC
+	oidcCfg := m.deps.Cfg.GetIDP().OIDC
 
 	for _, sk := range oidcCfg.SigningKeys {
 		if sk.GetAlgorithm() != signing.AlgorithmRS256 {
@@ -220,7 +229,7 @@ func (m *Manager) GetAllEdKeys(ctx context.Context) (map[string]ed25519.PrivateK
 	keys := make(map[string]ed25519.PrivateKey)
 
 	// 1. Load Ed25519 keys from static configuration
-	oidcCfg := m.deps.Cfg.GetIdP().OIDC
+	oidcCfg := m.deps.Cfg.GetIDP().OIDC
 
 	for _, sk := range oidcCfg.SigningKeys {
 		if sk.GetAlgorithm() != signing.AlgorithmEdDSA {
@@ -326,7 +335,7 @@ func (m *Manager) getStaticEdKeyByID(kid string) (ed25519.PrivateKey, error) {
 }
 
 func (m *Manager) staticKeyContentByID(kid string, algorithm string) (string, error) {
-	oidcCfg := m.deps.Cfg.GetIdP().OIDC
+	oidcCfg := m.deps.Cfg.GetIDP().OIDC
 
 	for _, sk := range oidcCfg.SigningKeys {
 		if sk.ID != kid || sk.GetAlgorithm() != algorithm {
@@ -343,7 +352,9 @@ func (m *Manager) staticKeyContentByID(kid string, algorithm string) (string, er
 func (m *Manager) loadRSAKeysFromRedis(ctx context.Context, keys map[string]*rsa.PrivateKey) (map[string]*rsa.PrivateKey, error) {
 	readCtx, cancel := m.redisReadContext(ctx)
 	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(readCtx, m.redisPrefix()+RedisKeyOIDCKeys).Result()
+
 	cancel()
+
 	if err != nil {
 		return keys, err
 	}
@@ -370,7 +381,9 @@ func (m *Manager) loadRSAKeysFromRedis(ctx context.Context, keys map[string]*rsa
 func (m *Manager) loadEdKeysFromRedis(ctx context.Context, keys map[string]ed25519.PrivateKey) (map[string]ed25519.PrivateKey, error) {
 	readCtx, cancel := m.redisReadContext(ctx)
 	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(readCtx, m.redisPrefix()+RedisKeyOIDCEdKeys).Result()
+
 	cancel()
+
 	if err != nil {
 		return keys, err
 	}
@@ -418,8 +431,8 @@ func (m *Manager) GenerateNewEdKey(ctx context.Context) (string, error) {
 	}
 
 	kid := ksuid.New().String()
-	pemData, err := m.ed25519PrivateKeyToPEM(privKey)
 
+	pemData, err := m.ed25519PrivateKeyToPEM(privKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode Ed25519 key to PEM: %w", err)
 	}
@@ -429,7 +442,7 @@ func (m *Manager) GenerateNewEdKey(ctx context.Context) (string, error) {
 
 // storeKeyInRedis stores a key in Redis and sets it as active.
 func (m *Manager) storeKeyInRedis(ctx context.Context, kid, pemData, algorithm, hashKey, activeKey string) (string, error) {
-	oidcCfg := m.deps.Cfg.GetIdP().OIDC
+	oidcCfg := m.deps.Cfg.GetIDP().OIDC
 	now := time.Now()
 
 	expiresAt := now.Add(oidcCfg.KeyMaxAge)
@@ -458,6 +471,7 @@ func (m *Manager) storeKeyInRedis(ctx context.Context, kid, pemData, algorithm, 
 	}
 
 	prefix := m.redisPrefix()
+
 	writeCtx, cancel := m.redisWriteContext(ctx)
 	defer cancel()
 
@@ -563,13 +577,13 @@ func (m *Manager) redisPrefix() string {
 
 // StartRotationJob starts a background job that periodically checks and rotates the signing key.
 func (m *Manager) StartRotationJob(ctx context.Context) {
-	if !m.deps.Cfg.GetIdP().OIDC.AutoKeyRotation {
+	if !m.deps.Cfg.GetIDP().OIDC.AutoKeyRotation {
 		return
 	}
 
 	level.Info(m.deps.Logger).Log("msg", "starting OIDC key rotation background job")
 
-	ticker := time.NewTicker(m.deps.Cfg.GetIdP().OIDC.GetKeyRotationInterval())
+	ticker := time.NewTicker(m.deps.Cfg.GetIDP().OIDC.GetKeyRotationInterval())
 
 	go func() {
 		defer ticker.Stop()
@@ -590,7 +604,7 @@ func (m *Manager) StartRotationJob(ctx context.Context) {
 
 // RotateKeys checks if the active keys need rotation and generates new ones if necessary.
 func (m *Manager) RotateKeys(ctx context.Context) {
-	if !m.deps.Cfg.GetIdP().OIDC.AutoKeyRotation {
+	if !m.deps.Cfg.GetIDP().OIDC.AutoKeyRotation {
 		return
 	}
 
@@ -607,7 +621,9 @@ func (m *Manager) rotateKeyType(ctx context.Context, activeRedisKey, hashRedisKe
 	readCtx, cancel := m.redisReadContext(ctx)
 
 	activeKID, err := m.deps.Redis.GetReadHandle().Get(readCtx, prefix+activeRedisKey).Result()
+
 	cancel()
+
 	if err != nil && !errors.Is(err, redis.Nil) {
 		level.Error(m.deps.Logger).Log("msg", "failed to get active kid from Redis", "algorithm", label, "error", err)
 
@@ -619,11 +635,12 @@ func (m *Manager) rotateKeyType(ctx context.Context, activeRedisKey, hashRedisKe
 		readCtx, cancel := m.redisReadContext(ctx)
 
 		encryptedData, _ := m.deps.Redis.GetReadHandle().HGet(readCtx, prefix+hashRedisKey, activeKID).Result()
+
 		cancel()
 
 		meta, err := m.decryptMetadata(sm, encryptedData)
 		if err == nil {
-			if time.Since(meta.CreatedAt) < m.deps.Cfg.GetIdP().OIDC.GetKeyRotationInterval() {
+			if time.Since(meta.CreatedAt) < m.deps.Cfg.GetIDP().OIDC.GetKeyRotationInterval() {
 				return
 			}
 		}
@@ -650,14 +667,18 @@ func (m *Manager) cleanupKeysInHash(ctx context.Context, hashKey, activeKey stri
 	readCtx, cancel := m.redisReadContext(ctx)
 
 	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(readCtx, prefix+hashKey).Result()
+
 	cancel()
+
 	if err != nil {
 		return
 	}
 
 	readCtx, cancel = m.redisReadContext(ctx)
 	activeKID, _ := m.deps.Redis.GetReadHandle().Get(readCtx, prefix+activeKey).Result()
+
 	cancel()
+
 	sm := m.deps.Redis.GetSecurityManager()
 	now := time.Now()
 

@@ -60,6 +60,7 @@ func registerRequestAttributes(
 	}
 
 	seen := make(map[string]string, len(policyConfig.RequestHeaders)+len(policyConfig.RequestMetadata))
+
 	headers, err := compileRequestHeaderAttributes(policyConfig.RequestHeaders, seen, registry)
 	if err != nil {
 		return policyruntime.RequestAttributeSettings{}, err

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package logging provides logging functionality.
 package logging
 
 import (
@@ -48,6 +49,7 @@ func LoggerMiddlewareWithConfig(logger *slog.Logger, cfg config.File) gin.Handle
 		ctx.Set(definitions.CtxLocalCacheAuthKey, false)
 
 		start := time.Now()
+
 		ctx.Next()
 
 		err := ctx.Errors.Last()
@@ -100,7 +102,7 @@ func requestLogFields(
 		definitions.LogKeyUserAgent, requestUserAgent(ctx),
 		definitions.LogKeyTLSSecure, negotiatedProtocol,
 		definitions.LogKeyTLSCipher, cipherSuiteName,
-		definitions.LogKeyUriPath, ctx.Request.URL.Path,
+		definitions.LogKeyURIPath, ctx.Request.URL.Path,
 		definitions.LogKeyAuthMethod, requestAuthType(ctx),
 		definitions.LogKeyMsg, requestLogMessage(err),
 	}

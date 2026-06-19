@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package common provides common functionality.
 package common
 
 import (
@@ -34,7 +35,7 @@ import (
 func CreateMiddlewareChain(cfg config.File, logger *slog.Logger, langManager corelang.Manager) []gin.HandlerFunc {
 	return []gin.HandlerFunc{
 		csrf.New(),
-		mdlua.LuaContextMiddleware(),
+		mdlua.ContextMiddleware(),
 		i18n.WithLanguage(cfg, logger, langManager),
 		mdauth.ProtectEndpointMiddleware(cfg, logger),
 	}

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package action provides action functionality.
 package action
 
 import (
@@ -267,6 +268,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
 				return aw.luaActionRequest.Repeating
 			}
+
 			return false
 		}()),
 
@@ -338,7 +340,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	modManager := luamod.NewModuleManager(reqCtx, aw.cfg, aw.logger, aw.redisClient)
 
-	modManager.BindAllDefault(L, aw.luaActionRequest.Context, reqCtx, tolerate.GetTolerate())
+	modManager.BindAllDefault(reqCtx, L, aw.luaActionRequest.Context, tolerate.GetTolerate())
 
 	if httpRequest != nil {
 		modManager.BindHTTP(L, lualib.NewHTTPMetaFromRequest(httpRequest))
@@ -540,6 +542,7 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 
 	// Check if the script has a nauthilus_call_action function (reqEnv-first lookup)
 	actionFunc := lua.LNil
+
 	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
 		if fn := L.GetField(v, definitions.LuaFnCallAction); fn != nil {
 			actionFunc = fn

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package flow provides flow functionality.
 package flow
 
 import "github.com/croessner/nauthilus/v3/server/definitions"
@@ -22,28 +23,28 @@ type keyManager interface {
 }
 
 var idPFlowStateKeys = [...]string{
-	definitions.SessionKeyIdPFlowType,
-	definitions.SessionKeyIdPFlowID,
-	definitions.SessionKeyIdPAuthOutcome,
-	definitions.SessionKeyIdPAuthOutcomeHMAC,
+	definitions.SessionKeyIDPFlowType,
+	definitions.SessionKeyIDPFlowID,
+	definitions.SessionKeyIDPAuthOutcome,
+	definitions.SessionKeyIDPAuthOutcomeHMAC,
 	definitions.SessionKeyIDPAuthStatusMessage,
 	definitions.SessionKeyIDPAuthStatusI18NKey,
 	definitions.SessionKeyIDPAuthStatusLanguage,
 	definitions.SessionKeyOIDCGrantType,
-	definitions.SessionKeyIdPClientID,
-	definitions.SessionKeyIdPRedirectURI,
-	definitions.SessionKeyIdPScope,
-	definitions.SessionKeyIdPState,
-	definitions.SessionKeyIdPNonce,
-	definitions.SessionKeyIdPResponseType,
-	definitions.SessionKeyIdPPrompt,
-	definitions.SessionKeyIdPCodeChallenge,
-	definitions.SessionKeyIdPCodeChallengeMethod,
+	definitions.SessionKeyIDPClientID,
+	definitions.SessionKeyIDPRedirectURI,
+	definitions.SessionKeyIDPScope,
+	definitions.SessionKeyIDPState,
+	definitions.SessionKeyIDPNonce,
+	definitions.SessionKeyIDPResponseType,
+	definitions.SessionKeyIDPPrompt,
+	definitions.SessionKeyIDPCodeChallenge,
+	definitions.SessionKeyIDPCodeChallengeMethod,
 	definitions.SessionKeyDeviceCode,
-	definitions.SessionKeyIdPSAMLRequest,
-	definitions.SessionKeyIdPSAMLRelayState,
-	definitions.SessionKeyIdPSAMLEntityID,
-	definitions.SessionKeyIdPOriginalURL,
+	definitions.SessionKeyIDPSAMLRequest,
+	definitions.SessionKeyIDPSAMLRelayState,
+	definitions.SessionKeyIDPSAMLEntityID,
+	definitions.SessionKeyIDPOriginalURL,
 	definitions.SessionKeyRequireMFAFlow,
 	definitions.SessionKeyRequireMFAPending,
 	definitions.SessionKeyRequireMFAParentFlowID,
@@ -70,8 +71,8 @@ var mfaStateKeys = [...]string{
 	definitions.SessionKeyRegistration,
 }
 
-// CleanupIdPState removes all temporary IdP flow keys from session storage.
-func CleanupIdPState(mgr keyManager) {
+// CleanupIDPState removes all temporary IDP flow keys from session storage.
+func CleanupIDPState(mgr keyManager) {
 	if mgr == nil {
 		return
 	}

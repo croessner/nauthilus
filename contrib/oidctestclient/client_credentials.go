@@ -91,7 +91,7 @@ func requestClientCredentialsToken(tokenEndpoint string, scopes []string) *clien
 		log.Fatalf("Token request failed: %v", err)
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

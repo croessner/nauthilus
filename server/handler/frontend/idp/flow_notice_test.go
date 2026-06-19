@@ -103,7 +103,6 @@ func TestLogIncomingIDPFlowRequestIncludesClientIP(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			assertIncomingNoticeClientIP(t, testCase)
@@ -137,7 +136,7 @@ func TestLogCompletedIDPFlowRequestIncludesResultAndClientIP(t *testing.T) {
 			httpStatus:   http.StatusOK,
 			wantClientIP: "198.51.100.10",
 			wantResult:   "ok",
-			wantMessage:  "IdP request was successful",
+			wantMessage:  "IDP request was successful",
 		},
 		{
 			name:           "failed trusted proxy request",
@@ -149,7 +148,7 @@ func TestLogCompletedIDPFlowRequestIncludesResultAndClientIP(t *testing.T) {
 			httpStatus:   http.StatusBadRequest,
 			wantClientIP: "203.0.113.10",
 			wantResult:   "fail",
-			wantMessage:  "IdP request has failed",
+			wantMessage:  "IDP request has failed",
 		},
 		{
 			name:       "successful forwarded request without trusted proxies uses direct peer",
@@ -160,12 +159,11 @@ func TestLogCompletedIDPFlowRequestIncludesResultAndClientIP(t *testing.T) {
 			httpStatus:   http.StatusOK,
 			wantClientIP: "127.0.0.1",
 			wantResult:   "ok",
-			wantMessage:  "IdP request was successful",
+			wantMessage:  "IDP request was successful",
 		},
 	}
 
 	for _, testCase := range testCases {
-
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			assertCompletedNoticeResult(t, testCase)
@@ -200,7 +198,7 @@ func assertCompletedNoticeResult(t *testing.T, testCase completedNoticeTestCase)
 	}
 }
 
-// newNoticeTestLoggerContext builds an IdP notice context and matching proxy config.
+// newNoticeTestLoggerContext builds an IDP notice context and matching proxy config.
 func newNoticeTestLoggerContext(
 	t *testing.T,
 	remoteAddr string,

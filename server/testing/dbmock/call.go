@@ -21,11 +21,17 @@ import "time"
 type CallKind string
 
 const (
-	CallExec     CallKind = "exec"
-	CallQuery    CallKind = "query"
-	CallPrepare  CallKind = "prepare"
-	CallBegin    CallKind = "begin"
-	CallCommit   CallKind = "commit"
+	// CallExec is an exported package constant.
+	CallExec CallKind = "exec"
+	// CallQuery is an exported package constant.
+	CallQuery = "query"
+	// CallPrepare identifies a prepared statement operation.
+	CallPrepare CallKind = "prepare"
+	// CallBegin identifies a transaction begin operation.
+	CallBegin CallKind = "begin"
+	// CallCommit identifies a transaction commit operation.
+	CallCommit CallKind = "commit"
+	// CallRollback identifies a transaction rollback operation.
 	CallRollback CallKind = "rollback"
 )
 

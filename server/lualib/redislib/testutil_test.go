@@ -34,7 +34,7 @@ const (
 	luaRuntimeContextKey = "__NAUTH_REQ_RUNTIME_CONTEXT"
 )
 
-func bindRedisRuntimeContextForTest(L *lua.LState, ctx context.Context) {
+func bindRedisRuntimeContextForTest(ctx context.Context, L *lua.LState) {
 	reqEnv := L.NewTable()
 	L.SetGlobal(luaRequestEnvKey, reqEnv)
 
@@ -75,7 +75,8 @@ func runSimpleKeyRedisTests(t *testing.T, luaCmd string, tests []simpleKeyRedisT
 
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -127,7 +128,8 @@ func runMultiValueRedisTests(t *testing.T, luaCmd string, tests []multiValueRedi
 
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 			tt.prepareMockRedis(mock)
@@ -136,10 +138,8 @@ func runMultiValueRedisTests(t *testing.T, luaCmd string, tests []multiValueRedi
 			L.SetGlobal("key", lua.LString(tt.key))
 
 			var luaCode strings.Builder
-			luaCode.WriteString(fmt.Sprintf(
-				`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.%s("default", key`,
-				luaCmd,
-			))
+			fmt.Fprintf(&luaCode, `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.%s("default", key`,
+				luaCmd)
 
 			for i, val := range tt.values {
 				varName := fmt.Sprintf("value%d", i)

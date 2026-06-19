@@ -70,6 +70,7 @@ func TestContextSet(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
+
 			bindTestLuaContext(L, ctx)
 
 			L.Push(tc.key)
@@ -91,6 +92,7 @@ func TestContextSet(t *testing.T) {
 
 func TestContextGet(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name  string
 		key   lua.LValue
@@ -124,6 +126,7 @@ func TestContextGet(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
+
 			bindTestLuaContext(L, ctx)
 
 			if tt.name != "Non-existent Key" {
@@ -149,6 +152,7 @@ func TestContextGet(t *testing.T) {
 
 func TestContextDelete(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name              string
 		key               lua.LValue
@@ -187,6 +191,7 @@ func TestContextDelete(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
+
 			bindTestLuaContext(L, ctx)
 
 			for key, value := range tt.preSets {

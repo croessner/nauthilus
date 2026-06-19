@@ -80,6 +80,7 @@ func NewScopeManager(requestedScopes []string, customScopes []config.Oauth2Custo
 			}
 
 			claimType := customClaim.GetType()
+
 			definition, exists := claimDefinitions[claimName]
 			if !exists {
 				claimDefinitions[claimName] = claimDefinition{
@@ -184,16 +185,16 @@ func (m *ClaimManager) applyMapping(mapping config.OIDCClaimMapping, claims map[
 		source = fmt.Sprintf("attribute '%s'", mapping.Attribute)
 	} else {
 		switch mapping.From {
-		case "groups":
+		case definitions.ClaimGroups:
 			groups := m.auth.GetGroups()
 			values = stringsToAny(groups)
 			found = len(values) > 0
-			source = "groups"
-		case "group_dns":
-			groupDNs := m.auth.GetGroupDNs()
-			values = stringsToAny(groupDNs)
+			source = definitions.ClaimGroups
+		case claimGroupDistinguishedNames:
+			groupDistinguishedNames := m.auth.GetGroupDistinguishedNames()
+			values = stringsToAny(groupDistinguishedNames)
 			found = len(values) > 0
-			source = "group_dns"
+			source = claimGroupDistinguishedNames
 		default:
 			return
 		}
@@ -567,9 +568,9 @@ func firstAddress(values []any) (map[string]any, bool) {
 func addressValue(value any) (map[string]any, bool) {
 	switch typed := value.(type) {
 	case string:
-		return map[string]any{"formatted": typed}, true
+		return map[string]any{claimAddressFormatted: typed}, true
 	case []byte:
-		return map[string]any{"formatted": string(typed)}, true
+		return map[string]any{claimAddressFormatted: string(typed)}, true
 	default:
 		return objectValue(value)
 	}

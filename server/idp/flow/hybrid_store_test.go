@@ -90,11 +90,11 @@ func (m *mapSessionManager) ComputeHMAC(data []byte) []byte {
 
 func TestFlowReferenceAdapterRoundtrip(t *testing.T) {
 	session := newMapSessionManager()
-	adapter := NewFlowReferenceAdapter(session)
+	adapter := NewReferenceAdapter(session)
 
 	state := &State{
 		FlowID:      "flow-123",
-		FlowType:    FlowTypeOIDCAuthorization,
+		Type:        FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		AuthOutcome: AuthOutcomeFailLatched,
 		PendingMFA:  true,
@@ -117,16 +117,16 @@ func TestFlowReferenceAdapterRoundtrip(t *testing.T) {
 		t.Fatalf("unexpected auth outcome: got=%s want=%s", loaded.AuthOutcome, state.AuthOutcome)
 	}
 
-	if session.GetString(definitions.SessionKeyIdPFlowID, "") != state.FlowID {
-		t.Fatalf("expected flow id key %q to be set", definitions.SessionKeyIdPFlowID)
+	if session.GetString(definitions.SessionKeyIDPFlowID, "") != state.FlowID {
+		t.Fatalf("expected flow id key %q to be set", definitions.SessionKeyIDPFlowID)
 	}
 
 	if err = adapter.Delete(t.Context(), state.FlowID); err != nil {
 		t.Fatalf("unexpected delete error: %v", err)
 	}
 
-	if session.GetString(definitions.SessionKeyIdPFlowID, "") != "" {
-		t.Fatalf("expected flow id key %q to be deleted", definitions.SessionKeyIdPFlowID)
+	if session.GetString(definitions.SessionKeyIDPFlowID, "") != "" {
+		t.Fatalf("expected flow id key %q to be deleted", definitions.SessionKeyIDPFlowID)
 	}
 }
 

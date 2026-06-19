@@ -62,6 +62,7 @@ func CompareCustomObserve(
 	input.Mode = modeObserve
 	recorder := observability.SafeRecorder(input.Recorder)
 	tracer := observability.NewTracer()
+
 	spanCtx, span := tracer.Start(ctx, "policy.observe.compare")
 	defer span.End()
 
@@ -122,6 +123,7 @@ func markUnavailableCustomOnlyChecks(
 	}
 
 	var unavailable []string
+
 	for _, check := range operationChecks(snapshot, policyReport.Operation) {
 		if check.Name == "" || observeCheckSafe(snapshot, check) {
 			continue
@@ -139,12 +141,12 @@ func markUnavailableCustomOnlyChecks(
 			policyReport.Unavailable = make(map[string]report.UnavailableFact)
 		}
 
-		policyReport.Unavailable[check.Name] = report.UnavailableFact{Name: check.Name, Reason: "not_observe_safe"}
+		policyReport.Unavailable[check.Name] = report.UnavailableFact{Name: check.Name, Reason: observeReasonNotSafe}
 		recorder.RecordObserveUnavailable(ctx, observability.ObserveUnavailableMeasurement{
 			Operation:  policyReport.Operation,
 			Stage:      check.Stage,
 			Check:      check.Name,
-			ReasonCode: "not_observe_safe",
+			ReasonCode: observeReasonNotSafe,
 		})
 		unavailable = append(unavailable, check.Name)
 	}
@@ -160,6 +162,7 @@ func operationChecks(snapshot *policyruntime.Snapshot, operation policy.Operatio
 	}
 
 	stages := snapshot.StagePlans[operation]
+
 	checks := make([]policyruntime.CompiledCheck, 0)
 	for _, plan := range stages {
 		checks = append(checks, plan.Checks...)
@@ -207,6 +210,7 @@ func evaluateConfiguredPolicySet(
 			Operation: policyReport.Operation,
 			Stage:     stage,
 		})
+
 		if decision == nil {
 			continue
 		}
@@ -278,6 +282,7 @@ func requiredChecksSatisfied(
 	}
 
 	satisfied := true
+
 	for _, name := range compiled.RequireChecks {
 		result := requireCheckResult(name, policyReport)
 		recorder.RecordRequireCheck(ctx, observability.RequireCheckMeasurement{
@@ -288,7 +293,8 @@ func requiredChecksSatisfied(
 			Operation:  policyReport.Operation,
 			Stage:      compiled.Stage,
 		})
-		if result != "satisfied" {
+
+		if result != requireResultSatisfied {
 			satisfied = false
 		}
 	}
@@ -312,7 +318,7 @@ func requireCheckResult(name string, policyReport *report.DecisionReport) string
 
 	switch check.Status {
 	case policy.CheckStatusOK, policy.CheckStatusError:
-		return "satisfied"
+		return requireResultSatisfied
 	case policy.CheckStatusSkipped:
 		return "skipped"
 	default:
@@ -347,7 +353,7 @@ func configuredDefaultDenyDecision() report.PolicyDecision {
 		Name:            customDefaultDenyPolicy,
 		Stage:           policy.StageAuthDecision,
 		Effect:          policy.DecisionDeny,
-		OutcomeMarker:   "auth.outcome.default_deny",
+		OutcomeMarker:   outcomeMarkerDefaultDeny,
 		FSMEventMarker:  policy.FSMEventMarkerAuthDeny,
 		ResponseMarker:  policy.ResponseMarkerFail,
 		ResponseMessage: defaultResponseMessage(policy.ResponseMarkerFail),
@@ -665,6 +671,7 @@ func stringSliceContains(actual any, expected any) bool {
 
 func stringSliceContainsAny(actual any, expected any) bool {
 	values, ok := actual.([]string)
+
 	candidates, candidatesOK := expected.([]string)
 	if !ok || !candidatesOK {
 		return false
@@ -681,6 +688,7 @@ func stringSliceContainsAny(actual any, expected any) bool {
 
 func stringSliceContainsAll(actual any, expected any) bool {
 	values, ok := actual.([]string)
+
 	candidates, candidatesOK := expected.([]string)
 	if !ok || !candidatesOK {
 		return false
@@ -710,6 +718,7 @@ func compareOrdered(operator policyruntime.Operator, actual any, expected any) b
 	}
 
 	actualNumber, ok := numericValue(actual)
+
 	expectedNumber, expectedOK := numericValue(expected)
 	if !ok || !expectedOK {
 		return false
@@ -787,6 +796,7 @@ func cidrContains(actual any, expected any) bool {
 
 func withinTimeWindow(actual any, expected any) bool {
 	timestamp, ok := actual.(time.Time)
+
 	window, windowOK := expected.(policyruntime.CompiledTimeWindow)
 	if !ok || !windowOK {
 		return false
@@ -818,6 +828,7 @@ func weekdayAllowed(day time.Weekday, days []time.Weekday) bool {
 
 func compareObserveDecisions(defaultFinal *report.FinalDecision, customFinal *report.FinalDecision) (string, bool) {
 	mismatches := make([]string, 0, 6)
+
 	if defaultFinal == nil || customFinal == nil {
 		return mismatchMultiple, true
 	}
@@ -919,6 +930,7 @@ func recordCustomComparison(
 		Operation:    operation,
 		Stage:        customFinal.Stage,
 	})
+
 	if surface == "" {
 		return
 	}

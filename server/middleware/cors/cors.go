@@ -323,6 +323,7 @@ func parseHeaderList(values string) []string {
 		}
 
 		seen[key] = struct{}{}
+
 		result = append(result, trimmed)
 	}
 
@@ -350,6 +351,7 @@ func joinHeaderValues(values []string) string {
 		}
 
 		seen[key] = struct{}{}
+
 		result = append(result, trimmed)
 	}
 

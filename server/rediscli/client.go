@@ -39,8 +39,10 @@ import (
 // If Redis TLS is disabled, it returns nil.
 func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 	if tlsCfg != nil && tlsCfg.IsEnabled() {
-		var certs []tls.Certificate
-		var caCertPool *x509.CertPool
+		var (
+			certs      []tls.Certificate
+			caCertPool *x509.CertPool
+		)
 
 		if tlsCfg.GetCAFile() != "" {
 			caCert, err := os.ReadFile(tlsCfg.GetCAFile())
@@ -104,11 +106,13 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 //	client := newRedisFailoverClient(true)
 func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, slavesOnly bool) (redisHandle *redis.Client) {
 	sentinelPassword := ""
+
 	redisCfg.GetSentinel().GetPassword().WithString(func(value string) {
 		sentinelPassword = value
 	})
 
 	masterPassword := ""
+
 	redisCfg.GetStandaloneMaster().GetPassword().WithString(func(value string) {
 		masterPassword = value
 	})
@@ -165,6 +169,7 @@ func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *conf
 // The remaining configuration properties such as username, password, database number, pool size, and TLS options are obtained from the "config.GetFile().GetServer().Redis.Master" and
 func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, address string) *redis.Client {
 	masterPassword := ""
+
 	redisCfg.GetStandaloneMaster().GetPassword().WithString(func(value string) {
 		masterPassword = value
 	})
@@ -225,6 +230,7 @@ func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis
 func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis) *redis.ClusterClient {
 	clusterCfg := redisCfg.GetCluster()
 	clusterPassword := ""
+
 	clusterCfg.GetPassword().WithString(func(value string) {
 		clusterPassword = value
 	})
@@ -310,6 +316,7 @@ func instrumentRedisIfEnabled(c redis.UniversalClient) {
 func newRedisClusterClientReadOnly(cfg config.File, logger *slog.Logger, redisCfg *config.Redis) *redis.ClusterClient {
 	clusterCfg := redisCfg.GetCluster()
 	clusterPassword := ""
+
 	clusterCfg.GetPassword().WithString(func(value string) {
 		clusterPassword = value
 	})
@@ -397,7 +404,7 @@ func enableClientTracking(ctx context.Context, cn *redis.Conn, ct *config.RedisC
 
 // buildClientTrackingArgs builds arguments slice for CLIENT TRACKING ON
 func buildClientTrackingArgs(ct *config.RedisClientTracking) []any {
-	args := []any{"client", "tracking", "on"}
+	args := []any{redisCommandClient, "tracking", "on"}
 
 	if ct == nil {
 		return args

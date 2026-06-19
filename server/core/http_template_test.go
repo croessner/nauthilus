@@ -27,6 +27,7 @@ import (
 
 func TestTemplateLoading(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
 	r := gin.New()
 
 	r.SetFuncMap(template.FuncMap{

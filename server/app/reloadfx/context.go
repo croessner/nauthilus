@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package reloadfx provides reloadfx functionality.
 package reloadfx
 
 import (
@@ -31,6 +32,7 @@ func WithPreviousSnapshot(ctx context.Context, snap configfx.Snapshot) context.C
 	return context.WithValue(ctx, previousSnapshotKey{}, snap)
 }
 
+// PreviousSnapshotFromContext provides the exported PreviousSnapshotFromContext function.
 func PreviousSnapshotFromContext(ctx context.Context) (configfx.Snapshot, bool) {
 	v := ctx.Value(previousSnapshotKey{})
 	if v == nil {

@@ -104,11 +104,14 @@ func TestRedisZAdd(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -236,7 +239,7 @@ func TestRedisZRange(t *testing.T) {
 			key:   "key4",
 			start: 0,
 			stop:  1,
-			expected: func(L *lua.LState) *lua.LTable {
+			expected: func(_ *lua.LState) *lua.LTable {
 				return nil
 			},
 			expectedErr: lua.LString("context deadline exceeded"),
@@ -252,11 +255,14 @@ func TestRedisZRange(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -354,7 +360,7 @@ func TestRedisZRevRange(t *testing.T) {
 			key:   "key4",
 			start: 0,
 			stop:  1,
-			expected: func(L *lua.LState) *lua.LTable {
+			expected: func(_ *lua.LState) *lua.LTable {
 				return nil
 			},
 			expectedErr: lua.LString("context deadline exceeded"),
@@ -370,11 +376,14 @@ func TestRedisZRevRange(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -430,7 +439,7 @@ func TestRedisZRangeByScore(t *testing.T) {
 			key:      "key1",
 			minScore: "10",
 			maxScore: "20",
-			optsTable: func(L *lua.LState) *lua.LTable {
+			optsTable: func(_ *lua.LState) *lua.LTable {
 				return nil
 			},
 			expected: func(L *lua.LState) *lua.LTable {
@@ -442,7 +451,7 @@ func TestRedisZRangeByScore(t *testing.T) {
 				return tbl
 			},
 			expectedErr: lua.LNil,
-			setupMock: func(mock redismock.ClientMock, key, minScore, maxScore string, opts redis.ZRangeBy) {
+			setupMock: func(mock redismock.ClientMock, key, _, _ string, opts redis.ZRangeBy) {
 				mock.ExpectZRangeByScore(key, &opts).SetVal([]string{"member1", "member2"})
 			},
 		},
@@ -468,7 +477,7 @@ func TestRedisZRangeByScore(t *testing.T) {
 				return tbl
 			},
 			expectedErr: lua.LNil,
-			setupMock: func(mock redismock.ClientMock, key, minScore, maxScore string, opts redis.ZRangeBy) {
+			setupMock: func(mock redismock.ClientMock, key, _, _ string, opts redis.ZRangeBy) {
 				opts.Offset = 1
 				opts.Count = 2
 				mock.ExpectZRangeByScore(key, &opts).SetVal([]string{"member2", "member3"})
@@ -479,14 +488,14 @@ func TestRedisZRangeByScore(t *testing.T) {
 			key:      "key3",
 			minScore: "50",
 			maxScore: "60",
-			optsTable: func(L *lua.LState) *lua.LTable {
+			optsTable: func(_ *lua.LState) *lua.LTable {
 				return nil
 			},
 			expected: func(L *lua.LState) *lua.LTable {
 				return L.NewTable()
 			},
 			expectedErr: lua.LNil,
-			setupMock: func(mock redismock.ClientMock, key, minScore, maxScore string, opts redis.ZRangeBy) {
+			setupMock: func(mock redismock.ClientMock, key, _, _ string, opts redis.ZRangeBy) {
 				mock.ExpectZRangeByScore(key, &opts).SetVal([]string{})
 			},
 		},
@@ -495,14 +504,14 @@ func TestRedisZRangeByScore(t *testing.T) {
 			key:      "key4",
 			minScore: "10",
 			maxScore: "20",
-			optsTable: func(L *lua.LState) *lua.LTable {
+			optsTable: func(_ *lua.LState) *lua.LTable {
 				return nil
 			},
 			expected: func(L *lua.LState) *lua.LTable {
 				return L.NewTable()
 			},
 			expectedErr: lua.LNil,
-			setupMock: func(mock redismock.ClientMock, key, minScore, maxScore string, opts redis.ZRangeBy) {
+			setupMock: func(mock redismock.ClientMock, key, _, _ string, opts redis.ZRangeBy) {
 				mock.ExpectZRangeByScore(key, &opts).SetVal([]string{})
 			},
 		},
@@ -511,14 +520,14 @@ func TestRedisZRangeByScore(t *testing.T) {
 			key:      "key5",
 			minScore: "10",
 			maxScore: "20",
-			optsTable: func(L *lua.LState) *lua.LTable {
+			optsTable: func(_ *lua.LState) *lua.LTable {
 				return nil
 			},
-			expected: func(L *lua.LState) *lua.LTable {
+			expected: func(_ *lua.LState) *lua.LTable {
 				return nil
 			},
 			expectedErr: lua.LString("context deadline exceeded"),
-			setupMock: func(mock redismock.ClientMock, key, minScore, maxScore string, opts redis.ZRangeBy) {
+			setupMock: func(mock redismock.ClientMock, key, _, _ string, opts redis.ZRangeBy) {
 				mock.ExpectZRangeByScore(key, &opts).SetErr(context.DeadlineExceeded)
 			},
 		},
@@ -530,11 +539,14 @@ func TestRedisZRangeByScore(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -697,11 +709,14 @@ func TestRedisZRem(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -805,11 +820,14 @@ func TestRedisZRemRangeByScore(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -918,11 +936,14 @@ func TestRedisZRemRangeByRank(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -1015,11 +1036,14 @@ func TestRedisZRank(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -1060,65 +1084,65 @@ func TestRedisZCount(t *testing.T) {
 	tests := []struct {
 		name        string
 		key         string
-		min         string
-		max         string
+		minScore    string
+		maxScore    string
 		expectedRes lua.LValue
 		expectedErr lua.LValue
-		setupMock   func(mock redismock.ClientMock, key, min, max string)
+		setupMock   func(mock redismock.ClientMock, key, minScore, maxScore string)
 	}{
 		{
 			name:        "ValidRange",
 			key:         "key1",
-			min:         "10",
-			max:         "20",
+			minScore:    "10",
+			maxScore:    "20",
 			expectedRes: lua.LNumber(5),
 			expectedErr: lua.LNil,
-			setupMock: func(mock redismock.ClientMock, key, min, max string) {
-				mock.ExpectZCount(key, min, max).SetVal(5)
+			setupMock: func(mock redismock.ClientMock, key, minScore, maxScore string) {
+				mock.ExpectZCount(key, minScore, maxScore).SetVal(5)
 			},
 		},
 		{
 			name:        "EmptyRange",
 			key:         "key2",
-			min:         "30",
-			max:         "40",
+			minScore:    "30",
+			maxScore:    "40",
 			expectedRes: lua.LNumber(0),
 			expectedErr: lua.LNil,
-			setupMock: func(mock redismock.ClientMock, key, min, max string) {
-				mock.ExpectZCount(key, min, max).SetVal(0)
+			setupMock: func(mock redismock.ClientMock, key, minScore, maxScore string) {
+				mock.ExpectZCount(key, minScore, maxScore).SetVal(0)
 			},
 		},
 		{
 			name:        "InfiniteRange",
 			key:         "key3",
-			min:         "-inf",
-			max:         "+inf",
+			minScore:    "-inf",
+			maxScore:    "+inf",
 			expectedRes: lua.LNumber(10),
 			expectedErr: lua.LNil,
-			setupMock: func(mock redismock.ClientMock, key, min, max string) {
-				mock.ExpectZCount(key, min, max).SetVal(10)
+			setupMock: func(mock redismock.ClientMock, key, minScore, maxScore string) {
+				mock.ExpectZCount(key, minScore, maxScore).SetVal(10)
 			},
 		},
 		{
 			name:        "NonExistentKey",
 			key:         "nonexistent",
-			min:         "0",
-			max:         "100",
+			minScore:    "0",
+			maxScore:    "100",
 			expectedRes: lua.LNumber(0),
 			expectedErr: lua.LNil,
-			setupMock: func(mock redismock.ClientMock, key, min, max string) {
-				mock.ExpectZCount(key, min, max).SetVal(0)
+			setupMock: func(mock redismock.ClientMock, key, minScore, maxScore string) {
+				mock.ExpectZCount(key, minScore, maxScore).SetVal(0)
 			},
 		},
 		{
 			name:        "RedisError",
 			key:         "key4",
-			min:         "10",
-			max:         "20",
+			minScore:    "10",
+			maxScore:    "20",
 			expectedRes: lua.LNil,
 			expectedErr: lua.LString("context deadline exceeded"),
-			setupMock: func(mock redismock.ClientMock, key, min, max string) {
-				mock.ExpectZCount(key, min, max).SetErr(context.DeadlineExceeded)
+			setupMock: func(mock redismock.ClientMock, key, minScore, maxScore string) {
+				mock.ExpectZCount(key, minScore, maxScore).SetErr(context.DeadlineExceeded)
 			},
 		},
 	}
@@ -1129,22 +1153,25 @@ func TestRedisZCount(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
 			if tt.setupMock != nil {
-				tt.setupMock(mock, tt.key, tt.min, tt.max)
+				tt.setupMock(mock, tt.key, tt.minScore, tt.maxScore)
 			}
 
 			L.SetGlobal("key", lua.LString(tt.key))
-			L.SetGlobal("min", lua.LString(tt.min))
-			L.SetGlobal("max", lua.LString(tt.max))
+			L.SetGlobal("min", lua.LString(tt.minScore))
+			L.SetGlobal("max", lua.LString(tt.maxScore))
 
 			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_zcount("default", key, min, max)`)
 			if err != nil {
@@ -1233,11 +1260,14 @@ func TestRedisZIncrBy(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -1332,11 +1362,14 @@ func TestRedisZScore(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -1429,11 +1462,14 @@ func TestRedisZRevRank(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -1496,11 +1532,14 @@ func TestRedisZScoreWithCustomHandle(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			// Create a userdata with the Redis client
@@ -1567,11 +1606,14 @@ func TestRedisZRevRankWithCustomHandle(t *testing.T) {
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
+
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			// Create a userdata with the Redis client

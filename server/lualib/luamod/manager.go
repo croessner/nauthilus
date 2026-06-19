@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package luamod provides luamod functionality.
 package luamod
 
 import (
@@ -96,7 +97,7 @@ func (mm *ModuleManager) BindHTTPResponse(L *lua.LState, ginCtx *gin.Context) {
 }
 
 // BindRedis binds the nauthilus_redis module.
-func (mm *ModuleManager) BindRedis(L *lua.LState, redisCtx context.Context) {
+func (mm *ModuleManager) BindRedis(redisCtx context.Context, L *lua.LState) {
 	loader := redislib.LoaderModRedis(redisCtx, mm.cfg, mm.redisClient)
 
 	mm.BindModule(L, definitions.LuaModRedis, loader)
@@ -159,10 +160,10 @@ func (mm *ModuleManager) BindI18NRuntime(L *lua.LState, runtime *lualib.I18NRunt
 }
 
 // BindAllDefault binds all default modules into the Lua state.
-func (mm *ModuleManager) BindAllDefault(L *lua.LState, requestCtx *lualib.Context, redisCtx context.Context, tolerate tolerate.Tolerate) {
+func (mm *ModuleManager) BindAllDefault(redisCtx context.Context, L *lua.LState, requestCtx *lualib.Context, tolerate tolerate.Tolerate) {
 	mm.BindContext(L, requestCtx)
 	mm.BindCBOR(L)
-	mm.BindRedis(L, redisCtx)
+	mm.BindRedis(redisCtx, L)
 	mm.BindPsnet(L)
 	mm.BindDNS(L)
 	mm.BindOTEL(L)

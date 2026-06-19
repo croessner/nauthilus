@@ -34,6 +34,7 @@ import (
 // GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the LDAP backend.
 func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials []mfa.PersistentCredential, err error) {
 	tr := monittrace.New("nauthilus/ldap")
+
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.get_webauthn_credentials",
 		attribute.String("pool_name", lm.poolName),
 		attribute.String("username", auth.Request.Username),
@@ -116,6 +117,7 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 	)
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
+
 	ctxSearch, cancelSearch := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPSearch())
 	defer cancelSearch()
 
@@ -177,6 +179,7 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 // SaveWebAuthnCredential saves a WebAuthn credential for the user in the LDAP backend.
 func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error) {
 	tr := monittrace.New("nauthilus/ldap")
+
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.save_webauthn_credential",
 		attribute.String("pool_name", lm.poolName),
 		attribute.String("username", auth.Request.Username),
@@ -312,6 +315,7 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 // DeleteWebAuthnCredential removes a WebAuthn credential for the user in the LDAP backend.
 func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error) {
 	tr := monittrace.New("nauthilus/ldap")
+
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.delete_webauthn_credential",
 		attribute.String("pool_name", lm.poolName),
 		attribute.String("username", auth.Request.Username),
@@ -339,12 +343,14 @@ func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential 
 	}
 
 	username := auth.handleMasterUserMode()
+
 	credBytes, err := jsonIter.Marshal(credential)
 	if err != nil {
 		return err
 	}
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
+
 	ctxModify, cancelModify := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPModify())
 	defer cancelModify()
 
@@ -389,6 +395,7 @@ func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential 
 // UpdateWebAuthnCredential updates an existing WebAuthn credential for the user in the LDAP backend.
 func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error) {
 	tr := monittrace.New("nauthilus/ldap")
+
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.update_webauthn_credential",
 		attribute.String("pool_name", lm.poolName),
 		attribute.String("username", auth.Request.Username),
@@ -556,7 +563,7 @@ func (lm *ldapManagerImpl) fetchObjectClasses(ctx context.Context, auth *AuthSta
 		},
 		Filter:            filter,
 		BaseDN:            baseDN,
-		SearchAttributes:  []string{"objectClass"},
+		SearchAttributes:  []string{ldapAttributeObjectClass},
 		Scope:             *scope,
 		LDAPReplyChan:     ldapReplyChan,
 		HTTPClientContext: ctxSearch,
@@ -565,6 +572,7 @@ func (lm *ldapManagerImpl) fetchObjectClasses(ctx context.Context, auth *AuthSta
 	lm.ldapQueue().Push(ldapSearchRequest, priority)
 
 	var currentObjectClasses []string
+
 	select {
 	case <-ctxSearch.Done():
 		return nil, errors.ErrLDAPSearchTimeout
@@ -573,7 +581,7 @@ func (lm *ldapManagerImpl) fetchObjectClasses(ctx context.Context, auth *AuthSta
 			return nil, wrapLDAPModifyError(ldapReply.Err, "Failed to fetch objectClasses")
 		}
 
-		if values, ok := ldapReply.Result["objectClass"]; ok {
+		if values, ok := ldapReply.Result[ldapAttributeObjectClass]; ok {
 			for _, val := range values {
 				if strVal, ok := val.(string); ok {
 					currentObjectClasses = append(currentObjectClasses, strVal)
@@ -601,8 +609,8 @@ func hasRequiredObjectClass(objectClass string, currentObjectClasses []string) b
 
 func (lm *ldapManagerImpl) webAuthnProtocolAndField(auth *AuthState) (*config.LDAPSearchProtocol, string, error) {
 	protocolName := auth.Request.Protocol.Get()
-	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(protocolName, lm.poolName)
 
+	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(protocolName, lm.poolName)
 	if err != nil {
 		return nil, "", err
 	}
@@ -640,7 +648,7 @@ func (lm *ldapManagerImpl) addObjectClass(ctx context.Context, auth *AuthState, 
 		BaseDN: baseDN,
 		Scope:  *scope,
 		ModifyAttributes: bktype.LDAPModifyAttributes{
-			"objectClass": []string{objectClass},
+			ldapAttributeObjectClass: []string{objectClass},
 		},
 		LDAPReplyChan:     ldapReplyChan,
 		HTTPClientContext: ctxModifyOC,

@@ -45,7 +45,7 @@ func TestControllerPreviewStart(t *testing.T) {
 
 	decision, err := controller.PreviewStart(&State{
 		FlowID:       "f-1",
-		FlowType:     FlowTypeOIDCAuthorization,
+		Type:         FlowTypeOIDCAuthorization,
 		Protocol:     FlowProtocolOIDC,
 		CurrentStep:  FlowStepStart,
 		ReturnTarget: "/login",
@@ -64,7 +64,7 @@ func TestControllerStartRequiresStore(t *testing.T) {
 
 	_, err := controller.Start(t.Context(), &State{
 		FlowID:      "f-1",
-		FlowType:    FlowTypeOIDCAuthorization,
+		Type:        FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		CurrentStep: FlowStepStart,
 	}, time.Now())
@@ -78,7 +78,7 @@ func TestControllerStartSavesState(t *testing.T) {
 	controller := NewController(store)
 	state := &State{
 		FlowID:      "f-1",
-		FlowType:    FlowTypeOIDCAuthorization,
+		Type:        FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		CurrentStep: FlowStepStart,
 	}
@@ -95,7 +95,7 @@ func TestControllerStartSavesState(t *testing.T) {
 func TestControllerAdvanceRejectsInvalidTransition(t *testing.T) {
 	store := &memoryStore{state: &State{
 		FlowID:      "f-1",
-		FlowType:    FlowTypeOIDCAuthorization,
+		Type:        FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		CurrentStep: FlowStepLogin,
 	}}
@@ -114,7 +114,7 @@ func TestControllerAdvanceRejectsInvalidTransition(t *testing.T) {
 func TestControllerRecoverInvalidTransitionAbortsFlow(t *testing.T) {
 	store := &memoryStore{state: &State{
 		FlowID:      "f-1",
-		FlowType:    FlowTypeOIDCAuthorization,
+		Type:        FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		CurrentStep: FlowStepLogin,
 	}}
@@ -123,7 +123,7 @@ func TestControllerRecoverInvalidTransitionAbortsFlow(t *testing.T) {
 	recoveryDecision, err := controller.Recover(
 		t.Context(),
 		"f-1",
-		TransitionError{FlowType: FlowTypeOIDCAuthorization, From: FlowStepLogin, To: FlowStepCallback, Action: FlowActionAdvance},
+		TransitionError{Type: FlowTypeOIDCAuthorization, From: FlowStepLogin, To: FlowStepCallback, Action: FlowActionAdvance},
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -171,7 +171,7 @@ func TestControllerRecoverStaleFlowID(t *testing.T) {
 func TestControllerSetAuthOutcomeIsSticky(t *testing.T) {
 	store := &memoryStore{state: &State{
 		FlowID:      "f-1",
-		FlowType:    FlowTypeOIDCAuthorization,
+		Type:        FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		CurrentStep: FlowStepLogin,
 	}}
@@ -198,7 +198,7 @@ func TestControllerResetAuthOutcomeForRetryClearsFailLatch(t *testing.T) {
 	now := time.Date(2026, time.May, 6, 18, 15, 0, 0, time.UTC)
 	store := &memoryStore{state: &State{
 		FlowID:      "f-1",
-		FlowType:    FlowTypeOIDCAuthorization,
+		Type:        FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		CurrentStep: FlowStepMFA,
 		AuthOutcome: AuthOutcomeFailLatched,
@@ -221,7 +221,7 @@ func TestControllerResetAuthOutcomeForRetryClearsFailLatch(t *testing.T) {
 func TestControllerAdvanceRejectsSuccessPathWhenFailLatched(t *testing.T) {
 	store := &memoryStore{state: &State{
 		FlowID:      "f-1",
-		FlowType:    FlowTypeOIDCAuthorization,
+		Type:        FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		CurrentStep: FlowStepMFA,
 		AuthOutcome: AuthOutcomeFailLatched,

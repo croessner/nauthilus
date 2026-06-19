@@ -32,9 +32,12 @@ func NewPacerFromConfig(cfg *Config, collector StatsCollector) *Pacer {
 		if cfg.AutoMode && cfg.AutoStartRPS > 0 {
 			initialRPS = cfg.AutoStartRPS
 		}
+
 		pacer := NewPacer(initialRPS)
 		collector.SetTargetRPS(initialRPS)
+
 		return pacer
 	}
+
 	return nil
 }

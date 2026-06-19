@@ -113,6 +113,7 @@ func TestBruteForceLoopbackRunsConfiguredCheckWithoutSchedulerGuard(t *testing.T
 	auth.Request.Username = "loopback-blocked@example.test"
 	auth.Request.Password = secret.New("blocked-secret")
 	ctx.Request.RemoteAddr = requestContextLoopbackIP + ":12345"
+
 	mock.MatchExpectationsInOrder(false)
 	rediscli.ClearScriptCache()
 	l1.GetEngine().Clear()
@@ -120,7 +121,7 @@ func TestBruteForceLoopbackRunsConfiguredCheckWithoutSchedulerGuard(t *testing.T
 	l1.GetEngine().Set(
 		ctx.Request.Context(),
 		l1.KeyNetwork("127.0.0.1/32"),
-		l1.L1Decision{Blocked: true, Rule: hardCutBruteForceRuleName},
+		l1.Decision{Blocked: true, Rule: hardCutBruteForceRuleName},
 		time.Minute,
 	)
 
@@ -251,6 +252,7 @@ func runHardCutPreAuthAdapterCase(t *testing.T, testCase hardCutPreAuthAdapterCa
 	}
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
 	auth.Request.ClientIP = testCase.clientIP
 	if strings.TrimSpace(testCase.remoteAddr) != "" {
 		ctx.Request.RemoteAddr = testCase.remoteAddr
@@ -382,6 +384,7 @@ func registerHardCutRBLService(t *testing.T) *hardCutRBLService {
 
 	service := &hardCutRBLService{score: 5, threshold: 5}
 	previous := GetRBLService()
+
 	RegisterRBLService(service)
 	t.Cleanup(func() {
 		RegisterRBLService(previous)

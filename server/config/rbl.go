@@ -17,6 +17,7 @@ package config
 
 import "fmt"
 
+// RBLSection describes the exported RBLSection type.
 type RBLSection struct {
 	SoftWhitelist SoftWhitelist `mapstructure:"allowlist"`
 	Lists         []RBL         `mapstructure:"lists" validate:"required,dive"`
@@ -72,11 +73,12 @@ func (r *RBLSection) GetSoftWhitelist() SoftWhitelist {
 	return r.SoftWhitelist
 }
 
+// RBL describes the exported RBL type.
 type RBL struct {
-	Name         string `mapstructure:"name" validate:"required"`
-	RBL          string `mapstructure:"rbl" validate:"required,hostname_rfc1123_with_opt_trailing_dot"`
-	IPv4         bool   `mapstructure:"ipv4"`
-	IPv6         bool   `mapstructure:"ipv6"`
+	Name         string   `mapstructure:"name" validate:"required"`
+	RBL          string   `mapstructure:"rbl" validate:"required,hostname_rfc1123_with_opt_trailing_dot"`
+	IPv4         bool     `mapstructure:"ipv4"`
+	IPv6         bool     `mapstructure:"ipv6"`
 	AllowFailure bool     `mapstructure:"allow_failure"`
 	ReturnCode   string   `mapstructure:"return_code" validate:"omitempty,ip4_addr"`
 	ReturnCodes  []string `mapstructure:"return_codes" validate:"required,dive,ip4_addr"`

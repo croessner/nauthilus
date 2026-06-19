@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Package idp contains a narrow generated OpenAPI client for public IdP
+// Package idp contains a narrow generated OpenAPI client for public IDP
 // discovery surfaces.
 //
 //go:generate ../../../../scripts/generate-openapi-bindings.sh

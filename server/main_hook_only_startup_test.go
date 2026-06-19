@@ -58,13 +58,16 @@ func TestHookOnlyConfigurationStartsAndStopsWithoutBackends(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	t.Cleanup(func() {
 		config.SetTestFile(nil)
+
 		config.ConfigFilePath = ""
 		config.ConfigFileType = "yaml"
+
 		viper.Reset()
 	})
 
 	config.ConfigFilePath = configPath
 	config.ConfigFileType = "yaml"
+
 	viper.SetConfigFile(configPath)
 	viper.SetConfigType("yaml")
 
@@ -84,6 +87,7 @@ func TestHookOnlyConfigurationStartsAndStopsWithoutBackends(t *testing.T) {
 
 	if err := waitForTCPListener(listenAddress, 5*time.Second); err != nil {
 		_ = app.Stop(context.Background())
+
 		t.Fatalf("hook-only listener did not come up: %v", err)
 	}
 

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package loopsfx provides loopsfx functionality.
 package loopsfx
 
 import (
@@ -101,7 +102,7 @@ func (s *BackendMonitoringService) Start(parent context.Context) error {
 
 // Stop terminates the backend monitoring process, stops the ticker, cancels the context, and waits for all goroutines to finish.
 func (s *BackendMonitoringService) Stop(stopCtx context.Context) error {
-	return stopLoop(&s.mu, &s.running, &s.cancel, &s.ticker, &s.ctx, &s.wg, stopCtx)
+	return stopLoop(stopCtx, &s.mu, &s.running, &s.cancel, &s.ticker, &s.ctx, &s.wg)
 }
 
 // Restart restarts the backend monitoring service by stopping and then starting its monitoring loop.

@@ -41,6 +41,7 @@ const (
 	BackendAuthMechanismBasic = "BASIC"
 )
 
+// RelayDomainsSection describes the exported RelayDomainsSection type.
 type RelayDomainsSection struct {
 	SoftWhitelist SoftWhitelist `mapstructure:"allowlist"`
 	StaticDomains []string      `mapstructure:"static" validate:"required,dive,hostname_rfc1123_with_opt_trailing_dot"`
@@ -74,6 +75,7 @@ func (r *RelayDomainsSection) GetSoftWhitelist() SoftWhitelist {
 	return r.SoftWhitelist
 }
 
+// BackendServer describes the exported BackendServer type.
 type BackendServer struct {
 	Protocol      string `mapstructure:"protocol" validate:"required,oneof=imap pop3 lmtp smtp sieve http"`
 	Host          string `mapstructure:"host" validate:"required,hostname_rfc1123_with_opt_trailing_dot|ip"`
@@ -231,6 +233,7 @@ func (n *BackendServer) IsHAProxyV2() bool {
 	return n.HAProxyV2
 }
 
+// BackendServerMonitoring describes the exported BackendServerMonitoring type.
 type BackendServerMonitoring struct {
 	BackendServers []*BackendServer `mapstructure:"backend_servers" validate:"required,dive"`
 

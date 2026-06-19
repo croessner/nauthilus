@@ -434,7 +434,7 @@ func (h *Handler) userSnapshotToProto(
 		DisplayName:  user.DisplayName,
 		Attributes:   stringAttributesToProto(user.Attributes),
 		Groups:       append([]string(nil), user.Groups...),
-		GroupDns:     append([]string(nil), user.GroupDNS...),
+		GroupDns:     append([]string(nil), user.GroupDistinguishedNames...),
 		Backend:      backend,
 		Mfa:          mfaStateToProto(user.MFA),
 	}, nil

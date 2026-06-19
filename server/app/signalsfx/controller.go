@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package signalsfx provides signalsfx functionality.
 package signalsfx
 
 import (
@@ -25,11 +26,13 @@ import (
 	"go.uber.org/fx"
 )
 
+// ReloadRunner describes the exported ReloadRunner type.
 type ReloadRunner interface {
 	// Reload triggers a configuration reload operation.
 	Reload(ctx context.Context) error
 }
 
+// RestartRunner describes the exported RestartRunner type.
 type RestartRunner interface {
 	// Restart triggers an in-process restart operation.
 	Restart(ctx context.Context) error

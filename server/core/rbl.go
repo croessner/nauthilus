@@ -88,6 +88,7 @@ func (a *AuthState) rblPolicyLookup(ctx *gin.Context, rbl *config.RBL) (RBLListP
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	reverseIPAddr, ipFamily, active, err := reverseRBLClientIP(a.Request.ClientIP, rbl)
+
 	fact.IPFamily = ipFamily
 	if err != nil {
 		fact.Error = true
@@ -137,6 +138,7 @@ func reverseRBLClientIP(clientIP string, rbl *config.RBL) (string, string, bool,
 	}
 
 	ipv6Str := strings.Join(strings.Split(tmp.Long(), ":"), "")
+
 	ipv6Slice := strings.Split(ipv6Str, "")
 	for n := 0; n < (len(ipv6Slice) / rblReverseHalves); n++ {
 		ipv6Slice[n], ipv6Slice[len(ipv6Slice)-n-1] = ipv6Slice[len(ipv6Slice)-n-1], ipv6Slice[n]
@@ -179,6 +181,7 @@ func (a *AuthState) rblQuestionType() string {
 
 func markRBLPolicyFactError(fact *RBLListPolicyFact, err error) {
 	fact.Error = true
+
 	fact.ReasonCode = "dns_error"
 	if strings.Contains(err.Error(), "no such host") {
 		fact.ReasonCode = "dns_no_such_host"

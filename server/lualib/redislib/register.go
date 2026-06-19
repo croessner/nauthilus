@@ -99,7 +99,7 @@ func LoaderModRedis(ctx context.Context, cfg config.File, client rediscli.Client
 		})
 
 		if ctx != nil {
-			lualib.BindRequestRuntimeContext(L, mod, ctx)
+			lualib.BindRequestRuntimeContext(ctx, L, mod)
 		}
 
 		L.Push(mod)

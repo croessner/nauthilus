@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package slo provides slo functionality.
 package slo
 
 import (
@@ -22,26 +23,36 @@ import (
 )
 
 var (
-	ErrEmptyTransactionID     = errors.New("empty slo transaction id")
-	ErrEmptyRootRequestID     = errors.New("empty slo root request id")
-	ErrInvalidDirection       = errors.New("invalid slo direction")
-	ErrInvalidBinding         = errors.New("invalid slo binding")
-	ErrInvalidStatus          = errors.New("invalid slo status")
+	// ErrEmptyTransactionID is an exported package value.
+	ErrEmptyTransactionID = errors.New("empty slo transaction id")
+	// ErrEmptyRootRequestID is an exported package value.
+	ErrEmptyRootRequestID = errors.New("empty slo root request id")
+	// ErrInvalidDirection reports an unsupported SLO direction.
+	ErrInvalidDirection = errors.New("invalid slo direction")
+	// ErrInvalidBinding reports an unsupported SLO binding.
+	ErrInvalidBinding = errors.New("invalid slo binding")
+	// ErrInvalidStatus reports an unsupported SLO status.
+	ErrInvalidStatus = errors.New("invalid slo status")
+	// ErrEmptyParticipantEntity reports a missing SLO participant entity identifier.
 	ErrEmptyParticipantEntity = errors.New("empty slo participant entity id")
-	ErrDuplicateRequestID     = errors.New("duplicate slo request id")
+	// ErrDuplicateRequestID reports a repeated SLO request identifier.
+	ErrDuplicateRequestID = errors.New("duplicate slo request id")
 )
 
-// SLOBinding describes the transport binding used for SLO protocol messages.
-type SLOBinding string
+// Binding describes the transport binding used for SLO protocol messages.
+type Binding string
 
 const (
-	SLOBindingUnknown  SLOBinding = "unknown"
-	SLOBindingRedirect SLOBinding = "redirect"
-	SLOBindingPost     SLOBinding = "post"
+	// SLOBindingUnknown is an exported package constant.
+	SLOBindingUnknown Binding = "unknown"
+	// SLOBindingRedirect is an exported package constant.
+	SLOBindingRedirect Binding = "redirect"
+	// SLOBindingPost identifies HTTP POST SLO transport.
+	SLOBindingPost Binding = "post"
 )
 
 // Valid reports whether the binding is a known value.
-func (b SLOBinding) Valid() bool {
+func (b Binding) Valid() bool {
 	switch b {
 	case SLOBindingRedirect, SLOBindingPost:
 		return true
@@ -50,17 +61,20 @@ func (b SLOBinding) Valid() bool {
 	}
 }
 
-// SLODirection indicates whether the transaction was initiated by an SP or by the IdP.
-type SLODirection string
+// Direction indicates whether the transaction was initiated by an SP or by the IDP.
+type Direction string
 
 const (
-	SLODirectionUnknown      SLODirection = "unknown"
-	SLODirectionSPInitiated  SLODirection = "sp_initiated"
-	SLODirectionIDPInitiated SLODirection = "idp_initiated"
+	// SLODirectionUnknown is an exported package constant.
+	SLODirectionUnknown Direction = "unknown"
+	// SLODirectionSPInitiated is an exported package constant.
+	SLODirectionSPInitiated = "sp_initiated"
+	// SLODirectionIDPInitiated identifies IDP-initiated SLO.
+	SLODirectionIDPInitiated Direction = "idp_initiated"
 )
 
 // Valid reports whether the direction is a known value.
-func (d SLODirection) Valid() bool {
+func (d Direction) Valid() bool {
 	switch d {
 	case SLODirectionSPInitiated, SLODirectionIDPInitiated:
 		return true
@@ -69,21 +83,28 @@ func (d SLODirection) Valid() bool {
 	}
 }
 
-// SLOStatus represents the lifecycle state of a single logout transaction.
-type SLOStatus string
+// Status represents the lifecycle state of a single logout transaction.
+type Status string
 
 const (
-	SLOStatusReceived      SLOStatus = "received"
-	SLOStatusValidated     SLOStatus = "validated"
-	SLOStatusLocalDone     SLOStatus = "local_done"
-	SLOStatusFanoutRunning SLOStatus = "fanout_running"
-	SLOStatusDone          SLOStatus = "done"
-	SLOStatusPartial       SLOStatus = "partial"
-	SLOStatusFailed        SLOStatus = "failed"
+	// SLOStatusReceived is an exported package constant.
+	SLOStatusReceived Status = "received"
+	// SLOStatusValidated is an exported package constant.
+	SLOStatusValidated = "validated"
+	// SLOStatusLocalDone marks successful local logout handling.
+	SLOStatusLocalDone Status = "local_done"
+	// SLOStatusFanoutRunning marks active downstream logout fanout.
+	SLOStatusFanoutRunning Status = "fanout_running"
+	// SLOStatusDone marks a completed SLO transaction.
+	SLOStatusDone Status = "done"
+	// SLOStatusPartial marks a partially completed SLO transaction.
+	SLOStatusPartial Status = "partial"
+	// SLOStatusFailed marks a failed SLO transaction.
+	SLOStatusFailed Status = "failed"
 )
 
 // Valid reports whether the status is a known value.
-func (s SLOStatus) Valid() bool {
+func (s Status) Valid() bool {
 	switch s {
 	case SLOStatusReceived,
 		SLOStatusValidated,
@@ -99,7 +120,7 @@ func (s SLOStatus) Valid() bool {
 }
 
 // IsTerminal reports whether the status marks a completed transaction.
-func (s SLOStatus) IsTerminal() bool {
+func (s Status) IsTerminal() bool {
 	switch s {
 	case SLOStatusDone, SLOStatusPartial, SLOStatusFailed:
 		return true
@@ -109,7 +130,7 @@ func (s SLOStatus) IsTerminal() bool {
 }
 
 // CanTransitionTo reports whether moving from the current state to next is allowed.
-func (s SLOStatus) CanTransitionTo(next SLOStatus) bool {
+func (s Status) CanTransitionTo(next Status) bool {
 	if !s.Valid() || !next.Valid() {
 		return false
 	}
@@ -130,8 +151,8 @@ func (s SLOStatus) CanTransitionTo(next SLOStatus) bool {
 
 // TransitionError reports invalid lifecycle transitions.
 type TransitionError struct {
-	From SLOStatus
-	To   SLOStatus
+	From Status
+	To   Status
 }
 
 // Error returns the transition violation.
@@ -139,17 +160,17 @@ func (e TransitionError) Error() string {
 	return "invalid slo transition: from=" + string(e.From) + " to=" + string(e.To)
 }
 
-// SLOParticipant stores correlation context for a participant service provider.
-type SLOParticipant struct {
-	EntityID     string     `json:"entity_id"`
-	NameID       string     `json:"name_id,omitzero"`
-	SessionIndex string     `json:"session_index,omitzero"`
-	RequestID    string     `json:"request_id,omitzero"`
-	Binding      SLOBinding `json:"binding"`
+// Participant stores correlation context for a participant service provider.
+type Participant struct {
+	EntityID     string  `json:"entity_id"`
+	NameID       string  `json:"name_id,omitzero"`
+	SessionIndex string  `json:"session_index,omitzero"`
+	RequestID    string  `json:"request_id,omitzero"`
+	Binding      Binding `json:"binding"`
 }
 
 // Validate ensures the participant can be used in a transaction.
-func (p *SLOParticipant) Validate() error {
+func (p *Participant) Validate() error {
 	if p == nil || p.EntityID == "" {
 		return fmt.Errorf("slo participant: %w", ErrEmptyParticipantEntity)
 	}
@@ -161,27 +182,27 @@ func (p *SLOParticipant) Validate() error {
 	return nil
 }
 
-// SLOTransaction models one end-to-end SLO run.
+// Transaction models one end-to-end SLO run.
 //
 // Request correlation is defined as:
 // 1. RootRequestID for the inbound SLO request that opened the transaction.
 // 2. Per-participant RequestID for outbound fanout requests, unique within the transaction.
-type SLOTransaction struct {
-	TransactionID string           `json:"transaction_id"`
-	RootRequestID string           `json:"root_request_id"`
-	Account       string           `json:"account,omitzero"`
-	Direction     SLODirection     `json:"direction"`
-	Binding       SLOBinding       `json:"binding"`
-	Status        SLOStatus        `json:"status"`
-	Participants  []SLOParticipant `json:"participants,omitzero"`
-	CreatedAt     time.Time        `json:"created_at,omitzero"`
-	UpdatedAt     time.Time        `json:"updated_at,omitzero"`
-	CompletedAt   time.Time        `json:"completed_at,omitzero"`
+type Transaction struct {
+	TransactionID string        `json:"transaction_id"`
+	RootRequestID string        `json:"root_request_id"`
+	Account       string        `json:"account,omitzero"`
+	Direction     Direction     `json:"direction"`
+	Binding       Binding       `json:"binding"`
+	Status        Status        `json:"status"`
+	Participants  []Participant `json:"participants,omitzero"`
+	CreatedAt     time.Time     `json:"created_at,omitzero"`
+	UpdatedAt     time.Time     `json:"updated_at,omitzero"`
+	CompletedAt   time.Time     `json:"completed_at,omitzero"`
 }
 
 // NewTransaction creates a validated SLO transaction with the initial lifecycle state.
-func NewTransaction(transactionID, rootRequestID string, direction SLODirection, binding SLOBinding, now time.Time) (*SLOTransaction, error) {
-	tx := &SLOTransaction{
+func NewTransaction(transactionID, rootRequestID string, direction Direction, binding Binding, now time.Time) (*Transaction, error) {
+	tx := &Transaction{
 		TransactionID: transactionID,
 		RootRequestID: rootRequestID,
 		Direction:     direction,
@@ -199,7 +220,7 @@ func NewTransaction(transactionID, rootRequestID string, direction SLODirection,
 }
 
 // Normalize fills canonical defaults for optional in-memory fields.
-func (t *SLOTransaction) Normalize(now time.Time) {
+func (t *Transaction) Normalize(now time.Time) {
 	if t == nil {
 		return
 	}
@@ -216,7 +237,7 @@ func (t *SLOTransaction) Normalize(now time.Time) {
 }
 
 // Validate ensures the transaction is internally consistent.
-func (t *SLOTransaction) Validate() error {
+func (t *Transaction) Validate() error {
 	if t == nil || t.TransactionID == "" {
 		return fmt.Errorf("slo transaction: %w", ErrEmptyTransactionID)
 	}
@@ -263,7 +284,7 @@ func (t *SLOTransaction) Validate() error {
 }
 
 // TransitionTo applies a lifecycle transition and updates timestamps.
-func (t *SLOTransaction) TransitionTo(next SLOStatus, now time.Time) error {
+func (t *Transaction) TransitionTo(next Status, now time.Time) error {
 	if t == nil || t.TransactionID == "" {
 		return fmt.Errorf("slo transaction: %w", ErrEmptyTransactionID)
 	}
@@ -305,7 +326,7 @@ func (t *SLOTransaction) TransitionTo(next SLOStatus, now time.Time) error {
 }
 
 // CorrelatesRequestID reports whether a request ID belongs to this transaction.
-func (t *SLOTransaction) CorrelatesRequestID(requestID string) bool {
+func (t *Transaction) CorrelatesRequestID(requestID string) bool {
 	if t == nil || requestID == "" {
 		return false
 	}
@@ -324,7 +345,7 @@ func (t *SLOTransaction) CorrelatesRequestID(requestID string) bool {
 }
 
 // ParticipantByRequestID resolves the participant for a correlated request ID.
-func (t *SLOTransaction) ParticipantByRequestID(requestID string) (*SLOParticipant, bool) {
+func (t *Transaction) ParticipantByRequestID(requestID string) (*Participant, bool) {
 	if t == nil || requestID == "" {
 		return nil, false
 	}

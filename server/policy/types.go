@@ -149,7 +149,7 @@ const (
 	// AttributeRequestGRPCMethod stores the normalized gRPC method when available.
 	AttributeRequestGRPCMethod = "request.grpc.method"
 
-	// AttributeRequestIDPClientID stores the IdP/OIDC client identifier when available before scheduling.
+	// AttributeRequestIDPClientID stores the IDP/OIDC client identifier when available before scheduling.
 	AttributeRequestIDPClientID = "request.idp.client_id"
 
 	// AttributeRequestSAMLServiceProviderID stores the SAML service-provider entity ID when available before scheduling.

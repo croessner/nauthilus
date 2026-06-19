@@ -24,8 +24,8 @@ import (
 func TestSLOStatusTransitions(t *testing.T) {
 	tests := []struct {
 		name string
-		from SLOStatus
-		to   SLOStatus
+		from Status
+		to   Status
 		want bool
 	}{
 		{name: "received to validated", from: SLOStatusReceived, to: SLOStatusValidated, want: true},
@@ -56,7 +56,7 @@ func TestSLOTransactionTransitionLifecycle(t *testing.T) {
 		t.Fatalf("unexpected constructor error: %v", err)
 	}
 
-	steps := []SLOStatus{
+	steps := []Status{
 		SLOStatusValidated,
 		SLOStatusLocalDone,
 		SLOStatusFanoutRunning,
@@ -81,6 +81,7 @@ func TestSLOTransactionTransitionLifecycle(t *testing.T) {
 
 func TestSLOTransactionTransitionInvalid(t *testing.T) {
 	now := time.Date(2026, time.March, 18, 10, 0, 0, 0, time.UTC)
+
 	tx, err := NewTransaction("tx-2", "_req-root", SLODirectionIDPInitiated, SLOBindingPost, now)
 	if err != nil {
 		t.Fatalf("unexpected constructor error: %v", err)
@@ -101,18 +102,18 @@ func TestSLOTransactionValidate(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		tx      *SLOTransaction
+		tx      *Transaction
 		errWant error
 	}{
 		{
 			name: "valid transaction",
-			tx: &SLOTransaction{
+			tx: &Transaction{
 				TransactionID: "tx-ok",
 				RootRequestID: "_root",
 				Direction:     SLODirectionSPInitiated,
 				Binding:       SLOBindingRedirect,
 				Status:        SLOStatusReceived,
-				Participants: []SLOParticipant{
+				Participants: []Participant{
 					{
 						EntityID:  "https://sp1.example.com",
 						RequestID: "_sp1",
@@ -131,7 +132,7 @@ func TestSLOTransactionValidate(t *testing.T) {
 		},
 		{
 			name: "empty transaction id",
-			tx: &SLOTransaction{
+			tx: &Transaction{
 				RootRequestID: "_root",
 				Direction:     SLODirectionSPInitiated,
 				Binding:       SLOBindingRedirect,
@@ -141,13 +142,13 @@ func TestSLOTransactionValidate(t *testing.T) {
 		},
 		{
 			name: "duplicate request id with root",
-			tx: &SLOTransaction{
+			tx: &Transaction{
 				TransactionID: "tx-dup",
 				RootRequestID: "_req",
 				Direction:     SLODirectionSPInitiated,
 				Binding:       SLOBindingRedirect,
 				Status:        SLOStatusReceived,
-				Participants: []SLOParticipant{
+				Participants: []Participant{
 					{
 						EntityID:  "https://sp1.example.com",
 						RequestID: "_req",
@@ -159,12 +160,12 @@ func TestSLOTransactionValidate(t *testing.T) {
 		},
 		{
 			name: "invalid status",
-			tx: &SLOTransaction{
+			tx: &Transaction{
 				TransactionID: "tx-invalid-status",
 				RootRequestID: "_root",
 				Direction:     SLODirectionSPInitiated,
 				Binding:       SLOBindingRedirect,
-				Status:        SLOStatus("wrong"),
+				Status:        Status("wrong"),
 			},
 			errWant: ErrInvalidStatus,
 		},
@@ -185,13 +186,13 @@ func TestSLOTransactionValidate(t *testing.T) {
 }
 
 func TestSLOTransactionRequestCorrelation(t *testing.T) {
-	tx := &SLOTransaction{
+	tx := &Transaction{
 		TransactionID: "tx-correlation",
 		RootRequestID: "_root",
 		Direction:     SLODirectionSPInitiated,
 		Binding:       SLOBindingRedirect,
 		Status:        SLOStatusReceived,
-		Participants: []SLOParticipant{
+		Participants: []Participant{
 			{
 				EntityID:  "https://sp1.example.com",
 				RequestID: "_sp1",

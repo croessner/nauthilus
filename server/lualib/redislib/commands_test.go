@@ -73,12 +73,14 @@ func TestRedisGet(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
 
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -161,12 +163,14 @@ func TestRedisSet(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
 
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -246,12 +250,14 @@ func TestRedisExpire(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
 
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -326,12 +332,14 @@ func TestRedisIncr(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
 
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -405,12 +413,14 @@ func TestRedisDel(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
 
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -488,12 +498,14 @@ func TestRedisRename(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
 
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("oldKey", lua.LString(tt.oldKey))
@@ -559,12 +571,14 @@ func TestPing(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
+
 			client := rediscli.NewTestClient(db)
 			SetDefaultClient(client)
 
 			L := lua.NewState()
 			defer L.Close()
-			bindRedisRuntimeContextForTest(L, context.Background())
+
+			bindRedisRuntimeContextForTest(context.Background(), L)
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_ping("default")`)
@@ -575,6 +589,7 @@ func TestPing(t *testing.T) {
 			gotResult := L.GetGlobal("result")
 
 			gotErr := L.GetGlobal("err")
+
 			if gotResult.String() != tt.expectedResult.String() {
 				t.Errorf("Ping = %v, want %v", gotResult, tt.expectedResult)
 			}

@@ -47,19 +47,21 @@ type SHAEncoder struct {
 	Encoding string
 }
 
+// Encode provides the exported Encode method.
 func (e *SHAEncoder) Encode(plain string) (string, error) {
 	sum := sha1.Sum([]byte(plain))
 
 	// Choose encoding
 	enc := lower(e.Encoding)
 	switch enc {
-	case "", "b64":
+	case "", passwordEncodingB64:
 		payload := base64.StdEncoding.EncodeToString(sum[:])
 
 		return "{SHA}" + payload, nil
-	case "hex":
+	case passwordEncodingHex:
 		// inline hex without importing encoding/hex to keep surface small
 		hex := make([]byte, len(sum)*2)
+
 		const hexdigits = "0123456789abcdef"
 
 		for i, b := range sum {
@@ -75,6 +77,7 @@ func (e *SHAEncoder) Encode(plain string) (string, error) {
 
 // --- SSHA encoder (256/512) ---
 
+// SSHAEncoder describes the exported SSHAEncoder type.
 type SSHAEncoder struct {
 	// Alg must be "ssha256" or "ssha512"
 	Alg string
@@ -84,13 +87,14 @@ type SSHAEncoder struct {
 	SaltLength int
 }
 
+// Encode provides the exported Encode method.
 func (e *SSHAEncoder) Encode(plain string) (string, error) {
 	var alg srvdefs.Algorithm
 
 	switch lower(e.Alg) {
 	case "ssha256":
 		alg = srvdefs.SSHA256
-	case "ssha512", "":
+	case passwordFormatSSHA512, "":
 		alg = srvdefs.SSHA512
 	default:
 		return "", fmt.Errorf("unsupported SSHA alg: %s", e.Alg)
@@ -101,9 +105,9 @@ func (e *SSHAEncoder) Encode(plain string) (string, error) {
 	enc := lower(e.Encoding)
 
 	switch enc {
-	case "hex":
+	case passwordEncodingHex:
 		opt = srvdefs.ENCHEX
-	case "", "b64":
+	case "", passwordEncodingB64:
 		opt = srvdefs.ENCB64
 	default:
 		return "", fmt.Errorf("unsupported SSHA encoding: %s", e.Encoding)
@@ -120,6 +124,7 @@ func (e *SSHAEncoder) Encode(plain string) (string, error) {
 	}
 
 	cp := &srvutil.CryptPassword{}
+
 	payload, err := cp.Generate(plain, salt, alg, opt)
 	if err != nil {
 		return "", err
@@ -146,13 +151,17 @@ func (e *SSHAEncoder) Encode(plain string) (string, error) {
 
 // --- Argon2 encoder ---
 
+// Argon2Variant describes the exported Argon2Variant type.
 type Argon2Variant int
 
 const (
+	// Argon2i is an exported package constant.
 	Argon2i Argon2Variant = iota
+	// Argon2id is an exported package constant.
 	Argon2id
 )
 
+// Argon2Encoder describes the exported Argon2Encoder type.
 type Argon2Encoder struct {
 	Variant        Argon2Variant // Argon2i or Argon2id
 	Time           uint32        // t
@@ -163,6 +172,7 @@ type Argon2Encoder struct {
 	SaltLength     int           // default 16 bytes
 }
 
+// Encode provides the exported Encode method.
 func (e *Argon2Encoder) Encode(plain string) (string, error) {
 	sl := e.SaltLength
 	if sl <= 0 {
@@ -194,8 +204,10 @@ func (e *Argon2Encoder) Encode(plain string) (string, error) {
 		keyLen = 32
 	}
 
-	var hash []byte
-	var vStr string
+	var (
+		hash []byte
+		vStr string
+	)
 
 	switch e.Variant {
 	case Argon2i:

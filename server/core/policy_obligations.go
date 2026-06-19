@@ -312,6 +312,7 @@ func (a *AuthState) enqueuePolicyPostAction(ctx *gin.Context) {
 	}
 
 	a.PostLuaAction(ctx, result)
+
 	if release {
 		PutPassDBResultToPool(result)
 	}

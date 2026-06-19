@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package backendmonitoring provides backendmonitoring functionality.
 package backendmonitoring
 
 import (
@@ -219,6 +220,7 @@ func compareServers(servers []*config.BackendServer, servers2 []*config.BackendS
 	}
 
 	foundServer := 0
+
 	for _, server := range servers {
 		for _, server2 := range servers2 {
 			if server == server2 {

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package i18n provides i18n functionality.
 package i18n
 
 import (
@@ -70,7 +71,7 @@ func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Man
 
 		// Language not found in catalog
 		if lang != "" && lang != baseName.String() {
-			ctx.AbortWithError(http.StatusNotFound, errors.ErrLanguageNotFound)
+			_ = ctx.AbortWithError(http.StatusNotFound, errors.ErrLanguageNotFound)
 
 			return
 		}

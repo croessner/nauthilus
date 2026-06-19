@@ -172,6 +172,7 @@ func currentBehaviorBuiltInControlCases() []currentBehaviorBuiltInControlCase {
 				t.Helper()
 
 				previous := GetRBLService()
+
 				RegisterRBLService(currentBehaviorRBLService{score: 5, threshold: 5})
 				t.Cleanup(func() {
 					RegisterRBLService(previous)
@@ -201,6 +202,7 @@ func TestCurrentBehaviorParityBruteForceDirectBlock(t *testing.T) {
 	auth.Request.ClientIP = "203.0.113.9"
 	auth.Request.Username = "blocked@example.test"
 	auth.Request.Password = secret.New("blocked-secret")
+
 	mock.MatchExpectationsInOrder(false)
 	rediscli.ClearScriptCache()
 	l1.GetEngine().Clear()
@@ -208,7 +210,7 @@ func TestCurrentBehaviorParityBruteForceDirectBlock(t *testing.T) {
 	l1.GetEngine().Set(
 		ctx.Request.Context(),
 		l1.KeyNetwork("203.0.113.0/24"),
-		l1.L1Decision{Blocked: true, Rule: "existing_block"},
+		l1.Decision{Blocked: true, Rule: "existing_block"},
 		time.Minute,
 	)
 
@@ -247,6 +249,7 @@ func TestCurrentBehaviorParityLuaSubjectStatusMessage(t *testing.T) {
 	previousVerifier := getPasswordVerifier()
 	previousSubject := getLuaSubject()
 	previousPostAction := getPostAction()
+
 	RegisterPasswordVerifier(currentBehaviorPasswordVerifier{})
 	RegisterLuaSubject(currentBehaviorDenyingSubject{message: "Lua subject denied"})
 	RegisterPostAction(currentBehaviorPostAction{})
@@ -376,12 +379,14 @@ func withCurrentBehaviorLuaEnvironment(t *testing.T, script string) {
 	luaEnvironment.Modes = pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated | pipeline.ModeNoAuth
 
 	previous := environmentlib.LuaEnvironmentSources
+
 	compiled := &environmentlib.PreCompiledLuaEnvironmentSources{LuaScripts: []*environmentlib.LuaEnvironmentSource{luaEnvironment}}
 	if err := compiled.RebuildPlans(); err != nil {
 		t.Fatalf("failed to build Lua environment plan: %v", err)
 	}
 
 	environmentlib.LuaEnvironmentSources = compiled
+
 	t.Cleanup(func() {
 		environmentlib.LuaEnvironmentSources = previous
 	})

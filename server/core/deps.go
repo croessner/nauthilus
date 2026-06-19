@@ -41,10 +41,12 @@ type AuthDeps struct {
 	LDAPAuthQueue LDAPAuthRequestQueue
 }
 
+// LDAPRequestQueue describes the exported LDAPRequestQueue type.
 type LDAPRequestQueue interface {
 	Push(request *bktype.LDAPRequest, priority int)
 }
 
+// LDAPAuthRequestQueue describes the exported LDAPAuthRequestQueue type.
 type LDAPAuthRequestQueue interface {
 	Push(request *bktype.LDAPAuthRequest, priority int)
 }

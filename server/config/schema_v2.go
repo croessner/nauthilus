@@ -744,7 +744,7 @@ type AuthPolicySection struct {
 
 func defaultAuthPolicySection() AuthPolicySection {
 	return AuthPolicySection{
-		Mode:          "enforce",
+		Mode:          defaultPolicyModeEnforce,
 		DefaultPolicy: defaultAuthPolicyName,
 		Report: PolicyReportConfig{
 			IncludeFSM:    true,
@@ -759,7 +759,7 @@ func applyAuthPolicyDefaults(policyConfig *AuthPolicySection) {
 	}
 
 	if policyConfig.Mode == "" {
-		policyConfig.Mode = "enforce"
+		policyConfig.Mode = defaultPolicyModeEnforce
 	}
 
 	if policyConfig.DefaultPolicy == "" {
@@ -1375,12 +1375,12 @@ func (f *FileSettings) materializeLDAP() *LDAPSection {
 	return ldapSection
 }
 
-func (f *FileSettings) materializeIDP() *IdPSection {
+func (f *FileSettings) materializeIDP() *IDPSection {
 	if f == nil || f.Identity == nil {
 		return nil
 	}
 
-	return &IdPSection{
+	return &IDPSection{
 		OIDC:                 f.Identity.OIDC.Materialize(),
 		SAML2:                f.Identity.SAML,
 		WebAuthn:             f.Identity.MFA.WebAuthn,

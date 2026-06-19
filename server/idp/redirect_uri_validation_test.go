@@ -110,20 +110,20 @@ var redirectValidationCases = []redirectValidationCase{
 }
 
 func TestValidateRedirectURI_WildcardsAndLoopbackPorts(t *testing.T) {
-	idp := &NauthilusIdP{}
+	idp := &NauthilusIDP{}
 
 	runRedirectValidationCases(t, idp, redirectValidationCases)
 }
 
 // runRedirectValidationCases executes redirect URI validation test cases against
-// a Nauthilus IdP instance.
-func runRedirectValidationCases(t *testing.T, idp *NauthilusIdP, tests []redirectValidationCase) {
+// a Nauthilus IDP instance.
+func runRedirectValidationCases(t *testing.T, idp *NauthilusIDP, tests []redirectValidationCase) {
 	t.Helper()
 
 	for _, tc := range tests {
-
 		t.Run(tc.name, func(t *testing.T) {
 			client := &config.OIDCClient{RedirectURIs: tc.allowedURIs}
+
 			got := idp.ValidateRedirectURI(client, tc.redirectURI)
 			if got != tc.want {
 				t.Fatalf("ValidateRedirectURI() = %v, want %v", got, tc.want)

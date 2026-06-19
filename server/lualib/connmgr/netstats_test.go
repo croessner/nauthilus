@@ -75,6 +75,7 @@ func TestConnectionManager(t *testing.T) {
 		L := lua.NewState()
 
 		defer L.Close()
+
 		reqEnv := L.NewTable()
 		L.SetGlobal(luaRequestEnvKey, reqEnv)
 

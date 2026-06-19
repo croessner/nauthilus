@@ -81,7 +81,7 @@ func TestBuildAuthenticatorSelection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.FileSettings{
 				Server: &config.ServerSection{},
-				IDP: &config.IdPSection{
+				IDP: &config.IDPSection{
 					WebAuthn: tt.webAuthnCfg,
 				},
 			}

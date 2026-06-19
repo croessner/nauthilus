@@ -323,7 +323,7 @@ func newRedisLuaTestState(t *testing.T) (*lua.LState, redismock.ClientMock) {
 
 	ctx := context.Background()
 
-	bindRedisRuntimeContextForTest(L, ctx)
+	bindRedisRuntimeContextForTest(ctx, L)
 	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(ctx, testFile, client))
 
 	return L, mock

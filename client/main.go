@@ -1,3 +1,4 @@
+// Package main provides the client command.
 package main
 
 import (
@@ -33,7 +34,7 @@ func main() {
 	}
 
 	// Handle Color
-	useColor := !(strings.ToLower(cfg.ColorMode) == "never" || os.Getenv("NO_COLOR") != "")
+	useColor := strings.ToLower(cfg.ColorMode) != "never" && os.Getenv("NO_COLOR") == ""
 
 	engine.InitColorStyles(useColor)
 
@@ -43,6 +44,7 @@ func main() {
 			if cfg.Debug {
 				return &fxevent.ConsoleLogger{W: os.Stderr}
 			}
+
 			return fxevent.NopLogger
 		}),
 		engine.Module,
@@ -213,7 +215,7 @@ func printStats(app *engine.App) {
 
 	fmt.Printf("Done in %s\n", stats.Elapsed)
 	fmt.Printf("total=%d matched=%d mismatched=%d http_errors=%d 429_errors=%d aborted=%d skipped=%d tolerated_bf=%d\n",
-		stats.Total, stats.Matched, stats.Mismatched, stats.HttpErrs, stats.TooManyRequests, stats.Aborted, stats.Skipped, stats.ToleratedBF)
+		stats.Total, stats.Matched, stats.Mismatched, stats.HTTPErrs, stats.TooManyRequests, stats.Aborted, stats.Skipped, stats.ToleratedBF)
 
 	if stats.Elapsed.Seconds() > 0 {
 		fmt.Printf("throughput=%.2f req/s\n", float64(stats.Total)/stats.Elapsed.Seconds())
@@ -245,11 +247,14 @@ func printStats(app *engine.App) {
 
 		// Print HTTP status codes summary (code, count)
 		fmt.Println("http_status_counts:")
+
 		var codes []int
 		for code := range stats.StatusCounts {
 			codes = append(codes, code)
 		}
+
 		sort.Ints(codes)
+
 		for _, code := range codes {
 			fmt.Printf("  %d: %d\n", code, stats.StatusCounts[code])
 		}

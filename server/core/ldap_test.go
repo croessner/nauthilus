@@ -51,6 +51,7 @@ func TestMasterUserTOTPSecretDecryptOrder(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected decrypted value to be []any, got %T", decrypted)
 	}
+
 	if len(values) != 1 {
 		t.Fatalf("expected decrypted value to have one element, got %d", len(values))
 	}
@@ -59,6 +60,7 @@ func TestMasterUserTOTPSecretDecryptOrder(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected decrypted value to be string, got %T", values[0])
 	}
+
 	if secret != "totp-secret" {
 		t.Fatalf("expected decrypted value to match, got %q", secret)
 	}

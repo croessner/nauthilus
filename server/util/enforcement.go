@@ -48,6 +48,7 @@ func AssertNoForbiddenSymbols(t *testing.T, targetPath string) {
 
 	// If targetPath ends with .go, it's a file, otherwise it's a package.
 	pkgPath := targetPath
+
 	isFile := false
 	if strings.HasSuffix(targetPath, ".go") {
 		isFile = true
@@ -55,7 +56,9 @@ func AssertNoForbiddenSymbols(t *testing.T, targetPath string) {
 	}
 
 	cmd := exec.Command("go", "list", "-f", "{{.Imports}}", pkgPath)
+
 	var out bytes.Buffer
+
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to list imports for %s: %v", pkgPath, err)
@@ -125,16 +128,21 @@ func checkUsage(t *testing.T, pkgPath, forbiddenPkg string) {
 		output, _ := cmd.CombinedOutput()
 
 		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+
 		var actualHits []string
+
 		for _, line := range lines {
 			if line == "" {
 				continue
 			}
+
 			parts := strings.SplitN(line, ":", 2)
+
 			file := parts[0]
 			if strings.HasSuffix(file, "_test.go") || strings.Contains(file, "vendor/") || strings.Contains(file, "server/config/") || strings.Contains(file, "server/log/") {
 				continue
 			}
+
 			actualHits = append(actualHits, line)
 		}
 

@@ -37,7 +37,7 @@ import (
 )
 
 type sloFanoutDispatch struct {
-	Participant slodomain.SLOParticipant
+	Participant slodomain.Participant
 	RelayState  string
 	Destination string
 	RedirectURL string
@@ -60,7 +60,7 @@ const (
 	sloBackChannelRetryBaseDelay    = 150 * time.Millisecond
 )
 
-func (h *SAMLHandler) newIDPInitiatedSLOTransaction(account string, binding slodomain.SLOBinding) (*slodomain.SLOTransaction, error) {
+func (h *SAMLHandler) newIDPInitiatedSLOTransaction(account string, binding slodomain.Binding) (*slodomain.Transaction, error) {
 	now := time.Now().UTC()
 	rootRequestID := "id-" + ksuid.New().String()
 
@@ -105,7 +105,7 @@ func (h *SAMLHandler) lookupSLOParticipantSessions(ctx context.Context, account 
 
 func (h *SAMLHandler) orchestrateIDPInitiatedSLOFanout(
 	ctx context.Context,
-	transaction *slodomain.SLOTransaction,
+	transaction *slodomain.Transaction,
 	account string,
 ) (*sloFanoutResult, error) {
 	if transaction == nil {
@@ -154,7 +154,7 @@ func (h *SAMLHandler) orchestrateIDPInitiatedSLOFanout(
 			transaction.TransactionID,
 			transaction.RootRequestID,
 			"",
-			"status", slodomain.SLOStatusDone,
+			samlMetricLabelStatus, slodomain.SLOStatusDone,
 			"participants_total", len(sessions),
 			"fanout_disabled", true,
 		)
@@ -174,7 +174,7 @@ func (h *SAMLHandler) orchestrateIDPInitiatedSLOFanout(
 			transaction.TransactionID,
 			transaction.RootRequestID,
 			"",
-			"status", slodomain.SLOStatusDone,
+			samlMetricLabelStatus, slodomain.SLOStatusDone,
 			"participants_total", 0,
 		)
 
@@ -184,7 +184,7 @@ func (h *SAMLHandler) orchestrateIDPInitiatedSLOFanout(
 	sessions = slices.Clone(sessions)
 	slices.SortFunc(sessions, compareSLOParticipantSessions)
 
-	idpObj, err := h.getSAMLIdP()
+	idpObj, err := h.getSAMLIDP()
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +296,7 @@ func (h *SAMLHandler) orchestrateIDPInitiatedSLOFanout(
 			transaction.TransactionID,
 			transaction.RootRequestID,
 			"",
-			"status", nextStatus,
+			samlMetricLabelStatus, nextStatus,
 			"participants_total", len(result.Failures),
 			"participants_failed", len(result.Failures),
 		)
@@ -326,7 +326,7 @@ func (h *SAMLHandler) sloBackChannelEnabled() bool {
 		return false
 	}
 
-	return h.sloEnabled() && h.deps.Cfg.GetIdP().SAML2.GetSLOBackChannelEnabled()
+	return h.sloEnabled() && h.deps.Cfg.GetIDP().SAML2.GetSLOBackChannelEnabled()
 }
 
 func (h *SAMLHandler) sloFrontChannelEnabled() bool {
@@ -334,7 +334,7 @@ func (h *SAMLHandler) sloFrontChannelEnabled() bool {
 		return true
 	}
 
-	return h.sloEnabled() && h.deps.Cfg.GetIdP().SAML2.GetSLOFrontChannelEnabled()
+	return h.sloEnabled() && h.deps.Cfg.GetIDP().SAML2.GetSLOFrontChannelEnabled()
 }
 
 func (h *SAMLHandler) sloMaxParticipants() int {
@@ -342,12 +342,12 @@ func (h *SAMLHandler) sloMaxParticipants() int {
 		return 64
 	}
 
-	return h.deps.Cfg.GetIdP().SAML2.GetSLOMaxParticipants()
+	return h.deps.Cfg.GetIDP().SAML2.GetSLOMaxParticipants()
 }
 
 func (h *SAMLHandler) tryBackChannelSLODispatch(
 	ctx context.Context,
-	transaction *slodomain.SLOTransaction,
+	transaction *slodomain.Transaction,
 	session slodomain.ParticipantSession,
 	idpObj *saml.IdentityProvider,
 	signingSP *saml.ServiceProvider,
@@ -421,11 +421,12 @@ func (h *SAMLHandler) deliverBackChannelSLODispatch(ctx context.Context, dispatc
 
 	form := url.Values{}
 	form.Set("SAMLRequest", encodedRequest)
+
 	if relayState := strings.TrimSpace(dispatch.RelayState); relayState != "" {
 		form.Set("RelayState", relayState)
 	}
 
-	samlCfg := h.deps.Cfg.GetIdP().SAML2
+	samlCfg := h.deps.Cfg.GetIDP().SAML2
 	requestTimeout := samlCfg.GetSLORequestTimeout()
 	maxRetries := samlCfg.GetSLOBackChannelMaxRetries()
 	attempts := maxRetries + 1
@@ -455,6 +456,7 @@ func (h *SAMLHandler) deliverBackChannelSLODispatch(ctx context.Context, dispatc
 		resp, err := client.Do(req)
 		if err != nil {
 			cancel()
+
 			lastErr = fmt.Errorf("back-channel request attempt %d/%d failed: %w", attempt, attempts, err)
 
 			continue
@@ -462,6 +464,7 @@ func (h *SAMLHandler) deliverBackChannelSLODispatch(ctx context.Context, dispatc
 
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, sloBackChannelResponseBodyLimit))
 		_ = resp.Body.Close()
+
 		cancel()
 
 		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
@@ -535,7 +538,7 @@ func sleepWithContext(ctx context.Context, delay time.Duration) error {
 }
 
 func (h *SAMLHandler) buildSLOFanoutDispatch(
-	transaction *slodomain.SLOTransaction,
+	transaction *slodomain.Transaction,
 	session slodomain.ParticipantSession,
 	idpObj *saml.IdentityProvider,
 	signingSP *saml.ServiceProvider,
@@ -549,11 +552,11 @@ func (h *SAMLHandler) buildSLOFanoutDispatch(
 }
 
 func (h *SAMLHandler) buildSLOFanoutDispatchWithBinding(
-	transaction *slodomain.SLOTransaction,
+	transaction *slodomain.Transaction,
 	session slodomain.ParticipantSession,
 	idpObj *saml.IdentityProvider,
 	signingSP *saml.ServiceProvider,
-	binding slodomain.SLOBinding,
+	binding slodomain.Binding,
 	destination string,
 ) (sloFanoutDispatch, error) {
 	entityID := strings.TrimSpace(session.SPEntityID)
@@ -582,9 +585,11 @@ func (h *SAMLHandler) buildSLOFanoutDispatchWithBinding(
 	if nameID == "" {
 		nameID = strings.TrimSpace(session.Account)
 	}
+
 	if nameID == "" && transaction != nil {
 		nameID = strings.TrimSpace(transaction.Account)
 	}
+
 	if nameID == "" {
 		return sloFanoutDispatch{}, fmt.Errorf("slo participant NameID is missing for %q", entityID)
 	}
@@ -599,7 +604,7 @@ func (h *SAMLHandler) buildSLOFanoutDispatchWithBinding(
 
 	logoutRequest := &saml.LogoutRequest{
 		ID:           requestID,
-		Version:      "2.0",
+		Version:      samlProtocolVersion,
 		IssueInstant: saml.TimeNow().UTC(),
 		Destination:  destination,
 		Issuer: &saml.Issuer{
@@ -607,7 +612,7 @@ func (h *SAMLHandler) buildSLOFanoutDispatchWithBinding(
 			Value:  idpObj.MetadataURL.String(),
 		},
 		NameID: &saml.NameID{
-			Format:          h.deps.Cfg.GetIdP().SAML2.GetNameIDFormat(),
+			Format:          h.deps.Cfg.GetIDP().SAML2.GetNameIDFormat(),
 			Value:           nameID,
 			NameQualifier:   idpObj.MetadataURL.String(),
 			SPNameQualifier: entityID,
@@ -619,7 +624,7 @@ func (h *SAMLHandler) buildSLOFanoutDispatchWithBinding(
 	}
 
 	dispatch := sloFanoutDispatch{
-		Participant: slodomain.SLOParticipant{
+		Participant: slodomain.Participant{
 			EntityID:     entityID,
 			NameID:       nameID,
 			SessionIndex: strings.TrimSpace(session.SessionIndex),
@@ -704,7 +709,7 @@ func (h *SAMLHandler) newSLOSigningServiceProvider(idpObj *saml.IdentityProvider
 			return nil, fmt.Errorf("saml signature method is not configured")
 		}
 
-		signatureMethod = h.deps.Cfg.GetIdP().SAML2.GetSignatureMethod()
+		signatureMethod = h.deps.Cfg.GetIDP().SAML2.GetSignatureMethod()
 	}
 
 	if signatureMethod == "" {

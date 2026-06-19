@@ -15,8 +15,8 @@ func TestConfigFlags(t *testing.T) {
 	fs.StringVar(&cfg.CSVPath, "csv", cfg.CSVPath, "")
 	fs.StringVar(&cfg.Endpoint, "url", cfg.Endpoint, "")
 	fs.StringVar(&cfg.Method, "method", cfg.Method, "")
-	fs.IntVar(&cfg.Concurrency, "concurrency", cfg.Concurrency, "")
-	fs.Float64Var(&cfg.RPS, "rps", cfg.RPS, "")
+	fs.IntVar(&cfg.Concurrency, autoFocusConcurrency, cfg.Concurrency, "")
+	fs.Float64Var(&cfg.RPS, autoFocusRPS, cfg.RPS, "")
 	fs.IntVar(&cfg.JitterMs, "jitter-ms", cfg.JitterMs, "")
 	fs.IntVar(&cfg.DelayMs, "delay-ms", cfg.DelayMs, "")
 	fs.IntVar(&cfg.TimeoutMs, "timeout-ms", cfg.TimeoutMs, "")
@@ -98,7 +98,7 @@ func TestConfigFlags(t *testing.T) {
 		"-v",
 		"-generate-csv",
 		"-generate-count", "50",
-		"-generate-cidr-prob", "0.5",
+		"-generate-cidr-prob", testHalfFlagValue,
 		"-generate-cidr-prefix", "28",
 		"-csv-delim", "tab",
 		"-csv-debug",
@@ -127,7 +127,7 @@ func TestConfigFlags(t *testing.T) {
 		"-auto-start-concurrency", "5",
 		"-auto-step-rps", "2.5",
 		"-auto-step-concurrency", "2",
-		"-auto-backoff", "0.5",
+		"-auto-backoff", testHalfFlagValue,
 		"-auto-max-err", "2.0",
 		"-auto-min-sample", "100",
 		"-auto-focus", "both",
@@ -234,73 +234,73 @@ func TestSeverityLogic(t *testing.T) {
 			name: "OK",
 			stats: Stats{
 				P95:       50 * time.Millisecond,
-				HttpErrs:  0,
+				HTTPErrs:  0,
 				Total:     100,
 				TargetRPS: 100,
 			},
-			expected: "ok",
+			expected: severityOK,
 		},
 		{
 			name: "Warn P95",
 			stats: Stats{
 				P95:       150 * time.Millisecond,
-				HttpErrs:  0,
+				HTTPErrs:  0,
 				Total:     100,
 				TargetRPS: 100,
 			},
-			expected: "warn",
+			expected: severityWarn,
 		},
 		{
 			name: "Crit P95",
 			stats: Stats{
 				P95:       250 * time.Millisecond,
-				HttpErrs:  0,
+				HTTPErrs:  0,
 				Total:     100,
 				TargetRPS: 100,
 			},
-			expected: "crit",
+			expected: severityCrit,
 		},
 		{
 			name: "Warn Error",
 			stats: Stats{
 				P95:       50 * time.Millisecond,
-				HttpErrs:  2,
+				HTTPErrs:  2,
 				Total:     100,
 				TargetRPS: 100,
 			},
-			expected: "warn",
+			expected: severityWarn,
 		},
 		{
 			name: "Crit Error",
 			stats: Stats{
 				P95:       50 * time.Millisecond,
-				HttpErrs:  6,
+				HTTPErrs:  6,
 				Total:     100,
 				TargetRPS: 100,
 			},
-			expected: "crit",
+			expected: severityCrit,
 		},
 		{
 			name: "Warn Track",
 			stats: Stats{
 				P95:       50 * time.Millisecond,
-				HttpErrs:  0,
+				HTTPErrs:  0,
 				Total:     85, // 85 RPS if elapsed is 1s
 				Elapsed:   1 * time.Second,
 				TargetRPS: 100,
 			},
-			expected: "warn",
+			expected: severityWarn,
 		},
 		{
 			name: "Crit Track",
 			stats: Stats{
 				P95:       50 * time.Millisecond,
-				HttpErrs:  0,
+				HTTPErrs:  0,
 				Total:     75,
 				Elapsed:   1 * time.Second,
 				TargetRPS: 100,
 			},
-			expected: "crit",
+			expected: severityCrit,
 		},
 	}
 
@@ -318,12 +318,13 @@ func TestSeverityLogic(t *testing.T) {
 				trkRatio = Clamp01(rps / tt.stats.TargetRPS)
 			}
 
-			severity := "ok"
+			severity := severityOK
+
 			errRate := CalcErrorRatePct(tt.stats)
 			if tt.stats.P95 >= time.Duration(cfg.CritP95)*time.Millisecond || errRate >= cfg.CritErr || (tt.stats.TargetRPS > 0 && trkRatio <= cfg.CritTrack) {
-				severity = "crit"
+				severity = severityCrit
 			} else if tt.stats.P95 >= time.Duration(cfg.WarnP95)*time.Millisecond || errRate >= cfg.WarnErr || (tt.stats.TargetRPS > 0 && trkRatio <= cfg.WarnTrack) {
-				severity = "warn"
+				severity = severityWarn
 			}
 
 			assert.Equal(t, tt.expected, severity)

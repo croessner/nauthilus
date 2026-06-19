@@ -43,8 +43,8 @@ const (
 	patchOpRemove  = "remove"
 )
 
-// ConfigReader loads configuration settings from a path.
-type ConfigReader interface {
+// Reader loads configuration settings from a path.
+type Reader interface {
 	Read(path string) (map[string]any, error)
 }
 
@@ -68,18 +68,18 @@ type ValueExpander interface {
 	Expand(settings map[string]any) error
 }
 
-// ConfigLoader loads a config tree, resolves includes, and applies patches.
-type ConfigLoader struct {
-	reader          ConfigReader    `mapstructure:"-"`
+// Loader loads a config tree, resolves includes, and applies patches.
+type Loader struct {
+	reader          Reader          `mapstructure:"-"`
 	includeResolver IncludeResolver `mapstructure:"-"`
 	patchEngine     PatchEngine     `mapstructure:"-"`
 	merger          SettingsMerger  `mapstructure:"-"`
 	valueExpander   ValueExpander   `mapstructure:"-"`
 }
 
-// NewConfigLoader returns a ConfigLoader configured for the given config type.
-func NewConfigLoader(configType string) *ConfigLoader {
-	return &ConfigLoader{
+// NewConfigLoader returns a Loader configured for the given config type.
+func NewConfigLoader(configType string) *Loader {
+	return &Loader{
 		reader:          &ViperConfigReader{configType: configType},
 		includeResolver: IncludeResolverFromConfig{},
 		patchEngine:     DefaultPatchEngine{},
@@ -89,7 +89,7 @@ func NewConfigLoader(configType string) *ConfigLoader {
 }
 
 // LoadFromFile reads the config file and applies includes and patches.
-func (l *ConfigLoader) LoadFromFile(path string) (map[string]any, error) {
+func (l *Loader) LoadFromFile(path string) (map[string]any, error) {
 	settings, err := l.reader.Read(path)
 	if err != nil {
 		return nil, err
@@ -99,7 +99,7 @@ func (l *ConfigLoader) LoadFromFile(path string) (map[string]any, error) {
 }
 
 // Load applies includes and patches starting from a settings map.
-func (l *ConfigLoader) Load(path string, settings map[string]any) (map[string]any, error) {
+func (l *Loader) Load(path string, settings map[string]any) (map[string]any, error) {
 	merged, patches, err := l.loadWithSettings(path, settings, map[string]struct{}{})
 	if err != nil {
 		return nil, err
@@ -118,7 +118,7 @@ func (l *ConfigLoader) Load(path string, settings map[string]any) (map[string]an
 	return merged, nil
 }
 
-func (l *ConfigLoader) loadWithSettings(path string, settings map[string]any, visited map[string]struct{}) (map[string]any, []PatchOperation, error) {
+func (l *Loader) loadWithSettings(path string, settings map[string]any, visited map[string]struct{}) (map[string]any, []PatchOperation, error) {
 	cleanPath := filepath.Clean(path)
 	if _, ok := visited[cleanPath]; ok {
 		return nil, nil, fmt.Errorf("include cycle detected at %q", cleanPath)
@@ -133,11 +133,14 @@ func (l *ConfigLoader) loadWithSettings(path string, settings map[string]any, vi
 	}
 
 	merged := map[string]any{}
+
 	var patches []PatchOperation
+
 	baseDir := filepath.Dir(cleanPath)
 
 	for _, include := range includes {
 		includePath := resolveIncludePath(baseDir, include.Path)
+
 		includeSettings, includePatches, err := l.loadFromFile(includePath, visited)
 		if err != nil {
 			if include.Required || !isConfigNotFound(err) {
@@ -148,6 +151,7 @@ func (l *ConfigLoader) loadWithSettings(path string, settings map[string]any, vi
 		}
 
 		patches = append(patches, includePatches...)
+
 		l.merger.Merge(merged, includeSettings)
 	}
 
@@ -155,6 +159,7 @@ func (l *ConfigLoader) loadWithSettings(path string, settings map[string]any, vi
 	if err != nil {
 		return nil, nil, err
 	}
+
 	if hasPatches {
 		patches = append(patches, filePatches...)
 	}
@@ -165,7 +170,7 @@ func (l *ConfigLoader) loadWithSettings(path string, settings map[string]any, vi
 	return merged, patches, nil
 }
 
-func (l *ConfigLoader) loadFromFile(path string, visited map[string]struct{}) (map[string]any, []PatchOperation, error) {
+func (l *Loader) loadFromFile(path string, visited map[string]struct{}) (map[string]any, []PatchOperation, error) {
 	settings, err := l.reader.Read(path)
 	if err != nil {
 		return nil, nil, err
@@ -270,6 +275,7 @@ func (IncludeResolverFromConfig) Resolve(root map[string]any) ([]IncludeFile, er
 	}
 
 	var includeFiles []IncludeFile
+
 	includeFiles = append(includeFiles, toIncludeFiles(spec.Required, true)...)
 	includeFiles = append(includeFiles, toIncludeFiles(spec.Optional, false)...)
 
@@ -347,6 +353,7 @@ func applyPatch(target map[string]any, patch PatchOperation) error {
 	}
 
 	parts := strings.Split(path, ".")
+
 	parent, key, err := resolveParentMap(target, parts, patch.Op != patchOpRemove)
 	if err != nil {
 		return fmt.Errorf("invalid patch path %q: %w", path, err)
@@ -371,6 +378,7 @@ func resolveParentMap(root map[string]any, parts []string, create bool) (map[str
 	}
 
 	current := root
+
 	for _, part := range parts[:len(parts)-1] {
 		if part == "" {
 			return nil, "", errors.New("path segment is empty")
@@ -385,6 +393,7 @@ func resolveParentMap(root map[string]any, parts []string, create bool) (map[str
 			nextMap := map[string]any{}
 			current[part] = nextMap
 			current = nextMap
+
 			continue
 		}
 
@@ -443,7 +452,9 @@ func applyRemove(parent map[string]any, key string, value any, fullPath string) 
 				filtered = append(filtered, item)
 			}
 		}
+
 		parent[key] = filtered
+
 		return nil
 	case map[string]any:
 		return removeMapKeys(typed, value, fullPath)
@@ -488,6 +499,7 @@ func (MapMerger) Merge(target map[string]any, source map[string]any) {
 		if existing, ok := target[key].(map[string]any); ok {
 			MapMerger{}.Merge(existing, valueMap)
 			target[key] = existing
+
 			continue
 		}
 
@@ -527,6 +539,7 @@ func loadMergedConfigSettings(configType string) (map[string]any, string, error)
 	}
 
 	loader := NewConfigLoader(configType)
+
 	merged, err := loader.Load(rootPath, rootViper.AllSettings())
 	if err != nil {
 		return nil, "", err
@@ -542,6 +555,7 @@ func applyMergedConfigSettings(settings map[string]any, configType string, rootP
 	}
 
 	viper.SetConfigType(configType)
+
 	if rootPath != "" {
 		viper.SetConfigFile(rootPath)
 	}
@@ -571,6 +585,7 @@ func jsonMarshal(value any) ([]byte, error) {
 	buf := &bytes.Buffer{}
 	encoder := json.NewEncoder(buf)
 	encoder.SetEscapeHTML(false)
+
 	if err := encoder.Encode(value); err != nil {
 		return nil, err
 	}

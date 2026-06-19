@@ -19,8 +19,10 @@ package flow
 type DecisionType string
 
 const (
+	// DecisionTypeRedirect is an exported package constant.
 	DecisionTypeRedirect DecisionType = "redirect"
-	DecisionTypeError    DecisionType = "error"
+	// DecisionTypeError is an exported package constant.
+	DecisionTypeError DecisionType = "error"
 )
 
 // Decision is a transport-agnostic description of what should happen next.

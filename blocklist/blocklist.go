@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package main provides the blocklist command.
 package main
 
 import (
@@ -78,7 +79,7 @@ func loadBlocklist() error {
 		return err
 	}
 
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	tempBlockedIPs := make(map[string]struct{})
 
@@ -174,7 +175,12 @@ func main() {
 	r := gin.New()
 
 	r.Use(gin.Logger())
-	r.SetTrustedProxies(nil)
+
+	if err := r.SetTrustedProxies(nil); err != nil {
+		color.Red("Error configuring trusted proxies:", err.Error())
+		os.Exit(1)
+	}
+
 	r.Use(loggingMiddleware)
 
 	// Initial load

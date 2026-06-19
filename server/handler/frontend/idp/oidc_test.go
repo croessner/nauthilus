@@ -67,8 +67,8 @@ type mockOIDCCfg struct {
 	trustedProxies        []string
 }
 
-func (m *mockOIDCCfg) GetIdP() *config.IdPSection {
-	return &config.IdPSection{
+func (m *mockOIDCCfg) GetIDP() *config.IDPSection {
+	return &config.IDPSection{
 		OIDC: config.OIDCConfig{
 			Issuer:                m.issuer,
 			TokenEndpointAllowGET: m.tokenEndpointAllowGET,
@@ -193,7 +193,7 @@ func TestOIDCHandlerTokenSetsGrantTypeContext(t *testing.T) {
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
-	idpInstance := idp.NewNauthilusIdP(d)
+	idpInstance := idp.NewNauthilusIDP(d)
 	h := NewOIDCHandler(d, idpInstance, nil)
 
 	w := httptest.NewRecorder()
@@ -244,7 +244,7 @@ func TestOIDCHandlerAuthorizeRejectsDuplicateSensitiveQueryValues(t *testing.T) 
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
-	idpInstance := idp.NewNauthilusIdP(d)
+	idpInstance := idp.NewNauthilusIDP(d)
 	h := NewOIDCHandler(d, idpInstance, nil)
 
 	for _, duplicateKey := range duplicateSensitiveAuthorizeParameters() {
@@ -280,7 +280,7 @@ func authorizeValuesWithDuplicate(duplicateKey string) url.Values {
 	values.Add(oidcParamResponseType, oidcResponseTypeCode)
 	values.Add(oidcParamClientID, "test-client")
 	values.Add(oidcParamRedirectURI, "https://app.com/callback")
-	values.Add(oidcParamScope, definitions.ScopeOpenId)
+	values.Add(oidcParamScope, definitions.ScopeOpenID)
 	values.Add(oidcParamState, "state-1")
 	values.Add(oidcParamNonce, "nonce-1")
 
@@ -421,6 +421,7 @@ func isLowerHexSuffix(key string, width int) bool {
 
 func (m *mockOIDCCfg) GetServer() *config.ServerSection {
 	var log config.Log
+
 	_ = log.Level.Set("debug")
 	all := &config.DbgModule{}
 	_ = all.Set("all")
@@ -590,6 +591,7 @@ func (m *mockOIDCCfg) GetLDAPConfigAuthIdlePoolSize() int                { retur
 
 func TestOIDCHandler_Discovery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
 	issuer := "https://auth.example.com"
 	cfg := &mockOIDCCfg{issuer: issuer, signingKey: secret.New(generateTestKey())}
 
@@ -611,6 +613,7 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]any
+
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.NoError(t, err)
 	assert.Equal(t, issuer, resp["issuer"])
@@ -622,21 +625,26 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assert.Contains(t, scopes, "offline_access")
 	assert.Contains(t, scopes, "groups")
 	assert.Contains(t, scopes, "openid")
+
 	responseTypes := resp["response_types_supported"].([]any)
 	assert.Equal(t, []any{"code"}, responseTypes)
+
 	grantTypes := resp["grant_types_supported"].([]any)
 	assert.Contains(t, grantTypes, "authorization_code")
 	assert.Contains(t, grantTypes, "refresh_token")
 	assert.Contains(t, grantTypes, "client_credentials")
 	assert.Contains(t, grantTypes, definitions.OIDCGrantTypeDeviceCode)
+
 	tokenEndpointAuthMethods := resp["token_endpoint_auth_methods_supported"].([]any)
 	assert.Contains(t, tokenEndpointAuthMethods, "client_secret_basic")
 	assert.Contains(t, tokenEndpointAuthMethods, "client_secret_post")
 	assert.Contains(t, tokenEndpointAuthMethods, "private_key_jwt")
 	assert.Contains(t, tokenEndpointAuthMethods, "none")
+
 	tokenEndpointAuthSigningAlgs := resp["token_endpoint_auth_signing_alg_values_supported"].([]any)
 	assert.Contains(t, tokenEndpointAuthSigningAlgs, "RS256")
 	assert.Contains(t, tokenEndpointAuthSigningAlgs, "EdDSA")
+
 	introspectionAuthMethods := resp["introspection_endpoint_auth_methods_supported"].([]any)
 	assert.Contains(t, introspectionAuthMethods, "client_secret_basic")
 	assert.Contains(t, introspectionAuthMethods, "client_secret_post")
@@ -646,6 +654,7 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	introspectionAuthSigningAlgs := resp["introspection_endpoint_auth_signing_alg_values_supported"].([]any)
 	assert.Contains(t, introspectionAuthSigningAlgs, "RS256")
 	assert.Contains(t, introspectionAuthSigningAlgs, "EdDSA")
+
 	codeChallengeMethods := resp["code_challenge_methods_supported"].([]any)
 	assert.Contains(t, codeChallengeMethods, "S256")
 	assert.NotContains(t, codeChallengeMethods, "plain")
@@ -665,7 +674,8 @@ func newOIDCTestRouter(t *testing.T, cfg *mockOIDCCfg, withCORS bool) *gin.Engin
 		Redis:       rClient,
 	}
 
-	h := NewOIDCHandler(d, idp.NewNauthilusIdP(d), nil)
+	h := NewOIDCHandler(d, idp.NewNauthilusIDP(d), nil)
+
 	r := gin.New()
 	if withCORS {
 		r.Use(mdcors.New(mdcors.MiddlewareConfig{Config: d.Cfg}).Handler())
@@ -770,7 +780,7 @@ func TestOIDCHandler_Register_TokenGETRouteConfigurable(t *testing.T) {
 			Redis:       rClient,
 		}
 
-		h := NewOIDCHandler(d, idp.NewNauthilusIdP(d), nil)
+		h := NewOIDCHandler(d, idp.NewNauthilusIDP(d), nil)
 		r := gin.New()
 		h.Register(r)
 
@@ -818,7 +828,7 @@ func TestOIDCHandler_JWKS(t *testing.T) {
 			db, _ := redismock.NewClientMock()
 			rClient := rediscli.NewTestClient(db)
 			d := &deps.Deps{Cfg: cfg, Redis: rClient}
-			h := NewOIDCHandler(d, idp.NewNauthilusIdP(d), nil)
+			h := NewOIDCHandler(d, idp.NewNauthilusIDP(d), nil)
 
 			w := httptest.NewRecorder()
 			ctx, _ := gin.CreateTestContext(w)
@@ -829,6 +839,7 @@ func TestOIDCHandler_JWKS(t *testing.T) {
 			assert.Equal(t, http.StatusOK, w.Code)
 
 			var resp map[string]any
+
 			err := json.Unmarshal(w.Body.Bytes(), &resp)
 			assert.NoError(t, err)
 			assert.NotNil(t, resp["keys"])
@@ -844,6 +855,7 @@ func TestOIDCHandler_JWKS(t *testing.T) {
 
 func TestOIDCHandler_Logout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
 	issuer := "https://auth.example.com"
 	signingKey := secret.New(generateTestKey())
 	client := config.OIDCClient{
@@ -866,7 +878,7 @@ func TestOIDCHandler_Logout(t *testing.T) {
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
-	idpInstance := idp.NewNauthilusIdP(d)
+	idpInstance := idp.NewNauthilusIDP(d)
 	h := NewOIDCHandler(d, idpInstance, nil)
 
 	// Set up default environment for util.ShouldSetSecureCookie
@@ -901,7 +913,7 @@ func TestOIDCHandler_Logout(t *testing.T) {
 		idToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
 			ClientID: "test-client",
 			UserID:   "user123",
-			Scopes:   []string{definitions.ScopeOpenId},
+			Scopes:   []string{definitions.ScopeOpenID},
 			AuthTime: time.Now(),
 		})
 
@@ -964,7 +976,7 @@ func TestOIDCHandler_Logout(t *testing.T) {
 		idToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
 			ClientID: "frontchannel-client",
 			UserID:   "user-front",
-			Scopes:   []string{definitions.ScopeOpenId},
+			Scopes:   []string{definitions.ScopeOpenID},
 			AuthTime: time.Now(),
 		})
 
@@ -992,13 +1004,13 @@ func TestBuildSAMLFrontChannelLogoutTasks(t *testing.T) {
 	result := &sloFanoutResult{
 		Dispatches: []sloFanoutDispatch{
 			{
-				Participant: slodomain.SLOParticipant{
+				Participant: slodomain.Participant{
 					EntityID: "https://sp-a.example.com/metadata",
 				},
 				RedirectURL: "https://sp-a.example.com/saml/slo?SAMLRequest=req-a",
 			},
 			{
-				Participant: slodomain.SLOParticipant{
+				Participant: slodomain.Participant{
 					EntityID: "https://sp-b.example.com/metadata",
 				},
 				PostBody: postBody,
@@ -1019,6 +1031,7 @@ func TestBuildSAMLFrontChannelLogoutTasks(t *testing.T) {
 		assert.Equal(t, "https://sp-a.example.com/saml/slo?SAMLRequest=req-a", tasks[0].URL)
 
 		assert.Equal(t, frontChannelLogoutTaskMethodPOST, tasks[1].Method)
+
 		rawPayload, err := base64.StdEncoding.DecodeString(tasks[1].PayloadBase64)
 		if assert.NoError(t, err) {
 			assert.Equal(t, postBody, string(rawPayload))
@@ -1145,53 +1158,53 @@ func Test_oidcDeviceFlowContext(t *testing.T) {
 	})
 }
 
-func Test_cleanupIdPFlowState(t *testing.T) {
+func Test_cleanupIDPFlowState(t *testing.T) {
 	flowKeys := []string{
-		// Common IdP flow keys
-		definitions.SessionKeyIdPFlowType,
-		definitions.SessionKeyIdPFlowID,
+		// Common IDP flow keys
+		definitions.SessionKeyIDPFlowType,
+		definitions.SessionKeyIDPFlowID,
 		// OIDC-specific flow keys
 		definitions.SessionKeyOIDCGrantType,
-		definitions.SessionKeyIdPClientID,
-		definitions.SessionKeyIdPRedirectURI,
-		definitions.SessionKeyIdPScope,
-		definitions.SessionKeyIdPState,
-		definitions.SessionKeyIdPNonce,
-		definitions.SessionKeyIdPResponseType,
-		definitions.SessionKeyIdPPrompt,
+		definitions.SessionKeyIDPClientID,
+		definitions.SessionKeyIDPRedirectURI,
+		definitions.SessionKeyIDPScope,
+		definitions.SessionKeyIDPState,
+		definitions.SessionKeyIDPNonce,
+		definitions.SessionKeyIDPResponseType,
+		definitions.SessionKeyIDPPrompt,
 		// SAML-specific flow keys
-		definitions.SessionKeyIdPSAMLRequest,
-		definitions.SessionKeyIdPSAMLRelayState,
-		definitions.SessionKeyIdPSAMLEntityID,
-		definitions.SessionKeyIdPOriginalURL,
+		definitions.SessionKeyIDPSAMLRequest,
+		definitions.SessionKeyIDPSAMLRelayState,
+		definitions.SessionKeyIDPSAMLEntityID,
+		definitions.SessionKeyIDPOriginalURL,
 		definitions.SessionKeyRequireMFAParentFlowID,
 	}
 
-	t.Run("removes all IdP flow state keys including OIDC and SAML", func(t *testing.T) {
+	t.Run("removes all IDP flow state keys including OIDC and SAML", func(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{
 			// OIDC keys
-			definitions.SessionKeyIdPFlowType:     definitions.ProtoOIDC,
-			definitions.SessionKeyIdPFlowID:       "flow-oidc-cleanup",
+			definitions.SessionKeyIDPFlowType:     definitions.ProtoOIDC,
+			definitions.SessionKeyIDPFlowID:       "flow-oidc-cleanup",
 			definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
-			definitions.SessionKeyIdPClientID:     "my-app",
-			definitions.SessionKeyIdPRedirectURI:  "https://app.example.com/callback",
-			definitions.SessionKeyIdPScope:        "openid profile email",
-			definitions.SessionKeyIdPState:        "state123",
-			definitions.SessionKeyIdPNonce:        "nonce456",
-			definitions.SessionKeyIdPResponseType: "code",
-			definitions.SessionKeyIdPPrompt:       "consent",
+			definitions.SessionKeyIDPClientID:     "my-app",
+			definitions.SessionKeyIDPRedirectURI:  "https://app.example.com/callback",
+			definitions.SessionKeyIDPScope:        "openid profile email",
+			definitions.SessionKeyIDPState:        "state123",
+			definitions.SessionKeyIDPNonce:        "nonce456",
+			definitions.SessionKeyIDPResponseType: "code",
+			definitions.SessionKeyIDPPrompt:       "consent",
 			// SAML keys
-			definitions.SessionKeyIdPSAMLRequest:         "<saml-request>",
-			definitions.SessionKeyIdPSAMLRelayState:      "relay-state",
-			definitions.SessionKeyIdPSAMLEntityID:        "https://sp.example.com",
-			definitions.SessionKeyIdPOriginalURL:         "/saml/sso?SAMLRequest=abc",
+			definitions.SessionKeyIDPSAMLRequest:         "<saml-request>",
+			definitions.SessionKeyIDPSAMLRelayState:      "relay-state",
+			definitions.SessionKeyIDPSAMLEntityID:        "https://sp.example.com",
+			definitions.SessionKeyIDPOriginalURL:         "/saml/sso?SAMLRequest=abc",
 			definitions.SessionKeyRequireMFAParentFlowID: "flow-parent",
 			// Non-flow keys (must survive)
 			definitions.SessionKeyAccount:     "user@example.com",
 			definitions.SessionKeyOIDCClients: "my-app",
 		}}
 
-		CleanupIdPFlowState(mgr)
+		CleanupIDPFlowState(mgr)
 
 		for _, key := range flowKeys {
 			_, exists := mgr.data[key]
@@ -1205,7 +1218,7 @@ func Test_cleanupIdPFlowState(t *testing.T) {
 
 	t.Run("handles nil manager gracefully", func(t *testing.T) {
 		assert.NotPanics(t, func() {
-			CleanupIdPFlowState(nil)
+			CleanupIDPFlowState(nil)
 		})
 	})
 
@@ -1213,7 +1226,7 @@ func Test_cleanupIdPFlowState(t *testing.T) {
 		mgr := &mockCookieManager{data: make(map[string]any)}
 
 		assert.NotPanics(t, func() {
-			CleanupIdPFlowState(mgr)
+			CleanupIDPFlowState(mgr)
 		})
 	})
 }
@@ -1304,6 +1317,7 @@ func (m *mockCookieManager) GetString(key string, defaultValue string) string {
 			return s
 		}
 	}
+
 	return defaultValue
 }
 
@@ -1313,6 +1327,7 @@ func (m *mockCookieManager) GetInt(key string, defaultValue int) int {
 			return i
 		}
 	}
+
 	return defaultValue
 }
 
@@ -1322,6 +1337,7 @@ func (m *mockCookieManager) GetInt64(key string, defaultValue int64) int64 {
 			return i
 		}
 	}
+
 	return defaultValue
 }
 
@@ -1331,6 +1347,7 @@ func (m *mockCookieManager) GetUint8(key string, defaultValue uint8) uint8 {
 			return i
 		}
 	}
+
 	return defaultValue
 }
 
@@ -1340,6 +1357,7 @@ func (m *mockCookieManager) GetBool(key string, defaultValue bool) bool {
 			return b
 		}
 	}
+
 	return defaultValue
 }
 
@@ -1349,6 +1367,7 @@ func (m *mockCookieManager) GetStringSlice(key string, defaultValue []string) []
 			return s
 		}
 	}
+
 	return defaultValue
 }
 
@@ -1358,6 +1377,7 @@ func (m *mockCookieManager) GetDuration(key string, defaultValue time.Duration) 
 			return d
 		}
 	}
+
 	return defaultValue
 }
 
@@ -1374,6 +1394,7 @@ func (m *mockCookieManager) GetBytes(key string, defaultValue []byte) []byte {
 			return b
 		}
 	}
+
 	return defaultValue
 }
 
@@ -1389,19 +1410,19 @@ func (m *mockCookieManager) ComputeHMAC(data []byte) []byte {
 
 func TestOIDCHandler_Consent(t *testing.T) {
 	t.Run("Authorize redirects to consent when not authorized", func(t *testing.T) {
-		t.Skip("Skipping integration test due to complex IdP dependencies. hasClientConsent is covered by unit tests.")
+		t.Skip("Skipping integration test due to complex IDP dependencies. hasClientConsent is covered by unit tests.")
 	})
 
 	t.Run("Authorize skips consent when already authorized", func(t *testing.T) {
-		t.Skip("Skipping integration test due to complex IdP dependencies. hasClientConsent is covered by unit tests.")
+		t.Skip("Skipping integration test due to complex IDP dependencies. hasClientConsent is covered by unit tests.")
 	})
 
 	t.Run("ConsentPOST redirects with code and state", func(t *testing.T) {
-		t.Skip("Skipping integration test due to complex IdP dependencies. addClientToSession is covered by unit tests.")
+		t.Skip("Skipping integration test due to complex IDP dependencies. addClientToSession is covered by unit tests.")
 	})
 
 	t.Run("ConsentPOST with state in query", func(t *testing.T) {
-		t.Skip("Skipping integration test due to complex IdP dependencies. addClientToSession is covered by unit tests.")
+		t.Skip("Skipping integration test due to complex IDP dependencies. addClientToSession is covered by unit tests.")
 	})
 }
 
@@ -1443,7 +1464,7 @@ func newLatchedConsentPostHandler(t *testing.T) (*OIDCHandler, redismock.ClientM
 		Redis:  rClient,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	handler := NewOIDCHandler(d, idp.NewNauthilusIdP(d), nil)
+	handler := NewOIDCHandler(d, idp.NewNauthilusIDP(d), nil)
 
 	expectLatchedConsentPostRedis(t, mock, client)
 
@@ -1455,7 +1476,7 @@ func latchedConsentOIDCClient() config.OIDCClient {
 		ClientID:     latchedConsentClientID,
 		ClientSecret: secret.New("test-secret"),
 		RedirectURIs: []string{"https://app.example.com/callback"},
-		Scopes:       []string{definitions.ScopeOpenId, "profile"},
+		Scopes:       []string{definitions.ScopeOpenID, "profile"},
 	}
 }
 
@@ -1466,7 +1487,7 @@ func expectLatchedConsentPostRedis(t *testing.T, mock redismock.ClientMock, clie
 		ClientID:    client.ClientID,
 		UserID:      latchedConsentUserID,
 		Username:    latchedConsentUsername,
-		Scopes:      []string{definitions.ScopeOpenId, "profile"},
+		Scopes:      []string{definitions.ScopeOpenID, "profile"},
 		RedirectURI: "https://app.example.com/callback",
 	}
 	sessionData, err := json.Marshal(oidcSession)
@@ -1474,7 +1495,7 @@ func expectLatchedConsentPostRedis(t *testing.T, mock redismock.ClientMock, clie
 
 	flowState := &flowdomain.State{
 		FlowID:      latchedConsentFlowID,
-		FlowType:    flowdomain.FlowTypeOIDCAuthorization,
+		Type:        flowdomain.FlowTypeOIDCAuthorization,
 		Protocol:    flowdomain.FlowProtocolOIDC,
 		CurrentStep: flowdomain.FlowStepConsent,
 		GrantType:   definitions.OIDCFlowAuthorizationCode,
@@ -1493,10 +1514,10 @@ func newLatchedConsentPostContext() (*gin.Context, *httptest.ResponseRecorder) {
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyIdPFlowID:     latchedConsentFlowID,
-		definitions.SessionKeyIdPFlowType:   definitions.ProtoOIDC,
+		definitions.SessionKeyIDPFlowID:     latchedConsentFlowID,
+		definitions.SessionKeyIDPFlowType:   definitions.ProtoOIDC,
 		definitions.SessionKeyOIDCGrantType: definitions.OIDCFlowAuthorizationCode,
-		definitions.SessionKeyIdPClientID:   latchedConsentClientID,
+		definitions.SessionKeyIDPClientID:   latchedConsentClientID,
 	}}
 	ctx.Set(definitions.CtxSecureDataKey, mgr)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/consent", strings.NewReader(url.Values{
@@ -1510,6 +1531,7 @@ func newLatchedConsentPostContext() (*gin.Context, *httptest.ResponseRecorder) {
 
 func TestOIDCHandler_Introspect(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
 	issuer := "https://auth.example.com"
 	signingKey := secret.New(generateTestKey())
 	clientAssertionKey, clientPublicKey := generateTestClientKeyPair(t)
@@ -1539,7 +1561,7 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
-	idpInstance := idp.NewNauthilusIdP(d)
+	idpInstance := idp.NewNauthilusIDP(d)
 	h := NewOIDCHandler(d, idpInstance, nil)
 
 	// Issue a token first
@@ -1572,6 +1594,7 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 		}
 
 		var resp map[string]any
+
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.NoError(t, err)
 		assert.True(t, resp["active"].(bool))
@@ -1626,7 +1649,9 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 		h.Introspect(ctx)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+
 		var resp map[string]any
+
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.NoError(t, err)
 		assert.False(t, resp["active"].(bool))
@@ -1733,7 +1758,7 @@ func TestOIDCHandler_PrivateKeyJWTReplayScopeIncludesEndpointAudience(t *testing
 
 type privateKeyJWTReplayOIDCTest struct {
 	handler   *OIDCHandler
-	issuerID  *idp.NauthilusIdP
+	issuerID  *idp.NauthilusIDP
 	mock      redismock.ClientMock
 	clientKey *rsa.PrivateKey
 	client    config.OIDCClient
@@ -1767,7 +1792,7 @@ func newPrivateKeyJWTReplayOIDCTest(t testing.TB) *privateKeyJWTReplayOIDCTest {
 		Redis:  redisClient,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	issuerID := idp.NewNauthilusIdP(dependencies)
+	issuerID := idp.NewNauthilusIDP(dependencies)
 
 	return &privateKeyJWTReplayOIDCTest{
 		handler:   NewOIDCHandler(dependencies, issuerID, nil),
@@ -1786,7 +1811,7 @@ func (f *privateKeyJWTReplayOIDCTest) authorizationCodeSessionJSON(t testing.TB)
 	session := &idp.OIDCSession{
 		ClientID:    f.client.ClientID,
 		UserID:      "jwt-user",
-		Scopes:      []string{definitions.ScopeOpenId},
+		Scopes:      []string{definitions.ScopeOpenID},
 		RedirectURI: "https://app.example.com/callback",
 		AuthTime:    time.Now(),
 	}
@@ -1804,7 +1829,7 @@ func (f *privateKeyJWTReplayOIDCTest) issuePrivateKeyJWTAccessToken(t testing.TB
 		ClientID: f.client.ClientID,
 		UserID:   "jwt-user",
 		AuthTime: time.Now(),
-		Scopes:   []string{definitions.ScopeOpenId, "profile"},
+		Scopes:   []string{definitions.ScopeOpenID, "profile"},
 	})
 	assert.NoError(t, err)
 
@@ -1875,6 +1900,7 @@ func assertInvalidClientResponse(t testing.TB, recorder *httptest.ResponseRecord
 func TestOIDCHandler_Token(t *testing.T) {
 	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
 	gin.SetMode(gin.TestMode)
+
 	issuer := "https://auth.example.com"
 	signingKey := secret.New(generateTestKey())
 	client := config.OIDCClient{
@@ -1898,7 +1924,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
-	idpInstance := idp.NewNauthilusIdP(d)
+	idpInstance := idp.NewNauthilusIDP(d)
 	h := NewOIDCHandler(d, idpInstance, nil)
 
 	assertInvalidClientForCombinedClientAuth := func(t *testing.T, grantType string, grantValueKey string, grantValue string) {
@@ -1977,7 +2003,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		oidcSession := &idp.OIDCSession{
 			ClientID:    "test-client",
 			UserID:      "user123",
-			Scopes:      []string{definitions.ScopeOpenId},
+			Scopes:      []string{definitions.ScopeOpenID},
 			RedirectURI: "https://app.com/callback",
 			Nonce:       "test-nonce",
 		}
@@ -2005,7 +2031,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 
 		// Verifiziere ID-Token Inhalt (optional, da wir IssueTokens bereits separat testen)
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.NotEmpty(t, resp["id_token"])
 
 		assert.NoError(t, mock.ExpectationsWereMet())
@@ -2038,7 +2064,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		oidcSession := &idp.OIDCSession{
 			ClientID:    specialClientID,
 			UserID:      "user123",
-			Scopes:      []string{definitions.ScopeOpenId},
+			Scopes:      []string{definitions.ScopeOpenID},
 			RedirectURI: "https://app.com/callback",
 		}
 		sessionData, _ := json.Marshal(oidcSession)
@@ -2115,8 +2141,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
+
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, "invalid_client", resp["error"])
 	})
 
@@ -2129,6 +2156,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 
 	t.Run("Refresh token request with basic and matching body credentials is accepted when compatibility is enabled for confidential client", func(t *testing.T) {
 		origCompat := cfg.clients[0].AllowRefreshTokenCombinedClientAuth
+
 		cfg.clients[0].AllowRefreshTokenCombinedClientAuth = true
 		defer func() {
 			cfg.clients[0].AllowRefreshTokenCombinedClientAuth = origCompat
@@ -2138,7 +2166,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		session := &idp.OIDCSession{
 			ClientID: "test-client",
 			UserID:   "user123",
-			Scopes:   []string{definitions.ScopeOpenId, definitions.ScopeOfflineAccess},
+			Scopes:   []string{definitions.ScopeOpenID, definitions.ScopeOfflineAccess},
 			AuthTime: time.Now(),
 		}
 		sessionData, _ := json.Marshal(session)
@@ -2168,8 +2196,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.NotEmpty(t, resp["access_token"])
 		assert.NotEmpty(t, resp["refresh_token"])
 		assert.NoError(t, mock.ExpectationsWereMet())
@@ -2194,7 +2223,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+
 		var resp map[string]any
+
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.NoError(t, err)
 		assert.Equal(t, "invalid_grant", resp["error"])
@@ -2204,6 +2235,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 	t.Run("Refresh token request without rotation reuses token and omits refresh_token in response", func(t *testing.T) {
 		origRevoke := cfg.clients[0].RevokeRefreshToken
 		disabled := false
+
 		cfg.clients[0].RevokeRefreshToken = &disabled
 		defer func() {
 			cfg.clients[0].RevokeRefreshToken = origRevoke
@@ -2214,7 +2246,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		session := &idp.OIDCSession{
 			ClientID:    "test-client",
 			UserID:      "user123",
-			Scopes:      []string{definitions.ScopeOpenId, definitions.ScopeOfflineAccess},
+			Scopes:      []string{definitions.ScopeOpenID, definitions.ScopeOfflineAccess},
 			AuthTime:    time.Now(),
 			AccessToken: oldAccessToken,
 		}
@@ -2241,7 +2273,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+
 		var resp map[string]any
+
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, resp["access_token"])
@@ -2256,6 +2290,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 
 		handler := &noticeCaptureHandler{}
 		previousLogger := d.Logger
+
 		d.Logger = slog.New(handler)
 		defer func() {
 			d.Logger = previousLogger
@@ -2280,11 +2315,12 @@ func TestOIDCHandler_Token(t *testing.T) {
 		foundFailureLog := false
 
 		for _, record := range handler.records {
-			if record.message != "IdP request has failed" {
+			if record.message != "IDP request has failed" {
 				continue
 			}
 
 			assert.Equal(t, "refresh token unknown, expired, or already rotated", record.attrs["failure_reason"])
+
 			foundFailureLog = true
 
 			break
@@ -2299,7 +2335,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		session := &idp.OIDCSession{
 			ClientID: "other-client",
 			UserID:   "user123",
-			Scopes:   []string{definitions.ScopeOpenId, definitions.ScopeOfflineAccess},
+			Scopes:   []string{definitions.ScopeOpenID, definitions.ScopeOfflineAccess},
 			AuthTime: time.Now(),
 		}
 		sessionData, _ := json.Marshal(session)
@@ -2320,8 +2356,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, "invalid_grant", resp["error"])
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -2350,7 +2387,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
+
 		var resp map[string]any
+
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.NoError(t, err)
 		assert.Equal(t, "invalid_client", resp["error"])
@@ -2374,7 +2413,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		session := &idp.OIDCSession{
 			ClientID: "public-refresh-client",
 			UserID:   "user123",
-			Scopes:   []string{definitions.ScopeOpenId, definitions.ScopeOfflineAccess},
+			Scopes:   []string{definitions.ScopeOpenID, definitions.ScopeOfflineAccess},
 			AuthTime: time.Now(),
 		}
 		sessionData, _ := json.Marshal(session)
@@ -2404,7 +2443,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+
 		var resp map[string]any
+
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, resp["access_token"])
@@ -2418,6 +2459,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		// Basic auth AND a duplicate client_id in the body with an empty
 		// client_secret must still be rejected as invalid_client.
 		origCompat := cfg.clients[0].AllowRefreshTokenCombinedClientAuth
+
 		cfg.clients[0].AllowRefreshTokenCombinedClientAuth = true
 		defer func() {
 			cfg.clients[0].AllowRefreshTokenCombinedClientAuth = origCompat
@@ -2440,7 +2482,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
+
 		var resp map[string]any
+
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.NoError(t, err)
 		assert.Equal(t, "invalid_client", resp["error"])
@@ -2466,8 +2510,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
+
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, "invalid_client", resp["error"])
 	})
 
@@ -2486,7 +2531,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		oidcSession := &idp.OIDCSession{
 			ClientID:            publicClient.ClientID,
 			UserID:              "user123",
-			Scopes:              []string{definitions.ScopeOpenId},
+			Scopes:              []string{definitions.ScopeOpenID},
 			RedirectURI:         "https://app.com/public-callback",
 			CodeChallenge:       challenge,
 			CodeChallengeMethod: "S256",
@@ -2514,7 +2559,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.NotEmpty(t, resp["id_token"])
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -2527,7 +2572,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		oidcSession := &idp.OIDCSession{
 			ClientID:            "test-client",
 			UserID:              "user123",
-			Scopes:              []string{definitions.ScopeOpenId},
+			Scopes:              []string{definitions.ScopeOpenID},
 			RedirectURI:         "https://app.com/callback",
 			CodeChallenge:       challenge,
 			CodeChallengeMethod: "S256",
@@ -2564,7 +2609,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		oidcSession := &idp.OIDCSession{
 			ClientID:            "test-client",
 			UserID:              "user123",
-			Scopes:              []string{definitions.ScopeOpenId},
+			Scopes:              []string{definitions.ScopeOpenID},
 			RedirectURI:         "https://app.com/callback",
 			CodeChallenge:       challenge,
 			CodeChallengeMethod: "S256",
@@ -2590,8 +2635,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, "invalid_grant", resp["error"])
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -2601,7 +2647,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		oidcSession := &idp.OIDCSession{
 			ClientID:            "test-client",
 			UserID:              "user123",
-			Scopes:              []string{definitions.ScopeOpenId},
+			Scopes:              []string{definitions.ScopeOpenID},
 			RedirectURI:         "https://app.com/callback",
 			CodeChallenge:       "dummy",
 			CodeChallengeMethod: "S256",
@@ -2626,8 +2672,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, "invalid_grant", resp["error"])
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -2638,7 +2685,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		oidcSession := &idp.OIDCSession{
 			ClientID:            "test-client",
 			UserID:              "user123",
-			Scopes:              []string{definitions.ScopeOpenId},
+			Scopes:              []string{definitions.ScopeOpenID},
 			RedirectURI:         "https://app.com/callback",
 			CodeChallenge:       verifier,
 			CodeChallengeMethod: "plain",
@@ -2664,8 +2711,9 @@ func TestOIDCHandler_Token(t *testing.T) {
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, "invalid_grant", resp["error"])
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})

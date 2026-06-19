@@ -72,6 +72,7 @@ func TestAuthValidation_EmptyField_JSON(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			setupMinimalTestConfig(t)
 			gin.SetMode(gin.TestMode)
+
 			deps := setupAuthDeps()
 
 			w := httptest.NewRecorder()
@@ -97,6 +98,7 @@ func TestAuthValidation_EmptyField_JSON(t *testing.T) {
 func TestAuthValidation_InvalidJSON(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
+
 	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()
@@ -124,6 +126,7 @@ func TestAuthValidation_InvalidJSON(t *testing.T) {
 func TestAuthValidation_JSONUnknownFieldStrict(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
+
 	deps := setupAuthDeps()
 
 	body := []byte(`{"username":"user1","password":"secret","unexpected":"value"}`)
@@ -146,6 +149,7 @@ func TestAuthValidation_JSONUnknownFieldStrict(t *testing.T) {
 func TestAuthValidation_ApplicationCBOR(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
+
 	deps := setupAuthDeps()
 
 	payload, err := cbor.Marshal(authdto.Request{
@@ -177,6 +181,7 @@ func TestAuthValidation_ApplicationCBOR(t *testing.T) {
 func TestAuthValidation_InvalidCBOR(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
+
 	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()
@@ -197,6 +202,7 @@ func TestAuthValidation_InvalidCBOR(t *testing.T) {
 func TestAuthValidation_CBORMissingPassword(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
+
 	deps := setupAuthDeps()
 
 	payload, err := cbor.Marshal(authdto.Request{Username: "user1"})
@@ -220,6 +226,7 @@ func TestAuthValidation_CBORMissingPassword(t *testing.T) {
 func TestAuthValidation_EmptyUsername_Header(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
+
 	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()
@@ -245,6 +252,7 @@ func TestAuthValidation_EmptyUsername_Header(t *testing.T) {
 func TestAuthValidation_EmptyUsername_Form(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
+
 	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()

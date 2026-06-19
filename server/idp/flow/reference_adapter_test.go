@@ -69,20 +69,20 @@ func (m *testSessionManager) ComputeHMAC(data []byte) []byte {
 
 func TestFlowReferenceAdapterLoadOIDCResumeTarget(t *testing.T) {
 	mgr := &testSessionManager{data: map[string]any{
-		definitions.SessionKeyIdPFlowID:       "flow-1",
-		definitions.SessionKeyIdPFlowType:     definitions.ProtoOIDC,
-		definitions.SessionKeyIdPAuthOutcome:  "fail_latched",
+		definitions.SessionKeyIDPFlowID:       "flow-1",
+		definitions.SessionKeyIDPFlowType:     definitions.ProtoOIDC,
+		definitions.SessionKeyIDPAuthOutcome:  "fail_latched",
 		definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
-		definitions.SessionKeyIdPClientID:     "client-1",
-		definitions.SessionKeyIdPRedirectURI:  "https://rp.example/cb",
-		definitions.SessionKeyIdPScope:        "openid profile",
-		definitions.SessionKeyIdPState:        "abc",
-		definitions.SessionKeyIdPNonce:        "nonce-1",
-		definitions.SessionKeyIdPResponseType: "code",
+		definitions.SessionKeyIDPClientID:     "client-1",
+		definitions.SessionKeyIDPRedirectURI:  "https://rp.example/cb",
+		definitions.SessionKeyIDPScope:        "openid profile",
+		definitions.SessionKeyIDPState:        "abc",
+		definitions.SessionKeyIDPNonce:        "nonce-1",
+		definitions.SessionKeyIDPResponseType: "code",
 	}}
 	setAuthOutcomeHMACTestValue(mgr, "flow-1", AuthOutcomeFailLatched)
 
-	state, err := NewFlowReferenceAdapter(mgr).Load(context.Background(), "")
+	state, err := NewReferenceAdapter(mgr).Load(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,18 +114,18 @@ func setAuthOutcomeHMACTestValue(mgr *testSessionManager, flowID string, outcome
 	binary.BigEndian.PutUint64(payload[:8], uint64(ts))
 	copy(payload[8:], tag)
 
-	mgr.Set(definitions.SessionKeyIdPAuthOutcomeHMAC, payload)
+	mgr.Set(definitions.SessionKeyIDPAuthOutcomeHMAC, payload)
 }
 
 func TestFlowReferenceAdapterLoadSAMLResumeTarget(t *testing.T) {
 	mgr := &testSessionManager{data: map[string]any{
-		definitions.SessionKeyIdPFlowID:       "flow-2",
-		definitions.SessionKeyIdPFlowType:     definitions.ProtoSAML,
-		definitions.SessionKeyIdPSAMLEntityID: "sp-entity",
-		definitions.SessionKeyIdPOriginalURL:  "/saml/sso?SAMLRequest=abc",
+		definitions.SessionKeyIDPFlowID:       "flow-2",
+		definitions.SessionKeyIDPFlowType:     definitions.ProtoSAML,
+		definitions.SessionKeyIDPSAMLEntityID: "sp-entity",
+		definitions.SessionKeyIDPOriginalURL:  "/saml/sso?SAMLRequest=abc",
 	}}
 
-	state, err := NewFlowReferenceAdapter(mgr).Load(context.Background(), "")
+	state, err := NewReferenceAdapter(mgr).Load(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -137,19 +137,19 @@ func TestFlowReferenceAdapterLoadSAMLResumeTarget(t *testing.T) {
 
 func TestFlowReferenceAdapterLoadDeviceResumeTarget(t *testing.T) {
 	mgr := &testSessionManager{data: map[string]any{
-		definitions.SessionKeyIdPFlowID:     "flow-3",
-		definitions.SessionKeyIdPFlowType:   definitions.ProtoOIDC,
+		definitions.SessionKeyIDPFlowID:     "flow-3",
+		definitions.SessionKeyIDPFlowType:   definitions.ProtoOIDC,
 		definitions.SessionKeyOIDCGrantType: definitions.OIDCFlowDeviceCode,
 		definitions.SessionKeyDeviceCode:    "device-1",
 	}}
 
-	state, err := NewFlowReferenceAdapter(mgr).Load(context.Background(), "")
+	state, err := NewReferenceAdapter(mgr).Load(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if state.FlowType != FlowTypeOIDCDeviceCode {
-		t.Fatalf("unexpected flow type: %s", state.FlowType)
+	if state.Type != FlowTypeOIDCDeviceCode {
+		t.Fatalf("unexpected flow type: %s", state.Type)
 	}
 
 	if state.Metadata[FlowMetadataResumeTarget] != FlowMetadataResumeTargetDeviceCodeComplete {
@@ -159,12 +159,12 @@ func TestFlowReferenceAdapterLoadDeviceResumeTarget(t *testing.T) {
 
 func TestFlowReferenceAdapterLoadAuthOutcomeRejectsMissingHMAC(t *testing.T) {
 	mgr := &testSessionManager{data: map[string]any{
-		definitions.SessionKeyIdPFlowID:      "flow-4",
-		definitions.SessionKeyIdPFlowType:    definitions.ProtoOIDC,
-		definitions.SessionKeyIdPAuthOutcome: "ok",
+		definitions.SessionKeyIDPFlowID:      "flow-4",
+		definitions.SessionKeyIDPFlowType:    definitions.ProtoOIDC,
+		definitions.SessionKeyIDPAuthOutcome: "ok",
 	}}
 
-	state, err := NewFlowReferenceAdapter(mgr).Load(context.Background(), "")
+	state, err := NewReferenceAdapter(mgr).Load(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

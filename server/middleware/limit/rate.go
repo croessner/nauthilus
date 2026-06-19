@@ -14,6 +14,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const limitScopeRate = "rate"
+
 // IPRateLimiter manages rate limiters for individual IP addresses.
 type IPRateLimiter struct {
 	ips *cache.Cache
@@ -71,7 +73,7 @@ func (i *IPRateLimiter) GetLimiter(ip string) *rate.Limiter {
 func (i *IPRateLimiter) Middleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		// Skip rate limiting for health check and metrics
-		if ctx.FullPath() == "/ping" || ctx.FullPath() == "/healthz" || ctx.FullPath() == "/metrics" {
+		if ctx.FullPath() == limitBypassPingPath || ctx.FullPath() == limitBypassHealthPath || ctx.FullPath() == limitBypassMetricsPath {
 			ctx.Next()
 
 			return
@@ -81,11 +83,11 @@ func (i *IPRateLimiter) Middleware() gin.HandlerFunc {
 		limiter := i.GetLimiter(ip)
 
 		if !limiter.Allow() {
-			ctx.Set(definitions.CtxRateLimitReasonKey, "rate")
+			ctx.Set(definitions.CtxRateLimitReasonKey, limitScopeRate)
 
 			ctx.JSON(http.StatusTooManyRequests, gin.H{
 				definitions.LogKeyMsg: "Rate limit exceeded",
-				"scope":               "rate",
+				limitResponseKeyScope: limitScopeRate,
 				"ip":                  ip,
 			})
 

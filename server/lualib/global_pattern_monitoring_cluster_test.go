@@ -42,26 +42,29 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 				if L.Get(1) != lua.LNil {
 					L.RaiseError("unexpected error")
 				}
+
 				return 0
 			},
 			"is_table": func(L *lua.LState) int {
 				L.Push(lua.LBool(L.Get(1).Type() == lua.LTTable))
 				return 1
 			},
-			"log_info": func(L *lua.LState) int {
+			"log_info": func(_ *lua.LState) int {
 				return 0
 			},
 		})
 		L.Push(mod)
+
 		return 1
 	})
 
 	L.PreloadModule("nauthilus_policy_facts", func(L *lua.LState) int {
 		mod := L.NewTable()
-		mod.RawSetString("emit_many", L.NewFunction(func(L *lua.LState) int {
+		mod.RawSetString("emit_many", L.NewFunction(func(_ *lua.LState) int {
 			return 0
 		}))
 		L.Push(mod)
+
 		return 1
 	})
 
@@ -75,11 +78,14 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 			for range 6 {
 				res.Append(lua.LNumber(0))
 			}
+
 			L.Push(res)
 			L.Push(lua.LNil)
+
 			return 2
 		}))
 		L.Push(mod)
+
 		return 1
 	})
 
@@ -92,6 +98,7 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 			} else {
 				L.Push(lua.LNil)
 			}
+
 			return 1
 		}))
 		mod.RawSetString("context_set", L.NewFunction(func(L *lua.LState) int {
@@ -99,6 +106,7 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 			return 0
 		}))
 		L.Push(mod)
+
 		return 1
 	})
 
@@ -134,15 +142,19 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected keys table, got %v", L.GetGlobal("last_keys").Type())
 	}
+
 	argsTbl, ok := L.GetGlobal("last_args").(*lua.LTable)
 	if !ok {
 		t.Fatalf("expected args table, got %v", L.GetGlobal("last_args").Type())
 	}
 
 	var perAttemptKeys []string
+
 	keyCount := 0
+
 	keysTbl.ForEach(func(_ lua.LValue, v lua.LValue) {
 		keyCount++
+
 		if strings.Contains(v.String(), "multilayer:global:metrics:1700000000") {
 			perAttemptKeys = append(perAttemptKeys, v.String())
 		}
@@ -151,6 +163,7 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 	if keyCount != 21 {
 		t.Fatalf("key count = %d, want 21", keyCount)
 	}
+
 	if len(perAttemptKeys) != 1 {
 		t.Fatalf("per-attempt key occurrences in KEYS = %d, want 1", len(perAttemptKeys))
 	}

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package bootfx provides bootfx functionality.
 package bootfx
 
 import (
@@ -69,10 +70,12 @@ var configDumpNonDefaultsMode bool
 var configDumpPrintSensitiveMode bool
 var configDumpFormat = config.DumpFormatCanonical
 
+const bootFlagVersion = "version"
+
 // ParseFlagsAndPrintVersion parses command-line flags, configures viper/config paths,
 // and prints the version information if the `-version` flag is set.
 func ParseFlagsAndPrintVersion(version string) {
-	versionFlag := flag.Bool("version", false, "print version and exit")
+	versionFlag := flag.Bool(bootFlagVersion, false, "print version and exit")
 	configFlag := flag.String("config", "", "path to configuration file")
 	configFormatFlag := flag.String("config-format", "yaml", "configuration file format (yaml, json, toml, etc.)")
 	configDumpFormatFlag := flag.String("dump-format", string(config.DumpFormatCanonical), "configuration dump output format (canonical, yaml, json, toml)")
@@ -93,7 +96,7 @@ func ParseFlagsAndPrintVersion(version string) {
 	flagutil.ApplyGroupedDoubleDashUsage(flag.CommandLine, "nauthilus", []flagutil.UsageGroup{
 		{
 			Title: "General",
-			Flags: []string{"version", "config", "config-format"},
+			Flags: []string{bootFlagVersion, "config", "config-format"},
 		},
 		{
 			Title: "Configuration Checks",
@@ -368,7 +371,7 @@ func DebugLoadableConfig(cfg config.File, logger *slog.Logger) {
 	debugIfNotNil(definitions.ControlRelayDomains, file.GetRelayDomains())
 	debugIfNotNil(definitions.ServiceBackendHealthChecks, file.GetBackendServerMonitoring())
 	debugIfNotNil(definitions.LogKeyBruteForce, file.GetBruteForce())
-	debugIfNotNil("idp", file.GetIdP())
+	debugIfNotNil("idp", file.GetIDP())
 
 	ldap := file.GetLDAP()
 	if ldap != nil {

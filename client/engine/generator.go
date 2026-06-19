@@ -7,18 +7,19 @@ import (
 	"os"
 )
 
+// GenerateCSV provides the exported GenerateCSV function.
 func GenerateCSV(path string, total int, cidrProb float64, cidrPrefix int) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	w := csv.NewWriter(f)
 	defer w.Flush()
 
 	// Header
-	_ = w.Write([]string{"username", "password", "ip", "expected_ok"})
+	_ = w.Write([]string{"username", csvFieldPassword, "ip", csvFieldExpectedOK})
 
 	var (
 		baseNet uint32
@@ -32,7 +33,7 @@ func GenerateCSV(path string, total int, cidrProb float64, cidrPrefix int) error
 
 	for i := range total {
 		username := fmt.Sprintf("user%d", i)
-		password := "password"
+		password := csvFieldPassword
 		ip := ""
 
 		if hasCIDR && rand.Float64() < cidrProb {
@@ -41,7 +42,7 @@ func GenerateCSV(path string, total int, cidrProb float64, cidrPrefix int) error
 			ip = uint32ToIP(randomRoutableIPv4())
 		}
 
-		expected := "true"
+		expected := csvValueTrue
 		if rand.Float64() < 0.1 {
 			expected = "false"
 		}
@@ -71,9 +72,11 @@ func isRoutableIPv4(u uint32) bool {
 	if first == 0 || first == 127 || first >= 224 {
 		return false
 	}
+
 	if first == 169 && byte(u>>16) == 254 {
 		return false
 	}
+
 	return true
 }
 
@@ -85,6 +88,7 @@ func pickRoutableCIDR(prefix int) (uint32, uint32, bool) {
 			return base, mask, true
 		}
 	}
+
 	return 0, 0, false
 }
 
@@ -92,9 +96,11 @@ func maskFromPrefix(prefix int) uint32 {
 	if prefix <= 0 {
 		return 0
 	}
+
 	if prefix >= 32 {
 		return 0xFFFFFFFF
 	}
+
 	return 0xFFFFFFFF << (32 - prefix)
 }
 

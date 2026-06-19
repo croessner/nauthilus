@@ -351,6 +351,7 @@ func TestGenerateRandomString(t *testing.T) {
 		if err != nil {
 			t.Errorf("GenerateRandomString(%d) failed: %v", l, err)
 		}
+
 		if len(s) != l {
 			t.Errorf("GenerateRandomString(%d) returned string of length %d, expected %d", l, len(s), l)
 		}

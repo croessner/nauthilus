@@ -84,6 +84,7 @@ func TestMaterializeLegacySectionsDoesNotClearFrontendTemplateDefaultWhenHealthC
 	}
 
 	cfg.materializeLegacySections()
+
 	if err := cfg.setDefaultHTMLStaticContentPath(); err != nil {
 		t.Fatalf("set default HTML path failed: %v", err)
 	}
@@ -297,6 +298,7 @@ func assertRemovedLuaSchedulerKeyRejected(t *testing.T, testCase removedLuaSched
 	t.Helper()
 
 	cfg := &FileSettings{}
+
 	err := cfg.HandleFile()
 	if err == nil {
 		t.Fatal("HandleFile() error = nil, want removed scheduler key rejection")

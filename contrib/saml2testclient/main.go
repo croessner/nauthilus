@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package main provides the saml2testclient command.
 package main
 
 import (
@@ -53,13 +54,18 @@ var (
 	samlSPEntityID      = os.Getenv("SAML2_SP_ENTITY_ID")
 	samlSPURL           = os.Getenv("SAML2_SP_URL")
 	samlSPListenAddress = os.Getenv("SAML2_SP_LISTEN_ADDRESS")
-	insecureSkipVerify  = os.Getenv("SAML2_INSECURE_SKIP_VERIFY") != "false" // Default to true for test client
+	insecureSkipVerify  = os.Getenv("SAML2_INSECURE_SKIP_VERIFY") != envBoolFalse // Default to true for test client
 	signAuthnRequests   = envBool("SAML2_SP_SIGN_AUTHN_REQUESTS", false)
 	signLogoutRequests  = envBool("SAML2_SP_SIGN_LOGOUT_REQUESTS", false)
 	signLogoutResponses = envBool("SAML2_SP_SIGN_LOGOUT_RESPONSES", false)
 )
 
-const sessionIndexAttribute = "SessionIndex"
+const (
+	envBoolFalse           = "false"
+	sessionIndexAttribute  = "SessionIndex"
+	sloMessageTypeRequest  = "request"
+	sloMessageTypeResponse = "response"
+)
 
 type logoutInitiation struct {
 	Binding     string
@@ -137,7 +143,7 @@ const successPageTmpl = `
 
         <div class="section">
             <h2>SAML Attributes</h2>
-            <p>The following attributes were received from the IdP:</p>
+            <p>The following attributes were received from the IDP:</p>
             <pre>{{.Attributes}}</pre>
         </div>
 
@@ -188,7 +194,7 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 }
 
 // exportSPCertificate writes the SP certificate as PEM to a well-known file
-// so it can be referenced via the IdP's cert_file configuration option.
+// so it can be referenced via the IDP's cert_file configuration option.
 func exportSPCertificate(keyPair tls.Certificate) {
 	const certPath = "contrib/saml2testclient/sp-cert.pem"
 
@@ -211,7 +217,7 @@ func exportSPCertificate(keyPair tls.Certificate) {
 		return
 	}
 
-	log.Printf("SP certificate exported to %s (use this in IdP saml2.service_providers[].cert_file)", certPath)
+	log.Printf("SP certificate exported to %s (use this in IDP saml2.service_providers[].cert_file)", certPath)
 }
 
 func envBool(key string, defaultValue bool) bool {
@@ -223,7 +229,7 @@ func envBool(key string, defaultValue bool) bool {
 	switch strings.ToLower(value) {
 	case "1", "true", "yes", "on":
 		return true
-	case "0", "false", "no", "off":
+	case "0", envBoolFalse, "no", "off":
 		return false
 	default:
 		log.Printf("Warning: Invalid boolean value %q for %s. Using default %t.", value, key, defaultValue)
@@ -327,7 +333,7 @@ func newLogoutRequest(
 ) (*saml.LogoutRequest, error) {
 	logoutDestination := strings.TrimSpace(serviceProvider.GetSLOBindingLocation(binding))
 	if logoutDestination == "" {
-		return nil, fmt.Errorf("missing IdP SingleLogoutService for binding %q", binding)
+		return nil, fmt.Errorf("missing IDP SingleLogoutService for binding %q", binding)
 	}
 
 	signingServiceProvider, err := cloneServiceProviderForSigning(serviceProvider, signRequest)
@@ -483,14 +489,14 @@ func parseIncomingSLOValues(values url.Values, binding string) (*incomingSLOMess
 		return nil, fmt.Errorf("SAMLRequest and SAMLResponse must not be present together")
 	case requestPayload != "":
 		return &incomingSLOMessage{
-			MessageType: "request",
+			MessageType: sloMessageTypeRequest,
 			Binding:     binding,
 			Payload:     requestPayload,
 			RelayState:  relayState,
 		}, nil
 	case responsePayload != "":
 		return &incomingSLOMessage{
-			MessageType: "response",
+			MessageType: sloMessageTypeResponse,
 			Binding:     binding,
 			Payload:     responsePayload,
 			RelayState:  relayState,
@@ -618,15 +624,19 @@ func main() {
 	if samlIDPMetadataURL == "" {
 		samlIDPMetadataURL = "https://localhost:9443/saml/metadata"
 	}
+
 	if samlSPEntityID == "" {
 		samlSPEntityID = "https://localhost:9095/saml/metadata"
 	}
+
 	if samlSPURL == "" {
 		samlSPURL = "https://localhost:9095"
 	}
 
-	var keyPair tls.Certificate
-	var err error
+	var (
+		keyPair tls.Certificate
+		err     error
+	)
 
 	keyPair, err = tls.LoadX509KeyPair("contrib/saml2testclient/token.crt", "contrib/saml2testclient/token.key")
 	if err != nil {
@@ -638,7 +648,7 @@ func main() {
 		}
 	}
 
-	// Export SP certificate as PEM so it can be used in IdP configuration
+	// Export SP certificate as PEM so it can be used in IDP configuration
 	// (e.g. saml2.service_providers[].cert_file).
 	exportSPCertificate(keyPair)
 
@@ -669,12 +679,13 @@ func main() {
 		LogoutBindings:    []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding},
 	}
 
-	// Try to fetch IDP metadata, but don't fail immediately if IdP is not up yet
+	// Try to fetch IDP metadata, but don't fail immediately if IDP is not up yet
 	// (though samlsp.New might need it if we want it fully initialized)
-	log.Printf("Fetching IdP metadata from %s...", samlIDPMetadataURL)
+	log.Printf("Fetching IDP metadata from %s...", samlIDPMetadataURL)
+
 	idpMetadata, err := samlsp.FetchMetadata(context.Background(), httpClient, *idpMetadataURL)
 	if err != nil {
-		log.Printf("Warning: Could not fetch IdP metadata: %v. The client might not work until restarted or metadata is available.", err)
+		log.Printf("Warning: Could not fetch IDP metadata: %v. The client might not work until restarted or metadata is available.", err)
 	} else {
 		opts.IDPMetadata = idpMetadata
 	}
@@ -713,7 +724,7 @@ func main() {
 		}
 
 		switch message.MessageType {
-		case "response":
+		case sloMessageTypeResponse:
 			if err = validateIncomingLogoutResponse(&samlSP.ServiceProvider, r, message); err != nil {
 				http.Error(w, fmt.Sprintf("invalid logout response: %v", err), http.StatusBadRequest)
 
@@ -722,7 +733,7 @@ func main() {
 
 			clearSessionCookies(w)
 			http.Redirect(w, r, "/", http.StatusFound)
-		case "request":
+		case sloMessageTypeRequest:
 			logoutRequest, err := decodeIncomingLogoutRequest(message.Binding, message.Payload)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -809,6 +820,7 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Received request: %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr)
+
 		session, err := samlSP.Session.GetSession(r)
 		if session != nil && err == nil {
 			// User is logged in, show attributes
@@ -816,9 +828,11 @@ func main() {
 			if sa, ok := session.(samlsp.SessionWithAttributes); ok {
 				attrs = sa.GetAttributes()
 			}
+
 			data, _ := json.MarshalIndent(attrs, "", "    ")
 
 			twoFAHomeURL := ""
+
 			if u, err := url.Parse(samlIDPMetadataURL); err == nil {
 				u.Path = "/mfa/register/home"
 				u.RawQuery = ""
@@ -827,19 +841,24 @@ func main() {
 			}
 
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			tmpl.Execute(w, struct {
+
+			if err := tmpl.Execute(w, struct {
 				Attributes   string
 				TwoFAHomeURL string
 			}{
 				Attributes:   string(data),
 				TwoFAHomeURL: twoFAHomeURL,
-			})
+			}); err != nil {
+				http.Error(w, "failed to render account page", http.StatusInternalServerError)
+			}
+
 			return
 		}
 
 		// User not logged in, show login page
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<!DOCTYPE html>
+
+		if _, err := fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head>
     <title>SAML2 Test Client</title>
@@ -869,7 +888,9 @@ func main() {
         <a href="/saml/login" class="login-btn">Login via SAML2</a>
     </div>
 </body>
-</html>`)
+</html>`); err != nil {
+			log.Printf("Failed to write login page: %v", err)
+		}
 	})
 
 	isHTTPS := spURL.Scheme == "https"
@@ -885,11 +906,13 @@ func main() {
 
 	if isHTTPS {
 		log.Printf("listening on https://%s/", server.Addr)
+
 		if err := server.ListenAndServeTLS("", ""); err != nil {
 			log.Fatal(err)
 		}
 	} else {
 		log.Printf("listening on http://%s/", server.Addr)
+
 		if err := server.ListenAndServe(); err != nil {
 			log.Fatal(err)
 		}

@@ -60,6 +60,7 @@ func TestNextStateMatchesTransitionTable(t *testing.T) {
 
 func TestNextStateRejectsUnlistedTransitions(t *testing.T) {
 	allowed := allowedTransitionSet()
+
 	for _, current := range allStates() {
 		for _, marker := range allTargetMarkers() {
 			if _, ok := allowed[current][marker]; ok {

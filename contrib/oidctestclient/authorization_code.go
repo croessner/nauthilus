@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Package main provides the oidctestclient command.
 package main
 
 import (
@@ -164,7 +165,9 @@ func handleAuthCodeLogin(oauth2Config *oauth2.Config, pkceMode PKCEMode) http.Ha
 			}
 
 			setCallbackCookie(w, "pkce_verifier", verifier)
+
 			opts = append(opts, pkceOpts...)
+
 			log.Printf("PKCE enabled for authorization request with method=%s", pkceMode)
 		}
 
@@ -228,6 +231,7 @@ func exchangeAndVerify(
 	log.Println("Exchanging authorization code for tokens...")
 
 	exchangeOpts := []oauth2.AuthCodeOption{}
+
 	if pkceMode != PKCEModeDisabled {
 		pkceVerifier, err := getRequiredCookie(r, "pkce_verifier")
 		if err != nil {
@@ -444,7 +448,7 @@ func renderSuccessPage(
 	}
 }
 
-// handleFrontChannelLogout processes front-channel logout requests from the IdP.
+// handleFrontChannelLogout processes front-channel logout requests from the IDP.
 func handleFrontChannelLogout(w http.ResponseWriter, r *http.Request) {
 	log.Println("Received request on '/frontchannel-logout'")
 
@@ -458,7 +462,10 @@ func handleFrontChannelLogout(w http.ResponseWriter, r *http.Request) {
 	clearSessionCookies(w)
 
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "Front-channel logout processed")
+
+	if _, err := fmt.Fprintf(w, "Front-channel logout processed"); err != nil {
+		log.Printf("Failed to write front-channel logout response: %v", err)
+	}
 }
 
 // handleBackChannelLogout returns a handler that processes back-channel logout tokens.
@@ -524,14 +531,15 @@ func handleBackChannelLogout(ctx context.Context, verifier *oidc.IDTokenVerifier
 	}
 }
 
-// handleLogoutCallback handles the post-logout redirect from the IdP.
+// handleLogoutCallback handles the post-logout redirect from the IDP.
 func handleLogoutCallback(w http.ResponseWriter, _ *http.Request) {
 	log.Println("Received request on '/logout-callback'")
 
 	clearSessionCookies(w)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `
+
+	if _, err := fmt.Fprintf(w, `
 		<!DOCTYPE html>
 		<html>
 		<head><title>Logged Out</title><style>body{font-family:sans-serif;margin:2em;}</style></head>
@@ -541,5 +549,7 @@ func handleLogoutCallback(w http.ResponseWriter, _ *http.Request) {
 			<p><a href="/">Start over</a></p>
 		</body>
 		</html>
-	`)
+	`); err != nil {
+		log.Printf("Failed to write logout callback response: %v", err)
+	}
 }

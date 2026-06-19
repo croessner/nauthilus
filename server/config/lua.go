@@ -22,6 +22,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/errors"
 )
 
+// LuaSection describes the exported LuaSection type.
 type LuaSection struct {
 	Actions             []LuaAction            `mapstructure:"actions" validate:"omitempty,dive"`
 	EnvironmentSources  []LuaEnvironmentSource `mapstructure:"-" validate:"omitempty,dive"`
@@ -117,6 +118,7 @@ func (l *LuaSection) GetHooks() []LuaHooks {
 	return l.Hooks
 }
 
+// LuaAction describes the exported LuaAction type.
 type LuaAction struct {
 	ActionType string `mapstructure:"type" validate:"required,oneof=brute_force rbl tls_encryption relay_domains lua post"`
 	ScriptName string `mapstructure:"name" validate:"required"`
@@ -125,7 +127,7 @@ type LuaAction struct {
 
 func (l *LuaAction) String() string {
 	if l == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return fmt.Sprintf("{ActionType: %s}, {BackendScriptPath: %s}", l.ActionType, l.ScriptPath)
@@ -180,7 +182,7 @@ type LuaEnvironmentSource struct {
 
 func (l *LuaEnvironmentSource) String() string {
 	if l == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
@@ -212,7 +214,7 @@ type LuaSubjectSource struct {
 
 func (l *LuaSubjectSource) String() string {
 	if l == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
@@ -236,6 +238,7 @@ func (l *LuaSubjectSource) GetScriptPath() string {
 	return l.ScriptPath
 }
 
+// LuaConf describes the exported LuaConf type.
 type LuaConf struct {
 	NumberOfWorkers        int      `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=1000000"`
 	BackendNumberOfWorkers int      `mapstructure:"backend_number_of_workers" validate:"omitempty,min=1,max=1000000"`
@@ -257,7 +260,7 @@ type LuaConf struct {
 
 func (l *LuaConf) String() string {
 	if l == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return l.BackendScriptPath
@@ -347,6 +350,7 @@ func (l *LuaConf) GetLuaIPv6CIDR() uint {
 	if l == nil {
 		return 0
 	}
+
 	return l.LuaIPv6CIDR
 }
 
@@ -355,6 +359,7 @@ func (l *LuaConf) GetLuaIPv4CIDR() uint {
 	if l == nil {
 		return 0
 	}
+
 	return l.LuaIPv4CIDR
 }
 
@@ -394,6 +399,7 @@ func (l *LuaConf) GetInitScriptPaths() []string {
 	return l.InitScriptPaths
 }
 
+// LuaSearchProtocol describes the exported LuaSearchProtocol type.
 type LuaSearchProtocol struct {
 	Protocols   []string `mapstructure:"protocol"`
 	CacheName   string   `mapstructure:"cache_name" validate:"required,printascii,excludesall= "`
@@ -432,6 +438,7 @@ func (l *LuaSearchProtocol) GetProtocols() []string {
 	return l.Protocols
 }
 
+// LuaHooks describes the exported LuaHooks type.
 type LuaHooks struct {
 	Location      string   `mapstructure:"http_location" validate:"required,printascii,excludesall= "`
 	AliasLocation string   `mapstructure:"http_alias_location" validate:"omitempty,printascii,excludesall= ,startswith=/"`
@@ -443,7 +450,7 @@ type LuaHooks struct {
 
 func (l *LuaHooks) String() string {
 	if l == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return fmt.Sprintf("{Location: %s}, {AliasLocation: %s}, {Method: %s}, {ScriptPath: %s}, {Scopes: %v}", l.Location, l.AliasLocation, l.Method, l.ScriptPath, l.Scopes)
@@ -480,7 +487,7 @@ func (l *LuaHooks) GetAliasLocation() string {
 // the ContentType is an empty string
 func (l *LuaHooks) GetContentType() string {
 	if l == nil {
-		return "application/json"
+		return mimeApplicationJSON
 	}
 
 	if l.ContentType == "" {

@@ -131,6 +131,7 @@ func TestRestartManager_CallsRestartInOrder(t *testing.T) {
 	}
 
 	got := rec.snapshot()
+
 	want := []string{"a", "b", "c"}
 	if len(got) != len(want) {
 		t.Fatalf("unexpected call count: got %v, want %v", got, want)

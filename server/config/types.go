@@ -118,7 +118,7 @@ func (v *Verbosity) Set(value string) error {
 // Type returns the type of the Verbosity struct.
 func (v *Verbosity) Type() string {
 	if v == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return "Verbosity"
@@ -150,7 +150,7 @@ type LDAPScope struct {
 
 func (l *LDAPScope) String() string {
 	if l == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return l.name
@@ -183,7 +183,7 @@ func (l *LDAPScope) Set(value string) error {
 // Type returns the name of the type.
 func (l *LDAPScope) Type() string {
 	if l == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return "LDAPScope"
@@ -206,7 +206,7 @@ type Protocol struct {
 
 func (p *Protocol) String() string {
 	if p == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return p.name
@@ -224,7 +224,7 @@ func (p *Protocol) Set(value string) {
 // Type returns the name of the type.
 func (p *Protocol) Type() string {
 	if p == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return "Protocol"
@@ -259,7 +259,7 @@ type Backend struct {
 
 func (b *Backend) String() string {
 	if b == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return b.backend.String()
@@ -284,7 +284,7 @@ func (b *Backend) Set(value string) error {
 	if matches := regex.FindStringSubmatch(value); matches != nil {
 		name := strings.TrimSpace(matches[2])
 
-		if name == "default" || name == definitions.DefaultBackendName {
+		if name == RemoteBackendDefaultName || name == definitions.DefaultBackendName {
 			return fmt.Errorf(errors.ErrWrongPassDB.Error(), name)
 		}
 
@@ -329,7 +329,7 @@ func isQualifiedPluginBackendName(name string) bool {
 // Type returns the name of the type.
 func (b *Backend) Type() string {
 	if b == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return "Backend"
@@ -360,7 +360,7 @@ type RuntimeModule struct {
 
 func (f *RuntimeModule) String() string {
 	if f == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return f.name
@@ -382,7 +382,7 @@ func (f *RuntimeModule) Set(value string) error {
 // Type returns the name of the type.
 func (f *RuntimeModule) Type() string {
 	if f == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return "RuntimeModule"
@@ -404,7 +404,7 @@ type Control struct {
 
 func (c *Control) String() string {
 	if c == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return c.name
@@ -422,7 +422,7 @@ func (c *Control) Set(value string) error {
 // Type returns the name of the type.
 func (c *Control) Type() string {
 	if c == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return "Control"
@@ -444,7 +444,7 @@ type Service struct {
 
 func (s *Service) String() string {
 	if s == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return s.name
@@ -462,7 +462,7 @@ func (s *Service) Set(value string) error {
 // Type returns the name of the type.
 func (s *Service) Type() string {
 	if s == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return "Service"
@@ -485,7 +485,7 @@ type DbgModule struct {
 
 func (d *DbgModule) String() string {
 	if d == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return d.name
@@ -514,7 +514,7 @@ func (d *DbgModule) Set(value string) error {
 // Type returns the type of the DbgModule, which is always "DebugModule".
 func (d *DbgModule) Type() string {
 	if d == nil {
-		return "<nil>"
+		return configStringNil
 	}
 
 	return "DebugModule"

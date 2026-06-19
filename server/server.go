@@ -138,7 +138,11 @@ func startLDAPWorkers(store *contextStore, cfg config.File, logger *slog.Logger,
 	forEachConfiguredBackendName(cfg, definitions.BackendLDAP, func(poolName string) {
 		// The default pool is already present in the channel registry.
 		if poolName != definitions.DefaultBackendName {
-			channel.GetLdapChannel().AddChannel(poolName)
+			if err := channel.GetLdapChannel().AddChannel(poolName); err != nil {
+				level.Error(logger).Log(definitions.LogKeyMsg, "Failed to add LDAP backend channel", "pool", poolName, definitions.LogKeyError, err)
+
+				return
+			}
 		}
 
 		backend.LDAPMainWorker(store.ldapLookup.ctx, cfg, logger, channel, poolName, backend.LDAPWorkerDeps{})
@@ -154,7 +158,11 @@ func startLuaWorkers(store *contextStore, cfg config.File, logger *slog.Logger, 
 	forEachConfiguredBackendName(cfg, definitions.BackendLua, func(backendName string) {
 		// The default backend is already present in the channel registry.
 		if backendName != definitions.DefaultBackendName {
-			channel.GetLuaChannel().AddChannel(backendName)
+			if err := channel.GetLuaChannel().AddChannel(backendName); err != nil {
+				level.Error(logger).Log(definitions.LogKeyMsg, "Failed to add Lua backend channel", "backend", backendName, definitions.LogKeyError, err)
+
+				return
+			}
 		}
 
 		go func() {
@@ -193,7 +201,7 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 				continue
 			}
 
-			setupLDAPWorker(store, ctx, cfg, logger, channel)
+			setupLDAPWorker(ctx, store, cfg, logger, channel)
 
 			ldapStarted = true
 		case definitions.BackendLua:
@@ -201,7 +209,7 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 				continue
 			}
 
-			setupLuaWorker(store, ctx, cfg, logger, redisClient, channel)
+			setupLuaWorker(ctx, store, cfg, logger, redisClient, channel)
 
 			luaStarted = true
 		case definitions.BackendCache, definitions.BackendTest:
@@ -212,7 +220,7 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 }
 
 // setupLDAPWorker initializes the LDAP worker contexts and starts LDAP worker routines for processing requests and authentication.
-func setupLDAPWorker(store *contextStore, ctx context.Context, cfg config.File, logger *slog.Logger, channel backend.Channel) {
+func setupLDAPWorker(ctx context.Context, store *contextStore, cfg config.File, logger *slog.Logger, channel backend.Channel) {
 	store.ldapLookup = newContextTuple(ctx)
 	store.ldapAuth = newContextTuple(ctx)
 
@@ -220,7 +228,7 @@ func setupLDAPWorker(store *contextStore, ctx context.Context, cfg config.File, 
 }
 
 // setupLuaWorker initializes the Lua worker context, channels, and starts the Lua worker goroutine.
-func setupLuaWorker(store *contextStore, ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, channel backend.Channel) {
+func setupLuaWorker(ctx context.Context, store *contextStore, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, channel backend.Channel) {
 	store.lua = newContextTuple(ctx)
 
 	startLuaWorkers(store, cfg, logger, redisClient, channel)
@@ -409,6 +417,7 @@ func validateHTTPServerStartStore(store *contextStore) (config.File, config.Envi
 	}
 
 	cfg := snap.File
+
 	env := store.env
 	if err := validateDeveloperModeBindAddress(env.GetDevMode(), cfg.GetServer().GetListenAddress()); err != nil {
 		return nil, nil, nil, err
@@ -505,7 +514,7 @@ func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
 		runtime.cfg,
 	)
 
-	if !runtime.cfg.GetIdP().OIDC.Enabled && !runtime.cfg.GetIdP().SAML2.Enabled {
+	if !runtime.cfg.GetIDP().OIDC.Enabled && !runtime.cfg.GetIDP().SAML2.Enabled {
 		logMissingInternalIDP(runtime)
 
 		return nil
@@ -537,7 +546,7 @@ func logMissingInternalIDP(runtime httpServerRuntime) {
 	if runtime.env.GetDevMode() {
 		_ = level.Warn(runtime.logger).Log(
 			definitions.LogKeyMsg,
-			"Frontend is enabled, but internal IdP (OIDC/SAML2) is not enabled. Login routes will not be registered",
+			"Frontend is enabled, but internal IDP (OIDC/SAML2) is not enabled. Login routes will not be registered",
 		)
 	}
 }
@@ -548,8 +557,8 @@ func registerIDPRoutes(
 	deps *handlerdeps.Deps,
 	storage *idp.RedisTokenStorage,
 ) {
-	nauthilusIDP := idp.NewNauthilusIdP(deps)
-	if runtime.cfg.GetIdP().OIDC.Enabled {
+	nauthilusIDP := idp.NewNauthilusIDP(deps)
+	if runtime.cfg.GetIDP().OIDC.Enabled {
 		nauthilusIDP.GetKeyManager().StartRotationJob(runtime.store.server.ctx)
 	}
 
@@ -557,12 +566,12 @@ func registerIDPRoutes(
 	frontendHandler.Register(e)
 	handlerapiv1.NewMFAAPI(deps).Register(e)
 
-	if runtime.cfg.GetIdP().OIDC.Enabled {
+	if runtime.cfg.GetIDP().OIDC.Enabled {
 		handlerapiv1.NewOIDCSessionsAPI(deps, storage).Register(e)
 		handleridp.NewOIDCHandler(deps, nauthilusIDP, frontendHandler).Register(e)
 	}
 
-	if runtime.cfg.GetIdP().SAML2.Enabled {
+	if runtime.cfg.GetIDP().SAML2.Enabled {
 		handleridp.NewSAMLHandler(deps, nauthilusIDP).Register(e)
 	}
 }
@@ -584,6 +593,7 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 			LangManager:  runtime.store.langManager,
 			TokenFlusher: tokenStorage,
 		}
+
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 		if err := handlerbackchannel.Setup(e, deps); err != nil {
 			_ = level.Error(runtime.logger).Log(definitions.LogKeyMsg, "Backchannel route setup failed", definitions.LogKeyError, err)

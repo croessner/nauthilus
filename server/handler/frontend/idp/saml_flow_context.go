@@ -52,7 +52,7 @@ func (c *samlFlowContext) OriginalURL() string {
 		return ""
 	}
 
-	return c.mgr.GetString(definitions.SessionKeyIdPOriginalURL, "")
+	return c.mgr.GetString(definitions.SessionKeyIDPOriginalURL, "")
 }
 
 // EntityID returns the SAML entity ID stored in the session.
@@ -61,7 +61,7 @@ func (c *samlFlowContext) EntityID() string {
 		return ""
 	}
 
-	return c.mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+	return c.mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
 }
 
 // Save persists the cookie session state.

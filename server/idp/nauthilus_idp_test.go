@@ -81,8 +81,8 @@ func (m *mockTokenGenerator) GenerateToken(prefix string) string {
 	return prefix + m.token
 }
 
-func (m *mockIdpConfig) GetIdP() *config.IdPSection {
-	return &config.IdPSection{
+func (m *mockIdpConfig) GetIDP() *config.IDPSection {
+	return &config.IDPSection{
 		OIDC:  m.oidc,
 		SAML2: m.saml,
 	}
@@ -170,7 +170,7 @@ func assertIDPSpanRecorded(t *testing.T, collector *idpTraceSpanCollector, name 
 	return span
 }
 
-func newTestIDPWithMock(t *testing.T, oidcCfg config.OIDCConfig) (*NauthilusIdP, redismock.ClientMock, rediscli.Client) {
+func newTestIDPWithMock(t *testing.T, oidcCfg config.OIDCConfig) (*NauthilusIDP, redismock.ClientMock, rediscli.Client) {
 	t.Helper()
 
 	cfg := &mockIdpConfig{
@@ -186,7 +186,7 @@ func newTestIDPWithMock(t *testing.T, oidcCfg config.OIDCConfig) (*NauthilusIdP,
 	db, mock := redismock.NewClientMock()
 	redisClient := rediscli.NewTestClient(db)
 
-	return NewNauthilusIdP(&deps.Deps{Cfg: cfg, Redis: redisClient}), mock, redisClient
+	return NewNauthilusIDP(&deps.Deps{Cfg: cfg, Redis: redisClient}), mock, redisClient
 }
 
 func signedTestAccessToken(t *testing.T, kid string, pemData string) string {
@@ -223,7 +223,7 @@ func redisKeyMetadataJSON(t *testing.T, kid string, pemData string) string {
 	return string(raw)
 }
 
-func TestNauthilusIdP_Tokens(t *testing.T) {
+func TestNauthilusIDP_Tokens(t *testing.T) {
 	signingKey := secret.New(generateTestKey())
 	oidcCfg := config.OIDCConfig{
 		Issuer: testIssuer,
@@ -269,7 +269,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 	db, mock := redismock.NewClientMock()
 	redisClient := rediscli.NewTestClient(db)
 	d := &deps.Deps{Cfg: cfg, Redis: redisClient}
-	idp := NewNauthilusIdP(d)
+	idp := NewNauthilusIDP(d)
 	idp.tokenGen = &mockTokenGenerator{token: "fixed-token"}
 	ctx := t.Context()
 
@@ -439,6 +439,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		sessionData, _ := json.Marshal(session)
 		originalClient := cfg.oidc.Clients[0]
 		disabled := false
+
 		cfg.oidc.Clients[0].RevokeRefreshToken = &disabled
 		defer func() {
 			cfg.oidc.Clients[0] = originalClient
@@ -476,7 +477,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 
 	t.Run("GetClaimsWithScopes", func(t *testing.T) {
 		user := &backend.User{
-			Id:          testUserID,
+			ID:          testUserID,
 			Name:        "jdoe",
 			DisplayName: "John Doe",
 			Attributes: bktype.AttributeMapping{
@@ -486,7 +487,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		}
 		client := &config.OIDCClient{
 			ClientID: testClientID,
-			IdTokenClaims: config.IdTokenClaims{
+			IDTokenClaims: config.IDTokenClaims{
 				Mappings: []config.OIDCClaimMapping{
 					{Claim: definitions.ClaimEmail, Attribute: "mail", Type: definitions.ClaimTypeString},
 					{Claim: definitions.ClaimGroups, Attribute: "memberOf", Type: definitions.ClaimTypeStringArray},
@@ -535,7 +536,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 			ClientID:          testClientID,
 			Scopes:            []string{"openid", "roles"},
 			ImpliedScopes:     []string{"roles"},
-			IdTokenClaims:     client.IdTokenClaims,
+			IDTokenClaims:     client.IDTokenClaims,
 			AccessTokenClaims: client.AccessTokenClaims,
 		}
 		filteredScopes := idp.FilterScopes(clientWithImpliedRoles, []string{"openid"})
@@ -745,7 +746,7 @@ func TestValidateTokenEmitsDiagnosticChildSpans(t *testing.T) {
 	assertIDPSpanRecorded(t, collector, "idp.validate_token.jwt.denylist")
 }
 
-func TestNauthilusIdP_FindSAMLServiceProvider_ReturnsSliceElement(t *testing.T) {
+func TestNauthilusIDP_FindSAMLServiceProvider_ReturnsSliceElement(t *testing.T) {
 	cfg := &mockIdpConfig{
 		FileSettings: &config.FileSettings{
 			Server: &config.ServerSection{
@@ -766,10 +767,11 @@ func TestNauthilusIdP_FindSAMLServiceProvider_ReturnsSliceElement(t *testing.T) 
 		},
 	}
 
-	idp := NewNauthilusIdP(&deps.Deps{Cfg: cfg})
+	idp := NewNauthilusIDP(&deps.Deps{Cfg: cfg})
 
 	sp, found := idp.FindSAMLServiceProvider("https://localhost:9095/saml/metadata")
 	assert.True(t, found)
+
 	if !assert.NotNil(t, sp) {
 		return
 	}
@@ -779,7 +781,7 @@ func TestNauthilusIdP_FindSAMLServiceProvider_ReturnsSliceElement(t *testing.T) 
 	assert.Equal(t, "updated-client", cfg.saml.ServiceProviders[0].Name)
 }
 
-func TestNauthilusIdP_ClientCredentials(t *testing.T) {
+func TestNauthilusIDP_ClientCredentials(t *testing.T) {
 	signingKey := secret.New(generateTestKey())
 	oidcCfg := config.OIDCConfig{
 		Issuer: testIssuer,
@@ -816,7 +818,7 @@ func TestNauthilusIdP_ClientCredentials(t *testing.T) {
 	db, _ := redismock.NewClientMock()
 	redisClient := rediscli.NewTestClient(db)
 	d := &deps.Deps{Cfg: cfg, Redis: redisClient}
-	idpInst := NewNauthilusIdP(d)
+	idpInst := NewNauthilusIDP(d)
 	ctx := t.Context()
 
 	t.Run("IssueClientCredentialsToken_Success", func(t *testing.T) {

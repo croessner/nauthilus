@@ -65,7 +65,7 @@ func consentScopeDescription(
 	}
 
 	// openid is technically mandatory and not user-actionable; do not show it.
-	if scope == definitions.ScopeOpenId {
+	if scope == definitions.ScopeOpenID {
 		return "", false
 	}
 
@@ -118,6 +118,7 @@ func localizedScopeDescriptionFromOther(other map[string]any, lang string) strin
 	}
 
 	normalized := strings.ToLower(strings.ReplaceAll(lang, "-", "_"))
+
 	base := normalized
 	if idx := strings.IndexByte(base, '_'); idx > 0 {
 		base = base[:idx]

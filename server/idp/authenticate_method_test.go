@@ -35,7 +35,7 @@ func (v *capturePasswordVerifier) Verify(_ *gin.Context, auth *core.AuthState, _
 	return result, nil
 }
 
-func TestNauthilusIdPAuthenticateSetsPasswordMethodForIdPLogin(t *testing.T) {
+func TestNauthilusIDPAuthenticateSetsPasswordMethodForIDPLogin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	verifier := &capturePasswordVerifier{}
@@ -59,14 +59,14 @@ func TestNauthilusIdPAuthenticateSetsPasswordMethodForIdPLogin(t *testing.T) {
 		AccountCache: accountcache.NewManager(cfg),
 	}
 
-	idp := NewNauthilusIdP(d)
+	idp := NewNauthilusIDP(d)
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("POST", "/login", nil)
 	ctx.Request.RemoteAddr = "192.168.1.100:12345"
 
-	setupMockContext(ctx, "test-idp-method-guid", definitions.ServIdP)
+	setupMockContext(ctx, "test-idp-method-guid", definitions.ServIDP)
 
 	_, _ = idp.Authenticate(ctx, "user1", "pass1", "client1", "")
 

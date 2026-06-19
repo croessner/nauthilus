@@ -178,7 +178,7 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 
 	if len(credentials) > 0 {
 		user = &backend.User{
-			Id:          uniqueUserID,
+			ID:          uniqueUserID,
 			Name:        userName,
 			DisplayName: displayName,
 			Credentials: credentials,
@@ -195,12 +195,14 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 	return user, nil
 }
 
-func (a *AuthState) putUser(user *backend.User) {
-	backend.SaveWebAuthnToRedis(a.Ctx(), a.Logger(), a.Cfg(), a.Redis(), user, a.Cfg().GetServer().Redis.PosCacheTTL)
+// putUser stores the initial WebAuthn user cache entry for registration.
+func (a *AuthState) putUser(user *backend.User) error {
+	return backend.SaveWebAuthnToRedis(a.Ctx(), a.Logger(), a.Cfg(), a.Redis(), user, a.Cfg().GetServer().Redis.PosCacheTTL)
 }
 
-func (a *AuthState) updateUser(user *backend.User) {
-	backend.SaveWebAuthnToRedis(a.Ctx(), a.Logger(), a.Cfg(), a.Redis(), user, a.Cfg().GetServer().Redis.PosCacheTTL)
+// updateUser refreshes the WebAuthn user cache after credential changes.
+func (a *AuthState) updateUser(user *backend.User) error {
+	return backend.SaveWebAuthnToRedis(a.Ctx(), a.Logger(), a.Cfg(), a.Redis(), user, a.Cfg().GetServer().Redis.PosCacheTTL)
 }
 
 func isWebAuthnRegistrationAuthenticated(mgr cookie.Manager) bool {
@@ -267,7 +269,7 @@ func webAuthnRegistrationFlowIDFromSession(mgr cookie.Manager) string {
 		return ""
 	}
 
-	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if flowID != "" {
 		return flowID
 	}
@@ -280,7 +282,7 @@ func webAuthnRegistrationFlowIDFromSession(mgr cookie.Manager) string {
 }
 
 func restoreWebAuthnRegistrationIdentityFromState(mgr cookie.Manager, state *flow.State) {
-	if mgr == nil || state == nil || state.FlowType != flow.FlowTypeRequireMFA || state.Metadata == nil {
+	if mgr == nil || state == nil || state.Type != flow.FlowTypeRequireMFA || state.Metadata == nil {
 		return
 	}
 
@@ -381,7 +383,16 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			// If it does not exist, create a new one
 			user = backend.NewUser(userName, displayName, uniqueUserID)
 
-			auth.(*AuthState).putUser(user)
+			if err = auth.(*AuthState).putUser(user); err != nil {
+				level.Error(deps.Logger).Log(
+					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+					definitions.LogKeyMsg, "Failed to persist initial WebAuthn user cache",
+					definitions.LogKeyError, err,
+				)
+				ctx.JSON(http.StatusInternalServerError, err.Error())
+
+				return
+			}
 		}
 
 		authSelect := buildAuthenticatorSelection(deps.Cfg)
@@ -563,12 +574,14 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		var response *protocol.ParsedCredentialCreationData
+
 		if err = jsonIter.Unmarshal(requestBody, &finishRequest); err == nil && len(finishRequest.Credential) > 0 {
 			deviceName = strings.TrimSpace(finishRequest.Name)
 			response, err = protocol.ParseCredentialCreationResponseBody(bytes.NewReader(finishRequest.Credential))
 		} else {
 			response, err = protocol.ParseCredentialCreationResponseBody(bytes.NewReader(requestBody))
 		}
+
 		if err != nil {
 			ctx.JSON(http.StatusBadRequest, fmt.Sprintf("%+v", util.ProtoErrToFields(err)))
 
@@ -600,7 +613,16 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		if shouldPersistWebAuthnCache(auth.(*AuthState)) {
-			auth.(*AuthState).updateUser(user)
+			if err = auth.(*AuthState).updateUser(user); err != nil {
+				level.Error(deps.Logger).Log(
+					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+					definitions.LogKeyMsg, "Failed to update WebAuthn user cache",
+					definitions.LogKeyError, err,
+				)
+				ctx.JSON(http.StatusInternalServerError, err.Error())
+
+				return
+			}
 		}
 
 		auth.PurgeCacheFor(userName)
@@ -609,7 +631,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		// In a forced-registration flow, remove WebAuthn from the pending list so
 		// that ContinueRequiredMFARegistration can advance to the next method or
-		// resume the IdP flow.
+		// resume the IDP flow.
 		if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
 			flow.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodWebAuthn)
 		}
@@ -652,6 +674,7 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 
 		if userName != "" {
 			auth := NewAuthStateFromContextWithDeps(ctx, deps)
+
 			var err error
 
 			user, err = auth.(*AuthState).getUser(userName, uniqueUserID, displayName)
@@ -751,6 +774,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
 		authState := auth.(*AuthState)
+
 		var user *backend.User
 
 		if userName != "" {
@@ -815,7 +839,9 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 		// Update sign count and last used if necessary
 		existingCredentials := user.Credentials
+
 		var oldSignCount *uint32
+
 		for i := range existingCredentials {
 			if bytes.Equal(existingCredentials[i].ID, credential.ID) {
 				oldValue := existingCredentials[i].Authenticator.SignCount
@@ -826,6 +852,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		signCountZero := newSignCount == 0
+
 		signCountMonotonic := true
 		if oldSignCount != nil {
 			signCountMonotonic = isWebAuthnSignCountMonotonic(*oldSignCount, newSignCount)
@@ -851,13 +878,13 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		debugKeyvals := []any{
 			definitions.LogKeyGUID, authState.Runtime.GUID,
 			definitions.LogKeyMsg, "WebAuthn login assertion details",
-			"sign_count", newSignCount,
-			"flags_up", credential.Flags.UserPresent,
-			"flags_uv", credential.Flags.UserVerified,
-			"credential_id_hash", credentialIDHash,
-			"is_resident_key", isResidentKey,
-			"aaguid", aaguid,
-			"sign_count_zero", signCountZero,
+			webAuthnDebugSignCount, newSignCount,
+			webAuthnDebugFlagsUP, credential.Flags.UserPresent,
+			webAuthnDebugFlagsUV, credential.Flags.UserVerified,
+			webAuthnDebugCredentialIDHash, credentialIDHash,
+			webAuthnDebugIsResidentKey, isResidentKey,
+			webAuthnDebugAAGUID, aaguid,
+			webAuthnDebugSignCountZero, signCountZero,
 		}
 
 		if oldSignCount != nil {
@@ -880,13 +907,13 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			warnKeyvals := []any{
 				definitions.LogKeyGUID, authState.Runtime.GUID,
 				definitions.LogKeyMsg, "WebAuthn sign count anomaly",
-				"sign_count", newSignCount,
-				"flags_up", credential.Flags.UserPresent,
-				"flags_uv", credential.Flags.UserVerified,
-				"credential_id_hash", credentialIDHash,
-				"is_resident_key", isResidentKey,
-				"aaguid", aaguid,
-				"sign_count_zero", signCountZero,
+				webAuthnDebugSignCount, newSignCount,
+				webAuthnDebugFlagsUP, credential.Flags.UserPresent,
+				webAuthnDebugFlagsUV, credential.Flags.UserVerified,
+				webAuthnDebugCredentialIDHash, credentialIDHash,
+				webAuthnDebugIsResidentKey, isResidentKey,
+				webAuthnDebugAAGUID, aaguid,
+				webAuthnDebugSignCountZero, signCountZero,
 			}
 
 			if oldSignCount != nil {
@@ -946,7 +973,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		if mgr != nil {
 			// Check if the original password authentication was successful (delayed response case).
 			// If the initial credentials were wrong, we must reject the login even if MFA succeeded.
-			// This implements "Fall B Punkt 1" from the IdP login flow specification:
+			// This implements "Fall B Punkt 1" from the IDP login flow specification:
 			// User is redirected back to /login/:languageTag with error message, session is reset.
 			submittedUsername := mgr.GetString(definitions.SessionKeyUsername, user.Name)
 			if !isMFAAuthResultValid(mgr, submittedUsername) {
@@ -1016,7 +1043,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 // buildAuthenticatorSelection constructs the protocol.AuthenticatorSelection from the
 // WebAuthn configuration. It maps string-based config values to their protocol equivalents.
 func buildAuthenticatorSelection(cfg config.File) protocol.AuthenticatorSelection {
-	webAuthnCfg := cfg.GetIdP().WebAuthn
+	webAuthnCfg := cfg.GetIDP().WebAuthn
 
 	authSelect := protocol.AuthenticatorSelection{
 		UserVerification: mapUserVerification(webAuthnCfg.GetUserVerification()),
@@ -1046,7 +1073,7 @@ func mapResidentKey(value string) protocol.ResidentKeyRequirement {
 	switch value {
 	case "preferred":
 		return protocol.ResidentKeyRequirementPreferred
-	case "required":
+	case authInputReasonRequired:
 		return protocol.ResidentKeyRequirementRequired
 	default:
 		return protocol.ResidentKeyRequirementDiscouraged
@@ -1058,7 +1085,7 @@ func mapUserVerification(value string) protocol.UserVerificationRequirement {
 	switch value {
 	case "discouraged":
 		return protocol.VerificationDiscouraged
-	case "required":
+	case authInputReasonRequired:
 		return protocol.VerificationRequired
 	default:
 		return protocol.VerificationPreferred
@@ -1071,6 +1098,7 @@ func updateWebAuthnCredentialAfterLogin(credentials []mfa.PersistentCredential, 
 	}
 
 	var oldCredential *mfa.PersistentCredential
+
 	for i := range credentials {
 		if bytes.Equal(credentials[i].ID, credential.ID) {
 			oldCredential = &credentials[i]
@@ -1161,14 +1189,14 @@ func hashCredentialID(credentialID []byte) string {
 
 // isMFAAuthResultValid checks if the authentication result stored in the cookie indicates
 // successful first-factor authentication. This is used to implement "Fall B Punkt 1" from
-// the IdP login flow specification: if the initial credentials were wrong (delayed response),
+// the IDP login flow specification: if the initial credentials were wrong (delayed response),
 // the user must be rejected after successful MFA verification.
 //
 // Default-deny: returns false if mgr is nil, auth_result is missing/corrupt, HMAC
 // verification fails, or auth_result is anything other than AuthResultOK.
 func isMFAAuthResultValid(mgr cookie.Manager, username string) bool {
 	if mgr != nil {
-		switch flow.AuthOutcome(mgr.GetString(definitions.SessionKeyIdPAuthOutcome, "")) {
+		switch flow.AuthOutcome(mgr.GetString(definitions.SessionKeyIDPAuthOutcome, "")) {
 		case flow.AuthOutcomeFailLatched:
 			return false
 		case flow.AuthOutcomeOK:

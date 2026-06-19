@@ -85,7 +85,7 @@ func (s *BruteForceSyncService) listenLoop(ctx context.Context) {
 	level.Info(s.logger).Log(definitions.LogKeyMsg, "Starting brute-force sync listener", "channel", definitions.RedisBFBlocksChannel)
 
 	pubsub := s.redisClient.GetReadHandle().Subscribe(ctx, definitions.RedisBFBlocksChannel)
-	defer pubsub.Close()
+	defer func() { _ = pubsub.Close() }()
 
 	ch := pubsub.Channel()
 
@@ -99,6 +99,7 @@ func (s *BruteForceSyncService) listenLoop(ctx context.Context) {
 				level.Warn(s.logger).Log(definitions.LogKeyMsg, "Brute-force sync channel closed")
 				return
 			}
+
 			s.handleMessage(msg.Payload)
 		}
 	}
@@ -107,6 +108,7 @@ func (s *BruteForceSyncService) listenLoop(ctx context.Context) {
 // handleMessage unmarshals and applies a block event to the local cache.
 func (s *BruteForceSyncService) handleMessage(payload string) {
 	tr := monittrace.New("nauthilus/sync")
+
 	_, sp := tr.Start(s.ctx, "sync.handle_message", attribute.Int("payload_len", len(payload)))
 	defer sp.End()
 
@@ -132,6 +134,7 @@ func (s *BruteForceSyncService) Stop(stopCtx context.Context) error {
 		s.mu.Unlock()
 		return nil
 	}
+
 	cancel := s.cancel
 	s.running = false
 	s.mu.Unlock()
@@ -141,6 +144,7 @@ func (s *BruteForceSyncService) Stop(stopCtx context.Context) error {
 	}
 
 	done := make(chan struct{})
+
 	go func() {
 		s.wg.Wait()
 		close(done)

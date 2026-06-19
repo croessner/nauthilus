@@ -81,7 +81,7 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 	resolver := util.NewDNSResolver(cfg)
 
 	switch kind {
-	case "A", "AAAA":
+	case "A", luaDNSRecordAAAA:
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
@@ -102,6 +102,7 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 		if err != nil {
 			tsp.RecordError(err)
 			tsp.End()
+
 			return nil, err
 		}
 
@@ -271,7 +272,7 @@ func LoaderModDNS(ctx context.Context, cfg config.File, logger *slog.Logger) lua
 		})
 
 		if ctx != nil {
-			BindRequestRuntimeContext(L, mod, ctx)
+			BindRequestRuntimeContext(ctx, L, mod)
 		}
 
 		return stack.PushResult(mod)

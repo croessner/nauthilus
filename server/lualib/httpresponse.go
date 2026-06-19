@@ -31,7 +31,6 @@ type HTTPResponseManager struct{}
 
 // NewHTTPResponseManager creates a new HTTPResponseManager.
 func NewHTTPResponseManager() *HTTPResponseManager {
-
 	return &HTTPResponseManager{}
 }
 

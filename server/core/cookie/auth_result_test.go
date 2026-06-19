@@ -111,6 +111,7 @@ func TestSetAndVerifyAuthResult(t *testing.T) {
 		// Copy raw data from mgr1 to mgr2
 		authResult, _ := mgr1.Get(definitions.SessionKeyAuthResult)
 		hmacPayload, _ := mgr1.Get(definitions.SessionKeyAuthResultHMAC)
+
 		mgr2.Set(definitions.SessionKeyAuthResult, authResult)
 		mgr2.Set(definitions.SessionKeyAuthResultHMAC, hmacPayload)
 

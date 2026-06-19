@@ -66,14 +66,14 @@ func (a *MFAAPI) Register(router gin.IRouter) {
 func (a *MFAAPI) SetupTOTP(ctx *gin.Context) {
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 
 		return
 	}
 
 	username := mgr.GetString(definitions.SessionKeyAccount, "")
 	if username == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 
 		return
 	}
@@ -82,7 +82,7 @@ func (a *MFAAPI) SetupTOTP(ctx *gin.Context) {
 
 	secret, qrCodeURL, err := a.mfa.GenerateTOTPSecret(ctx, username)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: err.Error()})
 
 		return
 	}
@@ -94,7 +94,7 @@ func (a *MFAAPI) SetupTOTP(ctx *gin.Context) {
 	}
 
 	if err := mgr.Save(ctx); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save session"})
+		ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: "Failed to save session"})
 
 		return
 	}
@@ -111,7 +111,7 @@ func (a *MFAAPI) SetupTOTP(ctx *gin.Context) {
 func (a *MFAAPI) RegisterTOTP(ctx *gin.Context) {
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 
 		return
 	}
@@ -125,19 +125,19 @@ func (a *MFAAPI) RegisterTOTP(ctx *gin.Context) {
 	}
 
 	if err := ctx.ShouldBindJSON(&input); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		ctx.JSON(http.StatusBadRequest, gin.H{apiResponseKeyError: "Invalid input"})
 
 		return
 	}
 
 	if username == "" || (sourceBackend != uint8(definitions.BackendRemote) && secret == "") {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 
 		return
 	}
 
 	if err := a.mfa.VerifyAndSaveTOTP(ctx, username, secret, input.Code, sourceBackend); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{apiResponseKeyError: err.Error()})
 
 		return
 	}
@@ -148,21 +148,21 @@ func (a *MFAAPI) RegisterTOTP(ctx *gin.Context) {
 
 	mgr.Debug(ctx, a.deps.Logger, "TOTP registered - session updated")
 
-	ctx.JSON(http.StatusOK, gin.H{"status": "success", "message": "TOTP registered successfully"})
+	ctx.JSON(http.StatusOK, gin.H{apiResponseKeyStatus: apiResponseStatusSuccess, apiResponseKeyMessage: "TOTP registered successfully"})
 }
 
 // DeleteTOTP removes TOTP.
 func (a *MFAAPI) DeleteTOTP(ctx *gin.Context) {
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 
 		return
 	}
 
 	username := mgr.GetString(definitions.SessionKeyAccount, "")
 	if username == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 
 		return
 	}
@@ -170,7 +170,7 @@ func (a *MFAAPI) DeleteTOTP(ctx *gin.Context) {
 	sourceBackend := mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 
 	if err := a.mfa.DeleteTOTP(ctx, username, sourceBackend); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: err.Error()})
 
 		return
 	}
@@ -180,21 +180,21 @@ func (a *MFAAPI) DeleteTOTP(ctx *gin.Context) {
 
 	mgr.Debug(ctx, a.deps.Logger, "TOTP deleted - session updated")
 
-	ctx.JSON(http.StatusOK, gin.H{"status": "success", "message": "TOTP deleted successfully"})
+	ctx.JSON(http.StatusOK, gin.H{apiResponseKeyStatus: apiResponseStatusSuccess, apiResponseKeyMessage: "TOTP deleted successfully"})
 }
 
 // GenerateRecoveryCodes generates new recovery codes.
 func (a *MFAAPI) GenerateRecoveryCodes(ctx *gin.Context) {
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 
 		return
 	}
 
 	username := mgr.GetString(definitions.SessionKeyAccount, "")
 	if username == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 
 		return
 	}
@@ -203,7 +203,7 @@ func (a *MFAAPI) GenerateRecoveryCodes(ctx *gin.Context) {
 
 	codes, err := a.mfa.GenerateRecoveryCodes(ctx, username, sourceBackend)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: err.Error()})
 
 		return
 	}
@@ -217,7 +217,7 @@ func (a *MFAAPI) mfaManageMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		mgr := cookie.GetManager(ctx)
 		if mgr == nil {
-			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 			ctx.Abort()
 
 			return
@@ -226,7 +226,7 @@ func (a *MFAAPI) mfaManageMiddleware() gin.HandlerFunc {
 		account := mgr.GetString(definitions.SessionKeyAccount, "")
 
 		if account == "" {
-			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 			ctx.Abort()
 
 			return
@@ -240,21 +240,21 @@ func (a *MFAAPI) mfaManageMiddleware() gin.HandlerFunc {
 func (a *MFAAPI) DeleteWebAuthn(ctx *gin.Context) {
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 
 		return
 	}
 
 	username := mgr.GetString(definitions.SessionKeyAccount, "")
 	if username == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{apiResponseKeyError: apiResponseUnauthorized})
 
 		return
 	}
 
 	credentialID := ctx.Param("credentialID")
 	if credentialID == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Missing credential ID"})
+		ctx.JSON(http.StatusBadRequest, gin.H{apiResponseKeyError: "Missing credential ID"})
 
 		return
 	}
@@ -262,7 +262,7 @@ func (a *MFAAPI) DeleteWebAuthn(ctx *gin.Context) {
 	sourceBackend := mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 
 	if err := a.mfa.DeleteWebAuthnCredential(ctx, username, credentialID, sourceBackend); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: err.Error()})
 
 		return
 	}
@@ -270,7 +270,7 @@ func (a *MFAAPI) DeleteWebAuthn(ctx *gin.Context) {
 	if uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, ""); uniqueUserID != "" {
 		key := a.deps.Cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserID
 		if err := a.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err(); err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete WebAuthn cache"})
+			ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: "Failed to delete WebAuthn cache"})
 
 			return
 		}
@@ -281,5 +281,5 @@ func (a *MFAAPI) DeleteWebAuthn(ctx *gin.Context) {
 		state.PurgeCacheFor(username)
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"status": "success", "message": "WebAuthn credential deleted successfully"})
+	ctx.JSON(http.StatusOK, gin.H{apiResponseKeyStatus: apiResponseStatusSuccess, apiResponseKeyMessage: "WebAuthn credential deleted successfully"})
 }

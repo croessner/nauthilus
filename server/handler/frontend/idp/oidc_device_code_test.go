@@ -69,7 +69,7 @@ func newTestDeviceCodeOIDCHandler(t *testing.T) (*OIDCHandler, config.OIDCClient
 		ClientID:     "test-client",
 		ClientSecret: secret.New("test-secret"),
 		RedirectURIs: []string{"https://app.example.com/callback"},
-		Scopes:       []string{definitions.ScopeOpenId, "profile", "email"},
+		Scopes:       []string{definitions.ScopeOpenID, "profile", "email"},
 		GrantTypes:   []string{definitions.OIDCGrantTypeDeviceCode},
 	}
 
@@ -89,7 +89,7 @@ func newTestDeviceCodeOIDCHandler(t *testing.T) (*OIDCHandler, config.OIDCClient
 	}
 	core.SetDefaultLogger(d.Logger)
 
-	idpInstance := devicecode.NewNauthilusIdP(d)
+	idpInstance := devicecode.NewNauthilusIDP(d)
 	handler := NewOIDCHandler(d, idpInstance, nil)
 	handler.deviceStore = &noopDeviceCodeStore{}
 
@@ -106,7 +106,7 @@ func TestIssueDeviceCodeTokens_RejectsMissingPersistedClaims(t *testing.T) {
 
 	request := &devicecode.DeviceCodeRequest{
 		ClientID: client.ClientID,
-		Scopes:   []string{definitions.ScopeOpenId, "profile", "email"},
+		Scopes:   []string{definitions.ScopeOpenID, "profile", "email"},
 		Status:   devicecode.DeviceCodeStatusAuthorized,
 	}
 
@@ -126,9 +126,9 @@ func TestIssueDeviceCodeTokens_UsesPersistedClaimsFromDeviceRequest(t *testing.T
 
 	request := &devicecode.DeviceCodeRequest{
 		ClientID: client.ClientID,
-		Scopes:   []string{definitions.ScopeOpenId, "profile", "email"},
+		Scopes:   []string{definitions.ScopeOpenID, "profile", "email"},
 		Status:   devicecode.DeviceCodeStatusAuthorized,
-		IdTokenClaims: map[string]any{
+		IDTokenClaims: map[string]any{
 			"sub":                "user-123",
 			"preferred_username": "alice",
 			"email":              "alice@example.com",
@@ -138,7 +138,7 @@ func TestIssueDeviceCodeTokens_UsesPersistedClaimsFromDeviceRequest(t *testing.T
 		},
 	}
 	request.StoreUserSnapshot(&backend.User{
-		Id:          "user-123",
+		ID:          "user-123",
 		Name:        "alice",
 		DisplayName: "Alice Example",
 		Attributes: bktype.AttributeMapping{
@@ -150,6 +150,7 @@ func TestIssueDeviceCodeTokens_UsesPersistedClaimsFromDeviceRequest(t *testing.T
 	assert.Equal(t, http.StatusOK, recorder.Code)
 
 	var tokenResp map[string]any
+
 	err := json.Unmarshal(recorder.Body.Bytes(), &tokenResp)
 	assert.NoError(t, err)
 
@@ -173,11 +174,11 @@ func TestIssueDeviceCodeTokens_RehydratesMissingClaimsFromSnapshot(t *testing.T)
 
 	request := &devicecode.DeviceCodeRequest{
 		ClientID: client.ClientID,
-		Scopes:   []string{definitions.ScopeOpenId, "profile", "email"},
+		Scopes:   []string{definitions.ScopeOpenID, "profile", "email"},
 		Status:   devicecode.DeviceCodeStatusAuthorized,
 	}
 	request.StoreUserSnapshot(&backend.User{
-		Id:          "user-123",
+		ID:          "user-123",
 		Name:        "alice",
 		DisplayName: "Alice Example",
 		Attributes: bktype.AttributeMapping{
@@ -189,6 +190,7 @@ func TestIssueDeviceCodeTokens_RehydratesMissingClaimsFromSnapshot(t *testing.T)
 	assert.Equal(t, http.StatusOK, recorder.Code)
 
 	var tokenResp map[string]any
+
 	err := json.Unmarshal(recorder.Body.Bytes(), &tokenResp)
 	assert.NoError(t, err)
 

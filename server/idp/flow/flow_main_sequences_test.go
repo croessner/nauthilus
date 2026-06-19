@@ -27,7 +27,7 @@ func TestMainFlowSequences_HappyPaths(t *testing.T) {
 	testCases := []struct {
 		name      string
 		state     *State
-		steps     []FlowStep
+		steps     []Step
 		flowID    string
 		wantFinal string
 	}{
@@ -35,12 +35,12 @@ func TestMainFlowSequences_HappyPaths(t *testing.T) {
 			name: "oidc authorization",
 			state: &State{
 				FlowID:       "flow-oidc-auth",
-				FlowType:     FlowTypeOIDCAuthorization,
+				Type:         FlowTypeOIDCAuthorization,
 				Protocol:     FlowProtocolOIDC,
 				CurrentStep:  FlowStepStart,
 				ReturnTarget: "/oidc/authorize?client_id=app",
 			},
-			steps:     []FlowStep{FlowStepLogin, FlowStepMFA, FlowStepCallback},
+			steps:     []Step{FlowStepLogin, FlowStepMFA, FlowStepCallback},
 			flowID:    "flow-oidc-auth",
 			wantFinal: "/oidc/authorize?client_id=app",
 		},
@@ -48,12 +48,12 @@ func TestMainFlowSequences_HappyPaths(t *testing.T) {
 			name: "oidc device",
 			state: &State{
 				FlowID:       "flow-oidc-device",
-				FlowType:     FlowTypeOIDCDeviceCode,
+				Type:         FlowTypeOIDCDeviceCode,
 				Protocol:     FlowProtocolOIDC,
 				CurrentStep:  FlowStepStart,
 				ReturnTarget: "/oidc/device/verify",
 			},
-			steps:     []FlowStep{FlowStepDeviceVerification, FlowStepLogin, FlowStepCallback},
+			steps:     []Step{FlowStepDeviceVerification, FlowStepLogin, FlowStepCallback},
 			flowID:    "flow-oidc-device",
 			wantFinal: "/oidc/device/verify",
 		},
@@ -61,12 +61,12 @@ func TestMainFlowSequences_HappyPaths(t *testing.T) {
 			name: "saml",
 			state: &State{
 				FlowID:       "flow-saml",
-				FlowType:     FlowTypeSAML,
+				Type:         FlowTypeSAML,
 				Protocol:     FlowProtocolSAML,
 				CurrentStep:  FlowStepStart,
 				ReturnTarget: "/saml/sso",
 			},
-			steps:     []FlowStep{FlowStepLogin, FlowStepCallback},
+			steps:     []Step{FlowStepLogin, FlowStepCallback},
 			flowID:    "flow-saml",
 			wantFinal: "/saml/sso",
 		},
@@ -74,13 +74,13 @@ func TestMainFlowSequences_HappyPaths(t *testing.T) {
 			name: "require_mfa",
 			state: &State{
 				FlowID:       "flow-require-mfa",
-				FlowType:     FlowTypeRequireMFA,
+				Type:         FlowTypeRequireMFA,
 				Protocol:     FlowProtocolInternal,
 				CurrentStep:  FlowStepStart,
 				ReturnTarget: "/mfa/register/totp",
 				PendingMFA:   true,
 			},
-			steps:     []FlowStep{FlowStepRequireMFAChallenge, FlowStepCallback},
+			steps:     []Step{FlowStepRequireMFAChallenge, FlowStepCallback},
 			flowID:    "flow-require-mfa",
 			wantFinal: "/mfa/register/totp",
 		},
@@ -132,7 +132,7 @@ func TestMainFlowSequences_CancelPaths(t *testing.T) {
 
 	state := &State{
 		FlowID:      "flow-cancel",
-		FlowType:    FlowTypeSAML,
+		Type:        FlowTypeSAML,
 		Protocol:    FlowProtocolSAML,
 		CurrentStep: FlowStepStart,
 	}
@@ -167,7 +167,7 @@ func TestMainFlowSequences_InvalidOrderAndDoubleSubmit(t *testing.T) {
 
 	state := &State{
 		FlowID:      "flow-invalid-order",
-		FlowType:    FlowTypeOIDCAuthorization,
+		Type:        FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		CurrentStep: FlowStepStart,
 	}

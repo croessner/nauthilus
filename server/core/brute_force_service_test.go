@@ -31,6 +31,7 @@ func TestWaitDelayMonotonicAndBounded(t *testing.T) {
 	maxDelay := uint(100)
 
 	prev := -1
+
 	for i := range uint(200) {
 		val := svc.WaitDelay(maxDelay, i)
 

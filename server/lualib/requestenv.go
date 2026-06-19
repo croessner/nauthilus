@@ -303,6 +303,6 @@ func RequireRuntimeContext(L *lua.LState, moduleName string) context.Context {
 }
 
 // BindRequestRuntimeContext binds the Go runtime context to a request-bound Lua module table.
-func BindRequestRuntimeContext(L *lua.LState, mod *lua.LTable, ctx context.Context) {
+func BindRequestRuntimeContext(ctx context.Context, L *lua.LState, mod *lua.LTable) {
 	bindRequestValue(L, mod, luaRuntimeContextKey, ctx)
 }

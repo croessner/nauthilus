@@ -40,9 +40,12 @@ const (
 	testASNLookupSnapshotURL = "https://routing.example.test/routeviews-prefix2as/2026/06/routeviews-rv2-20260615-1200.pfx2as.gz"
 	testASNLookupSourceURL   = "https://routing.example.test/pfx2as"
 	testASNPrefix            = "203.0.113.0/24"
+	testCityNameBerlin       = "Berlin"
 	testClientIP             = "203.0.113.7"
 	testConfigDatabasePath   = "database_path"
+	testConfigEnabledKey     = "enabled"
 	testCountryDE            = "DE"
+	testCountryNameGermany   = "Germany"
 	testCountryUS            = "US"
 	testProtocolIMAP         = "imap"
 	testRegistryARIN         = "arin"
@@ -186,7 +189,7 @@ func TestDecodeModuleConfigInfersMMDBAndASNRegistryDefaults(t *testing.T) {
 	config, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
 		testConfigDatabasePath: testDatabasePath(t, "geoip-test.mmdb"),
 		"asn_registry": map[string]any{
-			"enabled": true,
+			testConfigEnabledKey: true,
 		},
 	}))
 	if err != nil {
@@ -210,7 +213,7 @@ func TestDecodeModuleConfigEnablesASNLookupRoutingDefaults(t *testing.T) {
 	config, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
 		testConfigDatabasePath: testDatabasePath(t, "geoip.json"),
 		"asn_lookup": map[string]any{
-			"enabled": true,
+			testConfigEnabledKey: true,
 		},
 	}))
 	if err != nil {
@@ -257,8 +260,8 @@ func TestPluginSupportsMMDBConfigThroughDatabaseLoader(t *testing.T) {
 		return &fileDatabase{records: []geoRecord{
 			{
 				CountryISO:  testCountryDE,
-				CountryName: "Germany",
-				CityName:    "Berlin",
+				CountryName: testCountryNameGermany,
+				CityName:    testCityNameBerlin,
 				ASNOrg:      "Example Access GmbH",
 				Prefix:      mustPrefix(t, "203.0.113.0/24"),
 				ASN:         64500,
@@ -337,10 +340,10 @@ func TestEnvironmentSourceUsesASNRoutingSnapshotForRecordsWithoutASN(t *testing.
 	module := testModule(testDatabasePath(t, "geoip-test.mmdb"))
 	module.Config["database_format"] = databaseFormatMMDB
 	module.Config["asn_lookup"] = map[string]any{
-		"enabled":          true,
-		"refresh_interval": "1h",
-		"source_urls":      []string{testASNLookupSourceURL},
-		"timeout":          "1s",
+		testConfigEnabledKey: true,
+		"refresh_interval":   "1h",
+		"source_urls":        []string{testASNLookupSourceURL},
+		"timeout":            "1s",
 	}
 
 	plugin := NewPlugin()
@@ -357,8 +360,8 @@ func TestEnvironmentSourceUsesASNRoutingSnapshotForRecordsWithoutASN(t *testing.
 		return &fileDatabase{records: []geoRecord{
 			{
 				CountryISO:  testCountryDE,
-				CountryName: "Germany",
-				CityName:    "Berlin",
+				CountryName: testCountryNameGermany,
+				CityName:    testCityNameBerlin,
 				Prefix:      mustPrefix(t, "203.0.113.0/24"),
 			},
 		}}, nil

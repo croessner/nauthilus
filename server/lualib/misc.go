@@ -186,9 +186,9 @@ func (m *MiscManager) waitRandom(L *lua.LState) int {
 	return stack.PushResults(lua.LNumber(randomMillis), lua.LNil)
 }
 
-// getCryptoRandomInt returns a cryptographically secure random integer between min and max.
-func getCryptoRandomInt(min, max int64) (int64, error) {
-	diff := max - min
+// getCryptoRandomInt returns a cryptographically secure random integer between minValue and maxValue.
+func getCryptoRandomInt(minValue, maxValue int64) (int64, error) {
+	diff := maxValue - minValue
 	if diff <= 0 {
 		return 0, errors.ErrInvalidRange
 	}
@@ -198,7 +198,7 @@ func getCryptoRandomInt(min, max int64) (int64, error) {
 		return 0, err
 	}
 
-	return nBig.Int64() + min, nil
+	return nBig.Int64() + minValue, nil
 }
 
 // CompileLua reads the passed lua file from disk and compiles it.
@@ -212,7 +212,7 @@ func CompileLua(filePath string) (*lua.FunctionProto, error) {
 		return nil, fmt.Errorf("file %s not found", filePath)
 	}
 
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	reader := bufio.NewReader(file)
 
@@ -261,7 +261,6 @@ func (m *PasswordManager) comparePasswords(L *lua.LState) int {
 	plainPassword := stack.CheckString(2)
 
 	passwordsMatched, err := util.ComparePasswords(hashPassword, plainPassword)
-
 	if err != nil {
 		return stack.PushResults(lua.LBool(passwordsMatched), lua.LString(err.Error()))
 	}
@@ -286,14 +285,16 @@ func (m *MiscManager) scopedIP(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 
 	// Accept either (ctx, ip) or (ip) with default context
-	var ctxStr string
-	var ip string
+	var (
+		ctxStr string
+		ip     string
+	)
 
 	if stack.GetTop() >= 2 {
-		ctxStr = stack.OptString(1, "lua_generic")
+		ctxStr = stack.OptString(1, luaGenericScope)
 		ip = stack.CheckString(2)
 	} else {
-		ctxStr = "lua_generic"
+		ctxStr = luaGenericScope
 		ip = stack.CheckString(1)
 	}
 
@@ -304,10 +305,10 @@ func (m *MiscManager) scopedIP(L *lua.LState) int {
 		ctx = ipscoper.ScopeRepeatingWrongPassword
 	case "tolerations":
 		ctx = ipscoper.ScopeTolerations
-	case "lua_generic", "generic", "metrics":
-		ctx = "lua_generic"
+	case luaGenericScope, "generic", "metrics":
+		ctx = luaGenericScope
 	default:
-		ctx = "lua_generic"
+		ctx = luaGenericScope
 	}
 
 	sc := ipscoper.NewIPScoper()

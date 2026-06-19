@@ -213,6 +213,7 @@ func (m *i18nModule) getLocalized(L *lua.LState) int {
 	}
 
 	runtime := resolveI18NRuntime(m.runtime)
+
 	preference := runtime.DefaultPreference
 	if strings.TrimSpace(languageName) != "" {
 		preference.Explicit = strings.TrimSpace(languageName)
@@ -274,6 +275,7 @@ func (m *i18nModule) registerCatalog(L *lua.LState) int {
 	}
 
 	runtime := resolveI18NRuntime(m.runtime)
+
 	overrides, err := runtime.registerOverlay(localization.CatalogOverlay{
 		Entries: map[string]map[string]string{
 			languageName: entries,
@@ -312,6 +314,7 @@ func (s *I18NCatalogSession) registerOverlay(overlay localization.CatalogOverlay
 	defer s.mu.Unlock()
 
 	next := append(localization.CloneCatalogOverlays(s.overlays), localization.CloneCatalogOverlay(overlay))
+
 	overrides, err := s.base.Registry.ValidateAdditionalOverlays(next...)
 	if err != nil {
 		return nil, err
@@ -443,6 +446,7 @@ func i18nEntriesFromTable(L *lua.LState, value lua.LValue) (map[string]string, b
 
 	entries := make(map[string]string)
 	valid := true
+
 	entriesTable.ForEach(func(key lua.LValue, entry lua.LValue) {
 		if !valid {
 			return
@@ -450,6 +454,7 @@ func i18nEntriesFromTable(L *lua.LState, value lua.LValue) (map[string]string, b
 
 		if key.Type() != lua.LTString {
 			L.RaiseError("entries keys must be strings")
+
 			valid = false
 
 			return
@@ -457,6 +462,7 @@ func i18nEntriesFromTable(L *lua.LState, value lua.LValue) (map[string]string, b
 
 		if entry.Type() != lua.LTString {
 			L.RaiseError("entries values must be strings")
+
 			valid = false
 
 			return
@@ -465,6 +471,7 @@ func i18nEntriesFromTable(L *lua.LState, value lua.LValue) (map[string]string, b
 		entryKey := strings.TrimSpace(string(key.(lua.LString)))
 		if entryKey == "" {
 			L.RaiseError("entries keys must be non-empty strings")
+
 			valid = false
 
 			return
@@ -472,6 +479,7 @@ func i18nEntriesFromTable(L *lua.LState, value lua.LValue) (map[string]string, b
 
 		entries[entryKey] = string(entry.(lua.LString))
 	})
+
 	if !valid {
 		return nil, false
 	}

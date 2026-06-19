@@ -33,12 +33,14 @@ func TestConcurrentExecUnordered(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
+
 	errCh := make(chan error, calls)
 
 	for i := range calls {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
+
 			_, err := conn.Exec("UPDATE users SET enabled = ? WHERE id = ?", true, id)
 			if err != nil {
 				errCh <- err
@@ -62,6 +64,7 @@ func TestConcurrentQueueEnqueue(t *testing.T) {
 	t.Parallel()
 
 	queue := NewExpectationQueueWithOrdering(true)
+
 	const total = 32
 
 	var wg sync.WaitGroup
@@ -69,6 +72,7 @@ func TestConcurrentQueueEnqueue(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
+
 			queue.Enqueue(NewExecExpectation("SELECT ?", id))
 		}(i)
 	}

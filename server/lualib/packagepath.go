@@ -38,6 +38,7 @@ func PackagePath(L *lua.LState, cfg config.File) error {
 	}
 
 	pkg := L.GetGlobal("package")
+
 	tbl, ok := pkg.(*lua.LTable)
 	if !ok {
 		// package should exist after OpenLibs; if not, nothing to do

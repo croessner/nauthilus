@@ -36,6 +36,7 @@ var (
 	clientMu sync.Mutex
 )
 
+// GetClient provides the exported GetClient function.
 func GetClient() Client {
 	clientMu.Lock()
 	defer clientMu.Unlock()
@@ -146,6 +147,7 @@ func NewClientWithDeps(cfg config.File, logger *slog.Logger) Client {
 		// although 'config' is now skipped by batching hook.
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		err := writeHandle.Do(ctx, "CONFIG", "SET", "latency-monitor-threshold", "100").Err()
+
 		cancel()
 
 		if err != nil {
@@ -302,12 +304,12 @@ func (clt *redisClient) GetReadPipeline() redis.Pipeliner {
 // Close terminates all active connections held by the redisClient, including both write and read handles.
 func (clt *redisClient) Close() {
 	if clt.writeHandle != nil {
-		clt.writeHandle.Close()
+		_ = clt.writeHandle.Close()
 	}
 
 	if clt.readHandle != nil {
 		for _, handle := range clt.readHandle {
-			handle.Close()
+			_ = handle.Close()
 		}
 	}
 }
@@ -358,7 +360,7 @@ func (tc *testClient) GetReadPipeline() redis.Pipeliner {
 
 // Close terminates the connection managed by the testClient's Redis UniversalClient.
 func (tc *testClient) Close() {
-	tc.client.Close()
+	_ = tc.client.Close()
 }
 
 // GetSecurityManager returns the security manager for the testClient.

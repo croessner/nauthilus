@@ -45,6 +45,7 @@ func TestAuthBoundaryConfiguredLookupDecisionOverridesFoundIdentity(t *testing.T
 	passDBResult := GetPassDBResultFromPool()
 	passDBResult.UserFound = true
 	passDBResult.Authenticated = true
+
 	passDBResult.Backend = definitions.BackendTest
 	defer PutPassDBResultToPool(passDBResult)
 
@@ -83,11 +84,12 @@ func TestAuthBoundaryConfiguredIDPLookupUsesLookupOperationAndSurface(t *testing
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
 	auth.Request.NoAuth = true
-	auth.Request.Service = definitions.ServIdP
+	auth.Request.Service = definitions.ServIDP
 
 	passDBResult := GetPassDBResultFromPool()
 	passDBResult.UserFound = true
 	passDBResult.Authenticated = true
+
 	passDBResult.Backend = definitions.BackendTest
 	defer PutPassDBResultToPool(passDBResult)
 
@@ -135,13 +137,14 @@ func recordFailedIDPAuthenticatePolicyForTest(
 ) *policycollection.DecisionContext {
 	t.Helper()
 
-	auth.Request.Service = definitions.ServIdP
+	auth.Request.Service = definitions.ServIDP
 	auth.Request.Protocol = config.NewProtocol(definitions.ProtoOIDC)
 
 	failedPassDBResult := GetPassDBResultFromPool()
 	failedPassDBResult.UserFound = true
 	failedPassDBResult.Authenticated = false
 	failedPassDBResult.Backend = definitions.BackendTest
+
 	t.Cleanup(func() {
 		PutPassDBResultToPool(failedPassDBResult)
 	})
@@ -172,7 +175,7 @@ func recordFailedIDPAuthenticatePolicyForTest(
 func newIDPLookupAuthStateForTest(ctx *gin.Context, auth *AuthState) *AuthState {
 	lookupAuth := NewAuthStateFromContextWithDeps(ctx, auth.deps).(*AuthState)
 	lookupAuth.Runtime.GUID = "guid-current-behavior-lookup"
-	lookupAuth.Request.Service = definitions.ServIdP
+	lookupAuth.Request.Service = definitions.ServIDP
 	lookupAuth.Request.Protocol = config.NewProtocol(definitions.ProtoOIDC)
 	lookupAuth.Request.ClientIP = auth.Request.ClientIP
 	lookupAuth.Request.Username = auth.Request.Username
@@ -193,6 +196,7 @@ func recordSuccessfulIDPLookupPolicyForTest(
 	foundPassDBResult.UserFound = true
 	foundPassDBResult.Authenticated = true
 	foundPassDBResult.Backend = definitions.BackendTest
+
 	t.Cleanup(func() {
 		PutPassDBResultToPool(foundPassDBResult)
 	})
@@ -293,6 +297,7 @@ func TestAuthApplicationServiceListAccountsReturnsConfiguredDenialOutcome(t *tes
 	activatePolicySnapshotForTest(t, customListAccountsDenySnapshotForTest())
 
 	service, _ := newCurrentBehaviorApplicationService(t, cfg)
+
 	outcome, err := service.ListAccounts(context.Background(), NewAuthInputFromStructuredRequest(definitions.ServGRPC, AuthModeListAccounts, authdto.Request{
 		ClientIP: "203.0.113.45",
 	}))

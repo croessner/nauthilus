@@ -348,7 +348,7 @@ func TestSupportedIDPDiscoveryClientGetsOIDCDiscovery(t *testing.T) {
 
 	client, err := NewIDPDiscoveryClient(supportedClientBaseURL, generatedidp.WithHTTPClient(doer))
 	if err != nil {
-		t.Fatalf("create supported IdP discovery client: %v", err)
+		t.Fatalf("create supported IDP discovery client: %v", err)
 	}
 
 	response, err := client.GetOIDCDiscovery(context.Background())
@@ -365,7 +365,7 @@ func TestSupportedIDPDiscoveryClientUsesPublicDocuments(t *testing.T) {
 
 		response, err := client.GetPublicOpenAPIJSON(context.Background())
 		if err != nil {
-			t.Fatalf("get public IdP OpenAPI JSON: %v", err)
+			t.Fatalf("get public IDP OpenAPI JSON: %v", err)
 		}
 
 		requireStatusCode(t, response, http.StatusOK)
@@ -375,12 +375,12 @@ func TestSupportedIDPDiscoveryClientUsesPublicDocuments(t *testing.T) {
 	t.Run("openapi yaml", func(t *testing.T) {
 		client := newSupportedIDPDiscoveryClient(t, supportedOpenAPIYAMLRoute(
 			"/.well-known/openapi.yaml",
-			"Nauthilus IdP API",
+			"Nauthilus IDP API",
 		))
 
 		requireRawDocumentResponse(t, func(ctx context.Context) (*http.Response, error) {
 			return client.GetPublicOpenAPIYAML(ctx)
-		}, "Nauthilus IdP API")
+		}, "Nauthilus IDP API")
 	})
 }
 
@@ -445,7 +445,7 @@ func newSupportedIDPDiscoveryClient(t testing.TB, route requesttest.ClientSmokeR
 
 	client, err := NewIDPDiscoveryClient(supportedClientBaseURL, generatedidp.WithHTTPClient(doer))
 	if err != nil {
-		t.Fatalf("create supported IdP discovery client: %v", err)
+		t.Fatalf("create supported IDP discovery client: %v", err)
 	}
 
 	return client
@@ -833,16 +833,6 @@ func requireJWKSResponse(t testing.TB, response *generatedidp.GetOIDCJWKSRespons
 	if len(response.JSON200.Keys) != 1 {
 		t.Fatalf("JWKS key count = %d, want 1", len(response.JSON200.Keys))
 	}
-}
-
-//go:fix inline
-func stringPointer(value string) *string {
-	return new(value)
-}
-
-//go:fix inline
-func asyncJobStatusPointer(value management.AsyncJobStatusPayloadStatus) *management.AsyncJobStatusPayloadStatus {
-	return new(value)
 }
 
 func requireStringPointer(t testing.TB, field string, got *string, want string) {

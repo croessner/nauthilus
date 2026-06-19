@@ -89,6 +89,7 @@ func (n *BackendServer) Update(servers []*config.BackendServer) {
 	n.backendServer = servers
 }
 
+// GetTotalServers provides the exported GetTotalServers method.
 func (n *BackendServer) GetTotalServers() int {
 	n.mu.RLock()
 
@@ -624,8 +625,8 @@ type AuthGroups struct {
 	// Groups stores resolved group names.
 	Groups []string
 
-	// GroupDNs stores resolved group distinguished names.
-	GroupDNs []string
+	// GroupDistinguishedNames stores resolved group distinguished names.
+	GroupDistinguishedNames []string
 
 	// groupsMu is a mutex for thread-safe access to group fields.
 	groupsMu sync.RWMutex
@@ -653,18 +654,22 @@ type AuthState struct {
 	Groups AuthGroups
 }
 
+// Cfg provides the exported Cfg method.
 func (a *AuthState) Cfg() config.File {
 	return a.deps.Cfg
 }
 
+// Env provides the exported Env method.
 func (a *AuthState) Env() config.Environment {
 	return a.deps.Env
 }
 
+// Logger provides the exported Logger method.
 func (a *AuthState) Logger() *slog.Logger {
 	return a.deps.Logger
 }
 
+// Redis provides the exported Redis method.
 func (a *AuthState) Redis() rediscli.Client {
 	return a.deps.Redis
 }
@@ -677,14 +682,17 @@ func (a *AuthState) logger() *slog.Logger {
 	return a.Logger()
 }
 
+// AccountCache provides the exported AccountCache method.
 func (a *AuthState) AccountCache() *accountcache.Manager {
 	return a.deps.AccountCache
 }
 
+// Channel provides the exported Channel method.
 func (a *AuthState) Channel() backend.Channel {
 	return a.deps.Channel
 }
 
+// GetLogger provides the exported GetLogger method.
 func (a *AuthState) GetLogger() *slog.Logger {
 	return a.deps.Logger
 }
@@ -872,6 +880,7 @@ func (a *AuthState) GetBackendManager(backendType definitions.Backend, backendNa
 					definitions.LogKeyMsg, "LDAP pool name unresolved; using default",
 					definitions.LogKeyProtocol, a.Request.Protocol.Get(),
 				)
+
 				backendName = definitions.DefaultBackendName
 			}
 		}
@@ -920,8 +929,8 @@ type PassDBResult struct {
 	// Groups contains resolved group names.
 	Groups []string
 
-	// GroupDNs contains resolved group distinguished names.
-	GroupDNs []string
+	// GroupDistinguishedNames contains resolved group distinguished names.
+	GroupDistinguishedNames []string
 
 	// AdditionalAttributes contains additional backend attributes
 	AdditionalAttributes map[string]any
@@ -961,7 +970,7 @@ func (p *PassDBResult) Reset() {
 	p.Attributes = nil
 	p.AdditionalAttributes = nil
 	p.Groups = nil
-	p.GroupDNs = nil
+	p.GroupDistinguishedNames = nil
 }
 
 // IsPassDBResult returns true to identify this as a PassDBResult
@@ -991,7 +1000,7 @@ func (p *PassDBResult) Clone() *PassDBResult {
 	res.BackendRef = p.BackendRef
 	res.Attributes = p.Attributes.Clone()
 	res.Groups = slices.Clone(p.Groups)
-	res.GroupDNs = slices.Clone(p.GroupDNs)
+	res.GroupDistinguishedNames = slices.Clone(p.GroupDistinguishedNames)
 
 	if p.AdditionalAttributes != nil {
 		res.AdditionalAttributes = make(map[string]any, len(p.AdditionalAttributes))
@@ -1002,6 +1011,7 @@ func (p *PassDBResult) Clone() *PassDBResult {
 }
 
 type (
+	// PassDBOption describes the exported PassDBOption type.
 	// PassDBOption
 	// This type specifies the signature of a password database.
 	PassDBOption func(auth *AuthState) (*PassDBResult, error)
@@ -1038,6 +1048,7 @@ type WebAuthnCredentialDBFunc func(uniqueUserID string) ([]mfa.PersistentCredent
 // AddTOTPSecretFunc is a function signature that takes a *AuthState and *TOTPSecret as arguments and returns an error.
 type AddTOTPSecretFunc func(auth *AuthState, totp *mfa.TOTPSecret) (err error)
 
+// BackendServers is an exported package value.
 var BackendServers = NewBackendServer()
 
 // authStateField describes a single key-value pair for string representation.
@@ -1048,11 +1059,23 @@ type authStateField struct {
 
 // hiddenAuthStateFields lists field names whose values must be redacted in non-dev mode.
 var hiddenAuthStateFields = map[string]struct{}{
-	"Password":   {},
-	"TOTPSecret": {},
+	authStateFieldPassword:   {},
+	authStateFieldTOTPSecret: {},
 }
 
-const logRedactedValue = "<redacted>"
+const (
+	authStateFieldAccountField      = "AccountField"
+	authStateFieldAuthenticated     = "Authenticated"
+	authStateFieldBackendName       = "BackendName"
+	authStateFieldDisplayNameField  = "DisplayNameField"
+	authStateFieldPassword          = "Password"
+	authStateFieldTOTPRecoveryField = "TOTPRecoveryField"
+	authStateFieldTOTPSecret        = "TOTPSecret"
+	authStateFieldTOTPSecretField   = "TOTPSecretField"
+	authStateFieldUniqueUserIDField = "UniqueUserIDField"
+	authStateFieldUserFound         = "UserFound"
+	logRedactedValue                = "<redacted>"
+)
 
 // String returns a human-readable representation of the AuthState.
 // The GUID is omitted and the password is hidden unless dev mode is active.
@@ -1090,7 +1113,7 @@ func (a *AuthState) collectFields() []authStateField {
 		{"Protocol", a.Request.Protocol},
 		{"Method", a.Request.Method},
 		{"Username", a.Request.Username},
-		{"Password", a.Request.Password},
+		{authStateFieldPassword, a.Request.Password},
 		{"ClientIP", a.Request.ClientIP},
 		{"XClientPort", a.Request.XClientPort},
 		{"ClientHost", a.Request.ClientHost},
@@ -1121,16 +1144,16 @@ func (a *AuthState) collectFields() []authStateField {
 		{"ListAccounts", a.Request.ListAccounts},
 		// --- Runtime ---
 		{"StatusMessage", a.Runtime.StatusMessage},
-		{"AccountField", a.Runtime.AccountField},
+		{authStateFieldAccountField, a.Runtime.AccountField},
 		{"AccountName", a.Runtime.AccountName},
 		{"EnvironmentName", a.Runtime.EnvironmentName},
-		{"BackendName", a.Runtime.BackendName},
+		{authStateFieldBackendName, a.Runtime.BackendName},
 		{"UsedBackendIP", a.Runtime.UsedBackendIP},
-		{"TOTPSecret", a.Runtime.TOTPSecret},
-		{"TOTPSecretField", a.Runtime.TOTPSecretField},
-		{"TOTPRecoveryField", a.Runtime.TOTPRecoveryField},
-		{"UniqueUserIDField", a.Runtime.UniqueUserIDField},
-		{"DisplayNameField", a.Runtime.DisplayNameField},
+		{authStateFieldTOTPSecret, a.Runtime.TOTPSecret},
+		{authStateFieldTOTPSecretField, a.Runtime.TOTPSecretField},
+		{authStateFieldTOTPRecoveryField, a.Runtime.TOTPRecoveryField},
+		{authStateFieldUniqueUserIDField, a.Runtime.UniqueUserIDField},
+		{authStateFieldDisplayNameField, a.Runtime.DisplayNameField},
 		{"BFClientNet", a.Runtime.BFClientNet},
 		{"UsedBackendPort", a.Runtime.UsedBackendPort},
 		{"StatusCodeOK", a.Runtime.StatusCodeOK},
@@ -1138,8 +1161,8 @@ func (a *AuthState) collectFields() []authStateField {
 		{"StatusCodeFail", a.Runtime.StatusCodeFail},
 		{"SourcePassDBBackend", a.Runtime.SourcePassDBBackend},
 		{"UsedPassDBBackend", a.Runtime.UsedPassDBBackend},
-		{"UserFound", a.Runtime.UserFound},
-		{"Authenticated", a.Runtime.Authenticated},
+		{authStateFieldUserFound, a.Runtime.UserFound},
+		{authStateFieldAuthenticated, a.Runtime.Authenticated},
 		{"Authorized", a.Runtime.Authorized},
 		{"BFRepeating", a.Runtime.BFRepeating},
 		{"BFRWP", a.Runtime.BFRWP},
@@ -1422,6 +1445,7 @@ func (a *AuthState) GetPassword() secret.Value {
 
 func (a *AuthState) passwordString() string {
 	var password string
+
 	a.Request.Password.WithBytes(func(value []byte) {
 		if len(value) == 0 {
 			return
@@ -1622,14 +1646,14 @@ func (a *AuthState) GetAttribute(name string) ([]any, bool) {
 }
 
 // SetResolvedGroups replaces the resolved group names and group DNs.
-func (a *AuthState) SetResolvedGroups(groups []string, groupDNs []string) {
+func (a *AuthState) SetResolvedGroups(groups []string, groupDistinguishedNames []string) {
 	if a == nil {
 		return
 	}
 
 	a.Groups.groupsMu.Lock()
 	a.Groups.Groups = normalizeStringSet(groups)
-	a.Groups.GroupDNs = normalizeStringSet(groupDNs)
+	a.Groups.GroupDistinguishedNames = normalizeStringSet(groupDistinguishedNames)
 	a.Groups.groupsMu.Unlock()
 }
 
@@ -1652,8 +1676,8 @@ func (a *AuthState) GetGroups() []string {
 	return out
 }
 
-// GetGroupDNs returns a copy of resolved group distinguished names.
-func (a *AuthState) GetGroupDNs() []string {
+// GetGroupDistinguishedNames returns a copy of resolved group distinguished names.
+func (a *AuthState) GetGroupDistinguishedNames() []string {
 	if a == nil {
 		return nil
 	}
@@ -1661,12 +1685,12 @@ func (a *AuthState) GetGroupDNs() []string {
 	a.Groups.groupsMu.RLock()
 	defer a.Groups.groupsMu.RUnlock()
 
-	if len(a.Groups.GroupDNs) == 0 {
+	if len(a.Groups.GroupDistinguishedNames) == 0 {
 		return nil
 	}
 
-	out := make([]string, len(a.Groups.GroupDNs))
-	copy(out, a.Groups.GroupDNs)
+	out := make([]string, len(a.Groups.GroupDistinguishedNames))
+	copy(out, a.Groups.GroupDistinguishedNames)
 
 	return out
 }
@@ -1676,6 +1700,7 @@ func (a *AuthState) GetGroupDNs() []string {
 func (a *AuthState) RangeAttributes(fn func(string, []any) bool) {
 	a.Attributes.attributesMu.RLock()
 	defer a.Attributes.attributesMu.RUnlock()
+
 	for k, v := range a.Attributes.Attributes {
 		if !fn(k, v) {
 			return
@@ -1884,6 +1909,7 @@ func (a *AuthState) ResetLoginAttemptsOnSuccess() {
 // If the Service field is not equal to global.ServUserInfo, it responds with the selected status message as plain text.
 func (a *AuthState) setFailureHeaders(ctx *gin.Context, render responseMessageRenderer) {
 	a.prepareAuthFailure()
+
 	statusMessage := a.Runtime.StatusMessage
 	if render != nil {
 		statusMessage = render(ctx, a)
@@ -2108,6 +2134,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 		auth.Runtime.UserFound = true
 
 		auth.Runtime.SourcePassDBBackend = passDBResult.Backend
+
 		auth.Runtime.BackendName = passDBResult.BackendName
 		if !passDBResult.BackendRef.IsZero() {
 			auth.Runtime.RemoteBackendRef = passDBResult.BackendRef
@@ -2149,7 +2176,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 	}
 
 	if passDBResult.UserFound {
-		auth.SetResolvedGroups(passDBResult.Groups, passDBResult.GroupDNs)
+		auth.SetResolvedGroups(passDBResult.Groups, passDBResult.GroupDistinguishedNames)
 	}
 
 	// Handle AdditionalAttributes if they exist in the PassDBResult
@@ -2186,6 +2213,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 			// Read the current mapping with a bounded read deadline.
 			dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(auth.Ctx(), auth.Cfg())
 			current, err := backend.LookupUserAccountFromRedis(dReadCtx, auth.Cfg(), auth.deps.Redis, auth.Request.Username, auth.Request.Protocol.Get(), auth.Request.OIDCCID)
+
 			cancelRead()
 
 			if err != nil {
@@ -2200,6 +2228,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 
 				dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(context.TODO(), auth.Cfg())
 				werr := backend.SetUserAccountMapping(dWriteCtx, auth.Cfg(), auth.deps.Redis, auth.Request.Username, auth.Request.Protocol.Get(), auth.Request.OIDCCID, acc)
+
 				cancelWrite()
 
 				if werr != nil {
@@ -2261,6 +2290,7 @@ func (a *AuthState) refreshUserAccount() (accountName string) {
 	// Use request/service context with bounded deadline to avoid leaks and reuse caller context
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(a.Ctx(), a.Cfg())
 	accountName = backend.GetUserAccountFromCache(dCtx, a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
+
 	cancel()
 
 	if accountName == "" {
@@ -2280,9 +2310,9 @@ func (a *AuthState) traceSetupDetails(tsp trace.Span) {
 		return
 	}
 
-	mode := "auth"
+	mode := string(AuthModeAuthenticate)
 	if a.Request.NoAuth {
-		mode = "no-auth"
+		mode = authModeNoAuth
 	}
 
 	tsp.SetAttributes(
@@ -2385,7 +2415,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 		cr.Debug = a.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	}
 
-	a.fillIdPFields(cr)
+	a.fillIDPFields(cr)
 }
 
 // IsBackendHealthCheckRequest reports whether the current authentication request matches a configured health-check identity.
@@ -2412,6 +2442,7 @@ func (a *AuthState) IsBackendHealthCheckRequest() bool {
 		}
 
 		serverProtocol := strings.ToLower(strings.TrimSpace(server.Protocol))
+
 		if service == "" && protocol == "" {
 			return true
 		}
@@ -2427,11 +2458,11 @@ func (a *AuthState) IsBackendHealthCheckRequest() bool {
 // findOIDCClient looks up an OIDC client by its ID from the loaded configuration.
 func (a *AuthState) findOIDCClient(clientID string) *config.OIDCClient {
 	cfg := a.Cfg()
-	if cfg == nil || cfg.GetIdP() == nil {
+	if cfg == nil || cfg.GetIDP() == nil {
 		return nil
 	}
 
-	clients := cfg.GetIdP().OIDC.Clients
+	clients := cfg.GetIDP().OIDC.Clients
 
 	for i := range clients {
 		if clients[i].ClientID == clientID {
@@ -2442,10 +2473,10 @@ func (a *AuthState) findOIDCClient(clientID string) *config.OIDCClient {
 	return nil
 }
 
-// fillIdPFields enriches the CommonRequest with IdP-specific data read from the
+// fillIDPFields enriches the CommonRequest with IDP-specific data read from the
 // session cookie (grant type, scopes, redirect URI, MFA status) and the OIDC client
 // configuration (client name, allowed scopes, allowed grant types).
-func (a *AuthState) fillIdPFields(cr *lualib.CommonRequest) {
+func (a *AuthState) fillIDPFields(cr *lualib.CommonRequest) {
 	if a.Request.HTTPClientContext == nil {
 		return
 	}
@@ -2453,11 +2484,11 @@ func (a *AuthState) fillIdPFields(cr *lualib.CommonRequest) {
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
 	if mgr != nil {
 		cr.GrantType = mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
-		cr.RedirectURI = mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
+		cr.RedirectURI = mgr.GetString(definitions.SessionKeyIDPRedirectURI, "")
 		cr.MFACompleted = mgr.GetBool(definitions.SessionKeyMFACompleted, false)
 		cr.MFAMethod = mgr.GetString(definitions.SessionKeyMFAMethod, "")
 
-		if scopeStr := mgr.GetString(definitions.SessionKeyIdPScope, ""); scopeStr != "" {
+		if scopeStr := mgr.GetString(definitions.SessionKeyIDPScope, ""); scopeStr != "" {
 			cr.RequestedScopes = strings.Split(scopeStr, " ")
 		}
 	}
@@ -3029,6 +3060,7 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 	}
 
 	var passDBResult *PassDBResult
+
 	if val != nil {
 		res := val.(*PassDBResult)
 		if shared {
@@ -3212,6 +3244,7 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 		DisplayNameField:  a.Runtime.DisplayNameField,
 		Password: func() string {
 			var passwordShort string
+
 			a.Request.Password.WithBytes(func(value []byte) {
 				if len(value) == 0 {
 					return
@@ -3225,11 +3258,11 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 
 			return passwordShort
 		}(),
-		Backend:     a.Runtime.SourcePassDBBackend,
-		BackendName: a.Runtime.BackendName,
-		Attributes:  a.Attributes.Attributes,
-		Groups:      a.GetGroups(),
-		GroupDNs:    a.GetGroupDNs(),
+		Backend:                 a.Runtime.SourcePassDBBackend,
+		BackendName:             a.Runtime.BackendName,
+		Attributes:              a.Attributes.Attributes,
+		Groups:                  a.GetGroups(),
+		GroupDistinguishedNames: a.GetGroupDistinguishedNames(),
 	}
 }
 
@@ -3425,6 +3458,7 @@ func (a *AuthState) SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) def
 // ListUserAccounts returns the list of all known users from the account databases.
 func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
+
 	ginCtx := a.Request.HTTPClientContext
 	errSeen := false
 
@@ -3632,6 +3666,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 	// Service-scoped read to avoid inheriting a canceled request context
 	dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(context.TODO(), a.Cfg())
 	accountName = backend.GetUserAccountFromCache(dReadCtx, a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
+
 	cancelRead()
 
 	if accountName != "" {
@@ -3658,6 +3693,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 		// Service-scoped write for robust cache update
 		dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(context.TODO(), a.Cfg())
 		err = backend.SetUserAccountMapping(dWriteCtx, a.Cfg(), a.deps.Redis, a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, accountName)
+
 		cancelWrite()
 	}
 
@@ -3728,11 +3764,11 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 	a.Runtime.MonitoringFlags = []definitions.Monitoring{}
 
 	switch ctx.Query("mode") {
-	case "no-auth":
+	case authModeNoAuth:
 		util.DebugModuleWithCfg(ctx.Request.Context(), cfg, logger, definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=no-auth")
 
 		a.Request.NoAuth = true
-	case "list-accounts":
+	case string(AuthModeListAccounts):
 		util.DebugModuleWithCfg(ctx.Request.Context(), cfg, logger, definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=list-accounts")
 
 		a.Request.Protocol.Set(definitions.ProtoAccountProvider)
@@ -3810,14 +3846,13 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 		if decodedPassword, err := base64.URLEncoding.DecodeString(passwordValue); err != nil {
 			clear(passwordBytes)
 			passwordBytes = nil
-			ctx.Error(errors.ErrPasswordEncoding)
+
+			_ = ctx.Error(errors.ErrPasswordEncoding)
 		} else {
 			clear(passwordBytes)
 			passwordBytes = decodedPassword
 		}
 	}
-
-	passwordValue = ""
 
 	if a, ok := auth.(*AuthState); ok {
 		// Apply credentials and header-derived context in a consolidated manner
@@ -3861,7 +3896,6 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
 	}
 
 	passwordBytes := []byte(passwordValue)
-	passwordValue = ""
 
 	// Apply credentials via builder
 	if a, ok := auth.(*AuthState); ok {
@@ -3914,7 +3948,7 @@ func processStructuredAuthRequest(ctx *gin.Context, auth State, metricName strin
 		return
 	}
 
-	if request.Password == "" && ctx.Query("mode") != "no-auth" && ctx.Query("mode") != "list-accounts" {
+	if request.Password == "" && ctx.Query("mode") != authModeNoAuth && ctx.Query("mode") != string(AuthModeListAccounts) {
 		HandleJSONValidationError(ctx, "Password", "This field is required")
 
 		return
@@ -4007,6 +4041,7 @@ func buildCredentialOptions(request *authdto.Request) []CredentialOption {
 		passwordBytes := []byte(request.Password)
 		opts = append(opts, WithPassword(secret.FromBytes(passwordBytes)))
 		clear(passwordBytes)
+
 		request.Password = ""
 	}
 
@@ -4079,8 +4114,8 @@ func setupBodyBasedAuth(ctx *gin.Context, auth State) {
 		} else if strings.HasPrefix(contentType, "application/cbor") {
 			processApplicationCBOR(ctx, auth)
 		} else {
-			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Unsupported media type"})
-			ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{policyAttributeSuffixError: "Unsupported media type"})
+			_ = ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
 		}
 	}
 }
@@ -4148,7 +4183,7 @@ func setupAuth(ctx *gin.Context, auth State) {
 	switch svc {
 	case definitions.ServNginx, definitions.ServHeader:
 		setupHeaderBasedAuth(ctx, auth)
-	case definitions.ServJSON, definitions.ServCBOR, definitions.ServIdP:
+	case definitions.ServJSON, definitions.ServCBOR, definitions.ServIDP:
 		setupBodyBasedAuth(ctx, auth)
 	case definitions.ServBasic:
 		setupHTTPBasicAuth(ctx, auth)
@@ -4158,22 +4193,23 @@ func setupAuth(ctx *gin.Context, auth State) {
 		return
 	}
 
-	if ctx.Query("mode") != "list-accounts" && ctx.Query("mode") != "no-auth" && svc != definitions.ServBasic && svc != definitions.ServIdP {
+	if ctx.Query("mode") != string(AuthModeListAccounts) && ctx.Query("mode") != authModeNoAuth && svc != definitions.ServBasic && svc != definitions.ServIDP {
 		username := auth.GetUsername()
 
 		if username == "" {
-			ctx.Error(errors.ErrEmptyUsername)
+			_ = ctx.Error(errors.ErrEmptyUsername)
 
 			return
 		} else if !util.ValidateUsername(username) {
 			auth.SetUsername("")
-			ctx.Error(errors.ErrInvalidUsername)
+
+			_ = ctx.Error(errors.ErrInvalidUsername)
 
 			return
 		}
 
 		if auth.GetPassword().IsZero() {
-			ctx.Error(errors.ErrEmptyPassword)
+			_ = ctx.Error(errors.ErrEmptyPassword)
 
 			return
 		}
@@ -4262,7 +4298,7 @@ func (a *AuthState) WithDefaults(ctx *gin.Context) State {
 	switch a.Request.Service {
 	case definitions.ServBasic:
 		a.SetProtocol(config.NewProtocol(definitions.ProtoHTTP))
-	case definitions.ServIdP:
+	case definitions.ServIDP:
 		a.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
 	}
 
@@ -4387,7 +4423,7 @@ func (a *AuthState) generateLocalCacheKey() string {
 		a.Request.Protocol.Get(),
 		func() string {
 			if a.Request.ClientIP == "" {
-				return "0.0.0.0"
+				return defaultClientIPAny
 			}
 
 			return a.Request.ClientIP
@@ -4400,7 +4436,7 @@ func (a *AuthState) generateLocalCacheKey() string {
 func (a *AuthState) generateSingleflightKey() string {
 	clientIP := a.Request.ClientIP
 	if clientIP == "" {
-		clientIP = "0.0.0.0"
+		clientIP = defaultClientIPAny
 	}
 
 	sslFlag := "0"
@@ -4410,6 +4446,7 @@ func (a *AuthState) generateSingleflightKey() string {
 
 	// Short password hash (same function as for positive password cache)
 	var pwShort string
+
 	a.Request.Password.WithBytes(func(value []byte) {
 		if len(value) == 0 {
 			return
@@ -4503,7 +4540,6 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 	lcSpan.SetAttributes(attribute.Bool("hit", false))
 
 	return false
-
 }
 
 // PreproccessAuthRequest preprocesses the authentication request by checking if the request is already in the local cache.
@@ -4524,6 +4560,7 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	}
 
 	var cacheHit bool
+
 	if found := a.GetFromLocalCache(ctx); !found {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
@@ -4563,6 +4600,7 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 			a.markEnvironmentRejected(ctx)
 			pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
 			a.UpdateBruteForceBucketsCounter(ctx)
+
 			result := GetPassDBResultFromPool()
 			a.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
