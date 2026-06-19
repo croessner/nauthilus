@@ -20,9 +20,9 @@ import (
 	"regexp"
 	"strings"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/errors"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/errors"
 	"github.com/go-ldap/ldap/v3"
 )
 

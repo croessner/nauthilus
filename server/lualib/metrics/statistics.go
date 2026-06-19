@@ -19,12 +19,12 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/luastack"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/log"
+	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/lualib"
+	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
 	"github.com/prometheus/client_golang/prometheus"
 	lua "github.com/yuin/gopher-lua"
 )

@@ -16,7 +16,7 @@
 package idp
 
 import (
-	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/gin-gonic/gin"
 )
 

@@ -18,8 +18,8 @@ package v1
 import (
 	"net/http"
 
-	"github.com/croessner/nauthilus/server/handler/deps"
-	"github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/gin-gonic/gin"
 )
 

@@ -18,7 +18,7 @@ package bruteforce
 import (
 	"sync/atomic"
 
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 )
 
 // Redis DI seam for the bruteforce package.

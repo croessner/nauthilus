@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 )
 
 func TestResetFlowAuthOutcomeForRetryClearsFailLatchedCookieFlow(t *testing.T) {

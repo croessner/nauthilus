@@ -1,7 +1,7 @@
 # Native Go Plugin Developer API
 
 This document explains how to write native Go plugins for Nauthilus. It focuses on the developer contract exposed by
-`github.com/croessner/nauthilus/pluginapi/v1`, the runtime behavior that plugin authors can rely on, and the current
+`github.com/croessner/nauthilus/v3/pluginapi/v1`, the runtime behavior that plugin authors can rely on, and the current
 implementation limits that matter when designing production plugins.
 
 For operator-facing loader configuration, artifact verification, and deployment examples, see
@@ -183,7 +183,7 @@ The factory must be exported from a `main` package:
 ```go
 package main
 
-import pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
+import pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 
 func NauthilusPlugin() (pluginapi.Plugin, error) {
     return NewPlugin(), nil
@@ -481,7 +481,7 @@ err := secret.WithBytes(func(password []byte) error {
 ```
 
 Never store the byte slice passed to `WithBytes`, never log it, and clear plugin-owned copies immediately after use.
-For Nauthilus-compatible password verification, import `github.com/croessner/nauthilus/pluginapi/v1/password` and call
+For Nauthilus-compatible password verification, import `github.com/croessner/nauthilus/v3/pluginapi/v1/password` and call
 `password.CompareHash(hash, secret)`. The same package exposes `GenerateHash` and `GenerateHashString` for the
 Redis-compatible short hash used by Lua `nauthilus_password.generate_password_hash`; server-side nonce and dev-mode
 selection remain host-owned, so plugin-owned hashes must pass the same `password.HashOptions` when they need exact

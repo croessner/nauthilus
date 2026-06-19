@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
 // mockCfgProvider implements configfx.Provider for testing.

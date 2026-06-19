@@ -20,7 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/croessner/nauthilus/server/backend/accountcache"
+	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
 )
 
 // AccountCache injection seam for core subtrees.

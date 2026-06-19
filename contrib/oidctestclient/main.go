@@ -21,8 +21,8 @@ import (
 	"net/http"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/util"
 )
 
 // initProvider initializes the OIDC provider and extracts provider metadata claims.

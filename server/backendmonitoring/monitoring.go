@@ -23,13 +23,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
-	errorspkg "github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/monitoring"
-	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	errorspkg "github.com/croessner/nauthilus/v3/server/errors"
+	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/monitoring"
+	"github.com/croessner/nauthilus/v3/server/stats"
 )
 
 type healthGate struct {

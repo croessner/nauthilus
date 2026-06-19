@@ -24,10 +24,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	mdauth "github.com/croessner/nauthilus/v3/server/middleware/auth"
+	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )

@@ -16,8 +16,8 @@
 package compiler
 
 import (
-	"github.com/croessner/nauthilus/server/policy"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 func buildStagePlans(

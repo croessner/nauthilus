@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/bruteforce/l1"
+	"github.com/croessner/nauthilus/v3/server/bruteforce/l1"
 	"github.com/stretchr/testify/assert"
 )
 

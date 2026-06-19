@@ -19,7 +19,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 )
 
 // normalizeStringSet trims whitespace, removes empty strings and duplicates, and sorts the result.

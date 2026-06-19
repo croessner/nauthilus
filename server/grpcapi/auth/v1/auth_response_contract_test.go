@@ -18,7 +18,7 @@ package authv1
 import (
 	"testing"
 
-	commonv1 "github.com/croessner/nauthilus/server/grpcapi/common/v1"
+	commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
 
 	"google.golang.org/protobuf/proto"
 )

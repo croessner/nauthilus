@@ -22,7 +22,7 @@ import (
 	"log/slog"
 	"sort"
 
-	"github.com/croessner/nauthilus/server/app/opsfx"
+	"github.com/croessner/nauthilus/v3/server/app/opsfx"
 
 	"go.uber.org/fx"
 )

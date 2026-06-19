@@ -21,7 +21,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/croessner/nauthilus/contrib/csv2ldap/engine"
+	"github.com/croessner/nauthilus/v3/contrib/csv2ldap/engine"
 )
 
 func main() {

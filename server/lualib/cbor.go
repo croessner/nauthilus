@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/encoding/cborcodec"
-	"github.com/croessner/nauthilus/server/lualib/luastack"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/encoding/cborcodec"
+	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
 
 	lua "github.com/yuin/gopher-lua"
 )

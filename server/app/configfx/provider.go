@@ -18,7 +18,7 @@ package configfx
 import (
 	"sync/atomic"
 
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/v3/server/config"
 )
 
 // Snapshot represents an immutable configuration view.

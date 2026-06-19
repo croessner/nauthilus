@@ -22,10 +22,10 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/log"
+	"github.com/croessner/nauthilus/v3/server/log/level"
 
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"

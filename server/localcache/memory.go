@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/objpool"
-	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/v3/server/objpool"
+	"github.com/croessner/nauthilus/v3/server/stats"
 
 	"github.com/cespare/xxhash/v2"
 )

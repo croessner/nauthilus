@@ -18,7 +18,7 @@ package rediscli
 import (
 	"context"
 
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 )

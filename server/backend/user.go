@@ -16,8 +16,8 @@
 package backend
 
 import (
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/model/mfa"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 

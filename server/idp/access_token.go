@@ -19,7 +19,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/croessner/nauthilus/server/idp/signing"
+	"github.com/croessner/nauthilus/v3/server/idp/signing"
 	"github.com/golang-jwt/jwt/v5"
 )
 

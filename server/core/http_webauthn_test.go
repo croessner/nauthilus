@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/v3/server/config"
 )
 
 func TestInitWebAuthnSkipsWhenIdPAndFrontendDisabled(t *testing.T) {

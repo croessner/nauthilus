@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package nauthilus.common.v1;
 
-option go_package = "github.com/croessner/nauthilus/server/grpcapi/common/v1;commonv1";
+option go_package = "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1;commonv1";
 
 // OperationResult describes the domain result of an authority-side operation.
 enum OperationResult {

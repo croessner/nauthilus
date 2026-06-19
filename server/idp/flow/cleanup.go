@@ -15,7 +15,7 @@
 
 package flow
 
-import "github.com/croessner/nauthilus/server/definitions"
+import "github.com/croessner/nauthilus/v3/server/definitions"
 
 type keyManager interface {
 	Delete(key string)

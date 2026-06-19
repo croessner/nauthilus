@@ -28,9 +28,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
 )
 

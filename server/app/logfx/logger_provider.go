@@ -22,7 +22,7 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/v3/server/log"
 )
 
 // NewLogger provides the process logger.

@@ -18,7 +18,7 @@ package contentneg_test
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/server/util/contentneg"
+	"github.com/croessner/nauthilus/v3/server/util/contentneg"
 )
 
 // supported is the canonical list reused by every test case to keep the

@@ -22,10 +22,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/secret"
 
 	"github.com/redis/go-redis/v9"
 )

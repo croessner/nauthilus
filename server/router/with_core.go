@@ -16,8 +16,8 @@
 package router
 
 import (
-	mdcmp "github.com/croessner/nauthilus/server/middleware/compression"
-	mdmet "github.com/croessner/nauthilus/server/middleware/metrics"
+	mdcmp "github.com/croessner/nauthilus/v3/server/middleware/compression"
+	mdmet "github.com/croessner/nauthilus/v3/server/middleware/metrics"
 	"github.com/gin-gonic/gin"
 )
 

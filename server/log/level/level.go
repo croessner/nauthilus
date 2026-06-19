@@ -31,9 +31,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
-	"github.com/croessner/nauthilus/server/svcctx"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/svcctx"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"

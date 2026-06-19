@@ -22,9 +22,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/policy"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 const (

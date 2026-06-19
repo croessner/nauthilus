@@ -21,11 +21,11 @@ import (
 	"testing"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/pluginapi/v1/helpers"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/rediscli"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/pluginapi/v1/helpers"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 
 	"github.com/go-redis/redismock/v9"
 	"github.com/prometheus/client_golang/prometheus"

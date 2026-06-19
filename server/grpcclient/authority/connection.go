@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/croessner/nauthilus/server/config"
-	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
-	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
+	"github.com/croessner/nauthilus/v3/server/config"
+	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
+	identityv1 "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"

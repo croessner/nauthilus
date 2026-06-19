@@ -32,11 +32,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/errors"
+	"github.com/croessner/nauthilus/v3/server/log"
+	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/secret"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/go-viper/mapstructure/v2"
@@ -4027,7 +4027,6 @@ func appendConfigLeafPath(typ reflect.Type, prefix string, paths *[]string) bool
 
 func collectConfigStructLeafPaths(typ reflect.Type, prefix string, paths *[]string, seen map[reflect.Type]struct{}) {
 	for structField := range typ.Fields() {
-		structField := structField
 		if !structField.IsExported() {
 			continue
 		}

@@ -22,10 +22,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/core/cookie"
-	"github.com/croessner/nauthilus/server/definitions"
-	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/core/cookie"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/gin-gonic/gin"
 )
 

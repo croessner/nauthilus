@@ -18,14 +18,15 @@ package pluginruntime
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/lualib/connmgr"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/lualib/connmgr"
 )
 
 const maxConnectionTargetLabelValueLength = 64
@@ -234,9 +235,7 @@ func cloneConnectionTarget(target pluginapi.ConnectionTarget) pluginapi.Connecti
 	}
 
 	target.Labels = map[string]string{}
-	for name, value := range target.Labels {
-		target.Labels[name] = value
-	}
+	maps.Copy(target.Labels, target.Labels)
 
 	return target
 }

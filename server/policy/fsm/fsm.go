@@ -19,7 +19,7 @@ package fsm
 import (
 	"fmt"
 
-	"github.com/croessner/nauthilus/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy"
 )
 
 type state string

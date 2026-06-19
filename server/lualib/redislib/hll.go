@@ -19,7 +19,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/croessner/nauthilus/server/lualib/luastack"
+	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )

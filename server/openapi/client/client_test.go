@@ -23,10 +23,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	generatedidp "github.com/croessner/nauthilus/server/openapi/generated/idp"
-	management "github.com/croessner/nauthilus/server/openapi/generated/management"
-	"github.com/croessner/nauthilus/server/openapi/requesttest"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	generatedidp "github.com/croessner/nauthilus/v3/server/openapi/generated/idp"
+	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
+	"github.com/croessner/nauthilus/v3/server/openapi/requesttest"
 )
 
 const (
@@ -101,8 +101,8 @@ func TestSupportedManagementClientGetsAsyncJobStatus(t *testing.T) {
 		Operation: definitions.ServFlush,
 		Result: management.AsyncJobStatusPayload{
 			JobId:       new(supportedClientCacheJobID),
-			Status:      asyncJobStatusPointer(management.AsyncJobStatusDone),
-			Type:        stringPointer(definitions.CatCache),
+			Status:      new(management.AsyncJobStatusDone),
+			Type:        new(definitions.CatCache),
 			StartedAt:   new(supportedClientJobStartedAt),
 			FinishedAt:  new(supportedClientJobFinishedAt),
 			ResultCount: new(supportedClientJobResultCount),
@@ -545,7 +545,7 @@ func supportedBruteForceFlushRequest() management.BruteForceFlushRequest {
 	return management.BruteForceFlushRequest{
 		IpAddress: supportedClientIPAddress,
 		OidcCid:   new(supportedClientOIDCCID),
-		Protocol:  stringPointer(definitions.ProtoOIDC),
+		Protocol:  new(definitions.ProtoOIDC),
 		RuleName:  supportedClientBruteForceRuleName,
 	}
 }

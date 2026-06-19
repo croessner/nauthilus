@@ -18,7 +18,7 @@ package pluginapi
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/pluginapi/v1/helpers"
+	"github.com/croessner/nauthilus/v3/pluginapi/v1/helpers"
 )
 
 func TestDeterministicHelpersMatchLuaContracts(t *testing.T) {

@@ -18,9 +18,9 @@ package logfx
 import (
 	"context"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/reloadfx"
-	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/app/reloadfx"
+	"github.com/croessner/nauthilus/v3/server/log/level"
 
 	"go.uber.org/fx"
 )

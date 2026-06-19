@@ -18,7 +18,7 @@ package security
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/v3/server/secret"
 )
 
 func TestManagerEncryptDecryptRoundTrip(t *testing.T) {

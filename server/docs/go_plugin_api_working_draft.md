@@ -93,7 +93,7 @@ const APIVersion = "nauthilus.plugin.v1"
 ```
 
 Decision: the public package should live under `pluginapi/v1`, for example
-`github.com/croessner/nauthilus/pluginapi/v1`. Keeping the API outside `server/*` makes the extension boundary explicit
+`github.com/croessner/nauthilus/v3/pluginapi/v1`. Keeping the API outside `server/*` makes the extension boundary explicit
 and avoids making plugin authors depend on server internals.
 
 The package should depend only on stable standard-library types and carefully selected external types. Internal Nauthilus

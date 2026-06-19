@@ -20,12 +20,12 @@ import (
 	stderrors "errors"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/backend/accountcache"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/model/authdto"
-	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/model/authdto"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/util"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"

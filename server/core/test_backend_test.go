@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/model/mfa"
-	"github.com/croessner/nauthilus/server/secret"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/model/mfa"
+	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 

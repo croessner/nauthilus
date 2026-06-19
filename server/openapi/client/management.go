@@ -20,7 +20,7 @@ import (
 	"errors"
 	"net/http"
 
-	management "github.com/croessner/nauthilus/server/openapi/generated/management"
+	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
 )
 
 // ErrNilClient reports a nil generated client dependency.

@@ -21,11 +21,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/redifx"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/app/redifx"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/stats"
 )
 
 // StatsService is a service that manages periodic tasks and CPU usage monitoring using a defined interval and hooks.

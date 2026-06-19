@@ -18,7 +18,7 @@ package reloadfx
 import (
 	"context"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
 )
 
 // Reloadable is a component that can apply a new configuration snapshot without a full restart.

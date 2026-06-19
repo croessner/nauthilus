@@ -21,7 +21,7 @@ import (
 	"log/slog"
 	"testing"
 
-	handlerauthority "github.com/croessner/nauthilus/server/handler/grpcauthority"
+	handlerauthority "github.com/croessner/nauthilus/v3/server/handler/grpcauthority"
 )
 
 func TestStartGRPCAuthorityForHTTPFailsInitialStartup(t *testing.T) {

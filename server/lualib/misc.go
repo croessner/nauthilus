@@ -27,12 +27,12 @@ import (
 	"unicode"
 
 	"github.com/biter777/countries"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/ipscoper"
-	"github.com/croessner/nauthilus/server/lualib/luastack"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/errors"
+	"github.com/croessner/nauthilus/v3/server/ipscoper"
+	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
+	"github.com/croessner/nauthilus/v3/server/util"
 	lua "github.com/yuin/gopher-lua"
 	"github.com/yuin/gopher-lua/parse"
 )

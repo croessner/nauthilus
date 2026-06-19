@@ -16,8 +16,8 @@
 package signalsfx
 
 import (
-	"github.com/croessner/nauthilus/server/app/reloadfx"
-	"github.com/croessner/nauthilus/server/app/restartfx"
+	"github.com/croessner/nauthilus/v3/server/app/reloadfx"
+	"github.com/croessner/nauthilus/v3/server/app/restartfx"
 
 	"go.uber.org/fx"
 )

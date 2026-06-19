@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/croessner/nauthilus/server/policy"
-	"github.com/croessner/nauthilus/server/policy/registry"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
 // ErrNilSnapshot is returned when activation receives no candidate snapshot.

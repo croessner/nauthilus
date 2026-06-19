@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/v3/server/config"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/text/language"

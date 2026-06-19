@@ -15,7 +15,7 @@
 
 package authv1
 
-import commonv1 "github.com/croessner/nauthilus/server/grpcapi/common/v1"
+import commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
 
 // AttributeValues keeps existing auth callers source-compatible while the wire
 // contract uses the shared common protobuf message.

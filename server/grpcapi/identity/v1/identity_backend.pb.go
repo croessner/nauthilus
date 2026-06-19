@@ -7,7 +7,7 @@
 package identityv1
 
 import (
-	v1 "github.com/croessner/nauthilus/server/grpcapi/common/v1"
+	v1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -2454,7 +2454,7 @@ const file_server_grpcapi_identity_v1_identity_backend_proto_rawDesc = "" +
 	"\x16GetWebAuthnCredentials\x124.nauthilus.identity.v1.GetWebAuthnCredentialsRequest\x1a2.nauthilus.identity.v1.WebAuthnCredentialsResponse\x12w\n" +
 	"\x16SaveWebAuthnCredential\x124.nauthilus.identity.v1.SaveWebAuthnCredentialRequest\x1a'.nauthilus.identity.v1.MFAWriteResponse\x12{\n" +
 	"\x18UpdateWebAuthnCredential\x126.nauthilus.identity.v1.UpdateWebAuthnCredentialRequest\x1a'.nauthilus.identity.v1.MFAWriteResponse\x12{\n" +
-	"\x18DeleteWebAuthnCredential\x126.nauthilus.identity.v1.DeleteWebAuthnCredentialRequest\x1a'.nauthilus.identity.v1.MFAWriteResponseBFZDgithub.com/croessner/nauthilus/server/grpcapi/identity/v1;identityv1b\x06proto3"
+	"\x18DeleteWebAuthnCredential\x126.nauthilus.identity.v1.DeleteWebAuthnCredentialRequest\x1a'.nauthilus.identity.v1.MFAWriteResponseBIZGgithub.com/croessner/nauthilus/v3/server/grpcapi/identity/v1;identityv1b\x06proto3"
 
 var (
 	file_server_grpcapi_identity_v1_identity_backend_proto_rawDescOnce sync.Once

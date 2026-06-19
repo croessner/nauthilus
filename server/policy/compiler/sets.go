@@ -22,8 +22,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/config"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 func compileSets(configSets config.PolicySetsConfig) (policyruntime.CompiledSets, error) {

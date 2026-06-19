@@ -29,7 +29,7 @@ import (
 	"regexp"
 	"strings"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/simia-tech/crypt"
 )
 

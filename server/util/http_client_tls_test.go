@@ -20,7 +20,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/v3/server/config"
 )
 
 func TestNewHTTPClient_PreservesDefaultTransportBehavior(t *testing.T) {

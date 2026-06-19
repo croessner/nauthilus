@@ -15,7 +15,7 @@
 
 package core
 
-import mfamodel "github.com/croessner/nauthilus/server/model/mfa"
+import mfamodel "github.com/croessner/nauthilus/v3/server/model/mfa"
 
 // NewTOTPSecret creates a new TOTPSecret instance using the provided secret value.
 // It returns a pointer to the created TOTPSecret object.

@@ -31,11 +31,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/localcache"
-	"github.com/croessner/nauthilus/server/model/mfa"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/localcache"
+	"github.com/croessner/nauthilus/v3/server/model/mfa"
+	"github.com/croessner/nauthilus/v3/server/util"
 )
 
 // testBackendCachePrefix namespaces cache entries for test backend users.

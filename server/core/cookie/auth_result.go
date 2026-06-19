@@ -20,7 +20,7 @@ import (
 	"encoding/binary"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
 // authResultHMACData builds the message to be HMAC'd: username || auth_result || timestamp.

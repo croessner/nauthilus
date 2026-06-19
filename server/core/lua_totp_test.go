@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/backend/priorityqueue"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/model/mfa"
+	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/lualib"
+	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )

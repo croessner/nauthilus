@@ -18,10 +18,10 @@ package redislib
 import (
 	"context"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/lualib"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	lua "github.com/yuin/gopher-lua"
 )
 

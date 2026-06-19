@@ -31,10 +31,10 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/handler/deps"
-	slodomain "github.com/croessner/nauthilus/server/idp/slo"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
 )

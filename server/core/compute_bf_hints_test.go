@@ -20,11 +20,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/config"
-	corepkg "github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/config"
+	corepkg "github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/log"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 )

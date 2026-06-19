@@ -22,7 +22,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
 // FlowReferenceAdapter stores only minimal flow reference data in the session cookie.

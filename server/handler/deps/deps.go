@@ -18,14 +18,14 @@ package deps
 import (
 	"log/slog"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/backend/accountcache"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/core/language"
-	"github.com/croessner/nauthilus/server/core/localization"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/backend"
+	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/core/language"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 )

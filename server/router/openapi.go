@@ -18,7 +18,7 @@ package router
 import (
 	"net/http"
 
-	"github.com/croessner/nauthilus/server/openapi"
+	"github.com/croessner/nauthilus/v3/server/openapi"
 	"github.com/gin-gonic/gin"
 )
 

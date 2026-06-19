@@ -16,7 +16,7 @@
 package auth
 
 import (
-	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/gin-gonic/gin"
 )
 

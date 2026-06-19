@@ -21,10 +21,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/policy"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 func TestPolicyReportEnabledEmitsDefaultPolicyDebugReport(t *testing.T) {

@@ -5,14 +5,14 @@ import (
 	"errors"
 	"testing"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/policy"
-	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/lualib"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
 const (

@@ -18,8 +18,8 @@ package runtime
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/server/policy"
-	"github.com/croessner/nauthilus/server/policy/registry"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
 func TestSnapshotStorePublishesDetachedCopies(t *testing.T) {

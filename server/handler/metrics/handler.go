@@ -19,11 +19,11 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 
-	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
+	mdauth "github.com/croessner/nauthilus/v3/server/middleware/auth"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"

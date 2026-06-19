@@ -16,7 +16,7 @@
 // Package rediscli contains Redis client helpers and key builders.
 package rediscli
 
-import "github.com/croessner/nauthilus/server/definitions"
+import "github.com/croessner/nauthilus/v3/server/definitions"
 
 // BuildKey applies the configured Redis prefix without changing the key body.
 func BuildKey(prefix string, key string) string {

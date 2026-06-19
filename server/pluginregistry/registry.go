@@ -22,10 +22,10 @@ import (
 	"slices"
 	"strings"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/policy"
-	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
 var (

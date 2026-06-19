@@ -4,7 +4,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/v3/server/secret"
 )
 
 const defaultGRPCAuthorityAddress = "127.0.0.1:9444"

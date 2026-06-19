@@ -19,7 +19,7 @@ package enforcement
 import (
 	"context"
 
-	"github.com/croessner/nauthilus/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy"
 )
 
 // Decision is the minimal enforcement handoff for later adapters.

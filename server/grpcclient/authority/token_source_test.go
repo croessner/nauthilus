@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/idp/clientauth"
-	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/idp/clientauth"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/go-redis/redismock/v9"
 	"github.com/golang-jwt/jwt/v5"
 )

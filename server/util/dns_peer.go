@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/v3/server/config"
 )
 
 // DNSResolverPeerFromAddress normalizes a DNS resolver address (optionally including scheme and port)

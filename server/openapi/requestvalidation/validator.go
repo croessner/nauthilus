@@ -30,7 +30,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/openapi"
+	"github.com/croessner/nauthilus/v3/server/openapi"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/getkin/kin-openapi/routers"

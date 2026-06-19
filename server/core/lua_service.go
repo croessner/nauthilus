@@ -16,8 +16,8 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/policy/report"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/policy/report"
 	"github.com/gin-gonic/gin"
 )
 

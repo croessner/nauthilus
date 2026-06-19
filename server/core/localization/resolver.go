@@ -20,7 +20,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	"golang.org/x/text/language"
 )
 

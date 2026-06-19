@@ -23,8 +23,8 @@ import (
 	"strings"
 
 	"github.com/crewjam/saml"
-	"github.com/croessner/nauthilus/server/config"
-	slodomain "github.com/croessner/nauthilus/server/idp/slo"
+	"github.com/croessner/nauthilus/v3/server/config"
+	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
 	"github.com/gin-gonic/gin"
 	"github.com/segmentio/ksuid"
 )

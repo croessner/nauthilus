@@ -21,10 +21,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
-	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
-	"github.com/croessner/nauthilus/server/model/mfa"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/gin-gonic/gin"
 )
 

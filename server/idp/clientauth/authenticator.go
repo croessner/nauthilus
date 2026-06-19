@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/idp/signing"
-	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/v3/server/idp/signing"
+	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/golang-jwt/jwt/v5"
 )
 

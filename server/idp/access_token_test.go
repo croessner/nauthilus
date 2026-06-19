@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/idp/signing"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/idp/signing"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
 )

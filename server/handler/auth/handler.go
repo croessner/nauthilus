@@ -18,10 +18,10 @@ package auth
 import (
 	"net/http"
 
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
-	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
 )
 

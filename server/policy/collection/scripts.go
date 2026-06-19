@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/policy"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 // ScriptKind identifies the Lua script family observed by the adapter.

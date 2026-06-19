@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/policy"
-	policycollection "github.com/croessner/nauthilus/server/policy/collection"
-	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
-	"github.com/croessner/nauthilus/server/policy/report"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
+	"github.com/croessner/nauthilus/v3/server/policy/report"
 )
 
 const (

@@ -20,9 +20,9 @@ import (
 	"testing"
 
 	"github.com/crewjam/saml"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/handler/deps"
-	serveridp "github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	serveridp "github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/stretchr/testify/assert"
 )
 

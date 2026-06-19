@@ -18,8 +18,8 @@ package core
 import (
 	"log/slog"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 
 	"github.com/gin-gonic/gin"
 )

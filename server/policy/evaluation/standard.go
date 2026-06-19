@@ -26,10 +26,10 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/policy"
-	"github.com/croessner/nauthilus/server/policy/observability"
-	"github.com/croessner/nauthilus/server/policy/report"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/observability"
+	"github.com/croessner/nauthilus/v3/server/policy/report"
 )
 
 const (

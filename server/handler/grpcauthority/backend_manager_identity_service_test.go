@@ -22,12 +22,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
-	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
-	"github.com/croessner/nauthilus/server/model/mfa"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	identityv1 "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1"
+	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 

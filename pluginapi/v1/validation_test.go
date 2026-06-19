@@ -225,7 +225,7 @@ func TestValidateMetadata(t *testing.T) {
 }
 
 func TestSecretContractIsClosureOnly(t *testing.T) {
-	secret := reflect.TypeOf((*Secret)(nil)).Elem()
+	secret := reflect.TypeFor[Secret]()
 
 	if _, ok := secret.MethodByName("WithBytes"); !ok {
 		t.Fatal("Secret must expose WithBytes")

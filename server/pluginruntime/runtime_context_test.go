@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 )
 
 const (
@@ -101,7 +101,7 @@ func TestRuntimeDeltaConflictLoggingIsBoundedAndSecretSafe(t *testing.T) {
 	logger := &recordingRuntimeLogger{}
 
 	deltas := make([]pluginapi.RuntimeDelta, 0, RuntimeDeltaConflictLogLimit+4)
-	for index := 0; index < RuntimeDeltaConflictLogLimit+4; index++ {
+	for index := range RuntimeDeltaConflictLogLimit + 4 {
 		deltas = append(deltas, pluginapi.RuntimeDelta{
 			Set: map[string]any{runtimeContextSharedKey: fmt.Sprintf("secret-value-%d", index)},
 		})

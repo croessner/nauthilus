@@ -22,11 +22,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/policy"
-	policycollection "github.com/croessner/nauthilus/server/policy/collection"
-	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
-	"github.com/croessner/nauthilus/server/policy/report"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
+	"github.com/croessner/nauthilus/v3/server/policy/report"
 
 	lua "github.com/yuin/gopher-lua"
 )

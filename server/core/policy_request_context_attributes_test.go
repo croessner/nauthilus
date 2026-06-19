@@ -22,12 +22,12 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/policy"
-	"github.com/croessner/nauthilus/server/policy/compiler"
-	"github.com/croessner/nauthilus/server/policy/report"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/compiler"
+	"github.com/croessner/nauthilus/v3/server/policy/report"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	"github.com/gin-gonic/gin"
 )

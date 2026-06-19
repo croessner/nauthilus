@@ -16,8 +16,8 @@
 package rediscli
 
 import (
-	"github.com/croessner/nauthilus/server/secret"
-	"github.com/croessner/nauthilus/server/security"
+	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v3/server/security"
 )
 
 // SecurityManager handles encryption and decryption of sensitive data stored in Redis.

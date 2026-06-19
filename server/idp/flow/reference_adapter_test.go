@@ -22,7 +22,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
 type testSessionManager struct {

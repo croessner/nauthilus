@@ -20,8 +20,8 @@ package auth
 import (
 	"net/http"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
 )
 

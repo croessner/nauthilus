@@ -23,11 +23,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
-	"github.com/croessner/nauthilus/server/stats"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/stats"
+	"github.com/croessner/nauthilus/v3/server/util"
 
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/gin-gonic/gin"

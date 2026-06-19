@@ -16,7 +16,7 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/v3/server/config"
 )
 
 // FillIdTokenClaims populates a map of claims from IdTokenClaims configuration.

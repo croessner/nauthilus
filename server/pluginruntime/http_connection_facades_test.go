@@ -26,9 +26,9 @@ import (
 	"testing"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
-	"github.com/croessner/nauthilus/server/testing/tracetest"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/testing/tracetest"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"

@@ -21,8 +21,8 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	srvdefs "github.com/croessner/nauthilus/server/definitions"
-	srvutil "github.com/croessner/nauthilus/server/util"
+	srvdefs "github.com/croessner/nauthilus/v3/server/definitions"
+	srvutil "github.com/croessner/nauthilus/v3/server/util"
 
 	"golang.org/x/crypto/argon2"
 )

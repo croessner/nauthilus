@@ -15,7 +15,7 @@
 
 package authv1
 
-import "github.com/croessner/nauthilus/server/model/authdto"
+import "github.com/croessner/nauthilus/v3/server/model/authdto"
 
 // AuthRequestToDTO maps a gRPC authentication request to the shared auth DTO.
 func AuthRequestToDTO(request *AuthRequest) authdto.Request {

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -43,8 +43,8 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/util"
 	dsig "github.com/russellhaering/goxmldsig"
 )
 

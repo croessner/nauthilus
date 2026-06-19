@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/middleware/securityheaders"
+	"github.com/croessner/nauthilus/v3/server/middleware/securityheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )

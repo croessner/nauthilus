@@ -24,12 +24,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/backend"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/redis/go-redis/v9"
 )
 

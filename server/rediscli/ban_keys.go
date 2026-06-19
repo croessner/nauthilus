@@ -20,7 +20,7 @@ import (
 	"hash/crc32"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
 // GetBruteForceBanKey returns the Redis key for an individual per-network ban.

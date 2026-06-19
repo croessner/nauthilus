@@ -46,7 +46,7 @@ func TestResponseMutationResultSurfaces(t *testing.T) {
 		t.Fatalf("obligation response mutation = %#v, want status header interaction", obligation.Response)
 	}
 
-	if _, ok := reflect.TypeOf(PostActionEnqueueResult{}).FieldByName("Response"); ok {
+	if _, ok := reflect.TypeFor[PostActionEnqueueResult]().FieldByName("Response"); ok {
 		t.Fatal("post-action enqueue results must not expose late response mutation")
 	}
 }

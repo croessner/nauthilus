@@ -3,9 +3,9 @@ package metrics
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/util"
 )
 
 func TestEnforcement(t *testing.T) {
-	util.AssertNoForbiddenSymbols(t, "github.com/croessner/nauthilus/server/handler/metrics/handler.go")
+	util.AssertNoForbiddenSymbols(t, "github.com/croessner/nauthilus/v3/server/handler/metrics/handler.go")
 }

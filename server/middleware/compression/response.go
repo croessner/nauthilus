@@ -19,9 +19,9 @@ import (
 	"compress/gzip"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/middleware/brmw"
-	"github.com/croessner/nauthilus/server/middleware/zstdmw"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/middleware/brmw"
+	"github.com/croessner/nauthilus/v3/server/middleware/zstdmw"
 
 	gzipmw "github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"

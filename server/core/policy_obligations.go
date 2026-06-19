@@ -19,13 +19,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/policy"
-	"github.com/croessner/nauthilus/server/policy/observability"
-	"github.com/croessner/nauthilus/server/policy/report"
-	"github.com/croessner/nauthilus/server/stats"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/observability"
+	"github.com/croessner/nauthilus/v3/server/policy/report"
+	"github.com/croessner/nauthilus/v3/server/stats"
+	"github.com/croessner/nauthilus/v3/server/util"
 
 	"github.com/gin-gonic/gin"
 )

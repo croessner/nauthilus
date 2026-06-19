@@ -22,8 +22,8 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
 // claimDefinition holds scope bindings and a default claim type for a claim name.

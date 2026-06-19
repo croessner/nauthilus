@@ -5,7 +5,7 @@ package nauthilus.identity.v1;
 import "google/protobuf/timestamp.proto";
 import "server/grpcapi/common/v1/common.proto";
 
-option go_package = "github.com/croessner/nauthilus/server/grpcapi/identity/v1;identityv1";
+option go_package = "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1;identityv1";
 
 // IdentityBackendService exposes persistent identity and MFA data operations.
 service IdentityBackendService {

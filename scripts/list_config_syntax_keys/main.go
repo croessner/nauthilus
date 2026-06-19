@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/v3/server/config"
 )
 
 type syntaxKeys struct {

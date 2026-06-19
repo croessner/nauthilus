@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"

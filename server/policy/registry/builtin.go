@@ -15,7 +15,7 @@
 
 package registry
 
-import "github.com/croessner/nauthilus/server/policy"
+import "github.com/croessner/nauthilus/v3/server/policy"
 
 const (
 	producerBruteForce      = policy.CheckTypeBruteForce

@@ -18,7 +18,7 @@ package language
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/stretchr/testify/assert"
 )
 

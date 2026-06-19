@@ -3,22 +3,24 @@ package pluginruntime
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/pipeline"
-	"github.com/croessner/nauthilus/server/pluginregistry"
-	"github.com/croessner/nauthilus/server/policy"
-	policycollection "github.com/croessner/nauthilus/server/policy/collection"
-	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/lualib"
+	"github.com/croessner/nauthilus/v3/server/lualib/pipeline"
+	"github.com/croessner/nauthilus/v3/server/pluginregistry"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
@@ -142,8 +144,6 @@ func (b *SubjectSourceBridge) evaluateSubjectLevel(
 	group, groupCtx := errgroup.WithContext(contextFromGin(ctx))
 
 	for levelIndex, planned := range level {
-		planned := planned
-		levelIndex := levelIndex
 		component := planned.Value.(pluginregistry.Component)
 
 		group.Go(func() error {
@@ -231,9 +231,7 @@ func applySubjectLevelResults(
 
 	clearMap(runtimeValues)
 
-	for key, value := range merged {
-		runtimeValues[key] = value
-	}
+	maps.Copy(runtimeValues, merged)
 
 	return nil
 }
@@ -778,13 +776,7 @@ func ipPolicyFactValue(id string, value any) (netip.Addr, error) {
 }
 
 func policyOperationAllowed(operations []policy.Operation, operation policy.Operation) bool {
-	for _, candidate := range operations {
-		if candidate == operation {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(operations, operation)
 }
 
 func pluginSubjectCheckName(component pluginregistry.Component) string {

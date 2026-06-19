@@ -23,8 +23,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	logcolor "github.com/croessner/nauthilus/server/log/color"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	logcolor "github.com/croessner/nauthilus/v3/server/log/color"
 )
 
 var (

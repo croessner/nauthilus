@@ -19,11 +19,11 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/lualib/hook"
-	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/lualib/hook"
+	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/gin-gonic/gin"
 )
 

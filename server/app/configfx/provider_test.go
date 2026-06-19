@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/v3/server/config"
 )
 
 func TestProviderNewProviderRequiresConfigLoaded(t *testing.T) {

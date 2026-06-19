@@ -19,9 +19,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/frontend"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/frontend"
 	"github.com/gin-gonic/gin"
 )
 

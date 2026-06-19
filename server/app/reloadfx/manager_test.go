@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/opsfx"
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/app/opsfx"
+	"github.com/croessner/nauthilus/v3/server/config"
 )
 
 type fakeReloader struct {

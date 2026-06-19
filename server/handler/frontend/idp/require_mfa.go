@@ -22,12 +22,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/core/cookie"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/idp"
-	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
+	"github.com/croessner/nauthilus/v3/server/backend"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/core/cookie"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/idp"
+	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/gin-gonic/gin"
 )
 

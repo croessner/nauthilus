@@ -83,7 +83,7 @@ func publicPackageGoFiles(root string) ([]string, error) {
 
 // isForbiddenPublicAPIImport reports whether importPath binds pluginapi to host internals.
 func isForbiddenPublicAPIImport(importPath string) bool {
-	return importPath == "github.com/croessner/nauthilus/server" ||
-		strings.HasPrefix(importPath, "github.com/croessner/nauthilus/server/") ||
+	return importPath == "github.com/croessner/nauthilus/v3/server" ||
+		strings.HasPrefix(importPath, "github.com/croessner/nauthilus/v3/server/") ||
 		importPath == "github.com/gin-gonic/gin"
 }

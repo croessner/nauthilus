@@ -19,9 +19,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/croessner/nauthilus/pluginapi/v1/password"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/pluginapi/v1/password"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/util"
 	lua "github.com/yuin/gopher-lua"
 )
 

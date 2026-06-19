@@ -17,7 +17,7 @@ GOLANGCI_NEW_FROM_REV ?= HEAD
 NAUTHILUS_CONF_DIR ?= /etc/nauthilus
 NAUTHILUS_PLUGINS_DIR ?= /usr/local/share/nauthilus/lua-plugins.d
 GOVULNCHECK ?= govulncheck
-CONFIG_EXPANSION_LDFLAGS := -X github.com/croessner/nauthilus/server/config.nauthilusConfDir=$(NAUTHILUS_CONF_DIR) -X github.com/croessner/nauthilus/server/config.nauthilusPluginsDir=$(NAUTHILUS_PLUGINS_DIR)
+CONFIG_EXPANSION_LDFLAGS := -X github.com/croessner/nauthilus/v3/server/config.nauthilusConfDir=$(NAUTHILUS_CONF_DIR) -X github.com/croessner/nauthilus/v3/server/config.nauthilusPluginsDir=$(NAUTHILUS_PLUGINS_DIR)
 
 export GOEXPERIMENT := runtimesecret
 

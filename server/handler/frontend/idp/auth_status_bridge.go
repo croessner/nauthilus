@@ -21,12 +21,12 @@ import (
 	stderrors "errors"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/core/cookie"
-	"github.com/croessner/nauthilus/server/core/localization"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/frontend"
-	"github.com/croessner/nauthilus/server/handler/deps"
-	idpservice "github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/v3/server/core/cookie"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/frontend"
+	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	idpservice "github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/gin-gonic/gin"
 )
 

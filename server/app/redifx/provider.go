@@ -18,8 +18,8 @@ package redifx
 import (
 	"log/slog"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 )
 
 // Client is the Redis facade type used for DI.

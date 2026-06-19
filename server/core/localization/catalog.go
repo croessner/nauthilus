@@ -23,7 +23,7 @@ import (
 	"sort"
 	"strings"
 
-	corelang "github.com/croessner/nauthilus/server/core/language"
+	corelang "github.com/croessner/nauthilus/v3/server/core/language"
 	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/text/language"
 )

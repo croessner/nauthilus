@@ -21,10 +21,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/lualib/luastack"
-	"github.com/croessner/nauthilus/server/stats"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/lualib/convert"
+	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
+	"github.com/croessner/nauthilus/v3/server/stats"
+	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )

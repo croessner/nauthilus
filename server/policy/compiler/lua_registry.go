@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/policy"
-	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 
 	lua "github.com/yuin/gopher-lua"
 )

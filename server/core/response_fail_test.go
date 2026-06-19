@@ -21,12 +21,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/config"
-	corepkg "github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/core/localization"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/encoding/cborcodec"
-	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/v3/server/config"
+	corepkg "github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/encoding/cborcodec"
+	"github.com/croessner/nauthilus/v3/server/log"
 
 	"github.com/gin-gonic/gin"
 )

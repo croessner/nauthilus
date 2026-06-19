@@ -19,10 +19,10 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/backend/ldappool"
-	"github.com/croessner/nauthilus/server/backend/priorityqueue"
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/backend/ldappool"
+	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
+	"github.com/croessner/nauthilus/v3/server/config"
 )
 
 // LDAPQueue abstracts the shared lookup request queue for LDAP workers.

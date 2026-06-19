@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/localcache"
+	"github.com/croessner/nauthilus/v3/server/localcache"
 )
 
 // sharedTTLCache holds the LDAP-scoped shared TTL cache. It is created when the

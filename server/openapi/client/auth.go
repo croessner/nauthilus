@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"strings"
 
-	management "github.com/croessner/nauthilus/server/openapi/generated/management"
+	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
 )
 
 const (

@@ -42,8 +42,7 @@ func TestHostGoLogsPanicWithoutRecoveredValue(t *testing.T) {
 
 	host := NewHost(WithLogger(slog.New(slog.NewJSONHandler(&buf, nil))))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	host.Go(ctx, "worker", func(context.Context) error {
 		panic("panic contains password=secret")
@@ -65,8 +64,7 @@ func TestHostGoLogsWorkerErrorWithoutRawValue(t *testing.T) {
 
 	host := NewHost(WithLogger(slog.New(slog.NewJSONHandler(&buf, nil))))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	host.Go(ctx, "worker", func(context.Context) error {
 		return errors.New("worker failed with password=secret")

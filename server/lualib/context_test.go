@@ -18,7 +18,7 @@ package lualib
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/v3/server/lualib/convert"
 	lua "github.com/yuin/gopher-lua"
 )
 

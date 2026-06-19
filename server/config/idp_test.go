@@ -26,8 +26,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
 )

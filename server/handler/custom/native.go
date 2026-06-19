@@ -6,17 +6,18 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -207,9 +208,7 @@ func (i *nativeHookIndex) aliasMap() map[string]string {
 	}
 
 	aliases := make(map[string]string, len(i.aliases))
-	for key, value := range i.aliases {
-		aliases[key] = value
-	}
+	maps.Copy(aliases, i.aliases)
 
 	return aliases
 }

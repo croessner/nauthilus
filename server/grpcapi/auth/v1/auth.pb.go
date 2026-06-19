@@ -7,7 +7,7 @@
 package authv1
 
 import (
-	v1 "github.com/croessner/nauthilus/server/grpcapi/common/v1"
+	v1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -1035,7 +1035,7 @@ const file_server_grpcapi_auth_v1_auth_proto_rawDesc = "" +
 	"\vAuthService\x12O\n" +
 	"\fAuthenticate\x12\x1e.nauthilus.auth.v1.AuthRequest\x1a\x1f.nauthilus.auth.v1.AuthResponse\x12[\n" +
 	"\x0eLookupIdentity\x12(.nauthilus.auth.v1.LookupIdentityRequest\x1a\x1f.nauthilus.auth.v1.AuthResponse\x12_\n" +
-	"\fListAccounts\x12&.nauthilus.auth.v1.ListAccountsRequest\x1a'.nauthilus.auth.v1.ListAccountsResponseB>Z<github.com/croessner/nauthilus/server/grpcapi/auth/v1;authv1b\x06proto3"
+	"\fListAccounts\x12&.nauthilus.auth.v1.ListAccountsRequest\x1a'.nauthilus.auth.v1.ListAccountsResponseBAZ?github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1;authv1b\x06proto3"
 
 var (
 	file_server_grpcapi_auth_v1_auth_proto_rawDescOnce sync.Once

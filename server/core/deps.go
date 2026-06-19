@@ -18,12 +18,12 @@ package core
 import (
 	"log/slog"
 
-	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/backend/accountcache"
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/backend"
+	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 )
 
 // AuthDeps bundles dependencies required by authentication request paths.

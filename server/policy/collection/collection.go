@@ -24,12 +24,12 @@ import (
 	"sync"
 	"time"
 
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
-	"github.com/croessner/nauthilus/server/policy"
-	"github.com/croessner/nauthilus/server/policy/evaluation"
-	"github.com/croessner/nauthilus/server/policy/observability"
-	"github.com/croessner/nauthilus/server/policy/report"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/evaluation"
+	"github.com/croessner/nauthilus/v3/server/policy/observability"
+	"github.com/croessner/nauthilus/v3/server/policy/report"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"

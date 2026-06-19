@@ -26,12 +26,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/policy"
-	policyfsm "github.com/croessner/nauthilus/server/policy/fsm"
-	"github.com/croessner/nauthilus/server/policy/observability"
-	"github.com/croessner/nauthilus/server/policy/report"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyfsm "github.com/croessner/nauthilus/v3/server/policy/fsm"
+	"github.com/croessner/nauthilus/v3/server/policy/observability"
+	"github.com/croessner/nauthilus/v3/server/policy/report"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/text/language"

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/handler/deps"
-	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 )

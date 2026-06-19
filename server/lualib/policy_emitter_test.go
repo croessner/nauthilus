@@ -19,12 +19,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/policy"
-	policycollection "github.com/croessner/nauthilus/server/policy/collection"
-	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
-	"github.com/croessner/nauthilus/server/policy/report"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
+	"github.com/croessner/nauthilus/v3/server/policy/report"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	lua "github.com/yuin/gopher-lua"
 )

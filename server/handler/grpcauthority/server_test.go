@@ -35,11 +35,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
-	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
-	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
+	"github.com/croessner/nauthilus/v3/server/secret"
 
 	"github.com/golang-jwt/jwt/v5"
 	"go.opentelemetry.io/otel"

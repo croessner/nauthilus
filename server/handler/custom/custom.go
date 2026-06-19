@@ -20,13 +20,13 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/lualib/hook"
-	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
-	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/lualib/hook"
+	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/util"
 
 	"github.com/gin-gonic/gin"
 )

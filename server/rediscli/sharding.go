@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"hash/crc32"
 
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
 // GetShardID calculates a 2-digit hex shard ID (00-FF) for a given input string.

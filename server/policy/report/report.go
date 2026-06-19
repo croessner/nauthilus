@@ -18,7 +18,7 @@ package report
 
 import "maps"
 
-import "github.com/croessner/nauthilus/server/policy"
+import "github.com/croessner/nauthilus/v3/server/policy"
 
 // RedactedValue is the placeholder used for unsafe report values.
 const RedactedValue = "[redacted]"

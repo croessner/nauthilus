@@ -20,8 +20,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/secret"
-	"github.com/croessner/nauthilus/server/security"
+	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v3/server/security"
 )
 
 func TestDecryptCiphertextUsesNauthilusSecurityManager(t *testing.T) {

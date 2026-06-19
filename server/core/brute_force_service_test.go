@@ -16,8 +16,8 @@
 package core_test
 
 import (
-	corepkg "github.com/croessner/nauthilus/server/core"
-	_ "github.com/croessner/nauthilus/server/core/auth"
+	corepkg "github.com/croessner/nauthilus/v3/server/core"
+	_ "github.com/croessner/nauthilus/v3/server/core/auth"
 
 	"testing"
 )

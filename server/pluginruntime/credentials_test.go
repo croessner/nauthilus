@@ -19,8 +19,8 @@ import (
 	"context"
 	"testing"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/secret"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/secret"
 )
 
 func TestCredentialAccessRequiresCapability(t *testing.T) {

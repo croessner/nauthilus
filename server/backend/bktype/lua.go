@@ -19,10 +19,10 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/lualib"
-	policycollection "github.com/croessner/nauthilus/server/policy/collection"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/lualib"
+	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
 )
 
 // LuaRequest is a subset from the Authentication struct.

@@ -24,12 +24,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/pipeline"
-	policycollection "github.com/croessner/nauthilus/server/policy/collection"
-	"github.com/croessner/nauthilus/server/testing/tracetest"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/lualib"
+	"github.com/croessner/nauthilus/v3/server/lualib/pipeline"
+	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
+	"github.com/croessner/nauthilus/v3/server/testing/tracetest"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
 )

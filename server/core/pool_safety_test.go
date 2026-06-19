@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/stretchr/testify/assert"
 )
 

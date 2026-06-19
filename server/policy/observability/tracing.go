@@ -15,7 +15,7 @@
 
 package observability
 
-import monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+import monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 
 // TracerScope is the OpenTelemetry instrumentation scope for policy internals.
 const TracerScope = "nauthilus/policy"

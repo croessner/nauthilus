@@ -18,8 +18,8 @@ package config
 import (
 	"fmt"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/errors"
 )
 
 type LuaSection struct {

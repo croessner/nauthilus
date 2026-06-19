@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 )
 
 func TestLDAPQueueRouting(t *testing.T) {

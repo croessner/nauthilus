@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/golang-jwt/jwt/v5"
 )
 

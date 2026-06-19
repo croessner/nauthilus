@@ -18,10 +18,10 @@ package core
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/model/authdto"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/lualib"
+	"github.com/croessner/nauthilus/v3/server/model/authdto"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	lua "github.com/yuin/gopher-lua"

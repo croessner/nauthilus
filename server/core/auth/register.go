@@ -16,7 +16,7 @@
 package auth
 
 import (
-	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/v3/server/core"
 )
 
 // Package auth wires the default implementations for pluggable auth services

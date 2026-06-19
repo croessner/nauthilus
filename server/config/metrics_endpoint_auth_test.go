@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/v3/server/secret"
 )
 
 const (

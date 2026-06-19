@@ -18,7 +18,7 @@ package core
 import (
 	"strings"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/go-ldap/ldap/v3"
 )
 

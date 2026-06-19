@@ -18,7 +18,7 @@ package core
 import (
 	"strings"
 
-	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/v3/server/secret"
 )
 
 // Credentials captures user-supplied credentials (username/password, optional MFA).

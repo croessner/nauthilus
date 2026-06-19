@@ -566,7 +566,7 @@ syntax = "proto3";
 
 package nauthilus.common.v1;
 
-option go_package = "github.com/croessner/nauthilus/server/grpcapi/common/v1;commonv1";
+option go_package = "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1;commonv1";
 
 enum OperationResult {
   OPERATION_RESULT_UNSPECIFIED = 0;
@@ -624,7 +624,7 @@ package nauthilus.identity.v1;
 import "google/protobuf/timestamp.proto";
 import "server/grpcapi/common/v1/common.proto";
 
-option go_package = "github.com/croessner/nauthilus/server/grpcapi/identity/v1;identityv1";
+option go_package = "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1;identityv1";
 
 message RequestContext {
   string username = 1;

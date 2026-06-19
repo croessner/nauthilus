@@ -21,11 +21,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/lualib/connmgr"
-	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/lualib/connmgr"
+	"github.com/croessner/nauthilus/v3/server/stats"
 )
 
 // ConnMgrService manages the lifecycle of connection monitoring with configurable intervals and context handling.

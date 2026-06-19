@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/localcache"
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/localcache"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 
 	"go.opentelemetry.io/otel/attribute"
 )

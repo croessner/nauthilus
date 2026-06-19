@@ -19,10 +19,10 @@ package policyfx
 import (
 	"context"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/reloadfx"
-	"github.com/croessner/nauthilus/server/policy/compiler"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/app/reloadfx"
+	"github.com/croessner/nauthilus/v3/server/policy/compiler"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	"go.uber.org/fx"
 )

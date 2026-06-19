@@ -16,8 +16,8 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/server/policy"
-	policyfsm "github.com/croessner/nauthilus/server/policy/fsm"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyfsm "github.com/croessner/nauthilus/v3/server/policy/fsm"
 )
 
 type authFSMState string

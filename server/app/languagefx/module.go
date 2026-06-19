@@ -18,8 +18,8 @@ package languagefx
 import (
 	"log/slog"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/core/language"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/core/language"
 	"go.uber.org/fx"
 )
 

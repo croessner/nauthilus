@@ -20,7 +20,7 @@ import (
 	"os"
 	stdplugin "plugin"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 )
 
 // main opens a compiled plugin artifact and verifies the public factory contract.

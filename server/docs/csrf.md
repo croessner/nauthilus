@@ -26,7 +26,7 @@ interface-based replacement for external dependencies like `nosurf` and `gin-ada
 ### Basic Usage
 
 ```go
-import "github.com/croessner/nauthilus/server/middleware/csrf"
+import "github.com/croessner/nauthilus/v3/server/middleware/csrf"
 
 // Simple middleware setup
 router.Use(csrf.New())
@@ -592,7 +592,7 @@ token := nosurf.Token(ctx.Request)
 **After:**
 
 ```go
-import "github.com/croessner/nauthilus/server/middleware/csrf"
+import "github.com/croessner/nauthilus/v3/server/middleware/csrf"
 
 router.Use(csrf.New())
 token := csrf.Token(ctx)

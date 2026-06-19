@@ -20,12 +20,12 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/redifx"
-	"github.com/croessner/nauthilus/server/bruteforce"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log/level"
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/app/redifx"
+	"github.com/croessner/nauthilus/v3/server/bruteforce"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/log/level"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 
 	jsoniter "github.com/json-iterator/go"
 	"go.opentelemetry.io/otel/attribute"

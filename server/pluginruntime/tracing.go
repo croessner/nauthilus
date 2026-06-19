@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"strings"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"

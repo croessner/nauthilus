@@ -16,8 +16,8 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/server/core/cookie"
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/core/cookie"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
 // remoteBackendRefSessionKeys groups the session keys that hold one backend reference.

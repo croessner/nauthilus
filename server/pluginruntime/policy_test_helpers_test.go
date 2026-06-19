@@ -19,11 +19,11 @@ import (
 	"context"
 	"testing"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/policy"
-	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 const pluginPolicyModeEnforce = "enforce"

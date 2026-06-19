@@ -1,6 +1,6 @@
 package core
 
-import "github.com/croessner/nauthilus/server/config"
+import "github.com/croessner/nauthilus/v3/server/config"
 
 // Test-only default environment.
 //

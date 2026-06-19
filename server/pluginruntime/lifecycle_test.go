@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/pluginloader"
-	"github.com/croessner/nauthilus/server/pluginregistry"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/pluginloader"
+	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 )
 
 const (
@@ -147,8 +147,7 @@ func TestRunner_StopWaitsForHostWorkers(t *testing.T) {
 }
 
 func TestRunner_StopReportsHostWorkerWaitTimeout(t *testing.T) {
-	serviceCtx, cancelService := context.WithCancel(context.Background())
-	defer cancelService()
+	serviceCtx := t.Context()
 
 	host := NewHost(WithServiceContext(serviceCtx))
 	plugin := &workerRuntimePlugin{

@@ -18,8 +18,8 @@ package auth
 import (
 	"math"
 
-	"github.com/croessner/nauthilus/server/bruteforce"
-	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/v3/server/bruteforce"
+	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/gin-gonic/gin"
 )
 

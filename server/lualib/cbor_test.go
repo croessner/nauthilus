@@ -18,7 +18,7 @@ package lualib
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/fxamacker/cbor/v2"
 	lua "github.com/yuin/gopher-lua"
 )

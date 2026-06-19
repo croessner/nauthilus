@@ -1,8 +1,8 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/backend"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/redis/go-redis/v9"
 )
 

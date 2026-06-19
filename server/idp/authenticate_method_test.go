@@ -4,14 +4,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	coreauth "github.com/croessner/nauthilus/server/core/auth"
+	coreauth "github.com/croessner/nauthilus/v3/server/core/auth"
 
-	"github.com/croessner/nauthilus/server/backend/accountcache"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/handler/deps"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 )

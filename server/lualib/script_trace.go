@@ -19,7 +19,7 @@ import (
 	"context"
 	"strings"
 
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"

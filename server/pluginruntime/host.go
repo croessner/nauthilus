@@ -21,10 +21,10 @@ import (
 	"net/http"
 	"sync"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/pluginregistry"
-	"github.com/croessner/nauthilus/server/rediscli"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/pluginregistry"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 )
 
 var _ pluginapi.Host = (*Host)(nil)
@@ -316,10 +316,8 @@ func (h *Host) Go(ctx context.Context, name string, fn func(context.Context) err
 	}
 
 	workerCtx, cancel := context.WithCancel(h.ServiceContext())
-	h.workers.Add(1)
 
-	go func() {
-		defer h.workers.Done()
+	h.workers.Go(func() {
 		defer cancel()
 		defer func() {
 			if recovered := recover(); recovered != nil {
@@ -332,7 +330,7 @@ func (h *Host) Go(ctx context.Context, name string, fn func(context.Context) err
 		if err := fn(workerCtx); err != nil {
 			h.Logger(name).Error(workerCtx, "plugin worker stopped with error", pluginapi.LogField{Key: pluginLogFieldErrorClass, Value: "worker"})
 		}
-	}()
+	})
 }
 
 // WaitWorkers waits for supervised plugin workers to exit.

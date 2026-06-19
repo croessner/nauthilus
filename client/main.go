@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/croessner/nauthilus/client/engine"
-	"github.com/croessner/nauthilus/internal/flagutil"
+	"github.com/croessner/nauthilus/v3/client/engine"
+	"github.com/croessner/nauthilus/v3/internal/flagutil"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )

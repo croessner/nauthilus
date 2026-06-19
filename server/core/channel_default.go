@@ -20,7 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/v3/server/backend"
 )
 
 // Channel injection seam for core subtrees.

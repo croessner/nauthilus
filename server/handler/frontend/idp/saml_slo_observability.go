@@ -20,10 +20,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	slodomain "github.com/croessner/nauthilus/server/idp/slo"
-	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
+	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )

@@ -18,13 +18,13 @@ package common
 import (
 	"log/slog"
 
-	"github.com/croessner/nauthilus/server/config"
-	corelang "github.com/croessner/nauthilus/server/core/language"
+	"github.com/croessner/nauthilus/v3/server/config"
+	corelang "github.com/croessner/nauthilus/v3/server/core/language"
 
-	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
-	"github.com/croessner/nauthilus/server/middleware/csrf"
-	"github.com/croessner/nauthilus/server/middleware/i18n"
-	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
+	mdauth "github.com/croessner/nauthilus/v3/server/middleware/auth"
+	"github.com/croessner/nauthilus/v3/server/middleware/csrf"
+	"github.com/croessner/nauthilus/v3/server/middleware/i18n"
+	mdlua "github.com/croessner/nauthilus/v3/server/middleware/lua"
 
 	"github.com/gin-gonic/gin"
 )

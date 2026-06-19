@@ -19,9 +19,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/policy"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 const cleanupStandardTLSEnforcementPolicy = "standard_tls_enforcement"

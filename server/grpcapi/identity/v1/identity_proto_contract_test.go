@@ -18,7 +18,7 @@ package identityv1
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/server/grpcapi/internal/prototest"
+	"github.com/croessner/nauthilus/v3/server/grpcapi/internal/prototest"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 )

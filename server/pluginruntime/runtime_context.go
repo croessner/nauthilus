@@ -21,9 +21,10 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 )
 
 var (
@@ -63,10 +64,8 @@ func ValidateRuntimeDelta(delta pluginapi.RuntimeDelta) error {
 		}
 	}
 
-	for _, key := range delta.Delete {
-		if key == "" {
-			return fmt.Errorf("%w: delete key is empty", ErrInvalidRuntimeKey)
-		}
+	if slices.Contains(delta.Delete, "") {
+		return fmt.Errorf("%w: delete key is empty", ErrInvalidRuntimeKey)
 	}
 
 	return nil

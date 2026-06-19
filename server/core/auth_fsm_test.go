@@ -18,8 +18,8 @@ package core
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/policy"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/policy"
 )
 
 func TestNextAuthFSMState_AllowedTransitions(t *testing.T) {

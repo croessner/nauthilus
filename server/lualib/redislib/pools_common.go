@@ -18,8 +18,8 @@ package redislib
 import (
 	"fmt"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"

@@ -20,14 +20,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/bruteforce"
-	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/policy"
-	policycollection "github.com/croessner/nauthilus/server/policy/collection"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/bruteforce"
+	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	"github.com/gin-gonic/gin"
 )

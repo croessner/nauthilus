@@ -16,9 +16,9 @@
 package auth
 
 import (
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/environment"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/lualib"
+	"github.com/croessner/nauthilus/v3/server/lualib/environment"
 	"github.com/gin-gonic/gin"
 )
 

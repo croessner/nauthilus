@@ -20,9 +20,9 @@ import (
 	"errors"
 	"time"
 
-	commonv1 "github.com/croessner/nauthilus/server/grpcapi/common/v1"
-	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
-	"github.com/croessner/nauthilus/server/model/mfa"
+	commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
+	identityv1 "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1"
+	"github.com/croessner/nauthilus/v3/server/model/mfa"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

@@ -18,9 +18,9 @@ package core
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/secret"
-	"github.com/croessner/nauthilus/server/security"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v3/server/security"
 )
 
 func TestMasterUserTOTPSecretDecryptOrder(t *testing.T) {

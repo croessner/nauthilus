@@ -19,8 +19,8 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/croessner/nauthilus/server/secret"
-	"github.com/croessner/nauthilus/server/util/crypto"
+	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v3/server/util/crypto"
 )
 
 // Manager handles encryption and decryption of sensitive data.

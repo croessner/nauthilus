@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
+	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/gin-gonic/gin"
 )
 

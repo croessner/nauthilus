@@ -22,11 +22,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/localcache"
-	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/localcache"
+	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/go-ldap/ldap/v3"
 )
 

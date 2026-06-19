@@ -21,9 +21,9 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/openapi/requestvalidation"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/openapi/requestvalidation"
 	"github.com/gin-gonic/gin"
 )
 

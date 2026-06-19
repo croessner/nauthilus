@@ -17,8 +17,8 @@
 package policyschedule
 
 import (
-	"github.com/croessner/nauthilus/server/lualib/pipeline"
-	policycollection "github.com/croessner/nauthilus/server/policy/collection"
+	"github.com/croessner/nauthilus/v3/server/lualib/pipeline"
+	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
 )
 
 // BuildPlan creates a Lua execution plan from a request-local policy script schedule.

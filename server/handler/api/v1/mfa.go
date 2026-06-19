@@ -18,11 +18,11 @@ package v1
 import (
 	"net/http"
 
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/core/cookie"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/handler/deps"
-	"github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/core/cookie"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/gin-gonic/gin"
 )
 

@@ -20,7 +20,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 )
 
 // TestAuthState_Attributes_Concurrent exercises concurrent deletes and conditional sets

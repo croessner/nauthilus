@@ -15,7 +15,7 @@
 
 package identityv1
 
-import "github.com/croessner/nauthilus/server/model/authdto"
+import "github.com/croessner/nauthilus/v3/server/model/authdto"
 
 // DTOToRequestContext maps the shared auth DTO to an identity request context.
 func DTOToRequestContext(dto authdto.Request) *RequestContext {

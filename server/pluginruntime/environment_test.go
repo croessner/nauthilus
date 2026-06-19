@@ -19,11 +19,11 @@ import (
 	"context"
 	"testing"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/pluginregistry"
-	"github.com/croessner/nauthilus/server/policy"
-	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/pluginregistry"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
 const (

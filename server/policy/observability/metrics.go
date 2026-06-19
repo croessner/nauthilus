@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy"
 
 	"github.com/prometheus/client_golang/prometheus"
 )

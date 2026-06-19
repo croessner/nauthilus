@@ -19,8 +19,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/core/localization"
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 
 	lua "github.com/yuin/gopher-lua"
 	"golang.org/x/text/language"

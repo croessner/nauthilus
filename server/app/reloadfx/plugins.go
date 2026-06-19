@@ -18,9 +18,9 @@ package reloadfx
 import (
 	"context"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/pluginruntime"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/pluginruntime"
 )
 
 const pluginReloadOrder = 30

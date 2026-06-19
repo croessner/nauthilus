@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/secret"
 )
 
 func validateRequiredWithinSupported(required, supported []string) bool {

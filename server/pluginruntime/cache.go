@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
-	"github.com/croessner/nauthilus/server/processcache"
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/processcache"
 )
 
 var _ pluginapi.Cache = (*moduleCache)(nil)
