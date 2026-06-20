@@ -258,6 +258,155 @@ func (lm *ldapManagerImpl) runGroupSearch(ctx context.Context, auth *AuthState, 
 	return reply, nil
 }
 
+// initialGroupFrontier returns the first member frontier for group searches.
+func initialGroupFrontier(userDN string) []string {
+	if strings.TrimSpace(userDN) == "" {
+		return []string{""}
+	}
+
+	return []string{userDN}
+}
+
+// markGroupMemberVisited records a member DN and reports whether it was new.
+func markGroupMemberVisited(visitedMembers map[string]struct{}, memberDN string) bool {
+	memberKey := memberDN
+	if memberKey == "" {
+		memberKey = "__EMPTY__"
+	}
+
+	if _, seen := visitedMembers[memberKey]; seen {
+		return false
+	}
+
+	visitedMembers[memberKey] = struct{}{}
+
+	return true
+}
+
+// groupSearchReply executes one group search and normalizes reply errors.
+func (lm *ldapManagerImpl) groupSearchReply(auth *AuthState, protocol *config.LDAPSearchProtocol, groupsCfg *config.LDAPGroups, account string, memberDN string) (*bktype.LDAPReply, error) {
+	searchCtx, cancel := context.WithTimeout(auth.Ctx(), lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPSearch())
+	defer cancel()
+
+	reply, err := lm.runGroupSearch(searchCtx, auth, protocol, groupsCfg, account, memberDN)
+	if err != nil {
+		return nil, err
+	}
+
+	if reply.Err != nil {
+		return nil, reply.Err
+	}
+
+	return reply, nil
+}
+
+// groupSearchResultStrings extracts group names, DNs, and recursive frontier entries from a search reply.
+func groupSearchResultStrings(reply *bktype.LDAPReply, nameAttribute string, recursive bool) ([]string, []string, []string) {
+	if reply.Result == nil {
+		return nil, nil, nil
+	}
+
+	var groups []string
+	if values, ok := reply.Result[nameAttribute]; ok {
+		groups = anySliceToStrings(values)
+	}
+
+	var groupDNS []string
+	if values, ok := reply.Result[definitions.DistinguishedName]; ok {
+		groupDNS = anySliceToStrings(values)
+	}
+
+	if recursive {
+		return groups, groupDNS, groupDNS
+	}
+
+	return groups, groupDNS, nil
+}
+
+// legacyLDAPGroups resolves default memberOf and groups attributes when groups are not configured.
+func (lm *ldapManagerImpl) legacyLDAPGroups(attributes bktype.AttributeMapping) ([]string, []string) {
+	legacyGroups, legacyGroupDistinguishedNames := lm.resolveMemberOfGroups(&config.LDAPGroups{
+		Strategy:  "member_of",
+		Attribute: "memberOf",
+	}, attributes)
+
+	return mergeNormalizedStringSlices(
+		getNormalizedAttributeStrings(attributes, "groups"),
+		legacyGroups,
+	), legacyGroupDistinguishedNames
+}
+
+// groupResolutionCacheSettings returns the cache key and TTL for the current group lookup.
+func (lm *ldapManagerImpl) groupResolutionCacheSettings(auth *AuthState, protocol *config.LDAPSearchProtocol, groupsCfg *config.LDAPGroups, attributes bktype.AttributeMapping, accountField string) (string, string, string, time.Duration) {
+	userDN := getSingleStringAttribute(attributes, definitions.DistinguishedName)
+	account := getSingleStringAttribute(attributes, accountField)
+	groupBaseDN := lm.groupSearchBaseDN(protocol, groupsCfg)
+	groupFilter := lm.groupSearchFilter(groupsCfg)
+	cacheKey := groupResolutionCacheKey(
+		lm.poolName,
+		auth.Request.Protocol.Get(),
+		groupsCfg.GetStrategy(),
+		groupsCfg.GetAttribute(),
+		groupBaseDN,
+		groupFilter,
+		auth.Request.Username,
+		userDN,
+		account,
+	)
+
+	cacheTTL := time.Duration(0)
+	if poolCfg := lm.getPoolLDAPConf(); poolCfg != nil {
+		cacheTTL = poolCfg.GetMembershipCacheTTL()
+	}
+
+	return userDN, account, cacheKey, cacheTTL
+}
+
+// cachedLDAPGroupResolution returns cached groups when membership caching is enabled.
+func cachedLDAPGroupResolution(cacheKey string, cacheTTL time.Duration) ([]string, []string, bool) {
+	if cacheTTL <= 0 {
+		return nil, nil, false
+	}
+
+	cachedValue, ok := ldapMembershipCache.Get(cacheKey)
+	if !ok {
+		return nil, nil, false
+	}
+
+	cached, ok := cachedValue.(cachedGroupResolution)
+	if !ok {
+		return nil, nil, false
+	}
+
+	return cached.Groups, cached.GroupDistinguishedNames, true
+}
+
+// storeLDAPGroupResolution caches resolved groups when membership caching is enabled.
+func storeLDAPGroupResolution(cacheKey string, cacheTTL time.Duration, groups []string, groupDistinguishedNames []string) {
+	if cacheTTL <= 0 {
+		return
+	}
+
+	ldapMembershipCache.Set(cacheKey, cachedGroupResolution{
+		Groups:                  groups,
+		GroupDistinguishedNames: groupDistinguishedNames,
+	}, cacheTTL)
+}
+
+// logLDAPGroupResolutionError records group-resolution failures without failing authentication.
+func (lm *ldapManagerImpl) logLDAPGroupResolutionError(auth *AuthState, logger *slog.Logger, err error) {
+	if err == nil || logger == nil {
+		return
+	}
+
+	level.Warn(logger).Log(
+		definitions.LogKeyGUID, auth.Runtime.GUID,
+		definitions.LogKeyLDAPPoolName, lm.poolName,
+		definitions.LogKeyMsg, "group_resolution_failed",
+		definitions.LogKeyError, err,
+	)
+}
+
 // resolveSearchGroups resolves groups by performing LDAP searches.
 func (lm *ldapManagerImpl) resolveSearchGroups(auth *AuthState, protocol *config.LDAPSearchProtocol, groupsCfg *config.LDAPGroups, account string, userDN string) (groups []string, groupDistinguishedNames []string, err error) {
 	if groupsCfg == nil || !groupsCfg.UsesSearch() {
@@ -269,11 +418,7 @@ func (lm *ldapManagerImpl) resolveSearchGroups(auth *AuthState, protocol *config
 		maxDepth = groupsCfg.GetMaxDepth()
 	}
 
-	frontier := []string{userDN}
-	if strings.TrimSpace(userDN) == "" {
-		frontier = []string{""}
-	}
-
+	frontier := initialGroupFrontier(userDN)
 	visitedMembers := make(map[string]struct{}, maxDepth*2)
 	groupsAcc := make([]string, 0, 8)
 	groupDNAcc := make([]string, 0, 8)
@@ -283,46 +428,19 @@ func (lm *ldapManagerImpl) resolveSearchGroups(auth *AuthState, protocol *config
 		nextFrontier := make([]string, 0, len(frontier))
 
 		for _, memberDN := range frontier {
-			memberKey := memberDN
-			if memberKey == "" {
-				memberKey = "__EMPTY__"
-			}
-
-			if _, seen := visitedMembers[memberKey]; seen {
+			if !markGroupMemberVisited(visitedMembers, memberDN) {
 				continue
 			}
 
-			visitedMembers[memberKey] = struct{}{}
-
-			searchCtx, cancel := context.WithTimeout(auth.Ctx(), lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPSearch())
-			reply, searchErr := lm.runGroupSearch(searchCtx, auth, protocol, groupsCfg, account, memberDN)
-
-			cancel()
-
+			reply, searchErr := lm.groupSearchReply(auth, protocol, groupsCfg, account, memberDN)
 			if searchErr != nil {
 				return nil, nil, searchErr
 			}
 
-			if reply.Err != nil {
-				return nil, nil, reply.Err
-			}
-
-			if reply.Result == nil {
-				continue
-			}
-
-			if values, ok := reply.Result[nameAttribute]; ok {
-				groupsAcc = append(groupsAcc, anySliceToStrings(values)...)
-			}
-
-			if values, ok := reply.Result[definitions.DistinguishedName]; ok {
-				discoveredGroupDistinguishedNames := anySliceToStrings(values)
-				groupDNAcc = append(groupDNAcc, discoveredGroupDistinguishedNames...)
-
-				if groupsCfg.Recursive {
-					nextFrontier = append(nextFrontier, discoveredGroupDistinguishedNames...)
-				}
-			}
+			foundGroups, foundGroupDNS, foundFrontier := groupSearchResultStrings(reply, nameAttribute, groupsCfg.Recursive)
+			groupsAcc = append(groupsAcc, foundGroups...)
+			groupDNAcc = append(groupDNAcc, foundGroupDNS...)
+			nextFrontier = append(nextFrontier, foundFrontier...)
 		}
 
 		if !groupsCfg.Recursive || len(nextFrontier) == 0 {
@@ -348,70 +466,23 @@ func (lm *ldapManagerImpl) resolveGroups(auth *AuthState, protocol *config.LDAPS
 	}
 
 	if groupsCfg == nil || !groupsCfg.IsEnabled() {
-		legacyGroups, legacyGroupDistinguishedNames := lm.resolveMemberOfGroups(&config.LDAPGroups{
-			Strategy:  "member_of",
-			Attribute: "memberOf",
-		}, attributes)
-
-		return mergeNormalizedStringSlices(
-			getNormalizedAttributeStrings(attributes, "groups"),
-			legacyGroups,
-		), legacyGroupDistinguishedNames
+		return lm.legacyLDAPGroups(attributes)
 	}
 
-	userDN := getSingleStringAttribute(attributes, definitions.DistinguishedName)
-	account := getSingleStringAttribute(attributes, accountField)
-
-	groupBaseDN := lm.groupSearchBaseDN(protocol, groupsCfg)
-	groupFilter := lm.groupSearchFilter(groupsCfg)
-	cacheKey := groupResolutionCacheKey(
-		lm.poolName,
-		auth.Request.Protocol.Get(),
-		groupsCfg.GetStrategy(),
-		groupsCfg.GetAttribute(),
-		groupBaseDN,
-		groupFilter,
-		auth.Request.Username,
-		userDN,
-		account,
-	)
-
-	cacheTTL := time.Duration(0)
-	if poolCfg := lm.getPoolLDAPConf(); poolCfg != nil {
-		cacheTTL = poolCfg.GetMembershipCacheTTL()
-	}
-
-	if cacheTTL > 0 {
-		if cachedValue, ok := ldapMembershipCache.Get(cacheKey); ok {
-			if cached, ok := cachedValue.(cachedGroupResolution); ok {
-				return cached.Groups, cached.GroupDistinguishedNames
-			}
-		}
+	userDN, account, cacheKey, cacheTTL := lm.groupResolutionCacheSettings(auth, protocol, groupsCfg, attributes, accountField)
+	if cachedGroups, cachedGroupDNS, ok := cachedLDAPGroupResolution(cacheKey, cacheTTL); ok {
+		return cachedGroups, cachedGroupDNS
 	}
 
 	memberOfGroups, memberOfGroupDistinguishedNames := lm.resolveMemberOfGroups(groupsCfg, attributes)
 
 	searchGroups, searchGroupDistinguishedNames, err := lm.resolveSearchGroups(auth, protocol, groupsCfg, account, userDN)
-	if err != nil {
-		if logger != nil {
-			level.Warn(logger).Log(
-				definitions.LogKeyGUID, auth.Runtime.GUID,
-				definitions.LogKeyLDAPPoolName, lm.poolName,
-				definitions.LogKeyMsg, "group_resolution_failed",
-				definitions.LogKeyError, err,
-			)
-		}
-	}
+	lm.logLDAPGroupResolutionError(auth, logger, err)
 
 	resolvedGroups := mergeNormalizedStringSlices(memberOfGroups, searchGroups)
 	resolvedGroupDistinguishedNames := mergeNormalizedStringSlices(memberOfGroupDistinguishedNames, searchGroupDistinguishedNames)
 
-	if cacheTTL > 0 {
-		ldapMembershipCache.Set(cacheKey, cachedGroupResolution{
-			Groups:                  resolvedGroups,
-			GroupDistinguishedNames: resolvedGroupDistinguishedNames,
-		}, cacheTTL)
-	}
+	storeLDAPGroupResolution(cacheKey, cacheTTL, resolvedGroups, resolvedGroupDistinguishedNames)
 
 	return resolvedGroups, resolvedGroupDistinguishedNames
 }

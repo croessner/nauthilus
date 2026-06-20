@@ -43,36 +43,69 @@ type webAuthnCredentialProvider interface {
 // GetUserBackendData performs backend lookups and returns encapsulated user data.
 func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData, error) {
 	mgr := cookie.GetManager(ctx)
-	username := ""
 
-	if mgr != nil {
-		username = mgr.GetString(definitions.SessionKeyAccount, "")
+	username := h.backendDataUsername(ctx, mgr)
+	if username == "" {
+		return nil, nil
 	}
 
-	if username == "" {
-		authHeader := ctx.GetHeader("Authorization")
-		if after, ok := strings.CutPrefix(authHeader, "Bearer "); ok {
-			tokenString := after
-			idpInstance := idp.NewNauthilusIDP(h.deps)
+	authState := h.newBackendDataAuthState(ctx, username)
+	if authState == nil {
+		return nil, nil
+	}
 
-			claims, err := idpInstance.ValidateToken(ctx.Request.Context(), tokenString)
-			if err == nil {
-				if sub, ok := claims["sub"].(string); ok {
-					username = sub
-				}
-			}
+	data := newUserBackendData(username, authState)
+	if authState.HandlePassword(ctx) != definitions.AuthResultOK {
+		return data, nil
+	}
+
+	applyBackendIdentityData(data, authState)
+
+	if err := h.applyBackendMFAData(ctx, mgr, data, authState); err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+// backendDataUsername resolves the backend-data username from session or bearer token.
+func (h *FrontendHandler) backendDataUsername(ctx *gin.Context, mgr cookie.Manager) string {
+	if mgr != nil {
+		if username := mgr.GetString(definitions.SessionKeyAccount, ""); username != "" {
+			return username
 		}
 	}
 
-	if username == "" {
-		return nil, nil
+	return h.backendDataUsernameFromBearer(ctx)
+}
+
+// backendDataUsernameFromBearer resolves the subject claim from a bearer token.
+func (h *FrontendHandler) backendDataUsernameFromBearer(ctx *gin.Context) string {
+	tokenString, ok := strings.CutPrefix(ctx.GetHeader("Authorization"), "Bearer ")
+	if !ok {
+		return ""
 	}
 
-	authDeps := h.deps.Auth()
+	idpInstance := idp.NewNauthilusIDP(h.deps)
 
-	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
+	claims, err := idpInstance.ValidateToken(ctx.Request.Context(), tokenString)
+	if err != nil {
+		return ""
+	}
+
+	sub, ok := claims["sub"].(string)
+	if !ok {
+		return ""
+	}
+
+	return sub
+}
+
+// newBackendDataAuthState creates the no-auth IDP AuthState used for data lookups.
+func (h *FrontendHandler) newBackendDataAuthState(ctx *gin.Context, username string) *core.AuthState {
+	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
 	if state == nil {
-		return nil, nil
+		return nil
 	}
 
 	authState := state.(*core.AuthState)
@@ -80,38 +113,64 @@ func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData
 	authState.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
 	authState.SetNoAuth(true)
 
-	data := &UserBackendData{
+	return authState
+}
+
+// newUserBackendData creates the backend-data DTO for an initialized AuthState.
+func newUserBackendData(username string, authState *core.AuthState) *UserBackendData {
+	return &UserBackendData{
 		Username:  username,
 		AuthState: authState,
 	}
+}
 
-	if authResult := authState.HandlePassword(ctx); authResult == definitions.AuthResultOK {
-		if disp, ok := authState.GetDisplayNameOk(); ok {
-			data.DisplayName = disp
-		}
-
-		if uniqueID, ok := authState.GetUniqueUserIDOk(); ok {
-			data.UniqueUserID = uniqueID
-		}
-
-		loadedPublicMFA, err := h.applyPublicMFAState(ctx, data, authState)
-		if err != nil {
-			return nil, err
-		}
-
-		if !loadedPublicMFA {
-			if secret, ok := authState.GetTOTPSecretOk(); ok && secret != "" {
-				data.HaveTOTP = true
-			}
-
-			codes := authState.GetTOTPRecoveryCodes()
-			data.NumRecoveryCodes = len(codes)
-
-			h.resolveWebAuthnUser(ctx, mgr, data, authState)
-		}
+// applyBackendIdentityData copies display and stable user identifiers from AuthState.
+func applyBackendIdentityData(data *UserBackendData, authState *core.AuthState) {
+	if disp, ok := authState.GetDisplayNameOk(); ok {
+		data.DisplayName = disp
 	}
 
-	return data, nil
+	if uniqueID, ok := authState.GetUniqueUserIDOk(); ok {
+		data.UniqueUserID = uniqueID
+	}
+}
+
+// applyBackendMFAData fills MFA state from public backends or legacy AuthState fields.
+func (h *FrontendHandler) applyBackendMFAData(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	data *UserBackendData,
+	authState *core.AuthState,
+) error {
+	loadedPublicMFA, err := h.applyPublicMFAState(ctx, data, authState)
+	if err != nil {
+		return err
+	}
+
+	if loadedPublicMFA {
+		return nil
+	}
+
+	h.applyLegacyBackendMFAData(ctx, mgr, data, authState)
+
+	return nil
+}
+
+// applyLegacyBackendMFAData fills MFA state from legacy AuthState getters.
+func (h *FrontendHandler) applyLegacyBackendMFAData(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	data *UserBackendData,
+	authState *core.AuthState,
+) {
+	if secret, ok := authState.GetTOTPSecretOk(); ok && secret != "" {
+		data.HaveTOTP = true
+	}
+
+	codes := authState.GetTOTPRecoveryCodes()
+	data.NumRecoveryCodes = len(codes)
+
+	h.resolveWebAuthnUser(ctx, mgr, data, authState)
 }
 
 func (h *FrontendHandler) applyPublicMFAState(ctx *gin.Context, data *UserBackendData, authState *core.AuthState) (bool, error) {
@@ -184,37 +243,18 @@ func (h *FrontendHandler) resolveWebAuthnUser(ctx *gin.Context, mgr cookie.Manag
 		return
 	}
 
-	if data.UniqueUserID == "" && mgr != nil {
-		uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, "")
-		if uniqueUserID != "" {
-			data.UniqueUserID = uniqueUserID
-		}
-	}
+	applyUniqueUserIDFromSession(mgr, data)
 
-	if data.UniqueUserID != "" {
-		user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, data.UniqueUserID)
-		if err == nil && user != nil {
-			data.WebAuthnUser = user
-			data.HaveWebAuthn = len(user.WebAuthnCredentials()) > 0
-		}
-	}
-
-	if data.HaveWebAuthn {
+	if h.applyCachedWebAuthnUser(ctx, data) {
 		return
 	}
 
-	credentials, err := provider.GetWebAuthnCredentials()
-	if err != nil || len(credentials) == 0 {
+	credentials, ok := webAuthnCredentialsFromProvider(provider)
+	if !ok {
 		return
 	}
 
-	user := &backend.User{
-		ID:          data.UniqueUserID,
-		Name:        data.Username,
-		DisplayName: data.DisplayName,
-		Credentials: credentials,
-	}
-
+	user := backendDataWebAuthnUser(data, credentials)
 	data.WebAuthnUser = user
 	data.HaveWebAuthn = true
 
@@ -222,7 +262,60 @@ func (h *FrontendHandler) resolveWebAuthnUser(ctx *gin.Context, mgr cookie.Manag
 		return
 	}
 
-	if err = backend.SaveWebAuthnToRedis(
+	h.cacheWebAuthnUser(ctx, user)
+}
+
+// applyUniqueUserIDFromSession fills missing unique user IDs from the secure session.
+func applyUniqueUserIDFromSession(mgr cookie.Manager, data *UserBackendData) {
+	if data.UniqueUserID != "" || mgr == nil {
+		return
+	}
+
+	if uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, ""); uniqueUserID != "" {
+		data.UniqueUserID = uniqueUserID
+	}
+}
+
+// applyCachedWebAuthnUser loads WebAuthn credentials from Redis when available.
+func (h *FrontendHandler) applyCachedWebAuthnUser(ctx *gin.Context, data *UserBackendData) bool {
+	if data.UniqueUserID == "" {
+		return false
+	}
+
+	user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, data.UniqueUserID)
+	if err != nil || user == nil {
+		return false
+	}
+
+	data.WebAuthnUser = user
+	data.HaveWebAuthn = len(user.WebAuthnCredentials()) > 0
+
+	return data.HaveWebAuthn
+}
+
+// webAuthnCredentialsFromProvider loads non-empty WebAuthn credentials from a provider.
+func webAuthnCredentialsFromProvider(provider webAuthnCredentialProvider) ([]mfa.PersistentCredential, bool) {
+	credentials, err := provider.GetWebAuthnCredentials()
+	if err != nil || len(credentials) == 0 {
+		return nil, false
+	}
+
+	return credentials, true
+}
+
+// backendDataWebAuthnUser creates a backend user for WebAuthn credential state.
+func backendDataWebAuthnUser(data *UserBackendData, credentials []mfa.PersistentCredential) *backend.User {
+	return &backend.User{
+		ID:          data.UniqueUserID,
+		Name:        data.Username,
+		DisplayName: data.DisplayName,
+		Credentials: credentials,
+	}
+}
+
+// cacheWebAuthnUser stores resolved WebAuthn credentials in Redis best-effort.
+func (h *FrontendHandler) cacheWebAuthnUser(ctx *gin.Context, user *backend.User) {
+	if err := backend.SaveWebAuthnToRedis(
 		ctx.Request.Context(),
 		h.deps.Logger,
 		h.deps.Cfg,

@@ -89,74 +89,20 @@ func TestMFAService_GenerateTOTPSecret(t *testing.T) {
 func TestMFAService_VerifyAndSaveTOTP_LDAP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	backend := &config.Backend{}
-	_ = backend.Set("ldap")
-	encryptionSecret := secret.New("testsecret12345678")
-
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			Backends: []*config.Backend{backend},
-		},
-		LDAP: &config.LDAPSection{
-			Config: &config.LDAPConf{
-				EncryptionSecret: encryptionSecret,
-			},
-			Search: []config.LDAPSearchProtocol{
-				{
-					Protocols: []string{"idp"},
-					CacheName: "idp",
-					BaseDN:    "ou=users,dc=example,dc=com",
-					LDAPFilter: config.LDAPFilter{
-						User: "(uid=%s)",
-					},
-					LDAPAttributeMapping: config.LDAPAttributeMapping{
-						AccountField:    mfaLDAPUIDAttr,
-						TOTPSecretField: mfaLDAPTOTPSecretAttr,
-					},
-					Attributes: []string{mfaLDAPUIDAttr},
-					PoolName:   definitions.DefaultBackendName,
-				},
-			},
-		},
-	}
-
-	d := &deps.Deps{
-		Cfg:    cfg,
-		Env:    config.NewTestEnvironmentConfig(),
-		Logger: log.GetLogger(),
-	}
-	s := NewMFAService(d)
+	fixture := newMFALDAPFixture(t)
 
 	secret := "JBSWY3DPEHPK3PXP"
 	code, err := totp.GenerateCode(secret, time.Now())
 	assert.NoError(t, err)
 
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest("POST", "/", strings.NewReader("{}"))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-	ctx.Request.RemoteAddr = "127.0.0.1:12345"
-	setupMfaMockContext(ctx, "test-guid", definitions.ServIDP)
+	requestCh := fixture.replyToNextLDAPModify()
 
-	priorityqueue.LDAPQueue.AddPoolName(definitions.DefaultBackendName)
-
-	go func() {
-		req := priorityqueue.LDAPQueue.Pop(definitions.DefaultBackendName)
-		if req != nil {
-			assert.Equal(t, definitions.LDAPModify, req.Command)
-
-			encryptedSecret := req.ModifyAttributes[mfaLDAPTOTPSecretAttr][0]
-			securityManager := security.NewManager(encryptionSecret)
-			decryptedSecret, decryptErr := securityManager.Decrypt(encryptedSecret)
-			assert.NoError(t, decryptErr)
-			assert.Equal(t, secret, decryptedSecret)
-
-			req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
-		}
-	}()
-
-	err = s.VerifyAndSaveTOTP(ctx, mfaLDAPTestUser, secret, code, uint8(definitions.BackendLDAP))
+	err = fixture.service.VerifyAndSaveTOTP(fixture.ctx, mfaLDAPTestUser, secret, code, uint8(definitions.BackendLDAP))
 	assert.NoError(t, err)
+
+	request := fixture.nextRequest(t, requestCh)
+	assert.Equal(t, definitions.LDAPModify, request.Command)
+	assert.Equal(t, []string{secret}, fixture.decryptValues(t, request.ModifyAttributes[mfaLDAPTOTPSecretAttr]))
 }
 
 func TestMFAServiceVerifyAndSaveTOTPNormalizesRegistrationCode(t *testing.T) {
@@ -194,65 +140,15 @@ func TestMFAServiceVerifyAndSaveTOTPNormalizesRegistrationCode(t *testing.T) {
 func TestMFAService_DeleteTOTP_LDAP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	backend := &config.Backend{}
-	_ = backend.Set("ldap")
-	encryptionSecret := secret.New("testsecret12345678")
+	fixture := newMFALDAPFixture(t)
+	requestCh := fixture.replyToNextLDAPModify()
 
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			Backends: []*config.Backend{backend},
-		},
-		LDAP: &config.LDAPSection{
-			Config: &config.LDAPConf{
-				EncryptionSecret: encryptionSecret,
-			},
-			Search: []config.LDAPSearchProtocol{
-				{
-					Protocols: []string{"idp"},
-					CacheName: "idp",
-					BaseDN:    "ou=users,dc=example,dc=com",
-					LDAPFilter: config.LDAPFilter{
-						User: "(uid=%s)",
-					},
-					LDAPAttributeMapping: config.LDAPAttributeMapping{
-						AccountField:    mfaLDAPUIDAttr,
-						TOTPSecretField: mfaLDAPTOTPSecretAttr,
-					},
-					Attributes: []string{mfaLDAPUIDAttr},
-					PoolName:   definitions.DefaultBackendName,
-				},
-			},
-		},
-	}
-
-	d := &deps.Deps{
-		Cfg:    cfg,
-		Env:    config.NewTestEnvironmentConfig(),
-		Logger: log.GetLogger(),
-	}
-	s := NewMFAService(d)
-
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest("POST", "/", strings.NewReader("{}"))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-	ctx.Request.RemoteAddr = "127.0.0.1:12345"
-	setupMfaMockContext(ctx, "test-guid", definitions.ServIDP)
-
-	priorityqueue.LDAPQueue.AddPoolName(definitions.DefaultBackendName)
-
-	go func() {
-		req := priorityqueue.LDAPQueue.Pop(definitions.DefaultBackendName)
-		if req != nil {
-			assert.Equal(t, definitions.LDAPModify, req.Command)
-			assert.Equal(t, definitions.LDAPModifyDelete, req.SubCommand)
-
-			req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
-		}
-	}()
-
-	err := s.DeleteTOTP(ctx, mfaLDAPTestUser, uint8(definitions.BackendLDAP))
+	err := fixture.service.DeleteTOTP(fixture.ctx, mfaLDAPTestUser, uint8(definitions.BackendLDAP))
 	assert.NoError(t, err)
+
+	request := fixture.nextRequest(t, requestCh)
+	assert.Equal(t, definitions.LDAPModify, request.Command)
+	assert.Equal(t, definitions.LDAPModifyDelete, request.SubCommand)
 }
 
 func TestMFAServiceRemoteTOTPRegistrationFallsBackToFlowState(t *testing.T) {

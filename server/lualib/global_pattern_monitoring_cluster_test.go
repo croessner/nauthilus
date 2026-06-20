@@ -24,9 +24,37 @@ import (
 )
 
 func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
-	L := lua.NewState()
+	L := newGlobalPatternMonitoringTestState(t)
 	defer L.Close()
 
+	loadGlobalPatternMonitoringScript(t, L)
+	callGlobalPatternMonitoringEnvironment(t, L)
+	assertGlobalPatternMonitoringKeys(t, requireLuaTableGlobal(t, L, "last_keys"))
+	assertGlobalPatternMonitoringArgs(t, requireLuaTableGlobal(t, L, "last_args"))
+}
+
+// newGlobalPatternMonitoringTestState prepares the Lua state for the environment script.
+func newGlobalPatternMonitoringTestState(t *testing.T) *lua.LState {
+	t.Helper()
+
+	L := lua.NewState()
+	preloadGlobalPatternMonitoringModules(L)
+	preloadGlobalPatternMonitoringBuiltin(L)
+
+	return L
+}
+
+// preloadGlobalPatternMonitoringModules installs module stubs used by the environment script.
+func preloadGlobalPatternMonitoringModules(L *lua.LState) {
+	preloadGlobalPatternMonitoringUtilModule(L)
+	preloadGlobalPatternMonitoringPolicyFactsModule(L)
+	preloadGlobalPatternMonitoringRedisModule(L)
+	preloadInMemoryContextModule(L)
+	preloadFixedTimeModule(L, "2023-11-14-22")
+}
+
+// preloadGlobalPatternMonitoringUtilModule installs util functions used by the environment script.
+func preloadGlobalPatternMonitoringUtilModule(L *lua.LState) {
 	L.PreloadModule("nauthilus_util", func(L *lua.LState) int {
 		mod := L.NewTable()
 		L.SetFuncs(mod, map[string]lua.LGFunction{
@@ -57,7 +85,10 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 
 		return 1
 	})
+}
 
+// preloadGlobalPatternMonitoringPolicyFactsModule installs the policy facts sink used by the script.
+func preloadGlobalPatternMonitoringPolicyFactsModule(L *lua.LState) {
 	L.PreloadModule("nauthilus_policy_facts", func(L *lua.LState) int {
 		mod := L.NewTable()
 		mod.RawSetString("emit_many", L.NewFunction(func(_ *lua.LState) int {
@@ -67,7 +98,10 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 
 		return 1
 	})
+}
 
+// preloadGlobalPatternMonitoringRedisModule captures Redis script keys and args for assertions.
+func preloadGlobalPatternMonitoringRedisModule(L *lua.LState) {
 	L.PreloadModule("nauthilus_redis", func(L *lua.LState) int {
 		mod := L.NewTable()
 		mod.RawSetString("redis_run_script", L.NewFunction(func(L *lua.LState) int {
@@ -88,40 +122,30 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 
 		return 1
 	})
+}
 
-	L.PreloadModule("nauthilus_context", func(L *lua.LState) int {
-		state := map[string]lua.LValue{}
-		mod := L.NewTable()
-		mod.RawSetString("context_get", L.NewFunction(func(L *lua.LState) int {
-			if value, ok := state[L.CheckString(1)]; ok {
-				L.Push(value)
-			} else {
-				L.Push(lua.LNil)
-			}
-
-			return 1
-		}))
-		mod.RawSetString("context_set", L.NewFunction(func(L *lua.LState) int {
-			state[L.CheckString(1)] = L.CheckAny(2)
-			return 0
-		}))
-		L.Push(mod)
-
-		return 1
-	})
-
-	preloadFixedTimeModule(L, "2023-11-14-22")
-
+// preloadGlobalPatternMonitoringBuiltin installs environment result constants.
+func preloadGlobalPatternMonitoringBuiltin(L *lua.LState) {
 	builtin := L.NewTable()
 	builtin.RawSetString("ENVIRONMENT_TRIGGER_NO", lua.LNumber(0))
 	builtin.RawSetString("ENVIRONMENT_ABORT_NO", lua.LNumber(0))
 	builtin.RawSetString("ENVIRONMENT_RESULT_OK", lua.LNumber(0))
 	L.SetGlobal("nauthilus_builtin", builtin)
+}
+
+// loadGlobalPatternMonitoringScript loads the Lua environment plugin under test.
+func loadGlobalPatternMonitoringScript(t *testing.T, L *lua.LState) {
+	t.Helper()
 
 	scriptPath := filepath.Join("..", "lua-plugins.d", "environment", "global_pattern_monitoring.lua")
 	if err := L.DoFile(scriptPath); err != nil {
 		t.Fatalf("failed to load script: %v", err)
 	}
+}
+
+// callGlobalPatternMonitoringEnvironment invokes the environment plugin with a request.
+func callGlobalPatternMonitoringEnvironment(t *testing.T, L *lua.LState) {
+	t.Helper()
 
 	req := L.NewTable()
 	req.RawSetString("no_auth", lua.LBool(false))
@@ -137,16 +161,11 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 	}, req); err != nil {
 		t.Fatalf("failed to call environment source: %v", err)
 	}
+}
 
-	keysTbl, ok := L.GetGlobal("last_keys").(*lua.LTable)
-	if !ok {
-		t.Fatalf("expected keys table, got %v", L.GetGlobal("last_keys").Type())
-	}
-
-	argsTbl, ok := L.GetGlobal("last_args").(*lua.LTable)
-	if !ok {
-		t.Fatalf("expected args table, got %v", L.GetGlobal("last_args").Type())
-	}
+// assertGlobalPatternMonitoringKeys verifies the per-attempt key is passed as a Redis key.
+func assertGlobalPatternMonitoringKeys(t *testing.T, keysTbl *lua.LTable) {
+	t.Helper()
 
 	var perAttemptKeys []string
 
@@ -167,7 +186,11 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 	if len(perAttemptKeys) != 1 {
 		t.Fatalf("per-attempt key occurrences in KEYS = %d, want 1", len(perAttemptKeys))
 	}
+}
 
+// assertGlobalPatternMonitoringArgs verifies the per-attempt key does not leak into argv.
+func assertGlobalPatternMonitoringArgs(t *testing.T, argsTbl *lua.LTable) {
+	t.Helper()
 	argsTbl.ForEach(func(_ lua.LValue, v lua.LValue) {
 		if strings.Contains(v.String(), "multilayer:global:metrics:1700000000") {
 			t.Fatalf("per-attempt key leaked into ARGV: %q", v.String())

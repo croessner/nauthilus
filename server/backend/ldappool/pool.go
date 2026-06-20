@@ -41,6 +41,7 @@ import (
 	"github.com/go-ldap/ldap/v3"
 	"go.opentelemetry.io/otel/attribute"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -100,6 +101,31 @@ type ldapPoolImpl struct {
 	cfg config.File
 
 	logger *slog.Logger
+}
+
+type ldapPoolConfigSource struct {
+	bindPW          secret.Value
+	serverURIs      []string
+	bindDN          string
+	tlsCAFile       string
+	tlsClientCert   string
+	tlsClientKey    string
+	numberOfWorkers int
+	startTLS        bool
+	tlsSkipVerify   bool
+	saslExternal    bool
+}
+
+type ldapPoolLayout struct {
+	name         string
+	poolSize     int
+	idlePoolSize int
+}
+
+type ldapSearchSingleflightResult struct {
+	res bktype.AttributeMapping
+	raw []*ldap.Entry
+	err error
 }
 
 // StartHouseKeeper is a background task responsible for managing and cleaning up idle LDAP connections in the pool.
@@ -333,148 +359,205 @@ func getNegCache(pool string, conf *config.LDAPConf) localcache.SimpleCache {
 
 // NewPool creates and initializes a new LDAPPool based on the specified pool type and context for LDAP operations.
 func NewPool(ctx context.Context, cfg config.File, logger *slog.Logger, poolType int, poolName string) LDAPPool {
-	var (
-		poolSize        int
-		idlePoolSize    int
-		numberOfWorkers int
-		name            string
-		conn            []LDAPConnection
-		conf            []*config.LDAPConf
-		serverURIs      []string
-		bindDN          string
-		bindPW          secret.Value
-		startTLS        bool
-		tlsSkipVerify   bool
-		tlsCAFile       string
-		tlsClientCert   string
-		tlsClientKey    string
-		saslExternal    bool
-	)
-
 	if cfg.GetLDAP() == nil {
 		panic("LDAP configuration is not set")
 	}
 
 	poolMap := cfg.GetLDAP().GetOptionalLDAPPools()
+	source := resolveLDAPPoolConfigSource(cfg, poolMap, poolName)
+	layout := resolveLDAPPoolLayout(cfg, poolMap, poolType, poolName)
+	conf, conn := buildLDAPPoolConnections(layout, source)
 
+	logLDAPPoolCreated(cfg, logger, poolType, source, layout)
+
+	lp := newLDAPPoolImpl(ctx, cfg, logger, poolType, source, layout, conf, conn)
+	seedLDAPPoolTokens(lp)
+	startLDAPPoolHealthLoop(layout.name, conf)
+	configureLDAPPoolAuthLimiter(poolType, layout.name, conf)
+
+	return lp
+}
+
+// resolveLDAPPoolConfigSource resolves shared LDAP connection settings for the requested pool.
+func resolveLDAPPoolConfigSource(cfg config.File, poolMap map[string]*config.LDAPConf, poolName string) ldapPoolConfigSource {
 	if poolName == definitions.DefaultBackendName {
-		numberOfWorkers = cfg.GetLDAPConfigNumberOfWorkers()
-		serverURIs = cfg.GetLDAPConfigServerURIs()
-		bindDN = cfg.GetLDAPConfigBindDN()
-		bindPW = cfg.GetLDAPConfigBindPW()
-		startTLS = cfg.GetLDAPConfigStartTLS()
-		tlsSkipVerify = cfg.GetLDAPConfigTLSSkipVerify()
-		tlsCAFile = cfg.GetLDAPConfigTLSCAFile()
-		tlsClientCert = cfg.GetLDAPConfigTLSClientCert()
-		tlsClientKey = cfg.GetLDAPConfigTLSClientKey()
-		saslExternal = cfg.GetLDAPConfigSASLExternal()
-	} else {
-		if poolMap == nil || poolMap[poolName] == nil {
-			panic(fmt.Sprintf("LDAP pool %s is not defined", poolName))
+		return ldapPoolConfigSource{
+			numberOfWorkers: cfg.GetLDAPConfigNumberOfWorkers(),
+			serverURIs:      cfg.GetLDAPConfigServerURIs(),
+			bindDN:          cfg.GetLDAPConfigBindDN(),
+			bindPW:          cfg.GetLDAPConfigBindPW(),
+			startTLS:        cfg.GetLDAPConfigStartTLS(),
+			tlsSkipVerify:   cfg.GetLDAPConfigTLSSkipVerify(),
+			tlsCAFile:       cfg.GetLDAPConfigTLSCAFile(),
+			tlsClientCert:   cfg.GetLDAPConfigTLSClientCert(),
+			tlsClientKey:    cfg.GetLDAPConfigTLSClientKey(),
+			saslExternal:    cfg.GetLDAPConfigSASLExternal(),
 		}
-
-		numberOfWorkers = poolMap[poolName].GetNumberOfWorkers()
-		serverURIs = poolMap[poolName].ServerURIs
-		bindDN = poolMap[poolName].BindDN
-		bindPW = poolMap[poolName].BindPW
-		startTLS = poolMap[poolName].StartTLS
-		tlsSkipVerify = poolMap[poolName].TLSSkipVerify
-		tlsCAFile = poolMap[poolName].TLSCAFile
-		tlsClientCert = poolMap[poolName].TLSClientCert
-		tlsClientKey = poolMap[poolName].TLSClientKey
-		saslExternal = poolMap[poolName].SASLExternal
 	}
 
+	poolConfig := optionalLDAPPoolConfig(poolMap, poolName)
+
+	return ldapPoolConfigSource{
+		numberOfWorkers: poolConfig.GetNumberOfWorkers(),
+		serverURIs:      poolConfig.ServerURIs,
+		bindDN:          poolConfig.BindDN,
+		bindPW:          poolConfig.BindPW,
+		startTLS:        poolConfig.StartTLS,
+		tlsSkipVerify:   poolConfig.TLSSkipVerify,
+		tlsCAFile:       poolConfig.TLSCAFile,
+		tlsClientCert:   poolConfig.TLSClientCert,
+		tlsClientKey:    poolConfig.TLSClientKey,
+		saslExternal:    poolConfig.SASLExternal,
+	}
+}
+
+// optionalLDAPPoolConfig returns the named optional pool or panics with the existing message.
+func optionalLDAPPoolConfig(poolMap map[string]*config.LDAPConf, poolName string) *config.LDAPConf {
+	if poolMap == nil || poolMap[poolName] == nil {
+		panic(fmt.Sprintf("LDAP pool %s is not defined", poolName))
+	}
+
+	return poolMap[poolName]
+}
+
+// resolveLDAPPoolLayout resolves the pool name and connection counts for the requested pool type.
+func resolveLDAPPoolLayout(cfg config.File, poolMap map[string]*config.LDAPConf, poolType int, poolName string) ldapPoolLayout {
 	switch poolType {
 	case definitions.LDAPPoolLookup, definitions.LDAPPoolUnknown:
-		name = "lookup"
-
-		if poolName == definitions.DefaultBackendName {
-			poolSize = cfg.GetLDAPConfigLookupPoolSize()
-			idlePoolSize = cfg.GetLDAPConfigLookupIdlePoolSize()
-		} else {
-			name = poolName + "-lookup"
-			poolSize = poolMap[poolName].LookupPoolSize
-			idlePoolSize = poolMap[poolName].LookupIdlePoolSize
-		}
-
-		conf = make([]*config.LDAPConf, poolSize)
-		conn = make([]LDAPConnection, poolSize)
-
+		return resolveLookupPoolLayout(cfg, poolMap, poolName)
 	case definitions.LDAPPoolAuth:
-		name = "auth"
-
-		if poolName == definitions.DefaultBackendName {
-			poolSize = cfg.GetLDAPConfigAuthPoolSize()
-			idlePoolSize = cfg.GetLDAPConfigAuthIdlePoolSize()
-		} else {
-			name = poolName + "-auth"
-			poolSize = poolMap[poolName].AuthPoolSize
-			idlePoolSize = poolMap[poolName].AuthIdlePoolSize
-		}
-
-		conf = make([]*config.LDAPConf, poolSize)
-		conn = make([]LDAPConnection, poolSize)
+		return resolveAuthPoolLayout(cfg, poolMap, poolName)
 	default:
 		panic(fmt.Sprintf("LDAP pool type %d is not supported", poolType))
 	}
+}
 
-	for index := 0; index < poolSize; index++ {
-		conf[index] = &config.LDAPConf{}
+// resolveLookupPoolLayout resolves lookup pool dimensions.
+func resolveLookupPoolLayout(cfg config.File, poolMap map[string]*config.LDAPConf, poolName string) ldapPoolLayout {
+	if poolName == definitions.DefaultBackendName {
+		return ldapPoolLayout{
+			name:         "lookup",
+			poolSize:     cfg.GetLDAPConfigLookupPoolSize(),
+			idlePoolSize: cfg.GetLDAPConfigLookupIdlePoolSize(),
+		}
+	}
+
+	poolConfig := optionalLDAPPoolConfig(poolMap, poolName)
+
+	return ldapPoolLayout{
+		name:         poolName + "-lookup",
+		poolSize:     poolConfig.LookupPoolSize,
+		idlePoolSize: poolConfig.LookupIdlePoolSize,
+	}
+}
+
+// resolveAuthPoolLayout resolves auth pool dimensions.
+func resolveAuthPoolLayout(cfg config.File, poolMap map[string]*config.LDAPConf, poolName string) ldapPoolLayout {
+	if poolName == definitions.DefaultBackendName {
+		return ldapPoolLayout{
+			name:         "auth",
+			poolSize:     cfg.GetLDAPConfigAuthPoolSize(),
+			idlePoolSize: cfg.GetLDAPConfigAuthIdlePoolSize(),
+		}
+	}
+
+	poolConfig := optionalLDAPPoolConfig(poolMap, poolName)
+
+	return ldapPoolLayout{
+		name:         poolName + "-auth",
+		poolSize:     poolConfig.AuthPoolSize,
+		idlePoolSize: poolConfig.AuthIdlePoolSize,
+	}
+}
+
+// buildLDAPPoolConnections creates pool connections and per-connection configuration clones.
+func buildLDAPPoolConnections(layout ldapPoolLayout, source ldapPoolConfigSource) ([]*config.LDAPConf, []LDAPConnection) {
+	conf := make([]*config.LDAPConf, layout.poolSize)
+	conn := make([]LDAPConnection, layout.poolSize)
+
+	for index := 0; index < layout.poolSize; index++ {
+		conf[index] = newLDAPPoolConnectionConfig(layout.name, source)
 		conn[index] = &LDAPConnectionImpl{}
-
-		conf[index].ServerURIs = serverURIs
-		conf[index].BindDN = bindDN
-		conf[index].BindPW = bindPW
-		conf[index].StartTLS = startTLS
-		conf[index].TLSSkipVerify = tlsSkipVerify
-		conf[index].TLSCAFile = tlsCAFile
-		conf[index].TLSClientCert = tlsClientCert
-		conf[index].TLSClientKey = tlsClientKey
-		conf[index].SASLExternal = saslExternal
-		conf[index].PoolName = name
-
 		conn[index].SetState(definitions.LDAPStateClosed)
 	}
 
+	return conf, conn
+}
+
+// newLDAPPoolConnectionConfig copies shared pool settings into one LDAPConf instance.
+func newLDAPPoolConnectionConfig(poolName string, source ldapPoolConfigSource) *config.LDAPConf {
+	return &config.LDAPConf{
+		ServerURIs:    source.serverURIs,
+		BindDN:        source.bindDN,
+		BindPW:        source.bindPW,
+		StartTLS:      source.startTLS,
+		TLSSkipVerify: source.tlsSkipVerify,
+		TLSCAFile:     source.tlsCAFile,
+		TLSClientCert: source.tlsClientCert,
+		TLSClientKey:  source.tlsClientKey,
+		SASLExternal:  source.saslExternal,
+		PoolName:      poolName,
+	}
+}
+
+// logLDAPPoolCreated emits the existing pool-created debug event.
+func logLDAPPoolCreated(cfg config.File, logger *slog.Logger, poolType int, source ldapPoolConfigSource, layout ldapPoolLayout) {
 	util.DebugModuleWithCfg(
 		context.Background(),
 		cfg,
 		logger,
 		definitions.DbgLDAPPool,
 		definitions.LogKeyMsg, "ldap_worker_created",
-		definitions.LogKeyLDAPPoolName, name,
-		"number_of_workers", numberOfWorkers,
+		definitions.LogKeyLDAPPoolName, layout.name,
+		"number_of_workers", source.numberOfWorkers,
 		"pool_type", poolType,
-		"pool_size", poolSize,
-		"idle_pool_size", idlePoolSize,
+		"pool_size", layout.poolSize,
+		"idle_pool_size", layout.idlePoolSize,
 	)
+}
 
-	lp := &ldapPoolImpl{
-		numberOfWorkers: numberOfWorkers,
+// newLDAPPoolImpl assembles the LDAP pool implementation from resolved settings.
+func newLDAPPoolImpl(
+	ctx context.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	poolType int,
+	source ldapPoolConfigSource,
+	layout ldapPoolLayout,
+	conf []*config.LDAPConf,
+	conn []LDAPConnection,
+) *ldapPoolImpl {
+	return &ldapPoolImpl{
+		numberOfWorkers: source.numberOfWorkers,
 		poolType:        poolType,
-		poolSize:        poolSize,
-		idlePoolSize:    idlePoolSize,
+		poolSize:        layout.poolSize,
+		idlePoolSize:    layout.idlePoolSize,
 		ctx:             ctx,
-		name:            name,
+		name:            layout.name,
 		conn:            conn,
 		conf:            conf,
 		cfg:             cfg,
 		logger:          logger,
 	}
+}
 
-	// Initialize semaphore with poolSize tokens
-	lp.tokens = make(chan Token, poolSize)
-	for i := 0; i < poolSize; i++ {
+// seedLDAPPoolTokens initializes the pool capacity semaphore.
+func seedLDAPPoolTokens(lp *ldapPoolImpl) {
+	lp.tokens = make(chan Token, lp.poolSize)
+	for i := 0; i < lp.poolSize; i++ {
 		lp.tokens <- Token{}
 	}
+}
 
-	// Start active target health checker for this pool
+// startLDAPPoolHealthLoop starts the active target health checker for this pool.
+func startLDAPPoolHealthLoop(name string, conf []*config.LDAPConf) {
 	if len(conf) > 0 && conf[0] != nil {
 		go startHealthLoop(name, conf[0])
 	}
+}
 
-	// Initialize per-pool auth rate limiter if configured
+// configureLDAPPoolAuthLimiter initializes the per-pool auth rate limiter when configured.
+func configureLDAPPoolAuthLimiter(poolType int, name string, conf []*config.LDAPConf) {
 	if poolType == definitions.LDAPPoolAuth && len(conf) > 0 && conf[0] != nil {
 		rps := conf[0].GetAuthRateLimitPerSecond()
 		burst := conf[0].GetAuthRateLimitBurst()
@@ -484,8 +567,6 @@ func NewPool(ctx context.Context, cfg config.File, logger *slog.Logger, poolType
 			authLimiters.Store(name, lim)
 		}
 	}
-
-	return lp
 }
 
 // logCompletion logs a debug message indicating that the houseKeeper() method of LDAPPool has been terminated.
@@ -653,72 +734,99 @@ func (l *ldapPoolImpl) initializeConnections(bind bool) (err error) {
 // It locks the connection, checks its state, tries to connect if closed, and optionally binds based on the provided flag.
 // Returns an error if connection or binding fails.
 func (l *ldapPoolImpl) setupConnection(guid string, bind bool, index int) error {
-	var err error
-
-	// Trace connection (re)open + optional bind
-	tr := monittrace.New("nauthilus/ldap_pool")
-	ctx, sp := tr.Start(l.ctx, "ldap.pool.open_conn",
-		attribute.String("pool_name", l.name),
-		attribute.Int("index", index),
-		attribute.String("server_uri", func() string {
-			if l.conf != nil && index < len(l.conf) && l.conf[index] != nil {
-				uris := l.conf[index].GetServerURIs()
-				if len(uris) > 0 {
-					return uris[0]
-				}
-			}
-
-			return ""
-		}()),
-		attribute.Bool("starttls", func() bool {
-			if l.conf != nil && index < len(l.conf) && l.conf[index] != nil {
-				return l.conf[index].IsStartTLS()
-			}
-
-			return false
-		}()),
-		attribute.Bool("tls_skip_verify", func() bool {
-			if l.conf != nil && index < len(l.conf) && l.conf[index] != nil {
-				return l.conf[index].IsTLSSkipVerify()
-			}
-
-			return false
-		}()),
-	)
-
-	_ = ctx
+	sp := l.startConnectionOpenSpan(index)
+	defer sp.End()
 
 	l.conn[index].GetMutex().Lock()
 
 	defer l.conn[index].GetMutex().Unlock()
 
-	if l.conn[index].GetState() == definitions.LDAPStateClosed {
-		err = l.conn[index].Connect(guid, l.cfg, l.logger, l.conf[index])
-		if err != nil {
-			l.logConnectionError(guid, err)
-			sp.RecordError(err)
-		} else {
-			if bind {
-				err = l.conn[index].Bind(context.Background(), guid, l.cfg, l.logger, l.conf[index])
-				if err != nil {
-					l.logConnectionError(guid, err)
-					sp.RecordError(err)
-				} else {
-					l.conn[index].SetState(definitions.LDAPStateFree)
-				}
-			} else {
-				l.conn[index].SetState(definitions.LDAPStateFree)
-			}
-		}
+	err := l.openConnectionIfClosed(guid, bind, index, sp)
+	if err != nil {
+		return err
 	}
 
-	if err == nil {
-		sp.SetAttributes(attribute.Bool("ok", true))
+	sp.SetAttributes(attribute.Bool("ok", true))
+
+	return nil
+}
+
+// startConnectionOpenSpan starts the trace span for opening one pool connection.
+func (l *ldapPoolImpl) startConnectionOpenSpan(index int) trace.Span {
+	tr := monittrace.New("nauthilus/ldap_pool")
+	_, sp := tr.Start(l.ctx, "ldap.pool.open_conn",
+		attribute.String("pool_name", l.name),
+		attribute.Int("index", index),
+		attribute.String("server_uri", l.firstLDAPServerURIOrEmpty(index)),
+		attribute.Bool("starttls", l.connectionStartTLS(index)),
+		attribute.Bool("tls_skip_verify", l.connectionTLSSkipVerify(index)),
+	)
+
+	return sp
+}
+
+// openConnectionIfClosed connects and optionally binds a closed pool connection.
+func (l *ldapPoolImpl) openConnectionIfClosed(guid string, bind bool, index int, sp trace.Span) error {
+	if l.conn[index].GetState() != definitions.LDAPStateClosed {
+		return nil
 	}
 
-	sp.End()
+	if err := l.conn[index].Connect(guid, l.cfg, l.logger, l.conf[index]); err != nil {
+		l.logConnectionError(guid, err)
+		sp.RecordError(err)
 
-	return err
+		return err
+	}
+
+	if bind {
+		return l.bindOpenedConnection(guid, index, sp)
+	}
+
+	l.conn[index].SetState(definitions.LDAPStateFree)
+
+	return nil
+}
+
+// bindOpenedConnection binds an opened connection and marks it free on success.
+func (l *ldapPoolImpl) bindOpenedConnection(guid string, index int, sp trace.Span) error {
+	if err := l.conn[index].Bind(context.Background(), guid, l.cfg, l.logger, l.conf[index]); err != nil {
+		l.logConnectionError(guid, err)
+		sp.RecordError(err)
+
+		return err
+	}
+
+	l.conn[index].SetState(definitions.LDAPStateFree)
+
+	return nil
+}
+
+// firstLDAPServerURIOrEmpty returns the first configured server URI for tracing.
+func (l *ldapPoolImpl) firstLDAPServerURIOrEmpty(index int) string {
+	raw, ok := l.firstLDAPServerURI(index)
+	if !ok {
+		return ""
+	}
+
+	return raw
+}
+
+// connectionStartTLS reports the StartTLS flag for a pool connection index.
+func (l *ldapPoolImpl) connectionStartTLS(index int) bool {
+	if l.conf == nil || index >= len(l.conf) || l.conf[index] == nil {
+		return false
+	}
+
+	return l.conf[index].IsStartTLS()
+}
+
+// connectionTLSSkipVerify reports the TLS skip-verify flag for a pool connection index.
+func (l *ldapPoolImpl) connectionTLSSkipVerify(index int) bool {
+	if l.conf == nil || index >= len(l.conf) || l.conf[index] == nil {
+		return false
+	}
+
+	return l.conf[index].IsTLSSkipVerify()
 }
 
 // logConnectionInfo logs information about an LDAP connection including pool name, GUID, and specific connection settings.
@@ -748,52 +856,83 @@ func (l *ldapPoolImpl) logConnectionError(guid string, err error) {
 // for the given connection index. If the URI does not include an explicit port,
 // the default is inferred from the scheme: 389 for ldap, 636 for ldaps.
 func (l *ldapPoolImpl) serverAddrPort(index int) (string, int) {
-	var (
-		srvAddr string
-		srvPort int
-	)
-
-	if l.conf != nil && index < len(l.conf) && l.conf[index] != nil {
-		uris := l.conf[index].GetServerURIs()
-		if len(uris) > 0 {
-			raw := uris[0]
-
-			if u, err := url.Parse(raw); err == nil {
-				if strings.EqualFold(u.Scheme, "ldapi") {
-					if u.Path != "" && strings.HasPrefix(u.Path, "/") {
-						return u.Path, 0
-					}
-
-					return "", 0
-				}
-
-				// Standardfälle: ldap/ldaps mit Host/Port
-				host := u.Host
-
-				if h, p, e := net.SplitHostPort(host); e == nil {
-					srvAddr = h
-
-					if p != "" {
-						// Use ParseInt with bitSize 16 to avoid integer overflow; ports are 0-65535
-						if v, convErr := strconv.ParseInt(p, 10, 16); convErr == nil && v >= 0 && v <= 65535 {
-							srvPort = int(v)
-						}
-					}
-				} else {
-					// No explicit port provided; infer by scheme
-					srvAddr = host
-
-					if u.Scheme == ldapSchemeLDAPS {
-						srvPort = 636
-					} else {
-						srvPort = 389
-					}
-				}
-			}
-		}
+	raw, ok := l.firstLDAPServerURI(index)
+	if !ok {
+		return "", 0
 	}
 
-	return srvAddr, srvPort
+	return ldapServerAddrPort(raw)
+}
+
+// firstLDAPServerURI returns the first configured server URI for a connection index.
+func (l *ldapPoolImpl) firstLDAPServerURI(index int) (string, bool) {
+	if l.conf == nil || index >= len(l.conf) || l.conf[index] == nil {
+		return "", false
+	}
+
+	uris := l.conf[index].GetServerURIs()
+	if len(uris) == 0 {
+		return "", false
+	}
+
+	return uris[0], true
+}
+
+// ldapServerAddrPort parses an LDAP URI into OpenTelemetry server address and port values.
+func ldapServerAddrPort(raw string) (string, int) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", 0
+	}
+
+	if strings.EqualFold(u.Scheme, "ldapi") {
+		return ldapiServerAddrPort(u)
+	}
+
+	return ldapTCPServerAddrPort(u)
+}
+
+// ldapiServerAddrPort returns the Unix-socket address for ldapi URIs.
+func ldapiServerAddrPort(u *url.URL) (string, int) {
+	if u.Path != "" && strings.HasPrefix(u.Path, "/") {
+		return u.Path, 0
+	}
+
+	return "", 0
+}
+
+// ldapTCPServerAddrPort returns host and port attributes for ldap and ldaps URIs.
+func ldapTCPServerAddrPort(u *url.URL) (string, int) {
+	host := u.Host
+
+	if address, port, err := net.SplitHostPort(host); err == nil {
+		return address, parseLDAPPort(port)
+	}
+
+	return host, defaultLDAPPort(u.Scheme)
+}
+
+// parseLDAPPort parses explicit LDAP ports and returns zero for invalid values.
+func parseLDAPPort(port string) int {
+	if port == "" {
+		return 0
+	}
+
+	value, err := strconv.ParseInt(port, 10, 16)
+	if err != nil || value < 0 || value > 65535 {
+		return 0
+	}
+
+	return int(value)
+}
+
+// defaultLDAPPort returns the scheme-derived LDAP port.
+func defaultLDAPPort(scheme string) int {
+	if scheme == ldapSchemeLDAPS {
+		return 636
+	}
+
+	return 389
 }
 
 // acquireTokenWithTimeout tries to acquire a capacity token from the pool within the configured timeout.
@@ -869,54 +1008,54 @@ func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid string) (connN
 		return definitions.LDAPPoolExhausted, err
 	}
 
-	// Also bound the search for a free connection by the same timeout to avoid infinite wait when all are busy.
-	connectAbortTimeout := l.cfg.GetLDAPConfigConnectAbortTimeout()
-	if connectAbortTimeout == 0 {
-		connectAbortTimeout = 10 * time.Second
-	}
+	ctx, cancel, err := l.connectionWaitContext(reqCtx)
+	if err != nil {
+		l.releaseToken()
 
-	ctx := reqCtx
-	if ctx == nil {
-		ctx = l.ctx
-	}
-
-	var cancel func()
-
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			l.releaseToken()
-
-			return definitions.LDAPPoolExhausted, errors.ErrLDAPPoolExhausted.WithDetail("context timeout while waiting for free LDAP connection")
-		}
-
-		if remaining > connectAbortTimeout {
-			ctx, cancel = context.WithTimeout(ctx, connectAbortTimeout)
-		}
-	} else {
-		ctx, cancel = context.WithTimeout(ctx, connectAbortTimeout)
+		return definitions.LDAPPoolExhausted, err
 	}
 
 	if cancel != nil {
 		defer cancel()
 	}
 
+	return l.waitForFreeConnection(ctx, guid)
+}
+
+// connectionWaitContext bounds free-connection scanning by the configured abort timeout.
+func (l *ldapPoolImpl) connectionWaitContext(reqCtx context.Context) (context.Context, func(), error) {
+	ctx := reqCtx
+	if ctx == nil {
+		ctx = l.ctx
+	}
+
+	connectAbortTimeout := l.connectAbortTimeout()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, nil, errors.ErrLDAPPoolExhausted.WithDetail("context timeout while waiting for free LDAP connection")
+		}
+
+		if remaining <= connectAbortTimeout {
+			return ctx, nil, nil
+		}
+	}
+
+	boundedCtx, cancel := context.WithTimeout(ctx, connectAbortTimeout)
+
+	return boundedCtx, cancel, nil
+}
+
+// waitForFreeConnection scans pool slots until one can be borrowed or the wait context expires.
+func (l *ldapPoolImpl) waitForFreeConnection(ctx context.Context, guid string) (int, error) {
 	borrowStart := time.Now()
 
 	for {
 		for index := 0; index < len(l.conn); index++ {
-			connNumber = l.processConnection(ctx, index, guid)
+			connNumber := l.processConnection(ctx, index, guid)
 			if connNumber != definitions.LDAPPoolExhausted {
-				// Trace successful borrow under request context
-				tr := monittrace.New("nauthilus/ldap_pool")
-				bctx, bsp := tr.Start(ctx, "ldap.pool.borrow_conn",
-					attribute.String("pool_name", l.name),
-					attribute.Int("index", connNumber),
-					attribute.Int("waited_ms", int(time.Since(borrowStart).Milliseconds())),
-				)
-				_ = bctx
-
-				bsp.End()
+				l.traceBorrowedConnection(ctx, connNumber, borrowStart)
 
 				return connNumber, nil
 			}
@@ -934,6 +1073,28 @@ func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid string) (connN
 			time.Sleep(1 * time.Millisecond)
 		}
 	}
+}
+
+// traceBorrowedConnection records a successful LDAP connection borrow.
+func (l *ldapPoolImpl) traceBorrowedConnection(ctx context.Context, connNumber int, borrowStart time.Time) {
+	tr := monittrace.New("nauthilus/ldap_pool")
+	_, bsp := tr.Start(ctx, "ldap.pool.borrow_conn",
+		attribute.String("pool_name", l.name),
+		attribute.Int("index", connNumber),
+		attribute.Int("waited_ms", int(time.Since(borrowStart).Milliseconds())),
+	)
+
+	bsp.End()
+}
+
+// connectAbortTimeout returns the configured LDAP connect abort timeout with the default fallback.
+func (l *ldapPoolImpl) connectAbortTimeout() time.Duration {
+	connectAbortTimeout := l.cfg.GetLDAPConfigConnectAbortTimeout()
+	if connectAbortTimeout == 0 {
+		return 10 * time.Second
+	}
+
+	return connectAbortTimeout
 }
 
 // processConnection manages the connection at the specified index in the LDAP pool to determine its usability and state.
@@ -1119,201 +1280,256 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		rawResult []*ldap.Entry
 	)
 
-	// IMPORTANT: Expand macros/username placeholders before we interact with the
-	// negative cache. Otherwise a template filter like "(mail=%s)" would produce
-	// the same cache key for all users and could poison lookups.
-	if ldapRequest.MacroSource != nil {
-		ldapRequest.Filter = util.ExpandLDAPFilter(ldapRequest.Filter, ldapRequest.MacroSource)
-
-		// Prevent double-expansion in LDAPConnectionImpl.Search(). After this point
-		// ldapRequest.Filter is already final.
-		ldapRequest.MacroSource = nil
-	}
-
-	ldapRequest.Filter = util.RemoveCRLFFromQueryOrFilter(ldapRequest.Filter, "")
+	normalizeLookupSearchRequest(ldapRequest)
 
 	conf := l.conf[index]
 
-	// Tracing: low-level LDAP search execution
-	{
-		tr := monittrace.New("nauthilus/ldap_ops")
+	searchSpan := l.startLDAPSearchSpan(index, ldapRequest, conf)
+	defer finishLDAPSearchSpan(searchSpan, &err, &result, &rawResult)
 
-		// Derive server.address/port from pool config for this index
-		srvAddr, srvPort := l.serverAddrPort(index)
-
-		sctx, ssp := tr.StartClient(ldapRequest.HTTPClientContext, "ldap.search",
-			attribute.String("rpc.system", "ldap"),
-			semconv.PeerService("ldap"),
-			semconv.ServerAddress(srvAddr),
-			semconv.ServerPort(srvPort),
-			attribute.String("ldap.operation", "search"),
-			attribute.String("pool_name", l.name),
-			attribute.String("base_dn", ldapRequest.BaseDN),
-			attribute.String("scope", ldapRequest.Scope.String()),
-			attribute.String("filter", ldapRequest.Filter),
-			attribute.Int("attrs_count", func() int {
-				if ldapRequest.SearchAttributes == nil {
-					return 0
-				}
-
-				return len(ldapRequest.SearchAttributes)
-			}()),
-			attribute.Int("timeout_ms", func() int {
-				if conf.GetSearchTimeout() > 0 {
-					return int(conf.GetSearchTimeout().Milliseconds())
-				}
-
-				return 0
-			}()),
-		)
-
-		// Replace request context for downstream (if any LDAP client consults context)
-		ldapRequest.HTTPClientContext = sctx
-
-		defer func() {
-			if err != nil {
-				ssp.RecordError(err)
-			}
-
-			// On success or failure, set entries_count if available
-			if rawResult != nil {
-				ssp.SetAttributes(attribute.Int("entries_count", len(rawResult)))
-			} else if result != nil {
-				ssp.SetAttributes(attribute.Int("entries_count", len(result)))
-			}
-
-			ssp.End()
-		}()
-	}
-
-	// Obtain per-pool negative cache engine (LRU per pool or shared TTL)
 	cache := getNegCache(l.name, conf)
 
-	// Set per-op timeout if configured
-	if to := conf.GetSearchTimeout(); to > 0 {
-		l.conn[index].GetConn().SetTimeout(to)
-	}
+	l.applySearchTimeout(index, conf)
 
-	// Negative cache check by (pool|baseDN|filter)
-	// Filter is already expanded (macros/%s) at this point.
-	negKey := l.name + "|" + ldapRequest.BaseDN + "|" + ldapRequest.Filter
-	if v, ok := cache.Get(negKey); ok {
-		// Cache hit (negative)
-		_ = v // value unused; presence is enough
-
-		stats.GetMetrics().GetLdapCacheHitsTotal().WithLabelValues(l.name, "neg").Inc()
-		stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
-
-		ldapReply.Result = make(bktype.AttributeMapping)
-
-		// Optionally include raw result (none for negative)
-		if ctxErr := ldapRequest.HTTPClientContext.Err(); ctxErr != nil {
-			ldapReply.Err = ctxErr
-		}
-
+	negKey := negativeLDAPCacheKey(l.name, ldapRequest)
+	if l.applyNegativeCacheHit(cache, negKey, ldapRequest, ldapReply) {
 		return
 	}
 
 	stats.GetMetrics().GetLdapCacheMissesTotal().WithLabelValues(l.name, "neg").Inc()
 
-	maxRetries := conf.GetRetryMax()
-	base := conf.GetRetryBase()
-	maxBackoff := conf.GetRetryMaxBackoff()
-
-	// Singleflight protect identical misses to avoid stampedes
-	type sfRes struct {
-		res bktype.AttributeMapping
-		raw []*ldap.Entry
-		err error
+	result, rawResult, err = l.searchWithNegativeSingleflight(index, ldapRequest, conf, negKey)
+	if err != nil {
+		l.handleLDAPSearchError(err, conf, cache, negKey, ldapRequest, ldapReply)
 	}
 
+	l.applyLDAPSearchReply(conf, cache, negKey, ldapRequest, ldapReply, result, rawResult, err)
+}
+
+// normalizeLookupSearchRequest expands macros before negative-cache lookup and sanitizes the filter.
+func normalizeLookupSearchRequest(ldapRequest *bktype.LDAPRequest) {
+	if ldapRequest.MacroSource != nil {
+		ldapRequest.Filter = util.ExpandLDAPFilter(ldapRequest.Filter, ldapRequest.MacroSource)
+		ldapRequest.MacroSource = nil
+	}
+
+	ldapRequest.Filter = util.RemoveCRLFFromQueryOrFilter(ldapRequest.Filter, "")
+}
+
+// startLDAPSearchSpan starts low-level LDAP search tracing and updates the request context.
+func (l *ldapPoolImpl) startLDAPSearchSpan(index int, ldapRequest *bktype.LDAPRequest, conf *config.LDAPConf) trace.Span {
+	tr := monittrace.New("nauthilus/ldap_ops")
+	srvAddr, srvPort := l.serverAddrPort(index)
+
+	sctx, ssp := tr.StartClient(ldapRequest.HTTPClientContext, "ldap.search",
+		attribute.String("rpc.system", "ldap"),
+		semconv.PeerService("ldap"),
+		semconv.ServerAddress(srvAddr),
+		semconv.ServerPort(srvPort),
+		attribute.String("ldap.operation", "search"),
+		attribute.String("pool_name", l.name),
+		attribute.String("base_dn", ldapRequest.BaseDN),
+		attribute.String("scope", ldapRequest.Scope.String()),
+		attribute.String("filter", ldapRequest.Filter),
+		attribute.Int("attrs_count", len(ldapRequest.SearchAttributes)),
+		attribute.Int("timeout_ms", ldapSearchTimeoutMilliseconds(conf)),
+	)
+
+	ldapRequest.HTTPClientContext = sctx
+
+	return ssp
+}
+
+// finishLDAPSearchSpan records search outcome attributes and ends the span.
+func finishLDAPSearchSpan(span trace.Span, err *error, result *bktype.AttributeMapping, rawResult *[]*ldap.Entry) {
+	if *err != nil {
+		span.RecordError(*err)
+	}
+
+	if *rawResult != nil {
+		span.SetAttributes(attribute.Int("entries_count", len(*rawResult)))
+	} else if *result != nil {
+		span.SetAttributes(attribute.Int("entries_count", len(*result)))
+	}
+
+	span.End()
+}
+
+// ldapSearchTimeoutMilliseconds returns the configured search timeout in milliseconds.
+func ldapSearchTimeoutMilliseconds(conf *config.LDAPConf) int {
+	if conf.GetSearchTimeout() > 0 {
+		return int(conf.GetSearchTimeout().Milliseconds())
+	}
+
+	return 0
+}
+
+// applySearchTimeout applies the per-operation LDAP search timeout to the active connection.
+func (l *ldapPoolImpl) applySearchTimeout(index int, conf *config.LDAPConf) {
+	if to := conf.GetSearchTimeout(); to > 0 {
+		l.conn[index].GetConn().SetTimeout(to)
+	}
+}
+
+// negativeLDAPCacheKey builds the negative-cache key after filter macro expansion.
+func negativeLDAPCacheKey(poolName string, ldapRequest *bktype.LDAPRequest) string {
+	return poolName + "|" + ldapRequest.BaseDN + "|" + ldapRequest.Filter
+}
+
+// applyNegativeCacheHit writes an empty reply when a negative-cache entry exists.
+func (l *ldapPoolImpl) applyNegativeCacheHit(cache localcache.SimpleCache, negKey string, ldapRequest *bktype.LDAPRequest, ldapReply *bktype.LDAPReply) bool {
+	if _, ok := cache.Get(negKey); !ok {
+		return false
+	}
+
+	stats.GetMetrics().GetLdapCacheHitsTotal().WithLabelValues(l.name, "neg").Inc()
+	l.recordNegativeCacheEntries(cache)
+
+	ldapReply.Result = make(bktype.AttributeMapping)
+	if ctxErr := ldapRequest.HTTPClientContext.Err(); ctxErr != nil {
+		ldapReply.Err = ctxErr
+	}
+
+	return true
+}
+
+// searchWithNegativeSingleflight protects identical negative-cache misses from stampeding LDAP.
+func (l *ldapPoolImpl) searchWithNegativeSingleflight(
+	index int,
+	ldapRequest *bktype.LDAPRequest,
+	conf *config.LDAPConf,
+	negKey string,
+) (bktype.AttributeMapping, []*ldap.Entry, error) {
 	val, _, _ := negSF.Do(negKey, func() (any, error) {
-		var (
-			e   error
-			r   bktype.AttributeMapping
-			raw []*ldap.Entry
-		)
+		result, rawResult, err := l.searchWithRetries(index, ldapRequest, conf)
 
-		for attempt := 0; attempt <= maxRetries; attempt++ {
-			r, raw, e = l.conn[index].Search(ldapRequest.HTTPClientContext, l.cfg, l.logger, ldapRequest)
-			if e == nil || !isTransientNetworkError(e) {
-				break
-			}
-
-			// retry on transient errors only
-			stats.GetMetrics().GetLdapRetriesTotal().WithLabelValues(l.name, "search").Inc()
-			time.Sleep(jitterBackoff(base, attempt, maxBackoff))
-		}
-
-		return &sfRes{res: r, raw: raw, err: e}, nil
+		return &ldapSearchSingleflightResult{res: result, raw: rawResult, err: err}, nil
 	})
 
-	pack := val.(*sfRes)
-	err = pack.err
-	result = pack.res
-	rawResult = pack.raw
+	pack := val.(*ldapSearchSingleflightResult)
 
-	if err != nil {
-		// error metric for search
-		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "search", ldapErrorCode(err)).Inc()
+	return pack.res, pack.raw, pack.err
+}
 
-		var doLog bool
+// searchWithRetries retries transient LDAP search failures according to pool settings.
+func (l *ldapPoolImpl) searchWithRetries(index int, ldapRequest *bktype.LDAPRequest, conf *config.LDAPConf) (bktype.AttributeMapping, []*ldap.Entry, error) {
+	var (
+		err       error
+		result    bktype.AttributeMapping
+		rawResult []*ldap.Entry
+	)
 
-		if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
-			if ldapError.ResultCode != uint16(ldap.LDAPResultNoSuchObject) {
-				doLog = true
-
-				if isTimeoutErr(err) || ldapError.ResultCode == uint16(ldap.LDAPResultTimeLimitExceeded) {
-					ldapReply.Err = errors.ErrLDAPSearchTimeout.WithDetail(err.Error())
-				} else {
-					ldapReply.Err = ldapError.Err
-				}
-			} else {
-				// Negative result: cache it
-				negTTL := conf.GetNegativeCacheTTL()
-
-				// If TTL <= 0, treat as disabled: do not store in negative cache.
-				if negTTL > 0 {
-					cache.Set(negKey, true, negTTL)
-					stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
-				}
-			}
-		} else {
-			doLog = true
-
-			if isTimeoutErr(err) {
-				ldapReply.Err = errors.ErrLDAPSearchTimeout.WithDetail(err.Error())
-			} else {
-				ldapReply.Err = err
-			}
+	for attempt := 0; attempt <= conf.GetRetryMax(); attempt++ {
+		result, rawResult, err = l.conn[index].Search(ldapRequest.HTTPClientContext, l.cfg, l.logger, ldapRequest)
+		if err == nil || !isTransientNetworkError(err) {
+			break
 		}
 
-		if doLog {
-			level.Error(l.logger).Log(
-				definitions.LogKeyLDAPPoolName, l.name,
-				definitions.LogKeyGUID, ldapRequest.GUID,
-				definitions.LogKeyMsg, "LDAP search error",
-				definitions.LogKeyError, err,
-			)
-		}
+		stats.GetMetrics().GetLdapRetriesTotal().WithLabelValues(l.name, "search").Inc()
+		time.Sleep(jitterBackoff(conf.GetRetryBase(), attempt, conf.GetRetryMaxBackoff()))
 	}
 
+	return result, rawResult, err
+}
+
+// handleLDAPSearchError maps LDAP search errors to replies, metrics, logs, and negative cache entries.
+func (l *ldapPoolImpl) handleLDAPSearchError(
+	err error,
+	conf *config.LDAPConf,
+	cache localcache.SimpleCache,
+	negKey string,
+	ldapRequest *bktype.LDAPRequest,
+	ldapReply *bktype.LDAPReply,
+) {
+	stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "search", ldapErrorCode(err)).Inc()
+
+	if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
+		if l.handleTypedLDAPSearchError(err, ldapError, conf, cache, negKey, ldapReply) {
+			l.logLDAPSearchError(ldapRequest, err)
+		}
+
+		return
+	}
+
+	if isTimeoutErr(err) {
+		ldapReply.Err = errors.ErrLDAPSearchTimeout.WithDetail(err.Error())
+	} else {
+		ldapReply.Err = err
+	}
+
+	l.logLDAPSearchError(ldapRequest, err)
+}
+
+// handleTypedLDAPSearchError handles LDAP protocol errors and returns whether the error should be logged.
+func (l *ldapPoolImpl) handleTypedLDAPSearchError(
+	err error,
+	ldapError *ldap.Error,
+	conf *config.LDAPConf,
+	cache localcache.SimpleCache,
+	negKey string,
+	ldapReply *bktype.LDAPReply,
+) bool {
+	if ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject) {
+		l.cacheLDAPNegativeResult(cache, negKey, conf)
+
+		return false
+	}
+
+	if isTimeoutErr(err) || ldapError.ResultCode == uint16(ldap.LDAPResultTimeLimitExceeded) {
+		ldapReply.Err = errors.ErrLDAPSearchTimeout.WithDetail(err.Error())
+	} else {
+		ldapReply.Err = ldapError.Err
+	}
+
+	return true
+}
+
+// applyLDAPSearchReply copies search results into the reply and records cache/context side effects.
+func (l *ldapPoolImpl) applyLDAPSearchReply(
+	conf *config.LDAPConf,
+	cache localcache.SimpleCache,
+	negKey string,
+	ldapRequest *bktype.LDAPRequest,
+	ldapReply *bktype.LDAPReply,
+	result bktype.AttributeMapping,
+	rawResult []*ldap.Entry,
+	err error,
+) {
 	ldapReply.Result = result
 	if conf.GetIncludeRawResult() {
 		ldapReply.RawResult = rawResult
 	}
 
-	// Also cache negatives when result is empty without LDAP error, but only if TTL > 0
 	if err == nil && len(result) == 0 {
-		if negTTL := conf.GetNegativeCacheTTL(); negTTL > 0 {
-			cache.Set(negKey, true, negTTL)
-			stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
-		}
+		l.cacheLDAPNegativeResult(cache, negKey, conf)
 	}
 
 	if ctxErr := ldapRequest.HTTPClientContext.Err(); ctxErr != nil {
 		ldapReply.Err = ctxErr
 	}
+}
+
+// cacheLDAPNegativeResult stores a negative lookup when the configured TTL enables it.
+func (l *ldapPoolImpl) cacheLDAPNegativeResult(cache localcache.SimpleCache, negKey string, conf *config.LDAPConf) {
+	if negTTL := conf.GetNegativeCacheTTL(); negTTL > 0 {
+		cache.Set(negKey, true, negTTL)
+		l.recordNegativeCacheEntries(cache)
+	}
+}
+
+// recordNegativeCacheEntries updates the negative-cache entry metric for the pool.
+func (l *ldapPoolImpl) recordNegativeCacheEntries(cache localcache.SimpleCache) {
+	stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
+}
+
+// logLDAPSearchError logs a failed LDAP search with pool and request context.
+func (l *ldapPoolImpl) logLDAPSearchError(ldapRequest *bktype.LDAPRequest, err error) {
+	level.Error(l.logger).Log(
+		definitions.LogKeyLDAPPoolName, l.name,
+		definitions.LogKeyGUID, ldapRequest.GUID,
+		definitions.LogKeyMsg, "LDAP search error",
+		definitions.LogKeyError, err,
+	)
 }
 
 // processLookupModifyRequest handles the Modify LDAP operation for the specified connection index.

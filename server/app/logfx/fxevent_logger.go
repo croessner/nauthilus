@@ -42,6 +42,15 @@ func (l *FxEventLogger) LogEvent(event fxevent.Event) {
 		return
 	}
 
+	if l.logLifecycleEvent(event) || l.logHookEvent(event) || l.logDependencyEvent(event) || l.logInvocationEvent(event) {
+		return
+	}
+
+	level.Debug(l.logger).Log(definitions.LogKeyMsg, "fx event", "type", fmt.Sprintf("%T", event))
+}
+
+// logLifecycleEvent logs Fx application lifecycle events.
+func (l *FxEventLogger) logLifecycleEvent(event fxevent.Event) bool {
 	switch e := event.(type) {
 	case *fxevent.LoggerInitialized:
 		level.Debug(l.logger).Log(definitions.LogKeyMsg, "fx logger initialized")
@@ -53,6 +62,16 @@ func (l *FxEventLogger) LogEvent(event fxevent.Event) {
 		level.Warn(l.logger).Log(definitions.LogKeyMsg, "fx rolling back", definitions.LogKeyError, e.StartErr)
 	case *fxevent.RolledBack:
 		level.Warn(l.logger).Log(definitions.LogKeyMsg, "fx rolled back", definitions.LogKeyError, e.Err)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// logHookEvent logs Fx hook execution events.
+func (l *FxEventLogger) logHookEvent(event fxevent.Event) bool {
+	switch e := event.(type) {
 	case *fxevent.OnStartExecuting:
 		level.Debug(l.logger).Log(definitions.LogKeyMsg, "fx OnStart executing", "callee", e.FunctionName)
 	case *fxevent.OnStartExecuted:
@@ -61,25 +80,48 @@ func (l *FxEventLogger) LogEvent(event fxevent.Event) {
 		level.Debug(l.logger).Log(definitions.LogKeyMsg, "fx OnStop executing", "callee", e.FunctionName)
 	case *fxevent.OnStopExecuted:
 		l.logHookResult("fx OnStop executed", e.FunctionName, e.Err)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// logDependencyEvent logs Fx dependency supply, provide, and invoke-start events.
+func (l *FxEventLogger) logDependencyEvent(event fxevent.Event) bool {
+	switch e := event.(type) {
 	case *fxevent.Supplied:
 		level.Debug(l.logger).Log(definitions.LogKeyMsg, "fx supplied", "type", e.TypeName, "stacktrace", e.StackTrace)
 	case *fxevent.Provided:
 		level.Debug(l.logger).Log(definitions.LogKeyMsg, "fx provided", "constructor", e.ConstructorName, "output_type", e.OutputTypeNames, "module", e.ModuleName)
 	case *fxevent.Invoking:
 		level.Debug(l.logger).Log(definitions.LogKeyMsg, "fx invoking", "function", e.FunctionName, "module", e.ModuleName)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// logInvocationEvent logs completed Fx invocation events.
+func (l *FxEventLogger) logInvocationEvent(event fxevent.Event) bool {
+	switch e := event.(type) {
 	case *fxevent.Invoked:
 		if e.Err != nil {
 			level.Error(l.logger).Log(definitions.LogKeyMsg, "fx invoked", "function", e.FunctionName, definitions.LogKeyError, e.Err)
 
-			return
+			return true
 		}
 
 		level.Debug(l.logger).Log(definitions.LogKeyMsg, "fx invoked", "function", e.FunctionName)
 	default:
-		level.Debug(l.logger).Log(definitions.LogKeyMsg, "fx event", "type", fmt.Sprintf("%T", event))
+		return false
 	}
+
+	return true
 }
 
+// logHookResult logs the outcome of an Fx hook.
 func (l *FxEventLogger) logHookResult(msg string, callee string, err error) {
 	if err != nil {
 		level.Error(l.logger).Log(definitions.LogKeyMsg, msg, "callee", callee, definitions.LogKeyError, err)

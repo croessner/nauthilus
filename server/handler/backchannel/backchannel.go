@@ -56,6 +56,11 @@ const (
 	openAPIService               = "spec"
 )
 
+type backchannelAuthState struct {
+	basicEnabled bool
+	oidcEnabled  bool
+}
+
 func ensureBackchannelAuthConfigured(cfg config.File, developerMode bool) error {
 	if hasBackchannelProtectedRouteAuth(cfg, developerMode) {
 		return nil
@@ -129,41 +134,68 @@ func authorizeBackchannelRequest(
 	validator oidcbearer.TokenValidator,
 	logger *slog.Logger,
 ) bool {
+	authState, ok := resolveBackchannelAuthState(ctx, cfg)
+	if !ok {
+		return false
+	}
+
+	return authorizeBackchannelScheme(ctx, cfg, validator, logger, authState)
+}
+
+// resolveBackchannelAuthState validates configured backchannel auth methods.
+func resolveBackchannelAuthState(ctx *gin.Context, cfg config.File) (backchannelAuthState, bool) {
 	if cfg == nil || cfg.GetServer() == nil {
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{backchannelResponseKeyError: backchannelAuthNotConfigured})
+		abortBackchannelAuthNotConfigured(ctx)
 
-		return false
+		return backchannelAuthState{}, false
 	}
 
-	basicEnabled := cfg.GetServer().GetBasicAuth().IsEnabled()
+	authState := backchannelAuthState{
+		basicEnabled: cfg.GetServer().GetBasicAuth().IsEnabled(),
+		oidcEnabled:  cfg.GetServer().GetOIDCAuth().IsEnabled(),
+	}
+	if !authState.basicEnabled && !authState.oidcEnabled {
+		abortBackchannelAuthNotConfigured(ctx)
 
-	oidcEnabled := cfg.GetServer().GetOIDCAuth().IsEnabled()
-	if !basicEnabled && !oidcEnabled {
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{backchannelResponseKeyError: backchannelAuthNotConfigured})
-
-		return false
+		return backchannelAuthState{}, false
 	}
 
+	return authState, true
+}
+
+// authorizeBackchannelScheme dispatches to the configured Basic or Bearer authorizer.
+func authorizeBackchannelScheme(
+	ctx *gin.Context,
+	cfg config.File,
+	validator oidcbearer.TokenValidator,
+	logger *slog.Logger,
+	authState backchannelAuthState,
+) bool {
 	switch authorizationHeaderScheme(ctx) {
 	case "basic":
-		if basicEnabled {
+		if authState.basicEnabled {
 			return mdauth.AuthorizeBasicAuthWithDeps(ctx, cfg, logger)
 		}
 	case "bearer":
-		if oidcEnabled {
+		if authState.oidcEnabled {
 			return oidcbearer.AuthorizeAuthenticateScope(ctx, validator, cfg, logger)
 		}
 	case "":
-		if basicEnabled && !oidcEnabled {
+		if authState.basicEnabled && !authState.oidcEnabled {
 			return mdauth.AuthorizeBasicAuthWithDeps(ctx, cfg, logger)
 		}
 	}
 
-	if oidcEnabled {
+	if authState.oidcEnabled {
 		return oidcbearer.AuthorizeAuthenticateScope(ctx, validator, cfg, logger)
 	}
 
 	return mdauth.AuthorizeBasicAuthWithDeps(ctx, cfg, logger)
+}
+
+// abortBackchannelAuthNotConfigured writes the uniform missing-auth response.
+func abortBackchannelAuthNotConfigured(ctx *gin.Context) {
+	ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{backchannelResponseKeyError: backchannelAuthNotConfigured})
 }
 
 func authorizationHeaderScheme(ctx *gin.Context) string {
@@ -193,60 +225,91 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 	cfg := deps.Cfg
 	developerMode := deps.Env != nil && deps.Env.GetDevMode()
 
-	// Main API group with configured authentication (mandatory token)
-	var (
-		nauthilusIDP       oidcbearer.TokenValidator
-		authenticatedGroup *gin.RouterGroup
-	)
+	nauthilusIDP, authenticatedGroup, err := registerAuthenticatedBackchannelRoutes(router, deps, cfg, developerMode)
+	if err != nil {
+		return err
+	}
 
-	if hasBackchannelProtectedRouteAuth(cfg, developerMode) {
-		authenticatedGroup = router.Group("/api/v1")
-		authenticatedGroup.Use(openAPIContextMiddleware())
+	registerCustomHookRoutes(router, deps, nauthilusIDP)
+	registerDevUIRoutes(deps, authenticatedGroup)
 
-		// OIDC Bearer token middleware (replaces the legacy JWT mechanism).
-		// Uses the IDP's ValidateToken to verify RS256-signed tokens from client_credentials grant.
-		// Controlled by auth.backchannel.oidc_bearer.enabled, independent of identity.oidc.enabled.
-		if cfg.GetServer().GetOIDCAuth().IsEnabled() {
-			nauthilusIDP = idp.NewNauthilusIDP(deps)
-		}
+	return nil
+}
 
-		if hasConfiguredBackchannelAuth(cfg) {
-			authenticatedGroup.Use(backchannelAuthMiddleware(cfg, nauthilusIDP, deps.Logger))
-		}
-
-		authenticatedGroup.Use(mdlua.ContextMiddleware())
-
-		openAPIValidationMiddleware, err := mdopenapivalidation.NewManagementMiddleware(
-			cfg.GetServer().GetOpenAPIValidation(),
-			deps.Logger,
-		)
-		if err != nil {
-			return err
-		}
-
-		if openAPIValidationMiddleware != nil {
-			authenticatedGroup.Use(openAPIValidationMiddleware)
-		}
-
-		approuter.RegisterManagementOpenAPI(authenticatedGroup)
-
-		// Register modules (require mandatory authentication)
-		auth.New(deps).Register(authenticatedGroup)
-		bruteforce.New(deps).Register(authenticatedGroup)
-		confighandler.New(deps).Register(authenticatedGroup)
-		cache.New(deps).Register(authenticatedGroup)
-		asyncjobs.New(deps).Register(authenticatedGroup)
-		mfa_backchannel.New(deps).Register(authenticatedGroup)
-	} else {
+// registerAuthenticatedBackchannelRoutes registers protected management API routes.
+func registerAuthenticatedBackchannelRoutes(
+	router *gin.Engine,
+	deps *handlerdeps.Deps,
+	cfg config.File,
+	developerMode bool,
+) (oidcbearer.TokenValidator, *gin.RouterGroup, error) {
+	if !hasBackchannelProtectedRouteAuth(cfg, developerMode) {
 		deps.Logger.Warn(
 			"Skipping authenticated backchannel endpoints because no auth.backchannel method is configured",
 		)
+
+		return nil, nil, nil
 	}
 
-	// Custom hooks use a separate group without authentication middleware.
-	// Authentication and authorization are handled per-hook inside HasRequiredScopes:
-	// hooks that define required scopes perform token extraction, validation, and
-	// scope checking; hooks without scopes are publicly accessible.
+	authenticatedGroup := router.Group("/api/v1")
+	authenticatedGroup.Use(openAPIContextMiddleware())
+
+	nauthilusIDP := backchannelTokenValidator(deps, cfg)
+	if hasConfiguredBackchannelAuth(cfg) {
+		authenticatedGroup.Use(backchannelAuthMiddleware(cfg, nauthilusIDP, deps.Logger))
+	}
+
+	authenticatedGroup.Use(mdlua.ContextMiddleware())
+
+	if err := useManagementOpenAPIValidation(authenticatedGroup, deps, cfg); err != nil {
+		return nil, nil, err
+	}
+
+	registerManagementModules(authenticatedGroup, deps)
+
+	return nauthilusIDP, authenticatedGroup, nil
+}
+
+// backchannelTokenValidator returns the OIDC token validator when Bearer auth is enabled.
+func backchannelTokenValidator(deps *handlerdeps.Deps, cfg config.File) oidcbearer.TokenValidator {
+	if cfg.GetServer().GetOIDCAuth().IsEnabled() {
+		return idp.NewNauthilusIDP(deps)
+	}
+
+	return nil
+}
+
+// useManagementOpenAPIValidation wires OpenAPI validation middleware when configured.
+func useManagementOpenAPIValidation(authenticatedGroup *gin.RouterGroup, deps *handlerdeps.Deps, cfg config.File) error {
+	openAPIValidationMiddleware, err := mdopenapivalidation.NewManagementMiddleware(
+		cfg.GetServer().GetOpenAPIValidation(),
+		deps.Logger,
+	)
+	if err != nil {
+		return err
+	}
+
+	if openAPIValidationMiddleware != nil {
+		authenticatedGroup.Use(openAPIValidationMiddleware)
+	}
+
+	approuter.RegisterManagementOpenAPI(authenticatedGroup)
+
+	return nil
+}
+
+// registerManagementModules registers management modules on the authenticated group.
+func registerManagementModules(authenticatedGroup *gin.RouterGroup, deps *handlerdeps.Deps) {
+	auth.New(deps).Register(authenticatedGroup)
+	bruteforce.New(deps).Register(authenticatedGroup)
+	confighandler.New(deps).Register(authenticatedGroup)
+	cache.New(deps).Register(authenticatedGroup)
+	asyncjobs.New(deps).Register(authenticatedGroup)
+	mfa_backchannel.New(deps).Register(authenticatedGroup)
+}
+
+// registerCustomHookRoutes registers unauthenticated custom hook routes.
+func registerCustomHookRoutes(router *gin.Engine, deps *handlerdeps.Deps, nauthilusIDP oidcbearer.TokenValidator) {
 	hookGroup := router.Group("/api/v1")
 	hookGroup.Use(mdlua.ContextMiddleware())
 
@@ -257,12 +320,13 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 		nauthilusIDP,
 		custom.WithNativeHooks(nativeHookBindings()),
 	).Register(hookGroup)
+}
 
+// registerDevUIRoutes registers the development UI on the authenticated group.
+func registerDevUIRoutes(deps *handlerdeps.Deps, authenticatedGroup *gin.RouterGroup) {
 	if deps.Env != nil && deps.Env.GetDevMode() && authenticatedGroup != nil {
 		devui.New(deps).Register(authenticatedGroup)
 	}
-
-	return nil
 }
 
 // nativeHookBindings adapts registered native plugin hooks into custom routes.

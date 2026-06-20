@@ -114,7 +114,17 @@ func TestCommonRequestSetupRequestIDPFields(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
 
-	cr := &CommonRequest{
+	request := L.NewTable()
+	idpSetupRequestFixture().SetupRequest(L, nil, request)
+
+	assertCommonRequestIDPStrings(t, request)
+	assertCommonRequestMFACompleted(t, request)
+	assertCommonRequestIDPSlices(t, request)
+}
+
+// idpSetupRequestFixture returns a request with all IDP-specific fields populated.
+func idpSetupRequestFixture() *CommonRequest {
+	return &CommonRequest{
 		GrantType:               "authorization_code",
 		OIDCClientName:          "My App",
 		RedirectURI:             "https://app.example.com/cb",
@@ -125,47 +135,66 @@ func TestCommonRequestSetupRequestIDPFields(t *testing.T) {
 		AllowedClientScopes:     []string{"openid", "profile", "email", "groups"},
 		AllowedClientGrantTypes: []string{"authorization_code", "refresh_token"},
 	}
+}
 
-	request := L.NewTable()
-	cr.SetupRequest(L, nil, request)
+type luaStringExpectation struct {
+	key      string
+	expected string
+}
 
-	// Verify string fields
-	stringTests := []struct {
-		key      string
-		expected string
-	}{
+// commonRequestIDPStringExpectations returns the expected scalar IDP Lua fields.
+func commonRequestIDPStringExpectations() []luaStringExpectation {
+	return []luaStringExpectation{
 		{definitions.LuaRequestGrantType, "authorization_code"},
 		{definitions.LuaRequestOIDCClientName, "My App"},
 		{definitions.LuaRequestRedirectURI, "https://app.example.com/cb"},
 		{definitions.LuaRequestMFAMethod, "webauthn"},
 	}
+}
 
-	for _, st := range stringTests {
+// assertCommonRequestIDPStrings verifies scalar IDP fields in the Lua request table.
+func assertCommonRequestIDPStrings(t *testing.T, request *lua.LTable) {
+	t.Helper()
+
+	for _, st := range commonRequestIDPStringExpectations() {
 		val := request.RawGetString(st.key)
 
 		if val.String() != st.expected {
 			t.Errorf("key %q: expected %q, got %q", st.key, st.expected, val.String())
 		}
 	}
+}
 
-	// Verify MFACompleted bool
+// assertCommonRequestMFACompleted verifies the MFA completion flag in the Lua request table.
+func assertCommonRequestMFACompleted(t *testing.T, request *lua.LTable) {
+	t.Helper()
+
 	mfaVal := request.RawGet(lua.LString(definitions.LuaRequestMFACompleted))
 	if mfaVal != lua.LTrue {
 		t.Errorf("expected MFACompleted to be true, got %v", mfaVal)
 	}
+}
 
-	// Verify slice fields
-	sliceTests := []struct {
-		key      string
-		expected []string
-	}{
+type luaSliceExpectation struct {
+	key      string
+	expected []string
+}
+
+// commonRequestIDPSliceExpectations returns the expected table-backed IDP Lua fields.
+func commonRequestIDPSliceExpectations() []luaSliceExpectation {
+	return []luaSliceExpectation{
 		{definitions.LuaRequestRequestedScopes, []string{"openid", "profile", "email"}},
 		{definitions.LuaRequestUserGroups, []string{"developers", "admins"}},
 		{definitions.LuaRequestAllowedClientScopes, []string{"openid", "profile", "email", "groups"}},
 		{definitions.LuaRequestAllowedClientGrantTypes, []string{"authorization_code", "refresh_token"}},
 	}
+}
 
-	for _, st := range sliceTests {
+// assertCommonRequestIDPSlices verifies table-backed IDP fields in the Lua request table.
+func assertCommonRequestIDPSlices(t *testing.T, request *lua.LTable) {
+	t.Helper()
+
+	for _, st := range commonRequestIDPSliceExpectations() {
 		tbl, ok := request.RawGetString(st.key).(*lua.LTable)
 		if !ok {
 			t.Errorf("key %q: expected table, got %T", st.key, request.RawGetString(st.key))

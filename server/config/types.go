@@ -27,7 +27,8 @@ import (
 )
 
 var (
-	runtimeModuleNames = map[string]struct{}{
+	backendSelectorPattern = regexp.MustCompile(`^(ldap|lua|test|remote|plugin)\((.*?)\)$`)
+	runtimeModuleNames     = map[string]struct{}{
 		definitions.ControlTLSEncryption:       {},
 		definitions.ControlRBL:                 {},
 		definitions.ControlRelayDomains:        {},
@@ -279,21 +280,14 @@ func (b *Backend) Set(value string) error {
 	value = strings.TrimSpace(value)
 	b.name = definitions.DefaultBackendName
 
-	regex := regexp.MustCompile(`^(ldap|lua|test|remote|plugin)\((.*?)\)$`)
+	backendName, selectorName, ok, err := parseBackendSelector(value)
+	if err != nil {
+		return err
+	}
 
-	if matches := regex.FindStringSubmatch(value); matches != nil {
-		name := strings.TrimSpace(matches[2])
-
-		if name == RemoteBackendDefaultName || name == definitions.DefaultBackendName {
-			return fmt.Errorf(errors.ErrWrongPassDB.Error(), name)
-		}
-
-		if matches[1] == definitions.BackendPluginName && !isQualifiedPluginBackendName(name) {
-			return fmt.Errorf(errors.ErrWrongPassDB.Error(), name)
-		}
-
-		b.name = name
-		value = matches[1]
+	if ok {
+		b.name = selectorName
+		value = backendName
 	}
 
 	switch value {
@@ -318,6 +312,27 @@ func (b *Backend) Set(value string) error {
 	}
 
 	return nil
+}
+
+// parseBackendSelector parses named backend selectors such as ldap(name) or plugin(module.backend).
+func parseBackendSelector(value string) (string, string, bool, error) {
+	matches := backendSelectorPattern.FindStringSubmatch(value)
+	if matches == nil {
+		return "", "", false, nil
+	}
+
+	backendName := matches[1]
+
+	selectorName := strings.TrimSpace(matches[2])
+	if selectorName == RemoteBackendDefaultName || selectorName == definitions.DefaultBackendName {
+		return "", "", false, fmt.Errorf(errors.ErrWrongPassDB.Error(), selectorName)
+	}
+
+	if backendName == definitions.BackendPluginName && !isQualifiedPluginBackendName(selectorName) {
+		return "", "", false, fmt.Errorf(errors.ErrWrongPassDB.Error(), selectorName)
+	}
+
+	return backendName, selectorName, true, nil
 }
 
 // isQualifiedPluginBackendName verifies that a plugin backend selector carries

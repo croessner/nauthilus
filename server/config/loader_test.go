@@ -10,6 +10,21 @@ import (
 
 func TestConfigLoader_LoadFromFile_MergesIncludesAndPatches(t *testing.T) {
 	root := t.TempDir()
+	mainPath := writeMergedLoaderFixture(t, root)
+
+	loader := NewConfigLoader("yaml")
+
+	settings, err := loader.LoadFromFile(mainPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	assertMergedLoaderSettings(t, settings)
+}
+
+// writeMergedLoaderFixture writes the include and patch fixture files.
+func writeMergedLoaderFixture(t *testing.T, root string) string {
+	t.Helper()
 
 	writeConfigFile(t, root, "base.yaml", `auth:
   backends:
@@ -41,36 +56,35 @@ auth:
         lookup_pool_size: 10
 `)
 
-	loader := NewConfigLoader("yaml")
+	return mainPath
+}
 
-	settings, err := loader.LoadFromFile(mainPath)
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
+// assertMergedLoaderSettings verifies merged config values and stripped control keys.
+func assertMergedLoaderSettings(t *testing.T, settings map[string]any) {
+	t.Helper()
 
-	auth, ok := settings["auth"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected auth map, got %T", settings["auth"])
-	}
+	auth := requireMapSetting(t, settings, "auth", "auth")
+	backends := requireMapSetting(t, auth, "backends", "auth.backends")
+	ldap := requireMapSetting(t, backends, "ldap", "auth.backends.ldap")
 
-	backends, ok := auth["backends"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected auth.backends map, got %T", auth["backends"])
-	}
+	assertMergedLoaderDefault(t, ldap)
+	assertMergedLoaderSearch(t, ldap)
+	assertLoaderControlKeysStripped(t, settings)
+}
 
-	ldap, ok := backends["ldap"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected auth.backends.ldap map, got %T", backends["ldap"])
-	}
+// assertMergedLoaderDefault verifies that main config values override includes.
+func assertMergedLoaderDefault(t *testing.T, ldap map[string]any) {
+	t.Helper()
 
-	defaultConfig, ok := ldap["default"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected auth.backends.ldap.default map, got %T", ldap["default"])
-	}
-
+	defaultConfig := requireMapSetting(t, ldap, "default", "auth.backends.ldap.default")
 	if got := requireInt(t, defaultConfig["lookup_pool_size"]); got != 10 {
 		t.Fatalf("expected lookup_pool_size 10, got %d", got)
 	}
+}
+
+// assertMergedLoaderSearch verifies the patch-added LDAP search entry.
+func assertMergedLoaderSearch(t *testing.T, ldap map[string]any) {
+	t.Helper()
 
 	search, ok := ldap["search"].([]any)
 	if !ok {
@@ -89,6 +103,11 @@ auth:
 	if entry["protocol"] != "imap" {
 		t.Fatalf("expected protocol imap, got %v", entry["protocol"])
 	}
+}
+
+// assertLoaderControlKeysStripped verifies that loader-only keys are removed after merging.
+func assertLoaderControlKeysStripped(t *testing.T, settings map[string]any) {
+	t.Helper()
 
 	if _, ok := settings[includeKey]; ok {
 		t.Fatal("includes should be stripped from merged settings")
@@ -101,6 +120,18 @@ auth:
 	if _, ok := settings[envKey]; ok {
 		t.Fatal("env should be stripped from merged settings")
 	}
+}
+
+// requireMapSetting returns a nested settings map or fails the test with path context.
+func requireMapSetting(t *testing.T, settings map[string]any, key string, path string) map[string]any {
+	t.Helper()
+
+	value, ok := settings[key].(map[string]any)
+	if !ok {
+		t.Fatalf("expected %s map, got %T", path, settings[key])
+	}
+
+	return value
 }
 
 func TestConfigLoader_LoadFromFile_OptionalMissing(t *testing.T) {

@@ -654,99 +654,71 @@ func TestValidateIDPOIDCCustomScopes(t *testing.T) {
 }
 
 func TestValidateIDPSAMLSigningSettings(t *testing.T) {
+	assertSAMLSigningNoErrorCases(t)
+	assertSAMLSigningAuthnRequestErrors(t)
+	assertSAMLSigningLogoutErrors(t)
+}
+
+// assertSAMLSigningNoErrorCases verifies configurations that do not require signing errors.
+func assertSAMLSigningNoErrorCases(t *testing.T) {
+	t.Helper()
+
 	t.Run("nil config", func(t *testing.T) {
 		var cfg *FileSettings
 		assert.NoError(t, cfg.validateIDPSAMLSigningSettings())
 	})
 
 	t.Run("disabled saml", func(t *testing.T) {
-		cfg := &FileSettings{
-			IDP: &IDPSection{
-				SAML2: SAML2Config{Enabled: false},
-			},
-		}
+		cfg := &FileSettings{IDP: &IDPSection{SAML2: SAML2Config{Enabled: false}}}
 		assert.NoError(t, cfg.validateIDPSAMLSigningSettings())
 	})
 
 	t.Run("authn request signing disabled does not require cert", func(t *testing.T) {
-		cfg := &FileSettings{
-			IDP: &IDPSection{
-				SAML2: SAML2Config{
-					Enabled: true,
-					ServiceProviders: []SAML2ServiceProvider{
-						{
-							EntityID: "https://sp.example.com/metadata",
-							ACSURL:   "https://sp.example.com/acs",
-						},
-					},
-				},
-			},
-		}
+		cfg := samlSigningConfig(SAML2ServiceProvider{
+			EntityID: "https://sp.example.com/metadata",
+			ACSURL:   "https://sp.example.com/acs",
+		})
 		assert.NoError(t, cfg.validateIDPSAMLSigningSettings())
-	})
-
-	t.Run("missing cert with authn request signing enabled returns error", func(t *testing.T) {
-		cfg := &FileSettings{
-			IDP: &IDPSection{
-				SAML2: SAML2Config{
-					Enabled: true,
-					ServiceProviders: []SAML2ServiceProvider{
-						{
-							EntityID:            "https://sp.example.com/metadata",
-							ACSURL:              "https://sp.example.com/acs",
-							AuthnRequestsSigned: true,
-						},
-					},
-				},
-			},
-		}
-
-		err := cfg.validateIDPSAMLSigningSettings()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "authn_requests_signed requires cert or cert_file")
-	})
-
-	t.Run("invalid cert with authn request signing enabled returns error", func(t *testing.T) {
-		cfg := &FileSettings{
-			IDP: &IDPSection{
-				SAML2: SAML2Config{
-					Enabled: true,
-					ServiceProviders: []SAML2ServiceProvider{
-						{
-							EntityID:            "https://sp.example.com/metadata",
-							ACSURL:              "https://sp.example.com/acs",
-							AuthnRequestsSigned: true,
-							Cert:                "not-a-certificate",
-						},
-					},
-				},
-			},
-		}
-
-		err := cfg.validateIDPSAMLSigningSettings()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid cert for authn request signature validation")
 	})
 
 	t.Run("valid inline cert with authn request signing enabled", func(t *testing.T) {
-		cfg := &FileSettings{
-			IDP: &IDPSection{
-				SAML2: SAML2Config{
-					Enabled: true,
-					ServiceProviders: []SAML2ServiceProvider{
-						{
-							EntityID:            "https://sp.example.com/metadata",
-							ACSURL:              "https://sp.example.com/acs",
-							AuthnRequestsSigned: true,
-							Cert:                testCertificatePEM(t),
-						},
-					},
-				},
-			},
-		}
-
+		cfg := samlSigningConfig(SAML2ServiceProvider{
+			EntityID:            "https://sp.example.com/metadata",
+			ACSURL:              "https://sp.example.com/acs",
+			AuthnRequestsSigned: true,
+			Cert:                testCertificatePEM(t),
+		})
 		assert.NoError(t, cfg.validateIDPSAMLSigningSettings())
 	})
+}
+
+// assertSAMLSigningAuthnRequestErrors verifies authn request signing certificate errors.
+func assertSAMLSigningAuthnRequestErrors(t *testing.T) {
+	t.Helper()
+
+	t.Run("missing cert with authn request signing enabled returns error", func(t *testing.T) {
+		cfg := samlSigningConfig(SAML2ServiceProvider{
+			EntityID:            "https://sp.example.com/metadata",
+			ACSURL:              "https://sp.example.com/acs",
+			AuthnRequestsSigned: true,
+		})
+		assertSAMLSigningError(t, cfg, "authn_requests_signed requires cert or cert_file")
+	})
+
+	t.Run("invalid cert with authn request signing enabled returns error", func(t *testing.T) {
+		cfg := samlSigningConfig(SAML2ServiceProvider{
+			EntityID:            "https://sp.example.com/metadata",
+			ACSURL:              "https://sp.example.com/acs",
+			AuthnRequestsSigned: true,
+			Cert:                "not-a-certificate",
+		})
+		assertSAMLSigningError(t, cfg, "invalid cert for authn request signature validation")
+	})
+}
+
+// assertSAMLSigningLogoutErrors verifies logout signing certificate errors.
+func assertSAMLSigningLogoutErrors(t *testing.T) {
+	t.Helper()
 
 	t.Run("missing cert with logout signing enabled returns error", func(t *testing.T) {
 		testCases := []struct {
@@ -776,23 +748,31 @@ func TestValidateIDPSAMLSigningSettings(t *testing.T) {
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				cfg := &FileSettings{
-					IDP: &IDPSection{
-						SAML2: SAML2Config{
-							Enabled: true,
-							ServiceProviders: []SAML2ServiceProvider{
-								tc.serviceProv,
-							},
-						},
-					},
-				}
-
-				err := cfg.validateIDPSAMLSigningSettings()
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tc.wantErr)
+				assertSAMLSigningError(t, samlSigningConfig(tc.serviceProv), tc.wantErr)
 			})
 		}
 	})
+}
+
+// samlSigningConfig returns a SAML-enabled config with one service provider.
+func samlSigningConfig(serviceProvider SAML2ServiceProvider) *FileSettings {
+	return &FileSettings{
+		IDP: &IDPSection{
+			SAML2: SAML2Config{
+				Enabled:          true,
+				ServiceProviders: []SAML2ServiceProvider{serviceProvider},
+			},
+		},
+	}
+}
+
+// assertSAMLSigningError verifies a SAML signing validation error substring.
+func assertSAMLSigningError(t *testing.T, cfg *FileSettings, wantErr string) {
+	t.Helper()
+
+	err := cfg.validateIDPSAMLSigningSettings()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), wantErr)
 }
 
 func testCertificatePEM(t *testing.T) string {
@@ -857,6 +837,15 @@ func TestSAML2ServiceProvider_LogoutSigningDefaults(t *testing.T) {
 }
 
 func TestSAML2ServiceProvider_GetCert(t *testing.T) {
+	assertSAMLGetCertEmptyCases(t)
+	assertSAMLGetCertInlineCases(t)
+	assertSAMLGetCertFileCases(t)
+}
+
+// assertSAMLGetCertEmptyCases verifies empty certificate results.
+func assertSAMLGetCertEmptyCases(t *testing.T) {
+	t.Helper()
+
 	t.Run("NilServiceProvider", func(t *testing.T) {
 		var sp *SAML2ServiceProvider
 
@@ -874,6 +863,11 @@ func TestSAML2ServiceProvider_GetCert(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Empty(t, cert)
 	})
+}
+
+// assertSAMLGetCertInlineCases verifies inline certificate behavior.
+func assertSAMLGetCertInlineCases(t *testing.T) {
+	t.Helper()
 
 	t.Run("InlineCert", func(t *testing.T) {
 		sp := &SAML2ServiceProvider{
@@ -885,6 +879,23 @@ func TestSAML2ServiceProvider_GetCert(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, "inline-cert-content", cert)
 	})
+
+	t.Run("InlineTakesPrecedence", func(t *testing.T) {
+		sp := &SAML2ServiceProvider{
+			Cert:     "inline-cert",
+			CertFile: "/some/file",
+		}
+
+		cert, err := sp.GetCert()
+
+		assert.NoError(t, err)
+		assert.Equal(t, "inline-cert", cert)
+	})
+}
+
+// assertSAMLGetCertFileCases verifies file-backed certificate behavior.
+func assertSAMLGetCertFileCases(t *testing.T) {
+	t.Helper()
 
 	t.Run("CertFromFile", func(t *testing.T) {
 		tmpFile, err := os.CreateTemp("", "sp-cert")
@@ -914,18 +925,6 @@ func TestSAML2ServiceProvider_GetCert(t *testing.T) {
 
 		assert.Error(t, err)
 	})
-
-	t.Run("InlineTakesPrecedence", func(t *testing.T) {
-		sp := &SAML2ServiceProvider{
-			Cert:     "inline-cert",
-			CertFile: "/some/file",
-		}
-
-		cert, err := sp.GetCert()
-
-		assert.NoError(t, err)
-		assert.Equal(t, "inline-cert", cert)
-	})
 }
 
 func TestWebAuthn_GetAuthenticatorAttachment(t *testing.T) {
@@ -948,47 +947,89 @@ func TestWebAuthn_GetAuthenticatorAttachment(t *testing.T) {
 	}
 }
 
-func TestWebAuthn_GetResidentKey(t *testing.T) {
-	tests := []struct {
-		name string
-		w    *WebAuthn
-		want string
-	}{
-		{name: "nil receiver", w: nil, want: "discouraged"},
-		{name: "empty defaults to discouraged", w: &WebAuthn{}, want: "discouraged"},
-		{name: "discouraged", w: &WebAuthn{ResidentKey: "discouraged"}, want: "discouraged"},
-		{name: "preferred", w: &WebAuthn{ResidentKey: "preferred"}, want: "preferred"},
-		{name: "required", w: &WebAuthn{ResidentKey: "required"}, want: "required"},
-		{name: "invalid defaults to discouraged", w: &WebAuthn{ResidentKey: "bogus"}, want: "discouraged"},
-		{name: "uppercase normalized", w: &WebAuthn{ResidentKey: "Required"}, want: "required"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.w.GetResidentKey())
+func TestWebAuthn_StringOptions(t *testing.T) {
+	for _, option := range webAuthnStringOptions() {
+		t.Run(option.name, func(t *testing.T) {
+			assertWebAuthnStringOption(t, option)
 		})
 	}
 }
 
-func TestWebAuthn_GetUserVerification(t *testing.T) {
-	tests := []struct {
-		name string
-		w    *WebAuthn
-		want string
-	}{
-		{name: "nil receiver", w: nil, want: "preferred"},
-		{name: "empty defaults to preferred", w: &WebAuthn{}, want: "preferred"},
-		{name: "discouraged", w: &WebAuthn{UserVerification: "discouraged"}, want: "discouraged"},
-		{name: "preferred", w: &WebAuthn{UserVerification: "preferred"}, want: "preferred"},
-		{name: "required", w: &WebAuthn{UserVerification: "required"}, want: "required"},
-		{name: "invalid defaults to preferred", w: &WebAuthn{UserVerification: "bogus"}, want: "preferred"},
-		{name: "uppercase normalized", w: &WebAuthn{UserVerification: "Discouraged"}, want: "discouraged"},
-	}
+type webAuthnStringOption struct {
+	name           string
+	defaultWant    string
+	invalidWant    string
+	uppercaseValue string
+	uppercaseWant  string
+	build          func(string) *WebAuthn
+	get            func(*WebAuthn) string
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.w.GetUserVerification())
+type webAuthnStringOptionCase struct {
+	name        string
+	value       string
+	want        string
+	nilReceiver bool
+}
+
+// webAuthnStringOptions lists WebAuthn string options with distinct defaults and normalization cases.
+func webAuthnStringOptions() []webAuthnStringOption {
+	return []webAuthnStringOption{
+		{
+			name:           "resident key",
+			defaultWant:    "discouraged",
+			invalidWant:    "discouraged",
+			uppercaseValue: "Required",
+			uppercaseWant:  "required",
+			build: func(value string) *WebAuthn {
+				return &WebAuthn{ResidentKey: value}
+			},
+			get: func(w *WebAuthn) string {
+				return w.GetResidentKey()
+			},
+		},
+		{
+			name:           "user verification",
+			defaultWant:    "preferred",
+			invalidWant:    "preferred",
+			uppercaseValue: "Discouraged",
+			uppercaseWant:  "discouraged",
+			build: func(value string) *WebAuthn {
+				return &WebAuthn{UserVerification: value}
+			},
+			get: func(w *WebAuthn) string {
+				return w.GetUserVerification()
+			},
+		},
+	}
+}
+
+// assertWebAuthnStringOption runs shared WebAuthn string-normalization test cases.
+func assertWebAuthnStringOption(t *testing.T, option webAuthnStringOption) {
+	t.Helper()
+
+	for _, testCase := range webAuthnStringOptionCases(option) {
+		t.Run(testCase.name, func(t *testing.T) {
+			var w *WebAuthn
+			if !testCase.nilReceiver {
+				w = option.build(testCase.value)
+			}
+
+			assert.Equal(t, testCase.want, option.get(w))
 		})
+	}
+}
+
+// webAuthnStringOptionCases expands the common WebAuthn string-normalization matrix.
+func webAuthnStringOptionCases(option webAuthnStringOption) []webAuthnStringOptionCase {
+	return []webAuthnStringOptionCase{
+		{name: "nil receiver", nilReceiver: true, want: option.defaultWant},
+		{name: "empty defaults", want: option.defaultWant},
+		{name: "discouraged", value: "discouraged", want: "discouraged"},
+		{name: "preferred", value: "preferred", want: "preferred"},
+		{name: "required", value: "required", want: "required"},
+		{name: "invalid defaults", value: "bogus", want: option.invalidWant},
+		{name: "uppercase normalized", value: option.uppercaseValue, want: option.uppercaseWant},
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/backend"
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -33,51 +34,25 @@ import (
 
 const requireMFAFlowID = flowdomain.FlowIDRequireMFA
 
+type oidcMFAMethodSelector func(*config.OIDCClient) []string
+
+type samlMFAMethodSelector func(*config.SAML2ServiceProvider) []string
+
 // getRequiredMFAMethods returns the list of MFA methods configured as mandatory
 // for the current IDP client or SAML service provider read from the cookie.
 // Returns nil when no requirement is configured or the flow type is unknown.
 func (h *FrontendHandler) getRequiredMFAMethods(mgr cookie.Manager) []string {
-	if mgr == nil || h.deps == nil {
-		return nil
-	}
-
-	flowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
-	idpInstance := idp.NewNauthilusIDP(h.deps)
-
-	switch flowType {
-	case definitions.ProtoOIDC:
-		clientID := mgr.GetString(definitions.SessionKeyIDPClientID, "")
-		if clientID == "" {
-			return nil
-		}
-
-		client, ok := idpInstance.FindClient(clientID)
-		if !ok {
-			return nil
-		}
-
-		return client.GetRequireMFA()
-
-	case definitions.ProtoSAML:
-		entityID := mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
-		if entityID == "" {
-			return nil
-		}
-
-		sp, ok := idpInstance.FindSAMLServiceProvider(entityID)
-		if !ok {
-			return nil
-		}
-
-		return sp.GetRequireMFA()
-	}
-
-	return nil
+	return h.getFlowMFAMethods(mgr, (*config.OIDCClient).GetRequireMFA, (*config.SAML2ServiceProvider).GetRequireMFA)
 }
 
 // getSupportedMFAMethods returns the list of MFA methods supported for the current
 // IDP client or SAML service provider. Empty means all methods are supported.
 func (h *FrontendHandler) getSupportedMFAMethods(mgr cookie.Manager) []string {
+	return h.getFlowMFAMethods(mgr, (*config.OIDCClient).GetSupportedMFA, (*config.SAML2ServiceProvider).GetSupportedMFA)
+}
+
+// getFlowMFAMethods resolves OIDC or SAML MFA method settings from the current flow context.
+func (h *FrontendHandler) getFlowMFAMethods(mgr cookie.Manager, oidcSelector oidcMFAMethodSelector, samlSelector samlMFAMethodSelector) []string {
 	if mgr == nil || h.deps == nil {
 		return nil
 	}
@@ -97,7 +72,7 @@ func (h *FrontendHandler) getSupportedMFAMethods(mgr cookie.Manager) []string {
 			return nil
 		}
 
-		return client.GetSupportedMFA()
+		return oidcSelector(client)
 
 	case definitions.ProtoSAML:
 		entityID := mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
@@ -110,7 +85,7 @@ func (h *FrontendHandler) getSupportedMFAMethods(mgr cookie.Manager) []string {
 			return nil
 		}
 
-		return sp.GetSupportedMFA()
+		return samlSelector(sp)
 	}
 
 	return nil
@@ -237,24 +212,37 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 		return false
 	}
 
+	required, user, protocol, ok := h.requireMFARegistrationContext(ctx, mgr)
+	if !ok {
+		return false
+	}
+
+	missing := h.missingRequireMFAMethods(ctx, mgr, user, protocol, required)
+	if len(missing) == 0 {
+		h.clearRequireMFARegistrationState(mgr)
+
+		return false
+	}
+
+	flowdomain.SetRequireMFAPending(mgr, strings.Join(missing, ","))
+
+	return h.startRequireMFARegistrationFlow(ctx, mgr, user, protocol, missing)
+}
+
+// requireMFARegistrationContext loads configured requirements and current user.
+func (h *FrontendHandler) requireMFARegistrationContext(ctx *gin.Context, mgr cookie.Manager) ([]string, *backend.User, string, bool) {
 	required := h.getRequiredMFAMethods(mgr)
 	if len(required) == 0 {
 		h.clearRequireMFARegistrationState(mgr)
 
-		return false
+		return nil, nil, "", false
 	}
 
 	username := mgr.GetString(definitions.SessionKeyAccount, "")
-	if username == "" {
+	if username == "" || h.deps == nil {
 		h.clearRequireMFARegistrationState(mgr)
 
-		return false
-	}
-
-	protocol := mgr.GetString(definitions.SessionKeyProtocol, "")
-
-	if h.deps == nil {
-		return false
+		return nil, nil, "", false
 	}
 
 	idpInstance := idp.NewNauthilusIDP(h.deps)
@@ -264,49 +252,65 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 	if err != nil {
 		h.clearRequireMFARegistrationState(mgr)
 
-		return false
+		return nil, nil, "", false
 	}
 
-	var missing []string
+	return required, user, mgr.GetString(definitions.SessionKeyProtocol, ""), true
+}
+
+// missingRequireMFAMethods returns methods that are still not registered.
+func (h *FrontendHandler) missingRequireMFAMethods(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	user *backend.User,
+	protocol string,
+	required []string,
+) []string {
+	missing := make([]string, 0, len(required))
 
 	for _, method := range required {
-		switch method {
-		case definitions.MFAMethodTOTP:
-			if !h.hasTOTPForRequireMFA(ctx, mgr, user) {
-				missing = append(missing, definitions.MFAMethodTOTP)
-			}
-
-		case definitions.MFAMethodWebAuthn:
-			if !h.hasWebAuthn(ctx, user, protocol) {
-				missing = append(missing, definitions.MFAMethodWebAuthn)
-			}
-
-		case definitions.MFAMethodRecoveryCodes:
-			if !h.hasRecoveryCodesForRequireMFA(ctx, mgr, user) {
-				missing = append(missing, definitions.MFAMethodRecoveryCodes)
-			}
+		if h.requireMFAMethodMissing(ctx, mgr, user, protocol, method) {
+			missing = append(missing, method)
 		}
 	}
 
-	if len(missing) == 0 {
-		h.clearRequireMFARegistrationState(mgr)
+	return missing
+}
 
+// requireMFAMethodMissing checks one mandatory MFA method.
+func (h *FrontendHandler) requireMFAMethodMissing(ctx *gin.Context, mgr cookie.Manager, user *backend.User, protocol string, method string) bool {
+	switch method {
+	case definitions.MFAMethodTOTP:
+		return !h.hasTOTPForRequireMFA(ctx, mgr, user)
+	case definitions.MFAMethodWebAuthn:
+		return !h.hasWebAuthn(ctx, user, protocol)
+	case definitions.MFAMethodRecoveryCodes:
+		return !h.hasRecoveryCodesForRequireMFA(ctx, mgr, user)
+	default:
 		return false
 	}
+}
 
-	flowdomain.SetRequireMFAPending(mgr, strings.Join(missing, ","))
-
-	flowProtocol := flowdomain.FlowProtocolUnknown
-
+// requireMFAFlowProtocol maps the current IDP protocol to flow protocol.
+func requireMFAFlowProtocol(protocol string) flowdomain.Protocol {
 	switch protocol {
 	case definitions.ProtoOIDC:
-		flowProtocol = flowdomain.FlowProtocolOIDC
+		return flowdomain.FlowProtocolOIDC
 	case definitions.ProtoSAML:
-		flowProtocol = flowdomain.FlowProtocolSAML
+		return flowdomain.FlowProtocolSAML
+	default:
+		return flowdomain.FlowProtocolUnknown
 	}
+}
 
-	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-
+// startRequireMFARegistrationFlow creates and redirects to the require-MFA flow.
+func (h *FrontendHandler) startRequireMFARegistrationFlow(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	user *backend.User,
+	protocol string,
+	missing []string,
+) bool {
 	parentFlowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 	if parentFlowID != "" && parentFlowID != requireMFAFlowID {
 		mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
@@ -319,10 +323,12 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 		return false
 	}
 
+	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+
 	decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
 		FlowID:       requireMFAFlowID,
 		Type:         flowdomain.FlowTypeRequireMFA,
-		Protocol:     flowProtocol,
+		Protocol:     requireMFAFlowProtocol(protocol),
 		CurrentStep:  flowdomain.FlowStepStart,
 		ReturnTarget: nextTarget,
 		PendingMFA:   true,

@@ -61,12 +61,14 @@ func warnIfMissing(kind, name string) {
 	}
 }
 
-// createSummaryVec registers a new Prometheus SummaryVec metric with the provided name, help description, and label names.
-func (m *PrometheusManager) createSummaryVec(L *lua.LState) int {
-	stack := luastack.NewManager(L)
+type prometheusTimerVec interface {
+	With(labels prometheus.Labels) prometheus.Observer
+}
+
+// metricVecArgs reads the common metric name, help text, and optional label names.
+func metricVecArgs(stack *luastack.Manager) (string, string, []string) {
 	name := stack.CheckString(1)
 	help := stack.CheckString(2)
-
 	labelNames := make([]string, 0)
 
 	if stack.GetTop() > 2 {
@@ -76,170 +78,172 @@ func (m *PrometheusManager) createSummaryVec(L *lua.LState) int {
 		})
 	}
 
-	// Check if the summary already exists
-	if _, exists := summaries[name]; exists {
+	return name, help, labelNames
+}
+
+// labelValuesFromTable converts Lua label tables into Prometheus label maps.
+func labelValuesFromTable(labels *lua.LTable) prometheus.Labels {
+	labelValues := make(prometheus.Labels)
+
+	labels.ForEach(func(key, value lua.LValue) {
+		labelValues[key.String()] = value.String()
+	})
+
+	return labelValues
+}
+
+// registerMetricVec registers a metric vector once and stores it in its registry.
+func registerMetricVec[T prometheus.Collector](registry map[string]T, name string, build func() T) int {
+	if _, exists := registry[name]; exists {
 		return 0
 	}
 
-	summary := prometheus.NewSummaryVec(prometheus.SummaryOpts{
-		Name: name,
-		Help: help,
-	}, labelNames)
-
-	prometheus.MustRegister(summary)
-
-	summaries[name] = summary
+	metric := build()
+	prometheus.MustRegister(metric)
+	registry[name] = metric
 
 	return 0
+}
+
+// startMetricTimer starts a Prometheus timer for a registered observer vector.
+func startMetricTimer[T prometheusTimerVec](L *lua.LState, stack *luastack.Manager, registry map[string]T, kind string) int {
+	name := stack.CheckString(1)
+	labels := stack.CheckTable(2)
+
+	metric, exists := registry[name]
+	if !exists {
+		warnIfMissing(kind, name)
+
+		return 0
+	}
+
+	timer := prometheus.NewTimer(metric.With(labelValuesFromTable(labels)))
+	ud := L.NewUserData()
+	ud.Value = timer
+
+	return stack.PushResults(ud, lua.LNil)
+}
+
+// updateCounter runs an action against a registered counter child.
+func updateCounter(L *lua.LState, action func(prometheus.Counter)) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	labels := stack.CheckTable(2)
+
+	counter, exists := counters[name]
+	if !exists {
+		warnIfMissing("counter", name)
+
+		return 0
+	}
+
+	action(counter.With(labelValuesFromTable(labels)))
+
+	return 0
+}
+
+// updateGauge runs an action against a registered gauge child.
+func updateGauge(L *lua.LState, action func(prometheus.Gauge)) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	labels := stack.CheckTable(2)
+
+	gauge, exists := gauges[name]
+	if !exists {
+		warnIfMissing("gauge", name)
+
+		return 0
+	}
+
+	action(gauge.With(labelValuesFromTable(labels)))
+
+	return 0
+}
+
+// updateGaugeValue runs a value-based action against a registered gauge child.
+func updateGaugeValue(L *lua.LState, action func(prometheus.Gauge, float64)) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	value := float64(stack.CheckNumber(2))
+	labels := stack.CheckTable(3)
+
+	gauge, exists := gauges[name]
+	if !exists {
+		warnIfMissing("gauge", name)
+
+		return 0
+	}
+
+	action(gauge.With(labelValuesFromTable(labels)), value)
+
+	return 0
+}
+
+// createSummaryVec registers a new Prometheus SummaryVec metric with the provided name, help description, and label names.
+func (m *PrometheusManager) createSummaryVec(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name, help, labelNames := metricVecArgs(stack)
+
+	return registerMetricVec(summaries, name, func() *prometheus.SummaryVec {
+		return prometheus.NewSummaryVec(prometheus.SummaryOpts{
+			Name: name,
+			Help: help,
+		}, labelNames)
+	})
 }
 
 // createCounterVec registers a new Prometheus CounterVec metric with the provided name, help description, and label names.
 func (m *PrometheusManager) createCounterVec(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	help := stack.CheckString(2)
+	name, help, labelNames := metricVecArgs(stack)
 
-	labelNames := make([]string, 0)
-
-	if stack.GetTop() > 2 {
-		labelTable := stack.CheckTable(3)
-		labelTable.ForEach(func(_ lua.LValue, value lua.LValue) {
-			labelNames = append(labelNames, value.String())
-		})
-	}
-
-	// Check if the counter already exists
-	if _, exists := counters[name]; exists {
-		return 0
-	}
-
-	counter := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: name,
-		Help: help,
-	}, labelNames)
-
-	prometheus.MustRegister(counter)
-
-	counters[name] = counter
-
-	return 0
+	return registerMetricVec(counters, name, func() *prometheus.CounterVec {
+		return prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: name,
+			Help: help,
+		}, labelNames)
+	})
 }
 
 // createHistogramVec registers a new Prometheus HistogramVec with the specified name, help message, and optional label names.
 func (m *PrometheusManager) createHistogramVec(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	help := stack.CheckString(2)
+	name, help, labelNames := metricVecArgs(stack)
 
-	labelNames := make([]string, 0)
-
-	if stack.GetTop() > 2 {
-		labelTable := stack.CheckTable(3)
-		labelTable.ForEach(func(_ lua.LValue, value lua.LValue) {
-			labelNames = append(labelNames, value.String())
-		})
-	}
-
-	// Check if the histogram already exists
-	if _, exists := histograms[name]; exists {
-		return 0
-	}
-
-	histogram := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    name,
-		Help:    help,
-		Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
-	}, labelNames)
-
-	prometheus.MustRegister(histogram)
-
-	histograms[name] = histogram
-
-	return 0
+	return registerMetricVec(histograms, name, func() *prometheus.HistogramVec {
+		return prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    name,
+			Help:    help,
+			Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
+		}, labelNames)
+	})
 }
 
 // createGaugeVec registers a new Prometheus GaugeVec metric with the provided name, help description, and label names.
 func (m *PrometheusManager) createGaugeVec(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	help := stack.CheckString(2)
+	name, help, labelNames := metricVecArgs(stack)
 
-	labelNames := make([]string, 0)
-
-	if stack.GetTop() > 2 {
-		labelTable := stack.CheckTable(3)
-		labelTable.ForEach(func(_ lua.LValue, value lua.LValue) {
-			labelNames = append(labelNames, value.String())
-		})
-	}
-
-	// Check if the histogram already exists
-	if _, exists := gauges[name]; exists {
-		return 0
-	}
-
-	gauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: name,
-		Help: help,
-	}, labelNames)
-
-	prometheus.MustRegister(gauge)
-
-	gauges[name] = gauge
-
-	return 0
+	return registerMetricVec(gauges, name, func() *prometheus.GaugeVec {
+		return prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: name,
+			Help: help,
+		}, labelNames)
+	})
 }
 
 // startSumaryTimer starts a Prometheus timer for a specified SummaryVec metric with the provided label values.
 func (m *PrometheusManager) startSumaryTimer(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	labels := stack.CheckTable(2)
 
-	summary, exists := summaries[name]
-	if !exists {
-		warnIfMissing("summary", name)
-
-		return 0
-	}
-
-	labelValues := make(map[string]string)
-
-	labels.ForEach(func(key, value lua.LValue) {
-		labelValues[key.String()] = value.String()
-	})
-
-	timer := prometheus.NewTimer(summary.With(labelValues))
-	ud := L.NewUserData()
-	ud.Value = timer
-
-	return stack.PushResults(ud, lua.LNil)
+	return startMetricTimer(L, stack, summaries, "summary")
 }
 
 // startHistogramTimer starts a timer for a Prometheus histogram with given name and labels.
 func (m *PrometheusManager) startHistogramTimer(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	labels := stack.CheckTable(2)
 
-	histogram, exists := histograms[name]
-	if !exists {
-		warnIfMissing("histogram", name)
-
-		return 0
-	}
-
-	labelValues := make(map[string]string)
-
-	labels.ForEach(func(key, value lua.LValue) {
-		labelValues[key.String()] = value.String()
-	})
-
-	timer := prometheus.NewTimer(histogram.With(labelValues))
-	ud := L.NewUserData()
-	ud.Value = timer
-
-	return stack.PushResults(ud, lua.LNil)
+	return startMetricTimer(L, stack, histograms, "histogram")
 }
 
 // stopTimer stops a running Prometheus timer, recording its duration in the underlying metric.
@@ -267,175 +271,52 @@ func (m *PrometheusManager) stopTimer(L *lua.LState) int {
 
 // incrementCounter increments a Prometheus counter based on the name and label values provided in the Lua state.
 func (m *PrometheusManager) incrementCounter(L *lua.LState) int {
-	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	labels := stack.CheckTable(2)
-
-	counter, exists := counters[name]
-	if !exists {
-		warnIfMissing("counter", name)
-
-		return 0
-	}
-
-	labelValues := make(map[string]string)
-
-	labels.ForEach(func(key, value lua.LValue) {
-		labelValues[key.String()] = value.String()
+	return updateCounter(L, func(counter prometheus.Counter) {
+		counter.Inc()
 	})
-
-	counter.With(labelValues).Inc()
-
-	return 0
 }
 
 // addGauge adds a value to a Prometheus gauge identified by name and labels, creating label mappings from Lua table.
 func (m *PrometheusManager) addGauge(L *lua.LState) int {
-	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	value := stack.CheckNumber(2)
-	labels := stack.CheckTable(3)
-
-	gauge, exists := gauges[name]
-	if !exists {
-		warnIfMissing("gauge", name)
-
-		return 0
-	}
-
-	labelValues := make(map[string]string)
-
-	labels.ForEach(func(key, value lua.LValue) {
-		labelValues[key.String()] = value.String()
+	return updateGaugeValue(L, func(gauge prometheus.Gauge, value float64) {
+		gauge.Add(value)
 	})
-
-	gauge.With(labelValues).Add(float64(value))
-
-	return 0
 }
 
 // subGauge subtracts a specified value from a GaugeVec identified by name and labeled with the provided labels.
 func (m *PrometheusManager) subGauge(L *lua.LState) int {
-	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	value := stack.CheckNumber(2)
-	labels := stack.CheckTable(3)
-
-	gauge, exists := gauges[name]
-	if !exists {
-		warnIfMissing("gauge", name)
-
-		return 0
-	}
-
-	labelValues := make(map[string]string)
-
-	labels.ForEach(func(key, value lua.LValue) {
-		labelValues[key.String()] = value.String()
+	return updateGaugeValue(L, func(gauge prometheus.Gauge, value float64) {
+		gauge.Sub(value)
 	})
-
-	gauge.With(labelValues).Sub(float64(value))
-
-	return 0
 }
 
 // setGauge sets the value of a GaugeVec identified by the given name and labels in Lua.
 func (m *PrometheusManager) setGauge(L *lua.LState) int {
-	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	value := stack.CheckNumber(2)
-	labels := stack.CheckTable(3)
-
-	gauge, exists := gauges[name]
-	if !exists {
-		warnIfMissing("gauge", name)
-
-		return 0
-	}
-
-	labelValues := make(map[string]string)
-
-	labels.ForEach(func(key, value lua.LValue) {
-		labelValues[key.String()] = value.String()
+	return updateGaugeValue(L, func(gauge prometheus.Gauge, value float64) {
+		gauge.Set(value)
 	})
-
-	gauge.With(labelValues).Set(float64(value))
-
-	return 0
 }
 
 // incrementGauge increments the value of a Prometheus GaugeVec metric based on the label values provided.
 func (m *PrometheusManager) incrementGauge(L *lua.LState) int {
-	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	labels := stack.CheckTable(2)
-
-	gauge, exists := gauges[name]
-	if !exists {
-		warnIfMissing("gauge", name)
-
-		return 0
-	}
-
-	labelValues := make(map[string]string)
-
-	labels.ForEach(func(key, value lua.LValue) {
-		labelValues[key.String()] = value.String()
+	return updateGauge(L, func(gauge prometheus.Gauge) {
+		gauge.Inc()
 	})
-
-	gauge.With(labelValues).Inc()
-
-	return 0
 }
 
 // decrementGauge decreases the value of a specified Gauge within a collection of GaugeVec, based on the provided labels.
 func (m *PrometheusManager) decrementGauge(L *lua.LState) int {
-	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	labels := stack.CheckTable(2)
-
-	gauge, exists := gauges[name]
-	if !exists {
-		warnIfMissing("gauge", name)
-
-		return 0
-	}
-
-	labelValues := make(map[string]string)
-
-	labels.ForEach(func(key, value lua.LValue) {
-		labelValues[key.String()] = value.String()
+	return updateGauge(L, func(gauge prometheus.Gauge) {
+		gauge.Dec()
 	})
-
-	gauge.With(labelValues).Dec()
-
-	return 0
 }
 
 // touchCounter creates a labeled child for a CounterVec without incrementing it.
 // This ensures a zero-valued time series is exposed to Prometheus on scrape.
 func (m *PrometheusManager) touchCounter(L *lua.LState) int {
-	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	labels := stack.CheckTable(2)
-
-	counter, exists := counters[name]
-	if !exists {
-		warnIfMissing("counter", name)
-
-		return 0
-	}
-
-	labelValues := make(map[string]string)
-
-	labels.ForEach(func(key, value lua.LValue) {
-		labelValues[key.String()] = value.String()
+	return updateCounter(L, func(_ prometheus.Counter) {
+		// Creating the child is enough to expose a zero-valued time series.
 	})
-
-	// Create the child without incrementing; Go client will expose 0
-	counter.With(labelValues)
-
-	return 0
 }
 
 // LoaderModPrometheus loads and initializes the Prometheus module with metric-related functions for use in Lua scripts.

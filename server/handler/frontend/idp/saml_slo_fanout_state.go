@@ -157,13 +157,9 @@ func (h *SAMLHandler) applySLOFanoutLogoutResponse(
 	logoutResponse *saml.LogoutResponse,
 	relayState string,
 ) (*sloFanoutAggregationResult, error) {
-	if logoutResponse == nil {
-		return nil, fmt.Errorf("logout response payload is missing")
-	}
-
-	requestID := strings.TrimSpace(logoutResponse.InResponseTo)
-	if requestID == "" {
-		return nil, fmt.Errorf("logout response InResponseTo is missing")
+	requestID, err := sloLogoutResponseRequestID(logoutResponse)
+	if err != nil {
+		return nil, err
 	}
 
 	handle := h.sloFanoutStorageHandle()
@@ -176,47 +172,132 @@ func (h *SAMLHandler) applySLOFanoutLogoutResponse(
 		return nil, err
 	}
 
-	relayState = strings.TrimSpace(relayState)
-	if relayState != "" && relayState != transactionID {
-		return nil, fmt.Errorf("%w: expected %q, got %q", errSLOFanoutResponseRelayState, transactionID, relayState)
+	if err = validateSLOFanoutRelayState(relayState, transactionID); err != nil {
+		return nil, err
 	}
 
 	participant, isPending := state.Pending[requestID]
 	if !isPending {
-		if _, done := state.Outcomes[requestID]; done {
-			successCount, failureCount := state.outcomeCounts()
-
-			return &sloFanoutAggregationResult{
-				TransactionID: transactionID,
-				InResponseTo:  requestID,
-				SuccessCount:  successCount,
-				FailureCount:  failureCount,
-				PendingCount:  len(state.Pending),
-				Status:        state.Transaction.Status,
-				Final:         state.Transaction.Status.IsTerminal(),
-			}, nil
+		if aggregation, done := state.completedFanoutAggregation(transactionID, requestID); done {
+			return aggregation, nil
 		}
 
 		return nil, fmt.Errorf("%w: %q", errSLOFanoutResponseUnmatched, requestID)
 	}
 
-	issuer := ""
-	if logoutResponse.Issuer != nil {
-		issuer = strings.TrimSpace(logoutResponse.Issuer.Value)
+	if err = validateSLOFanoutResponseIssuer(logoutResponse, participant); err != nil {
+		return nil, err
 	}
 
-	if issuer != "" && strings.TrimSpace(participant.EntityID) != "" && issuer != strings.TrimSpace(participant.EntityID) {
-		return nil, fmt.Errorf(
-			"logout response issuer %q does not match pending participant %q",
-			issuer,
-			participant.EntityID,
-		)
+	state.recordSLOFanoutOutcome(requestID, participant, logoutResponse)
+	successCount, failureCount := state.outcomeCounts()
+	state.UpdatedAt = time.Now().UTC()
+
+	final := len(state.Pending) == 0
+
+	if final {
+		if err = h.applyFinalSLOFanoutStatus(ctx, transactionID, requestID, participant.EntityID, state, successCount, failureCount); err != nil {
+			return nil, err
+		}
 	}
 
-	if state.Outcomes == nil {
-		state.Outcomes = make(map[string]sloFanoutParticipantOutcome)
+	if err = state.Transaction.Validate(); err != nil {
+		return nil, err
 	}
 
+	if err = h.persistUpdatedSLOFanoutTransactionState(ctx, handle, transactionID, requestID, state, final); err != nil {
+		return nil, err
+	}
+
+	return newSLOFanoutAggregationResult(transactionID, requestID, participant.EntityID, state, successCount, failureCount, final), nil
+}
+
+// newSLOFanoutAggregationResult builds the public aggregation response.
+func newSLOFanoutAggregationResult(
+	transactionID string,
+	requestID string,
+	participantEntityID string,
+	state *sloFanoutTransactionState,
+	successCount int,
+	failureCount int,
+	final bool,
+) *sloFanoutAggregationResult {
+	return &sloFanoutAggregationResult{
+		TransactionID:     transactionID,
+		InResponseTo:      requestID,
+		ParticipantEntity: participantEntityID,
+		SuccessCount:      successCount,
+		FailureCount:      failureCount,
+		PendingCount:      len(state.Pending),
+		Status:            state.Transaction.Status,
+		Final:             final,
+	}
+}
+
+// sloLogoutResponseRequestID returns the required InResponseTo identifier.
+func sloLogoutResponseRequestID(logoutResponse *saml.LogoutResponse) (string, error) {
+	if logoutResponse == nil {
+		return "", fmt.Errorf("logout response payload is missing")
+	}
+
+	requestID := strings.TrimSpace(logoutResponse.InResponseTo)
+	if requestID == "" {
+		return "", fmt.Errorf("logout response InResponseTo is missing")
+	}
+
+	return requestID, nil
+}
+
+// validateSLOFanoutRelayState ensures RelayState still addresses the transaction.
+func validateSLOFanoutRelayState(relayState string, transactionID string) error {
+	relayState = strings.TrimSpace(relayState)
+	if relayState == "" || relayState == transactionID {
+		return nil
+	}
+
+	return fmt.Errorf("%w: expected %q, got %q", errSLOFanoutResponseRelayState, transactionID, relayState)
+}
+
+// completedFanoutAggregation returns the idempotent aggregation for an already processed request.
+func (s *sloFanoutTransactionState) completedFanoutAggregation(
+	transactionID string,
+	requestID string,
+) (*sloFanoutAggregationResult, bool) {
+	if _, done := s.Outcomes[requestID]; !done {
+		return nil, false
+	}
+
+	successCount, failureCount := s.outcomeCounts()
+
+	return &sloFanoutAggregationResult{
+		TransactionID: transactionID,
+		InResponseTo:  requestID,
+		SuccessCount:  successCount,
+		FailureCount:  failureCount,
+		PendingCount:  len(s.Pending),
+		Status:        s.Transaction.Status,
+		Final:         s.Transaction.Status.IsTerminal(),
+	}, true
+}
+
+// validateSLOFanoutResponseIssuer checks that the response issuer matches the pending participant.
+func validateSLOFanoutResponseIssuer(logoutResponse *saml.LogoutResponse, participant slodomain.Participant) error {
+	issuer := samlIssuerValue(logoutResponse.Issuer)
+
+	participantEntityID := strings.TrimSpace(participant.EntityID)
+	if issuer == "" || participantEntityID == "" || issuer == participantEntityID {
+		return nil
+	}
+
+	return fmt.Errorf("logout response issuer %q does not match pending participant %q", issuer, participant.EntityID)
+}
+
+// newSLOFanoutParticipantOutcome builds the stored outcome for one LogoutResponse.
+func newSLOFanoutParticipantOutcome(
+	requestID string,
+	participant slodomain.Participant,
+	logoutResponse *saml.LogoutResponse,
+) sloFanoutParticipantOutcome {
 	outcome := sloFanoutParticipantOutcome{
 		EntityID:   participant.EntityID,
 		RequestID:  requestID,
@@ -229,50 +310,71 @@ func (h *SAMLHandler) applySLOFanoutLogoutResponse(
 		outcome.Detail = strings.TrimSpace(logoutResponse.Status.StatusMessage.Value)
 	}
 
-	state.Outcomes[requestID] = outcome
-	delete(state.Pending, requestID)
+	return outcome
+}
 
-	successCount, failureCount := state.outcomeCounts()
-	state.UpdatedAt = time.Now().UTC()
-
-	final := len(state.Pending) == 0
-
-	if final {
-		finalStatus := aggregateSLOFanoutTerminalStatus(successCount, failureCount)
-		if err = state.Transaction.TransitionTo(finalStatus, time.Now().UTC()); err != nil {
-			return nil, err
-		}
-
-		recordSLOTerminalStatus(slodomain.SLODirectionIDPInitiated, finalStatus)
-		h.auditSLOEvent(
-			ctx,
-			"fanout_response_aggregated",
-			transactionID,
-			requestID,
-			participant.EntityID,
-			samlMetricLabelStatus, finalStatus,
-			"success_count", successCount,
-			"failure_count", failureCount,
-			"pending", len(state.Pending),
-		)
+// recordSLOFanoutOutcome stores a participant outcome and removes the pending request.
+func (s *sloFanoutTransactionState) recordSLOFanoutOutcome(
+	requestID string,
+	participant slodomain.Participant,
+	logoutResponse *saml.LogoutResponse,
+) {
+	if s.Outcomes == nil {
+		s.Outcomes = make(map[string]sloFanoutParticipantOutcome)
 	}
 
-	if err = state.Transaction.Validate(); err != nil {
-		return nil, err
+	s.Outcomes[requestID] = newSLOFanoutParticipantOutcome(requestID, participant, logoutResponse)
+	delete(s.Pending, requestID)
+}
+
+// applyFinalSLOFanoutStatus records terminal aggregation status.
+func (h *SAMLHandler) applyFinalSLOFanoutStatus(
+	ctx context.Context,
+	transactionID string,
+	requestID string,
+	participantEntityID string,
+	state *sloFanoutTransactionState,
+	successCount int,
+	failureCount int,
+) error {
+	finalStatus := aggregateSLOFanoutTerminalStatus(successCount, failureCount)
+	if err := state.Transaction.TransitionTo(finalStatus, time.Now().UTC()); err != nil {
+		return err
 	}
 
+	recordSLOTerminalStatus(slodomain.SLODirectionIDPInitiated, finalStatus)
+	h.auditSLOEvent(
+		ctx,
+		"fanout_response_aggregated",
+		transactionID,
+		requestID,
+		participantEntityID,
+		samlMetricLabelStatus, finalStatus,
+		"success_count", successCount,
+		"failure_count", failureCount,
+		"pending", len(state.Pending),
+	)
+
+	return nil
+}
+
+// persistUpdatedSLOFanoutTransactionState stores the updated transaction and request index changes.
+func (h *SAMLHandler) persistUpdatedSLOFanoutTransactionState(
+	ctx context.Context,
+	handle redis.UniversalClient,
+	transactionID string,
+	requestID string,
+	state *sloFanoutTransactionState,
+	final bool,
+) error {
 	rawState, err := json.Marshal(state)
 	if err != nil {
-		return nil, fmt.Errorf("cannot encode updated slo fanout transaction state: %w", err)
+		return fmt.Errorf("cannot encode updated slo fanout transaction state: %w", err)
 	}
 
-	ttl := h.sloReplayTTL()
-	transactionKey := h.sloFanoutStateKey(transactionID)
-	requestKey := h.sloFanoutRequestKey(requestID)
-
 	pipe := handle.Pipeline()
-	pipe.Set(ctx, transactionKey, rawState, ttl)
-	pipe.Del(ctx, requestKey)
+	pipe.Set(ctx, h.sloFanoutStateKey(transactionID), rawState, h.sloReplayTTL())
+	pipe.Del(ctx, h.sloFanoutRequestKey(requestID))
 
 	if final {
 		for pendingRequestID := range state.Pending {
@@ -281,19 +383,10 @@ func (h *SAMLHandler) applySLOFanoutLogoutResponse(
 	}
 
 	if _, err = pipe.Exec(ctx); err != nil {
-		return nil, fmt.Errorf("cannot persist updated slo fanout transaction state: %w", err)
+		return fmt.Errorf("cannot persist updated slo fanout transaction state: %w", err)
 	}
 
-	return &sloFanoutAggregationResult{
-		TransactionID:     transactionID,
-		InResponseTo:      requestID,
-		ParticipantEntity: participant.EntityID,
-		SuccessCount:      successCount,
-		FailureCount:      failureCount,
-		PendingCount:      len(state.Pending),
-		Status:            state.Transaction.Status,
-		Final:             final,
-	}, nil
+	return nil
 }
 
 func (h *SAMLHandler) loadSLOFanoutTransactionState(

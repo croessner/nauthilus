@@ -63,15 +63,7 @@ type redisRunNamedUploadedScriptCase struct {
 }
 
 func TestRedisRunScript(t *testing.T) {
-	testCases := []struct {
-		name             string
-		script           string
-		keys             []string
-		args             []any
-		expectErr        bool
-		expectRes        string
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+	testCases := []redisRunScriptCase{
 		{
 			name:      "ValidScript",
 			script:    "return redis.call('set',KEYS[1],'bar')",
@@ -98,34 +90,53 @@ func TestRedisRunScript(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			resetScriptsRepository(t)
-
-			L, mock := newRedisLuaTestState(t)
-			tc.prepareMockRedis(mock)
-
-			L.SetGlobal("script", lua.LString(tc.script))
-			L.SetGlobal("upload_name", lua.LString(""))
-
-			setLuaStringTable(L, "keys", tc.keys)
-			setLuaAnyTable(L, "args", tc.args)
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_run_script("default", script, upload_name, keys, args)`)
-			assert.NoError(t, err)
-
-			resReturned := L.GetGlobal("result")
-			errReturned := L.GetGlobal("err")
-
-			if tc.expectErr {
-				assert.NotEqual(t, lua.LNil, errReturned)
-			} else {
-				assert.Equal(t, lua.LNil, errReturned)
-				assert.Equal(t, tc.expectRes, resReturned.String())
-			}
-
-			// Check if everything expected was done
-			assert.NoError(t, mock.ExpectationsWereMet())
+			runRedisRunScriptCase(t, tc)
 		})
 	}
+}
+
+type redisRunScriptCase struct {
+	name             string
+	script           string
+	keys             []string
+	args             []any
+	expectErr        bool
+	expectRes        string
+	prepareMockRedis func(mock redismock.ClientMock)
+}
+
+// runRedisRunScriptCase executes one direct Redis script run case.
+func runRedisRunScriptCase(t *testing.T, tc redisRunScriptCase) {
+	t.Helper()
+
+	resetScriptsRepository(t)
+
+	L, mock := newRedisLuaTestState(t)
+	tc.prepareMockRedis(mock)
+
+	L.SetGlobal("script", lua.LString(tc.script))
+	L.SetGlobal("upload_name", lua.LString(""))
+	setLuaStringTable(L, "keys", tc.keys)
+	setLuaAnyTable(L, "args", tc.args)
+
+	err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_run_script("default", script, upload_name, keys, args)`)
+	assert.NoError(t, err)
+	assertRedisRunScriptResult(t, L, tc)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// assertRedisRunScriptResult verifies the direct script run Lua globals.
+func assertRedisRunScriptResult(t *testing.T, L *lua.LState, tc redisRunScriptCase) {
+	t.Helper()
+
+	if tc.expectErr {
+		assert.NotEqual(t, lua.LNil, L.GetGlobal("err"))
+
+		return
+	}
+
+	assert.Equal(t, lua.LNil, L.GetGlobal("err"))
+	assert.Equal(t, tc.expectRes, L.GetGlobal("result").String())
 }
 
 func TestRedisRunNamedUploadedScript(t *testing.T) {
@@ -217,14 +228,7 @@ func namedUploadedScriptCases() []redisRunNamedUploadedScriptCase {
 }
 
 func TestRedisUploadScript(t *testing.T) {
-	testCases := []struct {
-		name               string
-		script             string
-		uploadScriptName   string
-		expectErr          bool
-		expectedSHA        string
-		prepareRedisUpload func(mock redismock.ClientMock)
-	}{
+	testCases := []redisUploadScriptCase{
 		{
 			name:             "CorrectScript",
 			script:           customScriptSource,
@@ -249,38 +253,65 @@ func TestRedisUploadScript(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			resetScriptsRepository(t)
-
-			L, mock := newRedisLuaTestState(t)
-			tc.prepareRedisUpload(mock)
-
-			L.SetGlobal("script", lua.LString(tc.script))
-			L.SetGlobal("upload_name", lua.LString(tc.uploadScriptName))
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_upload_script("default", script, upload_name)`)
-			assert.NoError(t, err)
-
-			resReturned := L.GetGlobal("result")
-			errReturned := L.GetGlobal("err")
-
-			if tc.expectErr {
-				assert.NotEqual(t, lua.LNil, errReturned)
-			} else {
-				assert.Equal(t, lua.LNil, errReturned)
-				assert.Equal(t, tc.expectedSHA, resReturned.String())
-
-				if tc.uploadScriptName != "" {
-					uploadedScript, ok := scriptsRepository.Get(tc.uploadScriptName)
-					assert.True(t, ok)
-					assert.Equal(t, tc.expectedSHA, uploadedScript.SHA1)
-					assert.Equal(t, tc.script, uploadedScript.Source)
-				}
-			}
-
-			// Check if everything expected was done
-			assert.NoError(t, mock.ExpectationsWereMet())
+			runRedisUploadScriptCase(t, tc)
 		})
 	}
+}
+
+type redisUploadScriptCase struct {
+	name               string
+	script             string
+	uploadScriptName   string
+	expectErr          bool
+	expectedSHA        string
+	prepareRedisUpload func(mock redismock.ClientMock)
+}
+
+// runRedisUploadScriptCase executes one Redis script upload case.
+func runRedisUploadScriptCase(t *testing.T, tc redisUploadScriptCase) {
+	t.Helper()
+
+	resetScriptsRepository(t)
+
+	L, mock := newRedisLuaTestState(t)
+	tc.prepareRedisUpload(mock)
+
+	L.SetGlobal("script", lua.LString(tc.script))
+	L.SetGlobal("upload_name", lua.LString(tc.uploadScriptName))
+
+	err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_upload_script("default", script, upload_name)`)
+	assert.NoError(t, err)
+	assertRedisUploadScriptResult(t, L, tc)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// assertRedisUploadScriptResult verifies upload result globals and repository state.
+func assertRedisUploadScriptResult(t *testing.T, L *lua.LState, tc redisUploadScriptCase) {
+	t.Helper()
+
+	if tc.expectErr {
+		assert.NotEqual(t, lua.LNil, L.GetGlobal("err"))
+
+		return
+	}
+
+	assert.Equal(t, lua.LNil, L.GetGlobal("err"))
+	assert.Equal(t, tc.expectedSHA, L.GetGlobal("result").String())
+	assertUploadedScriptStored(t, tc)
+}
+
+// assertUploadedScriptStored verifies uploaded script repository state when a name was supplied.
+func assertUploadedScriptStored(t *testing.T, tc redisUploadScriptCase) {
+	t.Helper()
+
+	if tc.uploadScriptName == "" {
+		return
+	}
+
+	uploadedScript, ok := scriptsRepository.Get(tc.uploadScriptName)
+	assert.True(t, ok)
+	assert.Equal(t, tc.expectedSHA, uploadedScript.SHA1)
+	assert.Equal(t, tc.script, uploadedScript.Source)
 }
 
 func TestRedisRunScriptWithoutUploadNameUsesEval(t *testing.T) {

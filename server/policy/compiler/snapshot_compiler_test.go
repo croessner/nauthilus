@@ -48,6 +48,20 @@ const (
 	testPluginPostActionID       = testPluginPolicyModule + ".post_action"
 )
 
+// assertCompileErrorContains verifies that compiling a config fails with a canonical path fragment.
+func assertCompileErrorContains(t *testing.T, cfg config.File, wantErr string, wantDescription string) {
+	t.Helper()
+
+	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err == nil {
+		t.Fatalf("Compile() error = nil, want %s", wantDescription)
+	}
+
+	if !strings.Contains(err.Error(), wantErr) {
+		t.Fatalf("Compile() error = %q, want %s", err, wantErr)
+	}
+}
+
 func TestCompilerBuildsSnapshotFromConfiguredPolicy(t *testing.T) {
 	cfg := policyCompilerTestConfig()
 
@@ -600,28 +614,14 @@ func TestCompilerRejectsInvalidPolicyWithCanonicalPath(t *testing.T) {
 	cfg := policyCompilerTestConfig()
 	cfg.Auth.Policy.Policies[0].If.Attribute = "auth.missing"
 
-	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
-	if err == nil {
-		t.Fatal("Compile() error = nil, want unknown attribute error")
-	}
-
-	if !strings.Contains(err.Error(), "auth.policy.policies[0].if.attribute") {
-		t.Fatalf("Compile() error = %q, want canonical attribute path", err)
-	}
+	assertCompileErrorContains(t, cfg, "auth.policy.policies[0].if.attribute", "unknown attribute error")
 }
 
 func TestCompilerRejectsUnknownFSMEventNames(t *testing.T) {
 	cfg := policyCompilerTestConfig()
 	cfg.Auth.Policy.Policies[0].Then.FSMEventMarker = "unknown_pre_auth_marker"
 
-	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
-	if err == nil {
-		t.Fatal("Compile() error = nil, want unknown event name rejection")
-	}
-
-	if !strings.Contains(err.Error(), "auth.policy.policies[0].then.fsm_event_marker") {
-		t.Fatalf("Compile() error = %q, want canonical FSM marker path", err)
-	}
+	assertCompileErrorContains(t, cfg, "auth.policy.policies[0].then.fsm_event_marker", "unknown event name rejection")
 }
 
 func TestCompilerRejectsPreAuthPermitDecision(t *testing.T) {
@@ -629,14 +629,7 @@ func TestCompilerRejectsPreAuthPermitDecision(t *testing.T) {
 	cfg.Auth.Policy.Policies[0].Then.Decision = string(policy.DecisionPermit)
 	cfg.Auth.Policy.Policies[0].Then.ResponseMarker = "auth.response.ok"
 
-	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
-	if err == nil {
-		t.Fatal("Compile() error = nil, want pre-auth permit rejection")
-	}
-
-	if !strings.Contains(err.Error(), "auth.policy.policies[0].then.decision") {
-		t.Fatalf("Compile() error = %q, want canonical decision path", err)
-	}
+	assertCompileErrorContains(t, cfg, "auth.policy.policies[0].then.decision", "pre-auth permit rejection")
 }
 
 func TestCompilerAcceptsLuaActionDispatchObligationArgs(t *testing.T) {

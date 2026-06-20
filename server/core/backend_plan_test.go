@@ -71,17 +71,14 @@ type backendExecutionPlanPositivePasswordCacheCase struct {
 }
 
 func backendExecutionPlanPositivePasswordCacheCases() []backendExecutionPlanPositivePasswordCacheCase {
+	testCases := backendExecutionPlanPositivePasswordCacheEnabledCases()
+
+	return append(testCases, backendExecutionPlanPositivePasswordCacheDisabledCases()...)
+}
+
+// backendExecutionPlanPositivePasswordCacheEnabledCases returns positive cache cases.
+func backendExecutionPlanPositivePasswordCacheEnabledCases() []backendExecutionPlanPositivePasswordCacheCase {
 	return []backendExecutionPlanPositivePasswordCacheCase{
-		{
-			name: "disabled without configured cache backend",
-			plan: backendExecutionPlan{
-				positions: map[definitions.Backend]int{
-					definitions.BackendLDAP: 0,
-					definitions.BackendLua:  1,
-				},
-			},
-			usedBackend: definitions.BackendLua,
-		},
 		{
 			name: "enabled when cache precedes non-remote backend",
 			plan: backendExecutionPlan{
@@ -93,6 +90,22 @@ func backendExecutionPlanPositivePasswordCacheCases() []backendExecutionPlanPosi
 			},
 			usedBackend: definitions.BackendLDAP,
 			wantEnabled: true,
+		},
+	}
+}
+
+// backendExecutionPlanPositivePasswordCacheDisabledCases returns negative cache cases.
+func backendExecutionPlanPositivePasswordCacheDisabledCases() []backendExecutionPlanPositivePasswordCacheCase {
+	return []backendExecutionPlanPositivePasswordCacheCase{
+		{
+			name: "disabled without configured cache backend",
+			plan: backendExecutionPlan{
+				positions: map[definitions.Backend]int{
+					definitions.BackendLDAP: 0,
+					definitions.BackendLua:  1,
+				},
+			},
+			usedBackend: definitions.BackendLua,
 		},
 		{
 			name: "disabled when cache follows used backend",

@@ -121,29 +121,7 @@ func authRateLimitExceededForIP(ip string) (bool, time.Duration) {
 		}
 	}
 
-	// Maintain/reset the sliding window without locks
-	for {
-		resetAt := atomic.LoadInt64(&st.resetAtUnix)
-		if resetAt == 0 {
-			if atomic.CompareAndSwapInt64(&st.resetAtUnix, 0, now.Add(bfWindow).UnixNano()) {
-				break
-			}
-
-			continue
-		}
-
-		if now.UnixNano() <= resetAt {
-			break
-		}
-
-		// window elapsed -> set new window and reset count
-		if atomic.CompareAndSwapInt64(&st.resetAtUnix, resetAt, now.Add(bfWindow).UnixNano()) {
-			atomic.StoreInt32(&st.count, 0)
-
-			break
-		}
-		// CAS failed due to race; retry loop
-	}
+	resetFailureWindowIfElapsed(st, now)
 
 	authFailCache.Set(ip, st, cache.DefaultExpiration)
 
@@ -162,7 +140,18 @@ func noteAuthFailureForIP(ip string) {
 		authFailCache.Set(ip, st, cache.DefaultExpiration)
 	}
 
-	// Maintain/reset the sliding window without locks
+	resetFailureWindowIfElapsed(st, now)
+
+	newCount := atomic.AddInt32(&st.count, 1)
+	if newCount >= bfThreshold {
+		atomic.StoreInt64(&st.blockedToUnix, now.Add(bfBlockTime).UnixNano())
+	}
+
+	authFailCache.Set(ip, st, cache.DefaultExpiration)
+}
+
+// resetFailureWindowIfElapsed maintains the sliding auth-failure window without locks.
+func resetFailureWindowIfElapsed(st *failState, now time.Time) {
 	for {
 		resetAt := atomic.LoadInt64(&st.resetAtUnix)
 		if resetAt == 0 {
@@ -183,13 +172,6 @@ func noteAuthFailureForIP(ip string) {
 			break
 		}
 	}
-
-	newCount := atomic.AddInt32(&st.count, 1)
-	if newCount >= bfThreshold {
-		atomic.StoreInt64(&st.blockedToUnix, now.Add(bfBlockTime).UnixNano())
-	}
-
-	authFailCache.Set(ip, st, cache.DefaultExpiration)
 }
 
 // MaybeThrottleAuthByIP checks if the client IP is temporarily blocked and, if so, responds with 429 and a Retry-After header.
@@ -300,39 +282,9 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 // keeps the route-specific behavior used by the backchannel middleware.
 func AuthorizeBasicAuthWithDeps(ctx *gin.Context, cfg config.File, logger *slog.Logger) bool {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
+	cat, svc := basicAuthRouteContext(ctx)
 
-	cat := ctx.GetString(definitions.CtxCategoryKey)
-	svc := ctx.GetString(definitions.CtxServiceKey)
-
-	if cat == "" || svc == "" {
-		full := ctx.FullPath()
-		if full != "" {
-			parts := strings.Split(strings.Trim(full, "/"), "/")
-			if len(parts) >= 4 && parts[0] == "api" && parts[1] == "v1" {
-				if cat == "" {
-					cat = parts[2]
-					ctx.Set(definitions.CtxCategoryKey, cat)
-				}
-
-				if svc == "" {
-					svc = parts[3]
-					ctx.Set(definitions.CtxServiceKey, svc)
-				}
-			}
-		}
-	}
-
-	if cat == "" || svc == "" {
-		_ = level.Error(logger).Log(
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "missing routing context keys",
-			definitions.LogKeyError, "missing routing context keys",
-			"category", cat,
-			"service", svc,
-		)
-
-		ctx.AbortWithStatus(http.StatusInternalServerError)
-
+	if !requireBasicAuthRouteContext(ctx, logger, guid, cat, svc) {
 		return false
 	}
 
@@ -349,6 +301,52 @@ func AuthorizeBasicAuthWithDeps(ctx *gin.Context, cfg config.File, logger *slog.
 	}
 
 	return CheckAndRequireBasicAuthWithCfg(ctx, cfg)
+}
+
+// basicAuthRouteContext resolves category and service from context or route path.
+func basicAuthRouteContext(ctx *gin.Context) (string, string) {
+	cat := ctx.GetString(definitions.CtxCategoryKey)
+	svc := ctx.GetString(definitions.CtxServiceKey)
+
+	if cat != "" && svc != "" {
+		return cat, svc
+	}
+
+	parts := strings.Split(strings.Trim(ctx.FullPath(), "/"), "/")
+	if len(parts) < 4 || parts[0] != "api" || parts[1] != "v1" {
+		return cat, svc
+	}
+
+	if cat == "" {
+		cat = parts[2]
+		ctx.Set(definitions.CtxCategoryKey, cat)
+	}
+
+	if svc == "" {
+		svc = parts[3]
+		ctx.Set(definitions.CtxServiceKey, svc)
+	}
+
+	return cat, svc
+}
+
+// requireBasicAuthRouteContext aborts the request when routing metadata is missing.
+func requireBasicAuthRouteContext(ctx *gin.Context, logger *slog.Logger, guid string, cat string, svc string) bool {
+	if cat != "" && svc != "" {
+		return true
+	}
+
+	_ = level.Error(logger).Log(
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, "missing routing context keys",
+		definitions.LogKeyError, "missing routing context keys",
+		"category", cat,
+		"service", svc,
+	)
+
+	ctx.AbortWithStatus(http.StatusInternalServerError)
+
+	return false
 }
 
 // requestClientIP resolves the request IP through the shared trusted proxy helper.

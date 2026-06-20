@@ -64,32 +64,32 @@ func NewPasswordManager(ctx context.Context, cfg config.File, logger *slog.Logge
 // LoaderModMisc registers the miscellaneous module in the Lua state and returns the module table.
 func LoaderModMisc(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
-		stack := luastack.NewManager(L)
-		manager := NewMiscManager(ctx, cfg, logger)
-
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnGetCountryName: manager.getCountryName,
-			definitions.LuaFnWaitRandom:     manager.waitRandom,
-			definitions.LuaFnScopedIP:       manager.scopedIP,
-		})
-
-		return stack.PushResult(mod)
+		return pushLuaModule(L, miscFunctions(NewMiscManager(ctx, cfg, logger)))
 	}
 }
 
 // LoaderModPassword registers the password-related functions in the Lua runtime and returns the module.
 func LoaderModPassword(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
-		stack := luastack.NewManager(L)
-		manager := NewPasswordManager(ctx, cfg, logger)
+		return pushLuaModule(L, passwordFunctions(NewPasswordManager(ctx, cfg, logger)))
+	}
+}
 
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnComparePasswords:     manager.comparePasswords,
-			definitions.LuaFnCheckPasswordPolicy:  manager.validatePassword,
-			definitions.LuaFnGeneratePasswordHash: manager.generatePasswordHash,
-		})
+// miscFunctions returns the Lua function map for miscellaneous helpers.
+func miscFunctions(manager *MiscManager) map[string]lua.LGFunction {
+	return map[string]lua.LGFunction{
+		definitions.LuaFnGetCountryName: manager.getCountryName,
+		definitions.LuaFnWaitRandom:     manager.waitRandom,
+		definitions.LuaFnScopedIP:       manager.scopedIP,
+	}
+}
 
-		return stack.PushResult(mod)
+// passwordFunctions returns the Lua function map for password helpers.
+func passwordFunctions(manager *PasswordManager) map[string]lua.LGFunction {
+	return map[string]lua.LGFunction{
+		definitions.LuaFnComparePasswords:     manager.comparePasswords,
+		definitions.LuaFnCheckPasswordPolicy:  manager.validatePassword,
+		definitions.LuaFnGeneratePasswordHash: manager.generatePasswordHash,
 	}
 }
 

@@ -96,73 +96,9 @@ func (t *Telemetry) Start(ctx context.Context, appVersion string) {
 
 	svcName := ResolveServiceName(cfg.GetServiceName(), prov.GetInstanceName(), "nauthilus-server")
 
-	res, _ := resource.Merge(resource.Default(), resource.NewWithAttributes(
-		semconv.SchemaURL,
-		semconv.ServiceNameKey.String(svcName),
-		semconv.ServiceVersionKey.String(appVersion),
-		attribute.String("instance", prov.GetInstanceName()),
-	))
-
-	// Sampler
-	ratio := cfg.GetSamplerRatio()
-	if ratio < 0 {
-		ratio = 0
-	}
-
-	if ratio > 1 {
-		ratio = 1
-	}
-
-	sampler := sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))
-
-	// Exporter (only otlphttp supported per requirements)
-	var (
-		exp sdktrace.SpanExporter
-		err error
-	)
-
-	if strings.EqualFold(cfg.GetExporter(), "otlphttp") {
-		var opts []otlptracehttp.Option
-		if cfg.GetEndpoint() != "" {
-			opts = append(opts, otlptracehttp.WithEndpoint(cfg.GetEndpoint()))
-		}
-
-		// Transport security selection:
-		// - If a dedicated TLS block is enabled, build a tls.Config and use HTTPS.
-		// - Otherwise, default to plain HTTP by explicitly setting WithInsecure().
-		if cfg.GetTLS().IsEnabled() {
-			if tlsConf := cfg.GetTLS().ToTLSConfig(); tlsConf != nil {
-				opts = append(opts, otlptracehttp.WithTLSClientConfig(tlsConf))
-			}
-		} else {
-			// No TLS configured at all => default to HTTP to match expectations
-			opts = append(opts, otlptracehttp.WithInsecure())
-		}
-
-		exp, err = otlptracehttp.New(ctx, opts...)
-		if err != nil {
-			level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Failed to initialize OTLP/HTTP exporter", definitions.LogKeyError, err)
-		}
-	}
-
-	// Build TracerProvider
-	tpOpts := []sdktrace.TracerProviderOption{
-		sdktrace.WithSampler(sampler),
-		sdktrace.WithResource(res),
-	}
-
-	if exp != nil {
-		// Optionally wrap exporter with a logging decorator that emits INFO on successful exports
-		if cfg.IsLogExportResultsEnabled() {
-			exp = newLoggingExporter(exp, true)
-		} else {
-			exp = newLoggingExporter(exp, false)
-		}
-
-		// WithBatcher wraps exporter with a BatchSpanProcessor
-		tpOpts = append(tpOpts, sdktrace.WithBatcher(exp))
-	}
-
+	res := telemetryResource(svcName, appVersion, prov.GetInstanceName())
+	exp := newTelemetryExporter(ctx, cfg)
+	tpOpts := tracerProviderOptions(cfg, res, exp)
 	tp := sdktrace.NewTracerProvider(tpOpts...)
 
 	// Propagators
@@ -173,6 +109,80 @@ func (t *Telemetry) Start(ctx context.Context, appVersion string) {
 	t.started = true
 
 	level.Info(log.Logger).Log(definitions.LogKeyMsg, "OpenTelemetry tracing enabled", "service", svcName, "exporter", cfg.GetExporter())
+}
+
+// telemetryResource builds the service resource for tracing.
+func telemetryResource(serviceName string, appVersion string, instanceName string) *resource.Resource {
+	res, _ := resource.Merge(resource.Default(), resource.NewWithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceNameKey.String(serviceName),
+		semconv.ServiceVersionKey.String(appVersion),
+		attribute.String("instance", instanceName),
+	))
+
+	return res
+}
+
+// telemetrySampler returns the configured parent-based sampler.
+func telemetrySampler(cfg *config.Tracing) sdktrace.Sampler {
+	ratio := cfg.GetSamplerRatio()
+	if ratio < 0 {
+		ratio = 0
+	}
+
+	if ratio > 1 {
+		ratio = 1
+	}
+
+	return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))
+}
+
+// newTelemetryExporter creates the configured span exporter.
+func newTelemetryExporter(ctx context.Context, cfg *config.Tracing) sdktrace.SpanExporter {
+	if !strings.EqualFold(cfg.GetExporter(), "otlphttp") {
+		return nil
+	}
+
+	exp, err := otlptracehttp.New(ctx, otlpHTTPOptions(cfg)...)
+	if err != nil {
+		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Failed to initialize OTLP/HTTP exporter", definitions.LogKeyError, err)
+
+		return nil
+	}
+
+	return exp
+}
+
+// otlpHTTPOptions builds OTLP/HTTP exporter options.
+func otlpHTTPOptions(cfg *config.Tracing) []otlptracehttp.Option {
+	var opts []otlptracehttp.Option
+	if cfg.GetEndpoint() != "" {
+		opts = append(opts, otlptracehttp.WithEndpoint(cfg.GetEndpoint()))
+	}
+
+	if cfg.GetTLS().IsEnabled() {
+		if tlsConf := cfg.GetTLS().ToTLSConfig(); tlsConf != nil {
+			opts = append(opts, otlptracehttp.WithTLSClientConfig(tlsConf))
+		}
+	} else {
+		opts = append(opts, otlptracehttp.WithInsecure())
+	}
+
+	return opts
+}
+
+// tracerProviderOptions builds tracer provider options from config and exporter.
+func tracerProviderOptions(cfg *config.Tracing, res *resource.Resource, exp sdktrace.SpanExporter) []sdktrace.TracerProviderOption {
+	tpOpts := []sdktrace.TracerProviderOption{
+		sdktrace.WithSampler(telemetrySampler(cfg)),
+		sdktrace.WithResource(res),
+	}
+
+	if exp != nil {
+		tpOpts = append(tpOpts, sdktrace.WithBatcher(newLoggingExporter(exp, cfg.IsLogExportResultsEnabled())))
+	}
+
+	return tpOpts
 }
 
 // loggingExporter decorates a SpanExporter to log export outcomes.

@@ -36,7 +36,60 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// deviceAuthorizationClient resolves and validates the requesting device client.
+func (h *OIDCHandler) deviceAuthorizationClient(ctx *gin.Context, clientID string) (*config.OIDCClient, bool) {
+	if clientID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidRequest, oidcJSONErrorDescriptionKey: "client_id is required"})
+
+		return nil, false
+	}
+
+	client, ok := h.idp.FindClient(clientID)
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidClient})
+
+		return nil, false
+	}
+
+	if !client.SupportsGrantType(definitions.OIDCGrantTypeDeviceCode) {
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorUnauthorizedClient, oidcJSONErrorDescriptionKey: "client does not support device code grant"})
+
+		return nil, false
+	}
+
+	return client, true
+}
+
+// logDeviceAuthorizationRequest records a created device authorization request.
+func (h *OIDCHandler) logDeviceAuthorizationRequest(ctx *gin.Context, clientID string, userCode string) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Device authorization request",
+		"client_id", clientID,
+		"user_code", userCode,
+	)
+}
+
+// deviceAuthorizationResponse builds the RFC 8628 device authorization response.
+func deviceAuthorizationResponse(issuer string, userCode string, deviceCode string, request *idp.DeviceCodeRequest) gin.H {
+	verificationURI := issuer + frontendDeviceVerifyPath
+
+	return gin.H{
+		"device_code":               deviceCode,
+		"user_code":                 userCode,
+		"verification_uri":          verificationURI,
+		"verification_uri_complete": verificationURI + "?user_code=" + userCode,
+		oidcJSONFieldExpiresIn:      int(time.Until(request.ExpiresAt).Seconds()),
+		"interval":                  request.Interval,
+	}
+}
 
 // DeviceAuthorization handles the device authorization request (RFC 8628 §3.1).
 // The client requests a device code and user code for the user to authorize.
@@ -49,22 +102,8 @@ func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
 	h.logIncomingOIDCFlowRequest(ctx, "device_authorization", "", clientID)
 	defer h.logCompletedOIDCFlowRequest(ctx, "device_authorization", "", clientID)
 
-	if clientID == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidRequest, oidcJSONErrorDescriptionKey: "client_id is required"})
-
-		return
-	}
-
-	client, ok := h.idp.FindClient(clientID)
+	client, ok := h.deviceAuthorizationClient(ctx, clientID)
 	if !ok {
-		ctx.JSON(http.StatusUnauthorized, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidClient})
-
-		return
-	}
-
-	if !client.SupportsGrantType(definitions.OIDCGrantTypeDeviceCode) {
-		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorUnauthorizedClient, oidcJSONErrorDescriptionKey: "client does not support device code grant"})
-
 		return
 	}
 
@@ -81,28 +120,8 @@ func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
 		return
 	}
 
-	util.DebugModuleWithCfg(
-		ctx.Request.Context(),
-		h.deps.Cfg,
-		h.deps.Logger,
-		definitions.DbgIdp,
-		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "Device authorization request",
-		"client_id", clientID,
-		"user_code", userCode,
-	)
-
-	issuer := oidcCfg.Issuer
-	verificationURI := issuer + frontendDeviceVerifyPath
-
-	ctx.JSON(http.StatusOK, gin.H{
-		"device_code":               deviceCode,
-		"user_code":                 userCode,
-		"verification_uri":          verificationURI,
-		"verification_uri_complete": verificationURI + "?user_code=" + userCode,
-		oidcJSONFieldExpiresIn:      int(time.Until(deviceRequest.ExpiresAt).Seconds()),
-		"interval":                  deviceRequest.Interval,
-	})
+	h.logDeviceAuthorizationRequest(ctx, clientID, userCode)
+	ctx.JSON(http.StatusOK, deviceAuthorizationResponse(oidcCfg.Issuer, userCode, deviceCode, deviceRequest))
 }
 
 // createDeviceCodeRequest generates and stores a new device code request.
@@ -139,50 +158,49 @@ func (h *OIDCHandler) createDeviceCodeRequest(
 	return userCode, deviceCode, request, nil
 }
 
-// handleDeviceCodeTokenExchange handles the token exchange for the device code grant (RFC 8628 §3.4).
-// The client polls this endpoint until the user authorizes or denies the request.
-func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *config.OIDCClient) {
+// prepareDeviceCodePoll validates a polling request before status handling.
+func (h *OIDCHandler) prepareDeviceCodePoll(ctx *gin.Context, client *config.OIDCClient) (string, *idp.DeviceCodeRequest, bool) {
 	deviceCode := formValue(ctx, "device_code")
-
 	if deviceCode == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidRequest, oidcJSONErrorDescriptionKey: "device_code is required"})
 
-		return
+		return "", nil, false
 	}
 
 	request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorExpiredToken, oidcJSONErrorDescriptionKey: "device code has expired"})
 
-		return
+		return "", nil, false
 	}
 
-	// Verify client_id matches
 	if request.ClientID != client.ClientID {
 		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidGrant})
 
-		return
+		return "", nil, false
 	}
 
-	// Check expiration
 	if time.Now().After(request.ExpiresAt) {
 		_ = h.deviceStore.DeleteDeviceCode(ctx.Request.Context(), deviceCode)
 		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorExpiredToken})
 
-		return
+		return "", nil, false
 	}
 
-	// Enforce polling interval (slow_down per RFC 8628 §3.5)
 	if !request.LastPoll.IsZero() && time.Since(request.LastPoll) < time.Duration(request.Interval)*time.Second {
 		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorSlowDown})
 
-		return
+		return "", nil, false
 	}
 
-	// Update last poll time
 	request.LastPoll = time.Now()
 	_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
 
+	return deviceCode, request, true
+}
+
+// handleDeviceCodePollStatus writes the token endpoint response for current status.
+func (h *OIDCHandler) handleDeviceCodePollStatus(ctx *gin.Context, deviceCode string, request *idp.DeviceCodeRequest, client *config.OIDCClient) {
 	switch request.Status {
 	case idp.DeviceCodeStatusPending:
 		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorAuthorizationPending})
@@ -210,10 +228,19 @@ func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *co
 	}
 }
 
-// issueDeviceCodeTokens generates and returns tokens after successful device authorization.
-func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string, request *idp.DeviceCodeRequest, client *config.OIDCClient) {
-	setOIDCTokenPostActionMFAOverrides(ctx, request.MFACompleted, request.MFAMethod)
+// handleDeviceCodeTokenExchange handles the token exchange for the device code grant (RFC 8628 §3.4).
+// The client polls this endpoint until the user authorizes or denies the request.
+func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *config.OIDCClient) {
+	deviceCode, request, ok := h.prepareDeviceCodePoll(ctx, client)
+	if !ok {
+		return
+	}
 
+	h.handleDeviceCodePollStatus(ctx, deviceCode, request, client)
+}
+
+// ensureDeviceCodeRequestClaims recovers missing claims before token issuance.
+func (h *OIDCHandler) ensureDeviceCodeRequestClaims(ctx *gin.Context, deviceCode string, request *idp.DeviceCodeRequest, client *config.OIDCClient) bool {
 	if request.IDTokenClaims == nil || request.AccessTokenClaims == nil {
 		if err := h.recoverMissingDeviceRequestClaims(ctx, deviceCode, request, client); err != nil {
 			util.DebugModuleWithCfg(
@@ -231,12 +258,16 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 
 			ctx.JSON(http.StatusInternalServerError, gin.H{frontChannelLogoutTaskStatusError: oidcErrorServerError})
 
-			return
+			return false
 		}
 	}
 
-	// Build an OIDC session from the authorized device code request
-	session := &idp.OIDCSession{
+	return true
+}
+
+// newDeviceCodeOIDCSession builds an OIDC session from an authorized device request.
+func newDeviceCodeOIDCSession(request *idp.DeviceCodeRequest) *idp.OIDCSession {
+	return &idp.OIDCSession{
 		ClientID:          request.ClientID,
 		UserID:            request.UserID,
 		Username:          request.Username,
@@ -248,6 +279,17 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 		IDTokenClaims:     request.IDTokenClaims,
 		AccessTokenClaims: request.AccessTokenClaims,
 	}
+}
+
+// issueDeviceCodeTokens generates and returns tokens after successful device authorization.
+func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string, request *idp.DeviceCodeRequest, client *config.OIDCClient) {
+	setOIDCTokenPostActionMFAOverrides(ctx, request.MFACompleted, request.MFAMethod)
+
+	if !h.ensureDeviceCodeRequestClaims(ctx, deviceCode, request, client) {
+		return
+	}
+
+	session := newDeviceCodeOIDCSession(request)
 
 	setOIDCTokenPostActionSubject(ctx, session)
 
@@ -273,24 +315,12 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 
 	// Clean up the device code
 	_ = h.deviceStore.DeleteDeviceCode(ctx.Request.Context(), deviceCode)
-
-	stats.GetMetrics().GetIdpTokensIssuedTotal().WithLabelValues("oidc", request.ClientID, definitions.OIDCGrantTypeDeviceCode).Inc()
-
-	resp := gin.H{
-		oidcJSONFieldAccessToken: accessToken,
-		oidcJSONFieldTokenType:   oidcJSONTokenTypeBearer,
-		oidcJSONFieldExpiresIn:   int(expiresIn.Seconds()),
-	}
-
-	if idToken != "" {
-		resp["id_token"] = idToken
-	}
-
-	if refreshToken != "" {
-		resp["refresh_token"] = refreshToken
-	}
-
-	ctx.JSON(http.StatusOK, resp)
+	h.sendTokenResponse(ctx, request.ClientID, definitions.OIDCGrantTypeDeviceCode, &tokenResponse{
+		idToken:      idToken,
+		accessToken:  accessToken,
+		refreshToken: refreshToken,
+		expiresIn:    expiresIn,
+	})
 }
 
 func (h *OIDCHandler) recoverMissingDeviceRequestClaims(
@@ -426,140 +456,175 @@ func (h *OIDCHandler) DeviceVerifyFailedPage(ctx *gin.Context) {
 	h.renderDeviceVerifyFailed(ctx, errorMessage)
 }
 
-// DeviceVerify handles the user verification of a device code (RFC 8628 §3.3).
-// The user submits the user code along with their credentials to authorize or deny the device.
-func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_verify")
-	defer sp.End()
+// deviceVerifyCredentials carries submitted device verification credentials.
+type deviceVerifyCredentials struct {
+	userCode string
+	username string
+	password string
+}
 
-	h.logIncomingOIDCFlowRequest(ctx, "device_verify", "", "")
-	defer h.logCompletedOIDCFlowRequest(ctx, "device_verify", "", "")
+// deviceVerifyMFAState carries resolved MFA routing state.
+type deviceVerifyMFAState struct {
+	user         *backend.User
+	factorUser   *backend.User
+	factorRef    core.RemoteBackendRef
+	availability mfaAvailability
+	protocol     string
+}
 
-	userCode := ctx.PostForm("user_code")
-
-	if userCode == "" {
+// readDeviceVerifyCredentials validates the submitted device verification form.
+func (h *OIDCHandler) readDeviceVerifyCredentials(ctx *gin.Context) (deviceVerifyCredentials, bool) {
+	credentials := deviceVerifyCredentials{userCode: ctx.PostForm("user_code")}
+	if credentials.userCode == "" {
 		h.renderDeviceVerifyError(ctx, "", "User code is required")
 
-		return
+		return credentials, false
 	}
 
-	username := ctx.PostForm("username")
-	password := ctx.PostForm("password")
+	credentials.username = ctx.PostForm("username")
 
-	if username == "" || password == "" {
-		h.renderDeviceVerifyError(ctx, userCode, "Username and password are required")
+	credentials.password = ctx.PostForm("password")
+	if credentials.username == "" || credentials.password == "" {
+		h.renderDeviceVerifyError(ctx, credentials.userCode, "Username and password are required")
 
-		return
+		return credentials, false
 	}
 
+	return credentials, true
+}
+
+// loadPendingDeviceVerifyRequest loads and validates the pending device request.
+func (h *OIDCHandler) loadPendingDeviceVerifyRequest(ctx *gin.Context, userCode string) (string, *idp.DeviceCodeRequest, bool) {
 	deviceCode, request, err := h.deviceStore.GetDeviceCodeByUserCode(ctx.Request.Context(), userCode)
 	if err != nil {
 		h.renderDeviceVerifyError(ctx, userCode, "Invalid or expired user code")
 
-		return
+		return "", nil, false
 	}
 
-	// Check expiration
 	if time.Now().After(request.ExpiresAt) {
 		_ = h.deviceStore.DeleteDeviceCode(ctx.Request.Context(), deviceCode)
-
 		h.renderDeviceVerifyError(ctx, userCode, "Device code has expired")
 
-		return
+		return "", nil, false
 	}
 
-	// Verify the request is still pending
-	if request.Status != idp.DeviceCodeStatusPending {
+	if request.Status != idp.DeviceCodeStatusPending || request.VerificationLocked {
 		h.renderDeviceVerifyFailed(ctx, "Device code has already been processed")
 
-		return
+		return "", nil, false
 	}
 
-	// Single-use verification semantics: once first-factor evaluation started
-	// for this device code, no additional verify attempts are allowed.
-	if request.VerificationLocked {
-		h.renderDeviceVerifyFailed(ctx, "Device code has already been processed")
+	return deviceCode, request, true
+}
 
-		return
+// rejectLatchedDeviceVerifyFailure handles a previously latched auth failure.
+func (h *OIDCHandler) rejectLatchedDeviceVerifyFailure(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	redisPrefix string,
+	deviceCode string,
+	request *idp.DeviceCodeRequest,
+) bool {
+	outcome, ok := getFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
+	if !ok || outcome != flowdomain.AuthOutcomeFailLatched {
+		return false
 	}
 
-	sp.SetAttributes(
-		attribute.String("client_id", request.ClientID),
-		attribute.String("username", username),
+	request.Status = idp.DeviceCodeStatusDenied
+	_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
+
+	h.renderDeviceVerifyFailed(
+		ctx,
+		renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, mgr, idpGenericInvalidLoginMessage),
 	)
 
-	mgr := cookie.GetManager(ctx)
+	return true
+}
 
-	redisPrefix := h.deps.Cfg.GetServer().GetRedis().GetPrefix()
-	if outcome, ok := getFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix); ok && outcome == flowdomain.AuthOutcomeFailLatched {
-		request.Status = idp.DeviceCodeStatusDenied
-		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
-		abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
-
-		h.renderDeviceVerifyFailed(
-			ctx,
-			renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, mgr, idpGenericInvalidLoginMessage),
-		)
-
-		return
+// deviceVerifyDelayedResponseAllowed checks whether MFA can defer an auth failure.
+func (h *OIDCHandler) deviceVerifyDelayedResponseAllowed(
+	ctx *gin.Context,
+	credentials deviceVerifyCredentials,
+	request *idp.DeviceCodeRequest,
+	client *config.OIDCClient,
+	err error,
+) bool {
+	if !idpAuthFailureAllowsDelayedResponse(err) || !h.idp.IsDelayedResponse(request.ClientID, "") {
+		return false
 	}
 
-	client, ok := h.idp.FindClient(request.ClientID)
-	if !ok {
-		h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
-
-		return
+	delayedUser, userErr := h.idp.GetUserByUsernameForOIDCClaims(ctx, credentials.username, client, request.Scopes)
+	if userErr != nil || delayedUser == nil {
+		return false
 	}
 
-	// Authenticate the user.
-	// For delayed_response clients, mirror the authorization-code behavior:
-	// if password auth fails but MFA is available, continue with MFA and defer
-	// the final decision until flow completion.
-	authResult := definitions.AuthResultOK
+	factorUser, _, factorRef, factorErr := h.frontend.resolveMFAFactorUser(ctx, h.idp, credentials.username, delayedUser, client.ClientID, "")
+	if factorErr != nil {
+		factorUser = nil
+	}
 
-	var authErr error
+	availability := h.frontend.getMFAAvailabilityWithBackendRef(ctx, factorUser, definitions.ProtoOIDC, cookie.GetManager(ctx), factorRef)
 
-	_, err = h.idp.Authenticate(ctx, username, password, request.ClientID, "")
+	return availability.count > 0
+}
+
+// denyDeviceVerifyAuthentication marks the device request denied after auth failure.
+func (h *OIDCHandler) denyDeviceVerifyAuthentication(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	redisPrefix string,
+	deviceCode string,
+	request *idp.DeviceCodeRequest,
+	err error,
+) {
+	request.Status = idp.DeviceCodeStatusDenied
+	_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
+
+	h.renderDeviceVerifyFailed(
+		ctx,
+		renderIDPAuthFailureMessage(ctx, h.deps, err, idpGenericInvalidLoginMessage),
+	)
+}
+
+// authenticateDeviceVerifyUser verifies first-factor credentials for device flow.
+func (h *OIDCHandler) authenticateDeviceVerifyUser(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	redisPrefix string,
+	deviceCode string,
+	request *idp.DeviceCodeRequest,
+	client *config.OIDCClient,
+	credentials deviceVerifyCredentials,
+) (definitions.AuthResult, bool, error) {
+	_, err := h.idp.Authenticate(ctx, credentials.username, credentials.password, request.ClientID, "")
+	if err == nil {
+		return definitions.AuthResultOK, true, nil
+	}
+
+	if h.deviceVerifyDelayedResponseAllowed(ctx, credentials, request, client, err) {
+		return definitions.AuthResultFail, true, err
+	}
+
+	h.denyDeviceVerifyAuthentication(ctx, mgr, redisPrefix, deviceCode, request, err)
+
+	return definitions.AuthResultFail, false, err
+}
+
+// loadDeviceVerifyUserAndClaims loads OIDC claims for the verified user.
+func (h *OIDCHandler) loadDeviceVerifyUserAndClaims(
+	ctx *gin.Context,
+	credentials deviceVerifyCredentials,
+	request *idp.DeviceCodeRequest,
+	client *config.OIDCClient,
+) (*backend.User, bool) {
+	user, err := h.idp.GetUserByUsernameForOIDCClaims(ctx, credentials.username, client, request.Scopes)
 	if err != nil {
-		authErr = err
-		authResult = definitions.AuthResultFail
-		delayedResponseAllowed := false
+		h.renderDeviceVerifyError(ctx, credentials.userCode, "Internal server error")
 
-		if idpAuthFailureAllowsDelayedResponse(err) && h.idp.IsDelayedResponse(request.ClientID, "") {
-			if delayedUser, userErr := h.idp.GetUserByUsernameForOIDCClaims(ctx, username, client, request.Scopes); userErr == nil && delayedUser != nil {
-				protocol := definitions.ProtoOIDC
-
-				factorUser, _, factorRef, factorErr := h.frontend.resolveMFAFactorUser(ctx, h.idp, username, delayedUser, client.ClientID, "")
-				if factorErr != nil {
-					factorUser = nil
-				}
-
-				availability := h.frontend.getMFAAvailabilityWithBackendRef(ctx, factorUser, protocol, cookie.GetManager(ctx), factorRef)
-				if availability.count > 0 {
-					delayedResponseAllowed = true
-				}
-			}
-		}
-
-		if !delayedResponseAllowed {
-			request.Status = idp.DeviceCodeStatusDenied
-			_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
-			abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
-
-			h.renderDeviceVerifyFailed(
-				ctx,
-				renderIDPAuthFailureMessage(ctx, h.deps, err, idpGenericInvalidLoginMessage),
-			)
-
-			return
-		}
-	}
-
-	user, err := h.idp.GetUserByUsernameForOIDCClaims(ctx, username, client, request.Scopes)
-	if err != nil {
-		h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
-
-		return
+		return nil, false
 	}
 
 	if err = hydrateDeviceRequestClaims(ctx, h.idp, request, client, user); err != nil {
@@ -575,16 +640,27 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 			"error", err,
 		)
 
-		h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
+		h.renderDeviceVerifyError(ctx, credentials.userCode, "Internal server error")
 
-		return
+		return nil, false
 	}
 
-	// Check if user has MFA configured
-	protocol := definitions.ProtoOIDC
+	return user, true
+}
 
-	factorUser, _, factorRef, factorErr := h.frontend.resolveMFAFactorUser(ctx, h.idp, username, user, client.ClientID, "")
-	if factorErr != nil {
+// resolveDeviceVerifyMFAState resolves backend identity and active MFA methods.
+func (h *OIDCHandler) resolveDeviceVerifyMFAState(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	credentials deviceVerifyCredentials,
+	request *idp.DeviceCodeRequest,
+	client *config.OIDCClient,
+	user *backend.User,
+) (deviceVerifyMFAState, bool) {
+	state := deviceVerifyMFAState{user: user, protocol: definitions.ProtoOIDC}
+
+	factorUser, _, factorRef, err := h.frontend.resolveMFAFactorUser(ctx, h.idp, credentials.username, user, client.ClientID, "")
+	if err != nil {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
 			h.deps.Cfg,
@@ -593,275 +669,269 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "Device code verify: failed to load Master-User MFA factor account",
 			"client_id", request.ClientID,
-			"error", factorErr,
+			"error", err,
 		)
 
-		h.renderDeviceVerifyError(ctx, userCode, "Invalid login or password")
+		h.renderDeviceVerifyError(ctx, credentials.userCode, "Invalid login or password")
+
+		return state, false
+	}
+
+	state.factorUser = factorUser
+	state.factorRef = factorRef
+	state.availability = h.frontend.getMFAAvailabilityWithBackendRef(ctx, factorUser, state.protocol, mgr, factorRef)
+
+	return state, true
+}
+
+// deviceVerifyFlowState builds the Redis flow state for MFA or consent redirects.
+func (h *OIDCHandler) deviceVerifyFlowState(
+	request *idp.DeviceCodeRequest,
+	deviceCode string,
+	createdFlowID string,
+	returnTarget string,
+) *flowdomain.State {
+	return &flowdomain.State{
+		FlowID:       createdFlowID,
+		Type:         flowdomain.FlowTypeOIDCDeviceCode,
+		Protocol:     flowdomain.FlowProtocolOIDC,
+		CurrentStep:  flowdomain.FlowStepStart,
+		GrantType:    definitions.OIDCFlowDeviceCode,
+		ReturnTarget: returnTarget,
+		Metadata: map[string]string{
+			flowdomain.FlowMetadataClientID:     request.ClientID,
+			flowdomain.FlowMetadataDeviceCode:   deviceCode,
+			flowdomain.FlowMetadataResumeTarget: flowdomain.FlowMetadataResumeTargetDeviceCodeComplete,
+		},
+	}
+}
+
+// startDeviceVerifyFlow creates flow state for MFA or consent continuation.
+func (h *OIDCHandler) startDeviceVerifyFlow(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	flowBranch string,
+	returnTarget string,
+	request *idp.DeviceCodeRequest,
+	deviceCode string,
+) (flowdomain.Decision, bool) {
+	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+	createdFlowID := ksuid.New().String()
+
+	h.logDeviceFlowStateCreation(
+		ctx,
+		mgr,
+		flowBranch,
+		mgr.GetString(definitions.SessionKeyIDPFlowID, ""),
+		mgr.GetString(definitions.SessionKeyIDPFlowType, ""),
+		mgr.GetString(definitions.SessionKeyOIDCGrantType, ""),
+		createdFlowID,
+		request,
+		deviceCode,
+	)
+
+	decision, err := controller.Start(ctx.Request.Context(), h.deviceVerifyFlowState(request, deviceCode, createdFlowID, returnTarget), time.Now())
+	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "OIDC device flow creation failed",
+			"flow_branch", flowBranch,
+			"new_flow_id", createdFlowID,
+			"error", err,
+		)
+
+		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
+
+		return decision, false
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "OIDC device flow creation completed",
+		"flow_branch", flowBranch,
+		"new_flow_id", createdFlowID,
+		"redirect_target", decision.RedirectURI,
+	)
+
+	return decision, true
+}
+
+// setDeviceVerifyAuthOutcome stores the first-factor result for later MFA completion.
+func (h *OIDCHandler) setDeviceVerifyAuthOutcome(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	redisPrefix string,
+	authResult definitions.AuthResult,
+	authErr error,
+) {
+	if authResult == definitions.AuthResultFail {
+		_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeFailLatched)
+		storeIDPAuthStatusBridgeFromError(mgr, authErr)
 
 		return
 	}
 
-	availability := h.frontend.getMFAAvailabilityWithBackendRef(ctx, factorUser, protocol, cookie.GetManager(ctx), factorRef)
+	_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeOK)
+	clearIDPAuthStatusBridge(mgr)
+}
 
-	if availability.count > 0 {
-		// MFA is required - store session state and redirect to MFA flow
-		if mgr == nil {
-			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
-
-			return
-		}
-
-		if authResult == definitions.AuthResultFail {
-			_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeFailLatched)
-			storeIDPAuthStatusBridgeFromError(mgr, authErr)
-		} else {
-			_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeOK)
-			clearIDPAuthStatusBridge(mgr)
-		}
-
-		request.VerificationLocked = true
-		if err = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
-			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
-
-			return
-		}
-
-		controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-		oidcFlowContext := newOIDCDeviceFlowContext(mgr)
-		existingFlowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
-		existingFlowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
-		existingGrantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
-		createdFlowID := ksuid.New().String()
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "OIDC device flow creating flow state",
-			"flow_branch", "device_verify_mfa",
-			"http_method", ctx.Request.Method,
-			"request_uri", ctx.Request.RequestURI,
-			"request_host", ctx.Request.Host,
-			"origin", ctx.GetHeader("Origin"),
-			"referer", ctx.GetHeader("Referer"),
-			"user_agent", ctx.GetHeader("User-Agent"),
-			"x_forwarded_host", ctx.GetHeader("X-Forwarded-Host"),
-			"x_forwarded_proto", ctx.GetHeader("X-Forwarded-Proto"),
-			"account_present", mgr.GetString(definitions.SessionKeyAccount, "") != "",
-			"existing_flow_id", existingFlowID,
-			"existing_flow_type", existingFlowType,
-			"existing_grant_type", existingGrantType,
-			"new_flow_id", createdFlowID,
-			"client_id", request.ClientID,
-			"device_code", deviceCode,
-		)
-
-		decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
-			FlowID:       createdFlowID,
-			Type:         flowdomain.FlowTypeOIDCDeviceCode,
-			Protocol:     flowdomain.FlowProtocolOIDC,
-			CurrentStep:  flowdomain.FlowStepStart,
-			GrantType:    definitions.OIDCFlowDeviceCode,
-			ReturnTarget: h.frontend.getMFASelectPath(ctx),
-			Metadata: map[string]string{
-				flowdomain.FlowMetadataClientID:     request.ClientID,
-				flowdomain.FlowMetadataDeviceCode:   deviceCode,
-				flowdomain.FlowMetadataResumeTarget: flowdomain.FlowMetadataResumeTargetDeviceCodeComplete,
-			},
-		}, time.Now())
-		if err != nil {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				h.deps.Cfg,
-				h.deps.Logger,
-				definitions.DbgIdp,
-				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-				definitions.LogKeyMsg, "OIDC device flow creation failed",
-				"flow_branch", "device_verify_mfa",
-				"new_flow_id", createdFlowID,
-				"error", err,
-			)
-
-			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
-
-			return
-		}
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "OIDC device flow creation completed",
-			"flow_branch", "device_verify_mfa",
-			"new_flow_id", createdFlowID,
-			"redirect_target", decision.RedirectURI,
-		)
-
-		oidcFlowContext.StoreMFAContext(
-			username,
-			user.ID,
-			deviceCode,
-			request.ClientID,
-			protocol,
-			authResult,
-			availability.count > 1,
-		)
-		core.StorePendingIDPMFAIdentity(mgr, user)
-		core.StorePendingIDPMFAFactor(mgr, factorUser)
-		core.StorePendingIDPMFAFactorRemoteBackendRef(mgr, factorRef)
-
-		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepDeviceVerification)
-		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepLogin)
-		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepMFA)
-
-		mgr.Debug(ctx, h.deps.Logger, "Device code MFA required - session data stored")
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "Device code flow requires MFA",
-			"client_id", request.ClientID,
-			"username", username,
-			"mfa_count", availability.count,
-		)
-
-		redirectTarget := decision.RedirectURI
-
-		// Redirect to the appropriate MFA page
-		if redirectURL, ok := h.frontend.getMFARedirectURLFromAvailability(availability); ok {
-			redirectTarget = redirectURL
-		}
-
-		ctx.Redirect(http.StatusFound, redirectTarget)
-
-		return
-	}
-
-	// No MFA required - check if consent is needed before authorizing
-	if h.deviceCodeNeedsConsent(ctx, request.ClientID, request.Scopes) {
-		if mgr == nil {
-			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
-
-			return
-		}
-
-		controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-		existingFlowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
-		existingFlowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
-		existingGrantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
-		createdFlowID := ksuid.New().String()
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "OIDC device flow creating flow state",
-			"flow_branch", "device_verify_consent",
-			"http_method", ctx.Request.Method,
-			"request_uri", ctx.Request.RequestURI,
-			"request_host", ctx.Request.Host,
-			"origin", ctx.GetHeader("Origin"),
-			"referer", ctx.GetHeader("Referer"),
-			"user_agent", ctx.GetHeader("User-Agent"),
-			"x_forwarded_host", ctx.GetHeader("X-Forwarded-Host"),
-			"x_forwarded_proto", ctx.GetHeader("X-Forwarded-Proto"),
-			"account_present", mgr.GetString(definitions.SessionKeyAccount, "") != "",
-			"existing_flow_id", existingFlowID,
-			"existing_flow_type", existingFlowType,
-			"existing_grant_type", existingGrantType,
-			"new_flow_id", createdFlowID,
-			"client_id", request.ClientID,
-			"device_code", deviceCode,
-		)
-
-		decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
-			FlowID:       createdFlowID,
-			Type:         flowdomain.FlowTypeOIDCDeviceCode,
-			Protocol:     flowdomain.FlowProtocolOIDC,
-			CurrentStep:  flowdomain.FlowStepStart,
-			GrantType:    definitions.OIDCFlowDeviceCode,
-			ReturnTarget: h.deviceConsentPath(ctx),
-			Metadata: map[string]string{
-				flowdomain.FlowMetadataClientID:     request.ClientID,
-				flowdomain.FlowMetadataDeviceCode:   deviceCode,
-				flowdomain.FlowMetadataResumeTarget: flowdomain.FlowMetadataResumeTargetDeviceCodeComplete,
-			},
-		}, time.Now())
-		if err != nil {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				h.deps.Cfg,
-				h.deps.Logger,
-				definitions.DbgIdp,
-				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-				definitions.LogKeyMsg, "OIDC device flow creation failed",
-				"flow_branch", "device_verify_consent",
-				"new_flow_id", createdFlowID,
-				"error", err,
-			)
-
-			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
-
-			return
-		}
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "OIDC device flow creation completed",
-			"flow_branch", "device_verify_consent",
-			"new_flow_id", createdFlowID,
-			"redirect_target", decision.RedirectURI,
-		)
-
-		oidcFlowContext := newOIDCDeviceFlowContext(mgr)
-
-		request.VerificationLocked = true
-		if err = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
-			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
-
-			return
-		}
-
-		oidcFlowContext.StoreConsentContext(deviceCode, request.ClientID, user.ID)
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "Device code flow requires consent",
-			"client_id", request.ClientID,
-			"username", username,
-		)
-
-		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepDeviceVerification)
-		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepLogin)
-		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepConsent)
-
-		ctx.Redirect(http.StatusFound, decision.RedirectURI)
-
-		return
-	}
-
-	// No consent required - authorize device code directly
-	request.Status = idp.DeviceCodeStatusAuthorized
-
+// lockDeviceVerifyRequest marks a request as already being processed.
+func (h *OIDCHandler) lockDeviceVerifyRequest(ctx *gin.Context, deviceCode string, request *idp.DeviceCodeRequest, userCode string) bool {
+	request.VerificationLocked = true
 	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
 		h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
+
+		return false
+	}
+
+	return true
+}
+
+// advanceDeviceVerifyFlow advances the common device verification flow steps.
+func (h *OIDCHandler) advanceDeviceVerifyFlow(ctx *gin.Context, mgr cookie.Manager, steps ...flowdomain.Step) {
+	for _, step := range steps {
+		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), step)
+	}
+}
+
+// redirectDeviceVerifyMFA stores MFA session state and redirects to the MFA flow.
+func (h *OIDCHandler) redirectDeviceVerifyMFA(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	redisPrefix string,
+	deviceCode string,
+	request *idp.DeviceCodeRequest,
+	credentials deviceVerifyCredentials,
+	mfaState deviceVerifyMFAState,
+	authResult definitions.AuthResult,
+	authErr error,
+) bool {
+	if mgr == nil {
+		h.renderDeviceVerifyError(ctx, credentials.userCode, "Internal server error")
+
+		return true
+	}
+
+	h.setDeviceVerifyAuthOutcome(ctx, mgr, redisPrefix, authResult, authErr)
+
+	if !h.lockDeviceVerifyRequest(ctx, deviceCode, request, credentials.userCode) {
+		return true
+	}
+
+	decision, ok := h.startDeviceVerifyFlow(ctx, mgr, "device_verify_mfa", h.frontend.getMFASelectPath(ctx), request, deviceCode)
+	if !ok {
+		return true
+	}
+
+	oidcFlowContext := newOIDCDeviceFlowContext(mgr)
+	oidcFlowContext.StoreMFAContext(
+		credentials.username,
+		mfaState.user.ID,
+		deviceCode,
+		request.ClientID,
+		mfaState.protocol,
+		authResult,
+		mfaState.availability.count > 1,
+	)
+	core.StorePendingIDPMFAIdentity(mgr, mfaState.user)
+	core.StorePendingIDPMFAFactor(mgr, mfaState.factorUser)
+	core.StorePendingIDPMFAFactorRemoteBackendRef(mgr, mfaState.factorRef)
+
+	h.advanceDeviceVerifyFlow(ctx, mgr, flowdomain.FlowStepDeviceVerification, flowdomain.FlowStepLogin, flowdomain.FlowStepMFA)
+	mgr.Debug(ctx, h.deps.Logger, "Device code MFA required - session data stored")
+	h.logDeviceVerifyMFARequired(ctx, credentials.username, request, mfaState.availability)
+
+	redirectTarget := decision.RedirectURI
+	if redirectURL, ok := h.frontend.getMFARedirectURLFromAvailability(mfaState.availability); ok {
+		redirectTarget = redirectURL
+	}
+
+	ctx.Redirect(http.StatusFound, redirectTarget)
+
+	return true
+}
+
+// logDeviceVerifyMFARequired records the MFA branch of device verification.
+func (h *OIDCHandler) logDeviceVerifyMFARequired(ctx *gin.Context, username string, request *idp.DeviceCodeRequest, availability mfaAvailability) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Device code flow requires MFA",
+		"client_id", request.ClientID,
+		"username", username,
+		"mfa_count", availability.count,
+	)
+}
+
+// redirectDeviceVerifyConsent stores consent session state and redirects.
+func (h *OIDCHandler) redirectDeviceVerifyConsent(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	deviceCode string,
+	request *idp.DeviceCodeRequest,
+	credentials deviceVerifyCredentials,
+	user *backend.User,
+) bool {
+	if mgr == nil {
+		h.renderDeviceVerifyError(ctx, credentials.userCode, "Internal server error")
+
+		return true
+	}
+
+	decision, ok := h.startDeviceVerifyFlow(ctx, mgr, "device_verify_consent", h.deviceConsentPath(ctx), request, deviceCode)
+	if !ok {
+		return true
+	}
+
+	if !h.lockDeviceVerifyRequest(ctx, deviceCode, request, credentials.userCode) {
+		return true
+	}
+
+	newOIDCDeviceFlowContext(mgr).StoreConsentContext(deviceCode, request.ClientID, user.ID)
+	h.logDeviceVerifyConsentRequired(ctx, credentials.username, request)
+	h.advanceDeviceVerifyFlow(ctx, mgr, flowdomain.FlowStepDeviceVerification, flowdomain.FlowStepLogin, flowdomain.FlowStepConsent)
+
+	ctx.Redirect(http.StatusFound, decision.RedirectURI)
+
+	return true
+}
+
+// logDeviceVerifyConsentRequired records the consent branch of device verification.
+func (h *OIDCHandler) logDeviceVerifyConsentRequired(ctx *gin.Context, username string, request *idp.DeviceCodeRequest) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Device code flow requires consent",
+		"client_id", request.ClientID,
+		"username", username,
+	)
+}
+
+// authorizeDeviceCodeDirectly completes a device request without MFA or consent.
+func (h *OIDCHandler) authorizeDeviceCodeDirectly(
+	ctx *gin.Context,
+	deviceCode string,
+	request *idp.DeviceCodeRequest,
+	client *config.OIDCClient,
+	user *backend.User,
+) {
+	request.Status = idp.DeviceCodeStatusAuthorized
+	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
+		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
 
 		return
 	}
@@ -881,6 +951,127 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 	)
 
 	h.renderDeviceVerifySuccess(ctx)
+}
+
+// resolveDeviceVerifyClient resolves the client configured for a device request.
+func (h *OIDCHandler) resolveDeviceVerifyClient(ctx *gin.Context, request *idp.DeviceCodeRequest, credentials deviceVerifyCredentials) (*config.OIDCClient, bool) {
+	client, ok := h.idp.FindClient(request.ClientID)
+	if !ok {
+		h.renderDeviceVerifyError(ctx, credentials.userCode, "Internal server error")
+
+		return nil, false
+	}
+
+	return client, true
+}
+
+// setDeviceVerifySpanAttributes adds non-secret device-verification attributes to the trace span.
+func setDeviceVerifySpanAttributes(sp trace.Span, request *idp.DeviceCodeRequest, credentials deviceVerifyCredentials) {
+	sp.SetAttributes(
+		attribute.String("client_id", request.ClientID),
+		attribute.String("username", credentials.username),
+	)
+}
+
+// DeviceVerify handles the user verification of a device code (RFC 8628 §3.3).
+// The user submits the user code along with their credentials to authorize or deny the device.
+func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_verify")
+	defer sp.End()
+
+	h.logIncomingOIDCFlowRequest(ctx, "device_verify", "", "")
+	defer h.logCompletedOIDCFlowRequest(ctx, "device_verify", "", "")
+
+	credentials, ok := h.readDeviceVerifyCredentials(ctx)
+	if !ok {
+		return
+	}
+
+	deviceCode, request, ok := h.loadPendingDeviceVerifyRequest(ctx, credentials.userCode)
+	if !ok {
+		return
+	}
+
+	setDeviceVerifySpanAttributes(sp, request, credentials)
+
+	mgr := cookie.GetManager(ctx)
+
+	redisPrefix := h.deps.Cfg.GetServer().GetRedis().GetPrefix()
+	if h.rejectLatchedDeviceVerifyFailure(ctx, mgr, redisPrefix, deviceCode, request) {
+		return
+	}
+
+	client, ok := h.resolveDeviceVerifyClient(ctx, request, credentials)
+	if !ok {
+		return
+	}
+
+	authResult, ok, authErr := h.authenticateDeviceVerifyUser(ctx, mgr, redisPrefix, deviceCode, request, client, credentials)
+	if !ok {
+		return
+	}
+
+	user, ok := h.loadDeviceVerifyUserAndClaims(ctx, credentials, request, client)
+	if !ok {
+		return
+	}
+
+	mfaState, ok := h.resolveDeviceVerifyMFAState(ctx, mgr, credentials, request, client, user)
+	if !ok {
+		return
+	}
+
+	if mfaState.availability.count > 0 {
+		h.redirectDeviceVerifyMFA(ctx, mgr, redisPrefix, deviceCode, request, credentials, mfaState, authResult, authErr)
+
+		return
+	}
+
+	if h.deviceCodeNeedsConsent(ctx, request.ClientID, request.Scopes) {
+		h.redirectDeviceVerifyConsent(ctx, mgr, deviceCode, request, credentials, user)
+
+		return
+	}
+
+	h.authorizeDeviceCodeDirectly(ctx, deviceCode, request, client, user)
+}
+
+// logDeviceFlowStateCreation records the diagnostic context used when device flows create flow state.
+func (h *OIDCHandler) logDeviceFlowStateCreation(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	flowBranch string,
+	existingFlowID string,
+	existingFlowType string,
+	existingGrantType string,
+	createdFlowID string,
+	request *idp.DeviceCodeRequest,
+	deviceCode string,
+) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "OIDC device flow creating flow state",
+		"flow_branch", flowBranch,
+		"http_method", ctx.Request.Method,
+		"request_uri", ctx.Request.RequestURI,
+		"request_host", ctx.Request.Host,
+		"origin", ctx.GetHeader("Origin"),
+		"referer", ctx.GetHeader("Referer"),
+		"user_agent", ctx.GetHeader("User-Agent"),
+		"x_forwarded_host", ctx.GetHeader("X-Forwarded-Host"),
+		"x_forwarded_proto", ctx.GetHeader("X-Forwarded-Proto"),
+		"account_present", mgr.GetString(definitions.SessionKeyAccount, "") != "",
+		"existing_flow_id", existingFlowID,
+		"existing_flow_type", existingFlowType,
+		"existing_grant_type", existingGrantType,
+		"new_flow_id", createdFlowID,
+		"client_id", request.ClientID,
+		"device_code", deviceCode,
+	)
 }
 
 // buildDeviceVerifyPageData returns the common template data for the device verify page.
@@ -987,116 +1178,71 @@ func (h *OIDCHandler) DeviceConsentGET(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "idp_consent.html", data)
 }
 
-// DeviceConsentPOST handles the user's consent decision for the device code flow.
-// On approval, the device code is authorized and the success page is shown.
-// On denial, the device code is denied and an error page is shown.
-func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_consent_post")
-	defer sp.End()
+// denyDeviceConsent marks the device code as denied and aborts the flow.
+func (h *OIDCHandler) denyDeviceConsent(ctx *gin.Context, mgr cookie.Manager, deviceCode string, request *idp.DeviceCodeRequest) {
+	request.Status = idp.DeviceCodeStatusDenied
+	_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
 
-	h.logIncomingOIDCFlowRequest(ctx, "device_consent_post", "", "")
-	defer h.logCompletedOIDCFlowRequest(ctx, "device_consent_post", "", "")
+	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "deny").Inc()
+	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
-	mgr := cookie.GetManager(ctx)
-	if mgr == nil {
-		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Device code consent denied",
+		"client_id", request.ClientID,
+		"user_code", request.UserCode,
+	)
 
-		return
+	h.renderDeviceVerifyFailed(ctx, "Authorization denied")
+}
+
+// rejectDeviceConsentIfAuthFailure denies consent when auth failure was latched.
+func (h *OIDCHandler) rejectDeviceConsentIfAuthFailure(ctx *gin.Context, mgr cookie.Manager, deviceCode string, request *idp.DeviceCodeRequest) bool {
+	if !h.flowAuthFailureLatched(ctx, mgr) {
+		return false
 	}
 
-	oidcFlowContext := newOIDCDeviceFlowContext(mgr)
+	request.Status = idp.DeviceCodeStatusDenied
+	_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
 
-	deviceCode := oidcFlowContext.DeviceCode()
-	if deviceCode == "" {
-		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
+	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "deny").Inc()
+	h.abortFlow(ctx, mgr)
+	h.renderDeviceVerifyFailed(
+		ctx,
+		renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, mgr, idpGenericInvalidLoginMessage),
+	)
 
-		return
-	}
+	return true
+}
 
-	request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
-	if err != nil || request == nil {
-		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
-
-		return
-	}
-
-	submit := ctx.PostForm("submit")
-
-	sp.SetAttributes(attribute.String("client_id", request.ClientID))
-
-	if submit != oidcConsentDecisionAllow {
-		// User denied consent
-		request.Status = idp.DeviceCodeStatusDenied
-		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
-
-		stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "deny").Inc()
-
-		abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "Device code consent denied",
-			"client_id", request.ClientID,
-			"user_code", request.UserCode,
-		)
-
-		h.renderDeviceVerifyFailed(ctx, "Authorization denied")
-
-		return
-	}
-
-	// User approved consent
-	if h.flowAuthFailureLatched(ctx, mgr) {
-		request.Status = idp.DeviceCodeStatusDenied
-		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
-
-		stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "deny").Inc()
-
-		h.abortFlow(ctx, mgr)
-		h.renderDeviceVerifyFailed(
-			ctx,
-			renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, mgr, idpGenericInvalidLoginMessage),
-		)
-
-		return
-	}
-
-	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, oidcConsentDecisionAllow).Inc()
-
-	client, ok := h.idp.FindClient(request.ClientID)
-	if !ok {
-		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
-
-		return
-	}
-
-	request.Status = idp.DeviceCodeStatusAuthorized
-	if request.UserID == "" {
-		request.UserID = oidcFlowContext.UniqueUserID()
-	}
-
-	applyDeviceCodeMFASessionState(mgr, request)
-
+// applyDeviceConsentScopeSelection applies optional granular scopes.
+func (h *OIDCHandler) applyDeviceConsentScopeSelection(ctx *gin.Context, request *idp.DeviceCodeRequest, client *config.OIDCClient) bool {
 	consentMode := client.GetConsentMode(h.deps.Cfg.GetIDP().OIDC.GetConsentMode())
-
-	if consentMode == config.OIDCConsentModeGranularOptional {
-		plan := buildConsentScopePlan(client, h.deps.Cfg.GetIDP().OIDC.GetConsentMode(), request.Scopes)
-
-		grantedScopes, resolveErr := plan.ResolveGranted(ctx.PostFormArray("optional_scope"))
-		if resolveErr != nil {
-			h.renderDeviceVerifyError(ctx, request.UserCode, "Invalid optional scope selection")
-
-			return
-		}
-
-		request.Scopes = grantedScopes
+	if consentMode != config.OIDCConsentModeGranularOptional {
+		return true
 	}
 
-	if err = hydrateDeviceRequestClaims(ctx, h.idp, request, client, nil); err != nil {
+	plan := buildConsentScopePlan(client, h.deps.Cfg.GetIDP().OIDC.GetConsentMode(), request.Scopes)
+
+	grantedScopes, err := plan.ResolveGranted(ctx.PostFormArray("optional_scope"))
+	if err != nil {
+		h.renderDeviceVerifyError(ctx, request.UserCode, "Invalid optional scope selection")
+
+		return false
+	}
+
+	request.Scopes = grantedScopes
+
+	return true
+}
+
+// hydrateDeviceConsentClaims updates claims after consent approval.
+func (h *OIDCHandler) hydrateDeviceConsentClaims(ctx *gin.Context, request *idp.DeviceCodeRequest, client *config.OIDCClient) bool {
+	if err := hydrateDeviceRequestClaims(ctx, h.idp, request, client, nil); err != nil {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
 			h.deps.Cfg,
@@ -1111,17 +1257,27 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 
 		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
 
-		return
+		return false
 	}
 
+	return true
+}
+
+// completeDeviceConsentApproval persists approval and completes the device flow.
+func (h *OIDCHandler) completeDeviceConsentApproval(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	deviceCode string,
+	request *idp.DeviceCodeRequest,
+	client *config.OIDCClient,
+) bool {
 	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
 		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
 
-		return
+		return false
 	}
 
 	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID, request.Scopes, consentTTLForClient(h.deps.Cfg, client))
-
 	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
 	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
@@ -1136,6 +1292,103 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 		"user_id", request.UserID,
 		"user_code", request.UserCode,
 	)
+
+	return true
+}
+
+// deviceConsentContext carries the loaded device consent state.
+type deviceConsentContext struct {
+	mgr             cookie.Manager
+	oidcFlowContext *oidcDeviceFlowContext
+	request         *idp.DeviceCodeRequest
+	deviceCode      string
+}
+
+// loadDeviceConsentContext loads cookie and device-code state for consent POST.
+func (h *OIDCHandler) loadDeviceConsentContext(ctx *gin.Context) (deviceConsentContext, bool) {
+	consentContext := deviceConsentContext{mgr: cookie.GetManager(ctx)}
+	if consentContext.mgr == nil {
+		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
+
+		return consentContext, false
+	}
+
+	consentContext.oidcFlowContext = newOIDCDeviceFlowContext(consentContext.mgr)
+
+	consentContext.deviceCode = consentContext.oidcFlowContext.DeviceCode()
+	if consentContext.deviceCode == "" {
+		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
+
+		return consentContext, false
+	}
+
+	request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), consentContext.deviceCode)
+	if err != nil || request == nil {
+		ctx.Redirect(http.StatusFound, frontendDeviceVerifyPath)
+
+		return consentContext, false
+	}
+
+	consentContext.request = request
+
+	return consentContext, true
+}
+
+// approveDeviceConsent authorizes the device request after positive consent.
+func (h *OIDCHandler) approveDeviceConsent(ctx *gin.Context, consentContext deviceConsentContext) bool {
+	request := consentContext.request
+	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, oidcConsentDecisionAllow).Inc()
+
+	client, ok := h.idp.FindClient(request.ClientID)
+	if !ok {
+		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
+
+		return false
+	}
+
+	request.Status = idp.DeviceCodeStatusAuthorized
+	if request.UserID == "" {
+		request.UserID = consentContext.oidcFlowContext.UniqueUserID()
+	}
+
+	applyDeviceCodeMFASessionState(consentContext.mgr, request)
+
+	return h.applyDeviceConsentScopeSelection(ctx, request, client) &&
+		h.hydrateDeviceConsentClaims(ctx, request, client) &&
+		h.completeDeviceConsentApproval(ctx, consentContext.mgr, consentContext.deviceCode, request, client)
+}
+
+// DeviceConsentPOST handles the user's consent decision for the device code flow.
+// On approval, the device code is authorized and the success page is shown.
+// On denial, the device code is denied and an error page is shown.
+func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_consent_post")
+	defer sp.End()
+
+	h.logIncomingOIDCFlowRequest(ctx, "device_consent_post", "", "")
+	defer h.logCompletedOIDCFlowRequest(ctx, "device_consent_post", "", "")
+
+	consentContext, ok := h.loadDeviceConsentContext(ctx)
+	if !ok {
+		return
+	}
+
+	submit := ctx.PostForm("submit")
+
+	sp.SetAttributes(attribute.String("client_id", consentContext.request.ClientID))
+
+	if submit != oidcConsentDecisionAllow {
+		h.denyDeviceConsent(ctx, consentContext.mgr, consentContext.deviceCode, consentContext.request)
+		return
+	}
+
+	if h.rejectDeviceConsentIfAuthFailure(ctx, consentContext.mgr, consentContext.deviceCode, consentContext.request) {
+		return
+	}
+
+	if !h.approveDeviceConsent(ctx, consentContext) {
+		return
+	}
 
 	h.renderDeviceVerifySuccess(ctx)
 }

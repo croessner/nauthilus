@@ -25,90 +25,7 @@ import (
 
 func TestNewSLOFanoutTransactionState(t *testing.T) {
 	now := time.Date(2026, time.March, 19, 12, 0, 0, 0, time.UTC)
-
-	baseParticipant := func(entityID, requestID string) slodomain.Participant {
-		return slodomain.Participant{
-			EntityID:  entityID,
-			RequestID: requestID,
-			Binding:   slodomain.SLOBindingRedirect,
-		}
-	}
-
-	testCases := []struct {
-		name        string
-		transaction *slodomain.Transaction
-		result      *sloFanoutResult
-		wantErr     string
-		wantNil     bool
-		assertState func(t *testing.T, state *sloFanoutTransactionState)
-	}{
-		{
-			name:    "nil transaction rejected",
-			wantErr: "slo fanout transaction is missing",
-		},
-		{
-			name:        "missing dispatches returns nil state",
-			transaction: mustNewFanoutRunningTransaction(t, now),
-			result:      &sloFanoutResult{},
-			wantNil:     true,
-		},
-		{
-			name:        "wrong transaction status rejected",
-			transaction: mustNewValidatedTransaction(t, now),
-			result: &sloFanoutResult{
-				Dispatches: []sloFanoutDispatch{{Participant: baseParticipant("https://sp-a.example.com", "id-req-a")}},
-			},
-			wantErr: "must be in status fanout_running",
-		},
-		{
-			name:        "missing request id rejected",
-			transaction: mustNewFanoutRunningTransaction(t, now),
-			result: &sloFanoutResult{
-				Dispatches: []sloFanoutDispatch{{Participant: baseParticipant("https://sp-a.example.com", "  ")}},
-			},
-			wantErr: "request id is missing",
-		},
-		{
-			name:        "duplicate request id rejected",
-			transaction: mustNewFanoutRunningTransaction(t, now),
-			result: &sloFanoutResult{
-				Dispatches: []sloFanoutDispatch{
-					{Participant: baseParticipant("https://sp-a.example.com", "id-req-dup")},
-					{Participant: baseParticipant("https://sp-b.example.com", "id-req-dup")},
-				},
-			},
-			wantErr: "duplicate slo fanout request id",
-		},
-		{
-			name: "state built with pre counts",
-			transaction: mustNewFanoutRunningTransactionWithParticipants(t, now, []slodomain.Participant{
-				baseParticipant("https://sp-a.example.com", "id-req-a"),
-				baseParticipant("https://sp-b.example.com", "id-req-b"),
-				baseParticipant("https://sp-c.example.com", "id-req-c"),
-			}),
-			result: &sloFanoutResult{
-				Dispatches: []sloFanoutDispatch{
-					{Participant: baseParticipant("https://sp-a.example.com", "id-req-a")},
-					{Participant: baseParticipant("https://sp-b.example.com", "id-req-b")},
-				},
-				Failures: []sloFanoutFailure{{EntityID: "https://sp-x.example.com"}},
-			},
-			assertState: func(t *testing.T, state *sloFanoutTransactionState) {
-				t.Helper()
-
-				if !assert.NotNil(t, state) {
-					return
-				}
-
-				assert.Equal(t, 2, len(state.Pending))
-				assert.Equal(t, 1, state.PreSuccessCount)
-				assert.Equal(t, 1, state.PreFailureCount)
-				assert.Equal(t, now, state.UpdatedAt)
-			},
-		},
-	}
-
-	for _, tc := range testCases {
+	for _, tc := range newSLOFanoutTransactionStateCases(t, now) {
 		t.Run(tc.name, func(t *testing.T) {
 			state, err := newSLOFanoutTransactionState(tc.transaction, tc.result, now)
 			if tc.wantErr != "" {
@@ -132,6 +49,104 @@ func TestNewSLOFanoutTransactionState(t *testing.T) {
 				tc.assertState(t, state)
 			}
 		})
+	}
+}
+
+type sloFanoutTransactionStateCase struct {
+	name        string
+	transaction *slodomain.Transaction
+	result      *sloFanoutResult
+	wantErr     string
+	wantNil     bool
+	assertState func(t *testing.T, state *sloFanoutTransactionState)
+}
+
+// newSLOFanoutTransactionStateCases returns coverage cases for transaction state construction.
+func newSLOFanoutTransactionStateCases(t *testing.T, now time.Time) []sloFanoutTransactionStateCase {
+	t.Helper()
+
+	testCases := []sloFanoutTransactionStateCase{
+		{
+			name:    "nil transaction rejected",
+			wantErr: "slo fanout transaction is missing",
+		},
+		{
+			name:        "missing dispatches returns nil state",
+			transaction: mustNewFanoutRunningTransaction(t, now),
+			result:      &sloFanoutResult{},
+			wantNil:     true,
+		},
+		{
+			name:        "wrong transaction status rejected",
+			transaction: mustNewValidatedTransaction(t, now),
+			result: &sloFanoutResult{
+				Dispatches: []sloFanoutDispatch{{Participant: sloFanoutTestParticipant("https://sp-a.example.com", "id-req-a")}},
+			},
+			wantErr: "must be in status fanout_running",
+		},
+		{
+			name:        "missing request id rejected",
+			transaction: mustNewFanoutRunningTransaction(t, now),
+			result: &sloFanoutResult{
+				Dispatches: []sloFanoutDispatch{{Participant: sloFanoutTestParticipant("https://sp-a.example.com", "  ")}},
+			},
+			wantErr: "request id is missing",
+		},
+		{
+			name:        "duplicate request id rejected",
+			transaction: mustNewFanoutRunningTransaction(t, now),
+			result: &sloFanoutResult{
+				Dispatches: []sloFanoutDispatch{
+					{Participant: sloFanoutTestParticipant("https://sp-a.example.com", "id-req-dup")},
+					{Participant: sloFanoutTestParticipant("https://sp-b.example.com", "id-req-dup")},
+				},
+			},
+			wantErr: "duplicate slo fanout request id",
+		},
+	}
+
+	return append(testCases, newSLOFanoutTransactionStatePreCountCase(t, now))
+}
+
+// newSLOFanoutTransactionStatePreCountCase builds the pre-count success case.
+func newSLOFanoutTransactionStatePreCountCase(t *testing.T, now time.Time) sloFanoutTransactionStateCase {
+	t.Helper()
+
+	return sloFanoutTransactionStateCase{
+		name: "state built with pre counts",
+		transaction: mustNewFanoutRunningTransactionWithParticipants(t, now, []slodomain.Participant{
+			sloFanoutTestParticipant("https://sp-a.example.com", "id-req-a"),
+			sloFanoutTestParticipant("https://sp-b.example.com", "id-req-b"),
+			sloFanoutTestParticipant("https://sp-c.example.com", "id-req-c"),
+		}),
+		result: &sloFanoutResult{
+			Dispatches: []sloFanoutDispatch{
+				{Participant: sloFanoutTestParticipant("https://sp-a.example.com", "id-req-a")},
+				{Participant: sloFanoutTestParticipant("https://sp-b.example.com", "id-req-b")},
+			},
+			Failures: []sloFanoutFailure{{EntityID: "https://sp-x.example.com"}},
+		},
+		assertState: func(t *testing.T, state *sloFanoutTransactionState) {
+			t.Helper()
+
+			if !assert.NotNil(t, state) {
+				return
+			}
+
+			assert.Equal(t, 2, len(state.Pending))
+			assert.Equal(t, 1, state.PreSuccessCount)
+			assert.Equal(t, 1, state.PreFailureCount)
+			assert.Equal(t, now, state.UpdatedAt)
+		},
+	}
+}
+
+// sloFanoutTestParticipant builds a fanout participant for state tests.
+func sloFanoutTestParticipant(entityID, requestID string) slodomain.Participant {
+	return slodomain.Participant{
+		EntityID:  entityID,
+		RequestID: requestID,
+		Binding:   slodomain.SLOBindingRedirect,
 	}
 }
 

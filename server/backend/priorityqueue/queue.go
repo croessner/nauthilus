@@ -201,38 +201,81 @@ func (pq *LuaRequestPriorityQueue) Pop() any {
 	return item
 }
 
-type ldapRequestPool struct {
-	queue    LDAPRequestPriorityQueue
+type ldapPriorityQueueItem[T any] struct {
+	Request    *T
+	Priority   int
+	InsertTime time.Time
+	Index      int
+}
+
+type ldapPriorityQueueHeap[T any] []*ldapPriorityQueueItem[T]
+
+// Len returns the number of items currently stored in the LDAP priority heap.
+func (pq *ldapPriorityQueueHeap[T]) Len() int { return len(*pq) }
+
+// Less orders LDAP priority heap items by priority first and insertion time second.
+func (pq *ldapPriorityQueueHeap[T]) Less(i, j int) bool {
+	if (*pq)[i].Priority != (*pq)[j].Priority {
+		return (*pq)[i].Priority > (*pq)[j].Priority
+	}
+
+	return (*pq)[i].InsertTime.Before((*pq)[j].InsertTime)
+}
+
+// Swap exchanges LDAP priority heap items and updates their heap indexes.
+func (pq *ldapPriorityQueueHeap[T]) Swap(i, j int) {
+	(*pq)[i], (*pq)[j] = (*pq)[j], (*pq)[i]
+	(*pq)[i].Index = i
+	(*pq)[j].Index = j
+}
+
+// Push appends one LDAP priority heap item.
+func (pq *ldapPriorityQueueHeap[T]) Push(x any) {
+	n := len(*pq)
+	item := x.(*ldapPriorityQueueItem[T])
+	item.Index = n
+	*pq = append(*pq, item)
+}
+
+// Pop removes one LDAP priority heap item and clears the stored pointer.
+func (pq *ldapPriorityQueueHeap[T]) Pop() any {
+	old := *pq
+	n := len(old)
+	item := old[n-1]
+	old[n-1] = nil
+	item.Index = -1
+	*pq = old[0 : n-1]
+
+	return item
+}
+
+type ldapRequestPool[T any] struct {
+	queue    ldapPriorityQueueHeap[T]
 	notEmpty *sync.Cond
 	notify   chan struct{}
+}
+
+type ldapPriorityQueueCore[T any] struct {
+	logger         *slog.Logger
+	requestContext func(*T) context.Context
+	poolNames      map[string]bool
+	workerPools    map[string]bool
+	warnedNoWorker map[string]bool
+	pools          map[string]*ldapRequestPool[T]
+	maxLen         map[string]int
+	metricLabel    string
+	warnMessage    string
+	mutex          sync.Mutex
 }
 
 // LDAPRequestQueue manages per-pool priority queues for LDAP requests
 type LDAPRequestQueue struct {
-	logger         *slog.Logger
-	mutex          sync.Mutex
-	poolNames      map[string]bool
-	workerPools    map[string]bool
-	warnedNoWorker map[string]bool
-	pools          map[string]*ldapRequestPool
-	maxLen         map[string]int // per-pool max queue length; 0 means unlimited
-}
-
-type ldapAuthRequestPool struct {
-	queue    LDAPAuthRequestPriorityQueue
-	notEmpty *sync.Cond
-	notify   chan struct{}
+	core ldapPriorityQueueCore[bktype.LDAPRequest]
 }
 
 // LDAPAuthRequestQueue manages per-pool priority queues for LDAP auth requests
 type LDAPAuthRequestQueue struct {
-	logger         *slog.Logger
-	mutex          sync.Mutex
-	poolNames      map[string]bool
-	workerPools    map[string]bool
-	warnedNoWorker map[string]bool
-	pools          map[string]*ldapAuthRequestPool
-	maxLen         map[string]int // per-pool max queue length; 0 means unlimited
+	core ldapPriorityQueueCore[bktype.LDAPAuthRequest]
 }
 
 type luaRequestPool struct {
@@ -254,14 +297,13 @@ type LuaRequestQueue struct {
 
 // NewLDAPRequestQueue creates a new LDAPRequestQueue
 func NewLDAPRequestQueue(logger *slog.Logger) *LDAPRequestQueue {
-	logger = normalizeLogger(logger)
 	q := &LDAPRequestQueue{
-		logger:         logger,
-		poolNames:      make(map[string]bool),
-		workerPools:    make(map[string]bool),
-		warnedNoWorker: make(map[string]bool),
-		pools:          make(map[string]*ldapRequestPool),
-		maxLen:         make(map[string]int),
+		core: newLDAPPriorityQueueCore(
+			logger,
+			"lookup",
+			"LDAP lookup request queued without active worker",
+			ldapRequestContext,
+		),
 	}
 
 	return q
@@ -269,14 +311,13 @@ func NewLDAPRequestQueue(logger *slog.Logger) *LDAPRequestQueue {
 
 // NewLDAPAuthRequestQueue creates a new LDAPAuthRequestQueue
 func NewLDAPAuthRequestQueue(logger *slog.Logger) *LDAPAuthRequestQueue {
-	logger = normalizeLogger(logger)
 	q := &LDAPAuthRequestQueue{
-		logger:         logger,
-		poolNames:      make(map[string]bool),
-		workerPools:    make(map[string]bool),
-		warnedNoWorker: make(map[string]bool),
-		pools:          make(map[string]*ldapAuthRequestPool),
-		maxLen:         make(map[string]int),
+		core: newLDAPPriorityQueueCore(
+			logger,
+			"auth",
+			"LDAP auth request queued without active worker",
+			ldapAuthRequestContext,
+		),
 	}
 
 	return q
@@ -297,54 +338,62 @@ func NewLuaRequestQueue(logger *slog.Logger) *LuaRequestQueue {
 	return q
 }
 
-// AddPoolName adds a pool name to the LDAPRequestQueue
-func (q *LDAPRequestQueue) AddPoolName(poolName string) {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
+// newLDAPPriorityQueueCore creates the shared LDAP priority queue state for one queue class.
+func newLDAPPriorityQueueCore[T any](
+	logger *slog.Logger,
+	metricLabel string,
+	warnMessage string,
+	requestContext func(*T) context.Context,
+) ldapPriorityQueueCore[T] {
+	return ldapPriorityQueueCore[T]{
+		logger:         normalizeLogger(logger),
+		requestContext: requestContext,
+		poolNames:      make(map[string]bool),
+		workerPools:    make(map[string]bool),
+		warnedNoWorker: make(map[string]bool),
+		pools:          make(map[string]*ldapRequestPool[T]),
+		maxLen:         make(map[string]int),
+		metricLabel:    metricLabel,
+		warnMessage:    warnMessage,
+	}
+}
 
-	if markWorkerPoolLocked(q.poolNames, q.workerPools, q.warnedNoWorker, poolName) {
-		return
+// ldapRequestContext returns the cancellation context attached to a lookup request.
+func ldapRequestContext(request *bktype.LDAPRequest) context.Context {
+	if request == nil {
+		return nil
 	}
 
-	q.pools[poolName] = newLDAPRequestPool(&q.mutex)
+	return request.HTTPClientContext
+}
+
+// ldapAuthRequestContext returns the cancellation context attached to an auth request.
+func ldapAuthRequestContext(request *bktype.LDAPAuthRequest) context.Context {
+	if request == nil {
+		return nil
+	}
+
+	return request.HTTPClientContext
+}
+
+// AddPoolName adds a pool name to the LDAPRequestQueue
+func (q *LDAPRequestQueue) AddPoolName(poolName string) {
+	q.core.addPoolName(poolName)
 }
 
 // GetPoolNames returns the pool names in the LDAPRequestQueue
 func (q *LDAPRequestQueue) GetPoolNames() []string {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
-
-	var names []string
-	for name := range q.poolNames {
-		names = append(names, name)
-	}
-
-	return names
+	return q.core.getPoolNames()
 }
 
 // AddPoolName adds a pool name to the LDAPAuthRequestQueue
 func (q *LDAPAuthRequestQueue) AddPoolName(poolName string) {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
-
-	if markWorkerPoolLocked(q.poolNames, q.workerPools, q.warnedNoWorker, poolName) {
-		return
-	}
-
-	q.pools[poolName] = newLDAPAuthRequestPool(&q.mutex)
+	q.core.addPoolName(poolName)
 }
 
 // GetPoolNames returns the pool names in the LDAPAuthRequestQueue
 func (q *LDAPAuthRequestQueue) GetPoolNames() []string {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
-
-	var names []string
-	for name := range q.poolNames {
-		names = append(names, name)
-	}
-
-	return names
+	return q.core.getPoolNames()
 }
 
 // AddBackendName adds a backend name to the LuaRequestQueue
@@ -367,54 +416,54 @@ func markWorkerPoolLocked(names map[string]bool, workerNames map[string]bool, wa
 	return existed
 }
 
-// newLDAPRequestPool creates the lookup queue state for one LDAP pool.
-func newLDAPRequestPool(locker sync.Locker) *ldapRequestPool {
-	pq := make(LDAPRequestPriorityQueue, 0)
+// addPoolName records an LDAP pool with an active worker and initializes its queue.
+func (q *ldapPriorityQueueCore[T]) addPoolName(poolName string) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+
+	if markWorkerPoolLocked(q.poolNames, q.workerPools, q.warnedNoWorker, poolName) {
+		return
+	}
+
+	q.pools[poolName] = newLDAPRequestPool[T](&q.mutex)
+}
+
+// getPoolNames returns the registered LDAP pool names.
+func (q *ldapPriorityQueueCore[T]) getPoolNames() []string {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+
+	var names []string
+	for name := range q.poolNames {
+		names = append(names, name)
+	}
+
+	return names
+}
+
+// newLDAPRequestPool creates queue state for one LDAP pool.
+func newLDAPRequestPool[T any](locker sync.Locker) *ldapRequestPool[T] {
+	pq := make(ldapPriorityQueueHeap[T], 0)
 
 	heap.Init(&pq)
 
-	return &ldapRequestPool{
+	return &ldapRequestPool[T]{
 		queue:    pq,
 		notEmpty: sync.NewCond(locker),
 		notify:   make(chan struct{}, 1),
 	}
 }
 
-// newLDAPAuthRequestPool creates the auth queue state for one LDAP pool.
-func newLDAPAuthRequestPool(locker sync.Locker) *ldapAuthRequestPool {
-	pq := make(LDAPAuthRequestPriorityQueue, 0)
-
-	heap.Init(&pq)
-
-	return &ldapAuthRequestPool{
-		queue:    pq,
-		notEmpty: sync.NewCond(locker),
-		notify:   make(chan struct{}, 1),
-	}
-}
-
-func (q *LDAPRequestQueue) warnMissingWorkerLocked(poolName string) {
+// warnMissingWorkerLocked emits one warning when a request is queued without an active LDAP worker.
+func (q *ldapPriorityQueueCore[T]) warnMissingWorkerLocked(poolName string) {
 	if q.workerPools[poolName] || q.warnedNoWorker[poolName] {
 		return
 	}
 
 	level.Warn(q.logger).Log(
-		definitions.LogKeyMsg, "LDAP lookup request queued without active worker",
+		definitions.LogKeyMsg, q.warnMessage,
 		definitions.LogKeyLDAPPoolName, poolName,
-		"queue", "lookup",
-	)
-	q.warnedNoWorker[poolName] = true
-}
-
-func (q *LDAPAuthRequestQueue) warnMissingWorkerLocked(poolName string) {
-	if q.workerPools[poolName] || q.warnedNoWorker[poolName] {
-		return
-	}
-
-	level.Warn(q.logger).Log(
-		definitions.LogKeyMsg, "LDAP auth request queued without active worker",
-		definitions.LogKeyLDAPPoolName, poolName,
-		"queue", "auth",
+		"queue", q.metricLabel,
 	)
 	q.warnedNoWorker[poolName] = true
 }
@@ -446,192 +495,68 @@ func (q *LuaRequestQueue) GetBackendNames() []string {
 
 // Push adds a request to the LDAPRequestQueue with the given priority, routed by PoolName
 func (q *LDAPRequestQueue) Push(request *bktype.LDAPRequest, priority int) {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
-
-	poolName := request.PoolName
-	q.warnMissingWorkerLocked(poolName)
-
-	p, ok := q.pools[poolName]
-	if !ok {
-		// initialize on the fly if not present
-		p = newLDAPRequestPool(&q.mutex)
-		q.pools[poolName] = p
-		q.poolNames[poolName] = true
-	}
-
-	// Drop early if the request context is already canceled
-	if request.HTTPClientContext != nil {
-		select {
-		case <-request.HTTPClientContext.Done():
-			stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "lookup").Inc()
-
-			return
-		default:
-		}
-	}
-
-	// Drop on overflow if a max length is configured (>0)
-	if maxLen, has := q.maxLen[poolName]; has && maxLen > 0 && p.queue.Len() >= maxLen {
-		stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "lookup").Inc()
-
-		return
-	}
-
-	item := &LDAPRequestItem{
-		Request:    request,
-		Priority:   priority,
-		InsertTime: time.Now(),
-	}
-
-	heap.Push(&p.queue, item)
-	// Update depth metric after enqueue
-	stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "lookup").Set(float64(p.queue.Len()))
-	p.notEmpty.Signal()
-
-	select {
-	case p.notify <- struct{}{}:
-	default:
-	}
+	q.core.push(request.PoolName, request, priority)
 }
 
 // Pop removes and returns the highest priority request from the LDAPRequestQueue for a specific pool
 // It blocks if the queue for that pool is empty
 func (q *LDAPRequestQueue) Pop(poolName string) *bktype.LDAPRequest {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
-
-	p, ok := q.pools[poolName]
-	if !ok {
-		p = newLDAPRequestPool(&q.mutex)
-		q.pools[poolName] = p
-		q.poolNames[poolName] = true
-	}
-
-	for {
-		for p.queue.Len() == 0 {
-			p.notEmpty.Wait()
-		}
-
-		item := heap.Pop(&p.queue).(*LDAPRequestItem)
-
-		// If the request context is already canceled, drop it and continue to next
-		if item.Request != nil && item.Request.HTTPClientContext != nil {
-			select {
-			case <-item.Request.HTTPClientContext.Done():
-				stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "lookup").Inc()
-				// Update depth after drop and continue loop to fetch next item
-				stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "lookup").Set(float64(p.queue.Len()))
-
-				continue
-			default:
-			}
-		}
-
-		// Record queue wait time and new depth after dequeue
-		stats.GetMetrics().GetLdapQueueWaitSeconds().WithLabelValues(poolName, "lookup").Observe(time.Since(item.InsertTime).Seconds())
-		stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "lookup").Set(float64(p.queue.Len()))
-
-		return item.Request
-	}
+	return q.core.pop(poolName)
 }
 
 // PopWithContext removes and returns the highest priority request from the LDAPRequestQueue for a specific pool.
 //
 // It blocks if the queue is empty, but will return nil if ctx is canceled.
 func (q *LDAPRequestQueue) PopWithContext(ctx context.Context, poolName string) *bktype.LDAPRequest {
-	if ctx == nil {
-		return q.Pop(poolName)
-	}
-
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
-
-	p, ok := q.pools[poolName]
-	if !ok {
-		p = newLDAPRequestPool(&q.mutex)
-		q.pools[poolName] = p
-		q.poolNames[poolName] = true
-	}
-
-	for {
-		for p.queue.Len() == 0 {
-			q.mutex.Unlock()
-
-			select {
-			case <-ctx.Done():
-				q.mutex.Lock()
-
-				return nil
-			case <-p.notify:
-			}
-
-			q.mutex.Lock()
-		}
-
-		item := heap.Pop(&p.queue).(*LDAPRequestItem)
-
-		// If the request context is already canceled, drop it and continue to next.
-		if item.Request != nil && item.Request.HTTPClientContext != nil {
-			select {
-			case <-item.Request.HTTPClientContext.Done():
-				stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "lookup").Inc()
-				stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "lookup").Set(float64(p.queue.Len()))
-
-				continue
-			default:
-			}
-		}
-
-		stats.GetMetrics().GetLdapQueueWaitSeconds().WithLabelValues(poolName, "lookup").Observe(time.Since(item.InsertTime).Seconds())
-		stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "lookup").Set(float64(p.queue.Len()))
-
-		return item.Request
-	}
+	return q.core.popWithContext(ctx, poolName)
 }
 
 // Push adds a request to the LDAPAuthRequestQueue with the given priority, routed by PoolName
 func (q *LDAPAuthRequestQueue) Push(request *bktype.LDAPAuthRequest, priority int) {
+	q.core.push(request.PoolName, request, priority)
+}
+
+// Pop removes and returns the highest priority request from the LDAPAuthRequestQueue for a specific pool
+// It blocks if the queue is empty
+func (q *LDAPAuthRequestQueue) Pop(poolName string) *bktype.LDAPAuthRequest {
+	return q.core.pop(poolName)
+}
+
+// PopWithContext removes and returns the highest priority request from the LDAPAuthRequestQueue for a specific pool.
+//
+// It blocks if the queue is empty, but will return nil if ctx is canceled.
+func (q *LDAPAuthRequestQueue) PopWithContext(ctx context.Context, poolName string) *bktype.LDAPAuthRequest {
+	return q.core.popWithContext(ctx, poolName)
+}
+
+// push enqueues one LDAP request in the addressed pool or drops it when canceled or full.
+func (q *ldapPriorityQueueCore[T]) push(poolName string, request *T, priority int) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	poolName := request.PoolName
 	q.warnMissingWorkerLocked(poolName)
 
-	p, ok := q.pools[poolName]
-	if !ok {
-		p = newLDAPAuthRequestPool(&q.mutex)
-		q.pools[poolName] = p
-		q.poolNames[poolName] = true
-	}
-
-	// Drop early if the request context is already canceled
-	if request.HTTPClientContext != nil {
-		select {
-		case <-request.HTTPClientContext.Done():
-			stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "auth").Inc()
-
-			return
-		default:
-		}
-	}
-
-	// Drop on overflow if a max length is configured (>0)
-	if maxLen, has := q.maxLen[poolName]; has && maxLen > 0 && p.queue.Len() >= maxLen {
-		stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "auth").Inc()
+	p := q.ensurePoolLocked(poolName)
+	if q.requestCanceled(request) {
+		q.dropRequest(poolName)
 
 		return
 	}
 
-	item := &LDAPAuthRequestItem{
+	if maxLen, has := q.maxLen[poolName]; has && maxLen > 0 && p.queue.Len() >= maxLen {
+		q.dropRequest(poolName)
+
+		return
+	}
+
+	item := &ldapPriorityQueueItem[T]{
 		Request:    request,
 		Priority:   priority,
 		InsertTime: time.Now(),
 	}
 
 	heap.Push(&p.queue, item)
-	// Update depth metric after enqueue
-	stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "auth").Set(float64(p.queue.Len()))
+	q.updateDepth(poolName, p)
 	p.notEmpty.Signal()
 
 	select {
@@ -640,64 +565,34 @@ func (q *LDAPAuthRequestQueue) Push(request *bktype.LDAPAuthRequest, priority in
 	}
 }
 
-// Pop removes and returns the highest priority request from the LDAPAuthRequestQueue for a specific pool
-// It blocks if the queue is empty
-func (q *LDAPAuthRequestQueue) Pop(poolName string) *bktype.LDAPAuthRequest {
+// pop removes the next available LDAP request from a pool and waits while the queue is empty.
+func (q *ldapPriorityQueueCore[T]) pop(poolName string) *T {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	p, ok := q.pools[poolName]
-	if !ok {
-		p = newLDAPAuthRequestPool(&q.mutex)
-		q.pools[poolName] = p
-		q.poolNames[poolName] = true
-	}
+	p := q.ensurePoolLocked(poolName)
 
 	for {
 		for p.queue.Len() == 0 {
 			p.notEmpty.Wait()
 		}
 
-		item := heap.Pop(&p.queue).(*LDAPAuthRequestItem)
-
-		// If the request context is already canceled, drop it and continue to next
-		if item.Request != nil && item.Request.HTTPClientContext != nil {
-			select {
-			case <-item.Request.HTTPClientContext.Done():
-				stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "auth").Inc()
-				// Update depth after drop and continue loop to fetch next item
-				stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "auth").Set(float64(p.queue.Len()))
-
-				continue
-			default:
-			}
+		if request, ok := q.popAvailableLocked(poolName, p); ok {
+			return request
 		}
-
-		// Record queue wait time and new depth after dequeue
-		stats.GetMetrics().GetLdapQueueWaitSeconds().WithLabelValues(poolName, "auth").Observe(time.Since(item.InsertTime).Seconds())
-		stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "auth").Set(float64(p.queue.Len()))
-
-		return item.Request
 	}
 }
 
-// PopWithContext removes and returns the highest priority request from the LDAPAuthRequestQueue for a specific pool.
-//
-// It blocks if the queue is empty, but will return nil if ctx is canceled.
-func (q *LDAPAuthRequestQueue) PopWithContext(ctx context.Context, poolName string) *bktype.LDAPAuthRequest {
+// popWithContext removes the next LDAP request from a pool or returns nil when ctx is canceled.
+func (q *ldapPriorityQueueCore[T]) popWithContext(ctx context.Context, poolName string) *T {
 	if ctx == nil {
-		return q.Pop(poolName)
+		return q.pop(poolName)
 	}
 
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	p, ok := q.pools[poolName]
-	if !ok {
-		p = newLDAPAuthRequestPool(&q.mutex)
-		q.pools[poolName] = p
-		q.poolNames[poolName] = true
-	}
+	p := q.ensurePoolLocked(poolName)
 
 	for {
 		for p.queue.Len() == 0 {
@@ -714,25 +609,65 @@ func (q *LDAPAuthRequestQueue) PopWithContext(ctx context.Context, poolName stri
 			q.mutex.Lock()
 		}
 
-		item := heap.Pop(&p.queue).(*LDAPAuthRequestItem)
-
-		// If the request context is already canceled, drop it and continue to next.
-		if item.Request != nil && item.Request.HTTPClientContext != nil {
-			select {
-			case <-item.Request.HTTPClientContext.Done():
-				stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "auth").Inc()
-				stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "auth").Set(float64(p.queue.Len()))
-
-				continue
-			default:
-			}
+		if request, ok := q.popAvailableLocked(poolName, p); ok {
+			return request
 		}
-
-		stats.GetMetrics().GetLdapQueueWaitSeconds().WithLabelValues(poolName, "auth").Observe(time.Since(item.InsertTime).Seconds())
-		stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "auth").Set(float64(p.queue.Len()))
-
-		return item.Request
 	}
+}
+
+// ensurePoolLocked returns the queue state for a pool while the core mutex is held.
+func (q *ldapPriorityQueueCore[T]) ensurePoolLocked(poolName string) *ldapRequestPool[T] {
+	p, ok := q.pools[poolName]
+	if ok {
+		return p
+	}
+
+	p = newLDAPRequestPool[T](&q.mutex)
+	q.pools[poolName] = p
+	q.poolNames[poolName] = true
+
+	return p
+}
+
+// popAvailableLocked pops one ready request while the core mutex is held.
+func (q *ldapPriorityQueueCore[T]) popAvailableLocked(poolName string, p *ldapRequestPool[T]) (*T, bool) {
+	item := heap.Pop(&p.queue).(*ldapPriorityQueueItem[T])
+	if q.requestCanceled(item.Request) {
+		q.dropRequest(poolName)
+		q.updateDepth(poolName, p)
+
+		return nil, false
+	}
+
+	stats.GetMetrics().GetLdapQueueWaitSeconds().WithLabelValues(poolName, q.metricLabel).Observe(time.Since(item.InsertTime).Seconds())
+	q.updateDepth(poolName, p)
+
+	return item.Request, true
+}
+
+// requestCanceled reports whether the request context is already canceled.
+func (q *ldapPriorityQueueCore[T]) requestCanceled(request *T) bool {
+	requestCtx := q.requestContext(request)
+	if requestCtx == nil {
+		return false
+	}
+
+	select {
+	case <-requestCtx.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+// dropRequest records one dropped LDAP queue request.
+func (q *ldapPriorityQueueCore[T]) dropRequest(poolName string) {
+	stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, q.metricLabel).Inc()
+}
+
+// updateDepth records the current LDAP queue depth for one pool.
+func (q *ldapPriorityQueueCore[T]) updateDepth(poolName string, p *ldapRequestPool[T]) {
+	stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, q.metricLabel).Set(float64(p.queue.Len()))
 }
 
 // Push adds a request to the LuaRequestQueue with the given priority, routed by BackendName
@@ -926,19 +861,17 @@ func InitQueues(logger *slog.Logger) {
 // SetMaxQueueLength sets the maximum queue length for a given LDAP pool in the lookup queue.
 // A value <= 0 disables the limit (unlimited).
 func (q *LDAPRequestQueue) SetMaxQueueLength(poolName string, n int) {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
-
-	if q.maxLen == nil {
-		q.maxLen = make(map[string]int)
-	}
-
-	q.maxLen[poolName] = n
+	q.core.setMaxQueueLength(poolName, n)
 }
 
 // SetMaxQueueLength sets the maximum queue length for a given LDAP pool in the auth queue.
 // A value <= 0 disables the limit (unlimited).
 func (q *LDAPAuthRequestQueue) SetMaxQueueLength(poolName string, n int) {
+	q.core.setMaxQueueLength(poolName, n)
+}
+
+// setMaxQueueLength stores the per-pool LDAP queue length limit.
+func (q *ldapPriorityQueueCore[T]) setMaxQueueLength(poolName string, n int) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 

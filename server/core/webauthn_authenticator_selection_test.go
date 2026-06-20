@@ -24,14 +24,25 @@ import (
 )
 
 func TestBuildAuthenticatorSelection(t *testing.T) {
-	tests := []struct {
-		name                   string
-		webAuthnCfg            config.WebAuthn
-		wantAttachment         protocol.AuthenticatorAttachment
-		wantResidentKey        protocol.ResidentKeyRequirement
-		wantUserVerification   protocol.UserVerificationRequirement
-		wantRequireResidentKey bool
-	}{
+	for _, tt := range authenticatorSelectionCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			assertAuthenticatorSelectionCase(t, tt)
+		})
+	}
+}
+
+type authenticatorSelectionCase struct {
+	name                   string
+	webAuthnCfg            config.WebAuthn
+	wantAttachment         protocol.AuthenticatorAttachment
+	wantResidentKey        protocol.ResidentKeyRequirement
+	wantUserVerification   protocol.UserVerificationRequirement
+	wantRequireResidentKey bool
+}
+
+// authenticatorSelectionCases returns WebAuthn selection mapping fixtures.
+func authenticatorSelectionCases() []authenticatorSelectionCase {
+	return []authenticatorSelectionCase{
 		{
 			name:                   "defaults (empty config)",
 			webAuthnCfg:            config.WebAuthn{},
@@ -76,68 +87,67 @@ func TestBuildAuthenticatorSelection(t *testing.T) {
 			wantRequireResidentKey: false,
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.FileSettings{
-				Server: &config.ServerSection{},
-				IDP: &config.IDPSection{
-					WebAuthn: tt.webAuthnCfg,
-				},
-			}
-			config.SetTestFile(cfg)
+// assertAuthenticatorSelectionCase verifies one WebAuthn selection mapping.
+func assertAuthenticatorSelectionCase(t *testing.T, tt authenticatorSelectionCase) {
+	t.Helper()
 
-			result := buildAuthenticatorSelection(config.GetFile())
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{},
+		IDP: &config.IDPSection{
+			WebAuthn: tt.webAuthnCfg,
+		},
+	}
+	config.SetTestFile(cfg)
 
-			assert.Equal(t, tt.wantAttachment, result.AuthenticatorAttachment)
-			assert.Equal(t, tt.wantResidentKey, result.ResidentKey)
-			assert.Equal(t, tt.wantUserVerification, result.UserVerification)
+	result := buildAuthenticatorSelection(config.GetFile())
 
-			if tt.wantRequireResidentKey {
-				assert.NotNil(t, result.RequireResidentKey)
-				assert.True(t, *result.RequireResidentKey)
-			} else {
-				assert.NotNil(t, result.RequireResidentKey)
-				assert.False(t, *result.RequireResidentKey)
-			}
-		})
+	assert.Equal(t, tt.wantAttachment, result.AuthenticatorAttachment)
+	assert.Equal(t, tt.wantResidentKey, result.ResidentKey)
+	assert.Equal(t, tt.wantUserVerification, result.UserVerification)
+
+	if tt.wantRequireResidentKey {
+		assert.NotNil(t, result.RequireResidentKey)
+		assert.True(t, *result.RequireResidentKey)
+	} else {
+		assert.NotNil(t, result.RequireResidentKey)
+		assert.False(t, *result.RequireResidentKey)
 	}
 }
 
 func TestMapResidentKey(t *testing.T) {
-	tests := []struct {
-		input string
-		want  protocol.ResidentKeyRequirement
-	}{
-		{"discouraged", protocol.ResidentKeyRequirementDiscouraged},
-		{"preferred", protocol.ResidentKeyRequirementPreferred},
-		{"required", protocol.ResidentKeyRequirementRequired},
-		{"", protocol.ResidentKeyRequirementDiscouraged},
-		{"invalid", protocol.ResidentKeyRequirementDiscouraged},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			assert.Equal(t, tt.want, mapResidentKey(tt.input))
-		})
-	}
+	assertWebAuthnRequirementMapping(t, mapResidentKey, []webAuthnRequirementCase[protocol.ResidentKeyRequirement]{
+		{input: "discouraged", want: protocol.ResidentKeyRequirementDiscouraged},
+		{input: "preferred", want: protocol.ResidentKeyRequirementPreferred},
+		{input: "required", want: protocol.ResidentKeyRequirementRequired},
+		{input: "", want: protocol.ResidentKeyRequirementDiscouraged},
+		{input: "invalid", want: protocol.ResidentKeyRequirementDiscouraged},
+	})
 }
 
 func TestMapUserVerification(t *testing.T) {
-	tests := []struct {
-		input string
-		want  protocol.UserVerificationRequirement
-	}{
-		{"discouraged", protocol.VerificationDiscouraged},
-		{"preferred", protocol.VerificationPreferred},
-		{"required", protocol.VerificationRequired},
-		{"", protocol.VerificationPreferred},
-		{"invalid", protocol.VerificationPreferred},
-	}
+	assertWebAuthnRequirementMapping(t, mapUserVerification, []webAuthnRequirementCase[protocol.UserVerificationRequirement]{
+		{input: "discouraged", want: protocol.VerificationDiscouraged},
+		{input: "preferred", want: protocol.VerificationPreferred},
+		{input: "required", want: protocol.VerificationRequired},
+		{input: "", want: protocol.VerificationPreferred},
+		{input: "invalid", want: protocol.VerificationPreferred},
+	})
+}
 
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			assert.Equal(t, tt.want, mapUserVerification(tt.input))
+type webAuthnRequirementCase[T comparable] struct {
+	input string
+	want  T
+}
+
+// assertWebAuthnRequirementMapping verifies string-to-WebAuthn-requirement mapping tables.
+func assertWebAuthnRequirementMapping[T comparable](t *testing.T, mapValue func(string) T, cases []webAuthnRequirementCase[T]) {
+	t.Helper()
+
+	for _, testCase := range cases {
+		t.Run(testCase.input, func(t *testing.T) {
+			assert.Equal(t, testCase.want, mapValue(testCase.input))
 		})
 	}
 }

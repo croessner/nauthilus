@@ -20,7 +20,9 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"net/http"
 
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
@@ -49,8 +51,6 @@ type DefaultLuaSubject struct{}
 type DefaultPostAction struct{}
 
 // Analyze implements the Lua subject source logic with identical behavior to the legacy inline method.
-//
-//nolint:funlen
 func (DefaultLuaSubject) Analyze(ctx *gin.Context, view *core.StateView, passDBResult *core.PassDBResult) definitions.AuthResult {
 	auth := view.Auth()
 
@@ -79,18 +79,44 @@ func (DefaultLuaSubject) Analyze(ctx *gin.Context, view *core.StateView, passDBR
 	defer lualib.PutCommonRequest(commonRequest)
 
 	auth.FillCommonRequest(commonRequest)
+	prepareLuaSubjectCommonRequest(commonRequest, passDBResult)
 
+	subjectRequest := newLuaSubjectRequest(ctx, auth, commonRequest, backendServers)
+
+	subjectResult, luaBackendResult, removeAttributes, err := subjectRequest.CallSubjectLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())
+	if err != nil {
+		if result, done := handleLuaSubjectError(auth, err); done {
+			return result
+		}
+	} else if result, done := applyLuaSubjectResult(auth, subjectRequest, luaBackendResult, removeAttributes, passDBResult, subjectResult); done {
+		return result
+	}
+
+	if passDBResult.Authenticated {
+		return definitions.AuthResultOK
+	}
+
+	return definitions.AuthResultFail
+}
+
+// prepareLuaSubjectCommonRequest applies passDB values that may change after FillCommonRequest.
+func prepareLuaSubjectCommonRequest(commonRequest *lualib.CommonRequest, passDBResult *core.PassDBResult) {
 	if commonRequest.AccountField != "" {
 		commonRequest.AccountField = definitions.MetaUserAccount
 	}
 
-	// UserFound and Authenticated are special because they might have been
-	// updated by the passDB result after FillCommonRequest was called.
 	commonRequest.UserFound = passDBResult.UserFound
 	commonRequest.Authenticated = passDBResult.Authenticated
+}
 
-	policyCtx := auth.PolicyDecisionContext(ctx)
-	subjectRequest := &subject.Request{
+// newLuaSubjectRequest builds the Lua subject request from AuthState.
+func newLuaSubjectRequest(
+	ctx *gin.Context,
+	auth *core.AuthState,
+	commonRequest *lualib.CommonRequest,
+	backendServers []*config.BackendServer,
+) *subject.Request {
+	return &subject.Request{
 		Session:              auth.Runtime.GUID,
 		Username:             auth.Request.Username,
 		Password:             auth.PasswordBytes(),
@@ -104,87 +130,127 @@ func (DefaultLuaSubject) Analyze(ctx *gin.Context, view *core.StateView, passDBR
 		Context:              auth.Runtime.Context,
 		CommonRequest:        commonRequest,
 		ScriptRecorder:       auth.PolicyScriptRecorder(ctx),
-		PolicyContext:        policyCtx,
+		PolicyContext:        auth.PolicyDecisionContext(ctx),
 	}
+}
 
-	subjectResult, luaBackendResult, removeAttributes, err := subjectRequest.CallSubjectLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())
-	if err != nil {
-		if !stderrors.Is(err, errors.ErrNoSubjectSourcesDefined) {
-			// Include Lua stacktrace when available
-			if ae, ok := stderrors.AsType[*lua.ApiError](err); ok && ae != nil {
-				level.Error(auth.Logger()).Log(
-					definitions.LogKeyGUID, auth.Runtime.GUID,
-					definitions.LogKeyMsg, "Error calling Lua subject source",
-					definitions.LogKeyError, ae.Error(),
-					"stacktrace", ae.StackTrace,
-				)
-			}
-
-			// Errors during subject analysis are not authorized.
-			auth.Runtime.Authorized = false
-
-			return definitions.AuthResultTempFail
-		}
-
-		// Explicitly authorized when no subject sources are defined.
-		auth.Runtime.Authorized = true
-	} else {
-		if subjectRequest.Logs != nil && len(*subjectRequest.Logs) > 0 {
-			// Pre-allocate the AdditionalLogs slice to avoid continuous reallocation
-			additionalLogsLen := len(auth.Runtime.AdditionalLogs)
-			newAdditionalLogs := make([]any, additionalLogsLen+len(*subjectRequest.Logs))
-			copy(newAdditionalLogs, auth.Runtime.AdditionalLogs)
-			auth.Runtime.AdditionalLogs = newAdditionalLogs[:additionalLogsLen]
-
-			for index := range *subjectRequest.Logs {
-				auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, (*subjectRequest.Logs)[index])
-			}
-		}
-
-		if statusMessage := subjectRequest.StatusMessage; *statusMessage != auth.Runtime.StatusMessage {
-			auth.Runtime.StatusMessage = *statusMessage
-		}
-
-		for _, attributeName := range removeAttributes {
-			auth.DeleteAttribute(attributeName)
-		}
-
-		if luaBackendResult != nil {
-			if (*luaBackendResult).Attributes != nil {
-				for key, value := range (*luaBackendResult).Attributes {
-					if keyName, assertOk := key.(string); assertOk {
-						auth.SetAttributeIfAbsent(keyName, value)
-					}
-				}
-			}
-
-			if len((*luaBackendResult).Groups) > 0 || len((*luaBackendResult).GroupDistinguishedNames) > 0 {
-				mergedGroups := append(auth.GetGroups(), (*luaBackendResult).Groups...)
-				mergedGroupDistinguishedNames := append(auth.GetGroupDistinguishedNames(), (*luaBackendResult).GroupDistinguishedNames...)
-				auth.SetResolvedGroups(mergedGroups, mergedGroupDistinguishedNames)
-				passDBResult.Groups = auth.GetGroups()
-				passDBResult.GroupDistinguishedNames = auth.GetGroupDistinguishedNames()
-			}
-		}
-
-		if subjectResult {
-			auth.Runtime.Authorized = false
-
-			return definitions.AuthResultFail
-		}
-
-		// Subject analysis accepted the request.
+// handleLuaSubjectError maps Lua subject errors to auth results.
+func handleLuaSubjectError(auth *core.AuthState, err error) (definitions.AuthResult, bool) {
+	if stderrors.Is(err, errors.ErrNoSubjectSourcesDefined) {
 		auth.Runtime.Authorized = true
 
-		auth.Runtime.UsedBackendIP = *subjectRequest.UsedBackendAddr
-		auth.Runtime.UsedBackendPort = *subjectRequest.UsedBackendPort
+		return definitions.AuthResultUnset, false
 	}
 
-	if passDBResult.Authenticated {
-		return definitions.AuthResultOK
+	logLuaSubjectError(auth, err)
+	auth.Runtime.Authorized = false
+
+	return definitions.AuthResultTempFail, true
+}
+
+// logLuaSubjectError logs Lua stack traces when available.
+func logLuaSubjectError(auth *core.AuthState, err error) {
+	if ae, ok := stderrors.AsType[*lua.ApiError](err); ok && ae != nil {
+		level.Error(auth.Logger()).Log(
+			definitions.LogKeyGUID, auth.Runtime.GUID,
+			definitions.LogKeyMsg, "Error calling Lua subject source",
+			definitions.LogKeyError, ae.Error(),
+			"stacktrace", ae.StackTrace,
+		)
+	}
+}
+
+// applyLuaSubjectResult applies successful Lua subject output to AuthState.
+func applyLuaSubjectResult(
+	auth *core.AuthState,
+	subjectRequest *subject.Request,
+	luaBackendResult *lualib.LuaBackendResult,
+	removeAttributes []string,
+	passDBResult *core.PassDBResult,
+	subjectResult bool,
+) (definitions.AuthResult, bool) {
+	appendLuaSubjectLogs(auth, subjectRequest)
+	updateLuaSubjectStatusMessage(auth, subjectRequest)
+	removeLuaSubjectAttributes(auth, removeAttributes)
+	applyLuaBackendResult(auth, luaBackendResult, passDBResult)
+
+	if subjectResult {
+		auth.Runtime.Authorized = false
+
+		return definitions.AuthResultFail, true
 	}
 
-	return definitions.AuthResultFail
+	auth.Runtime.Authorized = true
+	auth.Runtime.UsedBackendIP = *subjectRequest.UsedBackendAddr
+	auth.Runtime.UsedBackendPort = *subjectRequest.UsedBackendPort
+
+	return definitions.AuthResultUnset, false
+}
+
+// appendLuaSubjectLogs appends Lua subject logs while preserving allocation behavior.
+func appendLuaSubjectLogs(auth *core.AuthState, subjectRequest *subject.Request) {
+	if subjectRequest.Logs == nil || len(*subjectRequest.Logs) == 0 {
+		return
+	}
+
+	additionalLogsLen := len(auth.Runtime.AdditionalLogs)
+	newAdditionalLogs := make([]any, additionalLogsLen+len(*subjectRequest.Logs))
+	copy(newAdditionalLogs, auth.Runtime.AdditionalLogs)
+	auth.Runtime.AdditionalLogs = newAdditionalLogs[:additionalLogsLen]
+
+	for index := range *subjectRequest.Logs {
+		auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, (*subjectRequest.Logs)[index])
+	}
+}
+
+// updateLuaSubjectStatusMessage applies a changed Lua status message.
+func updateLuaSubjectStatusMessage(auth *core.AuthState, subjectRequest *subject.Request) {
+	if statusMessage := subjectRequest.StatusMessage; *statusMessage != auth.Runtime.StatusMessage {
+		auth.Runtime.StatusMessage = *statusMessage
+	}
+}
+
+// removeLuaSubjectAttributes deletes attributes requested by Lua.
+func removeLuaSubjectAttributes(auth *core.AuthState, removeAttributes []string) {
+	for _, attributeName := range removeAttributes {
+		auth.DeleteAttribute(attributeName)
+	}
+}
+
+// applyLuaBackendResult merges Lua backend attributes and groups.
+func applyLuaBackendResult(auth *core.AuthState, luaBackendResult *lualib.LuaBackendResult, passDBResult *core.PassDBResult) {
+	if luaBackendResult == nil {
+		return
+	}
+
+	applyLuaBackendAttributes(auth, luaBackendResult)
+	applyLuaBackendGroups(auth, luaBackendResult, passDBResult)
+}
+
+// applyLuaBackendAttributes merges Lua backend attributes into AuthState.
+func applyLuaBackendAttributes(auth *core.AuthState, luaBackendResult *lualib.LuaBackendResult) {
+	if luaBackendResult.Attributes == nil {
+		return
+	}
+
+	for key, value := range luaBackendResult.Attributes {
+		if keyName, assertOk := key.(string); assertOk {
+			auth.SetAttributeIfAbsent(keyName, value)
+		}
+	}
+}
+
+// applyLuaBackendGroups merges Lua backend group results into AuthState and passDBResult.
+func applyLuaBackendGroups(auth *core.AuthState, luaBackendResult *lualib.LuaBackendResult, passDBResult *core.PassDBResult) {
+	if len(luaBackendResult.Groups) == 0 && len(luaBackendResult.GroupDistinguishedNames) == 0 {
+		return
+	}
+
+	mergedGroups := append(auth.GetGroups(), luaBackendResult.Groups...)
+	mergedGroupDistinguishedNames := append(auth.GetGroupDistinguishedNames(), luaBackendResult.GroupDistinguishedNames...)
+	auth.SetResolvedGroups(mergedGroups, mergedGroupDistinguishedNames)
+	passDBResult.Groups = auth.GetGroups()
+	passDBResult.GroupDistinguishedNames = auth.GetGroupDistinguishedNames()
 }
 
 // Run implements the Lua post action dispatch with identical behavior to the legacy inline method.
@@ -192,11 +258,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	auth := input.View.Auth()
 	passDBResult := input.Result
 
-	if passDBResult == nil {
-		return
-	}
-
-	if !auth.Cfg().HaveLuaActions() {
+	if !canRunLuaPostAction(auth, passDBResult) {
 		return
 	}
 
@@ -205,6 +267,31 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		return
 	}
 
+	lspan := startLuaPostActionSpan(auth, passDBResult)
+	defer lspan.End()
+
+	if !luaPostActionReady(auth) {
+		return
+	}
+
+	cr := lualib.GetCommonRequest()
+	defer lualib.PutCommonRequest(cr)
+
+	auth.FillCommonRequest(cr)
+	prepareLuaPostActionCommonRequest(auth, input, passDBResult, cr)
+
+	args := newLuaPostActionArgs(auth, postActionRequest, cr)
+
+	go auth.RunLuaPostAction(args)
+}
+
+// canRunLuaPostAction checks whether a post-action request should be scheduled.
+func canRunLuaPostAction(auth *core.AuthState, passDBResult *core.PassDBResult) bool {
+	return passDBResult != nil && auth.Cfg().HaveLuaActions()
+}
+
+// startLuaPostActionSpan starts the Lua post-action span and annotates backend state.
+func startLuaPostActionSpan(auth *core.AuthState, passDBResult *core.PassDBResult) trace.Span {
 	tr := monittrace.New("nauthilus/auth")
 	_, lspan := tr.Start(auth.Ctx(), "auth.lua.post_action",
 		attribute.String("service", auth.Request.Service),
@@ -222,28 +309,31 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		lspan.SetAttributes(attribute.String("backend", passDBResult.Backend.String()))
 	}
 
-	defer lspan.End()
+	return lspan
+}
 
-	// Make sure we have all the required values and they're not nil
-	if auth.Request.Protocol == nil || auth.Request.HTTPClientRequest == nil || auth.Runtime.Context == nil {
-		return
-	}
+// luaPostActionReady verifies required request fields before scheduling Lua work.
+func luaPostActionReady(auth *core.AuthState) bool {
+	return auth.Request.Protocol != nil && auth.Request.HTTPClientRequest != nil && auth.Runtime.Context != nil
+}
 
-	// Get a CommonRequest from the pool
-	cr := lualib.GetCommonRequest()
-
-	defer lualib.PutCommonRequest(cr)
-
-	auth.FillCommonRequest(cr)
-
-	// UserFound and Authenticated are special because they might have been
-	// updated by the passDB result after FillCommonRequest was called.
+// prepareLuaPostActionCommonRequest applies post-action specific common request values.
+func prepareLuaPostActionCommonRequest(
+	auth *core.AuthState,
+	input core.PostActionInput,
+	passDBResult *core.PassDBResult,
+	cr *lualib.CommonRequest,
+) {
 	cr.UserFound = passDBResult.UserFound || auth.GetAccount() != ""
 	cr.Authenticated = passDBResult.Authenticated
 	cr.EnvironmentRejected = input.EnvironmentRejected
 	cr.EnvironmentStageExpected = input.EnvironmentStageExpected
 	cr.SubjectStageExpected = input.SubjectStageExpected
+	applyLuaPostActionStatus(auth, cr)
+}
 
+// applyLuaPostActionStatus fills status message and HTTP status for Lua post-actions.
+func applyLuaPostActionStatus(auth *core.AuthState, cr *lualib.CommonRequest) {
 	if auth.Runtime.StatusMessage == "" {
 		if cr.Authenticated {
 			auth.Runtime.StatusMessage = authStatusMessageOK
@@ -257,7 +347,23 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	} else {
 		cr.HTTPStatus = auth.Runtime.StatusCodeFail
 	}
+}
 
+// newLuaPostActionArgs copies the common request into detached post-action args.
+func newLuaPostActionArgs(auth *core.AuthState, postActionRequest *http.Request, cr *lualib.CommonRequest) core.PostActionArgs {
+	requestCopy := luaPostActionRequestCopy(cr)
+
+	return core.PostActionArgs{
+		Context:       auth.Runtime.Context,
+		HTTPRequest:   postActionRequest,
+		ParentSpan:    trace.SpanContextFromContext(auth.Ctx()),
+		StatusMessage: auth.Runtime.StatusMessage,
+		Request:       requestCopy,
+	}
+}
+
+// luaPostActionRequestCopy returns an isolated copy for detached execution.
+func luaPostActionRequestCopy(cr *lualib.CommonRequest) lualib.CommonRequest {
 	requestCopy := *cr
 	if len(cr.Password) > 0 {
 		requestCopy.Password = bytes.Clone(cr.Password)
@@ -265,13 +371,5 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		requestCopy.Password = nil
 	}
 
-	args := core.PostActionArgs{
-		Context:       auth.Runtime.Context,
-		HTTPRequest:   postActionRequest,
-		ParentSpan:    trace.SpanContextFromContext(auth.Ctx()),
-		StatusMessage: auth.Runtime.StatusMessage,
-		Request:       requestCopy,
-	}
-
-	go auth.RunLuaPostAction(args)
+	return requestCopy
 }

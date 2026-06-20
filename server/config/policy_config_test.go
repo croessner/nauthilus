@@ -61,56 +61,81 @@ func policyConfigDecodeFixture(t *testing.T) map[string]any {
 		"mode":             "observe",
 		"default_policy":   policy.BuiltinDefaultSet,
 		"registry_scripts": []any{registryScript},
-		"sets": map[string]any{
-			"networks": map[string]any{
-				"trusted": []any{"10.0.0.0/8"},
-			},
-			"time_windows": map[string]any{
-				"office": map[string]any{
-					"timezone":  "Europe/Berlin",
-					"days":      []any{"mon"},
-					"intervals": []any{map[string]any{"start": "08:00", "end": "18:00"}},
-				},
-			},
+		"sets":             policyConfigFixtureSets(),
+		"report":           policyConfigFixtureReport(),
+		"scheduler_guards": policyConfigFixtureSchedulerGuards(),
+		"checks":           policyConfigFixtureChecks(),
+		"policies":         policyConfigFixturePolicies(),
+	}
+}
+
+// policyConfigFixtureSets returns policy set fixtures.
+func policyConfigFixtureSets() map[string]any {
+	return map[string]any{
+		"networks": map[string]any{
+			"trusted": []any{"10.0.0.0/8"},
 		},
-		"report": map[string]any{
-			"enabled":            true,
-			"include_fsm":        true,
-			"include_checks":     true,
-			"include_attributes": false,
-		},
-		"scheduler_guards": map[string]any{
-			testPolicySchedulerGuardTrustedSource: map[string]any{
-				"on_missing_attribute": "run",
-				"if": map[string]any{
-					testPolicyConditionFieldAttribute: "request.client.ip.trusted",
-					"is":                              true,
-				},
+		"time_windows": map[string]any{
+			"office": map[string]any{
+				"timezone":  "Europe/Berlin",
+				"days":      []any{"mon"},
+				"intervals": []any{map[string]any{"start": "08:00", "end": "18:00"}},
 			},
 		},
-		"checks": []any{
-			map[string]any{
-				"name":       "brute_force",
-				"type":       "builtin.brute_force",
-				"stage":      "pre_auth",
-				"config_ref": "auth.controls.brute_force",
-				"skip_if":    []any{testPolicySchedulerGuardTrustedSource},
+	}
+}
+
+// policyConfigFixtureReport returns report configuration fixtures.
+func policyConfigFixtureReport() map[string]any {
+	return map[string]any{
+		"enabled":            true,
+		"include_fsm":        true,
+		"include_checks":     true,
+		"include_attributes": false,
+	}
+}
+
+// policyConfigFixtureSchedulerGuards returns scheduler guard fixtures.
+func policyConfigFixtureSchedulerGuards() map[string]any {
+	return map[string]any{
+		testPolicySchedulerGuardTrustedSource: map[string]any{
+			"on_missing_attribute": "run",
+			"if": map[string]any{
+				testPolicyConditionFieldAttribute: "request.client.ip.trusted",
+				"is":                              true,
 			},
 		},
-		"policies": []any{
-			map[string]any{
-				"name":           "deny_bruteforce",
-				"stage":          "pre_auth",
-				"require_checks": []any{"brute_force"},
-				"if": map[string]any{
-					testPolicyConditionFieldAttribute: "auth.brute_force.triggered",
-					"is":                              true,
-				},
-				"then": map[string]any{
-					"decision":         "deny",
-					"fsm_event_marker": "auth.fsm.event.pre_auth_deny",
-					"response_marker":  "auth.response.fail",
-				},
+	}
+}
+
+// policyConfigFixtureChecks returns check fixtures.
+func policyConfigFixtureChecks() []any {
+	return []any{
+		map[string]any{
+			"name":       "brute_force",
+			"type":       "builtin.brute_force",
+			"stage":      "pre_auth",
+			"config_ref": "auth.controls.brute_force",
+			"skip_if":    []any{testPolicySchedulerGuardTrustedSource},
+		},
+	}
+}
+
+// policyConfigFixturePolicies returns policy fixtures.
+func policyConfigFixturePolicies() []any {
+	return []any{
+		map[string]any{
+			"name":           "deny_bruteforce",
+			"stage":          "pre_auth",
+			"require_checks": []any{"brute_force"},
+			"if": map[string]any{
+				testPolicyConditionFieldAttribute: "auth.brute_force.triggered",
+				"is":                              true,
+			},
+			"then": map[string]any{
+				"decision":         "deny",
+				"fsm_event_marker": "auth.fsm.event.pre_auth_deny",
+				"response_marker":  "auth.response.fail",
 			},
 		},
 	}

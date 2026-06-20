@@ -109,44 +109,11 @@ func TestNauthilusIDP_Authenticate_Integration(t *testing.T) {
 	}
 	idp := NewNauthilusIDP(d)
 
-	t.Run("OIDC Authentication Flow Setup", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = httptest.NewRequest("POST", "/login", nil)
-		ctx.Request.RemoteAddr = "192.168.1.100:12345"
-		setupMockContext(ctx, "test-oidc-guid", definitions.ServIDP)
-
-		// Mock Redis lookup for user account
-		userKey := "test:user:{55}" // Shard for user1 with prefix test:
-		mock.ExpectHGet(userKey, "user1|oidc|client1").RedisNil()
-
-		// We expect authentication to fail because no backends are configured,
-		// but we want to ensure it reaches the HandlePassword stage.
-		user, err := idp.Authenticate(ctx, "user1", "pass1", "client1", "")
-
-		assert.Error(t, err)
-		assert.Nil(t, user)
-		// AuthResultFail is typical when no backends are found or configured
-		assert.Contains(t, err.Error(), "authentication failed with result")
-	})
-
-	t.Run("SAML Authentication Flow Setup", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = httptest.NewRequest("POST", "/login", nil)
-		ctx.Request.RemoteAddr = "192.168.1.101:54321"
-		setupMockContext(ctx, "test-saml-guid", definitions.ServIDP)
-
-		// Mock Redis lookup for user account
-		userKey := "test:user:{ef}" // Shard for user2 with prefix test:
-		mock.ExpectHGet(userKey, "user2|saml|").RedisNil()
-
-		user, err := idp.Authenticate(ctx, "user2", "pass2", "", "sp1")
-
-		assert.Error(t, err)
-		assert.Nil(t, user)
-		assert.Contains(t, err.Error(), "authentication failed with result")
-	})
+	for _, tc := range authIntegrationFlowCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			assertAuthIntegrationFlow(t, idp, mock, tc)
+		})
+	}
 
 	t.Run("GetUserByUsername Setup", func(t *testing.T) {
 		w := httptest.NewRecorder()
@@ -160,4 +127,61 @@ func TestNauthilusIDP_Authenticate_Integration(t *testing.T) {
 		assert.Nil(t, user)
 		assert.Contains(t, err.Error(), "failed to load user")
 	})
+}
+
+type authIntegrationFlowCase struct {
+	name              string
+	guid              string
+	remoteAddr        string
+	redisKey          string
+	redisField        string
+	username          string
+	password          string
+	clientID          string
+	serviceProviderID string
+}
+
+func authIntegrationFlowCases() []authIntegrationFlowCase {
+	return []authIntegrationFlowCase{
+		{
+			name:       "OIDC Authentication Flow Setup",
+			guid:       "test-oidc-guid",
+			remoteAddr: "192.168.1.100:12345",
+			redisKey:   "test:user:{55}",
+			redisField: "user1|oidc|client1",
+			username:   "user1",
+			password:   "pass1",
+			clientID:   "client1",
+		},
+		{
+			name:              "SAML Authentication Flow Setup",
+			guid:              "test-saml-guid",
+			remoteAddr:        "192.168.1.101:54321",
+			redisKey:          "test:user:{ef}",
+			redisField:        "user2|saml|",
+			username:          "user2",
+			password:          "pass2",
+			serviceProviderID: "sp1",
+		},
+	}
+}
+
+// assertAuthIntegrationFlow checks that an integration login reaches password handling.
+func assertAuthIntegrationFlow(t *testing.T, idp *NauthilusIDP, mock redismock.ClientMock, tc authIntegrationFlowCase) {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest("POST", "/login", nil)
+	ctx.Request.RemoteAddr = tc.remoteAddr
+	setupMockContext(ctx, tc.guid, definitions.ServIDP)
+
+	mock.ExpectHGet(tc.redisKey, tc.redisField).RedisNil()
+
+	// Authentication is expected to fail because this test intentionally omits backends.
+	user, err := idp.Authenticate(ctx, tc.username, tc.password, tc.clientID, tc.serviceProviderID)
+
+	assert.Error(t, err)
+	assert.Nil(t, user)
+	assert.Contains(t, err.Error(), "authentication failed with result")
 }

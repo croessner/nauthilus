@@ -332,52 +332,12 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 	scoped := tolScoper.WithCfg(t.deps.cfg).Scope(ipscoper.ScopeTolerations, ipAddress)
 	t.getHouseKeeper().setIPAddress(scoped)
 
-	tolerateTTL := t.deps.cfg.GetBruteForce().GetTolerateTTL()
-
-	for _, customTolerate := range t.customTolerates {
-		if !t.findIP(customTolerate.IPAddress, ipAddress) {
-			continue
-		}
-
-		tolerateTTL = customTolerate.TolerateTTL
-
-		break
-	}
-
+	tolerateTTL := t.tolerateTTLForIP(ipAddress)
 	if tolerateTTL == 0 {
 		return
 	}
 
-	redisKey := t.getRedisKey(ipAddress)
-	now := time.Now().Unix()
-
-	flag := toleratePositiveFlag
-	label := "positive"
-
-	if !authenticated {
-		flag = tolerateNegativeFlag
-		label = "negative"
-	}
-
-	// Use Lua script to add to sorted set, count elements, and set expirations atomically
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(sctx, t.deps.cfg)
-
-	result, err := rediscli.ExecuteScript(
-		dCtx,
-		t.effectiveRedis(),
-		"ZAddCountAndExpire",
-		rediscli.LuaScripts["ZAddCountAndExpire"],
-		[]string{redisKey + flag, t.getRedisKey(ipAddress)},
-		float64(now),
-		strings.ToLower(username),
-		label,
-		int(tolerateTTL.Seconds()),
-	)
-
-	cancel()
-
+	result, err := t.recordTolerationEvent(sctx, ipAddress, username, authenticated, tolerateTTL)
 	if err != nil {
 		t.logRedisError(t.deps.logger, ipAddress, err)
 
@@ -390,6 +350,59 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 		"ip", ipAddress,
 		"username", username,
 	)
+}
+
+// tolerateTTLForIP resolves the configured toleration TTL for an IP address.
+func (t *tolerateImpl) tolerateTTLForIP(ipAddress string) time.Duration {
+	tolerateTTL := t.deps.cfg.GetBruteForce().GetTolerateTTL()
+
+	for _, customTolerate := range t.customTolerates {
+		if !t.findIP(customTolerate.IPAddress, ipAddress) {
+			continue
+		}
+
+		return customTolerate.TolerateTTL
+	}
+
+	return tolerateTTL
+}
+
+// recordTolerationEvent writes one positive or negative toleration event via Lua.
+func (t *tolerateImpl) recordTolerationEvent(
+	ctx context.Context,
+	ipAddress string,
+	username string,
+	authenticated bool,
+	tolerateTTL time.Duration,
+) (any, error) {
+	flag, label := tolerationFlagAndLabel(authenticated)
+	redisKey := t.getRedisKey(ipAddress)
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, t.deps.cfg)
+	defer cancel()
+
+	return rediscli.ExecuteScript(
+		dCtx,
+		t.effectiveRedis(),
+		"ZAddCountAndExpire",
+		rediscli.LuaScripts["ZAddCountAndExpire"],
+		[]string{redisKey + flag, redisKey},
+		float64(time.Now().Unix()),
+		strings.ToLower(username),
+		label,
+		int(tolerateTTL.Seconds()),
+	)
+}
+
+// tolerationFlagAndLabel returns the Redis suffix and script label for an event.
+func tolerationFlagAndLabel(authenticated bool) (string, string) {
+	if authenticated {
+		return toleratePositiveFlag, "positive"
+	}
+
+	return tolerateNegativeFlag, "negative"
 }
 
 // IsTolerated checks if the specified IP address is tolerated based on positive and negative interaction thresholds.
@@ -610,70 +623,75 @@ func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
 
 	t.houseKeeperContext = ctx
 
-	var err error
-
 	ticker := time.NewTicker(time.Second * 60)
 
 	defer ticker.Stop()
 
 	for range ticker.C {
-		now := time.Now().Unix()
-		removed := int64(0)
-
 		for _, ipAddress := range t.getHouseKeeper().getIPsToClean() {
-			redisKey := t.getRedisKey(ipAddress)
-			tolerateTTL := t.deps.cfg.GetBruteForce().GetTolerateTTL()
-
-			for _, customTolerate := range t.customTolerates {
-				if !t.findIP(customTolerate.IPAddress, ipAddress) {
-					continue
-				}
-
-				tolerateTTL = customTolerate.TolerateTTL
-
-				break
-			}
-
-			for _, flag := range []string{":P", ":N"} {
-				// Check if key exists with a read-deadline context
-				stats.GetMetrics().GetRedisReadCounter().Inc()
-
-				dCtxRead, cancelRead := util.GetCtxWithDeadlineRedisRead(t.houseKeeperContext, t.deps.cfg)
-				keysExists := t.deps.redis.GetReadHandle().Exists(dCtxRead, redisKey+flag).Val()
-
-				cancelRead()
-
-				if keysExists == 0 {
-					t.getHouseKeeper().removeIPAddress(ipAddress)
-
-					continue
-				}
-
-				// Remove old entries with a write-deadline context
-				stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-				dCtxWrite, cancelWrite := util.GetCtxWithDeadlineRedisWrite(t.houseKeeperContext, t.deps.cfg)
-				removed, err = t.deps.redis.GetWriteHandle().ZRemRangeByScore(
-					dCtxWrite,
-					redisKey+flag,
-					"-inf",
-					strconv.FormatInt(now-int64(tolerateTTL.Seconds()), 10),
-				).Result()
-
-				cancelWrite()
-
-				if err != nil {
-					t.logRedisError(t.deps.logger, ipAddress, err)
-
-					break
-				}
-
-				if removed > 0 {
-					t.logDbgRemovedRecords(t.houseKeeperContext, removed)
-				}
-			}
+			t.cleanTolerationIPAddress(ipAddress, time.Now().Unix())
 		}
 	}
+}
+
+// cleanTolerationIPAddress removes expired positive and negative records for one IP.
+func (t *tolerateImpl) cleanTolerationIPAddress(ipAddress string, now int64) {
+	redisKey := t.getRedisKey(ipAddress)
+	tolerateTTL := t.tolerateTTLForIP(ipAddress)
+
+	for _, flag := range []string{toleratePositiveFlag, tolerateNegativeFlag} {
+		removed, ok := t.cleanTolerationFlag(ipAddress, redisKey, flag, now, tolerateTTL)
+		if !ok {
+			break
+		}
+
+		if removed > 0 {
+			t.logDbgRemovedRecords(t.houseKeeperContext, removed)
+		}
+	}
+}
+
+// cleanTolerationFlag removes expired sorted-set entries for one event type.
+func (t *tolerateImpl) cleanTolerationFlag(ipAddress, redisKey, flag string, now int64, tolerateTTL time.Duration) (int64, bool) {
+	if !t.tolerationFlagExists(redisKey, flag) {
+		t.getHouseKeeper().removeIPAddress(ipAddress)
+
+		return 0, true
+	}
+
+	removed, err := t.removeExpiredTolerationRecords(redisKey, flag, now, tolerateTTL)
+	if err != nil {
+		t.logRedisError(t.deps.logger, ipAddress, err)
+
+		return 0, false
+	}
+
+	return removed, true
+}
+
+// tolerationFlagExists reports whether a positive or negative toleration key exists.
+func (t *tolerateImpl) tolerationFlagExists(redisKey, flag string) bool {
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(t.houseKeeperContext, t.deps.cfg)
+	defer cancel()
+
+	return t.deps.redis.GetReadHandle().Exists(dCtx, redisKey+flag).Val() != 0
+}
+
+// removeExpiredTolerationRecords deletes records older than the configured TTL.
+func (t *tolerateImpl) removeExpiredTolerationRecords(redisKey, flag string, now int64, tolerateTTL time.Duration) (int64, error) {
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(t.houseKeeperContext, t.deps.cfg)
+	defer cancel()
+
+	return t.deps.redis.GetWriteHandle().ZRemRangeByScore(
+		dCtx,
+		redisKey+flag,
+		"-inf",
+		strconv.FormatInt(now-int64(tolerateTTL.Seconds()), 10),
+	).Result()
 }
 
 // GetTolerateMap retrieves a map of toleration data from Redis for the specified IP address.

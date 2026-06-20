@@ -15,11 +15,24 @@ import (
 func TestSetupHeaderBasedAuth_NginxPasswordDecoding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	tests := []struct {
-		name             string
-		passwordHeader   string
-		expectedPassword string
-	}{
+	for _, tt := range nginxPasswordDecodingCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			auth := newNginxPasswordAuthState(t, tt.passwordHeader)
+
+			assert.Equal(t, tt.expectedPassword, auth.PasswordString())
+		})
+	}
+}
+
+type nginxPasswordDecodingCase struct {
+	name             string
+	passwordHeader   string
+	expectedPassword string
+}
+
+// nginxPasswordDecodingCases returns URL-encoded password header cases.
+func nginxPasswordDecodingCases() []nginxPasswordDecodingCase {
+	return []nginxPasswordDecodingCase{
 		{
 			name:             "Plain password",
 			passwordHeader:   "password123",
@@ -51,34 +64,29 @@ func TestSetupHeaderBasedAuth_NginxPasswordDecoding(t *testing.T) {
 			expectedPassword: "pass+word&",
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.FileSettings{
-				Server: &config.ServerSection{
-					DefaultHTTPRequestHeader: config.DefaultHTTPRequestHeader{
-						Password: "Auth-Pass",
-					},
-				},
-			}
+// newNginxPasswordAuthState builds an AuthState with the supplied password header.
+func newNginxPasswordAuthState(t *testing.T, passwordHeader string) *AuthState {
+	t.Helper()
 
-			w := httptest.NewRecorder()
-			ctx, _ := gin.CreateTestContext(w)
-			ctx.Request, _ = http.NewRequest("GET", "/", nil)
-			ctx.Request.Header.Set("Auth-Pass", tt.passwordHeader)
-			ctx.Set(definitions.CtxServiceKey, definitions.ServNginx)
-			ctx.Set(definitions.CtxGUIDKey, "test-guid")
-			ctx.Set(definitions.CtxDataExchangeKey, &lualib.Context{})
-
-			deps := AuthDeps{
-				Cfg: cfg,
-			}
-			SetDefaultConfigFile(cfg)
-
-			auth := NewAuthStateFromContextWithDeps(ctx, deps)
-			setupHeaderBasedAuth(ctx, auth)
-
-			assert.Equal(t, tt.expectedPassword, auth.(*AuthState).PasswordString())
-		})
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			DefaultHTTPRequestHeader: config.DefaultHTTPRequestHeader{
+				Password: "Auth-Pass",
+			},
+		},
 	}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request, _ = http.NewRequest("GET", "/", nil)
+	ctx.Request.Header.Set("Auth-Pass", passwordHeader)
+	ctx.Set(definitions.CtxServiceKey, definitions.ServNginx)
+	ctx.Set(definitions.CtxGUIDKey, "test-guid")
+	ctx.Set(definitions.CtxDataExchangeKey, &lualib.Context{})
+
+	SetDefaultConfigFile(cfg)
+	auth := NewAuthStateFromContextWithDeps(ctx, AuthDeps{Cfg: cfg})
+	setupHeaderBasedAuth(ctx, auth)
+
+	return auth.(*AuthState)
 }

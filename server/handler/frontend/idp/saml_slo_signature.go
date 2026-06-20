@@ -43,136 +43,180 @@ const (
 	xmlDSigNamespace            = "http://www.w3.org/2000/09/xmldsig#"
 )
 
+type redirectSLOSignatureParts struct {
+	SignedContent string
+	SigAlgValue   string
+	Signature     []byte
+	HasSignature  bool
+}
+
+type sloInboundSignatureValidation[T any] struct {
+	decode         func(slodomain.Binding, string) ([]byte, T, error)
+	issuer         func(T) string
+	shouldValidate func(slodomain.Binding, string, []byte, bool) (bool, error)
+	validate       func(slodomain.Binding, string, []byte, []*x509.Certificate) error
+	required       func(string) bool
+	messageType    sloMessageType
+	label          string
+}
+
 func (h *SAMLHandler) validateInboundLogoutRequestSignature(req *http.Request, message *sloInboundMessage) (*saml.LogoutRequest, error) {
-	if req == nil {
-		return nil, fmt.Errorf("logout request is missing HTTP context")
-	}
-
-	if req.URL == nil {
-		return nil, fmt.Errorf("logout request URL is missing")
-	}
-
-	if message == nil {
-		return nil, fmt.Errorf("logout request payload is missing")
-	}
-
-	if message.MessageType != sloMessageTypeRequest {
-		return nil, fmt.Errorf("unsupported message type %q", message.MessageType)
-	}
-
-	requestXML, logoutRequest, err := decodeLogoutRequestPayload(message.Binding, message.Payload)
-	if err != nil {
-		return nil, err
-	}
-
-	issuer := ""
-	if logoutRequest.Issuer != nil {
-		issuer = strings.TrimSpace(logoutRequest.Issuer.Value)
-	}
-
-	if issuer == "" {
-		return nil, fmt.Errorf("logout request issuer is missing")
-	}
-
-	signatureRequired := true
-	if sp, ok := h.findConfiguredSAMLServiceProvider(issuer); ok {
-		signatureRequired = sp.AreLogoutRequestsSigned()
-	}
-
-	shouldValidate, err := shouldValidateInboundLogoutRequestSignature(message.Binding, req.URL.RawQuery, requestXML, signatureRequired)
-	if err != nil {
-		return nil, err
-	}
-
-	if !shouldValidate {
-		return logoutRequest, nil
-	}
-
-	certs, err := h.resolveLogoutRequestSigningCerts(issuer)
-	if err != nil {
-		return nil, err
-	}
-
-	switch message.Binding {
-	case slodomain.SLOBindingRedirect:
-		if err := validateRedirectLogoutRequestSignature(req.URL.RawQuery, certs); err != nil {
-			return nil, err
-		}
-	case slodomain.SLOBindingPost:
-		if err := validateXMLLogoutRequestSignature(requestXML, certs); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, fmt.Errorf("unsupported SLO binding %q", message.Binding)
-	}
-
-	return logoutRequest, nil
+	return validateInboundSLOSignature(h, req, message, sloInboundSignatureValidation[*saml.LogoutRequest]{
+		decode:         decodeLogoutRequestPayload,
+		issuer:         logoutRequestIssuerValue,
+		shouldValidate: shouldValidateInboundLogoutRequestSignature,
+		validate:       validateLogoutRequestSignatureForBinding,
+		required:       h.logoutRequestSignatureRequired,
+		messageType:    sloMessageTypeRequest,
+		label:          "logout request",
+	})
 }
 
 func (h *SAMLHandler) validateInboundLogoutResponseSignature(req *http.Request, message *sloInboundMessage) (*saml.LogoutResponse, error) {
-	if req == nil {
-		return nil, fmt.Errorf("logout response is missing HTTP context")
+	return validateInboundSLOSignature(h, req, message, sloInboundSignatureValidation[*saml.LogoutResponse]{
+		decode:         decodeLogoutResponsePayload,
+		issuer:         logoutResponseIssuerValue,
+		shouldValidate: shouldValidateInboundLogoutResponseSignature,
+		validate:       validateLogoutResponseSignatureForBinding,
+		required:       h.logoutResponseSignatureRequired,
+		messageType:    sloMessageTypeResponse,
+		label:          "logout response",
+	})
+}
+
+// validateInboundSLOSignature executes the shared inbound SLO signature validation flow.
+func validateInboundSLOSignature[T any](
+	handler *SAMLHandler,
+	req *http.Request,
+	message *sloInboundMessage,
+	validation sloInboundSignatureValidation[T],
+) (T, error) {
+	var zero T
+
+	if err := validateSLOSignatureHTTPMessage(req, message, validation.messageType, validation.label); err != nil {
+		return zero, err
 	}
 
-	if req.URL == nil {
-		return nil, fmt.Errorf("logout response URL is missing")
-	}
-
-	if message == nil {
-		return nil, fmt.Errorf("logout response payload is missing")
-	}
-
-	if message.MessageType != sloMessageTypeResponse {
-		return nil, fmt.Errorf("unsupported message type %q", message.MessageType)
-	}
-
-	responseXML, logoutResponse, err := decodeLogoutResponsePayload(message.Binding, message.Payload)
+	payloadXML, payload, err := validation.decode(message.Binding, message.Payload)
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
 
-	issuer := ""
-	if logoutResponse.Issuer != nil {
-		issuer = strings.TrimSpace(logoutResponse.Issuer.Value)
-	}
-
+	issuer := validation.issuer(payload)
 	if issuer == "" {
-		return nil, fmt.Errorf("logout response issuer is missing")
+		return zero, fmt.Errorf("%s issuer is missing", validation.label)
 	}
 
-	signatureRequired := true
-	if sp, ok := h.findConfiguredSAMLServiceProvider(issuer); ok {
-		signatureRequired = sp.AreLogoutResponsesSigned()
-	}
-
-	shouldValidate, err := shouldValidateInboundLogoutResponseSignature(message.Binding, req.URL.RawQuery, responseXML, signatureRequired)
+	shouldValidate, err := validation.shouldValidate(message.Binding, req.URL.RawQuery, payloadXML, validation.required(issuer))
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
 
 	if !shouldValidate {
-		return logoutResponse, nil
+		return payload, nil
 	}
 
-	certs, err := h.resolveLogoutRequestSigningCerts(issuer)
+	certs, err := handler.resolveLogoutRequestSigningCerts(issuer)
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
 
-	switch message.Binding {
+	if err = validation.validate(message.Binding, req.URL.RawQuery, payloadXML, certs); err != nil {
+		return zero, err
+	}
+
+	return payload, nil
+}
+
+// logoutRequestIssuerValue returns the trimmed LogoutRequest issuer.
+func logoutRequestIssuerValue(request *saml.LogoutRequest) string {
+	if request.Issuer == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(request.Issuer.Value)
+}
+
+// logoutResponseIssuerValue returns the trimmed LogoutResponse issuer.
+func logoutResponseIssuerValue(response *saml.LogoutResponse) string {
+	if response.Issuer == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(response.Issuer.Value)
+}
+
+// validateSLOSignatureHTTPMessage checks the shared HTTP and message preconditions.
+func validateSLOSignatureHTTPMessage(req *http.Request, message *sloInboundMessage, expectedType sloMessageType, label string) error {
+	if req == nil {
+		return fmt.Errorf("%s is missing HTTP context", label)
+	}
+
+	if req.URL == nil {
+		return fmt.Errorf("%s URL is missing", label)
+	}
+
+	if message == nil {
+		return fmt.Errorf("%s payload is missing", label)
+	}
+
+	if message.MessageType != expectedType {
+		return fmt.Errorf("unsupported message type %q", message.MessageType)
+	}
+
+	return nil
+}
+
+// logoutRequestSignatureRequired returns the configured LogoutRequest signature policy.
+func (h *SAMLHandler) logoutRequestSignatureRequired(issuer string) bool {
+	if sp, ok := h.findConfiguredSAMLServiceProvider(issuer); ok {
+		return sp.AreLogoutRequestsSigned()
+	}
+
+	return true
+}
+
+// logoutResponseSignatureRequired returns the configured LogoutResponse signature policy.
+func (h *SAMLHandler) logoutResponseSignatureRequired(issuer string) bool {
+	if sp, ok := h.findConfiguredSAMLServiceProvider(issuer); ok {
+		return sp.AreLogoutResponsesSigned()
+	}
+
+	return true
+}
+
+// validateLogoutRequestSignatureForBinding validates a LogoutRequest signature for its binding.
+func validateLogoutRequestSignatureForBinding(
+	binding slodomain.Binding,
+	rawQuery string,
+	requestXML []byte,
+	certs []*x509.Certificate,
+) error {
+	switch binding {
 	case slodomain.SLOBindingRedirect:
-		if err = validateRedirectLogoutResponseSignature(req.URL.RawQuery, responseXML, certs); err != nil {
-			return nil, err
-		}
+		return validateRedirectLogoutRequestSignature(rawQuery, certs)
 	case slodomain.SLOBindingPost:
-		if err = validateXMLLogoutResponseSignature(responseXML, certs); err != nil {
-			return nil, err
-		}
+		return validateXMLLogoutRequestSignature(requestXML, certs)
 	default:
-		return nil, fmt.Errorf("unsupported SLO binding %q", message.Binding)
+		return fmt.Errorf("unsupported SLO binding %q", binding)
 	}
+}
 
-	return logoutResponse, nil
+// validateLogoutResponseSignatureForBinding validates a LogoutResponse signature for its binding.
+func validateLogoutResponseSignatureForBinding(
+	binding slodomain.Binding,
+	rawQuery string,
+	responseXML []byte,
+	certs []*x509.Certificate,
+) error {
+	switch binding {
+	case slodomain.SLOBindingRedirect:
+		return validateRedirectLogoutResponseSignature(rawQuery, responseXML, certs)
+	case slodomain.SLOBindingPost:
+		return validateXMLLogoutResponseSignature(responseXML, certs)
+	default:
+		return fmt.Errorf("unsupported SLO binding %q", binding)
+	}
 }
 
 func shouldValidateInboundLogoutRequestSignature(binding slodomain.Binding, rawQuery string, requestXML []byte, required bool) (bool, error) {
@@ -222,42 +266,39 @@ func shouldValidateInboundLogoutResponseSignature(binding slodomain.Binding, raw
 	}
 }
 
+// decodeLogoutRequestPayload decodes and validates a SAML LogoutRequest payload.
 func decodeLogoutRequestPayload(binding slodomain.Binding, payload string) ([]byte, *saml.LogoutRequest, error) {
-	requestXML, err := decodeLogoutRequestXML(binding, payload)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if err := xrv.Validate(bytes.NewReader(requestXML)); err != nil {
-		return nil, nil, fmt.Errorf("invalid LogoutRequest XML: %w", err)
-	}
-
-	var logoutRequest saml.LogoutRequest
-
-	if err := xml.Unmarshal(requestXML, &logoutRequest); err != nil {
-		return nil, nil, fmt.Errorf("cannot parse LogoutRequest XML: %w", err)
-	}
-
-	return requestXML, &logoutRequest, nil
+	return decodeLogoutPayload[saml.LogoutRequest](binding, payload, "LogoutRequest", decodeLogoutRequestXML)
 }
 
+// decodeLogoutResponsePayload decodes and validates a SAML LogoutResponse payload.
 func decodeLogoutResponsePayload(binding slodomain.Binding, payload string) ([]byte, *saml.LogoutResponse, error) {
-	responseXML, err := decodeLogoutResponseXML(binding, payload)
+	return decodeLogoutPayload[saml.LogoutResponse](binding, payload, "LogoutResponse", decodeLogoutResponseXML)
+}
+
+// decodeLogoutPayload validates XML round-tripping before unmarshalling a typed SLO payload.
+func decodeLogoutPayload[T any](
+	binding slodomain.Binding,
+	payload string,
+	messageName string,
+	decodeXML func(slodomain.Binding, string) ([]byte, error),
+) ([]byte, *T, error) {
+	messageXML, err := decodeXML(binding, payload)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if err = xrv.Validate(bytes.NewReader(responseXML)); err != nil {
-		return nil, nil, fmt.Errorf("invalid LogoutResponse XML: %w", err)
+	if err = xrv.Validate(bytes.NewReader(messageXML)); err != nil {
+		return nil, nil, fmt.Errorf("invalid %s XML: %w", messageName, err)
 	}
 
-	var logoutResponse saml.LogoutResponse
+	var message T
 
-	if err = xml.Unmarshal(responseXML, &logoutResponse); err != nil {
-		return nil, nil, fmt.Errorf("cannot parse LogoutResponse XML: %w", err)
+	if err = xml.Unmarshal(messageXML, &message); err != nil {
+		return nil, nil, fmt.Errorf("cannot parse %s XML: %w", messageName, err)
 	}
 
-	return responseXML, &logoutResponse, nil
+	return messageXML, &message, nil
 }
 
 func decodeLogoutRequestXML(binding slodomain.Binding, payload string) ([]byte, error) {
@@ -302,22 +343,42 @@ func (h *SAMLHandler) resolveLogoutRequestSigningCerts(issuer string) ([]*x509.C
 		return nil, fmt.Errorf("SAML handler configuration is not available")
 	}
 
-	if h.idp != nil {
-		serviceProviderMetadata, err := h.GetServiceProvider(nil, issuer)
-		if err == nil {
-			certs, err := parseMetadataSigningCertificates(serviceProviderMetadata)
-			if err != nil {
-				return nil, fmt.Errorf("invalid SP signing certificate for %q: %w", issuer, err)
-			}
-
-			if len(certs) > 0 {
-				return certs, nil
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("failed to load SP metadata for %q: %w", issuer, err)
-		}
+	if certs, ok, err := h.resolveMetadataLogoutRequestSigningCerts(issuer); ok || err != nil {
+		return certs, err
 	}
 
+	if certs, ok, err := h.resolveConfiguredLogoutRequestSigningCerts(issuer); ok || err != nil {
+		return certs, err
+	}
+
+	return nil, fmt.Errorf("unknown SAML service provider issuer %q", issuer)
+}
+
+// resolveMetadataLogoutRequestSigningCerts loads signing certificates through SP metadata.
+func (h *SAMLHandler) resolveMetadataLogoutRequestSigningCerts(issuer string) ([]*x509.Certificate, bool, error) {
+	if h.idp == nil {
+		return nil, false, nil
+	}
+
+	serviceProviderMetadata, err := h.GetServiceProvider(nil, issuer)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+
+		return nil, false, fmt.Errorf("failed to load SP metadata for %q: %w", issuer, err)
+	}
+
+	certs, err := parseMetadataSigningCertificates(serviceProviderMetadata)
+	if err != nil {
+		return nil, false, fmt.Errorf("invalid SP signing certificate for %q: %w", issuer, err)
+	}
+
+	return certs, len(certs) > 0, nil
+}
+
+// resolveConfiguredLogoutRequestSigningCerts loads signing certificates from configured SP entries.
+func (h *SAMLHandler) resolveConfiguredLogoutRequestSigningCerts(issuer string) ([]*x509.Certificate, bool, error) {
 	samlCfg := h.deps.Cfg.GetIDP().SAML2
 
 	for i := range samlCfg.ServiceProviders {
@@ -328,18 +389,18 @@ func (h *SAMLHandler) resolveLogoutRequestSigningCerts(issuer string) ([]*x509.C
 
 		certStr, err := sp.GetCert()
 		if err != nil {
-			return nil, fmt.Errorf("failed to read SP certificate for %q: %w", issuer, err)
+			return nil, false, fmt.Errorf("failed to read SP certificate for %q: %w", issuer, err)
 		}
 
 		certs, err := parsePEMCertificates(certStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid SP signing certificate for %q: %w", issuer, err)
+			return nil, false, fmt.Errorf("invalid SP signing certificate for %q: %w", issuer, err)
 		}
 
-		return certs, nil
+		return certs, true, nil
 	}
 
-	return nil, fmt.Errorf("unknown SAML service provider issuer %q", issuer)
+	return nil, false, nil
 }
 
 func parseMetadataSigningCertificates(entityDescriptor *saml.EntityDescriptor) ([]*x509.Certificate, error) {
@@ -419,116 +480,21 @@ func parsePEMCertificates(certPEM string) ([]*x509.Certificate, error) {
 }
 
 func validateRedirectLogoutRequestSignature(rawQuery string, certs []*x509.Certificate) error {
-	rawSAMLRequest, hasSAMLRequest, err := rawQueryParameterStrictSLO(rawQuery, "SAMLRequest")
+	parts, err := parseRedirectSLOSignatureParts(rawQuery, "SAMLRequest", true)
 	if err != nil {
 		return err
 	}
 
-	if !hasSAMLRequest || rawSAMLRequest == "" {
-		return fmt.Errorf("redirect binding signature is malformed: missing SAMLRequest")
-	}
-
-	rawRelayState, hasRelayState, err := rawQueryParameterStrictSLO(rawQuery, "RelayState")
-	if err != nil {
-		return err
-	}
-
-	rawSignature, hasSignature, err := rawQueryParameterStrictSLO(rawQuery, "Signature")
-	if err != nil {
-		return err
-	}
-
-	rawSigAlg, hasSigAlg, err := rawQueryParameterStrictSLO(rawQuery, "SigAlg")
-	if err != nil {
-		return err
-	}
-
-	if hasSignature != hasSigAlg {
-		return fmt.Errorf("redirect binding signature is malformed: require both Signature and SigAlg")
-	}
-
-	if !hasSignature {
-		return fmt.Errorf("redirect binding signature is required")
-	}
-
-	signedContent := "SAMLRequest=" + rawSAMLRequest
-	if hasRelayState {
-		signedContent += "&RelayState=" + rawRelayState
-	}
-
-	signedContent += "&SigAlg=" + rawSigAlg
-
-	sigAlgValue, err := url.QueryUnescape(rawSigAlg)
-	if err != nil {
-		return fmt.Errorf("cannot decode SigAlg: %w", err)
-	}
-
-	sigB64, err := url.QueryUnescape(rawSignature)
-	if err != nil {
-		return fmt.Errorf("cannot decode Signature: %w", err)
-	}
-
-	signature, err := base64.StdEncoding.DecodeString(sigB64)
-	if err != nil {
-		return fmt.Errorf("cannot decode Signature base64: %w", err)
-	}
-
-	algorithm, ok := signatureAlgorithmForRedirectSLO(sigAlgValue)
-	if !ok {
-		return fmt.Errorf("unsupported redirect signature algorithm %q", sigAlgValue)
-	}
-
-	var verifyErr error
-
-	for _, cert := range certs {
-		if cert == nil {
-			continue
-		}
-
-		if err := cert.CheckSignature(algorithm, []byte(signedContent), signature); err == nil {
-			return nil
-		}
-
-		verifyErr = err
-	}
-
-	if verifyErr == nil {
-		verifyErr = fmt.Errorf("no usable signing certificate")
-	}
-
-	return fmt.Errorf("invalid redirect logout request signature: %w", verifyErr)
+	return verifyRedirectSLOSignature(parts, certs, "logout request")
 }
 
 func validateRedirectLogoutResponseSignature(rawQuery string, responseXML []byte, certs []*x509.Certificate) error {
-	rawSAMLResponse, hasSAMLResponse, err := rawQueryParameterStrictSLO(rawQuery, "SAMLResponse")
+	parts, err := parseRedirectSLOSignatureParts(rawQuery, "SAMLResponse", false)
 	if err != nil {
 		return err
 	}
 
-	if !hasSAMLResponse || rawSAMLResponse == "" {
-		return fmt.Errorf("redirect binding signature is malformed: missing SAMLResponse")
-	}
-
-	rawRelayState, hasRelayState, err := rawQueryParameterStrictSLO(rawQuery, "RelayState")
-	if err != nil {
-		return err
-	}
-
-	rawSignature, hasSignature, err := rawQueryParameterStrictSLO(rawQuery, "Signature")
-	if err != nil {
-		return err
-	}
-
-	rawSigAlg, hasSigAlg, err := rawQueryParameterStrictSLO(rawQuery, "SigAlg")
-	if err != nil {
-		return err
-	}
-
-	if hasSignature != hasSigAlg {
-		return fmt.Errorf("redirect binding signature is malformed: require both Signature and SigAlg")
-	}
-
-	if !hasSignature {
+	if !parts.HasSignature {
 		if err = validateXMLLogoutResponseSignature(responseXML, certs); err != nil {
 			return err
 		}
@@ -536,7 +502,39 @@ func validateRedirectLogoutResponseSignature(rawQuery string, responseXML []byte
 		return nil
 	}
 
-	signedContent := "SAMLResponse=" + rawSAMLResponse
+	return verifyRedirectSLOSignature(parts, certs, "logout response")
+}
+
+// parseRedirectSLOSignatureParts extracts and decodes detached redirect signature fields.
+func parseRedirectSLOSignatureParts(rawQuery, payloadKey string, signatureRequired bool) (redirectSLOSignatureParts, error) {
+	rawPayload, hasPayload, err := rawQueryParameterStrictSLO(rawQuery, payloadKey)
+	if err != nil {
+		return redirectSLOSignatureParts{}, err
+	}
+
+	if !hasPayload || rawPayload == "" {
+		return redirectSLOSignatureParts{}, fmt.Errorf("redirect binding signature is malformed: missing %s", payloadKey)
+	}
+
+	rawRelayState, hasRelayState, err := rawQueryParameterStrictSLO(rawQuery, "RelayState")
+	if err != nil {
+		return redirectSLOSignatureParts{}, err
+	}
+
+	rawSignature, hasSignature, rawSigAlg, err := redirectSLODetachedSignatureParams(rawQuery)
+	if err != nil {
+		return redirectSLOSignatureParts{}, err
+	}
+
+	if !hasSignature {
+		if signatureRequired {
+			return redirectSLOSignatureParts{}, fmt.Errorf("redirect binding signature is required")
+		}
+
+		return redirectSLOSignatureParts{}, nil
+	}
+
+	signedContent := payloadKey + "=" + rawPayload
 	if hasRelayState {
 		signedContent += "&RelayState=" + rawRelayState
 	}
@@ -545,22 +543,61 @@ func validateRedirectLogoutResponseSignature(rawQuery string, responseXML []byte
 
 	sigAlgValue, err := url.QueryUnescape(rawSigAlg)
 	if err != nil {
-		return fmt.Errorf("cannot decode SigAlg: %w", err)
+		return redirectSLOSignatureParts{}, fmt.Errorf("cannot decode SigAlg: %w", err)
 	}
 
+	signature, err := decodeRedirectSLOSignature(rawSignature)
+	if err != nil {
+		return redirectSLOSignatureParts{}, err
+	}
+
+	return redirectSLOSignatureParts{
+		SignedContent: signedContent,
+		SigAlgValue:   sigAlgValue,
+		Signature:     signature,
+		HasSignature:  true,
+	}, nil
+}
+
+// redirectSLODetachedSignatureParams returns the raw Signature and SigAlg values.
+func redirectSLODetachedSignatureParams(rawQuery string) (rawSignature string, hasSignature bool, rawSigAlg string, err error) {
+	rawSignature, hasSignature, err = rawQueryParameterStrictSLO(rawQuery, "Signature")
+	if err != nil {
+		return "", false, "", err
+	}
+
+	rawSigAlg, hasSigAlg, err := rawQueryParameterStrictSLO(rawQuery, "SigAlg")
+	if err != nil {
+		return "", false, "", err
+	}
+
+	if hasSignature != hasSigAlg {
+		return "", false, "", fmt.Errorf("redirect binding signature is malformed: require both Signature and SigAlg")
+	}
+
+	return rawSignature, hasSignature, rawSigAlg, nil
+}
+
+// decodeRedirectSLOSignature decodes the raw redirect Signature value.
+func decodeRedirectSLOSignature(rawSignature string) ([]byte, error) {
 	sigB64, err := url.QueryUnescape(rawSignature)
 	if err != nil {
-		return fmt.Errorf("cannot decode Signature: %w", err)
+		return nil, fmt.Errorf("cannot decode Signature: %w", err)
 	}
 
 	signature, err := base64.StdEncoding.DecodeString(sigB64)
 	if err != nil {
-		return fmt.Errorf("cannot decode Signature base64: %w", err)
+		return nil, fmt.Errorf("cannot decode Signature base64: %w", err)
 	}
 
-	algorithm, ok := signatureAlgorithmForRedirectSLO(sigAlgValue)
+	return signature, nil
+}
+
+// verifyRedirectSLOSignature verifies decoded detached redirect signature parts.
+func verifyRedirectSLOSignature(parts redirectSLOSignatureParts, certs []*x509.Certificate, messageName string) error {
+	algorithm, ok := signatureAlgorithmForRedirectSLO(parts.SigAlgValue)
 	if !ok {
-		return fmt.Errorf("unsupported redirect signature algorithm %q", sigAlgValue)
+		return fmt.Errorf("unsupported redirect signature algorithm %q", parts.SigAlgValue)
 	}
 
 	var verifyErr error
@@ -570,18 +607,19 @@ func validateRedirectLogoutResponseSignature(rawQuery string, responseXML []byte
 			continue
 		}
 
-		if err = cert.CheckSignature(algorithm, []byte(signedContent), signature); err == nil {
+		checkErr := cert.CheckSignature(algorithm, []byte(parts.SignedContent), parts.Signature)
+		if checkErr == nil {
 			return nil
 		}
 
-		verifyErr = err
+		verifyErr = checkErr
 	}
 
 	if verifyErr == nil {
 		verifyErr = fmt.Errorf("no usable signing certificate")
 	}
 
-	return fmt.Errorf("invalid redirect logout response signature: %w", verifyErr)
+	return fmt.Errorf("invalid redirect %s signature: %w", messageName, verifyErr)
 }
 
 func redirectSLOHasDetachedSignature(rawQuery string) (bool, error) {
@@ -602,29 +640,16 @@ func redirectSLOHasDetachedSignature(rawQuery string) (bool, error) {
 	return hasSignature, nil
 }
 
+// validateXMLLogoutRequestSignature validates an enveloped XML signature on a LogoutRequest.
 func validateXMLLogoutRequestSignature(requestXML []byte, certs []*x509.Certificate) error {
-	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(requestXML); err != nil {
-		return fmt.Errorf("cannot parse LogoutRequest XML: %w", err)
-	}
+	return validateXMLLogoutSignature(requestXML, certs, "LogoutRequest", "logout request")
+}
 
-	root := doc.Root()
-	if root == nil {
-		return fmt.Errorf("LogoutRequest XML does not have a root element")
-	}
-
-	signatureMethod := xmlSignatureMethodSLO(root)
-	if isWeakSHA1SignatureMethodSLO(signatureMethod) {
-		return fmt.Errorf("unsupported XML signature algorithm %q", signatureMethod)
-	}
-
-	signatureElement, err := findChildByNamespace(root, xmlDSigNamespace, "Signature")
+// validateXMLLogoutSignature performs the shared SLO XML signature validation flow.
+func validateXMLLogoutSignature(documentXML []byte, certs []*x509.Certificate, messageName string, lowerMessageName string) error {
+	root, err := prepareSLOXMLSignatureRoot(documentXML, messageName, lowerMessageName)
 	if err != nil {
-		return fmt.Errorf("cannot inspect LogoutRequest signature: %w", err)
-	}
-
-	if signatureElement == nil {
-		return fmt.Errorf("logout request XML signature is required")
+		return err
 	}
 
 	certificateStore := dsig.MemoryX509CertificateStore{
@@ -638,32 +663,67 @@ func validateXMLLogoutRequestSignature(requestXML []byte, certs []*x509.Certific
 		validationContext.Clock = saml.Clock
 	}
 
-	if !signatureElementHasX509Cert(signatureElement) {
-		if keyInfo := findDirectChildByLocalTag(signatureElement, "KeyInfo"); keyInfo != nil {
-			signatureElement.RemoveChild(keyInfo)
-		}
-	}
-
 	ctx, err := etreeutils.NSBuildParentContext(root)
 	if err != nil {
-		return fmt.Errorf("cannot validate LogoutRequest XML signature: %v", err)
+		return fmt.Errorf("cannot validate %s XML signature: %v", messageName, err)
 	}
 
 	ctx, err = ctx.SubContext(root)
 	if err != nil {
-		return fmt.Errorf("cannot validate LogoutRequest XML signature: %v", err)
+		return fmt.Errorf("cannot validate %s XML signature: %v", messageName, err)
 	}
 
 	root, err = etreeutils.NSDetatch(ctx, root)
 	if err != nil {
-		return fmt.Errorf("cannot validate LogoutRequest XML signature: %v", err)
+		return fmt.Errorf("cannot validate %s XML signature: %v", messageName, err)
 	}
 
 	if _, err := validationContext.Validate(root); err != nil {
-		return fmt.Errorf("cannot validate LogoutRequest XML signature: %v", err)
+		return fmt.Errorf("cannot validate %s XML signature: %v", messageName, err)
 	}
 
 	return nil
+}
+
+// prepareSLOXMLSignatureRoot parses XML and strips embedded KeyInfo when needed.
+func prepareSLOXMLSignatureRoot(documentXML []byte, messageName string, lowerMessageName string) (*etree.Element, error) {
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(documentXML); err != nil {
+		return nil, fmt.Errorf("cannot parse %s XML: %w", messageName, err)
+	}
+
+	root := doc.Root()
+	if root == nil {
+		return nil, fmt.Errorf("%s XML does not have a root element", messageName)
+	}
+
+	if signatureMethod := xmlSignatureMethodSLO(root); isWeakSHA1SignatureMethodSLO(signatureMethod) {
+		return nil, fmt.Errorf("unsupported XML signature algorithm %q", signatureMethod)
+	}
+
+	signatureElement, err := findChildByNamespace(root, xmlDSigNamespace, "Signature")
+	if err != nil {
+		return nil, fmt.Errorf("cannot inspect %s signature: %w", messageName, err)
+	}
+
+	if signatureElement == nil {
+		return nil, fmt.Errorf("%s XML signature is required", lowerMessageName)
+	}
+
+	removeEmbeddedSLOKeyInfo(signatureElement)
+
+	return root, nil
+}
+
+// removeEmbeddedSLOKeyInfo strips KeyInfo when no embedded certificate is present.
+func removeEmbeddedSLOKeyInfo(signatureElement *etree.Element) {
+	if signatureElementHasX509Cert(signatureElement) {
+		return
+	}
+
+	if keyInfo := findDirectChildByLocalTag(signatureElement, "KeyInfo"); keyInfo != nil {
+		signatureElement.RemoveChild(keyInfo)
+	}
 }
 
 func xmlSLOHasSignature(document []byte) (bool, error) {
@@ -685,68 +745,9 @@ func xmlSLOHasSignature(document []byte) (bool, error) {
 	return signatureElement != nil, nil
 }
 
+// validateXMLLogoutResponseSignature validates an enveloped XML signature on a LogoutResponse.
 func validateXMLLogoutResponseSignature(responseXML []byte, certs []*x509.Certificate) error {
-	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(responseXML); err != nil {
-		return fmt.Errorf("cannot parse LogoutResponse XML: %w", err)
-	}
-
-	root := doc.Root()
-	if root == nil {
-		return fmt.Errorf("LogoutResponse XML does not have a root element")
-	}
-
-	signatureMethod := xmlSignatureMethodSLO(root)
-	if isWeakSHA1SignatureMethodSLO(signatureMethod) {
-		return fmt.Errorf("unsupported XML signature algorithm %q", signatureMethod)
-	}
-
-	signatureElement, err := findChildByNamespace(root, xmlDSigNamespace, "Signature")
-	if err != nil {
-		return fmt.Errorf("cannot inspect LogoutResponse signature: %w", err)
-	}
-
-	if signatureElement == nil {
-		return fmt.Errorf("logout response XML signature is required")
-	}
-
-	certificateStore := dsig.MemoryX509CertificateStore{
-		Roots: certs,
-	}
-
-	validationContext := dsig.NewDefaultValidationContext(&certificateStore)
-
-	validationContext.IdAttribute = samlXMLIDAttribute
-	if saml.Clock != nil {
-		validationContext.Clock = saml.Clock
-	}
-
-	if !signatureElementHasX509Cert(signatureElement) {
-		if keyInfo := findDirectChildByLocalTag(signatureElement, "KeyInfo"); keyInfo != nil {
-			signatureElement.RemoveChild(keyInfo)
-		}
-	}
-
-	ctx, err := etreeutils.NSBuildParentContext(root)
-	if err != nil {
-		return fmt.Errorf("cannot validate LogoutResponse XML signature: %v", err)
-	}
-
-	ctx, err = ctx.SubContext(root)
-	if err != nil {
-		return fmt.Errorf("cannot validate LogoutResponse XML signature: %v", err)
-	}
-
-	root, err = etreeutils.NSDetatch(ctx, root)
-	if err != nil {
-		return fmt.Errorf("cannot validate LogoutResponse XML signature: %v", err)
-	}
-
-	if _, err = validationContext.Validate(root); err != nil {
-		return fmt.Errorf("cannot validate LogoutResponse XML signature: %v", err)
-	}
-
-	return nil
+	return validateXMLLogoutSignature(responseXML, certs, "LogoutResponse", "logout response")
 }
 
 func signatureAlgorithmForRedirectSLO(identifier string) (x509.SignatureAlgorithm, bool) {

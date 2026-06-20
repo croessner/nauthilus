@@ -170,6 +170,17 @@ func listAccountsTempFailDecisionCase() standardDecisionCase {
 }
 
 func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) {
+	assertLuaEnvironmentStatusMessage(t)
+	assertLuaSubjectStatusMessage(t)
+	assertBruteForcePlannedObligations(t)
+	assertRBLPlannedObligation(t)
+	assertLuaAbortSkipsRemainingStageChecks(t)
+}
+
+// assertLuaEnvironmentStatusMessage verifies public Lua environment response detail selection.
+func assertLuaEnvironmentStatusMessage(t *testing.T) {
+	t.Helper()
+
 	details := map[string]report.DetailValue{
 		"status_message": {
 			Value:       "Denied by Lua",
@@ -195,6 +206,11 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 	if !luaReport.Attributes["auth.lua.environment.risk.triggered"].Details["status_message"].Selected {
 		t.Fatal("selected Lua response detail was not marked for redaction")
 	}
+}
+
+// assertLuaSubjectStatusMessage verifies public Lua subject response detail selection.
+func assertLuaSubjectStatusMessage(t *testing.T) {
+	t.Helper()
 
 	subjectReport := standardReport(
 		policy.OperationAuthenticate,
@@ -208,7 +224,7 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 		}),
 	)
 
-	got = EvaluateStandardAuth(subjectReport)
+	got := EvaluateStandardAuth(subjectReport)
 	if got.Final == nil {
 		t.Fatal("final decision is nil")
 	}
@@ -224,6 +240,11 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 	if !subjectReport.Attributes["auth.lua.subject.billing.rejected"].Details["status_message"].Selected {
 		t.Fatal("selected Lua subject response detail was not marked")
 	}
+}
+
+// assertBruteForcePlannedObligations verifies brute-force obligation planning.
+func assertBruteForcePlannedObligations(t *testing.T) {
+	t.Helper()
 
 	bruteForceReport := standardReport(
 		policy.OperationAuthenticate,
@@ -231,7 +252,7 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 		boolAttr(policy.AttributeBruteForceTriggered, policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
 	)
 
-	got = EvaluateStandardAuth(bruteForceReport)
+	got := EvaluateStandardAuth(bruteForceReport)
 	if len(got.Final.Obligations) != 3 {
 		t.Fatalf("obligations = %d, want 3 planned obligations", len(got.Final.Obligations))
 	}
@@ -247,6 +268,11 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 	if got := got.Final.Obligations[1].Args["feature"]; got != policy.LuaActionDispatchBruteForce {
 		t.Fatalf("brute-force feature arg = %v, want %s", got, policy.LuaActionDispatchBruteForce)
 	}
+}
+
+// assertRBLPlannedObligation verifies RBL obligation planning.
+func assertRBLPlannedObligation(t *testing.T) {
+	t.Helper()
 
 	rblReport := standardReport(
 		policy.OperationAuthenticate,
@@ -254,7 +280,7 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 		boolAttr(policy.AttributeRBLThresholdReached, policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
 	)
 
-	got = EvaluateStandardAuth(rblReport)
+	got := EvaluateStandardAuth(rblReport)
 	if len(got.Final.Obligations) != 1 || got.Final.Obligations[0].ID != policy.ObligationLuaActionDispatch {
 		t.Fatalf("rbl obligations = %#v, want lua action dispatch", got.Final.Obligations)
 	}
@@ -262,6 +288,11 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 	if got := got.Final.Obligations[0].Args["feature"]; got != policy.LuaActionDispatchRBL {
 		t.Fatalf("rbl feature arg = %v, want %s", got, policy.LuaActionDispatchRBL)
 	}
+}
+
+// assertLuaAbortSkipsRemainingStageChecks verifies abort control emission.
+func assertLuaAbortSkipsRemainingStageChecks(t *testing.T) {
+	t.Helper()
 
 	abortReport := standardReport(
 		policy.OperationAuthenticate,
@@ -269,7 +300,8 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 		boolAttr("auth.lua.environment.risk.abort", policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
 	)
 
-	got = EvaluateStandardAuth(abortReport)
+	EvaluateStandardAuth(abortReport)
+
 	if len(abortReport.Policies) == 0 || abortReport.Policies[0].Control == nil ||
 		!abortReport.Policies[0].Control.SkipRemainingStageChecks {
 		t.Fatalf("abort control = %#v, want skip remaining stage checks", abortReport.Policies)
@@ -381,6 +413,14 @@ func TestCustomObserveComparesConfiguredPolicyWithDefault(t *testing.T) {
 		t.Fatalf("shadow = %#v, want custom deny", got.Shadow)
 	}
 
+	assertCustomObserveDefaultReport(t, policyReport)
+	assertCustomObserveComparisonMetric(t, recorder)
+}
+
+// assertCustomObserveDefaultReport verifies the default-vs-shadow observe report.
+func assertCustomObserveDefaultReport(t *testing.T, policyReport *report.DecisionReport) {
+	t.Helper()
+
 	if policyReport.Final == nil || policyReport.Final.PolicyName != "standard_auth_success" {
 		t.Fatalf("final = %#v, want authoritative default", policyReport.Final)
 	}
@@ -389,6 +429,11 @@ func TestCustomObserveComparesConfiguredPolicyWithDefault(t *testing.T) {
 		policyReport.Observe.ShadowTerminalState != "auth_fail" {
 		t.Fatalf("observe terminal states = %#v, want default auth_ok and custom auth_fail", policyReport.Observe)
 	}
+}
+
+// assertCustomObserveComparisonMetric verifies mismatch metric recording.
+func assertCustomObserveComparisonMetric(t *testing.T, recorder *recordingRecorder) {
+	t.Helper()
 
 	if len(recorder.comparisons) != 1 || recorder.comparisons[0].Result != observability.ResultFailure {
 		t.Fatalf("comparison metrics = %#v, want one failure", recorder.comparisons)

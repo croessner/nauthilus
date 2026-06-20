@@ -30,22 +30,9 @@ import (
 const defaultSLOReplayTTL = time.Hour
 
 func (h *SAMLHandler) validateInboundLogoutRequestProtocol(ctx context.Context, logoutRequest *saml.LogoutRequest) error {
-	if logoutRequest == nil {
-		return fmt.Errorf("logout request payload is missing")
-	}
-
-	requestID := strings.TrimSpace(logoutRequest.ID)
-	if requestID == "" {
-		return fmt.Errorf("logout request id is missing")
-	}
-
-	issuer := ""
-	if logoutRequest.Issuer != nil {
-		issuer = strings.TrimSpace(logoutRequest.Issuer.Value)
-	}
-
-	if issuer == "" {
-		return fmt.Errorf("logout request issuer is missing")
+	requestID, issuer, nameID, sessionIndex, err := logoutRequestProtocolFields(logoutRequest)
+	if err != nil {
+		return err
 	}
 
 	if err := h.validateLogoutRequestDestination(logoutRequest.Destination); err != nil {
@@ -54,39 +41,8 @@ func (h *SAMLHandler) validateInboundLogoutRequestProtocol(ctx context.Context, 
 
 	now := saml.TimeNow().UTC()
 
-	if logoutRequest.IssueInstant.IsZero() {
-		return fmt.Errorf("logout request IssueInstant is missing")
-	}
-
-	issueInstant := logoutRequest.IssueInstant.UTC()
-
-	if issueInstant.After(now.Add(saml.MaxClockSkew)) {
-		return fmt.Errorf("logout request IssueInstant is in the future")
-	}
-
-	if issueInstant.Add(saml.MaxIssueDelay).Before(now) {
-		return fmt.Errorf("logout request IssueInstant is too old")
-	}
-
-	if logoutRequest.NotOnOrAfter != nil {
-		notOnOrAfter := logoutRequest.NotOnOrAfter.UTC()
-		if notOnOrAfter.Add(saml.MaxClockSkew).Before(now) {
-			return fmt.Errorf("logout request NotOnOrAfter is expired")
-		}
-	}
-
-	nameID := ""
-	if logoutRequest.NameID != nil {
-		nameID = strings.TrimSpace(logoutRequest.NameID.Value)
-	}
-
-	if nameID == "" {
-		return fmt.Errorf("logout request NameID is missing")
-	}
-
-	sessionIndex := ""
-	if logoutRequest.SessionIndex != nil {
-		sessionIndex = strings.TrimSpace(logoutRequest.SessionIndex.Value)
+	if err := validateLogoutRequestTimeWindow(logoutRequest, now); err != nil {
+		return err
 	}
 
 	if err := h.validateLogoutRequestParticipantSession(ctx, nameID, issuer, sessionIndex); err != nil {
@@ -95,6 +51,70 @@ func (h *SAMLHandler) validateInboundLogoutRequestProtocol(ctx context.Context, 
 
 	if err := h.checkAndRememberLogoutRequestID(ctx, issuer, requestID); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// logoutRequestProtocolFields extracts required protocol identifiers.
+func logoutRequestProtocolFields(logoutRequest *saml.LogoutRequest) (requestID, issuer, nameID, sessionIndex string, err error) {
+	if logoutRequest == nil {
+		return "", "", "", "", fmt.Errorf("logout request payload is missing")
+	}
+
+	requestID = strings.TrimSpace(logoutRequest.ID)
+	if requestID == "" {
+		return "", "", "", "", fmt.Errorf("logout request id is missing")
+	}
+
+	issuer = samlIssuerValue(logoutRequest.Issuer)
+	if issuer == "" {
+		return "", "", "", "", fmt.Errorf("logout request issuer is missing")
+	}
+
+	nameID = samlLogoutRequestAccount(logoutRequest)
+	if nameID == "" {
+		return "", "", "", "", fmt.Errorf("logout request NameID is missing")
+	}
+
+	if logoutRequest.SessionIndex != nil {
+		sessionIndex = strings.TrimSpace(logoutRequest.SessionIndex.Value)
+	}
+
+	return requestID, issuer, nameID, sessionIndex, nil
+}
+
+// validateLogoutRequestTimeWindow verifies IssueInstant and NotOnOrAfter bounds.
+func validateLogoutRequestTimeWindow(logoutRequest *saml.LogoutRequest, now time.Time) error {
+	if err := validateSLOIssueInstant("logout request", logoutRequest.IssueInstant, now); err != nil {
+		return err
+	}
+
+	if logoutRequest.NotOnOrAfter == nil {
+		return nil
+	}
+
+	notOnOrAfter := logoutRequest.NotOnOrAfter.UTC()
+	if notOnOrAfter.Add(saml.MaxClockSkew).Before(now) {
+		return fmt.Errorf("logout request NotOnOrAfter is expired")
+	}
+
+	return nil
+}
+
+// validateSLOIssueInstant verifies common SLO IssueInstant bounds.
+func validateSLOIssueInstant(messageName string, issueInstant time.Time, now time.Time) error {
+	if issueInstant.IsZero() {
+		return fmt.Errorf("%s IssueInstant is missing", messageName)
+	}
+
+	issueInstant = issueInstant.UTC()
+	if issueInstant.After(now.Add(saml.MaxClockSkew)) {
+		return fmt.Errorf("%s IssueInstant is in the future", messageName)
+	}
+
+	if issueInstant.Add(saml.MaxIssueDelay).Before(now) {
+		return fmt.Errorf("%s IssueInstant is too old", messageName)
 	}
 
 	return nil
@@ -130,18 +150,8 @@ func (h *SAMLHandler) validateInboundLogoutResponseProtocol(logoutResponse *saml
 
 	now := saml.TimeNow().UTC()
 
-	if logoutResponse.IssueInstant.IsZero() {
-		return fmt.Errorf("logout response IssueInstant is missing")
-	}
-
-	issueInstant := logoutResponse.IssueInstant.UTC()
-
-	if issueInstant.After(now.Add(saml.MaxClockSkew)) {
-		return fmt.Errorf("logout response IssueInstant is in the future")
-	}
-
-	if issueInstant.Add(saml.MaxIssueDelay).Before(now) {
-		return fmt.Errorf("logout response IssueInstant is too old")
+	if err := validateSLOIssueInstant("logout response", logoutResponse.IssueInstant, now); err != nil {
+		return err
 	}
 
 	if strings.TrimSpace(logoutResponse.Status.StatusCode.Value) == "" {

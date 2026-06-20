@@ -19,45 +19,44 @@ import (
 	"errors"
 
 	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	lua "github.com/yuin/gopher-lua"
 )
 
 // RedisEncrypt encrypts a string using the Redis security manager.
 func (rm *RedisManager) RedisEncrypt(L *lua.LState) int {
-	stack := luastack.NewManager(L)
-	_ = stack.CheckAny(1)
-	plaintext := stack.CheckString(2)
-
-	sm := rm.client.GetSecurityManager()
-	if sm == nil {
-		return stack.PushError(errors.New("security manager not available"))
-	}
-
-	ciphertext, err := sm.Encrypt(plaintext)
-	if err != nil {
-		return stack.PushError(err)
-	}
-
-	return stack.PushResults(lua.LString(ciphertext), lua.LNil)
+	return rm.executeSecurityString(L, func(sm *rediscli.SecurityManager, plaintext string) (string, error) {
+		return sm.Encrypt(plaintext)
+	})
 }
 
 // RedisDecrypt decrypts a string using the Redis security manager.
 func (rm *RedisManager) RedisDecrypt(L *lua.LState) int {
+	return rm.executeSecurityString(L, func(sm *rediscli.SecurityManager, ciphertext string) (string, error) {
+		return sm.Decrypt(ciphertext)
+	})
+}
+
+// executeSecurityString applies one security-manager string transformation.
+func (rm *RedisManager) executeSecurityString(
+	L *lua.LState,
+	operation func(*rediscli.SecurityManager, string) (string, error),
+) int {
 	stack := luastack.NewManager(L)
 	_ = stack.CheckAny(1)
-	ciphertext := stack.CheckString(2)
+	value := stack.CheckString(2)
 
 	sm := rm.client.GetSecurityManager()
 	if sm == nil {
 		return stack.PushError(errors.New("security manager not available"))
 	}
 
-	plaintext, err := sm.Decrypt(ciphertext)
+	result, err := operation(sm, value)
 	if err != nil {
 		return stack.PushError(err)
 	}
 
-	return stack.PushResults(lua.LString(plaintext), lua.LNil)
+	return stack.PushResults(lua.LString(result), lua.LNil)
 }
 
 // RedisIsEncryptionEnabled checks if encryption is enabled in the Redis security manager.

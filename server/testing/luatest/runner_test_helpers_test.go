@@ -45,11 +45,40 @@ func runLuaMockFixture(t *testing.T, scriptName, callbackType, script, mock stri
 	return runner, result
 }
 
+// runSuccessfulLuaMockFixture executes a Lua mock fixture and requires a successful result.
+func runSuccessfulLuaMockFixture(t *testing.T, scriptName, callbackType, script, mock string) *TestRunner {
+	t.Helper()
+
+	runner, result := runLuaMockFixture(t, scriptName, callbackType, script, mock)
+	requireLuaMockSuccess(t, result)
+
+	return runner
+}
+
 func requireLuaMockSuccess(t *testing.T, result *TestResult) {
 	t.Helper()
 
 	if !result.Success {
 		t.Fatalf("result.Success = false, errors = %v", result.Errors)
+	}
+}
+
+// requireSingleCapturedValue checks that one fixture capture exists and exposes the expected value.
+func requireSingleCapturedValue[T any](
+	t *testing.T,
+	label string,
+	captures []T,
+	extract func(T) string,
+	want string,
+) {
+	t.Helper()
+
+	if len(captures) != 1 {
+		t.Fatalf("%s captures = %#v, want exactly one", label, captures)
+	}
+
+	if got := extract(captures[0]); got != want {
+		t.Fatalf("%s value = %q, want %s", label, got, want)
 	}
 }
 

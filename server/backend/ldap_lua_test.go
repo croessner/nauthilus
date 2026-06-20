@@ -118,18 +118,28 @@ func TestLuaLDAPSearch_RawResult(t *testing.T) {
 		return
 	}
 
-	entryValue := resultTable.RawGetInt(1)
-	entryTable, ok := entryValue.(*lua.LTable)
+	assertRawLDAPEntry(t, L, resultTable)
+}
+
+// assertRawLDAPEntry verifies the raw LDAP entry returned to Lua.
+func assertRawLDAPEntry(t *testing.T, L *lua.LState, resultTable *lua.LTable) {
+	t.Helper()
+
+	entryTable, ok := resultTable.RawGetInt(1).(*lua.LTable)
 	assert.True(t, ok)
 
 	if !ok {
 		return
 	}
 
-	dn := L.GetField(entryTable, "dn")
-	assert.Equal(t, "uid=jdoe,dc=example,dc=org", dn.String())
+	assert.Equal(t, "uid=jdoe,dc=example,dc=org", L.GetField(entryTable, "dn").String())
+	assertRawLDAPEntryAttribute(t, L.GetField(entryTable, "attributes"))
+}
 
-	attributes := L.GetField(entryTable, "attributes")
+// assertRawLDAPEntryAttribute verifies the raw LDAP uid attribute table.
+func assertRawLDAPEntryAttribute(t *testing.T, attributes lua.LValue) {
+	t.Helper()
+
 	attrsTable, ok := attributes.(*lua.LTable)
 	assert.True(t, ok)
 
@@ -137,8 +147,7 @@ func TestLuaLDAPSearch_RawResult(t *testing.T) {
 		return
 	}
 
-	uidValues := attrsTable.RawGetString("uid")
-	uidTable, ok := uidValues.(*lua.LTable)
+	uidTable, ok := attrsTable.RawGetString("uid").(*lua.LTable)
 	assert.True(t, ok)
 
 	if ok {

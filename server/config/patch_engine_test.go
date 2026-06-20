@@ -4,8 +4,19 @@ import "testing"
 
 func TestDefaultPatchEngine_Apply(t *testing.T) {
 	engine := DefaultPatchEngine{}
+	settings := patchEngineInitialSettings()
+	patches := patchEngineOperations()
 
-	settings := map[string]any{
+	if err := engine.Apply(settings, patches); err != nil {
+		t.Fatalf("apply patches: %v", err)
+	}
+
+	assertPatchedLDAPSettings(t, settings)
+}
+
+// patchEngineInitialSettings returns the map modified by the patch test.
+func patchEngineInitialSettings() map[string]any {
+	return map[string]any{
 		"ldap": map[string]any{
 			"search": []any{
 				map[string]any{
@@ -18,8 +29,11 @@ func TestDefaultPatchEngine_Apply(t *testing.T) {
 			},
 		},
 	}
+}
 
-	patches := []PatchOperation{
+// patchEngineOperations returns add, replace, and remove patch coverage.
+func patchEngineOperations() []PatchOperation {
+	return []PatchOperation{
 		{
 			Op:   patchOpAdd,
 			Path: "ldap.search",
@@ -38,10 +52,11 @@ func TestDefaultPatchEngine_Apply(t *testing.T) {
 			Value: "bind_pw",
 		},
 	}
+}
 
-	if err := engine.Apply(settings, patches); err != nil {
-		t.Fatalf("apply patches: %v", err)
-	}
+// assertPatchedLDAPSettings verifies the expected patched LDAP structure.
+func assertPatchedLDAPSettings(t *testing.T, settings map[string]any) {
+	t.Helper()
 
 	ldap, ok := settings["ldap"].(map[string]any)
 	if !ok {

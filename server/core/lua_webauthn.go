@@ -46,11 +46,7 @@ func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials [
 	commonRequest := lualib.GetCommonRequest()
 	defer lualib.PutCommonRequest(commonRequest)
 
-	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Username = auth.Request.Username
-	commonRequest.Service = auth.Request.Service
-	commonRequest.Session = auth.Runtime.GUID
-	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
+	lm.populateWebAuthnCommonRequest(commonRequest, auth)
 
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
 
@@ -68,12 +64,7 @@ func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials [
 		CommonRequest:     commonRequest,
 	}
 
-	priority := priorityqueue.PriorityLow
-	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
-		priority = priorityqueue.PriorityHigh
-	}
-
-	priorityqueue.LuaQueue.Push(luaRequest, priority)
+	priorityqueue.LuaQueue.Push(luaRequest, webAuthnLuaPriority(auth, priorityqueue.PriorityLow))
 
 	luaBackendResult = <-luaReplyChan
 
@@ -92,6 +83,24 @@ func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials [
 	}
 
 	return
+}
+
+// populateWebAuthnCommonRequest fills common Lua request fields for WebAuthn calls.
+func (lm *luaManagerImpl) populateWebAuthnCommonRequest(commonRequest *lualib.CommonRequest, auth *AuthState) {
+	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.Username = auth.Request.Username
+	commonRequest.Service = auth.Request.Service
+	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
+}
+
+// webAuthnLuaPriority upgrades queue priority for authenticated users.
+func webAuthnLuaPriority(auth *AuthState, defaultPriority int) int {
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
+		return priorityqueue.PriorityHigh
+	}
+
+	return defaultPriority
 }
 
 // executeWebAuthnCredentialOp is the shared implementation for saving or deleting
@@ -126,11 +135,7 @@ func (lm *luaManagerImpl) executeWebAuthnCredentialOp(
 	commonRequest := lualib.GetCommonRequest()
 	defer lualib.PutCommonRequest(commonRequest)
 
-	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Username = auth.Request.Username
-	commonRequest.Service = auth.Request.Service
-	commonRequest.Session = auth.Runtime.GUID
-	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
+	lm.populateWebAuthnCommonRequest(commonRequest, auth)
 
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
 
@@ -149,12 +154,7 @@ func (lm *luaManagerImpl) executeWebAuthnCredentialOp(
 		CommonRequest:      commonRequest,
 	}
 
-	priority := priorityqueue.PriorityMedium
-	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
-		priority = priorityqueue.PriorityHigh
-	}
-
-	priorityqueue.LuaQueue.Push(luaRequest, priority)
+	priorityqueue.LuaQueue.Push(luaRequest, webAuthnLuaPriority(auth, priorityqueue.PriorityMedium))
 
 	luaBackendResult = <-luaReplyChan
 
@@ -190,23 +190,17 @@ func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredentia
 	)
 	defer lsp.End()
 
-	var (
-		luaBackendResult *lualib.LuaBackendResult
-		newCredBytes     []byte
-		oldCredBytes     []byte
-	)
-
-	if newCredBytes, err = json.Marshal(newCredential); err != nil {
+	newCredBytes, err := json.Marshal(newCredential)
+	if err != nil {
 		lsp.RecordError(err)
 		return
 	}
 
-	oldCredBytes = []byte(oldCredential.RawJSON)
-	if len(oldCredBytes) == 0 {
-		if oldCredBytes, err = json.Marshal(oldCredential); err != nil {
-			lsp.RecordError(err)
-			return
-		}
+	oldCredBytes, err := rawOrMarshalWebAuthnCredential(oldCredential)
+	if err != nil {
+		lsp.RecordError(err)
+
+		return
 	}
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
@@ -214,11 +208,7 @@ func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredentia
 	commonRequest := lualib.GetCommonRequest()
 	defer lualib.PutCommonRequest(commonRequest)
 
-	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Username = auth.Request.Username
-	commonRequest.Service = auth.Request.Service
-	commonRequest.Session = auth.Runtime.GUID
-	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
+	lm.populateWebAuthnCommonRequest(commonRequest, auth)
 	commonRequest.WebAuthnCredential = string(newCredBytes)
 	commonRequest.WebAuthnOldCredential = string(oldCredBytes)
 
@@ -240,14 +230,9 @@ func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredentia
 		CommonRequest:         commonRequest,
 	}
 
-	priority := priorityqueue.PriorityMedium
-	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
-		priority = priorityqueue.PriorityHigh
-	}
+	priorityqueue.LuaQueue.Push(luaRequest, webAuthnLuaPriority(auth, priorityqueue.PriorityMedium))
 
-	priorityqueue.LuaQueue.Push(luaRequest, priority)
-
-	luaBackendResult = <-luaReplyChan
+	luaBackendResult := <-luaReplyChan
 
 	if luaBackendResult.Err != nil {
 		err = luaBackendResult.Err
@@ -257,4 +242,13 @@ func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredentia
 	}
 
 	return
+}
+
+// rawOrMarshalWebAuthnCredential returns stored raw JSON or marshals a credential.
+func rawOrMarshalWebAuthnCredential(credential *mfa.PersistentCredential) ([]byte, error) {
+	if len(credential.RawJSON) > 0 {
+		return []byte(credential.RawJSON), nil
+	}
+
+	return json.Marshal(credential)
 }

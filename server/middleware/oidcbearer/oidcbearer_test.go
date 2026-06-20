@@ -34,6 +34,13 @@ type mockTokenValidator struct {
 	err    error
 }
 
+type hasScopeCase struct {
+	name   string
+	claims jwt.MapClaims
+	scope  string
+	want   bool
+}
+
 func (m *mockTokenValidator) ValidateToken(_ context.Context, _ string) (jwt.MapClaims, error) {
 	return m.claims, m.err
 }
@@ -43,69 +50,32 @@ func init() {
 }
 
 func TestHasScope(t *testing.T) {
-	tests := []struct {
-		name   string
-		claims jwt.MapClaims
-		scope  string
-		want   bool
-	}{
-		{
-			name:   "nil claims",
-			claims: nil,
-			scope:  "nauthilus:authenticate",
-			want:   false,
-		},
-		{
-			name:   "empty scope",
-			claims: jwt.MapClaims{"scope": "nauthilus:authenticate"},
-			scope:  "",
-			want:   false,
-		},
-		{
-			name:   "no scope claim",
-			claims: jwt.MapClaims{"sub": "client-id"},
-			scope:  "nauthilus:authenticate",
-			want:   false,
-		},
-		{
-			name:   "scope claim is not a string",
-			claims: jwt.MapClaims{"scope": 42},
-			scope:  "nauthilus:authenticate",
-			want:   false,
-		},
-		{
-			name:   "single scope match",
-			claims: jwt.MapClaims{"scope": "nauthilus:authenticate"},
-			scope:  "nauthilus:authenticate",
-			want:   true,
-		},
-		{
-			name:   "multiple scopes match",
-			claims: jwt.MapClaims{"scope": "nauthilus:authenticate nauthilus:admin nauthilus:security"},
-			scope:  "nauthilus:admin",
-			want:   true,
-		},
-		{
-			name:   "multiple scopes no match",
-			claims: jwt.MapClaims{"scope": "nauthilus:authenticate nauthilus:security"},
-			scope:  "nauthilus:admin",
-			want:   false,
-		},
-		{
-			name:   "partial scope name does not match",
-			claims: jwt.MapClaims{"scope": "nauthilus:authenticate_extra"},
-			scope:  "nauthilus:authenticate",
-			want:   false,
-		},
-	}
-
-	for _, tt := range tests {
+	for _, tt := range hasScopeCases() {
 		t.Run(tt.name, func(t *testing.T) {
 			got := HasScope(tt.claims, tt.scope)
 
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// hasScopeCases returns exact scope-matching scenarios.
+func hasScopeCases() []hasScopeCase {
+	return []hasScopeCase{
+		{name: "nil claims", scope: "nauthilus:authenticate"},
+		{name: "empty scope", claims: scopeClaims("nauthilus:authenticate"), scope: ""},
+		{name: "no scope claim", claims: jwt.MapClaims{"sub": "client-id"}, scope: "nauthilus:authenticate"},
+		{name: "scope claim is not a string", claims: jwt.MapClaims{"scope": 42}, scope: "nauthilus:authenticate"},
+		{name: "single scope match", claims: scopeClaims("nauthilus:authenticate"), scope: "nauthilus:authenticate", want: true},
+		{name: "multiple scopes match", claims: scopeClaims("nauthilus:authenticate nauthilus:admin nauthilus:security"), scope: "nauthilus:admin", want: true},
+		{name: "multiple scopes no match", claims: scopeClaims("nauthilus:authenticate nauthilus:security"), scope: "nauthilus:admin"},
+		{name: "partial scope name does not match", claims: scopeClaims("nauthilus:authenticate_extra"), scope: "nauthilus:authenticate"},
+	}
+}
+
+// scopeClaims returns JWT claims with a string scope claim.
+func scopeClaims(scope string) jwt.MapClaims {
+	return jwt.MapClaims{"scope": scope}
 }
 
 func TestHasAnyScope(t *testing.T) {
@@ -225,11 +195,14 @@ func TestMiddleware_ValidToken_WithAuthenticateScope(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestMiddleware_ValidToken_MissingAuthenticateScope(t *testing.T) {
+// assertBearerMiddlewareStatus runs a bearer middleware request and checks the response code.
+func assertBearerMiddlewareStatus(t *testing.T, scope string, target string, expectedStatus int) {
+	t.Helper()
+
 	validator := &mockTokenValidator{
 		claims: jwt.MapClaims{
 			"sub":   "test-client",
-			"scope": "nauthilus:security",
+			"scope": scope,
 		},
 	}
 
@@ -241,36 +214,20 @@ func TestMiddleware_ValidToken_MissingAuthenticateScope(t *testing.T) {
 		c.Status(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequest(http.MethodGet, target, nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
 
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, expectedStatus, w.Code)
+}
+
+func TestMiddleware_ValidToken_MissingAuthenticateScope(t *testing.T) {
+	assertBearerMiddlewareStatus(t, "nauthilus:security", "/test", http.StatusForbidden)
 }
 
 func TestMiddleware_NoAuthMode_StillRequiresAuthenticateScope(t *testing.T) {
-	validator := &mockTokenValidator{
-		claims: jwt.MapClaims{
-			"sub":   "test-client",
-			"scope": "nauthilus:list_accounts",
-		},
-	}
-
-	w := httptest.NewRecorder()
-	router := gin.New()
-
-	router.Use(Middleware(validator, nil, nil))
-	router.GET("/test", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/test?mode=no-auth", nil)
-	req.Header.Set("Authorization", "Bearer valid-token")
-
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assertBearerMiddlewareStatus(t, "nauthilus:list_accounts", "/test?mode=no-auth", http.StatusForbidden)
 }
 
 func TestExtractBearerToken(t *testing.T) {

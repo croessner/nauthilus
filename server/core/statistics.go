@@ -42,6 +42,21 @@ type Metric struct {
 	Label string  `redis:"label"`
 }
 
+type redisPoolCounterState struct {
+	previousHits     map[string]float64
+	previousMisses   map[string]float64
+	previousTimeouts map[string]float64
+}
+
+// newRedisPoolCounterState creates the previous-value stores used for Redis pool deltas.
+func newRedisPoolCounterState() redisPoolCounterState {
+	return redisPoolCounterState{
+		previousHits:     make(map[string]float64),
+		previousMisses:   make(map[string]float64),
+		previousTimeouts: make(map[string]float64),
+	}
+}
+
 // getCounterValue returns the value for a prometheus counter.
 func getCounterValue(logger *slog.Logger, metric *prometheus.CounterVec, lvs ...string) float64 {
 	dtoMetric := &dto.Metric{}
@@ -160,71 +175,74 @@ func SaveStatsToRedis(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 // UpdateRedisPoolStats updates and tracks Redis pool statistics such as hits, misses, timeouts, and connection counts.
 func UpdateRedisPoolStats(redisClient rediscli.Client) {
-	previousHits := make(map[string]float64)
-	previousMisses := make(map[string]float64)
-	previousTimeouts := make(map[string]float64)
+	counterState := newRedisPoolCounterState()
 	ticker := time.NewTicker(time.Second * 10)
 
 	defer ticker.Stop()
 
 	for range ticker.C {
-		redisStatsMap := map[string]*redis.PoolStats{
-			"default_rw": redisClient.GetWriteHandle().PoolStats(),
-		}
-
-		if redisClient.GetWriteHandle() != redisClient.GetReadHandle() {
-			redisStatsMap["default_ro"] = redisClient.GetReadHandle().PoolStats()
-		}
-
-		for _, redisStats := range redislib.GetStandaloneStats() {
-			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
-		}
-
-		for _, redisStats := range redislib.GetSentinelStats(false) {
-			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
-		}
-
-		for _, redisStats := range redislib.GetSentinelStats(true) {
-			redisStatsMap[redisStats.Name+"_ro"] = redisStats.Stats
-		}
-
-		for _, redisStats := range redislib.GetClusterStats() {
-			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
-		}
-
-		for poolName, redisStats := range redisStatsMap {
-			currentHits := float64(redisStats.Hits)
-			currentMisses := float64(redisStats.Misses)
-			currentTimeouts := float64(redisStats.Timeouts)
-
-			if previousHit, ok := previousHits[poolName]; ok {
-				hitsDiff := currentHits - previousHit
-				if hitsDiff >= 0 {
-					stats.GetMetrics().GetRedisHits().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(hitsDiff)
-				}
-			}
-
-			if previousMiss, ok := previousMisses[poolName]; ok {
-				missesDiff := currentMisses - previousMiss
-				if missesDiff >= 0 {
-					stats.GetMetrics().GetRedisMisses().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(missesDiff)
-				}
-			}
-
-			if previousTimeout, ok := previousTimeouts[poolName]; ok {
-				timeoutsDiff := currentTimeouts - previousTimeout
-				if timeoutsDiff >= 0 {
-					stats.GetMetrics().GetRedisTimeouts().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(timeoutsDiff)
-				}
-			}
-
-			previousHits[poolName] = currentHits
-			previousMisses[poolName] = currentMisses
-			previousTimeouts[poolName] = currentTimeouts
-
-			stats.GetMetrics().GetRedisTotalConns().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.TotalConns))
-			stats.GetMetrics().GetRedisIdleConns().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.IdleConns))
-			stats.GetMetrics().GetRedisStaleConns().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.StaleConns))
+		for poolName, redisStats := range redisPoolStatsSnapshot(redisClient) {
+			recordRedisPoolStats(poolName, redisStats, &counterState)
 		}
 	}
+}
+
+// redisPoolStatsSnapshot collects default and named Redis pool statistics for one tick.
+func redisPoolStatsSnapshot(redisClient rediscli.Client) map[string]*redis.PoolStats {
+	redisStatsMap := map[string]*redis.PoolStats{
+		"default_rw": redisClient.GetWriteHandle().PoolStats(),
+	}
+
+	if redisClient.GetWriteHandle() != redisClient.GetReadHandle() {
+		redisStatsMap["default_ro"] = redisClient.GetReadHandle().PoolStats()
+	}
+
+	for _, redisStats := range redislib.GetStandaloneStats() {
+		redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
+	}
+
+	for _, redisStats := range redislib.GetSentinelStats(false) {
+		redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
+	}
+
+	for _, redisStats := range redislib.GetSentinelStats(true) {
+		redisStatsMap[redisStats.Name+"_ro"] = redisStats.Stats
+	}
+
+	for _, redisStats := range redislib.GetClusterStats() {
+		redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
+	}
+
+	return redisStatsMap
+}
+
+// recordRedisPoolStats updates Redis pool counters and connection gauges for one pool.
+func recordRedisPoolStats(poolName string, redisStats *redis.PoolStats, counterState *redisPoolCounterState) {
+	currentHits := float64(redisStats.Hits)
+	currentMisses := float64(redisStats.Misses)
+	currentTimeouts := float64(redisStats.Timeouts)
+
+	addRedisPoolDelta(stats.GetMetrics().GetRedisHits(), counterState.previousHits, poolName, currentHits)
+	addRedisPoolDelta(stats.GetMetrics().GetRedisMisses(), counterState.previousMisses, poolName, currentMisses)
+	addRedisPoolDelta(stats.GetMetrics().GetRedisTimeouts(), counterState.previousTimeouts, poolName, currentTimeouts)
+	setRedisPoolConnectionGauges(poolName, redisStats)
+}
+
+// addRedisPoolDelta records a monotonic pool counter delta and stores the new baseline.
+func addRedisPoolDelta(metric *prometheus.CounterVec, previousValues map[string]float64, poolName string, currentValue float64) {
+	if previousValue, ok := previousValues[poolName]; ok {
+		diff := currentValue - previousValue
+		if diff >= 0 {
+			metric.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(diff)
+		}
+	}
+
+	previousValues[poolName] = currentValue
+}
+
+// setRedisPoolConnectionGauges records the current Redis pool connection gauges.
+func setRedisPoolConnectionGauges(poolName string, redisStats *redis.PoolStats) {
+	stats.GetMetrics().GetRedisTotalConns().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.TotalConns))
+	stats.GetMetrics().GetRedisIdleConns().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.IdleConns))
+	stats.GetMetrics().GetRedisStaleConns().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.StaleConns))
 }

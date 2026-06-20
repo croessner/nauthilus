@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 	"time"
 
@@ -31,12 +32,15 @@ import (
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // DNSManager manages DNS operations for Lua.
 type DNSManager struct {
 	*BaseManager
 }
+
+type dnsStringLookupFunc func(context.Context, string) ([]string, error)
 
 // NewDNSManager creates a new DNSManager.
 func NewDNSManager(ctx context.Context, cfg config.File, logger *slog.Logger) *DNSManager {
@@ -82,183 +86,195 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 
 	switch kind {
 	case "A", luaDNSRecordAAAA:
-		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
-			attribute.String("rpc.system", "dns"),
-			attribute.String("peer.service", "dns"),
-			attribute.String("dns.question.name", domain),
-			attribute.String("dns.question.type", kind),
-		)
-
-		host, port, ok := util.DNSResolverPeer(cfg)
-		if ok {
-			tsp.SetAttributes(
-				attribute.String("peer.hostname", host),
-				attribute.Int("peer.port", port),
-			)
-		}
-
-		ips, err := resolver.LookupIP(tctx, "ip", domain)
-		if err != nil {
-			tsp.RecordError(err)
-			tsp.End()
-
-			return nil, err
-		}
-
-		tbl := L.NewTable()
-
-		for _, ip := range ips {
-			if (kind == "A" && ip.To4() != nil) || (kind == "AAAA" && ip.To4() == nil) {
-				tbl.Append(lua.LString(ip.String()))
-			}
-		}
-
-		tsp.SetAttributes(attribute.Int("dns.answer.count", tbl.Len()))
-		tsp.End()
-
-		return tbl, nil
+		return lookupDNSIPRecords(ctxTimeout, cfg, L, domain, kind, resolver)
 	case "MX":
-		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
-			attribute.String("rpc.system", "dns"),
-			semconv.PeerService("dns"),
-			attribute.String("dns.question.name", domain),
-			attribute.String("dns.question.type", "MX"),
-		)
-
-		mxs, err := resolver.LookupMX(tctx, domain)
-		if err != nil {
-			tsp.RecordError(err)
-			tsp.End()
-
-			return nil, err
-		}
-
-		tbl := L.NewTable()
-
-		for _, mx := range mxs {
-			rec := L.NewTable()
-			rec.RawSetString("host", lua.LString(mx.Host))
-			rec.RawSetString("pref", lua.LNumber(mx.Pref))
-			tbl.Append(rec)
-		}
-
-		tsp.SetAttributes(attribute.Int("dns.answer.count", tbl.Len()))
-		tsp.End()
-
-		return tbl, nil
+		return lookupDNSMXRecords(ctxTimeout, L, domain, resolver)
 	case "NS":
-		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
-			attribute.String("rpc.system", "dns"),
-			semconv.PeerService("dns"),
-			attribute.String("dns.question.name", domain),
-			attribute.String("dns.question.type", "NS"),
-		)
-
-		nss, err := resolver.LookupNS(tctx, domain)
-		if err != nil {
-			tsp.RecordError(err)
-			tsp.End()
-
-			return nil, err
-		}
-
-		tbl := L.NewTable()
-
-		for _, ns := range nss {
-			tbl.Append(lua.LString(ns.Host))
-		}
-
-		tsp.SetAttributes(attribute.Int("dns.answer.count", tbl.Len()))
-		tsp.End()
-
-		return tbl, nil
+		return lookupDNSNSRecords(ctxTimeout, L, domain, resolver)
 	case "TXT":
-		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
-			attribute.String("rpc.system", "dns"),
-			semconv.PeerService("dns"),
-			attribute.String("dns.question.name", domain),
-			attribute.String("dns.question.type", "TXT"),
-		)
-
-		txts, err := resolver.LookupTXT(tctx, domain)
-		if err != nil {
-			tsp.RecordError(err)
-			tsp.End()
-
-			return nil, err
-		}
-
-		tbl := L.NewTable()
-
-		for _, txt := range txts {
-			tbl.Append(lua.LString(txt))
-		}
-
-		tsp.SetAttributes(attribute.Int("dns.answer.count", tbl.Len()))
-		tsp.End()
-
-		return tbl, nil
+		return lookupDNSStringRecords(ctxTimeout, L, domain, "TXT", resolver.LookupTXT)
 	case "CNAME":
-		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
-			attribute.String("rpc.system", "dns"),
-			semconv.PeerService("dns"),
-			attribute.String("dns.question.name", domain),
-			attribute.String("dns.question.type", "CNAME"),
-		)
-
-		cname, err := resolver.LookupCNAME(tctx, domain)
-		if err != nil {
-			tsp.RecordError(err)
-			tsp.End()
-
-			return nil, err
-		}
-
-		tsp.SetAttributes(attribute.Int("dns.answer.count", func() int {
-			if cname != "" {
-				return 1
-			}
-
-			return 0
-		}()))
-		tsp.End()
-
-		return lua.LString(cname), nil
+		return lookupDNSCNAMERecord(ctxTimeout, domain, resolver)
 	case "PTR":
-		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
-			attribute.String("rpc.system", "dns"),
-			semconv.PeerService("dns"),
-			attribute.String("dns.question.name", domain),
-			attribute.String("dns.question.type", "PTR"),
-		)
-
-		ptrs, err := resolver.LookupAddr(tctx, domain)
-		if err != nil {
-			tsp.RecordError(err)
-			tsp.End()
-
-			return nil, err
-		}
-
-		tbl := L.NewTable()
-
-		for _, ptr := range ptrs {
-			tbl.Append(lua.LString(ptr))
-		}
-
-		tsp.SetAttributes(attribute.Int("dns.answer.count", tbl.Len()))
-		tsp.End()
-
-		return tbl, nil
+		return lookupDNSStringRecords(ctxTimeout, L, domain, "PTR", resolver.LookupAddr)
 	default:
 		return nil, fmt.Errorf("unsupported record type: %s", kind)
 	}
+}
+
+// lookupDNSIPRecords resolves A or AAAA records and filters the IP family.
+func lookupDNSIPRecords(
+	ctx context.Context,
+	cfg config.File,
+	L *lua.LState,
+	domain string,
+	recordType string,
+	resolver *net.Resolver,
+) (lua.LValue, error) {
+	tctx, tsp := startDNSLookupTrace(ctx, cfg, domain, recordType, true)
+
+	ips, err := resolver.LookupIP(tctx, "ip", domain)
+	if err != nil {
+		tsp.RecordError(err)
+		tsp.End()
+
+		return nil, err
+	}
+
+	tbl := L.NewTable()
+
+	for _, ip := range ips {
+		if dnsIPMatchesRecordType(ip, recordType) {
+			tbl.Append(lua.LString(ip.String()))
+		}
+	}
+
+	finishDNSLookupTrace(tsp, tbl.Len())
+
+	return tbl, nil
+}
+
+// dnsIPMatchesRecordType reports whether an IP belongs to the requested record family.
+func dnsIPMatchesRecordType(ip net.IP, recordType string) bool {
+	return (recordType == "A" && ip.To4() != nil) || (recordType == luaDNSRecordAAAA && ip.To4() == nil)
+}
+
+// lookupDNSMXRecords resolves MX records into Lua tables.
+func lookupDNSMXRecords(ctx context.Context, L *lua.LState, domain string, resolver *net.Resolver) (lua.LValue, error) {
+	tctx, tsp := startDNSLookupTrace(ctx, nil, domain, "MX", false)
+
+	mxs, err := resolver.LookupMX(tctx, domain)
+	if err != nil {
+		tsp.RecordError(err)
+		tsp.End()
+
+		return nil, err
+	}
+
+	tbl := L.NewTable()
+	for _, mx := range mxs {
+		rec := L.NewTable()
+		rec.RawSetString("host", lua.LString(mx.Host))
+		rec.RawSetString("pref", lua.LNumber(mx.Pref))
+		tbl.Append(rec)
+	}
+
+	finishDNSLookupTrace(tsp, tbl.Len())
+
+	return tbl, nil
+}
+
+// lookupDNSNSRecords resolves NS records into a Lua table.
+func lookupDNSNSRecords(ctx context.Context, L *lua.LState, domain string, resolver *net.Resolver) (lua.LValue, error) {
+	tctx, tsp := startDNSLookupTrace(ctx, nil, domain, "NS", false)
+
+	nss, err := resolver.LookupNS(tctx, domain)
+	if err != nil {
+		tsp.RecordError(err)
+		tsp.End()
+
+		return nil, err
+	}
+
+	tbl := L.NewTable()
+	for _, ns := range nss {
+		tbl.Append(lua.LString(ns.Host))
+	}
+
+	finishDNSLookupTrace(tsp, tbl.Len())
+
+	return tbl, nil
+}
+
+// lookupDNSCNAMERecord resolves a CNAME record into a Lua string.
+func lookupDNSCNAMERecord(ctx context.Context, domain string, resolver *net.Resolver) (lua.LValue, error) {
+	tctx, tsp := startDNSLookupTrace(ctx, nil, domain, "CNAME", false)
+
+	cname, err := resolver.LookupCNAME(tctx, domain)
+	if err != nil {
+		tsp.RecordError(err)
+		tsp.End()
+
+		return nil, err
+	}
+
+	finishDNSLookupTrace(tsp, dnsCNAMEAnswerCount(cname))
+
+	return lua.LString(cname), nil
+}
+
+// dnsCNAMEAnswerCount returns the trace answer count for a CNAME response.
+func dnsCNAMEAnswerCount(cname string) int {
+	if cname != "" {
+		return 1
+	}
+
+	return 0
+}
+
+// lookupDNSStringRecords traces DNS lookups that return a plain string slice.
+func lookupDNSStringRecords(
+	ctx context.Context,
+	L *lua.LState,
+	domain string,
+	recordType string,
+	lookup dnsStringLookupFunc,
+) (lua.LValue, error) {
+	tctx, tsp := startDNSLookupTrace(ctx, nil, domain, recordType, false)
+
+	records, err := lookup(tctx, domain)
+	if err != nil {
+		tsp.RecordError(err)
+		tsp.End()
+
+		return nil, err
+	}
+
+	tbl := L.NewTable()
+
+	for _, record := range records {
+		tbl.Append(lua.LString(record))
+	}
+
+	finishDNSLookupTrace(tsp, tbl.Len())
+
+	return tbl, nil
+}
+
+// startDNSLookupTrace starts a tracing span for a DNS lookup.
+func startDNSLookupTrace(ctx context.Context, cfg config.File, domain, recordType string, includePeer bool) (context.Context, trace.Span) {
+	tr := monittrace.New("nauthilus/dns")
+	tctx, tsp := tr.StartClient(ctx, "dns.lookup",
+		attribute.String("rpc.system", "dns"),
+		semconv.PeerService("dns"),
+		attribute.String("dns.question.name", domain),
+		attribute.String("dns.question.type", recordType),
+	)
+
+	if includePeer {
+		setDNSResolverPeerAttributes(tsp, cfg)
+	}
+
+	return tctx, tsp
+}
+
+// setDNSResolverPeerAttributes adds resolver peer attributes when a custom resolver is configured.
+func setDNSResolverPeerAttributes(tsp trace.Span, cfg config.File) {
+	host, port, ok := util.DNSResolverPeer(cfg)
+	if !ok {
+		return
+	}
+
+	tsp.SetAttributes(
+		attribute.String("peer.hostname", host),
+		attribute.Int("peer.port", port),
+	)
+}
+
+// finishDNSLookupTrace records the DNS answer count and ends the span.
+func finishDNSLookupTrace(tsp trace.Span, answerCount int) {
+	tsp.SetAttributes(attribute.Int("dns.answer.count", answerCount))
+	tsp.End()
 }
 
 // LoaderModDNS initializes and loads the DNS module for Lua, providing functions for DNS lookups and managing records.

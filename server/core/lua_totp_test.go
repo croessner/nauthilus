@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -108,15 +109,9 @@ func TestLuaAddTOTPSecret(t *testing.T) {
 	lm, auth := setupLuaTOTPTest(t)
 
 	go func() {
-		req := priorityqueue.LuaQueue.Pop("test")
-		if req != nil {
-			assert.Equal(t, definitions.LuaCommandAddMFAValue, req.Command)
+		assertLuaTOTPQueueRequest(t, definitions.LuaCommandAddMFAValue, func(req *bktype.LuaRequest) {
 			assert.Equal(t, "secret", req.TOTPSecret)
-
-			if req.LuaReplyChan != nil {
-				req.LuaReplyChan <- &lualib.LuaBackendResult{}
-			}
-		}
+		})
 	}()
 
 	err := lm.AddTOTPSecret(auth, mfa.NewTOTPSecret("secret"))
@@ -127,14 +122,7 @@ func TestLuaDeleteTOTPSecret(t *testing.T) {
 	lm, auth := setupLuaTOTPTest(t)
 
 	go func() {
-		req := priorityqueue.LuaQueue.Pop("test")
-		if req != nil {
-			assert.Equal(t, definitions.LuaCommandDeleteMFAValue, req.Command)
-
-			if req.LuaReplyChan != nil {
-				req.LuaReplyChan <- &lualib.LuaBackendResult{}
-			}
-		}
+		assertLuaTOTPQueueRequest(t, definitions.LuaCommandDeleteMFAValue, nil)
 	}()
 
 	err := lm.DeleteTOTPSecret(auth)
@@ -147,16 +135,10 @@ func TestLuaAddTOTPRecoveryCodes(t *testing.T) {
 	recovery := mfa.NewTOTPRecovery([]string{"code1", "code2"})
 
 	go func() {
-		req := priorityqueue.LuaQueue.Pop("test")
-		if req != nil {
-			assert.Equal(t, definitions.LuaCommandAddTOTPRecoveryCodes, req.Command)
+		assertLuaTOTPQueueRequest(t, definitions.LuaCommandAddTOTPRecoveryCodes, func(req *bktype.LuaRequest) {
 			assert.NotNil(t, req.CommonRequest)
 			assert.Equal(t, []string{"code1", "code2"}, req.TOTPRecoveryCodes)
-
-			if req.LuaReplyChan != nil {
-				req.LuaReplyChan <- &lualib.LuaBackendResult{}
-			}
-		}
+		})
 	}()
 
 	err := lm.AddTOTPRecoveryCodes(auth, recovery)
@@ -167,16 +149,29 @@ func TestLuaDeleteTOTPRecoveryCodes(t *testing.T) {
 	lm, auth := setupLuaTOTPTest(t)
 
 	go func() {
-		req := priorityqueue.LuaQueue.Pop("test")
-		if req != nil {
-			assert.Equal(t, definitions.LuaCommandDeleteTOTPRecoveryCodes, req.Command)
-
-			if req.LuaReplyChan != nil {
-				req.LuaReplyChan <- &lualib.LuaBackendResult{}
-			}
-		}
+		assertLuaTOTPQueueRequest(t, definitions.LuaCommandDeleteTOTPRecoveryCodes, nil)
 	}()
 
 	err := lm.DeleteTOTPRecoveryCodes(auth)
 	assert.NoError(t, err)
+}
+
+// assertLuaTOTPQueueRequest verifies and acknowledges one Lua MFA queue request.
+func assertLuaTOTPQueueRequest(t *testing.T, command definitions.LuaCommand, assertRequest func(*bktype.LuaRequest)) {
+	t.Helper()
+
+	req := priorityqueue.LuaQueue.Pop("test")
+	if req == nil {
+		return
+	}
+
+	assert.Equal(t, command, req.Command)
+
+	if assertRequest != nil {
+		assertRequest(req)
+	}
+
+	if req.LuaReplyChan != nil {
+		req.LuaReplyChan <- &lualib.LuaBackendResult{}
+	}
 }

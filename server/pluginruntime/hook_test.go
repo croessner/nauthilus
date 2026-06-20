@@ -129,6 +129,17 @@ func TestRunner_ServeHookPanicBoundaryIsSecretSafe(t *testing.T) {
 }
 
 func TestNewHookRequestFromHTTPRequestRedactsAndCopiesValues(t *testing.T) {
+	req := newHookRequestSnapshotTestHTTPRequest()
+	body := []byte(testRuntimeHookBody)
+	request := NewHookRequestFromHTTPRequest(req, body, hookRequestSnapshotTestMetadata(), WithSnapshotSecretHeaders("X-Secret-Header"))
+
+	assertHookRequestSnapshot(t, request)
+	assertHookRequestImmutableCopies(t, request, req, body)
+	assertHookRequestCallerMetadata(t, request)
+}
+
+// newHookRequestSnapshotTestHTTPRequest builds the source HTTP request for hook snapshot tests.
+func newHookRequestSnapshotTestHTTPRequest() *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "https://nauthilus.example.test/api/v1/custom/webhook?tag=a&tag=b", strings.NewReader("ignored"))
 	req.Header.Set(requestHeaderAuthorization, "Bearer secret")
 	req.Header.Set(requestHeaderCookie, "session=secret")
@@ -136,8 +147,12 @@ func TestNewHookRequestFromHTTPRequestRedactsAndCopiesValues(t *testing.T) {
 	req.Header.Set("X-Secret-Header", "secret")
 	req.RemoteAddr = "192.0.2.10:34567"
 
-	body := []byte(testRuntimeHookBody)
-	request := NewHookRequestFromHTTPRequest(req, body, HookRequestMetadata{
+	return req
+}
+
+// hookRequestSnapshotTestMetadata returns caller metadata for hook snapshot tests.
+func hookRequestSnapshotTestMetadata() HookRequestMetadata {
+	return HookRequestMetadata{
 		Session:                  "guid-test",
 		ClientIP:                 "203.0.113.5",
 		ClientPort:               "12345",
@@ -178,9 +193,12 @@ func TestNewHookRequestFromHTTPRequestRedactsAndCopiesValues(t *testing.T) {
 			MFACompleted:            true,
 			MFAMethod:               "totp",
 		},
-	}, WithSnapshotSecretHeaders("X-Secret-Header"))
+	}
+}
 
-	assertHookRequestSnapshot(t, request)
+// assertHookRequestImmutableCopies verifies body, header, and query clone boundaries.
+func assertHookRequestImmutableCopies(t *testing.T, request pluginapi.HookRequest, req *http.Request, body []byte) {
+	t.Helper()
 
 	body[0] = 'X'
 
@@ -198,10 +216,26 @@ func TestNewHookRequestFromHTTPRequestRedactsAndCopiesValues(t *testing.T) {
 	if request.Query["tag"][0] != "a" {
 		t.Fatalf("query changed through source mutation: %#v", request.Query)
 	}
+}
+
+// assertHookRequestCallerMetadata verifies caller, runtime, diagnostics, and IDP metadata.
+func assertHookRequestCallerMetadata(t *testing.T, request pluginapi.HookRequest) {
+	t.Helper()
 
 	if !request.Snapshot.Runtime.Authenticated || request.Snapshot.OIDCCID != testRuntimeHookClientID {
 		t.Fatalf("snapshot caller metadata = %#v, want authenticated client-app", request.Snapshot)
 	}
+
+	assertHookRequestTransportMetadata(t, request)
+	assertHookRequestIdentityMetadata(t, request)
+	assertHookRequestRuntimeFlags(t, request)
+	assertHookRequestDiagnostics(t, request)
+	assertHookRequestIDPMetadata(t, request)
+}
+
+// assertHookRequestTransportMetadata verifies copied transport and attempt metadata.
+func assertHookRequestTransportMetadata(t *testing.T, request pluginapi.HookRequest) {
+	t.Helper()
 
 	if request.Snapshot.ClientNet != requestSnapshotClientNet ||
 		request.Snapshot.ClientID != requestSnapshotHookClientID ||
@@ -210,12 +244,22 @@ func TestNewHookRequestFromHTTPRequestRedactsAndCopiesValues(t *testing.T) {
 		request.Snapshot.AuthLoginAttempt != 5 {
 		t.Fatalf("snapshot transport/attempt metadata = %#v, want hook parity values", request.Snapshot)
 	}
+}
+
+// assertHookRequestIdentityMetadata verifies copied identity metadata.
+func assertHookRequestIdentityMetadata(t *testing.T, request pluginapi.HookRequest) {
+	t.Helper()
 
 	if request.Snapshot.AccountField != backendTestMailAttr ||
 		request.Snapshot.UniqueUserID != requestSnapshotHookUniqueUserID ||
 		request.Snapshot.DisplayName != requestSnapshotHookDisplayName {
 		t.Fatalf("snapshot identity metadata = %#v, want hook identity values", request.Snapshot)
 	}
+}
+
+// assertHookRequestRuntimeFlags verifies copied runtime flags.
+func assertHookRequestRuntimeFlags(t *testing.T, request pluginapi.HookRequest) {
+	t.Helper()
 
 	if !request.Snapshot.Runtime.NoAuth ||
 		!request.Snapshot.Runtime.UserFound ||
@@ -225,6 +269,11 @@ func TestNewHookRequestFromHTTPRequestRedactsAndCopiesValues(t *testing.T) {
 		!request.Snapshot.Runtime.SubjectStageExpected {
 		t.Fatalf("snapshot runtime flags = %#v, want hook parity flags", request.Snapshot.Runtime)
 	}
+}
+
+// assertHookRequestDiagnostics verifies copied diagnostic metadata.
+func assertHookRequestDiagnostics(t *testing.T, request pluginapi.HookRequest) {
+	t.Helper()
 
 	if request.Snapshot.Diagnostics.BruteForceName != requestSnapshotBruteForceName ||
 		request.Snapshot.Diagnostics.BruteForceCounter != 3 ||
@@ -232,6 +281,11 @@ func TestNewHookRequestFromHTTPRequestRedactsAndCopiesValues(t *testing.T) {
 		request.Snapshot.Diagnostics.HTTPStatus != http.StatusAccepted {
 		t.Fatalf("snapshot diagnostics = %#v, want hook diagnostics", request.Snapshot.Diagnostics)
 	}
+}
+
+// assertHookRequestIDPMetadata verifies copied IDP metadata.
+func assertHookRequestIDPMetadata(t *testing.T, request pluginapi.HookRequest) {
+	t.Helper()
 
 	if request.Snapshot.IDP.ClientName != requestSnapshotOIDCClientName ||
 		!request.Snapshot.IDP.MFACompleted ||

@@ -31,6 +31,27 @@ const luaRuntimeContextKey = "__NAUTH_REQ_RUNTIME_CONTEXT"
 func TestConnectionManager(t *testing.T) {
 	ctx := context.Background()
 
+	setupConnectionManagerTest()
+
+	t.Run("Register and GetCount", func(t *testing.T) {
+		assertRegisterAndGetCount(ctx, t)
+	})
+
+	t.Run("Register existing", func(t *testing.T) {
+		assertRegisterExistingTarget(ctx, t)
+	})
+
+	t.Run("GetCount non-existing", func(t *testing.T) {
+		assertMissingConnectionCount(t)
+	})
+
+	t.Run("Lua Register and GetCount", func(t *testing.T) {
+		assertLuaRegisterAndGetCount(ctx, t)
+	})
+}
+
+// setupConnectionManagerTest configures a fresh manager test environment.
+func setupConnectionManagerTest() {
 	testFile := &config.FileSettings{
 		Server: &config.ServerSection{
 			DNS: config.DNS{
@@ -41,69 +62,86 @@ func TestConnectionManager(t *testing.T) {
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	manager = GetConnectionManager()
+}
 
-	t.Run("Register and GetCount", func(t *testing.T) {
-		manager.Register(ctx, config.GetFile(), "127.0.0.1:8000", "local", "test")
+// assertRegisterAndGetCount verifies that a registered target is visible.
+func assertRegisterAndGetCount(ctx context.Context, t *testing.T) {
+	t.Helper()
 
-		_, ok := manager.GetCount("127.0.0.1:8000")
-		if !ok {
-			t.Errorf("Failed to register and retrieve target")
-		}
-	})
+	manager.Register(ctx, config.GetFile(), "127.0.0.1:8000", "local", "test")
 
-	t.Run("Register existing", func(t *testing.T) {
-		manager.Register(ctx, config.GetFile(), "127.0.0.1:8000", "local", "test")
+	_, ok := manager.GetCount("127.0.0.1:8000")
+	if !ok {
+		t.Errorf("Failed to register and retrieve target")
+	}
+}
 
-		target := "127.0.0.1:8000"
+// assertRegisterExistingTarget verifies that duplicate registrations keep the original counter.
+func assertRegisterExistingTarget(ctx context.Context, t *testing.T) {
+	t.Helper()
 
-		manager.Register(ctx, config.GetFile(), target, "remote", "test")
+	manager.Register(ctx, config.GetFile(), "127.0.0.1:8000", "local", "test")
 
-		count, ok := manager.GetCount(target)
-		if !ok || count != 0 {
-			t.Errorf("Failed to prevent duplicate registration")
-		}
-	})
+	target := "127.0.0.1:8000"
 
-	t.Run("GetCount non-existing", func(t *testing.T) {
-		_, ok := manager.GetCount("non-existing")
-		if ok {
-			t.Errorf("Failed to return false for non-existing target")
-		}
-	})
+	manager.Register(ctx, config.GetFile(), target, "remote", "test")
 
-	t.Run("Lua Register and GetCount", func(t *testing.T) {
-		L := lua.NewState()
+	count, ok := manager.GetCount(target)
+	if !ok || count != 0 {
+		t.Errorf("Failed to prevent duplicate registration")
+	}
+}
 
-		defer L.Close()
+// assertMissingConnectionCount verifies that unknown targets are absent.
+func assertMissingConnectionCount(t *testing.T) {
+	t.Helper()
 
-		reqEnv := L.NewTable()
-		L.SetGlobal(luaRequestEnvKey, reqEnv)
+	_, ok := manager.GetCount("non-existing")
+	if ok {
+		t.Errorf("Failed to return false for non-existing target")
+	}
+}
 
-		m := NewPsnetManager(ctx, config.GetFile(), nil)
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			"register": m.luaRegisterTarget,
-			"count":    m.luaCountOpenConnections,
-		})
+// assertLuaRegisterAndGetCount verifies the Lua-facing registration and count functions.
+func assertLuaRegisterAndGetCount(ctx context.Context, t *testing.T) {
+	t.Helper()
 
-		userData := L.NewUserData()
-		userData.Value = ctx
-		L.SetField(reqEnv, luaRuntimeContextKey, userData)
-		L.SetGlobal("register", mod.RawGetString("register"))
-		L.SetGlobal("count", mod.RawGetString("count"))
+	L := newConnectionManagerLuaState(ctx)
+	defer L.Close()
 
-		if err := L.DoString(`register("127.0.0.1:9000", "remote", "test")`); err != nil {
-			t.Errorf("Lua register failed: %v", err)
-		}
+	if err := L.DoString(`register("127.0.0.1:9000", "remote", "test")`); err != nil {
+		t.Errorf("Lua register failed: %v", err)
+	}
 
-		if err := L.DoString(`
+	if err := L.DoString(`
 		    count = count("127.0.0.1:9000")
 		    if type(count) ~= 'number' then
 			  error('Count is not a number')
 		    end
     `); err != nil {
-			t.Errorf("Lua count failed: %v", err)
-		}
+		t.Errorf("Lua count failed: %v", err)
+	}
+}
+
+// newConnectionManagerLuaState exposes connection manager functions to a Lua state.
+func newConnectionManagerLuaState(ctx context.Context) *lua.LState {
+	L := lua.NewState()
+	reqEnv := L.NewTable()
+	L.SetGlobal(luaRequestEnvKey, reqEnv)
+
+	m := NewPsnetManager(ctx, config.GetFile(), nil)
+	mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+		"register": m.luaRegisterTarget,
+		"count":    m.luaCountOpenConnections,
 	})
+
+	userData := L.NewUserData()
+	userData.Value = ctx
+	L.SetField(reqEnv, luaRuntimeContextKey, userData)
+	L.SetGlobal("register", mod.RawGetString("register"))
+	L.SetGlobal("count", mod.RawGetString("count"))
+
+	return L
 }
 
 func TestStartTicker(t *testing.T) {

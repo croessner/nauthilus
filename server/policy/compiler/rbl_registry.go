@@ -17,7 +17,6 @@ package compiler
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/policy"
@@ -39,30 +38,14 @@ func registerGeneratedRBLListAttributes(
 		return nil
 	}
 
-	seen := make(map[string]string)
-
-	for index, rbl := range rblSection.GetLists() {
-		name := strings.TrimSpace(rbl.Name)
-		if name == "" {
-			return configPathError(fmt.Sprintf("%s[%d].name", rblListConfigPath, index), "must not be empty")
-		}
-
-		identifier := policy.IdentifierSegment(name)
-		if previous, exists := seen[identifier]; exists {
-			return configPathError(
-				fmt.Sprintf("%s[%d].name", rblListConfigPath, index),
-				fmt.Sprintf("normalizes to policy identifier %q already used by RBL list %q", identifier, previous),
-			)
-		}
-
-		seen[identifier] = name
-
-		if err := registerGeneratedAttributes(registry, generatedRBLListAttributes(identifier, name)); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return registerGeneratedNamedAttributes(
+		registry,
+		rblSection.GetLists(),
+		rblListConfigPath,
+		"RBL list",
+		func(rbl config.RBL) string { return rbl.Name },
+		generatedRBLListAttributes,
+	)
 }
 
 func generatedRBLListAttributes(identifier string, name string) []policyregistry.AttributeDefinition {

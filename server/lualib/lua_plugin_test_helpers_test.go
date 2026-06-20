@@ -44,3 +44,35 @@ func preloadFixedTimeModule(L *lua.LState, formatted string) {
 		return 1
 	})
 }
+
+// preloadStringFunctionModule installs a module exposing one string-returning function.
+func preloadStringFunctionModule(L *lua.LState, moduleName string, functionName string, value string) {
+	L.PreloadModule(moduleName, func(L *lua.LState) int {
+		mod := L.NewTable()
+		mod.RawSetString(functionName, L.NewFunction(func(L *lua.LState) int {
+			L.Push(lua.LString(value))
+
+			return 1
+		}))
+		L.Push(mod)
+
+		return 1
+	})
+}
+
+// requireLuaTableGlobal returns a global Lua table or fails the current test.
+func requireLuaTableGlobal(t luaTestFailer, L *lua.LState, name string) *lua.LTable {
+	value := L.GetGlobal(name)
+
+	table, ok := value.(*lua.LTable)
+	if !ok {
+		t.Fatalf("expected %s table, got %v", name, value.Type())
+	}
+
+	return table
+}
+
+// luaTestFailer captures the subset of testing.TB used by Lua helper assertions.
+type luaTestFailer interface {
+	Fatalf(format string, args ...any)
+}

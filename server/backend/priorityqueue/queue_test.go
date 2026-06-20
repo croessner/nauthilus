@@ -27,82 +27,66 @@ import (
 )
 
 func TestLDAPQueueRouting(t *testing.T) {
-	q := NewLDAPRequestQueue(nil)
+	assertLDAPQueueRouting(t, NewLDAPRequestQueue(nil), newLDAPRoutingRequest("default"), newLDAPRoutingRequest("mail"), "request")
+}
+
+func TestLDAPAuthQueueRouting(t *testing.T) {
+	assertLDAPQueueRouting(t, NewLDAPAuthRequestQueue(nil), newLDAPAuthRoutingRequest("default"), newLDAPAuthRoutingRequest("mail"), "auth request")
+}
+
+type ldapRoutingQueue[T any] interface {
+	AddPoolName(string)
+	Push(*T, int)
+	Pop(string) *T
+}
+
+// newLDAPRoutingRequest creates a lookup request for queue routing tests.
+func newLDAPRoutingRequest(poolName string) *bktype.LDAPRequest {
+	return &bktype.LDAPRequest{PoolName: poolName, LDAPReplyChan: make(chan *bktype.LDAPReply, 1), HTTPClientContext: context.Background()}
+}
+
+// newLDAPAuthRoutingRequest creates an auth request for queue routing tests.
+func newLDAPAuthRoutingRequest(poolName string) *bktype.LDAPAuthRequest {
+	return &bktype.LDAPAuthRequest{PoolName: poolName, LDAPReplyChan: make(chan *bktype.LDAPReply, 1), HTTPClientContext: context.Background()}
+}
+
+// assertLDAPQueueRouting verifies that an LDAP queue pops requests from the addressed pool only.
+func assertLDAPQueueRouting[T any](t *testing.T, q ldapRoutingQueue[T], reqDefault *T, reqMail *T, label string) {
+	t.Helper()
+
 	q.AddPoolName("default")
 	q.AddPoolName("mail")
-
-	ctx := context.Background()
-
-	reqDefault := &bktype.LDAPRequest{PoolName: "default", LDAPReplyChan: make(chan *bktype.LDAPReply, 1), HTTPClientContext: ctx}
-	reqMail := &bktype.LDAPRequest{PoolName: "mail", LDAPReplyChan: make(chan *bktype.LDAPReply, 1), HTTPClientContext: ctx}
 
 	// Push in reverse order to ensure true routing, not FIFO across pools
 	q.Push(reqMail, PriorityLow)
 	q.Push(reqDefault, PriorityHigh)
 
-	// Pop for default should never return the mail request
-	gotDefaultCh := make(chan *bktype.LDAPRequest, 1)
-	go func() { gotDefaultCh <- q.Pop("default") }()
-
-	select {
-	case got := <-gotDefaultCh:
-		if got != reqDefault {
-			t.Fatalf("expected default request, got %+v", got)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for default pop")
+	gotDefault := popLDAPRoutingRequest(t, q, "default", "timeout waiting for default "+label+" pop")
+	if gotDefault != reqDefault {
+		t.Fatalf("expected default %s, got %+v", label, gotDefault)
 	}
 
-	// Pop for mail should now return the mail request
-	gotMailCh := make(chan *bktype.LDAPRequest, 1)
-	go func() { gotMailCh <- q.Pop("mail") }()
-
-	select {
-	case got := <-gotMailCh:
-		if got != reqMail {
-			t.Fatalf("expected mail request, got %+v", got)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for mail pop")
+	gotMail := popLDAPRoutingRequest(t, q, "mail", "timeout waiting for mail "+label+" pop")
+	if gotMail != reqMail {
+		t.Fatalf("expected mail %s, got %+v", label, gotMail)
 	}
 }
 
-func TestLDAPAuthQueueRouting(t *testing.T) {
-	q := NewLDAPAuthRequestQueue(nil)
-	q.AddPoolName("default")
-	q.AddPoolName("mail")
+// popLDAPRoutingRequest waits for one routed LDAP queue pop result.
+func popLDAPRoutingRequest[T any](t *testing.T, q ldapRoutingQueue[T], poolName string, timeoutMessage string) *T {
+	t.Helper()
 
-	ctx := context.Background()
-
-	reqDefault := &bktype.LDAPAuthRequest{PoolName: "default", LDAPReplyChan: make(chan *bktype.LDAPReply, 1), HTTPClientContext: ctx}
-	reqMail := &bktype.LDAPAuthRequest{PoolName: "mail", LDAPReplyChan: make(chan *bktype.LDAPReply, 1), HTTPClientContext: ctx}
-
-	q.Push(reqMail, PriorityLow)
-	q.Push(reqDefault, PriorityHigh)
-
-	gotDefaultCh := make(chan *bktype.LDAPAuthRequest, 1)
-	go func() { gotDefaultCh <- q.Pop("default") }()
+	gotCh := make(chan *T, 1)
+	go func() { gotCh <- q.Pop(poolName) }()
 
 	select {
-	case got := <-gotDefaultCh:
-		if got != reqDefault {
-			t.Fatalf("expected default auth request, got %+v", got)
-		}
+	case got := <-gotCh:
+		return got
 	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for default auth pop")
+		t.Fatal(timeoutMessage)
 	}
 
-	gotMailCh := make(chan *bktype.LDAPAuthRequest, 1)
-	go func() { gotMailCh <- q.Pop("mail") }()
-
-	select {
-	case got := <-gotMailCh:
-		if got != reqMail {
-			t.Fatalf("expected mail auth request, got %+v", got)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for mail auth pop")
-	}
+	return nil
 }
 
 func TestLuaQueueRouting(t *testing.T) {

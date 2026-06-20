@@ -1108,8 +1108,14 @@ func (a *AuthState) String() string {
 // collectFields returns the ordered list of fields for string representation.
 // Fields that should never appear (e.g. GUID) are excluded here.
 func (a *AuthState) collectFields() []authStateField {
+	fields := a.requestFields()
+
+	return append(fields, a.runtimeFields()...)
+}
+
+// requestFields returns request fields for AuthState string rendering.
+func (a *AuthState) requestFields() []authStateField {
 	return []authStateField{
-		// --- Request ---
 		{"Protocol", a.Request.Protocol},
 		{"Method", a.Request.Method},
 		{"Username", a.Request.Username},
@@ -1142,7 +1148,12 @@ func (a *AuthState) collectFields() []authStateField {
 		{"XPort", a.Request.XPort},
 		{"NoAuth", a.Request.NoAuth},
 		{"ListAccounts", a.Request.ListAccounts},
-		// --- Runtime ---
+	}
+}
+
+// runtimeFields returns runtime and security fields for AuthState string rendering.
+func (a *AuthState) runtimeFields() []authStateField {
+	return []authStateField{
 		{"StatusMessage", a.Runtime.StatusMessage},
 		{authStateFieldAccountField, a.Runtime.AccountField},
 		{"AccountName", a.Runtime.AccountName},
@@ -1663,17 +1674,9 @@ func (a *AuthState) GetGroups() []string {
 		return nil
 	}
 
-	a.Groups.groupsMu.RLock()
-	defer a.Groups.groupsMu.RUnlock()
-
-	if len(a.Groups.Groups) == 0 {
-		return nil
-	}
-
-	out := make([]string, len(a.Groups.Groups))
-	copy(out, a.Groups.Groups)
-
-	return out
+	return a.copyResolvedGroupValues(func(groups *AuthGroups) []string {
+		return groups.Groups
+	})
 }
 
 // GetGroupDistinguishedNames returns a copy of resolved group distinguished names.
@@ -1682,15 +1685,23 @@ func (a *AuthState) GetGroupDistinguishedNames() []string {
 		return nil
 	}
 
+	return a.copyResolvedGroupValues(func(groups *AuthGroups) []string {
+		return groups.GroupDistinguishedNames
+	})
+}
+
+// copyResolvedGroupValues returns a stable copy of one resolved group slice under the group lock.
+func (a *AuthState) copyResolvedGroupValues(selectValues func(*AuthGroups) []string) []string {
 	a.Groups.groupsMu.RLock()
 	defer a.Groups.groupsMu.RUnlock()
 
-	if len(a.Groups.GroupDistinguishedNames) == 0 {
+	values := selectValues(&a.Groups)
+	if len(values) == 0 {
 		return nil
 	}
 
-	out := make([]string, len(a.Groups.GroupDistinguishedNames))
-	copy(out, a.Groups.GroupDistinguishedNames)
+	out := make([]string, len(values))
+	copy(out, values)
 
 	return out
 }
@@ -2131,52 +2142,68 @@ func ProcessPassDBResult(ctx *gin.Context, passDBResult *PassDBResult, auth *Aut
 // It returns the updated PassDBResult struct.
 func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassDBResult, passDB *PassDBMap) {
 	if passDBResult.UserFound {
-		auth.Runtime.UserFound = true
-
-		auth.Runtime.SourcePassDBBackend = passDBResult.Backend
-
-		auth.Runtime.BackendName = passDBResult.BackendName
-		if !passDBResult.BackendRef.IsZero() {
-			auth.Runtime.RemoteBackendRef = passDBResult.BackendRef
-		}
-
-		if passDB != nil {
-			auth.Runtime.UsedPassDBBackend = passDB.backend
-		} else {
-			auth.Runtime.UsedPassDBBackend = passDBResult.Backend
-		}
+		auth.applyFoundPassDBRuntime(passDBResult, passDB)
 	}
 
+	auth.applyPassDBRuntimeFields(passDBResult)
+	auth.applyPassDBAttributes(ctx, passDBResult)
+	auth.syncAccountFromPassDBAttributes(ctx)
+}
+
+// applyFoundPassDBRuntime records backend identity for a found user.
+func (a *AuthState) applyFoundPassDBRuntime(passDBResult *PassDBResult, passDB *PassDBMap) {
+	a.Runtime.UserFound = true
+	a.Runtime.SourcePassDBBackend = passDBResult.Backend
+	a.Runtime.BackendName = passDBResult.BackendName
+
+	if !passDBResult.BackendRef.IsZero() {
+		a.Runtime.RemoteBackendRef = passDBResult.BackendRef
+	}
+
+	if passDB != nil {
+		a.Runtime.UsedPassDBBackend = passDB.backend
+
+		return
+	}
+
+	a.Runtime.UsedPassDBBackend = passDBResult.Backend
+}
+
+// applyPassDBRuntimeFields copies non-empty runtime fields from the backend result.
+func (a *AuthState) applyPassDBRuntimeFields(passDBResult *PassDBResult) {
 	if passDBResult.AccountField != "" {
-		auth.Runtime.AccountField = passDBResult.AccountField
+		a.Runtime.AccountField = passDBResult.AccountField
 	}
 
 	if passDBResult.Account != "" {
-		auth.Runtime.AccountName = passDBResult.Account
+		a.Runtime.AccountName = passDBResult.Account
 	}
 
 	if passDBResult.TOTPSecretField != "" {
-		auth.Runtime.TOTPSecretField = passDBResult.TOTPSecretField
+		a.Runtime.TOTPSecretField = passDBResult.TOTPSecretField
 	}
 
 	if passDBResult.TOTPRecoveryField != "" {
-		auth.Runtime.TOTPRecoveryField = passDBResult.TOTPRecoveryField
+		a.Runtime.TOTPRecoveryField = passDBResult.TOTPRecoveryField
 	}
 
 	if passDBResult.UniqueUserIDField != "" {
-		auth.Runtime.UniqueUserIDField = passDBResult.UniqueUserIDField
+		a.Runtime.UniqueUserIDField = passDBResult.UniqueUserIDField
 	}
 
 	if passDBResult.DisplayNameField != "" {
-		auth.Runtime.DisplayNameField = passDBResult.DisplayNameField
+		a.Runtime.DisplayNameField = passDBResult.DisplayNameField
 	}
+}
 
+// applyPassDBAttributes installs backend attributes and request-scoped additional attributes.
+func (a *AuthState) applyPassDBAttributes(ctx *gin.Context, passDBResult *PassDBResult) {
 	if len(passDBResult.Attributes) > 0 {
-		auth.ReplaceAllAttributes(passDBResult.Attributes)
+		a.ReplaceAllAttributes(passDBResult.Attributes)
 	}
 
 	if passDBResult.UserFound {
-		auth.SetResolvedGroups(passDBResult.Groups, passDBResult.GroupDistinguishedNames)
+		a.SetResolvedGroups(passDBResult.Groups, passDBResult.GroupDistinguishedNames)
 	}
 
 	// Handle AdditionalAttributes if they exist in the PassDBResult
@@ -2184,73 +2211,115 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 		// Set AdditionalAttributes in the gin.Context
 		ctx.Set(definitions.CtxAdditionalAttributesKey, passDBResult.AdditionalAttributes)
 	}
+}
 
-	// After attributes were applied, derive the authoritative account directly from attributes
-	// and mirror it into the Gin context. Do not use GetAccount() here, because that could still
-	// prefer a preliminary context value set by earlier middleware. The attribute value must win.
-	if vals, ok := auth.GetAttribute(auth.Runtime.AccountField); ok {
-		// We expect a single value string at LDAPSingleValue
-		if acc, ok2 := vals[definitions.LDAPSingleValue].(string); ok2 && acc != "" {
-			// Update the request-scoped context value and log source
-			prev := ctx.GetString(definitions.CtxAccountKey)
-			ctx.Set(definitions.CtxAccountKey, acc)
-
-			util.DebugModuleWithCfg(
-				auth.Ctx(),
-				auth.deps.Cfg,
-				auth.deps.Logger,
-				definitions.DbgAccount,
-				definitions.LogKeyGUID, auth.Runtime.GUID,
-				definitions.LogKeyUsername, auth.Request.Username,
-				definitions.LogKeyMsg, "Set account from attributes",
-				"prev", prev,
-				"new", acc,
-				"source", "attribute",
-				"changed", prev != acc,
-			)
-
-			// Keep Redis nt:USER mapping in sync when attribute-derived account differs.
-			// Read the current mapping with a bounded read deadline.
-			dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(auth.Ctx(), auth.Cfg())
-			current, err := backend.LookupUserAccountFromRedis(dReadCtx, auth.Cfg(), auth.deps.Redis, auth.Request.Username, auth.Request.Protocol.Get(), auth.Request.OIDCCID)
-
-			cancelRead()
-
-			if err != nil {
-				level.Error(auth.Logger()).Log(
-					definitions.LogKeyGUID, auth.Runtime.GUID,
-					definitions.LogKeyMsg, "Failed to lookup user->account mapping in Redis",
-					definitions.LogKeyError, err,
-				)
-			} else if current == "" || current != acc {
-				// Update Redis mapping with a bounded write deadline.
-				defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-				dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(context.TODO(), auth.Cfg())
-				werr := backend.SetUserAccountMapping(dWriteCtx, auth.Cfg(), auth.deps.Redis, auth.Request.Username, auth.Request.Protocol.Get(), auth.Request.OIDCCID, acc)
-
-				cancelWrite()
-
-				if werr != nil {
-					level.Error(auth.Logger()).Log(
-						definitions.LogKeyGUID, auth.Runtime.GUID,
-						definitions.LogKeyMsg, "Failed to update user->account mapping in Redis",
-						definitions.LogKeyError, werr,
-					)
-				} else {
-					util.DebugModuleWithCfg(
-						auth.Ctx(),
-						auth.deps.Cfg, auth.deps.Logger, definitions.DbgAccount,
-						definitions.LogKeyGUID, auth.Runtime.GUID,
-						definitions.LogKeyUsername, auth.Request.Username,
-						definitions.LogKeyMsg, "Synchronized nt:USER mapping",
-						"account", acc,
-						"source", "redis-update",
-					)
-				}
-			}
-		}
+// syncAccountFromPassDBAttributes mirrors the authoritative account attribute into context and Redis.
+func (a *AuthState) syncAccountFromPassDBAttributes(ctx *gin.Context) {
+	account, ok := a.accountFromPassDBAttributes()
+	if !ok {
+		return
 	}
+
+	prev := ctx.GetString(definitions.CtxAccountKey)
+	ctx.Set(definitions.CtxAccountKey, account)
+	a.logAccountAttributeSource(prev, account)
+	a.syncUserAccountMapping(account)
+}
+
+// accountFromPassDBAttributes returns the single-valued account attribute when present.
+func (a *AuthState) accountFromPassDBAttributes() (string, bool) {
+	vals, ok := a.GetAttribute(a.Runtime.AccountField)
+	if !ok {
+		return "", false
+	}
+
+	account, ok := vals[definitions.LDAPSingleValue].(string)
+	if !ok || account == "" {
+		return "", false
+	}
+
+	return account, true
+}
+
+// logAccountAttributeSource records the attribute-derived account source decision.
+func (a *AuthState) logAccountAttributeSource(previous string, account string) {
+	util.DebugModuleWithCfg(
+		a.Ctx(),
+		a.deps.Cfg,
+		a.deps.Logger,
+		definitions.DbgAccount,
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		definitions.LogKeyUsername, a.Request.Username,
+		definitions.LogKeyMsg, "Set account from attributes",
+		"prev", previous,
+		"new", account,
+		"source", "attribute",
+		"changed", previous != account,
+	)
+}
+
+// syncUserAccountMapping updates Redis when the attribute-derived account differs.
+func (a *AuthState) syncUserAccountMapping(account string) {
+	current, ok := a.currentUserAccountMapping()
+	if !ok {
+		return
+	}
+
+	if current != "" && current == account {
+		return
+	}
+
+	a.setUserAccountMapping(account)
+}
+
+// currentUserAccountMapping reads the current user-to-account mapping with a bounded deadline.
+func (a *AuthState) currentUserAccountMapping() (string, bool) {
+	dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(a.Ctx(), a.Cfg())
+	current, err := backend.LookupUserAccountFromRedis(dReadCtx, a.Cfg(), a.deps.Redis, a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID)
+
+	cancelRead()
+
+	if err != nil {
+		level.Error(a.Logger()).Log(
+			definitions.LogKeyGUID, a.Runtime.GUID,
+			definitions.LogKeyMsg, "Failed to lookup user->account mapping in Redis",
+			definitions.LogKeyError, err,
+		)
+
+		return "", false
+	}
+
+	return current, true
+}
+
+// setUserAccountMapping writes the user-to-account mapping with a bounded deadline.
+func (a *AuthState) setUserAccountMapping(account string) {
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(context.TODO(), a.Cfg())
+	werr := backend.SetUserAccountMapping(dWriteCtx, a.Cfg(), a.deps.Redis, a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, account)
+
+	cancelWrite()
+
+	if werr != nil {
+		level.Error(a.Logger()).Log(
+			definitions.LogKeyGUID, a.Runtime.GUID,
+			definitions.LogKeyMsg, "Failed to update user->account mapping in Redis",
+			definitions.LogKeyError, werr,
+		)
+
+		return
+	}
+
+	util.DebugModuleWithCfg(
+		a.Ctx(),
+		a.deps.Cfg, a.deps.Logger, definitions.DbgAccount,
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		definitions.LogKeyUsername, a.Request.Username,
+		definitions.LogKeyMsg, "Synchronized nt:USER mapping",
+		"account", account,
+		"source", "redis-update",
+	)
 }
 
 // SetStatusCodes sets different status codes for various services.
@@ -2339,6 +2408,15 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 		return
 	}
 
+	a.fillCommonIdentityFields(cr)
+	a.fillCommonConnectionFields(cr)
+	a.fillCommonRuntimeFields(cr)
+	a.fillCommonBruteForceCounter(cr)
+	a.fillIDPFields(cr)
+}
+
+// fillCommonIdentityFields copies account and protocol fields.
+func (a *AuthState) fillCommonIdentityFields(cr *lualib.CommonRequest) {
 	cr.Session = a.Runtime.GUID
 	cr.ExternalSessionID = a.Request.ExternalSessionID
 	cr.HealthCheck = a.IsBackendHealthCheckRequest()
@@ -2354,6 +2432,10 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.SAMLEntityID = a.Request.SAMLEntityID
 	cr.Protocol = a.Request.Protocol.Get()
 	cr.Method = a.Request.Method
+}
+
+// fillCommonConnectionFields copies network, user-agent, and TLS fields.
+func (a *AuthState) fillCommonConnectionFields(cr *lualib.CommonRequest) {
 	cr.ClientPort = a.Request.XClientPort
 	cr.ClientNet = a.Runtime.BFClientNet
 	cr.ClientHost = a.Request.ClientHost
@@ -2378,6 +2460,10 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.SSLSerial = a.Request.SSLSerial
 	cr.SSLFingerprint = a.Request.SSLFingerprint
 	cr.AuthLoginAttempt = a.Request.AuthLoginAttempt
+}
+
+// fillCommonRuntimeFields copies backend, status, and debug fields.
+func (a *AuthState) fillCommonRuntimeFields(cr *lualib.CommonRequest) {
 	cr.BackendServers = ListBackendServers()
 	cr.UsedBackendAddr = &a.Runtime.UsedBackendIP
 	cr.UsedBackendPort = &a.Runtime.UsedBackendPort
@@ -2399,23 +2485,27 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 		cr.HTTPStatus = a.Runtime.StatusCodeFail
 	}
 
-	if a.Security.BruteForceName != "" {
-		if val, ok := a.Security.BruteForceCounter[a.Security.BruteForceName]; ok {
-			cr.BruteForceCounter = val
-		} else {
-			// Handle cases like "rule,guessed"
-			parts := strings.Split(a.Security.BruteForceName, ",")
-			if val, ok := a.Security.BruteForceCounter[parts[0]]; ok {
-				cr.BruteForceCounter = val
-			}
-		}
-	}
-
 	if a.deps.Cfg != nil {
 		cr.Debug = a.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	}
+}
 
-	a.fillIDPFields(cr)
+// fillCommonBruteForceCounter copies the selected brute-force counter value.
+func (a *AuthState) fillCommonBruteForceCounter(cr *lualib.CommonRequest) {
+	if a.Security.BruteForceName == "" {
+		return
+	}
+
+	if val, ok := a.Security.BruteForceCounter[a.Security.BruteForceName]; ok {
+		cr.BruteForceCounter = val
+
+		return
+	}
+
+	parts := strings.Split(a.Security.BruteForceName, ",")
+	if val, ok := a.Security.BruteForceCounter[parts[0]]; ok {
+		cr.BruteForceCounter = val
+	}
 }
 
 // IsBackendHealthCheckRequest reports whether the current authentication request matches a configured health-check identity.
@@ -3013,6 +3103,12 @@ func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType definitions.
 	})
 }
 
+type verifyPasswordResult struct {
+	value  any
+	err    error
+	shared bool
+}
+
 // processVerifyPassword verifies the user's password against multiple databases.
 // It logs detailed information in case of errors and returns the result of the password verification process.
 func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
@@ -3033,86 +3129,122 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 		defer stop()
 	}
 
-	sfKey := a.Runtime.GUID
-	if idem := ctx.GetHeader(idempotencyHeaderName); idem != "" {
-		sfKey = "idem:" + idem
-	}
-
-	resCh := backchanSF.DoChan(sfKey, func() (any, error) {
+	resCh := backchanSF.DoChan(verifyPasswordSingleflightKey(ctx, a), func() (any, error) {
 		return a.verifyPassword(ctx, passDBs)
 	})
 
-	var (
-		val    any
-		err    error
-		shared bool
-	)
+	verifyResult, waitErr := a.waitVerifyPasswordResult(ctx, resCh)
+	if waitErr != nil {
+		return nil, waitErr
+	}
 
+	passDBResult := a.passDBResultFromVerifyValue(ctx, verifyResult)
+	recordVerifyPasswordSpan(vspan, passDBResult, verifyResult)
+	a.logVerifyPasswordError(verifyResult.err)
+
+	return passDBResult, verifyResult.err
+}
+
+// verifyPasswordSingleflightKey returns the deduplication key for password verification.
+func verifyPasswordSingleflightKey(ctx *gin.Context, auth *AuthState) string {
+	if idem := ctx.GetHeader(idempotencyHeaderName); idem != "" {
+		return "idem:" + idem
+	}
+
+	return auth.Runtime.GUID
+}
+
+// waitVerifyPasswordResult waits for singleflight or request cancellation.
+func (a *AuthState) waitVerifyPasswordResult(ctx *gin.Context, resCh <-chan singleflight.Result) (verifyPasswordResult, error) {
 	select {
 	case <-util.HTTPRequestDone(ctx.Request):
 		if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "verify.singleflight_wait") {
-			return nil, util.HTTPRequestContextError(ctx.Request)
+			return verifyPasswordResult{}, util.HTTPRequestContextError(ctx.Request)
 		}
 	case result := <-resCh:
-		val = result.Val
-		err = result.Err
-		shared = result.Shared
+		return verifyPasswordResult{
+			value:  result.Val,
+			err:    result.Err,
+			shared: result.Shared,
+		}, nil
 	}
 
-	var passDBResult *PassDBResult
+	return verifyPasswordResult{}, nil
+}
 
-	if val != nil {
-		res := val.(*PassDBResult)
-		if shared {
-			passDBResult = res.Clone()
-			updateAuthentication(ctx, a, passDBResult, nil)
-		} else {
-			passDBResult = res
-		}
+// passDBResultFromVerifyValue clones shared results before applying them to the auth state.
+func (a *AuthState) passDBResultFromVerifyValue(ctx *gin.Context, result verifyPasswordResult) *PassDBResult {
+	if result.value == nil {
+		return nil
 	}
 
+	passDBResult := result.value.(*PassDBResult)
+	if !result.shared {
+		return passDBResult
+	}
+
+	clonedResult := passDBResult.Clone()
+	updateAuthentication(ctx, a, clonedResult, nil)
+
+	return clonedResult
+}
+
+// recordVerifyPasswordSpan records verification outcome attributes on the active span.
+func recordVerifyPasswordSpan(vspan trace.Span, passDBResult *PassDBResult, result verifyPasswordResult) {
 	if passDBResult != nil {
 		vspan.SetAttributes(
 			attribute.Bool("authenticated", passDBResult.Authenticated),
 			attribute.Bool("user_found", passDBResult.UserFound),
-			attribute.Bool("shared", shared),
+			attribute.Bool("shared", result.shared),
+			attribute.String("backend", verifyPasswordBackendName(passDBResult)),
 		)
-
-		if passDBResult.BackendName != "" {
-			vspan.SetAttributes(attribute.String("backend", passDBResult.BackendName))
-		} else {
-			vspan.SetAttributes(attribute.String("backend", passDBResult.Backend.String()))
-		}
 	}
 
-	if err != nil {
-		vspan.RecordError(err)
+	if result.err != nil {
+		vspan.RecordError(result.err)
+	}
+}
+
+// verifyPasswordBackendName returns the configured backend name or backend type fallback.
+func verifyPasswordBackendName(passDBResult *PassDBResult) string {
+	if passDBResult.BackendName != "" {
+		return passDBResult.BackendName
 	}
 
-	if err != nil {
-		if detailedError, ok := stderrors.AsType[*errors.DetailedError](err); ok {
-			logs := []any{
-				definitions.LogKeyGUID, a.Runtime.GUID,
-				definitions.LogKeyMsg, detailedError.GetDetails(),
-				definitions.LogKeyError, detailedError.Error(),
-			}
+	return passDBResult.Backend.String()
+}
 
-			if len(a.Runtime.AdditionalLogs) > 0 && len(a.Runtime.AdditionalLogs)%2 == 0 {
-				logs = append(logs, a.Runtime.AdditionalLogs...)
-			}
-
-			level.Error(getDefaultLogger()).Log(
-				logs...,
-			)
-		} else {
-			level.Error(getDefaultLogger()).Log(
-				definitions.LogKeyGUID, a.Runtime.GUID,
-				definitions.LogKeyMsg, "Error verifying password",
-				definitions.LogKeyError, err)
-		}
+// logVerifyPasswordError writes detailed verification errors with any collected extra fields.
+func (a *AuthState) logVerifyPasswordError(err error) {
+	if err == nil {
+		return
 	}
 
-	return passDBResult, err
+	if detailedError, ok := stderrors.AsType[*errors.DetailedError](err); ok {
+		a.logDetailedVerifyPasswordError(detailedError)
+
+		return
+	}
+
+	level.Error(getDefaultLogger()).Log(
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		definitions.LogKeyMsg, "Error verifying password",
+		definitions.LogKeyError, err)
+}
+
+// logDetailedVerifyPasswordError writes backend-provided verification details.
+func (a *AuthState) logDetailedVerifyPasswordError(detailedError *errors.DetailedError) {
+	logs := []any{
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		definitions.LogKeyMsg, detailedError.GetDetails(),
+		definitions.LogKeyError, detailedError.Error(),
+	}
+
+	if len(a.Runtime.AdditionalLogs) > 0 && len(a.Runtime.AdditionalLogs)%2 == 0 {
+		logs = append(logs, a.Runtime.AdditionalLogs...)
+	}
+
+	level.Error(getDefaultLogger()).Log(logs...)
 }
 
 // processUserFound handles the processing when a user is found in the database, updates user account in Redis, and processes password history.
@@ -3457,8 +3589,6 @@ func (a *AuthState) SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) def
 
 // ListUserAccounts returns the list of all known users from the account databases.
 func (a *AuthState) ListUserAccounts() (accountList AccountList) {
-	var accounts []*AccountListMap
-
 	ginCtx := a.Request.HTTPClientContext
 	errSeen := false
 
@@ -3476,52 +3606,74 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 
 	a.Request.Protocol.Set(definitions.ProtoAccountProvider)
 
-	for _, backendType := range a.cfg().GetServer().GetBackends() {
-		switch backendType.Get() {
-		case definitions.BackendLDAP:
-			poolName := backendType.GetName()
-			if poolName == "" || poolName == definitions.DefaultBackendName {
-				if resolvedPoolName, ok := config.ResolveLDAPSearchPoolName(a.Cfg(), definitions.ProtoAccountProvider); ok {
-					poolName = resolvedPoolName
-				}
-			}
+	accounts := a.accountListBackends()
+	errSeen = a.appendAccountDBResults(accounts, &accountList)
 
-			mgr := NewLDAPManager(poolName, a.deps)
-			accounts = append(accounts, &AccountListMap{
-				definitions.BackendLDAP,
-				mgr.AccountDB,
-			})
-		case definitions.BackendLua:
-			mgr := NewLuaManager(backendType.GetName(), a.deps)
-			accounts = append(accounts, &AccountListMap{
-				definitions.BackendLua,
-				mgr.AccountDB,
-			})
-		case definitions.BackendTest:
-			mgr := NewTestBackendManager(backendType.GetName(), a.deps)
-			accounts = append(accounts, &AccountListMap{
-				definitions.BackendTest,
-				mgr.AccountDB,
-			})
-		case definitions.BackendRemote:
-			if mgr := a.GetBackendManager(definitions.BackendRemote, backendType.GetName()); mgr != nil {
-				accounts = append(accounts, &AccountListMap{
-					definitions.BackendRemote,
-					mgr.AccountDB,
-				})
-			}
-		case definitions.BackendPlugin:
-			if mgr := a.GetBackendManager(definitions.BackendPlugin, backendType.GetName()); mgr != nil {
-				accounts = append(accounts, &AccountListMap{
-					definitions.BackendPlugin,
-					mgr.AccountDB,
-				})
-			}
-		case definitions.BackendUnknown:
-		case definitions.BackendCache:
-		case definitions.BackendLocalCache:
+	return accountList
+}
+
+// accountListBackends builds account-database handlers from configured backends.
+func (a *AuthState) accountListBackends() []*AccountListMap {
+	accounts := make([]*AccountListMap, 0)
+
+	for _, backendType := range a.cfg().GetServer().GetBackends() {
+		if accountDB := a.accountListBackend(backendType); accountDB != nil {
+			accounts = append(accounts, accountDB)
 		}
 	}
+
+	return accounts
+}
+
+// accountListBackend resolves one configured backend into an account-database handler.
+func (a *AuthState) accountListBackend(backendType *config.Backend) *AccountListMap {
+	switch backendType.Get() {
+	case definitions.BackendLDAP:
+		return a.ldapAccountListBackend(backendType)
+	case definitions.BackendLua:
+		mgr := NewLuaManager(backendType.GetName(), a.deps)
+
+		return &AccountListMap{definitions.BackendLua, mgr.AccountDB}
+	case definitions.BackendTest:
+		mgr := NewTestBackendManager(backendType.GetName(), a.deps)
+
+		return &AccountListMap{definitions.BackendTest, mgr.AccountDB}
+	case definitions.BackendRemote:
+		return a.managedAccountListBackend(definitions.BackendRemote, backendType.GetName())
+	case definitions.BackendPlugin:
+		return a.managedAccountListBackend(definitions.BackendPlugin, backendType.GetName())
+	default:
+		return nil
+	}
+}
+
+// ldapAccountListBackend resolves the LDAP pool used for account-provider listing.
+func (a *AuthState) ldapAccountListBackend(backendType *config.Backend) *AccountListMap {
+	poolName := backendType.GetName()
+	if poolName == "" || poolName == definitions.DefaultBackendName {
+		if resolvedPoolName, ok := config.ResolveLDAPSearchPoolName(a.Cfg(), definitions.ProtoAccountProvider); ok {
+			poolName = resolvedPoolName
+		}
+	}
+
+	mgr := NewLDAPManager(poolName, a.deps)
+
+	return &AccountListMap{definitions.BackendLDAP, mgr.AccountDB}
+}
+
+// managedAccountListBackend returns an account handler for runtime-managed backends.
+func (a *AuthState) managedAccountListBackend(backend definitions.Backend, backendName string) *AccountListMap {
+	mgr := a.GetBackendManager(backend, backendName)
+	if mgr == nil {
+		return nil
+	}
+
+	return &AccountListMap{backend, mgr.AccountDB}
+}
+
+// appendAccountDBResults executes account handlers and appends successful results.
+func (a *AuthState) appendAccountDBResults(accounts []*AccountListMap, accountList *AccountList) bool {
+	errSeen := false
 
 	for _, accountDB := range accounts {
 		result, err := accountDB.fn(a)
@@ -3529,27 +3681,34 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 		util.DebugModuleWithCfg(a.Ctx(), a.Cfg(), a.Logger(), definitions.DbgAuth, definitions.LogKeyGUID, a.Runtime.GUID, "backendType", accountDB.backend.String(), "result", fmt.Sprintf("%v", result))
 
 		if err == nil {
-			accountList = append(accountList, result...)
+			*accountList = append(*accountList, result...)
 		} else {
 			errSeen = true
 
-			if detailedError, ok := stderrors.AsType[*errors.DetailedError](err); ok {
-				level.Error(a.logger()).Log(
-					definitions.LogKeyGUID, a.Runtime.GUID,
-					definitions.LogKeyMsg, detailedError.GetDetails(),
-					definitions.LogKeyError, err,
-				)
-			} else {
-				level.Error(a.logger()).Log(
-					definitions.LogKeyGUID, a.Runtime.GUID,
-					definitions.LogKeyMsg, "Error calling account database",
-					definitions.LogKeyError, err,
-				)
-			}
+			a.logAccountDBError(err)
 		}
 	}
 
-	return accountList
+	return errSeen
+}
+
+// logAccountDBError records backend errors raised during account listing.
+func (a *AuthState) logAccountDBError(err error) {
+	if detailedError, ok := stderrors.AsType[*errors.DetailedError](err); ok {
+		level.Error(a.logger()).Log(
+			definitions.LogKeyGUID, a.Runtime.GUID,
+			definitions.LogKeyMsg, detailedError.GetDetails(),
+			definitions.LogKeyError, err,
+		)
+
+		return
+	}
+
+	level.Error(a.logger()).Log(
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		definitions.LogKeyMsg, "Error calling account database",
+		definitions.LogKeyError, err,
+	)
 }
 
 func (a *AuthState) finishListAccountsPolicy(ctx *gin.Context, count int, errSeen bool) bool {
@@ -4164,15 +4323,11 @@ func getDecodedHeader(ctx *gin.Context, headerName string) string {
 //	ctx.SetParam("service", "nginx")
 //	setupAuth(&ctx, auth)
 func setupAuth(ctx *gin.Context, auth State) {
-	if a, ok := auth.(*AuthState); ok {
-		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_setup_total", ctx.FullPath()); stop != nil {
-			defer stop()
-		}
+	if stop := setupAuthTimer(ctx, auth); stop != nil {
+		defer stop()
 	}
 
-	if auth.GetProtocol() == nil || auth.GetProtocol().Get() == "" {
-		auth.SetProtocol(&config.Protocol{})
-	}
+	ensureAuthProtocol(auth)
 
 	auth.WithClientInfo(ctx)
 	auth.WithLocalInfo(ctx)
@@ -4180,6 +4335,40 @@ func setupAuth(ctx *gin.Context, auth State) {
 	auth.WithXSSL(ctx)
 
 	svc := ctx.GetString(definitions.CtxServiceKey)
+	setupAuthByService(ctx, auth, svc)
+
+	if ctx.IsAborted() {
+		return
+	}
+
+	if !validateSetupAuthCredentials(ctx, auth, svc) {
+		return
+	}
+
+	auth.InitMethodAndUserAgent()
+	auth.WithDefaults(ctx)
+	auth.SetOperationMode(ctx)
+}
+
+// setupAuthTimer starts the request setup metric for AuthState-backed requests.
+func setupAuthTimer(ctx *gin.Context, auth State) func() {
+	a, ok := auth.(*AuthState)
+	if !ok {
+		return nil
+	}
+
+	return stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_setup_total", ctx.FullPath())
+}
+
+// ensureAuthProtocol initializes an empty protocol holder when none exists.
+func ensureAuthProtocol(auth State) {
+	if auth.GetProtocol() == nil || auth.GetProtocol().Get() == "" {
+		auth.SetProtocol(&config.Protocol{})
+	}
+}
+
+// setupAuthByService dispatches request decoding based on the configured service.
+func setupAuthByService(ctx *gin.Context, auth State, svc string) {
 	switch svc {
 	case definitions.ServNginx, definitions.ServHeader:
 		setupHeaderBasedAuth(ctx, auth)
@@ -4188,36 +4377,44 @@ func setupAuth(ctx *gin.Context, auth State) {
 	case definitions.ServBasic:
 		setupHTTPBasicAuth(ctx, auth)
 	}
+}
 
-	if ctx.IsAborted() {
-		return
+// validateSetupAuthCredentials rejects missing or invalid credentials for direct auth endpoints.
+func validateSetupAuthCredentials(ctx *gin.Context, auth State, svc string) bool {
+	if !shouldValidateSetupAuthCredentials(ctx, svc) {
+		return true
 	}
 
-	if ctx.Query("mode") != string(AuthModeListAccounts) && ctx.Query("mode") != authModeNoAuth && svc != definitions.ServBasic && svc != definitions.ServIDP {
-		username := auth.GetUsername()
+	username := auth.GetUsername()
+	if username == "" {
+		_ = ctx.Error(errors.ErrEmptyUsername)
 
-		if username == "" {
-			_ = ctx.Error(errors.ErrEmptyUsername)
-
-			return
-		} else if !util.ValidateUsername(username) {
-			auth.SetUsername("")
-
-			_ = ctx.Error(errors.ErrInvalidUsername)
-
-			return
-		}
-
-		if auth.GetPassword().IsZero() {
-			_ = ctx.Error(errors.ErrEmptyPassword)
-
-			return
-		}
+		return false
 	}
 
-	auth.InitMethodAndUserAgent()
-	auth.WithDefaults(ctx)
-	auth.SetOperationMode(ctx)
+	if !util.ValidateUsername(username) {
+		auth.SetUsername("")
+
+		_ = ctx.Error(errors.ErrInvalidUsername)
+
+		return false
+	}
+
+	if auth.GetPassword().IsZero() {
+		_ = ctx.Error(errors.ErrEmptyPassword)
+
+		return false
+	}
+
+	return true
+}
+
+// shouldValidateSetupAuthCredentials reports whether setup must enforce username/password fields.
+func shouldValidateSetupAuthCredentials(ctx *gin.Context, svc string) bool {
+	return ctx.Query("mode") != string(AuthModeListAccounts) &&
+		ctx.Query("mode") != authModeNoAuth &&
+		svc != definitions.ServBasic &&
+		svc != definitions.ServIDP
 }
 
 // NewAuthStateWithSetupWithDeps is the dependency-injected variant of NewAuthStateWithSetup.
@@ -4565,51 +4762,7 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
 		if a.CheckBruteForce(ctx) {
-			if a.applyConfiguredPreAuthDecision(ctx) {
-				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
-				pspan.SetAttributes(attribute.Bool("reject", true))
-				pspan.End()
-
-				return true
-			}
-
-			if a.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) {
-				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
-				pspan.SetAttributes(attribute.Bool("policy_skip_remaining", true))
-				pspan.End()
-
-				return false
-			}
-
-			if a.HasConfiguredPreAuthPolicyAuthority(ctx) {
-				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
-				pspan.SetAttributes(attribute.Bool("policy_continue", true))
-				pspan.End()
-
-				return false
-			}
-
-			if a.applyDefaultPreAuthDecision(ctx) {
-				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
-				pspan.SetAttributes(attribute.Bool("reject", true))
-				pspan.End()
-
-				return true
-			}
-
-			a.markEnvironmentRejected(ctx)
-			pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
-			a.UpdateBruteForceBucketsCounter(ctx)
-
-			result := GetPassDBResultFromPool()
-			a.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
-			a.AuthFail(ctx)
-
-			pspan.SetAttributes(attribute.Bool("reject", true))
-			pspan.End()
-
-			return true
+			return a.handlePreAuthBruteForce(ctx, pspan)
 		}
 	} else {
 		stats.GetMetrics().GetCacheHits().Inc()
@@ -4621,6 +4774,57 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	pspan.End()
 
 	return false
+}
+
+// handlePreAuthBruteForce applies configured and default brute-force decisions.
+func (a *AuthState) handlePreAuthBruteForce(ctx *gin.Context, span trace.Span) bool {
+	span.SetAttributes(attribute.Bool("bruteforce.blocked", true))
+
+	if a.applyConfiguredPreAuthDecision(ctx) {
+		span.SetAttributes(attribute.Bool("reject", true))
+		span.End()
+
+		return true
+	}
+
+	if a.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) {
+		span.SetAttributes(attribute.Bool("policy_skip_remaining", true))
+		span.End()
+
+		return false
+	}
+
+	if a.HasConfiguredPreAuthPolicyAuthority(ctx) {
+		span.SetAttributes(attribute.Bool("policy_continue", true))
+		span.End()
+
+		return false
+	}
+
+	if a.applyDefaultPreAuthDecision(ctx) {
+		span.SetAttributes(attribute.Bool("reject", true))
+		span.End()
+
+		return true
+	}
+
+	a.rejectDefaultPreAuthBruteForce(ctx, span)
+
+	return true
+}
+
+// rejectDefaultPreAuthBruteForce performs the legacy rejection side effects.
+func (a *AuthState) rejectDefaultPreAuthBruteForce(ctx *gin.Context, span trace.Span) {
+	a.markEnvironmentRejected(ctx)
+	a.UpdateBruteForceBucketsCounter(ctx)
+
+	result := GetPassDBResultFromPool()
+	a.PostLuaAction(ctx, result)
+	PutPassDBResultToPool(result)
+	a.AuthFail(ctx)
+
+	span.SetAttributes(attribute.Bool("reject", true))
+	span.End()
 }
 
 // ApplyCredentials applies non-empty credential fields to the AuthState.

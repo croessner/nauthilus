@@ -46,39 +46,68 @@ func NewDefaultStatsCollector() *DefaultStatsCollector {
 func (s *DefaultStatsCollector) AddSample(latency time.Duration, _ bool, isMatch bool, isHTTPErr bool, isAborted bool, isSkipped bool, isToleratedBF bool, isTooManyRequests bool, statusCode int) {
 	s.total.Add(1)
 
+	if s.recordTerminalSample(isAborted, isSkipped) {
+		return
+	}
+
+	s.recordStatusCode(statusCode)
+	s.recordOutcome(isMatch, isHTTPErr, isToleratedBF, isTooManyRequests)
+	s.recordLatency(latency)
+}
+
+// recordTerminalSample records samples that do not carry normal response data.
+func (s *DefaultStatsCollector) recordTerminalSample(isAborted bool, isSkipped bool) bool {
 	if isAborted {
 		s.aborted.Add(1)
-		return
+
+		return true
 	}
 
 	if isSkipped {
 		s.skipped.Add(1)
-		return
+
+		return true
 	}
 
-	if statusCode >= 0 && statusCode < 600 {
+	return false
+}
+
+// recordStatusCode increments the bounded HTTP status-code bucket.
+func (s *DefaultStatsCollector) recordStatusCode(statusCode int) {
+	if statusCode >= 0 && statusCode < len(s.statusCounts) {
 		s.statusCounts[statusCode].Add(1)
 	}
+}
 
-	if isHTTPErr {
-		s.httpErrs.Add(1)
-	}
-
-	if isToleratedBF {
-		s.toleratedBF.Add(1)
-	}
-
-	if isTooManyRequests {
-		s.tooManyRequests.Add(1)
-	}
+// recordOutcome updates match, error, and tolerated brute-force counters.
+func (s *DefaultStatsCollector) recordOutcome(isMatch bool, isHTTPErr bool, isToleratedBF bool, isTooManyRequests bool) {
+	addIf(s.httpErrs.Add, isHTTPErr)
+	addIf(s.toleratedBF.Add, isToleratedBF)
+	addIf(s.tooManyRequests.Add, isTooManyRequests)
 
 	if isToleratedBF || isMatch {
 		s.matched.Add(1)
 	} else {
 		s.mismatched.Add(1)
 	}
+}
 
+// addIf increments an atomic counter when the condition is true.
+func addIf(add func(int64) int64, condition bool) {
+	if condition {
+		add(1)
+	}
+}
+
+// recordLatency updates latency bounds and histogram buckets.
+func (s *DefaultStatsCollector) recordLatency(latency time.Duration) {
 	latNs := latency.Nanoseconds()
+	s.recordLatencyBounds(latNs)
+	s.recordLatencyBucket(latency)
+}
+
+// recordLatencyBounds updates observed minimum and maximum latency values.
+func (s *DefaultStatsCollector) recordLatencyBounds(latNs int64) {
 	if latNs < s.minLat.Load() {
 		s.minLat.Store(latNs)
 	}
@@ -86,7 +115,10 @@ func (s *DefaultStatsCollector) AddSample(latency time.Duration, _ bool, isMatch
 	if latNs > s.maxLat.Load() {
 		s.maxLat.Store(latNs)
 	}
+}
 
+// recordLatencyBucket increments the millisecond latency histogram bucket.
+func (s *DefaultStatsCollector) recordLatencyBucket(latency time.Duration) {
 	ms := max(latency.Milliseconds(), 0)
 	if ms > maxLatencyMs {
 		s.latOverflow.Add(1)

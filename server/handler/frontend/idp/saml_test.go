@@ -48,6 +48,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	serveridp "github.com/croessner/nauthilus/v3/server/idp"
 	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/util"
@@ -249,6 +250,49 @@ func TestSAML_Routes_HaveLuaContext(t *testing.T) {
 	}
 }
 
+func TestSAMLHandler_SSOStoresValidatedIssuerForLoginResume(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const (
+		idpEntityID = "https://auth.example.com/saml/metadata"
+		idpSSOURL   = "https://auth.example.com/saml/sso"
+		spEntityID  = "https://localhost:19095/saml/metadata"
+		spACSURL    = "https://localhost:19095/saml/acs"
+	)
+
+	idpKey, _, idpCertPEM := mustGenerateRSACertificate(t, "saml-idp")
+	cfg := &mockSAMLCfg{
+		entityID:    idpEntityID,
+		certificate: string(idpCertPEM),
+		key:         string(mustEncodeRSAPrivateKeyPEM(t, idpKey)),
+		sps: []config.SAML2ServiceProvider{
+			{
+				EntityID: spEntityID,
+				ACSURL:   spACSURL,
+			},
+		},
+	}
+	handlerDeps := &deps.Deps{
+		Cfg:    cfg,
+		Logger: slog.Default(),
+	}
+	handler := NewSAMLHandler(handlerDeps, serveridp.NewNauthilusIDP(handlerDeps))
+	mgr := &mockCookieManager{data: map[string]any{}}
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, mustBuildSAMLAuthnRedirectTarget(t, spEntityID, spACSURL, idpSSOURL), nil)
+	ctx.Set(definitions.CtxSecureDataKey, mgr)
+
+	handler.SSO(ctx)
+
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Equal(t, frontendLoginPath, w.Header().Get("Location"))
+	assert.Equal(t, definitions.ProtoSAML, mgr.GetString(definitions.SessionKeyIDPFlowType, ""))
+	assert.Equal(t, spEntityID, mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""))
+	assert.NotEmpty(t, mgr.GetString(definitions.SessionKeyIDPOriginalURL, ""))
+}
+
 func TestSAMLHandler_registerSLOParticipantSession(t *testing.T) {
 	db, mock := redismock.NewClientMock()
 	redisClient := rediscli.NewTestClient(db)
@@ -310,18 +354,37 @@ func TestSAMLHandler_deleteSLOParticipantSessionsByAccount(t *testing.T) {
 func TestRouteSLOInboundMessage(t *testing.T) {
 	t.Parallel()
 
-	testCases := []struct {
-		name        string
-		method      string
-		target      string
-		contentType string
-		body        string
-		wantType    sloMessageType
-		wantBinding string
-		wantPayload string
-		wantRelay   string
-		wantErr     string
-	}{
+	for _, tc := range sloInboundMessageRouteCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertSLOInboundMessageRouteCase(t, tc)
+		})
+	}
+}
+
+type sloInboundMessageRouteCase struct {
+	name        string
+	method      string
+	target      string
+	contentType string
+	body        string
+	wantType    sloMessageType
+	wantBinding string
+	wantPayload string
+	wantRelay   string
+	wantErr     string
+}
+
+// sloInboundMessageRouteCases returns redirect and POST SLO routing fixtures.
+func sloInboundMessageRouteCases() []sloInboundMessageRouteCase {
+	testCases := sloInboundMessageSuccessRouteCases()
+
+	return append(testCases, sloInboundMessageRejectRouteCases()...)
+}
+
+// sloInboundMessageSuccessRouteCases returns accepted SLO routing fixtures.
+func sloInboundMessageSuccessRouteCases() []sloInboundMessageRouteCase {
+	return []sloInboundMessageRouteCase{
 		{
 			name:        "GET redirect logout request",
 			method:      http.MethodGet,
@@ -360,6 +423,19 @@ func TestRouteSLOInboundMessage(t *testing.T) {
 			wantBinding: "post",
 			wantPayload: "resp-1",
 		},
+	}
+}
+
+// sloInboundMessageRejectRouteCases returns rejected SLO routing fixtures.
+func sloInboundMessageRejectRouteCases() []sloInboundMessageRouteCase {
+	testCases := sloInboundMessageMissingRejectRouteCases()
+
+	return append(testCases, sloInboundMessageInvalidRejectRouteCases()...)
+}
+
+// sloInboundMessageMissingRejectRouteCases returns missing/ambiguous payload cases.
+func sloInboundMessageMissingRejectRouteCases() []sloInboundMessageRouteCase {
+	return []sloInboundMessageRouteCase{
 		{
 			name:    "GET missing payload",
 			method:  http.MethodGet,
@@ -388,6 +464,12 @@ func TestRouteSLOInboundMessage(t *testing.T) {
 			body:        "SAMLRequest=req&SAMLResponse=resp",
 			wantErr:     "must not be present together",
 		},
+	}
+}
+
+// sloInboundMessageInvalidRejectRouteCases returns malformed routing cases.
+func sloInboundMessageInvalidRejectRouteCases() []sloInboundMessageRouteCase {
+	return []sloInboundMessageRouteCase{
 		{
 			name:    "GET duplicated SAMLRequest",
 			method:  http.MethodGet,
@@ -423,36 +505,35 @@ func TestRouteSLOInboundMessage(t *testing.T) {
 			wantErr: "unsupported slo method",
 		},
 	}
+}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+// assertSLOInboundMessageRouteCase checks one SLO inbound routing fixture.
+func assertSLOInboundMessageRouteCase(t *testing.T, tc sloInboundMessageRouteCase) {
+	t.Helper()
 
-			req := httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body))
-			if tc.contentType != "" {
-				req.Header.Set("Content-Type", tc.contentType)
-			}
-
-			message, err := routeSLOInboundMessage(req)
-			if tc.wantErr != "" {
-				assert.Error(t, err)
-				assert.ErrorContains(t, err, tc.wantErr)
-				assert.Nil(t, message)
-
-				return
-			}
-
-			if !assert.NoError(t, err) {
-				return
-			}
-
-			assert.NotNil(t, message)
-			assert.Equal(t, tc.wantType, message.MessageType)
-			assert.Equal(t, tc.wantBinding, string(message.Binding))
-			assert.Equal(t, tc.wantPayload, message.Payload)
-			assert.Equal(t, tc.wantRelay, message.RelayState)
-		})
+	req := httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body))
+	if tc.contentType != "" {
+		req.Header.Set("Content-Type", tc.contentType)
 	}
+
+	message, err := routeSLOInboundMessage(req)
+	if tc.wantErr != "" {
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, tc.wantErr)
+		assert.Nil(t, message)
+
+		return
+	}
+
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.NotNil(t, message)
+	assert.Equal(t, tc.wantType, message.MessageType)
+	assert.Equal(t, tc.wantBinding, string(message.Binding))
+	assert.Equal(t, tc.wantPayload, message.Payload)
+	assert.Equal(t, tc.wantRelay, message.RelayState)
 }
 
 func mustGenerateRSACertificate(t *testing.T, commonName string) (*rsa.PrivateKey, *x509.Certificate, []byte) {
@@ -502,6 +583,46 @@ func mustEncodeRSAPrivateKeyPEM(t *testing.T, key *rsa.PrivateKey) []byte {
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	})
+}
+
+func mustBuildSAMLAuthnRedirectTarget(t *testing.T, spEntityID, spACSURL, idpSSOURL string) string {
+	t.Helper()
+
+	metadataURL, err := url.Parse(spEntityID)
+	if err != nil {
+		t.Fatalf("failed to parse SP entity ID: %v", err)
+	}
+
+	acsURL, err := url.Parse(spACSURL)
+	if err != nil {
+		t.Fatalf("failed to parse SP ACS URL: %v", err)
+	}
+
+	serviceProvider := &saml.ServiceProvider{
+		EntityID:    spEntityID,
+		MetadataURL: *metadataURL,
+		AcsURL:      *acsURL,
+		IDPMetadata: &saml.EntityDescriptor{
+			EntityID: "https://auth.example.com/saml/metadata",
+			IDPSSODescriptors: []saml.IDPSSODescriptor{
+				{
+					SingleSignOnServices: []saml.Endpoint{
+						{
+							Binding:  saml.HTTPRedirectBinding,
+							Location: idpSSOURL,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	redirectURL, err := serviceProvider.MakeRedirectAuthenticationRequest("relay-state")
+	if err != nil {
+		t.Fatalf("failed to create SAML AuthnRequest: %v", err)
+	}
+
+	return redirectURL.String()
 }
 
 func mustBuildSPLogoutResponseValidator(
@@ -558,29 +679,96 @@ func mustBuildSPLogoutResponseValidator(
 	}
 }
 
+// mustDecodeRedirectLogoutResponse inflates and decodes a redirect-binding LogoutResponse.
 func mustDecodeRedirectLogoutResponse(t *testing.T, encodedResponse string) *saml.LogoutResponse {
 	t.Helper()
 
-	rawResponse, err := base64.StdEncoding.DecodeString(encodedResponse)
+	return mustDecodeRedirectSAMLMessage[saml.LogoutResponse](t, encodedResponse, "logout response")
+}
+
+// mustDecodeRedirectLogoutRequest inflates and decodes a redirect-binding LogoutRequest.
+func mustDecodeRedirectLogoutRequest(t *testing.T, encodedRequest string) *saml.LogoutRequest {
+	t.Helper()
+
+	return mustDecodeRedirectSAMLMessage[saml.LogoutRequest](t, encodedRequest, "logout request")
+}
+
+// mustDecodeRedirectSAMLMessage decodes base64, inflates DEFLATE, and unmarshals a redirect SAML message.
+func mustDecodeRedirectSAMLMessage[T any](t *testing.T, encodedMessage string, messageKind string) *T {
+	t.Helper()
+
+	rawMessage, err := base64.StdEncoding.DecodeString(encodedMessage)
 	if err != nil {
-		t.Fatalf("failed to decode redirect logout response base64: %v", err)
+		t.Fatalf("failed to decode redirect %s base64: %v", messageKind, err)
 	}
 
-	reader := flate.NewReader(bytes.NewReader(rawResponse))
+	reader := flate.NewReader(bytes.NewReader(rawMessage))
 	defer func() { _ = reader.Close() }()
 
 	xmlPayload, err := io.ReadAll(reader)
 	if err != nil {
-		t.Fatalf("failed to inflate redirect logout response: %v", err)
+		t.Fatalf("failed to inflate redirect %s: %v", messageKind, err)
 	}
 
-	var response saml.LogoutResponse
+	var message T
 
-	if err = xml.Unmarshal(xmlPayload, &response); err != nil {
-		t.Fatalf("failed to unmarshal redirect logout response XML: %v", err)
+	if err = xml.Unmarshal(xmlPayload, &message); err != nil {
+		t.Fatalf("failed to unmarshal redirect %s XML: %v", messageKind, err)
 	}
 
-	return &response
+	return &message
+}
+
+type sloRedirectSignatureCase struct {
+	name    string
+	target  string
+	wantErr string
+}
+
+type sloRedirectSignatureValidator func(*http.Request, *sloInboundMessage) error
+
+// assertSLOInboundRedirectSignatureCases runs shared redirect-binding signature validation cases.
+func assertSLOInboundRedirectSignatureCases(t *testing.T, testCases []sloRedirectSignatureCase, validator sloRedirectSignatureValidator) {
+	t.Helper()
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.target, nil)
+
+			message, err := routeSLOInboundMessage(req)
+			if !assert.NoError(t, err) {
+				return
+			}
+
+			err = validator(req, message)
+			if tc.wantErr != "" {
+				assert.Error(t, err)
+				assert.ErrorContains(t, err, tc.wantErr)
+
+				return
+			}
+
+			assert.NoError(t, err)
+		})
+	}
+}
+
+// assertSLODispatchBadRequest checks common SLO handler rejection responses.
+func assertSLODispatchBadRequest(t *testing.T, target string, expectedBody string) {
+	t.Helper()
+
+	handler := NewSAMLHandler(&deps.Deps{
+		Cfg: &mockSAMLCfg{},
+	}, nil)
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, target, nil)
+
+	handler.SLO(ctx)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), expectedBody)
 }
 
 func mustDecodePostLogoutResponse(t *testing.T, encodedResponse string) *saml.LogoutResponse {
@@ -733,11 +921,27 @@ func TestSAMLHandler_validateInboundLogoutRequestProtocol_FieldValidation(t *tes
 		}
 	}
 
-	testCases := []struct {
-		name    string
-		mutate  func(request *saml.LogoutRequest)
-		wantErr string
-	}{
+	for _, tc := range logoutRequestProtocolFieldCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			request := baseRequest()
+			tc.mutate(request)
+
+			err := handler.validateInboundLogoutRequestProtocol(t.Context(), request)
+			assert.Error(t, err)
+			assert.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
+
+type logoutRequestProtocolFieldCase struct {
+	name    string
+	mutate  func(request *saml.LogoutRequest)
+	wantErr string
+}
+
+// logoutRequestProtocolFieldCases returns field-validation mutations for LogoutRequest.
+func logoutRequestProtocolFieldCases() []logoutRequestProtocolFieldCase {
+	return []logoutRequestProtocolFieldCase{
 		{
 			name: "missing request id",
 			mutate: func(request *saml.LogoutRequest) {
@@ -796,17 +1000,6 @@ func TestSAMLHandler_validateInboundLogoutRequestProtocol_FieldValidation(t *tes
 			wantErr: "logout request NameID is missing",
 		},
 	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			request := baseRequest()
-			tc.mutate(request)
-
-			err := handler.validateInboundLogoutRequestProtocol(t.Context(), request)
-			assert.Error(t, err)
-			assert.ErrorContains(t, err, tc.wantErr)
-		})
-	}
 }
 
 func TestSAMLHandler_validateInboundLogoutRequestProtocol_RegistryAndReplay(t *testing.T) {
@@ -815,119 +1008,7 @@ func TestSAMLHandler_validateInboundLogoutRequestProtocol_RegistryAndReplay(t *t
 	account := "alice@example.com"
 	spEntityID := "https://sp.example.com/saml/metadata"
 
-	baseRequest := func(requestID, issuer string, sessionIndex *string) *saml.LogoutRequest {
-		req := &saml.LogoutRequest{
-			ID:           requestID,
-			Version:      "2.0",
-			IssueInstant: saml.TimeNow().UTC(),
-			Destination:  "https://auth.example.com/saml/slo",
-			Issuer: &saml.Issuer{
-				Value: issuer,
-			},
-			NameID: &saml.NameID{
-				Value: account,
-			},
-		}
-
-		if sessionIndex != nil {
-			req.SessionIndex = &saml.SessionIndex{Value: *sessionIndex}
-		}
-
-		return req
-	}
-
-	trueVal := true
-	falseVal := false
-	sessionIdx1 := "_idx-1"
-	sessionIdx2 := "_idx-2"
-
-	testCases := []struct {
-		name         string
-		request      *saml.LogoutRequest
-		participants []slodomain.ParticipantSession
-		replayStored *bool
-		wantErr      string
-	}{
-		{
-			name:    "success with matching session index",
-			request: baseRequest("id-protocol-success", spEntityID, &sessionIdx1),
-			participants: []slodomain.ParticipantSession{
-				{
-					Account:      account,
-					SPEntityID:   spEntityID,
-					NameID:       account,
-					SessionIndex: sessionIdx1,
-					AuthnInstant: saml.TimeNow().UTC(),
-				},
-			},
-			replayStored: &trueVal,
-		},
-		{
-			name:    "success without session index uses issuer mapping",
-			request: baseRequest("id-protocol-success-no-session-index", spEntityID, nil),
-			participants: []slodomain.ParticipantSession{
-				{
-					Account:      account,
-					SPEntityID:   spEntityID,
-					NameID:       account,
-					SessionIndex: sessionIdx1,
-					AuthnInstant: saml.TimeNow().UTC(),
-				},
-			},
-			replayStored: &trueVal,
-		},
-		{
-			name:         "missing participant sessions",
-			request:      baseRequest("id-protocol-no-session", spEntityID, nil),
-			participants: nil,
-			wantErr:      "no active SLO participant session for NameID",
-		},
-		{
-			name:    "issuer does not match participant",
-			request: baseRequest("id-protocol-issuer-mismatch", "https://other-sp.example.com/saml/metadata", nil),
-			participants: []slodomain.ParticipantSession{
-				{
-					Account:      account,
-					SPEntityID:   spEntityID,
-					NameID:       account,
-					SessionIndex: sessionIdx1,
-					AuthnInstant: saml.TimeNow().UTC(),
-				},
-			},
-			wantErr: "no active SLO participant session for issuer",
-		},
-		{
-			name:    "session index does not match participant",
-			request: baseRequest("id-protocol-session-mismatch", spEntityID, &sessionIdx2),
-			participants: []slodomain.ParticipantSession{
-				{
-					Account:      account,
-					SPEntityID:   spEntityID,
-					NameID:       account,
-					SessionIndex: sessionIdx1,
-					AuthnInstant: saml.TimeNow().UTC(),
-				},
-			},
-			wantErr: "session index",
-		},
-		{
-			name:    "replay detected",
-			request: baseRequest("id-protocol-replay", spEntityID, nil),
-			participants: []slodomain.ParticipantSession{
-				{
-					Account:      account,
-					SPEntityID:   spEntityID,
-					NameID:       account,
-					SessionIndex: sessionIdx1,
-					AuthnInstant: saml.TimeNow().UTC(),
-				},
-			},
-			replayStored: &falseVal,
-			wantErr:      "replay detected",
-		},
-	}
-
-	for _, tc := range testCases {
+	for _, tc := range logoutRequestRegistryReplayCases(account, spEntityID) {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			redisClient := rediscli.NewTestClient(db)
@@ -937,29 +1018,7 @@ func TestSAMLHandler_validateInboundLogoutRequestProtocol_RegistryAndReplay(t *t
 				Redis: redisClient,
 			}, nil)
 
-			indexKey := sloTestParticipantIndexKey(redisPrefix, account)
-			participantKeys := make([]string, 0, len(tc.participants))
-
-			for _, participant := range tc.participants {
-				participantKey := sloTestParticipantKey(redisPrefix, participant.Account, participant.SPEntityID)
-				participantKeys = append(participantKeys, participantKey)
-			}
-
-			mock.ExpectSMembers(indexKey).SetVal(participantKeys)
-
-			for idx, participant := range tc.participants {
-				rawSession, err := json.Marshal(participant)
-				if !assert.NoError(t, err) {
-					return
-				}
-
-				mock.ExpectGet(participantKeys[idx]).SetVal(string(rawSession))
-			}
-
-			if tc.replayStored != nil {
-				replayKey := sloTestReplayKey(redisPrefix, tc.request.Issuer.Value, tc.request.ID)
-				mock.ExpectSetNX(replayKey, "1", time.Hour).SetVal(*tc.replayStored)
-			}
+			expectLogoutRequestProtocolRedis(t, mock, redisPrefix, account, tc)
 
 			err := handler.validateInboundLogoutRequestProtocol(t.Context(), tc.request)
 			if tc.wantErr != "" {
@@ -972,6 +1031,131 @@ func TestSAMLHandler_validateInboundLogoutRequestProtocol_RegistryAndReplay(t *t
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
+}
+
+type logoutRequestRegistryReplayCase struct {
+	name         string
+	request      *saml.LogoutRequest
+	participants []slodomain.ParticipantSession
+	replayStored *bool
+	wantErr      string
+}
+
+// logoutRequestRegistryReplayCases returns registry and replay validation cases.
+func logoutRequestRegistryReplayCases(account, spEntityID string) []logoutRequestRegistryReplayCase {
+	trueValue := true
+	falseValue := false
+	sessionIndex1 := "_idx-1"
+	sessionIndex2 := "_idx-2"
+	participant := logoutRequestProtocolParticipant(account, spEntityID, sessionIndex1)
+
+	return []logoutRequestRegistryReplayCase{
+		{
+			name:         "success with matching session index",
+			request:      newLogoutRequestProtocolTestRequest(account, "id-protocol-success", spEntityID, &sessionIndex1),
+			participants: []slodomain.ParticipantSession{participant},
+			replayStored: &trueValue,
+		},
+		{
+			name:         "success without session index uses issuer mapping",
+			request:      newLogoutRequestProtocolTestRequest(account, "id-protocol-success-no-session-index", spEntityID, nil),
+			participants: []slodomain.ParticipantSession{participant},
+			replayStored: &trueValue,
+		},
+		{
+			name:    "missing participant sessions",
+			request: newLogoutRequestProtocolTestRequest(account, "id-protocol-no-session", spEntityID, nil),
+			wantErr: "no active SLO participant session for NameID",
+		},
+		{
+			name:         "issuer does not match participant",
+			request:      newLogoutRequestProtocolTestRequest(account, "id-protocol-issuer-mismatch", "https://other-sp.example.com/saml/metadata", nil),
+			participants: []slodomain.ParticipantSession{participant},
+			wantErr:      "no active SLO participant session for issuer",
+		},
+		{
+			name:         "session index does not match participant",
+			request:      newLogoutRequestProtocolTestRequest(account, "id-protocol-session-mismatch", spEntityID, &sessionIndex2),
+			participants: []slodomain.ParticipantSession{participant},
+			wantErr:      "session index",
+		},
+		{
+			name:         "replay detected",
+			request:      newLogoutRequestProtocolTestRequest(account, "id-protocol-replay", spEntityID, nil),
+			participants: []slodomain.ParticipantSession{participant},
+			replayStored: &falseValue,
+			wantErr:      "replay detected",
+		},
+	}
+}
+
+// newLogoutRequestProtocolTestRequest builds the protocol validation baseline request.
+func newLogoutRequestProtocolTestRequest(account, requestID, issuer string, sessionIndex *string) *saml.LogoutRequest {
+	request := &saml.LogoutRequest{
+		ID:           requestID,
+		Version:      "2.0",
+		IssueInstant: saml.TimeNow().UTC(),
+		Destination:  "https://auth.example.com/saml/slo",
+		Issuer: &saml.Issuer{
+			Value: issuer,
+		},
+		NameID: &saml.NameID{
+			Value: account,
+		},
+	}
+
+	if sessionIndex != nil {
+		request.SessionIndex = &saml.SessionIndex{Value: *sessionIndex}
+	}
+
+	return request
+}
+
+// logoutRequestProtocolParticipant builds one active participant fixture.
+func logoutRequestProtocolParticipant(account, spEntityID, sessionIndex string) slodomain.ParticipantSession {
+	return slodomain.ParticipantSession{
+		Account:      account,
+		SPEntityID:   spEntityID,
+		NameID:       account,
+		SessionIndex: sessionIndex,
+		AuthnInstant: time.Now().UTC(),
+	}
+}
+
+// expectLogoutRequestProtocolRedis registers Redis expectations for one protocol case.
+func expectLogoutRequestProtocolRedis(
+	t *testing.T,
+	mock redismock.ClientMock,
+	redisPrefix string,
+	account string,
+	tc logoutRequestRegistryReplayCase,
+) {
+	t.Helper()
+
+	indexKey := sloTestParticipantIndexKey(redisPrefix, account)
+	participantKeys := make([]string, 0, len(tc.participants))
+
+	for _, participant := range tc.participants {
+		participantKeys = append(participantKeys, sloTestParticipantKey(redisPrefix, participant.Account, participant.SPEntityID))
+	}
+
+	mock.ExpectSMembers(indexKey).SetVal(participantKeys)
+
+	for idx, participant := range tc.participants {
+		rawSession, err := json.Marshal(participant)
+		if !assert.NoError(t, err) {
+			return
+		}
+
+		mock.ExpectGet(participantKeys[idx]).SetVal(string(rawSession))
+	}
+
+	if tc.replayStored == nil {
+		return
+	}
+
+	replayKey := sloTestReplayKey(redisPrefix, tc.request.Issuer.Value, tc.request.ID)
+	mock.ExpectSetNX(replayKey, "1", time.Hour).SetVal(*tc.replayStored)
 }
 
 func TestSAMLHandler_validateInboundLogoutRequestSignature_Redirect(t *testing.T) {
@@ -990,6 +1174,18 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_Redirect(t *testing.T
 		},
 		Logger: slog.Default(),
 	}, nil)
+
+	testCases := logoutRequestRedirectSignatureCases(t, spEntityID, spKey)
+	assertSLOInboundRedirectSignatureCases(t, testCases, func(req *http.Request, message *sloInboundMessage) error {
+		_, err := handler.validateInboundLogoutRequestSignature(req, message)
+
+		return err
+	})
+}
+
+// logoutRequestRedirectSignatureCases builds redirect-binding signature cases.
+func logoutRequestRedirectSignatureCases(t *testing.T, spEntityID string, spKey *rsa.PrivateKey) []sloRedirectSignatureCase {
+	t.Helper()
 
 	logoutRequest := &saml.LogoutRequest{
 		ID:           "id-redirect-1",
@@ -1023,11 +1219,7 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_Redirect(t *testing.T
 		spKey,
 	)
 
-	testCases := []struct {
-		name    string
-		target  string
-		wantErr string
-	}{
+	return []sloRedirectSignatureCase{
 		{
 			name:   "valid signature",
 			target: validTarget,
@@ -1047,27 +1239,6 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_Redirect(t *testing.T
 			target:  validTarget + "&Signature=AAAA",
 			wantErr: "duplicate parameter \"Signature\"",
 		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tc.target, nil)
-
-			message, err := routeSLOInboundMessage(req)
-			if !assert.NoError(t, err) {
-				return
-			}
-
-			_, err = handler.validateInboundLogoutRequestSignature(req, message)
-			if tc.wantErr != "" {
-				assert.Error(t, err)
-				assert.ErrorContains(t, err, tc.wantErr)
-
-				return
-			}
-
-			assert.NoError(t, err)
-		})
 	}
 }
 
@@ -1158,7 +1329,6 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_POST(t *testing.T) {
 	destination := "https://auth.example.com/saml/slo"
 
 	spKey, spCert, spCertPEM := mustGenerateRSACertificate(t, "sp.example.com")
-
 	handler := NewSAMLHandler(&deps.Deps{
 		Cfg: &mockSAMLCfg{
 			sps: []config.SAML2ServiceProvider{
@@ -1172,14 +1342,34 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_POST(t *testing.T) {
 		Logger: slog.Default(),
 	}, nil)
 
+	testCases := logoutRequestPostSignatureCases(t, spEntityID, destination, spKey, spCert)
+	assertSLOInboundPostSignatureCases(t, handler, testCases)
+}
+
+type sloPostSignatureCase struct {
+	name    string
+	body    string
+	wantErr string
+}
+
+// logoutRequestPostSignatureCases builds POST-binding XML signature cases.
+func logoutRequestPostSignatureCases(
+	t *testing.T,
+	spEntityID string,
+	destination string,
+	spKey *rsa.PrivateKey,
+	spCert *x509.Certificate,
+) []sloPostSignatureCase {
+	t.Helper()
+
 	spURL, err := url.Parse(spEntityID)
 	if !assert.NoError(t, err) {
-		return
+		return nil
 	}
 
 	acsURL, err := url.Parse("https://sp.example.com/saml/acs")
 	if !assert.NoError(t, err) {
-		return
+		return nil
 	}
 
 	newSP := func(signatureMethod string) *saml.ServiceProvider {
@@ -1203,11 +1393,7 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_POST(t *testing.T) {
 
 	sha1XML := mustBuildSignedLogoutRequestXML(t, newSP(dsig.RSASHA1SignatureMethod), destination, "alice@example.com")
 
-	testCases := []struct {
-		name    string
-		body    string
-		wantErr string
-	}{
+	return []sloPostSignatureCase{
 		{
 			name: "valid XML signature",
 			body: mustBuildPostLogoutBody(t, validXML),
@@ -1223,6 +1409,11 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_POST(t *testing.T) {
 			wantErr: "unsupported XML signature algorithm",
 		},
 	}
+}
+
+// assertSLOInboundPostSignatureCases runs shared POST-binding signature cases.
+func assertSLOInboundPostSignatureCases(t *testing.T, handler *SAMLHandler, testCases []sloPostSignatureCase) {
+	t.Helper()
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1270,319 +1461,94 @@ func TestSAMLHandler_SLOPayloadValidationAndDispatch(t *testing.T) {
 	})
 
 	t.Run("rejects missing payload with 400", func(t *testing.T) {
-		handler := NewSAMLHandler(&deps.Deps{
-			Cfg: &mockSAMLCfg{},
-		}, nil)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = httptest.NewRequest(http.MethodGet, "/saml/slo", nil)
-
-		handler.SLO(ctx)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "Invalid SAML SLO payload")
+		assertSLODispatchBadRequest(t, "/saml/slo", "Invalid SAML SLO payload")
 	})
 
 	t.Run("rejects unsigned logout request with 400", func(t *testing.T) {
-		handler := NewSAMLHandler(&deps.Deps{
-			Cfg: &mockSAMLCfg{},
-		}, nil)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = httptest.NewRequest(http.MethodGet, "/saml/slo?SAMLRequest=req-1", nil)
-
-		handler.SLO(ctx)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "Invalid SAML LogoutRequest signature")
+		assertSLODispatchBadRequest(t, "/saml/slo?SAMLRequest=req-1", "Invalid SAML LogoutRequest signature")
 	})
 
 	t.Run("dispatches signed logout request and returns signed redirect logout response", func(t *testing.T) {
-		db, mock := redismock.NewClientMock()
-		redisClient := rediscli.NewTestClient(db)
+		fixture := newSignedRedirectSLOFixture(t, "id-handler-1", "relay-state", "_idx-handler", nil)
+		result := runSignedRedirectSLOFixture(t, fixture)
 
-		spEntityID := "https://sp.example.com/saml/metadata"
-		spSLOURL := "https://sp.example.com/saml/slo"
-		spKey, _, spCertPEM := mustGenerateRSACertificate(t, "sp.example.com")
-		idpKey, idpCert, idpCertPEM := mustGenerateRSACertificate(t, "auth.example.com")
-		idpKeyPEM := mustEncodeRSAPrivateKeyPEM(t, idpKey)
-		nameID := "alice@example.com"
-		requestID := "id-handler-1"
-		relayState := "relay-state"
-
-		participantKey := sloTestParticipantKey("test:", nameID, spEntityID)
-		indexKey := sloTestParticipantIndexKey("test:", nameID)
-		replayKey := sloTestReplayKey("test:", spEntityID, requestID)
-
-		participantSession := slodomain.ParticipantSession{
-			Account:      nameID,
-			SPEntityID:   spEntityID,
-			NameID:       nameID,
-			SessionIndex: "_idx-handler",
-			AuthnInstant: time.Now().UTC(),
-		}
-
-		rawSession, err := json.Marshal(participantSession)
-		if !assert.NoError(t, err) {
-			return
-		}
-
-		mock.ExpectSMembers(indexKey).SetVal([]string{participantKey})
-		mock.ExpectGet(participantKey).SetVal(string(rawSession))
-		mock.ExpectSetNX(replayKey, "1", time.Hour).SetVal(true)
-		mock.ExpectSMembers(indexKey).SetVal([]string{participantKey})
-		mock.ExpectDel(participantKey).SetVal(1)
-		mock.ExpectDel(indexKey).SetVal(1)
-
-		handler := NewSAMLHandler(&deps.Deps{
-			Cfg: &mockSAMLCfg{
-				entityID:    "https://auth.example.com/saml/metadata",
-				certificate: string(idpCertPEM),
-				key:         string(idpKeyPEM),
-				redisPrefix: "test:",
-				sps: []config.SAML2ServiceProvider{
-					{
-						EntityID: spEntityID,
-						ACSURL:   "https://sp.example.com/saml/acs",
-						SLOURL:   spSLOURL,
-						Cert:     string(spCertPEM),
-					},
-				},
-			},
-			Logger: slog.Default(),
-			Redis:  redisClient,
-		}, nil)
-
-		logoutRequest := &saml.LogoutRequest{
-			ID:           requestID,
-			Version:      "2.0",
-			IssueInstant: time.Now().UTC(),
-			Destination:  "https://auth.example.com/saml/slo",
-			Issuer: &saml.Issuer{
-				Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-				Value:  spEntityID,
-			},
-			NameID: &saml.NameID{
-				Value: nameID,
-			},
-		}
-
-		target := mustBuildSignedRedirectLogoutTarget(
-			t,
-			"/saml/slo",
-			logoutRequest,
-			relayState,
-			dsig.RSASHA256SignatureMethod,
-			spKey,
-		)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = httptest.NewRequest(http.MethodGet, target, nil)
-
-		handler.SLO(ctx)
-
-		assert.Equal(t, http.StatusFound, w.Code)
-		location := w.Header().Get("Location")
-
-		locationURL, err := url.Parse(location)
-		if !assert.NoError(t, err) {
-			return
-		}
-
-		assert.Equal(t, spSLOURL, locationURL.Scheme+"://"+locationURL.Host+locationURL.Path)
-		assert.Equal(t, relayState, locationURL.Query().Get("RelayState"))
-
-		rawSAMLResponse := locationURL.Query().Get("SAMLResponse")
-		if !assert.NotEmpty(t, rawSAMLResponse) {
-			return
-		}
-
-		response := mustDecodeRedirectLogoutResponse(t, rawSAMLResponse)
-		assert.Equal(t, requestID, response.InResponseTo)
-		assert.Equal(t, spSLOURL, response.Destination)
-
-		if assert.NotNil(t, response.Issuer) {
-			assert.Equal(t, "https://auth.example.com/saml/metadata", response.Issuer.Value)
-		}
-
-		assert.Equal(t, saml.StatusSuccess, response.Status.StatusCode.Value)
-		assert.NotNil(t, response.Signature)
-
-		validatorSP := mustBuildSPLogoutResponseValidator(
-			t,
-			spEntityID,
-			spSLOURL,
-			"https://auth.example.com/saml/metadata",
-			idpCert,
-		)
-
-		assert.NoError(t, validatorSP.ValidateLogoutResponseRedirect(rawSAMLResponse))
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertSignedRedirectSLOSuccessResponse(t, fixture, result)
 	})
 }
 
-func TestSAMLHandler_SLOSignedLogoutResponse_POST(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
-
-	db, mock := redismock.NewClientMock()
-	redisClient := rediscli.NewTestClient(db)
-
-	spEntityID := "https://sp.example.com/saml/metadata"
-	spACSURL := "https://sp.example.com/saml/acs"
-	spSLOURL := "https://sp.example.com/saml/slo"
-	nameID := "alice@example.com"
-	relayState := "relay-post-state"
-
-	spKey, spCert, spCertPEM := mustGenerateRSACertificate(t, "sp.example.com")
-	idpKey, idpCert, idpCertPEM := mustGenerateRSACertificate(t, "auth.example.com")
-	idpKeyPEM := mustEncodeRSAPrivateKeyPEM(t, idpKey)
-
-	spMetadataURL, err := url.Parse(spEntityID)
-	if !assert.NoError(t, err) {
-		return
-	}
-
-	spACSParsedURL, err := url.Parse(spACSURL)
-	if !assert.NoError(t, err) {
-		return
-	}
-
-	requestSigningSP := &saml.ServiceProvider{
-		Key:             spKey,
-		Certificate:     spCert,
-		MetadataURL:     *spMetadataURL,
-		IDPMetadata:     &saml.EntityDescriptor{EntityID: "https://auth.example.com/saml/metadata"},
-		EntityID:        spEntityID,
-		AcsURL:          *spACSParsedURL,
-		SignatureMethod: dsig.RSASHA256SignatureMethod,
-	}
-
-	requestXML := mustBuildSignedLogoutRequestXML(
-		t,
-		requestSigningSP,
-		"https://auth.example.com/saml/slo",
-		nameID,
-	)
-
-	var logoutRequest saml.LogoutRequest
-	if err = xml.Unmarshal(requestXML, &logoutRequest); !assert.NoError(t, err) {
-		return
-	}
-
-	participantKey := sloTestParticipantKey("test:", nameID, spEntityID)
-	indexKey := sloTestParticipantIndexKey("test:", nameID)
-	replayKey := sloTestReplayKey("test:", spEntityID, logoutRequest.ID)
-
-	participantSession := slodomain.ParticipantSession{
-		Account:      nameID,
-		SPEntityID:   spEntityID,
-		NameID:       nameID,
-		SessionIndex: "_idx-handler-post",
-		AuthnInstant: time.Now().UTC(),
-	}
-
-	rawSession, err := json.Marshal(participantSession)
-	if !assert.NoError(t, err) {
-		return
-	}
-
-	mock.ExpectSMembers(indexKey).SetVal([]string{participantKey})
-	mock.ExpectGet(participantKey).SetVal(string(rawSession))
-	mock.ExpectSetNX(replayKey, "1", time.Hour).SetVal(true)
-	mock.ExpectSMembers(indexKey).SetVal([]string{participantKey})
-	mock.ExpectDel(participantKey).SetVal(1)
-	mock.ExpectDel(indexKey).SetVal(1)
-
-	handler := NewSAMLHandler(&deps.Deps{
-		Cfg: &mockSAMLCfg{
-			entityID:    "https://auth.example.com/saml/metadata",
-			certificate: string(idpCertPEM),
-			key:         string(idpKeyPEM),
-			redisPrefix: "test:",
-			sps: []config.SAML2ServiceProvider{
-				{
-					EntityID: spEntityID,
-					ACSURL:   spACSURL,
-					SLOURL:   spSLOURL,
-					Cert:     string(spCertPEM),
-				},
-			},
-		},
-		Logger: slog.Default(),
-		Redis:  redisClient,
-	}, nil)
-
-	formBody := "SAMLRequest=" + url.QueryEscape(base64.StdEncoding.EncodeToString(requestXML)) +
-		"&RelayState=" + url.QueryEscape(relayState)
-
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/saml/slo", strings.NewReader(formBody))
-	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	handler.SLO(ctx)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "id=\"SAMLResponseForm\"")
-
-	rawSAMLResponse := mustExtractHiddenFormValue(t, w.Body.String(), "SAMLResponse")
-	assert.Equal(t, relayState, mustExtractHiddenFormValue(t, w.Body.String(), "RelayState"))
-
-	response := mustDecodePostLogoutResponse(t, rawSAMLResponse)
-	assert.Equal(t, logoutRequest.ID, response.InResponseTo)
-	assert.Equal(t, spSLOURL, response.Destination)
-
-	if assert.NotNil(t, response.Issuer) {
-		assert.Equal(t, "https://auth.example.com/saml/metadata", response.Issuer.Value)
-	}
-
-	assert.Equal(t, saml.StatusSuccess, response.Status.StatusCode.Value)
-	assert.NotNil(t, response.Signature)
-
-	validatorSP := mustBuildSPLogoutResponseValidator(
-		t,
-		spEntityID,
-		spSLOURL,
-		"https://auth.example.com/saml/metadata",
-		idpCert,
-	)
-
-	assert.NoError(t, validatorSP.ValidateLogoutResponseForm(rawSAMLResponse))
-	assert.NoError(t, mock.ExpectationsWereMet())
+type signedRedirectSLOFixture struct {
+	handler     *SAMLHandler
+	mock        redismock.ClientMock
+	idpCert     *x509.Certificate
+	spEntityID  string
+	spSLOURL    string
+	idpEntityID string
+	requestID   string
+	relayState  string
+	target      string
 }
 
-func TestSAMLHandler_SLOSignedLogoutResponse_PartialLogoutStatus(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+type redirectSLOResponseResult struct {
+	locationURL     *url.URL
+	response        *saml.LogoutResponse
+	rawSAMLResponse string
+}
+
+// newSignedRedirectSLOFixture builds a signed Redirect-binding handler fixture.
+func newSignedRedirectSLOFixture(
+	t *testing.T,
+	requestID string,
+	relayState string,
+	sessionIndex string,
+	cleanupErr error,
+) signedRedirectSLOFixture {
+	t.Helper()
 
 	db, mock := redismock.NewClientMock()
 	redisClient := rediscli.NewTestClient(db)
-
 	spEntityID := "https://sp.example.com/saml/metadata"
 	spSLOURL := "https://sp.example.com/saml/slo"
 	nameID := "alice@example.com"
-	requestID := "id-handler-partial"
-	relayState := "relay-partial-state"
 
 	spKey, _, spCertPEM := mustGenerateRSACertificate(t, "sp.example.com")
 	idpKey, idpCert, idpCertPEM := mustGenerateRSACertificate(t, "auth.example.com")
 	idpKeyPEM := mustEncodeRSAPrivateKeyPEM(t, idpKey)
 
+	expectSLOParticipantLookupAndCleanup(t, mock, nameID, spEntityID, requestID, sessionIndex, cleanupErr)
+
+	handler := newSignedSLOTestHandler(t, redisClient, spEntityID, spSLOURL, spCertPEM, idpCertPEM, idpKeyPEM)
+	logoutRequest := newSignedRedirectSLOLogoutRequest(requestID, spEntityID, nameID)
+	target := mustBuildSignedRedirectLogoutTarget(t, "/saml/slo", logoutRequest, relayState, dsig.RSASHA256SignatureMethod, spKey)
+
+	return signedRedirectSLOFixture{
+		handler:     handler,
+		mock:        mock,
+		idpCert:     idpCert,
+		spEntityID:  spEntityID,
+		spSLOURL:    spSLOURL,
+		idpEntityID: "https://auth.example.com/saml/metadata",
+		requestID:   requestID,
+		relayState:  relayState,
+		target:      target,
+	}
+}
+
+// expectSLOParticipantLookupAndCleanup registers SLO registry and cleanup expectations.
+func expectSLOParticipantLookupAndCleanup(
+	t *testing.T,
+	mock redismock.ClientMock,
+	nameID string,
+	spEntityID string,
+	requestID string,
+	sessionIndex string,
+	cleanupErr error,
+) {
+	t.Helper()
+
 	participantKey := sloTestParticipantKey("test:", nameID, spEntityID)
 	indexKey := sloTestParticipantIndexKey("test:", nameID)
 	replayKey := sloTestReplayKey("test:", spEntityID, requestID)
-
-	participantSession := slodomain.ParticipantSession{
-		Account:      nameID,
-		SPEntityID:   spEntityID,
-		NameID:       nameID,
-		SessionIndex: "_idx-handler-partial",
-		AuthnInstant: time.Now().UTC(),
-	}
+	participantSession := logoutRequestProtocolParticipant(nameID, spEntityID, sessionIndex)
 
 	rawSession, err := json.Marshal(participantSession)
 	if !assert.NoError(t, err) {
@@ -1592,9 +1558,31 @@ func TestSAMLHandler_SLOSignedLogoutResponse_PartialLogoutStatus(t *testing.T) {
 	mock.ExpectSMembers(indexKey).SetVal([]string{participantKey})
 	mock.ExpectGet(participantKey).SetVal(string(rawSession))
 	mock.ExpectSetNX(replayKey, "1", time.Hour).SetVal(true)
-	mock.ExpectSMembers(indexKey).SetErr(fmt.Errorf("redis cleanup failure"))
 
-	handler := NewSAMLHandler(&deps.Deps{
+	if cleanupErr != nil {
+		mock.ExpectSMembers(indexKey).SetErr(cleanupErr)
+
+		return
+	}
+
+	mock.ExpectSMembers(indexKey).SetVal([]string{participantKey})
+	mock.ExpectDel(participantKey).SetVal(1)
+	mock.ExpectDel(indexKey).SetVal(1)
+}
+
+// newSignedSLOTestHandler creates a SAML handler with one signed SP fixture.
+func newSignedSLOTestHandler(
+	t *testing.T,
+	redisClient rediscli.Client,
+	spEntityID string,
+	spSLOURL string,
+	spCertPEM []byte,
+	idpCertPEM []byte,
+	idpKeyPEM []byte,
+) *SAMLHandler {
+	t.Helper()
+
+	return NewSAMLHandler(&deps.Deps{
 		Cfg: &mockSAMLCfg{
 			entityID:    "https://auth.example.com/saml/metadata",
 			certificate: string(idpCertPEM),
@@ -1612,8 +1600,11 @@ func TestSAMLHandler_SLOSignedLogoutResponse_PartialLogoutStatus(t *testing.T) {
 		Logger: slog.Default(),
 		Redis:  redisClient,
 	}, nil)
+}
 
-	logoutRequest := &saml.LogoutRequest{
+// newSignedRedirectSLOLogoutRequest creates the signed redirect test request.
+func newSignedRedirectSLOLogoutRequest(requestID, spEntityID, nameID string) *saml.LogoutRequest {
+	return &saml.LogoutRequest{
 		ID:           requestID,
 		Version:      "2.0",
 		IssueInstant: time.Now().UTC(),
@@ -1626,60 +1617,250 @@ func TestSAMLHandler_SLOSignedLogoutResponse_PartialLogoutStatus(t *testing.T) {
 			Value: nameID,
 		},
 	}
+}
 
-	target := mustBuildSignedRedirectLogoutTarget(
-		t,
-		"/saml/slo",
-		logoutRequest,
-		relayState,
-		dsig.RSASHA256SignatureMethod,
-		spKey,
-	)
+// runSignedRedirectSLOFixture executes a signed Redirect-binding SLO request.
+func runSignedRedirectSLOFixture(t *testing.T, fixture signedRedirectSLOFixture) redirectSLOResponseResult {
+	t.Helper()
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest(http.MethodGet, target, nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, fixture.target, nil)
 
-	handler.SLO(ctx)
+	fixture.handler.SLO(ctx)
 
 	assert.Equal(t, http.StatusFound, w.Code)
-	location := w.Header().Get("Location")
 
-	locationURL, err := url.Parse(location)
+	locationURL, err := url.Parse(w.Header().Get("Location"))
 	if !assert.NoError(t, err) {
-		return
+		return redirectSLOResponseResult{}
 	}
-
-	assert.Equal(t, spSLOURL, locationURL.Scheme+"://"+locationURL.Host+locationURL.Path)
-	assert.Equal(t, relayState, locationURL.Query().Get("RelayState"))
 
 	rawSAMLResponse := locationURL.Query().Get("SAMLResponse")
 	if !assert.NotEmpty(t, rawSAMLResponse) {
-		return
+		return redirectSLOResponseResult{locationURL: locationURL}
 	}
 
-	response := mustDecodeRedirectLogoutResponse(t, rawSAMLResponse)
-	assert.Equal(t, requestID, response.InResponseTo)
-	assert.Equal(t, saml.StatusResponder, response.Status.StatusCode.Value)
+	return redirectSLOResponseResult{
+		locationURL:     locationURL,
+		response:        mustDecodeRedirectLogoutResponse(t, rawSAMLResponse),
+		rawSAMLResponse: rawSAMLResponse,
+	}
+}
 
-	if assert.NotNil(t, response.Status.StatusCode.StatusCode) {
-		assert.Equal(t, saml.StatusPartialLogout, response.Status.StatusCode.StatusCode.Value)
+// assertSignedRedirectSLOSuccessResponse verifies a successful Redirect SLO response.
+func assertSignedRedirectSLOSuccessResponse(
+	t *testing.T,
+	fixture signedRedirectSLOFixture,
+	result redirectSLOResponseResult,
+) {
+	t.Helper()
+
+	assert.Equal(t, fixture.spSLOURL, result.locationURL.Scheme+"://"+result.locationURL.Host+result.locationURL.Path)
+	assert.Equal(t, fixture.relayState, result.locationURL.Query().Get("RelayState"))
+	assert.Equal(t, fixture.requestID, result.response.InResponseTo)
+	assert.Equal(t, fixture.spSLOURL, result.response.Destination)
+
+	if assert.NotNil(t, result.response.Issuer) {
+		assert.Equal(t, fixture.idpEntityID, result.response.Issuer.Value)
 	}
 
-	assert.NotNil(t, response.Signature)
+	assert.Equal(t, saml.StatusSuccess, result.response.Status.StatusCode.Value)
+	assert.NotNil(t, result.response.Signature)
 
-	validatorSP := mustBuildSPLogoutResponseValidator(
+	validatorSP := mustBuildSPLogoutResponseValidator(t, fixture.spEntityID, fixture.spSLOURL, fixture.idpEntityID, fixture.idpCert)
+	assert.NoError(t, validatorSP.ValidateLogoutResponseRedirect(result.rawSAMLResponse))
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+func TestSAMLHandler_SLOSignedLogoutResponse_POST(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	fixture := newSignedPostSLOFixture(t)
+	result := runSignedPostSLOFixture(t, fixture)
+
+	assertSignedPostSLOSuccessResponse(t, fixture, result)
+}
+
+type signedPostSLOFixture struct {
+	handler     *SAMLHandler
+	mock        redismock.ClientMock
+	idpCert     *x509.Certificate
+	spEntityID  string
+	spSLOURL    string
+	idpEntityID string
+	requestID   string
+	relayState  string
+	formBody    string
+}
+
+type postSLOResponseResult struct {
+	response        *saml.LogoutResponse
+	rawSAMLResponse string
+}
+
+// newSignedPostSLOFixture builds a signed POST-binding handler fixture.
+func newSignedPostSLOFixture(t *testing.T) signedPostSLOFixture {
+	t.Helper()
+
+	db, mock := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+	spEntityID := "https://sp.example.com/saml/metadata"
+	spSLOURL := "https://sp.example.com/saml/slo"
+	nameID := "alice@example.com"
+	relayState := "relay-post-state"
+
+	spKey, spCert, spCertPEM := mustGenerateRSACertificate(t, "sp.example.com")
+	idpKey, idpCert, idpCertPEM := mustGenerateRSACertificate(t, "auth.example.com")
+	idpKeyPEM := mustEncodeRSAPrivateKeyPEM(t, idpKey)
+
+	requestSigningSP := newPostLogoutRequestSigningSP(t, spKey, spCert, spEntityID)
+	requestXML := mustBuildSignedLogoutRequestXML(t, requestSigningSP, "https://auth.example.com/saml/slo", nameID)
+	requestID := mustUnmarshalLogoutRequestID(t, requestXML)
+
+	expectSLOParticipantLookupAndCleanup(t, mock, nameID, spEntityID, requestID, "_idx-handler-post", nil)
+
+	handler := newSignedSLOTestHandler(t, redisClient, spEntityID, spSLOURL, spCertPEM, idpCertPEM, idpKeyPEM)
+	formBody := mustBuildPostLogoutBody(t, requestXML) + "&RelayState=" + url.QueryEscape(relayState)
+
+	return signedPostSLOFixture{
+		handler:     handler,
+		mock:        mock,
+		idpCert:     idpCert,
+		spEntityID:  spEntityID,
+		spSLOURL:    spSLOURL,
+		idpEntityID: "https://auth.example.com/saml/metadata",
+		requestID:   requestID,
+		relayState:  relayState,
+		formBody:    formBody,
+	}
+}
+
+// newPostLogoutRequestSigningSP creates the SP used to sign POST LogoutRequests.
+func newPostLogoutRequestSigningSP(
+	t *testing.T,
+	spKey *rsa.PrivateKey,
+	spCert *x509.Certificate,
+	spEntityID string,
+) *saml.ServiceProvider {
+	t.Helper()
+
+	spMetadataURL, err := url.Parse(spEntityID)
+	if !assert.NoError(t, err) {
+		return nil
+	}
+
+	spACSParsedURL, err := url.Parse("https://sp.example.com/saml/acs")
+	if !assert.NoError(t, err) {
+		return nil
+	}
+
+	return &saml.ServiceProvider{
+		Key:             spKey,
+		Certificate:     spCert,
+		MetadataURL:     *spMetadataURL,
+		IDPMetadata:     &saml.EntityDescriptor{EntityID: "https://auth.example.com/saml/metadata"},
+		EntityID:        spEntityID,
+		AcsURL:          *spACSParsedURL,
+		SignatureMethod: dsig.RSASHA256SignatureMethod,
+	}
+}
+
+// mustUnmarshalLogoutRequestID reads a LogoutRequest ID from serialized XML.
+func mustUnmarshalLogoutRequestID(t *testing.T, requestXML []byte) string {
+	t.Helper()
+
+	var logoutRequest saml.LogoutRequest
+	if err := xml.Unmarshal(requestXML, &logoutRequest); !assert.NoError(t, err) {
+		return ""
+	}
+
+	return logoutRequest.ID
+}
+
+// runSignedPostSLOFixture executes a signed POST-binding SLO request.
+func runSignedPostSLOFixture(t *testing.T, fixture signedPostSLOFixture) postSLOResponseResult {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/saml/slo", strings.NewReader(fixture.formBody))
+	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	fixture.handler.SLO(ctx)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "id=\"SAMLResponseForm\"")
+
+	rawSAMLResponse := mustExtractHiddenFormValue(t, w.Body.String(), "SAMLResponse")
+	assert.Equal(t, fixture.relayState, mustExtractHiddenFormValue(t, w.Body.String(), "RelayState"))
+
+	return postSLOResponseResult{
+		response:        mustDecodePostLogoutResponse(t, rawSAMLResponse),
+		rawSAMLResponse: rawSAMLResponse,
+	}
+}
+
+// assertSignedPostSLOSuccessResponse verifies a successful POST SLO response.
+func assertSignedPostSLOSuccessResponse(t *testing.T, fixture signedPostSLOFixture, result postSLOResponseResult) {
+	t.Helper()
+
+	assert.Equal(t, fixture.requestID, result.response.InResponseTo)
+	assert.Equal(t, fixture.spSLOURL, result.response.Destination)
+
+	if assert.NotNil(t, result.response.Issuer) {
+		assert.Equal(t, fixture.idpEntityID, result.response.Issuer.Value)
+	}
+
+	assert.Equal(t, saml.StatusSuccess, result.response.Status.StatusCode.Value)
+	assert.NotNil(t, result.response.Signature)
+
+	validatorSP := mustBuildSPLogoutResponseValidator(t, fixture.spEntityID, fixture.spSLOURL, fixture.idpEntityID, fixture.idpCert)
+	assert.NoError(t, validatorSP.ValidateLogoutResponseForm(result.rawSAMLResponse))
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+func TestSAMLHandler_SLOSignedLogoutResponse_PartialLogoutStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	fixture := newSignedRedirectSLOFixture(
 		t,
-		spEntityID,
-		spSLOURL,
-		"https://auth.example.com/saml/metadata",
-		idpCert,
+		"id-handler-partial",
+		"relay-partial-state",
+		"_idx-handler-partial",
+		fmt.Errorf("redis cleanup failure"),
 	)
+	result := runSignedRedirectSLOFixture(t, fixture)
 
-	err = validatorSP.ValidateLogoutResponseRedirect(rawSAMLResponse)
+	assertSignedRedirectSLOPartialResponse(t, fixture, result)
+}
+
+// assertSignedRedirectSLOPartialResponse verifies a partial Redirect SLO response.
+func assertSignedRedirectSLOPartialResponse(
+	t *testing.T,
+	fixture signedRedirectSLOFixture,
+	result redirectSLOResponseResult,
+) {
+	t.Helper()
+
+	assert.Equal(t, fixture.spSLOURL, result.locationURL.Scheme+"://"+result.locationURL.Host+result.locationURL.Path)
+	assert.Equal(t, fixture.relayState, result.locationURL.Query().Get("RelayState"))
+	assert.Equal(t, fixture.requestID, result.response.InResponseTo)
+	assert.Equal(t, saml.StatusResponder, result.response.Status.StatusCode.Value)
+
+	if assert.NotNil(t, result.response.Status.StatusCode.StatusCode) {
+		assert.Equal(t, saml.StatusPartialLogout, result.response.Status.StatusCode.StatusCode.Value)
+	}
+
+	assert.NotNil(t, result.response.Signature)
+
+	validatorSP := mustBuildSPLogoutResponseValidator(t, fixture.spEntityID, fixture.spSLOURL, fixture.idpEntityID, fixture.idpCert)
+	err := validatorSP.ValidateLogoutResponseRedirect(result.rawSAMLResponse)
 	assert.Error(t, err)
 	assert.ErrorContains(t, err, "status code was not")
-	assert.NoError(t, mock.ExpectationsWereMet())
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
 }
 
 func TestSAMLHandler_newValidatedSLOTransaction(t *testing.T) {
@@ -1725,7 +1906,22 @@ func TestSAMLHandler_performLocalSLOCleanup_Idempotent(t *testing.T) {
 		Redis:  redisClient,
 	}, nil)
 
-	mgr := &mockCookieManager{data: map[string]any{
+	mgr := newLocalSLOCleanupCookieManager()
+
+	expectLocalSLOCleanupRedis(mock)
+
+	transaction := mustValidatedLocalSLOTransaction(t)
+	ctx, w := newLocalSLOCleanupContext(mgr)
+
+	handler.performLocalSLOCleanup(ctx, "alice@example.com", transaction)
+	handler.performLocalSLOCleanup(ctx, "alice@example.com", transaction)
+
+	assertLocalSLOCleanupResult(t, w, mgr, transaction, mock)
+}
+
+// newLocalSLOCleanupCookieManager creates a populated SLO session fixture.
+func newLocalSLOCleanupCookieManager() *mockCookieManager {
+	return &mockCookieManager{data: map[string]any{
 		definitions.SessionKeyAccount:                "alice@example.com",
 		definitions.SessionKeyIDPFlowID:              "flow-local-cleanup",
 		definitions.SessionKeyIDPFlowType:            definitions.ProtoSAML,
@@ -1736,7 +1932,10 @@ func TestSAMLHandler_performLocalSLOCleanup_Idempotent(t *testing.T) {
 		definitions.SessionKeyRequireMFAPending:      "webauthn",
 		definitions.SessionKeyRequireMFAParentFlowID: "flow-parent",
 	}}
+}
 
+// expectLocalSLOCleanupRedis registers idempotent local cleanup expectations.
+func expectLocalSLOCleanupRedis(mock redismock.ClientMock) {
 	flowStateKey := "test:idp:flow:flow-local-cleanup"
 	participantIndexKey := sloTestParticipantIndexKey("test:", "alice@example.com")
 
@@ -1745,6 +1944,11 @@ func TestSAMLHandler_performLocalSLOCleanup_Idempotent(t *testing.T) {
 	mock.ExpectDel(participantIndexKey).SetVal(1)
 	mock.ExpectSMembers(participantIndexKey).SetVal(nil)
 	mock.ExpectDel(participantIndexKey).SetVal(1)
+}
+
+// mustValidatedLocalSLOTransaction creates a transaction ready for local cleanup.
+func mustValidatedLocalSLOTransaction(t *testing.T) *slodomain.Transaction {
+	t.Helper()
 
 	transaction, err := slodomain.NewTransaction(
 		"tx-local-cleanup",
@@ -1754,21 +1958,36 @@ func TestSAMLHandler_performLocalSLOCleanup_Idempotent(t *testing.T) {
 		time.Now().UTC(),
 	)
 	if !assert.NoError(t, err) {
-		return
+		return nil
 	}
 
 	err = transaction.TransitionTo(slodomain.SLOStatusValidated, time.Now().UTC())
 	if !assert.NoError(t, err) {
-		return
+		return nil
 	}
 
+	return transaction
+}
+
+// newLocalSLOCleanupContext creates a Gin context with secure session data.
+func newLocalSLOCleanupContext(mgr *mockCookieManager) (*gin.Context, *httptest.ResponseRecorder) {
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/saml/slo", nil)
 	ctx.Set(definitions.CtxSecureDataKey, mgr)
 
-	handler.performLocalSLOCleanup(ctx, "alice@example.com", transaction)
-	handler.performLocalSLOCleanup(ctx, "alice@example.com", transaction)
+	return ctx, w
+}
+
+// assertLocalSLOCleanupResult verifies session, redirect, and Redis cleanup state.
+func assertLocalSLOCleanupResult(
+	t *testing.T,
+	w *httptest.ResponseRecorder,
+	mgr *mockCookieManager,
+	transaction *slodomain.Transaction,
+	mock redismock.ClientMock,
+) {
+	t.Helper()
 
 	assert.Equal(t, http.StatusFound, w.Code)
 	assert.Equal(t, "/logged_out", w.Header().Get("Location"))

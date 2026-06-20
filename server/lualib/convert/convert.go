@@ -110,15 +110,34 @@ func StringCmd(value *redis.StringCmd, valType string, L *lua.LState) error {
 
 // GoToLuaValue converts a Go value to a corresponding Lua value suitable for Lua state operations.
 func GoToLuaValue(L *lua.LState, value any) lua.LValue {
+	if scalar, ok := scalarGoToLuaValue(value); ok {
+		return scalar
+	}
+
+	return compoundGoToLuaValue(L, value)
+}
+
+// scalarGoToLuaValue converts scalar Go values to Lua values.
+func scalarGoToLuaValue(value any) (lua.LValue, bool) {
 	switch v := value.(type) {
 	case string:
-		return lua.LString(v)
+		return lua.LString(v), true
 	case float64:
-		return lua.LNumber(v)
+		return lua.LNumber(v), true
 	case int64:
-		return lua.LNumber(v)
+		return lua.LNumber(v), true
 	case bool:
-		return lua.LBool(v)
+		return lua.LBool(v), true
+	case nil:
+		return lua.LNil, true
+	default:
+		return lua.LNil, false
+	}
+}
+
+// compoundGoToLuaValue converts slices, maps, and config containers to Lua values.
+func compoundGoToLuaValue(L *lua.LState, value any) lua.LValue {
+	switch v := value.(type) {
 	case config.StringSet:
 		tbl := L.NewTable()
 		strSlice := v.GetStringSlice()
@@ -152,8 +171,6 @@ func GoToLuaValue(L *lua.LState, value any) lua.LValue {
 		}
 
 		return tbl
-	case nil:
-		return lua.LNil
 	default:
 		return lua.LString(fmt.Sprintf("%v", value))
 	}

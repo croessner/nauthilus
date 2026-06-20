@@ -14,35 +14,36 @@ import (
 func TestLoginRedirects(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	t.Run("Error if direct access without IDP flow in cookie", func(t *testing.T) {
-		r := gin.New()
-		r.Use(func(ctx *gin.Context) {
-			// No IDP flow active in cookie
-			mgr := &mockCookieManager{data: map[string]any{
-				definitions.SessionKeyAccount: "testuser",
-			}}
-			ctx.Set(definitions.CtxSecureDataKey, mgr)
-			ctx.Next()
+	for _, tt := range loginRedirectCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := runLoginRedirect(tt.cookieData)
+
+			assertLoginRedirectResponse(t, recorder, tt)
 		})
+	}
+}
 
-		h := &FrontendHandler{}
+type loginRedirectCase struct {
+	name             string
+	location         string
+	cookieData       map[string]any
+	locationContains []string
+	status           int
+}
 
-		r.GET(frontendLoginPath, h.Login)
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, frontendLoginPath, nil)
-
-		r.ServeHTTP(w, req)
-
-		// Without a valid IDP flow in cookie, we expect an error
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("Redirect to OIDC authorize if already logged in with valid OIDC flow in cookie", func(t *testing.T) {
-		r := gin.New()
-		r.Use(func(ctx *gin.Context) {
-			// Valid OIDC flow in cookie
-			mgr := &mockCookieManager{data: map[string]any{
+// loginRedirectCases returns login redirect and rejection scenarios.
+func loginRedirectCases() []loginRedirectCase {
+	return []loginRedirectCase{
+		{
+			name: "Error if direct access without IDP flow in cookie",
+			cookieData: map[string]any{
+				definitions.SessionKeyAccount: "testuser",
+			},
+			status: http.StatusBadRequest,
+		},
+		{
+			name: "Redirect to OIDC authorize if already logged in with valid OIDC flow in cookie",
+			cookieData: map[string]any{
 				definitions.SessionKeyAccount:        "testuser",
 				definitions.SessionKeyIDPFlowID:      "flow-oidc",
 				definitions.SessionKeyIDPFlowType:    definitions.ProtoOIDC,
@@ -51,91 +52,100 @@ func TestLoginRedirects(t *testing.T) {
 				definitions.SessionKeyIDPRedirectURI: "https://example.com/callback",
 				definitions.SessionKeyIDPScope:       "openid profile",
 				definitions.SessionKeyIDPState:       "state123",
-			}}
-			ctx.Set(definitions.CtxSecureDataKey, mgr)
-			ctx.Next()
-		})
-
-		h := &FrontendHandler{}
-
-		r.GET(frontendLoginPath, h.Login)
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, frontendLoginPath, nil)
-
-		r.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusFound, w.Code)
-		// Should redirect to OIDC authorize endpoint with parameters from cookie
-		location := w.Header().Get("Location")
-		assert.Contains(t, location, "/oidc/authorize")
-		assert.Contains(t, location, "client_id=test-client")
-	})
-
-	t.Run("Redirect to SAML SSO if already logged in with valid SAML2 flow in cookie", func(t *testing.T) {
-		r := gin.New()
-		r.Use(func(ctx *gin.Context) {
-			// Valid SAML2 flow in cookie
-			mgr := &mockCookieManager{data: map[string]any{
+			},
+			locationContains: []string{"/oidc/authorize", "client_id=test-client"},
+			status:           http.StatusFound,
+		},
+		{
+			name: "Redirect to SAML SSO if already logged in with valid SAML2 flow in cookie",
+			cookieData: map[string]any{
 				definitions.SessionKeyAccount:         "testuser",
 				definitions.SessionKeyIDPFlowID:       "flow-saml",
 				definitions.SessionKeyIDPFlowType:     definitions.ProtoSAML,
 				definitions.SessionKeyIDPSAMLEntityID: "sp-1",
 				definitions.SessionKeyIDPOriginalURL:  "/saml/sso?SAMLRequest=abc123",
-			}}
-			ctx.Set(definitions.CtxSecureDataKey, mgr)
-			ctx.Next()
-		})
-
-		h := &FrontendHandler{}
-
-		r.GET(frontendLoginPath, h.Login)
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, frontendLoginPath, nil)
-
-		r.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusFound, w.Code)
-		// Should redirect to original SAML SSO URL from cookie
-		assert.Equal(t, "/saml/sso?SAMLRequest=abc123", w.Header().Get("Location"))
-	})
-
-	t.Run("Error if IDP flow type is invalid", func(t *testing.T) {
-		r := gin.New()
-		r.Use(func(ctx *gin.Context) {
-			// Invalid flow type in cookie
-			mgr := &mockCookieManager{data: map[string]any{
+			},
+			location: "/saml/sso?SAMLRequest=abc123",
+			status:   http.StatusFound,
+		},
+		{
+			name: "Error if IDP flow type is invalid",
+			cookieData: map[string]any{
 				definitions.SessionKeyAccount:     "testuser",
 				definitions.SessionKeyIDPFlowID:   "flow-invalid",
 				definitions.SessionKeyIDPFlowType: "invalid",
-			}}
-			ctx.Set(definitions.CtxSecureDataKey, mgr)
-			ctx.Next()
-		})
+			},
+			status: http.StatusBadRequest,
+		},
+	}
+}
 
-		h := &FrontendHandler{}
+// runLoginRedirect executes the login endpoint with one cookie state.
+func runLoginRedirect(cookieData map[string]any) *httptest.ResponseRecorder {
+	r := gin.New()
+	r.Use(secureDataTestMiddleware(cookieData))
+	r.GET(frontendLoginPath, (&FrontendHandler{}).Login)
 
-		r.GET(frontendLoginPath, h.Login)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, frontendLoginPath, nil)
+	r.ServeHTTP(w, req)
 
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, frontendLoginPath, nil)
+	return w
+}
 
-		r.ServeHTTP(w, req)
+// secureDataTestMiddleware installs a mock secure-data cookie manager.
+func secureDataTestMiddleware(cookieData map[string]any) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: cookieData})
+		ctx.Next()
+	}
+}
 
-		// Invalid flow type should result in error
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
+// assertLoginRedirectResponse verifies status and optional Location expectations.
+func assertLoginRedirectResponse(t *testing.T, recorder *httptest.ResponseRecorder, tc loginRedirectCase) {
+	t.Helper()
+
+	assert.Equal(t, tc.status, recorder.Code)
+
+	location := recorder.Header().Get("Location")
+	if tc.location != "" {
+		assert.Equal(t, tc.location, location)
+	}
+
+	for _, fragment := range tc.locationContains {
+		assert.Contains(t, location, fragment)
+	}
 }
 
 func TestIsValidIDPFlow(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	tests := []struct {
-		name       string
-		cookieData map[string]any
-		expected   bool
-	}{
+	for _, tt := range validIDPFlowCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, runIsValidIDPFlow(tt.cookieData))
+		})
+	}
+}
+
+type validIDPFlowCase struct {
+	name       string
+	cookieData map[string]any
+	expected   bool
+}
+
+// validIDPFlowCases returns valid and invalid IDP flow cookie states.
+func validIDPFlowCases() []validIDPFlowCase {
+	cases := make([]validIDPFlowCase, 0, 10)
+	cases = append(cases, baselineIDPFlowCases()...)
+	cases = append(cases, oidcIDPFlowCases()...)
+	cases = append(cases, samlIDPFlowCases()...)
+
+	return cases
+}
+
+// baselineIDPFlowCases returns generic missing and invalid flow states.
+func baselineIDPFlowCases() []validIDPFlowCase {
+	return []validIDPFlowCase{
 		{
 			name:       "No cookie data",
 			cookieData: map[string]any{},
@@ -148,6 +158,20 @@ func TestIsValidIDPFlow(t *testing.T) {
 			},
 			expected: false,
 		},
+		{
+			name: "Invalid flow type",
+			cookieData: map[string]any{
+				definitions.SessionKeyIDPFlowID:   "flow-invalid",
+				definitions.SessionKeyIDPFlowType: "invalid",
+			},
+			expected: false,
+		},
+	}
+}
+
+// oidcIDPFlowCases returns valid and invalid OIDC flow states.
+func oidcIDPFlowCases() []validIDPFlowCase {
+	return []validIDPFlowCase{
 		{
 			name: "Valid OIDC authorization code flow",
 			cookieData: map[string]any{
@@ -198,6 +222,12 @@ func TestIsValidIDPFlow(t *testing.T) {
 			},
 			expected: false,
 		},
+	}
+}
+
+// samlIDPFlowCases returns valid and invalid SAML flow states.
+func samlIDPFlowCases() []validIDPFlowCase {
+	return []validIDPFlowCase{
 		{
 			name: "Valid SAML2 flow",
 			cookieData: map[string]any{
@@ -215,43 +245,26 @@ func TestIsValidIDPFlow(t *testing.T) {
 			},
 			expected: false,
 		},
-		{
-			name: "Invalid flow type",
-			cookieData: map[string]any{
-				definitions.SessionKeyIDPFlowID:   "flow-invalid",
-				definitions.SessionKeyIDPFlowType: "invalid",
-			},
-			expected: false,
-		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := gin.New()
+// runIsValidIDPFlow executes flow validation inside a Gin request.
+func runIsValidIDPFlow(cookieData map[string]any) bool {
+	r := gin.New()
+	r.Use(secureDataTestMiddleware(cookieData))
 
-			var result bool
+	var result bool
 
-			r.Use(func(ctx *gin.Context) {
-				mgr := &mockCookieManager{data: tt.cookieData}
-				ctx.Set(definitions.CtxSecureDataKey, mgr)
-				ctx.Next()
-			})
+	r.GET("/test", func(ctx *gin.Context) {
+		result = (&FrontendHandler{}).isValidIDPFlow(ctx)
+		ctx.Status(http.StatusOK)
+	})
 
-			h := &FrontendHandler{}
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	r.ServeHTTP(w, req)
 
-			r.GET("/test", func(ctx *gin.Context) {
-				result = h.isValidIDPFlow(ctx)
-				ctx.Status(http.StatusOK)
-			})
-
-			w := httptest.NewRecorder()
-			req, _ := http.NewRequest(http.MethodGet, "/test", nil)
-
-			r.ServeHTTP(w, req)
-
-			assert.Equal(t, tt.expected, result)
-		})
-	}
+	return result
 }
 
 func TestIsLoginSelfResume(t *testing.T) {

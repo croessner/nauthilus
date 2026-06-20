@@ -12,6 +12,24 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// serveBasicAuthAttempt executes one Basic Auth request against a minimal test route.
+func serveBasicAuthAttempt(path string, cfg config.File, clientIP string, password string) int {
+	w := httptest.NewRecorder()
+	router := gin.New()
+	router.GET(path, func(c *gin.Context) {
+		if CheckAndRequireBasicAuth(c, cfg) {
+			c.Status(http.StatusOK)
+		}
+	})
+
+	req := httptest.NewRequest("GET", path, nil)
+	req.RemoteAddr = clientIP + ":12345"
+	req.SetBasicAuth("admin", password)
+	router.ServeHTTP(w, req)
+
+	return w.Code
+}
+
 func TestBasicAuthBruteForce_Metrics(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -36,68 +54,18 @@ func TestBasicAuthBruteForce_Metrics(t *testing.T) {
 
 	// Trigger 5 failures on /metrics
 	for range 5 {
-		w := httptest.NewRecorder()
-		router := gin.New()
-		router.GET("/metrics", func(c *gin.Context) {
-			if CheckAndRequireBasicAuth(c, cfg) {
-				c.Status(http.StatusOK)
-			}
-		})
-
-		req := httptest.NewRequest("GET", "/metrics", nil)
-		req.RemoteAddr = clientIP + ":12345"
-		req.SetBasicAuth("admin", "wrong")
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt("/metrics", cfg, clientIP, "wrong"))
 	}
 
 	// 6th attempt should NOT be throttled on /metrics, even with correct password
-	w := httptest.NewRecorder()
-	router := gin.New()
-	router.GET("/metrics", func(c *gin.Context) {
-		if CheckAndRequireBasicAuth(c, cfg) {
-			c.Status(http.StatusOK)
-		}
-	})
-
-	req := httptest.NewRequest("GET", "/metrics", nil)
-	req.RemoteAddr = clientIP + ":12345"
-	req.SetBasicAuth("admin", "password")
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusOK, serveBasicAuthAttempt("/metrics", cfg, clientIP, "password"))
 
 	// However, failures on another path SHOULD lead to throttling
 	// First, trigger 5 failures on another path
 	for range 5 {
-		w := httptest.NewRecorder()
-		router := gin.New()
-		router.GET("/other", func(c *gin.Context) {
-			if CheckAndRequireBasicAuth(c, cfg) {
-				c.Status(http.StatusOK)
-			}
-		})
-
-		req := httptest.NewRequest("GET", "/other", nil)
-		req.RemoteAddr = clientIP + ":12345"
-		req.SetBasicAuth("admin", "wrong")
-		router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt("/other", cfg, clientIP, "wrong"))
 	}
 
 	// 6th attempt on /other should be throttled
-	w = httptest.NewRecorder()
-	router = gin.New()
-	router.GET("/other", func(c *gin.Context) {
-		if CheckAndRequireBasicAuth(c, cfg) {
-			c.Status(http.StatusOK)
-		}
-	})
-
-	req = httptest.NewRequest("GET", "/other", nil)
-	req.RemoteAddr = clientIP + ":12345"
-	req.SetBasicAuth("admin", "password")
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	assert.Equal(t, http.StatusTooManyRequests, serveBasicAuthAttempt("/other", cfg, clientIP, "password"))
 }

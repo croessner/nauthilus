@@ -24,13 +24,24 @@ import (
 func TestMainFlowSequences_HappyPaths(t *testing.T) {
 	now := time.Now().UTC()
 
-	testCases := []struct {
-		name      string
-		state     *State
-		steps     []Step
-		flowID    string
-		wantFinal string
-	}{
+	for _, tc := range mainFlowHappyPathCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			assertMainFlowHappyPath(t, tc, now)
+		})
+	}
+}
+
+type mainFlowHappyPathCase struct {
+	name      string
+	state     *State
+	steps     []Step
+	flowID    string
+	wantFinal string
+}
+
+// mainFlowHappyPathCases returns the primary successful flow sequences.
+func mainFlowHappyPathCases() []mainFlowHappyPathCase {
+	return []mainFlowHappyPathCase{
 		{
 			name: "oidc authorization",
 			state: &State{
@@ -85,45 +96,53 @@ func TestMainFlowSequences_HappyPaths(t *testing.T) {
 			wantFinal: "/mfa/register/totp",
 		},
 	}
+}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			store := &memoryStore{}
-			controller := NewController(store)
+// assertMainFlowHappyPath verifies one successful flow lifecycle.
+func assertMainFlowHappyPath(t *testing.T, tc mainFlowHappyPathCase, now time.Time) {
+	t.Helper()
 
-			startDecision, err := controller.Start(t.Context(), tc.state, now)
-			if err != nil {
-				t.Fatalf("start failed: %v", err)
-			}
+	store := &memoryStore{}
+	controller := NewController(store)
 
-			if startDecision.Type != DecisionTypeRedirect {
-				t.Fatalf("unexpected start decision: %+v", startDecision)
-			}
+	startDecision, err := controller.Start(t.Context(), tc.state, now)
+	if err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
 
-			for _, step := range tc.steps {
-				decision, advanceErr := controller.Advance(t.Context(), tc.flowID, step, now)
-				if advanceErr != nil {
-					t.Fatalf("advance to %s failed: %v", step, advanceErr)
-				}
+	if startDecision.Type != DecisionTypeRedirect {
+		t.Fatalf("unexpected start decision: %+v", startDecision)
+	}
 
-				if decision.Type != DecisionTypeRedirect {
-					t.Fatalf("unexpected advance decision: %+v", decision)
-				}
-			}
+	assertMainFlowAdvances(t, controller, tc, now)
 
-			completeDecision, completeErr := controller.Complete(t.Context(), tc.flowID)
-			if completeErr != nil {
-				t.Fatalf("complete failed: %v", completeErr)
-			}
+	completeDecision, completeErr := controller.Complete(t.Context(), tc.flowID)
+	if completeErr != nil {
+		t.Fatalf("complete failed: %v", completeErr)
+	}
 
-			if completeDecision.RedirectURI != tc.wantFinal {
-				t.Fatalf("unexpected complete redirect: got %q want %q", completeDecision.RedirectURI, tc.wantFinal)
-			}
+	if completeDecision.RedirectURI != tc.wantFinal {
+		t.Fatalf("unexpected complete redirect: got %q want %q", completeDecision.RedirectURI, tc.wantFinal)
+	}
 
-			if store.state != nil {
-				t.Fatal("expected state to be deleted after complete")
-			}
-		})
+	if store.state != nil {
+		t.Fatal("expected state to be deleted after complete")
+	}
+}
+
+// assertMainFlowAdvances verifies all intermediate steps for one happy path.
+func assertMainFlowAdvances(t *testing.T, controller *Controller, tc mainFlowHappyPathCase, now time.Time) {
+	t.Helper()
+
+	for _, step := range tc.steps {
+		decision, advanceErr := controller.Advance(t.Context(), tc.flowID, step, now)
+		if advanceErr != nil {
+			t.Fatalf("advance to %s failed: %v", step, advanceErr)
+		}
+
+		if decision.Type != DecisionTypeRedirect {
+			t.Fatalf("unexpected advance decision: %+v", decision)
+		}
 	}
 }
 

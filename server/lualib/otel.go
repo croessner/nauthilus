@@ -297,55 +297,22 @@ func tracerStartSpan(L *lua.LState) int {
 	ensureSpanMT(L)
 
 	stack := luastack.NewManager(L)
-
-	ud := stack.CheckUserData(1)
-	if ud == nil {
-		L.ArgError(1, "tracer expected")
-
-		return 0
-	}
-
-	tr, ok := ud.Value.(*luaTracerUD)
-	if !ok || tr == nil {
-		L.ArgError(1, "tracer expected")
-
-		return 0
-	}
-
+	tr := checkLuaTracer(L, stack)
 	name := stack.CheckString(2)
-
-	var opts *lua.LTable
-
-	if stack.GetTop() >= 3 {
-		opts = L.OptTable(3, nil)
-	}
-
-	// Build options
-	kind := spanKindFromOpts(opts)
-	attrs := attrsFromTable(L, tblField(opts, "attributes"))
-
-	// Links (optional)
-	links := linksFromTable(L, tblField(opts, "links"))
-
-	ctx := tr.state.Ctx
+	opts := optionalLuaTable(L, stack, 3)
 
 	if !tr.state.enabled {
 		// Return a dummy span userdata to keep API stable
 		return stack.PushResults(newDummySpanUD(L), lua.LNil)
 	}
 
+	startConfig := newLuaSpanStartConfig(L, opts)
 	tracer := tr.state.tracerFor(tr.scope)
-	sctx, sp := tracer.Start(ctx, name, append([]trace.SpanStartOption{trace.WithSpanKind(kind)}, trace.WithLinks(links...))...)
-
-	if len(attrs) > 0 {
-		sp.SetAttributes(attrs...)
-	}
+	sctx, sp := tracer.Start(tr.state.Ctx, name, startConfig.options...)
+	applyLuaSpanAttributes(sp, startConfig.attrs)
 
 	// Update context for caller if they want it
-	spanUD := L.NewUserData()
-	spanUD.Value = &luaSpanUD{span: sp}
-
-	L.SetMetatable(spanUD, L.GetTypeMetatable(definitions.LuaUDSpan))
+	spanUD := newLuaSpanUD(L, sp)
 
 	// return a tiny context token (opaque); we don’t expose it as Lua value – keep API simple
 	// Instead, we store latest context back to state for nesting convenience
@@ -358,77 +325,124 @@ func tracerWithSpan(L *lua.LState) int {
 	ensureSpanMT(L)
 
 	stack := luastack.NewManager(L)
+	tr := checkLuaTracer(L, stack)
+	name := stack.CheckString(2)
+	fn := L.CheckFunction(3)
+	opts := optionalLuaTable(L, stack, 4)
 
+	if !tr.state.enabled {
+		return callLuaFunctionWithoutSpan(L, stack, fn)
+	}
+
+	startConfig := newLuaSpanStartConfig(L, opts)
+	tracer := tr.state.tracerFor(tr.scope)
+	prev := tr.state.Ctx
+	sctx, sp := tracer.Start(prev, name, startConfig.options...)
+	applyLuaSpanAttributes(sp, startConfig.attrs)
+
+	tr.state.Ctx = sctx
+
+	finish := func() {
+		tr.state.Ctx = prev
+
+		sp.End()
+	}
+
+	return callLuaFunctionWithSpan(L, stack, fn, newLuaSpanUD(L, sp), finish)
+}
+
+// checkLuaTracer extracts a tracer userdata from a Lua method call.
+func checkLuaTracer(L *lua.LState, stack *luastack.Manager) *luaTracerUD {
 	ud := stack.CheckUserData(1)
 	if ud == nil {
 		L.ArgError(1, "tracer expected")
 
-		return 0
+		return nil
 	}
 
 	tr, ok := ud.Value.(*luaTracerUD)
 	if !ok || tr == nil {
 		L.ArgError(1, "tracer expected")
 
-		return 0
+		return nil
 	}
 
-	name := stack.CheckString(2)
-	fn := L.CheckFunction(3)
+	return tr
+}
 
-	var opts *lua.LTable
-
-	if stack.GetTop() >= 4 {
-		opts = L.OptTable(4, nil)
+// optionalLuaTable reads an optional Lua table argument.
+func optionalLuaTable(L *lua.LState, stack *luastack.Manager, index int) *lua.LTable {
+	if stack.GetTop() < index {
+		return nil
 	}
 
-	if !tr.state.enabled {
-		// no-op: call fn without span
-		base := stack.GetTop()
+	return L.OptTable(index, nil)
+}
 
-		L.Push(fn)
+type luaSpanStartConfig struct {
+	attrs   []attribute.KeyValue
+	options []trace.SpanStartOption
+}
 
-		if err := L.PCall(0, lua.MultRet, nil); err != nil {
-			L.RaiseError("%s", err.Error())
-		}
-
-		return stack.GetTop() - base
-	}
-
-	kind := spanKindFromOpts(opts)
-	attrs := attrsFromTable(L, tblField(opts, "attributes"))
+// newLuaSpanStartConfig converts Lua span options into OpenTelemetry start options.
+func newLuaSpanStartConfig(L *lua.LState, opts *lua.LTable) luaSpanStartConfig {
 	links := linksFromTable(L, tblField(opts, "links"))
 
-	tracer := tr.state.tracerFor(tr.scope)
-	parent := tr.state.Ctx
-	sctx, sp := tracer.Start(parent, name, append([]trace.SpanStartOption{trace.WithSpanKind(kind)}, trace.WithLinks(links...))...)
+	return luaSpanStartConfig{
+		attrs: attrsFromTable(L, tblField(opts, "attributes")),
+		options: append(
+			[]trace.SpanStartOption{trace.WithSpanKind(spanKindFromOpts(opts))},
+			trace.WithLinks(links...),
+		),
+	}
+}
 
+// applyLuaSpanAttributes attaches optional attributes to a span.
+func applyLuaSpanAttributes(sp trace.Span, attrs []attribute.KeyValue) {
 	if len(attrs) > 0 {
 		sp.SetAttributes(attrs...)
 	}
+}
 
-	// Set new context during call
-	prev := tr.state.Ctx
-	tr.state.Ctx = sctx
-
-	// Make span available to function as first argument
+// newLuaSpanUD wraps an OpenTelemetry span for Lua callbacks.
+func newLuaSpanUD(L *lua.LState, sp trace.Span) *lua.LUserData {
 	spanUD := L.NewUserData()
 	spanUD.Value = &luaSpanUD{span: sp}
 	L.SetMetatable(spanUD, L.GetTypeMetatable(definitions.LuaUDSpan))
 
+	return spanUD
+}
+
+// callLuaFunctionWithoutSpan invokes the callback when tracing is disabled.
+func callLuaFunctionWithoutSpan(L *lua.LState, stack *luastack.Manager, fn *lua.LFunction) int {
+	base := stack.GetTop()
+
+	L.Push(fn)
+
+	if err := L.PCall(0, lua.MultRet, nil); err != nil {
+		L.RaiseError("%s", err.Error())
+	}
+
+	return stack.GetTop() - base
+}
+
+// callLuaFunctionWithSpan invokes the callback with an active span userdata.
+func callLuaFunctionWithSpan(
+	L *lua.LState,
+	stack *luastack.Manager,
+	fn *lua.LFunction,
+	spanUD *lua.LUserData,
+	finish func(),
+) int {
 	base := stack.GetTop()
 
 	L.Push(fn)
 	L.Push(spanUD)
 	err := L.PCall(1, lua.MultRet, nil)
 
-	// Restore context and end span
-	tr.state.Ctx = prev
-
-	sp.End()
+	finish()
 
 	if err != nil {
-		// propagate error
 		L.RaiseError("%s", err.Error())
 	}
 

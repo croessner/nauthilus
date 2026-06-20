@@ -23,11 +23,27 @@ import (
 )
 
 func TestStateValidate(t *testing.T) {
-	tests := []struct {
-		name    string
-		state   *State
-		errWant error
-	}{
+	for _, tc := range stateValidateCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			assertStateValidateResult(t, tc)
+		})
+	}
+}
+
+type stateValidateCase struct {
+	name    string
+	state   *State
+	errWant error
+}
+
+// stateValidateCases returns the validation coverage matrix for flow state.
+func stateValidateCases() []stateValidateCase {
+	return append(validStateValidateCases(), invalidStateValidateCases()...)
+}
+
+// validStateValidateCases returns successful state validation scenarios.
+func validStateValidateCases() []stateValidateCase {
+	return []stateValidateCase{
 		{
 			name: "valid",
 			state: &State{
@@ -39,6 +55,12 @@ func TestStateValidate(t *testing.T) {
 			},
 			errWant: nil,
 		},
+	}
+}
+
+// invalidStateValidateCases returns failing state validation scenarios.
+func invalidStateValidateCases() []stateValidateCase {
+	return []stateValidateCase{
 		{
 			name: "empty flow id",
 			state: &State{
@@ -91,18 +113,19 @@ func TestStateValidate(t *testing.T) {
 			errWant: ErrInvalidAuthOutcome,
 		},
 	}
+}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			err := tc.state.Validate()
-			if tc.errWant == nil && err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+// assertStateValidateResult verifies one flow state validation case.
+func assertStateValidateResult(t *testing.T, tc stateValidateCase) {
+	t.Helper()
 
-			if tc.errWant != nil && !errors.Is(err, tc.errWant) {
-				t.Fatalf("expected %v, got %v", tc.errWant, err)
-			}
-		})
+	err := tc.state.Validate()
+	if tc.errWant == nil && err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if tc.errWant != nil && !errors.Is(err, tc.errWant) {
+		t.Fatalf("expected %v, got %v", tc.errWant, err)
 	}
 }
 

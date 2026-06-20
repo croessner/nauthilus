@@ -41,12 +41,28 @@ type ScopeManager struct {
 // NewScopeManager constructs a ScopeManager from config and the requested scopes.
 // It merges standard claim definitions with custom scope/claim definitions.
 func NewScopeManager(requestedScopes []string, customScopes []config.Oauth2CustomScope) *ScopeManager {
+	claimDefinitions := standardClaimDefinitions()
+	applyCustomClaimDefinitions(claimDefinitions, customScopes)
+
+	return &ScopeManager{
+		requested:   requestedScopeSet(requestedScopes),
+		definitions: claimDefinitions,
+	}
+}
+
+// requestedScopeSet converts requested scopes into lookup form.
+func requestedScopeSet(requestedScopes []string) map[string]struct{} {
 	requested := make(map[string]struct{}, len(requestedScopes))
 	for _, scope := range requestedScopes {
 		requested[scope] = struct{}{}
 	}
 
-	claimDefinitions := map[string]claimDefinition{
+	return requested
+}
+
+// standardClaimDefinitions returns built-in OIDC claim definitions.
+func standardClaimDefinitions() map[string]claimDefinition {
+	return map[string]claimDefinition{
 		definitions.ClaimName:              {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
 		definitions.ClaimGivenName:         {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
 		definitions.ClaimFamilyName:        {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
@@ -71,39 +87,46 @@ func NewScopeManager(requestedScopes []string, customScopes []config.Oauth2Custo
 		definitions.ClaimAddress: {Scopes: []string{definitions.ScopeAddress}, DefaultType: definitions.ClaimTypeAddress},
 		definitions.ClaimGroups:  {Scopes: []string{definitions.ScopeGroups}, DefaultType: definitions.ClaimTypeStringArray},
 	}
+}
 
+// applyCustomClaimDefinitions merges configured custom scope claims.
+func applyCustomClaimDefinitions(claimDefinitions map[string]claimDefinition, customScopes []config.Oauth2CustomScope) {
 	for _, customScope := range customScopes {
 		for _, customClaim := range customScope.Claims {
-			claimName := customClaim.GetName()
-			if claimName == "" {
-				continue
-			}
-
-			claimType := customClaim.GetType()
-
-			definition, exists := claimDefinitions[claimName]
-			if !exists {
-				claimDefinitions[claimName] = claimDefinition{
-					Scopes:      []string{customScope.Name},
-					DefaultType: claimType,
-				}
-
-				continue
-			}
-
-			definition.Scopes = appendUnique(definition.Scopes, customScope.Name)
-			if definition.DefaultType == "" {
-				definition.DefaultType = claimType
-			}
-
-			claimDefinitions[claimName] = definition
+			mergeCustomClaimDefinition(claimDefinitions, customScope.Name, customClaim)
 		}
 	}
+}
 
-	return &ScopeManager{
-		requested:   requested,
-		definitions: claimDefinitions,
+// mergeCustomClaimDefinition merges one custom claim definition.
+func mergeCustomClaimDefinition(
+	claimDefinitions map[string]claimDefinition,
+	scopeName string,
+	customClaim config.OIDCCustomClaim,
+) {
+	claimName := customClaim.GetName()
+	if claimName == "" {
+		return
 	}
+
+	claimType := customClaim.GetType()
+
+	definition, exists := claimDefinitions[claimName]
+	if !exists {
+		claimDefinitions[claimName] = claimDefinition{
+			Scopes:      []string{scopeName},
+			DefaultType: claimType,
+		}
+
+		return
+	}
+
+	definition.Scopes = appendUnique(definition.Scopes, scopeName)
+	if definition.DefaultType == "" {
+		definition.DefaultType = claimType
+	}
+
+	claimDefinitions[claimName] = definition
 }
 
 // AllowsClaim reports whether a claim is allowed by any of the requested scopes.
@@ -174,66 +197,68 @@ func (m *ClaimManager) applyMapping(mapping config.OIDCClaimMapping, claims map[
 		return
 	}
 
-	var (
-		values []any
-		found  bool
-		source string
-	)
-
-	if mapping.Attribute != "" {
-		values, found = m.auth.GetAttribute(mapping.Attribute)
-		source = fmt.Sprintf("attribute '%s'", mapping.Attribute)
-	} else {
-		switch mapping.From {
-		case definitions.ClaimGroups:
-			groups := m.auth.GetGroups()
-			values = stringsToAny(groups)
-			found = len(values) > 0
-			source = definitions.ClaimGroups
-		case claimGroupDistinguishedNames:
-			groupDistinguishedNames := m.auth.GetGroupDistinguishedNames()
-			values = stringsToAny(groupDistinguishedNames)
-			found = len(values) > 0
-			source = claimGroupDistinguishedNames
-		default:
-			return
-		}
-	}
+	values, source, found := m.mappingValues(mapping)
 
 	if !found || len(values) == 0 {
-		m.auth.Logger().Warn(
-			fmt.Sprintf("Claim '%s' not applied (no value for %s)", mapping.Claim, source),
-			definitions.LogKeyGUID, m.auth.Runtime.GUID,
-		)
+		m.warnClaimNotApplied(mapping.Claim, fmt.Sprintf("no value for %s", source))
 
 		return
 	}
 
-	claimType := mapping.Type
+	claimType := m.mappingClaimType(mapping)
 	if claimType == "" {
-		claimType = m.scopes.DefaultType(mapping.Claim)
-	}
-
-	if claimType == "" {
-		m.auth.Logger().Warn(
-			fmt.Sprintf("Claim '%s' not applied (no claim type configured)", mapping.Claim),
-			definitions.LogKeyGUID, m.auth.Runtime.GUID,
-		)
+		m.warnClaimNotApplied(mapping.Claim, "no claim type configured")
 
 		return
 	}
 
 	converted, ok := convertClaimValues(claimType, values)
 	if !ok {
-		m.auth.Logger().Warn(
-			fmt.Sprintf("Claim '%s' not applied (unsupported value for %s)", mapping.Claim, source),
-			definitions.LogKeyGUID, m.auth.Runtime.GUID,
-		)
+		m.warnClaimNotApplied(mapping.Claim, fmt.Sprintf("unsupported value for %s", source))
 
 		return
 	}
 
 	claims[mapping.Claim] = converted
+}
+
+// mappingValues resolves backend values and a log source for a claim mapping.
+func (m *ClaimManager) mappingValues(mapping config.OIDCClaimMapping) ([]any, string, bool) {
+	if mapping.Attribute != "" {
+		values, found := m.auth.GetAttribute(mapping.Attribute)
+
+		return values, fmt.Sprintf("attribute '%s'", mapping.Attribute), found
+	}
+
+	switch mapping.From {
+	case definitions.ClaimGroups:
+		values := stringsToAny(m.auth.GetGroups())
+
+		return values, definitions.ClaimGroups, len(values) > 0
+	case claimGroupDistinguishedNames:
+		values := stringsToAny(m.auth.GetGroupDistinguishedNames())
+
+		return values, claimGroupDistinguishedNames, len(values) > 0
+	default:
+		return nil, "", false
+	}
+}
+
+// mappingClaimType returns the configured or default claim type.
+func (m *ClaimManager) mappingClaimType(mapping config.OIDCClaimMapping) string {
+	if mapping.Type != "" {
+		return mapping.Type
+	}
+
+	return m.scopes.DefaultType(mapping.Claim)
+}
+
+// warnClaimNotApplied writes a consistent claim mapping warning.
+func (m *ClaimManager) warnClaimNotApplied(claimName string, reason string) {
+	m.auth.Logger().Warn(
+		fmt.Sprintf("Claim '%s' not applied (%s)", claimName, reason),
+		definitions.LogKeyGUID, m.auth.Runtime.GUID,
+	)
 }
 
 func convertClaimValues(claimType string, values []any) (any, bool) {
@@ -343,32 +368,10 @@ func boolValue(value any) (bool, bool) {
 		}
 
 		return parsed, true
-	case int:
-		return typed != 0, true
-	case int8:
-		return typed != 0, true
-	case int16:
-		return typed != 0, true
-	case int32:
-		return typed != 0, true
-	case int64:
-		return typed != 0, true
-	case uint:
-		return typed != 0, true
-	case uint8:
-		return typed != 0, true
-	case uint16:
-		return typed != 0, true
-	case uint32:
-		return typed != 0, true
-	case uint64:
-		return typed != 0, true
-	case float32:
-		return typed != 0, true
-	case float64:
-		return typed != 0, true
 	default:
-		return false, false
+		number, ok := numericFloat64Value(value)
+
+		return number != 0, ok
 	}
 }
 
@@ -401,11 +404,34 @@ func floatArray(values []any) ([]float64, bool) {
 }
 
 func floatValue(value any) (float64, bool) {
+	if typed, ok := value.(string); ok {
+		parsed, err := strconv.ParseFloat(typed, 64)
+		if err != nil {
+			return 0, false
+		}
+
+		return parsed, true
+	}
+
+	return numericFloat64Value(value)
+}
+
+// numericFloat64Value converts numeric values to float64.
+func numericFloat64Value(value any) (float64, bool) {
+	if converted, ok := signedFloat64Value(value); ok {
+		return converted, true
+	}
+
+	if converted, ok := unsignedFloat64Value(value); ok {
+		return converted, true
+	}
+
+	return directFloat64Value(value)
+}
+
+// signedFloat64Value converts signed integer values to float64.
+func signedFloat64Value(value any) (float64, bool) {
 	switch typed := value.(type) {
-	case float64:
-		return typed, true
-	case float32:
-		return float64(typed), true
 	case int:
 		return float64(typed), true
 	case int8:
@@ -416,6 +442,14 @@ func floatValue(value any) (float64, bool) {
 		return float64(typed), true
 	case int64:
 		return float64(typed), true
+	default:
+		return 0, false
+	}
+}
+
+// unsignedFloat64Value converts unsigned integer values to float64.
+func unsignedFloat64Value(value any) (float64, bool) {
+	switch typed := value.(type) {
 	case uint:
 		return float64(typed), true
 	case uint8:
@@ -426,13 +460,18 @@ func floatValue(value any) (float64, bool) {
 		return float64(typed), true
 	case uint64:
 		return float64(typed), true
-	case string:
-		parsed, err := strconv.ParseFloat(typed, 64)
-		if err != nil {
-			return 0, false
-		}
+	default:
+		return 0, false
+	}
+}
 
-		return parsed, true
+// directFloat64Value converts floating-point values to float64.
+func directFloat64Value(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
 	default:
 		return 0, false
 	}
@@ -467,6 +506,28 @@ func integerArray(values []any) ([]int64, bool) {
 }
 
 func integerValue(value any) (int64, bool) {
+	if typed, ok := value.(string); ok {
+		parsed, err := strconv.ParseInt(typed, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+
+		return parsed, true
+	}
+
+	if converted, ok := signedIntegerValue(value); ok {
+		return converted, true
+	}
+
+	if converted, ok := unsignedIntegerValue(value); ok {
+		return converted, true
+	}
+
+	return floatIntegerValue(value)
+}
+
+// signedIntegerValue converts signed integer values to int64.
+func signedIntegerValue(value any) (int64, bool) {
 	switch typed := value.(type) {
 	case int:
 		return int64(typed), true
@@ -478,6 +539,14 @@ func integerValue(value any) (int64, bool) {
 		return int64(typed), true
 	case int64:
 		return typed, true
+	default:
+		return 0, false
+	}
+}
+
+// unsignedIntegerValue converts unsigned integer values to int64.
+func unsignedIntegerValue(value any) (int64, bool) {
+	switch typed := value.(type) {
 	case uint:
 		return int64(typed), true
 	case uint8:
@@ -488,8 +557,17 @@ func integerValue(value any) (int64, bool) {
 		return int64(typed), true
 	case uint64:
 		return int64(typed), true
+	default:
+		return 0, false
+	}
+}
+
+// floatIntegerValue converts integral floating-point values to int64.
+func floatIntegerValue(value any) (int64, bool) {
+	switch typed := value.(type) {
 	case float32:
-		if math.Mod(float64(typed), 1) != 0 {
+		floatValue := float64(typed)
+		if math.Mod(floatValue, 1) != 0 {
 			return 0, false
 		}
 
@@ -500,13 +578,6 @@ func integerValue(value any) (int64, bool) {
 		}
 
 		return int64(typed), true
-	case string:
-		parsed, err := strconv.ParseInt(typed, 10, 64)
-		if err != nil {
-			return 0, false
-		}
-
-		return parsed, true
 	default:
 		return 0, false
 	}

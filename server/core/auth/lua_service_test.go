@@ -117,8 +117,50 @@ func TestDefaultLuaSubject_OverridesAccountField(t *testing.T) { //nolint:funlen
 	}
 }
 
-func TestDefaultLuaSubject_MergesGroupsFromBackendResult(t *testing.T) { //nolint:funlen
+func TestDefaultLuaSubject_MergesGroupsFromBackendResult(t *testing.T) {
+	auth, ctx := newLuaSubjectGroupMergeTestAuth(t)
+	passDBResult := &core.PassDBResult{}
+
+	result := (DefaultLuaSubject{}).Analyze(ctx, auth.View(), passDBResult)
+	if result != definitions.AuthResultFail {
+		t.Fatalf("expected AuthResultFail, got %v", result)
+	}
+
+	assertLuaSubjectMergedGroups(t, auth, passDBResult)
+}
+
+// newLuaSubjectGroupMergeTestAuth prepares AuthState for Lua subject group merge tests.
+func newLuaSubjectGroupMergeTestAuth(t *testing.T) (*core.AuthState, *gin.Context) {
+	t.Helper()
+
 	gin.SetMode(gin.TestMode)
+	prepareLuaSubjectGroupMergeConfig(t)
+
+	redisDB, _ := redismock.NewClientMock()
+	rediscli.NewTestClient(redisDB)
+
+	auth := core.NewAuthStateFromContextWithDeps(nil, core.AuthDeps{
+		Cfg:    config.GetFile(),
+		Logger: log.GetLogger(),
+		Redis:  rediscli.GetClient(),
+	}).(*core.AuthState)
+	auth.Runtime.GUID = "guid-2"
+	auth.Runtime.StartTime = time.Now()
+	auth.Request.Protocol = config.NewProtocol("imap")
+	auth.Request.Username = "user@example.com"
+	auth.Request.Password = secret.New("secret")
+	auth.Request.ClientIP = "127.0.0.1"
+	auth.SetResolvedGroups([]string{"Existing"}, nil)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
+
+	return auth, ctx
+}
+
+// prepareLuaSubjectGroupMergeConfig configures Lua subject source fixtures.
+func prepareLuaSubjectGroupMergeConfig(t *testing.T) {
+	t.Helper()
 
 	wd, err := os.Getwd()
 	if err != nil {
@@ -153,33 +195,11 @@ func TestDefaultLuaSubject_MergesGroupsFromBackendResult(t *testing.T) { //nolin
 	if err := subject.PreCompileLuaSubjectSources(config.GetFile()); err != nil {
 		t.Fatalf("PreCompileLuaSubjectSources failed: %v", err)
 	}
+}
 
-	redisDB, _ := redismock.NewClientMock()
-	rediscli.NewTestClient(redisDB)
-
-	auth := core.NewAuthStateFromContextWithDeps(nil, core.AuthDeps{
-		Cfg:    config.GetFile(),
-		Logger: log.GetLogger(),
-		Redis:  rediscli.GetClient(),
-	}).(*core.AuthState)
-
-	auth.Runtime.GUID = "guid-2"
-	auth.Runtime.StartTime = time.Now()
-	auth.Request.Protocol = config.NewProtocol("imap")
-	auth.Request.Username = "user@example.com"
-	auth.Request.Password = secret.New("secret")
-	auth.Request.ClientIP = "127.0.0.1"
-	auth.SetResolvedGroups([]string{"Existing"}, nil)
-
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
-
-	passDBResult := &core.PassDBResult{}
-
-	result := (DefaultLuaSubject{}).Analyze(ctx, auth.View(), passDBResult)
-	if result != definitions.AuthResultFail {
-		t.Fatalf("expected AuthResultFail, got %v", result)
-	}
+// assertLuaSubjectMergedGroups verifies merged auth and passDB group state.
+func assertLuaSubjectMergedGroups(t *testing.T, auth *core.AuthState, passDBResult *core.PassDBResult) {
+	t.Helper()
 
 	if got := auth.GetGroups(); len(got) != 3 || got[0] != "Developer" || got[1] != "Existing" || got[2] != "Ops" {
 		t.Fatalf("unexpected merged groups on auth state: %v", got)

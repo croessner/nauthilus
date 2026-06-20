@@ -262,6 +262,37 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 	// Get the scopes required for this hook
 	requiredScopes := resolveRequiredScopes(location, method, cfg, logger, guid, ctx)
 
+	nextState, ok := startHookAuthzFSM(ctx, requiredScopes)
+	if !ok {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return false
+	}
+
+	// If no scopes are configured, this is a public hook — allow access regardless of token.
+	if nextState == hookAuthzStateAuthorized {
+		return allowPublicHook(ctx, cfg, logger, guid)
+	}
+
+	// Scopes required but OIDC auth not configured — deny access.
+	if validator == nil {
+		return denyHookWithoutValidator(ctx, cfg, logger, guid, requiredScopes)
+	}
+
+	_, ok = oidcbearer.EnforceBearerScopeAuth(ctx, validator, cfg, oidcbearer.EnforceBearerScopeAuthOptions{
+		RequiredScopes:         requiredScopes,
+		MissingScopeMessage:    "insufficient permissions",
+		ThrottleOnMissingToken: false,
+	})
+	if !ok {
+		return handleHookBearerAuthFailure(ctx)
+	}
+
+	return allowScopedHook(ctx, cfg, logger, guid, requiredScopes)
+}
+
+// startHookAuthzFSM applies the initial hook authorization transition.
+func startHookAuthzFSM(ctx *gin.Context, requiredScopes []string) (hookAuthzFSMState, bool) {
 	startEvent := hookAuthzEventScopesRequired
 	if len(requiredScopes) == 0 {
 		startEvent = hookAuthzEventNoScopes
@@ -271,65 +302,68 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 	if err != nil {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
-		return false
+		return "", false
 	}
 
-	// If no scopes are configured, this is a public hook — allow access regardless of token.
-	if nextState == hookAuthzStateAuthorized {
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			cfg,
-			logger,
-			definitions.DbgLua,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "No scopes configured for this hook, allowing access",
-		)
+	return nextState, true
+}
 
-		return true
-	}
+// allowPublicHook logs and allows hooks that do not require scopes.
+func allowPublicHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string) bool {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
+		definitions.DbgLua,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, "No scopes configured for this hook, allowing access",
+	)
 
-	// Scopes required but OIDC auth not configured — deny access.
-	if validator == nil {
-		nextState, err = nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventValidatorMissing)
-		if err != nil {
-			ctx.AbortWithStatus(http.StatusInternalServerError)
+	return true
+}
 
-			return false
-		}
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			cfg,
-			logger,
-			definitions.DbgLua,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Hook requires scopes %v but OIDC auth is not configured, denying access", requiredScopes),
-		)
-
-		abortOnHookAuthzState(ctx, nextState, "authentication required but not configured")
+// denyHookWithoutValidator denies scoped hooks when no token validator exists.
+func denyHookWithoutValidator(ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string, requiredScopes []string) bool {
+	nextState, err := nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventValidatorMissing)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
 
 		return false
 	}
 
-	_, ok := oidcbearer.EnforceBearerScopeAuth(ctx, validator, cfg, oidcbearer.EnforceBearerScopeAuthOptions{
-		RequiredScopes:         requiredScopes,
-		MissingScopeMessage:    "insufficient permissions",
-		ThrottleOnMissingToken: false,
-	})
-	if !ok {
-		if ctx.Writer.Status() == http.StatusUnauthorized {
-			_, err = nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventTokenMissing)
-		} else {
-			_, err = nextHookAuthzFSMState(hookAuthzStateTokenChecked, hookAuthzEventScopeMiss)
-		}
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
+		definitions.DbgLua,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Hook requires scopes %v but OIDC auth is not configured, denying access", requiredScopes),
+	)
 
-		if err != nil {
-			ctx.AbortWithStatus(http.StatusInternalServerError)
-		}
+	abortOnHookAuthzState(ctx, nextState, "authentication required but not configured")
 
-		return false
+	return false
+}
+
+// handleHookBearerAuthFailure records the FSM transition for failed bearer auth.
+func handleHookBearerAuthFailure(ctx *gin.Context) bool {
+	var err error
+
+	if ctx.Writer.Status() == http.StatusUnauthorized {
+		_, err = nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventTokenMissing)
+	} else {
+		_, err = nextHookAuthzFSMState(hookAuthzStateTokenChecked, hookAuthzEventScopeMiss)
 	}
 
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+	}
+
+	return false
+}
+
+// allowScopedHook records successful scoped authorization.
+func allowScopedHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string, requiredScopes []string) bool {
 	tokenCheckedState, err := nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventTokenValid)
 	if err != nil {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
@@ -337,8 +371,7 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 		return false
 	}
 
-	_, err = nextHookAuthzFSMState(tokenCheckedState, hookAuthzEventScopeMatch)
-	if err != nil {
+	if _, err = nextHookAuthzFSMState(tokenCheckedState, hookAuthzEventScopeMatch); err != nil {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
 		return false
@@ -795,21 +828,7 @@ func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript 
 		return nil, err
 	}
 
-	// Resolve the entry function nauthilus_run_hook from the request env first, then fall back to _G.
-	// Because the script chunk is executed under __NAUTH_REQ_ENV (via DoCompiledFile + SetFEnv),
-	// global assignments inside the script land in the reqEnv table, not in _G.
-	runHookFn := lua.LNil
-
-	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
-		if fn := L.GetField(v, definitions.LuaFnRunHook); fn != nil {
-			runHookFn = fn
-		}
-	}
-
-	if runHookFn == lua.LNil {
-		runHookFn = L.GetGlobal(definitions.LuaFnRunHook)
-	}
-
+	runHookFn := resolveRunHookFunction(L)
 	if runHookFn.Type() != lua.LTFunction {
 		// Provide a clear error instead of attempting to call a non-function (which results in "attempt to call a non-function object").
 		return nil, fmt.Errorf("entry function '%s' is not defined as a function in the loaded script (hook: %s)", definitions.LuaFnRunHook, hook)
@@ -825,32 +844,58 @@ func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript 
 		return nil, err
 	}
 
-	// Interpret the Lua return value correctly:
-	// - nil (or no return) => no Gin result (keep result == nil)
-	// - table (map-like)   => convert to gin.H
-	// - table (array-like) => error if non-empty (invalid result)
-	if L.GetTop() == 1 {
-		lv := L.Get(-1)
-		if lv != lua.LNil {
-			switch value := convert.LuaValueToGo(lv).(type) {
-			case map[any]any:
-				result = convert.ToGinH(value)
-				if result == nil {
-					// Non-map table provided; signal invalid result
-					result = gin.H{}
-					err = fmt.Errorf("custom location '%s' returned invalid result", hook)
-				}
-			case []any:
-				// An empty Lua array means 'no content'; if non-empty, it's invalid for hooks
-				if len(value) > 0 {
-					result = gin.H{}
-					err = fmt.Errorf("custom location '%s' returned invalid result, expected a map", hook)
-				}
-			}
+	return luaHookResult(L, hook)
+}
+
+// resolveRunHookFunction resolves the hook entry function from request env or globals.
+func resolveRunHookFunction(L *lua.LState) lua.LValue {
+	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+		if fn := L.GetField(v, definitions.LuaFnRunHook); fn != nil {
+			return fn
 		}
 	}
 
-	return
+	return L.GetGlobal(definitions.LuaFnRunHook)
+}
+
+// luaHookResult converts the Lua hook return value into a Gin result map.
+func luaHookResult(L *lua.LState, hook string) (gin.H, error) {
+	if L.GetTop() != 1 {
+		return nil, nil
+	}
+
+	lv := L.Get(-1)
+	if lv == lua.LNil {
+		return nil, nil
+	}
+
+	switch value := convert.LuaValueToGo(lv).(type) {
+	case map[any]any:
+		return luaHookMapResult(value, hook)
+	case []any:
+		return luaHookArrayResult(value, hook)
+	default:
+		return nil, nil
+	}
+}
+
+// luaHookMapResult converts map-like Lua hook output to gin.H.
+func luaHookMapResult(value map[any]any, hook string) (gin.H, error) {
+	result := convert.ToGinH(value)
+	if result != nil {
+		return result, nil
+	}
+
+	return gin.H{}, fmt.Errorf("custom location '%s' returned invalid result", hook)
+}
+
+// luaHookArrayResult validates array-like Lua hook output.
+func luaHookArrayResult(value []any, hook string) (gin.H, error) {
+	if len(value) == 0 {
+		return nil, nil
+	}
+
+	return gin.H{}, fmt.Errorf("custom location '%s' returned invalid result, expected a map", hook)
 }
 
 // processError logs an error with the associated script hook for debugging or monitoring purposes.

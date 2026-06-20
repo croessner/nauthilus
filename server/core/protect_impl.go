@@ -31,109 +31,127 @@ import (
 func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey) // MiddleWare behind Logger!
-
-		protocol := &config.Protocol{}
-		protocol.Set(definitions.ProtoHTTP)
-
-		clientIP := ctx.GetHeader("Client-IP")
-		clientPort := util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
-
-		auth := &AuthState{
-			deps: AuthDeps{
-				Cfg:    cfg,
-				Logger: logger,
-			},
-			Request: AuthRequest{
-				HTTPClientContext: ctx,
-				HTTPClientRequest: ctx.Request,
-				NoAuth:            true,
-				Protocol:          protocol,
-				Method:            "plain",
-			},
-			Runtime: AuthRuntime{
-				GUID: guid,
-			},
-		}
-
-		auth.WithUserAgent(ctx)
-		auth.WithXSSL(ctx)
-
-		if clientIP == "" {
-			clientIP, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
-		}
-
-		util.ProcessXForwardedFor(ctx, cfg, logger, &clientIP, &clientPort, &auth.Request.XSSL)
-
-		if clientIP == "" {
-			clientIP = definitions.NotAvailable
-		}
-
-		if clientPort == "" {
-			clientPort = definitions.NotAvailable
-		}
-
-		auth.Request.ClientIP = clientIP
-		auth.Request.XClientPort = clientPort
+		auth := newProtectedEndpointAuthState(ctx, cfg, logger, guid)
+		auth.Request.ClientIP, auth.Request.XClientPort = protectedEndpointClient(ctx, cfg, logger, auth)
 
 		// Store remote client IP into connection context. It can be used for brute force updates.
-		ctx.Set(definitions.CtxClientIPKey, clientIP)
+		ctx.Set(definitions.CtxClientIPKey, auth.Request.ClientIP)
 
-		if auth.CheckBruteForce(ctx) {
-			if auth.applyConfiguredPreAuthDecision(ctx) {
-				return
-			}
-
-			if !auth.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) && !auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
-				if auth.applyDefaultPreAuthDecision(ctx) {
-					return
-				}
-
-				auth.markEnvironmentRejected(ctx)
-				auth.UpdateBruteForceBucketsCounter(ctx)
-
-				result := GetPassDBResultFromPool()
-				auth.PostLuaAction(ctx, result)
-				PutPassDBResultToPool(result)
-				auth.AuthFail(ctx)
-				ctx.Abort()
-
-				return
-			}
+		if auth.CheckBruteForce(ctx) && handleProtectedPreAuthBruteForce(ctx, auth) {
+			return
 		}
 
-		//nolint:exhaustive // Ignore some results
-		switch auth.HandleEnvironment(ctx) {
-		case definitions.AuthResultPreAuthTLS:
-			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
-			HandleErrWithDeps(ctx, errors.ErrNoTLS, auth.deps)
-			ctx.Abort()
-
+		if handleProtectedEnvironment(ctx, auth) {
 			return
-		case definitions.AuthResultPreAuthRelayDomain, definitions.AuthResultPreAuthRBL, definitions.AuthResultLuaEnvironment:
-			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
-			auth.AuthFail(ctx)
-			ctx.Abort()
-
-			return
-		case definitions.AuthResultUnset:
-		case definitions.AuthResultOK:
-		case definitions.AuthResultFail:
-		case definitions.AuthResultTempFail:
-			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
-			auth.AuthTempFail(ctx, definitions.TempFailDefault)
-			ctx.Abort()
-
-			return
-		case definitions.AuthResultEmptyUsername:
-		case definitions.AuthResultEmptyPassword:
 		}
 
 		ctx.Next()
 	}
+}
+
+// newProtectedEndpointAuthState creates the no-auth HTTP AuthState used by protected endpoints.
+func newProtectedEndpointAuthState(ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string) *AuthState {
+	protocol := &config.Protocol{}
+	protocol.Set(definitions.ProtoHTTP)
+
+	auth := &AuthState{
+		deps: AuthDeps{
+			Cfg:    cfg,
+			Logger: logger,
+		},
+		Request: AuthRequest{
+			HTTPClientContext: ctx,
+			HTTPClientRequest: ctx.Request,
+			NoAuth:            true,
+			Protocol:          protocol,
+			Method:            "plain",
+		},
+		Runtime: AuthRuntime{
+			GUID: guid,
+		},
+	}
+
+	auth.WithUserAgent(ctx)
+	auth.WithXSSL(ctx)
+
+	return auth
+}
+
+// protectedEndpointClient resolves the effective client address for protected endpoints.
+func protectedEndpointClient(ctx *gin.Context, cfg config.File, logger *slog.Logger, auth *AuthState) (string, string) {
+	clientIP := ctx.GetHeader("Client-IP")
+	clientPort := util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
+
+	if clientIP == "" {
+		clientIP, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
+	}
+
+	util.ProcessXForwardedFor(ctx, cfg, logger, &clientIP, &clientPort, &auth.Request.XSSL)
+
+	if clientIP == "" {
+		clientIP = definitions.NotAvailable
+	}
+
+	if clientPort == "" {
+		clientPort = definitions.NotAvailable
+	}
+
+	return clientIP, clientPort
+}
+
+// handleProtectedPreAuthBruteForce applies configured and fallback pre-auth brute-force decisions.
+func handleProtectedPreAuthBruteForce(ctx *gin.Context, auth *AuthState) bool {
+	if auth.applyConfiguredPreAuthDecision(ctx) {
+		return true
+	}
+
+	if auth.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) || auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
+		return false
+	}
+
+	if auth.applyDefaultPreAuthDecision(ctx) {
+		return true
+	}
+
+	auth.markEnvironmentRejected(ctx)
+	auth.UpdateBruteForceBucketsCounter(ctx)
+	protectedPostLuaAction(ctx, auth)
+	auth.AuthFail(ctx)
+	ctx.Abort()
+
+	return true
+}
+
+// handleProtectedEnvironment turns environment decisions into HTTP responses.
+func handleProtectedEnvironment(ctx *gin.Context, auth *AuthState) bool {
+	//nolint:exhaustive // Ignore some results
+	switch auth.HandleEnvironment(ctx) {
+	case definitions.AuthResultPreAuthTLS:
+		protectedPostLuaAction(ctx, auth)
+		HandleErrWithDeps(ctx, errors.ErrNoTLS, auth.deps)
+		ctx.Abort()
+
+		return true
+	case definitions.AuthResultPreAuthRelayDomain, definitions.AuthResultPreAuthRBL, definitions.AuthResultLuaEnvironment:
+		protectedPostLuaAction(ctx, auth)
+		auth.AuthFail(ctx)
+		ctx.Abort()
+
+		return true
+	case definitions.AuthResultTempFail:
+		protectedPostLuaAction(ctx, auth)
+		auth.AuthTempFail(ctx, definitions.TempFailDefault)
+		ctx.Abort()
+
+		return true
+	default:
+		return false
+	}
+}
+
+// protectedPostLuaAction runs post-action hooks with a pooled empty PassDB result.
+func protectedPostLuaAction(ctx *gin.Context, auth *AuthState) {
+	result := GetPassDBResultFromPool()
+	auth.PostLuaAction(ctx, result)
+	PutPassDBResultToPool(result)
 }

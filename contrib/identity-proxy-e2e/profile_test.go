@@ -131,14 +131,49 @@ func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
 	plan := loadYAML(t, filepath.Join(root, smokePlanFile))
 
 	got := stringSet(sequence(plan, "scenarios"))
-	for _, scenario := range []string{
+	assertSmokePlanScenarios(t, got, requiredSmokePlanScenarios())
+}
+
+// assertSmokePlanScenarios verifies that all required smoke scenarios are present.
+func assertSmokePlanScenarios(t *testing.T, got map[string]bool, required []string) {
+	t.Helper()
+
+	for _, scenario := range required {
+		if !got[scenario] {
+			t.Fatalf("smoke plan missing scenario %q; got %v", scenario, sortedKeys(got))
+		}
+	}
+}
+
+// requiredSmokePlanScenarios returns all smoke scenarios that must stay covered.
+func requiredSmokePlanScenarios() []string {
+	return slices.Concat(
+		grpcSmokePlanScenarios(),
+		oidcAuthorizationSmokePlanScenarios(),
+		oidcTokenSmokePlanScenarios(),
+		oidcDeviceSmokePlanScenarios(),
+		mfaSmokePlanScenarios(),
+		samlSmokePlanScenarios(),
+		continuitySmokePlanScenarios(),
+		failureSmokePlanScenarios(),
+	)
+}
+
+// grpcSmokePlanScenarios returns required gRPC and management checks.
+func grpcSmokePlanScenarios() []string {
+	return []string{
 		"grpc-authenticate",
 		"grpc-lookup-identity",
 		"grpc-list-accounts",
 		"grpc-resolve-user",
 		openAPIManagementScenario,
+	}
+}
+
+// oidcAuthorizationSmokePlanScenarios returns authorization endpoint checks.
+func oidcAuthorizationSmokePlanScenarios() []string {
+	return []string{
 		"oidc-authorization-code",
-		"oidc-device-code",
 		"oidc-authorize-invalid-response-type",
 		"oidc-authorize-invalid-client",
 		"oidc-authorize-invalid-redirect-uri",
@@ -167,6 +202,12 @@ func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
 		"oidc-session-fixation-cookie-ignored",
 		"oidc-flow-replay-after-callback-rejected",
 		"oidc-cross-edge-flow-replay-after-callback-rejected",
+	}
+}
+
+// oidcTokenSmokePlanScenarios returns token, introspection, and userinfo checks.
+func oidcTokenSmokePlanScenarios() []string {
+	return []string{
 		"oidc-token-invalid-client-secret",
 		"oidc-token-invalid-code",
 		"oidc-token-unsupported-grant",
@@ -190,6 +231,13 @@ func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
 		"oidc-discovery-metadata-consistent",
 		"oidc-userinfo-missing-token",
 		"oidc-userinfo-invalid-token",
+	}
+}
+
+// oidcDeviceSmokePlanScenarios returns device authorization checks.
+func oidcDeviceSmokePlanScenarios() []string {
+	return []string{
+		"oidc-device-code",
 		"oidc-device-missing-client",
 		"oidc-device-invalid-client",
 		"oidc-device-unsupported-client",
@@ -203,6 +251,12 @@ func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
 		"oidc-device-token-consent-denied",
 		"oidc-device-consent-denied",
 		"oidc-device-token-reuse-rejected",
+	}
+}
+
+// mfaSmokePlanScenarios returns MFA and recovery-code checks.
+func mfaSmokePlanScenarios() []string {
+	return []string{
 		"oidc-totp-invalid-code",
 		"oidc-recovery-invalid-code",
 		"oidc-delayed-response-recovery-invalid-code",
@@ -219,12 +273,6 @@ func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
 		"oidc-webauthn-sign-count-rollback",
 		"oidc-delayed-response-recovery-wrong-password-rejected",
 		"oidc-delayed-response-master-user-recovery-wrong-password-rejected",
-		"saml-sso",
-		"saml-sp-initiated-slo",
-		samlSSOMalformedScenario,
-		"saml-slo-missing-payload-rejected",
-		samlSLOAmbiguousScenario,
-		"saml-slo-duplicate-request-rejected",
 		"totp-registration-login",
 		"recovery-code-generation-consumption",
 		"oidc-recovery-code-login",
@@ -233,8 +281,32 @@ func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
 		"authority-webauthn-sign-count",
 		"oidc-master-user-recovery-code-login",
 		"oidc-delayed-response-master-user-recovery-code-login",
+	}
+}
+
+// samlSmokePlanScenarios returns SAML SSO and SLO checks.
+func samlSmokePlanScenarios() []string {
+	return []string{
+		"saml-sso",
+		"saml-sp-initiated-slo",
+		samlSSOMalformedScenario,
+		"saml-slo-missing-payload-rejected",
+		samlSLOAmbiguousScenario,
+		"saml-slo-duplicate-request-rejected",
+	}
+}
+
+// continuitySmokePlanScenarios returns multi-edge continuity checks.
+func continuitySmokePlanScenarios() []string {
+	return []string{
 		"multi-edge-oidc-continuity",
 		"multi-edge-webauthn-continuity",
+	}
+}
+
+// failureSmokePlanScenarios returns operational failure and isolation checks.
+func failureSmokePlanScenarios() []string {
+	return []string{
 		"edge-no-local-credentials",
 		"redis-network-separation",
 		"missing-caller-auth",
@@ -242,10 +314,6 @@ func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
 		"expired-backend-ref",
 		"authority-unavailable",
 		"idempotency-replay",
-	} {
-		if !got[scenario] {
-			t.Fatalf("smoke plan missing scenario %q; got %v", scenario, sortedKeys(got))
-		}
 	}
 }
 

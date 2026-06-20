@@ -324,6 +324,29 @@ func runCallSubjectLua(t *testing.T, request *Request) bool {
 	return action
 }
 
+// runSubjectDependencyPair executes two Lua subject scripts where the second depends on the first.
+func runSubjectDependencyPair(t *testing.T, firstScript string, secondScript string) *Request {
+	t.Helper()
+
+	scriptDir := t.TempDir()
+	firstScriptPath := writeSubjectScript(t, scriptDir, "first.lua", firstScript)
+	secondScriptPath := writeSubjectScript(t, scriptDir, "second.lua", secondScript)
+	first := mustNewLuaSubjectSource(t, "first", firstScriptPath)
+	second := mustNewLuaSubjectSource(t, "second", secondScriptPath)
+	second.Dependencies = []string{"first"}
+
+	withTestLuaSubjectSources(t, first, second)
+
+	request := newSubjectTestRequest(nil, nil)
+	action := runCallSubjectLua(t, request)
+
+	if action {
+		t.Fatalf("expected action=false, got true")
+	}
+
+	return request
+}
+
 func assertSelectedBackend(t *testing.T, request *Request, expectedAddr string, expectedPort int) {
 	t.Helper()
 
@@ -381,16 +404,14 @@ func TestCallSubjectLuaSelectBackendServerDelegatesTwoScriptsDeterministic(t *te
 }
 
 func TestCallSubjectLuaDependencyContextPropagation(t *testing.T) {
-	scriptDir := t.TempDir()
-	firstScriptPath := writeSubjectScript(t, scriptDir, "first.lua", `
+	request := runSubjectDependencyPair(t, `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_subject(request)
     nauthilus_context.context_set("dependency_value", "ready")
     return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
 end
-`)
-	secondScriptPath := writeSubjectScript(t, scriptDir, "second.lua", `
+`, `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_subject(request)
@@ -402,18 +423,6 @@ function nauthilus_call_subject(request)
     return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
 end
 `)
-	first := mustNewLuaSubjectSource(t, "first", firstScriptPath)
-	second := mustNewLuaSubjectSource(t, "second", secondScriptPath)
-	second.Dependencies = []string{"first"}
-
-	withTestLuaSubjectSources(t, first, second)
-
-	request := newSubjectTestRequest(nil, nil)
-	action := runCallSubjectLua(t, request)
-
-	if action {
-		t.Fatalf("expected action=false, got true")
-	}
 
 	if got := request.Get("dependent_value"); got != "seen" {
 		t.Fatalf("expected dependent context value %q, got %v", "seen", got)
@@ -568,8 +577,7 @@ func TestCallSubjectLuaRejectsDependencyCycle(t *testing.T) {
 }
 
 func TestCallSubjectLuaDependencyBackendSnapshotPropagation(t *testing.T) {
-	scriptDir := t.TempDir()
-	firstScriptPath := writeSubjectScript(t, scriptDir, "first.lua", `
+	request := runSubjectDependencyPair(t, `
 local nauthilus_backend = require("nauthilus_backend")
 local nauthilus_backend_result = require("nauthilus_backend_result")
 
@@ -582,8 +590,7 @@ function nauthilus_call_subject(request)
 
     return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
 end
-`)
-	secondScriptPath := writeSubjectScript(t, scriptDir, "second.lua", `
+`, `
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_backend = require("nauthilus_backend")
 
@@ -601,18 +608,6 @@ function nauthilus_call_subject(request)
     return nauthilus_builtin.SUBJECT_REJECT, nauthilus_builtin.SUBJECT_RESULT_FAIL
 end
 `)
-	first := mustNewLuaSubjectSource(t, "first", firstScriptPath)
-	second := mustNewLuaSubjectSource(t, "second", secondScriptPath)
-	second.Dependencies = []string{"first"}
-
-	withTestLuaSubjectSources(t, first, second)
-
-	request := newSubjectTestRequest(nil, nil)
-	action := runCallSubjectLua(t, request)
-
-	if action {
-		t.Fatalf("expected action=false, got true")
-	}
 
 	if got := request.Get("backend_snapshot_seen"); got != "yes" {
 		t.Fatalf("expected backend snapshot marker %q, got %v", "yes", got)

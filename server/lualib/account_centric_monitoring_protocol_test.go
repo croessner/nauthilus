@@ -25,10 +25,41 @@ import (
 )
 
 func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
-	L := lua.NewState()
-
+	L := newAccountCentricMonitoringTestState(t)
 	defer L.Close()
 
+	loadAccountCentricMonitoringSubject(t, L)
+	callAccountCentricMonitoringSubject(t, L)
+	assertAccountMonitoringKeysIncludeProtocol(t, requireLuaTableGlobal(t, L, "last_keys"))
+}
+
+// newAccountCentricMonitoringTestState prepares the Lua state for the monitoring subject script.
+func newAccountCentricMonitoringTestState(t *testing.T) *lua.LState {
+	t.Helper()
+
+	L := lua.NewState()
+	preloadAccountMonitoringModules(t, L)
+	addLuaPluginSharePath(t, L)
+
+	return L
+}
+
+// preloadAccountMonitoringModules installs module stubs required by the account monitoring script.
+func preloadAccountMonitoringModules(t *testing.T, L *lua.LState) {
+	t.Helper()
+
+	preloadAccountMonitoringUtilModule(L)
+	preloadAccountMonitoringKeysModule(L)
+	preloadAccountMonitoringRedisModule(L)
+	preloadInMemoryContextModule(L)
+	L.PreloadModule("nauthilus_policy", LoaderPolicyStatelessForTest())
+	preloadAccountMonitoringOTELModule(L)
+	preloadFixedTimeModule(L, "")
+	preloadAccountMonitoringBuiltin(L)
+}
+
+// preloadAccountMonitoringUtilModule installs the util functions used by the script.
+func preloadAccountMonitoringUtilModule(L *lua.LState) {
 	L.PreloadModule("nauthilus_util", func(L *lua.LState) int {
 		mod := L.NewTable()
 		L.SetFuncs(mod, map[string]lua.LGFunction{
@@ -69,18 +100,15 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 
 		return 1
 	})
+}
 
-	L.PreloadModule("nauthilus_keys", func(L *lua.LState) int {
-		mod := L.NewTable()
-		mod.RawSetString("account_tag", L.NewFunction(func(L *lua.LState) int {
-			L.Push(lua.LString(""))
-			return 1
-		}))
-		L.Push(mod)
+// preloadAccountMonitoringKeysModule installs the key helper functions used by the script.
+func preloadAccountMonitoringKeysModule(L *lua.LState) {
+	preloadStringFunctionModule(L, "nauthilus_keys", "account_tag", "")
+}
 
-		return 1
-	})
-
+// preloadAccountMonitoringRedisModule captures Redis script keys for assertions.
+func preloadAccountMonitoringRedisModule(L *lua.LState) {
 	L.PreloadModule("nauthilus_redis", func(L *lua.LState) int {
 		mod := L.NewTable()
 		mod.RawSetString("redis_run_script", L.NewFunction(func(L *lua.LState) int {
@@ -101,31 +129,10 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 
 		return 1
 	})
+}
 
-	L.PreloadModule("nauthilus_context", func(L *lua.LState) int {
-		state := map[string]lua.LValue{}
-		mod := L.NewTable()
-		mod.RawSetString("context_get", L.NewFunction(func(L *lua.LState) int {
-			if value, ok := state[L.CheckString(1)]; ok {
-				L.Push(value)
-			} else {
-				L.Push(lua.LNil)
-			}
-
-			return 1
-		}))
-		mod.RawSetString("context_set", L.NewFunction(func(L *lua.LState) int {
-			state[L.CheckString(1)] = L.CheckAny(2)
-
-			return 0
-		}))
-		L.Push(mod)
-
-		return 1
-	})
-
-	L.PreloadModule("nauthilus_policy", LoaderPolicyStatelessForTest())
-
+// preloadAccountMonitoringOTELModule disables tracing in the Lua subject script.
+func preloadAccountMonitoringOTELModule(L *lua.LState) {
 	L.PreloadModule("nauthilus_opentelemetry", func(L *lua.LState) int {
 		mod := L.NewTable()
 		mod.RawSetString("is_enabled", L.NewFunction(func(L *lua.LState) int {
@@ -136,20 +143,10 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 
 		return 1
 	})
+}
 
-	L.PreloadModule("time", func(L *lua.LState) int {
-		mod := L.NewTable()
-		mod.RawSetString("unix", L.NewFunction(func(L *lua.LState) int {
-			L.Push(lua.LNumber(1700000000))
-			return 1
-		}))
-		L.Push(mod)
-
-		return 1
-	})
-
-	addLuaPluginSharePath(t, L)
-
+// preloadAccountMonitoringBuiltin installs the builtin values used by the subject script.
+func preloadAccountMonitoringBuiltin(L *lua.LState) {
 	builtin := L.NewTable()
 	builtin.RawSetString("SUBJECT_ACCEPT", lua.LBool(false))
 	builtin.RawSetString("SUBJECT_RESULT_OK", lua.LNumber(0))
@@ -157,11 +154,21 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 		return 0
 	}))
 	L.SetGlobal("nauthilus_builtin", builtin)
+}
+
+// loadAccountCentricMonitoringSubject loads the Lua subject plugin under test.
+func loadAccountCentricMonitoringSubject(t *testing.T, L *lua.LState) {
+	t.Helper()
 
 	scriptPath := filepath.Join("..", "lua-plugins.d", "subject", "account_centric_monitoring.lua")
 	if err := L.DoFile(scriptPath); err != nil {
 		t.Fatalf("failed to load script: %v", err)
 	}
+}
+
+// callAccountCentricMonitoringSubject invokes the subject plugin with an IMAP request.
+func callAccountCentricMonitoringSubject(t *testing.T, L *lua.LState) {
+	t.Helper()
 
 	req := L.NewTable()
 	req.RawSetString("no_auth", lua.LBool(false))
@@ -178,13 +185,11 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 	}, req); err != nil {
 		t.Fatalf("failed to call subject source: %v", err)
 	}
+}
 
-	keysVal := L.GetGlobal("last_keys")
-
-	keysTbl, ok := keysVal.(*lua.LTable)
-	if !ok {
-		t.Fatalf("expected keys table, got %v", keysVal.Type())
-	}
+// assertAccountMonitoringKeysIncludeProtocol verifies that every Redis key carries the protocol segment.
+func assertAccountMonitoringKeysIncludeProtocol(t *testing.T, keysTbl *lua.LTable) {
+	t.Helper()
 
 	expectedSegment := ":proto:imap"
 

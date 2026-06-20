@@ -1088,10 +1088,22 @@ func (f *FileSettings) materializeLegacySections() {
 		return
 	}
 
-	if f.Runtime == nil && f.Observability == nil && f.Storage == nil && f.Auth == nil && f.Identity == nil {
+	if !f.hasStructuredV2Sections() {
 		return
 	}
 
+	f.materializeLegacyCoreSections()
+	f.materializeLegacyBackendSections()
+	f.materializeLegacyAuthSections()
+}
+
+// hasStructuredV2Sections reports whether v2 sections are present and need materialization.
+func (f *FileSettings) hasStructuredV2Sections() bool {
+	return f.Runtime != nil || f.Observability != nil || f.Storage != nil || f.Auth != nil || f.Identity != nil
+}
+
+// materializeLegacyCoreSections materializes server and network-adjacent legacy sections.
+func (f *FileSettings) materializeLegacyCoreSections() {
 	if f.Server == nil {
 		f.Server = f.materializeServerSection()
 	}
@@ -1111,7 +1123,10 @@ func (f *FileSettings) materializeLegacySections() {
 	if f.BackendServerMonitoring == nil {
 		f.BackendServerMonitoring = f.materializeBackendServerMonitoring()
 	}
+}
 
+// materializeLegacyBackendSections materializes backend runtime legacy sections.
+func (f *FileSettings) materializeLegacyBackendSections() {
 	if f.BruteForce == nil {
 		f.BruteForce = f.materializeBruteForce()
 	}
@@ -1123,7 +1138,10 @@ func (f *FileSettings) materializeLegacySections() {
 	if f.LDAP == nil {
 		f.LDAP = f.materializeLDAP()
 	}
+}
 
+// materializeLegacyAuthSections materializes identity-provider legacy sections.
+func (f *FileSettings) materializeLegacyAuthSections() {
 	if f.IDP == nil {
 		f.IDP = f.materializeIDP()
 	}

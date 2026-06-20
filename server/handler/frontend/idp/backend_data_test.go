@@ -269,94 +269,48 @@ func assertBaselineWebAuthnUser(t *testing.T, user *backend.User, credential mfa
 func TestResolveWebAuthnUserFallbacksToBackend(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	cfg := &webAuthnBackendTestConfig{
-		prefix: "test:",
-		ttl:    time.Minute,
-	}
+	fixture := newWebAuthnFallbackFixture(t)
+	fixture.expectBackendFallbackCacheRefresh(t)
 
-	db, mockRedis := redismock.NewClientMock()
-	if db == nil || mockRedis == nil {
-		t.Fatalf("failed to create Redis mock client")
-	}
+	data, statusCode := fixture.runResolveWebAuthnUser(t)
 
-	redisClient := rediscli.NewTestClient(db)
-	h := &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg:    cfg,
-			Logger: slog.Default(),
-			Redis:  redisClient,
-		},
-	}
-
-	uniqueUserID := "uid-123"
-	redisKey := cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserID
-
-	mockRedis.ExpectHGetAll(redisKey).SetVal(map[string]string{})
-
-	provider := &mockWebAuthnProvider{
-		credentials: []mfa.PersistentCredential{
-			{
-				Credential: webauthn.Credential{ID: []byte("cred-1")},
-				Name:       "Test Key",
-			},
-		},
-	}
-
-	credentialsJSON, err := jsoniter.ConfigFastest.Marshal(provider.credentials)
-	if err != nil {
-		t.Fatalf("failed to marshal credentials: %v", err)
-	}
-
-	credentialsValue := string(credentialsJSON)
-	if encrypted, err := redisClient.GetSecurityManager().Encrypt(credentialsValue); err == nil {
-		credentialsValue = encrypted
-	}
-
-	expected := map[string]any{
-		"id":           uniqueUserID,
-		"name":         "test1",
-		"display_name": "Test User",
-		"credentials":  credentialsValue,
-	}
-
-	mockRedis.ExpectHSet(redisKey, expected).SetVal(4)
-	mockRedis.ExpectExpire(redisKey, cfg.GetServer().GetRedis().GetPosCacheTTL()).SetVal(true)
-
-	r := gin.New()
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyUniqueUserID: uniqueUserID,
-	}}
-
-	var data *UserBackendData
-
-	r.GET("/test", func(c *gin.Context) {
-		data = &UserBackendData{
-			Username:    "test1",
-			DisplayName: "Test User",
-		}
-
-		h.resolveWebAuthnUser(c, mgr, data, provider)
-		c.Status(http.StatusOK)
-	})
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusOK, statusCode)
 
 	if assert.NotNil(t, data) {
-		assert.Equal(t, uniqueUserID, data.UniqueUserID)
+		assert.Equal(t, fixture.uniqueUserID, data.UniqueUserID)
 		assert.True(t, data.HaveWebAuthn)
 		assert.NotNil(t, data.WebAuthnUser)
 		assert.Len(t, data.WebAuthnUser.Credentials, 1)
 	}
 
-	assert.NoError(t, mockRedis.ExpectationsWereMet())
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
 }
 
 func TestHasWebAuthnWithProviderFallbacksToBackend(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
+	fixture := newWebAuthnFallbackFixture(t)
+	fixture.expectBackendFallbackCacheRefresh(t)
+
+	statusCode := fixture.runHasWebAuthnWithProvider(t)
+
+	assert.Equal(t, http.StatusOK, statusCode)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+type webAuthnFallbackFixture struct {
+	cfg          *webAuthnBackendTestConfig
+	redis        rediscli.Client
+	mock         redismock.ClientMock
+	handler      *FrontendHandler
+	provider     *mockWebAuthnProvider
+	uniqueUserID string
+	redisKey     string
+}
+
+// newWebAuthnFallbackFixture creates shared Redis and provider state for fallback tests.
+func newWebAuthnFallbackFixture(t *testing.T) *webAuthnFallbackFixture {
+	t.Helper()
 
 	cfg := &webAuthnBackendTestConfig{
 		prefix: "test:",
@@ -369,20 +323,24 @@ func TestHasWebAuthnWithProviderFallbacksToBackend(t *testing.T) {
 	}
 
 	redisClient := rediscli.NewTestClient(db)
-	h := &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg:    cfg,
-			Logger: slog.Default(),
-			Redis:  redisClient,
-		},
-	}
-
 	uniqueUserID := "uid-123"
-	redisKey := cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserID
 
-	mockRedis.ExpectHGetAll(redisKey).SetVal(map[string]string{})
+	fixture := &webAuthnFallbackFixture{
+		cfg:          cfg,
+		redis:        redisClient,
+		mock:         mockRedis,
+		uniqueUserID: uniqueUserID,
+		redisKey:     cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserID,
+		provider:     newWebAuthnFallbackProvider(),
+	}
+	fixture.handler = newWebAuthnFallbackHandler(cfg, redisClient)
 
-	provider := &mockWebAuthnProvider{
+	return fixture
+}
+
+// newWebAuthnFallbackProvider returns a provider with one backend credential.
+func newWebAuthnFallbackProvider() *mockWebAuthnProvider {
+	return &mockWebAuthnProvider{
 		credentials: []mfa.PersistentCredential{
 			{
 				Credential: webauthn.Credential{ID: []byte("cred-1")},
@@ -390,33 +348,92 @@ func TestHasWebAuthnWithProviderFallbacksToBackend(t *testing.T) {
 			},
 		},
 	}
+}
 
-	credentialsJSON, err := jsoniter.ConfigFastest.Marshal(provider.credentials)
+// newWebAuthnFallbackHandler creates the frontend handler used by fallback tests.
+func newWebAuthnFallbackHandler(cfg *webAuthnBackendTestConfig, redisClient rediscli.Client) *FrontendHandler {
+	return &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg:    cfg,
+			Logger: slog.Default(),
+			Redis:  redisClient,
+		},
+	}
+}
+
+// expectBackendFallbackCacheRefresh registers Redis expectations for backend fallback caching.
+func (f *webAuthnFallbackFixture) expectBackendFallbackCacheRefresh(t *testing.T) {
+	t.Helper()
+
+	f.mock.ExpectHGetAll(f.redisKey).SetVal(map[string]string{})
+	f.mock.ExpectHSet(f.redisKey, f.expectedCachedWebAuthnUser(t)).SetVal(4)
+	f.mock.ExpectExpire(f.redisKey, f.cfg.GetServer().GetRedis().GetPosCacheTTL()).SetVal(true)
+}
+
+// expectedCachedWebAuthnUser returns the Redis hash expected after fallback resolution.
+func (f *webAuthnFallbackFixture) expectedCachedWebAuthnUser(t *testing.T) map[string]any {
+	t.Helper()
+
+	return map[string]any{
+		"id":           f.uniqueUserID,
+		"name":         "test1",
+		"display_name": "Test User",
+		"credentials":  f.encryptedCredentialsValue(t),
+	}
+}
+
+// encryptedCredentialsValue returns the serialized credential payload expected in Redis.
+func (f *webAuthnFallbackFixture) encryptedCredentialsValue(t *testing.T) string {
+	t.Helper()
+
+	credentialsJSON, err := jsoniter.ConfigFastest.Marshal(f.provider.credentials)
 	if err != nil {
 		t.Fatalf("failed to marshal credentials: %v", err)
 	}
 
 	credentialsValue := string(credentialsJSON)
-	if encrypted, err := redisClient.GetSecurityManager().Encrypt(credentialsValue); err == nil {
-		credentialsValue = encrypted
+	if encrypted, err := f.redis.GetSecurityManager().Encrypt(credentialsValue); err == nil {
+		return encrypted
 	}
 
-	expected := map[string]any{
-		"id":           uniqueUserID,
-		"name":         "test1",
-		"display_name": "Test User",
-		"credentials":  credentialsValue,
+	return credentialsValue
+}
+
+// runResolveWebAuthnUser executes resolveWebAuthnUser through a Gin route.
+func (f *webAuthnFallbackFixture) runResolveWebAuthnUser(t *testing.T) (*UserBackendData, int) {
+	t.Helper()
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyUniqueUserID: f.uniqueUserID,
+	}}
+	data := &UserBackendData{
+		Username:    "test1",
+		DisplayName: "Test User",
 	}
 
-	mockRedis.ExpectHSet(redisKey, expected).SetVal(4)
-	mockRedis.ExpectExpire(redisKey, cfg.GetServer().GetRedis().GetPosCacheTTL()).SetVal(true)
+	statusCode := runWebAuthnFallbackRoute(func(c *gin.Context) {
+		f.handler.resolveWebAuthnUser(c, mgr, data, f.provider)
+	})
 
+	return data, statusCode
+}
+
+// runHasWebAuthnWithProvider executes hasWebAuthnWithProvider through a Gin route.
+func (f *webAuthnFallbackFixture) runHasWebAuthnWithProvider(t *testing.T) int {
+	t.Helper()
+
+	user := &backend.User{ID: f.uniqueUserID, Name: "test1", DisplayName: "Test User"}
+
+	return runWebAuthnFallbackRoute(func(c *gin.Context) {
+		assert.True(t, f.handler.hasWebAuthnWithProvider(c, user, "", f.provider))
+	})
+}
+
+// runWebAuthnFallbackRoute executes a single fallback assertion route.
+func runWebAuthnFallbackRoute(run func(*gin.Context)) int {
 	r := gin.New()
-
 	r.GET("/test", func(c *gin.Context) {
-		user := &backend.User{ID: uniqueUserID, Name: "test1", DisplayName: "Test User"}
-		haveWebAuthn := h.hasWebAuthnWithProvider(c, user, "", provider)
-		assert.True(t, haveWebAuthn)
+		run(c)
 		c.Status(http.StatusOK)
 	})
 
@@ -424,8 +441,7 @@ func TestHasWebAuthnWithProviderFallbacksToBackend(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.NoError(t, mockRedis.ExpectationsWereMet())
+	return w.Code
 }
 
 type backendDataBaseFixture struct {

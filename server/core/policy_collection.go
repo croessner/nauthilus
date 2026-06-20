@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -1085,35 +1086,29 @@ func boolPolicyValue(value any) (bool, bool) {
 }
 
 func numberPolicyValue(value any) (float64, bool) {
+	if value == nil {
+		return 0, false
+	}
+
 	switch v := value.(type) {
-	case int:
-		return float64(v), true
-	case int8:
-		return float64(v), true
-	case int16:
-		return float64(v), true
-	case int32:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	case uint:
-		return float64(v), true
-	case uint8:
-		return float64(v), true
-	case uint16:
-		return float64(v), true
-	case uint32:
-		return float64(v), true
-	case uint64:
-		return float64(v), true
-	case float32:
-		return float64(v), true
-	case float64:
-		return v, true
 	case string:
 		parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
 
 		return parsed, err == nil
+	}
+
+	return reflectedNumberPolicyValue(reflect.ValueOf(value))
+}
+
+// reflectedNumberPolicyValue converts scalar numeric values into the report representation.
+func reflectedNumberPolicyValue(value reflect.Value) (float64, bool) {
+	switch value.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return float64(value.Int()), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return float64(value.Uint()), true
+	case reflect.Float32, reflect.Float64:
+		return value.Convert(reflect.TypeOf(float64(0))).Float(), true
 	default:
 		return 0, false
 	}

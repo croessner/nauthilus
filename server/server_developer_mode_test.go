@@ -5,73 +5,70 @@ import (
 	"testing"
 )
 
+type developerModeBindCase struct {
+	name         string
+	listen       string
+	errorContain string
+	devMode      bool
+	expectErr    bool
+}
+
 func TestValidateDeveloperModeBindAddress(t *testing.T) {
-	tests := []struct {
-		name         string
-		devMode      bool
-		listen       string
-		expectErr    bool
-		errorContain string
-	}{
-		{
-			name:      "non-dev-mode-allows-any-bind",
-			devMode:   false,
-			listen:    "0.0.0.0:9080",
-			expectErr: false,
-		},
-		{
-			name:      "dev-mode-allows-ipv4-loopback",
-			devMode:   true,
-			listen:    "127.0.0.1:9080",
-			expectErr: false,
-		},
-		{
-			name:      "dev-mode-allows-ipv6-loopback",
-			devMode:   true,
-			listen:    "[::1]:9080",
-			expectErr: false,
-		},
-		{
-			name:         "dev-mode-rejects-wildcard-bind",
-			devMode:      true,
-			listen:       "0.0.0.0:9080",
-			expectErr:    true,
-			errorContain: "requires loopback listen address",
-		},
-		{
-			name:         "dev-mode-rejects-empty-host-bind",
-			devMode:      true,
-			listen:       ":9080",
-			expectErr:    true,
-			errorContain: "requires loopback listen address",
-		},
-		{
-			name:         "dev-mode-rejects-localhost-hostname",
-			devMode:      true,
-			listen:       "localhost:9080",
-			expectErr:    true,
-			errorContain: "requires loopback listen address",
-		},
+	for _, tt := range developerModeBindCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			assertDeveloperModeBindCase(t, tt)
+		})
+	}
+}
+
+// developerModeBindCases returns the developer-mode bind validation matrix.
+func developerModeBindCases() []developerModeBindCase {
+	return []developerModeBindCase{
+		{name: "non-dev-mode-allows-any-bind", listen: "0.0.0.0:9080"},
+		{name: "dev-mode-allows-ipv4-loopback", devMode: true, listen: "127.0.0.1:9080"},
+		{name: "dev-mode-allows-ipv6-loopback", devMode: true, listen: "[::1]:9080"},
+		rejectedDeveloperModeBind("dev-mode-rejects-wildcard-bind", "0.0.0.0:9080"),
+		rejectedDeveloperModeBind("dev-mode-rejects-empty-host-bind", ":9080"),
+		rejectedDeveloperModeBind("dev-mode-rejects-localhost-hostname", "localhost:9080"),
+	}
+}
+
+// rejectedDeveloperModeBind builds a rejected developer-mode bind case.
+func rejectedDeveloperModeBind(name string, listen string) developerModeBindCase {
+	return developerModeBindCase{
+		name:         name,
+		devMode:      true,
+		listen:       listen,
+		expectErr:    true,
+		errorContain: "requires loopback listen address",
+	}
+}
+
+// assertDeveloperModeBindCase verifies one developer-mode bind validation case.
+func assertDeveloperModeBindCase(t *testing.T, tt developerModeBindCase) {
+	t.Helper()
+
+	err := validateDeveloperModeBindAddress(tt.devMode, tt.listen)
+	if tt.expectErr {
+		assertDeveloperModeBindError(t, err, tt.errorContain)
+
+		return
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateDeveloperModeBindAddress(tt.devMode, tt.listen)
-			if tt.expectErr {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
 
-				if tt.errorContain != "" && !strings.Contains(err.Error(), tt.errorContain) {
-					t.Fatalf("error %q does not contain %q", err.Error(), tt.errorContain)
-				}
+// assertDeveloperModeBindError verifies the expected validation error text.
+func assertDeveloperModeBindError(t *testing.T, err error, errorContain string) {
+	t.Helper()
 
-				return
-			}
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
 
-			if err != nil {
-				t.Fatalf("expected no error, got %v", err)
-			}
-		})
+	if errorContain != "" && !strings.Contains(err.Error(), errorContain) {
+		t.Fatalf("error %q does not contain %q", err.Error(), errorContain)
 	}
 }

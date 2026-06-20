@@ -111,223 +111,202 @@ func mockNoisy(mock redismock.ClientMock) {
 func TestBruteForceScenarios(t *testing.T) {
 	cfg := initTestConfig()
 
-	const (
-		attackerIP  = "1.2.3.4"
-		accountName = "user1"
-		password    = "password123"
-	)
-
-	t.Run("Scenario 1: Known user, same password (Brute force triggered)", func(t *testing.T) {
-		mock, tol := setupSubtest(cfg)
-		mockNoisy(mock)
-
-		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen1", attackerIP, bruteforce.BucketManagerDeps{
-			Cfg:      cfg,
-			Logger:   log.GetLogger(),
-			Redis:    rediscli.GetClient(),
-			Tolerate: tol,
-		}).WithAccountName(accountName).WithUsername(accountName).WithProtocol("imap").WithPassword(secret.New(password))
-
-		mock.MatchExpectationsInOrder(false)
-
-		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
-		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
-
-		mock.Regexp().ExpectSIsMember(".*affected_accounts", accountName).SetVal(false)
-		mock.Regexp().ExpectSAdd(".*affected_accounts", accountName).SetVal(int64(1))
-
-		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]any{"10", int64(1), "4"})
-
-		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
-		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
-
-		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
-		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
-
-		mock.ExpectScriptLoad(rediscli.LuaScripts["IncrementAndExpire"]).SetVal("sha-inc")
-		mock.Regexp().ExpectEvalSha("sha-inc", []string{".*"}, ".*").SetVal(int64(1))
-
-		mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
-		mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
-
-		rule := cfg.GetBruteForceRules()[0]
-		_, network, _ := net.ParseCIDR(attackerIP + "/32")
-		triggered := bm.ProcessBruteForce(true, false, &rule, network, "attack", func() {})
-
-		assert.True(t, triggered)
-	})
+	for _, tc := range triggeredBruteForceScenarios() {
+		t.Run(tc.name, func(t *testing.T) {
+			runTriggeredBruteForceScenario(t, cfg, tc)
+		})
+	}
 
 	t.Run("Scenario 1b: RWP active skips affected accounts", func(t *testing.T) {
-		mock, tol := setupSubtest(cfg)
-		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen1b", attackerIP, bruteforce.BucketManagerDeps{
-			Cfg:      cfg,
-			Logger:   log.GetLogger(),
-			Redis:    rediscli.GetClient(),
-			Tolerate: tol,
-		}).WithAccountName(accountName).WithUsername(accountName).WithProtocol("imap").WithPassword(secret.New(password)).WithRWPDecision(false)
-
-		mock.MatchExpectationsInOrder(false)
-
-		mock.Regexp().ExpectSIsMember(".*pw_hist_ips.*", attackerIP).SetVal(false)
-		mock.Regexp().ExpectSAdd(".*pw_hist_ips.*", attackerIP).SetVal(int64(1))
-		mock.Regexp().ExpectExpire(".*pw_hist_ips.*", cfg.GetServer().Redis.NegCacheTTL).SetVal(true)
-
-		bm.ProcessPWHist()
-
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("Scenario 2: Known user, different passwords (Brute force triggered)", func(t *testing.T) {
-		mock, tol := setupSubtest(cfg)
-		mockNoisy(mock)
-
-		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen2", attackerIP, bruteforce.BucketManagerDeps{
-			Cfg:      cfg,
-			Logger:   log.GetLogger(),
-			Redis:    rediscli.GetClient(),
-			Tolerate: tol,
-		}).WithAccountName(accountName).WithPassword(secret.New("new_password"))
-
-		mock.MatchExpectationsInOrder(false)
-
-		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
-		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
-
-		// Check if account is in affected-accounts
-		mock.Regexp().ExpectSIsMember(".*affected_accounts", accountName).SetVal(false)
-		mock.Regexp().ExpectSAdd(".*affected_accounts", accountName).SetVal(int64(1))
-
-		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]any{"10", int64(1), "4"})
-
-		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
-		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
-
-		// Verifiziere globale Sperre via Pub/Sub
-		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
-		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
-
-		mock.ExpectScriptLoad(rediscli.LuaScripts["IncrementAndExpire"]).SetVal("sha-inc")
-		mock.Regexp().ExpectEvalSha("sha-inc", []string{".*"}, ".*").SetVal(int64(1))
-
-		// New password history Set logic
-		mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
-		mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
-
-		rule := cfg.GetBruteForceRules()[0]
-		_, network, _ := net.ParseCIDR(attackerIP + "/32")
-		triggered := bm.ProcessBruteForce(true, false, &rule, network, "attack", func() {})
-
-		assert.True(t, triggered)
+		runRWPActiveSkipsAffectedAccountsScenario(t, cfg)
 	})
 
 	t.Run("Scenario 2b: Ban write failure does not trigger", func(t *testing.T) {
-		mock, tol := setupSubtest(cfg)
-		mockNoisy(mock)
+		runBanWriteFailureScenario(t, cfg)
+	})
+}
 
-		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen2b", attackerIP, bruteforce.BucketManagerDeps{
-			Cfg:      cfg,
-			Logger:   log.GetLogger(),
-			Redis:    rediscli.GetClient(),
-			Tolerate: tol,
-		}).WithAccountName(accountName).WithPassword(secret.New("new_password"))
+const (
+	bruteForceScenarioIP      = "1.2.3.4"
+	bruteForceScenarioAccount = "user1"
+	bruteForceScenarioPass    = "password123"
+)
 
-		mock.MatchExpectationsInOrder(false)
+type triggeredBruteForceScenario struct {
+	name           string
+	guid           string
+	accountName    string
+	username       string
+	protocol       string
+	password       string
+	expectAffected bool
+}
 
-		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
-		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
+// triggeredBruteForceScenarios returns the process-brute-force trigger cases.
+func triggeredBruteForceScenarios() []triggeredBruteForceScenario {
+	return []triggeredBruteForceScenario{
+		{
+			name:           "Scenario 1: Known user, same password (Brute force triggered)",
+			guid:           "scen1",
+			accountName:    bruteForceScenarioAccount,
+			username:       bruteForceScenarioAccount,
+			protocol:       "imap",
+			password:       bruteForceScenarioPass,
+			expectAffected: true,
+		},
+		{
+			name:           "Scenario 2: Known user, different passwords (Brute force triggered)",
+			guid:           "scen2",
+			accountName:    bruteForceScenarioAccount,
+			password:       "new_password",
+			expectAffected: true,
+		},
+		{
+			name:     "Scenario 3: Different users, same password (Brute force)",
+			guid:     "scen3",
+			username: "user2",
+			password: bruteForceScenarioPass,
+		},
+		{
+			name:     "Scenario 4: Different users, different passwords (Brute force)",
+			guid:     "scen4",
+			username: "user3",
+			password: "passX",
+		},
+	}
+}
 
-		mock.Regexp().ExpectSIsMember(".*affected_accounts", accountName).SetVal(false)
-		mock.Regexp().ExpectSAdd(".*affected_accounts", accountName).SetVal(int64(1))
+// runTriggeredBruteForceScenario verifies a triggered brute-force process path.
+func runTriggeredBruteForceScenario(t *testing.T, cfg config.File, tc triggeredBruteForceScenario) {
+	t.Helper()
 
-		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]any{"10", int64(1), "4"})
+	mock, bm := setupScenarioBucketManager(t, cfg, tc)
+	expectTriggeredProcessRedis(mock, tc.expectAffected)
 
-		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetErr(errors.New("redis write failed"))
-		mock.Regexp().ExpectExists(".*bf:ban:.*").SetVal(int64(0))
+	assert.True(t, processScenarioBruteForce(cfg, bm))
+}
 
-		rule := cfg.GetBruteForceRules()[0]
-		_, network, _ := net.ParseCIDR(attackerIP + "/32")
-		triggered := bm.ProcessBruteForce(true, false, &rule, network, "attack", func() {})
+// setupScenarioBucketManager creates a bucket manager for a scenario case.
+func setupScenarioBucketManager(
+	t *testing.T,
+	cfg config.File,
+	tc triggeredBruteForceScenario,
+) (redismock.ClientMock, bruteforce.BucketManager) {
+	t.Helper()
 
-		assert.False(t, triggered)
+	mock, tol := setupSubtest(cfg)
+	mockNoisy(mock)
+	mock.MatchExpectationsInOrder(false)
+
+	bm := bruteforce.NewBucketManagerWithDeps(context.Background(), tc.guid, bruteForceScenarioIP, bruteforce.BucketManagerDeps{
+		Cfg:      cfg,
+		Logger:   log.GetLogger(),
+		Redis:    rediscli.GetClient(),
+		Tolerate: tol,
 	})
 
-	t.Run("Scenario 3: Different users, same password (Brute force)", func(t *testing.T) {
-		mock, tol := setupSubtest(cfg)
-		mockNoisy(mock)
+	if tc.accountName != "" {
+		bm = bm.WithAccountName(tc.accountName)
+	}
 
-		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen3", attackerIP, bruteforce.BucketManagerDeps{
-			Cfg:      cfg,
-			Logger:   log.GetLogger(),
-			Redis:    rediscli.GetClient(),
-			Tolerate: tol,
-		}).WithUsername("user2").WithPassword(secret.New(password))
+	if tc.username != "" {
+		bm = bm.WithUsername(tc.username)
+	}
 
-		mock.MatchExpectationsInOrder(false)
+	if tc.protocol != "" {
+		bm = bm.WithProtocol(tc.protocol)
+	}
 
-		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
-		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
-		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]any{"10", int64(1), "4"})
-		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
-		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
-		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
-		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
-		mock.ExpectScriptLoad(rediscli.LuaScripts["IncrementAndExpire"]).SetVal("sha-inc")
-		mock.Regexp().ExpectEvalSha("sha-inc", []string{".*"}, ".*").SetVal(int64(1))
+	return mock, bm.WithPassword(secret.New(tc.password))
+}
 
-		// New password history Set logic
-		mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
-		mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
+// expectTriggeredProcessRedis configures Redis expectations for a successful trigger.
+func expectTriggeredProcessRedis(mock redismock.ClientMock, expectAffected bool) {
+	mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
+	mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
 
-		rule := cfg.GetBruteForceRules()[0]
-		_, network, _ := net.ParseCIDR(attackerIP + "/32")
-		triggered := bm.ProcessBruteForce(true, false, &rule, network, "attack", func() {})
+	if expectAffected {
+		mock.Regexp().ExpectSIsMember(".*affected_accounts", bruteForceScenarioAccount).SetVal(false)
+		mock.Regexp().ExpectSAdd(".*affected_accounts", bruteForceScenarioAccount).SetVal(int64(1))
+	}
 
-		assert.True(t, triggered)
+	expectSlidingWindowTrigger(mock)
+	mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
+	mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
+	mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
+	mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
+	expectBurstLeaderAndPasswordHistory(mock)
+}
+
+// expectSlidingWindowTrigger configures the shared over-limit bucket script result.
+func expectSlidingWindowTrigger(mock redismock.ClientMock) {
+	mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
+	mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+		SetVal([]any{"10", int64(1), "4"})
+}
+
+// expectBurstLeaderAndPasswordHistory configures burst gate and password-history writes.
+func expectBurstLeaderAndPasswordHistory(mock redismock.ClientMock) {
+	mock.ExpectScriptLoad(rediscli.LuaScripts["IncrementAndExpire"]).SetVal("sha-inc")
+	mock.Regexp().ExpectEvalSha("sha-inc", []string{".*"}, ".*").SetVal(int64(1))
+	mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
+	mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
+}
+
+// processScenarioBruteForce invokes ProcessBruteForce with the default test rule.
+func processScenarioBruteForce(cfg config.File, bm bruteforce.BucketManager) bool {
+	rule := cfg.GetBruteForceRules()[0]
+	_, network, _ := net.ParseCIDR(bruteForceScenarioIP + "/32")
+
+	return bm.ProcessBruteForce(true, false, &rule, network, "attack", func() {})
+}
+
+// runRWPActiveSkipsAffectedAccountsScenario verifies PW_HIST without affected-account indexing.
+func runRWPActiveSkipsAffectedAccountsScenario(t *testing.T, cfg config.File) {
+	t.Helper()
+
+	mock, tol := setupSubtest(cfg)
+	bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen1b", bruteForceScenarioIP, bruteforce.BucketManagerDeps{
+		Cfg:      cfg,
+		Logger:   log.GetLogger(),
+		Redis:    rediscli.GetClient(),
+		Tolerate: tol,
+	}).WithAccountName(bruteForceScenarioAccount).WithUsername(bruteForceScenarioAccount).WithProtocol("imap").WithPassword(secret.New(bruteForceScenarioPass)).WithRWPDecision(false)
+
+	mock.MatchExpectationsInOrder(false)
+	mock.Regexp().ExpectSIsMember(".*pw_hist_ips.*", bruteForceScenarioIP).SetVal(false)
+	mock.Regexp().ExpectSAdd(".*pw_hist_ips.*", bruteForceScenarioIP).SetVal(int64(1))
+	mock.Regexp().ExpectExpire(".*pw_hist_ips.*", cfg.GetServer().Redis.NegCacheTTL).SetVal(true)
+
+	bm.ProcessPWHist()
+
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// runBanWriteFailureScenario verifies that failed ban writes do not trigger.
+func runBanWriteFailureScenario(t *testing.T, cfg config.File) {
+	t.Helper()
+
+	mock, bm := setupScenarioBucketManager(t, cfg, triggeredBruteForceScenario{
+		guid:           "scen2b",
+		accountName:    bruteForceScenarioAccount,
+		password:       "new_password",
+		expectAffected: true,
 	})
+	expectBanWriteFailureRedis(mock)
 
-	t.Run("Scenario 4: Different users, different passwords (Brute force)", func(t *testing.T) {
-		mock, tol := setupSubtest(cfg)
-		mockNoisy(mock)
+	assert.False(t, processScenarioBruteForce(cfg, bm))
+}
 
-		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen4", attackerIP, bruteforce.BucketManagerDeps{
-			Cfg:      cfg,
-			Logger:   log.GetLogger(),
-			Redis:    rediscli.GetClient(),
-			Tolerate: tol,
-		}).WithUsername("user3").WithPassword(secret.New("passX"))
-
-		mock.MatchExpectationsInOrder(false)
-
-		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
-		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
-		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]any{"10", int64(1), "4"})
-		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
-		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
-		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
-		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
-		mock.ExpectScriptLoad(rediscli.LuaScripts["IncrementAndExpire"]).SetVal("sha-inc")
-		mock.Regexp().ExpectEvalSha("sha-inc", []string{".*"}, ".*").SetVal(int64(1))
-
-		// New password history Set logic
-		mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
-		mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
-
-		rule := cfg.GetBruteForceRules()[0]
-		_, network, _ := net.ParseCIDR(attackerIP + "/32")
-		triggered := bm.ProcessBruteForce(true, false, &rule, network, "attack", func() {})
-
-		assert.True(t, triggered)
-	})
+// expectBanWriteFailureRedis configures Redis expectations for a failed ban write.
+func expectBanWriteFailureRedis(mock redismock.ClientMock) {
+	mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
+	mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
+	mock.Regexp().ExpectSIsMember(".*affected_accounts", bruteForceScenarioAccount).SetVal(false)
+	mock.Regexp().ExpectSAdd(".*affected_accounts", bruteForceScenarioAccount).SetVal(int64(1))
+	expectSlidingWindowTrigger(mock)
+	mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetErr(errors.New("redis write failed"))
+	mock.Regexp().ExpectExists(".*bf:ban:.*").SetVal(int64(0))
 }
 
 func TestProcessPWHistSkipsWithoutAccountName(t *testing.T) {
@@ -394,72 +373,89 @@ func TestProcessPWHistIndexesNewAffectedAccount(t *testing.T) {
 func TestBruteForceLogic(t *testing.T) {
 	cfg := initTestConfig()
 
-	const testIP = "192.168.1.1"
-
 	t.Run("IP already identified as brute forcer", func(t *testing.T) {
-		mock, tol := setupSubtest(cfg)
-		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", testIP, bruteforce.BucketManagerDeps{
-			Cfg:      cfg,
-			Logger:   log.GetLogger(),
-			Redis:    rediscli.GetClient(),
-			Tolerate: tol,
-		})
-		prefix := cfg.GetServer().GetRedis().GetPrefix()
-
-		banKey := rediscli.GetBruteForceBanKey(prefix, testIP+"/32")
-		mock.ExpectExists(banKey).SetVal(1)
-
-		network := &net.IPNet{}
-
-		var message string
-
-		withError, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(cfg.GetBruteForceRules(), &network, &message)
-
-		assert.False(t, withError)
-		assert.True(t, alreadyTriggered)
-		assert.Equal(t, 0, ruleNumber)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertAlreadyIdentifiedBruteForcer(t, cfg)
 	})
 
 	t.Run("IP over the limit", func(t *testing.T) {
-		mock, tol := setupSubtest(cfg)
-		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", testIP, bruteforce.BucketManagerDeps{
-			Cfg:      cfg,
-			Logger:   log.GetLogger(),
-			Redis:    rediscli.GetClient(),
-			Tolerate: tol,
-		})
-
-		rules := cfg.GetBruteForceRules()
-		rule := &rules[0]
-		_, network, _ := net.ParseCIDR(testIP + "/32")
-		currentKey, prevKey, _ := bm.GetSlidingWindowKeys(rule, network)
-
-		mock.MatchExpectationsInOrder(false)
-		mock.Regexp().ExpectHGet(".*", "positive").RedisNil()
-		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha1")
-		mock.Regexp().ExpectEvalSha("sha1", []string{currentKey, prevKey}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]any{"15", int64(1), "4"})
-
-		var message string
-
-		withError, ruleTriggered, _ := bm.CheckBucketOverLimit(rules, &message)
-
-		assert.False(t, withError)
-		assert.True(t, ruleTriggered)
-
-		facts := bm.GetBucketPolicyFacts()
-		if assert.Len(t, facts, 1) {
-			assert.True(t, facts[0].Matched)
-			assert.Equal(t, "testbucket", facts[0].Name)
-			assert.Equal(t, float64(15), facts[0].Count)
-			assert.Equal(t, float64(4), facts[0].EffectiveLimit)
-			assert.True(t, facts[0].OverLimit)
-			assert.True(t, facts[0].Repeating)
-		}
-
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertIPOverLimit(t, cfg)
 	})
+}
+
+const bruteForceLogicIP = "192.168.1.1"
+
+// assertAlreadyIdentifiedBruteForcer verifies cached ban-key detection.
+func assertAlreadyIdentifiedBruteForcer(t *testing.T, cfg config.File) {
+	t.Helper()
+
+	mock, bm := setupLogicBucketManager(cfg)
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
+	banKey := rediscli.GetBruteForceBanKey(prefix, bruteForceLogicIP+"/32")
+	mock.ExpectExists(banKey).SetVal(1)
+
+	network := &net.IPNet{}
+
+	var message string
+
+	withError, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(cfg.GetBruteForceRules(), &network, &message)
+
+	assert.False(t, withError)
+	assert.True(t, alreadyTriggered)
+	assert.Equal(t, 0, ruleNumber)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// assertIPOverLimit verifies bucket counter over-limit policy facts.
+func assertIPOverLimit(t *testing.T, cfg config.File) {
+	t.Helper()
+
+	mock, bm := setupLogicBucketManager(cfg)
+	rules := cfg.GetBruteForceRules()
+	rule := &rules[0]
+	_, network, _ := net.ParseCIDR(bruteForceLogicIP + "/32")
+	currentKey, prevKey, _ := bm.GetSlidingWindowKeys(rule, network)
+
+	mock.MatchExpectationsInOrder(false)
+	mock.Regexp().ExpectHGet(".*", "positive").RedisNil()
+	mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha1")
+	mock.Regexp().ExpectEvalSha("sha1", []string{currentKey, prevKey}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+		SetVal([]any{"15", int64(1), "4"})
+
+	var message string
+
+	withError, ruleTriggered, _ := bm.CheckBucketOverLimit(rules, &message)
+
+	assert.False(t, withError)
+	assert.True(t, ruleTriggered)
+	assertBucketPolicyFactsOverLimit(t, bm.GetBucketPolicyFacts())
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// setupLogicBucketManager creates a bucket manager for core logic tests.
+func setupLogicBucketManager(cfg config.File) (redismock.ClientMock, bruteforce.BucketManager) {
+	mock, tol := setupSubtest(cfg)
+	bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", bruteForceLogicIP, bruteforce.BucketManagerDeps{
+		Cfg:      cfg,
+		Logger:   log.GetLogger(),
+		Redis:    rediscli.GetClient(),
+		Tolerate: tol,
+	})
+
+	return mock, bm
+}
+
+// assertBucketPolicyFactsOverLimit verifies the stored over-limit facts.
+func assertBucketPolicyFactsOverLimit(t *testing.T, facts []bruteforce.BucketPolicyFact) {
+	t.Helper()
+
+	if assert.Len(t, facts, 1) {
+		assert.True(t, facts[0].Matched)
+		assert.Equal(t, "testbucket", facts[0].Name)
+		assert.Equal(t, float64(15), facts[0].Count)
+		assert.Equal(t, float64(4), facts[0].EffectiveLimit)
+		assert.True(t, facts[0].OverLimit)
+		assert.True(t, facts[0].Repeating)
+	}
 }
 
 func TestBruteForceFilters(t *testing.T) {

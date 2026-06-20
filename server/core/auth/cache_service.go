@@ -88,25 +88,32 @@ func (DefaultCacheService) Purge(auth *core.AuthState, username string) {
 		return
 	}
 
-	useCache := false
-
-	for _, backendType := range auth.Cfg().GetServer().GetBackends() {
-		if backendType.Get() == definitions.BackendCache {
-			useCache = true
-
-			break
-		}
-	}
-
-	if !useCache {
+	if !cacheBackendEnabled(auth) {
 		return
 	}
 
-	// We try to purge for the username itself and for any mapped account name
+	protocols := auth.Cfg().GetAllProtocols()
+	namesToPurge := cachePurgeNames(auth, username, protocols)
+	userKeys := positiveCacheUserKeys(auth, namesToPurge, protocols)
+
+	deletePositiveCacheUserKeys(auth, userKeys)
+}
+
+// cacheBackendEnabled reports whether the cache backend participates in auth.
+func cacheBackendEnabled(auth *core.AuthState) bool {
+	for _, backendType := range auth.Cfg().GetServer().GetBackends() {
+		if backendType.Get() == definitions.BackendCache {
+			return true
+		}
+	}
+
+	return false
+}
+
+// cachePurgeNames returns the submitted username plus mapped account names.
+func cachePurgeNames(auth *core.AuthState, username string, protocols []string) config.StringSet {
 	namesToPurge := config.NewStringSet()
 	(&namesToPurge).Set(username)
-
-	protocols := auth.Cfg().GetAllProtocols()
 
 	for _, protocol := range protocols {
 		accountName, err := backend.LookupUserAccountFromRedis(auth.Ctx(), auth.Cfg(), auth.Redis(), username, protocol, "")
@@ -115,26 +122,45 @@ func (DefaultCacheService) Purge(auth *core.AuthState, username string) {
 		}
 	}
 
+	return namesToPurge
+}
+
+// positiveCacheUserKeys builds all positive cache keys to purge.
+func positiveCacheUserKeys(auth *core.AuthState, namesToPurge config.StringSet, protocols []string) config.StringSet {
 	userKeys := config.NewStringSet()
 
 	for _, protocol := range protocols {
 		cacheNames := backend.GetCacheNames(auth.Cfg(), auth.Channel(), protocol, definitions.CacheAll)
-
 		for _, cacheName := range (&cacheNames).GetStringSlice() {
-			for _, name := range (&namesToPurge).GetStringSlice() {
-				var sb strings.Builder
-
-				sb.WriteString(auth.Cfg().GetServer().GetRedis().GetPrefix())
-				sb.WriteString(definitions.RedisUserPositiveCachePrefix)
-				sb.WriteString(cacheName)
-				sb.WriteByte(':')
-				sb.WriteString(name)
-
-				(&userKeys).Set(sb.String())
-			}
+			addPositiveCacheUserKeys(auth, &userKeys, cacheName, namesToPurge)
 		}
 	}
 
+	return userKeys
+}
+
+// addPositiveCacheUserKeys adds all user keys for one cache name.
+func addPositiveCacheUserKeys(auth *core.AuthState, userKeys *config.StringSet, cacheName string, namesToPurge config.StringSet) {
+	for _, name := range (&namesToPurge).GetStringSlice() {
+		userKeys.Set(positiveCacheUserKey(auth, cacheName, name))
+	}
+}
+
+// positiveCacheUserKey builds one Redis positive-cache key.
+func positiveCacheUserKey(auth *core.AuthState, cacheName string, name string) string {
+	var sb strings.Builder
+
+	sb.WriteString(auth.Cfg().GetServer().GetRedis().GetPrefix())
+	sb.WriteString(definitions.RedisUserPositiveCachePrefix)
+	sb.WriteString(cacheName)
+	sb.WriteByte(':')
+	sb.WriteString(name)
+
+	return sb.String()
+}
+
+// deletePositiveCacheUserKeys deletes the selected positive-cache keys best-effort.
+func deletePositiveCacheUserKeys(auth *core.AuthState, userKeys config.StringSet) {
 	for _, userKey := range (&userKeys).GetStringSlice() {
 		_, _ = auth.Redis().GetWriteHandle().Del(auth.Ctx(), userKey).Result()
 	}

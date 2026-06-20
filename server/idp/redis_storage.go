@@ -40,6 +40,13 @@ var (
 	ErrClientAssertionReplayDetected = stderrors.New("client assertion replay detected")
 )
 
+const (
+	oidcAccessTokenKeyKind       = "access_token"
+	oidcRefreshTokenKeyKind      = "refresh_token"
+	oidcUserAccessTokensKeyKind  = "user_access_tokens"
+	oidcUserRefreshTokensKeyKind = "user_refresh_tokens"
+)
+
 // ClientAssertionReplayStore reserves private_key_jwt assertion identifiers.
 type ClientAssertionReplayStore interface {
 	ReserveClientAssertionJWTID(ctx context.Context, clientID, audience, jwtID string, expiresAt time.Time) error
@@ -132,8 +139,68 @@ func (s *RedisTokenStorage) clientAssertionReplayKey(clientID, audience, jwtID s
 	return s.prefix + "oidc:client_assertion:replay:" + hex.EncodeToString(sum[:])
 }
 
+// oidcKey returns a Redis key in the existing oidc:<kind>:<value> namespace.
+func (s *RedisTokenStorage) oidcKey(kind string, value string) string {
+	return s.prefix + fmt.Sprintf("oidc:%s:%s", kind, value)
+}
+
 // StoreSession stores an OIDC session with a given code and TTL.
 func (s *RedisTokenStorage) StoreSession(ctx context.Context, code string, session *OIDCSession, ttl time.Duration) error {
+	return s.storeSessionAtKey(ctx, s.oidcKey("code", code), session, ttl)
+}
+
+// GetSession retrieves an OIDC session from Redis.
+func (s *RedisTokenStorage) GetSession(ctx context.Context, code string) (*OIDCSession, error) {
+	return s.getSessionAtKey(ctx, s.oidcKey("code", code))
+}
+
+// DeleteSession removes an OIDC session from Redis.
+func (s *RedisTokenStorage) DeleteSession(ctx context.Context, code string) error {
+	return s.deleteKey(ctx, s.oidcKey("code", code))
+}
+
+// StoreRefreshToken stores a refresh token session in Redis and tracks it for the user.
+func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string, session *OIDCSession, ttl time.Duration) error {
+	return s.storeTrackedToken(ctx, token, session, ttl, oidcRefreshTokenKeyKind, oidcUserRefreshTokensKeyKind)
+}
+
+// GetRefreshToken retrieves a refresh token session from Redis.
+func (s *RedisTokenStorage) GetRefreshToken(ctx context.Context, token string) (*OIDCSession, error) {
+	return s.getSessionAtKey(ctx, s.oidcKey(oidcRefreshTokenKeyKind, token))
+}
+
+// DeleteRefreshToken removes a refresh token session from Redis and its user tracking.
+func (s *RedisTokenStorage) DeleteRefreshToken(ctx context.Context, token string) error {
+	return s.deleteTrackedToken(ctx, token, s.GetRefreshToken, oidcRefreshTokenKeyKind, oidcUserRefreshTokensKeyKind)
+}
+
+// DeleteUserRefreshTokens removes all refresh tokens for a given user from Redis.
+func (s *RedisTokenStorage) DeleteUserRefreshTokens(ctx context.Context, userID string) error {
+	return s.deleteUserTrackedTokens(ctx, userID, oidcRefreshTokenKeyKind, oidcUserRefreshTokensKeyKind)
+}
+
+// StoreAccessToken stores an opaque access token in Redis and tracks it for the user.
+func (s *RedisTokenStorage) StoreAccessToken(ctx context.Context, token string, session *OIDCSession, ttl time.Duration) error {
+	return s.storeTrackedToken(ctx, token, session, ttl, oidcAccessTokenKeyKind, oidcUserAccessTokensKeyKind)
+}
+
+// GetAccessToken retrieves an opaque access token session from Redis.
+func (s *RedisTokenStorage) GetAccessToken(ctx context.Context, token string) (*OIDCSession, error) {
+	return s.getSessionAtKey(ctx, s.oidcKey(oidcAccessTokenKeyKind, token))
+}
+
+// DeleteAccessToken removes an opaque access token from Redis and its user tracking.
+func (s *RedisTokenStorage) DeleteAccessToken(ctx context.Context, token string) error {
+	return s.deleteTrackedToken(ctx, token, s.GetAccessToken, oidcAccessTokenKeyKind, oidcUserAccessTokensKeyKind)
+}
+
+// DeleteUserAccessTokens removes all access tokens for a given user from Redis.
+func (s *RedisTokenStorage) DeleteUserAccessTokens(ctx context.Context, userID string) error {
+	return s.deleteUserTrackedTokens(ctx, userID, oidcAccessTokenKeyKind, oidcUserAccessTokensKeyKind)
+}
+
+// storeSessionAtKey stores one encrypted OIDC session at a concrete Redis key.
+func (s *RedisTokenStorage) storeSessionAtKey(ctx context.Context, key string, session *OIDCSession, ttl time.Duration) error {
 	data, err := json.Marshal(session)
 	if err != nil {
 		return err
@@ -144,18 +211,14 @@ func (s *RedisTokenStorage) StoreSession(ctx context.Context, code string, sessi
 		return err
 	}
 
-	key := s.prefix + fmt.Sprintf("oidc:code:%s", code)
-
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
 	return s.redis.GetWriteHandle().Set(writeCtx, key, encryptedData, ttl).Err()
 }
 
-// GetSession retrieves an OIDC session from Redis.
-func (s *RedisTokenStorage) GetSession(ctx context.Context, code string) (*OIDCSession, error) {
-	key := s.prefix + fmt.Sprintf("oidc:code:%s", code)
-
+// getSessionAtKey retrieves and decrypts one OIDC session from a concrete Redis key.
+func (s *RedisTokenStorage) getSessionAtKey(ctx context.Context, key string) (*OIDCSession, error) {
 	readCtx, cancel := s.redisReadContext(ctx)
 	defer cancel()
 
@@ -177,18 +240,16 @@ func (s *RedisTokenStorage) GetSession(ctx context.Context, code string) (*OIDCS
 	return session, nil
 }
 
-// DeleteSession removes an OIDC session from Redis.
-func (s *RedisTokenStorage) DeleteSession(ctx context.Context, code string) error {
-	key := s.prefix + fmt.Sprintf("oidc:code:%s", code)
-
+// deleteKey removes one concrete Redis key through the write handle.
+func (s *RedisTokenStorage) deleteKey(ctx context.Context, key string) error {
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
 	return s.redis.GetWriteHandle().Del(writeCtx, key).Err()
 }
 
-// StoreRefreshToken stores a refresh token session in Redis and tracks it for the user.
-func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string, session *OIDCSession, ttl time.Duration) error {
+// storeTrackedToken stores one encrypted token session and records it in the user's token set.
+func (s *RedisTokenStorage) storeTrackedToken(ctx context.Context, token string, session *OIDCSession, ttl time.Duration, tokenKind string, userSetKind string) error {
 	data, err := json.Marshal(session)
 	if err != nil {
 		return err
@@ -199,8 +260,8 @@ func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string,
 		return err
 	}
 
-	key := s.prefix + fmt.Sprintf("oidc:refresh_token:%s", token)
-	userKey := s.prefix + fmt.Sprintf("oidc:user_refresh_tokens:%s", session.UserID)
+	key := s.oidcKey(tokenKind, token)
+	userKey := s.oidcKey(userSetKind, session.UserID)
 
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
@@ -216,57 +277,27 @@ func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string,
 	return err
 }
 
-// GetRefreshToken retrieves a refresh token session from Redis.
-func (s *RedisTokenStorage) GetRefreshToken(ctx context.Context, token string) (*OIDCSession, error) {
-	key := s.prefix + fmt.Sprintf("oidc:refresh_token:%s", token)
-
-	readCtx, cancel := s.redisReadContext(ctx)
-	defer cancel()
-
-	data, err := s.redis.GetReadHandle().Get(readCtx, key).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	decryptedData, err := s.redis.GetSecurityManager().Decrypt(data)
-	if err != nil {
-		return nil, err
-	}
-
-	session := &OIDCSession{}
-	if err := json.Unmarshal([]byte(decryptedData), session); err != nil {
-		return nil, err
-	}
-
-	return session, nil
-}
-
-// DeleteRefreshToken removes a refresh token session from Redis and its user tracking.
-func (s *RedisTokenStorage) DeleteRefreshToken(ctx context.Context, token string) error {
-	session, err := s.GetRefreshToken(ctx, token)
+// deleteTrackedToken removes one token key and, when available, its user tracking entry.
+func (s *RedisTokenStorage) deleteTrackedToken(ctx context.Context, token string, loadSession func(context.Context, string) (*OIDCSession, error), tokenKind string, userSetKind string) error {
+	session, err := loadSession(ctx, token)
 	if err == nil && session != nil {
-		userKey := s.prefix + fmt.Sprintf("oidc:user_refresh_tokens:%s", session.UserID)
+		userKey := s.oidcKey(userSetKind, session.UserID)
 		writeCtx, cancel := s.redisWriteContext(ctx)
 		_ = s.redis.GetWriteHandle().SRem(writeCtx, userKey, token).Err()
 
 		cancel()
 	}
 
-	key := s.prefix + fmt.Sprintf("oidc:refresh_token:%s", token)
-
-	writeCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
-
-	return s.redis.GetWriteHandle().Del(writeCtx, key).Err()
+	return s.deleteKey(ctx, s.oidcKey(tokenKind, token))
 }
 
-// DeleteUserRefreshTokens removes all refresh tokens for a given user from Redis.
-func (s *RedisTokenStorage) DeleteUserRefreshTokens(ctx context.Context, userID string) error {
+// deleteUserTrackedTokens removes all token keys referenced by one user's token set.
+func (s *RedisTokenStorage) deleteUserTrackedTokens(ctx context.Context, userID string, tokenKind string, userSetKind string) error {
 	if userID == "" {
 		return nil
 	}
 
-	userKey := s.prefix + fmt.Sprintf("oidc:user_refresh_tokens:%s", userID)
+	userKey := s.oidcKey(userSetKind, userID)
 	readCtx, readCancel := s.redisReadContext(ctx)
 
 	tokens, err := s.redis.GetReadHandle().SMembers(readCtx, userKey).Result()
@@ -287,7 +318,7 @@ func (s *RedisTokenStorage) DeleteUserRefreshTokens(ctx context.Context, userID 
 	pipe := s.redis.GetWriteHandle().Pipeline()
 
 	for _, token := range tokens {
-		pipe.Del(writeCtx, s.prefix+fmt.Sprintf("oidc:refresh_token:%s", token))
+		pipe.Del(writeCtx, s.oidcKey(tokenKind, token))
 	}
 
 	pipe.Del(writeCtx, userKey)
@@ -295,79 +326,6 @@ func (s *RedisTokenStorage) DeleteUserRefreshTokens(ctx context.Context, userID 
 	_, err = pipe.Exec(writeCtx)
 
 	return err
-}
-
-// StoreAccessToken stores an opaque access token in Redis and tracks it for the user.
-func (s *RedisTokenStorage) StoreAccessToken(ctx context.Context, token string, session *OIDCSession, ttl time.Duration) error {
-	data, err := json.Marshal(session)
-	if err != nil {
-		return err
-	}
-
-	encryptedData, err := s.redis.GetSecurityManager().Encrypt(string(data))
-	if err != nil {
-		return err
-	}
-
-	key := s.prefix + fmt.Sprintf("oidc:access_token:%s", token)
-	userKey := s.prefix + fmt.Sprintf("oidc:user_access_tokens:%s", session.UserID)
-
-	writeCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
-
-	pipe := s.redis.GetWriteHandle().Pipeline()
-	pipe.Set(writeCtx, key, encryptedData, ttl)
-	pipe.SAdd(writeCtx, userKey, token)
-	// Keep the user mapping alive as long as there might be active tokens
-	pipe.Expire(writeCtx, userKey, 30*24*time.Hour)
-
-	_, err = pipe.Exec(writeCtx)
-
-	return err
-}
-
-// GetAccessToken retrieves an opaque access token session from Redis.
-func (s *RedisTokenStorage) GetAccessToken(ctx context.Context, token string) (*OIDCSession, error) {
-	key := s.prefix + fmt.Sprintf("oidc:access_token:%s", token)
-
-	readCtx, cancel := s.redisReadContext(ctx)
-	defer cancel()
-
-	data, err := s.redis.GetReadHandle().Get(readCtx, key).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	decryptedData, err := s.redis.GetSecurityManager().Decrypt(data)
-	if err != nil {
-		return nil, err
-	}
-
-	session := &OIDCSession{}
-	if err := json.Unmarshal([]byte(decryptedData), session); err != nil {
-		return nil, err
-	}
-
-	return session, nil
-}
-
-// DeleteAccessToken removes an opaque access token from Redis and its user tracking.
-func (s *RedisTokenStorage) DeleteAccessToken(ctx context.Context, token string) error {
-	session, err := s.GetAccessToken(ctx, token)
-	if err == nil && session != nil {
-		userKey := s.prefix + fmt.Sprintf("oidc:user_access_tokens:%s", session.UserID)
-		writeCtx, cancel := s.redisWriteContext(ctx)
-		_ = s.redis.GetWriteHandle().SRem(writeCtx, userKey, token).Err()
-
-		cancel()
-	}
-
-	key := s.prefix + fmt.Sprintf("oidc:access_token:%s", token)
-
-	writeCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
-
-	return s.redis.GetWriteHandle().Del(writeCtx, key).Err()
 }
 
 // DenyJWTAccessToken adds a JWT access token to the denylist in Redis.
@@ -395,43 +353,6 @@ func (s *RedisTokenStorage) IsJWTAccessTokenDenied(ctx context.Context, token st
 	_, err := s.redis.GetReadHandle().Get(readCtx, key).Result()
 
 	return err == nil
-}
-
-// DeleteUserAccessTokens removes all access tokens for a given user from Redis.
-func (s *RedisTokenStorage) DeleteUserAccessTokens(ctx context.Context, userID string) error {
-	if userID == "" {
-		return nil
-	}
-
-	userKey := s.prefix + fmt.Sprintf("oidc:user_access_tokens:%s", userID)
-	readCtx, readCancel := s.redisReadContext(ctx)
-
-	tokens, err := s.redis.GetReadHandle().SMembers(readCtx, userKey).Result()
-
-	readCancel()
-
-	if err != nil {
-		return err
-	}
-
-	if len(tokens) == 0 {
-		return nil
-	}
-
-	writeCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
-
-	pipe := s.redis.GetWriteHandle().Pipeline()
-
-	for _, token := range tokens {
-		pipe.Del(writeCtx, s.prefix+fmt.Sprintf("oidc:access_token:%s", token))
-	}
-
-	pipe.Del(writeCtx, userKey)
-
-	_, err = pipe.Exec(writeCtx)
-
-	return err
 }
 
 // FlushUserTokens removes all OIDC access tokens and refresh tokens for a given user.

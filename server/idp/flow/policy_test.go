@@ -56,17 +56,28 @@ func TestPolicyForFlowType(t *testing.T) {
 }
 
 func TestPolicyRules(t *testing.T) {
-	tests := []struct {
-		name          string
-		flowType      Type
-		step          Step
-		action        Action
-		from          Step
-		to            Step
-		stepAllowed   bool
-		actionAllowed bool
-		transitionOK  bool
-	}{
+	for _, tc := range policyRuleCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			assertPolicyRule(t, tc)
+		})
+	}
+}
+
+type policyRuleCase struct {
+	name          string
+	flowType      Type
+	step          Step
+	action        Action
+	from          Step
+	to            Step
+	stepAllowed   bool
+	actionAllowed bool
+	transitionOK  bool
+}
+
+// policyRuleCases returns policy rule checks across flow types.
+func policyRuleCases() []policyRuleCase {
+	return []policyRuleCase{
 		{
 			name:          "oidc auth consent flow",
 			flowType:      FlowTypeOIDCAuthorization,
@@ -112,25 +123,26 @@ func TestPolicyRules(t *testing.T) {
 			transitionOK:  true,
 		},
 	}
+}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			policy, err := PolicyForFlowType(tc.flowType)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+// assertPolicyRule verifies one policy rule scenario.
+func assertPolicyRule(t *testing.T, tc policyRuleCase) {
+	t.Helper()
 
-			if policy.AllowsStep(tc.step) != tc.stepAllowed {
-				t.Fatalf("step check mismatch for %s", tc.step)
-			}
+	policy, err := PolicyForFlowType(tc.flowType)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-			if policy.AllowsAction(tc.step, tc.action) != tc.actionAllowed {
-				t.Fatalf("action check mismatch for %s/%s", tc.step, tc.action)
-			}
+	if policy.AllowsStep(tc.step) != tc.stepAllowed {
+		t.Fatalf("step check mismatch for %s", tc.step)
+	}
 
-			if policy.CanTransition(tc.from, tc.to) != tc.transitionOK {
-				t.Fatalf("transition mismatch for %s -> %s", tc.from, tc.to)
-			}
-		})
+	if policy.AllowsAction(tc.step, tc.action) != tc.actionAllowed {
+		t.Fatalf("action check mismatch for %s/%s", tc.step, tc.action)
+	}
+
+	if policy.CanTransition(tc.from, tc.to) != tc.transitionOK {
+		t.Fatalf("transition mismatch for %s -> %s", tc.from, tc.to)
 	}
 }

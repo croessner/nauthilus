@@ -16,11 +16,8 @@
 package core
 
 import (
-	"html/template"
-	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/middleware/securityheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -30,30 +27,7 @@ func TestTemplateLoading(t *testing.T) {
 
 	r := gin.New()
 
-	r.SetFuncMap(template.FuncMap{
-		"int": func(v any) int {
-			switch x := v.(type) {
-			case int:
-				return x
-			case int32:
-				return int(x)
-			case int64:
-				return int(x)
-			case float32:
-				return int(x)
-			case float64:
-				return int(x)
-			default:
-				return 0
-			}
-		},
-		"upper": func(s string) string {
-			return strings.ToUpper(s)
-		},
-		"cspNonce": func(data any) string {
-			return securityheaders.NonceFromTemplateData(data)
-		},
-	})
+	r.SetFuncMap(defaultTemplateFuncMap())
 
 	assert.NotPanics(t, func() {
 		r.LoadHTMLGlob("../../static/templates/*.html")

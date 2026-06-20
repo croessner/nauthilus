@@ -32,82 +32,128 @@ func TestRegisterRedisConnection(t *testing.T) {
 
 	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), nil))
 
-	tests := []struct {
-		name    string
-		args    []lua.LValue
-		want    []lua.LValue
-		wantErr bool
-	}{
-		{
-			"Standalone mode with new connection",
-			[]lua.LValue{lua.LString("standalone"), lua.LString("standalone"), L.NewTable()},
-			[]lua.LValue{lua.LString("OK")},
-			false,
-		},
-		{
-			"Sentinel mode with new connection",
-			[]lua.LValue{lua.LString("sentinel"), lua.LString("sentinel"), L.NewTable()},
-			[]lua.LValue{lua.LString("OK")},
-			false,
-		},
-		{
-			"Sentinel_replica mode with new connection",
-			[]lua.LValue{lua.LString("sentinel_replica"), lua.LString("sentinel_replica"), L.NewTable()},
-			[]lua.LValue{lua.LString("OK")},
-			false,
-		},
-		{
-			"Cluster mode with new connection",
-			[]lua.LValue{lua.LString("cluster"), lua.LString("cluster"), L.NewTable()},
-			[]lua.LValue{lua.LString("OK")},
-			false,
-		},
-		{
-			"Unknown mode",
-			[]lua.LValue{lua.LString("unknown"), lua.LString("unknown"), L.NewTable()},
-			[]lua.LValue{lua.LNil, lua.LString("Unknown mode: unknown")},
-			false,
-		},
-	}
-
-	for _, tt := range tests {
+	for _, tt := range registerRedisConnectionCases(L) {
 		t.Run(tt.name, func(t *testing.T) {
-			L.SetGlobal("pool_name", tt.args[0])
-			L.SetGlobal("pool_mode", tt.args[1])
-			L.SetGlobal("pool_options", tt.args[2])
-
-			if err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.register_redis_pool(pool_name, pool_mode, pool_options)`); (err != nil) != tt.wantErr {
-				t.Errorf("register_redis_pool() error = %v, wantErr %v", err, tt.wantErr)
-
-				return
-			}
-
-			gotResult := L.GetGlobal("result")
-			gotErr := L.GetGlobal("err")
-
-			if tt.wantErr {
-				if gotErr == lua.LNil {
-					t.Errorf("register_redis_pool() expected error, but got nil")
-				}
-			} else {
-				if gotResult.Type() != tt.want[0].Type() || gotResult.String() != tt.want[0].String() {
-					t.Errorf("register_redis_pool() result = %v, want %v", gotResult, tt.want[0])
-				}
-
-				if len(tt.want) > 1 {
-					if gotErr.Type() != tt.want[1].Type() || gotErr.String() != tt.want[1].String() {
-						t.Errorf("register_redis_pool() error = %v, want %v", gotErr, tt.want[1])
-					}
-				} else {
-					if gotErr != lua.LNil {
-						t.Errorf("register_redis_pool() error = %v, want nil", gotErr)
-					}
-				}
-			}
-
-			if err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.get_redis_connection(pool_name)`); (err != nil) != tt.wantErr {
-				t.Errorf("get_redis_connection() error = %v, wantErr %v", err, tt.wantErr)
-			}
+			runRegisterRedisConnectionCase(t, L, tt)
 		})
 	}
+}
+
+type registerRedisConnectionCase struct {
+	name    string
+	args    []lua.LValue
+	want    []lua.LValue
+	wantErr bool
+}
+
+// registerRedisConnectionCases returns Redis pool registration cases.
+func registerRedisConnectionCases(L *lua.LState) []registerRedisConnectionCase {
+	return []registerRedisConnectionCase{
+		{
+			name:    "Standalone mode with new connection",
+			args:    []lua.LValue{lua.LString("standalone"), lua.LString("standalone"), L.NewTable()},
+			want:    []lua.LValue{lua.LString("OK")},
+			wantErr: false,
+		},
+		{
+			name:    "Sentinel mode with new connection",
+			args:    []lua.LValue{lua.LString("sentinel"), lua.LString("sentinel"), L.NewTable()},
+			want:    []lua.LValue{lua.LString("OK")},
+			wantErr: false,
+		},
+		{
+			name:    "Sentinel_replica mode with new connection",
+			args:    []lua.LValue{lua.LString("sentinel_replica"), lua.LString("sentinel_replica"), L.NewTable()},
+			want:    []lua.LValue{lua.LString("OK")},
+			wantErr: false,
+		},
+		{
+			name:    "Cluster mode with new connection",
+			args:    []lua.LValue{lua.LString("cluster"), lua.LString("cluster"), L.NewTable()},
+			want:    []lua.LValue{lua.LString("OK")},
+			wantErr: false,
+		},
+		{
+			name:    "Unknown mode",
+			args:    []lua.LValue{lua.LString("unknown"), lua.LString("unknown"), L.NewTable()},
+			want:    []lua.LValue{lua.LNil, lua.LString("Unknown mode: unknown")},
+			wantErr: false,
+		},
+	}
+}
+
+// runRegisterRedisConnectionCase executes one Redis pool registration scenario.
+func runRegisterRedisConnectionCase(t *testing.T, L *lua.LState, tt registerRedisConnectionCase) {
+	t.Helper()
+
+	setRegisterRedisConnectionGlobals(L, tt.args)
+
+	if !runRedisPoolLuaCall(t, L, tt.wantErr, registerRedisPoolLuaCode()) {
+		return
+	}
+
+	assertRegisterRedisConnectionResult(t, L, tt)
+	runRedisPoolLuaCall(t, L, tt.wantErr, getRedisConnectionLuaCode())
+}
+
+// setRegisterRedisConnectionGlobals installs the Lua globals used by pool registration calls.
+func setRegisterRedisConnectionGlobals(L *lua.LState, args []lua.LValue) {
+	L.SetGlobal("pool_name", args[0])
+	L.SetGlobal("pool_mode", args[1])
+	L.SetGlobal("pool_options", args[2])
+}
+
+// runRedisPoolLuaCall executes a Redis pool Lua snippet and reports expected failures.
+func runRedisPoolLuaCall(t *testing.T, L *lua.LState, wantErr bool, luaCode string) bool {
+	t.Helper()
+
+	if err := L.DoString(luaCode); (err != nil) != wantErr {
+		t.Errorf("Redis pool Lua call error = %v, wantErr %v", err, wantErr)
+
+		return false
+	}
+
+	return true
+}
+
+// assertRegisterRedisConnectionResult checks pool registration result and error globals.
+func assertRegisterRedisConnectionResult(t *testing.T, L *lua.LState, tt registerRedisConnectionCase) {
+	t.Helper()
+
+	gotResult := L.GetGlobal("result")
+	gotErr := L.GetGlobal("err")
+
+	if tt.wantErr {
+		if gotErr == lua.LNil {
+			t.Errorf("register_redis_pool() expected error, but got nil")
+		}
+
+		return
+	}
+
+	if gotResult.Type() != tt.want[0].Type() || gotResult.String() != tt.want[0].String() {
+		t.Errorf("register_redis_pool() result = %v, want %v", gotResult, tt.want[0])
+	}
+
+	if len(tt.want) > 1 {
+		if gotErr.Type() != tt.want[1].Type() || gotErr.String() != tt.want[1].String() {
+			t.Errorf("register_redis_pool() error = %v, want %v", gotErr, tt.want[1])
+		}
+
+		return
+	}
+
+	if gotErr != lua.LNil {
+		t.Errorf("register_redis_pool() error = %v, want nil", gotErr)
+	}
+}
+
+// registerRedisPoolLuaCode returns the Lua snippet for registering a Redis pool.
+func registerRedisPoolLuaCode() string {
+	return `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.register_redis_pool(pool_name, pool_mode, pool_options)`
+}
+
+// getRedisConnectionLuaCode returns the Lua snippet for retrieving a Redis pool.
+func getRedisConnectionLuaCode() string {
+	return `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.get_redis_connection(pool_name)`
 }

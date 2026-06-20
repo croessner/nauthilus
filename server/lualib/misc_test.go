@@ -36,66 +36,26 @@ func TestValidatePassword(t *testing.T) {
 		{
 			name:     "WeakPassword",
 			password: "weak",
-			table: func() *lua.LTable {
-				tbl := lua.LTable{}
-
-				tbl.RawSetString("min_length", lua.LNumber(8))
-				tbl.RawSetString("min_upper", lua.LNumber(1))
-				tbl.RawSetString("min_lower", lua.LNumber(1))
-				tbl.RawSetString("min_number", lua.LNumber(1))
-				tbl.RawSetString("min_special", lua.LNumber(1))
-
-				return &tbl
-			}(),
-			want: false,
+			table:    passwordPolicyTable(),
+			want:     false,
 		},
 		{
 			name:     "StrongPassword",
 			password: "Strong1@",
-			table: func() *lua.LTable {
-				tbl := lua.LTable{}
-
-				tbl.RawSetString("min_length", lua.LNumber(8))
-				tbl.RawSetString("min_upper", lua.LNumber(1))
-				tbl.RawSetString("min_lower", lua.LNumber(1))
-				tbl.RawSetString("min_number", lua.LNumber(1))
-				tbl.RawSetString("min_special", lua.LNumber(1))
-
-				return &tbl
-			}(),
-			want: true,
+			table:    passwordPolicyTable(),
+			want:     true,
 		},
 		{
 			name:     "PasswordWithoutNumber",
 			password: "Strong@",
-			table: func() *lua.LTable {
-				tbl := lua.LTable{}
-
-				tbl.RawSetString("min_length", lua.LNumber(8))
-				tbl.RawSetString("min_upper", lua.LNumber(1))
-				tbl.RawSetString("min_lower", lua.LNumber(1))
-				tbl.RawSetString("min_number", lua.LNumber(1))
-				tbl.RawSetString("min_special", lua.LNumber(1))
-
-				return &tbl
-			}(),
-			want: false,
+			table:    passwordPolicyTable(),
+			want:     false,
 		},
 		{
 			name:     "PasswordWithoutSpecialChar",
 			password: "Strong1",
-			table: func() *lua.LTable {
-				tbl := lua.LTable{}
-
-				tbl.RawSetString("min_length", lua.LNumber(8))
-				tbl.RawSetString("min_upper", lua.LNumber(1))
-				tbl.RawSetString("min_lower", lua.LNumber(1))
-				tbl.RawSetString("min_number", lua.LNumber(1))
-				tbl.RawSetString("min_special", lua.LNumber(1))
-
-				return &tbl
-			}(),
-			want: false,
+			table:    passwordPolicyTable(),
+			want:     false,
 		},
 	}
 
@@ -124,6 +84,19 @@ func TestValidatePassword(t *testing.T) {
 			}
 		})
 	}
+}
+
+// passwordPolicyTable returns the shared strict policy used by password validation cases.
+func passwordPolicyTable() *lua.LTable {
+	tbl := lua.LTable{}
+
+	tbl.RawSetString("min_length", lua.LNumber(8))
+	tbl.RawSetString("min_upper", lua.LNumber(1))
+	tbl.RawSetString("min_lower", lua.LNumber(1))
+	tbl.RawSetString("min_number", lua.LNumber(1))
+	tbl.RawSetString("min_special", lua.LNumber(1))
+
+	return &tbl
 }
 
 func TestPasswordManagerComparePasswordsMatchesPublicHelper(t *testing.T) {
@@ -243,13 +216,16 @@ func TestGetCountryName(t *testing.T) {
 	}
 }
 
-func TestWaitRandom(t *testing.T) {
-	tests := []struct {
-		name    string
-		minWait lua.LNumber
-		maxWait lua.LNumber
-		err     bool
-	}{
+type waitRandomCase struct {
+	name    string
+	minWait lua.LNumber
+	maxWait lua.LNumber
+	err     bool
+}
+
+// waitRandomCases returns the Lua argument combinations for the random wait helper.
+func waitRandomCases() []waitRandomCase {
+	return []waitRandomCase{
 		{
 			name:    "TestValidRange",
 			minWait: 100,
@@ -281,31 +257,40 @@ func TestWaitRandom(t *testing.T) {
 			err:     true,
 		},
 	}
+}
 
-	for _, tt := range tests {
+func TestWaitRandom(t *testing.T) {
+	for _, tt := range waitRandomCases() {
 		t.Run(tt.name, func(t *testing.T) {
-			L := lua.NewState()
-
-			defer L.Close()
-
-			L.Push(tt.minWait)
-			L.Push(tt.maxWait)
-
-			m := NewMiscManager(context.TODO(), nil, nil)
-			m.waitRandom(L)
-
-			hasError := L.Get(-1) != lua.LNil
-			if hasError != tt.err {
-				t.Errorf("Unexpected result, got error: %v, want error: %v", hasError, tt.err)
-			}
-
-			if !tt.err {
-				value := L.ToInt(-2)
-
-				if value < int(tt.minWait) || value > int(tt.maxWait) {
-					t.Errorf("Returned value is outside the given range. Got: %d, Range: (%d - %d)", value, int(tt.minWait), int(tt.maxWait))
-				}
-			}
+			assertWaitRandomCase(t, tt)
 		})
+	}
+}
+
+// assertWaitRandomCase executes waitRandom and verifies the expected Lua result shape.
+func assertWaitRandomCase(t *testing.T, tt waitRandomCase) {
+	t.Helper()
+
+	L := lua.NewState()
+	defer L.Close()
+
+	L.Push(tt.minWait)
+	L.Push(tt.maxWait)
+
+	m := NewMiscManager(context.TODO(), nil, nil)
+	m.waitRandom(L)
+
+	hasError := L.Get(-1) != lua.LNil
+	if hasError != tt.err {
+		t.Errorf("Unexpected result, got error: %v, want error: %v", hasError, tt.err)
+	}
+
+	if tt.err {
+		return
+	}
+
+	value := L.ToInt(-2)
+	if value < int(tt.minWait) || value > int(tt.maxWait) {
+		t.Errorf("Returned value is outside the given range. Got: %d, Range: (%d - %d)", value, int(tt.minWait), int(tt.maxWait))
 	}
 }

@@ -31,6 +31,19 @@ type PasswordVerifier interface {
 	Verify(ctx *gin.Context, a *AuthState, passDBs []*PassDBMap) (*PassDBResult, error)
 }
 
+type passwordPipelineState struct {
+	configErrors map[definitions.Backend]error
+	tempfailErr  error
+	finalRes     *PassDBResult
+}
+
+// newPasswordPipelineState creates the mutable state for one password pipeline run.
+func newPasswordPipelineState() passwordPipelineState {
+	return passwordPipelineState{
+		configErrors: make(map[definitions.Backend]error),
+	}
+}
+
 // VerifyPasswordPipeline coordinates authentication processes across multiple password databases and backends.
 // It iterates through the provided PassDBMap, invoking their associated functions to authenticate a user or locate credentials.
 // Handles backend-specific configuration errors and logs failures while trying successive backends, as necessary.
@@ -44,108 +57,124 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 		return nil, util.HTTPRequestContextError(ctx.Request)
 	}
 
-	configErrors := make(map[definitions.Backend]error)
-	// Track temporary failures (e.g., pool exhaustion) to avoid mapping
-	// technical issues to "user not found" later in the pipeline.
-	var tempfailErr error
-
-	var finalRes *PassDBResult
+	state := newPasswordPipelineState()
 
 	for i, passDB := range passDBs {
-		if util.IsHTTPRequestCanceled(auth.Logger(), ctx.Request, auth.Runtime.GUID, "verify.next_backend") {
-			return nil, util.HTTPRequestContextError(ctx.Request)
-		}
-
-		res, err := passDB.fn(auth)
-		if err != nil {
-			// Prefer treating pool exhaustion as a tempfail over negative results
-			// from other backends (e.g., cache). We remember it and may return it
-			// at the end if no definitive success/user-found result exists.
-			if stderrors.Is(err, errors.ErrLDAPPoolExhausted) || stderrors.Is(err, errors.ErrBackendTemporaryFailure) {
-				tempfailErr = err
+		if res, done, err := state.tryPasswordBackend(ctx, auth, passDBs, passDB, i); err != nil {
+			return nil, err
+		} else if done {
+			if res == nil {
+				break
 			}
 
-			if e := HandleBackendErrors(i, passDBs, passDB, err, auth, configErrors); e != nil {
-				if stderrors.Is(e, errors.ErrAllBackendConfigError) {
-					return nil, e
-				}
-			}
-
-			continue
-		}
-
-		if res == nil {
-			return nil, errors.ErrNoPassDBResult
-		}
-
-		if util.IsHTTPRequestCanceled(auth.Logger(), ctx.Request, auth.Runtime.GUID, "verify.process_result") {
-			PutPassDBResultToPool(res)
-
-			return nil, util.HTTPRequestContextError(ctx.Request)
-		}
-
-		if e := ProcessPassDBResult(ctx, res, auth, passDB); e != nil {
-			level.Error(auth.Logger()).Log(
-				definitions.LogKeyGUID, auth.Runtime.GUID,
-				definitions.LogKeyMsg, "Error processing passdb result",
-				definitions.LogKeyError, e,
-			)
-
-			PutPassDBResultToPool(res)
-
-			continue
-		}
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			auth.deps.Cfg,
-			auth.deps.Logger,
-			definitions.DbgAuth,
-			definitions.LogKeyGUID, auth.Runtime.GUID,
-			"passdb", passDB.backend.String(),
-			"result", res.String(),
-		)
-
-		if finalRes != nil {
-			PutPassDBResultToPool(finalRes)
-		}
-
-		finalRes = res
-
-		// Restore legacy no-auth semantics: if a backend finds the user in no-auth
-		// mode, treat it as authenticated. This keeps followers/SingleFlight safe
-		// because we only mutate the local PassDBResult, not AuthState.
-		if auth.Request.NoAuth && res.UserFound && !res.Authenticated {
-			res.Authenticated = true
-		}
-
-		// Consolidated exit condition: use PassDBResult.Authenticated as the
-		// single stop criterion. In no-auth, the mapping above ensures the
-		// correct behavior without sprinkling special cases here.
-		if res.Authenticated {
 			return res, nil
-		}
-
-		// No matter what, if the user was found, we're done.
-		if res.UserFound {
-			break
 		}
 	}
 
-	if finalRes == nil {
-		if tempfailErr != nil {
-			return nil, tempfailErr
+	return state.finalPasswordResult()
+}
+
+// tryPasswordBackend executes one PassDB backend and updates pipeline state.
+func (state *passwordPipelineState) tryPasswordBackend(ctx *gin.Context, auth *AuthState, passDBs []*PassDBMap, passDB *PassDBMap, index int) (*PassDBResult, bool, error) {
+	if util.IsHTTPRequestCanceled(auth.Logger(), ctx.Request, auth.Runtime.GUID, "verify.next_backend") {
+		return nil, true, util.HTTPRequestContextError(ctx.Request)
+	}
+
+	res, err := passDB.fn(auth)
+	if err != nil {
+		return nil, false, state.handlePasswordBackendError(index, passDBs, passDB, err, auth)
+	}
+
+	if res == nil {
+		return nil, true, errors.ErrNoPassDBResult
+	}
+
+	if util.IsHTTPRequestCanceled(auth.Logger(), ctx.Request, auth.Runtime.GUID, "verify.process_result") {
+		PutPassDBResultToPool(res)
+
+		return nil, true, util.HTTPRequestContextError(ctx.Request)
+	}
+
+	if !processPasswordBackendResult(ctx, auth, passDB, res) {
+		return nil, false, nil
+	}
+
+	state.storePasswordResult(ctx, auth, passDB, res)
+
+	if res.Authenticated {
+		return res, true, nil
+	}
+
+	return nil, res.UserFound, nil
+}
+
+// handlePasswordBackendError records temporary backend failures and delegates configured error handling.
+func (state *passwordPipelineState) handlePasswordBackendError(index int, passDBs []*PassDBMap, passDB *PassDBMap, err error, auth *AuthState) error {
+	if stderrors.Is(err, errors.ErrLDAPPoolExhausted) || stderrors.Is(err, errors.ErrBackendTemporaryFailure) {
+		state.tempfailErr = err
+	}
+
+	e := HandleBackendErrors(index, passDBs, passDB, err, auth, state.configErrors)
+	if stderrors.Is(e, errors.ErrAllBackendConfigError) {
+		return e
+	}
+
+	return nil
+}
+
+// processPasswordBackendResult applies result post-processing and releases failed results.
+func processPasswordBackendResult(ctx *gin.Context, auth *AuthState, passDB *PassDBMap, res *PassDBResult) bool {
+	if e := ProcessPassDBResult(ctx, res, auth, passDB); e != nil {
+		level.Error(auth.Logger()).Log(
+			definitions.LogKeyGUID, auth.Runtime.GUID,
+			definitions.LogKeyMsg, "Error processing passdb result",
+			definitions.LogKeyError, e,
+		)
+
+		PutPassDBResultToPool(res)
+
+		return false
+	}
+
+	return true
+}
+
+// storePasswordResult keeps the latest usable result and preserves no-auth semantics.
+func (state *passwordPipelineState) storePasswordResult(ctx *gin.Context, auth *AuthState, passDB *PassDBMap, res *PassDBResult) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		auth.deps.Cfg,
+		auth.deps.Logger,
+		definitions.DbgAuth,
+		definitions.LogKeyGUID, auth.Runtime.GUID,
+		"passdb", passDB.backend.String(),
+		"result", res.String(),
+	)
+
+	if state.finalRes != nil {
+		PutPassDBResultToPool(state.finalRes)
+	}
+
+	state.finalRes = res
+
+	if auth.Request.NoAuth && res.UserFound && !res.Authenticated {
+		res.Authenticated = true
+	}
+}
+
+// finalPasswordResult returns the completed pipeline result or the preserved temporary failure.
+func (state *passwordPipelineState) finalPasswordResult() (*PassDBResult, error) {
+	if state.finalRes == nil {
+		if state.tempfailErr != nil {
+			return nil, state.tempfailErr
 		}
 
 		return nil, errors.ErrNoPassDBResult
 	}
 
-	// If no backend authenticated or found the user, but we encountered a
-	// pool exhaustion earlier, surface it as a temporary failure instead of
-	// silently degrading to "not found".
-	if !finalRes.Authenticated && !finalRes.UserFound && tempfailErr != nil {
-		return nil, tempfailErr
+	if !state.finalRes.Authenticated && !state.finalRes.UserFound && state.tempfailErr != nil {
+		return nil, state.tempfailErr
 	}
 
-	return finalRes, nil
+	return state.finalRes, nil
 }

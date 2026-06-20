@@ -96,56 +96,81 @@ func (m *Manager) getActiveRSASigner(ctx context.Context) (signing.Signer, error
 
 // getActiveEdDSASigner returns the current active EdDSA signer.
 func (m *Manager) getActiveEdDSASigner(ctx context.Context) (signing.Signer, error) {
-	// 1. Try Redis
 	readCtx, cancel := m.redisReadContext(ctx)
 	kid, err := m.deps.Redis.GetReadHandle().Get(readCtx, m.redisPrefix()+RedisKeyOIDCEdActive).Result()
 
 	cancel()
 
 	if err == nil && kid != "" {
-		pemData, err := m.getEncryptedEdKeyFromRedis(ctx, kid)
+		signer, err := m.edDSASignerFromRedis(ctx, kid)
 		if err == nil {
-			edKey, err := signing.ParseEd25519PrivateKeyPEM(pemData)
-			if err == nil {
-				return signing.NewEdDSASigner(edKey, kid), nil
-			}
+			return signer, nil
 		}
 	}
 
-	// 2. Auto-generate if rotation is enabled
 	if m.deps.Cfg.GetIDP().OIDC.AutoKeyRotation {
-		kid, err = m.GenerateNewEdKey(ctx)
+		signer, err := m.generatedEdDSASigner(ctx)
 		if err == nil {
-			pemData, err := m.getEncryptedEdKeyFromRedis(ctx, kid)
-			if err == nil {
-				edKey, err := signing.ParseEd25519PrivateKeyPEM(pemData)
-				if err == nil {
-					return signing.NewEdDSASigner(edKey, kid), nil
-				}
-			}
+			return signer, nil
 		}
 	}
 
-	// 3. Fallback to static configuration
-	oidcCfg := m.deps.Cfg.GetIDP().OIDC
+	if signer, ok := m.staticEdDSASigner(); ok {
+		return signer, nil
+	}
 
-	for _, sk := range oidcCfg.SigningKeys {
+	return nil, fmt.Errorf("no active EdDSA signing key found")
+}
+
+// edDSASignerFromRedis loads an EdDSA signer by key id from Redis.
+func (m *Manager) edDSASignerFromRedis(ctx context.Context, kid string) (signing.Signer, error) {
+	pemData, err := m.getEncryptedEdKeyFromRedis(ctx, kid)
+	if err != nil {
+		return nil, err
+	}
+
+	return newEdDSASignerFromPEM(pemData, kid)
+}
+
+// generatedEdDSASigner creates and loads a fresh EdDSA signer.
+func (m *Manager) generatedEdDSASigner(ctx context.Context) (signing.Signer, error) {
+	kid, err := m.GenerateNewEdKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return m.edDSASignerFromRedis(ctx, kid)
+}
+
+// staticEdDSASigner returns the active static EdDSA signer from configuration.
+func (m *Manager) staticEdDSASigner() (signing.Signer, bool) {
+	for _, sk := range m.deps.Cfg.GetIDP().OIDC.SigningKeys {
 		if sk.Active && sk.GetAlgorithm() == signing.AlgorithmEdDSA {
 			content, err := config.GetContent(sk.Key, sk.KeyFile)
 			if err != nil {
 				continue
 			}
 
-			edKey, err := signing.ParseEd25519PrivateKeyPEM(content)
+			signer, err := newEdDSASignerFromPEM(content, sk.ID)
 			if err != nil {
 				continue
 			}
 
-			return signing.NewEdDSASigner(edKey, sk.ID), nil
+			return signer, true
 		}
 	}
 
-	return nil, fmt.Errorf("no active EdDSA signing key found")
+	return nil, false
+}
+
+// newEdDSASignerFromPEM parses Ed25519 key material and wraps it in an EdDSA signer.
+func newEdDSASignerFromPEM(pemData string, kid string) (signing.Signer, error) {
+	edKey, err := signing.ParseEd25519PrivateKeyPEM(pemData)
+	if err != nil {
+		return nil, err
+	}
+
+	return signing.NewEdDSASigner(edKey, kid), nil
 }
 
 // GetActiveKey returns the current active RSA private key and its ID.
@@ -350,37 +375,24 @@ func (m *Manager) staticKeyContentByID(kid string, algorithm string) (string, er
 
 // loadRSAKeysFromRedis loads RSA keys from Redis into the provided map.
 func (m *Manager) loadRSAKeysFromRedis(ctx context.Context, keys map[string]*rsa.PrivateKey) (map[string]*rsa.PrivateKey, error) {
-	readCtx, cancel := m.redisReadContext(ctx)
-	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(readCtx, m.redisPrefix()+RedisKeyOIDCKeys).Result()
-
-	cancel()
-
-	if err != nil {
-		return keys, err
-	}
-
-	sm := m.deps.Redis.GetSecurityManager()
-	now := time.Now()
-
-	for kid, encryptedData := range redisKeys {
-		meta, err := m.decryptMetadata(sm, encryptedData)
-		if err != nil || isExpired(meta, now) {
-			continue
-		}
-
-		key, err := m.pemToPrivateKey(meta.PEM)
-		if err == nil {
-			keys[kid] = key
-		}
-	}
-
-	return keys, nil
+	return loadKeysFromRedis(ctx, m, keys, RedisKeyOIDCKeys, m.pemToPrivateKey)
 }
 
 // loadEdKeysFromRedis loads Ed25519 keys from Redis into the provided map.
 func (m *Manager) loadEdKeysFromRedis(ctx context.Context, keys map[string]ed25519.PrivateKey) (map[string]ed25519.PrivateKey, error) {
-	readCtx, cancel := m.redisReadContext(ctx)
-	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(readCtx, m.redisPrefix()+RedisKeyOIDCEdKeys).Result()
+	return loadKeysFromRedis(ctx, m, keys, RedisKeyOIDCEdKeys, signing.ParseEd25519PrivateKeyPEM)
+}
+
+// loadKeysFromRedis decrypts Redis key metadata and parses non-expired key material.
+func loadKeysFromRedis[T any](
+	ctx context.Context,
+	manager *Manager,
+	keys map[string]T,
+	redisHashKey string,
+	parseKey func(string) (T, error),
+) (map[string]T, error) {
+	readCtx, cancel := manager.redisReadContext(ctx)
+	redisKeys, err := manager.deps.Redis.GetReadHandle().HGetAll(readCtx, manager.redisPrefix()+redisHashKey).Result()
 
 	cancel()
 
@@ -388,16 +400,16 @@ func (m *Manager) loadEdKeysFromRedis(ctx context.Context, keys map[string]ed255
 		return keys, err
 	}
 
-	sm := m.deps.Redis.GetSecurityManager()
+	sm := manager.deps.Redis.GetSecurityManager()
 	now := time.Now()
 
 	for kid, encryptedData := range redisKeys {
-		meta, err := m.decryptMetadata(sm, encryptedData)
+		meta, err := manager.decryptMetadata(sm, encryptedData)
 		if err != nil || isExpired(meta, now) {
 			continue
 		}
 
-		key, err := signing.ParseEd25519PrivateKeyPEM(meta.PEM)
+		key, err := parseKey(meta.PEM)
 		if err == nil {
 			keys[kid] = key
 		}

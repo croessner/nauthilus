@@ -339,38 +339,49 @@ func TestHandleFile_ServerControlsRejectRemovedWhenNoAuthShape(t *testing.T) {
 	}
 }
 
-func TestHandleFile_ServerControlsRejectServices(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-
-	viper.Set("auth", map[string]any{
-		"controls": map[string]any{
-			"enabled": []any{"backend_health_checks"},
-		},
-	})
-	viper.Set("storage", map[string]any{
-		"redis": map[string]any{
-			"primary": map[string]any{
-				"address": "localhost:6379",
-			},
-			"password_nonce":    testRedisPasswordNonce,
-			"encryption_secret": testRedisEncryptionSecret,
-		},
-	})
-
-	cfg := &FileSettings{}
-	if err := cfg.HandleFile(); err == nil {
-		t.Fatal("expected handle file to reject backend_health_checks in auth.controls")
+func TestHandleFile_RuntimeModuleListsRejectWrongModuleType(t *testing.T) {
+	for _, testCase := range runtimeModuleListRejectionCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			assertRuntimeModuleListRejected(t, testCase)
+		})
 	}
 }
 
-func TestHandleFile_ServerServicesRejectControls(t *testing.T) {
+type runtimeModuleListRejectionCase struct {
+	name    string
+	section string
+	module  string
+	message string
+}
+
+// runtimeModuleListRejectionCases lists controls and services placed in the wrong config section.
+func runtimeModuleListRejectionCases() []runtimeModuleListRejectionCase {
+	return []runtimeModuleListRejectionCase{
+		{
+			name:    "service in controls",
+			section: "controls",
+			module:  "backend_health_checks",
+			message: "expected handle file to reject backend_health_checks in auth.controls",
+		},
+		{
+			name:    "control in services",
+			section: "services",
+			module:  "brute_force",
+			message: "expected handle file to reject brute_force in auth.services",
+		},
+	}
+}
+
+// assertRuntimeModuleListRejected verifies that controls and services cannot be mixed.
+func assertRuntimeModuleListRejected(t *testing.T, testCase runtimeModuleListRejectionCase) {
+	t.Helper()
+
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
 	viper.Set("auth", map[string]any{
-		"services": map[string]any{
-			"enabled": []any{"brute_force"},
+		testCase.section: map[string]any{
+			"enabled": []any{testCase.module},
 		},
 	})
 	viper.Set("storage", map[string]any{
@@ -385,7 +396,7 @@ func TestHandleFile_ServerServicesRejectControls(t *testing.T) {
 
 	cfg := &FileSettings{}
 	if err := cfg.HandleFile(); err == nil {
-		t.Fatal("expected handle file to reject brute_force in auth.services")
+		t.Fatal(testCase.message)
 	}
 }
 

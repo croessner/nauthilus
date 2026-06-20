@@ -40,35 +40,13 @@ func newConfigLoadContext() (*gin.Context, *httptest.ResponseRecorder) {
 func TestHandleConfigLoad_RequiresConfiguredAuthentication(t *testing.T) {
 	SetDefaultEnvironment(&config.EnvironmentSettings{DevMode: false})
 
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			BasicAuth: config.BasicAuth{Enabled: false},
-			OIDCAuth:  config.OIDCAuth{Enabled: false},
-		},
-	}
-	deps := newRestAdminDepsForConfigLoadTests(cfg)
-	ctx, w := newConfigLoadContext()
-
-	deps.HandleConfigLoad(ctx)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assertConfigLoadStatus(t, newConfigLoadSettings(false, false), nil, http.StatusUnauthorized)
 }
 
 func TestHandleConfigLoad_RequiresOIDCClaimsWhenOIDCAuthEnabled(t *testing.T) {
 	SetDefaultEnvironment(&config.EnvironmentSettings{DevMode: false})
 
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			BasicAuth: config.BasicAuth{Enabled: false},
-			OIDCAuth:  config.OIDCAuth{Enabled: true},
-		},
-	}
-	deps := newRestAdminDepsForConfigLoadTests(cfg)
-	ctx, w := newConfigLoadContext()
-
-	deps.HandleConfigLoad(ctx)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assertConfigLoadStatus(t, newConfigLoadSettings(false, true), nil, http.StatusUnauthorized)
 }
 
 func TestHandleConfigLoad_EnforcesSecurityOrAdminScope(t *testing.T) {
@@ -137,16 +115,31 @@ func TestHandleConfigLoad_RequiresValidatedBasicAuthWhenOnlyBasicAuthEnabled(t *
 func TestHandleConfigLoad_DeveloperModeBypassesMissingAuthConfiguration(t *testing.T) {
 	SetDefaultEnvironment(&config.EnvironmentSettings{DevMode: true})
 
-	cfg := &config.FileSettings{
+	assertConfigLoadStatus(t, newConfigLoadSettings(false, false), nil, http.StatusOK)
+}
+
+// newConfigLoadSettings creates FileSettings with the selected REST auth flags.
+func newConfigLoadSettings(basicAuthEnabled bool, oidcAuthEnabled bool) *config.FileSettings {
+	return &config.FileSettings{
 		Server: &config.ServerSection{
-			BasicAuth: config.BasicAuth{Enabled: false},
-			OIDCAuth:  config.OIDCAuth{Enabled: false},
+			BasicAuth: config.BasicAuth{Enabled: basicAuthEnabled},
+			OIDCAuth:  config.OIDCAuth{Enabled: oidcAuthEnabled},
 		},
 	}
+}
+
+// assertConfigLoadStatus executes HandleConfigLoad and verifies the response status.
+func assertConfigLoadStatus(t *testing.T, cfg *config.FileSettings, prepare func(*gin.Context), wantStatus int) {
+	t.Helper()
+
 	deps := newRestAdminDepsForConfigLoadTests(cfg)
+
 	ctx, w := newConfigLoadContext()
+	if prepare != nil {
+		prepare(ctx)
+	}
 
 	deps.HandleConfigLoad(ctx)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, wantStatus, w.Code)
 }

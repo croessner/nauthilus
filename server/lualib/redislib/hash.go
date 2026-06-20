@@ -110,16 +110,9 @@ func (rm *RedisManager) RedisHDel(L *lua.LState) int {
 
 // RedisHLen returns the number of fields in a hash.
 func (rm *RedisManager) RedisHLen(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		hash := stack.CheckString(2)
-
-		cmd := conn.HLen(ctx, hash)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
-	})
+	return executeKeyCmd(rm, L, false, func(ctx context.Context, conn redis.Cmdable, hash string) *redis.IntCmd {
+		return conn.HLen(ctx, hash)
+	}, luaNumberValue[int64])
 }
 
 // RedisHGetAll returns all fields and values of a hash.
@@ -187,47 +180,37 @@ func (rm *RedisManager) RedisHMGet(L *lua.LState) int {
 
 // RedisHIncrBy increments the integer value of a hash field.
 func (rm *RedisManager) RedisHIncrBy(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		hash := stack.CheckString(2)
-		field := stack.CheckString(3)
-		incr := int64(stack.CheckInt(4))
-
-		cmd := conn.HIncrBy(ctx, hash, field, incr)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
-	})
+	return executeHashIncrementCmd(rm, L, readLuaInt64Increment, redisHIncrByCmd)
 }
 
 // RedisHIncrByFloat increments the float value of a hash field.
 func (rm *RedisManager) RedisHIncrByFloat(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		hash := stack.CheckString(2)
-		field := stack.CheckString(3)
-		incr := float64(stack.CheckNumber(4))
+	return executeHashIncrementCmd(rm, L, readLuaFloatIncrement, redisHIncrByFloatCmd)
+}
 
-		cmd := conn.HIncrByFloat(ctx, hash, field, incr)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
+// readLuaInt64Increment reads an integer hash increment from the Lua stack.
+func readLuaInt64Increment(stack *luastack.Manager, index int) int64 {
+	return int64(stack.CheckInt(index))
+}
 
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
-	})
+// readLuaFloatIncrement reads a floating-point hash increment from the Lua stack.
+func readLuaFloatIncrement(stack *luastack.Manager, index int) float64 {
+	return float64(stack.CheckNumber(index))
+}
+
+// redisHIncrByCmd executes HINCRBY and exposes its value through the shared command interface.
+func redisHIncrByCmd(ctx context.Context, conn redis.Cmdable, hash string, field string, incr int64) redisValueCmd[int64] {
+	return conn.HIncrBy(ctx, hash, field, incr)
+}
+
+// redisHIncrByFloatCmd executes HINCRBYFLOAT and exposes its value through the shared command interface.
+func redisHIncrByFloatCmd(ctx context.Context, conn redis.Cmdable, hash string, field string, incr float64) redisValueCmd[float64] {
+	return conn.HIncrByFloat(ctx, hash, field, incr)
 }
 
 // RedisHExists checks if a hash field exists.
 func (rm *RedisManager) RedisHExists(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		hash := stack.CheckString(2)
-		field := stack.CheckString(3)
-
-		cmd := conn.HExists(ctx, hash, field)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LBool(cmd.Val()), lua.LNil)
-	})
+	return executeTwoStringCmd(rm, L, false, func(ctx context.Context, conn redis.Cmdable, hash string, field string) *redis.BoolCmd {
+		return conn.HExists(ctx, hash, field)
+	}, luaBoolValue)
 }

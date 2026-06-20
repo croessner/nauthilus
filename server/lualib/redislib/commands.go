@@ -72,163 +72,179 @@ func (rm *RedisManager) RedisSet(L *lua.LState) int {
 			return stack.PushError(err)
 		}
 
-		var (
-			useArgs bool
-			args    redis.SetArgs
-		)
-
-		if stack.GetTop() >= 4 {
-			if tbl, ok := L.Get(4).(*lua.LTable); ok {
-				useArgs = true
-
-				if v := tbl.RawGetString("nx"); v.Type() == lua.LTBool && lua.LVAsBool(v) {
-					args.Mode = "NX"
-				}
-
-				if v := tbl.RawGetString("xx"); v.Type() == lua.LTBool && lua.LVAsBool(v) {
-					args.Mode = "XX"
-				}
-
-				if v := tbl.RawGetString("get"); v.Type() == lua.LTBool && lua.LVAsBool(v) {
-					args.Get = true
-				}
-
-				if v := tbl.RawGetString("keepttl"); v.Type() == lua.LTBool && lua.LVAsBool(v) {
-					args.KeepTTL = true
-				}
-
-				if v := tbl.RawGetString("exat"); v.Type() == lua.LTNumber {
-					sec := int64(lua.LVAsNumber(v))
-					if sec > 0 {
-						args.ExpireAt = time.Unix(sec, 0)
-					}
-				}
-
-				if v := tbl.RawGetString("pxat"); v.Type() == lua.LTNumber {
-					ms := int64(lua.LVAsNumber(v))
-					if ms > 0 {
-						args.ExpireAt = time.Unix(0, ms*int64(time.Millisecond))
-					}
-				}
-
-				if v := tbl.RawGetString("ex"); v.Type() == lua.LTNumber {
-					sec := int64(lua.LVAsNumber(v))
-					if sec > 0 {
-						args.TTL = time.Duration(sec) * time.Second
-					}
-				}
-
-				if v := tbl.RawGetString("px"); v.Type() == lua.LTNumber {
-					ms := int64(lua.LVAsNumber(v))
-					if ms > 0 {
-						args.TTL = time.Duration(ms) * time.Millisecond
-					}
-				}
-			} else if L.Get(4).Type() == lua.LTNumber {
-				ttlSeconds := int64(stack.CheckInt(4))
-				if ttlSeconds < 0 {
-					return stack.PushError(errors.New("expiration seconds must be >= 0"))
-				}
-
-				useArgs = false
-				args.TTL = time.Duration(ttlSeconds) * time.Second
-			}
+		options, err := parseRedisSetOptions(L, stack)
+		if err != nil {
+			return stack.PushError(err)
 		}
 
-		if useArgs {
-			cmd := conn.SetArgs(ctx, key, value, args)
-			if cmd.Err() != nil {
-				if errors.Is(cmd.Err(), redis.Nil) {
-					return stack.PushResults(lua.LNil, lua.LNil)
-				}
-
-				return stack.PushError(cmd.Err())
-			}
-
-			return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
-		}
-
-		cmd := conn.Set(ctx, key, value, args.TTL)
-		if cmd.Err() != nil {
-			if errors.Is(cmd.Err(), redis.Nil) {
-				return stack.PushResults(lua.LNil, lua.LNil)
-			}
-
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
+		return executeRedisSet(ctx, conn, stack, key, value, options)
 	})
+}
+
+type redisSetOptions struct {
+	args    redis.SetArgs
+	useArgs bool
+}
+
+// parseRedisSetOptions parses legacy TTL and modern SET option arguments.
+func parseRedisSetOptions(L *lua.LState, stack *luastack.Manager) (redisSetOptions, error) {
+	var options redisSetOptions
+	if stack.GetTop() < 4 {
+		return options, nil
+	}
+
+	value := L.Get(4)
+	if tbl, ok := value.(*lua.LTable); ok {
+		options.useArgs = true
+		options.args = parseRedisSetTableOptions(tbl)
+
+		return options, nil
+	}
+
+	if value.Type() != lua.LTNumber {
+		return options, nil
+	}
+
+	ttlSeconds := int64(stack.CheckInt(4))
+	if ttlSeconds < 0 {
+		return options, errors.New("expiration seconds must be >= 0")
+	}
+
+	options.args.TTL = time.Duration(ttlSeconds) * time.Second
+
+	return options, nil
+}
+
+// parseRedisSetTableOptions maps Lua SET option fields into redis.SetArgs.
+func parseRedisSetTableOptions(tbl *lua.LTable) redis.SetArgs {
+	var args redis.SetArgs
+
+	applyRedisSetModeOptions(tbl, &args)
+	applyRedisSetBooleanOptions(tbl, &args)
+	applyRedisSetExpiryAtOptions(tbl, &args)
+	applyRedisSetTTLOptions(tbl, &args)
+
+	return args
+}
+
+// applyRedisSetModeOptions applies mutually exclusive NX and XX mode flags.
+func applyRedisSetModeOptions(tbl *lua.LTable, args *redis.SetArgs) {
+	if luaBoolField(tbl, "nx") {
+		args.Mode = "NX"
+	}
+
+	if luaBoolField(tbl, "xx") {
+		args.Mode = "XX"
+	}
+}
+
+// applyRedisSetBooleanOptions applies GET and KEEPTTL flags.
+func applyRedisSetBooleanOptions(tbl *lua.LTable, args *redis.SetArgs) {
+	args.Get = luaBoolField(tbl, "get")
+	args.KeepTTL = luaBoolField(tbl, "keepttl")
+}
+
+// luaBoolField reports whether a Lua table field is a true boolean.
+func luaBoolField(tbl *lua.LTable, key string) bool {
+	value := tbl.RawGetString(key)
+
+	return value.Type() == lua.LTBool && lua.LVAsBool(value)
+}
+
+// applyRedisSetExpiryAtOptions applies absolute expiration options.
+func applyRedisSetExpiryAtOptions(tbl *lua.LTable, args *redis.SetArgs) {
+	if sec, ok := luaPositiveIntField(tbl, "exat"); ok {
+		args.ExpireAt = time.Unix(sec, 0)
+	}
+
+	if ms, ok := luaPositiveIntField(tbl, "pxat"); ok {
+		args.ExpireAt = time.Unix(0, ms*int64(time.Millisecond))
+	}
+}
+
+// applyRedisSetTTLOptions applies relative expiration options.
+func applyRedisSetTTLOptions(tbl *lua.LTable, args *redis.SetArgs) {
+	if sec, ok := luaPositiveIntField(tbl, "ex"); ok {
+		args.TTL = time.Duration(sec) * time.Second
+	}
+
+	if ms, ok := luaPositiveIntField(tbl, "px"); ok {
+		args.TTL = time.Duration(ms) * time.Millisecond
+	}
+}
+
+// luaPositiveIntField returns a positive numeric Lua table field.
+func luaPositiveIntField(tbl *lua.LTable, key string) (int64, bool) {
+	value := tbl.RawGetString(key)
+	if value.Type() != lua.LTNumber {
+		return 0, false
+	}
+
+	number := int64(lua.LVAsNumber(value))
+	if number <= 0 {
+		return 0, false
+	}
+
+	return number, true
+}
+
+// executeRedisSet executes SET or SET with redis.SetArgs and pushes normalized results.
+func executeRedisSet(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager, key string, value any, options redisSetOptions) int {
+	if options.useArgs {
+		cmd := conn.SetArgs(ctx, key, value, options.args)
+
+		return pushRedisSetResult(stack, cmd.Val(), cmd.Err())
+	}
+
+	cmd := conn.Set(ctx, key, value, options.args.TTL)
+
+	return pushRedisSetResult(stack, cmd.Val(), cmd.Err())
+}
+
+// pushRedisSetResult handles Redis nil and error results for SET variants.
+func pushRedisSetResult(stack *luastack.Manager, value string, err error) int {
+	if err == nil {
+		return stack.PushResults(lua.LString(value), lua.LNil)
+	}
+
+	if errors.Is(err, redis.Nil) {
+		return stack.PushResults(lua.LNil, lua.LNil)
+	}
+
+	return stack.PushError(err)
 }
 
 // RedisIncr increments the value of a key in Redis.
 func (rm *RedisManager) RedisIncr(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-
-		cmd := conn.Incr(ctx, key)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
-	})
+	return executeKeyCmd(rm, L, true, func(ctx context.Context, conn redis.Cmdable, key string) *redis.IntCmd {
+		return conn.Incr(ctx, key)
+	}, luaNumberValue[int64])
 }
 
 // RedisDel deletes a key from Redis.
 func (rm *RedisManager) RedisDel(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-
-		cmd := conn.Del(ctx, key)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
-	})
+	return executeKeyCmd(rm, L, true, func(ctx context.Context, conn redis.Cmdable, key string) *redis.IntCmd {
+		return conn.Del(ctx, key)
+	}, luaNumberValue[int64])
 }
 
 // RedisRename renames a key in Redis.
 func (rm *RedisManager) RedisRename(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		oldKey := stack.CheckString(2)
-		newKey := stack.CheckString(3)
-
-		cmd := conn.Rename(ctx, oldKey, newKey)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
-	})
+	return executeTwoStringCmd(rm, L, true, func(ctx context.Context, conn redis.Cmdable, oldKey, newKey string) *redis.StatusCmd {
+		return conn.Rename(ctx, oldKey, newKey)
+	}, luaStringValue)
 }
 
 // RedisExpire sets an expiration time on a key.
 func (rm *RedisManager) RedisExpire(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		seconds := stack.CheckInt(3)
-
-		cmd := conn.Expire(ctx, key, time.Duration(seconds)*time.Second)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LBool(cmd.Val()), lua.LNil)
+	return executeExpireCmd(rm, L, func(ctx context.Context, conn redis.Cmdable, key string, ttl time.Duration) *redis.BoolCmd {
+		return conn.Expire(ctx, key, ttl)
 	})
 }
 
 // RedisExists checks if a key exists in Redis.
 func (rm *RedisManager) RedisExists(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-
-		cmd := conn.Exists(ctx, key)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
-	})
+	return executeKeyCmd(rm, L, false, func(ctx context.Context, conn redis.Cmdable, key string) *redis.IntCmd {
+		return conn.Exists(ctx, key)
+	}, luaNumberValue[int64])
 }

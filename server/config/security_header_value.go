@@ -398,10 +398,10 @@ func processStrictTransportSecurityValue(input any) (any, error) {
 }
 
 type securityHeaderValueDecoder[T any] struct {
-	key          string
-	fromString   func(string) T
-	fromPartials func([]string) T
-	fromObject   func(map[string]any) (T, error)
+	key          string                          `mapstructure:"-"`
+	fromString   func(string) T                  `mapstructure:"-"`
+	fromPartials func([]string) T                `mapstructure:"-"`
+	fromObject   func(map[string]any) (T, error) `mapstructure:"-"`
 }
 
 // processSecurityHeaderValue decodes shared security-header input shapes.

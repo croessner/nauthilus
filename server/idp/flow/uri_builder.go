@@ -60,37 +60,66 @@ func (b *URIBuilder) Resolve(state *State, action Action) string {
 		return defaultErrorURI
 	}
 
+	if uri, ok := explicitFlowTarget(state, action); ok {
+		return uri
+	}
+
+	if uri, ok := b.transitionTarget(state, action); ok {
+		return uri
+	}
+
+	return defaultFlowTarget(action)
+}
+
+// explicitFlowTarget returns the target carried by the current flow state.
+func explicitFlowTarget(state *State, action Action) (string, bool) {
 	switch action {
 	case FlowActionResume:
 		if state.Metadata != nil {
 			if target, ok := state.Metadata[FlowMetadataResumeTarget]; ok && target != "" {
-				return target
+				return target, true
 			}
 		}
 
 		if state.ReturnTarget != "" {
-			return state.ReturnTarget
+			return state.ReturnTarget, true
 		}
 	case FlowActionStart, FlowActionAdvance, FlowActionBack, FlowActionComplete:
 		if state.ReturnTarget != "" {
-			return state.ReturnTarget
+			return state.ReturnTarget, true
 		}
 	case FlowActionCancel:
 		if state.CancelTarget != "" {
-			return state.CancelTarget
+			return state.CancelTarget, true
 		}
 	}
 
-	if b != nil {
-		if steps, ok := b.transitions[state.Type]; ok {
-			if actions, ok := steps[state.CurrentStep]; ok {
-				if uri, ok := actions[action]; ok {
-					return uri
-				}
-			}
-		}
+	return "", false
+}
+
+// transitionTarget returns a configured target for the current flow step.
+func (b *URIBuilder) transitionTarget(state *State, action Action) (string, bool) {
+	if b == nil {
+		return "", false
 	}
 
+	steps, ok := b.transitions[state.Type]
+	if !ok {
+		return "", false
+	}
+
+	actions, ok := steps[state.CurrentStep]
+	if !ok {
+		return "", false
+	}
+
+	uri, ok := actions[action]
+
+	return uri, ok
+}
+
+// defaultFlowTarget returns the fallback redirect target for an action.
+func defaultFlowTarget(action Action) string {
 	switch action {
 	case FlowActionCancel:
 		return defaultCancelURI

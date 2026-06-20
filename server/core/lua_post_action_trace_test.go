@@ -21,22 +21,33 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	corepkg "github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/log"
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/lualib/action"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
-	"github.com/croessner/nauthilus/v3/server/util"
 	"go.opentelemetry.io/otel/trace"
 )
 
 func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	prepareLuaPostActionTest(t)
 
-	_ = action.NewWorker(config.GetFile(), log.GetLogger(), rediscli.GetClient(), util.GetDefaultEnvironment())
+	parent := newValidPostActionSpanContext(t)
+	ctx := trace.ContextWithSpanContext(context.Background(), parent)
 
-	// Use definitions to avoid unused import
-	_ = definitions.LuaActionPost
+	expected := trace.SpanContextFromContext(ctx)
+	if !expected.IsValid() {
+		t.Fatalf("expected extracted SpanContext to be valid")
+	}
+
+	done := make(chan struct{})
+	expectPostActionParentSpan(t, done, expected)
+
+	auth := newPostActionTraceAuthState()
+	auth.RunLuaPostAction(newPostActionTraceArgs(expected))
+	<-done
+}
+
+// newValidPostActionSpanContext creates the parent span used by the trace test.
+func newValidPostActionSpanContext(t *testing.T) trace.SpanContext {
+	t.Helper()
 
 	parent := trace.NewSpanContext(trace.SpanContextConfig{
 		TraceID:    trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
@@ -47,14 +58,12 @@ func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
 		t.Fatalf("expected parent SpanContext to be valid")
 	}
 
-	ctx := trace.ContextWithSpanContext(context.Background(), parent)
+	return parent
+}
 
-	expected := trace.SpanContextFromContext(ctx)
-	if !expected.IsValid() {
-		t.Fatalf("expected extracted SpanContext to be valid")
-	}
-
-	done := make(chan struct{})
+// expectPostActionParentSpan verifies the worker receives the parent span.
+func expectPostActionParentSpan(t *testing.T, done chan<- struct{}, expected trace.SpanContext) {
+	t.Helper()
 
 	go func() {
 		act := <-action.RequestChan
@@ -81,11 +90,14 @@ func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
 
 		close(done)
 	}()
+}
 
-	args := corepkg.PostActionArgs{
+// newPostActionTraceArgs creates the post-action args with the parent span.
+func newPostActionTraceArgs(parent trace.SpanContext) corepkg.PostActionArgs {
+	return corepkg.PostActionArgs{
 		Context:       &lualib.Context{},
 		HTTPRequest:   nil,
-		ParentSpan:    expected,
+		ParentSpan:    parent,
 		StatusMessage: "status-1",
 		Request: lualib.CommonRequest{
 			Session:   "guid-123",
@@ -95,10 +107,11 @@ func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
 			Repeating: true,
 		},
 	}
+}
 
-	auth := corepkg.NewAuthStateFromContextWithDeps(nil, corepkg.AuthDeps{
+// newPostActionTraceAuthState creates the AuthState used for trace propagation.
+func newPostActionTraceAuthState() *corepkg.AuthState {
+	return corepkg.NewAuthStateFromContextWithDeps(nil, corepkg.AuthDeps{
 		Cfg: config.GetFile(),
 	}).(*corepkg.AuthState)
-	auth.RunLuaPostAction(args)
-	<-done
 }

@@ -32,84 +32,88 @@ func TestClearBrowserCookies(t *testing.T) {
 	t.Run("sets only secure data cookie", func(t *testing.T) {
 		util.SetDefaultEnvironment(&config.EnvironmentSettings{DevMode: false})
 
-		writer := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(writer)
-		ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-
+		ctx, writer := newClearBrowserCookiesContext()
 		ClearBrowserCookies(ctx)
 
-		cookies := writer.Result().Cookies()
-
-		if len(cookies) != 1 {
-			t.Fatalf("expected exactly 1 cookie, got %d", len(cookies))
-		}
-
-		expectedNames := map[string]bool{
-			definitions.SecureDataCookieName: false,
-		}
-
-		for _, cookie := range cookies {
-			if _, ok := expectedNames[cookie.Name]; !ok {
-				t.Errorf("unexpected cookie %q", cookie.Name)
-			}
-
-			expectedNames[cookie.Name] = true
-
-			// Verify cookie is being deleted (MaxAge=-1)
-			if cookie.MaxAge != -1 {
-				t.Errorf("cookie %q MaxAge=%d, want -1", cookie.Name, cookie.MaxAge)
-			}
-		}
-
-		for name, found := range expectedNames {
-			if !found {
-				t.Errorf("expected cookie %q not found", name)
-			}
-		}
+		assertOnlySecureDataCookieDeleted(t, writer.Result().Cookies())
 	})
 
 	t.Run("secure flag based on dev mode", func(t *testing.T) {
-		tests := []struct {
-			name       string
-			devMode    bool
-			wantSecure bool
-		}{
-			{
-				name:       "secure cookies in non-dev mode",
-				devMode:    false,
-				wantSecure: true,
-			},
-			{
-				name:       "insecure cookies in dev mode",
-				devMode:    true,
-				wantSecure: false,
-			},
-		}
-
-		for _, test := range tests {
+		for _, test := range clearBrowserCookiesSecureCases() {
 			t.Run(test.name, func(t *testing.T) {
 				util.SetDefaultEnvironment(&config.EnvironmentSettings{DevMode: test.devMode})
 
-				writer := httptest.NewRecorder()
-				ctx, _ := gin.CreateTestContext(writer)
-				ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-
+				ctx, writer := newClearBrowserCookiesContext()
 				ClearBrowserCookies(ctx)
 
-				cookies := writer.Result().Cookies()
-
-				if len(cookies) == 0 {
-					t.Fatalf("expected cookies to be set")
-				}
-
-				for _, cookie := range cookies {
-					if cookie.Secure != test.wantSecure {
-						t.Errorf("cookie %q secure=%v, want %v", cookie.Name, cookie.Secure, test.wantSecure)
-					}
-				}
+				assertCookieSecureFlag(t, writer.Result().Cookies(), test.wantSecure)
 			})
 		}
 	})
+}
+
+type clearBrowserCookiesSecureCase struct {
+	name       string
+	devMode    bool
+	wantSecure bool
+}
+
+// clearBrowserCookiesSecureCases returns secure-cookie environment cases.
+func clearBrowserCookiesSecureCases() []clearBrowserCookiesSecureCase {
+	return []clearBrowserCookiesSecureCase{
+		{
+			name:       "secure cookies in non-dev mode",
+			devMode:    false,
+			wantSecure: true,
+		},
+		{
+			name:       "insecure cookies in dev mode",
+			devMode:    true,
+			wantSecure: false,
+		},
+	}
+}
+
+// newClearBrowserCookiesContext creates a request context for cookie clearing.
+func newClearBrowserCookiesContext() (*gin.Context, *httptest.ResponseRecorder) {
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+	return ctx, writer
+}
+
+// assertOnlySecureDataCookieDeleted verifies the expected deletion cookie.
+func assertOnlySecureDataCookieDeleted(t *testing.T, cookies []*http.Cookie) {
+	t.Helper()
+
+	if len(cookies) != 1 {
+		t.Fatalf("expected exactly 1 cookie, got %d", len(cookies))
+	}
+
+	cookie := cookies[0]
+	if cookie.Name != definitions.SecureDataCookieName {
+		t.Errorf("unexpected cookie %q", cookie.Name)
+	}
+
+	if cookie.MaxAge != -1 {
+		t.Errorf("cookie %q MaxAge=%d, want -1", cookie.Name, cookie.MaxAge)
+	}
+}
+
+// assertCookieSecureFlag verifies that all cookies use the expected Secure flag.
+func assertCookieSecureFlag(t *testing.T, cookies []*http.Cookie, wantSecure bool) {
+	t.Helper()
+
+	if len(cookies) == 0 {
+		t.Fatalf("expected cookies to be set")
+	}
+
+	for _, cookie := range cookies {
+		if cookie.Secure != wantSecure {
+			t.Errorf("cookie %q secure=%v, want %v", cookie.Name, cookie.Secure, wantSecure)
+		}
+	}
 }
 
 func TestSessionCleaner_RemovesLegacyLanguageFromSecureSession(t *testing.T) {

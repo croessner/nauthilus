@@ -64,76 +64,34 @@ func (h *Handler) Register(router gin.IRouter) {
 }
 
 func (h *Handler) json(ctx *gin.Context) {
-	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthJSONDisabled() {
-		ctx.AbortWithStatus(http.StatusNotFound)
-
-		return
-	}
-
-	// Minimal custom span to verify end-to-end tracing for the JSON auth path.
-	// This span appears as a child of the otelgin server span when tracing is enabled.
-	tr := monittrace.New("nauthilus/rest")
-
-	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_json")
-	defer sp.End()
-
-	// Propagate the new context down the call chain so child operations
-	// (e.g., Redis, outbound HTTP) attach under this span when possible.
-	ctx.Request = ctx.Request.WithContext(spanCtx)
-
-	h.process(ctx)
+	h.handleWithTrace(ctx, h.deps.Cfg.GetServer().GetEndpoint().IsAuthJSONDisabled, "rest.auth_json")
 }
 
 func (h *Handler) cbor(ctx *gin.Context) {
-	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthCBORDisabled() {
-		ctx.AbortWithStatus(http.StatusNotFound)
-
-		return
-	}
-
-	tr := monittrace.New("nauthilus/rest")
-
-	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_cbor")
-	defer sp.End()
-
-	ctx.Request = ctx.Request.WithContext(spanCtx)
-
-	h.process(ctx)
+	h.handleWithTrace(ctx, h.deps.Cfg.GetServer().GetEndpoint().IsAuthCBORDisabled, "rest.auth_cbor")
 }
 
 func (h *Handler) header(ctx *gin.Context) {
-	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthHeaderDisabled() {
-		ctx.AbortWithStatus(http.StatusNotFound)
-
-		return
-	}
-
-	// Minimal custom span analogous to JSON handler
-	tr := monittrace.New("nauthilus/rest")
-
-	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_header")
-	defer sp.End()
-
-	// Propagate tracing context
-	ctx.Request = ctx.Request.WithContext(spanCtx)
-
-	h.process(ctx)
+	h.handleWithTrace(ctx, h.deps.Cfg.GetServer().GetEndpoint().IsAuthHeaderDisabled, "rest.auth_header")
 }
 
 func (h *Handler) nginx(ctx *gin.Context) {
-	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthNginxDisabled() {
+	h.handleWithTrace(ctx, h.deps.Cfg.GetServer().GetEndpoint().IsAuthNginxDisabled, "rest.auth_nginx")
+}
+
+// handleWithTrace runs an auth endpoint with the endpoint-specific disabled check and tracing span.
+func (h *Handler) handleWithTrace(ctx *gin.Context, disabled func() bool, spanName string) {
+	if disabled() {
 		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
 	}
 
-	// Minimal custom span analogous to JSON handler
 	tr := monittrace.New("nauthilus/rest")
 
-	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_nginx")
+	spanCtx, sp := tr.Start(ctx.Request.Context(), spanName)
 	defer sp.End()
 
-	// Propagate tracing context
 	ctx.Request = ctx.Request.WithContext(spanCtx)
 
 	h.process(ctx)

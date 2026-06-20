@@ -27,6 +27,8 @@ const (
 	emailAddressPartCount     = 2
 )
 
+var macroPattern = regexp.MustCompile(`%([LURT]*)?\{([^\}]*)\}`)
+
 // MacroSource holds all values that might be used in macros.
 type MacroSource struct {
 	Username    string
@@ -38,6 +40,15 @@ type MacroSource struct {
 	XClientPort string
 	TOTPSecret  string
 	Protocol    config.Protocol
+}
+
+type macroReplacement struct {
+	source    string
+	modifier  string
+	variable  string
+	lowerCase bool
+	upperCase bool
+	replaced  bool
 }
 
 /*
@@ -64,133 +75,142 @@ remote_port - remote client port.
 account - authenticated account name
 user_dn - LDAP distinguished name of the current user
 */
-//nolint:gocognit,gocyclo // Ignore
 func (m *MacroSource) ReplaceMacros(source string) (dest string) {
-	var (
-		flag      bool
-		lowerCase bool
-		upperCase bool
-
-		user     string
-		username string
-		domain   string
-
-		service  string
-		localIP  string
-		remoteIP string
-	)
-
-	macroResult := make([]string, 0, macroCaptureGroupCapacity)
-	pattern := `%([LURT]*)?\{([^\}]*)\}`
-	regObj := regexp.MustCompile(pattern)
-
-	searchResult := regObj.FindSubmatch([]byte(source))
-	if searchResult == nil {
+	replacement, ok := newMacroReplacement(source)
+	if !ok {
 		return source
 	}
 
+	value, shouldReplace := m.macroValue(replacement)
+	if shouldReplace {
+		dest = replacement.replaceFirst(value)
+	}
+
+	return m.ReplaceMacros(dest)
+}
+
+// newMacroReplacement parses the first macro occurrence in source.
+func newMacroReplacement(source string) (macroReplacement, bool) {
+	searchResult := macroPattern.FindSubmatch([]byte(source))
+	if searchResult == nil {
+		return macroReplacement{}, false
+	}
+
+	macroResult := make([]string, 0, macroCaptureGroupCapacity)
 	for _, findings := range searchResult {
 		macroResult = append(macroResult, string(findings))
 	}
 
 	if macroResult[2] == "" {
-		return source
+		return macroReplacement{}, false
 	}
 
-	// Modifiers
-	for _, modifier := range macroResult[1] {
+	result := macroReplacement{
+		source:   source,
+		modifier: macroResult[1],
+		variable: macroResult[2],
+	}
+	result.applyModifiers()
+
+	return result, true
+}
+
+// applyModifiers records the effective case modifiers for a macro.
+func (r *macroReplacement) applyModifiers() {
+	for _, modifier := range r.modifier {
 		switch string(modifier) {
 		case "L":
-			lowerCase = !upperCase
+			r.lowerCase = !r.upperCase
 		case "U":
-			upperCase = !lowerCase
+			r.upperCase = !r.lowerCase
 		}
 	}
+}
 
-	splitUsername := func() []string {
-		if strings.Contains(m.Username, "@") {
-			split := strings.Split(m.Username, "@")
-			if len(split) <= emailAddressPartCount {
-				return split
-			}
-		}
-
-		return []string{}
-	}
-
-	// Long variables
-	applyCaseAndEscape := func(value string) string {
-		if lowerCase {
-			value = strings.ToLower(value)
-		} else if upperCase {
-			value = strings.ToUpper(value)
-		}
-
-		return EscapeLDAPFilter(value)
-	}
-
-	replaceFirst := func(value string) string {
-		return regObj.ReplaceAllStringFunc(source, func(val string) string {
-			if flag {
-				return val
-			}
-
-			flag = true
-
-			return regObj.ReplaceAllString(val, value)
-		})
-	}
-
-	switch macroResult[2] {
+// macroValue resolves the configured long variable to its escaped value.
+func (m *MacroSource) macroValue(replacement macroReplacement) (string, bool) {
+	switch replacement.variable {
 	case "user":
-		user = applyCaseAndEscape(m.Username)
-
-		dest = replaceFirst(user)
+		return replacement.applyCaseAndEscape(m.Username), true
 	case "username":
-		split := splitUsername()
-		if len(split) == emailAddressPartCount {
-			username = split[0]
-		} else {
-			username = m.Username
-		}
-
-		username = applyCaseAndEscape(username)
-
-		dest = replaceFirst(username)
+		return replacement.applyCaseAndEscape(m.localUsername()), true
 	case "domain":
-		split := splitUsername()
-		if len(split) == emailAddressPartCount {
-			domain = split[1]
-		}
-
-		domain = applyCaseAndEscape(domain)
-
-		dest = replaceFirst(domain)
+		return replacement.applyCaseAndEscape(m.usernameDomain()), true
 	case "service":
-		service = applyCaseAndEscape(m.Protocol.Get())
-
-		dest = replaceFirst(service)
+		return replacement.applyCaseAndEscape(m.Protocol.Get()), true
 	case "local_ip":
-		localIP = applyCaseAndEscape(m.XLocalIP)
-
-		dest = replaceFirst(localIP)
+		return replacement.applyCaseAndEscape(m.XLocalIP), true
 	case "local_port":
-		dest = replaceFirst(EscapeLDAPFilter(m.XPort))
+		return EscapeLDAPFilter(m.XPort), true
 	case "remote_ip":
-		remoteIP = applyCaseAndEscape(m.ClientIP)
-
-		dest = replaceFirst(remoteIP)
+		return replacement.applyCaseAndEscape(m.ClientIP), true
 	case "remote_port":
-		dest = replaceFirst(EscapeLDAPFilter(m.XClientPort))
+		return EscapeLDAPFilter(m.XClientPort), true
 	case "totp_secret":
-		dest = replaceFirst(EscapeLDAPFilter(m.TOTPSecret))
+		return EscapeLDAPFilter(m.TOTPSecret), true
 	case "account":
-		dest = replaceFirst(applyCaseAndEscape(m.Account))
+		return replacement.applyCaseAndEscape(m.Account), true
 	case "user_dn":
-		dest = replaceFirst(applyCaseAndEscape(m.UserDN))
+		return replacement.applyCaseAndEscape(m.UserDN), true
 	}
 
-	return m.ReplaceMacros(dest)
+	return "", false
+}
+
+// localUsername returns the username part used by the legacy macro implementation.
+func (m *MacroSource) localUsername() string {
+	split := m.splitUsername()
+	if len(split) == emailAddressPartCount {
+		return split[0]
+	}
+
+	return m.Username
+}
+
+// usernameDomain returns the domain part used by the legacy macro implementation.
+func (m *MacroSource) usernameDomain() string {
+	split := m.splitUsername()
+	if len(split) == emailAddressPartCount {
+		return split[1]
+	}
+
+	return ""
+}
+
+// splitUsername returns at most two address parts to match the legacy macro behavior.
+func (m *MacroSource) splitUsername() []string {
+	if strings.Contains(m.Username, "@") {
+		split := strings.Split(m.Username, "@")
+		if len(split) <= emailAddressPartCount {
+			return split
+		}
+	}
+
+	return []string{}
+}
+
+// applyCaseAndEscape applies supported case modifiers and LDAP escaping.
+func (r macroReplacement) applyCaseAndEscape(value string) string {
+	if r.lowerCase {
+		value = strings.ToLower(value)
+	} else if r.upperCase {
+		value = strings.ToUpper(value)
+	}
+
+	return EscapeLDAPFilter(value)
+}
+
+// replaceFirst substitutes only the first macro occurrence in the original source.
+func (r *macroReplacement) replaceFirst(value string) string {
+	return macroPattern.ReplaceAllStringFunc(r.source, func(val string) string {
+		if r.replaced {
+			return val
+		}
+
+		r.replaced = true
+
+		return macroPattern.ReplaceAllString(val, value)
+	})
 }
 
 // ExpandLDAPFilter replaces legacy placeholders and macros using LDAP-safe escaping.

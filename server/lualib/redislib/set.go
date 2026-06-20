@@ -52,21 +52,9 @@ func (rm *RedisManager) RedisSIsMember(L *lua.LState) int {
 
 // RedisSMembers gets all members in a set.
 func (rm *RedisManager) RedisSMembers(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-
-		cmd := conn.SMembers(ctx, key)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		result := L.NewTable()
-		for _, member := range cmd.Val() {
-			result.Append(lua.LString(member))
-		}
-
-		return stack.PushResults(result, lua.LNil)
-	})
+	return executeKeyCmd(rm, L, false, func(ctx context.Context, conn redis.Cmdable, key string) *redis.StringSliceCmd {
+		return conn.SMembers(ctx, key)
+	}, luaStringSliceValue(L))
 }
 
 // RedisSRem removes one or more members from a set.
@@ -78,14 +66,7 @@ func (rm *RedisManager) RedisSRem(L *lua.LState) int {
 
 // RedisSCard returns the number of members in a set.
 func (rm *RedisManager) RedisSCard(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-
-		cmd := conn.SCard(ctx, key)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
-	})
+	return executeKeyCmd(rm, L, false, func(ctx context.Context, conn redis.Cmdable, key string) *redis.IntCmd {
+		return conn.SCard(ctx, key)
+	}, luaNumberValue[int64])
 }

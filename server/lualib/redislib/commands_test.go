@@ -16,115 +16,73 @@
 package redislib
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
-	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/go-redis/redismock/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
 func TestRedisGet(t *testing.T) {
-	testFile := &config.FileSettings{Server: &config.ServerSection{}}
-	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	runRedisLuaCommandTests(t, "redis_get", redisGetLuaCode(), redisGetCases())
+}
 
-	tests := []struct {
-		name             string
-		key              string
-		valueType        string
-		expectedVal      lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+// redisGetLuaCode returns the Lua script used by Redis GET cases.
+func redisGetLuaCode() string {
+	return `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_get("default", key, valueType)`
+}
+
+// redisGetCases returns Redis GET behavior cases.
+func redisGetCases() []redisLuaCommandTest {
+	return []redisLuaCommandTest{
 		{
-			name:        "GetStringValue",
-			key:         "testKey",
-			valueType:   definitions.TypeString,
-			expectedVal: lua.LString("testValue"),
-			expectedErr: lua.LNil,
+			name: "GetStringValue",
+			luaGlobals: map[string]lua.LValue{
+				"key":       lua.LString("testKey"),
+				"valueType": lua.LString(definitions.TypeString),
+			},
+			expectedResult: lua.LString("testValue"),
+			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectGet("testKey").SetVal("testValue")
 			},
 		},
 		{
-			name:        "GetValueWithMissingKey",
-			key:         "missingKey",
-			valueType:   definitions.TypeString,
-			expectedVal: lua.LNil,
-			expectedErr: lua.LString("redis: nil"),
+			name: "GetValueWithMissingKey",
+			luaGlobals: map[string]lua.LValue{
+				"key":       lua.LString("missingKey"),
+				"valueType": lua.LString(definitions.TypeString),
+			},
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("redis: nil"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectGet("missingKey").RedisNil()
 			},
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock conn.")
-			}
-
-			tt.prepareMockRedis(mock)
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
-
-			L.SetGlobal("key", lua.LString(tt.key))
-			L.SetGlobal("valueType", lua.LString(tt.valueType))
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_get("default", key, valueType)`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotVal := L.GetGlobal("result")
-			if gotVal.Type() != tt.expectedVal.Type() || gotVal.String() != tt.expectedVal.String() {
-				t.Errorf("nauthilus.redis_get() gotVal = %v, want %v", gotVal.String(), tt.expectedVal.String())
-			}
-
-			gotErr := L.GetGlobal("err")
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
 }
 
 func TestRedisSet(t *testing.T) {
-	testFile := &config.FileSettings{Server: &config.ServerSection{}}
-	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	runRedisLuaCommandTests(t, "redis_set", redisSetLuaCode(), redisSetCases())
+}
 
-	tests := []struct {
-		name             string
-		key              string
-		value            lua.LValue
-		expiration       int
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+// redisSetLuaCode returns the Lua script used by Redis SET cases.
+func redisSetLuaCode() string {
+	return `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_set("default", key, value, expiration)`
+}
+
+// redisSetCases returns Redis SET behavior cases.
+func redisSetCases() []redisLuaCommandTest {
+	return []redisLuaCommandTest{
 		{
-			name:           "SetKeyValue",
-			key:            "testKey",
-			value:          lua.LString("testValue"),
-			expiration:     30,
+			name: "SetKeyValue",
+			luaGlobals: map[string]lua.LValue{
+				"key":        lua.LString("testKey"),
+				"value":      lua.LString("testValue"),
+				"expiration": lua.LNumber(30),
+			},
 			expectedResult: lua.LString("OK"),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -132,10 +90,12 @@ func TestRedisSet(t *testing.T) {
 			},
 		},
 		{
-			name:           "SetKeyValueWithoutExpiration",
-			key:            "anotherKey",
-			value:          lua.LString("anotherValue"),
-			expiration:     0,
+			name: "SetKeyValueWithoutExpiration",
+			luaGlobals: map[string]lua.LValue{
+				"key":        lua.LString("anotherKey"),
+				"value":      lua.LString("anotherValue"),
+				"expiration": lua.LNumber(0),
+			},
 			expectedResult: lua.LString("OK"),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -143,10 +103,12 @@ func TestRedisSet(t *testing.T) {
 			},
 		},
 		{
-			name:           "SetKeyValueWithError",
-			key:            "testKey",
-			value:          lua.LString("testValue"),
-			expiration:     30,
+			name: "SetKeyValueWithError",
+			luaGlobals: map[string]lua.LValue{
+				"key":        lua.LString("testKey"),
+				"value":      lua.LString("testValue"),
+				"expiration": lua.LNumber(30),
+			},
 			expectedResult: lua.LNil,
 			expectedErr:    lua.LString("some error"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -154,66 +116,26 @@ func TestRedisSet(t *testing.T) {
 			},
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock conn.")
-			}
-
-			tt.prepareMockRedis(mock)
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
-
-			L.SetGlobal("key", lua.LString(tt.key))
-			L.SetGlobal("value", tt.value)
-			L.SetGlobal("expiration", lua.LNumber(tt.expiration))
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_set("default", key, value, expiration)`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
-				t.Errorf("nauthilus.redis_set() gotResult = %v, want %v", gotResult.String(), tt.expectedResult.String())
-			}
-
-			gotErr := L.GetGlobal("err")
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
 }
 
 func TestRedisExpire(t *testing.T) {
-	testFile := &config.FileSettings{Server: &config.ServerSection{}}
-	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	runRedisLuaCommandTests(t, "redis_expire", redisExpireLuaCode(), redisExpireCases())
+}
 
-	tests := []struct {
-		name             string
-		key              string
-		expiration       lua.LNumber
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+// redisExpireLuaCode returns the Lua script used by Redis EXPIRE cases.
+func redisExpireLuaCode() string {
+	return `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_expire("default", key, expiration)`
+}
+
+// redisExpireCases returns Redis EXPIRE behavior cases.
+func redisExpireCases() []redisLuaCommandTest {
+	return []redisLuaCommandTest{
 		{
-			name:           "ExpireWithExistingKey",
-			key:            "testKey",
-			expiration:     60,
+			name: "ExpireWithExistingKey",
+			luaGlobals: map[string]lua.LValue{
+				"key":        lua.LString("testKey"),
+				"expiration": lua.LNumber(60),
+			},
 			expectedResult: lua.LTrue,
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -221,9 +143,11 @@ func TestRedisExpire(t *testing.T) {
 			},
 		},
 		{
-			name:           "ExpireWithNonExistingKey",
-			key:            "missingKey",
-			expiration:     30,
+			name: "ExpireWithNonExistingKey",
+			luaGlobals: map[string]lua.LValue{
+				"key":        lua.LString("missingKey"),
+				"expiration": lua.LNumber(30),
+			},
 			expectedResult: lua.LFalse,
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -231,9 +155,11 @@ func TestRedisExpire(t *testing.T) {
 			},
 		},
 		{
-			name:           "ExpireWithError",
-			key:            "keyWithError",
-			expiration:     10,
+			name: "ExpireWithError",
+			luaGlobals: map[string]lua.LValue{
+				"key":        lua.LString("keyWithError"),
+				"expiration": lua.LNumber(10),
+			},
 			expectedResult: lua.LNil,
 			expectedErr:    lua.LString("some error"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -241,227 +167,72 @@ func TestRedisExpire(t *testing.T) {
 			},
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock conn.")
-			}
-
-			tt.prepareMockRedis(mock)
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
-
-			L.SetGlobal("key", lua.LString(tt.key))
-			L.SetGlobal("expiration", tt.expiration)
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_expire("default", key, expiration)`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
-				t.Errorf("nauthilus.redis_expire() gotResult = %v, want %v", gotResult.String(), tt.expectedResult.String())
-			}
-
-			gotErr := L.GetGlobal("err")
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
 }
 
 func TestRedisIncr(t *testing.T) {
-	testFile := &config.FileSettings{Server: &config.ServerSection{}}
-	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
-
-	tests := []struct {
-		name             string
-		key              string
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
-		{
-			name:           "IncrementNonExistingKey",
-			key:            "testKey",
-			expectedResult: lua.LNumber(1),
-			expectedErr:    lua.LNil,
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectIncr("testKey").SetVal(1)
-			},
-		},
-		{
-			name:           "IncrementExistingKey",
-			key:            "existingKey",
-			expectedResult: lua.LNumber(2),
-			expectedErr:    lua.LNil,
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectIncr("existingKey").SetVal(2)
-			},
-		},
-		{
-			name:           "IncrementKeyWithError",
-			key:            "keyWithError",
-			expectedResult: lua.LNil,
-			expectedErr:    lua.LString("some error"),
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectIncr("keyWithError").SetErr(errors.New("some error"))
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock conn.")
-			}
-
-			tt.prepareMockRedis(mock)
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
-
-			L.SetGlobal("key", lua.LString(tt.key))
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_incr("default", key)`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedResult.Type() || lua.LVAsNumber(gotResult) != lua.LVAsNumber(tt.expectedResult) {
-				t.Errorf("nauthilus.redis_incr() gotResult = %v, want %v", gotResult, tt.expectedResult)
-			}
-
-			gotErr := L.GetGlobal("err")
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
+	runSimpleKeyRedisTests(t, "redis_incr", []simpleKeyRedisTest{
+		simpleKeyCase("IncrementNonExistingKey", "testKey", lua.LNumber(1), lua.LNil, expectIncrMissing),
+		simpleKeyCase("IncrementExistingKey", "existingKey", lua.LNumber(2), lua.LNil, expectIncrExisting),
+		simpleKeyCase("IncrementKeyWithError", "keyWithError", lua.LNil, lua.LString("some error"), expectIncrError),
+	})
 }
 
 func TestRedisDel(t *testing.T) {
-	testFile := &config.FileSettings{Server: &config.ServerSection{}}
-	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	runSimpleKeyRedisTests(t, "redis_del", []simpleKeyRedisTest{
+		simpleKeyCase("DeleteExistingKey", "existingKey", lua.LNumber(1), lua.LNil, expectDelExisting),
+		simpleKeyCase("DeleteNonExistingKey", "nonExistingKey", lua.LNumber(0), lua.LNil, expectDelMissing),
+		simpleKeyCase("DeleteWithError", "keyWithError", lua.LNil, lua.LString("some error"), expectDelError),
+	})
+}
 
-	tests := []struct {
-		name             string
-		key              string
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
-		{
-			name:           "DeleteExistingKey",
-			key:            "existingKey",
-			expectedResult: lua.LNumber(1),
-			expectedErr:    lua.LNil,
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectDel("existingKey").SetVal(1)
-			},
-		},
-		{
-			name:           "DeleteNonExistingKey",
-			key:            "nonExistingKey",
-			expectedResult: lua.LNumber(0),
-			expectedErr:    lua.LNil,
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectDel("nonExistingKey").SetVal(0)
-			},
-		},
-		{
-			name:           "DeleteWithError",
-			key:            "keyWithError",
-			expectedResult: lua.LNil,
-			expectedErr:    lua.LString("some error"),
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectDel("keyWithError").SetErr(errors.New("some error"))
-			},
-		},
-	}
+// expectIncrMissing configures INCR for a missing key.
+func expectIncrMissing(mock redismock.ClientMock) {
+	mock.ExpectIncr("testKey").SetVal(1)
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock conn.")
-			}
+// expectIncrExisting configures INCR for an existing key.
+func expectIncrExisting(mock redismock.ClientMock) {
+	mock.ExpectIncr("existingKey").SetVal(2)
+}
 
-			tt.prepareMockRedis(mock)
+// expectIncrError configures a failing INCR expectation.
+func expectIncrError(mock redismock.ClientMock) {
+	mock.ExpectIncr("keyWithError").SetErr(errors.New("some error"))
+}
 
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
+// expectDelExisting configures DEL for an existing key.
+func expectDelExisting(mock redismock.ClientMock) {
+	mock.ExpectDel("existingKey").SetVal(1)
+}
 
-			L := lua.NewState()
-			defer L.Close()
+// expectDelMissing configures DEL for a missing key.
+func expectDelMissing(mock redismock.ClientMock) {
+	mock.ExpectDel("nonExistingKey").SetVal(0)
+}
 
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
-
-			L.SetGlobal("key", lua.LString(tt.key))
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_del("default", key)`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
-				t.Errorf("nauthilus.redis_del() gotResult = %v, want %v", gotResult.String(), tt.expectedResult.String())
-			}
-
-			gotErr := L.GetGlobal("err")
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
+// expectDelError configures a failing DEL expectation.
+func expectDelError(mock redismock.ClientMock) {
+	mock.ExpectDel("keyWithError").SetErr(errors.New("some error"))
 }
 
 func TestRedisRename(t *testing.T) {
-	testFile := &config.FileSettings{Server: &config.ServerSection{}}
-	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	runRedisLuaCommandTests(t, "redis_rename", redisRenameLuaCode(), redisRenameCases())
+}
 
-	tests := []struct {
-		name             string
-		oldKey           string
-		newKey           string
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+// redisRenameLuaCode returns the Lua script used by Redis RENAME cases.
+func redisRenameLuaCode() string {
+	return `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_rename("default", oldKey, newKey)`
+}
+
+// redisRenameCases returns Redis RENAME behavior cases.
+func redisRenameCases() []redisLuaCommandTest {
+	return []redisLuaCommandTest{
 		{
-			name:           "RenameExistingKey",
-			oldKey:         "existingKey",
-			newKey:         "newKey",
+			name: "RenameExistingKey",
+			luaGlobals: map[string]lua.LValue{
+				"oldKey": lua.LString("existingKey"),
+				"newKey": lua.LString("newKey"),
+			},
 			expectedResult: lua.LString("OK"),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -469,9 +240,11 @@ func TestRedisRename(t *testing.T) {
 			},
 		},
 		{
-			name:           "RenameNonExistingKey",
-			oldKey:         "nonExistingKey",
-			newKey:         "newKey",
+			name: "RenameNonExistingKey",
+			luaGlobals: map[string]lua.LValue{
+				"oldKey": lua.LString("nonExistingKey"),
+				"newKey": lua.LString("newKey"),
+			},
 			expectedResult: lua.LNil,
 			expectedErr:    lua.LString("redis: nil"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -479,9 +252,11 @@ func TestRedisRename(t *testing.T) {
 			},
 		},
 		{
-			name:           "RenameWithError",
-			oldKey:         "keyWithError",
-			newKey:         "newKey",
+			name: "RenameWithError",
+			luaGlobals: map[string]lua.LValue{
+				"oldKey": lua.LString("keyWithError"),
+				"newKey": lua.LString("newKey"),
+			},
 			expectedResult: lua.LNil,
 			expectedErr:    lua.LString("some error"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -489,63 +264,22 @@ func TestRedisRename(t *testing.T) {
 			},
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock conn.")
-			}
-
-			tt.prepareMockRedis(mock)
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
-
-			L.SetGlobal("oldKey", lua.LString(tt.oldKey))
-			L.SetGlobal("newKey", lua.LString(tt.newKey))
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_rename("default", oldKey, newKey)`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			gotErr := L.GetGlobal("err")
-
-			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
-				t.Errorf("Unexpected result: got %v, want %v", gotResult, tt.expectedResult)
-			}
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
 }
 
 func TestPing(t *testing.T) {
-	testFile := &config.FileSettings{Server: &config.ServerSection{}}
-	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	runRedisLuaCommandTests(t, "redis_ping", redisPingLuaCode(), redisPingCases())
+}
 
-	tests := []struct {
-		name             string
-		mockError        error
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+// redisPingLuaCode returns the Lua script used by Redis PING cases.
+func redisPingLuaCode() string {
+	return `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_ping("default")`
+}
+
+// redisPingCases returns Redis PING behavior cases.
+func redisPingCases() []redisLuaCommandTest {
+	return []redisLuaCommandTest{
 		{
 			name:           "PingWithSuccess",
-			mockError:      nil,
 			expectedResult: lua.LString("PONG"),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -554,49 +288,11 @@ func TestPing(t *testing.T) {
 		},
 		{
 			name:           "PingWithError",
-			mockError:      errors.New("some error"),
 			expectedResult: lua.LNil,
 			expectedErr:    lua.LString("some error"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectPing().SetErr(errors.New("some error"))
 			},
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock conn.")
-			}
-
-			tt.prepareMockRedis(mock)
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_ping("default")`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-
-			gotErr := L.GetGlobal("err")
-
-			if gotResult.String() != tt.expectedResult.String() {
-				t.Errorf("Ping = %v, want %v", gotResult, tt.expectedResult)
-			}
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
 	}
 }

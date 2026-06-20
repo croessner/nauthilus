@@ -146,14 +146,38 @@ func TestDecodeLogoutPayload_InvalidXMLRejected(t *testing.T) {
 }
 
 func TestRawQueryParameterStrictSLO(t *testing.T) {
-	testCases := []struct {
-		name      string
-		rawQuery  string
-		key       string
-		wantValue string
-		wantFound bool
-		wantErr   string
-	}{
+	for _, tc := range rawQueryParameterStrictSLOCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			value, found, err := rawQueryParameterStrictSLO(tc.rawQuery, tc.key)
+			if tc.wantErr != "" {
+				assert.Error(t, err)
+				assert.ErrorContains(t, err, tc.wantErr)
+
+				return
+			}
+
+			if !assert.NoError(t, err) {
+				return
+			}
+
+			assert.Equal(t, tc.wantFound, found)
+			assert.Equal(t, tc.wantValue, value)
+		})
+	}
+}
+
+type rawQueryParameterStrictSLOCase struct {
+	name      string
+	rawQuery  string
+	key       string
+	wantValue string
+	wantFound bool
+	wantErr   string
+}
+
+// rawQueryParameterStrictSLOCases returns parser edge cases for SLO redirect queries.
+func rawQueryParameterStrictSLOCases() []rawQueryParameterStrictSLOCase {
+	return []rawQueryParameterStrictSLOCase{
 		{
 			name:      "single key value",
 			rawQuery:  "SAMLRequest=req-1&RelayState=state-1",
@@ -187,25 +211,6 @@ func TestRawQueryParameterStrictSLO(t *testing.T) {
 			key:      "RelayState",
 			wantErr:  "duplicate parameter",
 		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			value, found, err := rawQueryParameterStrictSLO(tc.rawQuery, tc.key)
-			if tc.wantErr != "" {
-				assert.Error(t, err)
-				assert.ErrorContains(t, err, tc.wantErr)
-
-				return
-			}
-
-			if !assert.NoError(t, err) {
-				return
-			}
-
-			assert.Equal(t, tc.wantFound, found)
-			assert.Equal(t, tc.wantValue, value)
-		})
 	}
 }
 

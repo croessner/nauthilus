@@ -77,11 +77,27 @@ func rootContextOption(ctx context.Context, cancel context.CancelFunc) fx.Option
 func main() {
 	bootfx.ParseFlagsAndPrintVersion(version)
 
+	if handleEarlyExitModes() {
+		return
+	}
+
+	if err := bootfx.SetupConfiguration(); err != nil {
+		stdlog.Fatalln("unable to load config file:", err)
+	}
+
+	ctx, cancel := svcctx.GetCtxWithCancel()
+	fApp := newFxApplication(ctx, cancel)
+
+	runFxApplication(ctx, fApp)
+}
+
+// handleEarlyExitModes handles command modes that finish before the fx runtime starts.
+func handleEarlyExitModes() bool {
 	// Check if we're in Lua test mode
 	if bootfx.IsLuaTestMode() {
 		runLuaTest()
 
-		return
+		return true
 	}
 
 	if bootfx.IsConfigDumpDefaultsMode() {
@@ -96,14 +112,12 @@ func main() {
 		os.Exit(runConfigCheck(bootfx.SetupConfiguration, os.Stderr))
 	}
 
-	if err := bootfx.SetupConfiguration(); err != nil {
-		stdlog.Fatalln("unable to load config file:", err)
-	}
+	return false
+}
 
-	ctx, cancel := svcctx.GetCtxWithCancel()
-	stopTimeout := definitions.FxStopTimeout
-
-	fApp := fx.New(
+// newFxApplication builds the fx application with the production module graph.
+func newFxApplication(ctx context.Context, cancel context.CancelFunc) *fx.App {
+	return fx.New(
 		fx.WithLogger(func(logger *slog.Logger) fxevent.Logger {
 			if logger.Enabled(context.Background(), slog.LevelDebug) {
 				return logfx.NewFxEventLogger(logger)
@@ -134,14 +148,17 @@ func main() {
 		fx.Invoke(registerRemoteBackendLifecycle),
 		signalsfx.Module(),
 	)
+}
 
+// runFxApplication starts the fx runtime and blocks until the root context ends.
+func runFxApplication(ctx context.Context, fApp *fx.App) {
 	if err := fApp.Start(context.Background()); err != nil {
 		stdlog.Fatalln("Unable to start fx app. Error:", err)
 	}
 
 	<-ctx.Done()
 
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), stopTimeout)
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), definitions.FxStopTimeout)
 	defer stopCancel()
 
 	if err := fApp.Stop(stopCtx); err != nil {

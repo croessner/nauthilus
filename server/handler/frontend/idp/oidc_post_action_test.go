@@ -96,6 +96,27 @@ func waitForQueuedAction(t *testing.T, requestChan <-chan *action.Action) {
 	}
 }
 
+// assertQueuedMFAPostAction verifies MFA metadata on a queued token post-action.
+func assertQueuedMFAPostAction(t *testing.T, requestChan <-chan *action.Action, expectedMethod string) {
+	t.Helper()
+
+	select {
+	case act := <-requestChan:
+		if act == nil || act.CommonRequest == nil {
+			t.Fatal("expected queued action with CommonRequest")
+		}
+
+		assert.Equal(t, expectedMethod, act.MFAMethod)
+		assert.True(t, act.MFACompleted)
+		assert.False(t, act.EnvironmentStageExpected)
+		assert.False(t, act.SubjectStageExpected)
+
+		act.FinishedChan <- action.Done{}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected post action to be queued")
+	}
+}
+
 func TestRunOIDCTokenPostActionQueuesActionWhenRequestContextCanceled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -151,21 +172,7 @@ func TestRunOIDCTokenPostActionCopiesMFASessionState(t *testing.T) {
 		5*time.Millisecond,
 	)
 
-	select {
-	case act := <-requestChan:
-		if act == nil || act.CommonRequest == nil {
-			t.Fatal("expected queued action with CommonRequest")
-		}
-
-		assert.Equal(t, "webauthn", act.MFAMethod)
-		assert.True(t, act.MFACompleted)
-		assert.False(t, act.EnvironmentStageExpected)
-		assert.False(t, act.SubjectStageExpected)
-
-		act.FinishedChan <- action.Done{}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("expected post action to be queued")
-	}
+	assertQueuedMFAPostAction(t, requestChan, "webauthn")
 }
 
 func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {
@@ -194,21 +201,7 @@ func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {
 		5*time.Millisecond,
 	)
 
-	select {
-	case act := <-requestChan:
-		if act == nil || act.CommonRequest == nil {
-			t.Fatal("expected queued action with CommonRequest")
-		}
-
-		assert.Equal(t, "totp", act.MFAMethod)
-		assert.True(t, act.MFACompleted)
-		assert.False(t, act.EnvironmentStageExpected)
-		assert.False(t, act.SubjectStageExpected)
-
-		act.FinishedChan <- action.Done{}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("expected post action to be queued")
-	}
+	assertQueuedMFAPostAction(t, requestChan, "totp")
 }
 
 func TestRunOIDCTokenPostActionCopiesOIDCSessionSubject(t *testing.T) {

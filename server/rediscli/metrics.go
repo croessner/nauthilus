@@ -35,6 +35,11 @@ import (
 
 const redisMetricLabelInstance = "instance"
 
+type redisInfoGaugeMetric struct {
+	infoKey string
+	gauge   *prometheus.GaugeVec
+}
+
 var (
 	// Redis server metrics
 	redisConnectedClients = promauto.NewGaugeVec(
@@ -143,6 +148,20 @@ var (
 	)
 )
 
+var redisInfoGaugeMetrics = []redisInfoGaugeMetric{
+	{infoKey: "connected_clients", gauge: redisConnectedClients},
+	{infoKey: "used_memory", gauge: redisUsedMemory},
+	{infoKey: "used_memory_rss", gauge: redisUsedMemoryRss},
+	{infoKey: "mem_fragmentation_ratio", gauge: redisMemFragmentationRatio},
+	{infoKey: "total_commands_processed", gauge: redisCommandsProcessed},
+	{infoKey: "evicted_keys", gauge: redisEvictedKeys},
+	{infoKey: "expired_keys", gauge: redisExpiredKeys},
+	{infoKey: "rejected_connections", gauge: redisRejectedConnections},
+	{infoKey: "instantaneous_ops_per_sec", gauge: redisInstantaneousOpsPerSec},
+	{infoKey: "instantaneous_input_kbps", gauge: redisInstantaneousInputKbps},
+	{infoKey: "instantaneous_output_kbps", gauge: redisInstantaneousOutputKbps},
+}
+
 // UpdateRedisServerMetrics periodically collects and updates Redis server metrics
 func UpdateRedisServerMetrics(ctx context.Context, cfg config.File, logger *slog.Logger) {
 	ticker := time.NewTicker(time.Second * 10)
@@ -229,76 +248,50 @@ func parseRedisInfo(info string) map[string]string {
 
 // updateRedisMetrics updates Prometheus metrics with values from Redis INFO
 func updateRedisMetrics(info map[string]string, instance string) {
-	// Helper function to parse float values
-	parseFloat := func(s string) float64 {
-		v, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return 0
-		}
+	updateRedisInfoGaugeMetrics(info, instance)
+	updateRedisKeyspaceMetrics(info, instance)
+}
 
-		return v
-	}
-
-	// Update metrics
-	if v, ok := info["connected_clients"]; ok {
-		redisConnectedClients.WithLabelValues(instance).Set(parseFloat(v))
-	}
-
-	if v, ok := info["used_memory"]; ok {
-		redisUsedMemory.WithLabelValues(instance).Set(parseFloat(v))
-	}
-
-	if v, ok := info["used_memory_rss"]; ok {
-		redisUsedMemoryRss.WithLabelValues(instance).Set(parseFloat(v))
-	}
-
-	if v, ok := info["mem_fragmentation_ratio"]; ok {
-		redisMemFragmentationRatio.WithLabelValues(instance).Set(parseFloat(v))
-	}
-
-	if v, ok := info["total_commands_processed"]; ok {
-		redisCommandsProcessed.WithLabelValues(instance).Set(parseFloat(v))
-	}
-
-	if v, ok := info["keyspace_hits"]; ok {
-		hits := parseFloat(v)
-		redisKeyspaceHits.WithLabelValues(instance).Set(hits)
-
-		// Calculate hit rate if both hits and misses are available
-		if m, ok := info["keyspace_misses"]; ok {
-			misses := parseFloat(m)
-			redisKeyspaceMisses.WithLabelValues(instance).Set(misses)
-
-			total := hits + misses
-			if total > 0 {
-				redisKeyspaceHitRate.WithLabelValues(instance).Set(hits / total)
-			}
+// updateRedisInfoGaugeMetrics updates direct Redis INFO gauge mappings.
+func updateRedisInfoGaugeMetrics(info map[string]string, instance string) {
+	for _, metric := range redisInfoGaugeMetrics {
+		if value, ok := info[metric.infoKey]; ok {
+			metric.gauge.WithLabelValues(instance).Set(parseRedisInfoFloat(value))
 		}
 	}
+}
 
-	if v, ok := info["evicted_keys"]; ok {
-		redisEvictedKeys.WithLabelValues(instance).Set(parseFloat(v))
+// updateRedisKeyspaceMetrics updates hit, miss, and hit-rate gauges.
+func updateRedisKeyspaceMetrics(info map[string]string, instance string) {
+	value, ok := info["keyspace_hits"]
+	if !ok {
+		return
 	}
 
-	if v, ok := info["expired_keys"]; ok {
-		redisExpiredKeys.WithLabelValues(instance).Set(parseFloat(v))
+	hits := parseRedisInfoFloat(value)
+	redisKeyspaceHits.WithLabelValues(instance).Set(hits)
+
+	missValue, ok := info["keyspace_misses"]
+	if !ok {
+		return
 	}
 
-	if v, ok := info["rejected_connections"]; ok {
-		redisRejectedConnections.WithLabelValues(instance).Set(parseFloat(v))
+	misses := parseRedisInfoFloat(missValue)
+	redisKeyspaceMisses.WithLabelValues(instance).Set(misses)
+
+	if total := hits + misses; total > 0 {
+		redisKeyspaceHitRate.WithLabelValues(instance).Set(hits / total)
+	}
+}
+
+// parseRedisInfoFloat parses Redis INFO numbers and treats malformed values as zero.
+func parseRedisInfoFloat(value string) float64 {
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0
 	}
 
-	if v, ok := info["instantaneous_ops_per_sec"]; ok {
-		redisInstantaneousOpsPerSec.WithLabelValues(instance).Set(parseFloat(v))
-	}
-
-	if v, ok := info["instantaneous_input_kbps"]; ok {
-		redisInstantaneousInputKbps.WithLabelValues(instance).Set(parseFloat(v))
-	}
-
-	if v, ok := info["instantaneous_output_kbps"]; ok {
-		redisInstantaneousOutputKbps.WithLabelValues(instance).Set(parseFloat(v))
-	}
+	return parsed
 }
 
 // collectLatencyMetrics collects Redis command latency metrics

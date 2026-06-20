@@ -33,197 +33,294 @@ import (
 const redisCommandSet = "set"
 
 func TestRedisTokenStorage(t *testing.T) {
-	db, mock := redismock.NewClientMock()
-	client := rediscli.NewTestClient(db)
-	prefix := "test:"
-	storage := NewRedisTokenStorage(client, prefix)
-	ctx := context.Background()
+	fixture := newRedisTokenStorageFixture()
 
 	t.Run("StoreSession", func(t *testing.T) {
-		code := "test-code"
-		session := &OIDCSession{
-			ClientID: "test-client",
-			UserID:   "user123",
-		}
-		ttl := time.Minute
-		key := prefix + "oidc:code:" + code
-
-		data, _ := json.Marshal(session)
-		mock.ExpectSet(key, string(data), ttl).SetVal("OK")
-
-		err := storage.StoreSession(ctx, code, session, ttl)
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertStoreSession(t, fixture)
 	})
 
 	t.Run("GetSession", func(t *testing.T) {
-		code := "test-code"
-		session := &OIDCSession{
-			ClientID: "test-client",
-			UserID:   "user123",
-		}
-		key := prefix + "oidc:code:" + code
-
-		data, _ := json.Marshal(session)
-		mock.ExpectGet(key).SetVal(string(data))
-
-		retrieved, err := storage.GetSession(ctx, code)
-		assert.NoError(t, err)
-		assert.Equal(t, session.ClientID, retrieved.ClientID)
-		assert.Equal(t, session.UserID, retrieved.UserID)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertGetSession(t, fixture)
 	})
 
 	t.Run("DeleteSession", func(t *testing.T) {
-		code := "test-code"
-		key := prefix + "oidc:code:" + code
-
-		mock.ExpectDel(key).SetVal(1)
-
-		err := storage.DeleteSession(ctx, code)
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertDeleteSession(t, fixture)
 	})
 
 	t.Run("DeleteUserRefreshTokens", func(t *testing.T) {
-		userID := "user123"
-		userKey := prefix + "oidc:user_refresh_tokens:" + userID
-		tokens := []string{"rt1", "rt2"}
-
-		mock.ExpectSMembers(userKey).SetVal(tokens)
-		mock.ExpectDel(prefix + "oidc:refresh_token:rt1").SetVal(1)
-		mock.ExpectDel(prefix + "oidc:refresh_token:rt2").SetVal(1)
-		mock.ExpectDel(userKey).SetVal(1)
-
-		err := storage.DeleteUserRefreshTokens(ctx, userID)
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertDeleteUserTokens(t, fixture.mock, fixture.prefix, "refresh_token", "user_refresh_tokens", []string{"rt1", "rt2"}, fixture.storage.DeleteUserRefreshTokens)
 	})
 
 	t.Run("DenyJWTAccessToken", func(t *testing.T) {
-		token := "header.payload.signature"
-		ttl := 2 * time.Hour
-		key := prefix + "oidc:denied_access_token:" + token
-
-		mock.ExpectSet(key, "1", ttl).SetVal("OK")
-
-		err := storage.DenyJWTAccessToken(ctx, token, ttl)
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertDenyJWTAccessToken(t, fixture)
 	})
 
 	t.Run("DenyJWTAccessToken_EmptyToken", func(t *testing.T) {
-		err := storage.DenyJWTAccessToken(ctx, "", time.Hour)
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertDenyJWTAccessTokenNoop(t, fixture, "", time.Hour)
 	})
 
 	t.Run("DenyJWTAccessToken_ZeroTTL", func(t *testing.T) {
-		err := storage.DenyJWTAccessToken(ctx, "some-token", 0)
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertDenyJWTAccessTokenNoop(t, fixture, "some-token", 0)
 	})
 
 	t.Run("IsJWTAccessTokenDenied_True", func(t *testing.T) {
-		token := "denied-jwt-token"
-		key := prefix + "oidc:denied_access_token:" + token
-
-		mock.ExpectGet(key).SetVal("1")
-
-		denied := storage.IsJWTAccessTokenDenied(ctx, token)
-		assert.True(t, denied)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertJWTAccessTokenDenied(t, fixture, "denied-jwt-token", true)
 	})
 
 	t.Run("IsJWTAccessTokenDenied_False", func(t *testing.T) {
-		token := "valid-jwt-token"
-		key := prefix + "oidc:denied_access_token:" + token
-
-		mock.ExpectGet(key).RedisNil()
-
-		denied := storage.IsJWTAccessTokenDenied(ctx, token)
-		assert.False(t, denied)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertJWTAccessTokenDenied(t, fixture, "valid-jwt-token", false)
 	})
 
 	t.Run("DeleteUserAccessTokens", func(t *testing.T) {
-		userID := "user123"
-		userKey := prefix + "oidc:user_access_tokens:" + userID
-		tokens := []string{"at1", "at2"}
-
-		mock.ExpectSMembers(userKey).SetVal(tokens)
-		mock.ExpectDel(prefix + "oidc:access_token:at1").SetVal(1)
-		mock.ExpectDel(prefix + "oidc:access_token:at2").SetVal(1)
-		mock.ExpectDel(userKey).SetVal(1)
-
-		err := storage.DeleteUserAccessTokens(ctx, userID)
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertDeleteUserTokens(t, fixture.mock, fixture.prefix, "access_token", "user_access_tokens", []string{"at1", "at2"}, fixture.storage.DeleteUserAccessTokens)
 	})
 
 	t.Run("DeleteUserAccessTokens_EmptyUser", func(t *testing.T) {
-		err := storage.DeleteUserAccessTokens(ctx, "")
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertDeleteUserAccessTokensEmptyUser(t, fixture)
 	})
 
 	t.Run("DeleteUserAccessTokens_NoTokens", func(t *testing.T) {
-		userID := "user-no-tokens"
-		userKey := prefix + "oidc:user_access_tokens:" + userID
-
-		mock.ExpectSMembers(userKey).SetVal([]string{})
-
-		err := storage.DeleteUserAccessTokens(ctx, userID)
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertDeleteUserAccessTokensNoTokens(t, fixture)
 	})
 
 	t.Run("FlushUserTokens", func(t *testing.T) {
-		userID := "user-flush"
-		accessKey := prefix + "oidc:user_access_tokens:" + userID
-		refreshKey := prefix + "oidc:user_refresh_tokens:" + userID
-
-		// Access tokens
-		mock.ExpectSMembers(accessKey).SetVal([]string{"at1"})
-		mock.ExpectDel(prefix + "oidc:access_token:at1").SetVal(1)
-		mock.ExpectDel(accessKey).SetVal(1)
-
-		// Refresh tokens
-		mock.ExpectSMembers(refreshKey).SetVal([]string{"rt1"})
-		mock.ExpectDel(prefix + "oidc:refresh_token:rt1").SetVal(1)
-		mock.ExpectDel(refreshKey).SetVal(1)
-
-		err := storage.FlushUserTokens(ctx, userID)
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertFlushUserTokens(t, fixture)
 	})
 
 	t.Run("FlushUserTokens_EmptyUser", func(t *testing.T) {
-		err := storage.FlushUserTokens(ctx, "")
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertFlushUserTokensEmptyUser(t, fixture)
 	})
 }
 
+type redisTokenStorageFixture struct {
+	storage *RedisTokenStorage
+	mock    redismock.ClientMock
+	ctx     context.Context
+	prefix  string
+}
+
+// newRedisTokenStorageFixture builds a mocked Redis token storage fixture.
+func newRedisTokenStorageFixture() redisTokenStorageFixture {
+	db, mock := redismock.NewClientMock()
+	client := rediscli.NewTestClient(db)
+	prefix := "test:"
+
+	return redisTokenStorageFixture{
+		storage: NewRedisTokenStorage(client, prefix),
+		mock:    mock,
+		ctx:     context.Background(),
+		prefix:  prefix,
+	}
+}
+
+// assertStoreSession verifies authorization-code session storage.
+func assertStoreSession(t *testing.T, fixture redisTokenStorageFixture) {
+	t.Helper()
+
+	code := "test-code"
+	session := &OIDCSession{
+		ClientID: "test-client",
+		UserID:   "user123",
+	}
+	ttl := time.Minute
+	key := fixture.prefix + "oidc:code:" + code
+
+	data, _ := json.Marshal(session)
+	fixture.mock.ExpectSet(key, string(data), ttl).SetVal("OK")
+
+	err := fixture.storage.StoreSession(fixture.ctx, code, session, ttl)
+	assert.NoError(t, err)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+// assertGetSession verifies authorization-code session retrieval.
+func assertGetSession(t *testing.T, fixture redisTokenStorageFixture) {
+	t.Helper()
+
+	code := "test-code"
+	session := &OIDCSession{
+		ClientID: "test-client",
+		UserID:   "user123",
+	}
+	key := fixture.prefix + "oidc:code:" + code
+
+	data, _ := json.Marshal(session)
+	fixture.mock.ExpectGet(key).SetVal(string(data))
+
+	retrieved, err := fixture.storage.GetSession(fixture.ctx, code)
+	assert.NoError(t, err)
+	assert.Equal(t, session.ClientID, retrieved.ClientID)
+	assert.Equal(t, session.UserID, retrieved.UserID)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+// assertDeleteSession verifies authorization-code session deletion.
+func assertDeleteSession(t *testing.T, fixture redisTokenStorageFixture) {
+	t.Helper()
+
+	code := "test-code"
+	key := fixture.prefix + "oidc:code:" + code
+
+	fixture.mock.ExpectDel(key).SetVal(1)
+
+	err := fixture.storage.DeleteSession(fixture.ctx, code)
+	assert.NoError(t, err)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+// assertDenyJWTAccessToken verifies storing a denied JWT access token.
+func assertDenyJWTAccessToken(t *testing.T, fixture redisTokenStorageFixture) {
+	t.Helper()
+
+	token := "header.payload.signature"
+	ttl := 2 * time.Hour
+	key := fixture.prefix + "oidc:denied_access_token:" + token
+
+	fixture.mock.ExpectSet(key, "1", ttl).SetVal("OK")
+
+	err := fixture.storage.DenyJWTAccessToken(fixture.ctx, token, ttl)
+	assert.NoError(t, err)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+// assertDenyJWTAccessTokenNoop verifies no-op denial inputs.
+func assertDenyJWTAccessTokenNoop(t *testing.T, fixture redisTokenStorageFixture, token string, ttl time.Duration) {
+	t.Helper()
+
+	err := fixture.storage.DenyJWTAccessToken(fixture.ctx, token, ttl)
+	assert.NoError(t, err)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+// assertJWTAccessTokenDenied verifies denied-token lookup behavior.
+func assertJWTAccessTokenDenied(t *testing.T, fixture redisTokenStorageFixture, token string, want bool) {
+	t.Helper()
+
+	key := fixture.prefix + "oidc:denied_access_token:" + token
+	if want {
+		fixture.mock.ExpectGet(key).SetVal("1")
+	} else {
+		fixture.mock.ExpectGet(key).RedisNil()
+	}
+
+	denied := fixture.storage.IsJWTAccessTokenDenied(fixture.ctx, token)
+	assert.Equal(t, want, denied)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+// assertDeleteUserAccessTokensEmptyUser verifies no-op deletion for empty users.
+func assertDeleteUserAccessTokensEmptyUser(t *testing.T, fixture redisTokenStorageFixture) {
+	t.Helper()
+
+	err := fixture.storage.DeleteUserAccessTokens(fixture.ctx, "")
+	assert.NoError(t, err)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+// assertDeleteUserAccessTokensNoTokens verifies deletion when the user set is empty.
+func assertDeleteUserAccessTokensNoTokens(t *testing.T, fixture redisTokenStorageFixture) {
+	t.Helper()
+
+	userID := "user-no-tokens"
+	userKey := fixture.prefix + "oidc:user_access_tokens:" + userID
+
+	fixture.mock.ExpectSMembers(userKey).SetVal([]string{})
+
+	err := fixture.storage.DeleteUserAccessTokens(fixture.ctx, userID)
+	assert.NoError(t, err)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+// assertFlushUserTokens verifies access and refresh token cleanup for a user.
+func assertFlushUserTokens(t *testing.T, fixture redisTokenStorageFixture) {
+	t.Helper()
+
+	userID := "user-flush"
+	accessKey := fixture.prefix + "oidc:user_access_tokens:" + userID
+	refreshKey := fixture.prefix + "oidc:user_refresh_tokens:" + userID
+
+	fixture.mock.ExpectSMembers(accessKey).SetVal([]string{"at1"})
+	fixture.mock.ExpectDel(fixture.prefix + "oidc:access_token:at1").SetVal(1)
+	fixture.mock.ExpectDel(accessKey).SetVal(1)
+	fixture.mock.ExpectSMembers(refreshKey).SetVal([]string{"rt1"})
+	fixture.mock.ExpectDel(fixture.prefix + "oidc:refresh_token:rt1").SetVal(1)
+	fixture.mock.ExpectDel(refreshKey).SetVal(1)
+
+	err := fixture.storage.FlushUserTokens(fixture.ctx, userID)
+	assert.NoError(t, err)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+// assertFlushUserTokensEmptyUser verifies no-op flush for empty users.
+func assertFlushUserTokensEmptyUser(t *testing.T, fixture redisTokenStorageFixture) {
+	t.Helper()
+
+	err := fixture.storage.FlushUserTokens(fixture.ctx, "")
+	assert.NoError(t, err)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
 func TestRedisTokenStorageUsesConfiguredRedisDeadlines(t *testing.T) {
-	cfg := &config.FileSettings{
+	storage := NewRedisTokenStorage(nil, "test:")
+	storage.cfg = newRedisReadDeadlineTestConfig(25 * time.Millisecond)
+
+	assertConfiguredRedisReadDeadline(t, storage, 25*time.Millisecond)
+}
+
+type redisReadDeadlineProvider interface {
+	redisReadContext(context.Context) (context.Context, context.CancelFunc)
+}
+
+// newRedisReadDeadlineTestConfig creates a config with only RedisRead populated.
+func newRedisReadDeadlineTestConfig(timeout time.Duration) *config.FileSettings {
+	return &config.FileSettings{
 		Server: &config.ServerSection{
 			Timeouts: config.Timeouts{
-				RedisRead: 25 * time.Millisecond,
+				RedisRead: timeout,
 			},
 		},
 	}
+}
 
-	storage := NewRedisTokenStorage(nil, "test:")
-	storage.cfg = cfg
+// assertConfiguredRedisReadDeadline verifies that a storage type applies the configured Redis read timeout.
+func assertConfiguredRedisReadDeadline(t *testing.T, provider redisReadDeadlineProvider, timeout time.Duration) {
+	t.Helper()
 
-	readCtx, cancel := storage.redisReadContext(context.Background())
+	readCtx, cancel := provider.redisReadContext(context.Background())
 	defer cancel()
 
 	deadline, ok := readCtx.Deadline()
 
 	assert.True(t, ok, "expected Redis read context to carry a deadline")
-	assert.WithinDuration(t, time.Now().Add(25*time.Millisecond), deadline, 10*time.Millisecond)
+	assert.WithinDuration(t, time.Now().Add(timeout), deadline, 10*time.Millisecond)
+}
+
+// assertDeleteUserTokens verifies deletion of all tracked tokens for one user.
+func assertDeleteUserTokens(
+	t *testing.T,
+	mock redismock.ClientMock,
+	prefix string,
+	tokenKind string,
+	userSetKind string,
+	tokens []string,
+	deleteUserTokens func(context.Context, string) error,
+) {
+	t.Helper()
+
+	userID := "user123"
+	userKey := prefix + "oidc:" + userSetKind + ":" + userID
+
+	mock.ExpectSMembers(userKey).SetVal(tokens)
+
+	for _, token := range tokens {
+		mock.ExpectDel(prefix + "oidc:" + tokenKind + ":" + token).SetVal(1)
+	}
+
+	mock.ExpectDel(userKey).SetVal(1)
+
+	err := deleteUserTokens(context.Background(), userID)
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestRedisTokenStorage_ReserveClientAssertionJWTID(t *testing.T) {

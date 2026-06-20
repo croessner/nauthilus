@@ -277,47 +277,66 @@ func (n *configSchemaNode) collectUnknown(value any, prefix string, out *[]strin
 
 	switch n.kind {
 	case configSchemaObject:
-		entries, ok := configMapEntries(value)
-		if !ok {
-			return
-		}
-
-		for _, entry := range entries {
-			childPath := joinConfigPath(prefix, entry.key)
-
-			childNode, ok := n.fieldByConfigName[entry.key]
-			if ok {
-				childNode.collectUnknown(entry.value, childPath, out, visited)
-
-				continue
-			}
-
-			if n.matchExtraKey != nil && n.matchExtraKey(entry.key) {
-				continue
-			}
-
-			collectUnknownConfigValuePaths(childPath, entry.value, out, 0, visited)
-		}
+		n.collectUnknownObject(value, prefix, out, visited)
 	case configSchemaList:
-		elements, ok := value.([]any)
-		if !ok {
-			return
-		}
-
-		for index := range elements {
-			childPath := fmt.Sprintf("%s[%d]", prefix, index)
-			n.element.collectUnknown(elements[index], childPath, out, visited)
-		}
+		n.collectUnknownList(value, prefix, out, visited)
 	case configSchemaMap:
-		entries, ok := configMapEntries(value)
-		if !ok {
-			return
-		}
+		n.collectUnknownMap(value, prefix, out, visited)
+	}
+}
 
-		for _, entry := range entries {
-			childPath := joinConfigPath(prefix, entry.key)
-			n.element.collectUnknown(entry.value, childPath, out, visited)
-		}
+// collectUnknownObject traverses configured object fields and records unknown values.
+func (n *configSchemaNode) collectUnknownObject(value any, prefix string, out *[]string, visited map[uintptr]struct{}) {
+	entries, ok := configMapEntries(value)
+	if !ok {
+		return
+	}
+
+	for _, entry := range entries {
+		n.collectUnknownObjectEntry(entry, prefix, out, visited)
+	}
+}
+
+// collectUnknownObjectEntry handles one object entry during unknown-field traversal.
+func (n *configSchemaNode) collectUnknownObjectEntry(entry configMapEntry, prefix string, out *[]string, visited map[uintptr]struct{}) {
+	childPath := joinConfigPath(prefix, entry.key)
+
+	if childNode, ok := n.fieldByConfigName[entry.key]; ok {
+		childNode.collectUnknown(entry.value, childPath, out, visited)
+
+		return
+	}
+
+	if n.matchExtraKey != nil && n.matchExtraKey(entry.key) {
+		return
+	}
+
+	collectUnknownConfigValuePaths(childPath, entry.value, out, 0, visited)
+}
+
+// collectUnknownList traverses list elements for unknown nested values.
+func (n *configSchemaNode) collectUnknownList(value any, prefix string, out *[]string, visited map[uintptr]struct{}) {
+	elements, ok := value.([]any)
+	if !ok {
+		return
+	}
+
+	for index := range elements {
+		childPath := fmt.Sprintf("%s[%d]", prefix, index)
+		n.element.collectUnknown(elements[index], childPath, out, visited)
+	}
+}
+
+// collectUnknownMap traverses map values for unknown nested values.
+func (n *configSchemaNode) collectUnknownMap(value any, prefix string, out *[]string, visited map[uintptr]struct{}) {
+	entries, ok := configMapEntries(value)
+	if !ok {
+		return
+	}
+
+	for _, entry := range entries {
+		childPath := joinConfigPath(prefix, entry.key)
+		n.element.collectUnknown(entry.value, childPath, out, visited)
 	}
 }
 
@@ -336,11 +355,7 @@ func (i *configSchemaIndex) configPathFromStructNamespace(namespace string) stri
 		return namespace
 	}
 
-	segments := strings.Split(namespace, ".")
-	if len(segments) > 0 && segments[0] == currentType.Name() {
-		segments = segments[1:]
-	}
-
+	segments := trimRootStructNamespace(strings.Split(namespace, "."), currentType)
 	if len(segments) == 0 {
 		return ""
 	}
@@ -348,37 +363,61 @@ func (i *configSchemaIndex) configPathFromStructNamespace(namespace string) stri
 	var path strings.Builder
 
 	for _, segment := range segments {
-		fieldName, suffix := splitStructNamespaceSegment(segment)
-		if fieldName == "" {
-			return namespace
-		}
-
-		currentType = dereferenceConfigType(currentType)
-		if currentType == nil || currentType.Kind() != reflect.Struct {
-			return namespace
-		}
-
-		field, ok := currentType.FieldByName(fieldName)
+		nextType, ok := appendConfigPathSegment(&path, currentType, segment)
 		if !ok {
 			return namespace
 		}
 
-		tagName, _, err := parseMapstructureTag(field)
-		if err != nil || tagName == "" || tagName == "-" {
-			return namespace
-		}
-
-		if path.Len() > 0 {
-			path.WriteByte('.')
-		}
-
-		path.WriteString(tagName)
-		path.WriteString(suffix)
-
-		currentType = advanceConfigType(field.Type, suffix)
+		currentType = nextType
 	}
 
 	return path.String()
+}
+
+// trimRootStructNamespace removes the root FileSettings segment from a validator namespace.
+func trimRootStructNamespace(segments []string, currentType reflect.Type) []string {
+	if len(segments) > 0 && segments[0] == currentType.Name() {
+		return segments[1:]
+	}
+
+	return segments
+}
+
+// appendConfigPathSegment appends one mapstructure-backed path segment.
+func appendConfigPathSegment(path *strings.Builder, currentType reflect.Type, segment string) (reflect.Type, bool) {
+	fieldName, suffix := splitStructNamespaceSegment(segment)
+	if fieldName == "" {
+		return nil, false
+	}
+
+	currentType = dereferenceConfigType(currentType)
+	if currentType == nil || currentType.Kind() != reflect.Struct {
+		return nil, false
+	}
+
+	field, ok := currentType.FieldByName(fieldName)
+	if !ok {
+		return nil, false
+	}
+
+	tagName, _, err := parseMapstructureTag(field)
+	if err != nil || tagName == "" || tagName == "-" {
+		return nil, false
+	}
+
+	appendConfigPathPart(path, tagName, suffix)
+
+	return advanceConfigType(field.Type, suffix), true
+}
+
+// appendConfigPathPart writes a dot-separated config path component.
+func appendConfigPathPart(path *strings.Builder, tagName string, suffix string) {
+	if path.Len() > 0 {
+		path.WriteByte('.')
+	}
+
+	path.WriteString(tagName)
+	path.WriteString(suffix)
 }
 
 func splitStructNamespaceSegment(segment string) (string, string) {

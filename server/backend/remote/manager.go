@@ -142,36 +142,51 @@ func (m *Manager) PassDB(auth *core.AuthState) (*core.PassDBResult, error) {
 	defer cancel()
 
 	if auth.Request.NoAuth {
-		if !m.cfg.AllowsOperation(config.RemoteBackendOperationLookupIdentity) {
-			return nil, ErrRemoteOperationDenied
-		}
-
-		if m.shouldResolveUserSnapshot(auth) {
-			request, err := m.resolveUserRequest(auth, false)
-			if err != nil {
-				return nil, err
-			}
-
-			if err = m.ensureResolveUserAllowed(request.GetAttributes()); err != nil {
-				return nil, err
-			}
-
-			response, err := m.client.ResolveUser(ctx, request)
-			if err != nil {
-				return nil, mapAuthorityError(err)
-			}
-
-			return m.passDBResultFromUserSnapshot(response)
-		}
-
-		response, err := m.client.LookupIdentity(ctx, authv1.DTOToLookupIdentityRequest(dto))
-		if err != nil {
-			return nil, mapAuthorityError(err)
-		}
-
-		return m.passDBResultFromResponse(response, false)
+		return m.lookupPassDB(ctx, auth, dto)
 	}
 
+	return m.authenticatePassDB(ctx, dto)
+}
+
+// lookupPassDB resolves identity information without password authentication.
+func (m *Manager) lookupPassDB(ctx context.Context, auth *core.AuthState, dto authdto.Request) (*core.PassDBResult, error) {
+	if !m.cfg.AllowsOperation(config.RemoteBackendOperationLookupIdentity) {
+		return nil, ErrRemoteOperationDenied
+	}
+
+	if m.shouldResolveUserSnapshot(auth) {
+		return m.resolveUserPassDB(ctx, auth)
+	}
+
+	response, err := m.client.LookupIdentity(ctx, authv1.DTOToLookupIdentityRequest(dto))
+	if err != nil {
+		return nil, mapAuthorityError(err)
+	}
+
+	return m.passDBResultFromResponse(response, false)
+}
+
+// resolveUserPassDB resolves a full user snapshot through the authority.
+func (m *Manager) resolveUserPassDB(ctx context.Context, auth *core.AuthState) (*core.PassDBResult, error) {
+	request, err := m.resolveUserRequest(auth, false)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = m.ensureResolveUserAllowed(request.GetAttributes()); err != nil {
+		return nil, err
+	}
+
+	response, err := m.client.ResolveUser(ctx, request)
+	if err != nil {
+		return nil, mapAuthorityError(err)
+	}
+
+	return m.passDBResultFromUserSnapshot(response)
+}
+
+// authenticatePassDB authenticates credentials through the authority.
+func (m *Manager) authenticatePassDB(ctx context.Context, dto authdto.Request) (*core.PassDBResult, error) {
 	if !m.cfg.AllowsOperation(config.RemoteBackendOperationAuth) {
 		return nil, ErrRemoteOperationDenied
 	}

@@ -6,23 +6,7 @@ import (
 	"testing"
 )
 
-// writeTempLuaTestFile writes helper fixtures for isolated Lua test runs.
-func writeTempLuaTestFile(t *testing.T, dir, name, content string) string {
-	t.Helper()
-
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("failed to write %s: %v", name, err)
-	}
-
-	return path
-}
-
-// TestRedisModuleUsesMiniredisSeedData verifies typed Redis fixture data is readable through real Redis Lua functions.
-func TestRedisModuleUsesMiniredisSeedData(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	scriptPath := writeTempLuaTestFile(t, tmpDir, "script.lua", `
+const redisSeedDataScript = `
 local redis = require("nauthilus_redis")
 
 function nauthilus_call_action(request)
@@ -63,9 +47,9 @@ function nauthilus_call_action(request)
 
     return true
 end
-`)
+`
 
-	mockPath := writeTempLuaTestFile(t, tmpDir, "mock.json", `{
+const redisSeedDataMock = `{
   "redis": {
     "initial_data": {
       "strings": {
@@ -101,28 +85,9 @@ end
     "action_result": true,
     "error_expected": false
   }
-}`)
+}`
 
-	runner, err := NewTestRunner(scriptPath, "action", mockPath)
-	if err != nil {
-		t.Fatalf("NewTestRunner failed: %v", err)
-	}
-
-	result, err := runner.Run()
-	if err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
-
-	if !result.Success {
-		t.Fatalf("expected miniredis-seeded redis operations to pass, got errors: %v", result.Errors)
-	}
-}
-
-// TestRedisExpectedCallsWorkWithRealRedisModule verifies expected_calls order checking on wrapped real Redis functions.
-func TestRedisExpectedCallsWorkWithRealRedisModule(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	scriptPath := writeTempLuaTestFile(t, tmpDir, "script.lua", `
+const redisExpectedCallsScript = `
 local redis = require("nauthilus_redis")
 
 function nauthilus_call_action(request)
@@ -138,9 +103,9 @@ function nauthilus_call_action(request)
 
     return true
 end
-`)
+`
 
-	mockPath := writeTempLuaTestFile(t, tmpDir, "mock.json", `{
+const redisExpectedCallsMock = `{
   "redis": {
     "expected_calls": [
       {"method": "redis_set", "arg_contains": "call:key"},
@@ -151,7 +116,27 @@ end
     "action_result": true,
     "error_expected": false
   }
-}`)
+}`
+
+// writeTempLuaTestFile writes helper fixtures for isolated Lua test runs.
+func writeTempLuaTestFile(t *testing.T, dir, name, content string) string {
+	t.Helper()
+
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("failed to write %s: %v", name, err)
+	}
+
+	return path
+}
+
+// runRedisLuaFixture executes a Redis-backed Lua fixture and requires success.
+func runRedisLuaFixture(t *testing.T, script, mock, failureMessage string) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	scriptPath := writeTempLuaTestFile(t, tmpDir, "script.lua", script)
+	mockPath := writeTempLuaTestFile(t, tmpDir, "mock.json", mock)
 
 	runner, err := NewTestRunner(scriptPath, "action", mockPath)
 	if err != nil {
@@ -164,6 +149,16 @@ end
 	}
 
 	if !result.Success {
-		t.Fatalf("expected redis expected_calls validation to pass, got errors: %v", result.Errors)
+		t.Fatalf("%s: %v", failureMessage, result.Errors)
 	}
+}
+
+// TestRedisModuleUsesMiniredisSeedData verifies typed Redis fixture data is readable through real Redis Lua functions.
+func TestRedisModuleUsesMiniredisSeedData(t *testing.T) {
+	runRedisLuaFixture(t, redisSeedDataScript, redisSeedDataMock, "expected miniredis-seeded redis operations to pass")
+}
+
+// TestRedisExpectedCallsWorkWithRealRedisModule verifies expected_calls order checking on wrapped real Redis functions.
+func TestRedisExpectedCallsWorkWithRealRedisModule(t *testing.T) {
+	runRedisLuaFixture(t, redisExpectedCallsScript, redisExpectedCallsMock, "expected redis expected_calls validation to pass")
 }

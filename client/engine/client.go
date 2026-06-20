@@ -65,6 +65,7 @@ func NewAuthClient(cfg *Config) *AuthClient {
 // BaseHeader provides the exported BaseHeader method.
 func (c *AuthClient) BaseHeader() http.Header {
 	h := make(http.Header)
+
 	if c.config.HeadersList != "" {
 		pairs := strings.SplitSeq(c.config.HeadersList, "||")
 		for p := range pairs {
@@ -106,73 +107,21 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 	reqCtx, reqCancel := context.WithCancel(ctx)
 	defer reqCancel()
 
-	if c.config.AbortProb > 0 && rand.Float64() < c.config.AbortProb {
-		maxMs := max(c.config.TimeoutMs/2, 1)
-		d := time.Duration(rand.IntN(maxMs+1)) * time.Millisecond
-		time.AfterFunc(d, reqCancel)
-	}
+	c.scheduleAbort(reqCancel)
 
 	start := time.Now()
+	body := c.requestBody(row)
 
-	payload := c.makePayload(row.RawFields)
-
-	// Random effects (pre-determined by row flags)
-	if row.BadPass {
-		if _, ok := payload[csvFieldPassword]; ok {
-			payload[csvFieldPassword] = "wrong-password-" + hex.EncodeToString(sha256.New().Sum(nil)[:4])
-		}
-	}
-
-	body, _ := fastJSON.Marshal(payload)
-
-	reqURL := c.config.Endpoint
-	if row.NoAuth {
-		if u, err := url.Parse(reqURL); err == nil {
-			q := u.Query()
-			if q.Get("mode") == "" {
-				q.Set("mode", "no-auth")
-				u.RawQuery = q.Encode()
-				reqURL = u.String()
-			}
-		}
-	}
-
-	req, err := http.NewRequestWithContext(reqCtx, c.config.Method, reqURL, bytes.NewReader(body))
+	req, err := c.newAuthRequest(reqCtx, row, body)
 	if err != nil {
 		return false, false, false, false, false, false, 0, nil, 0, err
-	}
-
-	// Add headers
-	if c.config.HeadersList != "" {
-		pairs := strings.SplitSeq(c.config.HeadersList, "||")
-		for p := range pairs {
-			kv := strings.SplitN(p, ":", 2)
-			if len(kv) == 2 {
-				req.Header.Set(strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1]))
-			}
-		}
-	}
-
-	if c.config.BasicAuth != "" {
-		kv := strings.SplitN(c.config.BasicAuth, ":", 2)
-		if len(kv) == 2 {
-			req.SetBasicAuth(kv[0], kv[1])
-		}
-	}
-
-	if c.config.UseIdemKey {
-		h := sha256.Sum256(body)
-		req.Header.Set("Idempotency-Key", hex.EncodeToString(h[:]))
 	}
 
 	resp, err := c.httpClient.Do(req)
 	latency = time.Since(start)
 
 	if err != nil {
-		aborted := false
-		if ctx.Err() != nil || reqCtx.Err() != nil {
-			aborted = true
-		}
+		aborted := requestAborted(ctx, reqCtx)
 
 		return false, false, !aborted, false, false, aborted, latency, nil, 0, err
 	}
@@ -183,39 +132,155 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 
 	respBody, err = io.ReadAll(resp.Body)
 	if err != nil {
-		aborted := false
-		if ctx.Err() != nil || reqCtx.Err() != nil {
-			aborted = true
-		}
+		aborted := requestAborted(ctx, reqCtx)
 
 		return false, false, !aborted, false, false, aborted, latency, nil, statusCode, err
 	}
 
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return false, false, false, true, false, false, latency, respBody, statusCode, nil
+	outcome := c.evaluateResponse(row, resp, respBody)
+
+	return outcome.ok, outcome.isMatch, outcome.isHTTPErr, outcome.isTooManyRequests, outcome.isToleratedBF, false, latency, respBody, statusCode, nil
+}
+
+// scheduleAbort installs a probabilistic request cancellation timer.
+func (c *AuthClient) scheduleAbort(cancel context.CancelFunc) {
+	if c.config.AbortProb <= 0 || rand.Float64() >= c.config.AbortProb {
+		return
 	}
 
-	if c.config.UseJSONFlag {
-		var res struct {
-			OK bool `json:"ok"`
+	maxMs := max(c.config.TimeoutMs/2, 1)
+	delay := time.Duration(rand.IntN(maxMs+1)) * time.Millisecond
+	time.AfterFunc(delay, cancel)
+}
+
+// requestBody builds the JSON request body from row fields and mutations.
+func (c *AuthClient) requestBody(row Row) []byte {
+	payload := c.makePayload(row.RawFields)
+	if row.BadPass {
+		applyBadPassword(payload)
+	}
+
+	body, _ := fastJSON.Marshal(payload)
+
+	return body
+}
+
+// applyBadPassword replaces a present password with the deterministic bad-password marker.
+func applyBadPassword(payload map[string]any) {
+	if _, ok := payload[csvFieldPassword]; !ok {
+		return
+	}
+
+	payload[csvFieldPassword] = "wrong-password-" + hex.EncodeToString(sha256.New().Sum(nil)[:4])
+}
+
+// newAuthRequest creates a configured HTTP request for one row.
+func (c *AuthClient) newAuthRequest(ctx context.Context, row Row, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, c.config.Method, c.requestURL(row), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+
+	applyHeaders(req, c.BaseHeader())
+	c.applyIdempotencyKey(req, body)
+
+	return req, nil
+}
+
+// requestURL applies the no-auth query mode when the row requests it.
+func (c *AuthClient) requestURL(row Row) string {
+	if !row.NoAuth {
+		return c.config.Endpoint
+	}
+
+	u, err := url.Parse(c.config.Endpoint)
+	if err != nil {
+		return c.config.Endpoint
+	}
+
+	q := u.Query()
+	if q.Get("mode") != "" {
+		return c.config.Endpoint
+	}
+
+	q.Set("mode", "no-auth")
+	u.RawQuery = q.Encode()
+
+	return u.String()
+}
+
+// applyHeaders copies a prepared header set onto a request.
+func applyHeaders(req *http.Request, header http.Header) {
+	for key, values := range header {
+		for _, value := range values {
+			req.Header.Add(key, value)
 		}
+	}
+}
 
-		_ = jsoniter.Unmarshal(respBody, &res)
-		ok = res.OK
-	} else {
-		ok = resp.StatusCode == c.config.OKStatus
+// applyIdempotencyKey attaches a stable body hash when configured.
+func (c *AuthClient) applyIdempotencyKey(req *http.Request, body []byte) {
+	if !c.config.UseIdemKey {
+		return
 	}
 
-	effectiveExpectOK := row.ExpectOK
+	hash := sha256.Sum256(body)
+	req.Header.Set("Idempotency-Key", hex.EncodeToString(hash[:]))
+}
+
+// requestAborted reports whether either request context was canceled.
+func requestAborted(parent context.Context, request context.Context) bool {
+	return parent.Err() != nil || request.Err() != nil
+}
+
+type responseOutcome struct {
+	ok                bool
+	isMatch           bool
+	isHTTPErr         bool
+	isTooManyRequests bool
+	isToleratedBF     bool
+}
+
+// evaluateResponse converts the HTTP response into the client result flags.
+func (c *AuthClient) evaluateResponse(row Row, resp *http.Response, body []byte) responseOutcome {
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return responseOutcome{isTooManyRequests: true}
+	}
+
+	ok := c.responseOK(resp.StatusCode, body)
+	isMatch := ok == effectiveExpectOK(row)
+	isToleratedBF := resp.Header.Get(c.bfHeaderName) != ""
+
+	return responseOutcome{
+		ok:            ok,
+		isMatch:       isMatch,
+		isHTTPErr:     (!isMatch && !isToleratedBF) || resp.StatusCode >= 500,
+		isToleratedBF: isToleratedBF,
+	}
+}
+
+// responseOK interprets success either from JSON or the configured status code.
+func (c *AuthClient) responseOK(statusCode int, body []byte) bool {
+	if !c.config.UseJSONFlag {
+		return statusCode == c.config.OKStatus
+	}
+
+	var res struct {
+		OK bool `json:"ok"`
+	}
+
+	_ = jsoniter.Unmarshal(body, &res)
+
+	return res.OK
+}
+
+// effectiveExpectOK applies row-level mutations to the expected result.
+func effectiveExpectOK(row Row) bool {
 	if row.BadPass && !row.NoAuth {
-		effectiveExpectOK = false
+		return false
 	}
 
-	isMatch = ok == effectiveExpectOK
-	isToleratedBF = resp.Header.Get(c.bfHeaderName) != ""
-	isHTTPErr = (!isMatch && !isToleratedBF) || (resp.StatusCode >= 500)
-
-	return ok, isMatch, isHTTPErr, false, isToleratedBF, false, latency, respBody, statusCode, nil
+	return row.ExpectOK
 }
 
 func (c *AuthClient) makePayload(fields map[string]string) map[string]any {

@@ -17,74 +17,46 @@ package hook
 
 import "testing"
 
+type hookAuthzTransitionCase struct {
+	name    string
+	current hookAuthzFSMState
+	event   hookAuthzFSMEvent
+	next    hookAuthzFSMState
+}
+
 func TestNextHookAuthzFSMState_AllowedTransitions(t *testing.T) {
-	tests := []struct {
-		name    string
-		current hookAuthzFSMState
-		event   hookAuthzFSMEvent
-		next    hookAuthzFSMState
-	}{
-		{
-			name:    "StartNoScopes",
-			current: hookAuthzStateStart,
-			event:   hookAuthzEventNoScopes,
-			next:    hookAuthzStateAuthorized,
-		},
-		{
-			name:    "StartScopesRequired",
-			current: hookAuthzStateStart,
-			event:   hookAuthzEventScopesRequired,
-			next:    hookAuthzStateScopesChecked,
-		},
-		{
-			name:    "ScopesCheckedValidatorMissing",
-			current: hookAuthzStateScopesChecked,
-			event:   hookAuthzEventValidatorMissing,
-			next:    hookAuthzStateUnauthorized,
-		},
-		{
-			name:    "ScopesCheckedTokenMissing",
-			current: hookAuthzStateScopesChecked,
-			event:   hookAuthzEventTokenMissing,
-			next:    hookAuthzStateUnauthorized,
-		},
-		{
-			name:    "ScopesCheckedTokenInvalid",
-			current: hookAuthzStateScopesChecked,
-			event:   hookAuthzEventTokenInvalid,
-			next:    hookAuthzStateUnauthorized,
-		},
-		{
-			name:    "ScopesCheckedTokenValid",
-			current: hookAuthzStateScopesChecked,
-			event:   hookAuthzEventTokenValid,
-			next:    hookAuthzStateTokenChecked,
-		},
-		{
-			name:    "TokenCheckedScopeMatch",
-			current: hookAuthzStateTokenChecked,
-			event:   hookAuthzEventScopeMatch,
-			next:    hookAuthzStateAuthorized,
-		},
-		{
-			name:    "TokenCheckedScopeMiss",
-			current: hookAuthzStateTokenChecked,
-			event:   hookAuthzEventScopeMiss,
-			next:    hookAuthzStateForbidden,
-		},
+	for _, tc := range hookAuthzTransitionCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			assertHookAuthzTransition(t, tc)
+		})
+	}
+}
+
+// hookAuthzTransitionCases returns valid FSM transitions for hook authorization.
+func hookAuthzTransitionCases() []hookAuthzTransitionCase {
+	return []hookAuthzTransitionCase{
+		{name: "StartNoScopes", current: hookAuthzStateStart, event: hookAuthzEventNoScopes, next: hookAuthzStateAuthorized},
+		{name: "StartScopesRequired", current: hookAuthzStateStart, event: hookAuthzEventScopesRequired, next: hookAuthzStateScopesChecked},
+		{name: "ScopesCheckedValidatorMissing", current: hookAuthzStateScopesChecked, event: hookAuthzEventValidatorMissing, next: hookAuthzStateUnauthorized},
+		{name: "ScopesCheckedTokenMissing", current: hookAuthzStateScopesChecked, event: hookAuthzEventTokenMissing, next: hookAuthzStateUnauthorized},
+		{name: "ScopesCheckedTokenInvalid", current: hookAuthzStateScopesChecked, event: hookAuthzEventTokenInvalid, next: hookAuthzStateUnauthorized},
+		{name: "ScopesCheckedTokenValid", current: hookAuthzStateScopesChecked, event: hookAuthzEventTokenValid, next: hookAuthzStateTokenChecked},
+		{name: "TokenCheckedScopeMatch", current: hookAuthzStateTokenChecked, event: hookAuthzEventScopeMatch, next: hookAuthzStateAuthorized},
+		{name: "TokenCheckedScopeMiss", current: hookAuthzStateTokenChecked, event: hookAuthzEventScopeMiss, next: hookAuthzStateForbidden},
+	}
+}
+
+// assertHookAuthzTransition verifies one expected FSM transition.
+func assertHookAuthzTransition(t *testing.T, tc hookAuthzTransitionCase) {
+	t.Helper()
+
+	next, err := nextHookAuthzFSMState(tc.current, tc.event)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			next, err := nextHookAuthzFSMState(tc.current, tc.event)
-			if err != nil {
-				t.Fatalf("expected no error, got %v", err)
-			}
-
-			if next != tc.next {
-				t.Fatalf("expected next=%s, got %s", tc.next, next)
-			}
-		})
+	if next != tc.next {
+		t.Fatalf("expected next=%s, got %s", tc.next, next)
 	}
 }
 

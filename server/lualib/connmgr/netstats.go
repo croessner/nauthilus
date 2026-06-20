@@ -294,52 +294,88 @@ func (m *ConnectionManager) UpdateCounts(ctx context.Context) {
 	defer m.mu.Unlock()
 
 	for target, info := range m.targets {
-		_, portStr, err := net.SplitHostPort(target)
-		if err != nil {
-			logError(fmt.Sprintf("Error when processing the target '%s'", target), err)
-
+		port, ok := targetPort(target)
+		if !ok {
 			continue
 		}
 
-		port, err := strconv.ParseUint(portStr, 10, 32)
-		if err != nil {
-			logError(fmt.Sprintf("Invalid port number for destination '%s'", target), err)
-
-			continue
-		}
-
-		count := 0
-
-		for _, conn := range connections {
-			var addr psnet.Addr
-
-			if conn.Status != "ESTABLISHED" {
-				continue
-			}
-
-			if info.Direction == "local" {
-				addr = conn.Laddr
-			} else {
-				addr = conn.Raddr
-			}
-
-			for _, ip := range m.ipTargets[target] {
-				if ip == "0.0.0.0" || ip == "::" || ip == addr.IP {
-					if addr.Port == uint32(port) {
-						count++
-					}
-				}
-			}
-		}
-
-		info.Count = count
+		info.Count = countTargetConnections(connections, m.ipTargets[target], info.Direction, port)
 		m.targets[target] = info
 
-		select {
-		case <-ctx.Done():
+		if !publishGenericConnection(ctx, target, &info) {
 			return
-		case GenericConnectionChan <- GenericConnection{Target: target, TargetInfo: &info}:
 		}
+	}
+}
+
+// targetPort extracts the port number from a registered target.
+func targetPort(target string) (uint64, bool) {
+	_, portStr, err := net.SplitHostPort(target)
+	if err != nil {
+		logError(fmt.Sprintf("Error when processing the target '%s'", target), err)
+
+		return 0, false
+	}
+
+	port, err := strconv.ParseUint(portStr, 10, 32)
+	if err != nil {
+		logError(fmt.Sprintf("Invalid port number for destination '%s'", target), err)
+
+		return 0, false
+	}
+
+	return port, true
+}
+
+// countTargetConnections counts established connections matching target IPs and port.
+func countTargetConnections(connections []psnet.ConnectionStat, ips []string, direction string, port uint64) int {
+	count := 0
+
+	for _, conn := range connections {
+		addr, ok := connectionAddress(conn, direction)
+		if !ok {
+			continue
+		}
+
+		if connectionMatchesTarget(addr, ips, port) {
+			count++
+		}
+	}
+
+	return count
+}
+
+// connectionAddress returns the relevant local or remote address for a connection.
+func connectionAddress(conn psnet.ConnectionStat, direction string) (psnet.Addr, bool) {
+	if conn.Status != "ESTABLISHED" {
+		return psnet.Addr{}, false
+	}
+
+	if direction == "local" {
+		return conn.Laddr, true
+	}
+
+	return conn.Raddr, true
+}
+
+// connectionMatchesTarget reports whether an address matches target IPs and port.
+func connectionMatchesTarget(addr psnet.Addr, ips []string, port uint64) bool {
+	for _, ip := range ips {
+		if (ip == "0.0.0.0" || ip == "::" || ip == addr.IP) && addr.Port == uint32(port) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// publishGenericConnection emits the updated target count unless context ended.
+func publishGenericConnection(ctx context.Context, target string, info *TargetInfo) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case GenericConnectionChan <- GenericConnection{Target: target, TargetInfo: info}:
+		return true
 	}
 }
 

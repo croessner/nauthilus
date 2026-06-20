@@ -42,6 +42,13 @@ import (
 
 const ldapSchemeLDAPS = "ldaps"
 
+type ldapConnectSettings struct {
+	base       time.Duration
+	maxBackoff time.Duration
+	pool       string
+	maxRetries int
+}
+
 // LDAPConnection defines behaviors for managing and interacting with an LDAP connection.
 type LDAPConnection interface {
 	// SetState sets the current state of the LDAP connection to the specified LDAPState value.
@@ -124,14 +131,6 @@ func (l *LDAPConnectionImpl) GetMutex() *sync.Mutex {
 // It handles TLS setup, retries, connection timeouts, and supports failover across multiple server URIs.
 // Returns an error if the connection could not be established or times out.
 func (l *LDAPConnectionImpl) Connect(guid string, cfg config.File, logger *slog.Logger, ldapConf *config.LDAPConf) error {
-	var (
-		connected  bool
-		timeout    bool
-		retryCount int
-		err        error
-		tlsConfig  *tls.Config
-	)
-
 	// Overall connect timeout stays as before using ticker
 	connectTicker := time.NewTicker(definitions.LDAPConnectTimeout * time.Second)
 	ldapConnectTimeout := make(chan bktype.Done)
@@ -139,82 +138,109 @@ func (l *LDAPConnectionImpl) Connect(guid string, cfg config.File, logger *slog.
 
 	go handleLDAPConnectTimeout(connectTicker, ldapConnectTimeout, tickerEndChan)
 
-	maxRetries := ldapConf.GetRetryMax()
-	base := ldapConf.GetRetryBase()
-	maxBackoff := ldapConf.GetRetryMaxBackoff()
-	pool := ldapConf.GetPoolName()
-
-EndlessLoop:
-	for {
-		select {
-		case <-ldapConnectTimeout:
-			timeout = true
-		default:
-			if retryCount > maxRetries {
-				return errors.ErrLDAPConnect.WithDetail(
-					fmt.Sprintf("Could not connect to any of the LDAP servers: %v", ldapConf.ServerURIs))
-			}
-
-			target := pickTarget(pool, ldapConf.ServerURIs, ldapConf)
-			idx := indexOfTarget(ldapConf.ServerURIs, target)
-
-			l.logURIInfo(context.Background(), cfg, logger, guid, ldapConf, idx, retryCount)
-
-			u, _ := url.Parse(target)
-			if u.Scheme == ldapSchemeLDAPS || ldapConf.StartTLS {
-				tlsConfig, err = l.setTLSConfig(u, ldapConf)
-				if err != nil {
-					break EndlessLoop
-				}
-			}
-
-			incInflight(pool, target)
-
-			err = l.dialAndStartTLS(context.Background(), cfg, logger, guid, ldapConf, idx, tlsConfig)
-			if err != nil {
-				decInflight(pool, target)
-				cbOnFailure(pool, target, ldapConf)
-				setHealth(pool, target, false)
-
-				// count retry and back off before next attempt
-				stats.GetMetrics().GetLdapRetriesTotal().WithLabelValues(pool, "connect").Inc()
-				// Jittered backoff before next attempt
-				time.Sleep(jitterBackoff(base, retryCount, maxBackoff))
-
-				retryCount++
-
-				continue EndlessLoop
-			}
-
-			decInflight(pool, target)
-			cbOnSuccess(pool, target)
-			setHealth(pool, target, true)
-
-			// store conf for later guardrails (search limits)
-			l.conf = ldapConf
-
-			// other operations including SASL External setup unchanged...
-			connected = true
-		}
-
-		if connected {
-			util.DebugModuleWithCfg(context.Background(), cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "Connection established")
-
-			break EndlessLoop
-		}
-
-		if timeout {
-			err = errors.ErrLDAPConnectTimeout.WithDetail("Connection timeout reached")
-
-			break EndlessLoop
-		}
-	}
+	err := l.connectWithRetries(guid, cfg, logger, ldapConf, ldapConnectTimeout)
 
 	connectTicker.Stop()
 
 	tickerEndChan <- bktype.Done{}
 
 	return err
+}
+
+// newLDAPConnectSettings captures retry settings used during one connect loop.
+func newLDAPConnectSettings(ldapConf *config.LDAPConf) ldapConnectSettings {
+	return ldapConnectSettings{
+		maxRetries: ldapConf.GetRetryMax(),
+		base:       ldapConf.GetRetryBase(),
+		maxBackoff: ldapConf.GetRetryMaxBackoff(),
+		pool:       ldapConf.GetPoolName(),
+	}
+}
+
+// connectWithRetries attempts LDAP targets until success, timeout, or a non-retryable setup error.
+func (l *LDAPConnectionImpl) connectWithRetries(
+	guid string,
+	cfg config.File,
+	logger *slog.Logger,
+	ldapConf *config.LDAPConf,
+	ldapConnectTimeout <-chan bktype.Done,
+) error {
+	settings := newLDAPConnectSettings(ldapConf)
+
+	for retryCount := 0; ; retryCount++ {
+		select {
+		case <-ldapConnectTimeout:
+			return errors.ErrLDAPConnectTimeout.WithDetail("Connection timeout reached")
+		default:
+		}
+
+		if retryCount > settings.maxRetries {
+			return errors.ErrLDAPConnect.WithDetail(
+				fmt.Sprintf("Could not connect to any of the LDAP servers: %v", ldapConf.ServerURIs))
+		}
+
+		retry, err := l.tryConnectLDAPTarget(guid, cfg, logger, ldapConf, settings, retryCount)
+		if err == nil {
+			util.DebugModuleWithCfg(context.Background(), cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "Connection established")
+
+			return nil
+		}
+
+		if !retry {
+			return err
+		}
+	}
+}
+
+// tryConnectLDAPTarget attempts one selected target and reports whether failures are retryable.
+func (l *LDAPConnectionImpl) tryConnectLDAPTarget(
+	guid string,
+	cfg config.File,
+	logger *slog.Logger,
+	ldapConf *config.LDAPConf,
+	settings ldapConnectSettings,
+	retryCount int,
+) (bool, error) {
+	target := pickTarget(settings.pool, ldapConf.ServerURIs, ldapConf)
+	idx := indexOfTarget(ldapConf.ServerURIs, target)
+
+	l.logURIInfo(context.Background(), cfg, logger, guid, ldapConf, idx, retryCount)
+
+	tlsConfig, err := l.tlsConfigForTarget(target, ldapConf)
+	if err != nil {
+		return false, err
+	}
+
+	incInflight(settings.pool, target)
+
+	err = l.dialAndStartTLS(context.Background(), cfg, logger, guid, ldapConf, idx, tlsConfig)
+	if err == nil {
+		decInflight(settings.pool, target)
+		cbOnSuccess(settings.pool, target)
+		setHealth(settings.pool, target, true)
+
+		l.conf = ldapConf
+
+		return false, nil
+	}
+
+	decInflight(settings.pool, target)
+	cbOnFailure(settings.pool, target, ldapConf)
+	setHealth(settings.pool, target, false)
+	stats.GetMetrics().GetLdapRetriesTotal().WithLabelValues(settings.pool, "connect").Inc()
+	time.Sleep(jitterBackoff(settings.base, retryCount, settings.maxBackoff))
+
+	return true, err
+}
+
+// tlsConfigForTarget returns a TLS config only for ldaps or StartTLS targets.
+func (l *LDAPConnectionImpl) tlsConfigForTarget(target string, ldapConf *config.LDAPConf) (*tls.Config, error) {
+	u, _ := url.Parse(target)
+	if u.Scheme != ldapSchemeLDAPS && !ldapConf.StartTLS {
+		return nil, nil
+	}
+
+	return l.setTLSConfig(u, ldapConf)
 }
 
 // Bind establishes a connection to the LDAP server using either SASL External or simple bind based on the configuration provided.
@@ -240,8 +266,22 @@ func (l *LDAPConnectionImpl) IsClosing() bool {
 
 // Search performs an LDAP search based on the provided LDAPRequest and returns the corresponding results or an error.
 func (l *LDAPConnectionImpl) Search(ctx context.Context, cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) (result bktype.AttributeMapping, rawResult []*ldap.Entry, err error) {
-	var searchResult *ldap.SearchResult
+	searchRequest := l.newSearchRequest(ctx, cfg, logger, ldapRequest)
 
+	searchResult, err := l.conn.Search(searchRequest)
+	if err != nil {
+		l.closeOnTransportError(err)
+
+		return nil, nil, err
+	}
+
+	result = collectLDAPSearchAttributes(searchResult, ldapRequest.SearchAttributes)
+
+	return result, searchResult.Entries, nil
+}
+
+// newSearchRequest normalizes the request filter and applies connection-level search limits.
+func (l *LDAPConnectionImpl) newSearchRequest(ctx context.Context, cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) *ldap.SearchRequest {
 	if ldapRequest.MacroSource != nil {
 		ldapRequest.Filter = util.ExpandLDAPFilter(ldapRequest.Filter, ldapRequest.MacroSource)
 	}
@@ -250,19 +290,9 @@ func (l *LDAPConnectionImpl) Search(ctx context.Context, cfg config.File, logger
 
 	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, ldapRequest.GUID, "filter", ldapRequest.Filter)
 
-	// Apply LDAP SizeLimit/TimeLimit from connection config if available
-	sizeLimit := 0
-	timeLimitSec := 0
+	sizeLimit, timeLimitSec := l.searchLimits()
 
-	if l.conf != nil {
-		sizeLimit = l.conf.GetSearchSizeLimit()
-
-		if tl := l.conf.GetSearchTimeLimit(); tl > 0 {
-			timeLimitSec = int(tl.Seconds())
-		}
-	}
-
-	searchRequest := ldap.NewSearchRequest(
+	return ldap.NewSearchRequest(
 		ldapRequest.BaseDN,
 		ldapRequest.Scope.Get(),
 		ldap.NeverDerefAliases,
@@ -273,111 +303,117 @@ func (l *LDAPConnectionImpl) Search(ctx context.Context, cfg config.File, logger
 		ldapRequest.SearchAttributes,
 		nil,
 	)
+}
 
-	searchResult, err = l.conn.Search(searchRequest)
-	if err != nil {
-		// On transport errors, mark connection as lame-duck and close
-		if isTransportError(err) {
-			_ = l.conn.Close()
-			l.SetState(definitions.LDAPStateClosed)
-		}
-
-		return nil, nil, err
+// searchLimits returns LDAP search size and time limits from the connection config.
+func (l *LDAPConnectionImpl) searchLimits() (int, int) {
+	if l.conf == nil {
+		return 0, 0
 	}
 
-	result = make(bktype.AttributeMapping)
-
-	for entryIndex := range searchResult.Entries {
-		for attrIndex := range ldapRequest.SearchAttributes {
-			var anySlice []any
-
-			values := searchResult.Entries[entryIndex].GetAttributeValues(ldapRequest.SearchAttributes[attrIndex])
-
-			// Do not add empty results
-			if len(values) == 0 {
-				continue
-			}
-
-			for index := range values {
-				anySlice = append(anySlice, values[index])
-			}
-
-			if len(result[ldapRequest.SearchAttributes[attrIndex]]) > 0 {
-				result[ldapRequest.SearchAttributes[attrIndex]] = append(result[ldapRequest.SearchAttributes[attrIndex]], anySlice...)
-			} else {
-				result[ldapRequest.SearchAttributes[attrIndex]] = anySlice
-			}
-		}
-
-		result[definitions.DistinguishedName] = append(result[definitions.DistinguishedName], searchResult.Entries[entryIndex].DN)
+	if timeLimit := l.conf.GetSearchTimeLimit(); timeLimit > 0 {
+		return l.conf.GetSearchSizeLimit(), int(timeLimit.Seconds())
 	}
 
-	return result, searchResult.Entries, nil
+	return l.conf.GetSearchSizeLimit(), 0
+}
+
+// collectLDAPSearchAttributes converts LDAP entries into the backend attribute mapping.
+func collectLDAPSearchAttributes(searchResult *ldap.SearchResult, searchAttributes []string) bktype.AttributeMapping {
+	result := make(bktype.AttributeMapping)
+
+	for _, entry := range searchResult.Entries {
+		collectLDAPEntryAttributes(result, entry, searchAttributes)
+		result[definitions.DistinguishedName] = append(result[definitions.DistinguishedName], entry.DN)
+	}
+
+	return result
+}
+
+// collectLDAPEntryAttributes appends one LDAP entry's selected attributes to the mapping.
+func collectLDAPEntryAttributes(result bktype.AttributeMapping, entry *ldap.Entry, searchAttributes []string) {
+	for _, attribute := range searchAttributes {
+		values := entry.GetAttributeValues(attribute)
+		if len(values) == 0 {
+			continue
+		}
+
+		anySlice := make([]any, 0, len(values))
+		for _, value := range values {
+			anySlice = append(anySlice, value)
+		}
+
+		result[attribute] = append(result[attribute], anySlice...)
+	}
 }
 
 // Modify applies changes to an LDAP entry based on the given LDAP request and returns an error if any operation fails.
-func (l *LDAPConnectionImpl) Modify(ctx context.Context, cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) (err error) {
-	var (
-		assertOk           bool
-		distinguishedNames any
-		distinguishedName  string
-		result             bktype.AttributeMapping
-	)
-
-	if ldapRequest.ModifyDN == "" {
-		if result, _, err = l.Search(ctx, cfg, logger, ldapRequest); err != nil {
-			return
-		}
-
-		if distinguishedNames, assertOk = result[definitions.DistinguishedName]; !assertOk {
-			err = errors.ErrNoLDAPSearchResult.WithDetail(
-				fmt.Sprintf("No search result for filter: %v", ldapRequest.Filter))
-
-			return
-		}
-
-		if len(distinguishedNames.([]any)) == 0 {
-			err = errors.ErrNoLDAPSearchResult.WithDetail(
-				fmt.Sprintf("No search result for filter: %v", ldapRequest.Filter))
-
-			return
-		}
-
-		distinguishedName = distinguishedNames.([]any)[definitions.LDAPSingleValue].(string)
-	} else {
-		distinguishedName = ldapRequest.ModifyDN
+func (l *LDAPConnectionImpl) Modify(ctx context.Context, cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) error {
+	distinguishedName, err := l.resolveModifyDN(ctx, cfg, logger, ldapRequest)
+	if err != nil {
+		return err
 	}
 
 	if ldapRequest.SubCommand == definitions.LDAPModifyUnknown {
-		err = errors.ErrLDAPModify.WithDetail("Undefined LDAP modify operation")
+		return errors.ErrLDAPModify.WithDetail("Undefined LDAP modify operation")
+	}
 
+	if ldapRequest.ModifyAttributes == nil {
+		return nil
+	}
+
+	err = l.conn.Modify(newModifyRequest(distinguishedName, ldapRequest))
+	l.closeOnTransportError(err)
+
+	return err
+}
+
+// resolveModifyDN returns the explicit ModifyDN or resolves one by running the search request.
+func (l *LDAPConnectionImpl) resolveModifyDN(ctx context.Context, cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) (string, error) {
+	if ldapRequest.ModifyDN != "" {
+		return ldapRequest.ModifyDN, nil
+	}
+
+	result, _, err := l.Search(ctx, cfg, logger, ldapRequest)
+	if err != nil {
+		return "", err
+	}
+
+	distinguishedNames, ok := result[definitions.DistinguishedName]
+	if !ok || len(distinguishedNames) == 0 {
+		return "", errors.ErrNoLDAPSearchResult.WithDetail(
+			fmt.Sprintf("No search result for filter: %v", ldapRequest.Filter))
+	}
+
+	return distinguishedNames[definitions.LDAPSingleValue].(string), nil
+}
+
+// newModifyRequest builds an LDAP modify request for the configured subcommand.
+func newModifyRequest(distinguishedName string, ldapRequest *bktype.LDAPRequest) *ldap.ModifyRequest {
+	modifyRequest := ldap.NewModifyRequest(distinguishedName, nil)
+
+	for attributeName, attributeValues := range ldapRequest.ModifyAttributes {
+		switch ldapRequest.SubCommand {
+		case definitions.LDAPModifyAdd:
+			modifyRequest.Add(attributeName, attributeValues)
+		case definitions.LDAPModifyDelete:
+			modifyRequest.Delete(attributeName, attributeValues)
+		case definitions.LDAPModifyReplace:
+			modifyRequest.Replace(attributeName, attributeValues)
+		}
+	}
+
+	return modifyRequest
+}
+
+// closeOnTransportError marks the LDAP connection closed when the error is transport-related.
+func (l *LDAPConnectionImpl) closeOnTransportError(err error) {
+	if err == nil || !isTransportError(err) {
 		return
 	}
 
-	modifyRequest := ldap.NewModifyRequest(distinguishedName, nil)
-
-	if ldapRequest.ModifyAttributes != nil {
-		for attributeName, attributeValues := range ldapRequest.ModifyAttributes {
-			switch ldapRequest.SubCommand {
-			case definitions.LDAPModifyAdd:
-				modifyRequest.Add(attributeName, attributeValues)
-			case definitions.LDAPModifyDelete:
-				modifyRequest.Delete(attributeName, attributeValues)
-			case definitions.LDAPModifyReplace:
-				modifyRequest.Replace(attributeName, attributeValues)
-			}
-		}
-
-		err = l.conn.Modify(modifyRequest)
-	}
-
-	// If a transport error occurred, close and mark connection for replacement
-	if err != nil && isTransportError(err) {
-		_ = l.conn.Close()
-		l.SetState(definitions.LDAPStateClosed)
-	}
-
-	return
+	_ = l.conn.Close()
+	l.SetState(definitions.LDAPStateClosed)
 }
 
 var _ LDAPConnection = (*LDAPConnectionImpl)(nil)
@@ -718,73 +754,98 @@ type ldapConnectionState struct {
 	state definitions.LDAPState
 }
 
-// setTLSConfig loads the CA chain and creates a TLS configuration for the LDAP connection. It takes the URL of the LDAP server, an array of certificates, and the LDAPConf configuration
+// setTLSConfig loads certificate material and creates a TLS configuration for the LDAP connection.
 func (l *LDAPConnectionImpl) setTLSConfig(u *url.URL, ldapConf *config.LDAPConf) (*tls.Config, error) {
-	var (
-		caCert       []byte
-		caCertPool   *x509.CertPool
-		certificates []tls.Certificate
-		cert         tls.Certificate
-		err          error
-	)
-
-	// Load CA chain if specified
-	if ldapConf.TLSCAFile != "" {
-		caCert, err = os.ReadFile(ldapConf.TLSCAFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load CA certificate: %w", err)
-		}
-
-		caCertPool = x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to append CA certificate")
-		}
-	} else {
-		caCertPool = nil // It's okay to use nil for RootCAs in tls.Config
+	caCertPool, err := loadLDAPRootCAs(ldapConf.TLSCAFile)
+	if err != nil {
+		return nil, err
 	}
 
-	if ldapConf.TLSClientCert != "" && ldapConf.TLSClientKey != "" {
-		cert, err = tls.LoadX509KeyPair(ldapConf.TLSClientCert, ldapConf.TLSClientKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load client certificate and key: %w", err)
-		}
-
-		certificates = append(certificates, cert)
+	certificates, err := loadLDAPClientCertificates(ldapConf)
+	if err != nil {
+		return nil, err
 	}
 
-	// Determine host for ServerName
-	host := u.Host
-	if strings.Contains(u.Host, ":") {
-		host, _, err = net.SplitHostPort(u.Host)
-		if err != nil {
-			return nil, err
-		}
+	host, err := ldapTLSServerName(u)
+	if err != nil {
+		return nil, err
 	}
 
 	return &tls.Config{
-		Certificates:       certificates,
-		RootCAs:            caCertPool,
-		InsecureSkipVerify: ldapConf.TLSSkipVerify,
-		ServerName:         host,
-		VerifyPeerCertificate: func(certificates [][]byte, _ [][]*x509.Certificate) error {
-			for _, certBytes := range certificates {
-				certificate, err := x509.ParseCertificate(certBytes)
-				if err != nil {
-					return fmt.Errorf("failed to parse certificate: %w", err)
-				}
-
-				if time.Now().After(certificate.NotAfter) {
-					return fmt.Errorf("certificate expired on %v", certificate.NotAfter)
-				}
-
-				if time.Now().Before(certificate.NotBefore) {
-					return fmt.Errorf("certificate not valid before %v", certificate.NotBefore)
-				}
-			}
-
-			return nil
-		},
+		Certificates:          certificates,
+		RootCAs:               caCertPool,
+		InsecureSkipVerify:    ldapConf.TLSSkipVerify,
+		ServerName:            host,
+		VerifyPeerCertificate: validateLDAPPeerCertificates,
 	}, nil
+}
+
+// loadLDAPRootCAs loads an optional CA bundle for LDAP TLS.
+func loadLDAPRootCAs(caFile string) (*x509.CertPool, error) {
+	if caFile == "" {
+		return nil, nil
+	}
+
+	caCert, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load CA certificate: %w", err)
+	}
+
+	caCertPool := x509.NewCertPool()
+	if !caCertPool.AppendCertsFromPEM(caCert) {
+		return nil, fmt.Errorf("failed to append CA certificate")
+	}
+
+	return caCertPool, nil
+}
+
+// loadLDAPClientCertificates loads the optional LDAP client certificate pair.
+func loadLDAPClientCertificates(ldapConf *config.LDAPConf) ([]tls.Certificate, error) {
+	if ldapConf.TLSClientCert == "" || ldapConf.TLSClientKey == "" {
+		return nil, nil
+	}
+
+	cert, err := tls.LoadX509KeyPair(ldapConf.TLSClientCert, ldapConf.TLSClientKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client certificate and key: %w", err)
+	}
+
+	return []tls.Certificate{cert}, nil
+}
+
+// ldapTLSServerName extracts the host used for TLS ServerName.
+func ldapTLSServerName(u *url.URL) (string, error) {
+	host := u.Host
+	if !strings.Contains(u.Host, ":") {
+		return host, nil
+	}
+
+	host, _, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return "", err
+	}
+
+	return host, nil
+}
+
+// validateLDAPPeerCertificates verifies validity periods for LDAP TLS peer certificates.
+func validateLDAPPeerCertificates(certificates [][]byte, _ [][]*x509.Certificate) error {
+	for _, certBytes := range certificates {
+		certificate, err := x509.ParseCertificate(certBytes)
+		if err != nil {
+			return fmt.Errorf("failed to parse certificate: %w", err)
+		}
+
+		if time.Now().After(certificate.NotAfter) {
+			return fmt.Errorf("certificate expired on %v", certificate.NotAfter)
+		}
+
+		if time.Now().Before(certificate.NotBefore) {
+			return fmt.Errorf("certificate not valid before %v", certificate.NotBefore)
+		}
+	}
+
+	return nil
 }
 
 // dialAndStartTLS dials the LDAP server and starts a TLS connection if configured.

@@ -31,6 +31,15 @@ import (
 
 type runtimeContextTestKey string
 
+// cachedModuleBindingCase describes one cached request-bound module reset scenario.
+type cachedModuleBindingCase struct {
+	name            string
+	bindingKey      string
+	bind            func(*testing.T, *lua.LState)
+	loadModule      string
+	failClosedCheck string
+}
+
 const runtimeContextTestRequestIDKey runtimeContextTestKey = "request_id"
 
 func newRuntimeContextTestState(t *testing.T) *lua.LState {
@@ -47,58 +56,38 @@ func newRuntimeContextTestState(t *testing.T) *lua.LState {
 func bindRuntimeTestContext(t *testing.T, L *lua.LState, luaCtx *lualib.Context) {
 	t.Helper()
 
-	loader := lualib.LoaderModContext(luaCtx)
-	if loader == nil {
-		t.Fatal("expected context loader")
-	}
-
-	_ = loader(L)
-
-	mod, ok := L.Get(-1).(*lua.LTable)
-	if !ok {
-		t.Fatalf("expected context module table, got %T", L.Get(-1))
-	}
-
-	L.Pop(1)
-	BindModuleIntoReq(L, definitions.LuaModContext, mod)
+	bindRuntimeTestModule(t, L, lualib.LoaderModContext(luaCtx), definitions.LuaModContext, "context")
 }
 
 func bindRuntimeTestHTTPRequest(t *testing.T, L *lua.LState, req *http.Request) {
 	t.Helper()
 
-	loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(req))
-	if loader == nil {
-		t.Fatal("expected http request loader")
-	}
-
-	_ = loader(L)
-
-	mod, ok := L.Get(-1).(*lua.LTable)
-	if !ok {
-		t.Fatalf("expected http request module table, got %T", L.Get(-1))
-	}
-
-	L.Pop(1)
-	BindModuleIntoReq(L, definitions.LuaModHTTPRequest, mod)
+	bindRuntimeTestModule(t, L, lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(req)), definitions.LuaModHTTPRequest, "http request")
 }
 
 func bindRuntimeTestHTTPResponse(t *testing.T, L *lua.LState, ginCtx *gin.Context) {
 	t.Helper()
 
-	loader := lualib.LoaderModHTTPResponse(ginCtx)
+	bindRuntimeTestModule(t, L, lualib.LoaderModHTTPResponse(ginCtx), definitions.LuaModHTTPResponse, "http response")
+}
+
+// bindRuntimeTestModule loads a request-bound module and exposes it through the request environment.
+func bindRuntimeTestModule(t *testing.T, L *lua.LState, loader lua.LGFunction, moduleName string, label string) {
+	t.Helper()
+
 	if loader == nil {
-		t.Fatal("expected http response loader")
+		t.Fatalf("expected %s loader", label)
 	}
 
 	_ = loader(L)
 
 	mod, ok := L.Get(-1).(*lua.LTable)
 	if !ok {
-		t.Fatalf("expected http response module table, got %T", L.Get(-1))
+		t.Fatalf("expected %s module table, got %T", label, L.Get(-1))
 	}
 
 	L.Pop(1)
-	BindModuleIntoReq(L, definitions.LuaModHTTPResponse, mod)
+	BindModuleIntoReq(L, moduleName, mod)
 }
 
 func bindRuntimeTestRuntimeModule(ctx context.Context, t *testing.T, L *lua.LState) {
@@ -187,107 +176,120 @@ func TestResetLuaStateScrubsOldRequestEnvironmentBindings(t *testing.T) {
 }
 
 func TestResetLuaStateScrubsCachedModuleBindings(t *testing.T) {
-	tests := []struct {
-		name            string
-		bindingKey      string
-		bind            func(*testing.T, *lua.LState)
-		loadModule      string
-		failClosedCheck string
-	}{
-		{
-			name:       "context_module",
-			bindingKey: "__NAUTH_REQ_CONTEXT",
-			bind: func(t *testing.T, L *lua.LState) {
-				t.Helper()
-				bindRuntimeTestContext(t, L, lualib.NewContext())
-			},
-			loadModule: `
-				package.preload["module_holder"] = function()
-					return {
-						module = require("nauthilus_context"),
-					}
-				end
-			`,
-			failClosedCheck: `
-				local ok = pcall(function()
-					holder.module.context_get("request_id")
-				end)
-				if ok then
-					error("expected cached context module to fail closed without request binding")
-				end
-			`,
-		},
-		{
-			name:       "runtime_module",
-			bindingKey: "__NAUTH_REQ_RUNTIME_CONTEXT",
-			bind: func(t *testing.T, L *lua.LState) {
-				t.Helper()
-				bindRuntimeTestRuntimeModule(context.WithValue(t.Context(), runtimeContextTestRequestIDKey, "first"), t, L)
-			},
-			loadModule: `
-				package.preload["module_holder"] = function()
-					return {
-						module = require("runtime_helper"),
-					}
-				end
-			`,
-			failClosedCheck: `
-				local ok = pcall(function()
-					holder.module.get_value()
-				end)
-				if ok then
-					error("expected cached runtime module to fail closed without request binding")
-				end
-			`,
-		},
-	}
-
-	for _, tt := range tests {
+	for _, tt := range cachedModuleBindingCases() {
 		t.Run(tt.name, func(t *testing.T) {
-			L := newRuntimeContextTestState(t)
-			PrepareRequestEnv(L)
-
-			tt.bind(t, L)
-
-			script := fmt.Sprintf(`
-				%s
-
-				local holder = require("module_holder")
-				if rawget(holder.module, %q) == nil then
-					error("missing request binding before reset")
-				end
-			`, tt.loadModule, tt.bindingKey)
-
-			if err := L.DoString(script); err != nil {
-				t.Fatalf("failed to cache request-bound module before reset: %v", err)
-			}
-
-			ResetLuaState(L)
-
-			script = fmt.Sprintf(`
-				local holder = require("module_holder")
-				if rawget(holder.module, %q) ~= nil then
-					error("stale request binding was not scrubbed")
-				end
-
-				%s
-			`, tt.bindingKey, tt.failClosedCheck)
-
-			if err := L.DoString(script); err != nil {
-				t.Fatalf("expected cached module binding to be scrubbed on reset: %v", err)
-			}
+			assertCachedModuleBindingReset(t, tt)
 		})
 	}
 }
 
-func TestCachedContextModuleUsesCurrentRequestContextAfterReset(t *testing.T) {
+// cachedModuleBindingCases returns cached module reset scenarios.
+func cachedModuleBindingCases() []cachedModuleBindingCase {
+	return []cachedModuleBindingCase{
+		cachedContextModuleBindingCase(),
+		cachedRuntimeModuleBindingCase(),
+	}
+}
+
+// cachedContextModuleBindingCase returns the context module reset scenario.
+func cachedContextModuleBindingCase() cachedModuleBindingCase {
+	return cachedModuleBindingCase{
+		name:       "context_module",
+		bindingKey: "__NAUTH_REQ_CONTEXT",
+		bind: func(t *testing.T, L *lua.LState) {
+			t.Helper()
+			bindRuntimeTestContext(t, L, lualib.NewContext())
+		},
+		loadModule: `
+			package.preload["module_holder"] = function()
+				return {
+					module = require("nauthilus_context"),
+				}
+			end
+		`,
+		failClosedCheck: `
+			local ok = pcall(function()
+				holder.module.context_get("request_id")
+			end)
+			if ok then
+				error("expected cached context module to fail closed without request binding")
+			end
+		`,
+	}
+}
+
+// cachedRuntimeModuleBindingCase returns the runtime module reset scenario.
+func cachedRuntimeModuleBindingCase() cachedModuleBindingCase {
+	return cachedModuleBindingCase{
+		name:       "runtime_module",
+		bindingKey: "__NAUTH_REQ_RUNTIME_CONTEXT",
+		bind: func(t *testing.T, L *lua.LState) {
+			t.Helper()
+			bindRuntimeTestRuntimeModule(context.WithValue(t.Context(), runtimeContextTestRequestIDKey, "first"), t, L)
+		},
+		loadModule: `
+			package.preload["module_holder"] = function()
+				return {
+					module = require("runtime_helper"),
+				}
+			end
+		`,
+		failClosedCheck: `
+			local ok = pcall(function()
+				holder.module.get_value()
+			end)
+			if ok then
+				error("expected cached runtime module to fail closed without request binding")
+			end
+		`,
+	}
+}
+
+// assertCachedModuleBindingReset verifies one cached module reset scenario.
+func assertCachedModuleBindingReset(t *testing.T, tt cachedModuleBindingCase) {
+	t.Helper()
+
 	L := newRuntimeContextTestState(t)
 	PrepareRequestEnv(L)
+	tt.bind(t, L)
 
-	firstContext := lualib.NewContext()
-	bindRuntimeTestContext(t, L, firstContext)
+	if err := L.DoString(cachedModuleBindingBeforeResetScript(tt.loadModule, tt.bindingKey)); err != nil {
+		t.Fatalf("failed to cache request-bound module before reset: %v", err)
+	}
 
-	if err := L.DoString(`
+	ResetLuaState(L)
+
+	if err := L.DoString(cachedModuleBindingAfterResetScript(tt.bindingKey, tt.failClosedCheck)); err != nil {
+		t.Fatalf("expected cached module binding to be scrubbed on reset: %v", err)
+	}
+}
+
+// cachedModuleBindingBeforeResetScript returns the pre-reset Lua assertion script.
+func cachedModuleBindingBeforeResetScript(loadModule string, bindingKey string) string {
+	return fmt.Sprintf(`
+		%s
+
+		local holder = require("module_holder")
+		if rawget(holder.module, %q) == nil then
+			error("missing request binding before reset")
+		end
+	`, loadModule, bindingKey)
+}
+
+// cachedModuleBindingAfterResetScript returns the post-reset Lua assertion script.
+func cachedModuleBindingAfterResetScript(bindingKey string, failClosedCheck string) string {
+	return fmt.Sprintf(`
+		local holder = require("module_holder")
+		if rawget(holder.module, %q) ~= nil then
+			error("stale request binding was not scrubbed")
+		end
+
+		%s
+	`, bindingKey, failClosedCheck)
+}
+
+func TestCachedContextModuleUsesCurrentRequestContextAfterReset(t *testing.T) {
+	runCachedContextAfterResetTest(t, "request_id", "first", "second", `
 		package.preload["ctx_holder"] = function()
 			return {
 				ctx = require("nauthilus_context"),
@@ -296,44 +298,14 @@ func TestCachedContextModuleUsesCurrentRequestContextAfterReset(t *testing.T) {
 
 		local holder = require("ctx_holder")
 		holder.ctx.context_set("request_id", "first")
-	`); err != nil {
-		t.Fatalf("first request failed: %v", err)
-	}
-
-	if got := firstContext.Get("request_id"); got != "first" {
-		t.Fatalf("expected first context to contain first request value, got %#v", got)
-	}
-
-	ResetLuaState(L)
-	PrepareRequestEnv(L)
-
-	secondContext := lualib.NewContext()
-	bindRuntimeTestContext(t, L, secondContext)
-
-	if err := L.DoString(`
+	`, `
 		local holder = require("ctx_holder")
 		holder.ctx.context_set("request_id", "second")
-	`); err != nil {
-		t.Fatalf("second request failed: %v", err)
-	}
-
-	if got := firstContext.Get("request_id"); got != "first" {
-		t.Fatalf("expected first context to remain unchanged, got %#v", got)
-	}
-
-	if got := secondContext.Get("request_id"); got != "second" {
-		t.Fatalf("expected second context to receive current request value, got %#v", got)
-	}
+	`)
 }
 
 func TestCachedLuaModuleUsesCurrentRequestContextAfterReset(t *testing.T) {
-	L := newRuntimeContextTestState(t)
-	PrepareRequestEnv(L)
-
-	firstContext := lualib.NewContext()
-	bindRuntimeTestContext(t, L, firstContext)
-
-	if err := L.DoString(`
+	runCachedContextAfterResetTest(t, "customer_id", "alpha", "beta", `
 		package.preload["common"] = function()
 			local common = {}
 			local ctx = require("nauthilus_context")
@@ -351,12 +323,33 @@ func TestCachedLuaModuleUsesCurrentRequestContextAfterReset(t *testing.T) {
 
 		local common = require("common")
 		common.store("customer_id", "alpha")
-	`); err != nil {
+	`, `
+		local common = require("common")
+		common.store("customer_id", "beta")
+
+		local value = common.load("customer_id")
+		if value ~= "beta" then
+			error("unexpected context value: " .. tostring(value))
+		end
+	`)
+}
+
+// runCachedContextAfterResetTest verifies that cached modules use the active request context after reset.
+func runCachedContextAfterResetTest(t *testing.T, key string, firstValue string, secondValue string, firstScript string, secondScript string) {
+	t.Helper()
+
+	L := newRuntimeContextTestState(t)
+	PrepareRequestEnv(L)
+
+	firstContext := lualib.NewContext()
+	bindRuntimeTestContext(t, L, firstContext)
+
+	if err := L.DoString(firstScript); err != nil {
 		t.Fatalf("first request failed: %v", err)
 	}
 
-	if got := firstContext.Get("customer_id"); got != "alpha" {
-		t.Fatalf("expected first context to contain alpha, got %#v", got)
+	if got := firstContext.Get(key); got != firstValue {
+		t.Fatalf("expected first context to contain %s, got %#v", firstValue, got)
 	}
 
 	ResetLuaState(L)
@@ -365,24 +358,16 @@ func TestCachedLuaModuleUsesCurrentRequestContextAfterReset(t *testing.T) {
 	secondContext := lualib.NewContext()
 	bindRuntimeTestContext(t, L, secondContext)
 
-	if err := L.DoString(`
-		local common = require("common")
-		common.store("customer_id", "beta")
-
-		local value = common.load("customer_id")
-		if value ~= "beta" then
-			error("unexpected context value: " .. tostring(value))
-		end
-	`); err != nil {
+	if err := L.DoString(secondScript); err != nil {
 		t.Fatalf("second request failed: %v", err)
 	}
 
-	if got := firstContext.Get("customer_id"); got != "alpha" {
-		t.Fatalf("expected first context to remain alpha, got %#v", got)
+	if got := firstContext.Get(key); got != firstValue {
+		t.Fatalf("expected first context to remain %s, got %#v", firstValue, got)
 	}
 
-	if got := secondContext.Get("customer_id"); got != "beta" {
-		t.Fatalf("expected second context to contain beta, got %#v", got)
+	if got := secondContext.Get(key); got != secondValue {
+		t.Fatalf("expected second context to contain %s, got %#v", secondValue, got)
 	}
 }
 

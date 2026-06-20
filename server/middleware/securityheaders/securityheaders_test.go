@@ -154,7 +154,10 @@ func TestMiddleware_NonceFailureAborts(t *testing.T) {
 	assert.Equal(t, "", w.Header().Get("Content-Security-Policy"))
 }
 
-func TestMiddleware_StyleSrcUnsafeInlineDropsNonce(t *testing.T) {
+// assertCSPMiddlewareResponse runs the security-header middleware and checks the CSP result.
+func assertCSPMiddlewareResponse(t *testing.T, policy string, expectedPolicy string) {
+	t.Helper()
+
 	gin.SetMode(gin.TestMode)
 
 	enabled := true
@@ -163,7 +166,7 @@ func TestMiddleware_StyleSrcUnsafeInlineDropsNonce(t *testing.T) {
 			Frontend: config.Frontend{
 				SecurityHeaders: config.FrontendSecurityHeaders{
 					Enabled:               &enabled,
-					ContentSecurityPolicy: config.NewContentSecurityPolicyValueFromString("default-src 'self'; style-src 'self' 'nonce-{{nonce}}' 'unsafe-inline'; script-src 'self' 'nonce-{{nonce}}'"),
+					ContentSecurityPolicy: config.NewContentSecurityPolicyValueFromString(policy),
 				},
 			},
 		},
@@ -184,47 +187,22 @@ func TestMiddleware_StyleSrcUnsafeInlineDropsNonce(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(
+	assert.Equal(t, expectedPolicy, w.Header().Get("Content-Security-Policy"))
+}
+
+func TestMiddleware_StyleSrcUnsafeInlineDropsNonce(t *testing.T) {
+	assertCSPMiddlewareResponse(
 		t,
+		"default-src 'self'; style-src 'self' 'nonce-{{nonce}}' 'unsafe-inline'; script-src 'self' 'nonce-{{nonce}}'",
 		"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-testnonce123'",
-		w.Header().Get("Content-Security-Policy"),
 	)
 }
 
 func TestMiddleware_FormActionSelfRemainsStrict(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	enabled := true
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			Frontend: config.Frontend{
-				SecurityHeaders: config.FrontendSecurityHeaders{
-					Enabled:               &enabled,
-					ContentSecurityPolicy: config.NewContentSecurityPolicyValueFromString("default-src 'self'; form-action 'self'; script-src 'self' 'nonce-{{nonce}}'"),
-				},
-			},
-		},
-	}
-
-	mw := New(MiddlewareConfig{
-		Config:         cfg,
-		NonceGenerator: fixedNonceGenerator{nonce: "testnonce123"},
-	})
-
-	r := gin.New()
-	r.Use(mw.Handler())
-	r.GET("/", func(ctx *gin.Context) {
-		ctx.String(http.StatusOK, "ok")
-	})
-
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(
+	assertCSPMiddlewareResponse(
 		t,
+		"default-src 'self'; form-action 'self'; script-src 'self' 'nonce-{{nonce}}'",
 		"default-src 'self'; form-action 'self'; script-src 'self' 'nonce-testnonce123'",
-		w.Header().Get("Content-Security-Policy"),
 	)
 }
 

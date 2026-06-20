@@ -37,6 +37,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // NauthilusIDP implements the IdentityProvider interface using Nauthilus core.
@@ -74,14 +75,16 @@ func (n *NauthilusIDP) GetKeyManager() *oidckeys.Manager {
 // FilterScopes filters the requested scopes against the allowed scopes for the client.
 func (n *NauthilusIDP) FilterScopes(client *config.OIDCClient, requestedScopes []string) []string {
 	allowed := client.GetAllowedScopes()
-	allowedMap := make(map[string]struct{}, len(allowed))
 	impliedScopes := client.GetImpliedScopes()
-	clientID := ""
+	allowedMap := allowedScopeSet(allowed)
+	filtered, seen := filterRequestedScopes(requestedScopes, allowedMap, len(impliedScopes))
 
-	if client != nil {
-		clientID = client.ClientID
-	}
+	return n.appendImpliedScopes(filtered, seen, allowedMap, impliedScopes, oidcClientID(client))
+}
 
+// allowedScopeSet builds the normalized allowed-scope lookup.
+func allowedScopeSet(allowed []string) map[string]struct{} {
+	allowedMap := make(map[string]struct{}, len(allowed))
 	for _, s := range allowed {
 		scope := strings.TrimSpace(s)
 		if scope == "" {
@@ -91,8 +94,13 @@ func (n *NauthilusIDP) FilterScopes(client *config.OIDCClient, requestedScopes [
 		allowedMap[scope] = struct{}{}
 	}
 
-	filtered := make([]string, 0, len(requestedScopes)+len(impliedScopes))
-	seen := make(map[string]struct{}, len(requestedScopes)+len(impliedScopes))
+	return allowedMap
+}
+
+// filterRequestedScopes returns requested scopes allowed for the client.
+func filterRequestedScopes(requestedScopes []string, allowedMap map[string]struct{}, impliedCount int) ([]string, map[string]struct{}) {
+	filtered := make([]string, 0, len(requestedScopes)+impliedCount)
+	seen := make(map[string]struct{}, len(requestedScopes)+impliedCount)
 
 	for _, rs := range requestedScopes {
 		scope := strings.TrimSpace(rs)
@@ -112,6 +120,17 @@ func (n *NauthilusIDP) FilterScopes(client *config.OIDCClient, requestedScopes [
 		filtered = append(filtered, scope)
 	}
 
+	return filtered, seen
+}
+
+// appendImpliedScopes appends valid implied scopes and logs invalid client configuration.
+func (n *NauthilusIDP) appendImpliedScopes(
+	filtered []string,
+	seen map[string]struct{},
+	allowedMap map[string]struct{},
+	impliedScopes []string,
+	clientID string,
+) []string {
 	for _, implied := range impliedScopes {
 		scope := strings.TrimSpace(implied)
 		if scope == "" {
@@ -139,6 +158,15 @@ func (n *NauthilusIDP) FilterScopes(client *config.OIDCClient, requestedScopes [
 	}
 
 	return filtered
+}
+
+// oidcClientID returns the configured client id for logging.
+func oidcClientID(client *config.OIDCClient) string {
+	if client == nil {
+		return ""
+	}
+
+	return client.ClientID
 }
 
 // FindClient returns an OIDC client by its ID.
@@ -526,26 +554,9 @@ func (n *NauthilusIDP) ValidateToken(ctx context.Context, tokenString string) (j
 
 	// Heuristic: JWT tokens always contain dots. Opaque tokens (KSUIDs) do not.
 	if !strings.Contains(tokenString, ".") {
-		lookupCtx, lookupSpan := n.tracer.Start(ctx, "idp.validate_token.opaque.redis_get")
-
-		session, err := n.storage.GetAccessToken(lookupCtx, tokenString)
-		if err != nil {
-			lookupSpan.RecordError(err)
-		}
-
-		lookupSpan.End()
-
-		if err == nil && session != nil {
-			token := NewOpaqueAccessToken(session, n.storage, n.tokenGen, 0)
-
-			return token.ClaimsFromSession(session), nil
-		}
-
-		if err != nil {
-			sp.RecordError(err)
-		}
-
-		return nil, fmt.Errorf("invalid or expired opaque token")
+		return n.opaqueTokenClaims(ctx, sp, tokenString, "idp.validate_token.opaque.redis_get", func(token *OpaqueAccessToken, session *OIDCSession) jwt.MapClaims {
+			return token.ClaimsFromSession(session)
+		})
 	}
 
 	// Fallback to JWT. Verify first so malformed input cannot force Redis denylist reads.
@@ -601,30 +612,40 @@ func (n *NauthilusIDP) ValidateTokenForUserInfo(ctx context.Context, tokenString
 
 	// Heuristic: JWT tokens always contain dots. Opaque tokens (KSUIDs) do not.
 	if !strings.Contains(tokenString, ".") {
-		lookupCtx, lookupSpan := n.tracer.Start(ctx, "idp.validate_token_for_userinfo.opaque.redis_get")
-
-		session, err := n.storage.GetAccessToken(lookupCtx, tokenString)
-		if err != nil {
-			lookupSpan.RecordError(err)
-		}
-
-		lookupSpan.End()
-
-		if err == nil && session != nil {
-			token := NewOpaqueAccessToken(session, n.storage, n.tokenGen, 0)
-
-			return token.UserInfoClaimsFromSession(session), nil
-		}
-
-		if err != nil {
-			sp.RecordError(err)
-		}
-
-		return nil, fmt.Errorf("invalid or expired opaque token")
+		return n.opaqueTokenClaims(ctx, sp, tokenString, "idp.validate_token_for_userinfo.opaque.redis_get", func(token *OpaqueAccessToken, session *OIDCSession) jwt.MapClaims {
+			return token.UserInfoClaimsFromSession(session)
+		})
 	}
 
 	// For JWT access tokens, fall back to standard validation.
 	return n.ValidateToken(ctx, tokenString)
+}
+
+// opaqueTokenClaims loads an opaque access-token session and maps it to endpoint-specific claims.
+func (n *NauthilusIDP) opaqueTokenClaims(
+	ctx context.Context,
+	parentSpan trace.Span,
+	tokenString string,
+	spanName string,
+	buildClaims func(*OpaqueAccessToken, *OIDCSession) jwt.MapClaims,
+) (jwt.MapClaims, error) {
+	lookupCtx, lookupSpan := n.tracer.Start(ctx, spanName)
+
+	session, err := n.storage.GetAccessToken(lookupCtx, tokenString)
+	if err != nil {
+		lookupSpan.RecordError(err)
+		parentSpan.RecordError(err)
+	}
+
+	lookupSpan.End()
+
+	if err == nil && session != nil {
+		token := NewOpaqueAccessToken(session, n.storage, n.tokenGen, 0)
+
+		return buildClaims(token, session), nil
+	}
+
+	return nil, fmt.Errorf("invalid or expired opaque token")
 }
 
 // resolveJWTPublicKey returns the public key for verifying a JWT based on its algorithm and kid header.
@@ -710,6 +731,37 @@ func (n *NauthilusIDP) Authenticate(ctx *gin.Context, username, password string,
 	)
 	defer sp.End()
 
+	auth, err := n.newPasswordAuthState(ctx, username, password, oidcCID, samlEntityID, sp)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := n.rejectBruteForceAuthentication(ctx, auth, sp); err != nil {
+		return nil, err
+	}
+
+	if err := n.rejectEnvironmentAuthentication(ctx, auth, sp); err != nil {
+		return nil, err
+	}
+
+	if err := n.rejectPasswordAuthentication(ctx, auth, sp); err != nil {
+		return nil, err
+	}
+
+	n.storeAuthenticationSession(ctx, auth)
+
+	return n.userFromAuthState(auth)
+}
+
+// newPasswordAuthState creates and configures AuthState for password authentication.
+func (n *NauthilusIDP) newPasswordAuthState(
+	ctx *gin.Context,
+	username string,
+	password string,
+	oidcCID string,
+	samlEntityID string,
+	sp trace.Span,
+) (*core.AuthState, error) {
 	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
 
 	auth, ok := authRaw.(*core.AuthState)
@@ -720,6 +772,14 @@ func (n *NauthilusIDP) Authenticate(ctx *gin.Context, username, password string,
 		return nil, err
 	}
 
+	configurePasswordAuthState(auth, username, password, oidcCID, samlEntityID)
+	auth.FinishSetup(ctx)
+
+	return auth, nil
+}
+
+// configurePasswordAuthState applies caller credentials and protocol metadata.
+func configurePasswordAuthState(auth *core.AuthState, username string, password string, oidcCID string, samlEntityID string) {
 	auth.SetUsername(username)
 	auth.SetPassword(secret.New(password))
 	auth.SetMethod(definitions.AuthMethodPassword)
@@ -733,68 +793,88 @@ func (n *NauthilusIDP) Authenticate(ctx *gin.Context, username, password string,
 	} else {
 		auth.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
 	}
+}
 
-	auth.FinishSetup(ctx)
-
-	if auth.CheckBruteForce(ctx) {
-		if auth.ApplyConfiguredPreAuthDecision(ctx) {
-			auth.FinishLogging(ctx, definitions.AuthResultFail)
-
-			err := fmt.Errorf("authentication failed due to brute force protection")
-			sp.RecordError(err)
-
-			return nil, n.authFailureError(ctx, auth, err)
-		}
-
-		if !auth.ApplyConfiguredPreAuthControl(ctx) && !auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
-			if auth.ApplyDefaultPreAuthDecision(ctx) {
-				auth.FinishLogging(ctx, definitions.AuthResultFail)
-
-				err := fmt.Errorf("authentication failed due to brute force protection")
-				sp.RecordError(err)
-
-				return nil, n.authFailureError(ctx, auth, err)
-			}
-
-			auth.UpdateBruteForceBucketsCounter(ctx)
-			auth.AuthFail(ctx)
-			auth.FinishLogging(ctx, definitions.AuthResultFail)
-
-			err := fmt.Errorf("authentication failed due to brute force protection")
-			sp.RecordError(err)
-
-			return nil, n.authFailureError(ctx, auth, err)
-		}
+// rejectBruteForceAuthentication applies pre-auth brute-force protection decisions.
+func (n *NauthilusIDP) rejectBruteForceAuthentication(ctx *gin.Context, auth *core.AuthState, sp trace.Span) error {
+	if !auth.CheckBruteForce(ctx) {
+		return nil
 	}
 
-	if res := auth.HandleEnvironment(ctx); res != definitions.AuthResultOK && res != definitions.AuthResultUnset {
-		auth.AuthFail(ctx)
-		auth.FinishLogging(ctx, res)
-
-		err := fmt.Errorf("authentication failed with pre-auth result: %d", res)
-		sp.RecordError(err)
-
-		return nil, n.authFailureError(ctx, auth, err)
+	if auth.ApplyConfiguredPreAuthDecision(ctx) {
+		return n.finishAuthenticationFailure(ctx, auth, sp, definitions.AuthResultFail, bruteForceAuthenticationError(), false)
 	}
 
+	if auth.ApplyConfiguredPreAuthControl(ctx) || auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
+		return nil
+	}
+
+	if auth.ApplyDefaultPreAuthDecision(ctx) {
+		return n.finishAuthenticationFailure(ctx, auth, sp, definitions.AuthResultFail, bruteForceAuthenticationError(), false)
+	}
+
+	auth.UpdateBruteForceBucketsCounter(ctx)
+
+	return n.finishAuthenticationFailure(ctx, auth, sp, definitions.AuthResultFail, bruteForceAuthenticationError(), true)
+}
+
+// rejectEnvironmentAuthentication fails authentication when pre-auth environment checks reject it.
+func (n *NauthilusIDP) rejectEnvironmentAuthentication(ctx *gin.Context, auth *core.AuthState, sp trace.Span) error {
+	res := auth.HandleEnvironment(ctx)
+	if res == definitions.AuthResultOK || res == definitions.AuthResultUnset {
+		return nil
+	}
+
+	return n.finishAuthenticationFailure(ctx, auth, sp, res, fmt.Errorf("authentication failed with pre-auth result: %d", res), true)
+}
+
+// rejectPasswordAuthentication fails authentication when password verification rejects it.
+func (n *NauthilusIDP) rejectPasswordAuthentication(ctx *gin.Context, auth *core.AuthState, sp trace.Span) error {
 	result := auth.HandlePassword(ctx)
 
 	auth.FinishLogging(ctx, result)
 
-	if result != definitions.AuthResultOK {
-		err := fmt.Errorf("authentication failed with result: %d", result)
-		sp.RecordError(err)
-
-		return nil, n.authFailureError(ctx, auth, err)
+	if result == definitions.AuthResultOK {
+		return nil
 	}
 
+	err := fmt.Errorf("authentication failed with result: %d", result)
+	sp.RecordError(err)
+
+	return n.authFailureError(ctx, auth, err)
+}
+
+// finishAuthenticationFailure records a failed authentication with optional AuthFail side effects.
+func (n *NauthilusIDP) finishAuthenticationFailure(
+	ctx *gin.Context,
+	auth *core.AuthState,
+	sp trace.Span,
+	result definitions.AuthResult,
+	err error,
+	markAuthFail bool,
+) error {
+	if markAuthFail {
+		auth.AuthFail(ctx)
+	}
+
+	auth.FinishLogging(ctx, result)
+	sp.RecordError(err)
+
+	return n.authFailureError(ctx, auth, err)
+}
+
+// storeAuthenticationSession persists backend affinity data for the browser session.
+func (n *NauthilusIDP) storeAuthenticationSession(ctx *gin.Context, auth *core.AuthState) {
 	if mgr := cookie.GetManager(ctx); mgr != nil {
 		mgr.Set(definitions.SessionKeyUserBackend, uint8(auth.GetSourcePassDBBackend()))
 		mgr.Set(definitions.SessionKeyUserBackendName, auth.GetUsedPassDBBackendName())
 		core.StoreRemoteBackendRef(mgr, auth.Runtime.RemoteBackendRef)
 	}
+}
 
-	return n.userFromAuthState(auth)
+// bruteForceAuthenticationError returns the shared brute-force authentication failure.
+func bruteForceAuthenticationError() error {
+	return fmt.Errorf("authentication failed due to brute force protection")
 }
 
 // GetUserByUsername retrieves user details and attributes without performing password authentication.

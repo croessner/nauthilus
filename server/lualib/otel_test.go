@@ -74,6 +74,83 @@ func setupTracingDisabled() {
 	config.SetTestFile(cfg)
 }
 
+// newOTELTestState creates a Lua state with the OpenTelemetry module preloaded.
+func newOTELTestState(t *testing.T) *lua.LState {
+	t.Helper()
+
+	L := lua.NewState()
+	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
+
+	return L
+}
+
+// runOTELScript executes a Lua OpenTelemetry test script.
+func runOTELScript(t *testing.T, L *lua.LState, script string) {
+	t.Helper()
+
+	if err := L.DoString(script); err != nil {
+		t.Fatalf("lua error: %v", err)
+	}
+}
+
+// requireCollectedSpan returns a recorded span by name.
+func requireCollectedSpan(t *testing.T, coll *spanCollector, name string) sdktrace.ReadOnlySpan {
+	t.Helper()
+
+	if len(coll.spans) == 0 {
+		t.Fatalf("expected spans to be recorded, got 0")
+	}
+
+	for _, sp := range coll.spans {
+		if sp.Name() == name {
+			return sp
+		}
+	}
+
+	t.Fatalf("expected to find span %q", name)
+
+	return nil
+}
+
+// assertSpanStringAttr verifies a string span attribute.
+func assertSpanStringAttr(t *testing.T, sp sdktrace.ReadOnlySpan, key string, value string) {
+	t.Helper()
+
+	for _, attr := range sp.Attributes() {
+		if string(attr.Key) == key && attr.Value.AsString() == value {
+			return
+		}
+	}
+
+	t.Fatalf("missing expected string attribute %s=%s", key, value)
+}
+
+// assertSpanFloatAttr verifies a numeric span attribute.
+func assertSpanFloatAttr(t *testing.T, sp sdktrace.ReadOnlySpan, key string, value float64) {
+	t.Helper()
+
+	for _, attr := range sp.Attributes() {
+		if string(attr.Key) == key && attr.Value.AsFloat64() == value {
+			return
+		}
+	}
+
+	t.Fatalf("missing expected numeric attribute %s=%v", key, value)
+}
+
+// assertSpanBoolAttr verifies a boolean span attribute.
+func assertSpanBoolAttr(t *testing.T, sp sdktrace.ReadOnlySpan, key string, value bool) {
+	t.Helper()
+
+	for _, attr := range sp.Attributes() {
+		if string(attr.Key) == key && attr.Value.AsBool() == value {
+			return
+		}
+	}
+
+	t.Fatalf("missing expected boolean attribute %s=%v", key, value)
+}
+
 // --- tests ---
 
 func TestOTEL_WithSpan_Basic(t *testing.T) {
@@ -86,11 +163,8 @@ func TestOTEL_WithSpan_Basic(t *testing.T) {
 
 	defer cleanup()
 
-	L := lua.NewState()
+	L := newOTELTestState(t)
 	defer L.Close()
-
-	// Preload module with a background context
-	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	script := `
       local otel = require("nauthilus_opentelemetry")
@@ -102,53 +176,16 @@ func TestOTEL_WithSpan_Basic(t *testing.T) {
       end, { kind = "client" })
     `
 
-	if err := L.DoString(script); err != nil {
-		t.Fatalf("lua error: %v", err)
+	runOTELScript(t, L, script)
+
+	sp := requireCollectedSpan(t, coll, "client.op")
+	if want := trace.SpanKindClient; sp.SpanKind() != want {
+		t.Fatalf("span kind mismatch: want %v got %v", want, sp.SpanKind())
 	}
 
-	// One span expected with name client.op and kind client
-	if len(coll.spans) == 0 {
-		t.Fatalf("expected spans to be recorded, got 0")
-	}
-
-	var found bool
-
-	for _, sp := range coll.spans {
-		if sp.Name() == "client.op" {
-			found = true
-
-			if want := trace.SpanKindClient; sp.SpanKind() != want {
-				t.Fatalf("span kind mismatch: want %v got %v", want, sp.SpanKind())
-			}
-
-			attrs := sp.Attributes()
-			hasPeer := false
-			hasTries := false
-			hasOk := false
-
-			for _, a := range attrs {
-				if string(a.Key) == "peer.service" && a.Value.AsString() == "http" {
-					hasPeer = true
-				}
-
-				if string(a.Key) == "tries" && a.Value.AsFloat64() == 1 {
-					hasTries = true
-				}
-
-				if string(a.Key) == "ok" && a.Value.AsBool() {
-					hasOk = true
-				}
-			}
-
-			if !hasPeer || !hasTries || !hasOk {
-				t.Fatalf("missing expected attributes: peer=%v tries=%v ok=%v", hasPeer, hasTries, hasOk)
-			}
-		}
-	}
-
-	if !found {
-		t.Fatalf("expected to find span 'client.op'")
-	}
+	assertSpanStringAttr(t, sp, "peer.service", "http")
+	assertSpanFloatAttr(t, sp, "tries", 1)
+	assertSpanBoolAttr(t, sp, "ok", true)
 }
 
 func TestOTEL_Span_Finish(t *testing.T) {
@@ -161,11 +198,8 @@ func TestOTEL_Span_Finish(t *testing.T) {
 
 	defer cleanup()
 
-	L := lua.NewState()
+	L := newOTELTestState(t)
 	defer L.Close()
-
-	// Preload module with a background context
-	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	script := `
       local otel = require("nauthilus_opentelemetry")
@@ -175,38 +209,8 @@ func TestOTEL_Span_Finish(t *testing.T) {
       span:finish()
     `
 
-	if err := L.DoString(script); err != nil {
-		t.Fatalf("lua error: %v", err)
-	}
-
-	// One span expected with name manual.op
-	if len(coll.spans) == 0 {
-		t.Fatalf("expected spans to be recorded, got 0")
-	}
-
-	var found bool
-
-	for _, sp := range coll.spans {
-		if sp.Name() == "manual.op" {
-			found = true
-			attrs := sp.Attributes()
-			hasManual := false
-
-			for _, a := range attrs {
-				if string(a.Key) == "manual" && a.Value.AsBool() {
-					hasManual = true
-				}
-			}
-
-			if !hasManual {
-				t.Fatalf("missing expected attribute 'manual'")
-			}
-		}
-	}
-
-	if !found {
-		t.Fatalf("expected to find span 'manual.op'")
-	}
+	runOTELScript(t, L, script)
+	assertSpanBoolAttr(t, requireCollectedSpan(t, coll, "manual.op"), "manual", true)
 }
 
 func TestOTEL_BaggageAndPropagation(t *testing.T) {
@@ -219,10 +223,8 @@ func TestOTEL_BaggageAndPropagation(t *testing.T) {
 
 	defer cleanup()
 
-	L := lua.NewState()
+	L := newOTELTestState(t)
 	defer L.Close()
-
-	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	script := `
       local otel = require("nauthilus_opentelemetry")
@@ -237,43 +239,9 @@ func TestOTEL_BaggageAndPropagation(t *testing.T) {
       end)
     `
 
-	if err := L.DoString(script); err != nil {
-		t.Fatalf("lua error: %v", err)
-	}
-
-	// Verify headers were populated with trace context and baggage
-	tbl := L.GetGlobal("headers")
-
-	ht, ok := tbl.(*lua.LTable)
-	if !ok {
-		t.Fatalf("headers table not found")
-	}
-
-	// Look for typical keys
-	var haveTraceparent, haveBaggage bool
-
-	ht.ForEach(func(k, v lua.LValue) {
-		if ks, ok := k.(lua.LString); ok {
-			switch string(ks) {
-			case "traceparent":
-				if v != lua.LNil {
-					haveTraceparent = true
-				}
-			case "baggage":
-				if v != lua.LNil {
-					haveBaggage = true
-				}
-			}
-		}
-	})
-
-	if !haveTraceparent {
-		t.Fatalf("traceparent not injected into headers")
-	}
-
-	if !haveBaggage {
-		t.Fatalf("baggage not injected into headers")
-	}
+	runOTELScript(t, L, script)
+	assertLuaHeaderPresent(t, L, "traceparent")
+	assertLuaHeaderPresent(t, L, "baggage")
 }
 
 func TestOTEL_SemconvHelpers_And_NoOp(t *testing.T) {
@@ -285,10 +253,8 @@ func TestOTEL_SemconvHelpers_And_NoOp(t *testing.T) {
 	)
 	cleanup := setupTracingEnabled(tp)
 
-	L := lua.NewState()
+	L := newOTELTestState(t)
 	defer L.Close()
-
-	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	script := `
       local otel = require("nauthilus_opentelemetry")
@@ -304,51 +270,62 @@ func TestOTEL_SemconvHelpers_And_NoOp(t *testing.T) {
       end, { kind = "client" })
     `
 
-	if err := L.DoString(script); err != nil {
-		t.Fatalf("lua error: %v", err)
-	}
-
-	// Verify mapping keys exist in at least one span
-	if len(coll.spans) == 0 {
-		t.Fatalf("expected spans, got 0")
-	}
-
-	var okHTTP, okDB, okNet bool
-
-	for _, sp := range coll.spans {
-		if sp.Name() != "test.semconv" {
-			continue
-		}
-
-		for _, a := range sp.Attributes() {
-			switch string(a.Key) {
-			case "http.method":
-				okHTTP = true
-			case "db.system":
-				okDB = true
-			case "server.address":
-				okNet = true
-			}
-		}
-	}
-
-	if !okHTTP || !okDB || !okNet {
-		t.Fatalf("missing semconv attributes http=%v db=%v net=%v", okHTTP, okDB, okNet)
-	}
+	runOTELScript(t, L, script)
+	assertSemconvAttributes(t, requireCollectedSpan(t, coll, "test.semconv"))
 
 	cleanup()
 
-	// 2) No-op path: disabled tracing should not record spans
+	assertOTELNoOpRecordsNoSpans(t)
+}
+
+// assertLuaHeaderPresent verifies that the global headers table contains one key.
+func assertLuaHeaderPresent(t *testing.T, L *lua.LState, key string) {
+	t.Helper()
+
+	headers, ok := L.GetGlobal("headers").(*lua.LTable)
+	if !ok {
+		t.Fatalf("headers table not found")
+	}
+
+	if value := headers.RawGetString(key); value == lua.LNil {
+		t.Fatalf("%s not injected into headers", key)
+	}
+}
+
+// assertSemconvAttributes verifies representative semantic convention attributes.
+func assertSemconvAttributes(t *testing.T, sp sdktrace.ReadOnlySpan) {
+	t.Helper()
+
+	assertSpanKeyPresent(t, sp, "http.method")
+	assertSpanKeyPresent(t, sp, "db.system")
+	assertSpanKeyPresent(t, sp, "server.address")
+}
+
+// assertSpanKeyPresent verifies that a span contains an attribute key.
+func assertSpanKeyPresent(t *testing.T, sp sdktrace.ReadOnlySpan, key string) {
+	t.Helper()
+
+	for _, attr := range sp.Attributes() {
+		if string(attr.Key) == key {
+			return
+		}
+	}
+
+	t.Fatalf("missing semconv attribute %s", key)
+}
+
+// assertOTELNoOpRecordsNoSpans verifies disabled tracing does not export spans.
+func assertOTELNoOpRecordsNoSpans(t *testing.T) {
+	t.Helper()
+
 	setupTracingDisabled()
 
 	coll2 := &spanCollector{}
 	tp2 := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(coll2)))
 	otel.SetTracerProvider(tp2)
 
-	L2 := lua.NewState()
+	L2 := newOTELTestState(t)
 	defer L2.Close()
-
-	L2.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	noOpScript := `
       local otel = require("nauthilus_opentelemetry")
@@ -359,9 +336,7 @@ func TestOTEL_SemconvHelpers_And_NoOp(t *testing.T) {
       sp["end"](sp)
     `
 
-	if err := L2.DoString(noOpScript); err != nil {
-		t.Fatalf("lua error: %v", err)
-	}
+	runOTELScript(t, L2, noOpScript)
 
 	if len(coll2.spans) != 0 {
 		t.Fatalf("expected 0 spans recorded in no-op mode, got %d", len(coll2.spans))

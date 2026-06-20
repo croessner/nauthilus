@@ -42,6 +42,16 @@ type compilePolicyInput struct {
 	advice      map[string]policyruntime.EffectDefinition
 }
 
+type expectedValueCompiler func(
+	operator policyruntime.Operator,
+	rawValue any,
+	valueType policyregistry.AttributeType,
+	sets policyruntime.CompiledSets,
+	path string,
+) (policyruntime.TypedValue, error)
+
+type luaActionArgCompiler func(value any, path string) (any, error)
+
 const (
 	operatorCIDRContains     = "cidr_contains"
 	operatorContains         = "contains"
@@ -64,6 +74,33 @@ const (
 	policyModeEnforce        = "enforce"
 	policyModeObserve        = "observe"
 )
+
+var expectedValueCompilers = map[policyruntime.Operator]expectedValueCompiler{
+	operatorExists:           compileExistsExpectedValue,
+	operatorMatches:          compilePatternExpectedValue,
+	operatorIn:               compileMembershipExpectedValue,
+	operatorNotIn:            compileMembershipExpectedValue,
+	operatorContains:         compileContainsExpectedValue,
+	operatorContainsAny:      compileContainsListExpectedValue,
+	operatorContainsAll:      compileContainsListExpectedValue,
+	operatorContainsNone:     compileContainsListExpectedValue,
+	operatorCIDRContains:     compileCIDRExpectedValue,
+	operatorWithinTimeWindow: compileTimeWindowExpectedValue,
+}
+
+var comparableExpectedOperators = map[policyruntime.Operator]struct{}{
+	operatorGT:  {},
+	operatorGTE: {},
+	operatorLT:  {},
+	operatorLTE: {},
+}
+
+var luaActionDispatchArgCompilers = map[string]luaActionArgCompiler{
+	policy.ObligationArgAction:      compileLuaActionNameArg,
+	policy.ObligationArgEnvironment: compileLuaActionStringArg,
+	policy.ObligationArgFeature:     compileLuaActionFeatureArg,
+	policy.ObligationArgWait:        compileLuaActionWaitArg,
+}
 
 func compilePolicies(input compilePolicyInput) ([]policyruntime.CompiledPolicy, error) {
 	policies := make([]policyruntime.CompiledPolicy, 0, len(input.configs))
@@ -370,55 +407,74 @@ func validateProducerPlan(
 	path string,
 ) error {
 	if definition.ProducerCheck != "" {
-		check, ok := ctx.checksByName[definition.ProducerCheck]
-		if !ok || !operationsIntersect(ctx.operations, check.Operations) {
-			return configPathError(path, "requires the producing check in the active check plan")
-		}
-
-		if definition.Stage == ctx.stage && !stringsContain(ctx.requireChecks, definition.ProducerCheck) {
-			return configPathError(path, "requires the producing check in require_checks")
-		}
-
-		return nil
+		return validateNamedProducerCheck(definition, ctx, path)
 	}
 
 	if len(definition.ProducerTypes) == 0 {
 		return nil
 	}
 
-	hasActiveProducer := false
-	hasRequiredProducer := false
-
-	for _, checkName := range ctx.requireChecks {
-		check, ok := ctx.checksByName[checkName]
-		if !ok {
-			continue
-		}
-
-		if check.Stage == definition.Stage && stringsContain(definition.ProducerTypes, check.Type) && operationsIntersect(ctx.operations, check.Operations) {
-			hasRequiredProducer = true
-
-			break
-		}
-	}
-
-	for _, check := range ctx.checksByName {
-		if check.Stage == definition.Stage && stringsContain(definition.ProducerTypes, check.Type) && operationsIntersect(ctx.operations, check.Operations) {
-			hasActiveProducer = true
-
-			break
-		}
-	}
-
-	if !hasActiveProducer {
+	if !hasActiveProducerType(definition, ctx) {
 		return configPathError(path, "requires a producing check in the active check plan")
 	}
 
-	if definition.Stage == ctx.stage && !hasRequiredProducer {
+	if definition.Stage == ctx.stage && !hasRequiredProducerType(definition, ctx) {
 		return configPathError(path, "requires a producing check in require_checks")
 	}
 
 	return nil
+}
+
+// validateNamedProducerCheck validates attributes produced by a specific named check.
+func validateNamedProducerCheck(
+	definition policyregistry.AttributeDefinition,
+	ctx typeCheckContext,
+	path string,
+) error {
+	check, ok := ctx.checksByName[definition.ProducerCheck]
+	if !ok || !operationsIntersect(ctx.operations, check.Operations) {
+		return configPathError(path, "requires the producing check in the active check plan")
+	}
+
+	if definition.Stage == ctx.stage && !stringsContain(ctx.requireChecks, definition.ProducerCheck) {
+		return configPathError(path, "requires the producing check in require_checks")
+	}
+
+	return nil
+}
+
+// hasRequiredProducerType reports whether require_checks contains a matching producer type.
+func hasRequiredProducerType(definition policyregistry.AttributeDefinition, ctx typeCheckContext) bool {
+	for _, checkName := range ctx.requireChecks {
+		check, ok := ctx.checksByName[checkName]
+		if ok && checkProducesAttribute(definition, ctx, check) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasActiveProducerType reports whether any active check can produce the attribute.
+func hasActiveProducerType(definition policyregistry.AttributeDefinition, ctx typeCheckContext) bool {
+	for _, check := range ctx.checksByName {
+		if checkProducesAttribute(definition, ctx, check) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// checkProducesAttribute matches producer stage, type, and operation compatibility.
+func checkProducesAttribute(
+	definition policyregistry.AttributeDefinition,
+	ctx typeCheckContext,
+	check policyruntime.CompiledCheck,
+) bool {
+	return check.Stage == definition.Stage &&
+		stringsContain(definition.ProducerTypes, check.Type) &&
+		operationsIntersect(ctx.operations, check.Operations)
 }
 
 func selectedOperator(
@@ -486,36 +542,111 @@ func compileExpectedValue(
 	sets policyruntime.CompiledSets,
 	path string,
 ) (policyruntime.TypedValue, error) {
-	switch operator {
-	case "exists":
-		return compileExistsValue(operator, rawValue, path)
-	case "matches":
-		return compilePatternValue(operator, rawValue, valueType, path)
-	case "in", "not_in":
-		return compileMembershipValue(operator, rawValue, valueType, path)
-	case "contains":
-		return compileContainsValue(operator, rawValue, valueType, path)
-	case "contains_any", "contains_all", "contains_none":
-		return compileContainsListValue(operator, rawValue, valueType, path)
-	case "cidr_contains":
-		if valueType != policyregistry.AttributeTypeIP && valueType != policyregistry.AttributeTypeCIDR {
-			return policyruntime.TypedValue{}, configPathError(childPath(path, string(operator)), "requires an IP or CIDR attribute")
-		}
+	if compiler, ok := expectedValueCompilers[operator]; ok {
+		return compiler(operator, rawValue, valueType, sets, path)
+	}
 
-		return compileNetworkOperand(rawValue, sets, childPath(path, string(operator)))
-	case "within_time_window":
-		if valueType != policyregistry.AttributeTypeDateTime {
-			return policyruntime.TypedValue{}, configPathError(childPath(path, string(operator)), "requires a datetime attribute")
-		}
-
-		return compileTimeWindowOperand(rawValue, sets, childPath(path, string(operator)))
-	case "gt", "gte", "lt", "lte":
-		if valueType != policyregistry.AttributeTypeNumber && valueType != policyregistry.AttributeTypeDateTime {
-			return policyruntime.TypedValue{}, configPathError(childPath(path, string(operator)), "requires a comparable attribute")
+	if _, ok := comparableExpectedOperators[operator]; ok {
+		if err := validateComparableExpectedValue(operator, valueType, path); err != nil {
+			return policyruntime.TypedValue{}, err
 		}
 	}
 
 	return compileScalarValue(operator, rawValue, valueType, path)
+}
+
+// compileExistsExpectedValue adapts the exists operand compiler to the shared dispatcher signature.
+func compileExistsExpectedValue(
+	operator policyruntime.Operator,
+	rawValue any,
+	_ policyregistry.AttributeType,
+	_ policyruntime.CompiledSets,
+	path string,
+) (policyruntime.TypedValue, error) {
+	return compileExistsValue(operator, rawValue, path)
+}
+
+// compilePatternExpectedValue adapts the pattern operand compiler to the shared dispatcher signature.
+func compilePatternExpectedValue(
+	operator policyruntime.Operator,
+	rawValue any,
+	valueType policyregistry.AttributeType,
+	_ policyruntime.CompiledSets,
+	path string,
+) (policyruntime.TypedValue, error) {
+	return compilePatternValue(operator, rawValue, valueType, path)
+}
+
+// compileMembershipExpectedValue adapts membership operands to the shared dispatcher signature.
+func compileMembershipExpectedValue(
+	operator policyruntime.Operator,
+	rawValue any,
+	valueType policyregistry.AttributeType,
+	_ policyruntime.CompiledSets,
+	path string,
+) (policyruntime.TypedValue, error) {
+	return compileMembershipValue(operator, rawValue, valueType, path)
+}
+
+// compileContainsExpectedValue adapts contains operands to the shared dispatcher signature.
+func compileContainsExpectedValue(
+	operator policyruntime.Operator,
+	rawValue any,
+	valueType policyregistry.AttributeType,
+	_ policyruntime.CompiledSets,
+	path string,
+) (policyruntime.TypedValue, error) {
+	return compileContainsValue(operator, rawValue, valueType, path)
+}
+
+// compileContainsListExpectedValue adapts list contains operands to the shared dispatcher signature.
+func compileContainsListExpectedValue(
+	operator policyruntime.Operator,
+	rawValue any,
+	valueType policyregistry.AttributeType,
+	_ policyruntime.CompiledSets,
+	path string,
+) (policyruntime.TypedValue, error) {
+	return compileContainsListValue(operator, rawValue, valueType, path)
+}
+
+// compileCIDRExpectedValue validates and compiles cidr_contains operands.
+func compileCIDRExpectedValue(
+	operator policyruntime.Operator,
+	rawValue any,
+	valueType policyregistry.AttributeType,
+	sets policyruntime.CompiledSets,
+	path string,
+) (policyruntime.TypedValue, error) {
+	if valueType != policyregistry.AttributeTypeIP && valueType != policyregistry.AttributeTypeCIDR {
+		return policyruntime.TypedValue{}, configPathError(childPath(path, string(operator)), "requires an IP or CIDR attribute")
+	}
+
+	return compileNetworkOperand(rawValue, sets, childPath(path, string(operator)))
+}
+
+// compileTimeWindowExpectedValue validates and compiles within_time_window operands.
+func compileTimeWindowExpectedValue(
+	operator policyruntime.Operator,
+	rawValue any,
+	valueType policyregistry.AttributeType,
+	sets policyruntime.CompiledSets,
+	path string,
+) (policyruntime.TypedValue, error) {
+	if valueType != policyregistry.AttributeTypeDateTime {
+		return policyruntime.TypedValue{}, configPathError(childPath(path, string(operator)), "requires a datetime attribute")
+	}
+
+	return compileTimeWindowOperand(rawValue, sets, childPath(path, string(operator)))
+}
+
+// validateComparableExpectedValue ensures comparison operators are used with comparable types.
+func validateComparableExpectedValue(operator policyruntime.Operator, valueType policyregistry.AttributeType, path string) error {
+	if valueType == policyregistry.AttributeTypeNumber || valueType == policyregistry.AttributeTypeDateTime {
+		return nil
+	}
+
+	return configPathError(childPath(path, string(operator)), "requires a comparable attribute")
 }
 
 func compileExistsValue(operator policyruntime.Operator, rawValue any, path string) (policyruntime.TypedValue, error) {
@@ -828,40 +959,17 @@ func compileDecision(
 		return policyruntime.DecisionPlan{}, configPathError(childPath(path, "decision"), "is not allowed in pre_auth")
 	}
 
-	fsmEventMarker := then.FSMEventMarker
-	if fsmEventMarker == "" {
-		fsmEventMarker = defaultFSMEventMarker(stage, decision)
-	}
-
-	if err := validateFSMMarker(fsmEventMarker, stage, input.fsmEvents, childPath(path, "fsm_event_marker")); err != nil {
-		return policyruntime.DecisionPlan{}, err
-	}
-
-	responseMarker := then.ResponseMarker
-	if responseMarker == "" {
-		responseMarker = defaultResponseMarker(decision)
-	}
-
-	if err := validateResponseMarker(responseMarker, decision, input.responses, childPath(path, "response_marker")); err != nil {
-		return policyruntime.DecisionPlan{}, err
-	}
-
-	responseMessage, err := compileResponseMessage(then.ResponseMessage, input.attributes, childPath(path, "response_message"))
+	fsmEventMarker, responseMarker, err := compileDecisionMarkers(then, stage, decision, path, input)
 	if err != nil {
 		return policyruntime.DecisionPlan{}, err
 	}
 
-	responseLanguage, err := compileResponseLanguage(then.ResponseLanguage, input.attributes, childPath(path, "response_language"))
+	responseMessage, responseLanguage, err := compileDecisionResponses(then, path, input)
 	if err != nil {
 		return policyruntime.DecisionPlan{}, err
 	}
 
-	obligations, err := compileEffectRequests(then.Obligations, input.obligations, childPath(path, "obligations"))
-	if err != nil {
-		return policyruntime.DecisionPlan{}, err
-	}
-
-	advice, err := compileEffectRequests(then.Advice, input.advice, childPath(path, "advice"))
+	obligations, advice, err := compileDecisionEffects(then, path, input)
 	if err != nil {
 		return policyruntime.DecisionPlan{}, err
 	}
@@ -880,6 +988,73 @@ func compileDecision(
 			SkipRemainingStageChecks: then.Control.SkipRemainingStageChecks,
 		},
 	}, nil
+}
+
+// compileDecisionMarkers resolves and validates FSM and response markers.
+func compileDecisionMarkers(
+	then config.PolicyThenConfig,
+	stage policy.Stage,
+	decision policy.Decision,
+	path string,
+	input compilePolicyInput,
+) (string, string, error) {
+	fsmEventMarker := then.FSMEventMarker
+	if fsmEventMarker == "" {
+		fsmEventMarker = defaultFSMEventMarker(stage, decision)
+	}
+
+	if err := validateFSMMarker(fsmEventMarker, stage, input.fsmEvents, childPath(path, "fsm_event_marker")); err != nil {
+		return "", "", err
+	}
+
+	responseMarker := then.ResponseMarker
+	if responseMarker == "" {
+		responseMarker = defaultResponseMarker(decision)
+	}
+
+	if err := validateResponseMarker(responseMarker, decision, input.responses, childPath(path, "response_marker")); err != nil {
+		return "", "", err
+	}
+
+	return fsmEventMarker, responseMarker, nil
+}
+
+// compileDecisionResponses compiles response message and language plans.
+func compileDecisionResponses(
+	then config.PolicyThenConfig,
+	path string,
+	input compilePolicyInput,
+) (policyruntime.ResponseMessagePlan, policyruntime.ResponseLanguagePlan, error) {
+	responseMessage, err := compileResponseMessage(then.ResponseMessage, input.attributes, childPath(path, "response_message"))
+	if err != nil {
+		return policyruntime.ResponseMessagePlan{}, policyruntime.ResponseLanguagePlan{}, err
+	}
+
+	responseLanguage, err := compileResponseLanguage(then.ResponseLanguage, input.attributes, childPath(path, "response_language"))
+	if err != nil {
+		return policyruntime.ResponseMessagePlan{}, policyruntime.ResponseLanguagePlan{}, err
+	}
+
+	return responseMessage, responseLanguage, nil
+}
+
+// compileDecisionEffects compiles obligation and advice effect requests.
+func compileDecisionEffects(
+	then config.PolicyThenConfig,
+	path string,
+	input compilePolicyInput,
+) ([]policyruntime.EffectRequest, []policyruntime.EffectRequest, error) {
+	obligations, err := compileEffectRequests(then.Obligations, input.obligations, childPath(path, "obligations"))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	advice, err := compileEffectRequests(then.Advice, input.advice, childPath(path, "advice"))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return obligations, advice, nil
 }
 
 func decisionValid(decision policy.Decision) bool {
@@ -991,11 +1166,7 @@ func compileResponseMessage(
 ) (policyruntime.ResponseMessagePlan, error) {
 	source := strings.TrimSpace(responseMessage.From)
 	if source == "" {
-		if responseMessage.Text == "" &&
-			responseMessage.I18NKey == "" &&
-			responseMessage.Attribute == "" &&
-			responseMessage.Detail == "" &&
-			responseMessage.Fallback == "" {
+		if responseMessageFieldsEmpty(responseMessage) {
 			return policyruntime.ResponseMessagePlan{Source: policy.ResponseSourceDefault}, nil
 		}
 
@@ -1004,24 +1175,9 @@ func compileResponseMessage(
 
 	switch source {
 	case policy.ResponseSourceDefault:
-		if responseMessage.Text != "" ||
-			responseMessage.I18NKey != "" ||
-			responseMessage.Attribute != "" ||
-			responseMessage.Detail != "" ||
-			responseMessage.Fallback != "" {
-			return policyruntime.ResponseMessagePlan{}, configPathError(path, "must not combine default with message fields")
-		}
-
-		return policyruntime.ResponseMessagePlan{Source: source}, nil
+		return compileDefaultResponseMessage(responseMessage, source, path)
 	case policy.ResponseSourceLiteral:
-		if responseMessage.Text == "" ||
-			responseMessage.I18NKey != "" ||
-			responseMessage.Attribute != "" ||
-			responseMessage.Detail != "" {
-			return policyruntime.ResponseMessagePlan{}, configPathError(path, "must contain only text for literal")
-		}
-
-		return policyruntime.ResponseMessagePlan{Source: source, Literal: responseMessage.Text}, nil
+		return compileLiteralResponseMessage(responseMessage, source, path)
 	case policy.ResponseSourceAttributeDetail:
 		return compileAttributeResponseMessage(responseMessage, attributes, path)
 	case policy.ResponseSourceI18N:
@@ -1029,6 +1185,44 @@ func compileResponseMessage(
 	default:
 		return policyruntime.ResponseMessagePlan{}, configPathError(childPath(path, "from"), "is invalid")
 	}
+}
+
+// responseMessageFieldsEmpty reports whether no configurable message fields were set.
+func responseMessageFieldsEmpty(responseMessage config.PolicyResponseMessageConfig) bool {
+	return responseMessage.Text == "" &&
+		responseMessage.I18NKey == "" &&
+		responseMessage.Attribute == "" &&
+		responseMessage.Detail == "" &&
+		responseMessage.Fallback == ""
+}
+
+// compileDefaultResponseMessage validates default response-source fields.
+func compileDefaultResponseMessage(
+	responseMessage config.PolicyResponseMessageConfig,
+	source string,
+	path string,
+) (policyruntime.ResponseMessagePlan, error) {
+	if !responseMessageFieldsEmpty(responseMessage) {
+		return policyruntime.ResponseMessagePlan{}, configPathError(path, "must not combine default with message fields")
+	}
+
+	return policyruntime.ResponseMessagePlan{Source: source}, nil
+}
+
+// compileLiteralResponseMessage validates literal response-source fields.
+func compileLiteralResponseMessage(
+	responseMessage config.PolicyResponseMessageConfig,
+	source string,
+	path string,
+) (policyruntime.ResponseMessagePlan, error) {
+	if responseMessage.Text == "" ||
+		responseMessage.I18NKey != "" ||
+		responseMessage.Attribute != "" ||
+		responseMessage.Detail != "" {
+		return policyruntime.ResponseMessagePlan{}, configPathError(path, "must contain only text for literal")
+	}
+
+	return policyruntime.ResponseMessagePlan{Source: source, Literal: responseMessage.Text}, nil
 }
 
 func compileI18NResponseMessage(
@@ -1211,46 +1405,17 @@ func compileEffectArgs(id string, input map[string]any, path string) (map[string
 func compileLuaActionDispatchArgs(input map[string]any, path string) (map[string]any, error) {
 	args := make(map[string]any, len(input))
 	for key, value := range input {
-		switch key {
-		case policy.ObligationArgAction:
-			actionName, ok := value.(string)
-			if !ok {
-				return nil, configPathError(childPath(path, key), "must be a string")
-			}
-
-			if !policy.LuaActionDispatchActionAllowed(actionName) {
-				return nil, configPathError(childPath(path, key), "must be an allowed Lua action")
-			}
-
-			args[key] = actionName
-		case policy.ObligationArgEnvironment:
-			environmentName, ok := value.(string)
-			if !ok {
-				return nil, configPathError(childPath(path, key), "must be a string")
-			}
-
-			args[key] = environmentName
-		case policy.ObligationArgFeature:
-			featureName, ok := value.(string)
-			if !ok {
-				return nil, configPathError(childPath(path, key), "must be a string")
-			}
-
-			if strings.TrimSpace(featureName) == "" {
-				return nil, configPathError(childPath(path, key), "must not be empty")
-			}
-
-			args[key] = featureName
-		case policy.ObligationArgWait:
-			wait, ok := value.(bool)
-			if !ok {
-				return nil, configPathError(childPath(path, key), "must be a boolean")
-			}
-
-			args[key] = wait
-		default:
+		compiler, ok := luaActionDispatchArgCompilers[key]
+		if !ok {
 			return nil, configPathError(childPath(path, key), "is not supported")
 		}
+
+		compiled, err := compiler(value, childPath(path, key))
+		if err != nil {
+			return nil, err
+		}
+
+		args[key] = compiled
 	}
 
 	if _, ok := args[policy.ObligationArgAction]; !ok {
@@ -1258,4 +1423,52 @@ func compileLuaActionDispatchArgs(input map[string]any, path string) (map[string
 	}
 
 	return args, nil
+}
+
+// compileLuaActionNameArg validates the required Lua action name argument.
+func compileLuaActionNameArg(value any, path string) (any, error) {
+	actionName, ok := value.(string)
+	if !ok {
+		return nil, configPathError(path, "must be a string")
+	}
+
+	if !policy.LuaActionDispatchActionAllowed(actionName) {
+		return nil, configPathError(path, "must be an allowed Lua action")
+	}
+
+	return actionName, nil
+}
+
+// compileLuaActionStringArg validates simple Lua action string arguments.
+func compileLuaActionStringArg(value any, path string) (any, error) {
+	stringValue, ok := value.(string)
+	if !ok {
+		return nil, configPathError(path, "must be a string")
+	}
+
+	return stringValue, nil
+}
+
+// compileLuaActionFeatureArg validates non-empty Lua action feature names.
+func compileLuaActionFeatureArg(value any, path string) (any, error) {
+	featureName, err := compileLuaActionStringArg(value, path)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.TrimSpace(featureName.(string)) == "" {
+		return nil, configPathError(path, "must not be empty")
+	}
+
+	return featureName, nil
+}
+
+// compileLuaActionWaitArg validates Lua action wait flags.
+func compileLuaActionWaitArg(value any, path string) (any, error) {
+	wait, ok := value.(bool)
+	if !ok {
+		return nil, configPathError(path, "must be a boolean")
+	}
+
+	return wait, nil
 }

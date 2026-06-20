@@ -47,6 +47,16 @@ type mockLDAPConnection struct {
 	modifyError error
 }
 
+type lookupRequestCase struct {
+	name              string
+	poolType          int
+	initialConnStates []definitions.LDAPState
+	expectedBusyConns int
+	mockConnError     error
+	mockBindError     error
+	expectError       bool
+}
+
 func (m *mockLDAPConnection) SetConn(_ *ldap.Conn) {}
 
 func (m *mockLDAPConnection) IsClosing() bool { return false }
@@ -109,17 +119,9 @@ func (m *mockLDAPConnection) Unbind() error {
 }
 
 func TestHandleLookupRequest(t *testing.T) {
-	// Initialize default config for LDAPConfigConnectAbortTimeout
-	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+	setupLDAPPoolTestConfig()
 
-	tests := []struct {
-		name              string
-		poolType          int
-		initialConnStates []definitions.LDAPState
-		expectedBusyConns int
-		mockConnError     error
-		mockBindError     error
-	}{
+	tests := []lookupRequestCase{
 		{
 			name:              "single_connection_available",
 			poolType:          definitions.LDAPPoolLookup,
@@ -131,6 +133,7 @@ func TestHandleLookupRequest(t *testing.T) {
 			poolType:          definitions.LDAPPoolLookup,
 			initialConnStates: []definitions.LDAPState{definitions.LDAPStateBusy, definitions.LDAPStateBusy},
 			expectedBusyConns: 2,
+			expectError:       true,
 		},
 		{
 			name:              "connection_needs_binding",
@@ -144,81 +147,97 @@ func TestHandleLookupRequest(t *testing.T) {
 			initialConnStates: []definitions.LDAPState{definitions.LDAPStateClosed},
 			mockBindError:     assert.AnError,
 			expectedBusyConns: 0,
+			expectError:       true,
 		},
 	}
-
-	log.SetupLogging(definitions.LogLevelNone, false, false, false, "")
-
-	config.SetTestFile(&config.FileSettings{
-		Server: &config.ServerSection{
-			Log: config.Log{
-				DbgModules: make([]*config.DbgModule, 0),
-			},
-		},
-		LDAP: &config.LDAPSection{
-			Config: &config.LDAPConf{
-				ConnectAbortTimeout: 100 * time.Millisecond,
-			},
-		},
-	})
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			mockConns := make([]LDAPConnection, len(tc.initialConnStates))
-			for i, state := range tc.initialConnStates {
-				mockConns[i] = &mockLDAPConnection{
-					state:     int32(state),
-					connError: tc.mockConnError,
-					bindError: tc.mockBindError,
-				}
-			}
-
 			ctx := t.Context()
+			mockConns := newLookupMockConnections(tc)
+			pool := newLookupTestPool(ctx, tc.poolType, mockConns)
 
-			dummyLDAPConf := make([]*config.LDAPConf, 0)
-			dummyLDAPConf = append(dummyLDAPConf, &config.LDAPConf{})
-
-			pool := &ldapPoolImpl{
-				poolType: tc.poolType,
-				name:     "test-pool",
-				ctx:      ctx,
-				conn:     mockConns,
-				conf:     dummyLDAPConf,
-				poolSize: len(mockConns),
-				tokens:   make(chan Token, len(mockConns)),
-				cfg:      config.GetFile(),
-			}
-
-			// Prefill tokens to simulate available capacity equal to poolSize
-			for range mockConns {
-				pool.tokens <- Token{}
-			}
-
-			// Reset metrics (you may skip if not using real stats library)
 			stats.GetMetrics().GetLdapPoolStatus().WithLabelValues(pool.name).Set(0)
 
-			// Call the method
-			assert.NoError(t, pool.HandleLookupRequest(&bktype.LDAPRequest{
+			err := pool.HandleLookupRequest(&bktype.LDAPRequest{
 				GUID:              tc.name,
 				HTTPClientContext: ctx,
-			}))
+			})
 
-			// Give goroutines time to execute
-			time.Sleep(50 * time.Millisecond)
-
-			// Validate states of connections
-			busyCount := 0
-
-			for _, conn := range mockConns {
-				if conn.(*mockLDAPConnection).GetState() == definitions.LDAPStateBusy {
-					busyCount++
-				}
-			}
-
-			// Assert the expected behavior
-			assert.Equal(t, tc.expectedBusyConns, busyCount)
+			assertLookupRequestCase(t, tc, err, mockConns)
 		})
 	}
+}
+
+// setupLDAPPoolTestConfig installs a minimal LDAP pool test configuration.
+func setupLDAPPoolTestConfig() {
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "")
+	config.SetTestFile(&config.FileSettings{
+		Server: &config.ServerSection{Log: config.Log{DbgModules: make([]*config.DbgModule, 0)}},
+		LDAP:   &config.LDAPSection{Config: &config.LDAPConf{ConnectAbortTimeout: 100 * time.Millisecond}},
+	})
+}
+
+// newLookupMockConnections builds mock connections for one lookup request case.
+func newLookupMockConnections(tc lookupRequestCase) []LDAPConnection {
+	mockConns := make([]LDAPConnection, len(tc.initialConnStates))
+	for i, state := range tc.initialConnStates {
+		mockConns[i] = &mockLDAPConnection{
+			state:     int32(state),
+			connError: tc.mockConnError,
+			bindError: tc.mockBindError,
+		}
+	}
+
+	return mockConns
+}
+
+// newLookupTestPool creates a lookup test pool with one token per mock connection.
+func newLookupTestPool(ctx context.Context, poolType int, mockConns []LDAPConnection) *ldapPoolImpl {
+	pool := &ldapPoolImpl{
+		poolType: poolType,
+		name:     "test-pool",
+		ctx:      ctx,
+		conn:     mockConns,
+		conf:     []*config.LDAPConf{{}},
+		poolSize: len(mockConns),
+		tokens:   make(chan Token, len(mockConns)),
+		cfg:      config.GetFile(),
+	}
+
+	for range mockConns {
+		pool.tokens <- Token{}
+	}
+
+	return pool
+}
+
+// assertLookupRequestCase verifies lookup request errors and final connection states.
+func assertLookupRequestCase(t *testing.T, tc lookupRequestCase, err error, mockConns []LDAPConnection) {
+	t.Helper()
+
+	if tc.expectError {
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, srverrors.ErrLDAPPoolExhausted)
+	} else {
+		assert.NoError(t, err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, tc.expectedBusyConns, busyConnectionCount(mockConns))
+}
+
+// busyConnectionCount counts mock connections left in the busy state.
+func busyConnectionCount(mockConns []LDAPConnection) int {
+	busyCount := 0
+
+	for _, conn := range mockConns {
+		if conn.(*mockLDAPConnection).GetState() == definitions.LDAPStateBusy {
+			busyCount++
+		}
+	}
+
+	return busyCount
 }
 
 func TestSemaphoreTimeout(t *testing.T) {
@@ -262,68 +281,67 @@ func TestNegativeCacheKeyUsesExpandedFilter(t *testing.T) {
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "")
 
 	ctx := t.Context()
+	pool, mockConn := newExpandedFilterNegativeCachePool(ctx)
 
-	conf := &config.LDAPConf{NegativeCacheTTL: 5 * time.Minute}
+	// Request A: non-existing user. Should set a negative cache entry for the
+	// expanded filter containing "missing@example.org".
+	missingReply := processExpandedFilterLookup(ctx, pool, "r1", "missing@example.org")
+	assert.NoError(t, missingReply.Err)
+	assert.Empty(t, missingReply.Result)
 
-	m := &mockLDAPConnection{}
-	m.SetState(definitions.LDAPStateBusy)
-	m.searchFunc = func(req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
-		// processLookupSearchRequest expands macros/%s before calling Search(), so
-		// we expect the filter to already contain the username.
-		switch {
-		case strings.Contains(req.Filter, "missing@example.org"):
-			return nil, nil, nil
-		case strings.Contains(req.Filter, "exists@example.org"):
-			return bktype.AttributeMapping{definitions.DistinguishedName: []any{"cn=exists,dc=example,dc=org"}}, nil, nil
-		default:
-			return nil, nil, nil
-		}
-	}
+	// Request B: existing user. Must NOT be blocked by the negative cache entry
+	// from Request A; Search() must be called again.
+	existingReply := processExpandedFilterLookup(ctx, pool, "r2", "exists@example.org")
+	assert.NoError(t, existingReply.Err)
+	assert.NotEmpty(t, existingReply.Result)
+	assert.Contains(t, existingReply.Result, definitions.DistinguishedName)
+
+	assert.Equal(t, int32(2), atomic.LoadInt32(&mockConn.searchCalls))
+}
+
+// newExpandedFilterNegativeCachePool creates a pool that distinguishes expanded filter values.
+func newExpandedFilterNegativeCachePool(ctx context.Context) (*ldapPoolImpl, *mockLDAPConnection) {
+	mockConn := &mockLDAPConnection{}
+	mockConn.SetState(definitions.LDAPStateBusy)
+	mockConn.searchFunc = expandedFilterSearchFunc
 
 	pool := &ldapPoolImpl{
 		poolType: definitions.LDAPPoolLookup,
 		name:     "test-negcache-expanded-filter",
 		ctx:      ctx,
-		conn:     []LDAPConnection{m},
-		conf:     []*config.LDAPConf{conf},
+		conn:     []LDAPConnection{mockConn},
+		conf:     []*config.LDAPConf{{NegativeCacheTTL: 5 * time.Minute}},
 		poolSize: 1,
 		cfg:      config.GetFile(),
 	}
 
-	// Request A: non-existing user. Should set a negative cache entry for the
-	// expanded filter containing "missing@example.org".
-	{
-		reply := &bktype.LDAPReply{}
-		pool.processLookupSearchRequest(0, &bktype.LDAPRequest{
-			GUID:              "r1",
-			Command:           definitions.LDAPSearch,
-			BaseDN:            "dc=example,dc=org",
-			Filter:            "(mail=%s)",
-			SearchAttributes:  []string{definitions.DistinguishedName},
-			MacroSource:       &util.MacroSource{Username: "missing@example.org"},
-			HTTPClientContext: ctx,
-		}, reply)
-		assert.NoError(t, reply.Err)
-		assert.Empty(t, reply.Result)
-	}
+	return pool, mockConn
+}
 
-	// Request B: existing user. Must NOT be blocked by the negative cache entry
-	// from Request A; Search() must be called again.
-	{
-		reply := &bktype.LDAPReply{}
-		pool.processLookupSearchRequest(0, &bktype.LDAPRequest{
-			GUID:              "r2",
-			Command:           definitions.LDAPSearch,
-			BaseDN:            "dc=example,dc=org",
-			Filter:            "(mail=%s)",
-			SearchAttributes:  []string{definitions.DistinguishedName},
-			MacroSource:       &util.MacroSource{Username: "exists@example.org"},
-			HTTPClientContext: ctx,
-		}, reply)
-		assert.NoError(t, reply.Err)
-		assert.NotEmpty(t, reply.Result)
-		assert.Contains(t, reply.Result, definitions.DistinguishedName)
+// expandedFilterSearchFunc returns a hit only for the expanded existing-user filter.
+func expandedFilterSearchFunc(req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
+	switch {
+	case strings.Contains(req.Filter, "missing@example.org"):
+		return nil, nil, nil
+	case strings.Contains(req.Filter, "exists@example.org"):
+		return bktype.AttributeMapping{definitions.DistinguishedName: []any{"cn=exists,dc=example,dc=org"}}, nil, nil
+	default:
+		return nil, nil, nil
 	}
+}
 
-	assert.Equal(t, int32(2), atomic.LoadInt32(&m.searchCalls))
+// processExpandedFilterLookup runs one lookup request through the negative-cache path.
+func processExpandedFilterLookup(ctx context.Context, pool *ldapPoolImpl, guid string, username string) *bktype.LDAPReply {
+	reply := &bktype.LDAPReply{}
+	pool.processLookupSearchRequest(0, &bktype.LDAPRequest{
+		GUID:              guid,
+		Command:           definitions.LDAPSearch,
+		BaseDN:            "dc=example,dc=org",
+		Filter:            "(mail=%s)",
+		SearchAttributes:  []string{definitions.DistinguishedName},
+		MacroSource:       &util.MacroSource{Username: username},
+		HTTPClientContext: ctx,
+	}, reply)
+
+	return reply
 }

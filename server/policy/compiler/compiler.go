@@ -66,6 +66,11 @@ type compiledSnapshotParts struct {
 	requestAttrs policyruntime.RequestAttributeSettings
 }
 
+type compiledEffectRegistries struct {
+	obligations map[string]policyruntime.EffectDefinition
+	advice      map[string]policyruntime.EffectDefinition
+}
+
 // NewCompiler returns the default policy snapshot compiler.
 func NewCompiler() *SnapshotCompiler {
 	return &SnapshotCompiler{
@@ -117,23 +122,12 @@ func buildSnapshotParts(ctx context.Context, file config.File, policyConfig conf
 	fsmEvents := builtinFSMEventRegistry()
 	responses := builtinResponseRegistry()
 
-	obligations := builtinObligationRegistry()
-	if err := registerNativePluginEffects(obligations); err != nil {
+	effects, err := compileEffectRegistries()
+	if err != nil {
 		return compiledSnapshotParts{}, err
 	}
 
-	advice := builtinAdviceRegistry()
-
-	policies, err := compilePolicies(compilePolicyInput{
-		configs:     policyConfig.Policies,
-		checks:      checks,
-		attributes:  attributes,
-		sets:        sets,
-		fsmEvents:   fsmEvents,
-		responses:   responses,
-		obligations: obligations,
-		advice:      advice,
-	})
+	policies, err := compileSnapshotPolicies(policyConfig, checks, attributes, sets, fsmEvents, responses, effects)
 	if err != nil {
 		return compiledSnapshotParts{}, err
 	}
@@ -151,10 +145,45 @@ func buildSnapshotParts(ctx context.Context, file config.File, policyConfig conf
 		attributes:   attributes,
 		checkTypes:   checkTypes,
 		responses:    responses,
-		obligations:  obligations,
-		advice:       advice,
+		obligations:  effects.obligations,
+		advice:       effects.advice,
 		fsmEvents:    fsmEvents,
 		requestAttrs: requestAttrs,
+	}, nil
+}
+
+// compileSnapshotPolicies builds the policy list from resolved snapshot registries.
+func compileSnapshotPolicies(
+	policyConfig config.AuthPolicySection,
+	checks []policyruntime.CompiledCheck,
+	attributes map[string]policyregistry.AttributeDefinition,
+	sets policyruntime.CompiledSets,
+	fsmEvents map[string]policyruntime.FSMEventDefinition,
+	responses map[string]policyruntime.ResponseDefinition,
+	effects compiledEffectRegistries,
+) ([]policyruntime.CompiledPolicy, error) {
+	return compilePolicies(compilePolicyInput{
+		configs:     policyConfig.Policies,
+		checks:      checks,
+		attributes:  attributes,
+		sets:        sets,
+		fsmEvents:   fsmEvents,
+		responses:   responses,
+		obligations: effects.obligations,
+		advice:      effects.advice,
+	})
+}
+
+// compileEffectRegistries creates built-in effect registries and adds native plugin obligations.
+func compileEffectRegistries() (compiledEffectRegistries, error) {
+	obligations := builtinObligationRegistry()
+	if err := registerNativePluginEffects(obligations); err != nil {
+		return compiledEffectRegistries{}, err
+	}
+
+	return compiledEffectRegistries{
+		obligations: obligations,
+		advice:      builtinAdviceRegistry(),
 	}, nil
 }
 

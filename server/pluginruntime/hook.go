@@ -72,7 +72,25 @@ func NewHookRequestFromHTTPRequest(
 	headers := redactedHeaders(headersFromHTTPRequest(request), opts.secretHeaders)
 	query := queryFromHTTPRequest(request)
 	method, path, userAgent, remoteHost, remotePort := requestFields(request)
+	metadata = hookMetadataWithRequestDefaults(metadata, request, remoteHost, remotePort)
 
+	return pluginapi.HookRequest{
+		Snapshot: hookRequestSnapshot(method, userAgent, cloneHeaderValues(headers), metadata),
+		Headers:  cloneHeaderValues(headers),
+		Query:    query,
+		Body:     slices.Clone(body),
+		Path:     path,
+		Method:   method,
+	}
+}
+
+// hookMetadataWithRequestDefaults fills metadata from the HTTP request when absent.
+func hookMetadataWithRequestDefaults(
+	metadata HookRequestMetadata,
+	request *http.Request,
+	remoteHost string,
+	remotePort string,
+) HookRequestMetadata {
 	if metadata.ClientIP == "" {
 		metadata.ClientIP = remoteHost
 	}
@@ -85,59 +103,70 @@ func NewHookRequestFromHTTPRequest(
 		metadata.ClientHost = request.Host
 	}
 
-	snapshotHeaders := cloneHeaderValues(headers)
+	return metadata
+}
 
-	return pluginapi.HookRequest{
-		Snapshot: pluginapi.RequestSnapshot{
-			Headers:           snapshotHeaders,
-			Session:           metadata.Session,
-			ExternalSessionID: metadata.ExternalSessionID,
-			Service:           metadata.Service,
-			Protocol:          metadata.Protocol,
-			Method:            method,
-			Username:          metadata.Username,
-			Account:           metadata.Account,
-			AccountField:      metadata.AccountField,
-			UniqueUserID:      metadata.UniqueUserID,
-			DisplayName:       metadata.DisplayName,
-			ClientIP:          metadata.ClientIP,
-			ClientPort:        metadata.ClientPort,
-			ClientNet:         metadata.ClientNet,
-			ClientHost:        metadata.ClientHost,
-			ClientID:          metadata.ClientID,
-			UserAgent:         userAgent,
-			LocalIP:           metadata.LocalIP,
-			LocalPort:         metadata.LocalPort,
-			OIDCCID:           metadata.OIDCCID,
-			SAMLEntityID:      metadata.SAMLEntityID,
-			AuthLoginAttempt:  metadata.AuthLoginAttempt,
-			IDP:               idPInfoFromHookMetadata(metadata),
-			Diagnostics: pluginapi.RequestDiagnostics{
-				StatusMessage:     metadata.StatusMessage,
-				BruteForceName:    metadata.BruteForceName,
-				EnvironmentName:   metadata.EnvironmentName,
-				BruteForceCounter: metadata.BruteForceCounter,
-				HTTPStatus:        metadata.HTTPStatus,
-			},
-			Runtime: pluginapi.RuntimeFlags{
-				Debug:                    metadata.Debug,
-				LocalRequest:             metadata.LocalRequest || metadata.NoAuth,
-				NoAuth:                   metadata.NoAuth || metadata.LocalRequest,
-				UserFound:                metadata.UserFound,
-				Authenticated:            metadata.Authenticated,
-				Authorized:               metadata.Authorized,
-				Repeating:                metadata.Repeating,
-				RWP:                      metadata.RWP,
-				EnvironmentRejected:      metadata.EnvironmentRejected,
-				EnvironmentStageExpected: metadata.EnvironmentStageExpected,
-				SubjectStageExpected:     metadata.SubjectStageExpected,
-			},
-		},
-		Headers: cloneHeaderValues(headers),
-		Query:   query,
-		Body:    slices.Clone(body),
-		Path:    path,
-		Method:  method,
+// hookRequestSnapshot builds the immutable API-level hook request snapshot.
+func hookRequestSnapshot(
+	method string,
+	userAgent string,
+	headers map[string][]string,
+	metadata HookRequestMetadata,
+) pluginapi.RequestSnapshot {
+	return pluginapi.RequestSnapshot{
+		Headers:           headers,
+		Session:           metadata.Session,
+		ExternalSessionID: metadata.ExternalSessionID,
+		Service:           metadata.Service,
+		Protocol:          metadata.Protocol,
+		Method:            method,
+		Username:          metadata.Username,
+		Account:           metadata.Account,
+		AccountField:      metadata.AccountField,
+		UniqueUserID:      metadata.UniqueUserID,
+		DisplayName:       metadata.DisplayName,
+		ClientIP:          metadata.ClientIP,
+		ClientPort:        metadata.ClientPort,
+		ClientNet:         metadata.ClientNet,
+		ClientHost:        metadata.ClientHost,
+		ClientID:          metadata.ClientID,
+		UserAgent:         userAgent,
+		LocalIP:           metadata.LocalIP,
+		LocalPort:         metadata.LocalPort,
+		OIDCCID:           metadata.OIDCCID,
+		SAMLEntityID:      metadata.SAMLEntityID,
+		AuthLoginAttempt:  metadata.AuthLoginAttempt,
+		IDP:               idPInfoFromHookMetadata(metadata),
+		Diagnostics:       hookRequestDiagnostics(metadata),
+		Runtime:           hookRuntimeFlags(metadata),
+	}
+}
+
+// hookRequestDiagnostics maps hook metadata to public request diagnostics.
+func hookRequestDiagnostics(metadata HookRequestMetadata) pluginapi.RequestDiagnostics {
+	return pluginapi.RequestDiagnostics{
+		StatusMessage:     metadata.StatusMessage,
+		BruteForceName:    metadata.BruteForceName,
+		EnvironmentName:   metadata.EnvironmentName,
+		BruteForceCounter: metadata.BruteForceCounter,
+		HTTPStatus:        metadata.HTTPStatus,
+	}
+}
+
+// hookRuntimeFlags maps hook metadata to public runtime flags.
+func hookRuntimeFlags(metadata HookRequestMetadata) pluginapi.RuntimeFlags {
+	return pluginapi.RuntimeFlags{
+		Debug:                    metadata.Debug,
+		LocalRequest:             metadata.LocalRequest || metadata.NoAuth,
+		NoAuth:                   metadata.NoAuth || metadata.LocalRequest,
+		UserFound:                metadata.UserFound,
+		Authenticated:            metadata.Authenticated,
+		Authorized:               metadata.Authorized,
+		Repeating:                metadata.Repeating,
+		RWP:                      metadata.RWP,
+		EnvironmentRejected:      metadata.EnvironmentRejected,
+		EnvironmentStageExpected: metadata.EnvironmentStageExpected,
+		SubjectStageExpected:     metadata.SubjectStageExpected,
 	}
 }
 

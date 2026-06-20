@@ -375,12 +375,12 @@ func TestSupportedIDPDiscoveryClientUsesPublicDocuments(t *testing.T) {
 	t.Run("openapi yaml", func(t *testing.T) {
 		client := newSupportedIDPDiscoveryClient(t, supportedOpenAPIYAMLRoute(
 			"/.well-known/openapi.yaml",
-			"Nauthilus IDP API",
+			"Nauthilus IdP API",
 		))
 
 		requireRawDocumentResponse(t, func(ctx context.Context) (*http.Response, error) {
 			return client.GetPublicOpenAPIYAML(ctx)
-		}, "Nauthilus IDP API")
+		}, "Nauthilus IdP API")
 	})
 }
 

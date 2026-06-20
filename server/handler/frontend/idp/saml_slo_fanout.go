@@ -55,6 +55,14 @@ type sloFanoutResult struct {
 	Failures   []sloFanoutFailure
 }
 
+type backChannelSLODelivery struct {
+	Client         *http.Client
+	FormBody       string
+	Destination    string
+	RequestTimeout time.Duration
+	Attempts       int
+}
+
 const (
 	sloBackChannelResponseBodyLimit = 4 * 1024
 	sloBackChannelRetryBaseDelay    = 150 * time.Millisecond
@@ -112,13 +120,9 @@ func (h *SAMLHandler) orchestrateIDPInitiatedSLOFanout(
 		return nil, fmt.Errorf("slo fanout transaction is missing")
 	}
 
-	account = strings.TrimSpace(account)
-	if account == "" {
-		account = strings.TrimSpace(transaction.Account)
-	}
-
-	if account == "" {
-		return nil, fmt.Errorf("slo fanout account is missing")
+	account, err := sloFanoutAccount(transaction, account)
+	if err != nil {
+		return nil, err
 	}
 
 	sessions, err := h.lookupSLOParticipantSessions(ctx, account)
@@ -126,70 +130,22 @@ func (h *SAMLHandler) orchestrateIDPInitiatedSLOFanout(
 		return nil, fmt.Errorf("cannot load slo fanout participants: %w", err)
 	}
 
-	now := time.Now().UTC()
-
-	if transaction.Status == slodomain.SLOStatusLocalDone {
-		if err = transaction.TransitionTo(slodomain.SLOStatusFanoutRunning, now); err != nil {
-			return nil, err
-		}
-	}
-
-	if transaction.Status != slodomain.SLOStatusFanoutRunning {
-		return nil, fmt.Errorf("slo fanout requires transaction status local_done or fanout_running, got %q", transaction.Status)
+	if err = ensureSLOFanoutRunning(transaction, time.Now().UTC()); err != nil {
+		return nil, err
 	}
 
 	frontChannelEnabled := h.sloFrontChannelEnabled()
 	backChannelEnabled := h.sloBackChannelEnabled()
 	maxParticipants := h.sloMaxParticipants()
 
-	if !frontChannelEnabled && !backChannelEnabled {
-		if err = transaction.TransitionTo(slodomain.SLOStatusDone, now); err != nil {
-			return nil, err
-		}
-
-		recordSLOTerminalStatus(slodomain.SLODirectionIDPInitiated, slodomain.SLOStatusDone)
-		h.auditSLOEvent(
-			ctx,
-			"fanout_completed",
-			transaction.TransactionID,
-			transaction.RootRequestID,
-			"",
-			samlMetricLabelStatus, slodomain.SLOStatusDone,
-			"participants_total", len(sessions),
-			"fanout_disabled", true,
-		)
-
-		return &sloFanoutResult{}, nil
-	}
-
-	if len(sessions) == 0 {
-		if err = transaction.TransitionTo(slodomain.SLOStatusDone, now); err != nil {
-			return nil, err
-		}
-
-		recordSLOTerminalStatus(slodomain.SLODirectionIDPInitiated, slodomain.SLOStatusDone)
-		h.auditSLOEvent(
-			ctx,
-			"fanout_completed",
-			transaction.TransactionID,
-			transaction.RootRequestID,
-			"",
-			samlMetricLabelStatus, slodomain.SLOStatusDone,
-			"participants_total", 0,
-		)
-
-		return &sloFanoutResult{}, nil
+	if result, done, err := h.completeSLOFanoutEarly(ctx, transaction, sessions, frontChannelEnabled, backChannelEnabled); done || err != nil {
+		return result, err
 	}
 
 	sessions = slices.Clone(sessions)
 	slices.SortFunc(sessions, compareSLOParticipantSessions)
 
-	idpObj, err := h.getSAMLIDP()
-	if err != nil {
-		return nil, err
-	}
-
-	signingSP, err := h.newSLOSigningServiceProvider(idpObj)
+	idpObj, signingSP, err := h.sloFanoutSigningContext()
 	if err != nil {
 		return nil, err
 	}
@@ -199,80 +155,10 @@ func (h *SAMLHandler) orchestrateIDPInitiatedSLOFanout(
 		Failures:   make([]sloFanoutFailure, 0),
 	}
 
-	if maxParticipants > 0 && len(sessions) > maxParticipants {
-		for _, session := range sessions[maxParticipants:] {
-			result.Failures = append(result.Failures, sloFanoutFailure{
-				EntityID: strings.TrimSpace(session.SPEntityID),
-				Err:      fmt.Errorf("slo max participants limit reached (%d)", maxParticipants),
-			})
-		}
-
-		sessions = sessions[:maxParticipants]
-	}
+	sessions = trimSLOFanoutSessionsToLimit(sessions, maxParticipants, result)
 
 	for _, session := range sessions {
-		if backChannelEnabled {
-			backChannelDispatch, delivered, backChannelErr := h.tryBackChannelSLODispatch(ctx, transaction, session, idpObj, signingSP)
-			if backChannelErr != nil {
-				if !frontChannelEnabled {
-					result.Failures = append(result.Failures, sloFanoutFailure{
-						EntityID: strings.TrimSpace(session.SPEntityID),
-						Err:      fmt.Errorf("slo back-channel dispatch failed and front-channel fallback is disabled: %w", backChannelErr),
-					})
-
-					continue
-				}
-
-				util.DebugModuleWithCfg(
-					ctx,
-					h.deps.Cfg,
-					h.deps.Logger,
-					definitions.DbgIdp,
-					definitions.LogKeyMsg, "SAML SLO back-channel dispatch failed, falling back to front-channel",
-					"transaction_id", util.WithNotAvailable(transaction.TransactionID),
-					"sp_entity_id", util.WithNotAvailable(strings.TrimSpace(session.SPEntityID)),
-					"error", backChannelErr.Error(),
-				)
-			} else if delivered {
-				transaction.Participants = append(transaction.Participants, backChannelDispatch.Participant)
-
-				util.DebugModuleWithCfg(
-					ctx,
-					h.deps.Cfg,
-					h.deps.Logger,
-					definitions.DbgIdp,
-					definitions.LogKeyMsg, "SAML SLO back-channel dispatch completed",
-					"transaction_id", util.WithNotAvailable(transaction.TransactionID),
-					"sp_entity_id", util.WithNotAvailable(backChannelDispatch.Participant.EntityID),
-					"request_id", util.WithNotAvailable(backChannelDispatch.Participant.RequestID),
-					"destination", util.WithNotAvailable(backChannelDispatch.Destination),
-				)
-
-				continue
-			}
-		}
-
-		if !frontChannelEnabled {
-			result.Failures = append(result.Failures, sloFanoutFailure{
-				EntityID: strings.TrimSpace(session.SPEntityID),
-				Err:      fmt.Errorf("slo front-channel fanout is disabled"),
-			})
-
-			continue
-		}
-
-		dispatch, err := h.buildSLOFanoutDispatch(transaction, session, idpObj, signingSP)
-		if err != nil {
-			result.Failures = append(result.Failures, sloFanoutFailure{
-				EntityID: strings.TrimSpace(session.SPEntityID),
-				Err:      err,
-			})
-
-			continue
-		}
-
-		transaction.Participants = append(transaction.Participants, dispatch.Participant)
-		result.Dispatches = append(result.Dispatches, dispatch)
+		h.dispatchSLOFanoutSession(ctx, transaction, session, idpObj, signingSP, frontChannelEnabled, backChannelEnabled, result)
 	}
 
 	if err = transaction.Validate(); err != nil {
@@ -280,27 +166,260 @@ func (h *SAMLHandler) orchestrateIDPInitiatedSLOFanout(
 	}
 
 	if len(result.Dispatches) == 0 {
-		nextStatus := slodomain.SLOStatusDone
-		if len(result.Failures) > 0 {
-			nextStatus = slodomain.SLOStatusFailed
-		}
-
-		if err = transaction.TransitionTo(nextStatus, time.Now().UTC()); err != nil {
-			return nil, err
-		}
-
-		recordSLOTerminalStatus(slodomain.SLODirectionIDPInitiated, nextStatus)
-		h.auditSLOEvent(
-			ctx,
-			"fanout_completed",
-			transaction.TransactionID,
-			transaction.RootRequestID,
-			"",
-			samlMetricLabelStatus, nextStatus,
-			"participants_total", len(result.Failures),
-			"participants_failed", len(result.Failures),
-		)
+		return h.completeSLOFanoutWithoutOpenDispatch(ctx, transaction, result)
 	}
+
+	return result, nil
+}
+
+// sloFanoutSigningContext returns the SAML IdP and signing SP used for fanout requests.
+func (h *SAMLHandler) sloFanoutSigningContext() (*saml.IdentityProvider, *saml.ServiceProvider, error) {
+	idpObj, err := h.getSAMLIDP()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	signingSP, err := h.newSLOSigningServiceProvider(idpObj)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return idpObj, signingSP, nil
+}
+
+// sloFanoutAccount returns the explicit account or the transaction account.
+func sloFanoutAccount(transaction *slodomain.Transaction, account string) (string, error) {
+	account = strings.TrimSpace(account)
+	if account == "" {
+		account = strings.TrimSpace(transaction.Account)
+	}
+
+	if account == "" {
+		return "", fmt.Errorf("slo fanout account is missing")
+	}
+
+	return account, nil
+}
+
+// ensureSLOFanoutRunning moves a local-done transaction into fanout-running state.
+func ensureSLOFanoutRunning(transaction *slodomain.Transaction, now time.Time) error {
+	if transaction.Status == slodomain.SLOStatusLocalDone {
+		if err := transaction.TransitionTo(slodomain.SLOStatusFanoutRunning, now); err != nil {
+			return err
+		}
+	}
+
+	if transaction.Status != slodomain.SLOStatusFanoutRunning {
+		return fmt.Errorf("slo fanout requires transaction status local_done or fanout_running, got %q", transaction.Status)
+	}
+
+	return nil
+}
+
+// completeSLOFanoutEarly handles disabled fanout or empty participant sets.
+func (h *SAMLHandler) completeSLOFanoutEarly(
+	ctx context.Context,
+	transaction *slodomain.Transaction,
+	sessions []slodomain.ParticipantSession,
+	frontChannelEnabled bool,
+	backChannelEnabled bool,
+) (*sloFanoutResult, bool, error) {
+	if !frontChannelEnabled && !backChannelEnabled {
+		result, err := h.completeSLOFanoutAsDone(ctx, transaction, len(sessions), "fanout_disabled", true)
+
+		return result, true, err
+	}
+
+	if len(sessions) == 0 {
+		result, err := h.completeSLOFanoutAsDone(ctx, transaction, 0)
+
+		return result, true, err
+	}
+
+	return nil, false, nil
+}
+
+// completeSLOFanoutAsDone marks a fanout with no dispatch work as completed.
+func (h *SAMLHandler) completeSLOFanoutAsDone(
+	ctx context.Context,
+	transaction *slodomain.Transaction,
+	participantsTotal int,
+	extraKeyvals ...any,
+) (*sloFanoutResult, error) {
+	if err := transaction.TransitionTo(slodomain.SLOStatusDone, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+
+	keyvals := []any{
+		samlMetricLabelStatus, slodomain.SLOStatusDone,
+		"participants_total", participantsTotal,
+	}
+	keyvals = append(keyvals, extraKeyvals...)
+
+	recordSLOTerminalStatus(slodomain.SLODirectionIDPInitiated, slodomain.SLOStatusDone)
+	h.auditSLOEvent(ctx, "fanout_completed", transaction.TransactionID, transaction.RootRequestID, "", keyvals...)
+
+	return &sloFanoutResult{}, nil
+}
+
+// trimSLOFanoutSessionsToLimit moves over-limit participants into result failures.
+func trimSLOFanoutSessionsToLimit(
+	sessions []slodomain.ParticipantSession,
+	maxParticipants int,
+	result *sloFanoutResult,
+) []slodomain.ParticipantSession {
+	if maxParticipants <= 0 || len(sessions) <= maxParticipants {
+		return sessions
+	}
+
+	for _, session := range sessions[maxParticipants:] {
+		result.Failures = append(result.Failures, sloFanoutFailure{
+			EntityID: strings.TrimSpace(session.SPEntityID),
+			Err:      fmt.Errorf("slo max participants limit reached (%d)", maxParticipants),
+		})
+	}
+
+	return sessions[:maxParticipants]
+}
+
+// dispatchSLOFanoutSession dispatches one participant through back-channel or front-channel SLO.
+func (h *SAMLHandler) dispatchSLOFanoutSession(
+	ctx context.Context,
+	transaction *slodomain.Transaction,
+	session slodomain.ParticipantSession,
+	idpObj *saml.IdentityProvider,
+	signingSP *saml.ServiceProvider,
+	frontChannelEnabled bool,
+	backChannelEnabled bool,
+	result *sloFanoutResult,
+) {
+	if backChannelEnabled && h.dispatchBackChannelSLOFanoutSession(ctx, transaction, session, idpObj, signingSP, frontChannelEnabled, result) {
+		return
+	}
+
+	if !frontChannelEnabled {
+		result.Failures = append(result.Failures, sloFanoutFailure{
+			EntityID: strings.TrimSpace(session.SPEntityID),
+			Err:      fmt.Errorf("slo front-channel fanout is disabled"),
+		})
+
+		return
+	}
+
+	dispatch, err := h.buildSLOFanoutDispatch(transaction, session, idpObj, signingSP)
+	if err != nil {
+		result.Failures = append(result.Failures, sloFanoutFailure{
+			EntityID: strings.TrimSpace(session.SPEntityID),
+			Err:      err,
+		})
+
+		return
+	}
+
+	transaction.Participants = append(transaction.Participants, dispatch.Participant)
+	result.Dispatches = append(result.Dispatches, dispatch)
+}
+
+// dispatchBackChannelSLOFanoutSession attempts back-channel dispatch and reports whether processing is complete.
+func (h *SAMLHandler) dispatchBackChannelSLOFanoutSession(
+	ctx context.Context,
+	transaction *slodomain.Transaction,
+	session slodomain.ParticipantSession,
+	idpObj *saml.IdentityProvider,
+	signingSP *saml.ServiceProvider,
+	frontChannelEnabled bool,
+	result *sloFanoutResult,
+) bool {
+	backChannelDispatch, delivered, backChannelErr := h.tryBackChannelSLODispatch(ctx, transaction, session, idpObj, signingSP)
+	if backChannelErr != nil {
+		if !frontChannelEnabled {
+			result.Failures = append(result.Failures, sloFanoutFailure{
+				EntityID: strings.TrimSpace(session.SPEntityID),
+				Err:      fmt.Errorf("slo back-channel dispatch failed and front-channel fallback is disabled: %w", backChannelErr),
+			})
+
+			return true
+		}
+
+		h.logBackChannelSLOFallback(ctx, transaction, session, backChannelErr)
+
+		return false
+	}
+
+	if !delivered {
+		return false
+	}
+
+	transaction.Participants = append(transaction.Participants, backChannelDispatch.Participant)
+	h.logBackChannelSLODelivered(ctx, transaction, backChannelDispatch)
+
+	return true
+}
+
+// logBackChannelSLOFallback records a fallback from back-channel to front-channel dispatch.
+func (h *SAMLHandler) logBackChannelSLOFallback(
+	ctx context.Context,
+	transaction *slodomain.Transaction,
+	session slodomain.ParticipantSession,
+	err error,
+) {
+	util.DebugModuleWithCfg(
+		ctx,
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyMsg, "SAML SLO back-channel dispatch failed, falling back to front-channel",
+		"transaction_id", util.WithNotAvailable(transaction.TransactionID),
+		"sp_entity_id", util.WithNotAvailable(strings.TrimSpace(session.SPEntityID)),
+		"error", err.Error(),
+	)
+}
+
+// logBackChannelSLODelivered records a successful back-channel dispatch.
+func (h *SAMLHandler) logBackChannelSLODelivered(
+	ctx context.Context,
+	transaction *slodomain.Transaction,
+	dispatch sloFanoutDispatch,
+) {
+	util.DebugModuleWithCfg(
+		ctx,
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyMsg, "SAML SLO back-channel dispatch completed",
+		"transaction_id", util.WithNotAvailable(transaction.TransactionID),
+		"sp_entity_id", util.WithNotAvailable(dispatch.Participant.EntityID),
+		"request_id", util.WithNotAvailable(dispatch.Participant.RequestID),
+		"destination", util.WithNotAvailable(dispatch.Destination),
+	)
+}
+
+// completeSLOFanoutWithoutOpenDispatch finalizes fanout when no front-channel requests remain pending.
+func (h *SAMLHandler) completeSLOFanoutWithoutOpenDispatch(
+	ctx context.Context,
+	transaction *slodomain.Transaction,
+	result *sloFanoutResult,
+) (*sloFanoutResult, error) {
+	nextStatus := slodomain.SLOStatusDone
+	if len(result.Failures) > 0 {
+		nextStatus = slodomain.SLOStatusFailed
+	}
+
+	if err := transaction.TransitionTo(nextStatus, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+
+	recordSLOTerminalStatus(slodomain.SLODirectionIDPInitiated, nextStatus)
+	h.auditSLOEvent(
+		ctx,
+		"fanout_completed",
+		transaction.TransactionID,
+		transaction.RootRequestID,
+		"",
+		samlMetricLabelStatus, nextStatus,
+		"participants_total", len(result.Failures),
+		"participants_failed", len(result.Failures),
+	)
 
 	return result, nil
 }
@@ -405,18 +524,28 @@ func (h *SAMLHandler) resolveLogoutRequestBackChannelDestination(spEntityID stri
 }
 
 func (h *SAMLHandler) deliverBackChannelSLODispatch(ctx context.Context, dispatch sloFanoutDispatch) error {
+	delivery, err := h.newBackChannelSLODelivery(dispatch)
+	if err != nil {
+		return err
+	}
+
+	return delivery.run(ctx)
+}
+
+// newBackChannelSLODelivery validates dispatch data and prepares an HTTP delivery.
+func (h *SAMLHandler) newBackChannelSLODelivery(dispatch sloFanoutDispatch) (backChannelSLODelivery, error) {
 	if h == nil || h.deps == nil || h.deps.Cfg == nil {
-		return fmt.Errorf("SAML handler configuration is not available")
+		return backChannelSLODelivery{}, fmt.Errorf("SAML handler configuration is not available")
 	}
 
 	destination := strings.TrimSpace(dispatch.Destination)
 	if destination == "" {
-		return fmt.Errorf("back-channel destination is missing")
+		return backChannelSLODelivery{}, fmt.Errorf("back-channel destination is missing")
 	}
 
 	encodedRequest := strings.TrimSpace(dispatch.PostRequest)
 	if encodedRequest == "" {
-		return fmt.Errorf("back-channel SAMLRequest payload is missing")
+		return backChannelSLODelivery{}, fmt.Errorf("back-channel SAMLRequest payload is missing")
 	}
 
 	form := url.Values{}
@@ -430,11 +559,21 @@ func (h *SAMLHandler) deliverBackChannelSLODispatch(ctx context.Context, dispatc
 	requestTimeout := samlCfg.GetSLORequestTimeout()
 	maxRetries := samlCfg.GetSLOBackChannelMaxRetries()
 	attempts := maxRetries + 1
-	client := h.newBackChannelSLOHTTPClient(requestTimeout)
 
+	return backChannelSLODelivery{
+		Client:         h.newBackChannelSLOHTTPClient(requestTimeout),
+		FormBody:       form.Encode(),
+		Destination:    destination,
+		RequestTimeout: requestTimeout,
+		Attempts:       attempts,
+	}, nil
+}
+
+// run executes the prepared back-channel delivery with configured retries.
+func (d backChannelSLODelivery) run(ctx context.Context) error {
 	var lastErr error
 
-	for attempt := 1; attempt <= attempts; attempt++ {
+	for attempt := 1; attempt <= d.Attempts; attempt++ {
 		if attempt > 1 {
 			retryDelay := time.Duration(attempt-1) * sloBackChannelRetryBaseDelay
 			if waitErr := sleepWithContext(ctx, retryDelay); waitErr != nil {
@@ -442,43 +581,16 @@ func (h *SAMLHandler) deliverBackChannelSLODispatch(ctx context.Context, dispatc
 			}
 		}
 
-		requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
-
-		req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, destination, strings.NewReader(form.Encode()))
+		done, retry, err := d.doAttempt(ctx, attempt)
 		if err != nil {
-			cancel()
-
-			return fmt.Errorf("cannot create back-channel logout request: %w", err)
+			lastErr = err
 		}
 
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			cancel()
-
-			lastErr = fmt.Errorf("back-channel request attempt %d/%d failed: %w", attempt, attempts, err)
-
-			continue
-		}
-
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, sloBackChannelResponseBodyLimit))
-		_ = resp.Body.Close()
-
-		cancel()
-
-		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		if done {
 			return nil
 		}
 
-		lastErr = fmt.Errorf(
-			"back-channel request attempt %d/%d returned HTTP %d",
-			attempt,
-			attempts,
-			resp.StatusCode,
-		)
-
-		if !isRetryableBackChannelStatus(resp.StatusCode) {
+		if !retry {
 			return lastErr
 		}
 	}
@@ -488,6 +600,35 @@ func (h *SAMLHandler) deliverBackChannelSLODispatch(ctx context.Context, dispatc
 	}
 
 	return lastErr
+}
+
+// doAttempt performs one back-channel HTTP request attempt.
+func (d backChannelSLODelivery) doAttempt(ctx context.Context, attempt int) (done bool, retry bool, err error) {
+	requestCtx, cancel := context.WithTimeout(ctx, d.RequestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, d.Destination, strings.NewReader(d.FormBody))
+	if err != nil {
+		return false, false, fmt.Errorf("cannot create back-channel logout request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := d.Client.Do(req)
+	if err != nil {
+		return false, true, fmt.Errorf("back-channel request attempt %d/%d failed: %w", attempt, d.Attempts, err)
+	}
+
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, sloBackChannelResponseBodyLimit))
+	_ = resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		return true, false, nil
+	}
+
+	err = fmt.Errorf("back-channel request attempt %d/%d returned HTTP %d", attempt, d.Attempts, resp.StatusCode)
+
+	return false, isRetryableBackChannelStatus(resp.StatusCode), err
 }
 
 func (h *SAMLHandler) newBackChannelSLOHTTPClient(requestTimeout time.Duration) *http.Client {
@@ -559,28 +700,60 @@ func (h *SAMLHandler) buildSLOFanoutDispatchWithBinding(
 	binding slodomain.Binding,
 	destination string,
 ) (sloFanoutDispatch, error) {
+	entityID, destination, err := h.resolveSLOFanoutDispatchTarget(session, destination)
+	if err != nil {
+		return sloFanoutDispatch{}, err
+	}
+
+	nameID, err := sloFanoutDispatchNameID(session, transaction, entityID)
+	if err != nil {
+		return sloFanoutDispatch{}, err
+	}
+
+	binding = resolveLogoutResponseBinding(binding)
+	requestID := "id-" + ksuid.New().String()
+	relayState := sloFanoutRelayState(transaction)
+	logoutRequest := h.newSLOFanoutLogoutRequest(requestID, destination, entityID, nameID, session, idpObj)
+	dispatch := newSLOFanoutDispatch(entityID, nameID, requestID, binding, destination, relayState, session)
+
+	if err = encodeSLOFanoutDispatchBinding(&dispatch, logoutRequest, signingSP); err != nil {
+		return sloFanoutDispatch{}, err
+	}
+
+	return dispatch, nil
+}
+
+// resolveSLOFanoutDispatchTarget resolves the participant entity and destination URL.
+func (h *SAMLHandler) resolveSLOFanoutDispatchTarget(
+	session slodomain.ParticipantSession,
+	destination string,
+) (string, string, error) {
 	entityID := strings.TrimSpace(session.SPEntityID)
 	if entityID == "" {
-		return sloFanoutDispatch{}, fmt.Errorf("slo participant entity id is missing")
+		return "", "", fmt.Errorf("slo participant entity id is missing")
 	}
 
 	destination = strings.TrimSpace(destination)
 	if destination == "" {
-		var err error
+		resolvedDestination, err := h.resolveLogoutRequestDestination(entityID)
 
-		destination, err = h.resolveLogoutRequestDestination(entityID)
-		if err != nil {
-			return sloFanoutDispatch{}, err
-		}
-	} else {
-		parsedDestination, err := parseAbsoluteURL(destination)
-		if err != nil {
-			return sloFanoutDispatch{}, fmt.Errorf("invalid SAML SLO destination for issuer %q: %w", entityID, err)
-		}
-
-		destination = parsedDestination.String()
+		return entityID, resolvedDestination, err
 	}
 
+	parsedDestination, err := parseAbsoluteURL(destination)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid SAML SLO destination for issuer %q: %w", entityID, err)
+	}
+
+	return entityID, parsedDestination.String(), nil
+}
+
+// sloFanoutDispatchNameID resolves the NameID for a participant logout request.
+func sloFanoutDispatchNameID(
+	session slodomain.ParticipantSession,
+	transaction *slodomain.Transaction,
+	entityID string,
+) (string, error) {
 	nameID := strings.TrimSpace(session.NameID)
 	if nameID == "" {
 		nameID = strings.TrimSpace(session.Account)
@@ -591,17 +764,30 @@ func (h *SAMLHandler) buildSLOFanoutDispatchWithBinding(
 	}
 
 	if nameID == "" {
-		return sloFanoutDispatch{}, fmt.Errorf("slo participant NameID is missing for %q", entityID)
+		return "", fmt.Errorf("slo participant NameID is missing for %q", entityID)
 	}
 
-	binding = resolveLogoutResponseBinding(binding)
-	requestID := "id-" + ksuid.New().String()
-	relayState := ""
+	return nameID, nil
+}
 
-	if transaction != nil {
-		relayState = transaction.TransactionID
+// sloFanoutRelayState returns the transaction identifier used as RelayState.
+func sloFanoutRelayState(transaction *slodomain.Transaction) string {
+	if transaction == nil {
+		return ""
 	}
 
+	return transaction.TransactionID
+}
+
+// newSLOFanoutLogoutRequest builds the SAML LogoutRequest for one participant.
+func (h *SAMLHandler) newSLOFanoutLogoutRequest(
+	requestID string,
+	destination string,
+	entityID string,
+	nameID string,
+	session slodomain.ParticipantSession,
+	idpObj *saml.IdentityProvider,
+) *saml.LogoutRequest {
 	logoutRequest := &saml.LogoutRequest{
 		ID:           requestID,
 		Version:      samlProtocolVersion,
@@ -623,7 +809,20 @@ func (h *SAMLHandler) buildSLOFanoutDispatchWithBinding(
 		logoutRequest.SessionIndex = &saml.SessionIndex{Value: sessionIndex}
 	}
 
-	dispatch := sloFanoutDispatch{
+	return logoutRequest
+}
+
+// newSLOFanoutDispatch creates the dispatch envelope tracked by fanout state.
+func newSLOFanoutDispatch(
+	entityID string,
+	nameID string,
+	requestID string,
+	binding slodomain.Binding,
+	destination string,
+	relayState string,
+	session slodomain.ParticipantSession,
+) sloFanoutDispatch {
+	return sloFanoutDispatch{
 		Participant: slodomain.Participant{
 			EntityID:     entityID,
 			NameID:       nameID,
@@ -634,37 +833,62 @@ func (h *SAMLHandler) buildSLOFanoutDispatchWithBinding(
 		RelayState:  relayState,
 		Destination: destination,
 	}
+}
 
-	var err error
-
-	switch binding {
+// encodeSLOFanoutDispatchBinding signs and encodes the dispatch for its binding.
+func encodeSLOFanoutDispatchBinding(
+	dispatch *sloFanoutDispatch,
+	logoutRequest *saml.LogoutRequest,
+	signingSP *saml.ServiceProvider,
+) error {
+	switch dispatch.Participant.Binding {
 	case slodomain.SLOBindingPost:
-		if err = signingSP.SignLogoutRequest(logoutRequest); err != nil {
-			return sloFanoutDispatch{}, fmt.Errorf("cannot sign SLO fanout logout request for %q: %w", entityID, err)
-		}
-
-		document := etree.NewDocument()
-		document.SetRoot(logoutRequest.Element())
-
-		rawRequestXML, encodeErr := document.WriteToBytes()
-		if encodeErr != nil {
-			return sloFanoutDispatch{}, fmt.Errorf("cannot encode POST SLO fanout request for %q: %w", entityID, encodeErr)
-		}
-
-		dispatch.PostRequest = base64.StdEncoding.EncodeToString(rawRequestXML)
-		dispatch.PostBody = string(logoutRequest.Post(dispatch.RelayState))
+		return encodePostSLOFanoutDispatch(dispatch, logoutRequest, signingSP)
 	case slodomain.SLOBindingRedirect:
-		redirectURL, redirectErr := buildSignedRedirectLogoutRequestURL(logoutRequest, dispatch.RelayState, signingSP)
-		if redirectErr != nil {
-			return sloFanoutDispatch{}, fmt.Errorf("cannot sign redirect SLO fanout request for %q: %w", entityID, redirectErr)
-		}
-
-		dispatch.RedirectURL = redirectURL
+		return encodeRedirectSLOFanoutDispatch(dispatch, logoutRequest, signingSP)
 	default:
-		return sloFanoutDispatch{}, fmt.Errorf("unsupported SLO fanout binding %q", binding)
+		return fmt.Errorf("unsupported SLO fanout binding %q", dispatch.Participant.Binding)
+	}
+}
+
+// encodePostSLOFanoutDispatch signs and serializes a POST-binding fanout request.
+func encodePostSLOFanoutDispatch(
+	dispatch *sloFanoutDispatch,
+	logoutRequest *saml.LogoutRequest,
+	signingSP *saml.ServiceProvider,
+) error {
+	if err := signingSP.SignLogoutRequest(logoutRequest); err != nil {
+		return fmt.Errorf("cannot sign SLO fanout logout request for %q: %w", dispatch.Participant.EntityID, err)
 	}
 
-	return dispatch, nil
+	document := etree.NewDocument()
+	document.SetRoot(logoutRequest.Element())
+
+	rawRequestXML, err := document.WriteToBytes()
+	if err != nil {
+		return fmt.Errorf("cannot encode POST SLO fanout request for %q: %w", dispatch.Participant.EntityID, err)
+	}
+
+	dispatch.PostRequest = base64.StdEncoding.EncodeToString(rawRequestXML)
+	dispatch.PostBody = string(logoutRequest.Post(dispatch.RelayState))
+
+	return nil
+}
+
+// encodeRedirectSLOFanoutDispatch signs and serializes a Redirect-binding fanout request.
+func encodeRedirectSLOFanoutDispatch(
+	dispatch *sloFanoutDispatch,
+	logoutRequest *saml.LogoutRequest,
+	signingSP *saml.ServiceProvider,
+) error {
+	redirectURL, err := buildSignedRedirectLogoutRequestURL(logoutRequest, dispatch.RelayState, signingSP)
+	if err != nil {
+		return fmt.Errorf("cannot sign redirect SLO fanout request for %q: %w", dispatch.Participant.EntityID, err)
+	}
+
+	dispatch.RedirectURL = redirectURL
+
+	return nil
 }
 
 func (h *SAMLHandler) resolveLogoutRequestDestination(spEntityID string) (string, error) {

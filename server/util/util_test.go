@@ -166,13 +166,30 @@ func TestGetParameters_ShortDecodedLength(t *testing.T) {
 }
 
 func TestComparePasswords(t *testing.T) {
-	var testCases = []struct {
-		Name            string
-		HashedPassword  string
-		PlainPassword   string
-		ExpectedOutcome bool
-		ExpectingError  bool
-	}{
+	for _, testCase := range comparePasswordCases() {
+		outcome, err := ComparePasswords(testCase.HashedPassword, testCase.PlainPassword)
+
+		assertComparePasswordResult(t, testCase, outcome, err)
+	}
+}
+
+// comparePasswordCase describes one password comparison expectation.
+type comparePasswordCase struct {
+	Name            string
+	HashedPassword  string
+	PlainPassword   string
+	ExpectedOutcome bool
+	ExpectingError  bool
+}
+
+// comparePasswordCases returns the password comparison coverage matrix.
+func comparePasswordCases() []comparePasswordCase {
+	return append(validComparePasswordCases(), invalidComparePasswordCases()...)
+}
+
+// validComparePasswordCases returns supported password comparison scenarios.
+func validComparePasswordCases() []comparePasswordCase {
+	return []comparePasswordCase{
 		{
 			"matching password ARGON2",
 			"$argon2id$v=19$m=65536,t=2,p=1$gCxez+B/Sr5ogq0o+y+7Ig$hKxxLmCF5pMVjcBk+seY7DeLx6RBfNoD/LUg1VZjAuo",
@@ -186,13 +203,6 @@ func TestComparePasswords(t *testing.T) {
 			"abc124",
 			false,
 			false,
-		},
-		{
-			"invalid format",
-			"{QWE}123",
-			"abc123",
-			false,
-			true,
 		},
 		{
 			"matching password SSHA256",
@@ -209,6 +219,26 @@ func TestComparePasswords(t *testing.T) {
 			false,
 		},
 		{
+			"empty plain password",
+			"$argon2id$v=19$m=65536,t=2,p=1$gCxez+B/Sr5ogq0o+y+7Ig$hKxxLmCF5pMVjcBk+seY7DeLx6RBfNoD/LUg1VZjAuo",
+			"",
+			false,
+			false,
+		},
+	}
+}
+
+// invalidComparePasswordCases returns unsupported password comparison scenarios.
+func invalidComparePasswordCases() []comparePasswordCase {
+	return []comparePasswordCase{
+		{
+			"invalid format",
+			"{QWE}123",
+			"abc123",
+			false,
+			true,
+		},
+		{
 			"invalid format suffix not supported",
 			"{SSHA256.BIN}9BT0VNzrkTp51/skOYDjOEFoYPN9FoGx/Gd+njZv5tEOgtl6TvODXg==",
 			"bc123",
@@ -223,13 +253,6 @@ func TestComparePasswords(t *testing.T) {
 			true,
 		},
 		{
-			"empty plain password",
-			"$argon2id$v=19$m=65536,t=2,p=1$gCxez+B/Sr5ogq0o+y+7Ig$hKxxLmCF5pMVjcBk+seY7DeLx6RBfNoD/LUg1VZjAuo",
-			"",
-			false,
-			false,
-		},
-		{
 			"empty both password",
 			"",
 			"",
@@ -237,23 +260,26 @@ func TestComparePasswords(t *testing.T) {
 			true,
 		},
 	}
+}
 
-	for _, testCase := range testCases {
-		outcome, err := ComparePasswords(testCase.HashedPassword, testCase.PlainPassword)
+// assertComparePasswordResult verifies one password comparison outcome.
+func assertComparePasswordResult(t *testing.T, testCase comparePasswordCase, outcome bool, err error) {
+	t.Helper()
 
-		if testCase.ExpectingError {
-			if err == nil {
-				t.Errorf("Expected error but got none for the test case: %s", testCase.Name)
-			}
-		} else {
-			if err != nil {
-				t.Errorf("Did not expect error but got one for the test case: %s. Error: %s", testCase.Name, err.Error())
-			}
-
-			if outcome != testCase.ExpectedOutcome {
-				t.Errorf("Expected outcome '%v' but got '%v' for the test case: %s", testCase.ExpectedOutcome, outcome, testCase.Name)
-			}
+	if testCase.ExpectingError {
+		if err == nil {
+			t.Errorf("Expected error but got none for the test case: %s", testCase.Name)
 		}
+
+		return
+	}
+
+	if err != nil {
+		t.Errorf("Did not expect error but got one for the test case: %s. Error: %s", testCase.Name, err.Error())
+	}
+
+	if outcome != testCase.ExpectedOutcome {
+		t.Errorf("Expected outcome '%v' but got '%v' for the test case: %s", testCase.ExpectedOutcome, outcome, testCase.Name)
 	}
 }
 

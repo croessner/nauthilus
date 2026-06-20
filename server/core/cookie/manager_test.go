@@ -639,6 +639,25 @@ func TestSecureManager_SetMaxAge_PersistsAcrossLoadAndSave(t *testing.T) {
 }
 
 func TestMiddleware_PreservesRememberMaxAgeOnSubsequentRequest(t *testing.T) {
+	router := newRememberMaxAgeRouter()
+
+	secureCookie := performRememberMaxAgeRequest(t, router, "/set", nil)
+	if secureCookie == nil {
+		return
+	}
+
+	assert.Equal(t, 86400, secureCookie.MaxAge)
+
+	secureCookie = performRememberMaxAgeRequest(t, router, "/touch", secureCookie)
+	if secureCookie == nil {
+		return
+	}
+
+	assert.Equal(t, 86400, secureCookie.MaxAge)
+}
+
+// newRememberMaxAgeRouter builds the middleware router used by remember-me tests.
+func newRememberMaxAgeRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	util.SetDefaultEnvironment(&testEnv{devMode: true})
 
@@ -656,56 +675,44 @@ func TestMiddleware_PreservesRememberMaxAgeOnSubsequentRequest(t *testing.T) {
 		ctx.Status(http.StatusOK)
 	})
 
-	w1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "/set", nil)
-	router.ServeHTTP(w1, req1)
+	return router
+}
 
-	cookies1 := w1.Result().Cookies()
-	if !assert.NotEmpty(t, cookies1) {
-		return
+// performRememberMaxAgeRequest runs one middleware request and returns the secure-data cookie.
+func performRememberMaxAgeRequest(t *testing.T, router *gin.Engine, path string, inputCookie *http.Cookie) *http.Cookie {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if inputCookie != nil {
+		req.AddCookie(inputCookie)
 	}
 
-	var secureCookie *http.Cookie
+	router.ServeHTTP(w, req)
 
-	for _, c := range cookies1 {
-		if c.Name == definitions.SecureDataCookieName {
-			secureCookie = c
-
-			break
-		}
+	cookies := w.Result().Cookies()
+	if !assert.NotEmpty(t, cookies) {
+		return nil
 	}
 
+	secureCookie := findSecureDataCookie(cookies)
 	if !assert.NotNil(t, secureCookie) {
-		return
+		return nil
 	}
 
-	assert.Equal(t, 86400, secureCookie.MaxAge)
+	return secureCookie
+}
 
-	w2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "/touch", nil)
-	req2.AddCookie(secureCookie)
-	router.ServeHTTP(w2, req2)
-
-	cookies2 := w2.Result().Cookies()
-	if !assert.NotEmpty(t, cookies2) {
-		return
-	}
-
-	var secureCookie2 *http.Cookie
-
-	for _, c := range cookies2 {
+// findSecureDataCookie returns the secure-data cookie from a response cookie list.
+func findSecureDataCookie(cookies []*http.Cookie) *http.Cookie {
+	for _, c := range cookies {
 		if c.Name == definitions.SecureDataCookieName {
-			secureCookie2 = c
-
-			break
+			return c
 		}
 	}
 
-	if !assert.NotNil(t, secureCookie2) {
-		return
-	}
-
-	assert.Equal(t, 86400, secureCookie2.MaxAge)
+	return nil
 }
 
 func TestMiddleware_DoesNotCreateSecureDataCookieWhenNoStateExists(t *testing.T) {

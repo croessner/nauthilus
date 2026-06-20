@@ -614,37 +614,104 @@ func attributeValue(expr policyruntime.CompiledExpr, policyReport *report.Decisi
 }
 
 func operatorMatches(operator policyruntime.Operator, actual any, expected any) bool {
+	if result, ok := equalityOperatorMatches(operator, actual, expected); ok {
+		return result
+	}
+
+	if result, ok := collectionOperatorMatches(operator, actual, expected); ok {
+		return result
+	}
+
+	if result, ok := patternOperatorMatches(operator, actual, expected); ok {
+		return result
+	}
+
+	if result, ok := stringSliceOperatorMatches(operator, actual, expected); ok {
+		return result
+	}
+
+	if result, ok := orderedOperatorMatches(operator, actual, expected); ok {
+		return result
+	}
+
+	if result, ok := networkOperatorMatches(operator, actual, expected); ok {
+		return result
+	}
+
+	return false
+}
+
+// equalityOperatorMatches handles equality-style observe operators.
+func equalityOperatorMatches(operator policyruntime.Operator, actual any, expected any) (bool, bool) {
 	switch operator {
 	case "is", "eq":
-		return reflect.DeepEqual(actual, expected)
+		return reflect.DeepEqual(actual, expected), true
 	case "ne":
-		return !reflect.DeepEqual(actual, expected)
-	case "in":
-		return valueInList(actual, expected)
-	case "not_in":
-		return !valueInList(actual, expected)
-	case "matches":
-		value, ok := actual.(string)
-		pattern, patternOK := expected.(*regexp.Regexp)
-
-		return ok && patternOK && pattern.MatchString(value)
-	case "contains":
-		return stringSliceContains(actual, expected)
-	case "contains_any":
-		return stringSliceContainsAny(actual, expected)
-	case "contains_all":
-		return stringSliceContainsAll(actual, expected)
-	case "contains_none":
-		return !stringSliceContainsAny(actual, expected)
-	case operatorGT, operatorGTE, operatorLT, operatorLTE:
-		return compareOrdered(operator, actual, expected)
-	case "cidr_contains":
-		return cidrContains(actual, expected)
-	case "within_time_window":
-		return withinTimeWindow(actual, expected)
+		return !reflect.DeepEqual(actual, expected), true
 	default:
-		return false
+		return false, false
 	}
+}
+
+// collectionOperatorMatches handles list-membership observe operators.
+func collectionOperatorMatches(operator policyruntime.Operator, actual any, expected any) (bool, bool) {
+	switch operator {
+	case "in":
+		return valueInList(actual, expected), true
+	case "not_in":
+		return !valueInList(actual, expected), true
+	default:
+		return false, false
+	}
+}
+
+// patternOperatorMatches handles regular-expression observe operators.
+func patternOperatorMatches(operator policyruntime.Operator, actual any, expected any) (bool, bool) {
+	if operator != "matches" {
+		return false, false
+	}
+
+	value, ok := actual.(string)
+	pattern, patternOK := expected.(*regexp.Regexp)
+
+	return ok && patternOK && pattern.MatchString(value), true
+}
+
+// stringSliceOperatorMatches handles string-slice observe operators.
+func stringSliceOperatorMatches(operator policyruntime.Operator, actual any, expected any) (bool, bool) {
+	switch operator {
+	case "contains":
+		return stringSliceContains(actual, expected), true
+	case "contains_any":
+		return stringSliceContainsAny(actual, expected), true
+	case "contains_all":
+		return stringSliceContainsAll(actual, expected), true
+	case "contains_none":
+		return !stringSliceContainsAny(actual, expected), true
+	default:
+		return false, false
+	}
+}
+
+// orderedOperatorMatches handles ordered numeric and temporal comparisons.
+func orderedOperatorMatches(operator policyruntime.Operator, actual any, expected any) (bool, bool) {
+	switch operator {
+	case operatorGT, operatorGTE, operatorLT, operatorLTE:
+		return compareOrdered(operator, actual, expected), true
+	case "within_time_window":
+		return withinTimeWindow(actual, expected), true
+	default:
+		return false, false
+	}
+}
+
+// networkOperatorMatches handles network-oriented observe operators.
+func networkOperatorMatches(operator policyruntime.Operator, actual any, expected any) (bool, bool) {
+	if operator != "cidr_contains" {
+		return false, false
+	}
+
+	return cidrContains(actual, expected), true
 }
 
 func valueInList(actual any, expected any) bool {

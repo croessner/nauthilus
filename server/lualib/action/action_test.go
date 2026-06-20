@@ -36,28 +36,22 @@ import (
 func newActionWorkerTestScript(t *testing.T) (string, *lua.FunctionProto) {
 	t.Helper()
 
-	scriptPath := filepath.Join(t.TempDir(), "busy_loop.lua")
-	script := []byte("local i = 0\nwhile true do\n  i = i + 1\nend\nreturn 0\n")
-
-	if err := os.WriteFile(scriptPath, script, 0o600); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
-
-	compiled, err := lualib.CompileLua(scriptPath)
-	if err != nil {
-		t.Fatalf("CompileLua failed: %v", err)
-	}
-
-	return scriptPath, compiled
+	return newActionWorkerScript(t, "busy_loop.lua", "local i = 0\nwhile true do\n  i = i + 1\nend\nreturn 0\n")
 }
 
 func newActionWorkerReturnTestScript(t *testing.T) (string, *lua.FunctionProto) {
 	t.Helper()
 
-	scriptPath := filepath.Join(t.TempDir(), "return_ok.lua")
-	script := []byte("return 0\n")
+	return newActionWorkerScript(t, "return_ok.lua", "return 0\n")
+}
 
-	if err := os.WriteFile(scriptPath, script, 0o600); err != nil {
+// newActionWorkerScript writes and compiles a Lua action script for worker tests.
+func newActionWorkerScript(t *testing.T, name string, script string) (string, *lua.FunctionProto) {
+	t.Helper()
+
+	scriptPath := filepath.Join(t.TempDir(), name)
+
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 

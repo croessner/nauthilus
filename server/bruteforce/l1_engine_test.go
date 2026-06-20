@@ -28,27 +28,15 @@ func TestL1Engine(t *testing.T) {
 	engine := l1.GetEngine()
 	ctx := context.Background()
 
-	t.Run("Set and Get Block Decision", func(t *testing.T) {
-		key := l1.KeyNetwork("1.2.3.0/24")
-		dec := l1.Decision{Blocked: true, Rule: "test-rule"}
-		engine.Set(ctx, key, dec, 100*time.Millisecond)
+	for _, testCase := range l1DecisionCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			engine.Set(ctx, testCase.key, testCase.decision, 100*time.Millisecond)
 
-		got, ok := engine.Get(ctx, key)
-		assert.True(t, ok)
-		assert.True(t, got.Blocked)
-		assert.Equal(t, "test-rule", got.Rule)
-	})
-
-	t.Run("Set and Get Allow Decision", func(t *testing.T) {
-		key := l1.KeyWhitelist("1.1.1.1")
-		dec := l1.Decision{Allowed: true, Reason: "Whitelist"}
-		engine.Set(ctx, key, dec, 100*time.Millisecond)
-
-		got, ok := engine.Get(ctx, key)
-		assert.True(t, ok)
-		assert.True(t, got.Allowed)
-		assert.Equal(t, "Whitelist", got.Reason)
-	})
+			got, ok := engine.Get(ctx, testCase.key)
+			assert.True(t, ok)
+			testCase.assertDecision(t, got)
+		})
+	}
 
 	t.Run("Expiration", func(t *testing.T) {
 		key := "temp-key"
@@ -73,4 +61,39 @@ func TestL1Engine(t *testing.T) {
 		assert.Equal(t, int64(50), got.Positive)
 		assert.Equal(t, int64(2), got.Negative)
 	})
+}
+
+type l1DecisionCase struct {
+	name           string
+	key            string
+	decision       l1.Decision
+	assertDecision func(*testing.T, l1.Decision)
+}
+
+// l1DecisionCases defines the shared cache round-trip cases for decision values.
+func l1DecisionCases() []l1DecisionCase {
+	return []l1DecisionCase{
+		{
+			name:     "Set and Get Block Decision",
+			key:      l1.KeyNetwork("1.2.3.0/24"),
+			decision: l1.Decision{Blocked: true, Rule: "test-rule"},
+			assertDecision: func(t *testing.T, got l1.Decision) {
+				t.Helper()
+
+				assert.True(t, got.Blocked)
+				assert.Equal(t, "test-rule", got.Rule)
+			},
+		},
+		{
+			name:     "Set and Get Allow Decision",
+			key:      l1.KeyWhitelist("1.1.1.1"),
+			decision: l1.Decision{Allowed: true, Reason: "Whitelist"},
+			assertDecision: func(t *testing.T, got l1.Decision) {
+				t.Helper()
+
+				assert.True(t, got.Allowed)
+				assert.Equal(t, "Whitelist", got.Reason)
+			},
+		},
+	}
 }

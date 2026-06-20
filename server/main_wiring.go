@@ -199,189 +199,300 @@ type runtimeLifecycleParams struct {
 // stops long-running services, performs time-bounded waits, and shuts down process-wide
 // resources.
 func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
+	params := p
+
 	var pluginRunner *pluginruntime.Runner
 
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
-			snap := p.Store.cfgProvider.Current()
+			var err error
 
-			// Initialize OpenTelemetry tracing early (no-op if disabled)
-			monitoring.GetTelemetry().Start(p.Ctx, version)
+			pluginRunner, err = startRuntimeLifecycle(&params)
 
-			bootfx.InitializeInstanceInfo(snap.File, version)
-			bootfx.DebugLoadableConfig(snap.File, p.Store.logger)
-
-			pluginState, ok := pluginloader.DefaultState()
-			if !ok {
-				var err error
-
-				pluginState, err = bootfx.SetupGoPlugins(snap.File, p.Store.logger)
-				if err != nil {
-					return err
-				}
-			}
-
-			if err := bootfx.SetupLuaScripts(snap.File, p.Store.logger); err != nil {
-				stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
-			}
-
-			bootfx.EnableBlockProfile(snap.File)
-			bootfx.InitializeBruteForceTolerate(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
-
-			if err := lualib.ConfigureDefaultI18NRuntime(
-				localization.NewManagerCatalog(p.LangManager),
-				snap.File.GetServer().Frontend.GetDefaultLanguage(),
-				p.Store.logger,
-			); err != nil {
-				return fmt.Errorf("configure Lua i18n runtime: %w", err)
-			}
-
-			bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
-			core.InitPassDBResultPool()
-
-			if snap.File == nil {
-				return fmt.Errorf("config snapshot file is nil")
-			}
-
-			// Provide core defaults for legacy call sites that are not fully constructor-injected yet.
-			core.SetDefaultConfigFile(snap.File)
-			core.SetDefaultLogger(p.Store.logger)
-			core.SetDefaultAccountCache(p.Store.accountCache)
-			core.SetDefaultChannel(p.Channel)
-			core.SetDefaultEnvironment(p.Env)
-
-			// Provide util defaults for legacy call sites.
-			util.SetDefaultConfigFile(snap.File)
-			util.SetDefaultLogger(p.Store.logger)
-			util.SetDefaultEnvironment(p.Env)
-
-			// Provide ldappool defaults.
-			ldappool.SetDefaultEnvironment(p.Env)
-
-			// Provide action defaults.
-			action.SetDefaultEnvironment(p.Env)
-
-			priorityqueue.InitQueues(p.Store.logger)
-
-			p.ActionWorkers = initializeActionWorkers(snap.File, p.Store.logger, p.Store.redisClient, p.Env)
-			setupWorkers(p.Ctx, p.Store, p.ActionWorkers, snap.File, p.Store.logger, p.Store.redisClient, p.Channel)
-
-			if err := setupRedis(p.Ctx, p.Ctx, snap.File, p.Store.logger, p.Store.redisClient); err != nil {
-				return err
-			}
-
-			// Ensure backend package uses the injected Redis client.
-			backend.SetDefaultRedisClient(p.Store.redisClient)
-
-			// Ensure bruteforce package uses the injected Redis client.
-			bruteforce.SetDefaultRedisClient(p.Store.redisClient)
-
-			// Ensure core helpers use the injected Redis client.
-			core.SetDefaultRedisClient(p.Store.redisClient)
-
-			// Ensure bruteforce tolerations use the injected Redis client.
-			tolerate.SetDefaultClient(p.Store.redisClient)
-
-			// Ensure Lua redislib has a configured default client before any Lua code runs.
-			redislib.SetDefaultClient(p.Store.redisClient)
-
-			pluginRunner = pluginruntime.NewRunner(
-				pluginState,
-				pluginruntime.WithHost(newRuntimePluginHost(
-					p.Ctx,
-					p.Store.logger,
-					snap.File,
-					p.Store.redisClient,
-					priorityqueue.LDAPQueue,
-				)),
-				pluginruntime.WithObserver(pluginruntime.NewOperationalObserver(p.Store.logger)),
-				pluginruntime.WithPluginConfig(snap.File.GetPlugins()),
-			)
-			pluginruntime.SetDefaultRunner(pluginRunner)
-
-			if err := pluginRunner.Start(p.Ctx); err != nil {
-				return err
-			}
-
-			bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
-			core.LoadStatsFromRedis(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
-
-			if err := startHTTPServer(p.Ctx, p.Store); err != nil {
-				return err
-			}
-
-			// Drop privileges after all file-based initialization and socket binding.
-			srv := snap.File.GetServer()
-
-			if err := privilege.DropPrivileges(srv.GetRunAsUser(), srv.GetRunAsGroup(), srv.GetChroot()); err != nil {
-				return fmt.Errorf("privilege drop failed: %w", err)
-			}
-
-			if err := p.ConnMgrSvc.Start(p.Ctx); err != nil {
-				return err
-			}
-
-			if err := p.MonitoringSvc.Start(p.Ctx); err != nil {
-				return err
-			}
-
-			if err := p.StatsSvc.Start(p.Ctx); err != nil {
-				return err
-			}
-
-			if err := p.BFSyncSvc.Start(p.Ctx); err != nil {
-				return err
-			}
-
-			return nil
+			return err
 		},
 		OnStop: func(stopCtx context.Context) error {
-			p.Cancel()
-
-			snap := p.Store.cfgProvider.Current()
-
-			if pluginRunner != nil {
-				if err := pluginRunner.Stop(stopCtx); err != nil {
-					stdlog.Printf("Unable to stop native plugin runtime. Error: %v", err)
-				}
-			}
-
-			if err := p.StatsSvc.Stop(stopCtx); err != nil {
-				stdlog.Printf("Unable to stop stats service. Error: %v", err)
-			}
-
-			if err := p.MonitoringSvc.Stop(stopCtx); err != nil {
-				stdlog.Printf("Unable to stop backend monitoring service. Error: %v", err)
-			}
-
-			if err := p.ConnMgrSvc.Stop(stopCtx); err != nil {
-				stdlog.Printf("Unable to stop connection manager service. Error: %v", err)
-			}
-
-			if err := p.BFSyncSvc.Stop(stopCtx); err != nil {
-				stdlog.Printf("Unable to stop brute-force sync service. Error: %v", err)
-			}
-
-			// Best-effort: do not spend the entire fx stop budget on shutdown waits.
-			waitCtx, waitCancel := context.WithTimeout(stopCtx, definitions.FxShutdownWaitTimeout)
-			waitForShutdown(waitCtx, p.Store, p.ActionWorkers)
-			waitCancel()
-
-			// Best-effort: do not let stats persistence block process termination.
-			statsCtx, statsCancel := context.WithTimeout(stopCtx, definitions.FxShutdownStatsFlushTimeout)
-			core.SaveStatsToRedis(statsCtx, snap.File, p.Store.logger, p.Store.redisClient)
-			statsCancel()
-
-			lualib.StopGlobalCache()
-
-			// Best-effort: telemetry shutdown should respect the remaining stop budget.
-			telemetryCtx, telemetryCancel := context.WithTimeout(stopCtx, definitions.FxShutdownTelemetryTimeout)
-			monitoring.GetTelemetry().Shutdown(telemetryCtx)
-			telemetryCancel()
-
-			return nil
+			return stopRuntimeLifecycle(stopCtx, &params, pluginRunner)
 		},
 	})
+}
+
+// startRuntimeLifecycle runs the legacy startup sequence inside the fx lifecycle.
+func startRuntimeLifecycle(p *runtimeLifecycleParams) (*pluginruntime.Runner, error) {
+	snap := p.Store.cfgProvider.Current()
+	startRuntimeTelemetryAndConfig(p, snap.File)
+
+	pluginState, err := loadRuntimePluginState(snap.File, p.Store.logger)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := configureRuntimeDefaults(p, snap.File); err != nil {
+		return nil, err
+	}
+
+	if err := setupRuntimeWorkersAndRedis(p, snap.File); err != nil {
+		return nil, err
+	}
+
+	pluginRunner, err := startRuntimePluginRunner(p, snap.File, pluginState)
+	if err != nil {
+		return nil, err
+	}
+
+	bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
+	core.LoadStatsFromRedis(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
+
+	if err := startHTTPAndDropPrivileges(p, snap.File); err != nil {
+		return nil, err
+	}
+
+	if err := startRuntimeLoopServices(p); err != nil {
+		return nil, err
+	}
+
+	return pluginRunner, nil
+}
+
+// startRuntimeTelemetryAndConfig runs early config-dependent process initialization.
+func startRuntimeTelemetryAndConfig(p *runtimeLifecycleParams, cfg config.File) {
+	// Initialize OpenTelemetry tracing early (no-op if disabled)
+	monitoring.GetTelemetry().Start(p.Ctx, version)
+
+	bootfx.InitializeInstanceInfo(cfg, version)
+	bootfx.DebugLoadableConfig(cfg, p.Store.logger)
+}
+
+// loadRuntimePluginState returns the current plugin loader state or initializes it.
+func loadRuntimePluginState(cfg config.File, logger *slog.Logger) (*pluginloader.State, error) {
+	pluginState, ok := pluginloader.DefaultState()
+	if ok {
+		return pluginState, nil
+	}
+
+	return bootfx.SetupGoPlugins(cfg, logger)
+}
+
+// configureRuntimeDefaults wires legacy package-level defaults for runtime code.
+func configureRuntimeDefaults(p *runtimeLifecycleParams, cfg config.File) error {
+	if err := bootfx.SetupLuaScripts(cfg, p.Store.logger); err != nil {
+		stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
+	}
+
+	bootfx.EnableBlockProfile(cfg)
+	bootfx.InitializeBruteForceTolerate(p.Ctx, cfg, p.Store.logger, p.Store.redisClient)
+
+	if err := configureRuntimeI18N(p, cfg); err != nil {
+		return err
+	}
+
+	bootfx.RunLuaInitScript(p.Ctx, cfg, p.Store.logger, p.Store.redisClient)
+	core.InitPassDBResultPool()
+
+	if cfg == nil {
+		return fmt.Errorf("config snapshot file is nil")
+	}
+
+	setRuntimePackageDefaults(p, cfg)
+	priorityqueue.InitQueues(p.Store.logger)
+
+	return nil
+}
+
+// configureRuntimeI18N initializes the Lua i18n runtime from the active config.
+func configureRuntimeI18N(p *runtimeLifecycleParams, cfg config.File) error {
+	if err := lualib.ConfigureDefaultI18NRuntime(
+		localization.NewManagerCatalog(p.LangManager),
+		cfg.GetServer().Frontend.GetDefaultLanguage(),
+		p.Store.logger,
+	); err != nil {
+		return fmt.Errorf("configure Lua i18n runtime: %w", err)
+	}
+
+	return nil
+}
+
+// setRuntimePackageDefaults publishes injected dependencies to legacy package defaults.
+func setRuntimePackageDefaults(p *runtimeLifecycleParams, cfg config.File) {
+	// Provide core defaults for legacy call sites that are not fully constructor-injected yet.
+	core.SetDefaultConfigFile(cfg)
+	core.SetDefaultLogger(p.Store.logger)
+	core.SetDefaultAccountCache(p.Store.accountCache)
+	core.SetDefaultChannel(p.Channel)
+	core.SetDefaultEnvironment(p.Env)
+
+	// Provide util defaults for legacy call sites.
+	util.SetDefaultConfigFile(cfg)
+	util.SetDefaultLogger(p.Store.logger)
+	util.SetDefaultEnvironment(p.Env)
+
+	// Provide ldappool defaults.
+	ldappool.SetDefaultEnvironment(p.Env)
+
+	// Provide action defaults.
+	action.SetDefaultEnvironment(p.Env)
+}
+
+// setupRuntimeWorkersAndRedis starts workers and initializes Redis-backed defaults.
+func setupRuntimeWorkersAndRedis(p *runtimeLifecycleParams, cfg config.File) error {
+	p.ActionWorkers = initializeActionWorkers(cfg, p.Store.logger, p.Store.redisClient, p.Env)
+	setupWorkers(p.Ctx, p.Store, p.ActionWorkers, cfg, p.Store.logger, p.Store.redisClient, p.Channel)
+
+	if err := setupRedis(p.Ctx, p.Ctx, cfg, p.Store.logger, p.Store.redisClient); err != nil {
+		return err
+	}
+
+	setRuntimeRedisDefaults(p)
+
+	return nil
+}
+
+// setRuntimeRedisDefaults publishes the injected Redis client to legacy package defaults.
+func setRuntimeRedisDefaults(p *runtimeLifecycleParams) {
+	// Ensure backend package uses the injected Redis client.
+	backend.SetDefaultRedisClient(p.Store.redisClient)
+
+	// Ensure bruteforce package uses the injected Redis client.
+	bruteforce.SetDefaultRedisClient(p.Store.redisClient)
+
+	// Ensure core helpers use the injected Redis client.
+	core.SetDefaultRedisClient(p.Store.redisClient)
+
+	// Ensure bruteforce tolerations use the injected Redis client.
+	tolerate.SetDefaultClient(p.Store.redisClient)
+
+	// Ensure Lua redislib has a configured default client before any Lua code runs.
+	redislib.SetDefaultClient(p.Store.redisClient)
+}
+
+// startRuntimePluginRunner starts the native plugin runtime with the production host.
+func startRuntimePluginRunner(p *runtimeLifecycleParams, cfg config.File, pluginState *pluginloader.State) (*pluginruntime.Runner, error) {
+	pluginRunner := pluginruntime.NewRunner(
+		pluginState,
+		pluginruntime.WithHost(newRuntimePluginHost(
+			p.Ctx,
+			p.Store.logger,
+			cfg,
+			p.Store.redisClient,
+			priorityqueue.LDAPQueue,
+		)),
+		pluginruntime.WithObserver(pluginruntime.NewOperationalObserver(p.Store.logger)),
+		pluginruntime.WithPluginConfig(cfg.GetPlugins()),
+	)
+	pluginruntime.SetDefaultRunner(pluginRunner)
+
+	if err := pluginRunner.Start(p.Ctx); err != nil {
+		return nil, err
+	}
+
+	return pluginRunner, nil
+}
+
+// startHTTPAndDropPrivileges starts HTTP entry points before privilege drop.
+func startHTTPAndDropPrivileges(p *runtimeLifecycleParams, cfg config.File) error {
+	if err := startHTTPServer(p.Ctx, p.Store); err != nil {
+		return err
+	}
+
+	// Drop privileges after all file-based initialization and socket binding.
+	srv := cfg.GetServer()
+
+	if err := privilege.DropPrivileges(srv.GetRunAsUser(), srv.GetRunAsGroup(), srv.GetChroot()); err != nil {
+		return fmt.Errorf("privilege drop failed: %w", err)
+	}
+
+	return nil
+}
+
+// startRuntimeLoopServices starts runtime loop services after HTTP is serving.
+func startRuntimeLoopServices(p *runtimeLifecycleParams) error {
+	if err := p.ConnMgrSvc.Start(p.Ctx); err != nil {
+		return err
+	}
+
+	if err := p.MonitoringSvc.Start(p.Ctx); err != nil {
+		return err
+	}
+
+	if err := p.StatsSvc.Start(p.Ctx); err != nil {
+		return err
+	}
+
+	if err := p.BFSyncSvc.Start(p.Ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// stopRuntimeLifecycle runs the legacy shutdown sequence inside the fx lifecycle.
+func stopRuntimeLifecycle(stopCtx context.Context, p *runtimeLifecycleParams, pluginRunner *pluginruntime.Runner) error {
+	p.Cancel()
+
+	snap := p.Store.cfgProvider.Current()
+
+	stopRuntimePluginRunner(stopCtx, pluginRunner)
+	stopRuntimeLoopServices(stopCtx, p)
+	waitForRuntimeShutdown(stopCtx, p)
+	saveRuntimeStats(stopCtx, p, snap.File)
+	lualib.StopGlobalCache()
+	shutdownRuntimeTelemetry(stopCtx)
+
+	return nil
+}
+
+// stopRuntimePluginRunner stops the native plugin runtime best-effort.
+func stopRuntimePluginRunner(stopCtx context.Context, pluginRunner *pluginruntime.Runner) {
+	if pluginRunner == nil {
+		return
+	}
+
+	if err := pluginRunner.Stop(stopCtx); err != nil {
+		stdlog.Printf("Unable to stop native plugin runtime. Error: %v", err)
+	}
+}
+
+// stopRuntimeLoopServices stops runtime loop services best-effort.
+func stopRuntimeLoopServices(stopCtx context.Context, p *runtimeLifecycleParams) {
+	if err := p.StatsSvc.Stop(stopCtx); err != nil {
+		stdlog.Printf("Unable to stop stats service. Error: %v", err)
+	}
+
+	if err := p.MonitoringSvc.Stop(stopCtx); err != nil {
+		stdlog.Printf("Unable to stop backend monitoring service. Error: %v", err)
+	}
+
+	if err := p.ConnMgrSvc.Stop(stopCtx); err != nil {
+		stdlog.Printf("Unable to stop connection manager service. Error: %v", err)
+	}
+
+	if err := p.BFSyncSvc.Stop(stopCtx); err != nil {
+		stdlog.Printf("Unable to stop brute-force sync service. Error: %v", err)
+	}
+}
+
+// waitForRuntimeShutdown waits for workers without consuming the full stop budget.
+func waitForRuntimeShutdown(stopCtx context.Context, p *runtimeLifecycleParams) {
+	// Best-effort: do not spend the entire fx stop budget on shutdown waits.
+	waitCtx, waitCancel := context.WithTimeout(stopCtx, definitions.FxShutdownWaitTimeout)
+	waitForShutdown(waitCtx, p.Store, p.ActionWorkers)
+	waitCancel()
+}
+
+// saveRuntimeStats persists stats without blocking process termination indefinitely.
+func saveRuntimeStats(stopCtx context.Context, p *runtimeLifecycleParams, cfg config.File) {
+	// Best-effort: do not let stats persistence block process termination.
+	statsCtx, statsCancel := context.WithTimeout(stopCtx, definitions.FxShutdownStatsFlushTimeout)
+	core.SaveStatsToRedis(statsCtx, cfg, p.Store.logger, p.Store.redisClient)
+	statsCancel()
+}
+
+// shutdownRuntimeTelemetry shuts down telemetry within the remaining stop budget.
+func shutdownRuntimeTelemetry(stopCtx context.Context) {
+	// Best-effort: telemetry shutdown should respect the remaining stop budget.
+	telemetryCtx, telemetryCancel := context.WithTimeout(stopCtx, definitions.FxShutdownTelemetryTimeout)
+	monitoring.GetTelemetry().Shutdown(telemetryCtx)
+	telemetryCancel()
 }
 
 // newRuntimePluginHost builds the production host facade after process services are initialized.

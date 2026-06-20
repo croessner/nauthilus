@@ -694,44 +694,77 @@ func (o *OIDCConfig) warnUnsupported() []string {
 
 	var warnings []string
 
-	if len(o.ResponseTypesSupported) > 0 {
-		for _, rt := range o.ResponseTypesSupported {
-			if rt != oidcResponseTypeCode {
-				warnings = append(warnings, fmt.Sprintf("oidc.response_types_supported: '%s' is currently not supported (only '%s' is supported)", rt, oidcResponseTypeCode))
-			}
+	warnings = append(warnings, unsupportedOIDCResponseTypeWarnings(o.ResponseTypesSupported)...)
+	warnings = append(warnings, unsupportedOIDCSubjectTypeWarnings(o.SubjectTypesSupported)...)
+	warnings = append(warnings, unsupportedOIDCSigningAlgWarnings(o.IDTokenSigningAlgValuesSupported)...)
+	warnings = append(warnings, unsupportedOIDCCodeChallengeWarnings(o.CodeChallengeMethodsSupported)...)
+	warnings = append(warnings, unsupportedOIDCLogoutSessionWarnings(o)...)
+
+	return warnings
+}
+
+// unsupportedOIDCResponseTypeWarnings returns warnings for unsupported response types.
+func unsupportedOIDCResponseTypeWarnings(values []string) []string {
+	var warnings []string
+
+	for _, value := range values {
+		if value != oidcResponseTypeCode {
+			warnings = append(warnings, fmt.Sprintf("oidc.response_types_supported: '%s' is currently not supported (only '%s' is supported)", value, oidcResponseTypeCode))
 		}
 	}
 
-	if len(o.SubjectTypesSupported) > 0 {
-		for _, st := range o.SubjectTypesSupported {
-			if st != oidcSubjectTypePublic {
-				warnings = append(warnings, fmt.Sprintf("oidc.subject_types_supported: '%s' is currently not supported (only '%s' is supported)", st, oidcSubjectTypePublic))
-			}
+	return warnings
+}
+
+// unsupportedOIDCSubjectTypeWarnings returns warnings for unsupported subject types.
+func unsupportedOIDCSubjectTypeWarnings(values []string) []string {
+	var warnings []string
+
+	for _, value := range values {
+		if value != oidcSubjectTypePublic {
+			warnings = append(warnings, fmt.Sprintf("oidc.subject_types_supported: '%s' is currently not supported (only '%s' is supported)", value, oidcSubjectTypePublic))
 		}
 	}
 
-	if len(o.IDTokenSigningAlgValuesSupported) > 0 {
-		for _, alg := range o.IDTokenSigningAlgValuesSupported {
-			if alg != oidcSigningAlgRS256 && alg != oidcSigningAlgEdDSA {
-				warnings = append(warnings, fmt.Sprintf("oidc.id_token_signing_alg_values_supported: '%s' is currently not supported (only '%s' and '%s' are supported)", alg, oidcSigningAlgRS256, oidcSigningAlgEdDSA))
-			}
+	return warnings
+}
+
+// unsupportedOIDCSigningAlgWarnings returns warnings for unsupported ID token algorithms.
+func unsupportedOIDCSigningAlgWarnings(values []string) []string {
+	var warnings []string
+
+	for _, value := range values {
+		if value != oidcSigningAlgRS256 && value != oidcSigningAlgEdDSA {
+			warnings = append(warnings, fmt.Sprintf("oidc.id_token_signing_alg_values_supported: '%s' is currently not supported (only '%s' and '%s' are supported)", value, oidcSigningAlgRS256, oidcSigningAlgEdDSA))
 		}
 	}
 
-	if len(o.CodeChallengeMethodsSupported) > 0 {
-		for _, method := range o.CodeChallengeMethodsSupported {
-			method = strings.TrimSpace(method)
-			if !strings.EqualFold(method, "S256") {
-				warnings = append(warnings, fmt.Sprintf("oidc.code_challenge_methods_supported: '%s' is not supported (only 'S256' is allowed)", method))
-			}
+	return warnings
+}
+
+// unsupportedOIDCCodeChallengeWarnings returns warnings for unsupported PKCE methods.
+func unsupportedOIDCCodeChallengeWarnings(values []string) []string {
+	var warnings []string
+
+	for _, value := range values {
+		method := strings.TrimSpace(value)
+		if !strings.EqualFold(method, "S256") {
+			warnings = append(warnings, fmt.Sprintf("oidc.code_challenge_methods_supported: '%s' is not supported (only 'S256' is allowed)", method))
 		}
 	}
 
-	if o.FrontChannelLogoutSessionSupported != nil && *o.FrontChannelLogoutSessionSupported {
+	return warnings
+}
+
+// unsupportedOIDCLogoutSessionWarnings returns warnings for unsupported logout session flags.
+func unsupportedOIDCLogoutSessionWarnings(config *OIDCConfig) []string {
+	var warnings []string
+
+	if config.FrontChannelLogoutSessionSupported != nil && *config.FrontChannelLogoutSessionSupported {
 		warnings = append(warnings, "oidc.front_channel_logout_session_supported: setting to 'true' is currently not supported (no effect)")
 	}
 
-	if o.BackChannelLogoutSessionSupported != nil && *o.BackChannelLogoutSessionSupported {
+	if config.BackChannelLogoutSessionSupported != nil && *config.BackChannelLogoutSessionSupported {
 		warnings = append(warnings, "oidc.back_channel_logout_session_supported: setting to 'true' is currently not supported (no effect)")
 	}
 

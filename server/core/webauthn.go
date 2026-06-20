@@ -57,6 +57,30 @@ type webAuthnLoginIdentity struct {
 	displayName  string
 }
 
+type webAuthnLoginSession struct {
+	identity    webAuthnLoginIdentity
+	sessionData *webauthn.SessionData
+}
+
+type webAuthnLoginAssertion struct {
+	credential          *webauthn.Credential
+	existingCredentials []mfa.PersistentCredential
+}
+
+type webAuthnSignCountAudit struct {
+	oldSignCount       *uint32
+	credentialIDHash   string
+	aaguid             string
+	isResidentKey      bool
+	signCountZero      bool
+	signCountMonotonic bool
+	newSignCount       uint32
+}
+
+type webAuthnTraceSpan interface {
+	SetAttributes(...attribute.KeyValue)
+}
+
 // sessionWebAuthnLoginIdentity resolves the MFA factor identity for WebAuthn login.
 func sessionWebAuthnLoginIdentity(mgr cookie.Manager) webAuthnLoginIdentity {
 	if mgr == nil {
@@ -89,20 +113,9 @@ func webAuthnBackendLookupUsername(userName string, uniqueUserID string) string 
 	return uniqueUserID
 }
 
-// getUser retrieves a User object with all their current credentials. This is Database depended. Which backend was used
-// can be gotten from the session cookie.
-func (a *AuthState) getUser(userName string, uniqueUserID string, displayName string) (*backend.User, error) {
-	var (
-		passDB      definitions.Backend
-		backendName string
-		err         error
-		user        *backend.User
-		credentials []mfa.PersistentCredential
-	)
-
-	mgr := cookie.GetManager(a.Request.HTTPClientContext)
+// webAuthnProtocolName resolves the request protocol for WebAuthn backend lookups.
+func (a *AuthState) webAuthnProtocolName(mgr cookie.Manager) string {
 	protocolName := ""
-
 	if a.Request.HTTPClientContext != nil {
 		protocolName = a.Request.HTTPClientContext.Query("protocol")
 	}
@@ -115,11 +128,90 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 		protocolName = definitions.ProtoIDP
 	}
 
+	return protocolName
+}
+
+// ensureWebAuthnRequestProtocol sets the request protocol when it is missing.
+func (a *AuthState) ensureWebAuthnRequestProtocol(protocolName string) {
 	if a.Request.Protocol == nil {
 		a.Request.Protocol = config.NewProtocol(protocolName)
-	} else if a.Request.Protocol.Get() == "" {
+
+		return
+	}
+
+	if a.Request.Protocol.Get() == "" {
 		a.Request.Protocol.Set(protocolName)
 	}
+}
+
+// sessionWebAuthnCredentials loads credentials from the backend stored in the session.
+func (a *AuthState) sessionWebAuthnCredentials(mgr cookie.Manager) (definitions.Backend, []mfa.PersistentCredential, error) {
+	if mgr == nil {
+		return definitions.BackendUnknown, nil, nil
+	}
+
+	cookieValue := mgr.GetUint8(definitions.SessionKeyUserBackend, 0)
+	if cookieValue == 0 {
+		return definitions.BackendUnknown, nil, nil
+	}
+
+	passDB := definitions.Backend(cookieValue)
+	backendName := mgr.GetString(definitions.SessionKeyUserBackendName, "")
+
+	backendMgr := a.GetBackendManager(passDB, backendName)
+	if backendMgr == nil {
+		return passDB, nil, nil
+	}
+
+	credentials, err := backendMgr.GetWebAuthnCredentials(a)
+
+	return passDB, credentials, err
+}
+
+// configuredWebAuthnCredentials searches configured backends for WebAuthn credentials.
+func (a *AuthState) configuredWebAuthnCredentials() ([]mfa.PersistentCredential, error) {
+	for _, backendType := range a.Cfg().GetServer().GetBackends() {
+		mgr := a.GetBackendManager(backendType.Get(), backendType.GetName())
+		if mgr == nil {
+			continue
+		}
+
+		credentials, err := mgr.GetWebAuthnCredentials(a)
+		if err != nil {
+			if stderrors.Is(err, errors.ErrLDAPConfig) {
+				continue
+			}
+
+			return nil, err
+		}
+
+		if len(credentials) > 0 {
+			return credentials, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// webAuthnUserFromCredentials builds a backend user when credentials were found.
+func webAuthnUserFromCredentials(userName string, uniqueUserID string, displayName string, credentials []mfa.PersistentCredential) *backend.User {
+	if len(credentials) == 0 {
+		return nil
+	}
+
+	return &backend.User{
+		ID:          uniqueUserID,
+		Name:        userName,
+		DisplayName: displayName,
+		Credentials: credentials,
+	}
+}
+
+// getUser retrieves a User object with all their current credentials. This is Database depended. Which backend was used
+// can be gotten from the session cookie.
+func (a *AuthState) getUser(userName string, uniqueUserID string, displayName string) (*backend.User, error) {
+	mgr := cookie.GetManager(a.Request.HTTPClientContext)
+	a.ensureWebAuthnRequestProtocol(a.webAuthnProtocolName(mgr))
 
 	a.Request.Username = webAuthnBackendLookupUsername(userName, uniqueUserID)
 
@@ -138,54 +230,19 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 		"request_username", a.Request.Username,
 	)
 
-	// We expect the same Database for credentials that was used for authenticating a user!
-	if mgr != nil {
-		cookieValue := mgr.GetUint8(definitions.SessionKeyUserBackend, 0)
-
-		if cookieValue != 0 {
-			passDB = definitions.Backend(cookieValue)
-			backendName = mgr.GetString(definitions.SessionKeyUserBackendName, "")
-
-			if backendMgr := a.GetBackendManager(passDB, backendName); backendMgr != nil {
-				credentials, err = backendMgr.GetWebAuthnCredentials(a)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
+	passDB, credentials, err := a.sessionWebAuthnCredentials(mgr)
+	if err != nil {
+		return nil, err
 	}
 
-	// No cookie (default login page), search all configured databases.
-	// Skip backends that do not support this protocol.
 	if passDB == definitions.BackendUnknown || len(credentials) == 0 {
-		for _, backendType := range a.Cfg().GetServer().GetBackends() {
-			if mgr := a.GetBackendManager(backendType.Get(), backendType.GetName()); mgr != nil {
-				credentials, err = mgr.GetWebAuthnCredentials(a)
-				if err != nil {
-					if stderrors.Is(err, errors.ErrLDAPConfig) {
-						continue
-					}
-
-					return nil, err
-				}
-
-				if len(credentials) > 0 {
-					break
-				}
-			}
+		credentials, err = a.configuredWebAuthnCredentials()
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	if len(credentials) > 0 {
-		user = &backend.User{
-			ID:          uniqueUserID,
-			Name:        userName,
-			DisplayName: displayName,
-			Credentials: credentials,
-		}
-	}
-
-	// Registering a device
+	user := webAuthnUserFromCredentials(userName, uniqueUserID, displayName, credentials)
 	if user == nil {
 		if user, err = backend.GetWebAuthnFromRedis(a.Ctx(), a.Cfg(), a.Logger(), a.Redis(), uniqueUserID); err != nil {
 			return nil, err
@@ -305,6 +362,389 @@ func restoreWebAuthnRegistrationIdentityFromState(mgr cookie.Manager, state *flo
 	}
 }
 
+type webAuthnRegistrationIdentity struct {
+	mgr          cookie.Manager
+	userName     string
+	uniqueUserID string
+	displayName  string
+}
+
+// registrationIdentityFromSession validates the session and resolves the WebAuthn registration identity.
+func registrationIdentityFromSession(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager) (webAuthnRegistrationIdentity, bool) {
+	identity := webAuthnRegistrationIdentity{mgr: mgr}
+
+	if mgr == nil {
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
+		ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
+		SessionCleaner(ctx)
+
+		return identity, false
+	}
+
+	if !isWebAuthnRegistrationAuthenticated(mgr) {
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
+		ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
+		SessionCleaner(ctx)
+
+		return identity, false
+	}
+
+	restoreWebAuthnRegistrationIdentityFromFlow(ctx, deps, mgr)
+
+	identity.userName = webAuthnRegistrationUserName(mgr)
+	if identity.userName == "" {
+		ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
+		SessionCleaner(ctx)
+
+		return identity, false
+	}
+
+	identity.uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+	if identity.uniqueUserID == "" {
+		ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
+		SessionCleaner(ctx)
+
+		return identity, false
+	}
+
+	identity.displayName, _ = resolveWebAuthnDisplayName(mgr, identity.userName)
+	if identity.displayName == "" {
+		ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
+		SessionCleaner(ctx)
+
+		return identity, false
+	}
+
+	return identity, true
+}
+
+// registrationUser returns an existing WebAuthn user or creates the initial backend cache entry.
+func registrationUser(ctx *gin.Context, deps AuthDeps, identity webAuthnRegistrationIdentity) (*backend.User, bool) {
+	auth := NewAuthStateFromContextWithDeps(ctx, deps)
+	auth.WithDefaults(ctx)
+
+	authState := auth.(*AuthState)
+
+	user, err := authState.getUser(identity.userName, identity.uniqueUserID, identity.displayName)
+	if err == nil {
+		return user, true
+	}
+
+	user = backend.NewUser(identity.userName, identity.displayName, identity.uniqueUserID)
+	if err = authState.putUser(user); err != nil {
+		level.Error(deps.Logger).Log(
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Failed to persist initial WebAuthn user cache",
+			definitions.LogKeyError, err,
+		)
+		ctx.JSON(http.StatusInternalServerError, err.Error())
+
+		return nil, false
+	}
+
+	return user, true
+}
+
+// beginRegistrationOptions starts the WebAuthn registration ceremony.
+func beginRegistrationOptions(deps AuthDeps, user *backend.User) (*protocol.CredentialCreation, *webauthn.SessionData, error) {
+	return webAuthn.BeginRegistration(
+		user,
+		webauthn.WithAuthenticatorSelection(buildAuthenticatorSelection(deps.Cfg)),
+		webauthn.WithConveyancePreference(protocol.PreferNoAttestation),
+	)
+}
+
+// saveRegistrationSession stores WebAuthn session data in the encrypted session cookie.
+func saveRegistrationSession(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager, sessionData *webauthn.SessionData) bool {
+	sessionDataJSON, err := jsonIter.Marshal(*sessionData)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, err)
+		SessionCleaner(ctx)
+
+		return false
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		deps.Cfg,
+		deps.Logger,
+		definitions.DbgWebAuthn,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "session data begin",
+		"content", fmt.Sprintf("%#v", sessionData),
+	)
+
+	mgr.Set(definitions.SessionKeyRegistration, sessionDataJSON)
+
+	if err = mgr.Save(ctx); err != nil {
+		ctx.JSON(http.StatusInternalServerError, err)
+		SessionCleaner(ctx)
+
+		return false
+	}
+
+	return true
+}
+
+// loginBeginUser resolves the optional session-bound WebAuthn user for login.
+func loginBeginUser(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager) (*backend.User, bool) {
+	if mgr == nil {
+		return nil, true
+	}
+
+	identity := sessionWebAuthnLoginIdentity(mgr)
+	if identity.userName == "" {
+		return nil, true
+	}
+
+	auth := NewAuthStateFromContextWithDeps(ctx, deps)
+
+	user, err := auth.(*AuthState).getUser(identity.userName, identity.uniqueUserID, identity.displayName)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, err.Error())
+
+		return nil, false
+	}
+
+	if user == nil || len(user.Credentials) == 0 {
+		ctx.JSON(http.StatusBadRequest, "No WebAuthn credentials found")
+
+		return nil, false
+	}
+
+	return user, true
+}
+
+// beginWebAuthnLoginOptions starts either discoverable or user-bound login.
+func beginWebAuthnLoginOptions(user *backend.User) (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
+	if user == nil {
+		return webAuthn.BeginDiscoverableLogin()
+	}
+
+	return webAuthn.BeginLogin(user)
+}
+
+// saveLoginSession stores WebAuthn login session data when a session manager exists.
+func saveLoginSession(ctx *gin.Context, mgr cookie.Manager, sessionData *webauthn.SessionData) bool {
+	sessionDataJSON, err := jsonIter.Marshal(*sessionData)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, err.Error())
+
+		return false
+	}
+
+	if mgr == nil {
+		return true
+	}
+
+	mgr.Set(definitions.SessionKeyRegistration, sessionDataJSON)
+
+	if err = mgr.Save(ctx); err != nil {
+		ctx.JSON(http.StatusInternalServerError, err.Error())
+
+		return false
+	}
+
+	return true
+}
+
+// finishRegistrationIdentityFromSession validates the finish-registration session identity.
+func finishRegistrationIdentityFromSession(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager) (webAuthnRegistrationIdentity, bool) {
+	identity := webAuthnRegistrationIdentity{mgr: mgr}
+	if mgr == nil {
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
+		ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
+
+		return identity, false
+	}
+
+	if !isWebAuthnRegistrationAuthenticated(mgr) {
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
+		ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
+
+		return identity, false
+	}
+
+	restoreWebAuthnRegistrationIdentityFromFlow(ctx, deps, mgr)
+
+	identity.userName = webAuthnRegistrationUserName(mgr)
+	if identity.userName == "" {
+		ctx.JSON(http.StatusBadRequest, errors.ErrNotLoggedIn.Error())
+
+		return identity, false
+	}
+
+	identity.uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+	if identity.uniqueUserID == "" {
+		ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
+		SessionCleaner(ctx)
+
+		return identity, false
+	}
+
+	var updated bool
+
+	identity.displayName, updated = resolveWebAuthnDisplayName(mgr, identity.userName)
+	if identity.displayName == "" {
+		ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
+		SessionCleaner(ctx)
+
+		return identity, false
+	}
+
+	if updated {
+		if err := mgr.Save(ctx); err != nil {
+			ctx.JSON(http.StatusInternalServerError, err.Error())
+			SessionCleaner(ctx)
+
+			return identity, false
+		}
+	}
+
+	return identity, true
+}
+
+// registrationSessionDataFromCookie loads registration session data from the session cookie.
+func registrationSessionDataFromCookie(ctx *gin.Context, mgr cookie.Manager) (*webauthn.SessionData, bool) {
+	cookieValue := mgr.GetBytes(definitions.SessionKeyRegistration, nil)
+	if cookieValue == nil {
+		SessionCleaner(ctx)
+		ctx.JSON(http.StatusBadRequest, errors.ErrWebAuthnSessionData)
+
+		return nil, false
+	}
+
+	sessionData := &webauthn.SessionData{}
+	if err := jsonIter.Unmarshal(cookieValue, sessionData); err != nil {
+		SessionCleaner(ctx)
+		ctx.JSON(http.StatusInternalServerError, err.Error())
+
+		return nil, false
+	}
+
+	return sessionData, true
+}
+
+// parseRegistrationFinishResponse parses the registration finish payload and optional device name.
+func parseRegistrationFinishResponse(ctx *gin.Context) (string, *protocol.ParsedCredentialCreationData, bool) {
+	requestBody, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, err.Error())
+
+		return "", nil, false
+	}
+
+	var finishRequest struct {
+		Name       string          `json:"name"`
+		Credential json.RawMessage `json:"credential"`
+	}
+
+	var response *protocol.ParsedCredentialCreationData
+	if err = jsonIter.Unmarshal(requestBody, &finishRequest); err == nil && len(finishRequest.Credential) > 0 {
+		response, err = protocol.ParseCredentialCreationResponseBody(bytes.NewReader(finishRequest.Credential))
+
+		return strings.TrimSpace(finishRequest.Name), response, registrationParseOK(ctx, err)
+	}
+
+	response, err = protocol.ParseCredentialCreationResponseBody(bytes.NewReader(requestBody))
+
+	return "", response, registrationParseOK(ctx, err)
+}
+
+// registrationParseOK writes the protocol parse error response when parsing failed.
+func registrationParseOK(ctx *gin.Context, err error) bool {
+	if err == nil {
+		return true
+	}
+
+	ctx.JSON(http.StatusBadRequest, fmt.Sprintf("%+v", util.ProtoErrToFields(err)))
+
+	return false
+}
+
+// persistRegistrationCredential stores the new credential in the configured backend.
+func persistRegistrationCredential(ctx *gin.Context, deps AuthDeps, authState *AuthState, credential *webauthn.Credential, deviceName string) bool {
+	persistentCredential := &mfa.PersistentCredential{
+		Credential: *credential,
+		Name:       deviceName,
+	}
+
+	if err := authState.SaveWebAuthnCredential(persistentCredential); err != nil {
+		level.Error(deps.Logger).Log(
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Failed to persist WebAuthn credential to backend",
+			definitions.LogKeyError, err,
+		)
+		ctx.JSON(http.StatusInternalServerError, err.Error())
+
+		return false
+	}
+
+	return true
+}
+
+// updateRegistrationUserCache refreshes the Redis WebAuthn user cache when needed.
+func updateRegistrationUserCache(ctx *gin.Context, deps AuthDeps, authState *AuthState, user *backend.User) bool {
+	if !shouldPersistWebAuthnCache(authState) {
+		return true
+	}
+
+	if err := authState.updateUser(user); err != nil {
+		level.Error(deps.Logger).Log(
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Failed to update WebAuthn user cache",
+			definitions.LogKeyError, err,
+		)
+		ctx.JSON(http.StatusInternalServerError, err.Error())
+
+		return false
+	}
+
+	return true
+}
+
+// completeRegistrationSession clears registration state and saves the session.
+func completeRegistrationSession(ctx *gin.Context, mgr cookie.Manager) bool {
+	mgr.Delete(definitions.SessionKeyRegistration)
+
+	if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+		flow.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodWebAuthn)
+	}
+
+	if err := mgr.Save(ctx); err != nil {
+		ctx.JSON(http.StatusInternalServerError, err)
+
+		return false
+	}
+
+	return true
+}
+
+// logRegistrationFinishContext records session and identity details for registration finish.
+func logRegistrationFinishContext(ctx *gin.Context, deps AuthDeps, identity webAuthnRegistrationIdentity, sessionData *webauthn.SessionData) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		deps.Cfg,
+		deps.Logger,
+		definitions.DbgWebAuthn,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "session data finish",
+		"content", fmt.Sprintf("%#v", sessionData),
+	)
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		deps.Cfg,
+		deps.Logger,
+		definitions.DbgWebAuthn,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "WebAuthn registration finish",
+		"account", identity.userName,
+		"unique_user_id", identity.uniqueUserID,
+		"display_name", identity.displayName,
+	)
+}
+
 // BeginRegistration Page: '/mfa/webauthn/register/begin'
 func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 	tracer := monittrace.New("nauthilus/core/webauthn")
@@ -313,53 +753,10 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.begin_registration")
 		defer sp.End()
 
-		var (
-			userName     string
-			displayName  string
-			uniqueUserID string
-		)
-
 		mgr := cookie.GetManager(ctx)
-		if mgr == nil {
-			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
-			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
-			SessionCleaner(ctx)
 
-			return
-		}
-
-		if !isWebAuthnRegistrationAuthenticated(mgr) {
-			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
-			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
-			SessionCleaner(ctx)
-
-			return
-		}
-
-		restoreWebAuthnRegistrationIdentityFromFlow(ctx, deps, mgr)
-
-		// We use the account name as username!
-		userName = webAuthnRegistrationUserName(mgr)
-		if userName == "" {
-			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
-			SessionCleaner(ctx)
-
-			return
-		}
-
-		uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
-		if uniqueUserID == "" {
-			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
-			SessionCleaner(ctx)
-
-			return
-		}
-
-		displayName, _ = resolveWebAuthnDisplayName(mgr, userName)
-		if displayName == "" {
-			ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
-			SessionCleaner(ctx)
-
+		identity, ok := registrationIdentityFromSession(ctx, deps, mgr)
+		if !ok {
 			return
 		}
 
@@ -370,40 +767,17 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			definitions.DbgWebAuthn,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "WebAuthn registration begin",
-			"account", userName,
-			"unique_user_id", uniqueUserID,
-			"display_name", displayName,
+			"account", identity.userName,
+			"unique_user_id", identity.uniqueUserID,
+			"display_name", identity.displayName,
 		)
 
-		auth := NewAuthStateFromContextWithDeps(ctx, deps)
-		auth.WithDefaults(ctx)
-
-		user, err := auth.(*AuthState).getUser(userName, uniqueUserID, displayName)
-		if err != nil {
-			// If it does not exist, create a new one
-			user = backend.NewUser(userName, displayName, uniqueUserID)
-
-			if err = auth.(*AuthState).putUser(user); err != nil {
-				level.Error(deps.Logger).Log(
-					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, "Failed to persist initial WebAuthn user cache",
-					definitions.LogKeyError, err,
-				)
-				ctx.JSON(http.StatusInternalServerError, err.Error())
-
-				return
-			}
+		user, ok := registrationUser(ctx, deps, identity)
+		if !ok {
+			return
 		}
 
-		authSelect := buildAuthenticatorSelection(deps.Cfg)
-
-		conveyancePref := protocol.PreferNoAttestation
-
-		options, sessionData, err := webAuthn.BeginRegistration(
-			user,
-			webauthn.WithAuthenticatorSelection(authSelect),
-			webauthn.WithConveyancePreference(conveyancePref),
-		)
+		options, sessionData, err := beginRegistrationOptions(deps, user)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, err)
 			SessionCleaner(ctx)
@@ -411,35 +785,10 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		// Serialize session data and save it to the encrypted session cookie.
-		sessionDataJSON, err := jsonIter.Marshal(*sessionData)
-		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, err)
-			SessionCleaner(ctx)
-
+		if !saveRegistrationSession(ctx, deps, mgr, sessionData) {
 			return
 		}
 
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			deps.Cfg,
-			deps.Logger,
-			definitions.DbgWebAuthn,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "session data begin",
-			"content", fmt.Sprintf("%#v", sessionData),
-		)
-
-		mgr.Set(definitions.SessionKeyRegistration, sessionDataJSON)
-
-		if err = mgr.Save(ctx); err != nil {
-			ctx.JSON(http.StatusInternalServerError, err)
-			SessionCleaner(ctx)
-
-			return
-		}
-
-		// Return the options generated
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "success").Inc()
 		ctx.JSON(http.StatusOK, options)
 	}
@@ -453,138 +802,30 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.finish_registration")
 		defer sp.End()
 
-		var (
-			userName     string
-			uniqueUserID string
-			displayName  string
-			deviceName   string
-			sessionData  *webauthn.SessionData
-		)
-
 		mgr := cookie.GetManager(ctx)
-		if mgr == nil {
-			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
-			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 
+		identity, ok := finishRegistrationIdentityFromSession(ctx, deps, mgr)
+		if !ok {
 			return
 		}
 
-		if !isWebAuthnRegistrationAuthenticated(mgr) {
-			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
-			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
-
+		sessionData, ok := registrationSessionDataFromCookie(ctx, mgr)
+		if !ok {
 			return
 		}
 
-		restoreWebAuthnRegistrationIdentityFromFlow(ctx, deps, mgr)
+		logRegistrationFinishContext(ctx, deps, identity, sessionData)
+		authState := newRegistrationAuthState(ctx, deps)
 
-		userName = webAuthnRegistrationUserName(mgr)
-		if userName == "" {
-			ctx.JSON(http.StatusBadRequest, errors.ErrNotLoggedIn.Error())
-
-			return
-		}
-
-		uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
-		if uniqueUserID == "" {
-			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
-			SessionCleaner(ctx)
-
-			return
-		}
-
-		displayName, updated := resolveWebAuthnDisplayName(mgr, userName)
-		if displayName == "" {
-			ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
-			SessionCleaner(ctx)
-
-			return
-		}
-
-		if updated {
-			if err := mgr.Save(ctx); err != nil {
-				ctx.JSON(http.StatusInternalServerError, err.Error())
-				SessionCleaner(ctx)
-
-				return
-			}
-		}
-
-		cookieValue := mgr.GetBytes(definitions.SessionKeyRegistration, nil)
-		if cookieValue != nil {
-			sessionData = &webauthn.SessionData{}
-
-			if err := jsonIter.Unmarshal(cookieValue, sessionData); err != nil {
-				SessionCleaner(ctx)
-				ctx.JSON(http.StatusInternalServerError, err.Error())
-
-				return
-			}
-		}
-
-		if sessionData == nil {
-			SessionCleaner(ctx)
-			ctx.JSON(http.StatusBadRequest, errors.ErrWebAuthnSessionData)
-
-			return
-		}
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			deps.Cfg,
-			deps.Logger,
-			definitions.DbgWebAuthn,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "session data finish",
-			"content", fmt.Sprintf("%#v", sessionData),
-		)
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			deps.Cfg,
-			deps.Logger,
-			definitions.DbgWebAuthn,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "WebAuthn registration finish",
-			"account", userName,
-			"unique_user_id", uniqueUserID,
-			"display_name", displayName,
-		)
-
-		auth := NewAuthStateFromContextWithDeps(ctx, deps)
-		auth.WithDefaults(ctx)
-
-		user, err := auth.(*AuthState).getUser(userName, uniqueUserID, displayName)
+		user, err := authState.getUser(identity.userName, identity.uniqueUserID, identity.displayName)
 		if err != nil {
 			ctx.JSON(http.StatusBadRequest, err.Error())
 
 			return
 		}
 
-		requestBody, err := io.ReadAll(ctx.Request.Body)
-		if err != nil {
-			ctx.JSON(http.StatusBadRequest, err.Error())
-
-			return
-		}
-
-		var finishRequest struct {
-			Name       string          `json:"name"`
-			Credential json.RawMessage `json:"credential"`
-		}
-
-		var response *protocol.ParsedCredentialCreationData
-
-		if err = jsonIter.Unmarshal(requestBody, &finishRequest); err == nil && len(finishRequest.Credential) > 0 {
-			deviceName = strings.TrimSpace(finishRequest.Name)
-			response, err = protocol.ParseCredentialCreationResponseBody(bytes.NewReader(finishRequest.Credential))
-		} else {
-			response, err = protocol.ParseCredentialCreationResponseBody(bytes.NewReader(requestBody))
-		}
-
-		if err != nil {
-			ctx.JSON(http.StatusBadRequest, fmt.Sprintf("%+v", util.ProtoErrToFields(err)))
-
+		deviceName, response, ok := parseRegistrationFinishResponse(ctx)
+		if !ok {
 			return
 		}
 
@@ -597,54 +838,31 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		user.AddCredential(*credential, deviceName)
 
-		persistentCredential := &mfa.PersistentCredential{
-			Credential: *credential,
-			Name:       deviceName,
-		}
-		if err = auth.(*AuthState).SaveWebAuthnCredential(persistentCredential); err != nil {
-			level.Error(deps.Logger).Log(
-				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-				definitions.LogKeyMsg, "Failed to persist WebAuthn credential to backend",
-				definitions.LogKeyError, err,
-			)
-			ctx.JSON(http.StatusInternalServerError, err.Error())
-
+		if !persistRegistrationCredential(ctx, deps, authState, credential, deviceName) {
 			return
 		}
 
-		if shouldPersistWebAuthnCache(auth.(*AuthState)) {
-			if err = auth.(*AuthState).updateUser(user); err != nil {
-				level.Error(deps.Logger).Log(
-					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, "Failed to update WebAuthn user cache",
-					definitions.LogKeyError, err,
-				)
-				ctx.JSON(http.StatusInternalServerError, err.Error())
-
-				return
-			}
+		if !updateRegistrationUserCache(ctx, deps, authState, user) {
+			return
 		}
 
-		auth.PurgeCacheFor(userName)
+		authState.PurgeCacheFor(identity.userName)
 
-		mgr.Delete(definitions.SessionKeyRegistration)
-
-		// In a forced-registration flow, remove WebAuthn from the pending list so
-		// that ContinueRequiredMFARegistration can advance to the next method or
-		// resume the IDP flow.
-		if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-			flow.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodWebAuthn)
-		}
-
-		if err = mgr.Save(ctx); err != nil {
-			ctx.JSON(http.StatusInternalServerError, err)
-
+		if !completeRegistrationSession(ctx, mgr) {
 			return
 		}
 
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "success").Inc()
 		ctx.JSON(http.StatusOK, "Registration success")
 	}
+}
+
+// newRegistrationAuthState builds the AuthState used to persist WebAuthn registration data.
+func newRegistrationAuthState(ctx *gin.Context, deps AuthDeps) *AuthState {
+	auth := NewAuthStateFromContextWithDeps(ctx, deps)
+	auth.WithDefaults(ctx)
+
+	return auth.(*AuthState)
 }
 
 // LoginWebAuthnBegin Page: '/login/webauthn/begin'
@@ -655,75 +873,22 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.login_begin")
 		defer sp.End()
 
-		var (
-			userName     string
-			uniqueUserID string
-			displayName  string
-		)
-
 		mgr := cookie.GetManager(ctx)
 
-		if mgr != nil {
-			identity := sessionWebAuthnLoginIdentity(mgr)
-			userName = identity.userName
-			uniqueUserID = identity.uniqueUserID
-			displayName = identity.displayName
+		user, ok := loginBeginUser(ctx, deps, mgr)
+		if !ok {
+			return
 		}
 
-		var user *backend.User
-
-		if userName != "" {
-			auth := NewAuthStateFromContextWithDeps(ctx, deps)
-
-			var err error
-
-			user, err = auth.(*AuthState).getUser(userName, uniqueUserID, displayName)
-			if err != nil {
-				ctx.JSON(http.StatusInternalServerError, err.Error())
-
-				return
-			}
-
-			if user == nil || len(user.Credentials) == 0 {
-				ctx.JSON(http.StatusBadRequest, "No WebAuthn credentials found")
-
-				return
-			}
-		}
-
-		var (
-			options     *protocol.CredentialAssertion
-			sessionData *webauthn.SessionData
-			err         error
-		)
-
-		if user == nil {
-			options, sessionData, err = webAuthn.BeginDiscoverableLogin()
-		} else {
-			options, sessionData, err = webAuthn.BeginLogin(user)
-		}
-
+		options, sessionData, err := beginWebAuthnLoginOptions(user)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, err.Error())
 
 			return
 		}
 
-		sessionDataJSON, err := jsonIter.Marshal(*sessionData)
-		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, err.Error())
-
+		if !saveLoginSession(ctx, mgr, sessionData) {
 			return
-		}
-
-		if mgr != nil {
-			mgr.Set(definitions.SessionKeyRegistration, sessionDataJSON)
-
-			if err = mgr.Save(ctx); err != nil {
-				ctx.JSON(http.StatusInternalServerError, err.Error())
-
-				return
-			}
 		}
 
 		ctx.JSON(http.StatusOK, options)
@@ -738,36 +903,15 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.login_finish")
 		defer sp.End()
 
-		var (
-			userName     string
-			uniqueUserID string
-			displayName  string
-			sessionData  *webauthn.SessionData
-		)
-
 		mgr := cookie.GetManager(ctx)
 
-		if mgr != nil {
-			identity := sessionWebAuthnLoginIdentity(mgr)
-			userName = identity.userName
-			uniqueUserID = identity.uniqueUserID
-			displayName = identity.displayName
-
-			cookieValue := mgr.GetBytes(definitions.SessionKeyRegistration, nil)
-			if cookieValue != nil {
-				sessionData = &webauthn.SessionData{}
-
-				if err := jsonIter.Unmarshal(cookieValue, sessionData); err != nil {
-					ctx.JSON(http.StatusInternalServerError, err.Error())
-
-					return
-				}
-			}
+		loginSession, ok := loadWebAuthnLoginSession(ctx, mgr)
+		if !ok {
+			return
 		}
 
-		if sessionData == nil {
-			LogIDPMFAuthResult(ctx, deps, userName, definitions.MFAMethodWebAuthn, errors.ErrWebAuthnSessionData.Error(), false)
-			ctx.JSON(http.StatusBadRequest, errors.ErrWebAuthnSessionData.Error())
+		if loginSession.sessionData == nil {
+			rejectMissingWebAuthnLoginSession(ctx, deps, loginSession.identity.userName)
 
 			return
 		}
@@ -775,269 +919,383 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
 		authState := auth.(*AuthState)
 
-		var user *backend.User
-
-		if userName != "" {
-			var err error
-
-			user, err = auth.(*AuthState).getUser(userName, uniqueUserID, displayName)
-			if err != nil {
-				LogIDPMFAuthResult(ctx, deps, userName, definitions.MFAMethodWebAuthn, err.Error(), false)
-				ctx.JSON(http.StatusInternalServerError, err.Error())
-
-				return
-			}
-		} else {
-			// Passwordless path: Identify user by handle from response
-			bodyBytes, _ := io.ReadAll(ctx.Request.Body)
-			ctx.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-			parsedResponse, err := protocol.ParseCredentialRequestResponseBody(bytes.NewBuffer(bodyBytes))
-			if err != nil {
-				LogIDPMFAuthResult(ctx, deps, userName, definitions.MFAMethodWebAuthn, "Invalid response body", false)
-				ctx.JSON(http.StatusBadRequest, "Invalid response body")
-
-				return
-			}
-
-			userHandle := string(parsedResponse.Response.UserHandle)
-			if userHandle == "" {
-				LogIDPMFAuthResult(ctx, deps, userName, definitions.MFAMethodWebAuthn, "No user handle provided", false)
-				ctx.JSON(http.StatusBadRequest, "No user handle provided")
-
-				return
-			}
-
-			user, err = backend.GetWebAuthnFromRedis(ctx.Request.Context(), auth.(*AuthState).Cfg(), auth.(*AuthState).Logger(), auth.(*AuthState).Redis(), userHandle)
-			if err != nil {
-				LogIDPMFAuthResult(ctx, deps, userHandle, definitions.MFAMethodWebAuthn, "User not found", false)
-				ctx.JSON(http.StatusBadRequest, "User not found")
-
-				return
-			}
+		user, ok := resolveWebAuthnLoginUser(ctx, deps, authState, loginSession.identity)
+		if !ok {
+			return
 		}
 
 		if user == nil {
-			LogIDPMFAuthResult(ctx, deps, userName, definitions.MFAMethodWebAuthn, "User not found", false)
+			LogIDPMFAuthResult(ctx, deps, loginSession.identity.userName, definitions.MFAMethodWebAuthn, "User not found", false)
 			ctx.JSON(http.StatusBadRequest, "User not found")
 
 			return
 		}
 
-		credential, err := webAuthn.FinishLogin(user, *sessionData, ctx.Request)
-		if err != nil {
-			LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, err.Error(), false)
-			ctx.JSON(http.StatusBadRequest, err.Error())
-
+		assertion, ok := finishWebAuthnLoginAssertion(ctx, deps, authState, user, loginSession.sessionData, sp)
+		if !ok {
 			return
 		}
 
-		credentialIDHash := hashCredentialID(credential.ID)
-		aaguid := hex.EncodeToString(credential.Authenticator.AAGUID)
-		isResidentKey := len(sessionData.AllowedCredentialIDs) == 0
-		newSignCount := credential.Authenticator.SignCount
-
-		// Update sign count and last used if necessary
-		existingCredentials := user.Credentials
-
-		var oldSignCount *uint32
-
-		for i := range existingCredentials {
-			if bytes.Equal(existingCredentials[i].ID, credential.ID) {
-				oldValue := existingCredentials[i].Authenticator.SignCount
-				oldSignCount = &oldValue
-
-				break
-			}
-		}
-
-		signCountZero := newSignCount == 0
-
-		signCountMonotonic := true
-		if oldSignCount != nil {
-			signCountMonotonic = isWebAuthnSignCountMonotonic(*oldSignCount, newSignCount)
-		}
-
-		sp.SetAttributes(
-			attribute.Int64("webauthn.sign_count", int64(newSignCount)),
-			attribute.Bool("webauthn.flags.up", credential.Flags.UserPresent),
-			attribute.Bool("webauthn.flags.uv", credential.Flags.UserVerified),
-			attribute.Bool("webauthn.is_resident_key", isResidentKey),
-			attribute.String("webauthn.credential_id_hash", credentialIDHash),
-			attribute.String("webauthn.aaguid", aaguid),
-			attribute.Bool("webauthn.sign_count_zero", signCountZero),
-		)
-
-		if oldSignCount != nil {
-			sp.SetAttributes(
-				attribute.Int64("webauthn.sign_count_previous", int64(*oldSignCount)),
-				attribute.Bool("webauthn.sign_count_monotonic", signCountMonotonic),
-			)
-		}
-
-		debugKeyvals := []any{
-			definitions.LogKeyGUID, authState.Runtime.GUID,
-			definitions.LogKeyMsg, "WebAuthn login assertion details",
-			webAuthnDebugSignCount, newSignCount,
-			webAuthnDebugFlagsUP, credential.Flags.UserPresent,
-			webAuthnDebugFlagsUV, credential.Flags.UserVerified,
-			webAuthnDebugCredentialIDHash, credentialIDHash,
-			webAuthnDebugIsResidentKey, isResidentKey,
-			webAuthnDebugAAGUID, aaguid,
-			webAuthnDebugSignCountZero, signCountZero,
-		}
-
-		if oldSignCount != nil {
-			debugKeyvals = append(
-				debugKeyvals,
-				"sign_count_previous", *oldSignCount,
-				"sign_count_monotonic", signCountMonotonic,
-			)
-		}
-
-		util.DebugModuleWithCfg(
-			authState.Ctx(),
-			authState.Cfg(),
-			authState.Logger(),
-			definitions.DbgWebAuthn,
-			debugKeyvals...,
-		)
-
-		if signCountZero || (oldSignCount != nil && !signCountMonotonic) {
-			warnKeyvals := []any{
-				definitions.LogKeyGUID, authState.Runtime.GUID,
-				definitions.LogKeyMsg, "WebAuthn sign count anomaly",
-				webAuthnDebugSignCount, newSignCount,
-				webAuthnDebugFlagsUP, credential.Flags.UserPresent,
-				webAuthnDebugFlagsUV, credential.Flags.UserVerified,
-				webAuthnDebugCredentialIDHash, credentialIDHash,
-				webAuthnDebugIsResidentKey, isResidentKey,
-				webAuthnDebugAAGUID, aaguid,
-				webAuthnDebugSignCountZero, signCountZero,
-			}
-
-			if oldSignCount != nil {
-				warnKeyvals = append(
-					warnKeyvals,
-					"sign_count_previous", *oldSignCount,
-					"sign_count_monotonic", signCountMonotonic,
-				)
-			}
-
-			level.Warn(authState.Logger()).Log(warnKeyvals...)
-		}
-
-		if oldSignCount != nil && !signCountMonotonic {
-			LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, "WebAuthn sign count rollback detected", false)
-			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "fail").Inc()
-			ctx.JSON(http.StatusBadRequest, "WebAuthn sign count rollback detected")
-
+		if !persistWebAuthnLoginCredentialUpdate(ctx, deps, authState, user, assertion) {
 			return
 		}
 
-		oldCredential, newPersistentCredential := updateWebAuthnCredentialAfterLogin(
-			existingCredentials,
-			credential,
-			time.Now(),
-		)
-
-		if oldCredential != nil {
-			if err = persistWebAuthnLoginUpdate(auth, user, oldCredential, newPersistentCredential); err != nil {
-				LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, err.Error(), false)
-				stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "fail").Inc()
-
-				_ = level.Error(authState.Logger()).Log(
-					definitions.LogKeyGUID, authState.Runtime.GUID,
-					definitions.LogKeyMsg, "Failed to persist WebAuthn login credential update",
-					definitions.LogKeyError, err,
-				)
-				ctx.JSON(http.StatusInternalServerError, err.Error())
-
-				return
-			}
-		}
-
-		// Success!
-		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "success").Inc()
-		LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, "", true)
-
-		// Set last MFA method cookie
-		secure := util.ShouldSetSecureCookie()
-
-		ctx.SetCookie("last_mfa_method", "webauthn", 365*24*60*60, "/", "", secure, true)
-
-		if shouldPersistWebAuthnCache(authState) {
-			_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), authState.Logger(), authState.Cfg(), authState.Redis(), user, authState.Cfg().GetServer().GetTimeouts().GetRedisWrite())
-		}
-
-		if mgr != nil {
-			// Check if the original password authentication was successful (delayed response case).
-			// If the initial credentials were wrong, we must reject the login even if MFA succeeded.
-			// This implements "Fall B Punkt 1" from the IDP login flow specification:
-			// User is redirected back to /login/:languageTag with error message, session is reset.
-			submittedUsername := mgr.GetString(definitions.SessionKeyUsername, user.Name)
-			if !isMFAAuthResultValid(mgr, submittedUsername) {
-				stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
-
-				util.DebugModuleWithCfg(
-					ctx.Request.Context(),
-					authState.Cfg(),
-					authState.Logger(),
-					definitions.DbgIdp,
-					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, "Delayed-response login rejected after MFA",
-					"mfa_method", "webauthn",
-					"username", submittedUsername,
-				)
-
-				// Ensure no stale authenticated session survives this failure path.
-				mgr.Delete(definitions.SessionKeyAccount)
-				mgr.Delete(definitions.SessionKeyDisplayName)
-				mgr.Delete(definitions.SessionKeySubject)
-
-				// Clear MFA-related session data (includes auth_result, username, registration, etc.)
-				flow.CleanupMFAState(mgr)
-
-				// Store error message in session for display on login page (after cleanup to persist it).
-				mgr.Set(definitions.SessionKeyLoginError, "Invalid login or password")
-
-				if saveErr := mgr.Save(ctx); saveErr != nil {
-					ctx.JSON(http.StatusInternalServerError, saveErr.Error())
-
-					return
-				}
-
-				// Return JSON with redirect signal.
-				// Device-code flows terminate on their dedicated failure page.
-				redirectTarget := "/login"
-				if mgr.GetString(definitions.SessionKeyOIDCGrantType, "") == definitions.OIDCFlowDeviceCode {
-					redirectTarget = "/oidc/device/verify/failed"
-					if languageTag := ctx.Param("languageTag"); languageTag != "" {
-						redirectTarget += "/" + languageTag
-					}
-				}
-
-				ctx.JSON(http.StatusUnauthorized, gin.H{"redirect": redirectTarget})
-
-				return
-			}
-
-			finalUser := ResolveCompletedIDPMFAUser(mgr, user)
-			StoreCompletedIDPMFASession(mgr, user, "webauthn")
-
-			if err = mgr.Save(ctx); err != nil {
-				ctx.JSON(http.StatusInternalServerError, err.Error())
-
-				return
-			}
-
-			user = finalUser
+		user, ok = completeWebAuthnLogin(ctx, deps, authState, mgr, user)
+		if !ok {
+			return
 		}
 
 		QueueCompletedIDPMFAPostAction(ctx, authState.deps, user)
 
 		ctx.JSON(http.StatusOK, "Login success")
 	}
+}
+
+// loadWebAuthnLoginSession reads the WebAuthn login identity and ceremony data from the session.
+func loadWebAuthnLoginSession(ctx *gin.Context, mgr cookie.Manager) (webAuthnLoginSession, bool) {
+	var loginSession webAuthnLoginSession
+	if mgr == nil {
+		return loginSession, true
+	}
+
+	loginSession.identity = sessionWebAuthnLoginIdentity(mgr)
+
+	cookieValue := mgr.GetBytes(definitions.SessionKeyRegistration, nil)
+	if cookieValue == nil {
+		return loginSession, true
+	}
+
+	loginSession.sessionData = &webauthn.SessionData{}
+	if err := jsonIter.Unmarshal(cookieValue, loginSession.sessionData); err != nil {
+		ctx.JSON(http.StatusInternalServerError, err.Error())
+
+		return loginSession, false
+	}
+
+	return loginSession, true
+}
+
+// rejectMissingWebAuthnLoginSession reports missing WebAuthn ceremony data as a failed MFA attempt.
+func rejectMissingWebAuthnLoginSession(ctx *gin.Context, deps AuthDeps, username string) {
+	LogIDPMFAuthResult(ctx, deps, username, definitions.MFAMethodWebAuthn, errors.ErrWebAuthnSessionData.Error(), false)
+	ctx.JSON(http.StatusBadRequest, errors.ErrWebAuthnSessionData.Error())
+}
+
+// resolveWebAuthnLoginUser resolves the user for session-bound or passwordless WebAuthn login.
+func resolveWebAuthnLoginUser(ctx *gin.Context, deps AuthDeps, authState *AuthState, identity webAuthnLoginIdentity) (*backend.User, bool) {
+	if identity.userName != "" {
+		user, err := authState.getUser(identity.userName, identity.uniqueUserID, identity.displayName)
+		if err != nil {
+			LogIDPMFAuthResult(ctx, deps, identity.userName, definitions.MFAMethodWebAuthn, err.Error(), false)
+			ctx.JSON(http.StatusInternalServerError, err.Error())
+
+			return nil, false
+		}
+
+		return user, true
+	}
+
+	return resolvePasswordlessWebAuthnLoginUser(ctx, deps, authState)
+}
+
+// resolvePasswordlessWebAuthnLoginUser identifies the user by handle from the assertion response.
+func resolvePasswordlessWebAuthnLoginUser(ctx *gin.Context, deps AuthDeps, authState *AuthState) (*backend.User, bool) {
+	bodyBytes, _ := io.ReadAll(ctx.Request.Body)
+	ctx.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	parsedResponse, err := protocol.ParseCredentialRequestResponseBody(bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		LogIDPMFAuthResult(ctx, deps, "", definitions.MFAMethodWebAuthn, "Invalid response body", false)
+		ctx.JSON(http.StatusBadRequest, "Invalid response body")
+
+		return nil, false
+	}
+
+	userHandle := string(parsedResponse.Response.UserHandle)
+	if userHandle == "" {
+		LogIDPMFAuthResult(ctx, deps, "", definitions.MFAMethodWebAuthn, "No user handle provided", false)
+		ctx.JSON(http.StatusBadRequest, "No user handle provided")
+
+		return nil, false
+	}
+
+	user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), authState.Cfg(), authState.Logger(), authState.Redis(), userHandle)
+	if err != nil {
+		LogIDPMFAuthResult(ctx, deps, userHandle, definitions.MFAMethodWebAuthn, "User not found", false)
+		ctx.JSON(http.StatusBadRequest, "User not found")
+
+		return nil, false
+	}
+
+	return user, true
+}
+
+// finishWebAuthnLoginAssertion validates the assertion and rejects sign-count rollbacks.
+func finishWebAuthnLoginAssertion(
+	ctx *gin.Context,
+	deps AuthDeps,
+	authState *AuthState,
+	user *backend.User,
+	sessionData *webauthn.SessionData,
+	sp webAuthnTraceSpan,
+) (webAuthnLoginAssertion, bool) {
+	credential, err := webAuthn.FinishLogin(user, *sessionData, ctx.Request)
+	if err != nil {
+		LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, err.Error(), false)
+		ctx.JSON(http.StatusBadRequest, err.Error())
+
+		return webAuthnLoginAssertion{}, false
+	}
+
+	assertion := webAuthnLoginAssertion{
+		credential:          credential,
+		existingCredentials: user.Credentials,
+	}
+	audit := newWebAuthnSignCountAudit(assertion.existingCredentials, credential, sessionData)
+	recordWebAuthnSignCountAudit(sp, authState, credential, audit)
+
+	if audit.oldSignCount != nil && !audit.signCountMonotonic {
+		LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, "WebAuthn sign count rollback detected", false)
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "fail").Inc()
+		ctx.JSON(http.StatusBadRequest, "WebAuthn sign count rollback detected")
+
+		return webAuthnLoginAssertion{}, false
+	}
+
+	return assertion, true
+}
+
+// newWebAuthnSignCountAudit derives observability fields from a completed assertion.
+func newWebAuthnSignCountAudit(
+	existingCredentials []mfa.PersistentCredential,
+	credential *webauthn.Credential,
+	sessionData *webauthn.SessionData,
+) webAuthnSignCountAudit {
+	newSignCount := credential.Authenticator.SignCount
+	oldSignCount := findWebAuthnOldSignCount(existingCredentials, credential.ID)
+
+	signCountMonotonic := true
+	if oldSignCount != nil {
+		signCountMonotonic = isWebAuthnSignCountMonotonic(*oldSignCount, newSignCount)
+	}
+
+	return webAuthnSignCountAudit{
+		oldSignCount:       oldSignCount,
+		credentialIDHash:   hashCredentialID(credential.ID),
+		aaguid:             hex.EncodeToString(credential.Authenticator.AAGUID),
+		isResidentKey:      len(sessionData.AllowedCredentialIDs) == 0,
+		signCountZero:      newSignCount == 0,
+		signCountMonotonic: signCountMonotonic,
+		newSignCount:       newSignCount,
+	}
+}
+
+// findWebAuthnOldSignCount returns the stored counter for the asserted credential.
+func findWebAuthnOldSignCount(credentials []mfa.PersistentCredential, credentialID []byte) *uint32 {
+	for i := range credentials {
+		if bytes.Equal(credentials[i].ID, credentialID) {
+			oldValue := credentials[i].Authenticator.SignCount
+
+			return &oldValue
+		}
+	}
+
+	return nil
+}
+
+// recordWebAuthnSignCountAudit emits trace, debug, and anomaly logs for assertion counters.
+func recordWebAuthnSignCountAudit(
+	sp webAuthnTraceSpan,
+	authState *AuthState,
+	credential *webauthn.Credential,
+	audit webAuthnSignCountAudit,
+) {
+	setWebAuthnSignCountTrace(sp, credential, audit)
+	logWebAuthnSignCountDebug(authState, credential, audit)
+
+	if audit.signCountZero || (audit.oldSignCount != nil && !audit.signCountMonotonic) {
+		level.Warn(authState.Logger()).Log(webAuthnSignCountLogFields(authState, credential, audit, "WebAuthn sign count anomaly")...)
+	}
+}
+
+// setWebAuthnSignCountTrace stores assertion counter details on the active span.
+func setWebAuthnSignCountTrace(sp webAuthnTraceSpan, credential *webauthn.Credential, audit webAuthnSignCountAudit) {
+	sp.SetAttributes(
+		attribute.Int64("webauthn.sign_count", int64(audit.newSignCount)),
+		attribute.Bool("webauthn.flags.up", credential.Flags.UserPresent),
+		attribute.Bool("webauthn.flags.uv", credential.Flags.UserVerified),
+		attribute.Bool("webauthn.is_resident_key", audit.isResidentKey),
+		attribute.String("webauthn.credential_id_hash", audit.credentialIDHash),
+		attribute.String("webauthn.aaguid", audit.aaguid),
+		attribute.Bool("webauthn.sign_count_zero", audit.signCountZero),
+	)
+
+	if audit.oldSignCount != nil {
+		sp.SetAttributes(
+			attribute.Int64("webauthn.sign_count_previous", int64(*audit.oldSignCount)),
+			attribute.Bool("webauthn.sign_count_monotonic", audit.signCountMonotonic),
+		)
+	}
+}
+
+// logWebAuthnSignCountDebug writes assertion counter details to the WebAuthn debug module.
+func logWebAuthnSignCountDebug(authState *AuthState, credential *webauthn.Credential, audit webAuthnSignCountAudit) {
+	util.DebugModuleWithCfg(
+		authState.Ctx(),
+		authState.Cfg(),
+		authState.Logger(),
+		definitions.DbgWebAuthn,
+		webAuthnSignCountLogFields(authState, credential, audit, "WebAuthn login assertion details")...,
+	)
+}
+
+// webAuthnSignCountLogFields builds the shared log fields for WebAuthn counter observability.
+func webAuthnSignCountLogFields(authState *AuthState, credential *webauthn.Credential, audit webAuthnSignCountAudit, message string) []any {
+	keyvals := []any{
+		definitions.LogKeyGUID, authState.Runtime.GUID,
+		definitions.LogKeyMsg, message,
+		webAuthnDebugSignCount, audit.newSignCount,
+		webAuthnDebugFlagsUP, credential.Flags.UserPresent,
+		webAuthnDebugFlagsUV, credential.Flags.UserVerified,
+		webAuthnDebugCredentialIDHash, audit.credentialIDHash,
+		webAuthnDebugIsResidentKey, audit.isResidentKey,
+		webAuthnDebugAAGUID, audit.aaguid,
+		webAuthnDebugSignCountZero, audit.signCountZero,
+	}
+
+	if audit.oldSignCount != nil {
+		keyvals = append(
+			keyvals,
+			"sign_count_previous", *audit.oldSignCount,
+			"sign_count_monotonic", audit.signCountMonotonic,
+		)
+	}
+
+	return keyvals
+}
+
+// persistWebAuthnLoginCredentialUpdate stores last-used and counter changes after login.
+func persistWebAuthnLoginCredentialUpdate(
+	ctx *gin.Context,
+	deps AuthDeps,
+	authState *AuthState,
+	user *backend.User,
+	assertion webAuthnLoginAssertion,
+) bool {
+	oldCredential, newPersistentCredential := updateWebAuthnCredentialAfterLogin(
+		assertion.existingCredentials,
+		assertion.credential,
+		time.Now(),
+	)
+	if oldCredential == nil {
+		return true
+	}
+
+	if err := persistWebAuthnLoginUpdate(authState, user, oldCredential, newPersistentCredential); err != nil {
+		LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, err.Error(), false)
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "fail").Inc()
+
+		_ = level.Error(authState.Logger()).Log(
+			definitions.LogKeyGUID, authState.Runtime.GUID,
+			definitions.LogKeyMsg, "Failed to persist WebAuthn login credential update",
+			definitions.LogKeyError, err,
+		)
+		ctx.JSON(http.StatusInternalServerError, err.Error())
+
+		return false
+	}
+
+	return true
+}
+
+// completeWebAuthnLogin records success, validates delayed login state, and stores the completed session.
+func completeWebAuthnLogin(
+	ctx *gin.Context,
+	deps AuthDeps,
+	authState *AuthState,
+	mgr cookie.Manager,
+	user *backend.User,
+) (*backend.User, bool) {
+	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "success").Inc()
+	LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, "", true)
+
+	secure := util.ShouldSetSecureCookie()
+	ctx.SetCookie("last_mfa_method", "webauthn", 365*24*60*60, "/", "", secure, true)
+
+	if shouldPersistWebAuthnCache(authState) {
+		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), authState.Logger(), authState.Cfg(), authState.Redis(), user, authState.Cfg().GetServer().GetTimeouts().GetRedisWrite())
+	}
+
+	if mgr == nil {
+		return user, true
+	}
+
+	if !acceptDelayedWebAuthnLogin(ctx, authState, mgr, user) {
+		return nil, false
+	}
+
+	finalUser := ResolveCompletedIDPMFAUser(mgr, user)
+	StoreCompletedIDPMFASession(mgr, user, "webauthn")
+
+	if err := mgr.Save(ctx); err != nil {
+		ctx.JSON(http.StatusInternalServerError, err.Error())
+
+		return nil, false
+	}
+
+	return finalUser, true
+}
+
+// acceptDelayedWebAuthnLogin fails closed when the original password step failed.
+func acceptDelayedWebAuthnLogin(ctx *gin.Context, authState *AuthState, mgr cookie.Manager, user *backend.User) bool {
+	submittedUsername := mgr.GetString(definitions.SessionKeyUsername, user.Name)
+	if isMFAAuthResultValid(mgr, submittedUsername) {
+		return true
+	}
+
+	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		authState.Cfg(),
+		authState.Logger(),
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Delayed-response login rejected after MFA",
+		"mfa_method", "webauthn",
+		"username", submittedUsername,
+	)
+
+	mgr.Delete(definitions.SessionKeyAccount)
+	mgr.Delete(definitions.SessionKeyDisplayName)
+	mgr.Delete(definitions.SessionKeySubject)
+	flow.CleanupMFAState(mgr)
+	mgr.Set(definitions.SessionKeyLoginError, "Invalid login or password")
+
+	if saveErr := mgr.Save(ctx); saveErr != nil {
+		ctx.JSON(http.StatusInternalServerError, saveErr.Error())
+
+		return false
+	}
+
+	ctx.JSON(http.StatusUnauthorized, gin.H{"redirect": webAuthnDelayedFailureRedirect(ctx, mgr)})
+
+	return false
+}
+
+// webAuthnDelayedFailureRedirect returns the browser target for delayed-login rejection.
+func webAuthnDelayedFailureRedirect(ctx *gin.Context, mgr cookie.Manager) string {
+	redirectTarget := "/login"
+	if mgr.GetString(definitions.SessionKeyOIDCGrantType, "") != definitions.OIDCFlowDeviceCode {
+		return redirectTarget
+	}
+
+	redirectTarget = "/oidc/device/verify/failed"
+	if languageTag := ctx.Param("languageTag"); languageTag != "" {
+		redirectTarget += "/" + languageTag
+	}
+
+	return redirectTarget
 }
 
 // buildAuthenticatorSelection constructs the protocol.AuthenticatorSelection from the

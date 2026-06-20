@@ -70,6 +70,13 @@ func TestWebAuthnCredentialMapperPreservesPersistentCredentialFields(t *testing.
 
 	assertCredentialBytes(t, "credential ID", roundTripped.ID, persistent.ID)
 	assertCredentialBytes(t, "public key", roundTripped.PublicKey, persistent.PublicKey)
+	assertCredentialAuthenticatorFields(t, roundTripped, persistent)
+	assertCredentialMetadataFields(t, roundTripped, persistent)
+}
+
+// assertCredentialAuthenticatorFields verifies authenticator and transport fields.
+func assertCredentialAuthenticatorFields(t *testing.T, roundTripped *mfa.PersistentCredential, persistent *mfa.PersistentCredential) {
+	t.Helper()
 
 	if got := roundTripped.Authenticator.SignCount; got != persistent.Authenticator.SignCount {
 		t.Fatalf("sign count = %d, want %d", got, persistent.Authenticator.SignCount)
@@ -86,6 +93,11 @@ func TestWebAuthnCredentialMapperPreservesPersistentCredentialFields(t *testing.
 	if got := roundTripped.Flags.BackupState; got != persistent.Flags.BackupState {
 		t.Fatalf("backup state = %v, want %v", got, persistent.Flags.BackupState)
 	}
+}
+
+// assertCredentialMetadataFields verifies attestation and metadata fields.
+func assertCredentialMetadataFields(t *testing.T, roundTripped *mfa.PersistentCredential, persistent *mfa.PersistentCredential) {
+	t.Helper()
 
 	if got := roundTripped.AttestationType; got != persistent.AttestationType {
 		t.Fatalf("attestation type = %q, want %q", got, persistent.AttestationType)

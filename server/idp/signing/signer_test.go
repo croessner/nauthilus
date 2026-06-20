@@ -66,6 +66,27 @@ func ed25519KeyToPEM(key ed25519.PrivateKey) string {
 	}))
 }
 
+// assertPEMSignerSigns verifies shared signer properties and a minimal signing flow.
+func assertPEMSignerSigns(t *testing.T, signer Signer, err error, expectedAlgorithm string, expectedKeyID string) {
+	t.Helper()
+
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Equal(t, expectedAlgorithm, signer.Algorithm())
+	assert.Equal(t, expectedKeyID, signer.KeyID())
+
+	claims := jwt.MapClaims{
+		"sub": "test",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}
+
+	tokenString, err := signer.Sign(claims)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, tokenString)
+}
+
 func TestRS256Signer_SignAndVerify(t *testing.T) {
 	key := generateRSAKey(t)
 	kid := "rs256-test-kid"
@@ -146,21 +167,8 @@ func TestRS256SignerFromPEM(t *testing.T) {
 	pemData := rsaKeyToPEM(key)
 
 	signer, err := NewRS256SignerFromPEM(pemData, "pem-kid")
-	if !assert.NoError(t, err) {
-		return
-	}
 
-	assert.Equal(t, AlgorithmRS256, signer.Algorithm())
-	assert.Equal(t, "pem-kid", signer.KeyID())
-
-	claims := jwt.MapClaims{
-		"sub": "test",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
-
-	tokenString, err := signer.Sign(claims)
-	assert.NoError(t, err)
-	assert.NotEmpty(t, tokenString)
+	assertPEMSignerSigns(t, signer, err, AlgorithmRS256, "pem-kid")
 }
 
 func TestEdDSASignerFromPEM(t *testing.T) {
@@ -168,21 +176,8 @@ func TestEdDSASignerFromPEM(t *testing.T) {
 	pemData := ed25519KeyToPEM(key)
 
 	signer, err := NewEdDSASignerFromPEM(pemData, "ed-pem-kid")
-	if !assert.NoError(t, err) {
-		return
-	}
 
-	assert.Equal(t, AlgorithmEdDSA, signer.Algorithm())
-	assert.Equal(t, "ed-pem-kid", signer.KeyID())
-
-	claims := jwt.MapClaims{
-		"sub": "test",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
-
-	tokenString, err := signer.Sign(claims)
-	assert.NoError(t, err)
-	assert.NotEmpty(t, tokenString)
+	assertPEMSignerSigns(t, signer, err, AlgorithmEdDSA, "ed-pem-kid")
 }
 
 func TestVerifier_WrongAlgorithm(t *testing.T) {

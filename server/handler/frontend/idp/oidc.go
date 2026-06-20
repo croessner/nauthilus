@@ -305,184 +305,264 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, discoveryDocument)
 }
 
+// oidcClientCredentials carries the resolved client authentication envelope.
+type oidcClientCredentials struct {
+	clientID         string
+	clientSecret     string
+	authSource       string
+	bodyClientID     string
+	bodyClientSecret string
+}
+
 // authenticateClient extracts and authenticates the OIDC client.
 func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, bool) {
-	var clientID, clientSecret string
-
-	var authSource string
-
-	// 1. Try Basic Auth
-	if hClientID, hClientSecret, ok := ctx.Request.BasicAuth(); ok {
-		if uClientID, err := url.QueryUnescape(hClientID); err == nil {
-			clientID = uClientID
-		} else {
-			clientID = hClientID
-		}
-
-		if uClientSecret, err := url.QueryUnescape(hClientSecret); err == nil {
-			clientSecret = uClientSecret
-		} else {
-			clientSecret = hClientSecret
-		}
-
-		authSource = clientauth.MethodClientSecretBasic
-	}
-
-	// 2. Try Body
-	bClientID := formValue(ctx, oidcParamClientID)
-	bClientSecret := formValue(ctx, oidcParamClientSecret)
-	combinedClientAuthAllowed := false
-
-	if bClientID != "" || bClientSecret != "" {
-		if authSource != "" {
-			combinedClientAuthAllowed = h.allowRefreshGrantCombinedClientAuth(
-				ctx,
-				authSource,
-				clientID,
-				clientSecret,
-				bClientID,
-				bClientSecret,
-			)
-
-			if combinedClientAuthAllowed {
-				clientType := "confidential"
-				if candidate, ok := h.idp.FindClient(clientID); ok && candidate.IsPublicClient() {
-					clientType = "public"
-				}
-
-				util.DebugModuleWithCfg(
-					ctx.Request.Context(),
-					h.deps.Cfg,
-					h.deps.Logger,
-					definitions.DbgIdp,
-					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, "Accepting combined OIDC client authentication for refresh token compatibility",
-					definitions.LogKeyClientID, clientID,
-					"client_type", clientType,
-				)
-			}
-
-			if !combinedClientAuthAllowed {
-				util.DebugModuleWithCfg(
-					ctx.Request.Context(),
-					h.deps.Cfg,
-					h.deps.Logger,
-					definitions.DbgIdp,
-					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, "Multiple OIDC client authentication methods used",
-					"methods", authSource+","+clientauth.MethodClientSecretPost,
-				)
-
-				ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
-
-				return nil, false
-			}
-		}
-
-		if !combinedClientAuthAllowed {
-			if bClientID != "" {
-				clientID = bClientID
-			}
-
-			clientSecret = bClientSecret
-		}
-	}
-
-	if clientID == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
-
-		return nil, false
-	}
-
-	client, ok := h.idp.FindClient(clientID)
+	credentials, ok := h.resolveOIDCClientCredentials(ctx)
 	if !ok {
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "OIDC client not found",
-			definitions.LogKeyClientID, clientID,
-		)
-
-		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
-
 		return nil, false
 	}
 
-	if authSource == "" && bClientSecret != "" {
-		authSource = clientauth.MethodClientSecretPost
+	if credentials.clientID == "" {
+		writeOIDCInvalidClientResponse(ctx)
+		return nil, false
 	}
 
-	if authSource == "" && bClientID != "" && (client.TokenEndpointAuthMethod == oidcClientAuthMethodNone || client.IsPublicClient()) {
-		authSource = oidcClientAuthMethodNone
+	client, ok := h.findOIDCClient(ctx, credentials.clientID)
+	if !ok {
+		return nil, false
 	}
 
-	if client.IsPublicClient() && clientID == client.ClientID {
-		if authSource == clientauth.MethodClientSecretBasic || authSource == clientauth.MethodClientSecretPost {
-			// Public clients cannot keep a secret. Some clients still include
-			// one for compatibility; ignore it and treat the request as "none".
-			authSource = oidcClientAuthMethodNone
-			clientSecret = ""
-		}
+	completeOIDCClientAuthSource(ctx, client, &credentials)
+
+	if !h.enforceOIDCClientAuthMethod(ctx, client, credentials) {
+		return nil, false
 	}
 
-	if authSource != "" {
-		ctx.Set(definitions.CtxAuthMethodKey, authSource)
-	}
-
-	// Enforce TokenEndpointAuthMethod if configured
-	if client.TokenEndpointAuthMethod != "" {
-		allowed := false
-
-		switch client.TokenEndpointAuthMethod {
-		case clientauth.MethodClientSecretBasic:
-			if authSource == clientauth.MethodClientSecretBasic {
-				allowed = true
-			}
-		case clientauth.MethodClientSecretPost:
-			if authSource == clientauth.MethodClientSecretPost {
-				allowed = true
-			}
-		case oidcClientAuthMethodNone:
-			if authSource == oidcClientAuthMethodNone {
-				allowed = true
-			}
-		default:
-			// If unknown, default to allowing existing behavior (basic or post)
-			allowed = authSource == clientauth.MethodClientSecretBasic || authSource == clientauth.MethodClientSecretPost
-		}
-
-		if !allowed {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				h.deps.Cfg,
-				h.deps.Logger,
-				definitions.DbgIdp,
-				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-				definitions.LogKeyMsg, "OIDC client authentication method not allowed",
-				definitions.LogKeyClientID, clientID,
-				"auth_source", authSource,
-				"expected_method", client.TokenEndpointAuthMethod,
-			)
-
-			ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
-
-			return nil, false
-		}
-	}
-
-	if authSource == oidcClientAuthMethodNone {
+	if credentials.authSource == oidcClientAuthMethodNone {
 		return client, true
 	}
 
-	if authSource == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
-
+	if credentials.authSource == "" {
+		writeOIDCInvalidClientResponse(ctx)
 		return nil, false
 	}
 
+	if !h.verifyOIDCClientSecret(ctx, client, credentials) {
+		return nil, false
+	}
+
+	return client, true
+}
+
+// resolveOIDCClientCredentials merges basic and form-based client credentials.
+func (h *OIDCHandler) resolveOIDCClientCredentials(ctx *gin.Context) (oidcClientCredentials, bool) {
+	credentials := basicOIDCClientCredentials(ctx)
+	credentials.bodyClientID = formValue(ctx, oidcParamClientID)
+	credentials.bodyClientSecret = formValue(ctx, oidcParamClientSecret)
+
+	if credentials.bodyClientID == "" && credentials.bodyClientSecret == "" {
+		return credentials, true
+	}
+
+	if credentials.authSource == "" {
+		credentials.applyBodyCredentials()
+		return credentials, true
+	}
+
+	if h.allowRefreshGrantCombinedClientAuth(
+		ctx,
+		credentials.authSource,
+		credentials.clientID,
+		credentials.clientSecret,
+		credentials.bodyClientID,
+		credentials.bodyClientSecret,
+	) {
+		h.logAcceptedCombinedClientAuth(ctx, credentials.clientID)
+		return credentials, true
+	}
+
+	h.logMultipleOIDCClientAuthenticationMethods(ctx, credentials.authSource)
+	writeOIDCInvalidClientResponse(ctx)
+
+	return credentials, false
+}
+
+// basicOIDCClientCredentials extracts HTTP Basic credentials.
+func basicOIDCClientCredentials(ctx *gin.Context) oidcClientCredentials {
+	clientID, clientSecret, ok := ctx.Request.BasicAuth()
+	if !ok {
+		return oidcClientCredentials{}
+	}
+
+	return oidcClientCredentials{
+		clientID:     decodeOIDCBasicAuthValue(clientID),
+		clientSecret: decodeOIDCBasicAuthValue(clientSecret),
+		authSource:   clientauth.MethodClientSecretBasic,
+	}
+}
+
+// decodeOIDCBasicAuthValue preserves raw Basic values when percent decoding fails.
+func decodeOIDCBasicAuthValue(value string) string {
+	decoded, err := url.QueryUnescape(value)
+	if err != nil {
+		return value
+	}
+
+	return decoded
+}
+
+// applyBodyCredentials applies form credentials when no other method was used.
+func (credentials *oidcClientCredentials) applyBodyCredentials() {
+	if credentials.bodyClientID != "" {
+		credentials.clientID = credentials.bodyClientID
+	}
+
+	credentials.clientSecret = credentials.bodyClientSecret
+
+	if credentials.bodyClientSecret != "" {
+		credentials.authSource = clientauth.MethodClientSecretPost
+	}
+}
+
+// logAcceptedCombinedClientAuth records refresh-token compatibility auth handling.
+func (h *OIDCHandler) logAcceptedCombinedClientAuth(ctx *gin.Context, clientID string) {
+	clientType := "confidential"
+	if candidate, ok := h.idp.FindClient(clientID); ok && candidate.IsPublicClient() {
+		clientType = "public"
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Accepting combined OIDC client authentication for refresh token compatibility",
+		definitions.LogKeyClientID, clientID,
+		"client_type", clientType,
+	)
+}
+
+// logMultipleOIDCClientAuthenticationMethods records mixed client auth methods.
+func (h *OIDCHandler) logMultipleOIDCClientAuthenticationMethods(ctx *gin.Context, authSource string) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Multiple OIDC client authentication methods used",
+		"methods", authSource+","+clientauth.MethodClientSecretPost,
+	)
+}
+
+// findOIDCClient resolves a configured client or writes the invalid_client response.
+func (h *OIDCHandler) findOIDCClient(ctx *gin.Context, clientID string) (*config.OIDCClient, bool) {
+	client, ok := h.idp.FindClient(clientID)
+	if ok {
+		return client, true
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "OIDC client not found",
+		definitions.LogKeyClientID, clientID,
+	)
+
+	writeOIDCInvalidClientResponse(ctx)
+
+	return nil, false
+}
+
+// completeOIDCClientAuthSource derives the effective auth method for the client.
+func completeOIDCClientAuthSource(ctx *gin.Context, client *config.OIDCClient, credentials *oidcClientCredentials) {
+	if credentials.authSource == "" && credentials.bodyClientID != "" && clientAllowsNoSecretAuth(client) {
+		credentials.authSource = oidcClientAuthMethodNone
+	}
+
+	if client.IsPublicClient() && credentials.clientID == client.ClientID && secretBasedAuthSource(credentials.authSource) {
+		// Public clients cannot keep a secret. Some clients still include
+		// one for compatibility; ignore it and treat the request as "none".
+		credentials.authSource = oidcClientAuthMethodNone
+		credentials.clientSecret = ""
+	}
+
+	if credentials.authSource != "" {
+		ctx.Set(definitions.CtxAuthMethodKey, credentials.authSource)
+	}
+}
+
+// clientAllowsNoSecretAuth reports whether the client may authenticate with none.
+func clientAllowsNoSecretAuth(client *config.OIDCClient) bool {
+	return client.TokenEndpointAuthMethod == oidcClientAuthMethodNone || client.IsPublicClient()
+}
+
+// secretBasedAuthSource reports whether the method carries a client secret.
+func secretBasedAuthSource(authSource string) bool {
+	return authSource == clientauth.MethodClientSecretBasic || authSource == clientauth.MethodClientSecretPost
+}
+
+// enforceOIDCClientAuthMethod checks the configured token endpoint auth method.
+func (h *OIDCHandler) enforceOIDCClientAuthMethod(ctx *gin.Context, client *config.OIDCClient, credentials oidcClientCredentials) bool {
+	if client.TokenEndpointAuthMethod == "" {
+		return true
+	}
+
+	if oidcClientAuthMethodAllowed(client.TokenEndpointAuthMethod, credentials.authSource) {
+		return true
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "OIDC client authentication method not allowed",
+		definitions.LogKeyClientID, credentials.clientID,
+		"auth_source", credentials.authSource,
+		"expected_method", client.TokenEndpointAuthMethod,
+	)
+
+	writeOIDCInvalidClientResponse(ctx)
+
+	return false
+}
+
+// oidcClientAuthMethodAllowed evaluates the configured auth method contract.
+func oidcClientAuthMethodAllowed(expected string, actual string) bool {
+	switch expected {
+	case clientauth.MethodClientSecretBasic:
+		return actual == clientauth.MethodClientSecretBasic
+	case clientauth.MethodClientSecretPost:
+		return actual == clientauth.MethodClientSecretPost
+	case oidcClientAuthMethodNone:
+		return actual == oidcClientAuthMethodNone
+	default:
+		return secretBasedAuthSource(actual)
+	}
+}
+
+// verifyOIDCClientSecret checks the provided secret in constant time.
+func (h *OIDCHandler) verifyOIDCClientSecret(ctx *gin.Context, client *config.OIDCClient, credentials oidcClientCredentials) bool {
+	expectedSecret := oidcClientSecretBytes(client)
+
+	receivedSecret := []byte(credentials.clientSecret)
+	if subtle.ConstantTimeCompare(expectedSecret, receivedSecret) == 1 {
+		return true
+	}
+
+	h.logOIDCClientSecretMismatch(ctx, credentials.clientID, credentials.clientSecret, len(expectedSecret), len(receivedSecret))
+	writeOIDCInvalidClientResponse(ctx)
+
+	return false
+}
+
+// oidcClientSecretBytes clones the configured client secret for comparison.
+func oidcClientSecretBytes(client *config.OIDCClient) []byte {
 	var expectedSecret []byte
 
 	client.ClientSecret.WithBytes(func(value []byte) {
@@ -493,38 +573,39 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 		expectedSecret = bytes.Clone(value)
 	})
 
-	receivedSecret := []byte(clientSecret)
-	if subtle.ConstantTimeCompare(expectedSecret, receivedSecret) != 1 {
-		keyvals := []any{
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "OIDC client secret mismatch",
-			definitions.LogKeyClientID, clientID,
-			"expected_len", len(expectedSecret),
-			"received_len", len(receivedSecret),
-		}
+	return expectedSecret
+}
 
-		if clientSecret == "secret" {
-			keyvals = append(keyvals, "hint", "Client sent literal string 'secret' - check client configuration")
-		}
-
-		if strings.TrimSpace(clientSecret) != clientSecret {
-			keyvals = append(keyvals, "hint", "Received secret contains leading/trailing whitespace")
-		}
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			keyvals...,
-		)
-
-		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
-
-		return nil, false
+// logOIDCClientSecretMismatch records safe diagnostics for secret mismatches.
+func (h *OIDCHandler) logOIDCClientSecretMismatch(ctx *gin.Context, clientID string, clientSecret string, expectedLength int, receivedLength int) {
+	keyvals := []any{
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "OIDC client secret mismatch",
+		definitions.LogKeyClientID, clientID,
+		"expected_len", expectedLength,
+		"received_len", receivedLength,
 	}
 
-	return client, true
+	if clientSecret == "secret" {
+		keyvals = append(keyvals, "hint", "Client sent literal string 'secret' - check client configuration")
+	}
+
+	if strings.TrimSpace(clientSecret) != clientSecret {
+		keyvals = append(keyvals, "hint", "Received secret contains leading/trailing whitespace")
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		keyvals...,
+	)
+}
+
+// writeOIDCInvalidClientResponse writes the standard invalid_client response.
+func writeOIDCInvalidClientResponse(ctx *gin.Context) {
+	ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 }
 
 func (h *OIDCHandler) allowRefreshGrantCombinedClientAuth(
@@ -535,23 +616,11 @@ func (h *OIDCHandler) allowRefreshGrantCombinedClientAuth(
 	bodyClientID string,
 	bodyClientSecret string,
 ) bool {
-	if h == nil || ctx == nil || ctx.Request == nil {
+	if h == nil {
 		return false
 	}
 
-	if formValue(ctx, oidcParamGrantType) != oidcGrantTypeRefreshToken {
-		return false
-	}
-
-	if authSource != clientauth.MethodClientSecretBasic {
-		return false
-	}
-
-	if headerClientID == "" || bodyClientID == "" {
-		return false
-	}
-
-	if headerClientID != bodyClientID {
+	if !combinedClientAuthRequestMatches(ctx, authSource, headerClientID, bodyClientID) {
 		return false
 	}
 
@@ -560,15 +629,29 @@ func (h *OIDCHandler) allowRefreshGrantCombinedClientAuth(
 		return false
 	}
 
+	return combinedClientAuthSecretMatches(client, headerClientSecret, bodyClientSecret)
+}
+
+// combinedClientAuthRequestMatches checks the refresh-token compatibility envelope.
+func combinedClientAuthRequestMatches(ctx *gin.Context, authSource string, headerClientID string, bodyClientID string) bool {
+	if ctx == nil || ctx.Request == nil {
+		return false
+	}
+
+	return formValue(ctx, oidcParamGrantType) == oidcGrantTypeRefreshToken &&
+		authSource == clientauth.MethodClientSecretBasic &&
+		headerClientID != "" &&
+		bodyClientID != "" &&
+		headerClientID == bodyClientID
+}
+
+// combinedClientAuthSecretMatches checks public and confidential compatibility secrets.
+func combinedClientAuthSecretMatches(client *config.OIDCClient, headerClientSecret string, bodyClientSecret string) bool {
 	if client.IsPublicClient() {
 		return bodyClientSecret == ""
 	}
 
-	if bodyClientSecret == "" {
-		return false
-	}
-
-	return headerClientSecret == bodyClientSecret
+	return bodyClientSecret != "" && headerClientSecret == bodyClientSecret
 }
 
 // privateKeyJWTClientAuthRequest carries the resolved client assertion context.
@@ -649,24 +732,48 @@ func (h *OIDCHandler) parsePrivateKeyJWTClientAuthRequest(ctx *gin.Context, audi
 
 // verifyPrivateKeyJWTClientAssertion verifies the assertion and reserves its scoped jti.
 func (h *OIDCHandler) verifyPrivateKeyJWTClientAssertion(ctx *gin.Context, request privateKeyJWTClientAuthRequest) bool {
-	verifier, err := h.buildClientVerifier(request.client)
-	if err != nil {
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "Failed to build client verifier",
-			definitions.LogKeyClientID, request.clientID,
-			definitions.LogKeyError, err,
-		)
-
-		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
-
+	verifier, ok := h.privateKeyJWTVerifier(ctx, request)
+	if !ok {
 		return false
 	}
 
+	claims, ok := h.authenticatePrivateKeyJWTAssertion(ctx, request, verifier)
+	if !ok {
+		return false
+	}
+
+	return h.reservePrivateKeyJWTAssertion(ctx, request, claims)
+}
+
+// privateKeyJWTVerifier builds the configured client assertion verifier.
+func (h *OIDCHandler) privateKeyJWTVerifier(ctx *gin.Context, request privateKeyJWTClientAuthRequest) (signing.Verifier, bool) {
+	verifier, err := h.buildClientVerifier(request.client)
+	if err == nil {
+		return verifier, true
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Failed to build client verifier",
+		definitions.LogKeyClientID, request.clientID,
+		definitions.LogKeyError, err,
+	)
+
+	writeOIDCInvalidClientResponse(ctx)
+
+	return nil, false
+}
+
+// authenticatePrivateKeyJWTAssertion verifies the JWT assertion claims.
+func (h *OIDCHandler) authenticatePrivateKeyJWTAssertion(
+	ctx *gin.Context,
+	request privateKeyJWTClientAuthRequest,
+	verifier signing.Verifier,
+) (*clientauth.PrivateKeyJWTClaims, bool) {
 	auth := clientauth.NewPrivateKeyJWTAuthenticator(verifier, request.clientID, request.audience)
 
 	claims, err := auth.AuthenticateAssertion(&clientauth.AuthRequest{
@@ -675,53 +782,67 @@ func (h *OIDCHandler) verifyPrivateKeyJWTClientAssertion(ctx *gin.Context, reque
 		ClientAssertion:     request.assertion,
 		TokenEndpointURL:    request.audience,
 	})
-	if err != nil {
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "private_key_jwt authentication failed",
-			definitions.LogKeyClientID, request.clientID,
-			definitions.LogKeyError, err,
-		)
-
-		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
-
-		return false
+	if err == nil {
+		return claims, true
 	}
 
-	if err := h.storage.ReserveClientAssertionJWTID(
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "private_key_jwt authentication failed",
+		definitions.LogKeyClientID, request.clientID,
+		definitions.LogKeyError, err,
+	)
+
+	writeOIDCInvalidClientResponse(ctx)
+
+	return nil, false
+}
+
+// reservePrivateKeyJWTAssertion reserves the scoped jti to reject replay.
+func (h *OIDCHandler) reservePrivateKeyJWTAssertion(
+	ctx *gin.Context,
+	request privateKeyJWTClientAuthRequest,
+	claims *clientauth.PrivateKeyJWTClaims,
+) bool {
+	err := h.storage.ReserveClientAssertionJWTID(
 		ctx.Request.Context(),
 		claims.ClientID,
 		claims.Audience,
 		claims.JWTID,
 		claims.ExpiresAt,
-	); err != nil {
-		replayStatus := "unavailable"
-		if errors.Is(err, idp.ErrClientAssertionReplayDetected) {
-			replayStatus = "detected"
-		}
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "private_key_jwt replay reservation failed",
-			definitions.LogKeyClientID, request.clientID,
-			"replay_status", replayStatus,
-			definitions.LogKeyError, err,
-		)
-
-		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
-
-		return false
+	)
+	if err == nil {
+		return true
 	}
 
-	return true
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "private_key_jwt replay reservation failed",
+		definitions.LogKeyClientID, request.clientID,
+		"replay_status", clientAssertionReplayStatus(err),
+		definitions.LogKeyError, err,
+	)
+
+	writeOIDCInvalidClientResponse(ctx)
+
+	return false
+}
+
+// clientAssertionReplayStatus classifies assertion reservation failures.
+func clientAssertionReplayStatus(err error) string {
+	if errors.Is(err, idp.ErrClientAssertionReplayDetected) {
+		return "detected"
+	}
+
+	return "unavailable"
 }
 
 // oidcEndpointURL builds a public endpoint URL from the configured issuer.
@@ -971,11 +1092,24 @@ func oidcTokenPostActionSubjectFromContext(ctx *gin.Context) (*oidcTokenPostActi
 	return subject, true
 }
 
-// buildOIDCTokenPostActionRequest creates the Lua request snapshot for OIDC
-// token endpoint post-actions without exposing token secrets.
-func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
+// fillOIDCTokenPostActionAuthState copies AuthState fields into the Lua request.
+func fillOIDCTokenPostActionAuthState(ctx *gin.Context, auth *core.AuthState, service string, clientID string, request *lualib.CommonRequest) {
+	if auth == nil {
+		return
+	}
+
+	auth.Runtime.GUID = ctx.GetString(definitions.CtxGUIDKey)
+	auth.Request.Service = service
+	auth.SetStatusCodes(service)
+	auth.SetOIDCCID(clientID)
+	auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
+	auth.FillCommonRequest(request)
+}
+
+// fillOIDCTokenPostActionBase sets token-endpoint metadata for Lua post-actions.
+func (h *OIDCHandler) fillOIDCTokenPostActionBase(
 	ctx *gin.Context,
-	auth *core.AuthState,
+	request *lualib.CommonRequest,
 	service string,
 	grantType string,
 	clientID string,
@@ -983,18 +1117,7 @@ func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
 	httpStatus int,
 	result string,
 	latency time.Duration,
-) lualib.CommonRequest {
-	request := lualib.CommonRequest{}
-
-	if auth != nil {
-		auth.Runtime.GUID = ctx.GetString(definitions.CtxGUIDKey)
-		auth.Request.Service = service
-		auth.SetStatusCodes(service)
-		auth.SetOIDCCID(clientID)
-		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
-		auth.FillCommonRequest(&request)
-	}
-
+) {
 	request.Debug = h.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	request.NoAuth = true
 	request.Authenticated = result == sloRequestOutcomeSuccess
@@ -1013,16 +1136,25 @@ func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
 	request.SubjectStageExpected = false
 	request.Latency = float64(latency.Milliseconds())
 	request.HTTPStatus = httpStatus
+}
 
-	if subject, ok := oidcTokenPostActionSubjectFromContext(ctx); ok {
-		request.Username = subject.Username
-		request.UniqueUserID = subject.UniqueUserID
-		request.DisplayName = subject.DisplayName
-		request.UserFound = subject.UserFound
-		request.MFACompleted = subject.MFACompleted
-		request.MFAMethod = subject.MFAMethod
+// applyOIDCTokenPostActionSubject copies resolved subject data into the request.
+func applyOIDCTokenPostActionSubject(ctx *gin.Context, request *lualib.CommonRequest) {
+	subject, ok := oidcTokenPostActionSubjectFromContext(ctx)
+	if !ok {
+		return
 	}
 
+	request.Username = subject.Username
+	request.UniqueUserID = subject.UniqueUserID
+	request.DisplayName = subject.DisplayName
+	request.UserFound = subject.UserFound
+	request.MFACompleted = subject.MFACompleted
+	request.MFAMethod = subject.MFAMethod
+}
+
+// applyOIDCTokenPostActionMFAOverrides applies explicit MFA context overrides.
+func applyOIDCTokenPostActionMFAOverrides(ctx *gin.Context, request *lualib.CommonRequest) {
 	if mfaCompleted, ok := ctx.Get(definitions.CtxMFACompletedKey); ok {
 		if value, ok := mfaCompleted.(bool); ok {
 			request.MFACompleted = value
@@ -1034,6 +1166,27 @@ func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
 			request.MFAMethod = value
 		}
 	}
+}
+
+// buildOIDCTokenPostActionRequest creates the Lua request snapshot for OIDC
+// token endpoint post-actions without exposing token secrets.
+func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
+	ctx *gin.Context,
+	auth *core.AuthState,
+	service string,
+	grantType string,
+	clientID string,
+	authMethod string,
+	httpStatus int,
+	result string,
+	latency time.Duration,
+) lualib.CommonRequest {
+	request := lualib.CommonRequest{}
+
+	fillOIDCTokenPostActionAuthState(ctx, auth, service, clientID, &request)
+	h.fillOIDCTokenPostActionBase(ctx, &request, service, grantType, clientID, authMethod, httpStatus, result, latency)
+	applyOIDCTokenPostActionSubject(ctx, &request)
+	applyOIDCTokenPostActionMFAOverrides(ctx, &request)
 
 	return request
 }
@@ -1175,17 +1328,11 @@ func (h *OIDCHandler) sendTokenResponse(ctx *gin.Context, clientID, grantType st
 	ctx.JSON(http.StatusOK, result)
 }
 
-// Token handles the OIDC token request.
-func (h *OIDCHandler) Token(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.token")
-	defer sp.End()
-
-	if rejectDuplicateOIDCTokenParameters(ctx) {
-		return
-	}
-
+// beginOIDCTokenRequest captures common token request metadata.
+func (h *OIDCHandler) beginOIDCTokenRequest(ctx *gin.Context) (time.Time, string, string, string) {
 	startedAt := time.Now()
 	grantType := formValue(ctx, oidcParamGrantType)
+
 	ctx.Set(definitions.CtxOIDCGrantTypeKey, grantType)
 
 	clientID := oidcTokenRequestClientID(ctx)
@@ -1197,29 +1344,20 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 
 	h.logIncomingOIDCFlowRequest(ctx, flow, grantType, clientID)
 
-	defer func() {
-		h.logCompletedOIDCFlowRequest(ctx, flow, grantType, clientID)
-		h.finishOIDCTokenRequest(ctx, grantType, clientID, startedAt)
-	}()
+	return startedAt, grantType, clientID, flow
+}
 
-	// Try private_key_jwt first if client_assertion is present
-	var (
-		client *config.OIDCClient
-		ok     bool
-	)
-
+// authenticateOIDCTokenClient resolves the token endpoint client auth method.
+func (h *OIDCHandler) authenticateOIDCTokenClient(ctx *gin.Context) (*config.OIDCClient, bool) {
 	if formValue(ctx, oidcParamClientAssertion) != "" {
-		client, ok = h.authenticateClientPrivateKeyJWT(ctx, h.oidcEndpointURL(oidcEndpointPathToken))
-	} else {
-		client, ok = h.authenticateClient(ctx)
+		return h.authenticateClientPrivateKeyJWT(ctx, h.oidcEndpointURL(oidcEndpointPathToken))
 	}
 
-	if !ok {
-		return
-	}
+	return h.authenticateClient(ctx)
+}
 
-	clientID = client.ClientID
-
+// logOIDCTokenRequest records the accepted token request envelope.
+func (h *OIDCHandler) logOIDCTokenRequest(ctx *gin.Context, grantType string, clientID string) {
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
 		h.deps.Cfg,
@@ -1230,31 +1368,60 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 		oidcParamGrantType, grantType,
 		definitions.LogKeyClientID, clientID,
 	)
+}
 
-	sp.SetAttributes(attribute.String(definitions.LogKeyClientID, clientID))
-
+// dispatchOIDCTokenGrant routes a token request by grant type.
+func (h *OIDCHandler) dispatchOIDCTokenGrant(ctx *gin.Context, client *config.OIDCClient, grantType string) {
 	switch grantType {
 	case definitions.OIDCFlowAuthorizationCode:
 		h.handleAuthorizationCodeTokenExchange(ctx, client, grantType)
-
 	case oidcGrantTypeRefreshToken:
 		h.handleRefreshTokenExchange(ctx, client, grantType)
-
 	case oidcGrantTypeClientCredentials:
 		h.handleClientCredentialsTokenExchange(ctx, client, grantType)
-
 	case definitions.OIDCGrantTypeDeviceCode:
-		if !client.SupportsGrantType(definitions.OIDCGrantTypeDeviceCode) {
-			ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorUnauthorizedClient})
-
-			return
-		}
-
-		h.handleDeviceCodeTokenExchange(ctx, client)
-
+		h.dispatchDeviceCodeTokenGrant(ctx, client)
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: "unsupported_grant_type"})
 	}
+}
+
+// dispatchDeviceCodeTokenGrant enforces device-code grant support before exchange.
+func (h *OIDCHandler) dispatchDeviceCodeTokenGrant(ctx *gin.Context, client *config.OIDCClient) {
+	if !client.SupportsGrantType(definitions.OIDCGrantTypeDeviceCode) {
+		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorUnauthorizedClient})
+
+		return
+	}
+
+	h.handleDeviceCodeTokenExchange(ctx, client)
+}
+
+// Token handles the OIDC token request.
+func (h *OIDCHandler) Token(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.token")
+	defer sp.End()
+
+	if rejectDuplicateOIDCTokenParameters(ctx) {
+		return
+	}
+
+	startedAt, grantType, clientID, flow := h.beginOIDCTokenRequest(ctx)
+	defer func() {
+		h.logCompletedOIDCFlowRequest(ctx, flow, grantType, clientID)
+		h.finishOIDCTokenRequest(ctx, grantType, clientID, startedAt)
+	}()
+
+	client, ok := h.authenticateOIDCTokenClient(ctx)
+	if !ok {
+		return
+	}
+
+	clientID = client.ClientID
+
+	h.logOIDCTokenRequest(ctx, grantType, clientID)
+	sp.SetAttributes(attribute.String(definitions.LogKeyClientID, clientID))
+	h.dispatchOIDCTokenGrant(ctx, client, grantType)
 }
 
 // UserInfo handles the OIDC userinfo request.
@@ -1494,19 +1661,12 @@ func buildSAMLFrontChannelLogoutTasks(result *sloFanoutResult) []frontChannelLog
 	return tasks
 }
 
-func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account string) []frontChannelLogoutTask {
-	account = strings.TrimSpace(account)
-	if account == "" {
-		return nil
-	}
-
-	samlHandler := NewSAMLHandler(h.deps, h.idp)
-	if !samlHandler.sloEnabled() {
-		_ = samlHandler.deleteSLOParticipantSessionsByAccount(ctx, account)
-
-		return nil
-	}
-
+// prepareSAMLFrontChannelLogoutTransaction creates and advances the SAML fanout transaction.
+func (h *OIDCHandler) prepareSAMLFrontChannelLogoutTransaction(
+	ctx context.Context,
+	samlHandler *SAMLHandler,
+	account string,
+) (*slodomain.Transaction, bool) {
 	sloTransaction, err := samlHandler.newIDPInitiatedSLOTransaction(account, slodomain.SLOBindingRedirect)
 	if err != nil {
 		util.DebugModuleWithCfg(
@@ -1519,7 +1679,7 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 			definitions.LogKeyError, err.Error(),
 		)
 
-		return nil
+		return nil, false
 	}
 
 	if err = sloTransaction.TransitionTo(slodomain.SLOStatusLocalDone, time.Now().UTC()); err != nil {
@@ -1533,38 +1693,25 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 			definitions.LogKeyError, err.Error(),
 		)
 
-		return nil
+		return nil, false
 	}
 
+	return sloTransaction, true
+}
+
+// planSAMLFrontChannelLogoutFanout prepares front-channel tasks and persists state.
+func (h *OIDCHandler) planSAMLFrontChannelLogoutFanout(
+	ctx context.Context,
+	samlHandler *SAMLHandler,
+	sloTransaction *slodomain.Transaction,
+	account string,
+) (*sloFanoutResult, bool) {
 	result, err := samlHandler.orchestrateIDPInitiatedSLOFanout(ctx, sloTransaction, account)
-	if err == nil {
-		if stateErr := samlHandler.storeSLOFanoutTransactionState(ctx, sloTransaction, result); stateErr != nil {
-			util.DebugModuleWithCfg(
-				ctx,
-				h.deps.Cfg,
-				h.deps.Logger,
-				definitions.DbgIdp,
-				definitions.LogKeyMsg, "Failed to persist SAML SLO fanout transaction state",
-				"transaction_id", sloTransaction.TransactionID,
-				definitions.LogKeyError, stateErr.Error(),
-			)
-
-			return nil
-		}
+	if err == nil && !h.persistSAMLFrontChannelLogoutState(ctx, samlHandler, sloTransaction, result) {
+		return nil, false
 	}
 
-	if cleanupErr := samlHandler.deleteSLOParticipantSessionsByAccount(ctx, account); cleanupErr != nil {
-		util.DebugModuleWithCfg(
-			ctx,
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyMsg, "Failed to cleanup SAML SLO participant sessions after fanout planning",
-			"transaction_id", sloTransaction.TransactionID,
-			"account", util.WithNotAvailable(account),
-			definitions.LogKeyError, cleanupErr.Error(),
-		)
-	}
+	h.cleanupSAMLFrontChannelLogoutParticipants(ctx, samlHandler, sloTransaction, account)
 
 	if err != nil {
 		util.DebugModuleWithCfg(
@@ -1577,9 +1724,59 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 			definitions.LogKeyError, err.Error(),
 		)
 
-		return nil
+		return nil, false
 	}
 
+	return result, true
+}
+
+// persistSAMLFrontChannelLogoutState stores pending fanout state for browser completion.
+func (h *OIDCHandler) persistSAMLFrontChannelLogoutState(
+	ctx context.Context,
+	samlHandler *SAMLHandler,
+	sloTransaction *slodomain.Transaction,
+	result *sloFanoutResult,
+) bool {
+	if stateErr := samlHandler.storeSLOFanoutTransactionState(ctx, sloTransaction, result); stateErr != nil {
+		util.DebugModuleWithCfg(
+			ctx,
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyMsg, "Failed to persist SAML SLO fanout transaction state",
+			"transaction_id", sloTransaction.TransactionID,
+			definitions.LogKeyError, stateErr.Error(),
+		)
+
+		return false
+	}
+
+	return true
+}
+
+// cleanupSAMLFrontChannelLogoutParticipants removes consumed SAML participant sessions.
+func (h *OIDCHandler) cleanupSAMLFrontChannelLogoutParticipants(
+	ctx context.Context,
+	samlHandler *SAMLHandler,
+	sloTransaction *slodomain.Transaction,
+	account string,
+) {
+	if cleanupErr := samlHandler.deleteSLOParticipantSessionsByAccount(ctx, account); cleanupErr != nil {
+		util.DebugModuleWithCfg(
+			ctx,
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyMsg, "Failed to cleanup SAML SLO participant sessions after fanout planning",
+			"transaction_id", sloTransaction.TransactionID,
+			"account", util.WithNotAvailable(account),
+			definitions.LogKeyError, cleanupErr.Error(),
+		)
+	}
+}
+
+// logPreparedSAMLFrontChannelLogoutTasks records successful SAML fanout planning.
+func (h *OIDCHandler) logPreparedSAMLFrontChannelLogoutTasks(ctx context.Context, sloTransaction *slodomain.Transaction, result *sloFanoutResult) {
 	util.DebugModuleWithCfg(
 		ctx,
 		h.deps.Cfg,
@@ -1592,8 +1789,232 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 		"participants_planned", len(result.Dispatches),
 		"participants_failed", len(result.Failures),
 	)
+}
+
+func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account string) []frontChannelLogoutTask {
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return nil
+	}
+
+	samlHandler := NewSAMLHandler(h.deps, h.idp)
+	if !samlHandler.sloEnabled() {
+		_ = samlHandler.deleteSLOParticipantSessionsByAccount(ctx, account)
+
+		return nil
+	}
+
+	sloTransaction, ok := h.prepareSAMLFrontChannelLogoutTransaction(ctx, samlHandler, account)
+	if !ok {
+		return nil
+	}
+
+	result, ok := h.planSAMLFrontChannelLogoutFanout(ctx, samlHandler, sloTransaction, account)
+	if !ok {
+		return nil
+	}
+
+	h.logPreparedSAMLFrontChannelLogoutTasks(ctx, sloTransaction, result)
 
 	return buildSAMLFrontChannelLogoutTasks(result)
+}
+
+// oidcLogoutSession captures session-derived identity data for logout.
+type oidcLogoutSession struct {
+	manager      cookie.Manager
+	account      string
+	uniqueUserID string
+	userID       string
+}
+
+// oidcLogoutRequest carries query parameters relevant to logout.
+type oidcLogoutRequest struct {
+	idTokenHint           string
+	postLogoutRedirectURI string
+	state                 string
+}
+
+// readOIDCLogoutRequest captures logout query parameters.
+func readOIDCLogoutRequest(ctx *gin.Context) oidcLogoutRequest {
+	return oidcLogoutRequest{
+		idTokenHint:           ctx.Query("id_token_hint"),
+		postLogoutRedirectURI: ctx.Query("post_logout_redirect_uri"),
+		state:                 ctx.Query("state"),
+	}
+}
+
+// readOIDCLogoutSession captures cookie-backed logout identity data.
+func readOIDCLogoutSession(ctx *gin.Context) oidcLogoutSession {
+	session := oidcLogoutSession{manager: cookie.GetManager(ctx)}
+	if session.manager == nil {
+		return session
+	}
+
+	session.account = session.manager.GetString(definitions.SessionKeyAccount, "")
+	session.uniqueUserID = session.manager.GetString(definitions.SessionKeyUniqueUserID, "")
+	session.userID = oidcLogoutUserID(session.account, session.uniqueUserID)
+
+	return session
+}
+
+// oidcLogoutUserID prefers unique user IDs over account names.
+func oidcLogoutUserID(account string, uniqueUserID string) string {
+	if uniqueUserID != "" {
+		return uniqueUserID
+	}
+
+	return account
+}
+
+// applyOIDCLogoutIDTokenHint validates id_token_hint and fills client/user context.
+func (h *OIDCHandler) applyOIDCLogoutIDTokenHint(ctx *gin.Context, request oidcLogoutRequest, session *oidcLogoutSession) *config.OIDCClient {
+	if request.idTokenHint == "" {
+		return nil
+	}
+
+	claims, err := h.idp.ValidateToken(ctx.Request.Context(), request.idTokenHint)
+	if err != nil {
+		return nil
+	}
+
+	client := h.oidcLogoutClientFromClaims(claims)
+	if session.userID == "" {
+		if sub, ok := claims["sub"].(string); ok {
+			session.userID = sub
+		}
+	}
+
+	return client
+}
+
+// oidcLogoutClientFromClaims resolves the client referenced by token claims.
+func (h *OIDCHandler) oidcLogoutClientFromClaims(claims map[string]any) *config.OIDCClient {
+	cid, ok := claims["aud"].(string)
+	if !ok {
+		return nil
+	}
+
+	client, _ := h.idp.FindClient(cid)
+
+	return client
+}
+
+// oidcLogoutClientIDs returns tracked OIDC clients from the session.
+func (h *OIDCHandler) oidcLogoutClientIDs(ctx *gin.Context, session oidcLogoutSession) []string {
+	if session.manager == nil {
+		return nil
+	}
+
+	oidcClients := session.manager.GetString(definitions.SessionKeyOIDCClients, "")
+	session.manager.Debug(ctx, h.deps.Logger, "OIDC logout initiated - session data before cleanup")
+
+	if oidcClients == "" {
+		return nil
+	}
+
+	return strings.Split(oidcClients, ",")
+}
+
+// oidcFrontChannelLogoutTask builds a browser logout task for an OIDC client.
+func (h *OIDCHandler) oidcFrontChannelLogoutTask(
+	ctx *gin.Context,
+	clientID string,
+	client *config.OIDCClient,
+	index int,
+) (frontChannelLogoutTask, bool) {
+	if client.FrontChannelLogoutURI == "" {
+		return frontChannelLogoutTask{}, false
+	}
+
+	parsedURI, err := parseAbsoluteURL(client.FrontChannelLogoutURI)
+	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyMsg, "Skipping invalid OIDC front-channel logout URI",
+			definitions.LogKeyClientID, util.WithNotAvailable(clientID),
+			"uri", util.WithNotAvailable(client.FrontChannelLogoutURI),
+			definitions.LogKeyError, err.Error(),
+		)
+
+		return frontChannelLogoutTask{}, false
+	}
+
+	return frontChannelLogoutTask{
+		ID:          fmt.Sprintf("oidc-%d", index),
+		DisplayName: clientID,
+		Protocol:    frontChannelLogoutTaskProtocolOIDC,
+		Method:      frontChannelLogoutTaskMethodGET,
+		URL:         parsedURI.String(),
+	}, true
+}
+
+// oidcFrontChannelLogoutTasks triggers back-channel logout and builds OIDC browser tasks.
+func (h *OIDCHandler) oidcFrontChannelLogoutTasks(ctx *gin.Context, clientIDs []string, userID string) []frontChannelLogoutTask {
+	frontChannelTasks := make([]frontChannelLogoutTask, 0)
+
+	for _, clientID := range clientIDs {
+		client, ok := h.idp.FindClient(clientID)
+		if !ok {
+			continue
+		}
+
+		if client.BackChannelLogoutURI != "" && userID != "" {
+			go h.doBackChannelLogout(clientID, userID, client.BackChannelLogoutURI)
+		}
+
+		task, ok := h.oidcFrontChannelLogoutTask(ctx, clientID, client, len(frontChannelTasks)+1)
+		if ok {
+			frontChannelTasks = append(frontChannelTasks, task)
+		}
+	}
+
+	return frontChannelTasks
+}
+
+// oidcLogoutTarget resolves the final redirect target.
+func (h *OIDCHandler) oidcLogoutTarget(client *config.OIDCClient, clientIDs []string, request oidcLogoutRequest) string {
+	logoutTarget := h.calculateLogoutTarget(client, clientIDs)
+	if client == nil || request.postLogoutRedirectURI == "" {
+		return logoutTarget
+	}
+
+	if h.idp.ValidatePostLogoutRedirectURI(client, request.postLogoutRedirectURI) {
+		return appendStateToLogoutTarget(request.postLogoutRedirectURI, request.state)
+	}
+
+	return logoutTarget
+}
+
+// oidcLogoutPageData builds template data for browser-based logout orchestration.
+func (h *OIDCHandler) oidcLogoutPageData(ctx *gin.Context, tasks []frontChannelLogoutTask, logoutTarget string) gin.H {
+	data := BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout")
+	data["LoggingOutFromAllApplications"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logging out from all applications...")
+	data["PleaseWaitWhileLogoutProcessIsCompleted"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please wait while the logout process is completed.")
+	data["FrontChannelLogoutTasks"] = tasks
+	data["FrontChannelLogoutTaskConfig"] = encodeFrontChannelLogoutTasks(tasks)
+	data["FrontChannelLogoutTimeoutMS"] = int(frontChannelLogoutTimeout / time.Millisecond)
+	data["FrontChannelLogoutMaxRetries"] = frontChannelLogoutMaxRetries
+	data["FrontChannelLogoutRedirectDelayMS"] = int(frontChannelLogoutRedirectDelay / time.Millisecond)
+	data["LogoutTarget"] = logoutTarget
+	data["LogoutProgress"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout progress")
+	data["LogoutStatusPerApplication"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout status per application")
+	data["LogoutSummaryPending"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout is in progress.")
+	data["LogoutSummaryDone"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout completed successfully.")
+	data["LogoutSummaryPartial"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout completed with partial failures.")
+	data["LogoutStatusPending"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Pending")
+	data["LogoutStatusRunning"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Running")
+	data["LogoutStatusSuccess"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Success")
+	data["LogoutStatusTimeout"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Timeout")
+	data["LogoutStatusError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Error")
+	data["LogoutStatusSkipped"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Skipped")
+	data["LogoutRetrying"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Retrying")
+	data["LogoutAttempt"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Attempt")
+
+	return data
 }
 
 // Logout handles the OIDC logout request.
@@ -1604,141 +2025,24 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 	h.logIncomingOIDCFlowRequest(ctx, "logout", "", "")
 	defer h.logCompletedOIDCFlowRequest(ctx, "logout", "", "")
 
-	idTokenHint := ctx.Query("id_token_hint")
-	postLogoutRedirectURI := ctx.Query("post_logout_redirect_uri")
-	state := ctx.Query("state")
+	request := readOIDCLogoutRequest(ctx)
+	session := readOIDCLogoutSession(ctx)
 
-	mgr := cookie.GetManager(ctx)
-	account := ""
-	uniqueUserID := ""
-
-	if mgr != nil {
-		account = mgr.GetString(definitions.SessionKeyAccount, "")
-		uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+	client := h.applyOIDCLogoutIDTokenHint(ctx, request, &session)
+	if session.userID != "" {
+		_ = h.storage.DeleteUserRefreshTokens(ctx.Request.Context(), session.userID)
 	}
 
-	userID := ""
-	if uniqueUserID != "" {
-		userID = uniqueUserID
-	} else if account != "" {
-		userID = account
-	}
-
-	// Validate id_token_hint if provided
-	var client *config.OIDCClient
-
-	if idTokenHint != "" {
-		claims, err := h.idp.ValidateToken(ctx.Request.Context(), idTokenHint)
-		if err == nil {
-			if cid, ok := claims["aud"].(string); ok {
-				client, _ = h.idp.FindClient(cid)
-			}
-
-			if userID == "" {
-				if sub, ok := claims["sub"].(string); ok {
-					userID = sub
-				}
-			}
-		}
-	}
-
-	if userID != "" {
-		_ = h.storage.DeleteUserRefreshTokens(ctx.Request.Context(), userID)
-	}
-
-	// Get clients to logout from
-	oidcClients := ""
-	if mgr != nil {
-		oidcClients = mgr.GetString(definitions.SessionKeyOIDCClients, "")
-		mgr.Debug(ctx, h.deps.Logger, "OIDC logout initiated - session data before cleanup")
-	}
-
-	var clientIDs []string
-
-	if oidcClients != "" {
-		clientIDs = strings.Split(oidcClients, ",")
-	}
-
-	frontChannelTasks := make([]frontChannelLogoutTask, 0)
-
-	for _, cid := range clientIDs {
-		c, ok := h.idp.FindClient(cid)
-		if !ok {
-			continue
-		}
-
-		// Back-channel logout
-		if c.BackChannelLogoutURI != "" && userID != "" {
-			go h.doBackChannelLogout(cid, userID, c.BackChannelLogoutURI)
-		}
-
-		// Front-channel logout
-		if c.FrontChannelLogoutURI != "" {
-			parsedURI, parseErr := parseAbsoluteURL(c.FrontChannelLogoutURI)
-			if parseErr != nil {
-				util.DebugModuleWithCfg(
-					ctx.Request.Context(),
-					h.deps.Cfg,
-					h.deps.Logger,
-					definitions.DbgIdp,
-					definitions.LogKeyMsg, "Skipping invalid OIDC front-channel logout URI",
-					definitions.LogKeyClientID, util.WithNotAvailable(cid),
-					"uri", util.WithNotAvailable(c.FrontChannelLogoutURI),
-					definitions.LogKeyError, parseErr.Error(),
-				)
-
-				continue
-			}
-
-			// In a real implementation, we could add sid here if required.
-			frontChannelTasks = append(frontChannelTasks, frontChannelLogoutTask{
-				ID:          fmt.Sprintf("oidc-%d", len(frontChannelTasks)+1),
-				DisplayName: cid,
-				Protocol:    frontChannelLogoutTaskProtocolOIDC,
-				Method:      frontChannelLogoutTaskMethodGET,
-				URL:         parsedURI.String(),
-			})
-		}
-	}
-
-	frontChannelTasks = append(frontChannelTasks, h.samlFrontChannelLogoutTasks(ctx.Request.Context(), account)...)
-	logoutTarget := h.calculateLogoutTarget(client, clientIDs)
-
-	if client != nil && postLogoutRedirectURI != "" {
-		if h.idp.ValidatePostLogoutRedirectURI(client, postLogoutRedirectURI) {
-			logoutTarget = appendStateToLogoutTarget(postLogoutRedirectURI, state)
-		}
-	}
+	clientIDs := h.oidcLogoutClientIDs(ctx, session)
+	frontChannelTasks := h.oidcFrontChannelLogoutTasks(ctx, clientIDs, session.userID)
+	frontChannelTasks = append(frontChannelTasks, h.samlFrontChannelLogoutTasks(ctx.Request.Context(), session.account)...)
+	logoutTarget := h.oidcLogoutTarget(client, clientIDs, request)
 
 	if len(frontChannelTasks) > 0 {
-		data := BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
-		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout")
-		data["LoggingOutFromAllApplications"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logging out from all applications...")
-		data["PleaseWaitWhileLogoutProcessIsCompleted"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please wait while the logout process is completed.")
-		data["FrontChannelLogoutTasks"] = frontChannelTasks
-		data["FrontChannelLogoutTaskConfig"] = encodeFrontChannelLogoutTasks(frontChannelTasks)
-		data["FrontChannelLogoutTimeoutMS"] = int(frontChannelLogoutTimeout / time.Millisecond)
-		data["FrontChannelLogoutMaxRetries"] = frontChannelLogoutMaxRetries
-		data["FrontChannelLogoutRedirectDelayMS"] = int(frontChannelLogoutRedirectDelay / time.Millisecond)
-		data["LogoutTarget"] = logoutTarget
-		data["LogoutProgress"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout progress")
-		data["LogoutStatusPerApplication"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout status per application")
-		data["LogoutSummaryPending"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout is in progress.")
-		data["LogoutSummaryDone"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout completed successfully.")
-		data["LogoutSummaryPartial"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout completed with partial failures.")
-		data["LogoutStatusPending"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Pending")
-		data["LogoutStatusRunning"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Running")
-		data["LogoutStatusSuccess"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Success")
-		data["LogoutStatusTimeout"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Timeout")
-		data["LogoutStatusError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Error")
-		data["LogoutStatusSkipped"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Skipped")
-		data["LogoutRetrying"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Retrying")
-		data["LogoutAttempt"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Attempt")
-
 		core.SessionCleaner(ctx)
 		core.ClearBrowserCookies(ctx)
 
-		ctx.HTML(http.StatusOK, "idp_logout_frames.html", data)
+		ctx.HTML(http.StatusOK, "idp_logout_frames.html", h.oidcLogoutPageData(ctx, frontChannelTasks, logoutTarget))
 
 		return
 	}

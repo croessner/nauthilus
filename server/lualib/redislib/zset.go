@@ -86,45 +86,15 @@ func (rm *RedisManager) parseLuaTableToRedisZSet(values *lua.LTable, _ string) [
 
 // RedisZRange returns a range of members in a sorted set, by index.
 func (rm *RedisManager) RedisZRange(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		start := int64(stack.CheckInt(3))
-		stop := int64(stack.CheckInt(4))
-
-		cmd := conn.ZRange(ctx, key, start, stop)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		result := L.NewTable()
-
-		for _, val := range cmd.Val() {
-			result.Append(lua.LString(val))
-		}
-
-		return stack.PushResults(result, lua.LNil)
+	return executeRangeStringSliceCmd(rm, L, func(ctx context.Context, conn redis.Cmdable, key string, start, stop int64) *redis.StringSliceCmd {
+		return conn.ZRange(ctx, key, start, stop)
 	})
 }
 
 // RedisZRevRange returns a range of members in a sorted set, by index, with scores ordered from high to low.
 func (rm *RedisManager) RedisZRevRange(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		start := int64(stack.CheckInt(3))
-		stop := int64(stack.CheckInt(4))
-
-		cmd := conn.ZRevRange(ctx, key, start, stop)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		result := L.NewTable()
-
-		for _, val := range cmd.Val() {
-			result.Append(lua.LString(val))
-		}
-
-		return stack.PushResults(result, lua.LNil)
+	return executeRangeStringSliceCmd(rm, L, func(ctx context.Context, conn redis.Cmdable, key string, start, stop int64) *redis.StringSliceCmd {
+		return conn.ZRevRange(ctx, key, start, stop)
 	})
 }
 
@@ -187,95 +157,44 @@ func (rm *RedisManager) RedisZRem(L *lua.LState) int {
 
 // RedisZRemRangeByScore removes all members in a sorted set within the given scores.
 func (rm *RedisManager) RedisZRemRangeByScore(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		minScore := stack.CheckString(3)
-		maxScore := stack.CheckString(4)
-
-		cmd := conn.ZRemRangeByScore(ctx, key, minScore, maxScore)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	return executeKeyTwoStringNumberCmd(rm, L, true, func(ctx context.Context, conn redis.Cmdable, key string, minScore string, maxScore string) redisValueCmd[int64] {
+		return conn.ZRemRangeByScore(ctx, key, minScore, maxScore)
 	})
 }
 
 // RedisZRemRangeByRank removes all members in a sorted set within the given indexes.
 func (rm *RedisManager) RedisZRemRangeByRank(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		start := int64(stack.CheckInt(3))
-		stop := int64(stack.CheckInt(4))
-
-		cmd := conn.ZRemRangeByRank(ctx, key, start, stop)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	return executeKeyIndexRangeNumberCmd(rm, L, true, func(ctx context.Context, conn redis.Cmdable, key string, start, stop int64) *redis.IntCmd {
+		return conn.ZRemRangeByRank(ctx, key, start, stop)
 	})
 }
 
 // RedisZRank returns the rank of a member in a sorted set, with scores ordered from low to high.
 func (rm *RedisManager) RedisZRank(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		member := stack.CheckString(3)
-
-		cmd := conn.ZRank(ctx, key, member)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
-	})
+	return executeTwoStringCmd(rm, L, false, func(ctx context.Context, conn redis.Cmdable, key string, member string) *redis.IntCmd {
+		return conn.ZRank(ctx, key, member)
+	}, luaNumberValue[int64])
 }
 
 // RedisZCount returns the number of members in a sorted set with scores within the given values.
 func (rm *RedisManager) RedisZCount(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		minScore := stack.CheckString(3)
-		maxScore := stack.CheckString(4)
-
-		cmd := conn.ZCount(ctx, key, minScore, maxScore)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	return executeKeyTwoStringNumberCmd(rm, L, false, func(ctx context.Context, conn redis.Cmdable, key string, minScore string, maxScore string) redisValueCmd[int64] {
+		return conn.ZCount(ctx, key, minScore, maxScore)
 	})
 }
 
 // RedisZScore returns the score of a member in a sorted set.
 func (rm *RedisManager) RedisZScore(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		member := stack.CheckString(3)
-
-		cmd := conn.ZScore(ctx, key, member)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
-	})
+	return executeTwoStringCmd(rm, L, false, func(ctx context.Context, conn redis.Cmdable, key string, member string) *redis.FloatCmd {
+		return conn.ZScore(ctx, key, member)
+	}, luaNumberValue[float64])
 }
 
 // RedisZRevRank returns the rank of a member in a sorted set, with scores ordered from high to low.
 func (rm *RedisManager) RedisZRevRank(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		member := stack.CheckString(3)
-
-		cmd := conn.ZRevRank(ctx, key, member)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
-	})
+	return executeTwoStringCmd(rm, L, false, func(ctx context.Context, conn redis.Cmdable, key string, member string) *redis.IntCmd {
+		return conn.ZRevRank(ctx, key, member)
+	}, luaNumberValue[int64])
 }
 
 // RedisZIncrBy increments the score of a member in a sorted set.

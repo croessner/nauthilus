@@ -19,8 +19,7 @@ import (
 	"testing"
 )
 
-func TestI18NMockRecordsRegisterCatalogCalls(t *testing.T) {
-	runner, result := runLuaMockFixture(t, "init.lua", "hook", `
+const i18NRegisterCatalogScript = `
 local i18n = require("nauthilus_i18n")
 
 function nauthilus_run_hook(logging)
@@ -32,7 +31,9 @@ function nauthilus_run_hook(logging)
     },
   })
 end
-`, `{
+`
+
+const i18NRegisterCatalogMock = `{
   "i18n": {
     "expected_calls": [
       {
@@ -41,14 +42,22 @@ end
       }
     ]
   }
-}`)
-	requireLuaMockSuccess(t, result)
+}`
 
-	if runner.mockData.I18N == nil || len(runner.mockData.I18N.Catalogs) != 1 {
-		t.Fatalf("i18n catalogs = %#v, want exactly one registration", runner.mockData.I18N)
+func TestI18NMockRecordsRegisterCatalogCalls(t *testing.T) {
+	runner := runSuccessfulLuaMockFixture(t, "init.lua", "hook", i18NRegisterCatalogScript, i18NRegisterCatalogMock)
+	requireSingleI18NCatalog(t, runner)
+}
+
+// requireSingleI18NCatalog checks the i18n mock captured the expected catalog registration.
+func requireSingleI18NCatalog(t *testing.T, runner *TestRunner) {
+	t.Helper()
+
+	if runner.mockData.I18N == nil {
+		t.Fatalf("i18n mock = nil, want one registration")
 	}
 
-	if got := runner.mockData.I18N.Catalogs[0].Language; got != "de" {
-		t.Fatalf("i18n catalog language = %q, want de", got)
-	}
+	requireSingleCapturedValue(t, "i18n catalog", runner.mockData.I18N.Catalogs, func(registration I18NCatalogRegistration) string {
+		return registration.Language
+	}, "de")
 }

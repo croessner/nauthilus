@@ -38,12 +38,8 @@ func (m *HTTPResponseManager) currentContext(L *lua.LState) *gin.Context {
 	return RequireHTTPResponseContext(L)
 }
 
-// SetHTTPResponseHeader sets (overwrites) an HTTP response header.
-// Usage from Lua: nauthilus_http_response.set_http_response_header(name, value)
-func (m *HTTPResponseManager) SetHTTPResponseHeader(L *lua.LState) int {
-	stack := luastack.NewManager(L)
-	name := stack.CheckString(1)
-	value := stack.CheckString(2)
+// useHTTPResponseContext resolves the active Gin context and applies an HTTP response action.
+func (m *HTTPResponseManager) useHTTPResponseContext(L *lua.LState, action func(*gin.Context)) int {
 	ginCtx := m.currentContext(L)
 
 	if ginCtx == nil {
@@ -52,10 +48,29 @@ func (m *HTTPResponseManager) SetHTTPResponseHeader(L *lua.LState) int {
 		return 0
 	}
 
-	ginCtx.Header(name, value)
-	ginCtx.Set(definitions.CtxResponseWrittenKey, true)
+	action(ginCtx)
 
 	return 0
+}
+
+// writeHTTPResponse runs an action and marks the Lua HTTP response as written.
+func (m *HTTPResponseManager) writeHTTPResponse(L *lua.LState, action func(*gin.Context)) int {
+	return m.useHTTPResponseContext(L, func(ginCtx *gin.Context) {
+		action(ginCtx)
+		ginCtx.Set(definitions.CtxResponseWrittenKey, true)
+	})
+}
+
+// SetHTTPResponseHeader sets (overwrites) an HTTP response header.
+// Usage from Lua: nauthilus_http_response.set_http_response_header(name, value)
+func (m *HTTPResponseManager) SetHTTPResponseHeader(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	value := stack.CheckString(2)
+
+	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+		ginCtx.Header(name, value)
+	})
 }
 
 // AddHTTPResponseHeader adds a value to an HTTP response header.
@@ -64,18 +79,10 @@ func (m *HTTPResponseManager) AddHTTPResponseHeader(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	name := stack.CheckString(1)
 	value := stack.CheckString(2)
-	ginCtx := m.currentContext(L)
 
-	if ginCtx == nil {
-		L.RaiseError("HTTP response context is nil")
-
-		return 0
-	}
-
-	ginCtx.Writer.Header().Add(name, value)
-	ginCtx.Set(definitions.CtxResponseWrittenKey, true)
-
-	return 0
+	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+		ginCtx.Writer.Header().Add(name, value)
+	})
 }
 
 // RemoveHTTPResponseHeader removes an HTTP response header.
@@ -83,18 +90,10 @@ func (m *HTTPResponseManager) AddHTTPResponseHeader(L *lua.LState) int {
 func (m *HTTPResponseManager) RemoveHTTPResponseHeader(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	name := stack.CheckString(1)
-	ginCtx := m.currentContext(L)
 
-	if ginCtx == nil {
-		L.RaiseError("HTTP response context is nil")
-
-		return 0
-	}
-
-	ginCtx.Writer.Header().Del(name)
-	ginCtx.Set(definitions.CtxResponseWrittenKey, true)
-
-	return 0
+	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+		ginCtx.Writer.Header().Del(name)
+	})
 }
 
 // SetHTTPStatus sets the HTTP status code for the response.
@@ -102,18 +101,10 @@ func (m *HTTPResponseManager) RemoveHTTPResponseHeader(L *lua.LState) int {
 func (m *HTTPResponseManager) SetHTTPStatus(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	code := stack.CheckInt(1)
-	ginCtx := m.currentContext(L)
 
-	if ginCtx == nil {
-		L.RaiseError("HTTP response context is nil")
-
-		return 0
-	}
-
-	ginCtx.Status(code)
-	ginCtx.Set(definitions.CtxResponseWrittenKey, true)
-
-	return 0
+	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+		ginCtx.Status(code)
+	})
 }
 
 // WriteHTTPResponseBody writes raw data to the HTTP response body.
@@ -122,24 +113,17 @@ func (m *HTTPResponseManager) SetHTTPStatus(L *lua.LState) int {
 func (m *HTTPResponseManager) WriteHTTPResponseBody(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	data := stack.CheckString(1)
-	ginCtx := m.currentContext(L)
 
-	if ginCtx == nil {
-		L.RaiseError("HTTP response context is nil")
+	return m.useHTTPResponseContext(L, func(ginCtx *gin.Context) {
+		// Do not write body for HEAD requests
+		if strings.EqualFold(ginCtx.Request.Method, http.MethodHead) {
+			return
+		}
 
-		return 0
-	}
-
-	// Do not write body for HEAD requests
-	if strings.EqualFold(ginCtx.Request.Method, http.MethodHead) {
-		return 0
-	}
-
-	// Use Gin's writer to ensure correct size/accounting
-	_, _ = ginCtx.Writer.Write([]byte(data))
-	ginCtx.Set(definitions.CtxResponseWrittenKey, true)
-
-	return 0
+		// Use Gin's writer to ensure correct size/accounting
+		_, _ = ginCtx.Writer.Write([]byte(data))
+		ginCtx.Set(definitions.CtxResponseWrittenKey, true)
+	})
 }
 
 // SetHTTPContentType sets the Content-Type header explicitly.
@@ -147,18 +131,10 @@ func (m *HTTPResponseManager) WriteHTTPResponseBody(L *lua.LState) int {
 func (m *HTTPResponseManager) SetHTTPContentType(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	value := stack.CheckString(1)
-	ginCtx := m.currentContext(L)
 
-	if ginCtx == nil {
-		L.RaiseError("HTTP response context is nil")
-
-		return 0
-	}
-
-	ginCtx.Header("Content-Type", value)
-	ginCtx.Set(definitions.CtxResponseWrittenKey, true)
-
-	return 0
+	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+		ginCtx.Header("Content-Type", value)
+	})
 }
 
 // HTTPString maps to Gin's ctx.String(status, body).
@@ -167,18 +143,10 @@ func (m *HTTPResponseManager) HTTPString(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	status := stack.CheckInt(1)
 	body := stack.CheckString(2)
-	ginCtx := m.currentContext(L)
 
-	if ginCtx == nil {
-		L.RaiseError("HTTP response context is nil")
-
-		return 0
-	}
-
-	ginCtx.String(status, body)
-	ginCtx.Set(definitions.CtxResponseWrittenKey, true)
-
-	return 0
+	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+		ginCtx.String(status, body)
+	})
 }
 
 // HTTPData maps to Gin's ctx.Data(status, contentType, data).
@@ -188,26 +156,17 @@ func (m *HTTPResponseManager) HTTPData(L *lua.LState) int {
 	status := stack.CheckInt(1)
 	contentType := stack.CheckString(2)
 	data := stack.CheckString(3)
-	ginCtx := m.currentContext(L)
 
-	if ginCtx == nil {
-		L.RaiseError("HTTP response context is nil")
+	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+		// Do not write body for HEAD requests
+		if strings.EqualFold(ginCtx.Request.Method, http.MethodHead) {
+			ginCtx.Status(status)
 
-		return 0
-	}
+			return
+		}
 
-	// Do not write body for HEAD requests
-	if strings.EqualFold(ginCtx.Request.Method, http.MethodHead) {
-		ginCtx.Status(status)
-		ginCtx.Set(definitions.CtxResponseWrittenKey, true)
-
-		return 0
-	}
-
-	ginCtx.Data(status, contentType, []byte(data))
-	ginCtx.Set(definitions.CtxResponseWrittenKey, true)
-
-	return 0
+		ginCtx.Data(status, contentType, []byte(data))
+	})
 }
 
 // HTTPHTML sends HTML content (uses Gin's Data with text/html).
@@ -216,25 +175,16 @@ func (m *HTTPResponseManager) HTTPHTML(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	status := stack.CheckInt(1)
 	html := stack.CheckString(2)
-	ginCtx := m.currentContext(L)
 
-	if ginCtx == nil {
-		L.RaiseError("HTTP response context is nil")
+	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+		if strings.EqualFold(ginCtx.Request.Method, http.MethodHead) {
+			ginCtx.Status(status)
 
-		return 0
-	}
+			return
+		}
 
-	if strings.EqualFold(ginCtx.Request.Method, http.MethodHead) {
-		ginCtx.Status(status)
-		ginCtx.Set(definitions.CtxResponseWrittenKey, true)
-
-		return 0
-	}
-
-	ginCtx.Data(status, "text/html; charset=utf-8", []byte(html))
-	ginCtx.Set(definitions.CtxResponseWrittenKey, true)
-
-	return 0
+		ginCtx.Data(status, "text/html; charset=utf-8", []byte(html))
+	})
 }
 
 // HTTPRedirect maps to Gin's ctx.Redirect(status, location).
@@ -243,18 +193,10 @@ func (m *HTTPResponseManager) HTTPRedirect(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	status := stack.CheckInt(1)
 	location := stack.CheckString(2)
-	ginCtx := m.currentContext(L)
 
-	if ginCtx == nil {
-		L.RaiseError("HTTP response context is nil")
-
-		return 0
-	}
-
-	ginCtx.Redirect(status, location)
-	ginCtx.Set(definitions.CtxResponseWrittenKey, true)
-
-	return 0
+	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+		ginCtx.Redirect(status, location)
+	})
 }
 
 // LoaderModHTTPResponse loads Lua functions to interact with the HTTP response using gin.Context.
@@ -263,18 +205,7 @@ func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 		stack := luastack.NewManager(L)
 		manager := NewHTTPResponseManager()
 
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnSetHTTPResponseHeader:    manager.SetHTTPResponseHeader,
-			definitions.LuaFnAddHTTPResponseHeader:    manager.AddHTTPResponseHeader,
-			definitions.LuaFnRemoveHTTPResponseHeader: manager.RemoveHTTPResponseHeader,
-			definitions.LuaFnSetHTTPStatus:            manager.SetHTTPStatus,
-			definitions.LuaFnWriteHTTPResponseBody:    manager.WriteHTTPResponseBody,
-			definitions.LuaFnSetHTTPContentType:       manager.SetHTTPContentType,
-			definitions.LuaFnHTTPString:               manager.HTTPString,
-			definitions.LuaFnHTTPData:                 manager.HTTPData,
-			definitions.LuaFnHTTPHTML:                 manager.HTTPHTML,
-			definitions.LuaFnHTTPRedirect:             manager.HTTPRedirect,
-		})
+		mod := newLuaModuleTable(L, httpHeaderFunctions(manager), httpBodyFunctions(manager))
 
 		// Expose essential HTTP status codes as UPPER_CASE module variables
 		statusCodes := map[string]int{
@@ -309,6 +240,28 @@ func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 		}
 
 		return stack.PushResult(mod)
+	}
+}
+
+// httpHeaderFunctions returns Lua functions that mutate HTTP response headers and status.
+func httpHeaderFunctions(manager *HTTPResponseManager) map[string]lua.LGFunction {
+	return map[string]lua.LGFunction{
+		definitions.LuaFnSetHTTPResponseHeader:    manager.SetHTTPResponseHeader,
+		definitions.LuaFnAddHTTPResponseHeader:    manager.AddHTTPResponseHeader,
+		definitions.LuaFnRemoveHTTPResponseHeader: manager.RemoveHTTPResponseHeader,
+		definitions.LuaFnSetHTTPStatus:            manager.SetHTTPStatus,
+		definitions.LuaFnSetHTTPContentType:       manager.SetHTTPContentType,
+	}
+}
+
+// httpBodyFunctions returns Lua functions that write HTTP response bodies.
+func httpBodyFunctions(manager *HTTPResponseManager) map[string]lua.LGFunction {
+	return map[string]lua.LGFunction{
+		definitions.LuaFnWriteHTTPResponseBody: manager.WriteHTTPResponseBody,
+		definitions.LuaFnHTTPString:            manager.HTTPString,
+		definitions.LuaFnHTTPData:              manager.HTTPData,
+		definitions.LuaFnHTTPHTML:              manager.HTTPHTML,
+		definitions.LuaFnHTTPRedirect:          manager.HTTPRedirect,
 	}
 }
 

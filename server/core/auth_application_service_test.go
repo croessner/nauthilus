@@ -116,121 +116,145 @@ func TestAuthApplicationService_LookupIdentityUsesNoAuthBoundary(t *testing.T) {
 	}
 }
 
-func TestAuthApplicationService_LookupIdentityCapturesDomainFailure(t *testing.T) {
-	deps, mock := setupPhase4AuthApplicationServiceTest(t, "test(phase6_lookup_identity_fail)")
-
-	RegisterPasswordVerifier(failingPasswordVerifier{})
-	expectPhase4UserAccountLookup(t, mock, "phase6-lookup-fail@example.test", "imap")
-
-	service := NewAuthApplicationService(deps)
-	input := NewAuthInputFromStructuredRequest(definitions.ServGRPC, AuthModeLookupIdentity, authdto.Request{
-		Username: "phase6-lookup-fail@example.test",
-		ClientIP: "203.0.113.16",
-		Protocol: "imap",
-		Method:   "lookup",
-	})
-
-	outcome, err := service.LookupIdentity(context.Background(), input)
-	if err != nil {
-		t.Fatalf("LookupIdentity returned error: %v", err)
-	}
-
-	if outcome.Decision != AuthDecisionFail {
-		t.Fatalf("decision = %q, want %q", outcome.Decision, AuthDecisionFail)
-	}
-
-	if outcome.StatusMessage != definitions.PasswordFail {
-		t.Fatalf("status message = %q, want %q", outcome.StatusMessage, definitions.PasswordFail)
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("redis expectations were not met: %v", err)
+func TestAuthApplicationService_CapturesDomainFailure(t *testing.T) {
+	for _, testCase := range authApplicationDomainFailureCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			assertAuthApplicationOutcome(t, testCase)
+		})
 	}
 }
 
-func TestAuthApplicationService_LookupIdentityCapturesTempFail(t *testing.T) {
-	deps, _ := setupPhase4AuthApplicationServiceTest(t, "test(phase6_lookup_identity_tempfail)")
-
-	RegisterPasswordVerifier(tempfailPasswordVerifier{})
-
-	service := NewAuthApplicationService(deps)
-	input := NewAuthInputFromStructuredRequest(definitions.ServGRPC, AuthModeLookupIdentity, authdto.Request{
-		Username: "phase6-lookup-tempfail@example.test",
-		ClientIP: "203.0.113.17",
-		Protocol: "imap",
-		Method:   "lookup",
-	})
-
-	outcome, err := service.LookupIdentity(context.Background(), input)
-	if err != nil {
-		t.Fatalf("LookupIdentity returned error: %v", err)
-	}
-
-	if outcome.Decision != AuthDecisionTempFail {
-		t.Fatalf("decision = %q, want %q", outcome.Decision, AuthDecisionTempFail)
-	}
-
-	if outcome.StatusMessage != definitions.TempFailDefault {
-		t.Fatalf("status message = %q, want %q", outcome.StatusMessage, definitions.TempFailDefault)
+func TestAuthApplicationService_CapturesTempFail(t *testing.T) {
+	for _, testCase := range authApplicationTempFailCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			assertAuthApplicationOutcome(t, testCase)
+		})
 	}
 }
 
-func TestAuthApplicationService_AuthenticateCapturesDomainFailure(t *testing.T) {
-	deps, mock := setupPhase4AuthApplicationServiceTest(t, "test(phase4_auth_fail)")
+type authApplicationOutcomeCase struct {
+	verifier     PasswordVerifier
+	run          func(AuthApplicationService, context.Context, AuthInput) (*AuthOutcome, error)
+	name         string
+	setupName    string
+	username     string
+	password     string
+	clientIP     string
+	method       string
+	wantStatus   string
+	mode         AuthMode
+	wantDecision AuthDecision
+	expectLookup bool
+}
 
-	RegisterPasswordVerifier(failingPasswordVerifier{})
-	expectPhase4UserAccountLookup(t, mock, "phase4-auth-fail@example.test", "imap")
-
-	service := NewAuthApplicationService(deps)
-	input := NewAuthInputFromStructuredRequest(definitions.ServGRPC, AuthModeAuthenticate, authdto.Request{
-		Username: "phase4-auth-fail@example.test",
-		Password: "wrong",
-		ClientIP: "203.0.113.12",
-		Protocol: "imap",
-	})
-
-	outcome, err := service.Authenticate(context.Background(), input)
-	if err != nil {
-		t.Fatalf("Authenticate returned error: %v", err)
-	}
-
-	if outcome.Decision != AuthDecisionFail {
-		t.Fatalf("decision = %q, want %q", outcome.Decision, AuthDecisionFail)
-	}
-
-	if outcome.StatusMessage != definitions.PasswordFail {
-		t.Fatalf("status message = %q, want %q", outcome.StatusMessage, definitions.PasswordFail)
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("redis expectations were not met: %v", err)
+// authApplicationDomainFailureCases lists service methods that capture password-domain failures.
+func authApplicationDomainFailureCases() []authApplicationOutcomeCase {
+	return []authApplicationOutcomeCase{
+		{
+			verifier:     failingPasswordVerifier{},
+			name:         "lookup identity",
+			setupName:    "test(phase6_lookup_identity_fail)",
+			username:     "phase6-lookup-fail@example.test",
+			clientIP:     "203.0.113.16",
+			method:       "lookup",
+			wantStatus:   definitions.PasswordFail,
+			mode:         AuthModeLookupIdentity,
+			wantDecision: AuthDecisionFail,
+			expectLookup: true,
+			run: func(service AuthApplicationService, ctx context.Context, input AuthInput) (*AuthOutcome, error) {
+				return service.LookupIdentity(ctx, input)
+			},
+		},
+		{
+			verifier:     failingPasswordVerifier{},
+			name:         "authenticate",
+			setupName:    "test(phase4_auth_fail)",
+			username:     "phase4-auth-fail@example.test",
+			password:     "wrong",
+			clientIP:     "203.0.113.12",
+			wantStatus:   definitions.PasswordFail,
+			mode:         AuthModeAuthenticate,
+			wantDecision: AuthDecisionFail,
+			expectLookup: true,
+			run: func(service AuthApplicationService, ctx context.Context, input AuthInput) (*AuthOutcome, error) {
+				return service.Authenticate(ctx, input)
+			},
+		},
 	}
 }
 
-func TestAuthApplicationService_AuthenticateCapturesTempFail(t *testing.T) {
-	deps, _ := setupPhase4AuthApplicationServiceTest(t, "test(phase4_auth_tempfail)")
+// authApplicationTempFailCases lists service methods that capture backend temporary failures.
+func authApplicationTempFailCases() []authApplicationOutcomeCase {
+	return []authApplicationOutcomeCase{
+		{
+			verifier:     tempfailPasswordVerifier{},
+			name:         "lookup identity",
+			setupName:    "test(phase6_lookup_identity_tempfail)",
+			username:     "phase6-lookup-tempfail@example.test",
+			clientIP:     "203.0.113.17",
+			method:       "lookup",
+			wantStatus:   definitions.TempFailDefault,
+			mode:         AuthModeLookupIdentity,
+			wantDecision: AuthDecisionTempFail,
+			run: func(service AuthApplicationService, ctx context.Context, input AuthInput) (*AuthOutcome, error) {
+				return service.LookupIdentity(ctx, input)
+			},
+		},
+		{
+			verifier:     tempfailPasswordVerifier{},
+			name:         "authenticate",
+			setupName:    "test(phase4_auth_tempfail)",
+			username:     "phase4-auth-tempfail@example.test",
+			password:     "secret",
+			clientIP:     "203.0.113.13",
+			wantStatus:   definitions.TempFailDefault,
+			mode:         AuthModeAuthenticate,
+			wantDecision: AuthDecisionTempFail,
+			run: func(service AuthApplicationService, ctx context.Context, input AuthInput) (*AuthOutcome, error) {
+				return service.Authenticate(ctx, input)
+			},
+		},
+	}
+}
 
-	RegisterPasswordVerifier(tempfailPasswordVerifier{})
+// assertAuthApplicationOutcome verifies one service-level captured auth outcome case.
+func assertAuthApplicationOutcome(t *testing.T, testCase authApplicationOutcomeCase) {
+	t.Helper()
+
+	deps, mock := setupPhase4AuthApplicationServiceTest(t, testCase.setupName)
+
+	RegisterPasswordVerifier(testCase.verifier)
+
+	if testCase.expectLookup {
+		expectPhase4UserAccountLookup(t, mock, testCase.username, "imap")
+	}
 
 	service := NewAuthApplicationService(deps)
-	input := NewAuthInputFromStructuredRequest(definitions.ServGRPC, AuthModeAuthenticate, authdto.Request{
-		Username: "phase4-auth-tempfail@example.test",
-		Password: "secret",
-		ClientIP: "203.0.113.13",
+	input := NewAuthInputFromStructuredRequest(definitions.ServGRPC, testCase.mode, authdto.Request{
+		Username: testCase.username,
+		Password: testCase.password,
+		ClientIP: testCase.clientIP,
 		Protocol: "imap",
+		Method:   testCase.method,
 	})
 
-	outcome, err := service.Authenticate(context.Background(), input)
+	outcome, err := testCase.run(service, context.Background(), input)
 	if err != nil {
-		t.Fatalf("Authenticate returned error: %v", err)
+		t.Fatalf("%s returned error: %v", testCase.name, err)
 	}
 
-	if outcome.Decision != AuthDecisionTempFail {
-		t.Fatalf("decision = %q, want %q", outcome.Decision, AuthDecisionTempFail)
+	if outcome.Decision != testCase.wantDecision {
+		t.Fatalf("decision = %q, want %q", outcome.Decision, testCase.wantDecision)
 	}
 
-	if outcome.StatusMessage != definitions.TempFailDefault {
-		t.Fatalf("status message = %q, want %q", outcome.StatusMessage, definitions.TempFailDefault)
+	if outcome.StatusMessage != testCase.wantStatus {
+		t.Fatalf("status message = %q, want %q", outcome.StatusMessage, testCase.wantStatus)
+	}
+
+	if testCase.expectLookup {
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("redis expectations were not met: %v", err)
+		}
 	}
 }
 

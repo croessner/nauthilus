@@ -21,6 +21,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/util"
@@ -37,39 +38,68 @@ func (b DefaultBootstrap) InitWebAuthn() error {
 	idpCfg := cfg.GetIDP()
 	serverCfg := cfg.GetServer()
 
+	if !shouldInitWebAuthn(idpCfg, serverCfg) {
+		return nil
+	}
+
+	rpID := resolvedWebAuthnRPID(idpCfg.WebAuthn.RPID, idpCfg.OIDC.Issuer)
+	origins := resolvedWebAuthnOrigins(idpCfg.WebAuthn.RPOrigins, b.env.GetDevMode())
+
+	logWebAuthnConfig(b, rpID, origins)
+
+	webAuthn, err = webauthn.New(newWebAuthnConfig(idpCfg, rpID, origins))
+	if err != nil {
+		level.Error(b.logger).Log(
+			definitions.LogKeyMsg, "Failed to create WebAuthn from environment",
+			definitions.LogKeyError, err,
+		)
+	}
+
+	return err
+}
+
+// shouldInitWebAuthn reports whether configured server features need WebAuthn bootstrap.
+func shouldInitWebAuthn(idpCfg *config.IDPSection, serverCfg *config.ServerSection) bool {
 	hasFrontend := serverCfg.Frontend.Enabled
 	hasIDP := idpCfg.OIDC.Enabled || idpCfg.SAML2.Enabled
 	hasWebAuthnConfig := idpCfg.WebAuthn.RPDisplayName != "" || idpCfg.WebAuthn.RPID != "" || len(idpCfg.WebAuthn.RPOrigins) > 0
 
-	if !hasFrontend && !hasIDP && !hasWebAuthnConfig {
-		return nil
+	return hasFrontend || hasIDP || hasWebAuthnConfig
+}
+
+// resolvedWebAuthnRPID derives the RP ID from the issuer when the configured value is local.
+func resolvedWebAuthnRPID(rpID string, issuer string) string {
+	if rpID != "" && rpID != "localhost" {
+		return rpID
 	}
 
-	rpID := idpCfg.WebAuthn.RPID
-	origins := idpCfg.WebAuthn.RPOrigins
-
-	// If RPID is localhost (our new default) or empty, try to get a better one from IDP issuer
-	if rpID == "" || rpID == "localhost" {
-		issuer := idpCfg.OIDC.Issuer
-		if issuer != "" {
-			if u, err := url.Parse(issuer); err == nil {
-				rpID = u.Hostname()
-			}
-		}
+	if issuer == "" {
+		return rpID
 	}
 
-	// Always ensure localhost is in origins if we are in developer mode
-	if b.env.GetDevMode() {
-		localhostFound := slices.Contains(origins, "https://localhost:9443")
-
-		if !localhostFound {
-			origins = append(origins, "https://localhost:9443", "http://localhost:9094")
-		}
+	if u, err := url.Parse(issuer); err == nil {
+		return u.Hostname()
 	}
+
+	return rpID
+}
+
+// resolvedWebAuthnOrigins adds developer localhost origins when dev mode is enabled.
+func resolvedWebAuthnOrigins(origins []string, devMode bool) []string {
+	if !devMode || slices.Contains(origins, "https://localhost:9443") {
+		return origins
+	}
+
+	return append(origins, "https://localhost:9443", "http://localhost:9094")
+}
+
+// logWebAuthnConfig emits the resolved WebAuthn bootstrap values.
+func logWebAuthnConfig(b DefaultBootstrap, rpID string, origins []string) {
+	idpCfg := b.cfg.GetIDP()
 
 	util.DebugModuleWithCfg(
 		context.Background(),
-		cfg,
+		b.cfg,
 		b.logger,
 		definitions.DbgWebAuthn,
 		definitions.LogKeyMsg, "WebAuthn config resolved",
@@ -82,8 +112,11 @@ func (b DefaultBootstrap) InitWebAuthn() error {
 		"oidc_issuer", idpCfg.OIDC.Issuer,
 		"dev_mode", b.env.GetDevMode(),
 	)
+}
 
-	webAuthn, err = webauthn.New(&webauthn.Config{
+// newWebAuthnConfig builds the runtime WebAuthn library configuration.
+func newWebAuthnConfig(idpCfg *config.IDPSection, rpID string, origins []string) *webauthn.Config {
+	return &webauthn.Config{
 		RPDisplayName: idpCfg.WebAuthn.RPDisplayName,
 		RPID:          rpID,
 		RPOrigins:     origins,
@@ -99,13 +132,5 @@ func (b DefaultBootstrap) InitWebAuthn() error {
 				TimeoutUVD: time.Second * 60,
 			},
 		},
-	})
-	if err != nil {
-		level.Error(b.logger).Log(
-			definitions.LogKeyMsg, "Failed to create WebAuthn from environment",
-			definitions.LogKeyError, err,
-		)
 	}
-
-	return err
 }

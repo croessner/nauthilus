@@ -229,20 +229,32 @@ func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis
 // The newRedisClusterClient function returns a pointer to the redis.ClusterClient object.
 func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis) *redis.ClusterClient {
 	clusterCfg := redisCfg.GetCluster()
-	clusterPassword := ""
+	options := newRedisClusterOptions(redisCfg, clusterCfg)
 
-	clusterCfg.GetPassword().WithString(func(value string) {
-		clusterPassword = value
-	})
+	setRedisClusterMaintenanceNotifications(options, redisCfg)
+	setRedisClusterOptionalTimeouts(options, clusterCfg)
+	setRedisClusterClientTracking(options, redisCfg)
 
-	options := &redis.ClusterOptions{
-		Addrs:        clusterCfg.GetAddresses(),
-		Username:     clusterCfg.GetUsername(),
-		Password:     clusterPassword,
-		PoolSize:     redisCfg.GetPoolSize(),
-		MinIdleConns: redisCfg.GetIdlePoolSize(),
-		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
+	c := redis.NewClusterClient(options)
 
+	// Attach OpenTelemetry Redis tracing if enabled
+	instrumentRedisIfEnabled(c)
+
+	// Attach client-side batching hook if enabled
+	attachBatchingHookIfEnabled(cfg, logger, c)
+
+	return c
+}
+
+// newRedisClusterOptions builds the base Redis Cluster option set.
+func newRedisClusterOptions(redisCfg *config.Redis, clusterCfg *config.Cluster) *redis.ClusterOptions {
+	return &redis.ClusterOptions{
+		Addrs:                 clusterCfg.GetAddresses(),
+		Username:              clusterCfg.GetUsername(),
+		Password:              redisClusterPassword(clusterCfg),
+		PoolSize:              redisCfg.GetPoolSize(),
+		MinIdleConns:          redisCfg.GetIdlePoolSize(),
+		TLSConfig:             RedisTLSOptions(redisCfg.GetTLS()),
 		ContextTimeoutEnabled: false,
 		PoolTimeout:           redisCfg.GetPoolTimeout(),
 		DialTimeout:           redisCfg.GetDialTimeout(),
@@ -251,25 +263,38 @@ func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *confi
 		PoolFIFO:              redisCfg.GetPoolFIFO(),
 		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
 		MaxRetries:            redisCfg.GetMaxRetries(),
-
-		// Topology awareness options
-		RouteByLatency: clusterCfg.GetRouteByLatency(),
-		RouteRandomly:  clusterCfg.GetRouteRandomly(),
-		ReadOnly:       clusterCfg.GetRouteReadsToReplicas(),
-		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
-		DisableIdentity: !redisCfg.IsIdentityEnabled(),
-		// Ensure RESP version based on configuration and Redis capabilities.
-		Protocol: getProtocol(redisCfg),
+		RouteByLatency:        clusterCfg.GetRouteByLatency(),
+		RouteRandomly:         clusterCfg.GetRouteRandomly(),
+		ReadOnly:              clusterCfg.GetRouteReadsToReplicas(),
+		DisableIdentity:       !redisCfg.IsIdentityEnabled(),
+		Protocol:              getProtocol(redisCfg),
 	}
+}
 
-	// Maintenance Notifications for cluster: configurable. Apply to options to propagate to nodes.
+// redisClusterPassword extracts the optional cluster password value.
+func redisClusterPassword(clusterCfg *config.Cluster) string {
+	clusterPassword := ""
+
+	clusterCfg.GetPassword().WithString(func(value string) {
+		clusterPassword = value
+	})
+
+	return clusterPassword
+}
+
+// setRedisClusterMaintenanceNotifications applies the configured Redis maintenance mode.
+func setRedisClusterMaintenanceNotifications(options *redis.ClusterOptions, redisCfg *config.Redis) {
 	if redisCfg.IsMaintNotificationsEnabled() {
 		options.MaintNotificationsConfig = &maintnotifications.Config{Mode: maintnotifications.ModeAuto}
-	} else {
-		options.MaintNotificationsConfig = &maintnotifications.Config{Mode: maintnotifications.ModeDisabled}
+
+		return
 	}
 
-	// Set optional parameters only if they have non-zero values
+	options.MaintNotificationsConfig = &maintnotifications.Config{Mode: maintnotifications.ModeDisabled}
+}
+
+// setRedisClusterOptionalTimeouts applies optional cluster-specific timeout overrides.
+func setRedisClusterOptionalTimeouts(options *redis.ClusterOptions, clusterCfg *config.Cluster) {
 	if maxRedirects := clusterCfg.GetMaxRedirects(); maxRedirects > 0 {
 		options.MaxRedirects = maxRedirects
 	}
@@ -281,22 +306,15 @@ func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *confi
 	if writeTimeout := clusterCfg.GetWriteTimeout(); writeTimeout > 0 {
 		options.WriteTimeout = writeTimeout
 	}
+}
 
+// setRedisClusterClientTracking wires Redis client tracking when enabled.
+func setRedisClusterClientTracking(options *redis.ClusterOptions, redisCfg *config.Redis) {
 	if ct := redisCfg.GetClientTracking(); ct.IsEnabled() {
 		options.OnConnect = func(ctx context.Context, cn *redis.Conn) error {
 			return enableClientTracking(ctx, cn, ct)
 		}
 	}
-
-	c := redis.NewClusterClient(options)
-
-	// Attach OpenTelemetry Redis tracing if enabled
-	instrumentRedisIfEnabled(c)
-
-	// Attach client-side batching hook if enabled
-	attachBatchingHookIfEnabled(cfg, logger, c)
-
-	return c
 }
 
 // instrumentRedisIfEnabled enables OpenTelemetry tracing for Redis clients when configured.

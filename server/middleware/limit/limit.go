@@ -69,97 +69,121 @@ func (lc *Counter) MiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
 	}
 
 	return func(ctx *gin.Context) {
-		// Always allow health check and metrics endpoints regardless of connection limits
-		if ctx.FullPath() == limitBypassPingPath || ctx.FullPath() == limitBypassHealthPath || ctx.FullPath() == limitBypassMetricsPath {
+		if isLimitBypassPath(ctx.FullPath()) {
 			ctx.Next()
 
 			return
 		}
 
-		// Check if we're at the connection limit
 		currentConnections := atomic.LoadInt32(&lc.CurrentConnections)
-		if currentConnections >= lc.MaxConnections {
-			ctx.Set(definitions.CtxRateLimitReasonKey, limitScopeConcurrency)
-
-			// For API requests, return 429 status code
-			ctx.JSON(http.StatusTooManyRequests, gin.H{
-				definitions.LogKeyMsg: "Too many requests",
-				limitResponseKeyScope: limitScopeConcurrency,
-				"current":             currentConnections,
-				"max":                 lc.MaxConnections,
-			})
-
-			ctx.Abort()
-
+		if lc.rejectOverLimit(ctx, currentConnections) {
 			return
 		}
 
-		// Store the request start time in the context for performance tracking
-		startTime := time.Now()
-		ctx.Set(definitions.CtxRequestStartTimeKey, startTime)
-
-		// Increment the connection counter
-		atomic.AddInt32(&lc.CurrentConnections, 1)
-		currentConnections = atomic.LoadInt32(&lc.CurrentConnections)
-
-		// Update metrics
-		stats.GetMetrics().GetCurrentRequests().Set(float64(currentConnections))
-
-		// Add connection info to the context
-		ctx.Set(definitions.CtxCurrentConnectionsKey, currentConnections)
-		ctx.Set(definitions.CtxMaxConnectionsKey, lc.MaxConnections)
-
-		// Process the request and decrement the counter when done
-		defer func() {
-			atomic.AddInt32(&lc.CurrentConnections, -1)
-
-			// Detect client-canceled requests (context canceled) and mark/log as 499 if possible
-			canceled := errors.Is(ctx.Request.Context().Err(), context.Canceled)
-			if canceled {
-				// Log cancellation; use GUID if present
-				guid, exists := ctx.Get(definitions.CtxGUIDKey)
-				if !exists {
-					guid = ksuid.New().String()
-				}
-
-				level.Warn(logger).Log(
-					definitions.LogKeyGUID, guid,
-					definitions.LogKeyMsg, definitions.MsgClientClosedRequest,
-					"path", ctx.FullPath(),
-					"status", definitions.StatusClientClosedRequest,
-				)
-
-				// If nothing was written yet and handler didn't abort, respond with 499
-				if !ctx.Writer.Written() && !ctx.IsAborted() {
-					ctx.AbortWithStatus(definitions.StatusClientClosedRequest)
-				}
-			}
-
-			// Calculate and log request duration for performance monitoring
-			if startTimeValue, exists := ctx.Get(definitions.CtxRequestStartTimeKey); exists {
-				if startTime, ok := startTimeValue.(time.Time); ok {
-					duration := time.Since(startTime)
-					ctx.Set(definitions.CtxRequestDurationKey, duration)
-
-					// Log long-running requests for further optimization (skip if client canceled)
-					if !canceled && duration > 1500*time.Millisecond {
-						// Get GUID from context if available, otherwise generate a new one
-						guid, exists := ctx.Get(definitions.CtxGUIDKey)
-						if !exists {
-							guid = ksuid.New().String()
-						}
-
-						level.Warn(logger).Log(
-							definitions.LogKeyGUID, guid,
-							definitions.LogKeyMsg, "Long-running request detected",
-							"path", ctx.FullPath(),
-							"duration_ms", duration.Milliseconds(),
-						)
-					}
-				}
-			}
-		}()
+		lc.trackRequestStart(ctx)
+		defer lc.finishRequest(ctx, logger)
 
 		ctx.Next()
 	}
+}
+
+// isLimitBypassPath reports whether a path bypasses concurrency limits.
+func isLimitBypassPath(path string) bool {
+	return path == limitBypassPingPath || path == limitBypassHealthPath || path == limitBypassMetricsPath
+}
+
+// rejectOverLimit writes the concurrency-limit response when the counter is full.
+func (lc *Counter) rejectOverLimit(ctx *gin.Context, currentConnections int32) bool {
+	if currentConnections < lc.MaxConnections {
+		return false
+	}
+
+	ctx.Set(definitions.CtxRateLimitReasonKey, limitScopeConcurrency)
+	ctx.JSON(http.StatusTooManyRequests, gin.H{
+		definitions.LogKeyMsg: "Too many requests",
+		limitResponseKeyScope: limitScopeConcurrency,
+		"current":             currentConnections,
+		"max":                 lc.MaxConnections,
+	})
+	ctx.Abort()
+
+	return true
+}
+
+// trackRequestStart records request metadata and increments active connection metrics.
+func (lc *Counter) trackRequestStart(ctx *gin.Context) {
+	ctx.Set(definitions.CtxRequestStartTimeKey, time.Now())
+
+	atomic.AddInt32(&lc.CurrentConnections, 1)
+	currentConnections := atomic.LoadInt32(&lc.CurrentConnections)
+
+	stats.GetMetrics().GetCurrentRequests().Set(float64(currentConnections))
+	ctx.Set(definitions.CtxCurrentConnectionsKey, currentConnections)
+	ctx.Set(definitions.CtxMaxConnectionsKey, lc.MaxConnections)
+}
+
+// finishRequest records completion details and decrements active connections.
+func (lc *Counter) finishRequest(ctx *gin.Context, logger *slog.Logger) {
+	atomic.AddInt32(&lc.CurrentConnections, -1)
+
+	canceled := errors.Is(ctx.Request.Context().Err(), context.Canceled)
+	if canceled {
+		logClientCanceledRequest(ctx, logger)
+	}
+
+	recordRequestDuration(ctx, logger, canceled)
+}
+
+// logClientCanceledRequest logs and marks requests canceled by the client.
+func logClientCanceledRequest(ctx *gin.Context, logger *slog.Logger) {
+	level.Warn(logger).Log(
+		definitions.LogKeyGUID, limitRequestGUID(ctx),
+		definitions.LogKeyMsg, definitions.MsgClientClosedRequest,
+		"path", ctx.FullPath(),
+		"status", definitions.StatusClientClosedRequest,
+	)
+
+	if !ctx.Writer.Written() && !ctx.IsAborted() {
+		ctx.AbortWithStatus(definitions.StatusClientClosedRequest)
+	}
+}
+
+// recordRequestDuration stores the request duration and logs slow requests.
+func recordRequestDuration(ctx *gin.Context, logger *slog.Logger, canceled bool) {
+	startTimeValue, exists := ctx.Get(definitions.CtxRequestStartTimeKey)
+	if !exists {
+		return
+	}
+
+	startTime, ok := startTimeValue.(time.Time)
+	if !ok {
+		return
+	}
+
+	duration := time.Since(startTime)
+	ctx.Set(definitions.CtxRequestDurationKey, duration)
+
+	if !canceled && duration > 1500*time.Millisecond {
+		logLongRunningRequest(ctx, logger, duration)
+	}
+}
+
+// logLongRunningRequest logs requests exceeding the middleware duration threshold.
+func logLongRunningRequest(ctx *gin.Context, logger *slog.Logger, duration time.Duration) {
+	level.Warn(logger).Log(
+		definitions.LogKeyGUID, limitRequestGUID(ctx),
+		definitions.LogKeyMsg, "Long-running request detected",
+		"path", ctx.FullPath(),
+		"duration_ms", duration.Milliseconds(),
+	)
+}
+
+// limitRequestGUID returns the request GUID or creates a fallback value.
+func limitRequestGUID(ctx *gin.Context) any {
+	guid, exists := ctx.Get(definitions.CtxGUIDKey)
+	if !exists {
+		return ksuid.New().String()
+	}
+
+	return guid
 }

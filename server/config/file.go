@@ -883,22 +883,6 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 		reqPoolName = definitions.DefaultBackendName
 	}
 
-	poolNameMatches := func(configPoolName string) bool {
-		if configPoolName == reqPoolName {
-			return true
-		}
-
-		// Historically, the configuration defaulted to `__meta_default__`, while runtime
-		// pooling uses `default`. Accept both as equivalent to keep configs without
-		// explicit `pool_name` working.
-		if (configPoolName == definitions.DefaultBackendName && reqPoolName == RemoteBackendDefaultName) ||
-			(configPoolName == RemoteBackendDefaultName && reqPoolName == definitions.DefaultBackendName) {
-			return true
-		}
-
-		return false
-	}
-
 	getProtocols := f.GetProtocols(definitions.BackendLDAP)
 	if getProtocols == nil {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
@@ -910,7 +894,7 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 	}
 
 	for index := range ldapProtocols {
-		if !poolNameMatches(ldapProtocols[index].GetPoolName()) {
+		if !ldapPoolNameMatches(ldapProtocols[index].GetPoolName(), reqPoolName) {
 			continue
 		}
 
@@ -921,6 +905,19 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 	}
 
 	return nil, nil
+}
+
+// ldapPoolNameMatches reports whether a configured LDAP pool name satisfies a requested pool.
+func ldapPoolNameMatches(configPoolName string, reqPoolName string) bool {
+	if configPoolName == reqPoolName {
+		return true
+	}
+
+	// Historically, the configuration defaulted to `__meta_default__`, while runtime
+	// pooling uses `default`. Accept both as equivalent to keep configs without
+	// explicit `pool_name` working.
+	return (configPoolName == definitions.DefaultBackendName && reqPoolName == RemoteBackendDefaultName) ||
+		(configPoolName == RemoteBackendDefaultName && reqPoolName == definitions.DefaultBackendName)
 }
 
 // ResolveLDAPSearchPoolName returns the pool name for a given LDAP protocol if it is uniquely configured.
@@ -1917,53 +1914,8 @@ func (f *FileSettings) validatePassDBBackends() error {
 	for _, backend := range f.Server.Backends {
 		switch backend.Get() {
 		case definitions.BackendLDAP:
-			if f.GetLDAP() == nil {
-				return errors.ErrNoLDAPSection
-			}
-
-			if !f.GetLDAP().GetConfig().(*LDAPConf).IsPoolOnly() && len(f.GetLDAP().GetSearch()) == 0 {
-				return errors.ErrNoLDAPSearchSection
-			}
-
-			/*
-			 + Checking LDAP settings
-			*/
-
-			if f.GetLDAPConfigLookupPoolSize() < 1 {
-				f.LDAP.Config.LookupPoolSize = runtime.NumCPU()
-			}
-
-			if f.GetLDAPConfigLookupIdlePoolSize() < 1 {
-				f.LDAP.Config.LookupIdlePoolSize = definitions.LDAPIdlePoolSize
-			}
-
-			if f.GetLDAPConfigLookupPoolSize() < f.GetLDAPConfigLookupIdlePoolSize() {
-				f.LDAP.Config.LookupPoolSize = f.LDAP.Config.LookupIdlePoolSize
-			}
-
-			if f.GetLDAPConfigAuthPoolSize() < 1 {
-				f.LDAP.Config.AuthPoolSize = runtime.NumCPU()
-			}
-
-			if f.GetLDAPConfigAuthIdlePoolSize() < 1 {
-				f.LDAP.Config.AuthIdlePoolSize = definitions.LDAPIdlePoolSize
-			}
-
-			if f.GetLDAPConfigAuthPoolSize() < f.GetLDAPConfigAuthIdlePoolSize() {
-				f.LDAP.Config.AuthPoolSize = f.LDAP.Config.AuthIdlePoolSize
-			}
-
-			requiresEncryptionSecret := false
-
-			for _, protocol := range f.GetLDAP().GetSearch() {
-				if protocol.GetTotpSecretField() != "" || protocol.GetTotpRecoveryField() != "" {
-					requiresEncryptionSecret = true
-					break
-				}
-			}
-
-			if requiresEncryptionSecret && f.GetLDAPConfigEncryptionSecret().IsZero() {
-				return errors.ErrLDAPConfig.WithDetail("Missing LDAP encryption secret for TOTP data in LDAP")
+			if err := f.validateLDAPPassDBBackend(); err != nil {
+				return err
 			}
 
 		default:
@@ -1971,6 +1923,63 @@ func (f *FileSettings) validatePassDBBackends() error {
 	}
 
 	return nil
+}
+
+// validateLDAPPassDBBackend validates and normalizes LDAP password backend settings.
+func (f *FileSettings) validateLDAPPassDBBackend() error {
+	if f.GetLDAP() == nil {
+		return errors.ErrNoLDAPSection
+	}
+
+	if !f.GetLDAP().GetConfig().(*LDAPConf).IsPoolOnly() && len(f.GetLDAP().GetSearch()) == 0 {
+		return errors.ErrNoLDAPSearchSection
+	}
+
+	f.setDefaultLDAPPoolSizes()
+
+	if f.ldapSearchRequiresEncryptionSecret() && f.GetLDAPConfigEncryptionSecret().IsZero() {
+		return errors.ErrLDAPConfig.WithDetail("Missing LDAP encryption secret for TOTP data in LDAP")
+	}
+
+	return nil
+}
+
+// setDefaultLDAPPoolSizes applies lookup and auth pool defaults.
+func (f *FileSettings) setDefaultLDAPPoolSizes() {
+	if f.GetLDAPConfigLookupPoolSize() < 1 {
+		f.LDAP.Config.LookupPoolSize = runtime.NumCPU()
+	}
+
+	if f.GetLDAPConfigLookupIdlePoolSize() < 1 {
+		f.LDAP.Config.LookupIdlePoolSize = definitions.LDAPIdlePoolSize
+	}
+
+	if f.GetLDAPConfigLookupPoolSize() < f.GetLDAPConfigLookupIdlePoolSize() {
+		f.LDAP.Config.LookupPoolSize = f.LDAP.Config.LookupIdlePoolSize
+	}
+
+	if f.GetLDAPConfigAuthPoolSize() < 1 {
+		f.LDAP.Config.AuthPoolSize = runtime.NumCPU()
+	}
+
+	if f.GetLDAPConfigAuthIdlePoolSize() < 1 {
+		f.LDAP.Config.AuthIdlePoolSize = definitions.LDAPIdlePoolSize
+	}
+
+	if f.GetLDAPConfigAuthPoolSize() < f.GetLDAPConfigAuthIdlePoolSize() {
+		f.LDAP.Config.AuthPoolSize = f.LDAP.Config.AuthIdlePoolSize
+	}
+}
+
+// ldapSearchRequiresEncryptionSecret reports whether LDAP TOTP fields need encryption.
+func (f *FileSettings) ldapSearchRequiresEncryptionSecret() bool {
+	for _, protocol := range f.GetLDAP().GetSearch() {
+		if protocol.GetTotpSecretField() != "" || protocol.GetTotpRecoveryField() != "" {
+			return true
+		}
+	}
+
+	return false
 }
 
 // checkAddress verifies the validity of a network address, returning an error if it is improperly formatted.
@@ -2257,6 +2266,13 @@ func (f *FileSettings) setDefaultSecuritySettings() error {
 		f.Server.LocalCacheAuthTTL = 30 * time.Second
 	}
 
+	f.setDefaultCORSSettings()
+
+	return nil
+}
+
+// setDefaultCORSSettings applies default CORS policy values.
+func (f *FileSettings) setDefaultCORSSettings() {
 	cors := &f.Server.CORS
 	if cors.Enabled == nil {
 		enabled := false
@@ -2292,8 +2308,6 @@ func (f *FileSettings) setDefaultSecuritySettings() error {
 			policy.MaxAge = defaultCORSMaxAge
 		}
 	}
-
-	return nil
 }
 
 // setDefaultFrontendSettings sets the default frontend settings if they are not already configured.
@@ -2310,7 +2324,21 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 		f.Server.Frontend.TotpIssuer = defaultFrontendTOTPIssuer
 	}
 
+	f.setDefaultFrontendSecurityHeaders()
+
+	return nil
+}
+
+// setDefaultFrontendSecurityHeaders applies default frontend security headers.
+func (f *FileSettings) setDefaultFrontendSecurityHeaders() {
 	headers := &f.Server.Frontend.SecurityHeaders
+	setDefaultFrontendPrimarySecurityHeaders(headers)
+	setDefaultFrontendCrossOriginSecurityHeaders(headers)
+	setDefaultFrontendMiscSecurityHeaders(headers)
+}
+
+// setDefaultFrontendPrimarySecurityHeaders applies base browser security headers.
+func setDefaultFrontendPrimarySecurityHeaders(headers *FrontendSecurityHeaders) {
 	if headers.Enabled == nil {
 		enabled := true
 		headers.Enabled = &enabled
@@ -2339,7 +2367,10 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 	if headers.PermissionsPolicy.IsZero() {
 		headers.PermissionsPolicy = NewPermissionsPolicyValueFromString(defaultPermissionsPolicy)
 	}
+}
 
+// setDefaultFrontendCrossOriginSecurityHeaders applies cross-origin isolation headers.
+func setDefaultFrontendCrossOriginSecurityHeaders(headers *FrontendSecurityHeaders) {
 	if headers.CrossOriginOpenerPolicy == "" {
 		headers.CrossOriginOpenerPolicy = securityHeaderValueSameOrigin
 	}
@@ -2351,7 +2382,10 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 	if headers.CrossOriginEmbedderPolicy == "" {
 		headers.CrossOriginEmbedderPolicy = "unsafe-none"
 	}
+}
 
+// setDefaultFrontendMiscSecurityHeaders applies remaining frontend security header defaults.
+func setDefaultFrontendMiscSecurityHeaders(headers *FrontendSecurityHeaders) {
 	if headers.XPermittedCrossDomainPolicies == "" {
 		headers.XPermittedCrossDomainPolicies = securityHeaderValueNone
 	}
@@ -2359,8 +2393,6 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 	if headers.XDNSPrefetchControl == "" {
 		headers.XDNSPrefetchControl = "off"
 	}
-
-	return nil
 }
 
 // setDefaultIDPSettings sets the default IDP settings if they are not already configured.
@@ -2815,34 +2847,69 @@ func ValidateGRPCAuthServerConfig(provider RuntimeGRPCAuthServerProvider) error 
 		return nil
 	}
 
+	applyDefaultGRPCAuthAddress(grpcAuth)
+
+	if err := validateGRPCAuthAddress(grpcAuth); err != nil {
+		return err
+	}
+
+	if err := validateGRPCAuthBackchannelAuth(provider.GetServer()); err != nil {
+		return err
+	}
+
+	return validateGRPCAuthTLS(grpcAuth)
+}
+
+// applyDefaultGRPCAuthAddress applies the default gRPC authority listen address.
+func applyDefaultGRPCAuthAddress(grpcAuth *RuntimeGRPCAuthServerSection) {
 	if grpcAuth.Address == "" {
 		grpcAuth.Address = defaultGRPCAuthorityAddress
 	}
+}
 
+// validateGRPCAuthAddress validates the gRPC authority listen address.
+func validateGRPCAuthAddress(grpcAuth *RuntimeGRPCAuthServerSection) error {
 	if err := checkAddress(grpcAuth.GetAddress()); err != nil {
 		return fmt.Errorf("runtime.servers.grpc.authority.address: %w", err)
 	}
 
-	server := provider.GetServer()
+	return nil
+}
+
+// validateGRPCAuthBackchannelAuth validates caller authentication for gRPC authority.
+func validateGRPCAuthBackchannelAuth(server *ServerSection) error {
 	if server == nil || (!server.GetBasicAuth().IsEnabled() && !server.GetOIDCAuth().IsEnabled()) {
 		return fmt.Errorf("runtime.servers.grpc.authority.enabled requires auth.backchannel.basic_auth.enabled=true or auth.backchannel.oidc_bearer.enabled=true")
 	}
 
 	if server.GetBasicAuth().IsEnabled() {
-		var problems []string
-		if strings.TrimSpace(server.GetBasicAuth().GetUsername()) == "" {
-			problems = append(problems, "auth.backchannel.basic_auth.username")
-		}
-
-		if server.GetBasicAuth().GetPassword().IsZero() {
-			problems = append(problems, "auth.backchannel.basic_auth.password")
-		}
-
-		if len(problems) > 0 {
-			return fmt.Errorf("%s are required when runtime.servers.grpc.authority.enabled=true and auth.backchannel.basic_auth.enabled=true", strings.Join(problems, " and "))
-		}
+		return validateGRPCAuthBasicAuth(server)
 	}
 
+	return nil
+}
+
+// validateGRPCAuthBasicAuth validates required backchannel basic-auth fields.
+func validateGRPCAuthBasicAuth(server *ServerSection) error {
+	var problems []string
+
+	if strings.TrimSpace(server.GetBasicAuth().GetUsername()) == "" {
+		problems = append(problems, "auth.backchannel.basic_auth.username")
+	}
+
+	if server.GetBasicAuth().GetPassword().IsZero() {
+		problems = append(problems, "auth.backchannel.basic_auth.password")
+	}
+
+	if len(problems) > 0 {
+		return fmt.Errorf("%s are required when runtime.servers.grpc.authority.enabled=true and auth.backchannel.basic_auth.enabled=true", strings.Join(problems, " and "))
+	}
+
+	return nil
+}
+
+// validateGRPCAuthTLS validates TLS requirements for gRPC authority.
+func validateGRPCAuthTLS(grpcAuth *RuntimeGRPCAuthServerSection) error {
 	tlsConfig := grpcAuth.GetTLS()
 	if !tlsConfig.IsEnabled() && !isLoopbackListenAddress(grpcAuth.GetAddress()) {
 		return fmt.Errorf("runtime.servers.grpc.authority.address %q requires TLS; plaintext gRPC is only allowed on loopback addresses", grpcAuth.GetAddress())
@@ -2852,18 +2919,20 @@ func ValidateGRPCAuthServerConfig(provider RuntimeGRPCAuthServerProvider) error 
 		return fmt.Errorf("runtime.servers.grpc.authority.tls.require_client_cert requires runtime.servers.grpc.authority.tls.enabled=true")
 	}
 
-	if tlsConfig.IsEnabled() {
-		if tlsConfig.GetCert() == "" || tlsConfig.GetKey() == "" {
-			return fmt.Errorf("runtime.servers.grpc.authority.tls.cert and runtime.servers.grpc.authority.tls.key are required when gRPC TLS is enabled")
-		}
+	if !tlsConfig.IsEnabled() {
+		return nil
+	}
 
-		if tlsConfig.GetMinTLSVersion() != "TLS1.2" && tlsConfig.GetMinTLSVersion() != TLSVersion13 {
-			return fmt.Errorf("runtime.servers.grpc.authority.tls.min_tls_version must be TLS1.2 or TLS1.3")
-		}
+	if tlsConfig.GetCert() == "" || tlsConfig.GetKey() == "" {
+		return fmt.Errorf("runtime.servers.grpc.authority.tls.cert and runtime.servers.grpc.authority.tls.key are required when gRPC TLS is enabled")
+	}
 
-		if tlsConfig.RequiresClientCert() && tlsConfig.GetClientCA() == "" {
-			return fmt.Errorf("runtime.servers.grpc.authority.tls.client_ca is required when require_client_cert is true")
-		}
+	if tlsConfig.GetMinTLSVersion() != "TLS1.2" && tlsConfig.GetMinTLSVersion() != TLSVersion13 {
+		return fmt.Errorf("runtime.servers.grpc.authority.tls.min_tls_version must be TLS1.2 or TLS1.3")
+	}
+
+	if tlsConfig.RequiresClientCert() && tlsConfig.GetClientCA() == "" {
+		return fmt.Errorf("runtime.servers.grpc.authority.tls.client_ca is required when require_client_cert is true")
 	}
 
 	return nil
@@ -3088,42 +3157,49 @@ func (f *FileSettings) checkResourceLimits() {
 		return
 	}
 
-	// Helper to check a pool and warn
-	checkPool := func(name string, poolSize int) {
-		if poolSize > 0 && poolSize < maxConcurrent/20 && poolSize < 50 {
-			safeWarn(
-				"msg", "backend pool size is very small compared to max_concurrent_requests",
-				"pool", name,
-				"size", poolSize,
-				"max_concurrent", maxConcurrent,
-				"recommendation", "increase pool size to avoid exhaustion under load",
-			)
-		}
+	f.checkLDAPResourceLimits(maxConcurrent)
+	warnSmallBackendPool("redis", f.GetServer().GetRedis().GetPoolSize(), maxConcurrent)
+	f.checkRedisTimeoutLimits()
+}
+
+// checkLDAPResourceLimits warns about LDAP pools that are small for the request limit.
+func (f *FileSettings) checkLDAPResourceLimits(maxConcurrent int) {
+	if f.LDAP == nil {
+		return
 	}
 
-	// Check LDAP
-	if f.LDAP != nil {
-		if cfg, ok := f.LDAP.GetConfig().(*LDAPConf); ok && cfg != nil {
-			defaultLDAPPool := "ldap." + definitions.DefaultBackendName
-
-			checkPool(defaultLDAPPool+".lookup", cfg.GetLookupPoolSize())
-			checkPool(defaultLDAPPool+".auth", cfg.GetAuthPoolSize())
-		}
-
-		for name, cfg := range f.LDAP.GetOptionalLDAPPools() {
-			if cfg != nil {
-				checkPool("ldap."+name+".lookup", cfg.GetLookupPoolSize())
-				checkPool("ldap."+name+".auth", cfg.GetAuthPoolSize())
-			}
-		}
+	if cfg, ok := f.LDAP.GetConfig().(*LDAPConf); ok && cfg != nil {
+		defaultLDAPPool := "ldap." + definitions.DefaultBackendName
+		warnSmallBackendPool(defaultLDAPPool+".lookup", cfg.GetLookupPoolSize(), maxConcurrent)
+		warnSmallBackendPool(defaultLDAPPool+".auth", cfg.GetAuthPoolSize(), maxConcurrent)
 	}
 
-	// Check Redis
-	checkPool("redis", f.GetServer().GetRedis().GetPoolSize())
+	for name, cfg := range f.LDAP.GetOptionalLDAPPools() {
+		if cfg != nil {
+			warnSmallBackendPool("ldap."+name+".lookup", cfg.GetLookupPoolSize(), maxConcurrent)
+			warnSmallBackendPool("ldap."+name+".auth", cfg.GetAuthPoolSize(), maxConcurrent)
+		}
+	}
+}
 
-	// Check Redis timeouts
+// warnSmallBackendPool emits an operator warning for undersized backend pools.
+func warnSmallBackendPool(name string, poolSize int, maxConcurrent int) {
+	if poolSize <= 0 || poolSize >= maxConcurrent/20 || poolSize >= 50 {
+		return
+	}
+
+	safeWarn(
+		"msg", "backend pool size is very small compared to max_concurrent_requests",
+		"pool", name,
+		"size", poolSize,
+		"max_concurrent", maxConcurrent,
+		"recommendation", "increase pool size to avoid exhaustion under load",
+	)
+}
+
+// checkRedisTimeoutLimits warns about Redis timeout settings that are too short.
+func (f *FileSettings) checkRedisTimeoutLimits() {
 	redisCfg := f.GetServer().GetRedis()
-
 	if redisCfg.GetReadTimeout() < 200*time.Millisecond {
 		safeWarn(
 			"msg", "Redis read timeout is very short",
@@ -3611,57 +3687,88 @@ func processBackends(input any) (any, error) {
 // createDecoderOption returns a viper.DecoderConfigOption to configure a mapstructure decoder with custom DecodeHook functions.
 // The DecodeHook functions handle conversions to specific types such as Verbosity, DbgModule, Control, Service, Protocol, and Backend.
 func createDecoderOption() viper.DecoderConfigOption {
-	verbosityType := reflect.TypeFor[Verbosity]()
-	debugModulesType := reflect.TypeFor[[]*DbgModule]()
-	runtimeModulesType := reflect.TypeFor[[]*RuntimeModule]()
-	controlsType := reflect.TypeFor[[]*Control]()
-	servicesType := reflect.TypeFor[[]*Service]()
-	protocolsType := reflect.TypeFor[[]*Protocol]()
-	backendsType := reflect.TypeFor[[]*Backend]()
-	contentSecurityPolicyType := reflect.TypeFor[ContentSecurityPolicyValue]()
-	permissionsPolicyType := reflect.TypeFor[PermissionsPolicyValue]()
-	strictTransportSecurityType := reflect.TypeFor[StrictTransportSecurityValue]()
-	secretType := reflect.TypeFor[secret.Value]()
+	types := newDecoderHookTypes()
 
 	return func(config *mapstructure.DecoderConfig) {
 		config.DecodeHook = mapstructure.ComposeDecodeHookFunc(
 			config.DecodeHook,
 			func(_ reflect.Type, to reflect.Type, data any) (any, error) {
-				switch to {
-				case verbosityType:
-					return processVerboseLevel(data)
-				case debugModulesType:
-					return processDebugModules(data)
-				case runtimeModulesType:
-					return processRuntimeModules(data)
-				case controlsType:
-					return processControls(data)
-				case servicesType:
-					return processServices(data)
-				case protocolsType:
-					return processProtocols(data)
-				case backendsType:
-					return processBackends(data)
-				case contentSecurityPolicyType:
-					return processContentSecurityPolicyValue(data)
-				case permissionsPolicyType:
-					return processPermissionsPolicyValue(data)
-				case strictTransportSecurityType:
-					return processStrictTransportSecurityValue(data)
-				case secretType:
-					switch value := data.(type) {
-					case string:
-						return secret.New(value), nil
-					case []byte:
-						return secret.FromBytes(value), nil
-					default:
-						return data, nil
-					}
-				default:
-					return data, nil
-				}
+				return types.decode(to, data)
 			},
 		)
+	}
+}
+
+type decoderHookTypes struct {
+	verbosityType               reflect.Type `mapstructure:"-"`
+	debugModulesType            reflect.Type `mapstructure:"-"`
+	runtimeModulesType          reflect.Type `mapstructure:"-"`
+	controlsType                reflect.Type `mapstructure:"-"`
+	servicesType                reflect.Type `mapstructure:"-"`
+	protocolsType               reflect.Type `mapstructure:"-"`
+	backendsType                reflect.Type `mapstructure:"-"`
+	contentSecurityPolicyType   reflect.Type `mapstructure:"-"`
+	permissionsPolicyType       reflect.Type `mapstructure:"-"`
+	strictTransportSecurityType reflect.Type `mapstructure:"-"`
+	secretType                  reflect.Type `mapstructure:"-"`
+}
+
+// newDecoderHookTypes returns the target types handled by custom decode hooks.
+func newDecoderHookTypes() decoderHookTypes {
+	return decoderHookTypes{
+		verbosityType:               reflect.TypeFor[Verbosity](),
+		debugModulesType:            reflect.TypeFor[[]*DbgModule](),
+		runtimeModulesType:          reflect.TypeFor[[]*RuntimeModule](),
+		controlsType:                reflect.TypeFor[[]*Control](),
+		servicesType:                reflect.TypeFor[[]*Service](),
+		protocolsType:               reflect.TypeFor[[]*Protocol](),
+		backendsType:                reflect.TypeFor[[]*Backend](),
+		contentSecurityPolicyType:   reflect.TypeFor[ContentSecurityPolicyValue](),
+		permissionsPolicyType:       reflect.TypeFor[PermissionsPolicyValue](),
+		strictTransportSecurityType: reflect.TypeFor[StrictTransportSecurityValue](),
+		secretType:                  reflect.TypeFor[secret.Value](),
+	}
+}
+
+// decode routes one custom mapstructure decode-hook conversion.
+func (t decoderHookTypes) decode(to reflect.Type, data any) (any, error) {
+	switch to {
+	case t.verbosityType:
+		return processVerboseLevel(data)
+	case t.debugModulesType:
+		return processDebugModules(data)
+	case t.runtimeModulesType:
+		return processRuntimeModules(data)
+	case t.controlsType:
+		return processControls(data)
+	case t.servicesType:
+		return processServices(data)
+	case t.protocolsType:
+		return processProtocols(data)
+	case t.backendsType:
+		return processBackends(data)
+	case t.contentSecurityPolicyType:
+		return processContentSecurityPolicyValue(data)
+	case t.permissionsPolicyType:
+		return processPermissionsPolicyValue(data)
+	case t.strictTransportSecurityType:
+		return processStrictTransportSecurityValue(data)
+	case t.secretType:
+		return decodeSecretValue(data)
+	default:
+		return data, nil
+	}
+}
+
+// decodeSecretValue converts supported secret inputs into secret.Value.
+func decodeSecretValue(data any) (any, error) {
+	switch value := data.(type) {
+	case string:
+		return secret.New(value), nil
+	case []byte:
+		return secret.FromBytes(value), nil
+	default:
+		return data, nil
 	}
 }
 
@@ -3676,114 +3783,124 @@ func (f *FileSettings) HandleFile() (err error) {
 
 	defer f.Mu.Unlock()
 
-	if err = viper.UnmarshalExact(f, createDecoderOption()); err != nil {
+	if err = f.unmarshalAndNormalize(); err != nil {
+		return err
+	}
+
+	if err = validateUnknownConfigSettings(viper.AllSettings()); err != nil {
+		return err
+	}
+
+	validate, err := newConfigValidator()
+	if err != nil {
+		return err
+	}
+
+	return f.validateLoadedConfig(validate)
+}
+
+// unmarshalAndNormalize loads Viper settings and applies alias normalization.
+func (f *FileSettings) unmarshalAndNormalize() error {
+	if err := viper.UnmarshalExact(f, createDecoderOption()); err != nil {
 		return formatDecodeErrors(err)
 	}
 
 	f.materializeLegacySections()
 	f.normalizeConfigAliases()
 
-	unknown, err := unknownConfigParameters(viper.AllSettings())
+	return nil
+}
+
+// validateUnknownConfigSettings converts unknown config keys into validation problems.
+func validateUnknownConfigSettings(settings map[string]any) error {
+	unknown, err := unknownConfigParameters(settings)
 	if err != nil {
 		return err
 	}
 
-	if len(unknown) > 0 {
-		problems := make([]Problem, 0, len(unknown))
-		for _, path := range unknown {
-			problems = append(problems, Problem{
-				Kind:    configProblemUnknownKey,
-				Path:    path,
-				Message: "is not a supported configuration key",
-			})
-		}
-
-		return formatConfigProblems(problems)
+	if len(unknown) == 0 {
+		return nil
 	}
 
-	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterCustomTypeFunc(func(field reflect.Value) any {
-		if !field.IsValid() {
-			return nil
-		}
-
-		if field.Kind() == reflect.Pointer {
-			if field.IsNil() {
-				return ""
-			}
-
-			field = field.Elem()
-		}
-
-		secretValue, ok := field.Interface().(secret.Value)
-		if !ok {
-			return nil
-		}
-
-		var value []byte
-
-		secretValue.WithBytes(func(s []byte) {
-			if len(s) == 0 {
-				return
-			}
-
-			value = bytes.Clone(s)
+	problems := make([]Problem, 0, len(unknown))
+	for _, path := range unknown {
+		problems = append(problems, Problem{
+			Kind:    configProblemUnknownKey,
+			Path:    path,
+			Message: "is not a supported configuration key",
 		})
-
-		return string(value)
-	}, secret.Value{}, &secret.Value{})
-
-	if err = registerValidation(validate, "secret_required", secretRequired); err != nil {
-		return err
 	}
 
-	if err = registerValidation(validate, "secret_min", secretMin); err != nil {
-		return err
+	return formatConfigProblems(problems)
+}
+
+// newConfigValidator constructs the configured validator instance.
+func newConfigValidator() (*validator.Validate, error) {
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	validate.RegisterCustomTypeFunc(secretValueForValidation, secret.Value{}, &secret.Value{})
+
+	registrations := []struct {
+		tag string
+		fn  validator.Func
+	}{
+		{"secret_required", secretRequired},
+		{"secret_min", secretMin},
+		{"secret_excludesall", secretExcludesAll},
+		{"secret_required_if_enabled", secretRequiredIfEnabled},
+		{"validateAuthPoolRequired", validateAuthPoolRequired},
+		{"validatDefaultBackendName", validatDefaultBackendName},
+		{"alphanumsymbol", isAlphanumSymbol},
+		{"scope_token", isScopeToken},
+		{"oidc_claim_name", isOIDCClaimName},
+		{"oidc_claim_type", isOIDCClaimType},
+		{"master_user_format", isMasterUserFormat},
+		{"hostname_rfc1123_with_opt_trailing_dot", hostnameRFC1123WithOptionalTrailingDot},
 	}
 
-	if err = registerValidation(validate, "secret_excludesall", secretExcludesAll); err != nil {
-		return err
+	for _, registration := range registrations {
+		if err := registerValidation(validate, registration.tag, registration.fn); err != nil {
+			return nil, err
+		}
 	}
 
-	if err = registerValidation(validate, "secret_required_if_enabled", secretRequiredIfEnabled); err != nil {
-		return err
+	return validate, nil
+}
+
+// secretValueForValidation exposes secret bytes to custom validation rules.
+func secretValueForValidation(field reflect.Value) any {
+	if !field.IsValid() {
+		return nil
 	}
 
-	if err = registerValidation(validate, "validateAuthPoolRequired", validateAuthPoolRequired); err != nil {
-		return err
+	if field.Kind() == reflect.Pointer {
+		if field.IsNil() {
+			return ""
+		}
+
+		field = field.Elem()
 	}
 
-	if err = registerValidation(validate, "validatDefaultBackendName", validatDefaultBackendName); err != nil {
-		return err
+	secretValue, ok := field.Interface().(secret.Value)
+	if !ok {
+		return nil
 	}
 
-	// Register custom validator for alphanumeric characters and symbols
-	if err = registerValidation(validate, "alphanumsymbol", isAlphanumSymbol); err != nil {
-		return err
-	}
+	var value []byte
 
-	if err = registerValidation(validate, "scope_token", isScopeToken); err != nil {
-		return err
-	}
+	secretValue.WithBytes(func(s []byte) {
+		if len(s) == 0 {
+			return
+		}
 
-	if err = registerValidation(validate, "oidc_claim_name", isOIDCClaimName); err != nil {
-		return err
-	}
+		value = bytes.Clone(s)
+	})
 
-	if err = registerValidation(validate, "oidc_claim_type", isOIDCClaimType); err != nil {
-		return err
-	}
+	return string(value)
+}
 
-	if err = registerValidation(validate, "master_user_format", isMasterUserFormat); err != nil {
-		return err
-	}
-
-	// Register custom hostname validator that allows optional trailing dot
-	if err = registerValidation(validate, "hostname_rfc1123_with_opt_trailing_dot", hostnameRFC1123WithOptionalTrailingDot); err != nil {
-		return err
-	}
-
-	if err = validate.Struct(f); err != nil {
+// validateLoadedConfig runs structural and semantic validation for loaded settings.
+func (f *FileSettings) validateLoadedConfig(validate *validator.Validate) error {
+	if err := validate.Struct(f); err != nil {
 		if validationErrors, ok := stderrors.AsType[validator.ValidationErrors](err); ok {
 			return formatValidationErrors(validationErrors)
 		}
@@ -3791,17 +3908,12 @@ func (f *FileSettings) HandleFile() (err error) {
 		return err
 	}
 
-	if err = f.validate(); err != nil {
+	if err := f.validate(); err != nil {
 		return err
 	}
 
-	// Emit deprecation warnings once after successful load/validation
 	f.warnDeprecatedConfig()
-
-	// Emit unsupported configuration warnings
 	f.warnUnsupportedConfig()
-
-	// Throw away unsupported keys
 	f.Other = nil
 
 	return nil
@@ -3870,65 +3982,115 @@ func bindEnvs(i any, parts ...string) error {
 	}
 
 	ift := ifv.Type()
-	secretType := reflect.TypeFor[secret.Value]()
-	secretPtrType := reflect.TypeFor[*secret.Value]()
-	contentSecurityPolicyType := reflect.TypeFor[ContentSecurityPolicyValue]()
-	permissionsPolicyType := reflect.TypeFor[PermissionsPolicyValue]()
-	strictTransportSecurityType := reflect.TypeFor[StrictTransportSecurityValue]()
+	types := newEnvBindTypes()
 
 	for i := range ift.NumField() {
-		v := ifv.Field(i)
-		t := ift.Field(i)
+		if err := bindEnvField(ifv.Field(i), ift.Field(i), parts, types); err != nil {
+			return err
+		}
+	}
 
-		if !t.IsExported() {
-			continue
+	return nil
+}
+
+type envBindTypes struct {
+	secretType                  reflect.Type `mapstructure:"-"`
+	secretPtrType               reflect.Type `mapstructure:"-"`
+	contentSecurityPolicyType   reflect.Type `mapstructure:"-"`
+	permissionsPolicyType       reflect.Type `mapstructure:"-"`
+	strictTransportSecurityType reflect.Type `mapstructure:"-"`
+}
+
+// newEnvBindTypes returns special struct types that should bind as leaf values.
+func newEnvBindTypes() envBindTypes {
+	return envBindTypes{
+		secretType:                  reflect.TypeFor[secret.Value](),
+		secretPtrType:               reflect.TypeFor[*secret.Value](),
+		contentSecurityPolicyType:   reflect.TypeFor[ContentSecurityPolicyValue](),
+		permissionsPolicyType:       reflect.TypeFor[PermissionsPolicyValue](),
+		strictTransportSecurityType: reflect.TypeFor[StrictTransportSecurityValue](),
+	}
+}
+
+// bindEnvField binds environment variables for one struct field.
+func bindEnvField(value reflect.Value, field reflect.StructField, parts []string, types envBindTypes) error {
+	tag, ok := envFieldTag(field)
+	if !ok {
+		return nil
+	}
+
+	nextParts := append(parts, tag)
+
+	switch {
+	case shouldRecurseEnvPointerStruct(value, field, types):
+		if value.IsNil() {
+			value.Set(reflect.New(field.Type.Elem()))
 		}
 
-		tag := t.Tag.Get("mapstructure")
-		if tag == "" {
-			tag = t.Name
-		}
+		return bindEnvs(value.Interface(), nextParts...)
+	case field.Type.Kind() == reflect.Map:
+		return bindEnvMapField(field.Type, nextParts)
+	case shouldRecurseEnvStruct(value, field, types):
+		return bindEnvs(value.Addr().Interface(), nextParts...)
+	default:
+		return bindEnvKey(nextParts)
+	}
+}
 
-		if tag == "-" {
-			continue
-		}
+// envFieldTag returns the mapstructure tag used for environment binding.
+func envFieldTag(field reflect.StructField) (string, bool) {
+	if !field.IsExported() {
+		return "", false
+	}
 
-		isSecret := t.Type == secretType || t.Type == secretPtrType
-		isSecurityHeaderValue := t.Type == contentSecurityPolicyType ||
-			t.Type == permissionsPolicyType ||
-			t.Type == strictTransportSecurityType
+	tag := field.Tag.Get("mapstructure")
+	if tag == "" {
+		tag = field.Name
+	}
 
-		if t.Type.Kind() == reflect.Pointer && t.Type.Elem().Kind() == reflect.Struct && !isSecret && !isSecurityHeaderValue {
-			if v.IsNil() {
-				v.Set(reflect.New(t.Type.Elem()))
-			}
+	if tag == "-" {
+		return "", false
+	}
 
-			err := bindEnvs(v.Interface(), append(parts, tag)...)
-			if err != nil {
-				return err
-			}
-		} else if t.Type.Kind() == reflect.Map {
-			key := strings.Join(append(parts, tag), ".")
-			if err := viper.BindEnv(key); err != nil {
-				return fmt.Errorf("failed to bind %q: %w", key, err)
-			}
+	return tag, true
+}
 
-			if err := bindMapElementEnvs(t.Type, append(parts, tag)...); err != nil {
-				return err
-			}
-		} else if v.Kind() == reflect.Struct && !isSecret && !isSecurityHeaderValue {
-			err := bindEnvs(v.Addr().Interface(), append(parts, tag)...)
-			if err != nil {
-				return err
-			}
-		} else {
-			key := strings.Join(append(parts, tag), ".")
+// shouldRecurseEnvPointerStruct reports whether a pointer struct field should recurse.
+func shouldRecurseEnvPointerStruct(value reflect.Value, field reflect.StructField, types envBindTypes) bool {
+	return field.Type.Kind() == reflect.Pointer &&
+		field.Type.Elem().Kind() == reflect.Struct &&
+		!types.isLeafType(field.Type) &&
+		value.CanSet()
+}
 
-			err := viper.BindEnv(key)
-			if err != nil {
-				return fmt.Errorf("failed to bind %q: %w", key, err)
-			}
-		}
+// shouldRecurseEnvStruct reports whether a struct field should recurse.
+func shouldRecurseEnvStruct(value reflect.Value, field reflect.StructField, types envBindTypes) bool {
+	return value.Kind() == reflect.Struct && !types.isLeafType(field.Type)
+}
+
+// isLeafType reports whether a type should bind as a single environment value.
+func (t envBindTypes) isLeafType(fieldType reflect.Type) bool {
+	return fieldType == t.secretType ||
+		fieldType == t.secretPtrType ||
+		fieldType == t.contentSecurityPolicyType ||
+		fieldType == t.permissionsPolicyType ||
+		fieldType == t.strictTransportSecurityType
+}
+
+// bindEnvMapField binds a map field and any supported map element leaf paths.
+func bindEnvMapField(mapType reflect.Type, parts []string) error {
+	if err := bindEnvKey(parts); err != nil {
+		return err
+	}
+
+	return bindMapElementEnvs(mapType, parts...)
+}
+
+// bindEnvKey binds one dot-separated environment key.
+func bindEnvKey(parts []string) error {
+	key := strings.Join(parts, ".")
+	if err := viper.BindEnv(key); err != nil {
+		return fmt.Errorf("failed to bind %q: %w", key, err)
 	}
 
 	return nil

@@ -233,83 +233,27 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		return
 	}
 
-	baseCtx := aw.ctx
-	if aw.luaActionRequest != nil && aw.luaActionRequest.OTelParentSpanContext.IsValid() {
-		baseCtx = trace.ContextWithSpanContext(svcctx.Get(), aw.luaActionRequest.OTelParentSpanContext)
-	}
-
-	actionCtx, cancelActionCtx := aw.actionContext(baseCtx, httpRequest)
+	actionCtx, cancelActionCtx := aw.actionContext(aw.actionBaseContext(), httpRequest)
 	defer cancelActionCtx()
 
 	if httpRequest != nil {
 		httpRequest = httpRequest.WithContext(actionCtx)
 	}
 
-	// Root span for a full actions run
-	tr := monittrace.New("nauthilus/actions")
-	actx, asp := tr.Start(actionCtx, "actions.run",
-		attribute.String("service", func() string {
-			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
-				return aw.luaActionRequest.Service
-			}
-
-			return ""
-		}()),
-
-		attribute.String("username", func() string {
-			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
-				return aw.luaActionRequest.Username
-			}
-
-			return ""
-		}()),
-
-		attribute.Bool("repeating", func() bool {
-			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
-				return aw.luaActionRequest.Repeating
-			}
-
-			return false
-		}()),
-
-		attribute.Int("scripts", len(aw.actionScripts)),
-	)
-
-	// propagate to any callee that might consult context
+	actx, asp := aw.startActionRunSpan(actionCtx)
 	if httpRequest != nil {
 		httpRequest = httpRequest.WithContext(actx)
 	}
 
 	defer asp.End()
-
-	startTime := time.Now()
-	defer func() {
-		latency := time.Since(startTime)
-		logs := new(lualib.CustomLogKeyValue)
-		logs.Set(definitions.LogKeyLatency, util.FormatDurationMs(latency))
-		level.Info(aw.logger).Log(
-			append([]any{
-				definitions.LogKeyGUID, aw.luaActionRequest.Session,
-				definitions.LogKeyMsg, "Lua action handler latency",
-			}, toLoggable(logs)...)...,
-		)
-	}()
+	defer aw.logActionLatency(time.Now())
 
 	if len(aw.actionScripts) == 0 {
 		return
 	}
 
-	pool := vmpool.GetManager().GetOrCreate("action:default", vmpool.PoolOptions{
-		MaxVMs: aw.cfg.GetLuaActionNumberOfWorkers(),
-		Config: aw.cfg,
-	})
-
-	lease, acqErr := pool.AcquireLease(actx)
-	if acqErr != nil {
-		if aw.isCanceledHTTPRequest(httpRequest, "acquire.lua_post_action") {
-			return
-		}
-
+	lease, ok := aw.acquireActionLease(actx, httpRequest)
+	if !ok {
 		return
 	}
 
@@ -319,42 +263,117 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	defer lease.ReleaseRecoveringOnError(&leaseErr)
 
-	// Grouping span for all post/async actions belonging to the originating request.
-	// This gives you a stable, queryable node like "post_actions" under "POST /...".
-	// All Lua spans (HTTP/Redis/LDAP/etc.) become children of this span.
-	postActionName := "post_actions"
-	if httpRequest != nil {
-		postActionName = fmt.Sprintf("post_actions: %s %s", httpRequest.Method, httpRequest.URL.Path)
+	reqCtx, postSp := aw.startPostActionSpan(actx, httpRequest)
+	defer postSp.End()
+
+	aw.bindActionModules(reqCtx, L, httpRequest)
+
+	logs := new(lualib.CustomLogKeyValue)
+	aw.setupGlobals(reqCtx, L, logs)
+
+	request := aw.setupRequest(L)
+
+	aw.runActionScripts(reqCtx, L, request, logs, httpRequest, &leaseErr)
+	aw.logActionsSummary(logs)
+}
+
+// actionBaseContext returns the context used as parent for action execution.
+func (aw *Worker) actionBaseContext() context.Context {
+	if aw.luaActionRequest != nil && aw.luaActionRequest.OTelParentSpanContext.IsValid() {
+		return trace.ContextWithSpanContext(svcctx.Get(), aw.luaActionRequest.OTelParentSpanContext)
 	}
 
-	reqCtx, postSp := tr.Start(actx, postActionName,
+	return aw.ctx
+}
+
+// startActionRunSpan starts the root span for a full action run.
+func (aw *Worker) startActionRunSpan(actionCtx context.Context) (context.Context, trace.Span) {
+	tr := monittrace.New("nauthilus/actions")
+
+	return tr.Start(actionCtx, "actions.run",
+		attribute.String("service", aw.currentActionService()),
+		attribute.String("username", aw.currentActionUsername()),
+		attribute.Bool("repeating", aw.currentActionRepeating()),
+		attribute.Int("scripts", len(aw.actionScripts)),
+	)
+}
+
+// logActionLatency logs total action-handler latency.
+func (aw *Worker) logActionLatency(startTime time.Time) {
+	latency := time.Since(startTime)
+	logs := new(lualib.CustomLogKeyValue)
+	logs.Set(definitions.LogKeyLatency, util.FormatDurationMs(latency))
+	level.Info(aw.logger).Log(
+		append([]any{
+			definitions.LogKeyGUID, aw.luaActionRequest.Session,
+			definitions.LogKeyMsg, "Lua action handler latency",
+		}, toLoggable(logs)...)...,
+	)
+}
+
+// acquireActionLease acquires a Lua VM lease for action execution.
+func (aw *Worker) acquireActionLease(ctx context.Context, httpRequest *http.Request) (*vmpool.Lease, bool) {
+	pool := vmpool.GetManager().GetOrCreate("action:default", vmpool.PoolOptions{
+		MaxVMs: aw.cfg.GetLuaActionNumberOfWorkers(),
+		Config: aw.cfg,
+	})
+
+	lease, acqErr := pool.AcquireLease(ctx)
+	if acqErr == nil {
+		return lease, true
+	}
+
+	if aw.isCanceledHTTPRequest(httpRequest, "acquire.lua_post_action") {
+		return nil, false
+	}
+
+	return nil, false
+}
+
+// startPostActionSpan starts the grouping span for post/async actions.
+func (aw *Worker) startPostActionSpan(ctx context.Context, httpRequest *http.Request) (context.Context, trace.Span) {
+	tr := monittrace.New("nauthilus/actions")
+
+	return tr.Start(ctx, postActionSpanName(httpRequest),
 		attribute.String("component", "lua"),
 		attribute.String("action", aw.luaActionRequest.LuaAction.String()),
 		attribute.Int("action_id", int(aw.luaActionRequest.LuaAction)),
 	)
+}
 
-	defer postSp.End()
+// postActionSpanName returns the grouping span name for action scripts.
+func postActionSpanName(httpRequest *http.Request) string {
+	if httpRequest == nil {
+		return "post_actions"
+	}
 
-	// Prepare per-request environment: ensures request-local globals and module bindings
+	return fmt.Sprintf("post_actions: %s %s", httpRequest.Method, httpRequest.URL.Path)
+}
+
+// bindActionModules prepares request-local Lua modules for action scripts.
+func (aw *Worker) bindActionModules(ctx context.Context, L *lua.LState, httpRequest *http.Request) {
 	luapool.PrepareRequestEnv(L)
 
-	modManager := luamod.NewModuleManager(reqCtx, aw.cfg, aw.logger, aw.redisClient)
-
-	modManager.BindAllDefault(reqCtx, L, aw.luaActionRequest.Context, tolerate.GetTolerate())
+	modManager := luamod.NewModuleManager(ctx, aw.cfg, aw.logger, aw.redisClient)
+	modManager.BindAllDefault(ctx, L, aw.luaActionRequest.Context, tolerate.GetTolerate())
 
 	if httpRequest != nil {
 		modManager.BindHTTP(L, lualib.NewHTTPMetaFromRequest(httpRequest))
 	}
 
 	modManager.BindHTTPResponse(L, aw.luaActionRequest.HTTPContext)
-	modManager.BindLDAP(L, backend.LoaderModLDAP(reqCtx, aw.cfg))
+	modManager.BindLDAP(L, backend.LoaderModLDAP(ctx, aw.cfg))
+}
 
-	logs := new(lualib.CustomLogKeyValue)
-
-	aw.setupGlobals(reqCtx, L, logs)
-
-	request := aw.setupRequest(L)
-
+// runActionScripts executes matching Lua action scripts in order.
+func (aw *Worker) runActionScripts(
+	reqCtx context.Context,
+	L *lua.LState,
+	request *lua.LTable,
+	logs *lualib.CustomLogKeyValue,
+	httpRequest *http.Request,
+	leaseErr *error,
+) {
 	for index := range aw.actionScripts {
 		if aw.actionScripts[index].LuaAction != aw.luaActionRequest.LuaAction {
 			continue
@@ -370,13 +389,11 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 		ret := aw.runScript(reqCtx, index, L, request, logs, httpRequest)
 		if ret < 0 {
-			leaseErr = errLuaActionScriptFailed
+			*leaseErr = errLuaActionScriptFailed
 		}
 
 		logs.Set(aw.actionScripts[index].ScriptPath, aw.createResultLogMessage(ret))
 	}
-
-	aw.logActionsSummary(logs)
 }
 
 // setupGlobals initializes and registers global Lua variables and functions into the provided Lua state.
@@ -422,6 +439,15 @@ func (aw *Worker) currentActionUsername() string {
 	}
 
 	return ""
+}
+
+// currentActionRepeating returns whether the current action request is repeating.
+func (aw *Worker) currentActionRepeating() bool {
+	if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
+		return aw.luaActionRequest.Repeating
+	}
+
+	return false
 }
 
 func (aw *Worker) actionResource() string {

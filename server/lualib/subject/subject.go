@@ -411,6 +411,19 @@ func newLuaBackendServer(userData *lua.LUserData) *config.BackendServer {
 	return nil
 }
 
+var backendServerLuaFields = map[string]func(*config.BackendServer) lua.LValue{
+	"protocol":        func(server *config.BackendServer) lua.LValue { return lua.LString(server.Protocol) },
+	"host":            func(server *config.BackendServer) lua.LValue { return lua.LString(server.Host) },
+	"port":            func(server *config.BackendServer) lua.LValue { return lua.LNumber(server.Port) },
+	"request_uri":     func(server *config.BackendServer) lua.LValue { return lua.LString(server.RequestURI) },
+	"test_username":   func(server *config.BackendServer) lua.LValue { return lua.LString(server.TestUsername) },
+	"test_password":   func(server *config.BackendServer) lua.LValue { return lua.LString(server.TestPassword) },
+	"haproxy_v2":      func(server *config.BackendServer) lua.LValue { return lua.LBool(server.HAProxyV2) },
+	"tls":             func(server *config.BackendServer) lua.LValue { return lua.LBool(server.TLS) },
+	"tls_skip_verify": func(server *config.BackendServer) lua.LValue { return lua.LBool(server.TLSSkipVerify) },
+	"deep_check":      func(server *config.BackendServer) lua.LValue { return lua.LBool(server.DeepCheck) },
+}
+
 // The metamethod for the __index field of the metatable
 func indexMethod(L *lua.LState) int {
 	stack := luastack.NewManager(L)
@@ -431,30 +444,11 @@ func indexMethod(L *lua.LState) int {
 		return 0
 	}
 
-	switch field {
-	case "protocol":
-		return stack.PushResult(lua.LString(server.Protocol))
-	case "host":
-		return stack.PushResult(lua.LString(server.Host))
-	case "port":
-		return stack.PushResult(lua.LNumber(server.Port))
-	case "request_uri":
-		return stack.PushResult(lua.LString(server.RequestURI))
-	case "test_username":
-		return stack.PushResult(lua.LString(server.TestUsername))
-	case "test_password":
-		return stack.PushResult(lua.LString(server.TestPassword))
-	case "haproxy_v2":
-		return stack.PushResult(lua.LBool(server.HAProxyV2))
-	case "tls":
-		return stack.PushResult(lua.LBool(server.TLS))
-	case "tls_skip_verify":
-		return stack.PushResult(lua.LBool(server.TLSSkipVerify))
-	case "deep_check":
-		return stack.PushResult(lua.LBool(server.DeepCheck))
-	default:
-		return 0 // The field does not exist
+	if getter, ok := backendServerLuaFields[field]; ok {
+		return stack.PushResult(getter(server))
 	}
+
+	return 0 // The field does not exist
 }
 
 // getBackendServers returns a table of backend server configurations as userdata.

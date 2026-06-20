@@ -16,26 +16,33 @@
 package redislib
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
 func TestRedisMGet(t *testing.T) {
-	tests := []struct {
-		name             string
-		keys             []string
-		expectedResult   map[string]string
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+	for _, tt := range redisMGetCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			runRedisMGetCase(t, tt)
+		})
+	}
+}
+
+type redisMGetTest struct {
+	name             string
+	keys             []string
+	expectedResult   map[string]string
+	expectedErr      lua.LValue
+	prepareMockRedis func(mock redismock.ClientMock)
+}
+
+// redisMGetCases returns Redis MGET behavior cases.
+func redisMGetCases() []redisMGetTest {
+	return []redisMGetTest{
 		{
 			name:           "MGetExistingKeys",
 			keys:           []string{"key1", "key2", "key3"},
@@ -64,86 +71,102 @@ func TestRedisMGet(t *testing.T) {
 			},
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
+// runRedisMGetCase executes one MGET scenario.
+func runRedisMGetCase(t *testing.T, tt redisMGetTest) {
+	t.Helper()
 
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
+	L, mock, _ := newRedisLuaCommandState(t)
+	tt.prepareMockRedis(mock)
+	runRedisMGetScript(t, L, tt.keys)
+	assertRedisMGetResult(t, L.GetGlobal("result"), tt)
+	checkLuaError(t, L.GetGlobal("err"), tt.expectedErr)
 
-			L := lua.NewState()
-			defer L.Close()
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("mock expectations were not met: %v", err)
+	}
 
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
+	mock.ClearExpect()
+}
 
-			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
+// runRedisMGetScript builds and executes an MGET Lua call with key globals.
+func runRedisMGetScript(t *testing.T, L *lua.LState, keys []string) {
+	t.Helper()
 
-			// Set up the Lua code to call redis_mget with the keys
-			var luaCode strings.Builder
-			luaCode.WriteString(`
-				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_mget("default"`)
+	var luaCode strings.Builder
+	luaCode.WriteString(`
+		local nauthilus_redis = require("nauthilus_redis")
+		result, err = nauthilus_redis.redis_mget("default"`)
 
-			// Add each key as a global variable and append to the Lua code
-			for i, key := range tt.keys {
-				varName := "key" + string(rune('0'+i))
-				L.SetGlobal(varName, lua.LString(key))
-				luaCode.WriteString(", " + varName)
-			}
+	for i, key := range keys {
+		varName := "key" + string(rune('0'+i))
+		L.SetGlobal(varName, lua.LString(key))
+		luaCode.WriteString(", " + varName)
+	}
 
-			luaCode.WriteString(")")
+	luaCode.WriteString(")")
 
-			err := L.DoString(luaCode.String())
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
+	if err := L.DoString(luaCode.String()); err != nil {
+		t.Fatalf("Running Lua code failed: %v", err)
+	}
+}
 
-			gotResult := L.GetGlobal("result")
-			gotErr := L.GetGlobal("err")
+// assertRedisMGetResult checks the key-indexed Lua result table returned by MGET.
+func assertRedisMGetResult(t *testing.T, gotResult lua.LValue, tt redisMGetTest) {
+	t.Helper()
 
-			if tt.expectedErr == lua.LNil {
-				if gotResult.Type() != lua.LTTable {
-					t.Errorf("Expected table result, got %v", gotResult.Type())
-				} else {
-					resultTable := gotResult.(*lua.LTable)
-					for key, expectedValue := range tt.expectedResult {
-						val := resultTable.RawGetString(key)
-						if val.Type() == lua.LTNil {
-							t.Errorf("Key %s not found in result", key)
-						} else if val.String() != expectedValue {
-							t.Errorf("For key %s, got value %s, want %s", key, val.String(), expectedValue)
-						}
-					}
-				}
-			}
+	if tt.expectedErr != lua.LNil {
+		return
+	}
 
-			checkLuaError(t, gotErr, tt.expectedErr)
+	resultTable, ok := gotResult.(*lua.LTable)
+	if !ok {
+		t.Errorf("Expected table result, got %v", gotResult.Type())
 
-			mock.ClearExpect()
-		})
+		return
+	}
+
+	for key, expectedValue := range tt.expectedResult {
+		val := resultTable.RawGetString(key)
+		if val.Type() == lua.LTNil {
+			t.Errorf("Key %s not found in result", key)
+		} else if val.String() != expectedValue {
+			t.Errorf("For key %s, got value %s, want %s", key, val.String(), expectedValue)
+		}
 	}
 }
 
 func TestRedisMSet(t *testing.T) {
-	tests := []struct {
-		name             string
-		keyValues        map[string]lua.LValue
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+	for _, tt := range redisMSetCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			runRedisMSetCase(t, tt)
+		})
+	}
+}
+
+type redisMSetPair struct {
+	key   string
+	value lua.LValue
+}
+
+type redisMSetTest struct {
+	name             string
+	keyValues        []redisMSetPair
+	expectedResult   lua.LValue
+	expectedErr      lua.LValue
+	prepareMockRedis func(mock redismock.ClientMock)
+}
+
+// redisMSetCases returns Redis MSET behavior cases.
+func redisMSetCases() []redisMSetTest {
+	return []redisMSetTest{
 		{
 			name: "MSetMultipleKeyValues",
-			keyValues: map[string]lua.LValue{
-				"key1": lua.LString("value1"),
-				"key2": lua.LString("value2"),
-				"key3": lua.LString("value3"),
+			keyValues: []redisMSetPair{
+				{key: "key1", value: lua.LString("value1")},
+				{key: "key2", value: lua.LString("value2")},
+				{key: "key3", value: lua.LString("value3")},
 			},
 			expectedResult: lua.LString("OK"),
 			expectedErr:    lua.LNil,
@@ -153,9 +176,9 @@ func TestRedisMSet(t *testing.T) {
 		},
 		{
 			name: "MSetWithError",
-			keyValues: map[string]lua.LValue{
-				"key1": lua.LString("value1"),
-				"key2": lua.LString("value2"),
+			keyValues: []redisMSetPair{
+				{key: "key1", value: lua.LString("value1")},
+				{key: "key2", value: lua.LString("value2")},
 			},
 			expectedResult: lua.LNil,
 			expectedErr:    lua.LString("some error"),
@@ -164,77 +187,64 @@ func TestRedisMSet(t *testing.T) {
 			},
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
+// runRedisMSetCase executes one MSET scenario.
+func runRedisMSetCase(t *testing.T, tt redisMSetTest) {
+	t.Helper()
 
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
+	L, mock, _ := newRedisLuaCommandState(t)
+	tt.prepareMockRedis(mock)
+	runRedisMSetScript(t, L, tt.keyValues)
+	assertLuaValueEqual(t, "redis_mset", L.GetGlobal("result"), tt.expectedResult)
+	checkLuaError(t, L.GetGlobal("err"), tt.expectedErr)
+	assertRedisExpectationsAndClear(t, mock)
+}
 
-			L := lua.NewState()
-			defer L.Close()
+// runRedisMSetScript builds and executes an MSET Lua call with ordered key/value globals.
+func runRedisMSetScript(t *testing.T, L *lua.LState, pairs []redisMSetPair) {
+	t.Helper()
 
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
+	var luaCode strings.Builder
+	luaCode.WriteString(`
+		local nauthilus_redis = require("nauthilus_redis")
+		result, err = nauthilus_redis.redis_mset("default"`)
 
-			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
+	for i, pair := range pairs {
+		keyVarName := "key" + string(rune('0'+i))
+		valueVarName := "value" + string(rune('0'+i))
 
-			// Set up the Lua code to call redis_mset with the key-value pairs
-			var luaCode strings.Builder
-			luaCode.WriteString(`
-				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_mset("default"`)
+		L.SetGlobal(keyVarName, lua.LString(pair.key))
+		L.SetGlobal(valueVarName, pair.value)
+		luaCode.WriteString(", " + keyVarName + ", " + valueVarName)
+	}
 
-			// Add each key-value pair as global variables and append to the Lua code
-			i := 0
-			for key, value := range tt.keyValues {
-				keyVarName := "key" + string(rune('0'+i))
-				valueVarName := "value" + string(rune('0'+i))
+	luaCode.WriteString(")")
 
-				L.SetGlobal(keyVarName, lua.LString(key))
-				L.SetGlobal(valueVarName, value)
-				luaCode.WriteString(", " + keyVarName + ", " + valueVarName)
-
-				i++
-			}
-
-			luaCode.WriteString(")")
-
-			err := L.DoString(luaCode.String())
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
-				t.Errorf("nauthilus.redis_mset() gotResult = %v, want %v", gotResult, tt.expectedResult)
-			}
-
-			gotErr := L.GetGlobal("err")
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
+	if err := L.DoString(luaCode.String()); err != nil {
+		t.Fatalf("Running Lua code failed: %v", err)
 	}
 }
 
 func TestRedisKeys(t *testing.T) {
-	tests := []struct {
-		name             string
-		pattern          string
-		expectedResult   []string
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+	runRedisLuaCommandTests(t, "redis_keys", redisKeysLuaCode(), redisKeysCases())
+}
+
+// redisKeysLuaCode returns the Lua script used by Redis KEYS cases.
+func redisKeysLuaCode() string {
+	return `
+		local nauthilus_redis = require("nauthilus_redis")
+		result, err = nauthilus_redis.redis_keys("default", pattern)
+	`
+}
+
+// redisKeysCases returns Redis KEYS behavior cases.
+func redisKeysCases() []redisLuaCommandTest {
+	return []redisLuaCommandTest{
 		{
 			name:           "KeysWithPattern",
-			pattern:        "user:*",
-			expectedResult: []string{"user:1", "user:2", "user:3"},
+			luaGlobals:     map[string]lua.LValue{"pattern": lua.LString("user:*")},
+			expectedResult: createLuaTable([]string{"user:1", "user:2", "user:3"}),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectKeys("user:*").SetVal([]string{"user:1", "user:2", "user:3"})
@@ -242,8 +252,8 @@ func TestRedisKeys(t *testing.T) {
 		},
 		{
 			name:           "KeysWithNoMatches",
-			pattern:        "nonexistent:*",
-			expectedResult: []string{},
+			luaGlobals:     map[string]lua.LValue{"pattern": lua.LString("nonexistent:*")},
+			expectedResult: createLuaTable([]string{}),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectKeys("nonexistent:*").SetVal([]string{})
@@ -251,76 +261,38 @@ func TestRedisKeys(t *testing.T) {
 		},
 		{
 			name:           "KeysWithError",
-			pattern:        "error:*",
-			expectedResult: nil,
+			luaGlobals:     map[string]lua.LValue{"pattern": lua.LString("error:*")},
+			expectedResult: lua.LNil,
 			expectedErr:    lua.LString("some error"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectKeys("error:*").SetErr(errors.New("some error"))
 			},
 		},
 	}
+}
 
-	for _, tt := range tests {
+func TestRedisScan(t *testing.T) {
+	for _, tt := range redisScanCases() {
 		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
-
-			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
-
-			L.SetGlobal("pattern", lua.LString(tt.pattern))
-
-			err := L.DoString(`
-				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_keys("default", pattern)
-			`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			gotErr := L.GetGlobal("err")
-
-			if tt.expectedErr == lua.LNil {
-				if gotResult.Type() != lua.LTTable {
-					t.Errorf("Expected table result, got %v", gotResult.Type())
-				} else {
-					expectedTable := createLuaTable(tt.expectedResult)
-					if !luaTablesAreEqual(gotResult.(*lua.LTable), expectedTable) {
-						t.Errorf("nauthilus.redis_keys() gotResult = %v, want %v", gotResult, expectedTable)
-					}
-				}
-			}
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
+			runRedisScanCase(t, tt)
 		})
 	}
 }
 
-func TestRedisScan(t *testing.T) {
-	tests := []struct {
-		name             string
-		cursor           uint64
-		pattern          string
-		count            int64
-		expectedCursor   uint64
-		expectedKeys     []string
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+type redisScanTest struct {
+	name             string
+	cursor           uint64
+	pattern          string
+	count            int64
+	expectedCursor   uint64
+	expectedKeys     []string
+	expectedErr      lua.LValue
+	prepareMockRedis func(mock redismock.ClientMock)
+}
+
+// redisScanCases returns Redis SCAN behavior cases.
+func redisScanCases() []redisScanTest {
+	return []redisScanTest{
 		{
 			name:           "ScanWithMatches",
 			cursor:         0,
@@ -370,71 +342,89 @@ func TestRedisScan(t *testing.T) {
 			},
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
+// runRedisScanCase executes one SCAN scenario.
+func runRedisScanCase(t *testing.T, tt redisScanTest) {
+	t.Helper()
 
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
+	L, mock, _ := newRedisLuaCommandState(t)
+	tt.prepareMockRedis(mock)
+	runRedisScanScript(t, L, tt)
+	assertRedisScanResult(t, L.GetGlobal("result"), tt)
+	checkLuaError(t, L.GetGlobal("err"), tt.expectedErr)
 
-			L := lua.NewState()
-			defer L.Close()
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("mock expectations were not met: %v", err)
+	}
 
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
+	mock.ClearExpect()
+}
 
-			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
+// runRedisScanScript executes a SCAN Lua call.
+func runRedisScanScript(t *testing.T, L *lua.LState, tt redisScanTest) {
+	t.Helper()
 
-			L.SetGlobal("cursor", lua.LNumber(tt.cursor))
-			L.SetGlobal("pattern", lua.LString(tt.pattern))
-			L.SetGlobal("count", lua.LNumber(tt.count))
+	L.SetGlobal("cursor", lua.LNumber(tt.cursor))
+	L.SetGlobal("pattern", lua.LString(tt.pattern))
+	L.SetGlobal("count", lua.LNumber(tt.count))
 
-			err := L.DoString(`
-				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_scan("default", cursor, pattern, count)
-			`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
+	if err := L.DoString(`
+		local nauthilus_redis = require("nauthilus_redis")
+		result, err = nauthilus_redis.redis_scan("default", cursor, pattern, count)
+	`); err != nil {
+		t.Fatalf("Running Lua code failed: %v", err)
+	}
+}
 
-			gotResult := L.GetGlobal("result")
-			gotErr := L.GetGlobal("err")
+// assertRedisScanResult checks the cursor and keys table returned by SCAN.
+func assertRedisScanResult(t *testing.T, gotResult lua.LValue, tt redisScanTest) {
+	t.Helper()
 
-			if tt.expectedErr == lua.LNil {
-				if gotResult.Type() != lua.LTTable {
-					t.Errorf("Expected table result, got %v", gotResult.Type())
-				} else {
-					resultTable := gotResult.(*lua.LTable)
+	if tt.expectedErr != lua.LNil {
+		return
+	}
 
-					// Check cursor
-					cursor := resultTable.RawGetString("cursor")
-					if cursor.Type() != lua.LTNumber {
-						t.Errorf("Expected cursor to be a number, got %v", cursor.Type())
-					} else if float64(lua.LVAsNumber(cursor)) != float64(tt.expectedCursor) {
-						t.Errorf("Expected cursor to be %v, got %v", tt.expectedCursor, lua.LVAsNumber(cursor))
-					}
+	resultTable, ok := gotResult.(*lua.LTable)
+	if !ok {
+		t.Errorf("Expected table result, got %v", gotResult.Type())
 
-					// Check keys
-					keys := resultTable.RawGetString("keys")
-					if keys.Type() != lua.LTTable {
-						t.Errorf("Expected keys to be a table, got %v", keys.Type())
-					} else {
-						expectedKeysTable := createLuaTable(tt.expectedKeys)
-						if !luaTablesAreEqual(keys.(*lua.LTable), expectedKeysTable) {
-							t.Errorf("Expected keys to be %v, got %v", tt.expectedKeys, keys)
-						}
-					}
-				}
-			}
+		return
+	}
 
-			checkLuaError(t, gotErr, tt.expectedErr)
+	assertRedisScanCursor(t, resultTable, tt.expectedCursor)
+	assertRedisScanKeys(t, resultTable, tt.expectedKeys)
+}
 
-			mock.ClearExpect()
-		})
+// assertRedisScanCursor checks the cursor field returned by SCAN.
+func assertRedisScanCursor(t *testing.T, resultTable *lua.LTable, expectedCursor uint64) {
+	t.Helper()
+
+	cursor := resultTable.RawGetString("cursor")
+	if cursor.Type() != lua.LTNumber {
+		t.Errorf("Expected cursor to be a number, got %v", cursor.Type())
+
+		return
+	}
+
+	if float64(lua.LVAsNumber(cursor)) != float64(expectedCursor) {
+		t.Errorf("Expected cursor to be %v, got %v", expectedCursor, lua.LVAsNumber(cursor))
+	}
+}
+
+// assertRedisScanKeys checks the keys table returned by SCAN.
+func assertRedisScanKeys(t *testing.T, resultTable *lua.LTable, expectedKeys []string) {
+	t.Helper()
+
+	keys := resultTable.RawGetString("keys")
+	if keys.Type() != lua.LTTable {
+		t.Errorf("Expected keys to be a table, got %v", keys.Type())
+
+		return
+	}
+
+	expectedKeysTable := createLuaTable(expectedKeys)
+	if !luaTablesAreEqual(keys.(*lua.LTable), expectedKeysTable) {
+		t.Errorf("Expected keys to be %v, got %v", expectedKeys, keys)
 	}
 }

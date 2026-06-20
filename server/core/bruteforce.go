@@ -34,6 +34,7 @@ import (
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // logBruteForceDebug logs debug information related to brute force authentication attempts.
@@ -111,53 +112,17 @@ func (a *AuthState) filterActiveBruteForceRules(ctx *gin.Context, tr monittrace.
 // It evaluates conditions like authentication state, IP whitelisting, protocol enforcement, and bucket rate limits.
 // Returns true if brute force detection is triggered, and false otherwise.
 func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
-	tr := monittrace.New("nauthilus/auth")
-	cctx, cspan := tr.Start(ctx.Request.Context(), "auth.bruteforce.check",
-		attribute.String("service", a.Request.Service),
-		attribute.String("username", a.Request.Username),
-		attribute.String("client_ip", a.Request.ClientIP),
-		attribute.String("protocol", a.Request.Protocol.Get()),
-	)
-
-	ctx.Request = ctx.Request.WithContext(cctx)
-	if a.Request.HTTPClientRequest != nil {
-		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(cctx)
-	}
+	tr, cctx, cspan := a.startBruteForceCheckTrace(ctx)
+	a.attachBruteForceCheckContext(cctx, ctx)
 
 	defer cspan.End()
 
-	// Overall BF check timer
-	var stopOverall func()
-	if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_overall_total", ctx.FullPath()); s != nil {
-		stopOverall = s
-
+	if stopOverall := a.startBruteForceOverallTimer(ctx); stopOverall != nil {
 		defer stopOverall()
 	}
 
-	var (
-		ruleTriggered bool
-		message       string
-		bm            bruteforce.BucketManager
-	)
-
-	if a.Request.NoAuth || a.Request.ListAccounts {
-		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "noauth_or_list"))
-
-		return false
-	}
-
 	cfg := a.cfg()
-
-	if !cfg.HasRuntimeModule(definitions.ControlBruteForce) {
-		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "control_disabled"))
-		a.markPolicyUnavailable(ctx, "brute_force", "control_disabled")
-
-		return false
-	}
-
-	if !a.policyCheckScheduled(ctx, bruteForcePolicySelector()) {
-		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "scheduler_guard"))
-
+	if a.skipBruteForceCheck(ctx, cspan, cfg) {
 		return false
 	}
 
@@ -166,67 +131,18 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}()
 
 	bfCfg := cfg.GetBruteForce()
-	if bfCfg != nil && bfCfg.HasSoftWhitelist() {
-		engine := l1.GetEngine()
-
-		swlKey := l1.KeySoftWhitelist(a.Request.Username, a.Request.ClientIP)
-		if dec, ok := engine.Get(cctx, swlKey); ok && dec.Allowed {
-			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.SoftWhitelisted)
-
-			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted_l1"))
-
-			return false
-		}
-
-		if util.IsSoftWhitelisted(cctx, a.Cfg(), a.Logger(), a.Request.Username, a.Request.ClientIP, a.Runtime.GUID, bfCfg.SoftWhitelist) {
-			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.SoftWhitelisted)
-
-			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted"))
-
-			// Cache result in L1 for 1 second to handle burst requests without hitting Redis
-			engine.Set(cctx, swlKey, l1.Decision{Allowed: true, Reason: "SoftWhitelist"}, time.Second)
-
-			return false
-		}
+	if a.isBruteForceWhitelisted(cctx, cspan, bfCfg) {
+		return false
 	}
 
-	if bfCfg != nil && len(bfCfg.GetIPWhitelist()) > 0 {
-		engine := l1.GetEngine()
-
-		wlKey := l1.KeyWhitelist(a.Request.ClientIP)
-		if dec, ok := engine.Get(cctx, wlKey); ok && dec.Allowed {
-			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Whitelisted)
-
-			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted_l1"))
-
-			return false
-		}
-
-		if a.IsInNetwork(bfCfg.IPWhitelist) {
-			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Whitelisted)
-
-			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted"))
-
-			// Cache result in L1 for 1 second to handle burst requests without hitting Redis
-			engine.Set(cctx, wlKey, l1.Decision{Allowed: true, Reason: "IPWhitelist"}, time.Second)
-
-			return false
-		}
-	}
-
-	// Existing generic timer
 	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "brute_force_check_request_total", ctx.FullPath())
-
-	// E2E histogram for BF path
 	bfStart := time.Now()
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
+
+	ruleTriggered := false
 
 	// Defer to set final outcome
 	defer func() {
@@ -240,149 +156,314 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		stats.GetMetrics().GetBruteForceEvalSeconds().Observe(time.Since(bfStart).Seconds())
 	}()
 
-	// All rules
 	rules := cfg.GetBruteForceRules()
-
 	if len(rules) == 0 {
 		return false
 	}
 
 	a.logBruteForceDebug(ctx.Request.Context())
 
-	bruteForceProtocolEnabled := false
-
-	for _, bruteForceService := range cfg.GetServer().GetBruteForceProtocols() {
-		if bruteForceService.Get() != a.Request.Protocol.Get() {
-			continue
-		}
-
-		bruteForceProtocolEnabled = true
-
-		break
-	}
-
-	if !bruteForceProtocolEnabled {
-		level.Warn(a.logger()).Log(
-			definitions.LogKeyGUID, a.Runtime.GUID,
-			definitions.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Request.Protocol.Get()))
-
+	if !a.isBruteForceCheckProtocolEnabled(cfg) {
 		return false
 	}
 
-	bm = bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.Runtime.GUID, a.Request.ClientIP, bruteforce.BucketManagerDeps{
+	bm := a.newBruteForceBucketManager(ctx)
+	a.cacheBruteForceRWPDecision(ctx, bm)
+
+	triggered, ruleTriggered := a.runBruteForceRuleCheck(ctx, tr, bm, rules)
+
+	return triggered
+}
+
+// startBruteForceCheckTrace starts the tracing span for brute-force checks.
+func (a *AuthState) startBruteForceCheckTrace(ctx *gin.Context) (monittrace.Tracer, context.Context, trace.Span) {
+	tr := monittrace.New("nauthilus/auth")
+	cctx, cspan := tr.Start(ctx.Request.Context(), "auth.bruteforce.check",
+		attribute.String("service", a.Request.Service),
+		attribute.String("username", a.Request.Username),
+		attribute.String("client_ip", a.Request.ClientIP),
+		attribute.String("protocol", a.Request.Protocol.Get()),
+	)
+
+	return tr, cctx, cspan
+}
+
+// attachBruteForceCheckContext propagates the tracing context to HTTP request holders.
+func (a *AuthState) attachBruteForceCheckContext(cctx context.Context, ctx *gin.Context) {
+	ctx.Request = ctx.Request.WithContext(cctx)
+	if a.Request.HTTPClientRequest != nil {
+		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(cctx)
+	}
+}
+
+// startBruteForceOverallTimer starts the top-level brute-force check metric timer.
+func (a *AuthState) startBruteForceOverallTimer(ctx *gin.Context) func() {
+	return stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_overall_total", ctx.FullPath())
+}
+
+// isBruteForceWhitelisted checks both soft and hard brute-force whitelists.
+func (a *AuthState) isBruteForceWhitelisted(ctx context.Context, span trace.Span, bfCfg *config.BruteForceSection) bool {
+	return a.isBruteForceSoftWhitelisted(ctx, span, bfCfg) || a.isBruteForceIPWhitelisted(ctx, span, bfCfg)
+}
+
+// isBruteForceCheckProtocolEnabled validates protocol enablement and logs disabled protocols.
+func (a *AuthState) isBruteForceCheckProtocolEnabled(cfg config.File) bool {
+	if bruteForceProtocolEnabled(cfg, a.Request.Protocol.Get()) {
+		return true
+	}
+
+	level.Warn(a.logger()).Log(
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		definitions.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Request.Protocol.Get()))
+
+	return false
+}
+
+// runBruteForceRuleCheck evaluates configured rules and applies matched brute-force state.
+func (a *AuthState) runBruteForceRuleCheck(
+	ctx *gin.Context,
+	tr monittrace.Tracer,
+	bm bruteforce.BucketManager,
+	rules []config.BruteForceRule,
+) (bool, bool) {
+	eval, abort := a.evaluateBruteForceRules(ctx, tr, bm, rules)
+	if abort {
+		return false, false
+	}
+
+	if !eval.alreadyTriggered && !eval.ruleTriggered {
+		return false, eval.ruleTriggered
+	}
+
+	stats.GetMetrics().GetBruteForceRulesMatchedTotal().Inc()
+
+	triggered := bm.ProcessBruteForce(eval.ruleTriggered, eval.alreadyTriggered, &eval.rules[eval.ruleNumber], eval.network, eval.message, func() {
+		a.applyTriggeredBruteForceRuntime(bm)
+	})
+	a.storeBruteForceRuntimeHints(ctx, eval)
+
+	if triggered || eval.alreadyTriggered {
+		a.updateLuaContext(definitions.ControlBruteForce)
+	}
+
+	return triggered || eval.alreadyTriggered, eval.ruleTriggered
+}
+
+// applyTriggeredBruteForceRuntime copies matched bucket manager state into AuthState.
+func (a *AuthState) applyTriggeredBruteForceRuntime(bm bruteforce.BucketManager) {
+	a.Runtime.EnvironmentName = bm.GetEnvironmentName()
+	a.Security.BruteForceName = bm.GetBruteForceName()
+	a.Security.BruteForceCounter = bm.GetBruteForceCounter()
+	a.Runtime.BruteForceToleration = bm.GetTolerationPolicyFact()
+
+	if lam := a.ensureLAM(); lam != nil {
+		lam.InitFromBucket(bm.GetLoginAttempts())
+		a.Security.LoginAttempts = lam.FailCount()
+
+		return
+	}
+
+	a.Security.LoginAttempts = bm.GetLoginAttempts()
+}
+
+type bruteForceRuleEvaluation struct {
+	network          *net.IPNet
+	rules            []config.BruteForceRule
+	message          string
+	ruleNumber       int
+	alreadyTriggered bool
+	ruleTriggered    bool
+}
+
+// skipBruteForceCheck handles early exits before any bucket lookup is needed.
+func (a *AuthState) skipBruteForceCheck(ctx *gin.Context, span trace.Span, cfg config.File) bool {
+	if a.Request.NoAuth || a.Request.ListAccounts {
+		span.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "noauth_or_list"))
+
+		return true
+	}
+
+	if !cfg.HasRuntimeModule(definitions.ControlBruteForce) {
+		span.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "control_disabled"))
+		a.markPolicyUnavailable(ctx, "brute_force", "control_disabled")
+
+		return true
+	}
+
+	if !a.policyCheckScheduled(ctx, bruteForcePolicySelector()) {
+		span.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "scheduler_guard"))
+
+		return true
+	}
+
+	return false
+}
+
+// isBruteForceSoftWhitelisted checks user/IP soft whitelist decisions and caches positive hits.
+func (a *AuthState) isBruteForceSoftWhitelisted(ctx context.Context, span trace.Span, bfCfg *config.BruteForceSection) bool {
+	if bfCfg == nil || !bfCfg.HasSoftWhitelist() {
+		return false
+	}
+
+	engine := l1.GetEngine()
+
+	swlKey := l1.KeySoftWhitelist(a.Request.Username, a.Request.ClientIP)
+	if dec, ok := engine.Get(ctx, swlKey); ok && dec.Allowed {
+		a.markBruteForceWhitelist(definitions.SoftWhitelisted)
+		span.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted_l1"))
+
+		return true
+	}
+
+	if !util.IsSoftWhitelisted(ctx, a.Cfg(), a.Logger(), a.Request.Username, a.Request.ClientIP, a.Runtime.GUID, bfCfg.SoftWhitelist) {
+		return false
+	}
+
+	a.markBruteForceWhitelist(definitions.SoftWhitelisted)
+	span.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted"))
+	engine.Set(ctx, swlKey, l1.Decision{Allowed: true, Reason: "SoftWhitelist"}, time.Second)
+
+	return true
+}
+
+// isBruteForceIPWhitelisted checks the hard IP whitelist and caches positive hits.
+func (a *AuthState) isBruteForceIPWhitelisted(ctx context.Context, span trace.Span, bfCfg *config.BruteForceSection) bool {
+	if bfCfg == nil || len(bfCfg.GetIPWhitelist()) == 0 {
+		return false
+	}
+
+	engine := l1.GetEngine()
+
+	wlKey := l1.KeyWhitelist(a.Request.ClientIP)
+	if dec, ok := engine.Get(ctx, wlKey); ok && dec.Allowed {
+		a.markBruteForceWhitelist(definitions.Whitelisted)
+		span.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted_l1"))
+
+		return true
+	}
+
+	if !a.IsInNetwork(bfCfg.IPWhitelist) {
+		return false
+	}
+
+	a.markBruteForceWhitelist(definitions.Whitelisted)
+	span.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted"))
+	engine.Set(ctx, wlKey, l1.Decision{Allowed: true, Reason: "IPWhitelist"}, time.Second)
+
+	return true
+}
+
+// markBruteForceWhitelist records whitelist state in additional logs.
+func (a *AuthState) markBruteForceWhitelist(value string) {
+	a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
+	a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, value)
+}
+
+// newBruteForceBucketManager builds the bucket manager with request identity attributes.
+func (a *AuthState) newBruteForceBucketManager(ctx *gin.Context) bruteforce.BucketManager {
+	bm := bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.Runtime.GUID, a.Request.ClientIP, bruteforce.BucketManagerDeps{
 		Cfg:    a.Cfg(),
 		Logger: a.Logger(),
 		Redis:  a.Redis(),
 	})
 
-	// Set the protocol on the bucket manager
 	if a.Request.Protocol != nil && a.Request.Protocol.Get() != "" {
 		bm = bm.WithProtocol(a.Request.Protocol.Get())
 	}
 
-	// Set the OIDC Client ID on the bucket manager
 	if a.Request.OIDCCID != "" {
 		bm = bm.WithOIDCCID(a.Request.OIDCCID)
 	}
 
-	// IMPORTANT: set request attributes before running checks
 	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
-	bm = bm.WithPassword(a.Request.Password).WithAccountName(accountName).WithUsername(a.Request.Username)
 
-	// Always check RWP (Repeating Wrong Password) and store result in gin.Context
-	// so UpdateBruteForceBucketsCounter can reuse it without a redundant Redis call.
+	return bm.WithPassword(a.Request.Password).WithAccountName(accountName).WithUsername(a.Request.Username)
+}
+
+// cacheBruteForceRWPDecision stores the repeating-wrong-password precheck for later reuse.
+func (a *AuthState) cacheBruteForceRWPDecision(ctx *gin.Context, bm bruteforce.BucketManager) {
 	if needEnforce, err := bm.ShouldEnforceBucketUpdate(); err == nil {
 		ctx.Set(definitions.CtxRWPResultKey, needEnforce)
-
-		// RWP detected when enforcement is NOT needed (needEnforce == false).
 		a.Runtime.BFRWP = !needEnforce
 	}
+}
 
-	// Determine IP once
+// evaluateBruteForceRules filters active rules and evaluates repeat and over-limit paths.
+func (a *AuthState) evaluateBruteForceRules(
+	ctx *gin.Context,
+	tr monittrace.Tracer,
+	bm bruteforce.BucketManager,
+	rules []config.BruteForceRule,
+) (bruteForceRuleEvaluation, bool) {
 	ip := net.ParseIP(a.Request.ClientIP)
-
 	activeRules := a.filterActiveBruteForceRules(ctx, tr, rules, ip)
+	bm.PrepareNetcalc(activeRules)
 
-	// Use filtered rules from here on and precompute networks
-	rules = activeRules
+	eval := bruteForceRuleEvaluation{
+		network: &net.IPNet{},
+		rules:   activeRules,
+	}
 
-	// Precompute network strings per CIDR for active rules (no behavior change)
-	bm.PrepareNetcalc(rules)
-
-	network := &net.IPNet{}
-
-	abort, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(rules, &network, &message)
-
+	abort, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(activeRules, &eval.network, &eval.message)
 	if abort {
-		return false
+		return eval, true
 	}
 
+	eval.alreadyTriggered = alreadyTriggered
+
+	eval.ruleNumber = ruleNumber
 	if !alreadyTriggered {
-		abort, ruleTriggered, ruleNumber = bm.CheckBucketOverLimit(rules, &message)
+		abort, eval.ruleTriggered, eval.ruleNumber = bm.CheckBucketOverLimit(activeRules, &eval.message)
 		if abort {
-			return false
+			return eval, true
 		}
 	}
 
-	a.storeBruteForceBucketPolicyFacts(bm, rules, alreadyTriggered, ruleTriggered, ruleNumber, network)
+	a.storeBruteForceBucketPolicyFacts(bm, activeRules, eval.alreadyTriggered, eval.ruleTriggered, eval.ruleNumber, eval.network)
 
-	// If neither path matched any rule/network, do not proceed further.
-	if !alreadyTriggered && !ruleTriggered {
-		return false
-	}
+	return eval, false
+}
 
-	// A rule matched either in pre-result or bucket evaluation
-	stats.GetMetrics().GetBruteForceRulesMatchedTotal().Inc()
+// storeBruteForceRuntimeHints stores post-action hint fields from the matched rule.
+func (a *AuthState) storeBruteForceRuntimeHints(ctx *gin.Context, eval bruteForceRuleEvaluation) {
+	bfClientNet := a.bruteForceClientNetwork(eval)
 
-	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
-		a.Runtime.EnvironmentName = bm.GetEnvironmentName()
-		a.Security.BruteForceName = bm.GetBruteForceName()
-		a.Security.BruteForceCounter = bm.GetBruteForceCounter()
-		a.Runtime.BruteForceToleration = bm.GetTolerationPolicyFact()
-		// Synchronize login attempts from bucket manager into centralized LAM (bucket has authority)
-		if lam := a.ensureLAM(); lam != nil {
-			lam.InitFromBucket(bm.GetLoginAttempts())
-			a.Security.LoginAttempts = lam.FailCount()
-		} else {
-			a.Security.LoginAttempts = bm.GetLoginAttempts()
-		}
-	})
-
-	// Compute and store brute-force hints for the Post-Action.
-	// 1) Derive client_net from the matched network; fallback to ClientIP/CIDR.
-	bfClientNet := ""
-	if network != nil && network.IP != nil && network.Mask != nil {
-		bfClientNet = network.String()
-	} else if a.Request.ClientIP != "" && rules[ruleNumber].CIDR > 0 {
-		if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", a.Request.ClientIP, rules[ruleNumber].CIDR)); err == nil && n != nil {
-			bfClientNet = n.String()
-		}
-	}
-
-	// 2) Determine repeating based on alreadyTriggered or counter >= limit; fallback to pre-result hash if buckets expired.
-	bfRepeating := alreadyTriggered || (a.Security.BruteForceCounter[rules[ruleNumber].Name] >= rules[ruleNumber].GetFailedRequests())
+	bfRepeating := eval.alreadyTriggered || (a.Security.BruteForceCounter[eval.rules[eval.ruleNumber].Name] >= eval.rules[eval.ruleNumber].GetFailedRequests())
 	if !bfRepeating && bfClientNet != "" {
-		prefix := a.cfg().GetServer().GetRedis().GetPrefix()
-		banKey := rediscli.GetBruteForceBanKey(prefix, bfClientNet)
-
-		stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		existsVal, err := a.deps.Redis.GetReadHandle().Exists(ctx.Request.Context(), banKey).Result()
-		if err == nil && existsVal > 0 {
-			bfRepeating = true
-		}
+		bfRepeating = a.bruteForceBanExists(ctx, bfClientNet)
 	}
 
-	// Store hints on AuthState for consumption by Post-Action
 	a.Runtime.BFClientNet = bfClientNet
 	a.Runtime.BFRepeating = bfRepeating || bruteForceBucketFactsRepeat(a.Runtime.BruteForceBuckets)
+}
 
-	if triggered || alreadyTriggered {
-		a.updateLuaContext(definitions.ControlBruteForce)
+// bruteForceClientNetwork derives the matched client network for post-action hints.
+func (a *AuthState) bruteForceClientNetwork(eval bruteForceRuleEvaluation) string {
+	if eval.network != nil && eval.network.IP != nil && eval.network.Mask != nil {
+		return eval.network.String()
 	}
 
-	// Always return triggered (block status) even if alreadyTriggered was true
-	return triggered || alreadyTriggered
+	if a.Request.ClientIP == "" || eval.rules[eval.ruleNumber].CIDR == 0 {
+		return ""
+	}
+
+	if _, network, err := net.ParseCIDR(fmt.Sprintf("%s/%d", a.Request.ClientIP, eval.rules[eval.ruleNumber].CIDR)); err == nil && network != nil {
+		return network.String()
+	}
+
+	return ""
+}
+
+// bruteForceBanExists checks whether the matched network is already banned.
+func (a *AuthState) bruteForceBanExists(ctx *gin.Context, clientNet string) bool {
+	prefix := a.cfg().GetServer().GetRedis().GetPrefix()
+	banKey := rediscli.GetBruteForceBanKey(prefix, clientNet)
+
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	existsVal, err := a.deps.Redis.GetReadHandle().Exists(ctx.Request.Context(), banKey).Result()
+
+	return err == nil && existsVal > 0
 }
 
 func (a *AuthState) storeBruteForceBucketPolicyFacts(
@@ -550,8 +631,6 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		defer stop()
 	}
 
-	var bm bruteforce.BucketManager
-
 	cfg := a.cfg()
 
 	if !cfg.HasRuntimeModule(definitions.ControlBruteForce) {
@@ -563,51 +642,41 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		return
 	}
 
-	util.DebugModuleWithCfg(
-		ctx.Request.Context(),
-		a.Cfg(),
-		a.Logger(),
-		definitions.DbgBf,
-		definitions.LogKeyGUID, a.Runtime.GUID,
-		definitions.LogKeyClientIP, a.Request.ClientIP,
-		definitions.LogKeyClientPort, a.Request.XClientPort,
-		definitions.LogKeyClientHost, a.Request.ClientHost,
-		definitions.LogKeyClientID, a.Request.XClientID,
-		definitions.LogKeyLocalIP, a.Request.XLocalIP,
-		definitions.LogKeyPort, a.Request.XPort,
-		definitions.LogKeyUsername, a.Request.Username,
-		definitions.LogKeyProtocol, a.Request.Protocol.Get(),
-		"service", util.WithNotAvailable(a.Request.Service),
-		"no-auth", a.Request.NoAuth,
-		"list-accounts", a.Request.ListAccounts,
-	)
+	a.logBruteForceDebug(ctx.Request.Context())
 
 	if a.Request.NoAuth || a.Request.ListAccounts {
 		return
 	}
 
-	bruteForceEnabled := false
-
-	for _, bruteForceService := range a.cfg().GetServer().GetBruteForceProtocols() {
-		if bruteForceService.Get() != a.Request.Protocol.Get() {
-			continue
-		}
-
-		bruteForceEnabled = true
-
-		break
-	}
-
-	if !bruteForceEnabled {
+	if !bruteForceProtocolEnabled(a.cfg(), a.Request.Protocol.Get()) {
 		return
 	}
 
-	if len(a.cfg().GetBruteForce().IPWhitelist) > 0 {
-		if a.IsInNetwork(a.cfg().GetBruteForce().IPWhitelist) {
-			return
-		}
+	if a.isBruteForceUpdateIPWhitelisted(bfCfg) {
+		return
 	}
 
+	matchedPeriod := a.matchedBruteForceUpdatePeriod(uspan)
+	bm := a.newBruteForceUpdateBucketManager(ctx)
+
+	bm, enforceBuckets := a.shouldEnforceBruteForceBucketUpdate(ctx, bm)
+	if !enforceBuckets {
+		return
+	}
+
+	// Commit the RWP sliding window write only if the rejection is genuine
+	// (not caused by an environment control like RBL that never verified the password).
+	a.commitRWPIfAllowed(ctx, bm)
+	a.saveBruteForceBucketCounters(ctx, bm, matchedPeriod)
+}
+
+// isBruteForceUpdateIPWhitelisted checks whether bucket updates should skip a whitelisted IP.
+func (a *AuthState) isBruteForceUpdateIPWhitelisted(bfCfg *config.BruteForceSection) bool {
+	return len(bfCfg.IPWhitelist) > 0 && a.IsInNetwork(bfCfg.IPWhitelist)
+}
+
+// matchedBruteForceUpdatePeriod returns the period of the matched rule for counter updates.
+func (a *AuthState) matchedBruteForceUpdatePeriod(span trace.Span) time.Duration {
 	matchedPeriod := time.Duration(0)
 
 	for _, rule := range a.cfg().GetBruteForceRules() {
@@ -617,7 +686,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 
 		matchedPeriod = rule.Period.Round(time.Second)
 
-		uspan.SetAttributes(
+		span.SetAttributes(
 			attribute.String("bf.matched_rule", rule.Name),
 			attribute.String("bf.period", matchedPeriod.String()),
 		)
@@ -625,82 +694,94 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		break
 	}
 
-	bm = bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.Runtime.GUID, a.Request.ClientIP, bruteforce.BucketManagerDeps{
+	return matchedPeriod
+}
+
+// newBruteForceUpdateBucketManager builds the bucket manager used for failed-login updates.
+func (a *AuthState) newBruteForceUpdateBucketManager(ctx *gin.Context) bruteforce.BucketManager {
+	bm := bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.Runtime.GUID, a.Request.ClientIP, bruteforce.BucketManagerDeps{
 		Cfg:      a.Cfg(),
 		Logger:   a.Logger(),
 		Redis:    a.Redis(),
 		Tolerate: a.deps.Tolerate,
 	})
 
-	// Set the protocol if available
 	if a.Request.Protocol != nil && a.Request.Protocol.Get() != "" {
 		bm = bm.WithProtocol(a.Request.Protocol.Get())
 	}
 
-	// Set the OIDC Client ID if available
 	if a.Request.OIDCCID != "" {
 		bm = bm.WithOIDCCID(a.Request.OIDCCID)
 	}
 
-	// IMPORTANT: set request attributes before saving counters
-	// Try to avoid Redis if possible: use state or in-process cache first
+	return bm.WithUsername(a.Request.Username).
+		WithPassword(a.Request.Password).
+		WithAccountName(a.bruteForceUpdateAccountName(ctx))
+}
+
+// bruteForceUpdateAccountName resolves account name without Redis when local state already knows it.
+func (a *AuthState) bruteForceUpdateAccountName(ctx *gin.Context) string {
 	accountName := a.GetAccount()
-	if accountName == "" {
-		if acc, ok := a.AccountCache().Get(a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID); ok {
-			accountName = acc
-		}
+	if accountName != "" {
+		return accountName
 	}
 
-	if accountName == "" {
-		accountName = backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
+	if acc, ok := a.AccountCache().Get(a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID); ok {
+		return acc
 	}
 
-	bm = bm.WithUsername(a.Request.Username).WithPassword(a.Request.Password).WithAccountName(accountName)
+	return backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
+}
 
-	// Check whether bucket counters should be increased.
-	// First try the context-cached result from CheckBruteForce; fall back to a fresh check.
+// shouldEnforceBruteForceBucketUpdate decides whether to increase bucket counters.
+func (a *AuthState) shouldEnforceBruteForceBucketUpdate(ctx *gin.Context, bm bruteforce.BucketManager) (bruteforce.BucketManager, bool) {
 	if cached, exists := ctx.Get(definitions.CtxRWPResultKey); exists {
 		if enforce, ok := cached.(bool); ok {
 			bm = bm.WithRWPDecision(enforce)
 
-			if enforce {
-				goto enforceBuckets
-			}
-
-			// RWP already detected in CheckBruteForce — do not increase buckets.
-			a.Runtime.BFRWP = true
-
-			bm.ProcessPWHist()
-
-			return
-		}
-	} else {
-		// Fallback: no cached result (e.g., called without prior CheckBruteForce).
-		if needEnforce, err := bm.ShouldEnforceBucketUpdate(); err != nil {
-			return
-		} else if !needEnforce {
-			bm = bm.WithRWPDecision(false)
-
-			// Store result in context so downstream consumers (e.g., Post-Lua-Actions) can read it.
-			ctx.Set(definitions.CtxRWPResultKey, false)
-
-			a.Runtime.BFRWP = true
-
-			bm.ProcessPWHist()
-
-			return
+			return bm, a.handleCachedRWPEnforcement(bm, enforce)
 		}
 
-		// Enforcement needed — cache the positive result for downstream consumers.
-		ctx.Set(definitions.CtxRWPResultKey, true)
+		return bm, true
 	}
 
-enforceBuckets:
+	needEnforce, err := bm.ShouldEnforceBucketUpdate()
+	if err != nil {
+		return bm, false
+	}
 
-	// Commit the RWP sliding window write only if the rejection is genuine
-	// (not caused by an environment control like RBL that never verified the password).
-	a.commitRWPIfAllowed(ctx, bm)
+	if !needEnforce {
+		bm = bm.WithRWPDecision(false)
 
+		ctx.Set(definitions.CtxRWPResultKey, false)
+
+		a.Runtime.BFRWP = true
+
+		bm.ProcessPWHist()
+
+		return bm, false
+	}
+
+	ctx.Set(definitions.CtxRWPResultKey, true)
+
+	return bm, true
+}
+
+// handleCachedRWPEnforcement applies the cached repeating-wrong-password decision.
+func (a *AuthState) handleCachedRWPEnforcement(bm bruteforce.BucketManager, enforce bool) bool {
+	if enforce {
+		return true
+	}
+
+	a.Runtime.BFRWP = true
+
+	bm.ProcessPWHist()
+
+	return false
+}
+
+// saveBruteForceBucketCounters writes counters for active rules matching the request context.
+func (a *AuthState) saveBruteForceBucketCounters(ctx *gin.Context, bm bruteforce.BucketManager, matchedPeriod time.Duration) {
 	proto := ""
 	if a.Request.Protocol != nil {
 		proto = a.Request.Protocol.Get()

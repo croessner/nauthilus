@@ -108,6 +108,37 @@ func ReadinessCheck(ctx *gin.Context, deps HealthzDeps) {
 func checkTestBackend(deps HealthzDeps, result *HealthzResult) {
 	start := time.Now()
 
+	authState, backend, ok := newHealthzTestBackend(deps, result)
+	if !ok {
+		return
+	}
+
+	if !checkHealthzPassDB(backend, authState, result) {
+		return
+	}
+
+	if !checkHealthzAccountDB(backend, authState, result) {
+		return
+	}
+
+	if !checkHealthzTOTP(backend, authState, result) {
+		return
+	}
+
+	if !checkHealthzWebAuthn(backend, authState, result) {
+		return
+	}
+
+	result.Checks["test_backend"] = &HealthzCheck{
+		Status: healthzStatusUp,
+		Meta: map[string]any{
+			healthzMetaLatencyMS: time.Since(start).Milliseconds(),
+		},
+	}
+}
+
+// newHealthzTestBackend initializes the test backend auth state and manager.
+func newHealthzTestBackend(deps HealthzDeps, result *HealthzResult) (*core.AuthState, core.BackendManager, bool) {
 	auth := core.NewAuthStateFromContextWithDeps(nil, core.AuthDeps{
 		Cfg:    deps.Cfg,
 		Logger: deps.Logger,
@@ -115,13 +146,9 @@ func checkTestBackend(deps HealthzDeps, result *HealthzResult) {
 	authState, ok := auth.(*core.AuthState)
 
 	if !ok || authState == nil {
-		result.Checks["test_backend"] = &HealthzCheck{
-			Status: healthzStatusDown,
-			Error:  "auth state not initialized",
-		}
-		result.Status = healthzStatusDown
+		setTestBackendHealthzStatus(result, healthzStatusDown, "auth state not initialized")
 
-		return
+		return nil, nil, false
 	}
 
 	authState.SetUsername("healthz-test")
@@ -132,65 +159,64 @@ func checkTestBackend(deps HealthzDeps, result *HealthzResult) {
 		Logger: deps.Logger,
 	})
 
+	return authState, backend, true
+}
+
+// checkHealthzPassDB verifies test backend password authentication.
+func checkHealthzPassDB(backend core.BackendManager, authState *core.AuthState, result *HealthzResult) bool {
 	passResult, err := backend.PassDB(authState)
 	if err != nil {
-		result.Checks["test_backend"] = &HealthzCheck{
-			Status: healthzStatusDown,
-			Error:  fmt.Sprintf("passdb failed: %v", err),
-		}
-		result.Status = healthzStatusDown
+		setTestBackendHealthzStatus(result, healthzStatusDown, fmt.Sprintf("passdb failed: %v", err))
 
-		return
+		return false
 	}
 
 	if passResult == nil || !passResult.Authenticated {
-		result.Checks["test_backend"] = &HealthzCheck{
-			Status: healthzStatusDown,
-			Error:  "passdb authentication failed",
-		}
-		result.Status = healthzStatusDown
+		setTestBackendHealthzStatus(result, healthzStatusDown, "passdb authentication failed")
 
-		return
+		return false
 	}
 
-	if accounts, err := backend.AccountDB(authState); err != nil {
-		result.Checks["test_backend"] = &HealthzCheck{
-			Status: healthzStatusDown,
-			Error:  fmt.Sprintf("accountdb failed: %v", err),
-		}
-		result.Status = healthzStatusDown
+	return true
+}
 
-		return
-	} else if !containsAccount(accounts, authState.Request.Username) {
-		result.Checks["test_backend"] = &HealthzCheck{
-			Status: healthzStatusDown,
-			Error:  "account missing after passdb",
-		}
-		result.Status = healthzStatusDown
+// checkHealthzAccountDB verifies that the authenticated test account is listed.
+func checkHealthzAccountDB(backend core.BackendManager, authState *core.AuthState, result *HealthzResult) bool {
+	accounts, err := backend.AccountDB(authState)
+	if err != nil {
+		setTestBackendHealthzStatus(result, healthzStatusDown, fmt.Sprintf("accountdb failed: %v", err))
 
-		return
+		return false
 	}
 
+	if !containsAccount(accounts, authState.Request.Username) {
+		setTestBackendHealthzStatus(result, healthzStatusDown, "account missing after passdb")
+
+		return false
+	}
+
+	return true
+}
+
+// checkHealthzTOTP verifies TOTP secret and recovery-code persistence.
+func checkHealthzTOTP(backend core.BackendManager, authState *core.AuthState, result *HealthzResult) bool {
 	if err := backend.AddTOTPSecret(authState, mfa.NewTOTPSecret("healthz-secret")); err != nil {
-		result.Checks["test_backend"] = &HealthzCheck{
-			Status: healthzStatusDegraded,
-			Error:  fmt.Sprintf("totp secret failed: %v", err),
-		}
-		result.Status = healthzStatusDegraded
+		setTestBackendHealthzStatus(result, healthzStatusDegraded, fmt.Sprintf("totp secret failed: %v", err))
 
-		return
+		return false
 	}
 
 	if err := backend.AddTOTPRecoveryCodes(authState, mfa.NewTOTPRecovery([]string{"healthz-recovery"})); err != nil {
-		result.Checks["test_backend"] = &HealthzCheck{
-			Status: healthzStatusDegraded,
-			Error:  fmt.Sprintf("totp recovery failed: %v", err),
-		}
-		result.Status = healthzStatusDegraded
+		setTestBackendHealthzStatus(result, healthzStatusDegraded, fmt.Sprintf("totp recovery failed: %v", err))
 
-		return
+		return false
 	}
 
+	return true
+}
+
+// checkHealthzWebAuthn verifies WebAuthn credential write and read paths.
+func checkHealthzWebAuthn(backend core.BackendManager, authState *core.AuthState, result *HealthzResult) bool {
 	credential := &mfa.PersistentCredential{
 		Credential: webauthn.Credential{
 			ID: []byte("healthz-credential"),
@@ -200,39 +226,34 @@ func checkTestBackend(deps HealthzDeps, result *HealthzResult) {
 	}
 
 	if err := backend.SaveWebAuthnCredential(authState, credential); err != nil {
-		result.Checks["test_backend"] = &HealthzCheck{
-			Status: healthzStatusDegraded,
-			Error:  fmt.Sprintf("webauthn save failed: %v", err),
-		}
-		result.Status = healthzStatusDegraded
+		setTestBackendHealthzStatus(result, healthzStatusDegraded, fmt.Sprintf("webauthn save failed: %v", err))
 
-		return
+		return false
 	}
 
-	if creds, err := backend.GetWebAuthnCredentials(authState); err != nil {
-		result.Checks["test_backend"] = &HealthzCheck{
-			Status: healthzStatusDegraded,
-			Error:  fmt.Sprintf("webauthn read failed: %v", err),
-		}
-		result.Status = healthzStatusDegraded
+	creds, err := backend.GetWebAuthnCredentials(authState)
+	if err != nil {
+		setTestBackendHealthzStatus(result, healthzStatusDegraded, fmt.Sprintf("webauthn read failed: %v", err))
 
-		return
-	} else if len(creds) == 0 {
-		result.Checks["test_backend"] = &HealthzCheck{
-			Status: healthzStatusDegraded,
-			Error:  "webauthn credential not persisted",
-		}
-		result.Status = healthzStatusDegraded
-
-		return
+		return false
 	}
 
+	if len(creds) == 0 {
+		setTestBackendHealthzStatus(result, healthzStatusDegraded, "webauthn credential not persisted")
+
+		return false
+	}
+
+	return true
+}
+
+// setTestBackendHealthzStatus records the test backend status and aggregate status.
+func setTestBackendHealthzStatus(result *HealthzResult, status string, message string) {
 	result.Checks["test_backend"] = &HealthzCheck{
-		Status: healthzStatusUp,
-		Meta: map[string]any{
-			healthzMetaLatencyMS: time.Since(start).Milliseconds(),
-		},
+		Status: status,
+		Error:  message,
 	}
+	result.Status = status
 }
 
 func checkRedis(deps HealthzDeps, result *HealthzResult) {
@@ -294,8 +315,28 @@ func checkRedisHandle(name string, handle redis.UniversalClient, timeout time.Du
 }
 
 func checkLDAP(deps HealthzDeps, result *HealthzResult) {
-	if deps.Cfg == nil || !deps.Cfg.HaveLDAPBackend() {
+	ldapConf, ok := healthzLDAPConfig(deps, result)
+	if !ok {
 		return
+	}
+
+	targets := ldapConf.GetServerURIs()
+	if len(targets) == 0 {
+		result.Checks["ldap"] = &HealthzCheck{
+			Status: healthzStatusDown,
+			Error:  "ldap server uris not configured",
+		}
+
+		return
+	}
+
+	checkLDAPTarget(ldapConf, targets[0], result)
+}
+
+// healthzLDAPConfig returns the active LDAP config when LDAP health checks apply.
+func healthzLDAPConfig(deps HealthzDeps, result *HealthzResult) (*config.LDAPConf, bool) {
+	if deps.Cfg == nil || !deps.Cfg.HaveLDAPBackend() {
+		return nil, false
 	}
 
 	ldapSection := deps.Cfg.GetLDAP()
@@ -306,7 +347,7 @@ func checkLDAP(deps HealthzDeps, result *HealthzResult) {
 			Error:  healthzLDAPConfigNone,
 		}
 
-		return
+		return nil, false
 	}
 
 	ldapCfgAny := ldapSection.GetConfig()
@@ -318,21 +359,14 @@ func checkLDAP(deps HealthzDeps, result *HealthzResult) {
 			Error:  healthzLDAPConfigNone,
 		}
 
-		return
+		return nil, false
 	}
 
-	targets := ldapConf.GetServerURIs()
+	return ldapConf, true
+}
 
-	if len(targets) == 0 {
-		result.Checks["ldap"] = &HealthzCheck{
-			Status: healthzStatusDown,
-			Error:  "ldap server uris not configured",
-		}
-
-		return
-	}
-
-	target := targets[0]
+// checkLDAPTarget probes a single configured LDAP target.
+func checkLDAPTarget(ldapConf *config.LDAPConf, target string, result *HealthzResult) {
 	timeout := ldapConf.GetHealthCheckTimeout()
 	start := time.Now()
 

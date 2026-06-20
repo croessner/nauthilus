@@ -80,78 +80,102 @@ func (m *mockEnv) GetDevMode() bool {
 }
 
 func TestTotpValidation(t *testing.T) {
+	fixture := newTOTPValidationFixture(t)
+
+	t.Run("ValidCode", func(t *testing.T) {
+		auth := fixture.newAuthState()
+
+		hardcodedSecret := "JBSWY3DPEHPK3PXP"
+		auth.SetTOTPSecret(hardcodedSecret)
+
+		codeNow, _ := totp.GenerateCode(hardcodedSecret, time.Now())
+		err := TotpValidation(fixture.ctx, auth, codeNow, fixture.deps)
+		assert.NoError(t, err)
+	})
+
+	t.Run("InvalidCode", func(t *testing.T) {
+		auth := fixture.newAuthState()
+		auth.SetTOTPSecret(fixture.generatedSecret)
+
+		err := TotpValidation(fixture.ctx, auth, "000000", fixture.deps)
+		assert.Error(t, err)
+	})
+
+	t.Run("RecoveryCode", func(t *testing.T) {
+		fixture.assertRecoveryCode(t)
+	})
+}
+
+type totpValidationFixture struct {
+	deps            AuthDeps
+	ctx             *gin.Context
+	account         string
+	generatedSecret string
+}
+
+// newTOTPValidationFixture creates shared TOTP validation test state.
+func newTOTPValidationFixture(t *testing.T) totpValidationFixture {
+	t.Helper()
+
 	issuer := "NauthilusTest"
 	account := "testuser"
-	secret, _ := totp.Generate(totp.GenerateOpts{
+	secret, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      issuer,
 		AccountName: account,
 	})
+	assert.NoError(t, err)
 
-	cfg := &mockTotpConfig{issuer: issuer, skew: 1}
 	deps := AuthDeps{
-		Cfg:    cfg,
+		Cfg:    &mockTotpConfig{issuer: issuer, skew: 1},
 		Logger: slog.New(slog.NewJSONHandler(os.Stdout, nil)),
 		Env:    &mockEnv{},
 	}
-
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest("POST", "/", nil)
 	ctx.Set(definitions.CtxServiceKey, "test")
 	ctx.Set(definitions.CtxGUIDKey, "test-guid")
 	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 
-	t.Run("ValidCode", func(t *testing.T) {
-		auth := NewAuthStateFromContextWithDeps(ctx, deps).(*AuthState)
-		auth.SetUsername(account)
-		auth.SetAccount(account)
+	return totpValidationFixture{
+		deps:            deps,
+		ctx:             ctx,
+		account:         account,
+		generatedSecret: secret.Secret(),
+	}
+}
 
-		// Use a hardcoded secret
-		hardcodedSecret := "JBSWY3DPEHPK3PXP"
-		auth.SetTOTPSecret(hardcodedSecret)
+// newAuthState creates an AuthState initialized with the fixture account.
+func (f totpValidationFixture) newAuthState() *AuthState {
+	auth := NewAuthStateFromContextWithDeps(f.ctx, f.deps).(*AuthState)
+	auth.SetUsername(f.account)
+	auth.SetAccount(f.account)
 
-		codeNow, _ := totp.GenerateCode(hardcodedSecret, time.Now())
-		err := TotpValidation(ctx, auth, codeNow, deps)
-		assert.NoError(t, err)
-	})
+	return auth
+}
 
-	t.Run("InvalidCode", func(t *testing.T) {
-		auth := NewAuthStateFromContextWithDeps(ctx, deps).(*AuthState)
-		auth.SetUsername(account)
-		auth.SetAccount(account)
-		auth.SetTOTPSecret(secret.Secret())
+// assertRecoveryCode verifies successful recovery-code consumption.
+func (f totpValidationFixture) assertRecoveryCode(t *testing.T) {
+	t.Helper()
 
-		err := TotpValidation(ctx, auth, "000000", deps)
-		assert.Error(t, err)
-	})
+	mBackend := new(mockBackend)
+	auth := f.newAuthState()
+	auth.SetTOTPSecret(f.generatedSecret)
+	auth.Attributes.Attributes = bktype.AttributeMapping{
+		"totp_recovery": {"recovery1", "recovery2"},
+	}
+	auth.Runtime.TOTPRecoveryField = "totp_recovery"
 
-	t.Run("RecoveryCode", func(t *testing.T) {
-		mBackend := new(mockBackend)
-		auth := NewAuthStateFromContextWithDeps(ctx, deps).(*AuthState)
-		auth.SetUsername(account)
-		auth.SetAccount(account)
-		auth.SetTOTPSecret(secret.Secret())
+	mBackend.On("DeleteTOTPRecoveryCodes", auth).Return(nil)
+	mBackend.On("AddTOTPRecoveryCodes", auth, mock.MatchedBy(func(r *mfa.TOTPRecovery) bool {
+		return len(r.GetCodes()) == 1 && r.GetCodes()[0] == "recovery2"
+	})).Return(nil)
 
-		// Setup recovery codes in AuthState attributes
-		auth.Attributes.Attributes = bktype.AttributeMapping{
-			"totp_recovery": {"recovery1", "recovery2"},
-		}
-		// We need to make sure auth.GetTOTPRecoveryField() returns "totp_recovery"
-		// In AuthState, it depends on PassDBResult.TOTPRecoveryField
-		auth.Runtime.TOTPRecoveryField = "totp_recovery"
+	deps := f.deps
+	deps.Backend = mBackend
 
-		// Mock expectations
-		mBackend.On("DeleteTOTPRecoveryCodes", auth).Return(nil)
-		mBackend.On("AddTOTPRecoveryCodes", auth, mock.MatchedBy(func(r *mfa.TOTPRecovery) bool {
-			return len(r.GetCodes()) == 1 && r.GetCodes()[0] == "recovery2"
-		})).Return(nil)
-
-		// Inject mock backend
-		deps.Backend = mBackend
-
-		err := TotpValidation(ctx, auth, "recovery1", deps)
-		assert.NoError(t, err)
-		mBackend.AssertExpectations(t)
-	})
+	err := TotpValidation(f.ctx, auth, "recovery1", deps)
+	assert.NoError(t, err)
+	mBackend.AssertExpectations(t)
 }
 
 func TestValidateTOTPCodeNormalizesAuthenticatorInput(t *testing.T) {

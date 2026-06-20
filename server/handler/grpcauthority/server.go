@@ -729,9 +729,30 @@ func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string)
 		return callerAuthFailure(ctx, "missing authorization metadata")
 	}
 
+	if result, ok := authenticateBasicCaller(ctx, cfg, values, basicEnabled); ok {
+		return result, nil
+	}
+
+	if !oidcEnabled {
+		return callerAuthFailure(ctx, "invalid backchannel authorization metadata")
+	}
+
+	if result, ok, err := authenticateBearerCaller(ctx, deps, fullMethod, values); ok {
+		return result, err
+	}
+
+	return callerAuthFailure(ctx, "invalid backchannel authorization metadata")
+}
+
+// authenticateBasicCaller authenticates the first valid Basic authorization value.
+func authenticateBasicCaller(ctx context.Context, cfg config.File, values []string, basicEnabled bool) (callerAuthResult, bool) {
+	if !basicEnabled {
+		return callerAuthResult{}, false
+	}
+
 	for _, value := range values {
 		scheme, payload, ok := splitAuthorization(value)
-		if !ok || scheme != "basic" || !basicEnabled {
+		if !ok || scheme != "basic" {
 			continue
 		}
 
@@ -739,14 +760,15 @@ func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string)
 		if valid {
 			return callerAuthResult{
 				caller: authorityCallerFromContextValues(ctx, username, true),
-			}, nil
+			}, true
 		}
 	}
 
-	if !oidcEnabled {
-		return callerAuthFailure(ctx, "invalid backchannel authorization metadata")
-	}
+	return callerAuthResult{}, false
+}
 
+// authenticateBearerCaller authenticates Bearer authorization values.
+func authenticateBearerCaller(ctx context.Context, deps ServerDeps, fullMethod string, values []string) (callerAuthResult, bool, error) {
 	var permissionErr error
 
 	for _, value := range values {
@@ -760,7 +782,7 @@ func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string)
 			return callerAuthResult{
 				claims: claims,
 				caller: authorityCallerFromClaims(ctx, claims),
-			}, nil
+			}, true, nil
 		}
 
 		if status.Code(err) == codes.PermissionDenied {
@@ -769,10 +791,10 @@ func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string)
 	}
 
 	if permissionErr != nil {
-		return callerAuthResult{}, permissionErr
+		return callerAuthResult{}, true, permissionErr
 	}
 
-	return callerAuthFailure(ctx, "invalid backchannel authorization metadata")
+	return callerAuthResult{}, false, nil
 }
 
 func callerAuthFailure(ctx context.Context, message string) (callerAuthResult, error) {

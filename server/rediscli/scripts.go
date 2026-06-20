@@ -34,6 +34,7 @@ import (
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var (
@@ -76,59 +77,69 @@ func EnsureKeysInSameSlot(keys []string, hashTag string) []string {
 		return keys
 	}
 
-	// Check if all keys already have the same hash tag
-	hasCommonTag := true
-
-	var commonTag string
-
-	for i, key := range keys {
-		startIdx := strings.Index(key, "{")
-		endIdx := strings.Index(key, "}")
-
-		// If a key has a hash tag
-		if startIdx != -1 && endIdx != -1 && startIdx < endIdx {
-			tag := key[startIdx : endIdx+1]
-			if i == 0 {
-				commonTag = tag
-			} else if tag != commonTag {
-				hasCommonTag = false
-
-				break
-			}
-		} else {
-			hasCommonTag = false
-
-			break
-		}
-	}
-
-	// If all keys already have the same hash tag, return the original keys
-	if hasCommonTag {
+	if keysShareCommonHashTag(keys) {
 		return keys
 	}
 
-	// Add the specified hash tag to all keys
 	modifiedKeys := make([]string, len(keys))
 
 	for i, key := range keys {
-		// Check if the key already has a hash tag
-		if strings.Contains(key, "{") && strings.Contains(key, "}") {
-			// Replace existing hash tag with the specified one
-			startIdx := strings.Index(key, "{")
-
-			endIdx := strings.Index(key, "}")
-			if startIdx != -1 && endIdx != -1 && startIdx < endIdx {
-				modifiedKeys[i] = key[:startIdx] + hashTag + key[endIdx+1:]
-			} else {
-				modifiedKeys[i] = hashTag + ":" + key
-			}
-		} else {
-			// Add the specified hash tag as a prefix
-			modifiedKeys[i] = hashTag + ":" + key
-		}
+		modifiedKeys[i] = keyWithHashTag(key, hashTag)
 	}
 
 	return modifiedKeys
+}
+
+// keysShareCommonHashTag reports whether every key already uses the same Redis hash tag.
+func keysShareCommonHashTag(keys []string) bool {
+	var commonTag string
+
+	for i, key := range keys {
+		tag, ok := redisKeyHashTag(key)
+		if !ok {
+			return false
+		}
+
+		if i == 0 {
+			commonTag = tag
+
+			continue
+		}
+
+		if tag != commonTag {
+			return false
+		}
+	}
+
+	return true
+}
+
+// redisKeyHashTag returns the brace-delimited Redis cluster hash tag for a key.
+func redisKeyHashTag(key string) (string, bool) {
+	startIdx, endIdx, ok := redisKeyHashTagBounds(key)
+	if !ok {
+		return "", false
+	}
+
+	return key[startIdx : endIdx+1], true
+}
+
+// redisKeyHashTagBounds returns the byte offsets for a valid Redis cluster hash tag.
+func redisKeyHashTagBounds(key string) (int, int, bool) {
+	startIdx := strings.Index(key, "{")
+	endIdx := strings.Index(key, "}")
+
+	return startIdx, endIdx, startIdx != -1 && endIdx != -1 && startIdx < endIdx
+}
+
+// keyWithHashTag replaces an existing hash tag or prefixes the key with one.
+func keyWithHashTag(key string, hashTag string) string {
+	startIdx, endIdx, ok := redisKeyHashTagBounds(key)
+	if ok {
+		return key[:startIdx] + hashTag + key[endIdx+1:]
+	}
+
+	return hashTag + ":" + key
 }
 
 // uploadScriptToHandle loads a Lua script onto a single Redis handle and returns its SHA1 hash.
@@ -238,7 +249,32 @@ func ExecuteScript(ctx context.Context, client Client, scriptName, scriptContent
 
 	defer sp.End()
 
-	// Get the SHA1 hash for the script
+	sha1, err := resolveScriptSHA(sctx, client, scriptName, scriptContent)
+	if err != nil {
+		sp.RecordError(err)
+
+		return nil, err
+	}
+
+	writeHandle := client.GetWriteHandle()
+	keys = scriptKeysForClient(writeHandle, keys)
+
+	result, err := evalRedisScript(sctx, writeHandle, sha1, keys, args...)
+	if err != nil {
+		result, err = handleScriptEvalError(sctx, client, writeHandle, scriptName, scriptContent, sha1, keys, args, err, sp)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Attach basic result hints
+	sp.SetAttributes(attribute.Bool("ok", true))
+
+	return result, nil
+}
+
+// resolveScriptSHA returns a cached script SHA or uploads the script when needed.
+func resolveScriptSHA(ctx context.Context, client Client, scriptName string, scriptContent string) (string, error) {
 	scriptsMutex.RLock()
 
 	sha1, exists := scripts[scriptName]
@@ -248,107 +284,138 @@ func ExecuteScript(ctx context.Context, client Client, scriptName, scriptContent
 	if !exists {
 		// If no script content is provided, we can't upload it
 		if scriptContent == "" {
-			return nil, ErrScriptNotFound
+			return "", ErrScriptNotFound
 		}
 
 		// Script not found, upload it
 		var err error
 
-		sha1, err = UploadScript(sctx, client, scriptName, scriptContent)
+		sha1, err = UploadScript(ctx, client, scriptName, scriptContent)
 		if err != nil {
-			sp.RecordError(err)
-
-			return nil, err
+			return "", err
 		}
 	}
 
-	// Get the Redis client handle
-	writeHandle := client.GetWriteHandle()
+	return sha1, nil
+}
 
-	// Check if we're using Redis Cluster and ensure keys hash to the same slot if needed
+// scriptKeysForClient normalizes script keys for Redis Cluster clients.
+func scriptKeysForClient(writeHandle redis.UniversalClient, keys []string) []string {
 	if isClusterClient(writeHandle) && len(keys) > 1 {
-		keys = ensureKeysInSameSlot(keys)
+		return ensureKeysInSameSlot(keys)
 	}
 
-	// Execute the script
+	return keys
+}
+
+// evalRedisScript executes an EvalSha call and accounts for Redis write metrics.
+func evalRedisScript(ctx context.Context, writeHandle redis.UniversalClient, sha1 string, keys []string, args ...any) (any, error) {
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	result, err := writeHandle.EvalSha(sctx, sha1, keys, args...).Result()
+	return writeHandle.EvalSha(ctx, sha1, keys, args...).Result()
+}
+
+// handleScriptEvalError dispatches script execution retries for known Redis errors.
+func handleScriptEvalError(
+	ctx context.Context,
+	client Client,
+	writeHandle redis.UniversalClient,
+	scriptName string,
+	scriptContent string,
+	sha1 string,
+	keys []string,
+	args []any,
+	err error,
+	sp trace.Span,
+) (any, error) {
+	switch {
+	case err.Error() == "NOSCRIPT No matching script. Please use EVAL.":
+		return retryScriptAfterNoScript(ctx, client, writeHandle, scriptName, scriptContent, keys, args, sp)
+	case strings.Contains(err.Error(), "CROSSSLOT Keys in request don't hash to the same slot"):
+		return retryScriptAfterCrossSlot(ctx, writeHandle, scriptName, sha1, keys, args, sp)
+	default:
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s'", scriptName),
+			definitions.LogKeyError, err,
+		)
+
+		sp.RecordError(err)
+
+		return nil, err
+	}
+}
+
+// retryScriptAfterNoScript re-uploads a missing script and executes it again.
+func retryScriptAfterNoScript(
+	ctx context.Context,
+	client Client,
+	writeHandle redis.UniversalClient,
+	scriptName string,
+	scriptContent string,
+	keys []string,
+	args []any,
+	sp trace.Span,
+) (any, error) {
+	level.Warn(log.Logger).Log(
+		definitions.LogKeyMsg, fmt.Sprintf("Script '%s' not found on Redis server, re-uploading. If this happens frequently, Redis scripts might have been administratively deleted. Consider restarting Nauthilus.", scriptName),
+	)
+
+	sp.SetAttributes(attribute.String("retry_reason", "noscript"))
+	InvalidateScript(scriptName)
+
+	sha1, err := UploadScript(ctx, client, scriptName, scriptContent)
 	if err != nil {
-		// Check if the error is NOSCRIPT
-		if err.Error() == "NOSCRIPT No matching script. Please use EVAL." {
-			level.Warn(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Script '%s' not found on Redis server, re-uploading. If this happens frequently, Redis scripts might have been administratively deleted. Consider restarting Nauthilus.", scriptName),
-			)
+		sp.RecordError(err)
 
-			sp.SetAttributes(attribute.String("retry_reason", "noscript"))
-
-			// Invalidate the local cache so UploadScript actually re-uploads to all handles
-			InvalidateScript(scriptName)
-
-			// Re-upload the script to write + all read handles
-			sha1, err = UploadScript(sctx, client, scriptName, scriptContent)
-			if err != nil {
-				sp.RecordError(err)
-
-				return nil, err
-			}
-
-			// Try executing again
-			stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-			result, err = writeHandle.EvalSha(sctx, sha1, keys, args...).Result()
-			if err != nil {
-				level.Error(log.Logger).Log(
-					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after re-upload. Redis scripts might have been administratively deleted. Consider restarting Nauthilus.", scriptName),
-					definitions.LogKeyError, err,
-				)
-
-				sp.RecordError(err)
-
-				return nil, err
-			}
-		} else if strings.Contains(err.Error(), "CROSSSLOT Keys in request don't hash to the same slot") {
-			// If we get a CROSSSLOT error, log it with more details
-			level.Warn(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("CROSSSLOT error executing script '%s' with keys %v, attempting to fix", scriptName, keys),
-				"caller", "scripts.go:ExecuteScript",
-			)
-
-			sp.SetAttributes(attribute.String("retry_reason", "crossslot"))
-
-			// Force keys to use the same hash tag
-			keys = ensureKeysInSameSlot(keys)
-
-			// Try executing again with modified keys
-			stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-			result, err = writeHandle.EvalSha(sctx, sha1, keys, args...).Result()
-			if err != nil {
-				level.Error(log.Logger).Log(
-					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after fixing keys", scriptName),
-					definitions.LogKeyError, err,
-					"keys", fmt.Sprintf("%v", keys),
-				)
-
-				sp.RecordError(err)
-
-				return nil, err
-			}
-		} else {
-			level.Error(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s'", scriptName),
-				definitions.LogKeyError, err,
-			)
-
-			sp.RecordError(err)
-
-			return nil, err
-		}
+		return nil, err
 	}
 
-	// Attach basic result hints
-	sp.SetAttributes(attribute.Bool("ok", true))
+	result, err := evalRedisScript(ctx, writeHandle, sha1, keys, args...)
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after re-upload. Redis scripts might have been administratively deleted. Consider restarting Nauthilus.", scriptName),
+			definitions.LogKeyError, err,
+		)
+
+		sp.RecordError(err)
+
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// retryScriptAfterCrossSlot normalizes keys and retries a Redis Cluster script call.
+func retryScriptAfterCrossSlot(
+	ctx context.Context,
+	writeHandle redis.UniversalClient,
+	scriptName string,
+	sha1 string,
+	keys []string,
+	args []any,
+	sp trace.Span,
+) (any, error) {
+	level.Warn(log.Logger).Log(
+		definitions.LogKeyMsg, fmt.Sprintf("CROSSSLOT error executing script '%s' with keys %v, attempting to fix", scriptName, keys),
+		"caller", "scripts.go:ExecuteScript",
+	)
+
+	sp.SetAttributes(attribute.String("retry_reason", "crossslot"))
+
+	keys = ensureKeysInSameSlot(keys)
+
+	result, err := evalRedisScript(ctx, writeHandle, sha1, keys, args...)
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after fixing keys", scriptName),
+			definitions.LogKeyError, err,
+			"keys", fmt.Sprintf("%v", keys),
+		)
+
+		sp.RecordError(err)
+
+		return nil, err
+	}
 
 	return result, nil
 }

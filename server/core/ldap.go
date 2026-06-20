@@ -36,6 +36,12 @@ import (
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/go-ldap/ldap/v3"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+)
+
+const (
+	ldapMissingTOTPSecretFieldDetail   = "Missing LDAP TOTP secret field"
+	ldapMissingTOTPRecoveryFieldDetail = "Missing LDAP TOTP recovery field"
 )
 
 // ldapManagerImpl provides an implementation for managing LDAP connections and operations using a specific connection pool.
@@ -85,6 +91,30 @@ type ldapSearchConfig struct {
 	accountField string
 }
 
+type ldapAccountSearchPlan struct {
+	scope        *config.LDAPScope
+	filter       string
+	baseDN       string
+	accountField string
+	attributes   []string
+}
+
+type ldapPassDBSearchPlan struct {
+	protocol     *config.LDAPSearchProtocol
+	scope        *config.LDAPScope
+	cancelSearch context.CancelFunc
+	filter       string
+	baseDN       string
+	accountField string
+	attributes   []string
+}
+
+type ldapPassDBFoundState struct {
+	securityManager *security.Manager
+	totpSecretPre   []any
+	dn              string
+}
+
 // ldapModifyRequestInput collects fields required to build an LDAP modify request.
 type ldapModifyRequestInput struct {
 	auth              *AuthState
@@ -97,6 +127,31 @@ type ldapModifyRequestInput struct {
 	includeTOTPSecret bool
 }
 
+type ldapObjectClassAddInput struct {
+	scope             *config.LDAPScope
+	filter            string
+	baseDN            string
+	objectClass       string
+	waitSpan          string
+	priority          int
+	includeTOTPSecret bool
+}
+
+type ldapAttributeReplaceParams struct {
+	prepareSpan           string
+	missingProtocolDetail string
+	missingFieldDetail    string
+	fieldGetter           func(*config.LDAPSearchProtocol) string
+}
+
+type ldapAttributeReplacePlan struct {
+	protocol    *config.LDAPSearchProtocol
+	scope       *config.LDAPScope
+	filter      string
+	baseDN      string
+	configField string
+}
+
 // loadSearchConfig resolves LDAP search settings with optional protocol and attribute handling.
 func (lm *ldapManagerImpl) loadSearchConfig(endSpan spanEnder, protocolName string, opts ldapSearchConfigOptions) (ldapSearchConfig, error) {
 	var cfg ldapSearchConfig
@@ -107,81 +162,123 @@ func (lm *ldapManagerImpl) loadSearchConfig(endSpan spanEnder, protocolName stri
 			err = errors.ErrLDAPConfig.WithDetail(fmt.Sprintf(opts.missingProtocolDetail, protocolName))
 		}
 
-		if endSpan != nil {
-			endSpan()
-		}
+		endLDAPPrepareSpan(endSpan)
 
 		return cfg, err
 	}
 
 	cfg.protocol = protocol
 
-	if opts.filterGetter != nil {
-		filter, err := opts.filterGetter(protocol)
-		if err != nil {
-			if endSpan != nil {
-				endSpan()
-			}
+	ignored, err := cfg.loadOptionalSearchFields(protocol, opts)
+	if ignored {
+		endLDAPPrepareSpan(endSpan)
 
-			if opts.ignoreFilterError {
-				return ldapSearchConfig{}, nil
-			}
-
-			return cfg, err
-		}
-
-		cfg.filter = filter
+		return ldapSearchConfig{}, nil
 	}
 
-	if opts.includeAccountField {
-		accountField, err := protocol.GetAccountField()
-		if err != nil {
-			if endSpan != nil {
-				endSpan()
-			}
-
-			return cfg, err
-		}
-
-		cfg.accountField = accountField
-	}
-
-	if opts.includeAttributes {
-		attributes, err := protocol.GetAttributes()
-		if err != nil {
-			if endSpan != nil {
-				endSpan()
-			}
-
-			return cfg, err
-		}
-
-		cfg.attributes = attributes
-	}
-
-	baseDN, err := protocol.GetBaseDN()
 	if err != nil {
-		if endSpan != nil {
-			endSpan()
-		}
+		endLDAPPrepareSpan(endSpan)
 
 		return cfg, err
 	}
 
-	cfg.baseDN = baseDN
+	if err := cfg.loadRequiredSearchFields(protocol); err != nil {
+		endLDAPPrepareSpan(endSpan)
+
+		return cfg, err
+	}
+
+	return cfg, nil
+}
+
+// endLDAPPrepareSpan closes an LDAP preparation span when it has been started.
+func endLDAPPrepareSpan(endSpan spanEnder) {
+	if endSpan != nil {
+		endSpan()
+	}
+}
+
+// loadOptionalSearchFields loads optional LDAP filter, account, and attribute settings.
+func (cfg *ldapSearchConfig) loadOptionalSearchFields(protocol *config.LDAPSearchProtocol, opts ldapSearchConfigOptions) (bool, error) {
+	if err := cfg.loadSearchFilter(protocol, opts); err != nil {
+		return opts.ignoreFilterError, err
+	}
+
+	if err := cfg.loadSearchAccountField(protocol, opts); err != nil {
+		return false, err
+	}
+
+	if err := cfg.loadSearchAttributes(protocol, opts); err != nil {
+		return false, err
+	}
+
+	return false, nil
+}
+
+// loadSearchFilter resolves the optional LDAP search filter.
+func (cfg *ldapSearchConfig) loadSearchFilter(protocol *config.LDAPSearchProtocol, opts ldapSearchConfigOptions) error {
+	if opts.filterGetter == nil {
+		return nil
+	}
+
+	filter, err := opts.filterGetter(protocol)
+	if err != nil {
+		return err
+	}
+
+	cfg.filter = filter
+
+	return nil
+}
+
+// loadSearchAccountField resolves the optional LDAP account field.
+func (cfg *ldapSearchConfig) loadSearchAccountField(protocol *config.LDAPSearchProtocol, opts ldapSearchConfigOptions) error {
+	if !opts.includeAccountField {
+		return nil
+	}
+
+	accountField, err := protocol.GetAccountField()
+	if err != nil {
+		return err
+	}
+
+	cfg.accountField = accountField
+
+	return nil
+}
+
+// loadSearchAttributes resolves optional LDAP search attributes.
+func (cfg *ldapSearchConfig) loadSearchAttributes(protocol *config.LDAPSearchProtocol, opts ldapSearchConfigOptions) error {
+	if !opts.includeAttributes {
+		return nil
+	}
+
+	attributes, err := protocol.GetAttributes()
+	if err != nil {
+		return err
+	}
+
+	cfg.attributes = attributes
+
+	return nil
+}
+
+// loadRequiredSearchFields resolves the LDAP base DN and scope.
+func (cfg *ldapSearchConfig) loadRequiredSearchFields(protocol *config.LDAPSearchProtocol) error {
+	baseDN, err := protocol.GetBaseDN()
+	if err != nil {
+		return err
+	}
 
 	scope, err := protocol.GetScope()
 	if err != nil {
-		if endSpan != nil {
-			endSpan()
-		}
-
-		return cfg, err
+		return err
 	}
 
+	cfg.baseDN = baseDN
 	cfg.scope = scope
 
-	return cfg, nil
+	return nil
 }
 
 // requestPriority derives a queue priority based on authentication state and cache hits.
@@ -339,24 +436,18 @@ func decryptLDAPAttributeValue(manager *security.Manager, value any) (any, error
 	case []any:
 		decrypted := make([]any, len(typedValue))
 		for index, entry := range typedValue {
-			switch entryValue := entry.(type) {
-			case string:
-				plaintext, err := manager.Decrypt(entryValue)
+			plaintext, handled, err := decryptLDAPScalarAttribute(manager, entry)
+			if handled {
 				if err != nil {
 					return nil, err
 				}
 
 				decrypted[index] = plaintext
-			case []byte:
-				plaintext, err := manager.Decrypt(string(entryValue))
-				if err != nil {
-					return nil, err
-				}
 
-				decrypted[index] = plaintext
-			default:
-				decrypted[index] = entry
+				continue
 			}
+
+			decrypted[index] = entry
 		}
 
 		return decrypted, nil
@@ -378,6 +469,22 @@ func decryptLDAPAttributeValue(manager *security.Manager, value any) (any, error
 		return manager.Decrypt(string(typedValue))
 	default:
 		return value, nil
+	}
+}
+
+// decryptLDAPScalarAttribute decrypts supported scalar LDAP attribute values.
+func decryptLDAPScalarAttribute(manager *security.Manager, value any) (any, bool, error) {
+	switch typedValue := value.(type) {
+	case string:
+		plaintext, err := manager.Decrypt(typedValue)
+
+		return plaintext, true, err
+	case []byte:
+		plaintext, err := manager.Decrypt(string(typedValue))
+
+		return plaintext, true, err
+	default:
+		return nil, false, nil
 	}
 }
 
@@ -424,22 +531,9 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	defer lspan.End()
 
-	var (
-		assertOk           bool
-		accountField       string
-		filter             string
-		baseDN             string
-		distinguishedNames any
-		attributes         []string
-		scope              *config.LDAPScope
-		ldapReply          *bktype.LDAPReply
-		protocol           *config.LDAPSearchProtocol
-		searchConfig       ldapSearchConfig
-	)
-
 	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromBackend, "ldap_passdb_request_total", resource)
 
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromBackend, "ldap_passdb_request_total", resource)
 	if stopTimer != nil {
 		defer stopTimer()
 	}
@@ -448,98 +542,171 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
+	searchPlan, ok, err := lm.prepareLDAPPassDBSearch(lctx, auth, tr, lspan, ldapReplyChan)
+	if err != nil || !ok {
+		return
+	}
+
+	defer searchPlan.cancelSearch()
+
+	ldapReply := waitLDAPReply(lctx, tr, "ldap.passdb.search.wait", ldapReplyChan)
+	if ldapReply.Err != nil {
+		return passDBResult, recordLDAPReplyError(lspan, ldapReply.Err)
+	}
+
+	foundState, found, err := lm.applyLDAPPassDBSearchReply(auth, lspan, passDBResult, searchPlan, ldapReply)
+	if err != nil || !found {
+		return
+	}
+
+	authenticated, err := lm.authenticateLDAPPassDBUser(lctx, auth, tr, lspan, foundState.dn)
+	if err != nil || !authenticated {
+		return passDBResult, err
+	}
+
+	completeLDAPPassDBAuthentication(auth, lspan, passDBResult)
+
+	return lm.refreshLDAPPassDBForMasterUser(auth, passDBResult, foundState.totpSecretPre, searchPlan.protocol)
+}
+
+// prepareLDAPPassDBSearch resolves search settings, builds the search request, and queues it.
+func (lm *ldapManagerImpl) prepareLDAPPassDBSearch(
+	lctx context.Context,
+	auth *AuthState,
+	tr monittrace.Tracer,
+	lspan trace.Span,
+	replyChan chan *bktype.LDAPReply,
+) (ldapPassDBSearchPlan, bool, error) {
 	_, endPrepare := startSpan(lctx, tr, "ldap.passdb.search.prepare")
 
-	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
+	searchConfig, err := lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
 		requireProtocol:       true,
 		missingProtocolDetail: "Missing LDAP search protocol; protocol=%s",
 		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
 		includeAccountField:   true,
 		includeAttributes:     true,
 	})
-	if err != nil {
-		return
+	if err != nil || searchConfig.protocol == nil {
+		return ldapPassDBSearchPlan{}, false, err
 	}
 
-	if searchConfig.protocol == nil {
-		return
+	ctxSearch, cancelSearch := context.WithTimeout(auth.Ctx(), lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPSearch())
+	plan := ldapPassDBSearchPlan{
+		protocol:     searchConfig.protocol,
+		scope:        searchConfig.scope,
+		cancelSearch: cancelSearch,
+		filter:       searchConfig.filter,
+		baseDN:       searchConfig.baseDN,
+		accountField: searchConfig.accountField,
+		attributes:   searchConfig.attributes,
 	}
-
-	protocol = searchConfig.protocol
-	accountField = searchConfig.accountField
-	attributes = searchConfig.attributes
-	filter = searchConfig.filter
-	baseDN = searchConfig.baseDN
-	scope = searchConfig.scope
-
-	username := auth.handleMasterUserMode()
 
 	lspan.SetAttributes(
-		attribute.String("base_dn", baseDN),
-		attribute.String("scope", scope.String()),
+		attribute.String("base_dn", plan.baseDN),
+		attribute.String("scope", plan.scope.String()),
 	)
 
-	// Derive a timeout context for LDAP search
-	dSearch := lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPSearch()
+	request := lm.newLDAPPassDBSearchRequest(ctxSearch, auth, plan, replyChan)
 
-	ctxSearch, cancelSearch := context.WithTimeout(auth.Ctx(), dSearch)
-	defer cancelSearch()
+	endPrepare()
+	lm.ldapQueue().Push(request, lm.requestPriority(auth))
 
+	return plan, true, nil
+}
+
+// newLDAPPassDBSearchRequest builds the queued LDAP search request for PassDB.
+func (lm *ldapManagerImpl) newLDAPPassDBSearchRequest(
+	ctxSearch context.Context,
+	auth *AuthState,
+	plan ldapPassDBSearchPlan,
+	replyChan chan *bktype.LDAPReply,
+) *bktype.LDAPRequest {
 	macroSource := lm.newMacroSource(auth, true)
-	macroSource.Username = username
+	macroSource.Username = auth.handleMasterUserMode()
 
-	ldapRequest := &bktype.LDAPRequest{
+	return &bktype.LDAPRequest{
 		GUID:              auth.Runtime.GUID,
 		Command:           definitions.LDAPSearch,
 		PoolName:          lm.poolName,
 		MacroSource:       macroSource,
-		Filter:            filter,
-		BaseDN:            baseDN,
-		SearchAttributes:  attributes,
-		Scope:             *scope,
-		LDAPReplyChan:     ldapReplyChan,
+		Filter:            plan.filter,
+		BaseDN:            plan.baseDN,
+		SearchAttributes:  plan.attributes,
+		Scope:             *plan.scope,
+		LDAPReplyChan:     replyChan,
 		HTTPClientContext: ctxSearch,
 	}
+}
 
-	// Find user with account status enabled
-	// Determine priority based on NoAuth flag and whether the user is already authenticated
-	priority := lm.requestPriority(auth)
-
-	endPrepare()
-
-	// Use priority queue instead of channel
-	lm.ldapQueue().Push(ldapRequest, priority)
-
-	ldapReply = waitLDAPReply(lctx, tr, "ldap.passdb.search.wait", ldapReplyChan)
-
-	if ldapReply.Err != nil {
-		lspan.RecordError(ldapReply.Err)
-
-		return passDBResult, ldapReply.Err
+// applyLDAPPassDBSearchReply applies a successful LDAP search reply to the PassDB result.
+func (lm *ldapManagerImpl) applyLDAPPassDBSearchReply(
+	auth *AuthState,
+	lspan trace.Span,
+	passDBResult *PassDBResult,
+	plan ldapPassDBSearchPlan,
+	ldapReply *bktype.LDAPReply,
+) (ldapPassDBFoundState, bool, error) {
+	distinguishedNames, ok := ldapReply.Result[definitions.DistinguishedName]
+	if !ok {
+		return ldapPassDBFoundState{}, false, nil
 	}
 
-	// User not found
-	if distinguishedNames, assertOk = ldapReply.Result[definitions.DistinguishedName]; !assertOk {
-		return
+	if len(distinguishedNames) == 0 {
+		return ldapPassDBFoundState{}, false, nil
 	}
 
-	if len(distinguishedNames.([]any)) == 0 {
-		return
+	state := ldapPassDBFoundState{
+		dn:              distinguishedNames[definitions.LDAPSingleValue].(string),
+		securityManager: lm.ldapPassDBSecurityManager(plan.protocol),
+		totpSecretPre:   saveMasterUserTOTPSecret(auth.Runtime.MasterUserMode, ldapReply, plan.protocol.TOTPSecretField),
 	}
 
-	dn := distinguishedNames.([]any)[definitions.LDAPSingleValue].(string)
+	lm.applyLDAPPassDBFoundFields(lspan, passDBResult, plan, ldapReply)
 
-	// If a DN was returned and an account field is present, the user was found in the backend.
+	if err := lm.decryptLDAPPassDBMFAAttributes(passDBResult, plan.protocol, state.securityManager); err != nil {
+		return ldapPassDBFoundState{}, false, err
+	}
+
+	if passDBResult.Attributes != nil {
+		passDBResult.Groups, passDBResult.GroupDistinguishedNames = lm.resolveGroups(auth, plan.protocol, passDBResult.Attributes, plan.accountField, lm.effectiveLogger())
+	}
+
+	totpSecretPre, err := decryptLDAPMasterTOTPSecret(state.securityManager, state.totpSecretPre)
+	if err != nil {
+		return ldapPassDBFoundState{}, false, err
+	}
+
+	state.totpSecretPre = totpSecretPre
+
+	return state, true, nil
+}
+
+// applyLDAPPassDBFoundFields marks the user as found and copies configured LDAP fields.
+func (lm *ldapManagerImpl) applyLDAPPassDBFoundFields(
+	lspan trace.Span,
+	passDBResult *PassDBResult,
+	plan ldapPassDBSearchPlan,
+	ldapReply *bktype.LDAPReply,
+) {
 	passDBResult.UserFound = true
 	passDBResult.Backend = definitions.BackendLDAP
 	passDBResult.BackendName = lm.poolName
 
 	lspan.SetAttributes(attribute.Bool("user_found", true))
 
-	if _, okay := ldapReply.Result[accountField]; okay {
-		passDBResult.AccountField = accountField
+	if _, okay := ldapReply.Result[plan.accountField]; okay {
+		passDBResult.AccountField = plan.accountField
 	}
 
+	applyLDAPPassDBProtocolFields(passDBResult, plan.protocol, plan.accountField)
+
+	if len(ldapReply.Result) > 0 {
+		passDBResult.Attributes = ldapReply.Result
+	}
+}
+
+// applyLDAPPassDBProtocolFields copies MFA and display-name field configuration.
+func applyLDAPPassDBProtocolFields(passDBResult *PassDBResult, protocol *config.LDAPSearchProtocol, accountField string) {
 	if protocol.TOTPSecretField != "" {
 		passDBResult.TOTPSecretField = protocol.TOTPSecretField
 	}
@@ -554,142 +721,185 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	if protocol.DisplayNameField != "" {
 		passDBResult.DisplayNameField = protocol.DisplayNameField
-	} else {
-		// Fallback
-		passDBResult.DisplayNameField = accountField
+
+		return
 	}
 
-	var securityManager *security.Manager
-	if protocol.TOTPSecretField != "" || protocol.GetTotpRecoveryField() != "" {
-		securityManager = security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
+	passDBResult.DisplayNameField = accountField
+}
+
+// ldapPassDBSecurityManager returns a decrypter when encrypted MFA fields are configured.
+func (lm *ldapManagerImpl) ldapPassDBSecurityManager(protocol *config.LDAPSearchProtocol) *security.Manager {
+	if protocol.TOTPSecretField == "" && protocol.GetTotpRecoveryField() == "" {
+		return nil
 	}
 
-	if len(ldapReply.Result) > 0 {
-		passDBResult.Attributes = ldapReply.Result
+	return security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
+}
+
+// decryptLDAPPassDBMFAAttributes decrypts configured TOTP fields in the LDAP attribute map.
+func (lm *ldapManagerImpl) decryptLDAPPassDBMFAAttributes(
+	passDBResult *PassDBResult,
+	protocol *config.LDAPSearchProtocol,
+	securityManager *security.Manager,
+) error {
+	if passDBResult.Attributes == nil {
+		return nil
 	}
 
-	totpSecretPre := saveMasterUserTOTPSecret(auth.Runtime.MasterUserMode, ldapReply, protocol.TOTPSecretField)
-
-	if passDBResult.Attributes != nil {
-		if protocol.TOTPSecretField != "" {
-			if decryptErr := decryptLDAPAttributeValues(securityManager, passDBResult.Attributes, protocol.TOTPSecretField); decryptErr != nil {
-				return passDBResult, errors.ErrLDAPConfig.WithDetail(
-					fmt.Sprintf("Failed to decrypt LDAP TOTP secret: %v", decryptErr))
-			}
-		}
-
-		if protocol.GetTotpRecoveryField() != "" {
-			if decryptErr := decryptLDAPAttributeValues(securityManager, passDBResult.Attributes, protocol.GetTotpRecoveryField()); decryptErr != nil {
-				return passDBResult, errors.ErrLDAPConfig.WithDetail(
-					fmt.Sprintf("Failed to decrypt LDAP TOTP recovery codes: %v", decryptErr))
-			}
-		}
-	}
-
-	if passDBResult.Attributes != nil {
-		passDBResult.Groups, passDBResult.GroupDistinguishedNames = lm.resolveGroups(auth, protocol, passDBResult.Attributes, accountField, lm.effectiveLogger())
-	}
-
-	if securityManager != nil && totpSecretPre != nil {
-		decryptedSecret, decryptErr := decryptLDAPAttributeValue(securityManager, totpSecretPre)
-		if decryptErr != nil {
-			return passDBResult, errors.ErrLDAPConfig.WithDetail(
-				fmt.Sprintf("Failed to decrypt LDAP master TOTP secret: %v", decryptErr))
-		}
-
-		switch typedSecret := decryptedSecret.(type) {
-		case []any:
-			totpSecretPre = typedSecret
-		case []string:
-			totpSecretPre = make([]any, len(typedSecret))
-			for index, entry := range typedSecret {
-				totpSecretPre[index] = entry
-			}
+	if protocol.TOTPSecretField != "" {
+		if decryptErr := decryptLDAPAttributeValues(securityManager, passDBResult.Attributes, protocol.TOTPSecretField); decryptErr != nil {
+			return errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Failed to decrypt LDAP TOTP secret: %v", decryptErr))
 		}
 	}
 
-	if !auth.Request.NoAuth {
-		ldapReplyChan = make(chan *bktype.LDAPReply, 1)
-
-		_, endAuthPrepare := startSpan(lctx, tr, "ldap.passdb.auth.prepare")
-
-		// Derive a timeout context for LDAP bind/auth
-		dBind := lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPBind()
-
-		ctxBind, cancelBind := context.WithTimeout(auth.Ctx(), dBind)
-		defer cancelBind()
-
-		var bindPassword string
-
-		auth.Request.Password.WithString(func(value string) {
-			bindPassword = value
-		})
-
-		ldapUserBindRequest := &bktype.LDAPAuthRequest{
-			GUID:              auth.Runtime.GUID,
-			PoolName:          lm.poolName,
-			BindDN:            dn,
-			BindPW:            bindPassword,
-			LDAPReplyChan:     ldapReplyChan,
-			HTTPClientContext: ctxBind,
-		}
-
-		// Determine priority based on NoAuth flag and whether the user is already authenticated
-		priority = lm.requestPriority(auth)
-
-		endAuthPrepare()
-
-		// Use priority queue instead of channel
-		lm.ldapAuthQueue().Push(ldapUserBindRequest, priority)
-
-		ldapReply = waitLDAPReply(lctx, tr, "ldap.passdb.auth.wait", ldapReplyChan)
-
-		if ldapReply.Err != nil {
-			util.DebugModuleWithCfg(
-				auth.Ctx(),
-				lm.effectiveCfg(),
-				lm.effectiveLogger(),
-				definitions.DbgLDAP,
-				definitions.LogKeyGUID, auth.Runtime.GUID,
-				definitions.LogKeyMsg, err,
-			)
-
-			if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
-				if ldapError.ResultCode != uint16(ldap.LDAPResultInvalidCredentials) {
-					lspan.RecordError(ldapError)
-
-					return passDBResult, ldapError.Err
-				}
-			}
-
-			// AuthState failed!
-			lspan.SetAttributes(attribute.Bool("authenticated", false))
-
-			return
+	if protocol.GetTotpRecoveryField() != "" {
+		if decryptErr := decryptLDAPAttributeValues(securityManager, passDBResult.Attributes, protocol.GetTotpRecoveryField()); decryptErr != nil {
+			return errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Failed to decrypt LDAP TOTP recovery codes: %v", decryptErr))
 		}
 	}
 
+	return nil
+}
+
+// decryptLDAPMasterTOTPSecret decrypts the saved master-user TOTP secret when present.
+func decryptLDAPMasterTOTPSecret(securityManager *security.Manager, totpSecretPre []any) ([]any, error) {
+	if securityManager == nil || totpSecretPre == nil {
+		return totpSecretPre, nil
+	}
+
+	decryptedSecret, decryptErr := decryptLDAPAttributeValue(securityManager, totpSecretPre)
+	if decryptErr != nil {
+		return nil, errors.ErrLDAPConfig.WithDetail(
+			fmt.Sprintf("Failed to decrypt LDAP master TOTP secret: %v", decryptErr))
+	}
+
+	switch typedSecret := decryptedSecret.(type) {
+	case []any:
+		return typedSecret, nil
+	case []string:
+		normalized := make([]any, len(typedSecret))
+		for index, entry := range typedSecret {
+			normalized[index] = entry
+		}
+
+		return normalized, nil
+	default:
+		return totpSecretPre, nil
+	}
+}
+
+// authenticateLDAPPassDBUser performs the optional LDAP bind for password verification.
+func (lm *ldapManagerImpl) authenticateLDAPPassDBUser(
+	lctx context.Context,
+	auth *AuthState,
+	tr monittrace.Tracer,
+	lspan trace.Span,
+	dn string,
+) (bool, error) {
+	if auth.Request.NoAuth {
+		return true, nil
+	}
+
+	replyChan := make(chan *bktype.LDAPReply, 1)
+	_, endAuthPrepare := startSpan(lctx, tr, "ldap.passdb.auth.prepare")
+
+	ctxBind, cancelBind := context.WithTimeout(auth.Ctx(), lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPBind())
+	defer cancelBind()
+
+	request := lm.newLDAPPassDBBindRequest(ctxBind, auth, dn, replyChan)
+	priority := lm.requestPriority(auth)
+
+	endAuthPrepare()
+	lm.ldapAuthQueue().Push(request, priority)
+
+	ldapReply := waitLDAPReply(lctx, tr, "ldap.passdb.auth.wait", replyChan)
+	if ldapReply.Err == nil {
+		return true, nil
+	}
+
+	return lm.handleLDAPPassDBBindError(auth, lspan, ldapReply.Err)
+}
+
+// newLDAPPassDBBindRequest builds the queued LDAP bind request for PassDB.
+func (lm *ldapManagerImpl) newLDAPPassDBBindRequest(
+	ctxBind context.Context,
+	auth *AuthState,
+	dn string,
+	replyChan chan *bktype.LDAPReply,
+) *bktype.LDAPAuthRequest {
+	var bindPassword string
+
+	auth.Request.Password.WithString(func(value string) {
+		bindPassword = value
+	})
+
+	return &bktype.LDAPAuthRequest{
+		GUID:              auth.Runtime.GUID,
+		PoolName:          lm.poolName,
+		BindDN:            dn,
+		BindPW:            bindPassword,
+		LDAPReplyChan:     replyChan,
+		HTTPClientContext: ctxBind,
+	}
+}
+
+// handleLDAPPassDBBindError distinguishes invalid credentials from transport errors.
+func (lm *ldapManagerImpl) handleLDAPPassDBBindError(auth *AuthState, lspan trace.Span, err error) (bool, error) {
+	util.DebugModuleWithCfg(
+		auth.Ctx(),
+		lm.effectiveCfg(),
+		lm.effectiveLogger(),
+		definitions.DbgLDAP,
+		definitions.LogKeyGUID, auth.Runtime.GUID,
+		definitions.LogKeyMsg, err,
+	)
+
+	if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
+		if ldapError.ResultCode != uint16(ldap.LDAPResultInvalidCredentials) {
+			lspan.RecordError(ldapError)
+
+			return false, ldapError.Err
+		}
+	}
+
+	lspan.SetAttributes(attribute.Bool("authenticated", false))
+
+	return false, nil
+}
+
+// completeLDAPPassDBAuthentication records successful bind state and cache status.
+func completeLDAPPassDBAuthentication(auth *AuthState, lspan trace.Span, passDBResult *PassDBResult) {
 	passDBResult.Authenticated = true
 
 	lspan.SetAttributes(attribute.Bool("authenticated", true))
-
-	// Update the authentication cache
 	localcache.AuthCache.Set(auth.Request.Username, true)
+}
 
-	// We need to do a second user lookup, to retrieve correct data from LDAP.
-	if auth.Runtime.MasterUserMode {
-		previousNoAuth := auth.Request.NoAuth
-		auth.Request.NoAuth = true
-
-		PutPassDBResultToPool(passDBResult)
-
-		passDBResult, err = lm.PassDB(auth)
-		auth.Request.NoAuth = previousNoAuth
-
-		restoreMasterUserTOTPSecret(passDBResult, totpSecretPre, protocol.TOTPSecretField)
+// refreshLDAPPassDBForMasterUser performs the second lookup required for master-user mode.
+func (lm *ldapManagerImpl) refreshLDAPPassDBForMasterUser(
+	auth *AuthState,
+	passDBResult *PassDBResult,
+	totpSecretPre []any,
+	protocol *config.LDAPSearchProtocol,
+) (*PassDBResult, error) {
+	if !auth.Runtime.MasterUserMode {
+		return passDBResult, nil
 	}
 
-	return
+	previousNoAuth := auth.Request.NoAuth
+	auth.Request.NoAuth = true
+
+	PutPassDBResultToPool(passDBResult)
+
+	refreshedResult, err := lm.PassDB(auth)
+	auth.Request.NoAuth = previousNoAuth
+
+	restoreMasterUserTOTPSecret(refreshedResult, totpSecretPre, protocol.TOTPSecretField)
+
+	return refreshedResult, err
 }
 
 // AccountDB implements the list-account mode and returns all known users from an LDAP server.
@@ -705,16 +915,6 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	defer asp.End()
 
-	var (
-		accountField string
-		filter       string
-		baseDN       string
-		attributes   []string
-		ldapReply    *bktype.LDAPReply
-		scope        *config.LDAPScope
-		searchConfig ldapSearchConfig
-	)
-
 	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
 	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "ldap_account_request_total", resource)
 
@@ -724,69 +924,36 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
-	_, endPrepare := startSpan(actx, tr, "ldap.accountdb.prepare")
-
-	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
-		filterGetter:        (*config.LDAPSearchProtocol).GetListAccountsFilter,
-		ignoreFilterError:   true,
-		includeAccountField: true,
-		includeAttributes:   true,
-	})
-
-	if err != nil || searchConfig.protocol == nil {
+	plan, endPrepare, err := lm.prepareLDAPAccountSearch(actx, auth, asp, tr)
+	if err != nil || endPrepare == nil {
 		return
 	}
 
-	accountField = searchConfig.accountField
-	attributes = searchConfig.attributes
-	filter = searchConfig.filter
-	baseDN = searchConfig.baseDN
-	scope = searchConfig.scope
-
-	asp.SetAttributes(
-		attribute.String("base_dn", baseDN),
-		attribute.String("scope", scope.String()),
-	)
-
-	// Derive a timeout context for LDAP search (account list) using service-scoped context
 	ctxSearch, cancelSearch := util.GetCtxWithDeadlineLDAPSearch(lm.effectiveCfg())
 	defer cancelSearch()
 
-	macroSource := lm.newMacroSource(auth, true)
-
-	ldapRequest := &bktype.LDAPRequest{
-		GUID:              auth.Runtime.GUID,
-		Command:           definitions.LDAPSearch,
-		PoolName:          lm.poolName,
-		MacroSource:       macroSource,
-		Filter:            filter,
-		BaseDN:            baseDN,
-		SearchAttributes:  attributes,
-		Scope:             *scope,
-		LDAPReplyChan:     ldapReplyChan,
-		HTTPClientContext: ctxSearch,
-	}
+	ldapRequest := lm.newLDAPAccountRequest(ctxSearch, auth, plan, ldapReplyChan)
 
 	endPrepare()
 
 	lm.ldapQueue().Push(ldapRequest, priorityqueue.PriorityMedium)
 
-	ldapReply = waitLDAPReply(actx, tr, "ldap.accountdb.wait", ldapReplyChan)
+	ldapReply := waitLDAPReply(actx, tr, "ldap.accountdb.wait", ldapReplyChan)
 
 	if ldapReply.Err != nil {
-		if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
-			asp.RecordError(ldapError)
-
-			return accounts, ldapError.Err
-		}
-
-		asp.RecordError(ldapReply.Err)
-
-		return accounts, ldapReply.Err
+		return accounts, recordLDAPReplyError(asp, ldapReply.Err)
 	}
 
+	accounts = lm.accountsFromLDAPReply(auth, ldapReply, plan.accountField)
+
+	return accounts, nil
+}
+
+// accountsFromLDAPReply converts the configured LDAP account field into an account list.
+func (lm *ldapManagerImpl) accountsFromLDAPReply(auth *AuthState, ldapReply *bktype.LDAPReply, accountField string) AccountList {
+	var accounts AccountList
+
 	if result, okay := ldapReply.Result[accountField]; okay {
-		// Pre-allocate the accounts slice to avoid continuous reallocation
 		accounts = make([]string, 0, len(result))
 		for index := range result {
 			if account, okay := result[index].(string); okay {
@@ -802,7 +969,202 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		)
 	}
 
-	return accounts, nil
+	return accounts
+}
+
+// prepareLDAPAccountSearch resolves LDAP search settings for account listing.
+func (lm *ldapManagerImpl) prepareLDAPAccountSearch(ctx context.Context, auth *AuthState, span trace.Span, tr monittrace.Tracer) (ldapAccountSearchPlan, spanEnder, error) {
+	var plan ldapAccountSearchPlan
+
+	_, endPrepare := startSpan(ctx, tr, "ldap.accountdb.prepare")
+
+	searchConfig, err := lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
+		filterGetter:        (*config.LDAPSearchProtocol).GetListAccountsFilter,
+		ignoreFilterError:   true,
+		includeAccountField: true,
+		includeAttributes:   true,
+	})
+	if err != nil || searchConfig.protocol == nil {
+		return plan, nil, err
+	}
+
+	span.SetAttributes(
+		attribute.String("base_dn", searchConfig.baseDN),
+		attribute.String("scope", searchConfig.scope.String()),
+	)
+
+	plan.accountField = searchConfig.accountField
+	plan.attributes = searchConfig.attributes
+	plan.filter = searchConfig.filter
+	plan.baseDN = searchConfig.baseDN
+	plan.scope = searchConfig.scope
+
+	return plan, endPrepare, nil
+}
+
+// newLDAPAccountRequest builds the LDAP search request used for account listing.
+func (lm *ldapManagerImpl) newLDAPAccountRequest(ctx context.Context, auth *AuthState, plan ldapAccountSearchPlan, replyChan chan *bktype.LDAPReply) *bktype.LDAPRequest {
+	return &bktype.LDAPRequest{
+		GUID:              auth.Runtime.GUID,
+		Command:           definitions.LDAPSearch,
+		PoolName:          lm.poolName,
+		MacroSource:       lm.newMacroSource(auth, true),
+		Filter:            plan.filter,
+		BaseDN:            plan.baseDN,
+		SearchAttributes:  plan.attributes,
+		Scope:             *plan.scope,
+		LDAPReplyChan:     replyChan,
+		HTTPClientContext: ctx,
+	}
+}
+
+// recordLDAPReplyError records and returns an LDAP reply error without changing its concrete value.
+func recordLDAPReplyError(span trace.Span, err error) error {
+	if err != nil {
+		span.RecordError(err)
+	}
+
+	return err
+}
+
+// encryptLDAPString encrypts a value with the configured LDAP encryption secret.
+func (lm *ldapManagerImpl) encryptLDAPString(value string, failureDetail string) (string, error) {
+	securityManager := security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
+
+	encryptedValue, err := securityManager.Encrypt(value)
+	if err != nil {
+		return "", errors.ErrLDAPConfig.WithDetail(fmt.Sprintf("%s: %v", failureDetail, err))
+	}
+
+	return encryptedValue, nil
+}
+
+// encryptLDAPStrings encrypts a list of values with the configured LDAP encryption secret.
+func (lm *ldapManagerImpl) encryptLDAPStrings(values []string, failureDetail string) ([]string, error) {
+	securityManager := security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
+	encryptedValues := make([]string, len(values))
+
+	for index, value := range values {
+		encryptedValue, err := securityManager.Encrypt(value)
+		if err != nil {
+			return nil, errors.ErrLDAPConfig.WithDetail(fmt.Sprintf("%s: %v", failureDetail, err))
+		}
+
+		encryptedValues[index] = encryptedValue
+	}
+
+	return encryptedValues, nil
+}
+
+// addLDAPObjectClass adds an optional objectClass before mutating an LDAP attribute.
+func (lm *ldapManagerImpl) addLDAPObjectClass(ctx context.Context, auth *AuthState, tr monittrace.Tracer, input ldapObjectClassAddInput) error {
+	if input.objectClass == "" {
+		return nil
+	}
+
+	ctxAddOC, cancelAddOC := lm.ldapModifyContext()
+	defer cancelAddOC()
+
+	objectClassReplyChan := make(chan *bktype.LDAPReply, 1)
+	ocRequest := lm.newLDAPModifyRequest(ldapModifyRequestInput{
+		auth:              auth,
+		filter:            input.filter,
+		baseDN:            input.baseDN,
+		scope:             input.scope,
+		subCommand:        definitions.LDAPModifyAdd,
+		ctx:               ctxAddOC,
+		replyChan:         objectClassReplyChan,
+		includeTOTPSecret: input.includeTOTPSecret,
+	})
+
+	ocRequest.ModifyAttributes = bktype.LDAPModifyAttributes{
+		ldapAttributeObjectClass: []string{input.objectClass},
+	}
+
+	lm.ldapQueue().Push(ocRequest, input.priority)
+
+	var ocReply *bktype.LDAPReply
+	if input.waitSpan != "" {
+		ocReply = waitLDAPReply(ctx, tr, input.waitSpan, objectClassReplyChan)
+	} else {
+		ocReply = <-objectClassReplyChan
+	}
+
+	if ocReply.Err == nil || isAttributeOrValueExistsError(ocReply.Err) {
+		return nil
+	}
+
+	return ocReply.Err
+}
+
+// prepareLDAPAttributeReplace resolves LDAP search settings for a single attribute replacement.
+func (lm *ldapManagerImpl) prepareLDAPAttributeReplace(ctx context.Context, auth *AuthState, span trace.Span, tr monittrace.Tracer, params ldapAttributeReplaceParams) (ldapAttributeReplacePlan, spanEnder, error) {
+	var plan ldapAttributeReplacePlan
+
+	_, endPrepare := startSpan(ctx, tr, params.prepareSpan)
+
+	searchConfig, err := lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
+		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
+		requireProtocol:       true,
+		missingProtocolDetail: params.missingProtocolDetail,
+	})
+	if err != nil || searchConfig.protocol == nil {
+		return plan, nil, err
+	}
+
+	span.SetAttributes(
+		attribute.String("base_dn", searchConfig.baseDN),
+		attribute.String("scope", searchConfig.scope.String()),
+	)
+
+	configField := params.fieldGetter(searchConfig.protocol)
+	if configField == "" {
+		endPrepare()
+
+		return plan, nil, errors.ErrLDAPConfig.WithDetail(
+			fmt.Sprintf("%s; protocol=%s", params.missingFieldDetail, auth.Request.Protocol.Get()))
+	}
+
+	plan.protocol = searchConfig.protocol
+	plan.filter = searchConfig.filter
+	plan.baseDN = searchConfig.baseDN
+	plan.scope = searchConfig.scope
+	plan.configField = configField
+
+	return plan, endPrepare, nil
+}
+
+// newLDAPReplaceAttributeRequest builds the LDAP modify-replace request for one attribute.
+func (lm *ldapManagerImpl) newLDAPReplaceAttributeRequest(ctx context.Context, auth *AuthState, plan ldapAttributeReplacePlan, replyChan chan *bktype.LDAPReply, values []string, includeTOTPSecret bool) *bktype.LDAPRequest {
+	ldapRequest := lm.newLDAPModifyRequest(ldapModifyRequestInput{
+		auth:              auth,
+		filter:            plan.filter,
+		baseDN:            plan.baseDN,
+		scope:             plan.scope,
+		subCommand:        definitions.LDAPModifyReplace,
+		ctx:               ctx,
+		replyChan:         replyChan,
+		includeTOTPSecret: includeTOTPSecret,
+	})
+
+	ldapRequest.ModifyAttributes = bktype.LDAPModifyAttributes{
+		plan.configField: values,
+	}
+
+	return ldapRequest
+}
+
+// replaceLDAPAttribute executes the LDAP modify-replace operation for one attribute.
+func (lm *ldapManagerImpl) replaceLDAPAttribute(ctx context.Context, auth *AuthState, tr monittrace.Tracer, waitSpan string, plan ldapAttributeReplacePlan, values []string, priority int, includeTOTPSecret bool) error {
+	ldapReplyChan := make(chan *bktype.LDAPReply)
+
+	ctxModify, cancelModify := lm.ldapModifyContext()
+	defer cancelModify()
+
+	ldapRequest := lm.newLDAPReplaceAttributeRequest(ctxModify, auth, plan, ldapReplyChan, values, includeTOTPSecret)
+	lm.ldapQueue().Push(ldapRequest, priority)
+
+	return waitLDAPReply(ctx, tr, waitSpan, ldapReplyChan).Err
 }
 
 // AddTOTPSecret adds a newly generated TOTP secret to an LDAP server.
@@ -818,16 +1180,6 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	defer msp.End()
 
-	var (
-		filter       string
-		baseDN       string
-		configField  string
-		ldapReply    *bktype.LDAPReply
-		scope        *config.LDAPScope
-		protocol     *config.LDAPSearchProtocol
-		searchConfig ldapSearchConfig
-	)
-
 	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
 	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "ldap_store_totp_request_total", resource)
 
@@ -835,116 +1187,48 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		defer stopTimer()
 	}
 
-	ldapReplyChan := make(chan *bktype.LDAPReply)
-
-	_, endPrepare := startSpan(mctx, tr, "ldap.add_totp.prepare")
-
-	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
-		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
-		requireProtocol:       true,
+	plan, endPrepare, err := lm.prepareLDAPAttributeReplace(mctx, auth, msp, tr, ldapAttributeReplaceParams{
+		prepareSpan:           "ldap.add_totp.prepare",
 		missingProtocolDetail: "Missing LDAP search protocol for TOTP; protocol=%s",
+		missingFieldDetail:    ldapMissingTOTPSecretFieldDetail,
+		fieldGetter:           (*config.LDAPSearchProtocol).GetTotpSecretField,
 	})
-	if err != nil || searchConfig.protocol == nil {
+	if err != nil || endPrepare == nil {
 		return
 	}
 
-	protocol = searchConfig.protocol
-	filter = searchConfig.filter
-	baseDN = searchConfig.baseDN
-	scope = searchConfig.scope
-
-	msp.SetAttributes(
-		attribute.String("base_dn", baseDN),
-		attribute.String("scope", scope.String()),
-	)
-
-	configField = totp.GetLDAPTOTPSecret(protocol)
-	if configField == "" {
-		endPrepare()
-
-		err = errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Missing LDAP TOTP secret field; protocol=%s", auth.Request.Protocol.Get()))
-
-		return
-	}
-
-	securityManager := security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
-
-	encryptedSecret, encryptErr := securityManager.Encrypt(totp.GetValue())
+	encryptedSecret, encryptErr := lm.encryptLDAPString(totp.GetValue(), "Failed to encrypt LDAP TOTP secret")
 	if encryptErr != nil {
 		endPrepare()
 
-		return errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Failed to encrypt LDAP TOTP secret: %v", encryptErr))
+		return encryptErr
 	}
 
-	totpObjectClass := protocol.GetTotpObjectClass()
-
-	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	totpObjectClass := plan.protocol.GetTotpObjectClass()
 	priority := lm.requestPriority(auth)
 
 	endPrepare()
 
-	// Step 1: Add objectClass in a separate request (ignore "already exists")
-	if totpObjectClass != "" {
-		ctxAddOC, cancelAddOC := lm.ldapModifyContext()
-		defer cancelAddOC()
-
-		objectClassReplyChan := make(chan *bktype.LDAPReply, 1)
-
-		ocRequest := lm.newLDAPModifyRequest(ldapModifyRequestInput{
-			auth:              auth,
-			filter:            filter,
-			baseDN:            baseDN,
-			scope:             scope,
-			subCommand:        definitions.LDAPModifyAdd,
-			ctx:               ctxAddOC,
-			replyChan:         objectClassReplyChan,
-			includeTOTPSecret: true,
-		})
-
-		ocRequest.ModifyAttributes = bktype.LDAPModifyAttributes{
-			ldapAttributeObjectClass: []string{totpObjectClass},
-		}
-
-		lm.ldapQueue().Push(ocRequest, priority)
-
-		ocReply := waitLDAPReply(mctx, tr, "ldap.add_totp.objectclass", objectClassReplyChan)
-		if ocReply.Err != nil && !isAttributeOrValueExistsError(ocReply.Err) {
-			msp.RecordError(ocReply.Err)
-
-			return wrapLDAPModifyError(ocReply.Err, "Failed to add objectClass for TOTP")
-		}
-	}
-
-	// Step 2: Replace the TOTP secret (works for both new and existing values)
-	ctxModify, cancelModify := lm.ldapModifyContext()
-	defer cancelModify()
-
-	ldapRequest := lm.newLDAPModifyRequest(ldapModifyRequestInput{
-		auth:              auth,
-		filter:            filter,
-		baseDN:            baseDN,
-		scope:             scope,
-		subCommand:        definitions.LDAPModifyReplace,
-		ctx:               ctxModify,
-		replyChan:         ldapReplyChan,
+	if err := lm.addLDAPObjectClass(mctx, auth, tr, ldapObjectClassAddInput{
+		scope:             plan.scope,
+		filter:            plan.filter,
+		baseDN:            plan.baseDN,
+		objectClass:       totpObjectClass,
+		waitSpan:          "ldap.add_totp.objectclass",
+		priority:          priority,
 		includeTOTPSecret: true,
-	})
+	}); err != nil {
+		msp.RecordError(err)
 
-	ldapRequest.ModifyAttributes = bktype.LDAPModifyAttributes{
-		configField: []string{encryptedSecret},
+		return wrapLDAPModifyError(err, "Failed to add objectClass for TOTP")
 	}
 
-	lm.ldapQueue().Push(ldapRequest, priority)
-
-	ldapReply = waitLDAPReply(mctx, tr, "ldap.add_totp.wait", ldapReplyChan)
-
-	if ldapReply.Err != nil {
-		msp.RecordError(ldapReply.Err)
+	replyErr := lm.replaceLDAPAttribute(mctx, auth, tr, "ldap.add_totp.wait", plan, []string{encryptedSecret}, priority, true)
+	if replyErr != nil {
+		msp.RecordError(replyErr)
 	}
 
-	return wrapLDAPModifyError(ldapReply.Err, "Failed to add TOTP secret")
+	return wrapLDAPModifyError(replyErr, "Failed to add TOTP secret")
 }
 
 // deleteLDAPFieldParams holds the per-operation parameters for deleteLDAPField.
@@ -956,6 +1240,67 @@ type deleteLDAPFieldParams struct {
 	waitSpan      string
 	fieldGetter   func(*config.LDAPSearchProtocol) string
 	missingDetail string
+}
+
+type deleteLDAPFieldPlan struct {
+	scope       *config.LDAPScope
+	filter      string
+	baseDN      string
+	configField string
+}
+
+// prepareDeleteLDAPField resolves LDAP search settings and the attribute to delete.
+func (lm *ldapManagerImpl) prepareDeleteLDAPField(ctx context.Context, auth *AuthState, params deleteLDAPFieldParams, span trace.Span, tr monittrace.Tracer) (deleteLDAPFieldPlan, spanEnder, error) {
+	var plan deleteLDAPFieldPlan
+
+	_, endPrepare := startSpan(ctx, tr, params.prepareSpan)
+
+	searchConfig, err := lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
+		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
+		requireProtocol:       true,
+		missingProtocolDetail: "Missing LDAP search protocol for delete; protocol=%s",
+	})
+	if err != nil || searchConfig.protocol == nil {
+		return plan, nil, err
+	}
+
+	span.SetAttributes(
+		attribute.String("base_dn", searchConfig.baseDN),
+		attribute.String("scope", searchConfig.scope.String()),
+	)
+
+	configField := params.fieldGetter(searchConfig.protocol)
+	if configField == "" {
+		endPrepare()
+
+		return plan, nil, errors.ErrLDAPConfig.WithDetail(
+			fmt.Sprintf("%s; protocol=%s", params.missingDetail, auth.Request.Protocol.Get()))
+	}
+
+	plan.filter = searchConfig.filter
+	plan.baseDN = searchConfig.baseDN
+	plan.scope = searchConfig.scope
+	plan.configField = configField
+
+	return plan, endPrepare, nil
+}
+
+// newDeleteLDAPFieldRequest builds the LDAP modify-delete request for one attribute.
+func (lm *ldapManagerImpl) newDeleteLDAPFieldRequest(ctx context.Context, auth *AuthState, plan deleteLDAPFieldPlan, replyChan chan *bktype.LDAPReply) *bktype.LDAPRequest {
+	ldapRequest := lm.newLDAPModifyRequest(ldapModifyRequestInput{
+		auth:       auth,
+		filter:     plan.filter,
+		baseDN:     plan.baseDN,
+		scope:      plan.scope,
+		subCommand: definitions.LDAPModifyDelete,
+		ctx:        ctx,
+		replyChan:  replyChan,
+	})
+
+	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 1)
+	ldapRequest.ModifyAttributes[plan.configField] = []string{}
+
+	return ldapRequest
 }
 
 // deleteLDAPField is the shared implementation for deleting a single LDAP attribute (TOTP secret, recovery codes, etc.).
@@ -971,16 +1316,6 @@ func (lm *ldapManagerImpl) deleteLDAPField(auth *AuthState, params deleteLDAPFie
 
 	defer msp.End()
 
-	var (
-		filter       string
-		baseDN       string
-		configField  string
-		ldapReply    *bktype.LDAPReply
-		scope        *config.LDAPScope
-		protocol     *config.LDAPSearchProtocol
-		searchConfig ldapSearchConfig
-	)
-
 	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
 	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), params.promLabel, params.promMetric, resource)
 
@@ -990,63 +1325,22 @@ func (lm *ldapManagerImpl) deleteLDAPField(auth *AuthState, params deleteLDAPFie
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
-	_, endPrepare := startSpan(mctx, tr, params.prepareSpan)
-
-	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
-		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
-		requireProtocol:       true,
-		missingProtocolDetail: "Missing LDAP search protocol for delete; protocol=%s",
-	})
-	if err != nil || searchConfig.protocol == nil {
+	plan, endPrepare, err := lm.prepareDeleteLDAPField(mctx, auth, params, msp, tr)
+	if err != nil || endPrepare == nil {
 		return
 	}
 
-	protocol = searchConfig.protocol
-	filter = searchConfig.filter
-	baseDN = searchConfig.baseDN
-	scope = searchConfig.scope
-
-	msp.SetAttributes(
-		attribute.String("base_dn", baseDN),
-		attribute.String("scope", scope.String()),
-	)
-
-	configField = params.fieldGetter(protocol)
-	if configField == "" {
-		endPrepare()
-
-		err = errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("%s; protocol=%s", params.missingDetail, auth.Request.Protocol.Get()))
-
-		return
-	}
-
-	// Derive a timeout context for LDAP modify using service-scoped context
 	ctxModify, cancelModify := lm.ldapModifyContext()
 	defer cancelModify()
 
-	ldapRequest := lm.newLDAPModifyRequest(ldapModifyRequestInput{
-		auth:       auth,
-		filter:     filter,
-		baseDN:     baseDN,
-		scope:      scope,
-		subCommand: definitions.LDAPModifyDelete,
-		ctx:        ctxModify,
-		replyChan:  ldapReplyChan,
-	})
-
-	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 1)
-	ldapRequest.ModifyAttributes[configField] = []string{}
-
-	// Determine priority based on NoAuth flag and whether the user is already authenticated
-	priority := lm.requestPriority(auth)
+	ldapRequest := lm.newDeleteLDAPFieldRequest(ctxModify, auth, plan, ldapReplyChan)
 
 	endPrepare()
 
 	// Use priority queue instead of channel
-	lm.ldapQueue().Push(ldapRequest, priority)
+	lm.ldapQueue().Push(ldapRequest, lm.requestPriority(auth))
 
-	ldapReply = waitLDAPReply(mctx, tr, params.waitSpan, ldapReplyChan)
+	ldapReply := waitLDAPReply(mctx, tr, params.waitSpan, ldapReplyChan)
 
 	if isNoSuchAttributeError(ldapReply.Err) {
 		return nil
@@ -1068,7 +1362,7 @@ func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 		prepareSpan:   "ldap.delete_totp.prepare",
 		waitSpan:      "ldap.delete_totp.wait",
 		fieldGetter:   (*config.LDAPSearchProtocol).GetTotpSecretField,
-		missingDetail: "Missing LDAP TOTP secret field",
+		missingDetail: ldapMissingTOTPSecretFieldDetail,
 	})
 }
 
@@ -1085,16 +1379,6 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 
 	defer msp.End()
 
-	var (
-		filter       string
-		baseDN       string
-		configField  string
-		ldapReply    *bktype.LDAPReply
-		scope        *config.LDAPScope
-		protocol     *config.LDAPSearchProtocol
-		searchConfig ldapSearchConfig
-	)
-
 	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
 	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTPRecovery, "ldap_store_totp_recovery_request_total", resource)
 
@@ -1102,118 +1386,48 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 		defer stopTimer()
 	}
 
-	ldapReplyChan := make(chan *bktype.LDAPReply)
-
-	_, endPrepare := startSpan(mctx, tr, "ldap.add_totp_recovery.prepare")
-
-	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
-		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
-		requireProtocol:       true,
+	plan, endPrepare, err := lm.prepareLDAPAttributeReplace(mctx, auth, msp, tr, ldapAttributeReplaceParams{
+		prepareSpan:           "ldap.add_totp_recovery.prepare",
 		missingProtocolDetail: "Missing LDAP search protocol for TOTP recovery; protocol=%s",
+		missingFieldDetail:    ldapMissingTOTPRecoveryFieldDetail,
+		fieldGetter:           (*config.LDAPSearchProtocol).GetTotpRecoveryField,
 	})
-	if err != nil || searchConfig.protocol == nil {
+	if err != nil || endPrepare == nil {
 		return
 	}
 
-	protocol = searchConfig.protocol
-	filter = searchConfig.filter
-	baseDN = searchConfig.baseDN
-	scope = searchConfig.scope
-
-	msp.SetAttributes(
-		attribute.String("base_dn", baseDN),
-		attribute.String("scope", scope.String()),
-	)
-
-	configField = recovery.GetLDAPRecoveryField(protocol)
-	if configField == "" {
-		endPrepare()
-
-		err = errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Missing LDAP TOTP recovery field; protocol=%s", auth.Request.Protocol.Get()))
-
-		return
-	}
-
-	securityManager := security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
 	codes := recovery.GetCodes()
 
-	encryptedCodes := make([]string, len(codes))
-	for index, code := range codes {
-		encryptedCode, encryptErr := securityManager.Encrypt(code)
-		if encryptErr != nil {
-			endPrepare()
+	encryptedCodes, encryptErr := lm.encryptLDAPStrings(codes, "Failed to encrypt LDAP TOTP recovery code")
+	if encryptErr != nil {
+		endPrepare()
 
-			return errors.ErrLDAPConfig.WithDetail(
-				fmt.Sprintf("Failed to encrypt LDAP TOTP recovery code: %v", encryptErr))
-		}
-
-		encryptedCodes[index] = encryptedCode
+		return encryptErr
 	}
 
-	// Derive a timeout context for LDAP modify using service-scoped context
-	ctxModify, cancelModify := lm.ldapModifyContext()
-	defer cancelModify()
-
-	ldapRequest := lm.newLDAPModifyRequest(ldapModifyRequestInput{
-		auth:       auth,
-		filter:     filter,
-		baseDN:     baseDN,
-		scope:      scope,
-		subCommand: definitions.LDAPModifyReplace,
-		ctx:        ctxModify,
-		replyChan:  ldapReplyChan,
-	})
-
-	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 1)
-	ldapRequest.ModifyAttributes[configField] = encryptedCodes
-
-	totpRecoveryObjectClass := protocol.GetTotpRecoveryObjectClass()
-
-	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	totpRecoveryObjectClass := plan.protocol.GetTotpRecoveryObjectClass()
 	priority := lm.requestPriority(auth)
 
-	if totpRecoveryObjectClass != "" {
-		objectClassReplyChan := make(chan *bktype.LDAPReply, 1)
+	if err := lm.addLDAPObjectClass(mctx, auth, tr, ldapObjectClassAddInput{
+		scope:       plan.scope,
+		filter:      plan.filter,
+		baseDN:      plan.baseDN,
+		objectClass: totpRecoveryObjectClass,
+		priority:    priority,
+	}); err != nil {
+		msp.RecordError(err)
 
-		ctxAddObjectClass, cancelAddObjectClass := lm.ldapModifyContext()
-		defer cancelAddObjectClass()
-
-		objectClassRequest := lm.newLDAPModifyRequest(ldapModifyRequestInput{
-			auth:       auth,
-			filter:     filter,
-			baseDN:     baseDN,
-			scope:      scope,
-			subCommand: definitions.LDAPModifyAdd,
-			ctx:        ctxAddObjectClass,
-			replyChan:  objectClassReplyChan,
-		})
-		objectClassRequest.ModifyAttributes = bktype.LDAPModifyAttributes{
-			ldapAttributeObjectClass: []string{totpRecoveryObjectClass},
-		}
-
-		lm.ldapQueue().Push(objectClassRequest, priority)
-
-		objectClassReply := <-objectClassReplyChan
-		if objectClassReply.Err != nil && !isAttributeOrValueExistsError(objectClassReply.Err) {
-			msp.RecordError(objectClassReply.Err)
-
-			return wrapLDAPModifyError(objectClassReply.Err, "Failed to add objectClass for TOTP recovery")
-		}
+		return wrapLDAPModifyError(err, "Failed to add objectClass for TOTP recovery")
 	}
 
 	endPrepare()
 
-	// Use priority queue instead of channel
-	lm.ldapQueue().Push(ldapRequest, priority)
-
-	ldapReply = waitLDAPReply(mctx, tr, "ldap.add_totp_recovery.wait", ldapReplyChan)
-
-	if ldapReply.Err != nil {
-		msp.RecordError(ldapReply.Err)
+	replyErr := lm.replaceLDAPAttribute(mctx, auth, tr, "ldap.add_totp_recovery.wait", plan, encryptedCodes, priority, false)
+	if replyErr != nil {
+		msp.RecordError(replyErr)
 	}
 
-	return wrapLDAPModifyError(ldapReply.Err, "Failed to add TOTP recovery codes")
+	return wrapLDAPModifyError(replyErr, "Failed to add TOTP recovery codes")
 }
 
 // DeleteTOTPRecoveryCodes removes all TOTP recovery codes for the user in the LDAP backend.
@@ -1225,7 +1439,7 @@ func (lm *ldapManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err error) 
 		prepareSpan:   "ldap.delete_totp_recovery.prepare",
 		waitSpan:      "ldap.delete_totp_recovery.wait",
 		fieldGetter:   (*config.LDAPSearchProtocol).GetTotpRecoveryField,
-		missingDetail: "Missing LDAP TOTP recovery field",
+		missingDetail: ldapMissingTOTPRecoveryFieldDetail,
 	})
 }
 

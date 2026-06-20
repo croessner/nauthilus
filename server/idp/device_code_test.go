@@ -16,12 +16,10 @@
 package idp
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
@@ -31,154 +29,171 @@ func TestDefaultUserCodeGenerator_GenerateUserCode(t *testing.T) {
 	gen := &DefaultUserCodeGenerator{}
 
 	t.Run("generates code with correct length", func(t *testing.T) {
-		code, err := gen.GenerateUserCode(8)
-
-		assert.NoError(t, err)
-
-		// Code should be 9 chars: 4 + hyphen + 4
-		assert.Len(t, code, 9)
-		assert.Equal(t, "-", string(code[4]))
+		assertGeneratedUserCodeShape(t, gen, 8, 9, 4)
 	})
 
 	t.Run("generates code with correct charset", func(t *testing.T) {
-		const validChars = "ABCDEFGHJKMNPQRSTVWXYZ-"
+		assertGeneratedUserCodeCharset(t, gen)
+	})
 
+	t.Run("excludes confusing characters", func(t *testing.T) {
+		assertGeneratedUserCodeExcludesConfusingCharacters(t, gen)
+	})
+
+	t.Run("generates unique codes", func(t *testing.T) {
+		assertGeneratedUserCodesUnique(t, gen)
+	})
+
+	t.Run("handles different lengths", func(t *testing.T) {
+		assertGeneratedUserCodeShape(t, gen, 6, 7, 3)
+	})
+}
+
+// assertGeneratedUserCodeShape verifies length and hyphen placement.
+func assertGeneratedUserCodeShape(t *testing.T, gen *DefaultUserCodeGenerator, inputLength int, expectedLength int, hyphenIndex int) {
+	t.Helper()
+
+	code, err := gen.GenerateUserCode(inputLength)
+
+	assert.NoError(t, err)
+	assert.Len(t, code, expectedLength)
+	assert.Equal(t, "-", string(code[hyphenIndex]))
+}
+
+// assertGeneratedUserCodeCharset verifies that generated codes use the expected alphabet.
+func assertGeneratedUserCodeCharset(t *testing.T, gen *DefaultUserCodeGenerator) {
+	t.Helper()
+
+	const validChars = "ABCDEFGHJKMNPQRSTVWXYZ-"
+
+	code, err := gen.GenerateUserCode(8)
+
+	assert.NoError(t, err)
+
+	for _, c := range code {
+		assert.Contains(t, validChars, string(c), "unexpected character: %c", c)
+	}
+}
+
+// assertGeneratedUserCodeExcludesConfusingCharacters checks repeated samples for excluded characters.
+func assertGeneratedUserCodeExcludesConfusingCharacters(t *testing.T, gen *DefaultUserCodeGenerator) {
+	t.Helper()
+
+	const confusing = "OIL01"
+
+	for range 100 {
 		code, err := gen.GenerateUserCode(8)
 
 		assert.NoError(t, err)
 
-		for _, c := range code {
-			assert.Contains(t, validChars, string(c), "unexpected character: %c", c)
+		cleaned := strings.ReplaceAll(code, "-", "")
+		for _, c := range cleaned {
+			assert.NotContains(t, confusing, string(c), "confusing character found: %c", c)
 		}
-	})
+	}
+}
 
-	t.Run("excludes confusing characters", func(t *testing.T) {
-		const confusing = "OIL01"
+// assertGeneratedUserCodesUnique checks that a small sample does not collide.
+func assertGeneratedUserCodesUnique(t *testing.T, gen *DefaultUserCodeGenerator) {
+	t.Helper()
 
-		// Generate many codes and check none contain confusing characters
-		for range 100 {
-			code, err := gen.GenerateUserCode(8)
+	seen := make(map[string]bool)
 
-			assert.NoError(t, err)
-
-			cleaned := strings.ReplaceAll(code, "-", "")
-
-			for _, c := range cleaned {
-				assert.NotContains(t, confusing, string(c), "confusing character found: %c", c)
-			}
-		}
-	})
-
-	t.Run("generates unique codes", func(t *testing.T) {
-		seen := make(map[string]bool)
-
-		for range 50 {
-			code, err := gen.GenerateUserCode(8)
-
-			assert.NoError(t, err)
-
-			assert.False(t, seen[code], "duplicate code generated: %s", code)
-
-			seen[code] = true
-		}
-	})
-
-	t.Run("handles different lengths", func(t *testing.T) {
-		code, err := gen.GenerateUserCode(6)
+	for range 50 {
+		code, err := gen.GenerateUserCode(8)
 
 		assert.NoError(t, err)
+		assert.False(t, seen[code], "duplicate code generated: %s", code)
 
-		// Should be 7 chars: 3 + hyphen + 3
-		assert.Len(t, code, 7)
-		assert.Equal(t, "-", string(code[3]))
-	})
+		seen[code] = true
+	}
 }
 
 func TestRedisDeviceCodeStoreUsesConfiguredRedisDeadlines(t *testing.T) {
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			Timeouts: config.Timeouts{
-				RedisRead: 35 * time.Millisecond,
-			},
-		},
-	}
-
 	store := NewRedisDeviceCodeStore(nil, "test:")
-	store.cfg = cfg
+	store.cfg = newRedisReadDeadlineTestConfig(35 * time.Millisecond)
 
-	readCtx, cancel := store.redisReadContext(context.Background())
-	defer cancel()
-
-	deadline, ok := readCtx.Deadline()
-
-	assert.True(t, ok, "expected Redis read context to carry a deadline")
-	assert.WithinDuration(t, time.Now().Add(35*time.Millisecond), deadline, 10*time.Millisecond)
+	assertConfiguredRedisReadDeadline(t, store, 35*time.Millisecond)
 }
 
 func TestRedisDeviceCodeStore_StoreAndGet(t *testing.T) {
-	db, mock := redismock.NewClientMock()
-	client := rediscli.NewTestClient(db)
-	prefix := "test:"
-	store := NewRedisDeviceCodeStore(client, prefix)
-	ctx := t.Context()
+	store, mock, prefix := newRedisDeviceCodeStoreTest()
 
 	t.Run("StoreDeviceCode stores both device code and user code mapping", func(t *testing.T) {
-		deviceCode := "device-abc123"
-		request := &DeviceCodeRequest{
-			ClientID:  "test-client",
-			Scopes:    []string{"openid", "email"},
-			UserCode:  "ABCD-EFGH",
-			Status:    DeviceCodeStatusPending,
-			ExpiresAt: time.Now().Add(10 * time.Minute),
-			Interval:  5,
-		}
-
-		ttl := 10 * time.Minute
-		data, _ := json.Marshal(request)
-		encryptedData := string(data) // Passthrough encryption with empty key
-
-		mock.ExpectSet(prefix+"oidc:device_code:"+deviceCode, encryptedData, ttl).SetVal("OK")
-		mock.ExpectSet(prefix+"oidc:user_code:ABCD-EFGH", deviceCode, ttl).SetVal("OK")
-
-		err := store.StoreDeviceCode(ctx, deviceCode, request, ttl)
-
-		assert.NoError(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertStoreDeviceCodeStoresMappings(t, store, mock, prefix)
 	})
 
 	t.Run("GetDeviceCode retrieves stored request", func(t *testing.T) {
-		deviceCode := "device-get123"
-		request := &DeviceCodeRequest{
-			ClientID:  "test-client",
-			Scopes:    []string{"openid"},
-			UserCode:  "XYZW-MNPQ",
-			Status:    DeviceCodeStatusPending,
-			ExpiresAt: time.Now().Add(5 * time.Minute),
-			Interval:  5,
-		}
-
-		data, _ := json.Marshal(request)
-
-		mock.ExpectGet(prefix + "oidc:device_code:" + deviceCode).SetVal(string(data))
-
-		retrieved, err := store.GetDeviceCode(ctx, deviceCode)
-
-		assert.NoError(t, err)
-		assert.Equal(t, request.ClientID, retrieved.ClientID)
-		assert.Equal(t, request.UserCode, retrieved.UserCode)
-		assert.Equal(t, DeviceCodeStatusPending, retrieved.Status)
-		assert.NoError(t, mock.ExpectationsWereMet())
+		assertGetDeviceCodeRetrievesRequest(t, store, mock, prefix)
 	})
 
 	t.Run("GetDeviceCode returns error for expired/missing code", func(t *testing.T) {
 		mock.ExpectGet(prefix + "oidc:device_code:nonexistent").RedisNil()
 
-		_, err := store.GetDeviceCode(ctx, "nonexistent")
+		_, err := store.GetDeviceCode(t.Context(), "nonexistent")
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not found or expired")
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
+}
+
+// newRedisDeviceCodeStoreTest builds a mocked Redis-backed device-code store.
+func newRedisDeviceCodeStoreTest() (*RedisDeviceCodeStore, redismock.ClientMock, string) {
+	db, mock := redismock.NewClientMock()
+	client := rediscli.NewTestClient(db)
+	prefix := "test:"
+
+	return NewRedisDeviceCodeStore(client, prefix), mock, prefix
+}
+
+// assertStoreDeviceCodeStoresMappings verifies device-code and user-code Redis writes.
+func assertStoreDeviceCodeStoresMappings(t *testing.T, store *RedisDeviceCodeStore, mock redismock.ClientMock, prefix string) {
+	t.Helper()
+
+	deviceCode := "device-abc123"
+	ttl := 10 * time.Minute
+	request := testDeviceCodeRequest([]string{"openid", "email"}, "ABCD-EFGH", ttl)
+	data, _ := json.Marshal(request)
+
+	mock.ExpectSet(prefix+"oidc:device_code:"+deviceCode, string(data), ttl).SetVal("OK")
+	mock.ExpectSet(prefix+"oidc:user_code:ABCD-EFGH", deviceCode, ttl).SetVal("OK")
+
+	err := store.StoreDeviceCode(t.Context(), deviceCode, request, ttl)
+
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// assertGetDeviceCodeRetrievesRequest verifies a Redis read decodes into the stored request.
+func assertGetDeviceCodeRetrievesRequest(t *testing.T, store *RedisDeviceCodeStore, mock redismock.ClientMock, prefix string) {
+	t.Helper()
+
+	deviceCode := "device-get123"
+	request := testDeviceCodeRequest([]string{"openid"}, "XYZW-MNPQ", 5*time.Minute)
+	data, _ := json.Marshal(request)
+
+	mock.ExpectGet(prefix + "oidc:device_code:" + deviceCode).SetVal(string(data))
+
+	retrieved, err := store.GetDeviceCode(t.Context(), deviceCode)
+
+	assert.NoError(t, err)
+	assert.Equal(t, request.ClientID, retrieved.ClientID)
+	assert.Equal(t, request.UserCode, retrieved.UserCode)
+	assert.Equal(t, DeviceCodeStatusPending, retrieved.Status)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// testDeviceCodeRequest builds a pending device-code request for Redis store tests.
+func testDeviceCodeRequest(scopes []string, userCode string, ttl time.Duration) *DeviceCodeRequest {
+	return &DeviceCodeRequest{
+		ClientID:  "test-client",
+		Scopes:    scopes,
+		UserCode:  userCode,
+		Status:    DeviceCodeStatusPending,
+		ExpiresAt: time.Now().Add(ttl),
+		Interval:  5,
+	}
 }
 
 func TestRedisDeviceCodeStore_GetByUserCode(t *testing.T) {
@@ -186,61 +201,80 @@ func TestRedisDeviceCodeStore_GetByUserCode(t *testing.T) {
 	client := rediscli.NewTestClient(db)
 	prefix := "test:"
 	store := NewRedisDeviceCodeStore(client, prefix)
-	ctx := t.Context()
 
-	t.Run("GetDeviceCodeByUserCode normalizes and retrieves", func(t *testing.T) {
-		deviceCode := "device-user123"
-		request := &DeviceCodeRequest{
-			ClientID: "test-client",
-			UserCode: "ABCD-EFGH",
-			Status:   DeviceCodeStatusPending,
-		}
-
-		data, _ := json.Marshal(request)
-
-		// User enters "abcdefgh" -> normalized to "ABCD-EFGH"
-		mock.ExpectGet(prefix + "oidc:user_code:ABCD-EFGH").SetVal(deviceCode)
-		mock.ExpectGet(prefix + "oidc:device_code:" + deviceCode).SetVal(string(data))
-
-		dc, req, err := store.GetDeviceCodeByUserCode(ctx, "abcdefgh")
-
-		assert.NoError(t, err)
-		assert.Equal(t, deviceCode, dc)
-		assert.Equal(t, request.ClientID, req.ClientID)
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("GetDeviceCodeByUserCode handles hyphenated input", func(t *testing.T) {
-		deviceCode := "device-hyp123"
-		request := &DeviceCodeRequest{
-			ClientID: "test-client",
-			UserCode: "XYZW-MNPQ",
-			Status:   DeviceCodeStatusPending,
-		}
-
-		data, _ := json.Marshal(request)
-
-		// User enters "XYZW-MNPQ" -> normalized to "XYZW-MNPQ"
-		mock.ExpectGet(prefix + "oidc:user_code:XYZW-MNPQ").SetVal(deviceCode)
-		mock.ExpectGet(prefix + "oidc:device_code:" + deviceCode).SetVal(string(data))
-
-		dc, req, err := store.GetDeviceCodeByUserCode(ctx, "XYZW-MNPQ")
-
-		assert.NoError(t, err)
-		assert.Equal(t, deviceCode, dc)
-		assert.Equal(t, request.ClientID, req.ClientID)
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
+	for _, tc := range deviceCodeByUserCodeCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			assertDeviceCodeByUserCode(t, store, mock, prefix, tc)
+		})
+	}
 
 	t.Run("GetDeviceCodeByUserCode returns error for invalid code", func(t *testing.T) {
 		mock.ExpectGet(prefix + "oidc:user_code:INVA-LIDC").RedisNil()
 
-		_, _, err := store.GetDeviceCodeByUserCode(ctx, "INVA-LIDC")
+		_, _, err := store.GetDeviceCodeByUserCode(t.Context(), "INVA-LIDC")
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not found or expired")
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
+}
+
+type deviceCodeByUserCodeCase struct {
+	name       string
+	input      string
+	lookupCode string
+	deviceCode string
+	request    *DeviceCodeRequest
+}
+
+func deviceCodeByUserCodeCases() []deviceCodeByUserCodeCase {
+	return []deviceCodeByUserCodeCase{
+		{
+			name:       "GetDeviceCodeByUserCode normalizes and retrieves",
+			input:      "abcdefgh",
+			lookupCode: "ABCD-EFGH",
+			deviceCode: "device-user123",
+			request: &DeviceCodeRequest{
+				ClientID: "test-client",
+				UserCode: "ABCD-EFGH",
+				Status:   DeviceCodeStatusPending,
+			},
+		},
+		{
+			name:       "GetDeviceCodeByUserCode handles hyphenated input",
+			input:      "XYZW-MNPQ",
+			lookupCode: "XYZW-MNPQ",
+			deviceCode: "device-hyp123",
+			request: &DeviceCodeRequest{
+				ClientID: "test-client",
+				UserCode: "XYZW-MNPQ",
+				Status:   DeviceCodeStatusPending,
+			},
+		},
+	}
+}
+
+// assertDeviceCodeByUserCode verifies normalized user-code lookups return the stored request.
+func assertDeviceCodeByUserCode(
+	t *testing.T,
+	store *RedisDeviceCodeStore,
+	mock redismock.ClientMock,
+	prefix string,
+	tc deviceCodeByUserCodeCase,
+) {
+	t.Helper()
+
+	data, _ := json.Marshal(tc.request)
+
+	mock.ExpectGet(prefix + "oidc:user_code:" + tc.lookupCode).SetVal(tc.deviceCode)
+	mock.ExpectGet(prefix + "oidc:device_code:" + tc.deviceCode).SetVal(string(data))
+
+	deviceCode, req, err := store.GetDeviceCodeByUserCode(t.Context(), tc.input)
+
+	assert.NoError(t, err)
+	assert.Equal(t, tc.deviceCode, deviceCode)
+	assert.Equal(t, tc.request.ClientID, req.ClientID)
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestRedisDeviceCodeStore_Update(t *testing.T) {

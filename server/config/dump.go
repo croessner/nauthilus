@@ -312,57 +312,82 @@ func buildStructuredNonDefaultConfigDumpValue(
 
 	switch node.kind {
 	case configSchemaObject:
-		entries, ok := configMapEntries(value)
-		if !ok {
-			normalized := normalizeStructuredConfigDumpValue(prefix, value)
-
-			return normalized, true
-		}
-
-		sort.Slice(entries, func(left int, right int) bool {
-			return entries[left].key < entries[right].key
-		})
-
-		result := make(map[string]any)
-
-		for _, entry := range entries {
-			childPath := joinConfigPath(prefix, entry.key)
-
-			childNode, ok := node.fieldByConfigName[entry.key]
-			if ok {
-				childValue, keep := buildStructuredNonDefaultConfigDumpValue(childNode, entry.value, childPath, defaults)
-				if keep {
-					result[entry.key] = childValue
-				}
-
-				continue
-			}
-
-			if node.matchExtraKey != nil && node.matchExtraKey(entry.key) {
-				normalized := normalizeStructuredConfigDumpValue(childPath, entry.value)
-
-				pruned, keep := pruneStructuredConfigDumpValue(normalized)
-				if keep {
-					result[entry.key] = pruned
-				}
-			}
-		}
-
-		if len(result) == 0 {
-			return nil, false
-		}
-
-		return result, true
+		return buildStructuredNonDefaultObjectDumpValue(node, value, prefix, defaults)
 	default:
+		return buildStructuredNonDefaultLeafDumpValue(value, prefix, defaults)
+	}
+}
+
+// buildStructuredNonDefaultObjectDumpValue builds a non-default dump object for schema fields.
+func buildStructuredNonDefaultObjectDumpValue(
+	node *configSchemaNode,
+	value any,
+	prefix string,
+	defaults map[string]string,
+) (any, bool) {
+	entries, ok := configMapEntries(value)
+	if !ok {
 		normalized := normalizeStructuredConfigDumpValue(prefix, value)
-		if defaultValue, ok := defaults[prefix]; ok && defaultValue == formatConfigDumpValue(prefix, normalized) {
-			return nil, false
+
+		return normalized, true
+	}
+
+	sort.Slice(entries, func(left int, right int) bool {
+		return entries[left].key < entries[right].key
+	})
+
+	result := make(map[string]any)
+
+	for _, entry := range entries {
+		collectStructuredNonDefaultObjectEntry(result, node, entry, prefix, defaults)
+	}
+
+	if len(result) == 0 {
+		return nil, false
+	}
+
+	return result, true
+}
+
+// collectStructuredNonDefaultObjectEntry adds one object entry when it is non-default.
+func collectStructuredNonDefaultObjectEntry(
+	result map[string]any,
+	node *configSchemaNode,
+	entry configMapEntry,
+	prefix string,
+	defaults map[string]string,
+) {
+	childPath := joinConfigPath(prefix, entry.key)
+
+	if childNode, ok := node.fieldByConfigName[entry.key]; ok {
+		childValue, keep := buildStructuredNonDefaultConfigDumpValue(childNode, entry.value, childPath, defaults)
+		if keep {
+			result[entry.key] = childValue
 		}
+
+		return
+	}
+
+	if node.matchExtraKey != nil && node.matchExtraKey(entry.key) {
+		normalized := normalizeStructuredConfigDumpValue(childPath, entry.value)
 
 		pruned, keep := pruneStructuredConfigDumpValue(normalized)
-
-		return pruned, keep
+		if keep {
+			result[entry.key] = pruned
+		}
 	}
+}
+
+// buildStructuredNonDefaultLeafDumpValue builds a non-default dump leaf value.
+func buildStructuredNonDefaultLeafDumpValue(value any, prefix string, defaults map[string]string) (any, bool) {
+	normalized := normalizeStructuredConfigDumpValue(prefix, value)
+	if defaultValue, ok := defaults[prefix]; ok && defaultValue == formatConfigDumpValue(prefix, normalized) {
+		return nil, false
+	}
+
+	pruned, keep := pruneStructuredConfigDumpValue(normalized)
+
+	return pruned, keep
 }
 
 func normalizeStructuredConfigDumpValue(path string, value any) any {

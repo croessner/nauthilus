@@ -85,55 +85,77 @@ func (m *CBORManager) Bytes(L *lua.LState) int {
 	return stack.PushResult(userData)
 }
 
+// toLuaValue converts decoded CBOR values into Lua values.
 func (m *CBORManager) toLuaValue(L *lua.LState, value any) (lua.LValue, error) {
 	switch typed := value.(type) {
 	case nil:
 		return m.nullValue, nil
-	case bool:
-		return lua.LBool(typed), nil
-	case string:
-		return lua.LString(typed), nil
-	case []byte:
-		return lua.LString(typed), nil
-	case uint64:
-		return lua.LNumber(typed), nil
-	case int64:
-		return lua.LNumber(typed), nil
-	case float64:
-		return lua.LNumber(typed), nil
+	case bool, string, []byte, uint64, int64, float64:
+		return cborScalarToLuaValue(typed), nil
 	case []any:
-		table := L.NewTable()
-
-		for _, item := range typed {
-			luaValue, err := m.toLuaValue(L, item)
-			if err != nil {
-				return lua.LNil, err
-			}
-
-			table.Append(luaValue)
-		}
-
-		return table, nil
+		return m.sliceToLuaTable(L, typed)
 	case map[any]any:
 		return m.mapToLuaTable(L, typed)
 	case map[string]any:
-		table := L.NewTable()
-
-		for key, item := range typed {
-			luaValue, err := m.toLuaValue(L, item)
-			if err != nil {
-				return lua.LNil, err
-			}
-
-			table.RawSetString(key, luaValue)
-		}
-
-		return table, nil
+		return m.stringMapToLuaTable(L, typed)
 	default:
 		return lua.LNil, fmt.Errorf("unsupported CBOR value type %T", value)
 	}
 }
 
+// cborScalarToLuaValue converts scalar CBOR values into Lua scalars.
+func cborScalarToLuaValue(value any) lua.LValue {
+	switch typed := value.(type) {
+	case bool:
+		return lua.LBool(typed)
+	case string:
+		return lua.LString(typed)
+	case []byte:
+		return lua.LString(typed)
+	case uint64:
+		return lua.LNumber(typed)
+	case int64:
+		return lua.LNumber(typed)
+	case float64:
+		return lua.LNumber(typed)
+	default:
+		return lua.LNil
+	}
+}
+
+// sliceToLuaTable converts a decoded CBOR array into a Lua table.
+func (m *CBORManager) sliceToLuaTable(L *lua.LState, values []any) (lua.LValue, error) {
+	table := L.NewTable()
+
+	for _, item := range values {
+		luaValue, err := m.toLuaValue(L, item)
+		if err != nil {
+			return lua.LNil, err
+		}
+
+		table.Append(luaValue)
+	}
+
+	return table, nil
+}
+
+// stringMapToLuaTable converts a decoded CBOR string-keyed map into a Lua table.
+func (m *CBORManager) stringMapToLuaTable(L *lua.LState, values map[string]any) (lua.LValue, error) {
+	table := L.NewTable()
+
+	for key, item := range values {
+		luaValue, err := m.toLuaValue(L, item)
+		if err != nil {
+			return lua.LNil, err
+		}
+
+		table.RawSetString(key, luaValue)
+	}
+
+	return table, nil
+}
+
+// mapToLuaTable converts a decoded CBOR map with arbitrary supported keys into a Lua table.
 func (m *CBORManager) mapToLuaTable(L *lua.LState, values map[any]any) (lua.LValue, error) {
 	table := L.NewTable()
 

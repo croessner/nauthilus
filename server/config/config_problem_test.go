@@ -316,42 +316,72 @@ func TestHandleFile_AcceptsGRPCAuthorityMinTLSVersion(t *testing.T) {
 	}
 }
 
-func TestHandleFile_RejectsHTTPServerTLS13CipherSuites(t *testing.T) {
-	t.Helper()
-
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-
-	certFile, keyFile := writeTestTLSKeyPair(t)
-	setHTTPServerTLSValidationTestConfig(certFile, keyFile, "TLS1.2", []string{
-		"TLS_AES_256_GCM_SHA384",
-	})
-
-	cfg := &FileSettings{}
-
-	err := cfg.HandleFile()
-	if err == nil {
-		t.Fatal("HandleFile() error = nil, want HTTP TLS 1.3 cipher suite validation error")
+func TestHandleFile_RejectsHTTPServerCipherSuiteSettings(t *testing.T) {
+	for _, testCase := range httpServerCipherSuiteRejectionCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			assertHTTPServerTLSValidationError(t, testCase)
+		})
 	}
-
-	got := err.Error()
-	assertContainsAll(t, got, []string{
-		"runtime.servers.http.tls.cipher_suites[0]",
-		"TLS_AES_256_GCM_SHA384",
-		"TLS 1.3 cipher suites are not configurable",
-	})
 }
 
-func TestHandleFile_RejectsHTTPServerCipherSuitesWithTLS13Minimum(t *testing.T) {
+type httpServerCipherSuiteRejectionCase struct {
+	name               string
+	minTLSVersion      string
+	cipherSuites       []string
+	expectedSubstrings []string
+}
+
+// httpServerCipherSuiteRejectionCases lists invalid HTTP server TLS cipher-suite combinations.
+func httpServerCipherSuiteRejectionCases() []httpServerCipherSuiteRejectionCase {
+	return []httpServerCipherSuiteRejectionCase{
+		{
+			name:          "tls13 cipher suite name with tls12 minimum",
+			minTLSVersion: "TLS1.2",
+			cipherSuites: []string{
+				"TLS_AES_256_GCM_SHA384",
+			},
+			expectedSubstrings: []string{
+				"runtime.servers.http.tls.cipher_suites[0]",
+				"TLS_AES_256_GCM_SHA384",
+				"TLS 1.3 cipher suites are not configurable",
+			},
+		},
+		{
+			name:          "configurable cipher suite with tls13 minimum",
+			minTLSVersion: TLSVersion13,
+			cipherSuites: []string{
+				"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+			},
+			expectedSubstrings: []string{
+				"runtime.servers.http.tls.cipher_suites",
+				"runtime.servers.http.tls.min_tls_version",
+				TLSVersion13,
+			},
+		},
+		{
+			name:          "unknown cipher suite",
+			minTLSVersion: "TLS1.2",
+			cipherSuites: []string{
+				"TLS_NOT_A_REAL_CIPHER_SUITE",
+			},
+			expectedSubstrings: []string{
+				"runtime.servers.http.tls.cipher_suites[0]",
+				"TLS_NOT_A_REAL_CIPHER_SUITE",
+				"unsupported TLS cipher suite",
+			},
+		},
+	}
+}
+
+// assertHTTPServerTLSValidationError verifies one HTTP server TLS rejection case.
+func assertHTTPServerTLSValidationError(t *testing.T, testCase httpServerCipherSuiteRejectionCase) {
 	t.Helper()
 
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
 	certFile, keyFile := writeTestTLSKeyPair(t)
-	setHTTPServerTLSValidationTestConfig(certFile, keyFile, TLSVersion13, []string{
-		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-	})
+	setHTTPServerTLSValidationTestConfig(certFile, keyFile, testCase.minTLSVersion, testCase.cipherSuites)
 
 	cfg := &FileSettings{}
 
@@ -360,38 +390,7 @@ func TestHandleFile_RejectsHTTPServerCipherSuitesWithTLS13Minimum(t *testing.T) 
 		t.Fatal("HandleFile() error = nil, want HTTP TLS cipher suite validation error")
 	}
 
-	got := err.Error()
-	assertContainsAll(t, got, []string{
-		"runtime.servers.http.tls.cipher_suites",
-		"runtime.servers.http.tls.min_tls_version",
-		TLSVersion13,
-	})
-}
-
-func TestHandleFile_RejectsUnknownHTTPServerCipherSuites(t *testing.T) {
-	t.Helper()
-
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-
-	certFile, keyFile := writeTestTLSKeyPair(t)
-	setHTTPServerTLSValidationTestConfig(certFile, keyFile, "TLS1.2", []string{
-		"TLS_NOT_A_REAL_CIPHER_SUITE",
-	})
-
-	cfg := &FileSettings{}
-
-	err := cfg.HandleFile()
-	if err == nil {
-		t.Fatal("HandleFile() error = nil, want HTTP TLS unknown cipher suite validation error")
-	}
-
-	got := err.Error()
-	assertContainsAll(t, got, []string{
-		"runtime.servers.http.tls.cipher_suites[0]",
-		"TLS_NOT_A_REAL_CIPHER_SUITE",
-		"unsupported TLS cipher suite",
-	})
+	assertContainsAll(t, err.Error(), testCase.expectedSubstrings)
 }
 
 func TestHandleFile_RejectsGRPCAuthorityWithIncompleteBasicBackchannelAuth(t *testing.T) {

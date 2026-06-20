@@ -141,27 +141,46 @@ func TestRequestContextLoopbackIsTypedPolicyFact(t *testing.T) {
 	assertRequestContextValue(t, policyReport, requestClientIPTrustedAttribute, true)
 }
 
-func TestRequestContextTrustedProxyHeaderIsExplicitlyTrusted(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t)
-	cfg.Server.TrustedProxies = []string{"198.51.100.10"}
-	cfg.Server.DefaultHTTPRequestHeader.ClientIP = requestContextClientIPHeader
-
-	activatePolicySnapshotForTest(t, requestContextSnapshotForTest())
-
-	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-	auth.Request.ClientIP = "203.0.113.44"
-	ctx.Request.RemoteAddr = "198.51.100.10:443"
-	ctx.Request.Header.Set(requestContextClientIPHeader, "203.0.113.44")
-
-	policyReport := requestContextReport(t, auth, ctx)
-
-	assertRequestContextValue(t, policyReport, policy.AttributeRequestClientIP, netip.MustParseAddr("203.0.113.44"))
-	assertRequestContextValue(t, policyReport, requestClientIPPresentAttribute, true)
-	assertRequestContextValue(t, policyReport, requestClientIPTrustedAttribute, true)
-	assertRequestContextValue(t, policyReport, requestClientIPSourceAttribute, requestClientIPSourceTrustedProxy)
+func TestRequestContextProxyHeaderTrust(t *testing.T) {
+	for _, testCase := range requestContextProxyHeaderCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			assertRequestContextProxyHeader(t, testCase)
+		})
+	}
 }
 
-func TestRequestContextUntrustedHeaderCandidateIsNotTrusted(t *testing.T) {
+type requestContextProxyHeaderCase struct {
+	name        string
+	clientIP    string
+	remoteAddr  string
+	wantSource  string
+	wantTrusted bool
+}
+
+// requestContextProxyHeaderCases lists trusted and untrusted proxy-header candidates.
+func requestContextProxyHeaderCases() []requestContextProxyHeaderCase {
+	return []requestContextProxyHeaderCase{
+		{
+			name:        "trusted proxy",
+			clientIP:    "203.0.113.44",
+			remoteAddr:  "198.51.100.10:443",
+			wantSource:  requestClientIPSourceTrustedProxy,
+			wantTrusted: true,
+		},
+		{
+			name:        "untrusted peer",
+			clientIP:    "203.0.113.45",
+			remoteAddr:  "198.51.100.99:443",
+			wantSource:  requestClientIPSourceMetadata,
+			wantTrusted: false,
+		},
+	}
+}
+
+// assertRequestContextProxyHeader verifies request client IP facts for one proxy-header case.
+func assertRequestContextProxyHeader(t *testing.T, testCase requestContextProxyHeaderCase) {
+	t.Helper()
+
 	cfg := newCurrentBehaviorConfig(t)
 	cfg.Server.TrustedProxies = []string{"198.51.100.10"}
 	cfg.Server.DefaultHTTPRequestHeader.ClientIP = requestContextClientIPHeader
@@ -169,16 +188,16 @@ func TestRequestContextUntrustedHeaderCandidateIsNotTrusted(t *testing.T) {
 	activatePolicySnapshotForTest(t, requestContextSnapshotForTest())
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-	auth.Request.ClientIP = "203.0.113.45"
-	ctx.Request.RemoteAddr = "198.51.100.99:443"
-	ctx.Request.Header.Set(requestContextClientIPHeader, "203.0.113.45")
+	auth.Request.ClientIP = testCase.clientIP
+	ctx.Request.RemoteAddr = testCase.remoteAddr
+	ctx.Request.Header.Set(requestContextClientIPHeader, testCase.clientIP)
 
 	policyReport := requestContextReport(t, auth, ctx)
 
-	assertRequestContextValue(t, policyReport, policy.AttributeRequestClientIP, netip.MustParseAddr("203.0.113.45"))
+	assertRequestContextValue(t, policyReport, policy.AttributeRequestClientIP, netip.MustParseAddr(testCase.clientIP))
 	assertRequestContextValue(t, policyReport, requestClientIPPresentAttribute, true)
-	assertRequestContextValue(t, policyReport, requestClientIPTrustedAttribute, false)
-	assertRequestContextValue(t, policyReport, requestClientIPSourceAttribute, requestClientIPSourceMetadata)
+	assertRequestContextValue(t, policyReport, requestClientIPTrustedAttribute, testCase.wantTrusted)
+	assertRequestContextValue(t, policyReport, requestClientIPSourceAttribute, testCase.wantSource)
 }
 
 func TestRequestContextGRPCMetadataCandidateIsNotTrusted(t *testing.T) {

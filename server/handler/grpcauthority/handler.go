@@ -209,46 +209,65 @@ func setListAccountsHeaders(ctx context.Context, outcome *core.ListAccountsOutco
 }
 
 func (h *Handler) localizedAuthOutcome(ctx context.Context, outcome *core.AuthOutcome) *core.AuthOutcome {
-	if outcome == nil {
-		return outcome
-	}
-
-	statusMessage, ok := h.resolvePolicyStatusMessage(ctx, grpcStatusMessageFields{
-		text:     outcome.StatusMessage,
-		i18nKey:  outcome.StatusMessageI18NKey,
-		language: outcome.ResponseLanguage,
-	})
-	if !ok {
-		return outcome
-	}
-
-	localized := *outcome
-	localized.StatusMessage = statusMessage
-
-	return &localized
+	return localizedOutcomeStatus(ctx, h, outcome, authOutcomeStatusFields, setAuthOutcomeStatusMessage)
 }
 
 func (h *Handler) localizedListAccountsOutcome(
 	ctx context.Context,
 	outcome *core.ListAccountsOutcome,
 ) *core.ListAccountsOutcome {
+	return localizedOutcomeStatus(ctx, h, outcome, listAccountsOutcomeStatusFields, setListAccountsOutcomeStatusMessage)
+}
+
+// localizedOutcomeStatus clones an outcome only when status-message localization changes it.
+func localizedOutcomeStatus[T any](
+	ctx context.Context,
+	handler *Handler,
+	outcome *T,
+	fieldsFor func(*T) grpcStatusMessageFields,
+	setStatusMessage func(*T, string),
+) *T {
 	if outcome == nil {
 		return outcome
 	}
 
-	statusMessage, ok := h.resolvePolicyStatusMessage(ctx, grpcStatusMessageFields{
-		text:     outcome.StatusMessage,
-		i18nKey:  outcome.StatusMessageI18NKey,
-		language: outcome.ResponseLanguage,
-	})
+	statusMessage, ok := handler.resolvePolicyStatusMessage(ctx, fieldsFor(outcome))
 	if !ok {
 		return outcome
 	}
 
 	localized := *outcome
-	localized.StatusMessage = statusMessage
+	setStatusMessage(&localized, statusMessage)
 
 	return &localized
+}
+
+// authOutcomeStatusFields extracts localizable status-message fields from an auth outcome.
+func authOutcomeStatusFields(outcome *core.AuthOutcome) grpcStatusMessageFields {
+	return grpcStatusMessageFields{
+		text:     outcome.StatusMessage,
+		i18nKey:  outcome.StatusMessageI18NKey,
+		language: outcome.ResponseLanguage,
+	}
+}
+
+// setAuthOutcomeStatusMessage writes a localized status message into an auth outcome clone.
+func setAuthOutcomeStatusMessage(outcome *core.AuthOutcome, statusMessage string) {
+	outcome.StatusMessage = statusMessage
+}
+
+// listAccountsOutcomeStatusFields extracts localizable status-message fields from a list outcome.
+func listAccountsOutcomeStatusFields(outcome *core.ListAccountsOutcome) grpcStatusMessageFields {
+	return grpcStatusMessageFields{
+		text:     outcome.StatusMessage,
+		i18nKey:  outcome.StatusMessageI18NKey,
+		language: outcome.ResponseLanguage,
+	}
+}
+
+// setListAccountsOutcomeStatusMessage writes a localized status message into a list outcome clone.
+func setListAccountsOutcomeStatusMessage(outcome *core.ListAccountsOutcome, statusMessage string) {
+	outcome.StatusMessage = statusMessage
 }
 
 type grpcStatusMessageFields struct {

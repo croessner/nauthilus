@@ -30,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/lualib/convert"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	"github.com/go-ldap/ldap/v3"
 	"github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -162,40 +163,20 @@ type ldapPopRequestFunc func() (guid string, httpCtx context.Context, replyChan 
 
 // lookupPopRequest adapts lookup queue items for the shared worker loop.
 func lookupPopRequest(ctx context.Context, queue LDAPQueue, pool ldappool.LDAPPool, poolName string) ldapPopRequestFunc {
-	return wrapLDAPPopRequest(func() ldapRequestFields {
-		req := queue.PopWithContext(ctx, poolName)
-		if req == nil {
-			return ldapRequestFields{}
-		}
-
-		return ldapRequestFields{
-			guid:      req.GUID,
-			httpCtx:   req.HTTPClientContext,
-			replyChan: req.LDAPReplyChan,
-			handle: func() error {
-				return pool.HandleLookupRequest(req)
-			},
-		}
-	})
+	return typedLDAPPopRequest(func() *bktype.LDAPRequest {
+		return queue.PopWithContext(ctx, poolName)
+	}, pool.HandleLookupRequest)
 }
 
 // authPopRequest adapts authentication queue items for the shared worker loop.
 func authPopRequest(ctx context.Context, queue LDAPAuthQueue, pool ldappool.LDAPPool, poolName string) ldapPopRequestFunc {
-	return wrapLDAPPopRequest(func() ldapRequestFields {
-		req := queue.PopWithContext(ctx, poolName)
-		if req == nil {
-			return ldapRequestFields{}
-		}
+	return typedLDAPPopRequest(func() *bktype.LDAPAuthRequest {
+		return queue.PopWithContext(ctx, poolName)
+	}, pool.HandleAuthRequest)
+}
 
-		return ldapRequestFields{
-			guid:      req.GUID,
-			httpCtx:   req.HTTPClientContext,
-			replyChan: req.LDAPReplyChan,
-			handle: func() error {
-				return pool.HandleAuthRequest(req)
-			},
-		}
-	})
+type ldapQueueRequest interface {
+	bktype.LDAPRequest | bktype.LDAPAuthRequest
 }
 
 type ldapRequestFields struct {
@@ -205,12 +186,43 @@ type ldapRequestFields struct {
 	guid      string
 }
 
-// wrapLDAPPopRequest converts request fields into the worker-loop callback shape.
-func wrapLDAPPopRequest(pop func() ldapRequestFields) ldapPopRequestFunc {
-	return func() (guid string, httpCtx context.Context, replyChan chan *bktype.LDAPReply, handle func() error) {
-		fields := pop()
+// typedLDAPPopRequest adapts concrete LDAP queue requests to the shared worker-loop callback shape.
+func typedLDAPPopRequest[T ldapQueueRequest](pop func() *T, handleRequest func(*T) error) ldapPopRequestFunc {
+	return func() (guid string, httpCtx context.Context, replyChan chan *bktype.LDAPReply, dispatch func() error) {
+		req := pop()
+		if req == nil {
+			return "", nil, nil, nil
+		}
+
+		fields := ldapRequestFieldsFrom(req, handleRequest)
 
 		return fields.guid, fields.httpCtx, fields.replyChan, fields.handle
+	}
+}
+
+// ldapRequestFieldsFrom extracts worker-loop fields from the supported LDAP request variants.
+func ldapRequestFieldsFrom[T ldapQueueRequest](req *T, handle func(*T) error) ldapRequestFields {
+	switch typed := any(req).(type) {
+	case *bktype.LDAPRequest:
+		return ldapRequestFieldsFor(typed.HTTPClientContext, typed.GUID, typed.LDAPReplyChan, func() error {
+			return handle(req)
+		})
+	case *bktype.LDAPAuthRequest:
+		return ldapRequestFieldsFor(typed.HTTPClientContext, typed.GUID, typed.LDAPReplyChan, func() error {
+			return handle(req)
+		})
+	default:
+		return ldapRequestFields{}
+	}
+}
+
+// ldapRequestFieldsFor groups the common request fields used by LDAP worker dispatch.
+func ldapRequestFieldsFor(httpCtx context.Context, guid string, replyChan chan *bktype.LDAPReply, handle func() error) ldapRequestFields {
+	return ldapRequestFields{
+		httpCtx:   httpCtx,
+		replyChan: replyChan,
+		handle:    handle,
+		guid:      guid,
 	}
 }
 
@@ -339,15 +351,7 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		_ = ctx
 
-		callCtx := lualib.RequireRuntimeContext(L, definitions.LuaModLDAP)
-		cancel := func() {}
-
-		if callCtx != nil {
-			if _, has := callCtx.Deadline(); !has {
-				callCtx, cancel = context.WithTimeout(callCtx, definitions.LuaLDAPReplyTimeout)
-			}
-		}
-
+		callCtx, cancel := luaLDAPRuntimeContext(L)
 		defer cancel()
 
 		table := L.CheckTable(1)
@@ -370,40 +374,51 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 
 		ldapRequest := createLDAPRequest(trCtx, L, fieldValues, definitions.LDAPModify)
 
-		// Determine priority (using low priority for Lua-initiated requests)
-		priority := priorityqueue.PriorityLow
+		enqueueLuaLDAPRequest(trCtx, "ldap.lua.modify.enqueue", ldapRequest)
 
-		// Use priority queue instead of channel
-		_, qSpan := trLua.Start(trCtx, "ldap.lua.modify.enqueue")
-
-		luaLDAPQueue.Push(ldapRequest, priority)
-		qSpan.End()
-
-		var ldapReply *bktype.LDAPReply
-
-		_, wSpan := trLua.Start(trCtx, "ldap.lua.modify.wait")
-		defer wSpan.End()
-
-		select {
-		case <-callCtx.Done():
-			L.Push(lua.LNil)
-			L.Push(lua.LString(callCtx.Err().Error()))
-
-			return 2
-		case ldapReply = <-ldapRequest.GetLDAPReplyChan():
-		}
-
-		if ldapReply.Err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(ldapReply.Err.Error()))
-
-			return 2
-		}
-
-		L.Push(lua.LString("OK"))
-
-		return 1
+		return processModifyReply(trCtx, L, ldapRequest.GetLDAPReplyChan())
 	}
+}
+
+// luaLDAPRuntimeContext returns the request context used by Lua LDAP operations.
+func luaLDAPRuntimeContext(L *lua.LState) (context.Context, context.CancelFunc) {
+	callCtx := lualib.RequireRuntimeContext(L, definitions.LuaModLDAP)
+	cancel := func() {}
+
+	if callCtx != nil {
+		if _, has := callCtx.Deadline(); !has {
+			callCtx, cancel = context.WithTimeout(callCtx, definitions.LuaLDAPReplyTimeout)
+		}
+	}
+
+	return callCtx, cancel
+}
+
+// enqueueLuaLDAPRequest pushes a Lua LDAP request into the low-priority queue with tracing.
+func enqueueLuaLDAPRequest(ctx context.Context, spanName string, ldapRequest *bktype.LDAPRequest) {
+	_, qSpan := trLua.Start(ctx, spanName)
+
+	luaLDAPQueue.Push(ldapRequest, priorityqueue.PriorityLow)
+	qSpan.End()
+}
+
+// processModifyReply waits for a modify reply and pushes the Lua result tuple.
+func processModifyReply(ctx context.Context, L *lua.LState, ldapReplyChan chan *bktype.LDAPReply) int {
+	ldapReply, ok := waitLDAPReply(ctx, L, ldapReplyChan, "ldap.lua.modify.wait")
+	if !ok {
+		return 2
+	}
+
+	if ldapReply.Err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(ldapReply.Err.Error()))
+
+		return 2
+	}
+
+	L.Push(lua.LString("OK"))
+
+	return 1
 }
 
 // prepareAndValidateSearchFields validates and retrieves expected fields from a Lua table, returning a map of field values.
@@ -501,86 +516,90 @@ func validateField(L *lua.LState, table *lua.LTable, fieldName string, fieldType
 
 // createLDAPRequest initializes an LDAPRequest with provided field values, scope, and context for an LDAP search operation.
 func createLDAPRequest(ctx context.Context, L *lua.LState, fieldValues map[string]lua.LValue, command definitions.LDAPCommand) *bktype.LDAPRequest {
-	var (
-		basedn           string
-		filter           string
-		operation        string
-		dn               string
-		searchAttributes []string
-		subCommand       definitions.LDAPSubCommand
-		modifyAttributes bktype.LDAPModifyAttributes
-	)
-
-	scope := &config.LDAPScope{}
-
-	guid := fieldValues["session"].String()
-	attrTable := fieldValues["attributes"].(*lua.LTable)
+	ldapRequest := newBaseLDAPRequest(ctx, fieldValues, command)
 
 	switch command {
 	case definitions.LDAPSearch:
-		basedn = fieldValues["basedn"].String()
-		filter = fieldValues["filter"].String()
-
-		ldapScope, err := convertScopeStringToLDAP(fieldValues["scope"].String())
-		if err != nil {
-			L.RaiseError("%s", err.Error())
-
+		if !applyLDAPSearchRequestFields(L, ldapRequest, fieldValues) {
 			return nil
 		}
-
-		scope = ldapScope
-
-		searchAttributes = extractAttributes(attrTable)
 	case definitions.LDAPModify:
-		dn = fieldValues["dn"].String()
-		operation = fieldValues["operation"].String()
-
-		switch operation {
-		case "add":
-			subCommand = definitions.LDAPModifyAdd
-		case "delete":
-			subCommand = definitions.LDAPModifyDelete
-		case "replace":
-			subCommand = definitions.LDAPModifyReplace
-		default:
-			L.RaiseError("unknown operation %s", operation)
-
+		if !applyLDAPModifyRequestFields(L, ldapRequest, fieldValues) {
 			return nil
 		}
-
-		modifyAttributes = make(bktype.LDAPModifyAttributes)
-
-		attrTable.ForEach(func(key lua.LValue, value lua.LValue) {
-			modifyAttributes[key.String()] = []string{value.String()}
-		})
-	}
-
-	ldapReplyChan := make(chan *bktype.LDAPReply)
-
-	poolName := fieldValues["pool_name"].String()
-
-	ldapRequest := &bktype.LDAPRequest{
-		// Common fields
-		GUID:              guid,
-		RequestID:         "",
-		PoolName:          poolName,
-		LDAPReplyChan:     ldapReplyChan,
-		HTTPClientContext: ctx,
-
-		// Search
-		Filter:           filter,
-		BaseDN:           basedn,
-		Scope:            *scope,
-		Command:          command,
-		SubCommand:       subCommand,
-		SearchAttributes: searchAttributes,
-
-		// Modify
-		ModifyDN:         dn,
-		ModifyAttributes: modifyAttributes,
 	}
 
 	return ldapRequest
+}
+
+// newBaseLDAPRequest creates the common request fields for LDAP search and modify operations.
+func newBaseLDAPRequest(ctx context.Context, fieldValues map[string]lua.LValue, command definitions.LDAPCommand) *bktype.LDAPRequest {
+	return &bktype.LDAPRequest{
+		GUID:              fieldValues["session"].String(),
+		RequestID:         "",
+		PoolName:          fieldValues["pool_name"].String(),
+		LDAPReplyChan:     make(chan *bktype.LDAPReply),
+		HTTPClientContext: ctx,
+		Command:           command,
+	}
+}
+
+// applyLDAPSearchRequestFields fills search-specific request fields.
+func applyLDAPSearchRequestFields(L *lua.LState, ldapRequest *bktype.LDAPRequest, fieldValues map[string]lua.LValue) bool {
+	ldapScope, err := convertScopeStringToLDAP(fieldValues["scope"].String())
+	if err != nil {
+		L.RaiseError("%s", err.Error())
+
+		return false
+	}
+
+	ldapRequest.BaseDN = fieldValues["basedn"].String()
+	ldapRequest.Filter = fieldValues["filter"].String()
+	ldapRequest.Scope = *ldapScope
+	ldapRequest.SearchAttributes = extractAttributes(fieldValues["attributes"].(*lua.LTable))
+
+	return true
+}
+
+// applyLDAPModifyRequestFields fills modify-specific request fields.
+func applyLDAPModifyRequestFields(L *lua.LState, ldapRequest *bktype.LDAPRequest, fieldValues map[string]lua.LValue) bool {
+	subCommand, ok := ldapModifySubCommand(L, fieldValues["operation"].String())
+	if !ok {
+		return false
+	}
+
+	ldapRequest.ModifyDN = fieldValues["dn"].String()
+	ldapRequest.SubCommand = subCommand
+	ldapRequest.ModifyAttributes = extractModifyAttributes(fieldValues["attributes"].(*lua.LTable))
+
+	return true
+}
+
+// ldapModifySubCommand maps Lua modify operations to backend subcommands.
+func ldapModifySubCommand(L *lua.LState, operation string) (definitions.LDAPSubCommand, bool) {
+	switch operation {
+	case "add":
+		return definitions.LDAPModifyAdd, true
+	case "delete":
+		return definitions.LDAPModifyDelete, true
+	case "replace":
+		return definitions.LDAPModifyReplace, true
+	default:
+		L.RaiseError("unknown operation %s", operation)
+
+		return definitions.LDAPModifyUnknown, false
+	}
+}
+
+// extractModifyAttributes converts a Lua attribute table into LDAP modify attributes.
+func extractModifyAttributes(attrTable *lua.LTable) bktype.LDAPModifyAttributes {
+	modifyAttributes := make(bktype.LDAPModifyAttributes)
+
+	attrTable.ForEach(func(key lua.LValue, value lua.LValue) {
+		modifyAttributes[key.String()] = []string{value.String()}
+	})
+
+	return modifyAttributes
 }
 
 // extractAttributes extracts string attributes from a Lua table and returns them as a slice of strings.
@@ -598,21 +617,11 @@ func extractAttributes(attrTable *lua.LTable) []string {
 //
 // It is context-aware to avoid hanging the caller indefinitely.
 func processReply(ctx context.Context, L *lua.LState, ldapReplyChan chan *bktype.LDAPReply) int {
-	var ldapReply *bktype.LDAPReply
-
-	_, span := trLua.Start(ctx, "ldap.lua.search.wait")
-	defer span.End()
-
-	select {
-	case <-ctx.Done():
-		L.Push(lua.LNil)
-		L.Push(lua.LString(ctx.Err().Error()))
-
+	ldapReply, ok := waitLDAPReply(ctx, L, ldapReplyChan, "ldap.lua.search.wait")
+	if !ok {
 		return 2
-	case ldapReply = <-ldapReplyChan:
 	}
 
-	// Check if there is an error. If so, return it.
 	if ldapReply.Err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(ldapReply.Err.Error()))
@@ -620,44 +629,75 @@ func processReply(ctx context.Context, L *lua.LState, ldapReplyChan chan *bktype
 		return 2
 	}
 
-	// Get the raw_result parameter from the first argument (table)
-	table := L.CheckTable(1)
-	rawResultValue := L.GetField(table, "raw_result")
-	rawResult := rawResultValue != lua.LNil && rawResultValue.(lua.LBool) == lua.LTrue
-
-	if rawResult && len(ldapReply.RawResult) > 0 {
-		// Convert raw LDAP entries to Lua table
-		rawResultTable := L.NewTable()
-
-		for i, entry := range ldapReply.RawResult {
-			entryTable := L.NewTable()
-
-			// Add DN
-			entryTable.RawSetString("dn", convert.GoToLuaValue(L, entry.DN))
-
-			// Add attributes
-			attributesTable := L.NewTable()
-			for _, attr := range entry.Attributes {
-				attrValuesTable := L.NewTable()
-				for _, val := range attr.Values {
-					attrValuesTable.Append(convert.GoToLuaValue(L, val))
-				}
-
-				attributesTable.RawSetString(attr.Name, attrValuesTable)
-			}
-
-			entryTable.RawSetString("attributes", attributesTable)
-
-			rawResultTable.RawSetInt(i+1, entryTable)
-		}
-
-		L.Push(rawResultTable)
+	if rawResultRequested(L) && len(ldapReply.RawResult) > 0 {
+		L.Push(rawLDAPEntriesToLuaTable(L, ldapReply.RawResult))
 
 		return 1
 	}
 
-	// Converting AttributeMapping (map[string][]any) to map[any]any
-	// which can be used in util.MapToLuaTable function
+	return pushLDAPAttributeResult(L, ldapReply)
+}
+
+// waitLDAPReply waits for an LDAP reply or pushes the context error tuple.
+func waitLDAPReply(ctx context.Context, L *lua.LState, ldapReplyChan chan *bktype.LDAPReply, spanName string) (*bktype.LDAPReply, bool) {
+	_, span := trLua.Start(ctx, spanName)
+	defer span.End()
+
+	select {
+	case <-ctx.Done():
+		L.Push(lua.LNil)
+		L.Push(lua.LString(ctx.Err().Error()))
+
+		return nil, false
+	case ldapReply := <-ldapReplyChan:
+		return ldapReply, true
+	}
+}
+
+// rawResultRequested reads the raw_result flag from the current Lua call table.
+func rawResultRequested(L *lua.LState) bool {
+	rawResultValue := L.GetField(L.CheckTable(1), "raw_result")
+
+	return rawResultValue != lua.LNil && rawResultValue.(lua.LBool) == lua.LTrue
+}
+
+// rawLDAPEntriesToLuaTable converts raw LDAP entries into a Lua table.
+func rawLDAPEntriesToLuaTable(L *lua.LState, entries []*ldap.Entry) *lua.LTable {
+	rawResultTable := L.NewTable()
+
+	for i, entry := range entries {
+		rawResultTable.RawSetInt(i+1, rawLDAPEntryToLuaTable(L, entry))
+	}
+
+	return rawResultTable
+}
+
+// rawLDAPEntryToLuaTable converts one raw LDAP entry into a Lua table.
+func rawLDAPEntryToLuaTable(L *lua.LState, entry *ldap.Entry) *lua.LTable {
+	entryTable := L.NewTable()
+	entryTable.RawSetString("dn", convert.GoToLuaValue(L, entry.DN))
+	entryTable.RawSetString("attributes", rawLDAPAttributesToLuaTable(L, entry.Attributes))
+
+	return entryTable
+}
+
+// rawLDAPAttributesToLuaTable converts LDAP entry attributes into a Lua table.
+func rawLDAPAttributesToLuaTable(L *lua.LState, attributes []*ldap.EntryAttribute) *lua.LTable {
+	attributesTable := L.NewTable()
+	for _, attr := range attributes {
+		attrValuesTable := L.NewTable()
+		for _, val := range attr.Values {
+			attrValuesTable.Append(convert.GoToLuaValue(L, val))
+		}
+
+		attributesTable.RawSetString(attr.Name, attrValuesTable)
+	}
+
+	return attributesTable
+}
+
+// pushLDAPAttributeResult converts AttributeMapping into a Lua table and pushes it.
+func pushLDAPAttributeResult(L *lua.LState, ldapReply *bktype.LDAPReply) int {
 	convertedMap := make(map[any]any)
 	for key, values := range ldapReply.Result {
 		list := make([]any, len(values))

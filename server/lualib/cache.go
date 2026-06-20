@@ -182,23 +182,31 @@ func (m *CacheManager) PopAll(L *lua.LState) int {
 // The cache is process-wide (no per-request state needed).
 func LoaderModCache(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
-		stack := luastack.NewManager(L)
 		manager := NewCacheManager(ctx, cfg, logger)
 
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnCacheSet:    manager.Set,
-			definitions.LuaFnCacheGet:    manager.Get,
-			definitions.LuaFnCacheDelete: manager.Delete,
-			definitions.LuaFnCacheExists: manager.Exists,
-			definitions.LuaFnCacheUpdate: manager.Update,
-			definitions.LuaFnCacheKeys:   manager.Keys,
-			definitions.LuaFnCacheSize:   manager.Size,
-			definitions.LuaFnCacheFlush:  manager.Flush,
-			definitions.LuaFnCachePush:   manager.Push,
-			definitions.LuaFnCachePopAll: manager.PopAll,
-		})
+		return pushLuaModule(L, cacheValueFunctions(manager), cacheListFunctions(manager))
+	}
+}
 
-		return stack.PushResult(mod)
+// cacheValueFunctions returns Lua cache functions for scalar cache operations.
+func cacheValueFunctions(manager *CacheManager) map[string]lua.LGFunction {
+	return map[string]lua.LGFunction{
+		definitions.LuaFnCacheSet:    manager.Set,
+		definitions.LuaFnCacheGet:    manager.Get,
+		definitions.LuaFnCacheDelete: manager.Delete,
+		definitions.LuaFnCacheExists: manager.Exists,
+		definitions.LuaFnCacheUpdate: manager.Update,
+	}
+}
+
+// cacheListFunctions returns Lua cache functions for cache introspection and list operations.
+func cacheListFunctions(manager *CacheManager) map[string]lua.LGFunction {
+	return map[string]lua.LGFunction{
+		definitions.LuaFnCacheKeys:   manager.Keys,
+		definitions.LuaFnCacheSize:   manager.Size,
+		definitions.LuaFnCacheFlush:  manager.Flush,
+		definitions.LuaFnCachePush:   manager.Push,
+		definitions.LuaFnCachePopAll: manager.PopAll,
 	}
 }
 

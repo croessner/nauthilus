@@ -103,71 +103,30 @@ func TestBasePageData(t *testing.T) {
 	cfg := &mockFrontendCfg{}
 
 	t.Run("Basic Session Data", func(t *testing.T) {
-		r := gin.New()
-		r.GET("/test", func(c *gin.Context) {
-			mgr := &mockCookieManager{data: map[string]any{
-				definitions.SessionKeyAccount: "testuser",
-			}}
-			c.Set(definitions.CtxSecureDataKey, mgr)
-
-			lm := &mockLangManager{}
-			localizer := i18n.NewLocalizer(lm.GetBundle(), "de")
-			c.Set(definitions.CtxLocalizedKey, localizer)
-			c.Set(definitions.CtxCSPNonceKey, "nonce-123")
-
-			data := BasePageData(c, cfg, lm)
-			assert.Equal(t, "de", data["LanguageTag"])
-			assert.Equal(t, "testuser", data["Username"])
-			assert.Equal(t, "nonce-123", data["CSPNonce"])
-			assert.Equal(t, "Logout", data["Logout"])
-			c.Status(http.StatusOK)
-		})
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
-		req.AddCookie(&http.Cookie{Name: definitions.LanguageCookieName, Value: "de"})
-		r.ServeHTTP(w, req)
+		assertBasePageBasicSessionData(t, cfg)
 	})
 
 	t.Run("Includes legal links from IDP config", func(t *testing.T) {
-		cfgWithLegalLinks := &mockFrontendCfg{
-			FileSettings: config.FileSettings{
-				IDP: &config.IDPSection{
-					TermsOfServiceURL:    "https://example.com/legal",
-					PrivacyPolicyURL:     "https://example.com/privacy",
-					PasswordForgottenURL: "https://example.com/forgot",
-				},
-			},
-		}
-
-		r := gin.New()
-		r.GET("/test", func(c *gin.Context) {
-			lm := &mockLangManager{}
-			localizer := i18n.NewLocalizer(lm.GetBundle(), "en")
-			c.Set(definitions.CtxLocalizedKey, localizer)
-
-			data := BasePageData(c, cfgWithLegalLinks, lm)
-			assert.Equal(t, "https://example.com/legal", data["TermsOfServiceURL"])
-			assert.Equal(t, "https://example.com/privacy", data["PrivacyPolicyURL"])
-			assert.Equal(t, "https://example.com/forgot", data["PasswordForgottenURL"])
-			assert.Equal(t, "Legal notice", data["LegalNoticeLabel"])
-			assert.Equal(t, "Privacy policy", data["PrivacyPolicyLabel"])
-			assert.Equal(t, "Forgot password?", data["PasswordForgottenLabel"])
-
-			c.Status(http.StatusOK)
-		})
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
-		r.ServeHTTP(w, req)
+		assertBasePageLegalLinks(t)
 	})
 
-	idpClientNameTests := []struct {
-		name         string
-		cfg          *mockFrontendCfg
-		sessionData  map[string]any
-		expectedName string
-	}{
+	for _, tt := range basePageIDPClientNameTests() {
+		t.Run(tt.name, func(t *testing.T) {
+			assertBasePageIDPClientName(t, tt.cfg, tt.sessionData, tt.expectedName)
+		})
+	}
+}
+
+type basePageIDPClientNameTest struct {
+	name         string
+	cfg          *mockFrontendCfg
+	sessionData  map[string]any
+	expectedName string
+}
+
+// basePageIDPClientNameTests returns OIDC and SAML display-name cases.
+func basePageIDPClientNameTests() []basePageIDPClientNameTest {
+	return []basePageIDPClientNameTest{
 		{
 			name: "OIDC Client Name",
 			cfg: &mockFrontendCfg{
@@ -207,29 +166,93 @@ func TestBasePageData(t *testing.T) {
 			expectedName: "Example SP",
 		},
 	}
+}
 
-	for _, tt := range idpClientNameTests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := gin.New()
+// assertBasePageBasicSessionData verifies common session-backed template values.
+func assertBasePageBasicSessionData(t *testing.T, cfg *mockFrontendCfg) {
+	t.Helper()
 
-			r.GET("/test", func(c *gin.Context) {
-				mgr := &mockCookieManager{data: tt.sessionData}
-				c.Set(definitions.CtxSecureDataKey, mgr)
+	sessionData := map[string]any{definitions.SessionKeyAccount: "testuser"}
+	cookieLang := "de"
+	runBasePageDataRequest(t, cfg, sessionData, cookieLang, func(data gin.H) {
+		assert.Equal(t, "de", data["LanguageTag"])
+		assert.Equal(t, "testuser", data["Username"])
+		assert.Equal(t, "nonce-123", data["CSPNonce"])
+		assert.Equal(t, "Logout", data["Logout"])
+	})
+}
 
-				lm := &mockLangManager{}
-				localizer := i18n.NewLocalizer(lm.GetBundle(), "en")
-				c.Set(definitions.CtxLocalizedKey, localizer)
+// assertBasePageLegalLinks verifies legal link URLs and labels.
+func assertBasePageLegalLinks(t *testing.T) {
+	t.Helper()
 
-				data := BasePageData(c, tt.cfg, lm)
-				assert.Equal(t, tt.expectedName, data["IDPClientName"])
-				c.Status(http.StatusOK)
-			})
-
-			w := httptest.NewRecorder()
-			req, _ := http.NewRequest(http.MethodGet, "/test", nil)
-			r.ServeHTTP(w, req)
-		})
+	cfgWithLegalLinks := &mockFrontendCfg{
+		FileSettings: config.FileSettings{
+			IDP: &config.IDPSection{
+				TermsOfServiceURL:    "https://example.com/legal",
+				PrivacyPolicyURL:     "https://example.com/privacy",
+				PasswordForgottenURL: "https://example.com/forgot",
+			},
+		},
 	}
+
+	runBasePageDataRequest(t, cfgWithLegalLinks, nil, "", func(data gin.H) {
+		assert.Equal(t, "https://example.com/legal", data["TermsOfServiceURL"])
+		assert.Equal(t, "https://example.com/privacy", data["PrivacyPolicyURL"])
+		assert.Equal(t, "https://example.com/forgot", data["PasswordForgottenURL"])
+		assert.Equal(t, "Legal notice", data["LegalNoticeLabel"])
+		assert.Equal(t, "Privacy policy", data["PrivacyPolicyLabel"])
+		assert.Equal(t, "Forgot password?", data["PasswordForgottenLabel"])
+	})
+}
+
+// assertBasePageIDPClientName verifies OIDC and SAML client-name resolution.
+func assertBasePageIDPClientName(
+	t *testing.T,
+	cfg *mockFrontendCfg,
+	sessionData map[string]any,
+	expectedName string,
+) {
+	t.Helper()
+
+	runBasePageDataRequest(t, cfg, sessionData, "", func(data gin.H) {
+		assert.Equal(t, expectedName, data["IDPClientName"])
+	})
+}
+
+// runBasePageDataRequest executes BasePageData inside a Gin request context.
+func runBasePageDataRequest(
+	t *testing.T,
+	cfg *mockFrontendCfg,
+	sessionData map[string]any,
+	cookieLang string,
+	assertData func(gin.H),
+) {
+	t.Helper()
+
+	r := gin.New()
+	r.GET("/test", func(c *gin.Context) {
+		lm := &mockLangManager{}
+		localizer := i18n.NewLocalizer(lm.GetBundle(), "en")
+		c.Set(definitions.CtxLocalizedKey, localizer)
+		c.Set(definitions.CtxCSPNonceKey, "nonce-123")
+
+		if sessionData != nil {
+			c.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: sessionData})
+		}
+
+		assertData(BasePageData(c, cfg, lm))
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	if cookieLang != "" {
+		req.AddCookie(&http.Cookie{Name: definitions.LanguageCookieName, Value: cookieLang})
+	}
+
+	r.ServeHTTP(w, req)
 }
 
 func TestURLParamsPreservation(t *testing.T) {
@@ -262,31 +285,12 @@ func TestURLParamsPreservation(t *testing.T) {
 }
 
 func TestMFASelectTemplateRecommended(t *testing.T) {
-	tmpl := loadMFASelectTemplate(t)
+	output := renderMFASelectTemplate(t, map[string]any{
+		"HaveRecoveryCodes": true,
+		"RecommendedMethod": "totp",
+		"HasOtherMethods":   true,
+	})
 
-	data := map[string]any{
-		"SelectMFA":            "Select",
-		"ChooseMFADescription": "Choose",
-		"SecurityKey":          "Security Key",
-		"AuthenticatorApp":     "Authenticator App",
-		"RecoveryCode":         "Recovery Code",
-		"Recommended":          "Recommended",
-		"OtherMethods":         "Other methods",
-		"Or":                   "or",
-		"Back":                 "Back",
-		"HaveTOTP":             true,
-		"HaveWebAuthn":         true,
-		"HaveRecoveryCodes":    true,
-		"RecommendedMethod":    "totp",
-		"HasOtherMethods":      true,
-	}
-
-	var buf bytes.Buffer
-
-	err := tmpl.Execute(&buf, data)
-	assert.NoError(t, err)
-
-	output := buf.String()
 	assert.Contains(t, output, "autofocus")
 	assert.Contains(t, output, "Other methods")
 	assert.Contains(t, output, "/login/totp")
@@ -294,31 +298,8 @@ func TestMFASelectTemplateRecommended(t *testing.T) {
 }
 
 func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
-	tmpl := loadMFASelectTemplate(t)
+	output := renderMFASelectTemplate(t, nil)
 
-	data := map[string]any{
-		"SelectMFA":            "Select",
-		"ChooseMFADescription": "Choose",
-		"SecurityKey":          "Security Key",
-		"AuthenticatorApp":     "Authenticator App",
-		"RecoveryCode":         "Recovery Code",
-		"Recommended":          "Recommended",
-		"OtherMethods":         "Other methods",
-		"Or":                   "or",
-		"Back":                 "Back",
-		"HaveTOTP":             true,
-		"HaveWebAuthn":         true,
-		"HaveRecoveryCodes":    false,
-		"RecommendedMethod":    "",
-		"HasOtherMethods":      false,
-	}
-
-	var buf bytes.Buffer
-
-	err := tmpl.Execute(&buf, data)
-	assert.NoError(t, err)
-
-	output := buf.String()
 	assert.NotContains(t, output, "<details")
 	assert.NotContains(t, output, "autofocus")
 	assert.Contains(t, output, "/login/totp")
@@ -440,6 +421,45 @@ func renderIDPLoginTemplate(t *testing.T, tmpl *template.Template, passwordForgo
 	return buf.String()
 }
 
+// renderMFASelectTemplate renders the MFA selection template with stable baseline labels.
+func renderMFASelectTemplate(t *testing.T, overrides map[string]any) string {
+	t.Helper()
+
+	tmpl := loadMFASelectTemplate(t)
+
+	data := mfaSelectTemplateData()
+	for key, value := range overrides {
+		data[key] = value
+	}
+
+	var buf bytes.Buffer
+
+	err := tmpl.Execute(&buf, data)
+	assert.NoError(t, err)
+
+	return buf.String()
+}
+
+// mfaSelectTemplateData returns the default template data shared by MFA selection tests.
+func mfaSelectTemplateData() map[string]any {
+	return map[string]any{
+		"SelectMFA":            "Select",
+		"ChooseMFADescription": "Choose",
+		"SecurityKey":          "Security Key",
+		"AuthenticatorApp":     "Authenticator App",
+		"RecoveryCode":         "Recovery Code",
+		"Recommended":          "Recommended",
+		"OtherMethods":         "Other methods",
+		"Or":                   "or",
+		"Back":                 "Back",
+		"HaveTOTP":             true,
+		"HaveWebAuthn":         true,
+		"HaveRecoveryCodes":    false,
+		"RecommendedMethod":    "",
+		"HasOtherMethods":      false,
+	}
+}
+
 func renderIDPFooterTemplate(t *testing.T, tmpl *template.Template, termsOfServiceURL, privacyPolicyURL string) string {
 	t.Helper()
 
@@ -511,103 +531,122 @@ func TestGetFlowClientIdentifiers(t *testing.T) {
 }
 
 func TestGetRememberMeTTL(t *testing.T) {
-	t.Run("Global setting overrides legacy client and service provider values", func(t *testing.T) {
-		h := &FrontendHandler{
-			deps: &deps.Deps{
-				Cfg: &mockFrontendCfg{
-					FileSettings: config.FileSettings{
-						IDP: &config.IDPSection{
-							RememberMeTTL: 2 * time.Hour,
-							OIDC: config.OIDCConfig{
-								Clients: []config.OIDCClient{
-									{ClientID: "oidc-client", RememberMeTTL: 30 * time.Minute},
-								},
-							},
-							SAML2: config.SAML2Config{
-								ServiceProviders: []config.SAML2ServiceProvider{
-									{EntityID: "sp-entity", RememberMeTTL: 45 * time.Minute},
-								},
-							},
-						},
-					},
-				},
-				Env:         config.NewTestEnvironmentConfig(),
-				LangManager: &mockLangManager{},
-				Logger:      slog.Default(),
+	cases := []struct {
+		name         string
+		idpConfig    *config.IDPSection
+		expectations []rememberMeTTLExpectation
+	}{
+		{
+			name:      "Global setting overrides legacy client and service provider values",
+			idpConfig: globalRememberMeIDPConfig(),
+			expectations: []rememberMeTTLExpectation{
+				{oidcClientID: "oidc-client", ttl: 2 * time.Hour, show: true},
+				{samlEntityID: "sp-entity", ttl: 2 * time.Hour, show: true},
+				{ttl: 2 * time.Hour, show: true},
 			},
-		}
-
-		assert.Equal(t, 2*time.Hour, h.getRememberMeTTL("oidc-client", ""))
-		assert.Equal(t, 2*time.Hour, h.getRememberMeTTL("", "sp-entity"))
-		assert.Equal(t, 2*time.Hour, h.getRememberMeTTL("", ""))
-		assert.True(t, h.shouldShowRememberMe("", ""))
-	})
-
-	t.Run("Legacy OIDC client value is used as fallback", func(t *testing.T) {
-		h := &FrontendHandler{
-			deps: &deps.Deps{
-				Cfg: &mockFrontendCfg{
-					FileSettings: config.FileSettings{
-						IDP: &config.IDPSection{
-							OIDC: config.OIDCConfig{
-								Clients: []config.OIDCClient{
-									{ClientID: "oidc-client", RememberMeTTL: 30 * time.Minute},
-								},
-							},
-						},
-					},
-				},
-				Env:         config.NewTestEnvironmentConfig(),
-				LangManager: &mockLangManager{},
-				Logger:      slog.Default(),
+		},
+		{
+			name:      "Legacy OIDC client value is used as fallback",
+			idpConfig: legacyOIDCRememberMeIDPConfig(),
+			expectations: []rememberMeTTLExpectation{
+				{oidcClientID: "oidc-client", ttl: 30 * time.Minute, show: true},
 			},
-		}
-
-		assert.Equal(t, 30*time.Minute, h.getRememberMeTTL("oidc-client", ""))
-		assert.True(t, h.shouldShowRememberMe("oidc-client", ""))
-	})
-
-	t.Run("Legacy SAML service provider value is used as fallback", func(t *testing.T) {
-		h := &FrontendHandler{
-			deps: &deps.Deps{
-				Cfg: &mockFrontendCfg{
-					FileSettings: config.FileSettings{
-						IDP: &config.IDPSection{
-							SAML2: config.SAML2Config{
-								ServiceProviders: []config.SAML2ServiceProvider{
-									{EntityID: "sp-entity", RememberMeTTL: time.Hour},
-								},
-							},
-						},
-					},
-				},
-				Env:         config.NewTestEnvironmentConfig(),
-				LangManager: &mockLangManager{},
-				Logger:      slog.Default(),
+		},
+		{
+			name:      "Legacy SAML service provider value is used as fallback",
+			idpConfig: legacySAMLRememberMeIDPConfig(),
+			expectations: []rememberMeTTLExpectation{
+				{samlEntityID: "sp-entity", ttl: time.Hour, show: true},
 			},
-		}
-
-		assert.Equal(t, time.Hour, h.getRememberMeTTL("", "sp-entity"))
-		assert.True(t, h.shouldShowRememberMe("", "sp-entity"))
-	})
-
-	t.Run("Unset values disable remember me", func(t *testing.T) {
-		h := &FrontendHandler{
-			deps: &deps.Deps{
-				Cfg: &mockFrontendCfg{
-					FileSettings: config.FileSettings{
-						IDP: &config.IDPSection{},
-					},
-				},
-				Env:         config.NewTestEnvironmentConfig(),
-				LangManager: &mockLangManager{},
-				Logger:      slog.Default(),
+		},
+		{
+			name:      "Unset values disable remember me",
+			idpConfig: &config.IDPSection{},
+			expectations: []rememberMeTTLExpectation{
+				{oidcClientID: "missing", ttl: 0, show: false},
 			},
-		}
+		},
+	}
 
-		assert.Equal(t, time.Duration(0), h.getRememberMeTTL("missing", ""))
-		assert.False(t, h.shouldShowRememberMe("missing", ""))
-	})
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRememberMeTTLExpectations(t, newRememberMeTTLHandler(tt.idpConfig), tt.expectations)
+		})
+	}
+}
+
+type rememberMeTTLExpectation struct {
+	oidcClientID string
+	samlEntityID string
+	ttl          time.Duration
+	show         bool
+}
+
+// globalRememberMeIDPConfig returns an IDP config with a global remember-me TTL.
+func globalRememberMeIDPConfig() *config.IDPSection {
+	return &config.IDPSection{
+		RememberMeTTL: 2 * time.Hour,
+		OIDC: config.OIDCConfig{
+			Clients: []config.OIDCClient{
+				{ClientID: "oidc-client", RememberMeTTL: 30 * time.Minute},
+			},
+		},
+		SAML2: config.SAML2Config{
+			ServiceProviders: []config.SAML2ServiceProvider{
+				{EntityID: "sp-entity", RememberMeTTL: 45 * time.Minute},
+			},
+		},
+	}
+}
+
+// legacyOIDCRememberMeIDPConfig returns an IDP config with a legacy OIDC TTL.
+func legacyOIDCRememberMeIDPConfig() *config.IDPSection {
+	return &config.IDPSection{
+		OIDC: config.OIDCConfig{
+			Clients: []config.OIDCClient{
+				{ClientID: "oidc-client", RememberMeTTL: 30 * time.Minute},
+			},
+		},
+	}
+}
+
+// legacySAMLRememberMeIDPConfig returns an IDP config with a legacy SAML TTL.
+func legacySAMLRememberMeIDPConfig() *config.IDPSection {
+	return &config.IDPSection{
+		SAML2: config.SAML2Config{
+			ServiceProviders: []config.SAML2ServiceProvider{
+				{EntityID: "sp-entity", RememberMeTTL: time.Hour},
+			},
+		},
+	}
+}
+
+// newRememberMeTTLHandler creates a frontend handler for remember-me TTL tests.
+func newRememberMeTTLHandler(idpConfig *config.IDPSection) *FrontendHandler {
+	return &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg: &mockFrontendCfg{
+				FileSettings: config.FileSettings{IDP: idpConfig},
+			},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+}
+
+// assertRememberMeTTLExpectations verifies TTL and visibility for each lookup.
+func assertRememberMeTTLExpectations(
+	t *testing.T,
+	handler *FrontendHandler,
+	expectations []rememberMeTTLExpectation,
+) {
+	t.Helper()
+
+	for _, expectation := range expectations {
+		assert.Equal(t, expectation.ttl, handler.getRememberMeTTL(expectation.oidcClientID, expectation.samlEntityID))
+		assert.Equal(t, expectation.show, handler.shouldShowRememberMe(expectation.oidcClientID, expectation.samlEntityID))
+	}
 }
 
 func TestIsMFAMethodSupported(t *testing.T) {
@@ -801,7 +840,26 @@ func newFrontendTestUser() *backend.User {
 func TestLoginMFAViewsDoNotExpose2FAHomeMenuBeforeMFACompletion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	h := &FrontendHandler{
+	h := newLoginMFAViewHandler()
+	tmpl := loginMFATestTemplate()
+	testCases := loginMFAViewCases(h)
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertLoginMFAViewHidesHomeMenu(t, tmpl, tc.path, tc.handler)
+		})
+	}
+}
+
+type loginMFAViewCase struct {
+	handler gin.HandlerFunc
+	name    string
+	path    string
+}
+
+// newLoginMFAViewHandler creates a frontend handler for MFA login view tests.
+func newLoginMFAViewHandler() *FrontendHandler {
+	return &FrontendHandler{
 		deps: &deps.Deps{
 			Cfg:         &mockFrontendCfg{},
 			Env:         config.NewTestEnvironmentConfig(),
@@ -809,18 +867,20 @@ func TestLoginMFAViewsDoNotExpose2FAHomeMenuBeforeMFACompletion(t *testing.T) {
 			Logger:      slog.Default(),
 		},
 	}
+}
 
-	tmpl := template.Must(template.New("mfa-login-templates").Parse(`
+// loginMFATestTemplate returns minimal templates that would expose Username when present.
+func loginMFATestTemplate() *template.Template {
+	return template.Must(template.New("mfa-login-templates").Parse(`
 {{ define "idp_webauthn_verify.html" }}{{ if .Username }}2FA Verwaltung{{ end }}{{ end }}
 {{ define "idp_totp_verify.html" }}{{ if .Username }}2FA Verwaltung{{ end }}{{ end }}
 {{ define "idp_recovery_login.html" }}{{ if .Username }}2FA Verwaltung{{ end }}{{ end }}
 `))
+}
 
-	testCases := []struct {
-		name    string
-		path    string
-		handler gin.HandlerFunc
-	}{
+// loginMFAViewCases returns the MFA login views that must hide self-service navigation.
+func loginMFAViewCases(h *FrontendHandler) []loginMFAViewCase {
+	return []loginMFAViewCase{
 		{
 			name:    "WebAuthn verify page",
 			path:    "/login/webauthn/de",
@@ -837,30 +897,40 @@ func TestLoginMFAViewsDoNotExpose2FAHomeMenuBeforeMFACompletion(t *testing.T) {
 			handler: h.LoginRecovery,
 		},
 	}
+}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			r := gin.New()
-			r.SetHTMLTemplate(tmpl)
-			r.Use(func(c *gin.Context) {
-				localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "de")
-				c.Set(definitions.CtxLocalizedKey, localizer)
-				c.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
-					definitions.SessionKeyUsername: "alice",
-				}})
-				c.Next()
-			})
+// assertLoginMFAViewHidesHomeMenu verifies that pending MFA pages omit the 2FA home link.
+func assertLoginMFAViewHidesHomeMenu(
+	t *testing.T,
+	tmpl *template.Template,
+	path string,
+	handler gin.HandlerFunc,
+) {
+	t.Helper()
 
-			r.GET(tc.path, tc.handler)
+	r := gin.New()
+	r.SetHTMLTemplate(tmpl)
+	r.Use(loginMFAViewSessionMiddleware())
+	r.GET(path, handler)
 
-			resp := httptest.NewRecorder()
-			req, _ := http.NewRequest(http.MethodGet, tc.path, nil)
+	resp := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, path, nil)
 
-			r.ServeHTTP(resp, req)
+	r.ServeHTTP(resp, req)
 
-			assert.Equal(t, http.StatusOK, resp.Code)
-			assert.NotContains(t, resp.Body.String(), "2FA Verwaltung")
-		})
+	assert.Equal(t, http.StatusOK, resp.Code)
+	assert.NotContains(t, resp.Body.String(), "2FA Verwaltung")
+}
+
+// loginMFAViewSessionMiddleware installs localized and secure-session state for view tests.
+func loginMFAViewSessionMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "de")
+		c.Set(definitions.CtxLocalizedKey, localizer)
+		c.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyUsername: "alice",
+		}})
+		c.Next()
 	}
 }
 
@@ -912,48 +982,29 @@ func TestDelayedResponseFirstFactorLatchSurvivesTOTPCompletion(t *testing.T) {
 func loadMFASelectTemplate(t *testing.T) *template.Template {
 	t.Helper()
 
-	path := filepath.Join("..", "..", "..", "..", "static", "templates", "idp_mfa_select.html")
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read template: %v", err)
-	}
-
-	tmpl := template.New("idp_mfa_select.html")
-
-	_, err = tmpl.Parse("{{ define \"idp_header.html\" }}header{{ end }}{{ define \"idp_footer.html\" }}footer{{ end }}")
-	if err != nil {
-		t.Fatalf("failed to parse base templates: %v", err)
-	}
-
-	_, err = tmpl.Parse(string(content))
-	if err != nil {
-		t.Fatalf("failed to parse select template: %v", err)
-	}
-
-	return tmpl
+	return loadIDPChromeTemplate(t, "idp_mfa_select.html")
 }
 
 func loadIDPLoginTemplate(t *testing.T) *template.Template {
 	t.Helper()
 
-	path := filepath.Join("..", "..", "..", "..", "static", "templates", "idp_login.html")
+	return loadIDPChromeTemplate(t, "idp_login.html")
+}
 
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read template: %v", err)
-	}
+// loadIDPChromeTemplate loads templates that depend on shared IDP header and footer definitions.
+func loadIDPChromeTemplate(t *testing.T, name string) *template.Template {
+	t.Helper()
 
-	tmpl := template.New("idp_login.html")
+	tmpl := template.New(name)
 
-	_, err = tmpl.Parse("{{ define \"idp_header.html\" }}header{{ end }}{{ define \"idp_footer.html\" }}footer{{ end }}")
+	_, err := tmpl.Parse("{{ define \"idp_header.html\" }}header{{ end }}{{ define \"idp_footer.html\" }}footer{{ end }}")
 	if err != nil {
 		t.Fatalf("failed to parse base templates: %v", err)
 	}
 
-	_, err = tmpl.Parse(string(content))
+	_, err = tmpl.Parse(loadStaticTemplate(t, name))
 	if err != nil {
-		t.Fatalf("failed to parse login template: %v", err)
+		t.Fatalf("failed to parse template %s: %v", name, err)
 	}
 
 	return tmpl

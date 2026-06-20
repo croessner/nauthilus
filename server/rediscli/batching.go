@@ -31,6 +31,7 @@ import (
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const redisCommandClient = "client"
@@ -128,107 +129,123 @@ func (h *BatchingHook) run() {
 	batch := make([]*batchItem, 0, h.maxBatch)
 
 	for {
-		// Block waiting for the first item or exit when queue is closed (never in current lifecycle)
-		first, ok := <-h.queue
+		var ok bool
+
+		batch, ok = h.collectBatch(batch[:0])
 		if !ok {
 			return
 		}
 
-		batch = batch[:0]
-		batch = append(batch, first)
+		h.flushBatch(batch)
+	}
+}
 
-		// Collect until size threshold or time threshold
-		timeout := time.NewTimer(h.maxWait)
+// collectBatch gathers queued commands until size or wait thresholds are reached.
+func (h *BatchingHook) collectBatch(batch []*batchItem) ([]*batchItem, bool) {
+	first, ok := <-h.queue
+	if !ok {
+		return nil, false
+	}
 
-		collect := true
-		for collect {
-			if len(batch) >= h.maxBatch {
-				break
+	batch = append(batch, first)
+
+	timeout := time.NewTimer(h.maxWait)
+	defer stopBatchTimer(timeout)
+
+	for len(batch) < h.maxBatch {
+		select {
+		case it, ok := <-h.queue:
+			if !ok {
+				return batch, true
 			}
 
-			select {
-			case it, ok := <-h.queue:
-				if !ok {
-					collect = false
-
-					break
-				}
-
-				batch = append(batch, it)
-			case <-timeout.C:
-				collect = false
-			}
+			batch = append(batch, it)
+		case <-timeout.C:
+			return batch, true
 		}
+	}
 
-		if !timeout.Stop() {
-			// Drain to prevent leaks
-			select {
-			case <-timeout.C:
-			default:
-			}
-		}
+	return batch, true
+}
 
-		// Execute the batch via pipelined; do not propagate a single error to all cmds,
-		// since each command tracks its own error/value.
-		// We purposely use Background context to rely on client timeouts for stability.
+// stopBatchTimer stops a timer and drains it when needed.
+func stopBatchTimer(timeout *time.Timer) {
+	if timeout.Stop() {
+		return
+	}
 
-		// Tracing for a single flush cycle
-		tr := monittrace.New("nauthilus/redis_batch")
-		base := svcctx.Get()
-		fctx, fsp := tr.Start(base, "redis.uc.flush",
-			attribute.Int("batch_size", len(batch)),
-			attribute.Int("max_batch", h.maxBatch),
-			attribute.Int("max_wait_ms", int(h.maxWait.Milliseconds())),
+	select {
+	case <-timeout.C:
+	default:
+	}
+}
+
+// flushBatch executes a collected command batch and notifies command waiters.
+func (h *BatchingHook) flushBatch(batch []*batchItem) {
+	fsp, execErr := h.executeBatchPipeline(batch)
+	if execErr != nil {
+		level.Debug(h.logger).Log(
+			definitions.LogKeyMsg, "Redis batching pipeline returned error",
+			definitions.LogKeyError, execErr,
 		)
 
-		// Derive a timeout context from the span context
-		dCtx, cancel := context.WithTimeout(fctx, h.pipelineTimeout)
+		fsp.RecordError(execErr)
+	}
 
-		_, execErr := h.client.Pipelined(dCtx, func(pipe redis.Pipeliner) error {
-			for _, it := range batch {
-				// We use a background context here to ensure the command is at least queued.
-				// go-redis handles its own context internally.
-				if perr := pipe.Process(context.Background(), it.cmd); perr != nil {
-					// defensiv: Command markieren und loggen
-					it.cmd.SetErr(perr)
-					level.Warn(h.logger).Log(
-						definitions.LogKeyMsg, "Failed to queue command into pipeline",
-						definitions.LogKeyError, perr,
-						"cmd", it.cmd.FullName(),
-					)
-					// Important: Still continue with the next command in the batch
-				}
-			}
+	fsp.End()
+	notifyBatchWaiters(batch)
+}
 
-			return nil
-		})
+// executeBatchPipeline traces and executes one Redis pipeline flush.
+func (h *BatchingHook) executeBatchPipeline(batch []*batchItem) (trace.Span, error) {
+	tr := monittrace.New("nauthilus/redis_batch")
+	base := svcctx.Get()
+	fctx, fsp := tr.Start(base, "redis.uc.flush",
+		attribute.Int("batch_size", len(batch)),
+		attribute.Int("max_batch", h.maxBatch),
+		attribute.Int("max_wait_ms", int(h.maxWait.Milliseconds())),
+	)
 
-		cancel()
+	dCtx, cancel := context.WithTimeout(fctx, h.pipelineTimeout)
+	defer cancel()
 
-		if execErr != nil {
-			// This is the first failing command’s error. Individual commands already have their error set by go-redis.
-			level.Debug(h.logger).Log(
-				definitions.LogKeyMsg, "Redis batching pipeline returned error",
-				definitions.LogKeyError, execErr,
+	_, execErr := h.client.Pipelined(dCtx, func(pipe redis.Pipeliner) error {
+		h.queuePipelineBatch(pipe, batch)
+
+		return nil
+	})
+
+	return fsp, execErr
+}
+
+// queuePipelineBatch queues all commands into the Redis pipeline.
+func (h *BatchingHook) queuePipelineBatch(pipe redis.Pipeliner, batch []*batchItem) {
+	for _, it := range batch {
+		// We use a background context here to ensure the command is at least queued.
+		// go-redis handles its own context internally.
+		if perr := pipe.Process(context.Background(), it.cmd); perr != nil {
+			it.cmd.SetErr(perr)
+			level.Warn(h.logger).Log(
+				definitions.LogKeyMsg, "Failed to queue command into pipeline",
+				definitions.LogKeyError, perr,
+				"cmd", it.cmd.FullName(),
 			)
+		}
+	}
+}
 
-			fsp.RecordError(execErr)
+// notifyBatchWaiters sends individual command errors to waiting callers.
+func notifyBatchWaiters(batch []*batchItem) {
+	for _, it := range batch {
+		var err error
+		if it.cmd != nil {
+			err = it.cmd.Err()
 		}
 
-		fsp.End()
-
-		// Notify waiters with their individual command error
-		for _, it := range batch {
-			var err error
-			if it.cmd != nil {
-				err = it.cmd.Err()
-			}
-
-			select {
-			case it.done <- err:
-			default:
-				// If waiter already gave up (ctx canceled), avoid blocking
-			}
+		select {
+		case it.done <- err:
+		default:
+			// If waiter already gave up (ctx canceled), avoid blocking
 		}
 	}
 }

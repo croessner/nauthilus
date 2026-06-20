@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -90,9 +91,22 @@ func (p *MetricsPoller) fetchAndFormat(ctx context.Context) string {
 		return ""
 	}
 
+	body, ok := p.fetchMetricsBody(ctx)
+	if !ok {
+		return ""
+	}
+	defer func() { _ = body.Close() }()
+
+	metrics := p.collectLuaMetrics(body)
+
+	return p.formatLuaMetrics(metrics)
+}
+
+// fetchMetricsBody performs one metrics request and returns a readable response body.
+func (p *MetricsPoller) fetchMetricsBody(ctx context.Context) (io.ReadCloser, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.url, nil)
 	if err != nil {
-		return ""
+		return nil, false
 	}
 
 	for k, v := range p.header {
@@ -105,191 +119,208 @@ func (p *MetricsPoller) fetchAndFormat(ctx context.Context) string {
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return ""
+		return nil, false
 	}
-	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		_ = resp.Body.Close()
+
+		return nil, false
 	}
 
-	depthByBackend := map[string]float64{}
+	return resp.Body, true
+}
 
-	var waitSum, waitCount float64
+type luaMetricsSnapshot struct {
+	depthByBackend   map[string]float64
+	droppedByBackend map[string]float64
+	vmInUseByKey     map[string]float64
+	replacedByKey    map[string]float64
+	waitSum          float64
+	waitCount        float64
+}
 
-	droppedByBackend := map[string]float64{}
-	vmInUseByKey := map[string]float64{}
-	replacedByKey := map[string]float64{}
+type metricKV struct {
+	key   string
+	value float64
+}
 
-	scanner := bufio.NewScanner(resp.Body)
+// collectLuaMetrics scans Prometheus samples relevant to Lua runtime status.
+func (p *MetricsPoller) collectLuaMetrics(reader io.Reader) luaMetricsSnapshot {
+	metrics := luaMetricsSnapshot{
+		depthByBackend:   map[string]float64{},
+		droppedByBackend: map[string]float64{},
+		vmInUseByKey:     map[string]float64{},
+		replacedByKey:    map[string]float64{},
+	}
+
+	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
 	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" || line[0] == '#' {
+		name, labels, value, ok := p.parseMetricSample(scanner.Text())
+		if !ok {
 			continue
 		}
 
-		matched := false
+		metrics.add(name, labels, value)
+	}
 
-		for _, re := range p.regexes {
-			if re.MatchString(line) {
-				matched = true
-				break
-			}
-		}
+	return metrics
+}
 
-		if !matched {
-			continue
-		}
+// parseMetricSample parses one Prometheus text sample selected by the poller regexes.
+func (p *MetricsPoller) parseMetricSample(line string) (string, map[string]string, float64, bool) {
+	if line == "" || line[0] == '#' || !p.matchesMetric(line) {
+		return "", nil, 0, false
+	}
 
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
+	parts := strings.Fields(line)
+	if len(parts) < 2 {
+		return "", nil, 0, false
+	}
 
-		head := parts[0]
+	val, err := strconv.ParseFloat(parts[1], 64)
+	if err != nil {
+		return "", nil, 0, false
+	}
 
-		val, err := strconv.ParseFloat(parts[1], 64)
-		if err != nil {
-			continue
-		}
+	name, labels := splitMetricHead(parts[0])
 
-		name := head
-		labels := map[string]string{}
+	return name, labels, val, true
+}
 
-		if i := strings.IndexByte(head, '{'); i >= 0 {
-			name = head[:i]
-
-			j := strings.LastIndexByte(head, '}')
-			if j > i {
-				labels = parseLabels(head[i : j+1])
-			}
-		}
-
-		switch name {
-		case "lua_queue_depth":
-			b := labels["backend"]
-			depthByBackend[b] += val
-		case "lua_queue_wait_seconds_sum":
-			waitSum += val
-		case "lua_queue_wait_seconds_count":
-			waitCount += val
-		case "lua_queue_dropped_total":
-			b := labels["backend"]
-			droppedByBackend[b] = val
-		case "lua_vm_in_use":
-			k := labels["key"]
-			vmInUseByKey[k] = val
-		case "lua_vm_replaced_total":
-			k := labels["key"]
-			replacedByKey[k] = val
+// matchesMetric reports whether a Prometheus line has one of the tracked metric names.
+func (p *MetricsPoller) matchesMetric(line string) bool {
+	for _, re := range p.regexes {
+		if re.MatchString(line) {
+			return true
 		}
 	}
 
-	type kv struct {
-		k string
-		v float64
-	}
+	return false
+}
 
-	pickTop := func(m map[string]float64, n int) []kv {
-		a := make([]kv, 0, len(m))
-		for k, v := range m {
-			if v <= 0 {
-				continue
-			}
-
-			a = append(a, kv{k, v})
+// splitMetricHead separates a metric name from optional labels.
+func splitMetricHead(head string) (string, map[string]string) {
+	if i := strings.IndexByte(head, '{'); i >= 0 {
+		j := strings.LastIndexByte(head, '}')
+		if j > i {
+			return head[:i], parseLabels(head[i : j+1])
 		}
-
-		sort.Slice(a, func(i, j int) bool { return a[i].v > a[j].v })
-
-		if n > 0 && len(a) > n {
-			a = a[:n]
-		}
-
-		return a
 	}
 
-	topsDepth := pickTop(depthByBackend, 3)
-	topsVM := pickTop(vmInUseByKey, 3)
+	return head, map[string]string{}
+}
 
-	var depthTotal float64
-	for _, v := range depthByBackend {
-		depthTotal += v
+// add stores one selected metric sample in the snapshot.
+func (m *luaMetricsSnapshot) add(name string, labels map[string]string, val float64) {
+	switch name {
+	case "lua_queue_depth":
+		m.depthByBackend[labels["backend"]] += val
+	case "lua_queue_wait_seconds_sum":
+		m.waitSum += val
+	case "lua_queue_wait_seconds_count":
+		m.waitCount += val
+	case "lua_queue_dropped_total":
+		m.droppedByBackend[labels["backend"]] = val
+	case "lua_vm_in_use":
+		m.vmInUseByKey[labels["key"]] = val
+	case "lua_vm_replaced_total":
+		m.replacedByKey[labels["key"]] = val
 	}
+}
 
-	var vmInUseTotal float64
-	for _, v := range vmInUseByKey {
-		vmInUseTotal += v
-	}
-
-	avgWaitMs := 0.0
-	if waitCount > 0 {
-		avgWaitMs = (waitSum / waitCount) * 1000.0
-	}
-
-	droppedDeltaTotal := 0.0
-
-	for b, cur := range droppedByBackend {
-		prev := p.lastDrop[b]
-		if cur >= prev {
-			droppedDeltaTotal += cur - prev
-		}
-
-		p.lastDrop[b] = cur
-	}
-
-	replacedDeltaTotal := 0.0
-
-	for k, cur := range replacedByKey {
-		prev := p.lastRepl[k]
-		if cur >= prev {
-			replacedDeltaTotal += cur - prev
-		}
-
-		p.lastRepl[k] = cur
-	}
-
+// formatLuaMetrics renders the latest Lua runtime metrics as a compact status line.
+func (p *MetricsPoller) formatLuaMetrics(metrics luaMetricsSnapshot) string {
 	var sb strings.Builder
-	sb.WriteString("[lua qDepth: ")
 
-	if len(topsDepth) == 0 {
-		sb.WriteString("-")
-	} else {
-		for i, kv := range topsDepth {
-			if i > 0 {
-				sb.WriteString(",")
-			}
-
-			fmt.Fprintf(&sb, "%s=%.0f", kv.k, kv.v)
-		}
-	}
-
-	fmt.Fprintf(&sb, " | total=%.0f] ", depthTotal)
+	writeTopMetrics(&sb, "[lua qDepth: ", pickTopMetrics(metrics.depthByBackend, 3))
+	fmt.Fprintf(&sb, " | total=%.0f] ", sumMetricValues(metrics.depthByBackend))
 	sb.WriteString("[qWait(avg)=")
-	fmt.Fprintf(&sb, "%.1fms] ", avgWaitMs)
+	fmt.Fprintf(&sb, "%.1fms] ", averageWaitMs(metrics))
 	sb.WriteString("[dropped(\u0394)=")
-	fmt.Fprintf(&sb, "%.0f] ", droppedDeltaTotal)
+	fmt.Fprintf(&sb, "%.0f] ", p.counterDeltaTotal(metrics.droppedByBackend, p.lastDrop))
 	sb.WriteString("[vmRepl(\u0394)=")
-	fmt.Fprintf(&sb, "%.0f] ", replacedDeltaTotal)
-	sb.WriteString("[vmInUse: ")
-
-	if len(topsVM) == 0 {
-		sb.WriteString("-")
-	} else {
-		for i, kv := range topsVM {
-			if i > 0 {
-				sb.WriteString(",")
-			}
-
-			fmt.Fprintf(&sb, "%s=%.0f", kv.k, kv.v)
-		}
-	}
-
-	fmt.Fprintf(&sb, " | total=%.0f]", vmInUseTotal)
+	fmt.Fprintf(&sb, "%.0f] ", p.counterDeltaTotal(metrics.replacedByKey, p.lastRepl))
+	writeTopMetrics(&sb, "[vmInUse: ", pickTopMetrics(metrics.vmInUseByKey, 3))
+	fmt.Fprintf(&sb, " | total=%.0f]", sumMetricValues(metrics.vmInUseByKey))
 
 	return sb.String()
+}
+
+// pickTopMetrics returns the highest positive metric values.
+func pickTopMetrics(metrics map[string]float64, n int) []metricKV {
+	values := make([]metricKV, 0, len(metrics))
+
+	for key, value := range metrics {
+		if value > 0 {
+			values = append(values, metricKV{key: key, value: value})
+		}
+	}
+
+	sort.Slice(values, func(i, j int) bool { return values[i].value > values[j].value })
+
+	if n > 0 && len(values) > n {
+		return values[:n]
+	}
+
+	return values
+}
+
+// sumMetricValues returns the sum of all values in a metric map.
+func sumMetricValues(metrics map[string]float64) float64 {
+	var total float64
+
+	for _, value := range metrics {
+		total += value
+	}
+
+	return total
+}
+
+// averageWaitMs returns the average queue wait in milliseconds.
+func averageWaitMs(metrics luaMetricsSnapshot) float64 {
+	if metrics.waitCount <= 0 {
+		return 0
+	}
+
+	return (metrics.waitSum / metrics.waitCount) * 1000.0
+}
+
+// counterDeltaTotal returns the monotonic counter increase and refreshes prior values.
+func (p *MetricsPoller) counterDeltaTotal(current map[string]float64, previous map[string]float64) float64 {
+	var total float64
+
+	for key, value := range current {
+		prev := previous[key]
+		if value >= prev {
+			total += value - prev
+		}
+
+		previous[key] = value
+	}
+
+	return total
+}
+
+// writeTopMetrics writes a compact key=value list or a placeholder.
+func writeTopMetrics(sb *strings.Builder, prefix string, values []metricKV) {
+	sb.WriteString(prefix)
+
+	if len(values) == 0 {
+		sb.WriteString("-")
+
+		return
+	}
+
+	for i, kv := range values {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+
+		fmt.Fprintf(sb, "%s=%.0f", kv.key, kv.value)
+	}
 }
 
 func deriveMetricsURL(apiURL string) string {
@@ -309,71 +340,81 @@ func deriveMetricsURL(apiURL string) string {
 }
 
 func parseLabels(s string) map[string]string {
-	m := make(map[string]string)
-
 	s = strings.Trim(s, "{}")
 	if s == "" {
-		return m
+		return map[string]string{}
 	}
 
-	var (
-		key, val string
-		inVal    bool
-		escaped  bool
-	)
-
-	add := func() {
-		if key != "" {
-			m[key] = val
-		}
-
-		key, val = "", ""
-		inVal, escaped = false, false
-	}
-
+	parser := &labelParser{labels: map[string]string{}}
 	for _, r := range s {
-		if escaped {
-			val += string(r)
-			escaped = false
-
-			continue
-		}
-
-		if r == '\\' {
-			escaped = true
-			continue
-		}
-
-		if r == '"' {
-			inVal = !inVal
-			continue
-		}
-
-		if !inVal {
-			if r == ',' {
-				add()
-				continue
-			}
-
-			if r == '=' {
-				continue
-			}
-
-			if unicode.IsSpace(r) {
-				continue
-			}
-
-			key += string(r)
-
-			continue
-		}
-
-		val += string(r)
+		parser.consume(r)
 	}
 
-	if key != "" {
-		add()
+	parser.flush()
+
+	return parser.labels
+}
+
+type labelParser struct {
+	labels  map[string]string
+	key     string
+	value   string
+	inValue bool
+	escaped bool
+}
+
+// consume applies one rune from a Prometheus label set.
+func (p *labelParser) consume(r rune) {
+	if p.escaped {
+		p.value += string(r)
+		p.escaped = false
+
+		return
 	}
 
-	return m
+	if r == '\\' {
+		p.escaped = true
+
+		return
+	}
+
+	if r == '"' {
+		p.inValue = !p.inValue
+
+		return
+	}
+
+	if p.inValue {
+		p.value += string(r)
+
+		return
+	}
+
+	p.consumeKeyRune(r)
+}
+
+// consumeKeyRune applies a rune while parsing the label key side.
+func (p *labelParser) consumeKeyRune(r rune) {
+	switch {
+	case r == ',':
+		p.flush()
+	case r == '=':
+		return
+	case unicode.IsSpace(r):
+		return
+	default:
+		p.key += string(r)
+	}
+}
+
+// flush stores the current key/value pair and resets parser state.
+func (p *labelParser) flush() {
+	if p.key != "" {
+		p.labels[p.key] = p.value
+	}
+
+	p.key = ""
+	p.value = ""
+	p.inValue = false
+	p.escaped = false
 }

@@ -109,27 +109,43 @@ func requestAttributes(allOperations []policy.Operation) []AttributeDefinition {
 }
 
 func preAuthAttributes(authOnly []policy.Operation, authLookup []policy.Operation) []AttributeDefinition {
-	return []AttributeDefinition{
-		{
-			ID:            policy.AttributeBruteForceTriggered,
-			Description:   "Brute-force protection matched the current request.",
-			Stage:         policy.StagePreAuth,
-			Operations:    authOnly,
-			ProducerTypes: []string{producerBruteForce},
-			Category:      AttributeCategoryEnvironment,
-			Type:          AttributeTypeBool,
-			Source:        SourceBuiltin,
-			Details: map[string]DetailDefinition{
-				detailBruteRule:           {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
-				detailBruteBucketID:       {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
-				detailBruteClientNet:      {Type: AttributeTypeCIDR, Sensitivity: DetailSensitivityInternal},
-				detailBruteRepeating:      {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
-				detailBruteRWPActive:      {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
-				detailBruteBucketCount:    {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
-				detailBruteBucketRatio:    {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
-				detailBruteEffectiveLimit: {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
-			},
+	attributes := []AttributeDefinition{bruteForceTriggeredAttribute(authOnly)}
+	attributes = append(attributes, bruteForceStateAttributes(authOnly)...)
+	attributes = append(attributes, bruteForceTolerationAttributes(authOnly)...)
+	attributes = append(attributes, bruteForceBucketAttributes(authOnly)...)
+	attributes = append(attributes, bruteForceErrorAttribute(authOnly))
+	attributes = append(attributes, tlsSecureAttribute(authLookup))
+
+	return attributes
+}
+
+// bruteForceTriggeredAttribute describes the primary pre-auth brute-force match fact.
+func bruteForceTriggeredAttribute(authOnly []policy.Operation) AttributeDefinition {
+	return AttributeDefinition{
+		ID:            policy.AttributeBruteForceTriggered,
+		Description:   "Brute-force protection matched the current request.",
+		Stage:         policy.StagePreAuth,
+		Operations:    authOnly,
+		ProducerTypes: []string{producerBruteForce},
+		Category:      AttributeCategoryEnvironment,
+		Type:          AttributeTypeBool,
+		Source:        SourceBuiltin,
+		Details: map[string]DetailDefinition{
+			detailBruteRule:           {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
+			detailBruteBucketID:       {Type: AttributeTypeString, Sensitivity: DetailSensitivityInternal},
+			detailBruteClientNet:      {Type: AttributeTypeCIDR, Sensitivity: DetailSensitivityInternal},
+			detailBruteRepeating:      {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
+			detailBruteRWPActive:      {Type: AttributeTypeBool, Sensitivity: DetailSensitivityInternal},
+			detailBruteBucketCount:    {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
+			detailBruteBucketRatio:    {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
+			detailBruteEffectiveLimit: {Type: AttributeTypeNumber, Sensitivity: DetailSensitivityInternal},
 		},
+	}
+}
+
+// bruteForceStateAttributes returns pre-auth brute-force state attributes.
+func bruteForceStateAttributes(authOnly []policy.Operation) []AttributeDefinition {
+	return []AttributeDefinition{
 		bruteForceBoolAttribute(
 			policy.AttributeBruteForceRepeating,
 			"Brute-force protection matched a repeating state for the current request.",
@@ -145,6 +161,12 @@ func preAuthAttributes(authOnly []policy.Operation, authLookup []policy.Operatio
 			"Bucket counters should be updated for the current request.",
 			authOnly,
 		),
+	}
+}
+
+// bruteForceTolerationAttributes returns pre-auth brute-force toleration attributes.
+func bruteForceTolerationAttributes(authOnly []policy.Operation) []AttributeDefinition {
+	return []AttributeDefinition{
 		bruteForceBoolAttribute(
 			policy.AttributeBruteForceTolerationActive,
 			"Brute-force toleration currently applies to the request client IP.",
@@ -190,6 +212,12 @@ func preAuthAttributes(authOnly []policy.Operation, authLookup []policy.Operatio
 			"Brute-force toleration suppressed a block that would otherwise have been applied.",
 			authOnly,
 		),
+	}
+}
+
+// bruteForceBucketAttributes returns pre-auth brute-force bucket summary attributes.
+func bruteForceBucketAttributes(authOnly []policy.Operation) []AttributeDefinition {
+	return []AttributeDefinition{
 		bruteForceNumberAttribute(
 			policy.AttributeBruteForceBucketMatchedCount,
 			"Number of brute-force buckets matching the current request context.",
@@ -210,27 +238,35 @@ func preAuthAttributes(authOnly []policy.Operation, authLookup []policy.Operatio
 			"Highest observed brute-force bucket fill ratio for the current request.",
 			authOnly,
 		),
-		{
-			ID:            policy.AttributeBruteForceError,
-			Description:   "Brute-force evaluation failed due to a technical runtime error.",
-			Stage:         policy.StagePreAuth,
-			Operations:    authOnly,
-			ProducerTypes: []string{producerBruteForce},
-			Category:      AttributeCategoryEnvironment,
-			Type:          AttributeTypeBool,
-			Source:        SourceBuiltin,
-			Details:       errorDetails(true),
-		},
-		{
-			ID:            policy.AttributeTLSSecure,
-			Description:   "The request arrived over an accepted TLS path.",
-			Stage:         policy.StagePreAuth,
-			Operations:    authLookup,
-			ProducerTypes: []string{producerTLSEncryption},
-			Category:      AttributeCategoryEnvironment,
-			Type:          AttributeTypeBool,
-			Source:        SourceBuiltin,
-		},
+	}
+}
+
+// bruteForceErrorAttribute returns the pre-auth brute-force runtime error attribute.
+func bruteForceErrorAttribute(authOnly []policy.Operation) AttributeDefinition {
+	return AttributeDefinition{
+		ID:            policy.AttributeBruteForceError,
+		Description:   "Brute-force evaluation failed due to a technical runtime error.",
+		Stage:         policy.StagePreAuth,
+		Operations:    authOnly,
+		ProducerTypes: []string{producerBruteForce},
+		Category:      AttributeCategoryEnvironment,
+		Type:          AttributeTypeBool,
+		Source:        SourceBuiltin,
+		Details:       errorDetails(true),
+	}
+}
+
+// tlsSecureAttribute returns the pre-auth TLS security attribute.
+func tlsSecureAttribute(authLookup []policy.Operation) AttributeDefinition {
+	return AttributeDefinition{
+		ID:            policy.AttributeTLSSecure,
+		Description:   "The request arrived over an accepted TLS path.",
+		Stage:         policy.StagePreAuth,
+		Operations:    authLookup,
+		ProducerTypes: []string{producerTLSEncryption},
+		Category:      AttributeCategoryEnvironment,
+		Type:          AttributeTypeBool,
+		Source:        SourceBuiltin,
 	}
 }
 

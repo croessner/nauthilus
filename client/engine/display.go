@@ -209,194 +209,316 @@ func computeHistogramCounts(buckets []atomic.Int64, start, end, bucketSpan, cols
 	return counts, maxC
 }
 
+type latencyHistogramRange struct {
+	dataStart int
+	dataEnd   int
+	start     int
+	end       int
+	span      int
+	dataSpan  int
+}
+
+type latencyHistogramLayout struct {
+	counts     []int64
+	binWidths  []int
+	binStarts  []int
+	tickPos    []int
+	maxC       int64
+	height     int
+	labelWidth int
+	bucketSpan int
+	cols       int
+	drawCols   int
+}
+
 // PrintLatencyHistogram provides the exported PrintLatencyHistogram function.
 func PrintLatencyHistogram(stats Stats, buckets []atomic.Int64) {
-	height := 10
+	const height = 10
 
-	dataStart, dataEnd, ok := findNonZeroRange(buckets)
+	histRange, ok := newLatencyHistogramRange(buckets)
 	if !ok {
 		fmt.Println("[hist] no data")
+
 		return
 	}
 
+	layout, ok := newLatencyHistogramLayout(buckets, histRange, height)
+	if !ok {
+		fmt.Println("[hist] all-zero buckets")
+
+		return
+	}
+
+	fmt.Printf("Latency histogram  bins=%d height=%d\n", layout.cols, layout.height)
+	printHistogramRows(layout)
+	printHistogramAxis(layout)
+	printHistogramMarkers(stats, histRange, layout)
+	printHistogramTickLabels(histRange, layout)
+}
+
+// newLatencyHistogramRange computes the padded latency range to render.
+func newLatencyHistogramRange(buckets []atomic.Int64) (latencyHistogramRange, bool) {
+	dataStart, dataEnd, ok := findNonZeroRange(buckets)
+	if !ok {
+		return latencyHistogramRange{}, false
+	}
+
+	start, end := paddedLatencyRange(dataStart, dataEnd)
+
+	return latencyHistogramRange{
+		dataStart: dataStart,
+		dataEnd:   dataEnd,
+		start:     start,
+		end:       end,
+		span:      end - start + 1,
+		dataSpan:  max(dataEnd-dataStart+1, 1),
+	}, true
+}
+
+// paddedLatencyRange adds visual breathing room around narrow latency ranges.
+func paddedLatencyRange(dataStart int, dataEnd int) (int, int) {
 	start := dataStart
 	end := dataEnd
-
 	pad := 0
+
 	if end-start < 20 {
 		pad = 2
 	}
 
-	start -= pad
-	if start < 0 {
-		start = 0
-	}
+	start = max(start-pad, 0)
+	end = min(end+pad, maxLatencyMs)
 
-	end += pad
-	if end > maxLatencyMs {
-		end = maxLatencyMs
-	}
+	return start, end
+}
 
-	span := end - start + 1
-	dataSpan := max(dataEnd-dataStart+1, 1)
+// newLatencyHistogramLayout computes terminal-width-dependent histogram geometry.
+func newLatencyHistogramLayout(buckets []atomic.Int64, histRange latencyHistogramRange, height int) (latencyHistogramLayout, bool) {
+	const (
+		gutter           = 2
+		provisionalLabel = 4
+	)
 
 	termW, _ := TermSize()
-	gutter := 2
-	provisionalLabel := 4
-	usable := min(span, max(termW-provisionalLabel-gutter, 20))
+	usable := min(histRange.span, max(termW-provisionalLabel-gutter, 20))
+	bucketSpan, cols := histogramBucketLayout(histRange.span, usable)
 
-	bucketSpan := (span + usable - 1) / usable
-	cols := (span + bucketSpan - 1) / bucketSpan
-
-	var counts []int64
-
-	_, maxC := computeHistogramCounts(buckets, start, end, bucketSpan, cols)
-
+	_, maxC := computeHistogramCounts(buckets, histRange.start, histRange.end, bucketSpan, cols)
 	if maxC == 0 {
-		fmt.Println("[hist] all-zero buckets")
-		return
+		return latencyHistogramLayout{}, false
 	}
 
 	labelWidth := max(len(humanCount(maxC)), 4)
-
-	// Recompute for exact fit
-	usable = min(span, max(termW-labelWidth-gutter, 20))
-	bucketSpan = (span + usable - 1) / usable
-	cols = (span + bucketSpan - 1) / bucketSpan
-	counts, maxC = computeHistogramCounts(buckets, start, end, bucketSpan, cols)
-
-	fmt.Printf("Latency histogram  bins=%d height=%d\n", cols, height)
-
+	usable = min(histRange.span, max(termW-labelWidth-gutter, 20))
+	bucketSpan, cols = histogramBucketLayout(histRange.span, usable)
+	counts, maxC := computeHistogramCounts(buckets, histRange.start, histRange.end, bucketSpan, cols)
 	drawCols := max(cols, usable)
+	binWidths, binStarts := histogramBinGeometry(cols, drawCols)
 
+	return latencyHistogramLayout{
+		counts:     counts,
+		binWidths:  binWidths,
+		binStarts:  binStarts,
+		tickPos:    histogramTickPositions(drawCols),
+		maxC:       maxC,
+		height:     height,
+		labelWidth: labelWidth,
+		bucketSpan: bucketSpan,
+		cols:       cols,
+		drawCols:   drawCols,
+	}, true
+}
+
+// histogramBucketLayout returns bucket width and column count for a span.
+func histogramBucketLayout(span int, usable int) (int, int) {
+	bucketSpan := (span + usable - 1) / usable
+	cols := (span + bucketSpan - 1) / bucketSpan
+
+	return bucketSpan, cols
+}
+
+// histogramBinGeometry maps histogram columns onto rendered terminal cells.
+func histogramBinGeometry(cols int, drawCols int) ([]int, []int) {
 	colWidth := max(drawCols/cols, 1)
-	rem := drawCols - colWidth*cols
-
+	remainder := drawCols - colWidth*cols
 	binWidths := make([]int, cols)
 	binStarts := make([]int, cols)
-	acc := 0
+	start := 0
 
-	for i := 0; i < cols; i++ {
-		w := colWidth
-		if i < rem {
-			w++
+	for i := range cols {
+		width := colWidth
+		if i < remainder {
+			width++
 		}
 
-		binWidths[i] = w
-		binStarts[i] = acc
-		acc += w
+		binWidths[i] = width
+		binStarts[i] = start
+		start += width
 	}
 
-	fmt.Printf("%*s ", labelWidth, "count")
+	return binWidths, binStarts
+}
+
+// histogramTickPositions returns the five evenly spaced axis tick locations.
+func histogramTickPositions(drawCols int) []int {
+	last := drawCols - 1
+
+	return []int{
+		0,
+		int(math.Round(float64(last) * 0.25)),
+		int(math.Round(float64(last) * 0.5)),
+		int(math.Round(float64(last) * 0.75)),
+		last,
+	}
+}
+
+// printHistogramRows renders count labels and histogram bars.
+func printHistogramRows(layout latencyHistogramLayout) {
+	fmt.Printf("%*s ", layout.labelWidth, "count")
 	fmt.Println(StyleBlue.S("↑"))
 
-	for row := height; row >= 1; row-- {
-		thr := int64(math.Round(float64(maxC) * float64(row) / float64(height)))
-		fmt.Printf("%*s ", labelWidth, humanCount(thr))
-		fmt.Print(StyleBlue.S("│"))
-
-		for i := 0; i < cols; i++ {
-			h := int(math.Round(float64(counts[i]) / float64(maxC) * float64(height)))
-
-			w := binWidths[i]
-			if h >= row {
-				fmt.Print(strings.Repeat("█", w))
-			} else {
-				fmt.Print(strings.Repeat(" ", w))
-			}
-		}
-
-		fmt.Println()
+	for row := layout.height; row >= 1; row-- {
+		printHistogramRow(row, layout)
 	}
+}
 
-	fmt.Printf("%*s ", labelWidth, "")
-	fmt.Print(StyleBlue.S("└"))
+// printHistogramRow renders one horizontal bar row.
+func printHistogramRow(row int, layout latencyHistogramLayout) {
+	threshold := int64(math.Round(float64(layout.maxC) * float64(row) / float64(layout.height)))
+	fmt.Printf("%*s ", layout.labelWidth, humanCount(threshold))
+	fmt.Print(StyleBlue.S("│"))
 
-	tickPos := []int{0, int(math.Round(float64(drawCols-1) * 0.25)), int(math.Round(float64(drawCols-1) * 0.5)), int(math.Round(float64(drawCols-1) * 0.75)), drawCols - 1}
-	for x := range drawCols {
-		isTick := slices.Contains(tickPos, x)
-		if isTick {
-			fmt.Print(StyleBlue.S("┬"))
-		} else {
-			fmt.Print(StyleBlue.S("─"))
-		}
+	for i := range layout.cols {
+		height := int(math.Round(float64(layout.counts[i]) / float64(layout.maxC) * float64(layout.height)))
+		fmt.Print(histogramBarCell(height >= row, layout.binWidths[i]))
 	}
 
 	fmt.Println()
+}
 
-	// Markers (p50, p90, p99)
-	fmt.Printf("%*s  ", labelWidth, "")
+// histogramBarCell returns the filled or empty cell sequence for one histogram column.
+func histogramBarCell(filled bool, width int) string {
+	if filled {
+		return strings.Repeat("█", width)
+	}
 
-	line := make([]rune, drawCols)
+	return strings.Repeat(" ", width)
+}
+
+// printHistogramAxis renders the x-axis baseline with tick marks.
+func printHistogramAxis(layout latencyHistogramLayout) {
+	fmt.Printf("%*s ", layout.labelWidth, "")
+	fmt.Print(StyleBlue.S("└"))
+
+	for x := range layout.drawCols {
+		fmt.Print(StyleBlue.S(histogramAxisRune(x, layout.tickPos)))
+	}
+
+	fmt.Println()
+}
+
+// histogramAxisRune returns the axis glyph at a rendered cell.
+func histogramAxisRune(x int, tickPos []int) string {
+	if slices.Contains(tickPos, x) {
+		return "┬"
+	}
+
+	return "─"
+}
+
+// printHistogramMarkers renders percentile labels above the tick labels.
+func printHistogramMarkers(stats Stats, histRange latencyHistogramRange, layout latencyHistogramLayout) {
+	fmt.Printf("%*s  ", layout.labelWidth, "")
+
+	line := blankRuneLine(layout.drawCols)
+	placeHistogramMarker(line, stats.P50, "p50", histRange, layout)
+	placeHistogramMarker(line, stats.P90, "p90", histRange, layout)
+	placeHistogramMarker(line, stats.P99, "p99", histRange, layout)
+	fmt.Println(string(line))
+}
+
+// blankRuneLine returns a space-filled marker line.
+func blankRuneLine(width int) []rune {
+	line := make([]rune, width)
+
 	for i := range line {
 		line[i] = ' '
 	}
 
-	place := func(ms time.Duration, text string) {
-		mms := int(ms / time.Millisecond)
+	return line
+}
 
-		var bin int
-		if mms < start {
-			bin = 0
-		} else if mms > end {
-			bin = cols - 1
-		} else {
-			bin = (mms - start) / bucketSpan
-		}
+// placeHistogramMarker writes a percentile marker into a marker line.
+func placeHistogramMarker(line []rune, latency time.Duration, text string, histRange latencyHistogramRange, layout latencyHistogramLayout) {
+	bin := histogramMarkerBin(latency, histRange, layout)
+	start := layout.binStarts[bin]
+	width := layout.binWidths[bin]
+	pos := max(start+(width-len([]rune(text)))/2, 0)
 
-		if bin < 0 {
-			bin = 0
-		}
+	writeRunesAt(line, pos, []rune(text))
+}
 
-		if bin >= cols {
-			bin = cols - 1
-		}
+// histogramMarkerBin maps a latency value to a rendered histogram bin.
+func histogramMarkerBin(latency time.Duration, histRange latencyHistogramRange, layout latencyHistogramLayout) int {
+	ms := int(latency / time.Millisecond)
+	switch {
+	case ms < histRange.start:
+		return 0
+	case ms > histRange.end:
+		return layout.cols - 1
+	default:
+		return min(max((ms-histRange.start)/layout.bucketSpan, 0), layout.cols-1)
+	}
+}
 
-		s := binStarts[bin]
-		w := binWidths[bin]
-		t := []rune(text)
-
-		pos := max(s+(w-len(t))/2, 0)
-		for i, r := range t {
-			p := pos + i
-			if p >= 0 && p < len(line) {
-				line[p] = r
-			}
+// writeRunesAt copies runes into a fixed-width line without growing it.
+func writeRunesAt(line []rune, pos int, text []rune) {
+	for i, r := range text {
+		target := pos + i
+		if target >= 0 && target < len(line) {
+			line[target] = r
 		}
 	}
-	place(stats.P50, "p50")
-	place(stats.P90, "p90")
-	place(stats.P99, "p99")
-	fmt.Println(string(line))
+}
 
-	fmt.Printf("%*s  ", labelWidth, "ms")
+// printHistogramTickLabels renders millisecond labels under the axis ticks.
+func printHistogramTickLabels(histRange latencyHistogramRange, layout latencyHistogramLayout) {
+	fmt.Printf("%*s  ", layout.labelWidth, "ms")
 
 	last := 0
 
-	nTicks := len(tickPos)
-	for i, x := range tickPos {
-		msVal := dataStart + int(math.Round(float64(x)/float64(drawCols-1)*float64(dataSpan-1)))
-		if x == drawCols-1 {
-			msVal = dataEnd
-		}
+	for i, x := range layout.tickPos {
+		label := histogramTickLabel(i, x, histRange, layout)
 
-		label := humanMs(msVal)
-
-		pos := x
-		if i == nTicks-1 {
-			pos = x - len(label) + 1
-		} else if i > 0 {
-			pos = x - len(label)/2
-		}
-
+		pos := histogramTickLabelPosition(i, x, len(label), len(layout.tickPos))
 		if pos < last {
 			continue
 		}
 
-		padding := pos - last
-		fmt.Printf("%*s%s", padding, "", label)
+		fmt.Printf("%*s%s", pos-last, "", label)
 		last = pos + len(label)
 	}
 
 	fmt.Println()
+}
+
+// histogramTickLabel returns the human-readable millisecond label for a tick.
+func histogramTickLabel(index int, x int, histRange latencyHistogramRange, layout latencyHistogramLayout) string {
+	value := histRange.dataStart + int(math.Round(float64(x)/float64(layout.drawCols-1)*float64(histRange.dataSpan-1)))
+	if index == len(layout.tickPos)-1 {
+		value = histRange.dataEnd
+	}
+
+	return humanMs(value)
+}
+
+// histogramTickLabelPosition centers tick labels except for the first and last label.
+func histogramTickLabelPosition(index int, x int, labelLen int, tickCount int) int {
+	switch {
+	case index == tickCount-1:
+		return x - labelLen + 1
+	case index > 0:
+		return x - labelLen/2
+	default:
+		return x
+	}
 }

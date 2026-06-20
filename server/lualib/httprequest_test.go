@@ -31,11 +31,23 @@ func bindTestHTTPRequestMeta(L *lua.LState, request *http.Request) {
 }
 
 func TestGetAllHTTPRequestHeaders(t *testing.T) {
-	testCases := []struct {
-		name           string
-		requestHeaders http.Header
-		expectedKeys   []string
-	}{
+	for _, tc := range allHTTPRequestHeaderCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			lTable := executeAllHTTPRequestHeaders(t, tc.requestHeaders)
+			assertLuaTableKeys(t, lTable, tc.expectedKeys)
+		})
+	}
+}
+
+type allHTTPRequestHeaderCase struct {
+	name           string
+	requestHeaders http.Header
+	expectedKeys   []string
+}
+
+// allHTTPRequestHeaderCases returns coverage for full header extraction.
+func allHTTPRequestHeaderCases() []allHTTPRequestHeaderCase {
+	return []allHTTPRequestHeaderCase{
 		{
 			name: "AllHeadersSingleValue",
 			requestHeaders: http.Header{
@@ -59,61 +71,42 @@ func TestGetAllHTTPRequestHeaders(t *testing.T) {
 			expectedKeys:   []string{},
 		},
 	}
-	for _, tc := range testCases {
+}
+
+// executeAllHTTPRequestHeaders runs the Lua binding and returns the header table.
+func executeAllHTTPRequestHeaders(t *testing.T, headers http.Header) *lua.LTable {
+	t.Helper()
+
+	L := lua.NewState()
+	t.Cleanup(L.Close)
+
+	bindTestHTTPRequestMeta(L, &http.Request{Header: headers})
+
+	manager := NewHTTPRequestManager()
+	manager.GetAllHTTPRequestHeaders(L)
+
+	return requireHTTPRequestResultTable(t, L)
+}
+
+func TestGetHTTPRequestHeader(t *testing.T) {
+	for _, tc := range httpRequestHeaderCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			L := lua.NewState()
-
-			defer L.Close()
-
-			httpRequest := &http.Request{
-				Header: tc.requestHeaders,
-			}
-
-			bindTestHTTPRequestMeta(L, httpRequest)
-
-			manager := NewHTTPRequestManager()
-			manager.GetAllHTTPRequestHeaders(L)
-
-			lTable := L.CheckTable(-2)
-			lError := L.Get(-1)
-
-			if lError != lua.LNil {
-				t.Errorf("Expected nil error but got %v", lError)
-			}
-
-			lengthTable := 0
-
-			lTable.ForEach(func(_ lua.LValue, _ lua.LValue) {
-				lengthTable++
-			})
-
-			if len(tc.expectedKeys) != lengthTable {
-				t.Errorf("expected number of header keys to be %d, got %d", len(tc.expectedKeys), lTable.Len())
-			}
-
-			foundKeys := make(map[string]bool)
-
-			lTable.ForEach(func(k, _ lua.LValue) {
-				key := fmt.Sprintf("%v", k)
-				foundKeys[key] = true
-			})
-
-			for _, ek := range tc.expectedKeys {
-				if !foundKeys[ek] {
-					t.Errorf("expected header key %s was not found", ek)
-				}
-			}
+			lTable := executeHTTPRequestHeader(t, tc.requestHeaders, tc.headerToGet)
+			assertLuaTableValues(t, lTable, tc.expectedValues)
 		})
 	}
 }
 
-func TestGetHTTPRequestHeader(t *testing.T) {
-	testCases := []struct {
-		name           string
-		requestHeaders http.Header
-		headerToGet    string
-		expectedValues []string
-	}{
+type httpRequestHeaderCase struct {
+	name           string
+	requestHeaders http.Header
+	headerToGet    string
+	expectedValues []string
+}
+
+// httpRequestHeaderCases returns coverage for named header extraction.
+func httpRequestHeaderCases() []httpRequestHeaderCase {
+	return []httpRequestHeaderCase{
 		{
 			name: "SingleHeaderSingleValue",
 			requestHeaders: http.Header{
@@ -148,49 +141,90 @@ func TestGetHTTPRequestHeader(t *testing.T) {
 			expectedValues: []string{},
 		},
 	}
+}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			L := lua.NewState()
+// executeHTTPRequestHeader runs the Lua binding for one header name.
+func executeHTTPRequestHeader(t *testing.T, headers http.Header, headerToGet string) *lua.LTable {
+	t.Helper()
 
-			defer L.Close()
+	L := lua.NewState()
+	t.Cleanup(L.Close)
 
-			L.Push(lua.LString(tc.headerToGet))
+	L.Push(lua.LString(headerToGet))
+	bindTestHTTPRequestMeta(L, &http.Request{Header: headers})
 
-			httpRequest := &http.Request{
-				Header: tc.requestHeaders,
-			}
+	manager := NewHTTPRequestManager()
+	manager.GetHTTPRequestHeader(L)
 
-			bindTestHTTPRequestMeta(L, httpRequest)
+	return requireHTTPRequestResultTable(t, L)
+}
 
-			manager := NewHTTPRequestManager()
-			manager.GetHTTPRequestHeader(L)
+// requireHTTPRequestResultTable returns the Lua table and asserts a nil error result.
+func requireHTTPRequestResultTable(t *testing.T, L *lua.LState) *lua.LTable {
+	t.Helper()
 
-			lTable := L.CheckTable(-2)
-			lError := L.Get(-1)
+	lTable := L.CheckTable(-2)
 
-			if lError != lua.LNil {
-				t.Errorf("Expected nil error but got %v", lError)
-			}
-
-			if len(tc.expectedValues) != lTable.Len() {
-				t.Errorf("expected number of header values to be %d, got %d", len(tc.expectedValues), lTable.Len())
-			}
-
-			foundValues := make(map[string]bool)
-
-			lTable.ForEach(func(_, v lua.LValue) {
-				value := fmt.Sprintf("%v", v)
-				foundValues[value] = true
-			})
-
-			for _, ev := range tc.expectedValues {
-				if !foundValues[ev] {
-					t.Errorf("expected header value %s was not found", ev)
-				}
-			}
-		})
+	lError := L.Get(-1)
+	if lError != lua.LNil {
+		t.Errorf("Expected nil error but got %v", lError)
 	}
+
+	return lTable
+}
+
+// assertLuaTableKeys verifies that a Lua table contains exactly the expected keys.
+func assertLuaTableKeys(t *testing.T, lTable *lua.LTable, expectedKeys []string) {
+	t.Helper()
+
+	foundKeys := make(map[string]bool)
+
+	lTable.ForEach(func(k, _ lua.LValue) {
+		key := fmt.Sprintf("%v", k)
+		foundKeys[key] = true
+	})
+
+	assertStringSet(t, "header key", foundKeys, expectedKeys, luaTableEntryCount(lTable))
+}
+
+// assertLuaTableValues verifies that a Lua table contains exactly the expected values.
+func assertLuaTableValues(t *testing.T, lTable *lua.LTable, expectedValues []string) {
+	t.Helper()
+
+	foundValues := make(map[string]bool)
+
+	lTable.ForEach(func(_, v lua.LValue) {
+		value := fmt.Sprintf("%v", v)
+		foundValues[value] = true
+	})
+
+	assertStringSet(t, "header value", foundValues, expectedValues, lTable.Len())
+}
+
+// assertStringSet verifies that all expected strings were discovered in a Lua result table.
+func assertStringSet(t *testing.T, label string, found map[string]bool, expected []string, gotCount int) {
+	t.Helper()
+
+	if len(expected) != gotCount {
+		t.Errorf("expected number of %ss to be %d, got %d", label, len(expected), gotCount)
+	}
+
+	for _, value := range expected {
+		if !found[value] {
+			t.Errorf("expected %s %s was not found", label, value)
+		}
+	}
+}
+
+// luaTableEntryCount counts all entries because LTable.Len only covers sequence values.
+func luaTableEntryCount(lTable *lua.LTable) int {
+	count := 0
+
+	lTable.ForEach(func(_ lua.LValue, _ lua.LValue) {
+		count++
+	})
+
+	return count
 }
 
 func TestURLPartialDecode(t *testing.T) {

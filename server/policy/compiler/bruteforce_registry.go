@@ -17,7 +17,6 @@ package compiler
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/policy"
@@ -39,30 +38,14 @@ func registerGeneratedBruteForceBucketAttributes(
 		return nil
 	}
 
-	seen := make(map[string]string)
-
-	for index, rule := range bruteForce.GetBuckets() {
-		name := strings.TrimSpace(rule.Name)
-		if name == "" {
-			return configPathError(fmt.Sprintf("%s[%d].name", bruteForceBucketConfigPath, index), "must not be empty")
-		}
-
-		identifier := policy.IdentifierSegment(name)
-		if previous, exists := seen[identifier]; exists {
-			return configPathError(
-				fmt.Sprintf("%s[%d].name", bruteForceBucketConfigPath, index),
-				fmt.Sprintf("normalizes to policy identifier %q already used by bucket %q", identifier, previous),
-			)
-		}
-
-		seen[identifier] = name
-
-		if err := registerGeneratedAttributes(registry, generatedBruteForceBucketAttributes(identifier, name)); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return registerGeneratedNamedAttributes(
+		registry,
+		bruteForce.GetBuckets(),
+		bruteForceBucketConfigPath,
+		"bucket",
+		func(rule config.BruteForceRule) string { return rule.Name },
+		generatedBruteForceBucketAttributes,
+	)
 }
 
 func generatedBruteForceBucketAttributes(identifier string, name string) []policyregistry.AttributeDefinition {

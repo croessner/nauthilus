@@ -23,12 +23,44 @@ import (
 )
 
 func TestNextAuthFSMState_AllowedTransitions(t *testing.T) {
-	tests := []struct {
-		name    string
-		current authFSMState
-		event   authFSMEvent
-		next    authFSMState
-	}{
+	for _, tc := range allowedAuthFSMTransitionCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			next, err := nextAuthFSMState(tc.current, tc.event)
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+
+			if next != tc.next {
+				t.Fatalf("expected next=%s, got %s", tc.next, next)
+			}
+		})
+	}
+}
+
+type authFSMTransitionCase struct {
+	name    string
+	current authFSMState
+	event   authFSMEvent
+	next    authFSMState
+}
+
+// allowedAuthFSMTransitionCases returns all accepted state transitions.
+func allowedAuthFSMTransitionCases() []authFSMTransitionCase {
+	testCases := initialAuthFSMTransitionCases()
+
+	return append(testCases, finalAuthFSMTransitionCases()...)
+}
+
+// initialAuthFSMTransitionCases returns input and pre-auth transitions.
+func initialAuthFSMTransitionCases() []authFSMTransitionCase {
+	testCases := parseAuthFSMTransitionCases()
+
+	return append(testCases, preAuthFSMTransitionCases()...)
+}
+
+// parseAuthFSMTransitionCases returns parse and input transitions.
+func parseAuthFSMTransitionCases() []authFSMTransitionCase {
+	return []authFSMTransitionCase{
 		{
 			name:    "InitParseOK",
 			current: authFSMStateInit,
@@ -59,6 +91,12 @@ func TestNextAuthFSMState_AllowedTransitions(t *testing.T) {
 			event:   authFSMEventPreAuthOK,
 			next:    authFSMStatePreAuthChecked,
 		},
+	}
+}
+
+// preAuthFSMTransitionCases returns pre-auth result transitions.
+func preAuthFSMTransitionCases() []authFSMTransitionCase {
+	return []authFSMTransitionCase{
 		{
 			name:    "PreAuthAuthEvaluated",
 			current: authFSMStatePreAuthChecked,
@@ -95,6 +133,12 @@ func TestNextAuthFSMState_AllowedTransitions(t *testing.T) {
 			event:   authFSMEventBasicAuthFail,
 			next:    authFSMStateAuthFail,
 		},
+	}
+}
+
+// finalAuthFSMTransitionCases returns auth-result and account-provider transitions.
+func finalAuthFSMTransitionCases() []authFSMTransitionCase {
+	return []authFSMTransitionCase{
 		{
 			name:    "AuthCheckedPermit",
 			current: authFSMStateAuthChecked,
@@ -143,19 +187,6 @@ func TestNextAuthFSMState_AllowedTransitions(t *testing.T) {
 			event:   authFSMEventAbort,
 			next:    authFSMStateAborted,
 		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			next, err := nextAuthFSMState(tc.current, tc.event)
-			if err != nil {
-				t.Fatalf("expected no error, got %v", err)
-			}
-
-			if next != tc.next {
-				t.Fatalf("expected next=%s, got %s", tc.next, next)
-			}
-		})
 	}
 }
 

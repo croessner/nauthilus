@@ -76,25 +76,26 @@ func TestReadinessCheckUsesTestBackend(t *testing.T) {
 }
 
 func TestReadinessCheckIgnoresInformationalChecks(t *testing.T) {
+	deps, redisMock := readinessInformationalDeps(t)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/healthz", nil)
+
+	ReadinessCheck(ctx, deps)
+	assertReadinessInformationalResponse(t, recorder, redisMock)
+}
+
+// readinessInformationalDeps prepares readiness dependencies with failing informational checks.
+func readinessInformationalDeps(t *testing.T) (HealthzDeps, redismock.ClientMock) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	core.InitPassDBResultPool()
 
-	backend := &config.Backend{}
-
-	if err := backend.Set(definitions.BackendLDAPName); err != nil {
-		t.Fatalf("failed to set ldap backend: %v", err)
-	}
-
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{Backends: []*config.Backend{backend}},
-		LDAP:   &config.LDAPSection{Config: &config.LDAPConf{ServerURIs: []string{}}},
-	}
-
+	cfg := readinessInformationalConfig(t)
 	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	redisDB, redisMock := redismock.NewClientMock()
-
 	if redisDB == nil || redisMock == nil {
 		t.Fatalf("failed to create redis mock")
 	}
@@ -102,21 +103,32 @@ func TestReadinessCheckIgnoresInformationalChecks(t *testing.T) {
 	redisMock.ExpectPing().SetErr(errors.New("redis down"))
 	redisMock.ExpectPing().SetErr(errors.New("redis down"))
 
-	redisClient := rediscli.NewTestClient(redisDB)
-
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/healthz", nil)
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	deps := HealthzDeps{
+	return HealthzDeps{
 		Cfg:         cfg,
-		Logger:      logger,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		BackendName: "healthz-test",
-		Redis:       redisClient,
+		Redis:       rediscli.NewTestClient(redisDB),
+	}, redisMock
+}
+
+// readinessInformationalConfig builds LDAP-enabled config with no LDAP targets.
+func readinessInformationalConfig(t *testing.T) *config.FileSettings {
+	t.Helper()
+
+	backend := &config.Backend{}
+	if err := backend.Set(definitions.BackendLDAPName); err != nil {
+		t.Fatalf("failed to set ldap backend: %v", err)
 	}
 
-	ReadinessCheck(ctx, deps)
+	return &config.FileSettings{
+		Server: &config.ServerSection{Backends: []*config.Backend{backend}},
+		LDAP:   &config.LDAPSection{Config: &config.LDAPConf{ServerURIs: []string{}}},
+	}
+}
+
+// assertReadinessInformationalResponse verifies readiness ignores informational failures.
+func assertReadinessInformationalResponse(t *testing.T, recorder *httptest.ResponseRecorder, redisMock redismock.ClientMock) {
+	t.Helper()
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", recorder.Code)
@@ -135,30 +147,21 @@ func TestReadinessCheckIgnoresInformationalChecks(t *testing.T) {
 		t.Fatalf("expected status %q, got %q", healthzStatusUp, result.Status)
 	}
 
-	redisWrite := result.Checks["redis_write"]
-	if redisWrite == nil {
-		t.Fatalf("expected redis_write check to be present")
+	assertHealthzCheckStatus(t, result, "redis_write", healthzStatusDown)
+	assertHealthzCheckStatus(t, result, "redis_read", healthzStatusDown)
+	assertHealthzCheckStatus(t, result, "ldap", healthzStatusDown)
+}
+
+// assertHealthzCheckStatus verifies one named health check status.
+func assertHealthzCheckStatus(t *testing.T, result HealthzResult, name string, want string) {
+	t.Helper()
+
+	check := result.Checks[name]
+	if check == nil {
+		t.Fatalf("expected %s check to be present", name)
 	}
 
-	if redisWrite.Status != healthzStatusDown {
-		t.Fatalf("expected redis_write status %q, got %q", healthzStatusDown, redisWrite.Status)
-	}
-
-	redisRead := result.Checks["redis_read"]
-	if redisRead == nil {
-		t.Fatalf("expected redis_read check to be present")
-	}
-
-	if redisRead.Status != healthzStatusDown {
-		t.Fatalf("expected redis_read status %q, got %q", healthzStatusDown, redisRead.Status)
-	}
-
-	ldapCheck := result.Checks["ldap"]
-	if ldapCheck == nil {
-		t.Fatalf("expected ldap check to be present")
-	}
-
-	if ldapCheck.Status != healthzStatusDown {
-		t.Fatalf("expected ldap status %q, got %q", healthzStatusDown, ldapCheck.Status)
+	if check.Status != want {
+		t.Fatalf("expected %s status %q, got %q", name, want, check.Status)
 	}
 }

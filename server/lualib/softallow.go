@@ -139,16 +139,15 @@ func (m *SoftAllowManager) SoftWhitelistDelete(L *lua.LState) int {
 // LoaderModSoftAllow initializes and loads the soft allow module for Lua.
 func LoaderModSoftAllow(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
-		stack := luastack.NewManager(L)
-		manager := NewSoftAllowManager(ctx, cfg, logger)
+		return pushLuaModule(L, softAllowFunctions(NewSoftAllowManager(ctx, cfg, logger)))
+	}
+}
 
-		// Register the module functions
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnSoftWhitelistSet:    manager.SoftWhitelistSet,
-			definitions.LuaFnSoftWhitelistGet:    manager.SoftWhitelistGet,
-			definitions.LuaFnSoftWhitelistDelete: manager.SoftWhitelistDelete,
-		})
-
-		return stack.PushResult(mod)
+// softAllowFunctions returns the Lua function map for soft-allow helpers.
+func softAllowFunctions(manager *SoftAllowManager) map[string]lua.LGFunction {
+	return map[string]lua.LGFunction{
+		definitions.LuaFnSoftWhitelistSet:    manager.SoftWhitelistSet,
+		definitions.LuaFnSoftWhitelistGet:    manager.SoftWhitelistGet,
+		definitions.LuaFnSoftWhitelistDelete: manager.SoftWhitelistDelete,
 	}
 }

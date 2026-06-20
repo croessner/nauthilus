@@ -22,40 +22,49 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type banKeyCase[T any] struct {
+	name     string
+	prefix   string
+	input    T
+	expected string
+}
+
+// runBanKeyCases verifies prefix-sensitive ban-key builders.
+func runBanKeyCases[T any](t *testing.T, tests []banKeyCase[T], build func(string, T) string) {
+	t.Helper()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := build(tt.prefix, tt.input)
+
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestGetBruteForceBanKey(t *testing.T) {
-	tests := []struct {
-		name     string
-		prefix   string
-		network  string
-		expected string
-	}{
+	tests := []banKeyCase[string]{
 		{
 			name:     "IPv4 network with prefix",
 			prefix:   "nauthilus:",
-			network:  "192.168.1.0/24",
+			input:    "192.168.1.0/24",
 			expected: "nauthilus:bf:ban:192.168.1.0/24",
 		},
 		{
 			name:     "IPv6 network with prefix",
 			prefix:   "nauthilus:",
-			network:  "2001:db8::/32",
+			input:    "2001:db8::/32",
 			expected: "nauthilus:bf:ban:2001:db8::/32",
 		},
 		{
 			name:     "empty prefix",
 			prefix:   "",
-			network:  "10.0.0.0/8",
+			input:    "10.0.0.0/8",
 			expected: "bf:ban:10.0.0.0/8",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GetBruteForceBanKey(tt.prefix, tt.network)
-
-			assert.Equal(t, tt.expected, result)
-		})
-	}
+	runBanKeyCases(t, tests, GetBruteForceBanKey)
 }
 
 func TestGetBruteForceBanKeyPattern(t *testing.T) {
@@ -174,39 +183,28 @@ func TestGetBanIndexShard(t *testing.T) {
 }
 
 func TestGetBruteForceBanIndexShardKey(t *testing.T) {
-	tests := []struct {
-		name     string
-		prefix   string
-		shard    byte
-		expected string
-	}{
+	tests := []banKeyCase[byte]{
 		{
 			name:     "shard 0",
 			prefix:   "nauthilus:",
-			shard:    0,
+			input:    0,
 			expected: "nauthilus:bf:bans:0",
 		},
 		{
 			name:     "shard 15 (F)",
 			prefix:   "nauthilus:",
-			shard:    15,
+			input:    15,
 			expected: "nauthilus:bf:bans:F",
 		},
 		{
 			name:     "shard 10 (A)",
 			prefix:   "test:",
-			shard:    10,
+			input:    10,
 			expected: "test:bf:bans:A",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GetBruteForceBanIndexShardKey(tt.prefix, tt.shard)
-
-			assert.Equal(t, tt.expected, result)
-		})
-	}
+	runBanKeyCases(t, tests, GetBruteForceBanIndexShardKey)
 }
 
 func TestGetAllBruteForceBanIndexKeys(t *testing.T) {

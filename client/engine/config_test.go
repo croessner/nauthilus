@@ -12,6 +12,23 @@ func TestConfigFlags(t *testing.T) {
 	cfg := DefaultConfig()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 
+	registerConfigTestFlags(fs, cfg)
+	err := fs.Parse(configFlagArgs())
+
+	assert.NoError(t, err)
+	assertConfigFlagValues(t, cfg)
+}
+
+// registerConfigTestFlags registers all flags covered by TestConfigFlags.
+func registerConfigTestFlags(fs *flag.FlagSet, cfg *Config) {
+	registerCoreConfigFlags(fs, cfg)
+	registerThresholdConfigFlags(fs, cfg)
+	registerAutoConfigFlags(fs, cfg)
+	registerRandomConfigFlags(fs, cfg)
+}
+
+// registerCoreConfigFlags registers base request, generation, and display flags.
+func registerCoreConfigFlags(fs *flag.FlagSet, cfg *Config) {
 	fs.StringVar(&cfg.CSVPath, "csv", cfg.CSVPath, "")
 	fs.StringVar(&cfg.Endpoint, "url", cfg.Endpoint, "")
 	fs.StringVar(&cfg.Method, "method", cfg.Method, "")
@@ -43,7 +60,10 @@ func TestConfigFlags(t *testing.T) {
 	fs.BoolVar(&cfg.UseIdemKey, "idempotency-key", cfg.UseIdemKey, "")
 	fs.BoolVar(&cfg.ProgressBar, "progress-bar", cfg.ProgressBar, "")
 	fs.StringVar(&cfg.ColorMode, "color", cfg.ColorMode, "")
+}
 
+// registerThresholdConfigFlags registers warning and critical threshold flags.
+func registerThresholdConfigFlags(fs *flag.FlagSet, cfg *Config) {
 	fs.IntVar(&cfg.WarnP95, "warn-p95", cfg.WarnP95, "")
 	fs.IntVar(&cfg.CritP95, "crit-p95", cfg.CritP95, "")
 	fs.Float64Var(&cfg.WarnErr, "warn-error-rate", cfg.WarnErr, "")
@@ -51,7 +71,10 @@ func TestConfigFlags(t *testing.T) {
 	fs.Float64Var(&cfg.WarnTrack, "warn-track", cfg.WarnTrack, "")
 	fs.Float64Var(&cfg.CritTrack, "crit-track", cfg.CritTrack, "")
 	fs.IntVar(&cfg.GraceSeconds, "grace-seconds", cfg.GraceSeconds, "")
+}
 
+// registerAutoConfigFlags registers adaptive-control flags.
+func registerAutoConfigFlags(fs *flag.FlagSet, cfg *Config) {
 	fs.BoolVar(&cfg.AutoMode, "auto", cfg.AutoMode, "")
 	fs.IntVar(&cfg.AutoTargetP95, "auto-target-p95", cfg.AutoTargetP95, "")
 	fs.Float64Var(&cfg.AutoMaxRPS, "auto-max-rps", cfg.AutoMaxRPS, "")
@@ -73,14 +96,31 @@ func TestConfigFlags(t *testing.T) {
 	fs.Float64Var(&cfg.AutoPlateauTrackThreshold, "auto-plateau-track-threshold", cfg.AutoPlateauTrackThreshold, "")
 	fs.IntVar(&cfg.AutoPlateauTrackWindows, "auto-plateau-track-windows", cfg.AutoPlateauTrackWindows, "")
 	fs.StringVar(&cfg.AutoPlateauTrackAction, "auto-plateau-track-action", cfg.AutoPlateauTrackAction, "")
+}
 
+// registerRandomConfigFlags registers stochastic request-mutation flags.
+func registerRandomConfigFlags(fs *flag.FlagSet, cfg *Config) {
 	fs.BoolVar(&cfg.RandomNoAuth, "random-no-auth", cfg.RandomNoAuth, "")
 	fs.Float64Var(&cfg.RandomNoAuthProb, "random-no-auth-prob", cfg.RandomNoAuthProb, "")
 	fs.BoolVar(&cfg.RandomBadPass, "random-bad-pass", cfg.RandomBadPass, "")
 	fs.Float64Var(&cfg.RandomBadPassProb, "random-bad-pass-prob", cfg.RandomBadPassProb, "")
 	fs.BoolVar(&cfg.Debug, "debug", cfg.Debug, "")
+}
 
-	err := fs.Parse([]string{
+// configFlagArgs returns the complete flag argument set for TestConfigFlags.
+func configFlagArgs() []string {
+	args := configRequestFlagArgs()
+	args = append(args, configRuntimeFlagArgs()...)
+	args = append(args, configThresholdFlagArgs()...)
+	args = append(args, configAutoFlagArgs()...)
+	args = append(args, configRandomFlagArgs()...)
+
+	return args
+}
+
+// configRequestFlagArgs returns request and input-related flag arguments.
+func configRequestFlagArgs() []string {
+	return []string{
 		"-csv", "test.csv",
 		"-url", "http://test",
 		"-method", "PUT",
@@ -96,6 +136,12 @@ func TestConfigFlags(t *testing.T) {
 		"-ok-status", "201",
 		"-json-ok=false",
 		"-v",
+	}
+}
+
+// configRuntimeFlagArgs returns generation, runtime, and display flag arguments.
+func configRuntimeFlagArgs() []string {
+	return []string{
 		"-generate-csv",
 		"-generate-count", "50",
 		"-generate-cidr-prob", testHalfFlagValue,
@@ -112,6 +158,12 @@ func TestConfigFlags(t *testing.T) {
 		"-idempotency-key",
 		"-progress-bar",
 		"-color", "always",
+	}
+}
+
+// configThresholdFlagArgs returns threshold-related flag arguments.
+func configThresholdFlagArgs() []string {
+	return []string{
 		"-warn-p95", "150",
 		"-crit-p95", "250",
 		"-warn-error-rate", "0.2",
@@ -119,6 +171,12 @@ func TestConfigFlags(t *testing.T) {
 		"-warn-track", "0.9",
 		"-crit-track", "0.75",
 		"-grace-seconds", "5",
+	}
+}
+
+// configAutoFlagArgs returns adaptive-control flag arguments.
+func configAutoFlagArgs() []string {
+	return []string{
 		"-auto",
 		"-auto-target-p95", "350",
 		"-auto-max-rps", "500",
@@ -139,14 +197,34 @@ func TestConfigFlags(t *testing.T) {
 		"-auto-plateau-track-threshold", "0.85",
 		"-auto-plateau-track-windows", "4",
 		"-auto-plateau-track-action", "shift",
+	}
+}
+
+// configRandomFlagArgs returns stochastic mutation flag arguments.
+func configRandomFlagArgs() []string {
+	return []string{
 		"-random-no-auth",
 		"-random-no-auth-prob", "0.01",
 		"-random-bad-pass",
 		"-random-bad-pass-prob", "0.02",
 		"-debug",
-	})
+	}
+}
 
-	assert.NoError(t, err)
+// assertConfigFlagValues verifies the parsed flag values as one coherent contract.
+func assertConfigFlagValues(t *testing.T, cfg *Config) {
+	t.Helper()
+
+	assertRequestConfigFlagValues(t, cfg)
+	assertRuntimeConfigFlagValues(t, cfg)
+	assertThresholdConfigFlagValues(t, cfg)
+	assertAutoConfigFlagValues(t, cfg)
+	assertRandomConfigFlagValues(t, cfg)
+}
+
+// assertRequestConfigFlagValues verifies request and input flag values.
+func assertRequestConfigFlagValues(t *testing.T, cfg *Config) {
+	t.Helper()
 	assert.Equal(t, "test.csv", cfg.CSVPath)
 	assert.Equal(t, "http://test", cfg.Endpoint)
 	assert.Equal(t, "PUT", cfg.Method)
@@ -162,6 +240,11 @@ func TestConfigFlags(t *testing.T) {
 	assert.Equal(t, 201, cfg.OKStatus)
 	assert.False(t, cfg.UseJSONFlag)
 	assert.True(t, cfg.Verbose)
+}
+
+// assertRuntimeConfigFlagValues verifies generation, runtime, and display flag values.
+func assertRuntimeConfigFlagValues(t *testing.T, cfg *Config) {
+	t.Helper()
 	assert.True(t, cfg.GenCSV)
 	assert.Equal(t, 50, cfg.GenCount)
 	assert.Equal(t, 0.5, cfg.GenCIDRProb)
@@ -178,7 +261,11 @@ func TestConfigFlags(t *testing.T) {
 	assert.True(t, cfg.UseIdemKey)
 	assert.True(t, cfg.ProgressBar)
 	assert.Equal(t, "always", cfg.ColorMode)
+}
 
+// assertThresholdConfigFlagValues verifies warning and critical threshold flag values.
+func assertThresholdConfigFlagValues(t *testing.T, cfg *Config) {
+	t.Helper()
 	assert.Equal(t, 150, cfg.WarnP95)
 	assert.Equal(t, 250, cfg.CritP95)
 	assert.Equal(t, 0.2, cfg.WarnErr)
@@ -186,7 +273,11 @@ func TestConfigFlags(t *testing.T) {
 	assert.Equal(t, 0.9, cfg.WarnTrack)
 	assert.Equal(t, 0.75, cfg.CritTrack)
 	assert.Equal(t, 5, cfg.GraceSeconds)
+}
 
+// assertAutoConfigFlagValues verifies adaptive-control flag values.
+func assertAutoConfigFlagValues(t *testing.T, cfg *Config) {
+	t.Helper()
 	assert.True(t, cfg.AutoMode)
 	assert.Equal(t, 350, cfg.AutoTargetP95)
 	assert.Equal(t, 500.0, cfg.AutoMaxRPS)
@@ -199,7 +290,6 @@ func TestConfigFlags(t *testing.T) {
 	assert.Equal(t, 2.0, cfg.AutoMaxErr)
 	assert.Equal(t, 100, cfg.AutoMinSample)
 	assert.Equal(t, "both", cfg.AutoFocus)
-
 	assert.True(t, cfg.AutoPlateau)
 	assert.Equal(t, 5, cfg.AutoPlateauWindows)
 	assert.Equal(t, 1.5, cfg.AutoPlateauGain)
@@ -208,7 +298,11 @@ func TestConfigFlags(t *testing.T) {
 	assert.Equal(t, 0.85, cfg.AutoPlateauTrackThreshold)
 	assert.Equal(t, 4, cfg.AutoPlateauTrackWindows)
 	assert.Equal(t, "shift", cfg.AutoPlateauTrackAction)
+}
 
+// assertRandomConfigFlagValues verifies stochastic mutation flag values.
+func assertRandomConfigFlagValues(t *testing.T, cfg *Config) {
+	t.Helper()
 	assert.True(t, cfg.RandomNoAuth)
 	assert.Equal(t, 0.01, cfg.RandomNoAuthProb)
 	assert.True(t, cfg.RandomBadPass)
@@ -217,6 +311,23 @@ func TestConfigFlags(t *testing.T) {
 }
 
 func TestSeverityLogic(t *testing.T) {
+	cfg := severityTestConfig()
+
+	for _, tt := range severityLogicCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, severityForTestStats(cfg, tt.stats))
+		})
+	}
+}
+
+type severityLogicCase struct {
+	name     string
+	stats    Stats
+	expected string
+}
+
+// severityTestConfig returns the threshold settings covered by TestSeverityLogic.
+func severityTestConfig() *Config {
 	cfg := DefaultConfig()
 	cfg.WarnP95 = 100
 	cfg.CritP95 = 200
@@ -225,11 +336,21 @@ func TestSeverityLogic(t *testing.T) {
 	cfg.WarnTrack = 0.9
 	cfg.CritTrack = 0.8
 
-	tests := []struct {
-		name     string
-		stats    Stats
-		expected string
-	}{
+	return cfg
+}
+
+// severityLogicCases returns all threshold scenarios covered by TestSeverityLogic.
+func severityLogicCases() []severityLogicCase {
+	cases := severityLatencyCases()
+	cases = append(cases, severityErrorCases()...)
+	cases = append(cases, severityTrackingCases()...)
+
+	return cases
+}
+
+// severityLatencyCases covers latency-threshold severity transitions.
+func severityLatencyCases() []severityLogicCase {
+	return []severityLogicCase{
 		{
 			name: "OK",
 			stats: Stats{
@@ -260,6 +381,12 @@ func TestSeverityLogic(t *testing.T) {
 			},
 			expected: severityCrit,
 		},
+	}
+}
+
+// severityErrorCases covers error-rate severity transitions.
+func severityErrorCases() []severityLogicCase {
+	return []severityLogicCase{
 		{
 			name: "Warn Error",
 			stats: Stats{
@@ -280,6 +407,12 @@ func TestSeverityLogic(t *testing.T) {
 			},
 			expected: severityCrit,
 		},
+	}
+}
+
+// severityTrackingCases covers target-RPS tracking severity transitions.
+func severityTrackingCases() []severityLogicCase {
+	return []severityLogicCase{
 		{
 			name: "Warn Track",
 			stats: Stats{
@@ -303,31 +436,43 @@ func TestSeverityLogic(t *testing.T) {
 			expected: severityCrit,
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rps := 0.0
-			if tt.stats.Elapsed.Seconds() > 0 {
-				rps = float64(tt.stats.Total) / tt.stats.Elapsed.Seconds()
-			} else if tt.stats.Total > 0 {
-				rps = float64(tt.stats.Total)
-			}
+// severityForTestStats mirrors the threshold checks covered by TestSeverityLogic.
+func severityForTestStats(cfg *Config, stats Stats) string {
+	rps := statsRPSForTest(stats)
+	trackingRatio := trackingRatioForTest(stats, rps)
+	errRate := CalcErrorRatePct(stats)
 
-			trkRatio := 1.0
-			if tt.stats.TargetRPS > 0 {
-				trkRatio = Clamp01(rps / tt.stats.TargetRPS)
-			}
-
-			severity := severityOK
-
-			errRate := CalcErrorRatePct(tt.stats)
-			if tt.stats.P95 >= time.Duration(cfg.CritP95)*time.Millisecond || errRate >= cfg.CritErr || (tt.stats.TargetRPS > 0 && trkRatio <= cfg.CritTrack) {
-				severity = severityCrit
-			} else if tt.stats.P95 >= time.Duration(cfg.WarnP95)*time.Millisecond || errRate >= cfg.WarnErr || (tt.stats.TargetRPS > 0 && trkRatio <= cfg.WarnTrack) {
-				severity = severityWarn
-			}
-
-			assert.Equal(t, tt.expected, severity)
-		})
+	if stats.P95 >= time.Duration(cfg.CritP95)*time.Millisecond || errRate >= cfg.CritErr || (stats.TargetRPS > 0 && trackingRatio <= cfg.CritTrack) {
+		return severityCrit
 	}
+
+	if stats.P95 >= time.Duration(cfg.WarnP95)*time.Millisecond || errRate >= cfg.WarnErr || (stats.TargetRPS > 0 && trackingRatio <= cfg.WarnTrack) {
+		return severityWarn
+	}
+
+	return severityOK
+}
+
+// statsRPSForTest computes the observed RPS fallback used by the severity test.
+func statsRPSForTest(stats Stats) float64 {
+	if stats.Elapsed.Seconds() > 0 {
+		return float64(stats.Total) / stats.Elapsed.Seconds()
+	}
+
+	if stats.Total > 0 {
+		return float64(stats.Total)
+	}
+
+	return 0
+}
+
+// trackingRatioForTest computes target-RPS tracking for the severity test.
+func trackingRatioForTest(stats Stats, rps float64) float64 {
+	if stats.TargetRPS <= 0 {
+		return 1
+	}
+
+	return Clamp01(rps / stats.TargetRPS)
 }

@@ -593,6 +593,19 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	issuer := "https://auth.example.com"
+	resp := mustGetOIDCDiscoveryResponse(t, issuer)
+
+	assertOIDCDiscoveryEndpoints(t, resp, issuer)
+	assertOIDCDiscoveryFlowSupport(t, resp)
+	assertOIDCDiscoveryClientAuthSupport(t, resp)
+	assertOIDCDiscoveryIntrospectionSupport(t, resp)
+	assertOIDCDiscoveryPKCESupport(t, resp)
+}
+
+// mustGetOIDCDiscoveryResponse executes discovery and returns the JSON payload.
+func mustGetOIDCDiscoveryResponse(t *testing.T, issuer string) map[string]any {
+	t.Helper()
+
 	cfg := &mockOIDCCfg{issuer: issuer, signingKey: secret.New(generateTestKey())}
 
 	db, _ := redismock.NewClientMock()
@@ -616,11 +629,25 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.NoError(t, err)
+
+	return resp
+}
+
+// assertOIDCDiscoveryEndpoints verifies discovery endpoint metadata.
+func assertOIDCDiscoveryEndpoints(t *testing.T, resp map[string]any, issuer string) {
+	t.Helper()
+
 	assert.Equal(t, issuer, resp["issuer"])
 	assert.Equal(t, issuer+"/oidc/authorize", resp["authorization_endpoint"])
 	assert.Equal(t, issuer+"/oidc/token", resp["token_endpoint"])
 	assert.Equal(t, issuer+"/oidc/introspect", resp["introspection_endpoint"])
 	assert.Equal(t, issuer+"/oidc/logout", resp["end_session_endpoint"])
+}
+
+// assertOIDCDiscoveryFlowSupport verifies flow and grant metadata.
+func assertOIDCDiscoveryFlowSupport(t *testing.T, resp map[string]any) {
+	t.Helper()
+
 	scopes := resp["scopes_supported"].([]any)
 	assert.Contains(t, scopes, "offline_access")
 	assert.Contains(t, scopes, "groups")
@@ -634,26 +661,45 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assert.Contains(t, grantTypes, "refresh_token")
 	assert.Contains(t, grantTypes, "client_credentials")
 	assert.Contains(t, grantTypes, definitions.OIDCGrantTypeDeviceCode)
+}
 
-	tokenEndpointAuthMethods := resp["token_endpoint_auth_methods_supported"].([]any)
-	assert.Contains(t, tokenEndpointAuthMethods, "client_secret_basic")
-	assert.Contains(t, tokenEndpointAuthMethods, "client_secret_post")
-	assert.Contains(t, tokenEndpointAuthMethods, "private_key_jwt")
-	assert.Contains(t, tokenEndpointAuthMethods, "none")
+// assertOIDCDiscoveryClientAuthSupport verifies token endpoint auth metadata.
+func assertOIDCDiscoveryClientAuthSupport(t *testing.T, resp map[string]any) {
+	t.Helper()
 
-	tokenEndpointAuthSigningAlgs := resp["token_endpoint_auth_signing_alg_values_supported"].([]any)
-	assert.Contains(t, tokenEndpointAuthSigningAlgs, "RS256")
-	assert.Contains(t, tokenEndpointAuthSigningAlgs, "EdDSA")
+	assertOIDCDiscoveryAuthMetadata(t, resp, "token_endpoint_auth_methods_supported", "token_endpoint_auth_signing_alg_values_supported", true)
+}
 
-	introspectionAuthMethods := resp["introspection_endpoint_auth_methods_supported"].([]any)
-	assert.Contains(t, introspectionAuthMethods, "client_secret_basic")
-	assert.Contains(t, introspectionAuthMethods, "client_secret_post")
-	assert.Contains(t, introspectionAuthMethods, "private_key_jwt")
-	assert.NotContains(t, introspectionAuthMethods, "none")
+// assertOIDCDiscoveryIntrospectionSupport verifies introspection auth metadata.
+func assertOIDCDiscoveryIntrospectionSupport(t *testing.T, resp map[string]any) {
+	t.Helper()
 
-	introspectionAuthSigningAlgs := resp["introspection_endpoint_auth_signing_alg_values_supported"].([]any)
-	assert.Contains(t, introspectionAuthSigningAlgs, "RS256")
-	assert.Contains(t, introspectionAuthSigningAlgs, "EdDSA")
+	assertOIDCDiscoveryAuthMetadata(t, resp, "introspection_endpoint_auth_methods_supported", "introspection_endpoint_auth_signing_alg_values_supported", false)
+}
+
+// assertOIDCDiscoveryAuthMetadata verifies endpoint auth methods and signing algorithms.
+func assertOIDCDiscoveryAuthMetadata(t *testing.T, resp map[string]any, methodsKey string, signingAlgsKey string, allowsNone bool) {
+	t.Helper()
+
+	authMethods := resp[methodsKey].([]any)
+	assert.Contains(t, authMethods, "client_secret_basic")
+	assert.Contains(t, authMethods, "client_secret_post")
+	assert.Contains(t, authMethods, "private_key_jwt")
+
+	if allowsNone {
+		assert.Contains(t, authMethods, "none")
+	} else {
+		assert.NotContains(t, authMethods, "none")
+	}
+
+	signingAlgs := resp[signingAlgsKey].([]any)
+	assert.Contains(t, signingAlgs, "RS256")
+	assert.Contains(t, signingAlgs, "EdDSA")
+}
+
+// assertOIDCDiscoveryPKCESupport verifies PKCE metadata.
+func assertOIDCDiscoveryPKCESupport(t *testing.T, resp map[string]any) {
+	t.Helper()
 
 	codeChallengeMethods := resp["code_challenge_methods_supported"].([]any)
 	assert.Contains(t, codeChallengeMethods, "S256")
@@ -855,6 +901,26 @@ func TestOIDCHandler_JWKS(t *testing.T) {
 
 func TestOIDCHandler_Logout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	fixture := newOIDCLogoutTest(t)
+
+	t.Run("Logout without session redirects to logged_out", fixture.assertNoSessionLogout)
+	t.Run("Logout with valid post_logout_redirect_uri", fixture.assertPostLogoutRedirect)
+	t.Run("Logout with client in session and LogoutRedirectURI", fixture.assertSessionClientLogoutRedirect)
+	t.Run("Logout with front-channel task renders orchestration page", fixture.assertFrontChannelLogoutPage)
+}
+
+type oidcLogoutTest struct {
+	handler     *OIDCHandler
+	idpInstance *idp.NauthilusIDP
+	mock        redismock.ClientMock
+	cfg         *mockOIDCCfg
+}
+
+// newOIDCLogoutTest builds an isolated OIDC logout fixture.
+func newOIDCLogoutTest(t *testing.T) *oidcLogoutTest {
+	t.Helper()
 
 	issuer := "https://auth.example.com"
 	signingKey := secret.New(generateTestKey())
@@ -879,124 +945,106 @@ func TestOIDCHandler_Logout(t *testing.T) {
 	}
 
 	idpInstance := idp.NewNauthilusIDP(d)
-	h := NewOIDCHandler(d, idpInstance, nil)
 
-	// Set up default environment for util.ShouldSetSecureCookie
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	return &oidcLogoutTest{
+		handler:     NewOIDCHandler(d, idpInstance, nil),
+		idpInstance: idpInstance,
+		mock:        mock,
+		cfg:         cfg,
+	}
+}
 
-	t.Run("Logout without session redirects to logged_out", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		r := gin.New()
-		r.GET("/logout", func(c *gin.Context) {
-			mgr := &mockCookieManager{data: make(map[string]any)}
-			c.Set(definitions.CtxSecureDataKey, mgr)
-			h.Logout(c)
-		})
+// serveLogout executes the logout route with optional session data and template.
+func (f *oidcLogoutTest) serveLogout(target string, sessionData map[string]any, templateText string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
 
-		req, _ := http.NewRequest(http.MethodGet, "/logout", nil)
-		r.ServeHTTP(w, req)
+	r := gin.New()
+	if templateText != "" {
+		r.SetHTMLTemplate(template.Must(template.New("idp_logout_frames.html").Parse(templateText)))
+	}
 
-		assert.Equal(t, http.StatusFound, w.Code)
-		assert.Equal(t, "/logged_out", w.Header().Get("Location"))
+	r.GET("/logout", func(c *gin.Context) {
+		mgr := &mockCookieManager{data: sessionData}
+		c.Set(definitions.CtxSecureDataKey, mgr)
+		f.handler.Logout(c)
 	})
 
-	t.Run("Logout with valid post_logout_redirect_uri", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		r := gin.New()
-		r.GET("/logout", func(c *gin.Context) {
-			mgr := &mockCookieManager{data: make(map[string]any)}
-			c.Set(definitions.CtxSecureDataKey, mgr)
-			h.Logout(c)
-		})
+	req, _ := http.NewRequest(http.MethodGet, target, nil)
+	r.ServeHTTP(w, req)
 
-		// Create a mock ID token hint (openid scope required per OIDC Core 1.0 §3.1.2.1)
-		idToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
-			ClientID: "test-client",
-			UserID:   "user123",
-			Scopes:   []string{definitions.ScopeOpenID},
-			AuthTime: time.Now(),
-		})
+	return w
+}
 
-		// Expectations for DeleteUserRefreshTokens
-		userKey := "test:oidc:user_refresh_tokens:user123"
-		mock.ExpectSMembers(userKey).SetVal([]string{})
-
-		logoutURL := "/logout?id_token_hint=" + idToken + "&post_logout_redirect_uri=https://app.com/post-logout"
-		req, _ := http.NewRequest(http.MethodGet, logoutURL, nil)
-		r.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusFound, w.Code)
-		assert.Equal(t, "https://app.com/post-logout", w.Header().Get("Location"))
-		assert.NoError(t, mock.ExpectationsWereMet())
+// issueLogoutIDToken creates an ID token hint for logout tests.
+func (f *oidcLogoutTest) issueLogoutIDToken(clientID, userID string) string {
+	idToken, _, _, _, _ := f.idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
+		ClientID: clientID,
+		UserID:   userID,
+		Scopes:   []string{definitions.ScopeOpenID},
+		AuthTime: time.Now(),
 	})
 
-	t.Run("Logout with client in session and LogoutRedirectURI", func(t *testing.T) {
-		clientWithLogout := config.OIDCClient{
-			ClientID:          "logout-client",
-			LogoutRedirectURI: "https://custom-logout.com",
-		}
-		cfg.clients = append(cfg.clients, clientWithLogout)
+	return idToken
+}
 
-		w := httptest.NewRecorder()
-		r := gin.New()
-		r.GET("/logout", func(c *gin.Context) {
-			mgr := &mockCookieManager{data: map[string]any{
-				definitions.SessionKeyOIDCClients: "logout-client",
-			}}
-			c.Set(definitions.CtxSecureDataKey, mgr)
-			h.Logout(c)
-		})
+// assertNoSessionLogout verifies the default no-session redirect.
+func (f *oidcLogoutTest) assertNoSessionLogout(t *testing.T) {
+	w := f.serveLogout("/logout", make(map[string]any), "")
 
-		req, _ := http.NewRequest(http.MethodGet, "/logout", nil)
-		r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Equal(t, "/logged_out", w.Header().Get("Location"))
+}
 
-		assert.Equal(t, http.StatusFound, w.Code)
-		assert.Equal(t, "https://custom-logout.com", w.Header().Get("Location"))
+// assertPostLogoutRedirect verifies a valid post_logout_redirect_uri redirect.
+func (f *oidcLogoutTest) assertPostLogoutRedirect(t *testing.T) {
+	idToken := f.issueLogoutIDToken("test-client", "user123")
+	f.mock.ExpectSMembers("test:oidc:user_refresh_tokens:user123").SetVal([]string{})
+
+	logoutURL := "/logout?id_token_hint=" + idToken + "&post_logout_redirect_uri=https://app.com/post-logout"
+	w := f.serveLogout(logoutURL, make(map[string]any), "")
+
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Equal(t, "https://app.com/post-logout", w.Header().Get("Location"))
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertSessionClientLogoutRedirect verifies client-specific session redirects.
+func (f *oidcLogoutTest) assertSessionClientLogoutRedirect(t *testing.T) {
+	f.cfg.clients = append(f.cfg.clients, config.OIDCClient{
+		ClientID:          "logout-client",
+		LogoutRedirectURI: "https://custom-logout.com",
 	})
 
-	t.Run("Logout with front-channel task renders orchestration page", func(t *testing.T) {
-		clientWithFrontChannel := config.OIDCClient{
-			ClientID:               "frontchannel-client",
-			FrontChannelLogoutURI:  "https://frontchannel.example.com/logout",
-			PostLogoutRedirectURIs: []string{"https://app.com/post-logout"},
-		}
-		cfg.clients = append(cfg.clients, clientWithFrontChannel)
+	sessionData := map[string]any{definitions.SessionKeyOIDCClients: "logout-client"}
+	w := f.serveLogout("/logout", sessionData, "")
 
-		w := httptest.NewRecorder()
-		r := gin.New()
-		r.SetHTMLTemplate(template.Must(template.New("idp_logout_frames.html").Parse("{{ .LogoutTarget }}|{{ .FrontChannelLogoutTaskConfig }}")))
-		r.GET("/logout", func(c *gin.Context) {
-			mgr := &mockCookieManager{data: map[string]any{
-				definitions.SessionKeyOIDCClients: "frontchannel-client",
-			}}
-			c.Set(definitions.CtxSecureDataKey, mgr)
-			h.Logout(c)
-		})
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Equal(t, "https://custom-logout.com", w.Header().Get("Location"))
+}
 
-		idToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
-			ClientID: "frontchannel-client",
-			UserID:   "user-front",
-			Scopes:   []string{definitions.ScopeOpenID},
-			AuthTime: time.Now(),
-		})
-
-		userKey := "test:oidc:user_refresh_tokens:user-front"
-		mock.ExpectSMembers(userKey).SetVal([]string{})
-
-		req, _ := http.NewRequest(
-			http.MethodGet,
-			"/logout?id_token_hint="+url.QueryEscape(idToken)+"&post_logout_redirect_uri="+url.QueryEscape("https://app.com/post-logout")+"&state=s-1",
-			nil,
-		)
-		r.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		body := html.UnescapeString(w.Body.String())
-		assert.Contains(t, body, "https://app.com/post-logout?state=s-1")
-		assert.Contains(t, body, "frontchannel.example.com/logout")
-		assert.Contains(t, body, "\"protocol\":\"oidc\"")
-		assert.NoError(t, mock.ExpectationsWereMet())
+// assertFrontChannelLogoutPage verifies front-channel logout orchestration output.
+func (f *oidcLogoutTest) assertFrontChannelLogoutPage(t *testing.T) {
+	f.cfg.clients = append(f.cfg.clients, config.OIDCClient{
+		ClientID:               "frontchannel-client",
+		FrontChannelLogoutURI:  "https://frontchannel.example.com/logout",
+		PostLogoutRedirectURIs: []string{"https://app.com/post-logout"},
 	})
+
+	idToken := f.issueLogoutIDToken("frontchannel-client", "user-front")
+	f.mock.ExpectSMembers("test:oidc:user_refresh_tokens:user-front").SetVal([]string{})
+
+	target := "/logout?id_token_hint=" + url.QueryEscape(idToken) +
+		"&post_logout_redirect_uri=" + url.QueryEscape("https://app.com/post-logout") +
+		"&state=s-1"
+	sessionData := map[string]any{definitions.SessionKeyOIDCClients: "frontchannel-client"}
+	w := f.serveLogout(target, sessionData, "{{ .LogoutTarget }}|{{ .FrontChannelLogoutTaskConfig }}")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	body := html.UnescapeString(w.Body.String())
+	assert.Contains(t, body, "https://app.com/post-logout?state=s-1")
+	assert.Contains(t, body, "frontchannel.example.com/logout")
+	assert.Contains(t, body, "\"protocol\":\"oidc\"")
+	assert.NoError(t, f.mock.ExpectationsWereMet())
 }
 
 func TestBuildSAMLFrontChannelLogoutTasks(t *testing.T) {
@@ -1159,61 +1207,13 @@ func Test_oidcDeviceFlowContext(t *testing.T) {
 }
 
 func Test_cleanupIDPFlowState(t *testing.T) {
-	flowKeys := []string{
-		// Common IDP flow keys
-		definitions.SessionKeyIDPFlowType,
-		definitions.SessionKeyIDPFlowID,
-		// OIDC-specific flow keys
-		definitions.SessionKeyOIDCGrantType,
-		definitions.SessionKeyIDPClientID,
-		definitions.SessionKeyIDPRedirectURI,
-		definitions.SessionKeyIDPScope,
-		definitions.SessionKeyIDPState,
-		definitions.SessionKeyIDPNonce,
-		definitions.SessionKeyIDPResponseType,
-		definitions.SessionKeyIDPPrompt,
-		// SAML-specific flow keys
-		definitions.SessionKeyIDPSAMLRequest,
-		definitions.SessionKeyIDPSAMLRelayState,
-		definitions.SessionKeyIDPSAMLEntityID,
-		definitions.SessionKeyIDPOriginalURL,
-		definitions.SessionKeyRequireMFAParentFlowID,
-	}
-
 	t.Run("removes all IDP flow state keys including OIDC and SAML", func(t *testing.T) {
-		mgr := &mockCookieManager{data: map[string]any{
-			// OIDC keys
-			definitions.SessionKeyIDPFlowType:     definitions.ProtoOIDC,
-			definitions.SessionKeyIDPFlowID:       "flow-oidc-cleanup",
-			definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
-			definitions.SessionKeyIDPClientID:     "my-app",
-			definitions.SessionKeyIDPRedirectURI:  "https://app.example.com/callback",
-			definitions.SessionKeyIDPScope:        "openid profile email",
-			definitions.SessionKeyIDPState:        "state123",
-			definitions.SessionKeyIDPNonce:        "nonce456",
-			definitions.SessionKeyIDPResponseType: "code",
-			definitions.SessionKeyIDPPrompt:       "consent",
-			// SAML keys
-			definitions.SessionKeyIDPSAMLRequest:         "<saml-request>",
-			definitions.SessionKeyIDPSAMLRelayState:      "relay-state",
-			definitions.SessionKeyIDPSAMLEntityID:        "https://sp.example.com",
-			definitions.SessionKeyIDPOriginalURL:         "/saml/sso?SAMLRequest=abc",
-			definitions.SessionKeyRequireMFAParentFlowID: "flow-parent",
-			// Non-flow keys (must survive)
-			definitions.SessionKeyAccount:     "user@example.com",
-			definitions.SessionKeyOIDCClients: "my-app",
-		}}
+		mgr := newIDPFlowCleanupCookieManager()
 
 		CleanupIDPFlowState(mgr)
 
-		for _, key := range flowKeys {
-			_, exists := mgr.data[key]
-			assert.False(t, exists, "key %q should have been deleted", key)
-		}
-
-		// Non-flow keys must be preserved
-		assert.Equal(t, "user@example.com", mgr.data[definitions.SessionKeyAccount])
-		assert.Equal(t, "my-app", mgr.data[definitions.SessionKeyOIDCClients])
+		assertIDPFlowStateRemoved(t, mgr)
+		assertIDPFlowStatePreserved(t, mgr)
 	})
 
 	t.Run("handles nil manager gracefully", func(t *testing.T) {
@@ -1229,6 +1229,68 @@ func Test_cleanupIDPFlowState(t *testing.T) {
 			CleanupIDPFlowState(mgr)
 		})
 	})
+}
+
+// newIDPFlowCleanupCookieManager creates mixed OIDC/SAML flow state.
+func newIDPFlowCleanupCookieManager() *mockCookieManager {
+	return &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowType:            definitions.ProtoOIDC,
+		definitions.SessionKeyIDPFlowID:              "flow-oidc-cleanup",
+		definitions.SessionKeyOIDCGrantType:          definitions.OIDCFlowAuthorizationCode,
+		definitions.SessionKeyIDPClientID:            "my-app",
+		definitions.SessionKeyIDPRedirectURI:         "https://app.example.com/callback",
+		definitions.SessionKeyIDPScope:               "openid profile email",
+		definitions.SessionKeyIDPState:               "state123",
+		definitions.SessionKeyIDPNonce:               "nonce456",
+		definitions.SessionKeyIDPResponseType:        "code",
+		definitions.SessionKeyIDPPrompt:              "consent",
+		definitions.SessionKeyIDPSAMLRequest:         "<saml-request>",
+		definitions.SessionKeyIDPSAMLRelayState:      "relay-state",
+		definitions.SessionKeyIDPSAMLEntityID:        "https://sp.example.com",
+		definitions.SessionKeyIDPOriginalURL:         "/saml/sso?SAMLRequest=abc",
+		definitions.SessionKeyRequireMFAParentFlowID: "flow-parent",
+		definitions.SessionKeyAccount:                "user@example.com",
+		definitions.SessionKeyOIDCClients:            "my-app",
+	}}
+}
+
+// idpFlowCleanupKeys returns all flow-scoped session keys.
+func idpFlowCleanupKeys() []string {
+	return []string{
+		definitions.SessionKeyIDPFlowType,
+		definitions.SessionKeyIDPFlowID,
+		definitions.SessionKeyOIDCGrantType,
+		definitions.SessionKeyIDPClientID,
+		definitions.SessionKeyIDPRedirectURI,
+		definitions.SessionKeyIDPScope,
+		definitions.SessionKeyIDPState,
+		definitions.SessionKeyIDPNonce,
+		definitions.SessionKeyIDPResponseType,
+		definitions.SessionKeyIDPPrompt,
+		definitions.SessionKeyIDPSAMLRequest,
+		definitions.SessionKeyIDPSAMLRelayState,
+		definitions.SessionKeyIDPSAMLEntityID,
+		definitions.SessionKeyIDPOriginalURL,
+		definitions.SessionKeyRequireMFAParentFlowID,
+	}
+}
+
+// assertIDPFlowStateRemoved verifies that flow-scoped keys were cleared.
+func assertIDPFlowStateRemoved(t *testing.T, mgr *mockCookieManager) {
+	t.Helper()
+
+	for _, key := range idpFlowCleanupKeys() {
+		_, exists := mgr.data[key]
+		assert.False(t, exists, "key %q should have been deleted", key)
+	}
+}
+
+// assertIDPFlowStatePreserved verifies that non-flow keys survive cleanup.
+func assertIDPFlowStatePreserved(t *testing.T, mgr *mockCookieManager) {
+	t.Helper()
+
+	assert.Equal(t, "user@example.com", mgr.data[definitions.SessionKeyAccount])
+	assert.Equal(t, "my-app", mgr.data[definitions.SessionKeyOIDCClients])
 }
 
 func Test_cleanupMFAState(t *testing.T) {
@@ -1532,6 +1594,30 @@ func newLatchedConsentPostContext() (*gin.Context, *httptest.ResponseRecorder) {
 func TestOIDCHandler_Introspect(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	fixture := newOIDCIntrospectionTest(t)
+
+	t.Run("Valid token introspection", fixture.assertValidTokenIntrospection)
+	t.Run("Private key JWT token introspection", fixture.assertPrivateKeyJWTTokenIntrospection)
+	t.Run("Invalid token introspection", fixture.assertInvalidTokenIntrospection)
+	t.Run("Unauthorized client", fixture.assertUnauthorizedClient)
+
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+type oidcIntrospectionTest struct {
+	handler                  *OIDCHandler
+	mock                     redismock.ClientMock
+	clientAssertionKey       *rsa.PrivateKey
+	privateKeyJWTClient      config.OIDCClient
+	issuer                   string
+	accessToken              string
+	privateKeyJWTAccessToken string
+}
+
+// newOIDCIntrospectionTest builds an isolated token introspection fixture.
+func newOIDCIntrospectionTest(t *testing.T) *oidcIntrospectionTest {
+	t.Helper()
+
 	issuer := "https://auth.example.com"
 	signingKey := secret.New(generateTestKey())
 	clientAssertionKey, clientPublicKey := generateTestClientKeyPair(t)
@@ -1563,8 +1649,6 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 
 	idpInstance := idp.NewNauthilusIDP(d)
 	h := NewOIDCHandler(d, idpInstance, nil)
-
-	// Issue a token first
 	accessToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
 		ClientID: "test-client",
 		UserID:   "user123",
@@ -1578,100 +1662,99 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 		Scopes:   []string{"openid", "profile"},
 	})
 
-	t.Run("Valid token introspection", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/introspect", nil)
-		ctx.Request.PostForm = url.Values{
-			"token": {accessToken},
-		}
-		ctx.Request.SetBasicAuth("test-client", "test-secret")
+	return &oidcIntrospectionTest{
+		handler:                  h,
+		mock:                     mock,
+		clientAssertionKey:       clientAssertionKey,
+		privateKeyJWTClient:      privateKeyJWTClient,
+		issuer:                   issuer,
+		accessToken:              accessToken,
+		privateKeyJWTAccessToken: privateKeyJWTAccessToken,
+	}
+}
 
-		h.Introspect(ctx)
+// postIntrospection submits an introspection request with optional Basic auth.
+func (f *oidcIntrospectionTest) postIntrospection(t *testing.T, form url.Values, basicID, basicSecret string) *httptest.ResponseRecorder {
+	t.Helper()
 
-		if !assert.Equal(t, http.StatusOK, w.Code) {
-			return
-		}
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/introspect", nil)
 
-		var resp map[string]any
+	ctx.Request.PostForm = form
+	if basicID != "" || basicSecret != "" {
+		ctx.Request.SetBasicAuth(basicID, basicSecret)
+	}
 
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
-		assert.NoError(t, err)
-		assert.True(t, resp["active"].(bool))
-		assert.Equal(t, "user123", resp["sub"])
-		assert.Equal(t, "test-client", resp["aud"])
-	})
+	f.handler.Introspect(ctx)
 
-	t.Run("Private key JWT token introspection", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
+	return w
+}
 
-		assertion := signTestClientAssertion(t, clientAssertionKey, privateKeyJWTClient.ClientID, issuer+"/oidc/introspect")
-		ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/introspect", nil)
-		ctx.Request.PostForm = url.Values{
-			"token":                      {privateKeyJWTAccessToken},
-			oidcParamClientID:            {privateKeyJWTClient.ClientID},
-			oidcParamClientAssertionType: {clientauth.AssertionTypeJWTBearer},
-			oidcParamClientAssertion:     {assertion},
-		}
+// assertValidTokenIntrospection verifies an active token for a secret client.
+func (f *oidcIntrospectionTest) assertValidTokenIntrospection(t *testing.T) {
+	w := f.postIntrospection(t, url.Values{"token": {f.accessToken}}, "test-client", "test-secret")
+	resp := mustDecodeOIDCTestJSON(t, w)
 
-		expectOIDCClientAssertionReplayReservation(
-			t,
-			mock,
-			expectedOIDCClientAssertionReplayKey(privateKeyJWTClient.ClientID, issuer+"/oidc/introspect", "test-client-assertion"),
-			true,
-		)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, resp["active"].(bool))
+	assert.Equal(t, "user123", resp["sub"])
+	assert.Equal(t, "test-client", resp["aud"])
+}
 
-		h.Introspect(ctx)
+// assertPrivateKeyJWTTokenIntrospection verifies endpoint-specific JWT auth.
+func (f *oidcIntrospectionTest) assertPrivateKeyJWTTokenIntrospection(t *testing.T) {
+	audience := f.issuer + "/oidc/introspect"
+	assertion := signTestClientAssertion(t, f.clientAssertionKey, f.privateKeyJWTClient.ClientID, audience)
+	form := url.Values{
+		"token":                      {f.privateKeyJWTAccessToken},
+		oidcParamClientID:            {f.privateKeyJWTClient.ClientID},
+		oidcParamClientAssertionType: {clientauth.AssertionTypeJWTBearer},
+		oidcParamClientAssertion:     {assertion},
+	}
 
-		if !assert.Equal(t, http.StatusOK, w.Code) {
-			return
-		}
+	expectOIDCClientAssertionReplayReservation(
+		t,
+		f.mock,
+		expectedOIDCClientAssertionReplayKey(f.privateKeyJWTClient.ClientID, audience, "test-client-assertion"),
+		true,
+	)
 
-		var resp map[string]any
+	w := f.postIntrospection(t, form, "", "")
+	resp := mustDecodeOIDCTestJSON(t, w)
 
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
-		assert.NoError(t, err)
-		assert.True(t, resp["active"].(bool))
-		assert.Equal(t, "jwt-user", resp[oidcTestJWTClaimSubject])
-		assert.Equal(t, privateKeyJWTClient.ClientID, resp["aud"])
-	})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, resp["active"].(bool))
+	assert.Equal(t, "jwt-user", resp[oidcTestJWTClaimSubject])
+	assert.Equal(t, f.privateKeyJWTClient.ClientID, resp["aud"])
+}
 
-	t.Run("Invalid token introspection", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/introspect", nil)
-		ctx.Request.PostForm = url.Values{
-			"token": {"invalid-token"},
-		}
-		ctx.Request.SetBasicAuth("test-client", "test-secret")
+// assertInvalidTokenIntrospection verifies inactive responses for unknown tokens.
+func (f *oidcIntrospectionTest) assertInvalidTokenIntrospection(t *testing.T) {
+	w := f.postIntrospection(t, url.Values{"token": {"invalid-token"}}, "test-client", "test-secret")
+	resp := mustDecodeOIDCTestJSON(t, w)
 
-		h.Introspect(ctx)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, resp["active"].(bool))
+}
 
-		assert.Equal(t, http.StatusOK, w.Code)
+// assertUnauthorizedClient verifies rejected introspection client credentials.
+func (f *oidcIntrospectionTest) assertUnauthorizedClient(t *testing.T) {
+	w := f.postIntrospection(t, url.Values{"token": {f.accessToken}}, "other-client", "wrong-secret")
 
-		var resp map[string]any
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
 
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
-		assert.NoError(t, err)
-		assert.False(t, resp["active"].(bool))
-	})
+// mustDecodeOIDCTestJSON decodes a test JSON response body.
+func mustDecodeOIDCTestJSON(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
 
-	t.Run("Unauthorized client", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/introspect", nil)
-		ctx.Request.PostForm = url.Values{
-			"token": {accessToken},
-		}
-		ctx.Request.SetBasicAuth("other-client", "wrong-secret")
+	var resp map[string]any
 
-		h.Introspect(ctx)
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
 
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-	})
-
-	assert.NoError(t, mock.ExpectationsWereMet())
+	return resp
 }
 
 func TestOIDCHandler_PrivateKeyJWTTokenReplayProtection(t *testing.T) {
@@ -1897,824 +1980,609 @@ func assertInvalidClientResponse(t testing.TB, recorder *httptest.ResponseRecord
 	assert.Equal(t, oidcErrorInvalidClient, response[definitions.LogKeyError])
 }
 
-func TestOIDCHandler_Token(t *testing.T) {
-	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
-	gin.SetMode(gin.TestMode)
+type oidcTokenTest struct {
+	handler *OIDCHandler
+	mock    redismock.ClientMock
+	cfg     *mockOIDCCfg
+	deps    *deps.Deps
+}
 
-	issuer := "https://auth.example.com"
-	signingKey := secret.New(generateTestKey())
+// newOIDCTokenTest builds an isolated token endpoint fixture.
+func newOIDCTokenTest(t *testing.T) *oidcTokenTest {
+	t.Helper()
+
 	client := config.OIDCClient{
 		ClientID:     "test-client",
 		ClientSecret: secret.New("test-secret"),
 		RedirectURIs: []string{"https://app.com/callback"},
 	}
-
 	cfg := &mockOIDCCfg{
-		issuer:     issuer,
-		signingKey: signingKey,
+		issuer:     "https://auth.example.com",
+		signingKey: secret.New(generateTestKey()),
 		clients:    []config.OIDCClient{client},
 	}
 
 	db, mock := redismock.NewClientMock()
 	rClient := rediscli.NewTestClient(db)
-
 	d := &deps.Deps{
 		Cfg:    cfg,
 		Redis:  rClient,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
-	idpInstance := idp.NewNauthilusIDP(d)
-	h := NewOIDCHandler(d, idpInstance, nil)
+	return &oidcTokenTest{
+		handler: NewOIDCHandler(d, idp.NewNauthilusIDP(d), nil),
+		mock:    mock,
+		cfg:     cfg,
+		deps:    d,
+	}
+}
 
-	assertInvalidClientForCombinedClientAuth := func(t *testing.T, grantType string, grantValueKey string, grantValue string) {
-		t.Helper()
+// postToken submits a token request and returns the response recorder.
+func (f *oidcTokenTest) postToken(
+	t *testing.T,
+	form url.Values,
+	configure func(*http.Request),
+) *httptest.ResponseRecorder {
+	t.Helper()
 
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-		form := url.Values{}
-		form.Add(oidcParamGrantType, grantType)
-		form.Add(grantValueKey, grantValue)
-		form.Add(oidcParamClientID, "test-client")
-		form.Add(oidcParamClientSecret, "test-secret")
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-
-		var resp map[string]any
-
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
-		assert.NoError(t, err)
-		assert.Equal(t, "invalid_client", resp[definitions.LogKeyError])
+	if configure != nil {
+		configure(req)
 	}
 
-	assertInvalidRequestForDuplicateTokenParameter := func(t *testing.T, duplicateKey string) {
-		t.Helper()
+	ctx.Request = req
+	f.handler.Token(ctx)
 
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
+	return w
+}
 
-		form := url.Values{}
-		form.Add(oidcParamGrantType, definitions.OIDCFlowAuthorizationCode)
-		form.Add(oidcParamCode, "valid-code")
-		form.Add(oidcParamRedirectURI, "https://app.com/callback")
-		form.Add(oidcParamClientID, "test-client")
-		form.Add(oidcParamClientSecret, "test-secret")
-		form.Add(duplicateKey, "attacker-value")
+// withBasicTokenAuth configures Basic auth for token endpoint requests.
+func withBasicTokenAuth(clientID, clientSecret string) func(*http.Request) {
+	return func(req *http.Request) {
+		req.SetBasicAuth(clientID, clientSecret)
+	}
+}
 
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		ctx.Request = req
+// withRawBasicTokenAuth configures a pre-encoded Basic auth value.
+func withRawBasicTokenAuth(clientID, clientSecret string) func(*http.Request) {
+	authValue := url.QueryEscape(clientID) + ":" + url.QueryEscape(clientSecret)
+	encodedAuth := base64.StdEncoding.EncodeToString([]byte(authValue))
 
-		h.Token(ctx)
+	return func(req *http.Request) {
+		req.Header.Set("Authorization", "Basic "+encodedAuth)
+	}
+}
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
+// tokenAuthCodeForm builds an authorization-code token request body.
+func tokenAuthCodeForm(code, redirectURI string) url.Values {
+	form := url.Values{}
+	form.Add(oidcParamGrantType, definitions.OIDCFlowAuthorizationCode)
+	form.Add(oidcParamCode, code)
+	form.Add(oidcParamRedirectURI, redirectURI)
 
-		var resp map[string]any
+	return form
+}
 
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
-		assert.NoError(t, err)
-		assert.Equal(t, "invalid_request", resp[definitions.LogKeyError])
+// tokenRefreshForm builds a refresh-token request body.
+func tokenRefreshForm(refreshToken string) url.Values {
+	form := url.Values{}
+	form.Add(oidcParamGrantType, "refresh_token")
+	form.Add("refresh_token", refreshToken)
+
+	return form
+}
+
+// mustMarshalOIDCSession serializes a test OIDC session.
+func mustMarshalOIDCSession(t *testing.T, session *idp.OIDCSession) string {
+	t.Helper()
+
+	sessionData, err := json.Marshal(session)
+	if !assert.NoError(t, err) {
+		return ""
 	}
 
-	t.Run("Token request with duplicate sensitive form values is rejected", func(t *testing.T) {
-		for _, duplicateKey := range []string{
-			oidcParamGrantType,
-			oidcParamClientID,
-			oidcParamClientSecret,
-			oidcParamCode,
-			oidcParamRedirectURI,
-		} {
-			t.Run(duplicateKey, func(t *testing.T) {
-				assertInvalidRequestForDuplicateTokenParameter(t, duplicateKey)
-			})
-		}
-	})
+	return string(sessionData)
+}
 
-	t.Run("Token request with Basic Auth", func(t *testing.T) {
-		code := "code123"
-		oidcSession := &idp.OIDCSession{
-			ClientID:    "test-client",
-			UserID:      "user123",
-			Scopes:      []string{definitions.ScopeOpenID},
-			RedirectURI: "https://app.com/callback",
-			Nonce:       "test-nonce",
-		}
-		sessionData, _ := json.Marshal(oidcSession)
+// expectAuthorizationCodeSession registers Redis expectations for an auth code.
+func (f *oidcTokenTest) expectAuthorizationCodeSession(t *testing.T, code string, session *idp.OIDCSession) {
+	t.Helper()
 
-		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
-		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
+	f.mock.ExpectGet("test:oidc:code:" + code).SetVal(mustMarshalOIDCSession(t, session))
+	f.mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
+}
 
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
+// expectRefreshTokenSession registers one refresh-token lookup expectation.
+func (f *oidcTokenTest) expectRefreshTokenSession(t *testing.T, refreshToken string, session *idp.OIDCSession) {
+	t.Helper()
 
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("code", code)
-		form.Add("redirect_uri", "https://app.com/callback")
+	f.mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(mustMarshalOIDCSession(t, session))
+}
 
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
+// expectRefreshTokenRotation registers successful refresh-token rotation expectations.
+func (f *oidcTokenTest) expectRefreshTokenRotation(t *testing.T, refreshToken string, session *idp.OIDCSession) {
+	t.Helper()
 
-		h.Token(ctx)
+	f.expectRefreshTokenSession(t, refreshToken, session)
+	f.expectRefreshTokenSession(t, refreshToken, session)
+	f.mock.ExpectSRem("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
+	f.mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
+	f.mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_.*", ".*", 30*24*time.Hour).SetVal("OK")
+	f.mock.Regexp().ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_.*").SetVal(1)
+	f.mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+}
 
-		assert.Equal(t, http.StatusOK, w.Code)
+// newRefreshTokenSession creates a common refresh-token session fixture.
+func newRefreshTokenSession(clientID string) *idp.OIDCSession {
+	return &idp.OIDCSession{
+		ClientID: clientID,
+		UserID:   "user123",
+		Scopes:   []string{definitions.ScopeOpenID, definitions.ScopeOfflineAccess},
+		AuthTime: time.Now(),
+	}
+}
 
-		// Verifiziere ID-Token Inhalt (optional, da wir IssueTokens bereits separat testen)
-		var resp map[string]any
-		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.NotEmpty(t, resp["id_token"])
+// assertTokenError verifies an OAuth error response.
+func assertTokenError(t *testing.T, w *httptest.ResponseRecorder, status int, code string) {
+	t.Helper()
 
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
+	assert.Equal(t, status, w.Code)
+	resp := mustDecodeOIDCTestJSON(t, w)
+	assert.Equal(t, code, resp[definitions.LogKeyError])
+}
 
-	t.Run("Token request with client_id in body and secret in Basic Auth (should fail)", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
+// assertTokenHasFields verifies successful token fields.
+func assertTokenHasFields(t *testing.T, w *httptest.ResponseRecorder, fields ...string) {
+	t.Helper()
 
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("code", "any-code")
-		form.Add("client_id", "test-client") // client_id im Body
+	assert.Equal(t, http.StatusOK, w.Code)
 
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret") // secret im Header
-		ctx.Request = req
+	resp := mustDecodeOIDCTestJSON(t, w)
+	for _, field := range fields {
+		assert.NotEmpty(t, resp[field])
+	}
+}
 
-		h.Token(ctx)
+// pkceS256Challenge returns the S256 challenge for a verifier.
+func pkceS256Challenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
 
-		// MUST NOT use more than one authentication method
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-	})
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
 
-	t.Run("Token request with URL-encoded characters in Basic Auth", func(t *testing.T) {
-		code := "code789"
-		specialClientID := "client@test"
-		specialSecret := "pass+word"
-		oidcSession := &idp.OIDCSession{
-			ClientID:    specialClientID,
-			UserID:      "user123",
-			Scopes:      []string{definitions.ScopeOpenID},
-			RedirectURI: "https://app.com/callback",
-		}
-		sessionData, _ := json.Marshal(oidcSession)
+// newPKCEAuthCodeSession creates an authorization-code session with PKCE data.
+func newPKCEAuthCodeSession(clientID, redirectURI, verifier, method string) *idp.OIDCSession {
+	challenge := verifier
+	if method == "S256" {
+		challenge = pkceS256Challenge(verifier)
+	}
 
-		// Mock client with special characters
-		cfg.clients = append(cfg.clients, config.OIDCClient{
-			ClientID:     specialClientID,
-			ClientSecret: secret.New(specialSecret),
-			RedirectURIs: []string{"https://app.com/callback"},
+	return &idp.OIDCSession{
+		ClientID:            clientID,
+		UserID:              "user123",
+		Scopes:              []string{definitions.ScopeOpenID},
+		RedirectURI:         redirectURI,
+		CodeChallenge:       challenge,
+		CodeChallengeMethod: method,
+	}
+}
+
+// assertDuplicateSensitiveFormValuesRejected verifies duplicate parameter rejection.
+func (f *oidcTokenTest) assertDuplicateSensitiveFormValuesRejected(t *testing.T) {
+	for _, duplicateKey := range []string{
+		oidcParamGrantType,
+		oidcParamClientID,
+		oidcParamClientSecret,
+		oidcParamCode,
+		oidcParamRedirectURI,
+	} {
+		t.Run(duplicateKey, func(t *testing.T) {
+			f.assertInvalidRequestForDuplicateTokenParameter(t, duplicateKey)
 		})
+	}
+}
 
-		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
-		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
+// assertInvalidRequestForDuplicateTokenParameter checks one duplicate form key.
+func (f *oidcTokenTest) assertInvalidRequestForDuplicateTokenParameter(t *testing.T, duplicateKey string) {
+	form := tokenAuthCodeForm("valid-code", "https://app.com/callback")
+	form.Add(oidcParamClientID, "test-client")
+	form.Add(oidcParamClientSecret, "test-secret")
+	form.Add(duplicateKey, "attacker-value")
 
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
+	w := f.postToken(t, form, nil)
 
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("code", code)
-		form.Add("redirect_uri", "https://app.com/callback")
+	assertTokenError(t, w, http.StatusBadRequest, "invalid_request")
+}
 
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+// assertInvalidClientForCombinedClientAuth checks double client authentication.
+func (f *oidcTokenTest) assertInvalidClientForCombinedClientAuth(
+	t *testing.T,
+	grantType string,
+	grantValueKey string,
+	grantValue string,
+) {
+	form := url.Values{}
+	form.Add(oidcParamGrantType, grantType)
+	form.Add(grantValueKey, grantValue)
+	form.Add(oidcParamClientID, "test-client")
+	form.Add(oidcParamClientSecret, "test-secret")
 
-		// URL-encode parts manually to simulate RFC 6749 Section 2.3.1
-		authValue := url.QueryEscape(specialClientID) + ":" + url.QueryEscape(specialSecret)
-		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(authValue)))
-		ctx.Request = req
+	w := f.postToken(t, form, withBasicTokenAuth("test-client", "test-secret"))
 
-		h.Token(ctx)
+	assertTokenError(t, w, http.StatusUnauthorized, "invalid_client")
+}
 
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.NoError(t, mock.ExpectationsWereMet())
+// assertAuthorizationCodeBasicAuth verifies a confidential authorization-code exchange.
+func (f *oidcTokenTest) assertAuthorizationCodeBasicAuth(t *testing.T) {
+	code := "code123"
+	session := &idp.OIDCSession{
+		ClientID:    "test-client",
+		UserID:      "user123",
+		Scopes:      []string{definitions.ScopeOpenID},
+		RedirectURI: "https://app.com/callback",
+		Nonce:       "test-nonce",
+	}
+	f.expectAuthorizationCodeSession(t, code, session)
+
+	w := f.postToken(t, tokenAuthCodeForm(code, "https://app.com/callback"), withBasicTokenAuth("test-client", "test-secret"))
+
+	assertTokenHasFields(t, w, "id_token")
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertBodyClientIDWithBasicSecretRejected verifies mixed auth method rejection.
+func (f *oidcTokenTest) assertBodyClientIDWithBasicSecretRejected(t *testing.T) {
+	form := url.Values{}
+	form.Add(oidcParamGrantType, definitions.OIDCFlowAuthorizationCode)
+	form.Add(oidcParamCode, "any-code")
+	form.Add(oidcParamClientID, "test-client")
+
+	w := f.postToken(t, form, withBasicTokenAuth("test-client", "test-secret"))
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// assertURLEncodedBasicAuth verifies RFC 6749 encoded Basic auth credentials.
+func (f *oidcTokenTest) assertURLEncodedBasicAuth(t *testing.T) {
+	code := "code789"
+	specialClientID := "client@test"
+	specialSecret := "pass+word"
+	f.cfg.clients = append(f.cfg.clients, config.OIDCClient{
+		ClientID:     specialClientID,
+		ClientSecret: secret.New(specialSecret),
+		RedirectURIs: []string{"https://app.com/callback"},
+	})
+	f.expectAuthorizationCodeSession(t, code, &idp.OIDCSession{
+		ClientID:    specialClientID,
+		UserID:      "user123",
+		Scopes:      []string{definitions.ScopeOpenID},
+		RedirectURI: "https://app.com/callback",
 	})
 
+	w := f.postToken(t, tokenAuthCodeForm(code, "https://app.com/callback"), withRawBasicTokenAuth(specialClientID, specialSecret))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertSecretLengthMismatchRejected verifies invalid Basic auth credentials.
+func (f *oidcTokenTest) assertSecretLengthMismatchRejected(t *testing.T) {
+	form := url.Values{}
+	form.Add(oidcParamGrantType, definitions.OIDCFlowAuthorizationCode)
+	form.Add(oidcParamCode, "any-code")
+
+	w := f.postToken(t, form, withBasicTokenAuth("test-client", "secret"))
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// assertMultipleMethodsRejected verifies explicit duplicate auth method rejection.
+func (f *oidcTokenTest) assertMultipleMethodsRejected(t *testing.T) {
+	form := url.Values{}
+	form.Add(oidcParamGrantType, definitions.OIDCFlowAuthorizationCode)
+	form.Add(oidcParamCode, "any-code")
+	form.Add(oidcParamClientID, "test-client")
+	form.Add(oidcParamClientSecret, "test-secret")
+
+	w := f.postToken(t, form, withBasicTokenAuth("test-client", "test-secret"))
+
+	assertTokenError(t, w, http.StatusUnauthorized, "invalid_client")
+}
+
+// assertRefreshCombinedAuthAcceptedForConfidentialClient verifies compatibility mode.
+func (f *oidcTokenTest) assertRefreshCombinedAuthAcceptedForConfidentialClient(t *testing.T) {
+	origCompat := f.cfg.clients[0].AllowRefreshTokenCombinedClientAuth
+
+	f.cfg.clients[0].AllowRefreshTokenCombinedClientAuth = true
+	defer func() { f.cfg.clients[0].AllowRefreshTokenCombinedClientAuth = origCompat }()
+
+	refreshToken := "refresh-token-combined-auth-compat-confidential"
+	f.expectRefreshTokenRotation(t, refreshToken, newRefreshTokenSession("test-client"))
+
+	form := tokenRefreshForm(refreshToken)
+	form.Add(oidcParamClientID, "test-client")
+	form.Add(oidcParamClientSecret, "test-secret")
+	w := f.postToken(t, form, withBasicTokenAuth("test-client", "test-secret"))
+
+	assertTokenHasFields(t, w, "access_token", "refresh_token")
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertInvalidRefreshToken verifies invalid_grant for a missing refresh token.
+func (f *oidcTokenTest) assertInvalidRefreshToken(t *testing.T) {
+	refreshToken := "missing-refresh-token"
+	f.mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).RedisNil()
+
+	w := f.postToken(t, tokenRefreshForm(refreshToken), withBasicTokenAuth("test-client", "test-secret"))
+
+	assertTokenError(t, w, http.StatusBadRequest, "invalid_grant")
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertRefreshWithoutRotation verifies refresh-token reuse when rotation is disabled.
+func (f *oidcTokenTest) assertRefreshWithoutRotation(t *testing.T) {
+	origRevoke := f.cfg.clients[0].RevokeRefreshToken
+	disabled := false
+
+	f.cfg.clients[0].RevokeRefreshToken = &disabled
+	defer func() { f.cfg.clients[0].RevokeRefreshToken = origRevoke }()
+
+	refreshToken := "stable-refresh-token"
+	oldAccessToken := "header.payload.signature"
+	session := newRefreshTokenSession("test-client")
+	session.AccessToken = oldAccessToken
+	f.expectRefreshTokenSession(t, refreshToken, session)
+	f.mock.ExpectSet("test:oidc:denied_access_token:"+oldAccessToken, "1", time.Hour).SetVal("OK")
+	f.mock.Regexp().ExpectSet("test:oidc:refresh_token:"+refreshToken, ".*", 30*24*time.Hour).SetVal("OK")
+	f.mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(0)
+	f.mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+
+	w := f.postToken(t, tokenRefreshForm(refreshToken), withBasicTokenAuth("test-client", "test-secret"))
+	resp := mustDecodeOIDCTestJSON(t, w)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NotEmpty(t, resp["access_token"])
+	_, hasRefreshToken := resp["refresh_token"]
+	assert.False(t, hasRefreshToken)
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertRefreshInvalidTokenLogsFailureReason verifies the notice failure reason.
+func (f *oidcTokenTest) assertRefreshInvalidTokenLogsFailureReason(t *testing.T) {
+	refreshToken := "missing-refresh-token-log-reason"
+	f.mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).RedisNil()
+
+	handler := &noticeCaptureHandler{}
+	previousLogger := f.deps.Logger
+
+	f.deps.Logger = slog.New(handler)
+	defer func() { f.deps.Logger = previousLogger }()
+
+	w := f.postToken(t, tokenRefreshForm(refreshToken), withBasicTokenAuth("test-client", "test-secret"))
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assertRefreshFailureReasonLogged(t, handler)
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertRefreshFailureReasonLogged verifies the captured refresh failure notice.
+func assertRefreshFailureReasonLogged(t *testing.T, handler *noticeCaptureHandler) {
+	t.Helper()
+
+	foundFailureLog := false
+
+	for _, record := range handler.records {
+		if record.message != "IDP request has failed" {
+			continue
+		}
+
+		assert.Equal(t, "refresh token unknown, expired, or already rotated", record.attrs["failure_reason"])
+
+		foundFailureLog = true
+
+		break
+	}
+
+	assert.True(t, foundFailureLog, "expected failed OIDC flow notice log with failure_reason")
+}
+
+// assertRefreshClientMismatch verifies invalid_grant for mismatched client state.
+func (f *oidcTokenTest) assertRefreshClientMismatch(t *testing.T) {
+	refreshToken := "refresh-token-client-mismatch"
+	f.expectRefreshTokenSession(t, refreshToken, newRefreshTokenSession("other-client"))
+
+	w := f.postToken(t, tokenRefreshForm(refreshToken), withBasicTokenAuth("test-client", "test-secret"))
+
+	assertTokenError(t, w, http.StatusBadRequest, "invalid_grant")
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertPublicRefreshEmptySecretRejectedByDefault verifies public duplicate auth rejection.
+func (f *oidcTokenTest) assertPublicRefreshEmptySecretRejectedByDefault(t *testing.T) {
+	f.cfg.clients = append(f.cfg.clients, config.OIDCClient{
+		ClientID:     "public-refresh-client-no-compat",
+		RedirectURIs: []string{"http://127.0.0.1"},
+	})
+
+	form := tokenRefreshForm("any-token")
+	form.Add(oidcParamClientID, "public-refresh-client-no-compat")
+	form.Add(oidcParamClientSecret, "")
+	w := f.postToken(t, form, withBasicTokenAuth("public-refresh-client-no-compat", ""))
+
+	assertTokenError(t, w, http.StatusUnauthorized, "invalid_client")
+}
+
+// assertPublicRefreshEmptySecretAcceptedWithCompatibility verifies public-client compatibility.
+func (f *oidcTokenTest) assertPublicRefreshEmptySecretAcceptedWithCompatibility(t *testing.T) {
+	f.cfg.clients = append(f.cfg.clients, config.OIDCClient{
+		ClientID:                            "public-refresh-client",
+		RedirectURIs:                        []string{"http://127.0.0.1"},
+		AllowRefreshTokenCombinedClientAuth: true,
+	})
+
+	refreshToken := "refresh-token-public-client-empty-body-secret"
+	f.expectRefreshTokenRotation(t, refreshToken, newRefreshTokenSession("public-refresh-client"))
+
+	form := tokenRefreshForm(refreshToken)
+	form.Add(oidcParamClientID, "public-refresh-client")
+	form.Add(oidcParamClientSecret, "")
+	w := f.postToken(t, form, withBasicTokenAuth("public-refresh-client", ""))
+
+	assertTokenHasFields(t, w, "access_token", "refresh_token")
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertConfidentialEmptySecretWithCompatibilityRejected verifies confidential-client exclusion.
+func (f *oidcTokenTest) assertConfidentialEmptySecretWithCompatibilityRejected(t *testing.T) {
+	origCompat := f.cfg.clients[0].AllowRefreshTokenCombinedClientAuth
+
+	f.cfg.clients[0].AllowRefreshTokenCombinedClientAuth = true
+	defer func() { f.cfg.clients[0].AllowRefreshTokenCombinedClientAuth = origCompat }()
+
+	form := tokenRefreshForm("any-token")
+	form.Add(oidcParamClientID, "test-client")
+	form.Add(oidcParamClientSecret, "")
+	w := f.postToken(t, form, withBasicTokenAuth("test-client", "test-secret"))
+
+	assertTokenError(t, w, http.StatusUnauthorized, "invalid_client")
+}
+
+// assertEnforcedMethodMismatchRejected verifies configured auth method enforcement.
+func (f *oidcTokenTest) assertEnforcedMethodMismatchRejected(t *testing.T) {
+	f.cfg.clients[0].TokenEndpointAuthMethod = "client_secret_basic"
+	form := tokenAuthCodeForm("any-code", "")
+	form.Del(oidcParamRedirectURI)
+	form.Add(oidcParamClientID, "test-client")
+	form.Add(oidcParamClientSecret, "test-secret")
+
+	w := f.postToken(t, form, nil)
+
+	assertTokenError(t, w, http.StatusUnauthorized, "invalid_client")
+}
+
+// assertPublicClientBodyOnlyToken verifies a public-client authorization code exchange.
+func (f *oidcTokenTest) assertPublicClientBodyOnlyToken(t *testing.T) {
+	code := "public-client-code"
+	verifier := strings.Repeat("c", 43)
+	publicClient := config.OIDCClient{
+		ClientID:                "public-client",
+		RedirectURIs:            []string{"https://app.com/public-callback"},
+		TokenEndpointAuthMethod: "none",
+	}
+	f.cfg.clients = append(f.cfg.clients, publicClient)
+	session := newPKCEAuthCodeSession(publicClient.ClientID, "https://app.com/public-callback", verifier, "S256")
+	f.expectAuthorizationCodeSession(t, code, session)
+
+	form := tokenAuthCodeForm(code, "https://app.com/public-callback")
+	form.Add(oidcParamClientID, publicClient.ClientID)
+	form.Add("code_verifier", verifier)
+	w := f.postToken(t, form, nil)
+
+	assertTokenHasFields(t, w, "id_token")
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertPKCES256Valid verifies a confidential-client PKCE S256 exchange.
+func (f *oidcTokenTest) assertPKCES256Valid(t *testing.T) {
+	code := "pkce-s256-code"
+	verifier := strings.Repeat("a", 43)
+	w := f.postPKCEAuthCode(t, code, verifier, "S256", "https://app.com/callback", "https://app.com/callback")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertRedirectURIMismatchRejected verifies redirect_uri replay protection.
+func (f *oidcTokenTest) assertRedirectURIMismatchRejected(t *testing.T) {
+	code := "redirect-uri-mismatch-code"
+	verifier := strings.Repeat("a", 43)
+	w := f.postPKCEAuthCode(t, code, verifier, "S256", "https://app.com/callback", "https://evil.com/callback")
+
+	assertTokenError(t, w, http.StatusBadRequest, "invalid_grant")
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertMissingPKCEVerifierRejected verifies missing verifier rejection.
+func (f *oidcTokenTest) assertMissingPKCEVerifierRejected(t *testing.T) {
+	code := "pkce-s256-missing-verifier"
+	session := &idp.OIDCSession{
+		ClientID:            "test-client",
+		UserID:              "user123",
+		Scopes:              []string{definitions.ScopeOpenID},
+		RedirectURI:         "https://app.com/callback",
+		CodeChallenge:       "dummy",
+		CodeChallengeMethod: "S256",
+	}
+	f.expectAuthorizationCodeSession(t, code, session)
+
+	w := f.postToken(t, tokenAuthCodeForm(code, "https://app.com/callback"), withBasicTokenAuth("test-client", "test-secret"))
+
+	assertTokenError(t, w, http.StatusBadRequest, "invalid_grant")
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertPlainPKCERejected verifies that plain PKCE remains unsupported.
+func (f *oidcTokenTest) assertPlainPKCERejected(t *testing.T) {
+	code := "pkce-plain-code"
+	verifier := strings.Repeat("b", 43)
+	w := f.postPKCEAuthCode(t, code, verifier, "plain", "https://app.com/callback", "https://app.com/callback")
+
+	assertTokenError(t, w, http.StatusBadRequest, "invalid_grant")
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// postPKCEAuthCode posts an authorization-code token request with PKCE fixtures.
+func (f *oidcTokenTest) postPKCEAuthCode(t *testing.T, code string, verifier string, method string, sessionRedirectURI string, formRedirectURI string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	session := newPKCEAuthCodeSession("test-client", sessionRedirectURI, verifier, method)
+	f.expectAuthorizationCodeSession(t, code, session)
+
+	form := tokenAuthCodeForm(code, formRedirectURI)
+	form.Add("code_verifier", verifier)
+
+	return f.postToken(t, form, withBasicTokenAuth("test-client", "test-secret"))
+}
+
+func TestOIDCHandler_Token(t *testing.T) {
+	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
+	gin.SetMode(gin.TestMode)
+
+	fixture := newOIDCTokenTest(t)
+
+	t.Run("Token request with duplicate sensitive form values is rejected", fixture.assertDuplicateSensitiveFormValuesRejected)
+	t.Run("Token request with Basic Auth", fixture.assertAuthorizationCodeBasicAuth)
+	t.Run("Token request with client_id in body and secret in Basic Auth (should fail)", fixture.assertBodyClientIDWithBasicSecretRejected)
+	t.Run("Token request with URL-encoded characters in Basic Auth", fixture.assertURLEncodedBasicAuth)
 	t.Run("Token request with both Header and Body (matching - should fail)", func(t *testing.T) {
-		assertInvalidClientForCombinedClientAuth(t, "authorization_code", "code", "any-code")
+		fixture.assertInvalidClientForCombinedClientAuth(t, "authorization_code", "code", "any-code")
 	})
-
-	t.Run("Token request with 11 vs 6 chars mismatch (reproduce user log)", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("code", "any-code")
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "secret") // 6 chars
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-	})
-
-	t.Run("Token request with multiple methods (should fail)", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("code", "any-code")
-		form.Add("client_id", "test-client")
-		form.Add("client_secret", "test-secret")
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-
-		var resp map[string]any
-		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, "invalid_client", resp["error"])
-	})
+	t.Run("Token request with 11 vs 6 chars mismatch (reproduce user log)", fixture.assertSecretLengthMismatchRejected)
+	t.Run("Token request with multiple methods (should fail)", fixture.assertMultipleMethodsRejected)
 
 	t.Run("Refresh token request with basic and matching body credentials is rejected by default", func(t *testing.T) {
-		// Per RFC 6749 §2.3 the client MUST NOT use more than one client
-		// authentication method. Even if the Basic auth and body credentials
-		// match, a confidential client sending both must be rejected.
-		assertInvalidClientForCombinedClientAuth(t, "refresh_token", "refresh_token", "any-token")
+		fixture.assertInvalidClientForCombinedClientAuth(t, "refresh_token", "refresh_token", "any-token")
 	})
 
-	t.Run("Refresh token request with basic and matching body credentials is accepted when compatibility is enabled for confidential client", func(t *testing.T) {
-		origCompat := cfg.clients[0].AllowRefreshTokenCombinedClientAuth
-
-		cfg.clients[0].AllowRefreshTokenCombinedClientAuth = true
-		defer func() {
-			cfg.clients[0].AllowRefreshTokenCombinedClientAuth = origCompat
-		}()
-
-		refreshToken := "refresh-token-combined-auth-compat-confidential"
-		session := &idp.OIDCSession{
-			ClientID: "test-client",
-			UserID:   "user123",
-			Scopes:   []string{definitions.ScopeOpenID, definitions.ScopeOfflineAccess},
-			AuthTime: time.Now(),
-		}
-		sessionData, _ := json.Marshal(session)
-
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
-		mock.ExpectSRem("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
-		mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
-		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_.*", ".*", 30*24*time.Hour).SetVal("OK")
-		mock.Regexp().ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_.*").SetVal(1)
-		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "refresh_token")
-		form.Add("refresh_token", refreshToken)
-		form.Add("client_id", "test-client")
-		form.Add("client_secret", "test-secret")
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp map[string]any
-		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.NotEmpty(t, resp["access_token"])
-		assert.NotEmpty(t, resp["refresh_token"])
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("Refresh token request with invalid token returns invalid_grant", func(t *testing.T) {
-		refreshToken := "missing-refresh-token"
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).RedisNil()
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "refresh_token")
-		form.Add("refresh_token", refreshToken)
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-
-		var resp map[string]any
-
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
-		assert.NoError(t, err)
-		assert.Equal(t, "invalid_grant", resp["error"])
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("Refresh token request without rotation reuses token and omits refresh_token in response", func(t *testing.T) {
-		origRevoke := cfg.clients[0].RevokeRefreshToken
-		disabled := false
-
-		cfg.clients[0].RevokeRefreshToken = &disabled
-		defer func() {
-			cfg.clients[0].RevokeRefreshToken = origRevoke
-		}()
-
-		refreshToken := "stable-refresh-token"
-		oldAccessToken := "header.payload.signature"
-		session := &idp.OIDCSession{
-			ClientID:    "test-client",
-			UserID:      "user123",
-			Scopes:      []string{definitions.ScopeOpenID, definitions.ScopeOfflineAccess},
-			AuthTime:    time.Now(),
-			AccessToken: oldAccessToken,
-		}
-		sessionData, _ := json.Marshal(session)
-
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
-		mock.ExpectSet("test:oidc:denied_access_token:"+oldAccessToken, "1", time.Hour).SetVal("OK")
-		mock.Regexp().ExpectSet("test:oidc:refresh_token:"+refreshToken, ".*", 30*24*time.Hour).SetVal("OK")
-		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(0)
-		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "refresh_token")
-		form.Add("refresh_token", refreshToken)
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp map[string]any
-
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
-		assert.NoError(t, err)
-		assert.NotEmpty(t, resp["access_token"])
-		_, hasRefreshToken := resp["refresh_token"]
-		assert.False(t, hasRefreshToken)
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("Refresh token request with invalid token logs failure reason", func(t *testing.T) {
-		refreshToken := "missing-refresh-token-log-reason"
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).RedisNil()
-
-		handler := &noticeCaptureHandler{}
-		previousLogger := d.Logger
-
-		d.Logger = slog.New(handler)
-		defer func() {
-			d.Logger = previousLogger
-		}()
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "refresh_token")
-		form.Add("refresh_token", refreshToken)
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-
-		foundFailureLog := false
-
-		for _, record := range handler.records {
-			if record.message != "IDP request has failed" {
-				continue
-			}
-
-			assert.Equal(t, "refresh token unknown, expired, or already rotated", record.attrs["failure_reason"])
-
-			foundFailureLog = true
-
-			break
-		}
-
-		assert.True(t, foundFailureLog, "expected failed OIDC flow notice log with failure_reason")
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("Refresh token request with client mismatch returns invalid_grant", func(t *testing.T) {
-		refreshToken := "refresh-token-client-mismatch"
-		session := &idp.OIDCSession{
-			ClientID: "other-client",
-			UserID:   "user123",
-			Scopes:   []string{definitions.ScopeOpenID, definitions.ScopeOfflineAccess},
-			AuthTime: time.Now(),
-		}
-		sessionData, _ := json.Marshal(session)
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "refresh_token")
-		form.Add("refresh_token", refreshToken)
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-
-		var resp map[string]any
-		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, "invalid_grant", resp["error"])
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("Refresh token request for public client with empty body client_secret and Basic Auth is rejected by default", func(t *testing.T) {
-		publicClient := config.OIDCClient{
-			ClientID:     "public-refresh-client-no-compat",
-			RedirectURIs: []string{"http://127.0.0.1"},
-		}
-		cfg.clients = append(cfg.clients, publicClient)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "refresh_token")
-		form.Add("refresh_token", "any-token")
-		form.Add("client_id", "public-refresh-client-no-compat")
-		form.Add("client_secret", "")
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("public-refresh-client-no-compat", "")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-
-		var resp map[string]any
-
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
-		assert.NoError(t, err)
-		assert.Equal(t, "invalid_client", resp["error"])
-	})
-
-	t.Run("Refresh token request for public client with empty body client_secret and Basic Auth is accepted when compatibility is enabled", func(t *testing.T) {
-		publicClient := config.OIDCClient{
-			ClientID:                            "public-refresh-client",
-			RedirectURIs:                        []string{"http://127.0.0.1"},
-			AllowRefreshTokenCombinedClientAuth: true,
-		}
-		cfg.clients = append(cfg.clients, publicClient)
-
-		// Reproduces the OpenCloud iOS native-client pattern:
-		//   Authorization: Basic base64("public-refresh-client:")
-		//   body: grant_type=refresh_token&client_id=public-refresh-client&client_secret=&refresh_token=...
-		// Per RFC 6749 §2.3.1 the empty client_secret form parameter is not
-		// a second authentication method. For public clients we must accept
-		// the request instead of rejecting it as "invalid_client".
-		refreshToken := "refresh-token-public-client-empty-body-secret"
-		session := &idp.OIDCSession{
-			ClientID: "public-refresh-client",
-			UserID:   "user123",
-			Scopes:   []string{definitions.ScopeOpenID, definitions.ScopeOfflineAccess},
-			AuthTime: time.Now(),
-		}
-		sessionData, _ := json.Marshal(session)
-
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
-		mock.ExpectSRem("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
-		mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
-		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_.*", ".*", 30*24*time.Hour).SetVal("OK")
-		mock.Regexp().ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_.*").SetVal(1)
-		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "refresh_token")
-		form.Add("refresh_token", refreshToken)
-		form.Add("client_id", "public-refresh-client")
-		form.Add("client_secret", "") // explicitly empty, as OpenCloud iOS does
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("public-refresh-client", "") // empty password
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp map[string]any
-
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
-		assert.NoError(t, err)
-		assert.NotEmpty(t, resp["access_token"])
-		assert.NotEmpty(t, resp["refresh_token"])
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("Refresh token request for confidential client with empty body client_secret and Basic Auth still fails with compatibility enabled", func(t *testing.T) {
-		// Negative test: the compatibility path for public clients must NOT
-		// apply to confidential clients. A confidential client that sends
-		// Basic auth AND a duplicate client_id in the body with an empty
-		// client_secret must still be rejected as invalid_client.
-		origCompat := cfg.clients[0].AllowRefreshTokenCombinedClientAuth
-
-		cfg.clients[0].AllowRefreshTokenCombinedClientAuth = true
-		defer func() {
-			cfg.clients[0].AllowRefreshTokenCombinedClientAuth = origCompat
-		}()
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "refresh_token")
-		form.Add("refresh_token", "any-token")
-		form.Add("client_id", "test-client")
-		form.Add("client_secret", "")
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-
-		var resp map[string]any
-
-		err := json.Unmarshal(w.Body.Bytes(), &resp)
-		assert.NoError(t, err)
-		assert.Equal(t, "invalid_client", resp["error"])
-	})
-
-	t.Run("Token request with enforced method (mismatch should fail)", func(t *testing.T) {
-		// Update client to enforce basic auth
-		cfg.clients[0].TokenEndpointAuthMethod = "client_secret_basic"
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("code", "any-code")
-		form.Add("client_id", "test-client")
-		form.Add("client_secret", "test-secret") // Post Body
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-
-		var resp map[string]any
-		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, "invalid_client", resp["error"])
-	})
-
-	t.Run("Token request with public client and client_id only in body", func(t *testing.T) {
-		code := "public-client-code"
-		verifier := strings.Repeat("c", 43)
-		sum := sha256.Sum256([]byte(verifier))
-		challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-		publicClient := config.OIDCClient{
-			ClientID:                "public-client",
-			RedirectURIs:            []string{"https://app.com/public-callback"},
-			TokenEndpointAuthMethod: "none",
-		}
-		cfg.clients = append(cfg.clients, publicClient)
-
-		oidcSession := &idp.OIDCSession{
-			ClientID:            publicClient.ClientID,
-			UserID:              "user123",
-			Scopes:              []string{definitions.ScopeOpenID},
-			RedirectURI:         "https://app.com/public-callback",
-			CodeChallenge:       challenge,
-			CodeChallengeMethod: "S256",
-		}
-		sessionData, _ := json.Marshal(oidcSession)
-
-		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
-		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("client_id", publicClient.ClientID)
-		form.Add("code", code)
-		form.Add("redirect_uri", "https://app.com/public-callback")
-		form.Add("code_verifier", verifier)
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp map[string]any
-		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.NotEmpty(t, resp["id_token"])
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("Token request with PKCE S256 (valid verifier)", func(t *testing.T) {
-		code := "pkce-s256-code"
-		verifier := strings.Repeat("a", 43)
-		sum := sha256.Sum256([]byte(verifier))
-		challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-		oidcSession := &idp.OIDCSession{
-			ClientID:            "test-client",
-			UserID:              "user123",
-			Scopes:              []string{definitions.ScopeOpenID},
-			RedirectURI:         "https://app.com/callback",
-			CodeChallenge:       challenge,
-			CodeChallengeMethod: "S256",
-		}
-		sessionData, _ := json.Marshal(oidcSession)
-
-		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
-		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("code", code)
-		form.Add("redirect_uri", "https://app.com/callback")
-		form.Add("code_verifier", verifier)
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("Token request with mismatched redirect_uri (must be rejected)", func(t *testing.T) {
-		code := "redirect-uri-mismatch-code"
-		verifier := strings.Repeat("a", 43)
-		sum := sha256.Sum256([]byte(verifier))
-		challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-		oidcSession := &idp.OIDCSession{
-			ClientID:            "test-client",
-			UserID:              "user123",
-			Scopes:              []string{definitions.ScopeOpenID},
-			RedirectURI:         "https://app.com/callback",
-			CodeChallenge:       challenge,
-			CodeChallengeMethod: "S256",
-		}
-		sessionData, _ := json.Marshal(oidcSession)
-
-		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
-		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("code", code)
-		form.Add("redirect_uri", "https://evil.com/callback")
-		form.Add("code_verifier", verifier)
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-
-		var resp map[string]any
-		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, "invalid_grant", resp["error"])
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("Token request with PKCE S256 (missing verifier should fail)", func(t *testing.T) {
-		code := "pkce-s256-missing-verifier"
-		oidcSession := &idp.OIDCSession{
-			ClientID:            "test-client",
-			UserID:              "user123",
-			Scopes:              []string{definitions.ScopeOpenID},
-			RedirectURI:         "https://app.com/callback",
-			CodeChallenge:       "dummy",
-			CodeChallengeMethod: "S256",
-		}
-		sessionData, _ := json.Marshal(oidcSession)
-
-		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
-		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("code", code)
-		form.Add("redirect_uri", "https://app.com/callback")
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-
-		var resp map[string]any
-		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, "invalid_grant", resp["error"])
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("Token request with PKCE plain (must be rejected)", func(t *testing.T) {
-		code := "pkce-plain-code"
-		verifier := strings.Repeat("b", 43)
-		oidcSession := &idp.OIDCSession{
-			ClientID:            "test-client",
-			UserID:              "user123",
-			Scopes:              []string{definitions.ScopeOpenID},
-			RedirectURI:         "https://app.com/callback",
-			CodeChallenge:       verifier,
-			CodeChallengeMethod: "plain",
-		}
-		sessionData, _ := json.Marshal(oidcSession)
-
-		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
-		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
-
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("code", code)
-		form.Add("redirect_uri", "https://app.com/callback")
-		form.Add("code_verifier", verifier)
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-
-		var resp map[string]any
-		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, "invalid_grant", resp["error"])
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
+	t.Run("Refresh token request with basic and matching body credentials is accepted when compatibility is enabled for confidential client", fixture.assertRefreshCombinedAuthAcceptedForConfidentialClient)
+	t.Run("Refresh token request with invalid token returns invalid_grant", fixture.assertInvalidRefreshToken)
+	t.Run("Refresh token request without rotation reuses token and omits refresh_token in response", fixture.assertRefreshWithoutRotation)
+	t.Run("Refresh token request with invalid token logs failure reason", fixture.assertRefreshInvalidTokenLogsFailureReason)
+	t.Run("Refresh token request with client mismatch returns invalid_grant", fixture.assertRefreshClientMismatch)
+
+	t.Run("Refresh token request for public client with empty body client_secret and Basic Auth is rejected by default", fixture.assertPublicRefreshEmptySecretRejectedByDefault)
+	t.Run("Refresh token request for public client with empty body client_secret and Basic Auth is accepted when compatibility is enabled", fixture.assertPublicRefreshEmptySecretAcceptedWithCompatibility)
+	t.Run("Refresh token request for confidential client with empty body client_secret and Basic Auth still fails with compatibility enabled", fixture.assertConfidentialEmptySecretWithCompatibilityRejected)
+	t.Run("Token request with enforced method (mismatch should fail)", fixture.assertEnforcedMethodMismatchRejected)
+	t.Run("Token request with public client and client_id only in body", fixture.assertPublicClientBodyOnlyToken)
+	t.Run("Token request with PKCE S256 (valid verifier)", fixture.assertPKCES256Valid)
+
+	t.Run("Token request with mismatched redirect_uri (must be rejected)", fixture.assertRedirectURIMismatchRejected)
+	t.Run("Token request with PKCE S256 (missing verifier should fail)", fixture.assertMissingPKCEVerifierRejected)
+	t.Run("Token request with PKCE plain (must be rejected)", fixture.assertPlainPKCERejected)
 }

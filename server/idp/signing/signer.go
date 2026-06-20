@@ -174,23 +174,11 @@ func NewRS256Verifier(key *rsa.PublicKey) *RS256Verifier {
 
 // Verify parses an RS256-signed JWT and verifies its signature.
 func (v *RS256Verifier) Verify(tokenString string) (jwt.MapClaims, error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
+	return verifyTokenWithMethod(tokenString, AlgorithmRS256, v.key, func(method jwt.SigningMethod) bool {
+		_, ok := method.(*jwt.SigningMethodRSA)
 
-		return v.key, nil
-	}, jwt.WithoutClaimsValidation())
-	if err != nil {
-		return nil, fmt.Errorf("RS256 verification failed: %w", err)
-	}
-
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok || !token.Valid {
-		return nil, fmt.Errorf("invalid RS256 token")
-	}
-
-	return claims, nil
+		return ok
+	})
 }
 
 // Algorithm returns "RS256".
@@ -210,20 +198,29 @@ func NewEdDSAVerifier(key ed25519.PublicKey) *EdDSAVerifier {
 
 // Verify parses an EdDSA-signed JWT and verifies its signature.
 func (v *EdDSAVerifier) Verify(tokenString string) (jwt.MapClaims, error) {
+	return verifyTokenWithMethod(tokenString, AlgorithmEdDSA, v.key, func(method jwt.SigningMethod) bool {
+		_, ok := method.(*jwt.SigningMethodEd25519)
+
+		return ok
+	})
+}
+
+// verifyTokenWithMethod verifies a token with a caller-supplied signing method guard.
+func verifyTokenWithMethod(tokenString string, algorithm string, verificationKey any, matchesMethod func(jwt.SigningMethod) bool) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
+		if !matchesMethod(token.Method) {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 
-		return v.key, nil
+		return verificationKey, nil
 	}, jwt.WithoutClaimsValidation())
 	if err != nil {
-		return nil, fmt.Errorf("EdDSA verification failed: %w", err)
+		return nil, fmt.Errorf("%s verification failed: %w", algorithm, err)
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok || !token.Valid {
-		return nil, fmt.Errorf("invalid EdDSA token")
+		return nil, fmt.Errorf("invalid %s token", algorithm)
 	}
 
 	return claims, nil
@@ -267,9 +264,9 @@ func (mv *MultiVerifier) Algorithm() string {
 
 // ParseRSAPrivateKeyPEM parses a PEM-encoded RSA private key (PKCS#1 or PKCS#8).
 func ParseRSAPrivateKeyPEM(pemData string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(pemData))
-	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM block")
+	block, err := decodePEMBlock(pemData)
+	if err != nil {
+		return nil, err
 	}
 
 	switch block.Type {
@@ -294,9 +291,9 @@ func ParseRSAPrivateKeyPEM(pemData string) (*rsa.PrivateKey, error) {
 
 // ParseEd25519PrivateKeyPEM parses a PEM-encoded Ed25519 private key (PKCS#8).
 func ParseEd25519PrivateKeyPEM(pemData string) (ed25519.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(pemData))
-	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM block")
+	block, err := decodePEMBlock(pemData)
+	if err != nil {
+		return nil, err
 	}
 
 	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
@@ -314,40 +311,42 @@ func ParseEd25519PrivateKeyPEM(pemData string) (ed25519.PrivateKey, error) {
 
 // ParseRSAPublicKeyPEM parses a PEM-encoded RSA public key.
 func ParseRSAPublicKeyPEM(pemData string) (*rsa.PublicKey, error) {
-	block, _ := pem.Decode([]byte(pemData))
-	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM block")
-	}
-
-	key, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
-	}
-
-	rsaKey, ok := key.(*rsa.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("public key is not RSA")
-	}
-
-	return rsaKey, nil
+	return parsePublicKeyPEM[*rsa.PublicKey](pemData, "RSA")
 }
 
 // ParseEd25519PublicKeyPEM parses a PEM-encoded Ed25519 public key.
 func ParseEd25519PublicKeyPEM(pemData string) (ed25519.PublicKey, error) {
+	return parsePublicKeyPEM[ed25519.PublicKey](pemData, "Ed25519")
+}
+
+// decodePEMBlock decodes the first PEM block and reports a shared parse error.
+func decodePEMBlock(pemData string) (*pem.Block, error) {
 	block, _ := pem.Decode([]byte(pemData))
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}
 
+	return block, nil
+}
+
+// parsePublicKeyPEM parses and type-checks a PEM-encoded public key.
+func parsePublicKeyPEM[T any](pemData string, keyType string) (T, error) {
+	var zero T
+
+	block, err := decodePEMBlock(pemData)
+	if err != nil {
+		return zero, err
+	}
+
 	key, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return zero, fmt.Errorf("failed to parse public key: %w", err)
 	}
 
-	edKey, ok := key.(ed25519.PublicKey)
+	typedKey, ok := key.(T)
 	if !ok {
-		return nil, fmt.Errorf("public key is not Ed25519")
+		return zero, fmt.Errorf("public key is not %s", keyType)
 	}
 
-	return edKey, nil
+	return typedKey, nil
 }

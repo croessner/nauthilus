@@ -19,8 +19,7 @@ import (
 	"testing"
 )
 
-func TestPolicyMockRecordsExpectedEmitAttributeCalls(t *testing.T) {
-	runner, result := runLuaMockFixture(t, "environment.lua", "environment", `
+const policyEmitAttributeScript = `
 local policy = require("nauthilus_policy")
 
 function nauthilus_call_environment(request)
@@ -34,7 +33,9 @@ function nauthilus_call_environment(request)
 
   return true, false, 0
 end
-`, `{
+`
+
+const policyEmitAttributeMock = `{
   "policy": {
     "expected_calls": [
       {
@@ -43,16 +44,24 @@ end
       }
     ]
   }
-}`)
-	requireLuaMockSuccess(t, result)
+}`
 
-	if runner.mockData.Policy == nil || len(runner.mockData.Policy.Emitted) != 1 {
-		t.Fatalf("policy emissions = %#v, want exactly one emission", runner.mockData.Policy)
+func TestPolicyMockRecordsExpectedEmitAttributeCalls(t *testing.T) {
+	runner := runSuccessfulLuaMockFixture(t, "environment.lua", "environment", policyEmitAttributeScript, policyEmitAttributeMock)
+	requireSinglePolicyEmission(t, runner)
+}
+
+// requireSinglePolicyEmission checks the policy mock captured the expected emitted attribute.
+func requireSinglePolicyEmission(t *testing.T, runner *TestRunner) {
+	t.Helper()
+
+	if runner.mockData.Policy == nil {
+		t.Fatalf("policy mock = nil, want one emission")
 	}
 
-	if got := runner.mockData.Policy.Emitted[0].ID; got != "lua.test.risk" {
-		t.Fatalf("policy emission ID = %q, want lua.test.risk", got)
-	}
+	requireSingleCapturedValue(t, "policy emission", runner.mockData.Policy.Emitted, func(emission PolicyEmission) string {
+		return emission.ID
+	}, "lua.test.risk")
 }
 
 func TestPolicyMockReportsMissingExpectedEmitAttributeCall(t *testing.T) {

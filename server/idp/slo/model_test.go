@@ -100,11 +100,27 @@ func TestSLOTransactionTransitionInvalid(t *testing.T) {
 func TestSLOTransactionValidate(t *testing.T) {
 	now := time.Date(2026, time.March, 18, 10, 0, 0, 0, time.UTC)
 
-	tests := []struct {
-		name    string
-		tx      *Transaction
-		errWant error
-	}{
+	for _, tc := range sloTransactionValidateCases(now) {
+		t.Run(tc.name, func(t *testing.T) {
+			assertSLOTransactionValidate(t, tc)
+		})
+	}
+}
+
+type sloTransactionValidateCase struct {
+	name    string
+	tx      *Transaction
+	errWant error
+}
+
+// sloTransactionValidateCases returns transaction validation scenarios.
+func sloTransactionValidateCases(now time.Time) []sloTransactionValidateCase {
+	return append(validSLOTransactionValidateCases(now), invalidSLOTransactionValidateCases()...)
+}
+
+// validSLOTransactionValidateCases returns successful transaction validation scenarios.
+func validSLOTransactionValidateCases(now time.Time) []sloTransactionValidateCase {
+	return []sloTransactionValidateCase{
 		{
 			name: "valid transaction",
 			tx: &Transaction{
@@ -130,6 +146,12 @@ func TestSLOTransactionValidate(t *testing.T) {
 			},
 			errWant: nil,
 		},
+	}
+}
+
+// invalidSLOTransactionValidateCases returns failing transaction validation scenarios.
+func invalidSLOTransactionValidateCases() []sloTransactionValidateCase {
+	return []sloTransactionValidateCase{
 		{
 			name: "empty transaction id",
 			tx: &Transaction{
@@ -170,18 +192,19 @@ func TestSLOTransactionValidate(t *testing.T) {
 			errWant: ErrInvalidStatus,
 		},
 	}
+}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			err := tc.tx.Validate()
-			if tc.errWant == nil && err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+// assertSLOTransactionValidate verifies one transaction validation result.
+func assertSLOTransactionValidate(t *testing.T, tc sloTransactionValidateCase) {
+	t.Helper()
 
-			if tc.errWant != nil && !errors.Is(err, tc.errWant) {
-				t.Fatalf("expected %v, got %v", tc.errWant, err)
-			}
-		})
+	err := tc.tx.Validate()
+	if tc.errWant == nil && err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if tc.errWant != nil && !errors.Is(err, tc.errWant) {
+		t.Fatalf("expected %v, got %v", tc.errWant, err)
 	}
 }
 

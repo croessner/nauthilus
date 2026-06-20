@@ -258,81 +258,11 @@ type CommonRequest struct {
 
 // Reset resets all fields of the CommonRequest to their zero values.
 func (c *CommonRequest) Reset() {
-	c.BackendServers = nil
-	c.TOTPRecoveryCodes = nil
-	c.RequestedScopes = nil
-	c.UserGroups = nil
-	c.AllowedClientScopes = nil
-	c.AllowedClientGrantTypes = nil
-	c.Service = ""
-	c.Session = ""
-	c.ExternalSessionID = ""
-	c.HealthCheck = false
-	c.ClientIP = ""
-	c.ClientPort = ""
-	c.ClientNet = ""
-	c.ClientHost = ""
-	c.ClientID = ""
-	c.UserAgent = ""
-	c.LocalIP = ""
-	c.LocalPort = ""
-	c.Username = ""
-	c.Account = ""
-	c.AccountField = ""
-	c.UniqueUserID = ""
-
-	c.DisplayName = ""
 	if len(c.Password) > 0 {
 		clear(c.Password)
 	}
 
-	c.Password = nil
-	c.WebAuthnCredential = ""
-	c.WebAuthnOldCredential = ""
-	c.Protocol = ""
-	c.Method = ""
-	c.OIDCCID = ""
-	c.SAMLEntityID = ""
-	c.AuthLoginAttempt = 0
-	c.GrantType = ""
-	c.OIDCClientName = ""
-	c.RedirectURI = ""
-	c.MFAMethod = ""
-	c.BruteForceName = ""
-	c.EnvironmentName = ""
-	c.XSSL = ""
-	c.XSSLSessionID = ""
-	c.XSSLClientVerify = ""
-	c.XSSLClientDN = ""
-	c.XSSLClientCN = ""
-	c.XSSLIssuer = ""
-	c.XSSLClientNotBefore = ""
-	c.XSSLClientNotAfter = ""
-	c.XSSLSubjectDN = ""
-	c.XSSLIssuerDN = ""
-	c.XSSLClientSubjectDN = ""
-	c.XSSLClientIssuerDN = ""
-	c.XSSLProtocol = ""
-	c.XSSLCipher = ""
-	c.SSLSerial = ""
-	c.SSLFingerprint = ""
-	c.RedisPrefix = ""
-	c.StatusMessage = nil
-	c.UsedBackendAddr = nil
-	c.UsedBackendPort = nil
-	c.Latency = 0
-	c.BruteForceCounter = 0
-	c.HTTPStatus = 0
-	c.Debug = false
-	c.Repeating = false
-	c.RWP = false
-	c.UserFound = false
-	c.Authenticated = false
-	c.NoAuth = false
-	c.EnvironmentRejected = false
-	c.EnvironmentStageExpected = false
-	c.SubjectStageExpected = false
-	c.MFACompleted = false
+	*c = CommonRequest{}
 }
 
 // setStringSliceField writes a string slice as a Lua table into the given request table.
@@ -347,8 +277,26 @@ func (c *CommonRequest) setStringSliceField(L *lua.LState, request *lua.LTable, 
 	request.RawSetString(key, tbl)
 }
 
-// SetupRequest sets up the request object with the common request properties
+// SetupRequest sets up the request object with the common request properties.
 func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lua.LTable) *lua.LTable {
+	logFormat, logLevel := requestLogSettings(cfg)
+
+	c.setRequestFlags(request)
+	c.setRequestConnectionFields(request)
+	c.setRequestIdentityFields(request)
+	c.setRequestAuthFields(L, request)
+	c.setRequestIDPFields(L, request)
+	c.setRequestSliceFields(L, request)
+	c.setRequestOutcomeFields(request)
+	c.setRequestXSSLFields(request)
+	c.setRequestLoggingFields(L, request, logFormat, logLevel)
+	c.setRequestMetricFields(request)
+
+	return request
+}
+
+// requestLogSettings resolves the Lua-visible log format and level for the request.
+func requestLogSettings(cfg config.File) (string, string) {
 	logFormat := definitions.LogFormatDefault
 	logLevel := ""
 
@@ -360,6 +308,11 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 		}
 	}
 
+	return logFormat, logLevel
+}
+
+// setRequestFlags writes boolean request state flags to Lua.
+func (c *CommonRequest) setRequestFlags(request *lua.LTable) {
 	request.RawSet(lua.LString(definitions.LuaRequestDebug), lua.LBool(c.Debug))
 	request.RawSet(lua.LString(definitions.LuaRequestRepeating), lua.LBool(c.Repeating))
 	request.RawSet(lua.LString(definitions.LuaRequestRWP), lua.LBool(c.RWP))
@@ -371,7 +324,10 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 	request.RawSet(lua.LString(definitions.LuaRequestSubjectStageExpected), lua.LBool(c.SubjectStageExpected))
 
 	request.RawSet(lua.LString(definitions.LuaRequestBruteForceCounter), lua.LNumber(c.BruteForceCounter))
+}
 
+// setRequestConnectionFields writes transport and connection metadata to Lua.
+func (c *CommonRequest) setRequestConnectionFields(request *lua.LTable) {
 	request.RawSetString(definitions.LuaRequestService, lua.LString(c.Service))
 	request.RawSetString(definitions.LuaRequestSession, lua.LString(c.Session))
 	request.RawSetString(definitions.LuaRequestExternalSession, lua.LString(c.ExternalSessionID))
@@ -384,12 +340,19 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 	request.RawSetString(definitions.LuaRequestUserAgent, lua.LString(c.UserAgent))
 	request.RawSetString(definitions.LuaRequestLocalIP, lua.LString(c.LocalIP))
 	request.RawSetString(definitions.LuaRequestLocalPort, lua.LString(c.LocalPort))
+}
+
+// setRequestIdentityFields writes identity and display attributes to Lua.
+func (c *CommonRequest) setRequestIdentityFields(request *lua.LTable) {
 	request.RawSetString(definitions.LuaRequestUsername, lua.LString(c.Username))
 	request.RawSetString(definitions.LuaRequestAccount, lua.LString(c.Account))
 	request.RawSetString(definitions.LuaRequestAccountField, lua.LString(c.AccountField))
 	request.RawSetString(definitions.LuaRequestUniqueUserID, lua.LString(c.UniqueUserID))
 	request.RawSetString(definitions.LuaRequestDisplayName, lua.LString(c.DisplayName))
+}
 
+// setRequestAuthFields writes password, credential, and protocol fields to Lua.
+func (c *CommonRequest) setRequestAuthFields(L *lua.LState, request *lua.LTable) {
 	if len(c.TOTPRecoveryCodes) > 0 {
 		recoveryTable := L.NewTable()
 		for _, code := range c.TOTPRecoveryCodes {
@@ -407,24 +370,37 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 	request.RawSetString(definitions.LuaRequestOIDCCID, lua.LString(c.OIDCCID))
 	request.RawSetString(definitions.LuaRequestSAMLEntityID, lua.LString(c.SAMLEntityID))
 	request.RawSetString(definitions.LuaRequestAuthLoginAttempt, lua.LNumber(c.AuthLoginAttempt))
+}
+
+// setRequestIDPFields writes identity-provider flow fields to Lua.
+func (c *CommonRequest) setRequestIDPFields(_ *lua.LState, request *lua.LTable) {
 	request.RawSetString(definitions.LuaRequestGrantType, lua.LString(c.GrantType))
 	request.RawSetString(definitions.LuaRequestOIDCClientName, lua.LString(c.OIDCClientName))
 	request.RawSetString(definitions.LuaRequestRedirectURI, lua.LString(c.RedirectURI))
 	request.RawSetString(definitions.LuaRequestMFAMethod, lua.LString(c.MFAMethod))
 	request.RawSet(lua.LString(definitions.LuaRequestMFACompleted), lua.LBool(c.MFACompleted))
+}
 
+// setRequestSliceFields writes request slice fields as Lua tables.
+func (c *CommonRequest) setRequestSliceFields(L *lua.LState, request *lua.LTable) {
 	c.setStringSliceField(L, request, definitions.LuaRequestRequestedScopes, c.RequestedScopes)
 	c.setStringSliceField(L, request, definitions.LuaRequestUserGroups, c.UserGroups)
 	c.setStringSliceField(L, request, definitions.LuaRequestAllowedClientScopes, c.AllowedClientScopes)
 	c.setStringSliceField(L, request, definitions.LuaRequestAllowedClientGrantTypes, c.AllowedClientGrantTypes)
+}
 
+// setRequestOutcomeFields writes policy outcome metadata to Lua.
+func (c *CommonRequest) setRequestOutcomeFields(request *lua.LTable) {
 	request.RawSetString(definitions.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
 	request.RawSetString(definitions.LuaRequestEnvironment, lua.LString(c.EnvironmentName))
 
 	if c.StatusMessage != nil {
 		request.RawSetString(definitions.LuaRequestStatusMessage, lua.LString(*c.StatusMessage))
 	}
+}
 
+// setRequestXSSLFields writes TLS client certificate metadata to Lua.
+func (c *CommonRequest) setRequestXSSLFields(request *lua.LTable) {
 	request.RawSetString(definitions.LuaRequestXSSL, lua.LString(c.XSSL))
 	request.RawSetString(definitions.LuaRequestXSSSLSessionID, lua.LString(c.XSSLSessionID))
 	request.RawSetString(definitions.LuaRequestXSSLClientVerify, lua.LString(c.XSSLClientVerify))
@@ -441,7 +417,10 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 	request.RawSetString(definitions.LuaRequestXSSLCipher, lua.LString(c.XSSLCipher))
 	request.RawSetString(definitions.LuaRequestSSLSerial, lua.LString(c.SSLSerial))
 	request.RawSetString(definitions.LuaRequestSSLFingerprint, lua.LString(c.SSLFingerprint))
+}
 
+// setRequestLoggingFields writes legacy and nested logging fields to Lua.
+func (c *CommonRequest) setRequestLoggingFields(L *lua.LState, request *lua.LTable, logFormat, logLevel string) {
 	logging := L.NewTable()
 	logging.RawSetString(definitions.LuaRequestLogFormat, lua.LString(logFormat))
 	logging.RawSetString(definitions.LuaRequestLogLevel, lua.LString(logLevel))
@@ -450,13 +429,14 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 
 	request.RawSetString(definitions.LuaRequestLogFormat, lua.LString(logFormat))
 	request.RawSetString(definitions.LuaRequestLogLevel, lua.LString(logLevel))
+}
 
+// setRequestMetricFields writes latency, status, and Redis-prefix fields to Lua.
+func (c *CommonRequest) setRequestMetricFields(request *lua.LTable) {
 	request.RawSetString(definitions.LuaRequestLatency, lua.LNumber(c.Latency))
 	request.RawSetString(definitions.LuaRequestHTTPStatus, lua.LNumber(c.HTTPStatus))
 
 	request.RawSetString(definitions.LuaRequestRedisPrefix, lua.LString(c.RedisPrefix))
-
-	return request
 }
 
 // SetStatusMessage sets a new status message by updating the provided string pointer based on the input from the Lua state.

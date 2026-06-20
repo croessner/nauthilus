@@ -120,21 +120,9 @@ func (rm *RedisManager) RedisMSet(L *lua.LState) int {
 
 // RedisKeys returns all keys matching a pattern.
 func (rm *RedisManager) RedisKeys(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		pattern := stack.CheckString(2)
-
-		cmd := conn.Keys(ctx, pattern)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		result := L.NewTable()
-		for _, key := range cmd.Val() {
-			result.Append(lua.LString(key))
-		}
-
-		return stack.PushResults(result, lua.LNil)
-	})
+	return executeKeyCmd(rm, L, false, func(ctx context.Context, conn redis.Cmdable, pattern string) *redis.StringSliceCmd {
+		return conn.Keys(ctx, pattern)
+	}, luaStringSliceValue(L))
 }
 
 // RedisScan incrementally iterates over keys in Redis.

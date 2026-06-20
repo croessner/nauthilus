@@ -83,11 +83,7 @@ func TestSAMLHandler_validateInboundLogoutResponseSignature_Redirect(t *testing.
 		},
 	)
 
-	testCases := []struct {
-		name    string
-		target  string
-		wantErr string
-	}{
+	testCases := []sloRedirectSignatureCase{
 		{
 			name:   "valid XML signature",
 			target: validTarget,
@@ -99,26 +95,11 @@ func TestSAMLHandler_validateInboundLogoutResponseSignature_Redirect(t *testing.
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tc.target, nil)
+	assertSLOInboundRedirectSignatureCases(t, testCases, func(req *http.Request, message *sloInboundMessage) error {
+		_, err := handler.validateInboundLogoutResponseSignature(req, message)
 
-			message, err := routeSLOInboundMessage(req)
-			if !assert.NoError(t, err) {
-				return
-			}
-
-			_, err = handler.validateInboundLogoutResponseSignature(req, message)
-			if tc.wantErr != "" {
-				assert.Error(t, err)
-				assert.ErrorContains(t, err, tc.wantErr)
-
-				return
-			}
-
-			assert.NoError(t, err)
-		})
-	}
+		return err
+	})
 }
 
 func TestSAMLHandler_validateInboundLogoutResponseSignature_Redirect_OptionalUnsigned(t *testing.T) {
@@ -230,11 +211,27 @@ func TestSAMLHandler_validateInboundLogoutResponseProtocol_FieldValidation(t *te
 		}
 	}
 
-	testCases := []struct {
-		name    string
-		mutate  func(response *saml.LogoutResponse)
-		wantErr string
-	}{
+	for _, tc := range logoutResponseProtocolFieldCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			response := baseResponse()
+			tc.mutate(response)
+
+			err := handler.validateInboundLogoutResponseProtocol(response)
+			assert.Error(t, err)
+			assert.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
+
+type logoutResponseProtocolFieldCase struct {
+	name    string
+	mutate  func(response *saml.LogoutResponse)
+	wantErr string
+}
+
+// logoutResponseProtocolFieldCases returns field-validation mutations for LogoutResponse.
+func logoutResponseProtocolFieldCases() []logoutResponseProtocolFieldCase {
+	return []logoutResponseProtocolFieldCase{
 		{
 			name: "missing response id",
 			mutate: func(response *saml.LogoutResponse) {
@@ -278,17 +275,6 @@ func TestSAMLHandler_validateInboundLogoutResponseProtocol_FieldValidation(t *te
 			wantErr: "logout response StatusCode is missing",
 		},
 	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			response := baseResponse()
-			tc.mutate(response)
-
-			err := handler.validateInboundLogoutResponseProtocol(response)
-			assert.Error(t, err)
-			assert.ErrorContains(t, err, tc.wantErr)
-		})
-	}
 }
 
 func TestSAMLHandler_applySLOFanoutLogoutResponse_AggregatesFinalStatus(t *testing.T) {
@@ -299,137 +285,13 @@ func TestSAMLHandler_applySLOFanoutLogoutResponse_AggregatesFinalStatus(t *testi
 		entityID      = "https://sp.example.com/saml/metadata"
 	)
 
-	baseTransaction := func(t *testing.T) slodomain.Transaction {
-		t.Helper()
-
-		now := time.Date(2026, time.March, 19, 9, 0, 0, 0, time.UTC)
-
-		tx, err := slodomain.NewTransaction(
-			transactionID,
-			"id-root-request",
-			slodomain.SLODirectionIDPInitiated,
-			slodomain.SLOBindingRedirect,
-			now,
-		)
-		if err != nil {
-			t.Fatalf("cannot create slo transaction: %v", err)
-		}
-
-		if err = tx.TransitionTo(slodomain.SLOStatusValidated, now); err != nil {
-			t.Fatalf("cannot transition to validated: %v", err)
-		}
-
-		if err = tx.TransitionTo(slodomain.SLOStatusLocalDone, now); err != nil {
-			t.Fatalf("cannot transition to local_done: %v", err)
-		}
-
-		if err = tx.TransitionTo(slodomain.SLOStatusFanoutRunning, now); err != nil {
-			t.Fatalf("cannot transition to fanout_running: %v", err)
-		}
-
-		tx.Participants = []slodomain.Participant{
-			{
-				EntityID:  entityID,
-				RequestID: requestID,
-				Binding:   slodomain.SLOBindingRedirect,
-			},
-		}
-
-		return *tx
-	}
-
-	testCases := []struct {
-		name           string
-		preSuccess     int
-		preFailure     int
-		responseStatus string
-		wantStatus     slodomain.Status
-		wantSuccess    int
-		wantFailure    int
-	}{
-		{
-			name:           "done when all successful",
-			preSuccess:     0,
-			preFailure:     0,
-			responseStatus: saml.StatusSuccess,
-			wantStatus:     slodomain.SLOStatusDone,
-			wantSuccess:    1,
-			wantFailure:    0,
-		},
-		{
-			name:           "partial when planning already failed",
-			preSuccess:     0,
-			preFailure:     1,
-			responseStatus: saml.StatusSuccess,
-			wantStatus:     slodomain.SLOStatusPartial,
-			wantSuccess:    1,
-			wantFailure:    1,
-		},
-		{
-			name:           "failed when no successful participant remains",
-			preSuccess:     0,
-			preFailure:     1,
-			responseStatus: saml.StatusResponder,
-			wantStatus:     slodomain.SLOStatusFailed,
-			wantSuccess:    0,
-			wantFailure:    2,
-		},
-	}
-
-	for _, tc := range testCases {
+	for _, tc := range sloFanoutAggregationFinalStatusCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			redisClient := rediscli.NewTestClient(db)
-
-			handler := NewSAMLHandler(&deps.Deps{
-				Cfg: &mockSAMLCfg{
-					redisPrefix: redisPrefix,
-				},
-				Redis: redisClient,
-			}, nil)
-
-			transaction := baseTransaction(t)
-			state := &sloFanoutTransactionState{
-				Transaction: transaction,
-				Pending: map[string]slodomain.Participant{
-					requestID: {
-						EntityID:  entityID,
-						RequestID: requestID,
-						Binding:   slodomain.SLOBindingRedirect,
-					},
-				},
-				Outcomes:        map[string]sloFanoutParticipantOutcome{},
-				PreSuccessCount: tc.preSuccess,
-				PreFailureCount: tc.preFailure,
-				UpdatedAt:       time.Date(2026, time.March, 19, 9, 5, 0, 0, time.UTC),
-			}
-
-			rawState, err := json.Marshal(state)
-			if !assert.NoError(t, err) {
-				return
-			}
-
-			requestKey := handler.sloFanoutRequestKey(requestID)
-			transactionKey := handler.sloFanoutStateKey(transactionID)
-
-			mock.ExpectGet(requestKey).SetVal(transactionID)
-			mock.ExpectGet(transactionKey).SetVal(string(rawState))
-			mock.Regexp().ExpectSet(transactionKey, `.+`, time.Hour).SetVal("OK")
-			mock.ExpectDel(requestKey).SetVal(1)
-
-			logoutResponse := &saml.LogoutResponse{
-				ID:           "id-response-aggregate",
-				InResponseTo: requestID,
-				IssueInstant: saml.TimeNow().UTC(),
-				Issuer: &saml.Issuer{
-					Value: entityID,
-				},
-				Status: saml.Status{
-					StatusCode: saml.StatusCode{
-						Value: tc.responseStatus,
-					},
-				},
-			}
+			handler, mock := newSLOFanoutResponseTestHandler(redisPrefix)
+			transaction := mustIDPFanoutRunningTransaction(t, transactionID, "id-root-request", slodomain.SLOBindingRedirect, entityID, requestID)
+			state := newPendingSLOFanoutState(transaction, requestID, time.Date(2026, time.March, 19, 9, 5, 0, 0, time.UTC), tc.preSuccess, tc.preFailure)
+			mustExpectSLOFanoutStateUpdate(t, handler, mock, transactionID, requestID, state, true)
+			logoutResponse := newSLOFanoutTestLogoutResponse("id-response-aggregate", requestID, entityID, tc.responseStatus)
 
 			aggregation, err := handler.applySLOFanoutLogoutResponse(t.Context(), logoutResponse, transactionID)
 			if !assert.NoError(t, err) {
@@ -450,6 +312,43 @@ func TestSAMLHandler_applySLOFanoutLogoutResponse_AggregatesFinalStatus(t *testi
 	}
 }
 
+type sloFanoutAggregationFinalStatusCase struct {
+	name           string
+	preSuccess     int
+	preFailure     int
+	responseStatus string
+	wantStatus     slodomain.Status
+	wantSuccess    int
+	wantFailure    int
+}
+
+// sloFanoutAggregationFinalStatusCases returns terminal aggregation status cases.
+func sloFanoutAggregationFinalStatusCases() []sloFanoutAggregationFinalStatusCase {
+	return []sloFanoutAggregationFinalStatusCase{
+		{
+			name:           "done when all successful",
+			responseStatus: saml.StatusSuccess,
+			wantStatus:     slodomain.SLOStatusDone,
+			wantSuccess:    1,
+		},
+		{
+			name:           "partial when planning already failed",
+			preFailure:     1,
+			responseStatus: saml.StatusSuccess,
+			wantStatus:     slodomain.SLOStatusPartial,
+			wantSuccess:    1,
+			wantFailure:    1,
+		},
+		{
+			name:           "failed when no successful participant remains",
+			preFailure:     1,
+			responseStatus: saml.StatusResponder,
+			wantStatus:     slodomain.SLOStatusFailed,
+			wantFailure:    2,
+		},
+	}
+}
+
 func TestSAMLHandler_storeSLOFanoutTransactionState_PersistsPendingRequests(t *testing.T) {
 	const (
 		redisPrefix   = "test:"
@@ -458,48 +357,8 @@ func TestSAMLHandler_storeSLOFanoutTransactionState_PersistsPendingRequests(t *t
 		entityID      = "https://sp.example.com/saml/metadata"
 	)
 
-	db, mock := redismock.NewClientMock()
-	redisClient := rediscli.NewTestClient(db)
-
-	handler := NewSAMLHandler(&deps.Deps{
-		Cfg: &mockSAMLCfg{
-			redisPrefix: redisPrefix,
-		},
-		Redis: redisClient,
-	}, nil)
-
-	now := time.Date(2026, time.March, 19, 11, 0, 0, 0, time.UTC)
-
-	tx, err := slodomain.NewTransaction(
-		transactionID,
-		"id-root-store",
-		slodomain.SLODirectionIDPInitiated,
-		slodomain.SLOBindingRedirect,
-		now,
-	)
-	if !assert.NoError(t, err) {
-		return
-	}
-
-	if !assert.NoError(t, tx.TransitionTo(slodomain.SLOStatusValidated, now)) {
-		return
-	}
-
-	if !assert.NoError(t, tx.TransitionTo(slodomain.SLOStatusLocalDone, now)) {
-		return
-	}
-
-	if !assert.NoError(t, tx.TransitionTo(slodomain.SLOStatusFanoutRunning, now)) {
-		return
-	}
-
-	tx.Participants = []slodomain.Participant{
-		{
-			EntityID:  entityID,
-			RequestID: requestID,
-			Binding:   slodomain.SLOBindingRedirect,
-		},
-	}
+	handler, mock := newSLOFanoutResponseTestHandler(redisPrefix)
+	tx := mustIDPFanoutRunningTransaction(t, transactionID, "id-root-store", slodomain.SLOBindingRedirect, entityID, requestID)
 
 	result := &sloFanoutResult{
 		Dispatches: []sloFanoutDispatch{
@@ -515,7 +374,7 @@ func TestSAMLHandler_storeSLOFanoutTransactionState_PersistsPendingRequests(t *t
 	mock.Regexp().ExpectSet(transactionKey, `.+`, time.Hour).SetVal("OK")
 	mock.ExpectSet(requestKey, transactionID, time.Hour).SetVal("OK")
 
-	err = handler.storeSLOFanoutTransactionState(t.Context(), tx, result)
+	err := handler.storeSLOFanoutTransactionState(t.Context(), tx, result)
 	assert.NoError(t, err)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
@@ -533,80 +392,14 @@ func TestSAMLHandler_SLO_LogoutResponse_CompletesFanout(t *testing.T) {
 
 	spKey, spCert, spCertPEM := mustGenerateRSACertificate(t, "sp.example.com")
 
-	db, mock := redismock.NewClientMock()
-	redisClient := rediscli.NewTestClient(db)
-
-	handler := NewSAMLHandler(&deps.Deps{
-		Cfg: &mockSAMLCfg{
-			redisPrefix: redisPrefix,
-			sps: []config.SAML2ServiceProvider{
-				{
-					EntityID: entityID,
-					ACSURL:   "https://sp.example.com/saml/acs",
-					Cert:     string(spCertPEM),
-				},
-			},
-		},
-		Logger: slog.Default(),
-		Redis:  redisClient,
-	}, nil)
-
-	now := time.Date(2026, time.March, 19, 10, 0, 0, 0, time.UTC)
-
-	tx, err := slodomain.NewTransaction(
-		transactionID,
-		"id-root-end-to-end",
-		slodomain.SLODirectionIDPInitiated,
-		slodomain.SLOBindingRedirect,
-		now,
-	)
-	if !assert.NoError(t, err) {
-		return
-	}
-
-	if !assert.NoError(t, tx.TransitionTo(slodomain.SLOStatusValidated, now)) {
-		return
-	}
-
-	if !assert.NoError(t, tx.TransitionTo(slodomain.SLOStatusLocalDone, now)) {
-		return
-	}
-
-	if !assert.NoError(t, tx.TransitionTo(slodomain.SLOStatusFanoutRunning, now)) {
-		return
-	}
-
-	tx.Participants = []slodomain.Participant{
-		{
-			EntityID:  entityID,
-			RequestID: requestID,
-			Binding:   slodomain.SLOBindingRedirect,
-		},
-	}
-
-	state := &sloFanoutTransactionState{
-		Transaction: *tx,
-		Pending: map[string]slodomain.Participant{
-			requestID: tx.Participants[0],
-		},
-		Outcomes:        map[string]sloFanoutParticipantOutcome{},
-		PreSuccessCount: 0,
-		PreFailureCount: 0,
-		UpdatedAt:       now,
-	}
-
-	rawState, err := json.Marshal(state)
-	if !assert.NoError(t, err) {
-		return
-	}
-
-	requestKey := handler.sloFanoutRequestKey(requestID)
-	transactionKey := handler.sloFanoutStateKey(transactionID)
-
-	mock.ExpectGet(requestKey).SetVal(transactionID)
-	mock.ExpectGet(transactionKey).SetVal(string(rawState))
-	mock.Regexp().ExpectSet(transactionKey, `.+`, time.Hour).SetVal("OK")
-	mock.ExpectDel(requestKey).SetVal(1)
+	handler, mock := newSLOFanoutResponseTestHandler(redisPrefix, config.SAML2ServiceProvider{
+		EntityID: entityID,
+		ACSURL:   "https://sp.example.com/saml/acs",
+		Cert:     string(spCertPEM),
+	})
+	tx := mustIDPFanoutRunningTransaction(t, transactionID, "id-root-end-to-end", slodomain.SLOBindingRedirect, entityID, requestID)
+	state := newPendingSLOFanoutState(tx, requestID, time.Date(2026, time.March, 19, 10, 0, 0, 0, time.UTC), 0, 0)
+	mustExpectSLOFanoutStateUpdate(t, handler, mock, transactionID, requestID, state, true)
 
 	logoutResponse := mustBuildSignedLogoutResponse(
 		t,
@@ -632,6 +425,128 @@ func TestSAMLHandler_SLO_LogoutResponse_CompletesFanout(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "SAML LogoutResponse processed")
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// newSLOFanoutResponseTestHandler creates a SAML handler and Redis mock for fanout response tests.
+func newSLOFanoutResponseTestHandler(
+	redisPrefix string,
+	serviceProviders ...config.SAML2ServiceProvider,
+) (*SAMLHandler, redismock.ClientMock) {
+	db, mock := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+
+	return NewSAMLHandler(&deps.Deps{
+		Cfg: &mockSAMLCfg{
+			redisPrefix: redisPrefix,
+			sps:         serviceProviders,
+		},
+		Logger: slog.Default(),
+		Redis:  redisClient,
+	}, nil), mock
+}
+
+// mustIDPFanoutRunningTransaction creates a transaction in fanout_running state.
+func mustIDPFanoutRunningTransaction(
+	t *testing.T,
+	transactionID string,
+	rootRequestID string,
+	binding slodomain.Binding,
+	entityID string,
+	requestID string,
+) *slodomain.Transaction {
+	t.Helper()
+
+	now := time.Date(2026, time.March, 19, 9, 0, 0, 0, time.UTC)
+
+	tx, err := slodomain.NewTransaction(transactionID, rootRequestID, slodomain.SLODirectionIDPInitiated, binding, now)
+	if !assert.NoError(t, err) {
+		t.FailNow()
+	}
+
+	for _, status := range []slodomain.Status{
+		slodomain.SLOStatusValidated,
+		slodomain.SLOStatusLocalDone,
+		slodomain.SLOStatusFanoutRunning,
+	} {
+		if !assert.NoError(t, tx.TransitionTo(status, now)) {
+			t.FailNow()
+		}
+	}
+
+	tx.Participants = []slodomain.Participant{{
+		EntityID:  entityID,
+		RequestID: requestID,
+		Binding:   binding,
+	}}
+
+	return tx
+}
+
+// newPendingSLOFanoutState creates persisted fanout state with one pending request.
+func newPendingSLOFanoutState(
+	transaction *slodomain.Transaction,
+	requestID string,
+	updatedAt time.Time,
+	preSuccess int,
+	preFailure int,
+) *sloFanoutTransactionState {
+	return &sloFanoutTransactionState{
+		Transaction: *transaction,
+		Pending: map[string]slodomain.Participant{
+			requestID: transaction.Participants[0],
+		},
+		Outcomes:        map[string]sloFanoutParticipantOutcome{},
+		PreSuccessCount: preSuccess,
+		PreFailureCount: preFailure,
+		UpdatedAt:       updatedAt,
+	}
+}
+
+// mustExpectSLOFanoutStateUpdate registers Redis expectations for loading and updating fanout state.
+func mustExpectSLOFanoutStateUpdate(
+	t *testing.T,
+	handler *SAMLHandler,
+	mock redismock.ClientMock,
+	transactionID string,
+	requestID string,
+	state *sloFanoutTransactionState,
+	final bool,
+) {
+	t.Helper()
+
+	rawState, err := json.Marshal(state)
+	if !assert.NoError(t, err) {
+		t.FailNow()
+	}
+
+	requestKey := handler.sloFanoutRequestKey(requestID)
+	transactionKey := handler.sloFanoutStateKey(transactionID)
+
+	mock.ExpectGet(requestKey).SetVal(transactionID)
+	mock.ExpectGet(transactionKey).SetVal(string(rawState))
+	mock.Regexp().ExpectSet(transactionKey, `.+`, time.Hour).SetVal("OK")
+	mock.ExpectDel(requestKey).SetVal(1)
+
+	if final {
+		return
+	}
+}
+
+// newSLOFanoutTestLogoutResponse builds an unsigned LogoutResponse for state aggregation tests.
+func newSLOFanoutTestLogoutResponse(responseID, requestID, entityID, responseStatus string) *saml.LogoutResponse {
+	return &saml.LogoutResponse{
+		ID:           responseID,
+		InResponseTo: requestID,
+		IssueInstant: saml.TimeNow().UTC(),
+		Issuer: &saml.Issuer{
+			Value: entityID,
+		},
+		Status: saml.Status{
+			StatusCode: saml.StatusCode{
+				Value: responseStatus,
+			},
+		},
+	}
 }
 
 func mustBuildSignedLogoutResponse(

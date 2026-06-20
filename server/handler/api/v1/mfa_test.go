@@ -301,28 +301,31 @@ func TestMFAAPI_RegisterTOTP_Unauthenticated(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestMFAAPI_MFAManageMiddleware_ValidSession(t *testing.T) {
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			Frontend: config.Frontend{
-				TotpIssuer: "NauthilusTest",
-			},
-		},
+func TestMFAAPI_MFAManageMiddleware_ValidSessions(t *testing.T) {
+	for _, testCase := range mfaManageMiddlewareSessionCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			assertMFAManageMiddlewareAllowsSession(t, testCase.sessionData)
+		})
 	}
-	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger()}
-
-	// Any authenticated session should pass the middleware
-	mgr := &mockCookieManager{data: newOIDCSessionData("testuser", "openid profile")}
-	r := setupTestRouterWithMockCookie(d, mgr)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/mfa/totp/setup", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestMFAAPI_MFAManageMiddleware_SAMLValidSession(t *testing.T) {
+type mfaManageMiddlewareSessionCase struct {
+	name        string
+	sessionData map[string]any
+}
+
+// mfaManageMiddlewareSessionCases lists authenticated session variants accepted by the MFA middleware.
+func mfaManageMiddlewareSessionCases() []mfaManageMiddlewareSessionCase {
+	return []mfaManageMiddlewareSessionCase{
+		{name: "oidc", sessionData: newOIDCSessionData("testuser", "openid profile")},
+		{name: "saml", sessionData: newSAMLSessionData("testuser", "https://sp.example.com")},
+	}
+}
+
+// assertMFAManageMiddlewareAllowsSession verifies that one authenticated session reaches the setup endpoint.
+func assertMFAManageMiddlewareAllowsSession(t *testing.T, sessionData map[string]any) {
+	t.Helper()
+
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
 			Frontend: config.Frontend{
@@ -332,8 +335,7 @@ func TestMFAAPI_MFAManageMiddleware_SAMLValidSession(t *testing.T) {
 	}
 	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger()}
 
-	// SAML session with any entity ID should pass the middleware
-	mgr := &mockCookieManager{data: newSAMLSessionData("testuser", "https://sp.example.com")}
+	mgr := &mockCookieManager{data: sessionData}
 	r := setupTestRouterWithMockCookie(d, mgr)
 
 	w := httptest.NewRecorder()

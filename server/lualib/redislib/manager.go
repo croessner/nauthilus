@@ -66,28 +66,43 @@ func (rm *RedisManager) getConn(L *lua.LState, fallback redis.UniversalClient) r
 	return client
 }
 
-// ExecuteRead executes a Redis read operation with the necessary boilerplate.
-func (rm *RedisManager) ExecuteRead(L *lua.LState, fn func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int) int {
+// executeWithDeadline runs a Redis operation with a selected handle, counter, and deadline policy.
+func (rm *RedisManager) executeWithDeadline(
+	L *lua.LState,
+	fallback redis.UniversalClient,
+	incrementCounter func(),
+	deadline func(context.Context, config.File) (context.Context, context.CancelFunc),
+	fn func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int,
+) int {
 	stack := luastack.NewManager(L)
-	conn := rm.getConn(L, rm.client.GetReadHandle())
+	conn := rm.getConn(L, fallback)
 
-	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+	defer incrementCounter()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(rm.currentContext(L), rm.cfg)
+	dCtx, cancel := deadline(rm.currentContext(L), rm.cfg)
 	defer cancel()
 
 	return fn(dCtx, conn, stack)
 }
 
+// ExecuteRead executes a Redis read operation with the necessary boilerplate.
+func (rm *RedisManager) ExecuteRead(L *lua.LState, fn func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int) int {
+	return rm.executeWithDeadline(
+		L,
+		rm.client.GetReadHandle(),
+		func() { stats.GetMetrics().GetRedisReadCounter().Inc() },
+		util.GetCtxWithDeadlineRedisRead,
+		fn,
+	)
+}
+
 // ExecuteWrite executes a Redis write operation with the necessary boilerplate.
 func (rm *RedisManager) ExecuteWrite(L *lua.LState, fn func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int) int {
-	stack := luastack.NewManager(L)
-	conn := rm.getConn(L, rm.client.GetWriteHandle())
-
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(rm.currentContext(L), rm.cfg)
-	defer cancel()
-
-	return fn(dCtx, conn, stack)
+	return rm.executeWithDeadline(
+		L,
+		rm.client.GetWriteHandle(),
+		func() { stats.GetMetrics().GetRedisWriteCounter().Inc() },
+		util.GetCtxWithDeadlineRedisWrite,
+		fn,
+	)
 }

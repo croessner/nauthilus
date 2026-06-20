@@ -305,26 +305,26 @@ func requireLuaTable(t *testing.T, value lua.LValue) *lua.LTable {
 func assertLuaStringField(t *testing.T, table *lua.LTable, key string, want string) {
 	t.Helper()
 
-	got, ok := table.RawGetString(key).(lua.LString)
-	if !ok {
-		t.Fatalf("%s = %s, want string", key, table.RawGetString(key).Type().String())
-	}
-
-	if string(got) != want {
-		t.Fatalf("%s = %q, want %q", key, string(got), want)
-	}
+	assertLuaTypedField(t, table, key, lua.LString(want), "string")
 }
 
 func assertLuaBoolField(t *testing.T, table *lua.LTable, key string, want bool) {
 	t.Helper()
 
-	got, ok := table.RawGetString(key).(lua.LBool)
+	assertLuaTypedField(t, table, key, lua.LBool(want), "bool")
+}
+
+// assertLuaTypedField verifies a typed scalar field in a Lua table.
+func assertLuaTypedField[T comparable](t *testing.T, table *lua.LTable, key string, want T, typeName string) {
+	t.Helper()
+
+	got, ok := table.RawGetString(key).(T)
 	if !ok {
-		t.Fatalf("%s = %s, want bool", key, table.RawGetString(key).Type().String())
+		t.Fatalf("%s = %s, want %s", key, table.RawGetString(key).Type().String(), typeName)
 	}
 
-	if bool(got) != want {
-		t.Fatalf("%s = %v, want %v", key, bool(got), want)
+	if got != want {
+		t.Fatalf("%s = %v, want %v", key, got, want)
 	}
 }
 

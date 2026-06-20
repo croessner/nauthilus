@@ -18,71 +18,71 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type backchannelAuthConfigCase struct {
+	name          string
+	cfg           config.File
+	developerMode bool
+	usePublicAPI  bool
+	wantErr       bool
+}
+
 func TestEnsureBackchannelAuthConfigured(t *testing.T) {
-	t.Run("returns error when no auth is configured", func(t *testing.T) {
-		cfg := &config.FileSettings{
-			Server: &config.ServerSection{
-				BasicAuth: config.BasicAuth{Enabled: false},
-				OIDCAuth:  config.OIDCAuth{Enabled: false},
-			},
-		}
+	for _, tt := range backchannelAuthConfigCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			assertBackchannelAuthConfig(t, tt)
+		})
+	}
+}
 
-		err := ensureBackchannelAuthConfigured(cfg, false)
+// backchannelAuthConfigCases returns configuration validation scenarios.
+func backchannelAuthConfigCases() []backchannelAuthConfigCase {
+	return []backchannelAuthConfigCase{
+		{name: "returns error when no auth is configured", cfg: backchannelAuthConfig(false, false, false), wantErr: true},
+		{name: "allows hook-only setup without auth", cfg: backchannelAuthConfig(false, false, true), usePublicAPI: true},
+		{name: "allows basic auth only", cfg: backchannelAuthConfig(true, false, false)},
+		{name: "allows oidc auth only", cfg: backchannelAuthConfig(false, true, false)},
+		{name: "developer mode bypasses auth configuration check", cfg: backchannelAuthConfig(false, false, false), developerMode: true},
+	}
+}
+
+// backchannelAuthConfig builds a minimal backchannel auth config for tests.
+func backchannelAuthConfig(basicEnabled bool, oidcEnabled bool, withHook bool) config.File {
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			BasicAuth: config.BasicAuth{Enabled: basicEnabled},
+			OIDCAuth:  config.OIDCAuth{Enabled: oidcEnabled},
+		},
+	}
+
+	if withHook {
+		cfg.Lua = &config.LuaSection{
+			Hooks: []config.LuaHooks{{
+				Location:   "/hooks/demo",
+				Method:     "POST",
+				ScriptPath: "/tmp/demo.lua",
+			}},
+		}
+	}
+
+	return cfg
+}
+
+// assertBackchannelAuthConfig verifies one backchannel auth configuration case.
+func assertBackchannelAuthConfig(t *testing.T, tt backchannelAuthConfigCase) {
+	t.Helper()
+
+	err := ensureBackchannelAuthConfigured(tt.cfg, tt.developerMode)
+	if tt.usePublicAPI {
+		err = ValidateAuthConfiguration(tt.cfg, tt.developerMode)
+	}
+
+	if tt.wantErr {
 		assert.ErrorIs(t, err, errBackchannelAuthNotConfigured)
-	})
 
-	t.Run("allows hook-only setup without auth", func(t *testing.T) {
-		cfg := &config.FileSettings{
-			Server: &config.ServerSection{
-				BasicAuth: config.BasicAuth{Enabled: false},
-				OIDCAuth:  config.OIDCAuth{Enabled: false},
-			},
-			Lua: &config.LuaSection{
-				Hooks: []config.LuaHooks{
-					{
-						Location:   "/hooks/demo",
-						Method:     "POST",
-						ScriptPath: "/tmp/demo.lua",
-					},
-				},
-			},
-		}
+		return
+	}
 
-		assert.NoError(t, ValidateAuthConfiguration(cfg, false))
-	})
-
-	t.Run("allows basic auth only", func(t *testing.T) {
-		cfg := &config.FileSettings{
-			Server: &config.ServerSection{
-				BasicAuth: config.BasicAuth{Enabled: true},
-				OIDCAuth:  config.OIDCAuth{Enabled: false},
-			},
-		}
-
-		assert.NoError(t, ensureBackchannelAuthConfigured(cfg, false))
-	})
-
-	t.Run("allows oidc auth only", func(t *testing.T) {
-		cfg := &config.FileSettings{
-			Server: &config.ServerSection{
-				BasicAuth: config.BasicAuth{Enabled: false},
-				OIDCAuth:  config.OIDCAuth{Enabled: true},
-			},
-		}
-
-		assert.NoError(t, ensureBackchannelAuthConfigured(cfg, false))
-	})
-
-	t.Run("developer mode bypasses auth configuration check", func(t *testing.T) {
-		cfg := &config.FileSettings{
-			Server: &config.ServerSection{
-				BasicAuth: config.BasicAuth{Enabled: false},
-				OIDCAuth:  config.OIDCAuth{Enabled: false},
-			},
-		}
-
-		assert.NoError(t, ensureBackchannelAuthConfigured(cfg, true))
-	})
+	assert.NoError(t, err)
 }
 
 func TestBackchannelAuthMiddlewareAllowsEitherBasicOrBearer(t *testing.T) {

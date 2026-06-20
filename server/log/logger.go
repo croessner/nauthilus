@@ -169,74 +169,86 @@ func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource 
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Map configLogLevel to slog level
-	var minLevel slog.Level
+	minLevel := slogLevelFromConfig(configLogLevel)
+	replaceAttr := noticeLevelReplaceAttr
 
-	switch configLogLevel {
-	case definitions.LogLevelNone:
-		// Level value is irrelevant when output is discarded; keep a sane default
-		minLevel = slog.LevelInfo
-	case definitions.LogLevelError:
-		minLevel = slog.LevelError
-	case definitions.LogLevelWarn:
-		minLevel = slog.LevelWarn
-	case definitions.LogLevelNotice:
-		// Custom NOTICE sits between info and warn
-		minLevel = slog.LevelInfo + definitions.SlogNoticeLevelOffset
-	case definitions.LogLevelInfo:
-		minLevel = slog.LevelInfo
-	case definitions.LogLevelDebug:
-		minLevel = slog.LevelDebug
-	default:
-		minLevel = slog.LevelInfo
-	}
-
-	// ReplaceAttr maps custom level values to well-known names (e.g., NOTICE instead of INFO+2).
-	replaceAttr := func(_ []string, a slog.Attr) slog.Attr {
-		if a.Key == slog.LevelKey {
-			if lv, ok := a.Value.Any().(slog.Level); ok {
-				if lv == slog.LevelInfo+definitions.SlogNoticeLevelOffset {
-					a.Value = slog.StringValue("NOTICE")
-				}
-			}
-		}
-
-		return a
-	}
-
-	if rootLogger == nil {
-		rootLogger = &dynamicHandlerRoot{}
-	}
-
+	ensureRootLogger()
 	rootLogger.levelVar.Set(minLevel)
 	rootLogger.instance.Store(&stringHolder{s: instance})
 
 	handlerOpts := &slog.HandlerOptions{Level: &rootLogger.levelVar, AddSource: addSource, ReplaceAttr: replaceAttr}
-
-	// Choose output target: for LogLevelNone, discard everything using io.Discard
-	var out io.Writer = os.Stdout
-	if configLogLevel == definitions.LogLevelNone {
-		out = io.Discard
-	}
-
-	var handler slog.Handler
-
-	termTheme := os.Getenv("NAUTHILUS_TERM_THEME")
-
-	if formatJSON {
-		// JSON output should never be colored
-		handler = slog.NewJSONHandler(out, handlerOpts)
-	} else if useColor && configLogLevel != definitions.LogLevelNone {
-		// Use wrapper to preserve TextHandler format while coloring full line; theme-aware colors
-		colors := logcolor.ThemeColorMap(termTheme)
-		handler = logcolor.NewLineWrapper(out, handlerOpts, colors)
-	} else {
-		handler = slog.NewTextHandler(out, handlerOpts)
-	}
-
+	handler := newConfiguredHandler(configLogLevel, formatJSON, useColor, handlerOpts)
 	rootLogger.inner.Store(&handlerHolder{h: handler})
 
 	if Logger == nil {
 		Logger = slog.New(&dynamicHandler{root: rootLogger})
 	}
+}
+
+// slogLevelFromConfig maps configuration log levels to slog levels.
+func slogLevelFromConfig(configLogLevel int) slog.Level {
+	switch configLogLevel {
+	case definitions.LogLevelNone:
+		return slog.LevelInfo
+	case definitions.LogLevelError:
+		return slog.LevelError
+	case definitions.LogLevelWarn:
+		return slog.LevelWarn
+	case definitions.LogLevelNotice:
+		return slog.LevelInfo + definitions.SlogNoticeLevelOffset
+	case definitions.LogLevelInfo:
+		return slog.LevelInfo
+	case definitions.LogLevelDebug:
+		return slog.LevelDebug
+	default:
+		return slog.LevelInfo
+	}
+}
+
+// noticeLevelReplaceAttr maps the custom NOTICE level to its public name.
+func noticeLevelReplaceAttr(_ []string, a slog.Attr) slog.Attr {
+	if a.Key == slog.LevelKey {
+		if lv, ok := a.Value.Any().(slog.Level); ok {
+			if lv == slog.LevelInfo+definitions.SlogNoticeLevelOffset {
+				a.Value = slog.StringValue("NOTICE")
+			}
+		}
+	}
+
+	return a
+}
+
+// ensureRootLogger initializes the dynamic root logger holder.
+func ensureRootLogger() {
+	if rootLogger == nil {
+		rootLogger = &dynamicHandlerRoot{}
+	}
+}
+
+// loggingOutput selects the writer for the configured log level.
+func loggingOutput(configLogLevel int) io.Writer {
+	var out io.Writer = os.Stdout
+	if configLogLevel == definitions.LogLevelNone {
+		out = io.Discard
+	}
+
+	return out
+}
+
+// newConfiguredHandler builds the configured slog handler.
+func newConfiguredHandler(configLogLevel int, formatJSON bool, useColor bool, handlerOpts *slog.HandlerOptions) slog.Handler {
+	out := loggingOutput(configLogLevel)
+	termTheme := os.Getenv("NAUTHILUS_TERM_THEME")
+
+	if formatJSON {
+		return slog.NewJSONHandler(out, handlerOpts)
+	}
+
+	if useColor && configLogLevel != definitions.LogLevelNone {
+		colors := logcolor.ThemeColorMap(termTheme)
+
+		return logcolor.NewLineWrapper(out, handlerOpts, colors)
+	}
+
+	return slog.NewTextHandler(out, handlerOpts)
 }

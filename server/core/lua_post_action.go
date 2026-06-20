@@ -62,50 +62,79 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 		return
 	}
 
-	httpRequest := args.HTTPRequest
-	if httpRequest == nil {
-		httpRequest = a.Request.HTTPClientRequest
-	}
-
-	postActionRequest := util.DetachedHTTPRequest(context.TODO(), httpRequest)
-
+	postActionRequest := util.DetachedHTTPRequest(context.TODO(), a.postActionHTTPRequest(args))
 	if util.IsHTTPRequestCanceled(a.Logger(), postActionRequest, args.Request.Session, "enqueue.lua_post_action") {
 		return
 	}
 
-	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
-
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromPostAction, "lua_post_action_request_total", resource)
-	if stopTimer != nil {
-		defer stopTimer()
-	}
+	defer a.stopPostActionTimer()()
 
 	finished := make(chan action.Done)
-
-	// Get a CommonRequest from the pool and fill from args
 	cr := lualib.GetCommonRequest()
 
 	defer lualib.PutCommonRequest(cr)
 
-	// Derive brute-force hints if not provided
-	clientNet := args.Request.ClientNet
-	repeating := args.Request.Repeating
+	clientNet, repeating := a.postActionBruteForceHints(args)
+	preparePostActionCommonRequest(cr, args, clientNet, repeating)
 
-	if clientNet == "" {
-		// Use service-root context; derive a bounded Redis read context for hint computation
-		base := svcctx.Get()
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(base, a.Cfg())
-		cn, rep := ComputeBruteForceHints(dCtx, a.Cfg(), a.Redis(), args.Request.ClientIP, args.Request.Protocol, args.Request.OIDCCID)
+	action.RequestChan <- newPostActionRequest(args, postActionRequest, cr, finished)
 
-		cancel()
+	<-finished
+}
 
-		if cn != "" || rep {
-			clientNet = cn
-			repeating = rep
-		}
+// postActionHTTPRequest resolves the HTTP request used for cancellation checks.
+func (a *AuthState) postActionHTTPRequest(args PostActionArgs) *http.Request {
+	if args.HTTPRequest != nil {
+		return args.HTTPRequest
 	}
 
-	// Copy-by-value from args.Request then set computed hints
+	return a.Request.HTTPClientRequest
+}
+
+// stopPostActionTimer starts and returns the post-action metric timer stop hook.
+func (a *AuthState) stopPostActionTimer() func() {
+	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
+
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromPostAction, "lua_post_action_request_total", resource)
+	if stopTimer == nil {
+		return func() {}
+	}
+
+	return stopTimer
+}
+
+// postActionBruteForceHints returns configured or derived brute-force hints.
+func (a *AuthState) postActionBruteForceHints(args PostActionArgs) (string, bool) {
+	clientNet := args.Request.ClientNet
+
+	repeating := args.Request.Repeating
+	if clientNet != "" {
+		return clientNet, repeating
+	}
+
+	base := svcctx.Get()
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(base, a.Cfg())
+	computedNet, computedRepeating := ComputeBruteForceHints(
+		dCtx,
+		a.Cfg(),
+		a.Redis(),
+		args.Request.ClientIP,
+		args.Request.Protocol,
+		args.Request.OIDCCID,
+	)
+
+	cancel()
+
+	if computedNet != "" || computedRepeating {
+		clientNet = computedNet
+		repeating = computedRepeating
+	}
+
+	return clientNet, repeating
+}
+
+// preparePostActionCommonRequest copies request data into the pooled request.
+func preparePostActionCommonRequest(cr *lualib.CommonRequest, args PostActionArgs, clientNet string, repeating bool) {
 	*cr = args.Request
 	if len(args.Request.Password) > 0 {
 		cr.Password = bytes.Clone(args.Request.Password)
@@ -115,25 +144,31 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 
 	cr.ClientNet = clientNet
 	cr.Repeating = repeating
-	// Deep copy StatusMessage string if it exists
+
 	if args.StatusMessage != "" {
-		sm := args.StatusMessage
-		cr.StatusMessage = &sm
+		statusMessage := args.StatusMessage
+		cr.StatusMessage = &statusMessage
 	} else {
 		cr.StatusMessage = nil
 	}
+}
 
-	action.RequestChan <- &action.Action{
+// newPostActionRequest creates the worker action for Lua post processing.
+func newPostActionRequest(
+	args PostActionArgs,
+	httpRequest *http.Request,
+	cr *lualib.CommonRequest,
+	finished chan action.Done,
+) *action.Action {
+	return &action.Action{
 		LuaAction:             definitions.LuaActionPost,
 		Context:               args.Context,
 		FinishedChan:          finished,
-		HTTPRequest:           postActionRequest,
+		HTTPRequest:           httpRequest,
 		HTTPContext:           nil,
 		OTelParentSpanContext: args.ParentSpan,
 		CommonRequest:         cr,
 	}
-
-	<-finished
 }
 
 // ComputeBruteForceHints derives clientNet and repeating fields for the post action
@@ -153,18 +188,7 @@ func ComputeBruteForceHints(ctx context.Context, cfg config.File, redisClient re
 	)
 	defer sp.End()
 
-	// Check whether the protocol is enabled for brute-force processing
-	bfProtoEnabled := false
-
-	for _, p := range cfg.GetServer().GetBruteForceProtocols() {
-		if p.Get() == protocol {
-			bfProtoEnabled = true
-
-			break
-		}
-	}
-
-	if !bfProtoEnabled {
+	if !bruteForceProtocolEnabled(cfg, protocol) {
 		return "", false
 	}
 
@@ -176,64 +200,137 @@ func ComputeBruteForceHints(ctx context.Context, cfg config.File, redisClient re
 	rules := cfg.GetBruteForceRules()
 	sp.SetAttributes(attribute.Int("rules.total", len(rules)))
 
-	var (
-		foundRepeatingNet string
-		foundRepeating    bool
-		bestCIDRRepeating uint // prefer most specific repeating
-		bestCIDRFallback  uint // prefer most specific fallback
-		considered        int
-	)
+	state := &bruteForceHintState{}
 
 	for i := range rules {
-		r := &rules[i]
-		if !r.MatchesContext(protocol, oidccid, ip) {
-			continue
-		}
-
-		considered++
-
-		if r.CIDR > 0 {
-			if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", clientIP, r.CIDR)); err == nil && n != nil {
-				candidate := n.String()
-
-				// (1) Check for active ban on this network via dedicated ban key.
-				if !foundRepeating {
-					prefix := cfg.GetServer().GetRedis().GetPrefix()
-					banKey := rediscli.GetBruteForceBanKey(prefix, candidate)
-
-					stats.GetMetrics().GetRedisReadCounter().Inc()
-
-					if existsVal, err := redisClient.GetReadHandle().Exists(ctx, banKey).Result(); err == nil && existsVal > 0 {
-						if r.CIDR > bestCIDRRepeating {
-							bestCIDRRepeating = r.CIDR
-							foundRepeatingNet = candidate
-						}
-
-						foundRepeating = true
-					}
-				}
-
-				// (2) Fallback: choose the most specific network
-				if clientNet == "" && (r.CIDR > bestCIDRFallback) {
-					bestCIDRFallback = r.CIDR
-					clientNet = candidate
-				}
-			}
-		}
+		state.considerRule(ctx, cfg, redisClient, &rules[i], bruteForceHintRuleInput{
+			clientIP: clientIP,
+			protocol: protocol,
+			oidcCID:  oidccid,
+			ip:       ip,
+		})
 	}
 
 	sp.SetAttributes(
-		attribute.Int("rules.considered", considered),
-		attribute.Bool("repeating", foundRepeating),
+		attribute.Int("rules.considered", state.considered),
+		attribute.Bool("repeating", state.foundRepeating),
 	)
 
-	if foundRepeating {
+	if state.foundRepeating {
 		repeating = true
 
-		if foundRepeatingNet != "" {
-			clientNet = foundRepeatingNet
+		if state.foundRepeatingNet != "" {
+			clientNet = state.foundRepeatingNet
 		}
+	} else if state.clientNet != "" {
+		clientNet = state.clientNet
 	}
 
 	return clientNet, repeating
+}
+
+type bruteForceHintRuleInput struct {
+	clientIP string
+	protocol string
+	oidcCID  string
+	ip       net.IP
+}
+
+type bruteForceHintState struct {
+	foundRepeatingNet string
+	clientNet         string
+	foundRepeating    bool
+	bestCIDRRepeating uint
+	bestCIDRFallback  uint
+	considered        int
+}
+
+// bruteForceProtocolEnabled reports whether hints apply to the protocol.
+func bruteForceProtocolEnabled(cfg config.File, protocol string) bool {
+	for _, configuredProtocol := range cfg.GetServer().GetBruteForceProtocols() {
+		if configuredProtocol.Get() == protocol {
+			return true
+		}
+	}
+
+	return false
+}
+
+// considerRule evaluates one matching brute-force hint rule.
+func (s *bruteForceHintState) considerRule(
+	ctx context.Context,
+	cfg config.File,
+	redisClient rediscli.Client,
+	rule *config.BruteForceRule,
+	input bruteForceHintRuleInput,
+) {
+	if !rule.MatchesContext(input.protocol, input.oidcCID, input.ip) {
+		return
+	}
+
+	s.considered++
+
+	candidate, ok := bruteForceRuleCIDRNetwork(input.clientIP, rule.CIDR)
+	if !ok {
+		return
+	}
+
+	s.applyRepeatingRule(ctx, cfg, redisClient, candidate, rule.CIDR)
+	s.applyFallbackRule(candidate, rule.CIDR)
+}
+
+// bruteForceRuleCIDRNetwork builds a candidate network for a rule CIDR.
+func bruteForceRuleCIDRNetwork(clientIP string, cidr uint) (string, bool) {
+	if cidr == 0 {
+		return "", false
+	}
+
+	_, network, err := net.ParseCIDR(fmt.Sprintf("%s/%d", clientIP, cidr))
+	if err != nil || network == nil {
+		return "", false
+	}
+
+	return network.String(), true
+}
+
+// applyRepeatingRule records a matching active ban network.
+func (s *bruteForceHintState) applyRepeatingRule(
+	ctx context.Context,
+	cfg config.File,
+	redisClient rediscli.Client,
+	candidate string,
+	cidr uint,
+) {
+	if s.foundRepeating || !bruteForceBanExists(ctx, cfg, redisClient, candidate) {
+		return
+	}
+
+	if cidr > s.bestCIDRRepeating {
+		s.bestCIDRRepeating = cidr
+		s.foundRepeatingNet = candidate
+	}
+
+	s.foundRepeating = true
+}
+
+// bruteForceBanExists checks whether the candidate network has an active ban.
+func bruteForceBanExists(ctx context.Context, cfg config.File, redisClient rediscli.Client, candidate string) bool {
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
+	banKey := rediscli.GetBruteForceBanKey(prefix, candidate)
+
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	existsVal, err := redisClient.GetReadHandle().Exists(ctx, banKey).Result()
+
+	return err == nil && existsVal > 0
+}
+
+// applyFallbackRule records the first eligible fallback network.
+func (s *bruteForceHintState) applyFallbackRule(candidate string, cidr uint) {
+	if s.clientNet != "" || cidr <= s.bestCIDRFallback {
+		return
+	}
+
+	s.bestCIDRFallback = cidr
+	s.clientNet = candidate
 }

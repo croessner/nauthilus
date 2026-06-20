@@ -65,65 +65,84 @@ func (s *EmailClient) SendMail(options *MailOptions) error {
 // It supports both SMTP and LMTP protocols, including optional authentication and TLS settings.
 // Returns an error if email sending fails or if any input is invalid.
 func SendMail(options *MailOptions, sendMail InternalSendMailFunc) error {
-	var (
-		fromAddress *mail.Address
-		buf         bytes.Buffer
-		auth        smtp.Auth
-		err         error
-	)
-
-	toAddresses := make([]string, 0)
-
-	if !options.LMTP {
-		if options.Username != "" && options.Password != "" {
-			server := options.Server
-			if options.TLS && !options.StartTLS && options.Port == 465 {
-				server = fmt.Sprintf("%s:%d", options.Server, options.Port)
-			}
-
-			// Set up authentication information.
-			auth = smtp.PlainAuth("", options.Username, options.Password, server)
-		}
-	}
-
 	if options.HeloName == "" {
 		options.HeloName = smtpDefaultHeloName
 	}
 
-	if fromAddress, err = mail.ParseAddress(options.From); err != nil {
-		return fmt.Errorf("invalid From address: %v", err)
+	fromAddress, toAddresses, err := parseMailAddresses(options)
+	if err != nil {
+		return err
 	}
 
-	for _, toAddressWithCN := range options.To {
-		var toAddress *mail.Address
+	buf, err := buildMailMessage(options, fromAddress)
+	if err != nil {
+		return err
+	}
 
-		if toAddress, err = mail.ParseAddress(toAddressWithCN); err != nil {
-			return fmt.Errorf("invalid To address: %v", err)
+	auth := smtpAuth(options)
+	smtpServer := options.Server + fmt.Sprintf(":%d", options.Port)
+
+	return sendMail(smtpServer, options.HeloName, auth, fromAddress.Address, toAddresses, buf.Bytes(), options.TLS, options.StartTLS)
+}
+
+// parseMailAddresses parses sender and recipient addresses.
+func parseMailAddresses(options *MailOptions) (*mail.Address, []string, error) {
+	fromAddress, err := mail.ParseAddress(options.From)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid From address: %v", err)
+	}
+
+	toAddresses := make([]string, 0, len(options.To))
+	for _, toAddressWithCN := range options.To {
+		toAddress, err := mail.ParseAddress(toAddressWithCN)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid To address: %v", err)
 		}
 
 		toAddresses = append(toAddresses, toAddress.Address)
 	}
 
-	msgIDDomain := "localhost"
-	if parts := strings.Split(fromAddress.Address, "@"); len(parts) > 1 {
-		msgIDDomain = parts[1]
-	}
+	return fromAddress, toAddresses, nil
+}
 
+// buildMailMessage renders headers and body into a message buffer.
+func buildMailMessage(options *MailOptions, fromAddress *mail.Address) (*bytes.Buffer, error) {
+	buf := new(bytes.Buffer)
 	msg := gomail.NewMessage()
 
 	msg.SetHeader("Date", msg.FormatDate(time.Now()))
-	msg.SetHeader("Message-ID", strconv.FormatInt(time.Now().UnixNano(), 10)+"@"+msgIDDomain)
+	msg.SetHeader("Message-ID", strconv.FormatInt(time.Now().UnixNano(), 10)+"@"+messageIDDomain(fromAddress))
 	msg.SetHeader("From", options.From)
 	msg.SetHeader("To", options.To...)
 	msg.SetHeader("Subject", options.Subject)
 	msg.SetBody("text/plain", options.Body)
 
-	_, err = msg.WriteTo(&buf)
-	if err != nil {
-		return err
+	if _, err := msg.WriteTo(buf); err != nil {
+		return nil, err
 	}
 
-	err = sendMail(options.Server+fmt.Sprintf(":%d", options.Port), options.HeloName, auth, fromAddress.Address, toAddresses, buf.Bytes(), options.TLS, options.StartTLS)
+	return buf, nil
+}
 
-	return err
+// messageIDDomain returns the domain part used for generated Message-ID values.
+func messageIDDomain(fromAddress *mail.Address) string {
+	if parts := strings.Split(fromAddress.Address, "@"); len(parts) > 1 {
+		return parts[1]
+	}
+
+	return "localhost"
+}
+
+// smtpAuth returns SMTP auth when credentials apply to an SMTP send.
+func smtpAuth(options *MailOptions) smtp.Auth {
+	if options.LMTP || options.Username == "" || options.Password == "" {
+		return nil
+	}
+
+	server := options.Server
+	if options.TLS && !options.StartTLS && options.Port == 465 {
+		server = fmt.Sprintf("%s:%d", options.Server, options.Port)
+	}
+
+	return smtp.PlainAuth("", options.Username, options.Password, server)
 }

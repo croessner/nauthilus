@@ -695,38 +695,50 @@ func (a *AuthState) handlePluginEnvironmentResult(ctx *gin.Context, span trace.S
 }
 
 func (a *AuthState) handleTLSEnvironmentResult(ctx *gin.Context, span trace.Span) (definitions.AuthResult, bool) {
-	tlsTriggered := a.checkTLSEncryptionEnvironment(ctx)
-	a.recordPolicyTLS(ctx, tlsTriggered)
-
-	if tlsTriggered {
-		if result, handled := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
+	return a.handleRejectingEnvironmentResult(
+		ctx,
+		span,
+		a.checkTLSEncryptionEnvironment,
+		a.recordPolicyTLS,
+		preAuthEnvironmentOutcome{
 			current:                 definitions.AuthResultPreAuthTLS,
 			decision:                environmentDecisionTLS,
 			reject:                  true,
 			continuePolicyAuthority: true,
 			markPolicyContinue:      true,
-		}); handled {
-			return result, true
-		}
-	}
-
-	return definitions.AuthResultUnset, false
+		},
+	)
 }
 
 func (a *AuthState) handleRelayDomainEnvironmentResult(ctx *gin.Context, span trace.Span) (definitions.AuthResult, bool) {
-	relayTriggered := a.checkRelayDomainsEnvironment(ctx)
-	a.recordPolicyRelayDomains(ctx, relayTriggered)
-
-	if relayTriggered {
-		if result, handled := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
+	return a.handleRejectingEnvironmentResult(
+		ctx,
+		span,
+		a.checkRelayDomainsEnvironment,
+		a.recordPolicyRelayDomains,
+		preAuthEnvironmentOutcome{
 			current:                 definitions.AuthResultPreAuthRelayDomain,
 			decision:                environmentDecisionRelayDomains,
 			reject:                  true,
 			continuePolicyAuthority: true,
 			markPolicyContinue:      true,
-		}); handled {
-			return result, true
-		}
+		},
+	)
+}
+
+// handleRejectingEnvironmentResult applies the common rejecting pre-auth environment flow.
+func (a *AuthState) handleRejectingEnvironmentResult(
+	ctx *gin.Context,
+	span trace.Span,
+	check func(*gin.Context) bool,
+	record func(*gin.Context, bool),
+	outcome preAuthEnvironmentOutcome,
+) (definitions.AuthResult, bool) {
+	triggered := check(ctx)
+	record(ctx, triggered)
+
+	if triggered {
+		return a.resolvePreAuthEnvironmentOutcome(ctx, span, outcome)
 	}
 
 	return definitions.AuthResultUnset, false

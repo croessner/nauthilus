@@ -18,7 +18,6 @@ package redislib
 import (
 	"context"
 
-	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -39,63 +38,28 @@ func (rm *RedisManager) RedisRPush(L *lua.LState) int {
 
 // RedisLPop removes and gets the first element in a list.
 func (rm *RedisManager) RedisLPop(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-
-		cmd := conn.LPop(ctx, key)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
-	})
+	return executeKeyCmd(rm, L, true, func(ctx context.Context, conn redis.Cmdable, key string) *redis.StringCmd {
+		return conn.LPop(ctx, key)
+	}, luaStringValue)
 }
 
 // RedisRPop removes and gets the last element in a list.
 func (rm *RedisManager) RedisRPop(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-
-		cmd := conn.RPop(ctx, key)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
-	})
+	return executeKeyCmd(rm, L, true, func(ctx context.Context, conn redis.Cmdable, key string) *redis.StringCmd {
+		return conn.RPop(ctx, key)
+	}, luaStringValue)
 }
 
 // RedisLRange gets a range of elements from a list.
 func (rm *RedisManager) RedisLRange(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		start := int64(stack.CheckInt(3))
-		stop := int64(stack.CheckInt(4))
-
-		cmd := conn.LRange(ctx, key, start, stop)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		result := L.NewTable()
-		for _, val := range cmd.Val() {
-			result.Append(lua.LString(val))
-		}
-
-		return stack.PushResults(result, lua.LNil)
+	return executeRangeStringSliceCmd(rm, L, func(ctx context.Context, conn redis.Cmdable, key string, start, stop int64) *redis.StringSliceCmd {
+		return conn.LRange(ctx, key, start, stop)
 	})
 }
 
 // RedisLLen gets the length of a list.
 func (rm *RedisManager) RedisLLen(L *lua.LState) int {
-	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-
-		cmd := conn.LLen(ctx, key)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
-	})
+	return executeKeyCmd(rm, L, false, func(ctx context.Context, conn redis.Cmdable, key string) *redis.IntCmd {
+		return conn.LLen(ctx, key)
+	}, luaNumberValue[int64])
 }

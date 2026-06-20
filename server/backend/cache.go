@@ -161,14 +161,52 @@ func LoadCacheFromRedisWithSF(ctx context.Context, cfg config.File, logger *slog
 func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, key string, ucp *bktype.PositivePasswordCache) (isRedisErr bool, err error) {
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
+	hashValues, isRedisErr, err := loadPositiveCacheHash(ctx, cfg, logger, redisClient, key)
+	if err != nil {
+		return isRedisErr, err
+	}
+
+	if isRedisErr {
+		return true, nil
+	}
+
+	if err := loadPositiveCacheBackend(logger, hashValues, ucp); err != nil {
+		return false, err
+	}
+
+	sm := redisClient.GetSecurityManager()
+	loadPositiveCacheSimpleFields(hashValues, sm, ucp)
+
+	if err := loadPositiveCacheAttributes(logger, hashValues, sm, ucp); err != nil {
+		return false, err
+	}
+
+	if err := loadPositiveCacheGroupFields(logger, hashValues, sm, ucp); err != nil {
+		return false, err
+	}
+
+	util.DebugModuleWithCfg(ctx, cfg, logger,
+		definitions.DbgCache,
+		definitions.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", *ucp))
+
+	return false, nil
+}
+
+// loadPositiveCacheHash reads all Redis hash fields for a positive password cache entry.
+func loadPositiveCacheHash(
+	ctx context.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	redisClient rediscli.Client,
+	key string,
+) (map[string]string, bool, error) {
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 	defer cancel()
 
-	// Get all fields from the hash
 	hashValues, err := redisClient.GetReadHandle().HGetAll(dCtx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return true, nil
+			return nil, true, nil
 		}
 
 		level.Error(logger).Log(
@@ -176,33 +214,40 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 			definitions.LogKeyError, err,
 		)
 
-		return true, err
+		return nil, true, err
 	}
 
-	// If the hash is empty, treat it as a Redis nil error
 	if len(hashValues) == 0 {
-		return true, nil
+		return nil, true, nil
 	}
 
-	// Parse backend field
-	if backendStr, ok := hashValues["backend"]; ok {
-		// Use ParseInt with bitSize 8 to avoid integer overflow; Backend is uint8
-		backendInt, err := strconv.ParseInt(backendStr, 10, 8)
-		if err != nil {
-			level.Error(logger).Log(
-				definitions.LogKeyMsg, "Failed to parse backend value",
-				definitions.LogKeyError, err,
-			)
+	return hashValues, false, nil
+}
 
-			return false, err
-		}
-
-		ucp.Backend = definitions.Backend(backendInt)
+// loadPositiveCacheBackend parses the cached backend enum.
+func loadPositiveCacheBackend(logger *slog.Logger, hashValues map[string]string, ucp *bktype.PositivePasswordCache) error {
+	backendStr, ok := hashValues["backend"]
+	if !ok {
+		return nil
 	}
 
-	// Parse simple string fields
-	sm := redisClient.GetSecurityManager()
+	backendInt, err := strconv.ParseInt(backendStr, 10, 8)
+	if err != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyMsg, "Failed to parse backend value",
+			definitions.LogKeyError, err,
+		)
 
+		return err
+	}
+
+	ucp.Backend = definitions.Backend(backendInt)
+
+	return nil
+}
+
+// loadPositiveCacheSimpleFields copies scalar cache fields into the positive cache object.
+func loadPositiveCacheSimpleFields(hashValues map[string]string, sm *rediscli.SecurityManager, ucp *bktype.PositivePasswordCache) {
 	if password, ok := hashValues["password"]; ok {
 		ucp.Password, _ = sm.Decrypt(password)
 	}
@@ -230,56 +275,81 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 	if backendName, ok := hashValues["backend_name"]; ok {
 		ucp.BackendName = backendName
 	}
+}
 
-	// Parse attributes JSON
-	if attributesJSON, ok := hashValues["attributes"]; ok && attributesJSON != "" {
-		decryptedAttributesJSON, _ := sm.Decrypt(attributesJSON)
-
-		var attributes bktype.AttributeMapping
-		if err = jsoniter.ConfigFastest.Unmarshal([]byte(decryptedAttributesJSON), &attributes); err != nil {
-			level.Error(logger).Log(
-				definitions.LogKeyMsg, "Failed to unmarshal attributes",
-				definitions.LogKeyError, err,
-			)
-
-			return false, err
-		}
-
-		ucp.Attributes = attributes
-	} else {
-		// Initialize empty attributes map if not present
+// loadPositiveCacheAttributes decrypts and unmarshals cached attribute mappings.
+func loadPositiveCacheAttributes(
+	logger *slog.Logger,
+	hashValues map[string]string,
+	sm *rediscli.SecurityManager,
+	ucp *bktype.PositivePasswordCache,
+) error {
+	attributesJSON, ok := hashValues["attributes"]
+	if !ok || attributesJSON == "" {
 		ucp.Attributes = make(bktype.AttributeMapping)
+
+		return nil
 	}
 
-	groups, parseErr := loadEncryptedStringSliceField(hashValues, "groups", sm)
-	if parseErr != nil {
+	decryptedAttributesJSON, _ := sm.Decrypt(attributesJSON)
+
+	var attributes bktype.AttributeMapping
+	if err := jsoniter.ConfigFastest.Unmarshal([]byte(decryptedAttributesJSON), &attributes); err != nil {
 		level.Error(logger).Log(
-			definitions.LogKeyMsg, "Failed to unmarshal groups",
-			definitions.LogKeyError, parseErr,
+			definitions.LogKeyMsg, "Failed to unmarshal attributes",
+			definitions.LogKeyError, err,
 		)
 
-		return false, parseErr
+		return err
+	}
+
+	ucp.Attributes = attributes
+
+	return nil
+}
+
+// loadPositiveCacheGroupFields loads cached group and distinguished-name slices.
+func loadPositiveCacheGroupFields(
+	logger *slog.Logger,
+	hashValues map[string]string,
+	sm *rediscli.SecurityManager,
+	ucp *bktype.PositivePasswordCache,
+) error {
+	groups, err := loadPositiveCacheStringSlice(logger, hashValues, "groups", "Failed to unmarshal groups", sm)
+	if err != nil {
+		return err
+	}
+
+	groupDistinguishedNames, err := loadPositiveCacheStringSlice(logger, hashValues, "group_dns", "Failed to unmarshal group_dns", sm)
+	if err != nil {
+		return err
 	}
 
 	ucp.Groups = groups
-
-	groupDistinguishedNames, parseErr := loadEncryptedStringSliceField(hashValues, "group_dns", sm)
-	if parseErr != nil {
-		level.Error(logger).Log(
-			definitions.LogKeyMsg, "Failed to unmarshal group_dns",
-			definitions.LogKeyError, parseErr,
-		)
-
-		return false, parseErr
-	}
-
 	ucp.GroupDistinguishedNames = groupDistinguishedNames
 
-	util.DebugModuleWithCfg(ctx, cfg, logger,
-		definitions.DbgCache,
-		definitions.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", *ucp))
+	return nil
+}
 
-	return false, nil
+// loadPositiveCacheStringSlice decrypts and unmarshals one cached string-slice field.
+func loadPositiveCacheStringSlice(
+	logger *slog.Logger,
+	hashValues map[string]string,
+	fieldName string,
+	logMessage string,
+	sm *rediscli.SecurityManager,
+) ([]string, error) {
+	values, err := loadEncryptedStringSliceField(hashValues, fieldName, sm)
+	if err != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyMsg, logMessage,
+			definitions.LogKeyError, err,
+		)
+
+		return nil, err
+	}
+
+	return values, nil
 }
 
 // SaveUserDataToRedis is a generic routine to store a cache object on Redis using Redis Hash for better memory efficiency.
@@ -291,78 +361,10 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 		definitions.LogKeyMsg, "Save password history to redis", "type", fmt.Sprintf("%T", *cache),
 	)
 
-	// Create a map for the hash fields
-	hashFields := make(map[string]any)
-
-	// Add simple fields
-	hashFields["backend"] = int(cache.Backend)
 	sm := redisClient.GetSecurityManager()
 
-	if cache.Password != "" {
-		hashFields["password"], _ = sm.Encrypt(cache.Password)
-	}
-
-	if cache.AccountField != "" {
-		hashFields["account_field"] = cache.AccountField
-	}
-
-	if cache.TOTPSecretField != "" {
-		hashFields["totp_secret_field"], _ = sm.Encrypt(cache.TOTPSecretField)
-	}
-
-	if cache.TOTPRecoveryField != "" {
-		hashFields["totp_recovery_field"], _ = sm.Encrypt(cache.TOTPRecoveryField)
-	}
-
-	if cache.UniqueUserIDField != "" {
-		hashFields["webauth_userid_field"] = cache.UniqueUserIDField
-	}
-
-	if cache.DisplayNameField != "" {
-		hashFields["display_name_field"] = cache.DisplayNameField
-	}
-
-	if cache.BackendName != "" {
-		hashFields["backend_name"] = cache.BackendName
-	}
-
-	// Serialize the attributes map as JSON since it's complex
-	if len(cache.Attributes) > 0 {
-		attributesJSON, err := jsoniter.ConfigFastest.Marshal(cache.Attributes)
-		if err != nil {
-			level.Error(logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Failed to marshal attributes",
-				definitions.LogKeyError, err,
-			)
-
-			return
-		}
-
-		hashFields["attributes"] = string(attributesJSON)
-
-		if encryptedAttributesJSON, err := sm.Encrypt(hashFields["attributes"].(string)); err == nil {
-			hashFields["attributes"] = encryptedAttributesJSON
-		}
-	}
-
-	if err := storeEncryptedStringSliceField(hashFields, "groups", cache.Groups, sm); err != nil {
-		level.Error(logger).Log(
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "Failed to marshal groups",
-			definitions.LogKeyError, err,
-		)
-
-		return
-	}
-
-	if err := storeEncryptedStringSliceField(hashFields, "group_dns", cache.GroupDistinguishedNames, sm); err != nil {
-		level.Error(logger).Log(
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "Failed to marshal group_dns",
-			definitions.LogKeyError, err,
-		)
-
+	hashFields, ok := buildPositiveCacheHashFields(logger, guid, cache, sm)
+	if !ok {
 		return
 	}
 
@@ -395,6 +397,118 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 		definitions.DbgCache,
 		definitions.LogKeyGUID, guid,
 		"redis", result)
+}
+
+// buildPositiveCacheHashFields builds the Redis hash payload for a positive password cache entry.
+func buildPositiveCacheHashFields(
+	logger *slog.Logger,
+	guid string,
+	cache *bktype.PositivePasswordCache,
+	sm *rediscli.SecurityManager,
+) (map[string]any, bool) {
+	hashFields := make(map[string]any)
+	hashFields["backend"] = int(cache.Backend)
+
+	addPositiveCacheSimpleHashFields(hashFields, cache, sm)
+
+	if !addPositiveCacheAttributesHashField(logger, guid, hashFields, cache, sm) {
+		return nil, false
+	}
+
+	if !addPositiveCacheStringSliceHashField(logger, guid, hashFields, "groups", cache.Groups, "Failed to marshal groups", sm) {
+		return nil, false
+	}
+
+	if !addPositiveCacheStringSliceHashField(logger, guid, hashFields, "group_dns", cache.GroupDistinguishedNames, "Failed to marshal group_dns", sm) {
+		return nil, false
+	}
+
+	return hashFields, true
+}
+
+// addPositiveCacheSimpleHashFields adds scalar cache values to the Redis hash payload.
+func addPositiveCacheSimpleHashFields(hashFields map[string]any, cache *bktype.PositivePasswordCache, sm *rediscli.SecurityManager) {
+	if cache.Password != "" {
+		hashFields["password"], _ = sm.Encrypt(cache.Password)
+	}
+
+	if cache.AccountField != "" {
+		hashFields["account_field"] = cache.AccountField
+	}
+
+	if cache.TOTPSecretField != "" {
+		hashFields["totp_secret_field"], _ = sm.Encrypt(cache.TOTPSecretField)
+	}
+
+	if cache.TOTPRecoveryField != "" {
+		hashFields["totp_recovery_field"], _ = sm.Encrypt(cache.TOTPRecoveryField)
+	}
+
+	if cache.UniqueUserIDField != "" {
+		hashFields["webauth_userid_field"] = cache.UniqueUserIDField
+	}
+
+	if cache.DisplayNameField != "" {
+		hashFields["display_name_field"] = cache.DisplayNameField
+	}
+
+	if cache.BackendName != "" {
+		hashFields["backend_name"] = cache.BackendName
+	}
+}
+
+// addPositiveCacheAttributesHashField marshals and encrypts attribute mappings for Redis.
+func addPositiveCacheAttributesHashField(
+	logger *slog.Logger,
+	guid string,
+	hashFields map[string]any,
+	cache *bktype.PositivePasswordCache,
+	sm *rediscli.SecurityManager,
+) bool {
+	if len(cache.Attributes) == 0 {
+		return true
+	}
+
+	attributesJSON, err := jsoniter.ConfigFastest.Marshal(cache.Attributes)
+	if err != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Failed to marshal attributes",
+			definitions.LogKeyError, err,
+		)
+
+		return false
+	}
+
+	hashFields["attributes"] = string(attributesJSON)
+	if encryptedAttributesJSON, err := sm.Encrypt(hashFields["attributes"].(string)); err == nil {
+		hashFields["attributes"] = encryptedAttributesJSON
+	}
+
+	return true
+}
+
+// addPositiveCacheStringSliceHashField marshals and encrypts one string-slice field for Redis.
+func addPositiveCacheStringSliceHashField(
+	logger *slog.Logger,
+	guid string,
+	hashFields map[string]any,
+	fieldName string,
+	values []string,
+	logMessage string,
+	sm *rediscli.SecurityManager,
+) bool {
+	if err := storeEncryptedStringSliceField(hashFields, fieldName, values, sm); err != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, logMessage,
+			definitions.LogKeyError, err,
+		)
+
+		return false
+	}
+
+	return true
 }
 
 // cacheNamer is a minimal interface implemented by protocol configs that expose a cache name.

@@ -16,13 +16,10 @@
 package redislib
 
 import (
-	"context"
 	"errors"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -30,258 +27,131 @@ import (
 func TestRedisLPush(t *testing.T) {
 	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
 
-	runMultiValueRedisTests(t, "redis_lpush", []multiValueRedisTest{
-		{
-			name:           "LPushSingleValue",
-			key:            "testList",
-			values:         []lua.LValue{lua.LString("value1")},
-			expectedResult: lua.LNumber(1),
-			expectedErr:    lua.LNil,
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectLPush("testList", "value1").SetVal(1)
-			},
+	runMultiValueRedisTests(t, "redis_lpush", listPushCases(
+		"LPush",
+		func(mock redismock.ClientMock) {
+			mock.ExpectLPush("testList", "value1").SetVal(1)
 		},
-		{
-			name:           "LPushMultipleValues",
-			key:            "testList",
-			values:         []lua.LValue{lua.LString("value1"), lua.LString("value2"), lua.LString("value3")},
-			expectedResult: lua.LNumber(3),
-			expectedErr:    lua.LNil,
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectLPush("testList", "value1", "value2", "value3").SetVal(3)
-			},
+		func(mock redismock.ClientMock) {
+			mock.ExpectLPush("testList", "value1", "value2", "value3").SetVal(3)
 		},
-		{
-			name:           "LPushWithError",
-			key:            "errorList",
-			values:         []lua.LValue{lua.LString("value1")},
-			expectedResult: lua.LNil,
-			expectedErr:    lua.LString("some error"),
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectLPush("errorList", "value1").SetErr(errors.New("some error"))
-			},
+		func(mock redismock.ClientMock) {
+			mock.ExpectLPush("errorList", "value1").SetErr(errors.New("some error"))
 		},
-	})
+	))
 }
 
 func TestRedisRPush(t *testing.T) {
-	runMultiValueRedisTests(t, "redis_rpush", []multiValueRedisTest{
-		{
-			name:           "RPushSingleValue",
-			key:            "testList",
-			values:         []lua.LValue{lua.LString("value1")},
-			expectedResult: lua.LNumber(1),
-			expectedErr:    lua.LNil,
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectRPush("testList", "value1").SetVal(1)
-			},
+	runMultiValueRedisTests(t, "redis_rpush", listPushCases(
+		"RPush",
+		func(mock redismock.ClientMock) {
+			mock.ExpectRPush("testList", "value1").SetVal(1)
 		},
-		{
-			name:           "RPushMultipleValues",
-			key:            "testList",
-			values:         []lua.LValue{lua.LString("value1"), lua.LString("value2"), lua.LString("value3")},
-			expectedResult: lua.LNumber(3),
-			expectedErr:    lua.LNil,
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectRPush("testList", "value1", "value2", "value3").SetVal(3)
-			},
+		func(mock redismock.ClientMock) {
+			mock.ExpectRPush("testList", "value1", "value2", "value3").SetVal(3)
 		},
-		{
-			name:           "RPushWithError",
-			key:            "errorList",
-			values:         []lua.LValue{lua.LString("value1")},
-			expectedResult: lua.LNil,
-			expectedErr:    lua.LString("some error"),
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectRPush("errorList", "value1").SetErr(errors.New("some error"))
-			},
+		func(mock redismock.ClientMock) {
+			mock.ExpectRPush("errorList", "value1").SetErr(errors.New("some error"))
 		},
-	})
+	))
 }
 
 func TestRedisLPop(t *testing.T) {
-	runSimpleKeyRedisTests(t, "redis_lpop", []simpleKeyRedisTest{
-		{
-			name:           "LPopExistingKey",
-			key:            "testList",
-			expectedResult: lua.LString("value1"),
-			expectedErr:    lua.LNil,
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectLPop("testList").SetVal("value1")
-			},
-		},
-		{
-			name:           "LPopEmptyList",
-			key:            "emptyList",
-			expectedResult: lua.LNil,
-			expectedErr:    lua.LString("redis: nil"),
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectLPop("emptyList").RedisNil()
-			},
-		},
-		{
-			name:           "LPopWithError",
-			key:            "errorList",
-			expectedResult: lua.LNil,
-			expectedErr:    lua.LString("some error"),
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectLPop("errorList").SetErr(errors.New("some error"))
-			},
-		},
-	})
+	runSimpleKeyRedisTests(t, "redis_lpop", listPopCases(
+		"LPop",
+		expectLPopValue,
+		expectLPopNil,
+		expectLPopError,
+	))
 }
 
 func TestRedisRPop(t *testing.T) {
-	runSimpleKeyRedisTests(t, "redis_rpop", []simpleKeyRedisTest{
-		{
-			name:           "RPopExistingKey",
-			key:            "testList",
-			expectedResult: lua.LString("value1"),
-			expectedErr:    lua.LNil,
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectRPop("testList").SetVal("value1")
-			},
-		},
-		{
-			name:           "RPopEmptyList",
-			key:            "emptyList",
-			expectedResult: lua.LNil,
-			expectedErr:    lua.LString("redis: nil"),
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectRPop("emptyList").RedisNil()
-			},
-		},
-		{
-			name:           "RPopWithError",
-			key:            "errorList",
-			expectedResult: lua.LNil,
-			expectedErr:    lua.LString("some error"),
-			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectRPop("errorList").SetErr(errors.New("some error"))
-			},
-		},
-	})
+	runSimpleKeyRedisTests(t, "redis_rpop", listPopCases(
+		"RPop",
+		expectRPopValue,
+		expectRPopNil,
+		expectRPopError,
+	))
 }
 
 func TestRedisLRange(t *testing.T) {
-	tests := []struct {
-		name             string
-		key              string
-		start            int64
-		stop             int64
-		expectedResult   []string
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+	runRedisLuaCommandTests(t, "redis_lrange", redisLRangeLuaCode(), redisLRangeCases())
+}
+
+// redisLRangeLuaCode returns the Lua script used by Redis LRANGE cases.
+func redisLRangeLuaCode() string {
+	return `
+		local nauthilus_redis = require("nauthilus_redis")
+		result, err = nauthilus_redis.redis_lrange("default", key, start, stop)
+	`
+}
+
+// redisLRangeCases returns Redis LRANGE behavior cases.
+func redisLRangeCases() []redisLuaCommandTest {
+	return []redisLuaCommandTest{
 		{
-			name:           "LRangeFullList",
-			key:            "testList",
-			start:          0,
-			stop:           -1,
-			expectedResult: []string{"value1", "value2", "value3"},
+			name: "LRangeFullList",
+			luaGlobals: map[string]lua.LValue{
+				"key":   lua.LString("testList"),
+				"start": lua.LNumber(0),
+				"stop":  lua.LNumber(-1),
+			},
+			expectedResult: createLuaTable([]string{"value1", "value2", "value3"}),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectLRange("testList", 0, -1).SetVal([]string{"value1", "value2", "value3"})
 			},
 		},
 		{
-			name:           "LRangePartialList",
-			key:            "testList",
-			start:          0,
-			stop:           1,
-			expectedResult: []string{"value1", "value2"},
+			name: "LRangePartialList",
+			luaGlobals: map[string]lua.LValue{
+				"key":   lua.LString("testList"),
+				"start": lua.LNumber(0),
+				"stop":  lua.LNumber(1),
+			},
+			expectedResult: createLuaTable([]string{"value1", "value2"}),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectLRange("testList", 0, 1).SetVal([]string{"value1", "value2"})
 			},
 		},
 		{
-			name:           "LRangeEmptyList",
-			key:            "emptyList",
-			start:          0,
-			stop:           -1,
-			expectedResult: []string{},
+			name: "LRangeEmptyList",
+			luaGlobals: map[string]lua.LValue{
+				"key":   lua.LString("emptyList"),
+				"start": lua.LNumber(0),
+				"stop":  lua.LNumber(-1),
+			},
+			expectedResult: createLuaTable([]string{}),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectLRange("emptyList", 0, -1).SetVal([]string{})
 			},
 		},
 		{
-			name:           "LRangeWithError",
-			key:            "errorList",
-			start:          0,
-			stop:           -1,
-			expectedResult: nil,
+			name: "LRangeWithError",
+			luaGlobals: map[string]lua.LValue{
+				"key":   lua.LString("errorList"),
+				"start": lua.LNumber(0),
+				"stop":  lua.LNumber(-1),
+			},
+			expectedResult: lua.LNil,
 			expectedErr:    lua.LString("some error"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectLRange("errorList", 0, -1).SetErr(errors.New("some error"))
 			},
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
-
-			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
-
-			L.SetGlobal("key", lua.LString(tt.key))
-			L.SetGlobal("start", lua.LNumber(tt.start))
-			L.SetGlobal("stop", lua.LNumber(tt.stop))
-
-			err := L.DoString(`
-				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_lrange("default", key, start, stop)
-			`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			gotErr := L.GetGlobal("err")
-
-			if tt.expectedErr == lua.LNil {
-				if gotResult.Type() != lua.LTTable {
-					t.Errorf("Expected table result, got %v", gotResult.Type())
-				} else {
-					expectedTable := createLuaTable(tt.expectedResult)
-					if !luaTablesAreEqual(gotResult.(*lua.LTable), expectedTable) {
-						t.Errorf("nauthilus.redis_lrange() gotResult = %v, want %v", gotResult, expectedTable)
-					}
-				}
-			}
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
 }
 
 func TestRedisLLen(t *testing.T) {
-	tests := []struct {
-		name             string
-		key              string
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+	runRedisLuaCommandTests(t, "redis_llen", `
+		local nauthilus_redis = require("nauthilus_redis")
+		result, err = nauthilus_redis.redis_llen("default", key)
+	`, []redisLuaCommandTest{
 		{
 			name:           "LLenExistingList",
-			key:            "testList",
+			luaGlobals:     map[string]lua.LValue{"key": lua.LString("testList")},
 			expectedResult: lua.LNumber(3),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -290,7 +160,7 @@ func TestRedisLLen(t *testing.T) {
 		},
 		{
 			name:           "LLenEmptyList",
-			key:            "emptyList",
+			luaGlobals:     map[string]lua.LValue{"key": lua.LString("emptyList")},
 			expectedResult: lua.LNumber(0),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -299,53 +169,109 @@ func TestRedisLLen(t *testing.T) {
 		},
 		{
 			name:           "LLenWithError",
-			key:            "errorList",
+			luaGlobals:     map[string]lua.LValue{"key": lua.LString("errorList")},
 			expectedResult: lua.LNil,
 			expectedErr:    lua.LString("some error"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectLLen("errorList").SetErr(errors.New("some error"))
 			},
 		},
+	})
+}
+
+// listPushCases builds shared list push cases for left and right push commands.
+func listPushCases(
+	prefix string,
+	prepareSingle func(redismock.ClientMock),
+	prepareMultiple func(redismock.ClientMock),
+	prepareError func(redismock.ClientMock),
+) []multiValueRedisTest {
+	return []multiValueRedisTest{
+		{
+			name:             prefix + "SingleValue",
+			key:              "testList",
+			values:           []lua.LValue{lua.LString("value1")},
+			expectedResult:   lua.LNumber(1),
+			expectedErr:      lua.LNil,
+			prepareMockRedis: prepareSingle,
+		},
+		{
+			name:             prefix + "MultipleValues",
+			key:              "testList",
+			values:           []lua.LValue{lua.LString("value1"), lua.LString("value2"), lua.LString("value3")},
+			expectedResult:   lua.LNumber(3),
+			expectedErr:      lua.LNil,
+			prepareMockRedis: prepareMultiple,
+		},
+		{
+			name:             prefix + "WithError",
+			key:              "errorList",
+			values:           []lua.LValue{lua.LString("value1")},
+			expectedResult:   lua.LNil,
+			expectedErr:      lua.LString("some error"),
+			prepareMockRedis: prepareError,
+		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
-
-			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
-
-			L.SetGlobal("key", lua.LString(tt.key))
-
-			err := L.DoString(`
-				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_llen("default", key)
-			`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedResult.Type() || lua.LVAsNumber(gotResult) != lua.LVAsNumber(tt.expectedResult) {
-				t.Errorf("nauthilus.redis_llen() gotResult = %v, want %v", gotResult, tt.expectedResult)
-			}
-
-			gotErr := L.GetGlobal("err")
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
+// listPopCases builds shared list pop cases for left and right pop commands.
+func listPopCases(
+	prefix string,
+	prepareValue func(redismock.ClientMock),
+	prepareNil func(redismock.ClientMock),
+	prepareError func(redismock.ClientMock),
+) []simpleKeyRedisTest {
+	return []simpleKeyRedisTest{
+		{
+			name:             prefix + "ExistingKey",
+			key:              "testList",
+			expectedResult:   lua.LString("value1"),
+			expectedErr:      lua.LNil,
+			prepareMockRedis: prepareValue,
+		},
+		{
+			name:             prefix + "EmptyList",
+			key:              "emptyList",
+			expectedResult:   lua.LNil,
+			expectedErr:      lua.LString("redis: nil"),
+			prepareMockRedis: prepareNil,
+		},
+		{
+			name:             prefix + "WithError",
+			key:              "errorList",
+			expectedResult:   lua.LNil,
+			expectedErr:      lua.LString("some error"),
+			prepareMockRedis: prepareError,
+		},
 	}
+}
+
+// expectLPopValue configures a successful LPOP expectation.
+func expectLPopValue(mock redismock.ClientMock) {
+	mock.ExpectLPop("testList").SetVal("value1")
+}
+
+// expectLPopNil configures a nil LPOP expectation.
+func expectLPopNil(mock redismock.ClientMock) {
+	mock.ExpectLPop("emptyList").RedisNil()
+}
+
+// expectLPopError configures a failing LPOP expectation.
+func expectLPopError(mock redismock.ClientMock) {
+	mock.ExpectLPop("errorList").SetErr(errors.New("some error"))
+}
+
+// expectRPopValue configures a successful RPOP expectation.
+func expectRPopValue(mock redismock.ClientMock) {
+	mock.ExpectRPop("testList").SetVal("value1")
+}
+
+// expectRPopNil configures a nil RPOP expectation.
+func expectRPopNil(mock redismock.ClientMock) {
+	mock.ExpectRPop("emptyList").RedisNil()
+}
+
+// expectRPopError configures a failing RPOP expectation.
+func expectRPopError(mock redismock.ClientMock) {
+	mock.ExpectRPop("errorList").SetErr(errors.New("some error"))
 }

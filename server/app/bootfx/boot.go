@@ -75,101 +75,139 @@ const bootFlagVersion = "version"
 // ParseFlagsAndPrintVersion parses command-line flags, configures viper/config paths,
 // and prints the version information if the `-version` flag is set.
 func ParseFlagsAndPrintVersion(version string) {
-	versionFlag := flag.Bool(bootFlagVersion, false, "print version and exit")
-	configFlag := flag.String("config", "", "path to configuration file")
-	configFormatFlag := flag.String("config-format", "yaml", "configuration file format (yaml, json, toml, etc.)")
-	configDumpFormatFlag := flag.String("dump-format", string(config.DumpFormatCanonical), "configuration dump output format (canonical, yaml, json, toml)")
-	configCheckFlag := flag.Bool("config-check", false, "validate configuration and exit (0 if valid, 1 otherwise)")
-	configDumpDefaultsFlag := flag.Bool("d", false, "print configuration defaults and exit")
-	configDumpNonDefaultsFlag := flag.Bool("n", false, "print non-default configuration values and exit")
-	configDumpPrintSensitiveFlag := flag.Bool("P", false, "print sensitive configuration values in dump output")
-	genOIDCKey := flag.Bool("gen-oidc-key", false, "generate a new RSA key for OIDC signing")
-	genSAMLCert := flag.String("gen-saml-cert", "", "generate a self-signed certificate for SAML (provide common name)")
-	keyBits := flag.Int("key-bits", 4096, "bits for the generated RSA key")
-	certYears := flag.Int("cert-years", 10, "validity in years for the generated certificate")
+	flags := newBootFlags()
 
-	// Lua testing flags
-	testLuaScript := flag.String("test-lua", "", "path to Lua script to test")
-	testCallback := flag.String("test-callback", "", "callback type: subject, environment, action, backend, hook, cache_flush")
-	testMockData := flag.String("test-mock", "", "path to JSON file with mock data")
-
-	flagutil.ApplyGroupedDoubleDashUsage(flag.CommandLine, "nauthilus", []flagutil.UsageGroup{
-		{
-			Title: "General",
-			Flags: []string{bootFlagVersion, "config", "config-format"},
-		},
-		{
-			Title: "Configuration Checks",
-			Flags: []string{"config-check", "d", "n", "dump-format", "P"},
-		},
-		{
-			Title: "Key Generation",
-			Flags: []string{"gen-oidc-key", "gen-saml-cert", "key-bits", "cert-years"},
-		},
-		{
-			Title: "Lua Testing",
-			Flags: []string{"test-lua", "test-callback", "test-mock"},
-		},
-	})
+	applyBootFlagUsage()
 
 	flag.Parse()
 
-	// Store Lua test flags
-	luaTestFlags.ScriptPath = *testLuaScript
-	luaTestFlags.CallbackType = *testCallback
-	luaTestFlags.MockDataPath = *testMockData
-	configCheckMode = *configCheckFlag
-	configDumpDefaultsMode = *configDumpDefaultsFlag
-	configDumpNonDefaultsMode = *configDumpNonDefaultsFlag
-	configDumpPrintSensitiveMode = *configDumpPrintSensitiveFlag
-	config.SetConfigDumpPrintSensitiveValues(*configDumpPrintSensitiveFlag)
+	applyBootRuntimeFlags(version, flags)
+	handleBootExitActions(version, flags)
+	applyConfigFileFlags(flags)
+}
+
+type bootFlags struct {
+	version                  *bool
+	configPath               *string
+	configFormat             *string
+	configDumpFormat         *string
+	configCheck              *bool
+	configDumpDefaults       *bool
+	configDumpNonDefaults    *bool
+	configDumpPrintSensitive *bool
+	genOIDCKey               *bool
+	genSAMLCert              *string
+	keyBits                  *int
+	certYears                *int
+	testLuaScript            *string
+	testCallback             *string
+	testMockData             *string
+}
+
+// newBootFlags registers server boot flags and keeps their pointers.
+func newBootFlags() bootFlags {
+	return bootFlags{
+		version:                  flag.Bool(bootFlagVersion, false, "print version and exit"),
+		configPath:               flag.String("config", "", "path to configuration file"),
+		configFormat:             flag.String("config-format", "yaml", "configuration file format (yaml, json, toml, etc.)"),
+		configDumpFormat:         flag.String("dump-format", string(config.DumpFormatCanonical), "configuration dump output format (canonical, yaml, json, toml)"),
+		configCheck:              flag.Bool("config-check", false, "validate configuration and exit (0 if valid, 1 otherwise)"),
+		configDumpDefaults:       flag.Bool("d", false, "print configuration defaults and exit"),
+		configDumpNonDefaults:    flag.Bool("n", false, "print non-default configuration values and exit"),
+		configDumpPrintSensitive: flag.Bool("P", false, "print sensitive configuration values in dump output"),
+		genOIDCKey:               flag.Bool("gen-oidc-key", false, "generate a new RSA key for OIDC signing"),
+		genSAMLCert:              flag.String("gen-saml-cert", "", "generate a self-signed certificate for SAML (provide common name)"),
+		keyBits:                  flag.Int("key-bits", 4096, "bits for the generated RSA key"),
+		certYears:                flag.Int("cert-years", 10, "validity in years for the generated certificate"),
+		testLuaScript:            flag.String("test-lua", "", "path to Lua script to test"),
+		testCallback:             flag.String("test-callback", "", "callback type: subject, environment, action, backend, hook, cache_flush"),
+		testMockData:             flag.String("test-mock", "", "path to JSON file with mock data"),
+	}
+}
+
+// applyBootFlagUsage installs grouped usage output for server boot flags.
+func applyBootFlagUsage() {
+	flagutil.ApplyGroupedDoubleDashUsage(flag.CommandLine, "nauthilus", []flagutil.UsageGroup{
+		{Title: "General", Flags: []string{bootFlagVersion, "config", "config-format"}},
+		{Title: "Configuration Checks", Flags: []string{"config-check", "d", "n", "dump-format", "P"}},
+		{Title: "Key Generation", Flags: []string{"gen-oidc-key", "gen-saml-cert", "key-bits", "cert-years"}},
+		{Title: "Lua Testing", Flags: []string{"test-lua", "test-callback", "test-mock"}},
+	})
+}
+
+// applyBootRuntimeFlags stores parsed flags in package runtime state.
+func applyBootRuntimeFlags(version string, flags bootFlags) {
+	luaTestFlags.ScriptPath = *flags.testLuaScript
+	luaTestFlags.CallbackType = *flags.testCallback
+	luaTestFlags.MockDataPath = *flags.testMockData
+	configCheckMode = *flags.configCheck
+	configDumpDefaultsMode = *flags.configDumpDefaults
+	configDumpNonDefaultsMode = *flags.configDumpNonDefaults
+	configDumpPrintSensitiveMode = *flags.configDumpPrintSensitive
+	config.SetConfigDumpPrintSensitiveValues(*flags.configDumpPrintSensitive)
 	config.SetConfigDumpVersion(version)
 
-	parsedDumpFormat, err := config.ParseDumpFormat(*configDumpFormatFlag)
+	parsedDumpFormat, err := config.ParseDumpFormat(*flags.configDumpFormat)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid --dump-format value: %v\n", err)
 		os.Exit(1)
 	}
 
 	configDumpFormat = parsedDumpFormat
+}
 
-	if *versionFlag {
+// handleBootExitActions performs flags that print and terminate the process.
+func handleBootExitActions(version string, flags bootFlags) {
+	if *flags.version {
 		fmt.Println("Version: ", version)
 		os.Exit(0)
 	}
 
-	if *genOIDCKey {
-		key, err := keygen.GenerateRSAKey(*keyBits)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to generate OIDC key: %v\n", err)
-			os.Exit(1)
-		}
-
-		fmt.Println(key)
-		os.Exit(0)
+	if *flags.genOIDCKey {
+		printGeneratedOIDCKey(*flags.keyBits)
 	}
 
-	if *genSAMLCert != "" {
-		cert, key, err := keygen.GenerateSelfSignedCert(*genSAMLCert, *keyBits, *certYears)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to generate SAML certificate: %v\n", err)
-			os.Exit(1)
-		}
+	if *flags.genSAMLCert != "" {
+		printGeneratedSAMLCert(*flags.genSAMLCert, *flags.keyBits, *flags.certYears)
+	}
+}
 
-		fmt.Println("Certificate:")
-		fmt.Println(cert)
-		fmt.Println("Key:")
-		fmt.Println(key)
-		os.Exit(0)
+// printGeneratedOIDCKey prints an RSA signing key and exits.
+func printGeneratedOIDCKey(keyBits int) {
+	key, err := keygen.GenerateRSAKey(keyBits)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to generate OIDC key: %v\n", err)
+		os.Exit(1)
 	}
 
-	if *configFlag != "" {
-		config.ConfigFilePath = *configFlag
-		viper.SetConfigFile(*configFlag)
+	fmt.Println(key)
+	os.Exit(0)
+}
+
+// printGeneratedSAMLCert prints a SAML certificate/key pair and exits.
+func printGeneratedSAMLCert(commonName string, keyBits int, certYears int) {
+	cert, key, err := keygen.GenerateSelfSignedCert(commonName, keyBits, certYears)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to generate SAML certificate: %v\n", err)
+		os.Exit(1)
 	}
 
-	config.ConfigFileType = *configFormatFlag
-	viper.SetConfigType(*configFormatFlag)
+	fmt.Println("Certificate:")
+	fmt.Println(cert)
+	fmt.Println("Key:")
+	fmt.Println(key)
+	os.Exit(0)
+}
+
+// applyConfigFileFlags updates Viper with parsed config file flags.
+func applyConfigFileFlags(flags bootFlags) {
+	if *flags.configPath != "" {
+		config.ConfigFilePath = *flags.configPath
+		viper.SetConfigFile(*flags.configPath)
+	}
+
+	config.ConfigFileType = *flags.configFormat
+	viper.SetConfigType(*flags.configFormat)
 }
 
 // GetLuaTestFlags returns the parsed Lua test flags.

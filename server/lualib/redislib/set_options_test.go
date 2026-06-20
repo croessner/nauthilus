@@ -16,36 +16,46 @@
 package redislib
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
-	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/go-redis/redismock/v9"
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
 func TestRedisSet_WithOptionsTable(t *testing.T) {
-	testFile := &config.FileSettings{Server: &config.ServerSection{}}
-	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
-
 	now := time.Now().Add(2 * time.Hour).Truncate(time.Second)
 
-	tests := []struct {
-		name           string
-		luaOptions     string
-		expect         func(mock redismock.ClientMock)
-		expectedResult lua.LValue
-		expectedErr    lua.LValue
-	}{
+	for _, tt := range redisSetOptionsCases(now) {
+		t.Run(tt.name, func(t *testing.T) {
+			runRedisSetOptionsCase(t, tt)
+		})
+	}
+}
+
+type redisSetOptionsCase struct {
+	name           string
+	luaOptions     string
+	expect         func(mock redismock.ClientMock)
+	expectedResult lua.LValue
+	expectedErr    lua.LValue
+}
+
+// redisSetOptionsCases returns SET option-table behavior cases.
+func redisSetOptionsCases(now time.Time) []redisSetOptionsCase {
+	cases := redisSetExpirationOptionsCases(now)
+	cases = append(cases, redisSetModeOptionsCases()...)
+	cases = append(cases, redisSetErrorOptionsCases()...)
+
+	return cases
+}
+
+// redisSetExpirationOptionsCases returns SET expiration option cases.
+func redisSetExpirationOptionsCases(now time.Time) []redisSetOptionsCase {
+	return []redisSetOptionsCase{
 		{
 			name:       "EX seconds",
 			luaOptions: `{ ex = 10 }`,
@@ -82,6 +92,12 @@ func TestRedisSet_WithOptionsTable(t *testing.T) {
 			expectedResult: lua.LString("OK"),
 			expectedErr:    lua.LNil,
 		},
+	}
+}
+
+// redisSetModeOptionsCases returns SET mode and result option cases.
+func redisSetModeOptionsCases() []redisSetOptionsCase {
+	return []redisSetOptionsCase{
 		{
 			name:       "NX option",
 			luaOptions: `{ nx = true }`,
@@ -127,6 +143,12 @@ func TestRedisSet_WithOptionsTable(t *testing.T) {
 			expectedResult: lua.LString("OK"),
 			expectedErr:    lua.LNil,
 		},
+	}
+}
+
+// redisSetErrorOptionsCases returns SET error propagation cases.
+func redisSetErrorOptionsCases() []redisSetOptionsCase {
+	return []redisSetOptionsCase{
 		{
 			name:       "Error bubbles up",
 			luaOptions: `{ ex = 1 }`,
@@ -137,100 +159,76 @@ func TestRedisSet_WithOptionsTable(t *testing.T) {
 			expectedErr:    lua.LString("boom"),
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock conn.")
-			}
+// runRedisSetOptionsCase executes one SET option-table scenario.
+func runRedisSetOptionsCase(t *testing.T, tt redisSetOptionsCase) {
+	t.Helper()
 
-			tt.expect(mock)
+	L, mock, _ := newRedisLuaCommandState(t)
+	tt.expect(mock)
+	runRedisSetOptionsScript(t, L, tt.luaOptions)
 
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
+	assertLuaValueEqual(t, "redis_set", L.GetGlobal("result"), tt.expectedResult)
+	checkLuaError(t, L.GetGlobal("err"), tt.expectedErr)
+	assertRedisExpectationsAndClear(t, mock)
+}
 
-			L := lua.NewState()
-			defer L.Close()
+// runRedisSetOptionsScript executes the SET option-table Lua call.
+func runRedisSetOptionsScript(t *testing.T, L *lua.LState, luaOptions string) {
+	t.Helper()
 
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
+	L.SetGlobal("k", lua.LString("k"))
+	L.SetGlobal("v", lua.LString("v"))
 
-			L.SetGlobal("k", lua.LString("k"))
-			L.SetGlobal("v", lua.LString("v"))
-
-			script := fmt.Sprintf(`local r = require("nauthilus_redis"); result, err = r.redis_set("default", k, v, %s)`, tt.luaOptions)
-			if err := L.DoString(script); err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			got := L.GetGlobal("result")
-			if got.Type() != tt.expectedResult.Type() || got.String() != tt.expectedResult.String() {
-				t.Errorf("redis_set() result = %v, want %v", got.String(), tt.expectedResult.String())
-			}
-
-			gotErr := L.GetGlobal("err")
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
+	script := fmt.Sprintf(`local r = require("nauthilus_redis"); result, err = r.redis_set("default", k, v, %s)`, luaOptions)
+	if err := L.DoString(script); err != nil {
+		t.Fatalf("Running Lua code failed: %v", err)
 	}
 }
 
 func TestRedisSet_WithOptionsTable_NilSemantics(t *testing.T) {
-	testFile := &config.FileSettings{Server: &config.ServerSection{}}
-	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	for _, tt := range redisSetNilSemanticsCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			runRedisSetNilSemanticsCase(t, tt)
+		})
+	}
+}
 
-	tests := []struct {
-		name       string
-		setArgs    redis.SetArgs
-		luaOptions string
-	}{
+type redisSetNilSemanticsCase struct {
+	name       string
+	setArgs    redis.SetArgs
+	luaOptions string
+}
+
+// redisSetNilSemanticsCases returns SET cases where Redis nil is a successful result.
+func redisSetNilSemanticsCases() []redisSetNilSemanticsCase {
+	return []redisSetNilSemanticsCase{
 		{name: "NX unmet returns nil no error", setArgs: redis.SetArgs{Mode: "NX"}, luaOptions: `{ nx = true }`},
 		{name: "XX unmet returns nil no error", setArgs: redis.SetArgs{Mode: "XX"}, luaOptions: `{ xx = true }`},
 		{name: "GET no old value returns nil no error", setArgs: redis.SetArgs{Get: true}, luaOptions: `{ get = true }`},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock conn.")
-			}
+// runRedisSetNilSemanticsCase executes one SET nil-semantics scenario.
+func runRedisSetNilSemanticsCase(t *testing.T, tt redisSetNilSemanticsCase) {
+	t.Helper()
 
-			mock.ExpectSetArgs("k", "v", tt.setArgs).RedisNil()
+	L, mock, _ := newRedisLuaCommandState(t)
+	mock.ExpectSetArgs("k", "v", tt.setArgs).RedisNil()
+	runRedisSetOptionsScript(t, L, tt.luaOptions)
 
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
-
-			L.SetGlobal("k", lua.LString("k"))
-			L.SetGlobal("v", lua.LString("v"))
-
-			script := fmt.Sprintf(`local r = require("nauthilus_redis"); result, err = r.redis_set("default", k, v, %s)`, tt.luaOptions)
-			if err := L.DoString(script); err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			// result should be nil, err should be nil
-			got := L.GetGlobal("result")
-			if got != lua.LNil {
-				t.Errorf("expected result nil, got %v", got)
-			}
-
-			gotErr := L.GetGlobal("err")
-			if gotErr != lua.LNil {
-				t.Errorf("expected err nil, got %v", gotErr)
-			}
-
-			mock.ClearExpect()
-		})
+	if got := L.GetGlobal("result"); got != lua.LNil {
+		t.Errorf("expected result nil, got %v", got)
 	}
+
+	if gotErr := L.GetGlobal("err"); gotErr != lua.LNil {
+		t.Errorf("expected err nil, got %v", gotErr)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("mock expectations were not met: %v", err)
+	}
+
+	mock.ClearExpect()
 }

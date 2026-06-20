@@ -44,52 +44,58 @@ func SessionCleaner(ctx *gin.Context) {
 		return
 	}
 
-	// Cleanup all sensitive session keys.
-	mgr.Delete(definitions.SessionKeyAuthResult)
-	mgr.Delete(definitions.SessionKeyUsername)
-	mgr.Delete(definitions.SessionKeyAccount)
-	mgr.Delete(definitions.SessionKeyHaveTOTP)
-	mgr.Delete(definitions.SessionKeyTOTPURL)
-	mgr.Delete(definitions.SessionKeyUserBackend)
-	mgr.Delete(definitions.SessionKeyRemoteBackendRefType)
-	mgr.Delete(definitions.SessionKeyRemoteBackendRefName)
-	mgr.Delete(definitions.SessionKeyRemoteBackendRefProtocol)
-	mgr.Delete(definitions.SessionKeyRemoteBackendRefAuthority)
-	mgr.Delete(definitions.SessionKeyRemoteBackendRefToken)
-	mgr.Delete(definitions.SessionKeyMFAFactorRemoteBackendRefType)
-	mgr.Delete(definitions.SessionKeyMFAFactorRemoteBackendRefName)
-	mgr.Delete(definitions.SessionKeyMFAFactorRemoteBackendRefProtocol)
-	mgr.Delete(definitions.SessionKeyMFAFactorRemoteBackendRefAuthority)
-	mgr.Delete(definitions.SessionKeyMFAFactorRemoteBackendRefToken)
-	mgr.Delete(definitions.SessionKeyUniqueUserID)
-	mgr.Delete(definitions.SessionKeyDisplayName)
-	mgr.Delete(definitions.SessionKeyRegistration)
-	mgr.Delete(definitions.SessionKeyOIDCClients)
-	mgr.Delete(definitions.SessionKeyOIDCConsentExpiries)
-	mgr.Delete(definitions.SessionKeyTOTPSecret)
-	mgr.Delete(definitions.SessionKeyTOTPPendingRegistration)
-	mgr.Delete(definitions.SessionKeyTOTPOperationID)
-	mgr.Delete(definitions.SessionKeyRecoveryCodes)
-	mgr.Delete(definitions.SessionKeyRecoveryCodesRemoteGenerated)
-	mgr.Delete(definitions.SessionKeyRecoveryOperationID)
-	mgr.Delete(definitions.SessionKeySubject)
-	mgr.Delete(definitions.SessionKeyUserBackendName)
-	mgr.Delete(definitions.SessionKeyProtocol)
-	mgr.Delete(definitions.SessionKeyLang)
-	mgr.Delete(definitions.SessionKeyRememberTTL)
-	mgr.Delete(definitions.SessionKeyLoginError)
-
-	// MFA-related keys
-	mgr.Delete(definitions.SessionKeyMFAAccount)
-	mgr.Delete(definitions.SessionKeyMFADisplayName)
-	mgr.Delete(definitions.SessionKeyMFAFactorAccount)
-	mgr.Delete(definitions.SessionKeyMFAFactorUniqueUserID)
-	mgr.Delete(definitions.SessionKeyMFAFactorDisplayName)
-	mgr.Delete(definitions.SessionKeyMFAMulti)
-	mgr.Delete(definitions.SessionKeyMFAMethod)
-	mgr.Delete(definitions.SessionKeyMFACompleted)
+	for _, key := range sessionCleanerKeys() {
+		mgr.Delete(key)
+	}
 
 	// Cookie is automatically saved by the cookie.Middleware after the handler chain.
+}
+
+// sessionCleanerKeys returns all sensitive browser-session keys.
+func sessionCleanerKeys() []string {
+	return []string{
+		definitions.SessionKeyAuthResult,
+		definitions.SessionKeyUsername,
+		definitions.SessionKeyAccount,
+		definitions.SessionKeyHaveTOTP,
+		definitions.SessionKeyTOTPURL,
+		definitions.SessionKeyUserBackend,
+		definitions.SessionKeyRemoteBackendRefType,
+		definitions.SessionKeyRemoteBackendRefName,
+		definitions.SessionKeyRemoteBackendRefProtocol,
+		definitions.SessionKeyRemoteBackendRefAuthority,
+		definitions.SessionKeyRemoteBackendRefToken,
+		definitions.SessionKeyMFAFactorRemoteBackendRefType,
+		definitions.SessionKeyMFAFactorRemoteBackendRefName,
+		definitions.SessionKeyMFAFactorRemoteBackendRefProtocol,
+		definitions.SessionKeyMFAFactorRemoteBackendRefAuthority,
+		definitions.SessionKeyMFAFactorRemoteBackendRefToken,
+		definitions.SessionKeyUniqueUserID,
+		definitions.SessionKeyDisplayName,
+		definitions.SessionKeyRegistration,
+		definitions.SessionKeyOIDCClients,
+		definitions.SessionKeyOIDCConsentExpiries,
+		definitions.SessionKeyTOTPSecret,
+		definitions.SessionKeyTOTPPendingRegistration,
+		definitions.SessionKeyTOTPOperationID,
+		definitions.SessionKeyRecoveryCodes,
+		definitions.SessionKeyRecoveryCodesRemoteGenerated,
+		definitions.SessionKeyRecoveryOperationID,
+		definitions.SessionKeySubject,
+		definitions.SessionKeyUserBackendName,
+		definitions.SessionKeyProtocol,
+		definitions.SessionKeyLang,
+		definitions.SessionKeyRememberTTL,
+		definitions.SessionKeyLoginError,
+		definitions.SessionKeyMFAAccount,
+		definitions.SessionKeyMFADisplayName,
+		definitions.SessionKeyMFAFactorAccount,
+		definitions.SessionKeyMFAFactorUniqueUserID,
+		definitions.SessionKeyMFAFactorDisplayName,
+		definitions.SessionKeyMFAMulti,
+		definitions.SessionKeyMFAMethod,
+		definitions.SessionKeyMFACompleted,
+	}
 }
 
 // ClearBrowserCookies explicitly overwrites security-relevant cookies in the browser with an expired state.

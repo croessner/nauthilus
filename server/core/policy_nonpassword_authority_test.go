@@ -330,37 +330,86 @@ func mustPolicyBackendForTest(t *testing.T, backendName definitions.Backend) *co
 }
 
 func customLookupDenySnapshotForTest() *policyruntime.Snapshot {
+	return customNonPasswordDenySnapshotForTest(customNonPasswordDenySnapshot{
+		generation:     121,
+		operation:      policy.OperationLookupIdentity,
+		policyName:     "custom_deny_lookup_identity",
+		requiredCheck:  "ldap_backend",
+		attributeID:    policy.AttributeIdentityFound,
+		outcomeMarker:  "auth.outcome.custom_lookup_deny",
+		responseText:   "Custom lookup deny",
+		includeAccount: false,
+	})
+}
+
+func customListAccountsDenySnapshotForTest() *policyruntime.Snapshot {
+	return customNonPasswordDenySnapshotForTest(customNonPasswordDenySnapshot{
+		generation:     122,
+		operation:      policy.OperationListAccounts,
+		policyName:     "custom_deny_account_listing",
+		requiredCheck:  "account_provider",
+		attributeID:    policy.AttributeAccountProviderCompleted,
+		outcomeMarker:  "auth.outcome.custom_account_listing_deny",
+		responseText:   "Custom account listing deny",
+		includeAccount: true,
+	})
+}
+
+type customNonPasswordDenySnapshot struct {
+	generation     uint64
+	operation      policy.Operation
+	policyName     string
+	requiredCheck  string
+	attributeID    string
+	outcomeMarker  string
+	responseText   string
+	includeAccount bool
+}
+
+// customNonPasswordDenySnapshotForTest builds a non-password deny snapshot for one operation.
+func customNonPasswordDenySnapshotForTest(snapshot customNonPasswordDenySnapshot) *policyruntime.Snapshot {
+	stagePlans := map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+		snapshot.operation: {
+			policy.StageAuthDecision: customNonPasswordDenyStagePlan(snapshot),
+		},
+	}
+
+	if snapshot.includeAccount {
+		stagePlans[snapshot.operation][policy.StageAccountProvider] = customAccountProviderStagePlanForTest(snapshot.operation)
+	}
+
 	return &policyruntime.Snapshot{
-		Generation:    121,
+		Generation:    snapshot.generation,
 		Mode:          "enforce",
 		DefaultPolicy: policy.BuiltinDefaultSet,
-		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
-			policy.OperationLookupIdentity: {
-				policy.StageAuthDecision: {
-					Stage: policy.StageAuthDecision,
-					Policies: []policyruntime.CompiledPolicy{
-						{
-							Name:          "custom_deny_lookup_identity",
-							Stage:         policy.StageAuthDecision,
-							Operations:    []policy.Operation{policy.OperationLookupIdentity},
-							RequireChecks: []string{"ldap_backend"},
-							Root: policyruntime.CompiledExpr{
-								Kind:        policyruntime.ExprKindAttribute,
-								AttributeID: policy.AttributeIdentityFound,
-								Operator:    "is",
-								Expected:    policyruntime.TypedValue{Value: true},
-							},
-							Then: policyruntime.DecisionPlan{
-								Decision:       policy.DecisionDeny,
-								OutcomeMarker:  "auth.outcome.custom_lookup_deny",
-								FSMEventMarker: policy.FSMEventMarkerAuthDeny,
-								ResponseMarker: policy.ResponseMarkerFail,
-								ResponseMessage: policyruntime.ResponseMessagePlan{
-									Source:  policy.ResponseSourceLiteral,
-									Literal: "Custom lookup deny",
-								},
-							},
-						},
+		StagePlans:    stagePlans,
+	}
+}
+
+// customNonPasswordDenyStagePlan builds the shared auth-decision deny stage.
+func customNonPasswordDenyStagePlan(snapshot customNonPasswordDenySnapshot) policyruntime.CompiledStagePlan {
+	return policyruntime.CompiledStagePlan{
+		Stage: policy.StageAuthDecision,
+		Policies: []policyruntime.CompiledPolicy{
+			{
+				Name:          snapshot.policyName,
+				Stage:         policy.StageAuthDecision,
+				Operations:    []policy.Operation{snapshot.operation},
+				RequireChecks: []string{snapshot.requiredCheck},
+				Root: policyruntime.CompiledExpr{
+					Kind:        policyruntime.ExprKindAttribute,
+					AttributeID: snapshot.attributeID,
+					Operator:    "is",
+					Expected:    policyruntime.TypedValue{Value: true},
+				},
+				Then: policyruntime.DecisionPlan{
+					Decision:       policy.DecisionDeny,
+					OutcomeMarker:  snapshot.outcomeMarker,
+					FSMEventMarker: policy.FSMEventMarkerAuthDeny,
+					ResponseMarker: policy.ResponseMarkerFail,
+					ResponseMessage: policyruntime.ResponseMessagePlan{
+						Source:  policy.ResponseSourceLiteral,
+						Literal: snapshot.responseText,
 					},
 				},
 			},
@@ -368,53 +417,18 @@ func customLookupDenySnapshotForTest() *policyruntime.Snapshot {
 	}
 }
 
-func customListAccountsDenySnapshotForTest() *policyruntime.Snapshot {
-	return &policyruntime.Snapshot{
-		Generation:    122,
-		Mode:          "enforce",
-		DefaultPolicy: policy.BuiltinDefaultSet,
-		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
-			policy.OperationListAccounts: {
-				policy.StageAccountProvider: {
-					Stage: policy.StageAccountProvider,
-					Checks: []policyruntime.CompiledCheck{
-						{
-							Name:       "account_provider",
-							Type:       policy.CheckTypeAccountProvider,
-							Stage:      policy.StageAccountProvider,
-							Operations: []policy.Operation{policy.OperationListAccounts},
-							ConfigRef:  "auth.backends",
-							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
-						},
-					},
-				},
-				policy.StageAuthDecision: {
-					Stage: policy.StageAuthDecision,
-					Policies: []policyruntime.CompiledPolicy{
-						{
-							Name:          "custom_deny_account_listing",
-							Stage:         policy.StageAuthDecision,
-							Operations:    []policy.Operation{policy.OperationListAccounts},
-							RequireChecks: []string{"account_provider"},
-							Root: policyruntime.CompiledExpr{
-								Kind:        policyruntime.ExprKindAttribute,
-								AttributeID: policy.AttributeAccountProviderCompleted,
-								Operator:    "is",
-								Expected:    policyruntime.TypedValue{Value: true},
-							},
-							Then: policyruntime.DecisionPlan{
-								Decision:       policy.DecisionDeny,
-								OutcomeMarker:  "auth.outcome.custom_account_listing_deny",
-								FSMEventMarker: policy.FSMEventMarkerAuthDeny,
-								ResponseMarker: policy.ResponseMarkerFail,
-								ResponseMessage: policyruntime.ResponseMessagePlan{
-									Source:  policy.ResponseSourceLiteral,
-									Literal: "Custom account listing deny",
-								},
-							},
-						},
-					},
-				},
+// customAccountProviderStagePlanForTest builds the account-provider check stage.
+func customAccountProviderStagePlanForTest(operation policy.Operation) policyruntime.CompiledStagePlan {
+	return policyruntime.CompiledStagePlan{
+		Stage: policy.StageAccountProvider,
+		Checks: []policyruntime.CompiledCheck{
+			{
+				Name:       "account_provider",
+				Type:       policy.CheckTypeAccountProvider,
+				Stage:      policy.StageAccountProvider,
+				Operations: []policy.Operation{operation},
+				ConfigRef:  "auth.backends",
+				RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
 			},
 		},
 	}

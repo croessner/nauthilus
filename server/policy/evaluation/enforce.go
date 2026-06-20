@@ -34,24 +34,7 @@ func EvaluateConfiguredPreAuth(
 	policyReport *report.DecisionReport,
 	input CompareInput,
 ) Result {
-	ctx, policyReport, input = normalizeCompareInput(ctx, policyReport, input)
-	if !configuredPreAuthEnabled(snapshot, policyReport.Operation) {
-		return Result{}
-	}
-
-	recorder := observability.SafeRecorder(input.Recorder)
-	tracer := observability.NewTracer()
-	start := time.Now()
-
-	spanCtx, span := tracer.Start(ctx, "policy.evaluate")
-	defer span.End()
-
-	final := selectConfiguredPreAuth(spanCtx, snapshot, policyReport, recorder, input)
-	recordConfiguredDecision(spanCtx, recorder, input, policyReport.Operation, policy.StagePreAuth, final, time.Since(start))
-	setConfiguredSpanAttributes(span, input, policyReport.Operation, policy.StagePreAuth, final)
-	logConfiguredDecision(spanCtx, input, policyReport.Operation, final)
-
-	return Result{Final: final}
+	return evaluateConfiguredEnforceStage(ctx, snapshot, policyReport, input, policy.StagePreAuth, configuredPreAuthEnabled, selectConfiguredPreAuth)
 }
 
 // EvaluateConfiguredAuth evaluates configured final auth rules in enforce mode.
@@ -61,8 +44,25 @@ func EvaluateConfiguredAuth(
 	policyReport *report.DecisionReport,
 	input CompareInput,
 ) Result {
+	return evaluateConfiguredEnforceStage(ctx, snapshot, policyReport, input, policy.StageAuthDecision, configuredAuthEnabled, selectConfiguredAuth)
+}
+
+type configuredStageEnabledFunc func(*policyruntime.Snapshot, policy.Operation) bool
+
+type configuredStageSelector func(context.Context, *policyruntime.Snapshot, *report.DecisionReport, observability.Recorder, CompareInput) *report.FinalDecision
+
+// evaluateConfiguredEnforceStage runs the shared configured-policy tracing and observability flow.
+func evaluateConfiguredEnforceStage(
+	ctx context.Context,
+	snapshot *policyruntime.Snapshot,
+	policyReport *report.DecisionReport,
+	input CompareInput,
+	stage policy.Stage,
+	enabled configuredStageEnabledFunc,
+	selectFinal configuredStageSelector,
+) Result {
 	ctx, policyReport, input = normalizeCompareInput(ctx, policyReport, input)
-	if !configuredAuthEnabled(snapshot, policyReport.Operation) {
+	if !enabled(snapshot, policyReport.Operation) {
 		return Result{}
 	}
 
@@ -73,9 +73,9 @@ func EvaluateConfiguredAuth(
 	spanCtx, span := tracer.Start(ctx, "policy.evaluate")
 	defer span.End()
 
-	final := selectConfiguredAuth(spanCtx, snapshot, policyReport, recorder, input)
-	recordConfiguredDecision(spanCtx, recorder, input, policyReport.Operation, policy.StageAuthDecision, final, time.Since(start))
-	setConfiguredSpanAttributes(span, input, policyReport.Operation, policy.StageAuthDecision, final)
+	final := selectFinal(spanCtx, snapshot, policyReport, recorder, input)
+	recordConfiguredDecision(spanCtx, recorder, input, policyReport.Operation, stage, final, time.Since(start))
+	setConfiguredSpanAttributes(span, input, policyReport.Operation, stage, final)
 	logConfiguredDecision(spanCtx, input, policyReport.Operation, final)
 
 	return Result{Final: final}

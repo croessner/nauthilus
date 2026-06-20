@@ -58,14 +58,7 @@ func registerAuthorizationCodeRoutes(
 	http.HandleFunc("/logout-callback", handleLogoutCallback)
 }
 
-// handleAuthCodeHome renders a small landing page so that incidental GET / requests
-// do not implicitly start a fresh OIDC authorization flow.
-func handleAuthCodeHome() http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-
-		_, _ = fmt.Fprint(w, `
+const authCodeHomeHTML = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -122,7 +115,16 @@ func handleAuthCodeHome() http.HandlerFunc {
     </div>
 </body>
 </html>
-`)
+`
+
+// handleAuthCodeHome renders a small landing page so that incidental GET / requests
+// do not implicitly start a fresh OIDC authorization flow.
+func handleAuthCodeHome() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+
+		_, _ = fmt.Fprint(w, authCodeHomeHTML)
 	}
 }
 

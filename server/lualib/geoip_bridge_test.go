@@ -230,17 +230,7 @@ func preloadClickHouseUtilModule(L *lua.LState) {
 }
 
 func preloadClickHousePasswordModule(L *lua.LState) {
-	L.PreloadModule("nauthilus_password", func(L *lua.LState) int {
-		mod := L.NewTable()
-		mod.RawSetString("generate_password_hash", L.NewFunction(func(L *lua.LState) int {
-			L.Push(lua.LString("hash"))
-
-			return 1
-		}))
-		L.Push(mod)
-
-		return 1
-	})
+	preloadStringFunctionModule(L, "nauthilus_password", "generate_password_hash", "hash")
 }
 
 func preloadClickHouseCacheModule(L *lua.LState) {

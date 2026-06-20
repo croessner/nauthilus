@@ -112,7 +112,7 @@ func TestDefaultRouterComposer_RegisterRoutes_RegistersPublicIDPOpenAPISpec(t *t
 	r.ServeHTTP(recorder, request)
 
 	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "Nauthilus IDP API")
+	assert.Contains(t, recorder.Body.String(), "Nauthilus IdP API")
 }
 
 func TestDefaultRouterComposer_RegisterRoutes_SkipsPublicIDPOpenAPIWithoutIDPSetup(t *testing.T) {

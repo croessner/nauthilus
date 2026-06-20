@@ -31,49 +31,8 @@ import (
 )
 
 func TestLuaGetWebAuthnCredentials(t *testing.T) {
-	mcfg := new(mockConfig)
-
-	var verbosity config.Verbosity
-
-	_ = verbosity.Set("debug")
-
-	mcfg.On("GetServer").Return(&config.ServerSection{
-		Timeouts: config.Timeouts{
-			LuaBackend: 2 * time.Second,
-		},
-		Log: config.Log{
-			Level: verbosity,
-		},
-	})
-
-	deps := AuthDeps{Cfg: mcfg}
-	lm := &luaManagerImpl{
-		backendName: "test",
-		deps:        deps,
-	}
-
-	cred := &mfa.PersistentCredential{
-		Credential: webauthn.Credential{
-			ID: []byte("test-id"),
-		},
-		Name: "Test Key",
-	}
-	credBytes, err := json.Marshal(cred)
-	assert.NoError(t, err)
-
-	auth := &AuthState{
-		deps: deps,
-		Request: AuthRequest{
-			Username: "jdoe",
-			Protocol: new(config.Protocol),
-		},
-		Runtime: AuthRuntime{
-			GUID: "test-guid",
-		},
-	}
-	auth.Request.Protocol.Set("oidc")
-
-	priorityqueue.LuaQueue.AddBackendName("test")
+	lm, auth, cred := setupWebAuthnCredentialTest(t)
+	credBytes := mustMarshalPersistentCredential(t, cred)
 
 	go func() {
 		req := priorityqueue.LuaQueue.Pop("test")
@@ -82,7 +41,7 @@ func TestLuaGetWebAuthnCredentials(t *testing.T) {
 
 			if req.LuaReplyChan != nil {
 				req.LuaReplyChan <- &lualib.LuaBackendResult{
-					WebAuthnCredentials: []string{string(credBytes)},
+					WebAuthnCredentials: []string{credBytes},
 				}
 			}
 		}
@@ -93,6 +52,16 @@ func TestLuaGetWebAuthnCredentials(t *testing.T) {
 	assert.Len(t, credentials, 1)
 	assert.True(t, bytes.Equal(cred.ID, credentials[0].ID))
 	assert.Equal(t, cred.Name, credentials[0].Name)
+}
+
+// mustMarshalPersistentCredential serializes a persistent credential fixture.
+func mustMarshalPersistentCredential(t *testing.T, cred *mfa.PersistentCredential) string {
+	t.Helper()
+
+	credBytes, err := json.Marshal(cred)
+	assert.NoError(t, err)
+
+	return string(credBytes)
 }
 
 // setupWebAuthnCredentialTest creates common test fixtures for Save/Delete WebAuthn credential tests.
@@ -194,52 +163,7 @@ func TestLuaSaveDeleteWebAuthnCredential(t *testing.T) {
 }
 
 func TestLuaUpdateWebAuthnCredential(t *testing.T) {
-	mcfg := new(mockConfig)
-
-	var verbosity config.Verbosity
-
-	_ = verbosity.Set("debug")
-
-	mcfg.On("GetServer").Return(&config.ServerSection{
-		Timeouts: config.Timeouts{
-			LuaBackend: 2 * time.Second,
-		},
-		Log: config.Log{
-			Level: verbosity,
-		},
-	})
-
-	deps := AuthDeps{Cfg: mcfg}
-	lm := &luaManagerImpl{
-		backendName: "test",
-		deps:        deps,
-	}
-
-	oldCred := &mfa.PersistentCredential{
-		Credential: webauthn.Credential{
-			ID: []byte("old-id"),
-		},
-		Name: "Old Key",
-	}
-	newCred := &mfa.PersistentCredential{
-		Credential: webauthn.Credential{
-			ID: []byte("new-id"),
-		},
-		Name: "New Key",
-	}
-
-	auth := &AuthState{
-		deps: deps,
-		Request: AuthRequest{
-			Username: "jdoe",
-			Protocol: new(config.Protocol),
-		},
-		Runtime: AuthRuntime{
-			GUID: "test-guid",
-		},
-	}
-
-	priorityqueue.LuaQueue.AddBackendName("test")
+	lm, auth, oldCred, newCred := setupWebAuthnCredentialUpdateTest(t)
 
 	go func() {
 		req := priorityqueue.LuaQueue.Pop("test")
@@ -267,4 +191,25 @@ func TestLuaUpdateWebAuthnCredential(t *testing.T) {
 
 	err := lm.UpdateWebAuthnCredential(auth, oldCred, newCred)
 	assert.NoError(t, err)
+}
+
+// setupWebAuthnCredentialUpdateTest creates fixtures for update credential tests.
+func setupWebAuthnCredentialUpdateTest(t *testing.T) (*luaManagerImpl, *AuthState, *mfa.PersistentCredential, *mfa.PersistentCredential) {
+	t.Helper()
+
+	lm, auth, _ := setupWebAuthnCredentialTest(t)
+	oldCred := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("old-id"),
+		},
+		Name: "Old Key",
+	}
+	newCred := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("new-id"),
+		},
+		Name: "New Key",
+	}
+
+	return lm, auth, oldCred, newCred
 }

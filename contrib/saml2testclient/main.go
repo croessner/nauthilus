@@ -620,7 +620,24 @@ func writeSAMLPostBinding(w http.ResponseWriter, body []byte) {
 
 func main() {
 	util.SetDefaultEnvironment(config.NewEnvironmentConfig())
+	applySAMLClientDefaults()
 
+	keyPair := loadSAMLKeyPair()
+	exportSPCertificate(keyPair)
+
+	idpMetadataURL := mustParseSAMLURL("IDP Metadata URL", samlIDPMetadataURL)
+	spURL := mustParseSAMLURL("SP URL", samlSPURL)
+	httpClient := newSAMLHTTPClient()
+	opts := newSAMLSPOptions(spURL, keyPair, httpClient)
+	attachIDPMetadata(&opts, httpClient, idpMetadataURL)
+
+	samlSP := mustNewSAMLSP(opts)
+	registerSAMLClientHandlers(samlSP, mustSuccessTemplate())
+	serveSAMLClient(spURL, keyPair)
+}
+
+// applySAMLClientDefaults fills default CLI flag values.
+func applySAMLClientDefaults() {
 	if samlIDPMetadataURL == "" {
 		samlIDPMetadataURL = "https://localhost:9443/saml/metadata"
 	}
@@ -632,43 +649,47 @@ func main() {
 	if samlSPURL == "" {
 		samlSPURL = "https://localhost:9095"
 	}
+}
 
-	var (
-		keyPair tls.Certificate
-		err     error
-	)
-
-	keyPair, err = tls.LoadX509KeyPair("contrib/saml2testclient/token.crt", "contrib/saml2testclient/token.key")
-	if err != nil {
-		log.Printf("Warning: Could not load keypair: %v. Generating a self-signed one...", err)
-
-		keyPair, err = generateSelfSignedCert()
-		if err != nil {
-			log.Fatalf("Failed to generate self-signed cert: %v", err)
-		}
+// loadSAMLKeyPair loads the configured keypair or creates a self-signed fallback.
+func loadSAMLKeyPair() tls.Certificate {
+	keyPair, err := tls.LoadX509KeyPair("contrib/saml2testclient/token.crt", "contrib/saml2testclient/token.key")
+	if err == nil {
+		return keyPair
 	}
 
-	// Export SP certificate as PEM so it can be used in IDP configuration
-	// (e.g. saml2.service_providers[].cert_file).
-	exportSPCertificate(keyPair)
+	log.Printf("Warning: Could not load keypair: %v. Generating a self-signed one...", err)
 
-	idpMetadataURL, err := url.Parse(samlIDPMetadataURL)
+	keyPair, err = generateSelfSignedCert()
 	if err != nil {
-		log.Fatalf("Invalid IDP Metadata URL: %v", err)
+		log.Fatalf("Failed to generate self-signed cert: %v", err)
 	}
 
-	spURL, err := url.Parse(samlSPURL)
+	return keyPair
+}
+
+// mustParseSAMLURL parses a configured URL or exits.
+func mustParseSAMLURL(label string, rawURL string) *url.URL {
+	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		log.Fatalf("Invalid SP URL: %v", err)
+		log.Fatalf("Invalid %s: %v", label, err)
 	}
 
-	httpClient := &http.Client{
+	return parsed
+}
+
+// newSAMLHTTPClient builds the SAML metadata HTTP client.
+func newSAMLHTTPClient() *http.Client {
+	return &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify},
 		},
 	}
+}
 
-	opts := samlsp.Options{
+// newSAMLSPOptions builds SAML SP options.
+func newSAMLSPOptions(spURL *url.URL, keyPair tls.Certificate, httpClient *http.Client) samlsp.Options {
+	return samlsp.Options{
 		URL:               *spURL,
 		Key:               keyPair.PrivateKey.(*rsa.PrivateKey),
 		Certificate:       keyPair.Leaf,
@@ -678,187 +699,180 @@ func main() {
 		SignRequest:       signAuthnRequests,
 		LogoutBindings:    []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding},
 	}
+}
 
-	// Try to fetch IDP metadata, but don't fail immediately if IDP is not up yet
-	// (though samlsp.New might need it if we want it fully initialized)
+// attachIDPMetadata fetches IDP metadata when available.
+func attachIDPMetadata(opts *samlsp.Options, httpClient *http.Client, idpMetadataURL *url.URL) {
 	log.Printf("Fetching IDP metadata from %s...", samlIDPMetadataURL)
 
 	idpMetadata, err := samlsp.FetchMetadata(context.Background(), httpClient, *idpMetadataURL)
 	if err != nil {
 		log.Printf("Warning: Could not fetch IDP metadata: %v. The client might not work until restarted or metadata is available.", err)
-	} else {
-		opts.IDPMetadata = idpMetadata
+
+		return
 	}
 
+	opts.IDPMetadata = idpMetadata
+}
+
+// mustNewSAMLSP initializes the SAML middleware or exits.
+func mustNewSAMLSP(opts samlsp.Options) *samlsp.Middleware {
 	samlSP, err := samlsp.New(opts)
 	if err != nil {
 		log.Fatalf("Failed to initialize SAML SP: %v", err)
 	}
 
+	return samlSP
+}
+
+// mustSuccessTemplate parses the account success template or exits.
+func mustSuccessTemplate() *template.Template {
 	tmpl, err := template.New("success").Parse(successPageTmpl)
 	if err != nil {
 		log.Fatalf("Failed to parse template: %v", err)
 	}
 
-	// Request logging middleware
-	logRequest := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			log.Printf("Received request: %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr)
-			next.ServeHTTP(w, r)
-		})
-	}
+	return tmpl
+}
 
-	http.Handle("/saml/", logRequest(samlSP))
-	http.Handle("/saml/login", logRequest(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Ensure that after successful login, we are redirected back to / instead of /saml/login,
-		// which would cause a loop.
+// registerSAMLClientHandlers registers all SAML test-client HTTP handlers.
+func registerSAMLClientHandlers(samlSP *samlsp.Middleware, tmpl *template.Template) {
+	registerSAMLAuthHandlers(samlSP)
+	registerSAMLLogoutHandler(samlSP)
+	registerSAMLHomeHandler(samlSP, tmpl)
+}
+
+// registerSAMLAuthHandlers registers SAML protocol entry points.
+func registerSAMLAuthHandlers(samlSP *samlsp.Middleware) {
+	http.Handle("/saml/", logRequestHandler(samlSP))
+	http.Handle("/saml/login", logRequestHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.URL.Path = "/"
 		samlSP.HandleStartAuthFlow(w, r)
 	})))
-	http.Handle("/saml/slo", logRequest(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		message, err := parseIncomingSLOMessage(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-
-			return
-		}
-
-		switch message.MessageType {
-		case sloMessageTypeResponse:
-			if err = validateIncomingLogoutResponse(&samlSP.ServiceProvider, r, message); err != nil {
-				http.Error(w, fmt.Sprintf("invalid logout response: %v", err), http.StatusBadRequest)
-
-				return
-			}
-
-			clearSessionCookies(w)
-			http.Redirect(w, r, "/", http.StatusFound)
-		case sloMessageTypeRequest:
-			logoutRequest, err := decodeIncomingLogoutRequest(message.Binding, message.Payload)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-
-				return
-			}
-
-			signingSP, err := cloneServiceProviderForSigning(&samlSP.ServiceProvider, signLogoutResponses)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-
-				return
-			}
-
-			clearSessionCookies(w)
-
-			switch message.Binding {
-			case saml.HTTPRedirectBinding:
-				redirectURL, err := signingSP.MakeRedirectLogoutResponse(logoutRequest.ID, message.RelayState)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-
-					return
-				}
-
-				http.Redirect(w, r, redirectURL.String(), http.StatusFound)
-			case saml.HTTPPostBinding:
-				postBody, err := signingSP.MakePostLogoutResponse(logoutRequest.ID, message.RelayState)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-
-					return
-				}
-
-				writeSAMLPostBinding(w, postBody)
-			default:
-				http.Error(w, fmt.Sprintf("unsupported logout binding %q", message.Binding), http.StatusBadRequest)
-			}
-		default:
-			http.Error(w, fmt.Sprintf("unsupported SLO message type %q", message.MessageType), http.StatusBadRequest)
-		}
+	http.Handle("/saml/slo", logRequestHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleSAMLSPLogoutService(w, r, samlSP)
 	})))
+}
 
+// registerSAMLLogoutHandler registers SP-initiated logout handling.
+func registerSAMLLogoutHandler(samlSP *samlsp.Middleware) {
 	http.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
-		nameID, sessionIndex, err := sessionLogoutContext(samlSP, r)
-		if err != nil {
-			clearSessionCookies(w)
-			http.Redirect(w, r, "/", http.StatusFound)
-
-			return
-		}
-
-		binding := preferredLogoutBinding(&samlSP.ServiceProvider)
-		if binding == "" {
-			clearSessionCookies(w)
-			http.Redirect(w, r, "/", http.StatusFound)
-
-			return
-		}
-
-		initiation, err := buildLogoutInitiation(
-			&samlSP.ServiceProvider,
-			binding,
-			nameID,
-			sessionIndex,
-			"logout",
-			signLogoutRequests,
-		)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-
-			return
-		}
-
-		switch initiation.Binding {
-		case saml.HTTPRedirectBinding:
-			http.Redirect(w, r, initiation.RedirectURL.String(), http.StatusFound)
-		case saml.HTTPPostBinding:
-			writeSAMLPostBinding(w, initiation.PostBody)
-		default:
-			http.Error(w, fmt.Sprintf("unsupported logout binding %q", initiation.Binding), http.StatusInternalServerError)
-		}
+		handleSPInitiatedLogout(w, r, samlSP)
 	})
+}
 
+// handleSPInitiatedLogout starts SAML logout or falls back to local cleanup.
+func handleSPInitiatedLogout(w http.ResponseWriter, r *http.Request, samlSP *samlsp.Middleware) {
+	nameID, sessionIndex, err := sessionLogoutContext(samlSP, r)
+	if err != nil {
+		clearSessionAndRedirectHome(w, r)
+
+		return
+	}
+
+	binding := preferredLogoutBinding(&samlSP.ServiceProvider)
+	if binding == "" {
+		clearSessionAndRedirectHome(w, r)
+
+		return
+	}
+
+	initiation, err := buildLogoutInitiation(
+		&samlSP.ServiceProvider,
+		binding,
+		nameID,
+		sessionIndex,
+		"logout",
+		signLogoutRequests,
+	)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+
+		return
+	}
+
+	writeLogoutInitiation(w, r, initiation)
+}
+
+// clearSessionAndRedirectHome clears local session cookies and redirects home.
+func clearSessionAndRedirectHome(w http.ResponseWriter, r *http.Request) {
+	clearSessionCookies(w)
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// writeLogoutInitiation sends a binding-specific SP-initiated logout message.
+func writeLogoutInitiation(w http.ResponseWriter, r *http.Request, initiation *logoutInitiation) {
+	switch initiation.Binding {
+	case saml.HTTPRedirectBinding:
+		http.Redirect(w, r, initiation.RedirectURL.String(), http.StatusFound)
+	case saml.HTTPPostBinding:
+		writeSAMLPostBinding(w, initiation.PostBody)
+	default:
+		http.Error(w, fmt.Sprintf("unsupported logout binding %q", initiation.Binding), http.StatusInternalServerError)
+	}
+}
+
+// registerSAMLHomeHandler registers the test-client landing page.
+func registerSAMLHomeHandler(samlSP *samlsp.Middleware, tmpl *template.Template) {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Received request: %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr)
+		handleSAMLHome(w, r, samlSP, tmpl)
+	})
+}
 
-		session, err := samlSP.Session.GetSession(r)
-		if session != nil && err == nil {
-			// User is logged in, show attributes
-			var attrs samlsp.Attributes
-			if sa, ok := session.(samlsp.SessionWithAttributes); ok {
-				attrs = sa.GetAttributes()
-			}
+// handleSAMLHome renders the login page or logged-in account page.
+func handleSAMLHome(w http.ResponseWriter, r *http.Request, samlSP *samlsp.Middleware, tmpl *template.Template) {
+	session, err := samlSP.Session.GetSession(r)
+	if session != nil && err == nil {
+		renderLoggedInSAMLHome(w, session, tmpl)
 
-			data, _ := json.MarshalIndent(attrs, "", "    ")
+		return
+	}
 
-			twoFAHomeURL := ""
+	writeSAMLLoginPage(w)
+}
 
-			if u, err := url.Parse(samlIDPMetadataURL); err == nil {
-				u.Path = "/mfa/register/home"
-				u.RawQuery = ""
-				u.Fragment = ""
-				twoFAHomeURL = u.String()
-			}
+// renderLoggedInSAMLHome writes the account page for an authenticated session.
+func renderLoggedInSAMLHome(w http.ResponseWriter, session samlsp.Session, tmpl *template.Template) {
+	attrs := samlsp.Attributes{}
+	if sessionWithAttributes, ok := session.(samlsp.SessionWithAttributes); ok {
+		attrs = sessionWithAttributes.GetAttributes()
+	}
 
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data, _ := json.MarshalIndent(attrs, "", "    ")
 
-			if err := tmpl.Execute(w, struct {
-				Attributes   string
-				TwoFAHomeURL string
-			}{
-				Attributes:   string(data),
-				TwoFAHomeURL: twoFAHomeURL,
-			}); err != nil {
-				http.Error(w, "failed to render account page", http.StatusInternalServerError)
-			}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-			return
-		}
+	if err := tmpl.Execute(w, struct {
+		Attributes   string
+		TwoFAHomeURL string
+	}{
+		Attributes:   string(data),
+		TwoFAHomeURL: resolveTwoFAHomeURL(),
+	}); err != nil {
+		http.Error(w, "failed to render account page", http.StatusInternalServerError)
+	}
+}
 
-		// User not logged in, show login page
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+// resolveTwoFAHomeURL derives the MFA home URL from IdP metadata configuration.
+func resolveTwoFAHomeURL() string {
+	u, err := url.Parse(samlIDPMetadataURL)
+	if err != nil {
+		return ""
+	}
 
-		if _, err := fmt.Fprintf(w, `<!DOCTYPE html>
+	u.Path = "/mfa/register/home"
+	u.RawQuery = ""
+	u.Fragment = ""
+
+	return u.String()
+}
+
+// writeSAMLLoginPage writes the unauthenticated login page.
+func writeSAMLLoginPage(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	if _, err := fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head>
     <title>SAML2 Test Client</title>
@@ -889,10 +903,97 @@ func main() {
     </div>
 </body>
 </html>`); err != nil {
-			log.Printf("Failed to write login page: %v", err)
-		}
-	})
+		log.Printf("Failed to write login page: %v", err)
+	}
+}
 
+// logRequestHandler logs inbound requests before passing them to the wrapped handler.
+func logRequestHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Received request: %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handleSAMLSPLogoutService handles incoming SAML SLO messages.
+func handleSAMLSPLogoutService(w http.ResponseWriter, r *http.Request, samlSP *samlsp.Middleware) {
+	message, err := parseIncomingSLOMessage(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+
+		return
+	}
+
+	switch message.MessageType {
+	case sloMessageTypeResponse:
+		handleIncomingLogoutResponse(w, r, samlSP, message)
+	case sloMessageTypeRequest:
+		handleIncomingLogoutRequest(w, r, samlSP, message)
+	default:
+		http.Error(w, fmt.Sprintf("unsupported SLO message type %q", message.MessageType), http.StatusBadRequest)
+	}
+}
+
+// handleIncomingLogoutResponse validates an SLO response and clears the local session.
+func handleIncomingLogoutResponse(w http.ResponseWriter, r *http.Request, samlSP *samlsp.Middleware, message *incomingSLOMessage) {
+	if err := validateIncomingLogoutResponse(&samlSP.ServiceProvider, r, message); err != nil {
+		http.Error(w, fmt.Sprintf("invalid logout response: %v", err), http.StatusBadRequest)
+
+		return
+	}
+
+	clearSessionCookies(w)
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// handleIncomingLogoutRequest responds to an incoming SLO request.
+func handleIncomingLogoutRequest(w http.ResponseWriter, r *http.Request, samlSP *samlsp.Middleware, message *incomingSLOMessage) {
+	logoutRequest, err := decodeIncomingLogoutRequest(message.Binding, message.Payload)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+
+		return
+	}
+
+	signingSP, err := cloneServiceProviderForSigning(&samlSP.ServiceProvider, signLogoutResponses)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+
+		return
+	}
+
+	clearSessionCookies(w)
+	writeSAMLLogoutResponse(w, r, signingSP, logoutRequest.ID, message)
+}
+
+// writeSAMLLogoutResponse writes a binding-specific SLO response.
+func writeSAMLLogoutResponse(w http.ResponseWriter, r *http.Request, signingSP *saml.ServiceProvider, requestID string, message *incomingSLOMessage) {
+	switch message.Binding {
+	case saml.HTTPRedirectBinding:
+		redirectURL, err := signingSP.MakeRedirectLogoutResponse(requestID, message.RelayState)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			return
+		}
+
+		http.Redirect(w, r, redirectURL.String(), http.StatusFound)
+	case saml.HTTPPostBinding:
+		postBody, err := signingSP.MakePostLogoutResponse(requestID, message.RelayState)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			return
+		}
+
+		writeSAMLPostBinding(w, postBody)
+	default:
+		http.Error(w, fmt.Sprintf("unsupported logout binding %q", message.Binding), http.StatusBadRequest)
+	}
+}
+
+// serveSAMLClient starts the configured HTTP or HTTPS listener.
+func serveSAMLClient(spURL *url.URL, keyPair tls.Certificate) {
 	isHTTPS := spURL.Scheme == "https"
 
 	tlsConfig := &tls.Config{

@@ -15,6 +15,16 @@ import (
 	"go.uber.org/fx/fxevent"
 )
 
+const (
+	flagWarnP95       = "warn-p95"
+	flagCritP95       = "crit-p95"
+	flagGraceSeconds  = "grace-seconds"
+	flagWarnErrorRate = "warn-error-rate"
+	flagCritErrorRate = "crit-error-rate"
+	flagWarnTrack     = "warn-track"
+	flagCritTrack     = "crit-track"
+)
+
 func main() {
 	cfg := engine.DefaultConfig()
 
@@ -53,9 +63,32 @@ func main() {
 }
 
 func setupFlags(cfg *engine.Config) {
+	registerInputEndpointFlags(cfg)
+	registerExecutionFlags(cfg)
+	registerParallelismFlags(cfg)
+	registerCSVGenerationFlags(cfg)
+	registerOutputFlags(cfg)
+	registerThresholdFlags(cfg)
+	registerAutoModeFlags(cfg)
+	registerPlateauDetectionFlags(cfg)
+	registerRandomEffectFlags(cfg)
+	registerDiagnosticFlags(cfg)
+	applyClientFlagUsage()
+}
+
+// registerInputEndpointFlags registers request input and endpoint flags.
+func registerInputEndpointFlags(cfg *engine.Config) {
 	flag.StringVar(&cfg.CSVPath, "csv", cfg.CSVPath, "CSV file path")
 	flag.StringVar(&cfg.Endpoint, "url", cfg.Endpoint, "Auth endpoint URL")
 	flag.StringVar(&cfg.Method, "method", cfg.Method, "HTTP method")
+	flag.StringVar(&cfg.HeadersList, "headers", cfg.HeadersList, "Extra headers, separated by '||'")
+	flag.StringVar(&cfg.BasicAuth, "basic-auth", cfg.BasicAuth, "HTTP Basic-Auth credentials in format username:password")
+	flag.IntVar(&cfg.OKStatus, "ok-status", cfg.OKStatus, "HTTP status indicating success when not using JSON flag")
+	flag.BoolVar(&cfg.UseJSONFlag, "json-ok", cfg.UseJSONFlag, "Expect JSON {ok:true|false} in response")
+}
+
+// registerExecutionFlags registers worker timing and row selection flags.
+func registerExecutionFlags(cfg *engine.Config) {
 	flag.IntVar(&cfg.Concurrency, "concurrency", cfg.Concurrency, "Concurrent workers")
 	flag.Float64Var(&cfg.RPS, "rps", cfg.RPS, "Global rate limit (0=unlimited)")
 	flag.IntVar(&cfg.JitterMs, "jitter-ms", cfg.JitterMs, "Random sleep 0..N ms before each request")
@@ -63,39 +96,82 @@ func setupFlags(cfg *engine.Config) {
 	flag.IntVar(&cfg.TimeoutMs, "timeout-ms", cfg.TimeoutMs, "HTTP timeout")
 	flag.IntVar(&cfg.MaxRows, "max", cfg.MaxRows, "Limit number of rows (0=all)")
 	flag.BoolVar(&cfg.Shuffle, "shuffle", cfg.Shuffle, "Shuffle rows before sending")
-	flag.StringVar(&cfg.HeadersList, "headers", cfg.HeadersList, "Extra headers, separated by '||'")
-	flag.StringVar(&cfg.BasicAuth, "basic-auth", cfg.BasicAuth, "HTTP Basic-Auth credentials in format username:password")
-	flag.IntVar(&cfg.OKStatus, "ok-status", cfg.OKStatus, "HTTP status indicating success when not using JSON flag")
-	flag.BoolVar(&cfg.UseJSONFlag, "json-ok", cfg.UseJSONFlag, "Expect JSON {ok:true|false} in response")
-	flag.BoolVar(&cfg.Verbose, "v", cfg.Verbose, "Verbose output")
+	flag.IntVar(&cfg.Loops, "loops", cfg.Loops, "Number of cycles to run over the CSV")
+	flag.DurationVar(&cfg.RunFor, "duration", cfg.RunFor, "Total duration to run the test (e.g. 5m). CSV rows will loop until time elapses")
+}
+
+// registerParallelismFlags registers per-item parallel request flags.
+func registerParallelismFlags(cfg *engine.Config) {
+	flag.IntVar(&cfg.MaxParallel, "max-parallel", cfg.MaxParallel, "Max parallel requests per item (1=off)")
+	flag.Float64Var(&cfg.ParallelProb, "parallel-prob", cfg.ParallelProb, "Probability (0..1) that an item is parallelized")
+	flag.Float64Var(&cfg.AbortProb, "abort-prob", cfg.AbortProb, "Probability (0..1) to abort/cancel a request (simulates connection drop)")
+	flag.BoolVar(&cfg.CompareParallel, "compare-parallel", cfg.CompareParallel, "Compare responses within a parallel group (strict byte equality)")
+	flag.BoolVar(&cfg.UseIdemKey, "idempotency-key", cfg.UseIdemKey, "Add Idempotency-Key header computed from request body (SHA-256)")
+}
+
+// registerCSVGenerationFlags registers synthetic CSV generation flags.
+func registerCSVGenerationFlags(cfg *engine.Config) {
 	flag.BoolVar(&cfg.GenCSV, "generate-csv", cfg.GenCSV, "Generate a CSV at --csv path and exit")
 	flag.IntVar(&cfg.GenCount, "generate-count", cfg.GenCount, "Number of rows to generate when --generate-csv is set")
 	flag.Float64Var(&cfg.GenCIDRProb, "generate-cidr-prob", cfg.GenCIDRProb, "Probability (0..1) that generated IPs are taken from the same CIDR block")
 	flag.IntVar(&cfg.GenCIDRPrefix, "generate-cidr-prefix", cfg.GenCIDRPrefix, "CIDR prefix length (8..30) of the shared block for IP grouping")
 	flag.StringVar(&cfg.CSVDelim, "csv-delim", cfg.CSVDelim, "CSV delimiter override: ',', ';', 'tab'; empty=auto-detect")
 	flag.BoolVar(&cfg.CSVDebug, "csv-debug", cfg.CSVDebug, "Print detected CSV headers and first row")
-	flag.IntVar(&cfg.Loops, "loops", cfg.Loops, "Number of cycles to run over the CSV")
-	flag.DurationVar(&cfg.RunFor, "duration", cfg.RunFor, "Total duration to run the test (e.g. 5m). CSV rows will loop until time elapses")
-	flag.IntVar(&cfg.MaxParallel, "max-parallel", cfg.MaxParallel, "Max parallel requests per item (1=off)")
-	flag.Float64Var(&cfg.ParallelProb, "parallel-prob", cfg.ParallelProb, "Probability (0..1) that an item is parallelized")
-	flag.Float64Var(&cfg.AbortProb, "abort-prob", cfg.AbortProb, "Probability (0..1) to abort/cancel a request (simulates connection drop)")
+}
+
+// registerOutputFlags registers progress and color output flags.
+func registerOutputFlags(cfg *engine.Config) {
+	flag.BoolVar(&cfg.Verbose, "v", cfg.Verbose, "Verbose output")
 	flag.DurationVar(&cfg.ProgressEvery, "progress-interval", cfg.ProgressEvery, "Progress report interval (e.g. 30s, 1m)")
-	flag.BoolVar(&cfg.CompareParallel, "compare-parallel", cfg.CompareParallel, "Compare responses within a parallel group (strict byte equality)")
-	flag.BoolVar(&cfg.UseIdemKey, "idempotency-key", cfg.UseIdemKey, "Add Idempotency-Key header computed from request body (SHA-256)")
 	flag.BoolVar(&cfg.ProgressBar, "progress-bar", cfg.ProgressBar, "Render a single-line progress bar (TTY only)")
 	flag.StringVar(&cfg.ColorMode, "color", cfg.ColorMode, "Color output: auto|always|never")
+}
 
-	// Thresholds & Coloring
-	flag.IntVar(&cfg.WarnP95, "warn-p95", cfg.WarnP95, "P95 threshold (ms) for yellow output")
-	flag.IntVar(&cfg.CritP95, "crit-p95", cfg.CritP95, "P95 threshold (ms) for red output")
-	flag.Float64Var(&cfg.WarnErr, "warn-error-rate", cfg.WarnErr, "Warn threshold for error rate in %")
-	flag.Float64Var(&cfg.CritErr, "crit-error-rate", cfg.CritErr, "Critical threshold for error rate in %")
-	flag.Float64Var(&cfg.WarnTrack, "warn-track", cfg.WarnTrack, "Warn threshold for tracking ratio rps/target_rps")
-	flag.Float64Var(&cfg.CritTrack, "crit-track", cfg.CritTrack, "Critical threshold for tracking ratio rps/target_rps")
+// registerThresholdFlags registers latency, error, and tracking thresholds.
+func registerThresholdFlags(cfg *engine.Config) {
+	registerIntThresholdFlags(cfg)
+	registerFloatThresholdFlags(cfg)
+}
 
-	flag.IntVar(&cfg.GraceSeconds, "grace-seconds", cfg.GraceSeconds, "Grace period (seconds) before auto-mode or stats start")
+// registerIntThresholdFlags registers integer warning and grace thresholds.
+func registerIntThresholdFlags(cfg *engine.Config) {
+	intFlags := []struct {
+		target *int
+		name   string
+		value  int
+		usage  string
+	}{
+		{&cfg.WarnP95, flagWarnP95, cfg.WarnP95, "P95 threshold (ms) for yellow output"},
+		{&cfg.CritP95, flagCritP95, cfg.CritP95, "P95 threshold (ms) for red output"},
+		{&cfg.GraceSeconds, flagGraceSeconds, cfg.GraceSeconds, "Grace period (seconds) before auto-mode or stats start"},
+	}
 
-	// Auto-mode flags
+	for _, item := range intFlags {
+		flag.IntVar(item.target, item.name, item.value, item.usage)
+	}
+}
+
+// registerFloatThresholdFlags registers floating-point warning and critical thresholds.
+func registerFloatThresholdFlags(cfg *engine.Config) {
+	floatFlags := []struct {
+		target *float64
+		name   string
+		value  float64
+		usage  string
+	}{
+		{&cfg.WarnErr, flagWarnErrorRate, cfg.WarnErr, "Warn threshold for error rate in %"},
+		{&cfg.CritErr, flagCritErrorRate, cfg.CritErr, "Critical threshold for error rate in %"},
+		{&cfg.WarnTrack, flagWarnTrack, cfg.WarnTrack, "Warn threshold for tracking ratio rps/target_rps"},
+		{&cfg.CritTrack, flagCritTrack, cfg.CritTrack, "Critical threshold for tracking ratio rps/target_rps"},
+	}
+
+	for _, item := range floatFlags {
+		flag.Float64Var(item.target, item.name, item.value, item.usage)
+	}
+}
+
+// registerAutoModeFlags registers adaptive-control flags.
+func registerAutoModeFlags(cfg *engine.Config) {
 	flag.BoolVar(&cfg.AutoMode, "auto", cfg.AutoMode, "Enable adaptive/auto mode")
 	flag.IntVar(&cfg.AutoTargetP95, "auto-target-p95", cfg.AutoTargetP95, "Target P95 latency for auto-mode")
 	flag.Float64Var(&cfg.AutoMaxRPS, "auto-max-rps", cfg.AutoMaxRPS, "Max RPS for auto-mode")
@@ -108,8 +184,10 @@ func setupFlags(cfg *engine.Config) {
 	flag.Float64Var(&cfg.AutoMaxErr, "auto-max-err", cfg.AutoMaxErr, "Max error rate (%) before backing off")
 	flag.IntVar(&cfg.AutoMinSample, "auto-min-sample", cfg.AutoMinSample, "Minimum samples before making a decision")
 	flag.StringVar(&cfg.AutoFocus, "auto-focus", cfg.AutoFocus, "What to scale: rps|concurrency")
+}
 
-	// Plateau detection
+// registerPlateauDetectionFlags registers adaptive plateau detection flags.
+func registerPlateauDetectionFlags(cfg *engine.Config) {
 	flag.BoolVar(&cfg.AutoPlateau, "auto-plateau", cfg.AutoPlateau, "Enable plateau detection")
 	flag.IntVar(&cfg.AutoPlateauWindows, "auto-plateau-windows", cfg.AutoPlateauWindows, "Number of windows to consider for plateau")
 	flag.Float64Var(&cfg.AutoPlateauGain, "auto-plateau-gain", cfg.AutoPlateauGain, "Min gain (%) to not be considered a plateau")
@@ -118,15 +196,23 @@ func setupFlags(cfg *engine.Config) {
 	flag.Float64Var(&cfg.AutoPlateauTrackThreshold, "auto-plateau-track-threshold", cfg.AutoPlateauTrackThreshold, "Tracking threshold rps/trps (0..1)")
 	flag.IntVar(&cfg.AutoPlateauTrackWindows, "auto-plateau-track-windows", cfg.AutoPlateauTrackWindows, "Windows for tracking plateau")
 	flag.StringVar(&cfg.AutoPlateauTrackAction, "auto-plateau-track-action", cfg.AutoPlateauTrackAction, "Action on tracking plateau")
+}
 
-	// Random effects
+// registerRandomEffectFlags registers stochastic request mutation flags.
+func registerRandomEffectFlags(cfg *engine.Config) {
 	flag.BoolVar(&cfg.RandomNoAuth, "random-no-auth", cfg.RandomNoAuth, "Randomly send no-auth mode for valid rows")
 	flag.Float64Var(&cfg.RandomNoAuthProb, "random-no-auth-prob", cfg.RandomNoAuthProb, "Probability for random-no-auth")
 	flag.BoolVar(&cfg.RandomBadPass, "random-bad-pass", cfg.RandomBadPass, "Randomly send wrong password")
 	flag.Float64Var(&cfg.RandomBadPassProb, "random-bad-pass-prob", cfg.RandomBadPassProb, "Probability for random-bad-pass")
+}
 
+// registerDiagnosticFlags registers diagnostic and debug flags.
+func registerDiagnosticFlags(cfg *engine.Config) {
 	flag.BoolVar(&cfg.Debug, "debug", cfg.Debug, "Enable debug output (including FX logs)")
+}
 
+// applyClientFlagUsage installs grouped usage output for the client command.
+func applyClientFlagUsage() {
 	flagutil.ApplyGroupedDoubleDashUsage(flag.CommandLine, "nauthilus-client", []flagutil.UsageGroup{
 		{
 			Title: "Input & Endpoint",
@@ -150,7 +236,15 @@ func setupFlags(cfg *engine.Config) {
 		},
 		{
 			Title: "Thresholds",
-			Flags: []string{"warn-p95", "crit-p95", "warn-error-rate", "crit-error-rate", "warn-track", "crit-track", "grace-seconds"},
+			Flags: []string{
+				flagWarnP95,
+				flagCritP95,
+				flagWarnErrorRate,
+				flagCritErrorRate,
+				flagWarnTrack,
+				flagCritTrack,
+				flagGraceSeconds,
+			},
 		},
 		{
 			Title: "Auto Mode",

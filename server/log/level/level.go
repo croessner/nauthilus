@@ -138,26 +138,7 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 
 	defer sp.End()
 
-	defer func() {
-		if r := recover(); r != nil {
-			sp.RecordError(errors.New(fmt.Sprint(r)))
-			sp.SetStatus(codes.Error, "recovered from panic")
-
-			// Minimal like go-kit: emit only the callsite, drop the problematic entry
-			pc, file, line, _ := runtime.Caller(2)
-			fn := runtime.FuncForPC(pc)
-			fnName := "?"
-
-			if fn != nil {
-				fnName = fn.Name()
-			}
-
-			fmt.Fprintf(os.Stderr, "[logger-recover] %s at %s:%d (%s)\n",
-				time.Now().Format(time.RFC3339Nano), file, line, fnName)
-
-			err = fmt.Errorf("logger panic recovered")
-		}
-	}()
+	defer recoverLoggerPanic(&err, sp)
 
 	// Ensure we have a logger and context first
 	l := s.l
@@ -170,10 +151,40 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 		return nil
 	}
 
-	var msg string
+	record, msg := s.logRecordFromKeyvals(keyvals)
 
-	// Search only for "msg" to avoid full iteration if possible
-	// and collect attributes directly.
+	if msg == "" {
+		msg = levelToDefaultMessage(s.lvl, sp)
+	}
+
+	record.Message = msg
+
+	return l.Handler().Handle(ctx, record)
+}
+
+// recoverLoggerPanic records logger panics and emits a minimal recovery line.
+func recoverLoggerPanic(err *error, sp trace.Span) {
+	if r := recover(); r != nil {
+		sp.RecordError(errors.New(fmt.Sprint(r)))
+		sp.SetStatus(codes.Error, "recovered from panic")
+
+		pc, file, line, _ := runtime.Caller(2)
+		fn := runtime.FuncForPC(pc)
+
+		fnName := "?"
+		if fn != nil {
+			fnName = fn.Name()
+		}
+
+		fmt.Fprintf(os.Stderr, "[logger-recover] %s at %s:%d (%s)\n",
+			time.Now().Format(time.RFC3339Nano), file, line, fnName)
+
+		*err = fmt.Errorf("logger panic recovered")
+	}
+}
+
+// logRecordFromKeyvals builds a slog record and extracts the optional message.
+func (s *slogLevelLogger) logRecordFromKeyvals(keyvals []any) (slog.Record, string) {
 	pc := uintptr(0)
 
 	if s.addSource {
@@ -183,67 +194,85 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 	}
 
 	record := slog.NewRecord(time.Now(), s.lvl, "", pc)
+	msg := ""
 
 	for i := 0; i < len(keyvals); i += 2 {
+		if i+1 >= len(keyvals) {
+			break
+		}
+
 		k, ok := keyvals[i].(string)
 		if !ok {
 			continue
 		}
 
-		if i+1 >= len(keyvals) {
-			break
+		if setLogMessage(&msg, k, keyvals[i+1]) {
+			continue
 		}
 
-		v := keyvals[i+1]
-
-		if k == "msg" {
-			if vs, ok := v.(string); ok {
-				msg = vs
-
-				continue
-			}
-		}
-
-		// Instead of a massive switch, we only handle our
-		// "Special Formatting" cases and let slog.Record.AddAttrs handle the rest.
-		// slog.Any is extremely optimized when called via Record.AddAttrs.
-		switch vv := v.(type) {
-		case string, bool, int, int64, uint64, float64, time.Time, time.Duration:
-			// No reflection here! Direct pass-through to slog.
-			record.AddAttrs(slog.Any(k, vv))
-		case error:
-			if vv == nil {
-				record.AddAttrs(slog.String(k, "<nil error>"))
-			} else {
-				record.AddAttrs(slog.String(k, vv.Error()))
-			}
-		case fmt.Stringer:
-			if vv == nil {
-				record.AddAttrs(slog.String(k, "<nil Stringer>"))
-			} else {
-				record.AddAttrs(slog.String(k, vv.String()))
-			}
-		case nil:
-			record.AddAttrs(slog.String(k, "<nil>"))
-		default:
-			// Use a custom Valuer for Slices/Maps to defer fmt.Sprintf
-			// until the log is actually written.
-			rt := reflect.TypeOf(vv)
-			if rt != nil && (rt.Kind() == reflect.Slice || rt.Kind() == reflect.Map) {
-				record.AddAttrs(slog.Any(k, lazyFormat{vv}))
-			} else {
-				record.AddAttrs(slog.Any(k, v))
-			}
-		}
+		record.AddAttrs(logAttr(k, keyvals[i+1]))
 	}
 
-	if msg == "" {
-		msg = levelToDefaultMessage(s.lvl, sp)
+	return record, msg
+}
+
+// setLogMessage extracts the special msg field.
+func setLogMessage(msg *string, key string, value any) bool {
+	if key != "msg" {
+		return false
 	}
 
-	record.Message = msg
+	if valueString, ok := value.(string); ok {
+		*msg = valueString
 
-	return l.Handler().Handle(ctx, record)
+		return true
+	}
+
+	return false
+}
+
+// logAttr converts a key/value pair into a slog attribute.
+func logAttr(key string, value any) slog.Attr {
+	switch typed := value.(type) {
+	case string, bool, int, int64, uint64, float64, time.Time, time.Duration:
+		return slog.Any(key, typed)
+	case error:
+		return errorLogAttr(key, typed)
+	case fmt.Stringer:
+		return stringerLogAttr(key, typed)
+	case nil:
+		return slog.String(key, "<nil>")
+	default:
+		return defaultLogAttr(key, value)
+	}
+}
+
+// errorLogAttr converts an error value into a slog attribute.
+func errorLogAttr(key string, value error) slog.Attr {
+	if value == nil {
+		return slog.String(key, "<nil error>")
+	}
+
+	return slog.String(key, value.Error())
+}
+
+// stringerLogAttr converts a Stringer value into a slog attribute.
+func stringerLogAttr(key string, value fmt.Stringer) slog.Attr {
+	if value == nil {
+		return slog.String(key, "<nil Stringer>")
+	}
+
+	return slog.String(key, value.String())
+}
+
+// defaultLogAttr converts maps and slices lazily while passing through other values.
+func defaultLogAttr(key string, value any) slog.Attr {
+	rt := reflect.TypeOf(value)
+	if rt != nil && (rt.Kind() == reflect.Slice || rt.Kind() == reflect.Map) {
+		return slog.Any(key, lazyFormat{value})
+	}
+
+	return slog.Any(key, value)
 }
 
 func levelToDefaultMessage(lvl slog.Level, sp trace.Span) string {

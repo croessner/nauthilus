@@ -34,87 +34,31 @@ import (
 
 const languageCookieMaxAgeSeconds = 365 * 24 * 60 * 60
 
+type languageSources struct {
+	guid         string
+	url          string
+	cookie       string
+	browser      string
+	accept       string
+	baseName     string
+	lang         string
+	needCookie   bool
+	needRedirect bool
+}
+
 // WithLanguage is a middleware function that handles the language setup for the application.
 func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Manager) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		var (
-			langFromURL     string
-			langFromCookie  string
-			langFromBrowser string
-		)
-
-		guid := ctx.GetString(definitions.CtxGUIDKey)
-
-		// Try to get language tag from URL
-		langFromURL = ctx.Param("languageTag")
-
-		// Try to get language tag from dedicated language cookie.
-		if cookieLang, err := ctx.Cookie(definitions.LanguageCookieName); err == nil {
-			langFromCookie = strings.TrimSpace(cookieLang)
-		}
-
-		// Get Accept-Language header for browser language detection
-		accept := ctx.GetHeader("Accept-Language")
-
-		// If no URL or cookie language is set, detect language from browser
-		if langFromURL == "" && langFromCookie == "" && accept != "" {
-			tag, _ := language.MatchStrings(langManager.GetMatcher(), accept)
-			baseName, _ := tag.Base()
-			langFromBrowser = baseName.String()
-		}
-
-		// Determine language with all available sources
-		lang, needCookie, needRedirect := setLanguageDetails(cfg, langFromURL, langFromCookie, langFromBrowser)
-
-		tag, _ := language.MatchStrings(langManager.GetMatcher(), lang, accept)
-		baseName, _ := tag.Base()
-
-		// Language not found in catalog
-		if lang != "" && lang != baseName.String() {
-			_ = ctx.AbortWithError(http.StatusNotFound, errors.ErrLanguageNotFound)
-
+		sources := newLanguageSources(ctx, cfg, langManager)
+		if !validateResolvedLanguage(ctx, sources) {
 			return
 		}
 
-		localizer := i18n.NewLocalizer(langManager.GetBundle(), lang, accept)
-
-		if needCookie {
-			ctx.SetCookie(
-				definitions.LanguageCookieName,
-				baseName.String(),
-				languageCookieMaxAgeSeconds,
-				"/",
-				"",
-				util.ShouldSetSecureCookie(),
-				true,
-			)
-
-			level.Debug(logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Language preference saved to language cookie",
-				"lang", baseName.String(),
-			)
-		}
-
+		localizer := i18n.NewLocalizer(langManager.GetBundle(), sources.lang, sources.accept)
+		saveLanguageCookie(ctx, logger, sources)
 		ctx.Set(definitions.CtxLocalizedKey, localizer)
 
-		if needRedirect && ctx.Request.Method == http.MethodGet {
-			var sb strings.Builder
-
-			path := strings.TrimSuffix(ctx.Request.URL.Path, "/")
-
-			sb.WriteString(path)
-			sb.WriteByte('/')
-			sb.WriteString(baseName.String())
-
-			if ctx.Request.URL.RawQuery != "" {
-				sb.WriteByte('?')
-				sb.WriteString(ctx.Request.URL.RawQuery)
-			}
-
-			ctx.Redirect(http.StatusFound, sb.String())
-			ctx.Abort()
-
+		if redirectLanguageRequest(ctx, sources) {
 			return
 		}
 
@@ -122,38 +66,126 @@ func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Man
 	}
 }
 
+// newLanguageSources collects language sources and resolves the final language.
+func newLanguageSources(ctx *gin.Context, cfg config.File, langManager corelang.Manager) languageSources {
+	sources := languageSources{
+		guid:   ctx.GetString(definitions.CtxGUIDKey),
+		url:    ctx.Param("languageTag"),
+		accept: ctx.GetHeader("Accept-Language"),
+	}
+
+	if cookieLang, err := ctx.Cookie(definitions.LanguageCookieName); err == nil {
+		sources.cookie = strings.TrimSpace(cookieLang)
+	}
+
+	sources.browser = browserLanguage(sources, langManager)
+	sources.lang, sources.needCookie, sources.needRedirect = setLanguageDetails(cfg, sources.url, sources.cookie, sources.browser)
+	sources.baseName = matchedLanguageBaseName(langManager, sources.lang, sources.accept)
+
+	return sources
+}
+
+// browserLanguage resolves the best browser language when no stronger source exists.
+func browserLanguage(sources languageSources, langManager corelang.Manager) string {
+	if sources.url != "" || sources.cookie != "" || sources.accept == "" {
+		return ""
+	}
+
+	tag, _ := language.MatchStrings(langManager.GetMatcher(), sources.accept)
+	baseName, _ := tag.Base()
+
+	return baseName.String()
+}
+
+// matchedLanguageBaseName resolves the supported base language name for a candidate language.
+func matchedLanguageBaseName(langManager corelang.Manager, lang string, accept string) string {
+	tag, _ := language.MatchStrings(langManager.GetMatcher(), lang, accept)
+	baseName, _ := tag.Base()
+
+	return baseName.String()
+}
+
+// validateResolvedLanguage aborts the request when the resolved language is unsupported.
+func validateResolvedLanguage(ctx *gin.Context, sources languageSources) bool {
+	if sources.lang == "" || sources.lang == sources.baseName {
+		return true
+	}
+
+	_ = ctx.AbortWithError(http.StatusNotFound, errors.ErrLanguageNotFound)
+
+	return false
+}
+
+// saveLanguageCookie persists the resolved language when cookie state changed.
+func saveLanguageCookie(ctx *gin.Context, logger *slog.Logger, sources languageSources) {
+	if !sources.needCookie {
+		return
+	}
+
+	ctx.SetCookie(
+		definitions.LanguageCookieName,
+		sources.baseName,
+		languageCookieMaxAgeSeconds,
+		"/",
+		"",
+		util.ShouldSetSecureCookie(),
+		true,
+	)
+
+	level.Debug(logger).Log(
+		definitions.LogKeyGUID, sources.guid,
+		definitions.LogKeyMsg, "Language preference saved to language cookie",
+		"lang", sources.baseName,
+	)
+}
+
+// redirectLanguageRequest redirects GET requests to the language-specific path.
+func redirectLanguageRequest(ctx *gin.Context, sources languageSources) bool {
+	if !sources.needRedirect || ctx.Request.Method != http.MethodGet {
+		return false
+	}
+
+	ctx.Redirect(http.StatusFound, languageRedirectURL(ctx, sources.baseName))
+	ctx.Abort()
+
+	return true
+}
+
+// languageRedirectURL returns the current request path with the resolved language suffix.
+func languageRedirectURL(ctx *gin.Context, baseName string) string {
+	var sb strings.Builder
+
+	path := strings.TrimSuffix(ctx.Request.URL.Path, "/")
+
+	sb.WriteString(path)
+	sb.WriteByte('/')
+	sb.WriteString(baseName)
+
+	if ctx.Request.URL.RawQuery != "" {
+		sb.WriteByte('?')
+		sb.WriteString(ctx.Request.URL.RawQuery)
+	}
+
+	return sb.String()
+}
+
 func setLanguageDetails(cfg config.File, langFromURL string, langFromCookie string, langFromBrowser string) (lang string, needCookie bool, needRedirect bool) {
-	switch {
-	case langFromURL == "" && langFromCookie == "" && langFromBrowser == "":
-		// 1. No language from URL, no cookie and no browser language
-		lang = ""
-	case langFromURL == "" && langFromCookie == "" && langFromBrowser != "":
-		// 2. No language from URL and no cookie, but browser language is set
-		lang = langFromBrowser
-		needCookie = true
-		needRedirect = true
-	case langFromURL == "" && langFromCookie != "":
-		// 3. No language from URL, but a cookie is set
-		lang = langFromCookie
-		needRedirect = true
-	case langFromURL != "" && langFromCookie == "":
-		// 4. Language from URL and no cookie
-		lang = langFromURL
-		needCookie = true
-	case langFromURL != "" && langFromCookie != "":
-		// 5. Language given from URL and cookie, but both differ
-		if langFromURL != langFromCookie {
-			needCookie = true
-		}
-
-		lang = langFromURL
+	if langFromURL != "" {
+		return languageDetailsFromURL(langFromURL, langFromCookie)
 	}
 
-	if lang == "" && langFromURL == "" && langFromCookie == "" && langFromBrowser == "" {
-		lang = cfg.GetServer().Frontend.GetDefaultLanguage()
-		needCookie = true
-		needRedirect = true
+	if langFromCookie != "" {
+		return langFromCookie, false, true
 	}
 
-	return lang, needCookie, needRedirect
+	if langFromBrowser != "" {
+		return langFromBrowser, true, true
+	}
+
+	return cfg.GetServer().Frontend.GetDefaultLanguage(), true, true
+}
+
+// languageDetailsFromURL resolves cookie update needs for URL-bound language tags.
+func languageDetailsFromURL(langFromURL string, langFromCookie string) (string, bool, bool) {
+	return langFromURL, langFromCookie == "" || langFromURL != langFromCookie, false
 }

@@ -30,6 +30,38 @@ import (
 
 const privateKeyJWTTestClaimNotBefore = "nbf"
 
+// assertPrivateKeyJWTAuthenticates signs and verifies a valid private_key_jwt request.
+func assertPrivateKeyJWTAuthenticates(
+	t *testing.T,
+	auth ClientAuthenticator,
+	signer signing.Signer,
+	clientID string,
+	tokenEndpoint string,
+	jti string,
+) {
+	t.Helper()
+
+	assertion, err := signer.Sign(jwt.MapClaims{
+		"iss": clientID,
+		"sub": clientID,
+		"aud": tokenEndpoint,
+		"exp": time.Now().Add(5 * time.Minute).Unix(),
+		"iat": time.Now().Unix(),
+		"jti": jti,
+	})
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	err = auth.Authenticate(&AuthRequest{
+		ClientID:            clientID,
+		ClientAssertionType: AssertionTypeJWTBearer,
+		ClientAssertion:     assertion,
+		TokenEndpointURL:    tokenEndpoint,
+	})
+	assert.NoError(t, err)
+}
+
 func TestClientSecretAuthenticator_Basic(t *testing.T) {
 	auth := NewClientSecretAuthenticator(secret.New("my-secret"), MethodClientSecretBasic)
 	assert.Equal(t, MethodClientSecretBasic, auth.Method())
@@ -78,45 +110,52 @@ func TestClientSecretAuthenticator_Post(t *testing.T) {
 }
 
 func TestPrivateKeyJWTAuthenticator_RS256(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	clientID := "my-client"
-	tokenEndpoint := "https://issuer.local/idp/oidc/token"
-
-	verifier := signing.NewRS256Verifier(&key.PublicKey)
-	auth := NewPrivateKeyJWTAuthenticator(verifier, clientID, tokenEndpoint)
-	assert.Equal(t, MethodPrivateKeyJWT, auth.Method())
+	fixture := newRS256PrivateKeyJWTFixture(t)
+	assert.Equal(t, MethodPrivateKeyJWT, fixture.auth.Method())
 
 	t.Run("valid assertion", func(t *testing.T) {
-		signer := signing.NewRS256Signer(key, "test-kid")
+		signer := signing.NewRS256Signer(fixture.key, "test-kid")
 
-		assertion, err := signer.Sign(jwt.MapClaims{
-			"iss": clientID,
-			"sub": clientID,
-			"aud": tokenEndpoint,
-			"exp": time.Now().Add(5 * time.Minute).Unix(),
-			"iat": time.Now().Unix(),
-			"jti": "unique-id-1",
-		})
-		if !assert.NoError(t, err) {
-			return
-		}
-
-		err = auth.Authenticate(&AuthRequest{
-			ClientID:            clientID,
-			ClientAssertionType: AssertionTypeJWTBearer,
-			ClientAssertion:     assertion,
-			TokenEndpointURL:    tokenEndpoint,
-		})
-		assert.NoError(t, err)
+		assertPrivateKeyJWTAuthenticates(t, fixture.auth, signer, fixture.clientID, fixture.tokenEndpoint, "unique-id-1")
 	})
 
+	runRS256PrivateKeyJWTNegativeAssertions(t, fixture)
+}
+
+// runRS256PrivateKeyJWTNegativeAssertions verifies failing RS256 private_key_jwt paths.
+func runRS256PrivateKeyJWTNegativeAssertions(t *testing.T, fixture privateKeyJWTFixture) {
+	t.Helper()
+
+	runRS256MalformedJWTAssertionTests(t, fixture)
+
+	t.Run("wrong issuer", func(t *testing.T) {
+		assertRS256PrivateKeyJWTRejected(t, fixture, jwt.MapClaims{"iss": "wrong-client"}, "iss")
+	})
+
+	t.Run("wrong subject", func(t *testing.T) {
+		assertRS256PrivateKeyJWTRejected(t, fixture, jwt.MapClaims{"sub": "wrong-client"}, "sub")
+	})
+
+	t.Run("wrong audience", func(t *testing.T) {
+		assertRS256PrivateKeyJWTRejected(t, fixture, jwt.MapClaims{"aud": "https://wrong.local/token"}, "aud")
+	})
+
+	t.Run("expired assertion", func(t *testing.T) {
+		assertRS256PrivateKeyJWTRejected(t, fixture, jwt.MapClaims{"exp": time.Now().Add(-5 * time.Minute).Unix()}, "")
+	})
+
+	t.Run("recently expired assertion within clock skew", func(t *testing.T) {
+		assertRS256PrivateKeyJWTClockSkew(t, fixture)
+	})
+}
+
+// runRS256MalformedJWTAssertionTests verifies malformed RS256 request paths.
+func runRS256MalformedJWTAssertionTests(t *testing.T, fixture privateKeyJWTFixture) {
+	t.Helper()
+
 	t.Run("wrong assertion type", func(t *testing.T) {
-		err := auth.Authenticate(&AuthRequest{
-			ClientID:            clientID,
+		err := fixture.auth.Authenticate(&AuthRequest{
+			ClientID:            fixture.clientID,
 			ClientAssertionType: "wrong-type",
 			ClientAssertion:     "some-jwt",
 		})
@@ -125,8 +164,8 @@ func TestPrivateKeyJWTAuthenticator_RS256(t *testing.T) {
 	})
 
 	t.Run("empty assertion", func(t *testing.T) {
-		err := auth.Authenticate(&AuthRequest{
-			ClientID:            clientID,
+		err := fixture.auth.Authenticate(&AuthRequest{
+			ClientID:            fixture.clientID,
 			ClientAssertionType: AssertionTypeJWTBearer,
 			ClientAssertion:     "",
 		})
@@ -134,121 +173,97 @@ func TestPrivateKeyJWTAuthenticator_RS256(t *testing.T) {
 		assert.Contains(t, err.Error(), "empty")
 	})
 
-	t.Run("wrong issuer", func(t *testing.T) {
-		signer := signing.NewRS256Signer(key, "test-kid")
-
-		assertion, err := signer.Sign(jwt.MapClaims{
-			"iss": "wrong-client",
-			"sub": clientID,
-			"aud": tokenEndpoint,
-			"exp": time.Now().Add(5 * time.Minute).Unix(),
-		})
-		if !assert.NoError(t, err) {
-			return
-		}
-
-		err = auth.Authenticate(&AuthRequest{
-			ClientID:            clientID,
-			ClientAssertionType: AssertionTypeJWTBearer,
-			ClientAssertion:     assertion,
-		})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "iss")
-	})
-
-	t.Run("wrong subject", func(t *testing.T) {
-		signer := signing.NewRS256Signer(key, "test-kid")
-
-		assertion, err := signer.Sign(jwt.MapClaims{
-			"iss": clientID,
-			"sub": "wrong-client",
-			"aud": tokenEndpoint,
-			"exp": time.Now().Add(5 * time.Minute).Unix(),
-		})
-		if !assert.NoError(t, err) {
-			return
-		}
-
-		err = auth.Authenticate(&AuthRequest{
-			ClientID:            clientID,
-			ClientAssertionType: AssertionTypeJWTBearer,
-			ClientAssertion:     assertion,
-		})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "sub")
-	})
-
-	t.Run("wrong audience", func(t *testing.T) {
-		signer := signing.NewRS256Signer(key, "test-kid")
-
-		assertion, err := signer.Sign(jwt.MapClaims{
-			"iss": clientID,
-			"sub": clientID,
-			"aud": "https://wrong.local/token",
-			"exp": time.Now().Add(5 * time.Minute).Unix(),
-		})
-		if !assert.NoError(t, err) {
-			return
-		}
-
-		err = auth.Authenticate(&AuthRequest{
-			ClientID:            clientID,
-			ClientAssertionType: AssertionTypeJWTBearer,
-			ClientAssertion:     assertion,
-		})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "aud")
-	})
-
-	t.Run("expired assertion", func(t *testing.T) {
-		signer := signing.NewRS256Signer(key, "test-kid")
-
-		assertion, err := signer.Sign(jwt.MapClaims{
-			"iss": clientID,
-			"sub": clientID,
-			"aud": tokenEndpoint,
-			"exp": time.Now().Add(-5 * time.Minute).Unix(),
-		})
-		if !assert.NoError(t, err) {
-			return
-		}
-
-		err = auth.Authenticate(&AuthRequest{
-			ClientID:            clientID,
-			ClientAssertionType: AssertionTypeJWTBearer,
-			ClientAssertion:     assertion,
-		})
-		assert.Error(t, err)
-	})
-
-	t.Run("recently expired assertion within clock skew", func(t *testing.T) {
-		signer := signing.NewRS256Signer(key, "test-kid")
-		now := time.Now()
-
-		assertion, err := signer.Sign(jwt.MapClaims{
-			"iss": clientID,
-			"sub": clientID,
-			"aud": tokenEndpoint,
-			"exp": now.Add(-defaultPrivateKeyJWTClockSkew / 2).Unix(),
-			"iat": now.Add(-time.Minute).Unix(),
-			"jti": "recently-expired-jti",
-		})
-		if !assert.NoError(t, err) {
-			return
-		}
-
-		err = auth.Authenticate(&AuthRequest{
-			ClientID:            clientID,
-			ClientAssertionType: AssertionTypeJWTBearer,
-			ClientAssertion:     assertion,
-		})
-		assert.NoError(t, err)
-	})
-
 	t.Run("nil request", func(t *testing.T) {
-		err := auth.Authenticate(nil)
+		err := fixture.auth.Authenticate(nil)
 		assert.Error(t, err)
 	})
+}
+
+// assertRS256PrivateKeyJWTClockSkew verifies recently expired assertions within clock skew.
+func assertRS256PrivateKeyJWTClockSkew(t *testing.T, fixture privateKeyJWTFixture) {
+	t.Helper()
+
+	now := time.Now()
+
+	assertion, err := fixture.sign(jwt.MapClaims{
+		"exp": now.Add(-defaultPrivateKeyJWTClockSkew / 2).Unix(),
+		"iat": now.Add(-time.Minute).Unix(),
+		"jti": "recently-expired-jti",
+	})
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	err = fixture.auth.Authenticate(&AuthRequest{
+		ClientID:            fixture.clientID,
+		ClientAssertionType: AssertionTypeJWTBearer,
+		ClientAssertion:     assertion,
+	})
+	assert.NoError(t, err)
+}
+
+type privateKeyJWTFixture struct {
+	key           *rsa.PrivateKey
+	auth          *PrivateKeyJWTAuthenticator
+	clientID      string
+	tokenEndpoint string
+}
+
+// newRS256PrivateKeyJWTFixture builds the RS256 private_key_jwt test fixture.
+func newRS256PrivateKeyJWTFixture(t *testing.T) privateKeyJWTFixture {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clientID := "my-client"
+	tokenEndpoint := "https://issuer.local/idp/oidc/token"
+	verifier := signing.NewRS256Verifier(&key.PublicKey)
+
+	return privateKeyJWTFixture{
+		key:           key,
+		auth:          NewPrivateKeyJWTAuthenticator(verifier, clientID, tokenEndpoint),
+		clientID:      clientID,
+		tokenEndpoint: tokenEndpoint,
+	}
+}
+
+// sign creates a signed RS256 client assertion with default valid claims plus overrides.
+func (f privateKeyJWTFixture) sign(overrides jwt.MapClaims) (string, error) {
+	claims := jwt.MapClaims{
+		"iss": f.clientID,
+		"sub": f.clientID,
+		"aud": f.tokenEndpoint,
+		"exp": time.Now().Add(5 * time.Minute).Unix(),
+	}
+	for key, value := range overrides {
+		claims[key] = value
+	}
+
+	return signing.NewRS256Signer(f.key, "test-kid").Sign(claims)
+}
+
+// assertRS256PrivateKeyJWTRejected verifies one rejected RS256 private_key_jwt assertion.
+func assertRS256PrivateKeyJWTRejected(t *testing.T, fixture privateKeyJWTFixture, overrides jwt.MapClaims, contains string) {
+	t.Helper()
+
+	assertion, err := fixture.sign(overrides)
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	err = fixture.auth.Authenticate(&AuthRequest{
+		ClientID:            fixture.clientID,
+		ClientAssertionType: AssertionTypeJWTBearer,
+		ClientAssertion:     assertion,
+	})
+	assert.Error(t, err)
+
+	if contains != "" {
+		assert.Contains(t, err.Error(), contains)
+	}
 }
 
 func TestPrivateKeyJWTAuthenticator_EdDSA(t *testing.T) {
@@ -267,25 +282,7 @@ func TestPrivateKeyJWTAuthenticator_EdDSA(t *testing.T) {
 	t.Run("valid EdDSA assertion", func(t *testing.T) {
 		signer := signing.NewEdDSASigner(edKey, "ed-kid")
 
-		assertion, err := signer.Sign(jwt.MapClaims{
-			"iss": clientID,
-			"sub": clientID,
-			"aud": tokenEndpoint,
-			"exp": time.Now().Add(5 * time.Minute).Unix(),
-			"iat": time.Now().Unix(),
-			"jti": "unique-id-2",
-		})
-		if !assert.NoError(t, err) {
-			return
-		}
-
-		err = auth.Authenticate(&AuthRequest{
-			ClientID:            clientID,
-			ClientAssertionType: AssertionTypeJWTBearer,
-			ClientAssertion:     assertion,
-			TokenEndpointURL:    tokenEndpoint,
-		})
-		assert.NoError(t, err)
+		assertPrivateKeyJWTAuthenticates(t, auth, signer, clientID, tokenEndpoint, "unique-id-2")
 	})
 
 	t.Run("wrong key", func(t *testing.T) {

@@ -72,224 +72,133 @@ func (tr *TestRunner) loadMockData() error {
 
 // Run executes the Lua script test.
 func (tr *TestRunner) Run() (*TestResult, error) {
-	L := lua.NewState()
-	defer L.Close()
-
-	tr.configureLuaPackagePath(L)
-
-	// Setup mock modules
-	cleanup, err := SetupMockModules(L, tr.mockData, tr.logger)
+	L, cleanup, err := tr.prepareLuaState()
 	if err != nil {
-		return nil, fmt.Errorf("failed to setup Lua test modules: %w", err)
+		return nil, err
 	}
+
+	defer L.Close()
 	defer cleanup()
 
-	// Load and execute the script
-	if err = L.DoFile(tr.scriptPath); err != nil {
+	result, err := tr.executeLuaScript(L)
+	if err != nil {
+		return nil, err
+	}
+
+	tr.captureBackendSelection(result)
+	tr.validateRuntimeExpectations(result)
+	tr.validateExpectedOutput(result)
+
+	return result, nil
+}
+
+// prepareLuaState creates a Lua state and installs all test modules.
+func (tr *TestRunner) prepareLuaState() (*lua.LState, func(), error) {
+	L := lua.NewState()
+	tr.configureLuaPackagePath(L)
+
+	cleanup, err := SetupMockModules(L, tr.mockData, tr.logger)
+	if err != nil {
+		L.Close()
+
+		return nil, nil, fmt.Errorf("failed to setup Lua test modules: %w", err)
+	}
+
+	return L, cleanup, nil
+}
+
+// executeLuaScript loads the script and runs the configured callback.
+func (tr *TestRunner) executeLuaScript(L *lua.LState) (*TestResult, error) {
+	if err := L.DoFile(tr.scriptPath); err != nil {
 		return nil, fmt.Errorf("failed to load Lua script: %w", err)
 	}
 
-	// Execute the appropriate callback
 	result, err := tr.executeCallback(L)
 	if err != nil {
-		result = &TestResult{
+		return &TestResult{
 			Success:        false,
 			Logs:           tr.logger.Logs,
 			StatusMessages: tr.logger.StatusMessages,
 			Errors:         []error{err},
-		}
-	} else {
-		result.Logs = tr.logger.Logs
-		result.StatusMessages = tr.logger.StatusMessages
+		}, nil
 	}
 
-	// Capture runtime backend-selection state when the backend mock is active.
-	if tr.mockData != nil && tr.mockData.Backend != nil {
-		if tr.mockData.Backend.RuntimeSelectedHost != "" {
-			selectedHost := tr.mockData.Backend.RuntimeSelectedHost
-			result.UsedBackendAddress = &selectedHost
-		}
+	result.Logs = tr.logger.Logs
+	result.StatusMessages = tr.logger.StatusMessages
 
-		if tr.mockData.Backend.RuntimeSelectedPort != nil {
-			selectedPort := *tr.mockData.Backend.RuntimeSelectedPort
-			result.UsedBackendPort = &selectedPort
-		}
+	return result, nil
+}
+
+// captureBackendSelection copies backend-selection runtime state into the result.
+func (tr *TestRunner) captureBackendSelection(result *TestResult) {
+	if tr.mockData == nil || tr.mockData.Backend == nil {
+		return
 	}
 
-	// Validate DB mock call expectations when configured.
-	if tr.mockData != nil && tr.mockData.DB != nil {
-		if err = tr.mockData.DB.ValidateComplete(); err != nil {
+	if tr.mockData.Backend.RuntimeSelectedHost != "" {
+		selectedHost := tr.mockData.Backend.RuntimeSelectedHost
+		result.UsedBackendAddress = &selectedHost
+	}
+
+	if tr.mockData.Backend.RuntimeSelectedPort != nil {
+		selectedPort := *tr.mockData.Backend.RuntimeSelectedPort
+		result.UsedBackendPort = &selectedPort
+	}
+}
+
+type luaTestExpectationValidator interface {
+	ValidateComplete() error
+}
+
+// validateRuntimeExpectations checks expected_calls for all configured mocks.
+func (tr *TestRunner) validateRuntimeExpectations(result *TestResult) {
+	for _, validator := range tr.runtimeExpectationValidators() {
+		if err := validator.ValidateComplete(); err != nil {
 			result.Success = false
 			result.Errors = append(result.Errors, err)
 		}
 	}
+}
 
-	// Validate expected_calls for all module mocks.
-	if tr.mockData != nil {
-		validators := []func() error{
-			func() error {
-				if tr.mockData.Context != nil {
-					return tr.mockData.Context.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.Redis != nil {
-					return tr.mockData.Redis.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.Policy != nil {
-					return tr.mockData.Policy.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.I18N != nil {
-					return tr.mockData.I18N.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.LDAP != nil {
-					return tr.mockData.LDAP.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.Backend != nil {
-					return tr.mockData.Backend.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.BackendResult != nil {
-					return tr.mockData.BackendResult.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.HTTPRequest != nil {
-					return tr.mockData.HTTPRequest.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.HTTPResponse != nil {
-					return tr.mockData.HTTPResponse.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.HTTPClient != nil {
-					return tr.mockData.HTTPClient.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.DNS != nil {
-					return tr.mockData.DNS.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.OpenTelemetry != nil {
-					return tr.mockData.OpenTelemetry.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.BruteForce != nil {
-					return tr.mockData.BruteForce.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.Psnet != nil {
-					return tr.mockData.Psnet.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.Prometheus != nil {
-					return tr.mockData.Prometheus.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.Util != nil {
-					return tr.mockData.Util.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.Cache != nil {
-					return tr.mockData.Cache.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.Misc != nil {
-					return tr.mockData.Misc.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.Password != nil {
-					return tr.mockData.Password.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.SoftWhitelist != nil {
-					return tr.mockData.SoftWhitelist.ValidateComplete()
-				}
-
-				return nil
-			},
-			func() error {
-				if tr.mockData.Mail != nil {
-					return tr.mockData.Mail.ValidateComplete()
-				}
-
-				return nil
-			},
-		}
-
-		for _, validate := range validators {
-			if vErr := validate(); vErr != nil {
-				result.Success = false
-				result.Errors = append(result.Errors, vErr)
-			}
-		}
+// runtimeExpectationValidators returns mock validators in stable validation order.
+func (tr *TestRunner) runtimeExpectationValidators() []luaTestExpectationValidator {
+	if tr.mockData == nil {
+		return nil
 	}
 
-	// Validate against expected output if provided
-	if tr.mockData.ExpectedOutput != nil {
-		tr.validateOutput(result)
+	return []luaTestExpectationValidator{
+		tr.mockData.DB,
+		tr.mockData.Context,
+		tr.mockData.Redis,
+		tr.mockData.Policy,
+		tr.mockData.I18N,
+		tr.mockData.LDAP,
+		tr.mockData.Backend,
+		tr.mockData.BackendResult,
+		tr.mockData.HTTPRequest,
+		tr.mockData.HTTPResponse,
+		tr.mockData.HTTPClient,
+		tr.mockData.DNS,
+		tr.mockData.OpenTelemetry,
+		tr.mockData.BruteForce,
+		tr.mockData.Psnet,
+		tr.mockData.Prometheus,
+		tr.mockData.Util,
+		tr.mockData.Cache,
+		tr.mockData.Misc,
+		tr.mockData.Password,
+		tr.mockData.SoftWhitelist,
+		tr.mockData.Mail,
+	}
+}
+
+// validateExpectedOutput applies expected output assertions when configured.
+func (tr *TestRunner) validateExpectedOutput(result *TestResult) {
+	if tr.mockData == nil || tr.mockData.ExpectedOutput == nil {
+		return
 	}
 
-	return result, nil
+	tr.validateOutput(result)
 }
 
 // configureLuaPackagePath extends package.path so local companion modules can be required
@@ -775,167 +684,36 @@ func populateBackendResultFromUserData(result *TestResult, userData *lua.LUserDa
 func (tr *TestRunner) validateOutput(result *TestResult) {
 	expected := tr.mockData.ExpectedOutput
 
-	// Validate subject source result.
-	if expected.SubjectResult != nil && result.SubjectResult != nil {
-		if *expected.SubjectResult != *result.SubjectResult {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("subject result mismatch: expected %d, got %d",
-					*expected.SubjectResult, *result.SubjectResult))
-		}
-	}
+	validateScalarExpectedOutput(result, expected)
+	validateCacheFlushExpectedOutput(result, expected)
+	validateStatusExpectedOutput(result, expected)
+	validateLogExpectedOutput(result, expected)
+	validateErrorExpectedOutput(result, expected)
+}
 
-	if expected.SubjectRejected != nil && result.SubjectRejected != nil {
-		if *expected.SubjectRejected != *result.SubjectRejected {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("subject rejection mismatch: expected %t, got %t",
-					*expected.SubjectRejected, *result.SubjectRejected))
-		}
-	}
+// validateScalarExpectedOutput checks scalar expected-output fields.
+func validateScalarExpectedOutput(result *TestResult, expected *ExpectedOutputMock) {
+	appendOptionalPointerMismatch(result, "subject result", expected.SubjectResult, result.SubjectResult, "%d")
+	appendOptionalPointerMismatch(result, "subject rejection", expected.SubjectRejected, result.SubjectRejected, "%t")
+	appendOptionalPointerMismatch(result, "environment trigger", expected.EnvironmentTriggered, result.EnvironmentTriggered, "%t")
+	appendOptionalPointerMismatch(result, "environment abort", expected.EnvironmentAbort, result.EnvironmentAbort, "%t")
+	appendOptionalPointerMismatch(result, "environment result", expected.EnvironmentResult, result.EnvironmentResult, "%d")
+	appendOptionalPointerMismatch(result, "action result", expected.ActionResult, result.ActionResult, "%t")
+	appendOptionalPointerMismatch(result, "backend result", expected.BackendResult, result.BackendResult, "%t")
+	appendOptionalPointerMismatch(result, "backend return code", expected.BackendReturnCode, result.BackendReturnCode, "%d")
+	appendRequiredPointerMismatch(result, "used backend address", expected.UsedBackendAddress, result.UsedBackendAddress, "%s")
+	appendRequiredPointerMismatch(result, "backend authenticated", expected.BackendAuthenticated, result.BackendAuthenticated, "%t")
+	appendRequiredPointerMismatch(result, "backend user_found", expected.BackendUserFound, result.BackendUserFound, "%t")
+	appendRequiredPointerMismatch(result, "backend account_field", expected.BackendAccountField, result.BackendAccountField, "%s")
+	appendRequiredPointerMismatch(result, "backend display_name", expected.BackendDisplayName, result.BackendDisplayName, "%s")
+	appendRequiredPointerMismatch(result, "backend unique_user_id", expected.BackendUniqueUserID, result.BackendUniqueUserID, "%s")
 
-	// Validate environment source result.
-	if expected.EnvironmentTriggered != nil && result.EnvironmentTriggered != nil {
-		if *expected.EnvironmentTriggered != *result.EnvironmentTriggered {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("environment trigger mismatch: expected %t, got %t",
-					*expected.EnvironmentTriggered, *result.EnvironmentTriggered))
-		}
-	}
+	appendRequiredPointerMismatch(result, "cache flush account name", expected.CacheFlushAccountName, result.CacheFlushAccountName, "%s")
+	appendRequiredPointerMismatch(result, "used backend port", expected.UsedBackendPort, result.UsedBackendPort, "%d")
+}
 
-	if expected.EnvironmentAbort != nil && result.EnvironmentAbort != nil {
-		if *expected.EnvironmentAbort != *result.EnvironmentAbort {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("environment abort mismatch: expected %t, got %t",
-					*expected.EnvironmentAbort, *result.EnvironmentAbort))
-		}
-	}
-
-	if expected.EnvironmentResult != nil && result.EnvironmentResult != nil {
-		if *expected.EnvironmentResult != *result.EnvironmentResult {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("environment result mismatch: expected %d, got %d",
-					*expected.EnvironmentResult, *result.EnvironmentResult))
-		}
-	}
-
-	// Validate action result
-	if expected.ActionResult != nil && result.ActionResult != nil {
-		if *expected.ActionResult != *result.ActionResult {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("action result mismatch: expected %t, got %t",
-					*expected.ActionResult, *result.ActionResult))
-		}
-	}
-
-	// Validate backend result
-	if expected.BackendResult != nil && result.BackendResult != nil {
-		if *expected.BackendResult != *result.BackendResult {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend result mismatch: expected %t, got %t",
-					*expected.BackendResult, *result.BackendResult))
-		}
-	}
-
-	if expected.BackendReturnCode != nil && result.BackendReturnCode != nil {
-		if *expected.BackendReturnCode != *result.BackendReturnCode {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend return code mismatch: expected %d, got %d",
-					*expected.BackendReturnCode, *result.BackendReturnCode))
-		}
-	}
-
-	// Validate selected backend address
-	if expected.UsedBackendAddress != nil {
-		if result.UsedBackendAddress == nil {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("used backend address mismatch: expected %s, got <nil>",
-					*expected.UsedBackendAddress))
-		} else if *expected.UsedBackendAddress != *result.UsedBackendAddress {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("used backend address mismatch: expected %s, got %s",
-					*expected.UsedBackendAddress, *result.UsedBackendAddress))
-		}
-	}
-
-	if expected.BackendAuthenticated != nil {
-		if result.BackendAuthenticated == nil {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend authenticated mismatch: expected %t, got <nil>",
-					*expected.BackendAuthenticated))
-		} else if *expected.BackendAuthenticated != *result.BackendAuthenticated {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend authenticated mismatch: expected %t, got %t",
-					*expected.BackendAuthenticated, *result.BackendAuthenticated))
-		}
-	}
-
-	if expected.BackendUserFound != nil {
-		if result.BackendUserFound == nil {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend user_found mismatch: expected %t, got <nil>",
-					*expected.BackendUserFound))
-		} else if *expected.BackendUserFound != *result.BackendUserFound {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend user_found mismatch: expected %t, got %t",
-					*expected.BackendUserFound, *result.BackendUserFound))
-		}
-	}
-
-	if expected.BackendAccountField != nil {
-		if result.BackendAccountField == nil {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend account_field mismatch: expected %s, got <nil>",
-					*expected.BackendAccountField))
-		} else if *expected.BackendAccountField != *result.BackendAccountField {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend account_field mismatch: expected %s, got %s",
-					*expected.BackendAccountField, *result.BackendAccountField))
-		}
-	}
-
-	if expected.BackendDisplayName != nil {
-		if result.BackendDisplayName == nil {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend display_name mismatch: expected %s, got <nil>",
-					*expected.BackendDisplayName))
-		} else if *expected.BackendDisplayName != *result.BackendDisplayName {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend display_name mismatch: expected %s, got %s",
-					*expected.BackendDisplayName, *result.BackendDisplayName))
-		}
-	}
-
-	if expected.BackendUniqueUserID != nil {
-		if result.BackendUniqueUserID == nil {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend unique_user_id mismatch: expected %s, got <nil>",
-					*expected.BackendUniqueUserID))
-		} else if *expected.BackendUniqueUserID != *result.BackendUniqueUserID {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("backend unique_user_id mismatch: expected %s, got %s",
-					*expected.BackendUniqueUserID, *result.BackendUniqueUserID))
-		}
-	}
-
+// validateCacheFlushExpectedOutput checks cache-flush key expectations.
+func validateCacheFlushExpectedOutput(result *TestResult, expected *ExpectedOutputMock) {
 	if expected.CacheFlushAdditionalKeys != nil {
 		if len(expected.CacheFlushAdditionalKeys) != len(result.CacheFlushAdditionalKeys) {
 			result.Success = false
@@ -954,111 +732,115 @@ func (tr *TestRunner) validateOutput(result *TestResult) {
 			}
 		}
 	}
+}
 
-	if expected.CacheFlushAccountName != nil {
-		if result.CacheFlushAccountName == nil {
+// validateStatusExpectedOutput checks status message contains and excludes.
+func validateStatusExpectedOutput(result *TestResult, expected *ExpectedOutputMock) {
+	validateStringExpectations(
+		result,
+		result.StatusMessages,
+		expected.StatusMessageContain,
+		expected.StatusMessageNotContain,
+		"expected status message not found: %s",
+		"unexpected status message found: %s",
+	)
+}
+
+// validateLogExpectedOutput checks log contains and excludes.
+func validateLogExpectedOutput(result *TestResult, expected *ExpectedOutputMock) {
+	validateStringExpectations(
+		result,
+		result.Logs,
+		expected.LogsContain,
+		expected.LogsNotContain,
+		"expected log not found: %s",
+		"unexpected log found: %s",
+	)
+}
+
+// validateStringExpectations checks required and forbidden substrings in ordered output slices.
+func validateStringExpectations(
+	result *TestResult,
+	values []string,
+	required []string,
+	forbidden []string,
+	missingFormat string,
+	unexpectedFormat string,
+) {
+	for _, expectedValue := range required {
+		if !containsSubstring(values, expectedValue) {
 			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("cache flush account name mismatch: expected %s, got <nil>",
-					*expected.CacheFlushAccountName))
-		} else if *expected.CacheFlushAccountName != *result.CacheFlushAccountName {
+			result.Errors = append(result.Errors, fmt.Errorf(missingFormat, expectedValue))
+		}
+	}
+
+	for _, unexpectedValue := range forbidden {
+		if containsSubstring(values, unexpectedValue) {
 			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("cache flush account name mismatch: expected %s, got %s",
-					*expected.CacheFlushAccountName, *result.CacheFlushAccountName))
+			result.Errors = append(result.Errors, fmt.Errorf(unexpectedFormat, unexpectedValue))
+		}
+	}
+}
+
+// containsSubstring reports whether any candidate contains the expected substring.
+func containsSubstring(values []string, expected string) bool {
+	for _, value := range values {
+		if strings.Contains(value, expected) {
+			return true
 		}
 	}
 
-	// Validate selected backend port
-	if expected.UsedBackendPort != nil {
-		if result.UsedBackendPort == nil {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("used backend port mismatch: expected %d, got <nil>",
-					*expected.UsedBackendPort))
-		} else if *expected.UsedBackendPort != *result.UsedBackendPort {
-			result.Success = false
-			result.Errors = append(result.Errors,
-				fmt.Errorf("used backend port mismatch: expected %d, got %d",
-					*expected.UsedBackendPort, *result.UsedBackendPort))
-		}
-	}
+	return false
+}
 
-	if expected.StatusMessageContain != nil {
-		for _, expectedStatus := range expected.StatusMessageContain {
-			found := false
-
-			for _, status := range result.StatusMessages {
-				if strings.Contains(status, expectedStatus) {
-					found = true
-					break
-				}
-			}
-
-			if !found {
-				result.Success = false
-				result.Errors = append(result.Errors,
-					fmt.Errorf("expected status message not found: %s", expectedStatus))
-			}
-		}
-	}
-
-	if expected.StatusMessageNotContain != nil {
-		for _, unexpectedStatus := range expected.StatusMessageNotContain {
-			for _, status := range result.StatusMessages {
-				if strings.Contains(status, unexpectedStatus) {
-					result.Success = false
-					result.Errors = append(result.Errors,
-						fmt.Errorf("unexpected status message found: %s", unexpectedStatus))
-
-					break
-				}
-			}
-		}
-	}
-
-	// Validate logs contain expected strings
-	if expected.LogsContain != nil {
-		for _, expectedLog := range expected.LogsContain {
-			found := false
-
-			for _, log := range result.Logs {
-				if strings.Contains(log, expectedLog) {
-					found = true
-					break
-				}
-			}
-
-			if !found {
-				result.Success = false
-				result.Errors = append(result.Errors,
-					fmt.Errorf("expected log not found: %s", expectedLog))
-			}
-		}
-	}
-
-	// Validate logs don't contain unexpected strings
-	if expected.LogsNotContain != nil {
-		for _, unexpectedLog := range expected.LogsNotContain {
-			for _, log := range result.Logs {
-				if strings.Contains(log, unexpectedLog) {
-					result.Success = false
-					result.Errors = append(result.Errors,
-						fmt.Errorf("unexpected log found: %s", unexpectedLog))
-
-					break
-				}
-			}
-		}
-	}
-
-	// Check if error was expected
+// validateErrorExpectedOutput checks expected error presence.
+func validateErrorExpectedOutput(result *TestResult, expected *ExpectedOutputMock) {
 	if expected.ErrorExpected && len(result.Errors) == 0 {
 		result.Success = false
 		result.Errors = append(result.Errors, fmt.Errorf("expected error but none occurred"))
 	} else if !expected.ErrorExpected && len(result.Errors) > 0 {
 		result.Success = false
 	}
+}
+
+// appendOptionalPointerMismatch compares values only when both expected and actual were produced.
+func appendOptionalPointerMismatch[T comparable](result *TestResult, label string, expected, actual *T, format string) {
+	if expected == nil || actual == nil {
+		return
+	}
+
+	appendPointerValueMismatch(result, label, expected, actual, format)
+}
+
+// appendRequiredPointerMismatch treats a present expected value as requiring a matching actual value.
+func appendRequiredPointerMismatch[T comparable](result *TestResult, label string, expected, actual *T, format string) {
+	if expected == nil {
+		return
+	}
+
+	if actual == nil {
+		result.Success = false
+		result.Errors = append(result.Errors, fmt.Errorf("%s mismatch: expected %s, got <nil>", label, fmt.Sprintf(format, *expected)))
+
+		return
+	}
+
+	appendPointerValueMismatch(result, label, expected, actual, format)
+}
+
+// appendPointerValueMismatch records a formatted mismatch for comparable pointer values.
+func appendPointerValueMismatch[T comparable](result *TestResult, label string, expected, actual *T, format string) {
+	if *expected == *actual {
+		return
+	}
+
+	result.Success = false
+	result.Errors = append(result.Errors, fmt.Errorf(
+		"%s mismatch: expected %s, got %s",
+		label,
+		fmt.Sprintf(format, *expected),
+		fmt.Sprintf(format, *actual),
+	))
 }
 
 // PrintResult prints the test result to stdout.
@@ -1068,99 +850,77 @@ func (tr *TestRunner) PrintResult(result *TestResult) {
 	fmt.Printf("Callback Type: %s\n", tr.callbackType)
 	fmt.Printf("Success: %t\n\n", result.Success)
 
-	if result.SubjectResult != nil {
-		fmt.Printf("Subject Result: %d\n", *result.SubjectResult)
-	}
-
-	if result.SubjectRejected != nil {
-		fmt.Printf("Subject Rejected: %t\n", *result.SubjectRejected)
-	}
-
-	if result.EnvironmentTriggered != nil {
-		fmt.Printf("Environment Triggered: %t\n", *result.EnvironmentTriggered)
-	}
-
-	if result.EnvironmentAbort != nil {
-		fmt.Printf("Environment Abort: %t\n", *result.EnvironmentAbort)
-	}
-
-	if result.EnvironmentResult != nil {
-		fmt.Printf("Environment Result: %d\n", *result.EnvironmentResult)
-	}
-
-	if result.ActionResult != nil {
-		fmt.Printf("Action Result: %t\n", *result.ActionResult)
-	}
-
-	if result.BackendResult != nil {
-		fmt.Printf("Backend Result: %t\n", *result.BackendResult)
-	}
-
-	if result.BackendReturnCode != nil {
-		fmt.Printf("Backend Return Code: %d\n", *result.BackendReturnCode)
-	}
-
-	if result.BackendAuthenticated != nil {
-		fmt.Printf("Backend Authenticated: %t\n", *result.BackendAuthenticated)
-	}
-
-	if result.BackendUserFound != nil {
-		fmt.Printf("Backend User Found: %t\n", *result.BackendUserFound)
-	}
-
-	if result.BackendAccountField != nil {
-		fmt.Printf("Backend Account Field: %s\n", *result.BackendAccountField)
-	}
-
-	if result.BackendDisplayName != nil {
-		fmt.Printf("Backend Display Name: %s\n", *result.BackendDisplayName)
-	}
-
-	if result.BackendUniqueUserID != nil {
-		fmt.Printf("Backend Unique User ID: %s\n", *result.BackendUniqueUserID)
-	}
-
-	if result.UsedBackendAddress != nil {
-		fmt.Printf("Used Backend Address: %s\n", *result.UsedBackendAddress)
-	}
-
-	if result.UsedBackendPort != nil {
-		fmt.Printf("Used Backend Port: %d\n", *result.UsedBackendPort)
-	}
-
-	if len(result.CacheFlushAdditionalKeys) > 0 {
-		fmt.Printf("Cache Flush Additional Keys: %v\n", result.CacheFlushAdditionalKeys)
-	}
-
-	if result.CacheFlushAccountName != nil {
-		fmt.Printf("Cache Flush Account Name: %s\n", *result.CacheFlushAccountName)
-	}
-
-	if len(result.StatusMessages) > 0 {
-		fmt.Println("\nStatus Messages:")
-
-		for _, status := range result.StatusMessages {
-			fmt.Printf("  [STATUS] %s\n", status)
-		}
-	}
-
-	if len(result.Logs) > 0 {
-		fmt.Println("\nLogs:")
-
-		for _, log := range result.Logs {
-			fmt.Printf("  %s\n", log)
-		}
-	}
-
-	if len(result.Errors) > 0 {
-		fmt.Println("\nErrors:")
-
-		for _, err := range result.Errors {
-			fmt.Printf("  ✗ %s\n", err)
-		}
-	}
+	printResultScalarFields(result)
+	printResultStringSlice("Status Messages", "  [STATUS] %s\n", result.StatusMessages)
+	printResultStringSlice("Logs", "  %s\n", result.Logs)
+	printResultErrors(result.Errors)
 
 	fmt.Println("\n===============================")
+}
+
+// printResultScalarFields prints optional scalar result fields.
+func printResultScalarFields(result *TestResult) {
+	printOptionalField("Subject Result", result.SubjectResult, "%d")
+	printOptionalField("Subject Rejected", result.SubjectRejected, "%t")
+	printOptionalField("Environment Triggered", result.EnvironmentTriggered, "%t")
+	printOptionalField("Environment Abort", result.EnvironmentAbort, "%t")
+	printOptionalField("Environment Result", result.EnvironmentResult, "%d")
+	printOptionalField("Action Result", result.ActionResult, "%t")
+	printOptionalField("Backend Result", result.BackendResult, "%t")
+	printOptionalField("Backend Return Code", result.BackendReturnCode, "%d")
+	printOptionalField("Backend Authenticated", result.BackendAuthenticated, "%t")
+	printOptionalField("Backend User Found", result.BackendUserFound, "%t")
+	printOptionalField("Backend Account Field", result.BackendAccountField, "%s")
+	printOptionalField("Backend Display Name", result.BackendDisplayName, "%s")
+	printOptionalField("Backend Unique User ID", result.BackendUniqueUserID, "%s")
+	printOptionalField("Used Backend Address", result.UsedBackendAddress, "%s")
+	printOptionalField("Used Backend Port", result.UsedBackendPort, "%d")
+	printOptionalSlice("Cache Flush Additional Keys", result.CacheFlushAdditionalKeys)
+	printOptionalField("Cache Flush Account Name", result.CacheFlushAccountName, "%s")
+}
+
+// printOptionalField prints a pointer field when it is present.
+func printOptionalField[T any](label string, value *T, format string) {
+	if value == nil {
+		return
+	}
+
+	fmt.Printf(label+": "+format+"\n", *value)
+}
+
+// printOptionalSlice prints a non-empty slice field.
+func printOptionalSlice[T any](label string, values []T) {
+	if len(values) == 0 {
+		return
+	}
+
+	fmt.Printf("%s: %v\n", label, values)
+}
+
+// printResultStringSlice prints a titled list of strings.
+func printResultStringSlice(title string, format string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+
+	fmt.Printf("\n%s:\n", title)
+
+	for _, value := range values {
+		fmt.Printf(format, value)
+	}
+}
+
+// printResultErrors prints collected result errors.
+func printResultErrors(errors []error) {
+	if len(errors) == 0 {
+		return
+	}
+
+	fmt.Println("\nErrors:")
+
+	for _, err := range errors {
+		fmt.Printf("  ✗ %s\n", err)
+	}
 }
 
 // GetExitCode returns the appropriate exit code based on test result.

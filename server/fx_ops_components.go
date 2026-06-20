@@ -280,109 +280,21 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	var restartErr error
 
-	stoppedHTTP := false
+	stoppedHTTP, err := r.stopHTTPForRestart(opCtx, &step)
+	if err != nil {
+		return err
+	}
 
 	defer func() {
-		if !stoppedHTTP {
-			return
-		}
-
-		// Best-effort: ensure the process keeps serving HTTP even if the restart
-		// operation fails or times out.
-		if err := startHTTPServerWithOptions(r.ctx, r.store, httpServerStartOptions{continueHTTPOnGRPCAuthorityError: true}); err != nil {
-			level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unable to start HTTP server after restart", definitions.LogKeyError, err)
-		}
+		r.restartHTTPAfterStop(stoppedHTTP)
 	}()
 
-	// Stop HTTP first to avoid serving requests with a partially restarted dependency graph.
-	if r.store != nil && r.store.server != nil {
-		step = "stop_http"
-
-		stopContext(r.store.server)
-
-		stoppedHTTP = true
-
-		if r.store.signals != nil && r.store.signals.HTTPDone() != nil {
-			select {
-			case <-r.store.signals.HTTPDone():
-			case <-opCtx.Done():
-				step = "wait_http_done"
-				restartErr = opCtx.Err()
-
-				return restartErr
-			}
-		}
-
-		if r.store.signals != nil && r.store.signals.HTTP3Done() != nil {
-			select {
-			case <-r.store.signals.HTTP3Done():
-			case <-opCtx.Done():
-				step = "wait_http3_done"
-				restartErr = opCtx.Err()
-
-				return restartErr
-			}
-		}
-
-		if r.store.grpcAuthorityDone != nil {
-			select {
-			case <-r.store.grpcAuthorityDone:
-			case <-opCtx.Done():
-				step = "wait_grpc_authority_done"
-				restartErr = opCtx.Err()
-
-				return restartErr
-			}
-		}
-	}
-
-	// Stop loops early to reduce load while dependencies restart.
-	if r.statsSvc != nil {
-		step = "stop_stats"
-
-		if err := r.statsSvc.Stop(opCtx); err != nil {
-			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop stats service", definitions.LogKeyError, err)
-		}
-	}
-
-	if r.monitoringSvc != nil {
-		step = "stop_backend_monitoring"
-
-		if err := r.monitoringSvc.Stop(opCtx); err != nil {
-			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop backend monitoring service", definitions.LogKeyError, err)
-		}
-	}
-
-	if r.connMgrSvc != nil {
-		step = "stop_connmgr"
-
-		if err := r.connMgrSvc.Stop(opCtx); err != nil {
-			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop connection manager service", definitions.LogKeyError, err)
-		}
-	}
+	r.stopLoopServices(opCtx, logger, &step)
 
 	reloader := &reloadOrchestrator{store: r.store, actionWorkers: r.actionWorkers}
 
-	// Stop workers (LDAP/Lua) and action workers before rebuilding Redis.
-	step = "stop_workers"
-
-	reloader.stopWorkersForConfig(opCtx, getConfigFile(r.store))
-
-	if r.store != nil && r.store.action != nil {
-		step = "stop_action_workers"
-
-		stopContext(r.store.action)
-
-		for i := 0; i < len(r.actionWorkers); i++ {
-			select {
-			case <-r.actionWorkers[i].DoneChan:
-			case <-opCtx.Done():
-				step = "wait_action_workers_done"
-				restartErr = opCtx.Err()
-
-				return restartErr
-			}
-		}
+	if err := r.stopWorkersForRestart(opCtx, reloader, &step); err != nil {
+		return err
 	}
 
 	step = "rebuild_redis_client"
@@ -393,6 +305,119 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 		return fmt.Errorf("config snapshot is nil")
 	}
 
+	if err := r.rebuildRedisForRestart(opCtx, cfg, logger, &step); err != nil {
+		restartErr = err
+	}
+
+	r.startWorkersForRestart(reloader, &step)
+
+	if err := r.startLoopServices(logger, &step); err != nil {
+		return err
+	}
+
+	// If HTTP was stopped, it will be started in the deferred cleanup above.
+	step = "done"
+
+	return restartErr
+}
+
+// stopHTTPForRestart stops HTTP entry points before dependency graph restart work begins.
+func (r *restartOrchestrator) stopHTTPForRestart(ctx context.Context, step *string) (bool, error) {
+	if r.store == nil || r.store.server == nil {
+		return false, nil
+	}
+
+	*step = "stop_http"
+
+	stopContext(r.store.server)
+
+	if err := r.waitHTTPShutdownSignals(ctx, step); err != nil {
+		return true, err
+	}
+
+	return true, nil
+}
+
+// waitHTTPShutdownSignals waits for all HTTP-related shutdown signals.
+func (r *restartOrchestrator) waitHTTPShutdownSignals(ctx context.Context, step *string) error {
+	if r.store.signals != nil {
+		if err := waitRestartDone(ctx, r.store.signals.HTTPDone(), "wait_http_done", step); err != nil {
+			return err
+		}
+
+		if err := waitRestartDone(ctx, r.store.signals.HTTP3Done(), "wait_http3_done", step); err != nil {
+			return err
+		}
+	}
+
+	return waitRestartDone(ctx, r.store.grpcAuthorityDone, "wait_grpc_authority_done", step)
+}
+
+// restartHTTPAfterStop restarts HTTP best-effort after a restart path stopped it.
+func (r *restartOrchestrator) restartHTTPAfterStop(stoppedHTTP bool) {
+	if !stoppedHTTP {
+		return
+	}
+
+	// Best-effort: ensure the process keeps serving HTTP even if the restart
+	// operation fails or times out.
+	if err := startHTTPServerWithOptions(r.ctx, r.store, httpServerStartOptions{continueHTTPOnGRPCAuthorityError: true}); err != nil {
+		level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unable to start HTTP server after restart", definitions.LogKeyError, err)
+	}
+}
+
+// stopLoopServices stops optional loop services before worker and Redis restart work.
+func (r *restartOrchestrator) stopLoopServices(ctx context.Context, logger *slog.Logger, step *string) {
+	if r.statsSvc != nil {
+		*step = "stop_stats"
+
+		if err := r.statsSvc.Stop(ctx); err != nil {
+			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop stats service", definitions.LogKeyError, err)
+		}
+	}
+
+	if r.monitoringSvc != nil {
+		*step = "stop_backend_monitoring"
+
+		if err := r.monitoringSvc.Stop(ctx); err != nil {
+			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop backend monitoring service", definitions.LogKeyError, err)
+		}
+	}
+
+	if r.connMgrSvc != nil {
+		*step = "stop_connmgr"
+
+		if err := r.connMgrSvc.Stop(ctx); err != nil {
+			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop connection manager service", definitions.LogKeyError, err)
+		}
+	}
+}
+
+// stopWorkersForRestart stops backend and action workers before Redis is rebuilt.
+func (r *restartOrchestrator) stopWorkersForRestart(ctx context.Context, reloader *reloadOrchestrator, step *string) error {
+	*step = "stop_workers"
+
+	reloader.stopWorkersForConfig(ctx, getConfigFile(r.store))
+
+	if r.store == nil || r.store.action == nil {
+		return nil
+	}
+
+	*step = "stop_action_workers"
+
+	stopContext(r.store.action)
+
+	if waitForActionWorkers(ctx, r.actionWorkers) {
+		return nil
+	}
+
+	*step = "wait_action_workers_done"
+
+	return ctx.Err()
+}
+
+// rebuildRedisForRestart rebuilds the Redis client and reruns Redis setup for restart.
+func (r *restartOrchestrator) rebuildRedisForRestart(ctx context.Context, cfg config.File, logger *slog.Logger, step *string) error {
 	if r.redisRebuilder != nil {
 		if err := r.redisRebuilder.Rebuild(cfg, logger); err != nil {
 			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to rebuild Redis client via DI", definitions.LogKeyError, err)
@@ -401,71 +426,72 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 		rediscli.RebuildClient()
 	}
 
-	redisReadyCtx, redisReadyCancel := context.WithTimeout(opCtx, definitions.RestartRedisReadyTimeout)
+	redisReadyCtx, redisReadyCancel := context.WithTimeout(ctx, definitions.RestartRedisReadyTimeout)
 	defer redisReadyCancel()
 
-	step = "setup_redis"
+	*step = "setup_redis"
 
 	if err := setupRedis(redisReadyCtx, r.ctx, cfg, logger, r.store.redisClient); err != nil {
 		// Best-effort: Redis readiness issues must not keep HTTP down indefinitely.
 		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during restart", definitions.LogKeyError, err)
-		restartErr = err
+
+		return err
 	}
 
-	// Start workers (LDAP/Lua) and action workers after Redis is ready.
-	step = "start_workers"
+	return nil
+}
+
+// startWorkersForRestart starts backend and action workers after Redis setup.
+func (r *restartOrchestrator) startWorkersForRestart(reloader *reloadOrchestrator, step *string) {
+	*step = "start_workers"
 
 	reloader.startWorkersForConfig(r.ctx, getConfigFile(r.store))
 
-	if r.store != nil && r.store.action != nil {
-		step = "start_action_workers"
-
-		r.store.action.ctx, r.store.action.cancel = context.WithCancel(r.ctx)
-		for i := 0; i < len(r.actionWorkers); i++ {
-			go r.actionWorkers[i].Work(r.store.action.ctx)
-		}
+	if r.store == nil || r.store.action == nil {
+		return
 	}
 
+	*step = "start_action_workers"
+	r.store.action.ctx, r.store.action.cancel = context.WithCancel(r.ctx)
+
+	for i := 0; i < len(r.actionWorkers); i++ {
+		go r.actionWorkers[i].Work(r.store.action.ctx)
+	}
+}
+
+// startLoopServices starts optional loop services after workers are available again.
+func (r *restartOrchestrator) startLoopServices(logger *slog.Logger, step *string) error {
 	if r.connMgrSvc != nil {
-		step = "start_connmgr"
+		*step = "start_connmgr"
 
 		if err := r.connMgrSvc.Start(r.ctx); err != nil {
 			level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start connection manager service", definitions.LogKeyError, err)
 
-			restartErr = err
-
-			return restartErr
+			return err
 		}
 	}
 
 	if r.monitoringSvc != nil {
-		step = "start_backend_monitoring"
+		*step = "start_backend_monitoring"
 
 		if err := r.monitoringSvc.Start(r.ctx); err != nil {
 			level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start backend monitoring service", definitions.LogKeyError, err)
 
-			restartErr = err
-
-			return restartErr
+			return err
 		}
 	}
 
 	if r.statsSvc != nil {
-		step = "start_stats"
+		*step = "start_stats"
 
 		if err := r.statsSvc.Start(r.ctx); err != nil {
 			level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start stats service", definitions.LogKeyError, err)
 
-			restartErr = err
-
-			return restartErr
+			return err
 		}
 	}
 
-	// If HTTP was stopped, it will be started in the deferred cleanup above.
-	step = "done"
-
-	return restartErr
+	return nil
 }
 
 // newReloadOrchestrator registers the reload orchestrator as a grouped reloadable.
@@ -529,49 +555,15 @@ func newRestartOrchestrator(
 // This keeps behavior parity with the legacy shutdown coordinator while avoiding
 // indefinite blocking during fx shutdown.
 func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
-	if store != nil {
-		signals := store.signals
-		if signals != nil && signals.HTTPDone() != nil {
-			select {
-			case <-signals.HTTPDone():
-			case <-ctx.Done():
-				return
-			}
-		}
-
-		if signals != nil && signals.HTTP3Done() != nil {
-			select {
-			case <-signals.HTTP3Done():
-			case <-ctx.Done():
-				return
-			}
-		}
-
-		if store.grpcAuthorityDone != nil {
-			select {
-			case <-store.grpcAuthorityDone:
-			case <-ctx.Done():
-				return
-			}
-		}
+	if !waitForServerShutdown(ctx, store) {
+		return
 	}
 
-	cfg := getConfigFile(store)
-	if cfg != nil && store != nil && store.channel != nil {
-		for _, backendType := range cfg.GetServer().GetBackends() {
-			if !waitForBackendShutdown(ctx, cfg, store.channel, backendType) {
-				return
-			}
-		}
+	if !waitForConfiguredBackendShutdowns(ctx, store) {
+		return
 	}
 
-	for i := range actionWorkers {
-		select {
-		case <-actionWorkers[i].DoneChan:
-		case <-ctx.Done():
-			return
-		}
-	}
+	waitForActionWorkers(ctx, actionWorkers)
 }
 
 // waitForBackendShutdown waits for backend worker goroutines to terminate.
@@ -581,40 +573,120 @@ func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*
 func waitForBackendShutdown(ctx context.Context, cfg config.File, channel backend.Channel, passDB *config.Backend) bool {
 	switch passDB.Get() {
 	case definitions.BackendLDAP:
-		poolNames := channel.GetLdapChannel().GetPoolNames()
-		for _, poolName := range poolNames {
-			select {
-			case <-channel.GetLdapChannel().GetLookupEndChan(poolName):
-			case <-ctx.Done():
-				return false
-			}
-		}
-
-		for _, poolName := range poolNames {
-			if cfg != nil && cfg.LDAPHavePoolOnly(poolName) {
-				continue
-			}
-
-			select {
-			case <-channel.GetLdapChannel().GetAuthEndChan(poolName):
-			case <-ctx.Done():
-				return false
-			}
-		}
+		return waitForLDAPBackendShutdown(ctx, cfg, channel.GetLdapChannel())
 	case definitions.BackendLua:
-		for _, backendName := range channel.GetLuaChannel().GetBackendNames() {
-			select {
-			case <-channel.GetLuaChannel().GetLookupEndChan(backendName):
-			case <-ctx.Done():
-				return false
-			}
-		}
+		return waitForLuaBackendShutdown(ctx, channel.GetLuaChannel())
 	case definitions.BackendCache, definitions.BackendTest:
 	default:
 		level.Warn(getLogger(nil)).Log(definitions.LogKeyMsg, "Unknown backend")
 	}
 
 	return true
+}
+
+// waitForServerShutdown waits for HTTP and gRPC authority shutdown signals.
+func waitForServerShutdown(ctx context.Context, store *contextStore) bool {
+	if store == nil {
+		return true
+	}
+
+	if store.signals != nil {
+		if !waitForDone(ctx, store.signals.HTTPDone()) {
+			return false
+		}
+
+		if !waitForDone(ctx, store.signals.HTTP3Done()) {
+			return false
+		}
+	}
+
+	return waitForDone(ctx, store.grpcAuthorityDone)
+}
+
+// waitForConfiguredBackendShutdowns waits for all configured backend workers.
+func waitForConfiguredBackendShutdowns(ctx context.Context, store *contextStore) bool {
+	cfg := getConfigFile(store)
+	if cfg == nil || store == nil || store.channel == nil {
+		return true
+	}
+
+	for _, backendType := range cfg.GetServer().GetBackends() {
+		if !waitForBackendShutdown(ctx, cfg, store.channel, backendType) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// waitForLDAPBackendShutdown waits for LDAP lookup and auth worker shutdowns.
+func waitForLDAPBackendShutdown(ctx context.Context, cfg config.File, ldapChannel backend.LDAPChannel) bool {
+	poolNames := ldapChannel.GetPoolNames()
+
+	for _, poolName := range poolNames {
+		if !waitForDone(ctx, ldapChannel.GetLookupEndChan(poolName)) {
+			return false
+		}
+	}
+
+	for _, poolName := range poolNames {
+		if cfg != nil && cfg.LDAPHavePoolOnly(poolName) {
+			continue
+		}
+
+		if !waitForDone(ctx, ldapChannel.GetAuthEndChan(poolName)) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// waitForLuaBackendShutdown waits for Lua lookup worker shutdowns.
+func waitForLuaBackendShutdown(ctx context.Context, luaChannel backend.LuaChannel) bool {
+	for _, backendName := range luaChannel.GetBackendNames() {
+		if !waitForDone(ctx, luaChannel.GetLookupEndChan(backendName)) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// waitForActionWorkers waits until all action workers report completion.
+func waitForActionWorkers(ctx context.Context, actionWorkers []*action.Worker) bool {
+	for i := range actionWorkers {
+		if !waitForDone(ctx, actionWorkers[i].DoneChan) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// waitRestartDone waits for a restart signal and records the timeout step.
+func waitRestartDone[T any](ctx context.Context, done <-chan T, timeoutStep string, step *string) error {
+	if waitForDone(ctx, done) {
+		return nil
+	}
+
+	*step = timeoutStep
+
+	return ctx.Err()
+}
+
+// waitForDone waits for a completion channel unless the context ends first.
+func waitForDone[T any](ctx context.Context, done <-chan T) bool {
+	if done == nil {
+		return true
+	}
+
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // getLogger returns the injected logger if available.

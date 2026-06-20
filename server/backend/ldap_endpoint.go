@@ -28,101 +28,102 @@ import (
 // LuaLDAPEndpoint provides the exported LuaLDAPEndpoint function.
 func LuaLDAPEndpoint(cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
-		poolName := definitions.DefaultBackendName
+		poolName := luaLDAPEndpointPoolName(L)
 
-		if L.GetTop() >= 1 {
-			poolNameArg := L.CheckString(1)
-			if poolNameArg != "" && poolNameArg != luaLDAPPoolAliasDefault {
-				poolName = poolNameArg
-			}
-		}
-
-		// Load configuration for the pool
-		var uris []string
-		if poolName == definitions.DefaultBackendName {
-			uris = cfg.GetLDAPConfigServerURIs()
-		} else {
-			pools := cfg.GetLDAP().GetOptionalLDAPPools()
-			if pools == nil || pools[poolName] == nil {
-				L.Push(lua.LNil)
-				L.Push(lua.LNil)
-				L.Push(lua.LString("ldap pool config not found: " + poolName))
-
-				return 3
-			}
-
-			uris = pools[poolName].GetServerURIs()
+		uris, ok := ldapEndpointURIs(cfg, poolName)
+		if !ok {
+			return pushLDAPEndpointError(L, "ldap pool config not found: "+poolName)
 		}
 
 		if len(uris) == 0 {
-			L.Push(lua.LNil)
-			L.Push(lua.LNil)
-			L.Push(lua.LString("no LDAP server_uri configured for pool: " + poolName))
-
-			return 3
+			return pushLDAPEndpointError(L, "no LDAP server_uri configured for pool: "+poolName)
 		}
 
 		ustr := strings.TrimSpace(uris[0])
 
 		u, err := url.Parse(ustr)
 		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LNil)
-			L.Push(lua.LString("invalid LDAP server_uri: " + ustr))
-
-			return 3
+			return pushLDAPEndpointError(L, "invalid LDAP server_uri: "+ustr)
 		}
 
-		// Support ldapi:///absolute/path (UNIX domain socket). For ldapi there is no host/port.
 		if strings.EqualFold(u.Scheme, "ldapi") {
-			// Accept only the non-escaped form with absolute path
-			if u.Path != "" && strings.HasPrefix(u.Path, "/") {
-				L.Push(lua.LString(u.Path))
-				L.Push(lua.LNumber(0))
-				L.Push(lua.LNil)
-
-				return 3
-			}
-
-			// Unsupported ldapi form → return empty values without logging here
-			L.Push(lua.LString(""))
-			L.Push(lua.LNumber(0))
-			L.Push(lua.LNil)
-
-			return 3
+			return pushLDAPEndpointResult(L, ldapiEndpointHost(u), 0)
 		}
 
-		// Standard ldap/ldaps handling with host/port
 		if u.Host == "" {
-			L.Push(lua.LNil)
-			L.Push(lua.LNil)
-			L.Push(lua.LString("invalid LDAP server_uri: " + ustr))
-
-			return 3
+			return pushLDAPEndpointError(L, "invalid LDAP server_uri: "+ustr)
 		}
 
-		host := u.Hostname()
-		port := 0
-
-		if p := u.Port(); p != "" {
-			// Use ParseInt with bitSize 16 to avoid integer overflow; ports are 0-65535
-			if v, perr := strconv.ParseInt(p, 10, 16); perr == nil && v >= 0 && v <= 65535 {
-				port = int(v)
-			}
-		}
-
-		if port == 0 {
-			if u.Scheme == "ldaps" {
-				port = 636
-			} else {
-				port = 389
-			}
-		}
-
-		L.Push(lua.LString(host))
-		L.Push(lua.LNumber(port))
-		L.Push(lua.LNil)
-
-		return 3
+		return pushLDAPEndpointResult(L, u.Hostname(), ldapEndpointPort(u))
 	}
+}
+
+// luaLDAPEndpointPoolName resolves the optional Lua endpoint pool argument.
+func luaLDAPEndpointPoolName(L *lua.LState) string {
+	if L.GetTop() < 1 {
+		return definitions.DefaultBackendName
+	}
+
+	poolNameArg := L.CheckString(1)
+	if poolNameArg == "" || poolNameArg == luaLDAPPoolAliasDefault {
+		return definitions.DefaultBackendName
+	}
+
+	return poolNameArg
+}
+
+// ldapEndpointURIs returns server URIs for the requested LDAP pool.
+func ldapEndpointURIs(cfg config.File, poolName string) ([]string, bool) {
+	if poolName == definitions.DefaultBackendName {
+		return cfg.GetLDAPConfigServerURIs(), true
+	}
+
+	pools := cfg.GetLDAP().GetOptionalLDAPPools()
+	if pools == nil || pools[poolName] == nil {
+		return nil, false
+	}
+
+	return pools[poolName].GetServerURIs(), true
+}
+
+// ldapiEndpointHost returns the Unix-socket path or the existing empty value for unsupported forms.
+func ldapiEndpointHost(u *url.URL) string {
+	if u.Path != "" && strings.HasPrefix(u.Path, "/") {
+		return u.Path
+	}
+
+	return ""
+}
+
+// ldapEndpointPort returns an explicit or scheme-derived LDAP endpoint port.
+func ldapEndpointPort(u *url.URL) int {
+	if p := u.Port(); p != "" {
+		if v, perr := strconv.ParseInt(p, 10, 16); perr == nil && v >= 0 && v <= 65535 {
+			return int(v)
+		}
+	}
+
+	if u.Scheme == "ldaps" {
+		return 636
+	}
+
+	return 389
+}
+
+// pushLDAPEndpointError pushes the Lua endpoint error tuple.
+func pushLDAPEndpointError(L *lua.LState, message string) int {
+	L.Push(lua.LNil)
+	L.Push(lua.LNil)
+	L.Push(lua.LString(message))
+
+	return 3
+}
+
+// pushLDAPEndpointResult pushes the Lua endpoint result tuple.
+func pushLDAPEndpointResult(L *lua.LState, host string, port int) int {
+	L.Push(lua.LString(host))
+	L.Push(lua.LNumber(port))
+	L.Push(lua.LNil)
+
+	return 3
 }

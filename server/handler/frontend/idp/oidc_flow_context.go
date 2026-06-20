@@ -79,45 +79,64 @@ func (c *oidcAuthorizeFlowContext) HasClientConsent(clientID string, requestedSc
 	}
 
 	consents := c.getConsentExpiries()
-	if len(consents) > 0 {
-		requested := normalizeScopes(requestedScopes)
-		now := time.Now().Unix()
-		changed := false
-
-		for cid, grants := range consents {
-			filtered := grants[:0]
-			for _, grant := range grants {
-				if grant.Expiry > now {
-					filtered = append(filtered, grant)
-				} else {
-					changed = true
-				}
-			}
-
-			if len(filtered) == 0 {
-				delete(consents, cid)
-				continue
-			}
-
-			consents[cid] = filtered
-		}
-
-		if changed {
-			c.setConsentExpiries(consents)
-		}
-
-		for _, grant := range consents[clientID] {
-			if grant.Covers(requested) {
-				return true
-			}
-		}
-
-		return false
+	if len(consents) == 0 {
+		return c.hasLegacyClientConsent(clientID)
 	}
 
-	// Backward compatibility for sessions created before consent TTL support.
-	oidcClients := c.mgr.GetString(definitions.SessionKeyOIDCClients, "")
+	if pruneExpiredConsentGrants(consents, time.Now().Unix()) {
+		c.setConsentExpiries(consents)
+	}
 
+	return consentGrantsCoverScopes(consents[clientID], normalizeScopes(requestedScopes))
+}
+
+// pruneExpiredConsentGrants removes expired consent grants in place.
+func pruneExpiredConsentGrants(consents map[string][]oidcConsentGrant, now int64) bool {
+	changed := false
+
+	for clientID, grants := range consents {
+		filtered := activeConsentGrants(grants, now)
+		if len(filtered) != len(grants) {
+			changed = true
+		}
+
+		if len(filtered) == 0 {
+			delete(consents, clientID)
+			continue
+		}
+
+		consents[clientID] = filtered
+	}
+
+	return changed
+}
+
+// activeConsentGrants returns only grants that have not expired.
+func activeConsentGrants(grants []oidcConsentGrant, now int64) []oidcConsentGrant {
+	filtered := grants[:0]
+	for _, grant := range grants {
+		if grant.Expiry > now {
+			filtered = append(filtered, grant)
+		}
+	}
+
+	return filtered
+}
+
+// consentGrantsCoverScopes reports whether any grant covers all requested scopes.
+func consentGrantsCoverScopes(grants []oidcConsentGrant, requested []string) bool {
+	for _, grant := range grants {
+		if grant.Covers(requested) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasLegacyClientConsent checks pre-TTL client consent markers.
+func (c *oidcAuthorizeFlowContext) hasLegacyClientConsent(clientID string) bool {
+	oidcClients := c.mgr.GetString(definitions.SessionKeyOIDCClients, "")
 	for id := range strings.SplitSeq(oidcClients, ",") {
 		if id == clientID {
 			return true
@@ -187,26 +206,37 @@ func (c *oidcAuthorizeFlowContext) addClientLoginMarker(clientID string) {
 	c.mgr.Set(definitions.SessionKeyOIDCClients, oidcClients)
 }
 
+// getConsentExpiries reads consent expiries from current and legacy session formats.
 func (c *oidcAuthorizeFlowContext) getConsentExpiries() map[string][]oidcConsentGrant {
 	raw := c.mgr.GetString(definitions.SessionKeyOIDCConsentExpiries, "")
 	if raw == "" {
 		return nil
 	}
 
-	var consents map[string][]oidcConsentGrant
-	if err := json.Unmarshal([]byte(raw), &consents); err == nil {
-		for clientID, grants := range consents {
-			for i := range grants {
-				grants[i].Scopes = normalizeScopes(grants[i].Scopes)
-			}
-
-			consents[clientID] = grants
-		}
-
+	if consents := consentExpiriesFromJSON(raw); consents != nil {
 		return consents
 	}
 
-	// Backward compatibility: old JSON form {"client":unix}.
+	if consents := legacyConsentExpiriesFromJSON(raw); consents != nil {
+		return consents
+	}
+
+	return legacyConsentExpiriesFromCSV(raw)
+}
+
+// consentExpiriesFromJSON parses the current JSON consent-grant format.
+func consentExpiriesFromJSON(raw string) map[string][]oidcConsentGrant {
+	var consents map[string][]oidcConsentGrant
+	if err := json.Unmarshal([]byte(raw), &consents); err == nil {
+		normalizeConsentGrantScopes(consents)
+		return consents
+	}
+
+	return nil
+}
+
+// legacyConsentExpiriesFromJSON parses the old JSON form {"client":unix}.
+func legacyConsentExpiriesFromJSON(raw string) map[string][]oidcConsentGrant {
 	var legacy map[string]int64
 	if err := json.Unmarshal([]byte(raw), &legacy); err == nil && len(legacy) > 0 {
 		converted := make(map[string][]oidcConsentGrant, len(legacy))
@@ -217,21 +247,14 @@ func (c *oidcAuthorizeFlowContext) getConsentExpiries() map[string][]oidcConsent
 		return converted
 	}
 
-	// Backward compatibility: old CSV form "client=unix,client2=unix".
-	consents = make(map[string][]oidcConsentGrant)
+	return nil
+}
 
+// legacyConsentExpiriesFromCSV parses the old CSV form "client=unix,client2=unix".
+func legacyConsentExpiriesFromCSV(raw string) map[string][]oidcConsentGrant {
+	consents := make(map[string][]oidcConsentGrant)
 	for pair := range strings.SplitSeq(raw, ",") {
-		clientID, expRaw, ok := strings.Cut(pair, "=")
-		if !ok || clientID == "" {
-			continue
-		}
-
-		exp, err := strconv.ParseInt(expRaw, 10, 64)
-		if err != nil {
-			continue
-		}
-
-		consents[clientID] = append(consents[clientID], oidcConsentGrant{Expiry: exp})
+		appendLegacyCSVConsent(consents, pair)
 	}
 
 	if len(consents) == 0 {
@@ -239,6 +262,32 @@ func (c *oidcAuthorizeFlowContext) getConsentExpiries() map[string][]oidcConsent
 	}
 
 	return consents
+}
+
+// normalizeConsentGrantScopes sorts and de-duplicates scopes in parsed consent grants.
+func normalizeConsentGrantScopes(consents map[string][]oidcConsentGrant) {
+	for clientID, grants := range consents {
+		for i := range grants {
+			grants[i].Scopes = normalizeScopes(grants[i].Scopes)
+		}
+
+		consents[clientID] = grants
+	}
+}
+
+// appendLegacyCSVConsent appends one legacy CSV consent pair when it is valid.
+func appendLegacyCSVConsent(consents map[string][]oidcConsentGrant, pair string) {
+	clientID, expRaw, ok := strings.Cut(pair, "=")
+	if !ok || clientID == "" {
+		return
+	}
+
+	exp, err := strconv.ParseInt(expRaw, 10, 64)
+	if err != nil {
+		return
+	}
+
+	consents[clientID] = append(consents[clientID], oidcConsentGrant{Expiry: exp})
 }
 
 func (c *oidcAuthorizeFlowContext) setConsentExpiries(expiries map[string][]oidcConsentGrant) {

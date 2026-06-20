@@ -326,13 +326,7 @@ func (h *Handler) GetWebAuthnCredential(ctx *gin.Context) {
 // SaveWebAuthnCredential provides the exported SaveWebAuthnCredential method.
 func (h *Handler) SaveWebAuthnCredential(ctx *gin.Context) {
 	executeWebAuthnOp(h, ctx,
-		func(p webauthnRequest) string {
-			if p.Username == "" || p.Credential == "" {
-				return mfaBackchannelUsernameCredentialRequired
-			}
-
-			return ""
-		},
+		validateWebAuthnCredentialPayload,
 		func(mgr core.BackendManager, auth *core.AuthState, cred *mfa.PersistentCredential) error {
 			return mgr.SaveWebAuthnCredential(auth, cred)
 		},
@@ -387,15 +381,18 @@ func (h *Handler) UpdateWebAuthnCredential(ctx *gin.Context) {
 // DeleteWebAuthnCredential provides the exported DeleteWebAuthnCredential method.
 func (h *Handler) DeleteWebAuthnCredential(ctx *gin.Context) {
 	executeWebAuthnOp(h, ctx,
-		func(p webauthnRequest) string {
-			if p.Username == "" || p.Credential == "" {
-				return mfaBackchannelUsernameCredentialRequired
-			}
-
-			return ""
-		},
+		validateWebAuthnCredentialPayload,
 		func(mgr core.BackendManager, auth *core.AuthState, cred *mfa.PersistentCredential) error {
 			return mgr.DeleteWebAuthnCredential(auth, cred)
 		},
 	)
+}
+
+// validateWebAuthnCredentialPayload verifies the shared username and credential requirements.
+func validateWebAuthnCredentialPayload(payload webauthnRequest) string {
+	if payload.Username == "" || payload.Credential == "" {
+		return mfaBackchannelUsernameCredentialRequired
+	}
+
+	return ""
 }

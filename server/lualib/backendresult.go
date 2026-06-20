@@ -292,8 +292,12 @@ func (m *BackendResultManager) GetSetAttributes(L *lua.LState) int {
 	return stack.PushResult(convert.GoToLuaValue(L, backendResult.Attributes))
 }
 
-// GetSetGroups sets or retrieves the Groups field.
-func (m *BackendResultManager) GetSetGroups(L *lua.LState) int {
+// getSetBackendResultStringSlice sets or retrieves a string-slice field on the backend result.
+func (m *BackendResultManager) getSetBackendResultStringSlice(
+	L *lua.LState,
+	getValue func(*LuaBackendResult) []string,
+	setValue func(*LuaBackendResult, []string),
+) int {
 	stack := luastack.NewManager(L)
 
 	backendResult := m.checkBackendResult(L)
@@ -303,47 +307,38 @@ func (m *BackendResultManager) GetSetGroups(L *lua.LState) int {
 
 	if stack.GetTop() == 2 {
 		table := stack.CheckTable(2)
-		groups := make([]string, 0, table.Len())
+		values := make([]string, 0, table.Len())
 
 		table.ForEach(func(_, value lua.LValue) {
 			if str, ok := value.(lua.LString); ok {
-				groups = append(groups, string(str))
+				values = append(values, string(str))
 			}
 		})
 
-		backendResult.Groups = groups
+		setValue(backendResult, values)
 
 		return 0
 	}
 
-	return stack.PushResult(convert.GoToLuaValue(L, backendResult.Groups))
+	return stack.PushResult(convert.GoToLuaValue(L, getValue(backendResult)))
+}
+
+// GetSetGroups sets or retrieves the Groups field.
+func (m *BackendResultManager) GetSetGroups(L *lua.LState) int {
+	return m.getSetBackendResultStringSlice(
+		L,
+		func(result *LuaBackendResult) []string { return result.Groups },
+		func(result *LuaBackendResult, values []string) { result.Groups = values },
+	)
 }
 
 // GetSetGroupDistinguishedNames sets or retrieves the GroupDistinguishedNames field.
 func (m *BackendResultManager) GetSetGroupDistinguishedNames(L *lua.LState) int {
-	stack := luastack.NewManager(L)
-
-	backendResult := m.checkBackendResult(L)
-	if backendResult == nil {
-		return 0
-	}
-
-	if stack.GetTop() == 2 {
-		table := stack.CheckTable(2)
-		groupDistinguishedNames := make([]string, 0, table.Len())
-
-		table.ForEach(func(_, value lua.LValue) {
-			if str, ok := value.(lua.LString); ok {
-				groupDistinguishedNames = append(groupDistinguishedNames, string(str))
-			}
-		})
-
-		backendResult.GroupDistinguishedNames = groupDistinguishedNames
-
-		return 0
-	}
-
-	return stack.PushResult(convert.GoToLuaValue(L, backendResult.GroupDistinguishedNames))
+	return m.getSetBackendResultStringSlice(
+		L,
+		func(result *LuaBackendResult) []string { return result.GroupDistinguishedNames },
+		func(result *LuaBackendResult, values []string) { result.GroupDistinguishedNames = values },
+	)
 }
 
 // LoaderModBackendResult initializes and loads the backend result module for Lua.

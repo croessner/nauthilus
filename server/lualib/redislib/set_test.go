@@ -16,367 +16,240 @@
 package redislib
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/lualib/convert"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
 func TestRedisSAdd(t *testing.T) {
-	tests := []struct {
-		name          string
-		key           string
-		values        []any
-		expectedCount lua.LValue
-		expectedErr   lua.LValue
-		setupMock     func(mock redismock.ClientMock)
-	}{
-		{
-			name:          "AddNewValues",
-			key:           "existingKey",
-			values:        []any{"val1", "val2"},
-			expectedCount: lua.LNumber(2),
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
-				mock.ExpectSAdd("existingKey", []any{"val1", "val2"}).SetVal(2)
-			},
-		},
-		{
-			name:          "AddExistingValues",
-			key:           "existingKey",
-			values:        []any{"val1", "val2"},
-			expectedCount: lua.LNumber(0),
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
-				mock.ExpectSAdd("existingKey", []any{"val1", "val2"}).SetVal(0)
-			},
-		},
-		{
-			name:          "AddWithErr",
-			key:           "existingKey",
-			values:        []any{"val1", "val2"},
-			expectedCount: lua.LNil,
-			expectedErr:   lua.LString("some error"),
-			setupMock: func(mock redismock.ClientMock) {
-				mock.ExpectSAdd("existingKey", []any{"val1", "val2"}).SetErr(errors.New("some error"))
-			},
-		},
-		{
-			name:          "AddEmptyValues",
-			key:           "existingKey",
-			values:        []any{},
-			expectedCount: lua.LNumber(0),
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
-				mock.ExpectSAdd("existingKey", []any{}).SetVal(0)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
-
-			tt.setupMock(mock)
-			rediscli.NewTestClient(db)
-
-			L.SetGlobal("key", lua.LString(tt.key))
-
-			var valueStr strings.Builder
-			for _, v := range tt.values {
-				fmt.Fprintf(&valueStr, ", %s", formatLuaValue(v))
-			}
-
-			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_sadd("default", key%s)`, valueStr.String()))
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedCount.Type() && gotResult.String() != tt.expectedCount.String() {
-				t.Errorf("nauthilus.redis_sadd() gotResult = %d, want %d", gotResult, tt.expectedCount)
-			}
-
-			gotErr := L.GetGlobal("err")
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
+	runSetValuesRedisTests(t, "redis_sadd", sAddCases())
 }
 
 func TestRedisSIsMember(t *testing.T) {
-	tests := []struct {
-		name          string
-		key           string
-		value         any
-		expectedValue lua.LValue
-		expectedErr   lua.LValue
-		setupMock     func(mock redismock.ClientMock)
-	}{
+	runRedisLuaCommandTests(t, "redis_sismember", redisSIsMemberLuaCode(), redisSIsMemberCases())
+}
+
+// redisSIsMemberLuaCode returns the Lua script used by Redis SISMEMBER cases.
+func redisSIsMemberLuaCode() string {
+	return `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_sismember("default", key, value)`
+}
+
+// redisSIsMemberCases returns Redis SISMEMBER behavior cases.
+func redisSIsMemberCases() []redisLuaCommandTest {
+	return []redisLuaCommandTest{
 		{
-			name:          "ExistInSet",
-			key:           "existingKey",
-			value:         "existingValue",
-			expectedValue: lua.LTrue,
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
+			name: "ExistInSet",
+			luaGlobals: map[string]lua.LValue{
+				"key":   lua.LString("existingKey"),
+				"value": lua.LString("existingValue"),
+			},
+			expectedResult: lua.LTrue,
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectSIsMember("existingKey", "existingValue").SetVal(true)
 			},
 		},
 		{
-			name:          "NotExistInSet",
-			key:           "existingKey",
-			value:         "nonExistingValue",
-			expectedValue: lua.LFalse,
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
+			name: "NotExistInSet",
+			luaGlobals: map[string]lua.LValue{
+				"key":   lua.LString("existingKey"),
+				"value": lua.LString("nonExistingValue"),
+			},
+			expectedResult: lua.LFalse,
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectSIsMember("existingKey", "nonExistingValue").SetVal(false)
 			},
 		},
 		{
-			name:          "ErrOnMemberCheck",
-			key:           "existingKey",
-			value:         "anyValue",
-			expectedValue: lua.LNil,
-			expectedErr:   lua.LString("some error"),
-			setupMock: func(mock redismock.ClientMock) {
+			name: "ErrOnMemberCheck",
+			luaGlobals: map[string]lua.LValue{
+				"key":   lua.LString("existingKey"),
+				"value": lua.LString("anyValue"),
+			},
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("some error"),
+			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectSIsMember("existingKey", "anyValue").SetErr(errors.New("some error"))
 			},
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
-
-			tt.setupMock(mock)
-			rediscli.NewTestClient(db)
-
-			L.SetGlobal("key", lua.LString(tt.key))
-			L.SetGlobal("value", convert.GoToLuaValue(L, tt.value))
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_sismember("default", key, value)`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedValue.Type() && gotResult.String() != tt.expectedValue.String() {
-				t.Errorf("nauthilus.redis_sismember() gotResult = %v, want %v", gotResult, tt.expectedValue)
-			}
-
-			gotErr := L.GetGlobal("err")
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
 }
 
 func TestRedisSMembers(t *testing.T) {
-	tests := []struct {
-		name          string
-		key           string
-		expectedValue lua.LValue
-		expectedErr   lua.LValue
-		setupMock     func(mock redismock.ClientMock)
-	}{
+	runRedisLuaCommandTests(t, "redis_smembers", redisSMembersLuaCode(), redisSMembersCases())
+}
+
+// redisSMembersLuaCode returns the Lua script used by Redis SMEMBERS cases.
+func redisSMembersLuaCode() string {
+	return `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_smembers("default", key)`
+}
+
+// redisSMembersCases returns Redis SMEMBERS behavior cases.
+func redisSMembersCases() []redisLuaCommandTest {
+	return []redisLuaCommandTest{
 		{
-			name:          "ValidKey",
-			key:           "existingKey",
-			expectedValue: createLuaTable([]string{"val1", "val2"}),
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
+			name:           "ValidKey",
+			luaGlobals:     map[string]lua.LValue{"key": lua.LString("existingKey")},
+			expectedResult: createLuaTable([]string{"val1", "val2"}),
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectSMembers("existingKey").SetVal([]string{"val1", "val2"})
 			},
 		},
 		{
-			name:          "NonExistingKey",
-			key:           "nonExistingKey",
-			expectedValue: createLuaTable([]string{}),
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
+			name:           "NonExistingKey",
+			luaGlobals:     map[string]lua.LValue{"key": lua.LString("nonExistingKey")},
+			expectedResult: createLuaTable([]string{}),
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectSMembers("nonExistingKey").SetVal([]string{})
 			},
 		},
 		{
-			name:          "ErrOnSMembers",
-			key:           "anyKey",
-			expectedValue: lua.LNil,
-			expectedErr:   lua.LString("some error"),
-			setupMock: func(mock redismock.ClientMock) {
+			name:           "ErrOnSMembers",
+			luaGlobals:     map[string]lua.LValue{"key": lua.LString("anyKey")},
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("some error"),
+			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectSMembers("anyKey").SetErr(errors.New("some error"))
 			},
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
-
-			tt.setupMock(mock)
-			rediscli.NewTestClient(db)
-
-			L.SetGlobal("key", lua.LString(tt.key))
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_smembers("default", key)`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedValue.Type() || gotResult.String() != "nil" {
-				if !luaTablesAreEqual(gotResult.(*lua.LTable), tt.expectedValue.(*lua.LTable)) {
-					t.Errorf("nautilus.redis_smembers() gotResult = %v, want %v", gotResult, tt.expectedValue)
-				}
-			}
-
-			gotErr := L.GetGlobal("err")
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
 }
 
 func TestRedisSRem(t *testing.T) {
-	tests := []struct {
-		name          string
-		key           string
-		values        []any
-		expectedValue lua.LValue
-		expectedErr   lua.LValue
-		setupMock     func(mock redismock.ClientMock)
-	}{
-		{
-			name:          "RemoveExistingValues",
-			key:           "existingKey",
-			values:        []any{"val1", "val2"},
-			expectedValue: lua.LNumber(2),
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
-				mock.ExpectSRem("existingKey", []any{"val1", "val2"}).SetVal(2)
-			},
-		},
-		{
-			name:          "RemoveNonExistingValues",
-			key:           "existingKey",
-			values:        []any{"nonExistingVal1", "nonExistingVal2"},
-			expectedValue: lua.LNumber(0),
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
-				mock.ExpectSRem("existingKey", []any{"nonExistingVal1", "nonExistingVal2"}).SetVal(0)
-			},
-		},
-		{
-			name:          "ErrorOnRemove",
-			key:           "existingKey",
-			values:        []any{"val1", "val2"},
-			expectedValue: lua.LNil,
-			expectedErr:   lua.LString("some error"),
-			setupMock: func(mock redismock.ClientMock) {
-				mock.ExpectSRem("existingKey", []any{"val1", "val2"}).SetErr(errors.New("some error"))
-			},
-		},
-		{
-			name:          "RemoveNoValues",
-			key:           "existingKey",
-			values:        []any{},
-			expectedValue: lua.LNumber(0),
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
-				mock.ExpectSRem("existingKey", []any{}).SetVal(0)
-			},
-		},
+	runSetValuesRedisTests(t, "redis_srem", sRemCases())
+}
+
+type setValuesRedisTest struct {
+	name          string
+	key           string
+	values        []any
+	expectedValue lua.LValue
+	expectedErr   lua.LValue
+	setupMock     func(mock redismock.ClientMock)
+}
+
+// sAddCases returns SADD command cases.
+func sAddCases() []setValuesRedisTest {
+	return setValuesCases(true)
+}
+
+// sRemCases returns SREM command cases.
+func sRemCases() []setValuesRedisTest {
+	return setValuesCases(false)
+}
+
+// setValuesCases returns SADD or SREM cases for mirrored set command behavior.
+func setValuesCases(add bool) []setValuesRedisTest {
+	if add {
+		return []setValuesRedisTest{
+			setValuesCase("AddNewValues", "existingKey", []any{"val1", "val2"}, lua.LNumber(2), lua.LNil, expectSAddNew),
+			setValuesCase("AddExistingValues", "existingKey", []any{"val1", "val2"}, lua.LNumber(0), lua.LNil, expectSAddExisting),
+			setValuesCase("AddWithErr", "existingKey", []any{"val1", "val2"}, lua.LNil, lua.LString("some error"), expectSAddError),
+			setValuesCase("AddEmptyValues", "existingKey", []any{}, lua.LNumber(0), lua.LNil, expectSAddEmpty),
+		}
 	}
+
+	return []setValuesRedisTest{
+		setValuesCase("RemoveExistingValues", "existingKey", []any{"val1", "val2"}, lua.LNumber(2), lua.LNil, expectSRemExisting),
+		setValuesCase("RemoveNonExistingValues", "existingKey", []any{"nonExistingVal1", "nonExistingVal2"}, lua.LNumber(0), lua.LNil, expectSRemMissing),
+		setValuesCase("ErrorOnRemove", "existingKey", []any{"val1", "val2"}, lua.LNil, lua.LString("some error"), expectSRemError),
+		setValuesCase("RemoveNoValues", "existingKey", []any{}, lua.LNumber(0), lua.LNil, expectSRemEmpty),
+	}
+}
+
+// setValuesCase builds a variadic set command test case.
+func setValuesCase(
+	name string,
+	key string,
+	values []any,
+	expectedValue lua.LValue,
+	expectedErr lua.LValue,
+	setupMock func(redismock.ClientMock),
+) setValuesRedisTest {
+	return setValuesRedisTest{
+		name:          name,
+		key:           key,
+		values:        values,
+		expectedValue: expectedValue,
+		expectedErr:   expectedErr,
+		setupMock:     setupMock,
+	}
+}
+
+// expectSAddNew configures SADD for new values.
+func expectSAddNew(mock redismock.ClientMock) {
+	mock.ExpectSAdd("existingKey", []any{"val1", "val2"}).SetVal(2)
+}
+
+// expectSAddExisting configures SADD for existing values.
+func expectSAddExisting(mock redismock.ClientMock) {
+	mock.ExpectSAdd("existingKey", []any{"val1", "val2"}).SetVal(0)
+}
+
+// expectSAddError configures a failing SADD expectation.
+func expectSAddError(mock redismock.ClientMock) {
+	mock.ExpectSAdd("existingKey", []any{"val1", "val2"}).SetErr(errors.New("some error"))
+}
+
+// expectSAddEmpty configures SADD for an empty value list.
+func expectSAddEmpty(mock redismock.ClientMock) {
+	mock.ExpectSAdd("existingKey", []any{}).SetVal(0)
+}
+
+// expectSRemExisting configures SREM for existing values.
+func expectSRemExisting(mock redismock.ClientMock) {
+	mock.ExpectSRem("existingKey", []any{"val1", "val2"}).SetVal(2)
+}
+
+// expectSRemMissing configures SREM for missing values.
+func expectSRemMissing(mock redismock.ClientMock) {
+	mock.ExpectSRem("existingKey", []any{"nonExistingVal1", "nonExistingVal2"}).SetVal(0)
+}
+
+// expectSRemError configures a failing SREM expectation.
+func expectSRemError(mock redismock.ClientMock) {
+	mock.ExpectSRem("existingKey", []any{"val1", "val2"}).SetErr(errors.New("some error"))
+}
+
+// expectSRemEmpty configures SREM for an empty value list.
+func expectSRemEmpty(mock redismock.ClientMock) {
+	mock.ExpectSRem("existingKey", []any{}).SetVal(0)
+}
+
+// runSetValuesRedisTests runs Redis set commands that take a key and variadic values.
+func runSetValuesRedisTests(t *testing.T, luaCmd string, tests []setValuesRedisTest) {
+	t.Helper()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
-
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
+			L, mock, _ := newRedisLuaCommandState(t)
 
 			tt.setupMock(mock)
-			rediscli.NewTestClient(db)
-
 			L.SetGlobal("key", lua.LString(tt.key))
 
 			var valueStr strings.Builder
-			for _, v := range tt.values {
-				fmt.Fprintf(&valueStr, ", %s", formatLuaValue(v))
+			for _, value := range tt.values {
+				fmt.Fprintf(&valueStr, ", %s", formatLuaValue(value))
 			}
 
-			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_srem("default", key%s)`, valueStr.String()))
-			if err != nil {
+			luaCode := fmt.Sprintf(
+				`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.%s("default", key%s)`,
+				luaCmd,
+				valueStr.String(),
+			)
+			if err := L.DoString(luaCode); err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
 
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedValue.Type() && gotResult.String() != tt.expectedValue.String() {
-				t.Errorf("nauthilus.redis_srem() gotResult = %v, want %v", gotResult, tt.expectedValue)
-			}
-
-			gotErr := L.GetGlobal("err")
-
-			checkLuaError(t, gotErr, tt.expectedErr)
+			assertLuaValueEqual(t, luaCmd, L.GetGlobal("result"), tt.expectedValue)
+			checkLuaError(t, L.GetGlobal("err"), tt.expectedErr)
 
 			mock.ClearExpect()
 		})
@@ -384,78 +257,24 @@ func TestRedisSRem(t *testing.T) {
 }
 
 func TestRedisSCard(t *testing.T) {
-	tests := []struct {
-		name          string
-		key           string
-		expectedValue lua.LValue
-		expectedErr   lua.LValue
-		setupMock     func(mock redismock.ClientMock)
-	}{
-		{
-			name:          "ValidKey",
-			key:           "existingKey",
-			expectedValue: lua.LNumber(2),
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
-				mock.ExpectSCard("existingKey").SetVal(2)
-			},
-		},
-		{
-			name:          "NonExistingKey",
-			key:           "nonExistingKey",
-			expectedValue: lua.LNumber(0),
-			expectedErr:   lua.LNil,
-			setupMock: func(mock redismock.ClientMock) {
-				mock.ExpectSCard("nonExistingKey").SetVal(0)
-			},
-		},
-		{
-			name:          "ErrorOnSCard",
-			key:           "anyKey",
-			expectedValue: lua.LNil,
-			expectedErr:   lua.LString("some error"),
-			setupMock: func(mock redismock.ClientMock) {
-				mock.ExpectSCard("anyKey").SetErr(errors.New("some error"))
-			},
-		},
-	}
+	runSimpleKeyRedisTests(t, "redis_scard", []simpleKeyRedisTest{
+		simpleKeyCase("ValidKey", "existingKey", lua.LNumber(2), lua.LNil, expectSCardValid),
+		simpleKeyCase("NonExistingKey", "nonExistingKey", lua.LNumber(0), lua.LNil, expectSCardMissing),
+		simpleKeyCase("ErrorOnSCard", "anyKey", lua.LNil, lua.LString("some error"), expectSCardError),
+	})
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
+// expectSCardValid configures SCARD for an existing key.
+func expectSCardValid(mock redismock.ClientMock) {
+	mock.ExpectSCard("existingKey").SetVal(2)
+}
 
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
+// expectSCardMissing configures SCARD for a missing key.
+func expectSCardMissing(mock redismock.ClientMock) {
+	mock.ExpectSCard("nonExistingKey").SetVal(0)
+}
 
-			L := lua.NewState()
-			defer L.Close()
-
-			bindRedisRuntimeContextForTest(context.Background(), L)
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
-
-			tt.setupMock(mock)
-			rediscli.NewTestClient(db)
-
-			L.SetGlobal("key", lua.LString(tt.key))
-
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_scard("default", key)`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedValue.Type() || gotResult.String() != tt.expectedValue.String() {
-				t.Errorf("nauthilus.redis_scard() gotResult = %v, want %v", gotResult, tt.expectedValue)
-			}
-
-			gotErr := L.GetGlobal("err")
-
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
+// expectSCardError configures a failing SCARD expectation.
+func expectSCardError(mock redismock.ClientMock) {
+	mock.ExpectSCard("anyKey").SetErr(errors.New("some error"))
 }

@@ -108,12 +108,38 @@ func seedInitialRedisData(ctx context.Context, client *redis.Client, initialData
 		return nil
 	}
 
+	seeders := []func(context.Context, *redis.Client, *RedisInitialData) error{
+		seedRedisStrings,
+		seedRedisHashes,
+		seedRedisSets,
+		seedRedisLists,
+		seedRedisZSets,
+		seedRedisHyperLogLogs,
+		seedRedisTTLs,
+	}
+
+	for _, seed := range seeders {
+		if err := seed(ctx, client, initialData); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// seedRedisStrings writes string seed data.
+func seedRedisStrings(ctx context.Context, client *redis.Client, initialData *RedisInitialData) error {
 	for key, value := range initialData.Strings {
 		if err := client.Set(ctx, key, value, 0).Err(); err != nil {
 			return fmt.Errorf("failed to seed redis string key %q: %w", key, err)
 		}
 	}
 
+	return nil
+}
+
+// seedRedisHashes writes hash seed data.
+func seedRedisHashes(ctx context.Context, client *redis.Client, initialData *RedisInitialData) error {
 	for key, fields := range initialData.Hashes {
 		values := make(map[string]any, len(fields))
 		for field, value := range fields {
@@ -129,36 +155,41 @@ func seedInitialRedisData(ctx context.Context, client *redis.Client, initialData
 		}
 	}
 
+	return nil
+}
+
+// seedRedisSets writes set seed data.
+func seedRedisSets(ctx context.Context, client *redis.Client, initialData *RedisInitialData) error {
 	for key, members := range initialData.Sets {
 		if len(members) == 0 {
 			continue
 		}
 
-		values := make([]any, 0, len(members))
-		for _, member := range members {
-			values = append(values, member)
-		}
-
-		if err := client.SAdd(ctx, key, values...).Err(); err != nil {
+		if err := client.SAdd(ctx, key, stringSliceToAny(members)...).Err(); err != nil {
 			return fmt.Errorf("failed to seed redis set key %q: %w", key, err)
 		}
 	}
 
+	return nil
+}
+
+// seedRedisLists writes list seed data.
+func seedRedisLists(ctx context.Context, client *redis.Client, initialData *RedisInitialData) error {
 	for key, entries := range initialData.Lists {
 		if len(entries) == 0 {
 			continue
 		}
 
-		values := make([]any, 0, len(entries))
-		for _, entry := range entries {
-			values = append(values, entry)
-		}
-
-		if err := client.RPush(ctx, key, values...).Err(); err != nil {
+		if err := client.RPush(ctx, key, stringSliceToAny(entries)...).Err(); err != nil {
 			return fmt.Errorf("failed to seed redis list key %q: %w", key, err)
 		}
 	}
 
+	return nil
+}
+
+// seedRedisZSets writes sorted-set seed data.
+func seedRedisZSets(ctx context.Context, client *redis.Client, initialData *RedisInitialData) error {
 	for key, members := range initialData.ZSets {
 		if len(members) == 0 {
 			continue
@@ -174,21 +205,26 @@ func seedInitialRedisData(ctx context.Context, client *redis.Client, initialData
 		}
 	}
 
+	return nil
+}
+
+// seedRedisHyperLogLogs writes HyperLogLog seed data.
+func seedRedisHyperLogLogs(ctx context.Context, client *redis.Client, initialData *RedisInitialData) error {
 	for key, elements := range initialData.HyperLogLogs {
 		if len(elements) == 0 {
 			continue
 		}
 
-		values := make([]any, 0, len(elements))
-		for _, element := range elements {
-			values = append(values, element)
-		}
-
-		if err := client.PFAdd(ctx, key, values...).Err(); err != nil {
+		if err := client.PFAdd(ctx, key, stringSliceToAny(elements)...).Err(); err != nil {
 			return fmt.Errorf("failed to seed redis hyperloglog key %q: %w", key, err)
 		}
 	}
 
+	return nil
+}
+
+// seedRedisTTLs writes key expiration seed data.
+func seedRedisTTLs(ctx context.Context, client *redis.Client, initialData *RedisInitialData) error {
 	for key, seconds := range initialData.TTLSeconds {
 		if err := client.Expire(ctx, key, secondsAsDuration(seconds)).Err(); err != nil {
 			return fmt.Errorf("failed to set redis ttl for key %q: %w", key, err)
@@ -196,6 +232,16 @@ func seedInitialRedisData(ctx context.Context, client *redis.Client, initialData
 	}
 
 	return nil
+}
+
+// stringSliceToAny converts string slices into Redis variadic arguments.
+func stringSliceToAny(values []string) []any {
+	result := make([]any, 0, len(values))
+	for _, value := range values {
+		result = append(result, value)
+	}
+
+	return result
 }
 
 // seedLegacyRedisResponses preserves compatibility for old fixtures using the responses map.

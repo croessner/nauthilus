@@ -19,6 +19,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	lua "github.com/yuin/gopher-lua"
@@ -29,15 +30,32 @@ func runLuaCode(L *lua.LState, code string) error {
 	return L.DoString(code)
 }
 
-func TestCreateAndUseSummaryVec(t *testing.T) {
-	L := lua.NewState()
+// runPrometheusLuaTest executes Lua code with the prometheus module loaded.
+func runPrometheusLuaTest(t *testing.T, code string) {
+	t.Helper()
 
+	L := lua.NewState()
 	defer L.Close()
 
-	// Register the module
 	L.PreloadModule("prometheus", LoaderModPrometheus(context.TODO(), nil, nil))
 
-	err := runLuaCode(L, `
+	if err := runLuaCode(L, code); err != nil {
+		t.Fatalf("Lua code execution failed: %v", err)
+	}
+}
+
+// assertCollectorHasSamples verifies a registered collector exists and exposes samples.
+func assertCollectorHasSamples(t *testing.T, collector prometheus.Collector, exists bool, label string) {
+	t.Helper()
+
+	assert.True(t, exists, "%s should exist", label)
+
+	count := testutil.CollectAndCount(collector)
+	assert.NotZero(t, count, "Expected non-zero count in %s", label)
+}
+
+func TestCreateAndUseSummaryVec(t *testing.T) {
+	runPrometheusLuaTest(t, `
 		local prometheus = require("prometheus")
 
 		-- Create a SummaryVec
@@ -51,18 +69,9 @@ func TestCreateAndUseSummaryVec(t *testing.T) {
 		-- Stop timer
 		prometheus.stop_timer(timer)
 	`)
-	if err != nil {
-		t.Fatalf("Lua code execution failed: %v", err)
-	}
 
-	// Verify the summary was created and contains the recorded value.
 	summary, exists := summaries["test_summary"]
-
-	assert.True(t, exists, "SummaryVec 'test_summary' should exist")
-
-	// Test whether the summary has recorded data
-	count := testutil.CollectAndCount(summary)
-	assert.NotZero(t, count, "Expected non-zero count in SummaryVec")
+	assertCollectorHasSamples(t, summary, exists, "SummaryVec 'test_summary'")
 }
 
 func TestCreateAndUseCounterVec(t *testing.T) {
@@ -96,14 +105,7 @@ func TestCreateAndUseCounterVec(t *testing.T) {
 }
 
 func TestCreateAndUseHistogramVec(t *testing.T) {
-	L := lua.NewState()
-
-	defer L.Close()
-
-	// Register the module
-	L.PreloadModule("prometheus", LoaderModPrometheus(context.TODO(), nil, nil))
-
-	err := runLuaCode(L, `
+	runPrometheusLuaTest(t, `
 		local prometheus = require("prometheus")
 
 		-- Create a HistogramVec
@@ -117,18 +119,9 @@ func TestCreateAndUseHistogramVec(t *testing.T) {
 		-- Stop timer
 		prometheus.stop_timer(timer)
 	`)
-	if err != nil {
-		t.Fatalf("Lua code execution failed: %v", err)
-	}
 
-	// Verify the histogram was created and contains the recorded value.
 	histogram, exists := histograms["test_histogram"]
-
-	assert.True(t, exists, "HistogramVec 'test_histogram' should exist")
-
-	// Test whether the histogram has recorded data
-	count := testutil.CollectAndCount(histogram)
-	assert.NotZero(t, count, "Expected non-zero count in HistogramVec")
+	assertCollectorHasSamples(t, histogram, exists, "HistogramVec 'test_histogram'")
 }
 
 func TestCreateAndUseGaugeVec(t *testing.T) {

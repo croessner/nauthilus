@@ -27,6 +27,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type sameOriginValidationCase struct {
+	name       string
+	origin     string
+	referer    string
+	errMessage string
+	wantErr    bool
+}
+
 func init() {
 	gin.SetMode(gin.TestMode)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
@@ -416,64 +424,44 @@ func TestDefaultOriginValidator_SameOrigin(t *testing.T) {
 	validator := NewOriginValidator()
 	selfOrigin := &url.URL{Scheme: "https", Host: "example.com"}
 
-	tests := []struct {
-		name       string
-		origin     string
-		referer    string
-		wantErr    bool
-		errMessage string
-	}{
-		{
-			name:    "same origin header",
-			origin:  "https://example.com",
-			wantErr: false,
-		},
-		{
-			name:       "different origin header",
-			origin:     "https://evil.com",
-			wantErr:    true,
-			errMessage: "bad origin",
-		},
-		{
-			name:    "same origin via referer",
-			referer: "https://example.com/page",
-			wantErr: false,
-		},
-		{
-			name:       "different origin via referer",
-			referer:    "https://evil.com/page",
-			wantErr:    true,
-			errMessage: "bad referer",
-		},
-		{
-			name:       "no origin or referer",
-			wantErr:    true,
-			errMessage: "no referer",
-		},
+	for _, tt := range sameOriginValidationCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			assertSameOriginValidation(t, validator, selfOrigin, tt)
+		})
+	}
+}
+
+// sameOriginValidationCases returns origin validation scenarios for same-origin checks.
+func sameOriginValidationCases() []sameOriginValidationCase {
+	return []sameOriginValidationCase{
+		{name: "same origin header", origin: "https://example.com"},
+		{name: "different origin header", origin: "https://evil.com", wantErr: true, errMessage: "bad origin"},
+		{name: "same origin via referer", referer: "https://example.com/page"},
+		{name: "different origin via referer", referer: "https://evil.com/page", wantErr: true, errMessage: "bad referer"},
+		{name: "no origin or referer", wantErr: true, errMessage: "no referer"},
+	}
+}
+
+// assertSameOriginValidation verifies one same-origin validation scenario.
+func assertSameOriginValidation(t *testing.T, validator *DefaultOriginValidator, selfOrigin *url.URL, tt sameOriginValidationCase) {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	if tt.origin != "" {
+		req.Header.Set("Origin", tt.origin)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	if tt.referer != "" {
+		req.Header.Set("Referer", tt.referer)
+	}
 
-			if tt.origin != "" {
-				req.Header.Set("Origin", tt.origin)
-			}
+	err := validator.ValidateOrigin(req, selfOrigin)
+	if tt.wantErr && err == nil {
+		t.Error("ValidateOrigin() should return error")
+	}
 
-			if tt.referer != "" {
-				req.Header.Set("Referer", tt.referer)
-			}
-
-			err := validator.ValidateOrigin(req, selfOrigin)
-
-			if tt.wantErr && err == nil {
-				t.Error("ValidateOrigin() should return error")
-			}
-
-			if !tt.wantErr && err != nil {
-				t.Errorf("ValidateOrigin() error = %v", err)
-			}
-		})
+	if !tt.wantErr && err != nil {
+		t.Errorf("ValidateOrigin() error = %v", err)
 	}
 }
 

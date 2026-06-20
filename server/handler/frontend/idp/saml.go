@@ -378,42 +378,73 @@ func (h *SAMLHandler) getSAMLIDP() (*saml.IdentityProvider, error) {
 		return nil, err
 	}
 
+	cert, err := parseSAMLIDPCertificate(certStr)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := parseSAMLIDPPrivateKey(keyStr)
+	if err != nil {
+		return nil, err
+	}
+
+	issuer := h.deps.Cfg.GetIDP().OIDC.Issuer
+	metadataURL, ssoURL, sloURL := resolveSAMLIDPEndpoints(samlCfg, issuer)
+
+	return &saml.IdentityProvider{
+		Key:                     key,
+		Certificate:             cert,
+		MetadataURL:             metadataURL,
+		SSOURL:                  ssoURL,
+		LogoutURL:               sloURL,
+		ServiceProviderProvider: h,
+		SignatureMethod:         samlCfg.GetSignatureMethod(),
+		Logger:                  &samlLogger{logger: h.deps.Logger},
+	}, nil
+}
+
+// parseSAMLIDPCertificate parses the configured SAML IdP certificate.
+func parseSAMLIDPCertificate(certStr string) (*x509.Certificate, error) {
 	block, _ := pem.Decode([]byte(certStr))
 	if block == nil {
 		return nil, fmt.Errorf("failed to parse PEM block containing the certificate")
 	}
 
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
+	return x509.ParseCertificate(block.Bytes)
+}
 
-	block, _ = pem.Decode([]byte(keyStr))
+// parseSAMLIDPPrivateKey parses the configured SAML IdP signing key.
+func parseSAMLIDPPrivateKey(keyStr string) (crypto.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(keyStr))
 	if block == nil {
 		return nil, fmt.Errorf("failed to parse PEM block containing the key")
 	}
 
-	var key any
-	if key, err = x509.ParsePKCS1PrivateKey(block.Bytes); err != nil {
-		if key, err = x509.ParsePKCS8PrivateKey(block.Bytes); err != nil {
-			return nil, fmt.Errorf("failed to parse private key: %v", err)
-		}
+	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return key, nil
 	}
 
-	issuer := h.deps.Cfg.GetIDP().OIDC.Issuer
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %v", err)
+	}
 
+	return key, nil
+}
+
+// resolveSAMLIDPEndpoints derives metadata, SSO, and SLO URLs from SAML configuration.
+func resolveSAMLIDPEndpoints(samlCfg config.SAML2Config, issuer string) (url.URL, url.URL, url.URL) {
 	entityID := samlCfg.EntityID
 	if entityID == "" {
 		entityID = issuer + "/saml/metadata"
 	}
 
 	metadataURL, _ := url.Parse(entityID)
-
 	ssoURLStr := issuer + "/saml/sso"
 	sloURLStr := issuer + frontendSAMLLogoutPath
 
 	if samlCfg.EntityID != "" {
-		// If EntityID is a full URL, try to use it as base for SSO URL
+		// If EntityID is a full URL, try to use it as base for SSO URL.
 		if u, err := url.Parse(samlCfg.EntityID); err == nil && u.Scheme != "" && u.Host != "" {
 			u.Path = "/saml/sso"
 			u.RawQuery = ""
@@ -428,16 +459,7 @@ func (h *SAMLHandler) getSAMLIDP() (*saml.IdentityProvider, error) {
 	ssoURL, _ := url.Parse(ssoURLStr)
 	sloURL, _ := url.Parse(sloURLStr)
 
-	return &saml.IdentityProvider{
-		Key:                     key.(crypto.PrivateKey),
-		Certificate:             cert,
-		MetadataURL:             *metadataURL,
-		SSOURL:                  *ssoURL,
-		LogoutURL:               *sloURL,
-		ServiceProviderProvider: h,
-		SignatureMethod:         samlCfg.GetSignatureMethod(),
-		Logger:                  &samlLogger{logger: h.deps.Logger},
-	}, nil
+	return *metadataURL, *ssoURL, *sloURL
 }
 
 // Register adds SAML routes to the router.
@@ -529,33 +551,14 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		return
 	}
 
-	var acsURL string
-	if req.ACSEndpoint != nil {
-		acsURL = req.ACSEndpoint.Location
-	}
-
-	var issuer string
-	if req.Request.Issuer != nil {
-		issuer = req.Request.Issuer.Value
-	}
-
-	util.DebugModuleWithCfg(
-		ctx.Request.Context(),
-		h.deps.Cfg,
-		h.deps.Logger,
-		definitions.DbgIdp,
-		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "SAML SSO request details",
-		"acs_url", util.WithNotAvailable(acsURL),
-		"issuer", util.WithNotAvailable(issuer),
-		"request_id", req.Request.ID,
-	)
-
 	if err := req.Validate(); err != nil {
 		ctx.String(http.StatusBadRequest, "Failed to validate SAML request: %v", err)
 
 		return
 	}
+
+	issuer := samlAuthnRequestIssuer(req)
+	h.logSAMLSSORequestDetails(ctx, req, issuer)
 
 	mgr := cookie.GetManager(ctx)
 	account := ""
@@ -565,69 +568,23 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 	}
 
 	if account == "" {
-		// User not logged in - store SAML flow state in secure cookie and redirect to login.
-		// This prevents open redirect vulnerabilities by not passing return_to in URL.
-		redirectTarget := frontendLoginPath
-
-		if mgr != nil {
-			controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-
-			decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
-				FlowID:       ksuid.New().String(),
-				Type:         flowdomain.FlowTypeSAML,
-				Protocol:     flowdomain.FlowProtocolSAML,
-				CurrentStep:  flowdomain.FlowStepStart,
-				ReturnTarget: frontendLoginPath,
-				Metadata: map[string]string{
-					flowdomain.FlowMetadataSAMLEntityID: issuer,
-					flowdomain.FlowMetadataOriginalURL:  ctx.Request.URL.String(),
-					flowdomain.FlowMetadataResumeTarget: ctx.Request.URL.RequestURI(),
-				},
-			}, time.Now())
-			if err != nil {
-				ctx.String(http.StatusInternalServerError, "Failed to initialize flow session")
-
-				return
-			}
-
-			redirectTarget = decision.RedirectURI
-
-			samlFlowCtx := newSAMLFlowContext(mgr)
-			samlFlowCtx.StoreRequest(issuer, ctx.Request.URL.String())
-
-			// Explicitly save cookie before redirect to ensure it's written to the response
-			if err := samlFlowCtx.Save(ctx); err != nil {
-				ctx.String(http.StatusInternalServerError, "Failed to save session")
-
-				return
-			}
-
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				h.deps.Cfg,
-				h.deps.Logger,
-				definitions.DbgIdp,
-				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-				definitions.LogKeyMsg, "SAML flow state stored in cookie - redirecting to login",
-				"issuer", util.WithNotAvailable(issuer),
-			)
-		}
-
-		ctx.Redirect(http.StatusFound, redirectTarget)
+		h.redirectUnauthenticatedSAMLSSO(ctx, mgr, issuer)
 
 		return
 	}
 
-	// User is logged in
-	username := account
+	h.handleAuthenticatedSAMLSSO(ctx, mgr, req, issuer, account)
+}
 
-	// We need user details for the assertion
-	issuerValue := ""
-	if req.Request.Issuer != nil {
-		issuerValue = req.Request.Issuer.Value
-	}
-
-	samlSP, ok := h.idp.FindSAMLServiceProvider(issuerValue)
+// handleAuthenticatedSAMLSSO issues the SAML assertion for an already logged-in account.
+func (h *SAMLHandler) handleAuthenticatedSAMLSSO(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	req *saml.IdpAuthnRequest,
+	issuer string,
+	username string,
+) {
+	samlSP, ok := h.idp.FindSAMLServiceProvider(issuer)
 	if !ok {
 		ctx.String(http.StatusBadRequest, "Invalid SAML service provider")
 
@@ -641,53 +598,10 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		return
 	}
 
-	// Cleanup IP address (remove port) for SAML assertion compatibility
-	if ip, _, err := net.SplitHostPort(req.HTTPRequest.RemoteAddr); err == nil {
-		req.HTTPRequest.RemoteAddr = ip
-	}
+	normalizeSAMLRequestRemoteAddr(req)
 
-	// Create SAML session
-	samlSessionID, _ := util.GenerateRandomString(32)
-	samlSessionIndex, _ := util.GenerateRandomString(32)
-
-	samlSession := &saml.Session{
-		ID:           samlSessionID,
-		CreateTime:   time.Now().UTC(),
-		ExpireTime:   time.Now().Add(h.deps.Cfg.GetIDP().SAML2.GetDefaultExpireTime()).UTC(),
-		Index:        samlSessionIndex,
-		UserName:     username,
-		NameID:       username,
-		NameIDFormat: h.deps.Cfg.GetIDP().SAML2.GetNameIDFormat(),
-	}
-
-	// Add attributes (filtered by allowed_attributes if configured)
-	allowedAttrs := samlSP.GetAllowedAttributes()
-
-	for k, v := range user.Attributes {
-		if len(v) == 0 {
-			continue
-		}
-
-		if k == definitions.ClaimGroups || k == definitions.LuaBackendResultGroupDistinguishedNames {
-			continue
-		}
-
-		if len(allowedAttrs) > 0 && !slices.Contains(allowedAttrs, k) {
-			continue
-		}
-
-		samlSession.CustomAttributes = append(samlSession.CustomAttributes, saml.Attribute{
-			Name: k,
-			Values: []saml.AttributeValue{
-				{
-					Type:  samlAttributeTypeString,
-					Value: fmt.Sprintf("%v", v[0]),
-				},
-			},
-		})
-	}
-
-	appendFirstClassSAMLAttributes(&samlSession.CustomAttributes, user, allowedAttrs)
+	samlSession := h.newSAMLAuthnSession(username)
+	populateSAMLSessionAttributes(samlSession, user, samlSP)
 
 	req.Now = time.Now().UTC()
 
@@ -698,15 +612,13 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		return
 	}
 
-	if err = h.registerSLOParticipantSession(ctx.Request.Context(), username, issuerValue, samlSession); err != nil {
+	if err = h.registerSLOParticipantSession(ctx.Request.Context(), username, issuer, samlSession); err != nil {
 		ctx.String(http.StatusInternalServerError, "Failed to persist SAML SLO session: %v", err)
 
 		return
 	}
 
-	// Complete the flow: advance to callback, delete Redis state, and clean up cookie keys
-	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
-	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+	h.completeSAMLSSOFlow(ctx, mgr)
 
 	form, err := req.PostBinding()
 	if err != nil {
@@ -715,6 +627,198 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		return
 	}
 
+	h.renderSAMLPostBinding(ctx, form)
+}
+
+// samlAuthnRequestIssuer returns the trimmed issuer from a parsed SAML AuthnRequest.
+func samlAuthnRequestIssuer(req *saml.IdpAuthnRequest) string {
+	if req == nil || req.Request.Issuer == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(req.Request.Issuer.Value)
+}
+
+// samlAuthnRequestACSURL returns the Assertion Consumer Service URL for logging.
+func samlAuthnRequestACSURL(req *saml.IdpAuthnRequest) string {
+	if req == nil || req.ACSEndpoint == nil {
+		return ""
+	}
+
+	return req.ACSEndpoint.Location
+}
+
+// logSAMLSSORequestDetails records non-secret request routing details.
+func (h *SAMLHandler) logSAMLSSORequestDetails(ctx *gin.Context, req *saml.IdpAuthnRequest, issuer string) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "SAML SSO request details",
+		"acs_url", util.WithNotAvailable(samlAuthnRequestACSURL(req)),
+		"issuer", util.WithNotAvailable(issuer),
+		"request_id", req.Request.ID,
+	)
+}
+
+// redirectUnauthenticatedSAMLSSO stores SAML flow state and sends the browser to login.
+func (h *SAMLHandler) redirectUnauthenticatedSAMLSSO(ctx *gin.Context, mgr cookie.Manager, issuer string) {
+	redirectTarget := frontendLoginPath
+
+	if mgr != nil {
+		decision, err := h.startSAMLSSOLoginFlow(ctx, mgr, issuer)
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, "Failed to initialize flow session")
+
+			return
+		}
+
+		redirectTarget = decision.RedirectURI
+
+		if !h.storeSAMLSSORequestContext(ctx, mgr, issuer) {
+			return
+		}
+	}
+
+	ctx.Redirect(http.StatusFound, redirectTarget)
+}
+
+// startSAMLSSOLoginFlow creates the cookie-backed flow state for SAML login.
+func (h *SAMLHandler) startSAMLSSOLoginFlow(ctx *gin.Context, mgr cookie.Manager, issuer string) (flowdomain.Decision, error) {
+	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+
+	return controller.Start(ctx.Request.Context(), &flowdomain.State{
+		FlowID:       ksuid.New().String(),
+		Type:         flowdomain.FlowTypeSAML,
+		Protocol:     flowdomain.FlowProtocolSAML,
+		CurrentStep:  flowdomain.FlowStepStart,
+		ReturnTarget: frontendLoginPath,
+		Metadata: map[string]string{
+			flowdomain.FlowMetadataSAMLEntityID: issuer,
+			flowdomain.FlowMetadataOriginalURL:  ctx.Request.URL.String(),
+			flowdomain.FlowMetadataResumeTarget: ctx.Request.URL.RequestURI(),
+		},
+	}, time.Now())
+}
+
+// storeSAMLSSORequestContext persists the original SAML request in the encrypted cookie.
+func (h *SAMLHandler) storeSAMLSSORequestContext(ctx *gin.Context, mgr cookie.Manager, issuer string) bool {
+	samlFlowCtx := newSAMLFlowContext(mgr)
+	samlFlowCtx.StoreRequest(issuer, ctx.Request.URL.String())
+
+	if err := samlFlowCtx.Save(ctx); err != nil {
+		ctx.String(http.StatusInternalServerError, "Failed to save session")
+
+		return false
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "SAML flow state stored in cookie - redirecting to login",
+		"issuer", util.WithNotAvailable(issuer),
+	)
+
+	return true
+}
+
+// normalizeSAMLRequestRemoteAddr removes the port for SAML assertion compatibility.
+func normalizeSAMLRequestRemoteAddr(req *saml.IdpAuthnRequest) {
+	if req == nil || req.HTTPRequest == nil {
+		return
+	}
+
+	if ip, _, err := net.SplitHostPort(req.HTTPRequest.RemoteAddr); err == nil {
+		req.HTTPRequest.RemoteAddr = ip
+	}
+}
+
+// newSAMLAuthnSession creates the SAML session bound to the authenticated user.
+func (h *SAMLHandler) newSAMLAuthnSession(username string) *saml.Session {
+	samlSessionID, _ := util.GenerateRandomString(32)
+	samlSessionIndex, _ := util.GenerateRandomString(32)
+
+	return &saml.Session{
+		ID:           samlSessionID,
+		CreateTime:   time.Now().UTC(),
+		ExpireTime:   time.Now().Add(h.deps.Cfg.GetIDP().SAML2.GetDefaultExpireTime()).UTC(),
+		Index:        samlSessionIndex,
+		UserName:     username,
+		NameID:       username,
+		NameIDFormat: h.deps.Cfg.GetIDP().SAML2.GetNameIDFormat(),
+	}
+}
+
+// populateSAMLSessionAttributes copies allowed backend attributes into the SAML session.
+func populateSAMLSessionAttributes(session *saml.Session, user *backend.User, samlSP *config.SAML2ServiceProvider) {
+	if session == nil || user == nil || samlSP == nil {
+		return
+	}
+
+	allowedAttrs := samlSP.GetAllowedAttributes()
+	for k, v := range user.Attributes {
+		if !shouldIncludeSAMLAttribute(k, v, allowedAttrs) {
+			continue
+		}
+
+		session.CustomAttributes = append(session.CustomAttributes, samlStringAttribute(k, fmt.Sprintf("%v", v[0])))
+	}
+
+	appendFirstClassSAMLAttributes(&session.CustomAttributes, user, allowedAttrs)
+}
+
+// shouldIncludeSAMLAttribute applies SAML attribute filtering rules.
+func shouldIncludeSAMLAttribute(name string, values []any, allowedAttrs []string) bool {
+	if len(values) == 0 {
+		return false
+	}
+
+	if name == definitions.ClaimGroups || name == definitions.LuaBackendResultGroupDistinguishedNames {
+		return false
+	}
+
+	return len(allowedAttrs) == 0 || slices.Contains(allowedAttrs, name)
+}
+
+// samlStringAttribute creates a single-valued string SAML attribute.
+func samlStringAttribute(name, value string) saml.Attribute {
+	return saml.Attribute{
+		Name: name,
+		Values: []saml.AttributeValue{
+			{
+				Type:  samlAttributeTypeString,
+				Value: value,
+			},
+		},
+	}
+}
+
+// completeSAMLSSOFlow advances and completes the server-side flow after assertion creation.
+func (h *SAMLHandler) completeSAMLSSOFlow(ctx *gin.Context, mgr cookie.Manager) {
+	redisPrefix := h.deps.Cfg.GetServer().GetRedis().GetPrefix()
+
+	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.FlowStepCallback)
+	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
+}
+
+// renderSAMLPostBinding renders the browser auto-submit form for the SAML response.
+func (h *SAMLHandler) renderSAMLPostBinding(ctx *gin.Context, form saml.IdpAuthnRequestForm) {
+	data := h.samlPostPageData(ctx)
+	data["AutoSubmitSAMLForm"] = true
+	data["SAMLPostURL"] = form.URL
+	data["SAMLResponse"] = form.SAMLResponse
+	data["RelayState"] = form.RelayState
+
+	ctx.HTML(http.StatusOK, "idp_saml_post.html", data)
+}
+
+// samlPostPageData builds localized template data for the SAML POST binding page.
+func (h *SAMLHandler) samlPostPageData(ctx *gin.Context) gin.H {
 	data := gin.H{
 		templateDataLanguageTag:         frontendDefaultLanguageTag,
 		templateDataLanguageCurrentName: "English",
@@ -738,12 +842,8 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 	data["SAMLPostMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You are being redirected to the application.")
 	data["SAMLPostHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "If this does not happen automatically, click Continue.")
 	data["Continue"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Continue")
-	data["AutoSubmitSAMLForm"] = true
-	data["SAMLPostURL"] = form.URL
-	data["SAMLResponse"] = form.SAMLResponse
-	data["RelayState"] = form.RelayState
 
-	ctx.HTML(http.StatusOK, "idp_saml_post.html", data)
+	return data
 }
 
 // SLO handles the SAML Single Logout request.
@@ -762,46 +862,17 @@ func (h *SAMLHandler) SLO(ctx *gin.Context) {
 		observeSLORequest(binding, messageType, sloRequestOutcomeFromHTTPStatus(ctx.Writer.Status()), time.Since(startTime))
 	}()
 
-	util.DebugModuleWithCfg(
-		ctx.Request.Context(),
-		h.deps.Cfg,
-		h.deps.Logger,
-		definitions.DbgIdp,
-		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "SAML SLO request",
-	)
+	h.logSLORequest(ctx)
 
 	if !h.sloEnabled() {
-		h.auditSLOEvent(
-			ctx.Request.Context(),
-			"request_rejected",
-			"",
-			"",
-			"",
-			samlMetricLabelBinding, binding,
-			"reason", "slo_disabled",
-		)
-		ctx.String(http.StatusNotFound, "SAML SLO endpoint is disabled")
+		h.rejectDisabledSLO(ctx, binding)
 
 		return
 	}
 
 	clientIP := util.RequestClientIPWithConfig(ctx, h.deps.Cfg, h.deps.Logger)
 	if !h.allowSLORequest(clientIP) {
-		recordSLOAbuseRejection(sloAbuseReasonRateLimit, binding)
-		recordSLOValidationError(sloValidationStageAbuseGuard, messageType, binding)
-		h.auditSLOEvent(
-			ctx.Request.Context(),
-			"request_blocked",
-			"",
-			"",
-			"",
-			samlMetricLabelBinding, binding,
-			"reason", sloAbuseReasonRateLimit,
-			"client_ip", util.WithNotAvailable(strings.TrimSpace(clientIP)),
-		)
-		ctx.Header("Retry-After", "1")
-		ctx.String(http.StatusTooManyRequests, "SAML SLO rate limit exceeded")
+		h.rejectRateLimitedSLO(ctx, binding, messageType, clientIP)
 
 		return
 	}
@@ -812,23 +883,7 @@ func (h *SAMLHandler) SLO(ctx *gin.Context) {
 
 	message, err := routeSLOInboundMessage(ctx.Request)
 	if err != nil {
-		recordSLOValidationError(sloValidationStagePayload, messageType, binding)
-
-		if isSLOPayloadTooLargeError(err) {
-			recordSLOAbuseRejection(sloAbuseReasonPayloadTooBig, binding)
-		}
-
-		h.auditSLOEvent(
-			ctx.Request.Context(),
-			"validation_failed",
-			"",
-			"",
-			"",
-			samlMetricLabelBinding, binding,
-			"stage", sloValidationStagePayload,
-			"error", err.Error(),
-		)
-		ctx.String(http.StatusBadRequest, "Invalid SAML SLO payload: %v", err)
+		h.rejectInvalidSLOPayload(ctx, binding, messageType, err)
 
 		return
 	}
@@ -836,6 +891,76 @@ func (h *SAMLHandler) SLO(ctx *gin.Context) {
 	binding = message.Binding
 	messageType = message.MessageType
 
+	h.dispatchSLOMessage(ctx, message, binding, messageType)
+}
+
+// logSLORequest records the incoming SLO handler entry.
+func (h *SAMLHandler) logSLORequest(ctx *gin.Context) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "SAML SLO request",
+	)
+}
+
+// rejectDisabledSLO writes the disabled-endpoint response and audit entry.
+func (h *SAMLHandler) rejectDisabledSLO(ctx *gin.Context, binding slodomain.Binding) {
+	h.auditSLOEvent(
+		ctx.Request.Context(),
+		"request_rejected",
+		"",
+		"",
+		"",
+		samlMetricLabelBinding, binding,
+		"reason", "slo_disabled",
+	)
+	ctx.String(http.StatusNotFound, "SAML SLO endpoint is disabled")
+}
+
+// rejectRateLimitedSLO writes the rate-limit response and abuse metrics.
+func (h *SAMLHandler) rejectRateLimitedSLO(ctx *gin.Context, binding slodomain.Binding, messageType sloMessageType, clientIP string) {
+	recordSLOAbuseRejection(sloAbuseReasonRateLimit, binding)
+	recordSLOValidationError(sloValidationStageAbuseGuard, messageType, binding)
+	h.auditSLOEvent(
+		ctx.Request.Context(),
+		"request_blocked",
+		"",
+		"",
+		"",
+		samlMetricLabelBinding, binding,
+		"reason", sloAbuseReasonRateLimit,
+		"client_ip", util.WithNotAvailable(strings.TrimSpace(clientIP)),
+	)
+	ctx.Header("Retry-After", "1")
+	ctx.String(http.StatusTooManyRequests, "SAML SLO rate limit exceeded")
+}
+
+// rejectInvalidSLOPayload writes the payload validation failure response and metrics.
+func (h *SAMLHandler) rejectInvalidSLOPayload(ctx *gin.Context, binding slodomain.Binding, messageType sloMessageType, err error) {
+	recordSLOValidationError(sloValidationStagePayload, messageType, binding)
+
+	if isSLOPayloadTooLargeError(err) {
+		recordSLOAbuseRejection(sloAbuseReasonPayloadTooBig, binding)
+	}
+
+	h.auditSLOEvent(
+		ctx.Request.Context(),
+		"validation_failed",
+		"",
+		"",
+		"",
+		samlMetricLabelBinding, binding,
+		"stage", sloValidationStagePayload,
+		"error", err.Error(),
+	)
+	ctx.String(http.StatusBadRequest, "Invalid SAML SLO payload: %v", err)
+}
+
+// dispatchSLOMessage routes a validated inbound SLO message by type.
+func (h *SAMLHandler) dispatchSLOMessage(ctx *gin.Context, message *sloInboundMessage, binding slodomain.Binding, messageType sloMessageType) {
 	switch message.MessageType {
 	case sloMessageTypeRequest:
 		h.handleLogoutRequest(ctx, message)
@@ -952,69 +1077,59 @@ func (h *SAMLHandler) handleLogoutRequest(ctx *gin.Context, message *sloInboundM
 
 	logoutRequest, err := h.validateInboundLogoutRequestSignature(ctx.Request, message)
 	if err != nil {
-		recordSLOValidationError(sloValidationStageSignature, sloMessageTypeRequest, binding)
-		h.auditSLOEvent(
-			ctx.Request.Context(),
-			"logout_request_rejected",
-			"",
-			"",
-			"",
-			samlMetricLabelBinding, binding,
-			"stage", sloValidationStageSignature,
-			"error", err.Error(),
-		)
-		ctx.String(http.StatusBadRequest, "Invalid SAML LogoutRequest signature: %v", err)
+		h.rejectLogoutRequest(ctx, binding, sloValidationStageSignature, "", "", "Invalid SAML LogoutRequest signature: %v", err)
 
 		return
 	}
 
 	requestID := strings.TrimSpace(logoutRequest.ID)
-
-	issuer := ""
-	if logoutRequest.Issuer != nil {
-		issuer = strings.TrimSpace(logoutRequest.Issuer.Value)
-	}
+	issuer := samlIssuerValue(logoutRequest.Issuer)
 
 	if err = h.validateInboundLogoutRequestProtocol(ctx.Request.Context(), logoutRequest); err != nil {
-		recordSLOValidationError(sloValidationStageProtocol, sloMessageTypeRequest, binding)
-		h.auditSLOEvent(
-			ctx.Request.Context(),
-			"logout_request_rejected",
-			"",
-			requestID,
-			issuer,
-			samlMetricLabelBinding, binding,
-			"stage", sloValidationStageProtocol,
-			"error", err.Error(),
-		)
-		ctx.String(http.StatusBadRequest, "Invalid SAML LogoutRequest protocol: %v", err)
+		h.rejectLogoutRequest(ctx, binding, sloValidationStageProtocol, requestID, issuer, "Invalid SAML LogoutRequest protocol: %v", err)
 
 		return
 	}
 
 	sloTransaction, err := h.newValidatedSLOTransaction(logoutRequest, message.Binding)
 	if err != nil {
-		recordSLOValidationError(sloValidationStageTransaction, sloMessageTypeRequest, binding)
-		h.auditSLOEvent(
-			ctx.Request.Context(),
-			"logout_request_rejected",
-			"",
-			requestID,
-			issuer,
-			samlMetricLabelBinding, binding,
-			"stage", sloValidationStageTransaction,
-			"error", err.Error(),
-		)
-		ctx.String(http.StatusBadRequest, "Invalid SAML LogoutRequest transaction: %v", err)
+		h.rejectLogoutRequest(ctx, binding, sloValidationStageTransaction, requestID, issuer, "Invalid SAML LogoutRequest transaction: %v", err)
 
 		return
 	}
 
-	account := ""
-	if logoutRequest.NameID != nil {
-		account = strings.TrimSpace(logoutRequest.NameID.Value)
-	}
+	h.completeValidatedLogoutRequest(ctx, message, logoutRequest, sloTransaction, binding, requestID, issuer)
+}
 
+// completeValidatedLogoutRequest performs local cleanup and sends the LogoutResponse.
+func (h *SAMLHandler) completeValidatedLogoutRequest(
+	ctx *gin.Context,
+	message *sloInboundMessage,
+	logoutRequest *saml.LogoutRequest,
+	sloTransaction *slodomain.Transaction,
+	binding slodomain.Binding,
+	requestID string,
+	issuer string,
+) {
+	account := samlLogoutRequestAccount(logoutRequest)
+
+	h.logValidatedLogoutRequest(ctx, message, logoutRequest, sloTransaction, issuer)
+	h.auditValidatedLogoutRequest(ctx, message, sloTransaction, binding, requestID, issuer)
+	cleanupResult := h.performLocalSLOCleanupInternal(ctx, account, sloTransaction, false)
+	terminalStatus := sloTerminalStatusFromCleanup(cleanupResult)
+	recordSLOTerminalStatus(slodomain.SLODirectionSPInitiated, terminalStatus)
+	h.auditLocalLogoutRequestCleanup(ctx, sloTransaction, binding, requestID, issuer, account, terminalStatus, cleanupResult)
+	h.respondAndAuditLogoutRequest(ctx, message, logoutRequest, sloTransaction, binding, requestID, issuer, cleanupResult, terminalStatus)
+}
+
+// logValidatedLogoutRequest records the validated LogoutRequest routing context.
+func (h *SAMLHandler) logValidatedLogoutRequest(
+	ctx *gin.Context,
+	message *sloInboundMessage,
+	logoutRequest *saml.LogoutRequest,
+	transaction *slodomain.Transaction,
+	issuer string,
+) {
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
 		h.deps.Cfg,
@@ -1026,23 +1141,129 @@ func (h *SAMLHandler) handleLogoutRequest(ctx *gin.Context, message *sloInboundM
 		"relay_state", util.WithNotAvailable(message.RelayState),
 		"issuer", util.WithNotAvailable(issuer),
 		"request_id", util.WithNotAvailable(logoutRequest.ID),
-		"transaction_id", sloTransaction.TransactionID,
+		"transaction_id", transaction.TransactionID,
 	)
+}
 
+// auditValidatedLogoutRequest records successful LogoutRequest validation.
+func (h *SAMLHandler) auditValidatedLogoutRequest(
+	ctx *gin.Context,
+	message *sloInboundMessage,
+	transaction *slodomain.Transaction,
+	binding slodomain.Binding,
+	requestID string,
+	issuer string,
+) {
 	h.auditSLOEvent(
 		ctx.Request.Context(),
 		"logout_request_validated",
-		sloTransaction.TransactionID,
+		transaction.TransactionID,
 		requestID,
 		issuer,
 		samlMetricLabelBinding, binding,
 		"relay_state", util.WithNotAvailable(message.RelayState),
 	)
+}
 
-	cleanupResult := h.performLocalSLOCleanupInternal(ctx, account, sloTransaction, false)
-	terminalStatus := sloTerminalStatusFromCleanup(cleanupResult)
-	recordSLOTerminalStatus(slodomain.SLODirectionSPInitiated, terminalStatus)
+// auditLocalLogoutRequestCleanup records local cleanup after a valid LogoutRequest.
+func (h *SAMLHandler) auditLocalLogoutRequestCleanup(
+	ctx *gin.Context,
+	transaction *slodomain.Transaction,
+	binding slodomain.Binding,
+	requestID string,
+	issuer string,
+	account string,
+	terminalStatus slodomain.Status,
+	cleanupResult sloLocalCleanupResult,
+) {
+	h.auditSLOEvent(
+		ctx.Request.Context(),
+		"logout_request_local_cleanup",
+		transaction.TransactionID,
+		requestID,
+		issuer,
+		sloLocalCleanupAuditKeyvals(binding, terminalStatus, account, cleanupResult)...,
+	)
+}
 
+// respondAndAuditLogoutRequest sends the LogoutResponse and records the outcome.
+func (h *SAMLHandler) respondAndAuditLogoutRequest(
+	ctx *gin.Context,
+	message *sloInboundMessage,
+	logoutRequest *saml.LogoutRequest,
+	transaction *slodomain.Transaction,
+	binding slodomain.Binding,
+	requestID string,
+	issuer string,
+	cleanupResult sloLocalCleanupResult,
+	terminalStatus slodomain.Status,
+) {
+	if err := h.respondToLogoutRequest(ctx, logoutRequest, message, cleanupResult); err != nil {
+		h.auditSLOEvent(
+			ctx.Request.Context(),
+			"logout_response_failed",
+			transaction.TransactionID,
+			requestID,
+			issuer,
+			samlMetricLabelBinding, binding,
+			"error", err.Error(),
+		)
+		ctx.String(http.StatusInternalServerError, "Failed to create SAML LogoutResponse: %v", err)
+
+		return
+	}
+
+	h.auditSLOEvent(
+		ctx.Request.Context(),
+		"logout_response_sent",
+		transaction.TransactionID,
+		requestID,
+		issuer,
+		samlMetricLabelBinding, binding,
+		samlMetricLabelStatus, terminalStatus,
+	)
+}
+
+// samlLogoutRequestAccount returns the NameID account from a LogoutRequest.
+func samlLogoutRequestAccount(logoutRequest *saml.LogoutRequest) string {
+	if logoutRequest == nil || logoutRequest.NameID == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(logoutRequest.NameID.Value)
+}
+
+// rejectLogoutRequest records and writes a LogoutRequest validation failure.
+func (h *SAMLHandler) rejectLogoutRequest(
+	ctx *gin.Context,
+	binding slodomain.Binding,
+	stage string,
+	requestID string,
+	issuer string,
+	responseFormat string,
+	err error,
+) {
+	recordSLOValidationError(stage, sloMessageTypeRequest, binding)
+	h.auditSLOEvent(
+		ctx.Request.Context(),
+		"logout_request_rejected",
+		"",
+		requestID,
+		issuer,
+		samlMetricLabelBinding, binding,
+		"stage", stage,
+		"error", err.Error(),
+	)
+	ctx.String(http.StatusBadRequest, responseFormat, err)
+}
+
+// sloLocalCleanupAuditKeyvals builds audit fields for local logout cleanup.
+func sloLocalCleanupAuditKeyvals(
+	binding slodomain.Binding,
+	terminalStatus slodomain.Status,
+	account string,
+	cleanupResult sloLocalCleanupResult,
+) []any {
 	auditKeyvals := []any{
 		samlMetricLabelBinding, binding,
 		samlMetricLabelStatus, terminalStatus,
@@ -1057,39 +1278,7 @@ func (h *SAMLHandler) handleLogoutRequest(ctx *gin.Context, message *sloInboundM
 		auditKeyvals = append(auditKeyvals, "participant_cleanup_error", cleanupResult.ParticipantCleanupErr.Error())
 	}
 
-	h.auditSLOEvent(
-		ctx.Request.Context(),
-		"logout_request_local_cleanup",
-		sloTransaction.TransactionID,
-		requestID,
-		issuer,
-		auditKeyvals...,
-	)
-
-	if err = h.respondToLogoutRequest(ctx, logoutRequest, message, cleanupResult); err != nil {
-		h.auditSLOEvent(
-			ctx.Request.Context(),
-			"logout_response_failed",
-			sloTransaction.TransactionID,
-			requestID,
-			issuer,
-			samlMetricLabelBinding, binding,
-			"error", err.Error(),
-		)
-		ctx.String(http.StatusInternalServerError, "Failed to create SAML LogoutResponse: %v", err)
-
-		return
-	}
-
-	h.auditSLOEvent(
-		ctx.Request.Context(),
-		"logout_response_sent",
-		sloTransaction.TransactionID,
-		requestID,
-		issuer,
-		samlMetricLabelBinding, binding,
-		samlMetricLabelStatus, terminalStatus,
-	)
+	return auditKeyvals
 }
 
 func (h *SAMLHandler) handleLogoutResponse(ctx *gin.Context, message *sloInboundMessage) {
@@ -1100,18 +1289,7 @@ func (h *SAMLHandler) handleLogoutResponse(ctx *gin.Context, message *sloInbound
 
 	logoutResponse, err := h.validateInboundLogoutResponseSignature(ctx.Request, message)
 	if err != nil {
-		recordSLOValidationError(sloValidationStageSignature, sloMessageTypeResponse, binding)
-		h.auditSLOEvent(
-			ctx.Request.Context(),
-			"logout_response_rejected",
-			"",
-			"",
-			"",
-			samlMetricLabelBinding, binding,
-			"stage", sloValidationStageSignature,
-			"error", err.Error(),
-		)
-		ctx.String(http.StatusBadRequest, "Invalid SAML LogoutResponse signature: %v", err)
+		h.rejectLogoutResponse(ctx, binding, sloValidationStageSignature, "", "", http.StatusBadRequest, "Invalid SAML LogoutResponse signature: %v", err)
 
 		return
 	}
@@ -1120,46 +1298,61 @@ func (h *SAMLHandler) handleLogoutResponse(ctx *gin.Context, message *sloInbound
 	issuer := samlIssuerValue(logoutResponse.Issuer)
 
 	if err = h.validateInboundLogoutResponseProtocol(logoutResponse); err != nil {
-		recordSLOValidationError(sloValidationStageProtocol, sloMessageTypeResponse, binding)
-		h.auditSLOEvent(
-			ctx.Request.Context(),
-			"logout_response_rejected",
-			"",
-			requestID,
-			issuer,
-			samlMetricLabelBinding, binding,
-			"stage", sloValidationStageProtocol,
-			"error", err.Error(),
-		)
-		ctx.String(http.StatusBadRequest, "Invalid SAML LogoutResponse protocol: %v", err)
+		h.rejectLogoutResponse(ctx, binding, sloValidationStageProtocol, requestID, issuer, http.StatusBadRequest, "Invalid SAML LogoutResponse protocol: %v", err)
 
 		return
 	}
 
 	aggregation, err := h.applySLOFanoutLogoutResponse(ctx.Request.Context(), logoutResponse, message.RelayState)
 	if err != nil {
-		recordSLOValidationError(sloValidationStageCorrelation, sloMessageTypeResponse, binding)
-
 		status := http.StatusBadRequest
 		if errors.Is(err, errSLOFanoutStateUnavailable) {
 			status = http.StatusInternalServerError
 		}
 
-		h.auditSLOEvent(
-			ctx.Request.Context(),
-			"logout_response_rejected",
-			"",
-			requestID,
-			issuer,
-			samlMetricLabelBinding, binding,
-			"stage", sloValidationStageCorrelation,
-			"error", err.Error(),
-		)
-		ctx.String(status, "Cannot correlate SAML LogoutResponse: %v", err)
+		h.rejectLogoutResponse(ctx, binding, sloValidationStageCorrelation, requestID, issuer, status, "Cannot correlate SAML LogoutResponse: %v", err)
 
 		return
 	}
 
+	h.logProcessedLogoutResponse(ctx, message, logoutResponse, aggregation, binding, requestID)
+	ctx.String(http.StatusOK, "SAML LogoutResponse processed")
+}
+
+// rejectLogoutResponse records and writes a LogoutResponse validation failure.
+func (h *SAMLHandler) rejectLogoutResponse(
+	ctx *gin.Context,
+	binding slodomain.Binding,
+	stage string,
+	requestID string,
+	issuer string,
+	status int,
+	responseFormat string,
+	err error,
+) {
+	recordSLOValidationError(stage, sloMessageTypeResponse, binding)
+	h.auditSLOEvent(
+		ctx.Request.Context(),
+		"logout_response_rejected",
+		"",
+		requestID,
+		issuer,
+		samlMetricLabelBinding, binding,
+		"stage", stage,
+		"error", err.Error(),
+	)
+	ctx.String(status, responseFormat, err)
+}
+
+// logProcessedLogoutResponse records successful fanout aggregation diagnostics and audit data.
+func (h *SAMLHandler) logProcessedLogoutResponse(
+	ctx *gin.Context,
+	message *sloInboundMessage,
+	logoutResponse *saml.LogoutResponse,
+	aggregation *sloFanoutAggregationResult,
+	binding slodomain.Binding,
+	requestID string,
+) {
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
 		h.deps.Cfg,
@@ -1193,8 +1386,6 @@ func (h *SAMLHandler) handleLogoutResponse(ctx *gin.Context, message *sloInbound
 		"pending", aggregation.PendingCount,
 		"final", aggregation.Final,
 	)
-
-	ctx.String(http.StatusOK, "SAML LogoutResponse processed")
 }
 
 func (h *SAMLHandler) newValidatedSLOTransaction(
@@ -1255,67 +1446,21 @@ func (h *SAMLHandler) performLocalSLOCleanupInternal(
 	redirectToLoggedOut bool,
 ) sloLocalCleanupResult {
 	mgr := cookie.GetManager(ctx)
-	account := strings.TrimSpace(accountHint)
+	account := sloCleanupAccount(accountHint, mgr)
 	result := sloLocalCleanupResult{
 		Account: account,
 	}
 
-	if account == "" && mgr != nil {
-		account = strings.TrimSpace(mgr.GetString(definitions.SessionKeyAccount, ""))
-		result.Account = account
-	}
-
 	if transaction != nil {
-		if transaction.Account == "" {
-			transaction.Account = account
-		}
-
-		if err := transaction.TransitionTo(slodomain.SLOStatusLocalDone, time.Now().UTC()); err != nil {
-			result.TransitionErr = err
-
-			if h != nil && h.deps != nil {
-				util.DebugModuleWithCfg(
-					ctx.Request.Context(),
-					h.deps.Cfg,
-					h.deps.Logger,
-					definitions.DbgIdp,
-					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, "Failed to transition SLO transaction to local_done",
-					"transaction_id", util.WithNotAvailable(transaction.TransactionID),
-					"error", err.Error(),
-				)
-			}
-		}
+		result.TransitionErr = h.transitionSLOTransactionLocalDone(ctx, transaction, account)
 	}
 
 	if mgr != nil {
-		var redisClient rediscli.Client
-		if h != nil && h.deps != nil {
-			redisClient = h.deps.Redis
-		}
-
-		abortFlow(ctx.Request.Context(), mgr, redisClient, h.redisPrefix())
-		CleanupMFAState(mgr)
-		flowdomain.ClearRequireMFAContext(mgr)
+		h.cleanupSLOBrowserFlowState(ctx, mgr)
 	}
 
 	core.SessionCleaner(ctx)
-
-	if err := h.deleteSLOParticipantSessionsByAccount(ctx.Request.Context(), account); err != nil {
-		result.ParticipantCleanupErr = err
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "Failed to cleanup SAML SLO participant sessions",
-			"account", util.WithNotAvailable(account),
-			"error", err.Error(),
-		)
-	}
-
+	result.ParticipantCleanupErr = h.cleanupSLOParticipantSessions(ctx, account)
 	core.ClearBrowserCookies(ctx)
 
 	if redirectToLoggedOut {
@@ -1323,6 +1468,80 @@ func (h *SAMLHandler) performLocalSLOCleanupInternal(
 	}
 
 	return result
+}
+
+// sloCleanupAccount chooses the explicit account hint before falling back to the session account.
+func sloCleanupAccount(accountHint string, mgr cookie.Manager) string {
+	account := strings.TrimSpace(accountHint)
+	if account != "" || mgr == nil {
+		return account
+	}
+
+	return strings.TrimSpace(mgr.GetString(definitions.SessionKeyAccount, ""))
+}
+
+// transitionSLOTransactionLocalDone records local cleanup completion on the transaction.
+func (h *SAMLHandler) transitionSLOTransactionLocalDone(
+	ctx *gin.Context,
+	transaction *slodomain.Transaction,
+	account string,
+) error {
+	if transaction.Account == "" {
+		transaction.Account = account
+	}
+
+	err := transaction.TransitionTo(slodomain.SLOStatusLocalDone, time.Now().UTC())
+	if err == nil {
+		return nil
+	}
+
+	if h != nil && h.deps != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Failed to transition SLO transaction to local_done",
+			"transaction_id", util.WithNotAvailable(transaction.TransactionID),
+			"error", err.Error(),
+		)
+	}
+
+	return err
+}
+
+// cleanupSLOBrowserFlowState clears browser-bound login, MFA, and flow state.
+func (h *SAMLHandler) cleanupSLOBrowserFlowState(ctx *gin.Context, mgr cookie.Manager) {
+	var redisClient rediscli.Client
+	if h != nil && h.deps != nil {
+		redisClient = h.deps.Redis
+	}
+
+	abortFlow(ctx.Request.Context(), mgr, redisClient, h.redisPrefix())
+	CleanupMFAState(mgr)
+	flowdomain.ClearRequireMFAContext(mgr)
+}
+
+// cleanupSLOParticipantSessions deletes persisted SLO participant sessions for the account.
+func (h *SAMLHandler) cleanupSLOParticipantSessions(ctx *gin.Context, account string) error {
+	err := h.deleteSLOParticipantSessionsByAccount(ctx.Request.Context(), account)
+	if err == nil {
+		return nil
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Failed to cleanup SAML SLO participant sessions",
+		"account", util.WithNotAvailable(account),
+		"error", err.Error(),
+	)
+
+	return err
 }
 
 func appendFirstClassSAMLAttributes(attributes *[]saml.Attribute, user *backend.User, allowedAttrs []string) {

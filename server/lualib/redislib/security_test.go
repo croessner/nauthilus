@@ -29,60 +29,23 @@ import (
 
 func TestRedisSecurity(t *testing.T) {
 	testFile := &config.FileSettings{Server: &config.ServerSection{}}
-
 	secretValue := secret.New("testsecret")
 
 	t.Run("EncryptionEnabled", func(t *testing.T) {
-		db, _ := redismock.NewClientMock()
-		sm := rediscli.NewSecurityManager(secretValue)
-		client := rediscli.NewTestClientWithSecurity(db, sm)
-
-		L := lua.NewState()
-		defer L.Close()
-
-		L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
-
-		err := L.DoString(`local nr = require("nauthilus_redis"); enabled = nr.redis_is_encryption_enabled("default")`)
-		if err != nil {
-			t.Fatalf("Lua failed: %v", err)
-		}
-
-		if L.GetGlobal("enabled") != lua.LTrue {
-			t.Error("Expected encryption to be enabled")
-		}
+		L := newRedisSecurityLuaState(t, testFile, secretValue)
+		runRedisSecurityLua(t, L, `local nr = require("nauthilus_redis"); enabled = nr.redis_is_encryption_enabled("default")`)
+		assertLuaGlobal(t, L, "enabled", lua.LTrue)
 	})
 
 	t.Run("EncryptionDisabled", func(t *testing.T) {
-		db, _ := redismock.NewClientMock()
-		sm := rediscli.NewSecurityManager(secret.Value{})
-		client := rediscli.NewTestClientWithSecurity(db, sm)
-
-		L := lua.NewState()
-		defer L.Close()
-
-		L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
-
-		err := L.DoString(`local nr = require("nauthilus_redis"); enabled = nr.redis_is_encryption_enabled("default")`)
-		if err != nil {
-			t.Fatalf("Lua failed: %v", err)
-		}
-
-		if L.GetGlobal("enabled") != lua.LFalse {
-			t.Error("Expected encryption to be disabled")
-		}
+		L := newRedisSecurityLuaState(t, testFile, secret.Value{})
+		runRedisSecurityLua(t, L, `local nr = require("nauthilus_redis"); enabled = nr.redis_is_encryption_enabled("default")`)
+		assertLuaGlobal(t, L, "enabled", lua.LFalse)
 	})
 
 	t.Run("EncryptDecrypt", func(t *testing.T) {
-		db, _ := redismock.NewClientMock()
-		sm := rediscli.NewSecurityManager(secretValue)
-		client := rediscli.NewTestClientWithSecurity(db, sm)
-
-		L := lua.NewState()
-		defer L.Close()
-
-		L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
-
-		err := L.DoString(`
+		L := newRedisSecurityLuaState(t, testFile, secretValue)
+		runRedisSecurityLua(t, L, `
 			local nr = require("nauthilus_redis")
 			local plaintext = "hello world"
 			local ciphertext, err = nr.redis_encrypt("default", plaintext)
@@ -93,12 +56,48 @@ func TestRedisSecurity(t *testing.T) {
 
 			final = decrypted
 		`)
-		if err != nil {
-			t.Fatalf("Lua failed: %v", err)
-		}
-
-		if L.GetGlobal("final").String() != "hello world" {
-			t.Errorf("Expected 'hello world', got %s", L.GetGlobal("final").String())
-		}
+		assertLuaGlobalString(t, L, "final", "hello world")
 	})
+}
+
+// newRedisSecurityLuaState creates a Lua state with a security-aware Redis client.
+func newRedisSecurityLuaState(t *testing.T, testFile *config.FileSettings, secretValue secret.Value) *lua.LState {
+	t.Helper()
+
+	db, _ := redismock.NewClientMock()
+	sm := rediscli.NewSecurityManager(secretValue)
+	client := rediscli.NewTestClientWithSecurity(db, sm)
+
+	L := lua.NewState()
+	t.Cleanup(L.Close)
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
+
+	return L
+}
+
+// runRedisSecurityLua executes a Lua security snippet.
+func runRedisSecurityLua(t *testing.T, L *lua.LState, script string) {
+	t.Helper()
+
+	if err := L.DoString(script); err != nil {
+		t.Fatalf("Lua failed: %v", err)
+	}
+}
+
+// assertLuaGlobal compares a Lua global with an expected Lua value.
+func assertLuaGlobal(t *testing.T, L *lua.LState, name string, expected lua.LValue) {
+	t.Helper()
+
+	if L.GetGlobal(name) != expected {
+		t.Errorf("Expected %s to be %v, got %v", name, expected, L.GetGlobal(name))
+	}
+}
+
+// assertLuaGlobalString compares a Lua global string value.
+func assertLuaGlobalString(t *testing.T, L *lua.LState, name string, expected string) {
+	t.Helper()
+
+	if L.GetGlobal(name).String() != expected {
+		t.Errorf("Expected %q, got %s", expected, L.GetGlobal(name).String())
+	}
 }

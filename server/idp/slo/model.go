@@ -68,7 +68,7 @@ const (
 	// SLODirectionUnknown is an exported package constant.
 	SLODirectionUnknown Direction = "unknown"
 	// SLODirectionSPInitiated is an exported package constant.
-	SLODirectionSPInitiated = "sp_initiated"
+	SLODirectionSPInitiated Direction = "sp_initiated"
 	// SLODirectionIDPInitiated identifies IDP-initiated SLO.
 	SLODirectionIDPInitiated Direction = "idp_initiated"
 )
@@ -90,7 +90,7 @@ const (
 	// SLOStatusReceived is an exported package constant.
 	SLOStatusReceived Status = "received"
 	// SLOStatusValidated is an exported package constant.
-	SLOStatusValidated = "validated"
+	SLOStatusValidated Status = "validated"
 	// SLOStatusLocalDone marks successful local logout handling.
 	SLOStatusLocalDone Status = "local_done"
 	// SLOStatusFanoutRunning marks active downstream logout fanout.

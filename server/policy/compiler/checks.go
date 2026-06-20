@@ -75,22 +75,9 @@ func compileCheck(
 	path string,
 	checkTypes map[string]policyruntime.CheckTypeDefinition,
 ) (policyruntime.CompiledCheck, error) {
-	if strings.TrimSpace(checkConfig.Name) == "" {
-		return policyruntime.CompiledCheck{}, configPathError(childPath(path, "name"), "must not be empty")
-	}
-
-	definition, ok := checkTypes[checkConfig.Type]
-	if !ok {
-		return policyruntime.CompiledCheck{}, configPathError(childPath(path, "type"), "is invalid")
-	}
-
-	stage := policy.Stage(checkConfig.Stage)
-	if !stageValid(stage) {
-		return policyruntime.CompiledCheck{}, configPathError(childPath(path, "stage"), "is invalid")
-	}
-
-	if stage != definition.Stage {
-		return policyruntime.CompiledCheck{}, configPathError(childPath(path, "stage"), "does not match the check type")
+	definition, stage, err := validateCheckBasics(checkConfig, path, checkTypes)
+	if err != nil {
+		return policyruntime.CompiledCheck{}, err
 	}
 
 	operations, err := compileOperations(checkConfig.Operations, definition.Operations, childPath(path, "operations"))
@@ -98,28 +85,22 @@ func compileCheck(
 		return policyruntime.CompiledCheck{}, err
 	}
 
-	runIfAuthState := strings.TrimSpace(checkConfig.RunIf.AuthState)
-	if runIfAuthState == "" {
-		runIfAuthState = runIfAny
-	}
-
-	if !runIfAuthStateValid(runIfAuthState) {
-		return policyruntime.CompiledCheck{}, configPathError(childPath(path, "run_if.auth_state"), "is invalid")
-	}
-
 	skipIf, err := compileSkipIfReferences(checkConfig.SkipIf, childPath(path, "skip_if"))
 	if err != nil {
 		return policyruntime.CompiledCheck{}, err
 	}
 
-	if checkConfig.ObserveSafe != nil && *checkConfig.ObserveSafe && !definition.ObserveSafeDefault && !definition.AllowsObserveSafeAssertion {
-		return policyruntime.CompiledCheck{}, configPathError(childPath(path, "observe_safe"), "cannot be asserted for this check type")
+	runIfAuthState, err := compileRunIfAuthState(checkConfig, path)
+	if err != nil {
+		return policyruntime.CompiledCheck{}, err
 	}
 
-	if definition.ConfigRefPrefix != "" && checkConfig.ConfigRef != "" && !strings.HasPrefix(checkConfig.ConfigRef, definition.ConfigRefPrefix) {
-		if checkConfig.ConfigRef != definition.ConfigRefPrefix {
-			return policyruntime.CompiledCheck{}, configPathError(childPath(path, "config_ref"), "does not match the check type")
-		}
+	if err := validateObserveSafeAssertion(checkConfig, definition, path); err != nil {
+		return policyruntime.CompiledCheck{}, err
+	}
+
+	if err := validateCheckConfigRef(checkConfig, definition, path); err != nil {
+		return policyruntime.CompiledCheck{}, err
 	}
 
 	return policyruntime.CompiledCheck{
@@ -135,6 +116,81 @@ func compileCheck(
 		ObserveSafe: definition.ObserveSafeDefault ||
 			(checkConfig.ObserveSafe != nil && *checkConfig.ObserveSafe),
 	}, nil
+}
+
+// validateCheckBasics validates name, type, and stage compatibility for one check.
+func validateCheckBasics(
+	checkConfig config.PolicyCheckConfig,
+	path string,
+	checkTypes map[string]policyruntime.CheckTypeDefinition,
+) (policyruntime.CheckTypeDefinition, policy.Stage, error) {
+	if strings.TrimSpace(checkConfig.Name) == "" {
+		return policyruntime.CheckTypeDefinition{}, "", configPathError(childPath(path, "name"), "must not be empty")
+	}
+
+	definition, ok := checkTypes[checkConfig.Type]
+	if !ok {
+		return policyruntime.CheckTypeDefinition{}, "", configPathError(childPath(path, "type"), "is invalid")
+	}
+
+	stage := policy.Stage(checkConfig.Stage)
+	if !stageValid(stage) {
+		return policyruntime.CheckTypeDefinition{}, "", configPathError(childPath(path, "stage"), "is invalid")
+	}
+
+	if stage != definition.Stage {
+		return policyruntime.CheckTypeDefinition{}, "", configPathError(childPath(path, "stage"), "does not match the check type")
+	}
+
+	return definition, stage, nil
+}
+
+// compileRunIfAuthState normalizes and validates run_if.auth_state.
+func compileRunIfAuthState(checkConfig config.PolicyCheckConfig, path string) (string, error) {
+	runIfAuthState := strings.TrimSpace(checkConfig.RunIf.AuthState)
+	if runIfAuthState == "" {
+		runIfAuthState = runIfAny
+	}
+
+	if !runIfAuthStateValid(runIfAuthState) {
+		return "", configPathError(childPath(path, "run_if.auth_state"), "is invalid")
+	}
+
+	return runIfAuthState, nil
+}
+
+// validateObserveSafeAssertion rejects unsupported observe_safe assertions.
+func validateObserveSafeAssertion(
+	checkConfig config.PolicyCheckConfig,
+	definition policyruntime.CheckTypeDefinition,
+	path string,
+) error {
+	if checkConfig.ObserveSafe == nil || !*checkConfig.ObserveSafe {
+		return nil
+	}
+
+	if definition.ObserveSafeDefault || definition.AllowsObserveSafeAssertion {
+		return nil
+	}
+
+	return configPathError(childPath(path, "observe_safe"), "cannot be asserted for this check type")
+}
+
+// validateCheckConfigRef verifies optional config_ref prefixes.
+func validateCheckConfigRef(
+	checkConfig config.PolicyCheckConfig,
+	definition policyruntime.CheckTypeDefinition,
+	path string,
+) error {
+	if definition.ConfigRefPrefix == "" || checkConfig.ConfigRef == "" {
+		return nil
+	}
+
+	if strings.HasPrefix(checkConfig.ConfigRef, definition.ConfigRefPrefix) || checkConfig.ConfigRef == definition.ConfigRefPrefix {
+		return nil
+	}
+
+	return configPathError(childPath(path, "config_ref"), "does not match the check type")
 }
 
 func compileOperations(
