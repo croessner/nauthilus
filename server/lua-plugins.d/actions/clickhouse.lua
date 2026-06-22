@@ -147,6 +147,21 @@ function nauthilus_call_action(request)
         return policy_facts[namespace][key]
     end
 
+    -- reputation_from_runtime_or_facts keeps ClickHouse writes resilient when
+    -- subject runtime details are absent but policy facts were emitted.
+    local function reputation_from_runtime_or_facts()
+        if type(rt) == "table" and type(rt.geoip_reputation) == "table" then
+            return rt.geoip_reputation, to_string(rt.geoip_reputation.source)
+        end
+
+        local reputation_facts = policy_facts.geoip_reputation
+        if type(reputation_facts) ~= "table" or nauthilus_util.table_length(reputation_facts) == 0 then
+            return nil, ""
+        end
+
+        return reputation_facts, "policy_facts"
+    end
+
     local function add_decision_source(name)
         if not nauthilus_util.exists_in_table(decision_sources_from_ctx, name) then
             table.insert(decision_sources_from_ctx, name)
@@ -296,17 +311,21 @@ function nauthilus_call_action(request)
         local reputation_samples
         local reputation_source = ""
         local reputation_decision = ""
-        if rt and rt.geoip_reputation then
-            reputation_score = to_float(rt.geoip_reputation.score)
-            reputation_positive_score = to_float(rt.geoip_reputation.positive_score)
-            reputation_negative_score = to_float(rt.geoip_reputation.negative_score)
-            reputation_ip_score = to_float(rt.geoip_reputation.ip_score)
-            reputation_asn_score = to_float(rt.geoip_reputation.asn_score)
-            reputation_country_score = to_float(rt.geoip_reputation.country_score)
-            reputation_asn_country_score = to_float(rt.geoip_reputation.asn_country_score)
-            reputation_samples = to_uint(rt.geoip_reputation.samples)
-            reputation_source = to_string(rt.geoip_reputation.source)
-            reputation_decision = to_string(rt.geoip_reputation.decision)
+        local reputation, reputation_default_source = reputation_from_runtime_or_facts()
+        if reputation then
+            reputation_score = to_float(reputation.score)
+            reputation_positive_score = to_float(reputation.positive_score)
+            reputation_negative_score = to_float(reputation.negative_score)
+            reputation_ip_score = to_float(reputation.ip_score)
+            reputation_asn_score = to_float(reputation.asn_score)
+            reputation_country_score = to_float(reputation.country_score)
+            reputation_asn_country_score = to_float(reputation.asn_country_score)
+            reputation_samples = to_uint(reputation.samples)
+            reputation_source = reputation_default_source
+            if reputation.source ~= nil then
+                reputation_source = to_string(reputation.source)
+            end
+            reputation_decision = to_string(reputation.decision)
         end
 
         -- Global pattern details if present

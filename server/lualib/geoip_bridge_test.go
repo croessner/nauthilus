@@ -120,6 +120,60 @@ func TestClickHouseActionUsesNativeGeoIPBridgeValues(t *testing.T) {
 	assertClickHouseGeoIPRow(t, readLastClickHouseRow(t, L))
 }
 
+func TestClickHouseActionUsesGeoIPReputationPolicyFacts(t *testing.T) {
+	L := newGeoIPBridgeTestState(t)
+	defer L.Close()
+
+	preloadClickHouseActionTestModules(t, L)
+	loadClickHouseAction(t, L)
+
+	if err := L.DoString(`
+ctx_state.policy_facts = {
+  geoip_reputation = {
+    score = 0.625,
+    positive_score = 0.91,
+    negative_score = 0.12,
+    ip_score = 0.73,
+    asn_score = 0.54,
+    country_score = 0.31,
+    asn_country_score = 0.27,
+    samples = 57,
+    decision = "suspicious",
+  },
+}
+
+local request = {
+  no_auth = false,
+  authenticated = false,
+  user_found = false,
+  service = "smtp",
+  protocol = "smtp",
+  method = "plain",
+  session = "s-2",
+  client_ip = "198.51.100.20",
+  client_port = "25",
+  username = "bob@example.test",
+  account = "",
+}
+
+nauthilus_call_action(request)
+`); err != nil {
+		t.Fatalf("clickhouse action failed: %v", err)
+	}
+
+	row := readLastClickHouseRow(t, L)
+	assertRowValue(t, row, "reputation_score", 0.625)
+	assertRowValue(t, row, "reputation_positive_score", 0.91)
+	assertRowValue(t, row, "reputation_negative_score", 0.12)
+	assertRowValue(t, row, "reputation_ip_score", 0.73)
+	assertRowValue(t, row, "reputation_asn_score", 0.54)
+	assertRowValue(t, row, "reputation_country_score", 0.31)
+	assertRowValue(t, row, "reputation_asn_country_score", 0.27)
+	assertRowValue(t, row, "reputation_samples", float64(57))
+	assertRowValue(t, row, "reputation_source", "policy_facts")
+	assertRowValue(t, row, "reputation_decision", "suspicious")
+}
+
 func newGeoIPBridgeTestState(t *testing.T) *lua.LState {
 	t.Helper()
 
