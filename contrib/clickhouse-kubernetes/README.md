@@ -81,7 +81,7 @@ The action plugin batches insert rows to ClickHouse via HTTP. Configure environm
   `http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow`
 - CLICKHOUSE_USER / CLICKHOUSE_PASSWORD: optional; sent via `X-ClickHouse-User` and `X-ClickHouse-Key` headers if set.
 - CLICKHOUSE_BATCH_SIZE: optional (default 100)
-- CLICKHOUSE_CACHE_KEY: optional (default `clickhouse:batch:failed_logins`)
+- CLICKHOUSE_CACHE_KEY: optional (default `clickhouse:batch:logins`)
 
 Example (Kubernetes container env):
 ```yaml
