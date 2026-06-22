@@ -192,14 +192,19 @@ Go plugin code cannot be unloaded or replaced after `plugin.Open`; SIGUSR1 does 
 ## Reference Plugin
 
 The GeoIP/ASN reference plugin in `contrib/plugins/geoip` demonstrates an environment source, init-time database loading,
-MaxMind `.mmdb` lookup support, local ASN routing snapshot lookups, optional delegated ASN registry metadata refresh,
-runtime facts, bounded metrics/traces, and config-only reload. Its example config is available in
+MaxMind `.mmdb` lookup support, optional secondary MaxMind ASN database lookup, local ASN routing snapshot lookups,
+optional delegated ASN registry metadata refresh, runtime facts, bounded metrics/traces, and config-only reload. Its
+example config is available in
 `server/docs/examples/go_plugin_geoip.yml`.
 
 GeoIP plugin config highlights:
 
 - `database_path`: absolute path to a JSON fixture or MaxMind `.mmdb` database.
 - `database_format`: optional `auto`, `json`, or `mmdb`; `auto` selects `mmdb` for `.mmdb` paths.
+- `asn_database_path`: optional absolute path to a JSON fixture or MaxMind ASN `.mmdb` database. When set, ASN and
+  autonomous-system organization facts are filled from this secondary database while primary location data still comes
+  from `database_path`.
+- `asn_database_format`: optional `auto`, `json`, or `mmdb`; `auto` selects `mmdb` for `.mmdb` paths.
 - `refresh_interval`: optional local database reload interval.
 - `lookup_timeout`: optional request lookup timeout, default `50ms`.
 - `asn_lookup.enabled`: opt-in local ASN routing snapshot lookup.

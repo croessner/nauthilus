@@ -39,8 +39,10 @@ const (
 	testASNLookupLogURL      = "https://routing.example.test/routeviews-prefix2as/pfx2as-creation.log"
 	testASNLookupSnapshotURL = "https://routing.example.test/routeviews-prefix2as/2026/06/routeviews-rv2-20260615-1200.pfx2as.gz"
 	testASNLookupSourceURL   = "https://routing.example.test/pfx2as"
+	testASNOrg               = "Example Access GmbH"
 	testASNPrefix            = "203.0.113.0/24"
 	testCityNameBerlin       = "Berlin"
+	testConfigASNDatabaseKey = "asn_database_path"
 	testClientIP             = "203.0.113.7"
 	testConfigDatabasePath   = "database_path"
 	testConfigEnabledKey     = "enabled"
@@ -284,6 +286,46 @@ func TestPluginSupportsMMDBConfigThroughDatabaseLoader(t *testing.T) {
 
 	assertFact(t, result.Facts, factMatched, true)
 	assertFact(t, result.Facts, factASN, 64500)
+}
+
+func TestEnvironmentSourceUsesASNDatabaseForOrganization(t *testing.T) {
+	primaryDatabasePath := testDatabasePath(t, "geoip-test.mmdb")
+	asnDatabasePath := testDatabasePath(t, "geoip-asn.mmdb")
+	module := testModule(primaryDatabasePath)
+	module.Config["database_format"] = databaseFormatMMDB
+	module.Config[testConfigASNDatabaseKey] = asnDatabasePath
+	module.Config["asn_database_format"] = databaseFormatMMDB
+
+	var loadedPaths []string
+
+	plugin := newASNDatabaseTestPlugin(t, primaryDatabasePath, asnDatabasePath, &loadedPaths)
+
+	registry, registeredPlugin := registerTestPluginInstance(t, plugin, module)
+
+	runner := newRunnerForPlugin(registry, registeredPlugin, module, nil, nil)
+	if err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer stopRunner(t, runner)
+
+	if !slices.Contains(loadedPaths, asnDatabasePath) {
+		t.Fatalf("loaded database paths = %#v, want ASN database path %q", loadedPaths, asnDatabasePath)
+	}
+
+	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
+	if err != nil {
+		t.Fatalf("EvaluateEnvironment() error = %v", err)
+	}
+
+	assertFact(t, result.Facts, factCountryISO, testCountryDE)
+	assertFact(t, result.Facts, factCityName, testCityNameBerlin)
+	assertFact(t, result.Facts, factASN, 64500)
+	assertFact(t, result.Facts, factASNOrg, testASNOrg)
+
+	runtimeValue := result.RuntimeDelta.Set[runtimeKey].(map[string]any)
+	if runtimeValue["asn_org"] != testASNOrg {
+		t.Fatalf("runtime ASN org = %#v, want %q", runtimeValue["asn_org"], testASNOrg)
+	}
 }
 
 func TestASNLookupUsesLocalRoutingSnapshotLongestPrefix(t *testing.T) {
@@ -538,6 +580,47 @@ func startedTestRunnerWithPlugin(
 	}
 
 	return runner, plugin, metrics, tracer
+}
+
+// newASNDatabaseTestPlugin builds a plugin loader with separate primary and ASN fixtures.
+func newASNDatabaseTestPlugin(
+	t *testing.T,
+	primaryDatabasePath string,
+	asnDatabasePath string,
+	loadedPaths *[]string,
+) *Plugin {
+	t.Helper()
+
+	plugin := NewPlugin()
+	plugin.databaseLoad = func(_ context.Context, config moduleConfig) (geoDatabase, error) {
+		*loadedPaths = append(*loadedPaths, config.DatabasePath)
+
+		switch config.DatabasePath {
+		case primaryDatabasePath:
+			return &fileDatabase{records: []geoRecord{
+				{
+					CountryISO:  testCountryDE,
+					CountryName: testCountryNameGermany,
+					CityName:    testCityNameBerlin,
+					Prefix:      mustPrefix(t, testASNPrefix),
+				},
+			}}, nil
+		case asnDatabasePath:
+			return &fileDatabase{records: []geoRecord{
+				{
+					ASNOrg: testASNOrg,
+					Prefix: mustPrefix(t, testASNPrefix),
+					ASN:    64500,
+				},
+			}}, nil
+		default:
+			t.Fatalf("unexpected database path %q", config.DatabasePath)
+
+			return nil, nil
+		}
+	}
+
+	return plugin
 }
 
 // newRunnerForPlugin creates a runtime runner for one registered plugin instance.

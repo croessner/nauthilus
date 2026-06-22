@@ -57,7 +57,7 @@ func NauthilusPlugin() (pluginapi.Plugin, error) {
 
 // Plugin coordinates lifecycle, state, and environment source registration.
 type Plugin struct {
-	database       geoDatabase
+	databases      geoDatabases
 	host           pluginapi.Host
 	logger         pluginapi.Logger
 	tracer         pluginapi.Tracer
@@ -96,6 +96,7 @@ func (p *Plugin) Metadata() pluginapi.Metadata {
 		Features: []pluginapi.Feature{
 			"asn_routing_snapshot",
 			"asn_registry_refresh",
+			"asn_mmdb",
 			"environment_source",
 			"init_task",
 			"maxmind_mmdb",
@@ -176,38 +177,38 @@ func (p *Plugin) Stop(ctx context.Context) error {
 
 // Reconfigure validates and atomically swaps database-backed plugin state.
 func (p *Plugin) Reconfigure(ctx context.Context, view pluginapi.ConfigView) error {
-	config, database, err := p.loadConfigAndDatabase(ctx, view)
+	config, databases, err := p.loadConfigAndDatabases(ctx, view)
 	if err != nil {
 		return err
 	}
 
-	p.swapDatabase(ctx, config, database, true)
+	p.swapDatabases(ctx, config, databases, true)
 
 	return nil
 }
 
-// loadConfigAndDatabase validates config and loads the referenced database.
-func (p *Plugin) loadConfigAndDatabase(ctx context.Context, view pluginapi.ConfigView) (moduleConfig, geoDatabase, error) {
+// loadConfigAndDatabases validates config and loads the referenced databases.
+func (p *Plugin) loadConfigAndDatabases(ctx context.Context, view pluginapi.ConfigView) (moduleConfig, geoDatabases, error) {
 	config, err := decodeModuleConfig(view)
 	if err != nil {
-		return moduleConfig{}, nil, err
+		return moduleConfig{}, geoDatabases{}, err
 	}
 
-	database, err := p.loadDatabase(ctx, config)
+	databases, err := p.loadDatabases(ctx, config)
 	if err != nil {
-		return moduleConfig{}, nil, err
+		return moduleConfig{}, geoDatabases{}, err
 	}
 
-	return config, database, nil
+	return config, databases, nil
 }
 
-// swapDatabase publishes a validated database and optionally restarts refresh work.
-func (p *Plugin) swapDatabase(ctx context.Context, config moduleConfig, database geoDatabase, restartRefresh bool) {
+// swapDatabases publishes validated databases and optionally restarts refresh work.
+func (p *Plugin) swapDatabases(ctx context.Context, config moduleConfig, databases geoDatabases, restartRefresh bool) {
 	p.mu.Lock()
-	oldDatabase := p.database
+	oldDatabases := p.databases
 
 	p.config = config
-	p.database = database
+	p.databases = databases
 
 	if config.ASNLookup.Enabled {
 		if p.asnLookup == nil || restartRefresh {
@@ -229,14 +230,19 @@ func (p *Plugin) swapDatabase(ctx context.Context, config moduleConfig, database
 	logger := p.logger
 	p.mu.Unlock()
 
-	closeDatabase(oldDatabase)
+	closeDatabases(oldDatabases)
 
 	if recordGauge != nil {
-		recordGauge.Set(ctx, float64(database.Records()), pluginapi.LabelValue{Name: metricLabelState, Value: metricStateLoaded})
+		recordGauge.Set(ctx, float64(databases.Records()), pluginapi.LabelValue{Name: metricLabelState, Value: metricStateLoaded})
 	}
 
 	if logger != nil {
-		logger.Info(ctx, "geoip database loaded", pluginapi.LogField{Key: "records", Value: database.Records()})
+		logger.Info(
+			ctx,
+			"geoip database loaded",
+			pluginapi.LogField{Key: "records", Value: databases.PrimaryRecords()},
+			pluginapi.LogField{Key: "asn_records", Value: databases.ASNRecords()},
+		)
 	}
 }
 
@@ -245,30 +251,25 @@ func (p *Plugin) currentConfig() (moduleConfig, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	return p.config, p.database != nil
+	return p.config, p.databases.Ready()
 }
 
 // lookupRecord runs database and ASN lookups while protecting replaceable readers from replacement.
 func (p *Plugin) lookupRecord(ctx context.Context, addr netip.Addr) (geoRecord, bool, error) {
 	p.mu.RLock()
+	defer p.mu.RUnlock()
 
-	if p.database == nil {
-		p.mu.RUnlock()
-
+	if !p.databases.Ready() {
 		return geoRecord{}, false, fmt.Errorf("geoip database is not loaded")
 	}
 
-	record, matched, err := p.database.Lookup(ctx, addr)
-	asnLookup := p.asnLookup
-	asnRegistry := p.asnRegistry
-	p.mu.RUnlock()
-
+	record, matched, err := p.databases.primary.Lookup(ctx, addr)
 	if err != nil || !matched {
 		return record, matched, err
 	}
 
-	if asnLookup != nil {
-		asnRecord, ok, lookupErr := asnLookup.Lookup(ctx, addr)
+	if p.asnLookup != nil {
+		asnRecord, ok, lookupErr := p.asnLookup.Lookup(ctx, addr)
 		if lookupErr != nil {
 			return record, matched, lookupErr
 		}
@@ -278,11 +279,22 @@ func (p *Plugin) lookupRecord(ctx context.Context, addr netip.Addr) (geoRecord, 
 		}
 	}
 
-	if record.ASN <= 0 || asnRegistry == nil {
+	if p.databases.asn != nil {
+		asnRecord, ok, lookupErr := p.databases.asn.Lookup(ctx, addr)
+		if lookupErr != nil {
+			return record, matched, lookupErr
+		}
+
+		if ok {
+			mergeASNDatabaseRecord(&record, asnRecord)
+		}
+	}
+
+	if record.ASN <= 0 || p.asnRegistry == nil {
 		return record, matched, nil
 	}
 
-	if asnRecord, ok := asnRegistry.Lookup(record.ASN); ok {
+	if asnRecord, ok := p.asnRegistry.Lookup(record.ASN); ok {
 		record.ASNRegistry = asnRecord.Registry
 		record.ASNCountryISO = asnRecord.CountryISO
 		record.ASNStatus = asnRecord.Status
@@ -445,7 +457,7 @@ func (p *Plugin) refreshOnce(ctx context.Context) {
 		return
 	}
 
-	database, err := p.loadDatabase(ctx, config)
+	databases, err := p.loadDatabases(ctx, config)
 	if err != nil {
 		p.recordLookup(ctx, resultError, 0)
 		p.logError(ctx, "geoip database refresh failed", err)
@@ -453,7 +465,7 @@ func (p *Plugin) refreshOnce(ctx context.Context) {
 		return
 	}
 
-	p.swapDatabase(ctx, config, database, false)
+	p.swapDatabases(ctx, config, databases, false)
 }
 
 // refreshASNLookupOnce fetches and publishes local ASN routing prefixes.
@@ -516,17 +528,51 @@ func (p *Plugin) refreshASNRegistryOnce(ctx context.Context, config asnRegistryC
 
 // closeDatabaseLocked releases the active database while the plugin is stopped.
 func (p *Plugin) closeDatabaseLocked() {
-	closeDatabase(p.database)
-	p.database = nil
+	closeDatabases(p.databases)
+	p.databases = geoDatabases{}
 }
 
-// closeDatabase releases database resources and intentionally ignores close errors during replacement.
+// closeDatabases releases database resources and intentionally ignores close errors during replacement.
+func closeDatabases(databases geoDatabases) {
+	closeDatabase(databases.primary)
+	closeDatabase(databases.asn)
+}
+
+// closeDatabase releases one database resource and intentionally ignores close errors during replacement.
 func closeDatabase(database geoDatabase) {
 	if database == nil {
 		return
 	}
 
 	_ = database.Close()
+}
+
+// loadDatabases loads the required primary database and the optional ASN database.
+func (p *Plugin) loadDatabases(ctx context.Context, config moduleConfig) (geoDatabases, error) {
+	primary, err := p.loadDatabase(ctx, config)
+	if err != nil {
+		return geoDatabases{}, err
+	}
+
+	databases := geoDatabases{primary: primary}
+	if config.ASNDatabasePath == "" {
+		return databases, nil
+	}
+
+	asnConfig := config
+	asnConfig.DatabasePath = config.ASNDatabasePath
+	asnConfig.DatabaseFormat = config.ASNDatabaseFormat
+
+	asn, err := p.loadDatabase(ctx, asnConfig)
+	if err != nil {
+		closeDatabases(databases)
+
+		return geoDatabases{}, err
+	}
+
+	databases.asn = asn
+
+	return databases, nil
 }
 
 // loadDatabase loads a configured database through the production or test loader.

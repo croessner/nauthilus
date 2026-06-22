@@ -16,6 +16,8 @@ plugins:
       config:
         database_path: /var/lib/GeoIP/GeoLite2-City.mmdb
         database_format: mmdb
+        asn_database_path: /var/lib/GeoIP/GeoLite2-ASN.mmdb
+        asn_database_format: mmdb
         refresh_interval: 1h
         lookup_timeout: 50ms
         asn_lookup:

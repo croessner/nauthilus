@@ -62,12 +62,12 @@ func (t geoIPInitTask) Start(ctx context.Context, init pluginapi.InitContext) er
 		return fmt.Errorf("geoip init task has no plugin")
 	}
 
-	config, database, err := t.plugin.loadConfigAndDatabase(ctx, init.Config)
+	config, databases, err := t.plugin.loadConfigAndDatabases(ctx, init.Config)
 	if err != nil {
 		return err
 	}
 
-	t.plugin.swapDatabase(ctx, config, database, true)
+	t.plugin.swapDatabases(ctx, config, databases, true)
 
 	return nil
 }

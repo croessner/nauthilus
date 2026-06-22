@@ -38,12 +38,14 @@ const (
 )
 
 type moduleConfig struct {
-	ASNRegistry     asnRegistryConfig `mapstructure:"-"`
-	ASNLookup       asnLookupConfig   `mapstructure:"-"`
-	DatabasePath    string            `mapstructure:"-"`
-	DatabaseFormat  string            `mapstructure:"-"`
-	RefreshInterval time.Duration     `mapstructure:"-"`
-	LookupTimeout   time.Duration     `mapstructure:"-"`
+	ASNRegistry       asnRegistryConfig `mapstructure:"-"`
+	ASNLookup         asnLookupConfig   `mapstructure:"-"`
+	ASNDatabasePath   string            `mapstructure:"-"`
+	DatabasePath      string            `mapstructure:"-"`
+	ASNDatabaseFormat string            `mapstructure:"-"`
+	DatabaseFormat    string            `mapstructure:"-"`
+	RefreshInterval   time.Duration     `mapstructure:"-"`
+	LookupTimeout     time.Duration     `mapstructure:"-"`
 }
 
 type asnLookupConfig struct {
@@ -61,12 +63,14 @@ type asnRegistryConfig struct {
 }
 
 type rawModuleConfig struct {
-	ASNRegistry     rawASNRegistryConfig `mapstructure:"asn_registry"`
-	ASNLookup       rawASNLookupConfig   `mapstructure:"asn_lookup"`
-	DatabasePath    string               `mapstructure:"database_path"`
-	DatabaseFormat  string               `mapstructure:"database_format"`
-	RefreshInterval string               `mapstructure:"refresh_interval"`
-	LookupTimeout   string               `mapstructure:"lookup_timeout"`
+	ASNRegistry       rawASNRegistryConfig `mapstructure:"asn_registry"`
+	ASNLookup         rawASNLookupConfig   `mapstructure:"asn_lookup"`
+	ASNDatabasePath   string               `mapstructure:"asn_database_path"`
+	DatabasePath      string               `mapstructure:"database_path"`
+	ASNDatabaseFormat string               `mapstructure:"asn_database_format"`
+	DatabaseFormat    string               `mapstructure:"database_format"`
+	RefreshInterval   string               `mapstructure:"refresh_interval"`
+	LookupTimeout     string               `mapstructure:"lookup_timeout"`
 }
 
 type rawASNLookupConfig struct {
@@ -92,13 +96,14 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		}
 	}
 
-	databasePath := filepath.Clean(strings.TrimSpace(raw.DatabasePath))
-	if databasePath == "." || databasePath == "" {
-		return moduleConfig{}, fmt.Errorf("database_path must not be empty")
+	databasePath, err := parseRequiredDatabasePath("database_path", raw.DatabasePath)
+	if err != nil {
+		return moduleConfig{}, err
 	}
 
-	if !filepath.IsAbs(databasePath) {
-		return moduleConfig{}, fmt.Errorf("database_path must be absolute: %s", databasePath)
+	asnDatabasePath, err := parseOptionalDatabasePath("asn_database_path", raw.ASNDatabasePath)
+	if err != nil {
+		return moduleConfig{}, err
 	}
 
 	refreshInterval, err := parseOptionalDuration("refresh_interval", raw.RefreshInterval)
@@ -116,6 +121,11 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		return moduleConfig{}, err
 	}
 
+	asnDatabaseFormat, err := parseASNDatabaseFormat(raw.ASNDatabaseFormat, asnDatabasePath)
+	if err != nil {
+		return moduleConfig{}, err
+	}
+
 	asnRegistry, err := parseASNRegistryConfig(raw.ASNRegistry)
 	if err != nil {
 		return moduleConfig{}, err
@@ -127,17 +137,65 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 	}
 
 	return moduleConfig{
-		ASNRegistry:     asnRegistry,
-		ASNLookup:       asnLookup,
-		DatabasePath:    databasePath,
-		DatabaseFormat:  databaseFormat,
-		RefreshInterval: refreshInterval,
-		LookupTimeout:   lookupTimeout,
+		ASNRegistry:       asnRegistry,
+		ASNLookup:         asnLookup,
+		ASNDatabasePath:   asnDatabasePath,
+		DatabasePath:      databasePath,
+		ASNDatabaseFormat: asnDatabaseFormat,
+		DatabaseFormat:    databaseFormat,
+		RefreshInterval:   refreshInterval,
+		LookupTimeout:     lookupTimeout,
 	}, nil
+}
+
+// parseRequiredDatabasePath validates a mandatory absolute database path.
+func parseRequiredDatabasePath(name string, value string) (string, error) {
+	databasePath, err := parseOptionalDatabasePath(name, value)
+	if err != nil {
+		return "", err
+	}
+
+	if databasePath == "" {
+		return "", fmt.Errorf("%s must not be empty", name)
+	}
+
+	return databasePath, nil
+}
+
+// parseOptionalDatabasePath validates an optional absolute database path.
+func parseOptionalDatabasePath(name string, value string) (string, error) {
+	databasePath := filepath.Clean(strings.TrimSpace(value))
+	if databasePath == "." || databasePath == "" {
+		return "", nil
+	}
+
+	if !filepath.IsAbs(databasePath) {
+		return "", fmt.Errorf("%s must be absolute: %s", name, databasePath)
+	}
+
+	return databasePath, nil
 }
 
 // parseDatabaseFormat validates the configured database format or infers it from the file extension.
 func parseDatabaseFormat(value string, databasePath string) (string, error) {
+	return parseNamedDatabaseFormat("database_format", value, databasePath)
+}
+
+// parseASNDatabaseFormat validates the optional ASN database format.
+func parseASNDatabaseFormat(value string, databasePath string) (string, error) {
+	if databasePath == "" {
+		if strings.TrimSpace(value) != "" {
+			return "", fmt.Errorf("asn_database_path must be set when asn_database_format is set")
+		}
+
+		return "", nil
+	}
+
+	return parseNamedDatabaseFormat("asn_database_format", value, databasePath)
+}
+
+// parseNamedDatabaseFormat validates a configured database format or infers it from the file extension.
+func parseNamedDatabaseFormat(name string, value string, databasePath string) (string, error) {
 	text := strings.TrimSpace(value)
 	if text == "" {
 		text = defaultDatabaseFormat
@@ -153,7 +211,7 @@ func parseDatabaseFormat(value string, databasePath string) (string, error) {
 	case databaseFormatJSON, databaseFormatMMDB:
 		return text, nil
 	default:
-		return "", fmt.Errorf("database_format must be one of auto, json, or mmdb")
+		return "", fmt.Errorf("%s must be one of auto, json, or mmdb", name)
 	}
 }
 

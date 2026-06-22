@@ -39,6 +39,11 @@ type geoDatabase interface {
 
 type databaseLoader func(context.Context, moduleConfig) (geoDatabase, error)
 
+type geoDatabases struct {
+	primary geoDatabase
+	asn     geoDatabase
+}
+
 type fileDatabase struct {
 	records []geoRecord
 }
@@ -92,6 +97,34 @@ type databaseRecord struct {
 	CityName    string `json:"city_name"`
 	ASNOrg      string `json:"asn_org"`
 	ASN         int    `json:"asn"`
+}
+
+// Ready reports whether the required primary database is available.
+func (d geoDatabases) Ready() bool {
+	return d.primary != nil
+}
+
+// Records reports the combined loaded record count for metrics.
+func (d geoDatabases) Records() int {
+	return d.PrimaryRecords() + d.ASNRecords()
+}
+
+// PrimaryRecords reports the primary GeoIP database record count.
+func (d geoDatabases) PrimaryRecords() int {
+	if d.primary == nil {
+		return 0
+	}
+
+	return d.primary.Records()
+}
+
+// ASNRecords reports the optional ASN database record count.
+func (d geoDatabases) ASNRecords() int {
+	if d.asn == nil {
+		return 0
+	}
+
+	return d.asn.Records()
 }
 
 // loadConfiguredDatabase loads the configured database format.
@@ -298,6 +331,30 @@ func geoRecordFromMaxMind(record maxMindRecord, prefix netip.Prefix) geoRecord {
 		Prefix:      prefix,
 		ASN:         asn,
 	}
+}
+
+// mergeASNDatabaseRecord fills ASN facts from a secondary ASN database.
+func mergeASNDatabaseRecord(record *geoRecord, asnRecord geoRecord) {
+	if record == nil || !asnRecordMatches(record.ASN, asnRecord.ASN) {
+		return
+	}
+
+	if record.ASN <= 0 && asnRecord.ASN > 0 {
+		record.ASN = asnRecord.ASN
+	}
+
+	if record.ASNOrg == "" {
+		record.ASNOrg = asnRecord.ASNOrg
+	}
+
+	if record.ASNPrefix == "" && asnRecord.Prefix.IsValid() {
+		record.ASNPrefix = asnRecord.Prefix.String()
+	}
+}
+
+// asnRecordMatches prevents stale ASN metadata from being attached to a different ASN.
+func asnRecordMatches(currentASN int, candidateASN int) bool {
+	return currentASN <= 0 || candidateASN <= 0 || currentASN == candidateASN
 }
 
 // preferredName returns the English name or a deterministic fallback.

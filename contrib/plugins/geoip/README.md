@@ -21,10 +21,12 @@ The JSON reference database format is intentionally tiny so tests and examples s
 }
 ```
 
-Production deployments should point `database_path` at a real MaxMind DB, such as GeoLite2 City or GeoLite2 Country. ASN
-facts can also be resolved from a local routing-prefix snapshot that is refreshed by a supervised background job. The
-test fixture `testdata/geoip-test.mmdb` is deliberately not a real MaxMind database; it exists only so unit tests can
-verify `.mmdb` path handling without committing licensed database contents.
+Production deployments should point `database_path` at a real MaxMind DB, such as GeoLite2 City or GeoLite2 Country.
+When `asn_database_path` points at GeoLite2 ASN, the plugin keeps the location lookup and ASN organization lookup local
+without replacing the primary city or country data. ASN routing facts can also be resolved from a local routing-prefix
+snapshot that is refreshed by a supervised background job. The test fixture `testdata/geoip-test.mmdb` is deliberately
+not a real MaxMind database; it exists only so unit tests can verify `.mmdb` path handling without committing licensed
+database contents.
 
 ## Build
 
@@ -40,6 +42,10 @@ The plugin-owned config subtree accepts:
 
 - `database_path`: absolute path to a local JSON fixture or MaxMind `.mmdb` database.
 - `database_format`: optional `auto`, `json`, or `mmdb`; `auto` is the default and selects `mmdb` for `.mmdb` paths.
+- `asn_database_path`: optional absolute path to a local JSON fixture or MaxMind ASN `.mmdb` database. When set, ASN and
+  autonomous-system organization facts are filled from this secondary database without replacing the primary location
+  data.
+- `asn_database_format`: optional `auto`, `json`, or `mmdb`; `auto` is the default and selects `mmdb` for `.mmdb` paths.
 - `refresh_interval`: optional duration for periodic local database reloads, for example `1h`.
 - `lookup_timeout`: optional request-time lookup bound, default `50ms`.
 - `asn_lookup.enabled`: optional boolean. When true, ASN data is resolved from a local routing-prefix snapshot.
