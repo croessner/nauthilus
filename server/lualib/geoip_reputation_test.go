@@ -54,6 +54,27 @@ func TestGeoIPReputationTracksSuccessfulLoginAndEmitsTrustScore(t *testing.T) {
 	assertLuaString(t, geoIPReputationFact(t, L, "decision"), "trusted")
 }
 
+func TestGeoIPReputationSkipsBackendHealthChecks(t *testing.T) {
+	L, redisState := newGeoIPReputationTestState(t)
+	defer L.Close()
+
+	loadGeoIPReputationSubject(t, L)
+	callGeoIPReputationSubjectWithHealthCheck(t, L, false, true)
+
+	if len(redisState) != 0 {
+		t.Fatalf("redis reputation state = %#v, want no health-check writes", redisState)
+	}
+
+	ctxState := luaTableValue(t, L.GetGlobal("ctx_state"), "ctx_state")
+	if policyFacts := ctxState.RawGetString("policy_facts"); policyFacts != lua.LNil {
+		assertLuaTableMissingKey(t, policyFacts, "geoip_reputation")
+	}
+
+	if rt := ctxState.RawGetString("rt"); rt != lua.LNil {
+		assertLuaTableMissingKey(t, rt, "geoip_reputation")
+	}
+}
+
 type geoIPReputationRedisState map[string]map[string]float64
 
 func newGeoIPReputationTestState(t *testing.T) (*lua.LState, geoIPReputationRedisState) {
@@ -259,8 +280,15 @@ func loadGeoIPReputationSubject(t *testing.T, L *lua.LState) {
 func callGeoIPReputationSubject(t *testing.T, L *lua.LState, authenticated bool) {
 	t.Helper()
 
+	callGeoIPReputationSubjectWithHealthCheck(t, L, authenticated, false)
+}
+
+func callGeoIPReputationSubjectWithHealthCheck(t *testing.T, L *lua.LState, authenticated bool, healthCheck bool) {
+	t.Helper()
+
 	request := L.NewTable()
 	request.RawSetString("no_auth", lua.LBool(false))
+	request.RawSetString("health_check", lua.LBool(healthCheck))
 	request.RawSetString("authenticated", lua.LBool(authenticated))
 	request.RawSetString("client_ip", lua.LString("203.0.113.10"))
 	request.RawSetString("username", lua.LString("alice@example.test"))
@@ -293,10 +321,7 @@ func geoIPReputationRT(t *testing.T, L *lua.LState, key string) lua.LValue {
 func luaTableField(t *testing.T, value lua.LValue, key string) lua.LValue {
 	t.Helper()
 
-	tableValue, ok := value.(*lua.LTable)
-	if !ok {
-		t.Fatalf("Lua value for %q has type %s, want table", key, value.Type())
-	}
+	tableValue := luaTableValue(t, value, key)
 
 	field := tableValue.RawGetString(key)
 	if field == lua.LNil {
@@ -304,6 +329,27 @@ func luaTableField(t *testing.T, value lua.LValue, key string) lua.LValue {
 	}
 
 	return field
+}
+
+func luaTableValue(t *testing.T, value lua.LValue, key string) *lua.LTable {
+	t.Helper()
+
+	tableValue, ok := value.(*lua.LTable)
+	if !ok {
+		t.Fatalf("Lua value for %q has type %s, want table", key, value.Type())
+	}
+
+	return tableValue
+}
+
+func assertLuaTableMissingKey(t *testing.T, value lua.LValue, key string) {
+	t.Helper()
+
+	tableValue := luaTableValue(t, value, key)
+
+	if field := tableValue.RawGetString(key); field != lua.LNil {
+		t.Fatalf("Lua table key %q = %s, want nil", key, field.String())
+	}
 }
 
 func assertRedisHashValue(t *testing.T, state geoIPReputationRedisState, key string, field string, want float64) {

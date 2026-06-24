@@ -284,7 +284,7 @@ local function store_runtime_reputation(scores, aggregate_score, positive_score,
 end
 
 function nauthilus_call_subject(request)
-    if request.no_auth then
+    if request.no_auth or request.health_check then
         return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
     end
 
