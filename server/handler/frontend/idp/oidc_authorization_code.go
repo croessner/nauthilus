@@ -128,6 +128,30 @@ func redirectOIDCAuthorizeError(ctx *gin.Context, redirectURI string, state stri
 	ctx.Redirect(http.StatusFound, target)
 }
 
+// buildOIDCCallbackRedirectURL appends authorization response parameters safely.
+func buildOIDCCallbackRedirectURL(redirectURI string, code string, state string) (string, error) {
+	callbackURL, err := url.Parse(strings.TrimSpace(redirectURI))
+	if err != nil {
+		return "", err
+	}
+
+	if strings.TrimSpace(callbackURL.String()) == "" {
+		return "", fmt.Errorf("redirect_uri is missing")
+	}
+
+	query := callbackURL.Query()
+	query.Set(oidcParamCode, code)
+
+	if state != "" {
+		query.Set(oidcParamState, state)
+	}
+
+	callbackURL.RawQuery = query.Encode()
+	callbackURL.Fragment = ""
+
+	return callbackURL.String(), nil
+}
+
 // flowMetadata returns Redis flow metadata for an authorization request.
 func (request oidcAuthorizeRequest) flowMetadata(ctx *gin.Context) map[string]string {
 	return map[string]string{
@@ -417,9 +441,11 @@ func (h *OIDCHandler) issueOIDCAuthorizeCode(
 		mgr.Debug(ctx, h.deps.Logger, "OIDC authorization successful - client added to session")
 	}
 
-	target := fmt.Sprintf("%s?code=%s", request.redirectURI, code)
-	if request.state != "" {
-		target += "&state=" + url.QueryEscape(request.state)
+	target, err := buildOIDCCallbackRedirectURL(request.redirectURI, code, request.state)
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, "Invalid redirect_uri")
+
+		return
 	}
 
 	ctx.Redirect(http.StatusFound, target)
@@ -679,7 +705,7 @@ func (h *OIDCHandler) oidcConsentPageData(ctx *gin.Context, session *idp.OIDCSes
 	data["NoAdditionalPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, consentMsgNoAdditional)
 	data["ConsentChallenge"] = consentChallenge
 	data["State"] = state
-	data["PostConsentEndpoint"] = ctx.Request.URL.Path + "?state=" + url.QueryEscape(state)
+	data["PostConsentEndpoint"] = ctx.Request.URL.Path
 	data["CSRFToken"] = csrf.Token(ctx)
 
 	return data
@@ -847,7 +873,13 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 
 	_ = h.storage.DeleteSession(ctx.Request.Context(), "consent:"+consentChallenge)
 
-	target := fmt.Sprintf("%s?code=%s&state=%s", session.RedirectURI, code, state)
+	target, err := buildOIDCCallbackRedirectURL(session.RedirectURI, code, state)
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, "Invalid redirect_uri")
+
+		return
+	}
+
 	h.completeOIDCConsentFlow(ctx, mgr, session, client)
 
 	ctx.Redirect(http.StatusFound, target)

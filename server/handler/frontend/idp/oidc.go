@@ -1497,6 +1497,7 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 	}
 
 	maps.Copy(response, claims)
+	response[oidcJSONFieldActive] = true
 
 	ctx.JSON(http.StatusOK, response)
 }

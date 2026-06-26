@@ -47,7 +47,7 @@ const (
 	// HookAuthSession requires an authenticated session.
 	HookAuthSession HookAuth = "session"
 
-	// HookAuthAdmin requires administrative authorization.
+	// HookAuthAdmin requires administrative authorization regardless of the declared hook scope.
 	HookAuthAdmin HookAuth = "admin"
 )
 

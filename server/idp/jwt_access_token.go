@@ -18,7 +18,6 @@ package idp
 import (
 	"context"
 	"fmt"
-	"maps"
 	"strings"
 	"time"
 
@@ -57,7 +56,7 @@ func (t *JWTAccessToken) Issue(_ context.Context) (string, time.Duration, error)
 		oidcClaimScope:     strings.Join(t.session.Scopes, " "),
 	}
 
-	maps.Copy(accessClaims, t.session.AccessTokenClaims)
+	copyCustomAccessTokenClaims(accessClaims, t.session.AccessTokenClaims)
 
 	accessTokenString, err := t.signer.Sign(accessClaims)
 	if err != nil {

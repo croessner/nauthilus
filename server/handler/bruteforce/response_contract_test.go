@@ -91,7 +91,12 @@ func newBruteForceResponseContractRouter(t *testing.T) (*gin.Engine, redismock.C
 	}
 
 	router := gin.New()
-	New(deps).Register(router.Group("/api/v1"))
+	group := router.Group("/api/v1")
+	group.Use(func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
+		ctx.Next()
+	})
+	New(deps).Register(group)
 
 	return router, mock
 }

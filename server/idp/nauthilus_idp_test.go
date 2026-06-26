@@ -503,7 +503,7 @@ func testRefreshOIDCSession(accessToken string, authTime time.Time) *OIDCSession
 func expectFixedRefreshTokenStore(mock redismock.ClientMock) {
 	mock.Regexp().ExpectSet(testRefreshTokenKey("na_rt_fixed-token"), ".*", 7*24*time.Hour).SetVal("OK")
 	mock.ExpectSAdd(testUserRefreshTokensKey(testUserID), "na_rt_fixed-token").SetVal(1)
-	mock.ExpectExpire(testUserRefreshTokensKey(testUserID), 30*24*time.Hour).SetVal(true)
+	expectUserTokenIndexTTL(mock, testUserRefreshTokensKey(testUserID), 7*24*time.Hour)
 }
 
 // expectJWTRefreshTokenExchange expects JWT access-token denial and refresh-token rotation.
@@ -534,7 +534,13 @@ func expectStableRefreshTokenExchange(mock redismock.ClientMock, refreshToken st
 	mock.ExpectSet(testDeniedAccessTokenKey(accessToken), "1", 2*time.Hour).SetVal("OK")
 	mock.Regexp().ExpectSet(testRefreshTokenKey(refreshToken), ".*", 7*24*time.Hour).SetVal("OK")
 	mock.ExpectSAdd(testUserRefreshTokensKey(testUserID), refreshToken).SetVal(0)
-	mock.ExpectExpire(testUserRefreshTokensKey(testUserID), 30*24*time.Hour).SetVal(true)
+	expectUserTokenIndexTTL(mock, testUserRefreshTokensKey(testUserID), 7*24*time.Hour)
+}
+
+// expectUserTokenIndexTTL expects monotonic TTL updates for user token indexes.
+func expectUserTokenIndexTTL(mock redismock.ClientMock, userKey string, ttl time.Duration) {
+	mock.ExpectExpireNX(userKey, ttl).SetVal(true)
+	mock.ExpectExpireGT(userKey, ttl).SetVal(false)
 }
 
 // assertRefreshTokenExchange verifies the common rotated refresh-token exchange result.

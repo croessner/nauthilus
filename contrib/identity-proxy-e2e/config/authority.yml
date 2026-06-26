@@ -129,6 +129,7 @@ identity:
       - groups
       - offline_access
       - nauthilus:authenticate
+      - nauthilus:security
       - nauthilus:lookup_identity
       - nauthilus:list_accounts
       - nauthilus:mfa_read
@@ -162,6 +163,7 @@ identity:
         access_token_lifetime: 5m
         scopes:
           - nauthilus:authenticate
+          - nauthilus:security
           - nauthilus:lookup_identity
           - nauthilus:list_accounts
           - nauthilus:mfa_read

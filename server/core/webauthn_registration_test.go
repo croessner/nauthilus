@@ -228,6 +228,15 @@ func TestWebAuthnRegistrationUserNameFallsBackToAuthenticatedUsername(t *testing
 	assert.Equal(t, "testuser", webAuthnRegistrationUserName(mgr))
 }
 
+func TestWebAuthnRegistrationFlowIDUsesRequiredMFAParentFlow(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyRequireMFAFlow:         true,
+		definitions.SessionKeyRequireMFAParentFlowID: "parent-flow",
+	}}
+
+	assert.Equal(t, flowdomain.NewRequireMFAFlowID("parent-flow"), webAuthnRegistrationFlowIDFromSession(mgr))
+}
+
 func TestRestoreWebAuthnRegistrationIdentityFromFlowState(t *testing.T) {
 	mgr := &mockCookieManager{data: map[string]any{
 		definitions.SessionKeyAccount: testUser,

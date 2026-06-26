@@ -508,11 +508,6 @@ func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
 	}
 
 	deps := frontendHandlerDeps(runtime)
-	storage := idp.NewRedisTokenStorageWithConfig(
-		runtime.store.redisClient,
-		runtime.cfg.GetServer().GetRedis().GetPrefix(),
-		runtime.cfg,
-	)
 
 	if !runtime.cfg.GetIDP().OIDC.Enabled && !runtime.cfg.GetIDP().SAML2.Enabled {
 		logMissingInternalIDP(runtime)
@@ -523,7 +518,7 @@ func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
 	return func(e *gin.Engine) {
 		deps.Env = runtime.env
 		deps.Redis = runtime.store.redisClient
-		registerIDPRoutes(e, runtime, deps, storage)
+		registerIDPRoutes(e, runtime, deps)
 	}
 }
 
@@ -555,7 +550,6 @@ func registerIDPRoutes(
 	e *gin.Engine,
 	runtime httpServerRuntime,
 	deps *handlerdeps.Deps,
-	storage *idp.RedisTokenStorage,
 ) {
 	nauthilusIDP := idp.NewNauthilusIDP(deps)
 	if runtime.cfg.GetIDP().OIDC.Enabled {
@@ -567,7 +561,6 @@ func registerIDPRoutes(
 	handlerapiv1.NewMFAAPI(deps).Register(e)
 
 	if runtime.cfg.GetIDP().OIDC.Enabled {
-		handlerapiv1.NewOIDCSessionsAPI(deps, storage).Register(e)
 		handleridp.NewOIDCHandler(deps, nauthilusIDP, frontendHandler).Register(e)
 	}
 

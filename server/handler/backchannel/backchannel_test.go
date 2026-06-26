@@ -7,11 +7,15 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	handlerbruteforce "github.com/croessner/nauthilus/v3/server/handler/bruteforce"
+	handlercache "github.com/croessner/nauthilus/v3/server/handler/cache"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -169,6 +173,44 @@ func TestSetupRegistersProtectedManagementOpenAPI(t *testing.T) {
 	assert.Contains(t, authorizedResponse.Body.String(), "Nauthilus Management API")
 }
 
+func TestBackchannelMutationRoutesRejectBaseScopeBearer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{
+			name:   "cache flush",
+			method: http.MethodDelete,
+			path:   "/api/v1/cache/flush",
+			body:   `{"user":"alice"}`,
+		},
+		{
+			name:   "brute-force flush",
+			method: http.MethodDelete,
+			path:   "/api/v1/bruteforce/flush",
+			body:   `{"ip_address":"192.0.2.10","rule_name":"*"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := newBackchannelMutationScopeRouter(definitions.ScopeAuthenticate)
+			request := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			request.Header.Set("Authorization", "Bearer base-scope-token")
+			request.Header.Set("Content-Type", "application/json")
+
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+
+			assert.Equal(t, http.StatusForbidden, response.Code)
+		})
+	}
+}
+
 func newBackchannelAuthTestRouter(cfg config.File, validator *recordingTokenValidator) *gin.Engine {
 	router := gin.New()
 	router.Use(backchannelAuthMiddleware(cfg, validator, slog.Default()))
@@ -177,6 +219,40 @@ func newBackchannelAuthTestRouter(cfg config.File, validator *recordingTokenVali
 	})
 
 	return router
+}
+
+// newBackchannelMutationScopeRouter builds cache and brute-force routes behind bearer base auth.
+func newBackchannelMutationScopeRouter(scope string) *gin.Engine {
+	cfg := backchannelAuthConfig(false, true, false)
+	validator := &recordingTokenValidator{
+		claims: jwt.MapClaims{"scope": scope},
+	}
+	router := gin.New()
+	router.Use(gin.Recovery())
+
+	group := router.Group("/api/v1")
+	group.Use(oidcBackchannelTestMiddleware(cfg, validator))
+
+	deps := &handlerdeps.Deps{
+		Cfg:    cfg,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	handlercache.New(deps).Register(group)
+	handlerbruteforce.New(deps).Register(group)
+
+	return router
+}
+
+// oidcBackchannelTestMiddleware simulates the shared Bearer backchannel boundary.
+func oidcBackchannelTestMiddleware(cfg config.File, validator *recordingTokenValidator) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if !oidcbearer.AuthorizeAuthenticateScope(ctx, validator, cfg, slog.Default()) {
+			return
+		}
+
+		ctx.Next()
+	}
 }
 
 type recordingTokenValidator struct {

@@ -1099,7 +1099,7 @@ func TestRestoreRequireMFAIdentityContextFromFlowState(t *testing.T) {
 		Type: flowdomain.FlowTypeRequireMFA,
 		Metadata: map[string]string{
 			flowdomain.FlowMetadataAccount:      frontendTestAccount,
-			flowdomain.FlowMetadataUniqueUserID: "uid-after",
+			flowdomain.FlowMetadataUniqueUserID: "uid-before",
 			flowdomain.FlowMetadataDisplayName:  frontendTestDisplayName,
 		},
 	}
@@ -1111,12 +1111,90 @@ func TestRestoreRequireMFAIdentityContextFromFlowState(t *testing.T) {
 	assert.Equal(t, frontendTestDisplayName, mgr.GetString(definitions.SessionKeyDisplayName, ""))
 }
 
-func TestRequireMFAFlowIDFallsBackToRequiredMFAReference(t *testing.T) {
+func TestRequiredMFAFlowIDsAreIsolatedPerParentFlow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg: &mockFrontendCfg{},
+		},
+	}
+	flowIDs := make(map[string]string)
+
+	for _, tc := range []struct {
+		name     string
+		parentID string
+		account  string
+		userID   string
+	}{
+		{name: "alice", parentID: "parent-flow-alice", account: "alice", userID: "uid-alice"},
+		{name: "bob", parentID: "parent-flow-bob", account: "bob", userID: "uid-bob"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodGet, "/login", nil)
+			mgr := &mockCookieManager{data: map[string]any{
+				definitions.SessionKeyAccount:           tc.account,
+				definitions.SessionKeyIDPFlowID:         tc.parentID,
+				definitions.SessionKeyProtocol:          definitions.ProtoOIDC,
+				definitions.SessionKeyRequireMFAPending: definitions.MFAMethodTOTP,
+				definitions.SessionKeyUniqueUserID:      tc.userID,
+			}}
+			user := &backend.User{
+				ID:   tc.userID,
+				Name: tc.account,
+			}
+
+			redirected := handler.startRequireMFARegistrationFlow(ctx, mgr, user, definitions.ProtoOIDC, []string{definitions.MFAMethodTOTP})
+			flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+
+			assert.True(t, redirected)
+			assert.NotEmpty(t, flowID)
+			assert.NotEqual(t, flowdomain.FlowIDRequireMFA, flowID)
+			assert.Equal(t, tc.parentID, mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""))
+
+			flowIDs[tc.name] = flowID
+		})
+	}
+
+	assert.NotEqual(t, flowIDs["alice"], flowIDs["bob"])
+}
+
+func TestRequiredMFAResumeRejectsMismatchedIdentityMetadata(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount: "alice",
+	}}
+	state := &flowdomain.State{
+		Type: flowdomain.FlowTypeRequireMFA,
+		Metadata: map[string]string{
+			flowdomain.FlowMetadataAccount:      "bob",
+			flowdomain.FlowMetadataUniqueUserID: "uid-bob",
+			flowdomain.FlowMetadataDisplayName:  "Bob Example",
+		},
+	}
+
+	restoreRequireMFAIdentityContext(mgr, state)
+
+	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyAccount, ""))
+	assert.Empty(t, mgr.GetString(definitions.SessionKeyUniqueUserID, ""))
+	assert.Empty(t, mgr.GetString(definitions.SessionKeyDisplayName, ""))
+}
+
+func TestRequireMFAFlowIDRequiresParentReference(t *testing.T) {
 	mgr := &mockCookieManager{data: map[string]any{
 		definitions.SessionKeyRequireMFAFlow: true,
 	}}
 
-	assert.Equal(t, requireMFAFlowID, requireMFAFlowIDFromSession(mgr))
+	assert.Empty(t, requireMFAFlowIDFromSession(mgr))
+}
+
+func TestRequireMFAFlowIDDerivesFromParentReference(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyRequireMFAFlow:         true,
+		definitions.SessionKeyRequireMFAParentFlowID: "parent-flow",
+	}}
+
+	assert.Equal(t, flowdomain.NewRequireMFAFlowID("parent-flow"), requireMFAFlowIDFromSession(mgr))
 }
 
 func TestRegisterWebAuthnRedirectsWithoutSession(t *testing.T) {

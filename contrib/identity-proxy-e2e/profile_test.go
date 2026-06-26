@@ -58,6 +58,7 @@ const (
 
 var requiredAuthorityScopes = []string{
 	"nauthilus:authenticate",
+	"nauthilus:security",
 	"nauthilus:lookup_identity",
 	"nauthilus:list_accounts",
 	"nauthilus:mfa_read",

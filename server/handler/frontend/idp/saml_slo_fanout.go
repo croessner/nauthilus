@@ -639,6 +639,9 @@ func (h *SAMLHandler) newBackChannelSLOHTTPClient(requestTimeout time.Duration) 
 	tlsHandshakeTimeout := max(requestTimeout/2, time.Second)
 
 	return &http.Client{
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			TLSHandshakeTimeout:   tlsHandshakeTimeout,

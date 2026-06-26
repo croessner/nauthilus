@@ -267,6 +267,56 @@ func TestRedisTokenStorageUsesConfiguredRedisDeadlines(t *testing.T) {
 	assertConfiguredRedisReadDeadline(t, storage, 25*time.Millisecond)
 }
 
+func TestRefreshTokenUserIndexTTLTracksTokenLifetime(t *testing.T) {
+	fixture := newRedisTokenStorageFixture()
+	token := "long-lived-refresh"
+	userID := "user-long-lived"
+	userKey := fixture.prefix + "oidc:user_refresh_tokens:" + userID
+	ttl := 45 * 24 * time.Hour
+	session := &OIDCSession{
+		ClientID: "test-client",
+		UserID:   userID,
+	}
+	data, _ := json.Marshal(session)
+
+	fixture.mock.ExpectSet(fixture.prefix+"oidc:refresh_token:"+token, string(data), ttl).SetVal("OK")
+	fixture.mock.ExpectSAdd(userKey, token).SetVal(1)
+	fixture.mock.ExpectExpireNX(userKey, ttl).SetVal(true)
+	fixture.mock.ExpectExpireGT(userKey, ttl).SetVal(false)
+
+	err := fixture.storage.StoreRefreshToken(fixture.ctx, token, session, ttl)
+	assert.NoError(t, err)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+func TestDeleteUserRefreshTokensAfterFormerIndexBoundary(t *testing.T) {
+	fixture := newRedisTokenStorageFixture()
+	token := "survives-old-index-boundary"
+	userID := "user-revocation"
+	userKey := fixture.prefix + "oidc:user_refresh_tokens:" + userID
+	ttl := 45 * 24 * time.Hour
+	session := &OIDCSession{
+		ClientID: "test-client",
+		UserID:   userID,
+	}
+	data, _ := json.Marshal(session)
+
+	fixture.mock.ExpectSet(fixture.prefix+"oidc:refresh_token:"+token, string(data), ttl).SetVal("OK")
+	fixture.mock.ExpectSAdd(userKey, token).SetVal(1)
+	fixture.mock.ExpectExpireNX(userKey, ttl).SetVal(true)
+	fixture.mock.ExpectExpireGT(userKey, ttl).SetVal(false)
+	fixture.mock.ExpectSMembers(userKey).SetVal([]string{token})
+	fixture.mock.ExpectDel(fixture.prefix + "oidc:refresh_token:" + token).SetVal(1)
+	fixture.mock.ExpectDel(userKey).SetVal(1)
+
+	err := fixture.storage.StoreRefreshToken(fixture.ctx, token, session, ttl)
+	assert.NoError(t, err)
+
+	err = fixture.storage.DeleteUserRefreshTokens(fixture.ctx, userID)
+	assert.NoError(t, err)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
 type redisReadDeadlineProvider interface {
 	redisReadContext(context.Context) (context.Context, context.CancelFunc)
 }

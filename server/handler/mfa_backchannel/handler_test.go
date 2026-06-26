@@ -16,13 +16,19 @@
 package mfa_backchannel
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func performRequest(t *testing.T, handler gin.HandlerFunc, method string, url string, body string) *httptest.ResponseRecorder {
@@ -91,4 +97,57 @@ func TestValidationErrors(t *testing.T) {
 			t.Fatalf("expected status 400, got %d", recorder.Code)
 		}
 	})
+}
+
+func TestMFABackchannelMutationRejectsBaseScopeBearer(t *testing.T) {
+	router := newMFABackchannelScopeRouter(definitions.ScopeAuthenticate)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/mfa-backchannel/totp", strings.NewReader(`{"username":"alice","totp_secret":"secret"}`))
+	request.Header.Set("Authorization", "Bearer base-scope-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d", response.Code)
+	}
+}
+
+// newMFABackchannelScopeRouter builds MFA backchannel routes behind bearer base auth.
+func newMFABackchannelScopeRouter(scope string) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			OIDCAuth: config.OIDCAuth{Enabled: true},
+		},
+	}
+	validator := &mfaBackchannelTokenValidator{
+		claims: jwt.MapClaims{"scope": scope},
+	}
+
+	router := gin.New()
+	router.Use(gin.Recovery())
+
+	group := router.Group("/api/v1")
+	group.Use(func(ctx *gin.Context) {
+		if !oidcbearer.AuthorizeAuthenticateScope(ctx, validator, cfg, slog.Default()) {
+			return
+		}
+
+		ctx.Next()
+	})
+
+	New(&handlerdeps.Deps{}).Register(group)
+
+	return router
+}
+
+type mfaBackchannelTokenValidator struct {
+	claims jwt.MapClaims
+}
+
+// ValidateToken returns static claims for MFA backchannel route tests.
+func (v *mfaBackchannelTokenValidator) ValidateToken(context.Context, string) (jwt.MapClaims, error) {
+	return v.claims, nil
 }

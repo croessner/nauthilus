@@ -74,6 +74,7 @@ const (
 
 var allAuthorityScopes = []string{
 	definitions.ScopeAuthenticate,
+	definitions.ScopeSecurity,
 	definitions.ScopeLookupIdentity,
 	definitions.ScopeListAccounts,
 	definitions.ScopeMFARead,

@@ -179,13 +179,40 @@ func NewClaimManager(auth *AuthState, requestedScopes []string, customScopes []c
 
 // ApplyMappings applies configured claim mappings to the provided claims map.
 func (m *ClaimManager) ApplyMappings(mappings []config.OIDCClaimMapping, claims map[string]any) {
+	m.applyMappings(mappings, claims, nil)
+}
+
+// ApplyAccessTokenMappings applies access-token mappings without reserved token claims.
+func (m *ClaimManager) ApplyAccessTokenMappings(mappings []config.OIDCClaimMapping, claims map[string]any) {
+	m.applyMappings(mappings, claims, m.accessTokenMappingAllowed)
+}
+
+type claimMappingFilter func(config.OIDCClaimMapping) bool
+
+// applyMappings applies claim mappings after an optional mapping-specific filter.
+func (m *ClaimManager) applyMappings(mappings []config.OIDCClaimMapping, claims map[string]any, filter claimMappingFilter) {
 	if m == nil || m.auth == nil {
 		return
 	}
 
 	for _, mapping := range mappings {
+		if filter != nil && !filter(mapping) {
+			continue
+		}
+
 		m.applyMapping(mapping, claims)
 	}
+}
+
+// accessTokenMappingAllowed rejects issuer-owned access-token claim names.
+func (m *ClaimManager) accessTokenMappingAllowed(mapping config.OIDCClaimMapping) bool {
+	if !definitions.IsReservedAccessTokenClaim(mapping.Claim) {
+		return true
+	}
+
+	m.warnClaimNotApplied(mapping.Claim, "reserved access-token claim")
+
+	return false
 }
 
 func (m *ClaimManager) applyMapping(mapping config.OIDCClaimMapping, claims map[string]any) {

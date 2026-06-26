@@ -132,7 +132,7 @@ commands:
   stack-down: "contrib/identity-proxy-e2e/scripts/run.sh down"
 
 notes:
-  - "The profile check is intentionally local and fast; it asserts the split Redis, remote-only edge, mTLS, bearer scopes, and virtual authenticator harness."
-  - "The Go smoke uses the supported generated OpenAPI management client against the live authority management API."
+  - "The profile check is intentionally local and fast; it asserts the split Redis, remote-only edge, mTLS, management-capable bearer scopes, and virtual authenticator harness."
+  - "The Go smoke uses the supported generated OpenAPI management client with the authority security scope against the live authority management API."
   - "The browser smoke uses Playwright and must create a CDP virtual authenticator before WebAuthn registration or login."
   - "The Compose topology keeps authority Redis and edge Redis on separate internal networks so neither Nauthilus role can address the other role's Redis."

@@ -1488,6 +1488,57 @@ func TestOIDCHandler_Consent(t *testing.T) {
 	})
 }
 
+func TestOIDCConsentRedirectEncodesDelimiterState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	state := "alpha&code=injected&state=shadow=value%25&client_id=evil"
+	handler, mock := newOIDCConsentCallbackRedirectTestHandler(t)
+	ctx, recorder := newOIDCConsentRedirectTestContext(state)
+
+	handler.ConsentPOST(ctx)
+
+	assertOIDCCallbackLocation(t, recorder.Header().Get("Location"), state)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOIDCCallbackRedirectDirectAndConsentParity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	state := "direct&code=injected&state=duplicate=value%25"
+
+	directHandler, directMock := newOIDCDirectCallbackRedirectTestHandler(t)
+	directCtx, directRecorder := newOIDCDirectCallbackRedirectTestContext()
+	request := oidcAuthorizeRequest{
+		clientID:    latchedConsentClientID,
+		redirectURI: "https://app.example.com/callback",
+		scope:       definitions.ScopeOpenID,
+		state:       state,
+	}
+	session := newOIDCCallbackRedirectSession(request.redirectURI)
+
+	directHandler.issueOIDCAuthorizeCode(
+		directCtx,
+		nil,
+		newOIDCAuthorizeFlowContext(nil),
+		&config.OIDCClient{ClientID: latchedConsentClientID},
+		request,
+		session,
+		[]string{definitions.ScopeOpenID},
+	)
+
+	assert.Equal(t, http.StatusFound, directRecorder.Code)
+	assertOIDCCallbackLocation(t, directRecorder.Header().Get("Location"), state)
+	assert.NoError(t, directMock.ExpectationsWereMet())
+
+	consentHandler, consentMock := newOIDCConsentCallbackRedirectTestHandler(t)
+	consentCtx, consentRecorder := newOIDCConsentRedirectTestContext(state)
+
+	consentHandler.ConsentPOST(consentCtx)
+
+	assertOIDCCallbackLocation(t, consentRecorder.Header().Get("Location"), state)
+	assert.NoError(t, consentMock.ExpectationsWereMet())
+}
+
 func TestOIDCConsentPOSTRejectsAllowWhenFlowAuthFailureLatched(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1589,6 +1640,108 @@ func newLatchedConsentPostContext() (*gin.Context, *httptest.ResponseRecorder) {
 	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	return ctx, recorder
+}
+
+// newOIDCCallbackRedirectTestHandler builds a handler for callback redirect tests.
+func newOIDCCallbackRedirectTestHandler(t *testing.T) (*OIDCHandler, redismock.ClientMock) {
+	t.Helper()
+
+	client := latchedConsentOIDCClient()
+	db, mock := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+	cfg := &mockOIDCCfg{
+		issuer:     "https://auth.example.com",
+		signingKey: secret.New(generateTestKey()),
+		clients:    []config.OIDCClient{client},
+	}
+	d := &deps.Deps{
+		Cfg:    cfg,
+		Redis:  rClient,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	handler := NewOIDCHandler(d, idp.NewNauthilusIDP(d), nil)
+
+	return handler, mock
+}
+
+// newOIDCDirectCallbackRedirectTestHandler expects direct authorization-code storage.
+func newOIDCDirectCallbackRedirectTestHandler(t *testing.T) (*OIDCHandler, redismock.ClientMock) {
+	t.Helper()
+
+	handler, mock := newOIDCCallbackRedirectTestHandler(t)
+	expectOIDCAuthorizationCodeStorage(mock)
+
+	return handler, mock
+}
+
+// newOIDCConsentCallbackRedirectTestHandler expects consent lookup, code storage, and cleanup.
+func newOIDCConsentCallbackRedirectTestHandler(t *testing.T) (*OIDCHandler, redismock.ClientMock) {
+	t.Helper()
+
+	handler, mock := newOIDCCallbackRedirectTestHandler(t)
+	session := newOIDCCallbackRedirectSession("https://app.example.com/callback")
+
+	mock.ExpectGet("test:oidc:code:consent:" + latchedConsentChallenge).SetVal(mustMarshalOIDCSession(t, session))
+	expectOIDCAuthorizationCodeStorage(mock)
+	mock.ExpectDel("test:oidc:code:consent:" + latchedConsentChallenge).SetVal(1)
+
+	return handler, mock
+}
+
+// expectOIDCAuthorizationCodeStorage matches one generated authorization-code write.
+func expectOIDCAuthorizationCodeStorage(mock redismock.ClientMock) {
+	mock.Regexp().ExpectSet("test:oidc:code:.*", ".*", 10*time.Minute).SetVal("OK")
+}
+
+// newOIDCConsentRedirectTestContext creates a consent POST carrying a delimiter-heavy state.
+func newOIDCConsentRedirectTestContext(state string) (*gin.Context, *httptest.ResponseRecorder) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/consent", strings.NewReader(url.Values{
+		"consent_challenge": {latchedConsentChallenge},
+		"state":             {state},
+		"submit":            {consentSubmitAllow},
+	}.Encode()))
+	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	return ctx, recorder
+}
+
+// newOIDCDirectCallbackRedirectTestContext creates a recorder-backed authorize context.
+func newOIDCDirectCallbackRedirectTestContext() (*gin.Context, *httptest.ResponseRecorder) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize", nil)
+
+	return ctx, recorder
+}
+
+// newOIDCCallbackRedirectSession creates a minimal authorization-code session.
+func newOIDCCallbackRedirectSession(redirectURI string) *idp.OIDCSession {
+	return &idp.OIDCSession{
+		ClientID:    latchedConsentClientID,
+		UserID:      latchedConsentUserID,
+		Username:    latchedConsentUsername,
+		Scopes:      []string{definitions.ScopeOpenID},
+		RedirectURI: redirectURI,
+	}
+}
+
+// assertOIDCCallbackLocation verifies that callback parameters are encoded as data.
+func assertOIDCCallbackLocation(t *testing.T, location string, wantState string) {
+	t.Helper()
+
+	parsedLocation, err := url.Parse(location)
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	query := parsedLocation.Query()
+	assert.Len(t, query[oidcParamCode], 1)
+	assert.NotEqual(t, "injected", query.Get(oidcParamCode))
+	assert.Len(t, query[oidcParamState], 1)
+	assert.Equal(t, wantState, query.Get(oidcParamState))
+	assert.Empty(t, query["client_id"])
 }
 
 func TestOIDCHandler_Introspect(t *testing.T) {
@@ -2114,7 +2267,13 @@ func (f *oidcTokenTest) expectRefreshTokenRotation(t *testing.T, refreshToken st
 	f.mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
 	f.mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_.*", ".*", 30*24*time.Hour).SetVal("OK")
 	f.mock.Regexp().ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_.*").SetVal(1)
-	f.mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+	f.expectUserTokenIndexTTL("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour)
+}
+
+// expectUserTokenIndexTTL expects monotonic TTL updates for Redis user-token indexes.
+func (f *oidcTokenTest) expectUserTokenIndexTTL(userKey string, ttl time.Duration) {
+	f.mock.ExpectExpireNX(userKey, ttl).SetVal(true)
+	f.mock.ExpectExpireGT(userKey, ttl).SetVal(false)
 }
 
 // newRefreshTokenSession creates a common refresh-token session fixture.
@@ -2340,7 +2499,7 @@ func (f *oidcTokenTest) assertRefreshWithoutRotation(t *testing.T) {
 	f.mock.ExpectSet("test:oidc:denied_access_token:"+oldAccessToken, "1", time.Hour).SetVal("OK")
 	f.mock.Regexp().ExpectSet("test:oidc:refresh_token:"+refreshToken, ".*", 30*24*time.Hour).SetVal("OK")
 	f.mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(0)
-	f.mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+	f.expectUserTokenIndexTTL("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour)
 
 	w := f.postToken(t, tokenRefreshForm(refreshToken), withBasicTokenAuth("test-client", "test-secret"))
 	resp := mustDecodeOIDCTestJSON(t, w)

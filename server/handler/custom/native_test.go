@@ -241,6 +241,14 @@ func TestNativeHookTokenAuthRejectsMissingScopeBeforePlugin(t *testing.T) {
 	assertNativeHookTokenRejectedBeforePlugin(t, jwt.MapClaims{nativeHookClaimScope: definitions.ScopeSecurity}, "Bearer token", http.StatusForbidden)
 }
 
+func TestNativeHookAdminAuthRejectsInternalScopeTokenBeforePlugin(t *testing.T) {
+	assertNativeHookAdminAuthStatus(t, definitions.ScopeAuthenticate, http.StatusForbidden, 0)
+}
+
+func TestNativeHookAdminAuthAllowsAdminScopeToken(t *testing.T) {
+	assertNativeHookAdminAuthStatus(t, definitions.ScopeAdmin, http.StatusOK, 1)
+}
+
 func TestNativeHookBodyLimitRejectsBeforePlugin(t *testing.T) {
 	runner, router := newNativeHookTestRouterForMethod(t, http.MethodPost, 3)
 	rec := performNativeHookRequest(router, http.MethodPost, nativeHookTestAPIPath, "toolarge", "")
@@ -251,6 +259,33 @@ func TestNativeHookBodyLimitRejectsBeforePlugin(t *testing.T) {
 
 	if runner.calls != 0 {
 		t.Fatalf("runner calls = %d, want zero before body limit success", runner.calls)
+	}
+}
+
+// assertNativeHookAdminAuthStatus verifies admin-auth descriptor behavior.
+func assertNativeHookAdminAuthStatus(t *testing.T, scope string, wantStatus int, wantCalls int) {
+	t.Helper()
+
+	runner := &nativeHookTestRunner{response: pluginapi.HookResponse{StatusCode: http.StatusOK}}
+	router := newNativeHookTestRouter(t, nativeHookTestConfig{
+		validator: &nativeHookTokenValidator{claims: jwt.MapClaims{"sub": nativeHookTestClientID, "client_id": nativeHookTestClientID, nativeHookClaimScope: scope}},
+		hook: nativeHookTestBinding(runner, pluginapi.HookDescriptor{
+			Name:         nativeHookTestName,
+			Method:       http.MethodGet,
+			Path:         nativeHookTestPath,
+			Scope:        pluginapi.HookScopeInternal,
+			Auth:         pluginapi.HookAuthAdmin,
+			MaxBodyBytes: 32,
+		}),
+	})
+
+	rec := performNativeHookRequest(router, http.MethodGet, nativeHookTestAPIPath, "", "Bearer token")
+	if rec.Code != wantStatus {
+		t.Fatalf("status = %d body=%s, want %d", rec.Code, rec.Body.String(), wantStatus)
+	}
+
+	if runner.calls != wantCalls {
+		t.Fatalf("runner calls = %d, want %d", runner.calls, wantCalls)
 	}
 }
 

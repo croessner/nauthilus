@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"maps"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -18,6 +16,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/util"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -27,16 +26,15 @@ import (
 )
 
 const (
-	defaultNativeHookMaxBodyBytes      int64 = 1 << 20
-	nativeHookErrorField                     = "error"
-	nativeHookHeaderAuthorization            = "Authorization"
-	nativeHookHeaderConnection               = "Connection"
-	nativeHookHeaderCookie                   = "Cookie"
-	nativeHookHeaderCSP                      = "Content-Security-Policy"
-	nativeHookHeaderProxyAuthenticate        = "Proxy-Authenticate"
-	nativeHookHeaderProxyAuthorization       = "Proxy-Authorization"
-	nativeHookHeaderSetCookie                = "Set-Cookie"
-	nativeHookBodyTooLarge                   = "hook request body too large"
+	nativeHookErrorField               = "error"
+	nativeHookHeaderAuthorization      = "Authorization"
+	nativeHookHeaderConnection         = "Connection"
+	nativeHookHeaderCookie             = "Cookie"
+	nativeHookHeaderCSP                = "Content-Security-Policy"
+	nativeHookHeaderProxyAuthenticate  = "Proxy-Authenticate"
+	nativeHookHeaderProxyAuthorization = "Proxy-Authorization"
+	nativeHookHeaderSetCookie          = "Set-Cookie"
+	nativeHookBodyTooLarge             = "hook request body too large"
 )
 
 var nativeHookHopByHopHeaders = map[string]struct{}{
@@ -324,7 +322,7 @@ func authorizeNativeHook(
 	case pluginapi.HookAuthToken:
 		return enforceNativeHookToken(ctx, cfg, validator, requiredScopes)
 	case pluginapi.HookAuthAdmin:
-		return enforceNativeHookToken(ctx, cfg, validator, addNativeHookScope(requiredScopes, definitions.ScopeAdmin))
+		return enforceNativeHookAdmin(ctx, cfg, validator)
 	case pluginapi.HookAuthSession:
 		if ctx.GetBool(definitions.CtxBasicAuthValidatedKey) {
 			return true
@@ -362,6 +360,11 @@ func enforceNativeHookToken(
 	return ok
 }
 
+// enforceNativeHookAdmin requires administrative bearer authority for admin hooks.
+func enforceNativeHookAdmin(ctx *gin.Context, cfg config.File, validator oidcbearer.TokenValidator) bool {
+	return enforceNativeHookToken(ctx, cfg, validator, []string{definitions.ScopeAdmin})
+}
+
 // nativeHookRequiredScopes maps public hook scope to Nauthilus control-plane scopes.
 func nativeHookRequiredScopes(scope pluginapi.HookScope) []string {
 	switch scope {
@@ -374,15 +377,6 @@ func nativeHookRequiredScopes(scope pluginapi.HookScope) []string {
 	default:
 		return []string{definitions.ScopeAdmin}
 	}
-}
-
-// addNativeHookScope appends a scope once.
-func addNativeHookScope(scopes []string, scope string) []string {
-	if scope == "" || slices.Contains(scopes, scope) {
-		return scopes
-	}
-
-	return append(scopes, scope)
 }
 
 // readNativeHookBody enforces the bounded v1 hook body model.
@@ -404,15 +398,15 @@ func readNativeHookBody(ctx *gin.Context, limit int64) ([]byte, bool) {
 		return nil, false
 	}
 
-	body, err := io.ReadAll(io.LimitReader(ctx.Request.Body, limit+1))
+	body, err := util.ReadBoundedRequestBody(ctx.Request.Body, limit)
 	if err != nil {
+		if errors.Is(err, util.ErrRequestBodyTooLarge) {
+			ctx.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{nativeHookErrorField: nativeHookBodyTooLarge})
+
+			return nil, false
+		}
+
 		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{nativeHookErrorField: "invalid hook request body"})
-
-		return nil, false
-	}
-
-	if int64(len(body)) > limit {
-		ctx.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{nativeHookErrorField: nativeHookBodyTooLarge})
 
 		return nil, false
 	}
@@ -423,7 +417,7 @@ func readNativeHookBody(ctx *gin.Context, limit int64) ([]byte, bool) {
 // effectiveNativeHookBodyLimit applies the global default when a hook omits a limit.
 func effectiveNativeHookBodyLimit(limit int64) int64 {
 	if limit == 0 {
-		return defaultNativeHookMaxBodyBytes
+		return util.DefaultHTTPRequestBodyLimit
 	}
 
 	return limit

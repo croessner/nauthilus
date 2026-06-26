@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/gin-gonic/gin"
 )
@@ -42,16 +43,19 @@ func New(deps *handlerdeps.Deps) *Handler {
 // Register provides the exported Register method.
 func (h *Handler) Register(router gin.IRouter) {
 	group := router.Group("/mfa-backchannel")
+	mfaWrite := oidcbearer.RequireAnyScope(definitions.ScopeMFAWrite, definitions.ScopeAdmin)
+	webauthnRead := oidcbearer.RequireAnyScope(definitions.ScopeWebAuthnRead, definitions.ScopeAdmin)
+	webauthnWrite := oidcbearer.RequireAnyScope(definitions.ScopeWebAuthnWrite, definitions.ScopeAdmin)
 
-	group.POST("/totp", h.AddTOTP)
-	group.DELETE("/totp", h.DeleteTOTP)
-	group.POST("/totp/recovery-codes", h.AddRecoveryCodes)
-	group.DELETE("/totp/recovery-codes", h.DeleteRecoveryCodes)
+	group.POST("/totp", mfaWrite, h.AddTOTP)
+	group.DELETE("/totp", mfaWrite, h.DeleteTOTP)
+	group.POST("/totp/recovery-codes", mfaWrite, h.AddRecoveryCodes)
+	group.DELETE("/totp/recovery-codes", mfaWrite, h.DeleteRecoveryCodes)
 
-	group.GET("/webauthn/credential", h.GetWebAuthnCredential)
-	group.POST("/webauthn/credential", h.SaveWebAuthnCredential)
-	group.PUT("/webauthn/credential", h.UpdateWebAuthnCredential)
-	group.DELETE("/webauthn/credential", h.DeleteWebAuthnCredential)
+	group.GET("/webauthn/credential", webauthnRead, h.GetWebAuthnCredential)
+	group.POST("/webauthn/credential", webauthnWrite, h.SaveWebAuthnCredential)
+	group.PUT("/webauthn/credential", webauthnWrite, h.UpdateWebAuthnCredential)
+	group.DELETE("/webauthn/credential", webauthnWrite, h.DeleteWebAuthnCredential)
 }
 
 type backendRequest struct {

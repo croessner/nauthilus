@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
@@ -101,6 +103,7 @@ func TestManagementRoutesMatchOpenAPIContract(t *testing.T) {
 
 	assertAPIV1OperationsDeclareProtectedSecurity(t, document.operations)
 	assertManagementOpenAPIDocumentsUseBackchannelGuard(t, document.operations)
+	assertManagementOIDCSessionsUseBackchannelGuard(t, buildManagementContractRouter(t))
 }
 
 func TestIDPRoutesMatchOpenAPIContract(t *testing.T) {
@@ -165,14 +168,29 @@ func buildManagementContractRouter(t *testing.T) *gin.Engine {
 	deps := routeContractDeps(cfg)
 
 	engine := gin.New()
+	engine.Use(gin.Recovery())
+
 	if err := handlerbackchannel.Setup(engine, deps); err != nil {
 		t.Fatalf("register backchannel routes: %v", err)
 	}
 
 	handlerapiv1.NewMFAAPI(deps).Register(engine)
-	handlerapiv1.NewOIDCSessionsAPI(deps, idp.NewRedisTokenStorage(nil, "test:")).Register(engine)
 
 	return engine
+}
+
+// assertManagementOIDCSessionsUseBackchannelGuard verifies session management is not mounted raw.
+func assertManagementOIDCSessionsUseBackchannelGuard(t *testing.T, router http.Handler) {
+	t.Helper()
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/oidc/sessions/user1", nil)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /api/v1/oidc/sessions/user1 status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
 }
 
 func buildIDPContractRouter(t *testing.T) *gin.Engine {
@@ -227,10 +245,11 @@ func routeContractDeps(cfg config.File) *handlerdeps.Deps {
 	util.SetDefaultEnvironment(env)
 
 	return &handlerdeps.Deps{
-		Cfg:         cfg,
-		Env:         env,
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		LangManager: routeContractLangManager{},
+		Cfg:          cfg,
+		Env:          env,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		LangManager:  routeContractLangManager{},
+		TokenFlusher: idp.NewRedisTokenStorage(nil, "test:"),
 	}
 }
 

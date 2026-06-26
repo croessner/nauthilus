@@ -32,8 +32,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const requireMFAFlowID = flowdomain.FlowIDRequireMFA
-
 type oidcMFAMethodSelector func(*config.OIDCClient) []string
 
 type samlMFAMethodSelector func(*config.SAML2ServiceProvider) []string
@@ -162,7 +160,13 @@ func (h *FrontendHandler) clearRequireMFARegistrationState(mgr cookie.Manager) {
 	}
 
 	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
-	if flowID != requireMFAFlowID {
+	if !flowdomain.IsRequireMFAFlowID(flowID) {
+		flowdomain.ClearRequireMFAContext(mgr)
+
+		return
+	}
+
+	if h == nil || h.deps == nil || h.deps.Cfg == nil {
 		flowdomain.ClearRequireMFAContext(mgr)
 
 		return
@@ -178,7 +182,7 @@ func (h *FrontendHandler) clearRequireMFARegistrationState(mgr cookie.Manager) {
 
 	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
-	if _, err := controller.Abort(context.Background(), requireMFAFlowID); err != nil {
+	if _, err := controller.Abort(context.Background(), flowID); err != nil {
 		flowdomain.ClearRequireMFAContext(mgr)
 
 		return
@@ -311,9 +315,16 @@ func (h *FrontendHandler) startRequireMFARegistrationFlow(
 	protocol string,
 	missing []string,
 ) bool {
-	parentFlowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
-	if parentFlowID != "" && parentFlowID != requireMFAFlowID {
+	parentFlowID := requireMFAParentFlowID(mgr)
+	if parentFlowID != "" {
 		mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
+	}
+
+	flowID := flowdomain.NewRequireMFAFlowID(parentFlowID)
+	if flowID == "" {
+		h.clearRequireMFARegistrationState(mgr)
+
+		return false
 	}
 
 	nextTarget := h.nextRequiredMFARegistrationTarget(mgr)
@@ -326,7 +337,7 @@ func (h *FrontendHandler) startRequireMFARegistrationFlow(
 	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
 	decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
-		FlowID:       requireMFAFlowID,
+		FlowID:       flowID,
 		Type:         flowdomain.FlowTypeRequireMFA,
 		Protocol:     requireMFAFlowProtocol(protocol),
 		CurrentStep:  flowdomain.FlowStepStart,
@@ -389,24 +400,24 @@ func requireMFAFlowMetadata(mgr cookie.Manager, user *backend.User, missing stri
 	return metadata
 }
 
-func (h *FrontendHandler) restoreRequireMFAIdentityContextFromStore(ctx *gin.Context, mgr cookie.Manager) {
+func (h *FrontendHandler) restoreRequireMFAIdentityContextFromStore(ctx *gin.Context, mgr cookie.Manager) bool {
 	if h == nil || h.deps == nil || h.deps.Cfg == nil || ctx == nil || mgr == nil {
-		return
+		return true
 	}
 
 	flowID := requireMFAFlowIDFromSession(mgr)
 	if flowID == "" {
-		return
+		return true
 	}
 
 	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
 	state, err := controller.State(ctx.Request.Context(), flowID)
 	if err != nil {
-		return
+		return false
 	}
 
-	restoreRequireMFAIdentityContext(mgr, state)
+	return restoreRequireMFAIdentityContext(mgr, state)
 }
 
 func requireMFAFlowIDFromSession(mgr cookie.Manager) string {
@@ -415,20 +426,25 @@ func requireMFAFlowIDFromSession(mgr cookie.Manager) string {
 	}
 
 	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
-	if flowID != "" {
+	if flowdomain.IsRequireMFAFlowID(flowID) {
 		return flowID
 	}
 
 	if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		return requireMFAFlowID
+		return flowdomain.NewRequireMFAFlowID(mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""))
 	}
 
 	return ""
 }
 
-func restoreRequireMFAIdentityContext(mgr cookie.Manager, state *flowdomain.State) {
+// restoreRequireMFAIdentityContext restores identity metadata only when it matches the current session.
+func restoreRequireMFAIdentityContext(mgr cookie.Manager, state *flowdomain.State) bool {
 	if mgr == nil || state == nil || state.Type != flowdomain.FlowTypeRequireMFA || state.Metadata == nil {
-		return
+		return false
+	}
+
+	if !requireMFAIdentityMetadataMatches(mgr, state.Metadata) {
+		return false
 	}
 
 	if mgr.GetString(definitions.SessionKeyAccount, "") == "" {
@@ -448,6 +464,41 @@ func restoreRequireMFAIdentityContext(mgr cookie.Manager, state *flowdomain.Stat
 			mgr.Set(definitions.SessionKeyDisplayName, displayName)
 		}
 	}
+
+	return true
+}
+
+// requireMFAParentFlowID returns the parent flow id used to derive an isolated required-MFA sub-flow.
+func requireMFAParentFlowID(mgr cookie.Manager) string {
+	if mgr == nil {
+		return ""
+	}
+
+	parentFlowID := mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, "")
+	if parentFlowID != "" {
+		return parentFlowID
+	}
+
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+	if flowdomain.IsRequireMFAFlowID(flowID) {
+		return ""
+	}
+
+	return flowID
+}
+
+// requireMFAIdentityMetadataMatches rejects stored metadata for a different authenticated identity.
+func requireMFAIdentityMetadataMatches(mgr cookie.Manager, metadata map[string]string) bool {
+	return requireMFAIdentityFieldMatches(mgr, metadata, definitions.SessionKeyAccount, flowdomain.FlowMetadataAccount) &&
+		requireMFAIdentityFieldMatches(mgr, metadata, definitions.SessionKeyUniqueUserID, flowdomain.FlowMetadataUniqueUserID)
+}
+
+// requireMFAIdentityFieldMatches compares one current session field with stored flow metadata.
+func requireMFAIdentityFieldMatches(mgr cookie.Manager, metadata map[string]string, sessionKey string, metadataKey string) bool {
+	current := mgr.GetString(sessionKey, "")
+	stored := metadata[metadataKey]
+
+	return current == "" || stored == "" || current == stored
 }
 
 func (h *FrontendHandler) nextRequiredMFARegistrationTarget(mgr cookie.Manager) string {
@@ -571,7 +622,12 @@ func (h *FrontendHandler) ContinueRequiredMFARegistration(ctx *gin.Context) {
 		return
 	}
 
-	h.restoreRequireMFAIdentityContextFromStore(ctx, mgr)
+	if !h.restoreRequireMFAIdentityContextFromStore(ctx, mgr) {
+		h.clearRequireMFARegistrationState(mgr)
+		ctx.Redirect(http.StatusFound, "/")
+
+		return
+	}
 
 	pending := mgr.GetString(definitions.SessionKeyRequireMFAPending, "")
 

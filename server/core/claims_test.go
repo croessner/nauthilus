@@ -208,3 +208,55 @@ func TestFillIDTokenClaims_FromGroupsSource(t *testing.T) {
 	assert.Equal(t, []string{"developers", "platform"}, claims[definitions.ClaimGroups])
 	assert.Equal(t, []string{"cn=developers,ou=groups,dc=example,dc=org"}, claims["group_dns"])
 }
+
+func TestReservedAccessTokenClaimMappingsAreRejected(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	auth := &AuthState{
+		deps: AuthDeps{
+			Logger: logger,
+		},
+	}
+	auth.ReplaceAllAttributes(map[string][]any{
+		"aud_attr":     {"evil-audience"},
+		"active_attr":  {false},
+		"custom_attr":  {"reader"},
+		"exp_attr":     {int64(1)},
+		"iat_attr":     {int64(1)},
+		"iss_attr":     {"https://evil.example.test"},
+		"scope_attr":   {"admin"},
+		"subject_attr": {"attacker"},
+	})
+
+	claims := map[string]any{
+		"aud":    "client-a",
+		"active": true,
+		"exp":    int64(200),
+		"iat":    int64(100),
+		"iss":    "https://issuer.example.test",
+		"scope":  "openid profile",
+		"sub":    "user-a",
+	}
+	cfgClaims := &config.AccessTokenClaims{
+		Mappings: []config.OIDCClaimMapping{
+			{Claim: "aud", Attribute: "aud_attr", Type: definitions.ClaimTypeString},
+			{Claim: "active", Attribute: "active_attr", Type: definitions.ClaimTypeBoolean},
+			{Claim: "scope", Attribute: "scope_attr", Type: definitions.ClaimTypeString},
+			{Claim: "sub", Attribute: "subject_attr", Type: definitions.ClaimTypeString},
+			{Claim: "iss", Attribute: "iss_attr", Type: definitions.ClaimTypeString},
+			{Claim: "exp", Attribute: "exp_attr", Type: definitions.ClaimTypeInteger},
+			{Claim: "iat", Attribute: "iat_attr", Type: definitions.ClaimTypeInteger},
+			{Claim: "resource.role", Attribute: "custom_attr", Type: definitions.ClaimTypeString},
+		},
+	}
+
+	auth.FillAccessTokenClaims(cfgClaims, claims, nil, nil)
+
+	assert.Equal(t, "client-a", claims["aud"])
+	assert.Equal(t, true, claims["active"])
+	assert.Equal(t, "openid profile", claims["scope"])
+	assert.Equal(t, "user-a", claims["sub"])
+	assert.Equal(t, "https://issuer.example.test", claims["iss"])
+	assert.Equal(t, int64(200), claims["exp"])
+	assert.Equal(t, int64(100), claims["iat"])
+	assert.Equal(t, "reader", claims["resource.role"])
+}

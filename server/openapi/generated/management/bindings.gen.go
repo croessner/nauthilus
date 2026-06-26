@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -192,8 +193,26 @@ type FieldErrorResponse struct {
 	Errors []FieldError `json:"errors"`
 }
 
+// OIDCSessionSummary defines model for OIDCSessionSummary.
+type OIDCSessionSummary struct {
+	AuthTime    time.Time `json:"auth_time"`
+	ClientId    string    `json:"client_id"`
+	DisplayName *string   `json:"display_name,omitempty"`
+
+	// Id Stable non-secret session identifier derived from the stored token.
+	Id           string    `json:"id"`
+	MfaCompleted *bool     `json:"mfa_completed,omitempty"`
+	MfaMethod    *string   `json:"mfa_method,omitempty"`
+	RedirectUri  *string   `json:"redirect_uri,omitempty"`
+	Scopes       *[]string `json:"scopes,omitempty"`
+	UserId       string    `json:"user_id"`
+	Username     *string   `json:"username,omitempty"`
+}
+
 // OIDCSessions defines model for OIDCSessions.
-type OIDCSessions map[string]interface{}
+type OIDCSessions struct {
+	Sessions []OIDCSessionSummary `json:"sessions"`
+}
 
 // ResultEnvelope defines model for ResultEnvelope.
 type ResultEnvelope struct {
@@ -1468,6 +1487,7 @@ type FlushUserCacheResponse struct {
 	JSON200      *CacheFlushResult
 	JSON400      *JSONValidationError
 	JSON401      *Unauthorized
+	JSON403      *Forbidden
 	JSON500      *Error
 }
 
@@ -1501,6 +1521,7 @@ type EnqueueUserCacheFlushResponse struct {
 	JSON202      *AsyncAccepted
 	JSON400      *JSONValidationError
 	JSON401      *Unauthorized
+	JSON403      *Forbidden
 	JSON500      *Error
 }
 
@@ -1566,6 +1587,7 @@ type DeleteOIDCSessionsResponse struct {
 	HTTPResponse *http.Response
 	JSON400      *Error
 	JSON401      *Unauthorized
+	JSON403      *Forbidden
 	JSON500      *Error
 }
 
@@ -1599,6 +1621,7 @@ type ListOIDCSessionsResponse struct {
 	JSON200      *OIDCSessions
 	JSON400      *Error
 	JSON401      *Unauthorized
+	JSON403      *Forbidden
 	JSON500      *Error
 }
 
@@ -1631,6 +1654,7 @@ type DeleteOIDCSessionResponse struct {
 	HTTPResponse *http.Response
 	JSON400      *Error
 	JSON401      *Unauthorized
+	JSON403      *Forbidden
 	JSON500      *Error
 }
 
@@ -2166,6 +2190,13 @@ func ParseFlushUserCacheResponse(rsp *http.Response) (*FlushUserCacheResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2212,6 +2243,13 @@ func ParseEnqueueUserCacheFlushResponse(rsp *http.Response) (*EnqueueUserCacheFl
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -2300,6 +2338,13 @@ func ParseDeleteOIDCSessionsResponse(rsp *http.Response) (*DeleteOIDCSessionsRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2347,6 +2392,13 @@ func ParseListOIDCSessionsResponse(rsp *http.Response) (*ListOIDCSessionsRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2386,6 +2438,13 @@ func ParseDeleteOIDCSessionResponse(rsp *http.Response) (*DeleteOIDCSessionRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error

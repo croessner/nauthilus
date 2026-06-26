@@ -66,6 +66,36 @@ func Middleware(validator TokenValidator, cfg config.File, logger *slog.Logger) 
 	}
 }
 
+// RequireAnyScope enforces route-specific Bearer scopes after backchannel
+// authentication. Requests authenticated with configured Basic auth are allowed
+// because Basic remains the administrative management credential.
+func RequireAnyScope(requiredScopes ...string) gin.HandlerFunc {
+	scopes := append([]string(nil), requiredScopes...)
+
+	return func(ctx *gin.Context) {
+		if len(scopes) == 0 || ctx.GetBool(definitions.CtxBasicAuthValidatedKey) {
+			ctx.Next()
+
+			return
+		}
+
+		claims := GetClaimsFromContext(ctx)
+		if claims == nil {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{oidcBearerResponseKeyError: oidcBearerUnauthorizedMessage})
+
+			return
+		}
+
+		if !HasAnyScope(claims, scopes...) {
+			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{oidcBearerResponseKeyError: missingScopeMessage(scopes)})
+
+			return
+		}
+
+		ctx.Next()
+	}
+}
+
 // AuthorizeAuthenticateScope validates a Bearer token for the base backchannel
 // authentication scope and stores validated claims in the Gin context.
 func AuthorizeAuthenticateScope(
@@ -238,4 +268,13 @@ func HasScopeFromContext(ctx *gin.Context, scope string) bool {
 	claims := GetClaimsFromContext(ctx)
 
 	return HasScope(claims, scope)
+}
+
+// missingScopeMessage renders a compact scope error without exposing token data.
+func missingScopeMessage(scopes []string) string {
+	if len(scopes) == 0 {
+		return "insufficient permissions"
+	}
+
+	return "missing required scope: " + strings.Join(scopes, " or ")
 }

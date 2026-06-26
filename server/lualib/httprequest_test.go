@@ -17,11 +17,15 @@ package lualib
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/yuin/gopher-lua"
 )
+
+const testHTTPRequestBodyLimit = 1 << 20
 
 func bindTestHTTPRequestMeta(L *lua.LState, request *http.Request) {
 	reqEnv := L.NewTable()
@@ -157,6 +161,79 @@ func executeHTTPRequestHeader(t *testing.T, headers http.Header, headerToGet str
 	manager.GetHTTPRequestHeader(L)
 
 	return requireHTTPRequestResultTable(t, L)
+}
+
+func TestGetHTTPRequestBodyRejectsOversizedBody(t *testing.T) {
+	L := lua.NewState()
+	t.Cleanup(L.Close)
+
+	req, err := http.NewRequest(http.MethodPost, "/custom/hook", strings.NewReader(strings.Repeat("x", testHTTPRequestBodyLimit+1)))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	bindTestHTTPRequestMeta(L, req)
+
+	manager := NewHTTPRequestManager()
+	manager.GetHTTPRequestBody(L)
+
+	if got := L.Get(-2); got != lua.LNil {
+		t.Fatalf("body result type=%s len=%d, want nil for oversized request", got.Type().String(), len(got.String()))
+	}
+
+	gotErr := L.Get(-1)
+
+	if gotErr == lua.LNil {
+		t.Fatal("error result is nil, want explicit body limit error")
+	}
+
+	if !strings.Contains(gotErr.String(), "request body too large") {
+		t.Fatalf("error = %q, want explicit body limit error", gotErr.String())
+	}
+}
+
+func TestGetHTTPRequestBodyReplaysAllowedBody(t *testing.T) {
+	L := lua.NewState()
+	t.Cleanup(L.Close)
+
+	req, err := http.NewRequest(http.MethodPost, "/custom/hook", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	bindTestHTTPRequestMeta(L, req)
+
+	manager := NewHTTPRequestManager()
+	for i := 0; i < 2; i++ {
+		manager.GetHTTPRequestBody(L)
+		assertHTTPRequestBodyResult(t, L, "payload")
+	}
+
+	replayed, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read replayed body: %v", err)
+	}
+
+	if string(replayed) != "payload" {
+		t.Fatalf("replayed body = %q, want payload", string(replayed))
+	}
+}
+
+// assertHTTPRequestBodyResult verifies one Lua body result pair.
+func assertHTTPRequestBodyResult(t *testing.T, L *lua.LState, want string) {
+	t.Helper()
+
+	gotErr := L.Get(-1)
+	if gotErr != lua.LNil {
+		t.Fatalf("error result = %v, want nil", gotErr)
+	}
+
+	got := L.Get(-2)
+	if got.String() != want {
+		t.Fatalf("body result = %q, want %q", got.String(), want)
+	}
+
+	L.Pop(2)
 }
 
 // requireHTTPRequestResultTable returns the Lua table and asserts a nil error result.

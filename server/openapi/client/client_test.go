@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	generatedidp "github.com/croessner/nauthilus/v3/server/openapi/generated/idp"
@@ -45,7 +46,8 @@ const (
 	supportedClientBruteForceRuleName     = "default"
 	supportedClientIPAddress              = "192.0.2.42"
 	supportedClientOIDCCID                = "identity-proxy"
-	supportedClientOIDCSessionToken       = "session-token"
+	supportedClientOIDCSessionID          = "session-reference-id"
+	supportedClientOIDCSessionReference   = "opaque-session-reference"
 	supportedClientOIDCUser               = "alice"
 	supportedClientDiscoveryAuthEndpoint  = "https://idp.example.test/oidc/authorize"
 	supportedClientDiscoveryIssuer        = "https://idp.example.test"
@@ -55,6 +57,8 @@ const (
 	supportedClientOpenAPIYAMLContentType = "application/yaml; charset=utf-8"
 	supportedClientOpenAPIVersion         = "3.1.0"
 )
+
+var supportedClientOIDCAuthTime = time.Date(2026, time.May, 15, 10, 2, 0, 0, time.UTC)
 
 func TestSupportedManagementClientEnqueuesCacheFlushWithBearerAuth(t *testing.T) {
 	response := callSupportedManagementCacheFlush(t, BearerToken(supportedClientBearerToken), "Bearer "+supportedClientBearerToken)
@@ -282,7 +286,14 @@ func TestSupportedManagementClientLoadsRuntimeConfig(t *testing.T) {
 func TestSupportedManagementClientListsOIDCSessions(t *testing.T) {
 	client := newSupportedManagementClient(t, requesttest.ClientSmokeRoute{
 		Response: management.OIDCSessions{
-			supportedClientOIDCSessionToken: map[string]any{"client_id": supportedClientOIDCCID},
+			Sessions: []management.OIDCSessionSummary{
+				{
+					Id:       supportedClientOIDCSessionID,
+					ClientId: supportedClientOIDCCID,
+					UserId:   supportedClientOIDCUser,
+					AuthTime: supportedClientOIDCAuthTime,
+				},
+			},
 		},
 		Method: http.MethodGet,
 		Path:   supportedOIDCSessionsPath(),
@@ -323,7 +334,7 @@ func TestSupportedManagementClientDeletesOIDCSession(t *testing.T) {
 	response, err := client.DeleteOIDCSession(
 		context.Background(),
 		supportedClientOIDCUser,
-		supportedClientOIDCSessionToken,
+		supportedClientOIDCSessionReference,
 	)
 	if err != nil {
 		t.Fatalf("delete OIDC session through supported client: %v", err)
@@ -483,7 +494,7 @@ func supportedOIDCSessionsPath() string {
 }
 
 func supportedOIDCSessionPath() string {
-	return supportedOIDCSessionsPath() + "/" + supportedClientOIDCSessionToken
+	return supportedOIDCSessionsPath() + "/" + supportedClientOIDCSessionReference
 }
 
 func callSupportedManagementCacheFlush(
@@ -816,8 +827,22 @@ func requireOIDCSession(t testing.TB, response *management.ListOIDCSessionsRespo
 		return
 	}
 
-	if _, ok := (*response.JSON200)[supportedClientOIDCSessionToken]; !ok {
-		t.Fatalf("OIDC session %q missing in %#v", supportedClientOIDCSessionToken, *response.JSON200)
+	if len(response.JSON200.Sessions) != 1 {
+		t.Fatalf("sessions length = %d, want 1", len(response.JSON200.Sessions))
+	}
+
+	session := response.JSON200.Sessions[0]
+
+	if session.Id != supportedClientOIDCSessionID {
+		t.Fatalf("session id = %q, want %q", session.Id, supportedClientOIDCSessionID)
+	}
+
+	if session.ClientId != supportedClientOIDCCID {
+		t.Fatalf("client id = %q, want %q", session.ClientId, supportedClientOIDCCID)
+	}
+
+	if session.UserId != supportedClientOIDCUser {
+		t.Fatalf("user id = %q, want %q", session.UserId, supportedClientOIDCUser)
 	}
 }
 

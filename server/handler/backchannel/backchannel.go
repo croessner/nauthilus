@@ -26,6 +26,7 @@ import (
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	handlerapiv1 "github.com/croessner/nauthilus/v3/server/handler/api/v1"
 	"github.com/croessner/nauthilus/v3/server/handler/asyncjobs"
 	"github.com/croessner/nauthilus/v3/server/handler/auth"
 	"github.com/croessner/nauthilus/v3/server/handler/bruteforce"
@@ -266,6 +267,7 @@ func registerAuthenticatedBackchannelRoutes(
 	}
 
 	registerManagementModules(authenticatedGroup, deps)
+	registerOIDCSessionManagement(authenticatedGroup, deps)
 
 	return nauthilusIDP, authenticatedGroup, nil
 }
@@ -306,6 +308,36 @@ func registerManagementModules(authenticatedGroup *gin.RouterGroup, deps *handle
 	cache.New(deps).Register(authenticatedGroup)
 	asyncjobs.New(deps).Register(authenticatedGroup)
 	mfa_backchannel.New(deps).Register(authenticatedGroup)
+}
+
+// registerOIDCSessionManagement registers OIDC session administration when OIDC is enabled.
+func registerOIDCSessionManagement(authenticatedGroup *gin.RouterGroup, deps *handlerdeps.Deps) {
+	if deps == nil || deps.Cfg == nil || !deps.Cfg.GetIDP().OIDC.Enabled {
+		return
+	}
+
+	handlerapiv1.NewOIDCSessionsAPI(deps, oidcSessionStoreFromDeps(deps)).Register(authenticatedGroup)
+}
+
+// oidcSessionStoreFromDeps resolves the Redis-backed OIDC token storage for management routes.
+func oidcSessionStoreFromDeps(deps *handlerdeps.Deps) handlerapiv1.OIDCSessionStore {
+	if deps == nil {
+		return nil
+	}
+
+	if storage, ok := deps.TokenFlusher.(*idp.RedisTokenStorage); ok && storage != nil {
+		return storage
+	}
+
+	if deps.Cfg == nil || deps.Redis == nil {
+		return nil
+	}
+
+	return idp.NewRedisTokenStorageWithConfig(
+		deps.Redis,
+		deps.Cfg.GetServer().GetRedis().GetPrefix(),
+		deps.Cfg,
+	)
 }
 
 // registerCustomHookRoutes registers unauthenticated custom hook routes.

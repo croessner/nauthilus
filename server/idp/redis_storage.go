@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/util"
 	jsoniter "github.com/json-iterator/go"
+	"github.com/redis/go-redis/v9"
 )
 
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
@@ -269,12 +270,23 @@ func (s *RedisTokenStorage) storeTrackedToken(ctx context.Context, token string,
 	pipe := s.redis.GetWriteHandle().Pipeline()
 	pipe.Set(writeCtx, key, encryptedData, ttl)
 	pipe.SAdd(writeCtx, userKey, token)
-	// Keep the user mapping alive as long as there might be active tokens
-	pipe.Expire(writeCtx, userKey, 30*24*time.Hour)
+	extendUserTokenIndexTTL(writeCtx, pipe, userKey, ttl)
 
 	_, err = pipe.Exec(writeCtx)
 
 	return err
+}
+
+// extendUserTokenIndexTTL keeps a user token index reachable for every tracked token lifetime.
+func extendUserTokenIndexTTL(ctx context.Context, pipe redis.Pipeliner, userKey string, ttl time.Duration) {
+	if ttl <= 0 {
+		pipe.Persist(ctx, userKey)
+
+		return
+	}
+
+	pipe.ExpireNX(ctx, userKey, ttl)
+	pipe.ExpireGT(ctx, userKey, ttl)
 }
 
 // deleteTrackedToken removes one token key and, when available, its user tracking entry.

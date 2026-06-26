@@ -3082,7 +3082,12 @@ func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 		return
 	}
 
-	h.restoreRequireMFAIdentityContextFromStore(ctx, mgr)
+	if !h.restoreRequireMFAIdentityContextFromStore(ctx, mgr) {
+		h.clearRequireMFARegistrationState(mgr)
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
 
 	uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, "")
 	if uniqueUserID == "" {

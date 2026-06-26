@@ -20,6 +20,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
 	"github.com/gin-gonic/gin"
 )
 
@@ -35,7 +36,10 @@ func New(deps *handlerdeps.Deps) *Handler {
 
 // Register provides the exported Register method.
 func (h *Handler) Register(router gin.IRouter) {
-	bg := router.Group("/" + definitions.CatBruteForce)
+	bg := router.Group(
+		"/"+definitions.CatBruteForce,
+		oidcbearer.RequireAnyScope(definitions.ScopeSecurity, definitions.ScopeAdmin),
+	)
 
 	bg.GET("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
 	bg.POST("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))

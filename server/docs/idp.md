@@ -727,6 +727,9 @@ Validierungsregeln:
 - `identity.saml.slo.max_participants >= 0` (`0` bedeutet: Default verwenden)
 - `identity.saml.slo.back_channel_max_retries >= 0` (`0` bedeutet: Default verwenden)
 - Wenn `identity.saml.slo.enabled=false`, sind `front_channel_enabled` und `back_channel_enabled` wirkungslos.
+- Back-channel SLO delivery does not follow HTTP redirects. Configure each service provider
+  `slo_back_channel_url` to the final HTTPS endpoint; a `3xx` response is treated as a failed delivery
+  and can fall back to front-channel fanout when that channel is enabled.
 
 #### SLO-014 Teststrategie und Interop-Abnahme
 
@@ -803,7 +806,7 @@ sequenceDiagram
     F ->> F: Check require_mfa against user's registered methods
     alt Missing MFA methods
         F ->> F: Store pending methods in cookie (require_mfa_pending)
-        F ->> R: FlowController.Start(flowID="require-mfa-flow", FlowTypeRequireMFA)
+        F ->> R: FlowController.Start(flowID=derived required-MFA sub-flow, FlowTypeRequireMFA)
         F ->> B: 302 Redirect to decision.RedirectURI (e.g. /mfa/totp/register, /mfa/webauthn/register, or /mfa/recovery/register)
         B ->> F: Complete registration
         F ->> F: GET /mfa/register/continue
@@ -811,7 +814,7 @@ sequenceDiagram
         alt More methods pending
             F ->> B: 302 Redirect to next registration page
         else All methods registered
-            F ->> R: FlowController.Abort("require-mfa-flow")
+            F ->> R: FlowController.Abort(derived required-MFA sub-flow)
             F ->> F: Clear require_mfa session keys
             F ->> B: 302 Redirect to IdP endpoint (authorize / SSO)
         end

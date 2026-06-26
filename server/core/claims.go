@@ -58,5 +58,5 @@ func (a *AuthState) FillAccessTokenClaims(
 		return
 	}
 
-	manager.ApplyMappings(mappings, claims)
+	manager.ApplyAccessTokenMappings(mappings, claims)
 }

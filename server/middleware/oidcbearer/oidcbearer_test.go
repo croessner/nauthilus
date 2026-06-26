@@ -359,6 +359,68 @@ func TestEnforceBearerScopeAuth(t *testing.T) {
 	})
 }
 
+func TestScopeMiddlewareRequiresOperationScopeForBearer(t *testing.T) {
+	tests := []struct {
+		name       string
+		claims     jwt.MapClaims
+		basicAuth  bool
+		wantStatus int
+	}{
+		{
+			name:       "base scope bearer is forbidden",
+			claims:     scopeClaims(definitions.ScopeAuthenticate),
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "operation scope bearer is allowed",
+			claims:     scopeClaims(definitions.ScopeSecurity),
+			wantStatus: http.StatusNoContent,
+		},
+		{
+			name:       "admin bearer is allowed",
+			claims:     scopeClaims(definitions.ScopeAdmin),
+			wantStatus: http.StatusNoContent,
+		},
+		{
+			name:       "basic authenticated request is allowed",
+			basicAuth:  true,
+			wantStatus: http.StatusNoContent,
+		},
+		{
+			name:       "missing authentication context is unauthorized",
+			wantStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			ctx, router := gin.CreateTestContext(response)
+			ctx.Request = httptest.NewRequest(http.MethodDelete, "/test", nil)
+
+			router.Use(func(ctx *gin.Context) {
+				if tt.claims != nil {
+					ctx.Set(definitions.CtxOIDCClaimsKey, tt.claims)
+				}
+
+				if tt.basicAuth {
+					ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
+				}
+
+				ctx.Next()
+			})
+			router.Use(RequireAnyScope(definitions.ScopeSecurity, definitions.ScopeAdmin))
+			router.DELETE("/test", func(ctx *gin.Context) {
+				ctx.Status(http.StatusNoContent)
+			})
+
+			router.ServeHTTP(response, ctx.Request)
+
+			assert.Equal(t, tt.wantStatus, response.Code)
+		})
+	}
+}
+
 func TestValidateAndStoreClaims_InvalidToken(t *testing.T) {
 	validator := &mockTokenValidator{
 		err: fmt.Errorf("invalid token"),

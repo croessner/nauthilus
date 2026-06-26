@@ -332,7 +332,7 @@ func webAuthnRegistrationFlowIDFromSession(mgr cookie.Manager) string {
 	}
 
 	if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		return flow.FlowIDRequireMFA
+		return flow.NewRequireMFAFlowID(mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""))
 	}
 
 	return ""

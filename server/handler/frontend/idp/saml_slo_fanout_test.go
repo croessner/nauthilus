@@ -226,6 +226,61 @@ func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_BackChannelFallbackToFront
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestSAMLBackChannelDeliveryRedirectToLoopbackIsBlocked(t *testing.T) {
+	var redirected atomic.Int32
+
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(resp http.ResponseWriter, _ *http.Request) {
+		redirected.Add(1)
+		resp.WriteHeader(http.StatusOK)
+	}))
+	defer redirectTarget.Close()
+
+	redirectingSP := httptest.NewServer(http.HandlerFunc(func(resp http.ResponseWriter, _ *http.Request) {
+		resp.Header().Set("Location", redirectTarget.URL+"/metadata")
+		resp.WriteHeader(http.StatusFound)
+	}))
+	defer redirectingSP.Close()
+
+	delivery := newSLOBackChannelRedirectTestDelivery(redirectingSP.URL)
+	err := delivery.run(t.Context())
+
+	assert.Error(t, err)
+	assert.Equal(t, int32(0), redirected.Load(), "back-channel delivery followed a redirect to loopback")
+}
+
+func TestSAMLBackChannelDeliveryRedirectChainIsNotFollowed(t *testing.T) {
+	var (
+		middleHits atomic.Int32
+		finalHits  atomic.Int32
+	)
+
+	finalTarget := httptest.NewServer(http.HandlerFunc(func(resp http.ResponseWriter, _ *http.Request) {
+		finalHits.Add(1)
+		resp.WriteHeader(http.StatusOK)
+	}))
+	defer finalTarget.Close()
+
+	middleTarget := httptest.NewServer(http.HandlerFunc(func(resp http.ResponseWriter, _ *http.Request) {
+		middleHits.Add(1)
+		resp.Header().Set("Location", finalTarget.URL+"/metadata")
+		resp.WriteHeader(http.StatusFound)
+	}))
+	defer middleTarget.Close()
+
+	redirectingSP := httptest.NewServer(http.HandlerFunc(func(resp http.ResponseWriter, _ *http.Request) {
+		resp.Header().Set("Location", middleTarget.URL+"/saml/slo-back")
+		resp.WriteHeader(http.StatusFound)
+	}))
+	defer redirectingSP.Close()
+
+	delivery := newSLOBackChannelRedirectTestDelivery(redirectingSP.URL)
+	err := delivery.run(t.Context())
+
+	assert.Error(t, err)
+	assert.Equal(t, int32(0), middleHits.Load(), "back-channel delivery followed the first redirect")
+	assert.Equal(t, int32(0), finalHits.Load(), "back-channel delivery followed the redirect chain")
+}
+
 func TestSAMLHandler_orchestrateIDPInitiatedSLOFanout_DisabledChannels(t *testing.T) {
 	idpKey, _, idpCertPEM := mustGenerateRSACertificate(t, "idp.example.com")
 	idpKeyPEM := mustEncodeRSAPrivateKeyPEM(t, idpKey)
@@ -461,6 +516,19 @@ func newBackChannelCaptureServer(t *testing.T) (chan url.Values, *httptest.Serve
 	}))
 
 	return receivedForm, server
+}
+
+// newSLOBackChannelRedirectTestDelivery creates a minimal delivery for redirect policy tests.
+func newSLOBackChannelRedirectTestDelivery(destination string) backChannelSLODelivery {
+	handler := &SAMLHandler{deps: &deps.Deps{Cfg: &mockSAMLCfg{}}}
+
+	return backChannelSLODelivery{
+		Client:         handler.newBackChannelSLOHTTPClient(time.Second),
+		FormBody:       url.Values{"SAMLRequest": {"request"}}.Encode(),
+		Destination:    destination,
+		RequestTimeout: time.Second,
+		Attempts:       1,
+	}
 }
 
 // newBackChannelSuccessSLOFanoutConfig builds config for successful back-channel fanout.

@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/openapi/requesttest"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
@@ -74,7 +75,12 @@ func newCacheResponseContractRouter(t *testing.T) *gin.Engine {
 	}
 
 	router := gin.New()
-	New(deps).Register(router.Group("/api/v1"))
+	group := router.Group("/api/v1")
+	group.Use(func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
+		ctx.Next()
+	})
+	New(deps).Register(group)
 
 	return router
 }

@@ -16,7 +16,10 @@
 package flow
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -58,6 +61,25 @@ const (
 	// FlowMetadataDisplayName stores the display name across required MFA hops.
 	FlowMetadataDisplayName = "display_name"
 )
+
+const requireMFAFlowIDSeparator = ":"
+
+// NewRequireMFAFlowID derives a bounded required-MFA sub-flow identifier from a parent flow.
+func NewRequireMFAFlowID(parentFlowID string) string {
+	parentFlowID = strings.TrimSpace(parentFlowID)
+	if parentFlowID == "" {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(parentFlowID))
+
+	return FlowIDRequireMFA + requireMFAFlowIDSeparator + hex.EncodeToString(sum[:])
+}
+
+// IsRequireMFAFlowID reports whether a flow id belongs to an isolated required-MFA sub-flow.
+func IsRequireMFAFlowID(flowID string) bool {
+	return strings.HasPrefix(flowID, FlowIDRequireMFA+requireMFAFlowIDSeparator)
+}
 
 // State stores the domain-level state of an IDP flow.
 type State struct {

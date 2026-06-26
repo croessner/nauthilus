@@ -156,8 +156,7 @@ func (m *HTTPRequestManager) GetHTTPRequestBody(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	meta := m.currentMeta(L)
 
-	// Read the HTTP body
-	bodyBytes, err := io.ReadAll(meta.Body())
+	bodyBytes, err := util.ReadBoundedRequestBody(meta.Body(), util.DefaultHTTPRequestBodyLimit)
 	if err != nil {
 		return stack.PushResults(lua.LNil, lua.LString(err.Error()))
 	}

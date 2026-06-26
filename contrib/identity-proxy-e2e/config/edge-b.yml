@@ -49,6 +49,7 @@ runtime:
               audience: "http://authority:18081/oidc/token"
               scopes:
                 - nauthilus:authenticate
+                - nauthilus:security
                 - nauthilus:lookup_identity
                 - nauthilus:list_accounts
                 - nauthilus:mfa_read
