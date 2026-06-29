@@ -927,12 +927,6 @@ def raw_request(client: NauthilusClient, args: argparse.Namespace) -> Response:
     )
 
 
-def config_load(client: NauthilusClient, _args: argparse.Namespace) -> Response:
-    """Load the runtime configuration."""
-
-    return client.get("/api/v1/config/load")
-
-
 def openapi_fetch(client: NauthilusClient, args: argparse.Namespace) -> Response:
     """Fetch the management OpenAPI document."""
 
@@ -996,10 +990,6 @@ def build_parser() -> argparse.ArgumentParser:
     token_sub = token.add_subparsers(dest="token_command", required=True)
     token_sub.add_parser("status", help="show token cache metadata").set_defaults(func=token_status, local_object=True)
     token_sub.add_parser("clear", help="delete cached token").set_defaults(func=token_clear, local_object=True)
-
-    config = subcommands.add_parser("config", help="configuration endpoints")
-    config_sub = config.add_subparsers(dest="config_command", required=True)
-    config_sub.add_parser("load", help="load runtime config").set_defaults(func=config_load)
 
     openapi = subcommands.add_parser("openapi", help="OpenAPI document")
     openapi.add_argument("format", choices=("json", "yaml"), nargs="?", default="json")
