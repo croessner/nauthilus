@@ -13,8 +13,12 @@
         "method": "open"
       },
       {
+        "method": "stmt",
+        "query_contains": "from nauthilus where username = ? or account = ?"
+      },
+      {
         "method": "query",
-        "query_contains": "from nauthilus where username",
+        "query_contains": "from nauthilus where username = ? or account = ?",
         "columns": [
           "account",
           "password",

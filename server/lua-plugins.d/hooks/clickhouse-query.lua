@@ -28,6 +28,7 @@
 --   recent   - list recent rows; params: limit (default 100, max 1000)
 --   by_user  - list recent rows for a specific username; params: username, limit (default 100, max 1000)
 --   by_ip    - list recent rows for a client_ip; params: ip, limit (default 100, max 1000)
+--   by_account - list recent rows for an account; params: account, limit (default 100, max 1000)
 
 local nauthilus_util = require("nauthilus_util")
 
@@ -528,20 +529,16 @@ function nauthilus_run_hook(request)
 
     local sql
     if action == "raw_sql" then
-        local user_sql = nauthilus_http_request.get_http_query_param("sql") or ""
-        local ok_safe, safe_or_reason = is_safe_select(user_sql)
-        if not ok_safe then
-            result.status = "error"
-            result.message = "Rejected SQL: " .. tostring(safe_or_reason)
-            result.clickhouse = {
-                action = action,
-                limit = limit,
-                offset = offset,
-                table = table_name,
-            }
-            return result
-        end
-        sql = ensure_limit_and_format(safe_or_reason, limit, offset)
+        result.status = "error"
+        result.message = "raw_sql action is not available"
+        result.clickhouse = {
+            action = action,
+            limit = limit,
+            offset = offset,
+            table = table_name,
+        }
+
+        return result
     else
         local where_clauses = {}
         if action == "by_user" then

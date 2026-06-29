@@ -52,15 +52,40 @@ local config = {
     read_only = false,
 }
 
-function nauthilus_backend_verify_password(request)
-    local b = nauthilus_backend_result.new()
-
+local function open_mysql()
     local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
     nauthilus_util.if_error_raise(err_open)
 
-    local result, err_query = mysql:query(
-        "SELECT account, password, totp_secret, uniqueid, display_name FROM nauthilus WHERE username = \"" .. request.username .. "\" OR account = \"" .. request.username .. "\";")
+    return mysql
+end
+
+local function mysql_query(mysql, query, ...)
+    local stmt, err_stmt = mysql:stmt(query)
+    nauthilus_util.if_error_raise(err_stmt)
+
+    local result, err_query = stmt:query(...)
     nauthilus_util.if_error_raise(err_query)
+
+    return result
+end
+
+local function mysql_exec(mysql, query, ...)
+    local result, err_exec = mysql:stmt(query)
+    nauthilus_util.if_error_raise(err_exec)
+
+    local _, err_stmt_exec = result:exec(...)
+    nauthilus_util.if_error_raise(err_stmt_exec)
+end
+
+function nauthilus_backend_verify_password(request)
+    local b = nauthilus_backend_result.new()
+
+    local mysql = open_mysql()
+
+    local result = mysql_query(mysql,
+        "SELECT account, password, totp_secret, uniqueid, display_name FROM nauthilus WHERE username = ? OR account = ?;",
+        request.username,
+        request.username)
 
     -- We do not want to return all results to each protocol
     local filter_result_value = function(key)
@@ -125,8 +150,7 @@ function nauthilus_backend_verify_password(request)
 end
 
 function nauthilus_backend_list_accounts()
-    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.if_error_raise(err_open)
+    local mysql = open_mysql()
 
     local result, err_query = mysql:query("SELECT account FROM nauthilus LIMIT 100;")
     nauthilus_util.if_error_raise(err_query)
@@ -143,59 +167,50 @@ function nauthilus_backend_list_accounts()
 end
 
 function nauthilus_backend_add_totp(request)
-    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.if_error_raise(err_open)
+    local mysql = open_mysql()
 
-    local _, err_exec = mysql:exec("UPDATE nauthilus SET totp_secret=\"" .. request.totp_secret .. "\" WHERE username=\"" .. request.username .. "\";")
-    nauthilus_util.if_error_raise(err_exec)
+    mysql_exec(mysql, "UPDATE nauthilus SET totp_secret = ? WHERE username = ?;", request.totp_secret, request.username)
 
     return nauthilus_builtin.BACKEND_RESULT_OK
 end
 
 function nauthilus_backend_delete_totp(request)
-    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.if_error_raise(err_open)
+    local mysql = open_mysql()
 
-    local _, err_exec = mysql:exec("UPDATE nauthilus SET totp_secret=NULL WHERE username=\"" .. request.username .. "\";")
-    nauthilus_util.if_error_raise(err_exec)
+    mysql_exec(mysql, "UPDATE nauthilus SET totp_secret = NULL WHERE username = ?;", request.username)
 
     return nauthilus_builtin.BACKEND_RESULT_OK
 end
 
 function nauthilus_backend_add_totp_recovery_codes(request)
-    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.if_error_raise(err_open)
+    local mysql = open_mysql()
 
     local codes = request.totp_recovery_codes or {}
     local codes_value = table.concat(codes, ",")
-    local err_exec
 
     if codes_value == "" then
-        _, err_exec = mysql:exec("UPDATE nauthilus SET totp_recovery_codes=NULL WHERE username=\"" .. request.username .. "\";")
+        mysql_exec(mysql, "UPDATE nauthilus SET totp_recovery_codes = NULL WHERE username = ?;", request.username)
     else
-        _, err_exec = mysql:exec("UPDATE nauthilus SET totp_recovery_codes=\"" .. codes_value .. "\" WHERE username=\"" .. request.username .. "\";")
+        mysql_exec(mysql, "UPDATE nauthilus SET totp_recovery_codes = ? WHERE username = ?;", codes_value, request.username)
     end
-    nauthilus_util.if_error_raise(err_exec)
 
     return nauthilus_builtin.BACKEND_RESULT_OK
 end
 
 function nauthilus_backend_delete_totp_recovery_codes(request)
-    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.if_error_raise(err_open)
+    local mysql = open_mysql()
 
-    local _, err_exec = mysql:exec("UPDATE nauthilus SET totp_recovery_codes=NULL WHERE username=\"" .. request.username .. "\";")
-    nauthilus_util.if_error_raise(err_exec)
+    mysql_exec(mysql, "UPDATE nauthilus SET totp_recovery_codes = NULL WHERE username = ?;", request.username)
 
     return nauthilus_builtin.BACKEND_RESULT_OK
 end
 
 function nauthilus_backend_get_webauthn_credentials(request)
-    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.if_error_raise(err_open)
+    local mysql = open_mysql()
 
-    local result, err_query = mysql:query("SELECT credential FROM nauthilus_webauthn WHERE username=\"" .. request.username .. "\";")
-    nauthilus_util.if_error_raise(err_query)
+    local result = mysql_query(mysql,
+        "SELECT credential FROM nauthilus_webauthn WHERE username = ?;",
+        request.username)
 
     local credentials = {}
     for _, row in pairs(result.rows) do
@@ -208,34 +223,38 @@ function nauthilus_backend_get_webauthn_credentials(request)
 end
 
 function nauthilus_backend_save_webauthn_credential(request)
-    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.if_error_raise(err_open)
+    local mysql = open_mysql()
 
-    local _, err_exec = mysql:exec("INSERT INTO nauthilus_webauthn (username, credential) VALUES (\"" .. request.username .. "\", \"" .. request.webauthn_credential .. "\");")
-    nauthilus_util.if_error_raise(err_exec)
+    mysql_exec(mysql,
+        "INSERT INTO nauthilus_webauthn (username, credential) VALUES (?, ?);",
+        request.username,
+        request.webauthn_credential)
 
     return nauthilus_builtin.BACKEND_RESULT_OK
 end
 
 function nauthilus_backend_delete_webauthn_credential(request)
-    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.if_error_raise(err_open)
+    local mysql = open_mysql()
 
     -- We assume the request.webauthn_credential contains the exact JSON string to delete.
     -- In a real scenario, you might want to delete by ID if provided.
-    local _, err_exec = mysql:exec("DELETE FROM nauthilus_webauthn WHERE username=\"" .. request.username .. "\" AND credential=\"" .. request.webauthn_credential .. "\";")
-    nauthilus_util.if_error_raise(err_exec)
+    mysql_exec(mysql,
+        "DELETE FROM nauthilus_webauthn WHERE username = ? AND credential = ?;",
+        request.username,
+        request.webauthn_credential)
 
     return nauthilus_builtin.BACKEND_RESULT_OK
 end
 
 function nauthilus_backend_update_webauthn_credential(request)
-    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.if_error_raise(err_open)
+    local mysql = open_mysql()
 
     -- Update existing credential by replacing the old JSON string with the new one.
-    local _, err_exec = mysql:exec("UPDATE nauthilus_webauthn SET credential=\"" .. request.webauthn_credential .. "\" WHERE username=\"" .. request.username .. "\" AND credential=\"" .. request.webauthn_old_credential .. "\";")
-    nauthilus_util.if_error_raise(err_exec)
+    mysql_exec(mysql,
+        "UPDATE nauthilus_webauthn SET credential = ? WHERE username = ? AND credential = ?;",
+        request.webauthn_credential,
+        request.username,
+        request.webauthn_old_credential)
 
     return nauthilus_builtin.BACKEND_RESULT_OK
 end

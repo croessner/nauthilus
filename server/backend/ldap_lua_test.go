@@ -63,12 +63,34 @@ func newSearchTable(L *lua.LState, rawResult bool) *lua.LTable {
 	return table
 }
 
+func newSafeSearchTable(L *lua.LState, rawResult bool) *lua.LTable {
+	table := L.NewTable()
+	table.RawSetString("pool_name", lua.LString("default"))
+	table.RawSetString("session", lua.LString("session-1"))
+	table.RawSetString("basedn", lua.LString("ou=people,dc=example,dc=org"))
+	table.RawSetString("allowed_base_dn", lua.LString("ou=people,dc=example,dc=org"))
+	table.RawSetString("filter_attr", lua.LString("uid"))
+	table.RawSetString("filter_value", lua.LString("jdoe"))
+	table.RawSetString("scope", lua.LString("sub"))
+
+	attrs := L.NewTable()
+	attrs.Append(lua.LString("uid"))
+	table.RawSetString("attributes", attrs)
+
+	if rawResult {
+		table.RawSetString("raw_result", lua.LTrue)
+	}
+
+	return table
+}
+
 func newModifyTable(L *lua.LState) *lua.LTable {
 	table := L.NewTable()
 	table.RawSetString("pool_name", lua.LString("default"))
 	table.RawSetString("session", lua.LString("session-1"))
 	table.RawSetString("operation", lua.LString("replace"))
 	table.RawSetString("dn", lua.LString("uid=jdoe,dc=example,dc=org"))
+	table.RawSetString("allowed_base_dn", lua.LString("dc=example,dc=org"))
 
 	attrs := L.NewTable()
 	attrs.RawSetString("description", lua.LString("new description"))
@@ -98,7 +120,7 @@ func TestLuaLDAPSearch_RawResult(t *testing.T) {
 	SetLuaLDAPQueue(enqueuer)
 	defer SetLuaLDAPQueue(nil)
 
-	table := newSearchTable(L, true)
+	table := newSafeSearchTable(L, true)
 	L.Push(table)
 
 	fn := LuaLDAPSearch(context.Background())
@@ -166,7 +188,7 @@ func TestLuaLDAPSearch_ErrorReply(t *testing.T) {
 	SetLuaLDAPQueue(enqueuer)
 	defer SetLuaLDAPQueue(nil)
 
-	table := newSearchTable(L, false)
+	table := newSafeSearchTable(L, false)
 	L.Push(table)
 
 	fn := LuaLDAPSearch(context.Background())
@@ -203,6 +225,77 @@ func TestLuaLDAPModify_OK(t *testing.T) {
 	assert.Equal(t, []string{"new description"}, enqueuer.request.ModifyAttributes["description"])
 	assert.Equal(t, priorityqueue.PriorityLow, enqueuer.priority)
 	assert.Equal(t, lua.LString("OK"), L.Get(-1))
+}
+
+func TestLuaLDAPSearchEscapesSafeEqualityFilterValue(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	bindLDAPRuntimeContextForTest(context.Background(), L)
+
+	enqueuer := &testLDAPEnqueuer{t: t, reply: &bktype.LDAPReply{}}
+
+	SetLuaLDAPQueue(enqueuer)
+	defer SetLuaLDAPQueue(nil)
+
+	table := newSafeSearchTable(L, false)
+	table.RawSetString("filter_value", lua.LString("jdoe)(|(uid=*))"))
+	L.Push(table)
+
+	fn := LuaLDAPSearch(context.Background())
+	ret := fn(L)
+
+	assert.Equal(t, 1, ret)
+	assert.NotNil(t, enqueuer.request)
+	assert.Equal(t, "(uid="+ldap.EscapeFilter("jdoe)(|(uid=*))")+")", enqueuer.request.Filter)
+	assert.Equal(t, "ou=people,dc=example,dc=org", enqueuer.request.BaseDN)
+}
+
+func TestLuaLDAPSearchRejectsUntrustedRawFilter(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	bindLDAPRuntimeContextForTest(context.Background(), L)
+
+	enqueuer := &testLDAPEnqueuer{t: t, reply: &bktype.LDAPReply{}}
+
+	SetLuaLDAPQueue(enqueuer)
+	defer SetLuaLDAPQueue(nil)
+
+	table := newSearchTable(L, false)
+	table.RawSetString("filter", lua.LString("(uid=jdoe)(|(uid=*))"))
+	L.Push(table)
+
+	fn := LuaLDAPSearch(context.Background())
+
+	assert.Panics(t, func() {
+		fn(L)
+	})
+	assert.Nil(t, enqueuer.request)
+}
+
+func TestLuaLDAPModifyRejectsDNOutsideAllowedSubtree(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	bindLDAPRuntimeContextForTest(context.Background(), L)
+
+	enqueuer := &testLDAPEnqueuer{t: t, reply: &bktype.LDAPReply{}}
+
+	SetLuaLDAPQueue(enqueuer)
+	defer SetLuaLDAPQueue(nil)
+
+	table := newModifyTable(L)
+	table.RawSetString("dn", lua.LString("uid=jdoe,ou=admins,dc=example,dc=org"))
+	table.RawSetString("allowed_base_dn", lua.LString("ou=people,dc=example,dc=org"))
+	L.Push(table)
+
+	fn := LuaLDAPModify(context.Background())
+
+	assert.Panics(t, func() {
+		fn(L)
+	})
+	assert.Nil(t, enqueuer.request)
 }
 
 func TestLuaLDAPEndpoint_DefaultAndLDAPI(t *testing.T) {

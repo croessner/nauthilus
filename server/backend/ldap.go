@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
@@ -42,6 +43,12 @@ var (
 
 const (
 	luaLDAPFieldAttributes  = "attributes"
+	luaLDAPFieldAllowedBase = "allowed_base_dn"
+	luaLDAPFieldBaseDN      = "basedn"
+	luaLDAPFieldFilter      = "filter"
+	luaLDAPFieldFilterAttr  = "filter_attr"
+	luaLDAPFieldFilterValue = "filter_value"
+	luaLDAPFieldTrusted     = "trusted"
 	luaLDAPFieldPoolName    = "pool_name"
 	luaLDAPFieldSession     = "session"
 	luaLDAPPoolAliasDefault = "default"
@@ -327,9 +334,9 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 		}
 
 		setDefaultPoolName(fieldValues)
-		pSpan.End()
-
 		ldapRequest := createLDAPRequest(trCtx, L, fieldValues, definitions.LDAPSearch)
+
+		pSpan.End()
 
 		// Determine priority (using low priority for Lua-initiated requests)
 		priority := priorityqueue.PriorityLow
@@ -370,9 +377,9 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 		}
 
 		setDefaultPoolName(fieldValues)
-		pSpan.End()
-
 		ldapRequest := createLDAPRequest(trCtx, L, fieldValues, definitions.LDAPModify)
+
+		pSpan.End()
 
 		enqueueLuaLDAPRequest(trCtx, "ldap.lua.modify.enqueue", ldapRequest)
 
@@ -428,8 +435,7 @@ func prepareAndValidateSearchFields(L *lua.LState, table *lua.LTable) map[string
 	expectedFields := map[string]string{
 		luaLDAPFieldPoolName:   definitions.LuaLiteralString,
 		luaLDAPFieldSession:    definitions.LuaLiteralString,
-		"basedn":               definitions.LuaLiteralString,
-		"filter":               definitions.LuaLiteralString,
+		luaLDAPFieldBaseDN:     definitions.LuaLiteralString,
 		"scope":                definitions.LuaLiteralString,
 		luaLDAPFieldAttributes: definitions.LuaLiteralTable,
 	}
@@ -442,6 +448,19 @@ func prepareAndValidateSearchFields(L *lua.LState, table *lua.LTable) map[string
 		}
 
 		fieldValues[field] = L.GetField(table, field)
+	}
+
+	if !collectOptionalLDAPStringFields(L, table, fieldValues,
+		luaLDAPFieldFilter,
+		luaLDAPFieldFilterAttr,
+		luaLDAPFieldFilterValue,
+		luaLDAPFieldAllowedBase,
+	) {
+		return nil
+	}
+
+	if !collectOptionalLDAPBoolField(L, table, fieldValues, luaLDAPFieldTrusted) {
+		return nil
 	}
 
 	// Check for optional raw_result field
@@ -482,7 +501,53 @@ func prepareAndValidateModifyFields(L *lua.LState, table *lua.LTable) map[string
 		fieldValues[field] = L.GetField(table, field)
 	}
 
+	if !collectOptionalLDAPStringFields(L, table, fieldValues, luaLDAPFieldAllowedBase) {
+		return nil
+	}
+
+	if !collectOptionalLDAPBoolField(L, table, fieldValues, luaLDAPFieldTrusted) {
+		return nil
+	}
+
 	return fieldValues
+}
+
+// collectOptionalLDAPStringFields validates optional LDAP string fields.
+func collectOptionalLDAPStringFields(L *lua.LState, table *lua.LTable, fieldValues map[string]lua.LValue, fields ...string) bool {
+	for _, field := range fields {
+		value := L.GetField(table, field)
+		if value == lua.LNil {
+			continue
+		}
+
+		if _, ok := value.(lua.LString); !ok {
+			L.RaiseError("%s should be a string", field)
+
+			return false
+		}
+
+		fieldValues[field] = value
+	}
+
+	return true
+}
+
+// collectOptionalLDAPBoolField validates one optional LDAP boolean field.
+func collectOptionalLDAPBoolField(L *lua.LState, table *lua.LTable, fieldValues map[string]lua.LValue, field string) bool {
+	value := L.GetField(table, field)
+	if value == lua.LNil {
+		return true
+	}
+
+	if _, ok := value.(lua.LBool); !ok {
+		L.RaiseError("%s should be a boolean", field)
+
+		return false
+	}
+
+	fieldValues[field] = value
+
+	return true
 }
 
 // setDefaultPoolName sets a default pool name if the "pool_name" field in the provided map is an empty string.
@@ -554,7 +619,20 @@ func applyLDAPSearchRequestFields(L *lua.LState, ldapRequest *bktype.LDAPRequest
 	}
 
 	ldapRequest.BaseDN = fieldValues["basedn"].String()
-	ldapRequest.Filter = fieldValues["filter"].String()
+	if err := enforceLuaLDAPSubtree(ldapRequest.BaseDN, luaStringField(fieldValues, luaLDAPFieldAllowedBase), luaBoolField(fieldValues, luaLDAPFieldTrusted)); err != nil {
+		L.RaiseError("%s", err.Error())
+
+		return false
+	}
+
+	filter, err := buildLuaLDAPSearchFilter(fieldValues)
+	if err != nil {
+		L.RaiseError("%s", err.Error())
+
+		return false
+	}
+
+	ldapRequest.Filter = filter
 	ldapRequest.Scope = *ldapScope
 	ldapRequest.SearchAttributes = extractAttributes(fieldValues["attributes"].(*lua.LTable))
 
@@ -569,10 +647,126 @@ func applyLDAPModifyRequestFields(L *lua.LState, ldapRequest *bktype.LDAPRequest
 	}
 
 	ldapRequest.ModifyDN = fieldValues["dn"].String()
+	if err := enforceLuaLDAPSubtree(ldapRequest.ModifyDN, luaStringField(fieldValues, luaLDAPFieldAllowedBase), luaBoolField(fieldValues, luaLDAPFieldTrusted)); err != nil {
+		L.RaiseError("%s", err.Error())
+
+		return false
+	}
+
 	ldapRequest.SubCommand = subCommand
 	ldapRequest.ModifyAttributes = extractModifyAttributes(fieldValues["attributes"].(*lua.LTable))
 
 	return true
+}
+
+// buildLuaLDAPSearchFilter returns a trusted raw filter or a safely escaped equality filter.
+func buildLuaLDAPSearchFilter(fieldValues map[string]lua.LValue) (string, error) {
+	if rawFilter := luaStringField(fieldValues, luaLDAPFieldFilter); rawFilter != "" {
+		if !luaBoolField(fieldValues, luaLDAPFieldTrusted) {
+			return "", fmt.Errorf("raw LDAP filter requires trusted=true")
+		}
+
+		return rawFilter, nil
+	}
+
+	attribute := luaStringField(fieldValues, luaLDAPFieldFilterAttr)
+	if !isSafeLDAPAttributeName(attribute) {
+		return "", fmt.Errorf("filter_attr must be a safe LDAP attribute name")
+	}
+
+	return fmt.Sprintf("(%s=%s)", attribute, ldap.EscapeFilter(luaStringField(fieldValues, luaLDAPFieldFilterValue))), nil
+}
+
+// enforceLuaLDAPSubtree verifies that a Lua LDAP DN stays under its allowed subtree.
+func enforceLuaLDAPSubtree(candidateDN, allowedBaseDN string, trusted bool) error {
+	if strings.TrimSpace(allowedBaseDN) == "" {
+		if trusted {
+			return nil
+		}
+
+		return fmt.Errorf("allowed_base_dn is required for untrusted LDAP operations")
+	}
+
+	candidate, err := ldap.ParseDN(candidateDN)
+	if err != nil {
+		return fmt.Errorf("invalid LDAP DN: %w", err)
+	}
+
+	allowed, err := ldap.ParseDN(allowedBaseDN)
+	if err != nil {
+		return fmt.Errorf("invalid allowed_base_dn: %w", err)
+	}
+
+	if allowed.EqualFold(candidate) || allowed.AncestorOfFold(candidate) {
+		return nil
+	}
+
+	return fmt.Errorf("LDAP DN is outside allowed_base_dn")
+}
+
+// isSafeLDAPAttributeName accepts conservative LDAP attribute names and options.
+func isSafeLDAPAttributeName(attribute string) bool {
+	if attribute == "" {
+		return false
+	}
+
+	parts := strings.Split(attribute, ";")
+	if len(parts) == 0 || !isLDAPAttributeDescriptionPart(parts[0], true) {
+		return false
+	}
+
+	for _, part := range parts[1:] {
+		if !isLDAPAttributeDescriptionPart(part, false) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isLDAPAttributeDescriptionPart validates one LDAP attribute description segment.
+func isLDAPAttributeDescriptionPart(part string, requireLeadingAlpha bool) bool {
+	if part == "" {
+		return false
+	}
+
+	for index, char := range part {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' {
+			continue
+		}
+
+		if index == 0 && requireLeadingAlpha {
+			return false
+		}
+
+		if char >= '0' && char <= '9' || char == '-' {
+			continue
+		}
+
+		return false
+	}
+
+	return true
+}
+
+// luaStringField returns the optional string value for a prepared Lua LDAP field.
+func luaStringField(fieldValues map[string]lua.LValue, field string) string {
+	value, ok := fieldValues[field]
+	if !ok || value == lua.LNil {
+		return ""
+	}
+
+	return value.String()
+}
+
+// luaBoolField returns the optional boolean value for a prepared Lua LDAP field.
+func luaBoolField(fieldValues map[string]lua.LValue, field string) bool {
+	value, ok := fieldValues[field].(lua.LBool)
+	if !ok {
+		return false
+	}
+
+	return bool(value)
 }
 
 // ldapModifySubCommand maps Lua modify operations to backend subcommands.

@@ -34,7 +34,9 @@ function nauthilus_backend_verify_password(request)
         pool_name = "default",
         session = request.session or "ldap-test-session",
         basedn = "ou=people,dc=example,dc=com",
-        filter = "(mail=" .. username .. ")",
+        allowed_base_dn = "ou=people,dc=example,dc=com",
+        filter_attr = "mail",
+        filter_value = username,
         scope = "sub",
         attributes = { "uid", "mail", "displayName" }
     })
@@ -53,6 +55,7 @@ function nauthilus_backend_verify_password(request)
         session = request.session or "ldap-test-session",
         operation = "replace",
         dn = "uid=" .. dn_uid .. ",ou=people,dc=example,dc=com",
+        allowed_base_dn = "ou=people,dc=example,dc=com",
         attributes = {
             lastAuthMethod = "lua-test"
         }

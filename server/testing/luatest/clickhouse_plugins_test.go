@@ -79,6 +79,29 @@ func TestClickhouseQuerySelectContainsIDPFields(t *testing.T) {
 	}
 }
 
+func TestClickhouseQueryRawSQLActionDoesNotPostCallerSQL(t *testing.T) {
+	runner := runClickhouseFixture(t, "query_wrapper.lua", "query_raw_sql_rejected.json", "hook")
+	captured := capturedHTTPRequests(t, runner)
+
+	if len(captured) != 0 {
+		t.Fatalf("expected raw_sql to be rejected before HTTP POST, got %d calls: %#v", len(captured), captured)
+	}
+}
+
+func TestClickhouseQueryNamedActionStillPostsTemplateSQL(t *testing.T) {
+	runner := runClickhouseFixture(t, "query_wrapper.lua", "query_by_user.json", "hook")
+	request := firstCapturedHTTPRequest(t, runner)
+	sql := request.Body
+
+	if strings.Contains(sql, "raw_sql") {
+		t.Fatalf("expected named action SQL not to contain raw_sql marker, query=%q", sql)
+	}
+
+	if !strings.Contains(sql, "username = 'alice@example.com'") {
+		t.Fatalf("expected named action SQL to contain escaped username predicate, query=%q", sql)
+	}
+}
+
 func runClickhouseFixture(t *testing.T, scriptFixture, mockFixture, callbackType string) *TestRunner {
 	t.Helper()
 

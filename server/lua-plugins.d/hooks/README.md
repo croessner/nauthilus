@@ -93,6 +93,7 @@ Features:
 - Supports limited, whitelisted queries to prevent arbitrary SQL:
   - action=recent&limit=N
   - action=by_user&username=<user>&limit=N
+  - action=by_account&account=<account>&limit=N
   - action=by_ip&ip=<ip>&limit=N
 - Uses glua_http (cjoudrey/gluahttp) for HTTP GET requests to ClickHouse.
 - Returns raw ClickHouse JSON (FORMAT JSON) inside the result table for your frontend to render.
@@ -105,10 +106,12 @@ Environment:
 Examples:
 - GET /api/v1/custom/clickhouse-query?action=recent&limit=100
 - GET /api/v1/custom/clickhouse-query?action=by_user&username=alice@example.com&limit=200
+- GET /api/v1/custom/clickhouse-query?action=by_account&account=alice@example.com&limit=200
 - GET /api/v1/custom/clickhouse-query?action=by_ip&ip=203.0.113.10&limit=100
 
 Security notes:
 - Query type is restricted to a small, whitelisted set; inputs are minimally sanitized.
+- `raw_sql` is rejected by the bundled hook; expose only named actions to ordinary callers.
 - Limit is clamped server-side (default 100, max 1000) to avoid heavy queries.
 
 ## Configuring Hooks in nauthilus.yml

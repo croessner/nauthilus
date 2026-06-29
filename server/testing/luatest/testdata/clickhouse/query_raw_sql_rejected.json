@@ -1,0 +1,27 @@
+{
+  "context": {
+    "session": "sess-raw-sql",
+    "service": "api",
+    "protocol": "http",
+    "debug": false,
+    "no_auth": false,
+    "authenticated": true,
+    "user_found": true
+  },
+  "http_request": {
+    "method": "GET",
+    "path": "/api/v1/custom/clickhouse-query?action=raw_sql&sql=SELECT%20%2A%20FROM%20system.users&limit=1",
+    "headers": {}
+  },
+  "util": {
+    "envs": {
+      "CLICKHOUSE_SELECT_BASE": "http://clickhouse.local:8123",
+      "CLICKHOUSE_TABLE": "nauthilus.logins"
+    }
+  },
+  "http_client": {},
+  "expected_output": {
+    "action_result": true,
+    "error_expected": false
+  }
+}

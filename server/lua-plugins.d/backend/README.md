@@ -59,7 +59,7 @@ This plugin can be used as a template for creating custom backend integrations. 
    - `nauthilus_backend_add_totp`: Adds TOTP secrets for 2FA
 
 **Security Considerations:**
-- The example code uses string concatenation for SQL queries, which is vulnerable to SQL injection. In a production environment, you should use prepared statements or parameterized queries.
+- The example uses prepared statements for request-derived values. Keep custom queries parameterized and avoid concatenating usernames, MFA secrets, recovery codes, or WebAuthn credential JSON into SQL strings.
 - Passwords should be stored using strong hashing algorithms (the example assumes this is already handled).
 - Database connection credentials should be stored securely and not hardcoded in the plugin.
 
