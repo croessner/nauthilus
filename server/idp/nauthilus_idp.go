@@ -355,7 +355,12 @@ func (n *NauthilusIDP) storeRefreshTokenSession(
 	accessToken string,
 ) (string, error) {
 	if refreshToken == "" {
-		refreshToken = n.tokenGen.GenerateToken(definitions.OIDCTokenPrefixRefreshToken)
+		generatedRefreshToken, err := n.tokenGen.GenerateToken(definitions.OIDCTokenPrefixRefreshToken)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate refresh token: %w", err)
+		}
+
+		refreshToken = generatedRefreshToken
 	}
 
 	refreshTokenLifetime := client.RefreshTokenLifetime
@@ -390,6 +395,10 @@ func (n *NauthilusIDP) IssueClientCredentialsToken(ctx context.Context, clientID
 
 	if !client.SupportsGrantType("client_credentials") {
 		return "", 0, fmt.Errorf("client does not support client_credentials grant type")
+	}
+
+	if client.IsPublicClient() {
+		return "", 0, fmt.Errorf("client_credentials requires confidential client authentication")
 	}
 
 	if err := ValidateClientCredentialsScopes(scopes); err != nil {
@@ -536,12 +545,17 @@ func (n *NauthilusIDP) IssueLogoutToken(ctx context.Context, clientID string, us
 
 	issuer := n.deps.Cfg.GetIDP().OIDC.Issuer
 
+	jwtID, err := n.tokenGen.GenerateToken("")
+	if err != nil {
+		return "", fmt.Errorf("failed to generate logout token id: %w", err)
+	}
+
 	claims := jwt.MapClaims{
 		oidcClaimIssuer:   issuer,
 		oidcClaimSubject:  userID,
 		oidcClaimAudience: clientID,
 		oidcClaimIssuedAt: time.Now().Unix(),
-		"jti":             n.tokenGen.GenerateToken(""),
+		"jti":             jwtID,
 		"events": map[string]any{
 			"http://schemas.openid.net/event/backchannel-logout": map[string]any{},
 		},

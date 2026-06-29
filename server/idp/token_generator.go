@@ -18,27 +18,45 @@ package idp
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
+	"io"
 )
 
 // TokenGenerator defines the interface for generating secure tokens.
 type TokenGenerator interface {
-	GenerateToken(prefix string) string
+	GenerateToken(prefix string) (string, error)
 }
 
 // DefaultTokenGenerator is the default implementation of the TokenGenerator interface.
-type DefaultTokenGenerator struct{}
+type DefaultTokenGenerator struct {
+	reader io.Reader
+}
 
 // NewDefaultTokenGenerator creates a new DefaultTokenGenerator.
 func NewDefaultTokenGenerator() *DefaultTokenGenerator {
-	return &DefaultTokenGenerator{}
+	return NewDefaultTokenGeneratorWithReader(rand.Reader)
 }
 
-// GenerateToken generates a random token with the given prefix.
-func (g *DefaultTokenGenerator) GenerateToken(prefix string) string {
-	b := make([]byte, 64)
-	if _, err := rand.Read(b); err != nil {
-		return prefix + "error-generating-random-string"
+// NewDefaultTokenGeneratorWithReader creates a generator with an explicit entropy reader.
+func NewDefaultTokenGeneratorWithReader(reader io.Reader) *DefaultTokenGenerator {
+	if reader == nil {
+		reader = rand.Reader
 	}
 
-	return prefix + base64.RawURLEncoding.EncodeToString(b)
+	return &DefaultTokenGenerator{reader: reader}
+}
+
+// GenerateToken generates a random token with the given prefix and fails closed on entropy errors.
+func (g *DefaultTokenGenerator) GenerateToken(prefix string) (string, error) {
+	reader := rand.Reader
+	if g != nil && g.reader != nil {
+		reader = g.reader
+	}
+
+	b := make([]byte, 64)
+	if _, err := io.ReadFull(reader, b); err != nil {
+		return "", fmt.Errorf("failed to read random token entropy: %w", err)
+	}
+
+	return prefix + base64.RawURLEncoding.EncodeToString(b), nil
 }

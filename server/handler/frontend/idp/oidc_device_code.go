@@ -63,6 +63,114 @@ func (h *OIDCHandler) deviceAuthorizationClient(ctx *gin.Context, clientID strin
 	return client, true
 }
 
+// authenticateDeviceAuthorizationClient validates the device client before state allocation.
+func (h *OIDCHandler) authenticateDeviceAuthorizationClient(ctx *gin.Context) (*config.OIDCClient, bool) {
+	formClientID := ctx.PostForm(oidcParamClientID)
+	clientID := formClientID
+
+	if clientID == "" {
+		if basicID, _, ok := ctx.Request.BasicAuth(); ok {
+			clientID = decodeOIDCBasicAuthValue(basicID)
+		}
+	}
+
+	client, ok := h.deviceAuthorizationClient(ctx, clientID)
+	if !ok {
+		return nil, false
+	}
+
+	if client.IsPublicClient() {
+		return client, true
+	}
+
+	if formValue(ctx, oidcParamClientAssertion) != "" {
+		return h.authenticateDeviceAuthorizationPrivateKeyJWT(ctx, client)
+	}
+
+	if !h.authenticateDeviceAuthorizationSecret(ctx, client, formClientID) {
+		return nil, false
+	}
+
+	return client, true
+}
+
+// authenticateDeviceAuthorizationPrivateKeyJWT verifies assertion-based device client auth.
+func (h *OIDCHandler) authenticateDeviceAuthorizationPrivateKeyJWT(ctx *gin.Context, expectedClient *config.OIDCClient) (*config.OIDCClient, bool) {
+	client, ok := h.authenticateClientPrivateKeyJWT(ctx, h.oidcEndpointURL(oidcEndpointPathDevice))
+	if !ok {
+		return nil, false
+	}
+
+	if client.ClientID == expectedClient.ClientID {
+		return client, true
+	}
+
+	writeOIDCInvalidClientResponse(ctx)
+
+	return nil, false
+}
+
+// authenticateDeviceAuthorizationSecret verifies Basic or post-secret device client auth.
+func (h *OIDCHandler) authenticateDeviceAuthorizationSecret(ctx *gin.Context, client *config.OIDCClient, formClientID string) bool {
+	credentials, ok := h.resolveDeviceAuthorizationSecretCredentials(ctx, formClientID)
+	if !ok {
+		return false
+	}
+
+	if credentials.clientID != client.ClientID {
+		writeOIDCInvalidClientResponse(ctx)
+
+		return false
+	}
+
+	if !h.enforceOIDCClientAuthMethod(ctx, client, credentials) {
+		return false
+	}
+
+	if credentials.authSource == "" || credentials.authSource == oidcClientAuthMethodNone {
+		writeOIDCInvalidClientResponse(ctx)
+
+		return false
+	}
+
+	return h.verifyOIDCClientSecret(ctx, client, credentials)
+}
+
+// resolveDeviceAuthorizationSecretCredentials allows Basic auth plus matching form client_id.
+func (h *OIDCHandler) resolveDeviceAuthorizationSecretCredentials(ctx *gin.Context, formClientID string) (oidcClientCredentials, bool) {
+	credentials := basicOIDCClientCredentials(ctx)
+	bodySecret := ctx.PostForm(oidcParamClientSecret)
+
+	if credentials.authSource != "" {
+		if formClientID != "" && credentials.clientID != formClientID {
+			writeOIDCInvalidClientResponse(ctx)
+
+			return credentials, false
+		}
+
+		if bodySecret != "" {
+			h.logMultipleOIDCClientAuthenticationMethods(ctx, credentials.authSource)
+			writeOIDCInvalidClientResponse(ctx)
+
+			return credentials, false
+		}
+
+		ctx.Set(definitions.CtxAuthMethodKey, credentials.authSource)
+
+		return credentials, true
+	}
+
+	credentials.bodyClientID = formClientID
+	credentials.bodyClientSecret = bodySecret
+	credentials.applyBodyCredentials()
+
+	if credentials.authSource != "" {
+		ctx.Set(definitions.CtxAuthMethodKey, credentials.authSource)
+	}
+
+	return credentials, true
+}
+
 // logDeviceAuthorizationRequest records a created device authorization request.
 func (h *OIDCHandler) logDeviceAuthorizationRequest(ctx *gin.Context, clientID string, userCode string) {
 	util.DebugModuleWithCfg(
@@ -97,16 +205,17 @@ func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_authorization")
 	defer sp.End()
 
-	clientID := ctx.PostForm("client_id")
+	clientID := ctx.PostForm(oidcParamClientID)
 
 	h.logIncomingOIDCFlowRequest(ctx, "device_authorization", "", clientID)
 	defer h.logCompletedOIDCFlowRequest(ctx, "device_authorization", "", clientID)
 
-	client, ok := h.deviceAuthorizationClient(ctx, clientID)
+	client, ok := h.authenticateDeviceAuthorizationClient(ctx)
 	if !ok {
 		return
 	}
 
+	clientID = client.ClientID
 	sp.SetAttributes(attribute.String(oidcParamClientID, clientID))
 
 	oidcCfg := h.deps.Cfg.GetIDP().OIDC

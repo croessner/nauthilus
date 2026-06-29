@@ -653,6 +653,44 @@ func TestValidateIDPOIDCCustomScopes(t *testing.T) {
 	})
 }
 
+func TestValidateIDPOIDCClientCredentialsGrant(t *testing.T) {
+	t.Run("public client_credentials client returns error", func(t *testing.T) {
+		cfg := &FileSettings{
+			IDP: &IDPSection{
+				OIDC: OIDCConfig{
+					Clients: []OIDCClient{
+						{
+							ClientID:                "public-client",
+							TokenEndpointAuthMethod: oidcAuthMethodNone,
+							GrantTypes:              []string{"client_credentials"},
+						},
+					},
+				},
+			},
+		}
+
+		assert.ErrorContains(t, cfg.validateIDPOIDCGrantAuthSettings(), "client_credentials requires confidential client authentication")
+	})
+
+	t.Run("confidential client_credentials client is valid", func(t *testing.T) {
+		cfg := &FileSettings{
+			IDP: &IDPSection{
+				OIDC: OIDCConfig{
+					Clients: []OIDCClient{
+						{
+							ClientID:     "confidential-client",
+							ClientSecret: secret.New("confidential-secret"),
+							GrantTypes:   []string{"client_credentials"},
+						},
+					},
+				},
+			},
+		}
+
+		assert.NoError(t, cfg.validateIDPOIDCGrantAuthSettings())
+	})
+}
+
 func TestValidateIDPSAMLSigningSettings(t *testing.T) {
 	assertSAMLSigningNoErrorCases(t)
 	assertSAMLSigningAuthnRequestErrors(t)

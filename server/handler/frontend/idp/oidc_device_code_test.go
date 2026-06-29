@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +62,37 @@ func (n *noopDeviceCodeStore) DeleteDeviceCode(_ context.Context, _ string) erro
 	return nil
 }
 
+type countingDeviceCodeStore struct {
+	requests []*devicecode.DeviceCodeRequest
+}
+
+// StoreDeviceCode records stored requests without touching Redis.
+func (s *countingDeviceCodeStore) StoreDeviceCode(_ context.Context, _ string, request *devicecode.DeviceCodeRequest, _ time.Duration) error {
+	s.requests = append(s.requests, request)
+
+	return nil
+}
+
+// GetDeviceCode is unused by allocation tests and returns no request.
+func (s *countingDeviceCodeStore) GetDeviceCode(_ context.Context, _ string) (*devicecode.DeviceCodeRequest, error) {
+	return nil, nil
+}
+
+// GetDeviceCodeByUserCode is unused by allocation tests and returns no request.
+func (s *countingDeviceCodeStore) GetDeviceCodeByUserCode(_ context.Context, _ string) (string, *devicecode.DeviceCodeRequest, error) {
+	return "", nil, nil
+}
+
+// UpdateDeviceCode is unused by allocation tests and is a no-op.
+func (s *countingDeviceCodeStore) UpdateDeviceCode(_ context.Context, _ string, _ *devicecode.DeviceCodeRequest) error {
+	return nil
+}
+
+// DeleteDeviceCode is unused by allocation tests and is a no-op.
+func (s *countingDeviceCodeStore) DeleteDeviceCode(_ context.Context, _ string) error {
+	return nil
+}
+
 func newTestDeviceCodeOIDCHandler(t *testing.T) (*OIDCHandler, config.OIDCClient) {
 	t.Helper()
 
@@ -94,6 +127,109 @@ func newTestDeviceCodeOIDCHandler(t *testing.T) (*OIDCHandler, config.OIDCClient
 	handler.deviceStore = &noopDeviceCodeStore{}
 
 	return handler, client
+}
+
+// newDeviceAuthorizationHandler builds a handler with a counting device store.
+func newDeviceAuthorizationHandler(t *testing.T, client config.OIDCClient) (*OIDCHandler, *countingDeviceCodeStore) {
+	t.Helper()
+
+	gin.SetMode(gin.TestMode)
+
+	cfg := &mockOIDCCfg{
+		issuer:     "https://auth.example.com",
+		signingKey: secret.New(generateTestKey()),
+		clients:    []config.OIDCClient{client},
+	}
+
+	db, _ := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+	d := &deps.Deps{
+		Cfg:    cfg,
+		Redis:  rClient,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	store := &countingDeviceCodeStore{}
+	handler := NewOIDCHandler(d, devicecode.NewNauthilusIDP(d), nil)
+	handler.deviceStore = store
+
+	return handler, store
+}
+
+// postDeviceAuthorization submits a form-encoded device authorization request.
+func postDeviceAuthorization(handler *OIDCHandler, form url.Values, basicID string, basicSecret string) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(http.MethodPost, "/oidc/device", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	if basicID != "" || basicSecret != "" {
+		req.SetBasicAuth(basicID, basicSecret)
+	}
+
+	ctx.Request = req
+	handler.DeviceAuthorization(ctx)
+
+	return recorder
+}
+
+func TestDeviceAuthorizationRequiresClientAuthBeforeStateAllocation(t *testing.T) {
+	client := config.OIDCClient{
+		ClientID:     "device-confidential",
+		ClientSecret: secret.New("device-secret"),
+		GrantTypes:   []string{definitions.OIDCGrantTypeDeviceCode},
+		Scopes:       []string{definitions.ScopeOpenID},
+	}
+	handler, store := newDeviceAuthorizationHandler(t, client)
+
+	form := url.Values{}
+	form.Add(oidcParamClientID, client.ClientID)
+	form.Add(oidcParamScope, definitions.ScopeOpenID)
+
+	recorder := postDeviceAuthorization(handler, form, "", "")
+
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+	assert.Empty(t, store.requests)
+}
+
+func TestDeviceAuthorizationStoresStateForAuthenticatedConfidentialClient(t *testing.T) {
+	client := config.OIDCClient{
+		ClientID:     "device-confidential-valid",
+		ClientSecret: secret.New("device-secret"),
+		GrantTypes:   []string{definitions.OIDCGrantTypeDeviceCode},
+		Scopes:       []string{definitions.ScopeOpenID},
+	}
+	handler, store := newDeviceAuthorizationHandler(t, client)
+
+	form := url.Values{}
+	form.Add(oidcParamClientID, client.ClientID)
+	form.Add(oidcParamScope, definitions.ScopeOpenID)
+
+	recorder := postDeviceAuthorization(handler, form, client.ClientID, "device-secret")
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Len(t, store.requests, 1)
+	assert.Equal(t, client.ClientID, store.requests[0].ClientID)
+}
+
+func TestDeviceAuthorizationStoresStateForPublicClient(t *testing.T) {
+	client := config.OIDCClient{
+		ClientID:                "device-public",
+		TokenEndpointAuthMethod: oidcClientAuthMethodNone,
+		GrantTypes:              []string{definitions.OIDCGrantTypeDeviceCode},
+		Scopes:                  []string{definitions.ScopeOpenID},
+	}
+	handler, store := newDeviceAuthorizationHandler(t, client)
+
+	form := url.Values{}
+	form.Add(oidcParamClientID, client.ClientID)
+	form.Add(oidcParamScope, definitions.ScopeOpenID)
+
+	recorder := postDeviceAuthorization(handler, form, "", "")
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Len(t, store.requests, 1)
+	assert.Equal(t, client.ClientID, store.requests[0].ClientID)
 }
 
 func TestIssueDeviceCodeTokens_RejectsMissingPersistedClaims(t *testing.T) {

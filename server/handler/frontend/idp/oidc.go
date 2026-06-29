@@ -92,6 +92,7 @@ const (
 	oidcParamCodeChallengeMethod   = "code_challenge_method"
 	oidcEndpointPathToken          = "/oidc/token"
 	oidcEndpointPathIntrospect     = "/oidc/introspect"
+	oidcEndpointPathDevice         = "/oidc/device"
 	oidcGrantTypeRefreshToken      = oidcParamRefreshToken
 	oidcGrantTypeClientCredentials = "client_credentials"
 	oidcResponseTypeCode           = oidcParamCode
@@ -540,6 +541,8 @@ func oidcClientAuthMethodAllowed(expected string, actual string) bool {
 		return actual == clientauth.MethodClientSecretBasic
 	case clientauth.MethodClientSecretPost:
 		return actual == clientauth.MethodClientSecretPost
+	case clientauth.MethodPrivateKeyJWT:
+		return actual == clientauth.MethodPrivateKeyJWT
 	case oidcClientAuthMethodNone:
 		return actual == oidcClientAuthMethodNone
 	default:

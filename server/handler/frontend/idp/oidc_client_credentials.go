@@ -35,6 +35,12 @@ func (h *OIDCHandler) handleClientCredentialsTokenExchange(ctx *gin.Context, cli
 		return
 	}
 
+	if client.IsPublicClient() {
+		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorUnauthorizedClient})
+
+		return
+	}
+
 	requestedScopes := strings.Fields(formValue(ctx, "scope"))
 	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
 	if err := oidcserver.ValidateClientCredentialsScopes(filteredScopes); err != nil {

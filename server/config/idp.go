@@ -119,6 +119,30 @@ func (f *FileSettings) validateIDPOIDCCustomScopes() error {
 	return nil
 }
 
+// validateIDPOIDCGrantAuthSettings rejects grant and client-auth combinations that cannot be safe.
+func (f *FileSettings) validateIDPOIDCGrantAuthSettings() error {
+	if f == nil || f.IDP == nil {
+		return nil
+	}
+
+	for idx := range f.IDP.OIDC.Clients {
+		client := &f.IDP.OIDC.Clients[idx]
+		if !client.SupportsGrantType("client_credentials") {
+			continue
+		}
+
+		if !client.IsPublicClient() {
+			continue
+		}
+
+		path := fmt.Sprintf("identity.oidc.clients[%d].grant_types", idx)
+
+		return NewValidationProblem(path, "client_credentials requires confidential client authentication")
+	}
+
+	return nil
+}
+
 // validateIDPSAMLSigningSettings ensures SAML SP signing requirements have the
 // required certificate material available and parseable at startup.
 func (f *FileSettings) validateIDPSAMLSigningSettings() error {

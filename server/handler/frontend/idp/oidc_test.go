@@ -2624,6 +2624,20 @@ func (f *oidcTokenTest) assertEnforcedMethodMismatchRejected(t *testing.T) {
 	assertTokenError(t, w, http.StatusUnauthorized, "invalid_client")
 }
 
+// assertPrivateKeyJWTClientSecretDowngradeRejected verifies assertion auth is mandatory.
+func (f *oidcTokenTest) assertPrivateKeyJWTClientSecretDowngradeRejected(t *testing.T) {
+	originalClient := f.cfg.clients[0]
+	defer func() {
+		f.cfg.clients[0] = originalClient
+	}()
+
+	f.cfg.clients[0].TokenEndpointAuthMethod = clientauth.MethodPrivateKeyJWT
+
+	w := f.postToken(t, tokenAuthCodeForm("private-key-jwt-downgrade-code", "https://app.com/callback"), withBasicTokenAuth("test-client", "test-secret"))
+
+	assertTokenError(t, w, http.StatusUnauthorized, "invalid_client")
+}
+
 // assertPublicClientBodyOnlyToken verifies a public-client authorization code exchange.
 func (f *oidcTokenTest) assertPublicClientBodyOnlyToken(t *testing.T) {
 	code := "public-client-code"
@@ -2677,6 +2691,45 @@ func (f *oidcTokenTest) assertClientCredentialsOpenIDScopeRejected(t *testing.T)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, oidcErrorInvalidScope, resp[definitions.LogKeyError])
+}
+
+// assertPublicClientCredentialsRejected verifies public clients cannot use confidential grants.
+func (f *oidcTokenTest) assertPublicClientCredentialsRejected(t *testing.T) {
+	publicClient := config.OIDCClient{
+		ClientID:                "public-client-credentials",
+		TokenEndpointAuthMethod: oidcClientAuthMethodNone,
+		GrantTypes:              []string{oidcGrantTypeClientCredentials},
+		Scopes:                  []string{"api.read"},
+	}
+	f.cfg.clients = append(f.cfg.clients, publicClient)
+
+	form := url.Values{}
+	form.Add(oidcParamGrantType, oidcGrantTypeClientCredentials)
+	form.Add(oidcParamClientID, publicClient.ClientID)
+	form.Add(oidcParamScope, "api.read")
+
+	w := f.postToken(t, form, nil)
+
+	assertTokenError(t, w, http.StatusBadRequest, oidcErrorUnauthorizedClient)
+}
+
+// assertConfidentialClientCredentialsAccepted verifies legitimate confidential grants.
+func (f *oidcTokenTest) assertConfidentialClientCredentialsAccepted(t *testing.T) {
+	originalClient := f.cfg.clients[0]
+	defer func() {
+		f.cfg.clients[0] = originalClient
+	}()
+
+	f.cfg.clients[0].GrantTypes = []string{oidcGrantTypeClientCredentials}
+	f.cfg.clients[0].Scopes = []string{"api.read"}
+
+	form := url.Values{}
+	form.Add(oidcParamGrantType, oidcGrantTypeClientCredentials)
+	form.Add(oidcParamScope, "api.read")
+
+	w := f.postToken(t, form, withBasicTokenAuth("test-client", "test-secret"))
+
+	assertTokenHasFields(t, w, oidcJSONFieldAccessToken)
 }
 
 // assertRedirectURIMismatchRejected verifies redirect_uri replay protection.
@@ -2761,11 +2814,35 @@ func TestOIDCHandler_Token(t *testing.T) {
 	t.Run("Refresh token request for public client with empty body client_secret and Basic Auth is accepted when compatibility is enabled", fixture.assertPublicRefreshEmptySecretAcceptedWithCompatibility)
 	t.Run("Refresh token request for confidential client with empty body client_secret and Basic Auth still fails with compatibility enabled", fixture.assertConfidentialEmptySecretWithCompatibilityRejected)
 	t.Run("Token request with enforced method (mismatch should fail)", fixture.assertEnforcedMethodMismatchRejected)
+	t.Run("PrivateKeyJWT client cannot downgrade to client secret authentication", fixture.assertPrivateKeyJWTClientSecretDowngradeRejected)
 	t.Run("Token request with public client and client_id only in body", fixture.assertPublicClientBodyOnlyToken)
 	t.Run("Token request with PKCE S256 (valid verifier)", fixture.assertPKCES256Valid)
 	t.Run("Client credentials request with openid scope is rejected", fixture.assertClientCredentialsOpenIDScopeRejected)
+	t.Run("Public client credentials request is rejected", fixture.assertPublicClientCredentialsRejected)
+	t.Run("Confidential client credentials request is accepted", fixture.assertConfidentialClientCredentialsAccepted)
 
 	t.Run("Token request with mismatched redirect_uri (must be rejected)", fixture.assertRedirectURIMismatchRejected)
 	t.Run("Token request with PKCE S256 (missing verifier should fail)", fixture.assertMissingPKCEVerifierRejected)
 	t.Run("Token request with PKCE plain (must be rejected)", fixture.assertPlainPKCERejected)
+}
+
+func TestOIDCHandler_PrivateKeyJWTClientSecretDowngradeRejected(t *testing.T) {
+	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
+	gin.SetMode(gin.TestMode)
+
+	newOIDCTokenTest(t).assertPrivateKeyJWTClientSecretDowngradeRejected(t)
+}
+
+func TestOIDCHandler_PublicClientCredentialsRejected(t *testing.T) {
+	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
+	gin.SetMode(gin.TestMode)
+
+	newOIDCTokenTest(t).assertPublicClientCredentialsRejected(t)
+}
+
+func TestOIDCHandler_ConfidentialClientCredentialsAccepted(t *testing.T) {
+	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
+	gin.SetMode(gin.TestMode)
+
+	newOIDCTokenTest(t).assertConfidentialClientCredentialsAccepted(t)
 }

@@ -46,10 +46,12 @@ func NewOpaqueAccessToken(session *OIDCSession, storage *RedisTokenStorage, toke
 
 // Issue generates an opaque access token and stores it in Redis.
 func (t *OpaqueAccessToken) Issue(ctx context.Context) (string, time.Duration, error) {
-	token := t.tokenGen.GenerateToken(definitions.OIDCTokenPrefixAccessToken)
-
-	err := t.storage.StoreAccessToken(ctx, token, t.session, t.lifetime)
+	token, err := t.tokenGen.GenerateToken(definitions.OIDCTokenPrefixAccessToken)
 	if err != nil {
+		return "", 0, fmt.Errorf("failed to generate opaque access token: %w", err)
+	}
+
+	if err := t.storage.StoreAccessToken(ctx, token, t.session, t.lifetime); err != nil {
 		return "", 0, fmt.Errorf("failed to store opaque access token: %w", err)
 	}
 

@@ -75,10 +75,15 @@ type mockIdpConfig struct {
 
 type mockTokenGenerator struct {
 	token string
+	err   error
 }
 
-func (m *mockTokenGenerator) GenerateToken(prefix string) string {
-	return prefix + m.token
+func (m *mockTokenGenerator) GenerateToken(prefix string) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+
+	return prefix + m.token, nil
 }
 
 func (m *mockIdpConfig) GetIDP() *config.IDPSection {
