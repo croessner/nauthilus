@@ -29,6 +29,7 @@ const callbackKey = process.env.NAUTHILUS_E2E_CALLBACK_KEY
 const username = process.env.NAUTHILUS_E2E_USERNAME || 'split-user@example.test';
 const password = process.env.NAUTHILUS_E2E_PASSWORD || 'split-password';
 const mfaUsername = `${username}.mfa`;
+const selfServiceUsername = `${username}.self-service`;
 const masterUsername = `${username}.master`;
 const masterWithoutMFAUsername = `${username}.master-no-mfa`;
 const masterUserLogin = `${mfaUsername}*${masterUsername}`;
@@ -673,6 +674,7 @@ async function runDeviceEndpointFailures(browser) {
 
   const device = await postForm(`${edgeAAPI}/oidc/device`, {
     client_id: browserClient.id,
+    client_secret: browserClient.secret,
     scope: 'openid profile email',
   });
 
@@ -699,6 +701,7 @@ async function runDeviceEndpointFailures(browser) {
 
   const clientMismatchDevice = await postForm(`${edgeAAPI}/oidc/device`, {
     client_id: browserClient.id,
+    client_secret: browserClient.secret,
     scope: 'openid profile email',
   });
   await expectFormError(`${edgeAAPI}/oidc/token`, {
@@ -718,6 +721,7 @@ async function runDeviceEndpointFailures(browser) {
 
   const deniedDevice = await postForm(`${edgeAAPI}/oidc/device`, {
     client_id: consentClient.id,
+    client_secret: consentClient.secret,
     scope: 'openid profile email',
   });
   const context = await newBrowserContext(browser, edgeA);
@@ -743,6 +747,7 @@ async function runDeviceEndpointFailures(browser) {
 async function runDeviceCodeFlow(browser) {
   const device = await postForm(`${edgeAAPI}/oidc/device`, {
     client_id: browserClient.id,
+    client_secret: browserClient.secret,
     scope: 'openid profile email',
   });
   assert.ok(device.device_code, 'device flow returned device_code');
@@ -780,30 +785,16 @@ async function withPageState(page, label, run) {
 
 // runRequiredMFAFlows exercises required MFA enrollment and all browser-visible MFA login variants.
 async function runRequiredMFAFlows(browser) {
-  const context = await newBrowserContext(browser, edgeA);
-  const page = await context.newPage();
-  const registrationAuthenticator = await installVirtualAuthenticator(page);
-
-  let recoveryCodes = [];
-  let totpSecret = '';
-  const registration = await withPageState(page, 'required MFA registration', async () =>
-    withCallbackServer('required MFA registration', async (redirectURI, callbackPromise) => {
-    await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
-    await submitPasswordLogin(page, mfaUsername, password);
-    totpSecret = await completeTOTPRegistration(page);
-    console.log('ok totp-registration');
-    await completeWebAuthnRegistration(page);
-    console.log('ok webauthn-registration');
-    recoveryCodes = await completeRecoveryRegistration(page);
-
-    return callbackPromise;
-  }));
-  assert.ok(registration.code, 'required MFA registration resumed the OIDC flow');
-  assert.ok(totpSecret, 'required MFA registration generated a TOTP secret');
-  assert.ok(recoveryCodes.length > 0, 'required MFA registration generated recovery codes');
+  const registration = await registerRequiredMFAProfile(browser, {
+    user: mfaUsername,
+    label: 'required MFA registration',
+    totpOKName: 'totp-registration',
+    webAuthnOKName: 'webauthn-registration',
+  });
+  const recoveryCodes = registration.recoveryCodes;
+  const totpSecret = registration.totpSecret;
   console.log('ok recovery-code-generation');
-  let webAuthnCredentials = await exportVirtualAuthenticatorCredentials(registrationAuthenticator);
-  await context.close();
+  let webAuthnCredentials = registration.webAuthnCredentials;
 
   const masterMFA = await registerMasterUserMFA(browser, webAuthnCredentials);
   webAuthnCredentials = masterMFA.webAuthnCredentials;
@@ -866,11 +857,12 @@ async function runRequiredMFAFlows(browser) {
     'Delayed-response Master-User TOTP wrong password',
     'oidc-delayed-response-master-user-totp-wrong-password-rejected',
   );
-  await runMasterUserWithoutMFAAllowed(browser, mfaClient, 'oidc-master-user-without-mfa-login');
-  await runMasterUserWithoutMFAAllowed(
+  await runMasterUserWithoutMFAAllowed(browser, browserClient, 'oidc-master-user-without-mfa-login');
+  await runMasterUserWithoutMFARejected(browser, mfaClient, 'oidc-master-user-without-mfa-require-mfa-rejected');
+  await runMasterUserWithoutMFARejected(
     browser,
     delayedMFAClient,
-    'oidc-delayed-response-master-user-without-mfa-login',
+    'oidc-delayed-response-master-user-without-mfa-require-mfa-rejected',
   );
   updatedWebAuthnCredentials = await runMasterUserWebAuthnLogin(
     browser,
@@ -911,39 +903,141 @@ async function runRequiredMFAFlows(browser) {
     delayedWrongPasswordOK: 'oidc-delayed-response-master-user-recovery-wrong-password-rejected',
     reuseOK: 'oidc-master-user-recovery-code-reuse-rejected',
   });
+  await runMFASelfServiceStepUpChecks(browser);
 
   return updatedWebAuthnCredentials;
 }
 
-// registerMasterUserMFA enrolls all MFA factors used by formatted Master-User logins.
-async function registerMasterUserMFA(browser, webAuthnCredentials) {
+// runMFASelfServiceStepUpChecks proves browser self-service mutations require fresh MFA.
+async function runMFASelfServiceStepUpChecks(browser) {
+  const registration = await registerRequiredMFAProfile(browser, {
+    user: selfServiceUsername,
+    label: 'self-service MFA registration',
+  });
+
+  await runMFASelfServiceMissingStepUpRejected(browser);
+
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
   const authenticator = await installVirtualAuthenticator(page);
-  await importVirtualAuthenticatorCredentials(authenticator, webAuthnCredentials);
+  await importVirtualAuthenticatorCredentials(authenticator, registration.webAuthnCredentials);
+
+  await withPageState(page, 'self-service fresh step-up', async () =>
+    withCallbackServer('self-service fresh step-up', async (redirectURI, callbackPromise) => {
+      await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, selfServiceUsername, password);
+      await completeWebAuthnLogin(page, edgeA);
+
+      return callbackPromise;
+    }));
+
+  await page.goto(`${edgeA}/mfa/register/home`);
+  await expectPageText(page, /2FA Self-Service/);
+
+  const recoveryResult = await submitSelfServiceMutation(page, 'POST', '/mfa/recovery/generate');
+  assert.equal(recoveryResult.status, 200, `fresh step-up recovery regeneration failed: ${recoveryResult.text}`);
+  assert.match(recoveryResult.text, /New recovery codes/i);
+  console.log('ok mfa-self-service-recovery-regeneration-step-up');
+
+  const totpResult = await submitSelfServiceMutation(page, 'DELETE', '/mfa/totp');
+  assert.equal(totpResult.status, 200, `fresh step-up TOTP delete failed: ${totpResult.text}`);
+  assert.match(totpResult.hxRedirect || '', /\/mfa\/register\/home/);
+  console.log('ok mfa-self-service-totp-delete-step-up');
+
+  await page.goto(`${edgeA}/mfa/webauthn/devices`);
+  const deletePath = await page.locator('button[hx-delete^="/mfa/webauthn/device/"]').first().getAttribute('hx-delete');
+  assert.ok(deletePath, 'self-service WebAuthn delete needs a registered device');
+  const webAuthnResult = await submitSelfServiceMutation(page, 'DELETE', deletePath);
+  assert.equal(webAuthnResult.status, 200, `fresh step-up WebAuthn delete failed: ${webAuthnResult.text}`);
+  assert.match(webAuthnResult.hxRedirect || '', /\/mfa\/webauthn\/devices|\/mfa\/register\/home/);
+  console.log('ok mfa-self-service-webauthn-delete-step-up');
+
+  await context.close();
+}
+
+// runMFASelfServiceMissingStepUpRejected proves first-factor sessions cannot mutate MFA state.
+async function runMFASelfServiceMissingStepUpRejected(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await withPageState(page, 'self-service missing step-up rejection', async () =>
+    withPassiveCallbackServer(async (redirectURI) => {
+      await page.goto(buildAuthorizeURL(edgeA, browserClient.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, masterWithoutMFAUsername, password);
+
+      await page.goto(`${edgeA}/mfa/register/home`);
+      await expectPageText(page, /2FA Self-Service/);
+
+      for (const mutation of [
+        ['POST', '/mfa/recovery/generate'],
+        ['DELETE', '/mfa/totp'],
+        ['DELETE', '/mfa/webauthn/device/not-a-real-id'],
+      ]) {
+        const result = await submitSelfServiceMutation(page, mutation[0], mutation[1]);
+        assert.equal(result.status, 200, `${mutation[0]} ${mutation[1]} returned unexpected status: ${result.text}`);
+        assert.match(result.text, /Recent MFA verification required/i);
+      }
+    }));
+
+  console.log('ok mfa-self-service-missing-step-up-rejected');
+  await context.close();
+}
+
+// registerMasterUserMFA enrolls all MFA factors used by formatted Master-User logins.
+async function registerMasterUserMFA(browser, webAuthnCredentials) {
+  const registration = await registerRequiredMFAProfile(browser, {
+    user: masterUsername,
+    label: 'Master-User MFA registration',
+    importWebAuthnCredentials: webAuthnCredentials,
+  });
+  console.log('ok master-user-mfa-registration');
+
+  return {
+    webAuthnCredentials: registration.webAuthnCredentials,
+    recoveryCodes: registration.recoveryCodes,
+    totpSecret: registration.totpSecret,
+  };
+}
+
+// registerRequiredMFAProfile enrolls all MFA methods for a browser smoke user.
+async function registerRequiredMFAProfile(browser, options) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const authenticator = await installVirtualAuthenticator(page);
+
+  if (options.importWebAuthnCredentials) {
+    await importVirtualAuthenticatorCredentials(authenticator, options.importWebAuthnCredentials);
+  }
 
   let recoveryCodes = [];
   let totpSecret = '';
-  const masterRegistration = await withPageState(page, 'Master-User MFA registration', async () =>
-    withCallbackServer('Master-User MFA registration', async (redirectURI, callbackPromise) => {
-    await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
-    await submitPasswordLogin(page, masterUsername, password);
-    totpSecret = await completeTOTPRegistration(page);
-    await completeWebAuthnRegistration(page);
-    recoveryCodes = await completeRecoveryRegistration(page);
+  const registration = await withPageState(page, options.label, async () =>
+    withCallbackServer(options.label, async (redirectURI, callbackPromise) => {
+      await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, options.user, password);
+      totpSecret = await completeTOTPRegistration(page);
+      if (options.totpOKName) {
+        console.log(`ok ${options.totpOKName}`);
+      }
 
-    return callbackPromise;
-  }));
-  assert.ok(masterRegistration.code, 'Master-User MFA registration resumed the OIDC flow');
-  assert.ok(totpSecret, 'Master-User MFA registration generated a TOTP secret');
-  assert.ok(recoveryCodes.length > 0, 'Master-User MFA registration generated recovery codes');
-  console.log('ok master-user-mfa-registration');
+      await completeWebAuthnRegistration(page);
+      if (options.webAuthnOKName) {
+        console.log(`ok ${options.webAuthnOKName}`);
+      }
 
-  const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
+      recoveryCodes = await completeRecoveryRegistration(page);
+
+      return callbackPromise;
+    }));
+  assert.ok(registration.code, `${options.label} resumed the OIDC flow`);
+  assert.ok(totpSecret, `${options.label} generated a TOTP secret`);
+  assert.ok(recoveryCodes.length > 0, `${options.label} generated recovery codes`);
+
+  const webAuthnCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
   await context.close();
 
   return {
-    webAuthnCredentials: updatedCredentials,
+    webAuthnCredentials,
     recoveryCodes,
     totpSecret,
   };
@@ -1022,6 +1116,22 @@ async function runMasterUserWithoutMFAAllowed(browser, client, okName) {
   const claims = decodeJWTClaims(token.id_token);
   assert.equal(claims.preferred_username, mfaUsername, 'Master-User without MFA must issue the target username');
   assert.notEqual(claims.preferred_username, masterUserWithoutMFALogin, 'Master-User without MFA must not leak the formatted login');
+  console.log(`ok ${okName}`);
+  await context.close();
+}
+
+// runMasterUserWithoutMFARejected proves require_mfa clients block master accounts without assurance.
+async function runMasterUserWithoutMFARejected(browser, client, okName) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await withPageState(page, 'Master-User without MFA require_mfa rejection', async () =>
+    withCallbackServer('Master-User without MFA require_mfa rejection', async (redirectURI) => {
+      await page.goto(buildAuthorizeURL(edgeA, client.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, masterUserWithoutMFALogin, password);
+      await page.waitForURL(/\/login\/(mfa|totp|webauthn|recovery)/, {timeout: 15000});
+    }));
+
   console.log(`ok ${okName}`);
   await context.close();
 }
@@ -1923,7 +2033,40 @@ async function withCallbackServer(label, run) {
   const callbackPromise = new Promise((resolve) => {
     resolveCallback = resolve;
   });
-  const server = https.createServer({
+  const server = newCallbackServer(resolveCallback);
+
+  await new Promise((resolve) => server.listen(callbackPort, callbackBindHost, resolve));
+  const redirectURI = `https://${callbackPublicHost}:${callbackPort}/callback`;
+
+  try {
+    const result = await Promise.race([
+      Promise.resolve(run(redirectURI, callbackPromise)),
+      delay(callbackTimeoutMS).then(() => {
+        throw new Error(`${label} OIDC callback timed out`);
+      }),
+    ]);
+
+    return {...(result || {}), redirectURI};
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+// withPassiveCallbackServer accepts callback navigation without requiring the flow to finish there.
+async function withPassiveCallbackServer(run) {
+  const server = newCallbackServer(() => undefined);
+
+  await new Promise((resolve) => server.listen(callbackPort, callbackBindHost, resolve));
+
+  try {
+    return await run(`https://${callbackPublicHost}:${callbackPort}/callback`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+function newCallbackServer(resolveCallback) {
+  return https.createServer({
     cert: fs.readFileSync(callbackCert),
     key: fs.readFileSync(callbackKey),
   }, (request, response) => {
@@ -1943,22 +2086,6 @@ async function withCallbackServer(label, run) {
     response.writeHead(200, {'content-type': 'text/plain'});
     response.end('OK');
   });
-
-  await new Promise((resolve) => server.listen(callbackPort, callbackBindHost, resolve));
-  const redirectURI = `https://${callbackPublicHost}:${callbackPort}/callback`;
-
-  try {
-    const result = await Promise.race([
-      Promise.resolve(run(redirectURI, callbackPromise)),
-      delay(callbackTimeoutMS).then(() => {
-        throw new Error(`${label} OIDC callback timed out`);
-      }),
-    ]);
-
-    return {...(result || {}), redirectURI};
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-  }
 }
 
 async function exchangeCode(base, client, code, redirectURI, extraFields = {}) {
@@ -2031,8 +2158,53 @@ async function submitSameOriginForm(page, pathName, fields) {
   }, {pathName, fields});
 }
 
+// submitSelfServiceMutation sends an HTMX-style MFA self-service mutation.
+async function submitSelfServiceMutation(page, method, pathName) {
+  const csrfToken = await extractPageCSRFToken(page);
+
+  return page.evaluate(async ({method: requestMethod, pathName: targetPath, csrf}) => {
+    const response = await fetch(targetPath, {
+      method: requestMethod,
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        'hx-request': 'true',
+        'x-csrf-token': csrf,
+      },
+      body: new URLSearchParams(),
+    });
+
+    return {
+      status: response.status,
+      text: await response.text(),
+      hxRedirect: response.headers.get('HX-Redirect') || response.headers.get('hx-redirect') || '',
+    };
+  }, {method, pathName, csrf: csrfToken});
+}
+
 async function extractCSRFToken(page) {
   return page.locator('input[name="csrf_token"]').inputValue();
+}
+
+// extractPageCSRFToken supports normal forms, WebAuthn buttons, and HTMX buttons.
+async function extractPageCSRFToken(page) {
+  const formToken = await page.locator('input[name="csrf_token"]').first().inputValue().catch(() => '');
+  if (formToken) {
+    return formToken;
+  }
+
+  const webAuthnToken = await page.locator('[data-webauthn-csrf]').first().getAttribute('data-webauthn-csrf').catch(() => '');
+  if (webAuthnToken) {
+    return webAuthnToken;
+  }
+
+  const hxHeaders = await page.locator('[hx-headers]').first().getAttribute('hx-headers').catch(() => '');
+  if (hxHeaders) {
+    const parsed = JSON.parse(hxHeaders);
+
+    return parsed['X-CSRF-Token'] || parsed['x-csrf-token'] || '';
+  }
+
+  throw new Error(`no CSRF token found on ${page.url()}`);
 }
 
 function duplicateTokenForm(duplicateKey) {

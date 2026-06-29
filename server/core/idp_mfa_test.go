@@ -17,6 +17,7 @@ package core
 
 import (
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -32,9 +33,11 @@ const (
 	testIDPMFATargetDisplay  = "Target User"
 	testIDPMFAMasterDisplay  = "Master User"
 	testIDPMFAFactorRefToken = "master-ref"
+	testIDPMFAOIDCClientID   = "oidc-client"
 )
 
 func TestStoreCompletedIDPMFASessionUsesCanonicalMFAIdentity(t *testing.T) {
+	before := time.Now().Unix()
 	mgr := &mockCookieManager{data: map[string]any{
 		definitions.SessionKeyUsername:                       testIDPMFAFormattedLogin,
 		definitions.SessionKeyMFAAccount:                     testIDPMFATargetLogin,
@@ -45,6 +48,7 @@ func TestStoreCompletedIDPMFASessionUsesCanonicalMFAIdentity(t *testing.T) {
 		definitions.SessionKeyMFAFactorDisplayName:           testIDPMFAMasterDisplay,
 		definitions.SessionKeyMFAFactorRemoteBackendRefToken: testIDPMFAFactorRefToken,
 		definitions.SessionKeyProtocol:                       definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID:                    testIDPMFAOIDCClientID,
 	}}
 
 	StoreCompletedIDPMFASession(mgr, &backend.User{
@@ -60,6 +64,10 @@ func TestStoreCompletedIDPMFASessionUsesCanonicalMFAIdentity(t *testing.T) {
 	assert.Equal(t, definitions.ProtoOIDC, mgr.GetString(definitions.SessionKeyProtocol, ""))
 	assert.True(t, mgr.GetBool(definitions.SessionKeyMFACompleted, false))
 	assert.Equal(t, definitions.MFAMethodWebAuthn, mgr.GetString(definitions.SessionKeyMFAMethod, ""))
+	assert.Equal(t, definitions.MFAMethodWebAuthn, mgr.GetString(definitions.SessionKeyMFAAssuranceMethod, ""))
+	assert.GreaterOrEqual(t, mgr.GetInt64(definitions.SessionKeyMFAAssuranceAt, 0), before)
+	assert.LessOrEqual(t, mgr.GetInt64(definitions.SessionKeyMFAAssuranceAt, 0), time.Now().Unix())
+	assert.Equal(t, definitions.ProtoOIDC+":"+testIDPMFAOIDCClientID, mgr.GetString(definitions.SessionKeyMFAAssuranceScope, ""))
 	assert.Empty(t, mgr.GetString(definitions.SessionKeyUsername, ""))
 	assert.Empty(t, mgr.GetString(definitions.SessionKeyMFAAccount, ""))
 	assert.Empty(t, mgr.GetString(definitions.SessionKeyMFADisplayName, ""))

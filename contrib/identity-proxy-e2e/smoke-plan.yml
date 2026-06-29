@@ -102,13 +102,18 @@ scenarios:
   - oidc-delayed-response-recovery-code-login
   - recovery-code-generation-consumption
   - webauthn-registration-login
+  - mfa-self-service-missing-step-up-rejected
+  - mfa-self-service-recovery-regeneration-step-up
+  - mfa-self-service-totp-delete-step-up
+  - mfa-self-service-webauthn-delete-step-up
   - master-user-mfa-registration
   - oidc-master-user-totp-login
   - oidc-delayed-response-master-user-totp-login
   - oidc-master-user-recovery-code-login
   - oidc-delayed-response-master-user-recovery-code-login
   - oidc-master-user-without-mfa-login
-  - oidc-delayed-response-master-user-without-mfa-login
+  - oidc-master-user-without-mfa-require-mfa-rejected
+  - oidc-delayed-response-master-user-without-mfa-require-mfa-rejected
   - oidc-master-user-webauthn-login
   - oidc-delayed-response-master-user-webauthn-login
   - authority-webauthn-sign-count

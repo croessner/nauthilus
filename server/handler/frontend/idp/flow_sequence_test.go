@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
@@ -153,10 +155,132 @@ func TestContinueRequiredMFARegistrationFlow(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			recorder := runContinueRequiredMFARegistration(t, tt.handler, tt.cookieData)
+			recorder, _ := runContinueRequiredMFARegistration(t, tt.handler, tt.cookieData)
 
 			assertContinueMFARedirect(t, recorder, tt.location, tt.locationPrefix)
 		})
+	}
+}
+
+func TestContinueRequiredMFARegistrationRecordsAssurance(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name     string
+		flowType string
+	}{
+		{name: "normal OIDC flow marker", flowType: definitions.ProtoOIDC},
+		{name: "missing flow marker with client identifier", flowType: ""},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			parentFlowID := "flow-parent"
+			cookieData := map[string]any{
+				definitions.SessionKeyIDPFlowID:              flowdomain.NewRequireMFAFlowID(parentFlowID),
+				definitions.SessionKeyRequireMFAParentFlowID: parentFlowID,
+				definitions.SessionKeyRequireMFAFlow:         true,
+				definitions.SessionKeyIDPFlowType:            tt.flowType,
+				definitions.SessionKeyOIDCGrantType:          definitions.OIDCFlowAuthorizationCode,
+				definitions.SessionKeyIDPClientID:            "client-1",
+				definitions.SessionKeyIDPRedirectURI:         "https://rp.example/cb",
+				definitions.SessionKeyIDPScope:               "openid",
+				definitions.SessionKeyIDPResponseType:        "code",
+				definitions.SessionKeyRequireMFAPending:      "",
+			}
+
+			recorder, mgr := runContinueRequiredMFARegistration(t, newContinueMFAFrontendHandler(), cookieData)
+			if tt.flowType != "" {
+				assertContinueMFARedirect(t, recorder, "", "/oidc/authorize?")
+			}
+
+			assertRequiredMFARegistrationAssurance(t, mgr)
+		})
+	}
+}
+
+// assertRequiredMFARegistrationAssurance checks the proof stored after forced MFA registration.
+func assertRequiredMFARegistrationAssurance(t *testing.T, mgr *mockCookieManager) {
+	t.Helper()
+
+	if !mgr.GetBool(definitions.SessionKeyMFACompleted, false) {
+		t.Fatal("expected required MFA registration to record completed MFA assurance")
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyMFAMethod, ""); got != definitions.MFAMethodTOTP {
+		t.Fatalf("MFA assurance method = %q, want %s", got, definitions.MFAMethodTOTP)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyMFAAssuranceMethod, ""); got != definitions.MFAMethodTOTP {
+		t.Fatalf("durable MFA assurance method = %q, want %s", got, definitions.MFAMethodTOTP)
+	}
+
+	if got := mgr.GetInt64(definitions.SessionKeyMFAAssuranceAt, 0); got == 0 {
+		t.Fatal("expected required MFA registration to record assurance time")
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyMFAAssuranceScope, ""); got != oidcMFAAssuranceScope("client-1") {
+		t.Fatalf("MFA assurance scope = %q, want %s", got, oidcMFAAssuranceScope("client-1"))
+	}
+}
+
+func TestStartRequiredMFARegistrationFallsBackToIDPFlowProtocol(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/login", nil)
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowID:         "flow-parent",
+		definitions.SessionKeyIDPFlowType:       definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID:       "client-1",
+		definitions.SessionKeyRequireMFAPending: definitions.MFAMethodRecoveryCodes,
+		definitions.SessionKeyAccount:           "user@example.test",
+		definitions.SessionKeyUniqueUserID:      "uid-user",
+	}}
+	user := &backend.User{
+		ID:   "uid-user",
+		Name: "user@example.test",
+	}
+
+	redirected := newContinueMFAFrontendHandler().startRequireMFARegistrationFlow(
+		ctx,
+		mgr,
+		user,
+		idpProtocolFromSession(mgr),
+		[]string{definitions.MFAMethodRecoveryCodes},
+	)
+
+	if !redirected {
+		t.Fatal("expected required MFA registration redirect")
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyIDPFlowType, ""); got != definitions.ProtoOIDC {
+		t.Fatalf("IDP flow type = %q, want %s", got, definitions.ProtoOIDC)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""); got != "flow-parent" {
+		t.Fatalf("parent flow id = %q, want flow-parent", got)
+	}
+}
+
+func TestRequireMFAMethodsFromMetadata(t *testing.T) {
+	methods := requireMFAMethodsFromMetadata(map[string]string{
+		"require_mfa": "totp,recovery,webauthn,, ",
+	})
+
+	want := []string{
+		definitions.MFAMethodTOTP,
+		definitions.MFAMethodRecoveryCodes,
+		definitions.MFAMethodWebAuthn,
+	}
+	if !slices.Equal(methods, want) {
+		t.Fatalf("methods = %#v, want %#v", methods, want)
+	}
+
+	if got := requireMFAMethodsFromMetadata(nil); got != nil {
+		t.Fatalf("nil metadata methods = %#v, want nil", got)
 	}
 }
 
@@ -189,6 +313,16 @@ func newContinueMFAFrontendHandler() *FrontendHandler {
 					Server: &config.ServerSection{
 						Redis: config.Redis{Prefix: "test:"},
 					},
+					IDP: &config.IDPSection{
+						OIDC: config.OIDCConfig{
+							Clients: []config.OIDCClient{
+								{
+									ClientID:   "client-1",
+									RequireMFA: []string{definitions.MFAMethodTOTP},
+								},
+							},
+						},
+					},
 				},
 			},
 		},
@@ -200,17 +334,18 @@ func runContinueRequiredMFARegistration(
 	t *testing.T,
 	handler *FrontendHandler,
 	cookieData map[string]any,
-) *httptest.ResponseRecorder {
+) (*httptest.ResponseRecorder, *mockCookieManager) {
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/mfa/register/continue", nil)
-	ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: cookieData})
+	mgr := &mockCookieManager{data: cookieData}
+	ctx.Set(definitions.CtxSecureDataKey, mgr)
 
 	handler.ContinueRequiredMFARegistration(ctx)
 
-	return recorder
+	return recorder, mgr
 }
 
 // assertContinueMFARedirect verifies exact or prefix-based redirect expectations.

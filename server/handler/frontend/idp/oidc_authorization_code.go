@@ -325,7 +325,12 @@ func oidcAuthorizeSessionMFA(mgr cookie.Manager) (bool, string) {
 		return false, ""
 	}
 
-	return mgr.GetBool(definitions.SessionKeyMFACompleted, false), mgr.GetString(definitions.SessionKeyMFAMethod, "")
+	method := mfaAssuranceMethodFromSession(mgr)
+	if method != "" && mgr.GetInt64(definitions.SessionKeyMFAAssuranceAt, 0) > 0 {
+		return true, method
+	}
+
+	return mgr.GetBool(definitions.SessionKeyMFACompleted, false), normalizeMFAAssuranceMethod(mgr.GetString(definitions.SessionKeyMFAMethod, ""))
 }
 
 // buildOIDCAuthorizeSession creates the pending OIDC session for authorization code issuance.
@@ -425,6 +430,10 @@ func (h *OIDCHandler) issueOIDCAuthorizeCode(
 	session *idp.OIDCSession,
 	filteredScopes []string,
 ) {
+	if !h.enforceOIDCClientMFAAssurance(ctx, mgr, client) {
+		return
+	}
+
 	code := ksuid.New().String()
 	if err := h.storage.StoreSession(ctx.Request.Context(), code, session, 10*time.Minute); err != nil {
 		ctx.String(http.StatusInternalServerError, "Internal error storing session")

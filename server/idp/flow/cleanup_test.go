@@ -56,7 +56,8 @@ func TestCleanupMFAState(t *testing.T) {
 			definitions.SessionKeyMFACompleted:                       true,
 			definitions.SessionKeyRegistration:                       true,
 			// Non-MFA key that should survive cleanup.
-			definitions.SessionKeyAccount: true,
+			definitions.SessionKeyAccount:            true,
+			definitions.SessionKeyMFAAssuranceMethod: true,
 		}}
 
 		CleanupMFAState(mgr)
@@ -81,6 +82,7 @@ func TestCleanupMFAState(t *testing.T) {
 		assert.False(t, mgr.data[definitions.SessionKeyRegistration])
 		// Non-MFA key must still be present.
 		assert.True(t, mgr.data[definitions.SessionKeyAccount])
+		assert.True(t, mgr.data[definitions.SessionKeyMFAAssuranceMethod])
 	})
 }
 

@@ -32,6 +32,7 @@ import (
 const (
 	frontendDefaultLanguageTag = "en"
 	frontendLoginPath          = "/login"
+	frontendMFASelectPath      = "/login/mfa"
 	frontendDeviceVerifyPath   = "/oidc/device/verify"
 	frontendDeviceConsentPath  = "/oidc/device/consent"
 	frontendSAMLLogoutPath     = "/saml/slo"

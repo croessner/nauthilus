@@ -154,6 +154,7 @@ identity:
     clients:
       - name: "Split Edge Service Principal"
         client_id: "nauthilus-edge-e2e"
+        client_secret: "edge-e2e-confidential-placeholder"
         grant_types:
           - client_credentials
         token_endpoint_auth_method: "private_key_jwt"

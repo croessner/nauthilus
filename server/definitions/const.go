@@ -241,6 +241,15 @@ const (
 	// SessionKeyMFAMethod stores the MFA method used (e.g. totp, webauthn, recovery).
 	SessionKeyMFAMethod = "mfa_method"
 
+	// SessionKeyMFAAssuranceAt stores the Unix timestamp for the most recent MFA assurance.
+	SessionKeyMFAAssuranceAt = "mfa_assurance_at"
+
+	// SessionKeyMFAAssuranceMethod stores the MFA method for the most recent assurance.
+	SessionKeyMFAAssuranceMethod = "mfa_assurance_method"
+
+	// SessionKeyMFAAssuranceScope stores the protocol/client scope for the most recent MFA assurance.
+	SessionKeyMFAAssuranceScope = "mfa_assurance_scope"
+
 	// SessionKeyRequireMFAFlow indicates that the user must register missing MFA methods
 	// before the IDP flow can be completed.
 	SessionKeyRequireMFAFlow = "require_mfa_flow"

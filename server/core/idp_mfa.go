@@ -20,6 +20,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/config"
@@ -57,6 +58,9 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 	mgr.Set(definitions.SessionKeySubject, finalUser.ID)
 	mgr.Set(definitions.SessionKeyProtocol, protocol)
 	mgr.Set(definitions.SessionKeyMFACompleted, true)
+	mgr.Set(definitions.SessionKeyMFAAssuranceAt, time.Now().Unix())
+	mgr.Set(definitions.SessionKeyMFAAssuranceMethod, method)
+	mgr.Set(definitions.SessionKeyMFAAssuranceScope, completedIDPMFAAssuranceScope(mgr, protocol))
 
 	if method != "" {
 		mgr.Set(definitions.SessionKeyMFAMethod, method)
@@ -66,6 +70,26 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 		mgr.SetMaxAge(rememberMeTTL)
 		mgr.Delete(definitions.SessionKeyRememberTTL)
 	}
+}
+
+// completedIDPMFAAssuranceScope records the protocol target that received fresh MFA.
+func completedIDPMFAAssuranceScope(mgr cookie.Manager, protocol string) string {
+	if mgr == nil {
+		return protocol
+	}
+
+	switch protocol {
+	case definitions.ProtoOIDC:
+		if clientID := mgr.GetString(definitions.SessionKeyIDPClientID, ""); clientID != "" {
+			return definitions.ProtoOIDC + ":" + clientID
+		}
+	case definitions.ProtoSAML:
+		if entityID := mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""); entityID != "" {
+			return definitions.ProtoSAML + ":" + entityID
+		}
+	}
+
+	return protocol
 }
 
 // ResolveCompletedIDPMFAUser returns the user identity that should be visible

@@ -280,8 +280,15 @@ func mfaSmokePlanScenarios() []string {
 		"oidc-delayed-response-recovery-code-login",
 		"webauthn-registration-login",
 		"authority-webauthn-sign-count",
+		"mfa-self-service-missing-step-up-rejected",
+		"mfa-self-service-recovery-regeneration-step-up",
+		"mfa-self-service-totp-delete-step-up",
+		"mfa-self-service-webauthn-delete-step-up",
 		"oidc-master-user-recovery-code-login",
 		"oidc-delayed-response-master-user-recovery-code-login",
+		"oidc-master-user-without-mfa-login",
+		"oidc-master-user-without-mfa-require-mfa-rejected",
+		"oidc-delayed-response-master-user-without-mfa-require-mfa-rejected",
 	}
 }
 
@@ -375,6 +382,8 @@ func TestBrowserAutomationUsesCDPVirtualAuthenticator(t *testing.T) {
 		"runRecoveryCodeMatrix",
 		"runDelayedResponseRecoveryFailure",
 		"runRecoveryCodeReuseRejected",
+		"runMFASelfServiceStepUpChecks",
+		"submitSelfServiceMutation",
 		"host-resolver-rules",
 		"runMultiEdgeWebAuthnContinuity",
 		"https://split.example.test",
@@ -561,6 +570,10 @@ func assertAuthorityCallerTokenProfile(t *testing.T, cfg map[string]any) {
 	client := findClient(t, sequenceMaps(oidc, "clients"), "nauthilus-edge-e2e")
 	if scalar(client, "token_endpoint_auth_method") != privateKeyJWT {
 		t.Fatalf("authority caller client auth method = %q, want %s", scalar(client, "token_endpoint_auth_method"), privateKeyJWT)
+	}
+
+	if scalar(client, "client_secret") == "" {
+		t.Fatal("authority caller client must stay confidential for client_credentials validation")
 	}
 
 	if !containsAll(sequence(client, "scopes"), requiredAuthorityScopes) {

@@ -95,6 +95,9 @@ func sessionCleanerKeys() []string {
 		definitions.SessionKeyMFAMulti,
 		definitions.SessionKeyMFAMethod,
 		definitions.SessionKeyMFACompleted,
+		definitions.SessionKeyMFAAssuranceAt,
+		definitions.SessionKeyMFAAssuranceMethod,
+		definitions.SessionKeyMFAAssuranceScope,
 	}
 }
 

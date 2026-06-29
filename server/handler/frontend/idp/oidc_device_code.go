@@ -1038,6 +1038,12 @@ func (h *OIDCHandler) authorizeDeviceCodeDirectly(
 	client *config.OIDCClient,
 	user *backend.User,
 ) {
+	applyDeviceCodeMFASessionState(cookie.GetManager(ctx), request)
+
+	if !h.enforceOIDCClientMFAAssurance(ctx, cookie.GetManager(ctx), client) {
+		return
+	}
+
 	request.Status = idp.DeviceCodeStatusAuthorized
 	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
 		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
@@ -1461,6 +1467,10 @@ func (h *OIDCHandler) approveDeviceConsent(ctx *gin.Context, consentContext devi
 	}
 
 	applyDeviceCodeMFASessionState(consentContext.mgr, request)
+
+	if !h.enforceOIDCClientMFAAssurance(ctx, consentContext.mgr, client) {
+		return false
+	}
 
 	return h.applyDeviceConsentScopeSelection(ctx, request, client) &&
 		h.hydrateDeviceConsentClaims(ctx, request, client) &&

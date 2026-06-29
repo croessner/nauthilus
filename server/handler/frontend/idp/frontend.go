@@ -112,7 +112,7 @@ func (h *FrontendHandler) deviceVerifyPath(ctx *gin.Context) string {
 }
 
 func (h *FrontendHandler) getMFASelectPath(ctx *gin.Context) string {
-	path := "/login/mfa"
+	path := frontendMFASelectPath
 	lang := ctx.Param("languageTag")
 
 	if lang != "" {
@@ -665,6 +665,10 @@ func (h *FrontendHandler) loginFlowState(mgr cookie.Manager) loginFlowState {
 func (h *FrontendHandler) resumeExistingLoginSession(ctx *gin.Context, mgr cookie.Manager) bool {
 	if mgr == nil || mgr.GetString(definitions.SessionKeyAccount, "") == "" {
 		return false
+	}
+
+	if h.redirectExistingSessionMFAAssurance(ctx, mgr) {
+		return true
 	}
 
 	if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
@@ -1696,7 +1700,10 @@ func (h *FrontendHandler) hasRecoveryCodes(user *backend.User) bool {
 // LoginMFASelect renders the MFA selection page.
 // All flow state is read from the encrypted cookie - no URL parameters are used.
 func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
-	mgr, username, protocol := readLoginMFASelectSession(ctx)
+	mgr := cookie.GetManager(ctx)
+	h.prepareExistingSessionMFAAssuranceChallenge(mgr)
+
+	username, protocol := readLoginMFASelectSession(mgr)
 	if username == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
@@ -1722,10 +1729,9 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 }
 
 // readLoginMFASelectSession returns the username and protocol for MFA selection.
-func readLoginMFASelectSession(ctx *gin.Context) (cookie.Manager, string, string) {
-	mgr := cookie.GetManager(ctx)
+func readLoginMFASelectSession(mgr cookie.Manager) (string, string) {
 	if mgr == nil {
-		return nil, "", ""
+		return "", ""
 	}
 
 	username := mgr.GetString(definitions.SessionKeyUsername, "")
@@ -1733,7 +1739,7 @@ func readLoginMFASelectSession(ctx *gin.Context) (cookie.Manager, string, string
 		username = factorUser
 	}
 
-	return mgr, username, mgr.GetString(definitions.SessionKeyIDPFlowType, "")
+	return username, mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 }
 
 // loginMFASelectUser loads the user for MFA availability checks.
@@ -1822,6 +1828,7 @@ type loginMFAVerificationPage struct {
 // renderLoginMFAVerificationPage renders a cookie-bound login MFA challenge page.
 func (h *FrontendHandler) renderLoginMFAVerificationPage(ctx *gin.Context, page loginMFAVerificationPage) {
 	mgr := cookie.GetManager(ctx)
+	h.prepareExistingSessionMFAAssuranceChallenge(mgr)
 
 	if mgr == nil || mgr.GetString(definitions.SessionKeyUsername, "") == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
@@ -2186,6 +2193,8 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User)
 // All flow state is read from the encrypted cookie - no URL parameters are used.
 func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 	mgr := cookie.GetManager(ctx)
+	h.prepareExistingSessionMFAAssuranceChallenge(mgr)
+
 	username := ""
 
 	if mgr != nil {
@@ -2491,7 +2500,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	// must be sent to the continue endpoint so that the next required method (if any)
 	// is registered before the IDP flow resumes.
 	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		flowdomain.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodTOTP)
+		h.removeCompletedRequireMFAMethod(ctx, mgr, definitions.MFAMethodTOTP)
 
 		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/continue")
 		ctx.Status(http.StatusOK)
@@ -2762,7 +2771,7 @@ func (h *FrontendHandler) finishSaveRecoveryCodes(ctx *gin.Context, context save
 	context.mgr.Set(definitions.SessionKeyRecoveryCodesSaved, true)
 
 	if context.mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		flowdomain.RemoveRequireMFAPendingMethod(context.mgr, definitions.MFAMethodRecoveryCodes)
+		h.removeCompletedRequireMFAMethod(ctx, context.mgr, definitions.MFAMethodRecoveryCodes)
 	}
 }
 
@@ -2827,7 +2836,7 @@ func (h *FrontendHandler) continueAfterRecoveryRegistration(ctx *gin.Context, mg
 	}
 
 	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		flowdomain.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodRecoveryCodes)
+		h.removeCompletedRequireMFAMethod(ctx, mgr, definitions.MFAMethodRecoveryCodes)
 		ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/continue")
 
 		return
@@ -2889,6 +2898,10 @@ func (h *FrontendHandler) PostRegisterRecoveryCodes(ctx *gin.Context) {
 func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_generate_recovery_codes")
 	defer sp.End()
+
+	if !h.enforceMFASelfServiceStepUp(ctx) {
+		return
+	}
 
 	mgr := cookie.GetManager(ctx)
 	username := ""
@@ -2952,6 +2965,10 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_totp")
 	defer sp.End()
+
+	if !h.enforceMFASelfServiceStepUp(ctx) {
+		return
+	}
 
 	mgr := cookie.GetManager(ctx)
 	username := ""
@@ -3026,6 +3043,10 @@ func deleteWebAuthnCredentials(userData *UserBackendData) error {
 func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_webauthn")
 	defer sp.End()
+
+	if !h.enforceMFASelfServiceStepUp(ctx) {
+		return
+	}
 
 	userID, username := deleteWebAuthnIdentity(ctx)
 	if userID == "" || username == "" {
@@ -3227,6 +3248,10 @@ func (h *FrontendHandler) WebAuthnDevices(ctx *gin.Context) {
 func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_webauthn_device")
 	defer sp.End()
+
+	if !h.enforceMFASelfServiceStepUp(ctx) {
+		return
+	}
 
 	decodedID, ok := h.webAuthnDeviceID(ctx)
 	if !ok {

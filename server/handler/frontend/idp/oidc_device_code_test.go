@@ -3,6 +3,7 @@ package idp
 import (
 	"context"
 	"encoding/json"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -63,7 +64,8 @@ func (n *noopDeviceCodeStore) DeleteDeviceCode(_ context.Context, _ string) erro
 }
 
 type countingDeviceCodeStore struct {
-	requests []*devicecode.DeviceCodeRequest
+	requests        []*devicecode.DeviceCodeRequest
+	updatedRequests []*devicecode.DeviceCodeRequest
 }
 
 // StoreDeviceCode records stored requests without touching Redis.
@@ -83,8 +85,10 @@ func (s *countingDeviceCodeStore) GetDeviceCodeByUserCode(_ context.Context, _ s
 	return "", nil, nil
 }
 
-// UpdateDeviceCode is unused by allocation tests and is a no-op.
-func (s *countingDeviceCodeStore) UpdateDeviceCode(_ context.Context, _ string, _ *devicecode.DeviceCodeRequest) error {
+// UpdateDeviceCode records updated requests without touching Redis.
+func (s *countingDeviceCodeStore) UpdateDeviceCode(_ context.Context, _ string, request *devicecode.DeviceCodeRequest) error {
+	s.updatedRequests = append(s.updatedRequests, request)
+
 	return nil
 }
 
@@ -230,6 +234,84 @@ func TestDeviceAuthorizationStoresStateForPublicClient(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Len(t, store.requests, 1)
 	assert.Equal(t, client.ClientID, store.requests[0].ClientID)
+}
+
+func TestAuthorizeDeviceCodeDirectlyRequireMFABlocksMissingAssurance(t *testing.T) {
+	client := config.OIDCClient{
+		ClientID:   "device-client-require-mfa",
+		RequireMFA: []string{definitions.MFAMethodTOTP},
+	}
+	handler, store := newDeviceAuthorizationHandler(t, client)
+	ctx, _ := newDeviceAuthorizeDirectContext(nil)
+	request := newDeviceAuthorizeDirectRequest(client.ClientID)
+
+	handler.authorizeDeviceCodeDirectly(ctx, "device-code-missing-mfa", request, &client, newDeviceAuthorizeDirectUser())
+
+	assert.Empty(t, store.updatedRequests)
+}
+
+func TestAuthorizeDeviceCodeDirectlyRequireMFAPermitsFreshAssurance(t *testing.T) {
+	client := config.OIDCClient{
+		ClientID:   "device-client-fresh-mfa",
+		RequireMFA: []string{definitions.MFAMethodTOTP},
+	}
+	handler, store := newDeviceAuthorizationHandler(t, client)
+	ctx, recorder := newDeviceAuthorizeDirectContext(map[string]any{
+		definitions.SessionKeyMFACompleted:      true,
+		definitions.SessionKeyMFAMethod:         definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceAt:    time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope: oidcMFAAssuranceScope(client.ClientID),
+	})
+	request := newDeviceAuthorizeDirectRequest(client.ClientID)
+
+	handler.authorizeDeviceCodeDirectly(ctx, "device-code-fresh-mfa", request, &client, newDeviceAuthorizeDirectUser())
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Len(t, store.updatedRequests, 1)
+	assert.Equal(t, devicecode.DeviceCodeStatusAuthorized, store.updatedRequests[0].Status)
+}
+
+func TestAuthorizeDeviceCodeDirectlyNoRequireMFAPreservesAuthorization(t *testing.T) {
+	client := config.OIDCClient{ClientID: "device-client-no-mfa"}
+	handler, store := newDeviceAuthorizationHandler(t, client)
+	ctx, recorder := newDeviceAuthorizeDirectContext(nil)
+	request := newDeviceAuthorizeDirectRequest(client.ClientID)
+
+	handler.authorizeDeviceCodeDirectly(ctx, "device-code-no-mfa", request, &client, newDeviceAuthorizeDirectUser())
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Len(t, store.updatedRequests, 1)
+	assert.Equal(t, devicecode.DeviceCodeStatusAuthorized, store.updatedRequests[0].Status)
+}
+
+func newDeviceAuthorizeDirectContext(data map[string]any) (*gin.Context, *httptest.ResponseRecorder) {
+	if data == nil {
+		data = make(map[string]any)
+	}
+
+	recorder := httptest.NewRecorder()
+	ctx, engine := gin.CreateTestContext(recorder)
+	engine.SetHTMLTemplate(template.Must(template.New("device-direct").Parse(`
+{{ define "idp_device_code_success.html" }}authorized{{ end }}
+{{ define "idp_device_code_error.html" }}{{ .Error }}{{ end }}
+`)))
+
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/device/verify", nil)
+	ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: data})
+
+	return ctx, recorder
+}
+
+func newDeviceAuthorizeDirectRequest(clientID string) *devicecode.DeviceCodeRequest {
+	return &devicecode.DeviceCodeRequest{
+		ClientID: clientID,
+		Scopes:   []string{definitions.ScopeOpenID},
+		UserCode: "USER-CODE",
+	}
+}
+
+func newDeviceAuthorizeDirectUser() *backend.User {
+	return &backend.User{ID: "user-123", Name: "alice"}
 }
 
 func TestIssueDeviceCodeTokens_RejectsMissingPersistedClaims(t *testing.T) {
