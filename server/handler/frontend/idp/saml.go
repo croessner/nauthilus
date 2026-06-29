@@ -42,7 +42,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/frontend"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	"github.com/croessner/nauthilus/v3/server/idp"
 	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
 	"github.com/croessner/nauthilus/v3/server/middleware/limit"
@@ -58,9 +57,15 @@ import (
 // SAMLHandler handles SAML 2.0 protocol requests.
 type SAMLHandler struct {
 	deps           *deps.Deps
-	idp            *idp.NauthilusIDP
+	idp            samlIdentityProvider
 	tracer         monittrace.Tracer
 	sloRateLimiter *limit.IPRateLimiter
+}
+
+// samlIdentityProvider captures the SAML IDP behavior used by the handler.
+type samlIdentityProvider interface {
+	FindSAMLServiceProvider(entityID string) (*config.SAML2ServiceProvider, bool)
+	GetUserByUsernameForSAML(ctx *gin.Context, username string, sp *config.SAML2ServiceProvider) (*backend.User, error)
 }
 
 type samlLogger struct {
@@ -149,10 +154,10 @@ func (l *samlLogger) Panicln(v ...any) {
 }
 
 // NewSAMLHandler creates a new SAMLHandler.
-func NewSAMLHandler(d *deps.Deps, idp *idp.NauthilusIDP) *SAMLHandler {
+func NewSAMLHandler(d *deps.Deps, provider samlIdentityProvider) *SAMLHandler {
 	return &SAMLHandler{
 		deps:           d,
-		idp:            idp,
+		idp:            provider,
 		tracer:         monittrace.New("nauthilus/idp/saml"),
 		sloRateLimiter: newSLORateLimiter(d),
 	}
@@ -275,6 +280,10 @@ func (h *SAMLHandler) deleteSLOParticipantSessionsByAccount(ctx context.Context,
 
 // GetServiceProvider returns the Service Provider metadata for the given entity ID.
 func (h *SAMLHandler) GetServiceProvider(_ *http.Request, serviceProviderID string) (*saml.EntityDescriptor, error) {
+	if h.idp == nil {
+		return nil, os.ErrNotExist
+	}
+
 	sp, ok := h.idp.FindSAMLServiceProvider(serviceProviderID)
 	if !ok {
 		return nil, os.ErrNotExist
@@ -560,6 +569,12 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 	issuer := samlAuthnRequestIssuer(req)
 	h.logSAMLSSORequestDetails(ctx, req, issuer)
 
+	if err := h.enforceSAMLAuthnRequestSignature(ctx.Request, req, issuer); err != nil {
+		ctx.String(http.StatusBadRequest, "Invalid SAML AuthnRequest signature: %v", err)
+
+		return
+	}
+
 	mgr := cookie.GetManager(ctx)
 	account := ""
 
@@ -588,6 +603,10 @@ func (h *SAMLHandler) handleAuthenticatedSAMLSSO(
 	if !ok {
 		ctx.String(http.StatusBadRequest, "Invalid SAML service provider")
 
+		return
+	}
+
+	if !h.enforceSAMLServiceProviderMFAAssurance(ctx, mgr, samlSP) {
 		return
 	}
 

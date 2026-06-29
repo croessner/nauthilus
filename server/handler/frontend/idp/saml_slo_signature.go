@@ -220,6 +220,11 @@ func validateLogoutResponseSignatureForBinding(
 }
 
 func shouldValidateInboundLogoutRequestSignature(binding slodomain.Binding, rawQuery string, requestXML []byte, required bool) (bool, error) {
+	return shouldValidateInboundSAMLRequestSignature(binding, rawQuery, requestXML, required, "SLO")
+}
+
+// shouldValidateInboundSAMLRequestSignature decides if a Redirect or POST request signature must be checked.
+func shouldValidateInboundSAMLRequestSignature(binding slodomain.Binding, rawQuery string, requestXML []byte, required bool, label string) (bool, error) {
 	switch binding {
 	case slodomain.SLOBindingRedirect:
 		hasSignature, err := redirectSLOHasDetachedSignature(rawQuery)
@@ -236,7 +241,7 @@ func shouldValidateInboundLogoutRequestSignature(binding slodomain.Binding, rawQ
 
 		return required || hasSignature, nil
 	default:
-		return false, fmt.Errorf("unsupported SLO binding %q", binding)
+		return false, fmt.Errorf("unsupported %s binding %q", label, binding)
 	}
 }
 

@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/idp"
 	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/gin-gonic/gin"
@@ -191,6 +192,15 @@ func oidcMFAAssuranceScope(clientID string) string {
 	return definitions.ProtoOIDC + ":" + clientID
 }
 
+// samlMFAAssuranceScope returns the session assurance scope for a SAML service provider.
+func samlMFAAssuranceScope(entityID string) string {
+	if entityID == "" {
+		return definitions.ProtoSAML
+	}
+
+	return definitions.ProtoSAML + ":" + entityID
+}
+
 // oidcClientRequiredMFAMethods returns the configured MFA policy for a client.
 func oidcClientRequiredMFAMethods(client *config.OIDCClient) []string {
 	if client == nil {
@@ -198,6 +208,15 @@ func oidcClientRequiredMFAMethods(client *config.OIDCClient) []string {
 	}
 
 	return client.GetRequireMFA()
+}
+
+// samlServiceProviderRequiredMFAMethods returns the configured MFA policy for a service provider.
+func samlServiceProviderRequiredMFAMethods(sp *config.SAML2ServiceProvider) []string {
+	if sp == nil {
+		return nil
+	}
+
+	return sp.GetRequireMFA()
 }
 
 // redirectTargetForMissingMFAAssurance returns the existing MFA challenge page.
@@ -226,6 +245,23 @@ func (h *OIDCHandler) enforceOIDCClientMFAAssurance(ctx *gin.Context, mgr cookie
 	return false
 }
 
+// enforceSAMLServiceProviderMFAAssurance blocks SAML assertion issuance without fresh MFA.
+func (h *SAMLHandler) enforceSAMLServiceProviderMFAAssurance(ctx *gin.Context, mgr cookie.Manager, sp *config.SAML2ServiceProvider) bool {
+	required := samlServiceProviderRequiredMFAMethods(sp)
+	if len(required) == 0 {
+		return true
+	}
+
+	if sessionHasFreshMFAAssurance(mgr, required, samlMFAAssuranceScope(sp.EntityID), time.Now()) {
+		return true
+	}
+
+	h.prepareSAMLServiceProviderMFAAssuranceChallenge(ctx, mgr, sp)
+	ctx.Redirect(http.StatusFound, frontendMFASelectPath)
+
+	return false
+}
+
 // prepareOIDCClientMFAAssuranceChallenge seeds the MFA UI for existing sessions.
 func (h *OIDCHandler) prepareOIDCClientMFAAssuranceChallenge(ctx *gin.Context, mgr cookie.Manager, client *config.OIDCClient) {
 	if mgr == nil || client == nil {
@@ -236,13 +272,43 @@ func (h *OIDCHandler) prepareOIDCClientMFAAssuranceChallenge(ctx *gin.Context, m
 		return
 	}
 
-	if h != nil && h.deps != nil && h.deps.Redis != nil && h.deps.Cfg != nil && h.deps.Cfg.GetServer() != nil {
-		_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.AuthOutcomeOK)
+	setMFAAssuranceFlowAuthOutcome(ctx, mgr, h.deps)
+}
+
+// prepareSAMLServiceProviderMFAAssuranceChallenge seeds the MFA UI for SAML step-up.
+func (h *SAMLHandler) prepareSAMLServiceProviderMFAAssuranceChallenge(ctx *gin.Context, mgr cookie.Manager, sp *config.SAML2ServiceProvider) {
+	if mgr == nil || sp == nil {
+		return
 	}
+
+	if !prepareSAMLMFAAssuranceSession(mgr, sp.EntityID) {
+		return
+	}
+
+	setMFAAssuranceFlowAuthOutcome(ctx, mgr, h.deps)
+}
+
+// setMFAAssuranceFlowAuthOutcome marks the current flow as authenticated when Redis state is available.
+func setMFAAssuranceFlowAuthOutcome(ctx *gin.Context, mgr cookie.Manager, handlerDeps *deps.Deps) {
+	if ctx == nil || mgr == nil || handlerDeps == nil || handlerDeps.Redis == nil || handlerDeps.Cfg == nil || handlerDeps.Cfg.GetServer() == nil {
+		return
+	}
+
+	_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, handlerDeps.Redis, handlerDeps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.AuthOutcomeOK)
 }
 
 // prepareOIDCMFAAssuranceSession writes the MFA session state needed by challenge pages.
 func prepareOIDCMFAAssuranceSession(mgr cookie.Manager, clientID string) bool {
+	return prepareProtocolMFAAssuranceSession(mgr, definitions.ProtoOIDC, clientID, "")
+}
+
+// prepareSAMLMFAAssuranceSession writes the MFA session state needed by challenge pages.
+func prepareSAMLMFAAssuranceSession(mgr cookie.Manager, entityID string) bool {
+	return prepareProtocolMFAAssuranceSession(mgr, definitions.ProtoSAML, "", entityID)
+}
+
+// prepareProtocolMFAAssuranceSession writes common MFA state for an IDP protocol.
+func prepareProtocolMFAAssuranceSession(mgr cookie.Manager, protocol string, clientID string, samlEntityID string) bool {
 	if mgr == nil {
 		return false
 	}
@@ -262,14 +328,25 @@ func prepareOIDCMFAAssuranceSession(mgr cookie.Manager, clientID string) bool {
 	}
 
 	mgr.Set(definitions.SessionKeyUsername, account)
-	mgr.Set(definitions.SessionKeyProtocol, definitions.ProtoOIDC)
-	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
-	mgr.Set(definitions.SessionKeyIDPClientID, clientID)
+	mgr.Set(definitions.SessionKeyProtocol, protocol)
+	mgr.Set(definitions.SessionKeyIDPFlowType, protocol)
+	setProtocolMFAAssuranceIdentifier(mgr, clientID, samlEntityID)
 	core.StorePendingIDPMFAIdentity(mgr, user)
 	core.StorePendingIDPMFAFactor(mgr, user)
 	cookie.SetAuthResult(mgr, account, definitions.AuthResultOK)
 
 	return true
+}
+
+// setProtocolMFAAssuranceIdentifier records the active OIDC client or SAML SP.
+func setProtocolMFAAssuranceIdentifier(mgr cookie.Manager, clientID string, samlEntityID string) {
+	if clientID != "" {
+		mgr.Set(definitions.SessionKeyIDPClientID, clientID)
+	}
+
+	if samlEntityID != "" {
+		mgr.Set(definitions.SessionKeyIDPSAMLEntityID, samlEntityID)
+	}
 }
 
 // redirectExistingSessionMFAAssurance keeps first-factor sessions in the MFA challenge path.
@@ -290,16 +367,34 @@ func (h *FrontendHandler) prepareExistingSessionMFAAssuranceChallenge(mgr cookie
 		return false
 	}
 
-	oidcClientID, _ := h.getFlowClientIdentifiers(mgr)
-	if oidcClientID == "" {
+	oidcClientID, samlEntityID := h.getFlowClientIdentifiers(mgr)
+
+	scope := existingSessionMFAAssuranceScope(oidcClientID, samlEntityID)
+	if scope == "" {
 		return false
 	}
 
-	if sessionHasFreshMFAAssurance(mgr, required, oidcMFAAssuranceScope(oidcClientID), time.Now()) {
+	if sessionHasFreshMFAAssurance(mgr, required, scope, time.Now()) {
 		return false
 	}
 
-	return prepareOIDCMFAAssuranceSession(mgr, oidcClientID)
+	if oidcClientID != "" {
+		return prepareOIDCMFAAssuranceSession(mgr, oidcClientID)
+	}
+
+	return prepareSAMLMFAAssuranceSession(mgr, samlEntityID)
+}
+
+// existingSessionMFAAssuranceScope resolves the flow-specific assurance scope.
+func existingSessionMFAAssuranceScope(oidcClientID string, samlEntityID string) string {
+	switch {
+	case oidcClientID != "":
+		return oidcMFAAssuranceScope(oidcClientID)
+	case samlEntityID != "":
+		return samlMFAAssuranceScope(samlEntityID)
+	default:
+		return ""
+	}
 }
 
 // enforceMFASelfServiceStepUp blocks sensitive MFA mutations without recent MFA.
