@@ -58,7 +58,7 @@ func DecompressBrRequestMiddleware(cfg config.File) gin.HandlerFunc {
 		enc := c.Request.Header.Get("Content-Encoding")
 		if enc == "br" || enc == "brotli" {
 			reader := brotli.NewReader(c.Request.Body)
-			c.Request.Body = brReadCloser{r: reader, src: c.Request.Body}
+			c.Request.Body = limitDecompressedRequestBody(c, brReadCloser{r: reader, src: c.Request.Body})
 
 			// Remove Content-Encoding and Content-Length headers since we've decompressed the body
 			c.Request.Header.Del("Content-Encoding")

@@ -4543,8 +4543,12 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 
 	cfg := a.cfg()
 	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetOIDCCID()), &a.Request.OIDCCID)
-	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientIP()), &a.Request.ClientIP)
-	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientPort()), &a.Request.XClientPort)
+
+	if util.DirectPeerIsTrustedProxy(ctx, cfg, a.Logger()) {
+		util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientIP()), &a.Request.ClientIP)
+		util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientPort()), &a.Request.XClientPort)
+	}
+
 	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientID()), &a.Request.XClientID)
 	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientHost()), &a.Request.ClientHost)
 	a.ApplyContextData(NewAuthContext(WithExternalSessionID(getDecodedHeader(ctx, cfg.GetExternalSessionID()))))

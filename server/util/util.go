@@ -642,6 +642,22 @@ func RequestClientIPWithConfig(ctx *gin.Context, cfg config.File, logger *slog.L
 	return directRequestClientIP(ctx)
 }
 
+// DirectPeerIsTrustedProxy reports whether the immediate peer matches trusted_proxies.
+func DirectPeerIsTrustedProxy(ctx *gin.Context, cfg config.File, logger *slog.Logger) bool {
+	if ctx == nil || ctx.Request == nil || cfg == nil || cfg.GetServer() == nil {
+		return false
+	}
+
+	remoteIP := directRequestClientIP(ctx)
+	if remoteIP == "" {
+		return false
+	}
+
+	guid := ctx.GetString(definitions.CtxGUIDKey)
+
+	return IsInNetworkWithCfg(ctx.Request.Context(), cfg, logger, cfg.GetServer().GetTrustedProxies(), guid, remoteIP)
+}
+
 // directRequestClientIP returns the immediate peer address without consulting
 // forwarding headers.
 func directRequestClientIP(ctx *gin.Context) string {
@@ -665,12 +681,9 @@ func trustedForwardedClientIP(ctx *gin.Context, cfg config.File, logger *slog.Lo
 		return ""
 	}
 
-	var (
-		guid           = ctx.GetString(definitions.CtxGUIDKey)
-		trustedProxies = cfg.GetServer().GetTrustedProxies()
-	)
+	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-	if !IsInNetworkWithCfg(ctx.Request.Context(), cfg, logger, trustedProxies, guid, remoteIP) {
+	if !DirectPeerIsTrustedProxy(ctx, cfg, logger) {
 		return ""
 	}
 

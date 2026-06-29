@@ -36,6 +36,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -910,6 +911,73 @@ func TestOIDCHandler_Logout(t *testing.T) {
 	t.Run("Logout with valid post_logout_redirect_uri", fixture.assertPostLogoutRedirect)
 	t.Run("Logout with client in session and LogoutRedirectURI", fixture.assertSessionClientLogoutRedirect)
 	t.Run("Logout with front-channel task renders orchestration page", fixture.assertFrontChannelLogoutPage)
+}
+
+func TestOIDCBackChannelLogoutDoesNotFollowRedirect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	originalDefaultClient := http.DefaultClient
+
+	var (
+		callbackRequests   atomic.Int32
+		redirectedRequests atomic.Int32
+	)
+
+	t.Cleanup(func() {
+		http.DefaultClient = originalDefaultClient
+	})
+
+	http.DefaultClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Host {
+			case "callback.example":
+				callbackRequests.Add(1)
+
+				return redirectResponse(req, "https://redirect.example/target"), nil
+			case "redirect.example":
+				redirectedRequests.Add(1)
+
+				return noContentResponse(req), nil
+			default:
+				return noContentResponse(req), nil
+			}
+		}),
+	}
+
+	fixture := newOIDCLogoutTest(t)
+	fixture.handler.doBackChannelLogout("test-client", "user123", "https://callback.example/logout")
+
+	assert.Equal(t, int32(1), callbackRequests.Load())
+	assert.Equal(t, int32(0), redirectedRequests.Load())
+}
+
+type roundTripFunc func(req *http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+// redirectResponse builds a synthetic redirect for HTTP client policy tests.
+func redirectResponse(req *http.Request, location string) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusFound,
+		Header: http.Header{
+			"Location": []string{location},
+		},
+		Body:    io.NopCloser(strings.NewReader("")),
+		Request: req,
+	}
+}
+
+// noContentResponse builds a synthetic successful response for HTTP client policy tests.
+func noContentResponse(req *http.Request) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusNoContent,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("")),
+		Request:    req,
+	}
 }
 
 type oidcLogoutTest struct {

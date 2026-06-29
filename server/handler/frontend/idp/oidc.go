@@ -2077,12 +2077,26 @@ func (h *OIDCHandler) doBackChannelLogout(clientID, userID, logoutURI string) {
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newOIDCBackChannelLogoutHTTPClient(http.DefaultClient.Transport).Do(req)
 	if err != nil {
 		return
 	}
 
 	defer func() { _ = resp.Body.Close() }()
+}
+
+// newOIDCBackChannelLogoutHTTPClient builds a callback client that returns redirects to the caller.
+func newOIDCBackChannelLogoutHTTPClient(transport http.RoundTripper) *http.Client {
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+
+	return &http.Client{
+		Transport: transport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 // CleanupIDPFlowState removes all temporary IDP flow state keys from the cookie.

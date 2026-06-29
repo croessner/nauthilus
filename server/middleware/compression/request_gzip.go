@@ -54,8 +54,8 @@ func DecompressRequestMiddleware(cfg config.File) gin.HandlerFunc {
 
 			defer func() { _ = gzipReader.Close() }()
 
-			// Replace the request body with the decompressed content
-			c.Request.Body = gzipReader
+			// Replace the request body with the capped decompressed content
+			c.Request.Body = limitDecompressedRequestBody(c, gzipReader)
 
 			// Remove Content-Encoding header since we've decompressed the body
 			c.Request.Header.Del("Content-Encoding")

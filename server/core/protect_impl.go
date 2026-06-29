@@ -18,6 +18,7 @@ package core
 import (
 	"log/slog"
 	"net"
+	"strings"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -79,14 +80,10 @@ func newProtectedEndpointAuthState(ctx *gin.Context, cfg config.File, logger *sl
 
 // protectedEndpointClient resolves the effective client address for protected endpoints.
 func protectedEndpointClient(ctx *gin.Context, cfg config.File, logger *slog.Logger, auth *AuthState) (string, string) {
-	clientIP := ctx.GetHeader("Client-IP")
-	clientPort := util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
-
-	if clientIP == "" {
-		clientIP, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
+	clientIP, clientPort, _ := net.SplitHostPort(ctx.Request.RemoteAddr)
+	if util.DirectPeerIsTrustedProxy(ctx, cfg, logger) {
+		clientIP, clientPort = protectedEndpointTrustedClient(ctx, cfg, logger, clientIP, clientPort)
 	}
-
-	util.ProcessXForwardedFor(ctx, cfg, logger, &clientIP, &clientPort, &auth.Request.XSSL)
 
 	if clientIP == "" {
 		clientIP = definitions.NotAvailable
@@ -94,6 +91,19 @@ func protectedEndpointClient(ctx *gin.Context, cfg config.File, logger *slog.Log
 
 	if clientPort == "" {
 		clientPort = definitions.NotAvailable
+	}
+
+	return clientIP, clientPort
+}
+
+// protectedEndpointTrustedClient resolves trusted proxy headers for protected endpoints.
+func protectedEndpointTrustedClient(ctx *gin.Context, cfg config.File, logger *slog.Logger, clientIP string, clientPort string) (string, string) {
+	if forwardedIP := util.RequestClientIPWithConfig(ctx, cfg, logger); forwardedIP != "" && forwardedIP != clientIP {
+		return forwardedIP, definitions.NotAvailable
+	}
+
+	if headerIP := strings.TrimSpace(ctx.GetHeader("Client-IP")); headerIP != "" {
+		return headerIP, util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
 	}
 
 	return clientIP, clientPort

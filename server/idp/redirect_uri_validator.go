@@ -92,16 +92,63 @@ func matchesAllowedRedirectURI(allowedURI string, redirectURI string, allowWildc
 		redirectWithoutQueryOrFragment := stripRedirectURIQueryAndFragment(redirectURI)
 		allowedURIPrefix := strings.TrimSuffix(allowedURI, "*")
 
-		if strings.HasPrefix(redirectWithoutQueryOrFragment, allowedURIPrefix) {
-			return true
-		}
-
-		if strings.HasSuffix(allowedURIPrefix, "/") && strings.TrimSuffix(allowedURIPrefix, "/") == redirectWithoutQueryOrFragment {
+		if wildcardRedirectURIMatches(allowedURIPrefix, redirectWithoutQueryOrFragment) {
 			return true
 		}
 	}
 
 	return allowedURI == redirectURI
+}
+
+// wildcardRedirectURIMatches applies wildcard matching after scheme, authority, and path parsing.
+func wildcardRedirectURIMatches(allowedURIPrefix string, redirectURI string) bool {
+	allowedURL, err := url.Parse(allowedURIPrefix)
+	if err != nil {
+		return false
+	}
+
+	redirectURL, err := url.Parse(redirectURI)
+	if err != nil {
+		return false
+	}
+
+	if !sameRedirectAuthority(allowedURL, redirectURL) {
+		return false
+	}
+
+	return wildcardRedirectPathMatches(allowedURL.EscapedPath(), redirectURL.EscapedPath())
+}
+
+// sameRedirectAuthority compares the parsed URI authority boundary.
+func sameRedirectAuthority(left *url.URL, right *url.URL) bool {
+	if left == nil || right == nil {
+		return false
+	}
+
+	return strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(left.Hostname(), right.Hostname()) &&
+		left.Port() == right.Port()
+}
+
+// wildcardRedirectPathMatches keeps wildcard scope inside a path segment boundary.
+func wildcardRedirectPathMatches(allowedPath string, redirectPath string) bool {
+	if allowedPath == "" || allowedPath == "/" {
+		return true
+	}
+
+	if redirectPath == allowedPath {
+		return true
+	}
+
+	if strings.HasSuffix(allowedPath, "/") && strings.TrimSuffix(allowedPath, "/") == redirectPath {
+		return true
+	}
+
+	if !strings.HasPrefix(redirectPath, allowedPath) {
+		return false
+	}
+
+	return strings.HasSuffix(allowedPath, "/") || redirectPath[len(allowedPath)] == '/'
 }
 
 // isRedirectSchemeAllowed enforces scheme compatibility for wildcard patterns

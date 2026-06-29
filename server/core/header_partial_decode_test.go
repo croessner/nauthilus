@@ -50,6 +50,7 @@ func TestHeaderBasedAuth_DecodesConfiguredRequestHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := newHeaderDecodeTestConfig()
+	cfg.Server.TrustedProxies = []string{"198.51.100.10"}
 	SetDefaultConfigFile(cfg)
 	t.Cleanup(func() {
 		SetDefaultConfigFile(nil)
@@ -58,6 +59,7 @@ func TestHeaderBasedAuth_DecodesConfiguredRequestHeaders(t *testing.T) {
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	ctx.Request.RemoteAddr = "198.51.100.10:54321"
 	setEncodedHeaders(ctx.Request)
 
 	auth := NewAuthStateFromContextWithDeps(ctx, AuthDeps{Cfg: cfg})
@@ -80,6 +82,33 @@ func TestHeaderBasedAuth_DecodesConfiguredRequestHeaders(t *testing.T) {
 	assert.Equal(t, "cid+abc+def", state.Request.XClientID)
 	assert.Equal(t, "mail.example.test", state.Request.ClientHost)
 	assert.Equal(t, "CN=alice,O=Example", state.Request.XSSLClientDN)
+}
+
+func TestHeaderBasedAuth_IgnoresConfiguredClientIPFromUntrustedPeer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := newHeaderDecodeTestConfig()
+	cfg.Server.TrustedProxies = []string{"198.51.100.10"}
+
+	SetDefaultConfigFile(cfg)
+	t.Cleanup(func() {
+		SetDefaultConfigFile(nil)
+	})
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	ctx.Request.RemoteAddr = "198.51.100.20:54321"
+	ctx.Request.Header.Set("Client-IP", "203.0.113.77")
+	ctx.Request.Header.Set("X-Client-Port", "2525")
+
+	auth := NewAuthStateFromContextWithDeps(ctx, AuthDeps{Cfg: cfg})
+	state := auth.(*AuthState)
+
+	state.WithClientInfo(ctx)
+
+	assert.Equal(t, "198.51.100.20", state.Request.ClientIP)
+	assert.Equal(t, "", state.Request.XClientPort)
 }
 
 func TestHeaderBasedAuth_UsesTrustedForwardedClientIPWhenConfiguredHeaderIsMissing(t *testing.T) {

@@ -66,6 +66,12 @@ var redirectValidationCases = []redirectValidationCase{
 		want:        true,
 	},
 	{
+		name:        "suffix wildcard cannot cross authority boundary",
+		redirectURI: "https://app.example.com.evil.test/callback",
+		allowedURIs: []string{"https://app.example.com*"},
+		want:        false,
+	},
+	{
 		name:        "suffix wildcard with trailing slash also matches base path",
 		redirectURI: "https://app.example.com/callback",
 		allowedURIs: []string{"https://app.example.com/callback/*"},
