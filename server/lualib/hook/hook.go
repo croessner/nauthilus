@@ -56,6 +56,9 @@ var (
 	// hookScopes is a map that associates each Location and HTTP method with its corresponding scopes.
 	hookScopes = make(map[string][]string)
 
+	// hookPublicAllowed records hooks that are intentionally unauthenticated.
+	hookPublicAllowed = make(map[string]bool)
+
 	// hookAliasLocations maps an absolute external alias location and method to a canonical hook location.
 	hookAliasLocations = make(map[string]string)
 
@@ -182,6 +185,17 @@ func (l CustomLocation) GetScript(location, method string) *PrecompiledLuaScript
 	return nil
 }
 
+// HasCustomScript reports whether a Lua custom hook script exists for the location and method.
+func HasCustomScript(location, method string) bool {
+	mu.RLock()
+
+	script := customLocation.GetScript(location, method)
+
+	mu.RUnlock()
+
+	return script != nil
+}
+
 // SetScript assigns a precompiled Lua script to a specific HTTP method for the given location.
 func (l CustomLocation) SetScript(location, method string, script *PrecompiledLuaScript) {
 	if hook := l.GetCustomHook(location); hook != nil {
@@ -218,6 +232,19 @@ func GetHookScopes(location, method string) []string {
 	return scopes
 }
 
+// IsHookPublic reports whether a hook was explicitly configured as public.
+func IsHookPublic(location, method string) bool {
+	hookKey := getHookKey(location, method)
+
+	mu.RLock()
+
+	public := hookPublicAllowed[hookKey]
+
+	mu.RUnlock()
+
+	return public
+}
+
 // ResolveAliasLocation returns the canonical hook location for a configured absolute alias.
 func ResolveAliasLocation(location, method string) (string, bool) {
 	aliasKey := getHookAliasKey(location, method)
@@ -246,7 +273,8 @@ func ResolveRequestHook(ctx *gin.Context) string {
 
 // HasRequiredScopes checks if the user has any of the required scopes for a hook.
 // It performs the full authentication and authorization flow for custom hooks:
-//   - No scopes configured → public hook, access allowed without token.
+//   - Explicitly public hooks with no scopes configured → access allowed without token.
+//   - No scopes and no explicit public marker → access denied.
 //   - Scopes configured → bearer token is extracted, validated via the TokenValidator,
 //     and the resulting claims are checked for the required scopes.
 //
@@ -261,8 +289,9 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 
 	// Get the scopes required for this hook
 	requiredScopes := resolveRequiredScopes(location, method, cfg, logger, guid, ctx)
+	publicHook := resolveHookPublic(location, method, cfg, logger, guid, ctx)
 
-	nextState, ok := startHookAuthzFSM(ctx, requiredScopes)
+	nextState, ok := startHookAuthzFSM(ctx, requiredScopes, publicHook)
 	if !ok {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
@@ -272,6 +301,10 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 	// If no scopes are configured, this is a public hook — allow access regardless of token.
 	if nextState == hookAuthzStateAuthorized {
 		return allowPublicHook(ctx, cfg, logger, guid)
+	}
+
+	if nextState == hookAuthzStateUnauthorized {
+		return denyUnmarkedHook(ctx, cfg, logger, guid)
 	}
 
 	// Scopes required but OIDC auth not configured — deny access.
@@ -292,7 +325,11 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 }
 
 // startHookAuthzFSM applies the initial hook authorization transition.
-func startHookAuthzFSM(ctx *gin.Context, requiredScopes []string) (hookAuthzFSMState, bool) {
+func startHookAuthzFSM(ctx *gin.Context, requiredScopes []string, publicHook bool) (hookAuthzFSMState, bool) {
+	if len(requiredScopes) == 0 && !publicHook {
+		return hookAuthzStateUnauthorized, true
+	}
+
 	startEvent := hookAuthzEventScopesRequired
 	if len(requiredScopes) == 0 {
 		startEvent = hookAuthzEventNoScopes
@@ -308,7 +345,7 @@ func startHookAuthzFSM(ctx *gin.Context, requiredScopes []string) (hookAuthzFSMS
 	return nextState, true
 }
 
-// allowPublicHook logs and allows hooks that do not require scopes.
+// allowPublicHook logs and allows hooks that are explicitly public.
 func allowPublicHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string) bool {
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -320,6 +357,22 @@ func allowPublicHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, gui
 	)
 
 	return true
+}
+
+// denyUnmarkedHook denies hooks that have neither scopes nor an explicit public marker.
+func denyUnmarkedHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string) bool {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
+		definitions.DbgLua,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, "Hook has no scopes and is not explicitly public, denying access",
+	)
+
+	abortOnHookAuthzState(ctx, hookAuthzStateUnauthorized, "authentication required")
+
+	return false
 }
 
 // denyHookWithoutValidator denies scoped hooks when no token validator exists.
@@ -431,6 +484,37 @@ func resolveRequiredScopes(location, method string, cfg config.File, logger *slo
 	return requiredScopes
 }
 
+// resolveHookPublic looks up the explicit public marker for a hook, trying both with and without a leading slash.
+func resolveHookPublic(location, method string, cfg config.File, logger *slog.Logger, guid string, ctx *gin.Context) bool {
+	publicHook := IsHookPublic(location, method)
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
+		definitions.DbgLua,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Public marker for hook %s %s: %t", location, method, publicHook),
+	)
+
+	if !publicHook && !strings.HasPrefix(location, "/") {
+		locationWithSlash := "/" + location
+
+		publicHook = IsHookPublic(locationWithSlash, method)
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
+			definitions.DbgLua,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Trying public marker with leading slash: %s, public: %t", locationWithSlash, publicHook),
+		)
+	}
+
+	return publicHook
+}
+
 // PreCompileLuaScript compiles a Lua script from the specified file path and manages the script in a thread-safe map.
 // Updates or removes entries in the LuaScripts map based on the configuration and compilation status.
 // Returns an error if the compilation fails or if the script cannot be managed properly.
@@ -505,6 +589,7 @@ func PreCompileLuaHooks(cfg config.File) error {
 
 	nextLocation := NewCustomLocation()
 	nextScopes := make(map[string][]string)
+	nextPublicAllowed := make(map[string]bool)
 	nextAliases := make(map[string]string)
 
 	if cfg != nil && cfg.HaveLuaHooks() {
@@ -523,6 +608,8 @@ func PreCompileLuaHooks(cfg config.File) error {
 			hookKey := getHookKey(hook.Location, hook.Method)
 
 			nextScopes[hookKey] = hook.GetScopes()
+			nextPublicAllowed[hookKey] = hook.IsPublic()
+
 			if aliasLocation := strings.TrimSpace(hook.GetAliasLocation()); aliasLocation != "" {
 				nextAliases[getHookAliasKey(aliasLocation, hook.Method)] = hook.Location
 			}
@@ -532,6 +619,7 @@ func PreCompileLuaHooks(cfg config.File) error {
 	mu.Lock()
 	customLocation = nextLocation
 	hookScopes = nextScopes
+	hookPublicAllowed = nextPublicAllowed
 	hookAliasLocations = nextAliases
 	mu.Unlock()
 

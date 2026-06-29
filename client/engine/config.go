@@ -18,6 +18,7 @@ type Config struct {
 	Shuffle         bool
 	HeadersList     string
 	BasicAuth       string
+	InsecureTLS     bool
 	OKStatus        int
 	UseJSONFlag     bool
 	Verbose         bool

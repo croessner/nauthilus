@@ -57,6 +57,19 @@ func TestReplaceMacrosModifiersStillApplyBeforeEscape(t *testing.T) {
 	assert.Equal(t, "(acct=DEV\\2aOPS)", macroSource.ReplaceMacros("(acct=%U{account})"))
 }
 
+// TestReplaceMacrosTreatsRequestValuesAsLiterals ensures request-derived macro
+// syntax is escaped once and is not reinterpreted as a second template.
+func TestReplaceMacrosTreatsRequestValuesAsLiterals(t *testing.T) {
+	t.Parallel()
+
+	macroSource := &MacroSource{
+		Username: "%{account}@example.org",
+		Account:  "admin",
+	}
+
+	assert.Equal(t, "(uid=%{account})", macroSource.ReplaceMacros("(uid=%{username})"))
+}
+
 // TestExpandLDAPFilterReplacesLegacyAndMacroSyntaxWithEscaping verifies that ExpandLDAPFilter
 // correctly handles both legacy %s and modern %{macro} syntax with proper escaping.
 func TestExpandLDAPFilterReplacesLegacyAndMacroSyntaxWithEscaping(t *testing.T) {

@@ -133,6 +133,7 @@ auth:
           http_method: "HTTP_METHOD"                 # The HTTP method (GET, POST, PUT, DELETE, PATCH)
           script_path: "/path/to/hook.lua"           # Full path to the Lua script
           scopes: ["scope1", "scope2"]               # Optional: OIDC scopes required to access this hook
+          public: false                              # Optional: set true only for intentionally unauthenticated hooks
 ```
 
 ### Example Configuration
@@ -158,7 +159,7 @@ auth:
         - http_location: "hello-world-request-dump"
           http_method: "GET"
           script_path: "/etc/nauthilus/lua-plugins.d/hooks/hello-world-request-dump.lua"
-          scopes: ["admin"]
+          public: true
 ```
 
 ### Absolute Alias Locations
@@ -174,8 +175,9 @@ When OIDC bearer authentication is enabled in Nauthilus, you can restrict access
 
 1. Define the required scopes in the `scopes` array for each hook
 2. Users must have at least one of the specified scopes in their bearer token to access the hook
-3. If no scopes are specified, the hook is public
+3. If no scopes are specified, the hook is denied unless `public: true` is set explicitly
 4. If OIDC bearer authentication is not enabled, hooks with scopes deny access
+5. Use `public: true` only for hooks that are deliberately unauthenticated; aliases inherit the canonical hook's `scopes` and `public` setting
 
 ### Enabling/Disabling All Custom Hooks
 

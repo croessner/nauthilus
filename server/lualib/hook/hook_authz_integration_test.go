@@ -85,8 +85,12 @@ func withIsolatedHookRoles(t *testing.T) {
 	origAliases := make(map[string]string, len(hookAliasLocations))
 	maps.Copy(origAliases, hookAliasLocations)
 
+	origPublic := make(map[string]bool, len(hookPublicAllowed))
+	maps.Copy(origPublic, hookPublicAllowed)
+
 	origLocation := customLocation
 	hookScopes = make(map[string][]string)
+	hookPublicAllowed = make(map[string]bool)
 	hookAliasLocations = make(map[string]string)
 	customLocation = NewCustomLocation()
 	mu.Unlock()
@@ -94,6 +98,7 @@ func withIsolatedHookRoles(t *testing.T) {
 	t.Cleanup(func() {
 		mu.Lock()
 		hookScopes = orig
+		hookPublicAllowed = origPublic
 		hookAliasLocations = origAliases
 		customLocation = origLocation
 		mu.Unlock()
@@ -104,6 +109,13 @@ func setHookScopes(location, method string, scopes []string) {
 	mu.Lock()
 
 	hookScopes[getHookKey(location, method)] = append([]string(nil), scopes...)
+	mu.Unlock()
+}
+
+func setHookPublic(location, method string, public bool) {
+	mu.Lock()
+
+	hookPublicAllowed[getHookKey(location, method)] = public
 	mu.Unlock()
 }
 
@@ -134,11 +146,32 @@ end
 	return path
 }
 
-func TestHasRequiredScopes_PublicHookAllows(t *testing.T) {
+func TestHasRequiredScopes_MissingScopesWithoutPublicMarkerDenies(t *testing.T) {
 	withIsolatedHookRoles(t)
 	cfg := setupHookTestConfig(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx, rec := newHookTestContext(http.MethodGet, "/custom/foo")
+
+	ok := HasRequiredScopes(ctx, cfg, logger, nil, "/custom/foo", http.MethodGet)
+	if ok {
+		t.Fatal("expected unmarked hook without scopes to deny access")
+	}
+
+	if !ctx.IsAborted() {
+		t.Fatal("expected aborted context")
+	}
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHasRequiredScopes_ExplicitPublicHookAllows(t *testing.T) {
+	withIsolatedHookRoles(t)
+	cfg := setupHookTestConfig(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, rec := newHookTestContext(http.MethodGet, "/custom/foo")
+	setHookPublic("/custom/foo", http.MethodGet, true)
 
 	ok := HasRequiredScopes(ctx, cfg, logger, nil, "/custom/foo", http.MethodGet)
 	if !ok {
@@ -311,6 +344,44 @@ func TestPreCompileLuaHooks_RegistersAbsoluteAlias(t *testing.T) {
 
 	if _, found := ResolveAliasLocation("/external/hook", http.MethodGet); found {
 		t.Fatal("did not expect alias to resolve for a different method")
+	}
+}
+
+func TestPreCompileLuaHooks_RegistersExplicitPublicHook(t *testing.T) {
+	withIsolatedHookRoles(t)
+
+	scriptPath := writeHookScript(t)
+	cfg := &config.FileSettings{
+		Lua: &config.LuaSection{
+			Hooks: []config.LuaHooks{
+				{
+					Location:   "public-hook",
+					Method:     http.MethodGet,
+					ScriptPath: scriptPath,
+					Public:     true,
+				},
+			},
+		},
+	}
+
+	if err := PreCompileLuaHooks(cfg); err != nil {
+		t.Fatalf("PreCompileLuaHooks() error = %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, rec := newHookTestContext(http.MethodGet, "/custom/public-hook")
+
+	ok := HasRequiredScopes(ctx, setupHookTestConfig(t), logger, nil, "public-hook", http.MethodGet)
+	if !ok {
+		t.Fatal("expected explicit public hook to allow access")
+	}
+
+	if ctx.IsAborted() {
+		t.Fatal("did not expect aborted context for explicit public hook")
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
 }
 

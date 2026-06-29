@@ -446,6 +446,7 @@ type LuaHooks struct {
 	ContentType   string   `mapstructure:"content_type" validate:"omitempty,printascii,excludesall= "`
 	ScriptPath    string   `mapstructure:"script_path" validate:"required,file"`
 	Scopes        []string `mapstructure:"scopes"`
+	Public        bool     `mapstructure:"public"`
 }
 
 func (l *LuaHooks) String() string {
@@ -453,7 +454,7 @@ func (l *LuaHooks) String() string {
 		return configStringNil
 	}
 
-	return fmt.Sprintf("{Location: %s}, {AliasLocation: %s}, {Method: %s}, {ScriptPath: %s}, {Scopes: %v}", l.Location, l.AliasLocation, l.Method, l.ScriptPath, l.Scopes)
+	return fmt.Sprintf("{Location: %s}, {AliasLocation: %s}, {Method: %s}, {ScriptPath: %s}, {Scopes: %v}, {Public: %t}", l.Location, l.AliasLocation, l.Method, l.ScriptPath, l.Scopes, l.Public)
 }
 
 // GetScopes returns the scopes configured for the hook. If no scopes are configured, it returns an empty slice.
@@ -463,6 +464,11 @@ func (l *LuaHooks) GetScopes() []string {
 	}
 
 	return l.Scopes
+}
+
+// IsPublic reports whether this hook is explicitly intended to allow unauthenticated calls.
+func (l *LuaHooks) IsPublic() bool {
+	return l != nil && l.Public
 }
 
 // GetLocation retrieves the Location from the LuaHooks. Returns an empty string if the LuaHooks is nil.

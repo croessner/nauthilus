@@ -84,6 +84,12 @@ func (h customRequestHandler) serve(ctx *gin.Context) {
 		return
 	}
 
+	if !hook.HasCustomScript(hookName, hookMethod) {
+		ctx.AbortWithStatus(http.StatusNotFound)
+
+		return
+	}
+
 	if !hook.HasRequiredScopes(ctx, snap.File, h.logger, h.validator, hookName, hookMethod) {
 		return
 	}

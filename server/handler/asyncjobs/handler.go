@@ -18,7 +18,9 @@ package asyncjobs
 
 import (
 	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,7 +35,10 @@ func New(deps *handlerdeps.Deps) *Handler { return &Handler{deps: deps} }
 
 // Register provides the exported Register method.
 func (h *Handler) Register(router gin.IRouter) {
-	ag := router.Group("/async")
+	ag := router.Group(
+		"/async",
+		oidcbearer.RequireAnyScope(definitions.ScopeSecurity, definitions.ScopeAdmin),
+	)
 
 	ag.GET("/jobs/:jobId", core.NewAsyncJobStatusHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
 }

@@ -41,6 +41,7 @@ func registerCoreConfigFlags(fs *flag.FlagSet, cfg *Config) {
 	fs.BoolVar(&cfg.Shuffle, "shuffle", cfg.Shuffle, "")
 	fs.StringVar(&cfg.HeadersList, "headers", cfg.HeadersList, "")
 	fs.StringVar(&cfg.BasicAuth, "basic-auth", cfg.BasicAuth, "")
+	fs.BoolVar(&cfg.InsecureTLS, "insecure-tls", cfg.InsecureTLS, "")
 	fs.IntVar(&cfg.OKStatus, "ok-status", cfg.OKStatus, "")
 	fs.BoolVar(&cfg.UseJSONFlag, "json-ok", cfg.UseJSONFlag, "")
 	fs.BoolVar(&cfg.Verbose, "v", cfg.Verbose, "")
@@ -133,6 +134,7 @@ func configRequestFlagArgs() []string {
 		"-shuffle=false",
 		"-headers", "X-Test: true",
 		"-basic-auth", "user:pass",
+		"-insecure-tls",
 		"-ok-status", "201",
 		"-json-ok=false",
 		"-v",
@@ -237,6 +239,7 @@ func assertRequestConfigFlagValues(t *testing.T, cfg *Config) {
 	assert.False(t, cfg.Shuffle)
 	assert.Equal(t, "X-Test: true", cfg.HeadersList)
 	assert.Equal(t, "user:pass", cfg.BasicAuth)
+	assert.True(t, cfg.InsecureTLS)
 	assert.Equal(t, 201, cfg.OKStatus)
 	assert.False(t, cfg.UseJSONFlag)
 	assert.True(t, cfg.Verbose)

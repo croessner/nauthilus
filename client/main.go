@@ -83,6 +83,7 @@ func registerInputEndpointFlags(cfg *engine.Config) {
 	flag.StringVar(&cfg.Method, "method", cfg.Method, "HTTP method")
 	flag.StringVar(&cfg.HeadersList, "headers", cfg.HeadersList, "Extra headers, separated by '||'")
 	flag.StringVar(&cfg.BasicAuth, "basic-auth", cfg.BasicAuth, "HTTP Basic-Auth credentials in format username:password")
+	flag.BoolVar(&cfg.InsecureTLS, "insecure-tls", cfg.InsecureTLS, "Disable TLS certificate verification for development or isolated test targets only")
 	flag.IntVar(&cfg.OKStatus, "ok-status", cfg.OKStatus, "HTTP status indicating success when not using JSON flag")
 	flag.BoolVar(&cfg.UseJSONFlag, "json-ok", cfg.UseJSONFlag, "Expect JSON {ok:true|false} in response")
 }
@@ -216,7 +217,7 @@ func applyClientFlagUsage() {
 	flagutil.ApplyGroupedDoubleDashUsage(flag.CommandLine, "nauthilus-client", []flagutil.UsageGroup{
 		{
 			Title: "Input & Endpoint",
-			Flags: []string{"csv", "url", "method", "headers", "basic-auth", "ok-status", "json-ok"},
+			Flags: []string{"csv", "url", "method", "headers", "basic-auth", "insecure-tls", "ok-status", "json-ok"},
 		},
 		{
 			Title: "Execution",

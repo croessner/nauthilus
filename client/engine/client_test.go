@@ -2,12 +2,34 @@ package engine
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestAuthClientDefaultTransportVerifiesCertificates(t *testing.T) {
+	cfg := DefaultConfig()
+	client := NewAuthClient(cfg)
+
+	transport, ok := client.HTTPClient().Transport.(*http.Transport)
+	assert.True(t, ok)
+
+	assert.False(t, transport.TLSClientConfig != nil && transport.TLSClientConfig.InsecureSkipVerify)
+}
+
+func TestAuthClientExplicitInsecureTLSMode(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.InsecureTLS = true
+	client := NewAuthClient(cfg)
+
+	transport, ok := client.HTTPClient().Transport.(*http.Transport)
+	assert.True(t, ok)
+
+	assert.Equal(t, &tls.Config{InsecureSkipVerify: true}, transport.TLSClientConfig)
+}
 
 func TestIdempotencyKey(t *testing.T) {
 	cfg := DefaultConfig()

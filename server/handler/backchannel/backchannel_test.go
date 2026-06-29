@@ -9,15 +9,19 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/handler/asyncjobs"
 	handlerbruteforce "github.com/croessner/nauthilus/v3/server/handler/bruteforce"
 	handlercache "github.com/croessner/nauthilus/v3/server/handler/cache"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redismock/v9"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 )
@@ -64,6 +68,7 @@ func backchannelAuthConfig(basicEnabled bool, oidcEnabled bool, withHook bool) c
 				Location:   "/hooks/demo",
 				Method:     "POST",
 				ScriptPath: "/tmp/demo.lua",
+				Public:     true,
 			}},
 		}
 	}
@@ -211,6 +216,57 @@ func TestBackchannelMutationRoutesRejectBaseScopeBearer(t *testing.T) {
 	}
 }
 
+func TestBackchannelAsyncJobStatusRejectsBaseScopeBearer(t *testing.T) {
+	router, mock := newBackchannelAsyncJobStatusRouter(t, definitions.ScopeAuthenticate)
+	jobID := "job-123"
+	key := "test:" + "async:job:" + jobID
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	mock.ExpectHGetAll(key).SetVal(map[string]string{
+		"status":      "DONE",
+		"type":        "TEST",
+		"createdAt":   now,
+		"startedAt":   now,
+		"finishedAt":  now,
+		"resultCount": "3",
+		"error":       "",
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/async/jobs/"+jobID, nil)
+	request.Header.Set("Authorization", "Bearer base-scope-token")
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusForbidden, response.Code)
+}
+
+func TestBackchannelAsyncJobStatusAllowsSecurityScopeBearer(t *testing.T) {
+	router, mock := newBackchannelAsyncJobStatusRouter(t, definitions.ScopeAuthenticate+" "+definitions.ScopeSecurity)
+	jobID := "job-123"
+	key := "test:" + "async:job:" + jobID
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	mock.ExpectHGetAll(key).SetVal(map[string]string{
+		"status":      "DONE",
+		"type":        "TEST",
+		"createdAt":   now,
+		"startedAt":   now,
+		"finishedAt":  now,
+		"resultCount": "3",
+		"error":       "",
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/async/jobs/"+jobID, nil)
+	request.Header.Set("Authorization", "Bearer security-scope-token")
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func newBackchannelAuthTestRouter(cfg config.File, validator *recordingTokenValidator) *gin.Engine {
 	router := gin.New()
 	router.Use(backchannelAuthMiddleware(cfg, validator, slog.Default()))
@@ -219,6 +275,36 @@ func newBackchannelAuthTestRouter(cfg config.File, validator *recordingTokenVali
 	})
 
 	return router
+}
+
+func newBackchannelAsyncJobStatusRouter(t *testing.T, scope string) (*gin.Engine, redismock.ClientMock) {
+	t.Helper()
+
+	cfg := backchannelAuthConfig(false, true, false)
+	cfg.GetServer().Redis.Prefix = "test:"
+
+	db, mock := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+
+	validator := &recordingTokenValidator{
+		claims: backchannelTestClaims(scope),
+	}
+
+	router := gin.New()
+	router.Use(gin.Recovery())
+
+	group := router.Group("/api/v1")
+	group.Use(oidcBackchannelTestMiddleware(cfg, validator))
+
+	deps := &handlerdeps.Deps{
+		Cfg:    cfg,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Redis:  redisClient,
+	}
+
+	asyncjobs.New(deps).Register(group)
+
+	return router, mock
 }
 
 // newBackchannelMutationScopeRouter builds cache and brute-force routes behind bearer base auth.

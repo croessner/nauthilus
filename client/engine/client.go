@@ -34,6 +34,20 @@ func NewAuthClient(cfg *Config) *AuthClient {
 		bfHeaderName = "X-Nauthilus-Bruteforce"
 	}
 
+	transport := newAuthClientTransport(cfg)
+
+	return &AuthClient{
+		config:       cfg,
+		bfHeaderName: bfHeaderName,
+		httpClient: &http.Client{
+			Timeout:   time.Duration(cfg.TimeoutMs) * time.Millisecond,
+			Transport: transport,
+		},
+	}
+}
+
+// newAuthClientTransport builds the HTTP transport and keeps TLS verification enabled unless explicitly disabled.
+func newAuthClientTransport(cfg *Config) *http.Transport {
 	transport := &http.Transport{
 		Proxy: nil,
 		DialContext: (&net.Dialer{
@@ -47,19 +61,15 @@ func NewAuthClient(cfg *Config) *AuthClient {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableCompression:    true,
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
 	}
 
-	return &AuthClient{
-		config:       cfg,
-		bfHeaderName: bfHeaderName,
-		httpClient: &http.Client{
-			Timeout:   time.Duration(cfg.TimeoutMs) * time.Millisecond,
-			Transport: transport,
-		},
+	if cfg != nil && cfg.InsecureTLS {
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
 	}
+
+	return transport
 }
 
 // BaseHeader provides the exported BaseHeader method.

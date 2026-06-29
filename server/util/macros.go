@@ -43,12 +43,10 @@ type MacroSource struct {
 }
 
 type macroReplacement struct {
-	source    string
 	modifier  string
 	variable  string
 	lowerCase bool
 	upperCase bool
-	replaced  bool
 }
 
 /*
@@ -76,17 +74,19 @@ account - authenticated account name
 user_dn - LDAP distinguished name of the current user
 */
 func (m *MacroSource) ReplaceMacros(source string) (dest string) {
-	replacement, ok := newMacroReplacement(source)
-	if !ok {
-		return source
-	}
+	return macroPattern.ReplaceAllStringFunc(source, func(match string) string {
+		replacement, ok := newMacroReplacement(match)
+		if !ok {
+			return match
+		}
 
-	value, shouldReplace := m.macroValue(replacement)
-	if shouldReplace {
-		dest = replacement.replaceFirst(value)
-	}
+		value, shouldReplace := m.macroValue(replacement)
+		if !shouldReplace {
+			return match
+		}
 
-	return m.ReplaceMacros(dest)
+		return value
+	})
 }
 
 // newMacroReplacement parses the first macro occurrence in source.
@@ -106,7 +106,6 @@ func newMacroReplacement(source string) (macroReplacement, bool) {
 	}
 
 	result := macroReplacement{
-		source:   source,
 		modifier: macroResult[1],
 		variable: macroResult[2],
 	}
@@ -198,19 +197,6 @@ func (r macroReplacement) applyCaseAndEscape(value string) string {
 	}
 
 	return EscapeLDAPFilter(value)
-}
-
-// replaceFirst substitutes only the first macro occurrence in the original source.
-func (r *macroReplacement) replaceFirst(value string) string {
-	return macroPattern.ReplaceAllStringFunc(r.source, func(val string) string {
-		if r.replaced {
-			return val
-		}
-
-		r.replaced = true
-
-		return macroPattern.ReplaceAllString(val, value)
-	})
 }
 
 // ExpandLDAPFilter replaces legacy placeholders and macros using LDAP-safe escaping.
