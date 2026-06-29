@@ -82,10 +82,6 @@ type SupportedManagementClient interface {
 		string,
 		...management.RequestEditorFn,
 	) (*management.GetAsyncJobStatusResponse, error)
-	LoadRuntimeConfig(
-		context.Context,
-		...management.RequestEditorFn,
-	) (*management.LoadRuntimeConfigResponse, error)
 	ListOIDCSessions(
 		context.Context,
 		string,
@@ -315,20 +311,6 @@ func (client *ManagementClient) GetAsyncJobStatus(
 	}
 
 	return generated.GetAsyncJobStatusWithResponse(ctx, jobID, requestEditors...)
-}
-
-// LoadRuntimeConfig loads the current runtime configuration through the
-// generated management contract.
-func (client *ManagementClient) LoadRuntimeConfig(
-	ctx context.Context,
-	requestEditors ...management.RequestEditorFn,
-) (*management.LoadRuntimeConfigResponse, error) {
-	generated, err := client.generatedClient()
-	if err != nil {
-		return nil, err
-	}
-
-	return generated.LoadRuntimeConfigWithResponse(ctx, requestEditors...)
 }
 
 // ListOIDCSessions lists OIDC sessions for one user through the generated

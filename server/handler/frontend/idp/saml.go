@@ -762,7 +762,7 @@ func populateSAMLSessionAttributes(session *saml.Session, user *backend.User, sa
 
 	allowedAttrs := samlSP.GetAllowedAttributes()
 	for k, v := range user.Attributes {
-		if !shouldIncludeSAMLAttribute(k, v, allowedAttrs) {
+		if !shouldIncludeSAMLAttribute(k, v, allowedAttrs, user.TOTPSecretField, user.TOTPRecoveryField) {
 			continue
 		}
 
@@ -773,8 +773,12 @@ func populateSAMLSessionAttributes(session *saml.Session, user *backend.User, sa
 }
 
 // shouldIncludeSAMLAttribute applies SAML attribute filtering rules.
-func shouldIncludeSAMLAttribute(name string, values []any, allowedAttrs []string) bool {
+func shouldIncludeSAMLAttribute(name string, values []any, allowedAttrs []string, sensitiveNames ...string) bool {
 	if len(values) == 0 {
+		return false
+	}
+
+	if core.IsSensitiveOutputAttribute(name, sensitiveNames...) {
 		return false
 	}
 

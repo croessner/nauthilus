@@ -390,9 +390,13 @@ func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
 	resp := authResponse{
 		OK:           true,
 		AccountField: auth.Runtime.AccountField,
-		TOTPSecret:   auth.Runtime.TOTPSecretField,
+		TOTPSecret:   "",
 		Backend:      int(auth.Runtime.SourcePassDBBackend),
-		Attributes:   auth.Attributes.Attributes,
+		Attributes: FilterSensitiveOutputAttributes(
+			auth.GetAttributesCopy(),
+			auth.Runtime.TOTPSecretField,
+			auth.Runtime.TOTPRecoveryField,
+		),
 	}
 
 	if auth.Request.Service == definitions.ServCBOR {

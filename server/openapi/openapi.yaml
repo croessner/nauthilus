@@ -593,28 +593,6 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/Error"
-  /api/v1/config/load:
-    get:
-      tags:
-        - Config
-      operationId: loadRuntimeConfig
-      summary: Return the loaded runtime configuration as JSON text.
-      security:
-        - backchannelBasic: []
-        - backchannelBearer: []
-      responses:
-        "200":
-          description: Runtime configuration wrapped in the standard result envelope.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ConfigLoadResult"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "500":
-          $ref: "#/components/responses/Error"
   /api/v1/async/jobs/{jobId}:
     get:
       tags:
@@ -1616,14 +1594,6 @@ components:
           properties:
             result:
               $ref: "#/components/schemas/CacheFlushPayload"
-    ConfigLoadResult:
-      allOf:
-        - $ref: "#/components/schemas/ResultEnvelope"
-        - type: object
-          properties:
-            result:
-              type: string
-              description: JSON-encoded runtime configuration.
     ErrorResponse:
       type: object
       required:

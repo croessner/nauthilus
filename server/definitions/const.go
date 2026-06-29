@@ -974,9 +974,6 @@ const (
 	// CatBruteForce is a constant for the "bruteforce" category.
 	CatBruteForce = "bruteforce"
 
-	// CatConfig is a constant representing the "config" category.
-	CatConfig = "config"
-
 	// ServNginx is a constant for the "nginx" service.
 	ServNginx = "nginx"
 
@@ -1000,9 +997,6 @@ const (
 
 	// ServList is a constant for the "list" service.
 	ServList = "list"
-
-	// ServLoad is a constant representing the "load" service category.
-	ServLoad = "load"
 
 	// ServIDP is a constant for the "idp" service.
 	ServIDP = "idp"

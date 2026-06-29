@@ -261,28 +261,6 @@ func TestSupportedManagementClientEnqueuesBruteForceRuleFlush(t *testing.T) {
 	requireStatusCode(t, response, http.StatusAccepted)
 }
 
-func TestSupportedManagementClientLoadsRuntimeConfig(t *testing.T) {
-	client := newSupportedManagementClient(t, requesttest.ClientSmokeRoute{
-		Response: management.ConfigLoadResult{
-			Session:   supportedClientConfigSession,
-			Object:    definitions.CatConfig,
-			Operation: definitions.ServLoad,
-			Result:    `{"runtime":{"workers":1}}`,
-		},
-		Method: http.MethodGet,
-		Path:   "/api/v1/config/load",
-		Status: http.StatusOK,
-	})
-
-	response, err := client.LoadRuntimeConfig(context.Background())
-	if err != nil {
-		t.Fatalf("load runtime config through supported client: %v", err)
-	}
-
-	requireStatusCode(t, response, http.StatusOK)
-	requireConfigLoadResult(t, response)
-}
-
 func TestSupportedManagementClientListsOIDCSessions(t *testing.T) {
 	client := newSupportedManagementClient(t, requesttest.ClientSmokeRoute{
 		Response: management.OIDCSessions{
@@ -798,24 +776,6 @@ func requireCacheFlushResult(t testing.TB, response *management.FlushUserCacheRe
 	}
 
 	requireStringPointer(t, "cache user", response.JSON200.Result.User, supportedClientCacheUser)
-}
-
-func requireConfigLoadResult(t testing.TB, response *management.LoadRuntimeConfigResponse) {
-	t.Helper()
-
-	if response.JSON200 == nil {
-		t.Fatal("JSON200 response missing")
-
-		return
-	}
-
-	if response.JSON200.Object != definitions.CatConfig {
-		t.Fatalf("object = %q, want %q", response.JSON200.Object, definitions.CatConfig)
-	}
-
-	if response.JSON200.Operation != definitions.ServLoad {
-		t.Fatalf("operation = %q, want %q", response.JSON200.Operation, definitions.ServLoad)
-	}
 }
 
 func requireOIDCSession(t testing.TB, response *management.ListOIDCSessionsResponse) {

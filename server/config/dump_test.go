@@ -203,6 +203,24 @@ func TestRenderNonDefaultConfigDump_RedactsSensitiveValuesByDefault(t *testing.T
 	}
 }
 
+func TestConfigDumpRedactsDSNLeaves(t *testing.T) {
+	SetConfigDumpPrintSensitiveValues(false)
+
+	testCases := []string{
+		"plugins.database.dsn",
+		"plugins.database.connection_string",
+		"plugins.database.data_source_name",
+	}
+
+	for _, path := range testCases {
+		t.Run(path, func(t *testing.T) {
+			if !shouldRedactConfigDumpValue(path, "postgres://user:password@example.test/db") {
+				t.Fatalf("shouldRedactConfigDumpValue(%q) = false, want true", path)
+			}
+		})
+	}
+}
+
 func TestRenderNonDefaultConfigDump_PrintsSensitiveValuesWhenEnabled(t *testing.T) {
 	SetConfigDumpPrintSensitiveValues(true)
 	t.Cleanup(func() {

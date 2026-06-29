@@ -45,6 +45,8 @@ import (
 
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml"
+	"github.com/croessner/nauthilus/v3/server/backend"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
@@ -56,6 +58,13 @@ import (
 	"github.com/go-redis/redismock/v9"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/stretchr/testify/assert"
+)
+
+const (
+	samlSensitiveTOTPField     = "ldap_totp_secret"
+	samlSensitiveRecoveryField = "ldap_totp_recovery"
+	samlSensitiveTOTPValue     = "fake-saml-totp-seed-not-for-output"
+	samlSensitiveRecoveryValue = "fake-saml-recovery-code-not-for-output"
 )
 
 type mockSAMLCfg struct {
@@ -101,6 +110,42 @@ func (m *mockSAMLCfg) GetServer() *config.ServerSection {
 			Prefix: m.redisPrefix,
 		},
 	}
+}
+
+func TestSAMLUnrestrictedAttributesSuppressSensitive(t *testing.T) {
+	session := &saml.Session{}
+	user := newSAMLAttributeUser(map[string][]any{
+		"email":                    {"alice@example.com"},
+		samlSensitiveTOTPField:     {samlSensitiveTOTPValue},
+		samlSensitiveRecoveryField: {samlSensitiveRecoveryValue},
+	})
+	sp := &config.SAML2ServiceProvider{}
+
+	populateSAMLSessionAttributes(session, user, sp)
+
+	attrs := samlAttributesByName(session.CustomAttributes)
+	for _, name := range []string{samlSensitiveTOTPField, samlSensitiveRecoveryField} {
+		if _, found := attrs[name]; found {
+			t.Fatalf("SAML assertion attributes unexpectedly included sensitive key %q", name)
+		}
+	}
+
+	assertSAMLAttributeValue(t, attrs, "email", "alice@example.com")
+}
+
+func TestSAMLUnrestrictedAttributesPreservesAllowedAttribute(t *testing.T) {
+	session := &saml.Session{}
+	user := newSAMLAttributeUser(map[string][]any{
+		"email":       {"alice@example.com"},
+		"displayName": {"Alice Example"},
+	})
+	sp := &config.SAML2ServiceProvider{}
+
+	populateSAMLSessionAttributes(session, user, sp)
+
+	attrs := samlAttributesByName(session.CustomAttributes)
+	assertSAMLAttributeValue(t, attrs, "email", "alice@example.com")
+	assertSAMLAttributeValue(t, attrs, "displayName", "Alice Example")
 }
 
 func TestSAMLHandler_Metadata(t *testing.T) {
@@ -150,6 +195,37 @@ func TestSAMLHandler_Metadata(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
 	assert.Contains(t, w.Body.String(), entityID)
+}
+
+func newSAMLAttributeUser(attributes bktype.AttributeMapping) *backend.User {
+	return &backend.User{
+		Name:              "alice",
+		DisplayName:       "Alice Example",
+		Attributes:        attributes,
+		TOTPSecretField:   samlSensitiveTOTPField,
+		TOTPRecoveryField: samlSensitiveRecoveryField,
+	}
+}
+
+func samlAttributesByName(attributes []saml.Attribute) map[string]string {
+	result := make(map[string]string, len(attributes))
+	for _, attr := range attributes {
+		if len(attr.Values) == 0 {
+			continue
+		}
+
+		result[attr.Name] = attr.Values[0].Value
+	}
+
+	return result
+}
+
+func assertSAMLAttributeValue(t *testing.T, attrs map[string]string, name string, want string) {
+	t.Helper()
+
+	if got := attrs[name]; got != want {
+		t.Fatalf("SAML attribute %q = %q, want %q", name, got, want)
+	}
 }
 
 func TestBuildSPKeyDescriptors(t *testing.T) {

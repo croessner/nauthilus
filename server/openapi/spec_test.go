@@ -82,7 +82,6 @@ var stableMachineOperations = []operationExpectation{
 	{method: methodDelete, path: "/api/v1/bruteforce/flush/async"},
 	{method: methodDelete, path: "/api/v1/cache/flush"},
 	{method: methodDelete, path: "/api/v1/cache/flush/async"},
-	{method: methodGet, path: "/api/v1/config/load"},
 	{method: methodGet, path: "/api/v1/async/jobs/{jobId}"},
 	{method: methodGet, path: "/api/v1/mfa/totp/setup"},
 	{method: methodPost, path: "/api/v1/mfa/totp/register"},

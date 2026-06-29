@@ -17,7 +17,9 @@ package core_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
@@ -27,6 +29,13 @@ import (
 	"github.com/croessner/nauthilus/v3/server/log"
 
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	sensitiveResponseTOTPField     = "ldap_totp_secret"
+	sensitiveResponseRecoveryField = "ldap_totp_recovery"
+	sensitiveResponseTOTPValue     = "fake-totp-seed-not-for-output"
+	sensitiveResponseRecoveryValue = "fake-recovery-code-not-for-output"
 )
 
 func setupMinimalConfig(t *testing.T) {
@@ -41,6 +50,92 @@ func setupMinimalConfig(t *testing.T) {
 	corepkg.SetDefaultConfigFile(config.GetFile())
 	corepkg.SetDefaultEnvironment(config.GetEnvironment())
 	corepkg.SetDefaultLogger(log.Logger)
+}
+
+func TestAuthResponseSuppressesSensitiveAttributes(t *testing.T) {
+	for _, service := range []string{definitions.ServJSON, definitions.ServCBOR} {
+		t.Run(service, func(t *testing.T) {
+			auth, body := runAuthResponseBody(t, service, map[string][]any{
+				"uid":                          {"alice"},
+				sensitiveResponseTOTPField:     {sensitiveResponseTOTPValue},
+				sensitiveResponseRecoveryField: {sensitiveResponseRecoveryValue},
+			})
+
+			assertAuthResponseOmitsSensitiveFields(t, body, auth.Runtime.TOTPSecretField, sensitiveResponseTOTPValue, sensitiveResponseRecoveryValue)
+		})
+	}
+}
+
+func TestAuthResponsePreservesSafeAttributes(t *testing.T) {
+	auth, body := runAuthResponseBody(t, definitions.ServJSON, map[string][]any{
+		"uid":         {"alice"},
+		"displayName": {"Alice Example"},
+	})
+
+	attrs, ok := body["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("attributes = %T, want object", body["attributes"])
+	}
+
+	if got := firstStringAttribute(attrs, "uid"); got != "alice" {
+		t.Fatalf("uid attribute = %q, want alice", got)
+	}
+
+	if got := firstStringAttribute(attrs, "displayName"); got != "Alice Example" {
+		t.Fatalf("displayName attribute = %q, want Alice Example", got)
+	}
+
+	if got, _ := body["totp_secret_field"].(string); got != "" {
+		t.Fatalf("totp_secret_field = %q, want empty", got)
+	}
+
+	if auth.Runtime.GUID == "" {
+		t.Fatal("auth runtime GUID unexpectedly empty")
+	}
+}
+
+func TestHeaderSuppressesSensitiveAttributes(t *testing.T) {
+	setupMinimalConfig(t)
+
+	w, ctx, auth := newHeaderResponseAuthState(t, definitions.ServHeader)
+	auth.Runtime.TOTPSecretField = sensitiveResponseTOTPField
+	auth.Runtime.TOTPRecoveryField = sensitiveResponseRecoveryField
+	auth.ReplaceAllAttributes(map[string][]any{
+		"uid":                          {"alice"},
+		sensitiveResponseTOTPField:     {sensitiveResponseTOTPValue},
+		sensitiveResponseRecoveryField: {sensitiveResponseRecoveryValue},
+	})
+
+	auth.AuthOK(ctx)
+
+	for _, header := range []string{
+		"X-Nauthilus-" + sensitiveResponseTOTPField,
+		"X-Nauthilus-" + sensitiveResponseRecoveryField,
+	} {
+		if got := w.Header().Get(header); got != "" {
+			t.Fatalf("%s = %q, want empty", header, got)
+		}
+	}
+}
+
+func TestHeaderPreservesSafeAttributes(t *testing.T) {
+	setupMinimalConfig(t)
+
+	w, ctx, auth := newHeaderResponseAuthState(t, definitions.ServHeader)
+	auth.ReplaceAllAttributes(map[string][]any{
+		"uid":         {"alice"},
+		"displayName": {"Alice Example"},
+	})
+
+	auth.AuthOK(ctx)
+
+	if got := w.Header().Get("X-Nauthilus-uid"); got != "alice" {
+		t.Fatalf("X-Nauthilus-uid = %q, want alice", got)
+	}
+
+	if got := w.Header().Get("X-Nauthilus-displayName"); got != "Alice Example" {
+		t.Fatalf("X-Nauthilus-displayName = %q, want Alice Example", got)
+	}
 }
 
 func TestResponseWriter_OK_NginxSetsHeaders(t *testing.T) {
@@ -92,6 +187,102 @@ func TestResponseWriter_OK_NginxSetsHeaders(t *testing.T) {
 	if got := w.Header().Get("Auth-Port"); got != "993" {
 		t.Fatalf("Auth-Port = %q, want %q", got, "993")
 	}
+}
+
+func runAuthResponseBody(t *testing.T, service string, attributes map[string][]any) (*corepkg.AuthState, map[string]any) {
+	t.Helper()
+	setupMinimalConfig(t)
+
+	w, ctx, auth := newHeaderResponseAuthState(t, service)
+	auth.Runtime.SourcePassDBBackend = definitions.BackendLDAP
+	auth.Runtime.AccountField = "uid"
+	auth.Runtime.TOTPSecretField = sensitiveResponseTOTPField
+	auth.Runtime.TOTPRecoveryField = sensitiveResponseRecoveryField
+	auth.ReplaceAllAttributes(attributes)
+
+	auth.AuthOK(ctx)
+
+	if w.Code != auth.Runtime.StatusCodeOK {
+		t.Fatalf("status code = %d, want %d", w.Code, auth.Runtime.StatusCodeOK)
+	}
+
+	var body map[string]any
+
+	switch service {
+	case definitions.ServCBOR:
+		if err := cborcodec.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("invalid CBOR body: %v", err)
+		}
+	default:
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("invalid JSON body: %v", err)
+		}
+	}
+
+	return auth, body
+}
+
+func newHeaderResponseAuthState(t *testing.T, service string) (*httptest.ResponseRecorder, *gin.Context, *corepkg.AuthState) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
+
+	cfgSettings := &config.FileSettings{Server: &config.ServerSection{}}
+	deps := corepkg.AuthDeps{Cfg: cfgSettings}
+	auth := corepkg.NewAuthStateFromContextWithDeps(ctx, deps).(*corepkg.AuthState)
+	auth.Request.Service = service
+	auth.Request.Protocol = config.NewProtocol("imap")
+	auth.Runtime.GUID = "guid-" + strings.ToLower(service)
+	auth.SetStatusCodes(auth.Request.Service)
+
+	return w, ctx, auth
+}
+
+func assertAuthResponseOmitsSensitiveFields(t *testing.T, body map[string]any, sensitiveNamesAndValues ...string) {
+	t.Helper()
+
+	bodyText := fmt.Sprintf("%#v", body)
+
+	for _, sensitive := range sensitiveNamesAndValues {
+		if strings.Contains(bodyText, sensitive) {
+			t.Fatalf("auth response exposed sensitive value %q in %s", sensitive, bodyText)
+		}
+	}
+
+	for _, name := range []string{sensitiveResponseTOTPField, sensitiveResponseRecoveryField} {
+		if attributeMapContainsKey(body["attributes"], name) {
+			t.Fatalf("attributes unexpectedly included sensitive key %q: %#v", name, body["attributes"])
+		}
+	}
+}
+
+func attributeMapContainsKey(value any, name string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		_, found := typed[name]
+
+		return found
+	case map[interface{}]interface{}:
+		_, found := typed[name]
+
+		return found
+	default:
+		return false
+	}
+}
+
+func firstStringAttribute(attrs map[string]any, name string) string {
+	values, ok := attrs[name].([]any)
+	if !ok || len(values) == 0 {
+		return ""
+	}
+
+	value, _ := values[0].(string)
+
+	return value
 }
 
 func TestResponseWriter_OK_JSONBodyIncludesOK(t *testing.T) {

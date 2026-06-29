@@ -115,6 +115,10 @@ func setNginxHeadersWithDeps(cfg config.File, logger *slog.Logger, ctx *gin.Cont
 func setHeaderHeaders(ctx *gin.Context, auth *AuthState) {
 	if len(auth.Attributes.Attributes) > 0 {
 		for name, value := range auth.Attributes.Attributes {
+			if IsSensitiveOutputAttribute(name, auth.Runtime.TOTPSecretField, auth.Runtime.TOTPRecoveryField) {
+				continue
+			}
+
 			handleAttributeValue(ctx, name, value)
 		}
 	}

@@ -31,7 +31,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/handler/auth"
 	"github.com/croessner/nauthilus/v3/server/handler/bruteforce"
 	"github.com/croessner/nauthilus/v3/server/handler/cache"
-	"github.com/croessner/nauthilus/v3/server/handler/confighandler"
 	"github.com/croessner/nauthilus/v3/server/handler/custom"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/handler/devui"
@@ -304,7 +303,6 @@ func useManagementOpenAPIValidation(authenticatedGroup *gin.RouterGroup, deps *h
 func registerManagementModules(authenticatedGroup *gin.RouterGroup, deps *handlerdeps.Deps) {
 	auth.New(deps).Register(authenticatedGroup)
 	bruteforce.New(deps).Register(authenticatedGroup)
-	confighandler.New(deps).Register(authenticatedGroup)
 	cache.New(deps).Register(authenticatedGroup)
 	asyncjobs.New(deps).Register(authenticatedGroup)
 	mfa_backchannel.New(deps).Register(authenticatedGroup)

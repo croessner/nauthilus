@@ -61,6 +61,9 @@ const (
 	encryptionSecretConfigLeaf      = "encryption_secret"
 	clientSecretConfigLeaf          = "client_secret"
 	clientPrivateKeyConfigLeaf      = "client_private_key"
+	connectionStringConfigLeaf      = "connection_string"
+	dataSourceNameConfigLeaf        = "data_source_name"
+	dsnConfigLeaf                   = "dsn"
 	staticTokenConfigLeaf           = "static_token"
 	testPasswordConfigLeaf          = "test_password"
 )
@@ -931,7 +934,7 @@ func shouldRedactConfigDumpValue(path string, value any) bool {
 	}
 
 	switch configPathLeaf(path) {
-	case passwordConfigLeaf, passwordEncodedConfigLeaf, passwordNonceConfigLeaf, encryptionSecretConfigLeaf, bindPWConfigLeaf, clientSecretConfigLeaf, clientPrivateKeyConfigLeaf, staticTokenConfigLeaf, testPasswordConfigLeaf:
+	case passwordConfigLeaf, passwordEncodedConfigLeaf, passwordNonceConfigLeaf, encryptionSecretConfigLeaf, bindPWConfigLeaf, clientSecretConfigLeaf, clientPrivateKeyConfigLeaf, connectionStringConfigLeaf, dataSourceNameConfigLeaf, dsnConfigLeaf, staticTokenConfigLeaf, testPasswordConfigLeaf:
 		return true
 	default:
 		return false

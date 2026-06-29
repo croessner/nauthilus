@@ -167,16 +167,6 @@ type CacheFlushResult struct {
 	Session   string            `json:"session"`
 }
 
-// ConfigLoadResult defines model for ConfigLoadResult.
-type ConfigLoadResult struct {
-	Object    string `json:"object"`
-	Operation string `json:"operation"`
-
-	// Result JSON-encoded runtime configuration.
-	Result  string `json:"result"`
-	Session string `json:"session"`
-}
-
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
 	Error string `json:"error"`
@@ -456,9 +446,6 @@ type ClientInterface interface {
 
 	EnqueueUserCacheFlush(ctx context.Context, body EnqueueUserCacheFlushJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// LoadRuntimeConfig request
-	LoadRuntimeConfig(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// DeleteOIDCSessions request
 	DeleteOIDCSessions(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -609,18 +596,6 @@ func (c *Client) EnqueueUserCacheFlushWithBody(ctx context.Context, contentType 
 
 func (c *Client) EnqueueUserCacheFlush(ctx context.Context, body EnqueueUserCacheFlushJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEnqueueUserCacheFlushRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) LoadRuntimeConfig(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewLoadRuntimeConfigRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -1030,33 +1005,6 @@ func NewEnqueueUserCacheFlushRequestWithBody(server string, contentType string, 
 	return req, nil
 }
 
-// NewLoadRuntimeConfigRequest generates requests for LoadRuntimeConfig
-func NewLoadRuntimeConfigRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/config/load")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewDeleteOIDCSessionsRequest generates requests for DeleteOIDCSessions
 func NewDeleteOIDCSessionsRequest(server string, userId string) (*http.Request, error) {
 	var err error
@@ -1293,9 +1241,6 @@ type ClientWithResponsesInterface interface {
 	EnqueueUserCacheFlushWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnqueueUserCacheFlushResponse, error)
 
 	EnqueueUserCacheFlushWithResponse(ctx context.Context, body EnqueueUserCacheFlushJSONRequestBody, reqEditors ...RequestEditorFn) (*EnqueueUserCacheFlushResponse, error)
-
-	// LoadRuntimeConfigWithResponse request
-	LoadRuntimeConfigWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LoadRuntimeConfigResponse, error)
 
 	// DeleteOIDCSessionsWithResponse request
 	DeleteOIDCSessionsWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*DeleteOIDCSessionsResponse, error)
@@ -1543,39 +1488,6 @@ func (r EnqueueUserCacheFlushResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r EnqueueUserCacheFlushResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type LoadRuntimeConfigResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *ConfigLoadResult
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON500      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r LoadRuntimeConfigResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r LoadRuntimeConfigResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r LoadRuntimeConfigResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1843,15 +1755,6 @@ func (c *ClientWithResponses) EnqueueUserCacheFlushWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseEnqueueUserCacheFlushResponse(rsp)
-}
-
-// LoadRuntimeConfigWithResponse request returning *LoadRuntimeConfigResponse
-func (c *ClientWithResponses) LoadRuntimeConfigWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LoadRuntimeConfigResponse, error) {
-	rsp, err := c.LoadRuntimeConfig(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseLoadRuntimeConfigResponse(rsp)
 }
 
 // DeleteOIDCSessionsWithResponse request returning *DeleteOIDCSessionsResponse
@@ -2236,53 +2139,6 @@ func ParseEnqueueUserCacheFlushResponse(rsp *http.Response) (*EnqueueUserCacheFl
 			return nil, err
 		}
 		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseLoadRuntimeConfigResponse parses an HTTP response from a LoadRuntimeConfigWithResponse call
-func ParseLoadRuntimeConfigResponse(rsp *http.Response) (*LoadRuntimeConfigResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &LoadRuntimeConfigResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConfigLoadResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized

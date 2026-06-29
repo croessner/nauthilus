@@ -19,7 +19,6 @@ Management API:
 - `ManagementClient.FlushUserCache`
 - `ManagementClient.EnqueueUserCacheFlush`
 - `ManagementClient.GetAsyncJobStatus`
-- `ManagementClient.LoadRuntimeConfig`
 - `ManagementClient.ListOIDCSessions`
 - `ManagementClient.DeleteOIDCSessions`
 - `ManagementClient.DeleteOIDCSession`

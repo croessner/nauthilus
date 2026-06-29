@@ -51,6 +51,7 @@ const (
 
 	contractGateSyntheticName               = "synthetic"
 	contractPathAuthJSON                    = "/api/v1/auth/json"
+	contractPathConfigLoad                  = "/api/v1/config/load"
 	contractPathMFABackchannelTOTP          = "/api/v1/mfa-backchannel/totp"
 	contractPathMFABackchannelRecoveryCodes = "/api/v1/mfa-backchannel/totp/recovery-codes"
 	contractPathMFABackchannelWebAuthn      = "/api/v1/mfa-backchannel/webauthn/credential"
@@ -104,6 +105,22 @@ func TestManagementRoutesMatchOpenAPIContract(t *testing.T) {
 	assertAPIV1OperationsDeclareProtectedSecurity(t, document.operations)
 	assertManagementOpenAPIDocumentsUseBackchannelGuard(t, document.operations)
 	assertManagementOIDCSessionsUseBackchannelGuard(t, buildManagementContractRouter(t))
+}
+
+func TestManagementRoutesDoNotExposeConfigLoad(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	document := loadRouteContractDocument(t, openapi.ManagementYAML())
+	routes := routeSetFromGinRoutes(buildManagementContractRouter(t).Routes())
+	operation := routeOperation{method: contractMethodGet, path: contractPathConfigLoad}
+
+	if _, ok := routes[operation]; ok {
+		t.Fatalf("%s is still registered", operation.label())
+	}
+
+	if _, ok := document.operationSet()[operation]; ok {
+		t.Fatalf("%s is still documented", operation.label())
+	}
 }
 
 func TestIDPRoutesMatchOpenAPIContract(t *testing.T) {

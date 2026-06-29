@@ -268,16 +268,6 @@ func NewBruteForceFlushAsyncHandler(cfg config.File, logger *slog.Logger, redisC
 	}
 }
 
-// NewConfigLoadHandler constructs a Gin handler for the config load endpoint
-// using injected dependencies.
-func NewConfigLoadHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
-	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
-
-	return func(ctx *gin.Context) {
-		deps.HandleConfigLoad(ctx)
-	}
-}
-
 // For brief documentation of this file please have a look at the Markdown document REST-API.md.
 
 type masterUserIdentity struct {
@@ -1455,75 +1445,6 @@ func bindOptionalBruteForceFilter(ctx *gin.Context) (*bf.FilterCmd, error) {
 	}
 
 	return filterCmd, nil
-}
-
-// HandleConfigLoad handles loading the server configuration with strict auth checks.
-// If OIDC backchannel auth is enabled, a valid Bearer token with security/admin
-// scope is required. If only Basic auth is enabled, the request must have passed
-// Basic auth middleware. On success, the configuration is returned as JSON.
-func (deps restAdminDeps) HandleConfigLoad(ctx *gin.Context) {
-	if err := deps.validate(); err != nil {
-		ctx.AbortWithStatus(http.StatusInternalServerError)
-
-		return
-	}
-
-	cfg := deps.effectiveCfg()
-	logger := deps.effectiveLogger()
-
-	basicAuthEnabled := cfg.GetServer().GetBasicAuth().IsEnabled()
-	oidcAuthEnabled := cfg.GetServer().GetOIDCAuth().IsEnabled()
-	developerMode := getDefaultEnvironment().GetDevMode()
-
-	// Backchannel config endpoint must never be reachable without at least one auth mechanism.
-	if !developerMode && !basicAuthEnabled && !oidcAuthEnabled {
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{policyAttributeSuffixError: "backchannel authentication is not configured"})
-
-		return
-	}
-
-	basicAuthValidated, _ := ctx.Get(definitions.CtxBasicAuthValidatedKey)
-
-	// Check if OIDC Bearer token has the required scope.
-	claims := oidcbearer.GetClaimsFromContext(ctx)
-	if oidcAuthEnabled {
-		if claims == nil {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{policyAttributeSuffixError: authUnsupportedAuthorization})
-
-			return
-		}
-
-		if !oidcbearer.HasAnyScope(claims, definitions.ScopeSecurity, definitions.ScopeAdmin) {
-			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{policyAttributeSuffixError: "missing required scope: " + definitions.ScopeSecurity + " or " + definitions.ScopeAdmin})
-
-			return
-		}
-	} else if basicAuthEnabled {
-		authenticated, ok := basicAuthValidated.(bool)
-		if !ok || !authenticated {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{policyAttributeSuffixError: authUnsupportedAuthorization})
-
-			return
-		}
-	}
-
-	jsonBytes, err := cfg.GetConfigFileAsJSON()
-	if err != nil {
-		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{policyAttributeSuffixError: "failed to get config as JSON"})
-
-		return
-	}
-
-	guid := ctx.GetString(definitions.CtxGUIDKey)
-
-	level.Info(logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, definitions.ServLoad)
-
-	ctx.JSON(http.StatusOK, &restdto.Result{
-		GUID:      guid,
-		Object:    definitions.CatConfig,
-		Operation: definitions.ServLoad,
-		Result:    string(jsonBytes),
-	})
 }
 
 // Flush User

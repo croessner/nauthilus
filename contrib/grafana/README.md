@@ -10,7 +10,7 @@ General Nauthilus metrics dashboard.
 
 ### 2. nauthilus-rest-admin-infinity.json
 
-`Nauthilus REST Admin Center` is a Grafana Infinity dashboard for the authenticated backchannel API. It does not query `/api/v1/config/load`.
+`Nauthilus REST Admin Center` is a Grafana Infinity dashboard for the authenticated backchannel API. It does not expose runtime configuration readback.
 
 Included views:
 
