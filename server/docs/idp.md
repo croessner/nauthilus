@@ -1453,6 +1453,12 @@ curl -X POST https://issuer.example.com/oidc/token \
   -d "scope=api.read"
 ```
 
+Client-credentials access tokens issued by Nauthilus are resource-bound to the protected backchannel API. JWT access
+tokens carry `token_type=access_token` and `aud=nauthilus:backchannel`; opaque access tokens produce the same claims
+after validation. Backchannel bearer authentication rejects tokens that do not carry that purpose and audience.
+The `openid` scope is not valid for `client_credentials`; requests that include it fail with `invalid_scope` because
+service tokens do not represent an end-user identity and cannot receive ID tokens or UserInfo claims.
+
 ### 8.4 Configuration
 
 #### Client with client_secret authentication for client_credentials

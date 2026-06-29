@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	oidcserver "github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/gin-gonic/gin"
 )
 
@@ -36,6 +37,14 @@ func (h *OIDCHandler) handleClientCredentialsTokenExchange(ctx *gin.Context, cli
 
 	requestedScopes := strings.Fields(formValue(ctx, "scope"))
 	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
+	if err := oidcserver.ValidateClientCredentialsScopes(filteredScopes); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			frontChannelLogoutTaskStatusError: oidcErrorInvalidScope,
+			oidcJSONErrorDescriptionKey:       err.Error(),
+		})
+
+		return
+	}
 
 	accessToken, expiresIn, err := h.idp.IssueClientCredentialsToken(ctx.Request.Context(), clientID, filteredScopes)
 	if err != nil {

@@ -17,22 +17,71 @@ package definitions
 
 import "strings"
 
+const (
+	// ClaimTokenType identifies the issuer-owned access-token purpose claim.
+	ClaimTokenType = "token_type"
+
+	// TokenTypeAccessToken marks bearer tokens that may authorize protected APIs.
+	TokenTypeAccessToken = "access_token"
+
+	// TokenTypeIDToken marks identity assertions that must not authorize protected APIs.
+	TokenTypeIDToken = "id_token"
+
+	// AudienceBackchannelAPI is the protected resource audience for Nauthilus backchannel APIs.
+	AudienceBackchannelAPI = "nauthilus:backchannel"
+)
+
+const (
+	reservedClaimAudience  = "aud"
+	reservedClaimExpiresAt = "exp"
+	reservedClaimIssuedAt  = "iat"
+	reservedClaimIssuer    = "iss"
+	reservedClaimSubject   = "sub"
+)
+
+var reservedAccessTokenClaims = map[string]struct{}{
+	"active":               {},
+	reservedClaimAudience:  {},
+	"client_id":            {},
+	reservedClaimExpiresAt: {},
+	reservedClaimIssuedAt:  {},
+	reservedClaimIssuer:    {},
+	"jti":                  {},
+	"nbf":                  {},
+	"scope":                {},
+	reservedClaimSubject:   {},
+	ClaimTokenType:         {},
+}
+
+var reservedIDTokenClaims = map[string]struct{}{
+	"acr":                  {},
+	"amr":                  {},
+	"at_hash":              {},
+	reservedClaimAudience:  {},
+	"auth_time":            {},
+	"azp":                  {},
+	"c_hash":               {},
+	reservedClaimExpiresAt: {},
+	reservedClaimIssuedAt:  {},
+	reservedClaimIssuer:    {},
+	"nonce":                {},
+	reservedClaimSubject:   {},
+	ClaimTokenType:         {},
+}
+
 // IsReservedAccessTokenClaim reports whether a claim is owned by the token issuer.
 func IsReservedAccessTokenClaim(claimName string) bool {
-	switch strings.TrimSpace(claimName) {
-	case "active",
-		"aud",
-		"client_id",
-		"exp",
-		"iat",
-		"iss",
-		"jti",
-		"nbf",
-		"scope",
-		"sub",
-		"token_type":
-		return true
-	default:
-		return false
-	}
+	return isReservedOIDCClaim(claimName, reservedAccessTokenClaims)
+}
+
+// IsReservedIDTokenClaim reports whether a claim is owned by the ID-token issuer.
+func IsReservedIDTokenClaim(claimName string) bool {
+	return isReservedOIDCClaim(claimName, reservedIDTokenClaims)
+}
+
+// isReservedOIDCClaim checks a normalized claim name against one reserved registry.
+func isReservedOIDCClaim(claimName string, reserved map[string]struct{}) bool {
+	_, ok := reserved[strings.TrimSpace(claimName)]
+
+	return ok
 }

@@ -99,6 +99,7 @@ const (
 	oidcErrorInvalidRequest        = "invalid_request"
 	oidcErrorInvalidClient         = "invalid_client"
 	oidcErrorInvalidGrant          = "invalid_grant"
+	oidcErrorInvalidScope          = "invalid_scope"
 	oidcErrorUnauthorizedClient    = "unauthorized_client"
 	oidcErrorServerError           = sloRequestOutcomeServerError
 	oidcErrorExpiredToken          = "expired_token"

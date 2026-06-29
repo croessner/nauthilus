@@ -78,6 +78,16 @@ func scopeClaims(scope string) jwt.MapClaims {
 	return jwt.MapClaims{"scope": scope}
 }
 
+// backchannelAccessClaims returns access-token claims for the Nauthilus backchannel API.
+func backchannelAccessClaims(scope string) jwt.MapClaims {
+	return jwt.MapClaims{
+		"aud":                      definitions.AudienceBackchannelAPI,
+		"scope":                    scope,
+		"sub":                      "test-client",
+		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+	}
+}
+
 func TestHasAnyScope(t *testing.T) {
 	claims := jwt.MapClaims{"scope": "nauthilus:authenticate nauthilus:security"}
 
@@ -168,10 +178,7 @@ func TestMiddleware_InvalidToken(t *testing.T) {
 
 func TestMiddleware_ValidToken_WithAuthenticateScope(t *testing.T) {
 	validator := &mockTokenValidator{
-		claims: jwt.MapClaims{
-			"sub":   "test-client",
-			"scope": "nauthilus:authenticate nauthilus:security",
-		},
+		claims: backchannelAccessClaims("nauthilus:authenticate nauthilus:security"),
 	}
 
 	w := httptest.NewRecorder()
@@ -200,10 +207,7 @@ func assertBearerMiddlewareStatus(t *testing.T, scope string, target string, exp
 	t.Helper()
 
 	validator := &mockTokenValidator{
-		claims: jwt.MapClaims{
-			"sub":   "test-client",
-			"scope": scope,
-		},
+		claims: backchannelAccessClaims(scope),
 	}
 
 	w := httptest.NewRecorder()
@@ -284,10 +288,7 @@ func TestExtractBearerToken(t *testing.T) {
 
 func TestValidateAndStoreClaims_ValidToken(t *testing.T) {
 	validator := &mockTokenValidator{
-		claims: jwt.MapClaims{
-			"sub":   "test-client",
-			"scope": "nauthilus:authenticate",
-		},
+		claims: backchannelAccessClaims(definitions.ScopeAuthenticate),
 	}
 
 	w := httptest.NewRecorder()
@@ -307,6 +308,69 @@ func TestValidateAndStoreClaims_ValidToken(t *testing.T) {
 	assert.Equal(t, "test-client", stored["sub"])
 }
 
+func TestValidateAndStoreClaimsRejectsIDTokenTokenType(t *testing.T) {
+	validator := &mockTokenValidator{
+		claims: jwt.MapClaims{
+			"aud":                      definitions.AudienceBackchannelAPI,
+			"scope":                    definitions.ScopeAuthenticate,
+			"sub":                      "test-client",
+			definitions.ClaimTokenType: definitions.TokenTypeIDToken,
+		},
+	}
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+
+	claims := ValidateAndStoreClaims(ctx, validator, nil, "valid-id-token")
+
+	assert.Nil(t, claims)
+	assert.True(t, ctx.IsAborted())
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Nil(t, GetClaimsFromContext(ctx))
+}
+
+func TestAuthorizeAuthenticateScopeRejectsWrongAudience(t *testing.T) {
+	validator := &mockTokenValidator{
+		claims: jwt.MapClaims{
+			"aud":                      "other-resource",
+			"scope":                    definitions.ScopeAuthenticate,
+			"sub":                      "test-client",
+			definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+		},
+	}
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx.Request.Header.Set("Authorization", "Bearer token")
+
+	_, ok := EnforceBearerScopeAuth(ctx, validator, nil, EnforceBearerScopeAuthOptions{
+		RequiredScopes: []string{definitions.ScopeAuthenticate},
+	})
+
+	assert.False(t, ok)
+	assert.True(t, ctx.IsAborted())
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestAuthorizeAuthenticateScopeAcceptsAccessTokenAudience(t *testing.T) {
+	validator := &mockTokenValidator{
+		claims: backchannelAccessClaims(definitions.ScopeAuthenticate),
+	}
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx.Request.Header.Set("Authorization", "Bearer token")
+
+	claims, ok := EnforceBearerScopeAuth(ctx, validator, nil, EnforceBearerScopeAuthOptions{
+		RequiredScopes: []string{definitions.ScopeAuthenticate},
+	})
+
+	assert.True(t, ok)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "test-client", claims["sub"])
+}
+
 func TestEnforceBearerScopeAuth(t *testing.T) {
 	t.Run("missing header denies", func(t *testing.T) {
 		validator := &mockTokenValidator{}
@@ -323,9 +387,7 @@ func TestEnforceBearerScopeAuth(t *testing.T) {
 
 	t.Run("valid token with matching scope allows", func(t *testing.T) {
 		validator := &mockTokenValidator{
-			claims: jwt.MapClaims{
-				"scope": "nauthilus:authenticate",
-			},
+			claims: backchannelAccessClaims(definitions.ScopeAuthenticate),
 		}
 		w := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(w)
@@ -341,9 +403,7 @@ func TestEnforceBearerScopeAuth(t *testing.T) {
 
 	t.Run("valid token with missing scope denies forbidden", func(t *testing.T) {
 		validator := &mockTokenValidator{
-			claims: jwt.MapClaims{
-				"scope": "nauthilus:security",
-			},
+			claims: backchannelAccessClaims(definitions.ScopeSecurity),
 		}
 		w := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(w)
@@ -368,17 +428,17 @@ func TestScopeMiddlewareRequiresOperationScopeForBearer(t *testing.T) {
 	}{
 		{
 			name:       "base scope bearer is forbidden",
-			claims:     scopeClaims(definitions.ScopeAuthenticate),
+			claims:     backchannelAccessClaims(definitions.ScopeAuthenticate),
 			wantStatus: http.StatusForbidden,
 		},
 		{
 			name:       "operation scope bearer is allowed",
-			claims:     scopeClaims(definitions.ScopeSecurity),
+			claims:     backchannelAccessClaims(definitions.ScopeSecurity),
 			wantStatus: http.StatusNoContent,
 		},
 		{
 			name:       "admin bearer is allowed",
-			claims:     scopeClaims(definitions.ScopeAdmin),
+			claims:     backchannelAccessClaims(definitions.ScopeAdmin),
 			wantStatus: http.StatusNoContent,
 		},
 		{

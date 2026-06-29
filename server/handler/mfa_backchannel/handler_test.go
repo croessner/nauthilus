@@ -123,7 +123,12 @@ func newMFABackchannelScopeRouter(scope string) *gin.Engine {
 		},
 	}
 	validator := &mfaBackchannelTokenValidator{
-		claims: jwt.MapClaims{"scope": scope},
+		claims: jwt.MapClaims{
+			"aud":                      definitions.AudienceBackchannelAPI,
+			"scope":                    scope,
+			"sub":                      "mfa-client",
+			definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+		},
 	}
 
 	router := gin.New()

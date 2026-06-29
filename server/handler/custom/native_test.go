@@ -207,7 +207,7 @@ func TestNativeHookLowercaseMethodDescriptorDispatchesAlias(t *testing.T) {
 func TestNativeHookTokenAuthAllowsMatchingScope(t *testing.T) {
 	runner := &nativeHookTestRunner{response: pluginapi.HookResponse{StatusCode: http.StatusOK}}
 	router := newNativeHookTestRouter(t, nativeHookTestConfig{
-		validator: &nativeHookTokenValidator{claims: jwt.MapClaims{"sub": nativeHookTestClientID, "client_id": nativeHookTestClientID, nativeHookClaimScope: definitions.ScopeAuthenticate}},
+		validator: &nativeHookTokenValidator{claims: nativeHookAccessClaims(definitions.ScopeAuthenticate)},
 		hook: nativeHookTestBinding(runner, pluginapi.HookDescriptor{
 			Name:         nativeHookTestName,
 			Method:       http.MethodGet,
@@ -234,11 +234,11 @@ func TestNativeHookTokenAuthAllowsMatchingScope(t *testing.T) {
 }
 
 func TestNativeHookTokenAuthRejectsMissingTokenBeforePlugin(t *testing.T) {
-	assertNativeHookTokenRejectedBeforePlugin(t, jwt.MapClaims{nativeHookClaimScope: definitions.ScopeAuthenticate}, "", http.StatusUnauthorized)
+	assertNativeHookTokenRejectedBeforePlugin(t, nativeHookAccessClaims(definitions.ScopeAuthenticate), "", http.StatusUnauthorized)
 }
 
 func TestNativeHookTokenAuthRejectsMissingScopeBeforePlugin(t *testing.T) {
-	assertNativeHookTokenRejectedBeforePlugin(t, jwt.MapClaims{nativeHookClaimScope: definitions.ScopeSecurity}, "Bearer token", http.StatusForbidden)
+	assertNativeHookTokenRejectedBeforePlugin(t, nativeHookAccessClaims(definitions.ScopeSecurity), "Bearer token", http.StatusForbidden)
 }
 
 func TestNativeHookAdminAuthRejectsInternalScopeTokenBeforePlugin(t *testing.T) {
@@ -268,7 +268,7 @@ func assertNativeHookAdminAuthStatus(t *testing.T, scope string, wantStatus int,
 
 	runner := &nativeHookTestRunner{response: pluginapi.HookResponse{StatusCode: http.StatusOK}}
 	router := newNativeHookTestRouter(t, nativeHookTestConfig{
-		validator: &nativeHookTokenValidator{claims: jwt.MapClaims{"sub": nativeHookTestClientID, "client_id": nativeHookTestClientID, nativeHookClaimScope: scope}},
+		validator: &nativeHookTokenValidator{claims: nativeHookAccessClaims(scope)},
 		hook: nativeHookTestBinding(runner, pluginapi.HookDescriptor{
 			Name:         nativeHookTestName,
 			Method:       http.MethodGet,
@@ -286,6 +286,17 @@ func assertNativeHookAdminAuthStatus(t *testing.T, scope string, wantStatus int,
 
 	if runner.calls != wantCalls {
 		t.Fatalf("runner calls = %d, want %d", runner.calls, wantCalls)
+	}
+}
+
+// nativeHookAccessClaims returns valid backchannel access-token claims for hook tests.
+func nativeHookAccessClaims(scope string) jwt.MapClaims {
+	return jwt.MapClaims{
+		"aud":                      definitions.AudienceBackchannelAPI,
+		"client_id":                nativeHookTestClientID,
+		"sub":                      nativeHookTestClientID,
+		nativeHookClaimScope:       scope,
+		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
 	}
 }
 

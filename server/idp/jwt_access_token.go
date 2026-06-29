@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/idp/signing"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -48,12 +49,13 @@ func (t *JWTAccessToken) Issue(_ context.Context) (string, time.Duration, error)
 	now := time.Now()
 
 	accessClaims := jwt.MapClaims{
-		oidcClaimIssuer:    t.issuer,
-		oidcClaimSubject:   t.session.UserID,
-		oidcClaimAudience:  t.session.ClientID,
-		oidcClaimExpiresAt: now.Add(t.lifetime).Unix(),
-		oidcClaimIssuedAt:  now.Unix(),
-		oidcClaimScope:     strings.Join(t.session.Scopes, " "),
+		oidcClaimIssuer:            t.issuer,
+		oidcClaimSubject:           t.session.UserID,
+		oidcClaimAudience:          accessTokenAudience(t.session),
+		oidcClaimExpiresAt:         now.Add(t.lifetime).Unix(),
+		oidcClaimIssuedAt:          now.Unix(),
+		oidcClaimScope:             strings.Join(t.session.Scopes, " "),
+		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
 	}
 
 	copyCustomAccessTokenClaims(accessClaims, t.session.AccessTokenClaims)

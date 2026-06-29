@@ -43,6 +43,16 @@ func (m *mockTokenValidator) ValidateToken(_ context.Context, _ string) (jwt.Map
 	return m.claims, m.err
 }
 
+// hookAccessClaims returns valid backchannel access-token claims for hook tests.
+func hookAccessClaims(scope string) jwt.MapClaims {
+	return jwt.MapClaims{
+		"aud":                      definitions.AudienceBackchannelAPI,
+		"scope":                    scope,
+		"sub":                      "hook-client",
+		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+	}
+}
+
 func setupHookTestConfig(t *testing.T) config.File {
 	t.Helper()
 
@@ -174,7 +184,7 @@ func TestHasRequiredScopes_ScopeMatchAllows(t *testing.T) {
 	ctx.Request.Header.Set("Authorization", "Bearer token")
 
 	validator := &mockTokenValidator{
-		claims: jwt.MapClaims{"scope": "scope:a scope:b"},
+		claims: hookAccessClaims("scope:a scope:b"),
 	}
 
 	ok := HasRequiredScopes(ctx, cfg, logger, validator, "/custom/secure", http.MethodGet)
@@ -200,7 +210,7 @@ func TestHasRequiredScopes_ScopeMissDeniesForbidden(t *testing.T) {
 	ctx.Request.Header.Set("Authorization", "Bearer token")
 
 	validator := &mockTokenValidator{
-		claims: jwt.MapClaims{"scope": "scope:x"},
+		claims: hookAccessClaims("scope:x"),
 	}
 
 	ok := HasRequiredScopes(ctx, cfg, logger, validator, "/custom/secure", http.MethodGet)
@@ -225,7 +235,7 @@ func TestHasRequiredScopes_MissingBearerDeniesUnauthorized(t *testing.T) {
 	setHookScopes("/custom/secure", http.MethodGet, []string{"scope:a"})
 
 	validator := &mockTokenValidator{
-		claims: jwt.MapClaims{"scope": "scope:a"},
+		claims: hookAccessClaims("scope:a"),
 	}
 
 	ok := HasRequiredScopes(ctx, cfg, logger, validator, "/custom/secure", http.MethodGet)
@@ -349,7 +359,7 @@ func TestHasRequiredScopes_AliasUsesCanonicalHookScopes(t *testing.T) {
 	ctx.Request.Header.Set("Authorization", "Bearer token")
 
 	validator := &mockTokenValidator{
-		claims: jwt.MapClaims{"scope": "scope:a"},
+		claims: hookAccessClaims("scope:a"),
 	}
 
 	ok := HasRequiredScopes(ctx, cfg, logger, validator, ResolveRequestHook(ctx), http.MethodGet)

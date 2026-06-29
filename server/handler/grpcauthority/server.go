@@ -876,6 +876,10 @@ func validateBearerAuthorization(
 		return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
 	}
 
+	if !oidcbearer.IsBackchannelAccessToken(claims) {
+		return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
+	}
+
 	for _, requiredScope := range requiredScopesForRPC(fullMethod, requestFromContext(ctx)) {
 		if !oidcbearer.HasScope(claims, requiredScope) {
 			return nil, status.Error(codes.PermissionDenied, "missing required scope: "+requiredScope)

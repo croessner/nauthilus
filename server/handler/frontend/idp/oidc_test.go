@@ -2656,6 +2656,29 @@ func (f *oidcTokenTest) assertPKCES256Valid(t *testing.T) {
 	assert.NoError(t, f.mock.ExpectationsWereMet())
 }
 
+// assertClientCredentialsOpenIDScopeRejected verifies service tokens cannot request identity scopes.
+func (f *oidcTokenTest) assertClientCredentialsOpenIDScopeRejected(t *testing.T) {
+	t.Helper()
+
+	originalClient := f.cfg.clients[0]
+	defer func() {
+		f.cfg.clients[0] = originalClient
+	}()
+
+	f.cfg.clients[0].GrantTypes = []string{oidcGrantTypeClientCredentials}
+	f.cfg.clients[0].Scopes = []string{definitions.ScopeOpenID, "api.read"}
+
+	form := url.Values{}
+	form.Add(oidcParamGrantType, oidcGrantTypeClientCredentials)
+	form.Add(oidcParamScope, definitions.ScopeOpenID)
+
+	w := f.postToken(t, form, withBasicTokenAuth("test-client", "test-secret"))
+	resp := mustDecodeOIDCTestJSON(t, w)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, oidcErrorInvalidScope, resp[definitions.LogKeyError])
+}
+
 // assertRedirectURIMismatchRejected verifies redirect_uri replay protection.
 func (f *oidcTokenTest) assertRedirectURIMismatchRejected(t *testing.T) {
 	code := "redirect-uri-mismatch-code"
@@ -2740,6 +2763,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 	t.Run("Token request with enforced method (mismatch should fail)", fixture.assertEnforcedMethodMismatchRejected)
 	t.Run("Token request with public client and client_id only in body", fixture.assertPublicClientBodyOnlyToken)
 	t.Run("Token request with PKCE S256 (valid verifier)", fixture.assertPKCES256Valid)
+	t.Run("Client credentials request with openid scope is rejected", fixture.assertClientCredentialsOpenIDScopeRejected)
 
 	t.Run("Token request with mismatched redirect_uri (must be rejected)", fixture.assertRedirectURIMismatchRejected)
 	t.Run("Token request with PKCE S256 (missing verifier should fail)", fixture.assertMissingPKCEVerifierRejected)

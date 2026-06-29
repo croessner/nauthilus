@@ -22,6 +22,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/croessner/nauthilus/v3/server/config"
@@ -190,10 +191,62 @@ func ValidateAndStoreClaims(ctx *gin.Context, validator TokenValidator, cfg conf
 		return nil
 	}
 
+	if !IsBackchannelAccessToken(claims) {
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+
+		return nil
+	}
+
 	// Store claims in context for downstream handlers
 	ctx.Set(definitions.CtxOIDCClaimsKey, claims)
 
 	return claims
+}
+
+// IsBackchannelAccessToken reports whether claims target the protected backchannel API.
+func IsBackchannelAccessToken(claims jwt.MapClaims) bool {
+	return HasTokenType(claims, definitions.TokenTypeAccessToken) &&
+		HasAudience(claims, definitions.AudienceBackchannelAPI)
+}
+
+// HasTokenType reports whether claims carry the expected issuer-owned token purpose.
+func HasTokenType(claims jwt.MapClaims, tokenType string) bool {
+	if claims == nil || tokenType == "" {
+		return false
+	}
+
+	actual, ok := claims[definitions.ClaimTokenType].(string)
+
+	return ok && actual == tokenType
+}
+
+// HasAudience reports whether claims are bound to the expected audience.
+func HasAudience(claims jwt.MapClaims, audience string) bool {
+	if claims == nil || audience == "" {
+		return false
+	}
+
+	switch value := claims["aud"].(type) {
+	case string:
+		return value == audience
+	case []string:
+		return slices.Contains(value, audience)
+	case []any:
+		return anySliceContainsString(value, audience)
+	default:
+		return false
+	}
+}
+
+// anySliceContainsString reports whether a mixed audience list contains a string.
+func anySliceContainsString(values []any, expected string) bool {
+	for _, value := range values {
+		if audience, ok := value.(string); ok && audience == expected {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ExtractBearerToken extracts the Bearer token from the Authorization header.

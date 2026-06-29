@@ -113,6 +113,7 @@ func TestAccessTokenReservedClaimsRemainCanonical(t *testing.T) {
 	assert.Nil(t, signer.claims["active"])
 	assert.NotEqual(t, int64(1), signer.claims["exp"])
 	assert.NotEqual(t, int64(1), signer.claims["iat"])
+	assert.Equal(t, definitions.TokenTypeAccessToken, signer.claims[definitions.ClaimTokenType])
 	assert.Equal(t, "allowed", signer.claims["custom_access"])
 
 	opaque := NewOpaqueAccessToken(session, nil, nil, time.Hour)
@@ -125,6 +126,7 @@ func TestAccessTokenReservedClaimsRemainCanonical(t *testing.T) {
 	assert.Nil(t, claims["iss"])
 	assert.Nil(t, claims["exp"])
 	assert.Nil(t, claims["iat"])
+	assert.Equal(t, definitions.TokenTypeAccessToken, claims[definitions.ClaimTokenType])
 	assert.Equal(t, "allowed", claims["custom_access"])
 }
 
@@ -183,6 +185,7 @@ func TestOpaqueAccessToken_Validate(t *testing.T) {
 		assert.Equal(t, "user1", claims["sub"])
 		assert.Equal(t, "client1", claims["aud"])
 		assert.Equal(t, "openid profile", claims["scope"])
+		assert.Equal(t, definitions.TokenTypeAccessToken, claims[definitions.ClaimTokenType])
 		assert.Equal(t, "Test User", claims["name"])
 		// Must NOT contain IDTokenClaims
 		assert.Nil(t, claims["preferred_username"])

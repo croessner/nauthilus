@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -338,8 +337,7 @@ func (n *NauthilusIDP) issueIDToken(
 		idClaims["nonce"] = session.Nonce
 	}
 
-	// Add mapped claims from session
-	maps.Copy(idClaims, session.IDTokenClaims)
+	copyCustomIDTokenClaims(idClaims, session.IDTokenClaims)
 
 	idTokenString, err := signer.Sign(idClaims)
 	if err != nil {
@@ -394,6 +392,10 @@ func (n *NauthilusIDP) IssueClientCredentialsToken(ctx context.Context, clientID
 		return "", 0, fmt.Errorf("client does not support client_credentials grant type")
 	}
 
+	if err := ValidateClientCredentialsScopes(scopes); err != nil {
+		return "", 0, err
+	}
+
 	accessTokenLifetime := client.AccessTokenLifetime
 	if accessTokenLifetime == 0 {
 		accessTokenLifetime = n.deps.Cfg.GetIDP().OIDC.GetDefaultAccessTokenLifetime()
@@ -410,11 +412,12 @@ func (n *NauthilusIDP) IssueClientCredentialsToken(ctx context.Context, clientID
 
 	// Build session for client credentials (no user, client is the subject)
 	session := &OIDCSession{
-		ClientID:          clientID,
-		UserID:            clientID,
-		Scopes:            scopes,
-		AuthTime:          time.Now(),
-		AccessTokenClaims: make(map[string]any),
+		ClientID:            clientID,
+		UserID:              clientID,
+		Scopes:              scopes,
+		AuthTime:            time.Now(),
+		AccessTokenAudience: clientCredentialsAccessTokenAudience(scopes),
+		AccessTokenClaims:   make(map[string]any),
 	}
 
 	// Access Token
@@ -556,7 +559,7 @@ func (n *NauthilusIDP) ValidateToken(ctx context.Context, tokenString string) (j
 	if !strings.Contains(tokenString, ".") {
 		return n.opaqueTokenClaims(ctx, sp, tokenString, "idp.validate_token.opaque.redis_get", func(token *OpaqueAccessToken, session *OIDCSession) jwt.MapClaims {
 			return token.ClaimsFromSession(session)
-		})
+		}, nil)
 	}
 
 	// Fallback to JWT. Verify first so malformed input cannot force Redis denylist reads.
@@ -614,11 +617,56 @@ func (n *NauthilusIDP) ValidateTokenForUserInfo(ctx context.Context, tokenString
 	if !strings.Contains(tokenString, ".") {
 		return n.opaqueTokenClaims(ctx, sp, tokenString, "idp.validate_token_for_userinfo.opaque.redis_get", func(token *OpaqueAccessToken, session *OIDCSession) jwt.MapClaims {
 			return token.UserInfoClaimsFromSession(session)
-		})
+		}, validateUserInfoSession)
 	}
 
 	// For JWT access tokens, fall back to standard validation.
-	return n.ValidateToken(ctx, tokenString)
+	claims, err := n.ValidateToken(ctx, tokenString)
+	if err != nil {
+		return nil, err
+	}
+
+	if !isAccessTokenClaims(claims) {
+		return nil, fmt.Errorf("invalid token type for userinfo")
+	}
+
+	if !claimsIncludeScope(claims, definitions.ScopeOpenID) {
+		return nil, fmt.Errorf("missing openid scope")
+	}
+
+	return claims, nil
+}
+
+// validateUserInfoSession requires the OIDC scope before releasing UserInfo claims.
+func validateUserInfoSession(session *OIDCSession) error {
+	if session == nil || !slices.Contains(session.Scopes, definitions.ScopeOpenID) {
+		return fmt.Errorf("missing openid scope")
+	}
+
+	return nil
+}
+
+// isAccessTokenClaims reports whether JWT claims represent an API access token.
+func isAccessTokenClaims(claims jwt.MapClaims) bool {
+	tokenType, ok := claims[definitions.ClaimTokenType].(string)
+
+	return ok && tokenType == definitions.TokenTypeAccessToken
+}
+
+// claimsIncludeScope reports whether a space-delimited scope claim contains a value.
+func claimsIncludeScope(claims jwt.MapClaims, expectedScope string) bool {
+	scopeValue, ok := claims[oidcClaimScope].(string)
+	if !ok {
+		return false
+	}
+
+	for scope := range strings.SplitSeq(scopeValue, " ") {
+		if scope == expectedScope {
+			return true
+		}
+	}
+
+	return false
 }
 
 // opaqueTokenClaims loads an opaque access-token session and maps it to endpoint-specific claims.
@@ -628,6 +676,7 @@ func (n *NauthilusIDP) opaqueTokenClaims(
 	tokenString string,
 	spanName string,
 	buildClaims func(*OpaqueAccessToken, *OIDCSession) jwt.MapClaims,
+	validateSession func(*OIDCSession) error,
 ) (jwt.MapClaims, error) {
 	lookupCtx, lookupSpan := n.tracer.Start(ctx, spanName)
 
@@ -640,6 +689,14 @@ func (n *NauthilusIDP) opaqueTokenClaims(
 	lookupSpan.End()
 
 	if err == nil && session != nil {
+		if validateSession != nil {
+			if err := validateSession(session); err != nil {
+				parentSpan.RecordError(err)
+
+				return nil, err
+			}
+		}
+
 		token := NewOpaqueAccessToken(session, n.storage, n.tokenGen, 0)
 
 		return buildClaims(token, session), nil

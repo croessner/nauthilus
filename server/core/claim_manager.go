@@ -182,6 +182,11 @@ func (m *ClaimManager) ApplyMappings(mappings []config.OIDCClaimMapping, claims 
 	m.applyMappings(mappings, claims, nil)
 }
 
+// ApplyIDTokenMappings applies ID-token mappings without issuer-owned token claims.
+func (m *ClaimManager) ApplyIDTokenMappings(mappings []config.OIDCClaimMapping, claims map[string]any) {
+	m.applyMappings(mappings, claims, m.idTokenMappingAllowed)
+}
+
 // ApplyAccessTokenMappings applies access-token mappings without reserved token claims.
 func (m *ClaimManager) ApplyAccessTokenMappings(mappings []config.OIDCClaimMapping, claims map[string]any) {
 	m.applyMappings(mappings, claims, m.accessTokenMappingAllowed)
@@ -202,6 +207,17 @@ func (m *ClaimManager) applyMappings(mappings []config.OIDCClaimMapping, claims 
 
 		m.applyMapping(mapping, claims)
 	}
+}
+
+// idTokenMappingAllowed rejects issuer-owned ID-token claim names.
+func (m *ClaimManager) idTokenMappingAllowed(mapping config.OIDCClaimMapping) bool {
+	if !definitions.IsReservedIDTokenClaim(mapping.Claim) {
+		return true
+	}
+
+	m.warnClaimNotApplied(mapping.Claim, "reserved ID-token claim")
+
+	return false
 }
 
 // accessTokenMappingAllowed rejects issuer-owned access-token claim names.

@@ -227,7 +227,12 @@ func newOIDCSessionsTokenValidator(scopes ...string) *oidcSessionsTokenValidator
 
 // ValidateToken returns the configured static claims without parsing token material.
 func (v *oidcSessionsTokenValidator) ValidateToken(context.Context, string) (jwt.MapClaims, error) {
-	return jwt.MapClaims{"scope": v.scope}, nil
+	return jwt.MapClaims{
+		"aud":                      definitions.AudienceBackchannelAPI,
+		"scope":                    v.scope,
+		"sub":                      "oidc-session-client",
+		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+	}, nil
 }
 
 // joinOIDCSessionsScopes renders a deterministic OAuth scope claim for tests.

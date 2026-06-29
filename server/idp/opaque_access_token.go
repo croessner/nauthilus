@@ -69,9 +69,10 @@ func (t *OpaqueAccessToken) Validate(ctx context.Context, tokenString string) (j
 // ClaimsFromSession builds access-token claims from an already validated opaque-token session.
 func (t *OpaqueAccessToken) ClaimsFromSession(session *OIDCSession) jwt.MapClaims {
 	claims := jwt.MapClaims{
-		oidcClaimSubject:  session.UserID,
-		oidcClaimAudience: session.ClientID,
-		oidcClaimScope:    strings.Join(session.Scopes, " "),
+		oidcClaimSubject:           session.UserID,
+		oidcClaimAudience:          accessTokenAudience(session),
+		oidcClaimScope:             strings.Join(session.Scopes, " "),
+		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
 	}
 
 	copyCustomAccessTokenClaims(claims, session.AccessTokenClaims)

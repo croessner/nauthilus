@@ -118,6 +118,12 @@ Nauthilus now also supports **Opaque Access Tokens**. When enabled:
 
 This can be configured globally or per client using the `access_token_type: "opaque"` setting.
 
+Client-credentials access tokens are bound to the protected Nauthilus backchannel API. JWT tokens carry
+`token_type=access_token` and `aud=nauthilus:backchannel`; opaque tokens expose the same claims after validation.
+Backchannel bearer authentication rejects tokens without that purpose and audience.
+The `openid` scope is rejected for `client_credentials` with `invalid_scope`; service tokens do not represent an
+end-user identity and cannot receive ID tokens or UserInfo claims.
+
 #### KID (Signing Key ID)
 
 The `id` in `signing_keys` (also called KID) is simply a name for your signing key.

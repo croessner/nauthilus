@@ -31,7 +31,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -441,7 +440,7 @@ func TestBufconnIdentityBackendServiceAuthzFailures(t *testing.T) {
 		service,
 		store,
 		grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{Enabled: true}),
-		staticTokenValidator{claims: jwt.MapClaims{authorityTestScopeClaim: definitions.ScopeMFARead}},
+		staticTokenValidator{claims: grpcBackchannelAccessClaims(definitions.ScopeMFARead)},
 	)
 
 	_, err := client.GetMFAState(context.Background(), &identityv1.GetMFAStateRequest{
@@ -588,7 +587,7 @@ func TestUnaryServerInterceptorEnforcesIdentityScopeMatrix(t *testing.T) {
 			interceptor := UnaryServerInterceptor(ServerDeps{
 				Cfg: cfg,
 				OIDCValidator: staticTokenValidator{
-					claims: jwt.MapClaims{authorityTestScopeClaim: testCase.scopes},
+					claims: grpcBackchannelAccessClaims(testCase.scopes),
 				},
 				Logger: slog.Default(),
 			})
@@ -633,18 +632,16 @@ func newBufconnIdentityBackendServiceClient(
 		store,
 		cfg,
 		staticTokenValidator{
-			claims: jwt.MapClaims{
-				authorityTestScopeClaim: stringsJoinScopes(
-					definitions.ScopeLookupIdentity,
-					definitions.ScopeListAccounts,
-					definitions.ScopeMFARead,
-					definitions.ScopeMFAVerify,
-					definitions.ScopeMFAWrite,
-					definitions.ScopeWebAuthnRead,
-					definitions.ScopeWebAuthnWrite,
-					definitions.ScopeAttributeRead,
-				),
-			},
+			claims: grpcBackchannelAccessClaims(stringsJoinScopes(
+				definitions.ScopeLookupIdentity,
+				definitions.ScopeListAccounts,
+				definitions.ScopeMFARead,
+				definitions.ScopeMFAVerify,
+				definitions.ScopeMFAWrite,
+				definitions.ScopeWebAuthnRead,
+				definitions.ScopeWebAuthnWrite,
+				definitions.ScopeAttributeRead,
+			)),
 		},
 	)
 }

@@ -105,7 +105,7 @@ func TestBackchannelAuthMiddlewareAllowsEitherBasicOrBearer(t *testing.T) {
 
 	t.Run("allows basic auth without bearer token", func(t *testing.T) {
 		validator := &recordingTokenValidator{
-			claims: jwt.MapClaims{"scope": definitions.ScopeAuthenticate},
+			claims: backchannelTestClaims(definitions.ScopeAuthenticate),
 		}
 		router := newBackchannelAuthTestRouter(cfg, validator)
 		request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/probe", nil)
@@ -120,7 +120,7 @@ func TestBackchannelAuthMiddlewareAllowsEitherBasicOrBearer(t *testing.T) {
 
 	t.Run("allows bearer token without basic credentials", func(t *testing.T) {
 		validator := &recordingTokenValidator{
-			claims: jwt.MapClaims{"scope": definitions.ScopeAuthenticate},
+			claims: backchannelTestClaims(definitions.ScopeAuthenticate),
 		}
 		router := newBackchannelAuthTestRouter(cfg, validator)
 		request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/probe", nil)
@@ -225,7 +225,7 @@ func newBackchannelAuthTestRouter(cfg config.File, validator *recordingTokenVali
 func newBackchannelMutationScopeRouter(scope string) *gin.Engine {
 	cfg := backchannelAuthConfig(false, true, false)
 	validator := &recordingTokenValidator{
-		claims: jwt.MapClaims{"scope": scope},
+		claims: backchannelTestClaims(scope),
 	}
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -258,6 +258,16 @@ func oidcBackchannelTestMiddleware(cfg config.File, validator *recordingTokenVal
 type recordingTokenValidator struct {
 	claims jwt.MapClaims
 	calls  int
+}
+
+// backchannelTestClaims returns valid access-token claims for backchannel tests.
+func backchannelTestClaims(scope string) jwt.MapClaims {
+	return jwt.MapClaims{
+		"aud":                      definitions.AudienceBackchannelAPI,
+		"scope":                    scope,
+		"sub":                      "api-client",
+		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+	}
 }
 
 func (v *recordingTokenValidator) ValidateToken(context.Context, string) (jwt.MapClaims, error) {

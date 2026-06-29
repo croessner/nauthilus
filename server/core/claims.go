@@ -37,7 +37,7 @@ func (a *AuthState) FillIDTokenClaims(
 		return
 	}
 
-	manager.ApplyMappings(mappings, claims)
+	manager.ApplyIDTokenMappings(mappings, claims)
 }
 
 // FillAccessTokenClaims populates a map of claims from AccessTokenClaims configuration.

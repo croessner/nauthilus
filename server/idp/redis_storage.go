@@ -68,6 +68,7 @@ type OIDCSession struct {
 	CodeChallenge       string         `json:"code_challenge,omitempty"`
 	CodeChallengeMethod string         `json:"code_challenge_method,omitempty"`
 	AccessToken         string         `json:"access_token,omitempty"`
+	AccessTokenAudience string         `json:"access_token_audience,omitempty"`
 	IDTokenClaims       map[string]any `json:"id_token_claims"`
 	AccessTokenClaims   map[string]any `json:"access_token_claims"`
 }

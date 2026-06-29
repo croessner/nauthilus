@@ -192,17 +192,24 @@ func newTestIDPWithMock(t *testing.T, oidcCfg config.OIDCConfig) (*NauthilusIDP,
 func signedTestAccessToken(t *testing.T, kid string, pemData string) string {
 	t.Helper()
 
+	return signedTestTokenWithClaims(t, kid, pemData, jwt.MapClaims{
+		claimIssuer:                testIssuer,
+		claimSubject:               testUserID,
+		claimAudience:              testClientID,
+		claimIssuedAt:              time.Now().Add(-time.Minute).Unix(),
+		claimExpires:               time.Now().Add(time.Hour).Unix(),
+		claimScope:                 testScopeClaim,
+		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+	})
+}
+
+func signedTestTokenWithClaims(t *testing.T, kid string, pemData string, claims jwt.MapClaims) string {
+	t.Helper()
+
 	signer, err := signing.NewRS256SignerFromPEM(pemData, kid)
 	assert.NoError(t, err)
 
-	tokenString, err := signer.Sign(jwt.MapClaims{
-		claimIssuer:   testIssuer,
-		claimSubject:  testUserID,
-		claimAudience: testClientID,
-		claimIssuedAt: time.Now().Add(-time.Minute).Unix(),
-		claimExpires:  time.Now().Add(time.Hour).Unix(),
-		claimScope:    testScopeClaim,
-	})
+	tokenString, err := signer.Sign(claims)
 	assert.NoError(t, err)
 
 	return tokenString
@@ -837,6 +844,85 @@ func TestValidateTokenJWTRejectsDeniedTokenAfterSignatureValidation(t *testing.T
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestIssueIDTokenReservedClaimsRemainCanonical(t *testing.T) {
+	fixture := newIDPTokenTestFixture(t)
+	session := testOIDCSession([]string{definitions.ScopeOpenID, definitions.ScopeProfile}, fixture.fixedTime)
+	session.Nonce = "issuer-nonce"
+	session.IDTokenClaims = map[string]any{
+		"acr":                      "urn:evil:acr",
+		"amr":                      []string{"pwd"},
+		"aud":                      "evil-client",
+		"custom_id":                "allowed",
+		"exp":                      int64(1),
+		"iat":                      int64(1),
+		"iss":                      "https://evil.example.test",
+		"nonce":                    "evil-nonce",
+		"sub":                      "attacker",
+		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+	}
+	signer := &captureAccessTokenSigner{}
+
+	_, err := fixture.idp.issueIDToken(session, signer, testIssuer, fixture.fixedTime, 2*time.Hour)
+	assert.NoError(t, err)
+
+	assert.Equal(t, testIssuer, signer.claims[claimIssuer])
+	assert.Equal(t, testUserID, signer.claims[claimSubject])
+	assert.Equal(t, testClientID, signer.claims[claimAudience])
+	assert.Equal(t, fixture.fixedTime.Add(2*time.Hour).Unix(), signer.claims[claimExpires])
+	assert.Equal(t, fixture.fixedTime.Unix(), signer.claims[claimIssuedAt])
+	assert.Equal(t, "issuer-nonce", signer.claims["nonce"])
+	assert.Nil(t, signer.claims["acr"])
+	assert.Nil(t, signer.claims["amr"])
+	assert.Nil(t, signer.claims[definitions.ClaimTokenType])
+	assert.Equal(t, "allowed", signer.claims["custom_id"])
+}
+
+func TestValidateTokenForUserInfoRequiresOpenIDScope(t *testing.T) {
+	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
+		Issuer: testIssuer,
+	})
+	mock.MatchExpectationsInOrder(false)
+
+	kid := "userinfo-no-openid"
+	pemData := generateTestKey()
+	tokenString := signedTestTokenWithClaims(t, kid, pemData, jwt.MapClaims{
+		claimIssuer:                testIssuer,
+		claimSubject:               testUserID,
+		claimAudience:              testClientID,
+		claimIssuedAt:              time.Now().Add(-time.Minute).Unix(),
+		claimExpires:               time.Now().Add(time.Hour).Unix(),
+		claimScope:                 definitions.ScopeProfile,
+		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+	})
+
+	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
+
+	claims, err := idp.ValidateTokenForUserInfo(t.Context(), tokenString)
+	assert.Error(t, err)
+	assert.Nil(t, claims)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateTokenForUserInfoAcceptsOpenIDScope(t *testing.T) {
+	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
+		Issuer: testIssuer,
+	})
+	mock.MatchExpectationsInOrder(false)
+
+	kid := "userinfo-openid"
+	pemData := generateTestKey()
+	tokenString := signedTestAccessToken(t, kid, pemData)
+
+	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
+
+	claims, err := idp.ValidateTokenForUserInfo(t.Context(), tokenString)
+	assert.NoError(t, err)
+	assert.Equal(t, testUserID, claims[claimSubject])
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestValidateTokenEmitsDiagnosticChildSpans(t *testing.T) {
 	collector := &idpTraceSpanCollector{}
 	tp := sdktrace.NewTracerProvider(
@@ -915,6 +1001,10 @@ func TestNauthilusIDP_ClientCredentials(t *testing.T) {
 		assertClientCredentialsTokenError(t, idpInst, "authcode-only", []string{"openid"}, "does not support client_credentials")
 	})
 
+	t.Run("IssueClientCredentialsToken_OpenIDScopeRejected", func(t *testing.T) {
+		assertClientCredentialsTokenError(t, idpInst, "cc-client", []string{definitions.ScopeOpenID}, "openid scope is not allowed")
+	})
+
 	t.Run("IssueClientCredentialsToken_UnknownClient", func(t *testing.T) {
 		assertClientCredentialsTokenError(t, idpInst, "nonexistent", nil, "client not found")
 	})
@@ -952,7 +1042,7 @@ func clientCredentialsOIDCConfig() config.OIDCConfig {
 				ClientID:            "cc-client",
 				ClientSecret:        secret.New("cc-secret"),
 				GrantTypes:          []string{"client_credentials"},
-				Scopes:              []string{"api.read", "api.write"},
+				Scopes:              []string{definitions.ScopeOpenID, "api.read", "api.write"},
 				AccessTokenLifetime: time.Hour,
 			},
 			{
@@ -978,8 +1068,9 @@ func assertIssueClientCredentialsToken(t *testing.T, idpInst *NauthilusIDP) {
 	claims, err := idpInst.ValidateToken(ctx, accessToken)
 	assert.NoError(t, err)
 	assert.Equal(t, "cc-client", claims[claimSubject])
-	assert.Equal(t, "cc-client", claims[claimAudience])
+	assert.Equal(t, definitions.AudienceBackchannelAPI, claims[claimAudience])
 	assert.Equal(t, testIssuer, claims[claimIssuer])
+	assert.Equal(t, definitions.TokenTypeAccessToken, claims[definitions.ClaimTokenType])
 }
 
 // assertClientCredentialsTokenError verifies a failing client-credentials token request.
@@ -987,7 +1078,10 @@ func assertClientCredentialsTokenError(t *testing.T, idpInst *NauthilusIDP, clie
 	t.Helper()
 
 	_, _, err := idpInst.IssueClientCredentialsToken(t.Context(), clientID, scopes)
-	assert.Error(t, err)
+	if !assert.Error(t, err) {
+		return
+	}
+
 	assert.Contains(t, err.Error(), contains)
 }
 

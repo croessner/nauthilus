@@ -30,3 +30,32 @@ func copyCustomAccessTokenClaims(dst jwt.MapClaims, src map[string]any) {
 		dst[claimName] = value
 	}
 }
+
+// copyCustomIDTokenClaims copies only non-reserved custom claims into ID-token claims.
+func copyCustomIDTokenClaims(dst jwt.MapClaims, src map[string]any) {
+	for claimName, value := range src {
+		if definitions.IsReservedIDTokenClaim(claimName) {
+			continue
+		}
+
+		dst[claimName] = value
+	}
+}
+
+// accessTokenAudience returns the resource audience for an access-token session.
+func accessTokenAudience(session *OIDCSession) string {
+	if session == nil {
+		return ""
+	}
+
+	if session.AccessTokenAudience != "" {
+		return session.AccessTokenAudience
+	}
+
+	return session.ClientID
+}
+
+// clientCredentialsAccessTokenAudience binds client-credentials tokens to the Nauthilus resource.
+func clientCredentialsAccessTokenAudience(_ []string) string {
+	return definitions.AudienceBackchannelAPI
+}

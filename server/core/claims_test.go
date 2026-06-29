@@ -260,3 +260,63 @@ func TestReservedAccessTokenClaimMappingsAreRejected(t *testing.T) {
 	assert.Equal(t, int64(100), claims["iat"])
 	assert.Equal(t, "reader", claims["resource.role"])
 }
+
+func TestReservedIDTokenClaimMappingsAreRejected(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	auth := &AuthState{
+		deps: AuthDeps{
+			Logger: logger,
+		},
+	}
+	auth.ReplaceAllAttributes(map[string][]any{
+		"acr_attr":        {"urn:evil:acr"},
+		"amr_attr":        {"pwd"},
+		"aud_attr":        {"evil-audience"},
+		"custom_attr":     {"allowed"},
+		"exp_attr":        {int64(1)},
+		"iat_attr":        {int64(1)},
+		"iss_attr":        {"https://evil.example.test"},
+		"nonce_attr":      {"evil-nonce"},
+		"subject_attr":    {"attacker"},
+		"token_type_attr": {definitions.TokenTypeAccessToken},
+	})
+
+	claims := map[string]any{
+		"acr":                      "urn:issuer:acr",
+		"amr":                      []string{"webauthn"},
+		"aud":                      "client-a",
+		"exp":                      int64(200),
+		"iat":                      int64(100),
+		"iss":                      "https://issuer.example.test",
+		"nonce":                    "issuer-nonce",
+		"sub":                      "user-a",
+		definitions.ClaimTokenType: definitions.TokenTypeIDToken,
+	}
+	cfgClaims := &config.IDTokenClaims{
+		Mappings: []config.OIDCClaimMapping{
+			{Claim: "iss", Attribute: "iss_attr", Type: definitions.ClaimTypeString},
+			{Claim: "sub", Attribute: "subject_attr", Type: definitions.ClaimTypeString},
+			{Claim: "aud", Attribute: "aud_attr", Type: definitions.ClaimTypeString},
+			{Claim: "exp", Attribute: "exp_attr", Type: definitions.ClaimTypeInteger},
+			{Claim: "iat", Attribute: "iat_attr", Type: definitions.ClaimTypeInteger},
+			{Claim: "nonce", Attribute: "nonce_attr", Type: definitions.ClaimTypeString},
+			{Claim: "acr", Attribute: "acr_attr", Type: definitions.ClaimTypeString},
+			{Claim: "amr", Attribute: "amr_attr", Type: definitions.ClaimTypeStringArray},
+			{Claim: definitions.ClaimTokenType, Attribute: "token_type_attr", Type: definitions.ClaimTypeString},
+			{Claim: "tenant_role", Attribute: "custom_attr", Type: definitions.ClaimTypeString},
+		},
+	}
+
+	auth.FillIDTokenClaims(cfgClaims, claims, nil, nil)
+
+	assert.Equal(t, "https://issuer.example.test", claims["iss"])
+	assert.Equal(t, "user-a", claims["sub"])
+	assert.Equal(t, "client-a", claims["aud"])
+	assert.Equal(t, int64(200), claims["exp"])
+	assert.Equal(t, int64(100), claims["iat"])
+	assert.Equal(t, "issuer-nonce", claims["nonce"])
+	assert.Equal(t, "urn:issuer:acr", claims["acr"])
+	assert.Equal(t, []string{"webauthn"}, claims["amr"])
+	assert.Equal(t, definitions.TokenTypeIDToken, claims[definitions.ClaimTokenType])
+	assert.Equal(t, "allowed", claims["tenant_role"])
+}

@@ -165,7 +165,7 @@ func TestUnaryServerInterceptorAllowsBearerWithAuthenticateScope(t *testing.T) {
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg: cfg,
 		OIDCValidator: staticTokenValidator{
-			claims: jwt.MapClaims{"scope": definitions.ScopeAuthenticate},
+			claims: grpcBackchannelAccessClaims(definitions.ScopeAuthenticate),
 		},
 		Logger: slog.Default(),
 	})
@@ -191,7 +191,7 @@ func TestUnaryServerInterceptorRejectsBearerListAccountsWithoutScope(t *testing.
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg: cfg,
 		OIDCValidator: staticTokenValidator{
-			claims: jwt.MapClaims{"scope": definitions.ScopeAuthenticate},
+			claims: grpcBackchannelAccessClaims(definitions.ScopeAuthenticate),
 		},
 		Logger: slog.Default(),
 	})
@@ -213,9 +213,7 @@ func TestUnaryServerInterceptorAllowsBearerListAccountsWithScope(t *testing.T) {
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg: cfg,
 		OIDCValidator: staticTokenValidator{
-			claims: jwt.MapClaims{
-				"scope": definitions.ScopeAuthenticate + " " + definitions.ScopeListAccounts,
-			},
+			claims: grpcBackchannelAccessClaims(definitions.ScopeAuthenticate + " " + definitions.ScopeListAccounts),
 		},
 		Logger: slog.Default(),
 	})
@@ -1142,6 +1140,16 @@ func okUnaryHandler(context.Context, any) (any, error) {
 
 func basicAuthorization(username, password string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
+}
+
+// grpcBackchannelAccessClaims returns valid access-token claims for gRPC backchannel tests.
+func grpcBackchannelAccessClaims(scope string) jwt.MapClaims {
+	return jwt.MapClaims{
+		"aud":                      definitions.AudienceBackchannelAPI,
+		"scope":                    scope,
+		"sub":                      "grpc-client",
+		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+	}
 }
 
 type staticTokenValidator struct {
