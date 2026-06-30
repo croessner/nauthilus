@@ -134,6 +134,36 @@ func TestSAMLUnrestrictedAttributesSuppressSensitive(t *testing.T) {
 	assertSAMLAttributeValue(t, attrs, "email", "alice@example.com")
 }
 
+func TestSAMLUnrestrictedAttributesSuppressCamelCaseSecrets(t *testing.T) {
+	session := &saml.Session{}
+	sensitiveAttributes := map[string][]any{
+		"userPassword": {"{SSHA}not-for-output"},
+		"clientSecret": {"oidc-secret-not-for-output"},
+	}
+
+	userAttributes := map[string][]any{
+		"displayName": {"Alice Example"},
+	}
+
+	for name, values := range sensitiveAttributes {
+		userAttributes[name] = values
+	}
+
+	user := newSAMLAttributeUser(userAttributes)
+	sp := &config.SAML2ServiceProvider{}
+
+	populateSAMLSessionAttributes(session, user, sp)
+
+	attrs := samlAttributesByName(session.CustomAttributes)
+	for name := range sensitiveAttributes {
+		if _, found := attrs[name]; found {
+			t.Fatalf("SAML assertion attributes unexpectedly included sensitive key %q", name)
+		}
+	}
+
+	assertSAMLAttributeValue(t, attrs, "displayName", "Alice Example")
+}
+
 func TestSAMLUnrestrictedAttributesPreservesAllowedAttribute(t *testing.T) {
 	session := &saml.Session{}
 	user := newSAMLAttributeUser(map[string][]any{

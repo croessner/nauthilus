@@ -17,6 +17,7 @@ package core
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -26,6 +27,7 @@ const sensitiveOutputPasswordAttribute = "password"
 
 var sensitiveOutputAttributeLeafNames = map[string]struct{}{
 	"access_token":                   {},
+	"api_token":                      {},
 	"bind_pw":                        {},
 	"client_private_key":             {},
 	"client_secret":                  {},
@@ -42,6 +44,7 @@ var sensitiveOutputAttributeLeafNames = map[string]struct{}{
 	"static_token":                   {},
 	"test_password":                  {},
 	"token":                          {},
+	"user_password":                  {},
 	definitions.LuaBackendResultTOTPRecoveryField: {},
 	definitions.LuaBackendResultTOTPSecretField:   {},
 	definitions.LuaRequestTOTPRecoveryCodes:       {},
@@ -101,10 +104,62 @@ func FilterSensitiveOutputAttributes(attributes bktype.AttributeMapping, configu
 	return filtered
 }
 
-// normalizeSensitiveOutputAttributeName canonicalizes attribute names for case-insensitive matching.
+// normalizeSensitiveOutputAttributeName canonicalizes attribute names across case and word separators.
 func normalizeSensitiveOutputAttributeName(name string) string {
-	name = strings.TrimSpace(strings.ToLower(name))
-	name = strings.ReplaceAll(name, "-", "_")
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
 
-	return name
+	var normalized strings.Builder
+	normalized.Grow(len(name))
+
+	runes := []rune(name)
+	lastSeparator := false
+
+	for index, current := range runes {
+		if isSensitiveOutputAttributeSeparator(current) {
+			lastSeparator = appendSensitiveOutputAttributeSeparator(&normalized, lastSeparator)
+
+			continue
+		}
+
+		if shouldSplitSensitiveOutputAttributeWord(runes, index, lastSeparator) {
+			appendSensitiveOutputAttributeSeparator(&normalized, lastSeparator)
+		}
+
+		normalized.WriteRune(unicode.ToLower(current))
+
+		lastSeparator = false
+	}
+
+	return strings.Trim(normalized.String(), "_")
+}
+
+// isSensitiveOutputAttributeSeparator reports whether a rune separates attribute name words.
+func isSensitiveOutputAttributeSeparator(value rune) bool {
+	return value == '-' || value == '_' || value == '.' || value == ':' || unicode.IsSpace(value)
+}
+
+// shouldSplitSensitiveOutputAttributeWord reports whether a camelCase boundary needs a separator.
+func shouldSplitSensitiveOutputAttributeWord(runes []rune, index int, lastSeparator bool) bool {
+	if index == 0 || lastSeparator || !unicode.IsUpper(runes[index]) {
+		return false
+	}
+
+	previous := runes[index-1]
+	nextIsLower := index+1 < len(runes) && unicode.IsLower(runes[index+1])
+
+	return unicode.IsLower(previous) || unicode.IsDigit(previous) || unicode.IsUpper(previous) && nextIsLower
+}
+
+// appendSensitiveOutputAttributeSeparator appends one normalized separator when needed.
+func appendSensitiveOutputAttributeSeparator(builder *strings.Builder, lastSeparator bool) bool {
+	if builder.Len() == 0 || lastSeparator {
+		return lastSeparator
+	}
+
+	builder.WriteByte('_')
+
+	return true
 }

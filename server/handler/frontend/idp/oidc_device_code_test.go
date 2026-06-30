@@ -21,6 +21,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	devicecode "github.com/croessner/nauthilus/v3/server/idp"
+	"github.com/croessner/nauthilus/v3/server/idp/clientauth"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/gin-gonic/gin"
@@ -194,6 +195,47 @@ func TestDeviceAuthorizationRequiresClientAuthBeforeStateAllocation(t *testing.T
 
 	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
 	assert.Empty(t, store.requests)
+}
+
+func TestDeviceAuthorizationRequiresConfiguredClientAuthBeforeStateAllocation(t *testing.T) {
+	tests := []struct {
+		name       string
+		authMethod string
+	}{
+		{
+			name:       "private_key_jwt",
+			authMethod: clientauth.MethodPrivateKeyJWT,
+		},
+		{
+			name:       "client_secret_basic",
+			authMethod: clientauth.MethodClientSecretBasic,
+		},
+		{
+			name:       "client_secret_post",
+			authMethod: clientauth.MethodClientSecretPost,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			client := config.OIDCClient{
+				ClientID:                "device-" + testCase.name,
+				TokenEndpointAuthMethod: testCase.authMethod,
+				GrantTypes:              []string{definitions.OIDCGrantTypeDeviceCode},
+				Scopes:                  []string{definitions.ScopeOpenID},
+			}
+			handler, store := newDeviceAuthorizationHandler(t, client)
+
+			form := url.Values{}
+			form.Add(oidcParamClientID, client.ClientID)
+			form.Add(oidcParamScope, definitions.ScopeOpenID)
+
+			recorder := postDeviceAuthorization(handler, form, "", "")
+
+			assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+			assert.Empty(t, store.requests)
+		})
+	}
 }
 
 func TestDeviceAuthorizationStoresStateForAuthenticatedConfidentialClient(t *testing.T) {

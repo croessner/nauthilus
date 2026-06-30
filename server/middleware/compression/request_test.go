@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 )
 
 type compressionTestWriter interface {
@@ -59,6 +60,12 @@ func TestDecompressedBodyLimitRejectsExpandedGzipAndBrotli(t *testing.T) {
 			body:     brotliRequestBody(t, payload),
 			mw:       DecompressBrRequestMiddleware(newCompressionTestConfig()),
 		},
+		{
+			name:     "zstd",
+			encoding: "zstd",
+			body:     zstdRequestBody(t, payload),
+			mw:       DecompressZstdRequestMiddleware(newCompressionTestConfig()),
+		},
 	}
 
 	for _, testCase := range tests {
@@ -88,6 +95,12 @@ func TestDecompressedBodyLimitPreservesValidGzipAndBrotli(t *testing.T) {
 			encoding: "br",
 			body:     brotliRequestBody(t, payload),
 			mw:       DecompressBrRequestMiddleware(newCompressionTestConfig()),
+		},
+		{
+			name:     "zstd",
+			encoding: "zstd",
+			body:     zstdRequestBody(t, payload),
+			mw:       DecompressZstdRequestMiddleware(newCompressionTestConfig()),
 		},
 	}
 
@@ -147,6 +160,28 @@ func brotliRequestBody(t *testing.T, payload string) []byte {
 	return compressedRequestBody(t, payload, "brotli", func(writer io.Writer) compressionTestWriter {
 		return brotli.NewWriter(writer)
 	})
+}
+
+// zstdRequestBody returns a zstd-compressed request payload for middleware tests.
+func zstdRequestBody(t *testing.T, payload string) []byte {
+	t.Helper()
+
+	var body bytes.Buffer
+
+	writer, err := zstd.NewWriter(&body)
+	if err != nil {
+		t.Fatalf("create zstd writer: %v", err)
+	}
+
+	if _, err := writer.Write([]byte(payload)); err != nil {
+		t.Fatalf("write zstd payload: %v", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close zstd writer: %v", err)
+	}
+
+	return body.Bytes()
 }
 
 // compressedRequestBody writes one compressed request body using the provided encoder.

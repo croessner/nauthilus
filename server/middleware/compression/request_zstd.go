@@ -67,8 +67,8 @@ func DecompressZstdRequestMiddleware(cfg config.File) gin.HandlerFunc {
 				return
 			}
 
-			// Replace the request body with a ReadCloser that ties Decoder lifecycle to the original body
-			c.Request.Body = zstdReadCloser{dec: dec, src: c.Request.Body}
+			// Replace the request body with the capped decoder while tying Decoder lifecycle to the original body.
+			c.Request.Body = limitDecompressedRequestBody(c, zstdReadCloser{dec: dec, src: c.Request.Body})
 
 			// Remove Content-Encoding and Content-Length headers since we've decompressed the body
 			c.Request.Header.Del("Content-Encoding")

@@ -79,7 +79,7 @@ func (h *OIDCHandler) authenticateDeviceAuthorizationClient(ctx *gin.Context) (*
 		return nil, false
 	}
 
-	if client.IsPublicClient() {
+	if allowsUnauthenticatedDeviceAuthorizationClient(client) {
 		return client, true
 	}
 
@@ -92,6 +92,19 @@ func (h *OIDCHandler) authenticateDeviceAuthorizationClient(ctx *gin.Context) (*
 	}
 
 	return client, true
+}
+
+// allowsUnauthenticatedDeviceAuthorizationClient reports whether the device endpoint may skip client authentication.
+func allowsUnauthenticatedDeviceAuthorizationClient(client *config.OIDCClient) bool {
+	if client == nil {
+		return false
+	}
+
+	if client.TokenEndpointAuthMethod != "" {
+		return client.TokenEndpointAuthMethod == oidcClientAuthMethodNone
+	}
+
+	return client.IsPublicClient()
 }
 
 // authenticateDeviceAuthorizationPrivateKeyJWT verifies assertion-based device client auth.
