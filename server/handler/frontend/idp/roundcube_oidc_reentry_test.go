@@ -216,6 +216,63 @@ func assertFollowUpAuthorizeCreatesFreshFlow(t *testing.T, handler *OIDCHandler,
 	}
 }
 
+func TestExistingSessionMFAAssuranceChallengePersistsSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize", nil)
+	ctx.Set(definitions.CtxGUIDKey, "roundcube-stepup-test-guid")
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:      "user@example.test",
+		definitions.SessionKeyUniqueUserID: "uid-user",
+		definitions.SessionKeyDisplayName:  "User Example",
+		definitions.SessionKeySubject:      "uid-user",
+		definitions.SessionKeyIDPFlowType:  definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID:  "roundcube-client",
+	}}
+	ctx.Set(definitions.CtxSecureDataKey, mgr)
+
+	handler := newRoundcubeOIDCHandler()
+	ok := handler.enforceOIDCClientMFAAssurance(ctx, mgr, &config.OIDCClient{
+		ClientID:   "roundcube-client",
+		RequireMFA: []string{definitions.MFAMethodTOTP, definitions.MFAMethodRecoveryCodes},
+	})
+
+	if ok {
+		t.Fatal("expected Roundcube require_mfa step-up to block code issuance")
+	}
+
+	if got := recorder.Header().Get("Location"); got != frontendMFASelectPath {
+		t.Fatalf("step-up redirect = %q, want %q", got, frontendMFASelectPath)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyUsername, ""); got != "user@example.test" {
+		t.Fatalf("username = %q, want account fallback", got)
+	}
+
+	if mgr.saves == 0 {
+		t.Fatal("step-up challenge must persist the MFA session before redirect")
+	}
+}
+
+func TestReadLoginMFASelectSessionFallsBackToAccount(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:     "user@example.test",
+		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+	}}
+
+	username, protocol := readLoginMFASelectSession(mgr)
+	if username != "user@example.test" {
+		t.Fatalf("username = %q, want account fallback", username)
+	}
+
+	if protocol != definitions.ProtoOIDC {
+		t.Fatalf("protocol = %q, want %q", protocol, definitions.ProtoOIDC)
+	}
+}
+
 func TestLoginWithoutIDPFlowStaysRejected(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

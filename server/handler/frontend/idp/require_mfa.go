@@ -250,7 +250,10 @@ func (h *OIDCHandler) enforceOIDCClientMFAAssurance(ctx *gin.Context, mgr cookie
 		return true
 	}
 
-	h.prepareOIDCClientMFAAssuranceChallenge(ctx, mgr, client)
+	if !h.prepareOIDCClientMFAAssuranceChallenge(ctx, mgr, client) {
+		return false
+	}
+
 	ctx.Redirect(http.StatusFound, h.redirectTargetForMissingMFAAssurance(ctx))
 
 	return false
@@ -267,36 +270,51 @@ func (h *SAMLHandler) enforceSAMLServiceProviderMFAAssurance(ctx *gin.Context, m
 		return true
 	}
 
-	h.prepareSAMLServiceProviderMFAAssuranceChallenge(ctx, mgr, sp)
+	if !h.prepareSAMLServiceProviderMFAAssuranceChallenge(ctx, mgr, sp) {
+		return false
+	}
+
 	ctx.Redirect(http.StatusFound, frontendMFASelectPath)
 
 	return false
 }
 
 // prepareOIDCClientMFAAssuranceChallenge seeds the MFA UI for existing sessions.
-func (h *OIDCHandler) prepareOIDCClientMFAAssuranceChallenge(ctx *gin.Context, mgr cookie.Manager, client *config.OIDCClient) {
+func (h *OIDCHandler) prepareOIDCClientMFAAssuranceChallenge(ctx *gin.Context, mgr cookie.Manager, client *config.OIDCClient) bool {
 	if mgr == nil || client == nil {
-		return
+		return false
 	}
 
 	if !prepareOIDCMFAAssuranceSession(mgr, client.ClientID) {
-		return
+		return false
 	}
 
-	setMFAAssuranceFlowAuthOutcome(ctx, mgr, h.deps)
+	return saveMFAAssuranceChallenge(ctx, mgr, h.deps)
 }
 
 // prepareSAMLServiceProviderMFAAssuranceChallenge seeds the MFA UI for SAML step-up.
-func (h *SAMLHandler) prepareSAMLServiceProviderMFAAssuranceChallenge(ctx *gin.Context, mgr cookie.Manager, sp *config.SAML2ServiceProvider) {
+func (h *SAMLHandler) prepareSAMLServiceProviderMFAAssuranceChallenge(ctx *gin.Context, mgr cookie.Manager, sp *config.SAML2ServiceProvider) bool {
 	if mgr == nil || sp == nil {
-		return
+		return false
 	}
 
 	if !prepareSAMLMFAAssuranceSession(mgr, sp.EntityID) {
-		return
+		return false
 	}
 
-	setMFAAssuranceFlowAuthOutcome(ctx, mgr, h.deps)
+	return saveMFAAssuranceChallenge(ctx, mgr, h.deps)
+}
+
+// saveMFAAssuranceChallenge persists step-up state before the browser redirect.
+func saveMFAAssuranceChallenge(ctx *gin.Context, mgr cookie.Manager, handlerDeps *deps.Deps) bool {
+	setMFAAssuranceFlowAuthOutcome(ctx, mgr, handlerDeps)
+
+	if err := mgr.Save(ctx); err != nil {
+		ctx.String(http.StatusInternalServerError, "Failed to save session")
+		return false
+	}
+
+	return true
 }
 
 // setMFAAssuranceFlowAuthOutcome marks the current flow as authenticated when Redis state is available.

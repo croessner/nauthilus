@@ -1414,7 +1414,8 @@ func Test_cleanupMFAState(t *testing.T) {
 
 // mockCookieManager implements cookie.Manager for testing.
 type mockCookieManager struct {
-	data map[string]any
+	data  map[string]any
+	saves int
 }
 
 func (m *mockCookieManager) Set(key string, value any) {
@@ -1435,6 +1436,7 @@ func (m *mockCookieManager) Clear() {
 }
 
 func (m *mockCookieManager) Save(_ *gin.Context) error {
+	m.saves++
 	return nil
 }
 

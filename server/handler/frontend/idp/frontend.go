@@ -1783,6 +1783,10 @@ func readLoginMFASelectSession(mgr cookie.Manager) (string, string) {
 		username = factorUser
 	}
 
+	if username == "" {
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+	}
+
 	return username, mgr.GetString(definitions.SessionKeyIDPFlowType, "")
 }
 
@@ -1874,7 +1878,7 @@ func (h *FrontendHandler) renderLoginMFAVerificationPage(ctx *gin.Context, page 
 	mgr := cookie.GetManager(ctx)
 	h.prepareExistingSessionMFAAssuranceChallenge(mgr)
 
-	if mgr == nil || mgr.GetString(definitions.SessionKeyUsername, "") == "" {
+	if username, _ := readLoginMFASelectSession(mgr); username == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
 		return
