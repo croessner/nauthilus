@@ -46,10 +46,21 @@ func (h *FrontendHandler) getRequiredMFAMethods(mgr cookie.Manager) []string {
 	return h.getFlowMFAMethods(mgr, (*config.OIDCClient).GetRequireMFA, (*config.SAML2ServiceProvider).GetRequireMFA)
 }
 
-// getSupportedMFAMethods returns the list of MFA methods supported for the current
-// IDP client or SAML service provider. Empty means all methods are supported.
+// getSupportedMFAMethods returns the explicitly configured MFA methods supported
+// for the current IDP client or SAML service provider.
 func (h *FrontendHandler) getSupportedMFAMethods(mgr cookie.Manager) []string {
 	return h.getFlowMFAMethods(mgr, (*config.OIDCClient).GetSupportedMFA, (*config.SAML2ServiceProvider).GetSupportedMFA)
+}
+
+// getEffectiveSupportedMFAMethods resolves the runtime MFA method set. Explicit
+// supported_mfa wins; otherwise require_mfa narrows the set for this flow.
+func (h *FrontendHandler) getEffectiveSupportedMFAMethods(mgr cookie.Manager) []string {
+	supported := h.getSupportedMFAMethods(mgr)
+	if len(supported) > 0 {
+		return supported
+	}
+
+	return h.getRequiredMFAMethods(mgr)
 }
 
 // getFlowMFAMethods resolves OIDC or SAML MFA method settings from the current flow context.
@@ -113,7 +124,7 @@ func (h *FrontendHandler) getFlowMFAMethodsByIdentifier(mgr cookie.Manager, oidc
 }
 
 func (h *FrontendHandler) isMFAMethodSupported(mgr cookie.Manager, method string) bool {
-	supported := h.getSupportedMFAMethods(mgr)
+	supported := h.getEffectiveSupportedMFAMethods(mgr)
 	if len(supported) == 0 {
 		return true
 	}

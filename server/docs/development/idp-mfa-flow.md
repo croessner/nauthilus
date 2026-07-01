@@ -16,7 +16,7 @@ session state must be considered together.
 | `skip_consent` | OIDC client consent can be skipped. | A successful login can resume directly to the OIDC callback path after token/code handling. |
 | `delayed_response` | The first-factor password result is hidden until after MFA. | A wrong password still enters MFA if the account/factors can be resolved; the failure is revealed after the second factor. |
 | `require_mfa` | List of MFA methods that must be registered for this client. | After successful authentication, the flow may be diverted to `/mfa/<method>/register` before OIDC/SAML resumes. |
-| `supported_mfa` | List of MFA methods the client allows during login/registration. | Methods not supported by the client must not be offered or counted as satisfying `require_mfa`. |
+| `supported_mfa` | List of MFA methods the client allows during login/registration. | Methods not supported by the client must not be offered or counted as satisfying `require_mfa`. When unset and `require_mfa` is set, the effective login method set is narrowed to `require_mfa`. |
 | OIDC flow state | Authorization request, client id, redirect URI, scopes, PKCE, prompt. | Stored in Redis and session cookie; must survive MFA and required-MFA sub-flows. |
 | SAML flow state | Request, RelayState, entity id. | Same continuation model as OIDC, but protocol-specific resume target. |
 | Device-code flow state | User code/device code and pending verification state. | WebAuthn completion may need to call device-code completion instead of returning a browser redirect. |
@@ -91,7 +91,7 @@ sequenceDiagram
 
   Frontend->>Cookie: Store pending final identity and factor identity
   Frontend->>Cookie: Store backend name/ref and protocol
-  Frontend->>Frontend: Compute MFA availability filtered by supported_mfa
+  Frontend->>Frontend: Compute MFA availability filtered by effective supported methods
 
   alt no MFA required for login
     Frontend->>Cookie: Store final session
@@ -107,6 +107,41 @@ Important invariant: once MFA availability has been computed from the password
 step and authority backend state, the immediate MFA continuation should not make
 a contradictory required-MFA decision because the WebAuthn finish request has a
 different body shape.
+
+## OIDC Reentry With Existing Sessions
+
+OIDC relying parties may start a new authorization request immediately after a
+successful token and userinfo exchange while the browser still has an
+authenticated account session. This is a new Authorization-Code request, not a
+continuation of the completed one. The handler must therefore persist a fresh
+OIDC flow for the current request before consent, MFA assurance, required-MFA
+registration, or code issuance is evaluated.
+
+```mermaid
+sequenceDiagram
+  participant Browser
+  participant OIDC as OIDCHandler
+  participant Cookie
+  participant FlowStore as Redis Flow Store
+  participant Frontend as FrontendHandler
+
+  Browser->>OIDC: GET /oidc/authorize with account session and no idp_flow_id
+  OIDC->>FlowStore: Store current authorize request metadata
+  OIDC->>Cookie: Store flow id, client id, redirect URI, scopes, state, nonce, PKCE
+  alt fresh client-scoped MFA assurance
+    OIDC-->>Browser: Redirect to client callback with code
+  else assurance missing or stale
+    OIDC->>Cookie: Seed MFA assurance session
+    OIDC-->>Browser: Redirect /login/mfa
+    Browser->>Frontend: Complete TOTP/WebAuthn/recovery
+    Frontend->>FlowStore: Resolve parent resume target
+    Frontend-->>Browser: Redirect /oidc/authorize?...
+  end
+```
+
+Completing the previous OIDC request may remove temporary flow keys, but it must
+not make the next valid `/oidc/authorize` depend on the unauthenticated login
+start path. Direct `/login` access without an active IDP flow remains rejected.
 
 ## Delayed Response
 
@@ -209,8 +244,8 @@ flowchart TD
   Required --> Empty{"require_mfa empty?"}
   Empty -- "yes" --> Clear["Clear required-MFA state"] --> ResumeIDP["Resume OIDC/SAML/device flow"]
   Empty -- "no" --> Identity["Resolve final subject and factor/backend context"]
-  Identity --> Supported["Apply supported_mfa filter"]
-  Supported --> CheckTOTP{"TOTP registered?"}
+  Identity --> RequiredPolicy["Evaluate require_mfa registration policy"]
+  RequiredPolicy --> CheckTOTP{"TOTP registered?"}
   CheckTOTP -- "no" --> RegisterTOTP["Start require-MFA sub-flow to /mfa/totp/register"]
   CheckTOTP -- "yes" --> CheckWebAuthn{"WebAuthn registered?"}
   CheckWebAuthn -- "no" --> RegisterWebAuthn["Start require-MFA sub-flow to /mfa/webauthn/register"]
@@ -223,6 +258,11 @@ Required invariant for split edge/authority deployments:
 
 - The check must use the same final subject, factor identity, backend name, and
   backend reference that were selected during first-factor authentication.
+- Explicit `supported_mfa` is the configured allow-list. If it is unset and
+  `require_mfa` is set, `require_mfa` becomes the effective allow-list for login
+  MFA challenge and method-offer decisions so the UI does not offer a method
+  that final client assurance will reject. Required-MFA registration still
+  follows `require_mfa` directly.
 - A copied/internal lookup context is acceptable only if it preserves the
   encrypted cookie manager and session keys.
 - The session enrollment snapshot may satisfy a method only when that method was

@@ -319,6 +319,28 @@ func (h *OIDCHandler) redirectUnauthenticatedOIDCAuthorize(
 	return true
 }
 
+// ensureOIDCAuthorizeFlowState creates a fresh authorization flow for an
+// already authenticated browser session when no active flow exists yet.
+func (h *OIDCHandler) ensureOIDCAuthorizeFlowState(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	oidcFlowContext *oidcAuthorizeFlowContext,
+	request oidcAuthorizeRequest,
+	account string,
+) bool {
+	if mgr == nil {
+		return true
+	}
+
+	if mgr.GetString(definitions.SessionKeyIDPFlowID, "") != "" {
+		return true
+	}
+
+	_, ok := h.startOIDCAuthorizeLoginFlow(ctx, mgr, oidcFlowContext, request, account)
+
+	return ok
+}
+
 // oidcAuthorizeSessionMFA returns MFA state from the current browser session.
 func oidcAuthorizeSessionMFA(mgr cookie.Manager) (bool, string) {
 	if mgr == nil {
@@ -396,12 +418,17 @@ func (h *OIDCHandler) redirectOIDCAuthorizeConsent(
 	request oidcAuthorizeRequest,
 	session *idp.OIDCSession,
 	filteredScopes []string,
+	createdAuthorizeFlow bool,
 ) bool {
 	if !oidcAuthorizeNeedsConsent(client, oidcFlowContext, request, filteredScopes) {
 		return false
 	}
 
 	if request.prompt == oidcClientAuthMethodNone {
+		if createdAuthorizeFlow {
+			h.abortFlow(ctx, mgr)
+		}
+
 		redirectOIDCAuthorizeError(ctx, request.redirectURI, request.state, "consent_required")
 
 		return true
@@ -504,6 +531,13 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		return
 	}
 
+	hadAuthorizeFlow := mgr != nil && mgr.GetString(definitions.SessionKeyIDPFlowID, "") != ""
+	if !h.ensureOIDCAuthorizeFlowState(ctx, mgr, oidcFlowContext, request, account) {
+		return
+	}
+
+	createdAuthorizeFlow := !hadAuthorizeFlow && mgr != nil && mgr.GetString(definitions.SessionKeyIDPFlowID, "") != ""
+
 	if h.flowAuthFailureLatched(ctx, mgr) {
 		h.abortFlow(ctx, mgr)
 		ctx.String(http.StatusForbidden, "Authorization denied")
@@ -516,7 +550,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		return
 	}
 
-	if h.redirectOIDCAuthorizeConsent(ctx, mgr, client, oidcFlowContext, request, oidcSession, filteredScopes) {
+	if h.redirectOIDCAuthorizeConsent(ctx, mgr, client, oidcFlowContext, request, oidcSession, filteredScopes, createdAuthorizeFlow) {
 		return
 	}
 
