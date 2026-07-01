@@ -1488,6 +1488,12 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 		return
 	}
 
+	if tokenType, ok := claims[definitions.ClaimTokenType].(string); !ok || tokenType != definitions.TokenTypeAccessToken {
+		ctx.JSON(http.StatusOK, gin.H{oidcJSONFieldActive: false})
+
+		return
+	}
+
 	// Verify that the token was issued to the client making the request,
 	// or that the client is otherwise authorized to introspect this token.
 	if aud, ok := claims["aud"].(string); ok && aud != client.ClientID {
@@ -1502,6 +1508,7 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 
 	maps.Copy(response, claims)
 	response[oidcJSONFieldActive] = true
+	response[oidcJSONFieldTokenType] = oidcJSONTokenTypeBearer
 
 	ctx.JSON(http.StatusOK, response)
 }

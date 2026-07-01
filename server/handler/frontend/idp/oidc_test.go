@@ -1977,6 +1977,7 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 
 	t.Run("Valid token introspection", fixture.assertValidTokenIntrospection)
 	t.Run("Private key JWT token introspection", fixture.assertPrivateKeyJWTTokenIntrospection)
+	t.Run("ID token introspection is inactive", fixture.assertIDTokenIntrospectionInactive)
 	t.Run("Invalid token introspection", fixture.assertInvalidTokenIntrospection)
 	t.Run("Unauthorized client", fixture.assertUnauthorizedClient)
 
@@ -1989,6 +1990,7 @@ type oidcIntrospectionTest struct {
 	clientAssertionKey       *rsa.PrivateKey
 	privateKeyJWTClient      config.OIDCClient
 	issuer                   string
+	idToken                  string
 	accessToken              string
 	privateKeyJWTAccessToken string
 }
@@ -2028,13 +2030,13 @@ func newOIDCIntrospectionTest(t *testing.T) *oidcIntrospectionTest {
 
 	idpInstance := idp.NewNauthilusIDP(d)
 	h := NewOIDCHandler(d, idpInstance, nil)
-	accessToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
+	idToken, accessToken, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
 		ClientID: "test-client",
 		UserID:   "user123",
 		AuthTime: time.Now(),
 		Scopes:   []string{"openid", "profile"},
 	})
-	privateKeyJWTAccessToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
+	_, privateKeyJWTAccessToken, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
 		ClientID: privateKeyJWTClient.ClientID,
 		UserID:   "jwt-user",
 		AuthTime: time.Now(),
@@ -2047,6 +2049,7 @@ func newOIDCIntrospectionTest(t *testing.T) *oidcIntrospectionTest {
 		clientAssertionKey:       clientAssertionKey,
 		privateKeyJWTClient:      privateKeyJWTClient,
 		issuer:                   issuer,
+		idToken:                  idToken,
 		accessToken:              accessToken,
 		privateKeyJWTAccessToken: privateKeyJWTAccessToken,
 	}
@@ -2074,9 +2077,12 @@ func (f *oidcIntrospectionTest) postIntrospection(t *testing.T, form url.Values,
 func (f *oidcIntrospectionTest) assertValidTokenIntrospection(t *testing.T) {
 	w := f.postIntrospection(t, url.Values{"token": {f.accessToken}}, "test-client", "test-secret")
 	resp := mustDecodeOIDCTestJSON(t, w)
+	claims := f.mustValidateAccessTokenClaims(t, f.accessToken)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.True(t, resp["active"].(bool))
+	assert.Equal(t, oidcJSONTokenTypeBearer, resp[oidcJSONFieldTokenType])
+	assert.Equal(t, definitions.TokenTypeAccessToken, claims[definitions.ClaimTokenType])
 	assert.Equal(t, "user123", resp["sub"])
 	assert.Equal(t, "test-client", resp["aud"])
 }
@@ -2101,11 +2107,34 @@ func (f *oidcIntrospectionTest) assertPrivateKeyJWTTokenIntrospection(t *testing
 
 	w := f.postIntrospection(t, form, "", "")
 	resp := mustDecodeOIDCTestJSON(t, w)
+	claims := f.mustValidateAccessTokenClaims(t, f.privateKeyJWTAccessToken)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.True(t, resp["active"].(bool))
+	assert.Equal(t, oidcJSONTokenTypeBearer, resp[oidcJSONFieldTokenType])
+	assert.Equal(t, definitions.TokenTypeAccessToken, claims[definitions.ClaimTokenType])
 	assert.Equal(t, "jwt-user", resp[oidcTestJWTClaimSubject])
 	assert.Equal(t, f.privateKeyJWTClient.ClientID, resp["aud"])
+}
+
+// assertIDTokenIntrospectionInactive verifies identity assertions are not exposed as bearer access tokens.
+func (f *oidcIntrospectionTest) assertIDTokenIntrospectionInactive(t *testing.T) {
+	w := f.postIntrospection(t, url.Values{"token": {f.idToken}}, "test-client", "test-secret")
+	resp := mustDecodeOIDCTestJSON(t, w)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, resp["active"].(bool))
+	assert.Nil(t, resp[oidcJSONFieldTokenType])
+}
+
+// mustValidateAccessTokenClaims returns the internally validated token claims.
+func (f *oidcIntrospectionTest) mustValidateAccessTokenClaims(t *testing.T, token string) map[string]any {
+	t.Helper()
+
+	claims, err := f.handler.idp.ValidateToken(context.Background(), token)
+	assert.NoError(t, err)
+
+	return claims
 }
 
 // assertInvalidTokenIntrospection verifies inactive responses for unknown tokens.
