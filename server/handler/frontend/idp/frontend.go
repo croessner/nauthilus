@@ -304,7 +304,6 @@ func frontendCookieFreeRouteHandlers(middlewares frontendRouteMiddlewares, handl
 // registerLoginRoutes registers login, MFA challenge, and recovery-code login routes.
 func (h *FrontendHandler) registerLoginRoutes(router gin.IRouter, middlewares frontendRouteMiddlewares) {
 	loginWebAuthnBegin := core.LoginWebAuthnBegin(h.deps.Auth())
-	loginWebAuthnFinish := core.LoginWebAuthnFinish(h.deps.Auth())
 
 	router.GET(frontendLoginPath, frontendRouteHandlers(middlewares, h.Login)...)
 	router.GET("/login/:languageTag", frontendRouteHandlers(middlewares, h.Login)...)
@@ -318,8 +317,8 @@ func (h *FrontendHandler) registerLoginRoutes(router gin.IRouter, middlewares fr
 	router.GET("/login/webauthn/:languageTag", frontendRouteHandlers(middlewares, h.LoginWebAuthn)...)
 	router.GET("/login/webauthn/begin", frontendRouteHandlers(middlewares, loginWebAuthnBegin)...)
 	router.GET("/login/webauthn/begin/:languageTag", frontendRouteHandlers(middlewares, loginWebAuthnBegin)...)
-	router.POST("/login/webauthn/finish", frontendRouteHandlers(middlewares, loginWebAuthnFinish)...)
-	router.POST("/login/webauthn/finish/:languageTag", frontendRouteHandlers(middlewares, loginWebAuthnFinish)...)
+	router.POST("/login/webauthn/finish", frontendRouteHandlers(middlewares, h.PostLoginWebAuthnFinish)...)
+	router.POST("/login/webauthn/finish/:languageTag", frontendRouteHandlers(middlewares, h.PostLoginWebAuthnFinish)...)
 	router.GET("/login/mfa", frontendRouteHandlers(middlewares, h.LoginMFASelect)...)
 	router.GET("/login/mfa/:languageTag", frontendRouteHandlers(middlewares, h.LoginMFASelect)...)
 	router.GET("/login/recovery", frontendRouteHandlers(middlewares, h.LoginRecovery)...)
@@ -676,6 +675,13 @@ func (h *FrontendHandler) resumeExistingLoginSession(ctx *gin.Context, mgr cooki
 	}
 
 	return true
+}
+
+// webAuthnFinishResponse is returned to browser JavaScript after a successful
+// WebAuthn login assertion. Redirect stays server-derived so the client never
+// reconstructs IDP flow state.
+type webAuthnFinishResponse struct {
+	Redirect string `json:"redirect"`
 }
 
 // renderLoginPage renders the initial username/password login page.
@@ -1582,6 +1588,39 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	}
 }
 
+// PostLoginWebAuthnFinish completes WebAuthn MFA and returns the server-derived
+// continuation target for the surrounding IDP flow.
+func (h *FrontendHandler) PostLoginWebAuthnFinish(ctx *gin.Context) {
+	if _, ok := core.CompleteLoginWebAuthn(ctx, h.deps.Auth()); !ok {
+		return
+	}
+
+	mgr := cookie.GetManager(ctx)
+
+	redirectURI, ok := h.loginWebAuthnCompletionRedirect(ctx, mgr)
+	if !ok {
+		return
+	}
+
+	if redirectURI == flowdomain.FlowMetadataResumeTargetDeviceCodeComplete {
+		h.completeDeviceCodeFlow(ctx, mgr)
+
+		return
+	}
+
+	ctx.JSON(http.StatusOK, webAuthnFinishResponse{Redirect: redirectURI})
+}
+
+// loginWebAuthnCompletionRedirect mirrors the post-MFA continuation used by
+// TOTP, but returns a transport-neutral target for the JavaScript WebAuthn flow.
+func (h *FrontendHandler) loginWebAuthnCompletionRedirect(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
+	if redirectURI, ok := h.requireMFARegistrationRedirectURI(ctx, mgr); ok {
+		return redirectURI, true
+	}
+
+	return h.resumeIDPFlowRedirectURI(ctx, mgr)
+}
+
 func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
 	if user == nil {
 		return false
@@ -1608,6 +1647,10 @@ func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
 
 // hasWebAuthn reports whether the user has any registered WebAuthn credential.
 func (h *FrontendHandler) hasWebAuthn(ctx *gin.Context, user *backend.User, protocolName string) bool {
+	if mgr := cookie.GetManager(ctx); mgr != nil && mgr.GetBool(definitions.SessionKeyHaveWebAuthn, false) {
+		return true
+	}
+
 	return h.hasWebAuthnWithBackendRef(ctx, user, protocolName, core.RemoteBackendRef{})
 }
 
@@ -1627,12 +1670,13 @@ func (h *FrontendHandler) hasWebAuthnWithProviderAndBackendRef(ctx *gin.Context,
 		return false
 	}
 
+	lookupCtx := backendDataLookupContext(ctx)
 	mgr := cookie.GetManager(ctx)
 
 	if provider == nil {
 		authDeps := h.deps.Auth()
 
-		state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
+		state := core.NewAuthStateWithSetupWithDeps(lookupCtx, authDeps)
 		if state == nil {
 			return false
 		}
@@ -1666,7 +1710,7 @@ func (h *FrontendHandler) hasWebAuthnWithProviderAndBackendRef(ctx *gin.Context,
 		UniqueUserID: user.ID,
 	}
 
-	h.resolveWebAuthnUser(ctx, nil, data, provider)
+	h.resolveWebAuthnUser(lookupCtx, nil, data, provider)
 
 	return data.HaveWebAuthn
 }
@@ -2070,42 +2114,90 @@ func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.Use
 
 // getMFAAvailabilityWithBackendRef evaluates active MFA methods against the selected backend identity.
 func (h *FrontendHandler) getMFAAvailabilityWithBackendRef(ctx *gin.Context, user *backend.User, protocolParam string, mgr cookie.Manager, backendRef core.RemoteBackendRef) mfaAvailability {
-	haveTOTP := h.hasTOTP(user)
-	haveWebAuthn := h.hasWebAuthnWithBackendRef(ctx, user, protocolParam, backendRef)
-	haveRecoveryCodes := h.hasRecoveryCodes(user)
+	availability := mfaAvailability{
+		haveTOTP:          h.hasTOTP(user),
+		haveWebAuthn:      h.hasWebAuthnWithBackendRef(ctx, user, protocolParam, backendRef),
+		haveRecoveryCodes: h.hasRecoveryCodes(user),
+	}
+
+	h.mergeBackendMFAAvailability(ctx, mgr, user, protocolParam, backendRef, &availability)
+	h.applySupportedMFAFilter(mgr, &availability)
+	availability.count = countMFAAvailability(availability)
+	storeMFAAvailabilitySnapshot(mgr, availability)
+
+	return availability
+}
+
+// mergeBackendMFAAvailability adds public backend MFA state to attribute-based checks.
+func (h *FrontendHandler) mergeBackendMFAAvailability(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	user *backend.User,
+	protocolParam string,
+	backendRef core.RemoteBackendRef,
+	availability *mfaAvailability,
+) {
+	if h == nil || h.deps == nil || ctx == nil || user == nil || availability == nil {
+		return
+	}
+
+	data, err := h.getUserBackendDataForIdentity(ctx, mgr, user.Name, protocolParam, backendRef)
+	if err != nil || data == nil {
+		return
+	}
+
+	availability.haveTOTP = availability.haveTOTP || data.HaveTOTP
+	availability.haveWebAuthn = availability.haveWebAuthn || data.HaveWebAuthn
+	availability.haveRecoveryCodes = availability.haveRecoveryCodes || data.NumRecoveryCodes > 0
+}
+
+// applySupportedMFAFilter removes methods disallowed by the active client policy.
+func (h *FrontendHandler) applySupportedMFAFilter(mgr cookie.Manager, availability *mfaAvailability) {
+	if h == nil || availability == nil {
+		return
+	}
 
 	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP) {
-		haveTOTP = false
+		availability.haveTOTP = false
 	}
 
 	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn) {
-		haveWebAuthn = false
+		availability.haveWebAuthn = false
 	}
 
 	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodRecoveryCodes) {
-		haveRecoveryCodes = false
+		availability.haveRecoveryCodes = false
 	}
+}
 
+// countMFAAvailability counts recovery codes only when another MFA method exists.
+func countMFAAvailability(availability mfaAvailability) int {
 	count := 0
 
-	if haveTOTP {
+	if availability.haveTOTP {
 		count++
 	}
 
-	if haveWebAuthn {
+	if availability.haveWebAuthn {
 		count++
 	}
 
-	if count != 0 && haveRecoveryCodes {
+	if count != 0 && availability.haveRecoveryCodes {
 		count++
 	}
 
-	return mfaAvailability{
-		haveTOTP:          haveTOTP,
-		haveWebAuthn:      haveWebAuthn,
-		haveRecoveryCodes: haveRecoveryCodes,
-		count:             count,
+	return count
+}
+
+// storeMFAAvailabilitySnapshot preserves enrolled-factor facts across MFA cleanup.
+func storeMFAAvailabilitySnapshot(mgr cookie.Manager, availability mfaAvailability) {
+	if mgr == nil {
+		return
 	}
+
+	mgr.Set(definitions.SessionKeyHaveTOTP, availability.haveTOTP)
+	mgr.Set(definitions.SessionKeyHaveWebAuthn, availability.haveWebAuthn)
+	mgr.Set(definitions.SessionKeyHaveRecoveryCodes, availability.haveRecoveryCodes)
 }
 
 // getMFARedirectURLFromCookie returns the MFA redirect URL based on user's available MFA methods.
@@ -2769,6 +2861,7 @@ func (h *FrontendHandler) finishSaveRecoveryCodes(ctx *gin.Context, context save
 	context.mgr.Delete(definitions.SessionKeyRecoveryCodes)
 	context.mgr.Delete(definitions.SessionKeyRecoveryCodesRemoteGenerated)
 	context.mgr.Set(definitions.SessionKeyRecoveryCodesSaved, true)
+	context.mgr.Set(definitions.SessionKeyHaveRecoveryCodes, true)
 
 	if context.mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
 		h.removeCompletedRequireMFAMethod(ctx, context.mgr, definitions.MFAMethodRecoveryCodes)
@@ -3086,6 +3179,10 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	}
 
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "success").Inc()
+
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		mgr.Set(definitions.SessionKeyHaveWebAuthn, false)
+	}
 
 	userData.AuthState.PurgeCacheFor(username)
 

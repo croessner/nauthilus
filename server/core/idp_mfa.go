@@ -61,6 +61,7 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 	mgr.Set(definitions.SessionKeyMFAAssuranceAt, time.Now().Unix())
 	mgr.Set(definitions.SessionKeyMFAAssuranceMethod, method)
 	mgr.Set(definitions.SessionKeyMFAAssuranceScope, completedIDPMFAAssuranceScope(mgr, protocol))
+	storeCompletedIDPMFAEnrollmentSnapshot(mgr, method)
 
 	if method != "" {
 		mgr.Set(definitions.SessionKeyMFAMethod, method)
@@ -69,6 +70,18 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 	if rememberMeTTL > 0 {
 		mgr.SetMaxAge(rememberMeTTL)
 		mgr.Delete(definitions.SessionKeyRememberTTL)
+	}
+}
+
+// storeCompletedIDPMFAEnrollmentSnapshot records factor enrollment proven by a successful challenge.
+func storeCompletedIDPMFAEnrollmentSnapshot(mgr cookie.Manager, method string) {
+	switch normalizeMFAMethodForLogging(method) {
+	case definitions.MFAMethodTOTP:
+		mgr.Set(definitions.SessionKeyHaveTOTP, true)
+	case definitions.MFAMethodWebAuthn:
+		mgr.Set(definitions.SessionKeyHaveWebAuthn, true)
+	case definitions.MFAMethodRecoveryCodes:
+		mgr.Set(definitions.SessionKeyHaveRecoveryCodes, true)
 	}
 }
 

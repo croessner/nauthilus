@@ -609,6 +609,29 @@
     }
 
     /**
+     * Resolves the post-login navigation target from a WebAuthn finish response.
+     *
+     * @param {Response} response
+     * @param {string} fallback
+     * @returns {Promise<string>}
+     */
+    async function webAuthnLoginRedirectURL(response, fallback) {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            try {
+                const data = await response.clone().json();
+                if (isSafeRelativeRedirect(data.redirect)) {
+                    return data.redirect;
+                }
+            } catch {
+                // Fall through to the legacy fallback below.
+            }
+        }
+
+        return fallback;
+    }
+
+    /**
      * Fetches an endpoint and renders response errors in the WebAuthn error panel.
      *
      * @param {string} endpoint
@@ -709,7 +732,7 @@
                 }
             }
 
-            window.location.href = nextURL;
+            window.location.href = await webAuthnLoginRedirectURL(finishResponse, nextURL);
         } catch (error) {
             showWebAuthnCaughtError(error, unknownErrorText, ui, trigger);
         }

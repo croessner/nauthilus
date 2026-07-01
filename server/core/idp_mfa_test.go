@@ -49,6 +49,7 @@ func TestStoreCompletedIDPMFASessionUsesCanonicalMFAIdentity(t *testing.T) {
 		definitions.SessionKeyMFAFactorRemoteBackendRefToken: testIDPMFAFactorRefToken,
 		definitions.SessionKeyProtocol:                       definitions.ProtoOIDC,
 		definitions.SessionKeyIDPClientID:                    testIDPMFAOIDCClientID,
+		definitions.SessionKeyHaveTOTP:                       true,
 	}}
 
 	StoreCompletedIDPMFASession(mgr, &backend.User{
@@ -68,6 +69,8 @@ func TestStoreCompletedIDPMFASessionUsesCanonicalMFAIdentity(t *testing.T) {
 	assert.GreaterOrEqual(t, mgr.GetInt64(definitions.SessionKeyMFAAssuranceAt, 0), before)
 	assert.LessOrEqual(t, mgr.GetInt64(definitions.SessionKeyMFAAssuranceAt, 0), time.Now().Unix())
 	assert.Equal(t, definitions.ProtoOIDC+":"+testIDPMFAOIDCClientID, mgr.GetString(definitions.SessionKeyMFAAssuranceScope, ""))
+	assert.True(t, mgr.GetBool(definitions.SessionKeyHaveTOTP, false))
+	assert.True(t, mgr.GetBool(definitions.SessionKeyHaveWebAuthn, false))
 	assert.Empty(t, mgr.GetString(definitions.SessionKeyUsername, ""))
 	assert.Empty(t, mgr.GetString(definitions.SessionKeyMFAAccount, ""))
 	assert.Empty(t, mgr.GetString(definitions.SessionKeyMFADisplayName, ""))

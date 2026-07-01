@@ -706,6 +706,7 @@ func updateRegistrationUserCache(ctx *gin.Context, deps AuthDeps, authState *Aut
 // completeRegistrationSession clears registration state and saves the session.
 func completeRegistrationSession(ctx *gin.Context, mgr cookie.Manager) bool {
 	mgr.Delete(definitions.SessionKeyRegistration)
+	mgr.Set(definitions.SessionKeyHaveWebAuthn, true)
 
 	if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
 		flow.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodWebAuthn)
@@ -895,59 +896,70 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 	}
 }
 
-// LoginWebAuthnFinish Page: '/login/webauthn/finish'
-func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
+// CompleteLoginWebAuthn validates a WebAuthn login assertion and stores the
+// completed MFA session. The caller is responsible for choosing the transport
+// response so browser flows can resume the surrounding IDP flow correctly.
+func CompleteLoginWebAuthn(ctx *gin.Context, deps AuthDeps) (*backend.User, bool) {
 	tracer := monittrace.New("nauthilus/core/webauthn")
 
+	_, sp := tracer.Start(ctx.Request.Context(), "webauthn.login_finish")
+	defer sp.End()
+
+	mgr := cookie.GetManager(ctx)
+
+	loginSession, ok := loadWebAuthnLoginSession(ctx, mgr)
+	if !ok {
+		return nil, false
+	}
+
+	if loginSession.sessionData == nil {
+		rejectMissingWebAuthnLoginSession(ctx, deps, loginSession.identity.userName)
+
+		return nil, false
+	}
+
+	auth := NewAuthStateFromContextWithDeps(ctx, deps)
+	authState := auth.(*AuthState)
+
+	user, ok := resolveWebAuthnLoginUser(ctx, deps, authState, loginSession.identity)
+	if !ok {
+		return nil, false
+	}
+
+	if user == nil {
+		LogIDPMFAuthResult(ctx, deps, loginSession.identity.userName, definitions.MFAMethodWebAuthn, "User not found", false)
+		ctx.JSON(http.StatusBadRequest, "User not found")
+
+		return nil, false
+	}
+
+	assertion, ok := finishWebAuthnLoginAssertion(ctx, deps, authState, user, loginSession.sessionData, sp)
+	if !ok {
+		return nil, false
+	}
+
+	if !persistWebAuthnLoginCredentialUpdate(ctx, deps, authState, user, assertion) {
+		return nil, false
+	}
+
+	user, ok = completeWebAuthnLogin(ctx, deps, authState, mgr, user)
+	if !ok {
+		return nil, false
+	}
+
+	QueueCompletedIDPMFAPostAction(ctx, authState.deps, user)
+
+	return user, true
+}
+
+// LoginWebAuthnFinish Page: '/login/webauthn/finish'
+func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.login_finish")
-		defer sp.End()
-
-		mgr := cookie.GetManager(ctx)
-
-		loginSession, ok := loadWebAuthnLoginSession(ctx, mgr)
-		if !ok {
+		if _, ok := CompleteLoginWebAuthn(ctx, deps); !ok {
 			return
 		}
 
-		if loginSession.sessionData == nil {
-			rejectMissingWebAuthnLoginSession(ctx, deps, loginSession.identity.userName)
-
-			return
-		}
-
-		auth := NewAuthStateFromContextWithDeps(ctx, deps)
-		authState := auth.(*AuthState)
-
-		user, ok := resolveWebAuthnLoginUser(ctx, deps, authState, loginSession.identity)
-		if !ok {
-			return
-		}
-
-		if user == nil {
-			LogIDPMFAuthResult(ctx, deps, loginSession.identity.userName, definitions.MFAMethodWebAuthn, "User not found", false)
-			ctx.JSON(http.StatusBadRequest, "User not found")
-
-			return
-		}
-
-		assertion, ok := finishWebAuthnLoginAssertion(ctx, deps, authState, user, loginSession.sessionData, sp)
-		if !ok {
-			return
-		}
-
-		if !persistWebAuthnLoginCredentialUpdate(ctx, deps, authState, user, assertion) {
-			return
-		}
-
-		user, ok = completeWebAuthnLogin(ctx, deps, authState, mgr, user)
-		if !ok {
-			return
-		}
-
-		QueueCompletedIDPMFAPostAction(ctx, authState.deps, user)
-
-		ctx.JSON(http.StatusOK, "Login success")
+		ctx.JSON(http.StatusOK, gin.H{asyncJobFieldStatus: "ok"})
 	}
 }
 

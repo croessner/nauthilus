@@ -593,29 +593,44 @@ func restoreRequireMFAFlowIdentifiers(mgr cookie.Manager, oidcClientID string, s
 //
 // Returns false when no registration is required and the caller may proceed normally.
 func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Context, mgr cookie.Manager) bool {
-	if mgr == nil {
-		return false
-	}
-
-	if mgr.GetString(definitions.SessionKeyIDPFlowID, "") == "" {
-		return false
-	}
-
-	required, user, protocol, ok := h.requireMFARegistrationContext(ctx, mgr)
+	redirectURI, ok := h.requireMFARegistrationRedirectURI(ctx, mgr)
 	if !ok {
 		return false
 	}
 
-	missing := h.missingRequireMFAMethods(ctx, mgr, user, protocol, required)
+	ctx.Redirect(http.StatusFound, redirectURI)
+
+	return true
+}
+
+// requireMFARegistrationRedirectURI prepares a required-MFA registration flow
+// and returns its next target without committing to a concrete HTTP transport.
+func (h *FrontendHandler) requireMFARegistrationRedirectURI(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
+	if mgr == nil {
+		return "", false
+	}
+
+	if mgr.GetString(definitions.SessionKeyIDPFlowID, "") == "" {
+		return "", false
+	}
+
+	lookupCtx := backendDataLookupContext(ctx)
+	required, user, protocol, ok := h.requireMFARegistrationContext(lookupCtx, mgr)
+
+	if !ok {
+		return "", false
+	}
+
+	missing := h.missingRequireMFAMethods(lookupCtx, mgr, user, protocol, required)
 	if len(missing) == 0 {
 		h.clearRequireMFARegistrationState(mgr)
 
-		return false
+		return "", false
 	}
 
 	flowdomain.SetRequireMFAPending(mgr, strings.Join(missing, ","))
 
-	return h.startRequireMFARegistrationFlow(ctx, mgr, user, protocol, missing)
+	return h.startRequireMFARegistrationFlow(lookupCtx, mgr, user, protocol, missing)
 }
 
 // requireMFARegistrationContext loads configured requirements and current user.
@@ -713,7 +728,7 @@ func (h *FrontendHandler) startRequireMFARegistrationFlow(
 	user *backend.User,
 	protocol string,
 	missing []string,
-) bool {
+) (string, bool) {
 	parentFlowID := requireMFAParentFlowID(mgr)
 	if parentFlowID != "" {
 		mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
@@ -723,14 +738,14 @@ func (h *FrontendHandler) startRequireMFARegistrationFlow(
 	if flowID == "" {
 		h.clearRequireMFARegistrationState(mgr)
 
-		return false
+		return "", false
 	}
 
 	nextTarget := h.nextRequiredMFARegistrationTarget(mgr)
 	if nextTarget == "" {
 		h.clearRequireMFARegistrationState(mgr)
 
-		return false
+		return "", false
 	}
 
 	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
@@ -747,20 +762,18 @@ func (h *FrontendHandler) startRequireMFARegistrationFlow(
 	if err != nil {
 		h.clearRequireMFARegistrationState(mgr)
 
-		return false
+		return "", false
 	}
 
 	if decision.RedirectURI == "" {
 		h.clearRequireMFARegistrationState(mgr)
 
-		return false
+		return "", false
 	}
 
 	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepRequireMFAChallenge)
 
-	ctx.Redirect(http.StatusFound, decision.RedirectURI)
-
-	return true
+	return decision.RedirectURI, true
 }
 
 func requireMFAFlowMetadata(mgr cookie.Manager, user *backend.User, missing string) map[string]string {
@@ -1029,9 +1042,10 @@ func (h *FrontendHandler) hasTOTPForRequireMFA(ctx *gin.Context, mgr cookie.Mana
 		username = mgr.GetString(definitions.SessionKeyAccount, "")
 	}
 
-	h.purgeCachedAuthenticationForUser(ctx, username)
+	lookupCtx := backendDataLookupContext(ctx)
+	h.purgeCachedAuthenticationForUser(lookupCtx, username)
 
-	userData, err := h.GetUserBackendData(ctx)
+	userData, err := h.GetUserBackendData(lookupCtx)
 	if err != nil || userData == nil {
 		return false
 	}
@@ -1044,6 +1058,10 @@ func (h *FrontendHandler) hasRecoveryCodesForRequireMFA(ctx *gin.Context, mgr co
 		return true
 	}
 
+	if mgr != nil && mgr.GetBool(definitions.SessionKeyHaveRecoveryCodes, false) {
+		return true
+	}
+
 	if mgr != nil && mgr.GetBool(definitions.SessionKeyRecoveryCodesSaved, false) {
 		return true
 	}
@@ -1053,9 +1071,10 @@ func (h *FrontendHandler) hasRecoveryCodesForRequireMFA(ctx *gin.Context, mgr co
 		username = mgr.GetString(definitions.SessionKeyAccount, "")
 	}
 
-	h.purgeCachedAuthenticationForUser(ctx, username)
+	lookupCtx := backendDataLookupContext(ctx)
+	h.purgeCachedAuthenticationForUser(lookupCtx, username)
 
-	userData, err := h.GetUserBackendData(ctx)
+	userData, err := h.GetUserBackendData(lookupCtx)
 	if err != nil || userData == nil {
 		return false
 	}
@@ -1068,7 +1087,9 @@ func (h *FrontendHandler) purgeCachedAuthenticationForUser(ctx *gin.Context, use
 		return
 	}
 
-	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
+	lookupCtx := backendDataLookupContext(ctx)
+	state := core.NewAuthStateWithSetupWithDeps(lookupCtx, h.deps.Auth())
+
 	if state == nil {
 		return
 	}

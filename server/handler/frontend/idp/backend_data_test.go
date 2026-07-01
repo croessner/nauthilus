@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,6 +179,64 @@ func TestGetUserBackendDataPurgesStaleWebAuthnCacheWhenAuthorityHasNoCredentials
 
 	assert.Len(t, client.mfaStateRequests, 1)
 	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+func TestPurgeCachedAuthenticationForUserIgnoresConsumedStructuredBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	fixture := newBackendDataRemoteFixture(t)
+	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
+
+	router := gin.New()
+	router.POST("/login/webauthn/finish", func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxGUIDKey, "baseline-backend-data-guid")
+		ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
+		ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+
+		handler.purgeCachedAuthenticationForUser(ctx, backendDataUsername)
+
+		ctx.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/login/webauthn/finish", strings.NewReader(""))
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = "127.0.0.1:12345"
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusNoContent, recorder.Code)
+	assert.Empty(t, recorder.Body.String())
+}
+
+func TestHasWebAuthnIgnoresConsumedStructuredBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	fixture := newBackendDataRemoteFixture(t)
+	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
+
+	router := gin.New()
+	router.POST("/login/webauthn/finish", func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxGUIDKey, "baseline-backend-data-guid")
+		ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
+		ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+
+		ok := handler.hasWebAuthn(ctx, &backend.User{
+			ID:   backendDataUniqueUserID,
+			Name: backendDataUsername,
+		}, definitions.ProtoIDP)
+
+		assert.False(t, ok)
+		ctx.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/login/webauthn/finish", strings.NewReader(""))
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = "127.0.0.1:12345"
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusNoContent, recorder.Code)
+	assert.Empty(t, recorder.Body.String())
 }
 
 func newBackendDataTestCredential() mfa.PersistentCredential {

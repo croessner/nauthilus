@@ -249,6 +249,36 @@ func TestMFAServiceGetAuthStateUsesPendingFactorBackendRef(t *testing.T) {
 	assert.Equal(t, "factor-backend", auth.Runtime.RemoteBackendRef.Name)
 }
 
+func TestUserLookupRemoteBackendRefUsesPendingFactorIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.FileSettings{}
+	env := config.NewTestEnvironmentConfig()
+	auth := &core.AuthState{}
+	mgr := cookie.NewSecureManager([]byte("test-secret-32bytes-1234567890!!"), definitions.SecureDataCookieName, cfg, env)
+	mgr.Set(definitions.SessionKeyMFAFactorAccount, "master@example.test")
+	core.StoreRemoteBackendRef(mgr, core.RemoteBackendRef{
+		Type:        definitions.BackendTestName,
+		Name:        "target-backend",
+		Protocol:    definitions.ProtoOIDC,
+		Authority:   mfaAuthority,
+		OpaqueToken: "target-token",
+	})
+	core.StorePendingIDPMFAFactorRemoteBackendRef(mgr, core.RemoteBackendRef{
+		Type:        definitions.BackendTestName,
+		Name:        "factor-backend",
+		Protocol:    definitions.ProtoOIDC,
+		Authority:   mfaAuthority,
+		OpaqueToken: "factor-token",
+	})
+
+	auth.SetUsername("master@example.test")
+	bindUserLookupRemoteBackendRef(auth, mgr)
+
+	assert.Equal(t, "factor-token", auth.Runtime.RemoteBackendRef.OpaqueToken)
+	assert.Equal(t, "factor-backend", auth.Runtime.RemoteBackendRef.Name)
+}
+
 func newRemoteTOTPFlowState(flowID string, metadata map[string]string) *flowdomain.State {
 	now := time.Unix(1_700_000_000, 0).UTC()
 

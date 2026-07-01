@@ -239,27 +239,12 @@ func setFlowAuthOutcome(ctx context.Context, mgr cookie.Manager, redisClient red
 // resumeIDPFlow resumes an interrupted IDP flow and performs the redirect
 // implied by the flow decision.
 func (h *FrontendHandler) resumeIDPFlow(ctx *gin.Context, mgr cookie.Manager) {
-	var (
-		redisClient rediscli.Client
-		redisPrefix string
-	)
-
-	if h != nil && h.deps != nil {
-		redisClient = h.deps.Redis
-
-		if h.deps.Cfg != nil && h.deps.Cfg.GetServer() != nil {
-			redisPrefix = h.deps.Cfg.GetServer().GetRedis().GetPrefix()
-		}
-	}
-
-	decision, err := resumeFlow(ctx.Request.Context(), mgr, redisClient, redisPrefix)
-	if err != nil {
-		ctx.Redirect(http.StatusFound, "/")
-
+	redirectURI, ok := h.resumeIDPFlowRedirectURI(ctx, mgr)
+	if !ok {
 		return
 	}
 
-	if decision.RedirectURI == flowdomain.FlowMetadataResumeTargetDeviceCodeComplete {
+	if redirectURI == flowdomain.FlowMetadataResumeTargetDeviceCodeComplete {
 		if h == nil || h.deps == nil {
 			ctx.Redirect(http.StatusFound, "/")
 
@@ -271,6 +256,22 @@ func (h *FrontendHandler) resumeIDPFlow(ctx *gin.Context, mgr cookie.Manager) {
 		return
 	}
 
+	ctx.Redirect(http.StatusFound, redirectURI)
+}
+
+// resumeIDPFlowRedirectURI resolves the next flow target without writing a
+// redirect response. Fetch-based frontends use this to resume the same flow as
+// form-based MFA completions.
+func (h *FrontendHandler) resumeIDPFlowRedirectURI(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
+	redisClient, redisPrefix := h.flowStore()
+
+	decision, err := resumeFlow(ctx.Request.Context(), mgr, redisClient, redisPrefix)
+	if err != nil {
+		ctx.Redirect(http.StatusFound, "/")
+
+		return "", false
+	}
+
 	redirectURI := decision.RedirectURI
 	if redirectURI == "" {
 		redirectURI = "/"
@@ -280,10 +281,25 @@ func (h *FrontendHandler) resumeIDPFlow(ctx *gin.Context, mgr cookie.Manager) {
 		abortFlow(ctx.Request.Context(), mgr, redisClient, redisPrefix)
 		h.renderNoFlowError(ctx)
 
-		return
+		return "", false
 	}
 
-	ctx.Redirect(http.StatusFound, redirectURI)
+	return redirectURI, true
+}
+
+func (h *FrontendHandler) flowStore() (rediscli.Client, string) {
+	if h == nil || h.deps == nil {
+		return nil, ""
+	}
+
+	redisClient := h.deps.Redis
+	redisPrefix := ""
+
+	if h.deps.Cfg != nil && h.deps.Cfg.GetServer() != nil {
+		redisPrefix = h.deps.Cfg.GetServer().GetRedis().GetPrefix()
+	}
+
+	return redisClient, redisPrefix
 }
 
 func isLoginSelfResume(requestPath string, redirectURI string) bool {

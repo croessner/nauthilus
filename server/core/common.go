@@ -58,6 +58,8 @@ func sessionCleanerKeys() []string {
 		definitions.SessionKeyUsername,
 		definitions.SessionKeyAccount,
 		definitions.SessionKeyHaveTOTP,
+		definitions.SessionKeyHaveWebAuthn,
+		definitions.SessionKeyHaveRecoveryCodes,
 		definitions.SessionKeyTOTPURL,
 		definitions.SessionKeyUserBackend,
 		definitions.SessionKeyRemoteBackendRefType,

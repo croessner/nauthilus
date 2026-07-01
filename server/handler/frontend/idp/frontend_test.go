@@ -1404,10 +1404,11 @@ func TestRequiredMFAFlowIDsAreIsolatedPerParentFlow(t *testing.T) {
 				Name: tc.account,
 			}
 
-			redirected := handler.startRequireMFARegistrationFlow(ctx, mgr, user, definitions.ProtoOIDC, []string{definitions.MFAMethodTOTP})
+			redirectURI, redirected := handler.startRequireMFARegistrationFlow(ctx, mgr, user, definitions.ProtoOIDC, []string{definitions.MFAMethodTOTP})
 			flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 
 			assert.True(t, redirected)
+			assert.NotEmpty(t, redirectURI)
 			assert.NotEmpty(t, flowID)
 			assert.NotEqual(t, flowdomain.FlowIDRequireMFA, flowID)
 			assert.Equal(t, tc.parentID, mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""))

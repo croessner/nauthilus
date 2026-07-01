@@ -45,6 +45,12 @@ const (
 	// SessionKeyHaveTOTP indicates whether the user already has a TOTP secret.
 	SessionKeyHaveTOTP = "already_have_totp"
 
+	// SessionKeyHaveWebAuthn indicates whether the user already has a WebAuthn credential.
+	SessionKeyHaveWebAuthn = "already_have_webauthn"
+
+	// SessionKeyHaveRecoveryCodes indicates whether the user already has recovery codes.
+	SessionKeyHaveRecoveryCodes = "already_have_recovery_codes"
+
 	// SessionKeyTOTPURL holds the otpauth:// URL during TOTP registration.
 	SessionKeyTOTPURL = "totp_url"
 

@@ -244,7 +244,7 @@ func TestStartRequiredMFARegistrationFallsBackToIDPFlowProtocol(t *testing.T) {
 		Name: "user@example.test",
 	}
 
-	redirected := newContinueMFAFrontendHandler().startRequireMFARegistrationFlow(
+	redirectURI, redirected := newContinueMFAFrontendHandler().startRequireMFARegistrationFlow(
 		ctx,
 		mgr,
 		user,
@@ -256,12 +256,88 @@ func TestStartRequiredMFARegistrationFallsBackToIDPFlowProtocol(t *testing.T) {
 		t.Fatal("expected required MFA registration redirect")
 	}
 
+	if redirectURI == "" {
+		t.Fatal("expected required MFA registration redirect URI")
+	}
+
 	if got := mgr.GetString(definitions.SessionKeyIDPFlowType, ""); got != definitions.ProtoOIDC {
 		t.Fatalf("IDP flow type = %q, want %s", got, definitions.ProtoOIDC)
 	}
 
 	if got := mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""); got != "flow-parent" {
 		t.Fatalf("parent flow id = %q, want flow-parent", got)
+	}
+}
+
+func TestWebAuthnCompletionResumesAuthorizationFlow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/login/webauthn/finish", nil)
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowID:       "flow-oidc",
+		definitions.SessionKeyIDPFlowType:     definitions.ProtoOIDC,
+		definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
+		definitions.SessionKeyIDPClientID:     "roundcube-client",
+		definitions.SessionKeyIDPRedirectURI:  "https://webmail.example.test/index.php/login/oauth",
+		definitions.SessionKeyIDPScope:        "openid profile email",
+		definitions.SessionKeyIDPState:        "state-1",
+		definitions.SessionKeyIDPNonce:        "nonce-1",
+		definitions.SessionKeyIDPResponseType: "code",
+		definitions.SessionKeyAccount:         "user@example.test",
+		definitions.SessionKeyMFACompleted:    true,
+	}}
+
+	redirectURI, ok := (&FrontendHandler{}).loginWebAuthnCompletionRedirect(ctx, mgr)
+	if !ok {
+		t.Fatal("expected WebAuthn completion redirect")
+	}
+
+	if strings.HasPrefix(redirectURI, "/login") {
+		t.Fatalf("WebAuthn completion must not resume through /login, got %q", redirectURI)
+	}
+
+	if !strings.HasPrefix(redirectURI, "/oidc/authorize?") {
+		t.Fatalf("WebAuthn completion redirect = %q, want OIDC authorize resume", redirectURI)
+	}
+
+	if !strings.Contains(redirectURI, "client_id=roundcube-client") {
+		t.Fatalf("WebAuthn completion redirect lost client_id: %q", redirectURI)
+	}
+}
+
+func TestWebAuthnCompletionRequiredMFAUsesEnrollmentSnapshot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/login/webauthn/finish", strings.NewReader("{}"))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyHaveTOTP:          true,
+		definitions.SessionKeyHaveWebAuthn:      true,
+		definitions.SessionKeyHaveRecoveryCodes: true,
+		definitions.SessionKeyAccount:           "user@example.test",
+		definitions.SessionKeyUniqueUserID:      "uid-user",
+	}}
+	ctx.Set(definitions.CtxSecureDataKey, mgr)
+
+	missing := (&FrontendHandler{}).missingRequireMFAMethods(
+		ctx,
+		mgr,
+		&backend.User{Name: "user@example.test", ID: "uid-user"},
+		definitions.ProtoOIDC,
+		[]string{
+			definitions.MFAMethodTOTP,
+			definitions.MFAMethodWebAuthn,
+			definitions.MFAMethodRecoveryCodes,
+		},
+	)
+	if len(missing) != 0 {
+		t.Fatalf("missing required MFA methods after WebAuthn completion = %#v, want none", missing)
 	}
 }
 

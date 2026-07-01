@@ -1009,11 +1009,8 @@ func (n *NauthilusIDP) getUserByUsername(
 		return nil, err
 	}
 
-	if ref, ok := core.RemoteBackendRefFromSession(cookie.GetManager(ctx)); ok {
-		auth.Runtime.RemoteBackendRef = ref
-	}
-
 	prepareUserLookupAuthState(ctx, auth, username, oidcCID, samlEntityID, attributeRequest)
+	bindUserLookupRemoteBackendRef(auth, cookie.GetManager(ctx))
 
 	// We use HandlePassword with NoAuth=true which should skip password check but load attributes
 	// depending on how backends handle NoAuth.
@@ -1059,6 +1056,13 @@ func prepareUserLookupAuthState(
 	}
 
 	auth.SetNoAuth(true)
+}
+
+// bindUserLookupRemoteBackendRef selects the backend reference for the lookup identity.
+func bindUserLookupRemoteBackendRef(auth *core.AuthState, mgr cookie.Manager) {
+	if ref, ok := core.RemoteBackendRefForAuthSession(auth, mgr); ok {
+		auth.Runtime.RemoteBackendRef = ref
+	}
 }
 
 func (n *NauthilusIDP) userFromAuthState(auth *core.AuthState) (*backend.User, error) {

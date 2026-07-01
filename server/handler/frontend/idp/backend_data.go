@@ -1,6 +1,7 @@
 package idp
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/croessner/nauthilus/v3/server/backend"
@@ -49,23 +50,71 @@ func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData
 		return nil, nil
 	}
 
-	authState := h.newBackendDataAuthState(ctx, username)
+	return h.getUserBackendDataForIdentity(ctx, mgr, username, definitions.ProtoIDP, core.RemoteBackendRef{})
+}
+
+// getUserBackendDataForIdentity performs a no-auth lookup for one identity and
+// optional authority backend reference.
+func (h *FrontendHandler) getUserBackendDataForIdentity(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	username string,
+	protocolName string,
+	backendRef core.RemoteBackendRef,
+) (*UserBackendData, error) {
+	lookupCtx := backendDataLookupContext(ctx)
+
+	authState := h.newBackendDataAuthState(lookupCtx, username)
 	if authState == nil {
 		return nil, nil
 	}
 
+	if protocolName != "" {
+		authState.SetProtocol(config.NewProtocol(protocolName))
+	}
+
+	if !backendRef.IsZero() {
+		authState.Runtime.RemoteBackendRef = backendRef
+	}
+
 	data := newUserBackendData(username, authState)
-	if authState.HandlePassword(ctx) != definitions.AuthResultOK {
+	if authState.HandlePassword(lookupCtx) != definitions.AuthResultOK {
 		return data, nil
 	}
 
 	applyBackendIdentityData(data, authState)
 
-	if err := h.applyBackendMFAData(ctx, mgr, data, authState); err != nil {
+	if err := h.applyBackendMFAData(lookupCtx, mgr, data, authState); err != nil {
 		return nil, err
 	}
 
 	return data, nil
+}
+
+// backendDataLookupContext prevents no-auth backend-data lookups from parsing
+// the body of the request that triggered the lookup, such as a WebAuthn finish
+// JSON payload that has already been consumed by the assertion verifier.
+func backendDataLookupContext(ctx *gin.Context) *gin.Context {
+	if ctx == nil || ctx.Request == nil {
+		return ctx
+	}
+
+	contentType := ctx.GetHeader("Content-Type")
+	if ctx.Request.Method != http.MethodPost ||
+		!strings.HasPrefix(contentType, "application/json") && !strings.HasPrefix(contentType, "application/cbor") {
+		return ctx
+	}
+
+	lookupCtx := ctx.Copy()
+	request := ctx.Request.Clone(ctx.Request.Context())
+	request.Method = http.MethodGet
+	request.Body = http.NoBody
+	request.ContentLength = 0
+	request.Header = request.Header.Clone()
+	request.Header.Del("Content-Type")
+	lookupCtx.Request = request
+
+	return lookupCtx
 }
 
 // backendDataUsername resolves the backend-data username from session or bearer token.
