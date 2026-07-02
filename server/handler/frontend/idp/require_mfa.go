@@ -838,18 +838,23 @@ func (h *FrontendHandler) recordRequireMFARegistrationAssurance(mgr cookie.Manag
 
 	mgr.Set(definitions.SessionKeyMFAMethod, method)
 	mgr.Set(definitions.SessionKeyMFAAssuranceMethod, method)
-	mgr.Set(definitions.SessionKeyMFAAssuranceLevel, core.DefaultIDPMFAAssuranceLevel(method))
 	mgr.Set(definitions.SessionKeyMFAAssuranceAt, time.Now().Unix())
 
 	oidcClientID, samlEntityID := h.getFlowClientIdentifiers(mgr)
+	protocol := definitions.ProtoIDP
+
 	switch {
 	case oidcClientID != "":
+		protocol = definitions.ProtoOIDC
 		mgr.Set(definitions.SessionKeyMFAAssuranceScope, oidcMFAAssuranceScope(oidcClientID))
 	case samlEntityID != "":
+		protocol = definitions.ProtoSAML
 		mgr.Set(definitions.SessionKeyMFAAssuranceScope, definitions.ProtoSAML+":"+samlEntityID)
 	default:
 		mgr.Delete(definitions.SessionKeyMFAAssuranceScope)
 	}
+
+	mgr.Set(definitions.SessionKeyMFAAssuranceLevel, core.IDPMFAAssuranceLevel(mgr, method, protocol))
 }
 
 // removeCompletedRequireMFAMethod records assurance when a forced-registration flow is complete.

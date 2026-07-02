@@ -67,7 +67,7 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 	mgr.Set(definitions.SessionKeyMFACompleted, true)
 	mgr.Set(definitions.SessionKeyMFAAssuranceAt, time.Now().Unix())
 	mgr.Set(definitions.SessionKeyMFAAssuranceMethod, normalizedMethod)
-	mgr.Set(definitions.SessionKeyMFAAssuranceLevel, completedIDPMFAAssuranceLevel(mgr, normalizedMethod, protocol))
+	mgr.Set(definitions.SessionKeyMFAAssuranceLevel, IDPMFAAssuranceLevel(mgr, normalizedMethod, protocol))
 	mgr.Set(definitions.SessionKeyMFAAssuranceScope, completedIDPMFAAssuranceScope(mgr, protocol))
 	storeCompletedIDPMFAEnrollmentSnapshot(mgr, normalizedMethod)
 
@@ -95,8 +95,8 @@ func DefaultIDPMFAAssuranceLevel(method string) int {
 	}
 }
 
-// completedIDPMFAAssuranceLevel resolves the effective method level for the current IDP target.
-func completedIDPMFAAssuranceLevel(mgr cookie.Manager, method string, protocol string) int {
+// IDPMFAAssuranceLevel resolves the effective method level for the current IDP target.
+func IDPMFAAssuranceLevel(mgr cookie.Manager, method string, protocol string) int {
 	level := DefaultIDPMFAAssuranceLevel(method)
 	if mgr == nil || !config.IsFileLoaded() {
 		return level

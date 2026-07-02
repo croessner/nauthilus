@@ -421,6 +421,112 @@ func TestContinueRequiredMFARegistrationRecordsAssurance(t *testing.T) {
 	}
 }
 
+func TestContinueRequiredMFARegistrationUsesEffectiveOIDCPolicyLevel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	idpConfig := &config.IDPSection{
+		OIDC: config.OIDCConfig{
+			Clients: []config.OIDCClient{
+				{
+					ClientID:         "client-1",
+					SupportedMFA:     []string{definitions.MFAMethodTOTP, definitions.MFAMethodWebAuthn},
+					RequireMFA:       []string{definitions.MFAMethodWebAuthn},
+					RequiredMFALevel: 3,
+					MFAPolicy: config.MFAPolicy{
+						Levels: map[string]int{
+							definitions.MFAMethodTOTP:     3,
+							definitions.MFAMethodWebAuthn: 2,
+						},
+					},
+				},
+			},
+		},
+	}
+	setContinueMFATestIDPConfig(t, idpConfig)
+
+	cookieData := map[string]any{
+		definitions.SessionKeyIDPFlowID:              flowdomain.NewRequireMFAFlowID("flow-parent"),
+		definitions.SessionKeyRequireMFAParentFlowID: "flow-parent",
+		definitions.SessionKeyRequireMFAFlow:         true,
+		definitions.SessionKeyIDPFlowType:            definitions.ProtoOIDC,
+		definitions.SessionKeyOIDCGrantType:          definitions.OIDCFlowAuthorizationCode,
+		definitions.SessionKeyIDPClientID:            "client-1",
+		definitions.SessionKeyIDPRedirectURI:         "https://rp.example/cb",
+		definitions.SessionKeyIDPScope:               "openid",
+		definitions.SessionKeyIDPResponseType:        "code",
+		definitions.SessionKeyRequireMFAPending:      "",
+	}
+
+	recorder, mgr := runContinueRequiredMFARegistration(t, newContinueMFAFrontendHandlerWithIDP(idpConfig), cookieData)
+
+	assertContinueMFARedirect(t, recorder, "", "/oidc/authorize?")
+	if got := mgr.GetInt(definitions.SessionKeyMFAAssuranceLevel, 0); got != 2 {
+		t.Fatalf("MFA assurance level = %d, want 2", got)
+	}
+
+	if sessionSatisfiesIDPSSOMFAAssurancePolicy(
+		mgr,
+		[]string{definitions.MFAMethodWebAuthn},
+		oidcMFAAssuranceScope("client-1"),
+		3,
+		time.Now(),
+	) {
+		t.Fatal("forced WebAuthn registration must not satisfy higher OIDC required_mfa_level")
+	}
+}
+
+func TestContinueRequiredMFARegistrationUsesEffectiveSAMLPolicyLevel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	idpConfig := &config.IDPSection{
+		SAML2: config.SAML2Config{
+			ServiceProviders: []config.SAML2ServiceProvider{
+				{
+					EntityID:         "sp-1",
+					ACSURL:           "https://sp.example/acs",
+					SupportedMFA:     []string{definitions.MFAMethodTOTP, definitions.MFAMethodWebAuthn},
+					RequireMFA:       []string{definitions.MFAMethodWebAuthn},
+					RequiredMFALevel: 3,
+					MFAPolicy: config.MFAPolicy{
+						Levels: map[string]int{
+							definitions.MFAMethodTOTP:     3,
+							definitions.MFAMethodWebAuthn: 2,
+						},
+					},
+				},
+			},
+		},
+	}
+	setContinueMFATestIDPConfig(t, idpConfig)
+
+	cookieData := map[string]any{
+		definitions.SessionKeyIDPFlowID:              flowdomain.NewRequireMFAFlowID("flow-parent"),
+		definitions.SessionKeyRequireMFAParentFlowID: "flow-parent",
+		definitions.SessionKeyRequireMFAFlow:         true,
+		definitions.SessionKeyIDPFlowType:            definitions.ProtoSAML,
+		definitions.SessionKeyIDPSAMLEntityID:        "sp-1",
+		definitions.SessionKeyIDPOriginalURL:         "/saml/sso?SAMLRequest=abc",
+		definitions.SessionKeyRequireMFAPending:      "",
+	}
+
+	recorder, mgr := runContinueRequiredMFARegistration(t, newContinueMFAFrontendHandlerWithIDP(idpConfig), cookieData)
+
+	assertContinueMFARedirect(t, recorder, "/saml/sso?SAMLRequest=abc", "")
+	if got := mgr.GetInt(definitions.SessionKeyMFAAssuranceLevel, 0); got != 2 {
+		t.Fatalf("MFA assurance level = %d, want 2", got)
+	}
+
+	if sessionSatisfiesIDPSSOMFAAssurancePolicy(
+		mgr,
+		[]string{definitions.MFAMethodWebAuthn},
+		samlMFAAssuranceScope("sp-1"),
+		3,
+		time.Now(),
+	) {
+		t.Fatal("forced WebAuthn registration must not satisfy higher SAML required_mfa_level")
+	}
+}
+
 // assertRequiredMFARegistrationAssurance checks the proof stored after forced MFA registration.
 func assertRequiredMFARegistrationAssurance(t *testing.T, mgr *mockCookieManager) {
 	t.Helper()
@@ -604,6 +710,20 @@ func assertResumeFlowRedirect(t *testing.T, cookieData map[string]any, redirectU
 
 // newContinueMFAFrontendHandler creates a handler with the config needed to resume parent flows.
 func newContinueMFAFrontendHandler() *FrontendHandler {
+	return newContinueMFAFrontendHandlerWithIDP(&config.IDPSection{
+		OIDC: config.OIDCConfig{
+			Clients: []config.OIDCClient{
+				{
+					ClientID:   "client-1",
+					RequireMFA: []string{definitions.MFAMethodTOTP},
+				},
+			},
+		},
+	})
+}
+
+// newContinueMFAFrontendHandlerWithIDP creates a handler with custom IDP config.
+func newContinueMFAFrontendHandlerWithIDP(idpConfig *config.IDPSection) *FrontendHandler {
 	return &FrontendHandler{
 		deps: &deps.Deps{
 			Cfg: &mockFrontendCfg{
@@ -611,20 +731,35 @@ func newContinueMFAFrontendHandler() *FrontendHandler {
 					Server: &config.ServerSection{
 						Redis: config.Redis{Prefix: "test:"},
 					},
-					IDP: &config.IDPSection{
-						OIDC: config.OIDCConfig{
-							Clients: []config.OIDCClient{
-								{
-									ClientID:   "client-1",
-									RequireMFA: []string{definitions.MFAMethodTOTP},
-								},
-							},
-						},
-					},
+					IDP: idpConfig,
 				},
 			},
 		},
 	}
+}
+
+// setContinueMFATestIDPConfig installs IDP config for effective-policy tests.
+func setContinueMFATestIDPConfig(t *testing.T, idpConfig *config.IDPSection) {
+	t.Helper()
+
+	previousConfigLoaded := config.IsFileLoaded()
+
+	var previousConfig config.File
+	if previousConfigLoaded {
+		previousConfig = config.GetFile()
+	}
+
+	config.SetTestFile(&config.FileSettings{IDP: idpConfig})
+
+	t.Cleanup(func() {
+		if previousConfigLoaded {
+			config.SetTestFile(previousConfig)
+
+			return
+		}
+
+		config.SetTestFile(nil)
+	})
 }
 
 // runContinueRequiredMFARegistration executes the continue endpoint for one cookie state.
