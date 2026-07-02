@@ -313,6 +313,25 @@ func TestAuthorizeDeviceCodeDirectlyRequireMFAPermitsFreshAssurance(t *testing.T
 	assert.Equal(t, devicecode.DeviceCodeStatusAuthorized, store.updatedRequests[0].Status)
 }
 
+func TestAuthorizeDeviceCodeDirectlyRequireMFARejectsDifferentSSOAssurance(t *testing.T) {
+	client := config.OIDCClient{
+		ClientID:   "device-client-strict-mfa",
+		RequireMFA: []string{definitions.MFAMethodTOTP},
+	}
+	handler, store := newDeviceAuthorizationHandler(t, client)
+	ctx, _ := newDeviceAuthorizeDirectContext(map[string]any{
+		definitions.SessionKeyMFACompleted:      true,
+		definitions.SessionKeyMFAMethod:         definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceAt:    time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope: oidcMFAAssuranceScope("heimdal-client"),
+	})
+	request := newDeviceAuthorizeDirectRequest(client.ClientID)
+
+	handler.authorizeDeviceCodeDirectly(ctx, "device-code-different-sso-mfa", request, &client, newDeviceAuthorizeDirectUser())
+
+	assert.Empty(t, store.updatedRequests)
+}
+
 func TestAuthorizeDeviceCodeDirectlyNoRequireMFAPreservesAuthorization(t *testing.T) {
 	client := config.OIDCClient{ClientID: "device-client-no-mfa"}
 	handler, store := newDeviceAuthorizationHandler(t, client)

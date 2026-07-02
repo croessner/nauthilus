@@ -34,6 +34,12 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const (
+	defaultIDPMFAAssuranceLevelRecoveryCodes = 1
+	defaultIDPMFAAssuranceLevelTOTP          = 2
+	defaultIDPMFAAssuranceLevelWebAuthn      = 3
+)
+
 // StoreCompletedIDPMFASession replaces the temporary MFA state with the final
 // authenticated IDP session while preserving the completed MFA metadata.
 func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method string) {
@@ -41,6 +47,7 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 		return
 	}
 
+	normalizedMethod := normalizeMFAMethodForLogging(method)
 	finalUser := ResolveCompletedIDPMFAUser(mgr, user)
 
 	protocol := mgr.GetString(definitions.SessionKeyProtocol, "")
@@ -59,18 +66,69 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 	mgr.Set(definitions.SessionKeyProtocol, protocol)
 	mgr.Set(definitions.SessionKeyMFACompleted, true)
 	mgr.Set(definitions.SessionKeyMFAAssuranceAt, time.Now().Unix())
-	mgr.Set(definitions.SessionKeyMFAAssuranceMethod, method)
+	mgr.Set(definitions.SessionKeyMFAAssuranceMethod, normalizedMethod)
+	mgr.Set(definitions.SessionKeyMFAAssuranceLevel, completedIDPMFAAssuranceLevel(mgr, normalizedMethod, protocol))
 	mgr.Set(definitions.SessionKeyMFAAssuranceScope, completedIDPMFAAssuranceScope(mgr, protocol))
-	storeCompletedIDPMFAEnrollmentSnapshot(mgr, method)
+	storeCompletedIDPMFAEnrollmentSnapshot(mgr, normalizedMethod)
 
-	if method != "" {
-		mgr.Set(definitions.SessionKeyMFAMethod, method)
+	if normalizedMethod != "" {
+		mgr.Set(definitions.SessionKeyMFAMethod, normalizedMethod)
 	}
 
 	if rememberMeTTL > 0 {
 		mgr.SetMaxAge(rememberMeTTL)
 		mgr.Delete(definitions.SessionKeyRememberTTL)
 	}
+}
+
+// DefaultIDPMFAAssuranceLevel returns the built-in assurance level for an MFA method.
+func DefaultIDPMFAAssuranceLevel(method string) int {
+	switch normalizeMFAMethodForLogging(method) {
+	case definitions.MFAMethodRecoveryCodes:
+		return defaultIDPMFAAssuranceLevelRecoveryCodes
+	case definitions.MFAMethodTOTP:
+		return defaultIDPMFAAssuranceLevelTOTP
+	case definitions.MFAMethodWebAuthn:
+		return defaultIDPMFAAssuranceLevelWebAuthn
+	default:
+		return 0
+	}
+}
+
+// completedIDPMFAAssuranceLevel resolves the effective method level for the current IDP target.
+func completedIDPMFAAssuranceLevel(mgr cookie.Manager, method string, protocol string) int {
+	level := DefaultIDPMFAAssuranceLevel(method)
+	if mgr == nil || !config.IsFileLoaded() {
+		return level
+	}
+
+	idpConfig := config.GetFile().GetIDP()
+	if idpConfig == nil {
+		return level
+	}
+
+	globalLevels := idpConfig.GetMFAPolicyLevels()
+
+	switch protocol {
+	case definitions.ProtoOIDC:
+		clientID := mgr.GetString(definitions.SessionKeyIDPClientID, "")
+
+		for idx := range idpConfig.OIDC.Clients {
+			client := &idpConfig.OIDC.Clients[idx]
+			if client.ClientID != clientID {
+				continue
+			}
+
+			return client.GetMFAPolicyLevels(globalLevels)[method]
+		}
+	case definitions.ProtoSAML:
+		entityID := mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
+		if sp, ok := config.FindSAMLServiceProviderByEntityID(idpConfig.SAML2.ServiceProviders, entityID); ok {
+			return sp.GetMFAPolicyLevels(globalLevels)[method]
+		}
+	}
+
+	return level
 }
 
 // storeCompletedIDPMFAEnrollmentSnapshot records factor enrollment proven by a successful challenge.

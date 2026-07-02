@@ -1572,6 +1572,29 @@ func TestOIDCConsentRedirectEncodesDelimiterState(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestOIDCConsentPOSTRequireMFABlocksMissingAssurance(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	client := latchedConsentOIDCClient()
+	client.RequireMFA = []string{definitions.MFAMethodTOTP}
+	handler, mock := newOIDCConsentCallbackRedirectTestHandlerWithClient(t, client, false)
+	ctx, recorder := newOIDCConsentRedirectTestContext("state-requires-mfa")
+	ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:      latchedConsentUsername,
+		definitions.SessionKeyUniqueUserID: latchedConsentUserID,
+		definitions.SessionKeyDisplayName:  "Alice Example",
+		definitions.SessionKeySubject:      latchedConsentUserID,
+		definitions.SessionKeyIDPFlowType:  definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID:  client.ClientID,
+	}})
+
+	handler.ConsentPOST(ctx)
+
+	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
+	assert.NotContains(t, recorder.Header().Get("Location"), oidcParamCode+"=")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestOIDCCallbackRedirectDirectAndConsentParity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1705,6 +1728,58 @@ func TestOIDCAuthorizationCodeRequireMFAPermitsFreshAssurance(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestOIDCAuthorizationCodeRequiredMFALevelBlocksLowerSSOAssurance(t *testing.T) {
+	handler, _ := newOIDCAssuranceCodeHandler(t)
+	ctx, recorder := newOIDCAssuranceCodeContext(map[string]any{
+		definitions.SessionKeyAccount:            "alice",
+		definitions.SessionKeyMFACompleted:       true,
+		definitions.SessionKeyMFAMethod:          definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
+		definitions.SessionKeyMFAAssuranceLevel:  2,
+	})
+	client := config.OIDCClient{
+		ClientID:         latchedConsentClientID,
+		RequiredMFALevel: 3,
+	}
+	request := newOIDCAssuranceCodeRequest()
+
+	mgr := cookieManagerFromContext(t, ctx)
+	handler.issueOIDCAuthorizeCode(ctx, mgr, newOIDCAuthorizeFlowContext(mgr), &client, request, newOIDCAssuranceCodeSession(true, definitions.MFAMethodTOTP), []string{definitions.ScopeOpenID})
+
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
+	assert.NotContains(t, recorder.Header().Get("Location"), oidcParamCode+"=")
+}
+
+func TestOIDCAuthorizationCodeRequiredMFALevelPermitsFreshLevel(t *testing.T) {
+	handler, mock := newOIDCAssuranceCodeHandler(t)
+	ctx, recorder := newOIDCAssuranceCodeContext(map[string]any{
+		definitions.SessionKeyAccount:            "alice",
+		definitions.SessionKeyMFACompleted:       true,
+		definitions.SessionKeyMFAMethod:          definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
+		definitions.SessionKeyMFAAssuranceLevel:  3,
+	})
+	client := config.OIDCClient{
+		ClientID:         latchedConsentClientID,
+		RequiredMFALevel: 3,
+	}
+	request := newOIDCAssuranceCodeRequest()
+
+	expectOIDCAuthorizationCodeStorage(mock)
+
+	mgr := cookieManagerFromContext(t, ctx)
+	handler.issueOIDCAuthorizeCode(ctx, mgr, newOIDCAuthorizeFlowContext(mgr), &client, request, newOIDCAssuranceCodeSession(true, definitions.MFAMethodWebAuthn), []string{definitions.ScopeOpenID})
+
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Contains(t, recorder.Header().Get("Location"), oidcParamCode+"=")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestOIDCAuthorizationCodeNoRequireMFAPreservesExistingSession(t *testing.T) {
 	handler, mock := newOIDCAssuranceCodeHandler(t)
 	ctx, recorder := newOIDCAssuranceCodeContext(map[string]any{
@@ -1829,7 +1904,12 @@ func newLatchedConsentPostContext() (*gin.Context, *httptest.ResponseRecorder) {
 func newOIDCCallbackRedirectTestHandler(t *testing.T) (*OIDCHandler, redismock.ClientMock) {
 	t.Helper()
 
-	client := latchedConsentOIDCClient()
+	return newOIDCCallbackRedirectTestHandlerWithClient(t, latchedConsentOIDCClient())
+}
+
+func newOIDCCallbackRedirectTestHandlerWithClient(t *testing.T, client config.OIDCClient) (*OIDCHandler, redismock.ClientMock) {
+	t.Helper()
+
 	db, mock := redismock.NewClientMock()
 	rClient := rediscli.NewTestClient(db)
 	cfg := &mockOIDCCfg{
@@ -1861,12 +1941,22 @@ func newOIDCDirectCallbackRedirectTestHandler(t *testing.T) (*OIDCHandler, redis
 func newOIDCConsentCallbackRedirectTestHandler(t *testing.T) (*OIDCHandler, redismock.ClientMock) {
 	t.Helper()
 
-	handler, mock := newOIDCCallbackRedirectTestHandler(t)
+	return newOIDCConsentCallbackRedirectTestHandlerWithClient(t, latchedConsentOIDCClient(), true)
+}
+
+func newOIDCConsentCallbackRedirectTestHandlerWithClient(t *testing.T, client config.OIDCClient, expectCode bool) (*OIDCHandler, redismock.ClientMock) {
+	t.Helper()
+
+	handler, mock := newOIDCCallbackRedirectTestHandlerWithClient(t, client)
 	session := newOIDCCallbackRedirectSession("https://app.example.com/callback")
+	session.ClientID = client.ClientID
 
 	mock.ExpectGet("test:oidc:code:consent:" + latchedConsentChallenge).SetVal(mustMarshalOIDCSession(t, session))
-	expectOIDCAuthorizationCodeStorage(mock)
-	mock.ExpectDel("test:oidc:code:consent:" + latchedConsentChallenge).SetVal(1)
+
+	if expectCode {
+		expectOIDCAuthorizationCodeStorage(mock)
+		mock.ExpectDel("test:oidc:code:consent:" + latchedConsentChallenge).SetVal(1)
+	}
 
 	return handler, mock
 }

@@ -922,7 +922,7 @@ func TestMFASelfServiceTOTPDeleteRejectsMissingStepUp(t *testing.T) {
 
 	handler.DeleteTOTP(ctx)
 
-	assertMFASelfServiceStepUpRejected(t, recorder, provider.deleteTOTPCalls)
+	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, provider.deleteTOTPCalls, "totp_delete", definitions.MFARoot+"/register/home")
 }
 
 func TestMFASelfServiceTOTPDeleteRejectsStaleStepUp(t *testing.T) {
@@ -937,22 +937,39 @@ func TestMFASelfServiceTOTPDeleteRejectsStaleStepUp(t *testing.T) {
 
 	handler.DeleteTOTP(ctx)
 
-	assertMFASelfServiceStepUpRejected(t, recorder, provider.deleteTOTPCalls)
+	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, provider.deleteTOTPCalls, "totp_delete", definitions.MFARoot+"/register/home")
 }
 
 func TestMFASelfServiceTOTPDeletePermitsFreshStepUp(t *testing.T) {
 	handler, provider := newMFASelfServiceTestHandler()
 	ctx, _ := newMFASelfServiceContext(http.MethodDelete, "/mfa/totp", map[string]any{
-		definitions.SessionKeyAccount:        "alice",
-		definitions.SessionKeyUserBackend:    uint8(definitions.BackendLDAP),
-		definitions.SessionKeyMFACompleted:   true,
-		definitions.SessionKeyMFAMethod:      definitions.MFAMethodTOTP,
-		definitions.SessionKeyMFAAssuranceAt: time.Now().Unix(),
+		definitions.SessionKeyAccount:           "alice",
+		definitions.SessionKeyUserBackend:       uint8(definitions.BackendLDAP),
+		definitions.SessionKeyMFACompleted:      true,
+		definitions.SessionKeyMFAMethod:         definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceAt:    time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope: definitions.ProtoIDP,
 	}, nil)
 
 	handler.DeleteTOTP(ctx)
 
 	assert.Equal(t, 1, provider.deleteTOTPCalls)
+}
+
+func TestMFASelfServiceTOTPDeleteRejectsFreshOIDCAssurance(t *testing.T) {
+	handler, provider := newMFASelfServiceTestHandler()
+	ctx, recorder := newMFASelfServiceContext(http.MethodDelete, "/mfa/totp", map[string]any{
+		definitions.SessionKeyAccount:           "alice",
+		definitions.SessionKeyUserBackend:       uint8(definitions.BackendLDAP),
+		definitions.SessionKeyMFACompleted:      true,
+		definitions.SessionKeyMFAMethod:         definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceAt:    time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope: oidcMFAAssuranceScope("mail-client"),
+	}, nil)
+
+	handler.DeleteTOTP(ctx)
+
+	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, provider.deleteTOTPCalls, "totp_delete", definitions.MFARoot+"/register/home")
 }
 
 func TestMFASelfServiceWebAuthnDeleteRejectsMissingStepUp(t *testing.T) {
@@ -964,8 +981,7 @@ func TestMFASelfServiceWebAuthnDeleteRejectsMissingStepUp(t *testing.T) {
 
 	handler.DeleteWebAuthn(ctx)
 
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "Recent MFA verification required")
+	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, 0, "webauthn_delete", definitions.MFARoot+"/register/home")
 }
 
 func TestMFASelfServiceRecoveryRegenerationRejectsMissingStepUp(t *testing.T) {
@@ -977,15 +993,120 @@ func TestMFASelfServiceRecoveryRegenerationRejectsMissingStepUp(t *testing.T) {
 
 	handler.PostGenerateRecoveryCodes(ctx)
 
-	assertMFASelfServiceStepUpRejected(t, recorder, provider.generateRecoveryCalls)
+	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, provider.generateRecoveryCalls, "recovery_generate", definitions.MFARoot+"/register/home")
 }
 
-func assertMFASelfServiceStepUpRejected(t *testing.T, recorder *httptest.ResponseRecorder, mutationCalls int) {
-	t.Helper()
+func TestMFASelfServiceWebAuthnDeviceDeleteRejectsMissingStepUp(t *testing.T) {
+	handler, _ := newMFASelfServiceTestHandler()
+	ctx, recorder := newMFASelfServiceContext(http.MethodDelete, "/mfa/webauthn/device/Y3JlZC0x", map[string]any{
+		definitions.SessionKeyAccount:      "alice",
+		definitions.SessionKeyUniqueUserID: "uid-123",
+	}, nil)
+	ctx.Params = gin.Params{{Key: "id", Value: "Y3JlZC0x"}}
+
+	handler.DeleteWebAuthnDevice(ctx)
+
+	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, 0, "webauthn_device_delete", definitions.MFARoot+"/webauthn/devices")
+}
+
+func TestMFASelfServiceStepUpIgnoresUntrustedReturnTargets(t *testing.T) {
+	handler, provider := newMFASelfServiceTestHandler()
+	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/recovery/generate?return=https://evil.example/", map[string]any{
+		definitions.SessionKeyAccount:     "alice",
+		definitions.SessionKeyUserBackend: uint8(definitions.BackendLDAP),
+	}, nil)
+	ctx.Request.Header.Set("Referer", "https://evil.example/mfa/register/home")
+
+	handler.PostGenerateRecoveryCodes(ctx)
+
+	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, provider.generateRecoveryCalls, "recovery_generate", definitions.MFARoot+"/register/home")
+	mgr := mfaSelfServiceTestManager(t, ctx)
+	assert.NotContains(t, mgr.GetString("mfa_self_service_step_up_return", ""), "evil.example")
+}
+
+func TestMFASelfServiceStepUpUsesHXRedirectForHTMX(t *testing.T) {
+	handler, provider := newMFASelfServiceTestHandler()
+	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/recovery/generate", map[string]any{
+		definitions.SessionKeyAccount:     "alice",
+		definitions.SessionKeyUserBackend: uint8(definitions.BackendLDAP),
+	}, nil)
+	ctx.Request.Header.Set("HX-Request", "true")
+
+	handler.PostGenerateRecoveryCodes(ctx)
 
 	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("HX-Redirect"))
+	assert.Zero(t, provider.generateRecoveryCalls)
+}
+
+func TestMFASelfServiceStepUpReturnTargetIsConsumedAfterMFA(t *testing.T) {
+	handler, _ := newMFASelfServiceTestHandler()
+	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/login/totp", map[string]any{
+		"mfa_self_service_step_up_action": "totp_delete",
+		"mfa_self_service_step_up_return": definitions.MFARoot + "/register/home",
+	}, nil)
+
+	redirected := handler.redirectPendingSelfServiceStepUp(ctx, cookie.GetManager(ctx))
+
+	assert.True(t, redirected)
+	assert.Equal(t, http.StatusFound, ctx.Writer.Status())
+	assert.Equal(t, definitions.MFARoot+"/register/home", recorder.Header().Get("Location"))
+
+	mgr := mfaSelfServiceTestManager(t, ctx)
+	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_action", ""))
+	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_return", ""))
+}
+
+func TestMFASelfServiceStepUpRejectsArbitraryPendingAction(t *testing.T) {
+	handler, _ := newMFASelfServiceTestHandler()
+	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/login/totp", map[string]any{
+		"mfa_self_service_step_up_action": "/login/webauthn",
+		"mfa_self_service_step_up_return": definitions.MFARoot + "/register/home",
+	}, nil)
+
+	redirected := handler.redirectPendingSelfServiceStepUp(ctx, cookie.GetManager(ctx))
+
+	assert.False(t, redirected)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+
+	mgr := mfaSelfServiceTestManager(t, ctx)
+	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_action", ""))
+	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_return", ""))
+}
+
+func assertMFASelfServiceStepUpRedirect(
+	t *testing.T,
+	ctx *gin.Context,
+	recorder *httptest.ResponseRecorder,
+	mutationCalls int,
+	action string,
+	returnTarget string,
+) {
+	t.Helper()
+
+	assert.Equal(t, http.StatusFound, ctx.Writer.Status())
+	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
 	assert.Zero(t, mutationCalls)
-	assert.Contains(t, recorder.Body.String(), "Recent MFA verification required")
+
+	mgr := mfaSelfServiceTestManager(t, ctx)
+	assert.Equal(t, action, mgr.GetString("mfa_self_service_step_up_action", ""))
+	assert.Equal(t, returnTarget, mgr.GetString("mfa_self_service_step_up_return", ""))
+	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyUsername, ""))
+	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyMFAAccount, ""))
+	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyMFAFactorAccount, ""))
+	assert.True(t, mgr.HasKey(definitions.SessionKeyAuthResult))
+	assert.Equal(t, 1, mgr.saves)
+}
+
+func mfaSelfServiceTestManager(t *testing.T, ctx *gin.Context) *mockCookieManager {
+	t.Helper()
+
+	mgr, ok := cookie.GetManager(ctx).(*mockCookieManager)
+	if !ok {
+		t.Fatal("expected mock cookie manager")
+	}
+
+	return mgr
 }
 
 type mfaSelfServiceProvider struct {

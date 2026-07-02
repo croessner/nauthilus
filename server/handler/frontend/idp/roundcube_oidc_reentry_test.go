@@ -60,7 +60,7 @@ func TestExistingSessionAuthorizeCreatesCurrentFlowBeforeMFA(t *testing.T) {
 	}
 }
 
-func TestRoundcubeRequireMFARestrictsUnsetSupportedMethods(t *testing.T) {
+func TestRoundcubeRequireMFADoesNotRestrictUnsetSupportedMethods(t *testing.T) {
 	handler := newRoundcubeFrontendHandler()
 	mgr := &mockCookieManager{data: map[string]any{
 		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
@@ -75,13 +75,13 @@ func TestRoundcubeRequireMFARestrictsUnsetSupportedMethods(t *testing.T) {
 		t.Fatal("recovery codes must stay supported by require_mfa")
 	}
 
-	if handler.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn) {
-		t.Fatal("WebAuthn must not be offered when require_mfa excludes it and supported_mfa is unset")
+	if !handler.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn) {
+		t.Fatal("WebAuthn must stay offered when supported_mfa is unset")
 	}
 
 	mgr.Set(definitions.SessionKeyMFAAssuranceMethod, definitions.MFAMethodWebAuthn)
 	mgr.Set(definitions.SessionKeyMFAAssuranceAt, time.Now().Unix())
-	mgr.Set(definitions.SessionKeyMFAAssuranceScope, oidcMFAAssuranceScope("roundcube-client"))
+	mgr.Set(definitions.SessionKeyMFAAssuranceScope, oidcMFAAssuranceScope("heimdal-client"))
 
 	if sessionHasFreshMFAAssurance(
 		mgr,
@@ -89,7 +89,244 @@ func TestRoundcubeRequireMFARestrictsUnsetSupportedMethods(t *testing.T) {
 		oidcMFAAssuranceScope("roundcube-client"),
 		time.Now(),
 	) {
-		t.Fatal("WebAuthn assurance must not satisfy a TOTP/recovery client policy")
+		t.Fatal("legacy exact-scope helper must stay strict")
+	}
+
+	if !sessionSatisfiesIDPSSOMFAAssurance(
+		mgr,
+		[]string{definitions.MFAMethodTOTP, definitions.MFAMethodRecoveryCodes},
+		oidcMFAAssuranceScope("roundcube-client"),
+		time.Now(),
+	) {
+		t.Fatal("fresh SSO MFA must satisfy normal Roundcube app assurance")
+	}
+}
+
+func TestSessionHasFreshMFAAssuranceLevel(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name          string
+		level         int
+		assuredAt     time.Time
+		requiredLevel int
+		want          bool
+	}{
+		{
+			name:          "level two fails required level three",
+			level:         2,
+			assuredAt:     now,
+			requiredLevel: 3,
+			want:          false,
+		},
+		{
+			name:          "level three satisfies required level three",
+			level:         3,
+			assuredAt:     now,
+			requiredLevel: 3,
+			want:          true,
+		},
+		{
+			name:          "stale level three fails freshness",
+			level:         3,
+			assuredAt:     now.Add(-mfaAssuranceFreshness - time.Second),
+			requiredLevel: 3,
+			want:          false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := &mockCookieManager{data: map[string]any{
+				definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodWebAuthn,
+				definitions.SessionKeyMFAAssuranceAt:     tt.assuredAt.Unix(),
+				definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("security-admin-client"),
+				definitions.SessionKeyMFAAssuranceLevel:  tt.level,
+			}}
+
+			got := sessionHasFreshMFAAssuranceLevel(
+				mgr,
+				tt.requiredLevel,
+				oidcMFAAssuranceScope("security-admin-client"),
+				now,
+			)
+			if got != tt.want {
+				t.Fatalf("sessionHasFreshMFAAssuranceLevel() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNoRequiredMFAAssuranceLevelKeepsSSOCompatibility(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
+	}}
+
+	if !sessionSatisfiesIDPSSOMFAAssurance(
+		mgr,
+		[]string{definitions.MFAMethodWebAuthn},
+		oidcMFAAssuranceScope("roundcube-client"),
+		time.Now(),
+	) {
+		t.Fatal("clients without required_mfa_level must keep fresh SSO MFA compatibility")
+	}
+}
+
+func TestRequiredMFAAssuranceLevelGatesCrossClientSSO(t *testing.T) {
+	now := time.Now()
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceAt:     now.Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
+		definitions.SessionKeyMFAAssuranceLevel:  2,
+	}}
+
+	if sessionSatisfiesIDPSSOMFAAssurancePolicy(
+		mgr,
+		[]string{definitions.MFAMethodWebAuthn},
+		oidcMFAAssuranceScope("security-admin-client"),
+		3,
+		now,
+	) {
+		t.Fatal("level-2 SSO session must not satisfy a level-3 client")
+	}
+
+	mgr.Set(definitions.SessionKeyMFAAssuranceMethod, definitions.MFAMethodWebAuthn)
+	mgr.Set(definitions.SessionKeyMFAAssuranceLevel, 3)
+
+	if !sessionSatisfiesIDPSSOMFAAssurancePolicy(
+		mgr,
+		[]string{definitions.MFAMethodWebAuthn},
+		oidcMFAAssuranceScope("security-admin-client"),
+		3,
+		now,
+	) {
+		t.Fatal("level-3 SSO session must satisfy a level-3 client")
+	}
+}
+
+func TestRoundcubeRequireMFAAcceptsFreshWebAuthnSSOSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize", nil)
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:            "croessner@example.test",
+		definitions.SessionKeyMFACompleted:       true,
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
+	}}
+	ctx.Set(definitions.CtxSecureDataKey, mgr)
+
+	handler := newRoundcubeOIDCHandler()
+	ok := handler.enforceOIDCClientSSOMFAAssurance(ctx, mgr, &config.OIDCClient{
+		ClientID:   "roundcube-client",
+		RequireMFA: []string{definitions.MFAMethodTOTP, definitions.MFAMethodRecoveryCodes},
+	})
+
+	if !ok {
+		t.Fatal("fresh WebAuthn SSO session must not trigger immediate Roundcube step-up")
+	}
+
+	if got := recorder.Header().Get("Location"); got != "" {
+		t.Fatalf("unexpected MFA redirect = %q", got)
+	}
+}
+
+func TestRoundcubeAuthorizeCodeAcceptsFreshWebAuthnSSOAssurance(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newOIDCAssuranceCodeHandler(t)
+	ctx, recorder := newOIDCAssuranceCodeContext(map[string]any{
+		definitions.SessionKeyAccount:            "croessner@example.test",
+		definitions.SessionKeyMFACompleted:       true,
+		definitions.SessionKeyMFAMethod:          definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
+	})
+	client := config.OIDCClient{
+		ClientID:   "roundcube-client",
+		RequireMFA: []string{definitions.MFAMethodTOTP, definitions.MFAMethodRecoveryCodes},
+	}
+	request := oidcAuthorizeRequest{
+		clientID:    "roundcube-client",
+		redirectURI: "https://webmail.example.test/index.php/login/oauth",
+		scope:       "openid profile email",
+		state:       "roundcube-state",
+	}
+	session := &idp.OIDCSession{
+		ClientID:     "roundcube-client",
+		UserID:       "uid-croessner",
+		Username:     "croessner@example.test",
+		Scopes:       []string{definitions.ScopeOpenID, definitions.ScopeProfile, definitions.ScopeEmail},
+		RedirectURI:  request.redirectURI,
+		MFACompleted: true,
+		MFAMethod:    definitions.MFAMethodWebAuthn,
+	}
+
+	expectOIDCAuthorizationCodeStorage(mock)
+
+	mgr := cookieManagerFromContext(t, ctx)
+	handler.issueOIDCAuthorizeCode(ctx, mgr, newOIDCAuthorizeFlowContext(mgr), &client, request, session, session.Scopes)
+
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusFound)
+	}
+
+	location := recorder.Header().Get("Location")
+	if !strings.HasPrefix(location, request.redirectURI+"?") {
+		t.Fatalf("redirect = %q, want Roundcube callback", location)
+	}
+
+	if !strings.Contains(location, oidcParamCode+"=") {
+		t.Fatalf("redirect = %q, want authorization code", location)
+	}
+
+	if strings.HasPrefix(location, frontendMFASelectPath) || strings.HasPrefix(location, frontendLoginPath) {
+		t.Fatalf("fresh SSO assurance must not redirect to MFA/login: %q", location)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("redis expectations: %v", err)
+	}
+}
+
+func TestRoundcubeMFASelectKeepsWebAuthnFromSessionSnapshot(t *testing.T) {
+	handler := newRoundcubeFrontendHandler()
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowType:           definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID:           "roundcube-client",
+		definitions.SessionKeyHaveTOTP:              true,
+		definitions.SessionKeyHaveWebAuthn:          true,
+		definitions.SessionKeyHaveRecoveryCodes:     true,
+		definitions.SessionKeyMFAAssuranceMethod:    definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceAt:        time.Now().Add(-30 * time.Minute).Unix(),
+		definitions.SessionKeyMFAAssuranceScope:     oidcMFAAssuranceScope("heimdal-client"),
+		definitions.SessionKeyMFAFactorAccount:      "croessner@example.test",
+		definitions.SessionKeyMFAFactorUniqueUserID: "uid-croessner",
+	}}
+	availability := mfaAvailability{}
+
+	applySessionMFAAvailabilitySnapshot(mgr, &availability)
+	handler.applySupportedMFAFilter(mgr, &availability)
+	availability.count = countMFAAvailability(availability)
+
+	if !availability.haveTOTP || !availability.haveWebAuthn || !availability.haveRecoveryCodes {
+		t.Fatalf("availability = %#v, want all registered methods from session snapshot", availability)
+	}
+
+	if availability.count != 3 {
+		t.Fatalf("availability count = %d, want 3", availability.count)
+	}
+
+	if target, ok := handler.getMFARedirectURLFromAvailability(availability); ok {
+		t.Fatalf("expected MFA select page, got direct redirect %q", target)
 	}
 }
 

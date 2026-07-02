@@ -45,6 +45,8 @@ var idPFlowStateKeys = [...]string{
 	definitions.SessionKeyIDPSAMLRelayState,
 	definitions.SessionKeyIDPSAMLEntityID,
 	definitions.SessionKeyIDPOriginalURL,
+	definitions.SessionKeyIDPResumeFallbackURL,
+	definitions.SessionKeyIDPResumeFallbackAt,
 	definitions.SessionKeyRequireMFAFlow,
 	definitions.SessionKeyRequireMFAPending,
 	definitions.SessionKeyRequireMFAParentFlowID,

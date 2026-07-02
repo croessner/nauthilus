@@ -62,21 +62,110 @@ func uniqueCustomScopeNames(scopes []Oauth2CustomScope) (map[string]struct{}, st
 	return seen, "", true
 }
 
-// validateIDPMFASettings ensures require_mfa is a subset of supported_mfa when supported_mfa is configured.
+// DefaultMFAPolicyLevels returns the built-in MFA assurance level mapping.
+func DefaultMFAPolicyLevels() map[string]int {
+	return map[string]int{
+		definitions.MFAMethodRecoveryCodes: 1,
+		definitions.MFAMethodTOTP:          2,
+		definitions.MFAMethodWebAuthn:      3,
+	}
+}
+
+// validateMFAPolicy ensures configured method levels use known method names and non-negative levels.
+func validateMFAPolicy(path string, policy MFAPolicy) error {
+	for method, level := range policy.Levels {
+		if !isKnownMFAPolicyMethod(method) {
+			return NewValidationProblem(fmt.Sprintf("%s.levels.%s", path, method), "is not supported")
+		}
+
+		if level < 0 {
+			return NewValidationProblem(fmt.Sprintf("%s.levels.%s", path, method), "must be >= 0")
+		}
+	}
+
+	return nil
+}
+
+// isKnownMFAPolicyMethod reports whether a method can participate in MFA level policy.
+func isKnownMFAPolicyMethod(method string) bool {
+	switch method {
+	case definitions.MFAMethodRecoveryCodes, definitions.MFAMethodTOTP, definitions.MFAMethodWebAuthn:
+		return true
+	default:
+		return false
+	}
+}
+
+// validateRequiredMFALevel ensures a positive required level can be satisfied by the effective policy.
+func validateRequiredMFALevel(path string, requiredLevel int, supportedMFA []string, levels map[string]int) error {
+	if requiredLevel < 0 {
+		return NewValidationProblem(path, "must be >= 0")
+	}
+
+	if requiredLevel == 0 {
+		return nil
+	}
+
+	for method, level := range levels {
+		if len(supportedMFA) > 0 && !slices.Contains(supportedMFA, method) {
+			continue
+		}
+
+		if level >= requiredLevel {
+			return nil
+		}
+	}
+
+	return NewValidationProblem(path, "must be satisfiable by at least one method allowed by supported_mfa")
+}
+
+// validateIDPMFASettings validates IDP MFA enrollment, challenge, and level policy settings.
 func (f *FileSettings) validateIDPMFASettings() error {
 	if f == nil || f.IDP == nil {
 		return nil
 	}
 
+	if err := validateMFAPolicy("identity.mfa_policy", f.IDP.MFAPolicy); err != nil {
+		return err
+	}
+
+	globalLevels := f.IDP.GetMFAPolicyLevels()
+
 	for _, client := range f.IDP.OIDC.Clients {
 		if !validateRequiredWithinSupported(client.RequireMFA, client.SupportedMFA) {
 			return fmt.Errorf("identity.oidc.clients[%s]: require_mfa must be a subset of supported_mfa", client.ClientID)
+		}
+
+		if err := validateMFAPolicy(fmt.Sprintf("identity.oidc.clients[%s].mfa_policy", client.ClientID), client.MFAPolicy); err != nil {
+			return err
+		}
+
+		if err := validateRequiredMFALevel(
+			fmt.Sprintf("identity.oidc.clients[%s].required_mfa_level", client.ClientID),
+			client.RequiredMFALevel,
+			client.SupportedMFA,
+			client.GetMFAPolicyLevels(globalLevels),
+		); err != nil {
+			return err
 		}
 	}
 
 	for _, sp := range f.IDP.SAML2.ServiceProviders {
 		if !validateRequiredWithinSupported(sp.RequireMFA, sp.SupportedMFA) {
 			return fmt.Errorf("identity.saml.service_providers[%s]: require_mfa must be a subset of supported_mfa", sp.EntityID)
+		}
+
+		if err := validateMFAPolicy(fmt.Sprintf("identity.saml.service_providers[%s].mfa_policy", sp.EntityID), sp.MFAPolicy); err != nil {
+			return err
+		}
+
+		if err := validateRequiredMFALevel(
+			fmt.Sprintf("identity.saml.service_providers[%s].required_mfa_level", sp.EntityID),
+			sp.RequiredMFALevel,
+			sp.SupportedMFA,
+			sp.GetMFAPolicyLevels(globalLevels),
+		); err != nil {
+			return err
 		}
 	}
 
@@ -237,6 +326,7 @@ func parseFirstPEMCertificate(certPEM string) (*x509.Certificate, error) {
 type IDPSection struct {
 	OIDC                 OIDCConfig    `mapstructure:"oidc"`
 	SAML2                SAML2Config   `mapstructure:"saml2"`
+	MFAPolicy            MFAPolicy     `mapstructure:"mfa_policy"`
 	WebAuthn             WebAuthn      `mapstructure:"webauthn"`
 	RememberMeTTL        time.Duration `mapstructure:"remember_me_ttl"`
 	TermsOfServiceURL    string        `mapstructure:"terms_of_service_url"`
@@ -250,9 +340,10 @@ func (i *IDPSection) String() string {
 	}
 
 	return fmt.Sprintf(
-		"IDPSection: {OIDC:%s SAML2:%s WebAuthn:%s RememberMeTTL:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s PasswordForgottenURL:%s}",
+		"IDPSection: {OIDC:%s SAML2:%s MFAPolicy:%v WebAuthn:%s RememberMeTTL:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s PasswordForgottenURL:%s}",
 		i.OIDC.String(),
 		i.SAML2.String(),
+		i.MFAPolicy.GetLevels(nil),
 		i.WebAuthn.String(),
 		i.RememberMeTTL,
 		i.TermsOfServiceURL,
@@ -270,6 +361,15 @@ func (i *IDPSection) GetRememberMeTTL() time.Duration {
 	return i.RememberMeTTL
 }
 
+// GetMFAPolicyLevels returns the effective global MFA assurance level policy.
+func (i *IDPSection) GetMFAPolicyLevels() map[string]int {
+	if i == nil {
+		return DefaultMFAPolicyLevels()
+	}
+
+	return i.MFAPolicy.GetLevels(nil)
+}
+
 // warnUnsupported returns a list of warnings for unsupported Identity Provider configuration parameters.
 func (i *IDPSection) warnUnsupported() []string {
 	if i == nil {
@@ -282,6 +382,33 @@ func (i *IDPSection) warnUnsupported() []string {
 	warnings = append(warnings, i.SAML2.warnUnsupported()...)
 
 	return warnings
+}
+
+// MFAPolicy maps MFA methods to assurance levels.
+type MFAPolicy struct {
+	Levels map[string]int `mapstructure:"levels"`
+}
+
+// GetLevels merges this policy over parentLevels or the built-in defaults.
+func (p *MFAPolicy) GetLevels(parentLevels map[string]int) map[string]int {
+	levels := make(map[string]int, len(parentLevels)+len(DefaultMFAPolicyLevels()))
+	if len(parentLevels) == 0 {
+		parentLevels = DefaultMFAPolicyLevels()
+	}
+
+	for method, level := range parentLevels {
+		levels[method] = level
+	}
+
+	if p == nil {
+		return levels
+	}
+
+	for method, level := range p.Levels {
+		levels[method] = level
+	}
+
+	return levels
 }
 
 // WebAuthn represents the configuration for WebAuthn.
@@ -807,6 +934,8 @@ type OIDCClient struct {
 	GrantTypes               []string            `mapstructure:"grant_types"`
 	RequireMFA               []string            `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
 	SupportedMFA             []string            `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	RequiredMFALevel         int                 `mapstructure:"required_mfa_level"`
+	MFAPolicy                MFAPolicy           `mapstructure:"mfa_policy"`
 	PostLogoutRedirectURIs   []string            `mapstructure:"post_logout_redirect_uris"`
 	BackChannelLogoutURI     string              `mapstructure:"backchannel_logout_uri"`
 	FrontChannelLogoutURI    string              `mapstructure:"frontchannel_logout_uri"`
@@ -944,6 +1073,24 @@ func (c *OIDCClient) GetSupportedMFA() []string {
 	}
 
 	return c.SupportedMFA
+}
+
+// GetRequiredMFALevel returns the browser SSO assurance level required by this client.
+func (c *OIDCClient) GetRequiredMFALevel() int {
+	if c == nil {
+		return 0
+	}
+
+	return c.RequiredMFALevel
+}
+
+// GetMFAPolicyLevels returns the effective MFA assurance policy for this client.
+func (c *OIDCClient) GetMFAPolicyLevels(parentLevels map[string]int) map[string]int {
+	if c == nil {
+		return (&MFAPolicy{}).GetLevels(parentLevels)
+	}
+
+	return c.MFAPolicy.GetLevels(parentLevels)
 }
 
 // GetAllowedScopes returns the allowed scopes for this client. If no scopes are configured, a default set of scopes is returned.
@@ -1289,20 +1436,22 @@ func GetContent(raw any, path string) (string, error) {
 
 // SAML2ServiceProvider represents a SAML 2.0 service provider configuration.
 type SAML2ServiceProvider struct {
-	Name                  string   `mapstructure:"name"`
-	EntityID              string   `mapstructure:"entity_id" validate:"required"`
-	ACSURL                string   `mapstructure:"acs_url" validate:"required"`
-	SLOURL                string   `mapstructure:"slo_url"`
-	SLOBackChannelURL     string   `mapstructure:"slo_back_channel_url"`
-	Cert                  string   `mapstructure:"cert"`
-	CertFile              string   `mapstructure:"cert_file"`
-	AuthnRequestsSigned   bool     `mapstructure:"authn_requests_signed"`
-	LogoutRequestsSigned  *bool    `mapstructure:"logout_requests_signed"`
-	LogoutResponsesSigned *bool    `mapstructure:"logout_responses_signed"`
-	AllowedAttributes     []string `mapstructure:"allowed_attributes"`
-	RequireMFA            []string `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	SupportedMFA          []string `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	LogoutRedirectURI     string   `mapstructure:"logout_redirect_uri"`
+	Name                  string    `mapstructure:"name"`
+	EntityID              string    `mapstructure:"entity_id" validate:"required"`
+	ACSURL                string    `mapstructure:"acs_url" validate:"required"`
+	SLOURL                string    `mapstructure:"slo_url"`
+	SLOBackChannelURL     string    `mapstructure:"slo_back_channel_url"`
+	Cert                  string    `mapstructure:"cert"`
+	CertFile              string    `mapstructure:"cert_file"`
+	AuthnRequestsSigned   bool      `mapstructure:"authn_requests_signed"`
+	LogoutRequestsSigned  *bool     `mapstructure:"logout_requests_signed"`
+	LogoutResponsesSigned *bool     `mapstructure:"logout_responses_signed"`
+	AllowedAttributes     []string  `mapstructure:"allowed_attributes"`
+	RequireMFA            []string  `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA          []string  `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	RequiredMFALevel      int       `mapstructure:"required_mfa_level"`
+	MFAPolicy             MFAPolicy `mapstructure:"mfa_policy"`
+	LogoutRedirectURI     string    `mapstructure:"logout_redirect_uri"`
 	// Deprecated: use identity.session.remember_me_ttl instead.
 	RememberMeTTL   time.Duration `mapstructure:"remember_me_ttl"`
 	DelayedResponse bool          `mapstructure:"delayed_response"`
@@ -1326,6 +1475,24 @@ func (s *SAML2ServiceProvider) GetSupportedMFA() []string {
 	}
 
 	return s.SupportedMFA
+}
+
+// GetRequiredMFALevel returns the browser SSO assurance level required by this service provider.
+func (s *SAML2ServiceProvider) GetRequiredMFALevel() int {
+	if s == nil {
+		return 0
+	}
+
+	return s.RequiredMFALevel
+}
+
+// GetMFAPolicyLevels returns the effective MFA assurance policy for this service provider.
+func (s *SAML2ServiceProvider) GetMFAPolicyLevels(parentLevels map[string]int) map[string]int {
+	if s == nil {
+		return (&MFAPolicy{}).GetLevels(parentLevels)
+	}
+
+	return s.MFAPolicy.GetLevels(parentLevels)
 }
 
 // GetCert returns the SP certificate content (inline or from file).

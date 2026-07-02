@@ -588,6 +588,10 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		return
 	}
 
+	if !h.ensureSAMLSSOFlowState(ctx, mgr, issuer) {
+		return
+	}
+
 	h.handleAuthenticatedSAMLSSO(ctx, mgr, req, issuer, account)
 }
 
@@ -614,6 +618,10 @@ func (h *SAMLHandler) handleAuthenticatedSAMLSSO(
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Failed to load user details: %v", err)
 
+		return
+	}
+
+	if h.checkRequireMFARegistrationAndRedirect(ctx, mgr, user) {
 		return
 	}
 
@@ -647,6 +655,94 @@ func (h *SAMLHandler) handleAuthenticatedSAMLSSO(
 	}
 
 	h.renderSAMLPostBinding(ctx, form)
+}
+
+func (h *SAMLHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Context, mgr cookie.Manager, user *backend.User) bool {
+	frontendHandler := &FrontendHandler{deps: h.deps}
+
+	required := frontendHandler.getRequiredMFAMethods(mgr)
+	if len(required) == 0 {
+		frontendHandler.clearRequireMFARegistrationState(mgr)
+
+		return false
+	}
+
+	missing := h.missingSAMLRequireMFAMethods(mgr, user, required)
+	if len(missing) == 0 {
+		frontendHandler.clearRequireMFARegistrationState(mgr)
+
+		return false
+	}
+
+	flowdomain.SetRequireMFAPending(mgr, strings.Join(missing, ","))
+
+	lookupCtx := backendDataLookupContext(ctx)
+
+	redirectURI, ok := frontendHandler.startRequireMFARegistrationFlow(lookupCtx, mgr, user, definitions.ProtoSAML, missing)
+	if !ok {
+		ctx.String(http.StatusInternalServerError, "Failed to initialize required MFA registration")
+
+		return true
+	}
+
+	ctx.Redirect(http.StatusFound, redirectURI)
+
+	return true
+}
+
+// missingSAMLRequireMFAMethods checks mandatory SAML MFA enrollment using only
+// already-loaded user data and durable session snapshots. The SAML assertion
+// path must not trigger a fresh generic backend lookup here; assertion issuance
+// has already loaded the SAML user and should fail closed to registration when
+// enrollment cannot be proven locally.
+func (h *SAMLHandler) missingSAMLRequireMFAMethods(mgr cookie.Manager, user *backend.User, required []string) []string {
+	frontendHandler := &FrontendHandler{deps: h.deps}
+	missing := make([]string, 0, len(required))
+
+	for _, method := range required {
+		if samlRequireMFAMethodMissing(frontendHandler, mgr, user, method) {
+			missing = append(missing, method)
+		}
+	}
+
+	return missing
+}
+
+func samlRequireMFAMethodMissing(h *FrontendHandler, mgr cookie.Manager, user *backend.User, method string) bool {
+	switch method {
+	case definitions.MFAMethodTOTP:
+		return !samlHasTOTPForRequireMFA(h, mgr, user)
+	case definitions.MFAMethodWebAuthn:
+		return !samlHasWebAuthnForRequireMFA(mgr)
+	case definitions.MFAMethodRecoveryCodes:
+		return !samlHasRecoveryCodesForRequireMFA(h, mgr, user)
+	default:
+		return false
+	}
+}
+
+func samlHasTOTPForRequireMFA(h *FrontendHandler, mgr cookie.Manager, user *backend.User) bool {
+	if mgr != nil && mgr.GetBool(definitions.SessionKeyHaveTOTP, false) {
+		return true
+	}
+
+	return h.hasTOTP(user)
+}
+
+func samlHasWebAuthnForRequireMFA(mgr cookie.Manager) bool {
+	return mgr != nil && mgr.GetBool(definitions.SessionKeyHaveWebAuthn, false)
+}
+
+func samlHasRecoveryCodesForRequireMFA(h *FrontendHandler, mgr cookie.Manager, user *backend.User) bool {
+	if h.hasRecoveryCodes(user) {
+		return true
+	}
+
+	if mgr != nil && mgr.GetBool(definitions.SessionKeyHaveRecoveryCodes, false) {
+		return true
+	}
+
+	return mgr != nil && mgr.GetBool(definitions.SessionKeyRecoveryCodesSaved, false)
 }
 
 // samlAuthnRequestIssuer returns the trimmed issuer from a parsed SAML AuthnRequest.
@@ -702,6 +798,45 @@ func (h *SAMLHandler) redirectUnauthenticatedSAMLSSO(ctx *gin.Context, mgr cooki
 	}
 
 	ctx.Redirect(http.StatusFound, redirectTarget)
+}
+
+// ensureSAMLSSOFlowState creates SAML flow state for already authenticated
+// browser sessions so downstream MFA assurance and registration gates have a
+// concrete parent flow to protect.
+func (h *SAMLHandler) ensureSAMLSSOFlowState(ctx *gin.Context, mgr cookie.Manager, issuer string) bool {
+	if mgr == nil {
+		return true
+	}
+
+	if currentSAMLSSOFlowState(ctx, mgr, issuer) {
+		return true
+	}
+
+	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+
+	if _, err := h.startSAMLSSOLoginFlow(ctx, mgr, issuer); err != nil {
+		ctx.String(http.StatusInternalServerError, "Failed to initialize flow session")
+
+		return false
+	}
+
+	return h.storeSAMLSSORequestContext(ctx, mgr, issuer)
+}
+
+func currentSAMLSSOFlowState(ctx *gin.Context, mgr cookie.Manager, issuer string) bool {
+	if ctx == nil || mgr == nil || mgr.GetString(definitions.SessionKeyIDPFlowID, "") == "" {
+		return false
+	}
+
+	if mgr.GetString(definitions.SessionKeyIDPFlowType, "") != definitions.ProtoSAML {
+		return false
+	}
+
+	if mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "") != issuer {
+		return false
+	}
+
+	return mgr.GetString(definitions.SessionKeyIDPOriginalURL, "") == ctx.Request.URL.String()
 }
 
 // startSAMLSSOLoginFlow creates the cookie-backed flow state for SAML login.

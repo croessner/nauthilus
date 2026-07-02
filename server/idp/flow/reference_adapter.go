@@ -131,6 +131,8 @@ func (a *ReferenceAdapter) Delete(_ context.Context, _ string) error {
 	a.mgr.Delete(definitions.SessionKeyIDPFlowID)
 	a.mgr.Delete(definitions.SessionKeyIDPAuthOutcome)
 	a.mgr.Delete(definitions.SessionKeyIDPAuthOutcomeHMAC)
+	a.mgr.Delete(definitions.SessionKeyIDPResumeFallbackURL)
+	a.mgr.Delete(definitions.SessionKeyIDPResumeFallbackAt)
 	a.mgr.Delete(definitions.SessionKeyRequireMFAFlow)
 
 	return nil

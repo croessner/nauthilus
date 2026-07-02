@@ -37,7 +37,31 @@ type oidcMFAMethodSelector func(*config.OIDCClient) []string
 
 type samlMFAMethodSelector func(*config.SAML2ServiceProvider) []string
 
+type oidcRequiredMFALevelProvider interface {
+	GetRequiredMFALevel() int
+}
+
+type samlRequiredMFALevelProvider interface {
+	GetRequiredMFALevel() int
+}
+
 const mfaAssuranceFreshness = 10 * time.Minute
+
+const (
+	sessionKeyMFASelfServiceStepUpAction = "mfa_self_service_step_up_action"
+	sessionKeyMFASelfServiceStepUpReturn = "mfa_self_service_step_up_return"
+	sessionKeyMFASelfServiceStepUpAt     = "mfa_self_service_step_up_at"
+
+	mfaSelfServiceActionRecoveryGenerate   = "recovery_generate"
+	mfaSelfServiceActionTOTPDelete         = "totp_delete"
+	mfaSelfServiceActionWebAuthnDelete     = "webauthn_delete"
+	mfaSelfServiceActionWebAuthnDeviceDrop = "webauthn_device_delete"
+)
+
+type mfaSelfServiceStepUpTarget struct {
+	action     string
+	returnPath string
+}
 
 // getRequiredMFAMethods returns the list of MFA methods configured as mandatory
 // for the current IDP client or SAML service provider read from the cookie.
@@ -52,15 +76,71 @@ func (h *FrontendHandler) getSupportedMFAMethods(mgr cookie.Manager) []string {
 	return h.getFlowMFAMethods(mgr, (*config.OIDCClient).GetSupportedMFA, (*config.SAML2ServiceProvider).GetSupportedMFA)
 }
 
-// getEffectiveSupportedMFAMethods resolves the runtime MFA method set. Explicit
-// supported_mfa wins; otherwise require_mfa narrows the set for this flow.
+// getEffectiveSupportedMFAMethods resolves the runtime MFA challenge method set.
+// Explicit supported_mfa is a client allow-list; when it is unset, all
+// registered methods remain eligible. require_mfa is evaluated separately as an
+// enrollment/assurance policy and must not silently hide a valid SSO method.
 func (h *FrontendHandler) getEffectiveSupportedMFAMethods(mgr cookie.Manager) []string {
-	supported := h.getSupportedMFAMethods(mgr)
-	if len(supported) > 0 {
-		return supported
+	return h.getSupportedMFAMethods(mgr)
+}
+
+// getRequiredMFALevel returns the assurance level required by the current flow.
+func (h *FrontendHandler) getRequiredMFALevel(mgr cookie.Manager) int {
+	if mgr == nil || h.deps == nil {
+		return 0
 	}
 
-	return h.getRequiredMFAMethods(mgr)
+	flowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
+	idpInstance := idp.NewNauthilusIDP(h.deps)
+
+	switch flowType {
+	case definitions.ProtoOIDC:
+		clientID := mgr.GetString(definitions.SessionKeyIDPClientID, "")
+		if clientID == "" {
+			return 0
+		}
+
+		client, ok := idpInstance.FindClient(clientID)
+		if !ok {
+			return 0
+		}
+
+		return oidcClientRequiredMFALevel(client)
+
+	case definitions.ProtoSAML:
+		entityID := mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
+		if entityID == "" {
+			return 0
+		}
+
+		sp, ok := idpInstance.FindSAMLServiceProvider(entityID)
+		if !ok {
+			return 0
+		}
+
+		return samlServiceProviderRequiredMFALevel(sp)
+	}
+
+	return h.getRequiredMFALevelByIdentifier(mgr)
+}
+
+// getRequiredMFALevelByIdentifier resolves assurance levels after sub-flow cleanup.
+func (h *FrontendHandler) getRequiredMFALevelByIdentifier(mgr cookie.Manager) int {
+	idpInstance := idp.NewNauthilusIDP(h.deps)
+
+	if clientID := mgr.GetString(definitions.SessionKeyIDPClientID, ""); clientID != "" {
+		if client, ok := idpInstance.FindClient(clientID); ok {
+			return oidcClientRequiredMFALevel(client)
+		}
+	}
+
+	if entityID := mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""); entityID != "" {
+		if sp, ok := idpInstance.FindSAMLServiceProvider(entityID); ok {
+			return samlServiceProviderRequiredMFALevel(sp)
+		}
+	}
+
+	return 0
 }
 
 // getFlowMFAMethods resolves OIDC or SAML MFA method settings from the current flow context.
@@ -159,6 +239,69 @@ func sessionHasFreshMFAAssurance(mgr cookie.Manager, requiredMethods []string, r
 	return true
 }
 
+// sessionHasFreshMFAAssuranceLevel verifies recent MFA proof at a minimum assurance level.
+func sessionHasFreshMFAAssuranceLevel(mgr cookie.Manager, requiredLevel int, requiredScope string, now time.Time) bool {
+	if requiredLevel <= 0 {
+		return sessionHasFreshMFAAssurance(mgr, nil, requiredScope, now)
+	}
+
+	if !sessionHasFreshMFAAssurance(mgr, nil, requiredScope, now) {
+		return false
+	}
+
+	return mgr.GetInt(definitions.SessionKeyMFAAssuranceLevel, 0) >= requiredLevel
+}
+
+// sessionHasFreshScopedMFAAssurance enforces strict method, scope, and level gates.
+func sessionHasFreshScopedMFAAssurance(
+	mgr cookie.Manager,
+	requiredMethods []string,
+	requiredScope string,
+	requiredLevel int,
+	now time.Time,
+) bool {
+	if len(requiredMethods) == 0 && requiredLevel <= 0 {
+		return true
+	}
+
+	if len(requiredMethods) > 0 && !sessionHasFreshMFAAssurance(mgr, requiredMethods, requiredScope, now) {
+		return false
+	}
+
+	if requiredLevel > 0 && !sessionHasFreshMFAAssuranceLevel(mgr, requiredLevel, requiredScope, now) {
+		return false
+	}
+
+	return true
+}
+
+// sessionSatisfiesIDPSSOMFAAssurance accepts either the legacy
+// client-scoped/method-scoped proof or a fresh SSO-level MFA proof from the
+// current browser session. Normal OIDC/SAML application SSO should not step up
+// again immediately after the user already completed MFA for the same session.
+func sessionSatisfiesIDPSSOMFAAssurance(mgr cookie.Manager, requiredMethods []string, requiredScope string, now time.Time) bool {
+	return sessionSatisfiesIDPSSOMFAAssurancePolicy(mgr, requiredMethods, requiredScope, 0, now)
+}
+
+// sessionSatisfiesIDPSSOMFAAssurancePolicy applies browser-SSO assurance semantics.
+func sessionSatisfiesIDPSSOMFAAssurancePolicy(
+	mgr cookie.Manager,
+	requiredMethods []string,
+	requiredScope string,
+	requiredLevel int,
+	now time.Time,
+) bool {
+	if requiredLevel > 0 {
+		return sessionHasFreshMFAAssuranceLevel(mgr, requiredLevel, "", now)
+	}
+
+	if sessionHasFreshMFAAssurance(mgr, requiredMethods, requiredScope, now) {
+		return true
+	}
+
+	return sessionHasFreshMFAAssurance(mgr, nil, "", now)
+}
+
 // mfaAssuranceMethodFromSession reads durable assurance method state with a legacy fallback.
 func mfaAssuranceMethodFromSession(mgr cookie.Manager) string {
 	if mgr == nil {
@@ -230,6 +373,34 @@ func samlServiceProviderRequiredMFAMethods(sp *config.SAML2ServiceProvider) []st
 	return sp.GetRequireMFA()
 }
 
+// oidcClientRequiredMFALevel returns the configured assurance level for a client.
+func oidcClientRequiredMFALevel(client *config.OIDCClient) int {
+	if client == nil {
+		return 0
+	}
+
+	provider, ok := any(client).(oidcRequiredMFALevelProvider)
+	if !ok {
+		return 0
+	}
+
+	return provider.GetRequiredMFALevel()
+}
+
+// samlServiceProviderRequiredMFALevel returns the configured assurance level for a service provider.
+func samlServiceProviderRequiredMFALevel(sp *config.SAML2ServiceProvider) int {
+	if sp == nil {
+		return 0
+	}
+
+	provider, ok := any(sp).(samlRequiredMFALevelProvider)
+	if !ok {
+		return 0
+	}
+
+	return provider.GetRequiredMFALevel()
+}
+
 // redirectTargetForMissingMFAAssurance returns the existing MFA challenge page.
 func (h *OIDCHandler) redirectTargetForMissingMFAAssurance(ctx *gin.Context) string {
 	if h != nil && h.frontend != nil {
@@ -241,12 +412,25 @@ func (h *OIDCHandler) redirectTargetForMissingMFAAssurance(ctx *gin.Context) str
 
 // enforceOIDCClientMFAAssurance blocks final OIDC authorization without fresh MFA.
 func (h *OIDCHandler) enforceOIDCClientMFAAssurance(ctx *gin.Context, mgr cookie.Manager, client *config.OIDCClient) bool {
+	return h.enforceOIDCClientMFAAssuranceWithChecker(ctx, mgr, client, sessionHasFreshScopedMFAAssurance)
+}
+
+type oidcMFAAssuranceChecker func(cookie.Manager, []string, string, int, time.Time) bool
+
+func (h *OIDCHandler) enforceOIDCClientMFAAssuranceWithChecker(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	client *config.OIDCClient,
+	checker oidcMFAAssuranceChecker,
+) bool {
 	required := oidcClientRequiredMFAMethods(client)
-	if len(required) == 0 {
+	requiredLevel := oidcClientRequiredMFALevel(client)
+
+	if len(required) == 0 && requiredLevel <= 0 {
 		return true
 	}
 
-	if sessionHasFreshMFAAssurance(mgr, required, oidcMFAAssuranceScope(client.ClientID), time.Now()) {
+	if checker(mgr, required, oidcMFAAssuranceScope(client.ClientID), requiredLevel, time.Now()) {
 		return true
 	}
 
@@ -259,14 +443,23 @@ func (h *OIDCHandler) enforceOIDCClientMFAAssurance(ctx *gin.Context, mgr cookie
 	return false
 }
 
+// enforceOIDCClientSSOMFAAssurance applies normal browser SSO semantics for
+// authorization-code flows. Device-code approval intentionally keeps the
+// stricter client-scoped OIDC assurance check.
+func (h *OIDCHandler) enforceOIDCClientSSOMFAAssurance(ctx *gin.Context, mgr cookie.Manager, client *config.OIDCClient) bool {
+	return h.enforceOIDCClientMFAAssuranceWithChecker(ctx, mgr, client, sessionSatisfiesIDPSSOMFAAssurancePolicy)
+}
+
 // enforceSAMLServiceProviderMFAAssurance blocks SAML assertion issuance without fresh MFA.
 func (h *SAMLHandler) enforceSAMLServiceProviderMFAAssurance(ctx *gin.Context, mgr cookie.Manager, sp *config.SAML2ServiceProvider) bool {
 	required := samlServiceProviderRequiredMFAMethods(sp)
-	if len(required) == 0 {
+	requiredLevel := samlServiceProviderRequiredMFALevel(sp)
+
+	if len(required) == 0 && requiredLevel <= 0 {
 		return true
 	}
 
-	if sessionHasFreshMFAAssurance(mgr, required, samlMFAAssuranceScope(sp.EntityID), time.Now()) {
+	if sessionSatisfiesIDPSSOMFAAssurancePolicy(mgr, required, samlMFAAssuranceScope(sp.EntityID), requiredLevel, time.Now()) {
 		return true
 	}
 
@@ -308,6 +501,11 @@ func (h *SAMLHandler) prepareSAMLServiceProviderMFAAssuranceChallenge(ctx *gin.C
 // saveMFAAssuranceChallenge persists step-up state before the browser redirect.
 func saveMFAAssuranceChallenge(ctx *gin.Context, mgr cookie.Manager, handlerDeps *deps.Deps) bool {
 	setMFAAssuranceFlowAuthOutcome(ctx, mgr, handlerDeps)
+
+	now := time.Now()
+
+	storeIDPFlowResumeFallback(mgr, now)
+	storeIDPFlowResumeFallbackFromRequest(ctx, mgr, now)
 
 	if err := mgr.Save(ctx); err != nil {
 		ctx.String(http.StatusInternalServerError, "Failed to save session")
@@ -392,7 +590,9 @@ func (h *FrontendHandler) redirectExistingSessionMFAAssurance(ctx *gin.Context, 
 // prepareExistingSessionMFAAssuranceChallenge rebuilds MFA state for step-up pages.
 func (h *FrontendHandler) prepareExistingSessionMFAAssuranceChallenge(mgr cookie.Manager) bool {
 	required := h.getRequiredMFAMethods(mgr)
-	if len(required) == 0 {
+	requiredLevel := h.getRequiredMFALevel(mgr)
+
+	if len(required) == 0 && requiredLevel <= 0 {
 		return false
 	}
 
@@ -403,7 +603,7 @@ func (h *FrontendHandler) prepareExistingSessionMFAAssuranceChallenge(mgr cookie
 		return false
 	}
 
-	if sessionHasFreshMFAAssurance(mgr, required, scope, time.Now()) {
+	if sessionSatisfiesIDPSSOMFAAssurancePolicy(mgr, required, scope, requiredLevel, time.Now()) {
 		return false
 	}
 
@@ -428,13 +628,198 @@ func existingSessionMFAAssuranceScope(oidcClientID string, samlEntityID string) 
 
 // enforceMFASelfServiceStepUp blocks sensitive MFA mutations without recent MFA.
 func (h *FrontendHandler) enforceMFASelfServiceStepUp(ctx *gin.Context) bool {
-	if sessionHasFreshMFAAssurance(cookie.GetManager(ctx), nil, "", time.Now()) {
+	if sessionHasFreshMFAAssurance(cookie.GetManager(ctx), nil, definitions.ProtoIDP, time.Now()) {
 		return true
 	}
 
-	h.renderErrorModal(ctx, "Recent MFA verification required")
+	if !h.prepareMFASelfServiceStepUp(ctx) {
+		h.renderErrorModal(ctx, "Recent MFA verification required")
+
+		return false
+	}
+
+	h.redirectMFASelfServiceStepUp(ctx)
 
 	return false
+}
+
+// prepareMFASelfServiceStepUp stores only whitelisted return-and-retry state for
+// a sensitive self-service mutation and rebuilds the normal MFA challenge state.
+func (h *FrontendHandler) prepareMFASelfServiceStepUp(ctx *gin.Context) bool {
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
+		return false
+	}
+
+	target, ok := mfaSelfServiceStepUpTargetForRequest(ctx)
+	if !ok {
+		return false
+	}
+
+	account := mgr.GetString(definitions.SessionKeyAccount, "")
+	if account == "" {
+		return false
+	}
+
+	user := &backend.User{
+		Name:        account,
+		ID:          mgr.GetString(definitions.SessionKeyUniqueUserID, ""),
+		DisplayName: mgr.GetString(definitions.SessionKeyDisplayName, ""),
+	}
+	if user.ID == "" {
+		user.ID = mgr.GetString(definitions.SessionKeySubject, "")
+	}
+
+	mgr.Set(sessionKeyMFASelfServiceStepUpAction, target.action)
+	mgr.Set(sessionKeyMFASelfServiceStepUpReturn, target.returnPath)
+	mgr.Set(sessionKeyMFASelfServiceStepUpAt, time.Now().Unix())
+	mgr.Set(definitions.SessionKeyUsername, account)
+	mgr.Set(definitions.SessionKeyProtocol, definitions.ProtoIDP)
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoIDP)
+	mgr.Delete(definitions.SessionKeyIDPClientID)
+	mgr.Delete(definitions.SessionKeyIDPSAMLEntityID)
+	core.StorePendingIDPMFAIdentity(mgr, user)
+	core.StorePendingIDPMFAFactor(mgr, user)
+	cookie.SetAuthResult(mgr, account, definitions.AuthResultOK)
+
+	if err := mgr.Save(ctx); err != nil {
+		ctx.String(http.StatusInternalServerError, "Failed to save session")
+
+		return false
+	}
+
+	return true
+}
+
+// mfaSelfServiceStepUpTargetForRequest maps sensitive self-service routes to a
+// fixed action label and safe return surface. Request-controlled return URLs are
+// deliberately ignored.
+func mfaSelfServiceStepUpTargetForRequest(ctx *gin.Context) (mfaSelfServiceStepUpTarget, bool) {
+	if ctx == nil || ctx.Request == nil {
+		return mfaSelfServiceStepUpTarget{}, false
+	}
+
+	method := ctx.Request.Method
+	path := ctx.Request.URL.Path
+
+	switch {
+	case method == http.MethodPost && isRecoveryGeneratePath(path):
+		return mfaSelfServiceStepUpTarget{
+			action:     mfaSelfServiceActionRecoveryGenerate,
+			returnPath: definitions.MFARoot + "/register/home",
+		}, true
+	case method == http.MethodDelete && path == definitions.MFARoot+"/totp":
+		return mfaSelfServiceStepUpTarget{
+			action:     mfaSelfServiceActionTOTPDelete,
+			returnPath: definitions.MFARoot + "/register/home",
+		}, true
+	case method == http.MethodDelete && path == definitions.MFARoot+"/webauthn":
+		return mfaSelfServiceStepUpTarget{
+			action:     mfaSelfServiceActionWebAuthnDelete,
+			returnPath: definitions.MFARoot + "/register/home",
+		}, true
+	case method == http.MethodDelete && strings.HasPrefix(path, definitions.MFARoot+"/webauthn/device/"):
+		return mfaSelfServiceStepUpTarget{
+			action:     mfaSelfServiceActionWebAuthnDeviceDrop,
+			returnPath: definitions.MFARoot + "/webauthn/devices",
+		}, true
+	default:
+		return mfaSelfServiceStepUpTarget{}, false
+	}
+}
+
+// isRecoveryGeneratePath accepts the localized and default recovery generation routes.
+func isRecoveryGeneratePath(path string) bool {
+	return path == definitions.MFARoot+"/recovery/generate" ||
+		strings.HasPrefix(path, definitions.MFARoot+"/recovery/generate/")
+}
+
+// redirectMFASelfServiceStepUp sends normal requests and HTMX requests to a
+// visible MFA challenge page. HTMX needs HX-Redirect to escape modal targets.
+func (h *FrontendHandler) redirectMFASelfServiceStepUp(ctx *gin.Context) {
+	target := h.getMFASelectPath(ctx)
+	if ctx.GetHeader("HX-Request") != "" {
+		ctx.Header("HX-Redirect", target)
+		ctx.Status(http.StatusOK)
+
+		return
+	}
+
+	ctx.Redirect(http.StatusFound, target)
+}
+
+// redirectPendingSelfServiceStepUp returns form-based MFA completions to the
+// whitelisted self-service surface where the user can retry the original action.
+func (h *FrontendHandler) redirectPendingSelfServiceStepUp(ctx *gin.Context, mgr cookie.Manager) bool {
+	target, ok := h.pendingSelfServiceStepUpRedirectURI(ctx, mgr)
+	if !ok {
+		return false
+	}
+
+	ctx.Redirect(http.StatusFound, target)
+
+	return true
+}
+
+// pendingSelfServiceStepUpRedirectURI consumes a pending self-service step-up
+// return target after verifying that the stored action and return path match the
+// server-side whitelist.
+func (h *FrontendHandler) pendingSelfServiceStepUpRedirectURI(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
+	target := popPendingSelfServiceStepUpReturnTarget(mgr)
+	if target == "" {
+		return "", false
+	}
+
+	if err := mgr.Save(ctx); err != nil {
+		ctx.String(http.StatusInternalServerError, "Failed to save session")
+
+		return "", false
+	}
+
+	return target, true
+}
+
+// popPendingSelfServiceStepUpReturnTarget clears and validates self-service
+// step-up state before returning the safe retry page.
+func popPendingSelfServiceStepUpReturnTarget(mgr cookie.Manager) string {
+	if mgr == nil {
+		return ""
+	}
+
+	action := mgr.GetString(sessionKeyMFASelfServiceStepUpAction, "")
+	storedReturn := mgr.GetString(sessionKeyMFASelfServiceStepUpReturn, "")
+	clearPendingSelfServiceStepUp(mgr)
+
+	expectedReturn, ok := mfaSelfServiceStepUpReturnForAction(action)
+	if !ok || storedReturn != expectedReturn {
+		return ""
+	}
+
+	return expectedReturn
+}
+
+// mfaSelfServiceStepUpReturnForAction resolves the only valid retry surface for
+// each pending self-service action.
+func mfaSelfServiceStepUpReturnForAction(action string) (string, bool) {
+	switch action {
+	case mfaSelfServiceActionRecoveryGenerate, mfaSelfServiceActionTOTPDelete, mfaSelfServiceActionWebAuthnDelete:
+		return definitions.MFARoot + "/register/home", true
+	case mfaSelfServiceActionWebAuthnDeviceDrop:
+		return definitions.MFARoot + "/webauthn/devices", true
+	default:
+		return "", false
+	}
+}
+
+// clearPendingSelfServiceStepUp removes non-replayable self-service step-up state.
+func clearPendingSelfServiceStepUp(mgr cookie.Manager) {
+	if mgr == nil {
+		return
+	}
+
+	mgr.Delete(sessionKeyMFASelfServiceStepUpAction)
+	mgr.Delete(sessionKeyMFASelfServiceStepUpReturn)
+	mgr.Delete(sessionKeyMFASelfServiceStepUpAt)
 }
 
 // recordRequireMFARegistrationAssurance marks a just-satisfied registration flow as fresh MFA proof.
@@ -448,8 +833,12 @@ func (h *FrontendHandler) recordRequireMFARegistrationAssurance(mgr cookie.Manag
 	}
 
 	mgr.Set(definitions.SessionKeyMFACompleted, true)
-	mgr.Set(definitions.SessionKeyMFAMethod, normalizeMFAAssuranceMethod(required[0]))
-	mgr.Set(definitions.SessionKeyMFAAssuranceMethod, normalizeMFAAssuranceMethod(required[0]))
+
+	method := normalizeMFAAssuranceMethod(required[0])
+
+	mgr.Set(definitions.SessionKeyMFAMethod, method)
+	mgr.Set(definitions.SessionKeyMFAAssuranceMethod, method)
+	mgr.Set(definitions.SessionKeyMFAAssuranceLevel, core.DefaultIDPMFAAssuranceLevel(method))
 	mgr.Set(definitions.SessionKeyMFAAssuranceAt, time.Now().Unix())
 
 	oidcClientID, samlEntityID := h.getFlowClientIdentifiers(mgr)
@@ -1054,11 +1443,11 @@ func (h *FrontendHandler) nextRequiredMFARegistrationTarget(mgr cookie.Manager) 
 }
 
 func (h *FrontendHandler) hasTOTPForRequireMFA(ctx *gin.Context, mgr cookie.Manager, user *backend.User) bool {
-	if h.hasTOTP(user) {
+	if mgr != nil && mgr.GetBool(definitions.SessionKeyHaveTOTP, false) {
 		return true
 	}
 
-	if mgr != nil && mgr.GetBool(definitions.SessionKeyHaveTOTP, false) {
+	if h.hasTOTP(user) {
 		return true
 	}
 

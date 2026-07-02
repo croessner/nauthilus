@@ -593,6 +593,199 @@ func TestValidateIDPMFASettings(t *testing.T) {
 	})
 }
 
+func TestMFAPolicyDefaultLevels(t *testing.T) {
+	var policy *MFAPolicy
+
+	assert.Equal(t, map[string]int{
+		definitions.MFAMethodRecoveryCodes: 1,
+		definitions.MFAMethodTOTP:          2,
+		definitions.MFAMethodWebAuthn:      3,
+	}, policy.GetLevels(nil))
+}
+
+func TestMFAPolicyGlobalOverride(t *testing.T) {
+	idp := &IDPSection{
+		MFAPolicy: MFAPolicy{
+			Levels: map[string]int{
+				definitions.MFAMethodRecoveryCodes: 1,
+				definitions.MFAMethodTOTP:          4,
+			},
+		},
+	}
+
+	assert.Equal(t, map[string]int{
+		definitions.MFAMethodRecoveryCodes: 1,
+		definitions.MFAMethodTOTP:          4,
+		definitions.MFAMethodWebAuthn:      3,
+	}, idp.GetMFAPolicyLevels())
+}
+
+func TestMFAPolicyIdentitySectionMaterialization(t *testing.T) {
+	cfg := &FileSettings{
+		Identity: &IdentitySection{
+			MFAPolicy: MFAPolicy{
+				Levels: map[string]int{
+					definitions.MFAMethodWebAuthn: 4,
+				},
+			},
+		},
+	}
+
+	assert.Equal(t, map[string]int{
+		definitions.MFAMethodRecoveryCodes: 1,
+		definitions.MFAMethodTOTP:          2,
+		definitions.MFAMethodWebAuthn:      4,
+	}, cfg.GetIDP().GetMFAPolicyLevels())
+}
+
+func TestOIDCClientMFAPolicyOverride(t *testing.T) {
+	client := &OIDCClient{
+		RequiredMFALevel: 3,
+		MFAPolicy: MFAPolicy{
+			Levels: map[string]int{
+				definitions.MFAMethodWebAuthn: 5,
+			},
+		},
+	}
+
+	assertMFAPolicyOverride(t, 3, map[string]int{
+		definitions.MFAMethodRecoveryCodes: 1,
+		definitions.MFAMethodTOTP:          2,
+		definitions.MFAMethodWebAuthn:      5,
+	}, client.GetRequiredMFALevel(), client.GetMFAPolicyLevels(defaultMFAPolicyLevelsForTest()))
+}
+
+func TestSAMLServiceProviderMFAPolicyOverride(t *testing.T) {
+	serviceProvider := &SAML2ServiceProvider{
+		RequiredMFALevel: 2,
+		MFAPolicy: MFAPolicy{
+			Levels: map[string]int{
+				definitions.MFAMethodRecoveryCodes: 2,
+			},
+		},
+	}
+
+	assertMFAPolicyOverride(t, 2, map[string]int{
+		definitions.MFAMethodRecoveryCodes: 2,
+		definitions.MFAMethodTOTP:          2,
+		definitions.MFAMethodWebAuthn:      3,
+	}, serviceProvider.GetRequiredMFALevel(), serviceProvider.GetMFAPolicyLevels(defaultMFAPolicyLevelsForTest()))
+}
+
+func TestMFAPolicyEqualRankTOTPAndWebAuthnOverride(t *testing.T) {
+	client := &OIDCClient{
+		MFAPolicy: MFAPolicy{
+			Levels: map[string]int{
+				definitions.MFAMethodTOTP:     2,
+				definitions.MFAMethodWebAuthn: 2,
+			},
+		},
+	}
+
+	assert.Equal(t, map[string]int{
+		definitions.MFAMethodRecoveryCodes: 1,
+		definitions.MFAMethodTOTP:          2,
+		definitions.MFAMethodWebAuthn:      2,
+	}, client.GetMFAPolicyLevels(nil))
+}
+
+func TestValidateIDPMFAPolicyRejectsUnknownGlobalMethod(t *testing.T) {
+	cfg := &FileSettings{
+		IDP: &IDPSection{
+			MFAPolicy: MFAPolicy{
+				Levels: map[string]int{"push": 4},
+			},
+		},
+	}
+
+	assertInvalidIDPMFASettings(t, cfg, "identity.mfa_policy.levels.push")
+}
+
+func TestValidateIDPMFAPolicyRejectsNegativeClientLevel(t *testing.T) {
+	cfg := &FileSettings{
+		IDP: &IDPSection{
+			OIDC: OIDCConfig{
+				Clients: []OIDCClient{
+					{
+						ClientID: "client-1",
+						MFAPolicy: MFAPolicy{
+							Levels: map[string]int{
+								definitions.MFAMethodTOTP: -1,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	assertInvalidIDPMFASettings(t, cfg, "identity.oidc.clients[client-1].mfa_policy.levels.totp")
+}
+
+func TestValidateIDPMFAPolicyRejectsNegativeRequiredSAMLLevel(t *testing.T) {
+	cfg := &FileSettings{
+		IDP: &IDPSection{
+			SAML2: SAML2Config{
+				ServiceProviders: []SAML2ServiceProvider{
+					{
+						EntityID:         "sp-1",
+						ACSURL:           "https://sp.example.com/acs",
+						RequiredMFALevel: -1,
+					},
+				},
+			},
+		},
+	}
+
+	assertInvalidIDPMFASettings(t, cfg, "identity.saml.service_providers[sp-1].required_mfa_level")
+}
+
+func TestValidateIDPMFAPolicyRejectsUnsupportedRequiredLevel(t *testing.T) {
+	cfg := &FileSettings{
+		IDP: &IDPSection{
+			OIDC: OIDCConfig{
+				Clients: []OIDCClient{
+					{
+						ClientID:         "client-1",
+						RequiredMFALevel: 3,
+						SupportedMFA:     []string{definitions.MFAMethodTOTP},
+					},
+				},
+			},
+		},
+	}
+
+	assertInvalidIDPMFASettings(t, cfg, "identity.oidc.clients[client-1].required_mfa_level")
+}
+
+// defaultMFAPolicyLevelsForTest returns the shared baseline for policy override tests.
+func defaultMFAPolicyLevelsForTest() map[string]int {
+	return (&IDPSection{
+		MFAPolicy: MFAPolicy{
+			Levels: map[string]int{
+				definitions.MFAMethodRecoveryCodes: 1,
+				definitions.MFAMethodTOTP:          2,
+				definitions.MFAMethodWebAuthn:      3,
+			},
+		},
+	}).GetMFAPolicyLevels()
+}
+
+// assertMFAPolicyOverride compares required level and effective method levels together.
+func assertMFAPolicyOverride(t *testing.T, expectedRequired int, expectedLevels map[string]int, required int, levels map[string]int) {
+	t.Helper()
+
+	assert.Equal(t, expectedRequired, required)
+	assert.Equal(t, expectedLevels, levels)
+}
+
+// assertInvalidIDPMFASettings verifies that an invalid MFA policy points at the expected path.
+func assertInvalidIDPMFASettings(t *testing.T, cfg *FileSettings, expectedPath string) {
+	t.Helper()
+
+	assert.ErrorContains(t, cfg.validateIDPMFASettings(), expectedPath)
+}
+
 func TestValidateIDPOIDCCustomScopes(t *testing.T) {
 	t.Run("valid client and global custom scopes", func(t *testing.T) {
 		cfg := &FileSettings{

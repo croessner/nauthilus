@@ -2,11 +2,13 @@ package idp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/config"
@@ -98,6 +100,226 @@ func TestResumeFlowStaleIDRecovery(t *testing.T) {
 	}
 
 	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet redis expectations: %v", err)
+	}
+}
+
+func TestResumeFlowUsesAuthorizeContextWhenFlowReferenceWasCleared(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/login/totp/de", nil)
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowID:              "flow-oidc",
+		definitions.SessionKeyIDPFlowType:            definitions.ProtoOIDC,
+		definitions.SessionKeyOIDCGrantType:          definitions.OIDCFlowAuthorizationCode,
+		definitions.SessionKeyIDPClientID:            "roundcube-client",
+		definitions.SessionKeyIDPRedirectURI:         "https://webmail.example.test/index.php/login/oauth",
+		definitions.SessionKeyIDPScope:               "openid profile email",
+		definitions.SessionKeyIDPState:               "state-1",
+		definitions.SessionKeyIDPNonce:               "nonce-1",
+		definitions.SessionKeyIDPResponseType:        "code",
+		definitions.SessionKeyIDPPrompt:              "login",
+		definitions.SessionKeyIDPCodeChallenge:       "challenge-1",
+		definitions.SessionKeyIDPCodeChallengeMethod: oidcPKCEChallengeMethodS256,
+	}}
+
+	storeIDPFlowResumeFallback(mgr, time.Now())
+	mgr.Delete(definitions.SessionKeyIDPFlowID)
+
+	redirectURI, ok := (&FrontendHandler{}).resumeIDPFlowRedirectURI(ctx, mgr)
+	if !ok {
+		t.Fatal("expected OIDC authorize context fallback")
+	}
+
+	if redirectURI == "/" {
+		t.Fatal("TOTP completion must not fall back to Nauthilus root when OIDC authorize context is present")
+	}
+
+	if !strings.HasPrefix(redirectURI, "/oidc/authorize?") {
+		t.Fatalf("resume redirect = %q, want OIDC authorize URL", redirectURI)
+	}
+
+	if !strings.Contains(redirectURI, "client_id=roundcube-client") {
+		t.Fatalf("resume redirect lost client_id: %q", redirectURI)
+	}
+
+	if !strings.Contains(redirectURI, "code_challenge=challenge-1") {
+		t.Fatalf("resume redirect lost PKCE challenge: %q", redirectURI)
+	}
+
+	for _, fragment := range []string{
+		"redirect_uri=https%3A%2F%2Fwebmail.example.test%2Findex.php%2Flogin%2Foauth",
+		"scope=openid+profile+email",
+		"state=state-1",
+		"nonce=nonce-1",
+		"response_type=code",
+		"prompt=login",
+		"code_challenge_method=S256",
+	} {
+		if !strings.Contains(redirectURI, fragment) {
+			t.Fatalf("resume redirect %q missing %q", redirectURI, fragment)
+		}
+	}
+}
+
+func TestResumeFlowUsesFallbackWhenActiveFlowRedirectsToRoot(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowID: "flow-oidc",
+	}}
+
+	mgr.Set(definitions.SessionKeyIDPResumeFallbackURL, "/oidc/authorize?client_id=admin-level3")
+	mgr.Set(definitions.SessionKeyIDPResumeFallbackAt, time.Now().Unix())
+
+	if !shouldUseFallbackIDPFlowRedirectURI("/") {
+		t.Fatal("expected fresh fallback to override root redirect for an active step-up flow")
+	}
+}
+
+func TestStoreIDPFlowResumeFallbackUsesCurrentAuthorizeRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?client_id=admin-level3&state=state-1", nil)
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowID:   "flow-oidc",
+		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+	}}
+
+	storeIDPFlowResumeFallback(mgr, time.Now())
+	storeIDPFlowResumeFallbackFromRequest(ctx, mgr, time.Now())
+
+	redirectURI := fallbackIDPFlowRedirectURI(mgr)
+	if redirectURI != "/oidc/authorize?client_id=admin-level3&state=state-1" {
+		t.Fatalf("fallback redirect = %q, want current authorize request", redirectURI)
+	}
+}
+
+func TestResumeFlowDoesNotUseStaleAuthorizeContextWithoutFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/login/totp/de", nil)
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowType:     definitions.ProtoOIDC,
+		definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
+		definitions.SessionKeyIDPClientID:     "roundcube-client",
+		definitions.SessionKeyIDPRedirectURI:  "https://webmail.example.test/index.php/login/oauth",
+		definitions.SessionKeyIDPState:        "state-1",
+		definitions.SessionKeyIDPResponseType: "code",
+	}}
+
+	redirectURI, ok := (&FrontendHandler{}).resumeIDPFlowRedirectURI(ctx, mgr)
+	if !ok {
+		t.Fatal("expected default redirect decision")
+	}
+
+	if redirectURI != "/" {
+		t.Fatalf("stale OIDC metadata redirect = %q, want /", redirectURI)
+	}
+}
+
+func TestResumeFlowFallbackRejectsUnsafeOrExpiredTargets(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name       string
+		target     string
+		createdAt  time.Time
+		wantTarget string
+	}{
+		{
+			name:       "safe local SAML target",
+			target:     "/saml/sso?SAMLRequest=abc",
+			createdAt:  now,
+			wantTarget: "/saml/sso?SAMLRequest=abc",
+		},
+		{
+			name:      "absolute target rejected",
+			target:    "https://evil.example/saml/sso",
+			createdAt: now,
+		},
+		{
+			name:      "protocol-relative target rejected",
+			target:    "//evil.example/saml/sso",
+			createdAt: now,
+		},
+		{
+			name:      "expired target rejected",
+			target:    "/saml/sso?SAMLRequest=abc",
+			createdAt: now.Add(-idpResumeFallbackTTL - time.Second),
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := &mockCookieManager{data: map[string]any{
+				definitions.SessionKeyIDPResumeFallbackURL: tt.target,
+				definitions.SessionKeyIDPResumeFallbackAt:  tt.createdAt.Unix(),
+			}}
+
+			got := fallbackIDPFlowRedirectURI(mgr)
+			if got != tt.wantTarget {
+				t.Fatalf("fallback target = %q, want %q", got, tt.wantTarget)
+			}
+		})
+	}
+}
+
+func TestStoreIDPFlowResumeFallbackSupportsDeviceCodeMarker(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowID:     "flow-device",
+		definitions.SessionKeyIDPFlowType:   definitions.ProtoOIDC,
+		definitions.SessionKeyOIDCGrantType: definitions.OIDCFlowDeviceCode,
+		definitions.SessionKeyDeviceCode:    "device-1",
+	}}
+
+	storeIDPFlowResumeFallback(mgr, time.Now())
+	mgr.Delete(definitions.SessionKeyIDPFlowID)
+
+	got := fallbackIDPFlowRedirectURI(mgr)
+	if got != flowdomain.FlowMetadataResumeTargetDeviceCodeComplete {
+		t.Fatalf("device fallback target = %q, want device completion marker", got)
+	}
+}
+
+func TestResumeFlowDoesNotFallbackOnRedisErrorWithActiveFlowReference(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db, mock := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+
+	const (
+		redisPrefix = "test:"
+		flowID      = "flow-active"
+	)
+
+	mock.ExpectGet("test:idp:flow:" + flowID).SetErr(errors.New("redis unavailable"))
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowID:              flowID,
+		definitions.SessionKeyIDPFlowType:            definitions.ProtoOIDC,
+		definitions.SessionKeyOIDCGrantType:          definitions.OIDCFlowAuthorizationCode,
+		definitions.SessionKeyIDPClientID:            "roundcube-client",
+		definitions.SessionKeyIDPRedirectURI:         "https://webmail.example.test/index.php/login/oauth",
+		definitions.SessionKeyIDPState:               "state-1",
+		definitions.SessionKeyIDPResponseType:        "code",
+		definitions.SessionKeyIDPCodeChallenge:       "challenge-1",
+		definitions.SessionKeyIDPCodeChallengeMethod: oidcPKCEChallengeMethodS256,
+	}}
+
+	decision, err := resumeFlow(context.Background(), mgr, rClient, redisPrefix)
+	if err == nil {
+		t.Fatalf("expected Redis-backed resume error to fail closed, got decision %#v", decision)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet redis expectations: %v", err)
 	}
 }

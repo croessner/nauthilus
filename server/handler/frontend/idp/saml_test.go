@@ -113,6 +113,10 @@ func (m *mockSAMLCfg) GetServer() *config.ServerSection {
 	}
 }
 
+func (m *mockSAMLCfg) GetLDAP() *config.LDAPSection {
+	return &config.LDAPSection{}
+}
+
 func TestSAMLUnrestrictedAttributesSuppressSensitive(t *testing.T) {
 	session := &saml.Session{}
 	user := newSAMLAttributeUser(map[string][]any{
@@ -435,6 +439,7 @@ func TestSAMLExistingSessionRequireMFAPermitsFreshAssurance(t *testing.T) {
 		definitions.SessionKeyMFAMethod:         definitions.MFAMethodTOTP,
 		definitions.SessionKeyMFAAssuranceAt:    time.Now().Unix(),
 		definitions.SessionKeyMFAAssuranceScope: definitions.ProtoSAML + ":" + spEntityID,
+		definitions.SessionKeyHaveTOTP:          true,
 	})
 	recorder, ctx := newSAMLSSOTestContext(target, mgr)
 
@@ -443,6 +448,109 @@ func TestSAMLExistingSessionRequireMFAPermitsFreshAssurance(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Equal(t, 1, fakeIDP.userLookups)
 	assert.NotEmpty(t, recorder.Body.String())
+}
+
+func TestSAMLExistingSessionRequiredMFALevelBlocksLowerSSOAssurance(t *testing.T) {
+	spEntityID := "https://sp.example.com/saml/metadata"
+	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
+		EntityID:         spEntityID,
+		ACSURL:           "https://sp.example.com/saml/acs",
+		RequiredMFALevel: 3,
+	}, map[string]any{
+		definitions.SessionKeyAccount:            "alice",
+		definitions.SessionKeyMFACompleted:       true,
+		definitions.SessionKeyMFAMethod:          definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
+		definitions.SessionKeyMFAAssuranceLevel:  2,
+	})
+	recorder, ctx := newSAMLSSOTestContext(target, mgr)
+
+	handler.SSO(ctx)
+
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
+	assert.Equal(t, 0, fakeIDP.userLookups)
+	assert.NotContains(t, recorder.Body.String(), "SAMLResponse")
+}
+
+func TestSAMLExistingSessionRequiredMFALevelPermitsFreshLevel(t *testing.T) {
+	spEntityID := "https://sp.example.com/saml/metadata"
+	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
+		EntityID:         spEntityID,
+		ACSURL:           "https://sp.example.com/saml/acs",
+		RequiredMFALevel: 3,
+	}, map[string]any{
+		definitions.SessionKeyAccount:            "alice",
+		definitions.SessionKeyMFACompleted:       true,
+		definitions.SessionKeyMFAMethod:          definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
+		definitions.SessionKeyMFAAssuranceLevel:  3,
+	})
+	recorder, ctx := newSAMLSSOTestContext(target, mgr)
+
+	handler.SSO(ctx)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, 1, fakeIDP.userLookups)
+	assert.NotEmpty(t, recorder.Body.String())
+}
+
+func TestSAMLExistingSessionRequireMFAStartsRegistrationWhenEnrollmentMissing(t *testing.T) {
+	spEntityID := "https://sp.example.com/saml/metadata"
+	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
+		EntityID:   spEntityID,
+		ACSURL:     "https://sp.example.com/saml/acs",
+		RequireMFA: []string{definitions.MFAMethodTOTP},
+	}, map[string]any{
+		definitions.SessionKeyAccount:            "alice",
+		definitions.SessionKeyMFACompleted:       true,
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
+	})
+	recorder, ctx := newSAMLSSOTestContext(target, mgr)
+
+	handler.SSO(ctx)
+
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Equal(t, definitions.MFARoot+"/totp/register", recorder.Header().Get("Location"))
+	assert.Equal(t, 1, fakeIDP.userLookups)
+	assert.True(t, mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false))
+	assert.NotContains(t, recorder.Body.String(), "SAMLResponse")
+}
+
+func TestSAMLExistingSessionRequireMFAIgnoresStaleFlowMetadata(t *testing.T) {
+	spEntityID := "https://sp.example.com/saml/metadata"
+	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
+		EntityID:   spEntityID,
+		ACSURL:     "https://sp.example.com/saml/acs",
+		RequireMFA: []string{definitions.MFAMethodTOTP},
+	}, map[string]any{
+		definitions.SessionKeyAccount:            "alice",
+		definitions.SessionKeyIDPFlowID:          "stale-saml-flow",
+		definitions.SessionKeyIDPFlowType:        definitions.ProtoSAML,
+		definitions.SessionKeyIDPSAMLEntityID:    "https://old-sp.example.com/saml/metadata",
+		definitions.SessionKeyIDPOriginalURL:     "/saml/sso?SAMLRequest=stale",
+		definitions.SessionKeyMFACompleted:       true,
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
+	})
+	recorder, ctx := newSAMLSSOTestContext(target, mgr)
+
+	handler.SSO(ctx)
+
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Equal(t, definitions.MFARoot+"/totp/register", recorder.Header().Get("Location"))
+	assert.Equal(t, 1, fakeIDP.userLookups)
+	assert.Equal(t, definitions.ProtoSAML, mgr.GetString(definitions.SessionKeyIDPFlowType, ""))
+	assert.Equal(t, spEntityID, mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""))
+	assert.True(t, mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false))
+	assert.NotContains(t, recorder.Body.String(), "SAMLResponse")
 }
 
 func TestSAMLExistingSessionNoRequireMFAPreservesSSO(t *testing.T) {

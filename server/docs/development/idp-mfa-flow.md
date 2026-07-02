@@ -15,8 +15,10 @@ session state must be considered together.
 | --- | --- | --- |
 | `skip_consent` | OIDC client consent can be skipped. | A successful login can resume directly to the OIDC callback path after token/code handling. |
 | `delayed_response` | The first-factor password result is hidden until after MFA. | A wrong password still enters MFA if the account/factors can be resolved; the failure is revealed after the second factor. |
-| `require_mfa` | List of MFA methods that must be registered for this client. | After successful authentication, the flow may be diverted to `/mfa/<method>/register` before OIDC/SAML resumes. |
-| `supported_mfa` | List of MFA methods the client allows during login/registration. | Methods not supported by the client must not be offered or counted as satisfying `require_mfa`. When unset and `require_mfa` is set, the effective login method set is narrowed to `require_mfa`. |
+| `require_mfa` | List of MFA methods that must be registered for this client or service provider. | After authentication, the flow may be diverted to `/mfa/<method>/register` before OIDC/SAML resumes. It must not silently narrow the login challenge methods when `supported_mfa` is unset, and it does not mean the current login used one of those methods. |
+| `supported_mfa` | Explicit list of MFA methods the client allows during login/registration. | Methods not supported by the client must not be offered. When unset, all registered methods remain eligible; `require_mfa` and `required_mfa_level` are evaluated separately. |
+| `mfa_policy.levels` | Global or client/SP-local mapping from MFA method to assurance level. | Defaults are `recovery_codes=1`, `totp=2`, and `webauthn=3`. Client/SP policy merges over the global policy. |
+| `required_mfa_level` | Minimum MFA assurance level required for normal browser SSO response issuance. | If unset or zero, compatibility behavior applies: any fresh MFA-backed browser session can satisfy ordinary SSO. If positive, the session must carry a fresh assurance level at or above this value or step-up is required. |
 | OIDC flow state | Authorization request, client id, redirect URI, scopes, PKCE, prompt. | Stored in Redis and session cookie; must survive MFA and required-MFA sub-flows. |
 | SAML flow state | Request, RelayState, entity id. | Same continuation model as OIDC, but protocol-specific resume target. |
 | Device-code flow state | User code/device code and pending verification state. | WebAuthn completion may need to call device-code completion instead of returning a browser redirect. |
@@ -128,9 +130,9 @@ sequenceDiagram
   Browser->>OIDC: GET /oidc/authorize with account session and no idp_flow_id
   OIDC->>FlowStore: Store current authorize request metadata
   OIDC->>Cookie: Store flow id, client id, redirect URI, scopes, state, nonce, PKCE
-  alt fresh client-scoped MFA assurance
+  alt fresh SSO MFA assurance in the browser session
     OIDC-->>Browser: Redirect to client callback with code
-  else assurance missing or stale
+  else no fresh MFA assurance
     OIDC->>Cookie: Seed MFA assurance session
     OIDC-->>Browser: Redirect /login/mfa
     Browser->>Frontend: Complete TOTP/WebAuthn/recovery
@@ -142,6 +144,113 @@ sequenceDiagram
 Completing the previous OIDC request may remove temporary flow keys, but it must
 not make the next valid `/oidc/authorize` depend on the unauthenticated login
 start path. Direct `/login` access without an active IDP flow remains rejected.
+
+## SSO MFA Assurance Versus Step-Up
+
+Normal OIDC/SAML application SSO and sensitive self-service mutations use the
+same MFA proof, but they have different freshness boundaries.
+
+```mermaid
+flowchart TD
+  Start["OIDC/SAML authorize with browser account session"] --> ClientPolicy["Read client policy: require_mfa, supported_mfa, required_mfa_level"]
+  ClientPolicy --> LevelGate{"required_mfa_level positive?"}
+  LevelGate -- "no" --> CompatBoundary{"Compatibility path needs fresh MFA?"}
+  LevelGate -- "yes" --> LevelFresh{"Fresh assurance level is high enough?"}
+  CompatBoundary -- "no" --> Enrollment["Check require_mfa registration policy"]
+  CompatBoundary -- "yes" --> CompatFresh{"Fresh MFA proof exists?"}
+  CompatFresh -- "yes" --> Enrollment
+  CompatFresh -- "no" --> Challenge
+  LevelFresh -- "yes" --> Enrollment
+  LevelFresh -- "no" --> Challenge["Render MFA challenge using supported_mfa or all registered eligible methods"]
+  Challenge --> Complete["User completes TOTP, WebAuthn, or recovery"]
+  Complete --> Store["Store MFA assurance method/time/session scope/level"]
+  Store --> Enrollment
+  Enrollment --> Missing{"Required factor registration missing?"}
+  Missing -- "yes" --> Register["Start forced registration flow"]
+  Missing -- "no" --> Issue
+
+  SelfService["Self-service mutation"] --> StepFresh{"Fresh MFA proof still within step-up TTL?"}
+  StepFresh -- "yes" --> Mutate["Allow mutation"]
+  StepFresh -- "no" --> Block["Fail closed and require fresh MFA"]
+```
+
+Expected invariants:
+
+- A user who just completed WebAuthn for one OIDC client has a fresh MFA-backed
+  SSO session. A second OIDC client such as Roundcube must not immediately force
+  another MFA challenge only because its `require_mfa` list names different
+  enrollment methods when no stronger `required_mfa_level` is configured.
+- When `required_mfa_level` is positive, the browser session must have a fresh
+  assurance level at or above that value. Registration of a high-level method is
+  necessary for enrollment policy, but it is not sufficient to satisfy the
+  assurance gate unless the user has actually completed a method whose
+  configured level reaches the gate.
+- `supported_mfa` controls which challenge methods can be offered. If it is not
+  configured, the UI offers the registered methods available to the user.
+- `require_mfa` controls which factor registrations must exist before the
+  client response is issued.
+- `required_mfa_level` controls the normal browser SSO assurance strength.
+  The default policy maps recovery codes to level 1, TOTP to level 2, and
+  WebAuthn to level 3; operators may override the mapping globally or per
+  OIDC client/SAML service provider.
+- `delayed_response` only hides first-factor success or failure until after MFA;
+  it does not change which methods are supported and does not create a separate
+  client-specific MFA step-up by itself.
+- Self-service actions that mutate MFA/account state remain the boundary for
+  explicit step-up freshness checks.
+
+## MFA Level Policy
+
+`require_mfa`, `supported_mfa`, and `required_mfa_level` are separate policy
+axes:
+
+- `require_mfa` is enrollment policy. It answers which factors must exist before
+  a client or service provider can receive a successful response.
+- `supported_mfa` is challenge-offer policy. It answers which registered methods
+  may be shown during login, registration, or step-up.
+- `required_mfa_level` is assurance policy. It answers how strong the current
+  fresh browser-session MFA proof must be before normal OIDC/SAML SSO may
+  continue.
+
+The default assurance mapping is:
+
+```yaml
+identity:
+  mfa_policy:
+    levels:
+      recovery_codes: 1
+      totp: 2
+      webauthn: 3
+```
+
+Client and service-provider overrides merge over the global policy:
+
+```yaml
+identity:
+  oidc:
+    clients:
+      - client_id: security-admin
+        require_mfa: [webauthn]
+        required_mfa_level: 3
+
+      - client_id: equal-rank-app
+        required_mfa_level: 2
+        mfa_policy:
+          levels:
+            totp: 2
+            webauthn: 2
+
+  saml:
+    service_providers:
+      - entity_id: https://sp.example.com/metadata
+        require_mfa: [totp]
+        required_mfa_level: 2
+```
+
+If application A completes TOTP at level 2 and application B requires level 3,
+B must trigger a visible step-up even when the user has WebAuthn registered. If
+the operator configures TOTP and WebAuthn at the same level, the same level-2
+TOTP proof may satisfy a level-2 application B.
 
 ## Delayed Response
 
@@ -258,19 +367,70 @@ Required invariant for split edge/authority deployments:
 
 - The check must use the same final subject, factor identity, backend name, and
   backend reference that were selected during first-factor authentication.
-- Explicit `supported_mfa` is the configured allow-list. If it is unset and
-  `require_mfa` is set, `require_mfa` becomes the effective allow-list for login
-  MFA challenge and method-offer decisions so the UI does not offer a method
-  that final client assurance will reject. Required-MFA registration still
-  follows `require_mfa` directly.
+- Explicit `supported_mfa` is the configured allow-list. If it is unset, the
+  challenge method set is not narrowed by `require_mfa`; normal SSO accepts any
+  fresh MFA proof and the required-MFA registration check still follows
+  `require_mfa` directly.
 - A copied/internal lookup context is acceptable only if it preserves the
   encrypted cookie manager and session keys.
 - The session enrollment snapshot may satisfy a method only when that method was
   already proven by MFA availability, registration, or a completed challenge; it
   must not be used to invent new factor enrollment state.
+- The MFA select page may merge previously proven session snapshots with fresh
+  backend data so the UI does not hide a factor that was already observed in
+  the same encrypted browser session. The explicit `supported_mfa` allow-list is
+  still applied after that merge.
 - A failed or incomplete lookup must fail closed for security, but it should be
   observable as a lookup failure, not silently downgraded to "factor missing"
   when the factor was proven earlier in the same flow.
+
+## Roundcube After Existing SSO
+
+Roundcube is a normal OIDC Authorization-Code client. If the browser already
+has a fresh MFA-backed SSO session from another client, for example after a
+WebAuthn login to Heimdal, Roundcube must not immediately force another MFA
+challenge only because its `require_mfa` list contains `totp` and
+`recovery_codes`. A Roundcube-like client that configures `required_mfa_level`
+must still satisfy that explicit level gate.
+
+```mermaid
+sequenceDiagram
+  participant Browser
+  participant Nauthilus
+  participant Cookie
+  participant FlowStore as Redis Flow Store
+  participant Roundcube
+
+  Browser->>Nauthilus: Completed Heimdal login with WebAuthn
+  Nauthilus->>Cookie: mfa_assurance_method=webauthn, mfa_assurance_at=now
+  Nauthilus->>Cookie: mfa_assurance_scope=oidc:heimdal-client
+
+  Browser->>Roundcube: GET /
+  Roundcube-->>Browser: Redirect /oidc/authorize client_id=roundcube-client
+  Browser->>Nauthilus: GET /oidc/authorize with existing account session
+  Nauthilus->>FlowStore: Store fresh Roundcube authorize flow
+  Nauthilus->>Cookie: Store Roundcube flow keys
+  Nauthilus->>Nauthilus: Check SSO-level MFA freshness or required_mfa_level
+
+  alt browser-session MFA satisfies client policy
+    Nauthilus->>Nauthilus: Check require_mfa registration exists
+    Nauthilus-->>Browser: Redirect Roundcube callback with code
+  else no fresh browser-session MFA
+    Nauthilus->>Cookie: Seed MFA challenge state
+    Nauthilus-->>Browser: /login/mfa
+  end
+```
+
+Important distinction:
+
+- Browser SSO uses `sessionSatisfiesIDPSSOMFAAssurance`, which accepts a fresh
+  same-session MFA proof even when the proof came from a different OIDC client.
+- Device-code approval and self-service mutations keep stricter freshness gates.
+- Required registration is still enforced. Missing TOTP or recovery-code
+  enrollment redirects to `/mfa/<method>/register`, not to `/login/mfa`.
+- The select page should offer every registered method allowed by
+  `supported_mfa`. When `supported_mfa` is unset, it must not hide WebAuthn just
+  because `require_mfa` lists TOTP and recovery codes.
 
 ## Expected Required-MFA Flow For `split-e2e-mfa`
 
@@ -325,23 +485,13 @@ places to audit are:
 - `supported_mfa` filtering that removes a registered method before the
   `require_mfa` comparison.
 
-For the split edge/authority E2E, the currently interesting failing transition
-is:
+Regression tests should cover two separate outcomes:
 
-```text
-ok recovery-code-generation
-ok master-user-mfa-registration
-ok oidc-totp-login
-ok oidc-delayed-response-totp-login
-ok oidc-delayed-response-totp-wrong-password-rejected
-WebAuthn finish redirects to /mfa/totp/register/en instead of the OIDC callback
-```
-
-That failure means WebAuthn verification itself succeeded, but the continuation
-path decided that `totp` is still missing for `split-e2e-mfa`. The next code
-audit should therefore focus on how TOTP availability is carried from the
-first-factor/MFA-availability decision into the WebAuthn completion
-`require_mfa` check, including `delayed_response` and remote backend references.
+- A normal browser SSO request with a fresh WebAuthn proof from another client
+  reaches the OIDC callback for Roundcube without visiting `/login/mfa`.
+- When a challenge is actually needed, the select page still contains every
+  registered and supported method, including WebAuthn when `supported_mfa` is
+  unset.
 
 ## Code Map
 

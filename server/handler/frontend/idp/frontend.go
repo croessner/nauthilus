@@ -1614,6 +1614,10 @@ func (h *FrontendHandler) PostLoginWebAuthnFinish(ctx *gin.Context) {
 // loginWebAuthnCompletionRedirect mirrors the post-MFA continuation used by
 // TOTP, but returns a transport-neutral target for the JavaScript WebAuthn flow.
 func (h *FrontendHandler) loginWebAuthnCompletionRedirect(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
+	if redirectURI, ok := h.pendingSelfServiceStepUpRedirectURI(ctx, mgr); ok {
+		return redirectURI, true
+	}
+
 	if redirectURI, ok := h.requireMFARegistrationRedirectURI(ctx, mgr); ok {
 		return redirectURI, true
 	}
@@ -1629,7 +1633,7 @@ func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
 	totpField := user.TOTPSecretField
 
 	if totpField == "" && h != nil && h.deps != nil && h.deps.Cfg != nil {
-		if protocols := h.deps.Cfg.GetLDAP().GetSearch(); len(protocols) > 0 {
+		if protocols := safeLDAPSearchConfig(h.deps.Cfg); len(protocols) > 0 {
 			totpField = protocols[0].GetTotpSecretField()
 		}
 	}
@@ -1643,6 +1647,21 @@ func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
 	}
 
 	return false
+}
+
+// safeLDAPSearchConfig returns configured LDAP search protocols when an LDAP
+// section is available.
+func safeLDAPSearchConfig(cfg config.File) []config.LDAPSearchProtocol {
+	if cfg == nil {
+		return nil
+	}
+
+	ldapConfig := cfg.GetLDAP()
+	if ldapConfig == nil {
+		return nil
+	}
+
+	return ldapConfig.GetSearch()
 }
 
 // hasWebAuthn reports whether the user has any registered WebAuthn credential.
@@ -1727,7 +1746,7 @@ func (h *FrontendHandler) hasRecoveryCodes(user *backend.User) bool {
 			return false
 		}
 
-		if protocols := h.deps.Cfg.GetLDAP().GetSearch(); len(protocols) > 0 {
+		if protocols := safeLDAPSearchConfig(h.deps.Cfg); len(protocols) > 0 {
 			recoveryField = protocols[0].GetTotpRecoveryField()
 		}
 	}
@@ -2125,11 +2144,24 @@ func (h *FrontendHandler) getMFAAvailabilityWithBackendRef(ctx *gin.Context, use
 	}
 
 	h.mergeBackendMFAAvailability(ctx, mgr, user, protocolParam, backendRef, &availability)
+	applySessionMFAAvailabilitySnapshot(mgr, &availability)
 	h.applySupportedMFAFilter(mgr, &availability)
 	availability.count = countMFAAvailability(availability)
 	storeMFAAvailabilitySnapshot(mgr, availability)
 
 	return availability
+}
+
+// applySessionMFAAvailabilitySnapshot preserves factor facts already proven in
+// this encrypted browser session before applying the client supported_mfa allow-list.
+func applySessionMFAAvailabilitySnapshot(mgr cookie.Manager, availability *mfaAvailability) {
+	if mgr == nil || availability == nil {
+		return
+	}
+
+	availability.haveTOTP = availability.haveTOTP || mgr.GetBool(definitions.SessionKeyHaveTOTP, false)
+	availability.haveWebAuthn = availability.haveWebAuthn || mgr.GetBool(definitions.SessionKeyHaveWebAuthn, false)
+	availability.haveRecoveryCodes = availability.haveRecoveryCodes || mgr.GetBool(definitions.SessionKeyHaveRecoveryCodes, false)
 }
 
 // mergeBackendMFAAvailability adds public backend MFA state to attribute-based checks.
@@ -2280,6 +2312,10 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User)
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
 	// Redirect back to IDP endpoint; check for mandatory MFA registration first.
+	if h.redirectPendingSelfServiceStepUp(ctx, mgr) {
+		return
+	}
+
 	if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
 		h.resumeIDPFlow(ctx, mgr)
 	}

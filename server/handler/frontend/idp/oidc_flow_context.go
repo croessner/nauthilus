@@ -385,6 +385,10 @@ func (c *oidcAuthorizeFlowContext) ResumeAuthorizeURL() string {
 		authorizeURL += "&response_type=" + url.QueryEscape(responseType)
 	}
 
+	if prompt := c.mgr.GetString(definitions.SessionKeyIDPPrompt, ""); prompt != "" {
+		authorizeURL += "&prompt=" + url.QueryEscape(prompt)
+	}
+
 	if codeChallenge := c.mgr.GetString(definitions.SessionKeyIDPCodeChallenge, ""); codeChallenge != "" {
 		authorizeURL += "&code_challenge=" + url.QueryEscape(codeChallenge)
 	}

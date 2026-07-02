@@ -234,6 +234,12 @@ const (
 	// SessionKeyIDPOriginalURL stores the original request URL for resuming the flow after login.
 	SessionKeyIDPOriginalURL = "idp_original_url"
 
+	// SessionKeyIDPResumeFallbackURL stores a bounded local resume target for MFA step-up recovery.
+	SessionKeyIDPResumeFallbackURL = "idp_resume_fallback_url"
+
+	// SessionKeyIDPResumeFallbackAt stores when the MFA step-up fallback was created.
+	SessionKeyIDPResumeFallbackAt = "idp_resume_fallback_at"
+
 	// SessionKeyDeviceCode stores the device code string during the device code MFA flow.
 	SessionKeyDeviceCode = "device_code"
 
@@ -252,6 +258,9 @@ const (
 
 	// SessionKeyMFAAssuranceMethod stores the MFA method for the most recent assurance.
 	SessionKeyMFAAssuranceMethod = "mfa_assurance_method"
+
+	// SessionKeyMFAAssuranceLevel stores the numeric assurance level for the most recent MFA assurance.
+	SessionKeyMFAAssuranceLevel = "mfa_assurance_level"
 
 	// SessionKeyMFAAssuranceScope stores the protocol/client scope for the most recent MFA assurance.
 	SessionKeyMFAAssuranceScope = "mfa_assurance_scope"

@@ -457,7 +457,7 @@ func (h *OIDCHandler) issueOIDCAuthorizeCode(
 	session *idp.OIDCSession,
 	filteredScopes []string,
 ) {
-	if !h.enforceOIDCClientMFAAssurance(ctx, mgr, client) {
+	if !h.enforceOIDCAuthorizePolicyGates(ctx, mgr, client) {
 		return
 	}
 
@@ -485,6 +485,25 @@ func (h *OIDCHandler) issueOIDCAuthorizeCode(
 	}
 
 	ctx.Redirect(http.StatusFound, target)
+}
+
+// enforceOIDCAuthorizePolicyGates applies the security gates common to direct
+// authorization-code issuance and consent-approved code issuance.
+func (h *OIDCHandler) enforceOIDCAuthorizePolicyGates(ctx *gin.Context, mgr cookie.Manager, client *config.OIDCClient) bool {
+	if !h.enforceOIDCClientSSOMFAAssurance(ctx, mgr, client) {
+		return false
+	}
+
+	frontendHandler := h.frontend
+	if frontendHandler == nil {
+		frontendHandler = &FrontendHandler{deps: h.deps}
+	}
+
+	if frontendHandler.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
+		return false
+	}
+
+	return true
 }
 
 // Authorize handles the OIDC authorization request.
@@ -904,6 +923,10 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	}
 
 	if !h.applyGranularOIDCConsentSelection(ctx, session, client) {
+		return
+	}
+
+	if !h.enforceOIDCAuthorizePolicyGates(ctx, mgr, client) {
 		return
 	}
 

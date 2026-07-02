@@ -77,6 +77,8 @@ const (
 	samlMetricLabelStatus      = "status"
 	samlProtocolVersion        = "2.0"
 	samlXMLIDAttribute         = "ID"
+
+	idpResumeFallbackTTL = 10 * time.Minute
 )
 
 // newFlowController builds an IDP flow controller with Redis-backed state
@@ -264,6 +266,7 @@ func (h *FrontendHandler) resumeIDPFlow(ctx *gin.Context, mgr cookie.Manager) {
 // form-based MFA completions.
 func (h *FrontendHandler) resumeIDPFlowRedirectURI(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
 	redisClient, redisPrefix := h.flowStore()
+	fallbackRedirectURI := fallbackIDPFlowRedirectURI(mgr)
 
 	decision, err := resumeFlow(ctx.Request.Context(), mgr, redisClient, redisPrefix)
 	if err != nil {
@@ -273,6 +276,10 @@ func (h *FrontendHandler) resumeIDPFlowRedirectURI(ctx *gin.Context, mgr cookie.
 	}
 
 	redirectURI := decision.RedirectURI
+	if shouldUseFallbackIDPFlowRedirectURI(redirectURI) && fallbackRedirectURI != "" {
+		redirectURI = fallbackRedirectURI
+	}
+
 	if redirectURI == "" {
 		redirectURI = "/"
 	}
@@ -285,6 +292,112 @@ func (h *FrontendHandler) resumeIDPFlowRedirectURI(ctx *gin.Context, mgr cookie.
 	}
 
 	return redirectURI, true
+}
+
+func shouldUseFallbackIDPFlowRedirectURI(redirectURI string) bool {
+	if redirectURI == "" {
+		return true
+	}
+
+	return redirectURI == "/"
+}
+
+func fallbackIDPFlowRedirectURI(mgr cookie.Manager) string {
+	if mgr == nil {
+		return ""
+	}
+
+	if !idpResumeFallbackFresh(mgr, time.Now()) {
+		return ""
+	}
+
+	target := mgr.GetString(definitions.SessionKeyIDPResumeFallbackURL, "")
+	if target == flowdomain.FlowMetadataResumeTargetDeviceCodeComplete {
+		return target
+	}
+
+	return safeLocalIDPResumeTarget(target)
+}
+
+func storeIDPFlowResumeFallback(mgr cookie.Manager, now time.Time) {
+	if mgr == nil || mgr.GetString(definitions.SessionKeyIDPFlowID, "") == "" {
+		return
+	}
+
+	var fallbackURL string
+
+	switch mgr.GetString(definitions.SessionKeyIDPFlowType, "") {
+	case definitions.ProtoOIDC:
+		fallbackURL = oidcFlowResumeFallbackURL(mgr)
+	case definitions.ProtoSAML:
+		fallbackURL = safeLocalIDPResumeTarget(mgr.GetString(definitions.SessionKeyIDPOriginalURL, ""))
+	}
+
+	if fallbackURL == "" {
+		mgr.Delete(definitions.SessionKeyIDPResumeFallbackURL)
+		mgr.Delete(definitions.SessionKeyIDPResumeFallbackAt)
+
+		return
+	}
+
+	mgr.Set(definitions.SessionKeyIDPResumeFallbackURL, fallbackURL)
+	mgr.Set(definitions.SessionKeyIDPResumeFallbackAt, now.Unix())
+}
+
+// storeIDPFlowResumeFallbackFromRequest preserves the active local IdP request
+// when Redis-backed flow state cannot be reconstructed from cookie metadata.
+func storeIDPFlowResumeFallbackFromRequest(ctx *gin.Context, mgr cookie.Manager, now time.Time) {
+	if ctx == nil || ctx.Request == nil || mgr == nil {
+		return
+	}
+
+	if fallbackIDPFlowRedirectURI(mgr) != "" {
+		return
+	}
+
+	fallbackURL := safeLocalIDPResumeTarget(ctx.Request.URL.RequestURI())
+	if fallbackURL == "" || isLoginPath(redirectPath(fallbackURL)) {
+		return
+	}
+
+	mgr.Set(definitions.SessionKeyIDPResumeFallbackURL, fallbackURL)
+	mgr.Set(definitions.SessionKeyIDPResumeFallbackAt, now.Unix())
+}
+
+func oidcFlowResumeFallbackURL(mgr cookie.Manager) string {
+	if mgr.GetString(definitions.SessionKeyOIDCGrantType, "") == definitions.OIDCFlowDeviceCode {
+		if mgr.GetString(definitions.SessionKeyDeviceCode, "") != "" {
+			return flowdomain.FlowMetadataResumeTargetDeviceCodeComplete
+		}
+
+		return ""
+	}
+
+	return safeLocalIDPResumeTarget(newOIDCAuthorizeFlowContext(mgr).ResumeAuthorizeURL())
+}
+
+func idpResumeFallbackFresh(mgr cookie.Manager, now time.Time) bool {
+	createdAt := mgr.GetInt64(definitions.SessionKeyIDPResumeFallbackAt, 0)
+	if createdAt <= 0 {
+		return false
+	}
+
+	created := time.Unix(createdAt, 0)
+
+	return !now.Before(created) && now.Sub(created) <= idpResumeFallbackTTL
+}
+
+func safeLocalIDPResumeTarget(rawTarget string) string {
+	if rawTarget == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(rawTarget)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/") {
+		return ""
+	}
+
+	return rawTarget
 }
 
 func (h *FrontendHandler) flowStore() (rediscli.Client, string) {

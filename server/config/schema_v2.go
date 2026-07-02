@@ -977,11 +977,12 @@ type BackendHealthChecksSection struct {
 
 // IdentitySection groups frontend, MFA, and identity-provider protocols.
 type IdentitySection struct {
-	Session  IdentitySessionSection  `mapstructure:"session" validate:"omitempty"`
-	Frontend IdentityFrontendSection `mapstructure:"frontend" validate:"omitempty"`
-	MFA      IdentityMFASection      `mapstructure:"mfa" validate:"omitempty"`
-	OIDC     OIDCWireConfig          `mapstructure:"oidc" validate:"omitempty"`
-	SAML     SAML2Config             `mapstructure:"saml" validate:"omitempty"`
+	Session   IdentitySessionSection  `mapstructure:"session" validate:"omitempty"`
+	Frontend  IdentityFrontendSection `mapstructure:"frontend" validate:"omitempty"`
+	MFA       IdentityMFASection      `mapstructure:"mfa" validate:"omitempty"`
+	MFAPolicy MFAPolicy               `mapstructure:"mfa_policy" validate:"omitempty"`
+	OIDC      OIDCWireConfig          `mapstructure:"oidc" validate:"omitempty"`
+	SAML      SAML2Config             `mapstructure:"saml" validate:"omitempty"`
 }
 
 // IdentitySessionSection configures shared identity-session behavior.
@@ -1401,6 +1402,7 @@ func (f *FileSettings) materializeIDP() *IDPSection {
 	return &IDPSection{
 		OIDC:                 f.Identity.OIDC.Materialize(),
 		SAML2:                f.Identity.SAML,
+		MFAPolicy:            f.Identity.MFAPolicy,
 		WebAuthn:             f.Identity.MFA.WebAuthn,
 		RememberMeTTL:        f.Identity.Session.RememberMeTTL,
 		TermsOfServiceURL:    f.Identity.Frontend.Links.TermsOfServiceURL,
