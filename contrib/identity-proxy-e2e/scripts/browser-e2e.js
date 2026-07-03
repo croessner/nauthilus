@@ -26,6 +26,8 @@ const callbackCert = process.env.NAUTHILUS_E2E_CALLBACK_CERT
   || path.join(__dirname, '..', '.work', 'certs', 'edge-http.crt');
 const callbackKey = process.env.NAUTHILUS_E2E_CALLBACK_KEY
   || path.join(__dirname, '..', '.work', 'certs', 'edge-http.key');
+const csrfProbeTimeoutMs = 250;
+const webAuthnLoginFinishRoute = '**/login/webauthn/finish**';
 const username = process.env.NAUTHILUS_E2E_USERNAME || 'split-user@example.test';
 const password = process.env.NAUTHILUS_E2E_PASSWORD || 'split-password';
 const mfaUsername = `${username}.mfa`;
@@ -918,50 +920,145 @@ async function runMFASelfServiceStepUpChecks(browser) {
   await runMFASelfServiceMissingStepUpRejected(browser);
   await runMFASelfServiceLocalizedVisibleStepUp(browser, registration);
 
+  let webAuthnCredentials = registration.webAuthnCredentials;
+  webAuthnCredentials = await runMFASelfServiceMutationAfterWebAuthnStepUp(browser, webAuthnCredentials, {
+    label: 'recovery regeneration',
+    openPath: '/mfa/register/home',
+    method: 'POST',
+    mutationPath: '/mfa/recovery/generate',
+    returnPattern: /\/mfa\/register\/home/,
+    assertResult(result) {
+      assert.equal(result.status, 200, `fresh step-up recovery regeneration failed: ${result.text}`);
+      assert.match(result.text, /New recovery codes/i);
+    },
+  });
+  console.log('ok mfa-self-service-recovery-regeneration-step-up');
+
+  await runMFASelfServiceMutationAfterWebAuthnStepUp(browser, webAuthnCredentials, {
+    label: 'WebAuthn delete',
+    openPath: '/mfa/webauthn/devices',
+    method: 'DELETE',
+    returnPattern: /\/mfa\/webauthn\/devices/,
+    async mutationPath(page) {
+      const deletePath = await page.locator('button[hx-delete^="/mfa/webauthn/device/"]').first().getAttribute('hx-delete');
+      assert.ok(deletePath, 'self-service WebAuthn delete needs a registered device');
+
+      return deletePath;
+    },
+    assertResult(result) {
+      assert.equal(result.status, 200, `fresh step-up WebAuthn delete failed: ${result.text}`);
+      assert.match(result.hxRedirect || '', /\/mfa\/webauthn\/devices|\/mfa\/register\/home/);
+    },
+  });
+  console.log('ok mfa-self-service-webauthn-delete-step-up');
+
+  await runMFASelfServiceMutationAfterTOTPStepUp(browser, registration.totpSecret, {
+    label: 'TOTP delete',
+    openPath: '/mfa/register/home',
+    method: 'DELETE',
+    mutationPath: '/mfa/totp',
+    returnPattern: /\/mfa\/register\/home/,
+    assertResult(result) {
+      assert.equal(result.status, 200, `fresh step-up TOTP delete failed: ${result.text}`);
+      assert.match(result.hxRedirect || '', /\/mfa\/register\/home/);
+    },
+  });
+  console.log('ok mfa-self-service-totp-delete-step-up');
+}
+
+// runMFASelfServiceMutationAfterWebAuthnStepUp retries one sensitive mutation
+// after the server has created and consumed self-service step-up state.
+async function runMFASelfServiceMutationAfterWebAuthnStepUp(browser, webAuthnCredentials, action) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
   const authenticator = await installVirtualAuthenticator(page);
-  await importVirtualAuthenticatorCredentials(authenticator, registration.webAuthnCredentials);
+  await importVirtualAuthenticatorCredentials(authenticator, webAuthnCredentials);
 
-  await withPageState(page, 'self-service fresh step-up', async () =>
-    withCallbackServer('self-service fresh step-up', async (redirectURI, callbackPromise) => {
-      await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
-      await submitPasswordLogin(page, selfServiceUsername, password);
-      await completeWebAuthnLogin(page, edgeA);
+  await withPageState(page, `self-service ${action.label}`, async () => {
+    await establishSelfServiceOIDCSession(page);
+    await page.goto(`${edgeA}${action.openPath}`);
+    await expectPageText(page, /2FA Self-Service|Security Keys \(WebAuthn\)/i);
 
-      return callbackPromise;
-    }));
+    const mutationPath = typeof action.mutationPath === 'function'
+      ? await action.mutationPath(page)
+      : action.mutationPath;
+    const blockedResult = await submitSelfServiceMutation(page, action.method, mutationPath);
+    assert.equal(blockedResult.status, 200, `self-service ${action.label} step-up challenge failed: ${blockedResult.text}`);
+    assert.match(blockedResult.hxRedirect || '', /\/login\/mfa/, `self-service ${action.label} did not redirect to MFA step-up`);
 
-  await page.goto(`${edgeA}/mfa/register/home`);
-  await expectPageText(page, /2FA Self-Service/);
+    await page.goto(new URL(blockedResult.hxRedirect, edgeA).toString());
+    await completeWebAuthnStepUp(page, edgeA, action.returnPattern);
 
-  const recoveryResult = await submitSelfServiceMutation(page, 'POST', '/mfa/recovery/generate');
-  assert.equal(recoveryResult.status, 200, `fresh step-up recovery regeneration failed: ${recoveryResult.text}`);
-  assert.match(recoveryResult.text, /New recovery codes/i);
-  console.log('ok mfa-self-service-recovery-regeneration-step-up');
+    const result = await submitSelfServiceMutation(page, action.method, mutationPath);
+    action.assertResult(result);
+  });
 
-  const totpResult = await submitSelfServiceMutation(page, 'DELETE', '/mfa/totp');
-  assert.equal(totpResult.status, 200, `fresh step-up TOTP delete failed: ${totpResult.text}`);
-  assert.match(totpResult.hxRedirect || '', /\/mfa\/register\/home/);
-  console.log('ok mfa-self-service-totp-delete-step-up');
+  const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
+  await context.close();
 
-  await page.goto(`${edgeA}/mfa/webauthn/devices`);
-  const deletePath = await page.locator('button[hx-delete^="/mfa/webauthn/device/"]').first().getAttribute('hx-delete');
-  assert.ok(deletePath, 'self-service WebAuthn delete needs a registered device');
-  const webAuthnResult = await submitSelfServiceMutation(page, 'DELETE', deletePath);
-  assert.equal(webAuthnResult.status, 200, `fresh step-up WebAuthn delete failed: ${webAuthnResult.text}`);
-  assert.match(webAuthnResult.hxRedirect || '', /\/mfa\/webauthn\/devices|\/mfa\/register\/home/);
-  console.log('ok mfa-self-service-webauthn-delete-step-up');
+  return updatedCredentials;
+}
+
+// runMFASelfServiceMutationAfterTOTPStepUp retries one sensitive mutation
+// after completing a TOTP-based self-service step-up.
+async function runMFASelfServiceMutationAfterTOTPStepUp(browser, totpSecret, action) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await withPageState(page, `self-service ${action.label}`, async () => {
+    await establishSelfServiceOIDCSessionWithTOTP(page, totpSecret);
+    await page.goto(`${edgeA}${action.openPath}`);
+    await expectPageText(page, /2FA Self-Service|Security Keys \(WebAuthn\)/i);
+
+    const mutationPath = typeof action.mutationPath === 'function'
+      ? await action.mutationPath(page)
+      : action.mutationPath;
+    const blockedResult = await submitSelfServiceMutation(page, action.method, mutationPath);
+    assert.equal(blockedResult.status, 200, `self-service ${action.label} step-up challenge failed: ${blockedResult.text}`);
+    assert.match(blockedResult.hxRedirect || '', /\/login\/mfa/, `self-service ${action.label} did not redirect to MFA step-up`);
+
+    await page.goto(new URL(blockedResult.hxRedirect, edgeA).toString());
+    await completeTOTPStepUp(page, totpSecret, action.returnPattern);
+
+    const result = await submitSelfServiceMutation(page, action.method, mutationPath);
+    action.assertResult(result);
+  });
 
   await context.close();
+}
+
+// establishSelfServiceOIDCSession creates an authenticated browser session whose
+// OIDC-scoped MFA proof is not sufficient for self-service mutations.
+async function establishSelfServiceOIDCSession(page) {
+  await withCallbackServer('self-service OIDC login', async (redirectURI, callbackPromise) => {
+    await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+    await submitPasswordLogin(page, selfServiceUsername, password);
+    await completeWebAuthnLogin(page, edgeA);
+
+    return callbackPromise;
+  });
+}
+
+// establishSelfServiceOIDCSessionWithTOTP creates the same OIDC-scoped session
+// using TOTP, which keeps WebAuthn deletion independent from later TOTP checks.
+async function establishSelfServiceOIDCSessionWithTOTP(page, totpSecret) {
+  await withCallbackServer('self-service OIDC TOTP login', async (redirectURI, callbackPromise) => {
+    await page.goto(buildAuthorizeURL(edgeA, browserClient.id, redirectURI, 'openid profile email'));
+    await submitPasswordLogin(page, selfServiceUsername, password);
+    await completeTOTPLogin(page, totpSecret);
+
+    return callbackPromise;
+  });
 }
 
 // runMFASelfServiceLocalizedVisibleStepUp proves localized self-service pages
 // send HTMX mutations to localized step-up routes.
 async function runMFASelfServiceLocalizedVisibleStepUp(browser, registration) {
+  let webAuthnCredentials = registration.webAuthnCredentials;
   for (const action of localizedSelfServiceStepUpActions()) {
-    await runMFASelfServiceLocalizedVisibleStepUpAction(browser, registration, action);
+    webAuthnCredentials = await runMFASelfServiceLocalizedVisibleStepUpAction(browser, webAuthnCredentials, action);
   }
+  registration.webAuthnCredentials = webAuthnCredentials;
 
   console.log('ok mfa-self-service-localized-visible-step-up');
 }
@@ -991,11 +1088,11 @@ function localizedSelfServiceStepUpActions() {
   ];
 }
 
-async function runMFASelfServiceLocalizedVisibleStepUpAction(browser, registration, action) {
+async function runMFASelfServiceLocalizedVisibleStepUpAction(browser, webAuthnCredentials, action) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
   const authenticator = await installVirtualAuthenticator(page);
-  await importVirtualAuthenticatorCredentials(authenticator, registration.webAuthnCredentials);
+  await importVirtualAuthenticatorCredentials(authenticator, webAuthnCredentials);
 
   await withPageState(page, `localized self-service visible step-up ${action.label}`, async () =>
     withCallbackServer(`localized self-service visible step-up ${action.label}`, async (redirectURI, callbackPromise) => {
@@ -1005,6 +1102,7 @@ async function runMFASelfServiceLocalizedVisibleStepUpAction(browser, registrati
 
       return callbackPromise;
     }));
+  const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
 
   await page.goto(`${edgeA}${action.openPath}`);
   if (action.label === 'WebAuthn device rename') {
@@ -1021,10 +1119,26 @@ async function runMFASelfServiceLocalizedVisibleStepUpAction(browser, registrati
   await expectPageText(page, /Select Multi-Factor Authentication|2FA Verification/i);
 
   await context.close();
+
+  return updatedCredentials;
 }
 
 // runMFASelfServiceMissingStepUpRejected proves first-factor sessions cannot mutate MFA state.
 async function runMFASelfServiceMissingStepUpRejected(browser) {
+  for (const mutation of [
+    ['POST', '/mfa/recovery/generate'],
+    ['DELETE', '/mfa/totp'],
+    ['DELETE', '/mfa/webauthn/device/not-a-real-id'],
+  ]) {
+    await assertMFASelfServiceMutationRequiresStepUp(browser, mutation[0], mutation[1]);
+  }
+
+  console.log('ok mfa-self-service-missing-step-up-rejected');
+}
+
+// assertMFASelfServiceMutationRequiresStepUp keeps each missing-step-up probe
+// isolated so pending retry state from one mutation cannot affect another.
+async function assertMFASelfServiceMutationRequiresStepUp(browser, method, pathName) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
 
@@ -1036,18 +1150,11 @@ async function runMFASelfServiceMissingStepUpRejected(browser) {
       await page.goto(`${edgeA}/mfa/register/home`);
       await expectPageText(page, /2FA Self-Service/);
 
-      for (const mutation of [
-        ['POST', '/mfa/recovery/generate'],
-        ['DELETE', '/mfa/totp'],
-        ['DELETE', '/mfa/webauthn/device/not-a-real-id'],
-      ]) {
-        const result = await submitSelfServiceMutation(page, mutation[0], mutation[1]);
-        assert.equal(result.status, 200, `${mutation[0]} ${mutation[1]} returned unexpected status: ${result.text}`);
-        assert.match(result.hxRedirect || '', /\/login\/(mfa|totp|webauthn|recovery)/);
-      }
+      const result = await submitSelfServiceMutation(page, method, pathName);
+      assert.equal(result.status, 200, `${method} ${pathName} returned unexpected status: ${result.text}`);
+      assert.match(result.hxRedirect || '', /\/login\/(mfa|totp|webauthn|recovery)/);
     }));
 
-  console.log('ok mfa-self-service-missing-step-up-rejected');
   await context.close();
 }
 
@@ -1281,7 +1388,7 @@ async function runWebAuthnTamperedAssertion(browser, webAuthnCredentials) {
     'oidc-webauthn-tampered-assertion',
     (body) => {
       body.response = body.response || {};
-      body.response.signature = base64URL(Buffer.from('tampered-signature'));
+      body.response.signature = tamperBase64URLValue(body.response.signature);
     },
     /signature|verification|invalid|error/i,
   );
@@ -1341,7 +1448,7 @@ async function runWebAuthnTamperCase(browser, webAuthnCredentials, label, okName
         await page.goto(`${edgeA}/login/webauthn`);
       }
 
-      await page.route('**/login/webauthn/finish', async (route) => {
+      await page.route(webAuthnLoginFinishRoute, async (route) => {
         const request = route.request();
         const body = JSON.parse(request.postData() || '{}');
         mutateBody(body);
@@ -1385,7 +1492,7 @@ async function runWebAuthnAssertionReplay(browser, webAuthnCredentials) {
         await page.goto(`${edgeA}/login/webauthn`);
       }
 
-      await page.route('**/login/webauthn/finish', async (route) => {
+      await page.route(webAuthnLoginFinishRoute, async (route) => {
         const request = route.request();
         const headers = request.headers();
         capturedBody = request.postData() || '';
@@ -1884,8 +1991,19 @@ async function completeTOTPRegistration(page) {
 }
 
 async function completeTOTPLogin(page, secret, options = {}) {
-  const expectCallback = options.expectCallback !== false;
+  const finalURLPattern = options.expectCallback === false ? /\/login/ : /callback/;
+  await completeTOTPChallenge(page, secret, finalURLPattern);
+}
 
+// completeTOTPStepUp finishes TOTP MFA and waits for the protected
+// self-service return surface instead of an OIDC callback.
+async function completeTOTPStepUp(page, secret, finalURLPattern) {
+  await completeTOTPChallenge(page, secret, finalURLPattern);
+}
+
+// completeTOTPChallenge drives the browser TOTP page until the server accepts
+// the code and redirects to the expected final URL.
+async function completeTOTPChallenge(page, secret, finalURLPattern) {
   await page.waitForURL(/\/login\/totp|\/login\/mfa|\/login\/webauthn|\/login\/recovery/, {timeout: 15000});
   if (!/\/login\/totp/.test(page.url())) {
     await page.goto(`${edgeA}/login/totp`);
@@ -1909,20 +2027,10 @@ async function completeTOTPLogin(page, secret, options = {}) {
       );
     }
 
-    if (expectCallback) {
-      const reachedCallback = await page.waitForURL(/callback/, {timeout: 3000})
-        .then(() => true)
-        .catch(() => false);
-      if (reachedCallback) {
-        return;
-      }
-      continue;
-    }
-
-    const returnedToLogin = await page.waitForURL(/\/login/, {timeout: 3000})
+    const reachedFinalURL = await page.waitForURL(finalURLPattern, {timeout: 3000})
       .then(() => true)
       .catch(() => false);
-    if (returnedToLogin) {
+    if (reachedFinalURL) {
       return;
     }
   }
@@ -1999,6 +2107,18 @@ async function completeRecoveryRegistration(page) {
 }
 
 async function completeWebAuthnLogin(page, base) {
+  await completeWebAuthnChallenge(page, base, /callback/);
+}
+
+// completeWebAuthnStepUp finishes WebAuthn MFA and waits for the protected
+// self-service return surface instead of an OIDC callback.
+async function completeWebAuthnStepUp(page, base, finalURLPattern) {
+  await completeWebAuthnChallenge(page, base, finalURLPattern);
+}
+
+// completeWebAuthnChallenge drives the browser WebAuthn page until the server
+// accepts the assertion and redirects to the expected final URL.
+async function completeWebAuthnChallenge(page, base, finalURLPattern) {
   await page.waitForURL(/\/login\/webauthn|\/login\/mfa|\/login\/totp|\/login\/recovery/, {timeout: 15000});
   if (!/\/login\/webauthn/.test(page.url())) {
     await page.goto(`${base}/login/webauthn`);
@@ -2042,7 +2162,7 @@ async function completeWebAuthnLogin(page, base) {
     );
   }
 
-  await page.waitForURL(/callback/, {timeout: 15000});
+  await page.waitForURL(finalURLPattern, {timeout: 15000});
 }
 
 // completeRecoveryLogin submits a recovery code and waits for either callback or fail-back to login.
@@ -2255,17 +2375,17 @@ async function extractCSRFToken(page) {
 
 // extractPageCSRFToken supports normal forms, WebAuthn buttons, and HTMX buttons.
 async function extractPageCSRFToken(page) {
-  const formToken = await page.locator('input[name="csrf_token"]').first().inputValue().catch(() => '');
+  const formToken = await page.locator('input[name="csrf_token"]').first().inputValue({timeout: csrfProbeTimeoutMs}).catch(() => '');
   if (formToken) {
     return formToken;
   }
 
-  const webAuthnToken = await page.locator('[data-webauthn-csrf]').first().getAttribute('data-webauthn-csrf').catch(() => '');
+  const webAuthnToken = await page.locator('[data-webauthn-csrf]').first().getAttribute('data-webauthn-csrf', {timeout: csrfProbeTimeoutMs}).catch(() => '');
   if (webAuthnToken) {
     return webAuthnToken;
   }
 
-  const hxHeaders = await page.locator('[hx-headers]').first().getAttribute('hx-headers').catch(() => '');
+  const hxHeaders = await page.locator('[hx-headers]').first().getAttribute('hx-headers', {timeout: csrfProbeTimeoutMs}).catch(() => '');
   if (hxHeaders) {
     const parsed = JSON.parse(hxHeaders);
 
@@ -2414,6 +2534,18 @@ function base64URL(value) {
 
 function base64URLJSON(value) {
   return base64URL(Buffer.from(JSON.stringify(value)));
+}
+
+// tamperBase64URLValue flips one bit while preserving the credential field shape.
+function tamperBase64URLValue(value) {
+  const decoded = Buffer.from(value || '', 'base64url');
+  if (decoded.length === 0) {
+    return base64URL(Buffer.from('tampered'));
+  }
+
+  decoded[decoded.length - 1] ^= 0x01;
+
+  return base64URL(decoded);
 }
 
 function unsignedJWT(header, payload) {

@@ -3336,7 +3336,13 @@ func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 	data["CSRFToken"] = csrf.Token(ctx)
 	data["WebAuthnBeginEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/register/begin")
 	data["WebAuthnFinishEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/register/finish")
-	data["WebAuthnNextEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/register/home")
+
+	webAuthnNextEndpoint := definitions.MFARoot + "/register/home"
+	if requireFlow {
+		webAuthnNextEndpoint = definitions.MFARoot + "/register/continue"
+	}
+
+	data["WebAuthnNextEndpoint"] = localizedMFARootPath(ctx, webAuthnNextEndpoint)
 
 	data["RequireMFAFlow"] = requireFlow
 	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")

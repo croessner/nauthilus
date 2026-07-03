@@ -471,6 +471,83 @@ func TestMFARegistrationTemplatesUseLocalizedSelfServiceEndpoints(t *testing.T) 
 	}
 }
 
+func TestRegisterWebAuthnPageUsesFlowAwareNextEndpoint(t *testing.T) {
+	testCases := []struct {
+		name         string
+		languageTag  string
+		requireFlow  bool
+		expectedNext string
+	}{
+		{
+			name:         "required MFA flow localized",
+			languageTag:  "de",
+			requireFlow:  true,
+			expectedNext: definitions.MFARoot + "/register/continue/de",
+		},
+		{
+			name:         "required MFA flow default language",
+			requireFlow:  true,
+			expectedNext: definitions.MFARoot + "/register/continue",
+		},
+		{
+			name:         "self-service localized",
+			languageTag:  "de",
+			expectedNext: definitions.MFARoot + "/register/home/de",
+		},
+		{
+			name:         "self-service default language",
+			expectedNext: definitions.MFARoot + "/register/home",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			output := renderRegisterWebAuthnPage(t, tc.languageTag, tc.requireFlow)
+
+			assert.Contains(t, output, `data-webauthn-next-url="`+tc.expectedNext+`"`)
+		})
+	}
+}
+
+// renderRegisterWebAuthnPage renders the real WebAuthn registration handler
+// with a minimal authenticated session.
+func renderRegisterWebAuthnPage(t *testing.T, languageTag string, requireFlow bool) string {
+	t.Helper()
+
+	recorder := httptest.NewRecorder()
+	ctx, engine := gin.CreateTestContext(recorder)
+	engine.SetHTMLTemplate(loadIDPChromeTemplate(t, "idp_webauthn_register.html"))
+
+	path := definitions.MFARoot + "/webauthn/register"
+	if languageTag != "" {
+		path += "/" + languageTag
+		ctx.Params = gin.Params{{Key: "languageTag", Value: languageTag}}
+	}
+
+	ctx.Request = httptest.NewRequest(http.MethodGet, path, nil)
+	ctx.Set(definitions.CtxLocalizedKey, i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en"))
+	ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:        frontendTestAccount,
+		definitions.SessionKeyUniqueUserID:   frontendTestUniqueUserID,
+		definitions.SessionKeyRequireMFAFlow: requireFlow,
+	}})
+
+	handler := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg:         &mockFrontendCfg{},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+
+	handler.RegisterWebAuthn(ctx)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+
+	return recorder.Body.String()
+}
+
 type registrationTemplateEndpointTest struct {
 	name         string
 	templateName string
@@ -510,13 +587,13 @@ func webAuthnRegistrationTemplateEndpointTest() registrationTemplateEndpointTest
 		want: []string{
 			`data-webauthn-begin="/mfa/webauthn/register/begin/de"`,
 			`data-webauthn-finish="/mfa/webauthn/register/finish/de"`,
-			`data-webauthn-next-url="/mfa/register/home/de"`,
+			`data-webauthn-next-url="/mfa/register/continue/de"`,
 			`href="/mfa/register/cancel/de"`,
 		},
 		notWant: []string{
 			`data-webauthn-begin="/mfa/webauthn/register/begin"`,
 			`data-webauthn-finish="/mfa/webauthn/register/finish"`,
-			`data-webauthn-next-url="/mfa/register/home"`,
+			`data-webauthn-next-url="/mfa/register/continue"`,
 			`href="/mfa/register/cancel"`,
 		},
 	}
@@ -753,7 +830,7 @@ func webAuthnRegisterTemplateData() map[string]any {
 		"CSRFToken":                "csrf-token",
 		"WebAuthnBeginEndpoint":    definitions.MFARoot + "/webauthn/register/begin/de",
 		"WebAuthnFinishEndpoint":   definitions.MFARoot + "/webauthn/register/finish/de",
-		"WebAuthnNextEndpoint":     definitions.MFARoot + "/register/home/de",
+		"WebAuthnNextEndpoint":     definitions.MFARoot + "/register/continue/de",
 		"CancelMFAEndpoint":        definitions.MFARoot + "/register/cancel/de",
 		"JSInteractWithKey":        "Touch key",
 		"JSCompletingRegistration": "Completing",
