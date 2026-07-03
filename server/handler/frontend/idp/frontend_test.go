@@ -32,6 +32,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	corelang "github.com/croessner/nauthilus/v3/server/core/language"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/frontend"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
@@ -65,6 +66,22 @@ func (m *mockLangManager) GetTags() []language.Tag {
 
 func (m *mockLangManager) GetMatcher() language.Matcher {
 	return language.NewMatcher([]language.Tag{language.English})
+}
+
+type mockMultiLangManager struct {
+	corelang.Manager
+}
+
+func (m *mockMultiLangManager) GetBundle() *i18n.Bundle {
+	return i18n.NewBundle(language.English)
+}
+
+func (m *mockMultiLangManager) GetTags() []language.Tag {
+	return []language.Tag{language.English, language.German}
+}
+
+func (m *mockMultiLangManager) GetMatcher() language.Matcher {
+	return language.NewMatcher(m.GetTags())
 }
 
 type mockFrontendCfg struct {
@@ -112,11 +129,39 @@ func TestBasePageData(t *testing.T) {
 		assertBasePageLegalLinks(t)
 	})
 
+	t.Run("Language switch keeps MFA route", func(t *testing.T) {
+		assertBasePageLanguageSwitchKeepsMFAPath(t, cfg)
+	})
+
 	for _, tt := range basePageIDPClientNameTests() {
 		t.Run(tt.name, func(t *testing.T) {
 			assertBasePageIDPClientName(t, tt.cfg, tt.sessionData, tt.expectedName)
 		})
 	}
+}
+
+// assertBasePageLanguageSwitchKeepsMFAPath verifies language menu links keep
+// the current MFA route while replacing only the language suffix.
+func assertBasePageLanguageSwitchKeepsMFAPath(t *testing.T, cfg *mockFrontendCfg) {
+	t.Helper()
+
+	r := gin.New()
+	r.GET("/login/mfa/:languageTag", func(c *gin.Context) {
+		lm := &mockMultiLangManager{}
+		c.Set(definitions.CtxLocalizedKey, i18n.NewLocalizer(lm.GetBundle(), "de"))
+		c.Params = gin.Params{{Key: "languageTag", Value: "de"}}
+
+		data := BasePageData(c, cfg, lm)
+		passive, ok := data["LanguagePassive"].([]frontend.Language)
+		assert.True(t, ok)
+		assert.Len(t, passive, 1)
+		assert.Equal(t, "/login/mfa/en?", passive[0].LanguageLink)
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/login/mfa/de", nil)
+
+	r.ServeHTTP(w, req)
 }
 
 type basePageIDPClientNameTest struct {
@@ -353,6 +398,176 @@ func TestIDPFooterTemplateHidesLinksWithoutURLs(t *testing.T) {
 	assert.NotContains(t, output, ">Privacy policy</a>")
 }
 
+func TestTwoFAHomeTemplateUsesLocalizedMFASelfServiceEndpoints(t *testing.T) {
+	tmpl := template.Must(template.New("idp_2fa_home.html").Funcs(template.FuncMap{
+		"int": func(value any) int {
+			if converted, ok := value.(int); ok {
+				return converted
+			}
+
+			return 0
+		},
+	}).Parse(`{{ define "idp_header.html" }}header{{ end }}{{ define "idp_footer.html" }}footer{{ end }}`))
+	tmpl = template.Must(tmpl.Parse(loadStaticTemplate(t, "idp_2fa_home.html")))
+	data := twoFAHomeTemplateData()
+	data["TOTPDeleteEndpoint"] = definitions.MFARoot + "/totp/de"
+	data["TOTPRegisterEndpoint"] = definitions.MFARoot + "/totp/register/de"
+	data["WebAuthnDevicesEndpoint"] = definitions.MFARoot + "/webauthn/devices/de"
+	data["WebAuthnRegisterEndpoint"] = definitions.MFARoot + "/webauthn/register/de"
+	data["RecoveryGenerateEndpoint"] = definitions.MFARoot + "/recovery/generate/de"
+
+	var output bytes.Buffer
+	assert.NoError(t, tmpl.Execute(&output, data))
+
+	assert.Contains(t, output.String(), `hx-delete="/mfa/totp/de"`)
+	assert.Contains(t, output.String(), `href="/mfa/webauthn/devices/de"`)
+	assert.Contains(t, output.String(), `hx-post="/mfa/recovery/generate/de"`)
+	assert.NotContains(t, output.String(), `hx-delete="/mfa/totp"`)
+	assert.NotContains(t, output.String(), `href="/mfa/webauthn/devices"`)
+	assert.NotContains(t, output.String(), `hx-post="/mfa/recovery/generate"`)
+}
+
+func TestWebAuthnDevicesTemplateUsesLocalizedMFASelfServiceEndpoints(t *testing.T) {
+	tmpl := template.Must(template.New("idp_2fa_webauthn_devices.html").
+		Parse(`{{ define "idp_header.html" }}header{{ end }}{{ define "idp_footer.html" }}footer{{ end }}`))
+	tmpl = template.Must(tmpl.Parse(loadStaticTemplate(t, "idp_2fa_webauthn_devices.html")))
+	data := webAuthnDevicesTemplateData()
+
+	var output bytes.Buffer
+	assert.NoError(t, tmpl.Execute(&output, data))
+
+	assert.Contains(t, output.String(), `href="/mfa/register/home/de"`)
+	assert.Contains(t, output.String(), `hx-post="/mfa/webauthn/device/Y3JlZC0x/name/de"`)
+	assert.Contains(t, output.String(), `hx-delete="/mfa/webauthn/device/Y3JlZC0x/de"`)
+	assert.Contains(t, output.String(), `href="/mfa/webauthn/register/de"`)
+	assert.NotContains(t, output.String(), `href="/mfa/register/home"`)
+	assert.NotContains(t, output.String(), `hx-post="/mfa/webauthn/device/Y3JlZC0x/name"`)
+	assert.NotContains(t, output.String(), `hx-delete="/mfa/webauthn/device/Y3JlZC0x"`)
+	assert.NotContains(t, output.String(), `href="/mfa/webauthn/register"`)
+}
+
+func TestMFARegistrationTemplatesUseLocalizedSelfServiceEndpoints(t *testing.T) {
+	for _, tc := range mfaRegistrationTemplateEndpointTests() {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpl := template.Must(template.New(tc.templateName).Funcs(template.FuncMap{
+				"cspNonce": func(any) string {
+					return "nonce"
+				},
+			}).
+				Parse(`{{ define "idp_header.html" }}header{{ end }}{{ define "idp_footer.html" }}footer{{ end }}`))
+			tmpl = template.Must(tmpl.Parse(loadStaticTemplate(t, tc.templateName)))
+
+			var output bytes.Buffer
+			assert.NoError(t, tmpl.Execute(&output, tc.data))
+
+			for _, want := range tc.want {
+				assert.Contains(t, output.String(), want)
+			}
+
+			for _, notWant := range tc.notWant {
+				assert.NotContains(t, output.String(), notWant)
+			}
+		})
+	}
+}
+
+type registrationTemplateEndpointTest struct {
+	name         string
+	templateName string
+	data         map[string]any
+	want         []string
+	notWant      []string
+}
+
+// mfaRegistrationTemplateEndpointTests returns localized endpoint assertions
+// for MFA registration and recovery-code templates.
+func mfaRegistrationTemplateEndpointTests() []registrationTemplateEndpointTest {
+	return []registrationTemplateEndpointTest{
+		totpRegistrationTemplateEndpointTest(),
+		webAuthnRegistrationTemplateEndpointTest(),
+		recoveryRegistrationTemplateEndpointTest(),
+		recoveryGeneratedModalTemplateEndpointTest(),
+	}
+}
+
+// totpRegistrationTemplateEndpointTest covers localized TOTP registration URLs.
+func totpRegistrationTemplateEndpointTest() registrationTemplateEndpointTest {
+	return registrationTemplateEndpointTest{
+		name:         "TOTP register",
+		templateName: "idp_totp_register.html",
+		data:         totpRegisterTemplateData(),
+		want:         []string{`hx-post="/mfa/totp/register/de"`, `href="/mfa/register/cancel/de"`},
+		notWant:      []string{`hx-post="/mfa/totp/register"`, `href="/mfa/register/cancel"`},
+	}
+}
+
+// webAuthnRegistrationTemplateEndpointTest covers localized WebAuthn registration URLs.
+func webAuthnRegistrationTemplateEndpointTest() registrationTemplateEndpointTest {
+	return registrationTemplateEndpointTest{
+		name:         "WebAuthn register",
+		templateName: "idp_webauthn_register.html",
+		data:         webAuthnRegisterTemplateData(),
+		want: []string{
+			`data-webauthn-begin="/mfa/webauthn/register/begin/de"`,
+			`data-webauthn-finish="/mfa/webauthn/register/finish/de"`,
+			`data-webauthn-next-url="/mfa/register/home/de"`,
+			`href="/mfa/register/cancel/de"`,
+		},
+		notWant: []string{
+			`data-webauthn-begin="/mfa/webauthn/register/begin"`,
+			`data-webauthn-finish="/mfa/webauthn/register/finish"`,
+			`data-webauthn-next-url="/mfa/register/home"`,
+			`href="/mfa/register/cancel"`,
+		},
+	}
+}
+
+// recoveryRegistrationTemplateEndpointTest covers localized recovery registration URLs.
+func recoveryRegistrationTemplateEndpointTest() registrationTemplateEndpointTest {
+	return registrationTemplateEndpointTest{
+		name:         "Recovery register",
+		templateName: "idp_recovery_codes_register.html",
+		data:         recoveryCodesRegisterTemplateData(),
+		want: []string{
+			`data-save-url="/mfa/recovery/register/save/de"`,
+			`action="/mfa/recovery/register/de"`,
+			`href="/mfa/register/cancel/de"`,
+		},
+		notWant: []string{
+			`data-save-url="/mfa/recovery/register/save"`,
+			`action="/mfa/recovery/register"`,
+			`href="/mfa/register/cancel"`,
+		},
+	}
+}
+
+// recoveryGeneratedModalTemplateEndpointTest covers localized generated-code modal URLs.
+func recoveryGeneratedModalTemplateEndpointTest() registrationTemplateEndpointTest {
+	return registrationTemplateEndpointTest{
+		name:         "Recovery generated modal",
+		templateName: "idp_recovery_codes_modal.html",
+		data:         recoveryCodesModalTemplateData(),
+		want:         []string{`hx-get="/mfa/register/home/de"`},
+		notWant:      []string{`hx-get="/mfa/register/home"`},
+	}
+}
+
+func TestMFASelectTemplateUsesLocalizedChallengeEndpoints(t *testing.T) {
+	output := renderMFASelectTemplate(t, map[string]any{
+		"HaveRecoveryCodes":     true,
+		"TOTPLoginEndpoint":     "/login/totp/de",
+		"WebAuthnLoginEndpoint": "/login/webauthn/de",
+		"RecoveryLoginEndpoint": "/login/recovery/de",
+	})
+
+	assert.Contains(t, output, `href="/login/totp/de"`)
+	assert.Contains(t, output, `href="/login/webauthn/de"`)
+	assert.Contains(t, output, `href="/login/recovery/de"`)
+	assert.NotContains(t, output, `href="/login/totp"`)
+	assert.NotContains(t, output, `href="/login/webauthn"`)
+	assert.NotContains(t, output, `href="/login/recovery"`)
+}
+
 func TestIDPUISubmitDisableDefersNativeFormHandling(t *testing.T) {
 	script := loadIDPUIScript(t)
 
@@ -442,23 +657,165 @@ func renderMFASelectTemplate(t *testing.T, overrides map[string]any) string {
 	return buf.String()
 }
 
+// twoFAHomeTemplateData returns default labels and state for the self-service
+// home template tests.
+func twoFAHomeTemplateData() map[string]any {
+	return map[string]any{
+		"HXRequest":                    true,
+		"Title":                        "2FA Self-Service",
+		"AuthenticatorAppTOTP":         "Authenticator App (TOTP)",
+		"TOTPDescription":              "Use an app.",
+		"SecurityKeyWebAuthn":          "Security Key (WebAuthn)",
+		"WebAuthnDescription":          "Use a security key.",
+		"RegisterTOTP":                 "Register TOTP",
+		"RegisterWebAuthn":             "Register WebAuthn",
+		"Deactivate":                   "Deactivate",
+		"DeactivateTOTPConfirm":        "Deactivate TOTP?",
+		"DeactivateWebAuthnConfirm":    "Deactivate WebAuthn?",
+		"RecoveryCodes":                "Recovery Codes",
+		"RecoveryCodesDescription":     "Backup codes.",
+		"RecoveryCodesLeft":            "You have %d recovery codes left.",
+		"GenerateNewRecoveryCodes":     "Generate new recovery codes",
+		"GenerateRecoveryCodesConfirm": "Generate new recovery codes?",
+		"HaveTOTP":                     true,
+		"HaveRecoveryCodes":            true,
+		"NumRecoveryCodes":             3,
+		"HaveWebAuthn":                 true,
+		"CSRFToken":                    "csrf-token",
+		"TOTPDeleteEndpoint":           definitions.MFARoot + "/totp",
+		"TOTPRegisterEndpoint":         definitions.MFARoot + "/totp/register",
+		"WebAuthnDevicesEndpoint":      definitions.MFARoot + "/webauthn/devices",
+		"WebAuthnRegisterEndpoint":     definitions.MFARoot + "/webauthn/register",
+		"RecoveryGenerateEndpoint":     definitions.MFARoot + "/recovery/generate",
+	}
+}
+
+// webAuthnDevicesTemplateData returns labels, endpoints, and one device row for
+// the WebAuthn devices template tests.
+func webAuthnDevicesTemplateData() map[string]any {
+	return map[string]any{
+		"Title":             "Security Keys",
+		"BackTo2FA":         "Back",
+		"BackTo2FAEndpoint": definitions.MFARoot + "/register/home/de",
+		"RegisteredDevices": "Registered devices",
+		"DeviceID":          "Device ID",
+		"LastUsed":          "Last used",
+		"UnnamedDevice":     "Unnamed device",
+		"Save":              "Save",
+		"Delete":            "Delete",
+		"DeleteConfirm":     "Delete?",
+		"AddDevice":         "Add",
+		"AddDeviceEndpoint": definitions.MFARoot + "/webauthn/register/de",
+		"CSRFToken":         "csrf-token",
+		"Devices": []map[string]string{
+			{
+				"ID":             "Y3JlZC0x",
+				"Name":           "Device",
+				"LastUsed":       "Never",
+				"NameEndpoint":   definitions.MFARoot + "/webauthn/device/Y3JlZC0x/name/de",
+				"DeleteEndpoint": definitions.MFARoot + "/webauthn/device/Y3JlZC0x/de",
+			},
+		},
+	}
+}
+
+// totpRegisterTemplateData returns default labels and endpoints for TOTP
+// registration template tests.
+func totpRegisterTemplateData() map[string]any {
+	return map[string]any{
+		"Title":                "Register TOTP",
+		"RequireMFAFlow":       true,
+		"RequireMFAMessage":    "Required",
+		"TOTPMessage":          "Scan",
+		"QRCode":               "otpauth://totp/test",
+		"Secret":               "secret",
+		"Code":                 "Code",
+		"Submit":               "Submit",
+		"Cancel":               "Cancel",
+		"CSRFToken":            "csrf-token",
+		"PostTOTPRegisterPath": definitions.MFARoot + "/totp/register/de",
+		"CancelMFAEndpoint":    definitions.MFARoot + "/register/cancel/de",
+	}
+}
+
+// webAuthnRegisterTemplateData returns default labels and endpoints for
+// WebAuthn registration template tests.
+func webAuthnRegisterTemplateData() map[string]any {
+	return map[string]any{
+		"Title":                    "Register WebAuthn",
+		"RequireMFAFlow":           true,
+		"RequireMFAMessage":        "Required",
+		"WebAuthnMessage":          "Use key",
+		"DeviceNameLabel":          "Device",
+		"DeviceNamePlaceholder":    "Device name",
+		"Submit":                   "Submit",
+		"Cancel":                   "Cancel",
+		"CSRFToken":                "csrf-token",
+		"WebAuthnBeginEndpoint":    definitions.MFARoot + "/webauthn/register/begin/de",
+		"WebAuthnFinishEndpoint":   definitions.MFARoot + "/webauthn/register/finish/de",
+		"WebAuthnNextEndpoint":     definitions.MFARoot + "/register/home/de",
+		"CancelMFAEndpoint":        definitions.MFARoot + "/register/cancel/de",
+		"JSInteractWithKey":        "Touch key",
+		"JSCompletingRegistration": "Completing",
+		"JSDeviceNameRequired":     "Required",
+		"JSUnknownError":           "Unknown",
+	}
+}
+
+// recoveryCodesRegisterTemplateData returns default labels and endpoints for
+// recovery-code registration template tests.
+func recoveryCodesRegisterTemplateData() map[string]any {
+	data := recoveryCodesModalTemplateData()
+	data["Title"] = "Recovery Codes"
+	data["RequireMFAFlow"] = true
+	data["RequireMFAMessage"] = "Required"
+	data["Continue"] = "Continue"
+	data["CSRFToken"] = "csrf-token"
+	data["SaveRecoveryCodesEndpoint"] = definitions.MFARoot + "/recovery/register/save/de"
+	data["PostRecoveryRegisterEndpoint"] = definitions.MFARoot + "/recovery/register/de"
+	data["CancelMFAEndpoint"] = definitions.MFARoot + "/register/cancel/de"
+
+	return data
+}
+
+// recoveryCodesModalTemplateData returns labels and endpoints for generated
+// recovery-code modal template tests.
+func recoveryCodesModalTemplateData() map[string]any {
+	return map[string]any{
+		"HXRequest":            true,
+		"NewRecoveryCodes":     "New recovery codes",
+		"BackupTheseCodes":     "Backup",
+		"ShownOnlyOnce":        "Once",
+		"Copy":                 "Copy",
+		"Download":             "Download",
+		"Downloaded":           "Downloaded",
+		"CopiedToClipboard":    "Copied",
+		"Close":                "Close",
+		"Codes":                []string{"AAAA-BBBB", "CCCC-DDDD"},
+		"RecoveryHomeEndpoint": definitions.MFARoot + "/register/home/de",
+	}
+}
+
 // mfaSelectTemplateData returns the default template data shared by MFA selection tests.
 func mfaSelectTemplateData() map[string]any {
 	return map[string]any{
-		"SelectMFA":            "Select",
-		"ChooseMFADescription": "Choose",
-		"SecurityKey":          "Security Key",
-		"AuthenticatorApp":     "Authenticator App",
-		"RecoveryCode":         "Recovery Code",
-		"Recommended":          "Recommended",
-		"OtherMethods":         "Other methods",
-		"Or":                   "or",
-		"Back":                 "Back",
-		"HaveTOTP":             true,
-		"HaveWebAuthn":         true,
-		"HaveRecoveryCodes":    false,
-		"RecommendedMethod":    "",
-		"HasOtherMethods":      false,
+		"SelectMFA":             "Select",
+		"ChooseMFADescription":  "Choose",
+		"SecurityKey":           "Security Key",
+		"AuthenticatorApp":      "Authenticator App",
+		"RecoveryCode":          "Recovery Code",
+		"Recommended":           "Recommended",
+		"OtherMethods":          "Other methods",
+		"Or":                    "or",
+		"Back":                  "Back",
+		"HaveTOTP":              true,
+		"HaveWebAuthn":          true,
+		"HaveRecoveryCodes":     false,
+		"RecommendedMethod":     "",
+		"HasOtherMethods":       false,
+		"TOTPLoginEndpoint":     "/login/totp",
+		"WebAuthnLoginEndpoint": "/login/webauthn",
+		"RecoveryLoginEndpoint": "/login/recovery",
 	}
 }
 
@@ -1039,6 +1396,109 @@ func TestMFASelfServiceStepUpUsesHXRedirectForHTMX(t *testing.T) {
 	assert.Zero(t, provider.generateRecoveryCalls)
 }
 
+func TestMFASelfServiceLocalizedStepUpUsesLocalizedHXRedirectForHTMX(t *testing.T) {
+	for _, tc := range localizedSelfServiceStepUpTests() {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, _ := newMFASelfServiceTestHandler()
+			ctx, recorder := newMFASelfServiceContext(tc.method, tc.path, map[string]any{
+				definitions.SessionKeyAccount:      "alice",
+				definitions.SessionKeyUserBackend:  uint8(definitions.BackendLDAP),
+				definitions.SessionKeyUniqueUserID: "uid-123",
+			}, nil)
+			ctx.Params = tc.params
+			ctx.Request.Header.Set("HX-Request", "true")
+
+			tc.handle(handler, ctx)
+
+			assert.Equal(t, http.StatusOK, recorder.Code)
+			assert.Equal(t, frontendMFASelectPath+"/de", recorder.Header().Get("HX-Redirect"))
+
+			mgr := mfaSelfServiceTestManager(t, ctx)
+			assert.Equal(t, tc.wantAction, mgr.GetString("mfa_self_service_step_up_action", ""))
+			assert.Equal(t, tc.wantReturn, mgr.GetString("mfa_self_service_step_up_return", ""))
+		})
+	}
+}
+
+type localizedSelfServiceStepUpTest struct {
+	name       string
+	method     string
+	path       string
+	params     gin.Params
+	handle     func(*FrontendHandler, *gin.Context)
+	wantAction string
+	wantReturn string
+}
+
+// localizedSelfServiceStepUpTests returns sensitive localized mutations that
+// must redirect HTMX callers to localized self-service MFA step-up.
+func localizedSelfServiceStepUpTests() []localizedSelfServiceStepUpTest {
+	return []localizedSelfServiceStepUpTest{
+		localizedRecoveryGenerateStepUpTest(),
+		localizedTOTPDeleteStepUpTest(),
+		localizedWebAuthnDeviceDeleteStepUpTest(),
+		localizedWebAuthnDeviceRenameStepUpTest(),
+	}
+}
+
+// localizedRecoveryGenerateStepUpTest covers recovery-code regeneration.
+func localizedRecoveryGenerateStepUpTest() localizedSelfServiceStepUpTest {
+	return localizedSelfServiceStepUpTest{
+		name:       "recovery generation",
+		method:     http.MethodPost,
+		path:       definitions.MFARoot + "/recovery/generate/de",
+		params:     gin.Params{{Key: "languageTag", Value: "de"}},
+		handle:     (*FrontendHandler).PostGenerateRecoveryCodes,
+		wantAction: "recovery_generate",
+		wantReturn: definitions.MFARoot + "/register/home/de",
+	}
+}
+
+// localizedTOTPDeleteStepUpTest covers TOTP deactivation.
+func localizedTOTPDeleteStepUpTest() localizedSelfServiceStepUpTest {
+	return localizedSelfServiceStepUpTest{
+		name:       "TOTP delete",
+		method:     http.MethodDelete,
+		path:       definitions.MFARoot + "/totp/de",
+		params:     gin.Params{{Key: "languageTag", Value: "de"}},
+		handle:     (*FrontendHandler).DeleteTOTP,
+		wantAction: "totp_delete",
+		wantReturn: definitions.MFARoot + "/register/home/de",
+	}
+}
+
+// localizedWebAuthnDeviceDeleteStepUpTest covers WebAuthn device deletion.
+func localizedWebAuthnDeviceDeleteStepUpTest() localizedSelfServiceStepUpTest {
+	return localizedSelfServiceStepUpTest{
+		name:   "WebAuthn device delete",
+		method: http.MethodDelete,
+		path:   definitions.MFARoot + "/webauthn/device/Y3JlZC0x/de",
+		params: gin.Params{
+			{Key: "id", Value: "Y3JlZC0x"},
+			{Key: "languageTag", Value: "de"},
+		},
+		handle:     (*FrontendHandler).DeleteWebAuthnDevice,
+		wantAction: "webauthn_device_delete",
+		wantReturn: definitions.MFARoot + "/webauthn/devices/de",
+	}
+}
+
+// localizedWebAuthnDeviceRenameStepUpTest covers WebAuthn device renaming.
+func localizedWebAuthnDeviceRenameStepUpTest() localizedSelfServiceStepUpTest {
+	return localizedSelfServiceStepUpTest{
+		name:   "WebAuthn device rename",
+		method: http.MethodPost,
+		path:   definitions.MFARoot + "/webauthn/device/Y3JlZC0x/name/de",
+		params: gin.Params{
+			{Key: "id", Value: "Y3JlZC0x"},
+			{Key: "languageTag", Value: "de"},
+		},
+		handle:     (*FrontendHandler).UpdateWebAuthnDeviceName,
+		wantAction: "webauthn_device_name",
+		wantReturn: definitions.MFARoot + "/webauthn/devices/de",
+	}
+}
+
 func TestMFASelfServiceStepUpReturnTargetIsConsumedAfterMFA(t *testing.T) {
 	handler, _ := newMFASelfServiceTestHandler()
 	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/login/totp", map[string]any{
@@ -1051,6 +1511,25 @@ func TestMFASelfServiceStepUpReturnTargetIsConsumedAfterMFA(t *testing.T) {
 	assert.True(t, redirected)
 	assert.Equal(t, http.StatusFound, ctx.Writer.Status())
 	assert.Equal(t, definitions.MFARoot+"/register/home", recorder.Header().Get("Location"))
+
+	mgr := mfaSelfServiceTestManager(t, ctx)
+	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_action", ""))
+	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_return", ""))
+}
+
+func TestMFASelfServiceStepUpReturnTargetFollowsLanguageSwitch(t *testing.T) {
+	handler, _ := newMFASelfServiceTestHandler()
+	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/login/totp/en", map[string]any{
+		"mfa_self_service_step_up_action": "totp_delete",
+		"mfa_self_service_step_up_return": definitions.MFARoot + "/register/home/de",
+	}, nil)
+	ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
+
+	redirected := handler.redirectPendingSelfServiceStepUp(ctx, cookie.GetManager(ctx))
+
+	assert.True(t, redirected)
+	assert.Equal(t, http.StatusFound, ctx.Writer.Status())
+	assert.Equal(t, definitions.MFARoot+"/register/home/en", recorder.Header().Get("Location"))
 
 	mgr := mfaSelfServiceTestManager(t, ctx)
 	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_action", ""))

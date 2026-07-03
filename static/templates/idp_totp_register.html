@@ -20,7 +20,7 @@
                 <p class="font-mono text-sm break-all">{{ .Secret }}</p>
             </div>
 
-            <form class="w-full" hx-headers='{"X-CSRF-Token": "{{ .CSRFToken }}"}' hx-post="/mfa/totp/register"
+            <form class="w-full" hx-headers='{"X-CSRF-Token": "{{ .CSRFToken }}"}' hx-post="{{ .PostTOTPRegisterPath }}"
                   hx-target="#modal-container">
                 <div class="form-control w-full">
                     <label class="label">
@@ -45,7 +45,7 @@
 
             {{if .RequireMFAFlow}}
             <div class="form-control mt-3 w-full">
-                <a class="btn btn-ghost" href="/mfa/register/cancel">{{ .Cancel }}</a>
+                <a class="btn btn-ghost" href="{{ .CancelMFAEndpoint }}">{{ .Cancel }}</a>
             </div>
             {{end}}
         </div>

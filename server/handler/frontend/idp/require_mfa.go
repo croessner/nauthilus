@@ -56,6 +56,7 @@ const (
 	mfaSelfServiceActionTOTPDelete         = "totp_delete"
 	mfaSelfServiceActionWebAuthnDelete     = "webauthn_delete"
 	mfaSelfServiceActionWebAuthnDeviceDrop = "webauthn_device_delete"
+	mfaSelfServiceActionWebAuthnDeviceName = "webauthn_device_name"
 )
 
 type mfaSelfServiceStepUpTarget struct {
@@ -700,28 +701,33 @@ func mfaSelfServiceStepUpTargetForRequest(ctx *gin.Context) (mfaSelfServiceStepU
 	}
 
 	method := ctx.Request.Method
-	path := ctx.Request.URL.Path
+	path := unlocalizedMFARootPath(ctx, ctx.Request.URL.Path)
 
 	switch {
 	case method == http.MethodPost && isRecoveryGeneratePath(path):
 		return mfaSelfServiceStepUpTarget{
 			action:     mfaSelfServiceActionRecoveryGenerate,
-			returnPath: definitions.MFARoot + "/register/home",
+			returnPath: localizedMFARootPath(ctx, definitions.MFARoot+"/register/home"),
 		}, true
 	case method == http.MethodDelete && path == definitions.MFARoot+"/totp":
 		return mfaSelfServiceStepUpTarget{
 			action:     mfaSelfServiceActionTOTPDelete,
-			returnPath: definitions.MFARoot + "/register/home",
+			returnPath: localizedMFARootPath(ctx, definitions.MFARoot+"/register/home"),
 		}, true
 	case method == http.MethodDelete && path == definitions.MFARoot+"/webauthn":
 		return mfaSelfServiceStepUpTarget{
 			action:     mfaSelfServiceActionWebAuthnDelete,
-			returnPath: definitions.MFARoot + "/register/home",
+			returnPath: localizedMFARootPath(ctx, definitions.MFARoot+"/register/home"),
 		}, true
 	case method == http.MethodDelete && strings.HasPrefix(path, definitions.MFARoot+"/webauthn/device/"):
 		return mfaSelfServiceStepUpTarget{
 			action:     mfaSelfServiceActionWebAuthnDeviceDrop,
-			returnPath: definitions.MFARoot + "/webauthn/devices",
+			returnPath: localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/devices"),
+		}, true
+	case method == http.MethodPost && isWebAuthnDeviceNamePath(path):
+		return mfaSelfServiceStepUpTarget{
+			action:     mfaSelfServiceActionWebAuthnDeviceName,
+			returnPath: localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/devices"),
 		}, true
 	default:
 		return mfaSelfServiceStepUpTarget{}, false
@@ -732,6 +738,12 @@ func mfaSelfServiceStepUpTargetForRequest(ctx *gin.Context) (mfaSelfServiceStepU
 func isRecoveryGeneratePath(path string) bool {
 	return path == definitions.MFARoot+"/recovery/generate" ||
 		strings.HasPrefix(path, definitions.MFARoot+"/recovery/generate/")
+}
+
+// isWebAuthnDeviceNamePath accepts WebAuthn credential rename routes.
+func isWebAuthnDeviceNamePath(path string) bool {
+	return strings.HasPrefix(path, definitions.MFARoot+"/webauthn/device/") &&
+		strings.HasSuffix(path, "/name")
 }
 
 // redirectMFASelfServiceStepUp sends normal requests and HTMX requests to a
@@ -765,7 +777,7 @@ func (h *FrontendHandler) redirectPendingSelfServiceStepUp(ctx *gin.Context, mgr
 // return target after verifying that the stored action and return path match the
 // server-side whitelist.
 func (h *FrontendHandler) pendingSelfServiceStepUpRedirectURI(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
-	target := popPendingSelfServiceStepUpReturnTarget(mgr)
+	target := popPendingSelfServiceStepUpReturnTarget(ctx, mgr)
 	if target == "" {
 		return "", false
 	}
@@ -781,7 +793,7 @@ func (h *FrontendHandler) pendingSelfServiceStepUpRedirectURI(ctx *gin.Context, 
 
 // popPendingSelfServiceStepUpReturnTarget clears and validates self-service
 // step-up state before returning the safe retry page.
-func popPendingSelfServiceStepUpReturnTarget(mgr cookie.Manager) string {
+func popPendingSelfServiceStepUpReturnTarget(ctx *gin.Context, mgr cookie.Manager) string {
 	if mgr == nil {
 		return ""
 	}
@@ -791,11 +803,21 @@ func popPendingSelfServiceStepUpReturnTarget(mgr cookie.Manager) string {
 	clearPendingSelfServiceStepUp(mgr)
 
 	expectedReturn, ok := mfaSelfServiceStepUpReturnForAction(action)
-	if !ok || storedReturn != expectedReturn {
+	if !ok || !matchesMFASelfServiceReturn(storedReturn, expectedReturn) {
 		return ""
 	}
 
-	return expectedReturn
+	if ctx != nil && strings.TrimSpace(ctx.Param("languageTag")) != "" {
+		return localizedMFARootPath(ctx, expectedReturn)
+	}
+
+	return storedReturn
+}
+
+// matchesMFASelfServiceReturn accepts the default return surface and its
+// localized route variants.
+func matchesMFASelfServiceReturn(storedReturn string, expectedReturn string) bool {
+	return storedReturn == expectedReturn || strings.HasPrefix(storedReturn, expectedReturn+"/")
 }
 
 // mfaSelfServiceStepUpReturnForAction resolves the only valid retry surface for
@@ -804,7 +826,7 @@ func mfaSelfServiceStepUpReturnForAction(action string) (string, bool) {
 	switch action {
 	case mfaSelfServiceActionRecoveryGenerate, mfaSelfServiceActionTOTPDelete, mfaSelfServiceActionWebAuthnDelete:
 		return definitions.MFARoot + "/register/home", true
-	case mfaSelfServiceActionWebAuthnDeviceDrop:
+	case mfaSelfServiceActionWebAuthnDeviceDrop, mfaSelfServiceActionWebAuthnDeviceName:
 		return definitions.MFARoot + "/webauthn/devices", true
 	default:
 		return "", false

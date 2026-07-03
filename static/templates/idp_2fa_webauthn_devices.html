@@ -2,7 +2,7 @@
 <div class="max-w-4xl mx-auto mt-10">
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-2">
         <h1 class="text-3xl font-bold idp-webauthn-title">{{ .Title }}</h1>
-        <a class="btn btn-ghost idp-back-link" href="/mfa/register/home">{{ .BackTo2FA }}</a>
+        <a class="btn btn-ghost idp-back-link" href="{{ .BackTo2FAEndpoint }}">{{ .BackTo2FA }}</a>
     </div>
 
     <div class="card bg-base-100 shadow-xl mb-8">
@@ -15,7 +15,7 @@
                 <div class="border border-base-300 rounded-lg p-4">
                     <!-- Row 1: Name + Save -->
                     <form class="flex items-center gap-2" hx-headers='{"X-CSRF-Token": "{{ $.CSRFToken }}"}'
-                          hx-post="/mfa/webauthn/device/{{ .ID }}/name"
+                          hx-post="{{ .NameEndpoint }}"
                           hx-target="#modal-container">
                         <label class="flex-1">
                             <input class="input input-bordered input-sm w-full" maxlength="64"
@@ -41,7 +41,7 @@
                         </span>
                         <button class="btn btn-error btn-sm btn-outline flex-shrink-0"
                                 hx-confirm="{{ $.DeleteConfirm }}"
-                                hx-delete="/mfa/webauthn/device/{{ .ID }}"
+                                hx-delete="{{ .DeleteEndpoint }}"
                                 hx-headers='{"X-CSRF-Token": "{{ $.CSRFToken }}"}'
                                 hx-target="#modal-container">
                             {{ $.Delete }}
@@ -55,7 +55,7 @@
             {{ end }}
 
             <div class="card-actions justify-end mt-6">
-                <a class="btn btn-primary" href="/mfa/webauthn/register">{{ .AddDevice }}</a>
+                <a class="btn btn-primary" href="{{ .AddDeviceEndpoint }}">{{ .AddDevice }}</a>
             </div>
         </div>
     </div>

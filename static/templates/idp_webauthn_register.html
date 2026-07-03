@@ -39,18 +39,18 @@
             </div>
 
             <button class="btn btn-primary btn-lg w-full" data-action="webauthn-register"
-                    data-webauthn-begin="/mfa/webauthn/register/begin"
+                    data-webauthn-begin="{{ .WebAuthnBeginEndpoint }}"
                     data-webauthn-completing="{{ .JSCompletingRegistration }}" data-webauthn-csrf="{{ .CSRFToken }}"
                     data-webauthn-device-input="#device-name" data-webauthn-device-required="{{ .JSDeviceNameRequired }}"
-                    data-webauthn-finish="/mfa/webauthn/register/finish"
-                    data-webauthn-next-url="{{if .RequireMFAFlow}}/mfa/register/continue{{else}}/mfa/register/home{{end}}"
+                    data-webauthn-finish="{{ .WebAuthnFinishEndpoint }}"
+                    data-webauthn-next-url="{{ .WebAuthnNextEndpoint }}"
                     data-webauthn-unknown-error="{{ .JSUnknownError }}" id="register-button" type="button">
                 {{ .Submit }}
             </button>
 
             {{if .RequireMFAFlow}}
             <div class="form-control mt-3 w-full">
-                <a class="btn btn-ghost" href="/mfa/register/cancel">{{ .Cancel }}</a>
+                <a class="btn btn-ghost" href="{{ .CancelMFAEndpoint }}">{{ .Cancel }}</a>
             </div>
             {{end}}
         </div>

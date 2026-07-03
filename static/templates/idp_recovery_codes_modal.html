@@ -38,7 +38,7 @@
         </div>
         <div class="modal-action">
             <button class="btn" data-enable-class="btn-primary" data-focus-on-enable="1" disabled
-                    hx-get="/mfa/register/home" hx-swap="innerHTML" hx-target="#idp-main-content"
+                    hx-get="{{ .RecoveryHomeEndpoint }}" hx-swap="innerHTML" hx-target="#idp-main-content"
                     id="recovery-modal-close" type="button">{{ .Close }}
             </button>
         </div>

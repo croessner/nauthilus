@@ -36,7 +36,7 @@
             <!-- Download as PDF -->
             <button class="btn btn-secondary w-full mb-3" data-action="recovery-download" data-csrf-token="{{ .CSRFToken }}"
                     data-downloaded-label="{{ .Downloaded }}" data-enable-target="#continue-btn"
-                    data-recovery-scope="#idp-main-content" data-save-url="/mfa/recovery/register/save" id="download-btn"
+                    data-recovery-scope="#idp-main-content" data-save-url="{{ .SaveRecoveryCodesEndpoint }}" id="download-btn"
                     type="button">
                 <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                      xmlns="http://www.w3.org/2000/svg">
@@ -47,7 +47,7 @@
             </button>
 
             <!-- Continue (disabled until download) -->
-            <form action="/mfa/recovery/register" class="w-full" method="POST">
+            <form action="{{ .PostRecoveryRegisterEndpoint }}" class="w-full" method="POST">
                 <input name="csrf_token" type="hidden" value="{{ .CSRFToken }}"/>
                 <button class="btn btn-primary w-full" disabled id="continue-btn" type="submit">
                     {{ .Continue }}
@@ -56,7 +56,7 @@
 
             {{if .RequireMFAFlow}}
             <div class="form-control mt-3 w-full">
-                <a class="btn btn-ghost" href="/mfa/register/cancel">{{ .Cancel }}</a>
+                <a class="btn btn-ghost" href="{{ .CancelMFAEndpoint }}">{{ .Cancel }}</a>
             </div>
             {{end}}
         </div>

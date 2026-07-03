@@ -122,6 +122,38 @@ func (h *FrontendHandler) getMFASelectPath(ctx *gin.Context) string {
 	return path
 }
 
+// localizedLoginPath appends the active language tag to browser login routes.
+func localizedLoginPath(ctx *gin.Context, path string) string {
+	lang := ctx.Param("languageTag")
+	if lang == "" {
+		return path
+	}
+
+	return path + "/" + lang
+}
+
+// localizedMFARootPath appends the active language tag to MFA self-service
+// routes that have localized handler variants.
+func localizedMFARootPath(ctx *gin.Context, path string) string {
+	lang := ctx.Param("languageTag")
+	if lang == "" {
+		return path
+	}
+
+	return path + "/" + lang
+}
+
+// unlocalizedMFARootPath removes the active language suffix from localized MFA
+// self-service request paths before route-sensitive comparisons.
+func unlocalizedMFARootPath(ctx *gin.Context, path string) string {
+	lang := ctx.Param("languageTag")
+	if lang == "" {
+		return path
+	}
+
+	return strings.TrimSuffix(path, "/"+lang)
+}
+
 func (h *FrontendHandler) appendQueryString(path string, query string) string {
 	if query == "" {
 		return path
@@ -351,6 +383,7 @@ func (h *FrontendHandler) registerAuthTOTPRoutes(router gin.IRouter) {
 	router.POST("/totp/register", h.PostRegisterTOTP)
 	router.POST("/totp/register/:languageTag", h.PostRegisterTOTP)
 	router.DELETE("/totp", h.DeleteTOTP)
+	router.DELETE("/totp/:languageTag", h.DeleteTOTP)
 }
 
 // registerAuthWebAuthnRoutes registers protected WebAuthn management routes.
@@ -365,10 +398,13 @@ func (h *FrontendHandler) registerAuthWebAuthnRoutes(router gin.IRouter) {
 	router.POST("/webauthn/register/finish", finishRegistration)
 	router.POST("/webauthn/register/finish/:languageTag", finishRegistration)
 	router.DELETE("/webauthn", h.DeleteWebAuthn)
+	router.DELETE("/webauthn/:languageTag", h.DeleteWebAuthn)
 	router.GET("/webauthn/devices", h.WebAuthnDevices)
 	router.GET("/webauthn/devices/:languageTag", h.WebAuthnDevices)
 	router.DELETE("/webauthn/device/:id", h.DeleteWebAuthnDevice)
+	router.DELETE("/webauthn/device/:id/:languageTag", h.DeleteWebAuthnDevice)
 	router.POST("/webauthn/device/:id/name", h.UpdateWebAuthnDeviceName)
+	router.POST("/webauthn/device/:id/name/:languageTag", h.UpdateWebAuthnDeviceName)
 }
 
 // registerAuthRecoveryRoutes registers protected recovery-code management routes.
@@ -462,6 +498,7 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		templateDataConfirmNo:     frontend.GetLocalized(ctx, cfg, nil, "Cancel"),
 		"Logout":                  frontend.GetLocalized(ctx, cfg, nil, "Logout"),
 		templateDataIDPClientName: idpClientName,
+		"SelfServiceHomeEndpoint": localizedMFARootPath(ctx, definitions.MFARoot+"/register/home"),
 	}
 
 	setLegalLinksData(ctx, cfg, data)
@@ -1870,6 +1907,9 @@ func (h *FrontendHandler) loginMFASelectPageData(ctx *gin.Context, availability 
 	data["HaveTOTP"] = availability.haveTOTP
 	data["HaveWebAuthn"] = availability.haveWebAuthn
 	data["HaveRecoveryCodes"] = availability.haveRecoveryCodes
+	data["TOTPLoginEndpoint"] = localizedLoginPath(ctx, "/login/totp")
+	data["WebAuthnLoginEndpoint"] = localizedLoginPath(ctx, "/login/webauthn")
+	data["RecoveryLoginEndpoint"] = localizedLoginPath(ctx, "/login/recovery")
 
 	lastMFA, recommendedMethod := recommendedMFAMethod(ctx, availability)
 
@@ -2248,7 +2288,12 @@ func (h *FrontendHandler) getMFARedirectURLFromCookie(ctx *gin.Context, user *ba
 
 	availability := h.getMFAAvailability(ctx, user, protocolParam, mgr)
 
-	return h.getMFARedirectURLFromAvailability(availability)
+	path, ok := h.getMFARedirectURLFromAvailability(availability)
+	if !ok {
+		return "", false
+	}
+
+	return localizedLoginPath(ctx, path), true
 }
 
 // getMFARedirectURLFromAvailability returns the direct challenge URL when exactly one method is available.
@@ -2276,8 +2321,8 @@ func (h *FrontendHandler) getMFARedirectURLFromAvailability(availability mfaAvai
 
 // getMFAURLFromCookie returns the URL for a specific MFA method.
 // All flow state is read from the encrypted cookie - no URL parameters are used.
-func (h *FrontendHandler) getMFAURLFromCookie(_ *gin.Context, mfaType string) string {
-	return "/login/" + mfaType
+func (h *FrontendHandler) getMFAURLFromCookie(ctx *gin.Context, mfaType string) string {
+	return localizedLoginPath(ctx, "/login/"+mfaType)
 }
 
 // getLoginMFABackURLFromCookie returns the URL to go back from MFA verification.
@@ -2481,6 +2526,11 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	data["RecoveryCodesLeft"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You have %d recovery codes left.")
 	data["GenerateNewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Generate new recovery codes")
 	data["GenerateRecoveryCodesConfirm"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.")
+	data["TOTPDeleteEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/totp")
+	data["TOTPRegisterEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/totp/register")
+	data["WebAuthnDevicesEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/devices")
+	data["WebAuthnRegisterEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/register")
+	data["RecoveryGenerateEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/recovery/generate")
 	data["Home"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Home")
 
 	userData, err := h.GetUserBackendData(ctx)
@@ -2575,12 +2625,14 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 	data["CSRFToken"] = csrf.Token(ctx)
+	data["PostTOTPRegisterPath"] = localizedMFARootPath(ctx, definitions.MFARoot+"/totp/register")
 
 	requireFlow := mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false)
 
 	data["RequireMFAFlow"] = requireFlow
 	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
 	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
+	data["CancelMFAEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/register/cancel")
 
 	ctx.HTML(http.StatusOK, "idp_totp_register.html", data)
 }
@@ -2775,9 +2827,12 @@ func (h *FrontendHandler) recoveryCodesRegisterPageData(ctx *gin.Context, codes 
 	data["CopiedToClipboard"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Copied to clipboard")
 	data["Codes"] = codes
 	data["CSRFToken"] = csrf.Token(ctx)
+	data["SaveRecoveryCodesEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/recovery/register/save")
+	data["PostRecoveryRegisterEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/recovery/register")
 	data["RequireMFAFlow"] = requireFlow
 	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
 	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
+	data["CancelMFAEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/register/cancel")
 
 	return data
 }
@@ -3090,6 +3145,7 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	data["Downloaded"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Downloaded")
 	data["Close"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Close")
 	data["Codes"] = codes
+	data["RecoveryHomeEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/register/home")
 
 	ctx.HTML(http.StatusOK, "idp_recovery_codes_modal.html", data)
 }
@@ -3278,10 +3334,14 @@ func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 	data["JSDeviceNameRequired"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter a device name")
 	data["JSUnknownError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An unknown error occurred")
 	data["CSRFToken"] = csrf.Token(ctx)
+	data["WebAuthnBeginEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/register/begin")
+	data["WebAuthnFinishEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/register/finish")
+	data["WebAuthnNextEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/register/home")
 
 	data["RequireMFAFlow"] = requireFlow
 	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
 	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
+	data["CancelMFAEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/register/cancel")
 
 	ctx.HTML(http.StatusOK, "idp_webauthn_register.html", data)
 }
@@ -3349,11 +3409,15 @@ func (h *FrontendHandler) WebAuthnDevices(ctx *gin.Context) {
 	data["AddDevice"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Add new security key")
 	data["BackTo2FA"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back to 2FA Overview")
 	data["UnnamedDevice"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Unnamed device")
+	data["BackTo2FAEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/register/home")
+	data["AddDeviceEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/register")
 
 	type device struct {
-		Name     string
-		ID       string
-		LastUsed string
+		Name           string
+		ID             string
+		LastUsed       string
+		NameEndpoint   string
+		DeleteEndpoint string
 	}
 
 	var devices []device
@@ -3367,10 +3431,13 @@ func (h *FrontendHandler) WebAuthnDevices(ctx *gin.Context) {
 				lastUsed = cred.LastUsed.Format("2006-01-02 15:04:05")
 			}
 
+			encodedID := base64.RawURLEncoding.EncodeToString(cred.ID)
 			devices = append(devices, device{
-				Name:     name,
-				ID:       base64.RawURLEncoding.EncodeToString(cred.ID),
-				LastUsed: lastUsed,
+				Name:           name,
+				ID:             encodedID,
+				LastUsed:       lastUsed,
+				NameEndpoint:   localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/device/"+encodedID+"/name"),
+				DeleteEndpoint: localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/device/"+encodedID),
 			})
 		}
 	}
@@ -3469,6 +3536,10 @@ func webAuthnRedisUserKey(cfg config.File, uniqueUserID string) string {
 func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.update_webauthn_device_name")
 	defer sp.End()
+
+	if !h.enforceMFASelfServiceStepUp(ctx) {
+		return
+	}
 
 	decodedID, name, ok := h.webAuthnDeviceNameUpdate(ctx)
 	if !ok {

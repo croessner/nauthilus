@@ -916,6 +916,7 @@ async function runMFASelfServiceStepUpChecks(browser) {
   });
 
   await runMFASelfServiceMissingStepUpRejected(browser);
+  await runMFASelfServiceLocalizedVisibleStepUp(browser, registration);
 
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
@@ -955,6 +956,73 @@ async function runMFASelfServiceStepUpChecks(browser) {
   await context.close();
 }
 
+// runMFASelfServiceLocalizedVisibleStepUp proves localized self-service pages
+// send HTMX mutations to localized step-up routes.
+async function runMFASelfServiceLocalizedVisibleStepUp(browser, registration) {
+  for (const action of localizedSelfServiceStepUpActions()) {
+    await runMFASelfServiceLocalizedVisibleStepUpAction(browser, registration, action);
+  }
+
+  console.log('ok mfa-self-service-localized-visible-step-up');
+}
+
+function localizedSelfServiceStepUpActions() {
+  return [
+    {
+      label: 'recovery regeneration',
+      openPath: '/mfa/register/home/en',
+      selector: 'button[hx-post="/mfa/recovery/generate/en"]',
+    },
+    {
+      label: 'TOTP delete',
+      openPath: '/mfa/register/home/en',
+      selector: 'button[hx-delete="/mfa/totp/en"]',
+    },
+    {
+      label: 'WebAuthn device delete',
+      openPath: '/mfa/webauthn/devices/en',
+      selector: 'button[hx-delete^="/mfa/webauthn/device/"][hx-delete$="/en"]',
+    },
+    {
+      label: 'WebAuthn device rename',
+      openPath: '/mfa/webauthn/devices/en',
+      selector: 'form[hx-post^="/mfa/webauthn/device/"][hx-post$="/name/en"] button[type="submit"]',
+    },
+  ];
+}
+
+async function runMFASelfServiceLocalizedVisibleStepUpAction(browser, registration, action) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const authenticator = await installVirtualAuthenticator(page);
+  await importVirtualAuthenticatorCredentials(authenticator, registration.webAuthnCredentials);
+
+  await withPageState(page, `localized self-service visible step-up ${action.label}`, async () =>
+    withCallbackServer(`localized self-service visible step-up ${action.label}`, async (redirectURI, callbackPromise) => {
+      await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, selfServiceUsername, password);
+      await completeWebAuthnLogin(page, edgeA);
+
+      return callbackPromise;
+    }));
+
+  await page.goto(`${edgeA}${action.openPath}`);
+  if (action.label === 'WebAuthn device rename') {
+    await page.locator('form[hx-post^="/mfa/webauthn/device/"][hx-post$="/name/en"] input[name="name"]').first().fill('Renamed key');
+  }
+
+  await page.locator(action.selector).first().click();
+  const confirmButton = page.locator('[data-action="confirm-yes"]');
+  if (await confirmButton.isVisible({timeout: 1000}).catch(() => false)) {
+    await confirmButton.click();
+  }
+
+  await page.waitForURL(/\/login\/mfa\/en/, {timeout: 15000});
+  await expectPageText(page, /Select Multi-Factor Authentication|2FA Verification/i);
+
+  await context.close();
+}
+
 // runMFASelfServiceMissingStepUpRejected proves first-factor sessions cannot mutate MFA state.
 async function runMFASelfServiceMissingStepUpRejected(browser) {
   const context = await newBrowserContext(browser, edgeA);
@@ -975,7 +1043,7 @@ async function runMFASelfServiceMissingStepUpRejected(browser) {
       ]) {
         const result = await submitSelfServiceMutation(page, mutation[0], mutation[1]);
         assert.equal(result.status, 200, `${mutation[0]} ${mutation[1]} returned unexpected status: ${result.text}`);
-        assert.match(result.text, /Recent MFA verification required/i);
+        assert.match(result.hxRedirect || '', /\/login\/(mfa|totp|webauthn|recovery)/);
       }
     }));
 

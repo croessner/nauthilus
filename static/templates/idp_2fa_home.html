@@ -26,14 +26,14 @@
                 <div class="card-actions justify-end mt-4">
                     {{ if .HaveTOTP }}
                     <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateTOTPConfirm }}"
-                            hx-delete="/mfa/totp"
+                            hx-delete="{{ .TOTPDeleteEndpoint }}"
                             hx-headers='{"X-CSRF-Token": "{{ .CSRFToken }}"}'
                             hx-target="#modal-container"
                             {{ if .BackendError }}disabled{{ end }}>
                         {{ .Deactivate }}
                     </button>
                     {{ else }}
-                    <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}" href="/mfa/totp/register">{{
+                    <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}" href="{{ .TOTPRegisterEndpoint }}">{{
                         .RegisterTOTP }}</a>
                     {{ end }}
                 </div>
@@ -47,10 +47,10 @@
                 <p>{{ .WebAuthnDescription }}</p>
                 <div class="card-actions justify-end mt-4">
                     {{ if .HaveWebAuthn }}
-                    <a class="btn btn-secondary" href="/mfa/webauthn/devices">{{ .SecurityKeyWebAuthn }}</a>
+                    <a class="btn btn-secondary" href="{{ .WebAuthnDevicesEndpoint }}">{{ .SecurityKeyWebAuthn }}</a>
                     {{ else }}
                     <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}"
-                       href="/mfa/webauthn/register">{{ .RegisterWebAuthn }}</a>
+                       href="{{ .WebAuthnRegisterEndpoint }}">{{ .RegisterWebAuthn }}</a>
                     {{ end }}
                 </div>
             </div>
@@ -68,7 +68,7 @@
                 <div class="card-actions justify-end mt-4">
                     <button class="btn btn-secondary"
                             hx-confirm="{{ .GenerateRecoveryCodesConfirm }}"
-                            hx-post="/mfa/recovery/generate"
+                            hx-post="{{ .RecoveryGenerateEndpoint }}"
                             hx-target="#modal-container"
                             hx-headers='{"X-CSRF-Token": "{{ .CSRFToken }}"}'
                             {{ if or .BackendError (not (or .HaveTOTP .HaveWebAuthn)) }}disabled{{ end }}>
@@ -82,4 +82,3 @@
 {{ if not .HXRequest }}
 {{ template "idp_footer.html" . }}
 {{ end }}
-
