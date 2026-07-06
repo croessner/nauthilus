@@ -169,15 +169,18 @@ The alias uses the canonical hook configuration, including the same HTTP method,
 Existing concrete Nauthilus routes take precedence; aliases are resolved only for requests that would otherwise be a 404.
 Alias locations under `/api/v1/custom/` are rejected because that prefix is reserved for canonical hook URLs.
 
-### Access Control with OIDC Bearer Authentication
+### Access Control with OIDC Bearer and Backchannel Basic Authentication
 
-When OIDC bearer authentication is enabled in Nauthilus, you can restrict access to hooks based on token scopes:
+When OIDC bearer authentication is enabled in Nauthilus, you can restrict access to hooks based on token scopes.
+Backchannel Basic Auth can authenticate scope-less hooks, but it does not satisfy configured hook scopes:
 
 1. Define the required scopes in the `scopes` array for each hook
 2. Users must have at least one of the specified scopes in their bearer token to access the hook
-3. If no scopes are specified, the hook is denied unless `public: true` is set explicitly
-4. If OIDC bearer authentication is not enabled, hooks with scopes deny access
-5. Use `public: true` only for hooks that are deliberately unauthenticated; aliases inherit the canonical hook's `scopes` and `public` setting
+3. If scopes are specified, valid Backchannel Basic Auth alone does not authorize the hook
+4. If no scopes are specified and `public: true` is not set, valid configured `auth.backchannel.basic_auth` credentials can authenticate the request
+5. If no scopes are specified and Backchannel Basic Auth is missing, invalid, or disabled, the hook is denied unless `public: true` is set explicitly
+6. If OIDC bearer authentication is not enabled, hooks with scopes deny access
+7. Use `public: true` only for hooks that are deliberately unauthenticated; aliases inherit the canonical hook's `scopes` and `public` setting
 
 ### Enabling/Disabling All Custom Hooks
 

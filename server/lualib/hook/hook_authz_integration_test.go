@@ -30,6 +30,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -63,6 +64,29 @@ func setupHookTestConfig(t *testing.T) config.File {
 			Redis: config.Redis{
 				Prefix:      "t:",
 				NegCacheTTL: time.Hour,
+			},
+		},
+	}
+	config.SetTestFile(cfg)
+
+	return config.GetFile()
+}
+
+func setupHookBasicAuthConfig(t *testing.T, enabled bool) config.File {
+	t.Helper()
+
+	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Redis: config.Redis{
+				Prefix:      "t:",
+				NegCacheTTL: time.Hour,
+			},
+			BasicAuth: config.BasicAuth{
+				Enabled:  enabled,
+				Username: "hook-client",
+				Password: secret.New("hook-secret"),
 			},
 		},
 	}
@@ -184,6 +208,104 @@ func TestHasRequiredScopes_ExplicitPublicHookAllows(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+}
+
+func TestHasRequiredScopes_UnscopedNonPublicHookAllowsValidBackchannelBasicAuth(t *testing.T) {
+	withIsolatedHookRoles(t)
+	cfg := setupHookBasicAuthConfig(t, true)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, rec := newHookTestContext(http.MethodGet, "/custom/foo")
+	ctx.Request.SetBasicAuth("hook-client", "hook-secret")
+
+	ok := HasRequiredScopes(ctx, cfg, logger, nil, "/custom/foo", http.MethodGet)
+	if !ok {
+		t.Fatal("expected valid backchannel Basic Auth to allow unscoped non-public hook")
+	}
+
+	if ctx.IsAborted() {
+		t.Fatal("did not expect aborted context for valid Basic Auth")
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	if !ctx.GetBool(definitions.CtxBasicAuthValidatedKey) {
+		t.Fatal("expected Basic Auth validated context marker")
+	}
+
+	if method := ctx.GetString(definitions.CtxAuthMethodKey); method != "basic_auth" {
+		t.Fatalf("expected auth method basic_auth, got %q", method)
+	}
+}
+
+func TestHasRequiredScopes_UnscopedNonPublicHookRejectsInvalidBackchannelBasicAuth(t *testing.T) {
+	withIsolatedHookRoles(t)
+	cfg := setupHookBasicAuthConfig(t, true)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, rec := newHookTestContext(http.MethodGet, "/custom/foo")
+	ctx.Request.SetBasicAuth("hook-client", "wrong-secret")
+
+	ok := HasRequiredScopes(ctx, cfg, logger, nil, "/custom/foo", http.MethodGet)
+	assertHookBasicAuthDenied(t, ctx, rec, ok, "expected invalid backchannel Basic Auth to deny unscoped non-public hook")
+}
+
+func TestHasRequiredScopes_UnscopedNonPublicHookRejectsBasicWhenDisabled(t *testing.T) {
+	withIsolatedHookRoles(t)
+	cfg := setupHookBasicAuthConfig(t, false)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, rec := newHookTestContext(http.MethodGet, "/custom/foo")
+	ctx.Request.SetBasicAuth("hook-client", "hook-secret")
+
+	ok := HasRequiredScopes(ctx, cfg, logger, nil, "/custom/foo", http.MethodGet)
+	assertHookBasicAuthDenied(t, ctx, rec, ok, "expected disabled backchannel Basic Auth to deny unscoped non-public hook")
+}
+
+// assertHookBasicAuthDenied verifies the common denial contract for Basic Auth hook attempts.
+func assertHookBasicAuthDenied(t *testing.T, ctx *gin.Context, rec *httptest.ResponseRecorder, ok bool, allowMessage string) {
+	t.Helper()
+
+	if ok {
+		t.Fatal(allowMessage)
+	}
+
+	if !ctx.IsAborted() {
+		t.Fatal("expected aborted context")
+	}
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	if ctx.GetBool(definitions.CtxBasicAuthValidatedKey) {
+		t.Fatal("did not expect Basic Auth validated context marker")
+	}
+}
+
+func TestHasRequiredScopes_ScopedHookDoesNotBypassScopesWithBasicAuth(t *testing.T) {
+	withIsolatedHookRoles(t)
+	cfg := setupHookBasicAuthConfig(t, true)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, rec := newHookTestContext(http.MethodGet, "/custom/secure")
+	setHookScopes("/custom/secure", http.MethodGet, []string{"scope:a"})
+	ctx.Request.SetBasicAuth("hook-client", "hook-secret")
+
+	ok := HasRequiredScopes(ctx, cfg, logger, nil, "/custom/secure", http.MethodGet)
+	if ok {
+		t.Fatal("expected Basic Auth not to bypass scoped hook requirements")
+	}
+
+	if !ctx.IsAborted() {
+		t.Fatal("expected aborted context")
+	}
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	if ctx.GetBool(definitions.CtxBasicAuthValidatedKey) {
+		t.Fatal("did not expect Basic Auth validated marker for scoped hook")
 	}
 }
 

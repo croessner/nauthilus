@@ -36,6 +36,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib/luamod"
 	"github.com/croessner/nauthilus/v3/server/lualib/luapool"
 	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
+	mdauth "github.com/croessner/nauthilus/v3/server/middleware/auth"
 	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/svcctx"
@@ -274,12 +275,12 @@ func ResolveRequestHook(ctx *gin.Context) string {
 // HasRequiredScopes checks if the user has any of the required scopes for a hook.
 // It performs the full authentication and authorization flow for custom hooks:
 //   - Explicitly public hooks with no scopes configured → access allowed without token.
-//   - No scopes and no explicit public marker → access denied.
+//   - No scopes and no explicit public marker → configured Backchannel Basic Auth can satisfy authentication.
 //   - Scopes configured → bearer token is extracted, validated via the TokenValidator,
 //     and the resulting claims are checked for the required scopes.
 //
 // On denial the function aborts the request with the appropriate HTTP status
-// (401 for missing/invalid token, 403 for insufficient scopes) and returns false.
+// (401 for missing/invalid authentication, 403 for insufficient scopes) and returns false.
 // The caller should return immediately without writing further responses.
 //
 // The validator parameter may be nil when OIDC authentication is not configured;
@@ -304,6 +305,10 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 	}
 
 	if nextState == hookAuthzStateUnauthorized {
+		if allowBackchannelBasicAuthHook(ctx, cfg, logger, guid) {
+			return true
+		}
+
 		return denyUnmarkedHook(ctx, cfg, logger, guid)
 	}
 
@@ -322,6 +327,32 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 	}
 
 	return allowScopedHook(ctx, cfg, logger, guid, requiredScopes)
+}
+
+// allowBackchannelBasicAuthHook authenticates unscoped non-public Lua hooks with configured Backchannel Basic Auth.
+func allowBackchannelBasicAuthHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string) bool {
+	if ctx == nil || ctx.Request == nil {
+		return false
+	}
+
+	username, password, ok := ctx.Request.BasicAuth()
+	if !ok || !mdauth.ValidateBasicCredentials(cfg, username, password) {
+		return false
+	}
+
+	ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
+	ctx.Set(definitions.CtxAuthMethodKey, "basic_auth")
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
+		definitions.DbgLua,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, "Hook has no scopes and is authenticated with backchannel Basic Auth, allowing access",
+	)
+
+	return true
 }
 
 // startHookAuthzFSM applies the initial hook authorization transition.
