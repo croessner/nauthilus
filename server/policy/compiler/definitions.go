@@ -36,6 +36,7 @@ const (
 	checkTypePluginEnvironment = policy.CheckTypePluginEnvironment
 	checkTypeLDAPBackend       = policy.CheckTypeLDAPBackend
 	checkTypeLuaBackend        = policy.CheckTypeLuaBackend
+	checkTypePluginBackend     = policy.CheckTypePluginBackend
 	checkTypeLuaSubjectSource  = policy.CheckTypeLuaSubjectSource
 	checkTypePluginSubject     = policy.CheckTypePluginSubjectSource
 	checkTypeAccountProvider   = policy.CheckTypeAccountProvider
@@ -149,6 +150,14 @@ func backendCheckTypes() map[string]policyruntime.CheckTypeDefinition {
 			Stage:                      policy.StageAuthBackend,
 			Operations:                 []policy.Operation{policy.OperationAuthenticate, policy.OperationLookupIdentity},
 			ConfigRefPrefix:            "auth.backends.lua.backend",
+			MinimumAttributes:          backendMinimumAttributes(),
+			ObserveSafeDefault:         false,
+			AllowsObserveSafeAssertion: true,
+		},
+		checkTypePluginBackend: {
+			Stage:                      policy.StageAuthBackend,
+			Operations:                 []policy.Operation{policy.OperationAuthenticate, policy.OperationLookupIdentity},
+			ConfigRefPrefix:            "auth.backends.order",
 			MinimumAttributes:          backendMinimumAttributes(),
 			ObserveSafeDefault:         false,
 			AllowsObserveSafeAssertion: true,

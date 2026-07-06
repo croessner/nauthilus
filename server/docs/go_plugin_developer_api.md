@@ -243,6 +243,7 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
         ID:          "plugin.backend.customer_sql.account_locked",
         Stage:       pluginapi.PolicyStageAuthBackend,
         Operations:  []pluginapi.PolicyOperation{pluginapi.PolicyOperationAuthenticate},
+        ProducerTypes: []string{"backend.plugin"},
         Category:    pluginapi.AttributeCategorySubject,
         Type:        pluginapi.AttributeTypeBool,
         Description: "Reports whether the backend account is administratively locked.",
@@ -727,8 +728,12 @@ func (subjectEnricher) Evaluate(ctx context.Context, request pluginapi.SubjectRe
 }
 ```
 
-Subject source results are merged deterministically per dependency level. A rejected subject maps to authentication
-failure.
+Subject source results are merged deterministically per dependency level. A terminal subject rejection is explicit:
+return `SubjectResult{Rejected: true}` and write policies against the generated native subject fact, for example
+`auth.plugin.subject.example_auth.policy.rejected`. Returning an error is different: the host records the generated
+`.error` fact and maps the check to a temporary failure. Backend temporary failures remain available through
+`auth.backend.tempfail`. Do not treat a non-`none` reject reason as proof that a native subject source rejected the
+subject.
 
 Subject sources can patch safe backend-result values explicitly. This is the native replacement for Lua's mutable
 backend-result object; plugins return values instead of receiving a pointer to internal host state:
@@ -777,7 +782,8 @@ func (s *subjectRouter) Evaluate(ctx context.Context, request pluginapi.SubjectR
 ```
 
 Returning an error maps to a secret-safe temporary failure. Returning `Rejected: true` maps to authentication failure.
-The host does not auto-select a backend when the candidate list is empty.
+Use separate deny and tempfail policy rules when a subject source can both reject and fail temporarily. The host does not
+auto-select a backend when the candidate list is empty.
 
 ### Response Mutations
 
@@ -1044,13 +1050,21 @@ func registerPolicyAttributes(registrar pluginapi.Registrar) error {
         Description: "ISO country code resolved from the request client IP.",
         Stage:       pluginapi.PolicyStagePreAuth,
         Operations:  []pluginapi.PolicyOperation{pluginapi.PolicyOperationAuthenticate},
+        ProducerTypes: []string{"plugin.environment"},
         Category:    pluginapi.AttributeCategoryEnvironment,
         Type:        pluginapi.AttributeTypeString,
-        ProducerCheck: "geoip.environment",
-        ProducerTypes: []string{"plugin.environment"},
     })
 }
 ```
+
+Use `ProducerTypes` for plugin-owned facts that may be emitted by any active compatible producer type. This is the
+normal path for native environment, subject, backend, and account-provider facts because plugin code can know the check
+type contract without knowing the operator's local policy check names.
+
+Use `ProducerCheck` only when the plugin and operator intentionally agree on one compiled policy check name. The value
+must be the policy check name from `auth.policy.checks[].name`, such as `plugin_subject_example_auth_policy`; it is not
+the plugin component ID (`geoip.environment`, `example_auth.policy`) and Nauthilus does not normalize component IDs into
+check names.
 
 Facts returned from environment, subject, backend password verification, account-list operations, and obligations are
 validated against the active policy snapshot. Unknown attributes fail safely. Account-list facts are emitted as

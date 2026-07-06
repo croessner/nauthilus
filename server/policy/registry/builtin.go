@@ -36,6 +36,7 @@ const (
 	producerRBL               = policy.CheckTypeRBL
 	producerLDAPBackend       = policy.CheckTypeLDAPBackend
 	producerLuaBackend        = policy.CheckTypeLuaBackend
+	producerPluginBackend     = policy.CheckTypePluginBackend
 	producerAccountProvider   = policy.CheckTypeAccountProvider
 )
 
@@ -526,7 +527,7 @@ func backendTempfailAttribute(operations []policy.Operation) AttributeDefinition
 		Description:   "Backend evaluation failed due to a temporary technical runtime error.",
 		Stage:         policy.StageAuthBackend,
 		Operations:    operations,
-		ProducerTypes: []string{producerLDAPBackend, producerLuaBackend},
+		ProducerTypes: backendProducerTypes(),
 		Category:      AttributeCategoryResource,
 		Type:          AttributeTypeBool,
 		Source:        SourceBuiltin,
@@ -564,7 +565,7 @@ func backendAttribute(
 		Description:   description,
 		Stage:         stage,
 		Operations:    operations,
-		ProducerTypes: []string{producerLDAPBackend, producerLuaBackend},
+		ProducerTypes: backendProducerTypes(),
 		Category:      category,
 		Type:          valueType,
 		Source:        SourceBuiltin,
@@ -578,6 +579,11 @@ func backendAttribute(
 	}
 
 	return definition
+}
+
+// backendProducerTypes returns the first-class backend producers for builtin backend facts.
+func backendProducerTypes() []string {
+	return []string{producerLDAPBackend, producerLuaBackend, producerPluginBackend}
 }
 
 func errorDetails(includeRetryable bool) map[string]DetailDefinition {

@@ -415,7 +415,7 @@ func registerGeneratedLuaAttributes(check policyruntime.CompiledCheck, registry 
 		name := normalizeIdentifierFromConfigRef("auth.policy.attribute_sources.lua.subject.", check.ConfigRef, check.Name)
 		return registerLuaSubjectSourceAttributes(name, check, registry)
 	case checkTypePluginSubject:
-		name := normalizeIdentifierFromConfigRef(pluginModuleConfigRefRoot, check.ConfigRef, check.Name)
+		name := policy.PluginSubjectIdentityFromCheck(check.ConfigRef, check.Name)
 		return registerPluginSubjectSourceAttributes(name, check, registry)
 	default:
 		return nil

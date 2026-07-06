@@ -113,11 +113,13 @@ type DetailDefinition struct {
 
 // AttributeDefinition describes one registered policy attribute.
 type AttributeDefinition struct {
-	ID            string
-	Description   string
-	Stage         policy.Stage
-	Operations    []policy.Operation
+	ID          string
+	Description string
+	Stage       policy.Stage
+	Operations  []policy.Operation
+	// ProducerTypes names compatible check types that can emit this attribute.
 	ProducerTypes []string
+	// ProducerCheck names one compiled policy check that must be active.
 	ProducerCheck string
 	Category      AttributeCategory
 	Type          AttributeType

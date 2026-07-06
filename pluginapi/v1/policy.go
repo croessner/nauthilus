@@ -140,12 +140,17 @@ type DetailDefinition struct {
 
 // AttributeDefinition describes one policy attribute registered by a plugin.
 type AttributeDefinition struct {
-	Details       map[string]DetailDefinition
-	ID            string
-	Description   string
-	Stage         PolicyStage
-	Operations    []PolicyOperation
+	Details     map[string]DetailDefinition
+	ID          string
+	Description string
+	Stage       PolicyStage
+	Operations  []PolicyOperation
+	// ProducerTypes names compatible policy check types, such as "plugin.environment",
+	// that may emit this attribute when such a check is active in the compiled policy.
 	ProducerTypes []string
+	// ProducerCheck names one compiled policy check that must be active before this
+	// attribute may be consumed. It is a host-owned policy check name, not a plugin
+	// component ID such as "module.component".
 	ProducerCheck string
 	Category      AttributeCategory
 	Type          AttributeType

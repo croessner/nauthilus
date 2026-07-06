@@ -582,6 +582,42 @@ func TestRecordPolicyBackendResultExportsConfiguredSubjectAttributes(t *testing.
 	}
 }
 
+func TestRecordPolicyBackendTempfailDoesNotEmitPluginSubjectRejection(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    82,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	passDBResult := &PassDBResult{
+		Backend:     definitions.BackendPlugin,
+		BackendName: "example_auth.passdb",
+	}
+
+	auth.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, nil)
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	report := policyCtx.Report()
+	if got := report.Attributes[policy.AttributeBackendTempFail].Value; got != true {
+		t.Fatalf("backend tempfail = %#v, want true", got)
+	}
+
+	if _, exists := report.Attributes[policy.PluginSubjectAttributeID("example_auth", "policy", "rejected")]; exists {
+		t.Fatal("backend tempfail emitted a plugin subject rejection attribute")
+	}
+
+	check := report.Checks["example_auth.passdb"]
+	if check.DecisionHint != policy.DecisionTempFail {
+		t.Fatalf("backend check = %#v, want tempfail hint", check)
+	}
+}
+
 func TestRecordPolicyBackendResultEmitsLDAPMasterUserFact(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
 	cfg.Server.MasterUser = config.MasterUser{Enabled: true, UserFormat: config.DefaultMasterUserFormat}

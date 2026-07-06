@@ -596,7 +596,7 @@ func recordPluginSubjectResult(
 			pluginSubjectAttributeID(item.component, "rejected"),
 			policy.StageSubjectAnalysis,
 			policyCtx.Report().Operation,
-			item.result.Rejected,
+			item.err == nil && item.result.Rejected,
 			pluginStatusDetails(item.result.Status),
 		),
 	}
@@ -788,7 +788,7 @@ func pluginSubjectConfigRef(component pluginregistry.Component) string {
 }
 
 func pluginSubjectAttributeID(component pluginregistry.Component, suffix string) string {
-	return "auth.plugin.subject." + component.ModuleName + "." + component.LocalName + "." + suffix
+	return policy.PluginSubjectAttributeID(component.ModuleName, component.LocalName, suffix)
 }
 
 func pluginStatusDetails(status *pluginapi.StatusMessage) map[string]policycollection.DetailValue {

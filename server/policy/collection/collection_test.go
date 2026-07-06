@@ -70,6 +70,30 @@ func TestDecisionContextRecordsCheckResultAndAttributes(t *testing.T) {
 	}
 }
 
+func TestCheckMatchesSelectorKeepsPluginSubjectConfigRefPrecise(t *testing.T) {
+	selector := CheckSelector{
+		CheckType: policy.CheckTypePluginSubjectSource,
+		Stage:     policy.StageSubjectAnalysis,
+		Name:      "plugin_subject_example_auth_policy",
+		ConfigRef: "plugins.modules.example_auth.subject",
+	}
+	check := policyruntime.CompiledCheck{
+		Name:      "plugin_subject_example_auth_policy",
+		Type:      policy.CheckTypePluginSubjectSource,
+		Stage:     policy.StageSubjectAnalysis,
+		ConfigRef: "plugins.modules.example_auth.subject",
+	}
+
+	if !checkMatchesSelector(check, selector) {
+		t.Fatal("selector did not match the intended plugin subject check")
+	}
+
+	check.Name = "plugin_subject_example_auth_other"
+	if checkMatchesSelector(check, selector) {
+		t.Fatal("selector matched a different plugin subject check with the same config_ref")
+	}
+}
+
 func TestDecisionContextReportsSkippedMissingAndUnavailableFacts(t *testing.T) {
 	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, nil)
 	ctx.MarkUnavailable("lua_environment_risk", "not_observe_safe")

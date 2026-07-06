@@ -42,8 +42,9 @@ const (
 	testRequestHeaderAttribute   = "request.header.company_domain"
 	testRequestMetadataAttribute = "request.metadata.company_domain"
 	testPluginPolicyModule       = "native_policy"
-	testPluginPolicySubjectCheck = "plugin_subject_native_policy"
+	testPluginPolicySubjectCheck = "plugin_subject_native_policy_subject"
 	testPluginPolicyAttribute    = "plugin.native_policy.subject.flag"
+	testPluginNamedAttribute     = "plugin.native_policy.subject.named_flag"
 	testPluginObligationID       = testPluginPolicyModule + ".sync_obligation"
 	testPluginPostActionID       = testPluginPolicyModule + ".post_action"
 )
@@ -767,6 +768,40 @@ func TestCompilerRejectsAttributeWithoutProducingCheck(t *testing.T) {
 	}
 }
 
+func TestCompilerAcceptsPluginBackendStandardAttributes(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{
+		{
+			Name:      "plugin_backend_example_auth",
+			Type:      policy.CheckTypePluginBackend,
+			Stage:     string(policy.StageAuthBackend),
+			ConfigRef: "auth.backends.order",
+		},
+	}
+	cfg.Auth.Policy.Policies = []config.PolicyRuleConfig{
+		backendAttributePolicy("backend_tempfail", policy.AttributeBackendTempFail, policy.OperationAuthenticate),
+		backendAttributePolicy("authenticated", policy.AttributeAuthenticated, policy.OperationAuthenticate),
+		backendAttributePolicy("identity_found", policy.AttributeIdentityFound, policy.OperationLookupIdentity),
+		backendAttributePolicy("empty_username", policy.AttributeBackendEmptyUsername, policy.OperationLookupIdentity),
+		backendAttributePolicy("empty_password", policy.AttributeBackendEmptyPassword, policy.OperationAuthenticate),
+	}
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	authChecks := snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthBackend].Checks
+	if len(authChecks) != 1 || authChecks[0].Type != policy.CheckTypePluginBackend {
+		t.Fatalf("authenticate backend checks = %#v, want one native plugin backend check", authChecks)
+	}
+
+	lookupChecks := snapshot.StagePlans[policy.OperationLookupIdentity][policy.StageAuthBackend].Checks
+	if len(lookupChecks) != 1 || lookupChecks[0].Type != policy.CheckTypePluginBackend {
+		t.Fatalf("lookup backend checks = %#v, want one native plugin backend check", lookupChecks)
+	}
+}
+
 func TestCompilerAcceptsPluginEnvironmentCheckType(t *testing.T) {
 	cfg := policyCompilerTestConfig()
 	cfg.Auth.Policy.Policies = nil
@@ -807,6 +842,54 @@ func TestCompilerRegistersNativePluginPolicySurface(t *testing.T) {
 	assertNativePluginPolicySurface(t, snapshot)
 }
 
+func TestCompilerRejectsPluginCustomFactWithUnresolvedProducerCheck(t *testing.T) {
+	publishCompilerPluginState(t, loadCompilerPluginState(t))
+
+	cfg := nativePluginPolicySurfaceConfig()
+	cfg.Auth.Policy.Policies[0].If.Attribute = testPluginNamedAttribute
+
+	assertCompileErrorContains(
+		t,
+		cfg,
+		"requires the producing check in the active check plan",
+		"unresolved native plugin producer check error",
+	)
+}
+
+func TestCompilerRegistersPluginSubjectAttributesWithComponentIdentity(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{
+		{
+			Name:      "plugin_subject_example_auth_policy",
+			Type:      policy.CheckTypePluginSubjectSource,
+			Stage:     string(policy.StageSubjectAnalysis),
+			ConfigRef: "plugins.modules.example_auth.subject",
+		},
+	}
+	cfg.Auth.Policy.Policies = []config.PolicyRuleConfig{
+		{
+			Name:  "deny_native_subject_rejection",
+			Stage: string(policy.StageAuthDecision),
+			If: config.PolicyConditionConfig{
+				Attribute: "auth.plugin.subject.example_auth.policy.rejected",
+				Is:        true,
+			},
+			Then: config.PolicyThenConfig{
+				Decision:       string(policy.DecisionDeny),
+				ResponseMarker: policy.ResponseMarkerFail,
+			},
+		},
+	}
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	assertRegisteredPluginSubjectAttribute(t, snapshot, "auth.plugin.subject.example_auth.policy.rejected")
+	assertRegisteredPluginSubjectAttribute(t, snapshot, "auth.plugin.subject.example_auth.policy.error")
+}
+
 // nativePluginPolicySurfaceConfig builds a config that consumes registered plugin policy metadata.
 func nativePluginPolicySurfaceConfig() *config.FileSettings {
 	cfg := policyCompilerTestConfig()
@@ -842,6 +925,20 @@ func nativePluginPolicySurfaceConfig() *config.FileSettings {
 	return cfg
 }
 
+// assertRegisteredPluginSubjectAttribute verifies generated native subject attributes use the canonical producer.
+func assertRegisteredPluginSubjectAttribute(t *testing.T, snapshot *policyruntime.Snapshot, attributeID string) {
+	t.Helper()
+
+	definition, ok := snapshot.AttributeRegistry[attributeID]
+	if !ok {
+		t.Fatalf("generated plugin subject attribute %q missing", attributeID)
+	}
+
+	if definition.ProducerCheck != "plugin_subject_example_auth_policy" {
+		t.Fatalf("producer check = %q, want plugin_subject_example_auth_policy", definition.ProducerCheck)
+	}
+}
+
 // assertNativePluginPolicySurface verifies plugin attributes, checks, and effects are compiled.
 func assertNativePluginPolicySurface(t *testing.T, snapshot *policyruntime.Snapshot) {
 	t.Helper()
@@ -853,6 +950,10 @@ func assertNativePluginPolicySurface(t *testing.T, snapshot *policyruntime.Snaps
 
 	if definition.Source != policyregistry.SourcePlugin {
 		t.Fatalf("attribute source = %q, want plugin", definition.Source)
+	}
+
+	if !stringsContain(definition.ProducerTypes, policy.CheckTypePluginSubjectSource) {
+		t.Fatalf("producer types = %#v, want plugin subject source", definition.ProducerTypes)
 	}
 
 	checks := snapshot.StagePlans[policy.OperationAuthenticate][policy.StageSubjectAnalysis].Checks
@@ -1103,6 +1204,23 @@ func tlsTempfailPolicy() config.PolicyRuleConfig {
 	}
 }
 
+// backendAttributePolicy builds an auth-decision rule that consumes one backend fact.
+func backendAttributePolicy(name string, attribute string, operation policy.Operation) config.PolicyRuleConfig {
+	return config.PolicyRuleConfig{
+		Name:       name,
+		Stage:      string(policy.StageAuthDecision),
+		Operations: []string{string(operation)},
+		If: config.PolicyConditionConfig{
+			Attribute: attribute,
+			Is:        true,
+		},
+		Then: config.PolicyThenConfig{
+			Decision:       string(policy.DecisionDeny),
+			ResponseMarker: "auth.response.fail",
+		},
+	}
+}
+
 func loadCompilerPluginState(t *testing.T) *pluginloader.State {
 	t.Helper()
 
@@ -1205,6 +1323,18 @@ func (p compilerPolicyPlugin) Register(registrar pluginapi.Registrar) error {
 		},
 		Category: pluginapi.AttributeCategorySubject,
 		Type:     pluginapi.AttributeTypeBool,
+	}); err != nil {
+		return err
+	}
+
+	if err := registrar.RegisterPolicyAttribute(pluginapi.AttributeDefinition{
+		ID:            testPluginNamedAttribute,
+		Description:   "Native subject flag tied to an intentionally named host check.",
+		Stage:         pluginapi.PolicyStageSubjectAnalysis,
+		Operations:    []pluginapi.PolicyOperation{pluginapi.PolicyOperationAuthenticate},
+		ProducerCheck: testPluginPolicyModule + ".subject",
+		Category:      pluginapi.AttributeCategorySubject,
+		Type:          pluginapi.AttributeTypeBool,
 	}); err != nil {
 		return err
 	}

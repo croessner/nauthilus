@@ -684,6 +684,29 @@ func TestConfiguredAuthEnforceSelectsLuaSubjectSourceStatusMessage(t *testing.T)
 	}
 }
 
+func TestConfiguredAuthSubjectRejectPolicyDoesNotMatchBackendTempfailOnly(t *testing.T) {
+	policyReport := standardReport(
+		policy.OperationAuthenticate,
+		check("example_auth.passdb", policy.CheckTypePluginBackend, policy.StageAuthBackend, policy.CheckStatusError),
+		boolAttr(policy.AttributeBackendTempFail, policy.StageAuthBackend, policy.OperationAuthenticate, true, nil),
+	)
+	snapshot := enforceSnapshotWithCustomAuth(customPluginSubjectRejectPolicy())
+
+	got := EvaluateConfiguredAuth(context.Background(), snapshot, policyReport, CompareInput{
+		Mode:       "enforce",
+		Set:        policy.BuiltinDefaultSet,
+		Generation: 33,
+	})
+	if got.Final == nil || got.Final.PolicyName == "custom_example_auth_subject_deny" {
+		t.Fatalf("configured final = %#v, want no subject rejection policy match", got.Final)
+	}
+
+	standard := EvaluateStandardAuth(policyReport)
+	if standard.Final == nil || standard.Final.PolicyName != "standard_backend_tempfail" {
+		t.Fatalf("standard final = %#v, want backend tempfail", standard.Final)
+	}
+}
+
 func TestConfiguredAuthEnforceSelectsI18NMessageAndLiteralLanguage(t *testing.T) {
 	policyReport := standardReport(
 		policy.OperationAuthenticate,
@@ -1014,6 +1037,26 @@ func customLuaSubjectSourcePolicy() policyruntime.CompiledPolicy {
 				Fallback:    "Invalid login or password",
 				MaxLength:   256,
 			},
+		},
+	}
+}
+
+func customPluginSubjectRejectPolicy() policyruntime.CompiledPolicy {
+	return policyruntime.CompiledPolicy{
+		Name:       "custom_example_auth_subject_deny",
+		Stage:      policy.StageAuthDecision,
+		Operations: []policy.Operation{policy.OperationAuthenticate},
+		Root: policyruntime.CompiledExpr{
+			Kind:        policyruntime.ExprKindAttribute,
+			AttributeID: policy.PluginSubjectAttributeID("example_auth", "policy", "rejected"),
+			Operator:    "is",
+			Expected:    policyruntime.TypedValue{Value: true},
+		},
+		Then: policyruntime.DecisionPlan{
+			Decision:       policy.DecisionDeny,
+			OutcomeMarker:  "auth.outcome.custom_example_auth_subject",
+			FSMEventMarker: policy.FSMEventMarkerAuthDeny,
+			ResponseMarker: policy.ResponseMarkerFail,
 		},
 	}
 }

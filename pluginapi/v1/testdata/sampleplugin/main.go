@@ -85,8 +85,11 @@ func (samplePlugin) Register(registrar pluginapi.Registrar) error {
 		Description: "Sample plugin emitted a pre-auth fact.",
 		Stage:       pluginapi.PolicyStagePreAuth,
 		Operations:  []pluginapi.PolicyOperation{pluginapi.PolicyOperationAuthenticate},
-		Category:    pluginapi.AttributeCategoryEnvironment,
-		Type:        pluginapi.AttributeTypeBool,
+		ProducerTypes: []string{
+			"plugin.environment",
+		},
+		Category: pluginapi.AttributeCategoryEnvironment,
+		Type:     pluginapi.AttributeTypeBool,
 	}); err != nil {
 		return err
 	}
@@ -96,8 +99,11 @@ func (samplePlugin) Register(registrar pluginapi.Registrar) error {
 		Description: "Sample plugin backend authentication result.",
 		Stage:       pluginapi.PolicyStageAuthBackend,
 		Operations:  []pluginapi.PolicyOperation{pluginapi.PolicyOperationAuthenticate},
-		Category:    pluginapi.AttributeCategorySubject,
-		Type:        pluginapi.AttributeTypeBool,
+		ProducerTypes: []string{
+			"backend.plugin",
+		},
+		Category: pluginapi.AttributeCategorySubject,
+		Type:     pluginapi.AttributeTypeBool,
 	}); err != nil {
 		return err
 	}

@@ -593,13 +593,22 @@ func (c *DecisionContext) resolveCheck(selector CheckSelector) policyruntime.Com
 	return policyruntime.CompiledCheck{}
 }
 
+// checkMatchesSelector compares runtime selectors with compiled checks without broad fallbacks.
 func checkMatchesSelector(check policyruntime.CompiledCheck, selector CheckSelector) bool {
 	if check.Type != selector.CheckType {
 		return false
 	}
 
 	if selector.ConfigRef != "" {
-		return check.ConfigRef == selector.ConfigRef
+		if check.ConfigRef != selector.ConfigRef {
+			return false
+		}
+
+		if selector.CheckType == policy.CheckTypePluginSubjectSource && selector.Name != "" {
+			return check.Name == selector.Name
+		}
+
+		return true
 	}
 
 	return selector.Name == "" || check.Name == selector.Name

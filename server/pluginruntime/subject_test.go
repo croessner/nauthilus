@@ -18,6 +18,12 @@ import (
 const (
 	subjectBackendName           = "imap-a"
 	subjectBackendIP             = "192.0.2.10"
+	subjectExampleCheckConfigRef = pluginSubjectConfigRefPrefix + "example_auth.subject"
+	subjectExampleCheckName      = "plugin_subject_example_auth_policy"
+	subjectExampleModuleName     = "example_auth"
+	subjectExampleRejectedAttr   = "auth.plugin.subject.example_auth.policy.rejected"
+	subjectExampleErrorAttr      = "auth.plugin.subject.example_auth.policy.error"
+	subjectExampleSourceName     = "policy"
 	subjectTestName              = "subject"
 	subjectCheckConfigRef        = pluginSubjectConfigRefPrefix + backendTestModuleName + "." + subjectTestName
 	subjectCheckName             = "plugin_subject_customer_subject"
@@ -417,6 +423,95 @@ func TestSubjectSourceRejectionMapsToFailure(t *testing.T) {
 	if got != definitions.AuthResultFail || auth.Runtime.Authorized {
 		t.Fatalf("Analyze() = %v authorized=%t, want fail/false", got, auth.Runtime.Authorized)
 	}
+
+	report := auth.PolicyDecisionContext(auth.Request.HTTPClientContext).Report()
+	if value := report.Attributes[policy.PluginSubjectAttributeID(backendTestModuleName, subjectTestName, "rejected")].Value; value != true {
+		t.Fatalf("rejected attribute = %#v, want true", value)
+	}
+
+	check := report.Checks[subjectCheckName]
+	if !check.Matched || check.DecisionHint != policy.DecisionDeny {
+		t.Fatalf("subject check = %#v, want matched deny hint", check)
+	}
+}
+
+func TestSubjectSourceErrorMapsToTempfailWithoutRejection(t *testing.T) {
+	bridge := newSubjectTestBridge(t, &fakeSubjectSource{err: errors.New("subject source failed")})
+	auth := newSubjectTestAuth(t)
+
+	passDBResult := newSubjectTestPassDBResult()
+	defer core.PutPassDBResultToPool(passDBResult)
+
+	activateSubjectPolicySnapshot(t)
+
+	got, handled := bridge.Analyze(auth.Request.HTTPClientContext, auth.View(), passDBResult, definitions.AuthResultOK)
+	if !handled {
+		t.Fatal("Analyze() handled = false, want true")
+	}
+
+	if got != definitions.AuthResultTempFail || auth.Runtime.Authorized {
+		t.Fatalf("Analyze() = %v authorized=%t, want tempfail/false", got, auth.Runtime.Authorized)
+	}
+
+	report := auth.PolicyDecisionContext(auth.Request.HTTPClientContext).Report()
+	if value := report.Attributes[policy.PluginSubjectAttributeID(backendTestModuleName, subjectTestName, "rejected")].Value; value != false {
+		t.Fatalf("rejected attribute = %#v, want false", value)
+	}
+
+	if value := report.Attributes[policy.PluginSubjectAttributeID(backendTestModuleName, subjectTestName, "error")].Value; value != true {
+		t.Fatalf("error attribute = %#v, want true", value)
+	}
+
+	check := report.Checks[subjectCheckName]
+	if !check.Matched || check.DecisionHint != policy.DecisionTempFail {
+		t.Fatalf("subject check = %#v, want matched tempfail hint", check)
+	}
+}
+
+func TestSubjectSourceRecordsCanonicalGeneratedAttributes(t *testing.T) {
+	bridge := newSubjectTestBridgeForModule(t, subjectExampleModuleName, &fakeSubjectSource{
+		name: subjectExampleSourceName,
+		result: pluginapi.SubjectResult{
+			Rejected: true,
+		},
+		err: errors.New("subject source failed"),
+	})
+	auth := newSubjectTestAuth(t)
+
+	passDBResult := newSubjectTestPassDBResult()
+	defer core.PutPassDBResultToPool(passDBResult)
+
+	activatePluginPolicySnapshot(t, pluginPolicySnapshotSpec{
+		stage:         policy.StageSubjectAnalysis,
+		category:      policyregistry.AttributeCategorySubject,
+		attributeType: policyregistry.AttributeTypeBool,
+		checkName:     subjectExampleCheckName,
+		checkType:     policy.CheckTypePluginSubjectSource,
+		configRef:     subjectExampleCheckConfigRef,
+	})
+
+	got, handled := bridge.Analyze(auth.Request.HTTPClientContext, auth.View(), passDBResult, definitions.AuthResultOK)
+	if !handled {
+		t.Fatal("Analyze() handled = false, want true")
+	}
+
+	if got != definitions.AuthResultTempFail {
+		t.Fatalf("Analyze() = %v, want tempfail from subject source error", got)
+	}
+
+	report := auth.PolicyDecisionContext(auth.Request.HTTPClientContext).Report()
+	if value := report.Attributes[subjectExampleRejectedAttr].Value; value != false {
+		t.Fatalf("rejected attribute = %#v, want false when the subject source errors", value)
+	}
+
+	if value := report.Attributes[subjectExampleErrorAttr].Value; value != true {
+		t.Fatalf("error attribute = %#v, want true", value)
+	}
+
+	check := report.Checks[subjectExampleCheckName]
+	if check.Type != policy.CheckTypePluginSubjectSource || !check.Matched {
+		t.Fatalf("subject check = %#v, want matched plugin subject check", check)
+	}
 }
 
 func TestSubjectSourcePreservesExistingFailure(t *testing.T) {
@@ -531,10 +626,21 @@ func TestSubjectSourceWrongStagePolicyFactFailsSafely(t *testing.T) {
 func newSubjectTestBridge(t *testing.T, sources ...*fakeSubjectSource) *SubjectSourceBridge {
 	t.Helper()
 
+	return newSubjectTestBridgeForModule(t, backendTestModuleName, sources...)
+}
+
+// newSubjectTestBridgeForModule starts a subject bridge for one configured native plugin module.
+func newSubjectTestBridgeForModule(
+	t *testing.T,
+	moduleName string,
+	sources ...*fakeSubjectSource,
+) *SubjectSourceBridge {
+	t.Helper()
+
 	module := config.PluginModule{
-		Name: backendTestModuleName,
+		Name: moduleName,
 		Type: config.PluginModuleTypeGo,
-		Path: "/plugins/customer.so",
+		Path: "/plugins/" + moduleName + ".so",
 	}
 
 	runner := newStartedTestRunnerWithModule(t, &runtimePlugin{}, module, func(registrar pluginapi.Registrar) error {
@@ -597,6 +703,7 @@ func firstStringAttributeFromAuth(auth *core.AuthState, name string) string {
 type fakeSubjectSource struct {
 	lastRequest pluginapi.SubjectRequest
 	result      pluginapi.SubjectResult
+	err         error
 	after       []string
 	name        string
 }
@@ -617,7 +724,7 @@ func (s *fakeSubjectSource) Descriptor() pluginapi.SourceDescriptor {
 func (s *fakeSubjectSource) Evaluate(_ context.Context, request pluginapi.SubjectRequest) (pluginapi.SubjectResult, error) {
 	s.lastRequest = request
 
-	return s.result, nil
+	return s.result, s.err
 }
 
 // newCandidateSubjectTestBridge starts a subject bridge with a host-backed candidate source.
