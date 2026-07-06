@@ -3444,7 +3444,6 @@ func (a *AuthState) loadBruteForceHistories(ctx *gin.Context, accountName string
 
 func (a *AuthState) applyBackendResult(ctx *gin.Context, passDBResult *PassDBResult) {
 	if passDBResult.Authenticated {
-		a.storeAuthenticatedLocalCache(passDBResult)
 		a.Runtime.Authenticated = true
 		a.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
 
@@ -3474,6 +3473,19 @@ func (a *AuthState) runPostBackendActions(ctx *gin.Context, passDBResult *PassDB
 	}
 
 	return authResult
+}
+
+func (a *AuthState) processFinalAuthCache(ctx *gin.Context, passDBResult *PassDBResult, authResult definitions.AuthResult, accountName string, plan backendExecutionPlan) error {
+	cacheAuthenticated := passDBResult.Authenticated && authResult == definitions.AuthResultOK
+	if err := a.processPositivePasswordCache(ctx, cacheAuthenticated, accountName, plan); err != nil {
+		return err
+	}
+
+	if cacheAuthenticated {
+		a.storeAuthenticatedLocalCache(passDBResult)
+	}
+
+	return nil
 }
 
 // authenticateUser runs backend verification and then applies post-backend side effects.
@@ -3528,18 +3540,18 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, plan backendExecutionPlan
 		return definitions.AuthResultTempFail
 	}
 
-	if err = a.processPositivePasswordCache(ctx, passDBResult.Authenticated, accountName, plan); err != nil {
+	a.loadBruteForceHistories(ctx, accountName)
+	a.applyBackendResult(ctx, passDBResult)
+	authResult = a.runPostBackendActions(ctx, passDBResult)
+	aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
+
+	if err = a.processFinalAuthCache(ctx, passDBResult, authResult, accountName, plan); err != nil {
 		// tempfail during cache processing
 		a.Runtime.Authenticated = false
 		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
 
 		return definitions.AuthResultTempFail
 	}
-
-	a.loadBruteForceHistories(ctx, accountName)
-	a.applyBackendResult(ctx, passDBResult)
-	authResult = a.runPostBackendActions(ctx, passDBResult)
-	aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
 
 	return authResult
 }
