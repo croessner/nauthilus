@@ -3499,11 +3499,8 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, plan backendExecutionPlan
 		attribute.Bool("positive_cache_configured", plan.hasPositivePasswordCache),
 	)
 
-	ctx.Request = ctx.Request.WithContext(actx)
-	if a.Request.HTTPClientRequest != nil {
-		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(actx)
-	}
-
+	restoreRequestContext := a.scopeRequestContext(actx, ctx)
+	defer restoreRequestContext()
 	defer aspan.End()
 
 	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_authenticate_user_total", ctx.FullPath()); stop != nil {

@@ -274,6 +274,37 @@ func TestEffectBridgeEnqueuesPostActionUnderHostSupervision(t *testing.T) {
 	host.WaitWorkers()
 }
 
+func TestEffectBridgeDetachesPostActionFromCanceledRequestContext(t *testing.T) {
+	ctxErrs := make(chan error, 1)
+	target := &fakePostActionTarget{ctxErrs: ctxErrs}
+	host := NewHost()
+	bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+		return registrar.RegisterPostActionTarget(target)
+	}, WithHost(host))
+	t.Cleanup(host.WaitWorkers)
+
+	auth := newSubjectTestAuth(t)
+	reqCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	auth.Request.HTTPClientContext.Request = auth.Request.HTTPClientContext.Request.WithContext(reqCtx)
+	auth.Request.HTTPClientRequest = auth.Request.HTTPClientContext.Request
+
+	handled, ok := bridge.ExecutePolicyEffect(auth.Request.HTTPClientContext, auth.View(), report.EffectRequest{ID: effectPostActionQualified})
+	if !handled || !ok {
+		t.Fatalf("ExecutePolicyEffect() handled=%t ok=%t, want true/true", handled, ok)
+	}
+
+	select {
+	case err := <-ctxErrs:
+		if err != nil {
+			t.Fatalf("post-action context err = %v, want nil", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("post-action target was not invoked")
+	}
+}
+
 func TestEffectBridgeRecoversPostActionPanic(t *testing.T) {
 	observer := &recordingObserver{}
 	target := &fakePostActionTarget{called: make(chan struct{}), panicEnqueue: true}
@@ -342,6 +373,7 @@ func (t *fakeObligationTarget) Execute(_ context.Context, request pluginapi.Obli
 
 type fakePostActionTarget struct {
 	requests     chan pluginapi.PostActionRequest
+	ctxErrs      chan error
 	called       chan struct{}
 	panicEnqueue bool
 }
@@ -350,9 +382,18 @@ func (t *fakePostActionTarget) Name() string {
 	return effectPostActionName
 }
 
-func (t *fakePostActionTarget) Enqueue(_ context.Context, request pluginapi.PostActionRequest) (pluginapi.PostActionEnqueueResult, error) {
+func (t *fakePostActionTarget) Enqueue(ctx context.Context, request pluginapi.PostActionRequest) (pluginapi.PostActionEnqueueResult, error) {
 	if t.called != nil {
 		close(t.called)
+	}
+
+	if t.ctxErrs != nil {
+		select {
+		case <-ctx.Done():
+			t.ctxErrs <- ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+			t.ctxErrs <- ctx.Err()
+		}
 	}
 
 	if t.requests != nil {

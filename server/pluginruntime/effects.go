@@ -94,7 +94,8 @@ func (b *EffectBridge) enqueuePostAction(ctx *gin.Context, auth *core.AuthState,
 		return false
 	}
 
-	b.runner.host.Go(contextFromGin(ctx), effect.ID, func(workerCtx context.Context) error {
+	postActionCtx := context.WithoutCancel(contextFromGin(ctx))
+	b.runner.host.Go(postActionCtx, effect.ID, func(workerCtx context.Context) error {
 		_, err = b.runner.EnqueuePostAction(workerCtx, effect.ID, pluginapi.PostActionRequest{
 			Snapshot: request.snapshot,
 			Runtime:  request.runtime,

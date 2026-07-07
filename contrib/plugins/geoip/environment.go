@@ -36,6 +36,17 @@ const (
 	factCountryISO    = "plugin.environment.geoip.country_iso"
 	factCountryName   = "plugin.environment.geoip.country_name"
 	factMatched       = "plugin.environment.geoip.matched"
+	geoValueASN       = "asn"
+	geoValueASNCC     = "asn_country_iso"
+	geoValueAllocated = "asn_allocated"
+	geoValueCity      = "city_name"
+	geoValueCountry   = "country_iso"
+	geoValueName      = "country_name"
+	geoValueOrg       = "asn_org"
+	geoValuePrefix    = "asn_prefix"
+	geoValueRegistry  = "asn_registry"
+	geoValueStatus    = "asn_status"
+	logNamespaceGeoIP = "geoip"
 	policyProducer    = "plugin.environment"
 	runtimeKey        = "plugin.environment.geoip"
 )
@@ -195,22 +206,23 @@ func matchResult(record geoRecord) pluginapi.EnvironmentResult {
 		resultMatched: true,
 	}
 
-	addStringFact(&facts, values, factCountryISO, "country_iso", record.CountryISO)
-	addStringFact(&facts, values, factCountryName, "country_name", record.CountryName)
-	addStringFact(&facts, values, factCityName, "city_name", record.CityName)
-	addStringFact(&facts, values, factASNOrg, "asn_org", record.ASNOrg)
-	addStringFact(&facts, values, factASNPrefix, "asn_prefix", record.ASNPrefix)
-	addStringFact(&facts, values, factASNRegistry, "asn_registry", record.ASNRegistry)
-	addStringFact(&facts, values, factASNCountryISO, "asn_country_iso", record.ASNCountryISO)
-	addStringFact(&facts, values, factASNAllocated, "asn_allocated", record.ASNAllocated)
-	addStringFact(&facts, values, factASNStatus, "asn_status", record.ASNStatus)
+	addStringFact(&facts, values, factCountryISO, geoValueCountry, record.CountryISO)
+	addStringFact(&facts, values, factCountryName, geoValueName, record.CountryName)
+	addStringFact(&facts, values, factCityName, geoValueCity, record.CityName)
+	addStringFact(&facts, values, factASNOrg, geoValueOrg, record.ASNOrg)
+	addStringFact(&facts, values, factASNPrefix, geoValuePrefix, record.ASNPrefix)
+	addStringFact(&facts, values, factASNRegistry, geoValueRegistry, record.ASNRegistry)
+	addStringFact(&facts, values, factASNCountryISO, geoValueASNCC, record.ASNCountryISO)
+	addStringFact(&facts, values, factASNAllocated, geoValueAllocated, record.ASNAllocated)
+	addStringFact(&facts, values, factASNStatus, geoValueStatus, record.ASNStatus)
 
 	if record.ASN > 0 {
 		facts = append(facts, pluginapi.PolicyFact{Attribute: factASN, Value: record.ASN})
-		values["asn"] = record.ASN
+		values[geoValueASN] = record.ASN
 	}
 
 	return pluginapi.EnvironmentResult{
+		Logs:  publicGeoIPLogFields(record),
 		Facts: facts,
 		RuntimeDelta: pluginapi.RuntimeDelta{
 			Set: map[string]any{
@@ -228,6 +240,33 @@ func addStringFact(facts *[]pluginapi.PolicyFact, values map[string]any, attribu
 
 	*facts = append(*facts, pluginapi.PolicyFact{Attribute: attribute, Value: value})
 	values[key] = value
+}
+
+// publicGeoIPLogFields returns intentionally public GeoIP values for central request logging.
+func publicGeoIPLogFields(record geoRecord) []pluginapi.LogField {
+	fields := make([]pluginapi.LogField, 0, 3)
+	addPublicGeoIPLogField(&fields, geoValueCountry, record.CountryISO)
+	addPublicGeoIPLogField(&fields, geoValueASNCC, record.ASNCountryISO)
+
+	if record.ASN > 0 {
+		addPublicGeoIPLogField(&fields, geoValueASN, record.ASN)
+	}
+
+	return fields
+}
+
+// addPublicGeoIPLogField appends one validated public GeoIP log field.
+func addPublicGeoIPLogField(fields *[]pluginapi.LogField, key string, value any) {
+	if text, ok := value.(string); ok && text == "" {
+		return
+	}
+
+	field, err := pluginapi.PublicPolicyFactLogField(logNamespaceGeoIP, key, value)
+	if err != nil {
+		return
+	}
+
+	*fields = append(*fields, field)
 }
 
 // registerPolicyAttributes declares all facts emitted by the GeoIP environment source.

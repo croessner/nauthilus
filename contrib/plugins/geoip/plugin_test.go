@@ -110,6 +110,8 @@ func TestEnvironmentSourceEmitsExpectedFactsRuntimeDeltaMetricsAndTrace(t *testi
 	assertFact(t, result.Facts, factMatched, true)
 	assertFact(t, result.Facts, factCountryISO, testCountryDE)
 	assertFact(t, result.Facts, factASN, 64500)
+	assertLogField(t, result.Logs, "policy_fact_geoip_country_iso", testCountryDE)
+	assertLogField(t, result.Logs, "policy_fact_geoip_asn", 64500)
 
 	runtimeValue := result.RuntimeDelta.Set[runtimeKey].(map[string]any)
 	if runtimeValue["country_iso"] != testCountryDE || runtimeValue["asn"] != 64500 {
@@ -475,6 +477,8 @@ func TestEnvironmentSourceEmitsASNRegistryFacts(t *testing.T) {
 	assertFact(t, result.Facts, factASNRegistry, testRegistryARIN)
 	assertFact(t, result.Facts, factASNCountryISO, testCountryUS)
 	assertFact(t, result.Facts, factASNAllocated, "20240101")
+	assertLogField(t, result.Logs, "policy_fact_geoip_country_iso", testCountryDE)
+	assertLogField(t, result.Logs, "policy_fact_geoip_asn_country_iso", testCountryUS)
 }
 
 func TestASNRegistryRefreshPublishesSnapshot(t *testing.T) {
@@ -756,6 +760,23 @@ func assertFact(t *testing.T, facts []pluginapi.PolicyFact, attribute string, wa
 	}
 
 	t.Fatalf("fact %s missing in %#v", attribute, facts)
+}
+
+// assertLogField checks one public plugin log field by key.
+func assertLogField(t *testing.T, fields []pluginapi.LogField, key string, want any) {
+	t.Helper()
+
+	for _, field := range fields {
+		if field.Key == key {
+			if field.Value != want {
+				t.Fatalf("log field %s = %#v, want %#v", key, field.Value, want)
+			}
+
+			return
+		}
+	}
+
+	t.Fatalf("log field %s missing in %#v", key, fields)
 }
 
 // goCommandEnv returns the environment for nested Go build commands.
