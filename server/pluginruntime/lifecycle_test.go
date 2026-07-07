@@ -245,6 +245,8 @@ func newTestRunnerWithModule(
 	t.Helper()
 
 	registry := pluginregistry.NewRegistry()
+
+	var capabilities []pluginapi.Capability
 	if register != nil {
 		registrar := registry.NewRegistrar(module)
 		if err := register(registrar); err != nil {
@@ -254,14 +256,17 @@ func newTestRunnerWithModule(
 		if err := registrar.Commit(); err != nil {
 			t.Fatalf("commit test components: %v", err)
 		}
+
+		capabilities = registrar.Capabilities()
 	}
 
 	instances := []pluginloader.ModuleInstance{
 		{
-			Plugin:     plugin,
-			Module:     module,
-			ModuleName: module.Name,
-			Status:     pluginloader.ModuleStatusRegistered,
+			Plugin:       plugin,
+			Module:       module,
+			ModuleName:   module.Name,
+			Status:       pluginloader.ModuleStatusRegistered,
+			Capabilities: capabilities,
 		},
 	}
 	options = append(options, WithPluginConfig(&config.PluginsSection{Modules: []config.PluginModule{module}}))

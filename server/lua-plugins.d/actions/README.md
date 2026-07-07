@@ -71,6 +71,12 @@ The plugin runs automatically on each authentication attempt. You can optionally
 ### haveibeenpwnd.lua
 Checks user credentials against the "Have I Been Pwned" database to identify compromised passwords.
 
+Native replacement: configure the bundled Go plugin `haveibeenpwnd` and reference the native policy effect ID
+`haveibeenpwnd.post_action`. The native plugin keeps the k-anonymity HTTP, Redis gate, and cache behavior, but SMTP/LMTP
+mail notification is deferred. If notification mail is required, keep using the Lua action for now. There is also a
+current Lua gate mismatch to account for during migration: `init/init.lua` returns `send_email`, while this action checks
+`send_mail`.
+
 **Capabilities:**
 - Securely checks passwords against known data breaches
 - Uses k-anonymity to protect user privacy during checks
@@ -112,6 +118,11 @@ Configure the plugin through environment variables:
 
 ### clickhouse.lua
 Exports metrics about non-authenticated requests (including those without an existing account) to ClickHouse using batched inserts.
+
+Native replacement: configure the bundled Go plugin `clickhouse` and reference the native policy effect ID
+`clickhouse.post_action`. The native plugin writes the same JSONEachRow field names through host-managed HTTP, Redis, and
+cache facades. Native post-actions cannot apply runtime deltas, so the Lua `rt.post_clickhouse = true` marker is not
+mutated back into request runtime state.
 
 Capabilities:
 - Mirrors metrics/fields collected by telegram.lua, but does not require an existing account (account can be "n/a").
@@ -219,3 +230,4 @@ Batching details:
 
 Enabling the action:
 - Ensure your post-actions configuration invokes server/lua-plugins.d/actions/clickhouse.lua after authentication processing.
+- For the native replacement, use policy obligations with `id: clickhouse.post_action` instead of the Lua action dispatch.

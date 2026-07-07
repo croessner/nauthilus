@@ -1,0 +1,69 @@
+# Native Have I Been Pwned post-action plugin.
+#
+# The bundled Docker images provide:
+#   /usr/local/lib/nauthilus/plugins/haveibeenpwnd.so
+#   /usr/local/lib/nauthilus/plugins/haveibeenpwnd.so.minisig
+#
+# Reference the native effect ID `haveibeenpwnd.post_action` from policy
+# obligations after the module is loaded. The module must allow the `credentials`
+# capability because the password is read only through the request-scoped
+# credential provider.
+
+plugins:
+  verification_policy: signature_required
+  allowed_dirs:
+    - /usr/local/lib/nauthilus/plugins
+  trust:
+    signers:
+      - id: nauthilus-plugin-build-key-2026
+        format: minisign
+        public_key_file: /usr/share/nauthilus/plugin-keys/build-2026.pub
+  modules:
+    - name: haveibeenpwnd
+      type: go
+      path: /usr/local/lib/nauthilus/plugins/haveibeenpwnd.so
+      signature: minisign:/usr/local/lib/nauthilus/plugins/haveibeenpwnd.so.minisig
+      signer: nauthilus-plugin-build-key-2026
+      optional: false
+      allow_capabilities:
+        - credentials
+      config:
+        redis_pool: default
+        api_base_url: https://api.pwnedpasswords.com/range/
+        http_timeout: 10s
+        http_max_response_bytes: 1048576
+        cache_positive_ttl: 1h
+        cache_negative_ttl: 10m
+        redis_positive_ttl: 1h
+        redis_negative_ttl: 24h
+        gate_ttl: 5m
+        mail:
+          enabled: false
+          use_lmtp: false
+          server: localhost
+          port: 25
+          helo_name: localhost
+          tls: false
+          starttls: false
+          username: ""
+          password: ""
+          mail_from: postmaster@example.invalid
+          website: https://self-service.example.invalid/
+
+auth:
+  policy:
+    policies:
+      - name: check_compromised_password
+        stage: auth_decision
+        operations:
+          - authenticate
+        if:
+          attribute: auth.authenticated
+          is: true
+        then:
+          decision: permit
+          outcome_marker: auth.outcome.auth_success
+          fsm_event_marker: auth.fsm.event.auth_permit
+          response_marker: auth.response.ok
+          obligations:
+            - id: haveibeenpwnd.post_action

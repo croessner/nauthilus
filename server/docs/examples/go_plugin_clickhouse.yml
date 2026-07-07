@@ -1,0 +1,66 @@
+# Native ClickHouse post-action plugin.
+#
+# The bundled Docker images provide:
+#   /usr/local/lib/nauthilus/plugins/clickhouse.so
+#   /usr/local/lib/nauthilus/plugins/clickhouse.so.minisig
+#
+# Reference the native effect ID `clickhouse.post_action` from policy obligations
+# after the module is loaded.
+
+plugins:
+  verification_policy: signature_required
+  allowed_dirs:
+    - /usr/local/lib/nauthilus/plugins
+  trust:
+    signers:
+      - id: nauthilus-plugin-build-key-2026
+        format: minisign
+        public_key_file: /usr/share/nauthilus/plugin-keys/build-2026.pub
+  modules:
+    - name: clickhouse
+      type: go
+      path: /usr/local/lib/nauthilus/plugins/clickhouse.so
+      signature: minisign:/usr/local/lib/nauthilus/plugins/clickhouse.so.minisig
+      signer: nauthilus-plugin-build-key-2026
+      optional: false
+      config:
+        insert_url: http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow
+        user: ""
+        password: ""
+        batch_size: 100
+        cache_key: clickhouse:batch:logins
+        timeout: 10s
+        max_response_bytes: 8192
+        auth_dedup_ttl: 300s
+
+auth:
+  policy:
+    policies:
+      - name: enqueue_clickhouse_login_success
+        stage: auth_decision
+        operations:
+          - authenticate
+        if:
+          attribute: auth.authenticated
+          is: true
+        then:
+          decision: permit
+          outcome_marker: auth.outcome.auth_success
+          fsm_event_marker: auth.fsm.event.auth_permit
+          response_marker: auth.response.ok
+          obligations:
+            - id: clickhouse.post_action
+      - name: enqueue_clickhouse_login_failure
+        stage: auth_decision
+        operations:
+          - authenticate
+        if:
+          attribute: auth.authenticated
+          is: false
+        then:
+          decision: deny
+          outcome_marker: auth.outcome.auth_failure
+          fsm_event_marker: auth.fsm.event.auth_deny
+          response_marker: auth.response.fail
+          obligations:
+            - id: clickhouse.post_action

@@ -3,10 +3,12 @@
 FROM --platform=$TARGETPLATFORM golang:1.26-alpine3.24 AS builder
 
 ARG REQUIRE_PLUGIN_SIGNATURE=false
+ARG BUILD_TAGS=""
 ARG TARGETOS
 ARG TARGETARCH
 ARG NAUTHILUS_CONF_DIR=/etc/nauthilus
 ARG NAUTHILUS_PLUGINS_DIR=/usr/app/lua-plugins.d
+ARG BUNDLED_NATIVE_PLUGINS="geoip clickhouse haveibeenpwnd"
 
 WORKDIR /usr/app
 
@@ -17,22 +19,30 @@ ENV CGO_ENABLED=1
 ENV GOEXPERIMENT=runtimesecret
 RUN apk add --no-cache build-base git
 
-RUN cd server && go build -mod=vendor -tags="netgo" -trimpath -ldflags="-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=dev-dbg -X github.com/croessner/nauthilus/v3/server/config.nauthilusConfDir=${NAUTHILUS_CONF_DIR} -X github.com/croessner/nauthilus/v3/server/config.nauthilusPluginsDir=${NAUTHILUS_PLUGINS_DIR}" -o nauthilus .
-RUN mkdir -p /usr/local/lib/nauthilus/plugins && cd contrib/plugins/geoip && go build -mod=vendor -tags="netgo" -buildmode=plugin -trimpath -o /usr/local/lib/nauthilus/plugins/geoip.so .
+RUN cd server && go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -trimpath -ldflags="-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=dev-dbg -X github.com/croessner/nauthilus/v3/server/config.nauthilusConfDir=${NAUTHILUS_CONF_DIR} -X github.com/croessner/nauthilus/v3/server/config.nauthilusPluginsDir=${NAUTHILUS_PLUGINS_DIR}" -o nauthilus .
+RUN mkdir -p /usr/local/lib/nauthilus/plugins && \
+    for plugin in ${BUNDLED_NATIVE_PLUGINS}; do \
+      cd /usr/app/contrib/plugins/${plugin} && \
+      go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -buildmode=plugin -trimpath -o /usr/local/lib/nauthilus/plugins/${plugin}.so .; \
+    done
 
 RUN --mount=type=secret,id=plugin_signing_private_key \
     if [ "${REQUIRE_PLUGIN_SIGNATURE}" = "true" ]; then \
       test -s /run/secrets/plugin_signing_private_key && \
-      go run -mod=vendor ./server/pluginloader/cmd/nauthilus-plugin-sign sign \
-        --artifact /usr/local/lib/nauthilus/plugins/geoip.so \
-        --signature /usr/local/lib/nauthilus/plugins/geoip.so.minisig \
-        --private-key-file /run/secrets/plugin_signing_private_key; \
+      for plugin in ${BUNDLED_NATIVE_PLUGINS}; do \
+        go run -mod=vendor ./server/pluginloader/cmd/nauthilus-plugin-sign sign \
+          --artifact /usr/local/lib/nauthilus/plugins/${plugin}.so \
+          --signature /usr/local/lib/nauthilus/plugins/${plugin}.so.minisig \
+          --private-key-file /run/secrets/plugin_signing_private_key; \
+      done; \
     fi
 
-RUN chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so && \
-    if [ -f /usr/local/lib/nauthilus/plugins/geoip.so.minisig ]; then \
-      chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so.minisig; \
-    fi
+RUN for plugin in ${BUNDLED_NATIVE_PLUGINS}; do \
+      chmod 0644 /usr/local/lib/nauthilus/plugins/${plugin}.so; \
+      if [ -f /usr/local/lib/nauthilus/plugins/${plugin}.so.minisig ]; then \
+        chmod 0644 /usr/local/lib/nauthilus/plugins/${plugin}.so.minisig; \
+      fi; \
+    done
 
 RUN cd docker-healthcheck && go build -mod=vendor -trimpath -ldflags="-s" -o healthcheck .
 RUN cd contrib/smtp-server && go build -mod=vendor -trimpath -ldflags="-s" -o fakesmtp .

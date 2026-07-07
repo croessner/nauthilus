@@ -8,6 +8,7 @@ import (
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	pluginpassword "github.com/croessner/nauthilus/v3/pluginapi/v1/password"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 	"github.com/croessner/nauthilus/v3/server/policy"
@@ -94,19 +95,83 @@ func (b *EffectBridge) enqueuePostAction(ctx *gin.Context, auth *core.AuthState,
 		return false
 	}
 
+	moduleName, err := moduleNameFromQualified(effect.ID)
+	if err != nil {
+		return false
+	}
+
 	postActionCtx := context.WithoutCancel(contextFromGin(ctx))
+	credentials := NewCredentialProvider(postActionCtx, auth.GetPassword(), b.runner.ModuleCapabilities(moduleName))
+	passwordHash := postActionPasswordHash(auth)
+
 	b.runner.host.Go(postActionCtx, effect.ID, func(workerCtx context.Context) error {
 		_, err = b.runner.EnqueuePostAction(workerCtx, effect.ID, pluginapi.PostActionRequest{
-			Snapshot: request.snapshot,
-			Runtime:  request.runtime,
-			Args:     request.args,
-			Facts:    request.facts,
+			Snapshot:     request.snapshot,
+			Runtime:      request.runtime,
+			Credentials:  credentials,
+			PasswordHash: passwordHash,
+			Args:         request.args,
+			Facts:        request.facts,
 		})
 
 		return err
 	})
 
 	return true
+}
+
+// postActionPasswordHash returns the host-owned short password hash used by Lua post-actions.
+func postActionPasswordHash(auth *core.AuthState) string {
+	if auth == nil || auth.GetPassword().IsZero() {
+		return ""
+	}
+
+	var passwordHash string
+
+	auth.GetPassword().WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		options := postActionPasswordHashOptions(auth)
+		defer clear(options.Nonce)
+
+		passwordHash = pluginpassword.GenerateHashBytes(value, options)
+	})
+
+	return passwordHash
+}
+
+// postActionPasswordHashOptions derives host-owned hash inputs without using global util state.
+func postActionPasswordHashOptions(auth *core.AuthState) pluginpassword.HashOptions {
+	options := pluginpassword.HashOptions{}
+	if auth == nil {
+		return options
+	}
+
+	if auth.Env() != nil {
+		options.DevMode = auth.Env().GetDevMode()
+	}
+
+	cfg := auth.Cfg()
+	if cfg == nil {
+		return options
+	}
+
+	server := cfg.GetServer()
+	if server == nil || server.GetRedis() == nil {
+		return options
+	}
+
+	server.GetRedis().GetPasswordNonce().WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		options.Nonce = append([]byte(nil), value...)
+	})
+
+	return options
 }
 
 type pluginEffectRequest struct {

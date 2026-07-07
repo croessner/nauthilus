@@ -7,21 +7,22 @@ import (
 )
 
 const (
-	dockerfilePluginSignatureBuildArg        = "ARG REQUIRE_PLUGIN_SIGNATURE=false"
-	dockerfilePluginSigningSecretMount       = "--mount=type=secret,id=plugin_signing_private_key"
-	dockerfilePluginSigningSecretCheck       = "test -s /run/secrets/plugin_signing_private_key"
-	dockerfilePluginSigningCommand           = "./server/pluginloader/cmd/nauthilus-plugin-sign sign"
-	dockerfileGeoIPSignatureOutput           = "--signature /usr/local/lib/nauthilus/plugins/geoip.so.minisig"
-	dockerfileReadableGeoIPPluginArtifact    = "chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so"
-	dockerfileReadableGeoIPPluginSignature   = "chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so.minisig"
-	dockerfileSignatureEnforcementBuildArg   = "signature enforcement build arg"
-	dockerfileBuildKitSigningSecretMount     = "BuildKit signing secret mount"
-	dockerfileRequiredPluginSigningSecret    = "required secret check"
-	dockerfileRepoOwnedPluginSigner          = "repo-owned plugin signer"
-	dockerfileGeoIPSignatureOutputLabel      = "GeoIP signature output"
-	dockerfileRuntimeReadablePluginArtifact  = "runtime-readable GeoIP plugin artifact"
-	dockerfileRuntimeReadablePluginSignature = "runtime-readable GeoIP plugin signature"
+	dockerfilePluginSignatureBuildArg      = "ARG REQUIRE_PLUGIN_SIGNATURE=false"
+	dockerfilePluginBuildTagsArg           = `ARG BUILD_TAGS=""`
+	dockerfileBundledNativePluginsArg      = `ARG BUNDLED_NATIVE_PLUGINS="geoip clickhouse haveibeenpwnd"`
+	dockerfilePluginSigningSecretMount     = "--mount=type=secret,id=plugin_signing_private_key"
+	dockerfilePluginSigningSecretCheck     = "test -s /run/secrets/plugin_signing_private_key"
+	dockerfilePluginSigningCommand         = "./server/pluginloader/cmd/nauthilus-plugin-sign sign"
+	dockerfileSignatureEnforcementBuildArg = "signature enforcement build arg"
+	dockerfileBuildTagsArgLabel            = "plugin build tags arg"
+	dockerfileBundledNativePluginsArgLabel = "bundled native plugin list"
+	dockerfileBuildKitSigningSecretMount   = "BuildKit signing secret mount"
+	dockerfileRequiredPluginSigningSecret  = "required secret check"
+	dockerfileRepoOwnedPluginSigner        = "repo-owned plugin signer"
+	dockerfileRuntimePluginCopy            = `COPY --from=builder ["/usr/local/lib/nauthilus/plugins/", "/usr/local/lib/nauthilus/plugins/"]`
 )
+
+var dockerfileBundledNativePlugins = []string{"geoip", "clickhouse", "haveibeenpwnd"}
 
 // TestDockerfileDebugBuildsPluginsWithServerTags prevents debug image plugin ABI drift.
 func TestDockerfileDebugBuildsPluginsWithServerTags(t *testing.T) {
@@ -35,23 +36,24 @@ func TestDockerfileDebugBuildsPluginsWithServerTags(t *testing.T) {
 		t.Fatalf("Dockerfile.debug must opt into BuildKit syntax for secret-mounted plugin signing")
 	}
 
-	if !strings.Contains(dockerfile, `cd server && go build -mod=vendor -tags="netgo"`) {
-		t.Fatalf("Dockerfile.debug server build must use the netgo tag")
+	if !strings.Contains(dockerfile, `cd server && go build -mod=vendor -tags="netgo ${BUILD_TAGS}"`) {
+		t.Fatalf("Dockerfile.debug server build must use the netgo tag set")
 	}
 
-	pluginBuild := `cd contrib/plugins/geoip && go build -mod=vendor -tags="netgo" -buildmode=plugin`
-	if !strings.Contains(dockerfile, pluginBuild) {
-		t.Fatalf("Dockerfile.debug GeoIP plugin build must use the same netgo tag as the server build")
-	}
+	assertDockerfileBuildsBundledPlugins(t, dockerfile, "Dockerfile.debug", "go build -mod=vendor -tags=\"netgo ${BUILD_TAGS}\" -buildmode=plugin")
 
 	expectedSigningSnippets := map[string]string{
-		dockerfilePluginSignatureBuildArg:      dockerfileSignatureEnforcementBuildArg,
-		dockerfilePluginSigningSecretMount:     dockerfileBuildKitSigningSecretMount,
-		dockerfilePluginSigningSecretCheck:     dockerfileRequiredPluginSigningSecret,
-		dockerfilePluginSigningCommand:         dockerfileRepoOwnedPluginSigner,
-		dockerfileGeoIPSignatureOutput:         dockerfileGeoIPSignatureOutputLabel,
-		dockerfileReadableGeoIPPluginArtifact:  dockerfileRuntimeReadablePluginArtifact,
-		dockerfileReadableGeoIPPluginSignature: dockerfileRuntimeReadablePluginSignature,
+		dockerfilePluginSignatureBuildArg:                                   dockerfileSignatureEnforcementBuildArg,
+		dockerfilePluginBuildTagsArg:                                        dockerfileBuildTagsArgLabel,
+		dockerfileBundledNativePluginsArg:                                   dockerfileBundledNativePluginsArgLabel,
+		dockerfilePluginSigningSecretMount:                                  dockerfileBuildKitSigningSecretMount,
+		dockerfilePluginSigningSecretCheck:                                  dockerfileRequiredPluginSigningSecret,
+		dockerfilePluginSigningCommand:                                      dockerfileRepoOwnedPluginSigner,
+		"--artifact /usr/local/lib/nauthilus/plugins/${plugin}.so":          "bundled plugin artifact signing input",
+		"--signature /usr/local/lib/nauthilus/plugins/${plugin}.so.minisig": "bundled plugin signature output",
+		"chmod 0644 /usr/local/lib/nauthilus/plugins/${plugin}.so":          "runtime-readable bundled plugin artifact",
+		"chmod 0644 /usr/local/lib/nauthilus/plugins/${plugin}.so.minisig":  "runtime-readable bundled plugin signature",
+		dockerfileRuntimePluginCopy:                                         "runtime plugin copy",
 	}
 
 	for expected, label := range expectedSigningSnippets {
@@ -90,19 +92,18 @@ func TestDockerfileStableBuildsPluginCapableImage(t *testing.T) {
 		t.Fatalf("Dockerfile server build must use the netgo tag set")
 	}
 
-	pluginBuild := `cd contrib/plugins/geoip && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -buildmode=plugin`
-	if !strings.Contains(dockerfile, pluginBuild) {
-		t.Fatalf("Dockerfile GeoIP plugin build must use the same tag set as the server build")
-	}
+	assertDockerfileBuildsBundledPlugins(t, dockerfile, "Dockerfile", "GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -tags=\"netgo ${BUILD_TAGS}\" -buildmode=plugin")
 
 	expectedSigningSnippets := map[string]string{
-		dockerfilePluginSignatureBuildArg:      dockerfileSignatureEnforcementBuildArg,
-		dockerfilePluginSigningSecretMount:     dockerfileBuildKitSigningSecretMount,
-		dockerfilePluginSigningSecretCheck:     dockerfileRequiredPluginSigningSecret,
-		dockerfilePluginSigningCommand:         dockerfileRepoOwnedPluginSigner,
-		dockerfileGeoIPSignatureOutput:         dockerfileGeoIPSignatureOutputLabel,
-		dockerfileReadableGeoIPPluginArtifact:  dockerfileRuntimeReadablePluginArtifact,
-		dockerfileReadableGeoIPPluginSignature: dockerfileRuntimeReadablePluginSignature,
+		dockerfilePluginSignatureBuildArg:                                   dockerfileSignatureEnforcementBuildArg,
+		dockerfileBundledNativePluginsArg:                                   dockerfileBundledNativePluginsArgLabel,
+		dockerfilePluginSigningSecretMount:                                  dockerfileBuildKitSigningSecretMount,
+		dockerfilePluginSigningSecretCheck:                                  dockerfileRequiredPluginSigningSecret,
+		dockerfilePluginSigningCommand:                                      dockerfileRepoOwnedPluginSigner,
+		"--artifact /usr/local/lib/nauthilus/plugins/${plugin}.so":          "bundled plugin artifact signing input",
+		"--signature /usr/local/lib/nauthilus/plugins/${plugin}.so.minisig": "bundled plugin signature output",
+		"chmod 0644 /usr/local/lib/nauthilus/plugins/${plugin}.so":          "runtime-readable bundled plugin artifact",
+		"chmod 0644 /usr/local/lib/nauthilus/plugins/${plugin}.so.minisig":  "runtime-readable bundled plugin signature",
 	}
 
 	for expected, label := range expectedSigningSnippets {
@@ -111,7 +112,33 @@ func TestDockerfileStableBuildsPluginCapableImage(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(dockerfile, `COPY --from=builder ["/usr/local/lib/nauthilus/plugins/", "/usr/local/lib/nauthilus/plugins/"]`) {
+	if !strings.Contains(dockerfile, dockerfileRuntimePluginCopy) {
 		t.Fatalf("Dockerfile must copy native plugins into the release image")
+	}
+}
+
+// assertDockerfileBuildsBundledPlugins verifies the Dockerfile keeps every bundled plugin on the server tag set.
+func assertDockerfileBuildsBundledPlugins(t *testing.T, dockerfile string, dockerfileName string, buildCommand string) {
+	t.Helper()
+
+	if !strings.Contains(dockerfile, "for plugin in ${BUNDLED_NATIVE_PLUGINS}; do") {
+		t.Fatalf("%s must build bundled native plugins through the explicit plugin list", dockerfileName)
+	}
+
+	if !strings.Contains(dockerfile, buildCommand) {
+		t.Fatalf("%s plugin build must use the same tag set as the server build", dockerfileName)
+	}
+
+	for _, plugin := range dockerfileBundledNativePlugins {
+		expectedArtifact := "/usr/local/lib/nauthilus/plugins/" + plugin + ".so"
+		expectedSignature := expectedArtifact + ".minisig"
+
+		if !strings.Contains(dockerfile, plugin) {
+			t.Fatalf("%s must include bundled native plugin %q", dockerfileName, plugin)
+		}
+
+		if strings.Contains(dockerfile, expectedArtifact) || strings.Contains(dockerfile, expectedSignature) {
+			t.Fatalf("%s must not hard-code %s outside the bundled plugin loop", dockerfileName, plugin)
+		}
 	}
 }

@@ -951,9 +951,22 @@ stores the account under that selected field in the internal `PassDBResult`.
 
 Post-actions enqueue detached work after policy selection. Return as soon as work is accepted or skipped; use
 `Host.Go` for bounded background work when you need host panic logging. `PostActionRequest.Args` and
-`PostActionRequest.Facts` use the same policy decision context as obligations. Post-action results report enqueue
-status only; they do not emit additional policy facts into the already-selected decision and cannot mutate the client
-response.
+`PostActionRequest.Facts` use the same policy decision context as obligations. `PostActionRequest.Credentials` exposes
+request credentials only when the module requested and was granted the `credentials` capability, and
+`PostActionRequest.PasswordHash` carries the host-owned Lua-compatible short password hash when a password was present.
+Post-action results report enqueue status only; they do not emit additional policy facts into the already-selected
+decision and cannot mutate the client response.
+
+Bundled action replacements use the same policy effect registry:
+
+| Native effect ID | Replaces | Notes |
+| --- | --- | --- |
+| `clickhouse.post_action` | `server/lua-plugins.d/actions/clickhouse.lua` | Uses host HTTP, Redis, cache, metrics, tracing, and connection-target facades. It cannot apply the Lua `rt.post_clickhouse = true` runtime marker because post-action deltas are not host-applied. |
+| `haveibeenpwnd.post_action` | `server/lua-plugins.d/actions/haveibeenpwnd.lua` | Requires the `credentials` capability and uses the request-scoped credential provider. SMTP/LMTP notification is deferred; `mail.enabled: true` is rejected instead of silently ignored. |
+
+When porting a Lua action, keep the policy selection model unchanged: register a post-action target, configure the module,
+and reference `<module>.<component>` in policy obligations. Adding or removing the module, changing module identity, or
+replacing the `.so` artifact requires a process restart; config-only swaps can be implemented through `Reconfigure`.
 
 ```go
 type auditPostAction struct {
@@ -1178,7 +1191,7 @@ The following implementation notes are visible in the current codebase and shoul
 | Request snapshots | Auth and hook adapters populate safe request identity, listener/client metadata, IDP/MFA policy inputs, legacy TLS compatibility values, diagnostics, and outcome flags. | Treat snapshots as immutable and redacted. Use `CredentialProvider` and typed backend operations for secrets and credential-shaped values. |
 | Backend result patching | Subject sources can patch account, account field, auth flags, selected backend, and string attributes through `BackendResultPatch`. Full mutable backend-result replacement is not exposed. | Return explicit value patches and keep plugin-owned state inside the module instance. |
 | Response mutation | Subject sources and synchronous obligations can set or delete allowed response headers while the HTTP response is still mutable. Post-actions have no response mutation field. | Use result-bound `ResponseMutation`; do not expect async work, gRPC paths, already-written responses, or forbidden headers to mutate client output. |
-| Effect requests | Native obligations and post-actions receive policy-selected `Args` and validated Lua/native plugin `Facts` from the active decision context. | Keep effects policy-selected; use explicit logs for public output and register every fact before emission. |
+| Effect requests | Native obligations and post-actions receive policy-selected `Args` and validated Lua/native plugin `Facts` from the active decision context. | Keep effects policy-selected; use explicit logs for public output and register every fact before emission. Use `clickhouse.post_action` and `haveibeenpwnd.post_action` for the bundled native action replacements. |
 | Host-managed HTTP | `Host.HTTP(scope)` validates outbound requests, injects trace headers, applies context timeouts and response body limits, records `host_http_client_*` metrics, and logs only bounded fields. | Prefer this facade for Lua-style outbound HTTP migrations such as blocklist, GeoIP, HIBP, proxy backends, Telegram, and ClickHouse inserts when the value-oriented request shape is sufficient. |
 | Redis keys and scripts | `Host.Redis()` exposes command handles, key construction, and a named script registry with `NOSCRIPT` recovery. | Use host key helpers for prefixed, cluster-safe keys and upload scripts before running them by deterministic name. |
 | Redis named pools | Host-owned named Redis pools are intentionally not exposed. | Build module-owned clients only when the configured host Redis facade is insufficient; close and redact them yourself. |

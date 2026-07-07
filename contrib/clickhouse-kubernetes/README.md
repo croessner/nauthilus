@@ -1,6 +1,7 @@
 # Nauthilus ClickHouse setup for Kubernetes (namespace: auth)
 
-This contrib package helps you create the ClickHouse database and table required by the Lua action plugin `server/lua-plugins.d/actions/clickhouse.lua`.
+This contrib package helps you create the ClickHouse database and table required by the Lua action plugin
+`server/lua-plugins.d/actions/clickhouse.lua` and the native Go replacement `clickhouse.post_action`.
 
 It assumes a standalone ClickHouse server is running inside your Kubernetes cluster, typically exposed as a Service named `clickhouse` in the `auth` namespace.
 
@@ -72,6 +73,46 @@ Notes:
 - Some ClickHouse Services expose only HTTP (8123) and not the native TCP (9000). In that case, set `CLICKHOUSE_PROTOCOL=http` or rely on the built-in fallback to HTTP.
 - Ensure the `CLICKHOUSE_HOST` matches your actual Service name (for operators it might not be simply `clickhouse`).
 - You can change the namespace fields in the YAML to match where your ClickHouse runs.
+
+## Configure Nauthilus native plugin
+
+The bundled Docker images include `/usr/local/lib/nauthilus/plugins/clickhouse.so` and, when signature enforcement is
+enabled, `/usr/local/lib/nauthilus/plugins/clickhouse.so.minisig`. Configure the module under `plugins.modules[]` and
+reference the native policy effect ID `clickhouse.post_action`.
+
+```yaml
+plugins:
+  verification_policy: signature_required
+  allowed_dirs:
+    - /usr/local/lib/nauthilus/plugins
+  trust:
+    signers:
+      - id: nauthilus-plugin-build-key-2026
+        format: minisign
+        public_key_file: /usr/share/nauthilus/plugin-keys/build-2026.pub
+  modules:
+    - name: clickhouse
+      type: go
+      path: /usr/local/lib/nauthilus/plugins/clickhouse.so
+      signature: minisign:/usr/local/lib/nauthilus/plugins/clickhouse.so.minisig
+      signer: nauthilus-plugin-build-key-2026
+      config:
+        insert_url: http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow
+        user: ""
+        password: ""
+        batch_size: 100
+        cache_key: clickhouse:batch:logins
+        timeout: 10s
+        max_response_bytes: 8192
+        auth_dedup_ttl: 300s
+```
+
+The native plugin uses host-managed HTTP, Redis, process cache, metrics, traces, and connection-target observability. It
+does not implement the optional Lua `clickhouse-query.lua` read-only hook, and native post-actions cannot apply the Lua
+`rt.post_clickhouse = true` runtime marker.
+
+Adding or removing the module, changing the module name, or replacing the `.so` artifact requires a Nauthilus process
+restart. Config-only changes inside `plugins.modules[].config` can be applied by SIGHUP when validation succeeds.
 
 ## Configure Nauthilus Lua plugin
 

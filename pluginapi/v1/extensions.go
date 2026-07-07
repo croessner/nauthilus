@@ -136,10 +136,12 @@ type ObligationTarget interface {
 
 // PostActionRequest is passed to asynchronous post-action enqueue targets.
 type PostActionRequest struct {
-	Snapshot RequestSnapshot
-	Runtime  RuntimeContext
-	Args     ArgsView
-	Facts    []PolicyFact
+	Snapshot     RequestSnapshot
+	Runtime      RuntimeContext
+	Credentials  CredentialProvider
+	PasswordHash string
+	Args         ArgsView
+	Facts        []PolicyFact
 }
 
 // PostActionEnqueueResult is returned after detached post-action work is accepted or skipped.

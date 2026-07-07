@@ -64,12 +64,23 @@ signature file, signer reference, signer format, signer key ID, and trusted sign
 `public_key_file`. Minisign signatures also verify the trusted-comment signature. Signatures are operational provenance
 checks for trusted in-process code; they do not sandbox plugin behavior.
 
-## Release Image Signing
+## Bundled Plugins And Release Image Signing
 
-The stable Docker build can sign bundled native plugins during the image build. The build uses the repo-owned
+Stable and debug Docker images build these native plugins with the same Go toolchain, module source tree, and build tags
+as the server binary:
+
+- `geoip.so`
+- `clickhouse.so`
+- `haveibeenpwnd.so`
+
+The artifacts are copied into `/usr/local/lib/nauthilus/plugins/` and are world-readable by the unprivileged runtime
+user. When `REQUIRE_PLUGIN_SIGNATURE=true`, every bundled plugin is signed during the image build and the detached
+`.minisig` files are copied beside the `.so` artifacts with the same runtime-readable mode.
+
+The stable and debug Docker builds can sign bundled native plugins during the image build. The build uses the repo-owned
 `nauthilus-plugin-sign` helper and a BuildKit secret so the Ed25519 signing seed is not written into image layers. Stable
-release builds set `REQUIRE_PLUGIN_SIGNATURE=true`; when that flag is enabled, the Docker build fails unless the
-`NAUTHILUS_PLUGIN_SIGNING_KEY_B64` GitHub Actions secret is available.
+release and features/debug image builds set `REQUIRE_PLUGIN_SIGNATURE=true`; when that flag is enabled, the Docker build
+fails unless the `NAUTHILUS_PLUGIN_SIGNING_KEY_B64` GitHub Actions secret is available.
 
 Generate the CI signing material once:
 
@@ -99,6 +110,9 @@ plugins:
       signature: minisign:/usr/local/lib/nauthilus/plugins/geoip.so.minisig
       signer: nauthilus-plugin-build-key-2026
 ```
+
+Repeat the same module signature shape for bundled action plugins, replacing the module name and artifact path with
+`clickhouse` or `haveibeenpwnd`.
 
 For multi-architecture images, prefer signature verification for bundled plugins instead of one static SHA-256 checksum:
 Go plugin artifacts are architecture-specific, so their checksums differ by platform while the trusted signer stays the
@@ -218,3 +232,42 @@ GeoIP plugin config highlights:
 - `asn_registry.timeout`: optional per-feed fetch timeout, default `30s`.
 - `asn_registry.source_urls`: optional HTTP(S) delegated stats feeds; when omitted with registry refresh enabled, the
   plugin uses AfriNIC, APNIC, ARIN, LACNIC, and RIPE NCC extended delegated stats feeds.
+
+## Native Action Plugins
+
+Bundled native action plugins register policy effect IDs through the normal native plugin registry. Use these IDs in
+policy obligations after the module is configured and loaded:
+
+| Lua action | Native module | Native effect ID | Example |
+| --- | --- | --- | --- |
+| `actions/clickhouse.lua` | `clickhouse` | `clickhouse.post_action` | `server/docs/examples/go_plugin_clickhouse.yml` |
+| `actions/haveibeenpwnd.lua` | `haveibeenpwnd` | `haveibeenpwnd.post_action` | `server/docs/examples/go_plugin_haveibeenpwnd.yml` |
+
+Config highlights:
+
+- ClickHouse uses `insert_url`, optional `user` and `password`, `batch_size`, `cache_key`, `timeout`,
+  `max_response_bytes`, and `auth_dedup_ttl`.
+- Have I Been Pwned uses `api_base_url`, HTTP/cache/Redis TTL settings, `redis_pool` for Lua config parity, and a `mail`
+  block that must keep `enabled: false` until native mail support exists.
+- HIBP requires `allow_capabilities: [credentials]` so it can read the request password through the request-scoped
+  credential provider.
+
+Observability:
+
+- Both action plugins use `Host.HTTP(scope)` for outbound HTTP and `Host.ConnectionTargets(scope)` to register redacted
+  remote endpoints.
+- Metrics and spans use bounded result labels only; they do not expose usernames, client IPs, account names, passwords,
+  SQL query text, raw response bodies, bearer tokens, or raw transport errors.
+
+Migration notes:
+
+- Replace policy effects that enqueue `actions/clickhouse.lua` with the native `clickhouse.post_action` effect after the
+  `clickhouse` module is configured.
+- Replace policy effects that enqueue `actions/haveibeenpwnd.lua` with `haveibeenpwnd.post_action` after the
+  `haveibeenpwnd` module is configured and the `credentials` capability is allowed.
+- Adding or removing either module, changing the module name, or replacing the `.so` artifact requires a process restart.
+  Config-only changes inside `plugins.modules[].config` can be applied by SIGHUP when validation succeeds.
+- Native post-actions cannot mutate already-selected runtime state. The ClickHouse plugin therefore does not apply the
+  Lua `rt.post_clickhouse = true` marker, and the HIBP plugin cannot set `rt.action_haveibeenpwnd = true` today.
+- HIBP SMTP/LMTP notification is intentionally deferred. The current native plugin rejects `mail.enabled: true`; keep the
+  Lua action when mail notifications are required.

@@ -107,6 +107,62 @@ func TestEffectBridgePassesArgsAndFactsToPostAction(t *testing.T) {
 	host.WaitWorkers()
 }
 
+func TestEffectBridgePassesCredentialsToPostAction(t *testing.T) {
+	requests := make(chan pluginapi.PostActionRequest, 1)
+	target := &fakePostActionTarget{requests: requests}
+	host := NewHost()
+	module := initialRuntimeModule(nil)
+	module.AllowCapabilities = []pluginapi.Capability{pluginapi.CapabilityCredentials}
+	runner := newStartedTestRunnerWithModule(t, &runtimePlugin{}, module, func(registrar pluginapi.Registrar) error {
+		if err := registrar.RequireCapability(pluginapi.CapabilityCredentials); err != nil {
+			return err
+		}
+
+		return registrar.RegisterPostActionTarget(target)
+	}, WithHost(host))
+	bridge := NewEffectBridge(runner)
+	auth := newSubjectTestAuth(t)
+
+	handled, ok := bridge.ExecutePolicyEffect(auth.Request.HTTPClientContext, auth.View(), report.EffectRequest{ID: effectPostActionQualified})
+	if !handled || !ok {
+		t.Fatalf("ExecutePolicyEffect() handled=%t ok=%t, want true/true", handled, ok)
+	}
+
+	select {
+	case request := <-requests:
+		if request.PasswordHash == "" {
+			t.Fatal("post-action password hash is empty")
+		}
+
+		if request.PasswordHash != postActionPasswordHash(auth) {
+			t.Fatalf("post-action password hash = %q, want host-owned hash %q", request.PasswordHash, postActionPasswordHash(auth))
+		}
+
+		credential, ok := request.Credentials.Password(context.Background())
+		if !ok {
+			t.Fatal("post-action credential provider did not expose the request password")
+		}
+
+		var got string
+
+		if err := credential.WithBytes(func(value []byte) error {
+			got = string(value)
+
+			return nil
+		}); err != nil {
+			t.Fatalf("credential callback error = %v", err)
+		}
+
+		if got != backendTestPassword {
+			t.Fatalf("post-action password = %q, want %q", got, backendTestPassword)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("post-action target was not invoked")
+	}
+
+	host.WaitWorkers()
+}
+
 func TestEffectBridgeAppliesObligationStatusLogsAndFacts(t *testing.T) {
 	target := &fakeObligationTarget{
 		result: pluginapi.ObligationResult{

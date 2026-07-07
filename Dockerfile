@@ -8,6 +8,7 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG NAUTHILUS_CONF_DIR=/etc/nauthilus
 ARG NAUTHILUS_PLUGINS_DIR=/usr/app/lua-plugins.d
+ARG BUNDLED_NATIVE_PLUGINS="geoip clickhouse haveibeenpwnd"
 
 WORKDIR /build
 
@@ -27,21 +28,28 @@ RUN GIT_TAG=$(git describe --tags --abbrev=0) && echo "tag="${GIT_TAG}"" && \
     upx --best --lzma nauthilus
 
 RUN mkdir -p /usr/local/lib/nauthilus/plugins && \
-    cd contrib/plugins/geoip && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -buildmode=plugin -trimpath -o /usr/local/lib/nauthilus/plugins/geoip.so .
+    for plugin in ${BUNDLED_NATIVE_PLUGINS}; do \
+      cd /build/contrib/plugins/${plugin} && \
+      GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -buildmode=plugin -trimpath -o /usr/local/lib/nauthilus/plugins/${plugin}.so .; \
+    done
 
 RUN --mount=type=secret,id=plugin_signing_private_key \
     if [ "${REQUIRE_PLUGIN_SIGNATURE}" = "true" ]; then \
       test -s /run/secrets/plugin_signing_private_key && \
-      go run -mod=vendor ./server/pluginloader/cmd/nauthilus-plugin-sign sign \
-        --artifact /usr/local/lib/nauthilus/plugins/geoip.so \
-        --signature /usr/local/lib/nauthilus/plugins/geoip.so.minisig \
-        --private-key-file /run/secrets/plugin_signing_private_key; \
+      for plugin in ${BUNDLED_NATIVE_PLUGINS}; do \
+        go run -mod=vendor ./server/pluginloader/cmd/nauthilus-plugin-sign sign \
+          --artifact /usr/local/lib/nauthilus/plugins/${plugin}.so \
+          --signature /usr/local/lib/nauthilus/plugins/${plugin}.so.minisig \
+          --private-key-file /run/secrets/plugin_signing_private_key; \
+      done; \
     fi
 
-RUN chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so && \
-    if [ -f /usr/local/lib/nauthilus/plugins/geoip.so.minisig ]; then \
-      chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so.minisig; \
-    fi
+RUN for plugin in ${BUNDLED_NATIVE_PLUGINS}; do \
+      chmod 0644 /usr/local/lib/nauthilus/plugins/${plugin}.so; \
+      if [ -f /usr/local/lib/nauthilus/plugins/${plugin}.so.minisig ]; then \
+        chmod 0644 /usr/local/lib/nauthilus/plugins/${plugin}.so.minisig; \
+      fi; \
+    done
 
 RUN cd client && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o nauthilus-client . && upx --best --lzma nauthilus-client
 RUN cd contrib/oidctestclient && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o oidctestclient . && upx --best --lzma oidctestclient
