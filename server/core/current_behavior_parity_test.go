@@ -220,7 +220,6 @@ func TestCurrentBehaviorParityBruteForceDirectBlock(t *testing.T) {
 		SetVal([]any{"3", int64(1), "4"})
 	mock.ExpectScriptLoad(rediscli.LuaScripts["IncrementAndExpire"]).SetVal("sha-current-burst")
 	mock.Regexp().ExpectEvalSha("sha-current-burst", []string{".*"}, ".*").SetVal(int64(2))
-	mock.Regexp().ExpectGet(".*").RedisNil()
 	mock.Regexp().ExpectSCard(".*").SetVal(0)
 
 	if !auth.CheckBruteForce(ctx) {

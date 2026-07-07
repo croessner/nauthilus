@@ -262,7 +262,7 @@ func (bm *bucketManagerImpl) tolerate() tolerate.Tolerate {
 	return bm.deps.Tolerate
 }
 
-// sgBurst entdoppelt parallele identische Burst-Gate-Anfragen (gleicher Burst-Key) ohne Logikänderung.
+// sgBurst deduplicates parallel identical burst-gate requests for the same burst key.
 var sgBurst singleflight.Group
 
 // GetLoginAttempts retrieves the current number of login attempts made for the given bucket manager instance.
@@ -550,59 +550,258 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 
 	tr := monittrace.New("nauthilus/bruteforce")
 
-	_, sp := tr.Start(bm.ctx, "bruteforce.load_all_password_histories",
+	ctx, sp := tr.Start(bm.ctx, "bruteforce.load_all_password_histories",
 		attribute.String("username", bm.username),
 		attribute.String("client_ip", bm.clientIP),
 	)
 	defer sp.End()
 
+	oldCtx := bm.ctx
+
+	bm.ctx = ctx
+	defer func() { bm.ctx = oldCtx }()
+
+	readHandle := bm.redis().GetReadHandle()
+	plan := bm.preparePasswordHistoryLoad(readHandle, false)
+
 	// 1) Load account-scoped password history metrics
-	bm.passwordsAccountSeen = bm.loadPasswordHistoryCount(true)
+	bm.passwordsAccountSeen = plan.loadPasswordHistoryCount(true)
 
-	// 2) Read total counters (account-scoped and IP-only) for observability and test expectations
-	//    Even if not strictly required for logic, these counters are useful and inexpensive.
-	bm.loadPasswordHistoryTotalKey(true)
-	bm.loadPasswordHistoryTotalKey(false)
+	// 2) Check if current password was already seen for this account
+	plan.loadCurrentPasswordHistoryMembership()
 
-	// 3) Check if current password was already seen for this account
-	if key := bm.getPasswordHistoryRedisSetKey(true); key != "" && !bm.password.IsZero() {
-		bm.loadCurrentPasswordHistoryMembership(key)
-	}
-
-	// 4) Load IP-only (overall) password history metrics
-	bm.passwordsTotalSeen = bm.loadPasswordHistoryCount(false)
+	// 3) Load IP-only (overall) password history metrics
+	bm.passwordsTotalSeen = plan.loadPasswordHistoryCount(false)
 }
 
-// loadPasswordHistoryTotalKey reads a total counter for observability and test expectations.
-func (bm *bucketManagerImpl) loadPasswordHistoryTotalKey(isAccountScoped bool) {
-	key := bm.getPasswordHistoryTotalRedisKey(isAccountScoped)
-	if key == "" {
-		return
+// passwordHistoryLoadPlan carries request-local password-history keys and read dependencies.
+type passwordHistoryLoadPlan struct {
+	bm         *bucketManagerImpl
+	readHandle redis.UniversalClient
+
+	accountSetKey   string
+	accountTotalKey string
+	ipSetKey        string
+	ipTotalKey      string
+	passwordHash    string
+	accountSkipMsg  string
+	hashComputed    bool
+}
+
+// preparePasswordHistoryLoad builds password-history Redis keys for one load invocation.
+func (bm *bucketManagerImpl) preparePasswordHistoryLoad(readHandle redis.UniversalClient, includeLegacyTotalKeys bool) passwordHistoryLoadPlan {
+	scopedIP := bm.scopedPasswordHistoryIP()
+	account := bm.passwordHistoryAccount()
+	prefix := bm.cfg().GetServer().GetRedis().GetPrefix()
+	plan := passwordHistoryLoadPlan{
+		bm:             bm,
+		readHandle:     readHandle,
+		accountSkipMsg: account.skipMsg,
+		ipSetKey:       passwordHistoryRedisKey(prefix, definitions.RedisPwHashKey, "", scopedIP),
 	}
 
-	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+	if account.name != "" {
+		plan.accountSetKey = passwordHistoryRedisKey(prefix, definitions.RedisPwHashKey, account.name, scopedIP)
+	}
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
-	defer cancel()
+	if includeLegacyTotalKeys {
+		plan.ipTotalKey = passwordHistoryRedisKey(prefix, definitions.RedisPwHistTotalKey, "", scopedIP)
+		if account.name != "" {
+			plan.accountTotalKey = passwordHistoryRedisKey(prefix, definitions.RedisPwHistTotalKey, account.name, scopedIP)
+		}
+	}
 
-	_, _ = bm.redis().GetReadHandle().Get(dCtx, key).Result()
+	return plan
+}
+
+// passwordHistoryAccount stores the resolved account name or the skip log message for account-scoped reads.
+type passwordHistoryAccount struct {
+	name    string
+	skipMsg string
+}
+
+// passwordHistoryAccount resolves account-scoped password-history state without emitting duplicate logs.
+func (bm *bucketManagerImpl) passwordHistoryAccount() passwordHistoryAccount {
+	if bm.accountName != "" {
+		return passwordHistoryAccount{name: bm.accountName}
+	}
+
+	if bm.cfg().GetBruteForce().GetPWHistKnownAccountsOnlyOnAlreadyTriggered() && bm.alreadyTriggered {
+		return passwordHistoryAccount{skipMsg: "Skipping account-scoped PW_HIST for unknown account on cached block"}
+	}
+
+	return passwordHistoryAccount{skipMsg: "Skipping account-scoped history: no accountName"}
+}
+
+// scopedPasswordHistoryIP returns the RWP-scoped client IP used in password-history keys.
+func (bm *bucketManagerImpl) scopedPasswordHistoryIP() string {
+	scoped := bm.clientIP
+	if bm.scoper != nil {
+		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
+	}
+
+	return scoped
+}
+
+// passwordHistoryRedisKey formats the Redis key used by password-history sets and counters.
+func passwordHistoryRedisKey(prefix string, baseKey string, accountName string, scopedIP string) string {
+	if accountName == "" {
+		var sb strings.Builder
+
+		sb.WriteString(prefix)
+		sb.WriteString(baseKey)
+		sb.WriteString(":{")
+		sb.WriteString(scopedIP)
+		sb.WriteString("}:")
+		sb.WriteString(scopedIP)
+
+		return sb.String()
+	}
+
+	var sbHashTag strings.Builder
+
+	sbHashTag.WriteString(accountName)
+	sbHashTag.WriteByte(':')
+	sbHashTag.WriteString(scopedIP)
+
+	hashTag := sbHashTag.String()
+
+	var sb strings.Builder
+
+	sb.WriteString(prefix)
+	sb.WriteString(baseKey)
+	sb.WriteString(":{")
+	sb.WriteString(hashTag)
+	sb.WriteString("}:")
+	sb.WriteString(accountName)
+	sb.WriteByte(':')
+	sb.WriteString(scopedIP)
+
+	return sb.String()
+}
+
+// setKey returns the prepared Redis set key for account-scoped or IP-scoped history.
+func (p *passwordHistoryLoadPlan) setKey(isAccountScoped bool) string {
+	if isAccountScoped {
+		return p.accountSetKey
+	}
+
+	return p.ipSetKey
+}
+
+// totalKey returns the prepared Redis total counter key for account-scoped or IP-scoped history.
+func (p *passwordHistoryLoadPlan) totalKey(isAccountScoped bool) string {
+	if isAccountScoped {
+		return p.accountTotalKey
+	}
+
+	return p.ipTotalKey
 }
 
 // loadCurrentPasswordHistoryMembership marks login attempts when the current hash was already seen.
-func (bm *bucketManagerImpl) loadCurrentPasswordHistoryMembership(key string) {
-	passwordHash := bm.currentPasswordHash()
+func (p *passwordHistoryLoadPlan) loadCurrentPasswordHistoryMembership() {
+	key := p.setKey(true)
+	p.logSetKey(key, true)
+
+	if key == "" || p.bm.password.IsZero() {
+		return
+	}
+
+	passwordHash := p.currentPasswordHash()
 	if passwordHash == "" {
 		return
 	}
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(p.bm.ctx, p.bm.cfg())
 	defer cancel()
 
-	if isMember, err := bm.redis().GetReadHandle().SIsMember(dCtx, key, passwordHash).Result(); err == nil && isMember {
-		bm.loginAttempts = 1
+	if isMember, err := p.readHandle.SIsMember(dCtx, key, passwordHash).Result(); err == nil && isMember {
+		p.bm.loginAttempts = 1
 	}
+}
+
+// currentPasswordHash returns the cached normalized password hash for this load invocation.
+func (p *passwordHistoryLoadPlan) currentPasswordHash() string {
+	if p.hashComputed {
+		return p.passwordHash
+	}
+
+	p.hashComputed = true
+	p.passwordHash = p.bm.currentPasswordHash()
+
+	return p.passwordHash
+}
+
+// loadPasswordHistoryCount reads the prepared password-history set cardinality.
+func (p *passwordHistoryLoadPlan) loadPasswordHistoryCount(isAccountScoped bool) uint {
+	key := p.setKey(isAccountScoped)
+	p.logSetKey(key, isAccountScoped)
+
+	if key == "" {
+		return 0
+	}
+
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(p.bm.ctx, p.bm.cfg())
+	defer cancel()
+
+	if count, err := p.readHandle.SCard(dCtx, key).Result(); err == nil {
+		return uint(count)
+	}
+
+	return 0
+}
+
+// logSetKey preserves password-history set-key debug logging for each logical read.
+func (p *passwordHistoryLoadPlan) logSetKey(key string, isAccountScoped bool) {
+	if p.logMissingAccount(isAccountScoped, key) {
+		return
+	}
+
+	util.DebugModuleWithCfg(
+		p.bm.ctx,
+		p.bm.cfg(),
+		p.bm.logger(),
+		definitions.DbgBf,
+		definitions.LogKeyGUID, p.bm.guid,
+		definitions.LogKeyClientIP, p.bm.clientIP,
+		"key", key,
+	)
+}
+
+// logTotalKey preserves password-history total-key debug logging for each logical read.
+func (p *passwordHistoryLoadPlan) logTotalKey(key string, isAccountScoped bool) {
+	if p.logMissingAccount(isAccountScoped, key) {
+		return
+	}
+
+	util.DebugModuleWithCfg(
+		p.bm.ctx,
+		p.bm.cfg(),
+		p.bm.logger(),
+		definitions.DbgBf,
+		definitions.LogKeyGUID, p.bm.guid,
+		"total_key", key,
+	)
+}
+
+// logMissingAccount emits the historical skip debug line for account-scoped reads without a resolved account.
+func (p *passwordHistoryLoadPlan) logMissingAccount(isAccountScoped bool, key string) bool {
+	if !isAccountScoped || key != "" {
+		return false
+	}
+
+	if p.accountSkipMsg != "" {
+		level.Debug(p.bm.logger()).Log(
+			definitions.LogKeyGUID, p.bm.guid,
+			definitions.LogKeyMsg, p.accountSkipMsg,
+		)
+	}
+
+	return true
 }
 
 // CheckRepeatingBruteForcer checks a set of brute force rules against a given network and updates the message if triggered.
@@ -2398,92 +2597,20 @@ func preparedCIDRNetwork(addr netip.Addr, cidr uint) *net.IPNet {
 	return &net.IPNet{IP: ip, Mask: mask}
 }
 
-func (bm *bucketManagerImpl) getPasswordHistoryBaseRedisKey(baseKey string, withUsername bool) string {
-	// Normalize the IP for the repeating-wrong-password context (may apply IPv6 CIDR scoping)
-	scoped := bm.clientIP
-	if bm.scoper != nil {
-		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
-	}
-
-	cfg := bm.cfg()
-
-	if withUsername {
-		accountName := bm.resolveAccountNameForHistory()
-		if accountName == "" {
-			return ""
-		}
-
-		var sbHashTag strings.Builder
-
-		sbHashTag.WriteString(accountName)
-		sbHashTag.WriteByte(':')
-		sbHashTag.WriteString(scoped)
-
-		hashTag := sbHashTag.String()
-
-		var sb strings.Builder
-
-		sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
-		sb.WriteString(baseKey)
-		sb.WriteString(":{")
-		sb.WriteString(hashTag)
-		sb.WriteString("}:")
-		sb.WriteString(accountName)
-		sb.WriteByte(':')
-		sb.WriteString(scoped)
-
-		return sb.String()
-	}
-
-	hashTag := scoped
-
-	var sb strings.Builder
-
-	sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
-	sb.WriteString(baseKey)
-	sb.WriteString(":{")
-	sb.WriteString(hashTag)
-	sb.WriteString("}:")
-	sb.WriteString(scoped)
-
-	return sb.String()
-}
-
 // getPasswordHistoryRedisSetKey generates the Redis set key for password history storage based on username and client IP.
 func (bm *bucketManagerImpl) getPasswordHistoryRedisSetKey(withUsername bool) (key string) {
-	key = bm.getPasswordHistoryBaseRedisKey(definitions.RedisPwHashKey, withUsername)
-	if key == "" {
-		return ""
-	}
-
-	util.DebugModuleWithCfg(
-		bm.ctx,
-		bm.cfg(),
-		bm.logger(),
-		definitions.DbgBf,
-		definitions.LogKeyGUID, bm.guid,
-		definitions.LogKeyClientIP, bm.clientIP,
-		"key", key,
-	)
+	plan := bm.preparePasswordHistoryLoad(nil, false)
+	key = plan.setKey(withUsername)
+	plan.logSetKey(key, withUsername)
 
 	return
 }
 
 // getPasswordHistoryTotalRedisKey generates the Redis key for the total counter for password history.
 func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) (key string) {
-	key = bm.getPasswordHistoryBaseRedisKey(definitions.RedisPwHistTotalKey, withUsername)
-	if key == "" {
-		return ""
-	}
-
-	util.DebugModuleWithCfg(
-		bm.ctx,
-		bm.cfg(),
-		bm.logger(),
-		definitions.DbgBf,
-		definitions.LogKeyGUID, bm.guid,
-		"total_key", key,
-	)
+	plan := bm.preparePasswordHistoryLoad(nil, true)
+	key = plan.totalKey(withUsername)
+	plan.logTotalKey(key, withUsername)
 
 	return
 }
@@ -2760,45 +2887,21 @@ func (bm *bucketManagerImpl) isRWPActive() (bool, error) {
 	return !enforce, nil
 }
 
+// resolveAccountNameForHistory returns the account name for account-scoped password-history work.
 func (bm *bucketManagerImpl) resolveAccountNameForHistory() string {
-	accountName := bm.accountName
-	if accountName != "" {
-		return accountName
+	account := bm.passwordHistoryAccount()
+	if account.name != "" {
+		return account.name
 	}
 
-	cfg := bm.cfg()
-	logger := bm.logger()
-
-	if cfg.GetBruteForce().GetPWHistKnownAccountsOnlyOnAlreadyTriggered() && bm.alreadyTriggered {
-		level.Debug(logger).Log(
+	if account.skipMsg != "" {
+		level.Debug(bm.logger()).Log(
 			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyMsg, "Skipping account-scoped PW_HIST for unknown account on cached block",
+			definitions.LogKeyMsg, account.skipMsg,
 		)
-
-		return ""
 	}
-
-	level.Debug(logger).Log(
-		definitions.LogKeyGUID, bm.guid,
-		definitions.LogKeyMsg, "Skipping account-scoped history: no accountName",
-	)
 
 	return ""
-}
-
-func (bm *bucketManagerImpl) loadPasswordHistoryCount(isAccountScoped bool) uint {
-	if key := bm.getPasswordHistoryRedisSetKey(isAccountScoped); key != "" {
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
-		defer cancel()
-
-		if count, err := bm.redis().GetReadHandle().SCard(dCtx, key).Result(); err == nil {
-			return uint(count)
-		}
-	}
-
-	return 0
 }
 
 func (bm *bucketManagerImpl) getAdaptiveScalingConfig() (repKey string, adaptiveEnabled int, minPct, maxPct uint8, scaleFactor float64, staticPct uint8, positive int64) {

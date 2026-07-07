@@ -395,6 +395,9 @@ func newRedisClusterClientReadOnly(cfg config.File, logger *slog.Logger, redisCf
 
 	c := redis.NewClusterClient(options)
 
+	// Attach OpenTelemetry Redis tracing if enabled
+	instrumentRedisIfEnabled(c)
+
 	// Attach client-side batching hook if enabled
 	attachBatchingHookIfEnabled(cfg, logger, c)
 
