@@ -29,7 +29,7 @@ permissions:
 
 env:
   ALPINE_IMAGE: alpine:3.24
-  GOLANG_IMAGE: golang:1.26-alpine3.24
+  GOLANG_IMAGE: golang:1.26.5-alpine3.24
   OCI_IMAGE_DESCRIPTION: >-
     Authentication and identity platform with OIDC, SAML, MFA, LDAP,
     Lua, and mail integrations

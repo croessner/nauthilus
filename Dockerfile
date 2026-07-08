@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM --platform=$TARGETPLATFORM golang:1.26-alpine3.24 AS builder
+FROM --platform=$TARGETPLATFORM golang:1.26.5-alpine3.24 AS builder
 
 ARG BUILD_TAGS=""
 ARG REQUIRE_PLUGIN_SIGNATURE=false

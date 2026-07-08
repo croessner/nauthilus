@@ -75,7 +75,7 @@ func TestDockerfileStableBuildsPluginCapableImage(t *testing.T) {
 		t.Fatalf("Dockerfile must opt into BuildKit syntax for secret-mounted plugin signing")
 	}
 
-	if !strings.Contains(dockerfile, `FROM --platform=$TARGETPLATFORM golang:1.26-alpine3.24 AS builder`) {
+	if !strings.Contains(dockerfile, `FROM --platform=$TARGETPLATFORM golang:1.26.5-alpine3.24 AS builder`) {
 		t.Fatalf("Dockerfile builder must run on the target platform so CGO plugin builds are native")
 	}
 
