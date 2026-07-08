@@ -33,6 +33,7 @@ import (
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/lualib/smtp"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
@@ -415,12 +416,17 @@ func TestPositiveResultPublishesHIBPRuntimeDelta(t *testing.T) {
 		t.Fatalf("enqueueWithCredentials() error = %v", err)
 	}
 
-	if got := result.RuntimeDelta.Set[runtimeKeyHIBPHashInfo]; got != prefix+"17" {
-		t.Fatalf("RuntimeDelta[%s] = %#v, want %q", runtimeKeyHIBPHashInfo, got, prefix+"17")
+	runtimeValue := result.RuntimeDelta.Set[exchange.KeyHaveIBeenPwned].(map[string]any)
+	if got := runtimeValue[exchange.FieldHashInfo]; got != prefix+"17" {
+		t.Fatalf("RuntimeDelta[%s].%s = %#v, want %q", exchange.KeyHaveIBeenPwned, exchange.FieldHashInfo, got, prefix+"17")
 	}
 
-	if _, exists := result.RuntimeDelta.Set[runtimeKeyLegacyRT]; exists {
-		t.Fatalf("RuntimeDelta unexpectedly restored legacy rt marker: %#v", result.RuntimeDelta.Set[runtimeKeyLegacyRT])
+	if got := runtimeValue[exchange.FieldLeaked]; got != true {
+		t.Fatalf("RuntimeDelta[%s].%s = %#v, want true", exchange.KeyHaveIBeenPwned, exchange.FieldLeaked, got)
+	}
+
+	if got := runtimeValue[exchange.FieldCount]; got != uint64(17) {
+		t.Fatalf("RuntimeDelta[%s].%s = %#v, want 17", exchange.KeyHaveIBeenPwned, exchange.FieldCount, got)
 	}
 }
 

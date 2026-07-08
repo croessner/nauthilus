@@ -163,6 +163,13 @@ HTTP, host-managed SMTP/LMTP mail, backend-candidate discovery, connection-targe
 functions, and a module-scoped process cache. These services do not require additional loader config beyond the normal
 Nauthilus service config and the module's `plugins.modules[]` entry.
 
+Runtime values that are meant for cross-plugin analytics or post-action handoff use the standard `plugin.exchange.*`
+keyspace. Bundled native producers write separate top-level keys such as `plugin.exchange.geoip` and
+`plugin.exchange.haveibeenpwnd`; ClickHouse consumes those exchange values plus policy facts when building analytics
+rows and `decision_sources`. The older `rt` table is historical Lua runtime state. Lua scripts may still write it for
+Lua-only compatibility, but `rt` is not the native Go plugin exchange standard and bundled native plugins do not depend
+on it.
+
 Some Lua helper families intentionally remain plugin-owned in the native contract:
 
 - extra or named Redis pools;
@@ -299,9 +306,10 @@ Migration notes:
   plan. Post-action deltas do not mutate the already-selected policy decision, client response, response mutation state,
   or live request runtime after the plan finishes; invalid deltas are rejected with bounded diagnostics.
 - Order `haveibeenpwnd.post_action` before `clickhouse.post_action` when ClickHouse rows should include
-  `haveibeenpwnd_hash_info` as `pwnd_info`. If ClickHouse is ordered first, the row is written without that value. The
-  ClickHouse plugin does not write the Lua `rt.post_clickhouse = true` marker back to live request runtime, and the HIBP
-  plugin intentionally does not set the legacy `rt.action_haveibeenpwnd = true` marker.
+  `plugin.exchange.haveibeenpwnd.hash_info` as `pwnd_info`. If ClickHouse is ordered first, the row is written without
+  that value. The ClickHouse plugin does not read or write `rt`, does not write the Lua `rt.post_clickhouse = true`
+  marker back to live request runtime, and the HIBP plugin intentionally does not set the legacy
+  `rt.action_haveibeenpwnd = true` marker.
 - HIBP SMTP/LMTP notification is supported through the host mail facade. Mail is attempted only after a fresh positive
   HIBP HTTP lookup, after the positive Redis count is written. The native plugin deliberately does not run the Lua
   `nauthilus_send_mail_hash` script because that script returns `send_email` while `haveibeenpwnd.lua` checks

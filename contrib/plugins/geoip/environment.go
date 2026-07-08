@@ -22,6 +22,7 @@ import (
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 )
 
 const (
@@ -48,7 +49,6 @@ const (
 	geoValueStatus    = "asn_status"
 	logNamespaceGeoIP = "geoip"
 	policyProducer    = "plugin.environment"
-	runtimeKey        = "plugin.environment.geoip"
 )
 
 var _ pluginapi.InitTask = (*geoIPInitTask)(nil)
@@ -187,13 +187,9 @@ func missResult() pluginapi.EnvironmentResult {
 		Facts: []pluginapi.PolicyFact{
 			{Attribute: factMatched, Value: false},
 		},
-		RuntimeDelta: pluginapi.RuntimeDelta{
-			Set: map[string]any{
-				runtimeKey: map[string]any{
-					resultMatched: false,
-				},
-			},
-		},
+		RuntimeDelta: exchange.GeoIPRuntimeDelta(map[string]any{
+			resultMatched: false,
+		}),
 	}
 }
 
@@ -222,13 +218,9 @@ func matchResult(record geoRecord) pluginapi.EnvironmentResult {
 	}
 
 	return pluginapi.EnvironmentResult{
-		Logs:  publicGeoIPLogFields(record),
-		Facts: facts,
-		RuntimeDelta: pluginapi.RuntimeDelta{
-			Set: map[string]any{
-				runtimeKey: values,
-			},
-		},
+		Logs:         publicGeoIPLogFields(record),
+		Facts:        facts,
+		RuntimeDelta: exchange.GeoIPRuntimeDelta(values),
 	}
 }
 

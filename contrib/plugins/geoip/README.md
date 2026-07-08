@@ -80,4 +80,8 @@ policy example.
 - `plugin.environment.geoip.asn_allocated`
 - `plugin.environment.geoip.asn_status`
 
-The runtime delta is stored at `plugin.environment.geoip` and contains only JSON-compatible values.
+The runtime delta is stored at `plugin.exchange.geoip` and contains only JSON-compatible values. Policy facts remain
+under `plugin.environment.geoip.*` because policy facts are the decision authority, while runtime exchange is the
+plan-local analytics surface for later post-action steps.
+The historical Lua `rt` table is not part of the native Go exchange standard; native consumers should use
+`plugin.exchange.geoip` and policy facts.

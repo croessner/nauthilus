@@ -29,6 +29,7 @@ import (
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
@@ -113,7 +114,7 @@ func TestEnvironmentSourceEmitsExpectedFactsRuntimeDeltaMetricsAndTrace(t *testi
 	assertLogField(t, result.Logs, "policy_fact_geoip_country_iso", testCountryDE)
 	assertLogField(t, result.Logs, "policy_fact_geoip_asn", 64500)
 
-	runtimeValue := result.RuntimeDelta.Set[runtimeKey].(map[string]any)
+	runtimeValue := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
 	if runtimeValue["country_iso"] != testCountryDE || runtimeValue["asn"] != 64500 {
 		t.Fatalf("runtime delta = %#v, want DE/64500", runtimeValue)
 	}
@@ -324,7 +325,7 @@ func TestEnvironmentSourceUsesASNDatabaseForOrganization(t *testing.T) {
 	assertFact(t, result.Facts, factASN, 64500)
 	assertFact(t, result.Facts, factASNOrg, testASNOrg)
 
-	runtimeValue := result.RuntimeDelta.Set[runtimeKey].(map[string]any)
+	runtimeValue := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
 	if runtimeValue["asn_org"] != testASNOrg {
 		t.Fatalf("runtime ASN org = %#v, want %q", runtimeValue["asn_org"], testASNOrg)
 	}

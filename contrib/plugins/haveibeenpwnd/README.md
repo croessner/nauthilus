@@ -72,13 +72,16 @@ The implementation keeps the Lua-compatible Redis keys:
 
 Runtime exchange is plan-local. Native and Lua post-actions run inside one
 detached plan in final-obligation order, and this plugin publishes positive
-HIBP hits as `haveibeenpwnd_hash_info` through
-`PostActionEnqueueResult.RuntimeDelta`. Later post-action steps in the same
-plan, such as `clickhouse.post_action`, can read that value when policy orders
-HIBP before ClickHouse. Post-action deltas do not mutate the already-selected
-policy decision, client response, or live request runtime after the plan
-finishes. The legacy `rt.action_haveibeenpwnd` marker remains intentionally
-omitted.
+HIBP hits as `plugin.exchange.haveibeenpwnd` through
+`PostActionEnqueueResult.RuntimeDelta`. The exchange map contains `hash_info`
+and, for positive hits, the bounded `leaked` and `count` fields. Later
+post-action steps in the same plan, such as `clickhouse.post_action`, can read
+that standard value when policy orders HIBP before ClickHouse. Post-action
+deltas do not mutate the already-selected policy decision, client response, or
+live request runtime after the plan finishes.
+
+`rt` is historical Lua runtime state and is not the native Go exchange standard. This plugin does not write
+`rt.action_haveibeenpwnd`; native consumers should read `plugin.exchange.haveibeenpwnd.hash_info` instead.
 
 Policy migration:
 

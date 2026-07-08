@@ -29,6 +29,7 @@ import (
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -44,8 +45,6 @@ const (
 	postActionRuntimeParityGap = "native post-action runtime exchange is limited to later steps in the same plan"
 	publicLogResultKey         = "haveibeenpwnd_result"
 	publicLogResultLeaked      = "leaked"
-	runtimeKeyHIBPHashInfo     = "haveibeenpwnd_hash_info"
-	runtimeKeyLegacyRT         = "rt"
 )
 
 type checkOutcome struct {
@@ -405,14 +404,25 @@ func enqueueResultFromOutcome(outcome checkOutcome) pluginapi.PostActionEnqueueR
 	}
 
 	if outcome.hashInfo != "" {
-		result.RuntimeDelta = pluginapi.RuntimeDelta{
-			Set: map[string]any{
-				runtimeKeyHIBPHashInfo: outcome.hashInfo,
-			},
-		}
+		result.RuntimeDelta = exchange.HIBPRuntimeDelta(exchange.HIBPResult{
+			HashInfo: outcome.hashInfo,
+			Leaked:   &outcome.leaked,
+			Count:    positiveCount(outcome.count),
+		})
 	}
 
 	return result
+}
+
+// positiveCount returns a pointer only for leaked HIBP counts that are safe to publish.
+func positiveCount(count int) *uint64 {
+	if count <= 0 {
+		return nil
+	}
+
+	converted := uint64(count)
+
+	return &converted
 }
 
 // logOutcome writes a secret-free bounded result log.

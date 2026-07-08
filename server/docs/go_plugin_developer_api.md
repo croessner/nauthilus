@@ -449,7 +449,7 @@ no separate legacy Lua request key.
 Runtime values are exposed through a read-only `RuntimeContext`:
 
 ```go
-value, ok := request.Runtime.Get("plugin.environment.geoip")
+value, ok := request.Runtime.Get("plugin.exchange.geoip")
 snapshot := request.Runtime.Snapshot()
 ```
 
@@ -467,8 +467,14 @@ return pluginapi.EnvironmentResult{
 }, nil
 ```
 
-Runtime values must be JSON-compatible scalar, map, or list values. Use stable namespaces, preferably
-`plugin.<extension>.<module_or_feature>`.
+Runtime values must be JSON-compatible scalar, map, or list values. Use stable namespaces. Cross-plugin analytics and
+post-action handoff values must use the standard `plugin.exchange.*` keyspace from
+`github.com/croessner/nauthilus/v3/pluginapi/v1/exchange`. Producer plugins should set only the exchange keys they own,
+for example `plugin.exchange.geoip`, `plugin.exchange.haveibeenpwnd`, or `plugin.exchange.feature.<name>`.
+
+`rt` is historical Lua runtime state. It may still appear in Lua scripts for Lua-only compatibility, but it is not the
+native Go plugin exchange standard. Native Go plugins should not read or write `rt`; use `plugin.exchange.*`,
+`RuntimeDelta`, and policy facts instead.
 
 Passwords are not present in the snapshot. Components that need request credentials must use the request-scoped
 `CredentialProvider` and must require the `credentials` capability during registration:
@@ -968,16 +974,17 @@ request runtime after the plan finishes. Invalid deltas are rejected with bounde
 and status values remain diagnostics and are not applied back into the selected request.
 
 For HIBP and ClickHouse, order the HIBP post-action before ClickHouse when ClickHouse rows should include
-`haveibeenpwnd_hash_info` as `pwnd_info`. If ClickHouse is ordered first, that field remains absent for the row. HIBP
-intentionally does not restore the legacy `rt.action_haveibeenpwnd` marker, and ClickHouse intentionally does not write
-`rt.post_clickhouse` back to live request runtime.
+`plugin.exchange.haveibeenpwnd.hash_info` as `pwnd_info`. If ClickHouse is ordered first, that field remains absent for
+the row. The native exchange standard is `plugin.exchange.*`; `rt` is historical Lua runtime state and not a Go plugin
+dependency. HIBP intentionally does not restore the legacy `rt.action_haveibeenpwnd` marker, and ClickHouse intentionally
+does not write `rt.post_clickhouse` back to live request runtime.
 
 Bundled action replacements use the same policy effect registry:
 
 | Native effect ID | Replaces | Notes |
 | --- | --- | --- |
-| `clickhouse.post_action` | `server/lua-plugins.d/actions/clickhouse.lua` | Uses host HTTP, Redis, cache, metrics, tracing, and connection-target facades. It reads `haveibeenpwnd_hash_info` from plan runtime when HIBP is ordered before ClickHouse, but it does not write the Lua `rt.post_clickhouse = true` marker back to live request runtime. |
-| `haveibeenpwnd.post_action` | `server/lua-plugins.d/actions/haveibeenpwnd.lua` | Requires the `credentials` capability and uses the request-scoped credential provider. When `mail.enabled: true`, it also requires `CapabilityMail` and sends SMTP/LMTP notifications through `Host.Mail("haveibeenpwnd")`. Positive hits publish `haveibeenpwnd_hash_info` through plan runtime; the legacy `rt.action_haveibeenpwnd` marker remains intentionally omitted. |
+| `clickhouse.post_action` | `server/lua-plugins.d/actions/clickhouse.lua` | Uses host HTTP, Redis, cache, metrics, tracing, and connection-target facades. It reads `plugin.exchange.haveibeenpwnd.hash_info` from plan runtime when HIBP is ordered before ClickHouse, derives `decision_sources` from `plugin.exchange.*` and policy facts, and does not write the Lua `rt.post_clickhouse = true` marker back to live request runtime. |
+| `haveibeenpwnd.post_action` | `server/lua-plugins.d/actions/haveibeenpwnd.lua` | Requires the `credentials` capability and uses the request-scoped credential provider. When `mail.enabled: true`, it also requires `CapabilityMail` and sends SMTP/LMTP notifications through `Host.Mail("haveibeenpwnd")`. Positive hits publish `plugin.exchange.haveibeenpwnd` through plan runtime; the legacy `rt.action_haveibeenpwnd` marker remains intentionally omitted. |
 
 When porting a Lua action, keep the policy selection model unchanged: register a post-action target, configure the module,
 and reference `<module>.<component>` in policy obligations. Adding or removing the module, changing module identity, or
@@ -1238,6 +1245,7 @@ Before shipping a plugin:
 - Require `credentials` only when needed and only access passwords through `CredentialProvider`.
 - Keep `Start`, request callbacks, and `Stop` context-bounded.
 - Return only registered policy facts.
-- Use deterministic merge-friendly runtime keys.
+- Use deterministic merge-friendly runtime keys; use `plugin.exchange.*` for cross-plugin analytics and post-action
+  handoff values.
 - Test direct plugin behavior and at least one `.so` load path.
 - Build with the same Go toolchain, module graph, and `GOEXPERIMENT=runtimesecret` setting as Nauthilus.

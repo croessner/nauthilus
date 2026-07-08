@@ -28,6 +28,11 @@ The plugin writes newline-delimited JSONEachRow payloads with the same row field
 module-scoped host cache for batching, the host Redis facade for authenticated request deduplication, and the host HTTP
 facade for inserts.
 
+Input runtime exchange values use the native Go standard `plugin.exchange.*` keyspace. The plugin reads
+`plugin.exchange.geoip`, `plugin.exchange.haveibeenpwnd`, standard feature markers, and policy facts to populate the
+existing ClickHouse row fields, including `decision_sources`. The historical Lua `rt` table is not part of this native
+exchange standard and is not read by the plugin.
+
 Policy migration:
 
 ```yaml
@@ -48,8 +53,7 @@ credentials.
 Known parity gaps:
 
 - Native and Lua post-actions can exchange runtime deltas with later steps in the same detached plan. Those deltas do
-  not mutate the already-selected policy decision, client response, or live request runtime after the plan finishes, so
-  the Lua `rt.post_clickhouse = true` marker is not written back into request runtime state.
+  not mutate the already-selected policy decision, client response, or live request runtime after the plan finishes.
 - Order `haveibeenpwnd.post_action` before `clickhouse.post_action` when ClickHouse rows should include
-  `haveibeenpwnd_hash_info` as `pwnd_info`.
+  `plugin.exchange.haveibeenpwnd.hash_info` as `pwnd_info`.
 - The Lua read-only ClickHouse query hook is not implemented by this native action plugin.

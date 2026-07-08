@@ -30,6 +30,7 @@ import (
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
@@ -182,9 +183,9 @@ func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:
 		protocol: "imap",
 		service:  "imap",
 		runtimeValues: map[string]any{
-			runtimeKeyBuiltinDecisionSources: []any{"custom"},
-			runtimeKeyHIBPHashInfo:           "abc123",
-			runtimeKeyNativeGeoIP: map[string]any{
+			exchange.KeyDecisionSources: []any{"custom", exchange.FeatureBlocklist},
+			exchange.KeyHaveIBeenPwned:  exchange.HIBPValue(exchange.HIBPResult{HashInfo: "abc123"}),
+			exchange.KeyGeoIP: map[string]any{
 				"matched":         true,
 				"country_iso":     "DE",
 				"country_name":    "Germany",
@@ -197,41 +198,38 @@ func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:
 				"asn_allocated":   "2024-01-01",
 				"asn_status":      "allocated",
 			},
-			runtimeKeyLegacyRT: map[string]any{
-				"environment_blocklist": true,
-				runtimeKeyFailedLoginInfo: map[string]any{
-					"new_count":          7,
-					"rank":               2,
-					"recognized_account": true,
-				},
-				runtimeKeyGeoIPReputation: map[string]any{
-					"score":             0.375,
-					"positive_score":    0.82,
-					"negative_score":    0.14,
-					"ip_score":          0.71,
-					"asn_score":         0.48,
-					"country_score":     0.22,
-					"asn_country_score": 0.19,
-					"samples":           42,
-					"source":            "redis",
-					"decision":          "suspicious",
-				},
-				runtimeKeyAccountProtection: map[string]any{
-					"active":        true,
-					"reason":        "spray",
-					"backoff_level": 3,
-					"delay_ms":      250,
-				},
-				runtimeKeyDynamicResponse: map[string]any{
-					"threat_level": 4,
-					"response":     "slow",
-				},
-				runtimeKeyGlobalPatternInfo: map[string]any{
-					"attempts":     11,
-					"unique_ips":   5,
-					"unique_users": 3,
-					"ips_per_user": 1.66,
-				},
+			exchange.KeyFailedLoginHotspot: map[string]any{
+				"count":              7,
+				"rank":               2,
+				"recognized_account": true,
+			},
+			exchange.KeyGeoIPReputation: map[string]any{
+				"score":             0.375,
+				"positive_score":    0.82,
+				"negative_score":    0.14,
+				"ip_score":          0.71,
+				"asn_score":         0.48,
+				"country_score":     0.22,
+				"asn_country_score": 0.19,
+				"samples":           42,
+				"source":            "redis",
+				"decision":          "neutral",
+			},
+			exchange.KeyAccountProtection: map[string]any{
+				"active":        true,
+				"reason":        "spray",
+				"backoff_level": 3,
+				"delay_ms":      250,
+			},
+			exchange.KeyDynamicResponse: map[string]any{
+				"threat_level": 4,
+				"response":     "slow",
+			},
+			exchange.KeyGlobalPattern: map[string]any{
+				"attempts":     11,
+				"unique_ips":   5,
+				"unique_users": 3,
+				"ips_per_user": 1.66,
 			},
 		},
 		facts: []pluginapi.PolicyFact{
@@ -275,6 +273,48 @@ func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:
 	assertStringField(t, row, "status_msg", "OK")
 }
 
+func TestDecisionSourcesIncludeGeoIPReputationSignal(t *testing.T) {
+	cases := []struct {
+		runtimeValues map[string]any
+		facts         []pluginapi.PolicyFact
+		name          string
+	}{
+		{
+			name: "standard exchange reputation decision",
+			runtimeValues: exchange.GeoIPReputationRuntimeDelta(map[string]any{
+				exchange.FieldDecision: "suspicious",
+			}).Set,
+		},
+		{
+			name: "policy fact reputation decision",
+			facts: []pluginapi.PolicyFact{
+				{Attribute: "lua.plugin.geoip_reputation.decision", Value: "suspicious"},
+			},
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			harness := startTestRunner(t, testModule(map[string]any{
+				"insert_url": testInsertURL,
+				"batch_size": 1,
+			}), testRunnerOptions{})
+			defer harness.stop(t)
+
+			_, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{
+				runtimeValues: testCase.runtimeValues,
+				facts:         testCase.facts,
+			}))
+			if err != nil {
+				t.Fatalf("EnqueuePostAction() error = %v", err)
+			}
+
+			row := decodeFirstRow(t, harness.transport.onlyRequest().body)
+			assertStringField(t, row, "decision_sources", exchange.FeatureGeoIPReputation)
+		})
+	}
+}
+
 func TestHIBPRuntimeOrderControlsPwndInfo(t *testing.T) {
 	cases := []struct {
 		runtimeValues map[string]any
@@ -284,7 +324,7 @@ func TestHIBPRuntimeOrderControlsPwndInfo(t *testing.T) {
 		{
 			name: "HIBP before ClickHouse",
 			runtimeValues: map[string]any{
-				runtimeKeyHIBPHashInfo: "abcde42",
+				exchange.KeyHaveIBeenPwned: exchange.HIBPValue(exchange.HIBPResult{HashInfo: "abcde42"}),
 			},
 			wantPwndInfo: "abcde42",
 		},

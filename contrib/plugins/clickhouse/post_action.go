@@ -29,22 +29,21 @@ import (
 )
 
 const (
-	dedupKeyPrefix             = "clickhouse:authdedup:"
-	headerAccept               = "Accept"
-	headerAuthorization        = "Authorization"
-	headerContentType          = "Content-Type"
-	headerUserAgent            = "User-Agent"
-	headerClickHouseUser       = "X-ClickHouse-User"
-	headerClickHouseKey        = "X-ClickHouse-Key"
-	headerValueAny             = "*/*"
-	headerValueJSON            = "application/json"
-	headerValueUserAgent       = "Nauthilus"
-	authMethodBasic            = "basic"
-	authMethodNone             = "none"
-	authMethodXHeaders         = "x_headers"
-	statusOK                   = http.StatusOK
-	statusNoContent            = http.StatusNoContent
-	postActionRuntimeParityGap = "post-action runtime deltas are plan-local; rt.post_clickhouse is not written back to live request runtime"
+	dedupKeyPrefix       = "clickhouse:authdedup:"
+	headerAccept         = "Accept"
+	headerAuthorization  = "Authorization"
+	headerContentType    = "Content-Type"
+	headerUserAgent      = "User-Agent"
+	headerClickHouseUser = "X-ClickHouse-User"
+	headerClickHouseKey  = "X-ClickHouse-Key"
+	headerValueAny       = "*/*"
+	headerValueJSON      = "application/json"
+	headerValueUserAgent = "Nauthilus"
+	authMethodBasic      = "basic"
+	authMethodNone       = "none"
+	authMethodXHeaders   = "x_headers"
+	statusOK             = http.StatusOK
+	statusNoContent      = http.StatusNoContent
 )
 
 // Enqueue builds, batches, and flushes one ClickHouse post-action row.

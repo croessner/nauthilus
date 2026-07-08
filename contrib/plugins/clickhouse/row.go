@@ -23,40 +23,26 @@ import (
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 )
 
 const (
-	runtimeKeyBuiltinDecisionSources = "__lua_ctx_builtin__"
-	runtimeKeyFailedLoginInfo        = "failed_login_info"
-	runtimeKeyGeoIPInfo              = "geoip_info"
-	runtimeKeyGlobalPatternInfo      = "global_pattern_info"
-	runtimeKeyAccountProtection      = "account_protection"
-	runtimeKeyDynamicResponse        = "dynamic_response"
-	runtimeKeyGeoIPReputation        = "geoip_reputation"
-	runtimeKeyHIBPHashInfo           = "haveibeenpwnd_hash_info"
-	runtimeKeyLegacyRT               = "rt"
-	runtimeKeyNativeGeoIP            = "plugin.environment.geoip"
-	decisionAccountProtection        = "account_protection"
-	decisionBlocklist                = "blocklist"
-	decisionFailedLoginHotspot       = "failed_login_hotspot"
-	decisionGeoIPPolicy              = "geoip_policyd"
-	sourceNativeGeoIP                = "native_geoip"
-	sourcePolicyFacts                = "policy_facts"
-	geoIPFieldASN                    = "asn"
-	geoIPFieldASNAllocated           = "asn_allocated"
-	geoIPFieldASNCountryISO          = "asn_country_iso"
-	geoIPFieldASNOrg                 = "asn_org"
-	geoIPFieldASNPrefix              = "asn_prefix"
-	geoIPFieldASNRegistry            = "asn_registry"
-	geoIPFieldASNStatus              = "asn_status"
-	geoIPFieldCityName               = "city_name"
-	geoIPFieldCountryName            = "country_name"
-	geoIPFieldCurrentCountryCode     = "current_country_code"
-	geoIPFieldMatched                = "matched"
-	geoIPFieldNativeCountryISO       = "native_country_iso"
-	geoIPFieldNativeMatched          = "native_matched"
-	geoIPStatusMatched               = "matched"
-	policyFactPartPlugin             = "plugin"
+	sourceNativeGeoIP            = "native_geoip"
+	sourcePolicyFacts            = "policy_facts"
+	geoIPFieldASN                = "asn"
+	geoIPFieldASNAllocated       = "asn_allocated"
+	geoIPFieldASNCountryISO      = "asn_country_iso"
+	geoIPFieldASNOrg             = "asn_org"
+	geoIPFieldASNPrefix          = "asn_prefix"
+	geoIPFieldASNRegistry        = "asn_registry"
+	geoIPFieldASNStatus          = "asn_status"
+	geoIPFieldCityName           = "city_name"
+	geoIPFieldCountryISO         = "country_iso"
+	geoIPFieldCountryName        = "country_name"
+	geoIPFieldCurrentCountryCode = "current_country_code"
+	geoIPFieldMatched            = "matched"
+	geoIPStatusMatched           = "matched"
+	geoIPStatusMiss              = "miss"
 )
 
 // clickHouseRow mirrors the Lua clickhouse.lua JSONEachRow field names.
@@ -138,16 +124,13 @@ type clickHouseRow struct {
 
 // buildRow maps one post-action request into the Lua-compatible ClickHouse row.
 func buildRow(request pluginapi.PostActionRequest) (clickHouseRow, error) {
-	runtimeSnapshot := request.Runtime.Snapshot()
-	rt := mapValue(runtimeSnapshot[runtimeKeyLegacyRT])
-	facts := factsByNamespace(request.Facts)
-	geoIPInfo := mergedGeoIPInfo(rt, runtimeSnapshot)
+	exchangeSnapshot := exchange.NewSnapshot(request.Runtime, request.Facts)
 
 	row := clickHouseRow{
 		TS:                utcNowMillis(),
 		Session:           request.Snapshot.Session,
 		Service:           request.Snapshot.Service,
-		DecisionSources:   decisionSources(rt, runtimeSnapshot, facts),
+		DecisionSources:   exchangeSnapshot.DecisionSourcesString(),
 		ClientIP:          request.Snapshot.ClientIP,
 		ClientPort:        request.Snapshot.ClientPort,
 		ClientNet:         request.Snapshot.ClientNet,
@@ -162,7 +145,7 @@ func buildRow(request pluginapi.PostActionRequest) (clickHouseRow, error) {
 		Account:           request.Snapshot.Account,
 		Username:          request.Snapshot.Username,
 		PasswordHash:      request.PasswordHash,
-		PwndInfo:          stringValue(runtimeSnapshot[runtimeKeyHIBPHashInfo]),
+		PwndInfo:          exchangeSnapshot.HIBPHashInfo(),
 		BruteForceBucket:  request.Snapshot.Diagnostics.BruteForceName,
 		BruteForceCounter: uintPointer(uint64(request.Snapshot.Diagnostics.BruteForceCounter)),
 		OIDCCID:           request.Snapshot.OIDCCID,
@@ -181,23 +164,23 @@ func buildRow(request pluginapi.PostActionRequest) (clickHouseRow, error) {
 		StatusMessage:     request.Snapshot.Diagnostics.StatusMessage,
 	}
 
-	applyFailedLoginInfo(&row, mapValue(rt[runtimeKeyFailedLoginInfo]))
-	applyGeoIPInfo(&row, geoIPInfo)
-	applyReputationInfo(&row, reputationInfo(rt, facts))
-	applyGlobalPatternInfo(&row, mapValue(rt[runtimeKeyGlobalPatternInfo]))
-	applyAccountProtectionInfo(&row, mapValue(rt[runtimeKeyAccountProtection]))
-	applyDynamicResponseInfo(&row, mapValue(rt[runtimeKeyDynamicResponse]))
+	applyFailedLoginInfo(&row, exchangeSnapshot.Map(exchange.KeyFailedLoginHotspot))
+	applyGeoIPInfo(&row, geoIPInfo(exchangeSnapshot.Map(exchange.KeyGeoIP)))
+	applyReputationInfo(&row, reputationInfo(exchangeSnapshot))
+	applyGlobalPatternInfo(&row, exchangeSnapshot.Map(exchange.KeyGlobalPattern))
+	applyAccountProtectionInfo(&row, exchangeSnapshot.Map(exchange.KeyAccountProtection))
+	applyDynamicResponseInfo(&row, exchangeSnapshot.Map(exchange.KeyDynamicResponse))
 
 	return row, nil
 }
 
-// applyFailedLoginInfo copies failed-login hotspot details from runtime state.
+// applyFailedLoginInfo copies standard failed-login hotspot details.
 func applyFailedLoginInfo(row *clickHouseRow, info map[string]any) {
 	if len(info) == 0 {
 		return
 	}
 
-	row.FailedLoginCount = uintFromAny(info["new_count"])
+	row.FailedLoginCount = firstUintFromAny(info["count"], info["new_count"])
 	row.FailedLoginRank = uintFromAny(info["rank"])
 
 	if value, ok := boolFromAny(info["recognized_account"]); ok {
@@ -205,23 +188,19 @@ func applyFailedLoginInfo(row *clickHouseRow, info map[string]any) {
 	}
 }
 
-// applyGeoIPInfo copies policy or native GeoIP bridge-compatible fields.
+// applyGeoIPInfo copies standard GeoIP exchange fields.
 func applyGeoIPInfo(row *clickHouseRow, info map[string]any) {
 	if len(info) == 0 {
 		return
 	}
 
 	row.GeoIPGUID = stringValue(info["guid"])
-	row.GeoIPCountry = stringValue(info["current_country_code"])
+	row.GeoIPCountry = firstStringValue(info[geoIPFieldCountryISO], info[geoIPFieldCurrentCountryCode])
 	row.GeoIPISOCodes = isoCodesValue(info["iso_codes_seen"], row.GeoIPCountry)
-	row.GeoIPStatus = stringValue(info["status"])
-	row.GeoIPSource = stringValue(info["source"])
+	row.GeoIPStatus = geoIPStatus(info)
+	row.GeoIPSource = firstStringValue(info["source"], sourceNativeGeoIP)
 
 	if value, ok := boolFromAny(info["matched"]); ok {
-		row.GeoIPMatched = &value
-	}
-
-	if value, ok := boolFromAny(info["native_matched"]); ok {
 		row.GeoIPMatched = &value
 	}
 
@@ -297,81 +276,41 @@ func applyDynamicResponseInfo(row *clickHouseRow, info map[string]any) {
 	row.DynamicResponse = stringValue(info["response"])
 }
 
-// mergedGeoIPInfo mirrors the Lua native GeoIP bridge without mutating runtime state.
-func mergedGeoIPInfo(rt map[string]any, runtimeSnapshot map[string]any) map[string]any {
-	existing := mapValue(rt[runtimeKeyGeoIPInfo])
-	native := nativeGeoIPInfo(mapValue(runtimeSnapshot[runtimeKeyNativeGeoIP]))
-
-	if len(native) == 0 {
-		return existing
-	}
-
-	merged := make(map[string]any, len(existing)+len(native))
-	for key, value := range existing {
-		merged[key] = value
-	}
-
-	setIfMissing(merged, "source", native["source"])
-	setIfMissing(merged, geoIPFieldMatched, native[geoIPFieldMatched])
-	setIfMissing(merged, geoIPFieldCurrentCountryCode, native[geoIPFieldCurrentCountryCode])
-	setIfMissing(merged, "status", native["status"])
-
-	for _, key := range []string{
-		geoIPFieldNativeMatched,
-		geoIPFieldNativeCountryISO,
-		geoIPFieldCountryName,
-		geoIPFieldCityName,
-		geoIPFieldASN,
-		geoIPFieldASNOrg,
-		geoIPFieldASNPrefix,
-		geoIPFieldASNRegistry,
-		geoIPFieldASNCountryISO,
-		geoIPFieldASNAllocated,
-		geoIPFieldASNStatus,
-	} {
-		if value, ok := native[key]; ok && !emptyValue(value) {
-			merged[key] = value
-		}
-	}
-
-	merged["iso_codes_seen"] = isoCodesList(stringValue(merged[geoIPFieldCurrentCountryCode]), merged["iso_codes_seen"])
-
-	return merged
-}
-
-// nativeGeoIPInfo converts native GeoIP runtime facts into the legacy Lua shape.
-func nativeGeoIPInfo(native map[string]any) map[string]any {
-	if len(native) == 0 {
+// geoIPInfo normalizes standard GeoIP exchange fields for row mapping.
+func geoIPInfo(values map[string]any) map[string]any {
+	if len(values) == 0 {
 		return nil
 	}
 
-	country := isoCode(stringValue(native["country_iso"]))
-	asnCountry := isoCode(stringValue(native[geoIPFieldASNCountryISO]))
-	matched, _ := boolFromAny(native[geoIPFieldMatched])
-	status := "miss"
-
-	if matched {
-		status = geoIPStatusMatched
+	normalized := make(map[string]any, len(values)+2)
+	for key, value := range values {
+		normalized[key] = value
 	}
 
-	return map[string]any{
-		"source":                     sourceNativeGeoIP,
-		geoIPFieldMatched:            matched,
-		geoIPFieldNativeMatched:      matched,
-		geoIPFieldNativeCountryISO:   country,
-		geoIPFieldCurrentCountryCode: country,
-		geoIPFieldCountryName:        stringValue(native[geoIPFieldCountryName]),
-		geoIPFieldCityName:           stringValue(native[geoIPFieldCityName]),
-		geoIPFieldASN:                uintFromAny(native[geoIPFieldASN]),
-		geoIPFieldASNOrg:             stringValue(native[geoIPFieldASNOrg]),
-		geoIPFieldASNPrefix:          stringValue(native[geoIPFieldASNPrefix]),
-		geoIPFieldASNRegistry:        stringValue(native[geoIPFieldASNRegistry]),
-		geoIPFieldASNCountryISO:      asnCountry,
-		geoIPFieldASNAllocated:       stringValue(native[geoIPFieldASNAllocated]),
-		geoIPFieldASNStatus:          stringValue(native[geoIPFieldASNStatus]),
-		"status":                     status,
-		"iso_codes_seen":             isoCodesList(country, nil),
+	country := isoCode(firstStringValue(values[geoIPFieldCountryISO], values[geoIPFieldCurrentCountryCode]))
+	if country != "" {
+		normalized[geoIPFieldCountryISO] = country
+		normalized["iso_codes_seen"] = isoCodesList(country, values["iso_codes_seen"])
 	}
+
+	if asnCountry := isoCode(stringValue(values[geoIPFieldASNCountryISO])); asnCountry != "" {
+		normalized[geoIPFieldASNCountryISO] = asnCountry
+	}
+
+	return normalized
+}
+
+// geoIPStatus returns the standard row status for GeoIP exchange data.
+func geoIPStatus(info map[string]any) string {
+	if status := strings.TrimSpace(stringValue(info["status"])); status != "" {
+		return status
+	}
+
+	if matched, ok := boolFromAny(info[geoIPFieldMatched]); ok && matched {
+		return geoIPStatusMatched
+	}
+
+	return geoIPStatusMiss
 }
 
 type reputationDetails struct {
@@ -379,13 +318,13 @@ type reputationDetails struct {
 	source string
 }
 
-// reputationInfo prefers runtime details and falls back to policy facts.
-func reputationInfo(rt map[string]any, facts map[string]map[string]any) reputationDetails {
-	if values := mapValue(rt[runtimeKeyGeoIPReputation]); len(values) > 0 {
+// reputationInfo returns standard reputation details with policy facts as fallback.
+func reputationInfo(snapshot exchange.Snapshot) reputationDetails {
+	if values := snapshot.Map(exchange.KeyGeoIPReputation); len(values) > 0 {
 		return reputationDetails{values: values, source: stringValue(values["source"])}
 	}
 
-	values := facts[runtimeKeyGeoIPReputation]
+	values := snapshot.GeoIPReputation()
 	if len(values) == 0 {
 		return reputationDetails{}
 	}
@@ -393,101 +332,9 @@ func reputationInfo(rt map[string]any, facts map[string]map[string]any) reputati
 	return reputationDetails{values: values, source: sourcePolicyFacts}
 }
 
-// decisionSources reproduces the Lua decision source list with duplicate removal.
-func decisionSources(rt map[string]any, runtimeSnapshot map[string]any, facts map[string]map[string]any) string {
-	sources := stringList(runtimeSnapshot[runtimeKeyBuiltinDecisionSources])
-	addDecision := func(name string) {
-		for _, source := range sources {
-			if source == name {
-				return
-			}
-		}
-
-		sources = append(sources, name)
-	}
-
-	if truthy(rt["environment_blocklist"]) {
-		addDecision(decisionBlocklist)
-	}
-
-	geoipInfo := mapValue(rt[runtimeKeyGeoIPInfo])
-	if truthy(rt["subject_geoippolicyd"]) && stringValue(geoipInfo["status"]) == "reject" {
-		addDecision(decisionGeoIPPolicy)
-	}
-
-	accountProtection := mapValue(rt[runtimeKeyAccountProtection])
-	if truthy(rt["subject_account_protection_mode"]) || truthy(accountProtection["active"]) {
-		addDecision(decisionAccountProtection)
-	}
-
-	if truthy(facts[decisionBlocklist]["matched"]) {
-		addDecision(decisionBlocklist)
-	}
-
-	if truthy(facts["geoip"]["rejected"]) {
-		addDecision(decisionGeoIPPolicy)
-	}
-
-	if truthy(facts[decisionFailedLoginHotspot]["triggered"]) {
-		addDecision(decisionFailedLoginHotspot)
-	}
-
-	if truthy(facts[decisionAccountProtection]["active"]) {
-		addDecision(decisionAccountProtection)
-	}
-
-	return strings.Join(sources, ",")
-}
-
-// factsByNamespace converts flat policy fact IDs into Lua-style namespace maps.
-func factsByNamespace(facts []pluginapi.PolicyFact) map[string]map[string]any {
-	result := make(map[string]map[string]any)
-
-	for _, fact := range facts {
-		namespace, key, ok := factNamespaceKey(fact.Attribute)
-		if !ok {
-			continue
-		}
-
-		if result[namespace] == nil {
-			result[namespace] = make(map[string]any)
-		}
-
-		result[namespace][key] = fact.Value
-	}
-
-	return result
-}
-
-// factNamespaceKey extracts namespace and field from known Lua/native fact IDs.
-func factNamespaceKey(attribute string) (string, string, bool) {
-	parts := strings.Split(strings.TrimSpace(attribute), ".")
-	if len(parts) < 2 {
-		return "", "", false
-	}
-
-	switch {
-	case len(parts) >= 4 && parts[0] == "lua" && parts[1] == policyFactPartPlugin:
-		return parts[2], strings.Join(parts[3:], "."), true
-	case len(parts) >= 4 && parts[0] == policyFactPartPlugin:
-		return parts[2], strings.Join(parts[3:], "."), true
-	default:
-		return "", "", false
-	}
-}
-
 // utcNowMillis returns the ClickHouse DateTime64(3, UTC) timestamp format used by Lua.
 func utcNowMillis() string {
 	return time.Now().UTC().Format("2006-01-02 15:04:05.000")
-}
-
-// mapValue returns a map value if it is represented with string keys.
-func mapValue(value any) map[string]any {
-	if typed, ok := value.(map[string]any); ok {
-		return typed
-	}
-
-	return nil
 }
 
 // stringValue mirrors Lua tostring defaults for string-like optional values.
@@ -502,6 +349,17 @@ func stringValue(value any) string {
 	default:
 		return fmt.Sprint(typed)
 	}
+}
+
+// firstStringValue returns the first non-empty string rendering.
+func firstStringValue(values ...any) string {
+	for _, value := range values {
+		if text := strings.TrimSpace(stringValue(value)); text != "" {
+			return text
+		}
+	}
+
+	return ""
 }
 
 // uintFromAny converts non-negative numeric values to UInt64-compatible pointers.
@@ -559,6 +417,17 @@ func uintFromAny(value any) *uint64 {
 	default:
 		return nil
 	}
+}
+
+// firstUintFromAny returns the first value that can be represented as UInt64.
+func firstUintFromAny(values ...any) *uint64 {
+	for _, value := range values {
+		if converted := uintFromAny(value); converted != nil {
+			return converted
+		}
+	}
+
+	return nil
 }
 
 // uintPointer returns a pointer to value.
@@ -628,32 +497,6 @@ func boolFromAny(value any) (bool, bool) {
 	}
 }
 
-// truthy reports whether a runtime or fact value is true.
-func truthy(value any) bool {
-	result, ok := boolFromAny(value)
-
-	return ok && result
-}
-
-// stringList normalizes Lua-style arrays used for decision source context.
-func stringList(value any) []string {
-	switch typed := value.(type) {
-	case []string:
-		return append([]string(nil), typed...)
-	case []any:
-		result := make([]string, 0, len(typed))
-		for _, item := range typed {
-			if text := strings.TrimSpace(stringValue(item)); text != "" {
-				result = append(result, text)
-			}
-		}
-
-		return result
-	default:
-		return nil
-	}
-}
-
 // isoCodesValue formats ISO country codes like the Lua ClickHouse action.
 func isoCodesValue(value any, fallback string) string {
 	parts := isoCodesList(fallback, value)
@@ -683,7 +526,7 @@ func isoCodesList(countryCode string, existing any) []string {
 		codes = append(codes, code)
 	}
 
-	for _, value := range stringList(existing) {
+	for _, value := range exchange.StringList(existing) {
 		add(value)
 	}
 
@@ -706,26 +549,6 @@ func isoCode(value string) string {
 	}
 
 	return code
-}
-
-// setIfMissing copies value when target has no meaningful value.
-func setIfMissing(target map[string]any, key string, value any) {
-	if emptyValue(target[key]) {
-		target[key] = value
-	}
-}
-
-// emptyValue reports whether value mirrors Lua nil or empty-string absence.
-func emptyValue(value any) bool {
-	if value == nil {
-		return true
-	}
-
-	if text, ok := value.(string); ok {
-		return strings.TrimSpace(text) == ""
-	}
-
-	return false
 }
 
 // nonNegativeInt maps negative ints to zero.

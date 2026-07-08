@@ -667,6 +667,13 @@ Runtime context values should be limited to JSON/CBOR-compatible data: nil, bool
 string keys. Plugin-specific Go objects should stay in plugin instance state, not in the shared runtime context. The host
 should validate `RuntimeDelta.Set` values before merging.
 
+Runtime values intended for cross-plugin analytics or post-action handoff use the standard `plugin.exchange.*` keyspace,
+defined by the public `pluginapi/v1/exchange` package. The standard uses separate top-level keys such as
+`plugin.exchange.geoip`, `plugin.exchange.haveibeenpwnd`, and `plugin.exchange.feature.<name>` because host runtime
+delta merging overwrites at the top-level key boundary. Policy facts remain the decision authority; exchange values are
+request-local or plan-local evidence for later consumers. `rt` is historical Lua runtime state and is not the native Go
+exchange standard. Native Go plugins must use `plugin.exchange.*` and policy facts instead of reading or writing `rt`.
+
 Passwords and other secrets should not be part of the general snapshot. Plugins that need request credentials must
 declare that capability during `Register` and request credentials explicitly through a request-scoped provider:
 
