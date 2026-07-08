@@ -31,6 +31,8 @@ const (
 	componentPostAction   = "post_action"
 	connectionTargetName  = "haveibeenpwnd"
 	connectionTargetLabel = "service"
+	debugModuleLookup     = "lookup"
+	debugModuleMail       = "mail"
 	docsURL               = "contrib/plugins/haveibeenpwnd/README.md"
 )
 
@@ -50,6 +52,8 @@ func NauthilusPlugin() (pluginapi.Plugin, error) {
 type Plugin struct {
 	host                 pluginapi.Host
 	logger               pluginapi.Logger
+	lookupLogger         pluginapi.Logger
+	mailLogger           pluginapi.Logger
 	tracer               pluginapi.Tracer
 	http                 pluginapi.HTTPClient
 	mailer               pluginapi.Mailer
@@ -116,6 +120,20 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 	p.mailCapabilityActive = mailCapabilityActive
 	p.mu.Unlock()
 
+	if err := registrar.RegisterDebugModule(pluginapi.DebugModuleDefinition{
+		Name:        debugModuleLookup,
+		Description: "HIBP k-anonymity lookup diagnostics.",
+	}); err != nil {
+		return err
+	}
+
+	if err := registrar.RegisterDebugModule(pluginapi.DebugModuleDefinition{
+		Name:        debugModuleMail,
+		Description: "HIBP notification mail diagnostics.",
+	}); err != nil {
+		return err
+	}
+
 	return registrar.RegisterPostActionTarget(postActionTarget{plugin: p})
 }
 
@@ -126,6 +144,8 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	}
 
 	logger := host.Logger(pluginName)
+	lookupLogger := host.Logger(debugModuleLookup)
+	mailLogger := host.Logger(debugModuleMail)
 	tracer := host.Tracer(pluginName)
 
 	metrics, err := registerMetrics(host.Metrics(pluginName))
@@ -141,6 +161,8 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	p.mu.Lock()
 	p.host = host
 	p.logger = logger
+	p.lookupLogger = lookupLogger
+	p.mailLogger = mailLogger
 	p.tracer = tracer
 	p.http = host.HTTP(pluginName)
 	config := p.config
@@ -167,6 +189,8 @@ func (p *Plugin) Stop(ctx context.Context) error {
 	logger := p.logger
 	p.host = nil
 	p.logger = nil
+	p.lookupLogger = nil
+	p.mailLogger = nil
 	p.tracer = nil
 	p.http = nil
 	p.mailer = nil
@@ -214,14 +238,16 @@ func (p *Plugin) snapshot() pluginState {
 	defer p.mu.RUnlock()
 
 	return pluginState{
-		config:  p.config,
-		logger:  p.logger,
-		tracer:  p.tracer,
-		http:    p.http,
-		mailer:  p.mailer,
-		redis:   p.redis,
-		cache:   p.cache,
-		metrics: p.metrics,
+		config:       p.config,
+		logger:       p.logger,
+		lookupLogger: p.lookupLogger,
+		mailLogger:   p.mailLogger,
+		tracer:       p.tracer,
+		http:         p.http,
+		mailer:       p.mailer,
+		redis:        p.redis,
+		cache:        p.cache,
+		metrics:      p.metrics,
 	}
 }
 
@@ -231,7 +257,7 @@ func mailerForConfig(host pluginapi.Host, config moduleConfig) pluginapi.Mailer 
 		return nil
 	}
 
-	return host.Mail(pluginName)
+	return host.Mail(debugModuleMail)
 }
 
 // registerConnectionTarget records the remote HIBP endpoint without URL paths.
@@ -275,14 +301,16 @@ func configuredRedisPoolClass(pool string) string {
 }
 
 type pluginState struct {
-	config  moduleConfig
-	logger  pluginapi.Logger
-	tracer  pluginapi.Tracer
-	http    pluginapi.HTTPClient
-	mailer  pluginapi.Mailer
-	redis   pluginapi.Redis
-	cache   pluginapi.Cache
-	metrics pluginMetrics
+	config       moduleConfig
+	logger       pluginapi.Logger
+	lookupLogger pluginapi.Logger
+	mailLogger   pluginapi.Logger
+	tracer       pluginapi.Tracer
+	http         pluginapi.HTTPClient
+	mailer       pluginapi.Mailer
+	redis        pluginapi.Redis
+	cache        pluginapi.Cache
+	metrics      pluginMetrics
 }
 
 type postActionTarget struct {

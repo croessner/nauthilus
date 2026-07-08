@@ -13,6 +13,45 @@ func TestRuntimeModuleSet_BackendMonitoringAliasIsRejected(t *testing.T) {
 	}
 }
 
+func TestDbgModuleSetAcceptsPluginDebugSelectors(t *testing.T) {
+	tests := []string{
+		"plugin",
+		"plugin.clickhouse",
+		"plugin.clickhouse.batch",
+	}
+
+	for _, selector := range tests {
+		t.Run(selector, func(t *testing.T) {
+			module := &DbgModule{}
+			if err := module.Set(selector); err != nil {
+				t.Fatalf("Set(%q) error = %v", selector, err)
+			}
+
+			if module.Get() != selector {
+				t.Fatalf("Get() = %q, want %q", module.Get(), selector)
+			}
+		})
+	}
+}
+
+func TestDbgModuleSetRejectsInvalidPluginDebugSelectors(t *testing.T) {
+	tests := []string{
+		"plugin.",
+		"plugin.clickhouse.batch.extra",
+		"plugin.clickhouse.all",
+		"debug.clickhouse",
+	}
+
+	for _, selector := range tests {
+		t.Run(selector, func(t *testing.T) {
+			module := &DbgModule{}
+			if err := module.Set(selector); err == nil {
+				t.Fatalf("Set(%q) error = nil, want invalid debug module", selector)
+			}
+		})
+	}
+}
+
 func TestResolveLDAPSearchPoolName(t *testing.T) {
 	cfg := &FileSettings{
 		LDAP: &LDAPSection{

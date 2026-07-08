@@ -90,6 +90,54 @@ func TestRegistrar_StagesComponentsUntilCommit(t *testing.T) {
 	}
 }
 
+func TestRegistrar_RegistersModuleAndLocalDebugSelectors(t *testing.T) {
+	registry := NewRegistry()
+	registrar := registry.NewRegistrar(config.PluginModule{Name: testRegistryModuleGeoIP})
+
+	if err := registrar.RegisterDebugModule(pluginapi.DebugModuleDefinition{
+		Name:        "lookup",
+		Description: "GeoIP lookup diagnostics.",
+	}); err != nil {
+		t.Fatalf("RegisterDebugModule() error = %v", err)
+	}
+
+	if err := registrar.Commit(); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+
+	debugModules := registry.DebugModulesByModule(testRegistryModuleGeoIP)
+	if len(debugModules) != 2 {
+		t.Fatalf("debug modules len = %d, want module and local selectors", len(debugModules))
+	}
+
+	if !registry.HasDebugSelector("plugin.geoip") || !registry.HasDebugSelector("plugin.geoip.lookup") {
+		t.Fatalf("registered debug selectors = %#v", debugModules)
+	}
+}
+
+func TestRegistrar_RejectsDuplicateDebugModuleName(t *testing.T) {
+	registrar := NewRegistry().NewRegistrar(config.PluginModule{Name: testRegistryModuleGeoIP})
+	definition := pluginapi.DebugModuleDefinition{Name: "lookup"}
+
+	if err := registrar.RegisterDebugModule(definition); err != nil {
+		t.Fatalf("RegisterDebugModule() error = %v", err)
+	}
+
+	err := registrar.RegisterDebugModule(definition)
+	if !errors.Is(err, ErrDuplicateDebugModule) {
+		t.Fatalf("RegisterDebugModule() error = %v, want ErrDuplicateDebugModule", err)
+	}
+}
+
+func TestRegistrar_RejectsReservedDebugModuleName(t *testing.T) {
+	registrar := NewRegistry().NewRegistrar(config.PluginModule{Name: testRegistryModuleGeoIP})
+
+	err := registrar.RegisterDebugModule(pluginapi.DebugModuleDefinition{Name: "auth"})
+	if !errors.Is(err, ErrInvalidDebugModule) {
+		t.Fatalf("RegisterDebugModule() error = %v, want ErrInvalidDebugModule", err)
+	}
+}
+
 func TestRegistrar_RejectsDisallowedCapability(t *testing.T) {
 	for _, capability := range []pluginapi.Capability{
 		pluginapi.CapabilityCredentials,

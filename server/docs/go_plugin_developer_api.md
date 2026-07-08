@@ -52,6 +52,7 @@ classDiagram
         +RegisterPostActionTarget(PostActionTarget) error
         +RegisterHook(Hook) error
         +RegisterPolicyAttribute(AttributeDefinition) error
+        +RegisterDebugModule(DebugModuleDefinition) error
     }
 
     class Host {
@@ -258,6 +259,27 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 Use `Registrar.Config()` for plugin-owned module config. Nauthilus passes the root `plugins.modules[].config` subtree as
 a read-only `ConfigView`. `Decode` is strict and should be treated as part of plugin startup validation.
 
+### Debug Modules
+
+Every configured module automatically has an operator-facing debug selector named `plugin.<module>`, where `<module>` is
+the configured `plugins.modules[].name`. Use `RegisterDebugModule` only for meaningful local debug surfaces that an
+operator may want to enable independently:
+
+```go
+if err := registrar.RegisterDebugModule(pluginapi.DebugModuleDefinition{
+    Name:        "lookup",
+    Description: "External lookup diagnostics.",
+}); err != nil {
+    return err
+}
+```
+
+The host publishes that declaration as `plugin.<module>.lookup`. Local debug names must match
+`[a-z0-9][a-z0-9_]{0,62}` and cannot use built-in or control names such as `auth`, `policy`, `all`, `none`, or
+`plugin`. Call `host.Logger("lookup").Debug(...)` normally; the host emits the record only when `server.log.level` is
+`debug` and `server.log.debug_modules` contains `all`, `plugin`, `plugin.<module>`, or the exact registered local
+selector. `Info`, `Warn`, and `Error` records are not gated by plugin debug selectors.
+
 ### Start And Stop
 
 Implement `pluginapi.RuntimePlugin` when the plugin needs host services, request-time shared state, or long-lived
@@ -323,7 +345,7 @@ The `Host` interface hides Nauthilus internals behind narrow facades:
 
 | Facade | Intended use |
 | --- | --- |
-| `Logger(scope)` | Structured plugin logs through the host logger. |
+| `Logger(scope)` | Structured plugin logs through the host logger; `Debug` is gated by registered plugin debug selectors. |
 | `Tracer(scope)` | Child spans from plugin call contexts. |
 | `Metrics(scope)` | Plugin-owned metric handles with declared labels and duplicate-safe registration. |
 | `HTTP(scope)` | Host-managed outbound HTTP with trace propagation, bounded metrics, timeouts, response body limits, and redacted operational logs. |

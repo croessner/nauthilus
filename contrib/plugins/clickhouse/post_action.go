@@ -99,8 +99,8 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 		pluginapi.TraceAttribute{Key: traceAttrBatchSize, Value: length},
 	)
 
-	if state.logger != nil {
-		state.logger.Debug(
+	if state.debugLogger != nil {
+		state.debugLogger.Debug(
 			ctx,
 			"clickhouse row queued",
 			pluginapi.LogField{Key: logFieldRows, Value: length},
@@ -258,8 +258,8 @@ func postRows(ctx context.Context, state pluginState, rows []any) (pluginapi.HTT
 	body := ndjsonBody(rows)
 	headers, authMethod := buildHeaders(state.config)
 
-	if state.logger != nil {
-		state.logger.Debug(
+	if state.debugLogger != nil {
+		state.debugLogger.Debug(
 			ctx,
 			"clickhouse batch posting",
 			pluginapi.LogField{Key: logFieldRows, Value: len(rows)},

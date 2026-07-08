@@ -290,6 +290,35 @@ func TestValidateOrderedPluginBackends_RejectsReferencedOptionalModuleFailure(t 
 	}
 }
 
+func TestValidatePluginDebugSelectors_AcceptsRegisteredSelectors(t *testing.T) {
+	state := loadDebugPluginState(t, testLoaderModuleCustomerA, "batch", false)
+	cfg := fileWithDebugModules(t, "plugin", "plugin."+testLoaderModuleCustomerA, "plugin."+testLoaderModuleCustomerA+".batch")
+
+	if err := ValidatePluginDebugSelectors(cfg, state); err != nil {
+		t.Fatalf("ValidatePluginDebugSelectors() error = %v", err)
+	}
+}
+
+func TestValidatePluginDebugSelectors_RejectsMissingLocalSelector(t *testing.T) {
+	state := loadDebugPluginState(t, testLoaderModuleCustomerA, "batch", false)
+	cfg := fileWithDebugModules(t, "plugin."+testLoaderModuleCustomerA+".lookup")
+
+	err := ValidatePluginDebugSelectors(cfg, state)
+	if !errors.Is(err, ErrPluginDebugSelectorMissing) {
+		t.Fatalf("ValidatePluginDebugSelectors() error = %v, want ErrPluginDebugSelectorMissing", err)
+	}
+}
+
+func TestValidatePluginDebugSelectors_RejectsOptionalModuleExactSelector(t *testing.T) {
+	state := loadDebugPluginState(t, testLoaderModuleCustomerA, "batch", true)
+	cfg := fileWithDebugModules(t, "plugin."+testLoaderModuleCustomerA)
+
+	err := ValidatePluginDebugSelectors(cfg, state)
+	if !errors.Is(err, ErrPluginDebugSelectorMissing) {
+		t.Fatalf("ValidatePluginDebugSelectors() error = %v, want ErrPluginDebugSelectorMissing", err)
+	}
+}
+
 func writeLoaderArtifact(t *testing.T) string {
 	t.Helper()
 
@@ -354,6 +383,35 @@ func loadBackendPluginState(t *testing.T, moduleName string, backendName string,
 	return state
 }
 
+func loadDebugPluginState(t *testing.T, moduleName string, debugName string, failOptional bool) *State {
+	t.Helper()
+
+	artifact := writeLoaderArtifact(t)
+	opener := fakeFactoryOpener(artifact, func() (pluginapi.Plugin, error) {
+		if failOptional {
+			return nil, errors.New("optional plugin unavailable")
+		}
+
+		return fakePlugin{
+			metadata: validLoaderMetadata(),
+			register: func(registrar pluginapi.Registrar) error {
+				return registrar.RegisterDebugModule(pluginapi.DebugModuleDefinition{Name: debugName})
+			},
+		}, nil
+	})
+
+	state, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+		verifiedLoaderModule(moduleName, artifact, func(module *config.PluginModule) {
+			module.Optional = failOptional
+		}),
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	return state
+}
+
 func fileWithPluginBackendOrder(t *testing.T, qualifiedName string) *config.FileSettings {
 	t.Helper()
 
@@ -364,6 +422,26 @@ func fileWithPluginBackendOrder(t *testing.T, qualifiedName string) *config.File
 
 	return &config.FileSettings{
 		Server: &config.ServerSection{Backends: []*config.Backend{backend}},
+	}
+}
+
+func fileWithDebugModules(t *testing.T, selectors ...string) *config.FileSettings {
+	t.Helper()
+
+	modules := make([]*config.DbgModule, 0, len(selectors))
+	for _, selector := range selectors {
+		module := &config.DbgModule{}
+		if err := module.Set(selector); err != nil {
+			t.Fatalf("DbgModule.Set(%q) error = %v", selector, err)
+		}
+
+		modules = append(modules, module)
+	}
+
+	return &config.FileSettings{
+		Server: &config.ServerSection{
+			Log: config.Log{DbgModules: modules},
+		},
 	}
 }
 

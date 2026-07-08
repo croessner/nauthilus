@@ -33,6 +33,7 @@ type DiscoveryDocument struct {
 type DiscoveryModule struct {
 	Metadata             DiscoveryMetadata      `json:"metadata"`
 	Components           []DiscoveryComponent   `json:"components,omitempty"`
+	DebugModules         []DiscoveryDebugModule `json:"debug_modules,omitempty"`
 	RequiredCapabilities []pluginapi.Capability `json:"required_capabilities,omitempty"`
 	Name                 string                 `json:"name"`
 	Type                 string                 `json:"type,omitempty"`
@@ -66,6 +67,15 @@ type DiscoveryComponent struct {
 	Name          string                         `json:"name"`
 	Kind          pluginregistry.ComponentKind   `json:"kind"`
 	Origin        pluginregistry.ComponentOrigin `json:"origin"`
+}
+
+// DiscoveryDebugModule describes one registered plugin debug selector.
+type DiscoveryDebugModule struct {
+	Selector    string                         `json:"selector"`
+	ModuleName  string                         `json:"module_name"`
+	Name        string                         `json:"name,omitempty"`
+	Description string                         `json:"description,omitempty"`
+	Origin      pluginregistry.ComponentOrigin `json:"origin"`
 }
 
 // DiscoverySourceDescriptor describes dependency-scheduled source metadata.
@@ -109,6 +119,7 @@ func discoveryModule(instance ModuleInstance) DiscoveryModule {
 	module := DiscoveryModule{
 		Metadata:             discoveryMetadata(instance.Metadata),
 		Components:           discoveryComponents(instance.Descriptors),
+		DebugModules:         discoveryDebugModules(instance.DebugModules),
 		RequiredCapabilities: slices.Clone(instance.Capabilities),
 		Name:                 instance.ModuleName,
 		Type:                 instance.Module.Type,
@@ -141,6 +152,26 @@ func discoveryMetadata(metadata pluginapi.Metadata) DiscoveryMetadata {
 		Features:     slices.Clone(metadata.Features),
 		Capabilities: slices.Clone(metadata.Capabilities),
 	}
+}
+
+// discoveryDebugModules converts registered debug selectors into JSON-safe values.
+func discoveryDebugModules(modules []pluginregistry.DebugModule) []DiscoveryDebugModule {
+	if len(modules) == 0 {
+		return nil
+	}
+
+	discovered := make([]DiscoveryDebugModule, 0, len(modules))
+	for _, module := range modules {
+		discovered = append(discovered, DiscoveryDebugModule{
+			Selector:    module.Selector,
+			ModuleName:  module.ModuleName,
+			Name:        module.LocalName,
+			Description: module.Description,
+			Origin:      module.Origin,
+		})
+	}
+
+	return discovered
 }
 
 // discoveryComponents converts registered component descriptors into JSON-safe values.

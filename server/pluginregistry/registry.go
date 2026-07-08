@@ -43,6 +43,12 @@ var (
 
 	// ErrInvalidPolicyAttribute is returned when a plugin policy attribute cannot be converted.
 	ErrInvalidPolicyAttribute = errors.New("invalid plugin policy attribute")
+
+	// ErrDuplicateDebugModule is returned when a plugin debug selector already exists.
+	ErrDuplicateDebugModule = errors.New("duplicate plugin debug module")
+
+	// ErrInvalidDebugModule is returned when a plugin debug module declaration is invalid.
+	ErrInvalidDebugModule = errors.New("invalid plugin debug module")
 )
 
 // ComponentKind identifies one plugin extension point family.
@@ -98,6 +104,15 @@ type Component struct {
 	Origin           ComponentOrigin
 }
 
+// DebugModule describes one registered plugin debug selector.
+type DebugModule struct {
+	Selector    string
+	ModuleName  string
+	LocalName   string
+	Description string
+	Origin      ComponentOrigin
+}
+
 // PolicyAttributeRegistrar accepts converted policy attributes during registrar commit.
 type PolicyAttributeRegistrar interface {
 	Register(policyregistry.AttributeDefinition) error
@@ -110,18 +125,23 @@ type RegistryOption func(*Registry)
 type Registry struct {
 	policyAttributeRegistrar PolicyAttributeRegistrar
 	components               map[string]Component
+	debugModules             map[string]DebugModule
 	byKind                   map[ComponentKind][]string
+	debugModulesByModule     map[string][]string
 	policyAttributes         map[string]policyregistry.AttributeDefinition
 	policyAttributeOrder     []string
+	debugModuleOrder         []string
 	order                    []string
 }
 
 // NewRegistry returns an empty plugin component registry.
 func NewRegistry(options ...RegistryOption) *Registry {
 	registry := &Registry{
-		components:       make(map[string]Component),
-		byKind:           make(map[ComponentKind][]string),
-		policyAttributes: make(map[string]policyregistry.AttributeDefinition),
+		components:           make(map[string]Component),
+		debugModules:         make(map[string]DebugModule),
+		byKind:               make(map[ComponentKind][]string),
+		debugModulesByModule: make(map[string][]string),
+		policyAttributes:     make(map[string]policyregistry.AttributeDefinition),
 	}
 	for _, option := range options {
 		option(registry)
@@ -144,10 +164,11 @@ func (r *Registry) NewRegistrar(module config.PluginModule) *Registrar {
 	}
 
 	return &Registrar{
-		localNames: make(map[string]struct{}),
-		registry:   r,
-		module:     module,
-		config:     NewConfigView(module.Config),
+		localNames:      make(map[string]struct{}),
+		debugLocalNames: make(map[string]struct{}),
+		registry:        r,
+		module:          module,
+		config:          NewConfigView(module.Config),
 	}
 }
 
@@ -233,6 +254,50 @@ func (r *Registry) PolicyAttributes() []policyregistry.AttributeDefinition {
 	return attributes
 }
 
+// DebugModules returns registered plugin debug selectors in registration order.
+func (r *Registry) DebugModules() []DebugModule {
+	if r == nil || len(r.debugModuleOrder) == 0 {
+		return nil
+	}
+
+	modules := make([]DebugModule, 0, len(r.debugModuleOrder))
+	for _, selector := range r.debugModuleOrder {
+		modules = append(modules, r.debugModules[selector])
+	}
+
+	return modules
+}
+
+// DebugModulesByModule returns registered plugin debug selectors for one module.
+func (r *Registry) DebugModulesByModule(moduleName string) []DebugModule {
+	if r == nil {
+		return nil
+	}
+
+	selectors := r.debugModulesByModule[moduleName]
+	if len(selectors) == 0 {
+		return nil
+	}
+
+	modules := make([]DebugModule, 0, len(selectors))
+	for _, selector := range selectors {
+		modules = append(modules, r.debugModules[selector])
+	}
+
+	return modules
+}
+
+// HasDebugSelector reports whether an exact plugin debug selector is registered.
+func (r *Registry) HasDebugSelector(selector string) bool {
+	if r == nil {
+		return false
+	}
+
+	_, ok := r.debugModules[selector]
+
+	return ok
+}
+
 // Lookup returns a registered component by fully qualified name.
 func (r *Registry) Lookup(qualifiedName string) (Component, bool) {
 	if r == nil {
@@ -281,15 +346,30 @@ func (r *Registry) registerPolicyAttribute(definition policyregistry.AttributeDe
 	return nil
 }
 
+// registerDebugModule stores one committed debug selector after collision checks.
+func (r *Registry) registerDebugModule(module DebugModule) error {
+	if _, exists := r.debugModules[module.Selector]; exists {
+		return fmt.Errorf("%w: %s", ErrDuplicateDebugModule, module.Selector)
+	}
+
+	r.debugModules[module.Selector] = module
+	r.debugModulesByModule[module.ModuleName] = append(r.debugModulesByModule[module.ModuleName], module.Selector)
+	r.debugModuleOrder = append(r.debugModuleOrder, module.Selector)
+
+	return nil
+}
+
 // Registrar records declarations for one module instance.
 type Registrar struct {
 	localNames       map[string]struct{}
+	debugLocalNames  map[string]struct{}
 	registry         *Registry
 	config           *ConfigView
 	module           config.PluginModule
 	policyAttributes []policyregistry.AttributeDefinition
 	capabilities     []pluginapi.Capability
 	components       []Component
+	debugModules     []DebugModule
 }
 
 var _ pluginapi.Registrar = (*Registrar)(nil)
@@ -452,6 +532,31 @@ func (r *Registrar) RegisterPolicyAttribute(definition pluginapi.AttributeDefini
 	return nil
 }
 
+// RegisterDebugModule records a plugin-local debug module declaration.
+func (r *Registrar) RegisterDebugModule(definition pluginapi.DebugModuleDefinition) error {
+	if r == nil || r.registry == nil {
+		return errors.New("plugin registrar is not initialized")
+	}
+
+	debugModule, err := validateDebugModuleDefinition(r.module.Name, definition)
+	if err != nil {
+		return err
+	}
+
+	if _, exists := r.debugLocalNames[debugModule.Selector]; exists {
+		return fmt.Errorf("%w: %s", ErrDuplicateDebugModule, debugModule.Selector)
+	}
+
+	if r.debugLocalNames == nil {
+		r.debugLocalNames = make(map[string]struct{})
+	}
+
+	r.debugLocalNames[debugModule.Selector] = struct{}{}
+	r.debugModules = append(r.debugModules, debugModule)
+
+	return nil
+}
+
 // Capabilities returns capabilities required during registration.
 func (r *Registrar) Capabilities() []pluginapi.Capability {
 	if r == nil || len(r.capabilities) == 0 {
@@ -484,6 +589,15 @@ func (r *Registrar) PolicyAttributes() []policyregistry.AttributeDefinition {
 	return attributes
 }
 
+// DebugModules returns plugin-local debug modules declared through this registrar.
+func (r *Registrar) DebugModules() []DebugModule {
+	if r == nil || len(r.debugModules) == 0 {
+		return nil
+	}
+
+	return slices.Clone(r.debugModules)
+}
+
 // Commit publishes staged registrar declarations to the shared registry.
 func (r *Registrar) Commit() error {
 	if r == nil || r.registry == nil {
@@ -492,6 +606,25 @@ func (r *Registrar) Commit() error {
 
 	if err := r.preflightComponents(); err != nil {
 		return err
+	}
+
+	if err := r.preflightDebugModules(); err != nil {
+		return err
+	}
+
+	moduleDebugModule, err := moduleLevelDebugModule(r.module.Name)
+	if err != nil {
+		return err
+	}
+
+	if err := r.registry.registerDebugModule(moduleDebugModule); err != nil {
+		return err
+	}
+
+	for _, debugModule := range r.debugModules {
+		if err := r.registry.registerDebugModule(debugModule); err != nil {
+			return err
+		}
 	}
 
 	for _, definition := range r.policyAttributes {
@@ -558,6 +691,56 @@ func (r *Registrar) preflightComponents() error {
 	}
 
 	return nil
+}
+
+// preflightDebugModules checks selector collisions before commit mutates the registry.
+func (r *Registrar) preflightDebugModules() error {
+	moduleDebugModule, err := moduleLevelDebugModule(r.module.Name)
+	if err != nil {
+		return err
+	}
+
+	if r.registry.HasDebugSelector(moduleDebugModule.Selector) {
+		return fmt.Errorf("%w: %s", ErrDuplicateDebugModule, moduleDebugModule.Selector)
+	}
+
+	for _, debugModule := range r.debugModules {
+		if r.registry.HasDebugSelector(debugModule.Selector) {
+			return fmt.Errorf("%w: %s", ErrDuplicateDebugModule, debugModule.Selector)
+		}
+	}
+
+	return nil
+}
+
+// moduleLevelDebugModule builds the automatic selector for one configured module.
+func moduleLevelDebugModule(moduleName string) (DebugModule, error) {
+	selector, err := pluginapi.PluginDebugModuleSelector(moduleName)
+	if err != nil {
+		return DebugModule{}, fmt.Errorf("%w: %w", ErrInvalidDebugModule, err)
+	}
+
+	return DebugModule{
+		Selector:   selector,
+		ModuleName: moduleName,
+		Origin:     ComponentOriginNative,
+	}, nil
+}
+
+// validateDebugModuleDefinition converts a public debug declaration into registry metadata.
+func validateDebugModuleDefinition(moduleName string, definition pluginapi.DebugModuleDefinition) (DebugModule, error) {
+	selector, err := pluginapi.PluginDebugSubmoduleSelector(moduleName, definition.Name)
+	if err != nil {
+		return DebugModule{}, fmt.Errorf("%w: %w", ErrInvalidDebugModule, err)
+	}
+
+	return DebugModule{
+		Selector:    selector,
+		ModuleName:  moduleName,
+		LocalName:   definition.Name,
+		Description: definition.Description,
+		Origin:      ComponentOriginNative,
+	}, nil
 }
 
 // sensitiveCapability reports whether a capability is default-deny without an allowlist.

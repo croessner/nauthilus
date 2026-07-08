@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/lualib/smtp"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
@@ -46,6 +47,7 @@ type Host struct {
 	mailSender        smtp.Client
 	httpClient        *http.Client
 	caches            *cacheRegistry
+	debugGate         *pluginDebugGate
 	redisPrefix       string
 	tracerFactory     func(string) pluginapi.Tracer
 	metricsFactory    func(string) pluginapi.Metrics
@@ -63,6 +65,7 @@ func NewHost(options ...HostOption) *Host {
 		mailSender:        &smtp.EmailClient{},
 		httpClient:        &http.Client{},
 		caches:            newCacheRegistry(),
+		debugGate:         &pluginDebugGate{},
 		helpers:           NewDeterministicHelperFacade(HelperOptions{}),
 		tracerFactory:     func(scope string) pluginapi.Tracer { return NewTracerFacade(scope) },
 		metricsFactory:    func(scope string) pluginapi.Metrics { return NewMetricsFacade(scope) },
@@ -125,6 +128,20 @@ func WithConfig(view pluginapi.ConfigView) HostOption {
 		if view != nil {
 			host.config = view
 		}
+	}
+}
+
+// WithDebugConfig configures the server log config used for plugin debug gating.
+func WithDebugConfig(cfg config.File) HostOption {
+	return func(host *Host) {
+		host.ensureDebugGate().cfg = cfg
+	}
+}
+
+// WithDebugRegistry configures the registered plugin debug selector lookup.
+func WithDebugRegistry(registry *pluginregistry.Registry) HostOption {
+	return func(host *Host) {
+		host.ensureDebugGate().setRegistry(registry)
 	}
 }
 
@@ -213,12 +230,17 @@ func (h *Host) ServiceContext() context.Context {
 
 // Logger returns a scoped structured logger facade.
 func (h *Host) Logger(scope string) pluginapi.Logger {
+	return h.scopedLogger("", scope)
+}
+
+// scopedLogger creates a plugin logger bound to an optional configured module name.
+func (h *Host) scopedLogger(moduleName string, scope string) pluginapi.Logger {
 	logger := slog.Default()
 	if h != nil && h.logger != nil {
 		logger = h.logger
 	}
 
-	return scopedLogger{logger: logger, scope: scope}
+	return scopedLogger{logger: logger, debugGate: h.debugGateOrNil(), moduleName: moduleName, scope: scope}
 }
 
 // Tracer returns a scoped host tracing facade.
@@ -336,6 +358,15 @@ func (h *Host) Go(ctx context.Context, name string, fn func(context.Context) err
 		return
 	}
 
+	h.goWithLogger(ctx, name, h.Logger(name), fn)
+}
+
+// goWithLogger starts a supervised worker using the supplied plugin logger.
+func (h *Host) goWithLogger(ctx context.Context, _ string, logger pluginapi.Logger, fn func(context.Context) error) {
+	if h == nil || fn == nil {
+		return
+	}
+
 	if ctx == nil {
 		ctx = h.ServiceContext()
 	}
@@ -346,14 +377,14 @@ func (h *Host) Go(ctx context.Context, name string, fn func(context.Context) err
 		defer cancel()
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				h.Logger(name).Error(workerCtx, "plugin worker panicked", pluginapi.LogField{Key: "panic", Value: true})
+				logger.Error(workerCtx, "plugin worker panicked", pluginapi.LogField{Key: "panic", Value: true})
 			}
 		}()
 
 		go cancelWhenDone(workerCtx, ctx, cancel)
 
 		if err := fn(workerCtx); err != nil {
-			h.Logger(name).Error(workerCtx, "plugin worker stopped with error", pluginapi.LogField{Key: pluginLogFieldErrorClass, Value: "worker"})
+			logger.Error(workerCtx, "plugin worker stopped with error", pluginapi.LogField{Key: pluginLogFieldErrorClass, Value: "worker"})
 		}
 	})
 }
@@ -401,13 +432,145 @@ func cancelWhenDone(workerCtx context.Context, parent context.Context, cancel co
 	}
 }
 
+// SetDebugRegistry updates the host debug selector registry after plugin loading.
+func (h *Host) SetDebugRegistry(registry *pluginregistry.Registry) {
+	if h == nil {
+		return
+	}
+
+	h.ensureDebugGate().setRegistry(registry)
+}
+
+// moduleHost returns a host facade bound to one configured plugin module instance.
+func (h *Host) moduleHost(moduleName string) pluginapi.Host {
+	if h == nil {
+		return NewHost().moduleHost(moduleName)
+	}
+
+	return moduleBoundHost{base: h, moduleName: moduleName}
+}
+
+// ensureDebugGate returns the mutable debug gate, creating it when needed.
+func (h *Host) ensureDebugGate() *pluginDebugGate {
+	if h.debugGate == nil {
+		h.debugGate = &pluginDebugGate{}
+	}
+
+	return h.debugGate
+}
+
+// debugGateOrNil returns the current debug gate without mutating a nil host.
+func (h *Host) debugGateOrNil() *pluginDebugGate {
+	if h == nil {
+		return nil
+	}
+
+	return h.ensureDebugGate()
+}
+
+type moduleBoundHost struct {
+	base       *Host
+	moduleName string
+}
+
+// ServiceContext returns the shared host service context.
+func (h moduleBoundHost) ServiceContext() context.Context {
+	return h.base.ServiceContext()
+}
+
+// Logger returns a logger bound to the configured plugin module.
+func (h moduleBoundHost) Logger(scope string) pluginapi.Logger {
+	return h.base.scopedLogger(h.moduleName, scope)
+}
+
+// Tracer returns a scoped tracer from the shared host.
+func (h moduleBoundHost) Tracer(scope string) pluginapi.Tracer {
+	return h.base.Tracer(scope)
+}
+
+// Metrics returns scoped metrics from the shared host.
+func (h moduleBoundHost) Metrics(scope string) pluginapi.Metrics {
+	return h.base.Metrics(scope)
+}
+
+// HTTP returns a module-bound host-managed HTTP facade.
+func (h moduleBoundHost) HTTP(scope string) pluginapi.HTTPClient {
+	return NewHTTPFacade(
+		scope,
+		HTTPFacadeClient(h.base.httpClient),
+		HTTPFacadeLogger(h.Logger(scope)),
+		HTTPFacadeMetrics(h.Metrics(scope)),
+		HTTPFacadeTracer(h.Tracer(scope)),
+	)
+}
+
+// Mail returns a module-bound host-managed mail facade.
+func (h moduleBoundHost) Mail(scope string) pluginapi.Mailer {
+	return NewMailFacade(
+		scope,
+		MailFacadeSender(h.base.mailSender),
+		MailFacadeLogger(h.Logger(scope)),
+	)
+}
+
+// ConnectionTargets returns the shared connection-target facade.
+func (h moduleBoundHost) ConnectionTargets(scope string) pluginapi.ConnectionTargets {
+	return h.base.ConnectionTargets(scope)
+}
+
+// BackendServers returns the shared backend server facade.
+func (h moduleBoundHost) BackendServers() pluginapi.BackendServers {
+	return h.base.BackendServers()
+}
+
+// Redis returns the shared Redis facade.
+func (h moduleBoundHost) Redis() pluginapi.Redis {
+	return h.base.Redis()
+}
+
+// Cache returns the shared scoped cache facade.
+func (h moduleBoundHost) Cache(scope string) (pluginapi.Cache, error) {
+	return h.base.Cache(scope)
+}
+
+// Helpers returns deterministic helper functions from the shared host.
+func (h moduleBoundHost) Helpers() pluginapi.DeterministicHelpers {
+	return h.base.Helpers()
+}
+
+// LDAP returns the shared LDAP facade.
+func (h moduleBoundHost) LDAP() pluginapi.LDAP {
+	return h.base.LDAP()
+}
+
+// Config returns the shared host config view.
+func (h moduleBoundHost) Config() pluginapi.ConfigView {
+	return h.base.Config()
+}
+
+// Go starts a supervised worker with module-bound logging.
+func (h moduleBoundHost) Go(ctx context.Context, name string, fn func(context.Context) error) {
+	h.base.goWithLogger(ctx, name, h.Logger(name), fn)
+}
+
 type scopedLogger struct {
-	logger *slog.Logger
-	scope  string
+	logger     *slog.Logger
+	debugGate  *pluginDebugGate
+	moduleName string
+	scope      string
 }
 
 // Debug writes a debug plugin log record.
 func (l scopedLogger) Debug(ctx context.Context, message string, fields ...pluginapi.LogField) {
+	if l.debugGate != nil {
+		debugModule, enabled := l.debugGate.enabled(l.moduleName, l.scope)
+		if !enabled {
+			return
+		}
+
+		fields = append(fields, pluginapi.LogField{Key: "debug_module", Value: debugModule})
+	}
+
 	l.log(ctx, slog.LevelDebug, message, fields...)
 }
 
@@ -428,7 +591,11 @@ func (l scopedLogger) Error(ctx context.Context, message string, fields ...plugi
 
 // log converts plugin log fields to slog attributes.
 func (l scopedLogger) log(ctx context.Context, level slog.Level, message string, fields ...pluginapi.LogField) {
-	attrs := make([]any, 0, 2+len(fields)*2)
+	attrs := make([]any, 0, 4+len(fields)*2)
+	if l.moduleName != "" {
+		attrs = append(attrs, "plugin_module", l.moduleName)
+	}
+
 	if l.scope != "" {
 		attrs = append(attrs, "plugin_scope", l.scope)
 	}

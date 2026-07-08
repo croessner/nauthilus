@@ -523,6 +523,13 @@ func (d *DbgModule) Set(value string) error {
 		}
 	}
 
+	if err := pluginapi.ValidatePluginDebugSelector(trimmedValue); err == nil {
+		d.module = definitions.DbgNone
+		d.name = trimmedValue
+
+		return nil
+	}
+
 	return fmt.Errorf(errors.ErrWrongDebugModule.Error(), value)
 }
 

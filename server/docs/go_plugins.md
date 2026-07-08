@@ -73,6 +73,9 @@ as the server binary:
 - `clickhouse.so`
 - `haveibeenpwnd.so`
 
+The "debug Docker image" wording describes the image build track. Runtime plugin debug output is controlled separately
+through `server.log.level` and `server.log.debug_modules`.
+
 The artifacts are copied into `/usr/local/lib/nauthilus/plugins/` and are world-readable by the unprivileged runtime
 user. When `REQUIRE_PLUGIN_SIGNATURE=true`, every bundled plugin is signed during the image build and the detached
 `.minisig` files are copied beside the `.so` artifacts with the same runtime-readable mode.
@@ -153,7 +156,43 @@ plugins:
 The loader state exposes machine-readable discovery through `pluginloader.State.Discovery()`. The discovery document is
 derived from safe module metadata and registered component descriptors. It includes module status, plugin metadata such as
 `Metadata.Description` and `Metadata.DocsURL`, required capabilities, and component descriptors while omitting
-plugin-owned `config` values.
+plugin-owned `config` values. Registered plugin debug selectors are exposed as `debug_modules` entries with the qualified
+selector, module name, optional local name, description, and origin.
+
+## Runtime Debug Modules
+
+Native plugin debug logs use the normal Nauthilus log level plus `server.log.debug_modules`. Set `server.log.level` to
+`debug` first, then enable the desired plugin selector:
+
+```yaml
+server:
+  log:
+    level: debug
+    debug_modules:
+      - plugin
+      - plugin.clickhouse
+      - plugin.clickhouse.batch
+      - plugin.haveibeenpwnd.lookup
+      - plugin.haveibeenpwnd.mail
+```
+
+Selector behavior:
+
+- `all`: enables all built-in and plugin debug modules.
+- `plugin`: enables debug logs for all registered native plugin modules.
+- `plugin.<module>`: enables all debug logs for one configured module instance.
+- `plugin.<module>.<name>`: enables one plugin-local debug module registered by that module.
+
+The `<module>` portion is the configured `plugins.modules[].name`; it is not the plugin product name from
+`Metadata().Name`. This keeps selectors distinct when the same `.so` is configured more than once. `Info`, `Warn`, and
+`Error` plugin logs remain controlled by the normal log level and are not hidden by debug-module selection.
+
+Bundled runtime selectors:
+
+- `plugin.geoip`: automatic module-level selector; GeoIP currently has no extra local debug selector.
+- `plugin.clickhouse.batch`: ClickHouse queue, flush, and insert diagnostics, including host-managed HTTP success logs.
+- `plugin.haveibeenpwnd.lookup`: HIBP k-anonymity lookup diagnostics.
+- `plugin.haveibeenpwnd.mail`: HIBP notification mail diagnostics, including host-managed mail success logs.
 
 ## Runtime Services And Boundaries
 

@@ -376,7 +376,10 @@ func startRuntimePluginRunner(p *runtimeLifecycleParams, cfg config.File, plugin
 			p.Store.redisClient,
 			priorityqueue.LDAPQueue,
 		)),
-		pluginruntime.WithObserver(pluginruntime.NewOperationalObserver(p.Store.logger)),
+		pluginruntime.WithObserver(pluginruntime.NewOperationalObserver(
+			p.Store.logger,
+			pluginruntime.WithOperationalObserverDebugConfig(cfg, pluginState.Registry()),
+		)),
 		pluginruntime.WithPluginConfig(cfg.GetPlugins()),
 	)
 	pluginruntime.SetDefaultRunner(pluginRunner)
@@ -512,6 +515,7 @@ func newRuntimePluginHost(
 		pluginruntime.WithServiceContext(ctx),
 		pluginruntime.WithLogger(logger),
 		pluginruntime.WithConfig(runtimePluginConfigView(cfg)),
+		pluginruntime.WithDebugConfig(cfg),
 		pluginruntime.WithHTTPClient(&http.Client{Transport: util.NewHTTPClientTransport(cfg)}),
 		pluginruntime.WithConnectionTargets(pluginruntime.NewConnectionTargetFacadeForConfig(cfg)),
 		pluginruntime.WithRedisPrefix(redisPrefix),

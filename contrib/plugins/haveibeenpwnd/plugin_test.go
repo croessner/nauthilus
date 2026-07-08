@@ -89,6 +89,13 @@ func TestPluginMetadataAndRegistrationExposePostActionTarget(t *testing.T) {
 	if targets[0].QualifiedName != "haveibeenpwnd.post_action" {
 		t.Fatalf("qualified target = %q, want haveibeenpwnd.post_action", targets[0].QualifiedName)
 	}
+
+	debugModules := registry.DebugModulesByModule(pluginName)
+	if !hasDebugSelector(debugModules, "plugin.haveibeenpwnd") ||
+		!hasDebugSelector(debugModules, "plugin.haveibeenpwnd."+debugModuleLookup) ||
+		!hasDebugSelector(debugModules, "plugin.haveibeenpwnd."+debugModuleMail) {
+		t.Fatalf("debug modules = %#v, want module, lookup, and mail selectors", debugModules)
+	}
 }
 
 func TestRegisterRequiresCredentialsCapability(t *testing.T) {
@@ -920,6 +927,16 @@ func registerTestPlugin(t *testing.T, module config.PluginModule) (*pluginregist
 	}
 
 	return registry, plugin, registrar
+}
+
+func hasDebugSelector(debugModules []pluginregistry.DebugModule, selector string) bool {
+	for _, debugModule := range debugModules {
+		if debugModule.Selector == selector {
+			return true
+		}
+	}
+
+	return false
 }
 
 // testModule returns a native HIBP plugin module config for tests.

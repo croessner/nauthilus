@@ -80,6 +80,10 @@ type Observer interface {
 	ObservePluginCall(CallRecord)
 }
 
+type debugRegistryHost interface {
+	SetDebugRegistry(*pluginregistry.Registry)
+}
+
 // Runner coordinates plugin lifecycle and request-time readiness.
 type Runner struct {
 	host             pluginapi.Host
@@ -144,6 +148,10 @@ func NewRunnerFromInstances(
 	runner.pluginConfig = pluginSectionFromModules(runner.modules)
 	for _, option := range options {
 		option(runner)
+	}
+
+	if host, ok := runner.host.(debugRegistryHost); ok {
+		host.SetDebugRegistry(runner.registry)
 	}
 
 	if runner.pluginConfig == nil {
@@ -427,7 +435,7 @@ func (r *Runner) startModule(ctx context.Context, index int) error {
 		method:         "Start",
 	}
 	if err := r.invoke(ctx, spec, func(callCtx context.Context) error {
-		return runtimePlugin.Start(callCtx, r.host)
+		return runtimePlugin.Start(callCtx, r.moduleHost(instance.ModuleName))
 	}); err != nil {
 		return r.handleLifecycleError(instance, "Start", err)
 	}
@@ -513,7 +521,7 @@ func (r *Runner) startInitTask(ctx context.Context, component pluginregistry.Com
 	}
 
 	initContext := pluginapi.InitContext{
-		Host:   r.host,
+		Host:   r.moduleHost(component.ModuleName),
 		Config: r.moduleConfigLocked(component.ModuleName),
 	}
 	if err := r.invoke(ctx, componentInvokeSpec(component, "Start"), func(callCtx context.Context) error {
@@ -581,6 +589,15 @@ func (r *Runner) readyComponent(qualifiedName string, kind pluginregistry.Compon
 	}
 
 	return component, nil
+}
+
+// moduleHost returns a host facade bound to one configured plugin module when supported.
+func (r *Runner) moduleHost(moduleName string) pluginapi.Host {
+	if binder, ok := r.host.(interface{ moduleHost(string) pluginapi.Host }); ok {
+		return binder.moduleHost(moduleName)
+	}
+
+	return r.host
 }
 
 // moduleConfigLocked returns a config view while the caller holds the runner lock.

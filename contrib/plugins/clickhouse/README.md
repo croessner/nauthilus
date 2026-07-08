@@ -7,6 +7,10 @@ Builds from the stable and debug Dockerfiles bundle this plugin at
 `/usr/local/lib/nauthilus/plugins/clickhouse.so`. When `REQUIRE_PLUGIN_SIGNATURE=true`, the image build also writes
 `/usr/local/lib/nauthilus/plugins/clickhouse.so.minisig`.
 
+The debug Dockerfile is an image build variant. Runtime debug logs are controlled separately with
+`server.log.debug_modules`; this plugin supports `plugin.clickhouse` and the local selector
+`plugin.clickhouse.batch`.
+
 ```yaml
 plugins:
   modules:
@@ -46,7 +50,7 @@ removing the module, changing the module name, or replacing the `.so` artifact r
 changes inside `plugins.modules[].config` can be applied by SIGHUP when validation succeeds.
 
 Observability is host-integrated: the plugin registers the remote ClickHouse endpoint through
-`Host.ConnectionTargets("clickhouse")`, sends inserts through `Host.HTTP("clickhouse")`, and records bounded queue/flush
+`Host.ConnectionTargets("clickhouse")`, sends inserts through `Host.HTTP("batch")`, and records bounded queue/flush
 metrics and spans. Logs, labels, and spans do not include row bodies, raw SQL query strings, usernames, client IPs, or
 credentials.
 

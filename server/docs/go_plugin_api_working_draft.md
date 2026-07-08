@@ -190,6 +190,11 @@ type ArgsView interface {
     IsZero() bool
 }
 
+type DebugModuleDefinition struct {
+    Name        string
+    Description string
+}
+
 type Registrar interface {
     Config() ConfigView
     RequireCapability(Capability) error
@@ -201,6 +206,7 @@ type Registrar interface {
     RegisterPostActionTarget(PostActionTarget) error
     RegisterHook(Hook) error
     RegisterPolicyAttribute(AttributeDefinition) error
+    RegisterDebugModule(DebugModuleDefinition) error
 }
 
 type Capability string
@@ -217,9 +223,15 @@ contract without weakening the version check. `Metadata.Capabilities` declares w
 makes plugin diagnostics visible before registration; hard compatibility should still be based on `APIVersion` and Go
 plugin load success.
 
-`Register` should be side-effect-light. It declares extension points, capabilities, and policy attributes. It may inspect
-the plugin-owned configuration block through the registrar, but long-lived workers start only through `Start`, after host
-services are ready.
+`Register` should be side-effect-light. It declares extension points, capabilities, policy attributes, and plugin-local
+debug modules. It may inspect the plugin-owned configuration block through the registrar, but long-lived workers start
+only through `Start`, after host services are ready.
+
+Plugin debug selectors are module-qualified by the host. Every registered module automatically gets
+`plugin.<module>`, where `<module>` is the configured `plugins.modules[].name`. Plugins may additionally declare local
+debug modules with `RegisterDebugModule(DebugModuleDefinition{Name: "lookup"})`; the operator-facing selector becomes
+`plugin.<module>.lookup`. Local debug names use the same strict lowercase identifier grammar as component names and may
+not use reserved built-in debug names such as `auth`, `policy`, `all`, `none`, or `plugin`.
 
 ## Plugin Configuration
 
@@ -1292,6 +1304,7 @@ Plugins should register policy attributes before policy snapshots compile:
 ```go
 type Registrar interface {
     RegisterPolicyAttribute(AttributeDefinition) error
+    RegisterDebugModule(DebugModuleDefinition) error
 }
 ```
 
@@ -1299,6 +1312,12 @@ Plugin attribute declarations should be made through `Registrar.RegisterPolicyAt
 snapshots can compile a complete registry before request handling begins. Request-time policy facts should be returned
 through extension result `Facts` fields such as `EnvironmentResult.Facts`, `SubjectResult.Facts`,
 `BackendResult.Facts`, `AccountListResult.Facts`, or `ObligationResult.Facts`.
+
+Plugin debug declarations should be made through `Registrar.RegisterDebugModule` during registration. The declaration is
+value-only and local to the configured module instance; the host publishes it as `plugin.<module>.<name>` and exposes it
+in discovery output. `Logger(scope).Debug` is emitted only when the active `server.log.debug_modules` contains `all`,
+`plugin`, `plugin.<module>`, or a matching registered local selector. `Info`, `Warn`, and `Error` records remain governed
+by normal log levels and are not hidden by debug-module selection.
 
 Native plugin attribute names should use the `plugin.<extension>.<module_or_feature>.<fact>` convention. The helper
 `pluginapi.PluginPolicyAttributeID(extension, moduleOrFeature, fact)` builds validated names such as

@@ -37,6 +37,32 @@ var pluginNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,62}$`)
 
 var backendAttributeNamePattern = regexp.MustCompile(`^[!-~]+$`)
 
+var reservedDebugModuleNames = map[string]struct{}{
+	"account":                   {},
+	"action":                    {},
+	"all":                       {},
+	"auth":                      {},
+	"brute_force":               {},
+	"cache":                     {},
+	"cookie":                    {},
+	"environment":               {},
+	"http":                      {},
+	"idp":                       {},
+	"jwt":                       {},
+	"ldap":                      {},
+	"ldappool":                  {},
+	"lua":                       {},
+	"none":                      {},
+	PluginPolicyAttributePrefix: {},
+	"policy":                    {},
+	"rbl":                       {},
+	"statistics":                {},
+	"subject":                   {},
+	"tolerate":                  {},
+	"webauthn":                  {},
+	"whitelist":                 {},
+}
+
 // ValidateAPIVersion checks that version exactly matches this package contract.
 func ValidateAPIVersion(version string) error {
 	if version != APIVersion {
@@ -54,6 +80,19 @@ func ValidateModuleName(name string) error {
 // ValidateComponentName checks a plugin-local component name.
 func ValidateComponentName(name string) error {
 	return validatePluginName("component", name)
+}
+
+// ValidateDebugModuleName checks a plugin-local debug module name.
+func ValidateDebugModuleName(name string) error {
+	if err := validatePluginName("debug module", name); err != nil {
+		return err
+	}
+
+	if _, reserved := reservedDebugModuleNames[name]; reserved {
+		return fmt.Errorf("%w: debug module %q is reserved", ErrInvalidName, name)
+	}
+
+	return nil
 }
 
 // ValidateBackendAttributeName checks a backend attribute name used in backend results.
@@ -81,6 +120,64 @@ func ValidateQualifiedComponentName(name string) error {
 	}
 
 	return nil
+}
+
+// ValidatePluginDebugSelector checks the operator-facing plugin debug selector grammar.
+func ValidatePluginDebugSelector(selector string) error {
+	parts := strings.Split(selector, ".")
+	switch len(parts) {
+	case 1:
+		if selector == PluginPolicyAttributePrefix {
+			return nil
+		}
+	case 2:
+		if parts[0] == PluginPolicyAttributePrefix && ValidateModuleName(parts[1]) == nil {
+			return nil
+		}
+	case 3:
+		if parts[0] != PluginPolicyAttributePrefix {
+			break
+		}
+
+		if err := ValidateModuleName(parts[1]); err != nil {
+			return err
+		}
+
+		if err := ValidateDebugModuleName(parts[2]); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("%w: plugin debug selector %q must use plugin, plugin.<module>, or plugin.<module>.<debug_module>", ErrInvalidName, selector)
+}
+
+// IsPluginDebugSelector reports whether value starts with the plugin selector namespace.
+func IsPluginDebugSelector(value string) bool {
+	return value == PluginPolicyAttributePrefix || strings.HasPrefix(value, PluginPolicyAttributePrefix+".")
+}
+
+// PluginDebugModuleSelector joins and validates a module-level plugin debug selector.
+func PluginDebugModuleSelector(module string) (string, error) {
+	if err := ValidateModuleName(module); err != nil {
+		return "", err
+	}
+
+	return PluginPolicyAttributePrefix + "." + module, nil
+}
+
+// PluginDebugSubmoduleSelector joins and validates a plugin-local debug selector.
+func PluginDebugSubmoduleSelector(module string, name string) (string, error) {
+	if err := ValidateModuleName(module); err != nil {
+		return "", err
+	}
+
+	if err := ValidateDebugModuleName(name); err != nil {
+		return "", err
+	}
+
+	return PluginPolicyAttributePrefix + "." + module + "." + name, nil
 }
 
 // QualifiedComponentName joins and validates a module-local component reference.

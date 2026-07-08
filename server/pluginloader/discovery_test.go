@@ -40,6 +40,13 @@ func TestStateDiscoveryUsesDescriptorsMetadataAndOmitsPluginConfig(t *testing.T)
 				},
 			},
 			register: func(registrar pluginapi.Registrar) error {
+				if err := registrar.RegisterDebugModule(pluginapi.DebugModuleDefinition{
+					Name:        "lookup",
+					Description: "GeoIP lookup diagnostics.",
+				}); err != nil {
+					return err
+				}
+
 				if err := registrar.RegisterEnvironmentSource(discoveryEnvironmentSource{}); err != nil {
 					return err
 				}
@@ -63,6 +70,7 @@ func TestStateDiscoveryUsesDescriptorsMetadataAndOmitsPluginConfig(t *testing.T)
 	discovery := state.Discovery()
 	module := assertDiscoveryModule(t, discovery)
 	assertDiscoveryComponents(t, module)
+	assertDiscoveryDebugModules(t, module)
 	assertDiscoveryOmitsConfig(t, discovery)
 }
 
@@ -106,6 +114,24 @@ func assertDiscoveryComponents(t *testing.T, module DiscoveryModule) {
 	hook := module.Components[1]
 	if hook.QualifiedName != testPluginModuleName+".status" || hook.Hook == nil {
 		t.Fatalf("hook discovery = %#v", hook)
+	}
+}
+
+// assertDiscoveryDebugModules verifies module and local selector discovery output.
+func assertDiscoveryDebugModules(t *testing.T, module DiscoveryModule) {
+	t.Helper()
+
+	if len(module.DebugModules) != 2 {
+		t.Fatalf("debug modules len = %d, want module and local selectors", len(module.DebugModules))
+	}
+
+	if module.DebugModules[0].Selector != "plugin."+testPluginModuleName {
+		t.Fatalf("module selector = %#v", module.DebugModules[0])
+	}
+
+	local := module.DebugModules[1]
+	if local.Selector != "plugin."+testPluginModuleName+".lookup" || local.Name != "lookup" || local.Description == "" {
+		t.Fatalf("local selector = %#v", local)
 	}
 }
 

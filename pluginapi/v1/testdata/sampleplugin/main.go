@@ -81,6 +81,13 @@ func (samplePlugin) Register(registrar pluginapi.Registrar) error {
 		return err
 	}
 
+	if err := registrar.RegisterDebugModule(pluginapi.DebugModuleDefinition{
+		Name:        "sample",
+		Description: "Sample plugin debug diagnostics.",
+	}); err != nil {
+		return err
+	}
+
 	if err := registrar.RegisterPolicyAttribute(pluginapi.AttributeDefinition{
 		ID:          sampleEnvironmentFact,
 		Description: "Sample plugin emitted a pre-auth fact.",

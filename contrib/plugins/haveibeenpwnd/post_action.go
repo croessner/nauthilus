@@ -427,11 +427,11 @@ func positiveCount(count int) *uint64 {
 
 // logOutcome writes a secret-free bounded result log.
 func logOutcome(ctx context.Context, state pluginState, outcome checkOutcome) {
-	if state.logger == nil {
+	if state.lookupLogger == nil {
 		return
 	}
 
-	state.logger.Debug(ctx, "haveibeenpwnd check completed", pluginapi.LogField{Key: logFieldResult, Value: outcome.result})
+	state.lookupLogger.Debug(ctx, "haveibeenpwnd check completed", pluginapi.LogField{Key: logFieldResult, Value: outcome.result})
 }
 
 // recordSkipped records a bounded skipped result.

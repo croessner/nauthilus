@@ -98,6 +98,75 @@ func TestValidateNames(t *testing.T) {
 	}
 }
 
+func TestValidateDebugModuleName(t *testing.T) {
+	valid := []string{
+		"batch",
+		"lookup_2",
+		"a",
+	}
+
+	for _, name := range valid {
+		t.Run("valid "+name, func(t *testing.T) {
+			if err := ValidateDebugModuleName(name); err != nil {
+				t.Fatalf("ValidateDebugModuleName() error = %v", err)
+			}
+		})
+	}
+
+	invalid := []string{
+		"",
+		"Batch",
+		"batch-log",
+		"all",
+		"none",
+		"plugin",
+		"auth",
+		"policy",
+	}
+
+	for _, name := range invalid {
+		t.Run("invalid "+name, func(t *testing.T) {
+			err := ValidateDebugModuleName(name)
+			if !errors.Is(err, ErrInvalidName) {
+				t.Fatalf("ValidateDebugModuleName() error = %v, want ErrInvalidName", err)
+			}
+		})
+	}
+}
+
+func TestValidatePluginDebugSelector(t *testing.T) {
+	valid := []string{
+		"plugin",
+		"plugin.clickhouse",
+		"plugin.clickhouse.batch",
+	}
+
+	for _, selector := range valid {
+		t.Run("valid "+selector, func(t *testing.T) {
+			if err := ValidatePluginDebugSelector(selector); err != nil {
+				t.Fatalf("ValidatePluginDebugSelector() error = %v", err)
+			}
+		})
+	}
+
+	invalid := []string{
+		"plugin.",
+		"plugin.ClickHouse",
+		"plugin.clickhouse.batch.extra",
+		"plugin.clickhouse.all",
+		"debug.clickhouse",
+	}
+
+	for _, selector := range invalid {
+		t.Run("invalid "+selector, func(t *testing.T) {
+			err := ValidatePluginDebugSelector(selector)
+			if !errors.Is(err, ErrInvalidName) {
+				t.Fatalf("ValidatePluginDebugSelector() error = %v, want ErrInvalidName", err)
+			}
+		})
+	}
+}
+
 func TestValidateQualifiedComponentName(t *testing.T) {
 	if err := ValidateQualifiedComponentName("geoip.environment"); err != nil {
 		t.Fatalf("expected valid qualified name, got %v", err)

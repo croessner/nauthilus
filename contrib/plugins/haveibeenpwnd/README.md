@@ -8,6 +8,10 @@ Builds from the stable and debug Dockerfiles bundle this plugin at
 `/usr/local/lib/nauthilus/plugins/haveibeenpwnd.so`. When `REQUIRE_PLUGIN_SIGNATURE=true`, the image build also writes
 `/usr/local/lib/nauthilus/plugins/haveibeenpwnd.so.minisig`.
 
+The debug Dockerfile is an image build variant. Runtime debug logs are controlled separately with
+`server.log.debug_modules`; this plugin supports `plugin.haveibeenpwnd`, `plugin.haveibeenpwnd.lookup`, and
+`plugin.haveibeenpwnd.mail`.
+
 ## Configuration
 
 Configure the module under `plugins.modules[].config` and allow the `credentials` capability. When `mail.enabled` is
@@ -99,7 +103,7 @@ module that was registered with `mail.enabled: false` requires a restart so the 
 
 Observability is host-integrated: the plugin registers the HIBP range API endpoint through
 `Host.ConnectionTargets("haveibeenpwnd")`, calls HIBP through `Host.HTTP("haveibeenpwnd")`, sends notification mail
-through `Host.Mail("haveibeenpwnd")`, and records bounded check/HTTP/mail metrics and spans. Logs, labels, and spans do
+through `Host.Mail("mail")`, and records bounded check/HTTP/mail metrics and spans. Logs, labels, and spans do
 not include passwords, account names, raw response bodies, recipients, rendered subjects, rendered bodies, template
 paths, or raw transport errors.
 

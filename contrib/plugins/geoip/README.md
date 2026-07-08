@@ -4,6 +4,9 @@ This directory contains a small native Go plugin that demonstrates the Nauthilus
 It enriches pre-auth requests from a local JSON fixture or MaxMind `.mmdb` GeoIP/ASN database and emits policy facts
 under `plugin.environment.geoip.*`.
 
+Runtime debug output is controlled with `server.log.debug_modules`. The module-level selector `plugin.geoip` is
+registered automatically; the plugin currently does not declare additional local debug selectors.
+
 The JSON reference database format is intentionally tiny so tests and examples stay license-free:
 
 ```json

@@ -317,6 +317,10 @@ func SetupGoPlugins(cfg config.File, logger *slog.Logger) (*pluginloader.State, 
 		return state, fmt.Errorf("validate native plugin backend references: %w", err)
 	}
 
+	if err := pluginloader.ValidatePluginDebugSelectors(cfg, state); err != nil {
+		return state, fmt.Errorf("validate native plugin debug selectors: %w", err)
+	}
+
 	pluginloader.SetDefaultState(state)
 
 	return state, nil

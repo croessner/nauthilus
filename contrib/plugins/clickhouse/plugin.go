@@ -30,6 +30,7 @@ const (
 	componentPostAction   = "post_action"
 	connectionTargetName  = "clickhouse"
 	connectionTargetLabel = "service"
+	debugModuleBatch      = "batch"
 	docsURL               = "contrib/plugins/clickhouse/README.md"
 )
 
@@ -45,15 +46,16 @@ func NauthilusPlugin() (pluginapi.Plugin, error) {
 
 // Plugin coordinates ClickHouse post-action lifecycle and host services.
 type Plugin struct {
-	host    pluginapi.Host
-	logger  pluginapi.Logger
-	tracer  pluginapi.Tracer
-	http    pluginapi.HTTPClient
-	redis   pluginapi.Redis
-	cache   pluginapi.Cache
-	metrics pluginMetrics
-	config  moduleConfig
-	mu      sync.RWMutex
+	host        pluginapi.Host
+	logger      pluginapi.Logger
+	debugLogger pluginapi.Logger
+	tracer      pluginapi.Tracer
+	http        pluginapi.HTTPClient
+	redis       pluginapi.Redis
+	cache       pluginapi.Cache
+	metrics     pluginMetrics
+	config      moduleConfig
+	mu          sync.RWMutex
 }
 
 // NewPlugin creates a ClickHouse native post-action plugin instance.
@@ -94,6 +96,13 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 	p.config = config
 	p.mu.Unlock()
 
+	if err := registrar.RegisterDebugModule(pluginapi.DebugModuleDefinition{
+		Name:        debugModuleBatch,
+		Description: "Batch queueing, flushing, and insert diagnostics.",
+	}); err != nil {
+		return err
+	}
+
 	return registrar.RegisterPostActionTarget(postActionTarget{plugin: p})
 }
 
@@ -104,6 +113,7 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	}
 
 	logger := host.Logger(pluginName)
+	debugLogger := host.Logger(debugModuleBatch)
 	tracer := host.Tracer(pluginName)
 
 	metrics, err := registerMetrics(host.Metrics(pluginName))
@@ -119,8 +129,9 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	p.mu.Lock()
 	p.host = host
 	p.logger = logger
+	p.debugLogger = debugLogger
 	p.tracer = tracer
-	p.http = host.HTTP(pluginName)
+	p.http = host.HTTP(debugModuleBatch)
 	p.redis = host.Redis()
 	p.cache = cache
 	p.metrics = metrics
@@ -139,6 +150,7 @@ func (p *Plugin) Stop(ctx context.Context) error {
 	logger := p.logger
 	p.host = nil
 	p.logger = nil
+	p.debugLogger = nil
 	p.tracer = nil
 	p.http = nil
 	p.redis = nil
@@ -178,13 +190,14 @@ func (p *Plugin) snapshot() pluginState {
 	defer p.mu.RUnlock()
 
 	return pluginState{
-		config:  p.config,
-		logger:  p.logger,
-		tracer:  p.tracer,
-		http:    p.http,
-		redis:   p.redis,
-		cache:   p.cache,
-		metrics: p.metrics,
+		config:      p.config,
+		logger:      p.logger,
+		debugLogger: p.debugLogger,
+		tracer:      p.tracer,
+		http:        p.http,
+		redis:       p.redis,
+		cache:       p.cache,
+		metrics:     p.metrics,
 	}
 }
 
@@ -220,13 +233,14 @@ func (p *Plugin) registerConnectionTarget(ctx context.Context, host pluginapi.Ho
 }
 
 type pluginState struct {
-	config  moduleConfig
-	logger  pluginapi.Logger
-	tracer  pluginapi.Tracer
-	http    pluginapi.HTTPClient
-	redis   pluginapi.Redis
-	cache   pluginapi.Cache
-	metrics pluginMetrics
+	config      moduleConfig
+	logger      pluginapi.Logger
+	debugLogger pluginapi.Logger
+	tracer      pluginapi.Tracer
+	http        pluginapi.HTTPClient
+	redis       pluginapi.Redis
+	cache       pluginapi.Cache
+	metrics     pluginMetrics
 }
 
 type postActionTarget struct {

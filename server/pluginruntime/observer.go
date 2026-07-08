@@ -21,8 +21,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 	"github.com/croessner/nauthilus/v3/server/stats"
 )
 
@@ -37,8 +39,9 @@ const (
 
 // OperationalObserver records bounded metrics and secret-safe structured plugin call logs.
 type OperationalObserver struct {
-	logger  *slog.Logger
-	metrics stats.Metrics
+	logger    *slog.Logger
+	metrics   stats.Metrics
+	debugGate pluginDebugGate
 }
 
 // OperationalObserverOption customizes an operational observer.
@@ -61,6 +64,13 @@ func NewOperationalObserver(logger *slog.Logger, options ...OperationalObserverO
 func WithOperationalObserverMetrics(metrics stats.Metrics) OperationalObserverOption {
 	return func(observer *OperationalObserver) {
 		observer.metrics = metrics
+	}
+}
+
+// WithOperationalObserverDebugConfig configures plugin debug selector gating for success logs.
+func WithOperationalObserverDebugConfig(cfg config.File, registry *pluginregistry.Registry) OperationalObserverOption {
+	return func(observer *OperationalObserver) {
+		observer.debugGate = pluginDebugGate{cfg: cfg, registry: registry}
 	}
 }
 
@@ -117,6 +127,12 @@ func (o *OperationalObserver) log(record CallRecord, result string) {
 		return
 	}
 
+	debugModule, enabled := o.debugGate.enabled(record.ModuleName, record.ComponentName)
+	if !enabled {
+		return
+	}
+
+	keyvals = append(keyvals, "debug_module", debugModule)
 	_ = level.Debug(o.logger).Log(keyvals...)
 }
 

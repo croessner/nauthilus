@@ -98,6 +98,7 @@ type ModuleInstance struct {
 	Metadata          pluginapi.Metadata
 	Module            config.PluginModule
 	Descriptors       []pluginregistry.Component
+	DebugModules      []pluginregistry.DebugModule
 	Capabilities      []pluginapi.Capability
 	ArtifactPath      string
 	SignaturePath     string
@@ -272,6 +273,7 @@ func (l *Loader) loadModule(registry *pluginregistry.Registry, verified Verified
 		Metadata:      metadata,
 		Module:        verified.Module,
 		Descriptors:   registrar.Components(),
+		DebugModules:  registry.DebugModulesByModule(verified.Module.Name),
 		Capabilities:  registrar.Capabilities(),
 		ArtifactPath:  verified.ArtifactPath,
 		SignaturePath: verified.SignaturePath,

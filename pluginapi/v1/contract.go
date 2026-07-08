@@ -51,6 +51,12 @@ type Metadata struct {
 	Capabilities []Capability
 }
 
+// DebugModuleDefinition declares one plugin-local debug selector.
+type DebugModuleDefinition struct {
+	Name        string
+	Description string
+}
+
 // Plugin is implemented by every native Go plugin factory result.
 type Plugin interface {
 	Metadata() Metadata
@@ -100,6 +106,7 @@ type Registrar interface {
 	RegisterPostActionTarget(PostActionTarget) error
 	RegisterHook(Hook) error
 	RegisterPolicyAttribute(AttributeDefinition) error
+	RegisterDebugModule(DebugModuleDefinition) error
 }
 
 // Host exposes runtime services through narrow facades managed by Nauthilus.

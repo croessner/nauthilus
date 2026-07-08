@@ -161,9 +161,9 @@ func renderMailMessage(config mailConfig, data mailTemplateData, recipient strin
 
 // logMailOutcome records one bounded mail result without message or recipient data.
 func logMailOutcome(ctx context.Context, state pluginState, result string) {
-	if state.logger == nil {
+	if state.mailLogger == nil {
 		return
 	}
 
-	state.logger.Debug(ctx, "haveibeenpwnd mail completed", pluginapi.LogField{Key: logFieldMailResult, Value: result})
+	state.mailLogger.Debug(ctx, "haveibeenpwnd mail completed", pluginapi.LogField{Key: logFieldMailResult, Value: result})
 }
