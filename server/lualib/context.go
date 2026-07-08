@@ -16,6 +16,7 @@
 package lualib
 
 import (
+	"fmt"
 	"maps"
 	"reflect"
 	"sync"
@@ -297,6 +298,37 @@ func cloneContextValue(value any) any {
 		return append([]string(nil), typed...)
 	default:
 		return value
+	}
+}
+
+// NormalizeContextValue converts Lua context containers into runtime-compatible Go containers.
+func NormalizeContextValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		normalized := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			normalized[key] = NormalizeContextValue(nested)
+		}
+
+		return normalized
+	case map[any]any:
+		normalized := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			normalized[fmt.Sprint(key)] = NormalizeContextValue(nested)
+		}
+
+		return normalized
+	case []any:
+		normalized := make([]any, len(typed))
+		for index, nested := range typed {
+			normalized[index] = NormalizeContextValue(nested)
+		}
+
+		return normalized
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return typed
 	}
 }
 

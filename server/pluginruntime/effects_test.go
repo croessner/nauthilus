@@ -391,6 +391,52 @@ func TestEffectBridgeRunsPostActionPlanInOrderAndSharesRuntimeDelta(t *testing.T
 	}
 }
 
+func TestEffectBridgeNormalizesLuaRuntimeSnapshotForPostActionPlan(t *testing.T) {
+	requests := make(chan pluginapi.PostActionRequest, 1)
+	target := &fakePostActionTarget{requests: requests}
+	bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+		return registrar.RegisterPostActionTarget(target)
+	})
+	auth := newSubjectTestAuth(t)
+	auth.Runtime.Context.Set("rt", map[any]any{
+		"action_haveibeenpwnd": true,
+		"nested": map[any]any{
+			1: "one",
+		},
+	})
+
+	plan, err := bridge.newPostActionPlan(auth.Request.HTTPClientContext, auth, []core.PostActionPlanStep{
+		core.NewNativePostActionPlanStep(report.EffectRequest{ID: effectPostActionQualified}),
+	})
+	if err != nil {
+		t.Fatalf("newPostActionPlan() error = %v", err)
+	}
+
+	if err := bridge.runPostActionPlan(context.Background(), plan); err != nil {
+		t.Fatalf("runPostActionPlan() error = %v", err)
+	}
+
+	select {
+	case request := <-requests:
+		value, ok := request.Runtime.Get("rt")
+		if !ok {
+			t.Fatal("runtime key rt was not propagated")
+		}
+
+		rt, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("runtime rt = %T, want map[string]any", value)
+		}
+
+		nested, ok := rt["nested"].(map[string]any)
+		if !ok || nested["1"] != "one" {
+			t.Fatalf("nested runtime value = %#v, %t; want string-keyed map", rt["nested"], ok)
+		}
+	default:
+		t.Fatal("post-action was not invoked")
+	}
+}
+
 func TestEffectBridgeRejectsInvalidPostActionRuntimeDelta(t *testing.T) {
 	consumerCalled := make(chan struct{})
 	producer := &fakePostActionTarget{

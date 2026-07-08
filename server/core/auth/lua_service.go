@@ -428,7 +428,7 @@ func luaContextDeltaToRuntimeDelta(delta lualib.ContextDelta) pluginapi.RuntimeD
 	if len(delta.Set) > 0 {
 		runtimeDelta.Set = make(map[string]any, len(delta.Set))
 		for key, value := range delta.Set {
-			runtimeDelta.Set[key] = luaContextRuntimeValue(value)
+			runtimeDelta.Set[key] = lualib.NormalizeContextValue(value)
 		}
 	}
 
@@ -437,35 +437,4 @@ func luaContextDeltaToRuntimeDelta(delta lualib.ContextDelta) pluginapi.RuntimeD
 	}
 
 	return runtimeDelta
-}
-
-// luaContextRuntimeValue normalizes Lua table maps to runtime-compatible string-keyed maps.
-func luaContextRuntimeValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		normalized := make(map[string]any, len(typed))
-		for key, nested := range typed {
-			normalized[key] = luaContextRuntimeValue(nested)
-		}
-
-		return normalized
-	case map[any]any:
-		normalized := make(map[string]any, len(typed))
-		for key, nested := range typed {
-			normalized[fmt.Sprint(key)] = luaContextRuntimeValue(nested)
-		}
-
-		return normalized
-	case []any:
-		normalized := make([]any, len(typed))
-		for index, nested := range typed {
-			normalized[index] = luaContextRuntimeValue(nested)
-		}
-
-		return normalized
-	case []string:
-		return append([]string(nil), typed...)
-	default:
-		return typed
-	}
 }

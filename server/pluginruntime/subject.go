@@ -829,12 +829,20 @@ func pluginSubjectDecision(rejected bool, err error) policy.Decision {
 	return policy.DecisionNeutral
 }
 
+// runtimeSnapshot returns a native-plugin-safe copy of the shared Lua runtime context.
 func runtimeSnapshot(auth *core.AuthState) map[string]any {
 	if auth == nil || auth.Runtime.Context == nil {
 		return map[string]any{}
 	}
 
-	return auth.Runtime.Context.Snapshot()
+	snapshot := auth.Runtime.Context.Snapshot()
+
+	normalized := make(map[string]any, len(snapshot))
+	for key, value := range snapshot {
+		normalized[key] = lualib.NormalizeContextValue(value)
+	}
+
+	return normalized
 }
 
 func applyRuntimeValues(auth *core.AuthState, values map[string]any) {
