@@ -495,8 +495,16 @@ type hostWorkerWaiter interface {
 	WaitWorkersContext(context.Context) error
 }
 
+type hostWorkerCanceler interface {
+	CancelWorkers()
+}
+
 // waitHostWorkers coordinates host-supervised workers during plugin runtime shutdown.
 func (r *Runner) waitHostWorkers(ctx context.Context) error {
+	if canceler, ok := r.host.(hostWorkerCanceler); ok {
+		canceler.CancelWorkers()
+	}
+
 	waiter, ok := r.host.(hostWorkerWaiter)
 	if !ok {
 		return nil

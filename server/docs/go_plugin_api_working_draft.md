@@ -352,6 +352,9 @@ Service notes:
   registration. Raw Prometheus registerers are not part of the public v1 API.
 - `Tracer` should attach spans to the active request context through a Nauthilus-owned facade. Raw OpenTelemetry
   providers are not part of the public v1 API.
+- `Go` should preserve caller context values, including trace context, but detach from caller cancellation. Host-managed
+  workers are canceled through the host worker lifetime during runtime shutdown, not by an already-finished request
+  context.
 - `HTTP` exposes host-managed outbound HTTP calls with context deadlines, trace-header injection, bounded plugin metrics,
   response body limits, and redacted operational logs. Plugins pass API-level request and response values, not raw
   `*http.Request` or `*http.Response` objects.
@@ -1384,6 +1387,9 @@ Plugins can use goroutines, but the API must define ownership:
 - Request-time calls receive a context with deadline and cancellation.
 - Plugins must return before the request deadline unless they explicitly schedule detached work through `Host.Go`.
 - Host-managed goroutines are preferred because they get panic recovery and shutdown coordination.
+- `Host.Go` carries context values such as OpenTelemetry span context into the worker, but the worker context is detached
+  from the request cancellation path. Workers must observe the supplied worker context for host service and runtime
+  shutdown.
 - Long-running or service-related plugin workers should be started through `Host.Go`. Plugins may use short-lived
   internal goroutines for local implementation details, but workers that outlive a single method call need host
   supervision, shutdown coordination, logging, metrics, tracing, and panic recovery.

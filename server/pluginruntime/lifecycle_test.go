@@ -117,8 +117,7 @@ func TestRunner_StopAppliesModuleStopTimeout(t *testing.T) {
 }
 
 func TestRunner_StopWaitsForHostWorkers(t *testing.T) {
-	serviceCtx, cancelService := context.WithCancel(context.Background())
-	host := NewHost(WithServiceContext(serviceCtx))
+	host := NewHost()
 	plugin := &workerRuntimePlugin{
 		started: make(chan struct{}),
 		done:    make(chan struct{}),
@@ -130,7 +129,6 @@ func TestRunner_StopWaitsForHostWorkers(t *testing.T) {
 	}
 
 	<-plugin.started
-	cancelService()
 
 	stopCtx, cancelStop := context.WithTimeout(context.Background(), time.Second)
 	defer cancelStop()
@@ -147,12 +145,10 @@ func TestRunner_StopWaitsForHostWorkers(t *testing.T) {
 }
 
 func TestRunner_StopReportsHostWorkerWaitTimeout(t *testing.T) {
-	serviceCtx := t.Context()
-
-	host := NewHost(WithServiceContext(serviceCtx))
-	plugin := &workerRuntimePlugin{
+	host := NewHost()
+	plugin := &blockedWorkerRuntimePlugin{
 		started: make(chan struct{}),
-		done:    make(chan struct{}),
+		release: make(chan struct{}),
 	}
 	runner := newTestRunner(t, plugin, nil, WithHost(host))
 
@@ -169,6 +165,9 @@ func TestRunner_StopReportsHostWorkerWaitTimeout(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Stop() error = %v, want context deadline exceeded", err)
 	}
+
+	close(plugin.release)
+	host.WaitWorkers()
 }
 
 func TestRunner_ReconfigureSuccessSwapsConfig(t *testing.T) {
@@ -338,6 +337,23 @@ func (p *workerRuntimePlugin) Start(_ context.Context, host pluginapi.Host) erro
 		<-ctx.Done()
 		time.Sleep(20 * time.Millisecond)
 		close(p.done)
+
+		return nil
+	})
+
+	return nil
+}
+
+type blockedWorkerRuntimePlugin struct {
+	runtimePlugin
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *blockedWorkerRuntimePlugin) Start(_ context.Context, host pluginapi.Host) error {
+	host.Go(context.Background(), "worker", func(context.Context) error {
+		close(p.started)
+		<-p.release
 
 		return nil
 	})

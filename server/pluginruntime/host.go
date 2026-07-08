@@ -37,6 +37,8 @@ type HostOption func(*Host)
 // Host exposes process-owned services through the public plugin API.
 type Host struct {
 	serviceContext    context.Context
+	workerContext     context.Context
+	workerCancel      context.CancelFunc
 	logger            *slog.Logger
 	config            pluginapi.ConfigView
 	redis             pluginapi.Redis
@@ -73,6 +75,8 @@ func NewHost(options ...HostOption) *Host {
 	for _, option := range options {
 		option(host)
 	}
+
+	host.workerContext, host.workerCancel = context.WithCancel(host.ServiceContext())
 
 	return host
 }
@@ -367,11 +371,7 @@ func (h *Host) goWithLogger(ctx context.Context, _ string, logger pluginapi.Logg
 		return
 	}
 
-	if ctx == nil {
-		ctx = h.ServiceContext()
-	}
-
-	workerCtx, cancel := context.WithCancel(h.ServiceContext())
+	workerCtx, cancel := context.WithCancel(detachedWorkerContext(ctx, h.workerLifetimeContext()))
 
 	h.workers.Go(func() {
 		defer cancel()
@@ -381,12 +381,43 @@ func (h *Host) goWithLogger(ctx context.Context, _ string, logger pluginapi.Logg
 			}
 		}()
 
-		go cancelWhenDone(workerCtx, ctx, cancel)
+		go cancelWhenDone(workerCtx, h.workerLifetimeContext(), cancel)
 
 		if err := fn(workerCtx); err != nil {
 			logger.Error(workerCtx, "plugin worker stopped with error", pluginapi.LogField{Key: pluginLogFieldErrorClass, Value: "worker"})
 		}
 	})
+}
+
+// detachedWorkerContext preserves caller values while leaving cancellation to the host worker lifetime.
+func detachedWorkerContext(ctx context.Context, lifetimeContext context.Context) context.Context {
+	if ctx == nil {
+		ctx = lifetimeContext
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	return context.WithoutCancel(ctx)
+}
+
+// workerLifetimeContext returns the host-owned cancellation root for supervised workers.
+func (h *Host) workerLifetimeContext() context.Context {
+	if h == nil || h.workerContext == nil {
+		return context.Background()
+	}
+
+	return h.workerContext
+}
+
+// CancelWorkers asks all host-supervised workers to stop before shutdown waits.
+func (h *Host) CancelWorkers() {
+	if h == nil || h.workerCancel == nil {
+		return
+	}
+
+	h.workerCancel()
 }
 
 // WaitWorkers waits for supervised plugin workers to exit.

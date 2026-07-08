@@ -352,7 +352,7 @@ The `Host` interface hides Nauthilus internals behind narrow facades:
 | `Mail(scope)` | Host-managed SMTP/LMTP sends through value-only mail requests and redacted operational logs. |
 | `ConnectionTargets(scope)` | Registration for host-owned generic connection observability. |
 | `ServiceContext()` | Process lifetime cancellation signal. |
-| `Go(ctx, name, fn)` | Host-supervised worker launch with panic logging. |
+| `Go(ctx, name, fn)` | Host-supervised worker launch with panic logging, trace/value preservation, and host-lifetime shutdown. |
 | `Redis()` | Host-owned Redis command handles, key helpers, and named script registry. |
 | `Cache(scope)` | Process-local cache isolated by plugin module scope. |
 | `Helpers()` | Deterministic non-secret helpers shared with Lua-compatible behavior. |
@@ -981,7 +981,9 @@ stores the account under that selected field in the internal `PassDBResult`.
 ### Post-Action Targets
 
 Post-actions enqueue detached work after policy selection. Return as soon as work is accepted or skipped; use
-`Host.Go` for bounded background work when you need host panic logging. `PostActionRequest.Args` and
+`Host.Go` for bounded background work when you need host panic logging. `Host.Go` preserves context values such as the
+OpenTelemetry trace context but does not inherit request cancellation; the worker context ends when the host service or
+runtime lifetime shuts down. `PostActionRequest.Args` and
 `PostActionRequest.Facts` use the same policy decision context as obligations. `PostActionRequest.Credentials` exposes
 request credentials only when the module requested and was granted the `credentials` capability, and
 `PostActionRequest.PasswordHash` carries the host-owned Lua-compatible short password hash when a password was present.
