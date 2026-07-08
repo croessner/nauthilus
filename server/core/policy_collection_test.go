@@ -333,6 +333,30 @@ func TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks(t *testing.T) {
 	}
 }
 
+func TestConfiguredBruteForceDecisionWaitsForCheckDependency(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
+	activatePolicySnapshotForTest(t, customBruteForceAfterGeoIPSnapshot())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.recordPolicyBruteForce(ctx, true)
+
+	if auth.applyConfiguredPreAuthDecision(ctx) {
+		t.Fatal("brute-force decision applied before its GeoIP dependency was collected")
+	}
+
+	check := auth.beginPolicyCheck(ctx, policycollection.CheckSelector{
+		Name:      "plugin_environment_geoip",
+		CheckType: policy.CheckTypePluginEnvironment,
+		Stage:     policy.StagePreAuth,
+		ConfigRef: testPluginEnvironmentConfigRef,
+	})
+	auth.finishPolicyCheck(check, policyCheckResult{})
+
+	if !auth.applyConfiguredPreAuthDecision(ctx) {
+		t.Fatal("brute-force decision was not applied after its GeoIP dependency was collected")
+	}
+}
+
 func TestRecordPolicyBruteForceEmitsBucketFacts(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
 	activatePolicySnapshotForTest(t, customEnforcePreAuthControlSnapshot())
@@ -736,6 +760,42 @@ func customEnforcePreAuthControlSnapshot() *policyruntime.Snapshot {
 	}
 }
 
+// customBruteForceAfterGeoIPSnapshot builds a pre-auth plan where brute-force depends on GeoIP collection.
+func customBruteForceAfterGeoIPSnapshot() *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Generation:    83,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StagePreAuth: {
+					Stage: policy.StagePreAuth,
+					Checks: []policyruntime.CompiledCheck{
+						{
+							Name:       "plugin_environment_geoip",
+							Type:       policy.CheckTypePluginEnvironment,
+							ConfigRef:  testPluginEnvironmentConfigRef,
+							Stage:      policy.StagePreAuth,
+							Operations: []policy.Operation{policy.OperationAuthenticate},
+							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+						},
+						{
+							Name:       definitions.ControlBruteForce,
+							Type:       policy.CheckTypeBruteForce,
+							ConfigRef:  policyConfigRefBruteForce,
+							Stage:      policy.StagePreAuth,
+							Operations: []policy.Operation{policy.OperationAuthenticate},
+							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+							After:      []string{"plugin_environment_geoip"},
+						},
+					},
+					Policies: []policyruntime.CompiledPolicy{customBruteForceDenyPolicy()},
+				},
+			},
+		},
+	}
+}
+
 func customEnforceTLSSnapshot(compiled policyruntime.CompiledPolicy) *policyruntime.Snapshot {
 	return &policyruntime.Snapshot{
 		Generation:    75,
@@ -804,9 +864,36 @@ func customEnforceTLSDenyPolicy(expected bool) policyruntime.CompiledPolicy {
 	return compiled
 }
 
+// customBruteForceSkipPolicy builds a neutral control policy for brute-force checks.
 func customBruteForceSkipPolicy() policyruntime.CompiledPolicy {
+	return customBruteForcePolicy(
+		"custom_brute_force_skip",
+		policyruntime.DecisionPlan{
+			Decision:       policy.DecisionNeutral,
+			OutcomeMarker:  "auth.outcome.custom_brute_force_skip",
+			FSMEventMarker: policy.FSMEventMarkerPreAuthOK,
+			Control:        policyruntime.DecisionControl{SkipRemainingStageChecks: true},
+		},
+	)
+}
+
+// customBruteForceDenyPolicy builds a terminal deny policy for brute-force checks.
+func customBruteForceDenyPolicy() policyruntime.CompiledPolicy {
+	return customBruteForcePolicy(
+		"custom_brute_force_deny",
+		policyruntime.DecisionPlan{
+			Decision:       policy.DecisionDeny,
+			OutcomeMarker:  "auth.outcome.custom_brute_force_deny",
+			FSMEventMarker: policy.FSMEventMarkerPreAuthDeny,
+			ResponseMarker: policy.ResponseMarkerFail,
+		},
+	)
+}
+
+// customBruteForcePolicy builds the shared brute-force policy shape used by control and deny cases.
+func customBruteForcePolicy(name string, then policyruntime.DecisionPlan) policyruntime.CompiledPolicy {
 	return policyruntime.CompiledPolicy{
-		Name:          "custom_brute_force_skip",
+		Name:          name,
 		Stage:         policy.StagePreAuth,
 		Operations:    []policy.Operation{policy.OperationAuthenticate},
 		RequireChecks: []string{definitions.ControlBruteForce},
@@ -816,12 +903,7 @@ func customBruteForceSkipPolicy() policyruntime.CompiledPolicy {
 			Operator:    "is",
 			Expected:    policyruntime.TypedValue{Value: true},
 		},
-		Then: policyruntime.DecisionPlan{
-			Decision:       policy.DecisionNeutral,
-			OutcomeMarker:  "auth.outcome.custom_brute_force_skip",
-			FSMEventMarker: policy.FSMEventMarkerPreAuthOK,
-			Control:        policyruntime.DecisionControl{SkipRemainingStageChecks: true},
-		},
+		Then: then,
 	}
 }
 

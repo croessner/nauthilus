@@ -103,6 +103,7 @@ func configuredStageEnabled(snapshot *policyruntime.Snapshot, operation policy.O
 	return ok && len(plan.Policies) > 0
 }
 
+// selectConfiguredPreAuth chooses the first ready configured pre-auth policy decision.
 func selectConfiguredPreAuth(
 	ctx context.Context,
 	snapshot *policyruntime.Snapshot,
@@ -111,8 +112,10 @@ func selectConfiguredPreAuth(
 	input CompareInput,
 ) *report.FinalDecision {
 	plan := snapshot.StagePlans[policyReport.Operation][policy.StagePreAuth]
+	dependencies := checkDependencyMap(plan.Checks)
+
 	for _, compiled := range plan.Policies {
-		if !requiredChecksSatisfied(ctx, compiled, policyReport, recorder, input.Mode) {
+		if !requiredChecksSatisfied(ctx, compiled, policyReport, recorder, input.Mode, dependencies) {
 			continue
 		}
 
@@ -134,6 +137,7 @@ func selectConfiguredPreAuth(
 	return nil
 }
 
+// selectConfiguredAuth chooses the first ready configured auth decision or the configured default deny.
 func selectConfiguredAuth(
 	ctx context.Context,
 	snapshot *policyruntime.Snapshot,
@@ -142,8 +146,10 @@ func selectConfiguredAuth(
 	input CompareInput,
 ) *report.FinalDecision {
 	plan := snapshot.StagePlans[policyReport.Operation][policy.StageAuthDecision]
+	dependencies := checkDependencyMap(plan.Checks)
+
 	for _, compiled := range plan.Policies {
-		if !requiredChecksSatisfied(ctx, compiled, policyReport, recorder, input.Mode) {
+		if !requiredChecksSatisfied(ctx, compiled, policyReport, recorder, input.Mode, dependencies) {
 			continue
 		}
 

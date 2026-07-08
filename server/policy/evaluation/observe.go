@@ -203,7 +203,7 @@ func evaluateConfiguredPolicySet(
 		}
 
 		start := time.Now()
-		decision := evaluateConfiguredStage(ctx, plan.Policies, policyReport, recorder, input)
+		decision := evaluateConfiguredStage(ctx, plan.Policies, policyReport, recorder, input, checkDependencyMap(plan.Checks))
 		recorder.RecordStageEvaluation(ctx, observability.StageMeasurement{
 			Duration:  time.Since(start),
 			Mode:      modeObserve,
@@ -246,15 +246,17 @@ func orderedStages(operation policy.Operation) []policy.Stage {
 	}
 }
 
+// evaluateConfiguredStage selects the first configured policy whose checks and expression are ready.
 func evaluateConfiguredStage(
 	ctx context.Context,
 	policies []policyruntime.CompiledPolicy,
 	policyReport *report.DecisionReport,
 	recorder observability.Recorder,
 	input CompareInput,
+	dependencies map[string][]string,
 ) *report.FinalDecision {
 	for _, compiled := range policies {
-		if !requiredChecksSatisfied(ctx, compiled, policyReport, recorder, input.Mode) {
+		if !requiredChecksSatisfied(ctx, compiled, policyReport, recorder, input.Mode, dependencies) {
 			continue
 		}
 
@@ -270,12 +272,14 @@ func evaluateConfiguredStage(
 	return nil
 }
 
+// requiredChecksSatisfied reports whether all policy-required checks and their dependencies are ready.
 func requiredChecksSatisfied(
 	ctx context.Context,
 	compiled policyruntime.CompiledPolicy,
 	policyReport *report.DecisionReport,
 	recorder observability.Recorder,
 	mode string,
+	dependencies map[string][]string,
 ) bool {
 	if mode == "" {
 		mode = modeObserve
@@ -284,22 +288,71 @@ func requiredChecksSatisfied(
 	satisfied := true
 
 	for _, name := range compiled.RequireChecks {
-		result := requireCheckResult(name, policyReport)
-		recorder.RecordRequireCheck(ctx, observability.RequireCheckMeasurement{
-			Mode:       mode,
-			PolicyName: compiled.Name,
-			Check:      name,
-			Result:     result,
-			Operation:  policyReport.Operation,
-			Stage:      compiled.Stage,
-		})
-
-		if result != requireResultSatisfied {
+		if !requiredCheckReady(ctx, compiled, name, policyReport, recorder, mode, dependencies, map[string]struct{}{}) {
 			satisfied = false
 		}
 	}
 
 	return satisfied
+}
+
+// checkDependencyMap indexes scheduler dependencies by check name for decision readiness checks.
+func checkDependencyMap(checks []policyruntime.CompiledCheck) map[string][]string {
+	dependencies := make(map[string][]string)
+
+	for _, check := range checks {
+		if len(check.After) == 0 {
+			continue
+		}
+
+		dependencies[check.Name] = append([]string(nil), check.After...)
+	}
+
+	return dependencies
+}
+
+// requiredCheckReady reports whether a required check and its scheduler dependencies are collected.
+func requiredCheckReady(
+	ctx context.Context,
+	compiled policyruntime.CompiledPolicy,
+	name string,
+	policyReport *report.DecisionReport,
+	recorder observability.Recorder,
+	mode string,
+	dependencies map[string][]string,
+	visiting map[string]struct{},
+) bool {
+	result := requireCheckResult(name, policyReport)
+	recorder.RecordRequireCheck(ctx, observability.RequireCheckMeasurement{
+		Mode:       mode,
+		PolicyName: compiled.Name,
+		Check:      name,
+		Result:     result,
+		Operation:  policyReport.Operation,
+		Stage:      compiled.Stage,
+	})
+
+	if result != requireResultSatisfied {
+		return false
+	}
+
+	if _, exists := visiting[name]; exists {
+		return true
+	}
+
+	visiting[name] = struct{}{}
+
+	ready := true
+
+	for _, dependency := range dependencies[name] {
+		if !requiredCheckReady(ctx, compiled, dependency, policyReport, recorder, mode, dependencies, visiting) {
+			ready = false
+		}
+	}
+
+	delete(visiting, name)
+
+	return ready
 }
 
 func requireCheckResult(name string, policyReport *report.DecisionReport) string {
