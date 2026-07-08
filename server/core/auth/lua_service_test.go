@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -350,6 +351,130 @@ func TestDefaultPostAction_ForwardsEnvironmentRejectedToLuaRequest(t *testing.T)
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("expected post action to be scheduled")
 	}
+}
+
+func TestDefaultPostActionPlanStepSeedsRuntimeAndReturnsLuaDelta(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := prepareDefaultPostActionTest(t)
+
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest("POST", "/auth", nil)
+
+	auth := newDefaultPostActionAuth(ctx, cfg, "guid-plan-step")
+	auth.Runtime.Context = lualib.NewContext()
+
+	resultCh, okCh := runDefaultPostActionPlanStep(auth)
+
+	select {
+	case act := <-action.RequestChan:
+		completePlanStepAction(t, act)
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected plan-step post action to be scheduled")
+	}
+
+	expectPlanStepOK(t, okCh)
+	delta := expectPlanStepDelta(t, resultCh)
+
+	if got := delta.Set["lua_value"]; got != "after" {
+		t.Fatalf("delta lua_value = %#v, want after", got)
+	}
+
+	rt, ok := delta.Set["rt"].(map[string]any)
+	if !ok {
+		t.Fatalf("delta rt = %#v, want map[string]any", delta.Set["rt"])
+	}
+
+	if rt["existing"] != "kept" || rt["action_haveibeenpwnd"] != true || rt["native_value_available"] != true {
+		t.Fatalf("delta rt = %#v, want normalized Lua context changes", rt)
+	}
+
+	if _, exists := delta.Set["native_value"]; exists {
+		t.Fatalf("unchanged seeded value was returned in delta: %#v", delta.Set)
+	}
+
+	if got := auth.Runtime.Context.Get("lua_value"); got != nil {
+		t.Fatalf("live auth context was mutated with %#v", got)
+	}
+}
+
+// runDefaultPostActionPlanStep starts the plan-step runner and returns its result channels.
+func runDefaultPostActionPlanStep(auth *core.AuthState) (<-chan pluginapi.RuntimeDelta, <-chan bool) {
+	resultCh := make(chan pluginapi.RuntimeDelta, 1)
+	okCh := make(chan bool, 1)
+
+	go func() {
+		delta, ok := DefaultPostAction{}.RunPlanStep(core.PostActionPlanInput{
+			PostActionInput: core.PostActionInput{
+				View: auth.View(),
+				Result: &core.PassDBResult{
+					Authenticated: true,
+					UserFound:     true,
+				},
+			},
+			Runtime: map[string]any{
+				"native_value": "visible-to-lua",
+				"rt":           map[string]any{"existing": "kept"},
+			},
+		})
+
+		resultCh <- delta
+
+		okCh <- ok
+	}()
+
+	return resultCh, okCh
+}
+
+// completePlanStepAction verifies seeded runtime values and finishes the Lua action.
+func completePlanStepAction(t *testing.T, act *action.Action) {
+	t.Helper()
+
+	if act == nil || act.Context == nil {
+		t.Fatal("expected Lua post-action request with context")
+	}
+
+	if got := act.Get("native_value"); got != "visible-to-lua" {
+		t.Fatalf("seeded runtime value = %#v, want visible-to-lua", got)
+	}
+
+	act.Set("lua_value", "after")
+	act.Set("rt", map[any]any{
+		"existing":               "kept",
+		"action_haveibeenpwnd":   true,
+		"native_value_available": act.Get("native_value") == "visible-to-lua",
+	})
+
+	act.FinishedChan <- action.Done{}
+}
+
+// expectPlanStepOK waits for the plan-step runner success flag.
+func expectPlanStepOK(t *testing.T, okCh <-chan bool) {
+	t.Helper()
+
+	select {
+	case ok := <-okCh:
+		if !ok {
+			t.Fatal("RunPlanStep() ok = false, want true")
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("RunPlanStep() did not return ok")
+	}
+}
+
+// expectPlanStepDelta waits for the plan-step runner delta.
+func expectPlanStepDelta(t *testing.T, resultCh <-chan pluginapi.RuntimeDelta) pluginapi.RuntimeDelta {
+	t.Helper()
+
+	select {
+	case delta := <-resultCh:
+		return delta
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("RunPlanStep() did not return delta")
+	}
+
+	return pluginapi.RuntimeDelta{}
 }
 
 func TestAuthStateSubjectLua_SkipsCanceledRequest(t *testing.T) {

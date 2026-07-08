@@ -20,8 +20,13 @@ import "context"
 // Capability names a host-controlled permission a plugin may request.
 type Capability string
 
-// CapabilityCredentials allows a module instance to access request-scoped credentials.
-const CapabilityCredentials Capability = "credentials"
+const (
+	// CapabilityCredentials allows a module instance to access request-scoped credentials.
+	CapabilityCredentials Capability = "credentials"
+
+	// CapabilityMail allows a module instance to send mail through the host mail facade.
+	CapabilityMail Capability = "mail"
+)
 
 // Feature names optional behavior inside a compatible API version.
 type Feature string
@@ -104,6 +109,7 @@ type Host interface {
 	Tracer(scope string) Tracer
 	Metrics(scope string) Metrics
 	HTTP(scope string) HTTPClient
+	Mail(scope string) Mailer
 	ConnectionTargets(scope string) ConnectionTargets
 	BackendServers() BackendServers
 	Redis() Redis

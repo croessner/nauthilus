@@ -80,9 +80,16 @@ func (e policyObligationExecutor) Execute(ctx *gin.Context, final *report.FinalD
 		return
 	}
 
+	postActionPlan := make([]PostActionPlanStep, 0)
 	for _, obligation := range final.Obligations {
+		if e.collectPostActionPlanStep(ctx, obligation, &postActionPlan) {
+			continue
+		}
+
 		e.executeOne(ctx, obligation)
 	}
+
+	e.executePostActionPlan(ctx, postActionPlan)
 }
 
 func (e policyObligationExecutor) executeOne(ctx *gin.Context, obligation report.EffectRequest) {
@@ -155,6 +162,145 @@ func (e policyObligationExecutor) executePluginEffect(ctx *gin.Context, obligati
 	}
 
 	return bridge.ExecutePolicyEffect(ctx, e.auth.View(), obligation)
+}
+
+// collectPostActionPlanStep appends post-action obligations for one ordered plan enqueue.
+func (e policyObligationExecutor) collectPostActionPlanStep(
+	ctx *gin.Context,
+	obligation report.EffectRequest,
+	postActionPlan *[]PostActionPlanStep,
+) bool {
+	if e.collectPluginPostAction(obligation, postActionPlan) {
+		return true
+	}
+
+	return e.collectLuaPostAction(ctx, obligation, postActionPlan)
+}
+
+// collectPluginPostAction appends native post-action effects for one later plan enqueue.
+func (e policyObligationExecutor) collectPluginPostAction(
+	obligation report.EffectRequest,
+	postActionPlan *[]PostActionPlanStep,
+) bool {
+	if postActionPlan == nil {
+		return false
+	}
+
+	bridge := getPluginEffectBridge()
+	if bridge == nil || !bridge.IsPostActionEffect(obligation) {
+		return false
+	}
+
+	*postActionPlan = append(*postActionPlan, NewNativePostActionPlanStep(obligation))
+
+	return true
+}
+
+// collectLuaPostAction appends the default Lua post-action dispatcher as a plan step.
+func (e policyObligationExecutor) collectLuaPostAction(
+	ctx *gin.Context,
+	obligation report.EffectRequest,
+	postActionPlan *[]PostActionPlanStep,
+) bool {
+	if postActionPlan == nil || obligation.ID != policy.ObligationLuaPostActionEnqueue || e.auth == nil {
+		return false
+	}
+
+	runner, ok := getPostAction().(PostActionPlanRunner)
+	if !ok || runner == nil {
+		return false
+	}
+
+	input, cleanup := e.luaPostActionPlanInput(ctx)
+	*postActionPlan = append(*postActionPlan, NewLuaPostActionPlanStep(obligation.ID, runner, input, cleanup))
+
+	return true
+}
+
+// luaPostActionPlanInput captures the post-action result until the detached plan consumes it.
+func (e policyObligationExecutor) luaPostActionPlanInput(ctx *gin.Context) (PostActionInput, func()) {
+	result, release := takePolicyPostActionResult(ctx)
+	if result == nil {
+		result = GetPassDBResultFromPool()
+		release = true
+	}
+
+	cleanup := func() {
+		if release {
+			PutPassDBResultToPool(result)
+		}
+	}
+
+	return e.auth.newPostActionInput(ctx, result), cleanup
+}
+
+// executePostActionPlan enqueues collected post-actions once per final decision.
+func (e policyObligationExecutor) executePostActionPlan(
+	ctx *gin.Context,
+	steps []PostActionPlanStep,
+) {
+	if len(steps) == 0 {
+		return
+	}
+
+	started := time.Now()
+	result := observability.ResultSuccess
+
+	handled, ok := e.enqueuePostActionPlan(ctx, steps)
+	if !handled {
+		result = observability.ResultError
+	} else if !ok {
+		result = observability.ResultFailure
+	}
+
+	duration := time.Since(started)
+	for _, step := range steps {
+		e.record(ctx, step.ID(), duration, result)
+	}
+
+	if !handled {
+		ReleasePostActionPlanSteps(steps)
+	}
+}
+
+// enqueuePostActionPlan delegates post-action scheduling to the runtime bridge.
+func (e policyObligationExecutor) enqueuePostActionPlan(
+	ctx *gin.Context,
+	steps []PostActionPlanStep,
+) (bool, bool) {
+	bridge := getPluginEffectBridge()
+
+	if e.auth == nil {
+		return false, false
+	}
+
+	if bridge == nil {
+		ok := e.runLuaPostActionFallback(steps)
+		ReleasePostActionPlanSteps(steps)
+
+		return true, ok
+	}
+
+	return bridge.EnqueuePostActionPlan(ctx, e.auth.View(), steps)
+}
+
+// runLuaPostActionFallback preserves Lua-only behavior when no native runtime bridge is registered.
+func (e policyObligationExecutor) runLuaPostActionFallback(steps []PostActionPlanStep) bool {
+	for _, step := range steps {
+		runner, input, ok := step.LuaStep()
+		if !ok {
+			return false
+		}
+
+		postAction, ok := runner.(PostAction)
+		if !ok {
+			return false
+		}
+
+		postAction.Run(input)
+	}
+
+	return true
 }
 
 func policyObligationsEnabled(ctx *gin.Context) bool {

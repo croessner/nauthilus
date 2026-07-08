@@ -2,6 +2,8 @@ package pluginruntime
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,12 +18,20 @@ import (
 const (
 	effectObligationName      = "sync_obligation"
 	effectPostActionName      = "post_action"
+	effectProducerActionName  = "post_action_producer"
+	effectConsumerActionName  = "post_action_consumer"
 	effectObligationQualified = testRuntimeModuleName + "." + effectObligationName
 	effectPostActionQualified = testRuntimeModuleName + "." + effectPostActionName
+	effectProducerQualified   = testRuntimeModuleName + "." + effectProducerActionName
+	effectConsumerQualified   = testRuntimeModuleName + "." + effectConsumerActionName
+	effectInvalidRuntimeKey   = "post_action_invalid"
+	effectSecretRuntimeValue  = "super-secret-runtime-value"
 	effectMessageArg          = "message"
 	effectMessageValue        = "hello"
 	effectFeatureArg          = "feature"
 	effectFeatureValue        = "brute_force"
+	effectExchangeKey         = "post_action_exchange"
+	effectExchangeValue       = "ready"
 	effectInputFactAttribute  = "plugin.subject.customer.risk"
 	effectResultFactAttribute = "plugin.resource.customer.applied"
 	effectPublicLogKey        = "policy_fact_customer_applied"
@@ -330,6 +340,105 @@ func TestEffectBridgeEnqueuesPostActionUnderHostSupervision(t *testing.T) {
 	host.WaitWorkers()
 }
 
+func TestEffectBridgeRunsPostActionPlanInOrderAndSharesRuntimeDelta(t *testing.T) {
+	callOrder := make(chan string, 2)
+	consumerRequests := make(chan pluginapi.PostActionRequest, 1)
+	producer := &fakePostActionTarget{
+		name:  effectProducerActionName,
+		order: callOrder,
+		result: pluginapi.PostActionEnqueueResult{
+			RuntimeDelta: pluginapi.RuntimeDelta{
+				Set: map[string]any{effectExchangeKey: effectExchangeValue},
+			},
+			Enqueued: true,
+		},
+	}
+	consumer := &fakePostActionTarget{
+		name:     effectConsumerActionName,
+		order:    callOrder,
+		requests: consumerRequests,
+	}
+	host := NewHost()
+	bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+		if err := registrar.RegisterPostActionTarget(producer); err != nil {
+			return err
+		}
+
+		return registrar.RegisterPostActionTarget(consumer)
+	}, WithHost(host))
+	auth := newSubjectTestAuth(t)
+
+	handled, ok := bridge.EnqueuePostActionPlan(auth.Request.HTTPClientContext, auth.View(), []core.PostActionPlanStep{
+		core.NewNativePostActionPlanStep(report.EffectRequest{ID: effectProducerQualified}),
+		core.NewNativePostActionPlanStep(report.EffectRequest{ID: effectConsumerQualified}),
+	})
+	if !handled || !ok {
+		t.Fatalf("EnqueuePostActionPlan() handled=%t ok=%t, want true/true", handled, ok)
+	}
+
+	host.WaitWorkers()
+
+	assertPostActionOrder(t, callOrder, effectProducerActionName, effectConsumerActionName)
+
+	select {
+	case request := <-consumerRequests:
+		value, ok := request.Runtime.Get(effectExchangeKey)
+		if !ok || value != effectExchangeValue {
+			t.Fatalf("consumer runtime value = %#v, %t; want %q", value, ok, effectExchangeValue)
+		}
+	default:
+		t.Fatal("consumer post-action was not invoked")
+	}
+}
+
+func TestEffectBridgeRejectsInvalidPostActionRuntimeDelta(t *testing.T) {
+	consumerCalled := make(chan struct{})
+	producer := &fakePostActionTarget{
+		name: effectProducerActionName,
+		result: pluginapi.PostActionEnqueueResult{
+			RuntimeDelta: pluginapi.RuntimeDelta{
+				Set: map[string]any{effectInvalidRuntimeKey: &secretRuntimeValue{value: effectSecretRuntimeValue}},
+			},
+			Enqueued: true,
+		},
+	}
+	consumer := &fakePostActionTarget{
+		name:   effectConsumerActionName,
+		called: consumerCalled,
+	}
+	bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+		if err := registrar.RegisterPostActionTarget(producer); err != nil {
+			return err
+		}
+
+		return registrar.RegisterPostActionTarget(consumer)
+	})
+	auth := newSubjectTestAuth(t)
+
+	plan, err := bridge.newPostActionPlan(auth.Request.HTTPClientContext, auth, []core.PostActionPlanStep{
+		core.NewNativePostActionPlanStep(report.EffectRequest{ID: effectProducerQualified}),
+		core.NewNativePostActionPlanStep(report.EffectRequest{ID: effectConsumerQualified}),
+	})
+	if err != nil {
+		t.Fatalf("newPostActionPlan() error = %v", err)
+	}
+
+	err = bridge.runPostActionPlan(context.Background(), plan)
+	if !errors.Is(err, ErrUnsupportedRuntimeValue) {
+		t.Fatalf("runPostActionPlan() error = %v, want unsupported runtime value", err)
+	}
+
+	if strings.Contains(err.Error(), effectSecretRuntimeValue) {
+		t.Fatalf("invalid runtime delta error leaked value: %v", err)
+	}
+
+	select {
+	case <-consumerCalled:
+		t.Fatal("consumer post-action ran after invalid producer runtime delta")
+	default:
+	}
+}
+
 func TestEffectBridgeDetachesPostActionFromCanceledRequestContext(t *testing.T) {
 	ctxErrs := make(chan error, 1)
 	target := &fakePostActionTarget{ctxErrs: ctxErrs}
@@ -431,16 +540,27 @@ type fakePostActionTarget struct {
 	requests     chan pluginapi.PostActionRequest
 	ctxErrs      chan error
 	called       chan struct{}
+	order        chan string
+	result       pluginapi.PostActionEnqueueResult
+	name         string
 	panicEnqueue bool
 }
 
 func (t *fakePostActionTarget) Name() string {
+	if t.name != "" {
+		return t.name
+	}
+
 	return effectPostActionName
 }
 
 func (t *fakePostActionTarget) Enqueue(ctx context.Context, request pluginapi.PostActionRequest) (pluginapi.PostActionEnqueueResult, error) {
 	if t.called != nil {
 		close(t.called)
+	}
+
+	if t.order != nil {
+		t.order <- t.Name()
 	}
 
 	if t.ctxErrs != nil {
@@ -460,13 +580,47 @@ func (t *fakePostActionTarget) Enqueue(ctx context.Context, request pluginapi.Po
 		panic("post-action panic")
 	}
 
+	if postActionResultIsSet(t.result) {
+		return t.result, nil
+	}
+
 	return pluginapi.PostActionEnqueueResult{Enqueued: true}, nil
+}
+
+// postActionResultIsSet distinguishes an explicit test result from the default enqueue success.
+func postActionResultIsSet(result pluginapi.PostActionEnqueueResult) bool {
+	return result.Status != nil ||
+		len(result.Logs) > 0 ||
+		len(result.RuntimeDelta.Set) > 0 ||
+		len(result.RuntimeDelta.Delete) > 0 ||
+		result.QueuedID != "" ||
+		result.Enqueued ||
+		result.Temporary
 }
 
 func obligationResultHasResponseMutation(result pluginapi.ObligationResult) bool {
 	return result.Response.StatusHeader ||
 		len(result.Response.Headers.Set) > 0 ||
 		len(result.Response.Headers.Delete) > 0
+}
+
+type secretRuntimeValue struct {
+	value string
+}
+
+func assertPostActionOrder(t *testing.T, order <-chan string, want ...string) {
+	t.Helper()
+
+	for _, expected := range want {
+		select {
+		case got := <-order:
+			if got != expected {
+				t.Fatalf("post-action order item = %q, want %q", got, expected)
+			}
+		default:
+			t.Fatalf("missing post-action order item %q", expected)
+		}
+	}
 }
 
 func recordEffectInputFact(t *testing.T, auth *core.AuthState) {

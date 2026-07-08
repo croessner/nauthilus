@@ -71,6 +71,27 @@ type HTTPResponse struct {
 	StatusCode int
 }
 
+// MailMessage describes one host-managed SMTP or LMTP message send request.
+type MailMessage struct {
+	To       []string
+	Server   string
+	HeloName string
+	Username string
+	Password string
+	From     string
+	Subject  string
+	Body     string
+	Port     int
+	TLS      bool
+	StartTLS bool
+	LMTP     bool
+}
+
+// Mailer sends SMTP or LMTP messages through host-managed transport.
+type Mailer interface {
+	Send(context.Context, MailMessage) error
+}
+
 // ConnectionTargetDirection describes which endpoint side should be counted.
 type ConnectionTargetDirection string
 

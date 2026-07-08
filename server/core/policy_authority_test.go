@@ -16,10 +16,12 @@
 package core
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/lualib"
@@ -31,9 +33,11 @@ import (
 )
 
 const (
-	policyAuthorityTestI18NKey      = "auth.policy.company.account_blocked"
-	policyAuthorityTestI18NFallback = "Login failed because the account is locked."
-	policyAuthorityPluginEffectID   = "customer.sync_obligation"
+	policyAuthorityTestI18NKey            = "auth.policy.company.account_blocked"
+	policyAuthorityTestI18NFallback       = "Login failed because the account is locked."
+	policyAuthorityPluginEffectID         = "customer.sync_obligation"
+	policyAuthorityPluginPostActionFirst  = "customer.first_post_action"
+	policyAuthorityPluginPostActionSecond = "customer.second_post_action"
 )
 
 func TestAuthBoundaryDefaultSetSelectsPreAuthDecisionDuringEnvironmentHandling(t *testing.T) {
@@ -503,6 +507,66 @@ func TestPolicyObligationExecutorRunsPluginEffectBridge(t *testing.T) {
 	}
 }
 
+func TestPolicyObligationExecutorEnqueuesPostActionsAsOrderedMixedPlan(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    110,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	_ = auth.requestPolicyContext(ctx)
+
+	bridge := &recordingPluginEffectBridge{
+		ok: true,
+		postActionIDs: map[string]bool{
+			policyAuthorityPluginPostActionFirst:  true,
+			policyAuthorityPluginPostActionSecond: true,
+		},
+	}
+	previous := getPluginEffectBridge()
+	previousPostAction := getPostAction()
+
+	RegisterPluginEffectBridge(bridge)
+	RegisterPostAction(recordingPlanPostAction{})
+
+	t.Cleanup(func() {
+		ReleasePostActionPlanSteps(bridge.plan)
+		RegisterPluginEffectBridge(previous)
+		RegisterPostAction(previousPostAction)
+	})
+
+	newPolicyObligationExecutor(auth).Execute(ctx, &report.FinalDecision{
+		Obligations: []report.EffectRequest{
+			{ID: policyAuthorityPluginPostActionFirst},
+			{ID: policy.ObligationLuaPostActionEnqueue},
+			{ID: policyAuthorityPluginEffectID},
+			{ID: policyAuthorityPluginPostActionSecond},
+		},
+	})
+
+	if bridge.calls != 1 {
+		t.Fatalf("synchronous plugin effect calls = %d, want 1", bridge.calls)
+	}
+
+	if bridge.planCalls != 1 {
+		t.Fatalf("post-action plan calls = %d, want 1", bridge.planCalls)
+	}
+
+	if len(bridge.plan) != 3 {
+		t.Fatalf("post-action plan length = %d, want 3", len(bridge.plan))
+	}
+
+	if got := postActionPlanStepIDs(bridge.plan); !slices.Equal(got, []string{
+		policyAuthorityPluginPostActionFirst,
+		policy.ObligationLuaPostActionEnqueue,
+		policyAuthorityPluginPostActionSecond,
+	}) {
+		t.Fatalf("post-action plan order = %#v", got)
+	}
+}
+
 func TestPolicyObligationExecutorRecordsPluginEffectFailure(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
@@ -688,9 +752,24 @@ type recordedActionDispatch struct {
 }
 
 type recordingPluginEffectBridge struct {
-	last  report.EffectRequest
-	calls int
-	ok    bool
+	postActionIDs map[string]bool
+	last          report.EffectRequest
+	plan          []PostActionPlanStep
+	calls         int
+	planCalls     int
+	ok            bool
+}
+
+func (b *recordingPluginEffectBridge) IsPostActionEffect(effect report.EffectRequest) bool {
+	return b.postActionIDs[effect.ID]
+}
+
+func (b *recordingPluginEffectBridge) EnqueuePostActionPlan(_ *gin.Context, _ *StateView, steps []PostActionPlanStep) (bool, bool) {
+	b.planCalls++
+
+	b.plan = append([]PostActionPlanStep(nil), steps...)
+
+	return true, b.ok
 }
 
 func (b *recordingPluginEffectBridge) ExecutePolicyEffect(_ *gin.Context, _ *StateView, effect report.EffectRequest) (bool, bool) {
@@ -698,6 +777,23 @@ func (b *recordingPluginEffectBridge) ExecutePolicyEffect(_ *gin.Context, _ *Sta
 	b.last = effect
 
 	return true, b.ok
+}
+
+type recordingPlanPostAction struct{}
+
+func (recordingPlanPostAction) Run(PostActionInput) {}
+
+func (recordingPlanPostAction) RunPlanStep(PostActionPlanInput) (pluginapi.RuntimeDelta, bool) {
+	return pluginapi.RuntimeDelta{}, true
+}
+
+func postActionPlanStepIDs(steps []PostActionPlanStep) []string {
+	ids := make([]string, 0, len(steps))
+	for _, step := range steps {
+		ids = append(ids, step.ID())
+	}
+
+	return ids
 }
 
 type recordedCommonRequest struct {

@@ -41,9 +41,11 @@ const (
 	headerUserAgent            = "User-Agent"
 	headerValueAny             = "*/*"
 	headerValueUserAgent       = "Nauthilus"
-	postActionRuntimeParityGap = "native post-actions currently cannot apply runtime deltas to the selected outcome"
+	postActionRuntimeParityGap = "native post-action runtime exchange is limited to later steps in the same plan"
 	publicLogResultKey         = "haveibeenpwnd_result"
 	publicLogResultLeaked      = "leaked"
+	runtimeKeyHIBPHashInfo     = "haveibeenpwnd_hash_info"
+	runtimeKeyLegacyRT         = "rt"
 )
 
 type checkOutcome struct {
@@ -192,13 +194,14 @@ func checkPasswordHash(ctx context.Context, state pluginState, snapshot pluginap
 		return checkOutcome{result: resultGateSkipped, enqueued: false}, nil
 	}
 
-	return lookupHTTPAndStore(ctx, state, redisKey, cacheKey, prefix, suffix)
+	return lookupHTTPAndStore(ctx, state, snapshot, redisKey, cacheKey, prefix, suffix)
 }
 
 // lookupHTTPAndStore calls HIBP and stores the positive or negative result in Redis and cache.
 func lookupHTTPAndStore(
 	ctx context.Context,
 	state pluginState,
+	snapshot pluginapi.RequestSnapshot,
 	redisKey string,
 	cacheKey string,
 	prefix string,
@@ -215,6 +218,10 @@ func lookupHTTPAndStore(
 		}
 
 		state.cache.Set(ctx, cacheKey, count, state.config.CachePositiveTTL)
+
+		if _, err := notifyPositiveMail(ctx, state, snapshot, redisKey, prefix, count); err != nil {
+			return checkOutcome{}, err
+		}
 
 		return countOutcome(resultHTTPPositive, resultHTTPNegative, prefix, count, true), nil
 	}
@@ -395,6 +402,14 @@ func enqueueResultFromOutcome(outcome checkOutcome) pluginapi.PostActionEnqueueR
 
 	if outcome.leaked {
 		result.Logs = append(result.Logs, pluginapi.LogField{Key: publicLogResultKey, Value: publicLogResultLeaked})
+	}
+
+	if outcome.hashInfo != "" {
+		result.RuntimeDelta = pluginapi.RuntimeDelta{
+			Set: map[string]any{
+				runtimeKeyHIBPHashInfo: outcome.hashInfo,
+			},
+		}
 	}
 
 	return result

@@ -275,6 +275,46 @@ func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:
 	assertStringField(t, row, "status_msg", "OK")
 }
 
+func TestHIBPRuntimeOrderControlsPwndInfo(t *testing.T) {
+	cases := []struct {
+		runtimeValues map[string]any
+		name          string
+		wantPwndInfo  string
+	}{
+		{
+			name: "HIBP before ClickHouse",
+			runtimeValues: map[string]any{
+				runtimeKeyHIBPHashInfo: "abcde42",
+			},
+			wantPwndInfo: "abcde42",
+		},
+		{
+			name:         "ClickHouse before HIBP",
+			wantPwndInfo: "",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			harness := startTestRunner(t, testModule(map[string]any{
+				"insert_url": testInsertURL,
+				"batch_size": 1,
+			}), testRunnerOptions{})
+			defer harness.stop(t)
+
+			_, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{
+				runtimeValues: testCase.runtimeValues,
+			}))
+			if err != nil {
+				t.Fatalf("EnqueuePostAction() error = %v", err)
+			}
+
+			row := decodeFirstRow(t, harness.transport.onlyRequest().body)
+			assertStringField(t, row, "pwnd_info", testCase.wantPwndInfo)
+		})
+	}
+}
+
 func TestCacheOnlyPathBelowBatchThreshold(t *testing.T) {
 	harness := startTestRunner(t, testModule(map[string]any{
 		"insert_url": testInsertURL,

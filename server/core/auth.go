@@ -2847,6 +2847,13 @@ func (a *AuthState) GetAccountField() string {
 
 // PostLuaAction executes a Lua-based post-processing action using the given authentication result and context.
 func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) {
+	if disp := getPostAction(); disp != nil {
+		disp.Run(a.newPostActionInput(ctx, passDBResult))
+	}
+}
+
+// newPostActionInput captures the request flags used by Lua post-actions.
+func (a *AuthState) newPostActionInput(ctx *gin.Context, passDBResult *PassDBResult) PostActionInput {
 	environmentRejected := false
 	environmentStageExpected := true
 	subjectStageExpected := true
@@ -2863,14 +2870,12 @@ func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) 
 		}
 	}
 
-	if disp := getPostAction(); disp != nil {
-		disp.Run(PostActionInput{
-			View:                     a.View(),
-			Result:                   passDBResult,
-			EnvironmentRejected:      environmentRejected,
-			EnvironmentStageExpected: environmentStageExpected,
-			SubjectStageExpected:     subjectStageExpected,
-		})
+	return PostActionInput{
+		View:                     a.View(),
+		Result:                   passDBResult,
+		EnvironmentRejected:      environmentRejected,
+		EnvironmentStageExpected: environmentStageExpected,
+		SubjectStageExpected:     subjectStageExpected,
 	}
 }
 

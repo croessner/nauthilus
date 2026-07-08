@@ -67,6 +67,7 @@ func (samplePlugin) Metadata() pluginapi.Metadata {
 		},
 		Capabilities: []pluginapi.Capability{
 			pluginapi.CapabilityCredentials,
+			pluginapi.CapabilityMail,
 		},
 		Build: pluginapi.BuildInfo{
 			GoVersion: "test",
@@ -151,6 +152,16 @@ func (samplePlugin) Start(ctx context.Context, host pluginapi.Host) error {
 	_ = host.BackendServers().List(ctx)
 	_ = host.Helpers().AccountTag("sample")
 	_ = host.HTTP("sample")
+	_ = host.Mail("sample")
+	_ = pluginapi.MailMessage{
+		Server:   "localhost",
+		HeloName: "localhost",
+		From:     "postmaster@localhost",
+		To:       []string{"sample@example.test"},
+		Subject:  "sample",
+		Body:     "sample",
+		Port:     25,
+	}
 
 	if err := host.ConnectionTargets("sample").Register(ctx, pluginapi.ConnectionTarget{
 		Name:        "sample",

@@ -44,7 +44,7 @@ const (
 	authMethodXHeaders         = "x_headers"
 	statusOK                   = http.StatusOK
 	statusNoContent            = http.StatusNoContent
-	postActionRuntimeParityGap = "native post-actions currently cannot apply runtime deltas such as rt.post_clickhouse"
+	postActionRuntimeParityGap = "post-action runtime deltas are plan-local; rt.post_clickhouse is not written back to live request runtime"
 )
 
 // Enqueue builds, batches, and flushes one ClickHouse post-action row.

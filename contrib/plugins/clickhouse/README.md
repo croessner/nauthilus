@@ -47,6 +47,9 @@ credentials.
 
 Known parity gaps:
 
-- Native post-actions currently cannot apply runtime deltas, so the Lua `rt.post_clickhouse = true` marker is not
-  mutated back into request runtime state.
+- Native and Lua post-actions can exchange runtime deltas with later steps in the same detached plan. Those deltas do
+  not mutate the already-selected policy decision, client response, or live request runtime after the plan finishes, so
+  the Lua `rt.post_clickhouse = true` marker is not written back into request runtime state.
+- Order `haveibeenpwnd.post_action` before `clickhouse.post_action` when ClickHouse rows should include
+  `haveibeenpwnd_hash_info` as `pwnd_info`.
 - The Lua read-only ClickHouse query hook is not implemented by this native action plugin.

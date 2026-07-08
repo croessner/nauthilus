@@ -17,9 +17,11 @@
 package main
 
 import (
-	"errors"
+	"bytes"
 	"fmt"
+	"os"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/croessner/nauthilus/v3/contrib/plugins/internal/pluginutil"
@@ -40,9 +42,26 @@ const (
 	defaultMailPort             = 25
 	defaultMailHeloName         = "localhost"
 	defaultMailFrom             = "postmaster@localhost"
+	defaultMailSubjectTemplate  = "Password leak detected for your account <{{ .Account }}>"
+	mailTemplateSizeLimit       = 64 * 1024
 )
 
-var errMailNotificationUnsupported = errors.New("haveibeenpwnd native mail notification is not implemented")
+const defaultMailBodyTemplate = `Hello,
+
+your account password has been found on haveibeenpwnd! It means that your password has been leaked and is known
+to the public.
+
+Account: {{ .Account }}
+Hash: {{ .HashPrefix }}
+Count: {{ .Count }}
+
+Please consider changing your password as soon as possible. To do so, please go to the following
+website: {{ .Website }}.
+
+Regards
+
+Postmaster
+`
 
 type moduleConfig struct {
 	Mail                 mailConfig
@@ -58,17 +77,19 @@ type moduleConfig struct {
 }
 
 type mailConfig struct {
-	Server   string
-	HeloName string
-	Username string
-	Password string
-	MailFrom string
-	Website  string
-	Port     int
-	Enabled  bool
-	UseLMTP  bool
-	TLS      bool
-	StartTLS bool
+	BodyTemplate    *template.Template
+	SubjectTemplate *template.Template
+	Server          string
+	HeloName        string
+	Username        string
+	Password        string
+	MailFrom        string
+	Website         string
+	Port            int
+	Enabled         bool
+	UseLMTP         bool
+	TLS             bool
+	StartTLS        bool
 }
 
 type rawModuleConfig struct {
@@ -85,17 +106,19 @@ type rawModuleConfig struct {
 }
 
 type rawMailConfig struct {
-	Server   string `mapstructure:"server"`
-	HeloName string `mapstructure:"helo_name"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
-	MailFrom string `mapstructure:"mail_from"`
-	Website  string `mapstructure:"website"`
-	Port     int    `mapstructure:"port"`
-	Enabled  bool   `mapstructure:"enabled"`
-	UseLMTP  bool   `mapstructure:"use_lmtp"`
-	TLS      bool   `mapstructure:"tls"`
-	StartTLS bool   `mapstructure:"starttls"`
+	Server          string `mapstructure:"server"`
+	HeloName        string `mapstructure:"helo_name"`
+	Username        string `mapstructure:"username"`
+	Password        string `mapstructure:"password"`
+	MailFrom        string `mapstructure:"mail_from"`
+	Website         string `mapstructure:"website"`
+	TemplatePath    string `mapstructure:"template_path"`
+	SubjectTemplate string `mapstructure:"subject_template"`
+	Port            int    `mapstructure:"port"`
+	Enabled         bool   `mapstructure:"enabled"`
+	UseLMTP         bool   `mapstructure:"use_lmtp"`
+	TLS             bool   `mapstructure:"tls"`
+	StartTLS        bool   `mapstructure:"starttls"`
 }
 
 // decodeModuleConfig reads and validates the HIBP plugin-owned config.
@@ -192,7 +215,7 @@ func normalizeAPIBaseURL(value string) (string, error) {
 	return strings.TrimRight(validated, "/") + "/", nil
 }
 
-// decodeMailConfig validates mail settings and rejects enabled mail until parity is implemented.
+// decodeMailConfig validates mail settings and parses templates before activation.
 func decodeMailConfig(raw rawMailConfig) (mailConfig, error) {
 	port := raw.Port
 	if port == 0 {
@@ -218,21 +241,101 @@ func decodeMailConfig(raw rawMailConfig) (mailConfig, error) {
 		mailFrom = defaultMailFrom
 	}
 
-	if raw.Enabled {
-		return mailConfig{}, errMailNotificationUnsupported
+	bodyTemplate, err := parseMailBodyTemplate(raw.TemplatePath)
+	if err != nil {
+		return mailConfig{}, err
+	}
+
+	subjectTemplate, err := parseMailSubjectTemplate(raw.SubjectTemplate)
+	if err != nil {
+		return mailConfig{}, err
 	}
 
 	return mailConfig{
-		Server:   server,
-		HeloName: heloName,
-		Username: strings.TrimSpace(raw.Username),
-		Password: raw.Password,
-		MailFrom: mailFrom,
-		Website:  strings.TrimSpace(raw.Website),
-		Port:     port,
-		Enabled:  raw.Enabled,
-		UseLMTP:  raw.UseLMTP,
-		TLS:      raw.TLS,
-		StartTLS: raw.StartTLS,
+		BodyTemplate:    bodyTemplate,
+		SubjectTemplate: subjectTemplate,
+		Server:          server,
+		HeloName:        heloName,
+		Username:        strings.TrimSpace(raw.Username),
+		Password:        raw.Password,
+		MailFrom:        mailFrom,
+		Website:         strings.TrimSpace(raw.Website),
+		Port:            port,
+		Enabled:         raw.Enabled,
+		UseLMTP:         raw.UseLMTP,
+		TLS:             raw.TLS,
+		StartTLS:        raw.StartTLS,
 	}, nil
+}
+
+// parseMailBodyTemplate loads the configured body template or the builtin fallback.
+func parseMailBodyTemplate(path string) (*template.Template, error) {
+	source, err := loadMailBodyTemplateSource(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseMailTemplate("body", source)
+}
+
+// loadMailBodyTemplateSource reads a bounded custom body template when configured.
+func loadMailBodyTemplateSource(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return defaultMailBodyTemplate, nil
+	}
+
+	info, err := os.Stat(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("mail.template_path is not readable")
+	}
+
+	if info.Size() > mailTemplateSizeLimit {
+		return "", fmt.Errorf("mail.template_path exceeds %d bytes", mailTemplateSizeLimit)
+	}
+
+	body, err := os.ReadFile(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("mail.template_path is not readable")
+	}
+
+	if len(body) > mailTemplateSizeLimit {
+		return "", fmt.Errorf("mail.template_path exceeds %d bytes", mailTemplateSizeLimit)
+	}
+
+	return string(body), nil
+}
+
+// parseMailSubjectTemplate parses the configured subject template or the default subject.
+func parseMailSubjectTemplate(source string) (*template.Template, error) {
+	trimmed := strings.TrimSpace(source)
+	if trimmed == "" {
+		trimmed = defaultMailSubjectTemplate
+	}
+
+	return parseMailTemplate("subject", trimmed)
+}
+
+// parseMailTemplate parses one Go text/template used by the mail renderer.
+func parseMailTemplate(name string, source string) (*template.Template, error) {
+	parsed, err := template.New(name).Option("missingkey=error").Parse(source)
+	if err != nil {
+		return nil, fmt.Errorf("mail.%s_template parse failed: %w", name, err)
+	}
+
+	return parsed, nil
+}
+
+// executeMailTemplate renders a parsed template with bounded typed data.
+func executeMailTemplate(tmpl *template.Template, data mailTemplateData) (string, error) {
+	if tmpl == nil {
+		return "", fmt.Errorf("mail template is unavailable")
+	}
+
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, data); err != nil {
+		return "", err
+	}
+
+	return out.String(), nil
 }

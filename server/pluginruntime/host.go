@@ -23,6 +23,7 @@ import (
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/lualib/smtp"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 )
@@ -42,6 +43,7 @@ type Host struct {
 	ldap              pluginapi.LDAP
 	backendServers    pluginapi.BackendServers
 	connectionTargets pluginapi.ConnectionTargets
+	mailSender        smtp.Client
 	httpClient        *http.Client
 	caches            *cacheRegistry
 	redisPrefix       string
@@ -58,6 +60,7 @@ func NewHost(options ...HostOption) *Host {
 		config:            pluginregistry.NewConfigView(nil),
 		backendServers:    NewBackendServerFacade(core.ListBackendServers),
 		connectionTargets: NewConnectionTargetFacade(nil),
+		mailSender:        &smtp.EmailClient{},
 		httpClient:        &http.Client{},
 		caches:            newCacheRegistry(),
 		helpers:           NewDeterministicHelperFacade(HelperOptions{}),
@@ -76,6 +79,15 @@ func WithHTTPClient(client *http.Client) HostOption {
 	return func(host *Host) {
 		if client != nil {
 			host.httpClient = client
+		}
+	}
+}
+
+// WithMailSender configures the SMTP/LMTP sender used by host-managed plugin mail calls.
+func WithMailSender(sender smtp.Client) HostOption {
+	return func(host *Host) {
+		if sender != nil {
+			host.mailSender = sender
 		}
 	}
 }
@@ -239,6 +251,19 @@ func (h *Host) HTTP(scope string) pluginapi.HTTPClient {
 		HTTPFacadeLogger(h.Logger(scope)),
 		HTTPFacadeMetrics(h.Metrics(scope)),
 		HTTPFacadeTracer(h.Tracer(scope)),
+	)
+}
+
+// Mail returns a scoped host-managed SMTP/LMTP mail facade.
+func (h *Host) Mail(scope string) pluginapi.Mailer {
+	if h == nil {
+		return NewMailFacade(scope)
+	}
+
+	return NewMailFacade(
+		scope,
+		MailFacadeSender(h.mailSender),
+		MailFacadeLogger(h.Logger(scope)),
 	)
 }
 

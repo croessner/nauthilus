@@ -67,9 +67,9 @@ not define a statically linked plugin deployment model or an interpreted Go plug
   registerers, or raw OpenTelemetry providers as the public contract.
 - Make request APIs context-first, cancelable, and deadline-aware.
 - Support background workers through an explicit lifecycle, not through package `init` side effects.
-- Keep host services capability-based and narrow: Redis, LDAP, metrics, tracing, logging, config, HTTP metadata, and
-  controlled goroutine supervision. Policy attributes are declared through the registrar, and request-time policy facts
-  are returned through extension result values.
+- Keep host services capability-based and narrow: Redis, LDAP, metrics, tracing, logging, config, HTTP metadata,
+  SMTP/LMTP mail, and controlled goroutine supervision. Policy attributes are declared through the registrar, and
+  request-time policy facts are returned through extension result values.
 - Keep Lua and Go implementations behind shared internal extension interfaces where possible.
 - Make reload behavior explicit. Loaded Go plugins cannot be unloaded, so removal or binary replacement should normally
   require restart.
@@ -207,6 +207,7 @@ type Capability string
 type Feature string
 
 const CapabilityCredentials Capability = "credentials"
+const CapabilityMail Capability = "mail"
 ```
 
 The loader must reject plugins whose `Metadata().APIVersion` does not exactly match the supported public API major
@@ -280,8 +281,8 @@ Plugin artifact paths must be absolute. This includes module `path`, detached si
 
 `allow_capabilities` is optional. When present, `Registrar.RequireCapability` may only request capabilities listed for
 that module instance. If absent, the host default policy decides whether requested capabilities are allowed. Sensitive
-capabilities such as `credentials` should be default-deny and require explicit allowance. Ordinary host facades such as
-logging, metrics, and tracing do not need capability gates by default.
+capabilities such as `credentials` and host-managed `mail` should be default-deny and require explicit allowance.
+Ordinary host facades such as logging, metrics, and tracing do not need capability gates by default.
 
 The plugin is responsible for interpreting, validating, defaulting, and documenting its own `config` keys. This avoids a
 false shared schema across unrelated plugin types such as GeoIP sources, customer-specific backends, and background
@@ -308,6 +309,7 @@ type Host interface {
     Tracer(scope string) Tracer
     Metrics(scope string) Metrics
     HTTP(scope string) HTTPClient
+    Mail(scope string) Mailer
     ConnectionTargets(scope string) ConnectionTargets
     BackendServers() BackendServers
     Redis() Redis
@@ -341,6 +343,30 @@ Service notes:
 - `HTTP` exposes host-managed outbound HTTP calls with context deadlines, trace-header injection, bounded plugin metrics,
   response body limits, and redacted operational logs. Plugins pass API-level request and response values, not raw
   `*http.Request` or `*http.Response` objects.
+- `Mail` exposes host-managed SMTP/LMTP sends through value-only request objects. Plugins pass API-level message values,
+  not raw SMTP clients or server transport types.
+
+```go
+type MailMessage struct {
+    To       []string
+    Server   string
+    HeloName string
+    Username string
+    Password string
+    From     string
+    Subject  string
+    Body     string
+    Port     int
+    TLS      bool
+    StartTLS bool
+    LMTP     bool
+}
+
+type Mailer interface {
+    Send(context.Context, MailMessage) error
+}
+```
+
 - `ConnectionTargets` registers named `host:port` targets with local/remote direction for generic connection
   observability. It validates names, addresses, bounded labels, and duplicate registration before delegating to the host
   connection monitor.
@@ -1177,12 +1203,18 @@ type PostActionTarget interface {
 ```
 
 Post-action targets mirror the existing Lua post-action enqueue path. They are selected by policy as post-decision
-effects, receive a host-built request snapshot, and enqueue detached worker execution with host-owned deadlines,
+effects, receive a host-built request snapshot, and run inside one detached post-action plan with host-owned deadlines,
 observability, panic recovery, and shutdown coordination. Post-action enqueueing is distinct from synchronous
 `ObligationTarget` execution. `PostActionRequest` carries policy arguments as `ArgsView` and receives the same
-decision-context facts as obligation requests. Post-action enqueue results are enqueue diagnostics only; v1 does not let
-detached post-actions emit more policy facts into the selected request outcome or mutate an already-selected client
-response.
+decision-context facts as obligation requests.
+
+The plan executes native and Lua post-action steps in final-obligation order. `PostActionEnqueueResult.RuntimeDelta`
+values are validated with the same JSON/CBOR-compatible runtime value rules as other plugin deltas, merged into the
+detached plan runtime, and made visible only to later post-action steps in that same plan. Invalid deltas fail the plan
+with bounded diagnostics. Post-action results remain post-decision diagnostics: they cannot emit more policy facts into
+the selected request outcome, change the selected policy decision, mutate the client response, or write plan runtime back
+to the live request runtime. Current runtime execution also does not apply returned post-action logs or status values
+after detached execution.
 
 ### Hooks
 
@@ -1605,8 +1637,9 @@ rules. Those concerns are useful when isolation is required, but they are not th
   provide human-facing documentation pointers, but descriptors remain the machine-readable runtime truth.
 - Module configuration may set `allow_capabilities`. When present, the registrar rejects capability requests not listed
   for that module instance; when absent, host defaults apply.
-- Sensitive capabilities are default-deny when `allow_capabilities` is absent. `credentials` requires explicit allowance;
-  ordinary logging, metrics, and tracing facades are available without capability gates.
+- Sensitive capabilities are default-deny when `allow_capabilities` is absent. `credentials` and host-managed `mail`
+  require explicit allowance when requested; ordinary logging, metrics, and tracing facades are available without
+  capability gates.
 - `ConfigView` is a read-only, format-neutral view over the plugin-owned `config` block with dot-path helpers, exact
   segment helpers, and strict `Decode`.
 - The plugin API does not provide permissive decode. Flexible plugin config should be handled explicitly through
@@ -1637,8 +1670,11 @@ rules. Those concerns are useful when isolation is required, but they are not th
 - The host creates automatic plugin method spans and exposes a small `Tracer` facade for plugin-created child spans
   without exposing raw OpenTelemetry providers.
 - Host-managed plugin HTTP calls use `Host.HTTP(scope)` for trace propagation, bounded metrics, context deadlines,
-  response body limits, and redacted logs. SMTP/LMTP mail and raw TCP/dialer behavior stay plugin-owned in v1; plugins
-  own config validation, lifecycle, TLS/deadline/retry policy, metrics, traces, and redaction for those transports.
+  response body limits, and redacted logs.
+- Host-managed SMTP/LMTP mail uses `CapabilityMail`, `Host.Mail(scope)`, `MailMessage`, and `Mailer`; runtime adapters
+  own transport wiring and redaction policy without exposing raw SMTP clients or server transport types.
+- Raw TCP/dialer behavior stays plugin-owned in v1; plugins own config validation, lifecycle, TLS/deadline/retry policy,
+  metrics, traces, and redaction for those transports.
 
 ## Final v1 Follow-Up State
 
@@ -1654,15 +1690,15 @@ The current v1 implementation covers the native plugin surfaces needed for produ
 - policy-selected obligations and post-actions with populated args/facts, registered fact validation, explicit public log
   conventions, status messages, and synchronous response mutation where the response is still mutable;
 - host-managed Redis key/script helpers, module-local process cache, deterministic helper functions, outbound HTTP,
-  bounded metrics/tracing, connection-target observability, and supervised workers;
+  SMTP/LMTP mail contract, bounded metrics/tracing, connection-target observability, and supervised workers;
 - native hook request/response adapters for GET, HEAD, aliases, query/header/body copies, response filtering, and a
   dynamic textmap-style sample fixture.
 
 Known v1 parity limits are intentional and documented in the developer and operator guides: extra or named Redis pools,
-SMTP/LMTP mail, raw TCP/dialer behavior, SQL/Telegram/template libraries, and the Lua GeoIP bridge remain plugin-owned;
-full mutable backend-result replacement, cross-family Lua/Go source dependencies, raw request bodies in snapshots,
-passwords, cookies, authorization headers, raw WebAuthn credential blobs, raw `*gin.Context`, raw Prometheus
-registerers, raw OpenTelemetry providers, and raw backend-server config pointers stay outside the public API.
+raw TCP/dialer behavior, SQL/Telegram/template libraries, and the Lua GeoIP bridge remain plugin-owned; full mutable
+backend-result replacement, cross-family Lua/Go source dependencies, raw request bodies in snapshots, passwords, cookies,
+authorization headers, raw WebAuthn credential blobs, raw `*gin.Context`, raw Prometheus registerers, raw OpenTelemetry
+providers, and raw backend-server config pointers stay outside the public API.
 
 ## Implementation Plan
 

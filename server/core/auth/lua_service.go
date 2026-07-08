@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -270,7 +271,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	lspan := startLuaPostActionSpan(auth, passDBResult)
 	defer lspan.End()
 
-	if !luaPostActionReady(auth) {
+	if !luaPostActionReadyWithContext(auth, auth.Runtime.Context) {
 		return
 	}
 
@@ -283,6 +284,43 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	args := newLuaPostActionArgs(auth, postActionRequest, cr)
 
 	go auth.RunLuaPostAction(args)
+}
+
+// RunPlanStep executes Lua post-actions synchronously inside the shared post-action plan.
+func (DefaultPostAction) RunPlanStep(input core.PostActionPlanInput) (pluginapi.RuntimeDelta, bool) {
+	auth := input.View.Auth()
+	passDBResult := input.Result
+
+	if !canRunLuaPostAction(auth, passDBResult) {
+		return pluginapi.RuntimeDelta{}, true
+	}
+
+	postActionRequest := util.DetachedHTTPRequest(context.TODO(), auth.Request.HTTPClientRequest)
+	if util.IsHTTPRequestCanceled(auth.Logger(), postActionRequest, auth.Runtime.GUID, "schedule.lua_post_action_plan") {
+		return pluginapi.RuntimeDelta{}, false
+	}
+
+	lspan := startLuaPostActionSpan(auth, passDBResult)
+	defer lspan.End()
+
+	luaCtx := lualib.NewContext()
+	luaCtx.ApplyDelta(lualib.ContextDelta{Set: input.Runtime})
+	before := luaCtx.Snapshot()
+
+	if !luaPostActionReadyWithContext(auth, luaCtx) {
+		return pluginapi.RuntimeDelta{}, true
+	}
+
+	cr := lualib.GetCommonRequest()
+	defer lualib.PutCommonRequest(cr)
+
+	auth.FillCommonRequest(cr)
+	prepareLuaPostActionCommonRequest(auth, input.PostActionInput, passDBResult, cr)
+
+	args := newLuaPostActionArgsWithContext(auth, postActionRequest, cr, luaCtx)
+	auth.RunLuaPostAction(args)
+
+	return luaContextDeltaToRuntimeDelta(luaCtx.Diff(before)), true
 }
 
 // canRunLuaPostAction checks whether a post-action request should be scheduled.
@@ -312,9 +350,9 @@ func startLuaPostActionSpan(auth *core.AuthState, passDBResult *core.PassDBResul
 	return lspan
 }
 
-// luaPostActionReady verifies required request fields before scheduling Lua work.
-func luaPostActionReady(auth *core.AuthState) bool {
-	return auth.Request.Protocol != nil && auth.Request.HTTPClientRequest != nil && auth.Runtime.Context != nil
+// luaPostActionReadyWithContext verifies required request fields and Lua context before scheduling work.
+func luaPostActionReadyWithContext(auth *core.AuthState, luaCtx *lualib.Context) bool {
+	return auth.Request.Protocol != nil && auth.Request.HTTPClientRequest != nil && luaCtx != nil
 }
 
 // prepareLuaPostActionCommonRequest applies post-action specific common request values.
@@ -351,10 +389,20 @@ func applyLuaPostActionStatus(auth *core.AuthState, cr *lualib.CommonRequest) {
 
 // newLuaPostActionArgs copies the common request into detached post-action args.
 func newLuaPostActionArgs(auth *core.AuthState, postActionRequest *http.Request, cr *lualib.CommonRequest) core.PostActionArgs {
+	return newLuaPostActionArgsWithContext(auth, postActionRequest, cr, auth.Runtime.Context)
+}
+
+// newLuaPostActionArgsWithContext copies the common request into detached post-action args.
+func newLuaPostActionArgsWithContext(
+	auth *core.AuthState,
+	postActionRequest *http.Request,
+	cr *lualib.CommonRequest,
+	luaCtx *lualib.Context,
+) core.PostActionArgs {
 	requestCopy := luaPostActionRequestCopy(cr)
 
 	return core.PostActionArgs{
-		Context:       auth.Runtime.Context,
+		Context:       luaCtx,
 		HTTPRequest:   postActionRequest,
 		ParentSpan:    trace.SpanContextFromContext(auth.Ctx()),
 		StatusMessage: auth.Runtime.StatusMessage,
@@ -372,4 +420,52 @@ func luaPostActionRequestCopy(cr *lualib.CommonRequest) lualib.CommonRequest {
 	}
 
 	return requestCopy
+}
+
+// luaContextDeltaToRuntimeDelta converts Lua context changes into plugin runtime changes.
+func luaContextDeltaToRuntimeDelta(delta lualib.ContextDelta) pluginapi.RuntimeDelta {
+	runtimeDelta := pluginapi.RuntimeDelta{}
+	if len(delta.Set) > 0 {
+		runtimeDelta.Set = make(map[string]any, len(delta.Set))
+		for key, value := range delta.Set {
+			runtimeDelta.Set[key] = luaContextRuntimeValue(value)
+		}
+	}
+
+	if len(delta.Delete) > 0 {
+		runtimeDelta.Delete = append([]string(nil), delta.Delete...)
+	}
+
+	return runtimeDelta
+}
+
+// luaContextRuntimeValue normalizes Lua table maps to runtime-compatible string-keyed maps.
+func luaContextRuntimeValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		normalized := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			normalized[key] = luaContextRuntimeValue(nested)
+		}
+
+		return normalized
+	case map[any]any:
+		normalized := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			normalized[fmt.Sprint(key)] = luaContextRuntimeValue(nested)
+		}
+
+		return normalized
+	case []any:
+		normalized := make([]any, len(typed))
+		for index, nested := range typed {
+			normalized[index] = luaContextRuntimeValue(nested)
+		}
+
+		return normalized
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return typed
+	}
 }

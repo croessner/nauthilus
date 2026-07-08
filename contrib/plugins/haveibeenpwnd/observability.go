@@ -23,33 +23,42 @@ import (
 )
 
 const (
-	metricChecks        = "haveibeenpwnd_checks_total"
-	metricHTTPDuration  = "haveibeenpwnd_http_duration_seconds"
-	metricLabelResult   = "result"
-	traceAttrComponent  = "plugin.component"
-	traceAttrModule     = "plugin.module"
-	traceAttrOperation  = "haveibeenpwnd.operation"
-	traceAttrResult     = "haveibeenpwnd.result"
-	operationCheck      = "check"
-	operationHTTP       = "http_lookup"
-	resultCacheNegative = "cache_negative"
-	resultCachePositive = "cache_positive"
-	resultGateSkipped   = "gate_skipped"
-	resultHTTPError     = "http_error"
-	resultHTTPNegative  = "http_negative"
-	resultHTTPPositive  = "http_positive"
-	resultRedisNegative = "redis_negative"
-	resultRedisPositive = "redis_positive"
-	resultSkipped       = "skipped"
-	resultStatusError   = "status_error"
-	logFieldResult      = "result"
-	logFieldRuntimeGap  = "runtime_gap"
-	logFieldRedisPool   = "redis_pool"
+	metricChecks            = "haveibeenpwnd_checks_total"
+	metricHTTPDuration      = "haveibeenpwnd_http_duration_seconds"
+	metricMailAttempts      = "haveibeenpwnd_mail_attempts_total"
+	metricLabelResult       = "result"
+	traceAttrComponent      = "plugin.component"
+	traceAttrModule         = "plugin.module"
+	traceAttrOperation      = "haveibeenpwnd.operation"
+	traceAttrResult         = "haveibeenpwnd.result"
+	operationCheck          = "check"
+	operationHTTP           = "http_lookup"
+	operationMail           = "mail_notify"
+	resultCacheNegative     = "cache_negative"
+	resultCachePositive     = "cache_positive"
+	resultGateSkipped       = "gate_skipped"
+	resultHTTPError         = "http_error"
+	resultHTTPNegative      = "http_negative"
+	resultHTTPPositive      = "http_positive"
+	resultRedisNegative     = "redis_negative"
+	resultRedisPositive     = "redis_positive"
+	resultSkipped           = "skipped"
+	resultStatusError       = "status_error"
+	resultMailDisabled      = "disabled"
+	resultMailGateSkipped   = "gate_skipped"
+	resultMailTemplateError = "template_error"
+	resultMailSendError     = "send_error"
+	resultMailSent          = "sent"
+	logFieldResult          = "result"
+	logFieldMailResult      = "mail_result"
+	logFieldRuntimeGap      = "runtime_gap"
+	logFieldRedisPool       = "redis_pool"
 )
 
 type pluginMetrics struct {
-	checks      pluginapi.Counter
-	httpLatency pluginapi.Histogram
+	checks       pluginapi.Counter
+	mailAttempts pluginapi.Counter
+	httpLatency  pluginapi.Histogram
 }
 
 // registerMetrics creates low-cardinality plugin-owned metrics.
@@ -77,9 +86,19 @@ func registerMetrics(metrics pluginapi.Metrics) (pluginMetrics, error) {
 		return pluginMetrics{}, err
 	}
 
+	mailAttempts, err := metrics.Counter(pluginapi.MetricDefinition{
+		Name:   metricMailAttempts,
+		Help:   "Have I Been Pwned mail notification outcomes.",
+		Labels: []string{metricLabelResult},
+	})
+	if err != nil {
+		return pluginMetrics{}, err
+	}
+
 	return pluginMetrics{
-		checks:      checks,
-		httpLatency: httpLatency,
+		checks:       checks,
+		mailAttempts: mailAttempts,
+		httpLatency:  httpLatency,
 	}, nil
 }
 
@@ -99,6 +118,15 @@ func (m pluginMetrics) recordHTTPResult(ctx context.Context, result string, dura
 	}
 
 	m.httpLatency.Observe(ctx, duration.Seconds(), pluginapi.LabelValue{Name: metricLabelResult, Value: result})
+}
+
+// recordMailResult increments the mail-attempt metric when available.
+func (m pluginMetrics) recordMailResult(ctx context.Context, result string) {
+	if m.mailAttempts == nil {
+		return
+	}
+
+	m.mailAttempts.Add(ctx, 1, pluginapi.LabelValue{Name: metricLabelResult, Value: result})
 }
 
 // startHIBPSpan starts a bounded HIBP child span.

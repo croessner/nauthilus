@@ -327,6 +327,7 @@ The `Host` interface hides Nauthilus internals behind narrow facades:
 | `Tracer(scope)` | Child spans from plugin call contexts. |
 | `Metrics(scope)` | Plugin-owned metric handles with declared labels and duplicate-safe registration. |
 | `HTTP(scope)` | Host-managed outbound HTTP with trace propagation, bounded metrics, timeouts, response body limits, and redacted operational logs. |
+| `Mail(scope)` | Host-managed SMTP/LMTP sends through value-only mail requests and redacted operational logs. |
 | `ConnectionTargets(scope)` | Registration for host-owned generic connection observability. |
 | `ServiceContext()` | Process lifetime cancellation signal. |
 | `Go(ctx, name, fn)` | Host-supervised worker launch with panic logging. |
@@ -352,10 +353,12 @@ trace headers from the active context and records `host_http_client_*` plugin me
 logs include service, method, result, status, and duration only; they do not include URLs, query strings, headers,
 bodies, bearer tokens, or raw transport errors.
 
-SMTP and LMTP mail transport is plugin-owned in v1. A native mail plugin must read and validate its own module config,
-own connection and TLS or STARTTLS policy, bind operations to contexts with explicit timeouts, expose low-cardinality
-metrics through `Host.Metrics(scope)`, create spans through `Host.Tracer(scope)`, and redact usernames, passwords,
-recipients, message bodies, server errors, and DSNs from logs and status text.
+Use `Host.Mail(scope).Send(ctx, message)` for SMTP or LMTP sends that should use the host-owned mail transport and
+redacted operational logs. Mail requests are value-only `pluginapi.MailMessage` values. A module that enables mail must
+request `CapabilityMail`, and the operator must include `mail` in `allow_capabilities`. The plugin still owns
+plugin-specific mail config, recipient selection, template parsing and rendering, low-cardinality mail metrics, and any
+plugin spans. Do not expose usernames, passwords, recipients, rendered subjects, rendered bodies, server errors, or local
+template paths in logs, metrics, traces, policy facts, or status text.
 
 Raw TCP or dialer behavior is plugin-owned in v1, including HAProxy map update style sockets. A plugin that opens raw
 network connections must own lifecycle, deadlines, retries, backoff, metrics, tracing, and secret-safe logging. Keep
@@ -611,7 +614,7 @@ Evidence examples include `backend/proxy_backend.lua`, `subject/idp_policy.lua`,
 | `nauthilus_prometheus` | Proxy backend, account protection, clickhouse, init | `Host.Metrics()`. | `exposed` | Plugin metrics are exported under the native plugin namespace; gauges support set and add semantics, histograms observe samples, and zero-valued counter series can be touched with `Add(ctx, 0, labels...)`. |
 | `nauthilus_opentelemetry` | Proxy backend, account protection, dynamic response | `Host.Tracer()` and `Host.HTTP()`. | `helper-facade` | Span creation is exposed; host-managed HTTP injects trace headers and records bounded HTTP spans. Lua semantic helpers are not exact native APIs. |
 | `nauthilus_psnet` | `init/init.lua` | `Host.ConnectionTargets(scope).Register(ctx, target)`. | `helper-facade` | Native plugins can register named connection targets for host generic connection observability. |
-| `nauthilus_mail` | `actions/dynamic_response.lua` | None. | `plugin-owned` | SMTP/LMTP mail remains plugin-owned. |
+| `nauthilus_mail` | `actions/dynamic_response.lua`, `actions/haveibeenpwnd.lua` | `Host.Mail(scope)` with `pluginapi.MailMessage`. | `helper-facade` | Host-managed SMTP/LMTP sends are available for bounded mail notifications. Plugins still own message selection, templates, module config, and must request `CapabilityMail`. |
 | Outbound HTTP libraries | Proxy backend, clickhouse, notifications | `Host.HTTP(scope).Do(ctx, request)`. | `helper-facade` | Use the host facade for traced, metered, bounded HTTP calls; plugin-owned clients remain possible when the facade is insufficient and must carry their own observability. |
 | Raw TCP, SQL, Telegram, template, JSON, time, base64, crypto libraries | Actions and shared scripts | Standard Go or plugin dependencies. | `plugin-owned` | Native plugins own dependencies and observability unless the host exposes a specific facade. Raw TCP/dialer behavior remains plugin-owned. |
 | `nauthilus_geoip_bridge` | Clickhouse, dynamic response | Runtime context produced by the GeoIP plugin. | `plugin-owned` | This is a Lua compatibility bridge over plugin-owned runtime facts. |
@@ -954,19 +957,33 @@ Post-actions enqueue detached work after policy selection. Return as soon as wor
 `PostActionRequest.Facts` use the same policy decision context as obligations. `PostActionRequest.Credentials` exposes
 request credentials only when the module requested and was granted the `credentials` capability, and
 `PostActionRequest.PasswordHash` carries the host-owned Lua-compatible short password hash when a password was present.
-Post-action results report enqueue status only; they do not emit additional policy facts into the already-selected
-decision and cannot mutate the client response.
+Post-action results report post-decision diagnostics only; they do not emit additional policy facts into the
+already-selected decision and cannot mutate the client response.
+
+Nauthilus collects policy-selected native and Lua post-actions into one detached plan and executes the plan steps in
+final-obligation order. `PostActionEnqueueResult.RuntimeDelta` is host-validated and merged into the plan runtime so
+later post-action steps can read safe request-local values from `PostActionRequest.Runtime`. Post-action deltas are
+plan-local: they do not change the already-selected policy decision, response mutation state, client response, or live
+request runtime after the plan finishes. Invalid deltas are rejected with bounded diagnostics. Returned post-action logs
+and status values remain diagnostics and are not applied back into the selected request.
+
+For HIBP and ClickHouse, order the HIBP post-action before ClickHouse when ClickHouse rows should include
+`haveibeenpwnd_hash_info` as `pwnd_info`. If ClickHouse is ordered first, that field remains absent for the row. HIBP
+intentionally does not restore the legacy `rt.action_haveibeenpwnd` marker, and ClickHouse intentionally does not write
+`rt.post_clickhouse` back to live request runtime.
 
 Bundled action replacements use the same policy effect registry:
 
 | Native effect ID | Replaces | Notes |
 | --- | --- | --- |
-| `clickhouse.post_action` | `server/lua-plugins.d/actions/clickhouse.lua` | Uses host HTTP, Redis, cache, metrics, tracing, and connection-target facades. It cannot apply the Lua `rt.post_clickhouse = true` runtime marker because post-action deltas are not host-applied. |
-| `haveibeenpwnd.post_action` | `server/lua-plugins.d/actions/haveibeenpwnd.lua` | Requires the `credentials` capability and uses the request-scoped credential provider. SMTP/LMTP notification is deferred; `mail.enabled: true` is rejected instead of silently ignored. |
+| `clickhouse.post_action` | `server/lua-plugins.d/actions/clickhouse.lua` | Uses host HTTP, Redis, cache, metrics, tracing, and connection-target facades. It reads `haveibeenpwnd_hash_info` from plan runtime when HIBP is ordered before ClickHouse, but it does not write the Lua `rt.post_clickhouse = true` marker back to live request runtime. |
+| `haveibeenpwnd.post_action` | `server/lua-plugins.d/actions/haveibeenpwnd.lua` | Requires the `credentials` capability and uses the request-scoped credential provider. When `mail.enabled: true`, it also requires `CapabilityMail` and sends SMTP/LMTP notifications through `Host.Mail("haveibeenpwnd")`. Positive hits publish `haveibeenpwnd_hash_info` through plan runtime; the legacy `rt.action_haveibeenpwnd` marker remains intentionally omitted. |
 
 When porting a Lua action, keep the policy selection model unchanged: register a post-action target, configure the module,
 and reference `<module>.<component>` in policy obligations. Adding or removing the module, changing module identity, or
 replacing the `.so` artifact requires a process restart; config-only swaps can be implemented through `Reconfigure`.
+Capability acquisition happens during registration, so enabling a feature that was disabled at registration time may need
+a restart even when the config keys themselves live under the plugin-owned `config` block.
 
 ```go
 type auditPostAction struct {
@@ -1199,7 +1216,8 @@ The following implementation notes are visible in the current codebase and shoul
 | Deterministic helpers | `Host.Helpers()` and `pluginapi/v1/helpers` expose account tags, scoped IPs, and routable IP checks. | Prefer these helpers over plugin-local copies when porting Lua logic. |
 | Plugin-defined metrics | `Host.Metrics()` validates definitions, exports Prometheus collectors under `nauthilus_plugin_<scope>_<name>`, and keeps local observation counts for diagnostics. | Declare bounded labels and avoid high-cardinality values. The host-owned `plugin_scope` label is reserved. |
 | Connection targets | `Host.ConnectionTargets(scope)` validates named `host:port` targets, local/remote direction, bounded labels, and idempotent duplicate registration before delegating to generic connection observability. | Use this from init tasks for psnet-style visibility. It is not a raw network dialer and does not manage plugin-owned sockets. |
-| SMTP/LMTP mail and raw TCP | No host-managed mail transport or raw dialer facade is exposed in v1. | Plugins own config validation, lifecycle, TLS/deadline/retry policy, metrics, traces, and redaction for mail, HAProxy map sockets, SQL drivers, and other raw network dependencies. |
+| SMTP/LMTP mail | `Host.Mail(scope)` adapts `pluginapi.MailMessage` values to the host-owned SMTP/LMTP transport and logs only bounded result/protocol fields. | Request `CapabilityMail` when mail can be sent, keep mail config under the module config, parse templates before activation, and keep recipients, subjects, bodies, credentials, template paths, and raw transport errors out of logs and facts. |
+| Raw TCP and dialers | No raw dialer facade is exposed in v1. | Plugins own lifecycle, TLS/deadline/retry policy, metrics, traces, and redaction for HAProxy map sockets, SQL drivers, and other raw network dependencies. |
 | Module `stop_timeout` | `plugins.modules[].stop_timeout` is applied to each module `Stop` call inside the outer shutdown context. | Keep `Stop` idempotent and bounded by its context. |
 | Host-supervised worker waiting | `Host.Go` launches supervised workers, logs panics, and `Runner.Stop` waits for workers after module stop until the shutdown context expires. | Start long-running plugin workers through `Host.Go` and exit promptly when the worker context is canceled. |
 | Plugin account listing | `plugin(<module>.<backend>)` account-provider configuration dispatches to plugin `Backend.ListAccounts`. | Return stable account names and use `AccountListResult.Facts` for registered account-provider policy facts. |
@@ -1207,7 +1225,7 @@ The following implementation notes are visible in the current codebase and shoul
 | Native hooks | `HookRequest` carries redacted headers, query values, path, method, body, and snapshot values; `HookResponse` maps status, safe headers, and body. HEAD responses write no body. | Keep route ownership in Nauthilus and return only API-level values. Use standard `net/http` status constants. |
 | Hook path collisions | Duplicate native hook canonical method/path keys and duplicate alias keys are rejected while building the native hook index. | Choose globally unique hook paths and aliases; ambiguous bindings are not routable. |
 | Mixed Lua and Go source scheduling | Lua sources and Go sources use the same scheduler semantics but are planned and executed as separate source sets. | Do not express cross-family `Requires` or `After` dependencies. Use runtime context facts when a Go source needs Lua output. |
-| Plugin-owned libraries | SQL drivers, Telegram clients, template engines, broad mail transports, raw sockets, extra Redis pools, and the Lua GeoIP bridge are outside the host-managed v1 facades. | Own config, lifecycle, deadlines, retries, metrics, traces, and redaction inside the plugin module; expose only safe facts, logs, and status values to Nauthilus. |
+| Plugin-owned libraries | SQL drivers, Telegram clients, template engines, custom mail stacks beyond `Host.Mail`, raw sockets, extra Redis pools, and the Lua GeoIP bridge are outside the host-managed v1 facades. | Own config, lifecycle, deadlines, retries, metrics, traces, and redaction inside the plugin module; expose only safe facts, logs, and status values to Nauthilus. |
 
 ## Developer Checklist
 

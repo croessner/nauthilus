@@ -16,6 +16,7 @@
 package core
 
 import (
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 	"github.com/gin-gonic/gin"
@@ -59,10 +60,103 @@ type PostAction interface {
 	Run(input PostActionInput)
 }
 
+// PostActionPlanInput supplies the detached plan runtime to one Lua post-action step.
+type PostActionPlanInput struct {
+	PostActionInput
+	Runtime map[string]any
+}
+
+// PostActionPlanRunner is implemented by post-action dispatchers that can run as a shared plan step.
+type PostActionPlanRunner interface {
+	RunPlanStep(input PostActionPlanInput) (pluginapi.RuntimeDelta, bool)
+}
+
+// PostActionPlanStepKind identifies the executable post-action step type.
+type PostActionPlanStepKind string
+
+const (
+	// PostActionPlanStepNative identifies a native plugin post-action target.
+	PostActionPlanStepNative PostActionPlanStepKind = "native"
+
+	// PostActionPlanStepLua identifies the default Lua post-action dispatcher.
+	PostActionPlanStepLua PostActionPlanStepKind = "lua"
+)
+
+// PostActionPlanStep describes one ordered post-action step captured by the policy executor.
+type PostActionPlanStep struct {
+	cleanup   func()
+	effect    report.EffectRequest
+	luaInput  PostActionInput
+	luaRunner PostActionPlanRunner
+	id        string
+	kind      PostActionPlanStepKind
+}
+
+// NewNativePostActionPlanStep creates a plan step for a native plugin post-action effect.
+func NewNativePostActionPlanStep(effect report.EffectRequest) PostActionPlanStep {
+	return PostActionPlanStep{
+		effect: effect,
+		id:     effect.ID,
+		kind:   PostActionPlanStepNative,
+	}
+}
+
+// NewLuaPostActionPlanStep creates a plan step for a Lua post-action dispatcher.
+func NewLuaPostActionPlanStep(id string, runner PostActionPlanRunner, input PostActionInput, cleanup func()) PostActionPlanStep {
+	return PostActionPlanStep{
+		cleanup:   cleanup,
+		luaInput:  input,
+		luaRunner: runner,
+		id:        id,
+		kind:      PostActionPlanStepLua,
+	}
+}
+
+// ID returns the policy effect identifier represented by the step.
+func (s PostActionPlanStep) ID() string {
+	return s.id
+}
+
+// Kind returns whether the step targets Lua or a native plugin.
+func (s PostActionPlanStep) Kind() PostActionPlanStepKind {
+	return s.kind
+}
+
+// NativeEffect returns the native effect carried by this step.
+func (s PostActionPlanStep) NativeEffect() (report.EffectRequest, bool) {
+	return s.effect, s.kind == PostActionPlanStepNative
+}
+
+// LuaStep returns the Lua plan runner and its captured input.
+func (s PostActionPlanStep) LuaStep() (PostActionPlanRunner, PostActionInput, bool) {
+	return s.luaRunner, s.luaInput, s.kind == PostActionPlanStepLua && s.luaRunner != nil
+}
+
+// Release frees resources owned by the captured plan step.
+func (s PostActionPlanStep) Release() {
+	if s.cleanup != nil {
+		s.cleanup()
+	}
+}
+
+// ReleasePostActionPlanSteps releases resources owned by all captured plan steps.
+func ReleasePostActionPlanSteps(steps []PostActionPlanStep) {
+	for index := range steps {
+		steps[index].Release()
+	}
+}
+
 // PluginEffectBridge executes native policy-selected effects without importing pluginruntime.
 //
 //goland:nointerface
 type PluginEffectBridge interface {
+	// IsPostActionEffect reports whether an effect targets a native post-action component.
+	IsPostActionEffect(effect report.EffectRequest) bool
+
+	// EnqueuePostActionPlan starts one host-supervised ordered post-action plan.
+	EnqueuePostActionPlan(ctx *gin.Context, view *StateView, steps []PostActionPlanStep) (handled bool, ok bool)
+
+	// ExecutePolicyEffect runs a synchronous native policy effect.
 	ExecutePolicyEffect(ctx *gin.Context, view *StateView, effect report.EffectRequest) (handled bool, ok bool)
 }
 

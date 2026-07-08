@@ -31,6 +31,17 @@ func NewEffectBridge(runner *Runner) *EffectBridge {
 	return &EffectBridge{runner: runner}
 }
 
+// IsPostActionEffect reports whether a policy effect resolves to a native post-action target.
+func (b *EffectBridge) IsPostActionEffect(effect report.EffectRequest) bool {
+	if b == nil || b.runner == nil || b.runner.registry == nil || effect.ID == "" {
+		return false
+	}
+
+	component, ok := b.runner.registry.Lookup(effect.ID)
+
+	return ok && component.Kind == pluginregistry.ComponentKindPostActionTarget
+}
+
 // ExecutePolicyEffect dispatches one policy-selected native plugin effect.
 func (b *EffectBridge) ExecutePolicyEffect(ctx *gin.Context, view *core.StateView, effect report.EffectRequest) (bool, bool) {
 	auth := authFromView(view)
@@ -47,7 +58,7 @@ func (b *EffectBridge) ExecutePolicyEffect(ctx *gin.Context, view *core.StateVie
 	case pluginregistry.ComponentKindObligationTarget:
 		return true, b.executeObligation(ctx, auth, effect)
 	case pluginregistry.ComponentKindPostActionTarget:
-		return true, b.enqueuePostAction(ctx, auth, effect)
+		return b.EnqueuePostActionPlan(ctx, view, []core.PostActionPlanStep{core.NewNativePostActionPlanStep(effect)})
 	default:
 		return false, false
 	}
@@ -83,41 +94,204 @@ func (b *EffectBridge) executeObligation(ctx *gin.Context, auth *core.AuthState,
 	return result.Applied || !result.Temporary
 }
 
-func (b *EffectBridge) enqueuePostAction(ctx *gin.Context, auth *core.AuthState, effect report.EffectRequest) bool {
-	if b.runner.host == nil {
-		return false
+// EnqueuePostActionPlan starts one detached worker for ordered post-action steps.
+func (b *EffectBridge) EnqueuePostActionPlan(
+	ctx *gin.Context,
+	view *core.StateView,
+	steps []core.PostActionPlanStep,
+) (bool, bool) {
+	auth := authFromView(view)
+	if b == nil || b.runner == nil || b.runner.host == nil || auth == nil || len(steps) == 0 {
+		return false, false
 	}
 
+	plan, err := b.newPostActionPlan(ctx, auth, steps)
+	if err != nil {
+		core.ReleasePostActionPlanSteps(steps)
+
+		return true, false
+	}
+
+	b.runner.host.Go(plan.requestContext, postActionPlanWorkerName, func(workerCtx context.Context) error {
+		return b.runPostActionPlan(workerCtx, plan)
+	})
+
+	return true, true
+}
+
+const postActionPlanWorkerName = "post_action_plan"
+
+type postActionPlan struct {
+	requestContext context.Context
+	runtimeValues  map[string]any
+	sourceSteps    []core.PostActionPlanStep
+	steps          []postActionPlanStep
+	facts          []pluginapi.PolicyFact
+	snapshot       pluginapi.RequestSnapshot
+	passwordHash   string
+}
+
+type postActionPlanStep struct {
+	credentials   pluginapi.CredentialProvider
+	args          pluginapi.ArgsView
+	luaInput      core.PostActionInput
+	luaRunner     core.PostActionPlanRunner
+	qualifiedName string
+	kind          core.PostActionPlanStepKind
+}
+
+// newPostActionPlan captures request-local inputs before the detached worker starts.
+func (b *EffectBridge) newPostActionPlan(
+	ctx *gin.Context,
+	auth *core.AuthState,
+	steps []core.PostActionPlanStep,
+) (postActionPlan, error) {
 	policyCtx := auth.PolicyDecisionContext(ctx)
 
-	request, err := newPluginEffectRequest(auth, policyCtx, effect.Args)
+	facts, err := pluginEffectFacts(policyCtx)
 	if err != nil {
-		return false
+		return postActionPlan{}, err
+	}
+
+	requestContext := context.WithoutCancel(contextFromGin(ctx))
+	plan := postActionPlan{
+		requestContext: requestContext,
+		runtimeValues:  runtimeSnapshot(auth),
+		sourceSteps:    append([]core.PostActionPlanStep(nil), steps...),
+		facts:          facts,
+		snapshot:       NewRequestSnapshotFromAuthState(auth, WithSnapshotConfig(auth.Cfg())),
+		passwordHash:   postActionPasswordHash(auth),
+		steps:          make([]postActionPlanStep, 0, len(steps)),
+	}
+
+	for _, requestedStep := range steps {
+		step, err := b.newPostActionPlanStep(requestContext, auth, requestedStep)
+		if err != nil {
+			return postActionPlan{}, err
+		}
+
+		plan.steps = append(plan.steps, step)
+	}
+
+	return plan, nil
+}
+
+// newPostActionPlanStep resolves one effect into immutable step inputs.
+func (b *EffectBridge) newPostActionPlanStep(
+	requestContext context.Context,
+	auth *core.AuthState,
+	requestedStep core.PostActionPlanStep,
+) (postActionPlanStep, error) {
+	if requestedStep.Kind() == core.PostActionPlanStepLua {
+		runner, input, ok := requestedStep.LuaStep()
+		if !ok {
+			return postActionPlanStep{}, fmt.Errorf("lua post-action plan step %q is not runnable", requestedStep.ID())
+		}
+
+		return postActionPlanStep{
+			luaInput:  input,
+			luaRunner: runner,
+			kind:      core.PostActionPlanStepLua,
+		}, nil
+	}
+
+	effect, ok := requestedStep.NativeEffect()
+	if !ok {
+		return postActionPlanStep{}, fmt.Errorf("post-action plan step %q has unsupported kind %q", requestedStep.ID(), requestedStep.Kind())
+	}
+
+	if !b.IsPostActionEffect(effect) {
+		return postActionPlanStep{}, fmt.Errorf("plugin post-action effect %q is not registered", effect.ID)
 	}
 
 	moduleName, err := moduleNameFromQualified(effect.ID)
 	if err != nil {
-		return false
+		return postActionPlanStep{}, err
 	}
 
-	postActionCtx := context.WithoutCancel(contextFromGin(ctx))
-	credentials := NewCredentialProvider(postActionCtx, auth.GetPassword(), b.runner.ModuleCapabilities(moduleName))
-	passwordHash := postActionPasswordHash(auth)
+	return postActionPlanStep{
+		credentials:   NewCredentialProvider(requestContext, auth.GetPassword(), b.runner.ModuleCapabilities(moduleName)),
+		args:          pluginregistry.NewArgsView(effect.Args),
+		qualifiedName: effect.ID,
+		kind:          core.PostActionPlanStepNative,
+	}, nil
+}
 
-	b.runner.host.Go(postActionCtx, effect.ID, func(workerCtx context.Context) error {
-		_, err = b.runner.EnqueuePostAction(workerCtx, effect.ID, pluginapi.PostActionRequest{
-			Snapshot:     request.snapshot,
-			Runtime:      request.runtime,
-			Credentials:  credentials,
-			PasswordHash: passwordHash,
-			Args:         request.args,
-			Facts:        request.facts,
-		})
+// runPostActionPlan executes post-action steps sequentially and merges valid runtime deltas.
+func (b *EffectBridge) runPostActionPlan(ctx context.Context, plan postActionPlan) error {
+	defer core.ReleasePostActionPlanSteps(plan.sourceSteps)
 
+	runtimeValues, err := cloneRuntimeMap(plan.runtimeValues)
+	if err != nil {
 		return err
-	})
+	}
 
-	return true
+	for _, step := range plan.steps {
+		runtimeContext, err := NewRuntimeContext(runtimeValues)
+		if err != nil {
+			return err
+		}
+
+		delta, err := b.runPostActionPlanStep(ctx, plan, step, runtimeContext, runtimeValues)
+		if err != nil {
+			return err
+		}
+
+		runtimeValues, err = MergeRuntimeDeltas(
+			ctx,
+			runtimeValues,
+			b.runner.host.Logger(postActionPlanWorkerName),
+			delta,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// runPostActionPlanStep executes one native or Lua step against the current plan runtime.
+func (b *EffectBridge) runPostActionPlanStep(
+	ctx context.Context,
+	plan postActionPlan,
+	step postActionPlanStep,
+	runtimeContext pluginapi.RuntimeContext,
+	runtimeValues map[string]any,
+) (pluginapi.RuntimeDelta, error) {
+	switch step.kind {
+	case core.PostActionPlanStepNative:
+		result, err := b.runner.EnqueuePostAction(ctx, step.qualifiedName, pluginapi.PostActionRequest{
+			Snapshot:     plan.snapshot,
+			Runtime:      runtimeContext,
+			Credentials:  step.credentials,
+			PasswordHash: plan.passwordHash,
+			Args:         step.args,
+			Facts:        plan.facts,
+		})
+		if err != nil {
+			return pluginapi.RuntimeDelta{}, err
+		}
+
+		return result.RuntimeDelta, nil
+	case core.PostActionPlanStepLua:
+		stepRuntime, err := cloneRuntimeMap(runtimeValues)
+		if err != nil {
+			return pluginapi.RuntimeDelta{}, err
+		}
+
+		delta, ok := step.luaRunner.RunPlanStep(core.PostActionPlanInput{
+			PostActionInput: step.luaInput,
+			Runtime:         stepRuntime,
+		})
+		if !ok {
+			return pluginapi.RuntimeDelta{}, fmt.Errorf("lua post-action plan step failed")
+		}
+
+		return delta, nil
+	default:
+		return pluginapi.RuntimeDelta{}, fmt.Errorf("unsupported post-action plan step kind %q", step.kind)
+	}
 }
 
 // postActionPasswordHash returns the host-owned short password hash used by Lua post-actions.

@@ -72,10 +72,11 @@ The plugin runs automatically on each authentication attempt. You can optionally
 Checks user credentials against the "Have I Been Pwned" database to identify compromised passwords.
 
 Native replacement: configure the bundled Go plugin `haveibeenpwnd` and reference the native policy effect ID
-`haveibeenpwnd.post_action`. The native plugin keeps the k-anonymity HTTP, Redis gate, and cache behavior, but SMTP/LMTP
-mail notification is deferred. If notification mail is required, keep using the Lua action for now. There is also a
-current Lua gate mismatch to account for during migration: `init/init.lua` returns `send_email`, while this action checks
-`send_mail`.
+`haveibeenpwnd.post_action`. The native plugin keeps the k-anonymity HTTP, Redis gate, cache behavior, and SMTP/LMTP
+mail notification through `Host.Mail("haveibeenpwnd")`. Enable mail in `plugins.modules[].config.mail` and add the
+`mail` capability beside `credentials` before restart. During migration, account for the Lua gate mismatch:
+`init/init.lua` returns `send_email`, while this action checks `send_mail`. The native plugin intentionally avoids that
+script and uses a direct Redis `HSETNX` on the `send_mail` hash field.
 
 **Capabilities:**
 - Securely checks passwords against known data breaches

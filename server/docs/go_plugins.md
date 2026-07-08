@@ -135,6 +135,19 @@ plugins:
 Request passwords are available only through the request-scoped `CredentialProvider`. Long-lived plugin credentials, such
 as SQL DSNs, should be referenced through files or another plugin-owned secret source rather than inline config values.
 
+Host-managed mail is also capability-gated. When a module configuration enables SMTP/LMTP sends through `Host.Mail`, the
+module must allow `mail` as well as any other required capability:
+
+```yaml
+plugins:
+  modules:
+    - name: haveibeenpwnd
+      path: /usr/lib/nauthilus/plugins/haveibeenpwnd.so
+      allow_capabilities:
+        - credentials
+        - mail
+```
+
 ## Discovery
 
 The loader state exposes machine-readable discovery through `pluginloader.State.Discovery()`. The discovery document is
@@ -146,14 +159,13 @@ plugin-owned `config` values.
 
 Nauthilus supplies host-owned facades to loaded plugins after registration and before request-time execution is enabled:
 logging, tracing, bounded metrics, Redis command handles with key/script helpers, LDAP queues, host-managed outbound
-HTTP, backend-candidate discovery, connection-target observability, deterministic helper functions, and a module-scoped
-process cache. These services do not require additional loader config beyond the normal Nauthilus service config and the
-module's `plugins.modules[]` entry.
+HTTP, host-managed SMTP/LMTP mail, backend-candidate discovery, connection-target observability, deterministic helper
+functions, and a module-scoped process cache. These services do not require additional loader config beyond the normal
+Nauthilus service config and the module's `plugins.modules[]` entry.
 
 Some Lua helper families intentionally remain plugin-owned in the native contract:
 
 - extra or named Redis pools;
-- SMTP and LMTP mail transports;
 - raw TCP sockets, dialers, and HAProxy map update clients;
 - SQL drivers, Telegram clients, template libraries, and other integration-specific packages.
 
@@ -164,6 +176,10 @@ from logs, metrics, traces, policy facts, and status messages.
 
 `Host.ConnectionTargets(scope)` is observability-only. It lets a plugin register named `host:port` targets for generic
 connection visibility, but it does not open sockets or manage plugin-owned network clients.
+
+`Host.Mail(scope)` adapts value-only `pluginapi.MailMessage` requests to the host SMTP/LMTP transport. Plugins still own
+message selection, rendering, and plugin-specific config validation; the host owns transport wiring and redacted
+operational logs.
 
 ## Observability
 
@@ -248,26 +264,45 @@ Config highlights:
 - ClickHouse uses `insert_url`, optional `user` and `password`, `batch_size`, `cache_key`, `timeout`,
   `max_response_bytes`, and `auth_dedup_ttl`.
 - Have I Been Pwned uses `api_base_url`, HTTP/cache/Redis TTL settings, `redis_pool` for Lua config parity, and a `mail`
-  block that must keep `enabled: false` until native mail support exists.
+  block with `enabled`, `use_lmtp`, `server`, `port`, `helo_name`, `tls`, `starttls`, `username`, `password`,
+  `mail_from`, `website`, `template_path`, and `subject_template`.
 - HIBP requires `allow_capabilities: [credentials]` so it can read the request password through the request-scoped
-  credential provider.
+  credential provider. When `mail.enabled: true`, add `mail` to `allow_capabilities` before restart.
+- Empty `mail.template_path` uses the builtin Lua-compatible body template. A custom path is parsed as Go
+  `text/template` during registration and `Reconfigure`, is limited to 64 KiB, and rejects the new config on read or
+  parse failure. Empty `mail.subject_template` falls back to
+  `Password leak detected for your account <{{ .Account }}>`.
 
 Observability:
 
 - Both action plugins use `Host.HTTP(scope)` for outbound HTTP and `Host.ConnectionTargets(scope)` to register redacted
   remote endpoints.
+- HIBP mail uses `Host.Mail("haveibeenpwnd")` for SMTP/LMTP sends and records bounded
+  `haveibeenpwnd_mail_attempts_total{result}` values such as `disabled`, `gate_skipped`, `template_error`, `send_error`,
+  and `sent`.
 - Metrics and spans use bounded result labels only; they do not expose usernames, client IPs, account names, passwords,
-  SQL query text, raw response bodies, bearer tokens, or raw transport errors.
+  SQL query text, raw response bodies, recipients, rendered subjects, rendered bodies, bearer tokens, or raw transport
+  errors.
 
 Migration notes:
 
 - Replace policy effects that enqueue `actions/clickhouse.lua` with the native `clickhouse.post_action` effect after the
   `clickhouse` module is configured.
 - Replace policy effects that enqueue `actions/haveibeenpwnd.lua` with `haveibeenpwnd.post_action` after the
-  `haveibeenpwnd` module is configured and the `credentials` capability is allowed.
+  `haveibeenpwnd` module is configured and the required capabilities are allowed.
 - Adding or removing either module, changing the module name, or replacing the `.so` artifact requires a process restart.
-  Config-only changes inside `plugins.modules[].config` can be applied by SIGHUP when validation succeeds.
-- Native post-actions cannot mutate already-selected runtime state. The ClickHouse plugin therefore does not apply the
-  Lua `rt.post_clickhouse = true` marker, and the HIBP plugin cannot set `rt.action_haveibeenpwnd = true` today.
-- HIBP SMTP/LMTP notification is intentionally deferred. The current native plugin rejects `mail.enabled: true`; keep the
-  Lua action when mail notifications are required.
+  Changing `allow_capabilities` also requires restart. Config-only changes inside `plugins.modules[].config` can be
+  applied by SIGHUP when validation succeeds. Enabling HIBP mail for a module that was registered with
+  `mail.enabled: false` requires restart so the plugin can acquire `CapabilityMail`.
+- Native and Lua post-actions run inside one detached plan in final-obligation order. A step's
+  `PostActionEnqueueResult.RuntimeDelta` is host-validated and visible only to later post-action steps in that same
+  plan. Post-action deltas do not mutate the already-selected policy decision, client response, response mutation state,
+  or live request runtime after the plan finishes; invalid deltas are rejected with bounded diagnostics.
+- Order `haveibeenpwnd.post_action` before `clickhouse.post_action` when ClickHouse rows should include
+  `haveibeenpwnd_hash_info` as `pwnd_info`. If ClickHouse is ordered first, the row is written without that value. The
+  ClickHouse plugin does not write the Lua `rt.post_clickhouse = true` marker back to live request runtime, and the HIBP
+  plugin intentionally does not set the legacy `rt.action_haveibeenpwnd = true` marker.
+- HIBP SMTP/LMTP notification is supported through the host mail facade. Mail is attempted only after a fresh positive
+  HIBP HTTP lookup, after the positive Redis count is written. The native plugin deliberately does not run the Lua
+  `nauthilus_send_mail_hash` script because that script returns `send_email` while `haveibeenpwnd.lua` checks
+  `send_mail`; native duplicate suppression uses a direct Redis `HSETNX` on the `send_mail` hash field instead.

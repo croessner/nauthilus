@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -38,6 +39,8 @@ var _ pluginapi.RuntimePlugin = (*Plugin)(nil)
 var _ pluginapi.ReloadablePlugin = (*Plugin)(nil)
 var _ pluginapi.PostActionTarget = (*postActionTarget)(nil)
 
+var errMailCapabilityNotActive = errors.New("haveibeenpwnd mail capability was not active at registration")
+
 // NauthilusPlugin is the factory symbol loaded by the Nauthilus native plugin loader.
 func NauthilusPlugin() (pluginapi.Plugin, error) {
 	return NewPlugin(), nil
@@ -45,15 +48,17 @@ func NauthilusPlugin() (pluginapi.Plugin, error) {
 
 // Plugin coordinates HIBP post-action lifecycle and host services.
 type Plugin struct {
-	host    pluginapi.Host
-	logger  pluginapi.Logger
-	tracer  pluginapi.Tracer
-	http    pluginapi.HTTPClient
-	redis   pluginapi.Redis
-	cache   pluginapi.Cache
-	metrics pluginMetrics
-	config  moduleConfig
-	mu      sync.RWMutex
+	host                 pluginapi.Host
+	logger               pluginapi.Logger
+	tracer               pluginapi.Tracer
+	http                 pluginapi.HTTPClient
+	mailer               pluginapi.Mailer
+	redis                pluginapi.Redis
+	cache                pluginapi.Cache
+	metrics              pluginMetrics
+	config               moduleConfig
+	mu                   sync.RWMutex
+	mailCapabilityActive bool
 }
 
 // NewPlugin creates a Have I Been Pwned native post-action plugin instance.
@@ -74,9 +79,10 @@ func (p *Plugin) Metadata() pluginapi.Metadata {
 			"hibp_k_anonymity",
 			"redis_gate",
 			"local_cache",
+			"mail_notification",
 			"reconfigure",
 		},
-		Capabilities: []pluginapi.Capability{pluginapi.CapabilityCredentials},
+		Capabilities: []pluginapi.Capability{pluginapi.CapabilityCredentials, pluginapi.CapabilityMail},
 	}
 }
 
@@ -95,8 +101,19 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 		return err
 	}
 
+	mailCapabilityActive := false
+
+	if config.Mail.Enabled {
+		if err := registrar.RequireCapability(pluginapi.CapabilityMail); err != nil {
+			return err
+		}
+
+		mailCapabilityActive = true
+	}
+
 	p.mu.Lock()
 	p.config = config
+	p.mailCapabilityActive = mailCapabilityActive
 	p.mu.Unlock()
 
 	return registrar.RegisterPostActionTarget(postActionTarget{plugin: p})
@@ -126,10 +143,11 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	p.logger = logger
 	p.tracer = tracer
 	p.http = host.HTTP(pluginName)
+	config := p.config
+	p.mailer = mailerForConfig(host, config)
 	p.redis = host.Redis()
 	p.cache = cache
 	p.metrics = metrics
-	config := p.config
 	p.mu.Unlock()
 
 	p.registerConnectionTarget(ctx, host, config)
@@ -151,6 +169,7 @@ func (p *Plugin) Stop(ctx context.Context) error {
 	p.logger = nil
 	p.tracer = nil
 	p.http = nil
+	p.mailer = nil
 	p.redis = nil
 	p.cache = nil
 	p.metrics = pluginMetrics{}
@@ -172,7 +191,14 @@ func (p *Plugin) Reconfigure(ctx context.Context, view pluginapi.ConfigView) err
 
 	p.mu.Lock()
 	host := p.host
+	if config.Mail.Enabled && !p.mailCapabilityActive {
+		p.mu.Unlock()
+
+		return errMailCapabilityNotActive
+	}
+
 	p.config = config
+	p.mailer = mailerForConfig(host, config)
 	p.mu.Unlock()
 
 	if host != nil {
@@ -192,10 +218,20 @@ func (p *Plugin) snapshot() pluginState {
 		logger:  p.logger,
 		tracer:  p.tracer,
 		http:    p.http,
+		mailer:  p.mailer,
 		redis:   p.redis,
 		cache:   p.cache,
 		metrics: p.metrics,
 	}
+}
+
+// mailerForConfig returns the scoped mail facade only when notifications are enabled.
+func mailerForConfig(host pluginapi.Host, config moduleConfig) pluginapi.Mailer {
+	if host == nil || !config.Mail.Enabled {
+		return nil
+	}
+
+	return host.Mail(pluginName)
 }
 
 // registerConnectionTarget records the remote HIBP endpoint without URL paths.
@@ -243,6 +279,7 @@ type pluginState struct {
 	logger  pluginapi.Logger
 	tracer  pluginapi.Tracer
 	http    pluginapi.HTTPClient
+	mailer  pluginapi.Mailer
 	redis   pluginapi.Redis
 	cache   pluginapi.Cache
 	metrics pluginMetrics

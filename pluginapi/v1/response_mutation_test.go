@@ -50,3 +50,30 @@ func TestResponseMutationResultSurfaces(t *testing.T) {
 		t.Fatal("post-action enqueue results must not expose late response mutation")
 	}
 }
+
+func TestPostActionEnqueueResultRuntimeDeltaContract(t *testing.T) {
+	resultType := reflect.TypeFor[PostActionEnqueueResult]()
+
+	field, ok := resultType.FieldByName("RuntimeDelta")
+	if !ok {
+		t.Fatal("post-action enqueue results must expose a runtime delta")
+	}
+
+	if field.Type != reflect.TypeFor[RuntimeDelta]() {
+		t.Fatalf("RuntimeDelta field type = %s, want %s", field.Type, reflect.TypeFor[RuntimeDelta]())
+	}
+
+	result := PostActionEnqueueResult{
+		RuntimeDelta: RuntimeDelta{
+			Set: map[string]any{"post_action_runtime": "shared"},
+		},
+		Enqueued: true,
+	}
+	if got := result.RuntimeDelta.Set["post_action_runtime"]; got != "shared" {
+		t.Fatalf("post-action runtime delta value = %#v, want shared", got)
+	}
+
+	if _, ok := resultType.FieldByName("Response"); ok {
+		t.Fatal("post-action enqueue results must still not expose response mutation")
+	}
+}

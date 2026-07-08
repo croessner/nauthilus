@@ -146,11 +146,12 @@ type PostActionRequest struct {
 
 // PostActionEnqueueResult is returned after detached post-action work is accepted or skipped.
 type PostActionEnqueueResult struct {
-	Status    *StatusMessage
-	Logs      []LogField
-	QueuedID  string
-	Enqueued  bool
-	Temporary bool
+	Status       *StatusMessage
+	Logs         []LogField
+	RuntimeDelta RuntimeDelta
+	QueuedID     string
+	Enqueued     bool
+	Temporary    bool
 }
 
 // PostActionTarget enqueues detached post-decision work under host supervision.

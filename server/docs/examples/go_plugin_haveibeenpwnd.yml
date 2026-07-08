@@ -7,7 +7,8 @@
 # Reference the native effect ID `haveibeenpwnd.post_action` from policy
 # obligations after the module is loaded. The module must allow the `credentials`
 # capability because the password is read only through the request-scoped
-# credential provider.
+# credential provider. If config.mail.enabled is set to true, also allow the
+# `mail` capability before restarting the process.
 
 plugins:
   verification_policy: signature_required
@@ -27,6 +28,8 @@ plugins:
       optional: false
       allow_capabilities:
         - credentials
+        # Required when config.mail.enabled is true.
+        # - mail
       config:
         redis_pool: default
         api_base_url: https://api.pwnedpasswords.com/range/
@@ -38,6 +41,8 @@ plugins:
         redis_negative_ttl: 24h
         gate_ttl: 5m
         mail:
+          # Set to true only after the module is allowed to use the `mail`
+          # capability and the relay settings below are valid for this host.
           enabled: false
           use_lmtp: false
           server: localhost
@@ -49,6 +54,8 @@ plugins:
           password: ""
           mail_from: postmaster@example.invalid
           website: https://self-service.example.invalid/
+          template_path: ""
+          subject_template: "Password leak detected for your account <{{ .Account }}>"
 
 auth:
   policy:

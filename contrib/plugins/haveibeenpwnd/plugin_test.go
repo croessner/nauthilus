@@ -24,6 +24,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -31,6 +34,7 @@ import (
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/lualib/smtp"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 	"github.com/croessner/nauthilus/v3/server/pluginruntime"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
@@ -47,6 +51,9 @@ const (
 	testRedisCount    = 23
 	testHTTPCount     = 42
 	testMissingSuffix = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	testMailSubject   = "Password leak detected"
+	testMailBody      = "rendered mail body"
+	testMailRawError  = "transport leaked alice@example.test smtp-secret rendered mail body"
 )
 
 func TestPluginMetadataAndRegistrationExposePostActionTarget(t *testing.T) {
@@ -65,6 +72,10 @@ func TestPluginMetadataAndRegistrationExposePostActionTarget(t *testing.T) {
 
 	if !slices.Contains(metadata.Capabilities, pluginapi.CapabilityCredentials) {
 		t.Fatalf("metadata capabilities = %#v, want credentials", metadata.Capabilities)
+	}
+
+	if !slices.Contains(metadata.Capabilities, pluginapi.CapabilityMail) {
+		t.Fatalf("metadata capabilities = %#v, want mail", metadata.Capabilities)
 	}
 
 	registry, _, _ := registerTestPlugin(t, testModule(map[string]any{}, true))
@@ -100,7 +111,47 @@ func TestRegisterRequiresCredentialsCapability(t *testing.T) {
 	}
 }
 
-func TestConfigDefaultsValidationAndMailParityGap(t *testing.T) {
+func TestRegisterRequiresMailCapabilityOnlyWhenMailEnabled(t *testing.T) {
+	moduleConfig := map[string]any{
+		"mail": map[string]any{"enabled": true},
+	}
+
+	registry := pluginregistry.NewRegistry()
+	registrar := registry.NewRegistrar(testModule(moduleConfig, true))
+
+	if err := NewPlugin().Register(registrar); err == nil {
+		t.Fatal("Register() error = nil, want mail capability error")
+	}
+
+	registry = pluginregistry.NewRegistry()
+	registrar = registry.NewRegistrar(testModuleWithCapabilities(
+		moduleConfig,
+		pluginapi.CapabilityCredentials,
+		pluginapi.CapabilityMail,
+	))
+
+	if err := NewPlugin().Register(registrar); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	capabilities := registrar.Capabilities()
+	if !slices.Equal(capabilities, []pluginapi.Capability{pluginapi.CapabilityCredentials, pluginapi.CapabilityMail}) {
+		t.Fatalf("Capabilities() = %#v, want credentials and mail", capabilities)
+	}
+}
+
+func TestReconfigureCannotEnableMailWithoutActiveCapability(t *testing.T) {
+	_, plugin, _ := registerTestPlugin(t, testModule(map[string]any{}, true))
+
+	err := plugin.Reconfigure(context.Background(), pluginregistry.NewConfigView(map[string]any{
+		"mail": map[string]any{"enabled": true},
+	}))
+	if !errors.Is(err, errMailCapabilityNotActive) {
+		t.Fatalf("Reconfigure() error = %v, want errMailCapabilityNotActive", err)
+	}
+}
+
+func TestConfigDefaultsAndBuiltinMailTemplate(t *testing.T) {
 	cfg, err := decodeModuleConfig(pluginregistry.NewConfigView(nil))
 	if err != nil {
 		t.Fatalf("decodeModuleConfig(defaults) error = %v", err)
@@ -110,6 +161,26 @@ func TestConfigDefaultsValidationAndMailParityGap(t *testing.T) {
 		t.Fatalf("defaults = %#v", cfg)
 	}
 
+	if cfg.Mail.Enabled {
+		t.Fatal("default mail enabled = true, want false")
+	}
+
+	assertRenderedMail(t, cfg.Mail, mailTemplateData{
+		Account:    testAccount,
+		HashPrefix: "abcde",
+		Count:      testHTTPCount,
+		Website:    "https://ssp.example.test",
+		Timestamp:  time.Unix(1, 0).UTC(),
+	}, []string{
+		"Hello,",
+		"Account: " + testAccount,
+		"Hash: abcde",
+		"Count: 42",
+		"website: https://ssp.example.test",
+	}, "Password leak detected for your account <"+testAccount+">")
+}
+
+func TestConfigValidationAndCustomSubjectTemplate(t *testing.T) {
 	valid, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
 		"redis_pool":              testRedisPool,
 		"api_base_url":            "https://hibp.example.test/range",
@@ -121,17 +192,18 @@ func TestConfigDefaultsValidationAndMailParityGap(t *testing.T) {
 		"redis_negative_ttl":      "48h",
 		"gate_ttl":                "45s",
 		"mail": map[string]any{
-			"enabled":   false,
-			"use_lmtp":  true,
-			"server":    "mail.example.test",
-			"port":      2525,
-			"helo_name": "nauthilus.example.test",
-			"tls":       true,
-			"starttls":  true,
-			"username":  "smtp-user",
-			"password":  "smtp-secret",
-			"mail_from": "postmaster@example.test",
-			"website":   "https://ssp.example.test",
+			"enabled":          false,
+			"use_lmtp":         true,
+			"server":           "mail.example.test",
+			"port":             2525,
+			"helo_name":        "nauthilus.example.test",
+			"tls":              true,
+			"starttls":         true,
+			"username":         "smtp-user",
+			"password":         "smtp-secret",
+			"mail_from":        "postmaster@example.test",
+			"website":          "https://ssp.example.test",
+			"subject_template": "Leaked password for {{ .Account }}",
 		},
 	}))
 	if err != nil {
@@ -142,10 +214,87 @@ func TestConfigDefaultsValidationAndMailParityGap(t *testing.T) {
 		t.Fatalf("valid config = %#v", valid)
 	}
 
-	if _, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
+	if valid.Mail.Enabled {
+		t.Fatal("valid mail enabled = true, want false")
+	}
+
+	assertRenderedMail(t, valid.Mail, mailTemplateData{Account: testAccount}, nil, "Leaked password for "+testAccount)
+}
+
+func TestConfigMailEnabledNoLongerFailsDecode(t *testing.T) {
+	enabled, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
 		"mail": map[string]any{"enabled": true},
-	})); !errors.Is(err, errMailNotificationUnsupported) {
-		t.Fatalf("decodeModuleConfig(mail enabled) error = %v, want mail parity gap", err)
+	}))
+	if err != nil {
+		t.Fatalf("decodeModuleConfig(mail enabled) error = %v", err)
+	}
+
+	if !enabled.Mail.Enabled {
+		t.Fatal("enabled mail config did not enable mail")
+	}
+}
+
+func TestCustomTemplatePathIsParsedBeforeConfigSwap(t *testing.T) {
+	templatePath := writeMailTemplate(t, "custom {{ .Account }} {{ .HashPrefix }} {{ .Count }} {{ .Website }}")
+	plugin := NewPlugin()
+	module := testModuleWithCapabilities(map[string]any{
+		"mail": map[string]any{
+			"enabled":       true,
+			"template_path": templatePath,
+			"website":       "https://initial.example.test",
+		},
+	}, pluginapi.CapabilityCredentials, pluginapi.CapabilityMail)
+
+	registry := pluginregistry.NewRegistry()
+
+	registrar := registry.NewRegistrar(module)
+	if err := plugin.Register(registrar); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	state := plugin.snapshot()
+	assertRenderedMail(t, state.config.Mail, mailTemplateData{
+		Account:    testAccount,
+		HashPrefix: "abcde",
+		Count:      testHTTPCount,
+		Website:    state.config.Mail.Website,
+		Timestamp:  time.Unix(1, 0).UTC(),
+	}, []string{"custom " + testAccount + " abcde 42 https://initial.example.test"}, "Password leak detected for your account <"+testAccount+">")
+
+	missingPath := filepath.Join(t.TempDir(), "missing.tmpl")
+
+	err := plugin.Reconfigure(context.Background(), pluginregistry.NewConfigView(map[string]any{
+		"mail": map[string]any{
+			"enabled":       true,
+			"template_path": missingPath,
+			"website":       "https://bad.example.test",
+		},
+	}))
+	if err == nil {
+		t.Fatal("Reconfigure() error = nil, want template path error")
+	}
+
+	if strings.Contains(err.Error(), missingPath) {
+		t.Fatalf("Reconfigure() leaked template path in error: %v", err)
+	}
+
+	if got := plugin.snapshot().config.Mail.Website; got != "https://initial.example.test" {
+		t.Fatalf("mail website after failed reconfigure = %q, want initial value", got)
+	}
+}
+
+func TestMailTemplateDataOnlyContainsBoundedFields(t *testing.T) {
+	dataType := reflect.TypeOf(mailTemplateData{})
+	wantFields := []string{"Account", "HashPrefix", "Count", "Website", "Timestamp"}
+
+	if dataType.NumField() != len(wantFields) {
+		t.Fatalf("mailTemplateData field count = %d, want %d", dataType.NumField(), len(wantFields))
+	}
+
+	for _, fieldName := range wantFields {
+		if _, ok := dataType.FieldByName(fieldName); !ok {
+			t.Fatalf("mailTemplateData missing field %s", fieldName)
+		}
 	}
 }
 
@@ -249,6 +398,29 @@ func TestLocalPositiveCacheReturnsLeakedResultWithoutHTTP(t *testing.T) {
 
 	if got := len(harness.transport.requests); got != 0 {
 		t.Fatalf("HTTP calls = %d, want 0", got)
+	}
+}
+
+func TestPositiveResultPublishesHIBPRuntimeDelta(t *testing.T) {
+	prefix, _ := testHashParts(testSecret)
+
+	harness := startTestPlugin(t, map[string]any{"api_base_url": testAPIBaseURL}, testPluginOptions{})
+	defer harness.stop(t)
+
+	cache := testCache(t, harness.host)
+	cache.Set(context.Background(), localCacheKey(testAccount, prefix), 17, time.Minute)
+
+	result, err := harness.target.enqueueWithCredentials(context.Background(), testRequest(t, requestOptions{authenticated: true}), testCredentials(testSecret))
+	if err != nil {
+		t.Fatalf("enqueueWithCredentials() error = %v", err)
+	}
+
+	if got := result.RuntimeDelta.Set[runtimeKeyHIBPHashInfo]; got != prefix+"17" {
+		t.Fatalf("RuntimeDelta[%s] = %#v, want %q", runtimeKeyHIBPHashInfo, got, prefix+"17")
+	}
+
+	if _, exists := result.RuntimeDelta.Set[runtimeKeyLegacyRT]; exists {
+		t.Fatalf("RuntimeDelta unexpectedly restored legacy rt marker: %#v", result.RuntimeDelta.Set[runtimeKeyLegacyRT])
 	}
 }
 
@@ -365,6 +537,199 @@ func TestHTTPPositivePathWritesRedisSeedsCacheAndReturnsLeakedData(t *testing.T)
 	}
 }
 
+func TestHTTPPositivePathWithMailEnabledSendsAndExtendsRedisExpiration(t *testing.T) {
+	prefix, suffix := testHashParts(testSecret)
+	redisKey := redisKeyPrefix + md5Hex(testAccount)
+	gateKey := redisGateKeyPrefix + md5Hex(testAccount) + ":" + prefix
+	db, mock := redismock.NewClientMock()
+	mock.ExpectHGet(redisKey, prefix).RedisNil()
+	mock.ExpectSetNX(gateKey, "1", defaultGateTTL).SetVal(true)
+	mock.ExpectHSet(redisKey, prefix, testHTTPCount).SetVal(1)
+	mock.ExpectExpire(redisKey, defaultRedisPositiveTTL).SetVal(true)
+	mock.ExpectHSetNX(redisKey, redisHashFieldSendMail, "1").SetVal(true)
+	mock.ExpectExpire(redisKey, defaultRedisNegativeTTL).SetVal(true)
+
+	body := strings.ToUpper(suffix) + ":42\n"
+	mailSender := &recordingPluginMailSender{}
+	metrics := newHIBPRecordingMetrics()
+
+	harness := startTestPlugin(t, mailEnabledConfig(map[string]any{
+		"subject_template": "Leak {{ .HashPrefix }} {{ .Count }}",
+		"website":          "https://ssp.example.test",
+	}), testPluginOptions{
+		allowMail:  true,
+		mailSender: mailSender,
+		metrics:    metrics,
+		redis:      pluginruntime.NewRedisFacade(rediscli.NewTestClient(db)),
+		transport:  &recordingTransport{statusCode: http.StatusOK, body: body},
+	})
+	defer harness.stop(t)
+
+	result, err := harness.target.enqueueWithCredentials(context.Background(), testRequest(t, requestOptions{authenticated: true}), testCredentials(testSecret))
+	if err != nil {
+		t.Fatalf("enqueueWithCredentials() error = %v", err)
+	}
+
+	assertResultLog(t, result, resultHTTPPositive)
+	assertResultLog(t, result, publicLogResultLeaked)
+	assertMailMetric(t, metrics, resultMailSent)
+	assertCacheCount(t, harness.host, localCacheKey(testAccount, prefix), testHTTPCount)
+
+	options := mailSender.singleCall(t)
+	if options.Server != "mail.example.test" || options.Port != 2525 || options.From != "postmaster@example.test" {
+		t.Fatalf("mail options = %#v, want configured transport fields", options)
+	}
+
+	if len(options.To) != 1 || options.To[0] != testAccount {
+		t.Fatalf("mail recipients = %#v, want account recipient", options.To)
+	}
+
+	if options.Subject != "Leak "+prefix+" 42" {
+		t.Fatalf("mail subject = %q, want rendered subject", options.Subject)
+	}
+
+	for _, want := range []string{testAccount, "Hash: " + prefix, "Count: 42", "https://ssp.example.test"} {
+		if !strings.Contains(options.Body, want) {
+			t.Fatalf("mail body missing %q: %s", want, options.Body)
+		}
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("Redis expectations were not met: %v", err)
+	}
+}
+
+func TestHTTPPositiveMailGateDuplicateSkipsSend(t *testing.T) {
+	prefix, suffix := testHashParts(testSecret)
+	redisKey := redisKeyPrefix + md5Hex(testAccount)
+	gateKey := redisGateKeyPrefix + md5Hex(testAccount) + ":" + prefix
+	db, mock := redismock.NewClientMock()
+	mock.ExpectHGet(redisKey, prefix).RedisNil()
+	mock.ExpectSetNX(gateKey, "1", defaultGateTTL).SetVal(true)
+	mock.ExpectHSet(redisKey, prefix, testHTTPCount).SetVal(1)
+	mock.ExpectExpire(redisKey, defaultRedisPositiveTTL).SetVal(true)
+	mock.ExpectHSetNX(redisKey, redisHashFieldSendMail, "1").SetVal(false)
+
+	mailSender := &recordingPluginMailSender{}
+	metrics := newHIBPRecordingMetrics()
+
+	harness := startTestPlugin(t, mailEnabledConfig(nil), testPluginOptions{
+		allowMail:  true,
+		mailSender: mailSender,
+		metrics:    metrics,
+		redis:      pluginruntime.NewRedisFacade(rediscli.NewTestClient(db)),
+		transport:  &recordingTransport{statusCode: http.StatusOK, body: strings.ToUpper(suffix) + ":42\n"},
+	})
+	defer harness.stop(t)
+
+	result, err := harness.target.enqueueWithCredentials(context.Background(), testRequest(t, requestOptions{authenticated: true}), testCredentials(testSecret))
+	if err != nil {
+		t.Fatalf("enqueueWithCredentials() error = %v", err)
+	}
+
+	assertResultLog(t, result, resultHTTPPositive)
+	assertMailMetric(t, metrics, resultMailGateSkipped)
+
+	if mailSender.calls != 0 {
+		t.Fatalf("mail calls = %d, want none", mailSender.calls)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("Redis expectations were not met: %v", err)
+	}
+}
+
+func TestHTTPPositiveMailSendErrorIsRedactedAndReturned(t *testing.T) {
+	var logs bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	prefix, suffix := testHashParts(testSecret)
+	fullHash := sha1Hex(testSecret)
+	redisKey := redisKeyPrefix + md5Hex(testAccount)
+	gateKey := redisGateKeyPrefix + md5Hex(testAccount) + ":" + prefix
+	db, mock := redismock.NewClientMock()
+	mock.ExpectHGet(redisKey, prefix).RedisNil()
+	mock.ExpectSetNX(gateKey, "1", defaultGateTTL).SetVal(true)
+	mock.ExpectHSet(redisKey, prefix, testHTTPCount).SetVal(1)
+	mock.ExpectExpire(redisKey, defaultRedisPositiveTTL).SetVal(true)
+	mock.ExpectHSetNX(redisKey, redisHashFieldSendMail, "1").SetVal(true)
+
+	mailSender := &recordingPluginMailSender{err: &secretMailError{text: testMailRawError}}
+	metrics := newHIBPRecordingMetrics()
+
+	harness := startTestPlugin(t, mailEnabledConfig(map[string]any{
+		"password":         "smtp-secret",
+		"subject_template": testMailSubject + " {{ .Account }}",
+		"template_path":    writeMailTemplate(t, testMailBody+" {{ .Account }}"),
+	}), testPluginOptions{
+		allowMail:  true,
+		logger:     logger,
+		mailSender: mailSender,
+		metrics:    metrics,
+		redis:      pluginruntime.NewRedisFacade(rediscli.NewTestClient(db)),
+		transport:  &recordingTransport{statusCode: http.StatusOK, body: strings.ToUpper(suffix) + ":42\n"},
+	})
+	defer harness.stop(t)
+
+	_, err := harness.target.enqueueWithCredentials(context.Background(), testRequest(t, requestOptions{authenticated: true}), testCredentials(testSecret))
+	if err == nil {
+		t.Fatal("enqueueWithCredentials() error = nil, want mail send error")
+	}
+
+	assertMailMetric(t, metrics, resultMailSendError)
+	assertRedactedHIBPMailText(t, err.Error(), fullHash)
+	assertRedactedHIBPMailText(t, logs.String(), fullHash)
+
+	if mailSender.calls != 1 {
+		t.Fatalf("mail calls = %d, want one", mailSender.calls)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("Redis expectations were not met: %v", err)
+	}
+}
+
+func TestHTTPPositiveMailTemplateRenderErrorSkipsSend(t *testing.T) {
+	prefix, suffix := testHashParts(testSecret)
+	redisKey := redisKeyPrefix + md5Hex(testAccount)
+	gateKey := redisGateKeyPrefix + md5Hex(testAccount) + ":" + prefix
+	db, mock := redismock.NewClientMock()
+	mock.ExpectHGet(redisKey, prefix).RedisNil()
+	mock.ExpectSetNX(gateKey, "1", defaultGateTTL).SetVal(true)
+	mock.ExpectHSet(redisKey, prefix, testHTTPCount).SetVal(1)
+	mock.ExpectExpire(redisKey, defaultRedisPositiveTTL).SetVal(true)
+	mock.ExpectHSetNX(redisKey, redisHashFieldSendMail, "1").SetVal(true)
+
+	mailSender := &recordingPluginMailSender{}
+	metrics := newHIBPRecordingMetrics()
+
+	harness := startTestPlugin(t, mailEnabledConfig(map[string]any{
+		"subject_template": "{{ .MissingField }}",
+	}), testPluginOptions{
+		allowMail:  true,
+		mailSender: mailSender,
+		metrics:    metrics,
+		redis:      pluginruntime.NewRedisFacade(rediscli.NewTestClient(db)),
+		transport:  &recordingTransport{statusCode: http.StatusOK, body: strings.ToUpper(suffix) + ":42\n"},
+	})
+	defer harness.stop(t)
+
+	_, err := harness.target.enqueueWithCredentials(context.Background(), testRequest(t, requestOptions{authenticated: true}), testCredentials(testSecret))
+	if err == nil {
+		t.Fatal("enqueueWithCredentials() error = nil, want template render error")
+	}
+
+	assertMailMetric(t, metrics, resultMailTemplateError)
+
+	if mailSender.calls != 0 {
+		t.Fatalf("mail calls = %d, want none", mailSender.calls)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("Redis expectations were not met: %v", err)
+	}
+}
+
 func TestHTTPNegativePathWritesRedisAndSeedsNegativeCache(t *testing.T) {
 	prefix, _ := testHashParts(testSecret)
 	redisKey := redisKeyPrefix + md5Hex(testAccount)
@@ -447,10 +812,13 @@ func TestStartRegistersBoundedConnectionTarget(t *testing.T) {
 }
 
 type testPluginOptions struct {
-	transport *recordingTransport
-	redis     pluginapi.Redis
-	logger    *slog.Logger
-	targets   *recordingConnectionTargetRegistrar
+	transport  *recordingTransport
+	mailSender *recordingPluginMailSender
+	metrics    *hibpRecordingMetrics
+	redis      pluginapi.Redis
+	logger     *slog.Logger
+	targets    *recordingConnectionTargetRegistrar
+	allowMail  bool
 }
 
 type testHarness struct {
@@ -464,7 +832,6 @@ type testHarness struct {
 func startTestPlugin(t *testing.T, pluginConfig map[string]any, options testPluginOptions) testHarness {
 	t.Helper()
 
-	_, plugin, _ := registerTestPlugin(t, testModule(pluginConfig, true))
 	transport := options.transport
 
 	if transport == nil {
@@ -476,9 +843,29 @@ func startTestPlugin(t *testing.T, pluginConfig map[string]any, options testPlug
 		targets = &recordingConnectionTargetRegistrar{}
 	}
 
+	mailSender := options.mailSender
+	if mailSender == nil {
+		mailSender = &recordingPluginMailSender{}
+	}
+
+	metrics := options.metrics
+	if metrics == nil {
+		metrics = newHIBPRecordingMetrics()
+	}
+
+	capabilities := []pluginapi.Capability{pluginapi.CapabilityCredentials}
+	if options.allowMail {
+		capabilities = append(capabilities, pluginapi.CapabilityMail)
+	}
+
+	_, plugin, _ := registerTestPlugin(t, testModuleWithCapabilities(pluginConfig, capabilities...))
 	hostOptions := []pluginruntime.HostOption{
 		pluginruntime.WithHTTPClient(&http.Client{Transport: transport}),
 		pluginruntime.WithConnectionTargets(pluginruntime.NewConnectionTargetFacade(targets)),
+		pluginruntime.WithMailSender(mailSender),
+		pluginruntime.WithMetricsFactory(func(string) pluginapi.Metrics {
+			return metrics
+		}),
 	}
 	if options.redis != nil {
 		hostOptions = append(hostOptions, pluginruntime.WithRedis(options.redis))
@@ -531,14 +918,23 @@ func registerTestPlugin(t *testing.T, module config.PluginModule) (*pluginregist
 
 // testModule returns a native HIBP plugin module config for tests.
 func testModule(pluginConfig map[string]any, allowCredentials bool) config.PluginModule {
+	if !allowCredentials {
+		return testModuleWithCapabilities(pluginConfig)
+	}
+
+	return testModuleWithCapabilities(pluginConfig, pluginapi.CapabilityCredentials)
+}
+
+// testModuleWithCapabilities returns a native HIBP test module with explicit capability allowlist.
+func testModuleWithCapabilities(pluginConfig map[string]any, capabilities ...pluginapi.Capability) config.PluginModule {
 	module := config.PluginModule{
 		Config: pluginConfig,
 		Name:   pluginName,
 		Type:   config.PluginModuleTypeGo,
 		Path:   "/plugins/haveibeenpwnd.so",
 	}
-	if allowCredentials {
-		module.AllowCapabilities = []pluginapi.Capability{pluginapi.CapabilityCredentials}
+	if len(capabilities) > 0 {
+		module.AllowCapabilities = append([]pluginapi.Capability(nil), capabilities...)
 	}
 
 	return module
@@ -661,10 +1057,14 @@ func testCredentials(value string) pluginapi.CredentialProvider {
 
 // testHashParts returns the HIBP prefix and suffix for one plain text password.
 func testHashParts(value string) (string, string) {
-	sum := sha1.Sum([]byte(value))
-	hash := hex.EncodeToString(sum[:])
+	return hashParts(sha1Hex(value))
+}
 
-	return hashParts(hash)
+// sha1Hex returns the lower-case SHA-1 digest for one test password.
+func sha1Hex(value string) string {
+	sum := sha1.Sum([]byte(value))
+
+	return hex.EncodeToString(sum[:])
 }
 
 // testCache returns the module-local cache.
@@ -705,6 +1105,218 @@ func assertResultLog(t *testing.T, result pluginapi.PostActionEnqueueResult, wan
 	}
 
 	t.Fatalf("logs = %#v, want value %q", result.Logs, want)
+}
+
+// writeMailTemplate stores one test mail template and returns its path.
+func writeMailTemplate(t *testing.T, body string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "mail.tmpl")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("WriteFile(%s) error = %v", path, err)
+	}
+
+	return path
+}
+
+// assertRenderedMail checks configured templates without exposing request-time transport.
+func assertRenderedMail(t *testing.T, config mailConfig, data mailTemplateData, bodyParts []string, subject string) {
+	t.Helper()
+
+	message, err := renderMailMessage(config, data, testAccount)
+	if err != nil {
+		t.Fatalf("renderMailMessage() error = %v", err)
+	}
+
+	if message.Subject != subject {
+		t.Fatalf("subject = %q, want %q", message.Subject, subject)
+	}
+
+	for _, bodyPart := range bodyParts {
+		if !strings.Contains(message.Body, bodyPart) {
+			t.Fatalf("body missing %q: %s", bodyPart, message.Body)
+		}
+	}
+}
+
+// mailEnabledConfig returns a complete enabled mail config for request-time tests.
+func mailEnabledConfig(overrides map[string]any) map[string]any {
+	mail := map[string]any{
+		"enabled":   true,
+		"use_lmtp":  true,
+		"server":    "mail.example.test",
+		"port":      2525,
+		"helo_name": "nauthilus.example.test",
+		"tls":       true,
+		"starttls":  false,
+		"username":  "smtp-user",
+		"password":  "smtp-secret",
+		"mail_from": "postmaster@example.test",
+		"website":   "https://ssp.example.test",
+	}
+	for key, value := range overrides {
+		mail[key] = value
+	}
+
+	return map[string]any{"api_base_url": testAPIBaseURL, "mail": mail}
+}
+
+// assertMailMetric verifies that a bounded mail result was recorded.
+func assertMailMetric(t *testing.T, metrics *hibpRecordingMetrics, want string) {
+	t.Helper()
+
+	if metrics.observationCount(metricMailAttempts, want) == 0 {
+		t.Fatalf("mail metric %q result %q was not recorded: %#v", metricMailAttempts, want, metrics.observations)
+	}
+}
+
+// assertRedactedHIBPMailText checks HIBP mail errors and logs for secret-bearing values.
+func assertRedactedHIBPMailText(t *testing.T, text string, fullHash string) {
+	t.Helper()
+
+	for _, secret := range []string{
+		testAccount,
+		testSecret,
+		"smtp-secret",
+		testMailSubject,
+		testMailBody,
+		testMailRawError,
+		fullHash,
+	} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("mail text leaked %q: %s", secret, text)
+		}
+	}
+}
+
+type recordingPluginMailSender struct {
+	last  *smtp.MailOptions
+	err   error
+	calls int
+}
+
+// SendMail records a cloned SMTP option set before returning the configured error.
+func (s *recordingPluginMailSender) SendMail(options *smtp.MailOptions) error {
+	s.calls++
+	s.last = cloneSMTPMailOptions(options)
+
+	return s.err
+}
+
+// singleCall returns the only recorded mail send options.
+func (s *recordingPluginMailSender) singleCall(t *testing.T) *smtp.MailOptions {
+	t.Helper()
+
+	if s.calls != 1 {
+		t.Fatalf("mail calls = %d, want one", s.calls)
+	}
+
+	if s.last == nil {
+		t.Fatal("mail sender did not record options")
+	}
+
+	return s.last
+}
+
+// cloneSMTPMailOptions copies mutable SMTP option slices for stable assertions.
+func cloneSMTPMailOptions(options *smtp.MailOptions) *smtp.MailOptions {
+	if options == nil {
+		return nil
+	}
+
+	cloned := *options
+	cloned.To = append([]string(nil), options.To...)
+
+	return &cloned
+}
+
+type secretMailError struct {
+	text string
+}
+
+// Error returns secret-bearing text used to prove logs and returned errors are redacted.
+func (err *secretMailError) Error() string {
+	return err.text
+}
+
+type hibpRecordingMetrics struct {
+	observations []hibpMetricObservation
+}
+
+type hibpMetricObservation struct {
+	name   string
+	result string
+}
+
+// newHIBPRecordingMetrics creates a bounded metrics fake for HIBP tests.
+func newHIBPRecordingMetrics() *hibpRecordingMetrics {
+	return &hibpRecordingMetrics{}
+}
+
+// Counter returns a recording counter.
+func (m *hibpRecordingMetrics) Counter(definition pluginapi.MetricDefinition) (pluginapi.Counter, error) {
+	return hibpRecordingMetric{name: definition.Name, metrics: m}, nil
+}
+
+// Gauge returns a recording gauge.
+func (m *hibpRecordingMetrics) Gauge(definition pluginapi.MetricDefinition) (pluginapi.Gauge, error) {
+	return hibpRecordingMetric{name: definition.Name, metrics: m}, nil
+}
+
+// Histogram returns a recording histogram.
+func (m *hibpRecordingMetrics) Histogram(definition pluginapi.MetricDefinition) (pluginapi.Histogram, error) {
+	return hibpRecordingMetric{name: definition.Name, metrics: m}, nil
+}
+
+// Summary returns a recording summary.
+func (m *hibpRecordingMetrics) Summary(definition pluginapi.MetricDefinition) (pluginapi.Summary, error) {
+	return hibpRecordingMetric{name: definition.Name, metrics: m}, nil
+}
+
+// observationCount returns the number of observations with a given metric name and result label.
+func (m *hibpRecordingMetrics) observationCount(name string, result string) int {
+	count := 0
+
+	for _, observation := range m.observations {
+		if observation.name == name && observation.result == result {
+			count++
+		}
+	}
+
+	return count
+}
+
+type hibpRecordingMetric struct {
+	metrics *hibpRecordingMetrics
+	name    string
+}
+
+// Add records counter and gauge observations.
+func (m hibpRecordingMetric) Add(_ context.Context, _ float64, labels ...pluginapi.LabelValue) {
+	m.record(labels...)
+}
+
+// Set records gauge observations.
+func (m hibpRecordingMetric) Set(_ context.Context, _ float64, labels ...pluginapi.LabelValue) {
+	m.record(labels...)
+}
+
+// Observe records histogram and summary observations.
+func (m hibpRecordingMetric) Observe(_ context.Context, _ float64, labels ...pluginapi.LabelValue) {
+	m.record(labels...)
+}
+
+// record stores one bounded metric observation.
+func (m hibpRecordingMetric) record(labels ...pluginapi.LabelValue) {
+	result := ""
+
+	for _, label := range labels {
+		if label.Name == metricLabelResult {
+			result = label.Value
+		}
+	}
+
+	m.metrics.observations = append(m.metrics.observations, hibpMetricObservation{name: m.name, result: result})
 }
 
 type connectionRecord struct {
