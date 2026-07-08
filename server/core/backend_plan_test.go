@@ -3,6 +3,7 @@ package core
 import (
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
 	"github.com/croessner/nauthilus/v3/server/localcache"
@@ -131,6 +132,64 @@ func TestAuthenticateUserSubjectOKWritesPositiveAuthCaches(t *testing.T) {
 	if !passDBResult.Authenticated {
 		t.Fatal("local auth cache PassDBResult.Authenticated = false, want true")
 	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("redis expectations: %v", err)
+	}
+}
+
+func TestHandleLocalCacheRunsPluginSubjectBridge(t *testing.T) {
+	auth, ctx, mock, _ := newBackendPlanCacheOrderingAuth(t, "local-cache-subject@example.test")
+	auth.Request.Service = definitions.ServNginx
+	auth.SetStatusCodes(auth.Request.Service)
+	enableBackendHealthChecksForCacheTest(t, auth)
+
+	cacheKey := auth.generateLocalCacheKey()
+	localcache.LocalCache.Delete(cacheKey)
+	t.Cleanup(func() {
+		localcache.LocalCache.Delete(cacheKey)
+	})
+
+	bridge := &recordingPluginSubjectBridge{
+		address: "10.0.0.7",
+		port:    993,
+	}
+
+	restore := replaceBackendPlanTestServices(
+		t,
+		backendPlanPasswordVerifier{},
+		nil,
+		nil,
+		backendPlanSubject{result: definitions.AuthResultOK},
+		currentBehaviorPostAction{},
+	)
+	defer restore()
+
+	restoreBridge := replacePluginSubjectBridgeForTest(t, bridge)
+	defer restoreBridge()
+
+	cached := backendPlanAuthenticatedCacheResult(auth)
+	localcache.LocalCache.Set(cacheKey, cached, auth.Cfg().GetServer().GetLocalCacheAuthTTL())
+
+	if found := auth.GetFromLocalCache(ctx); !found {
+		t.Fatal("GetFromLocalCache() = false, want true")
+	}
+
+	result := auth.handleLocalCache(ctx)
+	if result != definitions.AuthResultOK {
+		t.Fatalf("handleLocalCache() = %v, want %v", result, definitions.AuthResultOK)
+	}
+
+	if bridge.calls != 1 {
+		t.Fatalf("plugin subject bridge calls = %d, want 1", bridge.calls)
+	}
+
+	if auth.Runtime.UsedBackendIP != bridge.address || auth.Runtime.UsedBackendPort != bridge.port {
+		t.Fatalf("selected backend = %s:%d, want %s:%d", auth.Runtime.UsedBackendIP, auth.Runtime.UsedBackendPort, bridge.address, bridge.port)
+	}
+
+	auth.AuthOK(ctx)
+	assertNginxBackendHeaders(t, ctx, bridge.address, "993")
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("redis expectations: %v", err)
@@ -342,6 +401,93 @@ func (s backendPlanSubject) Analyze(_ *gin.Context, view *StateView, result *Pas
 	}
 
 	return s.result
+}
+
+// assertNginxBackendHeaders verifies backend health response headers for Nginx auth.
+func assertNginxBackendHeaders(t *testing.T, ctx *gin.Context, address string, port string) {
+	t.Helper()
+
+	if got := ctx.Writer.Header().Get("Auth-Server"); got != address {
+		t.Fatalf("Auth-Server = %q, want %q", got, address)
+	}
+
+	if got := ctx.Writer.Header().Get("Auth-Port"); got != port {
+		t.Fatalf("Auth-Port = %q, want %q", got, port)
+	}
+}
+
+type recordingPluginSubjectBridge struct {
+	address string
+	port    int
+	calls   int
+}
+
+// Analyze records native subject bridge execution and simulates backend selection.
+func (b *recordingPluginSubjectBridge) Analyze(_ *gin.Context, view *StateView, result *PassDBResult, current definitions.AuthResult) (definitions.AuthResult, bool) {
+	b.calls++
+	view.Auth().Runtime.UsedBackendIP = b.address
+	view.Auth().Runtime.UsedBackendPort = b.port
+
+	result.BackendRef = RemoteBackendRef{
+		Type:        definitions.BackendPluginName,
+		Name:        "mailde_auth",
+		Protocol:    definitions.ProtoIMAP,
+		Authority:   b.address,
+		OpaqueToken: "mailde_auth:" + b.address,
+	}
+
+	return current, true
+}
+
+// backendPlanAuthenticatedCacheResult returns a cached positive PassDB result.
+func backendPlanAuthenticatedCacheResult(auth *AuthState) *PassDBResult {
+	return &PassDBResult{
+		UserFound:     true,
+		Authenticated: true,
+		AccountField:  backendPlanAccountField,
+		Account:       auth.Request.Username,
+		Backend:       definitions.BackendLDAP,
+		Attributes: map[string][]any{
+			backendPlanAccountField: {auth.Request.Username},
+		},
+	}
+}
+
+// enableBackendHealthChecksForCacheTest activates Nginx backend-health response headers.
+func enableBackendHealthChecksForCacheTest(t *testing.T, auth *AuthState) {
+	t.Helper()
+
+	feat := &config.RuntimeModule{}
+	if err := feat.Set(definitions.ServiceBackendHealthChecks); err != nil {
+		t.Fatalf("RuntimeModule.Set(%q) failed: %v", definitions.ServiceBackendHealthChecks, err)
+	}
+
+	cfg, ok := auth.Cfg().(*config.FileSettings)
+	if !ok {
+		t.Fatalf("auth config type = %T, want *config.FileSettings", auth.Cfg())
+	}
+
+	cfg.Server.RuntimeModules = []*config.RuntimeModule{feat}
+
+	previousServers := ListBackendServers()
+
+	BackendServers.Update([]*config.BackendServer{{Host: "127.0.0.1", Port: 993, Protocol: definitions.ProtoIMAP}})
+	t.Cleanup(func() {
+		BackendServers.Update(previousServers)
+	})
+}
+
+// replacePluginSubjectBridgeForTest installs a native subject bridge for one test.
+func replacePluginSubjectBridgeForTest(t *testing.T, bridge PluginSubjectSourceBridge) func() {
+	t.Helper()
+
+	previousBridge := getPluginSubjectSourceBridge()
+
+	RegisterPluginSubjectSourceBridge(bridge)
+
+	return func() {
+		RegisterPluginSubjectSourceBridge(previousBridge)
+	}
 }
 
 func replaceBackendPlanTestServices(

@@ -2974,19 +2974,7 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	a.Runtime.Authenticated = true
 	a.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
 
-	authResult := definitions.AuthResultOK
-
-	if lf := getLuaSubject(); lf != nil {
-		authResult = lf.Analyze(ctx, a.View(), passDBResult)
-	}
-
-	if a.HasConfiguredAuthPolicyAuthority(ctx) {
-		a.storePolicyPostActionResult(ctx, passDBResult)
-	} else {
-		a.PostLuaAction(ctx, passDBResult)
-	}
-
-	return authResult
+	return a.runPostBackendActions(ctx, passDBResult)
 }
 
 // initializePassDBResult initializes a new instance of PassDBResult with values from the AuthState object.
