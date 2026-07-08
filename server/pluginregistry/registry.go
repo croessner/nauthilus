@@ -562,7 +562,7 @@ func (r *Registrar) preflightComponents() error {
 
 // sensitiveCapability reports whether a capability is default-deny without an allowlist.
 func sensitiveCapability(capability pluginapi.Capability) bool {
-	return capability == pluginapi.CapabilityCredentials
+	return capability == pluginapi.CapabilityCredentials || capability == pluginapi.CapabilityMail
 }
 
 // validateSourceDescriptor checks a dependency-scheduled source descriptor.

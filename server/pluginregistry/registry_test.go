@@ -91,27 +91,41 @@ func TestRegistrar_StagesComponentsUntilCommit(t *testing.T) {
 }
 
 func TestRegistrar_RejectsDisallowedCapability(t *testing.T) {
-	registrar := NewRegistry().NewRegistrar(config.PluginModule{Name: testRegistryModuleGeoIP})
+	for _, capability := range []pluginapi.Capability{
+		pluginapi.CapabilityCredentials,
+		pluginapi.CapabilityMail,
+	} {
+		t.Run(string(capability), func(t *testing.T) {
+			registrar := NewRegistry().NewRegistrar(config.PluginModule{Name: testRegistryModuleGeoIP})
 
-	err := registrar.RequireCapability(pluginapi.CapabilityCredentials)
-	if !errors.Is(err, ErrCapabilityNotAllowed) {
-		t.Fatalf("RequireCapability() error = %v, want ErrCapabilityNotAllowed", err)
+			err := registrar.RequireCapability(capability)
+			if !errors.Is(err, ErrCapabilityNotAllowed) {
+				t.Fatalf("RequireCapability() error = %v, want ErrCapabilityNotAllowed", err)
+			}
+		})
 	}
 }
 
 func TestRegistrar_RecordsAllowedCapability(t *testing.T) {
-	registrar := NewRegistry().NewRegistrar(config.PluginModule{
-		Name:              testRegistryModuleGeoIP,
-		AllowCapabilities: []pluginapi.Capability{pluginapi.CapabilityCredentials},
-	})
+	for _, capability := range []pluginapi.Capability{
+		pluginapi.CapabilityCredentials,
+		pluginapi.CapabilityMail,
+	} {
+		t.Run(string(capability), func(t *testing.T) {
+			registrar := NewRegistry().NewRegistrar(config.PluginModule{
+				Name:              testRegistryModuleGeoIP,
+				AllowCapabilities: []pluginapi.Capability{capability},
+			})
 
-	if err := registrar.RequireCapability(pluginapi.CapabilityCredentials); err != nil {
-		t.Fatalf("RequireCapability() error = %v", err)
-	}
+			if err := registrar.RequireCapability(capability); err != nil {
+				t.Fatalf("RequireCapability() error = %v", err)
+			}
 
-	capabilities := registrar.Capabilities()
-	if len(capabilities) != 1 || capabilities[0] != pluginapi.CapabilityCredentials {
-		t.Fatalf("Capabilities() = %#v, want credentials", capabilities)
+			capabilities := registrar.Capabilities()
+			if len(capabilities) != 1 || capabilities[0] != capability {
+				t.Fatalf("Capabilities() = %#v, want %s", capabilities, capability)
+			}
+		})
 	}
 }
 

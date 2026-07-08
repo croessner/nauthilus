@@ -5,10 +5,12 @@ import (
 	"testing"
 	"time"
 
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/spf13/viper"
 )
 
 const (
+	pluginConfigKeyAllowCapabilities  = "allow_capabilities"
 	pluginConfigKeyAllowedDirs        = "allowed_dirs"
 	pluginConfigKeyAPIKey             = "api_key"
 	pluginConfigKeyConfig             = "config"
@@ -228,6 +230,34 @@ func TestPluginConfig_RejectsInvalidLifecycleTimeout(t *testing.T) {
 	})
 
 	assertPluginConfigError(t, err, "plugins.modules[0].stop_timeout")
+}
+
+func TestPluginConfig_AcceptsMailCapabilityAllowlist(t *testing.T) {
+	pluginDir := t.TempDir()
+
+	cfg, err := loadPluginTestConfig(t, map[string]any{
+		pluginConfigKeyAllowedDirs: []string{pluginDir},
+		pluginConfigKeyModules: []map[string]any{
+			{
+				pluginConfigKeyName: pluginConfigModuleName,
+				pluginConfigKeyPath: pluginConfigArtifactPath(pluginDir),
+				pluginConfigKeyAllowCapabilities: []string{
+					string(pluginapi.CapabilityCredentials),
+					string(pluginapi.CapabilityMail),
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleFile() error = %v", err)
+	}
+
+	capabilities := cfg.GetPlugins().Modules[0].AllowCapabilities
+	if len(capabilities) != 2 ||
+		capabilities[0] != pluginapi.CapabilityCredentials ||
+		capabilities[1] != pluginapi.CapabilityMail {
+		t.Fatalf("AllowCapabilities = %#v, want credentials and mail", capabilities)
+	}
 }
 
 func TestPluginConfigDump_OmitsOpaqueModuleConfig(t *testing.T) {

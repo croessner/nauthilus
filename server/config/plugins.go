@@ -452,7 +452,7 @@ func validatePluginCapabilities(path string, capabilities []pluginapi.Capability
 
 	for index, capability := range capabilities {
 		switch capability {
-		case pluginapi.CapabilityCredentials:
+		case pluginapi.CapabilityCredentials, pluginapi.CapabilityMail:
 		default:
 			return newPluginValidationProblem(fmt.Sprintf("%s.allow_capabilities[%d]", path, index), "is not supported")
 		}
