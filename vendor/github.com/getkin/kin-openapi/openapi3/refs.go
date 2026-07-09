@@ -4,12 +4,10 @@ package openapi3
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/url"
 	"strings"
 
 	"github.com/go-openapi/jsonpointer"
-	"github.com/perimeterx/marshmallow"
 )
 
 // CallbackRef represents either a Callback or a $ref to a Callback.
@@ -70,7 +68,10 @@ func (x CallbackRef) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON sets CallbackRef to a copy of data.
 func (x *CallbackRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if extra, err := marshmallow.Unmarshal(data, &refOnly, marshmallow.WithExcludeKnownFieldsFromMap(true)); err == nil && refOnly.Ref != "" {
+	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+		extra := map[string]any{}
+		_ = json.Unmarshal(data, &extra)
+		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
 		if len(extra) != 0 {
@@ -118,7 +119,7 @@ func (x *CallbackRef) validateExtras(ctx context.Context) error {
 	}
 
 	if len(extras) != 0 {
-		return fmt.Errorf("extra sibling fields: %+v", extras)
+		return newExtraSiblingFields(extras, x.Origin)
 	}
 	return nil
 }
@@ -134,7 +135,7 @@ func (x *CallbackRef) Validate(ctx context.Context, opts ...ValidationOption) er
 		return v.Validate(ctx)
 	}
 
-	return foundUnresolvedRef(x.Ref)
+	return newUnresolvedRef(x.Ref, x.Origin)
 }
 
 // JSONLookup implements https://pkg.go.dev/github.com/go-openapi/jsonpointer#JSONPointable
@@ -209,7 +210,10 @@ func (x ExampleRef) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON sets ExampleRef to a copy of data.
 func (x *ExampleRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if extra, err := marshmallow.Unmarshal(data, &refOnly, marshmallow.WithExcludeKnownFieldsFromMap(true)); err == nil && refOnly.Ref != "" {
+	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+		extra := map[string]any{}
+		_ = json.Unmarshal(data, &extra)
+		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
 		if len(extra) != 0 {
@@ -257,7 +261,7 @@ func (x *ExampleRef) validateExtras(ctx context.Context) error {
 	}
 
 	if len(extras) != 0 {
-		return fmt.Errorf("extra sibling fields: %+v", extras)
+		return newExtraSiblingFields(extras, x.Origin)
 	}
 	return nil
 }
@@ -273,7 +277,7 @@ func (x *ExampleRef) Validate(ctx context.Context, opts ...ValidationOption) err
 		return v.Validate(ctx)
 	}
 
-	return foundUnresolvedRef(x.Ref)
+	return newUnresolvedRef(x.Ref, x.Origin)
 }
 
 // JSONLookup implements https://pkg.go.dev/github.com/go-openapi/jsonpointer#JSONPointable
@@ -348,7 +352,10 @@ func (x HeaderRef) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON sets HeaderRef to a copy of data.
 func (x *HeaderRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if extra, err := marshmallow.Unmarshal(data, &refOnly, marshmallow.WithExcludeKnownFieldsFromMap(true)); err == nil && refOnly.Ref != "" {
+	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+		extra := map[string]any{}
+		_ = json.Unmarshal(data, &extra)
+		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
 		if len(extra) != 0 {
@@ -396,7 +403,7 @@ func (x *HeaderRef) validateExtras(ctx context.Context) error {
 	}
 
 	if len(extras) != 0 {
-		return fmt.Errorf("extra sibling fields: %+v", extras)
+		return newExtraSiblingFields(extras, x.Origin)
 	}
 	return nil
 }
@@ -412,7 +419,7 @@ func (x *HeaderRef) Validate(ctx context.Context, opts ...ValidationOption) erro
 		return v.Validate(ctx)
 	}
 
-	return foundUnresolvedRef(x.Ref)
+	return newUnresolvedRef(x.Ref, x.Origin)
 }
 
 // JSONLookup implements https://pkg.go.dev/github.com/go-openapi/jsonpointer#JSONPointable
@@ -487,7 +494,10 @@ func (x LinkRef) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON sets LinkRef to a copy of data.
 func (x *LinkRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if extra, err := marshmallow.Unmarshal(data, &refOnly, marshmallow.WithExcludeKnownFieldsFromMap(true)); err == nil && refOnly.Ref != "" {
+	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+		extra := map[string]any{}
+		_ = json.Unmarshal(data, &extra)
+		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
 		if len(extra) != 0 {
@@ -535,7 +545,7 @@ func (x *LinkRef) validateExtras(ctx context.Context) error {
 	}
 
 	if len(extras) != 0 {
-		return fmt.Errorf("extra sibling fields: %+v", extras)
+		return newExtraSiblingFields(extras, x.Origin)
 	}
 	return nil
 }
@@ -551,7 +561,7 @@ func (x *LinkRef) Validate(ctx context.Context, opts ...ValidationOption) error 
 		return v.Validate(ctx)
 	}
 
-	return foundUnresolvedRef(x.Ref)
+	return newUnresolvedRef(x.Ref, x.Origin)
 }
 
 // JSONLookup implements https://pkg.go.dev/github.com/go-openapi/jsonpointer#JSONPointable
@@ -626,7 +636,10 @@ func (x ParameterRef) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON sets ParameterRef to a copy of data.
 func (x *ParameterRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if extra, err := marshmallow.Unmarshal(data, &refOnly, marshmallow.WithExcludeKnownFieldsFromMap(true)); err == nil && refOnly.Ref != "" {
+	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+		extra := map[string]any{}
+		_ = json.Unmarshal(data, &extra)
+		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
 		if len(extra) != 0 {
@@ -674,7 +687,7 @@ func (x *ParameterRef) validateExtras(ctx context.Context) error {
 	}
 
 	if len(extras) != 0 {
-		return fmt.Errorf("extra sibling fields: %+v", extras)
+		return newExtraSiblingFields(extras, x.Origin)
 	}
 	return nil
 }
@@ -690,7 +703,7 @@ func (x *ParameterRef) Validate(ctx context.Context, opts ...ValidationOption) e
 		return v.Validate(ctx)
 	}
 
-	return foundUnresolvedRef(x.Ref)
+	return newUnresolvedRef(x.Ref, x.Origin)
 }
 
 // JSONLookup implements https://pkg.go.dev/github.com/go-openapi/jsonpointer#JSONPointable
@@ -765,7 +778,10 @@ func (x RequestBodyRef) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON sets RequestBodyRef to a copy of data.
 func (x *RequestBodyRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if extra, err := marshmallow.Unmarshal(data, &refOnly, marshmallow.WithExcludeKnownFieldsFromMap(true)); err == nil && refOnly.Ref != "" {
+	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+		extra := map[string]any{}
+		_ = json.Unmarshal(data, &extra)
+		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
 		if len(extra) != 0 {
@@ -813,7 +829,7 @@ func (x *RequestBodyRef) validateExtras(ctx context.Context) error {
 	}
 
 	if len(extras) != 0 {
-		return fmt.Errorf("extra sibling fields: %+v", extras)
+		return newExtraSiblingFields(extras, x.Origin)
 	}
 	return nil
 }
@@ -829,7 +845,7 @@ func (x *RequestBodyRef) Validate(ctx context.Context, opts ...ValidationOption)
 		return v.Validate(ctx)
 	}
 
-	return foundUnresolvedRef(x.Ref)
+	return newUnresolvedRef(x.Ref, x.Origin)
 }
 
 // JSONLookup implements https://pkg.go.dev/github.com/go-openapi/jsonpointer#JSONPointable
@@ -904,7 +920,10 @@ func (x ResponseRef) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON sets ResponseRef to a copy of data.
 func (x *ResponseRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if extra, err := marshmallow.Unmarshal(data, &refOnly, marshmallow.WithExcludeKnownFieldsFromMap(true)); err == nil && refOnly.Ref != "" {
+	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+		extra := map[string]any{}
+		_ = json.Unmarshal(data, &extra)
+		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
 		if len(extra) != 0 {
@@ -952,7 +971,7 @@ func (x *ResponseRef) validateExtras(ctx context.Context) error {
 	}
 
 	if len(extras) != 0 {
-		return fmt.Errorf("extra sibling fields: %+v", extras)
+		return newExtraSiblingFields(extras, x.Origin)
 	}
 	return nil
 }
@@ -968,7 +987,7 @@ func (x *ResponseRef) Validate(ctx context.Context, opts ...ValidationOption) er
 		return v.Validate(ctx)
 	}
 
-	return foundUnresolvedRef(x.Ref)
+	return newUnresolvedRef(x.Ref, x.Origin)
 }
 
 // JSONLookup implements https://pkg.go.dev/github.com/go-openapi/jsonpointer#JSONPointable
@@ -1046,7 +1065,10 @@ func (x SchemaRef) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON sets SchemaRef to a copy of data.
 func (x *SchemaRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if extra, err := marshmallow.Unmarshal(data, &refOnly, marshmallow.WithExcludeKnownFieldsFromMap(true)); err == nil && refOnly.Ref != "" {
+	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+		extra := map[string]any{}
+		_ = json.Unmarshal(data, &extra)
+		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
 		if len(extra) != 0 {
@@ -1111,7 +1133,7 @@ func (x *SchemaRef) validateExtras(ctx context.Context) error {
 
 	if len(extras) != 0 {
 		if !validationOpts.isOpenAPI31OrLater {
-			return fmt.Errorf("extra sibling fields: %+v", extras)
+			return newExtraSiblingFields(extras, x.Origin)
 		}
 	}
 	return nil
@@ -1128,7 +1150,7 @@ func (x *SchemaRef) Validate(ctx context.Context, opts ...ValidationOption) erro
 		return v.Validate(ctx)
 	}
 
-	return foundUnresolvedRef(x.Ref)
+	return newUnresolvedRef(x.Ref, x.Origin)
 }
 
 // JSONLookup implements https://pkg.go.dev/github.com/go-openapi/jsonpointer#JSONPointable
@@ -1203,7 +1225,10 @@ func (x SecuritySchemeRef) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON sets SecuritySchemeRef to a copy of data.
 func (x *SecuritySchemeRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if extra, err := marshmallow.Unmarshal(data, &refOnly, marshmallow.WithExcludeKnownFieldsFromMap(true)); err == nil && refOnly.Ref != "" {
+	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+		extra := map[string]any{}
+		_ = json.Unmarshal(data, &extra)
+		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
 		if len(extra) != 0 {
@@ -1251,7 +1276,7 @@ func (x *SecuritySchemeRef) validateExtras(ctx context.Context) error {
 	}
 
 	if len(extras) != 0 {
-		return fmt.Errorf("extra sibling fields: %+v", extras)
+		return newExtraSiblingFields(extras, x.Origin)
 	}
 	return nil
 }
@@ -1267,7 +1292,7 @@ func (x *SecuritySchemeRef) Validate(ctx context.Context, opts ...ValidationOpti
 		return v.Validate(ctx)
 	}
 
-	return foundUnresolvedRef(x.Ref)
+	return newUnresolvedRef(x.Ref, x.Origin)
 }
 
 // JSONLookup implements https://pkg.go.dev/github.com/go-openapi/jsonpointer#JSONPointable

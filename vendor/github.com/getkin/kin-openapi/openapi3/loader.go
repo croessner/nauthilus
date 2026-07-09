@@ -20,17 +20,15 @@ import (
 // for backward compatibility but is not safe for concurrent use.
 var IncludeOrigin = false
 
-func foundUnresolvedRef(ref string) error {
-	return fmt.Errorf("found unresolved ref: %q", ref)
-}
-
 func failedToResolveRefFragmentPart(value, what string) error {
 	return fmt.Errorf("failed to resolve %q in fragment in URI: %q", what, value)
 }
 
 // Loader helps deserialize an OpenAPIv3 document
 type Loader struct {
-	// IsExternalRefsAllowed enables visiting other files
+	// IsExternalRefsAllowed enables visiting other files. Enforced only when
+	// ReadFromURIFunc is nil; a custom ReadFromURIFunc bypasses this flag and
+	// owns the access policy itself — see ReadFromURIFunc.
 	IsExternalRefsAllowed bool
 
 	// IncludeOrigin enables recording the file/line/column of each OpenAPI element.
@@ -38,7 +36,16 @@ type Loader struct {
 	// concurrent use.
 	IncludeOrigin bool
 
-	// ReadFromURIFunc allows overriding the any file/URL reading func
+	// ReadFromURIFunc overrides how the loader reads a referenced file or URL.
+	//
+	// SECURITY: when a custom ReadFromURIFunc is set, IsExternalRefsAllowed is
+	// NOT enforced — this function alone decides which locations may be read. A
+	// func that reads whatever URI it is handed (e.g. by delegating to
+	// DefaultReadFromURI) resolves external $refs even when IsExternalRefsAllowed
+	// is false, which on untrusted documents enables local file reads
+	// (`$ref: "/etc/passwd"`) and SSRF (`$ref: "http://169.254.169.254/..."`).
+	// A custom func must apply its own scheme/host allowlist, or re-check
+	// IsExternalRefsAllowed, before reading.
 	ReadFromURIFunc ReadFromURIFunc
 
 	// JoinFunc allows overriding how relative $ref paths are resolved against
@@ -105,9 +112,9 @@ func (loader *Loader) allowsExternalRefs(ref string) (err error) {
 }
 
 func (loader *Loader) loadSingleElementFromURI(ref string, rootPath *url.URL, element any) (*url.URL, error) {
-	// When a custom ReadFromURIFunc is installed, defer the external-ref decision to it;
-	// the function itself is responsible for enforcing any access policy.
-	// Otherwise enforce IsExternalRefsAllowed here before attempting any I/O.
+	// IsExternalRefsAllowed is enforced here only when no custom ReadFromURIFunc
+	// is installed; otherwise the custom func owns the access policy (see the
+	// SECURITY note on the ReadFromURIFunc field).
 	if loader.ReadFromURIFunc == nil {
 		if err := loader.allowsExternalRefs(ref); err != nil {
 			return nil, err
@@ -335,7 +342,9 @@ func (loader *Loader) resolveRefPath(ref string, path *url.URL) (*url.URL, error
 		return path, nil
 	}
 
-	// When a custom ReadFromURIFunc is installed, defer the external-ref decision to it.
+	// IsExternalRefsAllowed is enforced here only when no custom ReadFromURIFunc
+	// is installed; otherwise the custom func owns the access policy (see the
+	// SECURITY note on the ReadFromURIFunc field).
 	if loader.ReadFromURIFunc == nil {
 		if err := loader.allowsExternalRefs(ref); err != nil {
 			return nil, err
@@ -491,7 +500,7 @@ func (loader *Loader) resolveComponent(doc *T, ref string, path *url.URL, resolv
 		reflect.ValueOf(resolved).Elem().Set(reflect.ValueOf(cursor).Elem())
 		return componentDoc, componentPath, nil
 
-	case reflect.TypeOf(cursor) == reflect.TypeOf(map[string]any{}):
+	case reflect.TypeOf(cursor) == reflect.TypeFor[map[string]any]():
 		codec := func(got, expect any) error {
 			enc, err := json.Marshal(got)
 			if err != nil {
@@ -569,7 +578,7 @@ func drillIntoField(cursor any, fieldName string) (any, error) {
 		for i := range val.NumField() {
 			hasFields = true
 			if yamlTag := val.Type().Field(i).Tag.Get("yaml"); yamlTag != "-" {
-				if tagName := strings.Split(yamlTag, ",")[0]; tagName != "" {
+				if tagName, _, _ := strings.Cut(yamlTag, ","); tagName != "" {
 					if fieldName == tagName {
 						return val.Field(i).Interface(), nil
 					}

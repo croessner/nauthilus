@@ -17,8 +17,6 @@ import (
 	"unicode/utf16"
 
 	"github.com/go-openapi/jsonpointer"
-	"github.com/mohae/deepcopy"
-	"github.com/woodsbury/decimal128"
 )
 
 const (
@@ -776,13 +774,6 @@ func (schema *Schema) UnmarshalJSON(data []byte) error {
 	}
 
 	*schema = Schema(x)
-
-	if schema.Format == "date" {
-		// This is a fix for: https://github.com/getkin/kin-openapi/issues/697
-		if eg, ok := schema.Example.(string); ok {
-			schema.Example = strings.TrimSuffix(eg, "T00:00:00Z")
-		}
-	}
 	return nil
 }
 
@@ -1412,7 +1403,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 	stack = append(stack, schema)
 
 	if schema.ReadOnly && schema.WriteOnly {
-		return stack, errors.New("a property MUST NOT be marked as both readOnly and writeOnly being true")
+		return stack, newSchemaReadOnlyWriteOnlyExclusive(schema.Origin)
 	}
 
 	// Reject fields that only exist in OAS 3.1 / JSON Schema 2020-12 when the
@@ -1558,7 +1549,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 	for _, item := range schema.OneOf {
 		v := item.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(item.Ref)
+			return stack, newUnresolvedRef(item.Ref, item.Origin)
 		}
 
 		var err error
@@ -1570,7 +1561,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 	for _, item := range schema.AnyOf {
 		v := item.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(item.Ref)
+			return stack, newUnresolvedRef(item.Ref, item.Origin)
 		}
 
 		var err error
@@ -1582,7 +1573,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 	for _, item := range schema.AllOf {
 		v := item.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(item.Ref)
+			return stack, newUnresolvedRef(item.Ref, item.Origin)
 		}
 
 		var err error
@@ -1594,7 +1585,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 	if ref := schema.Not; ref != nil {
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1606,7 +1597,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 	if ref := schema.If; ref != nil {
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 		var err error
 		if stack, err = v.validate(ctx, stack); err != nil {
@@ -1616,7 +1607,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 	if ref := schema.Then; ref != nil {
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 		var err error
 		if stack, err = v.validate(ctx, stack); err != nil {
@@ -1626,7 +1617,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 	if ref := schema.Else; ref != nil {
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 		var err error
 		if stack, err = v.validate(ctx, stack); err != nil {
@@ -1685,15 +1676,15 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 			}
 		case TypeArray:
 			if schema.Items == nil && !validationOpts.jsonSchema2020ValidationEnabled && len(schema.PrefixItems) == 0 {
-				return stack, errors.New("when schema type is 'array', schema 'items' must be non-null")
+				return stack, newSchemaItemsRequired(schema.Origin)
 			}
 		case TypeObject:
 		case TypeNull:
 			if !validationOpts.jsonSchema2020ValidationEnabled {
-				return stack, fmt.Errorf("unsupported 'type' value %q", schemaType)
+				return stack, newSchemaTypeError(schemaType, schema.Origin)
 			}
 		default:
-			return stack, fmt.Errorf("unsupported 'type' value %q", schemaType)
+			return stack, newSchemaTypeError(schemaType, schema.Origin)
 		}
 	}
 
@@ -1703,7 +1694,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1719,7 +1710,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1729,7 +1720,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 	}
 
 	if schema.AdditionalProperties.Has != nil && schema.AdditionalProperties.Schema != nil {
-		return stack, errors.New("additionalProperties are set to both boolean and schema")
+		return stack, newSchemaAdditionalPropertiesBothForms(schema.Origin)
 	}
 	if ref := schema.AdditionalProperties.Schema; ref != nil {
 		if err := ref.validateExtras(ctx); err != nil {
@@ -1737,7 +1728,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1753,7 +1744,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1767,7 +1758,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1782,7 +1773,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1797,7 +1788,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1812,7 +1803,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1826,7 +1817,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1835,7 +1826,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 	}
 	if schema.UnevaluatedItems.Has != nil && schema.UnevaluatedItems.Schema != nil {
-		return stack, errors.New("unevaluatedItems is set to both boolean and schema")
+		return stack, newSchemaUnevaluatedItemsBothForms(schema.Origin)
 	}
 	if ref := schema.UnevaluatedItems.Schema; ref != nil {
 		if err := ref.validateExtras(ctx); err != nil {
@@ -1843,7 +1834,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1852,7 +1843,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 	}
 	if schema.UnevaluatedProperties.Has != nil && schema.UnevaluatedProperties.Schema != nil {
-		return stack, errors.New("unevaluatedProperties is set to both boolean and schema")
+		return stack, newSchemaUnevaluatedPropertiesBothForms(schema.Origin)
 	}
 	if ref := schema.UnevaluatedProperties.Schema; ref != nil {
 		if err := ref.validateExtras(ctx); err != nil {
@@ -1860,7 +1851,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1874,7 +1865,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 		v := ref.Value
 		if v == nil {
-			return stack, foundUnresolvedRef(ref.Ref)
+			return stack, newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 
 		var err error
@@ -1885,7 +1876,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 
 	if v := schema.ExternalDocs; v != nil {
 		if err := v.Validate(ctx); err != nil {
-			return stack, fmt.Errorf("invalid external docs: %w", err)
+			return stack, &SectionValidationError{Section: "external docs", Cause: err}
 		}
 	}
 
@@ -1901,7 +1892,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 		}
 	}
 
-	return stack, validateExtensions(ctx, schema.Extensions)
+	return stack, validateExtensions(ctx, schema.Extensions, schema.Origin)
 }
 
 func (schema *Schema) IsMatching(value any) bool {
@@ -2122,7 +2113,7 @@ func (schema *Schema) visitNotOperation(settings *schemaValidationSettings, valu
 	if ref := schema.Not; ref != nil {
 		v := ref.Value
 		if v == nil {
-			return foundUnresolvedRef(ref.Ref)
+			return newUnresolvedRef(ref.Ref, ref.Origin)
 		}
 		if err := v.visitJSON(settings, value); err == nil {
 			if settings.failfast {
@@ -2200,7 +2191,7 @@ func (schema *Schema) visitXOFOperations(settings *schemaValidationSettings, val
 		for idx, item := range v {
 			v := item.Value
 			if v == nil {
-				return foundUnresolvedRef(item.Ref), false
+				return newUnresolvedRef(item.Ref, item.Origin), false
 			}
 
 			if discriminatorRef != "" && discriminatorRef != item.Ref {
@@ -2209,7 +2200,7 @@ func (schema *Schema) visitXOFOperations(settings *schemaValidationSettings, val
 
 			// make a deep copy to protect origin value from being injected default value that defined in mismatched oneOf schema
 			if settings.asreq || settings.asrep {
-				tempValue = deepcopy.Copy(value)
+				tempValue = deepCopyJSONValue(value)
 			}
 
 			if err := v.visitJSON(settings, tempValue); err != nil {
@@ -2263,7 +2254,7 @@ func (schema *Schema) visitXOFOperations(settings *schemaValidationSettings, val
 		for idx, item := range v {
 			v := item.Value
 			if v == nil {
-				return foundUnresolvedRef(item.Ref), false
+				return newUnresolvedRef(item.Ref, item.Origin), false
 			}
 
 			if discriminatorRef != "" && discriminatorRef != item.Ref {
@@ -2272,7 +2263,7 @@ func (schema *Schema) visitXOFOperations(settings *schemaValidationSettings, val
 
 			// make a deep copy to protect origin value from being injected default value that defined in mismatched anyOf schema
 			if settings.asreq || settings.asrep {
-				tempValue = deepcopy.Copy(value)
+				tempValue = deepCopyJSONValue(value)
 			}
 			if err := v.visitJSON(settings, tempValue); err == nil {
 				ok = true
@@ -2301,7 +2292,7 @@ func (schema *Schema) visitXOFOperations(settings *schemaValidationSettings, val
 	for _, item := range schema.AllOf {
 		v := item.Value
 		if v == nil {
-			return foundUnresolvedRef(item.Ref), false
+			return newUnresolvedRef(item.Ref, item.Origin), false
 		}
 		if err := v.visitJSON(settings, value); err != nil {
 			if settings.failfast {
@@ -2560,10 +2551,10 @@ func (schema *Schema) visitJSONNumber(settings *schemaValidationSettings, value 
 	if v := schema.MultipleOf; v != nil {
 		// "A numeric instance is valid only if division by this keyword's
 		//    value results in an integer."
-		numParsed, _ := decimal128.Parse(fmt.Sprintf("%.10f", value))
-		denParsed, _ := decimal128.Parse(fmt.Sprintf("%.10f", *v))
-		_, remainder := numParsed.QuoRem(denParsed)
-		if !remainder.IsZero() {
+		numRat, denRat := &big.Rat{}, &big.Rat{}
+		numRat.SetString(fmt.Sprintf("%.10f", value))
+		denRat.SetString(fmt.Sprintf("%.10f", *v))
+		if !(&big.Rat{}).Quo(numRat, denRat).IsInt() {
 			if settings.failfast {
 				return errSchema
 			}
@@ -2796,7 +2787,7 @@ func (schema *Schema) visitJSONArray(settings *schemaValidationSettings, value [
 	if itemSchemaRef := schema.Items; itemSchemaRef != nil {
 		itemSchema := itemSchemaRef.Value
 		if itemSchema == nil {
-			return foundUnresolvedRef(itemSchemaRef.Ref)
+			return newUnresolvedRef(itemSchemaRef.Ref, itemSchemaRef.Origin)
 		}
 		for i, item := range value {
 			if err := itemSchema.visitJSON(settings, item); err != nil {
@@ -2907,7 +2898,7 @@ func (schema *Schema) visitJSONObject(settings *schemaValidationSettings, value 
 			if propertyRef != nil {
 				p := propertyRef.Value
 				if p == nil {
-					return foundUnresolvedRef(propertyRef.Ref)
+					return newUnresolvedRef(propertyRef.Ref, propertyRef.Origin)
 				}
 				if err := p.visitJSON(settings, v); err != nil {
 					if settings.failfast {
@@ -3092,9 +3083,9 @@ func (err *SchemaError) Error() string {
 	if len(err.reversePath) > 0 {
 		buf.WriteString(`Error at "`)
 		reversePath := err.reversePath
-		for i := len(reversePath) - 1; i >= 0; i-- {
+		for _, r := range slices.Backward(reversePath) {
 			buf.WriteByte('/')
-			buf.WriteString(reversePath[i])
+			buf.WriteString(r)
 		}
 		buf.WriteString(`": `)
 	}
@@ -3163,6 +3154,25 @@ func RegisterArrayUniqueItemsChecker(fn SliceUniqueItemsChecker) {
 
 func unsupportedFormat(format string) error {
 	return fmt.Errorf("unsupported 'format' value %q", format)
+}
+
+func deepCopyJSONValue(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		cp := make(map[string]any, len(v))
+		for k, val := range v {
+			cp[k] = deepCopyJSONValue(val)
+		}
+		return cp
+	case []any:
+		cp := make([]any, len(v))
+		for i, val := range v {
+			cp[i] = deepCopyJSONValue(val)
+		}
+		return cp
+	default:
+		return v // string, float64, bool, nil — all immutable
+	}
 }
 
 // UnmarshalJSON sets Schemas to a copy of data.
