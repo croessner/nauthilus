@@ -50,6 +50,7 @@ const (
 	testCountryDE            = "DE"
 	testCountryNameGermany   = "Germany"
 	testCountryUS            = "US"
+	testGeoIPSession         = "geoip-session"
 	testProtocolIMAP         = "imap"
 	testRegistryARIN         = "arin"
 	testRegistryRIPENCC      = "ripencc"
@@ -117,6 +118,10 @@ func TestEnvironmentSourceEmitsExpectedFactsRuntimeDeltaMetricsAndTrace(t *testi
 	runtimeValue := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
 	if runtimeValue["country_iso"] != testCountryDE || runtimeValue["asn"] != 64500 {
 		t.Fatalf("runtime delta = %#v, want DE/64500", runtimeValue)
+	}
+
+	if runtimeValue["guid"] != testGeoIPSession {
+		t.Fatalf("runtime guid = %#v, want %q", runtimeValue["guid"], testGeoIPSession)
 	}
 
 	if got := metrics.observationCount(metricLookupTotal, resultMatched); got != 1 {
@@ -738,6 +743,7 @@ func environmentRequest(clientIP string) pluginapi.EnvironmentRequest {
 
 	return pluginapi.EnvironmentRequest{
 		Snapshot: pluginapi.RequestSnapshot{
+			Session:  testGeoIPSession,
 			ClientIP: clientIP,
 			Protocol: testProtocolIMAP,
 			Service:  testProtocolIMAP,

@@ -174,6 +174,7 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 	assertLuaSubjectStatusMessage(t)
 	assertBruteForcePlannedObligations(t)
 	assertRBLPlannedObligation(t)
+	assertLuaBlocklistPlannedObligation(t)
 	assertLuaAbortSkipsRemainingStageChecks(t)
 }
 
@@ -253,8 +254,8 @@ func assertBruteForcePlannedObligations(t *testing.T) {
 	)
 
 	got := EvaluateStandardAuth(bruteForceReport)
-	if len(got.Final.Obligations) != 3 {
-		t.Fatalf("obligations = %d, want 3 planned obligations", len(got.Final.Obligations))
+	if len(got.Final.Obligations) != 4 {
+		t.Fatalf("obligations = %d, want 4 planned obligations", len(got.Final.Obligations))
 	}
 
 	if got.Final.Obligations[0].ID != "auth.obligation.brute_force.update" {
@@ -267,6 +268,14 @@ func assertBruteForcePlannedObligations(t *testing.T) {
 
 	if got := got.Final.Obligations[1].Args["feature"]; got != policy.LuaActionDispatchBruteForce {
 		t.Fatalf("brute-force feature arg = %v, want %s", got, policy.LuaActionDispatchBruteForce)
+	}
+
+	if got.Final.Obligations[2].ID != policy.ObligationLuaPostActionEnqueue {
+		t.Fatalf("third obligation = %q, want lua post-action enqueue", got.Final.Obligations[2].ID)
+	}
+
+	if got.Final.Obligations[3].ID != policy.ObligationClickHousePostAction {
+		t.Fatalf("fourth obligation = %q, want clickhouse post-action", got.Final.Obligations[3].ID)
 	}
 }
 
@@ -281,12 +290,44 @@ func assertRBLPlannedObligation(t *testing.T) {
 	)
 
 	got := EvaluateStandardAuth(rblReport)
-	if len(got.Final.Obligations) != 1 || got.Final.Obligations[0].ID != policy.ObligationLuaActionDispatch {
-		t.Fatalf("rbl obligations = %#v, want lua action dispatch", got.Final.Obligations)
+	if len(got.Final.Obligations) != 2 || got.Final.Obligations[0].ID != policy.ObligationLuaActionDispatch {
+		t.Fatalf("rbl obligations = %#v, want lua action dispatch and clickhouse post-action", got.Final.Obligations)
 	}
 
 	if got := got.Final.Obligations[0].Args["feature"]; got != policy.LuaActionDispatchRBL {
 		t.Fatalf("rbl feature arg = %v, want %s", got, policy.LuaActionDispatchRBL)
+	}
+
+	if got.Final.Obligations[1].ID != policy.ObligationClickHousePostAction {
+		t.Fatalf("second rbl obligation = %q, want clickhouse post-action", got.Final.Obligations[1].ID)
+	}
+}
+
+// assertLuaBlocklistPlannedObligation verifies Lua blocklist native analytics planning.
+func assertLuaBlocklistPlannedObligation(t *testing.T) {
+	t.Helper()
+
+	blocklistReport := standardReport(
+		policy.OperationAuthenticate,
+		check("lua_environment_blocklist", policy.CheckTypeLuaEnvironment, policy.StagePreAuth, policy.CheckStatusOK),
+		boolAttr("auth.lua.environment.blocklist.triggered", policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
+	)
+
+	got := EvaluateStandardAuth(blocklistReport)
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.PolicyName != "standard_lua_environment_blocklist_trigger" {
+		t.Fatalf("policy = %q, want standard_lua_environment_blocklist_trigger", got.Final.PolicyName)
+	}
+
+	if len(got.Final.Obligations) != 2 || got.Final.Obligations[0].ID != policy.ObligationLuaActionDispatch {
+		t.Fatalf("blocklist obligations = %#v, want lua action dispatch and clickhouse post-action", got.Final.Obligations)
+	}
+
+	if got.Final.Obligations[1].ID != policy.ObligationClickHousePostAction {
+		t.Fatalf("second blocklist obligation = %q, want clickhouse post-action", got.Final.Obligations[1].ID)
 	}
 }
 

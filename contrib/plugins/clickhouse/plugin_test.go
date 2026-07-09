@@ -276,6 +276,10 @@ func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:
 	assertNumberField(t, row, "latency", 12)
 	assertNumberField(t, row, "http_status", 200)
 	assertStringField(t, row, "status_msg", "OK")
+
+	if _, ok := row["features"]; ok {
+		t.Fatal("row contains unsupported legacy features field")
+	}
 }
 
 func TestDecisionSourcesIncludeGeoIPReputationSignal(t *testing.T) {
@@ -300,22 +304,35 @@ func TestDecisionSourcesIncludeGeoIPReputationSignal(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			harness := startTestRunner(t, testModule(map[string]any{
-				"insert_url": testInsertURL,
-				"batch_size": 1,
-			}), testRunnerOptions{})
-			defer harness.stop(t)
-
-			_, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{
+			row := singleRowForRequest(t, requestOptions{
 				runtimeValues: testCase.runtimeValues,
 				facts:         testCase.facts,
-			}))
-			if err != nil {
-				t.Fatalf("EnqueuePostAction() error = %v", err)
-			}
+			})
 
-			row := decodeFirstRow(t, harness.transport.onlyRequest().body)
 			assertStringField(t, row, "decision_sources", exchange.FeatureGeoIPReputation)
+		})
+	}
+}
+
+func TestStatusMessagesCoverTerminalAnalyticsRows(t *testing.T) {
+	cases := []struct {
+		name          string
+		statusMessage string
+	}{
+		{name: "auth success", statusMessage: "OK"},
+		{name: "auth failure", statusMessage: "Invalid login or password"},
+		{name: "custom policy message", statusMessage: "Custom backend deny"},
+		{name: "oidc success", statusMessage: "OIDC token issued"},
+		{name: "pre auth deny", statusMessage: "IP address blocked"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			row := singleRowForRequest(t, requestOptions{
+				statusMessage: testCase.statusMessage,
+			})
+
+			assertStringField(t, row, "status_msg", testCase.statusMessage)
 		})
 	}
 }
@@ -341,20 +358,10 @@ func TestHIBPRuntimeOrderControlsPwndInfo(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			harness := startTestRunner(t, testModule(map[string]any{
-				"insert_url": testInsertURL,
-				"batch_size": 1,
-			}), testRunnerOptions{})
-			defer harness.stop(t)
-
-			_, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{
+			row := singleRowForRequest(t, requestOptions{
 				runtimeValues: testCase.runtimeValues,
-			}))
-			if err != nil {
-				t.Fatalf("EnqueuePostAction() error = %v", err)
-			}
+			})
 
-			row := decodeFirstRow(t, harness.transport.onlyRequest().body)
 			assertStringField(t, row, "pwnd_info", testCase.wantPwndInfo)
 		})
 	}
@@ -652,6 +659,24 @@ func testModule(pluginConfig map[string]any) config.PluginModule {
 	}
 }
 
+// singleRowForRequest enqueues one request and decodes the emitted JSONEachRow payload.
+func singleRowForRequest(t *testing.T, options requestOptions) map[string]any {
+	t.Helper()
+
+	harness := startTestRunner(t, testModule(map[string]any{
+		"insert_url": testInsertURL,
+		"batch_size": 1,
+	}), testRunnerOptions{})
+	defer harness.stop(t)
+
+	_, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, options))
+	if err != nil {
+		t.Fatalf("EnqueuePostAction() error = %v", err)
+	}
+
+	return decodeFirstRow(t, harness.transport.onlyRequest().body)
+}
+
 type requestOptions struct {
 	runtimeValues map[string]any
 	facts         []pluginapi.PolicyFact
@@ -661,6 +686,7 @@ type requestOptions struct {
 	grantType     string
 	samlEntityID  string
 	mfaMethod     string
+	statusMessage string
 	authenticated bool
 	noAuth        bool
 	disableRedis  bool
@@ -685,6 +711,11 @@ func testRequest(t *testing.T, options requestOptions) pluginapi.PostActionReque
 	service := options.service
 	if service == "" {
 		service = protocol
+	}
+
+	statusMessage := options.statusMessage
+	if statusMessage == "" {
+		statusMessage = "OK"
 	}
 
 	username := testUsername
@@ -722,7 +753,7 @@ func testRequest(t *testing.T, options requestOptions) pluginapi.PostActionReque
 				},
 			},
 			Diagnostics: pluginapi.RequestDiagnostics{
-				StatusMessage:     "OK",
+				StatusMessage:     statusMessage,
 				BruteForceName:    "bucket-a",
 				LatencyMillis:     12,
 				BruteForceCounter: 9,

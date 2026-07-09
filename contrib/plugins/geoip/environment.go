@@ -160,7 +160,7 @@ func (s geoIPEnvironmentSource) Evaluate(ctx context.Context, request pluginapi.
 	)
 	s.plugin.recordLookup(spanCtx, resultMatched, time.Since(start))
 
-	return matchResult(record), nil
+	return matchResult(record, request.Snapshot.Session), nil
 }
 
 // startSpan creates a component-scoped child span for request-time lookup work.
@@ -194,12 +194,15 @@ func missResult() pluginapi.EnvironmentResult {
 }
 
 // matchResult returns all policy-visible and runtime-visible GeoIP data for a match.
-func matchResult(record geoRecord) pluginapi.EnvironmentResult {
+func matchResult(record geoRecord, session string) pluginapi.EnvironmentResult {
 	facts := []pluginapi.PolicyFact{
 		{Attribute: factMatched, Value: true},
 	}
 	values := map[string]any{
 		resultMatched: true,
+	}
+	if session != "" {
+		values["guid"] = session
 	}
 
 	addStringFact(&facts, values, factCountryISO, geoValueCountry, record.CountryISO)

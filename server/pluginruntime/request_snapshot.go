@@ -267,13 +267,34 @@ func diagnosticsFromAuthState(auth *core.AuthState) pluginapi.RequestDiagnostics
 	}
 
 	return pluginapi.RequestDiagnostics{
-		StatusMessage:     auth.Runtime.StatusMessage,
+		StatusMessage:     snapshotStatusMessage(auth),
 		BruteForceName:    auth.Security.BruteForceName,
 		EnvironmentName:   auth.Runtime.EnvironmentName,
 		LatencyMillis:     latencyMillis(auth.Runtime.StartTime),
 		BruteForceCounter: bruteForceCounter(auth),
 		HTTPStatus:        httpStatus(auth),
 	}
+}
+
+// snapshotStatusMessage preserves selected policy text and fills terminal defaults for analytics rows.
+func snapshotStatusMessage(auth *core.AuthState) string {
+	if auth == nil {
+		return ""
+	}
+
+	if message := strings.TrimSpace(auth.Runtime.StatusMessage); message != "" {
+		return message
+	}
+
+	if auth.Runtime.Authenticated {
+		return "OK"
+	}
+
+	if auth.Runtime.StatusCodeFail > 0 {
+		return definitions.PasswordFail
+	}
+
+	return ""
 }
 
 // idPInfoFromAuthState reuses the core Lua IDP mapper when a config snapshot is available.

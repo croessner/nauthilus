@@ -34,8 +34,14 @@ facade for inserts.
 
 Input runtime exchange values use the native Go standard `plugin.exchange.*` keyspace. The plugin reads
 `plugin.exchange.geoip`, `plugin.exchange.haveibeenpwnd`, standard feature markers, and policy facts to populate the
-existing ClickHouse row fields, including `decision_sources`. The historical Lua `rt` table is not part of this native
-exchange standard and is not read by the plugin.
+existing ClickHouse row fields, including `decision_sources`. The old Lua-era `features` column is not written or
+supported by the native plugin; `decision_sources` is the supported analytics source list. The historical Lua `rt` table
+is not part of this native exchange standard and is not read by the plugin.
+
+`status_msg` is taken from the core request snapshot, which preserves selected policy/failure text and fills terminal
+success or authentication-failure defaults before native post-actions run. `client_net` is the brute-force client
+network selected by the core brute-force path, with post-action fallback from brute-force policy-report details.
+`geoip_guid` is populated from native GeoIP exchange data when the GeoIP plugin runs before ClickHouse.
 
 Policy migration:
 

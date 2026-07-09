@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strings"
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 	pluginpassword "github.com/croessner/nauthilus/v3/pluginapi/v1/password"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
@@ -121,6 +123,11 @@ func (b *EffectBridge) EnqueuePostActionPlan(
 
 const postActionPlanWorkerName = "post_action_plan"
 
+const (
+	policyAttributeLuaEnvironmentBlocklistTriggered = "auth.lua.environment.blocklist.triggered"
+	policyDetailClientNet                           = "client_net"
+)
+
 type postActionPlan struct {
 	requestContext context.Context
 	runtimeValues  map[string]any
@@ -154,12 +161,18 @@ func (b *EffectBridge) newPostActionPlan(
 	}
 
 	requestContext := context.WithoutCancel(contextFromGin(ctx))
+	runtimeValues := runtimeSnapshot(auth)
+	addPolicyDecisionSources(runtimeValues, policyCtx)
+
+	snapshot := NewRequestSnapshotFromAuthState(auth, WithSnapshotConfig(auth.Cfg()))
+	snapshot.ClientNet = policyClientNet(policyCtx, snapshot.ClientNet)
+
 	plan := postActionPlan{
 		requestContext: requestContext,
-		runtimeValues:  runtimeSnapshot(auth),
+		runtimeValues:  runtimeValues,
 		sourceSteps:    append([]core.PostActionPlanStep(nil), steps...),
 		facts:          facts,
-		snapshot:       NewRequestSnapshotFromAuthState(auth, WithSnapshotConfig(auth.Cfg())),
+		snapshot:       snapshot,
 		passwordHash:   postActionPasswordHash(auth),
 		steps:          make([]postActionPlanStep, 0, len(steps)),
 	}
@@ -174,6 +187,122 @@ func (b *EffectBridge) newPostActionPlan(
 	}
 
 	return plan, nil
+}
+
+// addPolicyDecisionSources mirrors built-in policy outcomes into the public exchange keyspace.
+func addPolicyDecisionSources(runtimeValues map[string]any, policyCtx *policycollection.DecisionContext) {
+	if runtimeValues == nil {
+		return
+	}
+
+	policyReport := decisionReport(policyCtx)
+	if policyReport == nil {
+		return
+	}
+
+	sources := exchange.StringList(runtimeValues[exchange.KeyDecisionSources])
+	if policyAttributeBool(policyReport, policyAttributeLuaEnvironmentBlocklistTriggered) {
+		sources = appendDecisionSource(sources, exchange.FeatureBlocklist)
+	}
+
+	if policyAttributeBool(policyReport, policy.AttributeRBLThresholdReached) ||
+		policyAttributeBool(policyReport, policy.AttributeRBLError) {
+		sources = appendDecisionSource(sources, exchange.FeatureRBL)
+	}
+
+	if policyAttributeBool(policyReport, policy.AttributeBruteForceTriggered) ||
+		policyAttributeBool(policyReport, policy.AttributeBruteForceError) {
+		sources = appendDecisionSource(sources, exchange.FeatureBruteForce)
+	}
+
+	if len(sources) > 0 {
+		runtimeValues[exchange.KeyDecisionSources] = sources
+	}
+}
+
+// policyClientNet returns the snapshot value or the brute-force client-net report detail.
+func policyClientNet(policyCtx *policycollection.DecisionContext, current string) string {
+	if strings.TrimSpace(current) != "" {
+		return current
+	}
+
+	policyReport := decisionReport(policyCtx)
+	if policyReport == nil {
+		return ""
+	}
+
+	for _, attributeID := range []string{
+		policy.AttributeBruteForceTriggered,
+		policy.AttributeBruteForceRepeating,
+		policy.AttributeBruteForceBucketMatchedCount,
+		policy.AttributeBruteForceBucketTriggeredCount,
+	} {
+		if value := policyDetailString(policyReport, attributeID, policyDetailClientNet); value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+// decisionReport safely unwraps the report owned by a policy context.
+func decisionReport(policyCtx *policycollection.DecisionContext) *report.DecisionReport {
+	if policyCtx == nil {
+		return nil
+	}
+
+	return policyCtx.Report()
+}
+
+// policyAttributeBool reads stable boolean policy attributes from the decision report.
+func policyAttributeBool(policyReport *report.DecisionReport, attributeID string) bool {
+	if policyReport == nil {
+		return false
+	}
+
+	attribute, ok := policyReport.Attributes[attributeID]
+	if !ok {
+		return false
+	}
+
+	value, ok := attribute.Value.(bool)
+
+	return ok && value
+}
+
+// policyDetailString returns a trimmed string representation of one report detail.
+func policyDetailString(policyReport *report.DecisionReport, attributeID string, detailName string) string {
+	if policyReport == nil {
+		return ""
+	}
+
+	attribute, ok := policyReport.Attributes[attributeID]
+	if !ok || len(attribute.Details) == 0 {
+		return ""
+	}
+
+	detail, ok := attribute.Details[detailName]
+	if !ok {
+		return ""
+	}
+
+	return strings.TrimSpace(exchange.StringValue(detail.Value))
+}
+
+// appendDecisionSource appends one source while preserving the existing order and uniqueness.
+func appendDecisionSource(sources []string, source string) []string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return sources
+	}
+
+	for _, existing := range sources {
+		if existing == source {
+			return sources
+		}
+	}
+
+	return append(sources, source)
 }
 
 // newPostActionPlanStep resolves one effect into immutable step inputs.

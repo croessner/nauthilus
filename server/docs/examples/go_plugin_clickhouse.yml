@@ -6,6 +6,10 @@
 #
 # Reference the native effect ID `clickhouse.post_action` from policy obligations
 # after the module is loaded.
+# The built-in standard policy already queues this effect for
+# `standard_brute_force_deny`, `standard_rbl_reject`, and
+# `standard_lua_environment_blocklist_trigger`; custom replacements for those
+# decisions should keep the same analytics obligation.
 
 plugins:
   verification_policy: signature_required

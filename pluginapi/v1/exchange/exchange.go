@@ -61,6 +61,12 @@ const (
 	// FeatureBlocklist identifies external blocklist policy decisions.
 	FeatureBlocklist = "blocklist"
 
+	// FeatureRBL identifies built-in RBL policy decisions.
+	FeatureRBL = "rbl"
+
+	// FeatureBruteForce identifies built-in brute-force policy decisions.
+	FeatureBruteForce = "brute_force"
+
 	// FeatureGeoIPPolicy identifies delegated GeoIP policy decisions.
 	FeatureGeoIPPolicy = "geoip_policyd"
 
@@ -113,6 +119,8 @@ const (
 
 var featureOrder = []string{
 	FeatureBlocklist,
+	FeatureRBL,
+	FeatureBruteForce,
 	FeatureGeoIPPolicy,
 	FeatureFailedLoginHotspot,
 	FeatureAccountProtection,

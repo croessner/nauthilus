@@ -113,6 +113,51 @@ func TestRequestSnapshotPopulatesLuaParityFieldsFromAuthState(t *testing.T) {
 	assertSnapshotTLS(t, snapshot)
 }
 
+func TestRequestSnapshotDefaultsTerminalStatusMessages(t *testing.T) {
+	cases := []struct {
+		name string
+		auth func(*core.AuthState)
+		want string
+	}{
+		{
+			name: "authenticated success",
+			auth: func(auth *core.AuthState) {
+				auth.Runtime.Authenticated = true
+				auth.Runtime.StatusCodeOK = 200
+			},
+			want: requestSnapshotStatusOK,
+		},
+		{
+			name: "authentication failure",
+			auth: func(auth *core.AuthState) {
+				auth.Runtime.Authenticated = false
+				auth.Runtime.StatusCodeFail = 401
+			},
+			want: definitions.PasswordFail,
+		},
+		{
+			name: "policy-selected message",
+			auth: func(auth *core.AuthState) {
+				auth.Runtime.StatusMessage = "IP address blocked"
+				auth.Runtime.StatusCodeFail = 403
+			},
+			want: "IP address blocked",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			auth := &core.AuthState{}
+			testCase.auth(auth)
+
+			snapshot := NewRequestSnapshotFromAuthState(auth)
+			if snapshot.Diagnostics.StatusMessage != testCase.want {
+				t.Fatalf("status message = %q, want %q", snapshot.Diagnostics.StatusMessage, testCase.want)
+			}
+		})
+	}
+}
+
 // newSnapshotParityAuthState builds an auth state with every safe parity surface populated.
 func newSnapshotParityAuthState() *core.AuthState {
 	auth := &core.AuthState{}
