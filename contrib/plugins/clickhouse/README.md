@@ -54,6 +54,8 @@ then:
 Use this native effect ID instead of a Lua action dispatch to `clickhouse.lua` after the module is configured. Adding or
 removing the module, changing the module name, or replacing the `.so` artifact requires a process restart. Config-only
 changes inside `plugins.modules[].config` can be applied by SIGHUP when validation succeeds.
+Nauthilus does not enqueue this external effect implicitly; add the obligation to each policy decision that should
+produce a ClickHouse row.
 
 Observability is host-integrated: the plugin registers the remote ClickHouse endpoint through
 `Host.ConnectionTargets("clickhouse")`, sends inserts through `Host.HTTP("batch")`, and records bounded queue/flush

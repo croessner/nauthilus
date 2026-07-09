@@ -507,35 +507,6 @@ func TestPolicyObligationExecutorRunsPluginEffectBridge(t *testing.T) {
 	}
 }
 
-func TestPolicyObligationExecutorSkipsUnregisteredOptionalClickHousePostAction(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t)
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation:    111,
-		Mode:          "enforce",
-		DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-
-	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-	_ = auth.requestPolicyContext(ctx)
-
-	bridge := &recordingPluginEffectBridge{ok: true}
-	previous := getPluginEffectBridge()
-
-	RegisterPluginEffectBridge(bridge)
-
-	t.Cleanup(func() {
-		RegisterPluginEffectBridge(previous)
-	})
-
-	newPolicyObligationExecutor(auth).Execute(ctx, &report.FinalDecision{
-		Obligations: []report.EffectRequest{{ID: policy.ObligationClickHousePostAction}},
-	})
-
-	if bridge.calls != 0 || bridge.planCalls != 0 {
-		t.Fatalf("bridge calls = %d/%d, want optional clickhouse skip", bridge.calls, bridge.planCalls)
-	}
-}
-
 func TestPolicyObligationExecutorEnqueuesPostActionsAsOrderedMixedPlan(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{

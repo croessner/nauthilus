@@ -49,10 +49,8 @@ const (
 	obligationBruteForceUpdate       = policy.ObligationBruteForceUpdate
 	obligationLuaActionDispatch      = policy.ObligationLuaActionDispatch
 	obligationLuaPostActionEnqueue   = policy.ObligationLuaPostActionEnqueue
-	obligationClickHousePostAction   = policy.ObligationClickHousePostAction
 	detailStatusMessage              = "status_message"
 	luaAttributeSuffixError          = ".error"
-	luaEnvironmentBlocklistName      = "blocklist"
 	mismatchNone                     = "none"
 	mismatchMultiple                 = "multiple"
 	defaultMode                      = "enforce"
@@ -338,7 +336,6 @@ func bruteForceDenyRule() standardRule {
 		{ID: obligationBruteForceUpdate},
 		{ID: obligationLuaActionDispatch, Args: luaActionEffectArgs(policy.LuaActionDispatchBruteForce, nil)},
 		{ID: obligationLuaPostActionEnqueue, Args: luaActionEffectArgs(policy.LuaActionDispatchBruteForce, nil)},
-		clickHousePostActionEffect(),
 	}
 
 	return rule
@@ -424,7 +421,6 @@ func rblRules() []standardRule {
 	)
 	rejectRule.obligations = []report.EffectRequest{
 		{ID: obligationLuaActionDispatch, Args: luaActionEffectArgs(policy.LuaActionDispatchRBL, nil)},
-		clickHousePostActionEffect(),
 	}
 
 	return []standardRule{
@@ -622,7 +618,14 @@ func luaEnvironmentRules(policyReport *report.DecisionReport, operation policy.O
 			requiredChecks:  []string{checkResult.Name},
 			condition:       attrIsTrue(prefix + ".triggered"),
 			messageSelector: attributeMessage(prefix+".triggered", definitions.PasswordFail),
-			obligations:     luaEnvironmentTriggerObligations(checkResult.Name, name),
+			obligations: []report.EffectRequest{
+				{
+					ID: obligationLuaActionDispatch,
+					Args: luaActionEffectArgs(policy.LuaActionDispatchLua, map[string]any{
+						policy.ObligationArgEnvironment: checkResult.Name,
+					}),
+				},
+			},
 		}
 		rules = append(rules,
 			standardRule{
@@ -665,29 +668,6 @@ func luaActionEffectArgs(action string, extra map[string]any) map[string]any {
 	maps.Copy(args, extra)
 
 	return args
-}
-
-// luaEnvironmentTriggerObligations builds Lua dispatch obligations and optional blocklist analytics.
-func luaEnvironmentTriggerObligations(checkName string, scriptName string) []report.EffectRequest {
-	obligations := []report.EffectRequest{
-		{
-			ID: obligationLuaActionDispatch,
-			Args: luaActionEffectArgs(policy.LuaActionDispatchLua, map[string]any{
-				policy.ObligationArgEnvironment: checkName,
-			}),
-		},
-	}
-
-	if scriptName == luaEnvironmentBlocklistName {
-		obligations = append(obligations, clickHousePostActionEffect())
-	}
-
-	return obligations
-}
-
-// clickHousePostActionEffect returns the optional native ClickHouse analytics effect.
-func clickHousePostActionEffect() report.EffectRequest {
-	return report.EffectRequest{ID: obligationClickHousePostAction}
 }
 
 func luaSubjectRules(policyReport *report.DecisionReport, operation policy.Operation) []standardRule {

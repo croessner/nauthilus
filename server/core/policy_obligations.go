@@ -188,17 +188,12 @@ func (e policyObligationExecutor) collectPluginPostAction(
 
 	bridge := getPluginEffectBridge()
 	if bridge == nil || !bridge.IsPostActionEffect(obligation) {
-		return optionalNativePostActionEffect(obligation.ID)
+		return false
 	}
 
 	*postActionPlan = append(*postActionPlan, NewNativePostActionPlanStep(obligation))
 
 	return true
-}
-
-// optionalNativePostActionEffect reports optional bundled analytics effects absent plugins may ignore.
-func optionalNativePostActionEffect(id string) bool {
-	return id == policy.ObligationClickHousePostAction
 }
 
 // collectLuaPostAction appends the default Lua post-action dispatcher as a plan step.

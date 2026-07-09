@@ -47,6 +47,8 @@ const (
 	testPluginNamedAttribute     = "plugin.native_policy.subject.named_flag"
 	testPluginObligationID       = testPluginPolicyModule + ".sync_obligation"
 	testPluginPostActionID       = testPluginPolicyModule + ".post_action"
+	testExternalPluginModule     = "clickhouse"
+	testExternalPostActionID     = testExternalPluginModule + ".post_action"
 )
 
 // assertCompileErrorContains verifies that compiling a config fails with a canonical path fragment.
@@ -842,6 +844,24 @@ func TestCompilerRegistersNativePluginPolicySurface(t *testing.T) {
 	assertNativePluginPolicySurface(t, snapshot)
 }
 
+func TestCompilerRegistersExternalPostActionFromPluginState(t *testing.T) {
+	publishCompilerPluginState(t, loadCompilerExternalPostActionPluginState(t))
+
+	effects, err := compileEffectRegistries()
+	if err != nil {
+		t.Fatalf("compileEffectRegistries() error = %v", err)
+	}
+
+	definition, ok := effects.obligations[testExternalPostActionID]
+	if !ok {
+		t.Fatalf("obligation %q missing", testExternalPostActionID)
+	}
+
+	if definition.Kind != effectKindPostAction {
+		t.Fatalf("obligation kind = %q, want %q", definition.Kind, effectKindPostAction)
+	}
+}
+
 func TestCompilerRejectsPluginCustomFactWithUnresolvedProducerCheck(t *testing.T) {
 	publishCompilerPluginState(t, loadCompilerPluginState(t))
 
@@ -1224,11 +1244,23 @@ func backendAttributePolicy(name string, attribute string, operation policy.Oper
 func loadCompilerPluginState(t *testing.T) *pluginloader.State {
 	t.Helper()
 
+	return loadCompilerPluginStateForModule(t, testPluginPolicyModule, compilerPolicyPlugin{})
+}
+
+func loadCompilerExternalPostActionPluginState(t *testing.T) *pluginloader.State {
+	t.Helper()
+
+	return loadCompilerPluginStateForModule(t, testExternalPluginModule, compilerExternalPostActionPlugin{})
+}
+
+func loadCompilerPluginStateForModule(t *testing.T, moduleName string, plugin pluginapi.Plugin) *pluginloader.State {
+	t.Helper()
+
 	artifact := writeCompilerPluginArtifact(t)
 	opener := compilerPluginOpener{
 		artifact: compilerPluginHandle{
 			symbol: func() (pluginapi.Plugin, error) {
-				return compilerPolicyPlugin{}, nil
+				return plugin, nil
 			},
 		},
 	}
@@ -1236,7 +1268,7 @@ func loadCompilerPluginState(t *testing.T) *pluginloader.State {
 	state, err := pluginloader.NewLoader(pluginloader.WithOpener(opener)).Load([]pluginloader.VerifiedModule{
 		{
 			Module: config.PluginModule{
-				Name: testPluginPolicyModule,
+				Name: moduleName,
 				Type: config.PluginModuleTypeGo,
 				Path: artifact,
 			},
@@ -1374,4 +1406,18 @@ func (t compilerPostActionTarget) Name() string {
 
 func (t compilerPostActionTarget) Enqueue(context.Context, pluginapi.PostActionRequest) (pluginapi.PostActionEnqueueResult, error) {
 	return pluginapi.PostActionEnqueueResult{}, nil
+}
+
+type compilerExternalPostActionPlugin struct{}
+
+func (p compilerExternalPostActionPlugin) Metadata() pluginapi.Metadata {
+	return pluginapi.Metadata{
+		Name:       testExternalPluginModule,
+		Version:    "1.0.0",
+		APIVersion: pluginapi.APIVersion,
+	}
+}
+
+func (p compilerExternalPostActionPlugin) Register(registrar pluginapi.Registrar) error {
+	return registrar.RegisterPostActionTarget(compilerPostActionTarget{})
 }

@@ -359,9 +359,6 @@ const (
 
 	// ObligationLuaPostActionEnqueue identifies Lua post-action enqueue enforcement.
 	ObligationLuaPostActionEnqueue = "auth.obligation.lua_post_action.enqueue"
-
-	// ObligationClickHousePostAction identifies the optional native ClickHouse analytics post-action.
-	ObligationClickHousePostAction = "clickhouse.post_action"
 )
 
 const (

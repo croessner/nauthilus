@@ -258,7 +258,6 @@ func builtinObligationRegistry() map[string]policyruntime.EffectDefinition {
 		policy.ObligationBruteForceUpdate:     {ID: policy.ObligationBruteForceUpdate, Kind: effectKindObligation},
 		policy.ObligationLuaActionDispatch:    {ID: policy.ObligationLuaActionDispatch, Kind: effectKindObligation},
 		policy.ObligationLuaPostActionEnqueue: {ID: policy.ObligationLuaPostActionEnqueue, Kind: effectKindObligation},
-		policy.ObligationClickHousePostAction: {ID: policy.ObligationClickHousePostAction, Kind: effectKindObligation},
 	}
 }
 
