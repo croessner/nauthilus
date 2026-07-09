@@ -87,7 +87,7 @@ func TestDecodeModuleConfigDefaultsAndValidation(t *testing.T) { //nolint:gocycl
 		t.Fatalf("decodeModuleConfig(defaults) error = %v", err)
 	}
 
-	if cfg.InsertURL != "" || cfg.BatchSize != defaultBatchSize || cfg.CacheKey != defaultCacheKey {
+	if cfg.InsertURL != "" || cfg.BatchSize != defaultBatchSize || cfg.CacheKey != defaultCacheKey || cfg.Deployment != "" || cfg.Instance != "" {
 		t.Fatalf("defaults = %#v, want empty URL, batch %d, cache %q", cfg, defaultBatchSize, defaultCacheKey)
 	}
 
@@ -96,6 +96,8 @@ func TestDecodeModuleConfigDefaultsAndValidation(t *testing.T) { //nolint:gocycl
 	}
 
 	valid, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
+		"deployment":         " prod ",
+		"instance":           " nauthilus_k8s ",
 		"insert_url":         testInsertURL,
 		"batch_size":         2,
 		"cache_key":          testCacheKey,
@@ -107,7 +109,7 @@ func TestDecodeModuleConfigDefaultsAndValidation(t *testing.T) { //nolint:gocycl
 		t.Fatalf("decodeModuleConfig(valid) error = %v", err)
 	}
 
-	if valid.InsertURL != testInsertURL || valid.BatchSize != 2 || valid.Timeout != 250*time.Millisecond || valid.AuthDedupTTL != 5*time.Minute {
+	if valid.InsertURL != testInsertURL || valid.BatchSize != 2 || valid.Timeout != 250*time.Millisecond || valid.AuthDedupTTL != 5*time.Minute || valid.Deployment != "prod" || valid.Instance != "nauthilus_k8s" {
 		t.Fatalf("valid config = %#v", valid)
 	}
 
@@ -177,8 +179,17 @@ func TestOIDCTokenPostActionRowContainsIDPFields(t *testing.T) {
 	assertStringField(t, row, "mfa_method", "webauthn")
 }
 
+func TestSourceLabelsDefaultToEmptyStrings(t *testing.T) {
+	row := singleRowForRequest(t, requestOptions{})
+
+	assertStringField(t, row, "deployment", "")
+	assertStringField(t, row, "instance", "")
+}
+
 func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:funlen // The test enumerates the Lua-compatible row contract in one place.
 	harness := startTestRunner(t, testModule(map[string]any{
+		"deployment": "prod",
+		"instance":   "nauthilus_k8s",
 		"insert_url": testInsertURL,
 		"batch_size": 1,
 	}), testRunnerOptions{})
@@ -249,6 +260,8 @@ func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:
 	row := decodeFirstRow(t, harness.transport.onlyRequest().body)
 	assertStringField(t, row, "session", "sess-1")
 	assertStringField(t, row, "service", "imap")
+	assertStringField(t, row, "deployment", "prod")
+	assertStringField(t, row, "instance", "nauthilus_k8s")
 	assertStringField(t, row, "client_ip", testClientIP)
 	assertStringField(t, row, "proto", "imap")
 	assertStringField(t, row, "method", "plain")

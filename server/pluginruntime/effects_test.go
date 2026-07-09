@@ -3,13 +3,16 @@ package pluginruntime
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
 	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
@@ -166,6 +169,56 @@ func TestEffectBridgeAddsBuiltinDecisionSourcesAndClientNetToPostAction(t *testi
 
 		if request.Snapshot.ClientNet != "203.0.113.0/24" {
 			t.Fatalf("client net = %q, want 203.0.113.0/24", request.Snapshot.ClientNet)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("post-action target was not invoked")
+	}
+
+	host.WaitWorkers()
+}
+
+func TestEffectBridgePostActionAcceptsBuiltinStringSetRuntime(t *testing.T) {
+	requests := make(chan pluginapi.PostActionRequest, 1)
+	target := &fakePostActionTarget{requests: requests}
+	host := NewHost()
+	bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+		return registrar.RegisterPostActionTarget(target)
+	}, WithHost(host))
+	auth := newSubjectTestAuth(t)
+
+	controls := config.NewStringSet()
+	controls.Set(definitions.ControlRBL)
+	auth.Runtime.Context.Set(definitions.LuaCtxBuiltin, controls)
+
+	policyCtx := auth.PolicyDecisionContext(auth.Request.HTTPClientContext)
+	policyCtx.RecordAttribute(policycollection.BoolAttribute(
+		policy.AttributeRBLThresholdReached,
+		policy.StagePreAuth,
+		policy.OperationAuthenticate,
+		true,
+		nil,
+	))
+
+	handled, ok := bridge.ExecutePolicyEffect(auth.Request.HTTPClientContext, auth.View(), report.EffectRequest{
+		ID: effectPostActionQualified,
+	})
+	if !handled || !ok {
+		t.Fatalf("ExecutePolicyEffect() handled=%t ok=%t, want true/true", handled, ok)
+	}
+
+	select {
+	case request := <-requests:
+		if got := exchange.NewSnapshot(request.Runtime, request.Facts).DecisionSourcesString(); got != exchange.FeatureRBL {
+			t.Fatalf("decision sources = %q, want %q", got, exchange.FeatureRBL)
+		}
+
+		value, ok := request.Runtime.Get(definitions.LuaCtxBuiltin)
+		if !ok {
+			t.Fatal("builtin runtime value is missing")
+		}
+
+		if got, want := exchange.StringList(value), []string{definitions.ControlRBL}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("builtin runtime value = %#v, want %#v", got, want)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("post-action target was not invoked")

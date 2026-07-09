@@ -80,7 +80,7 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 		return pluginapi.PostActionEnqueueResult{Enqueued: false}, nil
 	}
 
-	rowJSON, err := encodeRequestRow(request)
+	rowJSON, err := encodeRequestRow(request, state.config)
 	if err != nil {
 		span.RecordError(err)
 		state.metrics.recordQueueResult(ctx, resultEncodeError)
@@ -116,8 +116,8 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 }
 
 // encodeRequestRow builds and encodes a ClickHouse row for module-cache storage.
-func encodeRequestRow(request pluginapi.PostActionRequest) ([]byte, error) {
-	row, err := buildRow(request)
+func encodeRequestRow(request pluginapi.PostActionRequest, cfg moduleConfig) ([]byte, error) {
+	row, err := buildRow(request, cfg)
 	if err != nil {
 		return nil, err
 	}

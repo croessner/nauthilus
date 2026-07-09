@@ -16,8 +16,10 @@
 package lualib
 
 import (
+	"reflect"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/lualib/convert"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -210,5 +212,20 @@ func TestContextDelete(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNormalizeContextValueConvertsStringSet(t *testing.T) {
+	t.Parallel()
+
+	set := config.NewStringSet()
+	set.Set("rbl")
+	set.Set("blocklist")
+
+	got := NormalizeContextValue(set)
+	want := []string{"blocklist", "rbl"}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeContextValue(StringSet) = %#v, want %#v", got, want)
 	}
 }

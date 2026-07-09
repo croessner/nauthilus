@@ -38,6 +38,10 @@ existing ClickHouse row fields, including `decision_sources`. The old Lua-era `f
 supported by the native plugin; `decision_sources` is the supported analytics source list. The historical Lua `rt` table
 is not part of this native exchange standard and is not read by the plugin.
 
+The optional `deployment` and `instance` module config fields are serialized into each ClickHouse row so mixed writers
+can be separated in analytics. Kubernetes deployments should normally set them from `${NAUTHILUS_ENV}` and
+`${NAUTHILUS_RUNTIME_INSTANCE_NAME}`.
+
 `status_msg` is taken from the core request snapshot, which preserves selected policy/failure text and fills terminal
 success or authentication-failure defaults before native post-actions run. `client_net` is the brute-force client
 network selected by the core brute-force path, with post-action fallback from brute-force policy-report details.

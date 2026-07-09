@@ -34,6 +34,8 @@ const (
 )
 
 type moduleConfig struct {
+	Deployment       string        `mapstructure:"-"`
+	Instance         string        `mapstructure:"-"`
 	InsertURL        string        `mapstructure:"-"`
 	User             string        `mapstructure:"-"`
 	Password         string        `mapstructure:"-"`
@@ -45,6 +47,8 @@ type moduleConfig struct {
 }
 
 type rawModuleConfig struct {
+	Deployment       string `mapstructure:"deployment"`
+	Instance         string `mapstructure:"instance"`
 	InsertURL        string `mapstructure:"insert_url"`
 	User             string `mapstructure:"user"`
 	Password         string `mapstructure:"password"`
@@ -95,6 +99,8 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 	}
 
 	return moduleConfig{
+		Deployment:       strings.TrimSpace(raw.Deployment),
+		Instance:         strings.TrimSpace(raw.Instance),
 		InsertURL:        insertURL,
 		User:             strings.TrimSpace(raw.User),
 		Password:         raw.Password,

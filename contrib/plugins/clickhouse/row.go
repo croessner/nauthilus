@@ -50,6 +50,8 @@ type clickHouseRow struct {
 	TS                        string   `json:"ts"`
 	Session                   string   `json:"session"`
 	Service                   string   `json:"service"`
+	Deployment                string   `json:"deployment"`
+	Instance                  string   `json:"instance"`
 	DecisionSources           string   `json:"decision_sources"`
 	ClientIP                  string   `json:"client_ip"`
 	ClientPort                string   `json:"client_port"`
@@ -123,7 +125,7 @@ type clickHouseRow struct {
 }
 
 // buildRow maps one post-action request into the Lua-compatible ClickHouse row.
-func buildRow(request pluginapi.PostActionRequest) (clickHouseRow, error) {
+func buildRow(request pluginapi.PostActionRequest, cfg moduleConfig) (clickHouseRow, error) {
 	exchangeSnapshot := exchange.NewSnapshot(request.Runtime, request.Facts)
 
 	row := clickHouseRow{
@@ -131,6 +133,8 @@ func buildRow(request pluginapi.PostActionRequest) (clickHouseRow, error) {
 		Session:           request.Snapshot.Session,
 		Service:           request.Snapshot.Service,
 		DecisionSources:   exchangeSnapshot.DecisionSourcesString(),
+		Deployment:        cfg.Deployment,
+		Instance:          cfg.Instance,
 		ClientIP:          request.Snapshot.ClientIP,
 		ClientPort:        request.Snapshot.ClientPort,
 		ClientNet:         request.Snapshot.ClientNet,

@@ -19,9 +19,11 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"sort"
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/lualib/convert"
 	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
@@ -304,6 +306,10 @@ func cloneContextValue(value any) any {
 // NormalizeContextValue converts Lua context containers into runtime-compatible Go containers.
 func NormalizeContextValue(value any) any {
 	switch typed := value.(type) {
+	case config.StringSet:
+		values := (&typed).GetStringSlice()
+		sort.Strings(values)
+		return values
 	case map[string]any:
 		normalized := make(map[string]any, len(typed))
 		for key, nested := range typed {
