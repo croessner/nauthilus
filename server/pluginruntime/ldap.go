@@ -335,17 +335,3 @@ func cloneLDAPModifyRequest(request pluginapi.LDAPModifyRequest) pluginapi.LDAPM
 
 	return request
 }
-
-// cloneStringSliceMap deep-copies a map of string slices.
-func cloneStringSliceMap(values map[string][]string) map[string][]string {
-	if len(values) == 0 {
-		return map[string][]string{}
-	}
-
-	cloned := make(map[string][]string, len(values))
-	for key, entries := range values {
-		cloned[key] = append([]string(nil), entries...)
-	}
-
-	return cloned
-}

@@ -75,8 +75,8 @@ func NewHookRequestFromHTTPRequest(
 	metadata = hookMetadataWithRequestDefaults(metadata, request, remoteHost, remotePort)
 
 	return pluginapi.HookRequest{
-		Snapshot: hookRequestSnapshot(method, userAgent, cloneHeaderValues(headers), metadata),
-		Headers:  cloneHeaderValues(headers),
+		Snapshot: hookRequestSnapshot(method, userAgent, cloneStringSliceMap(headers), metadata),
+		Headers:  cloneStringSliceMap(headers),
 		Query:    query,
 		Body:     slices.Clone(body),
 		Path:     path,
@@ -200,7 +200,7 @@ func queryFromHTTPRequest(request *http.Request) map[string][]string {
 		return map[string][]string{}
 	}
 
-	return cloneHeaderValues(map[string][]string(request.URL.Query()))
+	return cloneStringSliceMap(map[string][]string(request.URL.Query()))
 }
 
 // requestFields extracts immutable request metadata from net/http.
@@ -226,18 +226,4 @@ func splitRemoteAddr(remoteAddr string) (string, string) {
 	}
 
 	return host, port
-}
-
-// cloneHeaderValues copies header or query maps so plugins cannot mutate host state.
-func cloneHeaderValues(values map[string][]string) map[string][]string {
-	if len(values) == 0 {
-		return map[string][]string{}
-	}
-
-	cloned := make(map[string][]string, len(values))
-	for key, value := range values {
-		cloned[key] = slices.Clone(value)
-	}
-
-	return cloned
 }
