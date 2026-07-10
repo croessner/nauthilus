@@ -499,6 +499,12 @@ func (m *BackendManager) passDBResult(auth *core.AuthState, result pluginapi.Bac
 	passDBResult.Attributes = pluginAttributeMapping(result.Attributes)
 	passDBResult.AdditionalAttributes = pluginAdditionalAttributes(result.Status, facts)
 
+	if err := mapPluginBackendIdentity(passDBResult, result.Identity); err != nil {
+		core.PutPassDBResultToPool(passDBResult)
+
+		return nil, m.temporaryError()
+	}
+
 	if passDBResult.Account != "" {
 		if passDBResult.Attributes == nil {
 			passDBResult.Attributes = make(bktype.AttributeMapping)
@@ -529,6 +535,44 @@ func pluginResultAccountField(result pluginapi.BackendResult) (string, error) {
 	}
 
 	return result.AccountField, nil
+}
+
+// mapPluginBackendIdentity validates and copies public identity metadata into core state.
+func mapPluginBackendIdentity(target *core.PassDBResult, identity pluginapi.BackendIdentityResult) error {
+	fieldNames := [...]string{
+		identity.UniqueUserIDField,
+		identity.DisplayNameField,
+		identity.TOTPSecretField,
+		identity.TOTPRecoveryField,
+	}
+
+	for _, fieldName := range fieldNames {
+		if fieldName == "" {
+			continue
+		}
+
+		if err := pluginapi.ValidateBackendAttributeName(fieldName); err != nil {
+			return err
+		}
+	}
+
+	identity = clonePluginBackendIdentity(identity)
+	target.UniqueUserIDField = identity.UniqueUserIDField
+	target.DisplayNameField = identity.DisplayNameField
+	target.TOTPSecretField = identity.TOTPSecretField
+	target.TOTPRecoveryField = identity.TOTPRecoveryField
+	target.Groups = identity.Groups
+	target.GroupDistinguishedNames = identity.GroupDistinguishedNames
+
+	return nil
+}
+
+// clonePluginBackendIdentity copies identity collections for one runtime boundary.
+func clonePluginBackendIdentity(identity pluginapi.BackendIdentityResult) pluginapi.BackendIdentityResult {
+	identity.Groups = slices.Clone(identity.Groups)
+	identity.GroupDistinguishedNames = slices.Clone(identity.GroupDistinguishedNames)
+
+	return identity
 }
 
 // temporaryError returns a secret-safe temporary backend failure.

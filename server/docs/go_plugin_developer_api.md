@@ -435,6 +435,47 @@ Use `Host.Helpers()` or the dependency-light `pluginapi/v1/helpers` package for 
 account hash tags, scoped IPs, and routable IP checks. The runtime facade derives account-tag and IP-scoping options from
 the loaded Nauthilus configuration and Lua-compatible environment knobs.
 
+### LDAP
+
+Keep the `Host` received by `Start` when request-time components need LDAP. Search and modify are explicit host calls:
+
+```go
+result, err := host.LDAP().Search(ctx, pluginapi.LDAPSearchRequest{
+    PoolName:   "default",
+    BaseDN:     "ou=people,dc=example,dc=test",
+    Filter:     "(uid=sample)",
+    Scope:      pluginapi.LDAPScopeSub,
+    Attributes: []string{"mail", "memberOf"},
+})
+if err != nil {
+    return pluginapi.SubjectResult{}, err
+}
+
+if len(result.Entries) == 0 {
+    return pluginapi.SubjectResult{Rejected: true}, nil
+}
+
+err = host.LDAP().Modify(ctx, pluginapi.LDAPModifyRequest{
+    PoolName:  "default",
+    DN:        result.Entries[0].DN,
+    Operation: pluginapi.LDAPModifyReplace,
+    Attributes: map[string][]string{
+        "description": {"sample-updated"},
+    },
+})
+if err != nil {
+    return pluginapi.SubjectResult{}, err
+}
+```
+
+`Search` returns `LDAPSearchResult` and an error directly; `Modify` returns its error directly. The host never merges
+the search result into `BackendResult`, `SubjectRequest.BackendResult`, or `BackendResultPatch`. After a successful
+call, plugin code must deliberately return allowed attributes, facts, logs, status, rejection, or temporary failure.
+
+`LDAPSearchResult.Entries` contains copied public `pluginapi.LDAPEntry` values converted from internal LDAP entries.
+Their attribute maps and value slices do not expose raw internal entries, queues, connections, or shared mutable
+storage.
+
 ## Representative Contract Examples
 
 `pluginapi/v1/testdata/sampleplugin` is the compact compile-contract fixture for plugin authors. It deliberately uses
@@ -442,8 +483,12 @@ only public API types and exercises the final v1 surfaces that are easy to keep 
 
 - request snapshots: backend and environment callbacks read safe listener, client-network, IDP/MFA, TLS, and
   `AuthLoginAttempt` values from `RequestSnapshot`;
-- backend results: the sample backend returns `Account`, custom `AccountField`, attributes, authentication flags, and a
-  registered backend policy fact;
+- backend results: the sample backend returns `Account`, custom `AccountField`, synthetic identity field names and
+  groups, attributes, authentication flags, and a registered backend policy fact;
+- passwordless lookup: the sample returns the same synthetic identity result when `Runtime.NoAuth` is set and exits
+  before credential access;
+- typed MFA: the sample demonstrates discovery of the four independent optional backend interfaces, while MFA state
+  remains on implementations of those typed interfaces and never enters `BackendResult`;
 - subject sources: the sample subject source reads the current backend result, returns a value-only
   `BackendResultPatch`, logs a bounded field, and sets an allowed response header through `SubjectResult.Response`;
 - effects: the sample obligation reads policy args/facts, returns a registered `auth_decision` fact, sets explicit logs
@@ -655,11 +700,17 @@ Evidence examples include `backend/proxy_backend.lua`, `subject/idp_policy.lua`,
 | Account listing | Lua backend account providers | `Backend.ListAccounts` and `AccountListResult.Facts`. | `exposed` | Runtime validates and emits account-provider facts. |
 | Backend result account field | `LuaBackendResult.AccountField` | `BackendResult.AccountField`; `SubjectRequest.BackendResult.AccountField`; `BackendResultPatch.AccountField`. | `exposed` | Runtime maps custom fields into `PassDBResult.AccountField` and keeps the account value under the selected backend attribute. |
 | Backend result attributes | `nauthilus_backend_result` | `BackendResult.Attributes`, `SubjectResult.BackendAttributes`, `BackendResultPatch.Attributes`. | `exposed` | Direct string attribute set/delete is available; full backend-result pointer replacement is unsupported. |
-| Backend result groups and display fields | `LuaBackendResult` fields | No dedicated fields. | `missing` | Can be plugin-owned attributes, but the native contract is not equivalent. |
+| Backend result identity metadata | `LuaBackendResult` unique-ID, display-name, TOTP field-name, group, and group-DN fields | `BackendResult.Identity` with `BackendIdentityResult`; safe values are also populated on `SubjectRequest.BackendResult.Identity`. | `exposed` | Native forward mapping covers all six identity properties. Found-user groups are authoritative; subject readback clones mutable collections per request. |
 | TOTP add/delete/verify flows | `backend/proxy_backend.lua`, backend examples | Optional `TOTPBackend`. | `helper-facade` | Native API uses begin/finish/verify/delete flows instead of raw Lua request fields. |
 | Recovery-code add/use/delete flows | `backend/proxy_backend.lua` | Optional `RecoveryCodeBackend`. | `helper-facade` | Native API generates/uses/deletes codes; arbitrary code injection is not a direct request field. |
 | WebAuthn list/save/update/delete | `backend/proxy_backend.lua` | Optional `WebAuthnBackend`. | `helper-facade` | Native API uses typed `WebAuthnCredential` values. |
 | Public MFA state | Identity edge use cases | Optional `PublicMFAStateBackend`. | `exposed` | Native API has typed public MFA metadata. |
+
+Native, remote, and Lua backends do not have identical result objects. Native Go uses the explicit
+`BackendIdentityResult` value and typed optional MFA interfaces. Remote user snapshots currently populate account,
+synthetic unique-ID and display-name fields, attributes, groups, group DNs, and backend reference; the remote password
+response has its separate implemented field set. Lua retains a wider mutable backend result, including serialized
+WebAuthn credential values. These are documented differences, not claims that remote or Lua runtime behavior changed.
 
 ### Init, Hooks, And Stale Lua Expectations
 
@@ -787,8 +838,18 @@ return pluginapi.SubjectResult{
 ```
 
 The patch supports account, account field, user-found/authenticated flags, selected backend, and string backend
-attributes. Full backend-result replacement, mutable backend result pointers, group replacement, and arbitrary internal
-status mutation are unsupported.
+attributes. It cannot patch unique-ID or display-name field metadata, TOTP field names, groups, group DNs, status,
+facts, or WebAuthn values. Full backend-result replacement and mutable backend result pointers remain unsupported.
+
+`SubjectRequest.BackendResult` includes safe identity readback from the retained PassDB result. Every subject invocation,
+including parallel siblings, receives independent copies of attributes, groups, and group DNs. Mutating those input
+values does not mutate retained core state or another subject request. Forward backend mapping preserves plugin status
+and validated facts internally, but reverse subject readback intentionally leaves `BackendResult.Status` and
+`BackendResult.Facts` empty.
+
+`BackendResult.BackendServer` identifies the authority returned by the backend call. `SubjectResult.SelectedBackend`
+and `BackendResultPatch.SelectedBackend` are subject outputs that select a replacement for later processing; they do
+not add a `SelectedBackend` field to `BackendResult`.
 
 Subject sources that need monitored backend targets should keep the `Host` facade received by their runtime plugin
 `Start` method and read candidates through `host.BackendServers().List(ctx)`. The host returns defensive value copies
@@ -864,9 +925,32 @@ type backend struct {
 func (b *backend) Name() string { return "passdb" }
 
 func (b *backend) VerifyPassword(ctx context.Context, request pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+    result := pluginapi.BackendResult{
+        UserFound:    true,
+        Account:      request.Username,
+        AccountField: "uid",
+        Attributes: map[string][]string{
+            "uid":         {request.Username},
+            "entryUUID":   {"sample-user-id"},
+            "displayName": {"Sample User"},
+        },
+        Identity: pluginapi.BackendIdentityResult{
+            UniqueUserIDField:       "entryUUID",
+            DisplayNameField:        "displayName",
+            TOTPSecretField:         "totpSecret",
+            TOTPRecoveryField:       "totpRecovery",
+            Groups:                  []string{"sample-users"},
+            GroupDistinguishedNames: []string{"cn=sample-users,dc=example,dc=test"},
+        },
+    }
+
+    if request.Snapshot.Runtime.NoAuth {
+        return result, nil
+    }
+
     secret, ok := request.Credentials.Password(ctx)
     if !ok {
-        return pluginapi.BackendResult{UserFound: true, Authenticated: false}, nil
+        return result, nil
     }
 
     matched, err := password.CompareHash(b.lookupPasswordHash(request.Username), secret)
@@ -874,18 +958,12 @@ func (b *backend) VerifyPassword(ctx context.Context, request pluginapi.BackendA
         return pluginapi.BackendResult{}, err
     }
 
-    return pluginapi.BackendResult{
-        UserFound:     true,
-        Authenticated: matched,
-        Account:       request.Username,
-        AccountField:  "account",
-        Attributes: map[string][]string{
-            "account": []string{request.Username},
-        },
-        Facts: []pluginapi.PolicyFact{
-            {Attribute: "plugin.backend.customer_sql.authenticated", Value: matched},
-        },
-    }, nil
+    result.Authenticated = matched
+    result.Facts = []pluginapi.PolicyFact{
+        {Attribute: "plugin.backend.customer_sql.authenticated", Value: matched},
+    }
+
+    return result, nil
 }
 
 func (b *backend) ListAccounts(ctx context.Context, request pluginapi.AccountListRequest) (pluginapi.AccountListResult, error) {
@@ -906,6 +984,18 @@ auth:
     order:
       - plugin(customer_sql.passdb)
 ```
+
+Non-empty identity field names use the same backend-attribute grammar as `AccountField`. The runtime copies backend
+attributes, groups, and group DNs before retaining them. Empty identity field names preserve existing runtime field
+state. For a found user, returned groups and group DNs are authoritative: empty slices deliberately clear previously
+resolved values.
+
+IdP username lookup sets `Runtime.NoAuth`. A native backend can return `UserFound`, account, attributes, and identity
+metadata without reading `Credentials`; the compact sample and the example above branch before password access. TOTP
+field names in `BackendIdentityResult` are field-name metadata only and do not carry secret or recovery-code values.
+
+`BackendResult.BackendServer` remains the forward backend authority reference. Backend results do not have a subject
+`SelectedBackend` property.
 
 Optional MFA interfaces are attached to the same backend component:
 
@@ -933,6 +1023,16 @@ Lua backend examples pass raw fields such as `totp_secret`, `totp_recovery_codes
 | `webauthn_credential` list/save/delete | `WebAuthnListRequest`, `WebAuthnSaveRequest.Credential`, and `WebAuthnDeleteRequest.CredentialID`. |
 | `webauthn_old_credential` plus replacement credential | `WebAuthnUpdateRequest.OldCredential` and `NewCredential`. |
 | Public MFA metadata | `PublicMFAStateRequest` and `PublicMFAStateResult`. |
+
+The four optional interfaces are authoritative for plugin-owned MFA state. If an interface is absent, the adapter
+returns the established unknown-backend result. Plugin errors and panics become secret-safe temporary failures. Core
+edge calls that supply a selected TOTP secret or selected recovery-code values remain rejected for plugin backends;
+registration and generation must use the typed requests.
+
+`BackendIdentityResult.TOTPSecretField` and `TOTPRecoveryField` are only a compatibility bridge for core-managed
+attribute storage. Their presence does not enable edge-selected value writes and does not replace `TOTPBackend` or
+`RecoveryCodeBackend`. WebAuthn credentials and ceremony data remain on `WebAuthnBackend` and public MFA state; no
+WebAuthn field exists on `BackendResult`.
 
 The host maps backend errors to secret-safe temporary failures. Do not return raw SQL statements, LDAP filters, tokens,
 or password-derived details in errors.
@@ -1237,7 +1337,10 @@ The following implementation notes are visible in the current codebase and shoul
 | --- | --- | --- |
 | Host facades | Production host construction supplies config, Redis, LDAP, logging, tracing, metrics, host-managed HTTP, connection-target registration, and supervised workers. Policy data is not exposed through the process-scoped host. | Use `Registrar.RegisterPolicyAttribute` for declarations and extension result `Facts` for request-time policy data. |
 | Request snapshots | Auth and hook adapters populate safe request identity, listener/client metadata, IDP/MFA policy inputs, legacy TLS compatibility values, diagnostics, and outcome flags. | Treat snapshots as immutable and redacted. Use `CredentialProvider` and typed backend operations for secrets and credential-shaped values. |
-| Backend result patching | Subject sources can patch account, account field, auth flags, selected backend, and string attributes through `BackendResultPatch`. Full mutable backend-result replacement is not exposed. | Return explicit value patches and keep plugin-owned state inside the module instance. |
+| Backend identity results | Native backends can return validated unique-ID, display-name, TOTP field-name, group, and group-DN metadata through `BackendIdentityResult`. Attributes and group slices are copied at runtime boundaries; found-user empty groups clear prior resolved values. | Return field names rather than secret values. Use `Runtime.NoAuth` for passwordless identity lookup and treat group slices as authoritative. |
+| Subject identity readback | Subject requests receive safe identity metadata plus the backend authority reference with per-request clones. Status and facts are intentionally not reconstructed from internal forward storage. | Treat input as request-local. Use returned facts/status for new subject output and do not depend on reverse reconstruction. |
+| Backend result patching | Subject sources can patch account, account field, auth flags, selected backend, and string attributes through `BackendResultPatch`. Identity metadata, groups, status, facts, and MFA values are outside the patch. | Return explicit value patches and keep plugin-owned state inside the module instance. |
+| LDAP results | `Host.LDAP().Search` returns an explicit `LDAPSearchResult`; `Modify` returns its error. Entry values are copied public `LDAPEntry` values and are not attached to backend-result state. | Call LDAP explicitly, handle errors, then deliberately return allowed plugin outputs. |
 | Response mutation | Subject sources and synchronous obligations can set or delete allowed response headers while the HTTP response is still mutable. Post-actions have no response mutation field. | Use result-bound `ResponseMutation`; do not expect async work, gRPC paths, already-written responses, or forbidden headers to mutate client output. |
 | Effect requests | Native obligations and post-actions receive policy-selected `Args` and validated Lua/native plugin `Facts` from the active decision context. | Keep effects policy-selected; use explicit logs for public output and register every fact before emission. Use `clickhouse.post_action` and `haveibeenpwnd.post_action` for the bundled native action replacements. |
 | Host-managed HTTP | `Host.HTTP(scope)` validates outbound requests, injects trace headers, applies context timeouts and response body limits, records `host_http_client_*` metrics, and logs only bounded fields. | Prefer this facade for Lua-style outbound HTTP migrations such as blocklist, GeoIP, HIBP, proxy backends, Telegram, and ClickHouse inserts when the value-oriented request shape is sufficient. |

@@ -77,6 +77,8 @@ func (samplePlugin) Metadata() pluginapi.Metadata {
 
 // Register declares fixture components through the public registrar.
 func (samplePlugin) Register(registrar pluginapi.Registrar) error {
+	sampleOptionalMFAInterfaceDiscovery(sampleBackend{})
+
 	if err := registrar.RequireCapability(pluginapi.CapabilityCredentials); err != nil {
 		return err
 	}
@@ -154,6 +156,14 @@ func (samplePlugin) Register(registrar pluginapi.Registrar) error {
 	return registrar.RegisterHook(sampleTextmapHook{name: "textmap_head", method: http.MethodHead})
 }
 
+// sampleOptionalMFAInterfaceDiscovery demonstrates independent optional MFA interface checks.
+func sampleOptionalMFAInterfaceDiscovery(backend pluginapi.Backend) {
+	_, _ = backend.(pluginapi.TOTPBackend)
+	_, _ = backend.(pluginapi.RecoveryCodeBackend)
+	_, _ = backend.(pluginapi.WebAuthnBackend)
+	_, _ = backend.(pluginapi.PublicMFAStateBackend)
+}
+
 // Start demonstrates access to host-provided immutable backend candidates.
 func (samplePlugin) Start(ctx context.Context, host pluginapi.Host) error {
 	_ = host.BackendServers().List(ctx)
@@ -206,15 +216,16 @@ func (sampleBackend) Name() string {
 	return "backend"
 }
 
-// VerifyPassword demonstrates credential-gated password verification through the public helper package.
+// VerifyPassword handles NoAuth identity lookup before credential-gated password verification.
 func (sampleBackend) VerifyPassword(ctx context.Context, request pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
-	if request.Credentials == nil {
-		return pluginapi.BackendResult{UserFound: true, Account: request.Snapshot.Account, AccountField: request.Snapshot.AccountField}, nil
+	result := sampleBackendIdentityResult(request)
+	if request.Snapshot.Runtime.NoAuth || request.Credentials == nil {
+		return result, nil
 	}
 
 	secret, ok := request.Credentials.Password(ctx)
 	if !ok {
-		return pluginapi.BackendResult{UserFound: true, Account: request.Snapshot.Account, AccountField: request.Snapshot.AccountField}, nil
+		return result, nil
 	}
 
 	matched, err := password.CompareHash("{SSHA256}9BT0VNzrkTp51/skOYDjOEFoYPN9FoGx/Gd+njZv5tEOgtl6TvODXg==", secret)
@@ -222,21 +233,42 @@ func (sampleBackend) VerifyPassword(ctx context.Context, request pluginapi.Backe
 		return pluginapi.BackendResult{}, err
 	}
 
+	result.Authenticated = matched
+	result.Facts = []pluginapi.PolicyFact{
+		{Attribute: sampleBackendFact, Value: matched},
+	}
+
+	return result, nil
+}
+
+// sampleBackendIdentityResult returns synthetic public identity metadata without credential values.
+func sampleBackendIdentityResult(request pluginapi.BackendAuthRequest) pluginapi.BackendResult {
+	account := request.Username
+	if account == "" {
+		account = request.Snapshot.Account
+	}
+
 	return pluginapi.BackendResult{
-		Account:       request.Username,
-		AccountField:  "uid",
-		UserFound:     true,
-		Authenticated: matched,
+		Account:      account,
+		AccountField: "uid",
+		UserFound:    true,
 		Attributes: map[string][]string{
-			"uid":             {request.Username},
+			"uid":             {account},
+			"entryUUID":       {"sample-user-id"},
+			"displayName":     {"Sample User"},
 			"auth_login_try":  {fmt.Sprint(request.Snapshot.AuthLoginAttempt)},
 			"client_network":  {request.Snapshot.ClientNet},
 			"listener_socket": {net.JoinHostPort(request.Snapshot.LocalIP, request.Snapshot.LocalPort)},
 		},
-		Facts: []pluginapi.PolicyFact{
-			{Attribute: sampleBackendFact, Value: matched},
+		Identity: pluginapi.BackendIdentityResult{
+			UniqueUserIDField:       "entryUUID",
+			DisplayNameField:        "displayName",
+			TOTPSecretField:         "totpSecret",
+			TOTPRecoveryField:       "totpRecovery",
+			Groups:                  []string{"sample-users"},
+			GroupDistinguishedNames: []string{"cn=sample-users,dc=example,dc=test"},
 		},
-	}, nil
+	}
 }
 
 // ListAccounts returns a deterministic account list for the compile-only fixture.

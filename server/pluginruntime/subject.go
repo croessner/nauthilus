@@ -280,7 +280,7 @@ func subjectRequest(
 	return pluginapi.SubjectRequest{
 		Snapshot:      NewRequestSnapshotFromAuthState(auth, WithSnapshotConfig(auth.Cfg())),
 		Runtime:       runtimeContext,
-		BackendResult: backendResult,
+		BackendResult: clonePluginBackendResult(backendResult),
 		Credentials: NewCredentialProvider(
 			auth.Ctx(),
 			auth.GetPassword(),
@@ -311,13 +311,40 @@ func pluginBackendResultFromPassDB(passDBResult *core.PassDBResult) pluginapi.Ba
 	}
 
 	return pluginapi.BackendResult{
-		Attributes:    pluginAttributesFromMapping(passDBResult.Attributes),
+		Attributes: pluginAttributesFromMapping(passDBResult.Attributes),
+		Identity: pluginapi.BackendIdentityResult{
+			UniqueUserIDField:       passDBResult.UniqueUserIDField,
+			DisplayNameField:        passDBResult.DisplayNameField,
+			TOTPSecretField:         passDBResult.TOTPSecretField,
+			TOTPRecoveryField:       passDBResult.TOTPRecoveryField,
+			Groups:                  passDBResult.Groups,
+			GroupDistinguishedNames: passDBResult.GroupDistinguishedNames,
+		},
 		Account:       passDBResult.Account,
 		AccountField:  passDBResult.AccountField,
 		Authenticated: passDBResult.Authenticated,
 		UserFound:     passDBResult.UserFound,
 		BackendServer: pluginBackendRefFromCore(passDBResult.BackendRef),
 	}
+}
+
+// clonePluginBackendResult gives one subject request independent mutable result values.
+func clonePluginBackendResult(result pluginapi.BackendResult) pluginapi.BackendResult {
+	result.Attributes = cloneStringSliceMap(result.Attributes)
+	result.Facts = slices.Clone(result.Facts)
+	result.Identity = clonePluginBackendIdentity(result.Identity)
+
+	if result.Status != nil {
+		status := *result.Status
+		result.Status = &status
+	}
+
+	if result.BackendServer != nil {
+		backendServer := *result.BackendServer
+		result.BackendServer = &backendServer
+	}
+
+	return result
 }
 
 func pluginAttributesFromMapping(attributes bktype.AttributeMapping) map[string][]string {

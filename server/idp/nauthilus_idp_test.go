@@ -21,17 +21,23 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/backend"
+	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/idp/oidckeys"
 	"github.com/croessner/nauthilus/v3/server/idp/signing"
+	"github.com/croessner/nauthilus/v3/server/pluginloader"
+	"github.com/croessner/nauthilus/v3/server/pluginregistry"
+	"github.com/croessner/nauthilus/v3/server/pluginruntime"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/gin-gonic/gin"
@@ -41,6 +47,242 @@ import (
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
+
+const (
+	idpLookupModuleName        = "idp_lookup"
+	idpLookupBackendName       = "identity"
+	idpLookupAccount           = "canonical@example.test"
+	idpLookupUniqueID          = "idp-user-123"
+	idpLookupDisplayName       = "IDP Lookup User"
+	idpLookupUniqueIDField     = "entryUUID"
+	idpLookupDisplayNameField  = "displayName"
+	idpLookupTOTPSecretField   = "totpSecret"
+	idpLookupTOTPRecoveryField = "totpRecovery"
+)
+
+func TestNauthilusIDPGetUserByUsernameUsesNativePluginNoAuthIdentity(t *testing.T) {
+	const (
+		username = "lookup@example.test"
+		clientID = "lookup-client"
+	)
+
+	pluginBackend := &idpLookupPluginBackend{}
+	subjectSource := &idpLookupSubjectSource{}
+
+	installIDPLookupPluginRunner(t, pluginBackend, subjectSource)
+	idp, ctx, mock := newIDPLookupTestIDP(t, username, clientID)
+
+	user, err := idp.GetUserByUsername(ctx, username, clientID, "")
+	if err != nil {
+		t.Fatalf("GetUserByUsername() error = %v", err)
+	}
+
+	if !pluginBackend.called || !pluginBackend.sawNoAuth {
+		t.Fatalf("native backend call = called:%t no_auth:%t, want true/true", pluginBackend.called, pluginBackend.sawNoAuth)
+	}
+
+	if !subjectSource.called || !subjectSource.sawIdentity {
+		t.Fatalf("native subject readback = called:%t identity:%t, want true/true", subjectSource.called, subjectSource.sawIdentity)
+	}
+
+	assertIDPLookupUser(t, user)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// installIDPLookupPluginRunner installs a credential-free native lookup plugin for the test.
+func installIDPLookupPluginRunner(t *testing.T, backend pluginapi.Backend, subjectSource pluginapi.SubjectSource) {
+	t.Helper()
+
+	runner := newIDPLookupPluginRunner(t, backend, subjectSource)
+	previousRunner, _ := pluginruntime.DefaultRunner()
+
+	pluginruntime.SetDefaultRunner(runner)
+	t.Cleanup(func() {
+		pluginruntime.SetDefaultRunner(previousRunner)
+
+		if err := runner.Stop(context.Background()); err != nil {
+			t.Errorf("plugin runner Stop() error = %v", err)
+		}
+	})
+
+	if len(runner.ModuleCapabilities(idpLookupModuleName)) != 0 {
+		t.Fatal("IdP lookup plugin unexpectedly received credential capability")
+	}
+}
+
+// newIDPLookupTestIDP builds the IdP request context and Redis expectations for the lookup path.
+func newIDPLookupTestIDP(t *testing.T, username string, clientID string) (*NauthilusIDP, *gin.Context, redismock.ClientMock) {
+	t.Helper()
+
+	backendSelector := &config.Backend{}
+
+	if err := backendSelector.Set("plugin(" + idpLookupModuleName + "." + idpLookupBackendName + ")"); err != nil {
+		t.Fatalf("backend selector error = %v", err)
+	}
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{
+		Redis:    config.Redis{Prefix: testRedisPrefix},
+		Backends: []*config.Backend{backendSelector},
+	}}
+	db, mock := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+	userKey := rediscli.GetUserHashKey(testRedisPrefix, username)
+	mappingField := accountcache.GetAccountMappingField(username, definitions.ProtoOIDC, clientID)
+
+	mock.ExpectHGet(userKey, mappingField).RedisNil()
+	mock.ExpectHSet(userKey, mappingField, idpLookupAccount).SetVal(1)
+	mock.ExpectHGet(userKey, mappingField).SetVal(idpLookupAccount)
+
+	idp := NewNauthilusIDP(&deps.Deps{
+		Cfg:          cfg,
+		Env:          config.NewTestEnvironmentConfig(),
+		Redis:        redisClient,
+		AccountCache: accountcache.NewManager(cfg),
+	})
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	ctx.Request = httptest.NewRequest("GET", "/idp/user", nil)
+	setupMockContext(ctx, "idp-plugin-lookup-guid", definitions.ServIDP)
+
+	return idp, ctx, mock
+}
+
+// newIDPLookupPluginRunner registers and starts one native backend for the IdP lookup acceptance path.
+func newIDPLookupPluginRunner(
+	t *testing.T,
+	backend pluginapi.Backend,
+	subjectSource pluginapi.SubjectSource,
+) *pluginruntime.Runner {
+	t.Helper()
+
+	module := config.PluginModule{Name: idpLookupModuleName, Type: config.PluginModuleTypeGo, Path: "/plugins/idp-lookup.so"}
+	registry := pluginregistry.NewRegistry()
+	registrar := registry.NewRegistrar(module)
+	plugin := &idpLookupPlugin{backend: backend, subjectSource: subjectSource}
+
+	if err := plugin.Register(registrar); err != nil {
+		t.Fatalf("plugin Register() error = %v", err)
+	}
+
+	if err := registrar.Commit(); err != nil {
+		t.Fatalf("registrar Commit() error = %v", err)
+	}
+
+	runner := pluginruntime.NewRunnerFromInstances(registry, []pluginloader.ModuleInstance{{
+		Plugin:       plugin,
+		Module:       module,
+		ModuleName:   module.Name,
+		Status:       pluginloader.ModuleStatusRegistered,
+		Capabilities: registrar.Capabilities(),
+		ArtifactPath: module.Path,
+	}})
+	if err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("plugin runner Start() error = %v", err)
+	}
+
+	return runner
+}
+
+// assertIDPLookupUser verifies every safe identity value survives the native backend lookup path.
+func assertIDPLookupUser(t *testing.T, user *backend.User) {
+	t.Helper()
+
+	if user == nil {
+		t.Fatal("GetUserByUsername() user = nil")
+	}
+
+	assert.Equal(t, idpLookupAccount, user.Name)
+	assert.Equal(t, idpLookupUniqueID, user.ID)
+	assert.Equal(t, idpLookupDisplayName, user.DisplayName)
+	assert.Equal(t, []string{"group-a", "group-b"}, user.Groups)
+	assert.Equal(t, []string{"cn=group-a,dc=example,dc=test", "cn=group-b,dc=example,dc=test"}, user.GroupDistinguishedNames)
+	assert.Equal(t, idpLookupTOTPSecretField, user.TOTPSecretField)
+	assert.Equal(t, idpLookupTOTPRecoveryField, user.TOTPRecoveryField)
+	assert.Equal(t, []any{"lookup@example.test"}, user.Attributes["mail"])
+}
+
+type idpLookupPlugin struct {
+	backend       pluginapi.Backend
+	subjectSource pluginapi.SubjectSource
+}
+
+// Metadata describes the synthetic native IdP lookup plugin.
+func (p *idpLookupPlugin) Metadata() pluginapi.Metadata {
+	return pluginapi.Metadata{Name: idpLookupModuleName, Version: "test", APIVersion: pluginapi.APIVersion}
+}
+
+// Register exposes the synthetic lookup backend without credential capability.
+func (p *idpLookupPlugin) Register(registrar pluginapi.Registrar) error {
+	if err := registrar.RegisterBackend(p.backend); err != nil {
+		return err
+	}
+
+	return registrar.RegisterSubjectSource(p.subjectSource)
+}
+
+type idpLookupSubjectSource struct {
+	called      bool
+	sawIdentity bool
+}
+
+// Descriptor schedules the IdP lookup subject readback check.
+func (s *idpLookupSubjectSource) Descriptor() pluginapi.SourceDescriptor {
+	return pluginapi.SourceDescriptor{Name: "identity_readback", AbortPolicy: pluginapi.AbortPolicyNone}
+}
+
+// Evaluate rejects lookup results that do not expose the complete safe identity value.
+func (s *idpLookupSubjectSource) Evaluate(_ context.Context, request pluginapi.SubjectRequest) (pluginapi.SubjectResult, error) {
+	s.called = true
+	identity := request.BackendResult.Identity
+	s.sawIdentity = identity.UniqueUserIDField == idpLookupUniqueIDField &&
+		identity.DisplayNameField == idpLookupDisplayNameField &&
+		identity.TOTPSecretField == idpLookupTOTPSecretField &&
+		identity.TOTPRecoveryField == idpLookupTOTPRecoveryField &&
+		len(identity.Groups) == 2 && len(identity.GroupDistinguishedNames) == 2
+
+	return pluginapi.SubjectResult{Rejected: !s.sawIdentity}, nil
+}
+
+type idpLookupPluginBackend struct {
+	called    bool
+	sawNoAuth bool
+}
+
+// Name returns the plugin-local backend name.
+func (b *idpLookupPluginBackend) Name() string {
+	return idpLookupBackendName
+}
+
+// VerifyPassword returns identity metadata without accessing the credential provider.
+func (b *idpLookupPluginBackend) VerifyPassword(_ context.Context, request pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+	b.called = true
+	b.sawNoAuth = request.Snapshot.Runtime.NoAuth
+
+	return pluginapi.BackendResult{
+		Attributes: map[string][]string{
+			"uid":                     {idpLookupAccount},
+			"mail":                    {request.Username},
+			idpLookupUniqueIDField:    {idpLookupUniqueID},
+			idpLookupDisplayNameField: {idpLookupDisplayName},
+		},
+		Identity: pluginapi.BackendIdentityResult{
+			UniqueUserIDField:       idpLookupUniqueIDField,
+			DisplayNameField:        idpLookupDisplayNameField,
+			TOTPSecretField:         idpLookupTOTPSecretField,
+			TOTPRecoveryField:       idpLookupTOTPRecoveryField,
+			Groups:                  []string{"group-b", "group-a"},
+			GroupDistinguishedNames: []string{"cn=group-b,dc=example,dc=test", "cn=group-a,dc=example,dc=test"},
+		},
+		Account:      idpLookupAccount,
+		AccountField: "uid",
+		UserFound:    true,
+	}, nil
+}
+
+// ListAccounts is unused by the NoAuth identity lookup path.
+func (b *idpLookupPluginBackend) ListAccounts(context.Context, pluginapi.AccountListRequest) (pluginapi.AccountListResult, error) {
+	return pluginapi.AccountListResult{}, nil
+}
 
 const (
 	testRedisPrefix = "test:"

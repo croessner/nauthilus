@@ -153,6 +153,251 @@ func TestBackendManagerPassDBMapsCustomAccountField(t *testing.T) {
 	}
 }
 
+func TestBackendManagerPassDBMapsIdentityResultWithDefensiveCopies(t *testing.T) {
+	fixture := newBackendIdentityTestFixture()
+	backend := &fakePluginBackend{
+		verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+			return fixture.result(), nil
+		},
+	}
+	manager := newBackendTestManager(t, backendTestModuleName, backend, false)
+	auth := newBackendTestAuth(t)
+
+	result, err := manager.PassDB(auth)
+	if err != nil {
+		t.Fatalf("PassDB() error = %v", err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	fixture.mutatePluginStorage()
+	assertBackendIdentityFields(t, result)
+	assertBackendIdentityCopies(t, result)
+	assertBackendIdentityForwardCompatibility(t, result, auth, fixture.backendServer)
+}
+
+// backendIdentityTestFixture owns mutable plugin-returned values used by identity mapping tests.
+type backendIdentityTestFixture struct {
+	attributes              map[string][]string
+	backendServer           *pluginapi.BackendServerRef
+	groups                  []string
+	groupDistinguishedNames []string
+}
+
+// newBackendIdentityTestFixture creates a complete backend identity result fixture.
+func newBackendIdentityTestFixture() *backendIdentityTestFixture {
+	return &backendIdentityTestFixture{
+		attributes: map[string][]string{
+			backendTestMailAttr: {backendTestMail},
+		},
+		backendServer: &pluginapi.BackendServerRef{
+			Name:      "ldap-a",
+			Protocol:  "ldap",
+			Authority: "identity.example.test",
+			Address:   "192.0.2.10",
+			Port:      "389",
+		},
+		groups: []string{"users", "operators"},
+		groupDistinguishedNames: []string{
+			"cn=users,ou=groups,dc=example,dc=test",
+			"cn=operators,ou=groups,dc=example,dc=test",
+		},
+	}
+}
+
+// result returns the public backend value backed by the fixture's mutable storage.
+func (f *backendIdentityTestFixture) result() pluginapi.BackendResult {
+	return pluginapi.BackendResult{
+		Status: &pluginapi.StatusMessage{
+			Code:        pluginCallResultOK,
+			MessageKey:  backendTestStatusKey,
+			DefaultText: backendTestStatusText,
+		},
+		Attributes: f.attributes,
+		Identity: pluginapi.BackendIdentityResult{
+			UniqueUserIDField:       "entryUUID",
+			DisplayNameField:        "displayName",
+			TOTPSecretField:         "totpSecret",
+			TOTPRecoveryField:       "totpRecovery",
+			Groups:                  f.groups,
+			GroupDistinguishedNames: f.groupDistinguishedNames,
+		},
+		Facts: []pluginapi.PolicyFact{
+			{Attribute: backendTestRiskAttr, Value: float64(0.1)},
+		},
+		Account:       backendTestAccount,
+		BackendServer: f.backendServer,
+		Authenticated: true,
+		UserFound:     true,
+	}
+}
+
+// mutatePluginStorage changes every caller-owned collection after the adapter returns.
+func (f *backendIdentityTestFixture) mutatePluginStorage() {
+	f.attributes[backendTestMailAttr][0] = "mutated@example.test"
+	f.attributes["new"] = []string{"mutated"}
+	f.groups[0] = "mutated"
+	f.groupDistinguishedNames[0] = "cn=mutated,dc=example,dc=test"
+}
+
+// assertBackendIdentityFields verifies all scalar identity metadata reached core state.
+func assertBackendIdentityFields(t *testing.T, result *core.PassDBResult) {
+	t.Helper()
+
+	if result.UniqueUserIDField != "entryUUID" || result.DisplayNameField != "displayName" {
+		t.Fatalf("identity fields = %q/%q, want entryUUID/displayName", result.UniqueUserIDField, result.DisplayNameField)
+	}
+
+	if result.TOTPSecretField != "totpSecret" || result.TOTPRecoveryField != "totpRecovery" {
+		t.Fatalf("TOTP fields = %q/%q, want totpSecret/totpRecovery", result.TOTPSecretField, result.TOTPRecoveryField)
+	}
+}
+
+// assertBackendIdentityCopies verifies retained core collections do not alias plugin storage.
+func assertBackendIdentityCopies(t *testing.T, result *core.PassDBResult) {
+	t.Helper()
+
+	if got := firstStringAttribute(result.Attributes[backendTestMailAttr]); got != backendTestMail {
+		t.Fatalf("mail attribute after plugin mutation = %q, want %s", got, backendTestMail)
+	}
+
+	if _, ok := result.Attributes["new"]; ok {
+		t.Fatal("plugin attribute map mutation reached retained core result")
+	}
+
+	if !sameStrings(result.Groups, []string{"users", "operators"}) {
+		t.Fatalf("groups after plugin mutation = %#v, want original groups", result.Groups)
+	}
+
+	if !sameStrings(result.GroupDistinguishedNames, []string{
+		"cn=users,ou=groups,dc=example,dc=test",
+		"cn=operators,ou=groups,dc=example,dc=test",
+	}) {
+		t.Fatalf("group DNs after plugin mutation = %#v, want original group DNs", result.GroupDistinguishedNames)
+	}
+}
+
+// assertBackendIdentityForwardCompatibility verifies unchanged account, backend, status, and fact mapping.
+func assertBackendIdentityForwardCompatibility(
+	t *testing.T,
+	result *core.PassDBResult,
+	auth *core.AuthState,
+	backendServer *pluginapi.BackendServerRef,
+) {
+	t.Helper()
+
+	if result.AccountField != backendTestAccountAttr || firstStringAttribute(result.Attributes[backendTestAccountAttr]) != backendTestAccount {
+		t.Fatalf("default account mapping = %q/%#v, want account materialization", result.AccountField, result.Attributes)
+	}
+
+	if result.BackendRef.Name != backendServer.Name || result.BackendRef.OpaqueToken != "192.0.2.10:389" {
+		t.Fatalf("backend ref = %#v, want BackendServer mapping", result.BackendRef)
+	}
+
+	if auth.Runtime.RemoteBackendRef.Name != backendServer.Name {
+		t.Fatalf("runtime backend ref = %#v, want BackendServer mapping", auth.Runtime.RemoteBackendRef)
+	}
+
+	if result.AdditionalAttributes[pluginBackendStatusCodeAttribute] != pluginCallResultOK ||
+		result.AdditionalAttributes[pluginBackendStatusTextAttribute] != backendTestStatusText ||
+		result.AdditionalAttributes[pluginBackendStatusMessageAttribute] != backendTestStatusKey {
+		t.Fatalf("status additional attributes = %#v, want complete plugin status", result.AdditionalAttributes)
+	}
+
+	facts, ok := result.AdditionalAttributes[core.PassDBAdditionalAttributePluginFacts].([]pluginapi.PolicyFact)
+	if !ok || len(facts) != 1 || facts[0].Attribute != backendTestRiskAttr {
+		t.Fatalf("policy facts = %#v, want validated plugin fact", result.AdditionalAttributes)
+	}
+}
+
+func TestBackendManagerPassDBRejectsInvalidIdentityFieldNames(t *testing.T) {
+	testCases := []struct {
+		setField func(*pluginapi.BackendIdentityResult, string)
+		name     string
+	}{
+		{name: "unique user ID", setField: func(identity *pluginapi.BackendIdentityResult, value string) {
+			identity.UniqueUserIDField = value
+		}},
+		{name: "display name", setField: func(identity *pluginapi.BackendIdentityResult, value string) {
+			identity.DisplayNameField = value
+		}},
+		{name: "TOTP secret", setField: func(identity *pluginapi.BackendIdentityResult, value string) {
+			identity.TOTPSecretField = value
+		}},
+		{name: "TOTP recovery", setField: func(identity *pluginapi.BackendIdentityResult, value string) {
+			identity.TOTPRecoveryField = value
+		}},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			invalidFieldName := testCase.name + " private value"
+			identity := pluginapi.BackendIdentityResult{}
+			testCase.setField(&identity, invalidFieldName)
+
+			backend := &fakePluginBackend{
+				verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+					return pluginapi.BackendResult{
+						Identity:  identity,
+						UserFound: true,
+					}, nil
+				},
+			}
+			manager := newBackendTestManager(t, backendTestModuleName, backend, false)
+			auth := newBackendTestAuth(t)
+
+			result, err := manager.PassDB(auth)
+			if result != nil {
+				core.PutPassDBResultToPool(result)
+
+				t.Fatal("PassDB() returned a result for invalid identity metadata")
+			}
+
+			if !stderrors.Is(err, servererrors.ErrBackendTemporaryFailure) {
+				t.Fatalf("PassDB() error = %v, want ErrBackendTemporaryFailure", err)
+			}
+
+			if strings.Contains(err.Error(), invalidFieldName) {
+				t.Fatalf("temporary error leaked invalid identity field: %v", err)
+			}
+		})
+	}
+}
+
+func TestBackendManagerPassDBAcceptsEmptyIdentityAndAccountFields(t *testing.T) {
+	backend := &fakePluginBackend{
+		verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+			return pluginapi.BackendResult{
+				Identity: pluginapi.BackendIdentityResult{
+					Groups:                  []string{},
+					GroupDistinguishedNames: []string{},
+				},
+				UserFound: true,
+			}, nil
+		},
+	}
+	manager := newBackendTestManager(t, backendTestModuleName, backend, false)
+	auth := newBackendTestAuth(t)
+
+	result, err := manager.PassDB(auth)
+	if err != nil {
+		t.Fatalf("PassDB() error = %v", err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	if result.Account != "" || result.AccountField != "" {
+		t.Fatalf("empty account mapping = %q/%q, want empty fields", result.Account, result.AccountField)
+	}
+
+	if result.UniqueUserIDField != "" || result.DisplayNameField != "" ||
+		result.TOTPSecretField != "" || result.TOTPRecoveryField != "" {
+		t.Fatalf("empty identity fields = %#v, want zero values", result)
+	}
+
+	if len(result.Groups) != 0 || len(result.GroupDistinguishedNames) != 0 {
+		t.Fatalf("empty group mapping = %#v/%#v, want authoritative empty slices", result.Groups, result.GroupDistinguishedNames)
+	}
+}
+
 func TestBackendManagerPassDBRejectsInvalidAccountField(t *testing.T) {
 	backend := &fakePluginBackend{
 		verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
@@ -429,11 +674,112 @@ func TestBackendManagerMissingOptionalMFAOperationsMapToUnknownBackend(t *testin
 	}
 }
 
+func TestBackendManagerTypedMFAFailuresRemainSecretSafeTemporaryFailures(t *testing.T) {
+	const privateDetail = "private typed MFA detail"
+
+	testCases := []struct {
+		run       func(*BackendManager, *core.AuthState) error
+		name      string
+		operation string
+	}{
+		{name: "TOTP", operation: backendTestOpBeginTOTP, run: func(manager *BackendManager, auth *core.AuthState) error {
+			_, err := manager.BeginTOTPRegistration(auth, "begin-key")
+
+			return err
+		}},
+		{name: "recovery codes", operation: backendTestOpGenerateRecoveryCodes, run: func(manager *BackendManager, auth *core.AuthState) error {
+			_, err := manager.GenerateRecoveryCodes(auth, 2, "generate-key")
+
+			return err
+		}},
+		{name: "WebAuthn", operation: backendTestOpListWebAuthnCredentials, run: func(manager *BackendManager, auth *core.AuthState) error {
+			_, err := manager.GetWebAuthnCredentials(auth)
+
+			return err
+		}},
+		{name: "public MFA state", operation: backendTestOpPublicMFAState, run: func(manager *BackendManager, auth *core.AuthState) error {
+			_, err := manager.GetPublicMFAState(auth, true)
+
+			return err
+		}},
+	}
+
+	for _, testCase := range testCases {
+		for _, panicFailure := range []bool{false, true} {
+			failureKind := "error"
+			if panicFailure {
+				failureKind = "panic"
+			}
+
+			t.Run(testCase.name+" "+failureKind, func(t *testing.T) {
+				backend := &failingPluginMFABackend{
+					recordingPluginMFABackend: newRecordingPluginMFABackend(),
+					operation:                 testCase.operation,
+					privateDetail:             privateDetail,
+					panicFailure:              panicFailure,
+				}
+				manager, auth := newTypedMFABackendManager(t, backend)
+
+				err := testCase.run(manager, auth)
+				if !stderrors.Is(err, servererrors.ErrBackendTemporaryFailure) {
+					t.Fatalf("operation error = %v, want ErrBackendTemporaryFailure", err)
+				}
+
+				if strings.Contains(err.Error(), privateDetail) {
+					t.Fatalf("temporary failure leaked plugin detail: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestBackendManagerIdentityFieldNamesDoNotEnableEdgeSelectedMFAValues(t *testing.T) {
+	backend := &fakePluginBackend{
+		verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+			return pluginapi.BackendResult{
+				Identity: pluginapi.BackendIdentityResult{
+					TOTPSecretField:   "totpSecret",
+					TOTPRecoveryField: "totpRecovery",
+				},
+				UserFound: true,
+			}, nil
+		},
+	}
+	manager := newBackendTestManager(t, backendTestModuleName, backend, false)
+	auth := newBackendTestAuth(t)
+
+	result, err := manager.PassDB(auth)
+	if err != nil {
+		t.Fatalf("PassDB() error = %v", err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	if result.TOTPSecretField != "totpSecret" || result.TOTPRecoveryField != "totpRecovery" {
+		t.Fatalf("TOTP field metadata = %q/%q, want mapped field names", result.TOTPSecretField, result.TOTPRecoveryField)
+	}
+
+	if err := manager.AddTOTPSecret(auth, &mfa.TOTPSecret{}); !stderrors.Is(err, servererrors.ErrUnknownDatabaseBackend) {
+		t.Fatalf("AddTOTPSecret() error = %v, want ErrUnknownDatabaseBackend", err)
+	}
+
+	if err := manager.AddTOTPRecoveryCodes(auth, &mfa.TOTPRecovery{}); !stderrors.Is(err, servererrors.ErrUnknownDatabaseBackend) {
+		t.Fatalf("AddTOTPRecoveryCodes() error = %v, want ErrUnknownDatabaseBackend", err)
+	}
+}
+
 // newTypedMFABackendTestManager builds the recording backend fixture used by typed MFA parity tests.
 func newTypedMFABackendTestManager(t *testing.T) (*BackendManager, *recordingPluginMFABackend, *core.AuthState) {
 	t.Helper()
 
 	backend := newRecordingPluginMFABackend()
+	manager, auth := newTypedMFABackendManager(t, backend)
+
+	return manager, backend, auth
+}
+
+// newTypedMFABackendManager builds a manager for one complete typed MFA backend fixture.
+func newTypedMFABackendManager(t *testing.T, backend pluginapi.Backend) (*BackendManager, *core.AuthState) {
+	t.Helper()
 
 	runner := newBackendTestRunner(t, []backendTestModule{
 		{name: backendTestModuleName, backend: backend},
@@ -450,7 +796,7 @@ func newTypedMFABackendTestManager(t *testing.T) (*BackendManager, *recordingPlu
 
 	manager := &BackendManager{runner: runner, qualifiedName: backendTestQualified}
 
-	return manager, backend, auth
+	return manager, auth
 }
 
 // exerciseTypedPasswordBackendOperations verifies the password and account typed requests.
@@ -817,6 +1163,62 @@ type recordedPluginBackendCall struct {
 
 type recordingPluginMFABackend struct {
 	calls []recordedPluginBackendCall
+}
+
+type failingPluginMFABackend struct {
+	*recordingPluginMFABackend
+	operation     string
+	privateDetail string
+	panicFailure  bool
+}
+
+// failure returns or raises the configured secret-bearing plugin failure.
+func (b *failingPluginMFABackend) failure(operation string) error {
+	if b.operation != operation {
+		return nil
+	}
+
+	if b.panicFailure {
+		panic(b.privateDetail)
+	}
+
+	return stderrors.New(b.privateDetail)
+}
+
+// BeginTOTP fails the representative typed TOTP operation when configured.
+func (b *failingPluginMFABackend) BeginTOTP(ctx context.Context, request pluginapi.TOTPBeginRequest) (pluginapi.TOTPBeginResult, error) {
+	if err := b.failure(backendTestOpBeginTOTP); err != nil {
+		return pluginapi.TOTPBeginResult{}, err
+	}
+
+	return b.recordingPluginMFABackend.BeginTOTP(ctx, request)
+}
+
+// GenerateRecoveryCodes fails the representative typed recovery operation when configured.
+func (b *failingPluginMFABackend) GenerateRecoveryCodes(ctx context.Context, request pluginapi.RecoveryCodeGenerateRequest) (pluginapi.RecoveryCodeGenerateResult, error) {
+	if err := b.failure(backendTestOpGenerateRecoveryCodes); err != nil {
+		return pluginapi.RecoveryCodeGenerateResult{}, err
+	}
+
+	return b.recordingPluginMFABackend.GenerateRecoveryCodes(ctx, request)
+}
+
+// ListWebAuthnCredentials fails the representative typed WebAuthn operation when configured.
+func (b *failingPluginMFABackend) ListWebAuthnCredentials(ctx context.Context, request pluginapi.WebAuthnListRequest) (pluginapi.WebAuthnListResult, error) {
+	if err := b.failure(backendTestOpListWebAuthnCredentials); err != nil {
+		return pluginapi.WebAuthnListResult{}, err
+	}
+
+	return b.recordingPluginMFABackend.ListWebAuthnCredentials(ctx, request)
+}
+
+// PublicMFAState fails the typed public MFA state operation when configured.
+func (b *failingPluginMFABackend) PublicMFAState(ctx context.Context, request pluginapi.PublicMFAStateRequest) (pluginapi.PublicMFAStateResult, error) {
+	if err := b.failure(backendTestOpPublicMFAState); err != nil {
+		return pluginapi.PublicMFAStateResult{}, err
+	}
+
+	return b.recordingPluginMFABackend.PublicMFAState(ctx, request)
 }
 
 // newRecordingPluginMFABackend returns a fake backend covering every typed optional MFA interface.

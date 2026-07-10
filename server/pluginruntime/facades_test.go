@@ -23,10 +23,12 @@ import (
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/pluginapi/v1/helpers"
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 
+	"github.com/go-ldap/ldap/v3"
 	"github.com/go-redis/redismock/v9"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -386,6 +388,40 @@ func TestLDAPFacadeMapsSearchAndModifyRequests(t *testing.T) {
 
 	if len(fake.modifyRequests) != 1 || fake.modifyRequests[0].Operation != modifyRequest.Operation {
 		t.Fatalf("mapped modify requests = %#v", fake.modifyRequests)
+	}
+}
+
+func TestLDAPSearchResultOwnsCopiedPublicEntryValues(t *testing.T) {
+	rawEntry := &ldap.Entry{
+		DN: facadeLDAPDN,
+		Attributes: []*ldap.EntryAttribute{
+			{Name: "cn", Values: []string{"Demo"}},
+		},
+	}
+	reply := &bktype.LDAPReply{
+		Result: bktype.AttributeMapping{backendTestMailAttr: {facadeLDAPMail}},
+		RawResult: []*ldap.Entry{
+			rawEntry,
+		},
+	}
+
+	result := ldapReplyToSearchResult(reply)
+	if len(result.Entries) != 1 || result.Entries[0].DN != facadeLDAPDN {
+		t.Fatalf("LDAP entries = %#v, want one public entry", result.Entries)
+	}
+
+	rawEntry.Attributes[0].Values[0] = "mutated-internal"
+	if got := result.Entries[0].Attributes["cn"][0]; got != "Demo" {
+		t.Fatalf("public LDAP entry after internal mutation = %q, want Demo", got)
+	}
+
+	result.Entries[0].Attributes["cn"][0] = "mutated-public"
+	if got := rawEntry.Attributes[0].Values[0]; got != "mutated-internal" {
+		t.Fatalf("internal LDAP entry after public mutation = %q, want mutated-internal", got)
+	}
+
+	if got := result.Attributes[backendTestMailAttr][0]; got != facadeLDAPMail {
+		t.Fatalf("flattened LDAP result = %q, want %s", got, facadeLDAPMail)
 	}
 }
 

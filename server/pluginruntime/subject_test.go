@@ -43,7 +43,198 @@ const (
 	responseMutationStepupValue  = "stepup"
 	responseMutationReasonHeader = "X-Nauthilus-Protection-Reason"
 	responseMutationThreshold    = "threshold"
+	subjectUniqueIDField         = "entryUUID"
+	subjectDisplayNameField      = "displayName"
+	subjectTOTPSecretField       = "totpSecret"
+	subjectTOTPRecoveryField     = "totpRecovery"
+	subjectGroup                 = "group-a"
+	subjectGroupDN               = "cn=group-a,dc=example,dc=test"
 )
+
+func TestSubjectSourceReceivesSafeIdentityReadbackWithoutStatusOrFacts(t *testing.T) {
+	source := newIdentityReadbackSubjectSource()
+	bridge := newSubjectTestBridge(t, source)
+	auth := newSubjectTestAuth(t)
+	auth.Runtime.StatusMessage = "internal status"
+	auth.Runtime.AccountProviderPluginFacts = []pluginapi.PolicyFact{{Attribute: subjectRiskAttribute, Value: float64(0.4)}}
+
+	passDBResult := newSubjectTestPassDBResult()
+	defer core.PutPassDBResultToPool(passDBResult)
+
+	passDBResult.UniqueUserIDField = subjectUniqueIDField
+	passDBResult.DisplayNameField = subjectDisplayNameField
+	passDBResult.TOTPSecretField = subjectTOTPSecretField
+	passDBResult.TOTPRecoveryField = subjectTOTPRecoveryField
+	passDBResult.Groups = []string{subjectGroup}
+	passDBResult.GroupDistinguishedNames = []string{subjectGroupDN}
+	passDBResult.BackendRef = core.RemoteBackendRef{
+		Name:        "authority-backend",
+		Protocol:    "imap",
+		Authority:   "authority-a",
+		OpaqueToken: "192.0.2.44:993",
+	}
+	passDBResult.AdditionalAttributes = map[string]any{
+		"plugin_status": "must not be reconstructed",
+		"plugin_facts":  []string{"must not be reconstructed"},
+	}
+
+	activateSubjectPolicySnapshot(t)
+
+	got, handled := bridge.Analyze(auth.Request.HTTPClientContext, auth.View(), passDBResult, definitions.AuthResultOK)
+	if !handled || got != definitions.AuthResultOK {
+		t.Fatalf("Analyze() = %v handled=%t, want OK/true", got, handled)
+	}
+
+	requestResult := source.lastRequest.BackendResult
+	assertSubjectIdentity(t, requestResult.Identity)
+
+	if requestResult.Status != nil || len(requestResult.Facts) != 0 {
+		t.Fatalf("reverse status/facts = %#v/%#v, want nil/empty", requestResult.Status, requestResult.Facts)
+	}
+
+	if requestResult.BackendServer == nil || requestResult.BackendServer.Name != "authority-backend" || requestResult.BackendServer.Address != "192.0.2.44" {
+		t.Fatalf("backend readback = %#v, want authority backend", requestResult.BackendServer)
+	}
+
+	assertPassDBIdentity(t, passDBResult)
+
+	if passDBResult.BackendRef.Name != "selected-subject-backend" {
+		t.Fatalf("selected backend = %#v, want subject patch output", passDBResult.BackendRef)
+	}
+}
+
+func TestParallelSubjectRequestsOwnIndependentIdentityState(t *testing.T) {
+	firstMutated := make(chan struct{})
+	secondObservedOriginal := false
+	first := newFirstMutatingSubjectSource(firstMutated)
+	second := newSecondMutatingSubjectSource(firstMutated, &secondObservedOriginal)
+	bridge := newSubjectTestBridge(t, first, second)
+	auth := newSubjectTestAuth(t)
+
+	passDBResult := newSubjectTestPassDBResult()
+	defer core.PutPassDBResultToPool(passDBResult)
+
+	passDBResult.UniqueUserIDField = subjectUniqueIDField
+	passDBResult.DisplayNameField = subjectDisplayNameField
+	passDBResult.TOTPSecretField = subjectTOTPSecretField
+	passDBResult.TOTPRecoveryField = subjectTOTPRecoveryField
+	passDBResult.Groups = []string{subjectGroup}
+	passDBResult.GroupDistinguishedNames = []string{subjectGroupDN}
+
+	activateSubjectPolicySnapshot(t)
+
+	got, handled := bridge.Analyze(auth.Request.HTTPClientContext, auth.View(), passDBResult, definitions.AuthResultOK)
+	if !handled || got != definitions.AuthResultOK {
+		t.Fatalf("Analyze() = %v handled=%t, want OK/true", got, handled)
+	}
+
+	if !secondObservedOriginal {
+		t.Fatal("second parallel subject request observed sibling mutations")
+	}
+
+	if first.lastRequest.BackendResult.Attributes[backendTestUIDAttr][0] != "first-account" ||
+		first.lastRequest.BackendResult.Identity.Groups[0] != "first-group" ||
+		first.lastRequest.BackendResult.Identity.GroupDistinguishedNames[0] != "cn=first,dc=example,dc=test" {
+		t.Fatalf("first request changed after sibling mutation: %#v", first.lastRequest.BackendResult)
+	}
+
+	if firstStringAttribute(passDBResult.Attributes[backendTestUIDAttr]) != backendTestAccount ||
+		passDBResult.Groups[0] != subjectGroup || passDBResult.GroupDistinguishedNames[0] != subjectGroupDN {
+		t.Fatalf("retained core result was mutated: %#v", passDBResult)
+	}
+}
+
+// newIdentityReadbackSubjectSource returns a source that exercises every allowed patch field.
+func newIdentityReadbackSubjectSource() *fakeSubjectSource {
+	authenticated := true
+	userFound := true
+
+	return &fakeSubjectSource{result: pluginapi.SubjectResult{
+		BackendResultPatch: &pluginapi.BackendResultPatch{
+			SelectedBackend: &pluginapi.BackendServerRef{
+				Name:     "selected-subject-backend",
+				Protocol: "imap",
+				Address:  "192.0.2.55",
+				Port:     "993",
+			},
+			Attributes: pluginapi.AttributePatch{Set: map[string][]string{
+				backendTestMailAttr: {backendTestMail},
+			}},
+			Authenticated: &authenticated,
+			UserFound:     &userFound,
+			Account:       backendTestMail,
+			AccountField:  backendTestMailAttr,
+		},
+	}}
+}
+
+// newFirstMutatingSubjectSource returns a source that mutates its private request copy.
+func newFirstMutatingSubjectSource(firstMutated chan<- struct{}) *fakeSubjectSource {
+	return &fakeSubjectSource{
+		name: subjectSourceFirst,
+		evaluate: func(_ context.Context, request pluginapi.SubjectRequest) (pluginapi.SubjectResult, error) {
+			mutateSubjectRequestIdentity(request, "first-account", "first-group", "cn=first,dc=example,dc=test")
+			close(firstMutated)
+
+			return pluginapi.SubjectResult{}, nil
+		},
+	}
+}
+
+// newSecondMutatingSubjectSource verifies sibling isolation before mutating its request copy.
+func newSecondMutatingSubjectSource(firstMutated <-chan struct{}, observedOriginal *bool) *fakeSubjectSource {
+	return &fakeSubjectSource{
+		name: subjectSourceSecond,
+		evaluate: func(_ context.Context, request pluginapi.SubjectRequest) (pluginapi.SubjectResult, error) {
+			<-firstMutated
+
+			*observedOriginal = subjectRequestHasOriginalIdentity(request)
+			mutateSubjectRequestIdentity(request, "second-account", "second-group", "cn=second,dc=example,dc=test")
+
+			return pluginapi.SubjectResult{}, nil
+		},
+	}
+}
+
+// subjectRequestHasOriginalIdentity reports whether a sibling received the retained core values.
+func subjectRequestHasOriginalIdentity(request pluginapi.SubjectRequest) bool {
+	return request.BackendResult.Attributes[backendTestUIDAttr][0] == backendTestAccount &&
+		len(request.BackendResult.Identity.Groups) == 1 && request.BackendResult.Identity.Groups[0] == subjectGroup &&
+		len(request.BackendResult.Identity.GroupDistinguishedNames) == 1 && request.BackendResult.Identity.GroupDistinguishedNames[0] == subjectGroupDN
+}
+
+// mutateSubjectRequestIdentity changes every mutable identity collection in one request copy.
+func mutateSubjectRequestIdentity(request pluginapi.SubjectRequest, account string, group string, groupDN string) {
+	request.BackendResult.Attributes[backendTestUIDAttr][0] = account
+	request.BackendResult.Identity.Groups[0] = group
+	request.BackendResult.Identity.GroupDistinguishedNames[0] = groupDN
+}
+
+// assertSubjectIdentity verifies the complete safe identity readback value.
+func assertSubjectIdentity(t *testing.T, identity pluginapi.BackendIdentityResult) {
+	t.Helper()
+
+	if identity.UniqueUserIDField != subjectUniqueIDField || identity.DisplayNameField != subjectDisplayNameField ||
+		identity.TOTPSecretField != subjectTOTPSecretField || identity.TOTPRecoveryField != subjectTOTPRecoveryField ||
+		len(identity.Groups) != 1 || identity.Groups[0] != subjectGroup ||
+		len(identity.GroupDistinguishedNames) != 1 || identity.GroupDistinguishedNames[0] != subjectGroupDN {
+		t.Fatalf("identity readback = %#v, want complete safe identity", identity)
+	}
+}
+
+// assertPassDBIdentity verifies allowed patches leave core identity metadata unchanged.
+func assertPassDBIdentity(t *testing.T, result *core.PassDBResult) {
+	t.Helper()
+
+	assertSubjectIdentity(t, pluginapi.BackendIdentityResult{
+		UniqueUserIDField:       result.UniqueUserIDField,
+		DisplayNameField:        result.DisplayNameField,
+		TOTPSecretField:         result.TOTPSecretField,
+		TOTPRecoveryField:       result.TOTPRecoveryField,
+		Groups:                  result.Groups,
+		GroupDistinguishedNames: result.GroupDistinguishedNames,
+	})
+}
 
 func TestSubjectSourceReceivesBackendResultAndAppliesOutputs(t *testing.T) {
 	source := &fakeSubjectSource{
@@ -703,6 +894,7 @@ func firstStringAttributeFromAuth(auth *core.AuthState, name string) string {
 type fakeSubjectSource struct {
 	lastRequest pluginapi.SubjectRequest
 	result      pluginapi.SubjectResult
+	evaluate    func(context.Context, pluginapi.SubjectRequest) (pluginapi.SubjectResult, error)
 	err         error
 	after       []string
 	name        string
@@ -721,8 +913,12 @@ func (s *fakeSubjectSource) Descriptor() pluginapi.SourceDescriptor {
 	}
 }
 
-func (s *fakeSubjectSource) Evaluate(_ context.Context, request pluginapi.SubjectRequest) (pluginapi.SubjectResult, error) {
+// Evaluate captures the request and delegates to an optional test-specific evaluator.
+func (s *fakeSubjectSource) Evaluate(ctx context.Context, request pluginapi.SubjectRequest) (pluginapi.SubjectResult, error) {
 	s.lastRequest = request
+	if s.evaluate != nil {
+		return s.evaluate(ctx, request)
+	}
 
 	return s.result, s.err
 }

@@ -568,6 +568,14 @@ apply Nauthilus timeouts, retries, logging, and tracing.
 The public LDAP API should not expose bind/auth operations, raw queues, pools, or go-ldap request structs. The host
 should validate `LDAPScope` and `LDAPModifyOperation` values.
 
+`Search` returns its `LDAPSearchResult` and error directly to the calling plugin, and `Modify` returns its operation
+error directly. The runtime does not attach LDAP results to `BackendResult`, `SubjectRequest.BackendResult`, or
+`BackendResultPatch`. Plugin code must deliberately translate an LDAP result into allowed attributes, facts, logs,
+status, rejection, or temporary failure.
+
+`LDAPSearchResult.Entries` contains copied public `LDAPEntry` values. The queue adapter converts internal go-ldap
+entries and copies every attribute value slice; plugins receive neither internal entries nor LDAP connections.
+
 ## Request And Runtime Model
 
 Plugins should see immutable request snapshots plus narrow mutation sinks.
@@ -766,15 +774,25 @@ type ResponseMutation struct {
     StatusHeader bool
 }
 
+type BackendIdentityResult struct {
+    UniqueUserIDField       string
+    DisplayNameField        string
+    TOTPSecretField         string
+    TOTPRecoveryField       string
+    Groups                  []string
+    GroupDistinguishedNames []string
+}
+
 type BackendResult struct {
-    Authenticated bool
-    UserFound     bool
+    Status        *StatusMessage
+    Attributes    map[string][]string
+    Facts         []PolicyFact
+    Identity      BackendIdentityResult
     Account       string
     AccountField  string
-    Attributes    map[string][]string
     BackendServer *BackendServerRef
-    Status        *StatusMessage
-    Facts         []PolicyFact
+    Authenticated bool
+    UserFound     bool
 }
 ```
 
@@ -784,6 +802,28 @@ behavior.
 
 Backend attributes should stay `map[string][]string` to match existing LDAP and Lua backend result semantics. Typed or
 non-string policy data belongs in `PolicyFact` values instead of backend attributes.
+
+`BackendIdentityResult` is the native backend's explicit identity value. Its four scalar properties are attribute field
+names, not credential values. Non-empty names use the same backend-attribute validation grammar as `AccountField`;
+empty names preserve established runtime field state. `Groups` and `GroupDistinguishedNames` are authoritative for a
+found user, so empty slices clear previously resolved values through the existing core path.
+
+The forward native backend adapter copies `Attributes`, `Groups`, and `GroupDistinguishedNames` before retaining them,
+maps every identity field into the internal PassDB result, and preserves `Status` and validated `Facts` in internal
+additional attributes. Subject readback creates a fresh clone of all three mutable collections for every
+`SubjectRequest`, including parallel siblings. It intentionally does not reconstruct `Status` or `Facts` from internal
+additional attributes.
+
+`BackendResult.BackendServer` is the backend authority returned by the backend call. Subject output
+`SelectedBackend` and `BackendResultPatch.SelectedBackend` select a replacement for later processing; they are not
+fields on `BackendResult`.
+
+The three backend families still have different public/runtime shapes. Native Go now populates every
+`BackendIdentityResult` field through its PassDB and subject adapters. Remote user snapshots populate account, synthetic
+unique-ID and display-name fields, groups, group DNs, attributes, and backend reference; the remote password response
+separately exposes its currently implemented fields, including the TOTP secret field name. Lua backend results retain
+their wider mutable model, including serialized WebAuthn credential values. This work does not change remote or Lua
+runtime behavior and does not claim identical result or patch surfaces.
 
 `PolicyFact.Value` should use the same JSON/CBOR-compatible value set as runtime context values. This keeps policy facts
 serializable, reportable, and safe to bridge between Lua and Go extension paths.
@@ -886,7 +926,8 @@ type BackendResultPatch struct {
 This maps to Lua subject sources, including backend-result enrichment, attribute removal, backend server selection, and
 policy facts. `BackendResultPatch` is explicit and value-only; it supports account, account field,
 user-found/authenticated flags, selected backend, and string attributes without exposing mutable internal backend-result
-pointers or full replacement semantics.
+pointers or full replacement semantics. It cannot patch unique-ID or display-name field metadata, TOTP field names,
+groups, group distinguished names, status, facts, or WebAuthn values.
 `Response` supports controlled HTTP response header set/delete operations while the response is still mutable. It does
 not expose response bodies, cookies, streaming, raw `http.ResponseWriter`, or Gin contexts.
 
@@ -934,6 +975,16 @@ that do not implement an optional interface simply do not advertise that capabil
 Lua backend request fields such as `totp_secret`, `totp_recovery_codes`, `webauthn_credential`, and
 `webauthn_old_credential` stay out of `RequestSnapshot`; native ports use the typed TOTP, recovery-code, WebAuthn, and
 public MFA request structs instead.
+
+These four optional interfaces are authoritative for plugin-owned MFA state. Missing interfaces retain the established
+unknown-backend result, while plugin errors and panics map to secret-safe temporary failures. Core edge calls that try
+to supply a selected TOTP secret or selected recovery-code values remain rejected; registration and generation flow
+through the typed requests.
+
+`BackendIdentityResult.TOTPSecretField` and `TOTPRecoveryField` are only compatibility metadata for backends that
+intentionally participate in core-managed attribute storage. They do not enable secret-value writes and do not replace
+`TOTPBackend` or `RecoveryCodeBackend`. WebAuthn credential and ceremony data stays on `WebAuthnBackend` and
+`PublicMFAStateBackend`; `BackendResult` has no WebAuthn field.
 
 #### Backend Order Integration
 
@@ -1718,6 +1769,8 @@ The current v1 implementation covers the native plugin surfaces needed for produ
 - credential-gated password access plus public `pluginapi/v1/password` helpers shared with the Lua/server password path;
 - backend password and account-list adapters, custom account fields, account-list policy facts, and typed TOTP,
   recovery-code, WebAuthn, and public MFA operations;
+- explicit native backend identity results for unique-ID and display-name field metadata, core-managed TOTP field-name
+  compatibility, authoritative resolved groups, complete `NoAuth` IdP lookup, and isolated subject readback;
 - host-provided backend candidates plus value-only selected-backend and backend-result patching from subject sources;
 - policy-selected obligations and post-actions with populated args/facts, registered fact validation, explicit public log
   conventions, status messages, and synchronous response mutation where the response is still mutable;

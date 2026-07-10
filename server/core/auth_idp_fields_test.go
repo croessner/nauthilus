@@ -16,6 +16,7 @@
 package core
 
 import (
+	"net/http/httptest"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
@@ -26,6 +27,55 @@ import (
 	"github.com/stretchr/testify/assert"
 	lua "github.com/yuin/gopher-lua"
 )
+
+func TestProcessPassDBResultPreservesEmptyIdentityFieldsAndClearsFoundUserGroups(t *testing.T) {
+	setupMinimalTestConfig(t)
+	gin.SetMode(gin.TestMode)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("GET", "/idp/user", nil)
+	auth := NewAuthStateFromContextWithDeps(ctx, setupAuthDeps()).(*AuthState)
+	auth.Request.Username = "subject@example.test"
+	passDB := &PassDBMap{backend: definitions.BackendPlugin}
+
+	initial := &PassDBResult{
+		UserFound:               true,
+		Account:                 "subject@example.test",
+		UniqueUserIDField:       "entryUUID",
+		DisplayNameField:        "displayName",
+		TOTPSecretField:         "totpSecret",
+		TOTPRecoveryField:       "totpRecovery",
+		Groups:                  []string{"group-b", "group-a"},
+		GroupDistinguishedNames: []string{"cn=group-b,dc=example,dc=test", "cn=group-a,dc=example,dc=test"},
+		Backend:                 definitions.BackendPlugin,
+	}
+	if err := ProcessPassDBResult(ctx, initial, auth, passDB); err != nil {
+		t.Fatalf("ProcessPassDBResult(initial) error = %v", err)
+	}
+
+	assertRuntimeIdentityFields(t, auth, initial)
+	assert.Equal(t, []string{"group-a", "group-b"}, auth.GetGroups())
+	assert.Equal(t, []string{"cn=group-a,dc=example,dc=test", "cn=group-b,dc=example,dc=test"}, auth.GetGroupDistinguishedNames())
+
+	empty := &PassDBResult{UserFound: true, Backend: definitions.BackendPlugin}
+	if err := ProcessPassDBResult(ctx, empty, auth, passDB); err != nil {
+		t.Fatalf("ProcessPassDBResult(empty) error = %v", err)
+	}
+
+	assertRuntimeIdentityFields(t, auth, initial)
+	assert.Empty(t, auth.GetGroups())
+	assert.Empty(t, auth.GetGroupDistinguishedNames())
+}
+
+// assertRuntimeIdentityFields verifies non-empty identity field names remain installed.
+func assertRuntimeIdentityFields(t *testing.T, auth *AuthState, expected *PassDBResult) {
+	t.Helper()
+
+	assert.Equal(t, expected.UniqueUserIDField, auth.Runtime.UniqueUserIDField)
+	assert.Equal(t, expected.DisplayNameField, auth.Runtime.DisplayNameField)
+	assert.Equal(t, expected.TOTPSecretField, auth.Runtime.TOTPSecretField)
+	assert.Equal(t, expected.TOTPRecoveryField, auth.Runtime.TOTPRecoveryField)
+}
 
 // TestFillIDPFieldsPopulatesUserGroupsFromState verifies that fillIDPFields populates the
 // UserGroups field in the CommonRequest from the AuthState.

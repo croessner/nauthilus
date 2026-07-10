@@ -101,11 +101,22 @@ type BackendResultPatch struct {
 	AccountField    string
 }
 
+// BackendIdentityResult carries identity metadata returned by a backend plugin.
+type BackendIdentityResult struct {
+	UniqueUserIDField       string
+	DisplayNameField        string
+	TOTPSecretField         string
+	TOTPRecoveryField       string
+	Groups                  []string
+	GroupDistinguishedNames []string
+}
+
 // BackendResult describes a password verification result from a backend plugin.
 type BackendResult struct {
 	Status        *StatusMessage
 	Attributes    map[string][]string
 	Facts         []PolicyFact
+	Identity      BackendIdentityResult
 	Account       string
 	AccountField  string
 	BackendServer *BackendServerRef
