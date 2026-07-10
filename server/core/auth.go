@@ -576,8 +576,9 @@ type AuthRuntime struct {
 	// BFRepeating indicates whether brute-force detection is repeating.
 	BFRepeating bool
 
-	// BFRWP indicates whether the request was identified as a Repeating Wrong Password (RWP).
-	// When true, bucket counters were NOT increased because the same wrong password was repeated.
+	// BFRWP stores the request-level Repeating Wrong Password (RWP) allowance decision.
+	// A pre-auth candidate is cleared after successful authentication, so final logs retain true only for failures
+	// whose brute-force bucket counters were not increased.
 	BFRWP bool
 
 	// MasterUserMode indicates whether the request is in master user mode.
@@ -3438,6 +3439,7 @@ func (a *AuthState) loadBruteForceHistories(ctx *gin.Context, accountName string
 func (a *AuthState) applyBackendResult(ctx *gin.Context, passDBResult *PassDBResult) {
 	if passDBResult.Authenticated {
 		a.Runtime.Authenticated = true
+		a.Runtime.BFRWP = false
 		a.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
 
 		return

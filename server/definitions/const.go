@@ -496,7 +496,7 @@ const (
 	// LogKeyFailureReason represents a machine-readable failure reason for an operation.
 	LogKeyFailureReason = "failure_reason"
 
-	// LogKeyBFRWP indicates whether the request was identified as a Repeating Wrong Password (RWP).
+	// LogKeyBFRWP indicates whether an authentication failure used the Repeating Wrong Password (RWP) allowance.
 	LogKeyBFRWP = "bf_rwp"
 
 	// LogKeyStatus represents the general status (like authentication) for logging.

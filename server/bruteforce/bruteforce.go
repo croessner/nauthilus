@@ -2178,7 +2178,6 @@ type rwpScriptArgs struct {
 	argThreshold string
 	argTTL       string
 	argNow       string
-	threshold    uint
 }
 
 // buildRWPScriptArgs computes the common arguments needed by both RWPSlidingWindowCheck and RWPSlidingWindowCommit.
@@ -2204,7 +2203,6 @@ func (bm *bucketManagerImpl) buildRWPScriptArgs() *rwpScriptArgs {
 		argThreshold: strconv.FormatUint(uint64(threshold), 10),
 		argTTL:       strconv.FormatInt(int64(ttl.Seconds()), 10),
 		argNow:       strconv.FormatInt(time.Now().Unix(), 10),
-		threshold:    threshold,
 	}
 }
 
@@ -2336,7 +2334,6 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	}
 
 	if v, ok := res.(int64); ok && v == 1 {
-		bm.logRepeatingWrongPasswordAllowance(logger, args.threshold)
 		return true, nil
 	}
 
@@ -2363,22 +2360,6 @@ func (bm *bucketManagerImpl) repeatingWrongPasswordFallback(logger *slog.Logger,
 	isMember, _ := bm.redis().GetReadHandle().SIsMember(dCtx, acctKey, args.passwordHash).Result()
 
 	return isMember
-}
-
-// logRepeatingWrongPasswordAllowance records that the RWP allowance is active.
-func (bm *bucketManagerImpl) logRepeatingWrongPasswordAllowance(logger *slog.Logger, threshold uint) {
-	userForLog := bm.username
-	if userForLog == "" {
-		userForLog = bm.accountName
-	}
-
-	level.Info(logger).Log(
-		definitions.LogKeyGUID, bm.guid,
-		definitions.LogKeyBruteForce, "RWP allowance active",
-		definitions.LogKeyUsername, userForLog,
-		definitions.LogKeyClientIP, bm.clientIP,
-		"allowed_unique_hashes", threshold,
-	)
 }
 
 // checkEnforceBruteForceComputation determines if brute force computation must be enforced based on user and password state.

@@ -95,7 +95,7 @@ flowchart TD
 
 subgraph RWP_Decision [RWP Enforcement Decision]
 U_CTX -- Yes --> U_CTX_VAL{Enforce?}
-U_CTX_VAL -- No / RWP --> U_SKIP[ProcessPWHist only — do NOT increase buckets]
+U_CTX_VAL -- No / RWP --> U_SKIP[Commit RWP hash and process PW_HIST — do NOT increase buckets]
 U_CTX_VAL -- Yes --> U_UPDATE
 U_CTX -- No --> U_FRESH[Fallback: ShouldEnforceBucketUpdate]
 U_FRESH --> U_FRESH_VAL{Enforce?}
@@ -154,18 +154,21 @@ windows.
 
 ### 3.4 Repeating Wrong Password (RWP)
 
-RWP detection prevents automated attacks that try common passwords across many accounts or the same password repeatedly.
+RWP is an allowance that prevents a client repeatedly retrying the same stale password from inflating broader
+brute-force buckets. It does not block by itself; password spraying and other distinct-password attacks continue
+through normal brute-force enforcement.
 
 * **Data Structure:** Redis Sorted Set `bf:rwp:allow:<scoped_ip>:<account>`.
 * **Configuration:**
     * `brute_force.rwp_allowed_unique_hashes`: The number of distinct wrong password hashes tolerated within the
-      window (default: 1).
+      window (default: 3).
     * `brute_force.rwp_window`: The sliding window duration (default: 15 minutes).
 * **Logic:** Uses two Lua scripts: `RWPSlidingWindowCheck` (read-only) and `RWPSlidingWindowCommit` (write).
-  The check runs early in `CheckBruteForce` to determine whether the password is a repeat, but does **not** record
-  the hash yet. The commit is deferred to `UpdateBruteForceBucketsCounter` and only executes when the rejection was
-	  due to a genuine authentication failure — not an environment-control rejection (e.g., RBL) where the password was never
-	  verified. If `bruteforce.learning` includes the triggering environment control, the commit is still performed.
+  The check runs early in `CheckBruteForce` and produces an allowance candidate, but does **not** record the hash
+  or yet know whether the password is wrong. Successful authentication clears that candidate. After a genuine
+  authentication failure, `UpdateBruteForceBucketsCounter` logs the active allowance and commits the hash even when
+  bucket increments are skipped. Environment-control rejections (e.g., RBL), where the password was never verified,
+  do not commit unless `bruteforce.learning` explicitly includes the triggering control.
   The scripts allow a certain number of unique failed password hashes within a sliding window. If a hash is repeated,
   its timestamp is updated on commit, keeping it "fresh" and avoiding eviction. If the number of unique hashes in
   the window exceeds the threshold, the request is no longer "allowed" under RWP grace and must undergo full

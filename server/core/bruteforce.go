@@ -660,13 +660,15 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	bm := a.newBruteForceUpdateBucketManager(ctx)
 
 	bm, enforceBuckets := a.shouldEnforceBruteForceBucketUpdate(ctx, bm)
-	if !enforceBuckets {
-		return
-	}
 
 	// Commit the RWP sliding window write only if the rejection is genuine
 	// (not caused by an environment control like RBL that never verified the password).
 	a.commitRWPIfAllowed(ctx, bm)
+
+	if !enforceBuckets {
+		return
+	}
+
 	a.saveBruteForceBucketCounters(ctx, bm, matchedPeriod)
 }
 
@@ -755,11 +757,7 @@ func (a *AuthState) shouldEnforceBruteForceBucketUpdate(ctx *gin.Context, bm bru
 
 		ctx.Set(definitions.CtxRWPResultKey, false)
 
-		a.Runtime.BFRWP = true
-
-		bm.ProcessPWHist()
-
-		return bm, false
+		return bm, a.activateRWPAllowance(bm)
 	}
 
 	ctx.Set(definitions.CtxRWPResultKey, true)
@@ -773,11 +771,28 @@ func (a *AuthState) handleCachedRWPEnforcement(bm bruteforce.BucketManager, enfo
 		return true
 	}
 
+	return a.activateRWPAllowance(bm)
+}
+
+// activateRWPAllowance records a confirmed failed request that must not increase brute-force buckets.
+func (a *AuthState) activateRWPAllowance(bm bruteforce.BucketManager) bool {
 	a.Runtime.BFRWP = true
+	a.logRWPAllowanceActive()
 
 	bm.ProcessPWHist()
 
 	return false
+}
+
+// logRWPAllowanceActive records the confirmed request-level RWP allowance decision.
+func (a *AuthState) logRWPAllowanceActive() {
+	level.Info(a.Logger()).Log(
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		definitions.LogKeyBruteForce, "RWP allowance active",
+		definitions.LogKeyUsername, a.Request.Username,
+		definitions.LogKeyClientIP, a.Request.ClientIP,
+		"allowed_unique_hashes", a.cfg().GetBruteForce().GetRWPAllowedUniqueHashes(),
+	)
 }
 
 // saveBruteForceBucketCounters writes counters for active rules matching the request context.
