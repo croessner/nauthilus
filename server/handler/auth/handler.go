@@ -22,6 +22,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
 )
 
@@ -92,7 +93,9 @@ func (h *Handler) handleWithTrace(ctx *gin.Context, disabled func() bool, spanNa
 	spanCtx, sp := tr.Start(ctx.Request.Context(), spanName)
 	defer sp.End()
 
-	ctx.Request = ctx.Request.WithContext(spanCtx)
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 
 	h.process(ctx)
 }

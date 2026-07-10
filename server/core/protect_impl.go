@@ -33,7 +33,7 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey) // MiddleWare behind Logger!
 		auth := newProtectedEndpointAuthState(ctx, cfg, logger, guid)
-		auth.Request.ClientIP, auth.Request.XClientPort = protectedEndpointClient(ctx, cfg, logger, auth)
+		auth.Request.ClientIP, auth.Request.XClientPort = protectedEndpointClient(ctx, cfg, logger)
 
 		// Store remote client IP into connection context. It can be used for brute force updates.
 		ctx.Set(definitions.CtxClientIPKey, auth.Request.ClientIP)
@@ -79,7 +79,7 @@ func newProtectedEndpointAuthState(ctx *gin.Context, cfg config.File, logger *sl
 }
 
 // protectedEndpointClient resolves the effective client address for protected endpoints.
-func protectedEndpointClient(ctx *gin.Context, cfg config.File, logger *slog.Logger, auth *AuthState) (string, string) {
+func protectedEndpointClient(ctx *gin.Context, cfg config.File, logger *slog.Logger) (string, string) {
 	clientIP, clientPort, _ := net.SplitHostPort(ctx.Request.RemoteAddr)
 	if util.DirectPeerIsTrustedProxy(ctx, cfg, logger) {
 		clientIP, clientPort = protectedEndpointTrustedClient(ctx, cfg, logger, clientIP, clientPort)

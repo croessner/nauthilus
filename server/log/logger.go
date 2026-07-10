@@ -26,6 +26,14 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	logcolor "github.com/croessner/nauthilus/v3/server/log/color"
+
+	"go.opentelemetry.io/otel/trace"
+)
+
+const (
+	logSpanIDKey     = "span_id"
+	logTraceFlagsKey = "trace_flags"
+	logTraceIDKey    = "trace_id"
 )
 
 var (
@@ -87,7 +95,49 @@ func (h *dynamicHandler) Handle(ctx context.Context, r slog.Record) error {
 		}
 	}
 
+	handlerAttrs := h.attrs
+	if len(h.groups) > 0 {
+		handlerAttrs = nil
+	}
+
+	addTraceCorrelation(ctx, &r, handlerAttrs)
+
 	return cur.Handle(ctx, r)
+}
+
+// addTraceCorrelation adds active OpenTelemetry identifiers without replacing explicit log attributes.
+func addTraceCorrelation(ctx context.Context, record *slog.Record, handlerAttrs []slog.Attr) {
+	if ctx == nil || record == nil {
+		return
+	}
+
+	spanContext := trace.SpanContextFromContext(ctx)
+	if !spanContext.IsValid() {
+		return
+	}
+
+	keys := make(map[string]struct{}, record.NumAttrs()+len(handlerAttrs))
+	for _, attr := range handlerAttrs {
+		keys[attr.Key] = struct{}{}
+	}
+
+	record.Attrs(func(attr slog.Attr) bool {
+		keys[attr.Key] = struct{}{}
+
+		return true
+	})
+
+	if _, exists := keys[logTraceIDKey]; !exists {
+		record.AddAttrs(slog.String(logTraceIDKey, spanContext.TraceID().String()))
+	}
+
+	if _, exists := keys[logSpanIDKey]; !exists {
+		record.AddAttrs(slog.String(logSpanIDKey, spanContext.SpanID().String()))
+	}
+
+	if _, exists := keys[logTraceFlagsKey]; !exists {
+		record.AddAttrs(slog.String(logTraceFlagsKey, spanContext.TraceFlags().String()))
+	}
 }
 
 func (h *dynamicHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

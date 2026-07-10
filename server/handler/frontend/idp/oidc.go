@@ -1236,7 +1236,7 @@ func (h *OIDCHandler) runOIDCTokenPostAction(
 		Request:       h.buildOIDCTokenPostActionRequest(ctx, auth, service, grantType, clientID, authMethod, httpStatus, result, latency),
 	}
 
-	go auth.RunLuaPostAction(args)
+	auth.QueueLuaPostAction(args)
 }
 
 func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string, clientID string, startedAt time.Time) {
@@ -1403,7 +1403,10 @@ func (h *OIDCHandler) dispatchDeviceCodeTokenGrant(ctx *gin.Context, client *con
 
 // Token handles the OIDC token request.
 func (h *OIDCHandler) Token(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.token")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "oidc.token")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	if rejectDuplicateOIDCTokenParameters(ctx) {
@@ -1430,7 +1433,10 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 
 // UserInfo handles the OIDC userinfo request.
 func (h *OIDCHandler) UserInfo(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.userinfo")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "oidc.userinfo")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	authHeader := ctx.GetHeader("Authorization")
@@ -1456,7 +1462,10 @@ func (h *OIDCHandler) UserInfo(ctx *gin.Context) {
 
 // Introspect handles the OIDC token introspection request.
 func (h *OIDCHandler) Introspect(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.introspect")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "oidc.introspect")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	client, ok := h.authenticateIntrospectionClient(ctx)
@@ -2031,7 +2040,10 @@ func (h *OIDCHandler) oidcLogoutPageData(ctx *gin.Context, tasks []frontChannelL
 
 // Logout handles the OIDC logout request.
 func (h *OIDCHandler) Logout(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.logout")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "oidc.logout")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	h.logIncomingOIDCFlowRequest(ctx, "logout", "", "")

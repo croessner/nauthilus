@@ -206,13 +206,21 @@ func (e policyObligationExecutor) collectLuaPostAction(
 		return false
 	}
 
-	runner, ok := getPostAction().(PostActionPlanRunner)
-	if !ok || runner == nil {
+	preparer, ok := getPostAction().(PostActionPlanPreparer)
+	if !ok || preparer == nil {
 		return false
 	}
 
 	input, cleanup := e.luaPostActionPlanInput(ctx)
-	*postActionPlan = append(*postActionPlan, NewLuaPostActionPlanStep(obligation.ID, runner, input, cleanup))
+	runner := preparer.PreparePlanStep(input)
+
+	if runner == nil {
+		cleanup()
+
+		return false
+	}
+
+	*postActionPlan = append(*postActionPlan, NewLuaPostActionPlanStep(obligation.ID, runner, cleanup))
 
 	return true
 }
@@ -275,7 +283,7 @@ func (e policyObligationExecutor) enqueuePostActionPlan(
 	}
 
 	if bridge == nil {
-		ok := e.runLuaPostActionFallback(steps)
+		ok := e.runLuaPostActionFallback(ctx, steps)
 		ReleasePostActionPlanSteps(steps)
 
 		return true, ok
@@ -285,20 +293,41 @@ func (e policyObligationExecutor) enqueuePostActionPlan(
 }
 
 // runLuaPostActionFallback preserves Lua-only behavior when no native runtime bridge is registered.
-func (e policyObligationExecutor) runLuaPostActionFallback(steps []PostActionPlanStep) bool {
+func (e policyObligationExecutor) runLuaPostActionFallback(ctx *gin.Context, steps []PostActionPlanStep) bool {
+	runners := make([]PostActionPlanRunner, 0, len(steps))
 	for _, step := range steps {
-		runner, input, ok := step.LuaStep()
+		runner, ok := step.LuaStep()
 		if !ok {
 			return false
 		}
 
-		postAction, ok := runner.(PostAction)
-		if !ok {
-			return false
-		}
-
-		postAction.Run(input)
+		runners = append(runners, runner)
 	}
+
+	parent := DetachedPostActionContext(contextFromGin(ctx))
+	executionDone := PostActionExecutionDone(ctx)
+
+	go func() {
+		if WaitForPostActionExecution(parent, executionDone) != nil {
+			return
+		}
+
+		runtimeValues := make(map[string]any)
+		for _, runner := range runners {
+			delta, ok := runner.RunPlanStep(parent, PostActionPlanInput{Runtime: runtimeValues})
+			if !ok {
+				return
+			}
+
+			for key, value := range delta.Set {
+				runtimeValues[key] = value
+			}
+
+			for _, key := range delta.Delete {
+				delete(runtimeValues, key)
+			}
+		}
+	}()
 
 	return true
 }

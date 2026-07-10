@@ -215,7 +215,10 @@ func deviceAuthorizationResponse(issuer string, userCode string, deviceCode stri
 // DeviceAuthorization handles the device authorization request (RFC 8628 §3.1).
 // The client requests a device code and user code for the user to authorize.
 func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_authorization")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_authorization")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	clientID := ctx.PostForm(oidcParamClientID)
@@ -1104,7 +1107,10 @@ func setDeviceVerifySpanAttributes(sp trace.Span, request *idp.DeviceCodeRequest
 // DeviceVerify handles the user verification of a device code (RFC 8628 §3.3).
 // The user submits the user code along with their credentials to authorize or deny the device.
 func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_verify")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_verify")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	h.logIncomingOIDCFlowRequest(ctx, "device_verify", "", "")
@@ -1494,7 +1500,10 @@ func (h *OIDCHandler) approveDeviceConsent(ctx *gin.Context, consentContext devi
 // On approval, the device code is authorized and the success page is shown.
 // On denial, the device code is denied and an error page is shown.
 func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_consent_post")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_consent_post")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	h.logIncomingOIDCFlowRequest(ctx, "device_consent_post", "", "")

@@ -34,8 +34,7 @@ func TestProtectedEndpointClientIgnoresClientIPFromUntrustedPeer(t *testing.T) {
 		"X-Client-Port": "2525",
 	})
 
-	auth := &AuthState{}
-	clientIP, clientPort := protectedEndpointClient(ctx, cfg, nil, auth)
+	clientIP, clientPort := protectedEndpointClient(ctx, cfg, nil)
 
 	assert.Equal(t, "198.51.100.20", clientIP)
 	assert.Equal(t, "54321", clientPort)
@@ -49,8 +48,7 @@ func TestProtectedEndpointClientUsesForwardedIPFromTrustedProxy(t *testing.T) {
 		"X-Forwarded-For": "203.0.113.88",
 	})
 
-	auth := &AuthState{}
-	clientIP, _ := protectedEndpointClient(ctx, cfg, nil, auth)
+	clientIP, _ := protectedEndpointClient(ctx, cfg, nil)
 
 	assert.Equal(t, "203.0.113.88", clientIP)
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 	pluginpassword "github.com/croessner/nauthilus/v3/pluginapi/v1/password"
 	"github.com/croessner/nauthilus/v3/server/core"
+	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
@@ -19,6 +20,8 @@ import (
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 var _ core.PluginEffectBridge = (*EffectBridge)(nil)
@@ -130,6 +133,7 @@ const (
 
 type postActionPlan struct {
 	requestContext context.Context
+	executionDone  <-chan struct{}
 	runtimeValues  map[string]any
 	sourceSteps    []core.PostActionPlanStep
 	steps          []postActionPlanStep
@@ -141,7 +145,6 @@ type postActionPlan struct {
 type postActionPlanStep struct {
 	credentials   pluginapi.CredentialProvider
 	args          pluginapi.ArgsView
-	luaInput      core.PostActionInput
 	luaRunner     core.PostActionPlanRunner
 	qualifiedName string
 	kind          core.PostActionPlanStepKind
@@ -169,6 +172,7 @@ func (b *EffectBridge) newPostActionPlan(
 
 	plan := postActionPlan{
 		requestContext: requestContext,
+		executionDone:  core.PostActionExecutionDone(ctx),
 		runtimeValues:  runtimeValues,
 		sourceSteps:    append([]core.PostActionPlanStep(nil), steps...),
 		facts:          facts,
@@ -312,13 +316,12 @@ func (b *EffectBridge) newPostActionPlanStep(
 	requestedStep core.PostActionPlanStep,
 ) (postActionPlanStep, error) {
 	if requestedStep.Kind() == core.PostActionPlanStepLua {
-		runner, input, ok := requestedStep.LuaStep()
+		runner, ok := requestedStep.LuaStep()
 		if !ok {
 			return postActionPlanStep{}, fmt.Errorf("lua post-action plan step %q is not runnable", requestedStep.ID())
 		}
 
 		return postActionPlanStep{
-			luaInput:  input,
 			luaRunner: runner,
 			kind:      core.PostActionPlanStepLua,
 		}, nil
@@ -347,8 +350,29 @@ func (b *EffectBridge) newPostActionPlanStep(
 }
 
 // runPostActionPlan executes post-action steps sequentially and merges valid runtime deltas.
-func (b *EffectBridge) runPostActionPlan(ctx context.Context, plan postActionPlan) error {
+func (b *EffectBridge) runPostActionPlan(ctx context.Context, plan postActionPlan) (err error) {
 	defer core.ReleasePostActionPlanSteps(plan.sourceSteps)
+
+	if err = core.WaitForPostActionExecution(ctx, plan.executionDone); err != nil {
+		return err
+	}
+
+	tr := monittrace.New("nauthilus/post_action")
+	planCtx, planSpan := tr.Start(ctx, "auth.post_action.plan",
+		attribute.Int("post_action.steps", len(plan.steps)),
+	)
+
+	defer func() {
+		if err != nil {
+			planSpan.RecordError(err)
+			planSpan.SetStatus(codes.Error, "post-action plan failed")
+			planSpan.SetAttributes(attribute.String("post_action.result", "error"))
+		} else {
+			planSpan.SetAttributes(attribute.String("post_action.result", "ok"))
+		}
+
+		planSpan.End()
+	}()
 
 	runtimeValues, err := cloneRuntimeMap(plan.runtimeValues)
 	if err != nil {
@@ -361,13 +385,13 @@ func (b *EffectBridge) runPostActionPlan(ctx context.Context, plan postActionPla
 			return err
 		}
 
-		delta, err := b.runPostActionPlanStep(ctx, plan, step, runtimeContext, runtimeValues)
+		delta, err := b.runPostActionPlanStep(planCtx, plan, step, runtimeContext, runtimeValues)
 		if err != nil {
 			return err
 		}
 
 		runtimeValues, err = MergeRuntimeDeltas(
-			ctx,
+			planCtx,
 			runtimeValues,
 			b.runner.host.Logger(postActionPlanWorkerName),
 			delta,
@@ -409,9 +433,8 @@ func (b *EffectBridge) runPostActionPlanStep(
 			return pluginapi.RuntimeDelta{}, err
 		}
 
-		delta, ok := step.luaRunner.RunPlanStep(core.PostActionPlanInput{
-			PostActionInput: step.luaInput,
-			Runtime:         stepRuntime,
+		delta, ok := step.luaRunner.RunPlanStep(ctx, core.PostActionPlanInput{
+			Runtime: stepRuntime,
 		})
 		if !ok {
 			return pluginapi.RuntimeDelta{}, fmt.Errorf("lua post-action plan step failed")

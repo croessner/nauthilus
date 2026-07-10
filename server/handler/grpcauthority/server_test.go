@@ -83,6 +83,47 @@ func TestUnaryServerInterceptorAllowsValidBasicAuth(t *testing.T) {
 	}
 }
 
+func TestPostActionResponseCompletionInterceptorReleasesAfterHandlerReturn(t *testing.T) {
+	interceptor := postActionResponseCompletionInterceptor()
+	innerReturned := make(chan struct{})
+	releasedAfterReturn := make(chan bool, 1)
+
+	_, err := interceptor(
+		context.Background(),
+		struct{}{},
+		&grpc.UnaryServerInfo{FullMethod: authv1.AuthService_Authenticate_FullMethodName},
+		func(ctx context.Context, _ any) (any, error) {
+			defer close(innerReturned)
+
+			executionDone := core.PostActionExecutionDoneFromContext(ctx)
+			go func() {
+				<-executionDone
+
+				select {
+				case <-innerReturned:
+					releasedAfterReturn <- true
+				default:
+					releasedAfterReturn <- false
+				}
+			}()
+
+			return struct{}{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("interceptor error = %v", err)
+	}
+
+	select {
+	case released := <-releasedAfterReturn:
+		if !released {
+			t.Fatal("post-action gate released before gRPC handler returned")
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("post-action gate was not released")
+	}
+}
+
 func TestUnaryServerInterceptorRejectsInvalidBasicAuth(t *testing.T) {
 	cfg := grpcAuthTestConfig(config.BasicAuth{
 		Enabled:  true,

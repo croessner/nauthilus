@@ -17,57 +17,24 @@
 package tracetest
 
 import (
-	"context"
 	"reflect"
-	"sync"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/testing/oteltest"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// Collector stores exported spans in memory.
-type Collector struct {
-	mu    sync.Mutex
-	spans []sdktrace.ReadOnlySpan
-}
-
-// ExportSpans implements sdktrace.SpanExporter.
-func (c *Collector) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.spans = append(c.spans, spans...)
-
-	return nil
-}
-
-// Shutdown implements sdktrace.SpanExporter.
-func (c *Collector) Shutdown(_ context.Context) error {
-	return nil
-}
-
-// Spans returns a stable snapshot of collected spans.
-func (c *Collector) Spans() []sdktrace.ReadOnlySpan {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	return append([]sdktrace.ReadOnlySpan(nil), c.spans...)
-}
+// Collector aliases the config-independent OpenTelemetry test collector.
+type Collector = oteltest.Collector
 
 // Setup installs an always-sampled tracer provider and enables tracing in the test config.
 func Setup(t *testing.T) *Collector {
 	t.Helper()
 
-	collector := &Collector{}
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(collector)),
-	)
+	collector := oteltest.Setup(t)
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{},
@@ -75,19 +42,8 @@ func Setup(t *testing.T) *Collector {
 	cfg.Server.Insights.Tracing.Enabled = true
 	config.SetTestFile(cfg)
 
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
-
 	t.Cleanup(func() {
-		_ = tp.Shutdown(context.Background())
-
 		config.SetTestFile(nil)
-
-		otel.SetTracerProvider(sdktrace.NewTracerProvider())
-		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 	})
 
 	return collector

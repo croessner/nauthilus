@@ -56,7 +56,9 @@ func LoggerMiddlewareWithConfig(logger *slog.Logger, cfg config.File) gin.Handle
 		activeLogger := loggerWithDefault(logger)
 		keyvals := requestLogFields(ctx, cfg, activeLogger, guid, time.Since(start), err)
 
-		_ = requestLogWrapper(ctx.Writer.Status(), err)(activeLogger).Log(keyvals...)
+		_ = requestLogWrapper(ctx.Writer.Status(), err)(activeLogger).
+			WithContext(ctx.Request.Context()).
+			Log(keyvals...)
 	}
 }
 

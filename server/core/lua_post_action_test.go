@@ -193,3 +193,34 @@ func TestRunLuaPostAction_DetachesCanceledHTTPRequest(t *testing.T) {
 
 	close(stopReader)
 }
+
+func TestPostActionRuntimeCancelKeepsCommonRequestOwnedUntilWorkerFinishes(t *testing.T) {
+	cfg := prepareLuaPostActionTest(t)
+	auth := corepkg.NewAuthStateFromContextWithDeps(nil, corepkg.AuthDeps{Cfg: cfg}).(*corepkg.AuthState)
+	runtime := corepkg.NewPostActionRuntime(auth)
+	runCtx, cancel := context.WithCancel(context.Background())
+	completed := make(chan bool, 1)
+
+	go func() {
+		completed <- runtime.RunContext(runCtx, newLuaPostActionArgs(nil))
+	}()
+
+	var act *action.Action
+	select {
+	case act = <-action.RequestChan:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected post action to be enqueued")
+	}
+
+	cancel()
+
+	if ok := <-completed; ok {
+		t.Fatal("RunContext() reported completion after cancellation")
+	}
+
+	if act.CommonRequest == nil || act.Session != "guid-123" {
+		t.Fatalf("CommonRequest was released before worker completion: %#v", act.CommonRequest)
+	}
+
+	act.FinishedChan <- action.Done{}
+}

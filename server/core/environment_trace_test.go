@@ -6,6 +6,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/localcache"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/testing/tracetest"
@@ -153,7 +154,7 @@ func TestAuthenticate_DoesNotInheritLastEnvironmentControlSpan(t *testing.T) {
 		t,
 		backendPlanPasswordVerifier{},
 		nil,
-		nil,
+		traceBruteForceService{},
 		backendPlanSubject{result: definitions.AuthResultOK},
 		currentBehaviorPostAction{},
 	)
@@ -170,6 +171,9 @@ func TestAuthenticate_DoesNotInheritLastEnvironmentControlSpan(t *testing.T) {
 	rblSpan := requireTraceSpan(t, spans, "auth.environment.rbl")
 	authSpan := requireTraceSpan(t, spans, "auth.authenticate")
 	verifySpan := requireTraceSpan(t, spans, "auth.verify")
+	historySpan := requireTraceSpan(t, spans, "bruteforce.load_all_password_histories")
+	subjectSpan := requireTraceSpan(t, spans, "auth.lua.subject")
+	cacheSpan := requireTraceSpan(t, spans, "auth.cache.process")
 
 	if got, stale := authSpan.Parent().SpanID(), rblSpan.SpanContext().SpanID(); got == stale {
 		t.Fatalf("%s parent = %s, must not inherit stale %s span %s", authSpan.Name(), got, rblSpan.Name(), stale)
@@ -177,6 +181,91 @@ func TestAuthenticate_DoesNotInheritLastEnvironmentControlSpan(t *testing.T) {
 
 	requireParentSpanID(t, authSpan, requestSpan.SpanContext().SpanID())
 	requireParentSpanID(t, verifySpan, authSpan.SpanContext().SpanID())
+	requireParentSpanID(t, historySpan, authSpan.SpanContext().SpanID())
+	requireParentSpanID(t, subjectSpan, authSpan.SpanContext().SpanID())
+	requireParentSpanID(t, cacheSpan, authSpan.SpanContext().SpanID())
+	requireNoChildStartsAfterParentEnd(t, spans)
+}
+
+func TestPreprocessAuthRequest_RestoresParentAndKeepsChecksAsSiblings(t *testing.T) {
+	auth, ctx, collector := newTraceParentedEnvironmentAuth(t)
+	cacheKey := auth.generateLocalCacheKey()
+	localcache.LocalCache.Delete(cacheKey)
+	t.Cleanup(func() {
+		localcache.LocalCache.Delete(cacheKey)
+	})
+
+	requestSpan := attachRequestParentSpan(t, ctx, auth)
+
+	if reject := auth.PreproccessAuthRequest(ctx); reject {
+		t.Fatal("PreproccessAuthRequest() rejected an otherwise valid request")
+	}
+
+	requireRequestContextsSpanID(t, ctx, auth, requestSpan.SpanContext().SpanID())
+	requestSpan.End()
+
+	spans := collector.Spans()
+	preprocessSpan := requireTraceSpan(t, spans, "auth.environment")
+	localCacheSpan := requireTraceSpan(t, spans, "auth.local_cache")
+	bruteForceSpan := requireTraceSpan(t, spans, "auth.bruteforce.check")
+
+	requireParentSpanID(t, preprocessSpan, requestSpan.SpanContext().SpanID())
+	requireParentSpanID(t, localCacheSpan, preprocessSpan.SpanContext().SpanID())
+	requireParentSpanID(t, bruteForceSpan, preprocessSpan.SpanContext().SpanID())
+	requireNoChildStartsAfterParentEnd(t, spans)
+}
+
+func TestPositivePasswordCacheTraceKeepsNestedParents(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	cfg.Server.Redis.AccountLocalCache.Enabled = true
+	auth, ctx, mock := newCurrentBehaviorAuthState(t, cfg)
+	auth.AccountCache().Set(cfg, auth.Request.Username, auth.Request.Protocol.Get(), "", auth.Request.Username)
+	cacheKey := auth.positivePasswordCacheKey("__default__", auth.Request.Username)
+	mock.ExpectHGetAll(cacheKey).SetVal(map[string]string{})
+
+	collector := tracetest.Setup(t)
+	requestSpan := attachRequestParentSpan(t, ctx, auth)
+	previousVerifier := getPasswordVerifier()
+
+	RegisterPasswordVerifier(cacheTracePasswordVerifier{})
+	t.Cleanup(func() {
+		RegisterPasswordVerifier(previousVerifier)
+	})
+
+	result, err := auth.processVerifyPassword(ctx, []*PassDBMap{{
+		backend: definitions.BackendCache,
+		fn:      CachePassDB,
+	}})
+
+	requestSpan.End()
+
+	if result != nil {
+		PutPassDBResultToPool(result)
+	}
+
+	if err != nil {
+		t.Fatalf("CachePassDB() error = %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("redis expectations = %v", err)
+	}
+
+	spans := collector.Spans()
+	verifySpan := requireTraceSpan(t, spans, "auth.verify")
+	cachePassDBSpan := requireTraceSpan(t, spans, "cache.passdb")
+	cacheGetSpan := requireTraceSpan(t, spans, "cache.get")
+	requireParentSpanID(t, verifySpan, requestSpan.SpanContext().SpanID())
+	requireParentSpanID(t, cachePassDBSpan, verifySpan.SpanContext().SpanID())
+	requireParentSpanID(t, cacheGetSpan, cachePassDBSpan.SpanContext().SpanID())
+	requireNoChildStartsAfterParentEnd(t, spans)
+}
+
+type cacheTracePasswordVerifier struct{}
+
+// Verify exercises the configured cache backend inside the real detached verify worker.
+func (cacheTracePasswordVerifier) Verify(_ *gin.Context, auth *AuthState, passDBs []*PassDBMap) (*PassDBResult, error) {
+	return passDBs[0].fn(auth)
 }
 
 // newTraceParentedEnvironmentAuth creates a deterministic auth state whose environment controls do not reject.
@@ -192,6 +281,7 @@ func newTraceParentedEnvironmentAuth(t *testing.T) (*AuthState, *gin.Context, *t
 	cfg.RelayDomains = &config.RelayDomainsSection{
 		StaticDomains: []string{"example.test"},
 	}
+	cfg.Server.Redis.AccountLocalCache.Enabled = true
 
 	activateTracePolicySnapshotForTest(t)
 
@@ -200,6 +290,20 @@ func newTraceParentedEnvironmentAuth(t *testing.T) (*AuthState, *gin.Context, *t
 	auth.AccountCache().Set(cfg, auth.Request.Username, auth.Request.Protocol.Get(), "", auth.Request.Username)
 
 	return auth, ctx, tracetest.Setup(t)
+}
+
+type traceBruteForceService struct{}
+
+func (traceBruteForceService) WaitDelay(_, _ uint) int {
+	return 0
+}
+
+func (traceBruteForceService) LoadHistories(ctx *gin.Context, _ *AuthState, _ string) {
+	_, span := otel.Tracer("nauthilus/core/environment_trace_test").Start(
+		ctx.Request.Context(),
+		"bruteforce.load_all_password_histories",
+	)
+	span.End()
 }
 
 // activateTracePolicySnapshotForTest installs a minimal snapshot so policy.check spans are recorded.
@@ -303,4 +407,41 @@ func traceSpanNames(spans []sdktrace.ReadOnlySpan) []string {
 	}
 
 	return names
+}
+
+// requireNoChildStartsAfterParentEnd rejects stale synchronous parent contexts.
+func requireNoChildStartsAfterParentEnd(t *testing.T, spans []sdktrace.ReadOnlySpan) {
+	t.Helper()
+
+	byID := make(map[trace.SpanID]sdktrace.ReadOnlySpan, len(spans))
+	for _, span := range spans {
+		byID[span.SpanContext().SpanID()] = span
+	}
+
+	for _, child := range spans {
+		parent, exists := byID[child.Parent().SpanID()]
+		if !exists {
+			continue
+		}
+
+		if child.StartTime().After(parent.EndTime()) {
+			t.Fatalf(
+				"span %s started at %s after parent %s ended at %s",
+				child.Name(),
+				child.StartTime(),
+				parent.Name(),
+				parent.EndTime(),
+			)
+		}
+
+		if child.EndTime().After(parent.EndTime()) {
+			t.Fatalf(
+				"span %s ended at %s after synchronous parent %s ended at %s",
+				child.Name(),
+				child.EndTime(),
+				parent.Name(),
+				parent.EndTime(),
+			)
+		}
+	}
 }

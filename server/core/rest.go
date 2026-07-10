@@ -2312,10 +2312,10 @@ func startAsync(deps asyncJobDeps, jobID string, guid string, fn func(context.Co
 		return
 	}
 
-	go func() {
-		// Capture the time source once to avoid races in tests that temporarily override `nowFunc`.
-		now := nowFunc
+	// Capture the time source before the goroutine starts so callers may safely restore test overrides after return.
+	now := nowFunc
 
+	go func() {
 		base := svcctx.Get()
 
 		// Mark INPROGRESS

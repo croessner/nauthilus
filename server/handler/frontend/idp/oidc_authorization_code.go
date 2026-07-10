@@ -508,7 +508,10 @@ func (h *OIDCHandler) enforceOIDCAuthorizePolicyGates(ctx *gin.Context, mgr cook
 
 // Authorize handles the OIDC authorization request.
 func (h *OIDCHandler) Authorize(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.authorize")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "oidc.authorize")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	if rejectDuplicateOIDCAuthorizeParameters(ctx) {
@@ -888,7 +891,10 @@ func (h *OIDCHandler) completeOIDCConsentFlow(ctx *gin.Context, mgr cookie.Manag
 
 // ConsentPOST handles the OIDC consent submission.
 func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.consent_post")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "oidc.consent_post")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	h.logIncomingOIDCFlowRequest(ctx, "consent_post", "", "")

@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 
@@ -55,47 +56,117 @@ type PostActionArgs struct {
 	Request       lualib.CommonRequest
 }
 
+// PostActionRuntime is an immutable dependency snapshot for detached Lua work.
+type PostActionRuntime struct {
+	request  *http.Request
+	cfg      config.File
+	logger   *slog.Logger
+	redis    rediscli.Client
+	resource string
+}
+
+// NewPostActionRuntime captures all request-derived data before detached execution.
+func NewPostActionRuntime(auth *AuthState) PostActionRuntime {
+	if auth == nil {
+		return PostActionRuntime{}
+	}
+
+	return PostActionRuntime{
+		request:  auth.Request.HTTPClientRequest,
+		cfg:      auth.Cfg(),
+		logger:   auth.Logger(),
+		redis:    auth.Redis(),
+		resource: util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, auth.Request.Service),
+	}
+}
+
 // RunLuaPostAction enqueues a Lua post action on the worker channel using the
 // pooled CommonRequest object. It mirrors prior behavior and preserves metrics.
 func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
-	if !a.Cfg().HasRuntimeModule(definitions.ControlBruteForce) || args.Request.ClientIP == "" {
-		return
+	_ = NewPostActionRuntime(a).RunContext(svcctx.Get(), args)
+}
+
+// QueueLuaPostAction waits for the response boundary using only captured runtime data.
+func (a *AuthState) QueueLuaPostAction(args PostActionArgs) {
+	runtime := NewPostActionRuntime(a)
+	executionDone := PostActionExecutionDone(a.Request.HTTPClientContext)
+	lifetime := DetachedPostActionContext(trace.ContextWithSpanContext(context.Background(), args.ParentSpan))
+
+	go func() {
+		if WaitForPostActionExecution(lifetime, executionDone) != nil {
+			return
+		}
+
+		_ = runtime.RunContext(lifetime, args)
+	}()
+}
+
+// RunContext executes one Lua post-action and reports whether worker ownership completed.
+func (r PostActionRuntime) RunContext(ctx context.Context, args PostActionArgs) bool {
+	if r.cfg == nil || !r.cfg.HasRuntimeModule(definitions.ControlBruteForce) || args.Request.ClientIP == "" {
+		return true
 	}
 
-	postActionRequest := util.DetachedHTTPRequest(context.TODO(), a.postActionHTTPRequest(args))
-	if util.IsHTTPRequestCanceled(a.Logger(), postActionRequest, args.Request.Session, "enqueue.lua_post_action") {
-		return
+	if ctx == nil {
+		ctx = svcctx.Get()
 	}
 
-	defer a.stopPostActionTimer()()
+	postActionRequest := util.DetachedHTTPRequest(ctx, r.postActionHTTPRequest(args))
+	if util.IsHTTPRequestCanceled(r.logger, postActionRequest, args.Request.Session, "enqueue.lua_post_action") {
+		return false
+	}
 
-	finished := make(chan action.Done)
+	defer r.stopPostActionTimer()()
+
+	finished := make(chan action.Done, 1)
 	cr := lualib.GetCommonRequest()
 
-	defer lualib.PutCommonRequest(cr)
+	releaseCommonRequest := true
+	defer func() {
+		if releaseCommonRequest {
+			lualib.PutCommonRequest(cr)
+		}
+	}()
 
-	clientNet, repeating := a.postActionBruteForceHints(args)
+	clientNet, repeating := r.postActionBruteForceHints(args)
 	preparePostActionCommonRequest(cr, args, clientNet, repeating)
 
-	action.RequestChan <- newPostActionRequest(args, postActionRequest, cr, finished)
+	select {
+	case action.RequestChan <- newPostActionRequest(args, postActionRequest, cr, finished):
+	case <-ctx.Done():
+		return false
+	}
 
+	select {
+	case <-finished:
+		return true
+	case <-ctx.Done():
+		releaseCommonRequest = false
+
+		go releasePostActionCommonRequest(finished, cr)
+
+		return false
+	}
+}
+
+// releasePostActionCommonRequest waits for worker ownership to end before pooling the request.
+func releasePostActionCommonRequest(finished <-chan action.Done, cr *lualib.CommonRequest) {
 	<-finished
+	lualib.PutCommonRequest(cr)
 }
 
 // postActionHTTPRequest resolves the HTTP request used for cancellation checks.
-func (a *AuthState) postActionHTTPRequest(args PostActionArgs) *http.Request {
+func (r PostActionRuntime) postActionHTTPRequest(args PostActionArgs) *http.Request {
 	if args.HTTPRequest != nil {
 		return args.HTTPRequest
 	}
 
-	return a.Request.HTTPClientRequest
+	return r.request
 }
 
 // stopPostActionTimer starts and returns the post-action metric timer stop hook.
-func (a *AuthState) stopPostActionTimer() func() {
-	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
-
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromPostAction, "lua_post_action_request_total", resource)
+func (r PostActionRuntime) stopPostActionTimer() func() {
+	stopTimer := stats.PrometheusTimer(r.cfg, definitions.PromPostAction, "lua_post_action_request_total", r.resource)
 	if stopTimer == nil {
 		return func() {}
 	}
@@ -104,7 +175,7 @@ func (a *AuthState) stopPostActionTimer() func() {
 }
 
 // postActionBruteForceHints returns configured or derived brute-force hints.
-func (a *AuthState) postActionBruteForceHints(args PostActionArgs) (string, bool) {
+func (r PostActionRuntime) postActionBruteForceHints(args PostActionArgs) (string, bool) {
 	clientNet := args.Request.ClientNet
 
 	repeating := args.Request.Repeating
@@ -113,11 +184,15 @@ func (a *AuthState) postActionBruteForceHints(args PostActionArgs) (string, bool
 	}
 
 	base := svcctx.Get()
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(base, a.Cfg())
+	if args.ParentSpan.IsValid() {
+		base = trace.ContextWithSpanContext(base, args.ParentSpan)
+	}
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(base, r.cfg)
 	computedNet, computedRepeating := ComputeBruteForceHints(
 		dCtx,
-		a.Cfg(),
-		a.Redis(),
+		r.cfg,
+		r.redis,
 		args.Request.ClientIP,
 		args.Request.Protocol,
 		args.Request.OIDCCID,

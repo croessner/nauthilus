@@ -40,7 +40,9 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
 
-	_ = ctx
+	requestScope := auth.scopeRequestContext(ctx, nil)
+
+	defer requestScope.Restore()
 
 	defer sp.End()
 
@@ -95,7 +97,9 @@ func (auth *AuthState) readPositivePasswordCache(tr monittrace.Tracer, cacheName
 		attribute.String("cache_name", cacheName),
 	)
 
-	_ = cctx
+	requestScope := auth.scopeRequestContext(cctx, nil)
+
+	defer requestScope.Restore()
 
 	defer csp.End()
 

@@ -227,8 +227,9 @@ func (i *nativeHookIndex) serve(
 	}
 
 	traceCtx, span := startNativeHookSpan(ctx, hook)
-	ctx.Request = ctx.Request.WithContext(traceCtx)
+	requestScope := util.NewHTTPRequestContextScope(traceCtx, &ctx.Request)
 
+	defer requestScope.Restore()
 	defer span.End()
 
 	if !authorizeNativeHook(ctx, cfg, validator, hook.Descriptor) {

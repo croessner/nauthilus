@@ -673,8 +673,8 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 		}()),
 	)
 
-	// propagate context for downstream
-	ctx.Request = ctx.Request.WithContext(fctx)
+	requestScope := util.NewHTTPRequestContextScope(fctx, &ctx.Request)
+	defer requestScope.Restore()
 
 	defer func() {
 		fsp.SetAttributes(

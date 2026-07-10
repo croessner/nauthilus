@@ -751,7 +751,10 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 	tracer := monittrace.New("nauthilus/core/webauthn")
 
 	return func(ctx *gin.Context) {
-		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.begin_registration")
+		spanCtx, sp := tracer.Start(ctx.Request.Context(), "webauthn.begin_registration")
+		requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+		defer requestScope.Restore()
 		defer sp.End()
 
 		mgr := cookie.GetManager(ctx)
@@ -800,62 +803,70 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 	tracer := monittrace.New("nauthilus/core/webauthn")
 
 	return func(ctx *gin.Context) {
-		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.finish_registration")
+		spanCtx, sp := tracer.Start(ctx.Request.Context(), "webauthn.finish_registration")
+		requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+		defer requestScope.Restore()
 		defer sp.End()
 
-		mgr := cookie.GetManager(ctx)
-
-		identity, ok := finishRegistrationIdentityFromSession(ctx, deps, mgr)
-		if !ok {
-			return
-		}
-
-		sessionData, ok := registrationSessionDataFromCookie(ctx, mgr)
-		if !ok {
-			return
-		}
-
-		logRegistrationFinishContext(ctx, deps, identity, sessionData)
-		authState := newRegistrationAuthState(ctx, deps)
-
-		user, err := authState.getUser(identity.userName, identity.uniqueUserID, identity.displayName)
-		if err != nil {
-			ctx.JSON(http.StatusBadRequest, err.Error())
-
-			return
-		}
-
-		deviceName, response, ok := parseRegistrationFinishResponse(ctx)
-		if !ok {
-			return
-		}
-
-		credential, err := webAuthn.CreateCredential(user, *sessionData, response)
-		if err != nil {
-			ctx.JSON(http.StatusBadRequest, fmt.Sprintf("%+v", util.ProtoErrToFields(err)))
-
-			return
-		}
-
-		user.AddCredential(*credential, deviceName)
-
-		if !persistRegistrationCredential(ctx, deps, authState, credential, deviceName) {
-			return
-		}
-
-		if !updateRegistrationUserCache(ctx, deps, authState, user) {
-			return
-		}
-
-		authState.PurgeCacheFor(identity.userName)
-
-		if !completeRegistrationSession(ctx, mgr) {
-			return
-		}
-
-		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "success").Inc()
-		ctx.JSON(http.StatusOK, "Registration success")
+		finishRegistration(ctx, deps)
 	}
+}
+
+// finishRegistration validates and persists a WebAuthn registration response.
+func finishRegistration(ctx *gin.Context, deps AuthDeps) {
+	mgr := cookie.GetManager(ctx)
+
+	identity, ok := finishRegistrationIdentityFromSession(ctx, deps, mgr)
+	if !ok {
+		return
+	}
+
+	sessionData, ok := registrationSessionDataFromCookie(ctx, mgr)
+	if !ok {
+		return
+	}
+
+	logRegistrationFinishContext(ctx, deps, identity, sessionData)
+	authState := newRegistrationAuthState(ctx, deps)
+
+	user, err := authState.getUser(identity.userName, identity.uniqueUserID, identity.displayName)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, err.Error())
+
+		return
+	}
+
+	deviceName, response, ok := parseRegistrationFinishResponse(ctx)
+	if !ok {
+		return
+	}
+
+	credential, err := webAuthn.CreateCredential(user, *sessionData, response)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, fmt.Sprintf("%+v", util.ProtoErrToFields(err)))
+
+		return
+	}
+
+	user.AddCredential(*credential, deviceName)
+
+	if !persistRegistrationCredential(ctx, deps, authState, credential, deviceName) {
+		return
+	}
+
+	if !updateRegistrationUserCache(ctx, deps, authState, user) {
+		return
+	}
+
+	authState.PurgeCacheFor(identity.userName)
+
+	if !completeRegistrationSession(ctx, mgr) {
+		return
+	}
+
+	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "success").Inc()
+	ctx.JSON(http.StatusOK, "Registration success")
 }
 
 // newRegistrationAuthState builds the AuthState used to persist WebAuthn registration data.
@@ -871,7 +882,10 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 	tracer := monittrace.New("nauthilus/core/webauthn")
 
 	return func(ctx *gin.Context) {
-		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.login_begin")
+		spanCtx, sp := tracer.Start(ctx.Request.Context(), "webauthn.login_begin")
+		requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+		defer requestScope.Restore()
 		defer sp.End()
 
 		mgr := cookie.GetManager(ctx)
@@ -902,7 +916,11 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 func CompleteLoginWebAuthn(ctx *gin.Context, deps AuthDeps) (*backend.User, bool) {
 	tracer := monittrace.New("nauthilus/core/webauthn")
 
-	_, sp := tracer.Start(ctx.Request.Context(), "webauthn.login_finish")
+	spanCtx, sp := tracer.Start(ctx.Request.Context(), "webauthn.login_finish")
+
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	mgr := cookie.GetManager(ctx)

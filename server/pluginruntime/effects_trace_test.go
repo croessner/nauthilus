@@ -18,14 +18,17 @@ package pluginruntime
 import (
 	"context"
 	"testing"
+	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 	"github.com/croessner/nauthilus/v3/server/testing/tracetest"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestEffectBridgePostActionSpanKeepsRequestTraceAfterRequestCancel(t *testing.T) {
@@ -41,6 +44,7 @@ func TestEffectBridgePostActionSpanKeepsRequestTraceAfterRequestCancel(t *testin
 	requestCtx, cancelRequest := context.WithCancel(requestCtx)
 	auth.Request.HTTPClientContext.Request = auth.Request.HTTPClientContext.Request.WithContext(requestCtx)
 	auth.Request.HTTPClientRequest = auth.Request.HTTPClientContext.Request
+	gate := core.InstallPostActionExecutionGate(auth.Request.HTTPClientContext)
 
 	cancelRequest()
 
@@ -49,13 +53,84 @@ func TestEffectBridgePostActionSpanKeepsRequestTraceAfterRequestCancel(t *testin
 		t.Fatalf("ExecutePolicyEffect() handled=%t ok=%t, want true/true", handled, ok)
 	}
 
-	host.WaitWorkers()
 	requestSpan.End()
+	gate.Complete()
+	host.WaitWorkers()
 
-	span := requirePostActionPluginSpan(t, collector)
-	if got, want := span.Parent().SpanID(), requestSpan.SpanContext().SpanID(); got != want {
-		t.Fatalf("post-action plugin span parent = %s, want request span %s", got, want)
+	planSpan := requirePostActionPlanSpan(t, collector)
+	if got, want := planSpan.Parent().SpanID(), requestSpan.SpanContext().SpanID(); got != want {
+		t.Fatalf("post-action plan span parent = %s, want request span %s", got, want)
 	}
+
+	if planSpan.StartTime().Before(requestSpanEndTime(t, collector, requestSpan.SpanContext().SpanID())) {
+		t.Fatal("post-action plan started before request span ended")
+	}
+
+	pluginSpan := requirePostActionPluginSpan(t, collector)
+	if got, want := pluginSpan.Parent().SpanID(), planSpan.SpanContext().SpanID(); got != want {
+		t.Fatalf("post-action plugin span parent = %s, want plan span %s", got, want)
+	}
+}
+
+// requestSpanEndTime returns the exported end time for one request span ID.
+func requestSpanEndTime(t *testing.T, collector *tracetest.Collector, spanID trace.SpanID) time.Time {
+	t.Helper()
+
+	for _, span := range collector.Spans() {
+		if span.SpanContext().SpanID() == spanID {
+			return span.EndTime()
+		}
+	}
+
+	t.Fatalf("missing request span %s", spanID)
+
+	return time.Time{}
+}
+
+func TestEffectBridgeWaitsForResponseCompletionBeforePostAction(t *testing.T) {
+	target := &fakePostActionTarget{called: make(chan struct{})}
+	host := NewHost()
+	bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+		return registrar.RegisterPostActionTarget(target)
+	}, WithHost(host))
+	auth := newSubjectTestAuth(t)
+	gate := core.InstallPostActionExecutionGate(auth.Request.HTTPClientContext)
+
+	handled, ok := bridge.ExecutePolicyEffect(auth.Request.HTTPClientContext, auth.View(), report.EffectRequest{ID: effectPostActionQualified})
+	if !handled || !ok {
+		t.Fatalf("ExecutePolicyEffect() handled=%t ok=%t, want true/true", handled, ok)
+	}
+
+	select {
+	case <-target.called:
+		t.Fatal("post-action started before response completion")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	gate.Complete()
+	host.WaitWorkers()
+
+	select {
+	case <-target.called:
+	default:
+		t.Fatal("post-action did not start after response completion")
+	}
+}
+
+// requirePostActionPlanSpan finds the host-owned ordered post-action plan span.
+func requirePostActionPlanSpan(t *testing.T, collector *tracetest.Collector) sdktrace.ReadOnlySpan {
+	t.Helper()
+
+	span, ok := tracetest.FindByNameAndAttributes(
+		collector.Spans(),
+		"auth.post_action.plan",
+		attribute.Int("post_action.steps", 1),
+	)
+	if !ok {
+		t.Fatalf("missing post-action plan span; exported spans: %v", collector.Spans())
+	}
+
+	return span
 }
 
 // requirePostActionPluginSpan finds the host-owned native post-action call span.

@@ -143,6 +143,10 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 		r.Use(rateLimiter.Middleware())
 	}
 
+	// Install the response-completion boundary outside tracing so detached
+	// post-actions start only after the server span has ended and headers are committed.
+	r.Use(postActionResponseCompletionMiddleware())
+
 	// Tracing middleware (OpenTelemetry) – enabled if observability.tracing.enabled is true
 	// and not disabled via runtime.servers.http.disabled_endpoints.tracing
 	if c.cfg.GetServer().GetInsights().IsTracingEnabled() {

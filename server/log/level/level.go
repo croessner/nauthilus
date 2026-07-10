@@ -22,7 +22,6 @@ package level
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -32,11 +31,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/svcctx"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // lazyFormat implements slog.LogValuer to defer expensive reflection and formatting
@@ -133,12 +128,7 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 		ctx = svcctx.Get()
 	}
 
-	tracer := monittrace.New("nauthilus/log/level")
-	spCtx, sp := tracer.Start(ctx, "level.Log")
-
-	defer sp.End()
-
-	defer recoverLoggerPanic(&err, sp)
+	defer recoverLoggerPanic(&err)
 
 	// Ensure we have a logger and context first
 	l := s.l
@@ -147,14 +137,14 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 	}
 
 	// Early-out if level is disabled: do no work
-	if !l.Enabled(spCtx, s.lvl) {
+	if !l.Enabled(ctx, s.lvl) {
 		return nil
 	}
 
 	record, msg := s.logRecordFromKeyvals(keyvals)
 
 	if msg == "" {
-		msg = levelToDefaultMessage(s.lvl, sp)
+		msg = levelToDefaultMessage(s.lvl)
 	}
 
 	record.Message = msg
@@ -163,11 +153,8 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 }
 
 // recoverLoggerPanic records logger panics and emits a minimal recovery line.
-func recoverLoggerPanic(err *error, sp trace.Span) {
+func recoverLoggerPanic(err *error) {
 	if r := recover(); r != nil {
-		sp.RecordError(errors.New(fmt.Sprint(r)))
-		sp.SetStatus(codes.Error, "recovered from panic")
-
 		pc, file, line, _ := runtime.Caller(2)
 		fn := runtime.FuncForPC(pc)
 
@@ -275,37 +262,20 @@ func defaultLogAttr(key string, value any) slog.Attr {
 	return slog.Any(key, value)
 }
 
-func levelToDefaultMessage(lvl slog.Level, sp trace.Span) string {
+// levelToDefaultMessage maps a slog level to the compatibility message used when msg is absent.
+func levelToDefaultMessage(lvl slog.Level) string {
 	switch lvl {
 	case slog.LevelDebug:
-		sp.AddEvent("debug")
-		sp.SetAttributes(attribute.String("level", "debug"))
-
 		return "debug"
 	case slog.LevelInfo:
-		sp.AddEvent("info")
-		sp.SetAttributes(attribute.String("level", "info"))
-
 		return "info"
 	case slog.LevelInfo + definitions.SlogNoticeLevelOffset:
-		sp.AddEvent("notice")
-		sp.SetAttributes(attribute.String("level", "notice"))
-
 		return "notice"
 	case slog.LevelWarn:
-		sp.AddEvent("warn")
-		sp.SetAttributes(attribute.String("level", "warn"))
-
 		return "warn"
 	case slog.LevelError:
-		sp.AddEvent("error")
-		sp.SetAttributes(attribute.String("level", "error"))
-
 		return "error"
 	default:
-		sp.AddEvent("log")
-		sp.SetAttributes(attribute.String("level", "log"))
-
 		return "log"
 	}
 }

@@ -16,6 +16,8 @@
 package core
 
 import (
+	"context"
+
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
@@ -62,13 +64,17 @@ type PostAction interface {
 
 // PostActionPlanInput supplies the detached plan runtime to one Lua post-action step.
 type PostActionPlanInput struct {
-	PostActionInput
 	Runtime map[string]any
 }
 
-// PostActionPlanRunner is implemented by post-action dispatchers that can run as a shared plan step.
+// PostActionPlanPreparer captures request-bound Lua state before detached execution.
+type PostActionPlanPreparer interface {
+	PreparePlanStep(input PostActionInput) PostActionPlanRunner
+}
+
+// PostActionPlanRunner executes one already captured shared-plan step.
 type PostActionPlanRunner interface {
-	RunPlanStep(input PostActionPlanInput) (pluginapi.RuntimeDelta, bool)
+	RunPlanStep(ctx context.Context, input PostActionPlanInput) (pluginapi.RuntimeDelta, bool)
 }
 
 // PostActionPlanStepKind identifies the executable post-action step type.
@@ -86,7 +92,6 @@ const (
 type PostActionPlanStep struct {
 	cleanup   func()
 	effect    report.EffectRequest
-	luaInput  PostActionInput
 	luaRunner PostActionPlanRunner
 	id        string
 	kind      PostActionPlanStepKind
@@ -102,10 +107,9 @@ func NewNativePostActionPlanStep(effect report.EffectRequest) PostActionPlanStep
 }
 
 // NewLuaPostActionPlanStep creates a plan step for a Lua post-action dispatcher.
-func NewLuaPostActionPlanStep(id string, runner PostActionPlanRunner, input PostActionInput, cleanup func()) PostActionPlanStep {
+func NewLuaPostActionPlanStep(id string, runner PostActionPlanRunner, cleanup func()) PostActionPlanStep {
 	return PostActionPlanStep{
 		cleanup:   cleanup,
-		luaInput:  input,
 		luaRunner: runner,
 		id:        id,
 		kind:      PostActionPlanStepLua,
@@ -127,9 +131,9 @@ func (s PostActionPlanStep) NativeEffect() (report.EffectRequest, bool) {
 	return s.effect, s.kind == PostActionPlanStepNative
 }
 
-// LuaStep returns the Lua plan runner and its captured input.
-func (s PostActionPlanStep) LuaStep() (PostActionPlanRunner, PostActionInput, bool) {
-	return s.luaRunner, s.luaInput, s.kind == PostActionPlanStepLua && s.luaRunner != nil
+// LuaStep returns the already captured Lua plan runner.
+func (s PostActionPlanStep) LuaStep() (PostActionPlanRunner, bool) {
+	return s.luaRunner, s.kind == PostActionPlanStepLua && s.luaRunner != nil
 }
 
 // Release frees resources owned by the captured plan step.

@@ -498,7 +498,10 @@ func (h *SAMLHandler) Register(router gin.IRouter) {
 
 // Metadata returns the SAML IDP metadata.
 func (h *SAMLHandler) Metadata(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "saml.metadata")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "saml.metadata")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	util.DebugModuleWithCfg(
@@ -531,7 +534,10 @@ func (h *SAMLHandler) Metadata(ctx *gin.Context) {
 
 // SSO handles the SAML Single Sign-On request (Redirect Binding).
 func (h *SAMLHandler) SSO(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "saml.sso")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "saml.sso")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	h.logIncomingSAMLFlowRequest(ctx, "sso", "")
@@ -1006,7 +1012,10 @@ func (h *SAMLHandler) samlPostPageData(ctx *gin.Context) gin.H {
 
 // SLO handles the SAML Single Logout request.
 func (h *SAMLHandler) SLO(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "saml.slo")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "saml.slo")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	h.logIncomingSAMLFlowRequest(ctx, "slo", "")

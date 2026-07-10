@@ -113,8 +113,9 @@ func (a *AuthState) filterActiveBruteForceRules(ctx *gin.Context, tr monittrace.
 // Returns true if brute force detection is triggered, and false otherwise.
 func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	tr, cctx, cspan := a.startBruteForceCheckTrace(ctx)
-	a.attachBruteForceCheckContext(cctx, ctx)
+	requestScope := a.scopeRequestContext(cctx, ctx)
 
+	defer requestScope.Restore()
 	defer cspan.End()
 
 	if stopOverall := a.startBruteForceOverallTimer(ctx); stopOverall != nil {
@@ -136,11 +137,12 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "brute_force_check_request_total", ctx.FullPath())
-	bfStart := time.Now()
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
+
+	defer a.observeBruteForceEvaluation(time.Now())
 
 	ruleTriggered := false
 
@@ -150,10 +152,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			attribute.Bool("triggered", ruleTriggered),
 			attribute.String("bf.rule", a.Security.BruteForceName),
 		)
-	}()
-
-	defer func() {
-		stats.GetMetrics().GetBruteForceEvalSeconds().Observe(time.Since(bfStart).Seconds())
 	}()
 
 	rules := cfg.GetBruteForceRules()
@@ -175,6 +173,11 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	return triggered
 }
 
+// observeBruteForceEvaluation records the elapsed time of one brute-force rule evaluation.
+func (a *AuthState) observeBruteForceEvaluation(start time.Time) {
+	stats.GetMetrics().GetBruteForceEvalSeconds().Observe(time.Since(start).Seconds())
+}
+
 // startBruteForceCheckTrace starts the tracing span for brute-force checks.
 func (a *AuthState) startBruteForceCheckTrace(ctx *gin.Context) (monittrace.Tracer, context.Context, trace.Span) {
 	tr := monittrace.New("nauthilus/auth")
@@ -186,14 +189,6 @@ func (a *AuthState) startBruteForceCheckTrace(ctx *gin.Context) (monittrace.Trac
 	)
 
 	return tr, cctx, cspan
-}
-
-// attachBruteForceCheckContext propagates the tracing context to HTTP request holders.
-func (a *AuthState) attachBruteForceCheckContext(cctx context.Context, ctx *gin.Context) {
-	ctx.Request = ctx.Request.WithContext(cctx)
-	if a.Request.HTTPClientRequest != nil {
-		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(cctx)
-	}
 }
 
 // startBruteForceOverallTimer starts the top-level brute-force check metric timer.
@@ -619,11 +614,9 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		attribute.String("bf.rule", a.Security.BruteForceName),
 	)
 
-	ctx.Request = ctx.Request.WithContext(uctx)
-	if a.Request.HTTPClientRequest != nil {
-		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(uctx)
-	}
+	requestScope := a.scopeRequestContext(uctx, ctx)
 
+	defer requestScope.Restore()
 	defer uspan.End()
 
 	// Overall timer for updating BF buckets after an auth failure

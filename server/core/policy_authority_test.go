@@ -16,6 +16,7 @@
 package core
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"sync"
@@ -783,7 +784,11 @@ type recordingPlanPostAction struct{}
 
 func (recordingPlanPostAction) Run(PostActionInput) {}
 
-func (recordingPlanPostAction) RunPlanStep(PostActionPlanInput) (pluginapi.RuntimeDelta, bool) {
+func (p recordingPlanPostAction) PreparePlanStep(PostActionInput) PostActionPlanRunner {
+	return p
+}
+
+func (recordingPlanPostAction) RunPlanStep(context.Context, PostActionPlanInput) (pluginapi.RuntimeDelta, bool) {
 	return pluginapi.RuntimeDelta{}, true
 }
 

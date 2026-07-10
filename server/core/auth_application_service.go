@@ -371,16 +371,21 @@ func (s *authApplicationService) newAuthState(
 	})
 	deps.Resp = capture
 
+	ginCtx := newApplicationGinContext(parent, input)
+	AttachPostActionExecutionGate(parent, ginCtx)
+	auth := NewAuthStateFromContextWithDeps(ginCtx, deps).(*AuthState)
+
 	tr := monittrace.New("nauthilus/auth")
 	setupCtx, span := tr.Start(parent, "auth.setup",
 		attribute.String("service", input.Service),
 		attribute.String("mode", string(input.Mode)),
 	)
 
+	requestScope := auth.scopeRequestContext(setupCtx, ginCtx)
+
+	defer requestScope.Restore()
 	defer span.End()
 
-	ginCtx := newApplicationGinContext(setupCtx, input)
-	auth := NewAuthStateFromContextWithDeps(ginCtx, deps).(*AuthState)
 	auth.SetProtocol(&config.Protocol{})
 	auth.ApplyCredentials(input.Credentials)
 	auth.ApplyContextData(input.Context)

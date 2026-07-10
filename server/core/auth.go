@@ -635,6 +635,9 @@ type AuthGroups struct {
 
 // AuthState represents a struct that holds information related to an authentication process.
 type AuthState struct {
+	// operationContext is an isolated worker-owned context when no shared request carrier may be mutated.
+	operationContext context.Context
+
 	// deps holds the injected runtime dependencies for this auth request.
 	// It must be initialized by the request-boundary constructor.
 	deps AuthDeps
@@ -3107,33 +3110,48 @@ type verifyPasswordResult struct {
 // It logs detailed information in case of errors and returns the result of the password verification process.
 func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
 	tr := monittrace.New("nauthilus/auth")
-	vctx, vspan := tr.Start(ctx.Request.Context(), "auth.verify",
+
+	_, waitSpan := tr.Start(ctx.Request.Context(), "auth.verify.wait",
 		attribute.String("service", a.Request.Service),
 		attribute.String("username", a.Request.Username),
 	)
-
-	// ensure downstream uses the same context
-	ctx.Request = ctx.Request.WithContext(vctx)
-	if a.Request.HTTPClientRequest != nil {
-		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(vctx)
-	}
-	defer vspan.End()
+	defer waitSpan.End()
 
 	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_verify_password_total", ctx.FullPath()); stop != nil {
 		defer stop()
 	}
 
+	workerAuth, workerCtx := a.newVerificationWorkerState(ctx)
+	service := a.Request.Service
+	username := a.Request.Username
+
 	resCh := backchanSF.DoChan(verifyPasswordSingleflightKey(ctx, a), func() (any, error) {
-		return a.verifyPassword(ctx, passDBs)
+		vctx, vspan := tr.Start(workerCtx.Request.Context(), "auth.verify",
+			attribute.String("service", service),
+			attribute.String("username", username),
+		)
+		defer vspan.End()
+
+		workerCtx.Request = workerCtx.Request.WithContext(vctx)
+		workerAuth.Request.HTTPClientContext = workerCtx
+		workerAuth.Request.HTTPClientRequest = workerCtx.Request
+		workerAuth.operationContext = vctx
+		result, err := workerAuth.verifyPassword(workerCtx, passDBs)
+		recordVerifyPasswordSpan(vspan, result, err)
+
+		return verificationWorkResult{owner: a, auth: workerAuth, result: result}, err
 	})
 
 	verifyResult, waitErr := a.waitVerifyPasswordResult(ctx, resCh)
 	if waitErr != nil {
+		waitSpan.RecordError(waitErr)
+
 		return nil, waitErr
 	}
 
+	waitSpan.SetAttributes(attribute.Bool("shared", verifyResult.shared))
+
 	passDBResult := a.passDBResultFromVerifyValue(ctx, verifyResult)
-	recordVerifyPasswordSpan(vspan, passDBResult, verifyResult)
 	a.logVerifyPasswordError(verifyResult.err)
 
 	return passDBResult, verifyResult.err
@@ -3172,8 +3190,16 @@ func (a *AuthState) passDBResultFromVerifyValue(ctx *gin.Context, result verifyP
 		return nil
 	}
 
-	passDBResult := result.value.(*PassDBResult)
-	if !result.shared {
+	workResult := result.value.(verificationWorkResult)
+
+	passDBResult := workResult.result
+	if passDBResult == nil {
+		return nil
+	}
+
+	if workResult.owner == a {
+		a.applyVerificationWorkerState(ctx, workResult.auth, passDBResult)
+
 		return passDBResult
 	}
 
@@ -3184,18 +3210,17 @@ func (a *AuthState) passDBResultFromVerifyValue(ctx *gin.Context, result verifyP
 }
 
 // recordVerifyPasswordSpan records verification outcome attributes on the active span.
-func recordVerifyPasswordSpan(vspan trace.Span, passDBResult *PassDBResult, result verifyPasswordResult) {
+func recordVerifyPasswordSpan(vspan trace.Span, passDBResult *PassDBResult, err error) {
 	if passDBResult != nil {
 		vspan.SetAttributes(
 			attribute.Bool("authenticated", passDBResult.Authenticated),
 			attribute.Bool("user_found", passDBResult.UserFound),
-			attribute.Bool("shared", result.shared),
 			attribute.String("backend", verifyPasswordBackendName(passDBResult)),
 		)
 	}
 
-	if result.err != nil {
-		vspan.RecordError(result.err)
+	if err != nil {
+		vspan.RecordError(err)
 	}
 }
 
@@ -3403,7 +3428,9 @@ func (a *AuthState) processPositivePasswordCache(ctx *gin.Context, authenticated
 		attribute.Bool("positive_cache", positiveCacheEnabled),
 	)
 
-	_ = cctx
+	requestScope := a.scopeRequestContext(cctx, ctx)
+
+	defer requestScope.Restore()
 
 	defer cspan.End()
 
@@ -3494,8 +3521,9 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, plan backendExecutionPlan
 		attribute.Bool("positive_cache_configured", plan.hasPositivePasswordCache),
 	)
 
-	restoreRequestContext := a.scopeRequestContext(actx, ctx)
-	defer restoreRequestContext()
+	requestScope := a.scopeRequestContext(actx, ctx)
+
+	defer requestScope.Restore()
 	defer aspan.End()
 
 	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_authenticate_user_total", ctx.FullPath()); stop != nil {
@@ -3562,10 +3590,9 @@ func (a *AuthState) SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) def
 		attribute.String("username", a.Request.Username),
 	)
 
-	ctx.Request = ctx.Request.WithContext(lctx)
-	if a.Request.HTTPClientRequest != nil {
-		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(lctx)
-	}
+	requestScope := a.scopeRequestContext(lctx, ctx)
+
+	defer requestScope.Restore()
 
 	defer lspan.End()
 
@@ -3865,11 +3892,16 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 // Ctx returns a standard library context for this AuthState.
 // Preference order:
-// 1) HTTPClientRequest.Context() if present
-// 2) HTTPClientContext.Request.Context() if present
-// 3) svcctx.Get() as a safe, non-nil fallback
+// 1) isolated operationContext for worker-owned state
+// 2) HTTPClientRequest.Context() if present
+// 3) HTTPClientContext.Request.Context() if present
+// 4) svcctx.Get() as a safe, non-nil fallback
 func (a *AuthState) Ctx() context.Context {
 	if a != nil {
+		if a.operationContext != nil {
+			return a.operationContext
+		}
+
 		if a.Request.HTTPClientRequest != nil {
 			if rc := a.Request.HTTPClientRequest.Context(); rc != nil {
 				// Avoid returning a canceled request context
@@ -4433,12 +4465,13 @@ func NewAuthStateWithSetupWithDeps(ctx *gin.Context, deps AuthDeps) State {
 
 	defer tsp.End()
 
-	// Propagate tracing context downwards for any callee that reads request context
-	ctx.Request = ctx.Request.WithContext(tctx)
-
 	auth := NewAuthStateFromContextWithDeps(ctx, deps)
 
 	if a, ok := auth.(*AuthState); ok {
+		requestScope := a.scopeRequestContext(tctx, ctx)
+
+		defer requestScope.Restore()
+
 		a.traceSetupDetails(tsp)
 		a.FinishSetup(ctx)
 	}
@@ -4705,11 +4738,9 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 		attribute.String("username", a.Request.Username),
 	)
 
-	// ensure downstream uses the same context
-	ctx.Request = ctx.Request.WithContext(lcCtx)
-	if a.Request.HTTPClientRequest != nil {
-		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(lcCtx)
-	}
+	requestScope := a.scopeRequestContext(lcCtx, ctx)
+
+	defer requestScope.Restore()
 
 	defer lcSpan.End()
 
@@ -4758,11 +4789,10 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 		attribute.String("username", a.Request.Username),
 	)
 
-	// propagate for any nested calls
-	ctx.Request = ctx.Request.WithContext(pctx)
-	if a.Request.HTTPClientRequest != nil {
-		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(pctx)
-	}
+	requestScope := a.scopeRequestContext(pctx, ctx)
+
+	defer requestScope.Restore()
+	defer pspan.End()
 
 	var cacheHit bool
 
@@ -4779,7 +4809,6 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	}
 
 	pspan.SetAttributes(attribute.Bool("cache.hit", cacheHit))
-	pspan.End()
 
 	return false
 }
@@ -4790,28 +4819,24 @@ func (a *AuthState) handlePreAuthBruteForce(ctx *gin.Context, span trace.Span) b
 
 	if a.applyConfiguredPreAuthDecision(ctx) {
 		span.SetAttributes(attribute.Bool("reject", true))
-		span.End()
 
 		return true
 	}
 
 	if a.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) {
 		span.SetAttributes(attribute.Bool("policy_skip_remaining", true))
-		span.End()
 
 		return false
 	}
 
 	if a.HasConfiguredPreAuthPolicyAuthority(ctx) {
 		span.SetAttributes(attribute.Bool("policy_continue", true))
-		span.End()
 
 		return false
 	}
 
 	if a.applyDefaultPreAuthDecision(ctx) {
 		span.SetAttributes(attribute.Bool("reject", true))
-		span.End()
 
 		return true
 	}
@@ -4832,7 +4857,6 @@ func (a *AuthState) rejectDefaultPreAuthBruteForce(ctx *gin.Context, span trace.
 	a.AuthFail(ctx)
 
 	span.SetAttributes(attribute.Bool("reject", true))
-	span.End()
 }
 
 // ApplyCredentials applies non-empty credential fields to the AuthState.

@@ -33,9 +33,12 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib/subject"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v3/server/testing/oteltest"
 	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestDefaultLuaSubject_OverridesAccountField(t *testing.T) { //nolint:funlen
@@ -306,6 +309,42 @@ func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T
 	}
 }
 
+func TestDefaultPostAction_WaitsForResponseCompletion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := prepareDefaultPostActionTest(t)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/auth", nil)
+	auth := newDefaultPostActionAuth(ctx, cfg, "guid-response-gate")
+	gate := core.InstallPostActionExecutionGate(ctx)
+
+	DefaultPostAction{}.Run(core.PostActionInput{
+		View: auth.View(),
+		Result: &core.PassDBResult{
+			Authenticated: true,
+			UserFound:     true,
+		},
+	})
+
+	select {
+	case act := <-action.RequestChan:
+		act.FinishedChan <- action.Done{}
+
+		t.Fatal("Lua post-action started before response completion")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	gate.Complete()
+
+	select {
+	case act := <-action.RequestChan:
+		act.FinishedChan <- action.Done{}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Lua post-action did not start after response completion")
+	}
+}
+
 func TestDefaultPostAction_ForwardsEnvironmentRejectedToLuaRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -365,7 +404,7 @@ func TestDefaultPostActionPlanStepSeedsRuntimeAndReturnsLuaDelta(t *testing.T) {
 	auth := newDefaultPostActionAuth(ctx, cfg, "guid-plan-step")
 	auth.Runtime.Context = lualib.NewContext()
 
-	resultCh, okCh := runDefaultPostActionPlanStep(auth)
+	resultCh, okCh := runDefaultPostActionPlanStep(auth.Ctx(), auth)
 
 	select {
 	case act := <-action.RequestChan:
@@ -399,20 +438,80 @@ func TestDefaultPostActionPlanStepSeedsRuntimeAndReturnsLuaDelta(t *testing.T) {
 	}
 }
 
+func TestDefaultPostActionPlanStepKeepsCanceledRequestTrace(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := prepareDefaultPostActionTest(t)
+	cfg.Server.Insights.Tracing.Enabled = true
+	collector := oteltest.Setup(t)
+	parentCtx, parentSpan := otel.Tracer("nauthilus/core/auth/lua_service_test").Start(context.Background(), "auth.post_action.plan")
+	parent := parentSpan.SpanContext()
+	requestCtx, cancel := context.WithCancel(parentCtx)
+	workerCtx := context.WithoutCancel(requestCtx)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/auth", nil).WithContext(requestCtx)
+	auth := newDefaultPostActionAuth(ctx, cfg, "guid-canceled-plan-trace")
+
+	cancel()
+
+	resultCh, okCh := runDefaultPostActionPlanStep(workerCtx, auth)
+
+	var actionParent trace.SpanContext
+
+	select {
+	case act := <-action.RequestChan:
+		actionParent = act.OTelParentSpanContext
+		if got := act.OTelParentSpanContext.TraceID(); got != parent.TraceID() {
+			t.Errorf("post-action TraceID = %s, want %s", got, parent.TraceID())
+		}
+
+		act.FinishedChan <- action.Done{}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected plan-step post action to be scheduled")
+	}
+
+	expectPlanStepOK(t, okCh)
+	_ = expectPlanStepDelta(t, resultCh)
+
+	parentSpan.End()
+
+	var luaSpan trace.SpanContext
+
+	for _, span := range collector.Spans() {
+		if span.Name() != "auth.lua.post_action" {
+			continue
+		}
+
+		luaSpan = span.SpanContext()
+		if span.Parent().SpanID() != parent.SpanID() {
+			t.Fatalf("auth.lua.post_action parent = %s, want plan %s", span.Parent().SpanID(), parent.SpanID())
+		}
+	}
+
+	if !luaSpan.IsValid() {
+		t.Fatal("missing auth.lua.post_action span")
+	}
+
+	if actionParent.SpanID() != luaSpan.SpanID() {
+		t.Fatalf("Lua action parent = %s, want auth.lua.post_action %s", actionParent.SpanID(), luaSpan.SpanID())
+	}
+}
+
 // runDefaultPostActionPlanStep starts the plan-step runner and returns its result channels.
-func runDefaultPostActionPlanStep(auth *core.AuthState) (<-chan pluginapi.RuntimeDelta, <-chan bool) {
+func runDefaultPostActionPlanStep(ctx context.Context, auth *core.AuthState) (<-chan pluginapi.RuntimeDelta, <-chan bool) {
 	resultCh := make(chan pluginapi.RuntimeDelta, 1)
 	okCh := make(chan bool, 1)
+	runner := DefaultPostAction{}.PreparePlanStep(core.PostActionInput{
+		View: auth.View(),
+		Result: &core.PassDBResult{
+			Authenticated: true,
+			UserFound:     true,
+		},
+	})
 
 	go func() {
-		delta, ok := DefaultPostAction{}.RunPlanStep(core.PostActionPlanInput{
-			PostActionInput: core.PostActionInput{
-				View: auth.View(),
-				Result: &core.PassDBResult{
-					Authenticated: true,
-					UserFound:     true,
-				},
-			},
+		delta, ok := runner.RunPlanStep(ctx, core.PostActionPlanInput{
 			Runtime: map[string]any{
 				"native_value": "visible-to-lua",
 				"rt":           map[string]any{"existing": "kept"},

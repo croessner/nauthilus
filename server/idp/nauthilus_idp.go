@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/idp/signing"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.opentelemetry.io/otel/attribute"
@@ -795,11 +796,14 @@ func (n *NauthilusIDP) resolveEdDSAPublicKey(ctx context.Context, kid string) (a
 
 // Authenticate performs user authentication using AuthState.
 func (n *NauthilusIDP) Authenticate(ctx *gin.Context, username, password string, oidcCID string, samlEntityID string) (*backend.User, error) {
-	_, sp := n.tracer.Start(ctx.Request.Context(), "idp.authenticate",
+	spanCtx, sp := n.tracer.Start(ctx.Request.Context(), "idp.authenticate",
 		attribute.String("username", username),
 		attribute.String("oidc_cid", oidcCID),
 		attribute.String("saml_entity_id", samlEntityID),
 	)
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	auth, err := n.newPasswordAuthState(ctx, username, password, oidcCID, samlEntityID, sp)
@@ -992,11 +996,14 @@ func (n *NauthilusIDP) getUserByUsername(
 	samlEntityID string,
 	attributeRequest *core.IdentityAttributeRequest,
 ) (*backend.User, error) {
-	_, sp := n.tracer.Start(ctx.Request.Context(), "idp.get_user_by_username",
+	spanCtx, sp := n.tracer.Start(ctx.Request.Context(), "idp.get_user_by_username",
 		attribute.String("username", username),
 		attribute.String("oidc_cid", oidcCID),
 		attribute.String("saml_entity_id", samlEntityID),
 	)
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())

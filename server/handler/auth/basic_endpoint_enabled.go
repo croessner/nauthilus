@@ -18,10 +18,7 @@
 package auth
 
 import (
-	"net/http"
-
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
 )
 
@@ -33,19 +30,5 @@ func (h *Handler) registerBasicEndpoint(
 }
 
 func (h *Handler) basic(ctx *gin.Context) {
-	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthBasicDisabled() {
-		ctx.AbortWithStatus(http.StatusNotFound)
-
-		return
-	}
-
-	// Minimal custom span analogous to JSON handler
-	tr := monittrace.New("nauthilus/rest")
-	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_basic")
-	defer sp.End()
-
-	// Propagate tracing context
-	ctx.Request = ctx.Request.WithContext(spanCtx)
-
-	h.process(ctx)
+	h.handleWithTrace(ctx, h.deps.Cfg.GetServer().GetEndpoint().IsAuthBasicDisabled, "rest.auth_basic")
 }

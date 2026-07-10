@@ -165,12 +165,23 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 // UnaryServerInterceptor returns the complete authority unary interceptor chain.
 func UnaryServerInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 	return chainUnaryInterceptors(
+		postActionResponseCompletionInterceptor(),
 		recoveryInterceptor(deps),
 		traceContextInterceptor(),
 		loggingTracingInterceptor(deps),
 		mtlsInterceptor(deps),
 		backchannelAuthInterceptor(deps),
 	)
+}
+
+// postActionResponseCompletionInterceptor releases detached work after tracing and logging complete.
+func postActionResponseCompletionInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		requestContext, gate := core.ContextWithPostActionExecutionGate(ctx)
+		defer gate.Complete()
+
+		return handler(requestContext, req)
+	}
 }
 
 func serveGRPCAuthority(

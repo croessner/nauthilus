@@ -1566,7 +1566,10 @@ func annotatePostLoginSpan(sp trace.Span, flowContext postLoginFlowContext, cred
 // This endpoint is ONLY for IDP flows (OIDC/SAML2). Direct access without a proper flow is rejected.
 // All flow state is read from the secure encrypted cookie - no form parameters for flow state.
 func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	if !h.isValidIDPFlow(ctx) {
@@ -2071,7 +2074,10 @@ func (h *FrontendHandler) loadCompletedMFAUser(ctx *gin.Context, sess *mfaSessio
 // PostLoginRecovery handles the recovery code verification during login.
 // All flow state is read from the encrypted cookie - no form parameters for flow state.
 func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_recovery")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_recovery")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	sess, user, code := h.extractMFASessionAndUser(ctx)
@@ -2425,7 +2431,10 @@ func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 // PostLoginTOTP handles the TOTP verification during login.
 // All flow state is read from the encrypted cookie - no form parameters for flow state.
 func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_totp")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_totp")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	sess, user, code := h.extractMFASessionAndUser(ctx)
@@ -2639,7 +2648,10 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 
 // PostRegisterTOTP handles the TOTP registration submission.
 func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_register_totp")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_register_totp")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	mgr := cookie.GetManager(ctx)
@@ -2965,7 +2977,10 @@ func (h *FrontendHandler) finishSaveRecoveryCodes(ctx *gin.Context, context save
 
 // SaveRecoveryCodes persists the recovery codes once the user downloaded them.
 func (h *FrontendHandler) SaveRecoveryCodes(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.save_recovery_codes")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.save_recovery_codes")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	context := newSaveRecoveryCodesContext(ctx)
@@ -3052,7 +3067,10 @@ func (h *FrontendHandler) continueAfterRecoveryRegistration(ctx *gin.Context, mg
 
 // PostRegisterRecoveryCodes handles the continue action after recovery codes are saved.
 func (h *FrontendHandler) PostRegisterRecoveryCodes(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_register_recovery_codes")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_register_recovery_codes")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	mgr := cookie.GetManager(ctx)
@@ -3084,7 +3102,10 @@ func (h *FrontendHandler) PostRegisterRecoveryCodes(ctx *gin.Context) {
 
 // PostGenerateRecoveryCodes handles generating new recovery codes.
 func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_generate_recovery_codes")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_generate_recovery_codes")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	if !h.enforceMFASelfServiceStepUp(ctx) {
@@ -3152,7 +3173,10 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 
 // DeleteTOTP removes TOTP for the user.
 func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_totp")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_totp")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	if !h.enforceMFASelfServiceStepUp(ctx) {
@@ -3230,7 +3254,10 @@ func deleteWebAuthnCredentials(userData *UserBackendData) error {
 
 // DeleteWebAuthn removes WebAuthn credentials for the user.
 func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_webauthn")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_webauthn")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	if !h.enforceMFASelfServiceStepUp(ctx) {
@@ -3456,7 +3483,10 @@ func (h *FrontendHandler) WebAuthnDevices(ctx *gin.Context) {
 
 // DeleteWebAuthnDevice removes a specific WebAuthn credential for the user.
 func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_webauthn_device")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_webauthn_device")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	if !h.enforceMFASelfServiceStepUp(ctx) {
@@ -3540,7 +3570,10 @@ func webAuthnRedisUserKey(cfg config.File, uniqueUserID string) string {
 
 // UpdateWebAuthnDeviceName renames a specific WebAuthn credential for the user.
 func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.update_webauthn_device_name")
+	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.update_webauthn_device_name")
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+
+	defer requestScope.Restore()
 	defer sp.End()
 
 	if !h.enforceMFASelfServiceStepUp(ctx) {

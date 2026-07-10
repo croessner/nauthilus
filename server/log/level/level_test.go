@@ -20,6 +20,10 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+
+	"github.com/croessner/nauthilus/v3/server/testing/oteltest"
+
+	"go.opentelemetry.io/otel"
 )
 
 type rec struct {
@@ -176,5 +180,25 @@ func TestWithContextPropagatesToHandler(t *testing.T) {
 
 	if h.records[0].Ctx == nil {
 		t.Fatalf("expected context to be forwarded to handler")
+	}
+}
+
+func TestLogDoesNotCreateSyntheticSpan(t *testing.T) {
+	exporter := oteltest.Setup(t)
+
+	h := newMemHandler(slog.LevelDebug)
+	logger := slog.New(h)
+
+	ctx, requestSpan := otel.Tracer("nauthilus/log/level_test").Start(context.Background(), "request.parent")
+	if err := WithContext(ctx, logger).Log("msg", "hello"); err != nil {
+		t.Fatalf("Log returned error: %v", err)
+	}
+
+	requestSpan.End()
+
+	for _, span := range exporter.Spans() {
+		if span.Name() == "level.Log" {
+			t.Fatal("Log() emitted synthetic level.Log span")
+		}
 	}
 }

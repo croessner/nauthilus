@@ -251,7 +251,7 @@ func QueueCompletedIDPMFAPostAction(ctx *gin.Context, deps AuthDeps, user *backe
 
 	requestCopy := completedIDPMFAPostActionRequest(auth, user)
 
-	go auth.RunLuaPostAction(PostActionArgs{
+	auth.QueueLuaPostAction(PostActionArgs{
 		Context:       auth.Runtime.Context,
 		HTTPRequest:   util.DetachedHTTPRequest(context.TODO(), ctx.Request),
 		ParentSpan:    trace.SpanContextFromContext(ctx.Request.Context()),

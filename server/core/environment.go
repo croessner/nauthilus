@@ -16,7 +16,6 @@
 package core
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -55,37 +54,6 @@ type preAuthEnvironmentOutcome struct {
 	reject                  bool
 	continuePolicyAuthority bool
 	markPolicyContinue      bool
-}
-
-// scopeRequestContext temporarily installs requestContext for true child work and restores the previous request objects.
-func (a *AuthState) scopeRequestContext(requestContext context.Context, ctx *gin.Context) func() {
-	restore := func() {}
-	if requestContext == nil {
-		return restore
-	}
-
-	if ctx != nil && ctx.Request != nil {
-		previousRequest := ctx.Request
-		ctx.Request = previousRequest.WithContext(requestContext)
-
-		restore = func() {
-			ctx.Request = previousRequest
-		}
-	}
-
-	if a != nil && a.Request.HTTPClientRequest != nil {
-		previousHTTPClientRequest := a.Request.HTTPClientRequest
-		a.Request.HTTPClientRequest = previousHTTPClientRequest.WithContext(requestContext)
-
-		restorePrevious := restore
-		restore = func() {
-			restorePrevious()
-
-			a.Request.HTTPClientRequest = previousHTTPClientRequest
-		}
-	}
-
-	return restore
 }
 
 // logAddMessage appends a environment name and message to the AdditionalLogs slice.
@@ -292,8 +260,10 @@ func (a *AuthState) ControlRBL(ctx *gin.Context) (triggered bool, err error) {
 		attribute.Int("threshold", rbls.GetThreshold()),
 	)
 
-	restoreRequestContext := a.scopeRequestContext(rctx, ctx)
-	defer restoreRequestContext()
+	requestScope := a.scopeRequestContext(rctx, ctx)
+
+	defer requestScope.Restore()
+
 	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromDNS, definitions.ControlRBL, ctx.FullPath())
 	if stopTimer != nil {
 		defer stopTimer()
@@ -377,8 +347,9 @@ func (a *AuthState) checkLuaEnvironmentSource(ctx *gin.Context) (triggered bool,
 		attribute.String("username", a.Request.Username),
 	)
 
-	restoreRequestContext := a.scopeRequestContext(fctx, ctx)
-	defer restoreRequestContext()
+	requestScope := a.scopeRequestContext(fctx, ctx)
+
+	defer requestScope.Restore()
 	defer fspan.End()
 
 	checkFunc := func() {
@@ -413,8 +384,9 @@ func (a *AuthState) checkTLSEncryptionEnvironment(ctx *gin.Context, record func(
 		attribute.String("username", a.Request.Username),
 	)
 
-	restoreRequestContext := a.scopeRequestContext(fctx, ctx)
-	defer restoreRequestContext()
+	requestScope := a.scopeRequestContext(fctx, ctx)
+
+	defer requestScope.Restore()
 	defer fspan.End()
 	defer func() {
 		if record != nil {
@@ -446,8 +418,9 @@ func (a *AuthState) checkRelayDomainsEnvironment(ctx *gin.Context, record func(b
 		attribute.String("username", a.Request.Username),
 	)
 
-	restoreRequestContext := a.scopeRequestContext(fctx, ctx)
-	defer restoreRequestContext()
+	requestScope := a.scopeRequestContext(fctx, ctx)
+
+	defer requestScope.Restore()
 	defer fspan.End()
 	defer func() {
 		if record != nil {
@@ -496,8 +469,9 @@ func (a *AuthState) checkRBLEnvironment(ctx *gin.Context) (triggered bool, err e
 		attribute.String("username", a.Request.Username),
 	)
 
-	restoreRequestContext := a.scopeRequestContext(fctx, ctx)
-	defer restoreRequestContext()
+	requestScope := a.scopeRequestContext(fctx, ctx)
+
+	defer requestScope.Restore()
 	defer fspan.End()
 
 	isWhitelisted := func() bool {
@@ -588,8 +562,9 @@ func (a *AuthState) HandleEnvironment(ctx *gin.Context) definitions.AuthResult {
 
 	defer a.completePolicyStage(ctx, policy.StagePreAuth)
 
-	fsp, restoreEnvironmentContext := a.startEnvironmentEvaluation(ctx)
-	defer restoreEnvironmentContext()
+	fsp, requestScope := a.startEnvironmentEvaluation(ctx)
+
+	defer requestScope.Restore()
 
 	if a.configuredPreAuthChecksSkipped(ctx) {
 		return finishPreAuthEnvironmentOK(fsp, true)
@@ -618,7 +593,7 @@ func (a *AuthState) HandleEnvironment(ctx *gin.Context) definitions.AuthResult {
 	return a.handleRBLEnvironmentResult(ctx, fsp)
 }
 
-func (a *AuthState) startEnvironmentEvaluation(ctx *gin.Context) (trace.Span, func()) {
+func (a *AuthState) startEnvironmentEvaluation(ctx *gin.Context) (trace.Span, *requestContextScope) {
 	tr := monittrace.New("nauthilus/environment")
 	fctx, fsp := tr.Start(ctx.Request.Context(), "environment.evaluate",
 		attribute.String("service", a.Request.Service),
@@ -626,9 +601,9 @@ func (a *AuthState) startEnvironmentEvaluation(ctx *gin.Context) (trace.Span, fu
 		attribute.String("protocol", a.Request.Protocol.Get()),
 	)
 
-	restoreRequestContext := a.scopeRequestContext(fctx, ctx)
+	requestScope := a.scopeRequestContext(fctx, ctx)
 
-	return fsp, restoreRequestContext
+	return fsp, requestScope
 }
 
 func (a *AuthState) handleLuaEnvironmentResult(ctx *gin.Context, span trace.Span) (definitions.AuthResult, bool) {
@@ -719,15 +694,11 @@ func (a *AuthState) handlePluginEnvironmentResult(ctx *gin.Context, span trace.S
 }
 
 func (a *AuthState) handleTLSEnvironmentResult(ctx *gin.Context, span trace.Span) (definitions.AuthResult, bool) {
-	return a.handleRejectingEnvironmentResult(
+	return a.handleRecordedRejectingEnvironmentResult(
 		ctx,
 		span,
-		func(ctx *gin.Context) bool {
-			return a.checkTLSEncryptionEnvironment(ctx, func(triggered bool) {
-				a.recordPolicyTLS(ctx, triggered)
-			})
-		},
-		nil,
+		a.checkTLSEncryptionEnvironment,
+		a.recordPolicyTLS,
 		preAuthEnvironmentOutcome{
 			current:                 definitions.AuthResultPreAuthTLS,
 			decision:                environmentDecisionTLS,
@@ -739,15 +710,11 @@ func (a *AuthState) handleTLSEnvironmentResult(ctx *gin.Context, span trace.Span
 }
 
 func (a *AuthState) handleRelayDomainEnvironmentResult(ctx *gin.Context, span trace.Span) (definitions.AuthResult, bool) {
-	return a.handleRejectingEnvironmentResult(
+	return a.handleRecordedRejectingEnvironmentResult(
 		ctx,
 		span,
-		func(ctx *gin.Context) bool {
-			return a.checkRelayDomainsEnvironment(ctx, func(triggered bool) {
-				a.recordPolicyRelayDomains(ctx, triggered)
-			})
-		},
-		nil,
+		a.checkRelayDomainsEnvironment,
+		a.recordPolicyRelayDomains,
 		preAuthEnvironmentOutcome{
 			current:                 definitions.AuthResultPreAuthRelayDomain,
 			decision:                environmentDecisionRelayDomains,
@@ -758,19 +725,17 @@ func (a *AuthState) handleRelayDomainEnvironmentResult(ctx *gin.Context, span tr
 	)
 }
 
-// handleRejectingEnvironmentResult applies the common rejecting pre-auth environment flow.
-func (a *AuthState) handleRejectingEnvironmentResult(
+// handleRecordedRejectingEnvironmentResult evaluates and records one rejecting environment source.
+func (a *AuthState) handleRecordedRejectingEnvironmentResult(
 	ctx *gin.Context,
 	span trace.Span,
-	check func(*gin.Context) bool,
+	check func(*gin.Context, func(bool)) bool,
 	record func(*gin.Context, bool),
 	outcome preAuthEnvironmentOutcome,
 ) (definitions.AuthResult, bool) {
-	triggered := check(ctx)
-	if record != nil {
+	triggered := check(ctx, func(triggered bool) {
 		record(ctx, triggered)
-	}
-
+	})
 	if triggered {
 		return a.resolvePreAuthEnvironmentOutcome(ctx, span, outcome)
 	}

@@ -766,9 +766,9 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 		attribute.String("method", ctx.Request.Method),
 	)
 
-	// propagate tracing context into request
-	ctx.Request = ctx.Request.WithContext(xctx)
+	requestScope := util.NewHTTPRequestContextScope(xctx, &ctx.Request)
 
+	defer requestScope.Restore()
 	defer xsp.End()
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
