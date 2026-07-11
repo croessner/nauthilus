@@ -1,65 +1,4 @@
 {
-  "__inputs": [
-    {
-      "name": "DS_CLICKHOUSE",
-      "label": "ClickHouse datasource",
-      "description": "ClickHouse data source that can read the nauthilus.logins table.",
-      "type": "datasource",
-      "pluginId": "grafana-clickhouse-datasource",
-      "pluginName": "ClickHouse"
-    }
-  ],
-  "__elements": [],
-  "__requires": [
-    {
-      "type": "grafana",
-      "id": "grafana",
-      "name": "Grafana",
-      "version": "11.0.0"
-    },
-    {
-      "type": "datasource",
-      "id": "grafana-clickhouse-datasource",
-      "name": "ClickHouse",
-      "version": "4.17.0"
-    },
-    {
-      "type": "panel",
-      "id": "barchart",
-      "name": "Bar chart",
-      "version": ""
-    },
-    {
-      "type": "panel",
-      "id": "geomap",
-      "name": "Geomap",
-      "version": ""
-    },
-    {
-      "type": "panel",
-      "id": "piechart",
-      "name": "Pie chart",
-      "version": ""
-    },
-    {
-      "type": "panel",
-      "id": "stat",
-      "name": "Stat",
-      "version": ""
-    },
-    {
-      "type": "panel",
-      "id": "table",
-      "name": "Table",
-      "version": ""
-    },
-    {
-      "type": "panel",
-      "id": "timeseries",
-      "name": "Time series",
-      "version": ""
-    }
-  ],
   "annotations": {
     "list": [
       {
@@ -86,7 +25,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": null,
+  "id": 109831874064384,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -118,8 +57,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
-                "value": null
+                "color": "blue"
               }
             ]
           },
@@ -169,7 +107,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT count() AS \"Attempts\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "rawSql": "SELECT count() AS \"Attempts\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
           "refId": "A"
         }
       ],
@@ -191,8 +129,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -242,7 +179,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT countIf(authenticated = 1) AS \"Successful\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "rawSql": "SELECT countIf(authenticated = 1) AS \"Successful\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
           "refId": "A"
         }
       ],
@@ -264,8 +201,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "orange",
@@ -323,7 +259,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT countIf(authenticated = 0) AS \"Failed\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "rawSql": "SELECT countIf(authenticated = 0) AS \"Failed\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
           "refId": "A"
         }
       ],
@@ -345,8 +281,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
-                "value": null
+                "color": "red"
               },
               {
                 "color": "orange",
@@ -404,7 +339,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT if(count() = 0, 0, round(100 * countIf(authenticated = 1) / count(), 2)) AS \"Success rate\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "rawSql": "SELECT if(count() = 0, 0, round(100 * countIf(authenticated = 1) / count(), 2)) AS \"Success rate\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
           "refId": "A"
         }
       ],
@@ -426,8 +361,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
-                "value": null
+                "color": "blue"
               }
             ]
           },
@@ -477,7 +411,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT uniqExactIf(if(username != '', username, account), username != '' OR account != '') AS \"Unique users\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "rawSql": "SELECT uniqExactIf(if(username != '', username, account), username != '' OR account != '') AS \"Unique users\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
           "refId": "A"
         }
       ],
@@ -499,8 +433,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
-                "value": null
+                "color": "blue"
               }
             ]
           },
@@ -550,7 +483,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT uniqExactIf(client_ip, client_ip != '') AS \"Unique IPs\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "rawSql": "SELECT uniqExactIf(client_ip, client_ip != '') AS \"Unique IPs\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
           "refId": "A"
         }
       ],
@@ -572,8 +505,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "orange",
@@ -631,7 +563,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT if(count() = 0, 0, quantileTDigest(0.95)(latency)) AS \"P95 latency\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "rawSql": "SELECT if(count() = 0, 0, quantileTDigest(0.95)(latency)) AS \"P95 latency\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
           "refId": "A"
         }
       ],
@@ -653,8 +585,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "purple",
-                "value": null
+                "color": "purple"
               },
               {
                 "color": "orange",
@@ -712,7 +643,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT countIf(decision_sources != '' OR prot_active = 1 OR dyn_threat > 0 OR brute_force_counter > 0 OR failed_login_count > 0 OR reputation_decision != '' OR reputation_positive_score > 0 OR repeating = 1 OR rwp = 1) AS \"Defense events\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "rawSql": "SELECT countIf(decision_sources != '' OR prot_active = 1 OR dyn_threat > 0 OR brute_force_counter > 0 OR failed_login_count > 0 OR reputation_decision != '' OR reputation_positive_score > 0 OR repeating = 1 OR rwp = 1) AS \"Defense events\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
           "refId": "A"
         }
       ],
@@ -779,8 +710,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -831,12 +761,11 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT time, outcome, attempts FROM (SELECT $__timeInterval_ms(ts) AS time, multiIf(authenticated = 1, 'success', authenticated = 0, 'failed', 'unknown') AS outcome, count() AS attempts FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time, outcome) ORDER BY time",
+          "rawSql": "SELECT time, outcome, attempts FROM (SELECT $__timeInterval_ms(ts) AS time, multiIf(authenticated = 1, 'success', authenticated = 0, 'failed', 'unknown') AS outcome, count() AS attempts FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time, outcome) ORDER BY time",
           "refId": "A"
         }
       ],
       "title": "Authentication outcome over time",
-      "type": "timeseries",
       "transformations": [
         {
           "id": "prepareTimeSeries",
@@ -844,7 +773,8 @@
             "format": "many"
           }
         }
-      ]
+      ],
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -893,8 +823,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -976,7 +905,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT $__timeInterval_ms(ts) AS time, quantileTDigest(0.50)(latency) AS p50, quantileTDigest(0.95)(latency) AS p95, quantileTDigest(0.99)(latency) AS p99 FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time ORDER BY time",
+          "rawSql": "SELECT $__timeInterval_ms(ts) AS time, quantileTDigest(0.50)(latency) AS p50, quantileTDigest(0.95)(latency) AS p95, quantileTDigest(0.99)(latency) AS p99 FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time ORDER BY time",
           "refId": "A"
         }
       ],
@@ -1030,8 +959,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -1082,7 +1010,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT $__timeInterval_ms(ts) AS time, if(count() = 0, 0, round(100 * countIf(authenticated = 1) / count(), 2)) AS \"success_rate\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time ORDER BY time",
+          "rawSql": "SELECT $__timeInterval_ms(ts) AS time, if(count() = 0, 0, round(100 * countIf(authenticated = 1) / count(), 2)) AS \"success_rate\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time ORDER BY time",
           "refId": "A"
         }
       ],
@@ -1136,8 +1064,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -1188,12 +1115,11 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT time, status_class, requests FROM (SELECT $__timeInterval_ms(ts) AS time, if(http_status = 0, 'none', concat(toString(intDiv(http_status, 100)), 'xx')) AS status_class, count() AS requests FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time, status_class) ORDER BY time",
+          "rawSql": "SELECT time, status_class, requests FROM (SELECT $__timeInterval_ms(ts) AS time, if(http_status = 0, 'none', concat(toString(intDiv(http_status, 100)), 'xx')) AS status_class, count() AS requests FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time, status_class) ORDER BY time",
           "refId": "A"
         }
       ],
       "title": "HTTP status classes",
-      "type": "timeseries",
       "transformations": [
         {
           "id": "prepareTimeSeries",
@@ -1201,7 +1127,8 @@
             "format": "many"
           }
         }
-      ]
+      ],
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -1279,7 +1206,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT concat(if(proto = '', 'unknown', proto), ' / ', if(method = '', 'unknown', method)) AS slice, count() AS attempts FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY slice ORDER BY attempts DESC LIMIT 12",
+          "rawSql": "SELECT concat(if(proto = '', 'unknown', proto), ' / ', if(method = '', 'unknown', method)) AS slice, count() AS attempts FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY slice ORDER BY attempts DESC LIMIT 12",
           "refId": "A"
         }
       ],
@@ -1321,8 +1248,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1434,7 +1360,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT if(username = '', if(account = '', 'unknown', account), username) AS identity, count() AS failures, uniqExactIf(client_ip, client_ip != '') AS source_ips, max(failed_login_count) AS max_failed_count, max(failed_login_rank) AS best_failed_rank, argMax(status_msg, ts) AS latest_status FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND authenticated = 0 GROUP BY identity ORDER BY failures DESC LIMIT 25",
+          "rawSql": "SELECT if(username = '', if(account = '', 'unknown', account), username) AS identity, count() AS failures, uniqExactIf(client_ip, client_ip != '') AS source_ips, max(failed_login_count) AS max_failed_count, max(failed_login_rank) AS best_failed_rank, argMax(status_msg, ts) AS latest_status FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND authenticated = 0 GROUP BY identity ORDER BY failures DESC LIMIT 25",
           "refId": "A"
         }
       ],
@@ -1463,8 +1389,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1576,7 +1501,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT client_ip, argMax(geoip_country, ts) AS country, argMax(geoip_asn, ts) AS asn, argMax(geoip_asn_org, ts) AS asn_org, count() AS attempts, countIf(authenticated = 0) AS failures, round(100 * countIf(authenticated = 0) / count(), 2) AS failure_rate, uniqExactIf(username, username != '') AS identities, max(dyn_threat) AS max_threat, max(reputation_positive_score) AS risky_score, max(reputation_negative_score) AS trusted_score, max(reputation_samples) AS reputation_samples, argMax(reputation_decision, ts) AS reputation_decision, max(prot_delay_ms) AS max_delay_ms FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND client_ip != '' GROUP BY client_ip ORDER BY failures DESC, attempts DESC LIMIT 50",
+          "rawSql": "SELECT client_ip, argMax(geoip_country, ts) AS country, argMax(geoip_asn, ts) AS asn, argMax(geoip_asn_org, ts) AS asn_org, count() AS attempts, countIf(authenticated = 0) AS failures, round(100 * countIf(authenticated = 0) / count(), 2) AS failure_rate, uniqExactIf(username, username != '') AS identities, max(dyn_threat) AS max_threat, max(reputation_positive_score) AS risky_score, max(reputation_negative_score) AS trusted_score, max(reputation_samples) AS reputation_samples, argMax(reputation_decision, ts) AS reputation_decision, max(prot_delay_ms) AS max_delay_ms FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND client_ip != '' GROUP BY client_ip ORDER BY failures DESC, attempts DESC LIMIT 50",
           "refId": "A"
         }
       ],
@@ -1606,8 +1531,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#0072B2",
-                "value": null
+                "color": "#0072B2"
               },
               {
                 "color": "#F0E442",
@@ -1650,8 +1574,7 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "#0072B2",
-                      "value": null
+                      "color": "#0072B2"
                     },
                     {
                       "color": "#F0E442",
@@ -1683,8 +1606,8 @@
               {
                 "id": "color",
                 "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#0072B2"
+                  "fixedColor": "#0072B2",
+                  "mode": "fixed"
                 }
               }
             ]
@@ -1702,8 +1625,8 @@
               {
                 "id": "color",
                 "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#CC79A7"
+                  "fixedColor": "#CC79A7",
+                  "mode": "fixed"
                 }
               }
             ]
@@ -1721,8 +1644,8 @@
               {
                 "id": "color",
                 "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#E69F00"
+                  "fixedColor": "#E69F00",
+                  "mode": "fixed"
                 }
               }
             ]
@@ -1839,7 +1762,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT geoip_country AS lookup, geoip_country AS country, count() AS attempts, countIf(authenticated = 1) AS successful, countIf(authenticated = 0) AS failed, round(100 * countIf(authenticated = 0) / count(), 2) AS failure_rate, uniqExactIf(client_ip, client_ip != '') AS source_ips, uniqExactIf(if(username != '', username, account), username != '' OR account != '') AS identities, max(dyn_threat) AS max_threat FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND geoip_country != '' GROUP BY geoip_country ORDER BY failed DESC, attempts DESC LIMIT 250",
+          "rawSql": "SELECT geoip_country AS lookup, geoip_country AS country, count() AS attempts, countIf(authenticated = 1) AS successful, countIf(authenticated = 0) AS failed, round(100 * countIf(authenticated = 0) / count(), 2) AS failure_rate, uniqExactIf(client_ip, client_ip != '') AS source_ips, uniqExactIf(if(username != '', username, account), username != '' OR account != '') AS identities, max(dyn_threat) AS max_threat FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND geoip_country != '' GROUP BY geoip_country ORDER BY failed DESC, attempts DESC LIMIT 250",
           "refId": "A"
         }
       ],
@@ -1882,8 +1805,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -1903,8 +1825,8 @@
               {
                 "id": "color",
                 "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#0072B2"
+                  "fixedColor": "#0072B2",
+                  "mode": "fixed"
                 }
               }
             ]
@@ -1922,8 +1844,8 @@
               {
                 "id": "color",
                 "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#CC79A7"
+                  "fixedColor": "#CC79A7",
+                  "mode": "fixed"
                 }
               }
             ]
@@ -1979,7 +1901,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT if(geoip_country = '', 'unknown', geoip_country) AS country, count() AS attempts, countIf(authenticated = 0) AS failures FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY country ORDER BY attempts DESC LIMIT 30",
+          "rawSql": "SELECT if(geoip_country = '', 'unknown', geoip_country) AS country, count() AS attempts, countIf(authenticated = 0) AS failures FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY country ORDER BY attempts DESC LIMIT 30",
           "refId": "A"
         }
       ],
@@ -2033,8 +1955,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -2085,12 +2006,11 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT time, user_state, attempts FROM (SELECT $__timeInterval_ms(ts) AS time, multiIf(user_found = 1, 'known user', user_found = 0, 'unknown user', 'not reported') AS user_state, count() AS attempts FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time, user_state) ORDER BY time",
+          "rawSql": "SELECT time, user_state, attempts FROM (SELECT $__timeInterval_ms(ts) AS time, multiIf(user_found = 1, 'known user', user_found = 0, 'unknown user', 'not reported') AS user_state, count() AS attempts FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time, user_state) ORDER BY time",
           "refId": "A"
         }
       ],
       "title": "Known vs unknown users",
-      "type": "timeseries",
       "transformations": [
         {
           "id": "prepareTimeSeries",
@@ -2098,7 +2018,8 @@
             "format": "many"
           }
         }
-      ]
+      ],
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -2122,8 +2043,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -2235,7 +2155,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT if(user_agent = '', 'unknown', user_agent) AS user_agent, count() AS attempts, countIf(authenticated = 0) AS failures, round(100 * countIf(authenticated = 0) / count(), 2) AS failure_rate, uniqExactIf(client_ip, client_ip != '') AS source_ips FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY user_agent ORDER BY attempts DESC LIMIT 20",
+          "rawSql": "SELECT if(user_agent = '', 'unknown', user_agent) AS user_agent, count() AS attempts, countIf(authenticated = 0) AS failures, round(100 * countIf(authenticated = 0) / count(), 2) AS failure_rate, uniqExactIf(client_ip, client_ip != '') AS source_ips FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY user_agent ORDER BY attempts DESC LIMIT 20",
           "refId": "A"
         }
       ],
@@ -2302,8 +2222,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -2354,12 +2273,11 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT time, decision, attempts FROM (SELECT $__timeInterval_ms(ts) AS time, if(reputation_decision = '', 'none', reputation_decision) AS decision, count() AS attempts FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND reputation_decision != '' GROUP BY time, decision) ORDER BY time",
+          "rawSql": "SELECT time, decision, attempts FROM (SELECT $__timeInterval_ms(ts) AS time, if(reputation_decision = '', 'none', reputation_decision) AS decision, count() AS attempts FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND reputation_decision != '' GROUP BY time, decision) ORDER BY time",
           "refId": "A"
         }
       ],
       "title": "Reputation decisions over time",
-      "type": "timeseries",
       "transformations": [
         {
           "id": "prepareTimeSeries",
@@ -2367,7 +2285,8 @@
             "format": "many"
           }
         }
-      ]
+      ],
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -2416,8 +2335,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -2468,12 +2386,11 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT $__timeInterval_ms(ts) AS time, avg(reputation_score) AS avg_score, quantileTDigest(0.95)(reputation_positive_score) AS p95_risky_score, quantileTDigest(0.95)(reputation_negative_score) AS p95_trusted_score, max(reputation_samples) AS max_samples FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (reputation_score IS NOT NULL OR reputation_positive_score IS NOT NULL OR reputation_negative_score IS NOT NULL) GROUP BY time ORDER BY time",
+          "rawSql": "SELECT $__timeInterval_ms(ts) AS time, avg(reputation_score) AS avg_score, quantileTDigest(0.95)(reputation_positive_score) AS p95_risky_score, quantileTDigest(0.95)(reputation_negative_score) AS p95_trusted_score, max(reputation_samples) AS max_samples FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (reputation_score IS NOT NULL OR reputation_positive_score IS NOT NULL OR reputation_negative_score IS NOT NULL) GROUP BY time ORDER BY time",
           "refId": "A"
         }
       ],
       "title": "Reputation score percentiles",
-      "type": "timeseries",
       "transformations": [
         {
           "id": "prepareTimeSeries",
@@ -2481,7 +2398,8 @@
             "format": "many"
           }
         }
-      ]
+      ],
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -2505,8 +2423,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -2618,7 +2535,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT client_ip, argMax(geoip_country, ts) AS country, argMax(geoip_asn, ts) AS asn, argMax(geoip_asn_org, ts) AS asn_org, count() AS attempts, countIf(authenticated = 0) AS failures, round(100 * countIf(authenticated = 0) / count(), 2) AS failure_rate, max(reputation_score) AS max_score, max(reputation_positive_score) AS risky_score, max(reputation_negative_score) AS trusted_score, max(reputation_samples) AS samples, argMax(reputation_decision, ts) AS latest_decision FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND client_ip != '' AND (reputation_decision != '' OR reputation_score IS NOT NULL OR reputation_positive_score IS NOT NULL) GROUP BY client_ip ORDER BY risky_score DESC, failures DESC, attempts DESC LIMIT 50",
+          "rawSql": "SELECT client_ip, argMax(geoip_country, ts) AS country, argMax(geoip_asn, ts) AS asn, argMax(geoip_asn_org, ts) AS asn_org, count() AS attempts, countIf(authenticated = 0) AS failures, round(100 * countIf(authenticated = 0) / count(), 2) AS failure_rate, max(reputation_score) AS max_score, max(reputation_positive_score) AS risky_score, max(reputation_negative_score) AS trusted_score, max(reputation_samples) AS samples, argMax(reputation_decision, ts) AS latest_decision FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND client_ip != '' AND (reputation_decision != '' OR reputation_score IS NOT NULL OR reputation_positive_score IS NOT NULL) GROUP BY client_ip ORDER BY risky_score DESC, failures DESC, attempts DESC LIMIT 50",
           "refId": "A"
         }
       ],
@@ -2647,8 +2564,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -2760,7 +2676,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT if(geoip_country = '', 'unknown', geoip_country) AS country, if(geoip_asn IS NULL, 'unknown', concat('AS', toString(geoip_asn))) AS asn, argMax(geoip_asn_org, ts) AS asn_org, if(geoip_asn_country = '', 'unknown', geoip_asn_country) AS asn_country, count() AS attempts, countIf(authenticated = 0) AS failures, round(avg(reputation_score), 3) AS avg_score, max(reputation_positive_score) AS max_risky_score, max(reputation_negative_score) AS max_trusted_score, max(reputation_samples) AS samples, argMax(reputation_decision, ts) AS latest_decision FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (geoip_country != '' OR geoip_asn IS NOT NULL OR geoip_asn_country != '') AND (reputation_decision != '' OR reputation_score IS NOT NULL OR reputation_positive_score IS NOT NULL) GROUP BY country, asn, asn_country ORDER BY max_risky_score DESC, failures DESC, attempts DESC LIMIT 50",
+          "rawSql": "SELECT if(geoip_country = '', 'unknown', geoip_country) AS country, if(geoip_asn IS NULL, 'unknown', concat('AS', toString(geoip_asn))) AS asn, argMax(geoip_asn_org, ts) AS asn_org, if(geoip_asn_country = '', 'unknown', geoip_asn_country) AS asn_country, count() AS attempts, countIf(authenticated = 0) AS failures, round(avg(reputation_score), 3) AS avg_score, max(reputation_positive_score) AS max_risky_score, max(reputation_negative_score) AS max_trusted_score, max(reputation_samples) AS samples, argMax(reputation_decision, ts) AS latest_decision FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (geoip_country != '' OR geoip_asn IS NOT NULL OR geoip_asn_country != '') AND (reputation_decision != '' OR reputation_score IS NOT NULL OR reputation_positive_score IS NOT NULL) GROUP BY country, asn, asn_country ORDER BY max_risky_score DESC, failures DESC, attempts DESC LIMIT 50",
           "refId": "A"
         }
       ],
@@ -2827,8 +2743,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -2879,12 +2794,11 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT time, source, events FROM (SELECT $__timeInterval_ms(ts) AS time, arrayJoin(arrayFilter(x -> x != '', splitByChar(',', decision_sources))) AS source, count() AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND decision_sources != '' GROUP BY time, source) ORDER BY time",
+          "rawSql": "SELECT time, source, events FROM (SELECT $__timeInterval_ms(ts) AS time, arrayJoin(arrayFilter(x -> x != '', splitByChar(',', decision_sources))) AS source, count() AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND decision_sources != '' GROUP BY time, source) ORDER BY time",
           "refId": "A"
         }
       ],
       "title": "Decision sources over time",
-      "type": "timeseries",
       "transformations": [
         {
           "id": "prepareTimeSeries",
@@ -2892,7 +2806,8 @@
             "format": "many"
           }
         }
-      ]
+      ],
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -2941,8 +2856,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -2993,12 +2907,11 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT time, signal, events FROM (SELECT $__timeInterval_ms(ts) AS time, 'account protection' AS signal, countIf(prot_active = 1) AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time UNION ALL SELECT $__timeInterval_ms(ts) AS time, 'dynamic response' AS signal, countIf(dyn_threat > 0 OR dyn_response != '') AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time UNION ALL SELECT $__timeInterval_ms(ts) AS time, 'brute force' AS signal, countIf(brute_force_counter > 0 OR failed_login_count > 0 OR brute_force_bucket != '') AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time UNION ALL SELECT $__timeInterval_ms(ts) AS time, 'repeat/replay' AS signal, countIf(repeating = 1 OR rwp = 1) AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time) WHERE events > 0 ORDER BY time",
+          "rawSql": "SELECT time, signal, events FROM (SELECT $__timeInterval_ms(ts) AS time, 'account protection' AS signal, countIf(prot_active = 1) AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time UNION ALL SELECT $__timeInterval_ms(ts) AS time, 'dynamic response' AS signal, countIf(dyn_threat > 0 OR dyn_response != '') AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time UNION ALL SELECT $__timeInterval_ms(ts) AS time, 'brute force' AS signal, countIf(brute_force_counter > 0 OR failed_login_count > 0 OR brute_force_bucket != '') AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time UNION ALL SELECT $__timeInterval_ms(ts) AS time, 'repeat/replay' AS signal, countIf(repeating = 1 OR rwp = 1) AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time) WHERE events > 0 ORDER BY time",
           "refId": "A"
         }
       ],
       "title": "Defense activity",
-      "type": "timeseries",
       "transformations": [
         {
           "id": "prepareTimeSeries",
@@ -3006,13 +2919,15 @@
             "format": "many"
           }
         }
-      ]
+      ],
+      "type": "timeseries"
     },
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
+      "description": "Shows only requests for which Nauthilus exported a triggered brute-force bucket, a non-zero brute-force counter, or a failed-login hotspot count. Ordinary failures, RWP allowances, blocklist and RBL rejections are shown separately below.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3030,8 +2945,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -3143,11 +3057,11 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT if(brute_force_bucket = '', 'none', brute_force_bucket) AS bucket, count() AS attempts, countIf(authenticated = 0) AS failures, max(brute_force_counter) AS max_counter, max(failed_login_count) AS max_failed_count, uniqExactIf(client_ip, client_ip != '') AS source_ips, uniqExactIf(username, username != '') AS identities FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (brute_force_bucket != '' OR brute_force_counter > 0 OR failed_login_count > 0) GROUP BY bucket ORDER BY failures DESC, attempts DESC LIMIT 30",
+          "rawSql": "SELECT if(brute_force_bucket = '', 'none', brute_force_bucket) AS bucket, count() AS attempts, countIf(authenticated = 0) AS failures, max(brute_force_counter) AS max_counter, max(failed_login_count) AS max_failed_count, uniqExactIf(client_ip, client_ip != '') AS source_ips, uniqExactIf(username, username != '') AS identities FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (brute_force_bucket != '' OR brute_force_counter > 0 OR failed_login_count > 0) GROUP BY bucket ORDER BY failures DESC, attempts DESC LIMIT 30",
           "refId": "A"
         }
       ],
-      "title": "Brute-force buckets",
+      "title": "Triggered brute-force buckets",
       "type": "table"
     },
     {
@@ -3172,8 +3086,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -3285,7 +3198,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT if(dyn_response = '', 'none', dyn_response) AS response, if(prot_reason = '', 'none', prot_reason) AS protection_reason, count() AS events, max(dyn_threat) AS max_threat, uniqExactIf(client_ip, client_ip != '') AS source_ips, quantileTDigest(0.95)(prot_delay_ms) AS p95_delay_ms FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (dyn_threat > 0 OR dyn_response != '' OR prot_active = 1) GROUP BY response, protection_reason ORDER BY events DESC LIMIT 30",
+          "rawSql": "SELECT if(dyn_response = '', 'none', dyn_response) AS response, if(prot_reason = '', 'none', prot_reason) AS protection_reason, count() AS events, max(dyn_threat) AS max_threat, uniqExactIf(client_ip, client_ip != '') AS source_ips, quantileTDigest(0.95)(prot_delay_ms) AS p95_delay_ms FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (dyn_threat > 0 OR dyn_response != '' OR prot_active = 1) GROUP BY response, protection_reason ORDER BY events DESC LIMIT 30",
           "refId": "A"
         }
       ],
@@ -3314,8 +3227,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -3427,7 +3339,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT multiIf(oidc_cid != '', concat('oidc:', oidc_cid), saml_entity_id != '', concat('saml:', saml_entity_id), 'none') AS client, if(grant_type = '', 'n/a', grant_type) AS grant_type, if(mfa_method = '', 'none', mfa_method) AS mfa_method, count() AS attempts, countIf(authenticated = 1) AS successful, countIf(authenticated = 0) AS failed, uniqExactIf(username, username != '') AS users FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (oidc_cid != '' OR saml_entity_id != '' OR grant_type != '' OR mfa_method != '') GROUP BY client, grant_type, mfa_method ORDER BY attempts DESC LIMIT 50",
+          "rawSql": "SELECT multiIf(oidc_cid != '', concat('oidc:', oidc_cid), saml_entity_id != '', concat('saml:', saml_entity_id), 'none') AS client, if(grant_type = '', 'n/a', grant_type) AS grant_type, if(mfa_method = '', 'none', mfa_method) AS mfa_method, count() AS attempts, countIf(authenticated = 1) AS successful, countIf(authenticated = 0) AS failed, uniqExactIf(username, username != '') AS users FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (oidc_cid != '' OR saml_entity_id != '' OR grant_type != '' OR mfa_method != '') GROUP BY client, grant_type, mfa_method ORDER BY attempts DESC LIMIT 50",
           "refId": "A"
         }
       ],
@@ -3435,16 +3347,130 @@
       "type": "table"
     },
     {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Broader security activity before a brute-force bucket triggers. Signals can overlap: one request may contribute to multiple series. Public password failures exclude loopback and RFC1918 client addresses.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 55,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 83
+      },
+      "id": 43,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 2,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT time, signal, count() AS events FROM (SELECT $__timeInterval_ms(ts) AS time, arrayJoin(arrayFilter(x -> x != '', [if(brute_force_bucket != '' OR ifNull(brute_force_counter, 0) > 0, 'triggered brute force', ''), if(ifNull(failed_login_count, 0) > 0 OR position(decision_sources, 'failed_login_hotspot') > 0, 'failed-login hotspot', ''), if(ifNull(rwp, 0) = 1, 'RWP allowance', ''), if(ifNull(repeating, 0) = 1, 'repeat/replay', ''), if(position(decision_sources, 'blocklist') > 0, 'blocklist rejection', ''), if(position(decision_sources, 'rbl') > 0, 'RBL rejection', ''), if(authenticated = 0 AND status_msg = 'Invalid login or password' AND client_ip != '' AND NOT (isIPAddressInRange(client_ip, '10.0.0.0/8') OR isIPAddressInRange(client_ip, '172.16.0.0/12') OR isIPAddressInRange(client_ip, '192.168.0.0/16') OR isIPAddressInRange(client_ip, '127.0.0.0/8')), 'public password failure', '')])) AS signal FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))) GROUP BY time, signal ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Brute-force and rejection activity",
+      "transformations": [
+        {
+          "id": "prepareTimeSeries",
+          "options": {
+            "format": "many"
+          }
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 83
+        "y": 91
       },
-      "id": 40,
+      "id": 50,
       "panels": [],
-      "title": "Investigations",
+      "title": "Network privacy intelligence",
       "type": "row"
     },
     {
@@ -3452,6 +3478,583 @@
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
+      "description": "Requests matched by retained Tor, VPN, proxy, relay, or hosting evidence. Hosting remains a separate classification and does not imply VPN.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 92
+      },
+      "id": 51,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(geoip_privacy_detected = 1 OR geoip_is_hosting_network = 1) AS \"Privacy-attributed\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Privacy-attributed",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Requests attributed to current official Tor exit evidence.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 92
+      },
+      "id": 52,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(geoip_is_tor_exit_node = 1) AS \"Tor exit attempts\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Tor exit attempts",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Requests matched by operator/official known-VPN or community-VPN evidence. Coverage depends on configured feeds.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 92
+      },
+      "id": 53,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(geoip_is_known_vpn_exit = 1 OR geoip_is_community_vpn_exit = 1) AS \"VPN exit attempts\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "VPN exit attempts",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Requests matched by attributed public-proxy or privacy-relay evidence.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 92
+      },
+      "id": 54,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(geoip_is_public_proxy = 1 OR geoip_is_privacy_relay = 1) AS \"Proxy / relay attempts\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Proxy / relay attempts",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Requests matched by derived hosting/cloud evidence. This is not a VPN claim.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "blue",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 92
+      },
+      "id": 55,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(geoip_is_hosting_network = 1) AS \"Hosting network attempts\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Hosting network attempts",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Requests evaluated while required or contributing privacy snapshots were stale.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 92
+      },
+      "id": 56,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(geoip_privacy_data_stale = 1) AS \"Stale privacy evidence\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Stale privacy evidence",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Observational network-privacy classifications. A signal is evidence; policy remains the decision authority.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 55,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 96
+      },
+      "id": 57,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 2,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT time, signal, events FROM (SELECT $__timeInterval_ms(ts) AS time, arrayJoin(arrayFilter(x -> x != '', [if(geoip_is_tor_exit_node = 1, 'Tor exit', ''), if(geoip_is_known_vpn_exit = 1, 'known VPN', ''), if(geoip_is_community_vpn_exit = 1, 'community VPN', ''), if(geoip_is_public_proxy = 1, 'public proxy', ''), if(geoip_is_privacy_relay = 1, 'privacy relay', ''), if(geoip_is_hosting_network = 1, 'hosting network', ''), if(geoip_privacy_data_stale = 1, 'stale evidence', '')])) AS signal, count() AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (geoip_privacy_detected = 1 OR geoip_is_hosting_network = 1 OR geoip_privacy_data_stale = 1) GROUP BY time, signal) ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Privacy signals over time",
+      "transformations": [
+        {
+          "id": "prepareTimeSeries",
+          "options": {
+            "format": "many"
+          }
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Aggregate classification volume, outcomes, source IPs, and identities. Hosting remains separate from VPN.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3469,8 +4072,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -3543,12 +4145,12 @@
         ]
       },
       "gridPos": {
-        "h": 12,
-        "w": 24,
-        "x": 0,
-        "y": 84
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 96
       },
-      "id": 41,
+      "id": 58,
       "options": {
         "cellHeight": "sm",
         "footer": {
@@ -3582,11 +4184,11 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT ts AS time, service, proto, method, if(username = '', account, username) AS identity, client_ip, geoip_country AS country, multiIf(authenticated = 1, 'success', authenticated = 0, 'failed', 'unknown') AS outcome, http_status, status_msg, latency, decision_sources, brute_force_counter, failed_login_count, dyn_threat, reputation_score, reputation_positive_score, reputation_negative_score, reputation_decision, reputation_samples, prot_reason, prot_delay_ms, rwp, repeating, session FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (authenticated = 0 OR decision_sources != '' OR dyn_threat > 0 OR prot_active = 1 OR brute_force_counter > 0 OR failed_login_count > 0 OR reputation_decision != '' OR reputation_positive_score > 0 OR rwp = 1 OR repeating = 1) ORDER BY ts DESC LIMIT ${table_page_size:raw} OFFSET (${table_page:raw} - 1) * ${table_page_size:raw}",
+          "rawSql": "SELECT signal, count() AS attempts, countIf(authenticated = 0) AS failures, uniqExactIf(client_ip, client_ip != '') AS source_ips, uniqExactIf(if(username != '', username, account), if(username != '', username, account) != '') AS identities FROM (SELECT *, arrayJoin(arrayFilter(x -> x != '', [if(geoip_is_tor_exit_node = 1, 'Tor exit', ''), if(geoip_is_known_vpn_exit = 1, 'known VPN', ''), if(geoip_is_community_vpn_exit = 1, 'community VPN', ''), if(geoip_is_public_proxy = 1, 'public proxy', ''), if(geoip_is_privacy_relay = 1, 'privacy relay', ''), if(geoip_is_hosting_network = 1, 'hosting network', ''), if(geoip_privacy_data_stale = 1, 'stale evidence', '')])) AS signal FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (geoip_privacy_detected = 1 OR geoip_is_hosting_network = 1 OR geoip_privacy_data_stale = 1)) GROUP BY signal ORDER BY attempts DESC",
           "refId": "A"
         }
       ],
-      "title": "Recent high-risk events",
+      "title": "Privacy classifications",
       "type": "table"
     },
     {
@@ -3594,6 +4196,7 @@
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
+      "description": "Recent requests carrying privacy, hosting, or stale-evidence facts. Confidence is evidence confidence, not authentication risk.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3611,8 +4214,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -3688,7 +4290,302 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 96
+        "y": 104
+      },
+      "id": 59,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT ts AS time, deployment, instance, service, proto, method, if(username = '', account, username) AS identity, client_ip, geoip_country AS country, geoip_asn, geoip_asn_org, geoip_privacy_lookup_state AS lookup_state, geoip_privacy_classes AS privacy_classes, geoip_privacy_primary_class AS primary_class, geoip_privacy_confidence AS confidence, geoip_privacy_source_authorities AS authorities, geoip_privacy_data_age_seconds AS data_age_seconds, geoip_privacy_data_stale AS stale, geoip_is_tor_exit_node AS tor_exit, geoip_is_known_vpn_exit AS known_vpn, geoip_is_community_vpn_exit AS community_vpn, geoip_is_public_proxy AS public_proxy, geoip_is_privacy_relay AS privacy_relay, geoip_is_hosting_network AS hosting_network, multiIf(authenticated = 1, 'success', authenticated = 0, 'failed', 'unknown') AS outcome, status_msg, decision_sources, session FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (geoip_privacy_detected = 1 OR geoip_is_hosting_network = 1 OR geoip_privacy_data_stale = 1) ORDER BY ts DESC LIMIT ${table_page_size:raw}",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent privacy-attributed events",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 114
+      },
+      "id": 40,
+      "panels": [],
+      "title": "Investigations",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_delay_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failure_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 115
+      },
+      "id": 41,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT ts AS time, deployment, instance, service, proto, method, if(username = '', account, username) AS identity, client_ip, geoip_country AS country, geoip_privacy_lookup_state AS privacy_state, geoip_privacy_primary_class AS privacy_primary, geoip_privacy_classes AS privacy_classes, geoip_is_tor_exit_node AS tor_exit, geoip_is_known_vpn_exit AS known_vpn, geoip_is_community_vpn_exit AS community_vpn, geoip_is_public_proxy AS public_proxy, geoip_is_privacy_relay AS privacy_relay, geoip_is_hosting_network AS hosting_network, geoip_privacy_data_stale AS privacy_stale, multiIf(authenticated = 1, 'success', authenticated = 0, 'failed', 'unknown') AS outcome, http_status, status_msg, latency, decision_sources, brute_force_counter, failed_login_count, dyn_threat, reputation_score, reputation_positive_score, reputation_negative_score, reputation_decision, reputation_samples, prot_reason, prot_delay_ms, rwp, repeating, session FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (authenticated = 0 OR decision_sources != '' OR dyn_threat > 0 OR prot_active = 1 OR brute_force_counter > 0 OR failed_login_count > 0 OR reputation_decision != '' OR reputation_positive_score > 0 OR rwp = 1 OR repeating = 1 OR geoip_privacy_detected = 1 OR geoip_is_hosting_network = 1 OR geoip_privacy_data_stale = 1) ORDER BY ts DESC LIMIT ${table_page_size:raw} OFFSET (${table_page:raw} - 1) * ${table_page_size:raw}",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent high-risk events",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_delay_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failure_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 127
       },
       "id": 42,
       "options": {
@@ -3724,7 +4621,7 @@
             }
           },
           "queryType": "sql",
-          "rawSql": "SELECT ts AS time, service, proto, method, if(username = '', account, username) AS identity, client_ip, geoip_country AS country, multiIf(authenticated = 1, 'success', authenticated = 0, 'failed', 'unknown') AS outcome, http_status, status_msg, latency, decision_sources, reputation_decision, reputation_score, reputation_samples, user_agent FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) ORDER BY ts DESC LIMIT ${table_page_size:raw} OFFSET (${table_page:raw} - 1) * ${table_page_size:raw}",
+          "rawSql": "SELECT ts AS time, deployment, instance, service, proto, method, if(username = '', account, username) AS identity, client_ip, geoip_country AS country, geoip_privacy_lookup_state AS privacy_state, geoip_privacy_primary_class AS privacy_primary, geoip_privacy_classes AS privacy_classes, multiIf(authenticated = 1, 'success', authenticated = 0, 'failed', 'unknown') AS outcome, http_status, status_msg, latency, decision_sources, reputation_decision, reputation_score, reputation_samples, user_agent FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND $__conditionalAll(toString(geoip_asn) IN (${geoip_asn:singlequote}), $geoip_asn) AND $__conditionalAll(geoip_asn_country IN (${geoip_asn_country:singlequote}), $geoip_asn_country) AND $__conditionalAll(reputation_decision IN (${reputation_decision:singlequote}), $reputation_decision) AND $__conditionalAll(geoip_status IN (${geoip_status:singlequote}), $geoip_status) AND $__conditionalAll(geoip_source IN (${geoip_source:singlequote}), $geoip_source) AND $__conditionalAll(reputation_source IN (${reputation_source:singlequote}), $reputation_source) AND $__conditionalAll(grant_type IN (${grant_type:singlequote}), $grant_type) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) ORDER BY ts DESC LIMIT ${table_page_size:raw} OFFSET (${table_page:raw} - 1) * ${table_page_size:raw}",
           "refId": "A"
         }
       ],
@@ -3733,21 +4630,23 @@
     }
   ],
   "refresh": "30s",
-  "schemaVersion": 40,
-  "style": "dark",
+  "schemaVersion": 42,
   "tags": [
-    "nauthilus",
     "clickhouse",
     "logins",
-    "security"
+    "nauthilus",
+    "privacy-intelligence",
+    "security",
+    "tor",
+    "vpn"
   ],
   "templating": {
     "list": [
       {
         "current": {
           "selected": true,
-          "text": "${DS_CLICKHOUSE}",
-          "value": "${DS_CLICKHOUSE}"
+          "text": "Clickhouse Nauthilus",
+          "value": "bfmpvekl2vb40a"
         },
         "hide": 0,
         "includeAll": false,
@@ -4104,6 +5003,102 @@
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "SELECT geoip_status FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND geoip_status != '' GROUP BY geoip_status ORDER BY geoip_status",
+        "hide": 0,
+        "includeAll": true,
+        "label": "GeoIP status",
+        "multi": true,
+        "name": "geoip_status",
+        "options": [],
+        "query": "SELECT geoip_status FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND geoip_status != '' GROUP BY geoip_status ORDER BY geoip_status",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "SELECT geoip_source FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND geoip_source != '' GROUP BY geoip_source ORDER BY geoip_source",
+        "hide": 0,
+        "includeAll": true,
+        "label": "GeoIP source",
+        "multi": true,
+        "name": "geoip_source",
+        "options": [],
+        "query": "SELECT geoip_source FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND geoip_source != '' GROUP BY geoip_source ORDER BY geoip_source",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "SELECT reputation_source FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND reputation_source != '' GROUP BY reputation_source ORDER BY reputation_source",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Reputation source",
+        "multi": true,
+        "name": "reputation_source",
+        "options": [],
+        "query": "SELECT reputation_source FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND reputation_source != '' GROUP BY reputation_source ORDER BY reputation_source",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "SELECT grant_type FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND grant_type != '' GROUP BY grant_type ORDER BY grant_type",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Grant type",
+        "multi": true,
+        "name": "grant_type",
+        "options": [],
+        "query": "SELECT grant_type FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND grant_type != '' GROUP BY grant_type ORDER BY grant_type",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
       }
     ]
   },
@@ -4119,19 +5114,11 @@
       "5m",
       "15m",
       "1h"
-    ],
-    "time_options": [
-      "1h",
-      "6h",
-      "12h",
-      "24h",
-      "2d",
-      "7d"
     ]
   },
   "timezone": "browser",
   "title": "Nauthilus ClickHouse Login Command Center",
   "uid": "nauthilus-clickhouse-logins",
-  "version": 2,
+  "version": 5,
   "weekStart": ""
 }
