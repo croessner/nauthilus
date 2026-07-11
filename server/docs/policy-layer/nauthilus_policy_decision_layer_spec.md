@@ -1982,10 +1982,12 @@ Synchronous Lua action dispatch is a request-time obligation, not a policy condi
 The registered synchronous action obligation must accept bounded typed arguments:
 
 1. `action`: one of `brute_force`, `lua`, `tls_encryption`, `relay_domains`, or `rbl`;
-2. `environment`: optional stable environment control/source or check name used for environment-specific learning and reports;
+2. `environment`: optional stable environment control/source or check name used for action context and reports;
 3. `wait`: optional boolean, default `true`, preserving the current synchronous behavior.
 
-The obligation executor must preserve current action failure, timeout, and learning semantics for the selected action type. It must report the planned and executed obligation using the registered obligation ID and bounded argument values, not arbitrary Lua-provided labels.
+The brute-force update obligation accepts optional bounded `feature` and `environment` string arguments. With no arguments it performs the unconditional update used after a brute-force trigger. With `feature`, it updates only when the configured brute-force learning list contains that feature or the concrete environment alias. This keeps learning ownership separate from synchronous Lua action execution.
+
+The obligation executor must preserve current action failure and timeout semantics for the selected action type. It must report the planned and executed obligation using the registered obligation ID and bounded argument values, not arbitrary Lua-provided labels.
 
 Obligation execution rules:
 
@@ -4029,7 +4031,7 @@ Obligations and advice are registered built-ins. Policy YAML may reference IDs a
 | ID | Kind | Timing | Side effect | Failure behavior |
 |---|---|---|---|---|
 | `auth.obligation.brute_force.update` | obligation | request-time enforcement | update brute-force counters, toleration, and learning state according to current semantics | preserve current failure semantics; if the current path tempfails, policy enforcement must tempfail |
-| `auth.obligation.lua_action.dispatch` | obligation | request-time enforcement | dispatch an existing configured synchronous Lua action with sanitized decision context | preserve current action failure, timeout, and learning semantics; the action must not change the selected decision, FSM state, response marker, response message, or emit new policy facts |
+| `auth.obligation.lua_action.dispatch` | obligation | request-time enforcement | dispatch an existing configured synchronous Lua action with sanitized decision context | preserve current action failure and timeout semantics; the action must not change the selected decision, FSM state, response marker, response message, brute-force state, or emit new policy facts |
 | `auth.obligation.lua_post_action.enqueue` | obligation | enqueue during enforcement, execute asynchronously after response | enqueue an existing configured Lua POST-Action with sanitized decision context | enqueue failure is logged and metered; actual POST-Action execution never changes the selected decision, FSM state, response marker, or response message |
 | `auth.advice.audit_reason` | advice | reporting/logging | include a sanitized audit reason in logs, reports, or POST-Action context | failure or omission must not change the decision or response |
 
@@ -4075,11 +4077,11 @@ For `authenticate`/`pre_auth`, rows 10 and 20 are evaluated at the built-in chec
 | 20 | `authenticate` | `pre_auth` | `standard_brute_force_deny` | `brute_force` | `auth.brute_force.triggered is true` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | `auth.obligation.brute_force.update`; `auth.obligation.lua_action.dispatch(action=brute_force)`; `auth.obligation.lua_post_action.enqueue(action=brute_force)` if configured |
 | 30 | `authenticate`, `lookup_identity` | `pre_auth` | `standard_tls_enforcement` | `tls_encryption` | `auth.tls.secure is false` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `auth.response.tempfail.no_tls` | `auth.obligation.lua_action.dispatch(action=tls_encryption)` if configured |
 | 40 | `authenticate` | `pre_auth` | `standard_relay_domain_error_tempfail` | `relay_domains` | `auth.relay_domain.error is true` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `auth.response.tempfail` | none |
-| 50 | `authenticate` | `pre_auth` | `standard_relay_domain_reject` | `relay_domains` | `auth.relay_domain.present is true` and `auth.relay_domain.known is false` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | `auth.obligation.lua_action.dispatch(action=relay_domains)` if configured |
+| 50 | `authenticate` | `pre_auth` | `standard_relay_domain_reject` | `relay_domains` | `auth.relay_domain.present is true` and `auth.relay_domain.known is false` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | `auth.obligation.brute_force.update(feature=relay_domains, environment=relay_domains)`; `auth.obligation.lua_action.dispatch(action=relay_domains)` if configured |
 | 60 | `authenticate`, `lookup_identity` | `pre_auth` | `standard_rbl_error_tempfail` | `rbl` | `auth.rbl.error is true` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `auth.response.tempfail` | none |
-| 70 | `authenticate`, `lookup_identity` | `pre_auth` | `standard_rbl_reject` | `rbl` | `auth.rbl.threshold_reached is true` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | `auth.obligation.lua_action.dispatch(action=rbl)` if configured |
+| 70 | `authenticate`, `lookup_identity` | `pre_auth` | `standard_rbl_reject` | `rbl` | `auth.rbl.threshold_reached is true` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | `auth.obligation.brute_force.update(feature=rbl, environment=rbl)`; `auth.obligation.lua_action.dispatch(action=rbl)` if configured |
 | 80 | `authenticate` | `pre_auth` | `standard_lua_environment_<name>_error` | named Lua environment source | `auth.lua.environment.<name>.error is true` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `auth.response.tempfail` | none |
-| 90 | `authenticate` | `pre_auth` | `standard_lua_environment_<name>_trigger` | named Lua environment source | `auth.lua.environment.<name>.triggered is true` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | select public `status_message` detail if present; `auth.obligation.lua_action.dispatch(action=lua, environment=<check_name>)` if configured |
+| 90 | `authenticate` | `pre_auth` | `standard_lua_environment_<name>_trigger` | named Lua environment source | `auth.lua.environment.<name>.triggered is true` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | select public `status_message` detail if present; `auth.obligation.brute_force.update(feature=lua, environment=<name>)`; `auth.obligation.lua_action.dispatch(action=lua, environment=<check_name>)` if configured |
 | 100 | `authenticate` | `pre_auth` | `standard_lua_environment_<name>_abort` | named Lua environment source | `auth.lua.environment.<name>.abort is true` | `neutral` | `auth.fsm.event.pre_auth_ok` | none | `skip_remaining_stage_checks` |
 | 110 | all | `pre_auth` | implicit pre-auth pass | active pre-auth plan | no prior first-match terminal result | `neutral` | `auth.fsm.event.pre_auth_ok` | none | continue to the operation-specific next stage |
 | 200 | `authenticate`, `lookup_identity` | `auth_decision` | `standard_backend_tempfail` | backend plan | `auth.backend.tempfail is true` | `tempfail` | `auth.fsm.event.auth_tempfail` | `auth.response.tempfail` | none |

@@ -35,7 +35,7 @@ const (
 )
 
 type policyObligationHandlers struct {
-	updateBruteForce func(*gin.Context)
+	updateBruteForce func(*gin.Context, bruteForceUpdateObligation) bool
 	dispatchLua      func(*gin.Context, luaActionObligation) bool
 	enqueuePost      func(*gin.Context)
 }
@@ -53,16 +53,19 @@ type luaActionObligation struct {
 	wait            bool
 }
 
+type bruteForceUpdateObligation struct {
+	environmentName string
+	featureName     string
+}
+
 func newPolicyObligationExecutor(auth *AuthState) policyObligationExecutor {
 	executor := policyObligationExecutor{
 		auth:     auth,
 		recorder: observability.DefaultRecorder(),
 	}
 	executor.handlers = policyObligationHandlers{
-		updateBruteForce: func(ctx *gin.Context) {
-			auth.UpdateBruteForceBucketsCounter(ctx)
-		},
-		dispatchLua: auth.executeLuaActionObligation,
+		updateBruteForce: auth.executeBruteForceUpdateObligation,
+		dispatchLua:      auth.executeLuaActionObligation,
 		enqueuePost: func(ctx *gin.Context) {
 			auth.enqueuePolicyPostAction(ctx)
 		},
@@ -98,7 +101,16 @@ func (e policyObligationExecutor) executeOne(ctx *gin.Context, obligation report
 
 	switch obligation.ID {
 	case policy.ObligationBruteForceUpdate:
-		e.handlers.updateBruteForce(ctx)
+		request, ok := bruteForceUpdateObligationFromEffect(obligation)
+		if !ok {
+			result = observability.ResultError
+
+			break
+		}
+
+		if !e.handlers.updateBruteForce(ctx, request) {
+			result = observability.ResultFailure
+		}
 	case policy.ObligationLuaActionDispatch:
 		request, ok := luaActionObligationFromEffect(obligation)
 		if !ok {
@@ -375,6 +387,66 @@ func luaActionObligationFromEffect(effect report.EffectRequest) (luaActionObliga
 	}, true
 }
 
+// bruteForceUpdateObligationFromEffect validates optional learning metadata for one bucket update.
+func bruteForceUpdateObligationFromEffect(effect report.EffectRequest) (bruteForceUpdateObligation, bool) {
+	request := bruteForceUpdateObligation{}
+
+	for key, value := range effect.Args {
+		stringValue, ok := value.(string)
+		if !ok {
+			return bruteForceUpdateObligation{}, false
+		}
+
+		switch key {
+		case policy.ObligationArgEnvironment:
+			request.environmentName = stringValue
+		case policy.ObligationArgFeature:
+			if strings.TrimSpace(stringValue) == "" {
+				return bruteForceUpdateObligation{}, false
+			}
+
+			request.featureName = stringValue
+		default:
+			return bruteForceUpdateObligation{}, false
+		}
+	}
+
+	return request, true
+}
+
+// executeBruteForceUpdateObligation performs the selected update without dispatching Lua actions.
+func (a *AuthState) executeBruteForceUpdateObligation(ctx *gin.Context, request bruteForceUpdateObligation) bool {
+	if a == nil || ctx == nil || ctx.Request == nil {
+		return false
+	}
+
+	if !a.shouldRunBruteForceUpdate(request) {
+		return true
+	}
+
+	if request.environmentName != "" {
+		a.Runtime.EnvironmentName = request.environmentName
+	}
+
+	a.updateBruteForceBucketsCounter(ctx, request.featureName)
+
+	return true
+}
+
+// shouldRunBruteForceUpdate applies the configured learning gate to conditional updates.
+func (a *AuthState) shouldRunBruteForceUpdate(request bruteForceUpdateObligation) bool {
+	if request.featureName == "" {
+		return true
+	}
+
+	bruteForce := a.cfg().GetBruteForce()
+	if bruteForce == nil {
+		return false
+	}
+
+	return bruteForceLearningEnabled(bruteForce, request.featureName, request.environmentName)
+}
+
 func luaActionFromPolicyName(name string) (definitions.LuaAction, bool) {
 	switch name {
 	case policy.LuaActionDispatchBruteForce:
@@ -409,23 +481,9 @@ func (a *AuthState) executeLuaActionObligation(ctx *gin.Context, request luaActi
 		return true
 	}
 
-	a.learnFromLuaActionObligation(ctx, request)
 	a.performAction(request.luaAction, request.actionName)
 
 	return true
-}
-
-func (a *AuthState) learnFromLuaActionObligation(ctx *gin.Context, request luaActionObligation) {
-	bruteForce := a.cfg().GetBruteForce()
-	if bruteForce == nil {
-		return
-	}
-
-	if !bruteForce.LearnFromControl(request.environmentName) && !bruteForce.LearnFromControl(request.actionName) {
-		return
-	}
-
-	a.UpdateBruteForceBucketsCounter(ctx)
 }
 
 func (a *AuthState) dispatchBruteForceLuaAction(ctx *gin.Context, request luaActionObligation) {

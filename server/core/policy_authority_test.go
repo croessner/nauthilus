@@ -872,11 +872,13 @@ type recordingObligationHandlers struct {
 	postActionCount int
 }
 
-func (h *recordingObligationHandlers) updateBruteForce(*gin.Context) {
+func (h *recordingObligationHandlers) updateBruteForce(*gin.Context, bruteForceUpdateObligation) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	h.updateCount++
+
+	return true
 }
 
 func (h *recordingObligationHandlers) dispatchLua(*gin.Context, luaActionObligation) bool {

@@ -285,11 +285,23 @@ func assertRBLPlannedObligation(t *testing.T) {
 	)
 
 	got := EvaluateStandardAuth(rblReport)
-	if len(got.Final.Obligations) != 1 || got.Final.Obligations[0].ID != policy.ObligationLuaActionDispatch {
-		t.Fatalf("rbl obligations = %#v, want lua action dispatch", got.Final.Obligations)
+	if len(got.Final.Obligations) != 2 {
+		t.Fatalf("rbl obligations = %#v, want update and lua action dispatch", got.Final.Obligations)
 	}
 
-	if got := got.Final.Obligations[0].Args["feature"]; got != policy.LuaActionDispatchRBL {
+	if got.Final.Obligations[0].ID != policy.ObligationBruteForceUpdate {
+		t.Fatalf("first rbl obligation = %q, want brute-force update", got.Final.Obligations[0].ID)
+	}
+
+	if got := got.Final.Obligations[0].Args[policy.ObligationArgFeature]; got != policy.LuaActionDispatchRBL {
+		t.Fatalf("rbl update feature = %v, want %s", got, policy.LuaActionDispatchRBL)
+	}
+
+	if got.Final.Obligations[1].ID != policy.ObligationLuaActionDispatch {
+		t.Fatalf("second rbl obligation = %q, want lua action dispatch", got.Final.Obligations[1].ID)
+	}
+
+	if got := got.Final.Obligations[1].Args["feature"]; got != policy.LuaActionDispatchRBL {
 		t.Fatalf("rbl feature arg = %v, want %s", got, policy.LuaActionDispatchRBL)
 	}
 }
@@ -328,6 +340,21 @@ func TestStandardAuthMapsLuaScriptsForLookupIdentity(t *testing.T) {
 
 	if got.Final.PolicyName != "standard_lua_environment_risk_trigger" {
 		t.Fatalf("policy = %q, want standard_lua_environment_risk_trigger", got.Final.PolicyName)
+	}
+
+	if len(got.Final.Obligations) != 2 {
+		t.Fatalf("Lua environment obligations = %#v, want update and dispatch", got.Final.Obligations)
+	}
+
+	update := got.Final.Obligations[0]
+	if update.ID != policy.ObligationBruteForceUpdate ||
+		update.Args[policy.ObligationArgFeature] != policy.LuaActionDispatchLua ||
+		update.Args[policy.ObligationArgEnvironment] != "risk" {
+		t.Fatalf("Lua environment update = %#v, want conditional lua/risk update", update)
+	}
+
+	if got.Final.Obligations[1].ID != policy.ObligationLuaActionDispatch {
+		t.Fatalf("Lua environment dispatch = %#v, want Lua action dispatch", got.Final.Obligations[1])
 	}
 
 	subjectCheck := check("lua_subject_billing", policy.CheckTypeLuaSubjectSource, policy.StageSubjectAnalysis, policy.CheckStatusOK)

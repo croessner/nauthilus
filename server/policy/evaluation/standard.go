@@ -386,6 +386,13 @@ func relayDomainRules() []standardRule {
 		unknownRelayDomain,
 	)
 	rejectRule.obligations = []report.EffectRequest{
+		{
+			ID: obligationBruteForceUpdate,
+			Args: bruteForceLearningEffectArgs(
+				policy.LuaActionDispatchRelayDomains,
+				policy.LuaActionDispatchRelayDomains,
+			),
+		},
 		{ID: obligationLuaActionDispatch, Args: luaActionEffectArgs(policy.LuaActionDispatchRelayDomains, nil)},
 	}
 
@@ -420,6 +427,13 @@ func rblRules() []standardRule {
 		attrIsTrue(policy.AttributeRBLThresholdReached),
 	)
 	rejectRule.obligations = []report.EffectRequest{
+		{
+			ID: obligationBruteForceUpdate,
+			Args: bruteForceLearningEffectArgs(
+				policy.LuaActionDispatchRBL,
+				policy.LuaActionDispatchRBL,
+			),
+		},
 		{ID: obligationLuaActionDispatch, Args: luaActionEffectArgs(policy.LuaActionDispatchRBL, nil)},
 	}
 
@@ -620,6 +634,13 @@ func luaEnvironmentRules(policyReport *report.DecisionReport, operation policy.O
 			messageSelector: attributeMessage(prefix+".triggered", definitions.PasswordFail),
 			obligations: []report.EffectRequest{
 				{
+					ID: obligationBruteForceUpdate,
+					Args: bruteForceLearningEffectArgs(
+						policy.LuaActionDispatchLua,
+						name,
+					),
+				},
+				{
 					ID: obligationLuaActionDispatch,
 					Args: luaActionEffectArgs(policy.LuaActionDispatchLua, map[string]any{
 						policy.ObligationArgEnvironment: checkResult.Name,
@@ -657,6 +678,14 @@ func luaEnvironmentRules(policyReport *report.DecisionReport, operation policy.O
 	}
 
 	return rules
+}
+
+// bruteForceLearningEffectArgs describes one conditional environment-learning update.
+func bruteForceLearningEffectArgs(feature string, environment string) map[string]any {
+	return map[string]any{
+		policy.ObligationArgFeature:     feature,
+		policy.ObligationArgEnvironment: environment,
+	}
 }
 
 // luaActionEffectArgs attaches stable policy effect metadata to Lua dispatch effects.

@@ -238,7 +238,10 @@ Fix:
   mechanism paths.
 - Removed the old direct brute-force action dispatcher.
 - Preserved existing action dispatcher behavior, request context objects,
-  cancellation checks, action metrics, and environment-learning semantics.
+  cancellation checks, and action metrics.
+- Assigned environment-learning ownership to
+  `auth.obligation.brute_force.update` so Lua dispatch cannot mutate bucket
+  state.
 - Preserved brute-force Lua action `CommonRequest` parity by exposing the
   matched rule name during dispatch instead of the internal repeating/guessed
   security marker.

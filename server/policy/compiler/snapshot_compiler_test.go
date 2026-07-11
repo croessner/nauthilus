@@ -668,6 +668,56 @@ func TestCompilerAcceptsLuaActionDispatchObligationArgs(t *testing.T) {
 	}
 }
 
+func TestCompilerAcceptsBruteForceUpdateObligationArgs(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Policies[0].Then.Obligations = []config.PolicyEffectConfig{
+		{
+			ID: policy.ObligationBruteForceUpdate,
+			Args: map[string]any{
+				policy.ObligationArgFeature:     policy.LuaActionDispatchLua,
+				policy.ObligationArgEnvironment: "blocklist",
+			},
+		},
+	}
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	obligations := snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth].Policies[0].Then.Obligations
+	if len(obligations) != 1 {
+		t.Fatalf("obligations = %d, want one brute-force update obligation", len(obligations))
+	}
+
+	if got := obligations[0].Args[policy.ObligationArgFeature]; got != policy.LuaActionDispatchLua {
+		t.Fatalf("feature arg = %v, want %s", got, policy.LuaActionDispatchLua)
+	}
+
+	if got := obligations[0].Args[policy.ObligationArgEnvironment]; got != "blocklist" {
+		t.Fatalf("environment arg = %v, want blocklist", got)
+	}
+}
+
+func TestCompilerRejectsBruteForceUpdateInvalidArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    map[string]any
+		wantErr string
+	}{
+		{name: "non-string feature", args: map[string]any{policy.ObligationArgFeature: true}, wantErr: "must be a string"},
+		{name: "empty feature", args: map[string]any{policy.ObligationArgFeature: ""}, wantErr: "must not be empty"},
+		{name: "non-string environment", args: map[string]any{policy.ObligationArgEnvironment: true}, wantErr: "must be a string"},
+		{name: "unknown argument", args: map[string]any{"action": "rbl"}, wantErr: "is not supported"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			assertCompilerRejectsObligationArgs(t, policy.ObligationBruteForceUpdate, testCase.args, testCase.wantErr)
+		})
+	}
+}
+
 func TestCompilerRejectsLuaActionDispatchInvalidArgs(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -708,23 +758,27 @@ func TestCompilerRejectsLuaActionDispatchInvalidArgs(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			cfg := policyCompilerTestConfig()
-			cfg.Auth.Policy.Policies[0].Then.Obligations = []config.PolicyEffectConfig{
-				{
-					ID:   policy.ObligationLuaActionDispatch,
-					Args: testCase.args,
-				},
-			}
-
-			_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
-			if err == nil {
-				t.Fatal("Compile() error = nil, want invalid lua action obligation args")
-			}
-
-			if !strings.Contains(err.Error(), testCase.wantErr) {
-				t.Fatalf("Compile() error = %q, want %q", err, testCase.wantErr)
-			}
+			assertCompilerRejectsObligationArgs(t, policy.ObligationLuaActionDispatch, testCase.args, testCase.wantErr)
 		})
+	}
+}
+
+// assertCompilerRejectsObligationArgs verifies one bounded obligation argument failure.
+func assertCompilerRejectsObligationArgs(t *testing.T, id string, args map[string]any, wantErr string) {
+	t.Helper()
+
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Policies[0].Then.Obligations = []config.PolicyEffectConfig{
+		{ID: id, Args: args},
+	}
+
+	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err == nil {
+		t.Fatal("Compile() error = nil, want invalid obligation args")
+	}
+
+	if !strings.Contains(err.Error(), wantErr) {
+		t.Fatalf("Compile() error = %q, want %q", err, wantErr)
 	}
 }
 

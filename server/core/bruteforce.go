@@ -591,11 +591,11 @@ func bruteForceBucketFactsRepeat(facts []bruteforce.BucketPolicyFact) bool {
 // commitRWPIfAllowed commits the RWP sliding window write unless an environment control rejected the request
 // without learning being active for that environment control. In that case, the password was never verified,
 // so recording it in the RWP window would be incorrect.
-func (a *AuthState) commitRWPIfAllowed(ctx *gin.Context, bm bruteforce.BucketManager) {
+func (a *AuthState) commitRWPIfAllowed(ctx *gin.Context, bm bruteforce.BucketManager, learningSource string) {
 	if ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
 		bfCfg := a.cfg().GetBruteForce()
 
-		if bfCfg == nil || !bfCfg.LearnFromControl(a.Runtime.EnvironmentName) {
+		if !bruteForceLearningEnabled(bfCfg, learningSource, a.Runtime.EnvironmentName) {
 			return
 		}
 	}
@@ -603,8 +603,22 @@ func (a *AuthState) commitRWPIfAllowed(ctx *gin.Context, bm bruteforce.BucketMan
 	bm.CommitRWPSlidingWindow()
 }
 
+// bruteForceLearningEnabled checks the configured feature and concrete environment aliases.
+func bruteForceLearningEnabled(bfCfg *config.BruteForceSection, featureName string, environmentName string) bool {
+	if bfCfg == nil {
+		return false
+	}
+
+	return bfCfg.LearnFromControl(featureName) || bfCfg.LearnFromControl(environmentName)
+}
+
 // UpdateBruteForceBucketsCounter updates brute force protection rules based on client and protocol details.
 func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
+	a.updateBruteForceBucketsCounter(ctx, "")
+}
+
+// updateBruteForceBucketsCounter updates buckets with optional policy learning-source context.
+func (a *AuthState) updateBruteForceBucketsCounter(ctx *gin.Context, learningSource string) {
 	tr := monittrace.New("nauthilus/auth")
 	uctx, uspan := tr.Start(ctx.Request.Context(), "auth.bruteforce.update",
 		attribute.String("service", a.Request.Service),
@@ -656,7 +670,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 
 	// Commit the RWP sliding window write only if the rejection is genuine
 	// (not caused by an environment control like RBL that never verified the password).
-	a.commitRWPIfAllowed(ctx, bm)
+	a.commitRWPIfAllowed(ctx, bm, learningSource)
 
 	if !enforceBuckets {
 		return

@@ -50,7 +50,7 @@ type expectedValueCompiler func(
 	path string,
 ) (policyruntime.TypedValue, error)
 
-type luaActionArgCompiler func(value any, path string) (any, error)
+type effectArgCompiler func(value any, path string) (any, error)
 
 const (
 	operatorCIDRContains     = "cidr_contains"
@@ -95,11 +95,16 @@ var comparableExpectedOperators = map[policyruntime.Operator]struct{}{
 	operatorLTE: {},
 }
 
-var luaActionDispatchArgCompilers = map[string]luaActionArgCompiler{
+var luaActionDispatchArgCompilers = map[string]effectArgCompiler{
 	policy.ObligationArgAction:      compileLuaActionNameArg,
-	policy.ObligationArgEnvironment: compileLuaActionStringArg,
-	policy.ObligationArgFeature:     compileLuaActionFeatureArg,
-	policy.ObligationArgWait:        compileLuaActionWaitArg,
+	policy.ObligationArgEnvironment: compileEffectStringArg,
+	policy.ObligationArgFeature:     compileEffectFeatureArg,
+	policy.ObligationArgWait:        compileEffectWaitArg,
+}
+
+var bruteForceUpdateArgCompilers = map[string]effectArgCompiler{
+	policy.ObligationArgEnvironment: compileEffectStringArg,
+	policy.ObligationArgFeature:     compileEffectFeatureArg,
 }
 
 func compilePolicies(input compilePolicyInput) ([]policyruntime.CompiledPolicy, error) {
@@ -1391,7 +1396,10 @@ func compileEffectRequests(
 
 // compileEffectArgs validates known effect argument shapes and preserves custom effect args.
 func compileEffectArgs(id string, input map[string]any, path string) (map[string]any, error) {
-	if id == policy.ObligationLuaActionDispatch || id == policy.ObligationLuaPostActionEnqueue {
+	switch id {
+	case policy.ObligationBruteForceUpdate:
+		return compileBoundedEffectArgs(input, bruteForceUpdateArgCompilers, "", path)
+	case policy.ObligationLuaActionDispatch, policy.ObligationLuaPostActionEnqueue:
 		return compileLuaActionDispatchArgs(input, path)
 	}
 
@@ -1403,9 +1411,14 @@ func compileEffectArgs(id string, input map[string]any, path string) (map[string
 
 // compileLuaActionDispatchArgs enforces the bounded Lua compatibility effect argument contract.
 func compileLuaActionDispatchArgs(input map[string]any, path string) (map[string]any, error) {
+	return compileBoundedEffectArgs(input, luaActionDispatchArgCompilers, policy.ObligationArgAction, path)
+}
+
+// compileBoundedEffectArgs validates effect arguments against a small registered compiler set.
+func compileBoundedEffectArgs(input map[string]any, compilers map[string]effectArgCompiler, requiredKey string, path string) (map[string]any, error) {
 	args := make(map[string]any, len(input))
 	for key, value := range input {
-		compiler, ok := luaActionDispatchArgCompilers[key]
+		compiler, ok := compilers[key]
 		if !ok {
 			return nil, configPathError(childPath(path, key), "is not supported")
 		}
@@ -1418,8 +1431,10 @@ func compileLuaActionDispatchArgs(input map[string]any, path string) (map[string
 		args[key] = compiled
 	}
 
-	if _, ok := args[policy.ObligationArgAction]; !ok {
-		return nil, configPathError(childPath(path, policy.ObligationArgAction), "is required")
+	if requiredKey != "" {
+		if _, ok := args[requiredKey]; !ok {
+			return nil, configPathError(childPath(path, requiredKey), "is required")
+		}
 	}
 
 	return args, nil
@@ -1439,8 +1454,8 @@ func compileLuaActionNameArg(value any, path string) (any, error) {
 	return actionName, nil
 }
 
-// compileLuaActionStringArg validates simple Lua action string arguments.
-func compileLuaActionStringArg(value any, path string) (any, error) {
+// compileEffectStringArg validates simple string effect arguments.
+func compileEffectStringArg(value any, path string) (any, error) {
 	stringValue, ok := value.(string)
 	if !ok {
 		return nil, configPathError(path, "must be a string")
@@ -1449,9 +1464,9 @@ func compileLuaActionStringArg(value any, path string) (any, error) {
 	return stringValue, nil
 }
 
-// compileLuaActionFeatureArg validates non-empty Lua action feature names.
-func compileLuaActionFeatureArg(value any, path string) (any, error) {
-	featureName, err := compileLuaActionStringArg(value, path)
+// compileEffectFeatureArg validates non-empty effect feature names.
+func compileEffectFeatureArg(value any, path string) (any, error) {
+	featureName, err := compileEffectStringArg(value, path)
 	if err != nil {
 		return nil, err
 	}
@@ -1463,8 +1478,8 @@ func compileLuaActionFeatureArg(value any, path string) (any, error) {
 	return featureName, nil
 }
 
-// compileLuaActionWaitArg validates Lua action wait flags.
-func compileLuaActionWaitArg(value any, path string) (any, error) {
+// compileEffectWaitArg validates effect wait flags.
+func compileEffectWaitArg(value any, path string) (any, error) {
 	wait, ok := value.(bool)
 	if !ok {
 		return nil, configPathError(path, "must be a boolean")

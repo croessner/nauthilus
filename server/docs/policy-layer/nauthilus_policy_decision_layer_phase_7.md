@@ -43,8 +43,9 @@ selected and executed through `auth.obligation.lua_action.dispatch`.
     mode.
   - Records obligation metrics and policy debug-module entries.
   - Dispatches synchronous Lua actions through the existing action dispatcher,
-    preserving request context, cancellation checks, action latency metrics, and
-    environment-learning semantics.
+    preserving request context, cancellation checks, and action latency metrics.
+  - Routes conditional environment-learning updates through
+    `auth.obligation.brute_force.update`, independently from Lua dispatch.
   - Preserves the historical brute-force Lua action `CommonRequest` shape by
     exposing the matched rule name during dispatch while keeping the internal
     repeating/guessed security marker after dispatch.
@@ -58,7 +59,8 @@ selected and executed through `auth.obligation.lua_action.dispatch`.
 - `server/core/environment.go`
   - Keeps current mechanism execution as a fact producer.
   - Removes mechanism-owned synchronous Lua action dispatch.
-  - Moves environment-learning updates behind the selected Lua action obligation.
+  - Keeps environment-learning updates behind the selected brute-force update
+    obligation.
 
 - `server/core/bruteforce.go`
   - Keeps brute-force trigger detection and policy fact production.
@@ -147,8 +149,9 @@ Result:
   typed arguments.
 - Only `brute_force`, `lua`, `tls_encryption`, `relay_domains`, and `rbl` are
   accepted action names.
-- Optional `environment` is preserved for policy-selected action context and
-  environment-learning semantics.
+- Optional `environment` is preserved for policy-selected action context.
+- The brute-force update obligation accepts bounded `feature` and `environment`
+  metadata for conditional environment learning.
 - Environment-triggered and brute-force-triggered synchronous Lua actions no longer
   dispatch from mechanism paths; the direct brute-force action helper was
   removed.
@@ -160,7 +163,7 @@ Result:
   dispatch exactly once through the selected obligation.
 - Observe mode skips mutable central obligation execution, including synchronous
   Lua actions, Lua POST-Action enqueueing, brute-force updates, and learning
-  updates handled by the Lua action obligation path.
+  updates handled by the brute-force update obligation path.
 - The review pass tightened the boundary so the executor also skips mutable
   effects when no request-local policy context exists. This is covered by
   `TestPolicyObligationExecutorSkipsMutableEffectsWithoutPolicyContext`.
