@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "source": {
+    "id": "provider_relays",
+    "description": "Hermetic provider relay fixture",
+    "authority": "official",
+    "license": "CC0-1.0",
+    "license_url": "https://example.test/license",
+    "generated_at": "2026-07-11T10:00:00Z",
+    "valid_until": "2026-07-12T10:00:00Z"
+  },
+  "entries": [
+    {
+      "network": "203.0.113.7/32",
+      "classes": ["known_vpn_exit"],
+      "provider": "example",
+      "confidence": 100
+    },
+    {
+      "network": "2001:db8:42::/48",
+      "classes": ["privacy_relay"],
+      "provider": "example",
+      "confidence": 100
+    }
+  ]
+}

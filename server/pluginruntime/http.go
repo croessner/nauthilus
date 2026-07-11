@@ -36,6 +36,7 @@ import (
 const (
 	defaultPluginHTTPTimeout          = 10 * time.Second
 	defaultPluginHTTPMaxResponseBytes = int64(1 << 20)
+	maxPluginHTTPRedirects            = 10
 	maxHTTPMetricMethodLength         = 32
 	httpLabelService                  = "service"
 	httpLabelMethod                   = "method"
@@ -88,6 +89,19 @@ func NewHTTPFacade(scope string, options ...HTTPFacadeOption) *HTTPFacade {
 		option(facade)
 	}
 
+	previousRedirectPolicy := facade.client.CheckRedirect
+	facade.client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if err := pluginHTTPRedirectPolicy(request, via); err != nil {
+			return err
+		}
+
+		if previousRedirectPolicy != nil {
+			return previousRedirectPolicy(request, via)
+		}
+
+		return nil
+	}
+
 	return facade
 }
 
@@ -95,9 +109,34 @@ func NewHTTPFacade(scope string, options ...HTTPFacadeOption) *HTTPFacade {
 func HTTPFacadeClient(client *http.Client) HTTPFacadeOption {
 	return func(facade *HTTPFacade) {
 		if client != nil {
-			facade.client = client
+			clientCopy := *client
+			facade.client = &clientCopy
 		}
 	}
+}
+
+// pluginHTTPRedirectPolicy permits only bounded credential-free same-origin HTTPS redirects.
+func pluginHTTPRedirectPolicy(request *http.Request, via []*http.Request) error {
+	if request == nil || request.URL == nil || len(via) == 0 || via[0] == nil || via[0].URL == nil {
+		return fmt.Errorf("%w: invalid redirect target", pluginapi.ErrInvalidHTTPRequest)
+	}
+
+	if len(via) >= maxPluginHTTPRedirects {
+		return fmt.Errorf("%w: stopped after %d redirects", pluginapi.ErrInvalidHTTPRequest, maxPluginHTTPRedirects)
+	}
+
+	target := request.URL
+	origin := via[0].URL
+
+	if target.Scheme != httpSchemeHTTPS || target.User != nil {
+		return fmt.Errorf("%w: redirects require credential-free HTTPS", pluginapi.ErrInvalidHTTPRequest)
+	}
+
+	if !strings.EqualFold(target.Hostname(), origin.Hostname()) || httpURLPort(target) != httpURLPort(origin) || origin.Scheme != httpSchemeHTTPS {
+		return fmt.Errorf("%w: redirects must remain on the original HTTPS origin", pluginapi.ErrInvalidHTTPRequest)
+	}
+
+	return nil
 }
 
 // HTTPFacadeTracer configures the tracer used by the facade.

@@ -209,6 +209,10 @@ rows and `decision_sources`. The older `rt` table is historical Lua runtime stat
 Lua-only compatibility, but `rt` is not the native Go plugin exchange standard and bundled native plugins do not depend
 on it.
 
+Host-managed HTTP keeps explicitly configured direct HTTP endpoints available for internal integrations. Redirects are
+fail-closed: they are limited to ten hops, must use credential-free HTTPS, and must remain on the original HTTPS origin.
+Operators should configure the final endpoint directly when an upstream redirects across hosts, ports, or schemes.
+
 Some Lua helper families intentionally remain plugin-owned in the native contract:
 
 - extra or named Redis pools;
@@ -294,6 +298,27 @@ GeoIP plugin config highlights:
 - `asn_registry.timeout`: optional per-feed fetch timeout, default `30s`.
 - `asn_registry.source_urls`: optional HTTP(S) delegated stats feeds; when omitted with registry refresh enabled, the
   plugin uses AfriNIC, APNIC, ARIN, LACNIC, and RIPE NCC extended delegated stats feeds.
+- `privacy_intelligence.enabled`: opt-in local network privacy evidence; disabled by default.
+- `privacy_intelligence.sources`: complete Tor exit snapshots or versioned normalized JSON feeds. URL sources use one
+  host-managed background refresh path with conditional requests, bounded concurrency, jitter, retry backoff, and
+  optional persistent cache. Authentication requests perform only local immutable lookups.
+- `privacy_intelligence.refresh.cache_dir`: optional absolute directory for validated last-known-good snapshots. The
+  complete example uses this for the official Onionoo Tor exit source.
+- `privacy_intelligence.hosting`: separate derived hosting/cloud evidence from configured CIDRs, ASNs, or explicit
+  organization patterns. Hosting never implies VPN use.
+- `privacy_intelligence.public_log_fields`: opt-in bounded request-log fields for evaluated or stale results. Policy
+  facts and `plugin.exchange.geoip` remain available when this is disabled.
+
+Community and provider feeds are not bundled. They must be normalized to the versioned schema documented in
+`contrib/plugins/geoip/README.md`, and operators must verify license, attribution, automated-access, and redistribution
+terms before enabling them. VPN detection is incomplete: neither a negative lookup nor a hosting-network match proves
+whether a client is using a VPN or abusing the service. No commercial anonymous-IP database is required.
+
+The GeoIP plugin emits availability, freshness, classification, confidence, and evidence-authority facts under
+`plugin.environment.geoip.*` while keeping `Triggered` and `Abort` false. Policy can therefore combine a current Tor
+fact with `privacy_data_stale: false` without making the plugin a decision authority. If the native ClickHouse plugin
+will persist these values, apply and verify the additive `geoip_privacy_*` and `geoip_is_*` schema columns before
+deploying the new plugin artifacts; plugin-first rollout can fail JSONEachRow inserts.
 
 ## Native Action Plugins
 

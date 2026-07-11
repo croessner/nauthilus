@@ -1,0 +1,7 @@
+# Hermetic Tor exit fixture using documentation ranges.
+@type tordnsel 1.0
+ExitNode 0123456789ABCDEF0123456789ABCDEF01234567
+Published 2026-07-11 09:59:00
+LastStatus 2026-07-11 10:00:00
+ExitAddress 192.0.2.44 2026-07-11 10:00:00
+2001:db8::44

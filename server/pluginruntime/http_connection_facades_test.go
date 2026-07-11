@@ -22,6 +22,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -113,6 +114,72 @@ func TestHostHTTPFacadeRejectsOversizedResponseAndRedactsLogs(t *testing.T) {
 			t.Fatalf("HTTP facade log leaked %q: %s", secret, line)
 		}
 	}
+}
+
+func TestPluginHTTPRedirectPolicyRejectsUnsafeTargets(t *testing.T) {
+	origin := &http.Request{URL: mustHTTPTestURL(t, "https://feeds.example.test/list")}
+
+	for name, target := range map[string]string{
+		"cross_origin":   "https://other.example.test/list",
+		"http_downgrade": "http://feeds.example.test/list",
+		"credentials":    "https://user:secret@feeds.example.test/list",
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := &http.Request{URL: mustHTTPTestURL(t, target)}
+			if err := pluginHTTPRedirectPolicy(request, []*http.Request{origin}); err == nil {
+				t.Fatal("pluginHTTPRedirectPolicy() error = nil, want unsafe redirect rejection")
+			}
+		})
+	}
+}
+
+func TestPluginHTTPRedirectPolicyAllowsBoundedSameOriginHTTPS(t *testing.T) {
+	origin := &http.Request{URL: mustHTTPTestURL(t, "https://feeds.example.test/list")}
+	request := &http.Request{URL: mustHTTPTestURL(t, "https://feeds.example.test:443/current")}
+
+	if err := pluginHTTPRedirectPolicy(request, []*http.Request{origin}); err != nil {
+		t.Fatalf("pluginHTTPRedirectPolicy() error = %v", err)
+	}
+
+	via := make([]*http.Request, maxPluginHTTPRedirects)
+	for index := range via {
+		via[index] = origin
+	}
+
+	if err := pluginHTTPRedirectPolicy(request, via); err == nil {
+		t.Fatal("pluginHTTPRedirectPolicy() error = nil, want redirect limit rejection")
+	}
+}
+
+func TestPluginHTTPFacadeStillAllowsExplicitDirectHTTP(t *testing.T) {
+	facade := NewHTTPFacade(facadeHTTPService, HTTPFacadeClient(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Scheme != httpSchemeHTTP {
+			t.Fatalf("request scheme = %q, want explicit direct HTTP", request.URL.Scheme)
+		}
+
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+	})}))
+
+	response, err := facade.Do(context.Background(), pluginapi.HTTPRequest{URL: "http://clickhouse.example.test/", Service: facadeHTTPService})
+	if err != nil {
+		t.Fatalf("HTTP Do() error = %v", err)
+	}
+
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("HTTP status = %d, want 200", response.StatusCode)
+	}
+}
+
+// mustHTTPTestURL parses one test URL or fails the test.
+func mustHTTPTestURL(t *testing.T, value string) *url.URL {
+	t.Helper()
+
+	parsed, err := url.Parse(value)
+	if err != nil {
+		t.Fatalf("parse URL %q: %v", value, err)
+	}
+
+	return parsed
 }
 
 func TestMetricsFacadeGaugeAddAndCounterZeroSeries(t *testing.T) {

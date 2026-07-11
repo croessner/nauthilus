@@ -80,7 +80,7 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 		return pluginapi.PostActionEnqueueResult{Enqueued: false}, nil
 	}
 
-	rowJSON, err := encodeRequestRow(request, state.config)
+	rowJSON, mappingDiagnostics, err := encodeRequestRow(request, state.config)
 	if err != nil {
 		span.RecordError(err)
 		state.metrics.recordQueueResult(ctx, resultEncodeError)
@@ -91,6 +91,8 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 
 		return pluginapi.PostActionEnqueueResult{}, err
 	}
+
+	recordMappingDiagnostics(ctx, state.debugLogger, mappingDiagnostics)
 
 	length := state.cache.Push(ctx, state.config.CacheKey, string(rowJSON))
 	state.metrics.recordQueueResult(ctx, resultQueued)
@@ -116,13 +118,29 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 }
 
 // encodeRequestRow builds and encodes a ClickHouse row for module-cache storage.
-func encodeRequestRow(request pluginapi.PostActionRequest, cfg moduleConfig) ([]byte, error) {
+func encodeRequestRow(request pluginapi.PostActionRequest, cfg moduleConfig) ([]byte, []string, error) {
 	row, err := buildRow(request, cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return json.Marshal(row)
+	encoded, err := json.Marshal(row)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return encoded, row.mappingDiagnostics, nil
+}
+
+// recordMappingDiagnostics emits bounded field names without malformed values.
+func recordMappingDiagnostics(ctx context.Context, logger pluginapi.Logger, fields []string) {
+	if logger == nil {
+		return
+	}
+
+	for _, field := range fields {
+		logger.Debug(ctx, "clickhouse optional analytics field rejected", pluginapi.LogField{Key: logFieldField, Value: field})
+	}
 }
 
 // startPostActionSpan starts a bounded ClickHouse child span.

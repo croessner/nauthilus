@@ -14,6 +14,46 @@ It assumes a standalone ClickHouse server is running inside your Kubernetes clus
 
 Schema file: `schema.sql`
 
+## Privacy intelligence schema rollout
+
+Apply the additive schema before deploying GeoIP and ClickHouse plugin artifacts that emit `geoip_privacy_*` or
+`geoip_is_*` JSONEachRow fields. Existing plugin versions continue to insert rows after the columns are added and the
+new columns receive their defaults. Deploying the new writer against an old schema is unsupported because ClickHouse
+can reject unknown JSONEachRow fields. The plugin does not perform schema discovery or DDL.
+
+After applying `schema.sql`, verify exact column types:
+
+```sql
+SELECT
+  name,
+  type
+FROM system.columns
+WHERE database = 'nauthilus'
+  AND table = 'logins'
+  AND (name LIKE 'geoip_privacy%' OR name LIKE 'geoip_is_%')
+ORDER BY name;
+```
+
+After deploying the plugin artifacts, read back representative rows:
+
+```sql
+SELECT
+  ts,
+  geoip_privacy_lookup_state,
+  geoip_privacy_classes,
+  geoip_privacy_primary_class,
+  geoip_privacy_confidence,
+  geoip_privacy_data_stale,
+  geoip_is_tor_exit_node,
+  geoip_is_known_vpn_exit,
+  geoip_is_public_proxy,
+  geoip_is_hosting_network
+FROM nauthilus.logins
+WHERE ts >= now() - INTERVAL 1 HOUR
+ORDER BY ts DESC
+LIMIT 50;
+```
+
 ## Grafana dashboard
 
 The ClickHouse login analytics dashboard is available as:

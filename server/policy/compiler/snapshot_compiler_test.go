@@ -17,6 +17,7 @@ package compiler
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -885,6 +886,44 @@ func TestCompilerAcceptsPluginEnvironmentCheckType(t *testing.T) {
 	}
 }
 
+func TestCompilerAcceptsGeoIPPrivacyEnvironmentFacts(t *testing.T) {
+	publishCompilerPluginState(t, loadCompilerPluginStateForModule(t, "geoip", compilerGeoIPPrivacyPlugin{}))
+
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Policies = nil
+	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{{
+		Name:       "plugin_environment_geoip",
+		Type:       policy.CheckTypePluginEnvironment,
+		Stage:      string(policy.StagePreAuth),
+		Operations: []string{string(policy.OperationAuthenticate), string(policy.OperationLookupIdentity)},
+		ConfigRef:  "plugins.modules.geoip.environment",
+	}}
+
+	for index, condition := range []config.PolicyConditionConfig{
+		{Attribute: "plugin.environment.geoip.is_tor_exit_node", Is: true},
+		{Attribute: "plugin.environment.geoip.is_known_vpn_exit", Is: true},
+		{Attribute: "plugin.environment.geoip.is_public_proxy", Is: true},
+		{Attribute: "plugin.environment.geoip.privacy_data_stale", Is: false},
+		{Attribute: "plugin.environment.geoip.is_hosting_network", Is: true},
+	} {
+		cfg.Auth.Policy.Policies = append(cfg.Auth.Policy.Policies, config.PolicyRuleConfig{
+			Name:          fmt.Sprintf("geoip_privacy_%d", index),
+			Stage:         string(policy.StagePreAuth),
+			Operations:    []string{string(policy.OperationAuthenticate)},
+			RequireChecks: []string{"plugin_environment_geoip"},
+			If:            condition,
+			Then: config.PolicyThenConfig{
+				Decision:       string(policy.DecisionDeny),
+				ResponseMarker: policy.ResponseMarkerFail,
+			},
+		})
+	}
+
+	if _, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1}); err != nil {
+		t.Fatalf("Compile() GeoIP privacy policy error = %v", err)
+	}
+}
+
 func TestCompilerRegistersNativePluginPolicySurface(t *testing.T) {
 	publishCompilerPluginState(t, loadCompilerPluginState(t))
 
@@ -1385,6 +1424,50 @@ func (h compilerPluginHandle) Lookup(string) (any, error) {
 }
 
 type compilerPolicyPlugin struct{}
+
+type compilerGeoIPPrivacyPlugin struct{}
+
+func (compilerGeoIPPrivacyPlugin) Metadata() pluginapi.Metadata {
+	return pluginapi.Metadata{Name: "geoip", Version: "1.0.0", APIVersion: pluginapi.APIVersion}
+}
+
+func (compilerGeoIPPrivacyPlugin) Register(registrar pluginapi.Registrar) error {
+	if err := registrar.RegisterEnvironmentSource(compilerGeoIPPrivacyEnvironmentSource{}); err != nil {
+		return err
+	}
+
+	for _, attribute := range []string{
+		"plugin.environment.geoip.is_tor_exit_node",
+		"plugin.environment.geoip.is_known_vpn_exit",
+		"plugin.environment.geoip.is_public_proxy",
+		"plugin.environment.geoip.privacy_data_stale",
+		"plugin.environment.geoip.is_hosting_network",
+	} {
+		if err := registrar.RegisterPolicyAttribute(pluginapi.AttributeDefinition{
+			ID:            attribute,
+			Description:   "GeoIP privacy policy compiler fixture.",
+			Stage:         pluginapi.PolicyStagePreAuth,
+			Operations:    []pluginapi.PolicyOperation{pluginapi.PolicyOperationAuthenticate, pluginapi.PolicyOperationLookupIdentity},
+			ProducerTypes: []string{policy.CheckTypePluginEnvironment},
+			Category:      pluginapi.AttributeCategoryEnvironment,
+			Type:          pluginapi.AttributeTypeBool,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type compilerGeoIPPrivacyEnvironmentSource struct{}
+
+func (compilerGeoIPPrivacyEnvironmentSource) Descriptor() pluginapi.SourceDescriptor {
+	return pluginapi.SourceDescriptor{Name: "environment"}
+}
+
+func (compilerGeoIPPrivacyEnvironmentSource) Evaluate(context.Context, pluginapi.EnvironmentRequest) (pluginapi.EnvironmentResult, error) {
+	return pluginapi.EnvironmentResult{}, nil
+}
 
 func (p compilerPolicyPlugin) Metadata() pluginapi.Metadata {
 	return pluginapi.Metadata{

@@ -65,6 +65,96 @@ The plugin-owned config subtree accepts:
   `asn_registry.enabled` is true, the plugin uses the AfriNIC, APNIC, ARIN, LACNIC, and RIPE NCC extended delegated stats
   feeds.
 
+### Free network privacy intelligence
+
+`privacy_intelligence` is disabled by default. When enabled, it extends this same environment source with local,
+immutable evidence about Tor exits, known VPN exits, community VPN exits, public proxies, privacy relays, and hosting
+networks. It does not make authentication decisions, and it does not perform network or file I/O while evaluating a
+request. Policy remains the only decision authority.
+
+VPN coverage is necessarily incomplete. A negative result means that the address was not present in the configured,
+valid snapshots; it is not proof that the client is not using a VPN. Likewise, a hosting or cloud match is only network
+classification. Hosting evidence never implies a VPN match and should not be treated as proof of abuse.
+
+The complete example in
+[server/docs/examples/go_plugin_geoip.yml](../../../server/docs/examples/go_plugin_geoip.yml) shows every config group.
+The main settings are:
+
+- `enabled`: enables the optional subsystem; default `false`.
+- `lookup_timeout`: bounds the in-memory privacy lookup and may not exceed the parent `lookup_timeout`; default `10ms`.
+- `max_snapshot_entries`: bounds entries accepted from one source; default `1000000`.
+- `max_download_bytes`: bounds one remote response and persistent-cache load; default 32 MiB.
+- `public_log_fields`: emits only the approved bounded central fields for `evaluated` or `stale` lookups; default
+  `false`.
+- `refresh.cache_dir`: optional absolute directory for atomically written mode-0600 remote-source caches.
+- `refresh.max_concurrent_downloads`: shared remote download bound, default `2`, maximum `8`.
+- `refresh.startup_jitter`: initial worker jitter, default `30s`.
+- `refresh.default_refresh_interval`, `default_min_refresh_interval`, and `default_max_refresh_backoff`: generic source
+  defaults of `6h`, `1h`, and `24h`.
+- `sources`: official, operator, community, or derived sources. A source configures exactly one absolute `path` or
+  credential-free HTTPS `url`.
+- `hosting`: optional derived classification from configured CIDRs, ASNs, and disabled-by-default organization
+  patterns. Its confidence is capped at 60.
+- `overrides`: operator-owned prefix additions or suppressions with optional expiry. Official evidence can be suppressed
+  only with the explicit `suppress_official: true` flag.
+
+Remote sources share one refresh implementation. It uses the host HTTP facade, conditional `ETag` and `Last-Modified`
+requests, `Cache-Control` and `Expires` lower bounds, `Retry-After`, bounded jitter, exponential failure backoff,
+per-source refresh coalescing, and a global download semaphore. A response is parsed and validated completely before an
+atomic snapshot swap. A failed refresh retains the last known good snapshot. A validated persistent cache can satisfy
+startup; an expired cache remains usable only as explicitly stale evidence.
+
+Tor sources use `kind: tor_exit_list`, `authority: official`, and support complete bare-address lists,
+TorDNSEL/CollecTor 1.0 exit records, and bounded Onionoo details responses containing running relays with the `Exit`
+flag. The plugin never sends the request client address to Tor. Destination-dependent Tor bulk queries are not built by
+this source contract; normalize such data outside Nauthilus or use a complete TorDNSEL, CollecTor, or Onionoo snapshot.
+
+All other operator, provider, community, proxy, relay, and hosting prefix feeds use `kind: normalized_json`:
+
+```json
+{
+  "schema_version": 1,
+  "source": {
+    "id": "community_vpn",
+    "description": "Operator-approved community VPN snapshot",
+    "authority": "community",
+    "license": "CC-BY-4.0",
+    "license_url": "https://feeds.example.invalid/license",
+    "generated_at": "2026-07-11T10:00:00Z",
+    "valid_until": "2026-07-12T10:00:00Z"
+  },
+  "entries": [
+    {
+      "network": "203.0.113.7/32",
+      "classes": ["community_vpn_exit"],
+      "provider": "example",
+      "confidence": 70
+    }
+  ]
+}
+```
+
+Schema version, source ID and authority, timestamps, classes, CIDRs, confidence caps, entry count, and payload size are
+validated atomically. Community sources require `license` and `license_url` in both operator config and source metadata.
+No third-party data is bundled. Operators must review each feed's current license, attribution, automation terms, and
+redistribution limits before enabling it, retain required notices outside public request logs, and remove a source when
+its terms are incompatible. No commercial source, including MaxMind GeoIP Anonymous IP, is required.
+
+Lookup state preserves tri-state semantics:
+
+- `evaluated`: one or more valid snapshots were evaluated; explicit false classification facts are meaningful.
+- `stale`: data was evaluated but at least one contributing or required source exceeded `max_age`.
+- `unavailable`: configured sources have no valid snapshot; no negative classifications are fabricated.
+- `no_sources`: there is no usable configured source state.
+- `invalid_ip`: the request client address was invalid; classification booleans are omitted.
+
+Public request logs are intentionally narrower than policy facts and exchange values. When enabled, they may contain only
+`policy_fact_geoip_privacy_primary_class`, `policy_fact_geoip_privacy_confidence`,
+`policy_fact_geoip_privacy_data_stale`, `policy_fact_geoip_is_tor_exit_node`,
+`policy_fact_geoip_is_known_vpn_exit`, `policy_fact_geoip_is_public_proxy`, and
+`policy_fact_geoip_is_hosting_network`. They are emitted only for `evaluated` or `stale` state and never include source
+IDs, provider names, URLs, license data, override reasons, or raw evidence.
+
 See [server/docs/go_plugins.md](../../../server/docs/go_plugins.md) for operations guidance and
 [server/docs/examples/go_plugin_geoip.yml](../../../server/docs/examples/go_plugin_geoip.yml) for a complete loader and
 policy example.
@@ -82,9 +172,29 @@ policy example.
 - `plugin.environment.geoip.asn_country_iso`
 - `plugin.environment.geoip.asn_allocated`
 - `plugin.environment.geoip.asn_status`
+- `plugin.environment.geoip.privacy_lookup_state`
+- `plugin.environment.geoip.privacy_detected`
+- `plugin.environment.geoip.privacy_classes`
+- `plugin.environment.geoip.privacy_primary_class`
+- `plugin.environment.geoip.privacy_confidence`
+- `plugin.environment.geoip.privacy_source_authorities`
+- `plugin.environment.geoip.privacy_data_stale`
+- `plugin.environment.geoip.privacy_data_age_seconds`
+- `plugin.environment.geoip.is_tor_exit_node`
+- `plugin.environment.geoip.is_known_vpn_exit`
+- `plugin.environment.geoip.is_community_vpn_exit`
+- `plugin.environment.geoip.is_public_proxy`
+- `plugin.environment.geoip.is_privacy_relay`
+- `plugin.environment.geoip.is_hosting_network`
 
 The runtime delta is stored at `plugin.exchange.geoip` and contains only JSON-compatible values. Policy facts remain
 under `plugin.environment.geoip.*` because policy facts are the decision authority, while runtime exchange is the
 plan-local analytics surface for later post-action steps.
 The historical Lua `rt` table is not part of the native Go exchange standard; native consumers should use
 `plugin.exchange.geoip` and policy facts.
+
+The same privacy suffixes are added to `plugin.exchange.geoip` without replacing location, ASN, or GUID values. The
+native ClickHouse plugin consumes the typed exchange values first and compatible policy facts second. Before deploying
+plugin artifacts that emit privacy values, apply the additive `geoip_privacy_*` and `geoip_is_*` columns from
+`contrib/clickhouse-kubernetes/schema.sql`; see
+[the Kubernetes ClickHouse guide](../../clickhouse-kubernetes/README.md) for schema-first ordering and verification SQL.

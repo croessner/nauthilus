@@ -375,6 +375,10 @@ trace headers from the active context and records `host_http_client_*` plugin me
 logs include service, method, result, status, and duration only; they do not include URLs, query strings, headers,
 bodies, bearer tokens, or raw transport errors.
 
+Direct caller-configured HTTP URLs remain supported for explicitly selected internal services such as ClickHouse.
+Redirects are stricter: the host permits at most ten hops, requires credential-free HTTPS, and keeps every redirect on
+the original HTTPS origin. Configure the final URL when a service redirects to a different host, port, or scheme.
+
 Use `Host.Mail(scope).Send(ctx, message)` for SMTP or LMTP sends that should use the host-owned mail transport and
 redacted operational logs. Mail requests are value-only `pluginapi.MailMessage` values. A module that enables mail must
 request `CapabilityMail`, and the operator must include `mail` in `allow_capabilities`. The plugin still owns
@@ -501,6 +505,15 @@ only public API types and exercises the final v1 surfaces that are easy to keep 
 The GeoIP reference plugin in `contrib/plugins/geoip` remains the fuller lifecycle example: it registers policy
 attributes, starts init work and supervised refresh workers, emits environment facts and runtime deltas, uses bounded
 metrics/tracing, and supports config-only reload.
+
+Its optional privacy-intelligence path also demonstrates the lifecycle/request boundary for untrusted list data.
+Lifecycle code loads local files or calls `Host.HTTP("privacy")`, validates a complete bounded candidate, and atomically
+publishes an immutable prefix index. Request-time `Evaluate` only reads that index and returns registered facts plus the
+existing `plugin.exchange.geoip` map; it performs no HTTP, DNS, or file I/O. Every remote list kind shares the same
+conditional-request, cache, backoff, concurrency, and last-known-good coordinator, while parsers remain small
+format-specific responsibilities. Public logs expose only a separate allowlisted projection for evaluated or stale
+results. This is the recommended shape for a plugin that refreshes external evidence without making external services
+part of authentication latency or decision authority.
 
 ## Request Data And Secrets
 

@@ -113,6 +113,41 @@ func TestEnvironmentSourceBridgeAppliesRuntimeFactsAndObservations(t *testing.T)
 	assertEnvironmentPolicyReport(t, auth)
 }
 
+func TestEnvironmentSourceBridgeAppliesGeoIPPrivacyPolicyFactsWithoutTriggering(t *testing.T) {
+	facts := []pluginapi.PolicyFact{
+		{Attribute: "plugin.environment.geoip.is_tor_exit_node", Value: true},
+		{Attribute: "plugin.environment.geoip.is_known_vpn_exit", Value: false},
+		{Attribute: "plugin.environment.geoip.is_public_proxy", Value: true},
+		{Attribute: "plugin.environment.geoip.privacy_data_stale", Value: false},
+		{Attribute: "plugin.environment.geoip.is_hosting_network", Value: true},
+	}
+	attributes := make([]string, 0, len(facts))
+
+	for _, fact := range facts {
+		attributes = append(attributes, fact.Attribute)
+	}
+
+	bridge := newEnvironmentTestBridge(t, runtimeAdapterEnvironmentSource{result: pluginapi.EnvironmentResult{Facts: facts}})
+	auth := newSubjectTestAuth(t)
+	activateEnvironmentPolicySnapshot(t, attributes...)
+
+	triggered, abort, handled, err := bridge.Evaluate(auth.Request.HTTPClientContext, auth.View())
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+
+	if !handled || triggered || abort {
+		t.Fatalf("Evaluate() handled=%t triggered=%t abort=%t, want handled evidence only", handled, triggered, abort)
+	}
+
+	report := auth.PolicyDecisionContext(auth.Request.HTTPClientContext).Report()
+	for _, fact := range facts {
+		if got := report.Attributes[fact.Attribute].Value; got != fact.Value {
+			t.Fatalf("policy fact %s = %#v, want %#v", fact.Attribute, got, fact.Value)
+		}
+	}
+}
+
 func newEnvironmentTestBridge(t *testing.T, sources ...pluginapi.EnvironmentSource) *EnvironmentSourceBridge {
 	t.Helper()
 

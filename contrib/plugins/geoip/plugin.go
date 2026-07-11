@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"reflect"
 	"sync"
 	"time"
 
@@ -26,24 +27,27 @@ import (
 )
 
 const (
-	pluginName         = "geoip"
-	pluginVersion      = "0.1.0"
-	componentASNLookup = "asn_lookup"
-	componentDatabase  = "database"
-	componentSource    = "environment"
-	metricLookupTotal  = "geoip_lookup_total"
-	metricLookupTime   = "geoip_lookup_seconds"
-	metricRecords      = "geoip_database_records"
-	metricLabelResult  = "result"
-	metricLabelState   = "state"
-	metricStateLoaded  = "loaded"
-	resultError        = "error"
-	resultInvalidIP    = "invalid_ip"
-	resultMatched      = "matched"
-	resultMiss         = "miss"
-	logFieldLoadedAt   = "loaded_at"
-	traceAttrComponent = "plugin.component"
-	traceAttrModule    = "plugin.module"
+	pluginName           = "geoip"
+	pluginVersion        = "0.1.0"
+	componentASNLookup   = "asn_lookup"
+	componentDatabase    = "database"
+	componentSource      = "environment"
+	metricLookupTotal    = "geoip_lookup_total"
+	metricLookupTime     = "geoip_lookup_seconds"
+	metricRecords        = "geoip_database_records"
+	metricPrivacyRefresh = "geoip_privacy_source_refresh_total"
+	metricPrivacyEntries = "geoip_privacy_snapshot_entries"
+	metricLabelResult    = "result"
+	metricLabelSource    = "source"
+	metricLabelState     = "state"
+	metricStateLoaded    = "loaded"
+	resultError          = "error"
+	resultInvalidIP      = "invalid_ip"
+	resultMatched        = "matched"
+	resultMiss           = "miss"
+	logFieldLoadedAt     = "loaded_at"
+	traceAttrComponent   = "plugin.component"
+	traceAttrModule      = "plugin.module"
 )
 
 var _ pluginapi.Plugin = (*Plugin)(nil)
@@ -63,15 +67,19 @@ type Plugin struct {
 	tracer         pluginapi.Tracer
 	asnRegistry    *asnRegistrySnapshot
 	asnLookup      *asnLookupService
+	privacy        *privacyEngine
 	databaseLoad   databaseLoader
 	asnFetch       asnRegistryFetcher
 	asnRouteFetch  asnRouteFetcher
 	lookupCounter  pluginapi.Counter
 	lookupLatency  pluginapi.Histogram
 	recordGauge    pluginapi.Gauge
+	privacyRefresh pluginapi.Counter
+	privacyEntries pluginapi.Gauge
 	refreshCancel  context.CancelFunc
 	asnCancel      context.CancelFunc
 	asnRouteCancel context.CancelFunc
+	privacyCancel  []context.CancelFunc
 	config         moduleConfig
 	mu             sync.RWMutex
 }
@@ -146,6 +154,11 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 		return err
 	}
 
+	privacyRefresh, privacyEntries, err := registerPrivacyMetrics(metrics)
+	if err != nil {
+		return err
+	}
+
 	p.mu.Lock()
 	p.host = host
 	p.logger = logger
@@ -153,6 +166,8 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	p.lookupCounter = lookupCounter
 	p.lookupLatency = lookupLatency
 	p.recordGauge = recordGauge
+	p.privacyRefresh = privacyRefresh
+	p.privacyEntries = privacyEntries
 	p.mu.Unlock()
 
 	logger.Info(ctx, "geoip plugin started")
@@ -177,29 +192,59 @@ func (p *Plugin) Stop(ctx context.Context) error {
 
 // Reconfigure validates and atomically swaps database-backed plugin state.
 func (p *Plugin) Reconfigure(ctx context.Context, view pluginapi.ConfigView) error {
-	config, databases, err := p.loadConfigAndDatabases(ctx, view)
+	config, databases, privacy, err := p.loadConfigAndDatabases(ctx, view)
 	if err != nil {
 		return err
 	}
 
-	p.swapDatabases(ctx, config, databases, true)
+	p.swapState(ctx, config, databases, privacy, true)
 
 	return nil
 }
 
 // loadConfigAndDatabases validates config and loads the referenced databases.
-func (p *Plugin) loadConfigAndDatabases(ctx context.Context, view pluginapi.ConfigView) (moduleConfig, geoDatabases, error) {
+func (p *Plugin) loadConfigAndDatabases(ctx context.Context, view pluginapi.ConfigView) (moduleConfig, geoDatabases, *privacyEngine, error) {
 	config, err := decodeModuleConfig(view)
 	if err != nil {
-		return moduleConfig{}, geoDatabases{}, err
+		return moduleConfig{}, geoDatabases{}, nil, err
 	}
 
 	databases, err := p.loadDatabases(ctx, config)
 	if err != nil {
-		return moduleConfig{}, geoDatabases{}, err
+		return moduleConfig{}, geoDatabases{}, nil, err
 	}
 
-	return config, databases, nil
+	p.mu.RLock()
+	host := p.host
+	currentPrivacy := p.privacy
+	currentPrivacyConfig := p.config.Privacy
+	p.mu.RUnlock()
+
+	privacy := currentPrivacy
+	if currentPrivacy == nil || !reflect.DeepEqual(currentPrivacyConfig, config.Privacy) {
+		privacy, err = loadPrivacyEngine(ctx, config.Privacy, host)
+		if err != nil {
+			closeDatabases(databases)
+
+			return moduleConfig{}, geoDatabases{}, nil, err
+		}
+	}
+
+	return config, databases, privacy, nil
+}
+
+// swapState publishes validated GeoIP and privacy state as one lifecycle transition.
+func (p *Plugin) swapState(ctx context.Context, config moduleConfig, databases geoDatabases, privacy *privacyEngine, restartRefresh bool) {
+	p.mu.Lock()
+	p.privacy = privacy
+	privacyEntries := p.privacyEntries
+	p.mu.Unlock()
+
+	if privacyEntries != nil && privacy != nil {
+		privacyEntries.Set(ctx, float64(privacy.Records()))
+	}
+
+	p.swapDatabases(ctx, config, databases, restartRefresh)
 }
 
 // swapDatabases publishes validated databases and optionally restarts refresh work.
@@ -313,6 +358,7 @@ func (p *Plugin) startWorkersLocked() {
 	p.startDatabaseRefreshWorkerLocked()
 	p.startASNLookupWorkerLocked()
 	p.startASNRegistryWorkerLocked()
+	p.startPrivacyWorkersLocked()
 }
 
 // stopWorkersLocked cancels all active background workers.
@@ -320,6 +366,36 @@ func (p *Plugin) stopWorkersLocked() {
 	p.stopDatabaseRefreshWorkerLocked()
 	p.stopASNLookupWorkerLocked()
 	p.stopASNRegistryWorkerLocked()
+	p.stopPrivacyWorkersLocked()
+}
+
+// startPrivacyWorkersLocked supervises one shared-coordinator loop per remote source.
+func (p *Plugin) startPrivacyWorkersLocked() {
+	p.stopPrivacyWorkersLocked()
+
+	if p.host == nil || p.privacy == nil {
+		return
+	}
+
+	engine := p.privacy
+	for _, coordinator := range engine.coordinators {
+		workerCtx, cancel := context.WithCancel(p.host.ServiceContext())
+		p.privacyCancel = append(p.privacyCancel, cancel)
+		sourceID := coordinator.config.ID
+
+		p.host.Go(workerCtx, "geoip.privacy."+sourceID, func(ctx context.Context) error {
+			return p.runPrivacyRefreshLoop(ctx, engine, coordinator)
+		})
+	}
+}
+
+// stopPrivacyWorkersLocked cancels every active remote-source coordinator loop.
+func (p *Plugin) stopPrivacyWorkersLocked() {
+	for _, cancel := range p.privacyCancel {
+		cancel()
+	}
+
+	p.privacyCancel = nil
 }
 
 // startDatabaseRefreshWorkerLocked starts or replaces the optional database refresh worker.
@@ -666,4 +742,26 @@ func registerMetrics(metrics pluginapi.Metrics) (pluginapi.Counter, pluginapi.Hi
 	}
 
 	return lookupCounter, lookupLatency, recordGauge, nil
+}
+
+// registerPrivacyMetrics declares bounded lifecycle metrics without request identifiers.
+func registerPrivacyMetrics(metrics pluginapi.Metrics) (pluginapi.Counter, pluginapi.Gauge, error) {
+	refresh, err := metrics.Counter(pluginapi.MetricDefinition{
+		Name:   metricPrivacyRefresh,
+		Help:   "Privacy source refresh attempts.",
+		Labels: []string{metricLabelSource, metricLabelResult},
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	entries, err := metrics.Gauge(pluginapi.MetricDefinition{
+		Name: metricPrivacyEntries,
+		Help: "Published privacy intelligence prefix entries.",
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return refresh, entries, nil
 }

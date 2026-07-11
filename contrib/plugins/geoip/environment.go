@@ -73,12 +73,12 @@ func (t geoIPInitTask) Start(ctx context.Context, init pluginapi.InitContext) er
 		return fmt.Errorf("geoip init task has no plugin")
 	}
 
-	config, databases, err := t.plugin.loadConfigAndDatabases(ctx, init.Config)
+	config, databases, privacy, err := t.plugin.loadConfigAndDatabases(ctx, init.Config)
 	if err != nil {
 		return err
 	}
 
-	t.plugin.swapDatabases(ctx, config, databases, true)
+	t.plugin.swapState(ctx, config, databases, privacy, true)
 
 	return nil
 }
@@ -137,7 +137,12 @@ func (s geoIPEnvironmentSource) Evaluate(ctx context.Context, request pluginapi.
 	if err != nil {
 		s.plugin.recordLookup(spanCtx, resultInvalidIP, time.Since(start))
 
-		return missResult(), nil
+		result := missResult()
+		if config.Privacy.Enabled {
+			result = enrichPrivacyResult(result, privacyLookupResult{State: privacyLookupStateInvalidIP}, config.Privacy.PublicLogs)
+		}
+
+		return result, nil
 	}
 
 	record, matched, err := s.plugin.lookupRecord(spanCtx, addr)
@@ -148,19 +153,65 @@ func (s geoIPEnvironmentSource) Evaluate(ctx context.Context, request pluginapi.
 		return pluginapi.EnvironmentResult{}, err
 	}
 
-	if !matched {
-		s.plugin.recordLookup(spanCtx, resultMiss, time.Since(start))
+	result := missResult()
+	lookupResult := resultMiss
 
-		return missResult(), nil
+	if matched {
+		result = matchResult(record, request.Snapshot.Session)
+		lookupResult = resultMatched
+
+		span.SetAttributes(
+			pluginapi.TraceAttribute{Key: "geoip.matched", Value: true},
+			pluginapi.TraceAttribute{Key: "geoip.country_iso", Value: record.CountryISO},
+		)
 	}
 
-	span.SetAttributes(
-		pluginapi.TraceAttribute{Key: "geoip.matched", Value: true},
-		pluginapi.TraceAttribute{Key: "geoip.country_iso", Value: record.CountryISO},
-	)
-	s.plugin.recordLookup(spanCtx, resultMatched, time.Since(start))
+	if config.Privacy.Enabled {
+		privacy, privacyErr := s.lookupPrivacy(spanCtx, config.Privacy, addr, record)
+		if privacyErr != nil {
+			span.RecordError(privacyErr)
+			s.plugin.recordLookup(spanCtx, resultError, time.Since(start))
 
-	return matchResult(record, request.Snapshot.Session), nil
+			return pluginapi.EnvironmentResult{}, privacyErr
+		}
+
+		result = enrichPrivacyResult(result, privacy, config.Privacy.PublicLogs)
+		span.SetAttributes(
+			pluginapi.TraceAttribute{Key: "geoip.privacy_lookup_state", Value: privacy.State},
+			pluginapi.TraceAttribute{Key: "geoip.privacy_primary_class", Value: string(privacy.PrimaryClass)},
+			pluginapi.TraceAttribute{Key: "geoip.privacy_stale", Value: privacy.Stale},
+		)
+	}
+
+	s.plugin.recordLookup(spanCtx, lookupResult, time.Since(start))
+
+	return result, nil
+}
+
+// lookupPrivacy evaluates the immutable privacy index within its tighter request deadline.
+func (s geoIPEnvironmentSource) lookupPrivacy(ctx context.Context, config privacyConfig, addr netip.Addr, record geoRecord) (privacyLookupResult, error) {
+	lookupCtx, cancel := context.WithTimeout(ctx, config.LookupTimeout)
+	defer cancel()
+
+	if err := lookupCtx.Err(); err != nil {
+		return privacyLookupResult{}, err
+	}
+
+	s.plugin.mu.RLock()
+	engine := s.plugin.privacy
+	s.plugin.mu.RUnlock()
+
+	if engine == nil {
+		return privacyLookupResult{State: privacyLookupStateUnavailable}, nil
+	}
+
+	result := engine.LookupWithRecord(addr, record)
+
+	if err := lookupCtx.Err(); err != nil {
+		return privacyLookupResult{}, err
+	}
+
+	return result, nil
 }
 
 // startSpan creates a component-scoped child span for request-time lookup work.
@@ -294,6 +345,20 @@ func geoIPPolicyAttributes() []pluginapi.AttributeDefinition {
 		environmentAttribute(factASNCountryISO, pluginapi.AttributeTypeString, "Country code from delegated RIR ASN registry data.", operations),
 		environmentAttribute(factASNAllocated, pluginapi.AttributeTypeString, "Allocation date from delegated RIR ASN registry data.", operations),
 		environmentAttribute(factASNStatus, pluginapi.AttributeTypeString, "Allocation status from delegated RIR ASN registry data.", operations),
+		environmentAttribute(factPrivacyLookupState, pluginapi.AttributeTypeString, "Privacy intelligence lookup state.", operations),
+		environmentAttribute(factPrivacyDetected, pluginapi.AttributeTypeBool, "Whether retained privacy evidence other than hosting matched.", operations),
+		environmentAttribute(factPrivacyClasses, pluginapi.AttributeTypeStringList, "Deterministic retained privacy classifications.", operations),
+		environmentAttribute(factPrivacyPrimaryClass, pluginapi.AttributeTypeString, "Highest-authority privacy presentation class.", operations),
+		environmentAttribute(factPrivacyConfidence, pluginapi.AttributeTypeNumber, "Evidence confidence for the primary privacy class.", operations),
+		environmentAttribute(factPrivacySourceAuthorities, pluginapi.AttributeTypeStringList, "Contributing privacy evidence authority categories.", operations),
+		environmentAttribute(factPrivacyDataStale, pluginapi.AttributeTypeBool, "Whether required or contributing privacy snapshots are stale.", operations),
+		environmentAttribute(factPrivacyDataAgeSeconds, pluginapi.AttributeTypeNumber, "Age in seconds of the oldest contributing privacy snapshot.", operations),
+		environmentAttribute(factIsTorExitNode, pluginapi.AttributeTypeBool, "Whether official Tor exit evidence matched.", operations),
+		environmentAttribute(factIsKnownVPNExit, pluginapi.AttributeTypeBool, "Whether official provider or operator VPN exit evidence matched.", operations),
+		environmentAttribute(factIsCommunityVPNExit, pluginapi.AttributeTypeBool, "Whether community VPN exit evidence matched.", operations),
+		environmentAttribute(factIsPublicProxy, pluginapi.AttributeTypeBool, "Whether attributed public proxy evidence matched.", operations),
+		environmentAttribute(factIsPrivacyRelay, pluginapi.AttributeTypeBool, "Whether another attributed privacy relay matched.", operations),
+		environmentAttribute(factIsHostingNetwork, pluginapi.AttributeTypeBool, "Whether hosting or cloud network evidence matched.", operations),
 	}
 }
 

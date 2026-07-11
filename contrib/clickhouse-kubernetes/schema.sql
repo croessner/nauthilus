@@ -50,6 +50,20 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   geoip_asn_country    LowCardinality(String),
   geoip_asn_allocated  LowCardinality(String),
   geoip_asn_status     LowCardinality(String),
+  geoip_privacy_lookup_state LowCardinality(String),
+  geoip_privacy_detected Nullable(Bool),
+  geoip_privacy_classes Array(String),
+  geoip_privacy_primary_class LowCardinality(String),
+  geoip_privacy_confidence Nullable(Float64),
+  geoip_privacy_source_authorities Array(String),
+  geoip_privacy_data_stale Nullable(Bool),
+  geoip_privacy_data_age_seconds Nullable(UInt64),
+  geoip_is_tor_exit_node Nullable(Bool),
+  geoip_is_known_vpn_exit Nullable(Bool),
+  geoip_is_community_vpn_exit Nullable(Bool),
+  geoip_is_public_proxy Nullable(Bool),
+  geoip_is_privacy_relay Nullable(Bool),
+  geoip_is_hosting_network Nullable(Bool),
   reputation_score             Nullable(Float64),
   reputation_positive_score    Nullable(Float64),
   reputation_negative_score    Nullable(Float64),
@@ -150,7 +164,21 @@ ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_registry LowCard
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_country LowCardinality(String) AFTER geoip_asn_registry;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_allocated LowCardinality(String) AFTER geoip_asn_country;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_status LowCardinality(String) AFTER geoip_asn_allocated;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_score Nullable(Float64) AFTER geoip_asn_status;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_privacy_lookup_state LowCardinality(String) AFTER geoip_asn_status;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_privacy_detected Nullable(Bool) AFTER geoip_privacy_lookup_state;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_privacy_classes Array(String) AFTER geoip_privacy_detected;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_privacy_primary_class LowCardinality(String) AFTER geoip_privacy_classes;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_privacy_confidence Nullable(Float64) AFTER geoip_privacy_primary_class;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_privacy_source_authorities Array(String) AFTER geoip_privacy_confidence;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_privacy_data_stale Nullable(Bool) AFTER geoip_privacy_source_authorities;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_privacy_data_age_seconds Nullable(UInt64) AFTER geoip_privacy_data_stale;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_tor_exit_node Nullable(Bool) AFTER geoip_privacy_data_age_seconds;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_known_vpn_exit Nullable(Bool) AFTER geoip_is_tor_exit_node;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_community_vpn_exit Nullable(Bool) AFTER geoip_is_known_vpn_exit;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_public_proxy Nullable(Bool) AFTER geoip_is_community_vpn_exit;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_privacy_relay Nullable(Bool) AFTER geoip_is_public_proxy;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_hosting_network Nullable(Bool) AFTER geoip_is_privacy_relay;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_score Nullable(Float64) AFTER geoip_is_hosting_network;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_positive_score Nullable(Float64) AFTER reputation_score;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_negative_score Nullable(Float64) AFTER reputation_positive_score;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_ip_score Nullable(Float64) AFTER reputation_negative_score;

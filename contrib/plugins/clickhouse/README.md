@@ -47,6 +47,23 @@ success or authentication-failure defaults before native post-actions run. `clie
 network selected by the core brute-force path, with post-action fallback from brute-force policy-report details.
 `geoip_guid` is populated from native GeoIP exchange data when the GeoIP plugin runs before ClickHouse.
 
+Privacy intelligence uses the same `plugin.exchange.geoip` snapshot. Valid typed exchange values take precedence over
+registered `plugin.environment.geoip.*` facts; malformed optional exchange values fall back to compatible facts and do
+not discard the login row. Nullable columns preserve unavailable versus explicit `false` or zero, while privacy classes
+and source authorities are always emitted as JSON arrays. Privacy evidence is observational and does not add itself to
+`decision_sources`.
+
+The typed columns are `geoip_privacy_lookup_state`, `geoip_privacy_detected`, `geoip_privacy_classes`,
+`geoip_privacy_primary_class`, `geoip_privacy_confidence`, `geoip_privacy_source_authorities`,
+`geoip_privacy_data_stale`, `geoip_privacy_data_age_seconds`, `geoip_is_tor_exit_node`,
+`geoip_is_known_vpn_exit`, `geoip_is_community_vpn_exit`, `geoip_is_public_proxy`, `geoip_is_privacy_relay`, and
+`geoip_is_hosting_network`. Unavailable scalar values remain SQL `NULL`; missing class and authority lists remain
+non-null empty arrays. Bounded mapping diagnostics contain only malformed field names and never raw values.
+
+Apply and verify the additive privacy columns from `contrib/clickhouse-kubernetes/schema.sql` before deploying a plugin
+version that emits them. ClickHouse can accept rows from the old plugin after the schema grows, while a new JSONEachRow
+writer can fail against an old schema. The Kubernetes ClickHouse README contains the schema and row readback queries.
+
 Policy migration:
 
 ```yaml

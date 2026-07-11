@@ -31,6 +31,65 @@ plugins:
           enabled: true
           refresh_interval: 720h
           timeout: 30s
+        privacy_intelligence:
+          enabled: true
+          lookup_timeout: 10ms
+          max_snapshot_entries: 1000000
+          max_download_bytes: 33554432
+          public_log_fields: true
+          refresh:
+            cache_dir: /var/lib/nauthilus/privacy/cache
+            max_concurrent_downloads: 2
+            startup_jitter: 30s
+            default_refresh_interval: 6h
+            default_min_refresh_interval: 1h
+            default_max_refresh_backoff: 24h
+          sources:
+            # Onionoo is queried only by the background refresh worker. Client
+            # addresses are matched against the resulting local snapshot.
+            - id: tor_exit
+              kind: tor_exit_list
+              authority: official
+              url: https://onionoo.torproject.org/details?type=relay&running=true&flag=Exit&fields=exit_addresses%2Crunning%2Cflags
+              refresh_interval: 1h
+              min_refresh_interval: 30m
+              max_refresh_backoff: 12h
+              refresh_jitter: 5m
+              max_age: 6h
+              required: true
+            # This file uses the versioned normalized JSON contract documented
+            # in contrib/plugins/geoip/README.md.
+            - id: operator_relays
+              kind: normalized_json
+              authority: operator
+              path: /var/lib/nauthilus/privacy/operator-relays.json
+              max_age: 24h
+              required: false
+            # Community data is opt-in and must carry compatible attribution.
+            - id: community_vpn
+              kind: normalized_json
+              authority: community
+              url: https://feeds.example.invalid/community-vpn.json
+              license: CC-BY-4.0
+              license_url: https://feeds.example.invalid/license
+              confidence: 70
+              refresh_interval: 6h
+              max_age: 12h
+              required: false
+          hosting:
+            enabled: true
+            confidence: 50
+            asns:
+              - 64500
+            cidrs:
+              - 203.0.113.0/24
+            organization_patterns: []
+          overrides:
+            - network: 198.51.100.12/32
+              suppress_classes:
+                - community_vpn_exit
+              reason: trusted_corporate_egress
+              expires_at: "2026-12-31T23:59:59Z"
 
 auth:
   policy:
@@ -43,6 +102,21 @@ auth:
           - lookup_identity
         config_ref: plugins.modules.geoip.environment
     policies:
+      - name: deny_current_tor_password_auth
+        stage: pre_auth
+        operations:
+          - authenticate
+        require_checks:
+          - plugin_environment_geoip
+        if:
+          all:
+            - attribute: plugin.environment.geoip.is_tor_exit_node
+              is: true
+            - attribute: plugin.environment.geoip.privacy_data_stale
+              is: false
+        then:
+          decision: deny
+          response_marker: auth.response.fail
       - name: deny_unexpected_country
         stage: pre_auth
         operations:

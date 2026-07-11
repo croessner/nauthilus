@@ -35,9 +35,12 @@ const (
 	databaseFormatAuto                = "auto"
 	databaseFormatJSON                = "json"
 	databaseFormatMMDB                = "mmdb"
+	sourceSchemeHTTP                  = "http"
+	sourceSchemeHTTPS                 = "https"
 )
 
 type moduleConfig struct {
+	Privacy           privacyConfig     `mapstructure:"-"`
 	ASNRegistry       asnRegistryConfig `mapstructure:"-"`
 	ASNLookup         asnLookupConfig   `mapstructure:"-"`
 	ASNDatabasePath   string            `mapstructure:"-"`
@@ -63,6 +66,7 @@ type asnRegistryConfig struct {
 }
 
 type rawModuleConfig struct {
+	Privacy           rawPrivacyConfig     `mapstructure:"privacy_intelligence"`
 	ASNRegistry       rawASNRegistryConfig `mapstructure:"asn_registry"`
 	ASNLookup         rawASNLookupConfig   `mapstructure:"asn_lookup"`
 	ASNDatabasePath   string               `mapstructure:"asn_database_path"`
@@ -136,7 +140,13 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		return moduleConfig{}, err
 	}
 
+	privacy, err := parsePrivacyConfig(raw.Privacy, lookupTimeout)
+	if err != nil {
+		return moduleConfig{}, err
+	}
+
 	return moduleConfig{
+		Privacy:           privacy,
 		ASNRegistry:       asnRegistry,
 		ASNLookup:         asnLookup,
 		ASNDatabasePath:   asnDatabasePath,
@@ -355,7 +365,7 @@ func validateHTTPSourceURL(value string) error {
 		return fmt.Errorf("must be a valid URL: %w", err)
 	}
 
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+	if parsed.Scheme != sourceSchemeHTTPS && parsed.Scheme != sourceSchemeHTTP {
 		return fmt.Errorf("must use http or https")
 	}
 

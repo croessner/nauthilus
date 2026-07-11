@@ -47,86 +47,102 @@ const (
 
 // clickHouseRow mirrors the Lua clickhouse.lua JSONEachRow field names.
 type clickHouseRow struct {
-	TS                        string   `json:"ts"`
-	Session                   string   `json:"session"`
-	Service                   string   `json:"service"`
-	Deployment                string   `json:"deployment"`
-	Instance                  string   `json:"instance"`
-	DecisionSources           string   `json:"decision_sources"`
-	ClientIP                  string   `json:"client_ip"`
-	ClientPort                string   `json:"client_port"`
-	ClientNet                 string   `json:"client_net"`
-	ClientID                  string   `json:"client_id"`
-	Hostname                  string   `json:"hostname"`
-	Proto                     string   `json:"proto"`
-	Method                    string   `json:"method"`
-	UserAgent                 string   `json:"user_agent"`
-	LocalIP                   string   `json:"local_ip"`
-	LocalPort                 string   `json:"local_port"`
-	DisplayName               string   `json:"display_name"`
-	Account                   string   `json:"account"`
-	Username                  string   `json:"username"`
-	PasswordHash              string   `json:"password_hash"`
-	PwndInfo                  string   `json:"pwnd_info"`
-	BruteForceBucket          string   `json:"brute_force_bucket"`
-	BruteForceCounter         *uint64  `json:"brute_force_counter"`
-	OIDCCID                   string   `json:"oidc_cid"`
-	SAMLEntityID              string   `json:"saml_entity_id"`
-	GrantType                 string   `json:"grant_type"`
-	MFAMethod                 string   `json:"mfa_method"`
-	FailedLoginCount          *uint64  `json:"failed_login_count"`
-	FailedLoginRank           *uint64  `json:"failed_login_rank"`
-	FailedLoginRecognized     *bool    `json:"failed_login_recognized"`
-	GeoIPGUID                 string   `json:"geoip_guid"`
-	GeoIPCountry              string   `json:"geoip_country"`
-	GeoIPISOCodes             string   `json:"geoip_iso_codes"`
-	GeoIPStatus               string   `json:"geoip_status"`
-	GeoIPSource               string   `json:"geoip_source"`
-	GeoIPMatched              *bool    `json:"geoip_matched"`
-	GeoIPCountryName          string   `json:"geoip_country_name"`
-	GeoIPCityName             string   `json:"geoip_city_name"`
-	GeoIPASN                  *uint64  `json:"geoip_asn"`
-	GeoIPASNOrg               string   `json:"geoip_asn_org"`
-	GeoIPASNPrefix            string   `json:"geoip_asn_prefix"`
-	GeoIPASNRegistry          string   `json:"geoip_asn_registry"`
-	GeoIPASNCountry           string   `json:"geoip_asn_country"`
-	GeoIPASNAllocated         string   `json:"geoip_asn_allocated"`
-	GeoIPASNStatus            string   `json:"geoip_asn_status"`
-	ReputationScore           *float64 `json:"reputation_score"`
-	ReputationPositiveScore   *float64 `json:"reputation_positive_score"`
-	ReputationNegativeScore   *float64 `json:"reputation_negative_score"`
-	ReputationIPScore         *float64 `json:"reputation_ip_score"`
-	ReputationASNScore        *float64 `json:"reputation_asn_score"`
-	ReputationCountryScore    *float64 `json:"reputation_country_score"`
-	ReputationASNCountryScore *float64 `json:"reputation_asn_country_score"`
-	ReputationSamples         *uint64  `json:"reputation_samples"`
-	ReputationSource          string   `json:"reputation_source"`
-	ReputationDecision        string   `json:"reputation_decision"`
-	GPAttempts                *uint64  `json:"gp_attempts"`
-	GPUniqueIPs               *uint64  `json:"gp_unique_ips"`
-	GPUniqueUsers             *uint64  `json:"gp_unique_users"`
-	GPIPsPerUser              *float64 `json:"gp_ips_per_user"`
-	ProtectionActive          *bool    `json:"prot_active"`
-	ProtectionReason          string   `json:"prot_reason"`
-	ProtectionBackoff         *uint64  `json:"prot_backoff"`
-	ProtectionDelayMillis     *uint64  `json:"prot_delay_ms"`
-	DynamicThreat             *uint64  `json:"dyn_threat"`
-	DynamicResponse           string   `json:"dyn_response"`
-	Repeating                 bool     `json:"repeating"`
-	RWP                       bool     `json:"rwp"`
-	UserFound                 bool     `json:"user_found"`
-	Authenticated             bool     `json:"authenticated"`
-	XSSLProtocol              string   `json:"xssl_protocol"`
-	XSSLCipher                string   `json:"xssl_cipher"`
-	SSLFingerprint            string   `json:"ssl_fingerprint"`
-	Latency                   uint64   `json:"latency"`
-	HTTPStatus                uint64   `json:"http_status"`
-	StatusMessage             string   `json:"status_msg"`
+	mappingDiagnostics            []string `json:"-"`
+	GeoIPPrivacyClasses           []string `json:"geoip_privacy_classes"`
+	GeoIPPrivacySourceAuthorities []string `json:"geoip_privacy_source_authorities"`
+	TS                            string   `json:"ts"`
+	Session                       string   `json:"session"`
+	Service                       string   `json:"service"`
+	Deployment                    string   `json:"deployment"`
+	Instance                      string   `json:"instance"`
+	DecisionSources               string   `json:"decision_sources"`
+	ClientIP                      string   `json:"client_ip"`
+	ClientPort                    string   `json:"client_port"`
+	ClientNet                     string   `json:"client_net"`
+	ClientID                      string   `json:"client_id"`
+	Hostname                      string   `json:"hostname"`
+	Proto                         string   `json:"proto"`
+	Method                        string   `json:"method"`
+	UserAgent                     string   `json:"user_agent"`
+	LocalIP                       string   `json:"local_ip"`
+	LocalPort                     string   `json:"local_port"`
+	DisplayName                   string   `json:"display_name"`
+	Account                       string   `json:"account"`
+	Username                      string   `json:"username"`
+	PasswordHash                  string   `json:"password_hash"`
+	PwndInfo                      string   `json:"pwnd_info"`
+	BruteForceBucket              string   `json:"brute_force_bucket"`
+	BruteForceCounter             *uint64  `json:"brute_force_counter"`
+	OIDCCID                       string   `json:"oidc_cid"`
+	SAMLEntityID                  string   `json:"saml_entity_id"`
+	GrantType                     string   `json:"grant_type"`
+	MFAMethod                     string   `json:"mfa_method"`
+	FailedLoginCount              *uint64  `json:"failed_login_count"`
+	FailedLoginRank               *uint64  `json:"failed_login_rank"`
+	FailedLoginRecognized         *bool    `json:"failed_login_recognized"`
+	GeoIPGUID                     string   `json:"geoip_guid"`
+	GeoIPCountry                  string   `json:"geoip_country"`
+	GeoIPISOCodes                 string   `json:"geoip_iso_codes"`
+	GeoIPStatus                   string   `json:"geoip_status"`
+	GeoIPSource                   string   `json:"geoip_source"`
+	GeoIPMatched                  *bool    `json:"geoip_matched"`
+	GeoIPCountryName              string   `json:"geoip_country_name"`
+	GeoIPCityName                 string   `json:"geoip_city_name"`
+	GeoIPASN                      *uint64  `json:"geoip_asn"`
+	GeoIPASNOrg                   string   `json:"geoip_asn_org"`
+	GeoIPASNPrefix                string   `json:"geoip_asn_prefix"`
+	GeoIPASNRegistry              string   `json:"geoip_asn_registry"`
+	GeoIPASNCountry               string   `json:"geoip_asn_country"`
+	GeoIPASNAllocated             string   `json:"geoip_asn_allocated"`
+	GeoIPASNStatus                string   `json:"geoip_asn_status"`
+	GeoIPPrivacyLookupState       string   `json:"geoip_privacy_lookup_state"`
+	GeoIPPrivacyPrimaryClass      string   `json:"geoip_privacy_primary_class"`
+	GeoIPPrivacyDetected          *bool    `json:"geoip_privacy_detected"`
+	GeoIPPrivacyConfidence        *float64 `json:"geoip_privacy_confidence"`
+	GeoIPPrivacyDataStale         *bool    `json:"geoip_privacy_data_stale"`
+	GeoIPPrivacyDataAgeSeconds    *uint64  `json:"geoip_privacy_data_age_seconds"`
+	GeoIPIsTorExitNode            *bool    `json:"geoip_is_tor_exit_node"`
+	GeoIPIsKnownVPNExit           *bool    `json:"geoip_is_known_vpn_exit"`
+	GeoIPIsCommunityVPNExit       *bool    `json:"geoip_is_community_vpn_exit"`
+	GeoIPIsPublicProxy            *bool    `json:"geoip_is_public_proxy"`
+	GeoIPIsPrivacyRelay           *bool    `json:"geoip_is_privacy_relay"`
+	GeoIPIsHostingNetwork         *bool    `json:"geoip_is_hosting_network"`
+	ReputationScore               *float64 `json:"reputation_score"`
+	ReputationPositiveScore       *float64 `json:"reputation_positive_score"`
+	ReputationNegativeScore       *float64 `json:"reputation_negative_score"`
+	ReputationIPScore             *float64 `json:"reputation_ip_score"`
+	ReputationASNScore            *float64 `json:"reputation_asn_score"`
+	ReputationCountryScore        *float64 `json:"reputation_country_score"`
+	ReputationASNCountryScore     *float64 `json:"reputation_asn_country_score"`
+	ReputationSamples             *uint64  `json:"reputation_samples"`
+	ReputationSource              string   `json:"reputation_source"`
+	ReputationDecision            string   `json:"reputation_decision"`
+	GPAttempts                    *uint64  `json:"gp_attempts"`
+	GPUniqueIPs                   *uint64  `json:"gp_unique_ips"`
+	GPUniqueUsers                 *uint64  `json:"gp_unique_users"`
+	GPIPsPerUser                  *float64 `json:"gp_ips_per_user"`
+	ProtectionActive              *bool    `json:"prot_active"`
+	ProtectionReason              string   `json:"prot_reason"`
+	ProtectionBackoff             *uint64  `json:"prot_backoff"`
+	ProtectionDelayMillis         *uint64  `json:"prot_delay_ms"`
+	DynamicThreat                 *uint64  `json:"dyn_threat"`
+	DynamicResponse               string   `json:"dyn_response"`
+	XSSLProtocol                  string   `json:"xssl_protocol"`
+	XSSLCipher                    string   `json:"xssl_cipher"`
+	SSLFingerprint                string   `json:"ssl_fingerprint"`
+	StatusMessage                 string   `json:"status_msg"`
+	Repeating                     bool     `json:"repeating"`
+	RWP                           bool     `json:"rwp"`
+	UserFound                     bool     `json:"user_found"`
+	Authenticated                 bool     `json:"authenticated"`
+	Latency                       uint64   `json:"latency"`
+	HTTPStatus                    uint64   `json:"http_status"`
 }
 
 // buildRow maps one post-action request into the Lua-compatible ClickHouse row.
 func buildRow(request pluginapi.PostActionRequest, cfg moduleConfig) (clickHouseRow, error) {
 	exchangeSnapshot := exchange.NewSnapshot(request.Runtime, request.Facts)
+	geoIPAnalytics := exchangeSnapshot.GeoIPAnalytics()
 
 	row := clickHouseRow{
 		TS:                utcNowMillis(),
@@ -169,13 +185,34 @@ func buildRow(request pluginapi.PostActionRequest, cfg moduleConfig) (clickHouse
 	}
 
 	applyFailedLoginInfo(&row, exchangeSnapshot.Map(exchange.KeyFailedLoginHotspot))
-	applyGeoIPInfo(&row, geoIPInfo(exchangeSnapshot.Map(exchange.KeyGeoIP)))
+	applyGeoIPInfo(&row, geoIPInfo(geoIPAnalytics.Fields))
+	applyGeoIPPrivacyInfo(&row, geoIPAnalytics)
 	applyReputationInfo(&row, reputationInfo(exchangeSnapshot))
 	applyGlobalPatternInfo(&row, exchangeSnapshot.Map(exchange.KeyGlobalPattern))
 	applyAccountProtectionInfo(&row, exchangeSnapshot.Map(exchange.KeyAccountProtection))
 	applyDynamicResponseInfo(&row, exchangeSnapshot.Map(exchange.KeyDynamicResponse))
 
 	return row, nil
+}
+
+// applyGeoIPPrivacyInfo copies typed privacy analytics and bounded diagnostics.
+func applyGeoIPPrivacyInfo(row *clickHouseRow, info exchange.GeoIPAnalytics) {
+	privacy := info.Privacy
+	row.mappingDiagnostics = append([]string(nil), info.MalformedFields...)
+	row.GeoIPPrivacyClasses = append([]string{}, privacy.Classes...)
+	row.GeoIPPrivacySourceAuthorities = append([]string{}, privacy.SourceAuthorities...)
+	row.GeoIPPrivacyLookupState = privacy.LookupState
+	row.GeoIPPrivacyPrimaryClass = privacy.PrimaryClass
+	row.GeoIPPrivacyDetected = privacy.Detected
+	row.GeoIPPrivacyConfidence = privacy.Confidence
+	row.GeoIPPrivacyDataStale = privacy.DataStale
+	row.GeoIPPrivacyDataAgeSeconds = privacy.DataAgeSeconds
+	row.GeoIPIsTorExitNode = privacy.IsTorExitNode
+	row.GeoIPIsKnownVPNExit = privacy.IsKnownVPNExit
+	row.GeoIPIsCommunityVPNExit = privacy.IsCommunityVPNExit
+	row.GeoIPIsPublicProxy = privacy.IsPublicProxy
+	row.GeoIPIsPrivacyRelay = privacy.IsPrivacyRelay
+	row.GeoIPIsHostingNetwork = privacy.IsHostingNetwork
 }
 
 // applyFailedLoginInfo copies standard failed-login hotspot details.
