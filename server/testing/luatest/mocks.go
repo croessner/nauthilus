@@ -2157,6 +2157,7 @@ func LoaderModPrometheusMock(mockData *PrometheusMock) lua.LGFunction {
 		L.SetField(mod, "increment_counter", noop("increment_counter"))
 		L.SetField(mod, "increment_gauge", noop("increment_gauge"))
 		L.SetField(mod, "decrement_gauge", noop("decrement_gauge"))
+		L.SetField(mod, "set_gauge", noop("set_gauge"))
 
 		L.SetField(mod, "start_histogram_timer", L.NewFunction(func(L *lua.LState) int {
 			_ = mockData.RecordCall("start_histogram_timer", "")

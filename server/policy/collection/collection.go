@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/evaluation"
 	"github.com/croessner/nauthilus/v3/server/policy/observability"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
@@ -128,6 +129,20 @@ func (c *DecisionContext) Snapshot() *policyruntime.Snapshot {
 	}
 
 	return c.snapshot.Clone()
+}
+
+// AttributeDefinition returns one detached definition from the request snapshot.
+func (c *DecisionContext) AttributeDefinition(id string) (policyregistry.AttributeDefinition, bool) {
+	if c == nil || c.snapshot == nil || c.snapshot.AttributeRegistry == nil {
+		return policyregistry.AttributeDefinition{}, false
+	}
+
+	definition, ok := c.snapshot.AttributeRegistry[id]
+	if !ok {
+		return policyregistry.AttributeDefinition{}, false
+	}
+
+	return policyregistry.CloneDefinition(definition), true
 }
 
 // SnapshotMetadata returns stable metadata for request-local comparison output.
@@ -547,6 +562,24 @@ func (c *DecisionContext) RecordAttribute(value AttributeValue) {
 	defer c.mu.Unlock()
 
 	c.recordAttributeLocked(value)
+}
+
+// RecordAttributes stores emitted policy attributes under one request-local lock.
+func (c *DecisionContext) RecordAttributes(values []AttributeValue) {
+	if c == nil || c.report == nil || len(values) == 0 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, value := range values {
+		if value.ID == "" {
+			continue
+		}
+
+		c.recordAttributeLocked(value)
+	}
 }
 
 func (c *DecisionContext) recordAttributeLocked(value AttributeValue) {

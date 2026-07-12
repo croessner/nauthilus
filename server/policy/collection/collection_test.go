@@ -21,6 +21,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/observability"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
@@ -67,6 +68,63 @@ func TestDecisionContextRecordsCheckResultAndAttributes(t *testing.T) {
 
 	if got := recorder.checks[0].Status; got != policy.CheckStatusOK {
 		t.Fatalf("metric status = %q, want %q", got, policy.CheckStatusOK)
+	}
+}
+
+func TestDecisionContextReturnsDetachedAttributeDefinition(t *testing.T) {
+	snapshot := testSnapshot()
+	snapshot.AttributeRegistry = map[string]policyregistry.AttributeDefinition{
+		"lua.plugin.test.value": {
+			ID:         "lua.plugin.test.value",
+			Operations: []policy.Operation{policy.OperationAuthenticate},
+			Details: map[string]policyregistry.DetailDefinition{
+				"message": {Type: policyregistry.AttributeTypeString},
+			},
+		},
+	}
+	ctx := NewDecisionContext(snapshot, policy.OperationAuthenticate, nil)
+
+	definition, ok := ctx.AttributeDefinition("lua.plugin.test.value")
+	if !ok {
+		t.Fatal("registered attribute definition missing")
+	}
+
+	definition.Operations[0] = policy.OperationListAccounts
+	definition.Details["message"] = policyregistry.DetailDefinition{Type: policyregistry.AttributeTypeBool}
+
+	original := snapshot.AttributeRegistry["lua.plugin.test.value"]
+	if original.Operations[0] != policy.OperationAuthenticate {
+		t.Fatalf("snapshot operation = %q, want %q", original.Operations[0], policy.OperationAuthenticate)
+	}
+
+	if original.Details["message"].Type != policyregistry.AttributeTypeString {
+		t.Fatalf("snapshot detail type = %q, want %q", original.Details["message"].Type, policyregistry.AttributeTypeString)
+	}
+
+	if _, exists := ctx.AttributeDefinition("lua.plugin.test.missing"); exists {
+		t.Fatal("missing attribute definition reported as registered")
+	}
+}
+
+func TestDecisionContextRecordsAttributeBatch(t *testing.T) {
+	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, nil)
+	ctx.RecordAttributes([]AttributeValue{
+		BoolAttribute("lua.plugin.batch.first", policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
+		{},
+		BoolAttribute("lua.plugin.batch.second", policy.StagePreAuth, policy.OperationAuthenticate, false, nil),
+	})
+
+	attributes := ctx.Report().Attributes
+	if len(attributes) != 2 {
+		t.Fatalf("recorded attributes = %#v, want two non-empty attributes", attributes)
+	}
+
+	if got := attributes["lua.plugin.batch.first"].Value; got != true {
+		t.Fatalf("first batch attribute = %#v, want true", got)
+	}
+
+	if got := attributes["lua.plugin.batch.second"].Value; got != false {
+		t.Fatalf("second batch attribute = %#v, want false", got)
 	}
 }
 

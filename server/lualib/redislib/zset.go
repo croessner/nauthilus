@@ -18,6 +18,7 @@ package redislib
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
@@ -95,6 +96,36 @@ func (rm *RedisManager) RedisZRange(L *lua.LState) int {
 func (rm *RedisManager) RedisZRevRange(L *lua.LState) int {
 	return executeRangeStringSliceCmd(rm, L, func(ctx context.Context, conn redis.Cmdable, key string, start, stop int64) *redis.StringSliceCmd {
 		return conn.ZRevRange(ctx, key, start, stop)
+	})
+}
+
+// RedisZRevRangeWithScores returns reversed sorted-set rows with member and score fields.
+func (rm *RedisManager) RedisZRevRangeWithScores(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		start := int64(stack.CheckInt(3))
+		stop := int64(stack.CheckInt(4))
+
+		cmd := conn.ZRevRangeWithScores(ctx, key, start, stop)
+		if cmd.Err() != nil {
+			return stack.PushError(cmd.Err())
+		}
+
+		rows := L.NewTable()
+
+		for _, item := range cmd.Val() {
+			member, ok := item.Member.(string)
+			if !ok {
+				return stack.PushError(fmt.Errorf("unexpected sorted-set member type %T", item.Member))
+			}
+
+			row := L.NewTable()
+			row.RawSetString("member", lua.LString(member))
+			row.RawSetString("score", lua.LNumber(item.Score))
+			rows.Append(row)
+		}
+
+		return stack.PushResults(rows, lua.LNil)
 	})
 }
 

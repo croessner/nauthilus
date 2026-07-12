@@ -50,6 +50,7 @@ func LoaderModPolicy(ctx *policycollection.DecisionContext, stage policy.Stage) 
 		emitter := &PolicyEmitter{ctx: ctx, stage: stage}
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnPolicyEmitAttribute:  emitter.emitAttribute,
+			definitions.LuaFnPolicyEmitAttributes: emitter.emitAttributes,
 			definitions.LuaFnPolicyEmitMasterUser: emitter.emitMasterUser,
 		})
 		L.Push(mod)
@@ -63,6 +64,11 @@ func LoaderPolicyStateless() lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnPolicyEmitAttribute: func(L *lua.LState) int {
+				L.RaiseError("nauthilus_policy emitter is not available in this Lua runtime")
+
+				return 0
+			},
+			definitions.LuaFnPolicyEmitAttributes: func(L *lua.LState) int {
 				L.RaiseError("nauthilus_policy emitter is not available in this Lua runtime")
 
 				return 0
@@ -86,43 +92,83 @@ func (e *PolicyEmitter) emitAttribute(L *lua.LState) int {
 		return 0
 	}
 
-	table := L.CheckTable(1)
+	attributeValue, ok := e.parseAttribute(L, L.CheckTable(1), 1)
+	if !ok {
+		return 0
+	}
 
-	id := strings.TrimSpace(luaPolicyStringField(table, "id"))
-	if id == "" {
-		L.ArgError(1, "id must be a non-empty string")
+	e.ctx.RecordAttribute(attributeValue)
+
+	return 0
+}
+
+// emitAttributes validates a complete batch before recording it atomically.
+func (e *PolicyEmitter) emitAttributes(L *lua.LState) int {
+	if e == nil || e.ctx == nil {
+		L.RaiseError("nauthilus_policy emitter is not available in this Lua runtime")
 
 		return 0
 	}
 
+	table := L.CheckTable(1)
+	values := make([]policycollection.AttributeValue, 0, table.Len())
+
+	for index := 1; index <= table.Len(); index++ {
+		entry, ok := table.RawGetInt(index).(*lua.LTable)
+		if !ok {
+			L.ArgError(1, fmt.Sprintf("entry %d must be a table", index))
+
+			return 0
+		}
+
+		attributeValue, parsed := e.parseAttribute(L, entry, 1)
+		if !parsed {
+			return 0
+		}
+
+		values = append(values, attributeValue)
+	}
+
+	e.ctx.RecordAttributes(values)
+
+	return 0
+}
+
+// parseAttribute validates and converts one Lua attribute emission table.
+func (e *PolicyEmitter) parseAttribute(L *lua.LState, table *lua.LTable, argument int) (policycollection.AttributeValue, bool) {
+	id := strings.TrimSpace(luaPolicyStringField(table, "id"))
+	if id == "" {
+		L.ArgError(argument, "id must be a non-empty string")
+
+		return policycollection.AttributeValue{}, false
+	}
+
 	definition, operation, ok := e.validateEmissionTarget(L, id)
 	if !ok {
-		return 0
+		return policycollection.AttributeValue{}, false
 	}
 
 	value, err := luaPolicyTypedValue(table.RawGetString("value"), definition.Type, id)
 	if err != nil {
 		L.RaiseError("%s", err.Error())
 
-		return 0
+		return policycollection.AttributeValue{}, false
 	}
 
 	details, err := luaPolicyDetails(table.RawGetString("details"), definition.Details, id)
 	if err != nil {
 		L.RaiseError("%s", err.Error())
 
-		return 0
+		return policycollection.AttributeValue{}, false
 	}
 
-	e.ctx.RecordAttribute(policycollection.AttributeValue{
+	return policycollection.AttributeValue{
 		ID:        id,
 		Stage:     definition.Stage,
 		Operation: operation,
 		Value:     value,
 		Details:   details,
-	})
-
-	return 0
+	}, true
 }
 
 // emitMasterUser records the canonical master-user fact for Lua backends.
@@ -224,14 +270,7 @@ func (e *PolicyEmitter) validateRegisteredEmissionTarget(
 }
 
 func (e *PolicyEmitter) lookupAttribute(id string) (policyregistry.AttributeDefinition, bool) {
-	snapshot := e.ctx.Snapshot()
-	if snapshot == nil || snapshot.AttributeRegistry == nil {
-		return policyregistry.AttributeDefinition{}, false
-	}
-
-	definition, ok := snapshot.AttributeRegistry[id]
-
-	return definition, ok
+	return e.ctx.AttributeDefinition(id)
 }
 
 func policyOperationAllowed(operation policy.Operation, operations []policy.Operation) bool {

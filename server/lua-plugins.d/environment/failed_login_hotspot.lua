@@ -61,16 +61,15 @@ local function maybe_snapshot_topN(client, now, request)
     local zkey = nauthilus_util.get_redis_key(request, "top_failed_logins")
 
     -- Pull small top-N for metrics; keep it cheap
-    local members = nauthilus_redis.redis_zrevrange(client, zkey, 0, SNAPSHOT_TOPN - 1)
-    if members and nauthilus_util.is_table(members) and #members > 0 then
-        for i = 1, #members do
-            local uname = members[i]
-            local sc = nauthilus_redis.redis_zscore(client, zkey, uname)
-            local score = tonumber(sc) or 0
+    local rows = nauthilus_redis.redis_zrevrange_withscores(client, zkey, 0, SNAPSHOT_TOPN - 1)
+    if rows and nauthilus_util.is_table(rows) and #rows > 0 then
+        for i = 1, #rows do
+            local uname = rows[i].member
+            local score = tonumber(rows[i].score) or 0
             local rank = i - 1 -- i=1 -> rank 0
             nauthilus_prometheus.set_gauge(N .. "_top_score", score, { rank = tostring(rank), username = uname })
         end
-        nauthilus_prometheus.set_gauge(N .. "_topn_size", #members, {})
+        nauthilus_prometheus.set_gauge(N .. "_topn_size", #rows, {})
     else
         nauthilus_prometheus.set_gauge(N .. "_topn_size", 0, {})
     end

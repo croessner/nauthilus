@@ -141,6 +141,67 @@ policy.emit_attribute({
 	}
 }
 
+func TestPolicyEmitterRecordsRegisteredLuaAttributesBatch(t *testing.T) {
+	policyCtx := policyEmitterTestContext(map[string]policyregistry.AttributeDefinition{
+		"lua.plugin.batch.triggered": policyEmitterAttributeDefinition("lua.plugin.batch.triggered", policyregistry.AttributeTypeBool),
+		"lua.plugin.batch.count":     policyEmitterAttributeDefinition("lua.plugin.batch.count", policyregistry.AttributeTypeNumber),
+	})
+
+	L := lua.NewState()
+	defer L.Close()
+
+	L.PreloadModule(definitions.LuaModPolicy, LoaderModPolicy(policyCtx, policy.StagePreAuth))
+
+	if err := L.DoString(`
+local policy = require("nauthilus_policy")
+policy.emit_attributes({
+  { id = "lua.plugin.batch.triggered", value = true },
+  { id = "lua.plugin.batch.count", value = 12 },
+})
+`); err != nil {
+		t.Fatalf("policy batch emitter failed: %v", err)
+	}
+
+	attributes := policyCtx.Report().Attributes
+	if got := attributes["lua.plugin.batch.triggered"].Value; got != true {
+		t.Fatalf("triggered attribute value = %#v, want true", got)
+	}
+
+	if got := attributes["lua.plugin.batch.count"].Value; got != float64(12) {
+		t.Fatalf("count attribute value = %#v, want 12", got)
+	}
+}
+
+func TestPolicyEmitterBatchRejectsAtomically(t *testing.T) {
+	policyCtx := policyEmitterTestContext(map[string]policyregistry.AttributeDefinition{
+		"lua.plugin.batch.triggered": policyEmitterAttributeDefinition("lua.plugin.batch.triggered", policyregistry.AttributeTypeBool),
+	})
+
+	L := lua.NewState()
+	defer L.Close()
+
+	L.PreloadModule(definitions.LuaModPolicy, LoaderModPolicy(policyCtx, policy.StagePreAuth))
+
+	err := L.DoString(`
+local policy = require("nauthilus_policy")
+policy.emit_attributes({
+  { id = "lua.plugin.batch.triggered", value = true },
+  { id = "lua.plugin.batch.unknown", value = true },
+})
+`)
+	if err == nil {
+		t.Fatal("policy batch emitter error = nil, want unknown attribute rejection")
+	}
+
+	if !strings.Contains(err.Error(), "is not registered") {
+		t.Fatalf("policy batch emitter error = %q, want registration error", err)
+	}
+
+	if len(policyCtx.Report().Attributes) != 0 {
+		t.Fatalf("policy batch emitter recorded attributes after rejection: %#v", policyCtx.Report().Attributes)
+	}
+}
+
 func TestPolicyEmitterRecordsMasterUserAttribute(t *testing.T) {
 	policyCtx := policyEmitterTestContext(map[string]policyregistry.AttributeDefinition{
 		policy.AttributeMasterUserActive: {
@@ -202,4 +263,15 @@ func policyEmitterTestContext(definitions map[string]policyregistry.AttributeDef
 	snapshot := &policyruntime.Snapshot{AttributeRegistry: definitions}
 
 	return policycollection.NewDecisionContext(snapshot, policy.OperationAuthenticate, nil)
+}
+
+// policyEmitterAttributeDefinition builds a Lua-owned attribute definition for emitter tests.
+func policyEmitterAttributeDefinition(id string, attributeType policyregistry.AttributeType) policyregistry.AttributeDefinition {
+	return policyregistry.AttributeDefinition{
+		ID:         id,
+		Stage:      policy.StagePreAuth,
+		Operations: []policy.Operation{policy.OperationAuthenticate},
+		Type:       attributeType,
+		Source:     policyregistry.SourceLua,
+	}
 }

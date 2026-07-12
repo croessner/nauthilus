@@ -124,6 +124,7 @@ func redisSortedSetFunctions(rm *RedisManager) map[string]lua.LGFunction {
 		definitions.LuaFnRedisZRank:                rm.RedisZRank,
 		definitions.LuaFNRedisZRange:               rm.RedisZRange,
 		definitions.LuaFnRedisZRevRange:            rm.RedisZRevRange,
+		definitions.LuaFnRedisZRevRangeWithScores:  rm.RedisZRevRangeWithScores,
 		definitions.LuaFnRedisZRangeByScore:        rm.RedisZRangeByScore,
 		definitions.LuaFnRedisZRemRangeByScore:     rm.RedisZRemRangeByScore,
 		definitions.LuaFnRedisRedisZRemRangeByRank: rm.RedisZRemRangeByRank,

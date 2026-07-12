@@ -1,0 +1,102 @@
+{
+  "context": {
+    "username": "hot-user@example.test",
+    "account": "hot-user@example.test",
+    "client_ip": "192.0.2.44",
+    "protocol": "imap",
+    "session": "failed-login-hotspot-session",
+    "no_auth": false,
+    "expected_calls": [
+      {
+        "method": "context_get",
+        "arg_contains": "rt"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "rt"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "policy_facts"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "policy_facts"
+      }
+    ]
+  },
+  "redis": {
+    "initial_data": {
+      "zsets": {
+        "ntc:top_failed_logins": [
+          {
+            "member": "hot-user@example.test",
+            "score": 12
+          },
+          {
+            "member": "other-user@example.test",
+            "score": 10
+          }
+        ]
+      }
+    },
+    "expected_calls": [
+      {
+        "method": "redis_zscore",
+        "arg_contains": "hot-user@example.test"
+      },
+      {
+        "method": "redis_zrevrank",
+        "arg_contains": "hot-user@example.test"
+      },
+      {
+        "method": "redis_get",
+        "arg_contains": "last_snapshot"
+      },
+      {
+        "method": "redis_zrevrange_withscores",
+        "arg_contains": "top_failed_logins"
+      },
+      {
+        "method": "redis_set",
+        "arg_contains": "last_snapshot"
+      }
+    ]
+  },
+  "prometheus": {
+    "expected_calls": [
+      {
+        "method": "set_gauge"
+      },
+      {
+        "method": "set_gauge"
+      },
+      {
+        "method": "set_gauge"
+      },
+      {
+        "method": "set_gauge"
+      },
+      {
+        "method": "set_gauge"
+      },
+      {
+        "method": "increment_counter"
+      }
+    ]
+  },
+  "expected_output": {
+    "environment_triggered": true,
+    "environment_abort": false,
+    "environment_result": 0,
+    "logs_contain": [
+      "failed_login_username",
+      "failed_login_count",
+      "failed_login_rank",
+      "policy_fact_failed_login_hotspot_triggered",
+      "policy_fact_failed_login_hotspot_count",
+      "policy_fact_failed_login_hotspot_rank"
+    ],
+    "error_expected": false
+  }
+}

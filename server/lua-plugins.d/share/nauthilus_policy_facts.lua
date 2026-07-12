@@ -96,6 +96,27 @@ local function emit_attribute(namespace, key, value, details)
     })
 end
 
+local function emit_entries(entries)
+    local policy = load_policy_module()
+
+    if type(policy.emit_attributes) == "function" then
+        local attributes = {}
+        for _, entry in ipairs(entries) do
+            table.insert(attributes, {
+                id = attribute_id(entry.namespace, entry.key),
+                value = entry.value,
+            })
+        end
+
+        policy.emit_attributes(attributes)
+        return
+    end
+
+    for _, entry in ipairs(entries) do
+        emit_attribute(entry.namespace, entry.key, entry.value)
+    end
+end
+
 local function collect_entries(namespace, values)
     if type(values) ~= "table" then
         return nil
@@ -144,9 +165,7 @@ local function store_many(namespace, values, public, emit)
     end
 
     if emit then
-        for _, entry in ipairs(entries) do
-            emit_attribute(entry.namespace, entry.key, entry.value)
-        end
+        emit_entries(entries)
     end
 
     store_entries(entries, public)

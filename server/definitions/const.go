@@ -1719,6 +1719,9 @@ const (
 	// LuaFnRedisZRevRange represents the Lua function name for retrieving a reversed range of members from a Redis sorted set.
 	LuaFnRedisZRevRange = "redis_zrevrange"
 
+	// LuaFnRedisZRevRangeWithScores retrieves a reversed range of members and scores from a Redis sorted set.
+	LuaFnRedisZRevRangeWithScores = "redis_zrevrange_withscores"
+
 	// LuaFnRedisZRangeByScore provides functionality to retrieve elements from a Redis sorted set by their score range.
 	LuaFnRedisZRangeByScore = "redis_zrangebyscore"
 
@@ -1918,6 +1921,9 @@ const (
 
 	// LuaFnPolicyEmitAttribute records a Lua-owned custom policy attribute.
 	LuaFnPolicyEmitAttribute = "emit_attribute"
+
+	// LuaFnPolicyEmitAttributes atomically records a batch of Lua-owned custom policy attributes.
+	LuaFnPolicyEmitAttributes = "emit_attributes"
 
 	// LuaFnPolicyEmitMasterUser records the canonical master-user policy attribute.
 	LuaFnPolicyEmitMasterUser = "emit_master_user"

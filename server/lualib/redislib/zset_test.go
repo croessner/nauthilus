@@ -165,6 +165,128 @@ func TestRedisZRevRange(t *testing.T) {
 	runZIndexRangeRedisTests(t, "redis_zrevrange", redisZRevRangeCases())
 }
 
+func TestRedisZRevRangeWithScores(t *testing.T) {
+	for _, tt := range redisZRevRangeWithScoresCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			runRedisZRevRangeWithScoresCase(t, tt)
+		})
+	}
+}
+
+type zRevRangeWithScoresRedisTest struct {
+	redisErr     error
+	name         string
+	values       []redis.Z
+	customHandle bool
+}
+
+// redisZRevRangeWithScoresCases returns handle, result, and error coverage for scored ranges.
+func redisZRevRangeWithScoresCases() []zRevRangeWithScoresRedisTest {
+	return []zRevRangeWithScoresRedisTest{
+		{
+			name: "DefaultHandle",
+			values: []redis.Z{
+				{Member: "alice@example.test", Score: 12},
+				{Member: "bob@example.test", Score: 10},
+			},
+		},
+		{
+			name:         "CustomHandle",
+			customHandle: true,
+			values:       []redis.Z{{Member: "custom@example.test", Score: 9}},
+		},
+		{name: "EmptyRange", values: []redis.Z{}},
+		{name: "RedisError", redisErr: context.DeadlineExceeded},
+	}
+}
+
+// runRedisZRevRangeWithScoresCase executes one scored reverse-range scenario.
+func runRedisZRevRangeWithScoresCase(t *testing.T, tt zRevRangeWithScoresRedisTest) {
+	t.Helper()
+
+	L, mock, db := newRedisLuaCommandState(t)
+	key := "hotspots"
+	expectation := mock.ExpectZRevRangeWithScores(key, 0, 1)
+
+	if tt.redisErr != nil {
+		expectation.SetErr(tt.redisErr)
+	} else {
+		expectation.SetVal(tt.values)
+	}
+
+	handle := lua.LValue(lua.LString("default"))
+
+	if tt.customHandle {
+		userData := L.NewUserData()
+		userData.Value = db
+		handle = userData
+	}
+
+	L.SetGlobal("handle", handle)
+	L.SetGlobal("key", lua.LString(key))
+
+	if err := L.DoString(`
+local redis = require("nauthilus_redis")
+result, err = redis.redis_zrevrange_withscores(handle, key, 0, 1)
+`); err != nil {
+		t.Fatalf("Running Lua code failed: %v", err)
+	}
+
+	assertScoredRangeResult(t, L, tt)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("mock expectations were not met: %v", err)
+	}
+}
+
+// assertScoredRangeResult verifies the Lua result or Redis error for one scored range.
+func assertScoredRangeResult(t *testing.T, L *lua.LState, tt zRevRangeWithScoresRedisTest) {
+	t.Helper()
+
+	if tt.redisErr != nil {
+		if L.GetGlobal("result") != lua.LNil {
+			t.Fatalf("redis_zrevrange_withscores() result = %s, want nil", L.GetGlobal("result"))
+		}
+
+		checkLuaError(t, L.GetGlobal("err"), lua.LString(tt.redisErr.Error()))
+
+		return
+	}
+
+	result, ok := L.GetGlobal("result").(*lua.LTable)
+	if !ok {
+		t.Fatalf("redis_zrevrange_withscores() result = %s, want table", L.GetGlobal("result"))
+	}
+
+	if result.Len() != len(tt.values) {
+		t.Fatalf("redis_zrevrange_withscores() rows = %d, want %d", result.Len(), len(tt.values))
+	}
+
+	for index, value := range tt.values {
+		assertScoredRangeRow(t, result, index+1, value.Member.(string), value.Score)
+	}
+
+	checkLuaError(t, L.GetGlobal("err"), lua.LNil)
+}
+
+// assertScoredRangeRow verifies one member-score row returned to Lua.
+func assertScoredRangeRow(t *testing.T, rows *lua.LTable, index int, member string, score float64) {
+	t.Helper()
+
+	row, ok := rows.RawGetInt(index).(*lua.LTable)
+	if !ok {
+		t.Fatalf("scored range row %d = %s, want table", index, rows.RawGetInt(index))
+	}
+
+	if got := row.RawGetString("member").String(); got != member {
+		t.Fatalf("scored range row %d member = %q, want %q", index, got, member)
+	}
+
+	if got := float64(lua.LVAsNumber(row.RawGetString("score"))); got != score {
+		t.Fatalf("scored range row %d score = %v, want %v", index, got, score)
+	}
+}
+
 // redisZRangeCases returns Redis ZRANGE behavior cases.
 func redisZRangeCases() []zIndexRangeRedisTest {
 	return []zIndexRangeRedisTest{

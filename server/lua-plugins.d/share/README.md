@@ -12,8 +12,8 @@ Stores request-local policy facts, emits Lua-owned policy attributes, and option
 - `emit(namespace, key, value, details)`: Stores the fact and emits `lua.plugin.<namespace>.<key>`
 - `emit_public(namespace, key, value, details)`: Emits the attribute, stores the fact, and writes a custom log
 - `set_many(namespace, values)`: Stores multiple internal facts in one context update
-- `emit_many(namespace, values)`: Stores and emits multiple internal policy attributes
-- `emit_many_public(namespace, values)`: Stores, emits, and logs multiple public policy attributes
+- `emit_many(namespace, values)`: Stores and emits multiple internal policy attributes through the atomic batch API when available
+- `emit_many_public(namespace, values)`: Stores, atomically emits, and logs multiple public policy attributes
 - `set_public(namespace, key, value)`: Compatibility alias for `emit_public`
 - `set_many_public(namespace, values)`: Compatibility alias for `emit_many_public`
 - `set_public_log(namespace, key, value)`: Writes only a `policy_fact_<namespace>_<key>` custom log
