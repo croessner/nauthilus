@@ -107,6 +107,20 @@ func TestGeoIPAnalyticsDoesNotFabricateClassificationsWithoutEvaluatedState(t *t
 	}
 }
 
+func TestGeoIPAnalyticsCarriesSharedEgressClassification(t *testing.T) {
+	snapshot := NewSnapshotFromValues(map[string]any{
+		KeyGeoIP: map[string]any{
+			FieldPrivacyLookupState: "evaluated",
+			FieldIsSharedEgress:     true,
+		},
+	}, nil)
+
+	got := snapshot.GeoIPAnalytics()
+	if got.Privacy.IsSharedEgress == nil || !*got.Privacy.IsSharedEgress {
+		t.Fatalf("IsSharedEgress = %#v, want true", got.Privacy)
+	}
+}
+
 func TestGeoIPAnalyticsReportsMalformedFactWithoutRawValue(t *testing.T) {
 	snapshot := NewSnapshotFromValues(nil, []pluginapi.PolicyFact{
 		{Attribute: privacyFact(FieldPrivacyLookupState), Value: "evaluated"},

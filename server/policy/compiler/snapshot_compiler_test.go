@@ -905,6 +905,7 @@ func TestCompilerAcceptsGeoIPPrivacyEnvironmentFacts(t *testing.T) {
 		{Attribute: "plugin.environment.geoip.is_public_proxy", Is: true},
 		{Attribute: "plugin.environment.geoip.privacy_data_stale", Is: false},
 		{Attribute: "plugin.environment.geoip.is_hosting_network", Is: true},
+		{Attribute: "plugin.environment.geoip.is_shared_egress", Is: true},
 	} {
 		cfg.Auth.Policy.Policies = append(cfg.Auth.Policy.Policies, config.PolicyRuleConfig{
 			Name:          fmt.Sprintf("geoip_privacy_%d", index),
@@ -1442,6 +1443,7 @@ func (compilerGeoIPPrivacyPlugin) Register(registrar pluginapi.Registrar) error 
 		"plugin.environment.geoip.is_public_proxy",
 		"plugin.environment.geoip.privacy_data_stale",
 		"plugin.environment.geoip.is_hosting_network",
+		"plugin.environment.geoip.is_shared_egress",
 	} {
 		if err := registrar.RegisterPolicyAttribute(pluginapi.AttributeDefinition{
 			ID:            attribute,

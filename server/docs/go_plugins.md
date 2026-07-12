@@ -306,6 +306,9 @@ GeoIP plugin config highlights:
   complete example uses this for the official Onionoo Tor exit source.
 - `privacy_intelligence.hosting`: separate derived hosting/cloud evidence from configured CIDRs, ASNs, or explicit
   organization patterns. Hosting never implies VPN use.
+- The normalized `shared_egress` class is reserved for operator-approved public carrier or corporate NAT prefixes.
+  Never infer it from a complete ASN or organization pattern; RFC 6598 shared space normally identifies the internal
+  provider side rather than the public egress address.
 - `privacy_intelligence.public_log_fields`: opt-in bounded request-log fields for evaluated or stale results. Policy
   facts and `plugin.exchange.geoip` remain available when this is disabled.
 

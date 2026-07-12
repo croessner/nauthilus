@@ -120,6 +120,7 @@ func TestEnvironmentSourceBridgeAppliesGeoIPPrivacyPolicyFactsWithoutTriggering(
 		{Attribute: "plugin.environment.geoip.is_public_proxy", Value: true},
 		{Attribute: "plugin.environment.geoip.privacy_data_stale", Value: false},
 		{Attribute: "plugin.environment.geoip.is_hosting_network", Value: true},
+		{Attribute: "plugin.environment.geoip.is_shared_egress", Value: true},
 	}
 	attributes := make([]string, 0, len(facts))
 

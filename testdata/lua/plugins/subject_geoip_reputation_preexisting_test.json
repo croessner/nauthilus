@@ -1,0 +1,25 @@
+{
+  "context": {
+    "username": "shared-egress@example.test",
+    "client_ip": "203.0.113.7",
+    "protocol": "imap",
+    "session": "shared-egress-reputation-session",
+    "authenticated": false,
+    "no_auth": false
+  },
+  "redis": {
+    "initial_data": {
+      "hashes": {
+        "ntc:geoip:reputation:ip:203.0.113.7": {
+          "success": "0",
+          "failure": "40"
+        }
+      }
+    }
+  },
+  "expected_output": {
+    "subject_rejected": false,
+    "subject_result": 0,
+    "error_expected": false
+  }
+}

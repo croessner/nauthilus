@@ -42,6 +42,8 @@ const (
 	FieldIsPrivacyRelay = "is_privacy_relay"
 	// FieldIsHostingNetwork stores hosting or cloud network evidence.
 	FieldIsHostingNetwork = "is_hosting_network"
+	// FieldIsSharedEgress stores operator-approved shared public egress evidence.
+	FieldIsSharedEgress = "is_shared_egress"
 )
 
 var privacyBoolFields = []struct {
@@ -55,6 +57,7 @@ var privacyBoolFields = []struct {
 	{FieldIsPublicProxy, func(value *GeoIPPrivacyAnalytics, result *bool) { value.IsPublicProxy = result }},
 	{FieldIsPrivacyRelay, func(value *GeoIPPrivacyAnalytics, result *bool) { value.IsPrivacyRelay = result }},
 	{FieldIsHostingNetwork, func(value *GeoIPPrivacyAnalytics, result *bool) { value.IsHostingNetwork = result }},
+	{FieldIsSharedEgress, func(value *GeoIPPrivacyAnalytics, result *bool) { value.IsSharedEgress = result }},
 }
 
 // GeoIPAnalytics is a defensive typed view over standard GeoIP exchange data.
@@ -80,6 +83,7 @@ type GeoIPPrivacyAnalytics struct {
 	IsPublicProxy      *bool
 	IsPrivacyRelay     *bool
 	IsHostingNetwork   *bool
+	IsSharedEgress     *bool
 }
 
 // GeoIPAnalytics returns exchange-first GeoIP data with policy-fact privacy fallback.

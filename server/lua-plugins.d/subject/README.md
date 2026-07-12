@@ -77,6 +77,14 @@ Positive scores indicate risk, negative scores indicate trust. The emitted `deci
 - `lua.plugin.geoip_reputation.asn_country_score`
 - `lua.plugin.geoip_reputation.samples`
 - `lua.plugin.geoip_reputation.decision`
+- `lua.plugin.geoip_reputation.preexisting_positive_score`
+- `lua.plugin.geoip_reputation.preexisting_samples`
+- `lua.plugin.geoip_reputation.preexisting_decision`
+
+The `preexisting_*` attributes are computed before the current authentication
+outcome updates Redis. They are intended for policies that must prove risk was
+already present, such as shared-egress brute-force enforcement. The original
+attributes retain their post-update semantics for compatibility and analytics.
 
 **Configuration:**
 - `GEOIP_REPUTATION_ALPHA`: Beta smoothing factor, default `2`.

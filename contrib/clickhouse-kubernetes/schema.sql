@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   geoip_is_public_proxy Nullable(Bool),
   geoip_is_privacy_relay Nullable(Bool),
   geoip_is_hosting_network Nullable(Bool),
+  geoip_is_shared_egress Nullable(Bool),
   reputation_score             Nullable(Float64),
   reputation_positive_score    Nullable(Float64),
   reputation_negative_score    Nullable(Float64),
@@ -178,7 +179,8 @@ ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_community_vpn_exi
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_public_proxy Nullable(Bool) AFTER geoip_is_community_vpn_exit;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_privacy_relay Nullable(Bool) AFTER geoip_is_public_proxy;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_hosting_network Nullable(Bool) AFTER geoip_is_privacy_relay;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_score Nullable(Float64) AFTER geoip_is_hosting_network;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_shared_egress Nullable(Bool) AFTER geoip_is_hosting_network;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_score Nullable(Float64) AFTER geoip_is_shared_egress;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_positive_score Nullable(Float64) AFTER reputation_score;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_negative_score Nullable(Float64) AFTER reputation_positive_score;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_ip_score Nullable(Float64) AFTER reputation_negative_score;

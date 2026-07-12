@@ -30,6 +30,7 @@ const (
 	factIsPublicProxy            = "plugin.environment.geoip." + exchange.FieldIsPublicProxy
 	factIsPrivacyRelay           = "plugin.environment.geoip." + exchange.FieldIsPrivacyRelay
 	factIsHostingNetwork         = "plugin.environment.geoip." + exchange.FieldIsHostingNetwork
+	factIsSharedEgress           = "plugin.environment.geoip." + exchange.FieldIsSharedEgress
 )
 
 type privacyClassFact struct {
@@ -45,6 +46,7 @@ var privacyClassFacts = []privacyClassFact{
 	{class: privacyClassPublicProxy, attribute: factIsPublicProxy, key: exchange.FieldIsPublicProxy},
 	{class: privacyClassRelay, attribute: factIsPrivacyRelay, key: exchange.FieldIsPrivacyRelay},
 	{class: privacyClassHosting, attribute: factIsHostingNetwork, key: exchange.FieldIsHostingNetwork},
+	{class: privacyClassSharedEgress, attribute: factIsSharedEgress, key: exchange.FieldIsSharedEgress},
 }
 
 // enrichPrivacyResult adds privacy facts, public fields, and exchange values to one GeoIP result.
@@ -135,7 +137,7 @@ func addPrivacyEvidenceDetails(result *pluginapi.EnvironmentResult, values map[s
 
 // publicPrivacyLogFields returns only the approved bounded central log surface.
 func publicPrivacyLogFields(lookup privacyLookupResult) []pluginapi.LogField {
-	fields := make([]pluginapi.LogField, 0, 7)
+	fields := make([]pluginapi.LogField, 0, 8)
 	if !privacyClassificationsAvailable(lookup.State) {
 		return fields
 	}

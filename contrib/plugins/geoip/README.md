@@ -68,13 +68,18 @@ The plugin-owned config subtree accepts:
 ### Free network privacy intelligence
 
 `privacy_intelligence` is disabled by default. When enabled, it extends this same environment source with local,
-immutable evidence about Tor exits, known VPN exits, community VPN exits, public proxies, privacy relays, and hosting
-networks. It does not make authentication decisions, and it does not perform network or file I/O while evaluating a
-request. Policy remains the only decision authority.
+immutable evidence about Tor exits, known VPN exits, community VPN exits, public proxies, privacy relays, shared public
+egress, and hosting networks. It does not make authentication decisions, and it does not perform network or file I/O
+while evaluating a request. Policy remains the only decision authority.
 
 VPN coverage is necessarily incomplete. A negative result means that the address was not present in the configured,
 valid snapshots; it is not proof that the client is not using a VPN. Likewise, a hosting or cloud match is only network
 classification. Hosting evidence never implies a VPN match and should not be treated as proof of abuse.
+
+The `shared_egress` class is reserved for operator-approved public prefixes known to represent carrier-grade or managed
+corporate NAT gateways. The plugin does not infer this class from a complete ASN or organization name because those
+signals are too broad to prove address sharing. RFC 6598 `100.64.0.0/10` is provider-internal shared space and normally
+is not the public source observed by an Internet-facing Nauthilus deployment.
 
 The complete example in
 [server/docs/examples/go_plugin_geoip.yml](../../../server/docs/examples/go_plugin_geoip.yml) shows every config group.
@@ -152,7 +157,8 @@ Public request logs are intentionally narrower than policy facts and exchange va
 `policy_fact_geoip_privacy_primary_class`, `policy_fact_geoip_privacy_confidence`,
 `policy_fact_geoip_privacy_data_stale`, `policy_fact_geoip_is_tor_exit_node`,
 `policy_fact_geoip_is_known_vpn_exit`, `policy_fact_geoip_is_public_proxy`, and
-`policy_fact_geoip_is_hosting_network`. They are emitted only for `evaluated` or `stale` state and never include source
+`policy_fact_geoip_is_hosting_network`, and `policy_fact_geoip_is_shared_egress`. They are emitted only for `evaluated`
+or `stale` state and never include source
 IDs, provider names, URLs, license data, override reasons, or raw evidence.
 
 See [server/docs/go_plugins.md](../../../server/docs/go_plugins.md) for operations guidance and
@@ -186,6 +192,7 @@ policy example.
 - `plugin.environment.geoip.is_public_proxy`
 - `plugin.environment.geoip.is_privacy_relay`
 - `plugin.environment.geoip.is_hosting_network`
+- `plugin.environment.geoip.is_shared_egress`
 
 The runtime delta is stored at `plugin.exchange.geoip` and contains only JSON-compatible values. Policy facts remain
 under `plugin.environment.geoip.*` because policy facts are the decision authority, while runtime exchange is the

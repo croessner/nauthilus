@@ -65,6 +65,14 @@ plugins:
               path: /var/lib/nauthilus/privacy/operator-relays.json
               max_age: 24h
               required: false
+            # Shared egress must use operator-reviewed public NAT prefixes;
+            # never classify a complete carrier ASN as shared egress.
+            - id: operator_shared_egress
+              kind: normalized_json
+              authority: operator
+              path: /var/lib/nauthilus/privacy/operator-shared-egress.json
+              max_age: 24h
+              required: false
             # Community data is opt-in and must carry compatible attribution.
             - id: community_vpn
               kind: normalized_json

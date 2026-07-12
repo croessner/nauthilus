@@ -38,6 +38,7 @@ func TestPrivacyPolicyAttributeContract(t *testing.T) {
 		"plugin.environment.geoip.is_public_proxy":            pluginapi.AttributeTypeBool,
 		"plugin.environment.geoip.is_privacy_relay":           pluginapi.AttributeTypeBool,
 		"plugin.environment.geoip.is_hosting_network":         pluginapi.AttributeTypeBool,
+		"plugin.environment.geoip.is_shared_egress":           pluginapi.AttributeTypeBool,
 	}
 
 	definitions := geoIPPolicyAttributes()
@@ -71,6 +72,7 @@ func TestPrivacyEvaluatedNegativeEmitsTriStateFactsAndPreservesGeoIPExchange(t *
 	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.is_known_vpn_exit", false)
 	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.is_public_proxy", false)
 	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.is_hosting_network", false)
+	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.is_shared_egress", false)
 
 	values := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
 	if values[geoValueCountry] != testCountryDE || values[geoValueASN] != 64500 || values[exchange.FieldPrivacyDetected] != false {
@@ -79,6 +81,29 @@ func TestPrivacyEvaluatedNegativeEmitsTriStateFactsAndPreservesGeoIPExchange(t *
 
 	if result.Triggered || result.Abort {
 		t.Fatalf("privacy evidence triggered=%t abort=%t, want false/false", result.Triggered, result.Abort)
+	}
+}
+
+func TestPrivacySharedEgressRemainsPolicyEvidenceOnly(t *testing.T) {
+	result := evaluatePrivacyFixture(t, privacyLookupResult{
+		Classes:      []privacyClass{privacyClassSharedEgress},
+		Authorities:  []privacyAuthority{privacyAuthorityOperator},
+		PrimaryClass: privacyClassSharedEgress,
+		State:        privacyLookupStateEvaluated,
+		Confidence:   90,
+	}, geoRecord{}, true)
+
+	assertPrivacyFact(t, result.Facts, factIsSharedEgress, true)
+	assertPrivacyFact(t, result.Facts, factPrivacyDetected, true)
+	assertLogField(t, result.Logs, "policy_fact_geoip_is_shared_egress", true)
+
+	values := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
+	if values[exchange.FieldIsSharedEgress] != true {
+		t.Fatalf("runtime shared-egress value = %#v, want true", values[exchange.FieldIsSharedEgress])
+	}
+
+	if result.Triggered || result.Abort {
+		t.Fatalf("shared-egress evidence triggered=%t abort=%t, want false/false", result.Triggered, result.Abort)
 	}
 }
 

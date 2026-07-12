@@ -103,6 +103,9 @@ subject_analysis("lua.plugin.geoip_reputation.country_score", "number", "Signed 
 subject_analysis("lua.plugin.geoip_reputation.asn_country_score", "number", "Signed Redis reputation score for the ASN country.")
 subject_analysis("lua.plugin.geoip_reputation.samples", "number", "Largest sample count among tracked GeoIP reputation entities.")
 subject_analysis("lua.plugin.geoip_reputation.decision", "string", "Decision hint derived from GeoIP reputation scores.")
+subject_analysis("lua.plugin.geoip_reputation.preexisting_positive_score", "number", "Highest risky GeoIP reputation score before the current authentication outcome.")
+subject_analysis("lua.plugin.geoip_reputation.preexisting_samples", "number", "Largest GeoIP reputation sample count before the current authentication outcome.")
+subject_analysis("lua.plugin.geoip_reputation.preexisting_decision", "string", "Decision hint derived before the current authentication outcome is learned.")
 
 subject_analysis("lua.plugin.idp_policy.rejected", "bool", "Whether the IdP Lua policy rejected the request.", RESPONSE_MESSAGE_DETAIL)
 subject_analysis("lua.plugin.idp_policy.reason", "string", "Reason returned by the IdP Lua policy.")

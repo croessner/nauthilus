@@ -36,6 +36,7 @@ var privacyColumnContract = []struct {
 	{"GeoIPIsPublicProxy", "geoip_is_public_proxy", "Nullable(Bool)"},
 	{"GeoIPIsPrivacyRelay", "geoip_is_privacy_relay", "Nullable(Bool)"},
 	{"GeoIPIsHostingNetwork", "geoip_is_hosting_network", "Nullable(Bool)"},
+	{"GeoIPIsSharedEgress", "geoip_is_shared_egress", "Nullable(Bool)"},
 }
 
 func TestPrivacyExchangePopulatesEveryJSONEachRowField(t *testing.T) {
@@ -57,6 +58,7 @@ func TestPrivacyExchangePopulatesEveryJSONEachRowField(t *testing.T) {
 				exchange.FieldIsPublicProxy:            false,
 				exchange.FieldIsPrivacyRelay:           false,
 				exchange.FieldIsHostingNetwork:         true,
+				exchange.FieldIsSharedEgress:           true,
 			},
 			exchange.KeyGeoIPReputation: map[string]any{"score": 0.25},
 		},
@@ -205,6 +207,7 @@ func completePrivacyFacts() []pluginapi.PolicyFact {
 		{exchange.FieldIsPublicProxy, false},
 		{exchange.FieldIsPrivacyRelay, false},
 		{exchange.FieldIsHostingNetwork, true},
+		{exchange.FieldIsSharedEgress, true},
 	}
 
 	facts := make([]pluginapi.PolicyFact, 0, len(values))
@@ -233,6 +236,7 @@ func assertCompletePrivacyRow(t *testing.T, row map[string]any) {
 	assertBoolField(t, row, "geoip_is_public_proxy", false)
 	assertBoolField(t, row, "geoip_is_privacy_relay", false)
 	assertBoolField(t, row, "geoip_is_hosting_network", true)
+	assertBoolField(t, row, "geoip_is_shared_egress", true)
 }
 
 // assertStringSliceField checks a non-null JSON string array.

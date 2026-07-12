@@ -47,7 +47,8 @@ SELECT
   geoip_is_tor_exit_node,
   geoip_is_known_vpn_exit,
   geoip_is_public_proxy,
-  geoip_is_hosting_network
+  geoip_is_hosting_network,
+  geoip_is_shared_egress
 FROM nauthilus.logins
 WHERE ts >= now() - INTERVAL 1 HOUR
 ORDER BY ts DESC
@@ -66,7 +67,9 @@ It is built for the official Grafana ClickHouse data source (`grafana-clickhouse
 - Outcome and performance trends by time bucket, HTTP status class, protocol, and authentication method.
 - Identity and source-risk views for failed identities, source IPs, a country outcome world map, country rankings, known-vs-unknown users, and user agents.
 - GeoIP reputation views for reputation decisions over time, score percentiles, hot source IPs, and ASN/country aggregates.
-- Network privacy intelligence views for Tor, known/community VPN, public proxy, privacy relay, hosting-network, stale-evidence, and recent attributed-request analytics. Hosting remains separate from VPN evidence.
+- Network privacy intelligence views for Tor, known/community VPN, public proxy, privacy relay, hosting-network,
+  stale-evidence, and recent attributed-request analytics. Shared-egress evidence is stored in its dedicated nullable
+  column for policy and custom dashboard queries. Hosting remains separate from VPN evidence.
 - Defense-signal views for decision sources, account protection, dynamic response, brute-force buckets, repeat/replay markers, and OIDC/SAML client activity.
 - Investigation tables for recent high-risk events and the recent login stream.
 

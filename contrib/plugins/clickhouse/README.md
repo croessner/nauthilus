@@ -57,7 +57,7 @@ The typed columns are `geoip_privacy_lookup_state`, `geoip_privacy_detected`, `g
 `geoip_privacy_primary_class`, `geoip_privacy_confidence`, `geoip_privacy_source_authorities`,
 `geoip_privacy_data_stale`, `geoip_privacy_data_age_seconds`, `geoip_is_tor_exit_node`,
 `geoip_is_known_vpn_exit`, `geoip_is_community_vpn_exit`, `geoip_is_public_proxy`, `geoip_is_privacy_relay`, and
-`geoip_is_hosting_network`. Unavailable scalar values remain SQL `NULL`; missing class and authority lists remain
+`geoip_is_hosting_network`, and `geoip_is_shared_egress`. Unavailable scalar values remain SQL `NULL`; missing class and authority lists remain
 non-null empty arrays. Bounded mapping diagnostics contain only malformed field names and never raw values.
 
 Apply and verify the additive privacy columns from `contrib/clickhouse-kubernetes/schema.sql` before deploying a plugin

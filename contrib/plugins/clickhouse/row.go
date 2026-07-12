@@ -107,6 +107,7 @@ type clickHouseRow struct {
 	GeoIPIsPublicProxy            *bool    `json:"geoip_is_public_proxy"`
 	GeoIPIsPrivacyRelay           *bool    `json:"geoip_is_privacy_relay"`
 	GeoIPIsHostingNetwork         *bool    `json:"geoip_is_hosting_network"`
+	GeoIPIsSharedEgress           *bool    `json:"geoip_is_shared_egress"`
 	ReputationScore               *float64 `json:"reputation_score"`
 	ReputationPositiveScore       *float64 `json:"reputation_positive_score"`
 	ReputationNegativeScore       *float64 `json:"reputation_negative_score"`
@@ -213,6 +214,7 @@ func applyGeoIPPrivacyInfo(row *clickHouseRow, info exchange.GeoIPAnalytics) {
 	row.GeoIPIsPublicProxy = privacy.IsPublicProxy
 	row.GeoIPIsPrivacyRelay = privacy.IsPrivacyRelay
 	row.GeoIPIsHostingNetwork = privacy.IsHostingNetwork
+	row.GeoIPIsSharedEgress = privacy.IsSharedEgress
 }
 
 // applyFailedLoginInfo copies standard failed-login hotspot details.

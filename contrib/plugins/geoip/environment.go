@@ -359,6 +359,7 @@ func geoIPPolicyAttributes() []pluginapi.AttributeDefinition {
 		environmentAttribute(factIsPublicProxy, pluginapi.AttributeTypeBool, "Whether attributed public proxy evidence matched.", operations),
 		environmentAttribute(factIsPrivacyRelay, pluginapi.AttributeTypeBool, "Whether another attributed privacy relay matched.", operations),
 		environmentAttribute(factIsHostingNetwork, pluginapi.AttributeTypeBool, "Whether hosting or cloud network evidence matched.", operations),
+		environmentAttribute(factIsSharedEgress, pluginapi.AttributeTypeBool, "Whether operator-approved shared public egress evidence matched.", operations),
 	}
 }
 

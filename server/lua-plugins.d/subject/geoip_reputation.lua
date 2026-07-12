@@ -247,21 +247,46 @@ local function decision_from_scores(positive_score, negative_score)
     return "neutral"
 end
 
-local function emit_reputation(scores, aggregate_score, positive_score, negative_score, max_samples, decision)
-    policy_facts.emit_many(N, {
+-- reputation_snapshot builds one immutable policy view from Redis results.
+local function reputation_snapshot(entities, results)
+    local scores, _, aggregate_score, positive_score, negative_score, max_samples = compute_entity_scores(entities, results)
+
+    return {
+        scores = scores,
         score = aggregate_score,
         positive_score = positive_score,
         negative_score = negative_score,
-        ip_score = scores.ip or 0,
-        asn_score = scores.asn or 0,
-        country_score = scores.country or 0,
-        asn_country_score = scores.asn_country or 0,
         samples = max_samples,
-        decision = decision,
+        decision = decision_from_scores(positive_score, negative_score),
+    }
+end
+
+-- emit_preexisting_reputation exposes only the fields needed for current-attempt-independent policy.
+local function emit_preexisting_reputation(snapshot)
+    policy_facts.emit_many(N, {
+        preexisting_positive_score = snapshot.positive_score,
+        preexisting_samples = snapshot.samples,
+        preexisting_decision = snapshot.decision,
     })
 end
 
-local function store_runtime_reputation(scores, aggregate_score, positive_score, negative_score, max_samples, decision)
+-- emit_reputation preserves the established post-update policy fact contract.
+local function emit_reputation(snapshot)
+    policy_facts.emit_many(N, {
+        score = snapshot.score,
+        positive_score = snapshot.positive_score,
+        negative_score = snapshot.negative_score,
+        ip_score = snapshot.scores.ip or 0,
+        asn_score = snapshot.scores.asn or 0,
+        country_score = snapshot.scores.country or 0,
+        asn_country_score = snapshot.scores.asn_country or 0,
+        samples = snapshot.samples,
+        decision = snapshot.decision,
+    })
+end
+
+-- store_runtime_reputation preserves post-update analytics for later actions.
+local function store_runtime_reputation(snapshot)
     local rt = nauthilus_context.context_get("rt") or {}
     if type(rt) ~= "table" then
         rt = {}
@@ -269,15 +294,15 @@ local function store_runtime_reputation(scores, aggregate_score, positive_score,
 
     rt.geoip_reputation = {
         source = "redis",
-        score = aggregate_score,
-        positive_score = positive_score,
-        negative_score = negative_score,
-        ip_score = scores.ip or 0,
-        asn_score = scores.asn or 0,
-        country_score = scores.country or 0,
-        asn_country_score = scores.asn_country or 0,
-        samples = max_samples,
-        decision = decision,
+        score = snapshot.score,
+        positive_score = snapshot.positive_score,
+        negative_score = snapshot.negative_score,
+        ip_score = snapshot.scores.ip or 0,
+        asn_score = snapshot.scores.asn or 0,
+        country_score = snapshot.scores.country or 0,
+        asn_country_score = snapshot.scores.asn_country or 0,
+        samples = snapshot.samples,
+        decision = snapshot.decision,
     }
 
     nauthilus_context.context_set("rt", rt)
@@ -301,24 +326,27 @@ function nauthilus_call_subject(request)
     end
 
     local pool = resolve_redis_pool()
+    local preexisting_results = read_entity_counts(pool, entities)
+    local preexisting = reputation_snapshot(entities, preexisting_results)
+    emit_preexisting_reputation(preexisting)
+
     update_entity_counts(pool, entities, outcome)
 
     local results = read_entity_counts(pool, entities)
-    local scores, _, aggregate_score, positive_score, negative_score, max_samples = compute_entity_scores(entities, results)
-    local decision = decision_from_scores(positive_score, negative_score)
+    local current = reputation_snapshot(entities, results)
 
-    emit_reputation(scores, aggregate_score, positive_score, negative_score, max_samples, decision)
-    store_runtime_reputation(scores, aggregate_score, positive_score, negative_score, max_samples, decision)
+    emit_reputation(current)
+    store_runtime_reputation(current)
 
     nauthilus_util.log_info(request, {
         caller = N .. ".lua",
         message = "GeoIP reputation updated",
         outcome = outcome,
-        score = aggregate_score,
-        positive_score = positive_score,
-        negative_score = negative_score,
-        decision = decision,
-        samples = max_samples,
+        score = current.score,
+        positive_score = current.positive_score,
+        negative_score = current.negative_score,
+        decision = current.decision,
+        samples = current.samples,
     })
 
     return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK

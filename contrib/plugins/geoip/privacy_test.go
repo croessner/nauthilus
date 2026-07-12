@@ -79,6 +79,21 @@ func TestPrivacyConfigRejectsUnimplementedDestinationMetadata(t *testing.T) {
 	}
 }
 
+func TestNormalizedPrivacySnapshotAcceptsSharedEgressClass(t *testing.T) {
+	raw := []byte(`{"schema_version":1,"source":{"id":"operator_shared_egress","authority":"operator","generated_at":"2026-07-11T12:00:00Z"},"entries":[{"network":"203.0.113.0/24","classes":["shared_egress"],"confidence":90}]}`)
+	config := privacySourceConfig{ID: "operator_shared_egress", Kind: privacySourceKindNormalized, Authority: privacyAuthorityOperator, MaxAge: 24 * time.Hour, MaxEntries: 10}
+
+	snapshot, err := parseNormalizedPrivacySnapshot(raw, config, mustPrivacyTime(t, testPrivacyNow))
+	if err != nil {
+		t.Fatalf("parseNormalizedPrivacySnapshot() error = %v", err)
+	}
+
+	evidence := newPrivacyLookupIndex([]privacySnapshot{snapshot}).Lookup(netip.MustParseAddr("203.0.113.7"))
+	if len(evidence) != 1 || evidence[0].Class != privacyClassSharedEgress {
+		t.Fatalf("shared-egress evidence = %#v", evidence)
+	}
+}
+
 func TestNormalizedPrivacySnapshotAndPrefixLookup(t *testing.T) {
 	now := mustPrivacyTime(t, testPrivacyNow)
 	raw := []byte(`{

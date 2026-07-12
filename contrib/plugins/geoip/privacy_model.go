@@ -27,6 +27,7 @@ const (
 	privacyClassPublicProxy  privacyClass = "public_proxy"
 	privacyClassRelay        privacyClass = "privacy_relay"
 	privacyClassCommunityVPN privacyClass = "community_vpn_exit"
+	privacyClassSharedEgress privacyClass = "shared_egress"
 	privacyClassHosting      privacyClass = "hosting"
 )
 
@@ -36,6 +37,7 @@ var privacyClassOrder = []privacyClass{
 	privacyClassPublicProxy,
 	privacyClassRelay,
 	privacyClassCommunityVPN,
+	privacyClassSharedEgress,
 	privacyClassHosting,
 }
 
