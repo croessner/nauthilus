@@ -4561,15 +4561,28 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "avg by (service,task) (irate(function_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\",service=\"action\"}[1m]) / irate(function_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\",service=\"action\"}[1m]) > 0)",
+          "expr": "sum(rate(post_action_plan_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval])) / clamp_min(sum(rate(post_action_plan_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval])), 1e-9)",
           "hide": false,
           "instant": false,
-          "legendFormat": "{{service}} {{task}}",
+          "legendFormat": "average",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(post_action_plan_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval])))",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "p95",
+          "range": true,
+          "refId": "B"
         }
       ],
-      "title": "Request timings actions, post actions Lua (builtin)",
+      "title": "Complete detached post-processing duration",
       "type": "timeseries"
     },
     {

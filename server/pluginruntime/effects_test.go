@@ -17,6 +17,8 @@ import (
 	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
 	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 const (
@@ -651,6 +653,63 @@ func TestEffectBridgeRecoversPostActionPanic(t *testing.T) {
 	if !observer.sawPanic(effectPostActionName, "Enqueue") {
 		t.Fatalf("observer records = %#v, want post-action panic", observer.records)
 	}
+}
+
+func TestEffectBridgeRecordsPostActionPlanDuration(t *testing.T) {
+	metrics := newPostActionPlanTestMetrics()
+	bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+		return registrar.RegisterPostActionTarget(&fakePostActionTarget{called: make(chan struct{})})
+	})
+	bridge.planObserver = metrics
+
+	plan := postActionPlan{
+		requestContext: context.Background(),
+		executionDone:  closedPostActionExecutionGate(),
+		steps: []postActionPlanStep{{
+			kind:          core.PostActionPlanStepNative,
+			qualifiedName: effectPostActionQualified,
+		}},
+	}
+
+	if err := bridge.runPostActionPlan(context.Background(), plan); err != nil {
+		t.Fatalf("runPostActionPlan() error = %v", err)
+	}
+
+	metric := &dto.Metric{}
+	if err := metrics.duration.WithLabelValues(pluginCallResultOK).(prometheus.Metric).Write(metric); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	if got := metric.GetHistogram().GetSampleCount(); got != 1 {
+		t.Fatalf("post-action plan observations = %v, want 1", got)
+	}
+}
+
+type postActionPlanTestMetrics struct {
+	duration *prometheus.HistogramVec
+}
+
+// newPostActionPlanTestMetrics creates an isolated post-action plan histogram.
+func newPostActionPlanTestMetrics() *postActionPlanTestMetrics {
+	return &postActionPlanTestMetrics{
+		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "test_post_action_plan_duration_seconds",
+			Help: "Test post-action plan duration.",
+		}, []string{"result"}),
+	}
+}
+
+// Observe records one test observation using the production result shape.
+func (m *postActionPlanTestMetrics) Observe(duration time.Duration, result string) {
+	m.duration.WithLabelValues(result).Observe(duration.Seconds())
+}
+
+// closedPostActionExecutionGate returns an already completed response gate.
+func closedPostActionExecutionGate() <-chan struct{} {
+	done := make(chan struct{})
+	close(done)
+
+	return done
 }
 
 func newEffectTestBridge(t *testing.T, register func(pluginapi.Registrar) error, options ...Option) *EffectBridge {

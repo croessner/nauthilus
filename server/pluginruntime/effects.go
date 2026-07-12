@@ -28,12 +28,16 @@ var _ core.PluginEffectBridge = (*EffectBridge)(nil)
 
 // EffectBridge adapts policy-selected native plugin effects into core.
 type EffectBridge struct {
-	runner *Runner
+	runner       *Runner
+	planObserver postActionPlanObserver
 }
 
 // NewEffectBridge returns an effect bridge bound to one plugin runner.
 func NewEffectBridge(runner *Runner) *EffectBridge {
-	return &EffectBridge{runner: runner}
+	return &EffectBridge{
+		runner:       runner,
+		planObserver: newPostActionPlanObserver(),
+	}
 }
 
 // IsPostActionEffect reports whether a policy effect resolves to a native post-action target.
@@ -361,8 +365,11 @@ func (b *EffectBridge) runPostActionPlan(ctx context.Context, plan postActionPla
 	planCtx, planSpan := tr.Start(ctx, "auth.post_action.plan",
 		attribute.Int("post_action.steps", len(plan.steps)),
 	)
+	startedAt := time.Now()
 
 	defer func() {
+		b.planObserver.Observe(time.Since(startedAt), pluginCallResult(CallRecord{Err: err}))
+
 		if err != nil {
 			planSpan.RecordError(err)
 			planSpan.SetStatus(codes.Error, "post-action plan failed")
