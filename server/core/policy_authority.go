@@ -25,7 +25,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/policy/evaluation"
 	"github.com/croessner/nauthilus/v3/server/policy/observability"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -37,13 +36,11 @@ const (
 	policySkipPreAuthChecksContextKey         = "policy_skip_pre_auth_checks"
 )
 
-type configuredDecisionEvaluator func(context.Context, *policyruntime.Snapshot, *report.DecisionReport, evaluation.CompareInput) evaluation.Result
-
 type configuredDecisionResolver struct {
 	authoritative func(*policycollection.DecisionContext) bool
 	load          func(*gin.Context) (*report.FinalDecision, bool)
 	store         func(*gin.Context, *report.FinalDecision)
-	evaluate      configuredDecisionEvaluator
+	evaluate      func(*policycollection.DecisionContext, context.Context, evaluation.CompareInput) evaluation.Result
 }
 
 func (a *AuthState) defaultPolicyPreAuthResult(ctx *gin.Context, current definitions.AuthResult) definitions.AuthResult {
@@ -225,7 +222,7 @@ func (a *AuthState) configuredPolicyPreAuthDecision(ctx *gin.Context) (*report.F
 		},
 		load:     configuredPreAuthDecisionFromContext,
 		store:    storeConfiguredPreAuthDecision,
-		evaluate: evaluation.EvaluateConfiguredPreAuth,
+		evaluate: (*policycollection.DecisionContext).EvaluateConfiguredPreAuth,
 	})
 }
 
@@ -236,7 +233,7 @@ func (a *AuthState) configuredPolicyAuthDecision(ctx *gin.Context) (*report.Fina
 		},
 		load:     configuredAuthDecisionFromContext,
 		store:    storeConfiguredAuthDecision,
-		evaluate: evaluation.EvaluateConfiguredAuth,
+		evaluate: (*policycollection.DecisionContext).EvaluateConfiguredAuth,
 	})
 }
 
@@ -252,7 +249,7 @@ func (a *AuthState) configuredPolicyDecision(ctx *gin.Context, resolver configur
 
 	mode, defaultPolicy, generation := policyCtx.SnapshotMetadata()
 
-	result := resolver.evaluate(contextFromGin(ctx), policyCtx.Snapshot(), policyCtx.Report(), evaluation.CompareInput{
+	result := resolver.evaluate(policyCtx, contextFromGin(ctx), evaluation.CompareInput{
 		Mode:       mode,
 		Set:        defaultPolicy,
 		Generation: generation,

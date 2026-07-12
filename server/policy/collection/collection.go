@@ -85,6 +85,14 @@ type CheckSelector struct {
 	ConfigRef string
 }
 
+// configuredDecisionEvaluator evaluates configured policy against request-owned state.
+type configuredDecisionEvaluator func(
+	context.Context,
+	*policyruntime.Snapshot,
+	*report.DecisionReport,
+	evaluation.CompareInput,
+) evaluation.Result
+
 // DecisionContext stores request-local collected policy facts.
 type DecisionContext struct {
 	snapshot *policyruntime.Snapshot
@@ -122,13 +130,45 @@ func (c *DecisionContext) Report() *report.DecisionReport {
 	return c.report
 }
 
-// Snapshot returns the runtime snapshot captured for this request.
-func (c *DecisionContext) Snapshot() *policyruntime.Snapshot {
-	if c == nil || c.snapshot == nil {
-		return nil
+// evaluateConfigured runs one internal evaluator against the captured request state.
+func (c *DecisionContext) evaluateConfigured(
+	ctx context.Context,
+	evaluator configuredDecisionEvaluator,
+	input evaluation.CompareInput,
+) evaluation.Result {
+	if c == nil || c.snapshot == nil || c.report == nil || evaluator == nil {
+		return evaluation.Result{}
 	}
 
-	return c.snapshot.Clone()
+	return evaluator(ctx, c.snapshot, c.report, input)
+}
+
+// EvaluateConfiguredPreAuth evaluates configured pre-auth policy against the captured request state.
+func (c *DecisionContext) EvaluateConfiguredPreAuth(ctx context.Context, input evaluation.CompareInput) evaluation.Result {
+	return c.evaluateConfigured(ctx, evaluation.EvaluateConfiguredPreAuth, input)
+}
+
+// EvaluateConfiguredAuth evaluates configured final policy against the captured request state.
+func (c *DecisionContext) EvaluateConfiguredAuth(ctx context.Context, input evaluation.CompareInput) evaluation.Result {
+	return c.evaluateConfigured(ctx, evaluation.EvaluateConfiguredAuth, input)
+}
+
+// CompareCustomObserve compares configured observe policy against the captured request state.
+func (c *DecisionContext) CompareCustomObserve(ctx context.Context, input evaluation.CompareInput) evaluation.CompareResult {
+	if c == nil || c.snapshot == nil || c.report == nil {
+		return evaluation.CompareResult{}
+	}
+
+	return evaluation.CompareCustomObserve(ctx, c.snapshot, c.report, input)
+}
+
+// ReportSettings returns the immutable report settings captured for this request.
+func (c *DecisionContext) ReportSettings() policyruntime.ReportSettings {
+	if c == nil || c.snapshot == nil {
+		return policyruntime.ReportSettings{}
+	}
+
+	return c.snapshot.Report
 }
 
 // AttributeDefinition returns one detached definition from the request snapshot.

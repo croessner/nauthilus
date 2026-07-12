@@ -541,11 +541,6 @@ func pluginEffectFacts(policyCtx *policycollection.DecisionContext) ([]pluginapi
 		return nil, nil
 	}
 
-	snapshot := policyCtx.Snapshot()
-	if snapshot == nil || len(snapshot.AttributeRegistry) == 0 {
-		return nil, nil
-	}
-
 	attributeIDs := make([]string, 0, len(report.Attributes))
 	for attributeID := range report.Attributes {
 		attributeIDs = append(attributeIDs, attributeID)
@@ -557,7 +552,7 @@ func pluginEffectFacts(policyCtx *policycollection.DecisionContext) ([]pluginapi
 	for _, attributeID := range attributeIDs {
 		value := report.Attributes[attributeID]
 
-		definition, ok := snapshot.AttributeRegistry[attributeID]
+		definition, ok := policyCtx.AttributeDefinition(attributeID)
 		if !ok || !pluginEffectFactSource(definition.Source) {
 			continue
 		}

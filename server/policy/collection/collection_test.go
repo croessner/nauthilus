@@ -20,8 +20,10 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/evaluation"
 	"github.com/croessner/nauthilus/v3/server/policy/observability"
 	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
+	"github.com/croessner/nauthilus/v3/server/policy/report"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
@@ -103,6 +105,108 @@ func TestDecisionContextReturnsDetachedAttributeDefinition(t *testing.T) {
 
 	if _, exists := ctx.AttributeDefinition("lua.plugin.test.missing"); exists {
 		t.Fatal("missing attribute definition reported as registered")
+	}
+}
+
+func TestDecisionContextEvaluatesConfiguredWithCapturedState(t *testing.T) {
+	snapshot := testSnapshot()
+	ctx := NewDecisionContext(snapshot, policy.OperationAuthenticate, nil)
+	wantReport := ctx.Report()
+	calls := 0
+
+	evaluator := configuredDecisionEvaluator(func(
+		_ context.Context,
+		gotSnapshot *policyruntime.Snapshot,
+		gotReport *report.DecisionReport,
+		input evaluation.CompareInput,
+	) evaluation.Result {
+		calls++
+
+		if gotSnapshot != snapshot {
+			t.Fatal("configured evaluator did not receive the captured snapshot")
+		}
+
+		if gotReport != wantReport {
+			t.Fatal("configured evaluator did not receive the request report")
+		}
+
+		if input.Generation != snapshot.Generation {
+			t.Fatalf("generation = %d, want %d", input.Generation, snapshot.Generation)
+		}
+
+		return evaluation.Result{Mismatch: true}
+	})
+
+	result := ctx.evaluateConfigured(context.Background(), evaluator, evaluation.CompareInput{Generation: snapshot.Generation})
+	if !result.Mismatch {
+		t.Fatal("configured evaluator result was not returned")
+	}
+
+	if calls != 1 {
+		t.Fatalf("configured evaluator calls = %d, want 1", calls)
+	}
+}
+
+func TestDecisionContextConfiguredEvaluationAllocatesNothing(t *testing.T) {
+	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, nil)
+	evaluator := configuredDecisionEvaluator(func(
+		context.Context,
+		*policyruntime.Snapshot,
+		*report.DecisionReport,
+		evaluation.CompareInput,
+	) evaluation.Result {
+		return evaluation.Result{}
+	})
+	background := context.Background()
+	input := evaluation.CompareInput{}
+
+	allocations := testing.AllocsPerRun(1000, func() {
+		ctx.evaluateConfigured(background, evaluator, input)
+	})
+	if allocations != 0 {
+		t.Fatalf("configured evaluation allocations = %.2f, want 0", allocations)
+	}
+}
+
+func TestDecisionContextNarrowSnapshotOperationsHandleMissingState(t *testing.T) {
+	var nilContext *DecisionContext
+
+	if result := nilContext.evaluateConfigured(context.Background(), nil, evaluation.CompareInput{}); result != (evaluation.Result{}) {
+		t.Fatalf("nil context configured result = %#v, want empty", result)
+	}
+
+	ctx := NewDecisionContext(nil, policy.OperationAuthenticate, nil)
+	if result := ctx.evaluateConfigured(context.Background(), nil, evaluation.CompareInput{}); result != (evaluation.Result{}) {
+		t.Fatalf("nil evaluator configured result = %#v, want empty", result)
+	}
+
+	if result := ctx.CompareCustomObserve(context.Background(), evaluation.CompareInput{}); result != (evaluation.CompareResult{}) {
+		t.Fatalf("missing snapshot observe result = %#v, want empty", result)
+	}
+
+	if settings := nilContext.ReportSettings(); settings != (policyruntime.ReportSettings{}) {
+		t.Fatalf("nil context report settings = %#v, want empty", settings)
+	}
+}
+
+func TestDecisionContextReturnsReportSettingsByValue(t *testing.T) {
+	snapshot := testSnapshot()
+	snapshot.Report = policyruntime.ReportSettings{
+		Enabled:           true,
+		IncludeFSM:        true,
+		IncludeChecks:     true,
+		IncludeAttributes: true,
+	}
+	ctx := NewDecisionContext(snapshot, policy.OperationAuthenticate, nil)
+
+	settings := ctx.ReportSettings()
+	if settings != snapshot.Report {
+		t.Fatalf("report settings = %#v, want %#v", settings, snapshot.Report)
+	}
+
+	settings.Enabled = false
+	if !snapshot.Report.Enabled {
+		t.Fatal("mutating returned report settings changed the captured snapshot")
 	}
 }
 

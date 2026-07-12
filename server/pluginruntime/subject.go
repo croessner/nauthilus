@@ -687,16 +687,11 @@ func pluginPolicyFactAttributesForStage(
 		return nil, err
 	}
 
-	snapshot := policyCtx.Snapshot()
-	if snapshot == nil {
-		return nil, nil
-	}
-
 	operation := policyCtx.Report().Operation
 	attributes := make([]policycollection.AttributeValue, 0, len(validated))
 
 	for _, fact := range validated {
-		definition, ok := snapshot.AttributeRegistry[fact.Attribute]
+		definition, ok := policyCtx.AttributeDefinition(fact.Attribute)
 		if !ok {
 			return nil, fmt.Errorf("%w: unknown policy fact %q", ErrInvalidRuntimeKey, fact.Attribute)
 		}

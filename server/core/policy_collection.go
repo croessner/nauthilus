@@ -238,7 +238,7 @@ func (a *AuthState) observeConfiguredPolicyDecision(ctx *gin.Context) {
 	}
 
 	mode, defaultPolicy, generation := policyCtx.SnapshotMetadata()
-	result := evaluation.CompareCustomObserve(contextFromGin(ctx), policyCtx.Snapshot(), policyCtx.Report(), evaluation.CompareInput{
+	result := policyCtx.CompareCustomObserve(contextFromGin(ctx), evaluation.CompareInput{
 		Mode:       mode,
 		Set:        defaultPolicy,
 		Generation: generation,

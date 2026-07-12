@@ -48,8 +48,8 @@ func (a *AuthState) emitPolicyReport(
 		return
 	}
 
-	snapshot := policyCtx.Snapshot()
-	if snapshot == nil || !snapshot.Report.Enabled {
+	settings := policyCtx.ReportSettings()
+	if !settings.Enabled {
 		return
 	}
 
@@ -65,7 +65,7 @@ func (a *AuthState) emitPolicyReport(
 		"snapshot_generation", generation,
 		"policy_mode", mode,
 		"policy_set", defaultPolicy,
-		"policy_report", newPolicyDiagnosticReport(policyCtx.Report(), snapshot.Report),
+		"policy_report", newPolicyDiagnosticReport(policyCtx.Report(), settings),
 	)
 }
 
