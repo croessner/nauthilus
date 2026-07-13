@@ -41,6 +41,18 @@ const (
 	BackendAuthMechanismBasic = "BASIC"
 )
 
+// BackendTLSMode selects how a backend health-check target establishes TLS.
+type BackendTLSMode string
+
+const (
+	// BackendTLSModePlain keeps the backend connection unencrypted.
+	BackendTLSModePlain BackendTLSMode = "plain"
+	// BackendTLSModeImplicit starts TLS immediately after the optional PROXY preface.
+	BackendTLSModeImplicit BackendTLSMode = "implicit"
+	// BackendTLSModeStartTLS upgrades the application protocol before authentication.
+	BackendTLSModeStartTLS BackendTLSMode = "starttls"
+)
+
 // RelayDomainsSection describes the exported RelayDomainsSection type.
 type RelayDomainsSection struct {
 	SoftWhitelist SoftWhitelist `mapstructure:"allowlist"`
@@ -77,9 +89,10 @@ func (r *RelayDomainsSection) GetSoftWhitelist() SoftWhitelist {
 
 // BackendServer describes the exported BackendServer type.
 type BackendServer struct {
-	Protocol      string `mapstructure:"protocol" validate:"required,oneof=imap pop3 lmtp smtp sieve http"`
-	Host          string `mapstructure:"host" validate:"required,hostname_rfc1123_with_opt_trailing_dot|ip"`
-	AuthMechanism string `mapstructure:"auth_mechanism" validate:"omitempty,oneof=auto PLAIN LOGIN USERPASS BASIC"`
+	Protocol      string         `mapstructure:"protocol" validate:"required,oneof=imap pop3 lmtp smtp sieve http"`
+	Host          string         `mapstructure:"host" validate:"required,hostname_rfc1123_with_opt_trailing_dot|ip"`
+	AuthMechanism string         `mapstructure:"auth_mechanism" validate:"omitempty,oneof=auto PLAIN LOGIN USERPASS BASIC"`
+	TLSMode       BackendTLSMode `mapstructure:"tls_mode" validate:"omitempty,oneof=plain implicit starttls"`
 
 	RequestURI   string `mapstructure:"request_uri" validate:"omitempty,url_encoded"`
 	TestUsername string `mapstructure:"test_username" validate:"omitempty,excludesall= "`
@@ -101,8 +114,8 @@ func (n *BackendServer) String() string {
 		return "BackendServer: <nil>"
 	}
 
-	return fmt.Sprintf("BackendServer: {Protocol: %s, Host: %s, AuthMechanism: %s, RequestURI: %s, TestUsername: %s, TestPassword: <hidden>, Port: %d, TLS: %t, TLSSkipVerify: %t, HAProxyV2: %t}",
-		n.Protocol, n.Host, n.GetAuthMechanism(), n.RequestURI, n.TestUsername, n.Port, n.TLS, n.TLSSkipVerify, n.HAProxyV2)
+	return fmt.Sprintf("BackendServer: {Protocol: %s, Host: %s, AuthMechanism: %s, TLSMode: %s, RequestURI: %s, TestUsername: %s, TestPassword: <hidden>, Port: %d, TLS: %t, TLSSkipVerify: %t, HAProxyV2: %t}",
+		n.Protocol, n.Host, n.GetAuthMechanism(), n.GetTLSMode(), n.RequestURI, n.TestUsername, n.Port, n.TLS, n.TLSSkipVerify, n.HAProxyV2)
 }
 
 // GetProtocol retrieves the protocol value from the BackendServer.
@@ -151,6 +164,67 @@ func (n *BackendServer) normalizeAuthMechanism() {
 	}
 
 	n.AuthMechanism = n.GetAuthMechanism()
+}
+
+// GetTLSMode resolves the explicit mode and compatible legacy defaults.
+func (n *BackendServer) GetTLSMode() BackendTLSMode {
+	if n == nil {
+		return BackendTLSModePlain
+	}
+
+	if n.TLSMode != "" {
+		return NormalizeBackendTLSMode(n.TLSMode)
+	}
+
+	if n.TLS {
+		return BackendTLSModeImplicit
+	}
+
+	if strings.EqualFold(n.Protocol, "sieve") {
+		return BackendTLSModeStartTLS
+	}
+
+	return BackendTLSModePlain
+}
+
+// NormalizeBackendTLSMode canonicalizes backend health-check TLS modes.
+func NormalizeBackendTLSMode(mode BackendTLSMode) BackendTLSMode {
+	return BackendTLSMode(strings.ToLower(strings.TrimSpace(string(mode))))
+}
+
+// normalizeTLSMode stores a canonical explicit TLS mode without materializing legacy defaults.
+func (n *BackendServer) normalizeTLSMode() {
+	if n == nil || n.TLSMode == "" {
+		return
+	}
+
+	n.TLSMode = NormalizeBackendTLSMode(n.TLSMode)
+}
+
+// validateTLSMode enforces protocol and legacy compatibility for one target.
+func (n *BackendServer) validateTLSMode() error {
+	if n == nil {
+		return nil
+	}
+
+	mode := n.GetTLSMode()
+	if n.TLS && n.TLSMode != "" && mode != BackendTLSModeImplicit {
+		return fmt.Errorf("tls: true conflicts with tls_mode %q", mode)
+	}
+
+	if mode != BackendTLSModeStartTLS {
+		return nil
+	}
+
+	if strings.EqualFold(n.Protocol, "http") {
+		return fmt.Errorf("protocol http does not support tls_mode %q", mode)
+	}
+
+	if !n.DeepCheck {
+		return fmt.Errorf("tls_mode %q requires deep_check: true", mode)
+	}
+
+	return nil
 }
 
 // IsDeepCheck checks if deep checking is enabled for the BackendServer.

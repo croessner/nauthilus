@@ -17,7 +17,6 @@ package monitoring
 
 import (
 	"bufio"
-	"crypto/tls"
 	stderrors "errors"
 	"fmt"
 	"log/slog"
@@ -47,6 +46,13 @@ type capabilityAuthSession interface {
 	authenticate(AuthSelection) error
 }
 
+// startTLSAuthSession supplies protocol-specific upgrade commands to the shared TLS flow.
+type startTLSAuthSession interface {
+	requireStartTLS(AuthCapabilities) error
+	requestStartTLS() error
+	useConnection(net.Conn)
+}
+
 // capabilityAuthCheck runs the common greeting, capability discovery, TLS, and auth selection flow.
 type capabilityAuthCheck struct {
 	session capabilityAuthSession
@@ -54,11 +60,15 @@ type capabilityAuthCheck struct {
 	server  *config.BackendServer
 	conn    net.Conn
 	logout  string
+	tls     *backendTLSHandshaker
 }
 
 // Check executes a capability-driven protocol health check with a best-effort logout.
 func (c capabilityAuthCheck) Check() error {
-	defer writeProtocolLine(c.conn, c.logout)
+	conn := c.conn
+	defer func() {
+		writeProtocolLine(conn, c.logout)
+	}()
 
 	if err := c.session.readGreeting(); err != nil {
 		return err
@@ -69,11 +79,18 @@ func (c capabilityAuthCheck) Check() error {
 		return err
 	}
 
+	if c.server.GetTLSMode() == config.BackendTLSModeStartTLS {
+		conn, capabilities, err = c.upgradeStartTLS(capabilities)
+		if err != nil {
+			return err
+		}
+	}
+
 	if !hasBackendCredentials(c.server) {
 		return nil
 	}
 
-	if err := requireAuthTLS(c.logger, c.conn, strings.ToLower(c.server.Protocol)); err != nil {
+	if err := requireAuthTLS(c.logger, conn, strings.ToLower(c.server.Protocol)); err != nil {
 		return err
 	}
 
@@ -83,6 +100,36 @@ func (c capabilityAuthCheck) Check() error {
 	}
 
 	return c.session.authenticate(selection)
+}
+
+// upgradeStartTLS coordinates the protocol command, TLS handshake, and protected capability refresh.
+func (c capabilityAuthCheck) upgradeStartTLS(capabilities AuthCapabilities) (net.Conn, AuthCapabilities, error) {
+	startTLSSession, ok := c.session.(startTLSAuthSession)
+	if !ok {
+		return nil, AuthCapabilities{}, fmt.Errorf("protocol %s does not implement STARTTLS", c.server.Protocol)
+	}
+
+	if err := startTLSSession.requireStartTLS(capabilities); err != nil {
+		return nil, AuthCapabilities{}, err
+	}
+
+	if err := startTLSSession.requestStartTLS(); err != nil {
+		return nil, AuthCapabilities{}, err
+	}
+
+	protectedConn, err := c.tls.Handshake(c.conn)
+	if err != nil {
+		return nil, AuthCapabilities{}, err
+	}
+
+	startTLSSession.useConnection(protectedConn)
+
+	protectedCapabilities, err := c.session.discoverCapabilities()
+	if err != nil {
+		return nil, AuthCapabilities{}, err
+	}
+
+	return protectedConn, protectedCapabilities, nil
 }
 
 // smtpSession owns the SMTP and LMTP protocol exchange for one backend connection.
@@ -95,9 +142,14 @@ type smtpSession struct {
 
 // checkSMTP adapts the SMTP/LMTP session object to the connection monitor entry point.
 func checkSMTP(logger *slog.Logger, conn net.Conn, server *config.BackendServer) error {
+	return checkSMTPWithTLS(logger, conn, server, defaultBackendTLSHandshaker(logger, server))
+}
+
+// checkSMTPWithTLS runs SMTP or LMTP with the supplied shared TLS boundary.
+func checkSMTPWithTLS(logger *slog.Logger, conn net.Conn, server *config.BackendServer, handshaker *backendTLSHandshaker) error {
 	session := newSMTPSession(logger, conn, server)
 
-	return session.Check()
+	return session.Check(handshaker)
 }
 
 // newSMTPSession wires textproto parsing around an already prepared backend connection.
@@ -111,13 +163,14 @@ func newSMTPSession(logger *slog.Logger, conn net.Conn, server *config.BackendSe
 }
 
 // Check runs the shared capability-auth flow for SMTP and LMTP.
-func (s *smtpSession) Check() error {
+func (s *smtpSession) Check(handshaker *backendTLSHandshaker) error {
 	return capabilityAuthCheck{
 		session: s,
 		logger:  s.logger,
 		server:  s.server,
 		conn:    s.conn,
 		logout:  protocolQuitCommand,
+		tls:     handshaker,
 	}.Check()
 }
 
@@ -152,6 +205,39 @@ func (s *smtpSession) discoverCapabilities() (AuthCapabilities, error) {
 	}
 
 	return ParseSMTPAuthCapabilities(lines), nil
+}
+
+// requireStartTLS verifies the SMTP-family STARTTLS extension.
+func (s *smtpSession) requireStartTLS(capabilities AuthCapabilities) error {
+	if !hasSMTPCapability(capabilities.Raw, "STARTTLS") {
+		return fmt.Errorf("%s STARTTLS capability not advertised", strings.ToUpper(s.server.Protocol))
+	}
+
+	return nil
+}
+
+// requestStartTLS performs the SMTP-family upgrade command and validates its response.
+func (s *smtpSession) requestStartTLS() error {
+	if _, err := fmt.Fprintf(s.conn, "STARTTLS\r\n"); err != nil {
+		return err
+	}
+
+	response, err := s.reader.ReadLine()
+	if err != nil {
+		return err
+	}
+
+	if !hasStatusPrefix(response, "220") {
+		return fmt.Errorf("%s STARTTLS failed: %s", strings.ToUpper(s.server.Protocol), response)
+	}
+
+	return nil
+}
+
+// useConnection rebinds SMTP-family I/O to the protected connection.
+func (s *smtpSession) useConnection(conn net.Conn) {
+	s.conn = conn
+	s.reader = textproto.NewReader(bufio.NewReader(conn))
 }
 
 // authenticate executes the selected mechanism and performs the single syntax-fallback retry when allowed.
@@ -340,6 +426,18 @@ func ParseSMTPAuthCapabilities(lines []string) AuthCapabilities {
 	return capabilities
 }
 
+// hasSMTPCapability reports whether an EHLO or LHLO response contains one extension.
+func hasSMTPCapability(lines []string, capability string) bool {
+	for _, line := range lines {
+		fields := strings.Fields(stripSMTPStatus(line))
+		if len(fields) > 0 && strings.EqualFold(fields[0], capability) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // addSMTPMechanisms records every executable mechanism from one SMTP AUTH declaration.
 func addSMTPMechanisms(capabilities *AuthCapabilities, mechanisms []string) {
 	for _, mechanism := range mechanisms {
@@ -367,6 +465,11 @@ type imapSession struct {
 
 // checkIMAP adapts the IMAP session object to the connection monitor entry point.
 func checkIMAP(logger *slog.Logger, conn net.Conn, server *config.BackendServer) error {
+	return checkIMAPWithTLS(logger, conn, server, defaultBackendTLSHandshaker(logger, server))
+}
+
+// checkIMAPWithTLS runs IMAP with the supplied shared TLS boundary.
+func checkIMAPWithTLS(logger *slog.Logger, conn net.Conn, server *config.BackendServer, handshaker *backendTLSHandshaker) error {
 	session := &imapSession{
 		reader: textproto.NewReader(bufio.NewReader(conn)),
 		logger: logger,
@@ -374,17 +477,18 @@ func checkIMAP(logger *slog.Logger, conn net.Conn, server *config.BackendServer)
 		conn:   conn,
 	}
 
-	return session.Check()
+	return session.Check(handshaker)
 }
 
 // Check runs the shared capability-auth flow for IMAP.
-func (s *imapSession) Check() error {
+func (s *imapSession) Check(handshaker *backendTLSHandshaker) error {
 	return capabilityAuthCheck{
 		session: s,
 		logger:  s.logger,
 		server:  s.server,
 		conn:    s.conn,
 		logout:  imapLogoutCommand,
+		tls:     handshaker,
 	}.Check()
 }
 
@@ -414,6 +518,34 @@ func (s *imapSession) discoverCapabilities() (AuthCapabilities, error) {
 	}
 
 	return ParseIMAPAuthCapabilities(lines), nil
+}
+
+// requireStartTLS verifies the IMAP STARTTLS capability.
+func (s *imapSession) requireStartTLS(capabilities AuthCapabilities) error {
+	if !hasIMAPCapability(capabilities.Raw, "STARTTLS") {
+		return fmt.Errorf("IMAP STARTTLS capability not advertised")
+	}
+
+	return nil
+}
+
+// requestStartTLS performs the tagged IMAP upgrade command.
+func (s *imapSession) requestStartTLS() error {
+	if _, err := fmt.Fprintf(s.conn, "a2 STARTTLS\r\n"); err != nil {
+		return err
+	}
+
+	if _, err := readIMAPTaggedResponse(s.reader, "a2"); err != nil {
+		return fmt.Errorf("IMAP STARTTLS failed: %w", err)
+	}
+
+	return nil
+}
+
+// useConnection rebinds IMAP I/O to the protected connection.
+func (s *imapSession) useConnection(conn net.Conn) {
+	s.conn = conn
+	s.reader = textproto.NewReader(bufio.NewReader(conn))
 }
 
 // authenticate executes the selected IMAP SASL mechanism.
@@ -555,6 +687,19 @@ func ParseIMAPAuthCapabilities(lines []string) AuthCapabilities {
 	return capabilities
 }
 
+// hasIMAPCapability reports whether an IMAP capability response contains one token.
+func hasIMAPCapability(lines []string, capability string) bool {
+	for _, line := range lines {
+		for field := range strings.FieldsSeq(line) {
+			if strings.EqualFold(field, capability) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // pop3Session owns the POP3 protocol exchange for one backend connection.
 type pop3Session struct {
 	reader *textproto.Reader
@@ -565,6 +710,11 @@ type pop3Session struct {
 
 // checkPOP3 adapts the POP3 session object to the connection monitor entry point.
 func checkPOP3(logger *slog.Logger, conn net.Conn, server *config.BackendServer) error {
+	return checkPOP3WithTLS(logger, conn, server, defaultBackendTLSHandshaker(logger, server))
+}
+
+// checkPOP3WithTLS runs POP3 with the supplied shared TLS boundary.
+func checkPOP3WithTLS(logger *slog.Logger, conn net.Conn, server *config.BackendServer, handshaker *backendTLSHandshaker) error {
 	session := &pop3Session{
 		reader: textproto.NewReader(bufio.NewReader(conn)),
 		logger: logger,
@@ -572,17 +722,18 @@ func checkPOP3(logger *slog.Logger, conn net.Conn, server *config.BackendServer)
 		conn:   conn,
 	}
 
-	return session.Check()
+	return session.Check(handshaker)
 }
 
 // Check runs the shared capability-auth flow for POP3.
-func (s *pop3Session) Check() error {
+func (s *pop3Session) Check(handshaker *backendTLSHandshaker) error {
 	return capabilityAuthCheck{
 		session: s,
 		logger:  s.logger,
 		server:  s.server,
 		conn:    s.conn,
 		logout:  protocolQuitCommand,
+		tls:     handshaker,
 	}.Check()
 }
 
@@ -612,6 +763,30 @@ func (s *pop3Session) discoverCapabilities() (AuthCapabilities, error) {
 	}
 
 	return ParsePOP3AuthCapabilities(lines), nil
+}
+
+// requireStartTLS verifies the POP3 STLS capability.
+func (s *pop3Session) requireStartTLS(capabilities AuthCapabilities) error {
+	if !hasPOP3Capability(capabilities.Raw, "STLS") {
+		return fmt.Errorf("POP3 STLS capability not advertised")
+	}
+
+	return nil
+}
+
+// requestStartTLS performs the POP3 STLS command and validates its response.
+func (s *pop3Session) requestStartTLS() error {
+	if _, err := fmt.Fprintf(s.conn, "STLS\r\n"); err != nil {
+		return err
+	}
+
+	return s.expectOK("POP3 STLS")
+}
+
+// useConnection rebinds POP3 I/O to the protected connection.
+func (s *pop3Session) useConnection(conn net.Conn) {
+	s.conn = conn
+	s.reader = textproto.NewReader(bufio.NewReader(conn))
 }
 
 // authenticate executes the selected POP3 native or SASL mechanism.
@@ -762,6 +937,18 @@ func ParsePOP3AuthCapabilities(lines []string) AuthCapabilities {
 	return capabilities
 }
 
+// hasPOP3Capability reports whether a POP3 CAPA response contains one capability.
+func hasPOP3Capability(lines []string, capability string) bool {
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && strings.EqualFold(fields[0], capability) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // sieveSession owns the ManageSieve protocol exchange for one backend connection.
 type sieveSession struct {
 	reader *textproto.Reader
@@ -772,6 +959,11 @@ type sieveSession struct {
 
 // checkSieve adapts the ManageSieve session object to the connection monitor entry point.
 func checkSieve(logger *slog.Logger, conn net.Conn, server *config.BackendServer) error {
+	return checkSieveWithTLS(logger, conn, server, defaultBackendTLSHandshaker(logger, server))
+}
+
+// checkSieveWithTLS runs ManageSieve with the supplied shared TLS boundary.
+func checkSieveWithTLS(logger *slog.Logger, conn net.Conn, server *config.BackendServer, handshaker *backendTLSHandshaker) error {
 	session := &sieveSession{
 		reader: textproto.NewReader(bufio.NewReader(conn)),
 		logger: logger,
@@ -779,11 +971,57 @@ func checkSieve(logger *slog.Logger, conn net.Conn, server *config.BackendServer
 		conn:   conn,
 	}
 
-	return session.Check()
+	return session.Check(handshaker)
 }
 
-// Check runs greeting, STARTTLS, post-TLS capability discovery, and optional authentication.
-func (s *sieveSession) Check() error {
+// Check runs the configured ManageSieve TLS mode and optional authentication.
+func (s *sieveSession) Check(handshaker *backendTLSHandshaker) error {
+	greeting, err := s.readGreeting()
+	if err != nil {
+		return err
+	}
+
+	conn := s.conn
+	capabilities := ParseSieveAuthCapabilities(greeting.Lines)
+
+	if s.server.GetTLSMode() == config.BackendTLSModeStartTLS {
+		if !hasSieveCapability(greeting.Lines, "STARTTLS") {
+			return fmt.Errorf("sieve STARTTLS capability not advertised")
+		}
+
+		conn, err = s.startTLS(handshaker)
+		if err != nil {
+			return err
+		}
+
+		capabilities, err = s.discoverCapabilities()
+		if err != nil {
+			return err
+		}
+	}
+
+	defer func() {
+		writeProtocolLine(conn, "LOGOUT")
+	}()
+
+	if !hasBackendCredentials(s.server) {
+		return nil
+	}
+
+	if err := requireAuthTLS(s.logger, conn, "sieve"); err != nil {
+		return err
+	}
+
+	selection, err := NewAuthSelector(s.logger, s.server, BackendCheckPhaseDeep).Select(capabilities)
+	if err != nil {
+		return err
+	}
+
+	return s.authenticate(selection)
+}
+
+// readGreeting validates the initial ManageSieve response before session negotiation.
+func (s *sieveSession) readGreeting() (sieveResponse, error) {
 	greeting, err := readSieveResponse(s.reader)
 	if err != nil {
 		_ = level.Error(s.logger).Log(
@@ -793,7 +1031,7 @@ func (s *sieveSession) Check() error {
 			definitions.LogKeyError, err,
 		)
 
-		return err
+		return sieveResponse{}, err
 	}
 
 	if greeting.Status != sieveStatusOK {
@@ -805,45 +1043,14 @@ func (s *sieveSession) Check() error {
 			definitions.LogKeyError, "Sieve greeting not OK",
 		)
 
-		return fmt.Errorf("sieve greeting failed: %s", greeting.Status)
+		return sieveResponse{}, fmt.Errorf("sieve greeting failed: %s", greeting.Status)
 	}
 
-	if !hasSieveCapability(greeting.Lines, "STARTTLS") {
-		return fmt.Errorf("sieve STARTTLS capability not advertised")
-	}
-
-	tlsConn, err := s.startTLS()
-	if err != nil {
-		return err
-	}
-
-	s.conn = tlsConn
-	s.reader = textproto.NewReader(bufio.NewReader(tlsConn))
-
-	defer closeProtocolConn(tlsConn)
-	defer func() {
-		writeProtocolLine(s.conn, "LOGOUT")
-	}()
-
-	capabilities, err := s.discoverCapabilities()
-	if err != nil {
-		return err
-	}
-
-	if !hasBackendCredentials(s.server) {
-		return nil
-	}
-
-	selection, err := NewAuthSelector(s.logger, s.server, BackendCheckPhaseDeep).Select(capabilities)
-	if err != nil {
-		return err
-	}
-
-	return s.authenticate(selection)
+	return greeting, nil
 }
 
 // startTLS upgrades ManageSieve to TLS before authentication-capability evaluation.
-func (s *sieveSession) startTLS() (*tls.Conn, error) {
+func (s *sieveSession) startTLS(handshaker *backendTLSHandshaker) (net.Conn, error) {
 	if _, err := fmt.Fprintf(s.conn, "STARTTLS\r\n"); err != nil {
 		return nil, err
 	}
@@ -872,25 +1079,20 @@ func (s *sieveSession) startTLS() (*tls.Conn, error) {
 		return nil, fmt.Errorf("STARTTLS command failed: %s", response.Status)
 	}
 
-	tlsConn := tls.Client(s.conn, &tls.Config{
-		InsecureSkipVerify: s.server.TLSSkipVerify,
-		ServerName:         s.server.Host,
-		MinVersion:         tls.VersionTLS12,
-	})
-
-	if err := tlsConn.Handshake(); err != nil {
-		_ = level.Error(s.logger).Log(
-			definitions.LogKeyMsg, "TLS handshake failed (sieve STARTTLS)",
-			"host", s.server.Host,
-			"protocol", "sieve",
-			"skip_verify", s.server.TLSSkipVerify,
-			definitions.LogKeyError, err,
-		)
-
-		return nil, fmt.Errorf("TLS handshake failed (sieve host=%s skip_verify=%t): %w", s.server.Host, s.server.TLSSkipVerify, err)
+	protectedConn, err := handshaker.Handshake(s.conn)
+	if err != nil {
+		return nil, err
 	}
 
-	return tlsConn, nil
+	s.useConnection(protectedConn)
+
+	return protectedConn, nil
+}
+
+// useConnection rebinds ManageSieve I/O to the protected connection.
+func (s *sieveSession) useConnection(conn net.Conn) {
+	s.conn = conn
+	s.reader = textproto.NewReader(bufio.NewReader(conn))
 }
 
 // discoverCapabilities asks ManageSieve for the post-TLS capability set.

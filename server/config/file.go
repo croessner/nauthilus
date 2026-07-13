@@ -2474,6 +2474,7 @@ func (f *FileSettings) validate() (err error) {
 		f.validateGRPCAuthServer,
 		f.validateMetricsEndpointAuth,
 		f.validateOpenAPIValidation,
+		f.validateBackendHealthCheckTLSModes,
 
 		// Without errors, but fixing things
 		f.setDefaultInstanceName,
@@ -2515,6 +2516,21 @@ func (f *FileSettings) validate() (err error) {
 
 func (f *FileSettings) validateGRPCAuthServer() error {
 	return ValidateGRPCAuthServerConfig(f)
+}
+
+// validateBackendHealthCheckTLSModes validates target-local TLS transport semantics.
+func (f *FileSettings) validateBackendHealthCheckTLSModes() error {
+	if f == nil {
+		return nil
+	}
+
+	for index, server := range f.GetBackendServers() {
+		if err := server.validateTLSMode(); err != nil {
+			return fmt.Errorf("auth.services.backend_health_checks.targets[%d].tls_mode: %w", index, err)
+		}
+	}
+
+	return nil
 }
 
 // validatePlugins validates native plugin loader configuration.
@@ -3939,11 +3955,11 @@ func (f *FileSettings) normalizeConfigAliases() {
 		f.Server.normalizeConfiguredRuntimeModules()
 	}
 
-	f.normalizeBackendHealthCheckAuthMechanisms()
+	f.normalizeBackendHealthCheckTargets()
 }
 
-// normalizeBackendHealthCheckAuthMechanisms canonicalizes target-only health-check auth mechanisms.
-func (f *FileSettings) normalizeBackendHealthCheckAuthMechanisms() {
+// normalizeBackendHealthCheckTargets canonicalizes target-only health-check settings.
+func (f *FileSettings) normalizeBackendHealthCheckTargets() {
 	if f == nil {
 		return
 	}
@@ -3960,6 +3976,7 @@ func (f *FileSettings) normalizeBackendHealthCheckAuthMechanisms() {
 			}
 
 			server.normalizeAuthMechanism()
+			server.normalizeTLSMode()
 			seen[server] = struct{}{}
 		}
 	}

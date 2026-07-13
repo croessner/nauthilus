@@ -104,6 +104,7 @@ make guardrails
 - Integrated IdP manual: [IDP.md](IDP.md)
 - Test client documentation: [client/README.md](client/README.md)
 - Lua plugin notes: [server/lua-plugins.d/README.md](server/lua-plugins.d/README.md)
+- Backend health checks: [server/docs/backend_health_checks.md](server/docs/backend_health_checks.md)
 - Legacy config converter: [server/docs/config_v2_converter.md](server/docs/config_v2_converter.md)
 
 ## Community

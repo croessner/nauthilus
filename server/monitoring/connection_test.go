@@ -16,14 +16,19 @@
 package monitoring
 
 import (
+	"bufio"
+	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/pires/go-proxyproto"
 )
 
 func TestCheckBackendConnectionUsesConfiguredConnectTimeout(t *testing.T) {
@@ -77,6 +82,132 @@ func TestConnectProbeDoesNotRunDeepProtocolCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect probe should not execute SMTP deep check: %v", err)
 	}
+}
+
+func TestIMAPProxyV2PrecedesSTARTTLS(t *testing.T) {
+	cfg := &config.FileSettings{
+		BackendServerMonitoring: &config.BackendServerMonitoring{
+			ConnectTimeout: time.Second,
+			TLSTimeout:     time.Second,
+			DeepTimeout:    2 * time.Second,
+		},
+	}
+	server := &config.BackendServer{
+		Protocol:      "imap",
+		Host:          "127.0.0.1",
+		Port:          30143,
+		DeepCheck:     true,
+		TestUsername:  "monitor",
+		TestPassword:  "secret",
+		AuthMechanism: config.BackendAuthMechanismPlain,
+		TLSMode:       config.BackendTLSModeStartTLS,
+		TLSSkipVerify: true,
+		HAProxyV2:     true,
+	}
+
+	clientConn, waitServer := newProxyStartTLSScriptConn(t, checkProxyIMAPBeforeTLS, checkProxyIMAPAfterTLS)
+	defer waitServer()
+
+	err := checkBackendConnectionWithDialer(cfg, slog.Default(), server, backendCheckPhaseDeep, func(_ string, _ string, _ time.Duration) (net.Conn, error) {
+		return clientConn, nil
+	})
+	if err != nil {
+		t.Fatalf("PROXY-v2 IMAP STARTTLS check failed: %v", err)
+	}
+}
+
+func TestPrepareBackendConnectionHonorsExplicitImplicitTLS(t *testing.T) {
+	server := &config.BackendServer{
+		Protocol:      "imap",
+		Host:          "localhost",
+		Port:          993,
+		TLSMode:       config.BackendTLSModeImplicit,
+		TLSSkipVerify: true,
+	}
+	monitoringCfg := &config.BackendServerMonitoring{TLSTimeout: time.Second}
+	certificate := testTLSCertificate(t)
+	serverConn, clientConn := net.Pipe()
+	errCh := make(chan error, 1)
+
+	go func() {
+		defer closeProtocolConn(serverConn)
+
+		tlsConn := tls.Server(serverConn, &tls.Config{Certificates: []tls.Certificate{certificate}})
+		errCh <- tlsConn.Handshake()
+	}()
+
+	preparedConn, err := prepareBackendConnection(nil, slog.Default(), server, backendCheckPhaseConnect, monitoringCfg, clientConn)
+	if err != nil {
+		t.Fatalf("prepare explicit implicit TLS connection failed: %v", err)
+	}
+
+	defer closeProtocolConn(preparedConn)
+
+	if !isTLSConnection(preparedConn) {
+		t.Fatalf("prepared connection type = %T, want *tls.Conn", preparedConn)
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("scripted implicit TLS server failed: %v", err)
+	}
+}
+
+// checkProxyIMAPBeforeTLS validates PROXY framing and the plaintext IMAP upgrade exchange.
+func checkProxyIMAPBeforeTLS(conn net.Conn) error {
+	reader := bufio.NewReader(conn)
+	if err := writeTestLine(conn, "* OK imap.example.test ready"); err != nil {
+		return err
+	}
+
+	if got, err := readTestLine(reader); err != nil || got != "a1 CAPABILITY" {
+		return fmt.Errorf("pre-TLS CAPABILITY command = %q, err = %w", got, err)
+	}
+
+	proxyConn, ok := conn.(*proxyproto.Conn)
+	if !ok {
+		return fmt.Errorf("scripted connection type = %T, want *proxyproto.Conn", conn)
+	}
+
+	header := proxyConn.ProxyHeader()
+	if header == nil || header.Version != 2 || !header.Command.IsLocal() {
+		return fmt.Errorf("PROXY header = %#v, want v2 LOCAL", header)
+	}
+
+	if err := writeTestLines(conn, "* CAPABILITY IMAP4rev1 STARTTLS AUTH=PLAIN", "a1 OK capability completed"); err != nil {
+		return err
+	}
+
+	if got, err := readTestLine(reader); err != nil || got != "a2 STARTTLS" {
+		return fmt.Errorf("STARTTLS command = %q, err = %w", got, err)
+	}
+
+	return writeTestLine(conn, "a2 OK begin TLS negotiation")
+}
+
+// checkProxyIMAPAfterTLS validates protected capabilities, authentication, and logout.
+func checkProxyIMAPAfterTLS(conn net.Conn) error {
+	reader := bufio.NewReader(conn)
+	if got, err := readTestLine(reader); err != nil || got != "a1 CAPABILITY" {
+		return fmt.Errorf("post-TLS CAPABILITY command = %q, err = %w", got, err)
+	}
+
+	if err := writeTestLines(conn, "* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR", "a1 OK capability completed"); err != nil {
+		return err
+	}
+
+	if got, err := readTestLine(reader); err != nil || !strings.HasPrefix(got, "a2 AUTHENTICATE PLAIN ") {
+		return fmt.Errorf("protected AUTH command = %q, err = %w", got, err)
+	}
+
+	if err := writeTestLine(conn, "a2 OK authenticated"); err != nil {
+		return err
+	}
+
+	if got, err := readTestLine(reader); err != nil || got != "a3 LOGOUT" {
+		return fmt.Errorf("LOGOUT command = %q, err = %w", got, err)
+	}
+
+	return nil
 }
 
 type probeOnlyConn struct{}

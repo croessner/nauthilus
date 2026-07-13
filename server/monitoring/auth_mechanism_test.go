@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/pires/go-proxyproto"
 )
 
 func TestAuthSelectorAutoPlainInitialResponse(t *testing.T) {
@@ -284,6 +285,82 @@ func TestLMTPCredentialsUseLHLOAuthSelectionAndNoCredentialsStopsAfterCapabiliti
 	})
 }
 
+func TestSMTPFamilyUpgradesWithSTARTTLSBeforeAuthentication(t *testing.T) {
+	testCases := []struct {
+		name            string
+		protocol        string
+		greeting        string
+		capabilityLabel string
+	}{
+		{name: "smtp", protocol: "smtp", greeting: "220 smtp.example.test ESMTP", capabilityLabel: "EHLO"},
+		{name: "lmtp", protocol: "lmtp", greeting: "220 lmtp.example.test LMTP", capabilityLabel: "LHLO"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := &config.BackendServer{
+				Protocol:      testCase.protocol,
+				Host:          "localhost",
+				Port:          25,
+				TestUsername:  "monitor",
+				TestPassword:  "secret",
+				AuthMechanism: config.BackendAuthMechanismPlain,
+				TLSMode:       config.BackendTLSModeStartTLS,
+				TLSSkipVerify: true,
+			}
+			plainPayload := base64.StdEncoding.EncodeToString([]byte("\x00monitor\x00secret"))
+			clientConn, waitServer := newStartTLSScriptConn(t, func(conn net.Conn) error {
+				reader := bufio.NewReader(conn)
+				if err := writeTestLine(conn, testCase.greeting); err != nil {
+					return err
+				}
+
+				if got, err := readTestLine(reader); err != nil || !strings.HasPrefix(got, testCase.capabilityLabel+" ") {
+					return fmt.Errorf("pre-TLS %s command = %q, err = %w", testCase.capabilityLabel, got, err)
+				}
+
+				if err := writeTestLines(conn, "250-localhost", "250-STARTTLS", "250 AUTH LOGIN"); err != nil {
+					return err
+				}
+
+				if got, err := readTestLine(reader); err != nil || got != "STARTTLS" {
+					return fmt.Errorf("STARTTLS command = %q, err = %w", got, err)
+				}
+
+				return writeTestLine(conn, "220 2.0.0 ready to start TLS")
+			}, func(conn net.Conn) error {
+				reader := bufio.NewReader(conn)
+				if got, err := readTestLine(reader); err != nil || !strings.HasPrefix(got, testCase.capabilityLabel+" ") {
+					return fmt.Errorf("post-TLS %s command = %q, err = %w", testCase.capabilityLabel, got, err)
+				}
+
+				if err := writeTestLines(conn, "250-localhost", "250 AUTH PLAIN"); err != nil {
+					return err
+				}
+
+				if got, err := readTestLine(reader); err != nil || got != "AUTH PLAIN "+plainPayload {
+					return fmt.Errorf("protected AUTH command = %q, err = %w", got, err)
+				}
+
+				if err := writeTestLine(conn, "235 2.7.0 authentication successful"); err != nil {
+					return err
+				}
+
+				if got, err := readTestLine(reader); err != nil || got != "QUIT" {
+					return fmt.Errorf("QUIT command = %q, err = %w", got, err)
+				}
+
+				return nil
+			})
+			defer waitServer()
+
+			if err := checkSMTP(slog.Default(), clientConn, server); err != nil {
+				t.Fatalf("%s STARTTLS check failed: %v", testCase.protocol, err)
+			}
+		})
+	}
+}
+
 func TestIMAPWithoutSASLIRUsesClassicExchange(t *testing.T) {
 	server := &config.BackendServer{
 		Protocol:      "imap",
@@ -346,6 +423,107 @@ func TestIMAPWithoutSASLIRUsesClassicExchange(t *testing.T) {
 	}
 }
 
+func TestIMAPUpgradesWithSTARTTLSBeforeAuthentication(t *testing.T) {
+	server := &config.BackendServer{
+		Protocol:      "imap",
+		Host:          "localhost",
+		Port:          143,
+		TestUsername:  "monitor",
+		TestPassword:  "secret",
+		AuthMechanism: config.BackendAuthMechanismPlain,
+		TLSMode:       config.BackendTLSModeStartTLS,
+		TLSSkipVerify: true,
+	}
+	plainPayload := base64.StdEncoding.EncodeToString([]byte("\x00monitor\x00secret"))
+	cert := testTLSCertificate(t)
+	serverConn, clientConn := net.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		defer closeProtocolConn(serverConn)
+
+		reader := bufio.NewReader(serverConn)
+		if err := writeTestLine(serverConn, "* OK imap.example.test ready"); err != nil {
+			errCh <- err
+
+			return
+		}
+
+		if got, err := readTestLine(reader); err != nil || got != "a1 CAPABILITY" {
+			errCh <- fmt.Errorf("pre-TLS CAPABILITY command = %q, err = %w", got, err)
+
+			return
+		}
+
+		if err := writeTestLines(serverConn, "* CAPABILITY IMAP4rev1 STARTTLS AUTH=PLAIN", "a1 OK capability completed"); err != nil {
+			errCh <- err
+
+			return
+		}
+
+		if got, err := readTestLine(reader); err != nil || got != "a2 STARTTLS" {
+			errCh <- fmt.Errorf("STARTTLS command = %q, err = %w", got, err)
+
+			return
+		}
+
+		if err := writeTestLine(serverConn, "a2 OK begin TLS negotiation"); err != nil {
+			errCh <- err
+
+			return
+		}
+
+		tlsConn := tls.Server(serverConn, &tls.Config{Certificates: []tls.Certificate{cert}})
+		if err := tlsConn.Handshake(); err != nil {
+			errCh <- err
+
+			return
+		}
+
+		tlsReader := bufio.NewReader(tlsConn)
+		if got, err := readTestLine(tlsReader); err != nil || got != "a1 CAPABILITY" {
+			errCh <- fmt.Errorf("post-TLS CAPABILITY command = %q, err = %w", got, err)
+
+			return
+		}
+
+		if err := writeTestLines(tlsConn, "* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR", "a1 OK capability completed"); err != nil {
+			errCh <- err
+
+			return
+		}
+
+		if got, err := readTestLine(tlsReader); err != nil || got != "a2 AUTHENTICATE PLAIN "+plainPayload {
+			errCh <- fmt.Errorf("AUTHENTICATE command = %q, err = %w", got, err)
+
+			return
+		}
+
+		if err := writeTestLine(tlsConn, "a2 OK authenticated"); err != nil {
+			errCh <- err
+
+			return
+		}
+
+		if got, err := readTestLine(tlsReader); err != nil || got != "a3 LOGOUT" {
+			errCh <- fmt.Errorf("LOGOUT command = %q, err = %w", got, err)
+
+			return
+		}
+
+		errCh <- nil
+	}()
+
+	if err := checkIMAP(slog.Default(), clientConn, server); err != nil {
+		t.Fatalf("IMAP STARTTLS check failed: %v", err)
+	}
+
+	_ = clientConn.Close()
+
+	if serverErr := <-errCh; serverErr != nil {
+		t.Fatalf("scripted IMAP server failed: %v", serverErr)
+	}
+}
+
 func TestPOP3AutoSelectsNativeUserPass(t *testing.T) {
 	server := &config.BackendServer{
 		Protocol:      "pop3",
@@ -398,6 +576,249 @@ func TestPOP3AutoSelectsNativeUserPass(t *testing.T) {
 	}
 }
 
+func TestPOP3UpgradesWithSTLSBeforeAuthentication(t *testing.T) {
+	server := &config.BackendServer{
+		Protocol:      "pop3",
+		Host:          "localhost",
+		Port:          110,
+		TestUsername:  "monitor",
+		TestPassword:  "secret",
+		AuthMechanism: config.BackendAuthMechanismUserPass,
+		TLSMode:       config.BackendTLSModeStartTLS,
+		TLSSkipVerify: true,
+	}
+	clientConn, waitServer := newStartTLSScriptConn(t, func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		if err := writeTestLine(conn, "+OK pop3.example.test ready"); err != nil {
+			return err
+		}
+
+		if got, err := readTestLine(reader); err != nil || got != "CAPA" {
+			return fmt.Errorf("pre-TLS CAPA command = %q, err = %w", got, err)
+		}
+
+		if err := writeTestLines(conn, "+OK capability list follows", "STLS", "SASL LOGIN", "."); err != nil {
+			return err
+		}
+
+		if got, err := readTestLine(reader); err != nil || got != "STLS" {
+			return fmt.Errorf("STLS command = %q, err = %w", got, err)
+		}
+
+		return writeTestLine(conn, "+OK begin TLS negotiation")
+	}, func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		if got, err := readTestLine(reader); err != nil || got != "CAPA" {
+			return fmt.Errorf("post-TLS CAPA command = %q, err = %w", got, err)
+		}
+
+		if err := writeTestLines(conn, "+OK capability list follows", "USER", "."); err != nil {
+			return err
+		}
+
+		if got, err := readTestLine(reader); err != nil || got != "USER monitor" {
+			return fmt.Errorf("protected USER command = %q, err = %w", got, err)
+		}
+
+		if err := writeTestLine(conn, "+OK user accepted"); err != nil {
+			return err
+		}
+
+		if got, err := readTestLine(reader); err != nil || got != "PASS secret" {
+			return fmt.Errorf("protected PASS command = %q, err = %w", got, err)
+		}
+
+		if err := writeTestLine(conn, "+OK maildrop locked"); err != nil {
+			return err
+		}
+
+		if got, err := readTestLine(reader); err != nil || got != "QUIT" {
+			return fmt.Errorf("QUIT command = %q, err = %w", got, err)
+		}
+
+		return nil
+	})
+	defer waitServer()
+
+	if err := checkPOP3(slog.Default(), clientConn, server); err != nil {
+		t.Fatalf("POP3 STLS check failed: %v", err)
+	}
+}
+
+func TestMailProtocolsRequireSTARTTLSCapability(t *testing.T) {
+	t.Run("smtp", func(t *testing.T) {
+		testSMTPFamilyRequiresSTARTTLS(t, "smtp", 25, "220 smtp.example.test ESMTP", "EHLO ")
+	})
+
+	t.Run("lmtp", func(t *testing.T) {
+		testSMTPFamilyRequiresSTARTTLS(t, "lmtp", 24, "220 lmtp.example.test LMTP", "LHLO ")
+	})
+
+	t.Run("pop3", func(t *testing.T) {
+		server := plaintextAuthServer("pop3", 110)
+		clientConn, waitServer := newPlainScriptConn(t, func(conn net.Conn) error {
+			reader := bufio.NewReader(conn)
+			if err := writeTestLine(conn, "+OK pop3.example.test ready"); err != nil {
+				return err
+			}
+
+			if err := expectTestLine(reader, "CAPA"); err != nil {
+				return err
+			}
+
+			return writeTestLines(conn, "+OK capability list follows", "USER", ".")
+		})
+		defer waitServer()
+
+		assertUpgradeCapabilityError(t, checkPOP3(slog.Default(), clientConn, server), "STLS")
+	})
+
+	t.Run("imap", func(t *testing.T) {
+		server := plaintextAuthServer("imap", 143)
+		clientConn, waitServer := newPlainScriptConn(t, func(conn net.Conn) error {
+			reader := bufio.NewReader(conn)
+			if err := writeTestLine(conn, "* OK imap.example.test ready"); err != nil {
+				return err
+			}
+
+			if err := expectTestLine(reader, "a1 CAPABILITY"); err != nil {
+				return err
+			}
+
+			return writeTestLines(conn, "* CAPABILITY IMAP4rev1 AUTH=PLAIN", "a1 OK capability completed")
+		})
+		defer waitServer()
+
+		assertUpgradeCapabilityError(t, checkIMAP(slog.Default(), clientConn, server), "STARTTLS")
+	})
+}
+
+// testSMTPFamilyRequiresSTARTTLS verifies that SMTP-family checks reject missing upgrade capabilities.
+func testSMTPFamilyRequiresSTARTTLS(t *testing.T, protocol string, port int, greeting string, helloPrefix string) {
+	t.Helper()
+
+	server := plaintextAuthServer(protocol, port)
+	clientConn, waitServer := newPlainScriptConn(t, func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		if err := writeTestLine(conn, greeting); err != nil {
+			return err
+		}
+
+		if got, err := readTestLine(reader); err != nil || !strings.HasPrefix(got, helloPrefix) {
+			return fmt.Errorf("%s command = %q, err = %w", strings.TrimSpace(helloPrefix), got, err)
+		}
+
+		return writeTestLines(conn, "250-localhost", "250 AUTH PLAIN")
+	})
+	defer waitServer()
+
+	assertUpgradeCapabilityError(t, checkSMTP(slog.Default(), clientConn, server), "STARTTLS")
+}
+
+func TestMailProtocolsFailWhenSTARTTLSIsRefused(t *testing.T) {
+	for _, protocol := range []string{"smtp", "lmtp"} {
+		t.Run(protocol, func(t *testing.T) {
+			server := plaintextAuthServer(protocol, 25)
+			clientConn, waitServer := newPlainScriptConn(t, func(conn net.Conn) error {
+				reader := bufio.NewReader(conn)
+				if err := writeTestLine(conn, "220 mail.example.test ready"); err != nil {
+					return err
+				}
+
+				if _, err := readTestLine(reader); err != nil {
+					return err
+				}
+
+				if err := writeTestLines(conn, "250-localhost", "250 STARTTLS"); err != nil {
+					return err
+				}
+
+				if err := expectTestLine(reader, "STARTTLS"); err != nil {
+					return err
+				}
+
+				return writeTestLine(conn, "454 4.7.0 TLS temporarily unavailable")
+			})
+			defer waitServer()
+
+			assertUpgradeCapabilityError(t, checkSMTP(slog.Default(), clientConn, server), "STARTTLS")
+		})
+	}
+
+	t.Run("pop3", func(t *testing.T) {
+		server := plaintextAuthServer("pop3", 110)
+		clientConn, waitServer := newPlainScriptConn(t, func(conn net.Conn) error {
+			reader := bufio.NewReader(conn)
+			if err := writeTestLine(conn, "+OK pop3.example.test ready"); err != nil {
+				return err
+			}
+
+			if err := expectTestLine(reader, "CAPA"); err != nil {
+				return err
+			}
+
+			if err := writeTestLines(conn, "+OK capability list follows", "STLS", "."); err != nil {
+				return err
+			}
+
+			if err := expectTestLine(reader, "STLS"); err != nil {
+				return err
+			}
+
+			return writeTestLine(conn, "-ERR TLS temporarily unavailable")
+		})
+		defer waitServer()
+
+		assertUpgradeCapabilityError(t, checkPOP3(slog.Default(), clientConn, server), "STLS")
+	})
+
+	t.Run("imap", func(t *testing.T) {
+		server := plaintextAuthServer("imap", 143)
+		clientConn, waitServer := newPlainScriptConn(t, func(conn net.Conn) error {
+			reader := bufio.NewReader(conn)
+			if err := writeTestLine(conn, "* OK imap.example.test ready"); err != nil {
+				return err
+			}
+
+			if err := expectTestLine(reader, "a1 CAPABILITY"); err != nil {
+				return err
+			}
+
+			if err := writeTestLines(conn, "* CAPABILITY IMAP4rev1 STARTTLS", "a1 OK capability completed"); err != nil {
+				return err
+			}
+
+			if err := expectTestLine(reader, "a2 STARTTLS"); err != nil {
+				return err
+			}
+
+			return writeTestLine(conn, "a2 NO TLS temporarily unavailable")
+		})
+		defer waitServer()
+
+		assertUpgradeCapabilityError(t, checkIMAP(slog.Default(), clientConn, server), "STARTTLS")
+	})
+
+	t.Run("sieve", func(t *testing.T) {
+		server := plaintextAuthServer("sieve", 4190)
+		clientConn, waitServer := newPlainScriptConn(t, func(conn net.Conn) error {
+			reader := bufio.NewReader(conn)
+			if err := writeTestLines(conn, `"IMPLEMENTATION" "test"`, `"STARTTLS"`, "OK"); err != nil {
+				return err
+			}
+
+			if err := expectTestLine(reader, "STARTTLS"); err != nil {
+				return err
+			}
+
+			return writeTestLine(conn, "NO")
+		})
+		defer waitServer()
+
+		assertUpgradeCapabilityError(t, checkSieve(slog.Default(), clientConn, server), "STARTTLS")
+	})
+}
+
 func TestSieveRechecksCapabilitiesAfterStartTLS(t *testing.T) {
 	server := &config.BackendServer{
 		Protocol:      "sieve",
@@ -406,6 +827,7 @@ func TestSieveRechecksCapabilitiesAfterStartTLS(t *testing.T) {
 		TestUsername:  "monitor",
 		TestPassword:  "secret",
 		AuthMechanism: config.BackendAuthMechanismPlain,
+		TLSMode:       config.BackendTLSModeStartTLS,
 		TLSSkipVerify: true,
 	}
 	plainPayload := base64.StdEncoding.EncodeToString([]byte("\x00monitor\x00secret"))
@@ -543,6 +965,65 @@ func TestSieveRequiresStartTLSCapabilityBeforeUpgrade(t *testing.T) {
 	}
 }
 
+func TestSieveHonorsExplicitPlainAndImplicitModes(t *testing.T) {
+	t.Run("plain-without-credentials", func(t *testing.T) {
+		server := &config.BackendServer{
+			Protocol: "sieve",
+			Host:     "localhost",
+			Port:     4190,
+			TLSMode:  config.BackendTLSModePlain,
+		}
+		clientConn, waitServer := newPlainScriptConn(t, func(conn net.Conn) error {
+			reader := bufio.NewReader(conn)
+			if err := writeTestLines(conn, `"IMPLEMENTATION" "test"`, "OK"); err != nil {
+				return err
+			}
+
+			return expectTestLine(reader, "LOGOUT")
+		})
+		defer waitServer()
+
+		if err := checkSieve(slog.Default(), clientConn, server); err != nil {
+			t.Fatalf("explicit plaintext Sieve check failed: %v", err)
+		}
+	})
+
+	t.Run("implicit-with-credentials", func(t *testing.T) {
+		server := &config.BackendServer{
+			Protocol:      "sieve",
+			Host:          "localhost",
+			Port:          4190,
+			TestUsername:  "monitor",
+			TestPassword:  "secret",
+			AuthMechanism: config.BackendAuthMechanismPlain,
+			TLSMode:       config.BackendTLSModeImplicit,
+			TLSSkipVerify: true,
+		}
+		plainPayload := base64.StdEncoding.EncodeToString([]byte("\x00monitor\x00secret"))
+		clientConn, waitServer := newTLSScriptConn(t, func(conn net.Conn) error {
+			reader := bufio.NewReader(conn)
+			if err := writeTestLines(conn, `"IMPLEMENTATION" "test"`, `"SASL" "PLAIN"`, `"SASL-IR"`, "OK"); err != nil {
+				return err
+			}
+
+			if got, err := readTestLine(reader); err != nil || got != `AUTHENTICATE "PLAIN" "`+plainPayload+`"` {
+				return fmt.Errorf("AUTHENTICATE command = %q, err = %w", got, err)
+			}
+
+			if err := writeTestLine(conn, "OK"); err != nil {
+				return err
+			}
+
+			return expectTestLine(reader, "LOGOUT")
+		})
+		defer waitServer()
+
+		if err := checkSieve(slog.Default(), clientConn, server); err != nil {
+			t.Fatalf("implicit TLS Sieve check failed: %v", err)
+		}
+	})
+}
+
 func TestHTTPUsesStaticBasicAdapterAndRejectsNonBasic(t *testing.T) {
 	t.Run("basic", func(t *testing.T) {
 		server := &config.BackendServer{
@@ -628,6 +1109,61 @@ func authSelectorServer(protocol string, mechanism string) *config.BackendServer
 	}
 }
 
+// plaintextAuthServer returns a backend target that requires a protected authentication exchange.
+func plaintextAuthServer(protocol string, port int) *config.BackendServer {
+	return &config.BackendServer{
+		Protocol:      protocol,
+		Host:          "localhost",
+		Port:          port,
+		TestUsername:  "monitor",
+		TestPassword:  "secret",
+		AuthMechanism: config.BackendAuthMechanismPlain,
+		TLSMode:       config.BackendTLSModeStartTLS,
+		TLSSkipVerify: true,
+	}
+}
+
+// assertUpgradeCapabilityError requires a fail-closed missing-upgrade error.
+func assertUpgradeCapabilityError(t *testing.T, err error, capability string) {
+	t.Helper()
+
+	if err == nil || !strings.Contains(strings.ToUpper(err.Error()), capability) {
+		t.Fatalf("expected missing %s capability error, got %v", capability, err)
+	}
+}
+
+// newPlainScriptConn connects a protocol checker to one plaintext scripted backend.
+func newPlainScriptConn(t *testing.T, server func(net.Conn) error) (net.Conn, func()) {
+	t.Helper()
+
+	serverConn, clientConn := net.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		defer closeProtocolConn(serverConn)
+
+		errCh <- server(serverConn)
+	}()
+
+	return clientConn, func() {
+		t.Helper()
+
+		_ = clientConn.Close()
+		if err := <-errCh; err != nil && !stderrors.Is(err, io.ErrClosedPipe) {
+			t.Fatalf("scripted plaintext server failed: %v", err)
+		}
+	}
+}
+
+// expectTestLine requires one exact line from a scripted protocol peer.
+func expectTestLine(reader *bufio.Reader, want string) error {
+	got, err := readTestLine(reader)
+	if err != nil || got != want {
+		return fmt.Errorf("protocol line = %q, want %q, err = %w", got, want, err)
+	}
+
+	return nil
+}
+
 // newTLSScriptConn connects the protocol checker to a scripted TLS backend.
 func newTLSScriptConn(t *testing.T, server func(net.Conn) error) (*tls.Conn, func()) {
 	t.Helper()
@@ -659,6 +1195,61 @@ func newTLSScriptConn(t *testing.T, server func(net.Conn) error) (*tls.Conn, fun
 		_ = tlsConn.Close()
 		if err := <-errCh; err != nil && !stderrors.Is(err, io.ErrClosedPipe) {
 			t.Fatalf("scripted TLS server failed: %v", err)
+		}
+	}
+}
+
+// newStartTLSScriptConn connects a protocol checker to a scripted plaintext-to-TLS backend.
+func newStartTLSScriptConn(t *testing.T, beforeTLS func(net.Conn) error, afterTLS func(net.Conn) error) (net.Conn, func()) {
+	t.Helper()
+
+	return newUpgradableScriptConn(t, func(conn net.Conn) net.Conn { return conn }, beforeTLS, afterTLS)
+}
+
+// newProxyStartTLSScriptConn requires a PROXY header before the scripted plaintext-to-TLS exchange.
+func newProxyStartTLSScriptConn(t *testing.T, beforeTLS func(net.Conn) error, afterTLS func(net.Conn) error) (net.Conn, func()) {
+	t.Helper()
+
+	return newUpgradableScriptConn(t, func(conn net.Conn) net.Conn {
+		return proxyproto.NewConn(conn, func(proxyConn *proxyproto.Conn) {
+			proxyConn.ProxyHeaderPolicy = proxyproto.REQUIRE
+		})
+	}, beforeTLS, afterTLS)
+}
+
+// newUpgradableScriptConn runs a protocol transcript before and after an in-band TLS upgrade.
+func newUpgradableScriptConn(t *testing.T, wrap func(net.Conn) net.Conn, beforeTLS func(net.Conn) error, afterTLS func(net.Conn) error) (net.Conn, func()) {
+	t.Helper()
+
+	cert := testTLSCertificate(t)
+	serverConn, clientConn := net.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		defer closeProtocolConn(serverConn)
+
+		wrappedConn := wrap(serverConn)
+		if err := beforeTLS(wrappedConn); err != nil {
+			errCh <- err
+
+			return
+		}
+
+		tlsConn := tls.Server(wrappedConn, &tls.Config{Certificates: []tls.Certificate{cert}})
+		if err := tlsConn.Handshake(); err != nil {
+			errCh <- err
+
+			return
+		}
+
+		errCh <- afterTLS(tlsConn)
+	}()
+
+	return clientConn, func() {
+		t.Helper()
+
+		_ = clientConn.Close()
+		if err := <-errCh; err != nil && !stderrors.Is(err, io.ErrClosedPipe) {
+			t.Fatalf("scripted STARTTLS server failed: %v", err)
 		}
 	}
 }

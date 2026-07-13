@@ -31,8 +31,6 @@ import (
 	"github.com/pires/go-proxyproto"
 )
 
-const monitoringProtocolSieve = "sieve"
-
 // Monitor defines an interface for monitoring and checking backend server connections.
 // It provides a method to verify connectivity using specified configurations.
 type Monitor interface {
@@ -152,7 +150,7 @@ func prepareBackendConnection(cfg config.File, logger *slog.Logger, server *conf
 		}
 	}
 
-	if !server.TLS || strings.ToLower(server.Protocol) == monitoringProtocolSieve {
+	if server.GetTLSMode() != config.BackendTLSModeImplicit {
 		return conn, nil
 	}
 
@@ -178,31 +176,89 @@ func sendHAProxyV2Header(cfg config.File, logger *slog.Logger, server *config.Ba
 }
 
 func wrapTLSConnection(logger *slog.Logger, server *config.BackendServer, phase BackendCheckPhase, monitoringCfg *config.BackendServerMonitoring, conn net.Conn) (net.Conn, error) {
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: server.TLSSkipVerify,
-		ServerName:         server.Host,
-		MinVersion:         tls.VersionTLS12,
-	}
-	tlsConn := tls.Client(conn, tlsConfig)
+	handshaker := newBackendTLSHandshaker(
+		logger,
+		server,
+		phase,
+		config.BackendTLSModeImplicit,
+		monitoringCfg.GetServerTLSTimeout(server),
+		0,
+	)
 
-	setConnectionDeadline(tlsConn, monitoringCfg.GetServerTLSTimeout(server))
+	return handshaker.Handshake(conn)
+}
+
+// backendTLSHandshaker owns shared TLS policy, deadlines, and error reporting.
+type backendTLSHandshaker struct {
+	logger               *slog.Logger
+	server               *config.BackendServer
+	phase                BackendCheckPhase
+	mode                 config.BackendTLSMode
+	handshakeTimeout     time.Duration
+	postHandshakeTimeout time.Duration
+}
+
+// newBackendTLSHandshaker builds one backend TLS handshake boundary.
+func newBackendTLSHandshaker(logger *slog.Logger, server *config.BackendServer, phase BackendCheckPhase, mode config.BackendTLSMode, handshakeTimeout time.Duration, postHandshakeTimeout time.Duration) *backendTLSHandshaker {
+	return &backendTLSHandshaker{
+		logger:               logger,
+		server:               server,
+		phase:                phase,
+		mode:                 mode,
+		handshakeTimeout:     handshakeTimeout,
+		postHandshakeTimeout: postHandshakeTimeout,
+	}
+}
+
+// defaultBackendTLSHandshaker provides production defaults for direct protocol tests and adapters.
+func defaultBackendTLSHandshaker(logger *slog.Logger, server *config.BackendServer) *backendTLSHandshaker {
+	monitoringCfg := &config.BackendServerMonitoring{}
+
+	return newBackendTLSHandshaker(
+		logger,
+		server,
+		BackendCheckPhaseDeep,
+		config.BackendTLSModeStartTLS,
+		monitoringCfg.GetServerTLSTimeout(server),
+		monitoringCfg.GetServerDeepTimeout(server),
+	)
+}
+
+// Handshake applies the shared TLS client policy and restores the post-handshake deadline.
+func (h *backendTLSHandshaker) Handshake(conn net.Conn) (net.Conn, error) {
+	if h == nil || h.server == nil {
+		return nil, fmt.Errorf("backend TLS handshaker is not configured")
+	}
+
+	tlsConn := tls.Client(conn, &tls.Config{
+		InsecureSkipVerify: h.server.TLSSkipVerify,
+		ServerName:         h.server.Host,
+		MinVersion:         tls.VersionTLS12,
+	})
+
+	setConnectionDeadline(tlsConn, h.handshakeTimeout)
 
 	if err := tlsConn.Handshake(); err != nil {
 		_ = tlsConn.Close()
-		_ = level.Error(logger).Log(
+		_ = level.Error(h.logger).Log(
 			definitions.LogKeyMsg, "TLS handshake failed",
-			"host", server.Host,
-			"port", server.Port,
-			"protocol", strings.ToLower(server.Protocol),
-			"skip_verify", server.TLSSkipVerify,
-			"health_check_phase", string(phase),
+			"host", h.server.Host,
+			"port", h.server.Port,
+			"protocol", strings.ToLower(h.server.Protocol),
+			"tls_mode", h.mode,
+			"skip_verify", h.server.TLSSkipVerify,
+			"health_check_phase", string(h.phase),
 			definitions.LogKeyError, err,
 		)
 
-		return nil, fmt.Errorf("TLS handshake failed (host=%s port=%d protocol=%s skip_verify=%t): %w", server.Host, server.Port, strings.ToLower(server.Protocol), server.TLSSkipVerify, err)
+		return nil, fmt.Errorf("TLS handshake failed (host=%s port=%d protocol=%s tls_mode=%s skip_verify=%t): %w", h.server.Host, h.server.Port, strings.ToLower(h.server.Protocol), h.mode, h.server.TLSSkipVerify, err)
 	}
 
-	return net.Conn(tlsConn), nil
+	if h.postHandshakeTimeout > 0 {
+		setConnectionDeadline(tlsConn, h.postHandshakeTimeout)
+	}
+
+	return tlsConn, nil
 }
 
 func runBackendProtocolCheck(logger *slog.Logger, server *config.BackendServer, phase BackendCheckPhase, monitoringCfg *config.BackendServerMonitoring, conn net.Conn) error {
@@ -212,7 +268,7 @@ func runBackendProtocolCheck(logger *slog.Logger, server *config.BackendServer, 
 
 	setConnectionDeadline(conn, monitoringCfg.GetServerDeepTimeout(server))
 
-	return handleProtocol(logger, server, conn)
+	return handleProtocol(logger, server, monitoringCfg, conn)
 }
 
 func monitoringConfig(cfg config.File) *config.BackendServerMonitoring {
@@ -233,20 +289,26 @@ func setConnectionDeadline(conn net.Conn, timeout time.Duration) {
 	_ = conn.SetWriteDeadline(deadline)
 }
 
-// handleProtocol processes authentication for a test user over a network connection based on the specified protocol.
-// Supported protocols include SMTP, POP3, IMAP, and HTTP. If an unsupported protocol is specified, a warning is logged.
-// This function currently does not support plain connections requiring StartTLS.
-func handleProtocol(logger *slog.Logger, server *config.BackendServer, conn net.Conn) (err error) {
-	// Limited support only. Plain connections requiring StartTLS are not supported at the moment!
+// handleProtocol runs a protocol deep check with the configured TLS transport policy.
+func handleProtocol(logger *slog.Logger, server *config.BackendServer, monitoringCfg *config.BackendServerMonitoring, conn net.Conn) (err error) {
+	handshaker := newBackendTLSHandshaker(
+		logger,
+		server,
+		BackendCheckPhaseDeep,
+		config.BackendTLSModeStartTLS,
+		monitoringCfg.GetServerTLSTimeout(server),
+		monitoringCfg.GetServerDeepTimeout(server),
+	)
+
 	switch strings.ToLower(server.Protocol) {
 	case "smtp", "lmtp":
-		err = checkSMTP(logger, conn, server)
+		err = checkSMTPWithTLS(logger, conn, server, handshaker)
 	case "pop3":
-		err = checkPOP3(logger, conn, server)
+		err = checkPOP3WithTLS(logger, conn, server, handshaker)
 	case "imap":
-		err = checkIMAP(logger, conn, server)
+		err = checkIMAPWithTLS(logger, conn, server, handshaker)
 	case "sieve":
-		err = checkSieve(logger, conn, server)
+		err = checkSieveWithTLS(logger, conn, server, handshaker)
 	case "http":
 		err = checkHTTP(logger, conn, server)
 	default:
