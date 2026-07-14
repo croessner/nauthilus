@@ -26,7 +26,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/biter777/countries"
+	pluginhelpers "github.com/croessner/nauthilus/v3/pluginapi/v1/helpers"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
@@ -152,13 +152,7 @@ func (m *PasswordManager) validatePassword(L *lua.LState) int {
 func (m *MiscManager) getCountryName(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	isoCode := stack.CheckString(1)
-	country := countries.ByName(isoCode)
-
-	if country == countries.Unknown {
-		return stack.PushResults(lua.LString("Unknown"), lua.LNil)
-	}
-
-	countryName := country.String()
+	countryName := pluginhelpers.CountryName(isoCode)
 
 	return stack.PushResults(lua.LString(countryName), lua.LNil)
 }

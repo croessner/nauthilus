@@ -27,6 +27,7 @@ import (
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 var (
@@ -173,7 +174,7 @@ func (m *MetricsFacade) newMetricHandle(kind metricKind, definition pluginapi.Me
 		collector, err := registeredCollector(m.registerer, prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: collectorName, Help: metricHelp(definition)},
 			labelNames,
-		), !m.exactNames)
+		), true, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -183,7 +184,7 @@ func (m *MetricsFacade) newMetricHandle(kind metricKind, definition pluginapi.Me
 		collector, err := registeredCollector(m.registerer, prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{Name: collectorName, Help: metricHelp(definition)},
 			labelNames,
-		), !m.exactNames)
+		), true, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -193,7 +194,9 @@ func (m *MetricsFacade) newMetricHandle(kind metricKind, definition pluginapi.Me
 		collector, err := registeredCollector(m.registerer, prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: collectorName, Help: metricHelp(definition), Buckets: metricBuckets(definition)},
 			labelNames,
-		), !m.exactNames)
+		), true, func(existing *prometheus.HistogramVec) error {
+			return validateHistogramBuckets(existing, len(labelNames), metricBuckets(definition))
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -203,7 +206,7 @@ func (m *MetricsFacade) newMetricHandle(kind metricKind, definition pluginapi.Me
 		collector, err := registeredCollector(m.registerer, prometheus.NewSummaryVec(
 			prometheus.SummaryOpts{Name: collectorName, Help: metricHelp(definition)},
 			labelNames,
-		), !m.exactNames)
+		), true, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -464,8 +467,13 @@ func metricBuckets(definition pluginapi.MetricDefinition) []float64 {
 	return slices.Clone(definition.Buckets)
 }
 
-// registeredCollector registers a collector or returns an already registered equivalent.
-func registeredCollector[T prometheus.Collector](registerer prometheus.Registerer, collector T, reuse bool) (T, error) {
+// registeredCollector registers a collector or returns an exactly compatible existing collector.
+func registeredCollector[T prometheus.Collector](
+	registerer prometheus.Registerer,
+	collector T,
+	reuse bool,
+	validateExisting func(T) error,
+) (T, error) {
 	var zero T
 
 	if registerer == nil {
@@ -475,9 +483,19 @@ func registeredCollector[T prometheus.Collector](registerer prometheus.Registere
 	if err := registerer.Register(collector); err != nil {
 		var already prometheus.AlreadyRegisteredError
 		if reuse && errors.As(err, &already) {
+			if !sameCollectorDescriptors(already.ExistingCollector, collector) {
+				return zero, errors.New("existing plugin metric descriptor differs from requested contract")
+			}
+
 			existing, ok := already.ExistingCollector.(T)
 			if !ok {
 				return zero, err
+			}
+
+			if validateExisting != nil {
+				if validateErr := validateExisting(existing); validateErr != nil {
+					return zero, validateErr
+				}
 			}
 
 			return existing, nil
@@ -487,4 +505,107 @@ func registeredCollector[T prometheus.Collector](registerer prometheus.Registere
 	}
 
 	return collector, nil
+}
+
+// sameCollectorDescriptors compares complete ordered descriptor strings for strict compatibility reuse.
+func sameCollectorDescriptors(left prometheus.Collector, right prometheus.Collector) bool {
+	return slices.Equal(collectorDescriptorStrings(left), collectorDescriptorStrings(right))
+}
+
+// collectorDescriptorStrings drains and sorts immutable collector descriptor representations.
+func collectorDescriptorStrings(collector prometheus.Collector) []string {
+	descriptors := make(chan *prometheus.Desc)
+
+	go func() {
+		collector.Describe(descriptors)
+		close(descriptors)
+	}()
+
+	result := make([]string, 0)
+	for descriptor := range descriptors {
+		result = append(result, descriptor.String())
+	}
+
+	slices.Sort(result)
+
+	return result
+}
+
+// validateHistogramBuckets rejects reuse when Prometheus descriptors match but bucket boundaries differ.
+func validateHistogramBuckets(existing *prometheus.HistogramVec, labelCount int, expected []float64) error {
+	actual, err := histogramBucketBounds(existing, labelCount)
+	if err != nil {
+		return err
+	}
+
+	if !slices.Equal(actual, expected) {
+		return fmt.Errorf("existing plugin histogram buckets differ: got %v, want %v", actual, expected)
+	}
+
+	return nil
+}
+
+// histogramBucketBounds reads bucket boundaries without retaining a compatibility probe series.
+func histogramBucketBounds(histogram *prometheus.HistogramVec, labelCount int) ([]float64, error) {
+	metric := firstCollectedMetric(histogram)
+	if metric == nil {
+		labels := compatibilityProbeLabels(histogram, labelCount)
+
+		observer, err := histogram.GetMetricWithLabelValues(labels...)
+		if err != nil {
+			return nil, fmt.Errorf("inspect existing plugin histogram: %w", err)
+		}
+
+		var ok bool
+
+		metric, ok = observer.(prometheus.Metric)
+		if !ok {
+			return nil, errors.New("existing plugin histogram does not expose metric metadata")
+		}
+
+		defer histogram.DeleteLabelValues(labels...)
+	}
+
+	encoded := &dto.Metric{}
+	if err := metric.Write(encoded); err != nil {
+		return nil, fmt.Errorf("inspect existing plugin histogram buckets: %w", err)
+	}
+
+	buckets := encoded.GetHistogram().GetBucket()
+	result := make([]float64, 0, len(buckets))
+
+	for _, bucket := range buckets {
+		result = append(result, bucket.GetUpperBound())
+	}
+
+	return result, nil
+}
+
+// firstCollectedMetric returns one existing series while draining the collector safely.
+func firstCollectedMetric(collector prometheus.Collector) prometheus.Metric {
+	metrics := make(chan prometheus.Metric)
+
+	go func() {
+		collector.Collect(metrics)
+		close(metrics)
+	}()
+
+	var first prometheus.Metric
+	for metric := range metrics {
+		if first == nil {
+			first = metric
+		}
+	}
+
+	return first
+}
+
+// compatibilityProbeLabels builds collision-resistant temporary values for an uninitialized vector.
+func compatibilityProbeLabels(histogram *prometheus.HistogramVec, labelCount int) []string {
+	labels := make([]string, labelCount)
+	for index := range labels {
+		labels[index] = fmt.Sprintf("__nauthilus_compatibility_probe_%p_%d__", histogram, index)
+	}
+
+	return labels
 }

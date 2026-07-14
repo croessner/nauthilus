@@ -344,6 +344,18 @@ func TestDeterministicHelperFacade(t *testing.T) {
 	}
 }
 
+func TestDeterministicHelperFacadeCountryName(t *testing.T) {
+	helper := NewDeterministicHelperFacade(HelperOptions{})
+
+	if got := helper.CountryName("DE"); got != "Germany" {
+		t.Fatalf("CountryName(DE) = %q, want Germany", got)
+	}
+
+	if got := helper.CountryName("not-a-country"); got != "Unknown" {
+		t.Fatalf("CountryName(not-a-country) = %q, want Unknown", got)
+	}
+}
+
 func TestLDAPFacadeMapsSearchAndModifyRequests(t *testing.T) {
 	fake := &recordingLDAPExecutor{
 		searchResult: pluginapi.LDAPSearchResult{

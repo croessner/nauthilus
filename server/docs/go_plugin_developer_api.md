@@ -391,7 +391,10 @@ request the exception.
 Set `MetricDefinition.Compatibility`, `Type`, exact `Name`, `Help`, ordered `Labels`, and `Buckets` only when the complete
 definition appears in `plugins.modules[].compatibility.metrics`. The host registers the exact legacy collector and keeps
 the normal `nauthilus_plugin_<scope>_<name>` collector as supplemental data. Each observation is published once to each
-collector. Type, help, label order, or bucket drift is rejected; the API never exposes a Prometheus registerer.
+collector. When Lua initialization already registered the exact collector, the signed compatibility facade reuses that
+collector only if its type, help, ordered labels, and histogram buckets are identical. This avoids a second registration
+while Lua and native callers share the exact series. Any contract drift is rejected; the API never exposes a Prometheus
+registerer.
 
 Use `Host.CompatibilityTracer(scope)` only for an allowlisted plugin-owned domain span. `StartWithOptions` accepts the
 value-only `SpanKind`; `Span.SetStatus` accepts the value-only `SpanStatus`. `RecordError` records the error but does not
@@ -459,8 +462,10 @@ components. The host validates the scope, isolates cache contents per scope, and
 metrics or logs.
 
 Use `Host.Helpers()` or the dependency-light `pluginapi/v1/helpers` package for deterministic non-secret logic such as
-account hash tags, scoped IPs, and routable IP checks. The runtime facade derives account-tag and IP-scoping options from
-the loaded Nauthilus configuration and Lua-compatible environment knobs.
+account hash tags, country display names, scoped IPs, and routable IP checks. `CountryName` uses the same lookup and exact
+`"Unknown"` fallback as `nauthilus_misc.get_country_name`; it does not read localization state, configuration, or
+secrets. The runtime facade derives account-tag and IP-scoping options from the loaded Nauthilus configuration and
+Lua-compatible environment knobs.
 
 ### LDAP
 
@@ -745,6 +750,7 @@ Evidence examples include `backend/proxy_backend.lua`, `subject/idp_policy.lua`,
 | `nauthilus_cache` | Account protection, clickhouse | `Host.Cache(scope)`. | `helper-facade` | Native module caches are isolated by scope and support TTL, get/exists/delete, list push/pop-all, and clear. |
 | Redis key prefix helpers | `nauthilus_util.get_redis_key` | `Host.Redis().Keys()`. | `helper-facade` | The key builder applies the host prefix and preserves or normalizes Redis Cluster hash tags. |
 | Account hash-tag helpers | `nauthilus_keys` | `Host.Helpers().AccountTag` and `pluginapi/v1/helpers.AccountTag`. | `helper-facade` | Account tags share one deterministic helper implementation for Lua-compatible native ports. |
+| Country display-name helper | `nauthilus_misc.get_country_name` | `Host.Helpers().CountryName` and `pluginapi/v1/helpers.CountryName`. | `helper-facade` | Native and Lua callers share one deterministic lookup and the exact `"Unknown"` fallback. |
 | Scoped-IP and routable-IP helpers | `nauthilus_misc.scoped_ip`, `nauthilus_util.is_routable_ip` | `Host.Helpers().ScopedIP`, `IsRoutableIP`, and `pluginapi/v1/helpers`. | `helper-facade` | Deterministic utility helpers are public and dependency-light; the runtime facade supplies config-derived scoping. |
 | Password helpers | `nauthilus_password.compare_passwords`, `generate_password_hash` | `pluginapi/v1/password` plus `CredentialProvider`. | `exposed` | Public helpers share the same compare, SSHA parsing, crypt verifier, prepared-byte, and short-hash implementation used by Lua/server utilities. |
 | `nauthilus_prometheus` | Proxy backend, account protection, clickhouse, init | `Host.Metrics()`. | `exposed` | Plugin metrics are exported under the native plugin namespace; gauges support set and add semantics, histograms observe samples, and zero-valued counter series can be touched with `Add(ctx, 0, labels...)`. |
@@ -1424,7 +1430,7 @@ The following implementation notes are visible in the current codebase and shoul
 | Redis keys and scripts | `Host.Redis()` exposes command handles, key construction, and a named script registry with `NOSCRIPT` recovery. | Use host key helpers for prefixed, cluster-safe keys and upload scripts before running them by deterministic name. |
 | Redis named pools | Host-owned named Redis pools are intentionally not exposed. | Build module-owned clients only when the configured host Redis facade is insufficient; close and redact them yourself. |
 | Process cache | `Host.Cache(scope)` returns an in-process cache isolated by validated scope. | Use it for bounded module-local coordination, TTL state, and list batches; do not treat it as durable storage. |
-| Deterministic helpers | `Host.Helpers()` and `pluginapi/v1/helpers` expose account tags, scoped IPs, and routable IP checks. | Prefer these helpers over plugin-local copies when porting Lua logic. |
+| Deterministic helpers | `Host.Helpers()` and `pluginapi/v1/helpers` expose account tags, country display names, scoped IPs, and routable IP checks. | Prefer these helpers over plugin-local copies when porting Lua logic. `CountryName` is non-localized and returns `"Unknown"` for unrecognized input. |
 | Plugin-defined metrics | `Host.Metrics()` validates definitions, exports Prometheus collectors under `nauthilus_plugin_<scope>_<name>`, and keeps local observation counts for diagnostics. | Declare bounded labels and avoid high-cardinality values. The host-owned `plugin_scope` label is reserved. |
 | Connection targets | `Host.ConnectionTargets(scope)` validates named `host:port` targets, local/remote direction, bounded labels, and idempotent duplicate registration before delegating to generic connection observability. | Use this from init tasks for psnet-style visibility. It is not a raw network dialer and does not manage plugin-owned sockets. |
 | SMTP/LMTP mail | `Host.Mail(scope)` adapts `pluginapi.MailMessage` values to the host-owned SMTP/LMTP transport and logs only bounded result/protocol fields. | Request `CapabilityMail` when mail can be sent, keep mail config under the module config, parse templates before activation, and keep recipients, subjects, bodies, credentials, template paths, and raw transport errors out of logs and facts. |

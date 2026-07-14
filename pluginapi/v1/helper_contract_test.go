@@ -66,3 +66,24 @@ func TestDeterministicHelpersMatchLuaContracts(t *testing.T) {
 		t.Fatal("IsRoutableIP() returned false for public IPv6")
 	}
 }
+
+func TestCountryNameMatchesLuaContract(t *testing.T) {
+	tests := []struct {
+		name        string
+		countryCode string
+		want        string
+	}{
+		{name: "uppercase ISO code", countryCode: "US", want: "United States"},
+		{name: "lowercase ISO code", countryCode: "gb", want: "United Kingdom"},
+		{name: "unknown code", countryCode: "XYZ", want: "Unknown"},
+		{name: "empty code", countryCode: "", want: "Unknown"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := helpers.CountryName(test.countryCode); got != test.want {
+				t.Fatalf("CountryName(%q) = %q, want %q", test.countryCode, got, test.want)
+			}
+		})
+	}
+}

@@ -85,6 +85,11 @@ func (h *deterministicHelperFacade) AccountTag(username string) string {
 	return helpers.AccountTag(username, h.options.AccountTag)
 }
 
+// CountryName returns the Lua-compatible display name for a country code.
+func (h *deterministicHelperFacade) CountryName(countryCode string) string {
+	return helpers.CountryName(countryCode)
+}
+
 // ScopedIP returns a stable address or network identifier for a helper context.
 func (h *deterministicHelperFacade) ScopedIP(contextName string, ip string) string {
 	if h == nil {

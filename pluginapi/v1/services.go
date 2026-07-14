@@ -155,6 +155,7 @@ type Cache interface {
 // DeterministicHelpers exposes shared non-secret helper logic used by plugin ports.
 type DeterministicHelpers interface {
 	AccountTag(string) string
+	CountryName(string) string
 	ScopedIP(string, string) string
 	IsRoutableIP(string) bool
 }

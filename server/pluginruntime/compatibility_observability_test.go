@@ -94,26 +94,160 @@ func TestCompatibilityMetricsRejectDefinitionDrift(t *testing.T) {
 	}
 }
 
-func TestCompatibilityMetricsRejectPreexistingExactCollector(t *testing.T) {
+func TestCompatibilityMetricsReuseIdenticalLuaCollector(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	if err := registry.Register(prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "legacy_requests_total",
-		Help: "Legacy requests",
-	}, []string{"result"})); err != nil {
+
+	existing := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "http_client_concurrent_requests_total",
+		Help: "Measure the number of total concurrent HTTP client requests",
+	}, []string{"service"})
+
+	if err := registry.Register(existing); err != nil {
+		t.Fatalf("pre-register exact collector: %v", err)
+	}
+
+	existing.WithLabelValues("blocklist").Set(3)
+
+	definition := pluginapi.MetricDefinition{
+		Compatibility: true,
+		Type:          pluginapi.MetricTypeGauge,
+		Name:          "http_client_concurrent_requests_total",
+		Help:          "Measure the number of total concurrent HTTP client requests",
+		Labels:        []string{"service"},
+	}
+
+	host := newSignedCompatibilityMetricsHost(registry, definition)
+	metrics := host.moduleHost("rns_auth").Metrics("rns_auth")
+
+	gauge, err := metrics.Gauge(definition)
+	if err != nil {
+		t.Fatalf("Gauge() error = %v", err)
+	}
+
+	duplicate, err := metrics.Gauge(definition)
+	if err != nil {
+		t.Fatalf("duplicate Gauge() error = %v", err)
+	}
+
+	labels := []pluginapi.LabelValue{{Name: "service", Value: "blocklist"}}
+	gauge.Add(context.Background(), 2, labels...)
+	duplicate.Add(context.Background(), 1, labels...)
+
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+
+	assertGaugeValue(t, families, "http_client_concurrent_requests_total", 6)
+	assertGaugeValue(t, families, "nauthilus_plugin_rns_auth_http_client_concurrent_requests_total", 3)
+	assertMetricFamilyCount(t, families, "http_client_concurrent_requests_total", 1)
+
+	unsigned := host.moduleHost("unsigned").Metrics("unsigned")
+	if _, err := unsigned.Gauge(definition); !errors.Is(err, ErrCompatibilityMetricDenied) {
+		t.Fatalf("unsigned Gauge() error = %v, want ErrCompatibilityMetricDenied", err)
+	}
+}
+
+func TestCompatibilityMetricsReuseIdenticalLuaHistogram(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	buckets := prometheus.ExponentialBuckets(0.001, 1.75, 15)
+
+	existing := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "blocklist_duration_seconds",
+		Help:    "HTTP request to the blocklist service",
+		Buckets: buckets,
+	}, []string{"http"})
+
+	if err := registry.Register(existing); err != nil {
 		t.Fatalf("pre-register exact collector: %v", err)
 	}
 
 	definition := pluginapi.MetricDefinition{
 		Compatibility: true,
-		Type:          pluginapi.MetricTypeCounter,
-		Name:          "legacy_requests_total",
-		Help:          "Legacy requests",
-		Labels:        []string{"result"},
+		Type:          pluginapi.MetricTypeHistogram,
+		Name:          "blocklist_duration_seconds",
+		Help:          "HTTP request to the blocklist service",
+		Labels:        []string{"http"},
+		Buckets:       buckets,
 	}
 	metrics := NewCompatibilityMetricsFacade(NewMetricsFacadeWithRegisterer("rns_auth", registry), registry, []pluginapi.MetricDefinition{definition})
 
-	if _, err := metrics.Counter(definition); err == nil {
-		t.Fatal("Counter() error = nil, want exact collector conflict")
+	histogram, err := metrics.Histogram(definition)
+	if err != nil {
+		t.Fatalf("Histogram() error = %v", err)
+	}
+
+	existing.WithLabelValues("request").Observe(0.01)
+	histogram.Observe(context.Background(), 0.02, pluginapi.LabelValue{Name: "http", Value: "request"})
+
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+
+	assertHistogramSampleCount(t, families, "blocklist_duration_seconds", 2)
+	assertHistogramSampleCount(t, families, "nauthilus_plugin_rns_auth_blocklist_duration_seconds", 1)
+	assertMetricFamilyCount(t, families, "blocklist_duration_seconds", 1)
+}
+
+func TestCompatibilityMetricsRejectPreexistingCollectorContractDrift(t *testing.T) {
+	tests := []struct {
+		name       string
+		definition pluginapi.MetricDefinition
+		existing   prometheus.Collector
+	}{
+		{
+			name: "type",
+			definition: pluginapi.MetricDefinition{
+				Compatibility: true, Type: pluginapi.MetricTypeGauge, Name: "legacy_type", Help: "Legacy type", Labels: []string{"service"},
+			},
+			existing: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "legacy_type", Help: "Legacy type"}, []string{"service"}),
+		},
+		{
+			name: "help",
+			definition: pluginapi.MetricDefinition{
+				Compatibility: true, Type: pluginapi.MetricTypeGauge, Name: "legacy_help", Help: "Expected help", Labels: []string{"service"},
+			},
+			existing: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "legacy_help", Help: "Different help"}, []string{"service"}),
+		},
+		{
+			name: "label order",
+			definition: pluginapi.MetricDefinition{
+				Compatibility: true, Type: pluginapi.MetricTypeGauge, Name: "legacy_labels", Help: "Legacy labels", Labels: []string{"service", "result"},
+			},
+			existing: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "legacy_labels", Help: "Legacy labels"}, []string{"result", "service"}),
+		},
+		{
+			name: "histogram buckets",
+			definition: pluginapi.MetricDefinition{
+				Compatibility: true, Type: pluginapi.MetricTypeHistogram, Name: "legacy_buckets", Help: "Legacy buckets", Labels: []string{"service"}, Buckets: []float64{0.01, 0.1, 1},
+			},
+			existing: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "legacy_buckets", Help: "Legacy buckets", Buckets: []float64{0.02, 0.2, 2}}, []string{"service"}),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			registry := prometheus.NewRegistry()
+			if err := registry.Register(test.existing); err != nil {
+				t.Fatalf("pre-register exact collector: %v", err)
+			}
+
+			var err error
+
+			metrics := NewCompatibilityMetricsFacade(NewMetricsFacadeWithRegisterer("rns_auth", registry), registry, []pluginapi.MetricDefinition{test.definition})
+
+			switch test.definition.Type {
+			case pluginapi.MetricTypeGauge:
+				_, err = metrics.Gauge(test.definition)
+			case pluginapi.MetricTypeHistogram:
+				_, err = metrics.Histogram(test.definition)
+			}
+
+			if err == nil {
+				t.Fatal("compatibility metric error = nil, want collector contract conflict")
+			}
+		})
 	}
 }
 
@@ -178,21 +312,75 @@ func TestModuleBoundCompatibilityRequiresVerifiedSignerAndExactScope(t *testing.
 	}
 }
 
+// newSignedCompatibilityMetricsHost builds a verified module host for exact-metric tests.
+func newSignedCompatibilityMetricsHost(registry *prometheus.Registry, definition pluginapi.MetricDefinition) *Host {
+	host := NewHost(
+		WithCompatibilityRegisterer(registry),
+		WithMetricsFactory(func(scope string) pluginapi.Metrics {
+			return NewMetricsFacadeWithRegisterer(scope, registry)
+		}),
+	)
+	host.setModuleCompatibility([]pluginloader.ModuleInstance{{
+		ModuleName:     "rns_auth",
+		VerifiedSigner: "release_key",
+		Module: config.PluginModule{Compatibility: config.PluginCompatibility{Metrics: []config.PluginCompatibilityMetric{{
+			Type: definition.Type, Name: definition.Name, Help: definition.Help, Labels: definition.Labels, Buckets: definition.Buckets,
+		}}}},
+	}})
+
+	return host
+}
+
 // assertHistogramSampleCount checks one gathered histogram family.
 func assertHistogramSampleCount(t *testing.T, families []*dto.MetricFamily, name string, want uint64) {
 	t.Helper()
 
+	family := metricFamilyByName(t, families, name)
+
+	if got := family.GetMetric()[0].GetHistogram().GetSampleCount(); got != want {
+		t.Fatalf("histogram %q sample count = %d, want %d", name, got, want)
+	}
+}
+
+// assertGaugeValue checks one gathered gauge family value.
+func assertGaugeValue(t *testing.T, families []*dto.MetricFamily, name string, want float64) {
+	t.Helper()
+
+	family := metricFamilyByName(t, families, name)
+
+	if got := family.GetMetric()[0].GetGauge().GetValue(); got != want {
+		t.Fatalf("gauge %q value = %v, want %v", name, got, want)
+	}
+}
+
+// metricFamilyByName returns one gathered family or fails the test.
+func metricFamilyByName(t *testing.T, families []*dto.MetricFamily, name string) *dto.MetricFamily {
+	t.Helper()
+
 	for _, family := range families {
-		if family.GetName() != name {
-			continue
+		if family.GetName() == name {
+			return family
 		}
-
-		if got := family.GetMetric()[0].GetHistogram().GetSampleCount(); got != want {
-			t.Fatalf("histogram %q sample count = %d, want %d", name, got, want)
-		}
-
-		return
 	}
 
-	t.Fatalf("histogram %q was not gathered", name)
+	t.Fatalf("metric family %q was not gathered", name)
+
+	return nil
+}
+
+// assertMetricFamilyCount checks that one metric family exists exactly once.
+func assertMetricFamilyCount(t *testing.T, families []*dto.MetricFamily, name string, want int) {
+	t.Helper()
+
+	count := 0
+
+	for _, family := range families {
+		if family.GetName() == name {
+			count++
+		}
+	}
+
+	if count != want {
+		t.Fatalf("metric family %q count = %d, want %d", name, count, want)
+	}
 }

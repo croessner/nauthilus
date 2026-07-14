@@ -22,9 +22,14 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+
+	"github.com/biter777/countries"
 )
 
-const defaultAccountHashTagPrefix = "acm-"
+const (
+	defaultAccountHashTagPrefix = "acm-"
+	unknownCountryName          = "Unknown"
+)
 
 // AccountTagOptions controls Redis Cluster hash-tag generation for account keys.
 type AccountTagOptions struct {
@@ -60,6 +65,16 @@ func AccountTag(username string, options AccountTagOptions) string {
 	sum := md5.Sum([]byte(username))
 
 	return "{" + prefix + hex.EncodeToString(sum[:]) + "}"
+}
+
+// CountryName returns the Lua-compatible display name for a country code.
+func CountryName(countryCode string) string {
+	country := countries.ByName(countryCode)
+	if country == countries.Unknown {
+		return unknownCountryName
+	}
+
+	return country.String()
 }
 
 // ScopedIP returns ip or a configured network identifier for stable cache and Redis keys.

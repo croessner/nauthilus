@@ -168,6 +168,7 @@ func sampleOptionalMFAInterfaceDiscovery(backend pluginapi.Backend) {
 func (samplePlugin) Start(ctx context.Context, host pluginapi.Host) error {
 	_ = host.BackendServers().List(ctx)
 	_ = host.Helpers().AccountTag("sample")
+	_ = host.Helpers().CountryName("DE")
 	_ = host.HTTP("sample")
 	_ = host.Mail("sample")
 	_ = pluginapi.MailMessage{

@@ -356,7 +356,7 @@ Service notes:
 - `Cache` should expose only process-local module cache semantics: TTL values, delete/exists, list push/pop-all, and clear.
   Cache contents are isolated by validated module scope and are not durable.
 - `DeterministicHelpers` should hold shared non-secret helper logic used when porting Lua scripts, such as account hash
-  tags, scoped IPs, and routable IP checks.
+  tags, country display names, scoped IPs, and routable IP checks.
 - `LDAP` should expose queued, request-aware `Search` and `Modify` methods that package LDAP operations, submit them to
   the existing worker queues, and wait for results. Plugins should not receive raw LDAP queues, pools, or
   `LDAPRequest` internals.
@@ -365,10 +365,11 @@ Service notes:
 - `Tracer` should attach spans to the active request context through a Nauthilus-owned facade. Raw OpenTelemetry
   providers are not part of the public v1 API.
 - The implemented compatibility exception is signer-gated and restart-only. Exact metric contracts include collector
-  type, help, ordered labels, and histogram buckets, and publish once to both the exact and native collectors. Exact trace
-  scopes are for plugin-owned domain spans and use value-only kind and status enums. They must not wrap host-owned HTTP,
-  LDAP, Redis, or mail operations; `Host.HTTP` continues to own its single `plugin.http` client span. Compatibility
-  configuration is invalid when signature verification is disabled.
+  type, help, ordered labels, and histogram buckets, and publish once to both the exact and native collectors. An already
+  registered Lua collector is reused only when that full contract is identical; type, help, label-order, and bucket drift
+  fail closed. Exact trace scopes are for plugin-owned domain spans and use value-only kind and status enums. They must not
+  wrap host-owned HTTP, LDAP, Redis, or mail operations; `Host.HTTP` continues to own its single `plugin.http` client span.
+  Compatibility configuration is invalid when signature verification is disabled.
 - `Go` should preserve caller context values, including trace context, but detach from caller cancellation. Host-managed
   workers are canceled through the host worker lifetime during runtime shutdown, not by an already-finished request
   context.
@@ -510,6 +511,7 @@ type Cache interface {
 
 type DeterministicHelpers interface {
     AccountTag(string) string
+    CountryName(string) string
     ScopedIP(string, string) string
     IsRoutableIP(string) bool
 }
@@ -530,7 +532,9 @@ need a shared in-process buffer. Scope validation prevents accidental cross-modu
 requires an explicit future API.
 
 Deterministic helpers are also available as dependency-light public helpers for code that does not have a live `Host`
-facade. Runtime `Host.Helpers()` applies Nauthilus config and Lua-compatible environment defaults.
+facade. `CountryName` shares the exact non-localized lookup and `"Unknown"` fallback used by
+`nauthilus_misc.get_country_name`. Runtime `Host.Helpers()` applies Nauthilus config and Lua-compatible environment
+defaults where a helper requires them.
 
 LDAP should stay queue-backed but not queue-exposing:
 
@@ -1688,8 +1692,8 @@ rules. Those concerns are useful when isolation is required, but they are not th
   centralized in Nauthilus.
 - Named Redis pools are plugin-owned for now; the host does not expose Lua-style pool registration or lookup.
 - `Host.Cache(scope)` exposes process-local, scope-isolated cache semantics for TTL values and list batching.
-- `Host.Helpers()` exposes deterministic account tag, scoped-IP, and routable-IP helpers; dependency-light equivalents
-  live under `pluginapi/v1/helpers`.
+- `Host.Helpers()` exposes deterministic account tag, country display-name, scoped-IP, and routable-IP helpers;
+  dependency-light equivalents live under `pluginapi/v1/helpers`.
 - `Host.HTTP(scope)` is the native replacement for Lua-style outbound HTTP helpers when host-managed tracing, bounded
   metrics, timeouts, response body limits, and redacted logs are required.
 - `Host.ConnectionTargets(scope)` is the native replacement for psnet target registration. It is observability-only and
