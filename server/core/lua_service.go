@@ -20,6 +20,7 @@ import (
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 	"github.com/gin-gonic/gin"
 )
@@ -31,11 +32,25 @@ type LuaSubject interface {
 	Analyze(ctx *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult
 }
 
+// ScheduledLuaSubject executes one explicit policy-selected Lua subject phase.
+//
+//goland:nointerface
+type ScheduledLuaSubject interface {
+	AnalyzeSchedule(ctx *gin.Context, view *StateView, result *PassDBResult, plan policycollection.ScriptSchedulePlan) definitions.AuthResult
+}
+
 // PluginSubjectSourceBridge adapts native post-backend subject sources without importing pluginruntime.
 //
 //goland:nointerface
 type PluginSubjectSourceBridge interface {
 	Analyze(ctx *gin.Context, view *StateView, result *PassDBResult, current definitions.AuthResult) (definitions.AuthResult, bool)
+}
+
+// MixedPluginSubjectSourceBridge coordinates Lua checks that explicitly depend on native subject checks.
+//
+//goland:nointerface
+type MixedPluginSubjectSourceBridge interface {
+	AnalyzeMixed(ctx *gin.Context, view *StateView, result *PassDBResult, lua ScheduledLuaSubject) (definitions.AuthResult, bool)
 }
 
 // PluginEnvironmentSourceBridge adapts native pre-auth environment sources without importing pluginruntime.

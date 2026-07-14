@@ -1154,6 +1154,81 @@ func TestCompilerRegistersPluginSubjectAttributesWithComponentIdentity(t *testin
 	assertRegisteredPluginSubjectAttribute(t, snapshot, "auth.plugin.subject.example_auth.policy.error")
 }
 
+func TestCompilerPreservesLuaSubjectAfterNativeSubjectDependency(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{
+		{
+			Name:       "plugin_subject_rns_auth_rns_ldap",
+			Type:       policy.CheckTypePluginSubjectSource,
+			Stage:      string(policy.StageSubjectAnalysis),
+			Operations: []string{string(policy.OperationAuthenticate), string(policy.OperationLookupIdentity)},
+			RunIf:      config.PolicyRunIfConfig{AuthState: policy.RunIfAuthenticated},
+			ConfigRef:  "plugins.modules.rns_auth.subject",
+		},
+		{
+			Name:       "lua_subject_director_routing",
+			Type:       policy.CheckTypeLuaSubjectSource,
+			Stage:      string(policy.StageSubjectAnalysis),
+			Operations: []string{string(policy.OperationAuthenticate), string(policy.OperationLookupIdentity)},
+			RunIf:      config.PolicyRunIfConfig{AuthState: policy.RunIfAuthenticated},
+			After:      []string{"plugin_subject_rns_auth_rns_ldap"},
+			ConfigRef:  "auth.policy.attribute_sources.lua.subject.director_routing",
+		},
+	}
+	cfg.Auth.Policy.Policies = nil
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	checks := snapshot.StagePlans[policy.OperationAuthenticate][policy.StageSubjectAnalysis].Checks
+	if len(checks) != 2 || len(checks[1].After) != 1 || checks[1].After[0] != "plugin_subject_rns_auth_rns_ldap" {
+		t.Fatalf("subject checks = %#v, want preserved Lua-after-native dependency", checks)
+	}
+}
+
+func TestCompilerRejectsSecondNativeBoundaryAfterDeferredLuaSubject(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{
+		{
+			Name:      "lua_subject_before",
+			Type:      policy.CheckTypeLuaSubjectSource,
+			Stage:     string(policy.StageSubjectAnalysis),
+			ConfigRef: "auth.policy.attribute_sources.lua.subject.before",
+		},
+		{
+			Name:      "plugin_subject_example_auth_first",
+			Type:      policy.CheckTypePluginSubjectSource,
+			Stage:     string(policy.StageSubjectAnalysis),
+			After:     []string{"lua_subject_before"},
+			ConfigRef: "plugins.modules.example_auth.subject",
+		},
+		{
+			Name:      "lua_subject_after",
+			Type:      policy.CheckTypeLuaSubjectSource,
+			Stage:     string(policy.StageSubjectAnalysis),
+			After:     []string{"plugin_subject_example_auth_first"},
+			ConfigRef: "auth.policy.attribute_sources.lua.subject.after",
+		},
+		{
+			Name:      "plugin_subject_example_auth_second",
+			Type:      policy.CheckTypePluginSubjectSource,
+			Stage:     string(policy.StageSubjectAnalysis),
+			After:     []string{"lua_subject_after"},
+			ConfigRef: "plugins.modules.example_auth.subject",
+		},
+	}
+	cfg.Auth.Policy.Policies = nil
+
+	assertCompileErrorContains(
+		t,
+		cfg,
+		"requires more than one Lua/native subject boundary",
+		"unsupported alternating subject dependency error",
+	)
+}
+
 // nativePluginPolicySurfaceConfig builds a config that consumes registered plugin policy metadata.
 func nativePluginPolicySurfaceConfig() *config.FileSettings {
 	cfg := policyCompilerTestConfig()

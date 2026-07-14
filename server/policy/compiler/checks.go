@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/policy/subjectschedule"
 )
 
 func compileChecks(
@@ -290,6 +291,10 @@ func validateCheckDependencies(checks []policyruntime.CompiledCheck) error {
 		}
 	}
 
+	if err := validateMixedSubjectDependencyBoundaries(checks); err != nil {
+		return err
+	}
+
 	for operation := range operationSetFromChecks(checks) {
 		for stage := range stageSetFromChecks(checks) {
 			if err := sortChecksForPlan(checksForPlan(checks, operation, stage)); err != nil {
@@ -299,6 +304,19 @@ func validateCheckDependencies(checks []policyruntime.CompiledCheck) error {
 	}
 
 	return nil
+}
+
+// validateMixedSubjectDependencyBoundaries rejects graphs that alternate back to native after deferred Lua execution.
+func validateMixedSubjectDependencyBoundaries(checks []policyruntime.CompiledCheck) error {
+	checkName, dependencyIndex, found := subjectschedule.NewBoundaryGraph(checks).SecondNativeBoundary()
+	if !found {
+		return nil
+	}
+
+	return configPathError(
+		indexedPath("auth.policy.checks."+checkName+".after", dependencyIndex),
+		"requires more than one Lua/native subject boundary",
+	)
 }
 
 func operationsCover(left []policy.Operation, right []policy.Operation) bool {

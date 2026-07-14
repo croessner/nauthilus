@@ -306,6 +306,37 @@ legacy startup layer and are not rewritten or removed by this configuration surf
 
 See `server/docs/examples/policy_localization_and_allowlists.yml` for a focused example.
 
+## Mixed Lua And Native Subject Ordering
+
+Subject analysis keeps the established whole-Lua-then-native order unless policy configuration declares a Lua subject
+check after a native plugin subject check. This narrow form uses policy check names in `auth.policy.checks[].after`:
+
+```yaml
+auth:
+  policy:
+    checks:
+      - name: plugin_subject_example_auth_directory
+        type: plugin.subject
+        stage: subject_analysis
+        run_if:
+          auth_state: authenticated
+        config_ref: plugins.modules.example_auth.subject
+      - name: lua_subject_director_routing
+        type: lua.subject
+        stage: subject_analysis
+        run_if:
+          auth_state: authenticated
+        after:
+          - plugin_subject_example_auth_directory
+        config_ref: auth.policy.attribute_sources.lua.subject.director_routing
+```
+
+For this topology the host executes non-deferred Lua subject checks first, then the native subject bridge, and finally
+the deferred Lua subject checks. Lua-only dependencies inside either side retain their deterministic policy order.
+`SourceDescriptor.Requires` and `SourceDescriptor.After` still address native plugin components only; they must not name
+Lua checks. The compiler rejects a graph that would require native execution again after deferred Lua execution. Reload
+uses the same compiler validation and leaves the previous policy snapshot active when the candidate graph is invalid.
+
 Some Lua helper families intentionally remain plugin-owned in the native contract:
 
 - extra or named Redis pools;

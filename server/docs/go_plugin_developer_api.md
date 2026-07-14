@@ -803,9 +803,10 @@ flowchart TD
     B --> C["Go environment sources"]
     C --> D["Built-in pre-auth controls"]
     D --> E["Backend authentication"]
-    E --> F["Lua subject sources"]
+    E --> F["Lua subject sources before native boundary"]
     F --> G["Go subject sources"]
-    G --> H["Policy decision"]
+    G --> M["Lua subject sources deferred by policy after"]
+    M --> H["Policy decision"]
     H --> I["Synchronous obligations"]
     H --> J["Asynchronous post-actions"]
     K["HTTP custom route"] --> L["Go hook"]
@@ -1441,7 +1442,7 @@ The following implementation notes are visible in the current codebase and shoul
 | Account-list facts | `AccountListResult.Facts` are validated and emitted as `account_provider` policy attributes. | Register every account-provider fact before policy snapshots compile. |
 | Native hooks | `HookRequest` carries redacted headers, query values, path, method, body, and snapshot values; `HookResponse` maps status, safe headers, and body. HEAD responses write no body. | Keep route ownership in Nauthilus and return only API-level values. Use standard `net/http` status constants. |
 | Hook path collisions | Duplicate native hook canonical method/path keys and duplicate alias keys are rejected while building the native hook index. | Choose globally unique hook paths and aliases; ambiguous bindings are not routable. |
-| Mixed Lua and Go source scheduling | Lua sources and Go sources use the same scheduler semantics but are planned and executed as separate source sets. | Do not express cross-family `Requires` or `After` dependencies. Use runtime context facts when a Go source needs Lua output. |
+| Mixed Lua and Go source scheduling | Subject checks normally retain the existing whole-Lua-then-native order. A `lua.subject` policy check may declare `after: [<plugin.subject check>]`; the host then executes non-deferred Lua checks, the native subject bridge, and the deferred Lua checks in that order. | Use policy check names for the cross-source dependency. `SourceDescriptor.Requires` and `SourceDescriptor.After` remain native-only. The compiler rejects graphs that would require a second native boundary after deferred Lua execution. |
 | Plugin-owned libraries | SQL drivers, Telegram clients, template engines, custom mail stacks beyond `Host.Mail`, raw sockets, extra Redis pools, and the Lua GeoIP bridge are outside the host-managed v1 facades. | Own config, lifecycle, deadlines, retries, metrics, traces, and redaction inside the plugin module; expose only safe facts, logs, and status values to Nauthilus. |
 
 ## Developer Checklist

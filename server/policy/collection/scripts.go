@@ -22,6 +22,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/policy/subjectschedule"
 )
 
 // ScriptKind identifies the Lua script family observed by the adapter.
@@ -61,6 +62,13 @@ type ScriptSchedule struct {
 type ScriptSchedulePlan struct {
 	Schedules  []ScriptSchedule
 	Configured bool
+}
+
+// SubjectScriptPhases partitions Lua subject checks around a native subject boundary.
+type SubjectScriptPhases struct {
+	Before ScriptSchedulePlan
+	After  ScriptSchedulePlan
+	Mixed  bool
 }
 
 // ScriptRecorder consumes per-script Lua results.
@@ -123,6 +131,101 @@ func (s *ScriptSink) ScriptPlan(kind ScriptKind, authState AuthState) ScriptSche
 // ScriptPlan returns the active Lua script plan for one script family.
 func (c *DecisionContext) ScriptPlan(kind ScriptKind, authState AuthState) ScriptSchedulePlan {
 	return c.scriptPlan(kind, authState, true)
+}
+
+// SubjectScriptPhases returns Lua subject schedules before and after selected native subject dependencies.
+func (c *DecisionContext) SubjectScriptPhases(authState AuthState) SubjectScriptPhases {
+	plan := c.scriptPlan(ScriptKindSubject, authState, true)
+	phases := SubjectScriptPhases{Before: plan}
+
+	if !plan.Configured || len(plan.Schedules) == 0 {
+		return phases
+	}
+
+	checks := c.selectedSubjectChecks(authState)
+	deferred := deferredLuaSubjectNames(checks)
+
+	if len(deferred) == 0 {
+		return phases
+	}
+
+	phases.Before = filterScriptSchedulePlan(plan, deferred, false)
+	phases.After = filterScriptSchedulePlan(plan, deferred, true)
+	phases.Mixed = len(phases.After.Schedules) > 0
+
+	return phases
+}
+
+// selectedSubjectChecks returns request-selected Lua and native subject checks in policy order.
+func (c *DecisionContext) selectedSubjectChecks(authState AuthState) []policyruntime.CompiledCheck {
+	checks := make([]policyruntime.CompiledCheck, 0)
+
+	for _, check := range c.stageChecks(policy.StageSubjectAnalysis) {
+		if check.Type != policy.CheckTypeLuaSubjectSource && check.Type != policy.CheckTypePluginSubjectSource {
+			continue
+		}
+
+		if !c.compiledCheckSelected(check, authState) {
+			continue
+		}
+
+		checks = append(checks, check)
+	}
+
+	return checks
+}
+
+// deferredLuaSubjectNames finds Lua checks with a selected native dependency in their transitive chain.
+func deferredLuaSubjectNames(checks []policyruntime.CompiledCheck) map[string]struct{} {
+	deferredChecks := subjectschedule.NewBoundaryGraph(checks).DeferredLuaChecks()
+	deferred := make(map[string]struct{})
+
+	for _, check := range checks {
+		if check.Type != policy.CheckTypeLuaSubjectSource {
+			continue
+		}
+
+		if _, exists := deferredChecks[check.Name]; !exists {
+			continue
+		}
+
+		name := scriptNameFromCheck(ScriptKindSubject, check)
+		if name != "" {
+			deferred[name] = struct{}{}
+		}
+	}
+
+	return deferred
+}
+
+// filterScriptSchedulePlan keeps one side of the native boundary and removes already-satisfied dependencies.
+func filterScriptSchedulePlan(plan ScriptSchedulePlan, selected map[string]struct{}, keepSelected bool) ScriptSchedulePlan {
+	keptNames := make(map[string]struct{})
+
+	for _, schedule := range plan.Schedules {
+		_, exists := selected[schedule.Name]
+		if exists == keepSelected {
+			keptNames[schedule.Name] = struct{}{}
+		}
+	}
+
+	schedules := make([]ScriptSchedule, 0, len(keptNames))
+	for _, schedule := range plan.Schedules {
+		if _, keep := keptNames[schedule.Name]; !keep {
+			continue
+		}
+
+		dependencies := make([]string, 0, len(schedule.After))
+		for _, dependency := range schedule.After {
+			if _, keep := keptNames[dependency]; keep {
+				dependencies = append(dependencies, dependency)
+			}
+		}
+
+		schedules = append(schedules, ScriptSchedule{Name: schedule.Name, After: dependencies})
+	}
+
+	return ScriptSchedulePlan{Schedules: schedules, Configured: plan.Configured}
 }
 
 func (c *DecisionContext) scriptPlan(kind ScriptKind, authState AuthState, recordSkips bool) ScriptSchedulePlan {

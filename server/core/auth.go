@@ -3601,8 +3601,19 @@ func (a *AuthState) SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) def
 	}
 
 	if lf := getLuaSubject(); lf != nil {
+		bridge := getPluginSubjectSourceBridge()
+		if scheduledLua, ok := lf.(ScheduledLuaSubject); ok {
+			if mixedBridge, mixed := bridge.(MixedPluginSubjectSourceBridge); mixed {
+				if result, handled := mixedBridge.AnalyzeMixed(ctx, a.View(), passDBResult, scheduledLua); handled {
+					lspan.SetAttributes(attribute.String("result", string(result)))
+
+					return result
+				}
+			}
+		}
+
 		res := lf.Analyze(ctx, a.View(), passDBResult)
-		if bridge := getPluginSubjectSourceBridge(); bridge != nil {
+		if bridge != nil {
 			if next, handled := bridge.Analyze(ctx, a.View(), passDBResult, res); handled {
 				res = next
 			}

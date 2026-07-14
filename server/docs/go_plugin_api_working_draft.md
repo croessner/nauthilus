@@ -874,8 +874,11 @@ serializable, reportable, and safe to bridge between Lua and Go extension paths.
 The extension point names should be domain-specific and neutral. Lua and Go can be implementations of the same internal
 concept.
 
-Environment and subject sources should use the same dependency scheduler semantics that Lua uses today. In v1, Lua and
-Go sources are planned and executed as separate source sets; mixed Lua/Go dependency graphs are not supported.
+Environment and subject sources use the same deterministic dependency concepts. Environment sources and ordinary
+subject configurations retain separate Lua and Go source sets. Subject analysis also supports one narrow mixed boundary:
+a `lua.subject` policy check may name a `plugin.subject` policy check in `after`. The host then executes non-deferred Lua
+subject checks, the native subject bridge, and deferred Lua subject checks. Graphs that would alternate back to native
+execution after deferred Lua are rejected by the compiler.
 
 ```go
 type SourceDescriptor struct {
@@ -894,8 +897,8 @@ continue to publish request-context deltas through the existing Lua request cont
 
 Dependency names in `Requires` and `After` are resolved relative to the registering module first. A local component name
 such as `asn` can refer to `geoip.asn` when declared by the `geoip` module. Dependencies outside the module must use
-fully qualified plugin component names. Dependencies on Lua sources are unsupported in v1; use runtime context values to
-consume Lua output from later Go source execution instead of declaring a cross-family dependency.
+fully qualified plugin component names. These descriptor dependencies remain native-only. The mixed subject boundary is
+declared separately through `auth.policy.checks[].after`, using policy check names rather than component IDs.
 
 ### Init
 
@@ -1742,8 +1745,9 @@ rules. Those concerns are useful when isolation is required, but they are not th
   policy data belongs in `PolicyFact` values.
 - A single `.so` plugin may register multiple extension points. Each registered component must still have its own stable
   name, logging scope, metrics scope, and lifecycle status.
-- Go environment and subject sources use the same dependency scheduler semantics as Lua sources, but Lua and Go source
-  graphs are separate in v1; cross-family `Requires` and `After` dependencies are unsupported.
+- Go environment sources and ordinary subject configurations retain separate Lua and Go plans. A Lua subject policy
+  check may be deferred past the native subject bridge with `after: [<plugin.subject check>]`; descriptor-level
+  `Requires` and `After` remain native-only, and a second native boundary is rejected.
 - Source descriptor dependencies resolve local names inside the registering plugin module and require fully qualified
   names for dependencies on other plugin modules.
 - Native Go plugins must register policy attributes before policy snapshots compile. Runtime emission of unknown
@@ -1827,9 +1831,10 @@ The current v1 implementation covers the native plugin surfaces needed for produ
 
 Known v1 parity limits are intentional and documented in the developer and operator guides: extra or named Redis pools,
 raw TCP/dialer behavior, SQL/Telegram/template libraries, and the Lua GeoIP bridge remain plugin-owned; full mutable
-backend-result replacement, cross-family Lua/Go source dependencies, raw request bodies in snapshots, passwords, cookies,
-authorization headers, raw WebAuthn credential blobs, raw `*gin.Context`, raw Prometheus registerers, raw OpenTelemetry
-providers, and raw backend-server config pointers stay outside the public API.
+backend-result replacement, descriptor-level cross-family Lua/Go dependencies beyond the bounded policy subject
+boundary, raw request bodies in snapshots, passwords, cookies, authorization headers, raw WebAuthn credential blobs,
+raw `*gin.Context`, raw Prometheus registerers, raw OpenTelemetry providers, and raw backend-server config pointers stay
+outside the public API.
 
 ## Implementation Plan
 

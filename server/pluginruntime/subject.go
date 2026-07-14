@@ -34,6 +34,7 @@ const (
 )
 
 var _ core.PluginSubjectSourceBridge = (*SubjectSourceBridge)(nil)
+var _ core.MixedPluginSubjectSourceBridge = (*SubjectSourceBridge)(nil)
 
 // SubjectSourceBridge adapts native plugin subject sources into the post-backend flow.
 type SubjectSourceBridge struct {
@@ -82,6 +83,138 @@ func (b *SubjectSourceBridge) Analyze(
 	auth.Runtime.Authorized = current == definitions.AuthResultOK
 
 	return current, true
+}
+
+// AnalyzeMixed coordinates Lua checks that declare a native plugin subject dependency.
+func (b *SubjectSourceBridge) AnalyzeMixed(
+	ctx *gin.Context,
+	view *core.StateView,
+	passDBResult *core.PassDBResult,
+	lua core.ScheduledLuaSubject,
+) (definitions.AuthResult, bool) {
+	execution, ok := newMixedSubjectExecution(b, ctx, view, passDBResult, lua)
+
+	if !ok {
+		return definitions.AuthResultUnset, false
+	}
+
+	return execution.run(), true
+}
+
+type mixedSubjectExecution struct {
+	bridge       *SubjectSourceBridge
+	ctx          *gin.Context
+	view         *core.StateView
+	passDBResult *core.PassDBResult
+	lua          core.ScheduledLuaSubject
+	auth         *core.AuthState
+	phases       policycollection.SubjectScriptPhases
+}
+
+// newMixedSubjectExecution validates inputs and resolves the request-local phase plan.
+func newMixedSubjectExecution(
+	bridge *SubjectSourceBridge,
+	ctx *gin.Context,
+	view *core.StateView,
+	passDBResult *core.PassDBResult,
+	lua core.ScheduledLuaSubject,
+) (*mixedSubjectExecution, bool) {
+	auth := authFromView(view)
+
+	if bridge == nil || bridge.runner == nil || auth == nil || passDBResult == nil || lua == nil {
+		return nil, false
+	}
+
+	policyCtx := auth.PolicyDecisionContext(ctx)
+	if policyCtx == nil {
+		return nil, false
+	}
+
+	phases := policyCtx.SubjectScriptPhases(subjectPolicyAuthState(passDBResult))
+	if !phases.Mixed {
+		return nil, false
+	}
+
+	return &mixedSubjectExecution{
+		bridge:       bridge,
+		ctx:          ctx,
+		view:         view,
+		passDBResult: passDBResult,
+		lua:          lua,
+		auth:         auth,
+		phases:       phases,
+	}, true
+}
+
+// run executes the supported Lua-before, native, and Lua-after boundary.
+func (e *mixedSubjectExecution) run() definitions.AuthResult {
+	before := subjectBaseResult(e.passDBResult)
+	if len(e.phases.Before.Schedules) > 0 {
+		before = e.lua.AnalyzeSchedule(e.ctx, e.view, e.passDBResult, e.phases.Before)
+	}
+
+	if before == definitions.AuthResultTempFail {
+		return before
+	}
+
+	native, handled := e.bridge.Analyze(e.ctx, e.view, e.passDBResult, before)
+	if !handled {
+		e.auth.Runtime.Authorized = false
+
+		return definitions.AuthResultTempFail
+	}
+
+	if native == definitions.AuthResultTempFail {
+		return native
+	}
+
+	after := e.lua.AnalyzeSchedule(e.ctx, e.view, e.passDBResult, e.phases.After)
+	result := mergeSubjectAuthResults(before, native, after)
+	e.auth.Runtime.Authorized = result == definitions.AuthResultOK
+
+	return result
+}
+
+// subjectPolicyAuthState maps the backend result to the policy scheduler state.
+func subjectPolicyAuthState(passDBResult *core.PassDBResult) policycollection.AuthState {
+	if passDBResult != nil && passDBResult.Authenticated {
+		return policycollection.AuthStateAuthenticated
+	}
+
+	return policycollection.AuthStateUnauthenticated
+}
+
+// subjectBaseResult returns the legacy result when a mixed plan has no pre-native Lua checks.
+func subjectBaseResult(passDBResult *core.PassDBResult) definitions.AuthResult {
+	if passDBResult != nil && passDBResult.Authenticated {
+		return definitions.AuthResultOK
+	}
+
+	return definitions.AuthResultFail
+}
+
+// mergeSubjectAuthResults preserves the strongest result across mixed execution phases.
+func mergeSubjectAuthResults(results ...definitions.AuthResult) definitions.AuthResult {
+	merged := definitions.AuthResultUnset
+
+	for _, result := range results {
+		switch result {
+		case definitions.AuthResultTempFail:
+			return result
+		case definitions.AuthResultFail:
+			merged = result
+		case definitions.AuthResultOK:
+			if merged == definitions.AuthResultUnset {
+				merged = result
+			}
+		default:
+			if merged == definitions.AuthResultUnset {
+				merged = result
+			}
+		}
+	}
+
+	return merged
 }
 
 type subjectBridgeOutcome struct {

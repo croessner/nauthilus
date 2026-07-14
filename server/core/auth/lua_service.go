@@ -31,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/lualib/subject"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
 	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/croessner/nauthilus/v3/server/util"
 
@@ -79,6 +80,26 @@ type preparedLuaPostActionPlan struct {
 
 // Analyze implements the Lua subject source logic with identical behavior to the legacy inline method.
 func (DefaultLuaSubject) Analyze(ctx *gin.Context, view *core.StateView, passDBResult *core.PassDBResult) definitions.AuthResult {
+	return analyzeLuaSubject(ctx, view, passDBResult, nil)
+}
+
+// AnalyzeSchedule executes one explicit policy-selected Lua subject phase.
+func (DefaultLuaSubject) AnalyzeSchedule(
+	ctx *gin.Context,
+	view *core.StateView,
+	passDBResult *core.PassDBResult,
+	plan policycollection.ScriptSchedulePlan,
+) definitions.AuthResult {
+	return analyzeLuaSubject(ctx, view, passDBResult, &plan)
+}
+
+// analyzeLuaSubject owns the shared Lua subject invocation and optional phase schedule.
+func analyzeLuaSubject(
+	ctx *gin.Context,
+	view *core.StateView,
+	passDBResult *core.PassDBResult,
+	plan *policycollection.ScriptSchedulePlan,
+) definitions.AuthResult {
 	auth := view.Auth()
 
 	if !auth.Cfg().HaveLuaSubjectSources() {
@@ -109,6 +130,7 @@ func (DefaultLuaSubject) Analyze(ctx *gin.Context, view *core.StateView, passDBR
 	prepareLuaSubjectCommonRequest(commonRequest, passDBResult)
 
 	subjectRequest := newLuaSubjectRequest(ctx, auth, commonRequest, backendServers)
+	subjectRequest.ScriptScheduleOverride = plan
 
 	subjectResult, luaBackendResult, removeAttributes, err := subjectRequest.CallSubjectLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())
 	if err != nil {

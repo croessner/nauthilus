@@ -363,6 +363,9 @@ type Request struct {
 
 	ScriptRecorder policycollection.ScriptRecorder
 	PolicyContext  *policycollection.DecisionContext
+
+	// ScriptScheduleOverride constrains execution to one host-coordinated mixed-source phase.
+	ScriptScheduleOverride *policycollection.ScriptSchedulePlan
 }
 
 // handleError logs Lua execution errors for subject sources with stacktrace when available,
@@ -1431,11 +1434,32 @@ func subjectPlanForScripts(scriptPlan policycollection.ScriptSchedulePlan, mode 
 }
 
 func policySubjectScriptPlan(r *Request, authState policycollection.AuthState) policycollection.ScriptSchedulePlan {
+	if r != nil && r.ScriptScheduleOverride != nil {
+		return cloneSubjectScriptSchedulePlan(*r.ScriptScheduleOverride)
+	}
+
 	if r == nil || r.ScriptRecorder == nil {
 		return policycollection.ScriptSchedulePlan{}
 	}
 
 	return r.ScriptRecorder.ScriptPlan(policycollection.ScriptKindSubject, authState)
+}
+
+// cloneSubjectScriptSchedulePlan returns an execution-local copy of a host schedule.
+func cloneSubjectScriptSchedulePlan(plan policycollection.ScriptSchedulePlan) policycollection.ScriptSchedulePlan {
+	clone := policycollection.ScriptSchedulePlan{
+		Schedules:  make([]policycollection.ScriptSchedule, 0, len(plan.Schedules)),
+		Configured: plan.Configured,
+	}
+
+	for _, schedule := range plan.Schedules {
+		clone.Schedules = append(clone.Schedules, policycollection.ScriptSchedule{
+			Name:  schedule.Name,
+			After: append([]string(nil), schedule.After...),
+		})
+	}
+
+	return clone
 }
 
 func countSubjectSourcesForMode(sources []*LuaSubjectSource, mode pipeline.ModeMask) int {
