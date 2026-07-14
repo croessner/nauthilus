@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-14T16:28:52Z",
+  "gate": {
+    "status": "ready",
+    "prompt_b_allowed": true,
+    "reason": "Core/API prerequisites are released and proven on shadow and production."
+  },
+  "release": {
+    "core_commit": "3705e407b39399c4c5b3023bf6c2e555b0a8c480",
+    "beta_tag": "v3.1.0-beta.48",
+    "plugin_api_version": "nauthilus.plugin.v1",
+    "kubernetes_manifest_commit": "192fc7a2c45511b389727a785e8148b3a4e15b05"
+  },
+  "api_contract_hashes": {
+    "pluginapi_v1_git_tree": "db833dc040c96db6ce5ae70b54dc422fc5808608",
+    "pluginapi_v1_non_test_source_manifest_sha256": "609217feb6048bbb0ce8c6cf8b2d55b9d12e4fe351272fe9a6a436521b99b49f",
+    "public_plugin_docs_manifest_sha256": "01c7e78d575232a1779bc66a1209aa69b5c2f43ff86aed735bc9f8b5ab58b421",
+    "api_config_discovery_contract_sha256": "342191eac56162cac2ea9204a955205c030615bc380a05a3ff5a2db06e53b862"
+  },
+  "images": {
+    "production": {
+      "reference": "ghcr.io/croessner/nauthilus:v3.1.0-beta.48",
+      "index_digest": "sha256:52e60eebcb265b3b7ee3f255e7ce60fb8c0ff8e5b732ef65c3ff67af1b498573",
+      "amd64_manifest_digest": "sha256:4dbd22d18e5ff5f203547c69f3b7bb95fa8ea1c94188323a368d0523092a0b86",
+      "arm64_manifest_digest": "sha256:252f9ec8bfa267a6bb4dafc195a0d050459f32e66734dc7011d07ecc827f4ee3",
+      "oci_revision": "3705e407b39399c4c5b3023bf6c2e555b0a8c480"
+    },
+    "shadow": {
+      "reference": "ghcr.io/croessner/nauthilus:dev-dbg",
+      "index_digest": "sha256:a03e3dba341d8aa302742b7017807efbb57e9148a5f76b96d3d3df626b1f6a86",
+      "amd64_manifest_digest": "sha256:c54bb65a68605100adfe88d2aa85b6af7ebfd21a4c54ccc59a853cb46548e100",
+      "arm64_manifest_digest": "sha256:c00b81108193e94287b711a67816d8589a135d79066765c2c6bb6d126ae89fac",
+      "source_commit": "3705e407b39399c4c5b3023bf6c2e555b0a8c480"
+    }
+  },
+  "plugin_abi": {
+    "go_version": "go1.26.5",
+    "goexperiment": "runtimesecret",
+    "cgo_enabled": true,
+    "build_mode": "plugin",
+    "build_tags": [
+      "netgo"
+    ],
+    "trimpath": true,
+    "vcs_revision": "3705e407b39399c4c5b3023bf6c2e555b0a8c480",
+    "vcs_modified": true,
+    "vcs_modified_explanation": "The clean image checkout contains only the generated server/nauthilus build output before plugin compilation; no source or configuration file is mutated.",
+    "signer": "nauthilus-plugin-build-key-2026",
+    "production_arm64_artifacts": {
+      "geoip_so_sha256": "0c0a90efd85b780f750e6876eb5adf6b475d3e950444479df7f4a903c1c70946",
+      "geoip_minisig_sha256": "c0ffea83234f941551b62f68346a354c33c0b89e2b9c4f38b9ce544d9a9f8ba8",
+      "clickhouse_so_sha256": "39fdd9d8b4de76973d214f5ac275c5bc0e776ee873a933ee8205d209cde5cdfa",
+      "clickhouse_minisig_sha256": "5c7df662c26cfc5e19550ba102763ef0627a9bfd28d5344a4fc7e76eb3806a46",
+      "haveibeenpwnd_so_sha256": "db69e019ae8a17eda98fafaf5514d16124059f1999db8e5d6724eb86f3dcce61",
+      "haveibeenpwnd_minisig_sha256": "e3ce36339646252f42d1792b9301f9a97fd9074804a5146ba7b1ff24e1fb41df"
+    },
+    "external_bundle_requires_clean_core_archive": true,
+    "external_bundle_requires_clean_bundle_archive": true,
+    "external_bundle_requires_both_archive_hashes": true
+  },
+  "requirements": {
+    "operator_hook_required_scopes": true,
+    "generated_plugin_environment_execution_facts": true,
+    "trusted_exact_metric_compatibility": true,
+    "value_only_trace_compatibility": true,
+    "single_host_http_client_span": true,
+    "declarative_localization_catalogs": true,
+    "normalized_soft_allowlists": true,
+    "safe_ldap_endpoint_metadata": true,
+    "public_api_import_boundary": true,
+    "public_docs_schema_syntax_discovery": true
+  },
+  "checks": {
+    "focused_go_tests": "pass",
+    "guardrails": "pass",
+    "release_guardrails": "pass",
+    "govulncheck_called_vulnerabilities": 0,
+    "git_diff_check": "pass",
+    "generated_and_sync_checks": "pass",
+    "kubernetes_make_validate": "pass",
+    "github_guardrails": "pass",
+    "github_unit_tests": "pass",
+    "github_lua_plugin_tests": "pass",
+    "github_govulncheck_main_gate": "pass",
+    "github_codeql": "pass",
+    "github_development_docker_build": "pass",
+    "github_production_docker_build": "pass",
+    "github_release_build": "pass"
+  },
+  "github_runs": {
+    "development_docker": 29348660591,
+    "production_docker": 29348710328,
+    "release": 29348709836,
+    "main_guardrails": 29348680389,
+    "main_lua_plugins": 29348680439,
+    "main_govulncheck": 29348680223,
+    "main_codeql": 29348680230
+  },
+  "rollout": {
+    "shadow": {
+      "completed_at": "2026-07-14T16:23:27Z",
+      "namespace": "auth-test",
+      "deployment": "nauthilus-shadow",
+      "updated_replicas": 3,
+      "ready_replicas": 3,
+      "available_replicas": 3,
+      "server_container_restarts": 0,
+      "signature_verification": "pass",
+      "plugin_registration": "pass",
+      "hard_startup_errors": 0
+    },
+    "production": {
+      "completed_at": "2026-07-14T16:26:29Z",
+      "namespace": "auth",
+      "deployment": "nauthilus",
+      "updated_replicas": 3,
+      "ready_replicas": 3,
+      "available_replicas": 3,
+      "server_container_restarts": 0,
+      "required_plugin_startup": "pass",
+      "active_geoip_and_clickhouse_evidence": "pass",
+      "hard_startup_errors": 0
+    }
+  },
+  "scope": {
+    "rns_bundle_implemented": false,
+    "bundle_config_cutover_performed": false,
+    "lua_deployment_scripts_changed": false,
+    "director_lua_changed": false,
+    "test_context_behavior_added": false,
+    "custom_redis_pool_added": false,
+    "scratch_contract_committed": false
+  }
+}
