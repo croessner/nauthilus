@@ -596,6 +596,7 @@ auth:
 
     sets:
       networks: {}
+      strings: {}
       time_windows: {}
 
     report:
@@ -2812,8 +2813,8 @@ Common operators:
 | `is` | boolean or exact scalar equality for simple admin cases |
 | `eq` | exact equality |
 | `ne` | exact inequality |
-| `in` | scalar value is in a configured list |
-| `not_in` | scalar value is not in a configured list |
+| `in` | scalar value is in a configured inline list or referenced string set |
+| `not_in` | scalar value is not in a configured inline list or referenced string set |
 | `matches` | string matches regular expression |
 | `exists` | attribute or detail exists |
 
@@ -2825,6 +2826,46 @@ List operators:
 | `contains_any` | list contains at least one value from a configured list |
 | `contains_all` | list contains all values from a configured list |
 | `contains_none` | list contains none of the configured values |
+
+String-set references are reusable exact-match operands for scalar string attributes. They use the form
+`@string.<name>` and are supported only by `in` and `not_in`:
+
+```yaml
+auth:
+  policy:
+    sets:
+      strings:
+        allowed_country_iso:
+          - AT
+          - DE
+          - CH
+
+    policies:
+      - name: deny_unexpected_country
+        stage: pre_auth
+        operations: [authenticate]
+        require_checks: [plugin_environment_geoip]
+        if:
+          all:
+            - attribute: plugin.environment.geoip.matched
+              is: true
+            - attribute: plugin.environment.geoip.country_iso
+              not_in: "@string.allowed_country_iso"
+        then:
+          decision: deny
+          response_marker: auth.response.fail
+```
+
+String-set rules:
+
+1. string-set names must be unique within `auth.policy.sets.strings`;
+2. names must use simple identifier syntax, such as lowercase letters, digits, and underscores;
+3. every set must contain at least one non-empty string;
+4. duplicate values are invalid;
+5. values are compiled and compared exactly as configured, including case;
+6. string sets are generic operator-owned data; Nauthilus does not ship or infer geopolitical memberships;
+7. invalid definitions and references are startup or reload errors;
+8. inline `in` and `not_in` lists remain supported.
 
 Numeric or comparable operators:
 
@@ -3149,26 +3190,29 @@ Validation rules must include:
 35. scalar membership operators must not be used on list-typed values;
 36. list membership operators must not be used on scalar values;
 37. regex values for `matches` must compile and must be used only with string attributes or details;
-38. `@network.<name>` references must resolve to `auth.policy.sets.networks` entries;
-39. network set entries must compile to CIDR or IP network values;
-40. `@time_window.<name>` references must resolve to `auth.policy.sets.time_windows` entries;
-41. time-window set entries must compile to valid timezone, day, and interval values;
-42. cross-midnight time-window intervals must be rejected in the first policy language;
-43. `within_time_window` must be used only with datetime attributes or details;
-44. conditions must not reference arbitrary config paths for network or time-window operands;
-45. `fsm_event_marker` values must resolve to registered FSM event markers;
-46. `fsm_event_marker` values must be valid for the policy stage;
-47. `fsm_event_marker` values must reference events, not terminal states;
-48. `response_marker` values must resolve to registered response definitions;
-49. `response_marker` values must be compatible with the selected decision effect;
-50. response markers used for account listing must have HTTP list-accounts and gRPC ListAccounts profiles;
-51. `response_message` must not set transport details directly;
-52. check types that can fail inside the modeled decision flow must register typed error attributes;
-53. policy conditions must not contain lookup, transform, variable, loop, or scripting constructs;
-54. obligations and advice must reference registered built-in definitions;
-55. policy YAML must not define executable obligation logic;
-56. check names and output names must be unique;
-57. operation-scoped checks and policies must compile into at least one valid operation/stage plan.
+38. `@string.<name>` references must resolve to non-empty `auth.policy.sets.strings` entries;
+39. string-set references must be used only with scalar string `in` or `not_in` conditions;
+40. string-set values must remain exact and case-sensitive;
+41. `@network.<name>` references must resolve to `auth.policy.sets.networks` entries;
+42. network set entries must compile to CIDR or IP network values;
+43. `@time_window.<name>` references must resolve to `auth.policy.sets.time_windows` entries;
+44. time-window set entries must compile to valid timezone, day, and interval values;
+45. cross-midnight time-window intervals must be rejected in the first policy language;
+46. `within_time_window` must be used only with datetime attributes or details;
+47. conditions must not reference arbitrary config paths for reusable set operands;
+48. `fsm_event_marker` values must resolve to registered FSM event markers;
+49. `fsm_event_marker` values must be valid for the policy stage;
+50. `fsm_event_marker` values must reference events, not terminal states;
+51. `response_marker` values must resolve to registered response definitions;
+52. `response_marker` values must be compatible with the selected decision effect;
+53. response markers used for account listing must have HTTP list-accounts and gRPC ListAccounts profiles;
+54. `response_message` must not set transport details directly;
+55. check types that can fail inside the modeled decision flow must register typed error attributes;
+56. policy conditions must not contain lookup, transform, variable, loop, or scripting constructs;
+57. obligations and advice must reference registered built-in definitions;
+58. policy YAML must not define executable obligation logic;
+59. check names and output names must be unique;
+60. operation-scoped checks and policies must compile into at least one valid operation/stage plan.
 
 ### 14.5 Config Problems
 
@@ -3517,6 +3561,11 @@ auth:
         trusted_clients:
           - 10.0.0.0/8
           - 192.168.0.0/16
+      strings:
+        allowed_country_iso:
+          - AT
+          - DE
+          - CH
       time_windows:
         business_hours:
           timezone: Europe/Berlin

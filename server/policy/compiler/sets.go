@@ -32,6 +32,11 @@ func compileSets(configSets config.PolicySetsConfig) (policyruntime.CompiledSets
 		return policyruntime.CompiledSets{}, err
 	}
 
+	stringSets, err := compileStringSets(configSets.Strings)
+	if err != nil {
+		return policyruntime.CompiledSets{}, err
+	}
+
 	timeWindows, err := compileTimeWindowSets(configSets.TimeWindows)
 	if err != nil {
 		return policyruntime.CompiledSets{}, err
@@ -39,15 +44,73 @@ func compileSets(configSets config.PolicySetsConfig) (policyruntime.CompiledSets
 
 	return policyruntime.CompiledSets{
 		Networks:    networks,
+		Strings:     stringSets,
 		TimeWindows: timeWindows,
 	}, nil
+}
+
+// compileStringSets validates reusable exact-match string operands.
+func compileStringSets(stringSets map[string][]string) (map[string][]string, error) {
+	compiled := make(map[string][]string, len(stringSets))
+
+	for name, entries := range stringSets {
+		path := childPath("auth.policy.sets.strings", name)
+		if err := validatePolicySetName(name, path); err != nil {
+			return nil, err
+		}
+
+		if len(entries) == 0 {
+			return nil, configPathError(path, "must not be empty")
+		}
+
+		values, err := compileStringSetEntries(entries, path)
+		if err != nil {
+			return nil, err
+		}
+
+		compiled[name] = values
+	}
+
+	return compiled, nil
+}
+
+// validatePolicySetName applies the shared identifier contract for every reusable set kind.
+func validatePolicySetName(name string, path string) error {
+	if !simpleIdentifierPattern.MatchString(name) {
+		return configPathError(path, "must use lowercase letters, digits, and underscores")
+	}
+
+	return nil
+}
+
+// compileStringSetEntries rejects empty or duplicate values without changing exact-match semantics.
+func compileStringSetEntries(entries []string, path string) ([]string, error) {
+	values := make([]string, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+
+	for index, entry := range entries {
+		entryPath := indexedPath(path, index)
+		if strings.TrimSpace(entry) == "" {
+			return nil, configPathError(entryPath, "must not be empty")
+		}
+
+		if _, exists := seen[entry]; exists {
+			return nil, configPathError(entryPath, "duplicates an earlier value")
+		}
+
+		seen[entry] = struct{}{}
+		values = append(values, entry)
+	}
+
+	return values, nil
 }
 
 func compileNetworkSets(networkSets map[string][]string) (map[string][]netip.Prefix, error) {
 	compiled := make(map[string][]netip.Prefix, len(networkSets))
 	for name, entries := range networkSets {
-		if !simpleIdentifierPattern.MatchString(name) {
-			return nil, configPathError(childPath("auth.policy.sets.networks", name), "must use lowercase letters, digits, and underscores")
+		path := childPath("auth.policy.sets.networks", name)
+		if err := validatePolicySetName(name, path); err != nil {
+			return nil, err
 		}
 
 		prefixes := make([]netip.Prefix, 0, len(entries))
@@ -99,8 +162,8 @@ func compileTimeWindowSets(
 	compiled := make(map[string]policyruntime.CompiledTimeWindow, len(timeWindowSets))
 	for name, timeWindow := range timeWindowSets {
 		path := childPath("auth.policy.sets.time_windows", name)
-		if !simpleIdentifierPattern.MatchString(name) {
-			return nil, configPathError(path, "must use lowercase letters, digits, and underscores")
+		if err := validatePolicySetName(name, path); err != nil {
+			return nil, err
 		}
 
 		location, err := time.LoadLocation(timeWindow.Timezone)

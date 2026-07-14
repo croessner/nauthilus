@@ -297,6 +297,7 @@ class PolicyConversionPlanner:
 
         sets = ensure_mapping(policy_config, ("sets",))
         sets.setdefault("networks", {})
+        sets.setdefault("strings", {})
         sets.setdefault("time_windows", {})
 
         report = ensure_mapping(policy_config, ("report",))

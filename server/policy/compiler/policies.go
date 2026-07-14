@@ -587,10 +587,10 @@ func compileMembershipExpectedValue(
 	operator policyruntime.Operator,
 	rawValue any,
 	valueType policyregistry.AttributeType,
-	_ policyruntime.CompiledSets,
+	sets policyruntime.CompiledSets,
 	path string,
 ) (policyruntime.TypedValue, error) {
-	return compileMembershipValue(operator, rawValue, valueType, path)
+	return compileMembershipValue(operator, rawValue, valueType, sets, path)
 }
 
 // compileContainsExpectedValue adapts contains operands to the shared dispatcher signature.
@@ -690,18 +690,47 @@ func compileMembershipValue(
 	operator policyruntime.Operator,
 	rawValue any,
 	valueType policyregistry.AttributeType,
+	sets policyruntime.CompiledSets,
 	path string,
 ) (policyruntime.TypedValue, error) {
 	if valueType == policyregistry.AttributeTypeStringList {
 		return policyruntime.TypedValue{}, configPathError(childPath(path, string(operator)), "requires a scalar attribute")
 	}
 
+	if reference, ok := rawValue.(string); ok {
+		return compileStringSetOperand(reference, valueType, sets, childPath(path, string(operator)))
+	}
+
 	values, ok := rawValue.([]any)
 	if !ok {
-		return policyruntime.TypedValue{}, configPathError(childPath(path, string(operator)), "must be a list")
+		return policyruntime.TypedValue{}, configPathError(childPath(path, string(operator)), "must be a list or string set reference")
 	}
 
 	return compileListValue(operator, values, valueType, path)
+}
+
+// compileStringSetOperand resolves one immutable string-set reference for a scalar string attribute.
+func compileStringSetOperand(
+	reference string,
+	valueType policyregistry.AttributeType,
+	sets policyruntime.CompiledSets,
+	path string,
+) (policyruntime.TypedValue, error) {
+	if valueType != policyregistry.AttributeTypeString {
+		return policyruntime.TypedValue{}, configPathError(path, "requires a string attribute")
+	}
+
+	name, ok := strings.CutPrefix(reference, "@string.")
+	if !ok || name == "" {
+		return policyruntime.TypedValue{}, configPathError(path, "must be a list or @string.<name> string set reference")
+	}
+
+	values, ok := sets.Strings[name]
+	if !ok {
+		return policyruntime.TypedValue{}, configPathError(path, "references unknown string set")
+	}
+
+	return policyruntime.TypedValue{Value: append([]string(nil), values...)}, nil
 }
 
 func compileContainsValue(

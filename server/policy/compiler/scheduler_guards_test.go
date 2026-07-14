@@ -34,7 +34,9 @@ const (
 	testSchedulerGuardBusinessWindow      = "business_window"
 	testSchedulerGuardLocalEndpoint       = "local_endpoint"
 	testSchedulerGuardLocalEndpointPath   = "auth.policy.scheduler_guards.local_endpoint.if"
+	testSchedulerGuardProtocol            = "allowed_protocol"
 	testSchedulerGuardTrustedSource       = "trusted_source"
+	testAllowedProtocolsStringSetRef      = "@string.allowed_protocols"
 	testTrustedClientsNetworkSetRef       = "@network.trusted_clients"
 )
 
@@ -77,6 +79,31 @@ func TestCompilerAcceptsTimeWindowSchedulerGuard(t *testing.T) {
 	guard := snapshot.SchedulerGuards[testSchedulerGuardBusinessWindow]
 	if guard.Root.Operator != schedulerGuardOperatorWithinTimeWindow {
 		t.Fatalf("guard operator = %q, want within_time_window", guard.Root.Operator)
+	}
+}
+
+func TestCompilerAcceptsStringSetSchedulerGuard(t *testing.T) {
+	cfg := schedulerGuardCompilerConfig()
+	cfg.Auth.Policy.Sets.Strings = map[string][]string{
+		"allowed_protocols": {"imap", "smtp"},
+	}
+	cfg.Auth.Policy.SchedulerGuards = map[string]config.PolicySchedulerGuardConfig{
+		testSchedulerGuardProtocol: {
+			If: config.PolicyConditionConfig{
+				Attribute: policy.AttributeRequestProtocol,
+				In:        testAllowedProtocolsStringSetRef,
+			},
+		},
+	}
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	guard := snapshot.SchedulerGuards[testSchedulerGuardProtocol]
+	if guard.Root.Operator != schedulerGuardOperatorIn {
+		t.Fatalf("guard operator = %q, want in", guard.Root.Operator)
 	}
 }
 

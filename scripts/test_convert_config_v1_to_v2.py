@@ -98,6 +98,7 @@ class ConvertConfigV1ToV2Test(unittest.TestCase):
             self.assertIn("x-scope-profile:", converted)
             self.assertIn("policy:", converted)
             self.assertIn('default_policy: "standard_auth"', converted)
+            self.assertIn("strings: {}", converted)
             self.assertIn('type: "lua.environment"', converted)
             self.assertIn('config_ref: "auth.policy.attribute_sources.lua.environment.test_context_chain"', converted)
             self.assertIn('attribute: "auth.lua.environment.test_context_chain.triggered"', converted)

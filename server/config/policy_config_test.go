@@ -18,6 +18,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -29,6 +30,8 @@ import (
 const (
 	testPolicyConditionFieldAttribute     = "attribute"
 	testPolicySchedulerGuardTrustedSource = "trusted_source"
+	testPolicyStringSetEUCountries        = "eu_countries"
+	testPolicyStringSetReference          = "@string." + testPolicyStringSetEUCountries
 )
 
 func TestAuthPolicyConfigDecodesAndDumps(t *testing.T) {
@@ -74,6 +77,9 @@ func policyConfigFixtureSets() map[string]any {
 	return map[string]any{
 		"networks": map[string]any{
 			"trusted": []any{"10.0.0.0/8"},
+		},
+		"strings": map[string]any{
+			testPolicyStringSetEUCountries: []any{"AT", "DE"},
 		},
 		"time_windows": map[string]any{
 			"office": map[string]any{
@@ -138,6 +144,18 @@ func policyConfigFixturePolicies() []any {
 				"response_marker":  "auth.response.fail",
 			},
 		},
+		map[string]any{
+			"name":  "deny_unexpected_protocol",
+			"stage": "pre_auth",
+			"if": map[string]any{
+				testPolicyConditionFieldAttribute: "request.protocol",
+				"not_in":                          testPolicyStringSetReference,
+			},
+			"then": map[string]any{
+				"decision":        "deny",
+				"response_marker": "auth.response.fail",
+			},
+		},
 	}
 }
 
@@ -154,6 +172,14 @@ func assertDecodedPolicyConfig(t *testing.T, cfg *FileSettings) {
 
 	if got := cfg.Auth.Policy.Sets.Networks["trusted"]; len(got) != 1 || got[0] != "10.0.0.0/8" {
 		t.Fatalf("network set = %#v, want configured CIDR", got)
+	}
+
+	if got := cfg.Auth.Policy.Sets.Strings[testPolicyStringSetEUCountries]; !reflect.DeepEqual(got, []string{"AT", "DE"}) {
+		t.Fatalf("string set = %#v, want configured ISO codes", got)
+	}
+
+	if got := cfg.Auth.Policy.Policies[1].If.NotIn; got != testPolicyStringSetReference {
+		t.Fatalf("not_in operand = %#v, want %q", got, testPolicyStringSetReference)
 	}
 
 	guard := cfg.Auth.Policy.SchedulerGuards[testPolicySchedulerGuardTrustedSource]
@@ -178,6 +204,7 @@ func assertPolicyConfigDumps(t *testing.T) {
 		`auth.policy.mode = "enforce"`,
 		`auth.policy.default_policy = "standard_auth"`,
 		`auth.policy.registry_scripts = []`,
+		`auth.policy.sets.strings = {}`,
 		`auth.policy.scheduler_guards = {}`,
 	})
 
@@ -193,6 +220,8 @@ func assertPolicyConfigDumps(t *testing.T) {
 		`auth.policy.scheduler_guards.` + testPolicySchedulerGuardTrustedSource + `.if.attribute = "request.client.ip.trusted"`,
 		`auth.policy.scheduler_guards.` + testPolicySchedulerGuardTrustedSource + `.if.is = true`,
 		`auth.policy.scheduler_guards.` + testPolicySchedulerGuardTrustedSource + `.on_missing_attribute = "run"`,
+		`auth.policy.sets.strings.` + testPolicyStringSetEUCountries + ` = ["AT", "DE"]`,
+		`auth.policy.policies[1].if.not_in = "` + testPolicyStringSetReference + `"`,
 		`auth.policy.policies[0].then.fsm_event_marker = "auth.fsm.event.pre_auth_deny"`,
 	})
 }

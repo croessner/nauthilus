@@ -801,6 +801,7 @@ type PolicyLuaAttributeSourcesConfig struct {
 // PolicySetsConfig groups reusable policy operands.
 type PolicySetsConfig struct {
 	Networks    map[string][]string               `mapstructure:"networks" validate:"omitempty"`
+	Strings     map[string][]string               `mapstructure:"strings" validate:"omitempty"`
 	TimeWindows map[string]PolicyTimeWindowConfig `mapstructure:"time_windows" validate:"omitempty"`
 }
 
@@ -903,8 +904,8 @@ type PolicyConditionConfig struct {
 	Is               any                     `mapstructure:"is" validate:"omitempty"`
 	Eq               any                     `mapstructure:"eq" validate:"omitempty"`
 	Ne               any                     `mapstructure:"ne" validate:"omitempty"`
-	In               []any                   `mapstructure:"in" validate:"omitempty"`
-	NotIn            []any                   `mapstructure:"not_in" validate:"omitempty"`
+	In               any                     `mapstructure:"in" validate:"omitempty"`
+	NotIn            any                     `mapstructure:"not_in" validate:"omitempty"`
 	Exists           *bool                   `mapstructure:"exists" validate:"omitempty"`
 	Contains         any                     `mapstructure:"contains" validate:"omitempty"`
 	ContainsAny      []any                   `mapstructure:"contains_any" validate:"omitempty"`

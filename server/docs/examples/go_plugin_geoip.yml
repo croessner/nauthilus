@@ -138,6 +138,12 @@ plugins:
 
 auth:
   policy:
+    sets:
+      strings:
+        allowed_country_iso:
+          - DE
+          - AT
+          - CH
     checks:
       - name: plugin_environment_geoip
         type: plugin.environment
@@ -173,10 +179,7 @@ auth:
             - attribute: plugin.environment.geoip.matched
               is: true
             - attribute: plugin.environment.geoip.country_iso
-              not_in:
-                - DE
-                - AT
-                - CH
+              not_in: "@string.allowed_country_iso"
             - attribute: plugin.environment.geoip.asn_registry
               not_in:
                 - ripencc

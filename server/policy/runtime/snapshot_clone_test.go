@@ -25,6 +25,11 @@ import (
 func TestSnapshotStorePublishesDetachedCopies(t *testing.T) {
 	original := &Snapshot{
 		Generation: 3,
+		Sets: CompiledSets{
+			Strings: map[string][]string{
+				"eu_countries": {"AT", "DE"},
+			},
+		},
 		AttributeRegistry: map[string]registry.AttributeDefinition{
 			"request.operation": {
 				ID:         "request.operation",
@@ -37,16 +42,26 @@ func TestSnapshotStorePublishesDetachedCopies(t *testing.T) {
 
 	store := NewSnapshotStore(original)
 	original.AttributeRegistry["request.operation"] = registry.AttributeDefinition{ID: "changed"}
+	original.Sets.Strings["eu_countries"][0] = "changed"
 
 	active := store.Active()
 	if active.AttributeRegistry["request.operation"].ID != "request.operation" {
 		t.Fatalf("active registry was mutated: %#v", active.AttributeRegistry["request.operation"])
 	}
 
+	if got := active.Sets.Strings["eu_countries"][0]; got != "AT" {
+		t.Fatalf("active string set was mutated: %q", got)
+	}
+
 	active.AttributeRegistry["request.operation"] = registry.AttributeDefinition{ID: "mutated"}
+	active.Sets.Strings["eu_countries"][0] = "mutated"
 
 	next := store.Active()
 	if next.AttributeRegistry["request.operation"].ID != "request.operation" {
 		t.Fatalf("store returned mutable active snapshot: %#v", next.AttributeRegistry["request.operation"])
+	}
+
+	if got := next.Sets.Strings["eu_countries"][0]; got != "AT" {
+		t.Fatalf("store returned mutable string set: %q", got)
 	}
 }

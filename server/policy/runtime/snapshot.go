@@ -146,6 +146,7 @@ type RequestAttributeNormalization struct {
 // CompiledSets contains reusable typed policy operands.
 type CompiledSets struct {
 	Networks    map[string][]netip.Prefix
+	Strings     map[string][]string
 	TimeWindows map[string]CompiledTimeWindow
 }
 
@@ -153,6 +154,7 @@ type CompiledSets struct {
 func (s CompiledSets) Clone() CompiledSets {
 	return CompiledSets{
 		Networks:    cloneSliceMap(s.Networks),
+		Strings:     cloneSliceMap(s.Strings),
 		TimeWindows: cloneMap(s.TimeWindows, cloneTimeWindow),
 	}
 }
