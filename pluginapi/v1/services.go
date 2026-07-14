@@ -189,6 +189,7 @@ const (
 )
 
 // LDAPSearchRequest describes one queued LDAP search.
+// An empty PoolName or "default" selects the default LDAP pool.
 type LDAPSearchRequest struct {
 	Attributes []string
 	PoolName   string
@@ -204,6 +205,7 @@ type LDAPSearchResult struct {
 }
 
 // LDAPModifyRequest describes one queued LDAP modify operation.
+// An empty PoolName or "default" selects the default LDAP pool.
 type LDAPModifyRequest struct {
 	Attributes map[string][]string
 	PoolName   string

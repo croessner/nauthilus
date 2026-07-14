@@ -51,7 +51,6 @@ const (
 	luaLDAPFieldTrusted     = "trusted"
 	luaLDAPFieldPoolName    = "pool_name"
 	luaLDAPFieldSession     = "session"
-	luaLDAPPoolAliasDefault = "default"
 )
 
 // LDAPMainWorker orchestrates LDAP lookup operations, manages a connection pool, and processes incoming requests in a loop.
@@ -550,11 +549,9 @@ func collectOptionalLDAPBoolField(L *lua.LState, table *lua.LTable, fieldValues 
 	return true
 }
 
-// setDefaultPoolName sets a default pool name if the "pool_name" field in the provided map is an empty string.
+// setDefaultPoolName maps public LDAP pool aliases to worker pool names.
 func setDefaultPoolName(fieldValues map[string]lua.LValue) {
-	if fieldValues[luaLDAPFieldPoolName].String() == luaLDAPPoolAliasDefault {
-		fieldValues[luaLDAPFieldPoolName] = lua.LString(definitions.DefaultBackendName)
-	}
+	fieldValues[luaLDAPFieldPoolName] = lua.LString(LDAPWorkerPoolName(fieldValues[luaLDAPFieldPoolName].String()))
 }
 
 // validateField checks if a given field exists in a Lua table and validates its type, raising an error if invalid.

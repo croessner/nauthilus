@@ -81,7 +81,7 @@ func NewLDAPConfigEndpointResolver(currentConfig func() config.File) LDAPEndpoin
 func NewLDAPQueueExecutor(queue LDAPQueue) LDAPExecutor {
 	return &ldapQueueExecutor{
 		queue:    queue,
-		priority: priorityqueue.PriorityLow,
+		priority: priorityqueue.PriorityMedium,
 	}
 }
 
@@ -248,7 +248,7 @@ func newLDAPSearchQueueRequest(ctx context.Context, request pluginapi.LDAPSearch
 	}
 
 	return &bktype.LDAPRequest{
-		PoolName:          request.PoolName,
+		PoolName:          backend.LDAPWorkerPoolName(request.PoolName),
 		BaseDN:            request.BaseDN,
 		Filter:            request.Filter,
 		Scope:             scope,
@@ -267,7 +267,7 @@ func newLDAPModifyQueueRequest(ctx context.Context, request pluginapi.LDAPModify
 	}
 
 	return &bktype.LDAPRequest{
-		PoolName:          request.PoolName,
+		PoolName:          backend.LDAPWorkerPoolName(request.PoolName),
 		ModifyDN:          request.DN,
 		SubCommand:        subCommand,
 		ModifyAttributes:  bktype.LDAPModifyAttributes(cloneStringSliceMap(request.Attributes)),
