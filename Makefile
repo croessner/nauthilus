@@ -17,33 +17,35 @@ GOLANGCI_NEW_FROM_REV ?= HEAD
 NAUTHILUS_CONF_DIR ?= /etc/nauthilus
 NAUTHILUS_PLUGINS_DIR ?= /usr/local/share/nauthilus/lua-plugins.d
 GOVULNCHECK ?= govulncheck
+GO_PACKAGES = $(shell go list ./... | grep -v /vendor/)
+GO_PACKAGE_DIRS = $(patsubst $(CURDIR)/%,./%,$(shell go list -f '{{.Dir}}' $(GO_PACKAGES)))
 CONFIG_EXPANSION_LDFLAGS := -X github.com/croessner/nauthilus/v3/server/config.nauthilusConfDir=$(NAUTHILUS_CONF_DIR) -X github.com/croessner/nauthilus/v3/server/config.nauthilusPluginsDir=$(NAUTHILUS_PLUGINS_DIR)
 
 export GOEXPERIMENT := runtimesecret
 
-.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-auth-proto generate-openapi-bindings generate-openapi-bindings-check generate-openapi-management generate-openapi-management-check identity-proxy-e2e govulncheck release-guardrails guardrails
+.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check makefile-package-scope-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-auth-proto generate-openapi-bindings generate-openapi-bindings-check generate-openapi-management generate-openapi-management-check identity-proxy-e2e govulncheck release-guardrails guardrails
 
 all: build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck
 
 fix: ## Run go fix to apply automated code migrations
-	go fix ./...
+	go fix $(GO_PACKAGES)
 
 vet: ## Run go vet for static analysis
-	go vet ./...
+	go vet $(GO_PACKAGES)
 
 $(OUTPUT) $(CLIENT_OUTPUT) $(OIDCTESTCLIENT_OUTPUT) $(SAML2TESTCLIENT_OUTPUT) $(ENCRYPTION_SECRET_DECODER_OUTPUT) $(HEALTHCHECK_OUTPUT):
 	mkdir -p $(dir $@)
 
 test:
-	go test -short $$(go list ./... | grep -v /vendor/)
+	go test -short $(GO_PACKAGES)
 
 race:
-	go test -race -short $$(go list ./... | grep -v /vendor/)
+	go test -race -short $(GO_PACKAGES)
 
 msan:
-	go test -msan -short $$(go list ./... | grep -v /vendor/)
+	go test -msan -short $(GO_PACKAGES)
 
-build: fix vet $(OUTPUT)
+build: vet $(OUTPUT)
 	go build -mod=vendor -trimpath -v -ldflags "-X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT) $(CONFIG_EXPANSION_LDFLAGS)" -o $(OUTPUT) ./server
 
 build-client: $(CLIENT_OUTPUT)
@@ -121,7 +123,7 @@ identity-proxy-e2e: ## Run the split identity-proxy smoke profile
 
 govulncheck: ## Run Go vulnerability analysis across all packages
 	@command -v $(GOVULNCHECK) >/dev/null 2>&1 || { echo "govulncheck not found. Install it with: go install golang.org/x/vuln/cmd/govulncheck@latest"; exit 1; }
-	$(GOVULNCHECK) ./...
+	$(GOVULNCHECK) $(GO_PACKAGES)
 
 release-guardrails: ## Run mandatory local quality gates plus vulnerability analysis
 	$(MAKE) guardrails
@@ -144,7 +146,10 @@ sync-prompts-check: ## Verify that AGENTS.md is in sync with .junie/guidelines.m
 policy-check: ## Validate mandatory policy documents and text markers
 	./scripts/check-policy-docs.sh
 
-guardrails: sync-prompts-check policy-check generate-vim-syntax-check generate-openapi-bindings-check ## Run mandatory local quality gates
+makefile-package-scope-check: ## Verify package-wide Make targets exclude vendor and builds do not mutate sources
+	python3 scripts/test_makefile_package_scope.py
+
+guardrails: sync-prompts-check policy-check makefile-package-scope-check generate-vim-syntax-check generate-openapi-bindings-check ## Run mandatory local quality gates
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install it and rerun make guardrails"; exit 1; }
-	golangci-lint run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen --enable unused ./...
-	go test -short $$(go list ./... | grep -v /vendor/)
+	golangci-lint run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen --enable unused $(GO_PACKAGE_DIRS)
+	go test -short $(GO_PACKAGES)
