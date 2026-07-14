@@ -57,6 +57,43 @@ plugins:
               refresh_jitter: 5m
               max_age: 6h
               required: true
+            # Generic CSV parsing keeps provider-specific schemas out of the
+            # plugin while preserving official evidence authority.
+            - id: apple_private_relay
+              kind: cidr_csv
+              authority: official
+              url: https://mask-api.icloud.com/egress-ip-ranges.csv
+              provider: apple_private_relay
+              classes:
+                - privacy_relay
+                - shared_egress
+              cidr_column: 0
+              has_header: false
+              confidence: 100
+              refresh_interval: 6h
+              min_refresh_interval: 1h
+              max_refresh_backoff: 24h
+              refresh_jitter: 10m
+              max_age: 24h
+              required: false
+            # Generic line parsing treats this attributed community list only
+            # as bounded community VPN evidence.
+            - id: x4b_vpn
+              kind: cidr_list
+              authority: community
+              url: https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/vpn/ipv4.txt
+              provider: x4bnet
+              classes:
+                - community_vpn_exit
+              license: MIT
+              license_url: https://github.com/X4BNet/lists_vpn#license
+              confidence: 55
+              refresh_interval: 6h
+              min_refresh_interval: 1h
+              max_refresh_backoff: 24h
+              refresh_jitter: 10m
+              max_age: 24h
+              required: false
             # This file uses the versioned normalized JSON contract documented
             # in contrib/plugins/geoip/README.md.
             - id: operator_relays

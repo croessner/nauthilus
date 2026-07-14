@@ -103,7 +103,8 @@ The main settings are:
 - `refresh.default_refresh_interval`, `default_min_refresh_interval`, and `default_max_refresh_backoff`: generic source
   defaults of `6h`, `1h`, and `24h`.
 - `sources`: official, operator, community, or derived sources. A source configures exactly one absolute `path` or
-  credential-free HTTPS `url`.
+  credential-free HTTPS `url`. Generic `cidr_list` and `cidr_csv` sources also configure `provider`, `classes`, and
+  CSV column/header options where applicable.
 - `hosting`: optional derived classification from configured CIDRs, ASNs, and disabled-by-default organization
   patterns. Its confidence is capped at 60.
 - `overrides`: operator-owned prefix additions or suppressions with optional expiry. Official evidence can be suppressed
@@ -125,7 +126,32 @@ TorDNSEL/CollecTor 1.0 exit records, and bounded Onionoo details responses conta
 flag. The plugin never sends the request client address to Tor. Destination-dependent Tor bulk queries are not built by
 this source contract; normalize such data outside Nauthilus or use a complete TorDNSEL, CollecTor, or Onionoo snapshot.
 
-All other operator, provider, community, proxy, relay, and hosting prefix feeds use `kind: normalized_json`:
+Operator, provider, community, proxy, relay, and hosting feeds can use one of three vendor-independent contracts:
+
+- `kind: normalized_json` for the versioned metadata and entry schema below;
+- `kind: cidr_list` for one public prefix per line, with blank lines and `#` comments allowed;
+- `kind: cidr_csv` for RFC 4180-style records, using zero-based `cidr_column` and optional `has_header`.
+
+The two generic CIDR formats require configured `provider` and `classes`. Their prefixes are validated, deduplicated,
+and losslessly collapsed before class expansion, which avoids retaining source-specific location segmentation when the
+classification coverage is identical. For example:
+
+```yaml
+- id: official_privacy_relay
+  kind: cidr_csv
+  authority: official
+  url: https://provider.example.invalid/egress-prefixes.csv
+  provider: example_relay
+  classes:
+    - privacy_relay
+    - shared_egress
+  cidr_column: 0
+  has_header: true
+  confidence: 100
+```
+
+Normalized JSON remains the richer contract when source timestamps and per-entry provider or confidence values are
+required:
 
 ```json
 {
@@ -151,7 +177,8 @@ All other operator, provider, community, proxy, relay, and hosting prefix feeds 
 ```
 
 Schema version, source ID and authority, timestamps, classes, CIDRs, confidence caps, entry count, and payload size are
-validated atomically. Community sources require `license` and `license_url` in both operator config and source metadata.
+validated atomically. Community sources always require `license` and `license_url` in operator config; normalized
+community JSON must also contain license metadata.
 No third-party data is bundled. Operators must review each feed's current license, attribution, automation terms, and
 redistribution limits before enabling it, retain required notices outside public request logs, and remove a source when
 its terms are incompatible. No commercial source, including MaxMind GeoIP Anonymous IP, is required.

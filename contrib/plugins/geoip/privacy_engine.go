@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/netip"
 	"os"
 	"sync"
@@ -162,14 +163,7 @@ func loadLocalPrivacySnapshot(ctx context.Context, config privacySourceConfig, n
 		return privacySnapshot{}, fmt.Errorf("privacy source %q exceeds size limit", config.ID)
 	}
 
-	switch config.Kind {
-	case privacySourceKindTor:
-		return parseTorPrivacySnapshot(raw, config, now)
-	case privacySourceKindNormalized:
-		return parseNormalizedPrivacySnapshot(raw, config, now)
-	default:
-		return privacySnapshot{}, fmt.Errorf("privacy source %q uses unsupported kind %q", config.ID, config.Kind)
-	}
+	return parsePrivacySnapshotCandidate(raw, config, now)
 }
 
 // Lookup evaluates only the immutable in-memory index and applies operator overrides locally.
@@ -324,9 +318,7 @@ func (e *privacyEngine) buildIndex(snapshots map[string]privacySnapshot) *privac
 // withSnapshot builds a replacement state without mutating the published state.
 func (s *privacyLookupState) withSnapshot(snapshot privacySnapshot, build func(map[string]privacySnapshot) *privacyLookupIndex) *privacyLookupState {
 	snapshots := make(map[string]privacySnapshot, len(s.snapshots)+1)
-	for sourceID, current := range s.snapshots {
-		snapshots[sourceID] = current
-	}
+	maps.Copy(snapshots, s.snapshots)
 
 	snapshots[snapshot.SourceID] = snapshot
 

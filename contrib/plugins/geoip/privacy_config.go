@@ -32,6 +32,7 @@ const (
 	defaultTorRefreshInterval         = time.Hour
 	maximumCommunityConfidence        = 80
 	maximumDerivedConfidence          = 60
+	maximumPrivacyCSVColumn           = 63
 )
 
 type privacySourceKind string
@@ -40,6 +41,8 @@ type privacyAuthority string
 const (
 	privacySourceKindNormalized privacySourceKind = "normalized_json"
 	privacySourceKindTor        privacySourceKind = "tor_exit_list"
+	privacySourceKindCIDRList   privacySourceKind = "cidr_list"
+	privacySourceKindCIDRCSV    privacySourceKind = "cidr_csv"
 
 	privacyAuthorityOfficial  privacyAuthority = "official"
 	privacyAuthorityOperator  privacyAuthority = "operator"
@@ -67,6 +70,7 @@ type privacyRefreshConfig struct {
 }
 
 type privacySourceConfig struct {
+	Classes            []privacyClass
 	ID                 string
 	Description        string
 	Path               string
@@ -74,6 +78,7 @@ type privacySourceConfig struct {
 	CachePath          string
 	License            string
 	LicenseURL         string
+	Provider           string
 	Kind               privacySourceKind
 	Authority          privacyAuthority
 	RefreshInterval    time.Duration
@@ -84,7 +89,9 @@ type privacySourceConfig struct {
 	MaxDownloadBytes   int64
 	MaxEntries         int
 	Confidence         int
+	CIDRColumn         int
 	Required           bool
+	HasHeader          bool
 }
 
 type privacyHostingConfig struct {
@@ -126,22 +133,26 @@ type rawPrivacyRefreshConfig struct {
 }
 
 type rawPrivacySourceConfig struct {
-	ID                 string `mapstructure:"id"`
-	Kind               string `mapstructure:"kind"`
-	Authority          string `mapstructure:"authority"`
-	Description        string `mapstructure:"description"`
-	Path               string `mapstructure:"path"`
-	URL                string `mapstructure:"url"`
-	CachePath          string `mapstructure:"cache_path"`
-	License            string `mapstructure:"license"`
-	LicenseURL         string `mapstructure:"license_url"`
-	RefreshInterval    string `mapstructure:"refresh_interval"`
-	MinRefreshInterval string `mapstructure:"min_refresh_interval"`
-	MaxRefreshBackoff  string `mapstructure:"max_refresh_backoff"`
-	RefreshJitter      string `mapstructure:"refresh_jitter"`
-	MaxAge             string `mapstructure:"max_age"`
-	Confidence         int    `mapstructure:"confidence"`
-	Required           bool   `mapstructure:"required"`
+	Classes            []string `mapstructure:"classes"`
+	ID                 string   `mapstructure:"id"`
+	Kind               string   `mapstructure:"kind"`
+	Authority          string   `mapstructure:"authority"`
+	Description        string   `mapstructure:"description"`
+	Path               string   `mapstructure:"path"`
+	URL                string   `mapstructure:"url"`
+	CachePath          string   `mapstructure:"cache_path"`
+	License            string   `mapstructure:"license"`
+	LicenseURL         string   `mapstructure:"license_url"`
+	Provider           string   `mapstructure:"provider"`
+	RefreshInterval    string   `mapstructure:"refresh_interval"`
+	MinRefreshInterval string   `mapstructure:"min_refresh_interval"`
+	MaxRefreshBackoff  string   `mapstructure:"max_refresh_backoff"`
+	RefreshJitter      string   `mapstructure:"refresh_jitter"`
+	MaxAge             string   `mapstructure:"max_age"`
+	Confidence         int      `mapstructure:"confidence"`
+	CIDRColumn         int      `mapstructure:"cidr_column"`
+	Required           bool     `mapstructure:"required"`
+	HasHeader          bool     `mapstructure:"has_header"`
 }
 
 type rawPrivacyHostingConfig struct {
@@ -336,13 +347,18 @@ func parsePrivacySourceIdentity(raw rawPrivacySourceConfig) (privacySourceConfig
 		return privacySourceConfig{}, err
 	}
 
-	return privacySourceConfig{ID: raw.ID, Description: raw.Description, Path: path, URL: sourceURL, License: raw.License, LicenseURL: raw.LicenseURL, Kind: kind, Authority: authority, Confidence: confidence, Required: raw.Required}, nil
+	classes, provider, err := parsePrivacyPrefixSourceOptions(raw, kind)
+	if err != nil {
+		return privacySourceConfig{}, err
+	}
+
+	return privacySourceConfig{Classes: classes, ID: raw.ID, Description: raw.Description, Path: path, URL: sourceURL, License: raw.License, LicenseURL: raw.LicenseURL, Provider: provider, Kind: kind, Authority: authority, Confidence: confidence, CIDRColumn: raw.CIDRColumn, Required: raw.Required, HasHeader: raw.HasHeader}, nil
 }
 
 // parsePrivacySourceContract validates kind and evidence authority compatibility.
 func parsePrivacySourceContract(raw rawPrivacySourceConfig) (privacySourceKind, privacyAuthority, error) {
 	kind := privacySourceKind(raw.Kind)
-	if kind != privacySourceKindTor && kind != privacySourceKindNormalized {
+	if !slices.Contains([]privacySourceKind{privacySourceKindTor, privacySourceKindNormalized, privacySourceKindCIDRList, privacySourceKindCIDRCSV}, kind) {
 		return "", "", fmt.Errorf("kind %q is unsupported", raw.Kind)
 	}
 
@@ -356,6 +372,56 @@ func parsePrivacySourceContract(raw rawPrivacySourceConfig) (privacySourceKind, 
 	}
 
 	return kind, authority, nil
+}
+
+// parsePrivacyPrefixSourceOptions validates generic prefix-feed classification settings.
+func parsePrivacyPrefixSourceOptions(raw rawPrivacySourceConfig, kind privacySourceKind) ([]privacyClass, string, error) {
+	isPrefixSource := kind == privacySourceKindCIDRList || kind == privacySourceKindCIDRCSV
+	if !isPrefixSource {
+		if err := rejectPrivacyPrefixSourceOptions(raw); err != nil {
+			return nil, "", err
+		}
+
+		return nil, "", nil
+	}
+
+	classes, err := parsePrivacyClasses(raw.Classes)
+	if err != nil {
+		return nil, "", fmt.Errorf("classes: %w", err)
+	}
+
+	provider := strings.TrimSpace(raw.Provider)
+	if err := validatePrivacyID(provider); err != nil {
+		return nil, "", fmt.Errorf("provider: %w", err)
+	}
+
+	if err := validatePrivacyPrefixSourceFormat(raw, kind); err != nil {
+		return nil, "", err
+	}
+
+	return classes, provider, nil
+}
+
+// rejectPrivacyPrefixSourceOptions prevents ignored format settings on other source kinds.
+func rejectPrivacyPrefixSourceOptions(raw rawPrivacySourceConfig) error {
+	if len(raw.Classes) > 0 || raw.Provider != "" || raw.CIDRColumn != 0 || raw.HasHeader {
+		return fmt.Errorf("classes, provider, cidr_column, and has_header require a CIDR source kind")
+	}
+
+	return nil
+}
+
+// validatePrivacyPrefixSourceFormat checks options that differ between line and CSV sources.
+func validatePrivacyPrefixSourceFormat(raw rawPrivacySourceConfig, kind privacySourceKind) error {
+	if kind == privacySourceKindCIDRList && (raw.CIDRColumn != 0 || raw.HasHeader) {
+		return fmt.Errorf("cidr_column and has_header require kind %q", privacySourceKindCIDRCSV)
+	}
+
+	if raw.CIDRColumn < 0 || raw.CIDRColumn > maximumPrivacyCSVColumn {
+		return fmt.Errorf("cidr_column must be between 0 and %d", maximumPrivacyCSVColumn)
+	}
+
+	return nil
 }
 
 // parsePrivacySourceLocation validates one absolute file or credential-free HTTPS URL.

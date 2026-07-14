@@ -303,14 +303,16 @@ GeoIP plugin config highlights:
 - `asn_registry.source_urls`: optional HTTP(S) delegated stats feeds; when omitted with registry refresh enabled, the
   plugin uses AfriNIC, APNIC, ARIN, LACNIC, and RIPE NCC extended delegated stats feeds.
 - `privacy_intelligence.enabled`: opt-in local network privacy evidence; disabled by default.
-- `privacy_intelligence.sources`: complete Tor exit snapshots or versioned normalized JSON feeds. URL sources use one
-  host-managed background refresh path with conditional requests, bounded concurrency, jitter, retry backoff, and
-  optional persistent cache. Authentication requests perform only local immutable lookups.
+- `privacy_intelligence.sources`: complete Tor exit snapshots, versioned normalized JSON, line-oriented CIDR lists, or
+  CIDR-bearing CSV feeds. Generic CIDR sources configure their provider, classes, and optional CSV column/header
+  contract without vendor-specific plugin code. URL sources use one host-managed background refresh path with
+  conditional requests, bounded concurrency, jitter, retry backoff, and optional persistent cache. Authentication
+  requests perform only local immutable lookups.
 - `privacy_intelligence.refresh.cache_dir`: optional absolute directory for validated last-known-good snapshots. The
   complete example uses this for the official Onionoo Tor exit source.
 - `privacy_intelligence.hosting`: separate derived hosting/cloud evidence from configured CIDRs, ASNs, or explicit
   organization patterns. Hosting never implies VPN use.
-- The normalized `shared_egress` class is reserved for operator-approved public carrier or corporate NAT prefixes.
+- The `shared_egress` class is reserved for operator-approved public carrier or corporate NAT prefixes.
   Never infer it from a complete ASN or organization pattern; RFC 6598 shared space normally identifies the internal
   provider side rather than the public egress address.
 - `privacy_intelligence.public_log_fields`: opt-in bounded request-log fields for evaluated or stale results. Policy
@@ -321,10 +323,11 @@ Tempo can split request-time GeoIP work by the child spans `geoip.database.prima
 `geoip.privacy.lookup`. Each executed span carries the low-cardinality `geoip.lookup.result` attribute with
 `matched`, `miss`, or `error`.
 
-Community and provider feeds are not bundled. They must be normalized to the versioned schema documented in
-`contrib/plugins/geoip/README.md`, and operators must verify license, attribution, automated-access, and redistribution
-terms before enabling them. VPN detection is incomplete: neither a negative lookup nor a hosting-network match proves
-whether a client is using a VPN or abusing the service. No commercial anonymous-IP database is required.
+Community and provider data is not bundled. Sources can use the versioned normalized schema or the bounded generic CIDR
+formats documented in `contrib/plugins/geoip/README.md`. Operators must verify license, attribution, automated-access,
+and redistribution terms before enabling them. VPN detection is incomplete: neither a negative lookup nor a
+hosting-network match proves whether a client is using a VPN or abusing the service. No commercial anonymous-IP
+database is required.
 
 The GeoIP plugin emits availability, freshness, classification, confidence, and evidence-authority facts under
 `plugin.environment.geoip.*` while keeping `Triggered` and `Abort` false. Policy can therefore combine a current Tor

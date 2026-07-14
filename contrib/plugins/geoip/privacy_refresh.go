@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -205,14 +206,7 @@ func (c *privacySourceCoordinator) handleResponse(response pluginapi.HTTPRespons
 
 // parseCandidate dispatches only format-specific validation to the selected parser.
 func (c *privacySourceCoordinator) parseCandidate(raw []byte, now time.Time) (privacySnapshot, error) {
-	switch c.config.Kind {
-	case privacySourceKindTor:
-		return parseTorPrivacySnapshot(raw, c.config, now)
-	case privacySourceKindNormalized:
-		return parseNormalizedPrivacySnapshot(raw, c.config, now)
-	default:
-		return privacySnapshot{}, fmt.Errorf("unsupported privacy source kind %q", c.config.Kind)
-	}
+	return parsePrivacySnapshotCandidate(raw, c.config, now)
 }
 
 // conditionalHeaders builds cache validators without exposing source credentials.
@@ -450,7 +444,7 @@ func privacyHeader(headers map[string][]string, name string) string {
 func privacyCacheDelay(headers map[string][]string, now time.Time) time.Duration {
 	var delay time.Duration
 
-	for _, directive := range strings.Split(privacyHeader(headers, "Cache-Control"), ",") {
+	for directive := range strings.SplitSeq(privacyHeader(headers, "Cache-Control"), ",") {
 		name, value, found := strings.Cut(strings.TrimSpace(directive), "=")
 		if !found || !strings.EqualFold(name, "max-age") {
 			continue
@@ -485,11 +479,5 @@ func privacyRetryAfter(headers map[string][]string, now time.Time) time.Duration
 
 // slicesContainsPrivacyClass checks cached enum values without accepting future unknown classes.
 func slicesContainsPrivacyClass(class privacyClass) bool {
-	for _, candidate := range privacyClassOrder {
-		if candidate == class {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(privacyClassOrder, class)
 }
