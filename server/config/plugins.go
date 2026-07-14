@@ -81,16 +81,51 @@ type PluginTrustSigner struct {
 
 // PluginModule configures one native plugin module instance.
 type PluginModule struct {
-	Config            map[string]any         `mapstructure:"config" validate:"omitempty" configschema:"opaque"`
-	AllowCapabilities []pluginapi.Capability `mapstructure:"allow_capabilities" validate:"omitempty,dive"`
-	Name              string                 `mapstructure:"name" validate:"omitempty"`
-	Type              string                 `mapstructure:"type" validate:"omitempty"`
-	Path              string                 `mapstructure:"path" validate:"omitempty"`
-	Checksum          string                 `mapstructure:"checksum" validate:"omitempty"`
-	Signature         string                 `mapstructure:"signature" validate:"omitempty"`
-	Signer            string                 `mapstructure:"signer" validate:"omitempty"`
-	StopTimeout       time.Duration          `mapstructure:"stop_timeout" validate:"omitempty"`
-	Optional          bool                   `mapstructure:"optional"`
+	Config            map[string]any            `mapstructure:"config" validate:"omitempty" configschema:"opaque"`
+	AllowCapabilities []pluginapi.Capability    `mapstructure:"allow_capabilities" validate:"omitempty,dive"`
+	Hooks             []PluginHookAuthorization `mapstructure:"hooks" validate:"omitempty,dive"`
+	Compatibility     PluginCompatibility       `mapstructure:"compatibility" validate:"omitempty"`
+	Name              string                    `mapstructure:"name" validate:"omitempty"`
+	Type              string                    `mapstructure:"type" validate:"omitempty"`
+	Path              string                    `mapstructure:"path" validate:"omitempty"`
+	Checksum          string                    `mapstructure:"checksum" validate:"omitempty"`
+	Signature         string                    `mapstructure:"signature" validate:"omitempty"`
+	Signer            string                    `mapstructure:"signer" validate:"omitempty"`
+	StopTimeout       time.Duration             `mapstructure:"stop_timeout" validate:"omitempty"`
+	Optional          bool                      `mapstructure:"optional"`
+}
+
+// PluginCompatibility contains restart-only, operator-owned legacy observability allowlists.
+type PluginCompatibility struct {
+	Metrics     []PluginCompatibilityMetric `mapstructure:"metrics" validate:"omitempty,dive"`
+	TraceScopes []string                    `mapstructure:"trace_scopes" validate:"omitempty,dive"`
+}
+
+// PluginCompatibilityMetric describes one exact legacy collector contract.
+type PluginCompatibilityMetric struct {
+	Buckets []float64            `mapstructure:"buckets" validate:"omitempty,dive"`
+	Labels  []string             `mapstructure:"labels" validate:"omitempty,dive"`
+	Type    pluginapi.MetricType `mapstructure:"type" validate:"omitempty"`
+	Name    string               `mapstructure:"name" validate:"omitempty"`
+	Help    string               `mapstructure:"help" validate:"omitempty"`
+}
+
+// Definition returns a detached public API metric definition.
+func (m PluginCompatibilityMetric) Definition() pluginapi.MetricDefinition {
+	return pluginapi.MetricDefinition{
+		Buckets:       slices.Clone(m.Buckets),
+		Labels:        slices.Clone(m.Labels),
+		Type:          m.Type,
+		Name:          m.Name,
+		Help:          m.Help,
+		Compatibility: true,
+	}
+}
+
+// PluginHookAuthorization configures exact bearer scopes for one registered hook.
+type PluginHookAuthorization struct {
+	RequiredScopes []string `mapstructure:"required_scopes" validate:"omitempty,dive"`
+	Name           string   `mapstructure:"name" validate:"omitempty"`
 }
 
 // PluginChecksum is a parsed module artifact checksum reference.
@@ -300,9 +335,10 @@ func (v *pluginConfigValidator) validateSigners() error {
 // validateModules checks each configured module instance.
 func (v *pluginConfigValidator) validateModules() error {
 	seen := make(map[string]struct{}, len(v.plugins.Modules))
+	metricOwners := make(map[string]struct{})
 
 	for index := range v.plugins.Modules {
-		if err := v.validateModule(index, &v.plugins.Modules[index], seen); err != nil {
+		if err := v.validateModule(index, &v.plugins.Modules[index], seen, metricOwners); err != nil {
 			return err
 		}
 	}
@@ -311,7 +347,12 @@ func (v *pluginConfigValidator) validateModules() error {
 }
 
 // validateModule checks one plugin module instance.
-func (v *pluginConfigValidator) validateModule(index int, module *PluginModule, seen map[string]struct{}) error {
+func (v *pluginConfigValidator) validateModule(
+	index int,
+	module *PluginModule,
+	seen map[string]struct{},
+	metricOwners map[string]struct{},
+) error {
 	path := fmt.Sprintf("plugins.modules[%d]", index)
 
 	if err := pluginapi.ValidateModuleName(module.Name); err != nil {
@@ -344,7 +385,71 @@ func (v *pluginConfigValidator) validateModule(index int, module *PluginModule, 
 		return err
 	}
 
+	if err := validatePluginHookAuthorizations(path, module.Hooks); err != nil {
+		return err
+	}
+
+	if err := validatePluginCompatibility(path, module, v.plugins.EffectiveVerificationPolicy(), metricOwners); err != nil {
+		return err
+	}
+
 	return validatePluginStopTimeout(path, module.StopTimeout)
+}
+
+// validatePluginCompatibility checks signed exact observability allowlists and normalizes scopes.
+func validatePluginCompatibility(
+	path string,
+	module *PluginModule,
+	verificationPolicy string,
+	metricOwners map[string]struct{},
+) error {
+	compatibility := &module.Compatibility
+	if len(compatibility.Metrics) == 0 && len(compatibility.TraceScopes) == 0 {
+		return nil
+	}
+
+	if verificationPolicy == PluginVerificationPolicyOff {
+		return newPluginValidationProblem(path+".compatibility", "requires plugin signature verification")
+	}
+
+	if module.Signature == "" || module.Signer == "" {
+		return newPluginValidationProblem(path+".compatibility", "requires a configured signature and trusted signer")
+	}
+
+	for index, metric := range compatibility.Metrics {
+		metricPath := fmt.Sprintf("%s.compatibility.metrics[%d]", path, index)
+		if err := pluginapi.ValidateCompatibilityMetric(metric.Definition()); err != nil {
+			return newPluginValidationProblem(metricPath, err.Error())
+		}
+
+		if _, exists := metricOwners[metric.Name]; exists {
+			return newPluginValidationProblem(metricPath+".name", "duplicates another exact compatibility metric")
+		}
+
+		metricOwners[metric.Name] = struct{}{}
+	}
+
+	normalized := make([]string, 0, len(compatibility.TraceScopes))
+
+	seenScopes := make(map[string]struct{}, len(compatibility.TraceScopes))
+
+	for index, scope := range compatibility.TraceScopes {
+		scope = strings.TrimSpace(scope)
+		if err := pluginapi.ValidateCompatibilityTraceScope(scope); err != nil {
+			return newPluginValidationProblem(fmt.Sprintf("%s.compatibility.trace_scopes[%d]", path, index), err.Error())
+		}
+
+		if _, exists := seenScopes[scope]; exists {
+			continue
+		}
+
+		seenScopes[scope] = struct{}{}
+		normalized = append(normalized, scope)
+	}
+
+	compatibility.TraceScopes = normalized
+
+	return nil
 }
 
 // validateModuleType checks the configured module type.
@@ -462,6 +567,34 @@ func validatePluginCapabilities(path string, capabilities []pluginapi.Capability
 		}
 
 		seen[capability] = struct{}{}
+	}
+
+	return nil
+}
+
+// validatePluginHookAuthorizations normalizes exact hook scopes and rejects ambiguous entries.
+func validatePluginHookAuthorizations(path string, authorizations []PluginHookAuthorization) error {
+	seen := make(map[string]struct{}, len(authorizations))
+
+	for index := range authorizations {
+		authorization := &authorizations[index]
+		authorizationPath := fmt.Sprintf("%s.hooks[%d]", path, index)
+
+		if err := pluginapi.ValidateComponentName(authorization.Name); err != nil {
+			return newPluginValidationProblem(authorizationPath+".name", err.Error())
+		}
+
+		if _, exists := seen[authorization.Name]; exists {
+			return newPluginValidationProblem(authorizationPath+".name", "duplicates another hook authorization")
+		}
+
+		normalized, err := pluginapi.NormalizeHookRequiredScopes(authorization.RequiredScopes)
+		if err != nil {
+			return newPluginValidationProblem(authorizationPath+".required_scopes", err.Error())
+		}
+
+		seen[authorization.Name] = struct{}{}
+		authorization.RequiredScopes = normalized
 	}
 
 	return nil

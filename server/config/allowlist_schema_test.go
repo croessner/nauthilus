@@ -50,6 +50,63 @@ func TestHandleFile_RelayDomainsAllowlistSchema(t *testing.T) {
 	assertSoftWhitelistEntry(t, cfg.GetRelayDomains().GetSoftWhitelist(), "user1", "192.168.0.0/24")
 }
 
+func TestHandleFile_SoftAllowlistNormalizesAndDefensivelyCopiesNetworks(t *testing.T) {
+	cfg := handleAllowlistConfig(t, map[string]any{
+		"auth": map[string]any{
+			"controls": map[string]any{
+				"relay_domains": map[string]any{
+					"static": []any{"example.test"},
+					"allowlist": map[string]any{
+						"user1": []any{"192.168.0.42/24", "192.168.0.0/24"},
+					},
+				},
+			},
+		},
+	})
+
+	allowlist := cfg.GetRelayDomains().GetSoftWhitelist()
+
+	networks := allowlist.Get("user1")
+
+	if len(networks) != 1 || networks[0] != "192.168.0.0/24" {
+		t.Fatalf("normalized networks = %#v, want one canonical CIDR", networks)
+	}
+
+	networks[0] = "203.0.113.0/24"
+
+	if got := allowlist.Get("user1")[0]; got != "192.168.0.0/24" {
+		t.Fatalf("Get() mutation changed allowlist state: %q", got)
+	}
+}
+
+func TestHandleFile_SoftAllowlistRejectsInvalidEntries(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary":           map[string]any{"address": "localhost:6379"},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+	viper.Set("auth.controls.relay_domains", map[string]any{
+		"static": []any{"example.test"},
+		"allowlist": map[string]any{
+			"user1": []any{"not-a-cidr"},
+		},
+	})
+
+	err := (&FileSettings{}).HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want invalid CIDR failure")
+	}
+
+	if !strings.Contains(err.Error(), "auth.controls.relay_domains.allowlist.user1[0]") {
+		t.Fatalf("HandleFile() error = %q, want canonical allowlist path", err)
+	}
+}
+
 func TestHandleFile_RBLAllowlistSchema(t *testing.T) {
 	cfg := handleAllowlistConfig(t, map[string]any{
 		"auth": map[string]any{

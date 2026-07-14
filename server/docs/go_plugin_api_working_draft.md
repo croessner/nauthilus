@@ -264,6 +264,11 @@ plugins:
       stop_timeout: 10s
       allow_capabilities:
         - credentials
+      hooks:
+        - name: health
+          required_scopes:
+            - nauthilus:admin
+            - nauthilus:custom:health
       config:
         database_path: /var/lib/GeoIP/GeoLite2-City.mmdb
         database_format: mmdb
@@ -296,6 +301,12 @@ that module instance. If absent, the host default policy decides whether request
 capabilities such as `credentials` and host-managed `mail` should be default-deny and require explicit allowance.
 Ordinary host facades such as logging, metrics, and tracing do not need capability gates by default.
 
+`hooks` is optional, host-owned authorization configuration keyed by the plugin's registered local hook name. Each
+`required_scopes` list is normalized, validated as RFC 6749 scope tokens, de-duplicated, bounded to 32 entries, and copied
+into the effective descriptor during registration. Non-empty lists use any-of bearer-scope semantics and require
+`HookAuthToken` on a non-public hook. Empty lists retain the descriptor's coarse scope/auth behavior. Invalid, duplicate,
+unmatched, or conflicting entries fail closed and changes require a process restart.
+
 The plugin is responsible for interpreting, validating, defaulting, and documenting its own `config` keys. This avoids a
 false shared schema across unrelated plugin types such as GeoIP sources, customer-specific backends, and background
 workers.
@@ -319,6 +330,7 @@ type Host interface {
     ServiceContext() context.Context
     Logger(scope string) Logger
     Tracer(scope string) Tracer
+    CompatibilityTracer(scope string) (Tracer, error)
     Metrics(scope string) Metrics
     HTTP(scope string) HTTPClient
     Mail(scope string) Mailer
@@ -352,6 +364,11 @@ Service notes:
   registration. Raw Prometheus registerers are not part of the public v1 API.
 - `Tracer` should attach spans to the active request context through a Nauthilus-owned facade. Raw OpenTelemetry
   providers are not part of the public v1 API.
+- The implemented compatibility exception is signer-gated and restart-only. Exact metric contracts include collector
+  type, help, ordered labels, and histogram buckets, and publish once to both the exact and native collectors. Exact trace
+  scopes are for plugin-owned domain spans and use value-only kind and status enums. They must not wrap host-owned HTTP,
+  LDAP, Redis, or mail operations; `Host.HTTP` continues to own its single `plugin.http` client span. Compatibility
+  configuration is invalid when signature verification is disabled.
 - `Go` should preserve caller context values, including trace context, but detach from caller cancellation. Host-managed
   workers are canceled through the host worker lifetime during runtime shutdown, not by an already-finished request
   context.
@@ -521,6 +538,14 @@ LDAP should stay queue-backed but not queue-exposing:
 type LDAP interface {
     Search(context.Context, LDAPSearchRequest) (LDAPSearchResult, error)
     Modify(context.Context, LDAPModifyRequest) error
+    Endpoints(context.Context, string) ([]LDAPEndpoint, error)
+}
+
+type LDAPEndpoint struct {
+    PoolName string
+    Scheme   string
+    Host     string
+    Port     int
 }
 
 type LDAPSearchRequest struct {
@@ -568,6 +593,11 @@ apply Nauthilus timeouts, retries, logging, and tracing.
 The public LDAP API should not expose bind/auth operations, raw queues, pools, or go-ldap request structs. The host
 should validate `LDAPScope` and `LDAPModifyOperation` values.
 
+`Endpoints` is the only public configuration-derived LDAP metadata surface. It returns configured failover endpoints
+from the current config snapshot as detached values containing only pool, scheme, host, and port. Raw URIs, userinfo,
+bind identities, passwords, base DNs, URI query/fragment values, TLS files, and config objects remain private. Endpoint
+order is configuration order and is not evidence of the endpoint selected by a queued operation.
+
 `Search` returns its `LDAPSearchResult` and error directly to the calling plugin, and `Modify` returns its operation
 error directly. The runtime does not attach LDAP results to `BackendResult`, `SubjectRequest.BackendResult`, or
 `BackendResultPatch`. Plugin code must deliberately translate an LDAP result into allowed attributes, facts, logs,
@@ -575,6 +605,13 @@ status, rejection, or temporary failure.
 
 `LDAPSearchResult.Entries` contains copied public `LDAPEntry` values. The queue adapter converts internal go-ldap
 entries and copies every attribute value slice; plugins receive neither internal entries nor LDAP connections.
+
+Policy response catalogs and per-account soft allowlists are deliberately not plugin mutation APIs. Operators declare
+catalogs under `auth.policy.localization.catalogs` and network exceptions under the existing
+`auth.controls.brute_force.allowlist` and `auth.controls.relay_domains.allowlist` paths. The localization registry keeps
+system, startup Lua, and operator layers distinct; operator entries have final precedence, and config reload replaces
+only that layer after the complete candidate validates. Authentication request boundaries consume the current config
+snapshot so successful allowlist reloads apply to new HTTP and gRPC requests.
 
 ## Request And Runtime Model
 
@@ -1313,14 +1350,15 @@ type HookResponse struct {
 }
 
 type HookDescriptor struct {
-    Name    string
-    Method  string
-    Path    string
-    Alias   string
-    Scope   HookScope
-    Auth    HookAuth
-    Timeout time.Duration
-    MaxBodyBytes int64
+    RequiredScopes []string
+    Name           string
+    Method         string
+    Path           string
+    Alias          string
+    Scope          HookScope
+    Auth           HookAuth
+    Timeout        time.Duration
+    MaxBodyBytes   int64
 }
 
 type HookScope string
@@ -1342,8 +1380,10 @@ Hooks are HTTP-facing and should stay separate from auth-pipeline sources. They 
 request body, response, timeout, body limit, and authorization semantics. `HookRequest.Body` is a byte slice because the
 host has already enforced the hook body limit before invoking the plugin. Go plugin hooks should not receive
 `*gin.Context`; the host should translate the HTTP request and response through API-level `HookRequest` and
-`HookResponse` value objects. The host should enforce the declared `HookAuth`, `HookScope`, and `MaxBodyBytes` before
-calling `Serve`. If `MaxBodyBytes` is zero, the host should apply the global default.
+`HookResponse` value objects. Plugins must leave `RequiredScopes` empty; exact scopes are operator-owned and injected by
+the host after validation. A non-empty effective list requires bearer authentication and accepts any one configured
+scope. The host should enforce the effective authorization, declared `HookAuth`, `HookScope`, and `MaxBodyBytes` before
+constructing the request or calling `Serve`. If `MaxBodyBytes` is zero, the host should apply the global default.
 The host should filter hook response headers before writing them to the client, rejecting hop-by-hop headers and
 configured denied headers such as transport or security headers owned by Nauthilus. Native hooks should return standard
 library `net/http` status constants in `HookResponse.StatusCode`. Lua response helpers such as `string`, `html`, and
@@ -1541,8 +1581,8 @@ type ReloadablePlugin interface {
 }
 ```
 
-Only the plugin-owned `config` block is eligible for live reconfiguration. Loader and artifact fields require restart
-because Go plugin code cannot be unloaded or replaced after `plugin.Open`.
+Only the plugin-owned `config` block is eligible for live reconfiguration. Loader, artifact, capability, and hook
+authorization fields require restart because Go plugin code cannot be unloaded or replaced after `plugin.Open`.
 
 If `Reconfigure` fails, the host should keep the previous working plugin configuration and report the reload failure
 through logs and metrics. Plugins that do not implement `ReloadablePlugin` continue running with their existing
@@ -1654,8 +1694,9 @@ rules. Those concerns are useful when isolation is required, but they are not th
   metrics, timeouts, response body limits, and redacted logs are required.
 - `Host.ConnectionTargets(scope)` is the native replacement for psnet target registration. It is observability-only and
   does not provide raw socket management.
-- LDAP plugin access is limited to API-level queued `Search` and `Modify` requests. Bind/auth operations, raw queues,
-  pools, and go-ldap request structs stay outside the public plugin API.
+- LDAP plugin access is limited to API-level queued `Search` and `Modify` requests plus trace-safe configured endpoint
+  metadata. Bind/auth operations, raw URIs, queues, pools, connections, config objects, and go-ldap request structs stay
+  outside the public plugin API.
 - LDAP scopes and modify operations use v1 constants; the host rejects unknown values.
 - Request snapshots never contain passwords or other secrets. Plugins can access credentials only through an explicit,
   capability-gated, request-scoped `CredentialProvider`.
@@ -1706,7 +1747,8 @@ rules. Those concerns are useful when isolation is required, but they are not th
 - `PolicyFact.Value` uses JSON/CBOR-compatible values, matching the runtime context value discipline.
 - Native Go plugins may provide HTTP hooks, but hooks are separate from auth-pipeline sources and use API-level request
   and response values instead of `*gin.Context`.
-- Plugin hooks declare `HookAuth` and `HookScope`; the host authorizes requests before invoking the plugin hook.
+- Plugin hooks declare `HookAuth` and `HookScope`; operators may assign exact any-of bearer scopes by registered hook
+  name, and the host authorizes requests before request construction or plugin invocation.
 - Plugin hooks may declare `MaxBodyBytes`; the host enforces the body limit before invoking the plugin hook and falls
   back to the global default when no hook-specific limit is set.
 - Every host-invoked plugin method is called behind a panic boundary. Runtime panics become technical errors and should
@@ -1820,7 +1862,8 @@ Deliverables:
 
 - Root-level `plugins` config section with `modules`, `allowed_dirs`, `verification_policy`, and `trust.signers`.
 - Module fields for `name`, optional `type`, `path`, optional `checksum`, optional `signature`, optional `signer`,
-  optional `optional`, optional `allow_capabilities`, optional lifecycle timeouts, and opaque `config`.
+  optional `optional`, optional `allow_capabilities`, optional host-owned `hooks`, optional lifecycle timeouts, and opaque
+  `config`.
 - Strict validation for module names, component selector names, absolute paths, allowed directory containment, unsupported
   module types, signer references, and verification policy values.
 - SHA-256 and minisign/signify-style detached signature verification before `plugin.Open`.

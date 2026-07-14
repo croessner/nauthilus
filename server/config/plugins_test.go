@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ const (
 	pluginConfigKeyAllowedDirs        = "allowed_dirs"
 	pluginConfigKeyAPIKey             = "api_key"
 	pluginConfigKeyConfig             = "config"
+	pluginConfigKeyHooks              = "hooks"
 	pluginConfigKeyModules            = "modules"
 	pluginConfigKeyName               = "name"
 	pluginConfigKeyNested             = "nested"
@@ -21,6 +23,7 @@ const (
 	pluginConfigKeySignature          = "signature"
 	pluginConfigKeySigner             = "signer"
 	pluginConfigKeySigners            = "signers"
+	pluginConfigKeyRequiredScopes     = "required_scopes"
 	pluginConfigKeyTrust              = "trust"
 	pluginConfigKeyType               = "type"
 	pluginConfigKeyVerificationPolicy = "verification_policy"
@@ -260,6 +263,88 @@ func TestPluginConfig_AcceptsMailCapabilityAllowlist(t *testing.T) {
 	}
 }
 
+func TestPluginConfig_NormalizesHookRequiredScopes(t *testing.T) {
+	pluginDir := t.TempDir()
+
+	cfg, err := loadPluginTestConfig(t, map[string]any{
+		pluginConfigKeyAllowedDirs: []string{pluginDir},
+		pluginConfigKeyModules: []map[string]any{
+			{
+				pluginConfigKeyName: pluginConfigModuleName,
+				pluginConfigKeyPath: pluginConfigArtifactPath(pluginDir),
+				pluginConfigKeyHooks: []map[string]any{
+					{
+						pluginConfigKeyName:           "postfix_map",
+						pluginConfigKeyRequiredScopes: []string{" nauthilus:admin ", "nauthilus:custom:postfix", "nauthilus:admin"},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleFile() error = %v", err)
+	}
+
+	scopes := cfg.GetPlugins().Modules[0].Hooks[0].RequiredScopes
+
+	want := []string{"nauthilus:admin", "nauthilus:custom:postfix"}
+
+	if !slices.Equal(scopes, want) {
+		t.Fatalf("RequiredScopes = %#v, want %#v", scopes, want)
+	}
+}
+
+func TestPluginConfig_RejectsInvalidHookRequiredScopes(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		scopes []string
+	}{
+		{name: "empty", scopes: []string{" "}},
+		{name: "invalid", scopes: []string{"bad scope"}},
+		{name: "excessive", scopes: slices.Repeat([]string{"scope"}, pluginapi.MaxHookRequiredScopes+1)},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			pluginDir := t.TempDir()
+			err := loadPluginTestConfigError(t, map[string]any{
+				pluginConfigKeyAllowedDirs: []string{pluginDir},
+				pluginConfigKeyModules: []map[string]any{
+					{
+						pluginConfigKeyName: pluginConfigModuleName,
+						pluginConfigKeyPath: pluginConfigArtifactPath(pluginDir),
+						pluginConfigKeyHooks: []map[string]any{
+							{
+								pluginConfigKeyName:           "postfix_map",
+								pluginConfigKeyRequiredScopes: testCase.scopes,
+							},
+						},
+					},
+				},
+			})
+
+			assertPluginConfigError(t, err, "plugins.modules[0].hooks[0].required_scopes")
+		})
+	}
+}
+
+func TestPluginConfig_RejectsDuplicateHookAuthorization(t *testing.T) {
+	pluginDir := t.TempDir()
+	err := loadPluginTestConfigError(t, map[string]any{
+		pluginConfigKeyAllowedDirs: []string{pluginDir},
+		pluginConfigKeyModules: []map[string]any{
+			{
+				pluginConfigKeyName: pluginConfigModuleName,
+				pluginConfigKeyPath: pluginConfigArtifactPath(pluginDir),
+				pluginConfigKeyHooks: []map[string]any{
+					{pluginConfigKeyName: "postfix_map"},
+					{pluginConfigKeyName: "postfix_map"},
+				},
+			},
+		},
+	})
+
+	assertPluginConfigError(t, err, "plugins.modules[0].hooks[1].name")
+}
+
 func TestPluginConfigDump_OmitsOpaqueModuleConfig(t *testing.T) {
 	settings := map[string]any{
 		"plugins": map[string]any{
@@ -268,6 +353,12 @@ func TestPluginConfigDump_OmitsOpaqueModuleConfig(t *testing.T) {
 				map[string]any{
 					pluginConfigKeyName: pluginConfigModuleName,
 					pluginConfigKeyPath: "/usr/lib/nauthilus/plugins/geoip.so",
+					pluginConfigKeyHooks: []any{
+						map[string]any{
+							pluginConfigKeyName:           "postfix_map",
+							pluginConfigKeyRequiredScopes: []any{"nauthilus:admin", "nauthilus:custom:postfix"},
+						},
+					},
 					pluginConfigKeyConfig: map[string]any{
 						pluginConfigKeyAPIKey: "must-not-render",
 					},
@@ -287,6 +378,10 @@ func TestPluginConfigDump_OmitsOpaqueModuleConfig(t *testing.T) {
 
 	if !strings.Contains(output, `plugins.modules[0].name = "geoip"`) {
 		t.Fatalf("RenderNonDefaultConfigDump() omitted module loader fields: %q", output)
+	}
+
+	if !strings.Contains(output, `plugins.modules[0].hooks[0].required_scopes = ["nauthilus:admin", "nauthilus:custom:postfix"]`) {
+		t.Fatalf("RenderNonDefaultConfigDump() omitted hook required scopes: %q", output)
 	}
 }
 

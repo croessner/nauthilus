@@ -18,6 +18,7 @@ package pluginapi
 import (
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 )
@@ -31,9 +32,22 @@ var (
 
 	// ErrInvalidMetadata is returned when plugin metadata is incomplete or invalid.
 	ErrInvalidMetadata = errors.New("invalid plugin metadata")
+
+	// ErrInvalidScope is returned when hook authorization contains an invalid OAuth scope token.
+	ErrInvalidScope = errors.New("invalid OAuth scope token")
+
+	// ErrInvalidMetricDefinition is returned when an exact compatibility metric contract is invalid.
+	ErrInvalidMetricDefinition = errors.New("invalid compatibility metric definition")
+
+	// ErrInvalidTraceScope is returned when an exact compatibility instrumentation scope is invalid.
+	ErrInvalidTraceScope = errors.New("invalid compatibility trace scope")
 )
 
 var pluginNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,62}$`)
+
+var metricNamePattern = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*$`)
+
+var traceScopePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_./-]{0,254}$`)
 
 var backendAttributeNamePattern = regexp.MustCompile(`^[!-~]+$`)
 
@@ -102,6 +116,51 @@ func ValidateBackendAttributeName(name string) error {
 	}
 
 	return nil
+}
+
+// ValidateScopeToken checks the RFC 6749 scope-token grammar.
+func ValidateScopeToken(scope string) error {
+	if scope == "" {
+		return fmt.Errorf("%w: scope must not be empty", ErrInvalidScope)
+	}
+
+	for _, character := range scope {
+		if character < 0x21 || character > 0x7E || character == 0x22 || character == 0x5C {
+			return fmt.Errorf("%w: scope %q contains a disallowed character", ErrInvalidScope, scope)
+		}
+	}
+
+	return nil
+}
+
+// NormalizeHookRequiredScopes trims, validates, de-duplicates, and copies hook scopes.
+func NormalizeHookRequiredScopes(scopes []string) ([]string, error) {
+	if len(scopes) == 0 {
+		return nil, nil
+	}
+
+	if len(scopes) > MaxHookRequiredScopes {
+		return nil, fmt.Errorf("%w: at most %d scopes are allowed", ErrInvalidScope, MaxHookRequiredScopes)
+	}
+
+	normalized := make([]string, 0, len(scopes))
+	seen := make(map[string]struct{}, len(scopes))
+
+	for index, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if err := ValidateScopeToken(scope); err != nil {
+			return nil, fmt.Errorf("required scope %d: %w", index, err)
+		}
+
+		if _, exists := seen[scope]; exists {
+			continue
+		}
+
+		seen[scope] = struct{}{}
+		normalized = append(normalized, scope)
+	}
+
+	return normalized, nil
 }
 
 // ValidateQualifiedComponentName checks a fully qualified module.component name.
@@ -214,6 +273,86 @@ func ValidateMetadata(metadata Metadata) error {
 func validatePluginName(kind string, name string) error {
 	if !pluginNamePattern.MatchString(name) {
 		return fmt.Errorf("%w: %s %q must match [a-z0-9][a-z0-9_]{0,62}", ErrInvalidName, kind, name)
+	}
+
+	return nil
+}
+
+// ValidateCompatibilityMetric validates one exact value-only collector contract.
+func ValidateCompatibilityMetric(definition MetricDefinition) error {
+	if !definition.Compatibility {
+		return fmt.Errorf("%w: compatibility marker is required", ErrInvalidMetricDefinition)
+	}
+
+	if !validCompatibilityMetricType(definition.Type) {
+		return fmt.Errorf("%w: unsupported type %q", ErrInvalidMetricDefinition, definition.Type)
+	}
+
+	if !metricNamePattern.MatchString(definition.Name) {
+		return fmt.Errorf("%w: invalid name %q", ErrInvalidMetricDefinition, definition.Name)
+	}
+
+	if strings.TrimSpace(definition.Help) == "" {
+		return fmt.Errorf("%w: help must not be empty", ErrInvalidMetricDefinition)
+	}
+
+	if err := validateCompatibilityMetricLabels(definition.Labels); err != nil {
+		return err
+	}
+
+	return validateCompatibilityMetricBuckets(definition.Type, definition.Buckets)
+}
+
+// validCompatibilityMetricType reports whether the exact collector type is supported.
+func validCompatibilityMetricType(metricType MetricType) bool {
+	switch metricType {
+	case MetricTypeCounter, MetricTypeGauge, MetricTypeHistogram, MetricTypeSummary:
+		return true
+	default:
+		return false
+	}
+}
+
+// validateCompatibilityMetricLabels checks exact label names and uniqueness.
+func validateCompatibilityMetricLabels(labels []string) error {
+	seen := make(map[string]struct{}, len(labels))
+	for _, label := range labels {
+		if label == "plugin_scope" || !metricNamePattern.MatchString(label) {
+			return fmt.Errorf("%w: invalid label %q", ErrInvalidMetricDefinition, label)
+		}
+
+		if _, exists := seen[label]; exists {
+			return fmt.Errorf("%w: duplicate label %q", ErrInvalidMetricDefinition, label)
+		}
+
+		seen[label] = struct{}{}
+	}
+
+	return nil
+}
+
+// validateCompatibilityMetricBuckets checks histogram-only ordering and finite values.
+func validateCompatibilityMetricBuckets(metricType MetricType, buckets []float64) error {
+	if metricType != MetricTypeHistogram && len(buckets) > 0 {
+		return fmt.Errorf("%w: buckets require histogram type", ErrInvalidMetricDefinition)
+	}
+
+	previous := 0.0
+	for index, bucket := range buckets {
+		if bucket <= 0 || math.IsNaN(bucket) || math.IsInf(bucket, 0) || (index > 0 && bucket <= previous) {
+			return fmt.Errorf("%w: buckets must be finite, positive, and strictly increasing", ErrInvalidMetricDefinition)
+		}
+
+		previous = bucket
+	}
+
+	return nil
+}
+
+// ValidateCompatibilityTraceScope validates one exact instrumentation scope.
+func ValidateCompatibilityTraceScope(scope string) error {
+	if !traceScopePattern.MatchString(scope) {
+		return fmt.Errorf("%w: scope %q must match [a-zA-Z0-9][a-zA-Z0-9_./-]{0,254}", ErrInvalidTraceScope, scope)
 	}
 
 	return nil

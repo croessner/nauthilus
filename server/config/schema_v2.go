@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"slices"
 	"time"
 
@@ -192,6 +193,28 @@ func (f *FileSettings) GetAuthPolicy() AuthPolicySection {
 	applyAuthPolicyDefaults(&policyConfig)
 
 	return policyConfig
+}
+
+// GetPolicyLocalizationCatalogs returns detached operator-owned policy translation catalogs.
+func (f *FileSettings) GetPolicyLocalizationCatalogs() []PolicyTranslationCatalogConfig {
+	if f == nil || f.Auth == nil {
+		return nil
+	}
+
+	catalogs := f.Auth.Policy.Localization.Catalogs
+	if len(catalogs) == 0 {
+		return nil
+	}
+
+	cloned := make([]PolicyTranslationCatalogConfig, 0, len(catalogs))
+	for _, catalog := range catalogs {
+		entries := make(map[string]string, len(catalog.Entries))
+		maps.Copy(entries, catalog.Entries)
+		catalog.Entries = entries
+		cloned = append(cloned, catalog)
+	}
+
+	return cloned
 }
 
 // HTTPRateLimit configures the global HTTP rate limiter.
@@ -727,6 +750,7 @@ type AuthServicesSection struct {
 
 // AuthPolicySection configures the declarative auth decision compiler.
 type AuthPolicySection struct {
+	Localization      PolicyLocalizationConfig               `mapstructure:"localization" validate:"omitempty"`
 	Sets              PolicySetsConfig                       `mapstructure:"sets" validate:"omitempty"`
 	SchedulerGuards   map[string]PolicySchedulerGuardConfig  `mapstructure:"scheduler_guards" validate:"omitempty"`
 	Report            PolicyReportConfig                     `mapstructure:"report" validate:"omitempty"`
@@ -740,6 +764,18 @@ type AuthPolicySection struct {
 	AttributeExports  []PolicyAttributeExportConfig          `mapstructure:"attribute_exports" validate:"omitempty,dive"`
 	Checks            []PolicyCheckConfig                    `mapstructure:"checks" validate:"omitempty,dive"`
 	Policies          []PolicyRuleConfig                     `mapstructure:"policies" validate:"omitempty,dive"`
+}
+
+// PolicyLocalizationConfig contains operator-owned policy translation catalogs.
+type PolicyLocalizationConfig struct {
+	Catalogs []PolicyTranslationCatalogConfig `mapstructure:"catalogs" validate:"omitempty,max=32,dive"`
+}
+
+// PolicyTranslationCatalogConfig declares messages for one language and namespace.
+type PolicyTranslationCatalogConfig struct {
+	Entries   map[string]string `mapstructure:"entries" validate:"required,max=1024"`
+	Namespace string            `mapstructure:"namespace" validate:"required,max=64,printascii"`
+	Language  string            `mapstructure:"language" validate:"required,max=35,printascii"`
 }
 
 func defaultAuthPolicySection() AuthPolicySection {

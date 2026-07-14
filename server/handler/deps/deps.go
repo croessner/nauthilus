@@ -49,8 +49,20 @@ func NewDefaultServices(deps *Deps) *DefaultServices {
 
 // Auth provides the exported Auth method.
 func (d *Deps) Auth() core.AuthDeps {
+	cfg := d.Cfg
+	if d.CfgProvider != nil {
+		cfg = d.CfgProvider.Current().File
+	}
+
 	return core.AuthDeps{
-		Cfg:          d.Cfg,
+		Cfg: cfg,
+		CurrentConfig: func() config.File {
+			if d.CfgProvider == nil {
+				return d.Cfg
+			}
+
+			return d.CfgProvider.Current().File
+		},
 		Env:          d.Env,
 		Logger:       d.Logger,
 		Redis:        d.Redis,

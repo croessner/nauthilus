@@ -16,14 +16,74 @@
 package backend
 
 import (
-	"net/url"
-	"strconv"
+	"errors"
 	"strings"
 
+	"github.com/croessner/nauthilus/v3/server/backend/ldapendpoint"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	lua "github.com/yuin/gopher-lua"
 )
+
+var (
+	errLDAPEndpointPoolNotFound = errors.New("LDAP endpoint pool not found")
+	errLDAPEndpointUnavailable  = errors.New("LDAP endpoint is not configured")
+)
+
+// LDAPEndpointMetadata contains configured trace-safe LDAP endpoint fields.
+type LDAPEndpointMetadata struct {
+	PoolName string
+	Scheme   string
+	Host     string
+	Port     int
+}
+
+// LDAPEndpoints returns all configured endpoints for a default or named pool.
+func LDAPEndpoints(cfg config.File, poolName string) ([]LDAPEndpointMetadata, error) {
+	poolName = normalizeLDAPEndpointPoolName(poolName)
+
+	lookupPoolName := poolName
+
+	if poolName == config.RemoteBackendDefaultName {
+		lookupPoolName = definitions.DefaultBackendName
+	}
+
+	uris, ok := ldapEndpointURIs(cfg, lookupPoolName)
+	if !ok {
+		return nil, errLDAPEndpointPoolNotFound
+	}
+
+	if len(uris) == 0 {
+		return nil, errLDAPEndpointUnavailable
+	}
+
+	endpoints := make([]LDAPEndpointMetadata, 0, len(uris))
+	for _, rawURI := range uris {
+		endpoint, err := ldapendpoint.Parse(rawURI)
+		if err != nil {
+			return nil, err
+		}
+
+		endpoints = append(endpoints, LDAPEndpointMetadata{
+			PoolName: poolName,
+			Scheme:   endpoint.Scheme,
+			Host:     endpoint.Host,
+			Port:     endpoint.Port,
+		})
+	}
+
+	return endpoints, nil
+}
+
+// normalizeLDAPEndpointPoolName maps public default aliases to one stable value.
+func normalizeLDAPEndpointPoolName(poolName string) string {
+	poolName = strings.TrimSpace(poolName)
+	if poolName == "" || poolName == definitions.DefaultBackendName {
+		return config.RemoteBackendDefaultName
+	}
+
+	return poolName
+}
 
 // LuaLDAPEndpoint provides the exported LuaLDAPEndpoint function.
 func LuaLDAPEndpoint(cfg config.File) lua.LGFunction {
@@ -39,22 +99,12 @@ func LuaLDAPEndpoint(cfg config.File) lua.LGFunction {
 			return pushLDAPEndpointError(L, "no LDAP server_uri configured for pool: "+poolName)
 		}
 
-		ustr := strings.TrimSpace(uris[0])
-
-		u, err := url.Parse(ustr)
+		endpoint, err := ldapendpoint.Parse(uris[0])
 		if err != nil {
-			return pushLDAPEndpointError(L, "invalid LDAP server_uri: "+ustr)
+			return pushLDAPEndpointError(L, "invalid LDAP server_uri")
 		}
 
-		if strings.EqualFold(u.Scheme, "ldapi") {
-			return pushLDAPEndpointResult(L, ldapiEndpointHost(u), 0)
-		}
-
-		if u.Host == "" {
-			return pushLDAPEndpointError(L, "invalid LDAP server_uri: "+ustr)
-		}
-
-		return pushLDAPEndpointResult(L, u.Hostname(), ldapEndpointPort(u))
+		return pushLDAPEndpointResult(L, endpoint.Host, endpoint.Port)
 	}
 }
 
@@ -84,30 +134,6 @@ func ldapEndpointURIs(cfg config.File, poolName string) ([]string, bool) {
 	}
 
 	return pools[poolName].GetServerURIs(), true
-}
-
-// ldapiEndpointHost returns the Unix-socket path or the existing empty value for unsupported forms.
-func ldapiEndpointHost(u *url.URL) string {
-	if u.Path != "" && strings.HasPrefix(u.Path, "/") {
-		return u.Path
-	}
-
-	return ""
-}
-
-// ldapEndpointPort returns an explicit or scheme-derived LDAP endpoint port.
-func ldapEndpointPort(u *url.URL) int {
-	if p := u.Port(); p != "" {
-		if v, perr := strconv.ParseInt(p, 10, 16); perr == nil && v >= 0 && v <= 65535 {
-			return int(v)
-		}
-	}
-
-	if u.Scheme == "ldaps" {
-		return 636
-	}
-
-	return 389
 }
 
 // pushLDAPEndpointError pushes the Lua endpoint error tuple.

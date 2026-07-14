@@ -978,6 +978,10 @@ func (t *recordingTracer) Start(ctx context.Context, name string, attrs ...plugi
 	return ctx, recordingSpan{tracer: t, index: len(t.spans) - 1}
 }
 
+func (t *recordingTracer) StartWithOptions(ctx context.Context, name string, options pluginapi.SpanStartOptions) (context.Context, pluginapi.Span) {
+	return t.Start(ctx, name, options.Attributes...)
+}
+
 type recordingSpan struct {
 	tracer *recordingTracer
 	index  int
@@ -997,6 +1001,8 @@ func (s recordingSpan) SetAttributes(attrs ...pluginapi.TraceAttribute) {
 func (s recordingSpan) RecordError(error) {
 	s.tracer.spans[s.index].attrs["error"] = true
 }
+
+func (s recordingSpan) SetStatus(pluginapi.SpanStatus, string) {}
 
 // End finishes the recording span.
 func (s recordingSpan) End() {}

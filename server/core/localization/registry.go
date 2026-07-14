@@ -15,16 +15,18 @@
 
 package localization
 
-import "maps"
-
-import "sync"
+import (
+	"maps"
+	"sync"
+)
 
 // CatalogRegistry owns deployment overlays and publishes effective catalogs.
 type CatalogRegistry struct {
-	system   Catalog
-	store    *CatalogStore
-	overlays []CatalogOverlay
-	mu       sync.Mutex
+	system           Catalog
+	store            *CatalogStore
+	startupOverlays  []CatalogOverlay
+	operatorOverlays []CatalogOverlay
+	mu               sync.Mutex
 }
 
 // NewCatalogRegistry creates a registry with an atomically published initial catalog.
@@ -37,9 +39,9 @@ func NewCatalogRegistry(system Catalog, overlays ...CatalogOverlay) (*CatalogReg
 	}
 
 	return &CatalogRegistry{
-		system:   system,
-		store:    NewCatalogStore(effective),
-		overlays: detached,
+		system:          system,
+		store:           NewCatalogStore(effective),
+		startupOverlays: detached,
 	}, nil
 }
 
@@ -75,7 +77,7 @@ func (r *CatalogRegistry) RegisterOverlays(overlays ...CatalogOverlay) ([]Catalo
 		return nil, err
 	}
 
-	r.overlays = next
+	r.startupOverlays = next
 
 	return overrides, nil
 }
@@ -94,7 +96,7 @@ func (r *CatalogRegistry) ValidateAdditionalOverlays(overlays ...CatalogOverlay)
 	return overrides, err
 }
 
-// Reload replaces all deployment overlays only after the complete catalog builds successfully.
+// Reload replaces all startup overlays only after the complete catalog builds successfully.
 func (r *CatalogRegistry) Reload(overlays ...CatalogOverlay) ([]CatalogOverride, error) {
 	if r == nil {
 		return nil, ErrNilCatalog
@@ -105,7 +107,7 @@ func (r *CatalogRegistry) Reload(overlays ...CatalogOverlay) ([]CatalogOverride,
 
 	next := cloneCatalogOverlays(overlays)
 
-	effective, overrides, err := NewEffectiveCatalog(r.system, next...)
+	effective, overrides, err := r.buildEffectiveLocked(next, r.operatorOverlays)
 	if err != nil {
 		return nil, err
 	}
@@ -114,20 +116,56 @@ func (r *CatalogRegistry) Reload(overlays ...CatalogOverlay) ([]CatalogOverride,
 		return nil, err
 	}
 
-	r.overlays = next
+	r.startupOverlays = next
 
 	return overrides, nil
 }
 
-func (r *CatalogRegistry) candidateWithLocked(overlays []CatalogOverlay) ([]CatalogOverlay, *EffectiveCatalog, []CatalogOverride, error) {
-	next := append(cloneCatalogOverlays(r.overlays), cloneCatalogOverlays(overlays)...)
+// ReloadOperatorOverlays atomically replaces only operator-configured overlays.
+func (r *CatalogRegistry) ReloadOperatorOverlays(overlays ...CatalogOverlay) ([]CatalogOverride, error) {
+	if r == nil {
+		return nil, ErrNilCatalog
+	}
 
-	effective, overrides, err := NewEffectiveCatalog(r.system, next...)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	next := cloneCatalogOverlays(overlays)
+
+	effective, overrides, err := r.buildEffectiveLocked(r.startupOverlays, next)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := r.store.Activate(effective); err != nil {
+		return nil, err
+	}
+
+	r.operatorOverlays = next
+
+	return overrides, nil
+}
+
+// candidateWithLocked builds a detached startup-layer candidate while the registry lock is held.
+func (r *CatalogRegistry) candidateWithLocked(overlays []CatalogOverlay) ([]CatalogOverlay, *EffectiveCatalog, []CatalogOverride, error) {
+	next := append(cloneCatalogOverlays(r.startupOverlays), cloneCatalogOverlays(overlays)...)
+
+	effective, overrides, err := r.buildEffectiveLocked(next, r.operatorOverlays)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	return next, effective, overrides, nil
+}
+
+// buildEffectiveLocked builds the fixed system, startup, then operator precedence chain.
+func (r *CatalogRegistry) buildEffectiveLocked(
+	startupOverlays []CatalogOverlay,
+	operatorOverlays []CatalogOverlay,
+) (*EffectiveCatalog, []CatalogOverride, error) {
+	overlays := append(cloneCatalogOverlays(startupOverlays), cloneCatalogOverlays(operatorOverlays)...)
+
+	return NewEffectiveCatalog(r.system, overlays...)
 }
 
 func cloneCatalogOverlays(overlays []CatalogOverlay) []CatalogOverlay {

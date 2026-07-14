@@ -98,6 +98,52 @@ func TestValidateNames(t *testing.T) {
 	}
 }
 
+func TestNormalizeHookRequiredScopes(t *testing.T) {
+	tests := []struct {
+		name    string
+		scopes  []string
+		want    []string
+		wantErr bool
+	}{
+		{
+			name:   "normalizes and deduplicates",
+			scopes: []string{" nauthilus:admin ", "nauthilus:custom:postfix", "nauthilus:admin"},
+			want:   []string{"nauthilus:admin", "nauthilus:custom:postfix"},
+		},
+		{name: "empty list", scopes: nil, want: nil},
+		{name: "empty entry", scopes: []string{" "}, wantErr: true},
+		{name: "invalid syntax", scopes: []string{"bad scope"}, wantErr: true},
+		{name: "excessive list", scopes: make([]string, MaxHookRequiredScopes+1), wantErr: true},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if testCase.name == "excessive list" {
+				for index := range testCase.scopes {
+					testCase.scopes[index] = "scope"
+				}
+			}
+
+			got, err := NormalizeHookRequiredScopes(testCase.scopes)
+			if testCase.wantErr {
+				if !errors.Is(err, ErrInvalidScope) {
+					t.Fatalf("NormalizeHookRequiredScopes() error = %v, want ErrInvalidScope", err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("NormalizeHookRequiredScopes() error = %v", err)
+			}
+
+			if !reflect.DeepEqual(got, testCase.want) {
+				t.Fatalf("NormalizeHookRequiredScopes() = %#v, want %#v", got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestValidateDebugModuleName(t *testing.T) {
 	valid := []string{
 		"batch",

@@ -151,13 +151,65 @@ plugins:
         - mail
 ```
 
+## Hook Authorization
+
+Plugins declare a hook's coarse `Scope` and `Auth`, while operators may assign exact OAuth bearer scopes by hook name:
+
+```yaml
+plugins:
+  modules:
+    - name: customer_status
+      path: /usr/lib/nauthilus/plugins/customer_status.so
+      hooks:
+        - name: health
+          required_scopes:
+            - nauthilus:admin
+            - nauthilus:custom:health
+```
+
+`required_scopes` uses any-of semantics: a bearer token containing either listed scope is accepted. Values are trimmed,
+validated as RFC 6749 scope tokens, de-duplicated in declaration order, and limited to 32 entries per hook. Empty entries,
+invalid tokens, duplicate hook names, unmatched hook names, public hooks, and hook auth modes other than `token` are
+rejected. An omitted or empty list preserves the hook descriptor's existing `Scope` and `Auth` behavior.
+
+Exact hook scopes are host-owned configuration. A plugin must not hard-code `RequiredScopes` in its descriptor. Nauthilus
+authorizes the request before reading the body, constructing `HookRequest`, or calling `Hook.Serve`. Effective scopes are
+visible in the non-secret configuration dump and plugin discovery output; bearer tokens and plugin-owned `config` values
+remain omitted. A standalone example is available in
+`server/docs/examples/go_plugin_hook_scopes.yml`.
+
+### Signed Observability Compatibility
+
+`plugins.modules[].compatibility` is a narrow restart-only allowlist for plugins that must preserve exact legacy metric
+contracts or tracing instrumentation scopes. The module must configure a detached signature and trusted signer. At
+runtime the grant becomes effective only when that signer actually verified the artifact. Discovery reports
+`verified_signer`, `signature_verified`, and defensive copies of effective compatibility definitions; it exposes no keys,
+tokens, or plugin-owned `config` values.
+
+Compatibility configuration is rejected when `plugins.verification_policy` is `off`, because that mode cannot establish
+the verified signer provenance required for the grant.
+
+Each metric entry declares `type`, exact `name`, exact `help`, ordered `labels`, and histogram `buckets`. Exact names are
+globally unique across configured modules. Registration rejects type/help/label/bucket conflicts. An accepted observation
+updates both the exact collector and the normal namespaced native collector once.
+
+`trace_scopes` contains exact instrumentation scopes for plugin-owned domain spans. Plugins select one through
+`Host.CompatibilityTracer`; span kind and status are value-only API enums. These scopes must not duplicate host-owned
+client instrumentation. `Host.HTTP` retains one `plugin.http` client span, and the same ownership rule applies to LDAP,
+Redis, and mail facades.
+
+Changing compatibility metrics or trace scopes requires a process restart. The config dump retains these non-secret
+operator values, while discovery publishes them only for a registered module after signer verification. See
+`server/docs/examples/go_plugin_compatibility_observability.yml`.
+
 ## Discovery
 
 The loader state exposes machine-readable discovery through `pluginloader.State.Discovery()`. The discovery document is
 derived from safe module metadata and registered component descriptors. It includes module status, plugin metadata such as
 `Metadata.Description` and `Metadata.DocsURL`, required capabilities, and component descriptors while omitting
-plugin-owned `config` values. Registered plugin debug selectors are exposed as `debug_modules` entries with the qualified
-selector, module name, optional local name, description, and origin.
+plugin-owned `config` values. Hook descriptors include normalized operator-configured `required_scopes` without request
+tokens. Registered plugin debug selectors are exposed as `debug_modules` entries with the qualified selector, module
+name, optional local name, description, and origin.
 
 ## Runtime Debug Modules
 
@@ -213,6 +265,47 @@ Host-managed HTTP keeps explicitly configured direct HTTP endpoints available fo
 fail-closed: they are limited to ten hops, must use credential-free HTTPS, and must remain on the original HTTPS origin.
 Operators should configure the final endpoint directly when an upstream redirects across hosts, ports, or schemes.
 
+## Declarative Policy Initialization
+
+Policy response translations and per-account network exceptions are authoritative operator configuration. Native
+plugins do not receive mutation APIs for either surface.
+
+```yaml
+auth:
+  policy:
+    localization:
+      catalogs:
+        - namespace: rns-auth
+          language: de
+          entries:
+            auth.policy.rns.account_disabled: "Das Konto ist deaktiviert."
+        - namespace: rns-auth
+          language: en
+          entries:
+            auth.policy.rns.account_disabled: "The account is disabled."
+  controls:
+    brute_force:
+      allowlist:
+        monitoring-account:
+          - 192.0.2.0/24
+    relay_domains:
+      allowlist:
+        monitoring-account:
+          - 192.0.2.0/24
+```
+
+Catalog languages must be valid BCP 47 tags. Namespace/language pairs must be unique, keys and messages must be
+non-empty, and configured catalogs are visible in the non-default config dump. Operator catalogs have higher
+precedence than the system catalog and startup Lua overlays. Reload builds the complete candidate first and activates
+it atomically; an invalid reload leaves the previously active catalog unchanged and does not discard Lua overlays.
+
+Soft allowlist values must be CIDR networks. They are canonicalized and deduplicated during config load. New HTTP and
+gRPC authentication requests take the current config snapshot, so successful reloads apply additions and removals
+without allowing Lua or plugins to mutate the declarations. Existing Lua initialization scripts remain supported as a
+legacy startup layer and are not rewritten or removed by this configuration surface.
+
+See `server/docs/examples/policy_localization_and_allowlists.yml` for a focused example.
+
 Some Lua helper families intentionally remain plugin-owned in the native contract:
 
 - extra or named Redis pools;
@@ -260,8 +353,8 @@ These changes require a process restart:
 
 - adding or removing modules
 - replacing a `.so` artifact
-- changing module `name`, `type`, `path`, `checksum`, `signature`, `signer`, `optional`, `stop_timeout`, or
-  `allow_capabilities`
+- changing module `name`, `type`, `path`, `checksum`, `signature`, `signer`, `optional`, `stop_timeout`,
+  `allow_capabilities`, `hooks`, or `compatibility`
 - changing `plugins.verification_policy`
 - changing `plugins.allowed_dirs`
 - changing `plugins.trust.signers`

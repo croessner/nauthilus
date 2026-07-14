@@ -178,7 +178,59 @@ func restartOnlyModuleChange(current config.PluginModule, next config.PluginModu
 		return true
 	}
 
+	if !sameHookAuthorizations(current.Hooks, next.Hooks) {
+		return true
+	}
+
+	if !samePluginCompatibility(current.Compatibility, next.Compatibility) {
+		return true
+	}
+
 	return !sameCapabilities(current.AllowCapabilities, next.AllowCapabilities)
+}
+
+// samePluginCompatibility compares restart-only exact observability allowlists in declaration order.
+func samePluginCompatibility(left config.PluginCompatibility, right config.PluginCompatibility) bool {
+	if !slices.Equal(left.TraceScopes, right.TraceScopes) || len(left.Metrics) != len(right.Metrics) {
+		return false
+	}
+
+	for index := range left.Metrics {
+		leftMetric := left.Metrics[index]
+
+		rightMetric := right.Metrics[index]
+
+		if leftMetric.Type != rightMetric.Type ||
+			leftMetric.Name != rightMetric.Name ||
+			leftMetric.Help != rightMetric.Help ||
+			!slices.Equal(leftMetric.Labels, rightMetric.Labels) ||
+			!slices.Equal(leftMetric.Buckets, rightMetric.Buckets) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// sameHookAuthorizations compares host-owned hook scopes independently of declaration order.
+func sameHookAuthorizations(left []config.PluginHookAuthorization, right []config.PluginHookAuthorization) bool {
+	if len(left) != len(right) {
+		return false
+	}
+
+	rightByName := make(map[string][]string, len(right))
+	for _, authorization := range right {
+		rightByName[authorization.Name] = authorization.RequiredScopes
+	}
+
+	for _, authorization := range left {
+		rightScopes, exists := rightByName[authorization.Name]
+		if !exists || !slices.Equal(authorization.RequiredScopes, rightScopes) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // sameSigners reports whether trust signer configuration is unchanged.

@@ -603,7 +603,10 @@ func startGRPCAuthorityForHTTP(
 	options httpServerStartOptions,
 ) error {
 	grpcAuthorityDone, err := options.effectiveGRPCAuthorityStarter()(ctx, handlerauthority.ServerDeps{
-		Cfg:             cfg,
+		Cfg: cfg,
+		CurrentConfig: func() config.File {
+			return store.cfgProvider.Current().File
+		},
 		Env:             env,
 		Logger:          logger,
 		Redis:           store.redisClient,

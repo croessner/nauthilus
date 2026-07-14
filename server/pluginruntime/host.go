@@ -17,19 +17,27 @@ package pluginruntime
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/lualib/smtp"
+	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var _ pluginapi.Host = (*Host)(nil)
+
+// ErrCompatibilityObservabilityDenied marks requests outside verified operator allowlists.
+var ErrCompatibilityObservabilityDenied = errors.New("compatibility observability denied")
 
 // HostOption customizes the minimal plugin host facade.
 type HostOption func(*Host)
@@ -53,6 +61,10 @@ type Host struct {
 	redisPrefix       string
 	tracerFactory     func(string) pluginapi.Tracer
 	metricsFactory    func(string) pluginapi.Metrics
+	compatibility     map[string]moduleCompatibility
+	compatMetrics     map[string]pluginapi.Metrics
+	compatRegisterer  prometheus.Registerer
+	compatMu          sync.Mutex
 	workers           sync.WaitGroup
 }
 
@@ -71,6 +83,9 @@ func NewHost(options ...HostOption) *Host {
 		helpers:           NewDeterministicHelperFacade(HelperOptions{}),
 		tracerFactory:     func(scope string) pluginapi.Tracer { return NewTracerFacade(scope) },
 		metricsFactory:    func(scope string) pluginapi.Metrics { return NewMetricsFacade(scope) },
+		compatibility:     make(map[string]moduleCompatibility),
+		compatMetrics:     make(map[string]pluginapi.Metrics),
+		compatRegisterer:  prometheus.DefaultRegisterer,
 	}
 	for _, option := range options {
 		option(host)
@@ -79,6 +94,11 @@ func NewHost(options ...HostOption) *Host {
 	host.workerContext, host.workerCancel = context.WithCancel(host.ServiceContext())
 
 	return host
+}
+
+type moduleCompatibility struct {
+	metrics     []pluginapi.MetricDefinition
+	traceScopes []string
 }
 
 // WithHTTPClient configures the HTTP transport used by host-managed plugin HTTP calls.
@@ -223,6 +243,13 @@ func WithMetricsFactory(factory func(string) pluginapi.Metrics) HostOption {
 	}
 }
 
+// WithCompatibilityRegisterer configures the host-owned exact collector registerer.
+func WithCompatibilityRegisterer(registerer prometheus.Registerer) HostOption {
+	return func(host *Host) {
+		host.compatRegisterer = registerer
+	}
+}
+
 // ServiceContext returns the host service context.
 func (h *Host) ServiceContext() context.Context {
 	if h == nil || h.serviceContext == nil {
@@ -256,6 +283,11 @@ func (h *Host) Tracer(scope string) pluginapi.Tracer {
 	return h.tracerFactory(scope)
 }
 
+// CompatibilityTracer denies exact scope selection outside a verified module-bound host.
+func (h *Host) CompatibilityTracer(string) (pluginapi.Tracer, error) {
+	return nil, ErrCompatibilityObservabilityDenied
+}
+
 // Metrics returns a scoped host metrics facade.
 func (h *Host) Metrics(scope string) pluginapi.Metrics {
 	if h == nil || h.metricsFactory == nil {
@@ -271,12 +303,22 @@ func (h *Host) HTTP(scope string) pluginapi.HTTPClient {
 		return NewHTTPFacade(scope)
 	}
 
+	return h.httpFacade(scope, h.Logger(scope), h.Metrics(scope), h.Tracer(scope))
+}
+
+// httpFacade constructs one host-managed HTTP facade from already bound observability services.
+func (h *Host) httpFacade(
+	scope string,
+	logger pluginapi.Logger,
+	metrics pluginapi.Metrics,
+	tracer pluginapi.Tracer,
+) pluginapi.HTTPClient {
 	return NewHTTPFacade(
 		scope,
 		HTTPFacadeClient(h.httpClient),
-		HTTPFacadeLogger(h.Logger(scope)),
-		HTTPFacadeMetrics(h.Metrics(scope)),
-		HTTPFacadeTracer(h.Tracer(scope)),
+		HTTPFacadeLogger(logger),
+		HTTPFacadeMetrics(metrics),
+		HTTPFacadeTracer(tracer),
 	)
 }
 
@@ -286,10 +328,15 @@ func (h *Host) Mail(scope string) pluginapi.Mailer {
 		return NewMailFacade(scope)
 	}
 
+	return h.mailFacade(scope, h.Logger(scope))
+}
+
+// mailFacade constructs one host-managed mail facade from an already bound logger.
+func (h *Host) mailFacade(scope string, logger pluginapi.Logger) pluginapi.Mailer {
 	return NewMailFacade(
 		scope,
 		MailFacadeSender(h.mailSender),
-		MailFacadeLogger(h.Logger(scope)),
+		MailFacadeLogger(logger),
 	)
 }
 
@@ -481,6 +528,34 @@ func (h *Host) moduleHost(moduleName string) pluginapi.Host {
 	return moduleBoundHost{base: h, moduleName: moduleName}
 }
 
+// setModuleCompatibility binds restart-only allowlists only to artifacts with verified signer provenance.
+func (h *Host) setModuleCompatibility(instances []pluginloader.ModuleInstance) {
+	if h == nil {
+		return
+	}
+
+	configured := make(map[string]moduleCompatibility)
+
+	for _, instance := range instances {
+		if !instance.IsRegistered() || instance.VerifiedSigner == "" {
+			continue
+		}
+
+		compatibility := instance.Module.Compatibility
+
+		policy := moduleCompatibility{traceScopes: slices.Clone(compatibility.TraceScopes)}
+
+		for _, metric := range compatibility.Metrics {
+			policy.metrics = append(policy.metrics, metric.Definition())
+		}
+
+		configured[instance.ModuleName] = policy
+	}
+
+	h.compatibility = configured
+	h.compatMetrics = make(map[string]pluginapi.Metrics)
+}
+
 // ensureDebugGate returns the mutable debug gate, creating it when needed.
 func (h *Host) ensureDebugGate() *pluginDebugGate {
 	if h.debugGate == nil {
@@ -519,29 +594,47 @@ func (h moduleBoundHost) Tracer(scope string) pluginapi.Tracer {
 	return h.base.Tracer(scope)
 }
 
+// CompatibilityTracer returns an exact allowlisted scope for one verified module.
+func (h moduleBoundHost) CompatibilityTracer(scope string) (pluginapi.Tracer, error) {
+	policy, ok := h.base.compatibility[h.moduleName]
+	if !ok || !slices.Contains(policy.traceScopes, scope) {
+		return nil, ErrCompatibilityObservabilityDenied
+	}
+
+	return NewCompatibilityTracerFacade(scope), nil
+}
+
 // Metrics returns scoped metrics from the shared host.
 func (h moduleBoundHost) Metrics(scope string) pluginapi.Metrics {
-	return h.base.Metrics(scope)
+	native := h.base.Metrics(scope)
+
+	policy, ok := h.base.compatibility[h.moduleName]
+	if !ok || len(policy.metrics) == 0 {
+		return native
+	}
+
+	key := h.moduleName + "\x00" + scope
+	h.base.compatMu.Lock()
+	defer h.base.compatMu.Unlock()
+
+	if cached, exists := h.base.compatMetrics[key]; exists {
+		return cached
+	}
+
+	metrics := NewCompatibilityMetricsFacade(native, h.base.compatRegisterer, policy.metrics)
+	h.base.compatMetrics[key] = metrics
+
+	return metrics
 }
 
 // HTTP returns a module-bound host-managed HTTP facade.
 func (h moduleBoundHost) HTTP(scope string) pluginapi.HTTPClient {
-	return NewHTTPFacade(
-		scope,
-		HTTPFacadeClient(h.base.httpClient),
-		HTTPFacadeLogger(h.Logger(scope)),
-		HTTPFacadeMetrics(h.Metrics(scope)),
-		HTTPFacadeTracer(h.Tracer(scope)),
-	)
+	return h.base.httpFacade(scope, h.Logger(scope), h.Metrics(scope), h.Tracer(scope))
 }
 
 // Mail returns a module-bound host-managed mail facade.
 func (h moduleBoundHost) Mail(scope string) pluginapi.Mailer {
-	return NewMailFacade(
-		scope,
-		MailFacadeSender(h.base.mailSender),
-		MailFacadeLogger(h.Logger(scope)),
-	)
+	return h.base.mailFacade(scope, h.Logger(scope))
 }
 
 // ConnectionTargets returns the shared connection-target facade.
@@ -645,6 +738,11 @@ func (noopTracer) Start(ctx context.Context, _ string, _ ...pluginapi.TraceAttri
 	return ctx, noopSpan{}
 }
 
+// StartWithOptions returns the input context and a no-op span.
+func (noopTracer) StartWithOptions(ctx context.Context, _ string, _ pluginapi.SpanStartOptions) (context.Context, pluginapi.Span) {
+	return ctx, noopSpan{}
+}
+
 type noopSpan struct{}
 
 // AddEvent records no event for the no-op span.
@@ -655,6 +753,9 @@ func (noopSpan) SetAttributes(...pluginapi.TraceAttribute) {}
 
 // RecordError records no error for the no-op span.
 func (noopSpan) RecordError(error) {}
+
+// SetStatus records no status for the no-op span.
+func (noopSpan) SetStatus(pluginapi.SpanStatus, string) {}
 
 // End finishes the no-op span.
 func (noopSpan) End() {}

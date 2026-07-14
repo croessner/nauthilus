@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
 	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
@@ -48,7 +49,15 @@ func TestRuntimePluginHostProvidesProductionFacades(t *testing.T) {
 		},
 	})
 
-	host := newRuntimePluginHost(context.Background(), logger, &config.FileSettings{}, redisClient, queue)
+	cfg := &config.FileSettings{}
+	host := newRuntimePluginHost(
+		context.Background(),
+		logger,
+		cfg,
+		configfx.NewProviderWithSnapshot(cfg),
+		redisClient,
+		queue,
+	)
 
 	if host.Redis() == nil {
 		t.Fatal("Redis facade is nil")

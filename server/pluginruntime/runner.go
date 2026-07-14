@@ -137,7 +137,7 @@ func NewRunnerFromInstances(
 	}
 
 	for _, instance := range instances {
-		if instance.Status != "" && instance.Status != pluginloader.ModuleStatusRegistered {
+		if !instance.IsRegistered() {
 			continue
 		}
 
@@ -152,6 +152,10 @@ func NewRunnerFromInstances(
 
 	if host, ok := runner.host.(debugRegistryHost); ok {
 		host.SetDebugRegistry(runner.registry)
+	}
+
+	if host, ok := runner.host.(*Host); ok {
+		host.setModuleCompatibility(instances)
 	}
 
 	if runner.pluginConfig == nil {
@@ -756,7 +760,41 @@ func clonePluginSection(plugins *config.PluginsSection) *config.PluginsSection {
 func clonePluginModule(module config.PluginModule) config.PluginModule {
 	cloned := module
 	cloned.AllowCapabilities = append([]pluginapi.Capability(nil), module.AllowCapabilities...)
+	cloned.Hooks = clonePluginHookAuthorizations(module.Hooks)
+	cloned.Compatibility = clonePluginCompatibility(module.Compatibility)
 	cloned.Config = cloneConfigMap(module.Config)
+
+	return cloned
+}
+
+// clonePluginCompatibility detaches all operator-owned observability allowlists.
+func clonePluginCompatibility(compatibility config.PluginCompatibility) config.PluginCompatibility {
+	cloned := config.PluginCompatibility{TraceScopes: slices.Clone(compatibility.TraceScopes)}
+	if len(compatibility.Metrics) == 0 {
+		return cloned
+	}
+
+	cloned.Metrics = make([]config.PluginCompatibilityMetric, len(compatibility.Metrics))
+	for index, metric := range compatibility.Metrics {
+		cloned.Metrics[index] = metric
+		cloned.Metrics[index].Labels = slices.Clone(metric.Labels)
+		cloned.Metrics[index].Buckets = slices.Clone(metric.Buckets)
+	}
+
+	return cloned
+}
+
+// clonePluginHookAuthorizations detaches host-owned hook scopes from source configuration.
+func clonePluginHookAuthorizations(authorizations []config.PluginHookAuthorization) []config.PluginHookAuthorization {
+	if len(authorizations) == 0 {
+		return nil
+	}
+
+	cloned := make([]config.PluginHookAuthorization, len(authorizations))
+	for index, authorization := range authorizations {
+		cloned[index] = authorization
+		cloned[index].RequiredScopes = slices.Clone(authorization.RequiredScopes)
+	}
 
 	return cloned
 }

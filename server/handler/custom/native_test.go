@@ -233,6 +233,68 @@ func TestNativeHookTokenAuthAllowsMatchingScope(t *testing.T) {
 	}
 }
 
+func TestNativeHookRequiredScopesUseAnyOfBeforeRequestConstruction(t *testing.T) {
+	requiredScopes := []string{"nauthilus:admin", "nauthilus:custom:postfix"}
+	tests := []struct {
+		name         string
+		claimScopes  string
+		token        string
+		wantStatus   int
+		wantBuilders int
+		wantCalls    int
+	}{
+		{name: "first scope", claimScopes: "nauthilus:admin", token: "Bearer token", wantStatus: http.StatusOK, wantBuilders: 1, wantCalls: 1},
+		{name: "second scope", claimScopes: "nauthilus:custom:postfix", token: "Bearer token", wantStatus: http.StatusOK, wantBuilders: 1, wantCalls: 1},
+		{name: "both scopes", claimScopes: "nauthilus:admin nauthilus:custom:postfix", token: "Bearer token", wantStatus: http.StatusOK, wantBuilders: 1, wantCalls: 1},
+		{name: "missing token", claimScopes: "nauthilus:admin", wantStatus: http.StatusUnauthorized},
+		{name: "unrelated scope", claimScopes: "nauthilus:security", token: "Bearer token", wantStatus: http.StatusForbidden},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			runner := &nativeHookTestRunner{response: pluginapi.HookResponse{StatusCode: http.StatusOK}}
+			binding := nativeHookTestBinding(runner, pluginapi.HookDescriptor{
+				RequiredScopes: requiredScopes,
+				Name:           nativeHookTestName,
+				Method:         http.MethodGet,
+				Path:           nativeHookTestPath,
+				Scope:          pluginapi.HookScopeInternal,
+				Auth:           pluginapi.HookAuthToken,
+				MaxBodyBytes:   32,
+			})
+			builderCalls := 0
+			binding.BuildRequest = func(
+				ctx *gin.Context,
+				cfg config.File,
+				descriptor pluginapi.HookDescriptor,
+				caller NativeHookCaller,
+				body []byte,
+			) (pluginapi.HookRequest, error) {
+				builderCalls++
+
+				return nativeHookTestRequestBuilder(ctx, cfg, descriptor, caller, body)
+			}
+			router := newNativeHookTestRouter(t, nativeHookTestConfig{
+				validator: &nativeHookTokenValidator{claims: nativeHookAccessClaims(testCase.claimScopes)},
+				hook:      binding,
+			})
+
+			rec := performNativeHookRequest(router, http.MethodGet, nativeHookTestAPIPath, "", testCase.token)
+			if rec.Code != testCase.wantStatus {
+				t.Fatalf("status = %d body=%s, want %d", rec.Code, rec.Body.String(), testCase.wantStatus)
+			}
+
+			if builderCalls != testCase.wantBuilders {
+				t.Fatalf("request builder calls = %d, want %d", builderCalls, testCase.wantBuilders)
+			}
+
+			if runner.calls != testCase.wantCalls {
+				t.Fatalf("runner calls = %d, want %d", runner.calls, testCase.wantCalls)
+			}
+		})
+	}
+}
+
 func TestNativeHookTokenAuthRejectsMissingTokenBeforePlugin(t *testing.T) {
 	assertNativeHookTokenRejectedBeforePlugin(t, nativeHookAccessClaims(definitions.ScopeAuthenticate), "", http.StatusUnauthorized)
 }

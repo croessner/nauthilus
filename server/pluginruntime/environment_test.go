@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	environmentCheckConfigRef  = pluginEnvironmentConfigRefPrefix + testRuntimeModuleName + ".environment"
+	environmentCheckConfigRef  = "plugins.modules." + testRuntimeModuleName + ".environment"
 	environmentCheckName       = "plugin_environment_geoip"
 	environmentLogKey          = "geoip_marker"
 	environmentLogValue        = "native"

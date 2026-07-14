@@ -117,12 +117,5 @@ func (h *Handler) process(ctx *gin.Context) {
 }
 
 func (h *Handler) newAuthState(ctx *gin.Context) core.State {
-	return core.NewAuthStateWithSetupWithDeps(ctx, core.AuthDeps{
-		Cfg:          h.deps.Cfg,
-		Env:          h.deps.Env,
-		Logger:       h.deps.Logger,
-		Redis:        h.deps.Redis,
-		AccountCache: h.deps.AccountCache,
-		Channel:      h.deps.Channel,
-	})
+	return core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
 }

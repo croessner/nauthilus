@@ -59,6 +59,7 @@ classDiagram
         +ServiceContext() context.Context
         +Logger(scope string) Logger
         +Tracer(scope string) Tracer
+        +CompatibilityTracer(scope string) (Tracer, error)
         +Metrics(scope string) Metrics
         +HTTP(scope string) HTTPClient
         +ConnectionTargets(scope string) ConnectionTargets
@@ -337,7 +338,7 @@ Implement `pluginapi.ReloadablePlugin` only when plugin-owned config can be chan
 `Reconfigure` returns an error, Nauthilus keeps the previous working module config.
 
 Changes outside `plugins.modules[].config` are restart-only. Module identity, artifact path, checksum, signature, signer,
-optional flag, capability allowlist, and verification settings require a process restart.
+optional flag, capability allowlist, hook authorization, and verification settings require a process restart.
 
 ## Host Facades
 
@@ -347,6 +348,7 @@ The `Host` interface hides Nauthilus internals behind narrow facades:
 | --- | --- |
 | `Logger(scope)` | Structured plugin logs through the host logger; `Debug` is gated by registered plugin debug selectors. |
 | `Tracer(scope)` | Child spans from plugin call contexts. |
+| `CompatibilityTracer(scope)` | Exact operator-allowlisted instrumentation scope for a verified signed module. |
 | `Metrics(scope)` | Plugin-owned metric handles with declared labels and duplicate-safe registration. |
 | `HTTP(scope)` | Host-managed outbound HTTP with trace propagation, bounded metrics, timeouts, response body limits, and redacted operational logs. |
 | `Mail(scope)` | Host-managed SMTP/LMTP sends through value-only mail requests and redacted operational logs. |
@@ -356,7 +358,7 @@ The `Host` interface hides Nauthilus internals behind narrow facades:
 | `Redis()` | Host-owned Redis command handles, key helpers, and named script registry. |
 | `Cache(scope)` | Process-local cache isolated by plugin module scope. |
 | `Helpers()` | Deterministic non-secret helpers shared with Lua-compatible behavior. |
-| `LDAP()` | Host-owned queued LDAP operations. |
+| `LDAP()` | Host-owned queued LDAP operations and trace-safe configured endpoint metadata. |
 | `Config()` | Host-wide config view. |
 
 Prefer request results for request-scoped facts and runtime changes. For example, return `PolicyFact` values from
@@ -378,6 +380,27 @@ bodies, bearer tokens, or raw transport errors.
 Direct caller-configured HTTP URLs remain supported for explicitly selected internal services such as ClickHouse.
 Redirects are stricter: the host permits at most ten hops, requires credential-free HTTPS, and keeps every redirect on
 the original HTTPS origin. Configure the final URL when a service redirects to a different host, port, or scheme.
+
+### Trusted Observability Compatibility
+
+Exact legacy observability is an operator-owned, restart-only exception for signed native modules. The module must name a
+detached signature and trusted signer, and the loader must record that this signer actually verified the artifact.
+Configuration alone does not grant compatibility access, and `verification_policy: off` is rejected for modules that
+request the exception.
+
+Set `MetricDefinition.Compatibility`, `Type`, exact `Name`, `Help`, ordered `Labels`, and `Buckets` only when the complete
+definition appears in `plugins.modules[].compatibility.metrics`. The host registers the exact legacy collector and keeps
+the normal `nauthilus_plugin_<scope>_<name>` collector as supplemental data. Each observation is published once to each
+collector. Type, help, label order, or bucket drift is rejected; the API never exposes a Prometheus registerer.
+
+Use `Host.CompatibilityTracer(scope)` only for an allowlisted plugin-owned domain span. `StartWithOptions` accepts the
+value-only `SpanKind`; `Span.SetStatus` accepts the value-only `SpanStatus`. `RecordError` records the error but does not
+imply status, so set error status explicitly when the operation failed.
+
+Do not wrap `Host.HTTP`, `Host.LDAP`, `Host.Redis`, or `Host.Mail` calls in a compatibility client span. Those network
+operations remain host-owned. In particular, `Host.HTTP` emits its single `plugin.http` client span; a second client span
+would double-instrument the request. A compatibility span may describe the surrounding plugin domain operation, but it
+must not claim the host-owned network call.
 
 Use `Host.Mail(scope).Send(ctx, message)` for SMTP or LMTP sends that should use the host-owned mail transport and
 redacted operational logs. Mail requests are value-only `pluginapi.MailMessage` values. A module that enables mail must
@@ -479,6 +502,29 @@ call, plugin code must deliberately return allowed attributes, facts, logs, stat
 `LDAPSearchResult.Entries` contains copied public `pluginapi.LDAPEntry` values converted from internal LDAP entries.
 Their attribute maps and value slices do not expose raw internal entries, queues, connections, or shared mutable
 storage.
+
+Plugins that need configured endpoint attributes for domain spans can request trace-safe metadata without reading raw
+LDAP configuration:
+
+```go
+endpoints, err := host.LDAP().Endpoints(ctx, "default")
+if err != nil {
+    return pluginapi.SubjectResult{}, err
+}
+
+if len(endpoints) > 0 {
+    span.SetAttributes(
+        pluginapi.TraceAttribute{Key: "server.address", Value: endpoints[0].Host},
+        pluginapi.TraceAttribute{Key: "server.port", Value: endpoints[0].Port},
+    )
+}
+```
+
+Each `LDAPEndpoint` contains only `PoolName`, `Scheme`, `Host`, and `Port`. The host resolves it from the current config
+snapshot and returns a detached slice. It never exposes the raw URI, URI userinfo, bind identity, password, search base,
+query, fragment, or TLS file settings. The list describes configured failover endpoints in order; it does not prove
+which endpoint served a particular queued LDAP operation. Do not use this metadata to bypass `Search` or `Modify` with
+a plugin-owned connection.
 
 ## Representative Contract Examples
 
@@ -1152,7 +1198,8 @@ func (a auditPostAction) Enqueue(ctx context.Context, request pluginapi.PostActi
 ### HTTP Hooks
 
 Hooks expose HTTP-facing plugin endpoints through the custom hook surface. A hook descriptor declares method, path, scope,
-auth mode, alias, timeout, and maximum body size.
+auth mode, alias, timeout, and maximum body size. Plugins leave `RequiredScopes` empty because exact bearer scopes are
+owned by the operator configuration.
 
 ```go
 type healthHook struct{}
@@ -1182,6 +1229,13 @@ func (healthHook) Serve(ctx context.Context, request pluginapi.HookRequest) (plu
 
 Hook paths are mounted below the native custom hook route surface. Keep paths stable, narrow, and explicit. Avoid
 overlapping canonical paths or aliases with other plugins until duplicate detection is enforced at startup.
+
+Operators may populate `plugins.modules[].hooks[]` with a registered hook name and an exact `required_scopes` list. The
+host normalizes and copies those scopes into the effective descriptor during registration. A non-empty list requires an
+internal or admin hook with `HookAuthToken`; plugin-provided scopes, public hooks, unmatched names, and other auth modes
+fail registration. Authorization retains any-of semantics and runs before body reading, request construction, and
+`Hook.Serve`. An omitted or empty list falls back to the coarse descriptor behavior. Discovery and the non-secret config
+dump show effective scopes, but never bearer tokens.
 
 Lua `nauthilus_http_request` helpers map to immutable `HookRequest` values: `request.Method`, `request.Path`,
 `request.Query`, `request.Headers`, and `request.Body`. Header names are canonical Go HTTP names, repeated headers and
@@ -1268,6 +1322,11 @@ plugins:
       optional: false
       allow_capabilities:
         - credentials
+      hooks:
+        - name: health
+          required_scopes:
+            - nauthilus:admin
+            - nauthilus:custom:health
       config:
         dsn_file: /etc/nauthilus/customer-sql.dsn
         query_timeout: 150ms
@@ -1279,6 +1338,7 @@ Guidelines for module config:
 - Decode config into a small typed struct during `Register` and during `Reconfigure`.
 - Validate absolute paths, timeouts, and enum values before publishing state.
 - Treat missing optional config as explicit defaults in plugin code.
+- Treat `hooks` as operator-owned host configuration; do not decode or duplicate it in plugin-owned `config`.
 
 ## Build And Compatibility
 

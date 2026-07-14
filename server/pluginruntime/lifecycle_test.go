@@ -228,6 +228,48 @@ func TestRunner_ReconfigureRejectsRestartOnlyLoaderChanges(t *testing.T) {
 	}
 }
 
+func TestRunner_ReconfigureRejectsHookAuthorizationChanges(t *testing.T) {
+	plugin := &runtimePlugin{}
+	module := initialRuntimeModule(map[string]any{testRuntimeConfigKey: testRuntimeOldValue})
+	module.Hooks = []config.PluginHookAuthorization{
+		{Name: "postfix_map", RequiredScopes: []string{"nauthilus:admin"}},
+	}
+	runner := newTestRunnerWithModule(t, plugin, module, nil)
+	next := nextRuntimeConfig(map[string]any{testRuntimeConfigKey: testRuntimeNewValue}, func(module *config.PluginModule) {
+		module.Hooks = []config.PluginHookAuthorization{
+			{Name: "postfix_map", RequiredScopes: []string{"nauthilus:custom:postfix"}},
+		}
+	})
+
+	err := runner.Reconfigure(context.Background(), next)
+	if !errors.Is(err, ErrRestartRequired) {
+		t.Fatalf("Reconfigure() error = %v, want ErrRestartRequired", err)
+	}
+
+	if len(plugin.reconfigureValues) != 0 {
+		t.Fatalf("reconfigure was called despite hook authorization change: %#v", plugin.reconfigureValues)
+	}
+}
+
+func TestRunner_ReconfigureRejectsCompatibilityObservabilityChanges(t *testing.T) {
+	plugin := &runtimePlugin{}
+	module := initialRuntimeModule(map[string]any{testRuntimeConfigKey: testRuntimeOldValue})
+	module.Compatibility.TraceScopes = []string{"nauthilus/lua/blocklist"}
+	runner := newTestRunnerWithModule(t, plugin, module, nil)
+	next := nextRuntimeConfig(map[string]any{testRuntimeConfigKey: testRuntimeNewValue}, func(module *config.PluginModule) {
+		module.Compatibility.TraceScopes = []string{"nauthilus/lua/ldap"}
+	})
+
+	err := runner.Reconfigure(context.Background(), next)
+	if !errors.Is(err, ErrRestartRequired) {
+		t.Fatalf("Reconfigure() error = %v, want ErrRestartRequired", err)
+	}
+
+	if len(plugin.reconfigureValues) != 0 {
+		t.Fatalf("reconfigure was called despite compatibility change: %#v", plugin.reconfigureValues)
+	}
+}
+
 func newTestRunner(t *testing.T, plugin pluginapi.Plugin, register func(pluginapi.Registrar) error, options ...Option) *Runner {
 	t.Helper()
 

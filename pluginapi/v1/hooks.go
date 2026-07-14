@@ -24,6 +24,9 @@ import (
 type HookScope string
 
 const (
+	// MaxHookRequiredScopes bounds operator-configured authorization metadata per hook.
+	MaxHookRequiredScopes = 32
+
 	// HookScopePublic marks a hook as public.
 	HookScopePublic HookScope = "public"
 
@@ -53,14 +56,15 @@ const (
 
 // HookDescriptor describes an HTTP-facing plugin hook.
 type HookDescriptor struct {
-	Timeout      time.Duration
-	Name         string
-	Method       string
-	Path         string
-	Alias        string
-	Scope        HookScope
-	Auth         HookAuth
-	MaxBodyBytes int64
+	RequiredScopes []string
+	Timeout        time.Duration
+	Name           string
+	Method         string
+	Path           string
+	Alias          string
+	Scope          HookScope
+	Auth           HookAuth
+	MaxBodyBytes   int64
 }
 
 // HookRequest is the API-level request value passed to hook plugins.

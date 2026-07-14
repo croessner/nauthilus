@@ -85,5 +85,8 @@ func publicPackageGoFiles(root string) ([]string, error) {
 func isForbiddenPublicAPIImport(importPath string) bool {
 	return importPath == "github.com/croessner/nauthilus/v3/server" ||
 		strings.HasPrefix(importPath, "github.com/croessner/nauthilus/v3/server/") ||
-		importPath == "github.com/gin-gonic/gin"
+		importPath == "github.com/gin-gonic/gin" ||
+		strings.HasPrefix(importPath, "github.com/prometheus/") ||
+		strings.HasPrefix(importPath, "go.opentelemetry.io/otel") ||
+		importPath == "github.com/spf13/viper"
 }

@@ -1064,6 +1064,7 @@ func configDumpAuthPolicyDefaults() map[string]configDumpValueProvider {
 		"auth.backends.remote":                  func() any { return map[string]any{} },
 		"auth.policy.mode":                      func() any { return defaultPolicyModeEnforce },
 		"auth.policy.default_policy":            func() any { return defaultAuthPolicyName },
+		"auth.policy.localization.catalogs":     func() any { return []any{} },
 		"auth.policy.registry_scripts":          func() any { return []any{} },
 		"auth.policy.sets.networks":             func() any { return map[string]any{} },
 		"auth.policy.sets.strings":              func() any { return map[string]any{} },

@@ -1,0 +1,13 @@
+# Operator-owned exact authorization for a native plugin hook.
+plugins:
+  allowed_dirs:
+    - /usr/lib/nauthilus/plugins
+  modules:
+    - name: customer_status
+      type: go
+      path: /usr/lib/nauthilus/plugins/customer_status.so
+      hooks:
+        - name: health
+          required_scopes:
+            - nauthilus:admin
+            - nauthilus:custom:health

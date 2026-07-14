@@ -16,7 +16,10 @@
 package config
 
 import (
+	"fmt"
 	"net"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -84,9 +87,9 @@ func (s SoftWhitelist) HasSoftWhitelist() bool {
 // isValidNetwork checks if the provided network string is a valid CIDR notation.
 // It returns true if the network is valid, otherwise false.
 func (s SoftWhitelist) isValidNetwork(network string) bool {
-	_, _, err := net.ParseCIDR(network)
+	_, ok := canonicalSoftWhitelistNetwork(network)
 
-	return err == nil
+	return ok
 }
 
 // Set adds a specified network to a user's whitelist if the network is valid and the username is not empty.
@@ -103,12 +106,14 @@ func (s SoftWhitelist) Set(username, network string) {
 		return
 	}
 
-	if s.isValidNetwork(network) {
+	if canonical, ok := canonicalSoftWhitelistNetwork(network); ok {
 		if s[username] == nil {
 			s[username] = make([]string, 0)
 		}
 
-		s[username] = append(s[username], network)
+		if !slices.Contains(s[username], canonical) {
+			s[username] = append(s[username], canonical)
+		}
 	}
 }
 
@@ -123,13 +128,66 @@ func (s SoftWhitelist) Get(username string) []string {
 
 	defer mu.RUnlock()
 
-	for k, v := range s {
-		if k == username {
-			return v
+	return append([]string(nil), s[username]...)
+}
+
+// normalize canonicalizes networks and removes duplicate entries during config loading.
+func (s SoftWhitelist) normalize() {
+	for username, networks := range s {
+		normalized := make([]string, 0, len(networks))
+
+		seen := make(map[string]struct{}, len(networks))
+
+		for _, network := range networks {
+			canonical, ok := canonicalSoftWhitelistNetwork(network)
+			if !ok {
+				canonical = strings.TrimSpace(network)
+			}
+
+			if _, exists := seen[canonical]; exists {
+				continue
+			}
+
+			seen[canonical] = struct{}{}
+			normalized = append(normalized, canonical)
+		}
+
+		s[username] = normalized
+	}
+}
+
+// validate checks usernames and CIDR entries using deterministic paths.
+func (s SoftWhitelist) validate(path string) error {
+	usernames := make([]string, 0, len(s))
+	for username := range s {
+		usernames = append(usernames, username)
+	}
+
+	sort.Strings(usernames)
+
+	for _, username := range usernames {
+		if strings.TrimSpace(username) == "" {
+			return NewValidationProblem(path, "username must not be blank")
+		}
+
+		for index, network := range s[username] {
+			if !s.isValidNetwork(network) {
+				return NewValidationProblem(fmt.Sprintf("%s.%s[%d]", path, username, index), "must be a valid CIDR network")
+			}
 		}
 	}
 
 	return nil
+}
+
+// canonicalSoftWhitelistNetwork returns a normalized CIDR representation.
+func canonicalSoftWhitelistNetwork(network string) (string, bool) {
+	_, parsed, err := net.ParseCIDR(strings.TrimSpace(network))
+	if err != nil {
+		return "", false
+	}
+
+	return parsed.String(), true
 }
 
 // Delete removes the specified network from the user's whitelist in the SoftWhitelist. If the network is the only entry,
@@ -142,6 +200,10 @@ func (s SoftWhitelist) Delete(username, network string) {
 	mu.Lock()
 
 	defer mu.Unlock()
+
+	if canonical, ok := canonicalSoftWhitelistNetwork(network); ok {
+		network = canonical
+	}
 
 	networks, exists := s[username]
 	if !exists {

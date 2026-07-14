@@ -408,6 +408,10 @@ func (s *authApplicationService) newAuthState(
 
 func (s *authApplicationService) effectiveDeps() (AuthDeps, error) {
 	deps := s.deps
+	if deps.CurrentConfig != nil {
+		deps.Cfg = deps.CurrentConfig()
+	}
+
 	if deps.Cfg == nil {
 		return AuthDeps{}, fmt.Errorf("%w: cfg", ErrAuthApplicationDependencyMissing)
 	}

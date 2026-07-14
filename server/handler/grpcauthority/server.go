@@ -66,6 +66,7 @@ const (
 // ServerDeps contains the dependencies required by the gRPC authority server.
 type ServerDeps struct {
 	Cfg             config.File
+	CurrentConfig   func() config.File
 	Env             config.Environment
 	Logger          *slog.Logger
 	Redis           rediscli.Client
@@ -242,12 +243,13 @@ func (d ServerDeps) authApplicationService() core.AuthApplicationService {
 	}
 
 	return core.NewAuthApplicationService(core.AuthDeps{
-		Cfg:          d.Cfg,
-		Env:          d.Env,
-		Logger:       d.effectiveLogger(),
-		Redis:        d.Redis,
-		AccountCache: d.AccountCache,
-		Channel:      d.Channel,
+		Cfg:           d.Cfg,
+		CurrentConfig: d.CurrentConfig,
+		Env:           d.Env,
+		Logger:        d.effectiveLogger(),
+		Redis:         d.Redis,
+		AccountCache:  d.AccountCache,
+		Channel:       d.Channel,
 	})
 }
 
@@ -259,12 +261,13 @@ func (d ServerDeps) authorityIdentityService() AuthorityIdentityService {
 	return NewBackendManagerIdentityService(BackendManagerIdentityServiceDeps{
 		AuthService: d.authApplicationService(),
 		AuthDeps: core.AuthDeps{
-			Cfg:          d.Cfg,
-			Env:          d.Env,
-			Logger:       d.effectiveLogger(),
-			Redis:        d.Redis,
-			AccountCache: d.AccountCache,
-			Channel:      d.Channel,
+			Cfg:           d.Cfg,
+			CurrentConfig: d.CurrentConfig,
+			Env:           d.Env,
+			Logger:        d.effectiveLogger(),
+			Redis:         d.Redis,
+			AccountCache:  d.AccountCache,
+			Channel:       d.Channel,
 		},
 	})
 }

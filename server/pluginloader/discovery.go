@@ -34,16 +34,34 @@ type DiscoveryModule struct {
 	Metadata             DiscoveryMetadata      `json:"metadata"`
 	Components           []DiscoveryComponent   `json:"components,omitempty"`
 	DebugModules         []DiscoveryDebugModule `json:"debug_modules,omitempty"`
+	Compatibility        DiscoveryCompatibility `json:"compatibility,omitempty"`
 	RequiredCapabilities []pluginapi.Capability `json:"required_capabilities,omitempty"`
 	Name                 string                 `json:"name"`
 	Type                 string                 `json:"type,omitempty"`
 	Status               ModuleStatus           `json:"status"`
 	ArtifactPath         string                 `json:"artifact_path,omitempty"`
 	Signer               string                 `json:"signer,omitempty"`
+	VerifiedSigner       string                 `json:"verified_signer,omitempty"`
 	FailureStep          string                 `json:"failure_step,omitempty"`
 	Optional             bool                   `json:"optional"`
 	ChecksumConfigured   bool                   `json:"checksum_configured"`
 	SignatureConfigured  bool                   `json:"signature_configured"`
+	SignatureVerified    bool                   `json:"signature_verified"`
+}
+
+// DiscoveryCompatibility exposes restart-only exact observability allowlists without secrets.
+type DiscoveryCompatibility struct {
+	Metrics     []DiscoveryCompatibilityMetric `json:"metrics,omitempty"`
+	TraceScopes []string                       `json:"trace_scopes,omitempty"`
+}
+
+// DiscoveryCompatibilityMetric exposes one exact collector contract.
+type DiscoveryCompatibilityMetric struct {
+	Buckets []float64            `json:"buckets,omitempty"`
+	Labels  []string             `json:"labels,omitempty"`
+	Type    pluginapi.MetricType `json:"type"`
+	Name    string               `json:"name"`
+	Help    string               `json:"help"`
 }
 
 // DiscoveryMetadata exposes plugin product metadata and build diagnostics.
@@ -90,14 +108,15 @@ type DiscoverySourceDescriptor struct {
 
 // DiscoveryHookDescriptor describes HTTP hook routing metadata.
 type DiscoveryHookDescriptor struct {
-	Name         string              `json:"name"`
-	Method       string              `json:"method"`
-	Path         string              `json:"path"`
-	Alias        string              `json:"alias,omitempty"`
-	Scope        pluginapi.HookScope `json:"scope"`
-	Auth         pluginapi.HookAuth  `json:"auth"`
-	Timeout      time.Duration       `json:"timeout"`
-	MaxBodyBytes int64               `json:"max_body_bytes"`
+	RequiredScopes []string            `json:"required_scopes,omitempty"`
+	Name           string              `json:"name"`
+	Method         string              `json:"method"`
+	Path           string              `json:"path"`
+	Alias          string              `json:"alias,omitempty"`
+	Scope          pluginapi.HookScope `json:"scope"`
+	Auth           pluginapi.HookAuth  `json:"auth"`
+	Timeout        time.Duration       `json:"timeout"`
+	MaxBodyBytes   int64               `json:"max_body_bytes"`
 }
 
 // Discovery returns registered native plugin metadata and component descriptors.
@@ -120,22 +139,47 @@ func discoveryModule(instance ModuleInstance) DiscoveryModule {
 		Metadata:             discoveryMetadata(instance.Metadata),
 		Components:           discoveryComponents(instance.Descriptors),
 		DebugModules:         discoveryDebugModules(instance.DebugModules),
+		Compatibility:        discoveryCompatibility(instance),
 		RequiredCapabilities: slices.Clone(instance.Capabilities),
 		Name:                 instance.ModuleName,
 		Type:                 instance.Module.Type,
 		Status:               instance.Status,
 		ArtifactPath:         instance.ArtifactPath,
 		Signer:               instance.Module.Signer,
+		VerifiedSigner:       instance.VerifiedSigner,
 		FailureStep:          moduleFailureStep(instance.RegistrationError),
 		Optional:             instance.Optional,
 		ChecksumConfigured:   instance.Module.Checksum != "",
 		SignatureConfigured:  instance.Module.Signature != "",
+		SignatureVerified:    instance.VerifiedSigner != "",
 	}
 	if module.Name == "" {
 		module.Name = instance.Module.Name
 	}
 
 	return module
+}
+
+// discoveryCompatibility returns detached allowlists only for a registered, signature-verified module.
+func discoveryCompatibility(instance ModuleInstance) DiscoveryCompatibility {
+	if !instance.IsRegistered() || instance.VerifiedSigner == "" {
+		return DiscoveryCompatibility{}
+	}
+
+	compatibility := DiscoveryCompatibility{
+		TraceScopes: slices.Clone(instance.Module.Compatibility.TraceScopes),
+	}
+	for _, metric := range instance.Module.Compatibility.Metrics {
+		compatibility.Metrics = append(compatibility.Metrics, DiscoveryCompatibilityMetric{
+			Buckets: slices.Clone(metric.Buckets),
+			Labels:  slices.Clone(metric.Labels),
+			Type:    metric.Type,
+			Name:    metric.Name,
+			Help:    metric.Help,
+		})
+	}
+
+	return compatibility
 }
 
 // discoveryMetadata converts public metadata while preserving copy semantics.
@@ -223,14 +267,15 @@ func discoverySourceDescriptor(descriptor pluginapi.SourceDescriptor) *Discovery
 // discoveryHookDescriptor converts HTTP hook metadata for discovery output.
 func discoveryHookDescriptor(descriptor pluginapi.HookDescriptor) *DiscoveryHookDescriptor {
 	return &DiscoveryHookDescriptor{
-		Name:         descriptor.Name,
-		Method:       descriptor.Method,
-		Path:         descriptor.Path,
-		Alias:        descriptor.Alias,
-		Scope:        descriptor.Scope,
-		Auth:         descriptor.Auth,
-		Timeout:      descriptor.Timeout,
-		MaxBodyBytes: descriptor.MaxBodyBytes,
+		RequiredScopes: slices.Clone(descriptor.RequiredScopes),
+		Name:           descriptor.Name,
+		Method:         descriptor.Method,
+		Path:           descriptor.Path,
+		Alias:          descriptor.Alias,
+		Scope:          descriptor.Scope,
+		Auth:           descriptor.Auth,
+		Timeout:        descriptor.Timeout,
+		MaxBodyBytes:   descriptor.MaxBodyBytes,
 	}
 }
 

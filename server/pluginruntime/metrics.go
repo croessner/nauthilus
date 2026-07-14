@@ -53,6 +53,7 @@ type MetricsFacade struct {
 	registerer prometheus.Registerer
 	scope      string
 	metrics    map[string]*metricHandle
+	exactNames bool
 }
 
 // NewMetricsFacade returns a scoped metrics facade.
@@ -66,6 +67,15 @@ func NewMetricsFacadeWithRegisterer(scope string, registerer prometheus.Register
 		scope:      scope,
 		registerer: registerer,
 		metrics:    make(map[string]*metricHandle),
+	}
+}
+
+// newExactMetricsFacade returns a facade that preserves exact names and labels for trusted compatibility metrics.
+func newExactMetricsFacade(registerer prometheus.Registerer) *MetricsFacade {
+	return &MetricsFacade{
+		registerer: registerer,
+		metrics:    make(map[string]*metricHandle),
+		exactNames: true,
 	}
 }
 
@@ -115,6 +125,10 @@ func (m *MetricsFacade) metric(kind metricKind, definition pluginapi.MetricDefin
 		return nil, errors.New("plugin metrics facade is nil")
 	}
 
+	if definition.Compatibility {
+		return nil, ErrCompatibilityMetricDenied
+	}
+
 	if err := validateMetricDefinition(definition); err != nil {
 		return nil, err
 	}
@@ -142,6 +156,10 @@ func (m *MetricsFacade) newMetricHandle(kind metricKind, definition pluginapi.Me
 	definition = cloneMetricDefinition(definition)
 	collectorName := prometheusMetricName(m.scope, definition.Name)
 	labelNames := prometheusLabelNames(definition.Labels)
+	if m.exactNames {
+		collectorName = definition.Name
+		labelNames = slices.Clone(definition.Labels)
+	}
 	handle := &metricHandle{
 		owner:          m,
 		kind:           kind,
@@ -155,7 +173,7 @@ func (m *MetricsFacade) newMetricHandle(kind metricKind, definition pluginapi.Me
 		collector, err := registeredCollector(m.registerer, prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: collectorName, Help: metricHelp(definition)},
 			labelNames,
-		))
+		), !m.exactNames)
 		if err != nil {
 			return nil, err
 		}
@@ -165,7 +183,7 @@ func (m *MetricsFacade) newMetricHandle(kind metricKind, definition pluginapi.Me
 		collector, err := registeredCollector(m.registerer, prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{Name: collectorName, Help: metricHelp(definition)},
 			labelNames,
-		))
+		), !m.exactNames)
 		if err != nil {
 			return nil, err
 		}
@@ -175,7 +193,7 @@ func (m *MetricsFacade) newMetricHandle(kind metricKind, definition pluginapi.Me
 		collector, err := registeredCollector(m.registerer, prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: collectorName, Help: metricHelp(definition), Buckets: metricBuckets(definition)},
 			labelNames,
-		))
+		), !m.exactNames)
 		if err != nil {
 			return nil, err
 		}
@@ -185,7 +203,7 @@ func (m *MetricsFacade) newMetricHandle(kind metricKind, definition pluginapi.Me
 		collector, err := registeredCollector(m.registerer, prometheus.NewSummaryVec(
 			prometheus.SummaryOpts{Name: collectorName, Help: metricHelp(definition)},
 			labelNames,
-		))
+		), !m.exactNames)
 		if err != nil {
 			return nil, err
 		}
@@ -298,7 +316,9 @@ func (h *metricHandle) prometheusLabelValues(labels []pluginapi.LabelValue) []st
 	}
 
 	values := make([]string, 0, len(h.declaredLabels)+1)
-	values = append(values, h.owner.scope)
+	if !h.owner.exactNames {
+		values = append(values, h.owner.scope)
+	}
 
 	for _, label := range h.declaredLabels {
 		values = append(values, byName[label])
@@ -445,7 +465,7 @@ func metricBuckets(definition pluginapi.MetricDefinition) []float64 {
 }
 
 // registeredCollector registers a collector or returns an already registered equivalent.
-func registeredCollector[T prometheus.Collector](registerer prometheus.Registerer, collector T) (T, error) {
+func registeredCollector[T prometheus.Collector](registerer prometheus.Registerer, collector T, reuse bool) (T, error) {
 	var zero T
 
 	if registerer == nil {
@@ -454,7 +474,7 @@ func registeredCollector[T prometheus.Collector](registerer prometheus.Registere
 
 	if err := registerer.Register(collector); err != nil {
 		var already prometheus.AlreadyRegisteredError
-		if errors.As(err, &already) {
+		if reuse && errors.As(err, &already) {
 			existing, ok := already.ExistingCollector.(T)
 			if !ok {
 				return zero, err

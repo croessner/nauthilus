@@ -102,9 +102,15 @@ type ModuleInstance struct {
 	Capabilities      []pluginapi.Capability
 	ArtifactPath      string
 	SignaturePath     string
+	VerifiedSigner    string
 	ModuleName        string
 	Status            ModuleStatus
 	Optional          bool
+}
+
+// IsRegistered reports whether the instance can participate in the plugin runtime.
+func (m ModuleInstance) IsRegistered() bool {
+	return m.Status == "" || m.Status == ModuleStatusRegistered
 }
 
 // State contains all module instances registered during one loader run.
@@ -269,18 +275,28 @@ func (l *Loader) loadModule(registry *pluginregistry.Registry, verified Verified
 	}
 
 	return ModuleInstance{
-		Plugin:        pluginObject,
-		Metadata:      metadata,
-		Module:        verified.Module,
-		Descriptors:   registrar.Components(),
-		DebugModules:  registry.DebugModulesByModule(verified.Module.Name),
-		Capabilities:  registrar.Capabilities(),
-		ArtifactPath:  verified.ArtifactPath,
-		SignaturePath: verified.SignaturePath,
-		ModuleName:    verified.Module.Name,
-		Status:        ModuleStatusRegistered,
-		Optional:      verified.Module.Optional,
+		Plugin:         pluginObject,
+		Metadata:       metadata,
+		Module:         verified.Module,
+		Descriptors:    registrar.Components(),
+		DebugModules:   registry.DebugModulesByModule(verified.Module.Name),
+		Capabilities:   registrar.Capabilities(),
+		ArtifactPath:   verified.ArtifactPath,
+		SignaturePath:  verified.SignaturePath,
+		VerifiedSigner: verifiedSignerID(verified.Signer),
+		ModuleName:     verified.Module.Name,
+		Status:         ModuleStatusRegistered,
+		Optional:       verified.Module.Optional,
 	}, nil
+}
+
+// verifiedSignerID returns the trusted signer that actually verified an artifact.
+func verifiedSignerID(signer *config.PluginTrustSigner) string {
+	if signer == nil {
+		return ""
+	}
+
+	return signer.ID
 }
 
 // checkVerifiedArtifact makes sure the handoff path still points to a loadable .so file.
@@ -379,6 +395,7 @@ func failedModuleInstance(verified VerifiedModule, err error) ModuleInstance {
 		Module:            verified.Module,
 		ArtifactPath:      verified.ArtifactPath,
 		SignaturePath:     verified.SignaturePath,
+		VerifiedSigner:    verifiedSignerID(verified.Signer),
 		ModuleName:        verified.Module.Name,
 		Status:            ModuleStatusFailed,
 		Optional:          verified.Module.Optional,

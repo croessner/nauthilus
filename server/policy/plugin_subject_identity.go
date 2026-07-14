@@ -20,8 +20,7 @@ import "strings"
 const (
 	pluginSubjectAttributePrefix = "auth.plugin.subject."
 	pluginSubjectCheckPrefix     = "plugin_subject_"
-	pluginSubjectConfigRefPrefix = "plugins.modules."
-	pluginSubjectConfigRefSuffix = ".subject"
+	pluginSubjectRefSuffix       = ".subject"
 )
 
 // PluginSubjectIdentity returns the canonical module-local identity for native subject sources.
@@ -38,7 +37,7 @@ func PluginSubjectIdentity(moduleName string, localName string) string {
 
 // PluginSubjectIdentityFromCheck derives the canonical subject identity from a compiled check.
 func PluginSubjectIdentityFromCheck(configRef string, checkName string) string {
-	moduleName, ok := pluginSubjectModuleNameFromConfigRef(configRef)
+	moduleName, ok := pluginModuleNameFromConfigRef(configRef, pluginSubjectRefSuffix)
 	if !ok {
 		return ""
 	}
@@ -61,28 +60,6 @@ func PluginSubjectAttributeID(moduleName string, localName string, suffix string
 	}
 
 	return pluginSubjectAttributePrefix + identity + "." + suffix
-}
-
-// pluginSubjectModuleNameFromConfigRef parses the module-level native subject config reference.
-func pluginSubjectModuleNameFromConfigRef(configRef string) (string, bool) {
-	configRef = strings.TrimSpace(configRef)
-
-	trimmed, ok := strings.CutPrefix(configRef, pluginSubjectConfigRefPrefix)
-	if !ok {
-		return "", false
-	}
-
-	moduleName, ok := strings.CutSuffix(trimmed, pluginSubjectConfigRefSuffix)
-	if !ok {
-		return "", false
-	}
-
-	moduleName = strings.TrimSpace(moduleName)
-	if moduleName == "" {
-		return "", false
-	}
-
-	return moduleName, true
 }
 
 // pluginSubjectLocalNameFromCheckName parses the runtime-generated subject check name for one module.

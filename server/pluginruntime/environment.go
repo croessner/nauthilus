@@ -30,11 +30,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const (
-	pluginEnvironmentCheckPrefix     = "plugin_environment_"
-	pluginEnvironmentConfigRefPrefix = "plugins.modules."
-)
-
 var _ core.PluginEnvironmentSourceBridge = (*EnvironmentSourceBridge)(nil)
 
 // EnvironmentSourceBridge adapts native plugin environment sources into the pre-auth flow.
@@ -311,17 +306,17 @@ func recordPluginEnvironmentResult(
 
 // pluginEnvironmentCheckName returns the scheduler-visible check name for one module.
 func pluginEnvironmentCheckName(component pluginregistry.Component) string {
-	return pluginEnvironmentCheckPrefix + component.ModuleName
+	return policy.PluginEnvironmentCheckName(component.ModuleName)
 }
 
 // pluginEnvironmentConfigRef returns the module config reference used to match compiled checks.
 func pluginEnvironmentConfigRef(component pluginregistry.Component) string {
-	return pluginEnvironmentConfigRefPrefix + component.ModuleName + ".environment"
+	return policy.PluginEnvironmentConfigRef(component.ModuleName)
 }
 
 // pluginEnvironmentAttributeID returns a bounded policy attribute id for plugin environment evidence.
 func pluginEnvironmentAttributeID(component pluginregistry.Component, suffix string) string {
-	return "auth.plugin.environment." + component.ModuleName + "." + component.LocalName + "." + suffix
+	return policy.PluginEnvironmentAttributeID(component.ModuleName, component.LocalName, suffix)
 }
 
 // pluginEnvironmentDecision maps a plugin environment result into the policy report decision hint.

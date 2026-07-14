@@ -21,9 +21,10 @@ import (
 	"strings"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -32,8 +33,7 @@ var _ pluginapi.Span = (*spanFacade)(nil)
 
 // TracerFacade starts plugin spans through the host tracing package.
 type TracerFacade struct {
-	tracer monittrace.Tracer
-	scope  string
+	tracer oteltrace.Tracer
 }
 
 // NewTracerFacade returns a scoped plugin tracer facade.
@@ -42,14 +42,26 @@ func NewTracerFacade(scope string) *TracerFacade {
 		scope = "plugin"
 	}
 
-	return &TracerFacade{
-		tracer: monittrace.New("nauthilus/plugin/" + scope),
-		scope:  scope,
+	return &TracerFacade{tracer: otel.Tracer("nauthilus/plugin/" + scope)}
+}
+
+// NewCompatibilityTracerFacade returns a tracer with an exact operator-allowlisted instrumentation scope.
+func NewCompatibilityTracerFacade(scope string) *TracerFacade {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		scope = "plugin"
 	}
+
+	return &TracerFacade{tracer: otel.Tracer(scope)}
 }
 
 // Start begins a child span using host-owned OpenTelemetry plumbing.
 func (t *TracerFacade) Start(ctx context.Context, name string, attrs ...pluginapi.TraceAttribute) (context.Context, pluginapi.Span) {
+	return t.StartWithOptions(ctx, name, pluginapi.SpanStartOptions{Attributes: attrs})
+}
+
+// StartWithOptions begins a child span with value-only kind and attribute options.
+func (t *TracerFacade) StartWithOptions(ctx context.Context, name string, options pluginapi.SpanStartOptions) (context.Context, pluginapi.Span) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -63,7 +75,12 @@ func (t *TracerFacade) Start(ctx context.Context, name string, attrs ...pluginap
 		spanName = "plugin.operation"
 	}
 
-	nextCtx, span := t.tracer.Start(ctx, spanName, traceAttributes(attrs)...)
+	nextCtx, span := t.tracer.Start(
+		ctx,
+		spanName,
+		oteltrace.WithSpanKind(traceSpanKind(options.Kind)),
+		oteltrace.WithAttributes(traceAttributes(options.Attributes)...),
+	)
 
 	return nextCtx, spanFacade{span: span}
 }
@@ -97,6 +114,15 @@ func (s spanFacade) RecordError(err error) {
 	}
 
 	s.span.RecordError(err)
+}
+
+// SetStatus records an explicit status without coupling plugins to OpenTelemetry types.
+func (s spanFacade) SetStatus(status pluginapi.SpanStatus, description string) {
+	if s.span == nil {
+		return
+	}
+
+	s.span.SetStatus(traceStatusCode(status), description)
 }
 
 // End finishes the span.
@@ -142,5 +168,33 @@ func traceAttribute(key string, value any) attribute.KeyValue {
 		return attribute.String(key, typed)
 	default:
 		return attribute.String(key, fmt.Sprint(typed))
+	}
+}
+
+// traceSpanKind converts the public value-only span kind.
+func traceSpanKind(kind pluginapi.SpanKind) oteltrace.SpanKind {
+	switch kind {
+	case pluginapi.SpanKindServer:
+		return oteltrace.SpanKindServer
+	case pluginapi.SpanKindClient:
+		return oteltrace.SpanKindClient
+	case pluginapi.SpanKindProducer:
+		return oteltrace.SpanKindProducer
+	case pluginapi.SpanKindConsumer:
+		return oteltrace.SpanKindConsumer
+	default:
+		return oteltrace.SpanKindInternal
+	}
+}
+
+// traceStatusCode converts the public value-only span status.
+func traceStatusCode(status pluginapi.SpanStatus) codes.Code {
+	switch status {
+	case pluginapi.SpanStatusOK:
+		return codes.Ok
+	case pluginapi.SpanStatusError:
+		return codes.Error
+	default:
+		return codes.Unset
 	}
 }

@@ -27,6 +27,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,6 +42,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
+	"golang.org/x/text/language"
 )
 
 // The configuration file is briefly documented in the markdown file Configuration-FileSettings.md.
@@ -2464,6 +2466,7 @@ func (f *FileSettings) validateFrontend() error {
 // Returns an error if any validation function fails, otherwise returns nil.
 func (f *FileSettings) validate() (err error) {
 	validators := []func() error{
+		f.validatePolicyInitialization,
 		f.validateBruteForce,
 		f.validatePassDBBackends,
 		f.validateAddress,
@@ -3822,6 +3825,7 @@ func (f *FileSettings) unmarshalAndNormalize() error {
 		return formatDecodeErrors(err)
 	}
 
+	f.normalizePolicyInitialization()
 	f.materializeLegacySections()
 	f.normalizeConfigAliases()
 
@@ -3940,6 +3944,128 @@ func (f *FileSettings) validateLoadedConfig(validate *validator.Validate) error 
 func registerValidation(validate *validator.Validate, tag string, fn validator.Func) error {
 	if err := validate.RegisterValidation(tag, fn); err != nil {
 		return fmt.Errorf("register validator %q: %w", tag, err)
+	}
+
+	return nil
+}
+
+// normalizePolicyInitialization canonicalizes declarative policy initialization values.
+func (f *FileSettings) normalizePolicyInitialization() {
+	if f == nil || f.Auth == nil {
+		return
+	}
+
+	for index := range f.Auth.Policy.Localization.Catalogs {
+		catalog := &f.Auth.Policy.Localization.Catalogs[index]
+		catalog.Namespace = strings.TrimSpace(catalog.Namespace)
+
+		catalog.Language = strings.TrimSpace(catalog.Language)
+
+		if tag, err := language.Parse(catalog.Language); err == nil {
+			catalog.Language = tag.String()
+		}
+	}
+
+	if bruteForce := f.Auth.Controls.BruteForce; bruteForce != nil {
+		bruteForce.Allowlist.normalize()
+	}
+
+	if relayDomains := f.Auth.Controls.RelayDomains; relayDomains != nil {
+		relayDomains.Allowlist.normalize()
+	}
+}
+
+// validatePolicyInitialization checks operator catalogs and per-user network allowlists.
+func (f *FileSettings) validatePolicyInitialization() error {
+	if f == nil || f.Auth == nil {
+		return nil
+	}
+
+	if err := validatePolicyLocalizationCatalogs(f.Auth.Policy.Localization.Catalogs); err != nil {
+		return err
+	}
+
+	return f.validatePolicySoftAllowlists()
+}
+
+// validatePolicyLocalizationCatalogs checks unique languages and bounded messages.
+func validatePolicyLocalizationCatalogs(catalogs []PolicyTranslationCatalogConfig) error {
+	seenCatalogs := make(map[string]struct{}, len(catalogs))
+	for index, catalog := range catalogs {
+		path := fmt.Sprintf("auth.policy.localization.catalogs[%d]", index)
+		identity := catalog.Namespace + "\x00" + catalog.Language
+
+		if _, exists := seenCatalogs[identity]; exists {
+			return NewValidationProblem(path, "duplicates an existing namespace and language catalog")
+		}
+
+		seenCatalogs[identity] = struct{}{}
+
+		if err := validatePolicyTranslationCatalog(path, catalog); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validatePolicyTranslationCatalog checks one language tag and its entries.
+func validatePolicyTranslationCatalog(path string, catalog PolicyTranslationCatalogConfig) error {
+	if _, err := language.Parse(catalog.Language); err != nil {
+		return NewValidationProblem(path+".language", "must be a valid BCP 47 language tag")
+	}
+
+	keys := make([]string, 0, len(catalog.Entries))
+	for key := range catalog.Entries {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		if err := validatePolicyTranslationEntry(path, key, catalog.Entries[key]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validatePolicyTranslationEntry checks one bounded non-empty key and message.
+func validatePolicyTranslationEntry(path string, key string, message string) error {
+	entryPath := path + ".entries." + key
+
+	if strings.TrimSpace(key) == "" {
+		return NewValidationProblem(path+".entries", "message key must not be blank")
+	}
+
+	if len(key) > 256 {
+		return NewValidationProblem(entryPath, "message key must not exceed 256 bytes")
+	}
+
+	if strings.TrimSpace(message) == "" {
+		return NewValidationProblem(entryPath, "message must not be blank")
+	}
+
+	if len(message) > 4096 {
+		return NewValidationProblem(entryPath, "message must not exceed 4096 bytes")
+	}
+
+	return nil
+}
+
+// validatePolicySoftAllowlists checks declarative network entries on each supported policy surface.
+func (f *FileSettings) validatePolicySoftAllowlists() error {
+	if bruteForce := f.Auth.Controls.BruteForce; bruteForce != nil {
+		if err := bruteForce.Allowlist.validate("auth.controls.brute_force.allowlist"); err != nil {
+			return err
+		}
+	}
+
+	if relayDomains := f.Auth.Controls.RelayDomains; relayDomains != nil {
+		if err := relayDomains.Allowlist.validate("auth.controls.relay_domains.allowlist"); err != nil {
+			return err
+		}
 	}
 
 	return nil

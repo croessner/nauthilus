@@ -21,13 +21,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/backend/ldapendpoint"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
@@ -880,59 +879,12 @@ func (l *ldapPoolImpl) firstLDAPServerURI(index int) (string, bool) {
 
 // ldapServerAddrPort parses an LDAP URI into OpenTelemetry server address and port values.
 func ldapServerAddrPort(raw string) (string, int) {
-	u, err := url.Parse(raw)
+	endpoint, err := ldapendpoint.Parse(raw)
 	if err != nil {
 		return "", 0
 	}
 
-	if strings.EqualFold(u.Scheme, "ldapi") {
-		return ldapiServerAddrPort(u)
-	}
-
-	return ldapTCPServerAddrPort(u)
-}
-
-// ldapiServerAddrPort returns the Unix-socket address for ldapi URIs.
-func ldapiServerAddrPort(u *url.URL) (string, int) {
-	if u.Path != "" && strings.HasPrefix(u.Path, "/") {
-		return u.Path, 0
-	}
-
-	return "", 0
-}
-
-// ldapTCPServerAddrPort returns host and port attributes for ldap and ldaps URIs.
-func ldapTCPServerAddrPort(u *url.URL) (string, int) {
-	host := u.Host
-
-	if address, port, err := net.SplitHostPort(host); err == nil {
-		return address, parseLDAPPort(port)
-	}
-
-	return host, defaultLDAPPort(u.Scheme)
-}
-
-// parseLDAPPort parses explicit LDAP ports and returns zero for invalid values.
-func parseLDAPPort(port string) int {
-	if port == "" {
-		return 0
-	}
-
-	value, err := strconv.ParseInt(port, 10, 16)
-	if err != nil || value < 0 || value > 65535 {
-		return 0
-	}
-
-	return int(value)
-}
-
-// defaultLDAPPort returns the scheme-derived LDAP port.
-func defaultLDAPPort(scheme string) int {
-	if scheme == ldapSchemeLDAPS {
-		return 636
-	}
-
-	return 389
+	return endpoint.Host, endpoint.Port
 }
 
 // acquireTokenWithTimeout tries to acquire a capacity token from the pool within the configured timeout.

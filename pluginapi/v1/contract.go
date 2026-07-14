@@ -114,6 +114,7 @@ type Host interface {
 	ServiceContext() context.Context
 	Logger(scope string) Logger
 	Tracer(scope string) Tracer
+	CompatibilityTracer(scope string) (Tracer, error)
 	Metrics(scope string) Metrics
 	HTTP(scope string) HTTPClient
 	Mail(scope string) Mailer

@@ -130,5 +130,8 @@ func (noopSpan) SetAttributes(...pluginapi.TraceAttribute) {}
 // RecordError discards span errors when no tracer is configured.
 func (noopSpan) RecordError(error) {}
 
+// SetStatus records no status when tracing is unavailable.
+func (noopSpan) SetStatus(pluginapi.SpanStatus, string) {}
+
 // End completes the no-op span.
 func (noopSpan) End() {}

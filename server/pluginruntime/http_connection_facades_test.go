@@ -401,8 +401,16 @@ func assertHTTPMetricObservations(t *testing.T, metrics *MetricsFacade) {
 func assertPluginHTTPSpan(t *testing.T, collector *tracetest.Collector) {
 	t.Helper()
 
-	if _, ok := tracetest.FindByNameAndAttributes(collector.Spans(), "plugin.http"); !ok {
-		t.Fatalf("plugin HTTP span not exported: %#v", collector.Spans())
+	count := 0
+
+	for _, span := range collector.Spans() {
+		if span.Name() == "plugin.http" {
+			count++
+		}
+	}
+
+	if count != 1 {
+		t.Fatalf("plugin HTTP span count = %d, want exactly one: %#v", count, collector.Spans())
 	}
 }
 

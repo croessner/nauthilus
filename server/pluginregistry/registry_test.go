@@ -263,6 +263,109 @@ func TestRegistrar_RejectsInvalidDescriptor(t *testing.T) {
 	}
 }
 
+func TestRegistrar_InjectsOperatorHookRequiredScopes(t *testing.T) {
+	configuredScopes := []string{" nauthilus:admin ", "nauthilus:custom:postfix", "nauthilus:admin"}
+	registry := NewRegistry()
+	registrar := registry.NewRegistrar(config.PluginModule{
+		Name: testRegistryModuleGeoIP,
+		Hooks: []config.PluginHookAuthorization{
+			{Name: testRegistryHookName, RequiredScopes: configuredScopes},
+		},
+	})
+
+	if err := registrar.RegisterHook(fakeHook{name: testRegistryHookName}); err != nil {
+		t.Fatalf("RegisterHook() error = %v", err)
+	}
+
+	configuredScopes[0] = "mutated"
+
+	if err := registrar.Commit(); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+
+	component, ok := registry.Lookup(testRegistryModuleGeoIP + "." + testRegistryHookName)
+	if !ok {
+		t.Fatal("registered hook missing")
+	}
+
+	want := []string{"nauthilus:admin", "nauthilus:custom:postfix"}
+	if !slicesEqual(component.HookDescriptor.RequiredScopes, want) {
+		t.Fatalf("RequiredScopes = %#v, want %#v", component.HookDescriptor.RequiredScopes, want)
+	}
+
+	component.HookDescriptor.RequiredScopes[0] = "mutated-again"
+
+	next, _ := registry.Lookup(testRegistryModuleGeoIP + "." + testRegistryHookName)
+
+	if !slicesEqual(next.HookDescriptor.RequiredScopes, want) {
+		t.Fatalf("registry scope slice was mutable through Lookup(): %#v", next.HookDescriptor.RequiredScopes)
+	}
+}
+
+func TestRegistrar_RejectsUnmatchedOperatorHookAuthorization(t *testing.T) {
+	registrar := NewRegistry().NewRegistrar(config.PluginModule{
+		Name: testRegistryModuleGeoIP,
+		Hooks: []config.PluginHookAuthorization{
+			{Name: "missing_hook", RequiredScopes: []string{"nauthilus:admin"}},
+		},
+	})
+
+	if err := registrar.RegisterHook(fakeHook{name: testRegistryHookName}); err != nil {
+		t.Fatalf("RegisterHook() error = %v", err)
+	}
+
+	if err := registrar.Commit(); !errors.Is(err, ErrInvalidDescriptor) {
+		t.Fatalf("Commit() error = %v, want ErrInvalidDescriptor", err)
+	}
+}
+
+func TestRegistrar_RejectsHookRequiredScopeConflicts(t *testing.T) {
+	tests := []struct {
+		name string
+		hook fakeHook
+	}{
+		{
+			name: "public scope",
+			hook: fakeHook{name: testRegistryHookName, scope: pluginapi.HookScopePublic, auth: pluginapi.HookAuthToken},
+		},
+		{
+			name: "no auth",
+			hook: fakeHook{name: testRegistryHookName, scope: pluginapi.HookScopeInternal, auth: pluginapi.HookAuthNone},
+		},
+		{
+			name: "session auth",
+			hook: fakeHook{name: testRegistryHookName, scope: pluginapi.HookScopeInternal, auth: pluginapi.HookAuthSession},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			registrar := NewRegistry().NewRegistrar(config.PluginModule{
+				Name: testRegistryModuleGeoIP,
+				Hooks: []config.PluginHookAuthorization{
+					{Name: testRegistryHookName, RequiredScopes: []string{"nauthilus:admin"}},
+				},
+			})
+
+			if err := registrar.RegisterHook(testCase.hook); !errors.Is(err, ErrInvalidDescriptor) {
+				t.Fatalf("RegisterHook() error = %v, want ErrInvalidDescriptor", err)
+			}
+		})
+	}
+}
+
+func TestRegistrar_RejectsPluginOwnedHookRequiredScopes(t *testing.T) {
+	registrar := NewRegistry().NewRegistrar(config.PluginModule{Name: testRegistryModuleGeoIP})
+	err := registrar.RegisterHook(fakeHook{
+		name:           testRegistryHookName,
+		requiredScopes: []string{"nauthilus:admin"},
+	})
+
+	if !errors.Is(err, ErrInvalidDescriptor) {
+		t.Fatalf("RegisterHook() error = %v, want ErrInvalidDescriptor", err)
+	}
+}
+
 func TestRegistrar_RegistersPolicyAttributeHandoff(t *testing.T) {
 	policyAttributes := policyregistry.NewAttributeRegistry()
 	registry := NewRegistry(WithPolicyAttributeRegistrar(policyAttributes))
@@ -459,24 +562,41 @@ func (t fakePostActionTarget) Enqueue(context.Context, pluginapi.PostActionReque
 }
 
 type fakeHook struct {
-	name string
-	path string
+	requiredScopes []string
+	name           string
+	path           string
+	scope          pluginapi.HookScope
+	auth           pluginapi.HookAuth
 }
 
 func (h fakeHook) Descriptor() pluginapi.HookDescriptor {
 	path := h.path
+
 	if path == "" {
 		path = "/hook"
 	}
 
+	scope := h.scope
+
+	if scope == "" {
+		scope = pluginapi.HookScopeInternal
+	}
+
+	auth := h.auth
+
+	if auth == "" {
+		auth = pluginapi.HookAuthToken
+	}
+
 	return pluginapi.HookDescriptor{
-		Timeout:      time.Second,
-		Name:         h.name,
-		Method:       "GET",
-		Path:         path,
-		Scope:        pluginapi.HookScopeInternal,
-		Auth:         pluginapi.HookAuthToken,
-		MaxBodyBytes: 1024,
+		RequiredScopes: h.requiredScopes,
+		Timeout:        time.Second,
+		Name:           h.name,
+		Method:         "GET",
+		Path:           path,
+		Scope:          scope,
+		Auth:           auth,
+		MaxBodyBytes:   1024,
 	}
 }
 

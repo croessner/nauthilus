@@ -1,0 +1,26 @@
+# Operator-owned policy translations and soft allowlists.
+auth:
+  policy:
+    localization:
+      catalogs:
+        - namespace: rns-auth
+          language: de
+          entries:
+            auth.policy.rns.account_disabled: "Das Konto ist deaktiviert."
+        - namespace: rns-auth
+          language: en
+          entries:
+            auth.policy.rns.account_disabled: "The account is disabled."
+
+  controls:
+    brute_force:
+      allowlist:
+        monitoring-account:
+          - 192.0.2.0/24
+
+    relay_domains:
+      static:
+        - example.test
+      allowlist:
+        monitoring-account:
+          - 192.0.2.0/24

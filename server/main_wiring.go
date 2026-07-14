@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/app/bootfx"
 	"github.com/croessner/nauthilus/v3/server/app/configfx"
 	"github.com/croessner/nauthilus/v3/server/app/envfx"
+	"github.com/croessner/nauthilus/v3/server/app/localizationfx"
 	"github.com/croessner/nauthilus/v3/server/app/logfx"
 	"github.com/croessner/nauthilus/v3/server/app/loopsfx"
 	"github.com/croessner/nauthilus/v3/server/app/redifx"
@@ -309,6 +310,11 @@ func configureRuntimeI18N(p *runtimeLifecycleParams, cfg config.File) error {
 		return fmt.Errorf("configure Lua i18n runtime: %w", err)
 	}
 
+	registry := lualib.DefaultI18NRuntime().Registry
+	if _, err := registry.ReloadOperatorOverlays(localizationfx.CatalogOverlays(cfg)...); err != nil {
+		return fmt.Errorf("configure operator localization catalogs: %w", err)
+	}
+
 	return nil
 }
 
@@ -373,6 +379,7 @@ func startRuntimePluginRunner(p *runtimeLifecycleParams, cfg config.File, plugin
 			p.Ctx,
 			p.Store.logger,
 			cfg,
+			p.Store.cfgProvider,
 			p.Store.redisClient,
 			priorityqueue.LDAPQueue,
 		)),
@@ -503,6 +510,7 @@ func newRuntimePluginHost(
 	ctx context.Context,
 	logger *slog.Logger,
 	cfg config.File,
+	cfgProvider configfx.Provider,
 	redisClient rediscli.Client,
 	ldapQueue pluginruntime.LDAPQueue,
 ) *pluginruntime.Host {
@@ -527,7 +535,17 @@ func newRuntimePluginHost(
 	}
 
 	if ldapQueue != nil {
-		options = append(options, pluginruntime.WithLDAPExecutor(pluginruntime.NewLDAPQueueExecutor(ldapQueue)))
+		currentConfig := func() config.File {
+			if cfgProvider == nil {
+				return cfg
+			}
+
+			return cfgProvider.Current().File
+		}
+		options = append(options, pluginruntime.WithLDAP(pluginruntime.NewLDAPFacade(
+			pluginruntime.NewLDAPQueueExecutor(ldapQueue),
+			pluginruntime.NewLDAPConfigEndpointResolver(currentConfig),
+		)))
 	}
 
 	return pluginruntime.NewHost(options...)

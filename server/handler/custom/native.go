@@ -297,6 +297,7 @@ func startNativeHookSpan(ctx *gin.Context, hook NativeHook) (context.Context, ot
 		attribute.String("plugin.module", hook.ModuleName),
 		attribute.String("plugin.component", hook.ComponentName),
 		attribute.String("plugin.hook", hook.QualifiedName),
+		attribute.Int("plugin.hook.required_scope_count", len(hook.Descriptor.RequiredScopes)),
 	)
 
 	return nextCtx, span
@@ -309,6 +310,10 @@ func authorizeNativeHook(
 	validator oidcbearer.TokenValidator,
 	descriptor pluginapi.HookDescriptor,
 ) bool {
+	if len(descriptor.RequiredScopes) > 0 {
+		return enforceNativeHookToken(ctx, cfg, validator, descriptor.RequiredScopes)
+	}
+
 	requiredScopes := nativeHookRequiredScopes(descriptor.Scope)
 
 	switch descriptor.Auth {

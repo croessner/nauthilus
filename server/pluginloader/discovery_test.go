@@ -3,6 +3,7 @@ package pluginloader
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,8 @@ const (
 	discoveryEnvironmentName  = "environment"
 	discoverySecretConfigKey  = "api_token"
 	discoverySecretConfigText = "secret-token"
+	discoveryHookScopeAdmin   = "nauthilus:admin"
+	discoveryHookScopePostfix = "nauthilus:custom:postfix"
 )
 
 func TestStateDiscoveryUsesDescriptorsMetadataAndOmitsPluginConfig(t *testing.T) {
@@ -60,6 +63,12 @@ func TestStateDiscoveryUsesDescriptorsMetadataAndOmitsPluginConfig(t *testing.T)
 		verifiedLoaderModule(testPluginModuleName, artifact, func(module *config.PluginModule) {
 			module.Config = map[string]any{
 				discoverySecretConfigKey: discoverySecretConfigText,
+			}
+			module.Hooks = []config.PluginHookAuthorization{
+				{
+					Name:           "status",
+					RequiredScopes: []string{discoveryHookScopeAdmin, discoveryHookScopePostfix},
+				},
 			}
 		}),
 	})
@@ -114,6 +123,11 @@ func assertDiscoveryComponents(t *testing.T, module DiscoveryModule) {
 	hook := module.Components[1]
 	if hook.QualifiedName != testPluginModuleName+".status" || hook.Hook == nil {
 		t.Fatalf("hook discovery = %#v", hook)
+	}
+
+	wantScopes := []string{discoveryHookScopeAdmin, discoveryHookScopePostfix}
+	if !slices.Equal(hook.Hook.RequiredScopes, wantScopes) {
+		t.Fatalf("hook required scopes = %#v, want %#v", hook.Hook.RequiredScopes, wantScopes)
 	}
 }
 
@@ -176,8 +190,8 @@ func (discoveryHook) Descriptor() pluginapi.HookDescriptor {
 		Method:       "GET",
 		Path:         "/plugins/geoip/status",
 		Alias:        "/plugins/geoip",
-		Scope:        pluginapi.HookScopeAdmin,
-		Auth:         pluginapi.HookAuthAdmin,
+		Scope:        pluginapi.HookScopeInternal,
+		Auth:         pluginapi.HookAuthToken,
 		Timeout:      time.Second,
 		MaxBodyBytes: 1024,
 	}

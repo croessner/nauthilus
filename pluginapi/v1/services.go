@@ -216,10 +216,19 @@ type LDAPEntry struct {
 	DN         string
 }
 
+// LDAPEndpoint contains configured trace-safe endpoint metadata for one pool URI.
+type LDAPEndpoint struct {
+	PoolName string
+	Scheme   string
+	Host     string
+	Port     int
+}
+
 // LDAP exposes host-owned queued LDAP operations.
 type LDAP interface {
 	Search(context.Context, LDAPSearchRequest) (LDAPSearchResult, error)
 	Modify(context.Context, LDAPModifyRequest) error
+	Endpoints(context.Context, string) ([]LDAPEndpoint, error)
 }
 
 // MetricDefinition describes one plugin-owned metric.
@@ -228,7 +237,24 @@ type MetricDefinition struct {
 	Labels  []string
 	Name    string
 	Help    string
+	Type    MetricType
+	// Compatibility requests an operator-allowlisted exact legacy collector in addition to the native metric.
+	Compatibility bool
 }
+
+// MetricType identifies a Prometheus collector family without exposing Prometheus types.
+type MetricType string
+
+const (
+	// MetricTypeCounter selects a monotonically increasing counter collector.
+	MetricTypeCounter MetricType = "counter"
+	// MetricTypeGauge selects a gauge collector.
+	MetricTypeGauge MetricType = "gauge"
+	// MetricTypeHistogram selects a histogram collector with explicit or default buckets.
+	MetricTypeHistogram MetricType = "histogram"
+	// MetricTypeSummary selects a summary collector.
+	MetricTypeSummary MetricType = "summary"
+)
 
 // LabelValue binds one declared metric label to a value.
 type LabelValue struct {
@@ -271,15 +297,51 @@ type TraceAttribute struct {
 	Value any
 }
 
+// SpanKind describes the relationship between a span and the operation it represents.
+type SpanKind uint8
+
+const (
+	// SpanKindInternal identifies an in-process operation.
+	SpanKindInternal SpanKind = iota
+	// SpanKindServer identifies inbound request handling.
+	SpanKindServer
+	// SpanKindClient identifies an outbound client operation.
+	SpanKindClient
+	// SpanKindProducer identifies message production.
+	SpanKindProducer
+	// SpanKindConsumer identifies message consumption.
+	SpanKindConsumer
+)
+
+// SpanStatus describes the explicit completion state of a span.
+type SpanStatus uint8
+
+const (
+	// SpanStatusUnset leaves status inference to the tracing backend.
+	SpanStatusUnset SpanStatus = iota
+	// SpanStatusOK marks a completed operation as successful.
+	SpanStatusOK
+	// SpanStatusError marks a completed operation as failed.
+	SpanStatusError
+)
+
+// SpanStartOptions contains value-only options for a plugin-owned span.
+type SpanStartOptions struct {
+	Attributes []TraceAttribute
+	Kind       SpanKind
+}
+
 // Span records plugin-created tracing details through a host-owned tracer.
 type Span interface {
 	AddEvent(string, ...TraceAttribute)
 	SetAttributes(...TraceAttribute)
 	RecordError(error)
+	SetStatus(SpanStatus, string)
 	End()
 }
 
 // Tracer starts child spans from plugin call contexts.
 type Tracer interface {
 	Start(context.Context, string, ...TraceAttribute) (context.Context, Span)
+	StartWithOptions(context.Context, string, SpanStartOptions) (context.Context, Span)
 }

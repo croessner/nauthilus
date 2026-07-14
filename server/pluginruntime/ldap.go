@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/v3/server/config"
@@ -45,6 +46,11 @@ type LDAPExecutor interface {
 	Modify(context.Context, pluginapi.LDAPModifyRequest) error
 }
 
+// LDAPEndpointResolver resolves current trace-safe endpoint metadata by pool.
+type LDAPEndpointResolver interface {
+	Endpoints(context.Context, string) ([]pluginapi.LDAPEndpoint, error)
+}
+
 // LDAPQueue accepts internal LDAP lookup requests.
 type LDAPQueue interface {
 	Push(request *bktype.LDAPRequest, priority int)
@@ -52,12 +58,23 @@ type LDAPQueue interface {
 
 // LDAPFacade validates public LDAP requests before delegating to a host executor.
 type LDAPFacade struct {
-	executor LDAPExecutor
+	executor         LDAPExecutor
+	endpointResolver LDAPEndpointResolver
 }
 
 // NewLDAPFacade returns a validating LDAP facade over a host executor.
-func NewLDAPFacade(executor LDAPExecutor) *LDAPFacade {
-	return &LDAPFacade{executor: executor}
+func NewLDAPFacade(executor LDAPExecutor, endpointResolvers ...LDAPEndpointResolver) *LDAPFacade {
+	facade := &LDAPFacade{executor: executor}
+	if len(endpointResolvers) > 0 {
+		facade.endpointResolver = endpointResolvers[0]
+	}
+
+	return facade
+}
+
+// NewLDAPConfigEndpointResolver returns a resolver backed by a current-config callback.
+func NewLDAPConfigEndpointResolver(currentConfig func() config.File) LDAPEndpointResolver {
+	return &ldapConfigEndpointResolver{currentConfig: currentConfig}
 }
 
 // NewLDAPQueueExecutor returns an executor backed by the existing LDAP lookup queue.
@@ -92,6 +109,53 @@ func (f *LDAPFacade) Modify(ctx context.Context, request pluginapi.LDAPModifyReq
 	}
 
 	return f.executor.Modify(ctx, cloneLDAPModifyRequest(request))
+}
+
+// Endpoints returns detached trace-safe metadata for the requested LDAP pool.
+func (f *LDAPFacade) Endpoints(ctx context.Context, poolName string) ([]pluginapi.LDAPEndpoint, error) {
+	if f == nil || f.endpointResolver == nil {
+		return nil, errors.New("plugin LDAP endpoint resolver is not configured")
+	}
+
+	endpoints, err := f.endpointResolver.Endpoints(ctx, poolName)
+	if err != nil {
+		return nil, err
+	}
+
+	return append([]pluginapi.LDAPEndpoint(nil), endpoints...), nil
+}
+
+type ldapConfigEndpointResolver struct {
+	currentConfig func() config.File
+}
+
+// Endpoints resolves pool metadata from the latest immutable config snapshot.
+func (r *ldapConfigEndpointResolver) Endpoints(_ context.Context, poolName string) ([]pluginapi.LDAPEndpoint, error) {
+	if r == nil || r.currentConfig == nil {
+		return nil, errors.New("LDAP endpoint config is not available")
+	}
+
+	cfg := r.currentConfig()
+	if cfg == nil {
+		return nil, errors.New("LDAP endpoint config is not available")
+	}
+
+	metadata, err := backend.LDAPEndpoints(cfg, poolName)
+	if err != nil {
+		return nil, err
+	}
+
+	endpoints := make([]pluginapi.LDAPEndpoint, 0, len(metadata))
+	for _, endpoint := range metadata {
+		endpoints = append(endpoints, pluginapi.LDAPEndpoint{
+			PoolName: endpoint.PoolName,
+			Scheme:   endpoint.Scheme,
+			Host:     endpoint.Host,
+			Port:     endpoint.Port,
+		})
+	}
+
+	return endpoints, nil
 }
 
 type ldapQueueExecutor struct {

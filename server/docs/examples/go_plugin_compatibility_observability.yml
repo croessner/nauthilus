@@ -1,0 +1,29 @@
+# Exact legacy observability is restricted to artifacts verified by this trusted signer.
+plugins:
+  verification_policy: signature_required
+  allowed_dirs:
+    - /usr/local/lib/nauthilus/plugins
+  trust:
+    signers:
+      - id: compatibility-release-key
+        format: minisign
+        public_key_file: /usr/share/nauthilus/plugin-keys/compatibility.pub
+  modules:
+    - name: legacy_port
+      type: go
+      path: /usr/local/lib/nauthilus/plugins/legacy_port.so
+      signature: minisign:/usr/local/lib/nauthilus/plugins/legacy_port.so.minisig
+      signer: compatibility-release-key
+      compatibility:
+        metrics:
+          - type: histogram
+            name: legacy_request_duration_seconds
+            help: Legacy request duration
+            labels:
+              - service
+            buckets:
+              - 0.01
+              - 0.1
+              - 1
+        trace_scopes:
+          - nauthilus/lua/legacy_port

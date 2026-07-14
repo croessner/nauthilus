@@ -447,6 +447,27 @@ func setupPhase4AuthApplicationServiceTest(t *testing.T, backendName string) (Au
 	return deps, mock
 }
 
+func TestAuthApplicationServiceUsesCurrentConfigAtRequestBoundary(t *testing.T) {
+	db, _ := redismock.NewClientMock()
+	startup := &config.FileSettings{}
+	current := &config.FileSettings{}
+	service := &authApplicationService{deps: AuthDeps{
+		Cfg:           startup,
+		CurrentConfig: func() config.File { return current },
+		Env:           config.NewTestEnvironmentConfig(),
+		Redis:         rediscli.NewTestClient(db),
+	}}
+
+	deps, err := service.effectiveDeps()
+	if err != nil {
+		t.Fatalf("effectiveDeps() error = %v", err)
+	}
+
+	if deps.Cfg != current {
+		t.Fatalf("effectiveDeps().Cfg = %p, want current snapshot %p", deps.Cfg, current)
+	}
+}
+
 func expectPhase4UserAccountMapping(t *testing.T, mock redismock.ClientMock, username, protocol string) {
 	t.Helper()
 

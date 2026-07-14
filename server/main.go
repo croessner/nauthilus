@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/app/bootfx"
 	"github.com/croessner/nauthilus/v3/server/app/envfx"
 	"github.com/croessner/nauthilus/v3/server/app/languagefx"
+	"github.com/croessner/nauthilus/v3/server/app/localizationfx"
 	"github.com/croessner/nauthilus/v3/server/app/logfx"
 	"github.com/croessner/nauthilus/v3/server/app/loopsfx"
 	"github.com/croessner/nauthilus/v3/server/app/opsfx"
@@ -135,6 +136,7 @@ func newFxApplication(ctx context.Context, cancel context.CancelFunc) *fx.App {
 		fx.Provide(newBackendChannel),
 		envfx.Module(),
 		languagefx.Module(),
+		localizationfx.Module(),
 		loopsfx.Module(),
 		opsfx.Module(),
 		policyfx.Module(),

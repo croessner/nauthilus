@@ -886,6 +886,156 @@ func TestCompilerAcceptsPluginEnvironmentCheckType(t *testing.T) {
 	}
 }
 
+func TestCompilerRegistersPluginEnvironmentExecutionFacts(t *testing.T) {
+	publishCompilerPluginState(t, loadCompilerPluginStateForModule(t, "rns_auth", compilerEnvironmentPlugin{}))
+
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{
+		{
+			Name:       "plugin_environment_rns_auth",
+			Type:       policy.CheckTypePluginEnvironment,
+			Stage:      string(policy.StagePreAuth),
+			Operations: []string{string(policy.OperationAuthenticate)},
+			ConfigRef:  "plugins.modules.rns_auth.environment",
+		},
+	}
+	cfg.Auth.Policy.Policies = []config.PolicyRuleConfig{
+		{
+			Name:          "deny_blocklist_match",
+			Stage:         string(policy.StagePreAuth),
+			RequireChecks: []string{"plugin_environment_rns_auth"},
+			If: config.PolicyConditionConfig{
+				Attribute: "auth.plugin.environment.rns_auth.blocklist.triggered",
+				Is:        true,
+			},
+			Then: config.PolicyThenConfig{
+				Decision:       string(policy.DecisionDeny),
+				ResponseMarker: policy.ResponseMarkerFail,
+			},
+		},
+	}
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	for _, component := range []string{"blocklist", "failed_login_hotspot"} {
+		for _, suffix := range []string{"triggered", "abort", "error"} {
+			attributeID := "auth.plugin.environment.rns_auth." + component + "." + suffix
+
+			definition, ok := snapshot.AttributeRegistry[attributeID]
+
+			if !ok {
+				t.Fatalf("generated plugin environment attribute %q missing", attributeID)
+			}
+
+			if definition.ProducerCheck != "plugin_environment_rns_auth" {
+				t.Fatalf("producer check = %q, want plugin_environment_rns_auth", definition.ProducerCheck)
+			}
+
+			assertPluginEnvironmentExecutionDefinition(t, definition, suffix)
+		}
+	}
+
+	if _, ok := snapshot.AttributeRegistry["auth.plugin.environment.rns_auth.triggered"]; ok {
+		t.Fatal("module-only plugin environment execution fact must not be registered")
+	}
+}
+
+// assertPluginEnvironmentExecutionDefinition verifies the complete generated execution-fact contract.
+func assertPluginEnvironmentExecutionDefinition(
+	t *testing.T,
+	definition policyregistry.AttributeDefinition,
+	suffix string,
+) {
+	t.Helper()
+
+	assertPluginEnvironmentExecutionBase(t, definition)
+
+	switch suffix {
+	case "triggered":
+		assertPluginEnvironmentStatusDetail(t, definition)
+	case "error":
+		assertPluginEnvironmentErrorDetail(t, definition)
+	case "abort":
+		if len(definition.Details) != 0 {
+			t.Fatalf("abort details = %#v, want none", definition.Details)
+		}
+	}
+}
+
+// assertPluginEnvironmentExecutionBase verifies shared execution-fact metadata.
+func assertPluginEnvironmentExecutionBase(t *testing.T, definition policyregistry.AttributeDefinition) {
+	t.Helper()
+
+	if definition.Stage != policy.StagePreAuth ||
+		definition.Category != policyregistry.AttributeCategoryEnvironment ||
+		definition.Type != policyregistry.AttributeTypeBool ||
+		definition.Source != policyregistry.SourceBuiltin {
+		t.Fatalf("execution definition = %#v, want pre-auth built-in environment bool", definition)
+	}
+
+	if definition.Description != definition.ID {
+		t.Fatalf("description = %q, want attribute id %q", definition.Description, definition.ID)
+	}
+
+	if len(definition.Operations) != 1 || definition.Operations[0] != policy.OperationAuthenticate {
+		t.Fatalf("operations = %#v, want authenticate", definition.Operations)
+	}
+}
+
+// assertPluginEnvironmentStatusDetail verifies the triggered response-message detail.
+func assertPluginEnvironmentStatusDetail(t *testing.T, definition policyregistry.AttributeDefinition) {
+	t.Helper()
+
+	detail, ok := definition.Details[detailStatusMessage]
+	if !ok || len(definition.Details) != 1 {
+		t.Fatalf("triggered details = %#v, want %q", definition.Details, detailStatusMessage)
+	}
+
+	if detail.Type != policyregistry.AttributeTypeString ||
+		detail.Sensitivity != policyregistry.DetailSensitivityPublic ||
+		detail.Purpose != policyregistry.DetailPurposeResponseMessage ||
+		detail.MaxLength != 256 {
+		t.Fatalf("status detail = %#v, want bounded public response message", detail)
+	}
+}
+
+// assertPluginEnvironmentErrorDetail verifies the internal error-reason detail.
+func assertPluginEnvironmentErrorDetail(t *testing.T, definition policyregistry.AttributeDefinition) {
+	t.Helper()
+
+	detail, ok := definition.Details[detailReasonCode]
+	if !ok || len(definition.Details) != 1 {
+		t.Fatalf("error details = %#v, want %q", definition.Details, detailReasonCode)
+	}
+
+	if detail.Type != policyregistry.AttributeTypeString || detail.Sensitivity != policyregistry.DetailSensitivityInternal {
+		t.Fatalf("error detail = %#v, want internal string reason", detail)
+	}
+}
+
+func TestCompilerRejectsInvalidPluginEnvironmentConfigRef(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Policies = nil
+	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{
+		{
+			Name:      "plugin_environment_rns_auth",
+			Type:      policy.CheckTypePluginEnvironment,
+			Stage:     string(policy.StagePreAuth),
+			ConfigRef: "plugins.modules.rns_auth.subject",
+		},
+	}
+
+	assertCompileErrorContains(
+		t,
+		cfg,
+		"auth.policy.checks.plugin_environment_rns_auth.config_ref",
+		"invalid native plugin environment config reference",
+	)
+}
+
 func TestCompilerAcceptsGeoIPPrivacyEnvironmentFacts(t *testing.T) {
 	publishCompilerPluginState(t, loadCompilerPluginStateForModule(t, "geoip", compilerGeoIPPrivacyPlugin{}))
 
@@ -1427,6 +1577,34 @@ func (h compilerPluginHandle) Lookup(string) (any, error) {
 type compilerPolicyPlugin struct{}
 
 type compilerGeoIPPrivacyPlugin struct{}
+
+type compilerEnvironmentPlugin struct{}
+
+func (compilerEnvironmentPlugin) Metadata() pluginapi.Metadata {
+	return pluginapi.Metadata{Name: "rns_auth", Version: "1.0.0", APIVersion: pluginapi.APIVersion}
+}
+
+func (compilerEnvironmentPlugin) Register(registrar pluginapi.Registrar) error {
+	for _, name := range []string{"blocklist", "failed_login_hotspot"} {
+		if err := registrar.RegisterEnvironmentSource(compilerNamedEnvironmentSource{name: name}); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type compilerNamedEnvironmentSource struct {
+	name string
+}
+
+func (source compilerNamedEnvironmentSource) Descriptor() pluginapi.SourceDescriptor {
+	return pluginapi.SourceDescriptor{Name: source.name}
+}
+
+func (compilerNamedEnvironmentSource) Evaluate(context.Context, pluginapi.EnvironmentRequest) (pluginapi.EnvironmentResult, error) {
+	return pluginapi.EnvironmentResult{}, nil
+}
 
 func (compilerGeoIPPrivacyPlugin) Metadata() pluginapi.Metadata {
 	return pluginapi.Metadata{Name: "geoip", Version: "1.0.0", APIVersion: pluginapi.APIVersion}

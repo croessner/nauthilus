@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
@@ -56,7 +57,7 @@ func compileChecks(
 			seenOutputs[check.Output] = struct{}{}
 		}
 
-		if err := registerGeneratedLuaAttributes(check, attributeRegistry); err != nil {
+		if err := registerGeneratedExecutionAttributes(check, attributeRegistry); err != nil {
 			return nil, err
 		}
 
@@ -406,7 +407,8 @@ func sortChecksForPlan(checks []policyruntime.CompiledCheck) error {
 	return nil
 }
 
-func registerGeneratedLuaAttributes(check policyruntime.CompiledCheck, registry *policyregistry.AttributeRegistry) error {
+// registerGeneratedExecutionAttributes registers host-owned execution facts for Lua and native plugin checks.
+func registerGeneratedExecutionAttributes(check policyruntime.CompiledCheck, registry *policyregistry.AttributeRegistry) error {
 	switch check.Type {
 	case checkTypeLuaEnvironment:
 		name := normalizeIdentifierFromConfigRef("auth.policy.attribute_sources.lua.environment.", check.ConfigRef, check.Name)
@@ -414,12 +416,65 @@ func registerGeneratedLuaAttributes(check policyruntime.CompiledCheck, registry 
 	case checkTypeLuaSubjectSource:
 		name := normalizeIdentifierFromConfigRef("auth.policy.attribute_sources.lua.subject.", check.ConfigRef, check.Name)
 		return registerLuaSubjectSourceAttributes(name, check, registry)
+	case checkTypePluginEnvironment:
+		return registerPluginEnvironmentAttributes(check, registry)
 	case checkTypePluginSubject:
 		name := policy.PluginSubjectIdentityFromCheck(check.ConfigRef, check.Name)
 		return registerPluginSubjectSourceAttributes(name, check, registry)
 	default:
 		return nil
 	}
+}
+
+// registerPluginEnvironmentAttributes registers execution facts for every environment component in the selected module.
+func registerPluginEnvironmentAttributes(
+	check policyruntime.CompiledCheck,
+	registry *policyregistry.AttributeRegistry,
+) error {
+	moduleName := policy.PluginEnvironmentModuleNameFromConfigRef(check.ConfigRef)
+	if moduleName == "" {
+		return configPathError("auth.policy.checks."+check.Name+".config_ref", "must identify a native plugin environment module")
+	}
+
+	state, ok := pluginloader.DefaultState()
+	if !ok {
+		return nil
+	}
+
+	for _, component := range state.Registry().EnvironmentSources() {
+		if component.ModuleName != moduleName {
+			continue
+		}
+
+		definitions := []policyregistry.AttributeDefinition{
+			generatedPluginEnvironmentAttribute(policy.PluginEnvironmentAttributeID(moduleName, component.LocalName, "triggered"), check, true, false),
+			generatedPluginEnvironmentAttribute(policy.PluginEnvironmentAttributeID(moduleName, component.LocalName, "abort"), check, false, false),
+			generatedPluginEnvironmentAttribute(policy.PluginEnvironmentAttributeID(moduleName, component.LocalName, "error"), check, false, true),
+		}
+
+		if err := registerGeneratedAttributes(registry, definitions); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// generatedPluginEnvironmentAttribute defines one host-owned native environment execution fact.
+func generatedPluginEnvironmentAttribute(
+	id string,
+	check policyruntime.CompiledCheck,
+	withStatusMessage bool,
+	withErrorReason bool,
+) policyregistry.AttributeDefinition {
+	detail := executionAttributeDetailNone
+	if withStatusMessage {
+		detail = executionAttributeDetailStatus
+	} else if withErrorReason {
+		detail = executionAttributeDetailError
+	}
+
+	return generatedExecutionAttribute(id, policy.StagePreAuth, policyregistry.AttributeCategoryEnvironment, check, detail)
 }
 
 func registerLuaEnvironmentAttributes(
@@ -473,29 +528,12 @@ func generatedPluginSubjectAttribute(
 	check policyruntime.CompiledCheck,
 	withStatusMessage bool,
 ) policyregistry.AttributeDefinition {
-	definition := policyregistry.AttributeDefinition{
-		ID:            id,
-		Description:   id,
-		Stage:         policy.StageSubjectAnalysis,
-		Operations:    append([]policy.Operation(nil), check.Operations...),
-		ProducerCheck: check.Name,
-		Category:      policyregistry.AttributeCategorySubject,
-		Type:          policyregistry.AttributeTypeBool,
-		Source:        policyregistry.SourceBuiltin,
-	}
-
+	detail := executionAttributeDetailNone
 	if withStatusMessage {
-		definition.Details = map[string]policyregistry.DetailDefinition{
-			detailStatusMessage: {
-				Type:        policyregistry.AttributeTypeString,
-				Sensitivity: policyregistry.DetailSensitivityPublic,
-				Purpose:     policyregistry.DetailPurposeResponseMessage,
-				MaxLength:   256,
-			},
-		}
+		detail = executionAttributeDetailStatus
 	}
 
-	return definition
+	return generatedExecutionAttribute(id, policy.StageSubjectAnalysis, policyregistry.AttributeCategorySubject, check, detail)
 }
 
 func generatedLuaAttribute(
@@ -504,18 +542,51 @@ func generatedLuaAttribute(
 	check policyruntime.CompiledCheck,
 	withStatusMessage bool,
 ) policyregistry.AttributeDefinition {
+	detail := executionAttributeDetailNone
+	if withStatusMessage {
+		detail = executionAttributeDetailStatus
+	}
+
+	return generatedExecutionAttribute(id, stage, policyregistry.AttributeCategoryEnvironment, check, detail)
+}
+
+func generatedLuaErrorAttribute(
+	id string,
+	stage policy.Stage,
+	check policyruntime.CompiledCheck,
+) policyregistry.AttributeDefinition {
+	return generatedExecutionAttribute(id, stage, policyregistry.AttributeCategoryEnvironment, check, executionAttributeDetailError)
+}
+
+type executionAttributeDetail uint8
+
+const (
+	executionAttributeDetailNone executionAttributeDetail = iota
+	executionAttributeDetailStatus
+	executionAttributeDetailError
+)
+
+// generatedExecutionAttribute creates one host-owned boolean execution fact with optional bounded details.
+func generatedExecutionAttribute(
+	id string,
+	stage policy.Stage,
+	category policyregistry.AttributeCategory,
+	check policyruntime.CompiledCheck,
+	detail executionAttributeDetail,
+) policyregistry.AttributeDefinition {
 	definition := policyregistry.AttributeDefinition{
 		ID:            id,
 		Description:   id,
 		Stage:         stage,
 		Operations:    append([]policy.Operation(nil), check.Operations...),
 		ProducerCheck: check.Name,
-		Category:      policyregistry.AttributeCategoryEnvironment,
+		Category:      category,
 		Type:          policyregistry.AttributeTypeBool,
 		Source:        policyregistry.SourceBuiltin,
 	}
 
-	if withStatusMessage {
+	switch detail {
+	case executionAttributeDetailStatus:
 		definition.Details = map[string]policyregistry.DetailDefinition{
 			detailStatusMessage: {
 				Type:        policyregistry.AttributeTypeString,
@@ -524,29 +595,13 @@ func generatedLuaAttribute(
 				MaxLength:   256,
 			},
 		}
+	case executionAttributeDetailError:
+		definition.Details = map[string]policyregistry.DetailDefinition{
+			detailReasonCode: {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
+		}
 	}
 
 	return definition
-}
-
-func generatedLuaErrorAttribute(
-	id string,
-	stage policy.Stage,
-	check policyruntime.CompiledCheck,
-) policyregistry.AttributeDefinition {
-	return policyregistry.AttributeDefinition{
-		ID:            id,
-		Description:   id,
-		Stage:         stage,
-		Operations:    append([]policy.Operation(nil), check.Operations...),
-		ProducerCheck: check.Name,
-		Category:      policyregistry.AttributeCategoryEnvironment,
-		Type:          policyregistry.AttributeTypeBool,
-		Source:        policyregistry.SourceBuiltin,
-		Details: map[string]policyregistry.DetailDefinition{
-			detailReasonCode: {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
-		},
-	}
 }
 
 func registerGeneratedAttributes(registry *policyregistry.AttributeRegistry, definitions []policyregistry.AttributeDefinition) error {

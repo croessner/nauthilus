@@ -163,12 +163,17 @@ func (r *Registry) NewRegistrar(module config.PluginModule) *Registrar {
 		r = NewRegistry()
 	}
 
+	hookAuthorizations, hookAuthorizationErr := newHookAuthorizations(module.Hooks)
+
 	return &Registrar{
-		localNames:      make(map[string]struct{}),
-		debugLocalNames: make(map[string]struct{}),
-		registry:        r,
-		module:          module,
-		config:          NewConfigView(module.Config),
+		localNames:                make(map[string]struct{}),
+		debugLocalNames:           make(map[string]struct{}),
+		hookAuthorizations:        hookAuthorizations,
+		matchedHookAuthorizations: make(map[string]struct{}),
+		hookAuthorizationErr:      hookAuthorizationErr,
+		registry:                  r,
+		module:                    module,
+		config:                    NewConfigView(module.Config),
 	}
 }
 
@@ -180,7 +185,7 @@ func (r *Registry) Components() []Component {
 
 	components := make([]Component, 0, len(r.order))
 	for _, name := range r.order {
-		components = append(components, r.components[name])
+		components = append(components, cloneComponent(r.components[name]))
 	}
 
 	return components
@@ -199,7 +204,7 @@ func (r *Registry) ComponentsByKind(kind ComponentKind) []Component {
 
 	components := make([]Component, 0, len(names))
 	for _, name := range names {
-		components = append(components, r.components[name])
+		components = append(components, cloneComponent(r.components[name]))
 	}
 
 	return components
@@ -306,7 +311,7 @@ func (r *Registry) Lookup(qualifiedName string) (Component, bool) {
 
 	component, ok := r.components[qualifiedName]
 
-	return component, ok
+	return cloneComponent(component), ok
 }
 
 // register stores one committed component after collision checks.
@@ -321,7 +326,7 @@ func (r *Registry) register(component Component) error {
 	}
 
 	component.QualifiedName = qualifiedName
-	r.components[qualifiedName] = component
+	r.components[qualifiedName] = cloneComponent(component)
 	r.byKind[component.Kind] = append(r.byKind[component.Kind], qualifiedName)
 	r.order = append(r.order, qualifiedName)
 
@@ -361,15 +366,18 @@ func (r *Registry) registerDebugModule(module DebugModule) error {
 
 // Registrar records declarations for one module instance.
 type Registrar struct {
-	localNames       map[string]struct{}
-	debugLocalNames  map[string]struct{}
-	registry         *Registry
-	config           *ConfigView
-	module           config.PluginModule
-	policyAttributes []policyregistry.AttributeDefinition
-	capabilities     []pluginapi.Capability
-	components       []Component
-	debugModules     []DebugModule
+	localNames                map[string]struct{}
+	debugLocalNames           map[string]struct{}
+	hookAuthorizations        map[string][]string
+	matchedHookAuthorizations map[string]struct{}
+	registry                  *Registry
+	config                    *ConfigView
+	module                    config.PluginModule
+	hookAuthorizationErr      error
+	policyAttributes          []policyregistry.AttributeDefinition
+	capabilities              []pluginapi.Capability
+	components                []Component
+	debugModules              []DebugModule
 }
 
 var _ pluginapi.Registrar = (*Registrar)(nil)
@@ -505,19 +513,32 @@ func (r *Registrar) RegisterHook(hook pluginapi.Hook) error {
 		return ErrNilComponent
 	}
 
-	descriptor, err := validateHookDescriptor(hook.Descriptor())
+	descriptor, err := r.applyHookAuthorization(hook.Descriptor())
 	if err != nil {
 		return err
 	}
 
-	return r.registerComponent(Component{
+	descriptor, err = validateHookDescriptor(descriptor)
+	if err != nil {
+		return err
+	}
+
+	if err := r.registerComponent(Component{
 		Value:          hook,
 		HookDescriptor: descriptor,
 		ModuleName:     r.module.Name,
 		LocalName:      descriptor.Name,
 		Kind:           ComponentKindHook,
 		Origin:         ComponentOriginNative,
-	})
+	}); err != nil {
+		return err
+	}
+
+	if _, configured := r.hookAuthorizations[descriptor.Name]; configured {
+		r.matchedHookAuthorizations[descriptor.Name] = struct{}{}
+	}
+
+	return nil
 }
 
 // RegisterPolicyAttribute records a native plugin policy attribute declaration.
@@ -572,7 +593,12 @@ func (r *Registrar) Components() []Component {
 		return nil
 	}
 
-	return slices.Clone(r.components)
+	components := make([]Component, 0, len(r.components))
+	for _, component := range r.components {
+		components = append(components, cloneComponent(component))
+	}
+
+	return components
 }
 
 // PolicyAttributes returns policy attributes declared through this registrar.
@@ -602,6 +628,10 @@ func (r *Registrar) DebugModules() []DebugModule {
 func (r *Registrar) Commit() error {
 	if r == nil || r.registry == nil {
 		return errors.New("plugin registrar is not initialized")
+	}
+
+	if err := r.preflightHookAuthorizations(); err != nil {
+		return err
 	}
 
 	if err := r.preflightComponents(); err != nil {
@@ -672,7 +702,22 @@ func (r *Registrar) registerComponent(component Component) error {
 
 	component.QualifiedName = qualifiedName
 	r.localNames[qualifiedName] = struct{}{}
-	r.components = append(r.components, component)
+	r.components = append(r.components, cloneComponent(component))
+
+	return nil
+}
+
+// preflightHookAuthorizations rejects invalid or unmatched operator hook configuration.
+func (r *Registrar) preflightHookAuthorizations() error {
+	if r.hookAuthorizationErr != nil {
+		return r.hookAuthorizationErr
+	}
+
+	for name := range r.hookAuthorizations {
+		if _, matched := r.matchedHookAuthorizations[name]; !matched {
+			return fmt.Errorf("%w: configured hook authorization %q does not match a registered hook", ErrInvalidDescriptor, name)
+		}
+	}
 
 	return nil
 }
@@ -748,6 +793,66 @@ func sensitiveCapability(capability pluginapi.Capability) bool {
 	return capability == pluginapi.CapabilityCredentials || capability == pluginapi.CapabilityMail
 }
 
+// newHookAuthorizations validates and copies operator-owned hook authorization metadata.
+func newHookAuthorizations(authorizations []config.PluginHookAuthorization) (map[string][]string, error) {
+	if len(authorizations) == 0 {
+		return nil, nil
+	}
+
+	result := make(map[string][]string, len(authorizations))
+	for _, authorization := range authorizations {
+		if err := pluginapi.ValidateComponentName(authorization.Name); err != nil {
+			return nil, fmt.Errorf("%w: configured hook authorization name: %w", ErrInvalidDescriptor, err)
+		}
+
+		if _, exists := result[authorization.Name]; exists {
+			return nil, fmt.Errorf("%w: duplicate hook authorization %q", ErrInvalidDescriptor, authorization.Name)
+		}
+
+		scopes, err := pluginapi.NormalizeHookRequiredScopes(authorization.RequiredScopes)
+		if err != nil {
+			return nil, fmt.Errorf("%w: configured hook authorization %q: %w", ErrInvalidDescriptor, authorization.Name, err)
+		}
+
+		result[authorization.Name] = scopes
+	}
+
+	return result, nil
+}
+
+// applyHookAuthorization injects exact operator-owned scopes into a plugin hook descriptor.
+func (r *Registrar) applyHookAuthorization(descriptor pluginapi.HookDescriptor) (pluginapi.HookDescriptor, error) {
+	if r == nil {
+		return pluginapi.HookDescriptor{}, errors.New("plugin registrar is not initialized")
+	}
+
+	if r.hookAuthorizationErr != nil {
+		return pluginapi.HookDescriptor{}, r.hookAuthorizationErr
+	}
+
+	if len(descriptor.RequiredScopes) > 0 {
+		return pluginapi.HookDescriptor{}, fmt.Errorf("%w: hook %q required scopes must be configured by the operator", ErrInvalidDescriptor, descriptor.Name)
+	}
+
+	scopes, configured := r.hookAuthorizations[descriptor.Name]
+	if !configured {
+		return descriptor, nil
+	}
+
+	descriptor.RequiredScopes = slices.Clone(scopes)
+
+	return descriptor, nil
+}
+
+// cloneComponent detaches mutable descriptor metadata from registry-owned state.
+func cloneComponent(component Component) Component {
+	component.SourceDescriptor.Requires = slices.Clone(component.SourceDescriptor.Requires)
+	component.SourceDescriptor.After = slices.Clone(component.SourceDescriptor.After)
+	component.HookDescriptor.RequiredScopes = slices.Clone(component.HookDescriptor.RequiredScopes)
+
+	return component
+}
+
 // validateSourceDescriptor checks a dependency-scheduled source descriptor.
 func validateSourceDescriptor(module string, descriptor pluginapi.SourceDescriptor) (pluginapi.SourceDescriptor, error) {
 	if err := pluginapi.ValidateComponentName(descriptor.Name); err != nil {
@@ -811,6 +916,21 @@ func validateHookDescriptor(descriptor pluginapi.HookDescriptor) (pluginapi.Hook
 	if !hookAuthValid(descriptor.Auth) {
 		return pluginapi.HookDescriptor{}, fmt.Errorf("%w: hook %q auth %q is not supported", ErrInvalidDescriptor, descriptor.Name, descriptor.Auth)
 	}
+
+	requiredScopes, err := pluginapi.NormalizeHookRequiredScopes(descriptor.RequiredScopes)
+	if err != nil {
+		return pluginapi.HookDescriptor{}, fmt.Errorf("%w: hook %q required scopes: %w", ErrInvalidDescriptor, descriptor.Name, err)
+	}
+
+	if len(requiredScopes) > 0 && descriptor.Scope == pluginapi.HookScopePublic {
+		return pluginapi.HookDescriptor{}, fmt.Errorf("%w: public hook %q cannot require bearer scopes", ErrInvalidDescriptor, descriptor.Name)
+	}
+
+	if len(requiredScopes) > 0 && descriptor.Auth != pluginapi.HookAuthToken {
+		return pluginapi.HookDescriptor{}, fmt.Errorf("%w: hook %q with required scopes must use token authentication", ErrInvalidDescriptor, descriptor.Name)
+	}
+
+	descriptor.RequiredScopes = requiredScopes
 
 	return descriptor, nil
 }
