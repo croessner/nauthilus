@@ -13,7 +13,7 @@ Core commit and contract hashes recorded below. This lane did not implement or a
 
 ## Requirement status
 
-| Required Core/API capability | Ist | Soll and evidence |
+| Required Core/API capability | Current status | Target and evidence |
 | --- | --- | --- |
 | Operator-owned hook scopes | Complete | `HookDescriptor.RequiredScopes` is configured by the operator, normalized, de-duplicated, defensively copied, conflict checked, and authorized with the existing any-of semantics before request construction or plugin execution. Empty lists retain the established Scope/Auth fallback. Effective scopes are visible in non-secret config and discovery diagnostics. |
 | Native environment execution facts | Complete | The policy compiler generates `auth.plugin.environment.<module>.<component>.{triggered,abort,error}` from registered components. Snapshot tests cover exact definitions, producer checks, operations, details, and rejection of invalid references. |
