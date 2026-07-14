@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,6 +26,8 @@ import (
 )
 
 const testPrivacyNow = "2026-07-11T12:00:00Z"
+
+var privacyEvidenceSink []privacyEvidence
 
 func TestPrivacyConfigValidationAndDefaults(t *testing.T) {
 	config, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
@@ -123,6 +126,52 @@ func TestNormalizedPrivacySnapshotAndPrefixLookup(t *testing.T) {
 
 	if got := index.Lookup(netip.MustParseAddr("2001:db8:42::7")); len(got) != 1 || got[0].Class != privacyClassKnownVPN {
 		t.Fatalf("IPv6 evidence = %#v", got)
+	}
+}
+
+func TestPrivacyOverridesReuseEvidenceWhenNoOverridesExist(t *testing.T) {
+	now := mustPrivacyTime(t, testPrivacyNow)
+	evidence := []privacyEvidence{{
+		GeneratedAt: now,
+		ConfirmedAt: now,
+		Prefix:      netip.MustParsePrefix("192.0.2.44/32"),
+		Class:       privacyClassTor,
+		Authority:   privacyAuthorityOfficial,
+		SourceID:    "tor_exit",
+		MaxAge:      6 * time.Hour,
+		Confidence:  100,
+	}}
+
+	result := applyPrivacyOverrides(netip.MustParseAddr("192.0.2.44"), evidence, nil, now)
+	if len(result) != 1 || &result[0] != &evidence[0] {
+		t.Fatal("empty override evaluation copied immutable evidence")
+	}
+}
+
+func TestPrivacyExactAddressLookupDoesNotAllocate(t *testing.T) {
+	now := mustPrivacyTime(t, testPrivacyNow)
+	snapshot := privacySnapshot{
+		SourceID:    "tor_exit",
+		Authority:   privacyAuthorityOfficial,
+		GeneratedAt: now,
+		ConfirmedAt: now,
+		MaxAge:      6 * time.Hour,
+		Entries: []privacyEntry{
+			{Prefix: netip.MustParsePrefix("192.0.2.44/32"), Class: privacyClassTor, Confidence: 100},
+			{Prefix: netip.MustParsePrefix("2001:db8::44/128"), Class: privacyClassTor, Confidence: 100},
+		},
+	}
+	index := newPrivacyLookupIndex([]privacySnapshot{snapshot})
+
+	for _, address := range []string{"192.0.2.44", "2001:db8::44"} {
+		addr := netip.MustParseAddr(address)
+		allocations := testing.AllocsPerRun(100, func() {
+			privacyEvidenceSink = index.Lookup(addr)
+		})
+
+		if allocations != 0 {
+			t.Errorf("Lookup(%s) allocations = %.2f, want 0", address, allocations)
+		}
 	}
 }
 
@@ -327,6 +376,146 @@ func TestPrivacyRefreshUsesConditionalValidatorsAndConfirmsNotModified(t *testin
 	}
 }
 
+func TestPrivacyRefreshBuildDoesNotBlockLookup(t *testing.T) {
+	engine, coordinator, buildStarted, buildRelease := blockingPrivacyRefreshFixture(t)
+	refreshDone := make(chan error, 1)
+
+	go func() {
+		refreshDone <- engine.Refresh(context.Background(), coordinator)
+	}()
+
+	<-buildStarted
+
+	lookupDone := make(chan privacyLookupResult, 1)
+
+	go func() {
+		lookupDone <- engine.Lookup(netip.MustParseAddr("192.0.2.44"))
+	}()
+
+	select {
+	case result := <-lookupDone:
+		if result.State != privacyLookupStateEvaluated || result.PrimaryClass != privacyClassTor {
+			t.Fatalf("lookup during rebuild = %#v, want previous Tor state", result)
+		}
+	case <-time.After(100 * time.Millisecond):
+		close(buildRelease)
+		t.Fatal("lookup blocked while the replacement privacy index was built")
+	}
+
+	close(buildRelease)
+
+	if err := <-refreshDone; err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+
+	if result := engine.Lookup(netip.MustParseAddr("198.51.100.8")); result.PrimaryClass != privacyClassTor {
+		t.Fatalf("lookup after refresh = %#v, want refreshed Tor state", result)
+	}
+}
+
+// blockingPrivacyRefreshFixture creates a paused replacement build over one published snapshot.
+func blockingPrivacyRefreshFixture(t *testing.T) (*privacyEngine, *privacySourceCoordinator, chan struct{}, chan struct{}) {
+	t.Helper()
+
+	now := mustPrivacyTime(t, testPrivacyNow)
+
+	oldSnapshot, err := parseTorPrivacySnapshot([]byte("192.0.2.44\n"), privacySourceConfig{
+		ID: "tor_exit", Kind: privacySourceKindTor, Authority: privacyAuthorityOfficial,
+		MaxEntries: 10, MaxAge: 6 * time.Hour,
+	}, now)
+	if err != nil {
+		t.Fatalf("parseTorPrivacySnapshot() error = %v", err)
+	}
+
+	client := &sequencePrivacyHTTPClient{responses: []pluginapi.HTTPResponse{{StatusCode: http.StatusOK, Body: []byte("198.51.100.8\n")}}}
+	coordinator := newPrivacySourceCoordinator(privacySourceConfig{
+		ID: "tor_exit", Kind: privacySourceKindTor, Authority: privacyAuthorityOfficial,
+		URL: "https://check.torproject.org/api/bulk", MaxEntries: 10, MaxDownloadBytes: 1024,
+		RefreshInterval: time.Hour, MinRefreshInterval: 30 * time.Minute, MaxRefreshBackoff: 12 * time.Hour, MaxAge: 6 * time.Hour,
+	}, client, nil)
+	coordinator.now = func() time.Time { return now.Add(time.Hour) }
+
+	buildStarted := make(chan struct{})
+	buildRelease := make(chan struct{})
+	engine := &privacyEngine{
+		state: &privacyLookupState{
+			snapshots:  map[string]privacySnapshot{"tor_exit": oldSnapshot},
+			required:   make(map[string]struct{}),
+			index:      newPrivacyLookupIndex([]privacySnapshot{oldSnapshot}),
+			configured: 1,
+		},
+		now: func() time.Time { return now },
+		indexBuilder: func(snapshots []privacySnapshot) *privacyLookupIndex {
+			close(buildStarted)
+			<-buildRelease
+
+			return newPrivacyLookupIndex(snapshots)
+		},
+	}
+
+	return engine, coordinator, buildStarted, buildRelease
+}
+
+func TestPrivacyConcurrentRefreshesPreserveBothSourceUpdates(t *testing.T) {
+	now := mustPrivacyTime(t, testPrivacyNow)
+	engine := &privacyEngine{
+		state: &privacyLookupState{
+			snapshots:  make(map[string]privacySnapshot),
+			required:   make(map[string]struct{}),
+			index:      newPrivacyLookupIndex(nil),
+			configured: 2,
+		},
+		now: func() time.Time { return now },
+	}
+
+	firstBuildStarted := make(chan struct{})
+	firstBuildRelease := make(chan struct{})
+
+	var builds atomic.Int32
+
+	engine.indexBuilder = func(snapshots []privacySnapshot) *privacyLookupIndex {
+		if builds.Add(1) == 1 {
+			close(firstBuildStarted)
+			<-firstBuildRelease
+		}
+
+		return newPrivacyLookupIndex(snapshots)
+	}
+
+	coordinators := []*privacySourceCoordinator{
+		newPrivacySourceCoordinator(privacySourceConfig{
+			ID: "tor_v4", Kind: privacySourceKindTor, Authority: privacyAuthorityOfficial,
+			URL: "https://feeds.example.test/tor-v4", MaxEntries: 10, MaxDownloadBytes: 1024, MaxAge: 6 * time.Hour,
+		}, &sequencePrivacyHTTPClient{responses: []pluginapi.HTTPResponse{{StatusCode: http.StatusOK, Body: []byte("192.0.2.44\n")}}}, nil),
+		newPrivacySourceCoordinator(privacySourceConfig{
+			ID: "tor_v6", Kind: privacySourceKindTor, Authority: privacyAuthorityOfficial,
+			URL: "https://feeds.example.test/tor-v6", MaxEntries: 10, MaxDownloadBytes: 1024, MaxAge: 6 * time.Hour,
+		}, &sequencePrivacyHTTPClient{responses: []pluginapi.HTTPResponse{{StatusCode: http.StatusOK, Body: []byte("2001:db8::44\n")}}}, nil),
+	}
+
+	refreshDone := make(chan error, len(coordinators))
+
+	go func() { refreshDone <- engine.Refresh(context.Background(), coordinators[0]) }()
+
+	<-firstBuildStarted
+
+	go func() { refreshDone <- engine.Refresh(context.Background(), coordinators[1]) }()
+
+	close(firstBuildRelease)
+
+	for range coordinators {
+		if err := <-refreshDone; err != nil {
+			t.Fatalf("Refresh() error = %v", err)
+		}
+	}
+
+	for _, address := range []string{"192.0.2.44", "2001:db8::44"} {
+		if result := engine.Lookup(netip.MustParseAddr(address)); result.PrimaryClass != privacyClassTor {
+			t.Errorf("Lookup(%s) = %#v, want preserved Tor update", address, result)
+		}
+	}
+}
+
 func TestPrivacyPersistentCacheRoundTrip(t *testing.T) {
 	now := mustPrivacyTime(t, testPrivacyNow)
 	path := filepath.Join(t.TempDir(), "tor.cache.json")
@@ -418,11 +607,13 @@ func TestPrivacyEngineDistinguishesUnavailableAndStale(t *testing.T) {
 	now := mustPrivacyTime(t, testPrivacyNow)
 
 	unavailable := &privacyEngine{
-		snapshots:  make(map[string]privacySnapshot),
-		required:   map[string]struct{}{"required": {}},
-		index:      newPrivacyLookupIndex(nil),
-		now:        func() time.Time { return now },
-		configured: 1,
+		state: &privacyLookupState{
+			snapshots:  make(map[string]privacySnapshot),
+			required:   map[string]struct{}{"required": {}},
+			index:      newPrivacyLookupIndex(nil),
+			configured: 1,
+		},
+		now: func() time.Time { return now },
 	}
 	if result := unavailable.Lookup(netip.MustParseAddr("192.0.2.1")); result.State != privacyLookupStateUnavailable {
 		t.Fatalf("unavailable state = %q", result.State)
@@ -431,11 +622,13 @@ func TestPrivacyEngineDistinguishesUnavailableAndStale(t *testing.T) {
 	staleSnapshot := privacySnapshot{SourceID: "required", ConfirmedAt: now.Add(-7 * time.Hour), MaxAge: 6 * time.Hour}
 
 	stale := &privacyEngine{
-		snapshots:  map[string]privacySnapshot{"required": staleSnapshot},
-		required:   map[string]struct{}{"required": {}},
-		index:      newPrivacyLookupIndex([]privacySnapshot{staleSnapshot}),
-		now:        func() time.Time { return now },
-		configured: 1,
+		state: &privacyLookupState{
+			snapshots:  map[string]privacySnapshot{"required": staleSnapshot},
+			required:   map[string]struct{}{"required": {}},
+			index:      newPrivacyLookupIndex([]privacySnapshot{staleSnapshot}),
+			configured: 1,
+		},
+		now: func() time.Time { return now },
 	}
 	if result := stale.Lookup(netip.MustParseAddr("192.0.2.1")); result.State != privacyLookupStateStale || !result.Stale {
 		t.Fatalf("stale result = %#v", result)

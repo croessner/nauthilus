@@ -277,6 +277,10 @@ optional delegated ASN registry metadata refresh, runtime facts, bounded metrics
 example config is available in
 `server/docs/examples/go_plugin_geoip.yml`.
 
+The plugin eagerly reads primary and ASN MMDB files and constructs readers with `maxminddb.FromBytes`; request-time
+lookups do not depend on mmap-backed database pages. Each process retains approximately the combined MMDB file sizes,
+and a config reload briefly retains both the old and replacement buffers during the atomic swap.
+
 GeoIP plugin config highlights:
 
 - `database_path`: absolute path to a JSON fixture or MaxMind `.mmdb` database.
@@ -311,6 +315,11 @@ GeoIP plugin config highlights:
   provider side rather than the public egress address.
 - `privacy_intelligence.public_log_fields`: opt-in bounded request-log fields for evaluated or stale results. Policy
   facts and `plugin.exchange.geoip` remain available when this is disabled.
+
+Tempo can split request-time GeoIP work by the child spans `geoip.database.primary.lookup`,
+`geoip.asn.routing.lookup`, `geoip.database.asn.lookup`, `geoip.asn.registry.lookup`, and
+`geoip.privacy.lookup`. Each executed span carries the low-cardinality `geoip.lookup.result` attribute with
+`matched`, `miss`, or `error`.
 
 Community and provider feeds are not bundled. They must be normalized to the versioned schema documented in
 `contrib/plugins/geoip/README.md`, and operators must verify license, attribution, automated-access, and redistribution

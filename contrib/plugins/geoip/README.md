@@ -31,6 +31,12 @@ snapshot that is refreshed by a supervised background job. The test fixture `tes
 not a real MaxMind database; it exists only so unit tests can verify `.mmdb` path handling without committing licensed
 database contents.
 
+MaxMind databases are read completely during plugin initialization or reload and opened with
+`maxminddb.FromBytes`. The request path therefore reads a process-owned memory buffer instead of an mmap-backed file,
+avoiding demand paging from the database volume during authentication. Operators should budget approximately the
+combined primary and ASN MMDB file sizes per Nauthilus process. A reload temporarily holds the current and replacement
+database buffers until the atomic swap completes and the previous readers are released.
+
 ## Build
 
 ```sh
@@ -108,6 +114,11 @@ requests, `Cache-Control` and `Expires` lower bounds, `Retry-After`, bounded jit
 per-source refresh coalescing, and a global download semaphore. A response is parsed and validated completely before an
 atomic snapshot swap. A failed refresh retains the last known good snapshot. A validated persistent cache can satisfy
 startup; an expired cache remains usable only as explicitly stale evidence.
+
+Privacy refreshes build their replacement immutable index before a short publication lock, so request lookup continues
+against the last complete state during construction. Exact IPv4 and IPv6 addresses use a direct address index, while
+broader networks use terminating prefix tries. Database reloads likewise publish a new database owner immediately;
+in-flight requests retain a short-lived lease on the previous in-memory readers until their lookup completes.
 
 Tor sources use `kind: tor_exit_list`, `authority: official`, and support complete bare-address lists,
 TorDNSEL/CollecTor 1.0 exit records, and bounded Onionoo details responses containing running relays with the `Exit`
@@ -205,3 +216,18 @@ native ClickHouse plugin consumes the typed exchange values first and compatible
 plugin artifacts that emit privacy values, apply the additive `geoip_privacy_*` and `geoip_is_*` columns from
 `contrib/clickhouse-kubernetes/schema.sql`; see
 [the Kubernetes ClickHouse guide](../../clickhouse-kubernetes/README.md) for schema-first ordering and verification SQL.
+
+## Request-Time Tracing
+
+The plugin adds child spans below `geoip.environment.evaluate` so lookup costs can be attributed without exposing
+request values:
+
+- `geoip.database.primary.lookup`
+- `geoip.asn.routing.lookup`
+- `geoip.database.asn.lookup`
+- `geoip.asn.registry.lookup`
+- `geoip.privacy.lookup`
+
+Each executed child span sets `geoip.lookup.result` to `matched`, `miss`, or `error`. Optional child spans are
+absent when their corresponding lookup source is not configured, and a primary database miss ends location enrichment
+before the ASN steps.

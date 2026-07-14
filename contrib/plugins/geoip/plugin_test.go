@@ -25,6 +25,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -133,6 +135,45 @@ func TestEnvironmentSourceEmitsExpectedFactsRuntimeDeltaMetricsAndTrace(t *testi
 	}
 }
 
+func TestEnvironmentSourceTracesLookupSubsteps(t *testing.T) {
+	module := privacyModuleWithLocalTor(t, testClientIP, false)
+	module.Config[testConfigASNDatabaseKey] = testDatabasePath(t, "geoip.json")
+	module.Config["asn_database_format"] = databaseFormatJSON
+
+	runner, plugin, _, tracer := startedTestRunnerWithPlugin(t, module)
+	defer stopRunner(t, runner)
+
+	routingSnapshot, err := buildASNLookupSnapshot([][]byte{[]byte(testASNPrefix + " 64500\n")})
+	if err != nil {
+		t.Fatalf("buildASNLookupSnapshot() error = %v", err)
+	}
+
+	routingLookup := newASNLookupService()
+	routingLookup.Swap(routingSnapshot)
+
+	plugin.mu.Lock()
+	plugin.asnLookup = routingLookup
+	plugin.asnRegistry = mustASNRegistrySnapshot(t, []byte(testRegistryARIN+"|"+testCountryUS+"|asn|64500|1|20240101|allocated\n"))
+	plugin.mu.Unlock()
+
+	_, err = runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
+	if err != nil {
+		t.Fatalf("EvaluateEnvironment() error = %v", err)
+	}
+
+	for _, spanName := range []string{
+		spanGeoIPPrimaryDatabaseLookup,
+		spanGeoIPASNRoutingLookup,
+		spanGeoIPASNDatabaseLookup,
+		spanGeoIPASNRegistryLookup,
+		spanGeoIPPrivacyLookup,
+	} {
+		if !tracer.sawSpan(spanName, traceAttrLookupResult, resultMatched) {
+			t.Errorf("spans = %#v, want %s with matched result", tracer.spans, spanName)
+		}
+	}
+}
+
 func TestMissingDatabaseFailsStartupForRequiredModule(t *testing.T) {
 	module := testModule(filepath.Join(t.TempDir(), "missing.json"))
 	registry, plugin := registerTestPlugin(t, module)
@@ -186,6 +227,69 @@ func TestReconfigureFailureKeepsPreviousDatabaseState(t *testing.T) {
 
 	assertFact(t, result.Facts, factCountryISO, testCountryDE)
 	assertFact(t, result.Facts, factASN, 64500)
+}
+
+func TestDatabaseSwapDoesNotWaitForActiveLookup(t *testing.T) {
+	oldDatabase := newLifecycleTestDatabase(testCountryDE, true)
+	replacement := newLifecycleTestDatabase(testReloadedCountry, false)
+	plugin := NewPlugin()
+	plugin.swapDatabases(context.Background(), moduleConfig{}, geoDatabases{primary: oldDatabase}, false)
+
+	lookupDone := make(chan error, 1)
+
+	go func() {
+		_, _, err := plugin.lookupRecord(context.Background(), netip.MustParseAddr(testClientIP))
+		lookupDone <- err
+	}()
+
+	<-oldDatabase.started
+
+	swapDone := make(chan struct{})
+
+	go func() {
+		plugin.swapDatabases(context.Background(), moduleConfig{}, geoDatabases{primary: replacement}, false)
+		close(swapDone)
+	}()
+
+	swapCompletedEarly := false
+
+	select {
+	case <-swapDone:
+		swapCompletedEarly = true
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	select {
+	case <-oldDatabase.closed:
+		t.Fatal("old database closed while its lookup was active")
+	default:
+	}
+
+	oldDatabase.unblock()
+
+	if err := <-lookupDone; err != nil {
+		t.Fatalf("old lookup error = %v", err)
+	}
+
+	<-swapDone
+	<-oldDatabase.closed
+
+	if !swapCompletedEarly {
+		t.Fatal("database swap waited for the active lookup")
+	}
+
+	record, matched, err := plugin.lookupRecord(context.Background(), netip.MustParseAddr(testClientIP))
+	if err != nil || !matched || record.CountryISO != testReloadedCountry {
+		t.Fatalf("replacement lookup = %#v/%t/%v, want %q", record, matched, err, testReloadedCountry)
+	}
+
+	if calls := oldDatabase.closeCalls.Load(); calls != 1 {
+		t.Fatalf("old database Close() calls = %d, want 1", calls)
+	}
+
+	if err := plugin.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
 }
 
 func TestInvalidDatabaseFailsValidation(t *testing.T) {
@@ -677,6 +781,69 @@ func stopRunner(t *testing.T, runner *pluginruntime.Runner) {
 
 	if err := runner.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop() error = %v", err)
+	}
+}
+
+type lifecycleTestDatabase struct {
+	started     chan struct{}
+	release     chan struct{}
+	closed      chan struct{}
+	record      geoRecord
+	startOnce   sync.Once
+	releaseOnce sync.Once
+	closeOnce   sync.Once
+	closeCalls  atomic.Int32
+}
+
+// newLifecycleTestDatabase creates a controllable database for replacement lifetime tests.
+func newLifecycleTestDatabase(country string, blocking bool) *lifecycleTestDatabase {
+	database := &lifecycleTestDatabase{
+		closed: make(chan struct{}),
+		record: geoRecord{CountryISO: country, Prefix: netip.MustParsePrefix("203.0.113.0/24")},
+	}
+
+	if blocking {
+		database.started = make(chan struct{})
+		database.release = make(chan struct{})
+	}
+
+	return database
+}
+
+// Lookup optionally blocks until the lifetime test releases the active reader.
+func (d *lifecycleTestDatabase) Lookup(ctx context.Context, _ netip.Addr) (geoRecord, bool, error) {
+	if d.started != nil {
+		d.startOnce.Do(func() { close(d.started) })
+	}
+
+	if d.release != nil {
+		select {
+		case <-d.release:
+		case <-ctx.Done():
+			return geoRecord{}, false, ctx.Err()
+		}
+	}
+
+	return d.record, true, nil
+}
+
+// Records reports one synthetic lookup record.
+func (d *lifecycleTestDatabase) Records() int {
+	return 1
+}
+
+// Close records database retirement and makes it observable to the test.
+func (d *lifecycleTestDatabase) Close() error {
+	d.closeCalls.Add(1)
+	d.closeOnce.Do(func() { close(d.closed) })
+
+	return nil
+}
+
+// unblock releases a blocking lookup exactly once.
+func (d *lifecycleTestDatabase) unblock() {
+	if d.release != nil {
+		d.releaseOnce.Do(func() { close(d.release) })
 	}
 }
 

@@ -20,14 +20,20 @@ import (
 
 type privacyEngine struct {
 	coordinators []*privacySourceCoordinator
-	snapshots    map[string]privacySnapshot
-	overrides    []privacyOverrideConfig
-	required     map[string]struct{}
-	index        *privacyLookupIndex
-	hosting      privacyHostingConfig
-	configured   int
+	state        *privacyLookupState
 	now          func() time.Time
+	indexBuilder func([]privacySnapshot) *privacyLookupIndex
 	mu           sync.RWMutex
+	publishMu    sync.Mutex
+}
+
+type privacyLookupState struct {
+	snapshots  map[string]privacySnapshot
+	overrides  []privacyOverrideConfig
+	required   map[string]struct{}
+	index      *privacyLookupIndex
+	hosting    privacyHostingConfig
+	configured int
 }
 
 // loadPrivacyEngine builds every initial source candidate before publishing a lookup engine.
@@ -41,7 +47,17 @@ func loadPrivacyEngine(ctx context.Context, config privacyConfig, host pluginapi
 		configured++
 	}
 
-	engine := &privacyEngine{snapshots: make(map[string]privacySnapshot), required: make(map[string]struct{}), overrides: append([]privacyOverrideConfig(nil), config.Overrides...), hosting: config.Hosting, now: time.Now, configured: configured}
+	engine := &privacyEngine{
+		state: &privacyLookupState{
+			snapshots:  make(map[string]privacySnapshot),
+			overrides:  append([]privacyOverrideConfig(nil), config.Overrides...),
+			required:   make(map[string]struct{}),
+			hosting:    config.Hosting,
+			configured: configured,
+		},
+		now:          time.Now,
+		indexBuilder: newPrivacyLookupIndex,
+	}
 	semaphore := make(chan struct{}, config.Refresh.MaxConcurrentDownloads)
 
 	for _, source := range config.Sources {
@@ -51,7 +67,7 @@ func loadPrivacyEngine(ctx context.Context, config privacyConfig, host pluginapi
 	}
 
 	engine.addHostingSnapshot(config.Hosting)
-	engine.rebuildIndexLocked()
+	engine.state.index = engine.buildIndex(engine.state.snapshots)
 
 	return engine, nil
 }
@@ -59,7 +75,7 @@ func loadPrivacyEngine(ctx context.Context, config privacyConfig, host pluginapi
 // loadSource initializes one required or optional local or remote source.
 func (e *privacyEngine) loadSource(ctx context.Context, source privacySourceConfig, refresh privacyRefreshConfig, host pluginapi.Host, semaphore chan struct{}) error {
 	if source.Required {
-		e.required[source.ID] = struct{}{}
+		e.state.required[source.ID] = struct{}{}
 	}
 
 	if source.Path != "" {
@@ -80,7 +96,7 @@ func (e *privacyEngine) loadLocalSource(ctx context.Context, source privacySourc
 		return nil
 	}
 
-	e.snapshots[source.ID] = snapshot
+	e.state.snapshots[source.ID] = snapshot
 
 	return nil
 }
@@ -100,7 +116,7 @@ func (e *privacyEngine) loadRemoteSource(ctx context.Context, source privacySour
 
 	cached := coordinator.Snapshot()
 	if cacheErr == nil && cached.SourceID != "" {
-		e.snapshots[source.ID] = cached
+		e.state.snapshots[source.ID] = cached
 	}
 
 	if privacyCacheCanDefer(source, cached, e.now()) {
@@ -112,7 +128,7 @@ func (e *privacyEngine) loadRemoteSource(ctx context.Context, source privacySour
 
 	refreshErr := coordinator.Refresh(ctx)
 	if refreshErr == nil {
-		e.snapshots[source.ID] = coordinator.Snapshot()
+		e.state.snapshots[source.ID] = coordinator.Snapshot()
 	} else if source.Required && coordinator.Snapshot().SourceID == "" {
 		return fmt.Errorf("load required privacy source %q: %w", source.ID, refreshErr)
 	}
@@ -167,28 +183,25 @@ func (e *privacyEngine) LookupWithRecord(addr netip.Addr, record geoRecord) priv
 		return privacyLookupResult{State: privacyLookupStateNoSources}
 	}
 
-	e.mu.RLock()
-
-	if e.configured == 0 && len(e.snapshots) == 0 {
-		e.mu.RUnlock()
-
+	state := e.currentState()
+	if state == nil {
 		return privacyLookupResult{State: privacyLookupStateNoSources}
 	}
 
-	if len(e.snapshots) == 0 {
-		e.mu.RUnlock()
+	if state.configured == 0 && len(state.snapshots) == 0 {
+		return privacyLookupResult{State: privacyLookupStateNoSources}
+	}
 
+	if len(state.snapshots) == 0 {
 		return privacyLookupResult{State: privacyLookupStateUnavailable}
 	}
 
 	now := e.now()
-	evidence := e.index.Lookup(addr)
-	evidence = append(evidence, e.hostingEvidence(addr, record, now)...)
-	overrides := append([]privacyOverrideConfig(nil), e.overrides...)
-	requiredStale := e.requiredSourceStaleLocked(now)
-	e.mu.RUnlock()
+	evidence := state.index.Lookup(addr)
+	evidence = append(evidence, state.hostingEvidence(addr, record, now)...)
+	requiredStale := state.requiredSourceStale(now)
 
-	result := mergePrivacyEvidence(applyPrivacyOverrides(addr, evidence, overrides, now), now)
+	result := mergePrivacyEvidence(applyPrivacyOverrides(addr, evidence, state.overrides, now), now)
 
 	result.State = privacyLookupStateEvaluated
 	if result.Stale || requiredStale {
@@ -199,9 +212,17 @@ func (e *privacyEngine) LookupWithRecord(addr netip.Addr, record geoRecord) priv
 	return result
 }
 
+// currentState returns the immutable request-side privacy state.
+func (e *privacyEngine) currentState() *privacyLookupState {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	return e.state
+}
+
 // hostingEvidence derives hosting classification without creating VPN evidence.
-func (e *privacyEngine) hostingEvidence(addr netip.Addr, record geoRecord, now time.Time) []privacyEvidence {
-	if !e.hosting.Enabled || !e.hosting.matches(record) {
+func (s *privacyLookupState) hostingEvidence(addr netip.Addr, record geoRecord, now time.Time) []privacyEvidence {
+	if !s.hosting.Enabled || !s.hosting.matches(record) {
 		return nil
 	}
 
@@ -213,14 +234,14 @@ func (e *privacyEngine) hostingEvidence(addr netip.Addr, record geoRecord, now t
 		Authority:   privacyAuthorityDerived,
 		SourceID:    string(privacyClassHosting),
 		MaxAge:      defaultPrivacySourceMaxAge,
-		Confidence:  e.hosting.Confidence,
+		Confidence:  s.hosting.Confidence,
 	}}
 }
 
-// requiredSourceStaleLocked reports stale or missing required source state.
-func (e *privacyEngine) requiredSourceStaleLocked(now time.Time) bool {
-	for sourceID := range e.required {
-		snapshot, found := e.snapshots[sourceID]
+// requiredSourceStale reports stale or missing required source state.
+func (s *privacyLookupState) requiredSourceStale(now time.Time) bool {
+	for sourceID := range s.required {
+		snapshot, found := s.snapshots[sourceID]
 		if !found || (snapshot.MaxAge > 0 && now.Sub(snapshot.ConfirmedAt) > snapshot.MaxAge) {
 			return true
 		}
@@ -235,11 +256,13 @@ func (e *privacyEngine) Records() int {
 		return 0
 	}
 
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	state := e.currentState()
+	if state == nil {
+		return 0
+	}
 
 	records := 0
-	for _, snapshot := range e.snapshots {
+	for _, snapshot := range state.snapshots {
 		records += len(snapshot.Entries)
 	}
 
@@ -254,9 +277,14 @@ func (e *privacyEngine) Refresh(ctx context.Context, coordinator *privacySourceC
 
 	snapshot := coordinator.Snapshot()
 
+	e.publishMu.Lock()
+	defer e.publishMu.Unlock()
+
+	current := e.currentState()
+	next := current.withSnapshot(snapshot, e.buildIndex)
+
 	e.mu.Lock()
-	e.snapshots[snapshot.SourceID] = snapshot
-	e.rebuildIndexLocked()
+	e.state = next
 	e.mu.Unlock()
 
 	return nil
@@ -275,17 +303,41 @@ func (e *privacyEngine) addHostingSnapshot(config privacyHostingConfig) {
 		entries = append(entries, privacyEntry{Prefix: prefix, Class: privacyClassHosting, Confidence: config.Confidence})
 	}
 
-	e.snapshots[string(privacyClassHosting)] = privacySnapshot{Entries: entries, SourceID: string(privacyClassHosting), Kind: privacySourceKindNormalized, Authority: privacyAuthorityDerived, GeneratedAt: now, ConfirmedAt: now, LoadedAt: now, MaxAge: defaultPrivacySourceMaxAge}
+	e.state.snapshots[string(privacyClassHosting)] = privacySnapshot{Entries: entries, SourceID: string(privacyClassHosting), Kind: privacySourceKindNormalized, Authority: privacyAuthorityDerived, GeneratedAt: now, ConfirmedAt: now, LoadedAt: now, MaxAge: defaultPrivacySourceMaxAge}
 }
 
-// rebuildIndexLocked publishes a complete index built from valid source snapshots.
-func (e *privacyEngine) rebuildIndexLocked() {
-	snapshots := make([]privacySnapshot, 0, len(e.snapshots))
-	for _, snapshot := range e.snapshots {
-		snapshots = append(snapshots, snapshot)
+// buildIndex builds a complete immutable index through the configured implementation.
+func (e *privacyEngine) buildIndex(snapshots map[string]privacySnapshot) *privacyLookupIndex {
+	builder := e.indexBuilder
+	if builder == nil {
+		builder = newPrivacyLookupIndex
 	}
 
-	e.index = newPrivacyLookupIndex(snapshots)
+	values := make([]privacySnapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		values = append(values, snapshot)
+	}
+
+	return builder(values)
+}
+
+// withSnapshot builds a replacement state without mutating the published state.
+func (s *privacyLookupState) withSnapshot(snapshot privacySnapshot, build func(map[string]privacySnapshot) *privacyLookupIndex) *privacyLookupState {
+	snapshots := make(map[string]privacySnapshot, len(s.snapshots)+1)
+	for sourceID, current := range s.snapshots {
+		snapshots[sourceID] = current
+	}
+
+	snapshots[snapshot.SourceID] = snapshot
+
+	return &privacyLookupState{
+		snapshots:  snapshots,
+		overrides:  s.overrides,
+		required:   s.required,
+		index:      build(snapshots),
+		hosting:    s.hosting,
+		configured: s.configured,
+	}
 }
 
 // runPrivacyRefreshLoop schedules remote refreshes without blocking request-time lookup.

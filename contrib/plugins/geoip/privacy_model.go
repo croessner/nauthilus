@@ -130,7 +130,19 @@ type onionooPrivacyRelay struct {
 }
 
 type privacyLookupIndex struct {
-	prefixes map[netip.Prefix][]privacyEvidence
+	exact    map[netip.Addr][]privacyEvidence
+	prefixes privacyPrefixTrie
+}
+
+type privacyPrefixTrie struct {
+	root4 *privacyPrefixTrieNode
+	root6 *privacyPrefixTrieNode
+}
+
+type privacyPrefixTrieNode struct {
+	zero     *privacyPrefixTrieNode
+	one      *privacyPrefixTrieNode
+	evidence []privacyEvidence
 }
 
 // parseNormalizedPrivacySnapshot validates one complete versioned normalized candidate.
@@ -397,20 +409,31 @@ func isASCIIHex(value string) bool {
 	return true
 }
 
-// newPrivacyLookupIndex builds an immutable prefix map with bounded address lookup cost.
+// newPrivacyLookupIndex builds immutable exact-address and broader-prefix indexes.
 func newPrivacyLookupIndex(snapshots []privacySnapshot) *privacyLookupIndex {
-	index := &privacyLookupIndex{prefixes: make(map[netip.Prefix][]privacyEvidence)}
+	index := &privacyLookupIndex{exact: make(map[netip.Addr][]privacyEvidence)}
 
 	for _, snapshot := range snapshots {
 		for _, entry := range snapshot.Entries {
 			evidence := privacyEvidence{GeneratedAt: snapshot.GeneratedAt, ConfirmedAt: snapshot.ConfirmedAt, Prefix: entry.Prefix, Class: entry.Class, Authority: snapshot.Authority, SourceID: snapshot.SourceID, Provider: entry.Provider, MaxAge: snapshot.MaxAge, Confidence: entry.Confidence}
-			index.prefixes[entry.Prefix] = append(index.prefixes[entry.Prefix], evidence)
+			prefix := entry.Prefix.Masked()
+
+			if prefix.Bits() == prefix.Addr().BitLen() {
+				address := prefix.Addr().Unmap()
+				index.exact[address] = append(index.exact[address], evidence)
+
+				continue
+			}
+
+			index.prefixes.Insert(prefix, evidence)
 		}
 	}
 
-	for prefix := range index.prefixes {
-		sortPrivacyEvidence(index.prefixes[prefix])
+	for address := range index.exact {
+		sortPrivacyEvidence(index.exact[address])
 	}
+
+	index.prefixes.Sort()
 
 	return index
 }
@@ -422,13 +445,112 @@ func (i *privacyLookupIndex) Lookup(addr netip.Addr) []privacyEvidence {
 	}
 
 	addr = addr.Unmap()
-	result := make([]privacyEvidence, 0)
+	prefixEvidence := i.prefixes.Lookup(addr)
+	exactEvidence := i.exact[addr]
 
-	for bits := 0; bits <= addr.BitLen(); bits++ {
-		result = append(result, i.prefixes[netip.PrefixFrom(addr, bits).Masked()]...)
+	if len(prefixEvidence) == 0 {
+		return exactEvidence[:len(exactEvidence):len(exactEvidence)]
+	}
+
+	result := make([]privacyEvidence, 0, len(prefixEvidence)+len(exactEvidence))
+	result = append(result, prefixEvidence...)
+	result = append(result, exactEvidence...)
+
+	return result
+}
+
+// Insert stores broader-prefix evidence at its matching trie node.
+func (t *privacyPrefixTrie) Insert(prefix netip.Prefix, evidence privacyEvidence) {
+	prefix = prefix.Masked()
+	root := t.insertRoot(prefix.Addr())
+	node := root
+
+	for bit := 0; bit < prefix.Bits(); bit++ {
+		if addrBit(prefix.Addr(), bit) {
+			if node.one == nil {
+				node.one = &privacyPrefixTrieNode{}
+			}
+
+			node = node.one
+		} else {
+			if node.zero == nil {
+				node.zero = &privacyPrefixTrieNode{}
+			}
+
+			node = node.zero
+		}
+	}
+
+	node.evidence = append(node.evidence, evidence)
+}
+
+// Lookup collects evidence until the first missing address branch.
+func (t privacyPrefixTrie) Lookup(addr netip.Addr) []privacyEvidence {
+	node := t.lookupRoot(addr)
+	if node == nil {
+		return nil
+	}
+
+	result := append([]privacyEvidence(nil), node.evidence...)
+
+	for bit := 0; bit < addrBits(addr); bit++ {
+		if addrBit(addr, bit) {
+			node = node.one
+		} else {
+			node = node.zero
+		}
+
+		if node == nil {
+			break
+		}
+
+		result = append(result, node.evidence...)
 	}
 
 	return result
+}
+
+// Sort orders evidence stored at every populated trie node.
+func (t privacyPrefixTrie) Sort() {
+	sortPrivacyPrefixTrieNode(t.root4)
+	sortPrivacyPrefixTrieNode(t.root6)
+}
+
+// insertRoot returns the address-family root, creating it when necessary.
+func (t *privacyPrefixTrie) insertRoot(addr netip.Addr) *privacyPrefixTrieNode {
+	if addr.Unmap().Is4() {
+		if t.root4 == nil {
+			t.root4 = &privacyPrefixTrieNode{}
+		}
+
+		return t.root4
+	}
+
+	if t.root6 == nil {
+		t.root6 = &privacyPrefixTrieNode{}
+	}
+
+	return t.root6
+}
+
+// lookupRoot returns the address-family root without allocating it.
+func (t privacyPrefixTrie) lookupRoot(addr netip.Addr) *privacyPrefixTrieNode {
+	if addr.Unmap().Is4() {
+		return t.root4
+	}
+
+	return t.root6
+}
+
+// sortPrivacyPrefixTrieNode recursively sorts one bounded-depth trie branch.
+func sortPrivacyPrefixTrieNode(node *privacyPrefixTrieNode) {
+	if node == nil {
+		return
+	}
+
+	sortPrivacyEvidence(node.evidence)
+	sortPrivacyPrefixTrieNode(node.zero)
+	sortPrivacyPrefixTrieNode(node.one)
 }
 
 // mergePrivacyEvidence creates a deterministic classification view without policy decisions.
@@ -480,11 +602,17 @@ func mergePrivacyEvidence(evidence []privacyEvidence, now time.Time) privacyLook
 
 // applyPrivacyOverrides adds operator evidence and suppresses only permitted weaker evidence.
 func applyPrivacyOverrides(addr netip.Addr, evidence []privacyEvidence, overrides []privacyOverrideConfig, now time.Time) []privacyEvidence {
-	result := append([]privacyEvidence(nil), evidence...)
+	result := evidence
+	copied := false
 
 	for _, override := range overrides {
 		if (!override.ExpiresAt.IsZero() && !override.ExpiresAt.After(now)) || !override.Network.Contains(addr) {
 			continue
+		}
+
+		if !copied {
+			result = append([]privacyEvidence(nil), evidence...)
+			copied = true
 		}
 
 		result = slices.DeleteFunc(result, func(item privacyEvidence) bool {
@@ -499,8 +627,6 @@ func applyPrivacyOverrides(addr netip.Addr, evidence []privacyEvidence, override
 			result = append(result, privacyEvidence{GeneratedAt: now, ConfirmedAt: now, Prefix: override.Network, Class: class, Authority: privacyAuthorityOperator, SourceID: "override", MaxAge: 24 * time.Hour, Confidence: 100})
 		}
 	}
-
-	sortPrivacyEvidence(result)
 
 	return result
 }

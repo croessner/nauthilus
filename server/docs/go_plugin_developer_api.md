@@ -506,6 +506,10 @@ The GeoIP reference plugin in `contrib/plugins/geoip` remains the fuller lifecyc
 attributes, starts init work and supervised refresh workers, emits environment facts and runtime deltas, uses bounded
 metrics/tracing, and supports config-only reload.
 
+Its MaxMind loader reads each MMDB completely before constructing a reader with `maxminddb.FromBytes`, which keeps
+request-time lookups independent of mmap demand paging. Dedicated child spans separate primary database, ASN routing,
+ASN database, ASN registry, and privacy lookup time while sharing one bounded `geoip.lookup.result` vocabulary.
+
 Its optional privacy-intelligence path also demonstrates the lifecycle/request boundary for untrusted list data.
 Lifecycle code loads local files or calls `Host.HTTP("privacy")`, validates a complete bounded candidate, and atomically
 publishes an immutable prefix index. Request-time `Evaluate` only reads that index and returns registered facts plus the

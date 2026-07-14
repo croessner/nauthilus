@@ -184,18 +184,20 @@ func TestPrivacyPublicLogsAreOptionalWithoutRemovingFacts(t *testing.T) {
 
 func TestPrivacyHostingRulesUseGeoIPASNAndOrganizationWithoutImplyingVPN(t *testing.T) {
 	engine := &privacyEngine{
-		snapshots: map[string]privacySnapshot{
-			"hosting": {SourceID: "hosting", ConfirmedAt: mustPrivacyTime(t, testPrivacyNow), MaxAge: 24 * time.Hour},
+		state: &privacyLookupState{
+			snapshots: map[string]privacySnapshot{
+				"hosting": {SourceID: "hosting", ConfirmedAt: mustPrivacyTime(t, testPrivacyNow), MaxAge: 24 * time.Hour},
+			},
+			index: newPrivacyLookupIndex(nil),
+			hosting: privacyHostingConfig{
+				ASNs:       []int{64500},
+				Patterns:   []string{"example access"},
+				Confidence: 50,
+				Enabled:    true,
+			},
+			configured: 1,
 		},
-		index: newPrivacyLookupIndex(nil),
-		hosting: privacyHostingConfig{
-			ASNs:       []int{64500},
-			Patterns:   []string{"example access"},
-			Confidence: 50,
-			Enabled:    true,
-		},
-		configured: 1,
-		now:        func() time.Time { return mustPrivacyTime(t, testPrivacyNow) },
+		now: func() time.Time { return mustPrivacyTime(t, testPrivacyNow) },
 	}
 
 	for name, record := range map[string]geoRecord{

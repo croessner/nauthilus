@@ -199,19 +199,24 @@ func (s geoIPEnvironmentSource) lookupPrivacy(ctx context.Context, config privac
 
 	s.plugin.mu.RLock()
 	engine := s.plugin.privacy
+	tracer := s.plugin.tracer
 	s.plugin.mu.RUnlock()
 
-	if engine == nil {
-		return privacyLookupResult{State: privacyLookupStateUnavailable}, nil
-	}
+	result, _, err := traceGeoIPLookup(lookupCtx, tracer, spanGeoIPPrivacyLookup, func(spanCtx context.Context) (privacyLookupResult, bool, error) {
+		if engine == nil {
+			return privacyLookupResult{State: privacyLookupStateUnavailable}, false, nil
+		}
 
-	result := engine.LookupWithRecord(addr, record)
+		lookup := engine.LookupWithRecord(addr, record)
 
-	if err := lookupCtx.Err(); err != nil {
-		return privacyLookupResult{}, err
-	}
+		if lookupErr := spanCtx.Err(); lookupErr != nil {
+			return privacyLookupResult{}, false, lookupErr
+		}
 
-	return result, nil
+		return lookup, len(lookup.Classes) > 0, nil
+	})
+
+	return result, err
 }
 
 // startSpan creates a component-scoped child span for request-time lookup work.

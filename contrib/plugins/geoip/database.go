@@ -39,6 +39,12 @@ type geoDatabase interface {
 
 type databaseLoader func(context.Context, moduleConfig) (geoDatabase, error)
 
+type maxMindReaderFactory interface {
+	FromBytes([]byte) (*maxminddb.Reader, error)
+}
+
+type inMemoryMaxMindReaderFactory struct{}
+
 type geoDatabases struct {
 	primary geoDatabase
 	asn     geoDatabase
@@ -167,8 +173,13 @@ func loadFileDatabase(ctx context.Context, path string) (*fileDatabase, error) {
 	return &fileDatabase{records: records}, nil
 }
 
-// loadMaxMindDatabase opens a MaxMind DB reader for City, Country, or ASN records.
+// loadMaxMindDatabase eagerly loads a MaxMind database into process memory.
 func loadMaxMindDatabase(ctx context.Context, path string) (*maxMindDatabase, error) {
+	return loadMaxMindDatabaseWithFactory(ctx, path, inMemoryMaxMindReaderFactory{})
+}
+
+// loadMaxMindDatabaseWithFactory reads the complete database before constructing its reader.
+func loadMaxMindDatabaseWithFactory(ctx context.Context, path string, factory maxMindReaderFactory) (*maxMindDatabase, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -177,12 +188,26 @@ func loadMaxMindDatabase(ctx context.Context, path string) (*maxMindDatabase, er
 		return nil, fmt.Errorf("database_path must be absolute: %s", path)
 	}
 
-	reader, err := maxminddb.Open(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("open MaxMind database %q: %w", path, err)
+		return nil, fmt.Errorf("read MaxMind database %q: %w", path, err)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	reader, err := factory.FromBytes(raw)
+	if err != nil {
+		return nil, fmt.Errorf("open MaxMind database %q from memory: %w", path, err)
 	}
 
 	return &maxMindDatabase{reader: reader, path: path}, nil
+}
+
+// FromBytes constructs a MaxMind reader over the retained in-memory database bytes.
+func (inMemoryMaxMindReaderFactory) FromBytes(raw []byte) (*maxminddb.Reader, error) {
+	return maxminddb.FromBytes(raw)
 }
 
 // parseDatabaseRecords converts JSON records into lookup records.

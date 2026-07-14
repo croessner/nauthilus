@@ -61,7 +61,7 @@ func NauthilusPlugin() (pluginapi.Plugin, error) {
 
 // Plugin coordinates lifecycle, state, and environment source registration.
 type Plugin struct {
-	databases      geoDatabases
+	databaseOwner  *geoDatabaseOwner
 	host           pluginapi.Host
 	logger         pluginapi.Logger
 	tracer         pluginapi.Tracer
@@ -87,6 +87,7 @@ type Plugin struct {
 // NewPlugin creates a GeoIP reference plugin instance.
 func NewPlugin() *Plugin {
 	return &Plugin{
+		databaseOwner: newGeoDatabaseOwner(geoDatabases{}),
 		databaseLoad:  loadConfiguredDatabase,
 		asnFetch:      httpASNRegistryFetcher{},
 		asnRouteFetch: httpASNRouteFetcher{},
@@ -179,9 +180,14 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 func (p *Plugin) Stop(ctx context.Context) error {
 	p.mu.Lock()
 	p.stopWorkersLocked()
-	p.closeDatabaseLocked()
+	owner := p.databaseOwner
+	p.databaseOwner = newGeoDatabaseOwner(geoDatabases{})
 	logger := p.logger
 	p.mu.Unlock()
+
+	if err := owner.WaitRetired(ctx); err != nil {
+		return err
+	}
 
 	if logger != nil {
 		logger.Info(ctx, "geoip plugin stopped")
@@ -249,11 +255,13 @@ func (p *Plugin) swapState(ctx context.Context, config moduleConfig, databases g
 
 // swapDatabases publishes validated databases and optionally restarts refresh work.
 func (p *Plugin) swapDatabases(ctx context.Context, config moduleConfig, databases geoDatabases, restartRefresh bool) {
+	nextOwner := newGeoDatabaseOwner(databases)
+
 	p.mu.Lock()
-	oldDatabases := p.databases
+	oldOwner := p.databaseOwner
 
 	p.config = config
-	p.databases = databases
+	p.databaseOwner = nextOwner
 
 	if config.ASNLookup.Enabled {
 		if p.asnLookup == nil || restartRefresh {
@@ -275,7 +283,7 @@ func (p *Plugin) swapDatabases(ctx context.Context, config moduleConfig, databas
 	logger := p.logger
 	p.mu.Unlock()
 
-	closeDatabases(oldDatabases)
+	oldOwner.Retire()
 
 	if recordGauge != nil {
 		recordGauge.Set(ctx, float64(databases.Records()), pluginapi.LabelValue{Name: metricLabelState, Value: metricStateLoaded})
@@ -296,60 +304,132 @@ func (p *Plugin) currentConfig() (moduleConfig, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	return p.config, p.databases.Ready()
+	return p.config, p.databaseOwner.Ready()
 }
 
-// lookupRecord runs database and ASN lookups while protecting replaceable readers from replacement.
-func (p *Plugin) lookupRecord(ctx context.Context, addr netip.Addr) (geoRecord, bool, error) {
+type geoLookupResources struct {
+	lease       *geoDatabaseLease
+	tracer      pluginapi.Tracer
+	asnLookup   *asnLookupService
+	asnRegistry *asnRegistrySnapshot
+}
+
+// acquireLookupResources snapshots request resources and leases replaceable databases.
+func (p *Plugin) acquireLookupResources() (*geoLookupResources, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	if !p.databases.Ready() {
-		return geoRecord{}, false, fmt.Errorf("geoip database is not loaded")
+	lease, ready := p.databaseOwner.Acquire()
+	if !ready {
+		return nil, false
 	}
 
-	record, matched, err := p.databases.primary.Lookup(ctx, addr)
+	return &geoLookupResources{
+		lease:       lease,
+		tracer:      p.tracer,
+		asnLookup:   p.asnLookup,
+		asnRegistry: p.asnRegistry,
+	}, true
+}
+
+// lookupRecord runs database and ASN lookups without retaining the plugin state lock.
+func (p *Plugin) lookupRecord(ctx context.Context, addr netip.Addr) (geoRecord, bool, error) {
+	resources, ready := p.acquireLookupResources()
+	if !ready {
+		return geoRecord{}, false, fmt.Errorf("geoip database is not loaded")
+	}
+	defer resources.lease.Release()
+
+	return resources.lookupRecord(ctx, addr)
+}
+
+// lookupRecord executes the immutable database and ASN enrichment chain.
+func (r *geoLookupResources) lookupRecord(ctx context.Context, addr netip.Addr) (geoRecord, bool, error) {
+	databases := r.lease.databases
+
+	record, matched, err := traceGeoIPLookup(ctx, r.tracer, spanGeoIPPrimaryDatabaseLookup, func(spanCtx context.Context) (geoRecord, bool, error) {
+		return databases.primary.Lookup(spanCtx, addr)
+	})
 	if err != nil || !matched {
 		return record, matched, err
 	}
 
-	if p.asnLookup != nil {
-		asnRecord, ok, lookupErr := p.asnLookup.Lookup(ctx, addr)
-		if lookupErr != nil {
-			return record, matched, lookupErr
-		}
-
-		if ok {
-			mergeASNLookupRecord(&record, asnRecord)
-		}
+	if err := r.enrichASNLookup(ctx, addr, &record); err != nil {
+		return record, matched, err
 	}
 
-	if p.databases.asn != nil {
-		asnRecord, ok, lookupErr := p.databases.asn.Lookup(ctx, addr)
-		if lookupErr != nil {
-			return record, matched, lookupErr
-		}
-
-		if ok {
-			mergeASNDatabaseRecord(&record, asnRecord)
-		}
+	if err := r.enrichASNDatabase(ctx, addr, &record); err != nil {
+		return record, matched, err
 	}
 
-	if record.ASN <= 0 || p.asnRegistry == nil {
-		return record, matched, nil
-	}
-
-	if asnRecord, ok := p.asnRegistry.Lookup(record.ASN); ok {
-		record.ASNRegistry = asnRecord.Registry
-		record.ASNCountryISO = asnRecord.CountryISO
-		record.ASNStatus = asnRecord.Status
-
-		if record.ASNAllocated == "" {
-			record.ASNAllocated = asnRecord.Allocated
-		}
-	}
+	r.enrichASNRegistry(ctx, &record)
 
 	return record, matched, nil
+}
+
+// enrichASNLookup adds local routing snapshot data when configured.
+func (r *geoLookupResources) enrichASNLookup(ctx context.Context, addr netip.Addr, record *geoRecord) error {
+	if r.asnLookup == nil {
+		return nil
+	}
+
+	asnRecord, matched, err := traceGeoIPLookup(ctx, r.tracer, spanGeoIPASNRoutingLookup, func(spanCtx context.Context) (geoRecord, bool, error) {
+		return r.asnLookup.Lookup(spanCtx, addr)
+	})
+	if err != nil {
+		return err
+	}
+
+	if matched {
+		mergeASNLookupRecord(record, asnRecord)
+	}
+
+	return nil
+}
+
+// enrichASNDatabase adds secondary ASN database data when configured.
+func (r *geoLookupResources) enrichASNDatabase(ctx context.Context, addr netip.Addr, record *geoRecord) error {
+	database := r.lease.databases.asn
+	if database == nil {
+		return nil
+	}
+
+	asnRecord, matched, err := traceGeoIPLookup(ctx, r.tracer, spanGeoIPASNDatabaseLookup, func(spanCtx context.Context) (geoRecord, bool, error) {
+		return database.Lookup(spanCtx, addr)
+	})
+	if err != nil {
+		return err
+	}
+
+	if matched {
+		mergeASNDatabaseRecord(record, asnRecord)
+	}
+
+	return nil
+}
+
+// enrichASNRegistry adds delegated registry metadata for a resolved ASN.
+func (r *geoLookupResources) enrichASNRegistry(ctx context.Context, record *geoRecord) {
+	if record.ASN <= 0 || r.asnRegistry == nil {
+		return
+	}
+
+	asnRecord, matched, _ := traceGeoIPLookup(ctx, r.tracer, spanGeoIPASNRegistryLookup, func(context.Context) (asnRegistryRecord, bool, error) {
+		registryRecord, found := r.asnRegistry.Lookup(record.ASN)
+
+		return registryRecord, found, nil
+	})
+	if !matched {
+		return
+	}
+
+	record.ASNRegistry = asnRecord.Registry
+	record.ASNCountryISO = asnRecord.CountryISO
+	record.ASNStatus = asnRecord.Status
+
+	if record.ASNAllocated == "" {
+		record.ASNAllocated = asnRecord.Allocated
+	}
 }
 
 // startWorkersLocked starts or replaces all optional background workers.
@@ -600,12 +680,6 @@ func (p *Plugin) refreshASNRegistryOnce(ctx context.Context, config asnRegistryC
 			pluginapi.LogField{Key: logFieldLoadedAt, Value: snapshot.loadedAt.Format(time.RFC3339)},
 		)
 	}
-}
-
-// closeDatabaseLocked releases the active database while the plugin is stopped.
-func (p *Plugin) closeDatabaseLocked() {
-	closeDatabases(p.databases)
-	p.databases = geoDatabases{}
 }
 
 // closeDatabases releases database resources and intentionally ignores close errors during replacement.
