@@ -3730,6 +3730,7 @@ type decoderHookTypes struct {
 	contentSecurityPolicyType   reflect.Type `mapstructure:"-"`
 	permissionsPolicyType       reflect.Type `mapstructure:"-"`
 	strictTransportSecurityType reflect.Type `mapstructure:"-"`
+	softWhitelistType           reflect.Type `mapstructure:"-"`
 	secretType                  reflect.Type `mapstructure:"-"`
 }
 
@@ -3746,6 +3747,7 @@ func newDecoderHookTypes() decoderHookTypes {
 		contentSecurityPolicyType:   reflect.TypeFor[ContentSecurityPolicyValue](),
 		permissionsPolicyType:       reflect.TypeFor[PermissionsPolicyValue](),
 		strictTransportSecurityType: reflect.TypeFor[StrictTransportSecurityValue](),
+		softWhitelistType:           reflect.TypeFor[SoftWhitelist](),
 		secretType:                  reflect.TypeFor[secret.Value](),
 	}
 }
@@ -3773,6 +3775,8 @@ func (t decoderHookTypes) decode(to reflect.Type, data any) (any, error) {
 		return processPermissionsPolicyValue(data)
 	case t.strictTransportSecurityType:
 		return processStrictTransportSecurityValue(data)
+	case t.softWhitelistType:
+		return decodeSoftWhitelist(data)
 	case t.secretType:
 		return decodeSecretValue(data)
 	default:
@@ -3973,6 +3977,10 @@ func (f *FileSettings) normalizePolicyInitialization() {
 	if relayDomains := f.Auth.Controls.RelayDomains; relayDomains != nil {
 		relayDomains.Allowlist.normalize()
 	}
+
+	if rbl := f.Auth.Controls.RBL; rbl != nil {
+		rbl.Allowlist.normalize()
+	}
 }
 
 // validatePolicyInitialization checks operator catalogs and per-user network allowlists.
@@ -4064,6 +4072,12 @@ func (f *FileSettings) validatePolicySoftAllowlists() error {
 
 	if relayDomains := f.Auth.Controls.RelayDomains; relayDomains != nil {
 		if err := relayDomains.Allowlist.validate("auth.controls.relay_domains.allowlist"); err != nil {
+			return err
+		}
+	}
+
+	if rbl := f.Auth.Controls.RBL; rbl != nil {
+		if err := rbl.Allowlist.validate("auth.controls.rbl.allowlist"); err != nil {
 			return err
 		}
 	}

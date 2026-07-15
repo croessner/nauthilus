@@ -46,6 +46,90 @@ type SoftWhitelistProvider interface {
 // Typically used to associate users with a list of CIDR networks.
 type SoftWhitelist map[string][]string
 
+// decodeSoftWhitelist restores dotted usernames that Viper expands into nested maps.
+func decodeSoftWhitelist(data any) (SoftWhitelist, error) {
+	allowlist := NewSoftWhitelist()
+
+	if err := collectSoftWhitelistEntries(allowlist, nil, data); err != nil {
+		return nil, err
+	}
+
+	return allowlist, nil
+}
+
+// collectSoftWhitelistEntries flattens one Viper map branch into a username and its networks.
+func collectSoftWhitelistEntries(allowlist SoftWhitelist, path []string, data any) error {
+	switch value := data.(type) {
+	case nil:
+		return nil
+	case SoftWhitelist:
+		copySoftWhitelistEntries(allowlist, value)
+		return nil
+	case map[string][]string:
+		copySoftWhitelistEntries(allowlist, value)
+		return nil
+	case map[string]any:
+		return collectSoftWhitelistMapEntries(allowlist, path, value)
+	case []string:
+		return storeSoftWhitelistNetworks(allowlist, path, value)
+	case []any:
+		return storeSoftWhitelistAnyNetworks(allowlist, path, value)
+	default:
+		return fmt.Errorf("allowlist %q expects network list, got %T", strings.Join(path, "."), data)
+	}
+}
+
+// copySoftWhitelistEntries copies typed allowlist entries without sharing network slices.
+func copySoftWhitelistEntries(allowlist SoftWhitelist, entries map[string][]string) {
+	for username, networks := range entries {
+		allowlist[username] = append([]string(nil), networks...)
+	}
+}
+
+// collectSoftWhitelistMapEntries walks map keys in deterministic order.
+func collectSoftWhitelistMapEntries(allowlist SoftWhitelist, path []string, entries map[string]any) error {
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		if err := collectSoftWhitelistEntries(allowlist, append(path, key), entries[key]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// storeSoftWhitelistNetworks stores one username entry after validating its path.
+func storeSoftWhitelistNetworks(allowlist SoftWhitelist, path []string, networks []string) error {
+	if len(path) == 0 {
+		return fmt.Errorf("allowlist networks require a username")
+	}
+
+	allowlist[strings.Join(path, ".")] = append([]string(nil), networks...)
+
+	return nil
+}
+
+// storeSoftWhitelistAnyNetworks converts Viper list values into strings before storing them.
+func storeSoftWhitelistAnyNetworks(allowlist SoftWhitelist, path []string, values []any) error {
+	networks := make([]string, 0, len(values))
+	for index, network := range values {
+		networkString, ok := network.(string)
+		if !ok {
+			return fmt.Errorf("allowlist %q network %d expects string, got %T", strings.Join(path, "."), index, network)
+		}
+
+		networks = append(networks, networkString)
+	}
+
+	return storeSoftWhitelistNetworks(allowlist, path, networks)
+}
+
 // NewSoftWhitelist creates and returns a new instance of SoftWhitelist initialized as an empty map of string slices.
 func NewSoftWhitelist() SoftWhitelist {
 	return make(SoftWhitelist)

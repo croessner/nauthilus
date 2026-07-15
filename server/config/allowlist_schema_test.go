@@ -131,6 +131,49 @@ func TestHandleFile_RBLAllowlistSchema(t *testing.T) {
 	}
 }
 
+func TestHandleFile_DottedUsernameAllowlistsFromYAML(t *testing.T) {
+	const monitoringUser = "zabbix@srvint.net"
+
+	cfg := loadFileSettingsFromContent(t, `storage:
+  redis:
+    primary:
+      address: localhost:6379
+    password_nonce: nonce-secret-1234
+    encryption_secret: redis-secret-1234
+auth:
+  controls:
+    brute_force:
+      buckets:
+        - name: test
+          period: 60
+          cidr: 32
+          ipv4: true
+          failed_requests: 1
+      allowlist:
+        "zabbix@srvint.net":
+          - 192.168.0.0/16
+    relay_domains:
+      static:
+        - srvint.net
+      allowlist:
+        "zabbix@srvint.net":
+          - 192.168.0.0/16
+    rbl:
+      lists:
+        - name: test-rbl
+          rbl: rbl.example.test
+          return_codes:
+            - 127.0.0.2
+      allowlist:
+        "zabbix@srvint.net":
+          - 192.168.0.0/16
+`)
+
+	assertSoftWhitelistEntry(t, cfg.GetBruteForce().GetSoftWhitelist(), monitoringUser, "192.168.0.0/16")
+	assertSoftWhitelistEntry(t, cfg.GetRelayDomains().GetSoftWhitelist(), monitoringUser, "192.168.0.0/16")
+	assertSoftWhitelistEntry(t, cfg.GetRBLs().GetSoftWhitelist(), monitoringUser, "192.168.0.0/16")
+}
+
 func TestHandleFile_LegacyAllowlistNamesAreRejected(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
