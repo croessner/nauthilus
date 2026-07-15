@@ -20,6 +20,8 @@ runtime:
       authority:
         enabled: true
         address: "0.0.0.0:19444"
+        backend_refs:
+          enabled: true
         tls:
           enabled: true
           cert: "/etc/nauthilus/e2e/certs/authority-server.crt"

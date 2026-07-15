@@ -78,7 +78,7 @@ func LDAPEndpoints(cfg config.File, poolName string) ([]LDAPEndpointMetadata, er
 // normalizeLDAPEndpointPoolName maps public default aliases to one stable value.
 func normalizeLDAPEndpointPoolName(poolName string) string {
 	poolName = strings.TrimSpace(poolName)
-	if poolName == "" || poolName == definitions.DefaultBackendName {
+	if LDAPWorkerPoolName(poolName) == definitions.DefaultBackendName {
 		return config.RemoteBackendDefaultName
 	}
 
@@ -114,12 +114,7 @@ func luaLDAPEndpointPoolName(L *lua.LState) string {
 		return definitions.DefaultBackendName
 	}
 
-	poolNameArg := L.CheckString(1)
-	if poolNameArg == "" || poolNameArg == luaLDAPPoolAliasDefault {
-		return definitions.DefaultBackendName
-	}
-
-	return poolNameArg
+	return LDAPWorkerPoolName(L.CheckString(1))
 }
 
 // ldapEndpointURIs returns server URIs for the requested LDAP pool.

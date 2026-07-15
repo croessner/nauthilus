@@ -42,6 +42,7 @@ func TestRenderDefaultConfigDump_IncludesKnownDefaults(t *testing.T) {
 
 	expectedLines := []string{
 		`runtime.servers.grpc.authority.address = "127.0.0.1:9444"`,
+		`runtime.servers.grpc.authority.backend_refs.enabled = false`,
 		`runtime.servers.grpc.authority.tls.min_tls_version = "TLS1.2"`,
 		`runtime.servers.http.middlewares.logging = true`,
 		`runtime.servers.http.tls.min_tls_version = "TLS1.2"`,
@@ -88,6 +89,9 @@ func nonDefaultConfigDumpSettings() map[string]any {
 				"grpc": map[string]any{
 					"authority": map[string]any{
 						"address": "127.0.0.1:9445",
+						"backend_refs": map[string]any{
+							"enabled": true,
+						},
 						"tls": map[string]any{
 							"min_tls_version": TLSVersion13,
 						},
@@ -120,6 +124,7 @@ func assertNonDefaultConfigDumpOutput(t *testing.T, output string) {
 
 	expectedLines := []string{
 		`runtime.servers.grpc.authority.address = "127.0.0.1:9445"`,
+		`runtime.servers.grpc.authority.backend_refs.enabled = true`,
 		`runtime.servers.grpc.authority.tls.min_tls_version = "TLS1.3"`,
 		`runtime.servers.http.middlewares.limit = false`,
 		`runtime.servers.http.tls.min_tls_version = "TLS1.3"`,

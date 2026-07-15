@@ -1031,6 +1031,7 @@ func configDumpRuntimeDefaults() map[string]configDumpValueProvider {
 		developerModeConfigKey:                                   func() any { return false },
 		"runtime.clients.grpc.nauthilus_authorities":             func() any { return map[string]any{} },
 		"runtime.servers.grpc.authority.address":                 func() any { return defaultGRPCAuthorityAddress },
+		"runtime.servers.grpc.authority.backend_refs.enabled":    func() any { return false },
 		"runtime.servers.grpc.authority.enabled":                 func() any { return false },
 		"runtime.servers.grpc.authority.tls.enabled":             func() any { return false },
 		"runtime.servers.grpc.authority.tls.min_tls_version":     func() any { return defaultTLSMinVersion },

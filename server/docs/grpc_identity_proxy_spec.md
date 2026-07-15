@@ -309,18 +309,18 @@ Target path:
 runtime.servers.grpc.authority
 ```
 
-Current pre-implementation state:
+Current implementation:
 
-- The existing inbound gRPC `AuthService` listener already uses `runtime.servers.grpc.authority` for server-side
+- The inbound gRPC listener uses `runtime.servers.grpc.authority` for server-side
   configuration, default config dumps, validation errors, startup/TLS errors, tracing span names, and policy listener
   facts.
 - The old `runtime.servers.grpc.auth` path is intentionally rejected. There is no compatibility alias because the gRPC
   config surface is not stable-released yet.
-- The current protobuf contract remains `nauthilus.auth.v1.AuthService` for `Authenticate`, `LookupIdentity`, and
-  `ListAccounts`. The future `common/v1` and `identity/v1` protobuf work is additive and belongs to the next
-  implementation phases.
-- The current Go package may still be `grpcauth` during pre-work. It must be renamed to `grpcauthority` before the full
-  identity-backend authority feature ships.
+- `nauthilus.auth.v1.AuthService` is always registered when the authority listener is enabled.
+- `backend_refs.enabled` defaults to `false`. When omitted or disabled, the server does not create a backend-reference
+  store and does not register `nauthilus.identity.v1.IdentityBackendService`.
+- Explicitly enabling `backend_refs` requires Redis or an injected backend-reference store. It enables authority-issued
+  references on auth responses and registers `IdentityBackendService` for Edge-to-Authority continuation calls.
 
 ```yaml
 runtime:
@@ -329,6 +329,8 @@ runtime:
       authority:
         enabled: true
         address: "10.20.30.40:9444"
+        backend_refs:
+          enabled: true
         tls:
           enabled: true
           cert: "/etc/nauthilus/grpc-server.pem"
@@ -336,19 +338,6 @@ runtime:
           client_ca: "/etc/nauthilus/edge-ca.pem"
           require_client_cert: true
           min_tls_version: "TLS1.3"
-        services:
-          auth: true
-          identity_backend: true
-        backend_refs:
-          enabled: true
-          storage: "redis"
-          key_prefix: "grpc:backend_ref:"
-          ttl: "15m"
-          idempotency_key_prefix: "grpc:idempotency:"
-          idempotency_ttl: "15m"
-          require_opaque_token_for_mutations: true
-          bind_to_service_principal: true
-          bind_to_edge_cluster: true
 ```
 
 The existing hard rule remains:
@@ -687,7 +676,7 @@ Rules:
 5. `opaque_token` is an authority-issued Redis-bound handle in the split-deployment target profile.
 
 `opaque_token` is not a signed self-contained token. It is a random, non-guessable handle. The authority stores the
-handle payload in authority Redis under `runtime.servers.grpc.authority.backend_refs.key_prefix`, encrypted with the
+handle payload in authority Redis under the internal `grpc:authority:backend_ref:` key prefix, encrypted with the
 authority Redis security manager, and returns only the handle value to the edge.
 
 The stored backend-reference payload must include at least:
@@ -1351,7 +1340,7 @@ This section names the expected code locations so implementation work can be spl
 | Existing gRPC auth contract | `server/grpcapi/auth/v1/auth.proto`, `server/grpcapi/auth/v1/request_mapper.go`, `server/handler/grpcauthority` | Import `common/v1`, switch `AuthResponse.attributes = 7` to `.nauthilus.common.v1.AttributeValues`, add additive `.nauthilus.common.v1.BackendRef backend_ref = 10`, keep `Authenticate`, `LookupIdentity`, and `ListAccounts` stable, and update mapper tests. |
 | Shared proto messages | `server/grpcapi/common/v1/common.proto`, generated Go files, `README.md` | Define reusable `BackendRef`, `OperationResult`, `ErrorDetail`, `OperationStatus`, and `AttributeValues`. This package is mandatory for Phase 1. |
 | Identity gRPC contract | `server/grpcapi/identity/v1/identity_backend.proto`, generated Go files, `README.md` | Add `IdentityBackendService`, domain messages, contract tests, mapper tests, and generator documentation. |
-| gRPC server registration | `server/handler/grpcauthority/server.go`, `server/handler/grpcauthority/server_test.go` | Move the current `grpcauth` package to `grpcauthority` before the feature ships; register both `AuthService` and `IdentityBackendService`; keep auth, mTLS, logging, tracing, and recovery interceptors shared. |
+| gRPC server registration | `server/handler/grpcauthority/server.go`, `server/handler/grpcauthority/server_test.go` | Register `AuthService` unconditionally and `IdentityBackendService` only when backend refs are explicitly enabled; keep auth, mTLS, logging, tracing, and recovery interceptors shared. |
 | Authority identity handler | `server/handler/grpcauthority/identity_backend.go` | Implement RPC methods as transport adapters over existing core/backend services; enforce scopes before domain calls; map errors to stable status codes. |
 | Authority internal IdP client | `server/config/idp.go`, `server/handler/frontend/idp/oidc_client_credentials.go`, `server/idp/nauthilus_idp.go` | Reuse existing `client_credentials` issuance; validate the split profile requires `access_token_type=opaque`, short lifetime, and non-public token endpoint exposure. |
 | Authority caller-token source | `server/grpcclient/authority/token_source.go` | Implement client-credentials token acquisition, edge Redis token cache, distributed refresh lock, expiry skew, and static token-file fallback for development. |

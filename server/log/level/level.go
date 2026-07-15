@@ -182,6 +182,7 @@ func (s *slogLevelLogger) logRecordFromKeyvals(keyvals []any) (slog.Record, stri
 
 	record := slog.NewRecord(time.Now(), s.lvl, "", pc)
 	msg := ""
+	attrs := make([]slog.Attr, 0, len(keyvals)/2)
 
 	for i := 0; i < len(keyvals); i += 2 {
 		if i+1 >= len(keyvals) {
@@ -197,8 +198,10 @@ func (s *slogLevelLogger) logRecordFromKeyvals(keyvals []any) (slog.Record, stri
 			continue
 		}
 
-		record.AddAttrs(logAttr(k, keyvals[i+1]))
+		attrs = append(attrs, logAttr(k, keyvals[i+1]))
 	}
+
+	record.AddAttrs(attrs...)
 
 	return record, msg
 }

@@ -359,7 +359,8 @@ Service notes:
   tags, country display names, scoped IPs, and routable IP checks.
 - `LDAP` should expose queued, request-aware `Search` and `Modify` methods that package LDAP operations, submit them to
   the existing worker queues, and wait for results. Plugins should not receive raw LDAP queues, pools, or
-  `LDAPRequest` internals.
+  `LDAPRequest` internals. An empty pool name and the public `default` alias resolve to the internal default worker pool.
+  Native plugin LDAP requests use medium queue priority, below high-priority Core authentication work.
 - `Metrics` should register namespaced counters, gauges, histograms, and summaries without panicking on duplicate
   registration. Raw Prometheus registerers are not part of the public v1 API.
 - `Tracer` should attach spans to the active request context through a Nauthilus-owned facade. Raw OpenTelemetry

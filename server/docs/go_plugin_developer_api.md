@@ -503,6 +503,9 @@ if err != nil {
 `Search` returns `LDAPSearchResult` and an error directly; `Modify` returns its error directly. The host never merges
 the search result into `BackendResult`, `SubjectRequest.BackendResult`, or `BackendResultPatch`. After a successful
 call, plugin code must deliberately return allowed attributes, facts, logs, status, rejection, or temporary failure.
+An empty `PoolName` and the public name `default` both select the default LDAP worker pool; named pools remain unchanged.
+Native plugin LDAP requests use medium queue priority so synchronous enrichment stays ahead of low-priority auxiliary
+LDAP work while high-priority Core authentication requests remain preferred.
 
 `LDAPSearchResult.Entries` contains copied public `pluginapi.LDAPEntry` values converted from internal LDAP entries.
 Their attribute maps and value slices do not expose raw internal entries, queues, connections, or shared mutable

@@ -78,9 +78,10 @@ type RuntimeGRPCServersSection struct {
 
 // RuntimeGRPCAuthServerSection configures the gRPC authority listener.
 type RuntimeGRPCAuthServerSection struct {
-	Address string                `mapstructure:"address" validate:"omitempty,tcp_addr"`
-	TLS     RuntimeGRPCTLSSection `mapstructure:"tls" validate:"omitempty"`
-	Enabled bool                  `mapstructure:"enabled"`
+	Address     string                        `mapstructure:"address" validate:"omitempty,tcp_addr"`
+	TLS         RuntimeGRPCTLSSection         `mapstructure:"tls" validate:"omitempty"`
+	BackendRefs RuntimeGRPCBackendRefsSection `mapstructure:"backend_refs" validate:"omitempty"`
+	Enabled     bool                          `mapstructure:"enabled"`
 }
 
 // IsEnabled reports whether the gRPC authority listener is enabled.
@@ -108,6 +109,29 @@ func (s *RuntimeGRPCAuthServerSection) GetTLS() *RuntimeGRPCTLSSection {
 	}
 
 	return &s.TLS
+}
+
+// GetBackendRefs returns the backend reference configuration.
+func (s *RuntimeGRPCAuthServerSection) GetBackendRefs() *RuntimeGRPCBackendRefsSection {
+	if s == nil {
+		return &RuntimeGRPCBackendRefsSection{}
+	}
+
+	return &s.BackendRefs
+}
+
+// RuntimeGRPCBackendRefsSection configures authority-issued backend references.
+type RuntimeGRPCBackendRefsSection struct {
+	Enabled bool `mapstructure:"enabled"`
+}
+
+// IsEnabled reports whether the authority issues and resolves backend references.
+func (s *RuntimeGRPCBackendRefsSection) IsEnabled() bool {
+	if s == nil {
+		return false
+	}
+
+	return s.Enabled
 }
 
 // RuntimeGRPCTLSSection configures TLS for gRPC listeners.

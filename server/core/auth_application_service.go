@@ -187,12 +187,26 @@ func (e *AuthPermissionDeniedError) Error() string {
 }
 
 type authApplicationService struct {
-	deps AuthDeps
+	contextFactory *applicationGinContextFactory
+	deps           AuthDeps
 }
 
 // NewAuthApplicationService constructs the transport-neutral auth service.
 func NewAuthApplicationService(deps AuthDeps) AuthApplicationService {
-	return &authApplicationService{deps: deps}
+	return &authApplicationService{
+		contextFactory: newApplicationGinContextFactory(),
+		deps:           deps,
+	}
+}
+
+// applicationGinContextFactory reuses the immutable Gin engine across application requests.
+type applicationGinContextFactory struct {
+	engine *gin.Engine
+}
+
+// newApplicationGinContextFactory constructs the synthetic request context factory.
+func newApplicationGinContextFactory() *applicationGinContextFactory {
+	return &applicationGinContextFactory{engine: gin.New()}
 }
 
 // ContextWithOIDCClaims stores validated backchannel OIDC claims for auth
@@ -371,7 +385,11 @@ func (s *authApplicationService) newAuthState(
 	})
 	deps.Resp = capture
 
-	ginCtx := newApplicationGinContext(parent, input)
+	ginCtx, err := s.contextFactory.New(parent, input)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
 	AttachPostActionExecutionGate(parent, ginCtx)
 	auth := NewAuthStateFromContextWithDeps(ginCtx, deps).(*AuthState)
 
@@ -431,7 +449,8 @@ func (s *authApplicationService) effectiveDeps() (AuthDeps, error) {
 	return deps, nil
 }
 
-func newApplicationGinContext(parent context.Context, input AuthInput) *gin.Context {
+// New builds a request-scoped Gin context without allocating a Gin engine.
+func (f *applicationGinContextFactory) New(parent context.Context, input AuthInput) (*gin.Context, error) {
 	path := "/grpc/auth/v1/Authenticate"
 
 	switch input.Mode {
@@ -442,8 +461,14 @@ func newApplicationGinContext(parent context.Context, input AuthInput) *gin.Cont
 	}
 
 	recorder := httptest.NewRecorder()
-	ginCtx, _ := gin.CreateTestContext(recorder)
-	ginCtx.Request = httptest.NewRequest(http.MethodPost, path, http.NoBody).WithContext(parent)
+	ginCtx := gin.CreateTestContextOnly(recorder, f.engine)
+
+	request, err := http.NewRequestWithContext(parent, http.MethodPost, path, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("build application request: %w", err)
+	}
+
+	ginCtx.Request = request
 	ginCtx.Set(definitions.CtxCategoryKey, definitions.CatAuth)
 	ginCtx.Set(definitions.CtxServiceKey, input.Service)
 	ginCtx.Set(definitions.CtxGUIDKey, ksuid.New().String())
@@ -454,7 +479,7 @@ func newApplicationGinContext(parent context.Context, input AuthInput) *gin.Cont
 		ginCtx.Set(definitions.CtxOIDCClaimsKey, claims)
 	}
 
-	return ginCtx
+	return ginCtx, nil
 }
 
 func authOutcomeFromCaptured(captured CapturedAuthOutcome) *AuthOutcome {
