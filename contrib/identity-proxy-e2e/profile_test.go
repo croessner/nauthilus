@@ -93,6 +93,7 @@ func TestSplitDeploymentProfileKeepsAuthorityAndEdgeSeparated(t *testing.T) {
 	assertEdgeRemoteOnly(t, edgeA, "edge-a")
 	assertEdgeRemoteOnly(t, edgeB, "edge-b")
 	assertAuthorityLocalOnly(t, authority)
+	assertAuthorityBackendRefs(t, authority)
 	assertAuthorityCallerTokenProfile(t, authority)
 	assertEdgeBackchannelAuth(t, edgeA, "edge-a")
 	assertEdgeBackchannelAuth(t, edgeB, "edge-b")
@@ -111,6 +112,16 @@ func TestSplitDeploymentProfileKeepsAuthorityAndEdgeSeparated(t *testing.T) {
 	assertOIDCTokenLifetimes(t, edgeB, "edge-b")
 	assertEdgeNegativeOIDCClients(t, edgeA, "edge-a")
 	assertEdgeNegativeOIDCClients(t, edgeB, "edge-b")
+}
+
+// assertAuthorityBackendRefs verifies that the split authority explicitly enables backend references.
+func assertAuthorityBackendRefs(t *testing.T, cfg map[string]any) {
+	t.Helper()
+
+	backendRefs := mapping(cfg, "runtime", "servers", "grpc", "authority", "backend_refs")
+	if !boolValue(backendRefs, "enabled") {
+		t.Fatal("split authority must explicitly enable backend refs")
+	}
 }
 
 func TestComposeNetworksPreventDirectCrossRedisAccess(t *testing.T) {

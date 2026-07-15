@@ -32,6 +32,41 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+type applicationContextTestKey struct{}
+
+func TestApplicationGinContextFactoryBuildsModeSpecificRequests(t *testing.T) {
+	factory := newApplicationGinContextFactory()
+	parent := context.WithValue(context.Background(), applicationContextTestKey{}, "parent")
+
+	tests := []struct {
+		name      string
+		mode      AuthMode
+		wantPath  string
+		wantQuery string
+	}{
+		{name: "authenticate", mode: AuthModeAuthenticate, wantPath: "/grpc/auth/v1/Authenticate"},
+		{name: "lookup", mode: AuthModeLookupIdentity, wantPath: "/grpc/auth/v1/LookupIdentity", wantQuery: "mode=no-auth"},
+		{name: "list", mode: AuthModeListAccounts, wantPath: "/grpc/auth/v1/ListAccounts", wantQuery: "mode=list-accounts"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ginCtx, err := factory.New(parent, AuthInput{Mode: test.mode, Service: definitions.ServGRPC})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			if ginCtx.Request.Method != "POST" || ginCtx.Request.URL.Path != test.wantPath || ginCtx.Request.URL.RawQuery != test.wantQuery {
+				t.Fatalf("request = %s %s, want POST %s?%s", ginCtx.Request.Method, ginCtx.Request.URL.String(), test.wantPath, test.wantQuery)
+			}
+
+			if got := ginCtx.Request.Context().Value(applicationContextTestKey{}); got != "parent" {
+				t.Fatalf("parent context value = %v, want parent", got)
+			}
+		})
+	}
+}
+
 func TestAuthApplicationService_AuthenticateCapturesOutcomeWithoutHTTPRendering(t *testing.T) {
 	deps, mock := setupPhase4AuthApplicationServiceTest(t, "test(phase4_auth_ok)")
 	deps.Resp = panicResponseWriter{}

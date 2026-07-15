@@ -46,7 +46,7 @@ const (
 
 func TestNewServerRegistersAuthorityServices(t *testing.T) {
 	server, err := NewServer(ServerDeps{
-		Cfg:             grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
+		Cfg:             enableGRPCAuthBackendRefs(grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{})),
 		Logger:          slog.Default(),
 		IdentityService: &recordingAuthorityIdentityService{},
 		BackendRefs:     newRecordingBackendRefStore(),
@@ -63,6 +63,38 @@ func TestNewServerRegistersAuthorityServices(t *testing.T) {
 
 	if _, found := services["nauthilus.identity.v1.IdentityBackendService"]; !found {
 		t.Fatalf("registered services = %#v, want IdentityBackendService", services)
+	}
+}
+
+func TestNewServerDefaultsToAuthServiceWithoutBackendRefs(t *testing.T) {
+	server, err := NewServer(ServerDeps{
+		Cfg:             grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
+		Logger:          slog.Default(),
+		IdentityService: &recordingAuthorityIdentityService{},
+		BackendRefs:     newRecordingBackendRefStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	defer server.Stop()
+
+	services := server.GetServiceInfo()
+	if _, found := services["nauthilus.auth.v1.AuthService"]; !found {
+		t.Fatalf("registered services = %#v, want AuthService", services)
+	}
+
+	if _, found := services["nauthilus.identity.v1.IdentityBackendService"]; found {
+		t.Fatalf("registered services = %#v, IdentityBackendService must require explicit backend refs", services)
+	}
+}
+
+func TestNewServerRejectsEnabledBackendRefsWithoutStore(t *testing.T) {
+	_, err := NewServer(ServerDeps{
+		Cfg:    enableGRPCAuthBackendRefs(grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{})),
+		Logger: slog.Default(),
+	})
+	if err == nil {
+		t.Fatal("NewServer() error = nil, want missing backend ref store error")
 	}
 }
 
@@ -655,6 +687,7 @@ func newBufconnIdentityBackendServiceClientWithValidator(
 	validator staticTokenValidator,
 ) identityv1.IdentityBackendServiceClient {
 	t.Helper()
+	enableGRPCAuthBackendRefs(cfg)
 
 	listener := bufconn.Listen(1024 * 1024)
 
@@ -715,6 +748,17 @@ func newBufconnIdentityBackendServiceClientWithValidator(
 	})
 
 	return identityv1.NewIdentityBackendServiceClient(conn)
+}
+
+// enableGRPCAuthBackendRefs enables the split-deployment backend reference contract in tests.
+func enableGRPCAuthBackendRefs(cfg *config.FileSettings) *config.FileSettings {
+	if cfg == nil || cfg.Runtime == nil {
+		return cfg
+	}
+
+	cfg.Runtime.Servers.GRPC.Authority.BackendRefs.Enabled = true
+
+	return cfg
 }
 
 type recordingAuthorityIdentityService struct {

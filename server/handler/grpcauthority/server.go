@@ -150,15 +150,28 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 		options = append(options, grpc.Creds(credentials.NewTLS(tlsConfig)))
 	}
 
+	backendRefs, err := deps.backendRefStore(grpcAuthorityConfig.GetBackendRefs())
+	if err != nil {
+		return nil, err
+	}
+
+	var identityService AuthorityIdentityService
+	if backendRefs != nil {
+		identityService = deps.authorityIdentityService()
+	}
+
 	server := grpc.NewServer(options...)
 	handler := NewWithServices(
 		deps.authApplicationService(),
 		deps.MessageResolver,
-		deps.authorityIdentityService(),
-		deps.backendRefStore(),
+		identityService,
+		backendRefs,
 	)
 	authv1.RegisterAuthServiceServer(server, handler)
-	identityv1.RegisterIdentityBackendServiceServer(server, handler)
+
+	if backendRefs != nil {
+		identityv1.RegisterIdentityBackendServiceServer(server, handler)
+	}
 
 	return server, nil
 }
@@ -272,16 +285,21 @@ func (d ServerDeps) authorityIdentityService() AuthorityIdentityService {
 	})
 }
 
-func (d ServerDeps) backendRefStore() BackendRefStore {
+// backendRefStore builds the explicitly enabled backend reference store.
+func (d ServerDeps) backendRefStore(settings *config.RuntimeGRPCBackendRefsSection) (BackendRefStore, error) {
+	if !settings.IsEnabled() {
+		return nil, nil
+	}
+
 	if d.BackendRefs != nil {
-		return d.BackendRefs
+		return d.BackendRefs, nil
 	}
 
 	if d.Redis == nil {
-		return nil
+		return nil, stderrors.New("runtime.servers.grpc.authority.backend_refs.enabled requires Redis or an injected backend reference store")
 	}
 
-	return NewRedisBackendRefStore(d.Redis, RedisBackendRefStoreOptions{})
+	return NewRedisBackendRefStore(d.Redis, RedisBackendRefStoreOptions{}), nil
 }
 
 func (d ServerDeps) effectiveLogger() *slog.Logger {
