@@ -352,8 +352,18 @@ func TestConfiguredBruteForceDecisionWaitsForCheckDependency(t *testing.T) {
 	})
 	auth.finishPolicyCheck(check, policyCheckResult{})
 
-	if !auth.applyConfiguredPreAuthDecision(ctx) {
-		t.Fatal("brute-force decision was not applied after its GeoIP dependency was collected")
+	result, handled := auth.configuredPolicyPreAuthResult(ctx, definitions.AuthResultOK)
+	if !handled {
+		t.Fatal("brute-force decision was not available after its GeoIP dependency was collected")
+	}
+
+	if result != definitions.AuthResultFail {
+		t.Fatalf("brute-force pre-auth result = %v, want %v", result, definitions.AuthResultFail)
+	}
+
+	event, ok := mapPreAuthResultToFSMEvent(result)
+	if !ok || event != authFSMEventPreAuthDeny {
+		t.Fatalf("brute-force pre-auth event = %q, ok = %t, want %q", event, ok, authFSMEventPreAuthDeny)
 	}
 }
 

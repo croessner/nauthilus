@@ -572,7 +572,7 @@ func mapPreAuthResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bo
 	switch result {
 	case definitions.AuthResultPreAuthTLS:
 		return authFSMEventPreAuthTempFail, true
-	case definitions.AuthResultPreAuthRelayDomain, definitions.AuthResultPreAuthRBL, definitions.AuthResultLuaEnvironment:
+	case definitions.AuthResultPreAuthRelayDomain, definitions.AuthResultPreAuthRBL, definitions.AuthResultLuaEnvironment, definitions.AuthResultFail:
 		return authFSMEventPreAuthDeny, true
 	case definitions.AuthResultUnset:
 		return authFSMEventPreAuthAbort, true
