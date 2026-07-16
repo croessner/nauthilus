@@ -66,10 +66,7 @@ import (
 	"github.com/gin-gonic/gin/binding"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"golang.org/x/sync/singleflight"
 )
-
-var backchanSF singleflight.Group
 
 // BackendServer represents a type for managing a slive of config.BackendServer
 type BackendServer struct {
@@ -635,9 +632,6 @@ type AuthGroups struct {
 
 // AuthState represents a struct that holds information related to an authentication process.
 type AuthState struct {
-	// operationContext is an isolated worker-owned context when no shared request carrier may be mutated.
-	operationContext context.Context
-
 	// deps holds the injected runtime dependencies for this auth request.
 	// It must be initialized by the request-boundary constructor.
 	deps AuthDeps
@@ -3100,12 +3094,6 @@ func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType definitions.
 	})
 }
 
-type verifyPasswordResult struct {
-	value  any
-	err    error
-	shared bool
-}
-
 // processVerifyPassword verifies the user's password against multiple databases.
 // It logs detailed information in case of errors and returns the result of the password verification process.
 func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
@@ -3121,92 +3109,20 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 		defer stop()
 	}
 
-	workerAuth, workerCtx := a.newVerificationWorkerState(ctx)
-	service := a.Request.Service
-	username := a.Request.Username
+	vctx, vspan := tr.Start(ctx.Request.Context(), "auth.verify",
+		attribute.String("service", a.Request.Service),
+		attribute.String("username", a.Request.Username),
+	)
+	requestScope := a.scopeRequestContext(vctx, ctx)
 
-	resCh := backchanSF.DoChan(verifyPasswordSingleflightKey(ctx, a), func() (any, error) {
-		vctx, vspan := tr.Start(workerCtx.Request.Context(), "auth.verify",
-			attribute.String("service", service),
-			attribute.String("username", username),
-		)
-		defer vspan.End()
+	defer requestScope.Restore()
+	defer vspan.End()
 
-		workerCtx.Request = workerCtx.Request.WithContext(vctx)
-		workerAuth.Request.HTTPClientContext = workerCtx
-		workerAuth.Request.HTTPClientRequest = workerCtx.Request
-		workerAuth.operationContext = vctx
-		result, err := workerAuth.verifyPassword(workerCtx, passDBs)
-		recordVerifyPasswordSpan(vspan, result, err)
+	passDBResult, err := a.verifyPassword(ctx, passDBs)
+	recordVerifyPasswordSpan(vspan, passDBResult, err)
+	a.logVerifyPasswordError(err)
 
-		return verificationWorkResult{owner: a, auth: workerAuth, result: result}, err
-	})
-
-	verifyResult, waitErr := a.waitVerifyPasswordResult(ctx, resCh)
-	if waitErr != nil {
-		waitSpan.RecordError(waitErr)
-
-		return nil, waitErr
-	}
-
-	waitSpan.SetAttributes(attribute.Bool("shared", verifyResult.shared))
-
-	passDBResult := a.passDBResultFromVerifyValue(ctx, verifyResult)
-	a.logVerifyPasswordError(verifyResult.err)
-
-	return passDBResult, verifyResult.err
-}
-
-// verifyPasswordSingleflightKey returns the deduplication key for password verification.
-func verifyPasswordSingleflightKey(ctx *gin.Context, auth *AuthState) string {
-	if idem := ctx.GetHeader(idempotencyHeaderName); idem != "" {
-		return "idem:" + idem
-	}
-
-	return auth.Runtime.GUID
-}
-
-// waitVerifyPasswordResult waits for singleflight or request cancellation.
-func (a *AuthState) waitVerifyPasswordResult(ctx *gin.Context, resCh <-chan singleflight.Result) (verifyPasswordResult, error) {
-	select {
-	case <-util.HTTPRequestDone(ctx.Request):
-		if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "verify.singleflight_wait") {
-			return verifyPasswordResult{}, util.HTTPRequestContextError(ctx.Request)
-		}
-	case result := <-resCh:
-		return verifyPasswordResult{
-			value:  result.Val,
-			err:    result.Err,
-			shared: result.Shared,
-		}, nil
-	}
-
-	return verifyPasswordResult{}, nil
-}
-
-// passDBResultFromVerifyValue clones shared results before applying them to the auth state.
-func (a *AuthState) passDBResultFromVerifyValue(ctx *gin.Context, result verifyPasswordResult) *PassDBResult {
-	if result.value == nil {
-		return nil
-	}
-
-	workResult := result.value.(verificationWorkResult)
-
-	passDBResult := workResult.result
-	if passDBResult == nil {
-		return nil
-	}
-
-	if workResult.owner == a {
-		a.applyVerificationWorkerState(ctx, workResult.auth, passDBResult)
-
-		return passDBResult
-	}
-
-	clonedResult := passDBResult.Clone()
-	updateAuthentication(ctx, a, clonedResult, nil)
-
-	return clonedResult
+	return passDBResult, err
 }
 
 // recordVerifyPasswordSpan records verification outcome attributes on the active span.
@@ -3903,16 +3819,11 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 // Ctx returns a standard library context for this AuthState.
 // Preference order:
-// 1) isolated operationContext for worker-owned state
-// 2) HTTPClientRequest.Context() if present
-// 3) HTTPClientContext.Request.Context() if present
-// 4) svcctx.Get() as a safe, non-nil fallback
+// 1) HTTPClientRequest.Context() if present
+// 2) HTTPClientContext.Request.Context() if present
+// 3) svcctx.Get() as a safe, non-nil fallback
 func (a *AuthState) Ctx() context.Context {
 	if a != nil {
-		if a.operationContext != nil {
-			return a.operationContext
-		}
-
 		if a.Request.HTTPClientRequest != nil {
 			if rc := a.Request.HTTPClientRequest.Context(); rc != nil {
 				// Avoid returning a canceled request context

@@ -24,11 +24,8 @@ import (
 
 // requestContextScope owns temporary request-context replacements for one child operation.
 type requestContextScope struct {
-	authState                *AuthState
-	previousOperationContext context.Context
-	authRequest              *util.HTTPRequestContextScope
-	ginRequest               *util.HTTPRequestContextScope
-	operationContextActive   bool
+	authRequest *util.HTTPRequestContextScope
+	ginRequest  *util.HTTPRequestContextScope
 }
 
 // scopeRequestContext installs requestContext for child work on both request holders.
@@ -40,13 +37,6 @@ func (a *AuthState) scopeRequestContext(requestContext context.Context, ctx *gin
 	}
 
 	if a != nil {
-		if a.operationContext != nil && requestContext != nil {
-			scope.authState = a
-			scope.previousOperationContext = a.operationContext
-			scope.operationContextActive = true
-			a.operationContext = requestContext
-		}
-
 		scope.authRequest = util.NewHTTPRequestContextScope(requestContext, &a.Request.HTTPClientRequest)
 	}
 
@@ -65,12 +55,5 @@ func (s *requestContextScope) Restore() {
 
 	if s.authRequest != nil {
 		s.authRequest.Restore()
-	}
-
-	if s.operationContextActive && s.authState != nil {
-		s.authState.operationContext = s.previousOperationContext
-		s.authState = nil
-		s.previousOperationContext = nil
-		s.operationContextActive = false
 	}
 }
