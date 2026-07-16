@@ -37,6 +37,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
+	internalpasswordhash "github.com/croessner/nauthilus/v3/server/internal/passwordhash"
 	"github.com/croessner/nauthilus/v3/server/ipscoper"
 	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
@@ -583,7 +584,7 @@ type passwordHistoryLoadPlan struct {
 	accountTotalKey string
 	ipSetKey        string
 	ipTotalKey      string
-	passwordHash    string
+	passwordHashes  internalpasswordhash.RedisCompatibilityCandidates
 	accountSkipMsg  string
 	hashComputed    bool
 }
@@ -707,8 +708,8 @@ func (p *passwordHistoryLoadPlan) loadCurrentPasswordHistoryMembership() {
 		return
 	}
 
-	passwordHash := p.currentPasswordHash()
-	if passwordHash == "" {
+	passwordHashes := p.currentPasswordHashes()
+	if passwordHashes.Full() == "" {
 		return
 	}
 
@@ -717,21 +718,30 @@ func (p *passwordHistoryLoadPlan) loadCurrentPasswordHistoryMembership() {
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(p.bm.ctx, p.bm.cfg())
 	defer cancel()
 
-	if isMember, err := p.readHandle.SIsMember(dCtx, key, passwordHash).Result(); err == nil && isMember {
-		p.bm.loginAttempts = 1
+	for _, candidate := range []string{passwordHashes.Full(), passwordHashes.Legacy()} {
+		isMember, err := p.readHandle.SIsMember(dCtx, key, candidate).Result()
+		if err != nil {
+			return
+		}
+
+		if isMember {
+			p.bm.loginAttempts = 1
+
+			return
+		}
 	}
 }
 
-// currentPasswordHash returns the cached normalized password hash for this load invocation.
-func (p *passwordHistoryLoadPlan) currentPasswordHash() string {
+// currentPasswordHashes returns cached bounded hash candidates for this load invocation.
+func (p *passwordHistoryLoadPlan) currentPasswordHashes() internalpasswordhash.RedisCompatibilityCandidates {
 	if p.hashComputed {
-		return p.passwordHash
+		return p.passwordHashes
 	}
 
 	p.hashComputed = true
-	p.passwordHash = p.bm.currentPasswordHash()
+	p.passwordHashes = p.bm.currentPasswordHashCandidates()
 
-	return p.passwordHash
+	return p.passwordHashes
 }
 
 // loadPasswordHistoryCount reads the prepared password-history set cardinality.
@@ -1849,8 +1859,8 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 		return
 	}
 
-	passwordHash := bm.currentPasswordHash()
-	if passwordHash == "" {
+	passwordHashes := bm.currentPasswordHashCandidates()
+	if passwordHashes.Full() == "" {
 		return
 	}
 
@@ -1862,7 +1872,7 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 			continue
 		}
 
-		if ok := bm.saveFailedPasswordHashToKey(logger, key, passwordHash, ttl, maxEntries); !ok {
+		if ok := bm.saveFailedPasswordHashToKey(logger, key, passwordHashes, ttl, maxEntries); !ok {
 			return
 		}
 	}
@@ -1880,7 +1890,7 @@ func (bm *bucketManagerImpl) failedPasswordHistoryKeys() []string {
 func (bm *bucketManagerImpl) saveFailedPasswordHashToKey(
 	logger *slog.Logger,
 	key string,
-	passwordHash string,
+	passwordHashes internalpasswordhash.RedisCompatibilityCandidates,
 	ttl time.Duration,
 	maxEntries int32,
 ) bool {
@@ -1891,7 +1901,17 @@ func (bm *bucketManagerImpl) saveFailedPasswordHashToKey(
 
 	// We use a simple script to add to set and expire, but also respect maxEntries if possible.
 	// Since it's now a Set, we don't track counters per password, just existence.
-	res, err := rediscli.ExecuteScript(dCtx, bm.redis(), "AddToSetAndExpireLimit", rediscli.LuaScripts["AddToSetAndExpireLimit"], []string{key}, passwordHash, strconv.FormatInt(int64(ttl.Seconds()), 10), strconv.Itoa(int(maxEntries)))
+	res, err := rediscli.ExecuteScript(
+		dCtx,
+		bm.redis(),
+		"AddToSetAndExpireLimit",
+		rediscli.LuaScripts["AddToSetAndExpireLimit"],
+		[]string{key},
+		passwordHashes.Full(),
+		strconv.FormatInt(int64(ttl.Seconds()), 10),
+		strconv.Itoa(int(maxEntries)),
+		passwordHashes.Legacy(),
+	)
 
 	stats.GetMetrics().GetRedisWriteCounter().Add(1)
 
@@ -2175,6 +2195,7 @@ func (bm *bucketManagerImpl) ShouldEnforceBucketUpdate() (bool, error) {
 type rwpScriptArgs struct {
 	allowKey     string
 	passwordHash string
+	legacyHash   string
 	argThreshold string
 	argTTL       string
 	argNow       string
@@ -2183,8 +2204,8 @@ type rwpScriptArgs struct {
 // buildRWPScriptArgs computes the common arguments needed by both RWPSlidingWindowCheck and RWPSlidingWindowCommit.
 // Returns nil if the key or hash cannot be determined.
 func (bm *bucketManagerImpl) buildRWPScriptArgs() *rwpScriptArgs {
-	allowKey, passwordHash := bm.buildRWPKeyAndHash()
-	if allowKey == "" || passwordHash == "" {
+	allowKey, passwordHashes := bm.buildRWPKeyAndHashes()
+	if allowKey == "" || passwordHashes.Full() == "" {
 		return nil
 	}
 
@@ -2199,7 +2220,8 @@ func (bm *bucketManagerImpl) buildRWPScriptArgs() *rwpScriptArgs {
 
 	return &rwpScriptArgs{
 		allowKey:     allowKey,
-		passwordHash: passwordHash,
+		passwordHash: passwordHashes.Full(),
+		legacyHash:   passwordHashes.Legacy(),
 		argThreshold: strconv.FormatUint(uint64(threshold), 10),
 		argTTL:       strconv.FormatInt(int64(ttl.Seconds()), 10),
 		argNow:       strconv.FormatInt(time.Now().Unix(), 10),
@@ -2221,7 +2243,7 @@ func (bm *bucketManagerImpl) CommitRWPSlidingWindow() {
 		"RWPSlidingWindowCommit",
 		rediscli.LuaScripts["RWPSlidingWindowCommit"],
 		[]string{args.allowKey},
-		args.passwordHash, args.argNow, args.argTTL, args.argThreshold,
+		args.passwordHash, args.argNow, args.argTTL, args.argThreshold, args.legacyHash,
 	)
 
 	cancel()
@@ -2234,16 +2256,16 @@ func (bm *bucketManagerImpl) CommitRWPSlidingWindow() {
 	}
 }
 
-// buildRWPKeyAndHash computes the Redis key and password hash used by the RWP sliding window.
+// buildRWPKeyAndHashes computes the Redis key and bounded hash candidates used by RWP.
 // Returns empty strings if the password or account cannot be determined.
-func (bm *bucketManagerImpl) buildRWPKeyAndHash() (allowKey, passwordHash string) {
+func (bm *bucketManagerImpl) buildRWPKeyAndHashes() (allowKey string, passwordHashes internalpasswordhash.RedisCompatibilityCandidates) {
 	if bm.password.IsZero() {
-		return "", ""
+		return "", internalpasswordhash.RedisCompatibilityCandidates{}
 	}
 
-	passwordHash = bm.currentPasswordHash()
-	if passwordHash == "" {
-		return "", ""
+	passwordHashes = bm.currentPasswordHashCandidates()
+	if passwordHashes.Full() == "" {
+		return "", internalpasswordhash.RedisCompatibilityCandidates{}
 	}
 
 	scoped := bm.clientIP
@@ -2261,7 +2283,7 @@ func (bm *bucketManagerImpl) buildRWPKeyAndHash() (allowKey, passwordHash string
 	}
 
 	if acct == "" {
-		return "", ""
+		return "", internalpasswordhash.RedisCompatibilityCandidates{}
 	}
 
 	cfg := bm.cfg()
@@ -2275,12 +2297,17 @@ func (bm *bucketManagerImpl) buildRWPKeyAndHash() (allowKey, passwordHash string
 	sb.WriteByte(':')
 	sb.WriteString(acct)
 
-	return sb.String(), passwordHash
+	return sb.String(), passwordHashes
 }
 
-// currentPasswordHash returns the normalized password hash used by brute-force Redis sets.
+// currentPasswordHash returns the canonical normalized password hash used by new Redis writes.
 func (bm *bucketManagerImpl) currentPasswordHash() string {
-	var passwordHash string
+	return bm.currentPasswordHashCandidates().Full()
+}
+
+// currentPasswordHashCandidates derives the canonical and bounded legacy candidates.
+func (bm *bucketManagerImpl) currentPasswordHashCandidates() internalpasswordhash.RedisCompatibilityCandidates {
+	var candidates internalpasswordhash.RedisCompatibilityCandidates
 
 	bm.password.WithBytes(func(value []byte) {
 		if len(value) == 0 {
@@ -2290,10 +2317,10 @@ func (bm *bucketManagerImpl) currentPasswordHash() string {
 		prepared := util.PreparePasswordBytes(value)
 		defer clear(prepared)
 
-		passwordHash = util.GetHashBytes(prepared)
+		candidates = internalpasswordhash.DeriveRedisCompatibilityCandidates(prepared)
 	})
 
-	return passwordHash
+	return candidates
 }
 
 // isRepeatingWrongPassword implements the RWP allowance logic.
@@ -2324,7 +2351,7 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		"RWPSlidingWindowCheck",
 		rediscli.LuaScripts["RWPSlidingWindowCheck"],
 		[]string{args.allowKey},
-		args.passwordHash, args.argNow, args.argTTL, args.argThreshold,
+		args.passwordHash, args.argNow, args.argTTL, args.argThreshold, args.legacyHash,
 	)
 
 	cancel()
@@ -2357,9 +2384,14 @@ func (bm *bucketManagerImpl) repeatingWrongPasswordFallback(logger *slog.Logger,
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 	defer cancel()
 
-	isMember, _ := bm.redis().GetReadHandle().SIsMember(dCtx, acctKey, args.passwordHash).Result()
+	for _, candidate := range []string{args.passwordHash, args.legacyHash} {
+		isMember, _ := bm.redis().GetReadHandle().SIsMember(dCtx, acctKey, candidate).Result()
+		if isMember {
+			return true
+		}
+	}
 
-	return isMember
+	return false
 }
 
 // checkEnforceBruteForceComputation determines if brute force computation must be enforced based on user and password state.

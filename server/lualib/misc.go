@@ -262,8 +262,8 @@ func (m *PasswordManager) comparePasswords(L *lua.LState) int {
 	return stack.PushResults(lua.LBool(passwordsMatched), lua.LNil)
 }
 
-// generatePasswordHash creates the Redis-compatible password hash matching the Go backend behavior.
-// It takes one argument (password string) and returns a lowercase 8-hex-character string.
+// generatePasswordHash creates the canonical password hash matching the Go backend behavior.
+// It takes one argument and returns a lowercase 64-hex-character SHA-256 digest.
 func (m *PasswordManager) generatePasswordHash(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	password := stack.CheckString(1)

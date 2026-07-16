@@ -2,6 +2,7 @@ package pluginruntime
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"reflect"
 	"strings"
@@ -20,6 +21,19 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
+
+func TestPostActionPasswordHashUsesFullSHA256(t *testing.T) {
+	auth := newSubjectTestAuth(t)
+	hash := postActionPasswordHash(auth)
+
+	if len(hash) != 64 {
+		t.Fatalf("post-action password hash = %q, want 64 lowercase hex characters", hash)
+	}
+
+	if _, err := hex.DecodeString(hash); err != nil {
+		t.Fatalf("post-action password hash = %q, want lowercase hex: %v", hash, err)
+	}
+}
 
 const (
 	effectObligationName      = "sync_obligation"

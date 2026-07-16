@@ -76,9 +76,7 @@ func TestPasswordHelperGenerateHashMatchesLuaBehavior(t *testing.T) {
 		t.Fatalf("GenerateHash() = %q, want GenerateHashString() = %q", secretHash, stringHash)
 	}
 
-	wantPrepared := string(password.PrepareBytes([]byte("s3cret"), nil))
-
-	if got := password.GenerateHashString("s3cret", password.HashOptions{DevMode: true}); got != wantPrepared {
-		t.Fatalf("dev-mode GenerateHashString() = %q, want prepared password %q", got, wantPrepared)
+	if got := password.GenerateHashString("s3cret", password.HashOptions{Nonce: []byte("nonce"), DevMode: true}); got != stringHash {
+		t.Fatalf("dev-mode GenerateHashString() = %q, want canonical hash %q", got, stringHash)
 	}
 }

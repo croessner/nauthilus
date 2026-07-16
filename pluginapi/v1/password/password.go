@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // Package password exposes Nauthilus-compatible password comparison and
-// generated short-hash helpers for native Go plugins without importing server
+// full password-hash helpers for native Go plugins without importing server
 // internals.
 package password
 
@@ -209,13 +209,14 @@ func CompareHashBytes(hashPassword string, plainPassword []byte) (bool, error) {
 	return subtle.ConstantTimeCompare([]byte(encoded), []byte(hashPassword)) == 1, nil
 }
 
-// HashOptions controls generated short password hashes.
+// HashOptions controls generated password hashes.
 type HashOptions struct {
-	Nonce   []byte
+	Nonce []byte
+	// DevMode is retained for source compatibility and no longer changes hash output.
 	DevMode bool
 }
 
-// GenerateHash creates the Nauthilus short hash for a public plugin secret.
+// GenerateHash creates the Nauthilus full password hash for a public plugin secret.
 func GenerateHash(secret pluginapi.Secret, options HashOptions) (string, error) {
 	if secret == nil {
 		return "", nil
@@ -235,20 +236,20 @@ func GenerateHash(secret pluginapi.Secret, options HashOptions) (string, error) 
 	return hash, nil
 }
 
-// GenerateHashString creates the Nauthilus short hash for a plain-text password string.
+// GenerateHashString creates the Nauthilus full hash for a plain-text password string.
 func GenerateHashString(password string, options HashOptions) string {
 	return GenerateHashBytes([]byte(password), options)
 }
 
-// GenerateHashBytes creates the Nauthilus short hash for plain password bytes.
+// GenerateHashBytes creates the Nauthilus full hash for plain password bytes.
 func GenerateHashBytes(password []byte, options HashOptions) string {
 	prepared := PrepareBytes(password, options.Nonce)
 	defer clear(prepared)
 
-	return ShortHash(prepared, options.DevMode)
+	return FullHash(prepared)
 }
 
-// PrepareBytes applies the Nauthilus password nonce layout before short hashing.
+// PrepareBytes applies the Nauthilus password nonce layout before hashing.
 func PrepareBytes(password []byte, nonce []byte) []byte {
 	prepared := make([]byte, len(nonce)+1+len(password))
 	copy(prepared, nonce)
@@ -258,16 +259,11 @@ func PrepareBytes(password []byte, nonce []byte) []byte {
 	return prepared
 }
 
-// ShortHash returns the first eight hex characters of a SHA-256 digest unless dev mode requests raw prepared bytes.
-func ShortHash(value []byte, devMode bool) string {
-	if devMode {
-		return string(value)
-	}
+// FullHash returns the lowercase full SHA-256 digest of prepared bytes.
+func FullHash(value []byte) string {
+	digest := sha256.Sum256(value)
 
-	hashValue := sha256.New()
-	_, _ = hashValue.Write(value)
-
-	return hex.EncodeToString(hashValue.Sum(nil))[:8]
+	return hex.EncodeToString(digest[:])
 }
 
 // compareSaltedSHA verifies a salted SHA password hash.

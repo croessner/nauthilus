@@ -631,9 +631,10 @@ err := secret.WithBytes(func(password []byte) error {
 Never store the byte slice passed to `WithBytes`, never log it, and clear plugin-owned copies immediately after use.
 For Nauthilus-compatible password verification, import `github.com/croessner/nauthilus/v3/pluginapi/v1/password` and call
 `password.CompareHash(hash, secret)`. The same package exposes `GenerateHash` and `GenerateHashString` for the
-Redis-compatible short hash used by Lua `nauthilus_password.generate_password_hash`; server-side nonce and dev-mode
-selection remain host-owned, so plugin-owned hashes must pass the same `password.HashOptions` when they need exact
-server-context parity.
+canonical lowercase 64-hex SHA-256 digest used by Lua `nauthilus_password.generate_password_hash`. The server-side
+nonce remains host-owned, so plugin-owned hashes must pass the same `password.HashOptions` when they need exact
+server-context parity. `HashOptions.DevMode` remains source-compatible but never exposes prepared password bytes and
+does not change the digest.
 
 ## Lua Surface Audit
 
@@ -755,7 +756,7 @@ Evidence examples include `backend/proxy_backend.lua`, `subject/idp_policy.lua`,
 | Account hash-tag helpers | `nauthilus_keys` | `Host.Helpers().AccountTag` and `pluginapi/v1/helpers.AccountTag`. | `helper-facade` | Account tags share one deterministic helper implementation for Lua-compatible native ports. |
 | Country display-name helper | `nauthilus_misc.get_country_name` | `Host.Helpers().CountryName` and `pluginapi/v1/helpers.CountryName`. | `helper-facade` | Native and Lua callers share one deterministic lookup and the exact `"Unknown"` fallback. |
 | Scoped-IP and routable-IP helpers | `nauthilus_misc.scoped_ip`, `nauthilus_util.is_routable_ip` | `Host.Helpers().ScopedIP`, `IsRoutableIP`, and `pluginapi/v1/helpers`. | `helper-facade` | Deterministic utility helpers are public and dependency-light; the runtime facade supplies config-derived scoping. |
-| Password helpers | `nauthilus_password.compare_passwords`, `generate_password_hash` | `pluginapi/v1/password` plus `CredentialProvider`. | `exposed` | Public helpers share the same compare, SSHA parsing, crypt verifier, prepared-byte, and short-hash implementation used by Lua/server utilities. |
+| Password helpers | `nauthilus_password.compare_passwords`, `generate_password_hash` | `pluginapi/v1/password` plus `CredentialProvider`. | `exposed` | Public helpers share the same compare, SSHA parsing, crypt verifier, prepared-byte, and full SHA-256 implementation used by Lua/server utilities. |
 | `nauthilus_prometheus` | Proxy backend, account protection, clickhouse, init | `Host.Metrics()`. | `exposed` | Plugin metrics are exported under the native plugin namespace; gauges support set and add semantics, histograms observe samples, and zero-valued counter series can be touched with `Add(ctx, 0, labels...)`. |
 | `nauthilus_opentelemetry` | Proxy backend, account protection, dynamic response | `Host.Tracer()` and `Host.HTTP()`. | `helper-facade` | Span creation is exposed; host-managed HTTP injects trace headers and records bounded HTTP spans. Lua semantic helpers are not exact native APIs. |
 | `nauthilus_psnet` | `init/init.lua` | `Host.ConnectionTargets(scope).Register(ctx, target)`. | `helper-facade` | Native plugins can register named connection targets for host generic connection observability. |
@@ -1159,7 +1160,9 @@ OpenTelemetry trace context but does not inherit request cancellation; the worke
 runtime lifetime shuts down. `PostActionRequest.Args` and
 `PostActionRequest.Facts` use the same policy decision context as obligations. `PostActionRequest.Credentials` exposes
 request credentials only when the module requested and was granted the `credentials` capability, and
-`PostActionRequest.PasswordHash` carries the host-owned Lua-compatible short password hash when a password was present.
+`PostActionRequest.PasswordHash` carries the host-owned lowercase 64-hex SHA-256 password hash when a password was present.
+The bundled Lua and native ClickHouse row builders validate this full value and export only its first eight lowercase
+hex characters for their established analytics schema; no other post-action surface receives that short export.
 Post-action results report post-decision diagnostics only; they do not emit additional policy facts into the
 already-selected decision and cannot mutate the client response.
 

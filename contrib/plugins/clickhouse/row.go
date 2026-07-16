@@ -142,6 +142,11 @@ type clickHouseRow struct {
 
 // buildRow maps one post-action request into the Lua-compatible ClickHouse row.
 func buildRow(request pluginapi.PostActionRequest, cfg moduleConfig) (clickHouseRow, error) {
+	passwordHash, err := clickHousePasswordHash(request.PasswordHash)
+	if err != nil {
+		return clickHouseRow{}, err
+	}
+
 	exchangeSnapshot := exchange.NewSnapshot(request.Runtime, request.Facts)
 	geoIPAnalytics := exchangeSnapshot.GeoIPAnalytics()
 
@@ -165,7 +170,7 @@ func buildRow(request pluginapi.PostActionRequest, cfg moduleConfig) (clickHouse
 		DisplayName:       request.Snapshot.DisplayName,
 		Account:           request.Snapshot.Account,
 		Username:          request.Snapshot.Username,
-		PasswordHash:      request.PasswordHash,
+		PasswordHash:      passwordHash,
 		PwndInfo:          exchangeSnapshot.HIBPHashInfo(),
 		BruteForceBucket:  request.Snapshot.Diagnostics.BruteForceName,
 		BruteForceCounter: uintPointer(uint64(request.Snapshot.Diagnostics.BruteForceCounter)),
@@ -194,6 +199,25 @@ func buildRow(request pluginapi.PostActionRequest, cfg moduleConfig) (clickHouse
 	applyDynamicResponseInfo(&row, exchangeSnapshot.Map(exchange.KeyDynamicResponse))
 
 	return row, nil
+}
+
+// clickHousePasswordHash validates the general full digest before its row-only export.
+func clickHousePasswordHash(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+
+	if len(value) != 64 {
+		return "", fmt.Errorf("password hash must contain 64 lowercase hexadecimal characters")
+	}
+
+	for _, char := range value {
+		if char < '0' || (char > '9' && char < 'a') || char > 'f' {
+			return "", fmt.Errorf("password hash must contain 64 lowercase hexadecimal characters")
+		}
+	}
+
+	return value[:8], nil
 }
 
 // applyGeoIPPrivacyInfo copies typed privacy analytics and bounded diagnostics.

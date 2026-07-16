@@ -17,6 +17,11 @@ package lualib
 
 import (
 	"context"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/pluginapi/v1/password"
@@ -24,6 +29,55 @@ import (
 	"github.com/croessner/nauthilus/v3/server/util"
 	lua "github.com/yuin/gopher-lua"
 )
+
+func TestPasswordManagerGeneratePasswordHashReturnsFullSHA256(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	util.SetDefaultConfigFile(&config.FileSettings{Server: &config.ServerSection{}})
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	L.Push(lua.LString("contract-password"))
+
+	manager := NewPasswordManager(context.TODO(), nil, nil)
+	manager.generatePasswordHash(L)
+	got := L.ToString(-2)
+
+	if len(got) != 64 {
+		t.Fatalf("generate_password_hash returned %q, want 64 lowercase hex characters", got)
+	}
+
+	if _, err := hex.DecodeString(got); err != nil {
+		t.Fatalf("generate_password_hash returned malformed digest %q: %v", got, err)
+	}
+}
+
+func TestBundledGeneralPasswordHashConsumersUseCanonicalLuaAPI(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("failed to locate Lua consumer fixtures")
+	}
+
+	consumers := map[string]string{
+		"telegram": "password_hash = nauthilus_password.generate_password_hash(request.password)",
+		"metrics":  "pcall(nauthilus_password.generate_password_hash, request.password)",
+	}
+
+	for name, call := range consumers {
+		path := filepath.Join(filepath.Dir(currentFile), "..", "lua-plugins.d", map[string]string{
+			"telegram": filepath.Join("actions", "telegram.lua"),
+			"metrics":  filepath.Join("environment", "account_longwindow_metrics.lua"),
+		}[name])
+
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s Lua consumer: %v", name, err)
+		}
+
+		if !strings.Contains(string(source), call) {
+			t.Fatalf("%s does not consume the canonical Lua password-hash API", name)
+		}
+	}
+}
 
 func TestValidatePassword(t *testing.T) {
 	// Define the test cases

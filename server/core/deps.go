@@ -28,18 +28,19 @@ import (
 
 // AuthDeps bundles dependencies required by authentication request paths.
 type AuthDeps struct {
-	Cfg           config.File
-	CurrentConfig func() config.File
-	Logger        *slog.Logger
-	Env           config.Environment
-	Redis         rediscli.Client
-	Tolerate      tolerate.Tolerate
-	Resp          ResponseWriter
-	AccountCache  *accountcache.Manager
-	Channel       backend.Channel
-	Backend       BackendManager
-	LDAPQueue     LDAPRequestQueue
-	LDAPAuthQueue LDAPAuthRequestQueue
+	Cfg                        config.File
+	CurrentConfig              func() config.File
+	Logger                     *slog.Logger
+	Env                        config.Environment
+	Redis                      rediscli.Client
+	Tolerate                   tolerate.Tolerate
+	Resp                       ResponseWriter
+	AccountCache               *accountcache.Manager
+	Channel                    backend.Channel
+	Backend                    BackendManager
+	LDAPQueue                  LDAPRequestQueue
+	LDAPAuthQueue              LDAPAuthRequestQueue
+	BackendAuthenticationCache *PositiveBackendAuthenticationCache
 }
 
 // LDAPRequestQueue describes the exported LDAPRequestQueue type.

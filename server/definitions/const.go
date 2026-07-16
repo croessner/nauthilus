@@ -743,7 +743,7 @@ const (
 	// BackendTest represents a test backend
 	BackendTest
 
-	// BackendLocalCache represents the local in-memory cache localcache.LocalCache
+	// BackendLocalCache represents backend credential reuse from the positive in-memory cache.
 	BackendLocalCache
 
 	// BackendRemote represents a remote authority backend
@@ -769,7 +769,7 @@ const (
 	// BackendTestName refers to the in-memory test backend
 	BackendTestName = "test"
 
-	// BackendLocalCacheName refers to th elocal in memory localcache.LocalCache.
+	// BackendLocalCacheName identifies the positive in-memory backend authentication cache.
 	BackendLocalCacheName = "memory"
 
 	// BackendRemoteName refers to a remote authority backend.
@@ -1840,7 +1840,7 @@ const (
 	// LuaFnScopedIP exposes IP scoping (network normalization) to Lua via nauthilus_misc.scoped_ip(ctx, ip).
 	LuaFnScopedIP = "scoped_ip"
 
-	// LuaFnGeneratePasswordHash is the function name for generating a Redis-compatible password hash
+	// LuaFnGeneratePasswordHash is the function name for generating the canonical full password hash
 	// used by Nauthilus (util.GetHash(util.PreparePassword(password))).
 	LuaFnGeneratePasswordHash = "generate_password_hash"
 

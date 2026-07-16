@@ -46,7 +46,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/v3/server/errors"
-	"github.com/croessner/nauthilus/v3/server/localcache"
 	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
@@ -2891,7 +2890,7 @@ func (a *AuthState) HaveMonitoringFlag(flag definitions.Monitoring) bool {
 	return slices.Contains(a.Runtime.MonitoringFlags, flag)
 }
 
-// SFKeyHash returns a short hash for the strict singleflight key to use in Redis keys.
+// SFKeyHash returns the digest for the legacy strict singleflight key.
 func (a *AuthState) SFKeyHash() string {
 	sum := sha1.Sum([]byte(a.generateSingleflightKey()))
 
@@ -2949,11 +2948,7 @@ func (a *AuthState) usernamePasswordChecks() definitions.AuthResult {
 	return definitions.AuthResultUnset
 }
 
-// handleLocalCache handles the local cache authentication logic for the AuthState object.
-// It sets the operation mode and initializes the passDBResult.
-// Then, it applies Lua subject analysis to the authentication result.
-// After that, the PostLuaAction is executed on the passDBResult.
-// Finally, it returns the authResult of type definitions.AuthResult.
+// handleLocalCache reconstructs the backend result and runs request-local subject work.
 func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
 	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_local_cache_path_total", resource); stop != nil {
@@ -2962,39 +2957,20 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 
 	a.SetOperationMode(ctx)
 
-	passDBResult := a.initializePassDBResult()
+	authentication, found := cachedBackendAuthenticationForRequest(ctx)
+	if !found {
+		return definitions.AuthResultTempFail
+	}
 
+	passDBResult, ok := authentication.passDBResult()
+	if !ok {
+		return definitions.AuthResultTempFail
+	}
 	defer PutPassDBResultToPool(passDBResult)
 
-	// Since this path is a confirmed positive hit from the in-memory cache,
-	// the PassDB stage has already decided previously. Reflect that in AuthState
-	// so final logs include authn=true for cache hits.
-	a.Runtime.Authenticated = true
-	a.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
+	a.applyBackendResult(ctx, passDBResult)
 
 	return a.runPostBackendActions(ctx, passDBResult)
-}
-
-// initializePassDBResult initializes a new instance of PassDBResult with values from the AuthState object.
-// It sets Authenticated and UserFound to true and copies the values of AccountField, TOTPSecretField, TOTPRecoveryField,
-// UniqueUserIDField, DisplayNameField, Backend, and Attributes from the AuthState object.
-// The initialized PassDBResult instance is returned.
-func (a *AuthState) initializePassDBResult() *PassDBResult {
-	result := GetPassDBResultFromPool()
-
-	result.Authenticated = true
-	result.UserFound = true
-	result.AccountField = a.Runtime.AccountField
-	result.Account = a.GetAccount()
-	result.TOTPSecretField = a.Runtime.TOTPSecretField
-	result.TOTPRecoveryField = a.Runtime.TOTPRecoveryField
-	result.UniqueUserIDField = a.Runtime.UniqueUserIDField
-	result.DisplayNameField = a.Runtime.DisplayNameField
-	result.Backend = a.Runtime.UsedPassDBBackend
-	// Hand out a copy to avoid aliasing with the live AuthState map
-	result.Attributes = a.GetAttributesCopy()
-
-	return result
 }
 
 // buildBackendExecutionPlan converts the configured backend order into executable backends and side-effect metadata.
@@ -3304,27 +3280,12 @@ func (a *AuthState) GetCacheNameFor(usedBackend definitions.CacheNameBackend) (c
 // CreatePositivePasswordCache constructs a PositivePasswordCache containing user authentication details.
 func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache {
 	return &bktype.PositivePasswordCache{
-		AccountField:      a.Runtime.AccountField,
-		TOTPSecretField:   a.Runtime.TOTPSecretField,
-		TOTPRecoveryField: a.Runtime.TOTPRecoveryField,
-		UniqueUserIDField: a.Runtime.UniqueUserIDField,
-		DisplayNameField:  a.Runtime.DisplayNameField,
-		Password: func() string {
-			var passwordShort string
-
-			a.Request.Password.WithBytes(func(value []byte) {
-				if len(value) == 0 {
-					return
-				}
-
-				prepared := util.PreparePasswordBytes(value)
-				defer clear(prepared)
-
-				passwordShort = util.GetHashBytes(prepared)
-			})
-
-			return passwordShort
-		}(),
+		AccountField:            a.Runtime.AccountField,
+		TOTPSecretField:         a.Runtime.TOTPSecretField,
+		TOTPRecoveryField:       a.Runtime.TOTPRecoveryField,
+		UniqueUserIDField:       a.Runtime.UniqueUserIDField,
+		DisplayNameField:        a.Runtime.DisplayNameField,
+		Password:                preparedCredentialDigest(a),
 		Backend:                 a.Runtime.SourcePassDBBackend,
 		BackendName:             a.Runtime.BackendName,
 		Attributes:              a.Attributes.Attributes,
@@ -3393,14 +3354,6 @@ func (a *AuthState) applyBackendResult(ctx *gin.Context, passDBResult *PassDBRes
 	a.recordPolicyBackendResult(ctx, definitions.AuthResultFail, passDBResult, nil)
 }
 
-func (a *AuthState) storeAuthenticatedLocalCache(passDBResult *PassDBResult) {
-	if a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser() {
-		return
-	}
-
-	localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult.Clone(), a.Cfg().GetServer().GetLocalCacheAuthTTL())
-}
-
 func (a *AuthState) runPostBackendActions(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult {
 	authResult := a.SubjectLua(ctx, passDBResult)
 
@@ -3419,11 +3372,39 @@ func (a *AuthState) processFinalAuthCache(ctx *gin.Context, passDBResult *PassDB
 		return err
 	}
 
-	if cacheAuthenticated {
-		a.storeAuthenticatedLocalCache(passDBResult)
+	return nil
+}
+
+// applyPositiveBackendAuthenticationCache applies a request-owned cached backend result.
+func (a *AuthState) applyPositiveBackendAuthenticationCache(ctx *gin.Context) (definitions.AuthResult, bool) {
+	if !a.GetFromLocalCache(ctx) {
+		stats.GetMetrics().GetCacheMisses().Inc()
+
+		return definitions.AuthResultUnset, false
 	}
 
-	return nil
+	stats.GetMetrics().GetCacheHits().Inc()
+
+	if idempotencyKey := ctx.GetHeader(idempotencyHeaderName); idempotencyKey != "" {
+		replayed := true
+
+		setIdempotencyHeaders(ctx, idempotencyKey, &replayed)
+	}
+
+	return a.handleLocalCache(ctx), true
+}
+
+// resolveBackendAuthenticationShortcut handles outcomes that do not need another backend call.
+func (a *AuthState) resolveBackendAuthenticationShortcut(ctx *gin.Context) (definitions.AuthResult, bool) {
+	if a.Runtime.Authenticated {
+		return definitions.AuthResultOK, true
+	}
+
+	if cachedResult, ok := a.applyPositiveBackendAuthenticationCache(ctx); ok {
+		return cachedResult, true
+	}
+
+	return definitions.AuthResultUnset, false
 }
 
 // authenticateUser runs backend verification and then applies post-backend side effects.
@@ -3446,9 +3427,8 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, plan backendExecutionPlan
 		defer stop()
 	}
 
-	// Protect against re-entrancy: if a prior pass in this request already authenticated, do not degrade
-	if a.Runtime.Authenticated {
-		return definitions.AuthResultOK
+	if cachedResult, ok := a.resolveBackendAuthenticationShortcut(ctx); ok {
+		return cachedResult
 	}
 
 	var (
@@ -3478,6 +3458,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, plan backendExecutionPlan
 
 	a.loadBruteForceHistories(ctx, accountName)
 	a.applyBackendResult(ctx, passDBResult)
+	a.storePositiveBackendAuthentication(ctx, passDBResult)
 	authResult = a.runPostBackendActions(ctx, passDBResult)
 	aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
 
@@ -4572,27 +4553,8 @@ func (a *AuthState) WithXSSL(ctx *gin.Context) State {
 	return a
 }
 
-// generateLocalCacheKey generates a string key used for caching the AuthState object in the local cache.
-// The key is constructed by concatenating the Username, Password and  Service values using a null character ('\0')
-// as a separator.
-func (a *AuthState) generateLocalCacheKey() string {
-	return fmt.Sprintf("%s\000%s\000%s\000%s\000%s",
-		a.Request.Username,
-		a.Request.Password,
-		a.Request.Service,
-		a.Request.Protocol.Get(),
-		func() string {
-			if a.Request.ClientIP == "" {
-				return defaultClientIPAny
-			}
-
-			return a.Request.ClientIP
-		}(),
-	)
-}
-
 // generateSingleflightKey builds a strict deduplication key for backchannel singleflight.
-// Fields: service, protocol, username, client_ip, local_ip, local_port, ssl_flag, [oidcCID], pw_short
+// Fields: service, protocol, username, client_ip, local_ip, local_port, ssl_flag, [oidcCID], password digest.
 func (a *AuthState) generateSingleflightKey() string {
 	clientIP := a.Request.ClientIP
 	if clientIP == "" {
@@ -4604,19 +4566,7 @@ func (a *AuthState) generateSingleflightKey() string {
 		sslFlag = "1"
 	}
 
-	// Short password hash (same function as for positive password cache)
-	var pwShort string
-
-	a.Request.Password.WithBytes(func(value []byte) {
-		if len(value) == 0 {
-			return
-		}
-
-		prepared := util.PreparePasswordBytes(value)
-		defer clear(prepared)
-
-		pwShort = util.GetHashBytes(prepared)
-	})
+	passwordDigest := preparedCredentialDigest(a)
 
 	const sep = "\x00"
 
@@ -4642,17 +4592,12 @@ func (a *AuthState) generateSingleflightKey() string {
 	}
 
 	sb.WriteString(sep)
-	sb.WriteString(pwShort)
+	sb.WriteString(passwordDigest)
 
 	return sb.String()
 }
 
-// GetFromLocalCache retrieves the AuthState object from the local cache using the generateLocalCacheKey() as the key.
-// If the object is found in the cache, it updates the fields of the current AuthState object with the cached values.
-// It also sets the a.GUID field with the original value to avoid losing the GUID from the previous object.
-// If the a.HTTPClientContext field is not nil, it sets it to nil and restores it after updating the AuthState object.
-// It sets the a.UsedPassDBBackend field to BackendLocalCache to indicate that the cache was used.
-// Finally, it sets the "local_cache_auth" key to true in the gin.Context using ctx.Set() and returns true if the object is found in the cache; otherwise, it returns false.
+// GetFromLocalCache applies one complete positive backend snapshot to the current request.
 func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 	tr := monittrace.New("nauthilus/auth")
 	lcCtx, lcSpan := tr.Start(a.Ctx(), "auth.local_cache",
@@ -4666,25 +4611,13 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 
 	defer lcSpan.End()
 
-	if a.HaveMonitoringFlag(definitions.MonInMemory) {
+	if a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser() {
 		lcSpan.SetAttributes(attribute.Bool("skipped", true))
 
 		return false
 	}
 
-	if value, found := localcache.LocalCache.Get(a.generateLocalCacheKey()); found {
-		passDBResult := value.(*PassDBResult)
-
-		updateAuthentication(ctx, a, passDBResult, &PassDBMap{
-			backend: definitions.BackendLocalCache,
-			fn:      nil,
-		})
-
-		// Set AdditionalAttributes in the gin.Context if they exist in the cached result
-		if len(passDBResult.AdditionalAttributes) > 0 {
-			ctx.Set(definitions.CtxAdditionalAttributesKey, passDBResult.AdditionalAttributes)
-		}
-
+	if a.backendAuthenticationCache().ApplyForRequest(ctx, a) {
 		ctx.Set(definitions.CtxLocalCacheAuthKey, true)
 
 		lcSpan.SetAttributes(
@@ -4692,7 +4625,7 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 			attribute.String("backend", definitions.BackendLocalCache.String()),
 		)
 
-		return found
+		return true
 	}
 
 	lcSpan.SetAttributes(attribute.Bool("hit", false))
@@ -4700,10 +4633,8 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 	return false
 }
 
-// PreproccessAuthRequest preprocesses the authentication request by checking if the request is already in the local cache.
-// If not found in the cache, it checks if the request is a brute force attack and updates the brute force counter.
-// It then performs a post Lua action and triggers a failed authentication response.
-// If a brute force attack is rejected, it returns true. Configured policy controls may let processing continue.
+// PreproccessAuthRequest runs request-local brute-force controls before environment and backend authentication.
+// If a brute-force attack is rejected, it returns true. Configured policy controls may let processing continue.
 func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	tr := monittrace.New("nauthilus/auth")
 	pctx, pspan := tr.Start(ctx.Request.Context(), "auth.environment",
@@ -4716,21 +4647,9 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	defer requestScope.Restore()
 	defer pspan.End()
 
-	var cacheHit bool
-
-	if found := a.GetFromLocalCache(ctx); !found {
-		stats.GetMetrics().GetCacheMisses().Inc()
-
-		if a.CheckBruteForce(ctx) {
-			return a.handlePreAuthBruteForce(ctx, pspan)
-		}
-	} else {
-		stats.GetMetrics().GetCacheHits().Inc()
-
-		cacheHit = true
+	if a.CheckBruteForce(ctx) {
+		return a.handlePreAuthBruteForce(ctx, pspan)
 	}
-
-	pspan.SetAttributes(attribute.Bool("cache.hit", cacheHit))
 
 	return false
 }

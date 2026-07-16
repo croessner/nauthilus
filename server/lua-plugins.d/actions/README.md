@@ -102,9 +102,9 @@ Sends security notifications and alerts to a Telegram channel or group.
 
 **Behavior (v1.8.2):**
 - The plugin only sends a Telegram message if `request.account` is set and non-empty.
-- If a `request.password` is present, the plugin computes a short hash via the Go-backed Lua module `nauthilus_password.generate_password_hash(password)`.
+- If a `request.password` is present, the plugin computes a full hash via the Go-backed Lua module `nauthilus_password.generate_password_hash(password)`.
   - This hash is identical to the one stored/used server-side for Redis password history: `util.GetHash(util.PreparePassword(password))`.
-  - It uses the server's configured nonce internally and returns an 8-character lowercase hex string.
+  - It uses the server's configured nonce internally and returns a 64-character lowercase SHA-256 hex string.
 - The rendered Telegram message includes the field "PASSWORD HASH" along with other context.
 
 **Usage:**
@@ -129,6 +129,7 @@ Capabilities:
 - Mirrors metrics/fields collected by telegram.lua, but does not require an existing account (account can be "n/a").
 - Batches rows with the in-process nauthilus_cache to reduce HTTP insert overhead.
 - Uses glua_http (cjoudrey/gluahttp) for HTTP POST to ClickHouse.
+- Validates the general 64-character password hash and exports its first eight lowercase hex characters only in the ClickHouse row.
 
 ClickHouse table schema (JSONEachRow):
 ```

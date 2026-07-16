@@ -3,10 +3,10 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/localcache"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/testing/tracetest"
@@ -143,6 +143,7 @@ func TestHandleEnvironment_RestoresRequestContextAfterEarlyEnvironmentReturn(t *
 
 func TestAuthenticate_DoesNotInheritLastEnvironmentControlSpan(t *testing.T) {
 	auth, ctx, collector := newTraceParentedEnvironmentAuth(t)
+	auth.deps.BackendAuthenticationCache = NewPositiveBackendAuthenticationCache(time.Now)
 	requestSpan := attachRequestParentSpan(t, ctx, auth)
 
 	environmentResult := auth.HandleEnvironment(ctx)
@@ -170,6 +171,7 @@ func TestAuthenticate_DoesNotInheritLastEnvironmentControlSpan(t *testing.T) {
 	spans := collector.Spans()
 	rblSpan := requireTraceSpan(t, spans, "auth.environment.rbl")
 	authSpan := requireTraceSpan(t, spans, "auth.authenticate")
+	localCacheSpan := requireTraceSpan(t, spans, "auth.local_cache")
 	verifySpan := requireTraceSpan(t, spans, "auth.verify")
 	historySpan := requireTraceSpan(t, spans, "bruteforce.load_all_password_histories")
 	subjectSpan := requireTraceSpan(t, spans, "auth.lua.subject")
@@ -180,6 +182,7 @@ func TestAuthenticate_DoesNotInheritLastEnvironmentControlSpan(t *testing.T) {
 	}
 
 	requireParentSpanID(t, authSpan, requestSpan.SpanContext().SpanID())
+	requireParentSpanID(t, localCacheSpan, authSpan.SpanContext().SpanID())
 	requireParentSpanID(t, verifySpan, authSpan.SpanContext().SpanID())
 	requireParentSpanID(t, historySpan, authSpan.SpanContext().SpanID())
 	requireParentSpanID(t, subjectSpan, authSpan.SpanContext().SpanID())
@@ -189,11 +192,7 @@ func TestAuthenticate_DoesNotInheritLastEnvironmentControlSpan(t *testing.T) {
 
 func TestPreprocessAuthRequest_RestoresParentAndKeepsChecksAsSiblings(t *testing.T) {
 	auth, ctx, collector := newTraceParentedEnvironmentAuth(t)
-	cacheKey := auth.generateLocalCacheKey()
-	localcache.LocalCache.Delete(cacheKey)
-	t.Cleanup(func() {
-		localcache.LocalCache.Delete(cacheKey)
-	})
+	auth.deps.BackendAuthenticationCache = NewPositiveBackendAuthenticationCache(time.Now)
 
 	requestSpan := attachRequestParentSpan(t, ctx, auth)
 
@@ -206,12 +205,11 @@ func TestPreprocessAuthRequest_RestoresParentAndKeepsChecksAsSiblings(t *testing
 
 	spans := collector.Spans()
 	preprocessSpan := requireTraceSpan(t, spans, "auth.environment")
-	localCacheSpan := requireTraceSpan(t, spans, "auth.local_cache")
 	bruteForceSpan := requireTraceSpan(t, spans, "auth.bruteforce.check")
 
 	requireParentSpanID(t, preprocessSpan, requestSpan.SpanContext().SpanID())
-	requireParentSpanID(t, localCacheSpan, preprocessSpan.SpanContext().SpanID())
 	requireParentSpanID(t, bruteForceSpan, preprocessSpan.SpanContext().SpanID())
+	requireTraceSpanAbsent(t, spans, "auth.local_cache")
 	requireNoChildStartsAfterParentEnd(t, spans)
 }
 
@@ -344,6 +342,17 @@ func requireTraceSpan(t *testing.T, spans []sdktrace.ReadOnlySpan, name string) 
 	t.Fatalf("missing span %q; exported spans: %v", name, traceSpanNames(spans))
 
 	return nil
+}
+
+// requireTraceSpanAbsent verifies that work outside the tested boundary did not run.
+func requireTraceSpanAbsent(t *testing.T, spans []sdktrace.ReadOnlySpan, name string) {
+	t.Helper()
+
+	for _, span := range spans {
+		if span.Name() == name {
+			t.Fatalf("unexpected span %q; exported spans: %v", name, traceSpanNames(spans))
+		}
+	}
 }
 
 // requireTraceSpanWithAttributes returns the first exported span matching a name and attributes.

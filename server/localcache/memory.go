@@ -56,8 +56,10 @@ type Cache struct {
 
 // janitor cleans up expired items from the cache
 type janitor struct {
+	stop     chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
 	Interval time.Duration
-	stop     chan bool
 }
 
 // NewMemoryShardedCache creates a new sharded cache with the specified number of shards
@@ -80,7 +82,8 @@ func NewMemoryShardedCache(numShards int, defaultExpiration, cleanupInterval tim
 	if cleanupInterval > 0 {
 		j := &janitor{
 			Interval: cleanupInterval,
-			stop:     make(chan bool),
+			stop:     make(chan struct{}),
+			done:     make(chan struct{}),
 		}
 		cache.janitor = j
 
@@ -113,6 +116,7 @@ func NewCache(defaultExpiration, cleanupInterval time.Duration) *Cache {
 func (sc *MemoryShardedCache) startJanitor() {
 	ticker := time.NewTicker(sc.janitor.Interval)
 	defer ticker.Stop()
+	defer close(sc.janitor.done)
 
 	for {
 		select {
@@ -131,12 +135,10 @@ func (sc *MemoryShardedCache) Stop() {
 		return
 	}
 
-	// Non-blocking stop signal; janitor goroutine exits on receipt
-	select {
-	case sc.janitor.stop <- true:
-	default:
-		// already signaled or drained
-	}
+	sc.janitor.stopOnce.Do(func() {
+		close(sc.janitor.stop)
+	})
+	<-sc.janitor.done
 }
 
 // Set adds an item to the MemoryShardedCache with the given expiration duration
@@ -194,6 +196,24 @@ func (sc *MemoryShardedCache) Delete(k string) {
 	}
 
 	delete(shard.items, k)
+}
+
+// Clear removes every stored item while preserving the cache lifecycle.
+func (sc *MemoryShardedCache) Clear() {
+	if sc == nil {
+		return
+	}
+
+	for _, shard := range sc.shards {
+		shard.mu.Lock()
+
+		for key, item := range shard.items {
+			sc.resetAndReturnToPoolIfPassDBResult(item.Object)
+			delete(shard.items, key)
+		}
+
+		shard.mu.Unlock()
+	}
 }
 
 // DeleteByPrefix removes all items from the MemoryShardedCache that have a key starting with the given prefix

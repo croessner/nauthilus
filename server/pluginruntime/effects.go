@@ -453,7 +453,7 @@ func (b *EffectBridge) runPostActionPlanStep(
 	}
 }
 
-// postActionPasswordHash returns the host-owned short password hash used by Lua post-actions.
+// postActionPasswordHash returns the host-owned full password hash used by post-actions.
 func postActionPasswordHash(auth *core.AuthState) string {
 	if auth == nil || auth.GetPassword().IsZero() {
 		return ""

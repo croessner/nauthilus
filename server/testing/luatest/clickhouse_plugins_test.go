@@ -19,6 +19,35 @@ func TestClickhouseActionIncludesIDPFieldsInInsertedRow(t *testing.T) {
 	assertStringField(t, row, "mfa_method", "webauthn")
 }
 
+func TestClickhouseActionExportsValidatedShortPasswordHash(t *testing.T) {
+	runner := runClickhouseFixture(t, "action_wrapper.lua", "action_success.json", "action")
+	request := firstCapturedHTTPRequest(t, runner)
+	row := decodeJSONEachRowLine(t, request.Body)
+
+	assertStringField(t, row, "password_hash", "01234567")
+}
+
+func TestClickhouseActionRejectsMalformedPasswordHash(t *testing.T) {
+	scriptPath := clickhouseFixturePath(t, "action_wrapper.lua")
+	mockPath := clickhouseFixturePath(t, "action_success.json")
+
+	runner, err := NewTestRunner(scriptPath, "action", mockPath)
+	if err != nil {
+		t.Fatalf("NewTestRunner failed: %v", err)
+	}
+
+	runner.mockData.Password.GeneratedHash = "12345678"
+
+	result, err := runner.Run()
+	if err != nil {
+		t.Fatalf("Run failed outside Lua callback: %v", err)
+	}
+
+	if result.Success {
+		t.Fatalf("malformed ClickHouse password hash succeeded: result=%#v err=%v", result, err)
+	}
+}
+
 func TestClickhouseActionIncludesOIDCTokenPostActionRows(t *testing.T) {
 	runner := runClickhouseFixture(t, "action_wrapper.lua", "action_success_oidc_token.json", "action")
 	request := firstCapturedHTTPRequest(t, runner)

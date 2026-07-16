@@ -27,3 +27,5 @@ run_test testdata/lua/plugins/subject_test_context_chain_wrapper.lua subject tes
 run_test testdata/lua/plugins/subject_test_context_chain_no_auth_without_environment_wrapper.lua subject testdata/lua/plugins/subject_test_context_chain_no_auth_without_environment_test.json
 run_test testdata/lua/plugins/subject_geoip_reputation_preexisting_wrapper.lua subject testdata/lua/plugins/subject_geoip_reputation_preexisting_test.json
 run_test testdata/lua/plugins/cache_flush_wrapper.lua cache_flush testdata/lua/plugins/cache_flush_test.json
+
+go test ./server/testing/luatest -run '^TestClickhouseAction(ExportsValidatedShortPasswordHash|RejectsMalformedPasswordHash)$' -count=1 -v

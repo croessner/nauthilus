@@ -91,6 +91,16 @@ function nauthilus_call_action(request)
         return tostring(value)
     end
 
+    -- clickhouse_password_hash validates the general digest before the row-only short export.
+    local function clickhouse_password_hash(value)
+        if value == nil or value == "" then return "" end
+        if type(value) ~= "string" or #value ~= 64 or value:match("^[0-9a-f]+$") == nil then
+            error("clickhouse password hash must contain 64 lowercase hexadecimal characters")
+        end
+
+        return value:sub(1, 8)
+    end
+
     -- Normalize timestamp strings for ClickHouse DateTime64(3, 'UTC') JSONEachRow input
     -- - Replace 'T' with space
     -- - Remove trailing 'Z'
@@ -231,7 +241,7 @@ function nauthilus_call_action(request)
         local account = (request.account ~= nil and request.account ~= "" and request.account) or ""
 
         if request.password and request.password ~= "" then
-            password_hash = nauthilus_password.generate_password_hash(request.password)
+            password_hash = clickhouse_password_hash(nauthilus_password.generate_password_hash(request.password))
         end
 
         local display_name = (request.display_name ~= "" and request.display_name) or ""

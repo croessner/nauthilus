@@ -234,7 +234,7 @@ func TestPasswordHistoryLoadPlanComputesPasswordHashOnlyWhenNeeded(t *testing.T)
 		t.Fatal("password hash was not computed for membership read with a current password")
 	}
 
-	if plan.passwordHash == "" {
+	if plan.passwordHashes.Full() == "" || plan.passwordHashes.Legacy() == "" {
 		t.Fatal("password hash is empty after membership read with a current password")
 	}
 
@@ -393,6 +393,7 @@ type passwordHistoryCommandReadHandle struct {
 
 	sCardValues    map[string]int64
 	memberValues   map[string]bool
+	exactMembers   map[string]map[string]bool
 	commands       []passwordHistoryRedisCommand
 	recordCommands bool
 }
@@ -430,7 +431,12 @@ func (h *passwordHistoryCommandReadHandle) Get(_ context.Context, key string) *r
 
 // SIsMember records an SISMEMBER read and returns deterministic membership.
 func (h *passwordHistoryCommandReadHandle) SIsMember(_ context.Context, key string, member any) *redis.BoolCmd {
-	h.record("SISMEMBER", key, fmt.Sprint(member))
+	memberValue := fmt.Sprint(member)
+	h.record("SISMEMBER", key, memberValue)
+
+	if h.exactMembers != nil {
+		return redis.NewBoolResult(h.exactMembers[key][memberValue], nil)
+	}
 
 	return redis.NewBoolResult(h.memberValues[key], nil)
 }

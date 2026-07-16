@@ -24,6 +24,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,13 +33,27 @@ import (
 	"github.com/croessner/nauthilus/v3/server/bruteforce"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/localcache"
 	"github.com/croessner/nauthilus/v3/server/log"
+	"github.com/croessner/nauthilus/v3/server/lualib/cacheflush"
+	"github.com/croessner/nauthilus/v3/server/model/admin"
 	bf "github.com/croessner/nauthilus/v3/server/model/bruteforce"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/util"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 )
+
+type fixedUserCacheFlushScriptRunner struct {
+	result *cacheflush.Result
+	err    error
+}
+
+// Run returns one deterministic Lua cache-flush outcome.
+func (r fixedUserCacheFlushScriptRunner) Run(context.Context, string, string) (*cacheflush.Result, error) {
+	return r.result, r.err
+}
 
 // test helpers
 func setupMinimalTestConfig(t *testing.T) {
@@ -47,7 +63,10 @@ func setupMinimalTestConfig(t *testing.T) {
 func setupTestConfigWithBackends(t *testing.T, backendNames ...string) {
 	t.Helper()
 
-	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+	env := config.NewTestEnvironmentConfig()
+	config.SetTestEnvironmentConfig(env)
+	SetDefaultEnvironment(env)
+	util.SetDefaultEnvironment(env)
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
@@ -70,6 +89,7 @@ func setupTestConfigWithBackends(t *testing.T, backendNames ...string) {
 
 	config.SetTestFile(cfg)
 	SetDefaultConfigFile(config.GetFile())
+	util.SetDefaultConfigFile(cfg)
 
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 }
@@ -210,6 +230,8 @@ func TestProcessBruteForceRules_WildcardSkipsBanRead(t *testing.T) {
 	})
 
 	deps, mock := setupRestAdminDepsWithMock(t)
+	mock.MatchExpectationsInOrder(false)
+
 	ctx := newTestGinContext()
 	rules := config.GetFile().GetBruteForceRules()
 	bm := createBucketManager(ctx.Request.Context(), deps, "guid-1", "1.2.3.4", "", "")
@@ -441,6 +463,121 @@ func TestCacheFlushSync_WithMapping_OK(t *testing.T) {
 	}
 }
 
+func TestProcessUserCmdInvalidatesLocalAuthCachesUsernameOnly(t *testing.T) {
+	setupMinimalTestConfig(t)
+	deps, mock := setupRestAdminDepsWithMock(t)
+	mock.MatchExpectationsInOrder(false)
+
+	recorder := &recordingAuthCacheInvalidator{}
+	deps.AuthCacheInvalidator = recorder
+	ctx := newTestGinContext()
+	user := "flush-user-only"
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	shardKey := rediscli.GetUserHashKey(prefix, user)
+
+	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{})
+	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
+	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, user).SetVal(1)
+	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), user).SetVal(1)
+	mock.ExpectHDel(shardKey, user).SetVal(1)
+	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user).SetVal(1)
+
+	removedKeys, _ := processUserCmd(ctx, deps, &admin.FlushUserCmd{User: user}, "flush-username-guid")
+	assertRecordedLocalInvalidation(t, recorder, []string{user})
+	assertNoLocalBackendAuthenticationKeyLeak(t, removedKeys, prefix)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet redis expectations: %v", err)
+	}
+}
+
+func TestProcessUserCmdInvalidatesLocalAuthCachesForRedisAlias(t *testing.T) {
+	setupMinimalTestConfig(t)
+	deps, mock := setupRestAdminDepsWithMock(t)
+	mock.MatchExpectationsInOrder(false)
+
+	recorder := &recordingAuthCacheInvalidator{}
+	deps.AuthCacheInvalidator = recorder
+	ctx := newTestGinContext()
+	user := "flush-user"
+	alias := "flush-alias"
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	shardKey := rediscli.GetUserHashKey(prefix, user)
+	mappingField := accountcache.GetAccountMappingField(user, "imap", "")
+
+	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{mappingField: alias})
+	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
+	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(alias, config.GetFile())).SetVal(1)
+	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, alias, user).SetVal(2)
+	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), alias, user).SetVal(2)
+	mock.ExpectHDel(shardKey, user, mappingField).SetVal(2)
+	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user).SetVal(1)
+	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + alias).SetVal(1)
+
+	removedKeys, _ := processUserCmd(ctx, deps, &admin.FlushUserCmd{User: user}, "flush-guid")
+	assertRecordedLocalInvalidation(t, recorder, []string{alias, user})
+	assertNoLocalBackendAuthenticationKeyLeak(t, removedKeys, prefix)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet redis expectations: %v", err)
+	}
+}
+
+func TestProcessUserCmdInvalidatesLocalAuthCachesForLuaAlias(t *testing.T) {
+	setupMinimalTestConfig(t)
+	deps, mock := setupRestAdminDepsWithMock(t)
+	mock.MatchExpectationsInOrder(false)
+
+	recorder := &recordingAuthCacheInvalidator{}
+	deps.AuthCacheInvalidator = recorder
+	user := "flush-lua-user"
+	alias := "flush-lua-alias"
+	deps.CacheFlushRunner = fixedUserCacheFlushScriptRunner{result: &cacheflush.Result{AccountName: alias}}
+	ctx := newTestGinContext()
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	shardKey := rediscli.GetUserHashKey(prefix, user)
+
+	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(alias, config.GetFile())).SetVal(1)
+	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
+	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, alias, user).SetVal(2)
+	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), alias, user).SetVal(2)
+	mock.ExpectHDel(shardKey, user).SetVal(1)
+	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + alias).SetVal(1)
+	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user).SetVal(1)
+
+	removedKeys, _ := processUserCmd(ctx, deps, &admin.FlushUserCmd{User: user}, "flush-lua-guid")
+	assertRecordedLocalInvalidation(t, recorder, []string{alias, user})
+	assertNoLocalBackendAuthenticationKeyLeak(t, removedKeys, prefix)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet redis expectations: %v", err)
+	}
+}
+
+// assertRecordedLocalInvalidation verifies one exact sorted invalidation scope.
+func assertRecordedLocalInvalidation(t *testing.T, recorder *recordingAuthCacheInvalidator, identities []string) {
+	t.Helper()
+
+	if recorder.calls != 1 {
+		t.Fatalf("invalidation calls = %d, want 1", recorder.calls)
+	}
+
+	if !slices.Equal(recorder.identities, identities) {
+		t.Fatalf("invalidated identities = %v, want %v", recorder.identities, identities)
+	}
+}
+
+// assertNoLocalBackendAuthenticationKeyLeak verifies that REST results stay Redis-only.
+func assertNoLocalBackendAuthenticationKeyLeak(t *testing.T, removedKeys []string, redisPrefix string) {
+	t.Helper()
+
+	for _, removedKey := range removedKeys {
+		if !strings.HasPrefix(removedKey, redisPrefix) || strings.Contains(removedKey, "credential") {
+			t.Fatalf("REST result exposed local decision material: %q", removedKey)
+		}
+	}
+}
+
 // --- Async job status + executor tests ---
 
 func TestAsyncJobStateTransitions(t *testing.T) {
@@ -618,6 +755,133 @@ func TestCacheFlushAsync_Enqueue_OK(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet redis expectations: %v", err)
 	}
+}
+
+type asyncAliasCacheFixture struct {
+	backendAuthentications   *PositiveBackendAuthenticationCache
+	userAuth                 *localcache.UserAuthCache
+	backendAuthenticationKey BackendAuthenticationCacheKey
+}
+
+// seedAsyncAliasCaches creates entries for one alias in both positive caches.
+func seedAsyncAliasCaches(t *testing.T, user, alias string) *asyncAliasCacheFixture {
+	t.Helper()
+
+	backendAuthentications := NewPositiveBackendAuthenticationCache(time.Now)
+	userAuth := localcache.NewUserAuthCache()
+	cfg := config.GetFile().(*config.FileSettings)
+	auth, authCtx := newRequestOwnedContractAuth(t, cfg, user, "credential", "async-alias")
+	result := newSemanticPassDBResult(authCtx, auth)
+
+	defer PutPassDBResultToPool(result)
+
+	backendAuthenticationKey := mustBuildBackendAuthenticationCacheKey(t, auth)
+
+	if !backendAuthentications.StoreForRequest(authCtx, auth, result, time.Minute, user, alias) {
+		userAuth.Close()
+		t.Fatal("decision seed failed")
+	}
+
+	userAuth.Set(alias, true)
+
+	return &asyncAliasCacheFixture{backendAuthentications: backendAuthentications, userAuth: userAuth, backendAuthenticationKey: backendAuthenticationKey}
+}
+
+// captureAsyncCacheFlush installs deterministic async seams and returns the captured work.
+func captureAsyncCacheFlush(t *testing.T) *func(context.Context) (int, []string, error) {
+	t.Helper()
+
+	previousID := genJobID
+	previousNow := nowFunc
+	previousStarter := asyncStarterWithDeps
+	execute := new(func(context.Context) (int, []string, error))
+
+	genJobID = func() string { return "job-cache-invalidation" }
+	nowFunc = func() time.Time { return time.Unix(0, 0).UTC() }
+	asyncStarterWithDeps = func(_ asyncJobDeps, _ string, _ string, run func(context.Context) (int, []string, error)) {
+		*execute = run
+	}
+
+	t.Cleanup(func() {
+		genJobID = previousID
+		nowFunc = previousNow
+		asyncStarterWithDeps = previousStarter
+	})
+
+	return execute
+}
+
+// invokeAsyncUserFlush executes the REST handler with one username-only request.
+func invokeAsyncUserFlush(deps restAdminDeps, user string) {
+	recorderHTTP := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorderHTTP)
+	ctx.Request = httptest.NewRequest(http.MethodDelete, "/api/v1/cache/flush/async", bytes.NewBufferString(`{"user":"`+user+`"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set(definitions.CtxGUIDKey, "async-flush-guid")
+	deps.HandleUserFlushAsync(ctx)
+}
+
+func TestCacheFlushAsyncExecutedInvalidatesAliasInBothLocalAuthCaches(t *testing.T) {
+	setupMinimalTestConfig(t)
+	deps, mock := setupRestAdminDepsWithMock(t)
+	mock.MatchExpectationsInOrder(false)
+
+	user := "async-flush-user"
+	alias := "async-flush-alias"
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+
+	fixture := seedAsyncAliasCaches(t, user, alias)
+	defer fixture.userAuth.Close()
+
+	deps.AuthCacheInvalidator = NewCompositeAuthCacheInvalidator(fixture.backendAuthentications, fixture.userAuth)
+	execute := captureAsyncCacheFlush(t)
+
+	expectExecutedAsyncAliasUserFlush(mock, prefix+"async:job:job-cache-invalidation", rediscli.GetUserHashKey(prefix, user), prefix, user, alias)
+	invokeAsyncUserFlush(deps, user)
+
+	if *execute == nil {
+		t.Fatal("async callback was not captured")
+	}
+
+	_, removedKeys, err := (*execute)(context.Background())
+	if err != nil {
+		t.Fatalf("execute async callback: %v", err)
+	}
+
+	if _, found := fixture.backendAuthentications.load(fixture.backendAuthenticationKey); found {
+		t.Fatal("async alias flush left the backend authentication cache entry")
+	}
+
+	if _, found := fixture.userAuth.Get(alias); found {
+		t.Fatal("async alias flush left the UserAuth entry")
+	}
+
+	assertNoLocalBackendAuthenticationKeyLeak(t, removedKeys, prefix)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet redis expectations: %v", err)
+	}
+}
+
+// expectExecutedAsyncAliasUserFlush declares the async alias-flush Redis contract.
+func expectExecutedAsyncAliasUserFlush(mock redismock.ClientMock, jobKey, shardKey, prefix, user, alias string) {
+	mappingField := accountcache.GetAccountMappingField(user, "imap", "")
+
+	mock.ExpectHSet(jobKey,
+		"status", jobStatusQueued,
+		"type", "CACHE_FLUSH",
+		"createdAt", time.Unix(0, 0).UTC().Format(time.RFC3339Nano),
+		"resultCount", 0,
+	).SetVal(4)
+	mock.ExpectExpire(jobKey, config.GetFile().GetServer().GetRedis().NegCacheTTL).SetVal(true)
+	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{mappingField: alias})
+	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(alias, config.GetFile())).SetVal(1)
+	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
+	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, alias, user).SetVal(2)
+	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), alias, user).SetVal(2)
+	mock.ExpectHDel(shardKey, user, mappingField).SetVal(2)
+	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + alias).SetVal(1)
+	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user).SetVal(1)
 }
 
 // removed brittle direct startAsync test; covered via HTTP status test above

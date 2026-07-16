@@ -99,11 +99,15 @@ return {percent, max_negative, positive, negative, 1}
 	// ARGV[1] - The hash to add
 	// ARGV[2] - The expiration time in seconds
 	// ARGV[3] - The maximum number of entries allowed in the set
+	// ARGV[4] - The exact legacy hash to remove before adding the full hash
 	"AddToSetAndExpireLimit": `
 local key = KEYS[1]
 local hash = ARGV[1]
 local ttl = tonumber(ARGV[2])
 local max = tonumber(ARGV[3])
+local legacy_hash = ARGV[4]
+
+redis.call('SREM', key, legacy_hash)
 
 if redis.call('SCARD', key) >= max then
   if redis.call('SISMEMBER', key, hash) == 1 then
@@ -137,22 +141,25 @@ end
 	// ARGV[2] - Current timestamp (seconds)
 	// ARGV[3] - TTL (seconds)
 	// ARGV[4] - Max allowed unique hashes in the window
+	// ARGV[5] - Exact legacy password hash candidate
 	"RWPSlidingWindowCheck": `
 local key = KEYS[1]
 local hash = ARGV[1]
 local now = tonumber(ARGV[2])
 local ttl = tonumber(ARGV[3])
 local max = tonumber(ARGV[4])
+local legacy_hash = ARGV[5]
 
 -- Remove outdated entries (necessary for accurate cardinality)
 redis.call('ZREMRANGEBYSCORE', key, '-inf', '(' .. (now - ttl))
 
 -- Check if hash already exists
 local score = redis.call('ZSCORE', key, hash)
+local legacy_score = redis.call('ZSCORE', key, legacy_hash)
 local card = redis.call('ZCARD', key)
 
 -- Return 1 if it was a repeat (existed before) or if we were below the limit
-if score or card < max then
+if score or legacy_score or card < max then
     return 1
 end
 
@@ -167,17 +174,20 @@ return 0
 	// ARGV[2] - Current timestamp (seconds)
 	// ARGV[3] - TTL (seconds)
 	// ARGV[4] - Max allowed unique hashes in the window
+	// ARGV[5] - Exact legacy password hash candidate
 	"RWPSlidingWindowCommit": `
 local key = KEYS[1]
 local hash = ARGV[1]
 local now = tonumber(ARGV[2])
 local ttl = tonumber(ARGV[3])
 local max = tonumber(ARGV[4])
+local legacy_hash = ARGV[5]
 
 -- Remove outdated entries
 redis.call('ZREMRANGEBYSCORE', key, '-inf', '(' .. (now - ttl))
 
 -- Add/update the current hash
+redis.call('ZREM', key, legacy_hash)
 redis.call('ZADD', key, now, hash)
 
 -- If we exceed the max unique hashes, remove the oldest one

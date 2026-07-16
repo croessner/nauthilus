@@ -29,9 +29,12 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/localcache"
+	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/report"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/secret"
 
 	"github.com/gin-gonic/gin"
@@ -57,6 +60,28 @@ type semanticPassDBSnapshot struct {
 	UserFound               bool
 }
 
+// newPassDBResultFromAuthStateForTest projects request state for semantic test comparisons.
+func newPassDBResultFromAuthStateForTest(auth *AuthState) *PassDBResult {
+	result := GetPassDBResultFromPool()
+	result.Authenticated = true
+	result.UserFound = true
+	result.AccountField = auth.Runtime.AccountField
+	result.Account = auth.GetAccount()
+	result.TOTPSecretField = auth.Runtime.TOTPSecretField
+	result.TOTPRecoveryField = auth.Runtime.TOTPRecoveryField
+	result.UniqueUserIDField = auth.Runtime.UniqueUserIDField
+	result.DisplayNameField = auth.Runtime.DisplayNameField
+	result.Backend = auth.Runtime.SourcePassDBBackend
+	result.BackendName = auth.Runtime.BackendName
+	result.BackendRef = auth.Runtime.RemoteBackendRef
+	result.Attributes = auth.GetAttributesCopy()
+	result.Groups = auth.GetGroups()
+	result.GroupDistinguishedNames = auth.GetGroupDistinguishedNames()
+	result.AdditionalAttributes = maps.Clone(auth.Runtime.AdditionalAttributes)
+
+	return result
+}
+
 type semanticAuthenticationSnapshot struct {
 	Result                  semanticPassDBSnapshot
 	Attributes              bktype.AttributeMapping
@@ -66,13 +91,20 @@ type semanticAuthenticationSnapshot struct {
 	ResponseHeaders         http.Header
 	Account                 string
 	ContextAccount          string
+	AccountField            string
+	TOTPSecretField         string
+	TOTPRecoveryField       string
+	UniqueUserIDField       string
+	DisplayNameField        string
 	BackendName             string
 	UsedBackendIP           string
 	StatusMessage           string
 	StatusMessageI18NKey    string
+	ResponseLanguage        string
 	AuthFSMTerminalState    string
 	RemoteBackendRef        RemoteBackendRef
 	SourcePassDBBackend     definitions.Backend
+	UsedPassDBBackend       definitions.Backend
 	Decision                definitions.AuthResult
 	UsedBackendPort         int
 	Authenticated           bool
@@ -116,12 +148,6 @@ type controlledDecisionVerifier struct {
 	calls               atomic.Int32
 	createBeforeRelease bool
 }
-
-type countingDecisionVerifier struct {
-	calls atomic.Int32
-}
-
-type successfulDecisionSubject struct{}
 
 // newVerificationBarrier creates an idempotently releasable synchronization point.
 func newVerificationBarrier() *verificationBarrier {
@@ -199,18 +225,6 @@ func (v *controlledDecisionVerifier) Verify(ctx *gin.Context, auth *AuthState, _
 	return result, nil
 }
 
-// Verify counts cache-fill executions and returns a complete decision.
-func (v *countingDecisionVerifier) Verify(ctx *gin.Context, auth *AuthState, _ []*PassDBMap) (*PassDBResult, error) {
-	v.calls.Add(1)
-
-	return newSemanticPassDBResult(ctx, auth), nil
-}
-
-// Analyze preserves a successful authentication decision without adding request variance.
-func (successfulDecisionSubject) Analyze(_ *gin.Context, _ *StateView, _ *PassDBResult) definitions.AuthResult {
-	return definitions.AuthResultOK
-}
-
 // newSemanticPassDBResult creates a complete backend result and matching request-owned state.
 func newSemanticPassDBResult(ctx *gin.Context, auth *AuthState) *PassDBResult {
 	account := auth.Request.Username
@@ -270,13 +284,20 @@ func snapshotAuthentication(auth *AuthState, ctx *gin.Context, result *PassDBRes
 		ResponseHeaders:         ctx.Writer.Header().Clone(),
 		Account:                 auth.GetAccount(),
 		ContextAccount:          ctx.GetString(definitions.CtxAccountKey),
+		AccountField:            auth.Runtime.AccountField,
+		TOTPSecretField:         auth.Runtime.TOTPSecretField,
+		TOTPRecoveryField:       auth.Runtime.TOTPRecoveryField,
+		UniqueUserIDField:       auth.Runtime.UniqueUserIDField,
+		DisplayNameField:        auth.Runtime.DisplayNameField,
 		BackendName:             auth.Runtime.BackendName,
 		UsedBackendIP:           auth.Runtime.UsedBackendIP,
 		StatusMessage:           auth.Runtime.StatusMessage,
 		StatusMessageI18NKey:    auth.Runtime.StatusMessageI18NKey,
+		ResponseLanguage:        auth.Runtime.ResponseLanguage,
 		AuthFSMTerminalState:    auth.Runtime.AuthFSMTerminalState,
 		RemoteBackendRef:        auth.Runtime.RemoteBackendRef,
 		SourcePassDBBackend:     auth.Runtime.SourcePassDBBackend,
+		UsedPassDBBackend:       auth.Runtime.UsedPassDBBackend,
 		Decision:                decision,
 		UsedBackendPort:         auth.Runtime.UsedBackendPort,
 		Authenticated:           auth.Runtime.Authenticated,
@@ -736,47 +757,413 @@ func TestPasswordVerificationCancellationIsRequestLocal(t *testing.T) {
 	}
 }
 
-func TestDeferredLocalCacheReplayPreservesCompleteTerminalDecision(t *testing.T) {
-	t.Skip("deferred: the local cache does not yet preserve the complete terminal authentication decision")
+// runPositiveBackendAuthenticationRequest executes one normal password-FSM request.
+func runPositiveBackendAuthenticationRequest(
+	t *testing.T,
+	cfg *config.FileSettings,
+	cache *PositiveBackendAuthenticationCache,
+	guid string,
+	wantHit bool,
+) (*AuthState, *gin.Context, semanticAuthenticationSnapshot) {
+	t.Helper()
 
-	cfg := newCurrentBehaviorConfig(t)
-	cfg.Server.Redis.AccountLocalCache.Enabled = true
-	first, firstCtx := newRequestOwnedContractAuth(t, cfg, "cached@example.test", "cached-secret", "cache-first")
-	cacheKey := first.generateLocalCacheKey()
-	localCacheDeleteForContract(t, cacheKey)
+	auth, ctx := newRequestOwnedContractAuth(t, cfg, "cached@example.test", "cached-secret", guid)
+	auth.deps.BackendAuthenticationCache = cache
 
-	verifier := &countingDecisionVerifier{}
-	restore := replaceBackendPlanTestServices(t, verifier, nil, nil, successfulDecisionSubject{}, nil)
-	t.Cleanup(restore)
-
-	plan := backendExecutionPlan{passDBs: []*PassDBMap{{backend: definitions.BackendLDAP}}}
-	firstDecision := first.authenticateUser(firstCtx, plan)
-	firstSnapshot := snapshotAuthentication(first, firstCtx, nil, firstDecision)
-
-	second, secondCtx := newRequestOwnedContractAuth(t, cfg, "cached@example.test", "cached-secret", "cache-second")
-
-	if found := second.GetFromLocalCache(secondCtx); !found {
-		t.Fatal("request starting after completion did not find the local decision cache")
+	if rejected := auth.PreproccessAuthRequest(ctx); rejected {
+		t.Fatalf("%s request was rejected during preprocessing", guid)
 	}
 
-	secondDecision := second.handleLocalCache(secondCtx)
-	secondSnapshot := snapshotAuthentication(second, secondCtx, nil, secondDecision)
-
-	if got := verifier.calls.Load(); got != 1 {
-		t.Errorf("backend calls = %d, want 1 within local-cache TTL", got)
+	if ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
+		t.Fatalf("%s applied local backend state before the password phase", guid)
 	}
 
-	if !reflect.DeepEqual(secondSnapshot, firstSnapshot) {
-		t.Fatalf("local-cache replay did not preserve the complete semantic decision; fields differ: %v", differingSemanticFields(secondSnapshot, firstSnapshot))
+	auth.runPasswordFSMPhase(ctx, authFSMStatePreAuthChecked)
+
+	if got := ctx.GetBool(definitions.CtxLocalCacheAuthKey); got != wantHit {
+		t.Fatalf("%s local backend hit = %v, want %v after password phase", guid, got, wantHit)
+	}
+
+	result := newPassDBResultFromAuthStateForTest(auth)
+	snapshot := snapshotAuthentication(auth, ctx, result, definitions.AuthResultOK)
+	PutPassDBResultToPool(result)
+
+	return auth, ctx, snapshot
+}
+
+// backendAuthenticationExpiry returns the fixed expiry of one stored decision.
+func backendAuthenticationExpiry(t *testing.T, cache *PositiveBackendAuthenticationCache, auth *AuthState) time.Time {
+	t.Helper()
+
+	value, found := cache.storage.Get(mustBuildBackendAuthenticationCacheKey(t, auth).storageKey())
+
+	if !found {
+		t.Fatalf("stored decision missing: authenticated=%v authorized=%v terminal=%q", auth.Runtime.Authenticated, auth.Runtime.Authorized, auth.Runtime.AuthFSMTerminalState)
+	}
+
+	return value.(*backendAuthenticationCacheEntry).expiresAt
+}
+
+// assertPositiveBackendAuthenticationWorkCounts proves backend-only warm reuse.
+func assertPositiveBackendAuthenticationWorkCounts(
+	t *testing.T,
+	verifierCalls, subjectCalls *atomic.Int32,
+	policyBridge *backendAuthenticationPolicyBridge,
+) {
+	t.Helper()
+
+	checks := map[string]struct {
+		got  int32
+		want int32
+	}{
+		"backend verification":    {got: verifierCalls.Load(), want: 1},
+		"subject decision":        {got: subjectCalls.Load(), want: 2},
+		"configured final-policy": {got: policyBridge.effectCalls.Load(), want: 2},
+		"post decision":           {got: policyBridge.postCalls.Load(), want: 2},
+	}
+
+	for name, check := range checks {
+		if check.got != check.want {
+			t.Fatalf("%s calls = %d, want %d across cold and warm requests", name, check.got, check.want)
+		}
 	}
 }
 
-// localCacheDeleteForContract isolates a cache key before and after a contract test.
-func localCacheDeleteForContract(t *testing.T, key string) {
+func TestPositiveBackendAuthenticationCacheColdWarmReevaluatesCompleteTerminalDecision(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	cfg.Server.Redis.AccountLocalCache.Enabled = true
+
+	activatePositiveBackendAuthenticationPolicy(t)
+
+	verifierCalls := &atomic.Int32{}
+	subjectCalls := &atomic.Int32{}
+	policyBridge := &backendAuthenticationPolicyBridge{}
+
+	restoreServices := installPositiveBackendAuthenticationServices(t, verifierCalls, subjectCalls, policyBridge)
+	defer restoreServices()
+
+	backendAuthenticationCache := NewPositiveBackendAuthenticationCache(time.Now)
+	first, _, firstSnapshot := runPositiveBackendAuthenticationRequest(t, cfg, backendAuthenticationCache, "cache-first", false)
+	expiresAt := backendAuthenticationExpiry(t, backendAuthenticationCache, first)
+	_, _, secondSnapshot := runPositiveBackendAuthenticationRequest(t, cfg, backendAuthenticationCache, "cache-second", true)
+	warmExpiresAt := backendAuthenticationExpiry(t, backendAuthenticationCache, first)
+
+	if !warmExpiresAt.Equal(expiresAt) {
+		t.Fatalf("warm replay refreshed fixed TTL from %v to %v", expiresAt, warmExpiresAt)
+	}
+
+	normalizeCacheSpecificSnapshot(&firstSnapshot)
+	normalizeCacheSpecificSnapshot(&secondSnapshot)
+
+	if !reflect.DeepEqual(secondSnapshot, firstSnapshot) {
+		t.Fatalf("local-cache replay did not preserve the complete semantic decision; fields differ: %v; cold additional=%#v warm additional=%#v; cold headers=%v warm headers=%v", differingSemanticFields(secondSnapshot, firstSnapshot), firstSnapshot.AdditionalAttributes, secondSnapshot.AdditionalAttributes, firstSnapshot.ResponseHeaders, secondSnapshot.ResponseHeaders)
+	}
+
+	assertPositiveBackendAuthenticationWorkCounts(t, verifierCalls, subjectCalls, policyBridge)
+}
+
+type panickingSetIPAddressTolerate struct {
+	tolerate.Tolerate
+}
+
+// SetIPAddress simulates a terminal success side-effect panic.
+func (panickingSetIPAddressTolerate) SetIPAddress(context.Context, string, string, bool) {
+	panic("terminal tolerate panic")
+}
+
+// runPasswordFSMPhaseRecovering captures a terminal-outcome panic for cache assertions.
+func runPasswordFSMPhaseRecovering(auth *AuthState, ctx *gin.Context) (recovered any) {
+	defer func() {
+		recovered = recover()
+	}()
+
+	auth.runPasswordFSMPhase(ctx, authFSMStatePreAuthChecked)
+
+	return nil
+}
+
+func TestPositiveBackendAuthenticationCacheRetainsBackendSnapshotAcrossTerminalOutcomePanic(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	cfg.Server.Redis.AccountLocalCache.Enabled = true
+
+	activatePositiveBackendAuthenticationPolicy(t)
+
+	verifierCalls := &atomic.Int32{}
+	subjectCalls := &atomic.Int32{}
+	policyBridge := &backendAuthenticationPolicyBridge{}
+
+	restoreServices := installPositiveBackendAuthenticationServices(t, verifierCalls, subjectCalls, policyBridge)
+	defer restoreServices()
+
+	testCases := map[string]func(*AuthState){
+		"response writer": func(auth *AuthState) { auth.deps.Resp = panicResponseWriter{} },
+		"tolerate":        func(auth *AuthState) { auth.deps.Tolerate = panickingSetIPAddressTolerate{} },
+	}
+
+	for name, installPanic := range testCases {
+		t.Run(name, func(t *testing.T) {
+			cache := NewPositiveBackendAuthenticationCache(time.Now)
+			auth, ctx := newRequestOwnedContractAuth(t, cfg, "panic@example.test", "cached-secret", "panic-outcome")
+			auth.deps.BackendAuthenticationCache = cache
+
+			if rejected := auth.PreproccessAuthRequest(ctx); rejected {
+				t.Fatal("cold request was rejected during preprocessing")
+			}
+
+			installPanic(auth)
+
+			if recovered := runPasswordFSMPhaseRecovering(auth, ctx); recovered == nil {
+				t.Fatal("terminal outcome did not panic")
+			}
+
+			if _, found := cache.load(mustBuildBackendAuthenticationCacheKey(t, auth)); !found {
+				t.Fatal("valid backend snapshot was lost after terminal outcome panic")
+			}
+		})
+	}
+}
+
+type cancelingOKResponseWriter struct {
+	cancel context.CancelFunc
+}
+
+// OK cancels one request-context source during terminal outcome application.
+func (w cancelingOKResponseWriter) OK(*gin.Context, *StateView) {
+	w.cancel()
+}
+
+// Fail rejects an unexpected failure outcome.
+func (cancelingOKResponseWriter) Fail(*gin.Context, *StateView) {
+	panic("unexpected failure outcome")
+}
+
+// TempFail rejects an unexpected temporary-failure outcome.
+func (cancelingOKResponseWriter) TempFail(*gin.Context, *StateView, string) {
+	panic("unexpected temporary-failure outcome")
+}
+
+func TestPositiveBackendAuthenticationCacheRetainsSnapshotAfterTerminalOutcomeCancellation(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	cfg.Server.Redis.AccountLocalCache.Enabled = true
+
+	activatePositiveBackendAuthenticationPolicy(t)
+
+	verifierCalls := &atomic.Int32{}
+	subjectCalls := &atomic.Int32{}
+	policyBridge := &backendAuthenticationPolicyBridge{}
+
+	restoreServices := installPositiveBackendAuthenticationServices(t, verifierCalls, subjectCalls, policyBridge)
+	defer restoreServices()
+
+	for _, source := range []string{"gin", "auth"} {
+		t.Run(source, func(t *testing.T) {
+			cache := NewPositiveBackendAuthenticationCache(time.Now)
+			auth, ctx := newRequestOwnedContractAuth(t, cfg, "cancel-after-outcome@example.test", "cached-secret", "cancel-after-outcome")
+			auth.deps.BackendAuthenticationCache = cache
+
+			if rejected := auth.PreproccessAuthRequest(ctx); rejected {
+				t.Fatal("cold request was rejected during preprocessing")
+			}
+
+			requestContext, cancel := context.WithCancel(context.Background())
+			ctx.Request = ctx.Request.WithContext(context.Background())
+			auth.Request.HTTPClientRequest = auth.Request.HTTPClientRequest.WithContext(context.Background())
+
+			if source == "gin" {
+				ctx.Request = ctx.Request.WithContext(requestContext)
+			} else {
+				auth.Request.HTTPClientRequest = auth.Request.HTTPClientRequest.WithContext(requestContext)
+			}
+
+			auth.deps.Resp = cancelingOKResponseWriter{cancel: cancel}
+			auth.runPasswordFSMPhase(ctx, authFSMStatePreAuthChecked)
+
+			if _, found := cache.load(mustBuildBackendAuthenticationCacheKey(t, auth)); !found {
+				t.Fatal("backend snapshot was lost after later terminal cancellation")
+			}
+		})
+	}
+}
+
+func TestPositiveBackendAuthenticationCacheWarmReevaluatesDefaultFinalPolicy(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    212,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	cache := NewPositiveBackendAuthenticationCache(time.Now)
+	source, sourceCtx := newRequestOwnedContractAuth(t, cfg, "default-policy@example.test", "credential", "default-policy-source")
+
+	result := newSemanticPassDBResult(sourceCtx, source)
+	defer PutPassDBResultToPool(result)
+
+	if !cache.StoreForRequest(sourceCtx, source, result, time.Minute, source.Request.Username) {
+		t.Fatal("failed to seed default-policy decision")
+	}
+
+	warm, warmCtx := newRequestOwnedContractAuth(t, cfg, source.Request.Username, "credential", "default-policy-warm")
+	warm.deps.BackendAuthenticationCache = cache
+
+	if rejected := warm.PreproccessAuthRequest(warmCtx); rejected || warmCtx.GetBool(definitions.CtxLocalCacheAuthKey) {
+		t.Fatal("warm request consumed backend state during preprocessing")
+	}
+
+	if got := warm.HandlePassword(warmCtx); got != definitions.AuthResultOK {
+		t.Fatalf("warm password result = %v, want %v", got, definitions.AuthResultOK)
+	}
+
+	if !warmCtx.GetBool(definitions.CtxLocalCacheAuthKey) {
+		t.Fatal("warm request missed at backend verification boundary")
+	}
+
+	policyCtx, ok := policyDecisionContext(warmCtx)
+	if !ok {
+		t.Fatal("warm request did not complete policy-stage reporting")
+	}
+
+	if policyCtx.Report().Final == nil {
+		t.Fatal("default final policy was not reevaluated on warm backend-cache hit")
+	}
+}
+
+// normalizeCacheSpecificSnapshot removes intentionally request-local response metadata.
+func normalizeCacheSpecificSnapshot(snapshot *semanticAuthenticationSnapshot) {
+	snapshot.ResponseHeaders.Del("X-Nauthilus-Memory-Cache")
+	snapshot.ResponseHeaders.Del("X-Nauthilus-Session")
+	snapshot.UsedPassDBBackend = snapshot.SourcePassDBBackend
+	snapshot.Result.Backend = snapshot.SourcePassDBBackend
+}
+
+// backendAuthenticationContractVerifier returns one complete request-owned backend result.
+type backendAuthenticationContractVerifier struct {
+	calls *atomic.Int32
+}
+
+// Verify records backend execution and returns meaningful final-decision fields.
+func (v backendAuthenticationContractVerifier) Verify(ctx *gin.Context, auth *AuthState, passDBs []*PassDBMap) (*PassDBResult, error) {
+	v.calls.Add(1)
+
+	result := GetPassDBResultFromPool()
+	result.UserFound = true
+	result.Authenticated = true
+	result.BackendName = "ldap-primary"
+	result.AccountField = "uid"
+	result.Account = auth.Request.Username
+	result.TOTPSecretField = "totpSecret"
+	result.TOTPRecoveryField = "recoveryCodes"
+	result.UniqueUserIDField = "entryUUID"
+	result.DisplayNameField = "displayName"
+	result.Backend = definitions.BackendLDAP
+	result.BackendRef = RemoteBackendRef{Type: "ldap", Name: "primary", Protocol: auth.Request.Protocol.Get(), Authority: "ldap.example.test"}
+	result.Attributes = bktype.AttributeMapping{"uid": {auth.Request.Username}, "displayName": {"Cache Contract User"}}
+	result.Groups = []string{"mail-users", "staff"}
+	result.GroupDistinguishedNames = []string{"cn=mail-users,dc=example,dc=test", "cn=staff,dc=example,dc=test"}
+	result.AdditionalAttributes = map[string]any{"tenant": "example", "quota": "10G"}
+
+	passDB := &PassDBMap{backend: definitions.BackendLDAP}
+	if len(passDBs) > 0 {
+		passDB = passDBs[0]
+	}
+
+	if err := ProcessPassDBResult(ctx, result, auth, passDB); err != nil {
+		PutPassDBResultToPool(result)
+
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// backendAuthenticationContractSubject records one complete subject decision.
+type backendAuthenticationContractSubject struct {
+	calls *atomic.Int32
+}
+
+// Analyze records subject work and installs response-relevant semantic fields.
+func (s backendAuthenticationContractSubject) Analyze(_ *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult {
+	s.calls.Add(1)
+
+	auth := view.Auth()
+	auth.Runtime.Authorized = true
+	auth.Runtime.UsedBackendIP = "192.0.2.10"
+	auth.Runtime.UsedBackendPort = 389
+	auth.Runtime.StatusMessage = "authentication accepted"
+	auth.Runtime.StatusMessageI18NKey = "auth.success"
+	auth.Runtime.ResponseLanguage = "de"
+	auth.Runtime.AdditionalAttributes = maps.Clone(result.AdditionalAttributes)
+
+	return definitions.AuthResultOK
+}
+
+// backendAuthenticationPolicyBridge counts selected final-policy effects and post plans.
+type backendAuthenticationPolicyBridge struct {
+	effectCalls atomic.Int32
+	postCalls   atomic.Int32
+}
+
+// IsPostActionEffect leaves native effects on the synchronous path.
+func (*backendAuthenticationPolicyBridge) IsPostActionEffect(report.EffectRequest) bool {
+	return false
+}
+
+// EnqueuePostActionPlan records and releases one selected post-decision plan.
+func (b *backendAuthenticationPolicyBridge) EnqueuePostActionPlan(_ *gin.Context, _ *StateView, steps []PostActionPlanStep) (bool, bool) {
+	b.postCalls.Add(1)
+	ReleasePostActionPlanSteps(steps)
+
+	return true, true
+}
+
+// ExecutePolicyEffect records one synchronous configured final-policy effect.
+func (b *backendAuthenticationPolicyBridge) ExecutePolicyEffect(_ *gin.Context, _ *StateView, _ report.EffectRequest) (bool, bool) {
+	b.effectCalls.Add(1)
+
+	return true, true
+}
+
+// activatePositiveBackendAuthenticationPolicy selects an unconditional permit with observable obligations.
+func activatePositiveBackendAuthenticationPolicy(t *testing.T) {
 	t.Helper()
 
-	localcache.LocalCache.Delete(key)
-	t.Cleanup(func() {
-		localcache.LocalCache.Delete(key)
-	})
+	snapshot := customEnforceAuthSnapshotForTest()
+	compiled := snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision]
+	compiled.Policies[0].Root = policyruntime.CompiledExpr{Kind: policyruntime.ExprKindAlways}
+	compiled.Policies[0].Then.Decision = policy.DecisionPermit
+	compiled.Policies[0].Then.FSMEventMarker = policy.FSMEventMarkerAuthPermit
+	compiled.Policies[0].Then.ResponseMarker = policy.ResponseMarkerOK
+	compiled.Policies[0].Then.Obligations = []policyruntime.EffectRequest{
+		{ID: policyAuthorityPluginEffectID},
+		{ID: policy.ObligationLuaPostActionEnqueue},
+	}
+	snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision] = compiled
+	activatePolicySnapshotForTest(t, snapshot)
+}
+
+// installPositiveBackendAuthenticationServices installs deterministic decision-work counters.
+func installPositiveBackendAuthenticationServices(
+	t *testing.T,
+	verifierCalls *atomic.Int32,
+	subjectCalls *atomic.Int32,
+	policyBridge *backendAuthenticationPolicyBridge,
+) func() {
+	t.Helper()
+
+	previousVerifier := getPasswordVerifier()
+	previousSubject := getLuaSubject()
+	previousPost := getPostAction()
+	previousBridge := getPluginEffectBridge()
+
+	RegisterPasswordVerifier(backendAuthenticationContractVerifier{calls: verifierCalls})
+	RegisterLuaSubject(backendAuthenticationContractSubject{calls: subjectCalls})
+	RegisterPostAction(recordingPlanPostAction{})
+	RegisterPluginEffectBridge(policyBridge)
+
+	return func() {
+		RegisterPasswordVerifier(previousVerifier)
+		RegisterLuaSubject(previousSubject)
+		RegisterPostAction(previousPost)
+		RegisterPluginEffectBridge(previousBridge)
+	}
 }

@@ -2337,7 +2337,7 @@ func passwordHashMock(mockData *PasswordMock) lua.LGFunction {
 			return 2
 		}
 
-		generatedHash := "mock$hash"
+		generatedHash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 		if mockData != nil && mockData.GeneratedHash != "" {
 			generatedHash = mockData.GeneratedHash
 		}

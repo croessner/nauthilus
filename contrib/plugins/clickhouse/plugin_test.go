@@ -251,7 +251,7 @@ func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:
 		facts: []pluginapi.PolicyFact{
 			{Attribute: "lua.plugin.failed_login_hotspot.triggered", Value: true},
 		},
-		passwordHash: "password-short",
+		passwordHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}))
 	if err != nil {
 		t.Fatalf("EnqueuePostAction() error = %v", err)
@@ -267,7 +267,7 @@ func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:
 	assertStringField(t, row, "method", "plain")
 	assertStringField(t, row, "account", testAccount)
 	assertStringField(t, row, "username", testUsername)
-	assertStringField(t, row, "password_hash", "password-short")
+	assertStringField(t, row, "password_hash", "01234567")
 	assertStringField(t, row, "pwnd_info", "abc123")
 	assertStringField(t, row, "brute_force_bucket", "bucket-a")
 	assertStringField(t, row, "decision_sources", "custom,blocklist,account_protection,failed_login_hotspot")

@@ -36,6 +36,9 @@
       }
     ]
   },
+  "password": {
+    "generated_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
   "expected_output": {
     "action_result": true,
     "error_expected": false

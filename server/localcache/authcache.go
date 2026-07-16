@@ -41,28 +41,20 @@ func NewUserAuthCache() *UserAuthCache {
 
 // Set adds or updates an entry in the cache
 func (c *UserAuthCache) Set(username string, authenticated bool) {
-	// Store in the sharded cache
-	c.shardedCache.Set(username, authenticated, 1*time.Hour)
+	if !authenticated {
+		c.shardedCache.Delete(username)
 
-	// Also store in the main LocalCache with a TTL
-	LocalCache.Set(username, authenticated, 1*time.Hour)
+		return
+	}
+
+	c.shardedCache.Set(username, authenticated, 1*time.Hour)
 }
 
 // Get retrieves an entry from the cache
 // Returns the authentication status and whether the entry was found
 func (c *UserAuthCache) Get(username string) (bool, bool) {
-	// First try the sharded cache
 	if value, found := c.shardedCache.Get(username); found {
 		if authenticated, ok := value.(bool); ok {
-			return authenticated, true
-		}
-	}
-
-	// Then try the main LocalCache
-	if value, found := LocalCache.Get(username); found {
-		if authenticated, ok := value.(bool); ok {
-			// Update our sharded cache
-			c.shardedCache.Set(username, authenticated, 1*time.Hour)
 			return authenticated, true
 		}
 	}
@@ -72,18 +64,17 @@ func (c *UserAuthCache) Get(username string) (bool, bool) {
 
 // Delete removes an entry from the cache
 func (c *UserAuthCache) Delete(username string) {
-	// Delete from the sharded cache
 	c.shardedCache.Delete(username)
-
-	// Also delete from the main LocalCache
-	LocalCache.Delete(username)
 }
 
 // Clear removes all entries from the cache
 func (c *UserAuthCache) Clear() {
-	// Create a new sharded cache to replace the current one
-	c.shardedCache = NewMemoryShardedCache(32, 1*time.Hour, 10*time.Minute)
-	// We don't clear the main LocalCache as it may contain other data
+	c.shardedCache.Clear()
+}
+
+// Close releases the cache janitor owned by this instance.
+func (c *UserAuthCache) Close() {
+	c.shardedCache.Stop()
 }
 
 // IsAuthenticated checks if a user is authenticated

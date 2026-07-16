@@ -71,7 +71,7 @@ func TestFailedRWPAllowanceCommitsSlidingWindowWithoutIncrementingBuckets(t *tes
 	mock.Regexp().ExpectEvalSha(
 		"sha-rwp-commit",
 		[]string{".*bf:rwp:allow:.*"},
-		".*", ".*", ".*", ".*",
+		".*", ".*", ".*", ".*", ".*",
 	).SetVal(int64(1))
 
 	auth.UpdateBruteForceBucketsCounter(ctx)
@@ -101,7 +101,7 @@ func newRWPPrecheckFixture(t *testing.T) rwpPrecheckFixture {
 	mock.Regexp().ExpectEvalSha(
 		"sha-rwp-check",
 		[]string{".*bf:rwp:allow:.*"},
-		".*", ".*", ".*", ".*",
+		".*", ".*", ".*", ".*", ".*",
 	).SetVal(int64(1))
 
 	bm := auth.newBruteForceBucketManager(ctx)

@@ -40,6 +40,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
 	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/croessner/nauthilus/v3/server/svcctx"
 
 	"github.com/gin-gonic/gin"
@@ -216,9 +217,23 @@ func PreparePassword(password string) string {
 
 // PreparePasswordBytes provides the exported PreparePasswordBytes function.
 func PreparePasswordBytes(password []byte) []byte {
+	return preparePasswordBytes(password, getDefaultConfigFile().GetServer().GetRedis().GetPasswordNonce())
+}
+
+// PreparePasswordBytesWithConfig prepares a password only when request configuration is available.
+func PreparePasswordBytesWithConfig(password []byte, cfg config.File) ([]byte, bool) {
+	if cfg == nil {
+		return nil, false
+	}
+
+	return preparePasswordBytes(password, cfg.GetServer().GetRedis().GetPasswordNonce()), true
+}
+
+// preparePasswordBytes applies one explicitly supplied password nonce.
+func preparePasswordBytes(password []byte, passwordNonce secret.Value) []byte {
 	var nonce []byte
 
-	getDefaultConfigFile().GetServer().GetRedis().GetPasswordNonce().WithBytes(func(value []byte) {
+	passwordNonce.WithBytes(func(value []byte) {
 		if len(value) == 0 {
 			return
 		}
@@ -233,14 +248,14 @@ func PreparePasswordBytes(password []byte) []byte {
 	return pluginpassword.PrepareBytes(password, nonce)
 }
 
-// GetHash creates an SHA-256 hash of a plain text password and returns the first 128 bits.
+// GetHash creates the full lowercase SHA-256 hash of prepared password bytes.
 func GetHash(value string) string {
-	return pluginpassword.ShortHash([]byte(value), getDefaultEnvironment().GetDevMode())
+	return pluginpassword.FullHash([]byte(value))
 }
 
-// GetHashBytes provides the exported GetHashBytes function.
+// GetHashBytes creates the full lowercase SHA-256 hash of prepared password bytes.
 func GetHashBytes(value []byte) string {
-	return pluginpassword.ShortHash(value, getDefaultEnvironment().GetDevMode())
+	return pluginpassword.FullHash(value)
 }
 
 // ResolveIPAddress returns the hostname for a given IP address.

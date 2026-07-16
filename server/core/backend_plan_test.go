@@ -2,11 +2,11 @@ package core
 
 import (
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
-	"github.com/croessner/nauthilus/v3/server/localcache"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 )
@@ -56,99 +56,57 @@ func TestAuthenticateUserLoadsBruteForceHistoriesWithoutCacheBackend(t *testing.
 	}
 }
 
-func TestAuthenticateUserSubjectFailDoesNotWritePositiveAuthCaches(t *testing.T) {
-	auth, ctx, mock, cacheService := newBackendPlanCacheOrderingAuth(t, "subject-fail@example.test")
-	cacheKey := auth.generateLocalCacheKey()
-
-	restore := replaceBackendPlanTestServices(
-		t,
-		backendPlanPasswordVerifier{},
-		cacheService,
-		nil,
-		backendPlanSubject{result: definitions.AuthResultFail},
-		currentBehaviorPostAction{},
-	)
-	defer restore()
-
-	result := auth.authenticateUser(ctx, backendPlanPositiveCacheBeforeLDAP())
-	if result != definitions.AuthResultFail {
-		t.Fatalf("authenticateUser() = %v, want %v", result, definitions.AuthResultFail)
+func TestAuthenticateUserStoresBackendAuthenticationBeforeSubjectAuthority(t *testing.T) {
+	testCases := []struct {
+		name             string
+		username         string
+		subjectResult    definitions.AuthResult
+		wantSuccessCalls int
+		wantFailureCalls int
+	}{
+		{name: "subject permit", username: "subject-ok@example.test", subjectResult: definitions.AuthResultOK, wantSuccessCalls: 1},
+		{name: "subject deny", username: "subject-fail@example.test", subjectResult: definitions.AuthResultFail, wantFailureCalls: 1},
 	}
 
-	if cacheService.successCalls != 0 {
-		t.Fatalf("positive cache success calls = %d, want 0", cacheService.successCalls)
-	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			auth, ctx, mock, cacheService := newBackendPlanCacheOrderingAuth(t, testCase.username)
 
-	if cacheService.failureCalls != 1 {
-		t.Fatalf("positive cache failure calls = %d, want 1", cacheService.failureCalls)
-	}
+			restore := replaceBackendPlanTestServices(
+				t,
+				backendPlanPasswordVerifier{},
+				cacheService,
+				nil,
+				backendPlanSubject{result: testCase.subjectResult},
+				currentBehaviorPostAction{},
+			)
+			defer restore()
 
-	if _, found := localcache.LocalCache.Get(cacheKey); found {
-		t.Fatal("local auth cache was populated for final AuthResultFail")
-	}
+			result := auth.authenticateUser(ctx, backendPlanPositiveCacheBeforeLDAP())
+			if result != testCase.subjectResult {
+				t.Fatalf("authenticateUser() = %v, want %v", result, testCase.subjectResult)
+			}
 
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("redis expectations: %v", err)
-	}
-}
+			if cacheService.successCalls != testCase.wantSuccessCalls || cacheService.failureCalls != testCase.wantFailureCalls {
+				t.Fatalf("positive password cache calls = success:%d failure:%d, want success:%d failure:%d", cacheService.successCalls, cacheService.failureCalls, testCase.wantSuccessCalls, testCase.wantFailureCalls)
+			}
 
-func TestAuthenticateUserSubjectOKWritesPositiveAuthCaches(t *testing.T) {
-	auth, ctx, mock, cacheService := newBackendPlanCacheOrderingAuth(t, "subject-ok@example.test")
-	cacheKey := auth.generateLocalCacheKey()
+			if _, found := auth.backendAuthenticationCache().load(mustBuildBackendAuthenticationCacheKey(t, auth)); !found {
+				t.Fatal("positive backend authentication was not stored before subject authority")
+			}
 
-	restore := replaceBackendPlanTestServices(
-		t,
-		backendPlanPasswordVerifier{},
-		cacheService,
-		nil,
-		backendPlanSubject{result: definitions.AuthResultOK},
-		currentBehaviorPostAction{},
-	)
-	defer restore()
-
-	result := auth.authenticateUser(ctx, backendPlanPositiveCacheBeforeLDAP())
-	if result != definitions.AuthResultOK {
-		t.Fatalf("authenticateUser() = %v, want %v", result, definitions.AuthResultOK)
-	}
-
-	if cacheService.successCalls != 1 {
-		t.Fatalf("positive cache success calls = %d, want 1", cacheService.successCalls)
-	}
-
-	if cacheService.failureCalls != 0 {
-		t.Fatalf("positive cache failure calls = %d, want 0", cacheService.failureCalls)
-	}
-
-	value, found := localcache.LocalCache.Get(cacheKey)
-	if !found {
-		t.Fatal("local auth cache was not populated for final AuthResultOK")
-	}
-
-	passDBResult, ok := value.(*PassDBResult)
-	if !ok {
-		t.Fatalf("local auth cache value type = %T, want *PassDBResult", value)
-	}
-
-	if !passDBResult.Authenticated {
-		t.Fatal("local auth cache PassDBResult.Authenticated = false, want true")
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("redis expectations: %v", err)
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("redis expectations: %v", err)
+			}
+		})
 	}
 }
 
-func TestHandleLocalCacheRunsPluginSubjectBridge(t *testing.T) {
+func TestHandleLocalCacheRerunsPluginSubjectBridge(t *testing.T) {
 	auth, ctx, mock, _ := newBackendPlanCacheOrderingAuth(t, "local-cache-subject@example.test")
 	auth.Request.Service = definitions.ServNginx
 	auth.SetStatusCodes(auth.Request.Service)
 	enableBackendHealthChecksForCacheTest(t, auth)
-
-	cacheKey := auth.generateLocalCacheKey()
-	localcache.LocalCache.Delete(cacheKey)
-	t.Cleanup(func() {
-		localcache.LocalCache.Delete(cacheKey)
-	})
 
 	bridge := &recordingPluginSubjectBridge{
 		address: "10.0.0.7",
@@ -169,7 +127,18 @@ func TestHandleLocalCacheRunsPluginSubjectBridge(t *testing.T) {
 	defer restoreBridge()
 
 	cached := backendPlanAuthenticatedCacheResult(auth)
-	localcache.LocalCache.Set(cacheKey, cached, auth.Cfg().GetServer().GetLocalCacheAuthTTL())
+	updateAuthentication(ctx, auth, cached, nil)
+	auth.Runtime.Authenticated = true
+	auth.Runtime.Authorized = true
+	auth.Runtime.AuthFSMTerminalState = string(authFSMStateAuthOK)
+	auth.Runtime.UsedBackendIP = bridge.address
+	auth.Runtime.UsedBackendPort = bridge.port
+
+	if !auth.backendAuthenticationCache().StoreForRequest(ctx, auth, cached, auth.Cfg().GetServer().GetLocalCacheAuthTTL(), auth.Request.Username) {
+		t.Fatal("failed to seed positive backend authentication cache")
+	}
+
+	PutPassDBResultToPool(cached)
 
 	if found := auth.GetFromLocalCache(ctx); !found {
 		t.Fatal("GetFromLocalCache() = false, want true")
@@ -182,10 +151,6 @@ func TestHandleLocalCacheRunsPluginSubjectBridge(t *testing.T) {
 
 	if bridge.calls != 1 {
 		t.Fatalf("plugin subject bridge calls = %d, want 1", bridge.calls)
-	}
-
-	if auth.Runtime.UsedBackendIP != bridge.address || auth.Runtime.UsedBackendPort != bridge.port {
-		t.Fatalf("selected backend = %s:%d, want %s:%d", auth.Runtime.UsedBackendIP, auth.Runtime.UsedBackendPort, bridge.address, bridge.port)
 	}
 
 	auth.AuthOK(ctx)
@@ -309,11 +274,7 @@ func newBackendPlanCacheOrderingAuth(
 	auth.Request.Username = username
 	auth.AccountCache().Set(cfg, auth.Request.Username, auth.Request.Protocol.Get(), "", auth.Request.Username)
 
-	cacheKey := auth.generateLocalCacheKey()
-	localcache.LocalCache.Delete(cacheKey)
-	t.Cleanup(func() {
-		localcache.LocalCache.Delete(cacheKey)
-	})
+	auth.deps.BackendAuthenticationCache = NewPositiveBackendAuthenticationCache(time.Now)
 
 	return auth, ctx, mock, &recordingCacheService{}
 }

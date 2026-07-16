@@ -74,12 +74,29 @@ type TokenFlusher interface {
 	FlushUserTokens(ctx context.Context, userID string) error
 }
 
+type userCacheFlushScriptRunner interface {
+	Run(ctx context.Context, username string, guid string) (*cacheflush.Result, error)
+}
+
+type configuredUserCacheFlushScriptRunner struct {
+	cfg    config.File
+	logger *slog.Logger
+	redis  rediscli.Client
+}
+
+// Run executes the configured cache-flush callback with production dependencies.
+func (r configuredUserCacheFlushScriptRunner) Run(ctx context.Context, username string, guid string) (*cacheflush.Result, error) {
+	return cacheflush.RunCacheFlushScript(ctx, r.cfg, r.logger, r.redis, username, guid)
+}
+
 type restAdminDeps struct {
-	Cfg          config.File
-	Logger       *slog.Logger
-	Redis        rediscli.Client
-	Channel      backend.Channel
-	TokenFlusher TokenFlusher
+	Cfg                  config.File
+	Logger               *slog.Logger
+	Redis                rediscli.Client
+	Channel              backend.Channel
+	TokenFlusher         TokenFlusher
+	AuthCacheInvalidator AuthCacheInvalidator
+	CacheFlushRunner     userCacheFlushScriptRunner
 }
 
 const (
@@ -141,6 +158,28 @@ func (deps restAdminDeps) effectiveCfg() config.File {
 
 func (deps restAdminDeps) effectiveRedis() rediscli.Client {
 	return deps.Redis
+}
+
+// effectiveAuthCacheInvalidator returns the injected invalidator or the process-wide composite.
+func (deps restAdminDeps) effectiveAuthCacheInvalidator() AuthCacheInvalidator {
+	if deps.AuthCacheInvalidator != nil {
+		return deps.AuthCacheInvalidator
+	}
+
+	return defaultAuthCacheInvalidator
+}
+
+// effectiveCacheFlushRunner returns the injected callback runner or the configured production adapter.
+func (deps restAdminDeps) effectiveCacheFlushRunner() userCacheFlushScriptRunner {
+	if deps.CacheFlushRunner != nil {
+		return deps.CacheFlushRunner
+	}
+
+	return configuredUserCacheFlushScriptRunner{
+		cfg:    deps.effectiveCfg(),
+		logger: deps.effectiveLogger(),
+		redis:  deps.effectiveRedis(),
+	}
 }
 
 // NewBruteForceListHandler constructs a Gin handler for the BruteForce list endpoint
@@ -401,12 +440,6 @@ func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
 
 	if a.Request.Service == definitions.ServIDP {
 		a.handleMasterUserMode()
-	}
-
-	if ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
-		// Local-cache hit represents a previously authenticated identity.
-		// Ensure subject-source predicates based on Authenticated evaluate consistently.
-		a.Runtime.Authenticated = true
 	}
 
 	current, handled := a.runPreAuthFSMPhase(ctx, current)
@@ -1544,6 +1577,12 @@ type userCacheFlushScope struct {
 func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
 	luaResult, luaAdditionalKeys := runUserCacheFlushScript(ctx.Request.Context(), deps, userCmd.User, guid)
 	scope := resolveUserCacheFlushScope(ctx.Request.Context(), deps, userCmd.User, guid, luaResult)
+	localRemoved := deps.effectiveAuthCacheInvalidator().InvalidateIdentities(scope.cleanupAccountNames...)
+	_ = level.Info(deps.effectiveLogger()).Log(
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, "Invalidated local authentication caches",
+		"removed", localRemoved,
+	)
 	userKeys, ipAddressSet := collectUserCacheFlushKeys(ctx, deps, guid, scope.cleanupAccountNames)
 	removedKeySet := flushUserBruteForceIPKeys(ctx, deps, guid, ipAddressSet)
 
@@ -1565,7 +1604,7 @@ func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUs
 func runUserCacheFlushScript(ctx context.Context, deps restAdminDeps, username string, guid string) (*cacheflush.Result, []string) {
 	logger := deps.effectiveLogger()
 
-	luaResult, luaErr := cacheflush.RunCacheFlushScript(ctx, deps.effectiveCfg(), logger, deps.effectiveRedis(), username, guid)
+	luaResult, luaErr := deps.effectiveCacheFlushRunner().Run(ctx, username, guid)
 	if luaErr != nil {
 		_ = level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
@@ -2450,7 +2489,7 @@ func (deps restAdminDeps) HandleUserFlushAsync(ctx *gin.Context) {
 		return
 	}
 
-	startAsync(jobDeps, jobID, guid, func(base context.Context) (int, []string, error) {
+	asyncStarterWithDeps(jobDeps, jobID, guid, func(base context.Context) (int, []string, error) {
 		gctx := &gin.Context{}
 		gctx.Request = ctx.Request.Clone(base)
 		removedKeys, _ := processFlushCache(gctx, deps, userCmd, guid)
