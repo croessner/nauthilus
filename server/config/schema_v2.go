@@ -730,9 +730,10 @@ type TLSEncryptionControl struct {
 
 // RBLControlSection configures RBL-based policy checks.
 type RBLControlSection struct {
-	Lists       []RBL    `mapstructure:"lists" validate:"required,dive"`
-	Threshold   int      `mapstructure:"threshold" validate:"omitempty,min=0,max=100"`
-	IPAllowlist []string `mapstructure:"ip_allowlist" validate:"omitempty,dive,ip_addr|cidr"`
+	Allowlist   SoftWhitelist `mapstructure:"allowlist"`
+	Lists       []RBL         `mapstructure:"lists" validate:"required,dive"`
+	IPAllowlist []string      `mapstructure:"ip_allowlist" validate:"omitempty,dive,ip_addr|cidr"`
+	Threshold   int           `mapstructure:"threshold" validate:"omitempty,min=0,max=100"`
 }
 
 // RelayDomainsControl configures relay-domain policy behavior.
@@ -1330,9 +1331,10 @@ func (f *FileSettings) materializeRBLSection() *RBLSection {
 	}
 
 	return &RBLSection{
-		Lists:       append([]RBL(nil), f.Auth.Controls.RBL.Lists...),
-		Threshold:   f.Auth.Controls.RBL.Threshold,
-		IPWhiteList: append([]string(nil), f.Auth.Controls.RBL.IPAllowlist...),
+		SoftWhitelist: f.Auth.Controls.RBL.Allowlist,
+		Lists:         append([]RBL(nil), f.Auth.Controls.RBL.Lists...),
+		Threshold:     f.Auth.Controls.RBL.Threshold,
+		IPWhiteList:   append([]string(nil), f.Auth.Controls.RBL.IPAllowlist...),
 	}
 }
 

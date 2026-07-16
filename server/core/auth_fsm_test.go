@@ -262,6 +262,12 @@ func preAuthFSMEventMappingCases() []authFSMResultMappingCase {
 			wantOK:  true,
 		},
 		{
+			name:    "PolicyBruteForceFail",
+			result:  definitions.AuthResultFail,
+			wantEvt: authFSMEventPreAuthDeny,
+			wantOK:  true,
+		},
+		{
 			name:    "PreAuthTempFail",
 			result:  definitions.AuthResultTempFail,
 			wantEvt: authFSMEventPreAuthTempFail,
