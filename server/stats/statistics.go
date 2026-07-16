@@ -202,6 +202,12 @@ type Metrics interface {
 	// GetHTTPResponseTimeSeconds provides a Prometheus HistogramVec that tracks HTTP response times, with a "path" label.
 	GetHTTPResponseTimeSeconds() *prometheus.HistogramVec
 
+	// GetGRPCRequestsTotal returns a counter vector tracking completed gRPC requests by bounded method and status code.
+	GetGRPCRequestsTotal() *prometheus.CounterVec
+
+	// GetGRPCResponseTimeSeconds returns a histogram vector tracking gRPC response-boundary durations by bounded method.
+	GetGRPCResponseTimeSeconds() *prometheus.HistogramVec
+
 	// GetLoginsCounter tracks the total number of login attempts (failed and successful) as a Prometheus CounterVec.
 	GetLoginsCounter() *prometheus.CounterVec
 
@@ -352,6 +358,8 @@ type metricsImpl struct {
 	currentRequests           prometheus.Gauge
 	httpRequestsTotal         *prometheus.CounterVec
 	httpResponseTimeSeconds   *prometheus.HistogramVec
+	grpcRequestsTotal         *prometheus.CounterVec
+	grpcResponseTimeSeconds   *prometheus.HistogramVec
 	loginsCounter             *prometheus.CounterVec
 	redisReadCounter          prometheus.Counter
 	redisWriteCounter         prometheus.Counter
@@ -428,6 +436,16 @@ func (m *metricsImpl) GetHTTPRequestsTotal() *prometheus.CounterVec {
 // GetHTTPResponseTimeSeconds returns the httpResponseTimeSeconds field.
 func (m *metricsImpl) GetHTTPResponseTimeSeconds() *prometheus.HistogramVec {
 	return m.httpResponseTimeSeconds
+}
+
+// GetGRPCRequestsTotal returns the gRPC request counter.
+func (m *metricsImpl) GetGRPCRequestsTotal() *prometheus.CounterVec {
+	return m.grpcRequestsTotal
+}
+
+// GetGRPCResponseTimeSeconds returns the gRPC response-boundary histogram.
+func (m *metricsImpl) GetGRPCResponseTimeSeconds() *prometheus.HistogramVec {
+	return m.grpcResponseTimeSeconds
 }
 
 // GetLoginsCounter returns the loginsCounter field.
@@ -761,6 +779,8 @@ func (m *metricsImpl) initCoreMetrics() {
 	m.currentRequests = newGaugeMetric("server_concurrent_requests", "Number of current requests.")
 	m.httpRequestsTotal = newCounterVecMetric("http_requests_total", "Number of HTTP requests.", metricPathLabel)
 	m.httpResponseTimeSeconds = newHistogramVecMetric("http_response_time_seconds", "Duration of HTTP requests.", nil, metricPathLabel)
+	m.grpcRequestsTotal = newCounterVecMetric("grpc_requests_total", "Number of completed gRPC requests.", metricMethodLabel, metricCodeLabel)
+	m.grpcResponseTimeSeconds = newHistogramVecMetric("grpc_response_time_seconds", "Duration of gRPC requests at the server response boundary.", nil, metricMethodLabel)
 	m.loginsCounter = newCounterVecMetric("logins_total", "Number of failed and successful login attempts.", metricLoginsLabel)
 	m.functionDuration = newHistogramVecMetric("function_duration_seconds", "Time spent in function", prometheus.ExponentialBuckets(0.001, 1.75, 15), metricServiceLabel, metricTaskLabel, metricResourceLabel)
 	m.rblDuration = newHistogramVecMetric("rbl_duration_seconds", "Time spent for RBL lookups", prometheus.ExponentialBuckets(0.001, 1.75, 15), metricRBLLabel)

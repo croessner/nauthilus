@@ -44,6 +44,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/croessner/nauthilus/v3/server/util"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -178,8 +179,16 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 
 // UnaryServerInterceptor returns the complete authority unary interceptor chain.
 func UnaryServerInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
+	requestMetrics := newGRPCRequestMetrics(deps.Cfg, stats.GetMetrics())
+
+	return unaryServerInterceptor(deps, requestMetrics.UnaryServerInterceptor())
+}
+
+// unaryServerInterceptor composes the authority response-boundary interceptor order.
+func unaryServerInterceptor(deps ServerDeps, requestMetrics grpc.UnaryServerInterceptor) grpc.UnaryServerInterceptor {
 	return chainUnaryInterceptors(
 		postActionResponseCompletionInterceptor(),
+		requestMetrics,
 		recoveryInterceptor(deps),
 		traceContextInterceptor(),
 		loggingTracingInterceptor(deps),
@@ -1019,6 +1028,7 @@ func resolveRequestNeedsAttributeRead(request any) bool {
 		attributes.GetReportMissing()
 }
 
+// grpcSpanName maps gRPC methods to bounded observability labels.
 func grpcSpanName(fullMethod string) string {
 	switch fullMethod {
 	case authv1.AuthService_Authenticate_FullMethodName:
@@ -1027,9 +1037,14 @@ func grpcSpanName(fullMethod string) string {
 		return "grpc.authority_lookup_identity"
 	case authv1.AuthService_ListAccounts_FullMethodName:
 		return "grpc.authority_list_accounts"
-	default:
-		return "grpc.authority_unknown"
 	}
+
+	identityMethodPrefix := "/" + identityv1.IdentityBackendService_ServiceDesc.ServiceName + "/"
+	if strings.HasPrefix(fullMethod, identityMethodPrefix) {
+		return "grpc.authority_identity_backend"
+	}
+
+	return "grpc.authority_unknown"
 }
 
 func grpcFullMethod(info *grpc.UnaryServerInfo) string {
