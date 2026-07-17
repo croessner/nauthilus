@@ -245,6 +245,7 @@ func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason s
 // AuthOK is the general method to indicate authentication success.
 func (a *AuthState) AuthOK(ctx *gin.Context) {
 	a.responseWriter().OK(ctx, a.View())
+	a.markAuthenticationMetric(ctx, AuthDecisionOK)
 	a.observeConfiguredPolicyDecision(ctx)
 }
 
@@ -253,13 +254,25 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 func (a *AuthState) AuthFail(ctx *gin.Context) {
 	a.increaseLoginAttempts()
 	a.responseWriter().Fail(ctx, a.View())
+	a.markAuthenticationMetric(ctx, AuthDecisionFail)
 	a.observeConfiguredPolicyDecision(ctx)
 }
 
 // AuthTempFail sends a temporary failure response with the provided reason and logs the error.
 func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 	a.responseWriter().TempFail(ctx, a.View(), reason)
+	a.markAuthenticationMetric(ctx, AuthDecisionTempFail)
 	a.observeConfiguredPolicyDecision(ctx)
+}
+
+// markAuthenticationMetric stores bounded terminal metadata for the outer transport observer.
+func (a *AuthState) markAuthenticationMetric(ctx *gin.Context, outcome AuthDecision) {
+	if a == nil || ctx == nil {
+		return
+	}
+
+	ctx.Set(definitions.CtxAuthOutcomeKey, string(outcome))
+	ctx.Set(definitions.CtxAuthProtocolKey, a.GetProtocol().Get())
 }
 
 // OK implements the success response logic (unchanged behavior).

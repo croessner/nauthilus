@@ -19,27 +19,43 @@ package metrics
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/monitoring/authmetrics"
 	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+type responseMetricCollectors interface {
+	GetHTTPRequestsTotal() *prometheus.CounterVec
+	GetHTTPResponseTimeSeconds() *prometheus.HistogramVec
+	GetAuthenticationResponseTimeSeconds() *prometheus.HistogramVec
+}
 
 // PrometheusMiddleware is a Gin middleware for tracking HTTP request metrics using Prometheus timers and counters.
 // It records request counts and response times based on the request path and mode query parameter.
 // Metrics include the total number of requests and the duration of HTTP responses.
 // The middleware respects configuration settings for enabling Prometheus timers and uses predefined labels for tracking.
 func PrometheusMiddleware(cfg config.File) gin.HandlerFunc {
+	return prometheusMiddleware(cfg, stats.GetMetrics())
+}
+
+// prometheusMiddleware builds request observers with injectable metric collectors.
+func prometheusMiddleware(cfg config.File, metrics responseMetricCollectors) gin.HandlerFunc {
 	enableTimer := false
 	if cfg != nil {
 		enableTimer = cfg.GetServer().GetPrometheusTimer().IsEnabled()
 	}
 
+	authObserver := authmetrics.New(cfg, metrics)
+
 	return func(ctx *gin.Context) {
 		var timer *prometheus.Timer
 
+		startedAt := time.Now()
 		path := ctx.FullPath()
 		mode := ctx.Query("mode")
 		uScore := "_"
@@ -51,19 +67,30 @@ func PrometheusMiddleware(cfg config.File) gin.HandlerFunc {
 		stopTimer := stats.PrometheusTimer(cfg, definitions.PromRequest, fmt.Sprintf("request%s%s_total", uScore, strings.ReplaceAll(mode, "-", "_")), path)
 
 		if enableTimer {
-			timer = prometheus.NewTimer(stats.GetMetrics().GetHTTPResponseTimeSeconds().WithLabelValues(path))
+			timer = prometheus.NewTimer(metrics.GetHTTPResponseTimeSeconds().WithLabelValues(path))
 		}
+
+		defer func() {
+			metrics.GetHTTPRequestsTotal().WithLabelValues(path).Inc()
+
+			if enableTimer && timer != nil {
+				timer.ObserveDuration()
+			}
+
+			if stopTimer != nil {
+				stopTimer()
+			}
+
+			if ctx.GetString(definitions.CtxCategoryKey) == definitions.CatAuth {
+				authObserver.Observe(
+					startedAt,
+					authmetrics.TransportHTTP,
+					ctx.GetString(definitions.CtxAuthOutcomeKey),
+					ctx.GetString(definitions.CtxAuthProtocolKey),
+				)
+			}
+		}()
 
 		ctx.Next()
-
-		stats.GetMetrics().GetHTTPRequestsTotal().WithLabelValues(path).Inc()
-
-		if enableTimer && timer != nil {
-			timer.ObserveDuration()
-		}
-
-		if stopTimer != nil {
-			stopTimer()
-		}
 	}
 }

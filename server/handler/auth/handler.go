@@ -109,6 +109,8 @@ func (h *Handler) process(ctx *gin.Context) {
 		return
 	}
 
+	ctx.Set(definitions.CtxAuthProtocolKey, auth.GetProtocol().Get())
+
 	if reject := auth.PreproccessAuthRequest(ctx); reject {
 		return
 	}

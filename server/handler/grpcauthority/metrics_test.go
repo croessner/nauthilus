@@ -24,10 +24,13 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
 	identityv1 "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1"
+	"github.com/croessner/nauthilus/v3/server/monitoring/authmetrics"
 	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -38,6 +41,7 @@ import (
 type isolatedGRPCRequestMetrics struct {
 	requests *prometheus.CounterVec
 	duration *prometheus.HistogramVec
+	auth     *prometheus.HistogramVec
 }
 
 type grpcRequestMetricsCase struct {
@@ -84,6 +88,10 @@ func newIsolatedGRPCRequestMetrics() *isolatedGRPCRequestMetrics {
 			Name: "test_grpc_response_time_seconds",
 			Help: "Test gRPC response duration.",
 		}, []string{"method"}),
+		auth: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "test_authentication_response_time_seconds",
+			Help: "Test authentication response duration.",
+		}, []string{"transport", "outcome", "protocol"}),
 	}
 }
 
@@ -95,6 +103,91 @@ func (m *isolatedGRPCRequestMetrics) GetGRPCRequestsTotal() *prometheus.CounterV
 // GetGRPCResponseTimeSeconds returns the isolated response histogram.
 func (m *isolatedGRPCRequestMetrics) GetGRPCResponseTimeSeconds() *prometheus.HistogramVec {
 	return m.duration
+}
+
+// GetAuthenticationResponseTimeSeconds returns the isolated auth response histogram.
+func (m *isolatedGRPCRequestMetrics) GetAuthenticationResponseTimeSeconds() *prometheus.HistogramVec {
+	return m.auth
+}
+
+// TestGRPCRequestMetricsRecordsDomainAuthenticationOutcomes verifies business outcomes at the outer boundary.
+func TestGRPCRequestMetricsRecordsDomainAuthenticationOutcomes(t *testing.T) {
+	testCases := []struct {
+		name        string
+		response    any
+		err         error
+		wantOutcome string
+	}{
+		{name: "success", response: &authv1.AuthResponse{Decision: authv1.AuthDecision_AUTH_DECISION_OK}, wantOutcome: authmetrics.OutcomeOK},
+		{name: "denial", response: &authv1.AuthResponse{Decision: authv1.AuthDecision_AUTH_DECISION_FAIL}, wantOutcome: authmetrics.OutcomeFail},
+		{name: "temporary failure", response: &authv1.AuthResponse{Decision: authv1.AuthDecision_AUTH_DECISION_TEMPFAIL}, wantOutcome: authmetrics.OutcomeTempFail},
+		{name: "unspecified", response: &authv1.AuthResponse{}, wantOutcome: authmetrics.OutcomeError},
+		{name: "transport error", err: status.Error(codes.Internal, "failed"), wantOutcome: authmetrics.OutcomeError},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := grpcRequestMetricsTestConfig(true)
+			metrics := newIsolatedGRPCRequestMetrics()
+			interceptor := newGRPCRequestMetrics(cfg, metrics).UnaryServerInterceptor()
+			request := &authv1.AuthRequest{Protocol: "SMTP"}
+
+			_, _ = interceptor(
+				context.Background(),
+				request,
+				&grpc.UnaryServerInfo{FullMethod: authv1.AuthService_Authenticate_FullMethodName},
+				func(context.Context, any) (any, error) {
+					return testCase.response, testCase.err
+				},
+			)
+
+			count, _ := grpcRequestHistogramValue(
+				t,
+				metrics.auth,
+				authmetrics.TransportGRPC,
+				testCase.wantOutcome,
+				definitions.ProtoSMTP,
+			)
+			if count != 1 {
+				t.Fatalf("authentication duration count = %d, want 1", count)
+			}
+		})
+	}
+}
+
+// TestGRPCRequestMetricsScopesAuthenticationHistogram verifies method and timer gating.
+func TestGRPCRequestMetricsScopesAuthenticationHistogram(t *testing.T) {
+	testCases := []struct {
+		name       string
+		method     string
+		enabled    bool
+		wantSeries int
+	}{
+		{name: "authenticate enabled", method: authv1.AuthService_Authenticate_FullMethodName, enabled: true, wantSeries: 1},
+		{name: "lookup excluded", method: authv1.AuthService_LookupIdentity_FullMethodName, enabled: true},
+		{name: "authenticate disabled", method: authv1.AuthService_Authenticate_FullMethodName},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := grpcRequestMetricsTestConfig(testCase.enabled)
+			metrics := newIsolatedGRPCRequestMetrics()
+			interceptor := newGRPCRequestMetrics(cfg, metrics).UnaryServerInterceptor()
+
+			_, _ = interceptor(
+				context.Background(),
+				&authv1.AuthRequest{Protocol: definitions.ProtoIMAP},
+				&grpc.UnaryServerInfo{FullMethod: testCase.method},
+				func(context.Context, any) (any, error) {
+					return &authv1.AuthResponse{Decision: authv1.AuthDecision_AUTH_DECISION_OK}, nil
+				},
+			)
+
+			if got := testutil.CollectAndCount(metrics.auth, "test_authentication_response_time_seconds"); got != testCase.wantSeries {
+				t.Fatalf("authentication metric series = %d, want %d", got, testCase.wantSeries)
+			}
+		})
+	}
 }
 
 // TestGRPCRequestMetricsInterceptorRecordsBoundedMethodAndCode verifies the public metric labels.

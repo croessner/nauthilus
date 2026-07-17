@@ -1065,6 +1065,12 @@ const (
 	// CtxLocalCacheAuthKey is used as a key to store an Authentication structure for an authenticated user.
 	CtxLocalCacheAuthKey = "local_cache_auth"
 
+	// CtxAuthOutcomeKey stores the terminal authentication outcome for response-boundary metrics.
+	CtxAuthOutcomeKey = "auth_outcome"
+
+	// CtxAuthProtocolKey stores the resolved authentication protocol for response-boundary metrics.
+	CtxAuthProtocolKey = "auth_protocol"
+
 	// CtxOIDCClaimsKey is used as a key to store OIDC Bearer token claims in the context.
 	CtxOIDCClaimsKey = "oidc_claims"
 

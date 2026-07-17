@@ -25,6 +25,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/monitoring/authmetrics"
 	"github.com/croessner/nauthilus/v3/server/stats"
 
 	"github.com/gin-gonic/gin"
@@ -48,6 +49,7 @@ func TestCaptureResponseWriter_OKCapturesOutcomeWithoutHTTPRendering(t *testing.
 	successBefore := loginCounterValue(definitions.LabelSuccess)
 
 	auth.AuthOK(ctx)
+	assertAuthMetricMarker(t, ctx, authmetrics.OutcomeOK, "imap")
 
 	assertNoHTTPRendering(t, rec)
 
@@ -95,6 +97,7 @@ func TestCaptureResponseWriter_FailCapturesOutcomeWithoutHTTPRendering(t *testin
 	failureBefore := loginCounterValue(definitions.LabelFailure)
 
 	auth.AuthFail(ctx)
+	assertAuthMetricMarker(t, ctx, authmetrics.OutcomeFail, "imap")
 
 	assertNoHTTPRendering(t, rec)
 
@@ -125,6 +128,7 @@ func TestCaptureResponseWriter_TempFailCapturesOutcomeWithoutHTTPRendering(t *te
 	const reason = "Temporary server problem"
 
 	auth.AuthTempFail(ctx, reason)
+	assertAuthMetricMarker(t, ctx, authmetrics.OutcomeTempFail, "imap")
 
 	assertNoHTTPRendering(t, rec)
 
@@ -242,6 +246,19 @@ func assertNoHTTPRendering(t *testing.T, rec *httptest.ResponseRecorder) {
 
 	if len(rec.Header()) != 0 {
 		t.Fatalf("expected no HTTP headers, got %v", rec.Header())
+	}
+}
+
+// assertAuthMetricMarker verifies request-local terminal metric metadata.
+func assertAuthMetricMarker(t *testing.T, ctx *gin.Context, wantOutcome string, wantProtocol string) {
+	t.Helper()
+
+	if got := ctx.GetString(definitions.CtxAuthOutcomeKey); got != wantOutcome {
+		t.Fatalf("auth metric outcome = %q, want %q", got, wantOutcome)
+	}
+
+	if got := ctx.GetString(definitions.CtxAuthProtocolKey); got != wantProtocol {
+		t.Fatalf("auth metric protocol = %q, want %q", got, wantProtocol)
 	}
 }
 
