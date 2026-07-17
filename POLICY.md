@@ -20,6 +20,11 @@ A task is incomplete if any mandatory rule is not satisfied.
   docs, filenames, branch names, tags, commit subjects, and commit bodies. Use
   domain-specific names such as `baseline`, `authority`, `identity`, or the
   concrete feature name instead.
+- MUST: Perform all development and editing work on the `features` branch.
+  Never implement changes directly on another branch unless the user explicitly
+  names an exception. Use `main` only for release integration after the intended
+  changes have been committed and validated on `features`; do not edit code
+  there.
 - MUST: Write commit messages as `Prefix: Concise headline`, using only the
   approved prefixes `Add`, `Change`, `Fix`, `Remove`, `Refactor`, `Test`,
   `Docs`, `Build`, `Ci`, `Vendor`, `Security`, and `Chore`.
@@ -42,6 +47,8 @@ A task is incomplete if any mandatory rule is not satisfied.
 - [ ] DRY check completed; duplicate logic removed or intentionally shared.
 - [ ] OOP structure verified; responsibilities are small and cohesive.
 - [ ] Comments/docs introduced in this change are English-only.
+- [ ] Development and editing were performed on `features`; `main` was used
+      only for release integration, if applicable.
 - [ ] `make guardrails` passes locally and in CI.
 - [ ] `golangci-lint` findings are fixed or intentionally documented.
 - [ ] Commit messages use the approved prefix, headline, and bullet-list body

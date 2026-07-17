@@ -14,6 +14,7 @@ This document captures practical, project-specific details to build, configure, 
 - MUST: Write code comments and technical docs in English.
 - MUST: Document newly added or changed non-exported functions and methods with concise English comments that explain responsibility or non-obvious behavior.
 - MUST: Keep numbered rollout-stage terminology out of source code, tests, docs, filenames, branch names, tags, commit subjects, and commit bodies. Use domain-specific names such as `baseline`, `authority`, `identity`, or the concrete feature name instead.
+- MUST: Perform all development and editing work on the `features` branch. Never implement changes directly on another branch unless the user explicitly names an exception. Use `main` only for release integration after the intended changes have been committed and validated on `features`; do not edit code there.
 - MUST (CRITICAL, GO 1.26): ALWAYS prefix Go test commands with `GOEXPERIMENT=runtimesecret`.
     - Required form: `GOEXPERIMENT=runtimesecret go test ...`
     - This is mandatory for every Go 1.26 test run and must never be skipped.
@@ -23,6 +24,7 @@ This document captures practical, project-specific details to build, configure, 
     - [ ] OOP structure verified; responsibilities are small and cohesive.
     - [ ] Comments/docs introduced in this change are English-only.
     - [ ] Newly added or changed non-exported functions/methods have concise English comments.
+    - [ ] Development and editing were performed on `features`; `main` was used only for release integration, if applicable.
     - [ ] make guardrails passes locally and in CI.
 
 1. Build and configuration
