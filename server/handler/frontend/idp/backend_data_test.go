@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
@@ -94,6 +95,7 @@ const (
 	remoteBackendDataAuthorityBackend  = "authority-ldap"
 	remoteBackendDataAttributeMail     = "mail"
 	remoteBackendDataBackendRef        = "remote-backend-ref"
+	backendDataPluginResponseHeader    = "X-Nauthilus-Lookup-Response"
 )
 
 func TestGetUserBackendDataCapturesIdentityAndMFAState(t *testing.T) {
@@ -237,6 +239,35 @@ func TestHasWebAuthnIgnoresConsumedStructuredBody(t *testing.T) {
 
 	assert.Equal(t, http.StatusNoContent, recorder.Code)
 	assert.Empty(t, recorder.Body.String())
+}
+
+func TestBackendDataLookupContextDoesNotExposePluginResponseBoundary(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/login/webauthn/finish",
+		strings.NewReader(`{"id":"credential"}`),
+	)
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	lookupCtx := backendDataLookupContext(ctx)
+	assert.NotSame(t, ctx, lookupCtx)
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	authState := core.NewAuthStateFromContextWithDeps(lookupCtx, core.AuthDeps{Cfg: cfg}).(*core.AuthState)
+	authState.Request.Service = definitions.ServIDP
+
+	assert.NotPanics(t, func() {
+		authState.ApplyPluginResponseMutation(lookupCtx, pluginapi.ResponseMutation{
+			Headers: pluginapi.ResponseHeaderMutation{
+				Set: map[string][]string{backendDataPluginResponseHeader: {"must-not-escape"}},
+			},
+		})
+	})
+	assert.Empty(t, recorder.Header().Get(backendDataPluginResponseHeader))
 }
 
 func newBackendDataTestCredential() mfa.PersistentCredential {

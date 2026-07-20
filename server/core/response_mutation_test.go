@@ -163,6 +163,27 @@ func TestPluginResponseMutationNoOpsWhenResponseIsNotMutable(t *testing.T) {
 			t.Fatalf("%s = %q, want no-op after write", responseMutationHeader, got)
 		}
 	})
+
+	t.Run("explicitly disabled copied context", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest("GET", "/auth", nil)
+
+		copiedCtx := ctx.Copy()
+		copiedCtx.Set(definitions.CtxPluginResponseMutationDisabledKey, true)
+
+		cfg := &config.FileSettings{Server: &config.ServerSection{}}
+		auth := newResponseAuthState(copiedCtx, cfg, nil, definitions.ServJSON)
+		auth.ApplyPluginResponseMutation(copiedCtx, pluginapi.ResponseMutation{
+			Headers: pluginapi.ResponseHeaderMutation{
+				Set: map[string][]string{responseMutationHeader: {"internal"}},
+			},
+		})
+
+		if got := recorder.Header().Get(responseMutationHeader); got != "" {
+			t.Fatalf("%s = %q, want no-op for explicitly disabled copied context", responseMutationHeader, got)
+		}
+	})
 }
 
 func TestPluginResponseMutationStatusHeaderUsesSelectedStatusMessage(t *testing.T) {

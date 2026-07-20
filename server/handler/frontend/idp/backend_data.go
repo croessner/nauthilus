@@ -106,6 +106,8 @@ func backendDataLookupContext(ctx *gin.Context) *gin.Context {
 	}
 
 	lookupCtx := ctx.Copy()
+	lookupCtx.Set(definitions.CtxPluginResponseMutationDisabledKey, true)
+
 	request := ctx.Request.Clone(ctx.Request.Context())
 	request.Method = http.MethodGet
 	request.Body = http.NoBody

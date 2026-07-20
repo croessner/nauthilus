@@ -1089,6 +1089,9 @@ const (
 	// CtxResponseWrittenKey marks that a Lua response has been written for this request.
 	CtxResponseWrittenKey = "response_written"
 
+	// CtxPluginResponseMutationDisabledKey marks internal contexts that cannot mutate an HTTP response.
+	CtxPluginResponseMutationDisabledKey = "plugin_response_mutation_disabled"
+
 	// CtxCustomHookKey stores the canonical custom hook name resolved for the current request.
 	CtxCustomHookKey = "custom_hook"
 

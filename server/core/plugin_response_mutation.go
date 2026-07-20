@@ -86,7 +86,9 @@ func (a *AuthState) canApplyPluginResponseMutation(ctx *gin.Context) bool {
 		return false
 	}
 
-	if ctx.GetBool(definitions.CtxResponseWrittenKey) || ctx.Writer.Written() {
+	if ctx.GetBool(definitions.CtxPluginResponseMutationDisabledKey) ||
+		ctx.GetBool(definitions.CtxResponseWrittenKey) ||
+		ctx.Writer.Written() {
 		return false
 	}
 
