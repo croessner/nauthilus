@@ -49,6 +49,11 @@ type ldapConnectSettings struct {
 	maxRetries int
 }
 
+// ldapTargetConnector applies one LDAP transport policy to normal connections and probes.
+type ldapTargetConnector struct {
+	conf *config.LDAPConf
+}
+
 // LDAPConnection defines behaviors for managing and interacting with an LDAP connection.
 type LDAPConnection interface {
 	// SetState sets the current state of the LDAP connection to the specified LDAPState value.
@@ -206,14 +211,9 @@ func (l *LDAPConnectionImpl) tryConnectLDAPTarget(
 
 	l.logURIInfo(context.Background(), cfg, logger, guid, ldapConf, idx, retryCount)
 
-	tlsConfig, err := l.tlsConfigForTarget(target, ldapConf)
-	if err != nil {
-		return false, err
-	}
-
 	incInflight(settings.pool, target)
 
-	err = l.dialAndStartTLS(context.Background(), cfg, logger, guid, ldapConf, idx, tlsConfig)
+	err := l.dialAndStartTLS(context.Background(), cfg, logger, guid, ldapConf, idx)
 	if err == nil {
 		decInflight(settings.pool, target)
 		cbOnSuccess(settings.pool, target)
@@ -231,16 +231,6 @@ func (l *LDAPConnectionImpl) tryConnectLDAPTarget(
 	time.Sleep(jitterBackoff(settings.base, retryCount, settings.maxBackoff))
 
 	return true, err
-}
-
-// tlsConfigForTarget returns a TLS config only for ldaps or StartTLS targets.
-func (l *LDAPConnectionImpl) tlsConfigForTarget(target string, ldapConf *config.LDAPConf) (*tls.Config, error) {
-	u, _ := url.Parse(target)
-	if u.Scheme != ldapSchemeLDAPS && !ldapConf.StartTLS {
-		return nil, nil
-	}
-
-	return l.setTLSConfig(u, ldapConf)
 }
 
 // Bind establishes a connection to the LDAP server using either SASL External or simple bind based on the configuration provided.
@@ -598,6 +588,7 @@ func ensureTargetState(pool, target string) *targetState {
 	return ts
 }
 
+// setHealth records transport establishment health; LDAP bind outcomes do not own this state.
 func setHealth(pool, target string, ok bool) {
 	ts := ensureTargetState(pool, target)
 
@@ -680,6 +671,7 @@ func indexOfTarget(targets []string, target string) int {
 	return 0
 }
 
+// startHealthLoop periodically verifies the complete configured transport for each target.
 func startHealthLoop(pool string, ldapConf *config.LDAPConf) {
 	if ldapConf == nil {
 		return
@@ -691,24 +683,9 @@ func startHealthLoop(pool string, ldapConf *config.LDAPConf) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	connector := newLDAPTargetConnector(ldapConf)
 	probe := func(target string) {
-		opts := []ldap.DialOpt{ldap.DialWithDialer(&net.Dialer{Timeout: probeTO})}
-		// minimal TLS config if ldaps or StartTLS indicated
-		if strings.HasPrefix(strings.ToLower(target), "ldaps") || ldapConf.StartTLS {
-			tlsCfg := &tls.Config{InsecureSkipVerify: ldapConf.TLSSkipVerify}
-			opts = append(opts, ldap.DialWithTLSConfig(tlsCfg))
-		}
-
-		c, err := ldap.DialURL(target, opts...)
-		if err == nil {
-			_ = c.Close()
-
-			setHealth(pool, target, true)
-
-			return
-		}
-
-		setHealth(pool, target, false)
+		setHealth(pool, target, connector.probe(target, probeTO) == nil)
 	}
 
 	// initial probe
@@ -721,6 +698,78 @@ func startHealthLoop(pool string, ldapConf *config.LDAPConf) {
 			probe(t)
 		}
 	}
+}
+
+// newLDAPTargetConnector creates a connector for one immutable LDAP target policy.
+func newLDAPTargetConnector(ldapConf *config.LDAPConf) *ldapTargetConnector {
+	return &ldapTargetConnector{conf: ldapConf}
+}
+
+// probe verifies the complete configured transport without sending bind credentials.
+func (c *ldapTargetConnector) probe(target string, timeout time.Duration) error {
+	connection, _, err := c.dial(
+		target,
+		timeout,
+		ldap.DialWithDialer(&net.Dialer{Timeout: timeout}),
+	)
+	if err != nil {
+		return err
+	}
+
+	_ = connection.Close()
+
+	return nil
+}
+
+// dial establishes the configured plain, LDAPS, or StartTLS transport.
+func (c *ldapTargetConnector) dial(
+	target string,
+	requestTimeout time.Duration,
+	options ...ldap.DialOpt,
+) (*ldap.Conn, bool, error) {
+	tlsConfig, err := c.tlsConfig(target)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if tlsConfig != nil {
+		options = append(options, ldap.DialWithTLSConfig(tlsConfig))
+	}
+
+	connection, err := ldap.DialURL(target, options...)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if !c.conf.StartTLS {
+		return connection, false, nil
+	}
+
+	if requestTimeout > 0 {
+		connection.SetTimeout(requestTimeout)
+	}
+
+	if err = connection.StartTLS(tlsConfig); err != nil {
+		_ = connection.Close()
+
+		return nil, false, err
+	}
+
+	return connection, true, nil
+}
+
+// tlsConfig returns the shared TLS policy for LDAPS and StartTLS targets.
+func (c *ldapTargetConnector) tlsConfig(target string) (*tls.Config, error) {
+	targetURL, err := url.Parse(target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse LDAP target URI: %w", err)
+	}
+
+	if targetURL.Scheme != ldapSchemeLDAPS && !c.conf.StartTLS {
+		return nil, nil
+	}
+
+	return newLDAPTLSConfig(targetURL, c.conf)
 }
 
 // jitterBackoff applies exponential backoff with capped jitter to calculate the next retry duration.
@@ -754,8 +803,8 @@ type ldapConnectionState struct {
 	state definitions.LDAPState
 }
 
-// setTLSConfig loads certificate material and creates a TLS configuration for the LDAP connection.
-func (l *LDAPConnectionImpl) setTLSConfig(u *url.URL, ldapConf *config.LDAPConf) (*tls.Config, error) {
+// newLDAPTLSConfig loads certificate material and creates the shared LDAP TLS policy.
+func newLDAPTLSConfig(u *url.URL, ldapConf *config.LDAPConf) (*tls.Config, error) {
 	caCertPool, err := loadLDAPRootCAs(ldapConf.TLSCAFile)
 	if err != nil {
 		return nil, err
@@ -848,21 +897,18 @@ func validateLDAPPeerCertificates(certificates [][]byte, _ [][]*x509.Certificate
 	return nil
 }
 
-// dialAndStartTLS dials the LDAP server and starts a TLS connection if configured.
-func (l *LDAPConnectionImpl) dialAndStartTLS(ctx context.Context, cfg config.File, logger *slog.Logger, guid string, ldapConf *config.LDAPConf, ldapCounter int, tlsConfig *tls.Config) error {
-	var err error
+// dialAndStartTLS establishes the configured LDAP transport and records StartTLS diagnostics.
+func (l *LDAPConnectionImpl) dialAndStartTLS(ctx context.Context, cfg config.File, logger *slog.Logger, guid string, ldapConf *config.LDAPConf, ldapCounter int) error {
+	connector := newLDAPTargetConnector(ldapConf)
 
-	l.conn, err = ldap.DialURL(ldapConf.ServerURIs[ldapCounter], ldap.DialWithTLSConfig(tlsConfig))
+	connection, startedTLS, err := connector.dial(ldapConf.ServerURIs[ldapCounter], 0)
 	if err != nil {
 		return err
 	}
 
-	if ldapConf.StartTLS {
-		err = l.conn.StartTLS(tlsConfig)
-		if err != nil {
-			return err
-		}
+	l.conn = connection
 
+	if startedTLS {
 		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "STARTTLS")
 	}
 
