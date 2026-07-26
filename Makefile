@@ -17,11 +17,12 @@ GOLANGCI_NEW_FROM_REV ?= HEAD
 NAUTHILUS_CONF_DIR ?= /etc/nauthilus
 NAUTHILUS_PLUGINS_DIR ?= /usr/local/share/nauthilus/lua-plugins.d
 GOVULNCHECK ?= govulncheck
-GO_PACKAGES = $(shell go list ./... | grep -v /vendor/)
-GO_PACKAGE_DIRS = $(patsubst $(CURDIR)/%,./%,$(shell go list -f '{{.Dir}}' $(GO_PACKAGES)))
-CONFIG_EXPANSION_LDFLAGS := -X github.com/croessner/nauthilus/v3/server/config.nauthilusConfDir=$(NAUTHILUS_CONF_DIR) -X github.com/croessner/nauthilus/v3/server/config.nauthilusPluginsDir=$(NAUTHILUS_PLUGINS_DIR)
 
 export GOEXPERIMENT := runtimesecret
+
+GO_PACKAGES = $(shell GOEXPERIMENT=$(GOEXPERIMENT) go list ./... | grep -v /vendor/)
+GO_PACKAGE_DIRS = $(patsubst $(CURDIR)/%,./%,$(shell GOEXPERIMENT=$(GOEXPERIMENT) go list -f '{{.Dir}}' $(GO_PACKAGES)))
+CONFIG_EXPANSION_LDFLAGS := -X github.com/croessner/nauthilus/v3/server/config.nauthilusConfDir=$(NAUTHILUS_CONF_DIR) -X github.com/croessner/nauthilus/v3/server/config.nauthilusPluginsDir=$(NAUTHILUS_PLUGINS_DIR)
 
 .PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check makefile-package-scope-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-auth-proto generate-openapi-bindings generate-openapi-bindings-check generate-openapi-management generate-openapi-management-check identity-proxy-e2e govulncheck release-guardrails guardrails
 

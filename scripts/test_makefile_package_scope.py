@@ -60,13 +60,20 @@ class MakefilePackageScopeTest(unittest.TestCase):
         """Require the shared package query to filter vendored package paths."""
         self.assertRegex(
             self.makefile,
-            r"(?m)^GO_PACKAGES\s*[:?+]?=\s*\$\(shell go list \./\.\.\. \| grep -v /vendor/\)$",
+            r"(?m)^GO_PACKAGES\s*[:?+]?=\s*\$\(shell GOEXPERIMENT=\$\(GOEXPERIMENT\) go list \./\.\.\. \| grep -v /vendor/\)$",
         )
 
         self.assertRegex(
             self.makefile,
-            r"(?m)^GO_PACKAGE_DIRS\s*[:?+]?=.*\$\(GO_PACKAGES\).*$",
+            r"(?m)^GO_PACKAGE_DIRS\s*[:?+]?=.*\$\(shell GOEXPERIMENT=\$\(GOEXPERIMENT\) go list .*\$\(GO_PACKAGES\)\).*$",
         )
+
+    def test_goexperiment_is_defined_before_package_discovery(self) -> None:
+        """Keep the required Go experiment defined before package discovery."""
+        export_offset = self.makefile.index("export GOEXPERIMENT := runtimesecret")
+        package_list_offset = self.makefile.index("GO_PACKAGES = $(shell GOEXPERIMENT=")
+
+        self.assertLess(export_offset, package_list_offset)
 
     def test_scoped_targets_use_shared_package_list(self) -> None:
         """Require every repository-wide analysis target to reuse GO_PACKAGES."""
