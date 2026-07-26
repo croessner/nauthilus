@@ -957,6 +957,7 @@ type OIDCClient struct {
 	OptionalScopes                      []string      `mapstructure:"optional_scopes" validate:"omitempty,dive,ne=openid"`
 	SkipConsent                         bool          `mapstructure:"skip_consent"`
 	DelayedResponse                     bool          `mapstructure:"delayed_response"`
+	RequirePKCE                         bool          `mapstructure:"require_pkce"`
 	AllowRefreshTokenCombinedClientAuth bool          `mapstructure:"allow_refresh_token_combined_client_auth"`
 	RevokeRefreshToken                  *bool         `mapstructure:"revoke_refresh_token"`
 	FrontChannelLogoutSessionRequired   bool          `mapstructure:"frontchannel_logout_session_required"`
@@ -1024,6 +1025,15 @@ func (c *OIDCClient) IsPublicClient() bool {
 	}
 
 	return c.ClientSecret.IsZero() || c.TokenEndpointAuthMethod == oidcAuthMethodNone
+}
+
+// RequiresPKCE reports whether authorization-code requests must use PKCE.
+func (c *OIDCClient) RequiresPKCE() bool {
+	if c == nil {
+		return false
+	}
+
+	return c.RequirePKCE || c.IsPublicClient()
 }
 
 // AllowsRefreshTokenCombinedClientAuth reports whether this client is allowed

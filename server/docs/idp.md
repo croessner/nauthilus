@@ -1492,6 +1492,7 @@ oidc:
         - openid
         - profile
         - email
+      require_pkce: true
       access_token_lifetime: 1h
       token_endpoint_auth_method: private_key_jwt
       client_public_key_algorithm: RS256
@@ -1523,6 +1524,7 @@ oidc:
 |-------------------------------|------------|------------------------|---------------------------------------------------------------------------|
 | `grant_types`                 | `[]string` | `[authorization_code]` | Allowed grant types for this client                                       |
 | `token_endpoint_auth_method`  | `string`   | (any secret method)    | `client_secret_basic`, `client_secret_post`, `private_key_jwt`, or `none` |
+| `require_pkce`                | `bool`     | `false`                | Require PKCE with `S256`; always required for public clients              |
 | `client_public_key`           | `string`   | —                      | PEM-encoded public key (inline) for `private_key_jwt`                     |
 | `client_public_key_file`      | `string`   | —                      | Path to PEM file containing the public key                                |
 | `client_public_key_algorithm` | `string`   | `RS256`                | Algorithm for the client's public key (`RS256` or `EdDSA`)                |

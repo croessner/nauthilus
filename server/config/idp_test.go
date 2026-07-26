@@ -593,6 +593,33 @@ func TestValidateIDPMFASettings(t *testing.T) {
 	})
 }
 
+func TestOIDCClientRequiresPKCE(t *testing.T) {
+	t.Run("configured confidential client", func(t *testing.T) {
+		client := &OIDCClient{
+			ClientSecret:            secret.New("client-secret"),
+			TokenEndpointAuthMethod: AuthorityClientSecretBasicAuth,
+			RequirePKCE:             true,
+		}
+
+		assert.True(t, client.RequiresPKCE())
+	})
+
+	t.Run("public client", func(t *testing.T) {
+		client := &OIDCClient{TokenEndpointAuthMethod: oidcAuthMethodNone}
+
+		assert.True(t, client.RequiresPKCE())
+	})
+
+	t.Run("optional for confidential client by default", func(t *testing.T) {
+		client := &OIDCClient{
+			ClientSecret:            secret.New("client-secret"),
+			TokenEndpointAuthMethod: AuthorityClientSecretBasicAuth,
+		}
+
+		assert.False(t, client.RequiresPKCE())
+	})
+}
+
 func TestMFAPolicyDefaultLevels(t *testing.T) {
 	var policy *MFAPolicy
 

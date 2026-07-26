@@ -109,8 +109,8 @@ func (h *OIDCHandler) validateOIDCAuthorizeRequest(ctx *gin.Context, request oid
 		return nil, false
 	}
 
-	if client.IsPublicClient() && request.codeChallenge == "" {
-		ctx.String(http.StatusBadRequest, "PKCE is required for public clients")
+	if client.RequiresPKCE() && request.codeChallenge == "" {
+		ctx.String(http.StatusBadRequest, "PKCE is required for this client")
 
 		return nil, false
 	}
