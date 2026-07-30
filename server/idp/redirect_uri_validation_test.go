@@ -121,6 +121,26 @@ func TestValidateRedirectURI_WildcardsAndLoopbackPorts(t *testing.T) {
 	runRedirectValidationCases(t, idp, redirectValidationCases)
 }
 
+func TestValidateRedirectURI_ExactUppercaseCustomScheme(t *testing.T) {
+	const redirectURI = "A000://0000000000000000000"
+
+	idp := &NauthilusIDP{}
+	client := &config.OIDCClient{RedirectURIs: []string{redirectURI}}
+
+	if !idp.ValidateRedirectURI(client, redirectURI) {
+		t.Fatalf("exact registered uppercase custom-scheme redirect URI was rejected")
+	}
+}
+
+func TestValidateRedirectURI_RejectsEmptyLoopbackPort(t *testing.T) {
+	idp := &NauthilusIDP{}
+	client := &config.OIDCClient{RedirectURIs: []string{"http://127.0.0.1/callback"}}
+
+	if idp.ValidateRedirectURI(client, "http://127.0.0.1:/callback") {
+		t.Fatalf("loopback redirect URI with an empty explicit port was accepted")
+	}
+}
+
 // runRedirectValidationCases executes redirect URI validation test cases against
 // a Nauthilus IDP instance.
 func runRedirectValidationCases(t *testing.T, idp *NauthilusIDP, tests []redirectValidationCase) {

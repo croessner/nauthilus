@@ -1,0 +1,4 @@
+# target|package|class|smoke_budget|parallel|max_input_bytes|corpus_sensitivity
+FuzzCBORDecode|./server/encoding/cborcodec|go|15s|2|65536|synthetic
+FuzzSecureCodecDecode|./server/core/cookie|go|15s|2|65536|synthetic
+FuzzValidateRedirectURIAllowlist|./server/idp|go|15s|2|4096|synthetic

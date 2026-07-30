@@ -52,7 +52,9 @@ func validateRedirectURIAgainstAllowList(allowedURIs []string, redirectURI strin
 	// Native-app compatibility:
 	// allow dynamic loopback ports for HTTP redirects by comparing again
 	// with the default HTTP port stripped from the incoming redirect URI.
-	if strings.EqualFold(requestScheme, "http") && isLoopbackRedirectHost(requestURI.Hostname()) {
+	if strings.EqualFold(requestScheme, "http") &&
+		isLoopbackRedirectHost(requestURI.Hostname()) &&
+		requestURI.Port() != "" {
 		redirectWithDefaultPort := normalizeRedirectURIWithoutPort(requestURI)
 
 		if matchesRedirectURIList(allowedURIs, redirectWithDefaultPort, requestScheme, allowWildcards) {
@@ -158,7 +160,8 @@ func isRedirectSchemeAllowed(matchedAllowedURI string, requestScheme string) boo
 		return true
 	}
 
-	if strings.HasPrefix(matchedAllowedURI, requestScheme+":") {
+	allowedScheme, _, hasScheme := strings.Cut(matchedAllowedURI, ":")
+	if hasScheme && strings.EqualFold(allowedScheme, requestScheme) {
 		return true
 	}
 
