@@ -449,7 +449,7 @@ func registrationUser(ctx *gin.Context, deps AuthDeps, identity webAuthnRegistra
 func beginRegistrationOptions(deps AuthDeps, user *backend.User) (*protocol.CredentialCreation, *webauthn.SessionData, error) {
 	return webAuthn.BeginRegistration(
 		user,
-		webauthn.WithAuthenticatorSelection(buildAuthenticatorSelection(deps.Cfg)),
+		webauthn.WithAuthenticatorSelection(buildAuthenticatorSelection(deps.Cfg.GetIDP().WebAuthn)),
 		webauthn.WithConveyancePreference(protocol.PreferNoAttestation),
 	)
 }
@@ -1330,9 +1330,7 @@ func webAuthnDelayedFailureRedirect(ctx *gin.Context, mgr cookie.Manager) string
 
 // buildAuthenticatorSelection constructs the protocol.AuthenticatorSelection from the
 // WebAuthn configuration. It maps string-based config values to their protocol equivalents.
-func buildAuthenticatorSelection(cfg config.File) protocol.AuthenticatorSelection {
-	webAuthnCfg := cfg.GetIDP().WebAuthn
-
+func buildAuthenticatorSelection(webAuthnCfg config.WebAuthn) protocol.AuthenticatorSelection {
 	authSelect := protocol.AuthenticatorSelection{
 		UserVerification: mapUserVerification(webAuthnCfg.GetUserVerification()),
 		ResidentKey:      mapResidentKey(webAuthnCfg.GetResidentKey()),

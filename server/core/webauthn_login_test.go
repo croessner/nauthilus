@@ -21,9 +21,11 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/backend"
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/stretchr/testify/assert"
 )
@@ -42,6 +44,57 @@ const (
 // WebAuthn environment. The session handling for WebAuthn is now tested in webauthn_registration_test.go.
 func TestLoginWebAuthnBeginUsesSessionUniqueUserID(t *testing.T) {
 	t.Skip("Skipping WebAuthn login test - requires fully initialized WebAuthn environment")
+}
+
+func TestConfiguredWebAuthnUserVerificationReachesLoginOptions(t *testing.T) {
+	originalWebAuthn := webAuthn
+
+	t.Cleanup(func() {
+		webAuthn = originalWebAuthn
+	})
+
+	idpCfg := &config.IDPSection{
+		WebAuthn: config.WebAuthn{
+			ResidentKey:      "preferred",
+			UserVerification: "required",
+		},
+	}
+
+	configuredWebAuthn, err := webauthn.New(newWebAuthnConfig(
+		idpCfg,
+		"login.example.test",
+		[]string{"https://login.example.test"},
+	))
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	webAuthn = configuredWebAuthn
+	user := &backend.User{
+		ID:   "user-id",
+		Name: "alice",
+		Credentials: []mfa.PersistentCredential{
+			{Credential: webauthn.Credential{ID: []byte("credential-id")}},
+		},
+	}
+
+	for _, testCase := range []struct {
+		name string
+		user *backend.User
+	}{
+		{name: "user-bound", user: user},
+		{name: "discoverable", user: nil},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			options, sessionData, beginErr := beginWebAuthnLoginOptions(testCase.user)
+			if !assert.NoError(t, beginErr) {
+				return
+			}
+
+			assert.Equal(t, protocol.VerificationRequired, options.Response.UserVerification)
+			assert.Equal(t, protocol.VerificationRequired, sessionData.UserVerification)
+		})
+	}
 }
 
 // TestIsMFAAuthResultValid tests the authentication result validation after MFA verification.

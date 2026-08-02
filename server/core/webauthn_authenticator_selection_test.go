@@ -93,15 +93,7 @@ func authenticatorSelectionCases() []authenticatorSelectionCase {
 func assertAuthenticatorSelectionCase(t *testing.T, tt authenticatorSelectionCase) {
 	t.Helper()
 
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{},
-		IDP: &config.IDPSection{
-			WebAuthn: tt.webAuthnCfg,
-		},
-	}
-	config.SetTestFile(cfg)
-
-	result := buildAuthenticatorSelection(config.GetFile())
+	result := buildAuthenticatorSelection(tt.webAuthnCfg)
 
 	assert.Equal(t, tt.wantAttachment, result.AuthenticatorAttachment)
 	assert.Equal(t, tt.wantResidentKey, result.ResidentKey)

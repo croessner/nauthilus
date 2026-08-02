@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestInitWebAuthnSkipsWhenIDPAndFrontendDisabled(t *testing.T) {
@@ -42,5 +44,25 @@ func TestInitWebAuthnSkipsWhenIDPAndFrontendDisabled(t *testing.T) {
 
 	if err := NewDefaultBootstrap(deps).InitWebAuthn(); err != nil {
 		t.Fatalf("expected InitWebAuthn to skip without error, got %v", err)
+	}
+}
+
+func TestNewWebAuthnConfigCarriesAuthenticatorSelection(t *testing.T) {
+	idpCfg := &config.IDPSection{
+		WebAuthn: config.WebAuthn{
+			AuthenticatorAttachment: "cross-platform",
+			ResidentKey:             "preferred",
+			UserVerification:        "required",
+		},
+	}
+
+	runtimeCfg := newWebAuthnConfig(idpCfg, "login.example.test", []string{"https://login.example.test"})
+
+	assert.Equal(t, protocol.CrossPlatform, runtimeCfg.AuthenticatorSelection.AuthenticatorAttachment)
+	assert.Equal(t, protocol.ResidentKeyRequirementPreferred, runtimeCfg.AuthenticatorSelection.ResidentKey)
+	assert.Equal(t, protocol.VerificationRequired, runtimeCfg.AuthenticatorSelection.UserVerification)
+
+	if assert.NotNil(t, runtimeCfg.AuthenticatorSelection.RequireResidentKey) {
+		assert.False(t, *runtimeCfg.AuthenticatorSelection.RequireResidentKey)
 	}
 }

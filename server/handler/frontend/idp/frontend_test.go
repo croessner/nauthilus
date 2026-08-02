@@ -653,6 +653,18 @@ func TestIDPUISubmitDisableDefersNativeFormHandling(t *testing.T) {
 	assert.Contains(t, script, "deferNativeFormSubmitDisable(form, submitter);")
 }
 
+func TestIDPUIWebAuthnPreservesCredentialMetadata(t *testing.T) {
+	script := loadIDPUIScript(t)
+
+	assert.Contains(t, script, "function serializePublicKeyCredential(credential)")
+	assert.Contains(t, script, "typeof credential.toJSON === 'function'")
+	assert.Contains(t, script, "authenticatorAttachment: credential.authenticatorAttachment")
+	assert.Contains(t, script, "clientExtensionResults: credential.getClientExtensionResults()")
+	assert.Contains(t, script, "response.getTransports()")
+	assert.Contains(t, script, "JSON.stringify(serializePublicKeyCredential(assertion))")
+	assert.Contains(t, script, "credential: serializePublicKeyCredential(credential)")
+}
+
 func TestIDPUIRecoveryCodesDownloadUsesPDF(t *testing.T) {
 	script := loadIDPUIScript(t)
 

@@ -117,9 +117,10 @@ func logWebAuthnConfig(b DefaultBootstrap, rpID string, origins []string) {
 // newWebAuthnConfig builds the runtime WebAuthn library configuration.
 func newWebAuthnConfig(idpCfg *config.IDPSection, rpID string, origins []string) *webauthn.Config {
 	return &webauthn.Config{
-		RPDisplayName: idpCfg.WebAuthn.RPDisplayName,
-		RPID:          rpID,
-		RPOrigins:     origins,
+		RPDisplayName:          idpCfg.WebAuthn.RPDisplayName,
+		RPID:                   rpID,
+		RPOrigins:              origins,
+		AuthenticatorSelection: buildAuthenticatorSelection(idpCfg.WebAuthn),
 		Timeouts: webauthn.TimeoutsConfig{
 			Login: webauthn.TimeoutConfig{
 				Enforce:    true,

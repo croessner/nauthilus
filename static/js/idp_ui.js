@@ -84,6 +84,56 @@
     }
 
     /**
+     * Serializes an authenticator response when PublicKeyCredential.toJSON is unavailable.
+     *
+     * @param {AuthenticatorAttestationResponse | AuthenticatorAssertionResponse} response
+     * @returns {Record<string, unknown>}
+     */
+    function serializeAuthenticatorResponse(response) {
+        const serialized = {
+            clientDataJSON: arrayBufferToBase64URL(response.clientDataJSON),
+        };
+
+        if ('attestationObject' in response) {
+            serialized.attestationObject = arrayBufferToBase64URL(response.attestationObject);
+            serialized.transports = typeof response.getTransports === 'function'
+                ? response.getTransports()
+                : [];
+
+            return serialized;
+        }
+
+        serialized.authenticatorData = arrayBufferToBase64URL(response.authenticatorData);
+        serialized.signature = arrayBufferToBase64URL(response.signature);
+        serialized.userHandle = response.userHandle
+            ? arrayBufferToBase64URL(response.userHandle)
+            : null;
+
+        return serialized;
+    }
+
+    /**
+     * Serializes a WebAuthn credential without dropping browser-supplied metadata.
+     *
+     * @param {PublicKeyCredential} credential
+     * @returns {Record<string, unknown>}
+     */
+    function serializePublicKeyCredential(credential) {
+        if (typeof credential.toJSON === 'function') {
+            return credential.toJSON();
+        }
+
+        return {
+            id: credential.id,
+            rawId: arrayBufferToBase64URL(credential.rawId),
+            type: credential.type,
+            authenticatorAttachment: credential.authenticatorAttachment,
+            clientExtensionResults: credential.getClientExtensionResults(),
+            response: serializeAuthenticatorResponse(credential.response),
+        };
+    }
+
+    /**
      * Converts either a Base64URL string or a BufferSource to Uint8Array.
      *
      * @param {string | ArrayBuffer | ArrayBufferView} input
@@ -699,19 +749,7 @@
                     'Content-Type': 'application/json',
                     'X-CSRF-Token': csrfToken,
                 },
-                body: JSON.stringify({
-                    id: assertion.id,
-                    rawId: arrayBufferToBase64URL(assertion.rawId),
-                    type: assertion.type,
-                    response: {
-                        authenticatorData: arrayBufferToBase64URL(assertion.response.authenticatorData),
-                        clientDataJSON: arrayBufferToBase64URL(assertion.response.clientDataJSON),
-                        signature: arrayBufferToBase64URL(assertion.response.signature),
-                        userHandle: assertion.response.userHandle
-                            ? arrayBufferToBase64URL(assertion.response.userHandle)
-                            : null,
-                    },
-                }),
+                body: JSON.stringify(serializePublicKeyCredential(assertion)),
             });
 
             if (!finishResponse.ok) {
@@ -800,15 +838,7 @@
                 },
                 body: JSON.stringify({
                     name: deviceName,
-                    credential: {
-                        id: credential.id,
-                        rawId: arrayBufferToBase64URL(credential.rawId),
-                        type: credential.type,
-                        response: {
-                            attestationObject: arrayBufferToBase64URL(credential.response.attestationObject),
-                            clientDataJSON: arrayBufferToBase64URL(credential.response.clientDataJSON),
-                        },
-                    },
+                    credential: serializePublicKeyCredential(credential),
                 }),
             });
 
