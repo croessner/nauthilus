@@ -97,6 +97,8 @@
   "Yes": "हाँ",
   "Cancel": "रद्द करें",
   "Invalid Request": "अमान्य अनुरोध",
+  "Session Expired": "सत्र समाप्त हो गया",
+  "Your self-service session has expired. Please sign in again through your application and reopen the 2FA self-service.": "आपका स्वयं-सेवा सत्र समाप्त हो गया है। कृपया अपने अनुप्रयोग के माध्यम से फिर से साइन इन करें और 2FA स्वयं-सेवा को दोबारा खोलें।",
   "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "यह लॉगिन पृष्ठ केवल एक वैध OIDC या SAML2 प्रमाणीकरण प्रवाह के माध्यम से एक्सेस किया जा सकता है। कृपया लॉगिन प्रक्रिया शुरू करने के लिए अपने एप्लिकेशन का उपयोग करें।",
   "Device Authorization": "डिवाइस प्राधिकरण",
   "Enter the code displayed on your device and sign in to authorize it.": "अपने डिवाइस पर प्रदर्शित कोड दर्ज करें और इसे अधिकृत करने के लिए साइन इन करें।",

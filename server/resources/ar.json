@@ -97,6 +97,8 @@
   "Yes": "نعم",
   "Cancel": "إلغاء",
   "Invalid Request": "طلب غير صالح",
+  "Session Expired": "انتهت صلاحية الجلسة",
+  "Your self-service session has expired. Please sign in again through your application and reopen the 2FA self-service.": "انتهت صلاحية جلسة الخدمة الذاتية. يرجى تسجيل الدخول مرة أخرى عبر تطبيقك ثم إعادة فتح الخدمة الذاتية للمصادقة الثنائية.",
   "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "لا يمكن الوصول إلى صفحة تسجيل الدخول هذه إلا من خلال تدفق مصادقة OIDC أو SAML2 صالح. يرجى استخدام تطبيقك لبدء عملية تسجيل الدخول.",
   "Device Authorization": "تفويض الجهاز",
   "Enter the code displayed on your device and sign in to authorize it.": "أدخل الرمز المعروض على جهازك وسجّل الدخول لتفويضه.",

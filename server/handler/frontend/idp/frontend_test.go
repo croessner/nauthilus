@@ -437,13 +437,69 @@ func TestWebAuthnDevicesTemplateUsesLocalizedMFASelfServiceEndpoints(t *testing.
 	assert.NoError(t, tmpl.Execute(&output, data))
 
 	assert.Contains(t, output.String(), `href="/mfa/register/home/de"`)
-	assert.Contains(t, output.String(), `hx-post="/mfa/webauthn/device/Y3JlZC0x/name/de"`)
+	assert.Contains(t, output.String(), `action="/mfa/webauthn/device/Y3JlZC0x/name/de"`)
+	assert.Contains(t, output.String(), `method="post"`)
+	assert.Contains(t, output.String(), `name="csrf_token" type="hidden" value="csrf-token"`)
 	assert.Contains(t, output.String(), `hx-delete="/mfa/webauthn/device/Y3JlZC0x/de"`)
 	assert.Contains(t, output.String(), `href="/mfa/webauthn/register/de"`)
 	assert.NotContains(t, output.String(), `href="/mfa/register/home"`)
-	assert.NotContains(t, output.String(), `hx-post="/mfa/webauthn/device/Y3JlZC0x/name"`)
+	assert.NotContains(t, output.String(), `hx-post=`)
+	assert.NotContains(t, output.String(), `action="/mfa/webauthn/device/Y3JlZC0x/name"`)
 	assert.NotContains(t, output.String(), `hx-delete="/mfa/webauthn/device/Y3JlZC0x"`)
 	assert.NotContains(t, output.String(), `href="/mfa/webauthn/register"`)
+}
+
+func TestAuthMiddlewareExplainsExpiredSelfServiceSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler := &FrontendHandler{}
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{}})
+	})
+	router.GET("/mfa/register/home", handler.AuthMiddleware(), func(ctx *gin.Context) {
+		ctx.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/mfa/register/home", nil))
+
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "self_service_session_expired")
+	assert.Contains(t, recorder.Body.String(), "self-service session has expired")
+	assert.NotContains(t, recorder.Body.String(), "OIDC or SAML2 authentication flow")
+}
+
+func TestAuthMiddlewareAllowsActiveSelfServiceSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler := &FrontendHandler{}
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyAccount: "alice",
+		}})
+	})
+	router.GET("/mfa/register/home", handler.AuthMiddleware(), func(ctx *gin.Context) {
+		ctx.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/mfa/register/home", nil))
+
+	assert.Equal(t, http.StatusNoContent, recorder.Code)
+}
+
+func TestAuthMiddlewareRendersSelfServiceRestartGuidance(t *testing.T) {
+	handler, _ := newMFASelfServiceTestHandler()
+	ctx, recorder := newMFASelfServiceContext(http.MethodGet, "/mfa/register/home", nil, nil)
+
+	handler.AuthMiddleware()(ctx)
+
+	assert.Equal(t, http.StatusUnauthorized, ctx.Writer.Status())
+	assert.Contains(t, recorder.Body.String(), "Session Expired")
+	assert.Contains(t, recorder.Body.String(), "sign in again through your application")
+	assert.NotContains(t, recorder.Body.String(), "OIDC or SAML2 authentication flow")
 }
 
 func TestMFARegistrationTemplatesUseLocalizedSelfServiceEndpoints(t *testing.T) {
@@ -1509,6 +1565,41 @@ func TestMFASelfServiceLocalizedStepUpUsesLocalizedHXRedirectForHTMX(t *testing.
 	}
 }
 
+func TestRedirectWebAuthnDevicesUsesLocalizedBrowserNavigation(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		htmx           bool
+		wantStatus     int
+		wantHeaderName string
+	}{
+		{
+			name:           "native form",
+			wantStatus:     http.StatusSeeOther,
+			wantHeaderName: "Location",
+		},
+		{
+			name:           "HTMX mutation",
+			htmx:           true,
+			wantStatus:     http.StatusOK,
+			wantHeaderName: "HX-Redirect",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/webauthn/device/Y3JlZC0x/name/de", nil, nil)
+
+			ctx.Params = gin.Params{{Key: "languageTag", Value: "de"}}
+			if tc.htmx {
+				ctx.Request.Header.Set("HX-Request", "true")
+			}
+
+			redirectWebAuthnDevices(ctx)
+
+			assert.Equal(t, tc.wantStatus, ctx.Writer.Status())
+			assert.Equal(t, definitions.MFARoot+"/webauthn/devices/de", recorder.Header().Get(tc.wantHeaderName))
+		})
+	}
+}
+
 type localizedSelfServiceStepUpTest struct {
 	name       string
 	method     string
@@ -1652,7 +1743,7 @@ func assertMFASelfServiceStepUpRedirect(
 ) {
 	t.Helper()
 
-	assert.Equal(t, http.StatusFound, ctx.Writer.Status())
+	assert.Equal(t, http.StatusSeeOther, ctx.Writer.Status())
 	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
 	assert.Zero(t, mutationCalls)
 
@@ -1760,6 +1851,7 @@ func newMFASelfServiceContext(method string, path string, sessionData map[string
 	ctx, engine := gin.CreateTestContext(recorder)
 	engine.SetHTMLTemplate(template.Must(template.New("mfa-self-service").Parse(`
 {{ define "idp_error_modal.html" }}{{ .Message }}{{ end }}
+{{ define "idp_error.html" }}{{ .ErrorTitle }}: {{ .ErrorMessage }}{{ end }}
 {{ define "idp_recovery_codes_modal.html" }}{{ range .Codes }}{{ . }} {{ end }}{{ end }}
 `)))
 

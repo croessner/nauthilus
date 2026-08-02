@@ -97,6 +97,8 @@
   "Yes": "Oui",
   "Cancel": "Annuler",
   "Invalid Request": "Requête invalide",
+  "Session Expired": "Session expirée",
+  "Your self-service session has expired. Please sign in again through your application and reopen the 2FA self-service.": "Votre session en libre-service a expiré. Reconnectez-vous depuis votre application, puis rouvrez le libre-service 2FA.",
   "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "Cette page de connexion ne peut être accédée qu'à travers un flux d'authentification OIDC ou SAML2 valide. Veuillez utiliser votre application pour démarrer le processus de connexion.",
   "Device Authorization": "Autorisation de l'appareil",
   "Enter the code displayed on your device and sign in to authorize it.": "Saisissez le code affiché sur votre appareil et connectez-vous pour l'autoriser.",

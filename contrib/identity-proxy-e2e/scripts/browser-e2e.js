@@ -1083,7 +1083,7 @@ function localizedSelfServiceStepUpActions() {
     {
       label: 'WebAuthn device rename',
       openPath: '/mfa/webauthn/devices/en',
-      selector: 'form[hx-post^="/mfa/webauthn/device/"][hx-post$="/name/en"] button[type="submit"]',
+      selector: 'form[action^="/mfa/webauthn/device/"][action$="/name/en"] button[type="submit"]',
     },
   ];
 }
@@ -1102,11 +1102,9 @@ async function runMFASelfServiceLocalizedVisibleStepUpAction(browser, webAuthnCr
 
       return callbackPromise;
     }));
-  const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
-
   await page.goto(`${edgeA}${action.openPath}`);
   if (action.label === 'WebAuthn device rename') {
-    await page.locator('form[hx-post^="/mfa/webauthn/device/"][hx-post$="/name/en"] input[name="name"]').first().fill('Renamed key');
+    await page.locator('form[action^="/mfa/webauthn/device/"][action$="/name/en"] input[name="name"]').first().fill('Renamed key');
   }
 
   await page.locator(action.selector).first().click();
@@ -1117,6 +1115,21 @@ async function runMFASelfServiceLocalizedVisibleStepUpAction(browser, webAuthnCr
 
   await page.waitForURL(/\/login\/mfa\/en/, {timeout: 15000});
   await expectPageText(page, /Select Multi-Factor Authentication|2FA Verification/i);
+
+  if (action.label === 'WebAuthn device rename') {
+    await completeWebAuthnStepUp(page, edgeA, /\/mfa\/webauthn\/devices\/en/);
+
+    const renamedInput = page.locator('form[action^="/mfa/webauthn/device/"][action$="/name/en"] input[name="name"]').first();
+    await renamedInput.fill('Renamed key');
+    await page.locator(action.selector).first().click();
+    await page.waitForURL(/\/mfa\/webauthn\/devices\/en/, {timeout: 15000});
+    assert.equal(await renamedInput.inputValue(), 'Renamed key', 'WebAuthn device rename was not visible after save');
+
+    await page.reload();
+    assert.equal(await renamedInput.inputValue(), 'Renamed key', 'WebAuthn device rename was not persisted');
+  }
+
+  const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
 
   await context.close();
 

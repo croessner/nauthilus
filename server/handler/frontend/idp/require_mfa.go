@@ -757,7 +757,7 @@ func (h *FrontendHandler) redirectMFASelfServiceStepUp(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, target)
+	ctx.Redirect(http.StatusSeeOther, target)
 }
 
 // redirectPendingSelfServiceStepUp returns form-based MFA completions to the

@@ -97,6 +97,8 @@
   "Yes": "是",
   "Cancel": "取消",
   "Invalid Request": "无效请求",
+  "Session Expired": "会话已过期",
+  "Your self-service session has expired. Please sign in again through your application and reopen the 2FA self-service.": "您的自助服务会话已过期。请通过您的应用程序重新登录，然后重新打开双因素认证自助服务。",
   "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "此登录 页面只能通过有效的 OIDC 或 SAML2 身份验证流程访问。请使用您的应用程序启动登录过 程。",
   "Device Authorization": "设备授权",
   "Enter the code displayed on your device and sign in to authorize it.": "输入设备上显示的代码并登录以授权该设备。",

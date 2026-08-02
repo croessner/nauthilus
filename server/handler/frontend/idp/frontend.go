@@ -217,13 +217,20 @@ func (h *FrontendHandler) isValidSAMLFlow(mgr cookie.Manager) bool {
 	return newSAMLFlowContext(mgr).OriginalURL() != ""
 }
 
-// renderNoFlowError renders an error page when the /login endpoint is accessed without a valid IDP flow.
-func (h *FrontendHandler) renderNoFlowError(ctx *gin.Context) {
-	// Check if deps is available (may not be in tests)
+// frontendErrorPage describes one browser-safe frontend error response.
+type frontendErrorPage struct {
+	code    string
+	title   string
+	message string
+	status  int
+}
+
+// renderFrontendError renders a localized browser error with a JSON fallback.
+func (h *FrontendHandler) renderFrontendError(ctx *gin.Context, page frontendErrorPage) {
 	if h.deps == nil || h.deps.Cfg == nil {
-		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-			frontChannelLogoutTaskStatusError: "invalid_request",
-			"message":                         "This login page can only be accessed through a valid OIDC or SAML2 authentication flow.",
+		ctx.AbortWithStatusJSON(page.status, gin.H{
+			frontChannelLogoutTaskStatusError: page.code,
+			"message":                         page.message,
 		})
 
 		return
@@ -231,10 +238,30 @@ func (h *FrontendHandler) renderNoFlowError(ctx *gin.Context) {
 
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Error")
-	data["ErrorTitle"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid Request")
-	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.")
+	data["ErrorTitle"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, page.title)
+	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, page.message)
 
-	ctx.HTML(http.StatusBadRequest, "idp_error.html", data)
+	ctx.HTML(page.status, "idp_error.html", data)
+}
+
+// renderNoFlowError renders an error page when /login has no valid IDP flow.
+func (h *FrontendHandler) renderNoFlowError(ctx *gin.Context) {
+	h.renderFrontendError(ctx, frontendErrorPage{
+		code:    "invalid_request",
+		title:   "Invalid Request",
+		message: "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.",
+		status:  http.StatusBadRequest,
+	})
+}
+
+// renderExpiredSelfServiceSessionError explains how to restart self-service safely.
+func (h *FrontendHandler) renderExpiredSelfServiceSessionError(ctx *gin.Context) {
+	h.renderFrontendError(ctx, frontendErrorPage{
+		code:    "self_service_session_expired",
+		title:   "Session Expired",
+		message: "Your self-service session has expired. Please sign in again through your application and reopen the 2FA self-service.",
+		status:  http.StatusUnauthorized,
+	})
 }
 
 // Register adds frontend routes to the router.
@@ -446,9 +473,7 @@ func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 		}
 
 		if account == "" {
-			// User is not logged in - show error page instead of redirect to login.
-			// The 2FA Self-Service pages are only accessible after a completed IDP flow.
-			h.renderNoFlowError(ctx)
+			h.renderExpiredSelfServiceSessionError(ctx)
 			ctx.Abort()
 
 			return
@@ -3680,8 +3705,15 @@ func (h *FrontendHandler) finishRemoteWebAuthnAuthorityChange(ctx *gin.Context, 
 	redirectWebAuthnDevices(ctx)
 }
 
-// redirectWebAuthnDevices returns HTMX callers to the WebAuthn device list.
+// redirectWebAuthnDevices returns browser and HTMX callers to the localized device list.
 func redirectWebAuthnDevices(ctx *gin.Context) {
-	ctx.Header("HX-Redirect", definitions.MFARoot+"/webauthn/devices")
-	ctx.Status(http.StatusOK)
+	target := localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/devices")
+	if ctx.GetHeader("HX-Request") != "" {
+		ctx.Header("HX-Redirect", target)
+		ctx.Status(http.StatusOK)
+
+		return
+	}
+
+	ctx.Redirect(http.StatusSeeOther, target)
 }

@@ -14,9 +14,8 @@
                 {{ range .Devices }}
                 <div class="border border-base-300 rounded-lg p-4">
                     <!-- Row 1: Name + Save -->
-                    <form class="flex items-center gap-2" hx-headers='{"X-CSRF-Token": "{{ $.CSRFToken }}"}'
-                          hx-post="{{ .NameEndpoint }}"
-                          hx-target="#modal-container">
+                    <form action="{{ .NameEndpoint }}" class="flex items-center gap-2" method="post">
+                        <input name="csrf_token" type="hidden" value="{{ $.CSRFToken }}"/>
                         <label class="flex-1">
                             <input class="input input-bordered input-sm w-full" maxlength="64"
                                    name="name" placeholder="{{ $.UnnamedDevice }}" required type="text"

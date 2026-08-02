@@ -97,6 +97,8 @@
   "Yes": "Ja",
   "Cancel": "Abbrechen",
   "Invalid Request": "Ungültige Anfrage",
+  "Session Expired": "Sitzung abgelaufen",
+  "Your self-service session has expired. Please sign in again through your application and reopen the 2FA self-service.": "Ihre Selbstverwaltungs-Sitzung ist abgelaufen. Bitte melden Sie sich erneut über Ihre Anwendung an und öffnen Sie anschließend die 2FA-Selbstverwaltung erneut.",
   "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "Diese Anmeldeseite kann nur über einen gültigen OIDC- oder SAML2-Authentifizierungsfluss aufgerufen werden. Bitte verwenden Sie Ihre Anwendung, um den Anmeldevorgang zu starten.",
   "Device Authorization": "Geräteautorisierung",
   "Enter the code displayed on your device and sign in to authorize it.": "Geben Sie den auf Ihrem Gerät angezeigten Code ein und melden Sie sich an, um es zu autorisieren.",
