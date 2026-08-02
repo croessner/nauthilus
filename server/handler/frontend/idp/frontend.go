@@ -52,6 +52,8 @@ import (
 	"golang.org/x/text/language/display"
 )
 
+const webAuthnDeviceNameMaxRunes = 64
+
 // FrontendHandler handles general IDP frontend pages like login and consent.
 type FrontendHandler struct {
 	deps        *deps.Deps
@@ -448,6 +450,8 @@ func (h *FrontendHandler) registerAuthRecoveryRoutes(router gin.IRouter) {
 
 // registerAuthContinuationRoutes registers required-MFA continuation and cancel routes.
 func (h *FrontendHandler) registerAuthContinuationRoutes(router gin.IRouter) {
+	router.GET("/self-service/continue", h.ContinueMFASelfServiceStepUp)
+	router.GET("/self-service/continue/:languageTag", h.ContinueMFASelfServiceStepUp)
 	router.GET("/register/continue", h.ContinueRequiredMFARegistration)
 	router.GET("/register/continue/:languageTag", h.ContinueRequiredMFARegistration)
 	router.GET("/register/cancel", h.CancelRequiredMFARegistration)
@@ -1681,6 +1685,10 @@ func (h *FrontendHandler) PostLoginWebAuthnFinish(ctx *gin.Context) {
 func (h *FrontendHandler) loginWebAuthnCompletionRedirect(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
 	if redirectURI, ok := h.pendingSelfServiceStepUpRedirectURI(ctx, mgr); ok {
 		return redirectURI, true
+	}
+
+	if ctx.Writer.Written() {
+		return "", false
 	}
 
 	if redirectURI, ok := h.requireMFARegistrationRedirectURI(ctx, mgr); ok {
@@ -3545,6 +3553,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 
 	if userData.UsesRemoteWebAuthnAuthority() {
 		h.finishRemoteWebAuthnAuthorityChange(ctx, userData)
+		redirectWebAuthnDevices(ctx)
 
 		return
 	}
@@ -3601,25 +3610,73 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 	defer requestScope.Restore()
 	defer sp.End()
 
-	if !h.enforceMFASelfServiceStepUp(ctx) {
-		return
-	}
-
 	decodedID, name, ok := h.webAuthnDeviceNameUpdate(ctx)
 	if !ok {
 		return
 	}
 
-	userData, ok := h.webAuthnDeviceUserData(ctx)
-	if !ok {
+	mutation := &mfaSelfServiceStepUpMutation{
+		webAuthnCredentialID: ctx.Param("id"),
+		webAuthnDeviceName:   name,
+	}
+	if !h.enforceMFASelfServiceStepUpMutation(ctx, mutation) {
 		return
+	}
+
+	if failure := h.performWebAuthnDeviceNameUpdate(ctx, decodedID, name, ""); failure != nil {
+		if failure.err != nil {
+			sp.RecordError(failure.err)
+		}
+
+		h.renderWebAuthnDeviceNameUpdateFailure(ctx, failure)
+
+		return
+	}
+
+	redirectWebAuthnDevices(ctx)
+}
+
+// webAuthnDeviceNameUpdateFailure carries a public message and optional internal cause.
+type webAuthnDeviceNameUpdateFailure struct {
+	err     error
+	message string
+}
+
+// performWebAuthnDeviceNameUpdate applies a validated credential rename without choosing a transport response.
+func (h *FrontendHandler) performWebAuthnDeviceNameUpdate(
+	ctx *gin.Context,
+	decodedID []byte,
+	name string,
+	verifiedUsername string,
+) *webAuthnDeviceNameUpdateFailure {
+	var (
+		userData *UserBackendData
+		err      error
+	)
+
+	if verifiedUsername == "" {
+		userData, err = h.GetUserBackendData(ctx)
+	} else {
+		userData, err = h.getUserBackendDataForIdentity(
+			ctx,
+			cookie.GetManager(ctx),
+			verifiedUsername,
+			definitions.ProtoIDP,
+			core.RemoteBackendRef{},
+		)
+	}
+
+	if err != nil || userData == nil {
+		return &webAuthnDeviceNameUpdateFailure{err: err, message: "Not logged in"}
+	}
+
+	if userData.WebAuthnUser == nil {
+		return &webAuthnDeviceNameUpdateFailure{message: "User not found"}
 	}
 
 	targetIndex := findWebAuthnCredentialIndex(userData.WebAuthnUser, decodedID)
 	if targetIndex == -1 {
-		h.renderErrorModal(ctx, "Credential not found")
-
-		return
+		return &webAuthnDeviceNameUpdateFailure{message: "Credential not found"}
 	}
 
 	oldCredential := userData.WebAuthnUser.Credentials[targetIndex]
@@ -3627,19 +3684,49 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 	newCredential.Name = name
 
 	if err := userData.AuthState.UpdateWebAuthnCredential(&oldCredential, &newCredential); err != nil {
-		sp.RecordError(err)
-		h.renderErrorModalWithErr(ctx, "Failed to update credential", err)
-
-		return
+		return &webAuthnDeviceNameUpdateFailure{err: err, message: "Failed to update credential"}
 	}
 
 	if userData.UsesRemoteWebAuthnAuthority() {
 		h.finishRemoteWebAuthnAuthorityChange(ctx, userData)
 
-		return
+		return nil
 	}
 
 	h.finishLocalWebAuthnDeviceNameUpdate(ctx, userData, targetIndex, name)
+
+	return nil
+}
+
+// renderWebAuthnDeviceNameUpdateFailure renders an interactive rename failure.
+func (h *FrontendHandler) renderWebAuthnDeviceNameUpdateFailure(
+	ctx *gin.Context,
+	failure *webAuthnDeviceNameUpdateFailure,
+) {
+	if failure == nil {
+		return
+	}
+
+	if failure.err != nil {
+		h.renderErrorModalWithErr(ctx, failure.message, failure.err)
+
+		return
+	}
+
+	h.renderErrorModal(ctx, failure.message)
+}
+
+// renderPendingWebAuthnDeviceNameError renders post-MFA continuation failures for browser and JSON transports.
+func (h *FrontendHandler) renderPendingWebAuthnDeviceNameError(ctx *gin.Context, message string, err error) {
+	if strings.Contains(ctx.GetHeader("Content-Type"), "application/json") {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			frontChannelLogoutTaskStatusError: frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, message),
+		})
+
+		return
+	}
+
+	h.renderWebAuthnDeviceNameUpdateFailure(ctx, &webAuthnDeviceNameUpdateFailure{err: err, message: message})
 }
 
 // webAuthnDeviceNameUpdate validates form input for renaming a WebAuthn credential.
@@ -3652,6 +3739,12 @@ func (h *FrontendHandler) webAuthnDeviceNameUpdate(ctx *gin.Context) ([]byte, st
 	name := strings.TrimSpace(ctx.PostForm("name"))
 	if name == "" {
 		h.renderErrorModal(ctx, "Missing device name")
+
+		return nil, "", false
+	}
+
+	if len([]rune(name)) > webAuthnDeviceNameMaxRunes {
+		h.renderErrorModal(ctx, "Invalid device name")
 
 		return nil, "", false
 	}
@@ -3695,14 +3788,12 @@ func (h *FrontendHandler) finishLocalWebAuthnDeviceNameUpdate(
 	_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, userData.WebAuthnUser, h.deps.Cfg.GetServer().GetTimeouts().GetRedisWrite())
 
 	userData.AuthState.PurgeCacheFor(userData.Username)
-	redirectWebAuthnDevices(ctx)
 }
 
 // finishRemoteWebAuthnAuthorityChange invalidates local cache after an authority-owned mutation.
 func (h *FrontendHandler) finishRemoteWebAuthnAuthorityChange(ctx *gin.Context, userData *UserBackendData) {
 	_ = backend.DeleteWebAuthnFromRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, userData.UniqueUserID)
 	userData.AuthState.PurgeCacheFor(userData.Username)
-	redirectWebAuthnDevices(ctx)
 }
 
 // redirectWebAuthnDevices returns browser and HTMX callers to the localized device list.

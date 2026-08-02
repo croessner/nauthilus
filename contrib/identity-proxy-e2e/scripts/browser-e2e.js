@@ -1120,10 +1120,7 @@ async function runMFASelfServiceLocalizedVisibleStepUpAction(browser, webAuthnCr
     await completeWebAuthnStepUp(page, edgeA, /\/mfa\/webauthn\/devices\/en/);
 
     const renamedInput = page.locator('form[action^="/mfa/webauthn/device/"][action$="/name/en"] input[name="name"]').first();
-    await renamedInput.fill('Renamed key');
-    await page.locator(action.selector).first().click();
-    await page.waitForURL(/\/mfa\/webauthn\/devices\/en/, {timeout: 15000});
-    assert.equal(await renamedInput.inputValue(), 'Renamed key', 'WebAuthn device rename was not visible after save');
+    assert.equal(await renamedInput.inputValue(), 'Renamed key', 'WebAuthn device rename was not completed after step-up');
 
     await page.reload();
     assert.equal(await renamedInput.inputValue(), 'Renamed key', 'WebAuthn device rename was not persisted');

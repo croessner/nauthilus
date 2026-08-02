@@ -338,6 +338,8 @@ func browserOnlyMFARouteReasons() map[routeOperation]string {
 		routeOperation{method: contractMethodPost, path: contractPathBrowserMFARecoveryRegister},
 		routeOperation{method: contractMethodPost, path: "/mfa/recovery/register/save"},
 		routeOperation{method: contractMethodPost, path: "/mfa/recovery/generate"},
+		routeOperation{method: contractMethodGet, path: "/mfa/self-service/continue"},
+		routeOperation{method: contractMethodGet, path: "/mfa/self-service/continue/{languageTag}"},
 		routeOperation{method: contractMethodGet, path: "/mfa/register/continue"},
 		routeOperation{method: contractMethodGet, path: "/mfa/register/cancel"},
 	)

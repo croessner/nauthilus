@@ -17,6 +17,7 @@ package idp
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"slices"
 	"strings"
@@ -48,9 +49,12 @@ type samlRequiredMFALevelProvider interface {
 const mfaAssuranceFreshness = 10 * time.Minute
 
 const (
-	sessionKeyMFASelfServiceStepUpAction = "mfa_self_service_step_up_action"
-	sessionKeyMFASelfServiceStepUpReturn = "mfa_self_service_step_up_return"
-	sessionKeyMFASelfServiceStepUpAt     = "mfa_self_service_step_up_at"
+	sessionKeyMFASelfServiceStepUpAction               = "mfa_self_service_step_up_action"
+	sessionKeyMFASelfServiceStepUpReturn               = "mfa_self_service_step_up_return"
+	sessionKeyMFASelfServiceStepUpAt                   = "mfa_self_service_step_up_at"
+	sessionKeyMFASelfServiceStepUpAccount              = "mfa_self_service_step_up_account"
+	sessionKeyMFASelfServiceStepUpWebAuthnCredentialID = "mfa_self_service_step_up_webauthn_credential_id"
+	sessionKeyMFASelfServiceStepUpWebAuthnDeviceName   = "mfa_self_service_step_up_webauthn_device_name"
 
 	mfaSelfServiceActionRecoveryGenerate   = "recovery_generate"
 	mfaSelfServiceActionTOTPDelete         = "totp_delete"
@@ -62,6 +66,21 @@ const (
 type mfaSelfServiceStepUpTarget struct {
 	action     string
 	returnPath string
+}
+
+// mfaSelfServiceStepUpMutation contains validated data needed to finish one pending mutation.
+type mfaSelfServiceStepUpMutation struct {
+	webAuthnCredentialID string
+	webAuthnDeviceName   string
+}
+
+// mfaSelfServiceStepUpContinuation is a validated, one-time post-MFA command.
+type mfaSelfServiceStepUpContinuation struct {
+	action               string
+	returnPath           string
+	account              string
+	webAuthnCredentialID string
+	webAuthnDeviceName   string
 }
 
 // getRequiredMFAMethods returns the list of MFA methods configured as mandatory
@@ -629,11 +648,19 @@ func existingSessionMFAAssuranceScope(oidcClientID string, samlEntityID string) 
 
 // enforceMFASelfServiceStepUp blocks sensitive MFA mutations without recent MFA.
 func (h *FrontendHandler) enforceMFASelfServiceStepUp(ctx *gin.Context) bool {
+	return h.enforceMFASelfServiceStepUpMutation(ctx, nil)
+}
+
+// enforceMFASelfServiceStepUpMutation preserves a validated mutation while requesting fresh MFA.
+func (h *FrontendHandler) enforceMFASelfServiceStepUpMutation(
+	ctx *gin.Context,
+	mutation *mfaSelfServiceStepUpMutation,
+) bool {
 	if sessionHasFreshMFAAssurance(cookie.GetManager(ctx), nil, definitions.ProtoIDP, time.Now()) {
 		return true
 	}
 
-	if !h.prepareMFASelfServiceStepUp(ctx) {
+	if !h.prepareMFASelfServiceStepUp(ctx, mutation) {
 		h.renderErrorModal(ctx, "Recent MFA verification required")
 
 		return false
@@ -644,9 +671,12 @@ func (h *FrontendHandler) enforceMFASelfServiceStepUp(ctx *gin.Context) bool {
 	return false
 }
 
-// prepareMFASelfServiceStepUp stores only whitelisted return-and-retry state for
-// a sensitive self-service mutation and rebuilds the normal MFA challenge state.
-func (h *FrontendHandler) prepareMFASelfServiceStepUp(ctx *gin.Context) bool {
+// prepareMFASelfServiceStepUp stores a whitelisted, validated continuation and
+// rebuilds the normal MFA challenge state.
+func (h *FrontendHandler) prepareMFASelfServiceStepUp(
+	ctx *gin.Context,
+	mutation *mfaSelfServiceStepUpMutation,
+) bool {
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {
 		return false
@@ -662,6 +692,11 @@ func (h *FrontendHandler) prepareMFASelfServiceStepUp(ctx *gin.Context) bool {
 		return false
 	}
 
+	if target.action == mfaSelfServiceActionWebAuthnDeviceName &&
+		(mutation == nil || mutation.webAuthnCredentialID == "" || mutation.webAuthnDeviceName == "") {
+		return false
+	}
+
 	user := &backend.User{
 		Name:        account,
 		ID:          mgr.GetString(definitions.SessionKeyUniqueUserID, ""),
@@ -674,6 +709,15 @@ func (h *FrontendHandler) prepareMFASelfServiceStepUp(ctx *gin.Context) bool {
 	mgr.Set(sessionKeyMFASelfServiceStepUpAction, target.action)
 	mgr.Set(sessionKeyMFASelfServiceStepUpReturn, target.returnPath)
 	mgr.Set(sessionKeyMFASelfServiceStepUpAt, time.Now().Unix())
+	mgr.Set(sessionKeyMFASelfServiceStepUpAccount, account)
+	mgr.Delete(sessionKeyMFASelfServiceStepUpWebAuthnCredentialID)
+	mgr.Delete(sessionKeyMFASelfServiceStepUpWebAuthnDeviceName)
+
+	if target.action == mfaSelfServiceActionWebAuthnDeviceName {
+		mgr.Set(sessionKeyMFASelfServiceStepUpWebAuthnCredentialID, mutation.webAuthnCredentialID)
+		mgr.Set(sessionKeyMFASelfServiceStepUpWebAuthnDeviceName, mutation.webAuthnDeviceName)
+	}
+
 	mgr.Set(definitions.SessionKeyUsername, account)
 	mgr.Set(definitions.SessionKeyProtocol, definitions.ProtoIDP)
 	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoIDP)
@@ -762,10 +806,13 @@ func (h *FrontendHandler) redirectMFASelfServiceStepUp(ctx *gin.Context) {
 
 // redirectPendingSelfServiceStepUp returns form-based MFA completions to the
 // whitelisted self-service surface where the user can retry the original action.
-func (h *FrontendHandler) redirectPendingSelfServiceStepUp(ctx *gin.Context, mgr cookie.Manager) bool {
+func (h *FrontendHandler) redirectPendingSelfServiceStepUp(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+) bool {
 	target, ok := h.pendingSelfServiceStepUpRedirectURI(ctx, mgr)
 	if !ok {
-		return false
+		return ctx.Writer.Written()
 	}
 
 	ctx.Redirect(http.StatusFound, target)
@@ -773,14 +820,30 @@ func (h *FrontendHandler) redirectPendingSelfServiceStepUp(ctx *gin.Context, mgr
 	return true
 }
 
-// pendingSelfServiceStepUpRedirectURI consumes a pending self-service step-up
-// return target after verifying that the stored action and return path match the
-// server-side whitelist.
-func (h *FrontendHandler) pendingSelfServiceStepUpRedirectURI(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
-	target := popPendingSelfServiceStepUpReturnTarget(ctx, mgr)
-	if target == "" {
+// pendingSelfServiceStepUpRedirectURI resolves the next safe continuation step
+// and consumes actions that intentionally retain retry semantics.
+func (h *FrontendHandler) pendingSelfServiceStepUpRedirectURI(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+) (string, bool) {
+	continuation, ok := readPendingSelfServiceStepUpContinuation(ctx, mgr, time.Now())
+	if !ok {
+		clearPendingSelfServiceStepUp(mgr)
+
+		if mgr != nil {
+			if err := mgr.Save(ctx); err != nil {
+				ctx.String(http.StatusInternalServerError, "Failed to save session")
+			}
+		}
+
 		return "", false
 	}
+
+	if continuation.action == mfaSelfServiceActionWebAuthnDeviceName {
+		return localizedMFARootPath(ctx, definitions.MFARoot+"/self-service/continue"), true
+	}
+
+	clearPendingSelfServiceStepUp(mgr)
 
 	if err := mgr.Save(ctx); err != nil {
 		ctx.String(http.StatusInternalServerError, "Failed to save session")
@@ -788,30 +851,125 @@ func (h *FrontendHandler) pendingSelfServiceStepUpRedirectURI(ctx *gin.Context, 
 		return "", false
 	}
 
-	return target, true
+	return continuation.returnPath, true
 }
 
-// popPendingSelfServiceStepUpReturnTarget clears and validates self-service
-// step-up state before returning the safe retry page.
-func popPendingSelfServiceStepUpReturnTarget(ctx *gin.Context, mgr cookie.Manager) string {
+// ContinueMFASelfServiceStepUp executes a one-time mutation after the completed
+// MFA response has established the fresh authenticated browser session.
+func (h *FrontendHandler) ContinueMFASelfServiceStepUp(ctx *gin.Context) {
+	mgr := cookie.GetManager(ctx)
+	if !sessionHasFreshMFAAssurance(mgr, nil, definitions.ProtoIDP, time.Now()) {
+		h.renderErrorModal(ctx, "Recent MFA verification required")
+
+		return
+	}
+
+	continuation, ok := popPendingSelfServiceStepUpContinuation(ctx, mgr, time.Now())
+	if !ok || continuation.action != mfaSelfServiceActionWebAuthnDeviceName {
+		h.renderErrorModal(ctx, "Invalid request")
+
+		return
+	}
+
+	if err := mgr.Save(ctx); err != nil {
+		ctx.String(http.StatusInternalServerError, "Failed to save session")
+
+		return
+	}
+
+	credentialID, err := base64.RawURLEncoding.DecodeString(continuation.webAuthnCredentialID)
+	if err != nil {
+		h.renderPendingWebAuthnDeviceNameError(ctx, "Invalid device ID", err)
+
+		return
+	}
+
+	if failure := h.performWebAuthnDeviceNameUpdate(ctx, credentialID, continuation.webAuthnDeviceName, continuation.account); failure != nil {
+		h.renderPendingWebAuthnDeviceNameError(ctx, failure.message, failure.err)
+
+		return
+	}
+
+	ctx.Header("Cache-Control", "no-store")
+	ctx.Redirect(http.StatusSeeOther, continuation.returnPath)
+}
+
+// popPendingSelfServiceStepUpContinuation clears and validates one-time self-service state.
+func popPendingSelfServiceStepUpContinuation(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	now time.Time,
+) (mfaSelfServiceStepUpContinuation, bool) {
+	continuation, ok := readPendingSelfServiceStepUpContinuation(ctx, mgr, now)
+	clearPendingSelfServiceStepUp(mgr)
+
+	return continuation, ok
+}
+
+// readPendingSelfServiceStepUpContinuation validates pending state without consuming it.
+func readPendingSelfServiceStepUpContinuation(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	now time.Time,
+) (mfaSelfServiceStepUpContinuation, bool) {
 	if mgr == nil {
-		return ""
+		return mfaSelfServiceStepUpContinuation{}, false
 	}
 
 	action := mgr.GetString(sessionKeyMFASelfServiceStepUpAction, "")
 	storedReturn := mgr.GetString(sessionKeyMFASelfServiceStepUpReturn, "")
-	clearPendingSelfServiceStepUp(mgr)
-
+	account := mgr.GetString(sessionKeyMFASelfServiceStepUpAccount, "")
+	activeAccount := mgr.GetString(definitions.SessionKeyAccount, "")
+	createdAtUnix := mgr.GetInt64(sessionKeyMFASelfServiceStepUpAt, 0)
+	createdAt := time.Unix(createdAtUnix, 0)
+	credentialID := mgr.GetString(sessionKeyMFASelfServiceStepUpWebAuthnCredentialID, "")
+	deviceName := mgr.GetString(sessionKeyMFASelfServiceStepUpWebAuthnDeviceName, "")
 	expectedReturn, ok := mfaSelfServiceStepUpReturnForAction(action)
-	if !ok || !matchesMFASelfServiceReturn(storedReturn, expectedReturn) {
-		return ""
+	continuation := mfaSelfServiceStepUpContinuation{
+		action:               action,
+		returnPath:           storedReturn,
+		account:              account,
+		webAuthnCredentialID: credentialID,
+		webAuthnDeviceName:   strings.TrimSpace(deviceName),
+	}
+
+	if !ok || !validPendingSelfServiceStepUpContinuation(continuation, activeAccount, expectedReturn, createdAtUnix, createdAt, now) {
+		return mfaSelfServiceStepUpContinuation{}, false
+	}
+
+	if !validPendingSelfServiceStepUpPayload(continuation) {
+		return mfaSelfServiceStepUpContinuation{}, false
 	}
 
 	if ctx != nil && strings.TrimSpace(ctx.Param("languageTag")) != "" {
-		return localizedMFARootPath(ctx, expectedReturn)
+		continuation.returnPath = localizedMFARootPath(ctx, expectedReturn)
 	}
 
-	return storedReturn
+	return continuation, true
+}
+
+// validPendingSelfServiceStepUpContinuation validates shared action, account, return, and freshness state.
+func validPendingSelfServiceStepUpContinuation(
+	continuation mfaSelfServiceStepUpContinuation,
+	activeAccount string,
+	expectedReturn string,
+	createdAtUnix int64,
+	createdAt time.Time,
+	now time.Time,
+) bool {
+	return continuation.account != "" && continuation.account == activeAccount &&
+		matchesMFASelfServiceReturn(continuation.returnPath, expectedReturn) &&
+		createdAtUnix > 0 && !now.Before(createdAt) && now.Sub(createdAt) <= mfaAssuranceFreshness
+}
+
+// validPendingSelfServiceStepUpPayload validates action-specific continuation data.
+func validPendingSelfServiceStepUpPayload(continuation mfaSelfServiceStepUpContinuation) bool {
+	if continuation.action != mfaSelfServiceActionWebAuthnDeviceName {
+		return true
+	}
+
+	return continuation.webAuthnCredentialID != "" && continuation.webAuthnDeviceName != "" &&
+		len([]rune(continuation.webAuthnDeviceName)) <= webAuthnDeviceNameMaxRunes
 }
 
 // matchesMFASelfServiceReturn accepts the default return surface and its
@@ -842,6 +1000,9 @@ func clearPendingSelfServiceStepUp(mgr cookie.Manager) {
 	mgr.Delete(sessionKeyMFASelfServiceStepUpAction)
 	mgr.Delete(sessionKeyMFASelfServiceStepUpReturn)
 	mgr.Delete(sessionKeyMFASelfServiceStepUpAt)
+	mgr.Delete(sessionKeyMFASelfServiceStepUpAccount)
+	mgr.Delete(sessionKeyMFASelfServiceStepUpWebAuthnCredentialID)
+	mgr.Delete(sessionKeyMFASelfServiceStepUpWebAuthnDeviceName)
 }
 
 // recordRequireMFARegistrationAssurance marks a just-satisfied registration flow as fresh MFA proof.

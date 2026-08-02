@@ -20,7 +20,9 @@ import (
 	"testing"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
@@ -146,6 +148,28 @@ func TestEnvironmentSourceBridgeAppliesGeoIPPrivacyPolicyFactsWithoutTriggering(
 		if got := report.Attributes[fact.Attribute].Value; got != fact.Value {
 			t.Fatalf("policy fact %s = %#v, want %#v", fact.Attribute, got, fact.Value)
 		}
+	}
+}
+
+func TestEnvironmentSourceBridgePreservesUnchangedBuiltinControlSet(t *testing.T) {
+	bridge := newEnvironmentTestBridge(t, runtimeAdapterEnvironmentSource{})
+	auth := newSubjectTestAuth(t)
+	controls := config.NewStringSet()
+	controls.Set(definitions.ControlBruteForce)
+	auth.Runtime.Context.Set(definitions.LuaCtxBuiltin, controls)
+
+	_, _, handled, err := bridge.Evaluate(auth.Request.HTTPClientContext, auth.View())
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+
+	if !handled {
+		t.Fatal("Evaluate() handled = false, want true")
+	}
+
+	value := auth.Runtime.Context.Get(definitions.LuaCtxBuiltin)
+	if _, ok := value.(config.StringSet); !ok {
+		t.Fatalf("builtin controls type = %T, want config.StringSet", value)
 	}
 }
 

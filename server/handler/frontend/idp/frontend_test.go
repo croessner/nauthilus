@@ -1511,6 +1511,25 @@ func TestMFASelfServiceWebAuthnDeviceDeleteRejectsMissingStepUp(t *testing.T) {
 	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, 0, "webauthn_device_delete", definitions.MFARoot+"/webauthn/devices")
 }
 
+func TestMFASelfServiceWebAuthnDeviceRenamePreservesValidatedMutationForStepUp(t *testing.T) {
+	handler, _ := newMFASelfServiceTestHandler()
+	body := bytes.NewReader([]byte("name=Renamed+key"))
+	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/webauthn/device/Y3JlZC0x/name", map[string]any{
+		definitions.SessionKeyAccount:      "alice",
+		definitions.SessionKeyUniqueUserID: "uid-123",
+	}, body)
+	ctx.Params = gin.Params{{Key: "id", Value: "Y3JlZC0x"}}
+	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	handler.UpdateWebAuthnDeviceName(ctx)
+
+	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
+	mgr := mfaSelfServiceTestManager(t, ctx)
+	assert.Equal(t, "Y3JlZC0x", mgr.GetString("mfa_self_service_step_up_webauthn_credential_id", ""))
+	assert.Equal(t, "Renamed key", mgr.GetString("mfa_self_service_step_up_webauthn_device_name", ""))
+	assert.Equal(t, "alice", mgr.GetString("mfa_self_service_step_up_account", ""))
+}
+
 func TestMFASelfServiceStepUpIgnoresUntrustedReturnTargets(t *testing.T) {
 	handler, provider := newMFASelfServiceTestHandler()
 	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/recovery/generate?return=https://evil.example/", map[string]any{
@@ -1545,13 +1564,24 @@ func TestMFASelfServiceLocalizedStepUpUsesLocalizedHXRedirectForHTMX(t *testing.
 	for _, tc := range localizedSelfServiceStepUpTests() {
 		t.Run(tc.name, func(t *testing.T) {
 			handler, _ := newMFASelfServiceTestHandler()
+
+			var body *bytes.Reader
+
+			if tc.wantAction == mfaSelfServiceActionWebAuthnDeviceName {
+				body = bytes.NewReader([]byte("name=Renamed+key"))
+			}
+
 			ctx, recorder := newMFASelfServiceContext(tc.method, tc.path, map[string]any{
 				definitions.SessionKeyAccount:      "alice",
 				definitions.SessionKeyUserBackend:  uint8(definitions.BackendLDAP),
 				definitions.SessionKeyUniqueUserID: "uid-123",
-			}, nil)
+			}, body)
 			ctx.Params = tc.params
 			ctx.Request.Header.Set("HX-Request", "true")
+
+			if body != nil {
+				ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			}
 
 			tc.handle(handler, ctx)
 
@@ -1682,8 +1712,11 @@ func localizedWebAuthnDeviceRenameStepUpTest() localizedSelfServiceStepUpTest {
 func TestMFASelfServiceStepUpReturnTargetIsConsumedAfterMFA(t *testing.T) {
 	handler, _ := newMFASelfServiceTestHandler()
 	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/login/totp", map[string]any{
-		"mfa_self_service_step_up_action": "totp_delete",
-		"mfa_self_service_step_up_return": definitions.MFARoot + "/register/home",
+		definitions.SessionKeyAccount:      "alice",
+		"mfa_self_service_step_up_action":  "totp_delete",
+		"mfa_self_service_step_up_return":  definitions.MFARoot + "/register/home",
+		"mfa_self_service_step_up_at":      time.Now().Unix(),
+		"mfa_self_service_step_up_account": "alice",
 	}, nil)
 
 	redirected := handler.redirectPendingSelfServiceStepUp(ctx, cookie.GetManager(ctx))
@@ -1700,8 +1733,11 @@ func TestMFASelfServiceStepUpReturnTargetIsConsumedAfterMFA(t *testing.T) {
 func TestMFASelfServiceStepUpReturnTargetFollowsLanguageSwitch(t *testing.T) {
 	handler, _ := newMFASelfServiceTestHandler()
 	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/login/totp/en", map[string]any{
-		"mfa_self_service_step_up_action": "totp_delete",
-		"mfa_self_service_step_up_return": definitions.MFARoot + "/register/home/de",
+		definitions.SessionKeyAccount:      "alice",
+		"mfa_self_service_step_up_action":  "totp_delete",
+		"mfa_self_service_step_up_return":  definitions.MFARoot + "/register/home/de",
+		"mfa_self_service_step_up_at":      time.Now().Unix(),
+		"mfa_self_service_step_up_account": "alice",
 	}, nil)
 	ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
 
@@ -1714,6 +1750,75 @@ func TestMFASelfServiceStepUpReturnTargetFollowsLanguageSwitch(t *testing.T) {
 	mgr := mfaSelfServiceTestManager(t, ctx)
 	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_action", ""))
 	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_return", ""))
+}
+
+func TestMFASelfServiceStepUpConsumesValidatedWebAuthnRenameContinuation(t *testing.T) {
+	now := time.Now()
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:                     "alice",
+		"mfa_self_service_step_up_action":                 "webauthn_device_name",
+		"mfa_self_service_step_up_return":                 definitions.MFARoot + "/webauthn/devices/de",
+		"mfa_self_service_step_up_at":                     now.Unix(),
+		"mfa_self_service_step_up_account":                "alice",
+		"mfa_self_service_step_up_webauthn_credential_id": "Y3JlZC0x",
+		"mfa_self_service_step_up_webauthn_device_name":   "Renamed key",
+	}}
+	ctx, _ := newMFASelfServiceContext(http.MethodPost, "/login/webauthn/finish/de", nil, nil)
+	ctx.Params = gin.Params{{Key: "languageTag", Value: "de"}}
+
+	continuation, ok := popPendingSelfServiceStepUpContinuation(ctx, mgr, now)
+
+	assert.True(t, ok)
+	assert.Equal(t, "webauthn_device_name", continuation.action)
+	assert.Equal(t, definitions.MFARoot+"/webauthn/devices/de", continuation.returnPath)
+	assert.Equal(t, "alice", continuation.account)
+	assert.Equal(t, "Y3JlZC0x", continuation.webAuthnCredentialID)
+	assert.Equal(t, "Renamed key", continuation.webAuthnDeviceName)
+	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_action", ""))
+	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_webauthn_credential_id", ""))
+	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_webauthn_device_name", ""))
+}
+
+func TestMFASelfServiceStepUpRejectsContinuationForDifferentAccount(t *testing.T) {
+	now := time.Now()
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:                     "bob",
+		"mfa_self_service_step_up_action":                 "webauthn_device_name",
+		"mfa_self_service_step_up_return":                 definitions.MFARoot + "/webauthn/devices",
+		"mfa_self_service_step_up_at":                     now.Unix(),
+		"mfa_self_service_step_up_account":                "alice",
+		"mfa_self_service_step_up_webauthn_credential_id": "Y3JlZC0x",
+		"mfa_self_service_step_up_webauthn_device_name":   "Renamed key",
+	}}
+	ctx, _ := newMFASelfServiceContext(http.MethodGet, "/mfa/self-service/continue", nil, nil)
+
+	_, ok := popPendingSelfServiceStepUpContinuation(ctx, mgr, now)
+
+	assert.False(t, ok)
+}
+
+func TestMFASelfServiceWebAuthnRenameDefersMutationUntilFreshSessionRequest(t *testing.T) {
+	now := time.Now()
+	handler, _ := newMFASelfServiceTestHandler()
+	ctx, _ := newMFASelfServiceContext(http.MethodPost, "/login/webauthn/finish/en", map[string]any{
+		definitions.SessionKeyAccount:                     "alice",
+		"mfa_self_service_step_up_action":                 "webauthn_device_name",
+		"mfa_self_service_step_up_return":                 definitions.MFARoot + "/webauthn/devices/en",
+		"mfa_self_service_step_up_at":                     now.Unix(),
+		"mfa_self_service_step_up_account":                "alice",
+		"mfa_self_service_step_up_webauthn_credential_id": "Y3JlZC0x",
+		"mfa_self_service_step_up_webauthn_device_name":   "Renamed key",
+	}, nil)
+	ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
+	mgr := mfaSelfServiceTestManager(t, ctx)
+
+	target, ok := handler.pendingSelfServiceStepUpRedirectURI(ctx, mgr)
+
+	assert.True(t, ok)
+	assert.Equal(t, definitions.MFARoot+"/self-service/continue/en", target)
+	assert.Equal(t, "webauthn_device_name", mgr.GetString("mfa_self_service_step_up_action", ""))
+	assert.Equal(t, "Renamed key", mgr.GetString("mfa_self_service_step_up_webauthn_device_name", ""))
+	assert.Zero(t, mgr.saves)
 }
 
 func TestMFASelfServiceStepUpRejectsArbitraryPendingAction(t *testing.T) {
@@ -1750,6 +1855,7 @@ func assertMFASelfServiceStepUpRedirect(
 	mgr := mfaSelfServiceTestManager(t, ctx)
 	assert.Equal(t, action, mgr.GetString("mfa_self_service_step_up_action", ""))
 	assert.Equal(t, returnTarget, mgr.GetString("mfa_self_service_step_up_return", ""))
+	assert.Equal(t, "alice", mgr.GetString("mfa_self_service_step_up_account", ""))
 	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyUsername, ""))
 	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyMFAAccount, ""))
 	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyMFAFactorAccount, ""))

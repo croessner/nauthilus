@@ -64,18 +64,44 @@ func (a *AuthState) logAddMessage(message, environmentName string) {
 
 // updateLuaContext updates the Lua context with a new environment control in the Gin context, ensuring unique entries.
 func (a *AuthState) updateLuaContext(environmentName string) {
-	var environmentControlSet config.StringSet
-
 	currentEnvironmentControls, exists := a.Runtime.Context.GetExists(definitions.LuaCtxBuiltin)
 	if !exists {
-		environmentControlSet = config.NewStringSet()
-	} else {
-		environmentControlSet = currentEnvironmentControls.(config.StringSet)
+		currentEnvironmentControls = nil
 	}
+
+	environmentControlSet := environmentControlStringSet(currentEnvironmentControls)
 
 	environmentControlSet.Set(environmentName)
 
 	a.Runtime.Context.Set(definitions.LuaCtxBuiltin, environmentControlSet)
+}
+
+// environmentControlStringSet restores the internal set from supported runtime bridge representations.
+func environmentControlStringSet(value any) config.StringSet {
+	controls := config.NewStringSet()
+
+	switch typed := value.(type) {
+	case config.StringSet:
+		for control := range typed {
+			controls.Set(control)
+		}
+	case map[string]any:
+		for control := range typed {
+			controls.Set(control)
+		}
+	case []string:
+		for _, control := range typed {
+			controls.Set(control)
+		}
+	case []any:
+		for _, value := range typed {
+			if control, ok := value.(string); ok {
+				controls.Set(control)
+			}
+		}
+	}
+
+	return controls
 }
 
 // EnvironmentLua runs Lua environment source scripts and returns a trigger result.

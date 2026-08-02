@@ -90,6 +90,7 @@ func (b *EnvironmentSourceBridge) evaluate(
 	}
 
 	runtimeValues := runtimeSnapshot(auth)
+	baselineRuntimeValues := maps.Clone(runtimeValues)
 	policyCtx := auth.PolicyDecisionContext(ctx)
 	outcome := environmentBridgeOutcome{}
 
@@ -108,7 +109,7 @@ func (b *EnvironmentSourceBridge) evaluate(
 		}
 	}
 
-	applyRuntimeValues(auth, runtimeValues)
+	applyRuntimeValues(auth, baselineRuntimeValues, runtimeValues)
 
 	return outcome, nil
 }

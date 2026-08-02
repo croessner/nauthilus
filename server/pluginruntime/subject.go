@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net"
 	"net/netip"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -246,6 +247,7 @@ func (b *SubjectSourceBridge) evaluate(
 	}
 
 	runtimeValues := runtimeSnapshot(auth)
+	baselineRuntimeValues := maps.Clone(runtimeValues)
 	backendResult := pluginBackendResultFromPassDB(passDBResult)
 	policyCtx := auth.PolicyDecisionContext(ctx)
 	outcome := subjectBridgeOutcome{}
@@ -261,7 +263,7 @@ func (b *SubjectSourceBridge) evaluate(
 		}
 	}
 
-	applyRuntimeValues(auth, runtimeValues)
+	applyRuntimeValues(auth, baselineRuntimeValues, runtimeValues)
 
 	return outcome, nil
 }
@@ -1000,7 +1002,8 @@ func runtimeSnapshot(auth *core.AuthState) map[string]any {
 	return normalized
 }
 
-func applyRuntimeValues(auth *core.AuthState, values map[string]any) {
+// applyRuntimeValues writes only plugin changes so normalized snapshots cannot erode internal context types.
+func applyRuntimeValues(auth *core.AuthState, baseline map[string]any, values map[string]any) {
 	if auth == nil {
 		return
 	}
@@ -1009,15 +1012,20 @@ func applyRuntimeValues(auth *core.AuthState, values map[string]any) {
 		auth.Runtime.Context = lualib.NewContext()
 	}
 
-	before := auth.Runtime.Context.Snapshot()
-
-	for key := range before {
+	for key := range baseline {
 		if _, ok := values[key]; !ok {
 			auth.Runtime.Context.Delete(key)
 		}
 	}
 
 	for key, value := range values {
+		if baselineValue, ok := baseline[key]; ok {
+			normalizedBaseline, err := normalizeRuntimeValue(key, baselineValue)
+			if err == nil && reflect.DeepEqual(normalizedBaseline, value) {
+				continue
+			}
+		}
+
 		auth.Runtime.Context.Set(key, value)
 	}
 }
