@@ -39,6 +39,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/croessner/nauthilus/v3/server/idp/clientauth"
+	"github.com/croessner/nauthilus/v3/server/idp/dcr"
 	"github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/croessner/nauthilus/v3/server/idp/signing"
 	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
@@ -73,40 +74,41 @@ func formValue(ctx *gin.Context, key string) string {
 }
 
 const (
-	oidcParamGrantType             = "grant_type"
-	oidcParamClientID              = "client_id"
-	oidcParamClientSecret          = "client_secret"
-	oidcParamClientAssertionType   = "client_assertion_type"
-	oidcParamClientAssertion       = "client_assertion"
-	oidcParamCode                  = "code"
-	oidcParamRedirectURI           = "redirect_uri"
-	oidcParamCodeVerifier          = "code_verifier"
-	oidcParamRefreshToken          = "refresh_token"
-	oidcParamDeviceCode            = "device_code"
-	oidcParamResponseType          = "response_type"
-	oidcParamScope                 = "scope"
-	oidcParamState                 = "state"
-	oidcParamNonce                 = "nonce"
-	oidcParamPrompt                = "prompt"
-	oidcParamCodeChallenge         = "code_challenge"
-	oidcParamCodeChallengeMethod   = "code_challenge_method"
-	oidcEndpointPathToken          = "/oidc/token"
-	oidcEndpointPathIntrospect     = "/oidc/introspect"
-	oidcEndpointPathDevice         = "/oidc/device"
-	oidcGrantTypeRefreshToken      = oidcParamRefreshToken
-	oidcGrantTypeClientCredentials = "client_credentials"
-	oidcResponseTypeCode           = oidcParamCode
-	oidcJSONErrorDescriptionKey    = "error_description"
-	oidcErrorInvalidRequest        = "invalid_request"
-	oidcErrorInvalidClient         = "invalid_client"
-	oidcErrorInvalidGrant          = "invalid_grant"
-	oidcErrorInvalidScope          = "invalid_scope"
-	oidcErrorUnauthorizedClient    = "unauthorized_client"
-	oidcErrorServerError           = sloRequestOutcomeServerError
-	oidcErrorExpiredToken          = "expired_token"
-	oidcErrorSlowDown              = "slow_down"
-	oidcErrorAuthorizationPending  = "authorization_pending"
-	oidcErrorAccessDenied          = "access_denied"
+	oidcParamGrantType               = "grant_type"
+	oidcParamClientID                = "client_id"
+	oidcParamClientSecret            = "client_secret"
+	oidcParamClientAssertionType     = "client_assertion_type"
+	oidcParamClientAssertion         = "client_assertion"
+	oidcParamCode                    = "code"
+	oidcParamRedirectURI             = "redirect_uri"
+	oidcParamCodeVerifier            = "code_verifier"
+	oidcParamRefreshToken            = "refresh_token"
+	oidcParamDeviceCode              = "device_code"
+	oidcParamResponseType            = "response_type"
+	oidcParamScope                   = "scope"
+	oidcParamState                   = "state"
+	oidcParamNonce                   = "nonce"
+	oidcParamPrompt                  = "prompt"
+	oidcParamCodeChallenge           = "code_challenge"
+	oidcParamCodeChallengeMethod     = "code_challenge_method"
+	oidcEndpointPathToken            = "/oidc/token"
+	oidcEndpointPathIntrospect       = "/oidc/introspect"
+	oidcEndpointPathDevice           = "/oidc/device"
+	oidcGrantTypeRefreshToken        = oidcParamRefreshToken
+	oidcGrantTypeClientCredentials   = "client_credentials"
+	oidcResponseTypeCode             = oidcParamCode
+	oidcJSONErrorDescriptionKey      = "error_description"
+	oidcErrorInvalidRequest          = "invalid_request"
+	oidcErrorUnsupportedResponseType = "unsupported_response_type"
+	oidcErrorInvalidClient           = "invalid_client"
+	oidcErrorInvalidGrant            = "invalid_grant"
+	oidcErrorInvalidScope            = "invalid_scope"
+	oidcErrorUnauthorizedClient      = "unauthorized_client"
+	oidcErrorServerError             = sloRequestOutcomeServerError
+	oidcErrorExpiredToken            = "expired_token"
+	oidcErrorSlowDown                = "slow_down"
+	oidcErrorAuthorizationPending    = "authorization_pending"
+	oidcErrorAccessDenied            = "access_denied"
 )
 
 var oidcTokenSingleValueParameters = []string{
@@ -158,13 +160,14 @@ func oidcRequestValues(ctx *gin.Context, key string) []string {
 
 // OIDCHandler handles OIDC protocol requests.
 type OIDCHandler struct {
-	deps        *deps.Deps
-	idp         *idp.NauthilusIDP
-	storage     *idp.RedisTokenStorage
-	deviceStore idp.DeviceCodeStore
-	userCodeGen idp.UserCodeGenerator
-	frontend    *FrontendHandler
-	tracer      monittrace.Tracer
+	deps                *deps.Deps
+	idp                 *idp.NauthilusIDP
+	storage             *idp.RedisTokenStorage
+	deviceStore         idp.DeviceCodeStore
+	userCodeGen         idp.UserCodeGenerator
+	registrationService dynamicRegistrationService
+	frontend            *FrontendHandler
+	tracer              monittrace.Tracer
 }
 
 const (
@@ -195,15 +198,19 @@ type frontChannelLogoutTask struct {
 // NewOIDCHandler creates a new OIDCHandler.
 func NewOIDCHandler(d *deps.Deps, idpInstance *idp.NauthilusIDP, frontendHandler *FrontendHandler) *OIDCHandler {
 	prefix := d.Cfg.GetServer().GetRedis().GetPrefix()
+	registrationPolicy := d.Cfg.GetIDP().OIDC.DynamicClientRegistration
+	registrationAuditor := dcr.NewSlogAuditor(d.Logger)
+	registrationRepository := dcr.NewRepository(d.Redis, prefix, registrationPolicy.GetLifecycle(), registrationAuditor)
 
 	return &OIDCHandler{
-		deps:        d,
-		idp:         idpInstance,
-		storage:     idp.NewRedisTokenStorageWithConfig(d.Redis, prefix, d.Cfg),
-		deviceStore: idp.NewRedisDeviceCodeStoreWithConfig(d.Redis, prefix, d.Cfg),
-		userCodeGen: &idp.DefaultUserCodeGenerator{},
-		frontend:    frontendHandler,
-		tracer:      monittrace.New("nauthilus/idp/oidc"),
+		deps:                d,
+		idp:                 idpInstance,
+		storage:             idp.NewRedisTokenStorageWithConfig(d.Redis, prefix, d.Cfg, registrationAuditor),
+		deviceStore:         idp.NewRedisDeviceCodeStoreWithConfig(d.Redis, prefix, d.Cfg),
+		userCodeGen:         &idp.DefaultUserCodeGenerator{},
+		registrationService: dcr.NewRegistrationService(registrationRepository, registrationPolicy),
+		frontend:            frontendHandler,
+		tracer:              monittrace.New("nauthilus/idp/oidc"),
 	}
 }
 
@@ -229,6 +236,15 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	securityMW := securityheaders.New(securityheaders.MiddlewareConfig{Config: h.deps.Cfg}).Handler()
 
 	router.GET("/.well-known/openid-configuration", h.Discovery)
+
+	if h.deps.Cfg.GetIDP().OIDC.DynamicClientRegistration.Enabled {
+		if engine, ok := router.(*gin.Engine); ok {
+			engine.HandleMethodNotAllowed = true
+		}
+
+		router.Use(registrationNoStoreMiddleware())
+		router.POST(oidcRegistrationEndpointPath, h.RegisterDynamicClient)
+	}
 	router.GET("/oidc/authorize", securityMW, secureMW, i18nMW, h.Authorize)
 	router.GET("/oidc/authorize/:languageTag", securityMW, secureMW, i18nMW, h.Authorize)
 	router.POST("/oidc/token", h.Token)
@@ -302,6 +318,10 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 
 	if signingAlgs := oidcCfg.GetIntrospectionEndpointAuthSigningAlgValuesSupported(); len(signingAlgs) > 0 {
 		discoveryDocument["introspection_endpoint_auth_signing_alg_values_supported"] = signingAlgs
+	}
+
+	if oidcCfg.DynamicClientRegistration.Enabled {
+		discoveryDocument["registration_endpoint"] = issuer + oidcRegistrationEndpointPath
 	}
 
 	ctx.JSON(http.StatusOK, discoveryDocument)
@@ -459,9 +479,15 @@ func (h *OIDCHandler) logMultipleOIDCClientAuthenticationMethods(ctx *gin.Contex
 
 // findOIDCClient resolves a configured client or writes the invalid_client response.
 func (h *OIDCHandler) findOIDCClient(ctx *gin.Context, clientID string) (*config.OIDCClient, bool) {
-	client, ok := h.idp.FindClient(clientID)
-	if ok {
+	client, err := h.idp.ResolveClient(ctx.Request.Context(), clientID)
+	if err == nil {
 		return client, true
+	}
+
+	if strings.HasPrefix(clientID, dcr.ClientIDPrefix) && !errors.Is(err, dcr.ErrNotFound) {
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{definitions.LogKeyError: oidcErrorServerError})
+
+		return nil, false
 	}
 
 	util.DebugModuleWithCfg(
@@ -1311,7 +1337,7 @@ func (h *OIDCHandler) logTokenError(ctx *gin.Context, grantType, clientID string
 
 // sendTokenResponse writes the common OIDC token response JSON.
 func (h *OIDCHandler) sendTokenResponse(ctx *gin.Context, clientID, grantType string, resp *tokenResponse) {
-	stats.GetMetrics().GetIdpTokensIssuedTotal().WithLabelValues("oidc", clientID, grantType).Inc()
+	stats.GetMetrics().GetIdpTokensIssuedTotal().WithLabelValues("oidc", oidcMetricClientID(clientID), grantType).Inc()
 
 	result := gin.H{
 		oidcJSONFieldAccessToken: resp.accessToken,
@@ -1330,6 +1356,15 @@ func (h *OIDCHandler) sendTokenResponse(ctx *gin.Context, clientID, grantType st
 	}
 
 	ctx.JSON(http.StatusOK, result)
+}
+
+// oidcMetricClientID bounds metric cardinality for remotely created clients.
+func oidcMetricClientID(clientID string) string {
+	if strings.HasPrefix(clientID, dcr.ClientIDPrefix) {
+		return "dynamic/" + dcr.ProfileMailClientV1
+	}
+
+	return clientID
 }
 
 // beginOIDCTokenRequest captures common token request metadata.
@@ -1376,6 +1411,12 @@ func (h *OIDCHandler) logOIDCTokenRequest(ctx *gin.Context, grantType string, cl
 
 // dispatchOIDCTokenGrant routes a token request by grant type.
 func (h *OIDCHandler) dispatchOIDCTokenGrant(ctx *gin.Context, client *config.OIDCClient, grantType string) {
+	if client.Dynamic && !client.SupportsGrantType(grantType) {
+		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorUnauthorizedClient})
+
+		return
+	}
+
 	switch grantType {
 	case definitions.OIDCFlowAuthorizationCode:
 		h.handleAuthorizationCodeTokenExchange(ctx, client, grantType)
@@ -1524,11 +1565,27 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 
 // authenticateIntrospectionClient selects the configured client authentication path for introspection.
 func (h *OIDCHandler) authenticateIntrospectionClient(ctx *gin.Context) (*config.OIDCClient, bool) {
+	var client *config.OIDCClient
+
+	var ok bool
+
 	if formValue(ctx, oidcParamClientAssertion) != "" {
-		return h.authenticateClientPrivateKeyJWT(ctx, h.oidcEndpointURL(oidcEndpointPathIntrospect))
+		client, ok = h.authenticateClientPrivateKeyJWT(ctx, h.oidcEndpointURL(oidcEndpointPathIntrospect))
+	} else {
+		client, ok = h.authenticateClient(ctx)
 	}
 
-	return h.authenticateClient(ctx)
+	if !ok || client == nil {
+		return nil, false
+	}
+
+	if client.Dynamic {
+		writeOIDCInvalidClientResponse(ctx)
+
+		return nil, false
+	}
+
+	return client, true
 }
 
 // JWKS handles the OIDC JWKS request.
@@ -2054,7 +2111,11 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 
 	client := h.applyOIDCLogoutIDTokenHint(ctx, request, &session)
 	if session.userID != "" {
-		_ = h.storage.DeleteUserRefreshTokens(ctx.Request.Context(), session.userID)
+		if err := h.storage.FlushUserTokens(ctx.Request.Context(), session.userID); err != nil {
+			ctx.JSON(http.StatusServiceUnavailable, gin.H{definitions.LogKeyError: oidcErrorServerError})
+
+			return
+		}
 	}
 
 	clientIDs := h.oidcLogoutClientIDs(ctx, session)

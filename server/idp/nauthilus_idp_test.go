@@ -21,6 +21,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -33,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/idp/dcr"
 	"github.com/croessner/nauthilus/v3/server/idp/oidckeys"
 	"github.com/croessner/nauthilus/v3/server/idp/signing"
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
@@ -1050,6 +1052,96 @@ func TestValidateTokenOpaqueUsesSingleRedisLookup(t *testing.T) {
 	assert.Equal(t, testScopeClaim, claims[claimScope])
 	assert.Equal(t, "reader", claims["role"])
 	assert.NoError(t, mock.ExpectationsWereMet(), "opaque token validation must use the session loaded by the first Redis lookup")
+}
+
+func TestValidateTokenOpaqueRevalidatesDynamicClientAuthoritatively(t *testing.T) {
+	const clientID = dcr.ClientIDPrefix + "opaque-policy-client"
+
+	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
+		Issuer: testIssuer,
+		DynamicClientRegistration: config.OIDCDynamicClientRegistrationConfig{
+			Enabled:        true,
+			RequiredScopes: []string{definitions.ScopeOpenID},
+		},
+	})
+	tokenString := "na_at_dynamic-policy"
+	issuedAt := time.Now().Add(-time.Minute)
+	session := &OIDCSession{
+		ClientID:             clientID,
+		UserID:               testUserID,
+		Scopes:               []string{definitions.ScopeOpenID},
+		AccessTokenIssuedAt:  issuedAt,
+		AccessTokenExpiresAt: issuedAt.Add(5 * time.Minute),
+	}
+	sessionData, err := json.Marshal(session)
+	assert.NoError(t, err)
+
+	record := &dcr.DynamicClientRecord{
+		EffectiveMetadata: dcr.EffectiveMetadata{
+			RedirectURIs:             []string{"http://127.0.0.1/callback"},
+			GrantTypes:               []string{dcr.GrantAuthorizationCode},
+			ResponseTypes:            []string{dcr.ResponseTypeCode},
+			Scope:                    definitions.ScopeOpenID,
+			TokenEndpointAuthMethod:  dcr.TokenEndpointAuthMethodNone,
+			ApplicationType:          dcr.ApplicationTypeNative,
+			SubjectType:              dcr.SubjectTypePublic,
+			IDTokenSignedResponseAlg: dcr.IDTokenSigningAlgorithm,
+		},
+		ClientID:        clientID,
+		Profile:         dcr.ProfileMailClientV1,
+		ProfileVersion:  1,
+		CreatedAt:       time.Now(),
+		AccessTokenTTL:  5 * time.Minute,
+		RefreshTokenTTL: time.Hour,
+	}
+	recordData, err := json.Marshal(record)
+	assert.NoError(t, err)
+
+	mock.ExpectGet(testAccessTokenKey(tokenString)).SetVal(string(sessionData))
+	mock.ExpectGet(testRedisPrefix + "oidc:dcr:{registry}:client:" + clientID).SetVal(string(recordData))
+
+	claims, err := idp.ValidateToken(t.Context(), tokenString)
+	assert.NoError(t, err)
+	assert.Equal(t, clientID, claims[claimAudience])
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateTokenOpaqueFailsClosedWhenDynamicClientUnavailable(t *testing.T) {
+	const clientID = dcr.ClientIDPrefix + "opaque-unavailable-client"
+
+	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
+		Issuer: testIssuer,
+		DynamicClientRegistration: config.OIDCDynamicClientRegistrationConfig{
+			Enabled:        true,
+			RequiredScopes: []string{definitions.ScopeOpenID},
+		},
+	})
+	tokenString := "na_at_dynamic-unavailable"
+	sessionData, err := json.Marshal(&OIDCSession{ClientID: clientID, UserID: testUserID, Scopes: []string{definitions.ScopeOpenID}})
+	assert.NoError(t, err)
+
+	mock.ExpectGet(testAccessTokenKey(tokenString)).SetVal(string(sessionData))
+	mock.ExpectGet(testRedisPrefix + "oidc:dcr:{registry}:client:" + clientID).SetErr(errors.New("redis unavailable"))
+
+	_, err = idp.ValidateToken(t.Context(), tokenString)
+	assert.Error(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateDynamicAccessTokenLifetimeFailsClosed(t *testing.T) {
+	now := time.Now()
+	tests := []OIDCSession{
+		{},
+		{AccessTokenIssuedAt: now, AccessTokenExpiresAt: now},
+		{AccessTokenIssuedAt: now.Add(-time.Minute), AccessTokenExpiresAt: now.Add(time.Hour)},
+		{AccessTokenIssuedAt: now.Add(-time.Hour), AccessTokenExpiresAt: now.Add(-time.Minute)},
+	}
+
+	for index := range tests {
+		if err := validateDynamicAccessTokenLifetime(&tests[index], 5*time.Minute, now); err == nil {
+			t.Fatalf("case %d accepted invalid dynamic access-token lifetime", index)
+		}
+	}
 }
 
 func TestValidateTokenJWTResolvesRedisKeyByKID(t *testing.T) {

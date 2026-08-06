@@ -26,14 +26,16 @@ import (
 )
 
 type openAPIContractDocument struct {
-	publicOperations   map[operationExpectation]struct{}
-	name               string
-	content            []byte
-	expectedOperations []operationExpectation
+	publicOperations            map[operationExpectation]struct{}
+	optionalAnonymousOperations map[operationExpectation]struct{}
+	name                        string
+	content                     []byte
+	expectedOperations          []operationExpectation
 }
 
 type openAPIContractGate struct {
-	publicOperations map[operationExpectation]struct{}
+	publicOperations            map[operationExpectation]struct{}
+	optionalAnonymousOperations map[operationExpectation]struct{}
 }
 
 type openAPIContractOperation struct {
@@ -48,7 +50,10 @@ func (document openAPIContractDocument) validate() error {
 		return err
 	}
 
-	gate := openAPIContractGate{publicOperations: document.publicOperations}
+	gate := openAPIContractGate{
+		publicOperations:            document.publicOperations,
+		optionalAnonymousOperations: document.optionalAnonymousOperations,
+	}
 	if err := gate.validate(doc); err != nil {
 		return err
 	}
@@ -278,8 +283,14 @@ func (gate openAPIContractGate) validateOperationSecurity(
 		return fmt.Errorf("%s: protected operation missing security requirements", key.label())
 	}
 
+	_, optionalAnonymous := gate.optionalAnonymousOperations[key]
+
 	for _, requirement := range *security {
 		if len(requirement) == 0 {
+			if optionalAnonymous {
+				continue
+			}
+
 			return fmt.Errorf("%s: protected operation allows anonymous security requirement", key.label())
 		}
 

@@ -19,6 +19,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const roundcubeTestCodeChallenge = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 func TestExistingSessionAuthorizeCreatesCurrentFlowBeforeMFA(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -385,7 +387,7 @@ func TestPromptNoneConsentRequiredCleansFreshAuthorizeFlow(t *testing.T) {
 
 func newPromptNoneConsentAuthorizeContext() (*httptest.ResponseRecorder, *gin.Context, *mockCookieManager) {
 	recorder, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?client_id=consent-client&redirect_uri=https%3A%2F%2Fapp.example.test%2Fcallback&response_type=code&scope=openid+profile&state=state-2&nonce=nonce-2&prompt=none&code_challenge=challenge-2&code_challenge_method=S256", nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?client_id=consent-client&redirect_uri=https%3A%2F%2Fapp.example.test%2Fcallback&response_type=code&scope=openid+profile&state=state-2&nonce=nonce-2&prompt=none&code_challenge="+roundcubeTestCodeChallenge+"&code_challenge_method=S256", nil)
 
 	return recorder, ctx, mgr
 }
@@ -422,7 +424,7 @@ func assertFollowUpAuthorizeCreatesFreshFlow(t *testing.T, handler *OIDCHandler,
 
 	nextRecorder := httptest.NewRecorder()
 	nextCtx, _ := gin.CreateTestContext(nextRecorder)
-	nextCtx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?client_id=roundcube-client&redirect_uri=https%3A%2F%2Fwebmail.example.test%2Findex.php%2Flogin%2Foauth&response_type=code&scope=openid+profile+email&state=state-fresh&nonce=nonce-fresh&code_challenge=challenge-fresh&code_challenge_method=S256", nil)
+	nextCtx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?client_id=roundcube-client&redirect_uri=https%3A%2F%2Fwebmail.example.test%2Findex.php%2Flogin%2Foauth&response_type=code&scope=openid+profile+email&state=state-fresh&nonce=nonce-fresh&code_challenge="+roundcubeTestCodeChallenge+"&code_challenge_method=S256", nil)
 	nextCtx.Set(definitions.CtxSecureDataKey, mgr)
 	nextCtx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 	nextCtx.Set(definitions.CtxGUIDKey, "roundcube-reentry-test-guid")
@@ -448,7 +450,7 @@ func assertFollowUpAuthorizeCreatesFreshFlow(t *testing.T, handler *OIDCHandler,
 		t.Fatalf("follow-up nonce = %q, want fresh request nonce", got)
 	}
 
-	if got := mgr.GetString(definitions.SessionKeyIDPCodeChallenge, ""); got != "challenge-fresh" {
+	if got := mgr.GetString(definitions.SessionKeyIDPCodeChallenge, ""); got != roundcubeTestCodeChallenge {
 		t.Fatalf("follow-up code challenge = %q, want fresh request PKCE", got)
 	}
 }
@@ -536,7 +538,7 @@ func newRoundcubeAuthorizeTestContext() (*gin.Context, *mockCookieManager) {
 func newRoundcubeAuthorizeRecorderContext() (*httptest.ResponseRecorder, *gin.Context, *mockCookieManager) {
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?client_id=roundcube-client&redirect_uri=https%3A%2F%2Fwebmail.example.test%2Findex.php%2Flogin%2Foauth&response_type=code&scope=openid+profile+email&state=state-1&nonce=nonce-1&code_challenge=challenge-1&code_challenge_method=S256", nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?client_id=roundcube-client&redirect_uri=https%3A%2F%2Fwebmail.example.test%2Findex.php%2Flogin%2Foauth&response_type=code&scope=openid+profile+email&state=state-1&nonce=nonce-1&code_challenge="+roundcubeTestCodeChallenge+"&code_challenge_method=S256", nil)
 	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 	ctx.Set(definitions.CtxGUIDKey, "roundcube-reentry-test-guid")
 	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
@@ -647,8 +649,8 @@ func assertRoundcubeOIDCFlowRequestState(t *testing.T, mgr *mockCookieManager) {
 		t.Fatalf("nonce = %q, want nonce-1", got)
 	}
 
-	if got := mgr.GetString(definitions.SessionKeyIDPCodeChallenge, ""); got != "challenge-1" {
-		t.Fatalf("code challenge = %q, want challenge-1", got)
+	if got := mgr.GetString(definitions.SessionKeyIDPCodeChallenge, ""); got != roundcubeTestCodeChallenge {
+		t.Fatalf("code challenge = %q, want valid S256 challenge", got)
 	}
 
 	if got := mgr.GetString(definitions.SessionKeyIDPCodeChallengeMethod, ""); got != oidcPKCEChallengeMethodS256 {
@@ -666,7 +668,7 @@ func assertRoundcubeAuthorizeResumeTarget(t *testing.T, redirectURI string) {
 		"scope=openid+profile+email",
 		"state=state-1",
 		"nonce=nonce-1",
-		"code_challenge=challenge-1",
+		"code_challenge=" + roundcubeTestCodeChallenge,
 		"code_challenge_method=S256",
 	} {
 		if !strings.Contains(redirectURI, fragment) {
@@ -681,6 +683,7 @@ func assertNoOIDCAuthorizeFlowState(t *testing.T, mgr *mockCookieManager) {
 	for _, key := range []string{
 		definitions.SessionKeyIDPFlowID,
 		definitions.SessionKeyIDPClientID,
+		definitions.SessionKeyIDPRequiredMFALevel,
 		definitions.SessionKeyIDPRedirectURI,
 		definitions.SessionKeyIDPState,
 		definitions.SessionKeyIDPNonce,

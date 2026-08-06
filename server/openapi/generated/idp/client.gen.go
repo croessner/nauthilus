@@ -29,6 +29,7 @@ type OIDCDiscovery struct {
 	IntrospectionEndpointAuthSigningAlgValuesSupported *[]string              `json:"introspection_endpoint_auth_signing_alg_values_supported,omitempty"`
 	Issuer                                             string                 `json:"issuer"`
 	JwksUri                                            string                 `json:"jwks_uri"`
+	RegistrationEndpoint                               *string                `json:"registration_endpoint,omitempty"`
 	TokenEndpoint                                      string                 `json:"token_endpoint"`
 	TokenEndpointAuthMethodsSupported                  *[]string              `json:"token_endpoint_auth_methods_supported,omitempty"`
 	TokenEndpointAuthSigningAlgValuesSupported         *[]string              `json:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
@@ -107,6 +108,14 @@ func (a *OIDCDiscovery) UnmarshalJSON(b []byte) error {
 			return fmt.Errorf("error reading 'jwks_uri': %w", err)
 		}
 		delete(object, "jwks_uri")
+	}
+
+	if raw, found := object["registration_endpoint"]; found {
+		err = json.Unmarshal(raw, &a.RegistrationEndpoint)
+		if err != nil {
+			return fmt.Errorf("error reading 'registration_endpoint': %w", err)
+		}
+		delete(object, "registration_endpoint")
 	}
 
 	if raw, found := object["token_endpoint"]; found {
@@ -194,6 +203,13 @@ func (a OIDCDiscovery) MarshalJSON() ([]byte, error) {
 	object["jwks_uri"], err = json.Marshal(a.JwksUri)
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling 'jwks_uri': %w", err)
+	}
+
+	if a.RegistrationEndpoint != nil {
+		object["registration_endpoint"], err = json.Marshal(a.RegistrationEndpoint)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'registration_endpoint': %w", err)
+		}
 	}
 
 	object["token_endpoint"], err = json.Marshal(a.TokenEndpoint)

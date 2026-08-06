@@ -197,6 +197,8 @@ const (
 
 	// SessionKeyIDPClientID stores the OIDC client_id for the current flow.
 	SessionKeyIDPClientID = "idp_client_id"
+	// SessionKeyIDPRequiredMFALevel stores the resolved OIDC MFA floor for the current flow.
+	SessionKeyIDPRequiredMFALevel = "idp_required_mfa_level"
 
 	// SessionKeyIDPRedirectURI stores the validated redirect_uri for OIDC flows.
 	SessionKeyIDPRedirectURI = "idp_redirect_uri"

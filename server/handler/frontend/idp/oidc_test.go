@@ -65,15 +65,21 @@ type mockOIDCCfg struct {
 	signingKeyID          string
 	clients               []config.OIDCClient
 	tokenEndpointAllowGET bool
+	dynamicRegistration   bool
+	dynamicPolicy         config.OIDCDynamicClientRegistrationConfig
 	cors                  config.CORS
 	trustedProxies        []string
 }
 
 func (m *mockOIDCCfg) GetIDP() *config.IDPSection {
+	dynamicPolicy := m.dynamicPolicy
+	dynamicPolicy.Enabled = m.dynamicRegistration
+
 	return &config.IDPSection{
 		OIDC: config.OIDCConfig{
-			Issuer:                m.issuer,
-			TokenEndpointAllowGET: m.tokenEndpointAllowGET,
+			Issuer:                    m.issuer,
+			TokenEndpointAllowGET:     m.tokenEndpointAllowGET,
+			DynamicClientRegistration: dynamicPolicy,
 			SigningKeys: []config.OIDCKey{
 				{ID: m.signingKeyID, Key: m.signingKey, Active: true},
 			},
@@ -604,11 +610,44 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assertOIDCDiscoveryPKCESupport(t, resp)
 }
 
+func TestOIDCHandlerDiscoveryAdvertisesRegistrationEndpointOnlyWhenEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const issuer = "https://auth.example.com"
+
+	for _, test := range []struct {
+		name    string
+		enabled bool
+	}{
+		{name: "disabled", enabled: false},
+		{name: "enabled", enabled: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := mustGetOIDCDiscoveryResponseWithDCR(t, issuer, test.enabled)
+			endpoint, present := response["registration_endpoint"]
+
+			if test.enabled {
+				assert.True(t, present)
+				assert.Equal(t, issuer+"/oidc/register", endpoint)
+
+				return
+			}
+
+			assert.False(t, present)
+		})
+	}
+}
+
 // mustGetOIDCDiscoveryResponse executes discovery and returns the JSON payload.
 func mustGetOIDCDiscoveryResponse(t *testing.T, issuer string) map[string]any {
+	return mustGetOIDCDiscoveryResponseWithDCR(t, issuer, false)
+}
+
+// mustGetOIDCDiscoveryResponseWithDCR executes discovery with explicit registration state.
+func mustGetOIDCDiscoveryResponseWithDCR(t *testing.T, issuer string, enabled bool) map[string]any {
 	t.Helper()
 
-	cfg := &mockOIDCCfg{issuer: issuer, signingKey: secret.New(generateTestKey())}
+	cfg := &mockOIDCCfg{issuer: issuer, signingKey: secret.New(generateTestKey()), dynamicRegistration: enabled}
 
 	db, _ := redismock.NewClientMock()
 	rClient := rediscli.NewTestClient(db)
@@ -808,6 +847,33 @@ func TestOIDCHandler_Register_DeviceVerifyLanguageRoute(t *testing.T) {
 	assert.True(t, hasRoute(http.MethodGet, "/.well-known/openid-configuration"))
 }
 
+func TestOIDCHandlerRegisterMountsRegistrationEndpointOnlyWhenEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	for _, test := range []struct {
+		name    string
+		enabled bool
+	}{
+		{name: "disabled", enabled: false},
+		{name: "enabled", enabled: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &mockOIDCCfg{
+				issuer:              "https://auth.example.com",
+				signingKey:          secret.New(generateTestKey()),
+				dynamicRegistration: test.enabled,
+			}
+			router := newOIDCTestRouter(t, cfg, false)
+
+			present := slices.ContainsFunc(router.Routes(), func(route gin.RouteInfo) bool {
+				return route.Method == http.MethodPost && route.Path == "/oidc/register"
+			})
+			assert.Equal(t, test.enabled, present)
+		})
+	}
+}
+
 func TestOIDCHandler_Register_TokenGETRouteConfigurable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -909,6 +975,7 @@ func TestOIDCHandler_Logout(t *testing.T) {
 
 	t.Run("Logout without session redirects to logged_out", fixture.assertNoSessionLogout)
 	t.Run("Logout with valid post_logout_redirect_uri", fixture.assertPostLogoutRedirect)
+	t.Run("Logout stops when epoch revocation fails", fixture.assertLogoutRevocationFailure)
 	t.Run("Logout with client in session and LogoutRedirectURI", fixture.assertSessionClientLogoutRedirect)
 	t.Run("Logout with front-channel task renders orchestration page", fixture.assertFrontChannelLogoutPage)
 }
@@ -1067,13 +1134,25 @@ func (f *oidcLogoutTest) assertNoSessionLogout(t *testing.T) {
 // assertPostLogoutRedirect verifies a valid post_logout_redirect_uri redirect.
 func (f *oidcLogoutTest) assertPostLogoutRedirect(t *testing.T) {
 	idToken := f.issueLogoutIDToken("test-client", "user123")
-	f.mock.ExpectSMembers("test:oidc:user_refresh_tokens:user123").SetVal([]string{})
+	f.expectUserTokenFlush("user123")
 
 	logoutURL := "/logout?id_token_hint=" + idToken + "&post_logout_redirect_uri=https://app.com/post-logout"
 	w := f.serveLogout(logoutURL, make(map[string]any), "")
 
 	assert.Equal(t, http.StatusFound, w.Code)
 	assert.Equal(t, "https://app.com/post-logout", w.Header().Get("Location"))
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertLogoutRevocationFailure verifies that logout does not continue after the epoch boundary fails.
+func (f *oidcLogoutTest) assertLogoutRevocationFailure(t *testing.T) {
+	idToken := f.issueLogoutIDToken("test-client", "user-failure")
+	f.mock.ExpectIncr("test:oidc:dcr:{dynamic}:dynamic_user_epoch:user-failure").SetErr(fmt.Errorf("redis unavailable"))
+
+	w := f.serveLogout("/logout?id_token_hint="+idToken, make(map[string]any), "")
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Empty(t, w.Header().Get("Location"))
 	assert.NoError(t, f.mock.ExpectationsWereMet())
 }
 
@@ -1100,7 +1179,7 @@ func (f *oidcLogoutTest) assertFrontChannelLogoutPage(t *testing.T) {
 	})
 
 	idToken := f.issueLogoutIDToken("frontchannel-client", "user-front")
-	f.mock.ExpectSMembers("test:oidc:user_refresh_tokens:user-front").SetVal([]string{})
+	f.expectUserTokenFlush("user-front")
 
 	target := "/logout?id_token_hint=" + url.QueryEscape(idToken) +
 		"&post_logout_redirect_uri=" + url.QueryEscape("https://app.com/post-logout") +
@@ -1114,6 +1193,17 @@ func (f *oidcLogoutTest) assertFrontChannelLogoutPage(t *testing.T) {
 	assert.Contains(t, body, "frontchannel.example.com/logout")
 	assert.Contains(t, body, "\"protocol\":\"oidc\"")
 	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// expectUserTokenFlush configures the epoch-first logout revocation sequence.
+func (f *oidcLogoutTest) expectUserTokenFlush(userID string) {
+	dynamicPrefix := "test:oidc:dcr:{dynamic}:"
+	f.mock.ExpectIncr(dynamicPrefix + "dynamic_user_epoch:" + userID).SetVal(1)
+	f.mock.ExpectSMembers("test:oidc:user_access_tokens:" + userID).SetVal(nil)
+	f.mock.ExpectSMembers(dynamicPrefix + "user_access_tokens:" + userID).SetVal(nil)
+	f.mock.ExpectSMembers("test:oidc:user_refresh_tokens:" + userID).SetVal(nil)
+	f.mock.ExpectSMembers(dynamicPrefix + "user_refresh_tokens:" + userID).SetVal(nil)
+	f.mock.ExpectDel(dynamicPrefix + "user_refresh_tokens:" + userID).SetVal(0)
 }
 
 func TestBuildSAMLFrontChannelLogoutTasks(t *testing.T) {
@@ -2267,8 +2357,7 @@ func TestOIDCHandler_PrivateKeyJWTTokenReplayProtection(t *testing.T) {
 	replayKey := expectedOIDCClientAssertionReplayKey(fixture.client.ClientID, audience, jwtID)
 
 	expectOIDCClientAssertionReplayReservation(t, fixture.mock, replayKey, true)
-	fixture.mock.ExpectGet("test:oidc:code:token-code-1").SetVal(fixture.authorizationCodeSessionJSON(t))
-	fixture.mock.ExpectDel("test:oidc:code:token-code-1").SetVal(1)
+	fixture.mock.ExpectGetDel("test:oidc:code:token-code-1").SetVal(fixture.authorizationCodeSessionJSON(t))
 
 	first := fixture.postPrivateKeyJWTToken(t, "token-code-1", assertion)
 	assert.Equal(t, http.StatusOK, first.Code)
@@ -2320,8 +2409,7 @@ func TestOIDCHandler_PrivateKeyJWTReplayScopeIncludesEndpointAudience(t *testing
 		expectedOIDCClientAssertionReplayKey(fixture.client.ClientID, tokenAudience, jwtID),
 		true,
 	)
-	fixture.mock.ExpectGet("test:oidc:code:audience-code").SetVal(fixture.authorizationCodeSessionJSON(t))
-	fixture.mock.ExpectDel("test:oidc:code:audience-code").SetVal(1)
+	fixture.mock.ExpectGetDel("test:oidc:code:audience-code").SetVal(fixture.authorizationCodeSessionJSON(t))
 
 	tokenResponse := fixture.postPrivateKeyJWTToken(t, "audience-code", tokenAssertion)
 	assert.Equal(t, http.StatusOK, tokenResponse.Code)
@@ -2593,8 +2681,7 @@ func mustMarshalOIDCSession(t *testing.T, session *idp.OIDCSession) string {
 func (f *oidcTokenTest) expectAuthorizationCodeSession(t *testing.T, code string, session *idp.OIDCSession) {
 	t.Helper()
 
-	f.mock.ExpectGet("test:oidc:code:" + code).SetVal(mustMarshalOIDCSession(t, session))
-	f.mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
+	f.mock.ExpectGetDel("test:oidc:code:" + code).SetVal(mustMarshalOIDCSession(t, session))
 }
 
 // expectRefreshTokenSession registers one refresh-token lookup expectation.

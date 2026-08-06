@@ -103,6 +103,36 @@ func TestUnknownConfigParameters_ClientCustomScopes(t *testing.T) {
 	}
 }
 
+func TestUnknownConfigParameters_OIDCDynamicClientRegistration(t *testing.T) {
+	settings := map[string]any{
+		"identity": map[string]any{
+			"oidc": map[string]any{
+				"dynamic_client_registration": map[string]any{
+					"enabled":      true,
+					"unknown_leaf": true,
+					"limits": map[string]any{
+						"unknown_limit": 1,
+					},
+				},
+			},
+		},
+	}
+
+	got, err := unknownConfigParameters(settings)
+	if err != nil {
+		t.Fatalf("unknownConfigParameters() error = %v", err)
+	}
+
+	want := []string{
+		"identity.oidc.dynamic_client_registration.limits.unknown_limit",
+		"identity.oidc.dynamic_client_registration.unknown_leaf",
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unknownConfigParameters() = %v, want %v", got, want)
+	}
+}
+
 func TestUnknownConfigParameters_CyclicMap(t *testing.T) {
 	cycle := map[string]any{}
 	cycle["self"] = cycle

@@ -70,6 +70,100 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OIDCDiscovery"
+  /oidc/register:
+    post:
+      tags:
+        - OIDC
+      operationId: registerOIDCDynamicClient
+      summary: Register a restricted public native OIDC client.
+      description: Implements the mail-client-v1 RFC 7591 profile with RFC 8252 literal loopback redirects and PKCE S256.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DynamicClientRegistrationRequest"
+      responses:
+        "201":
+          description: Dynamic client created.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/DCRCacheControl"
+            Pragma:
+              $ref: "#/components/headers/DCRPragma"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DynamicClientRegistrationResponse"
+        "400":
+          description: Invalid client metadata, redirect URI, or unapproved software statement.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/DCRCacheControl"
+            Pragma:
+              $ref: "#/components/headers/DCRPragma"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DynamicClientRegistrationError"
+        "413":
+          description: Registration request body exceeds the configured limit.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/DCRCacheControl"
+            Pragma:
+              $ref: "#/components/headers/DCRPragma"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPError"
+        "415":
+          description: Registration request does not use application/json.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/DCRCacheControl"
+            Pragma:
+              $ref: "#/components/headers/DCRPragma"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPError"
+        "429":
+          description: Registration rate limit or active-client quota exceeded.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/DCRCacheControl"
+            Pragma:
+              $ref: "#/components/headers/DCRPragma"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPError"
+        "503":
+          description: Authoritative dynamic-client state is unavailable.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/DCRCacheControl"
+            Pragma:
+              $ref: "#/components/headers/DCRPragma"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPError"
+        "405":
+          description: The registration endpoint only accepts POST.
+          headers:
+            Allow:
+              schema:
+                type: string
+                const: POST
+            Cache-Control:
+              $ref: "#/components/headers/DCRCacheControl"
+            Pragma:
+              $ref: "#/components/headers/DCRPragma"
+        "404":
+          description: Dynamic client registration is disabled and the route is absent.
   /oidc/authorize:
     get:
       tags:
@@ -126,6 +220,7 @@ paths:
       security:
         - clientBasic: []
         - clientPost: []
+        - {}
       requestBody:
         required: true
         content:
@@ -570,6 +665,15 @@ paths:
         "200":
           $ref: "#/components/responses/HTMLPage"
 components:
+  headers:
+    DCRCacheControl:
+      schema:
+        type: string
+        const: no-store
+    DCRPragma:
+      schema:
+        type: string
+        const: no-cache
   securitySchemes:
     bearerToken:
       type: http
@@ -734,6 +838,9 @@ components:
         introspection_endpoint:
           type: string
           format: uri
+        registration_endpoint:
+          type: string
+          format: uri
         jwks_uri:
           type: string
           format: uri
@@ -754,6 +861,130 @@ components:
           items:
             type: string
       additionalProperties: true
+    DynamicClientRegistrationRequest:
+      type: object
+      required:
+        - redirect_uris
+      properties:
+        redirect_uris:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            format: uri
+        client_name:
+          type: string
+          maxLength: 1024
+        scope:
+          type: string
+        grant_types:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - authorization_code
+              - refresh_token
+        response_types:
+          type: array
+          items:
+            type: string
+            const: code
+        token_endpoint_auth_method:
+          type: string
+          const: none
+        application_type:
+          type: string
+          const: native
+        subject_type:
+          type: string
+          const: public
+        id_token_signed_response_alg:
+          type: string
+          const: RS256
+        software_id:
+          type: string
+        software_version:
+          type: string
+      additionalProperties: true
+    DynamicClientRegistrationResponse:
+      type: object
+      required:
+        - client_id
+        - client_id_issued_at
+        - redirect_uris
+        - grant_types
+        - response_types
+        - scope
+        - token_endpoint_auth_method
+        - application_type
+        - subject_type
+        - id_token_signed_response_alg
+      properties:
+        client_id:
+          type: string
+          pattern: '^dcr_[A-Za-z0-9_-]{43,}$'
+        client_id_issued_at:
+          type: integer
+          format: int64
+        redirect_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+        client_name:
+          type: string
+        scope:
+          type: string
+        grant_types:
+          type: array
+          items:
+            type: string
+        response_types:
+          type: array
+          items:
+            type: string
+        token_endpoint_auth_method:
+          type: string
+          const: none
+        application_type:
+          type: string
+          const: native
+        subject_type:
+          type: string
+          const: public
+        id_token_signed_response_alg:
+          type: string
+          const: RS256
+        software_id:
+          type: string
+        software_version:
+          type: string
+      additionalProperties: false
+    DynamicClientRegistrationError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_redirect_uri
+            - invalid_client_metadata
+            - unapproved_software_statement
+        error_description:
+          type: string
+      additionalProperties: false
+    HTTPError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+      additionalProperties: false
     TokenRequest:
       type: object
       required:

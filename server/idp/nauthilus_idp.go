@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/idp/dcr"
 	"github.com/croessner/nauthilus/v3/server/idp/oidckeys"
 	"github.com/croessner/nauthilus/v3/server/idp/signing"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
@@ -36,17 +37,19 @@ import (
 	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // NauthilusIDP implements the IdentityProvider interface using Nauthilus core.
 type NauthilusIDP struct {
-	deps     *deps.Deps
-	storage  *RedisTokenStorage
-	tracer   monittrace.Tracer
-	keyMgr   *oidckeys.Manager
-	tokenGen TokenGenerator
+	deps           *deps.Deps
+	storage        *RedisTokenStorage
+	tracer         monittrace.Tracer
+	keyMgr         *oidckeys.Manager
+	tokenGen       TokenGenerator
+	dynamicClients *dcr.Repository
 }
 
 var (
@@ -58,12 +61,16 @@ var (
 
 // NewNauthilusIDP creates a new instance of NauthilusIDP.
 func NewNauthilusIDP(d *deps.Deps) *NauthilusIDP {
+	prefix := d.Cfg.GetServer().GetRedis().GetPrefix()
+	dynamicPolicy := d.Cfg.GetIDP().OIDC.DynamicClientRegistration
+
 	return &NauthilusIDP{
-		deps:     d,
-		storage:  NewRedisTokenStorageWithConfig(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix(), d.Cfg),
-		tracer:   monittrace.New("nauthilus/idp"),
-		keyMgr:   oidckeys.NewManager(d),
-		tokenGen: NewDefaultTokenGenerator(),
+		deps:           d,
+		storage:        NewRedisTokenStorageWithConfig(d.Redis, prefix, d.Cfg, dcr.NewSlogAuditor(d.Logger)),
+		tracer:         monittrace.New("nauthilus/idp"),
+		keyMgr:         oidckeys.NewManager(d),
+		tokenGen:       NewDefaultTokenGenerator(),
+		dynamicClients: dcr.NewRepository(d.Redis, prefix, dynamicPolicy.GetLifecycle(), dcr.NewSlogAuditor(d.Logger)),
 	}
 }
 
@@ -172,13 +179,59 @@ func oidcClientID(client *config.OIDCClient) string {
 // FindClient returns an OIDC client by its ID.
 func (n *NauthilusIDP) FindClient(clientID string) (*config.OIDCClient, bool) {
 	clients := n.deps.Cfg.GetIDP().OIDC.Clients
-	for i := range clients {
-		if clients[i].ClientID == clientID {
-			return &clients[i], true
+	for index := range clients {
+		if clients[index].ClientID == clientID {
+			return &clients[index], true
 		}
 	}
 
 	return nil, false
+}
+
+// ResolveClient returns a static client or authoritatively resolves a dynamic client.
+func (n *NauthilusIDP) ResolveClient(ctx context.Context, clientID string) (*config.OIDCClient, error) {
+	if client, ok := n.FindClient(clientID); ok {
+		return client, nil
+	}
+
+	registration := n.deps.Cfg.GetIDP().OIDC.DynamicClientRegistration
+	if !registration.Enabled || !strings.HasPrefix(clientID, dcr.ClientIDPrefix) {
+		return nil, dcr.ErrNotFound
+	}
+
+	record, err := n.dynamicClients.Get(ctx, clientID)
+	if err != nil {
+		return nil, err
+	}
+
+	return dcr.NewRuntimePolicy(registration).Resolve(record)
+}
+
+// TouchDynamicClient records activity after successful protocol validation.
+func (n *NauthilusIDP) TouchDynamicClient(ctx context.Context, client *config.OIDCClient, operation string) error {
+	if client == nil || !client.Dynamic {
+		return nil
+	}
+
+	if err := n.dynamicClients.Touch(ctx, client.ClientID); err != nil {
+		n.auditDynamicClient(ctx, operation, "failed", "touch_failed", client.ClientID)
+
+		return err
+	}
+
+	n.auditDynamicClient(ctx, operation, "success", "validated_use", client.ClientID)
+
+	return nil
+}
+
+// auditDynamicClient records bounded profile use without user or redirect metadata.
+func (n *NauthilusIDP) auditDynamicClient(ctx context.Context, operation string, outcome string, reason string, clientID string) {
+	dcr.NewSlogAuditor(n.deps.Logger).Record(ctx, dcr.AuditEvent{
+		Operation: operation,
+		Outcome:   outcome,
+		Reason:    reason,
+		ClientID:  clientID,
+	})
 }
 
 // FindSAMLServiceProvider returns a SAML service provider by its entity ID.
@@ -209,6 +262,10 @@ func (n *NauthilusIDP) ValidateRedirectURI(client *config.OIDCClient, redirectUR
 		return false
 	}
 
+	if client.Dynamic {
+		return dcr.MatchRedirectURI(client.RedirectURIs, redirectURI)
+	}
+
 	return validateRedirectURIAgainstAllowList(client.RedirectURIs, redirectURI)
 }
 
@@ -225,12 +282,43 @@ func (n *NauthilusIDP) ValidatePostLogoutRedirectURI(client *config.OIDCClient, 
 // Per OIDC Core 1.0 §3.1.2.1, an ID token is only issued when the "openid" scope is present.
 // Without "openid", this behaves as a pure OAuth 2.0 token response (access_token only).
 func (n *NauthilusIDP) IssueTokens(ctx context.Context, session *OIDCSession) (string, string, string, time.Duration, error) {
-	client, ok := n.FindClient(session.ClientID)
-	if !ok {
+	client, err := n.ResolveClient(ctx, session.ClientID)
+	if err != nil {
 		return "", "", "", 0, fmt.Errorf("client not found")
 	}
 
+	if client.Dynamic {
+		if err := n.validateDynamicSessionPolicy(client, session); err != nil {
+			return "", "", "", 0, err
+		}
+
+		epoch, err := n.storage.DynamicUserEpoch(ctx, session.UserID)
+		if err != nil {
+			return "", "", "", 0, fmt.Errorf("load dynamic token revocation epoch: %w", err)
+		}
+
+		session.DynamicUserEpoch = epoch
+	}
+
 	return n.issueTokensForClient(ctx, client, session, "")
+}
+
+// validateDynamicSessionPolicy rejects stale sessions after operator-policy narrowing.
+func (n *NauthilusIDP) validateDynamicSessionPolicy(client *config.OIDCClient, session *OIDCSession) error {
+	if client == nil || session == nil || !client.Dynamic {
+		return nil
+	}
+
+	filteredScopes := n.FilterScopes(client, session.Scopes)
+	if !slices.Equal(filteredScopes, session.Scopes) || client.RequiredMFALevel > session.RequiredMFALevel {
+		return fmt.Errorf("dynamic client policy changed; authorization must restart")
+	}
+
+	if slices.Contains(session.Scopes, definitions.ScopeOfflineAccess) && !client.SupportsGrantType(dcr.GrantRefreshToken) {
+		return fmt.Errorf("dynamic client refresh policy changed; authorization must restart")
+	}
+
+	return nil
 }
 
 func (n *NauthilusIDP) issueTokensForClient(
@@ -248,6 +336,17 @@ func (n *NauthilusIDP) issueTokensForClient(
 	hasOfflineAccess := slices.Contains(session.Scopes, definitions.ScopeOfflineAccess)
 
 	if hasOfflineAccess {
+		if client.Dynamic {
+			refreshTokenString, err = n.storeInitialDynamicRefreshToken(ctx, client, session, accessTokenString)
+			if err != nil {
+				_ = n.storage.DeleteAccessToken(ctx, accessTokenString)
+
+				return "", "", "", 0, err
+			}
+
+			return idTokenString, accessTokenString, refreshTokenString, accessTokenLifetime, nil
+		}
+
 		refreshTokenString, err = n.storeRefreshTokenSession(ctx, client, persistedRefreshToken, session, accessTokenString)
 		if err != nil {
 			return "", "", "", 0, err
@@ -259,6 +358,28 @@ func (n *NauthilusIDP) issueTokensForClient(
 	}
 
 	return idTokenString, accessTokenString, refreshTokenString, accessTokenLifetime, nil
+}
+
+// storeInitialDynamicRefreshToken creates the first rotating token and family pointer.
+func (n *NauthilusIDP) storeInitialDynamicRefreshToken(ctx context.Context, client *config.OIDCClient, session *OIDCSession, accessToken string) (string, error) {
+	refreshToken, err := n.tokenGen.GenerateToken(definitions.OIDCTokenPrefixRefreshToken)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate refresh token: %w", err)
+	}
+
+	familyID, err := n.tokenGen.GenerateToken("dcr_family_")
+	if err != nil {
+		return "", fmt.Errorf("failed to generate refresh family: %w", err)
+	}
+
+	session.AccessToken = accessToken
+	session.RefreshFamilyID = familyID
+
+	if err := n.storage.StoreInitialDynamicRefreshToken(ctx, refreshToken, session, client.RefreshTokenLifetime); err != nil {
+		return "", fmt.Errorf("failed to store dynamic refresh token: %w", err)
+	}
+
+	return refreshToken, nil
 }
 
 func (n *NauthilusIDP) issueIDAndAccessTokens(
@@ -458,6 +579,10 @@ func (n *NauthilusIDP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 	)
 	defer sp.End()
 
+	if strings.HasPrefix(clientID, dcr.ClientIDPrefix) {
+		return n.exchangeDynamicRefreshToken(ctx, refreshToken, clientID)
+	}
+
 	session, err := n.storage.GetRefreshToken(ctx, refreshToken)
 	if err != nil {
 		return nil, "", "", "", 0, fmt.Errorf("%w", ErrInvalidRefreshToken)
@@ -467,8 +592,8 @@ func (n *NauthilusIDP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 		return nil, "", "", "", 0, fmt.Errorf("%w", ErrRefreshTokenClientMismatch)
 	}
 
-	client, ok := n.FindClient(clientID)
-	if !ok {
+	client, resolveErr := n.ResolveClient(ctx, clientID)
+	if resolveErr != nil {
 		return nil, "", "", "", 0, fmt.Errorf("client not found")
 	}
 
@@ -493,6 +618,66 @@ func (n *NauthilusIDP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 	idToken, accessToken, newRefreshToken, expiresIn, issueErr := n.issueTokensForClient(ctx, client, session, persistedRefreshToken)
 	if issueErr != nil {
 		return nil, "", "", "", 0, issueErr
+	}
+
+	return session, idToken, accessToken, newRefreshToken, expiresIn, nil
+}
+
+// exchangeDynamicRefreshToken rotates a public-native refresh family atomically.
+func (n *NauthilusIDP) exchangeDynamicRefreshToken(ctx context.Context, refreshToken string, clientID string) (*OIDCSession, string, string, string, time.Duration, error) { //nolint:gocyclo
+	session, err := n.storage.GetDynamicRefreshToken(ctx, refreshToken)
+	if err != nil {
+		if errors.Is(err, redis.Nil) || errors.Is(err, ErrDynamicRefreshTokenReuse) {
+			return nil, "", "", "", 0, fmt.Errorf("%w: %w", ErrInvalidRefreshToken, err)
+		}
+
+		return nil, "", "", "", 0, err
+	}
+
+	if session.ClientID != clientID {
+		return nil, "", "", "", 0, fmt.Errorf("%w", ErrRefreshTokenClientMismatch)
+	}
+
+	client, err := n.ResolveClient(ctx, clientID)
+	if err != nil || !client.Dynamic || !client.SupportsGrantType(dcr.GrantRefreshToken) || session.RefreshFamilyID == "" {
+		return nil, "", "", "", 0, fmt.Errorf("client not found")
+	}
+
+	if err := n.validateDynamicSessionPolicy(client, session); err != nil {
+		return nil, "", "", "", 0, fmt.Errorf("%w: %v", ErrInvalidRefreshToken, err)
+	}
+
+	n.invalidateOldAccessToken(ctx, session, clientID)
+	session.AccessToken = ""
+
+	idToken, accessToken, expiresIn, err := n.issueIDAndAccessTokens(ctx, client, session)
+	if err != nil {
+		return nil, "", "", "", 0, err
+	}
+
+	newRefreshToken, err := n.tokenGen.GenerateToken(definitions.OIDCTokenPrefixRefreshToken)
+	if err != nil {
+		_ = n.storage.DeleteAccessToken(ctx, accessToken)
+
+		return nil, "", "", "", 0, err
+	}
+
+	session.AccessToken = accessToken
+	if err := n.storage.RotateDynamicRefreshToken(ctx, refreshToken, newRefreshToken, session, client.RefreshTokenLifetime); err != nil {
+		_ = n.storage.DeleteAccessToken(ctx, accessToken)
+
+		if errors.Is(err, redis.Nil) || errors.Is(err, ErrDynamicRefreshTokenReuse) {
+			return nil, "", "", "", 0, fmt.Errorf("%w: %w", ErrInvalidRefreshToken, err)
+		}
+
+		return nil, "", "", "", 0, err
+	}
+
+	if err := n.TouchDynamicClient(ctx, client, "refresh_exchange"); err != nil {
+		_ = n.storage.DeleteAccessToken(ctx, accessToken)
+		_ = n.storage.DeleteDynamicRefreshToken(ctx, newRefreshToken)
+
+		return nil, "", "", "", 0, err
 	}
 
 	return session, idToken, accessToken, newRefreshToken, expiresIn, nil
@@ -695,7 +880,7 @@ func (n *NauthilusIDP) opaqueTokenClaims(
 ) (jwt.MapClaims, error) {
 	lookupCtx, lookupSpan := n.tracer.Start(ctx, spanName)
 
-	session, err := n.storage.GetAccessToken(lookupCtx, tokenString)
+	session, err := n.storage.GetAccessTokenAuthoritative(lookupCtx, tokenString)
 	if err != nil {
 		lookupSpan.RecordError(err)
 		parentSpan.RecordError(err)
@@ -704,6 +889,25 @@ func (n *NauthilusIDP) opaqueTokenClaims(
 	lookupSpan.End()
 
 	if err == nil && session != nil {
+		if strings.HasPrefix(session.ClientID, dcr.ClientIDPrefix) {
+			client, resolveErr := n.ResolveClient(ctx, session.ClientID)
+			if resolveErr != nil {
+				parentSpan.RecordError(resolveErr)
+
+				return nil, fmt.Errorf("dynamic client is not active: %w", resolveErr)
+			}
+
+			if policyErr := n.validateDynamicSessionPolicy(client, session); policyErr != nil {
+				parentSpan.RecordError(policyErr)
+
+				return nil, policyErr
+			}
+
+			if lifetimeErr := validateDynamicAccessTokenLifetime(session, client.AccessTokenLifetime, time.Now()); lifetimeErr != nil {
+				return nil, lifetimeErr
+			}
+		}
+
 		if validateSession != nil {
 			if err := validateSession(session); err != nil {
 				parentSpan.RecordError(err)
@@ -718,6 +922,21 @@ func (n *NauthilusIDP) opaqueTokenClaims(
 	}
 
 	return nil, fmt.Errorf("invalid or expired opaque token")
+}
+
+// validateDynamicAccessTokenLifetime fail-closes missing, corrupt, narrowed, or expired lifetime metadata.
+func validateDynamicAccessTokenLifetime(session *OIDCSession, currentLifetime time.Duration, now time.Time) error {
+	if session == nil || session.AccessTokenIssuedAt.IsZero() || session.AccessTokenExpiresAt.IsZero() {
+		return fmt.Errorf("dynamic access token has missing lifetime metadata")
+	}
+
+	currentExpiryCeiling := session.AccessTokenIssuedAt.Add(currentLifetime)
+	if !session.AccessTokenExpiresAt.After(session.AccessTokenIssuedAt) || session.AccessTokenExpiresAt.After(currentExpiryCeiling) ||
+		!now.Before(session.AccessTokenExpiresAt) {
+		return fmt.Errorf("dynamic access token has invalid lifetime metadata")
+	}
+
+	return nil
 }
 
 // resolveJWTPublicKey returns the public key for verifying a JWT based on its algorithm and kid header.

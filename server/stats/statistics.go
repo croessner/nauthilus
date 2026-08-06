@@ -351,6 +351,11 @@ type Metrics interface {
 	// GetIdpMfaOperationsTotal tracks the total number of IDP MFA operations.
 	GetIdpMfaOperationsTotal() *prometheus.CounterVec
 
+	// GetIdpDynamicClientRegistrationsTotal tracks bounded dynamic-registration outcomes.
+	GetIdpDynamicClientRegistrationsTotal() *prometheus.CounterVec
+	// GetIdpDynamicClientRegistrationDurationSeconds tracks DCR request latency without unbounded labels.
+	GetIdpDynamicClientRegistrationDurationSeconds() prometheus.Histogram
+
 	// GetAuthFSMTransitionsTotal tracks auth FSM transitions labeled by from/event/to.
 	GetAuthFSMTransitionsTotal() *prometheus.CounterVec
 
@@ -365,69 +370,71 @@ type Metrics interface {
 }
 
 type metricsImpl struct {
-	instanceInfo               *prometheus.GaugeVec
-	currentRequests            prometheus.Gauge
-	httpRequestsTotal          *prometheus.CounterVec
-	httpResponseTimeSeconds    *prometheus.HistogramVec
-	grpcRequestsTotal          *prometheus.CounterVec
-	grpcResponseTimeSeconds    *prometheus.HistogramVec
-	authenticationResponseTime *prometheus.HistogramVec
-	loginsCounter              *prometheus.CounterVec
-	redisReadCounter           prometheus.Counter
-	redisWriteCounter          prometheus.Counter
-	functionDuration           *prometheus.HistogramVec
-	rblDuration                *prometheus.HistogramVec
-	cacheHits                  prometheus.Counter
-	cacheMisses                prometheus.Counter
-	redisHits                  *prometheus.CounterVec
-	redisMisses                *prometheus.CounterVec
-	redisTimeouts              *prometheus.CounterVec
-	redisTotalConns            *prometheus.GaugeVec
-	redisIdleConns             *prometheus.GaugeVec
-	redisStaleConns            *prometheus.GaugeVec
-	bruteForceRejected         *prometheus.CounterVec
-	bruteForceHits             *prometheus.CounterVec
-	rejectedProtocols          *prometheus.CounterVec
-	acceptedProtocols          *prometheus.CounterVec
-	backendServerStatus        *prometheus.GaugeVec
-	ldapPoolStatus             *prometheus.GaugeVec
-	ldapOpenConnections        *prometheus.GaugeVec
-	ldapStaleConnections       *prometheus.GaugeVec
-	ldapPoolSize               *prometheus.GaugeVec
-	ldapIdlePoolSize           *prometheus.GaugeVec
-	ldapQueueDepth             *prometheus.GaugeVec
-	ldapQueueWaitSeconds       *prometheus.HistogramVec
-	ldapQueueDroppedTotal      *prometheus.CounterVec
-	ldapBreakerState           *prometheus.GaugeVec
-	ldapTargetHealth           *prometheus.GaugeVec
-	ldapTargetInflight         *prometheus.GaugeVec
-	ldapCacheHitsTotal         *prometheus.CounterVec
-	ldapCacheMissesTotal       *prometheus.CounterVec
-	ldapCacheEntries           *prometheus.GaugeVec
-	ldapCacheEvictionsTotal    *prometheus.CounterVec
-	ldapErrorsTotal            *prometheus.CounterVec
-	ldapRetriesTotal           *prometheus.CounterVec
-	ldapAuthRateLimitedTotal   *prometheus.CounterVec
-	luaQueueDepth              *prometheus.GaugeVec
-	luaQueueWaitSeconds        *prometheus.HistogramVec
-	luaQueueDroppedTotal       *prometheus.CounterVec
-	luaVMInUse                 *prometheus.GaugeVec
-	luaVMReplacedTotal         *prometheus.CounterVec
-	rblRejected                *prometheus.CounterVec
-	genericConnections         *prometheus.GaugeVec
-	bruteForceEvalSeconds      prometheus.Histogram
-	bruteForcePhaseSeconds     *prometheus.HistogramVec
-	bruteForceCacheHitsTotal   *prometheus.CounterVec
-	bruteForceRulesMatchedTot  prometheus.Counter
-	redisRoundtripsTotal       *prometheus.CounterVec
-	idpLoginsTotal             *prometheus.CounterVec
-	idpTokensIssuedTotal       *prometheus.CounterVec
-	idpConsentTotal            *prometheus.CounterVec
-	idpMfaOperationsTotal      *prometheus.CounterVec
-	authFSMTransitionsTotal    *prometheus.CounterVec
-	pluginCallsTotal           *prometheus.CounterVec
-	pluginCallDurationSeconds  *prometheus.HistogramVec
-	postActionPlanDuration     *prometheus.HistogramVec
+	instanceInfo                   *prometheus.GaugeVec
+	currentRequests                prometheus.Gauge
+	httpRequestsTotal              *prometheus.CounterVec
+	httpResponseTimeSeconds        *prometheus.HistogramVec
+	grpcRequestsTotal              *prometheus.CounterVec
+	grpcResponseTimeSeconds        *prometheus.HistogramVec
+	authenticationResponseTime     *prometheus.HistogramVec
+	loginsCounter                  *prometheus.CounterVec
+	redisReadCounter               prometheus.Counter
+	redisWriteCounter              prometheus.Counter
+	functionDuration               *prometheus.HistogramVec
+	rblDuration                    *prometheus.HistogramVec
+	cacheHits                      prometheus.Counter
+	cacheMisses                    prometheus.Counter
+	redisHits                      *prometheus.CounterVec
+	redisMisses                    *prometheus.CounterVec
+	redisTimeouts                  *prometheus.CounterVec
+	redisTotalConns                *prometheus.GaugeVec
+	redisIdleConns                 *prometheus.GaugeVec
+	redisStaleConns                *prometheus.GaugeVec
+	bruteForceRejected             *prometheus.CounterVec
+	bruteForceHits                 *prometheus.CounterVec
+	rejectedProtocols              *prometheus.CounterVec
+	acceptedProtocols              *prometheus.CounterVec
+	backendServerStatus            *prometheus.GaugeVec
+	ldapPoolStatus                 *prometheus.GaugeVec
+	ldapOpenConnections            *prometheus.GaugeVec
+	ldapStaleConnections           *prometheus.GaugeVec
+	ldapPoolSize                   *prometheus.GaugeVec
+	ldapIdlePoolSize               *prometheus.GaugeVec
+	ldapQueueDepth                 *prometheus.GaugeVec
+	ldapQueueWaitSeconds           *prometheus.HistogramVec
+	ldapQueueDroppedTotal          *prometheus.CounterVec
+	ldapBreakerState               *prometheus.GaugeVec
+	ldapTargetHealth               *prometheus.GaugeVec
+	ldapTargetInflight             *prometheus.GaugeVec
+	ldapCacheHitsTotal             *prometheus.CounterVec
+	ldapCacheMissesTotal           *prometheus.CounterVec
+	ldapCacheEntries               *prometheus.GaugeVec
+	ldapCacheEvictionsTotal        *prometheus.CounterVec
+	ldapErrorsTotal                *prometheus.CounterVec
+	ldapRetriesTotal               *prometheus.CounterVec
+	ldapAuthRateLimitedTotal       *prometheus.CounterVec
+	luaQueueDepth                  *prometheus.GaugeVec
+	luaQueueWaitSeconds            *prometheus.HistogramVec
+	luaQueueDroppedTotal           *prometheus.CounterVec
+	luaVMInUse                     *prometheus.GaugeVec
+	luaVMReplacedTotal             *prometheus.CounterVec
+	rblRejected                    *prometheus.CounterVec
+	genericConnections             *prometheus.GaugeVec
+	bruteForceEvalSeconds          prometheus.Histogram
+	bruteForcePhaseSeconds         *prometheus.HistogramVec
+	bruteForceCacheHitsTotal       *prometheus.CounterVec
+	bruteForceRulesMatchedTot      prometheus.Counter
+	redisRoundtripsTotal           *prometheus.CounterVec
+	idpLoginsTotal                 *prometheus.CounterVec
+	idpTokensIssuedTotal           *prometheus.CounterVec
+	idpConsentTotal                *prometheus.CounterVec
+	idpMfaOperationsTotal          *prometheus.CounterVec
+	idpDynamicRegistrations        *prometheus.CounterVec
+	idpDynamicRegistrationDuration prometheus.Histogram
+	authFSMTransitionsTotal        *prometheus.CounterVec
+	pluginCallsTotal               *prometheus.CounterVec
+	pluginCallDurationSeconds      *prometheus.HistogramVec
+	postActionPlanDuration         *prometheus.HistogramVec
 }
 
 // GetInstanceInfo returns the instanceInfo field.
@@ -720,6 +727,16 @@ func (m *metricsImpl) GetIdpMfaOperationsTotal() *prometheus.CounterVec {
 	return m.idpMfaOperationsTotal
 }
 
+// GetIdpDynamicClientRegistrationsTotal returns the bounded DCR outcome counter.
+func (m *metricsImpl) GetIdpDynamicClientRegistrationsTotal() *prometheus.CounterVec {
+	return m.idpDynamicRegistrations
+}
+
+// GetIdpDynamicClientRegistrationDurationSeconds returns the bounded DCR latency histogram.
+func (m *metricsImpl) GetIdpDynamicClientRegistrationDurationSeconds() prometheus.Histogram {
+	return m.idpDynamicRegistrationDuration
+}
+
 // GetAuthFSMTransitionsTotal returns the authFSMTransitionsTotal field.
 func (m *metricsImpl) GetAuthFSMTransitionsTotal() *prometheus.CounterVec {
 	return m.authFSMTransitionsTotal
@@ -887,6 +904,8 @@ func (m *metricsImpl) initIDPMetrics() {
 	m.idpTokensIssuedTotal = newCounterVecMetric("idp_tokens_issued_total", "The total number of IDP tokens issued", metricProtocolLabel, metricClientIDLabel, metricGrantTypeLabel)
 	m.idpConsentTotal = newCounterVecMetric("idp_consent_total", "The total number of IDP consent operations", metricClientIDLabel, metricStatusLabel)
 	m.idpMfaOperationsTotal = newCounterVecMetric("idp_mfa_operations_total", "The total number of IDP MFA operations", metricTypeLabel, metricMethodLabel, metricStatusLabel)
+	m.idpDynamicRegistrations = newCounterVecMetric("idp_dynamic_client_registrations_total", "The total number of dynamic OIDC client registration outcomes", metricOutcomeLabel, metricCodeLabel)
+	m.idpDynamicRegistrationDuration = newHistogramMetric("idp_dynamic_client_registration_duration_seconds", "Duration of dynamic OIDC client registration requests", prometheus.ExponentialBuckets(0.001, 1.7, 15))
 	m.authFSMTransitionsTotal = newCounterVecMetric("auth_fsm_transitions_total", "Total number of auth FSM transitions", metricFromLabel, metricEventLabel, metricToLabel)
 }
 

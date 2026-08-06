@@ -17,7 +17,10 @@
 package security
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/croessner/nauthilus/v3/server/secret"
@@ -29,6 +32,28 @@ type Manager struct {
 	secret           secret.Value
 	allowEmptySecret bool
 	allowPlaintext   bool
+}
+
+// IndexDigest returns a deterministic non-reversible reference for sensitive index values.
+func (m *Manager) IndexDigest(namespace string, value string) string {
+	var digest []byte
+
+	m.secret.WithBytes(func(secretBytes []byte) {
+		if len(secretBytes) == 0 {
+			sum := sha256.Sum256([]byte(namespace + "\x00" + value))
+			digest = sum[:]
+
+			return
+		}
+
+		mac := hmac.New(sha256.New, secretBytes)
+		_, _ = mac.Write([]byte(namespace))
+		_, _ = mac.Write([]byte{0})
+		_, _ = mac.Write([]byte(value))
+		digest = mac.Sum(nil)
+	})
+
+	return hex.EncodeToString(digest)
 }
 
 // Option configures the behavior of the Manager.

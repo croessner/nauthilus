@@ -17,6 +17,8 @@ package v1
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -90,6 +92,7 @@ func TestOIDCSessionsAPI_ListSessionsSanitizesTokenKeys(t *testing.T) {
 	}
 
 	mock.ExpectSMembers("test:oidc:user_access_tokens:" + userID).SetVal([]string{sessionToken})
+	mock.ExpectSMembers("test:oidc:dcr:{dynamic}:user_access_tokens:" + userID).SetVal(nil)
 	mock.ExpectGet("test:oidc:access_token:" + sessionToken).SetVal(string(sessionData))
 
 	response := httptest.NewRecorder()
@@ -130,12 +133,10 @@ func TestOIDCSessionsAPI_DeleteAllRejectsWrongScopeBeforeStorage(t *testing.T) {
 	assert.Equal(t, 0, storage.calls)
 }
 
-func TestOIDCSessionsAPI_DeleteSessionRejectsWrongUserToken(t *testing.T) {
+func TestOIDCSessionsAPI_DeleteSessionDoesNotCrossUserBoundary(t *testing.T) {
 	const (
-		pathUserID    = "alice-id"
-		tokenOwnerID  = "bob-id"
-		sessionToken  = "opaque-session-reference"
-		accessKeyName = "test:oidc:access_token:" + sessionToken
+		pathUserID   = "alice-id"
+		sessionToken = "opaque-session-reference"
 	)
 
 	storage, mock := newOIDCSessionsRedisStorage(t)
@@ -145,20 +146,19 @@ func TestOIDCSessionsAPI_DeleteSessionRejectsWrongUserToken(t *testing.T) {
 		definitions.ScopeSecurity,
 	))
 
-	sessionData, err := json.Marshal(&idp.OIDCSession{UserID: tokenOwnerID})
-	if err != nil {
-		t.Fatalf("marshal OIDC session: %v", err)
-	}
+	managementIDSum := sha256.Sum256([]byte(sessionToken))
+	managementID := hex.EncodeToString(managementIDSum[:])
 
-	mock.ExpectGet(accessKeyName).SetVal(string(sessionData))
+	mock.ExpectSMembers("test:oidc:user_access_tokens:" + pathUserID).SetVal(nil)
+	mock.ExpectSMembers("test:oidc:dcr:{dynamic}:user_access_tokens:" + pathUserID).SetVal(nil)
 
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodDelete, "/api/v1/oidc/sessions/"+pathUserID+"/"+sessionToken, nil)
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/oidc/sessions/"+pathUserID+"/"+managementID, nil)
 	request.Header.Set("Authorization", "Bearer management-token")
 
 	router.ServeHTTP(response, request)
 
-	assert.Equal(t, http.StatusForbidden, response.Code)
+	assert.Equal(t, http.StatusNotFound, response.Code)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -177,13 +177,7 @@ func (s *oidcSessionsStorageSpy) ListUserSessions(context.Context, string) (map[
 	return map[string]*idp.OIDCSession{}, nil
 }
 
-func (s *oidcSessionsStorageSpy) GetAccessToken(context.Context, string) (*idp.OIDCSession, error) {
-	s.calls++
-
-	return nil, nil
-}
-
-func (s *oidcSessionsStorageSpy) DeleteAccessToken(context.Context, string) error {
+func (s *oidcSessionsStorageSpy) DeleteUserSession(context.Context, string, string) error {
 	s.calls++
 
 	return nil

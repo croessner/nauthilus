@@ -476,35 +476,36 @@ func (w *WebAuthn) GetUserVerification() string {
 
 // OIDCConfig represents the configuration for OpenID Connect.
 type OIDCConfig struct {
-	Enabled                            bool                `mapstructure:"enabled"`
-	Issuer                             string              `mapstructure:"issuer" validate:"required_if=Enabled true"`
-	SigningKeys                        []OIDCKey           `mapstructure:"signing_keys"`
-	AutoKeyRotation                    bool                `mapstructure:"auto_key_rotation"`
-	KeyRotationInterval                time.Duration       `mapstructure:"key_rotation_interval"`
-	KeyMaxAge                          time.Duration       `mapstructure:"key_max_age"`
-	Clients                            []OIDCClient        `mapstructure:"clients"`
-	CustomScopes                       []Oauth2CustomScope `mapstructure:"custom_scopes" validate:"omitempty,dive"`
-	ScopesSupported                    []string            `mapstructure:"scopes_supported"`
-	ResponseTypesSupported             []string            `mapstructure:"response_types_supported"`
-	SubjectTypesSupported              []string            `mapstructure:"subject_types_supported"`
-	IDTokenSigningAlgValuesSupported   []string            `mapstructure:"id_token_signing_alg_values_supported"`
-	TokenEndpointAuthMethodsSupported  []string            `mapstructure:"token_endpoint_auth_methods_supported"`
-	CodeChallengeMethodsSupported      []string            `mapstructure:"code_challenge_methods_supported"`
-	ClaimsSupported                    []string            `mapstructure:"claims_supported"`
-	FrontChannelLogoutSupported        *bool               `mapstructure:"front_channel_logout_supported"`
-	FrontChannelLogoutSessionSupported *bool               `mapstructure:"front_channel_logout_session_supported"`
-	BackChannelLogoutSupported         *bool               `mapstructure:"back_channel_logout_supported"`
-	BackChannelLogoutSessionSupported  *bool               `mapstructure:"back_channel_logout_session_supported"`
-	AccessTokenType                    string              `mapstructure:"access_token_type"`
-	DefaultAccessTokenLifetime         time.Duration       `mapstructure:"default_access_token_lifetime"`
-	DefaultRefreshTokenLifetime        time.Duration       `mapstructure:"default_refresh_token_lifetime"`
-	RevokeRefreshToken                 *bool               `mapstructure:"revoke_refresh_token"`
-	ConsentTTL                         time.Duration       `mapstructure:"consent_ttl"`
-	ConsentMode                        string              `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
-	TokenEndpointAllowGET              bool                `mapstructure:"token_endpoint_allow_get"`
-	DeviceCodeExpiry                   time.Duration       `mapstructure:"device_code_expiry"`
-	DeviceCodePollingInterval          int                 `mapstructure:"device_code_polling_interval"`
-	DeviceCodeUserCodeLength           int                 `mapstructure:"device_code_user_code_length"`
+	Enabled                            bool                                `mapstructure:"enabled"`
+	Issuer                             string                              `mapstructure:"issuer" validate:"required_if=Enabled true"`
+	SigningKeys                        []OIDCKey                           `mapstructure:"signing_keys"`
+	AutoKeyRotation                    bool                                `mapstructure:"auto_key_rotation"`
+	KeyRotationInterval                time.Duration                       `mapstructure:"key_rotation_interval"`
+	KeyMaxAge                          time.Duration                       `mapstructure:"key_max_age"`
+	Clients                            []OIDCClient                        `mapstructure:"clients"`
+	CustomScopes                       []Oauth2CustomScope                 `mapstructure:"custom_scopes" validate:"omitempty,dive"`
+	ScopesSupported                    []string                            `mapstructure:"scopes_supported"`
+	ResponseTypesSupported             []string                            `mapstructure:"response_types_supported"`
+	SubjectTypesSupported              []string                            `mapstructure:"subject_types_supported"`
+	IDTokenSigningAlgValuesSupported   []string                            `mapstructure:"id_token_signing_alg_values_supported"`
+	TokenEndpointAuthMethodsSupported  []string                            `mapstructure:"token_endpoint_auth_methods_supported"`
+	CodeChallengeMethodsSupported      []string                            `mapstructure:"code_challenge_methods_supported"`
+	ClaimsSupported                    []string                            `mapstructure:"claims_supported"`
+	FrontChannelLogoutSupported        *bool                               `mapstructure:"front_channel_logout_supported"`
+	FrontChannelLogoutSessionSupported *bool                               `mapstructure:"front_channel_logout_session_supported"`
+	BackChannelLogoutSupported         *bool                               `mapstructure:"back_channel_logout_supported"`
+	BackChannelLogoutSessionSupported  *bool                               `mapstructure:"back_channel_logout_session_supported"`
+	AccessTokenType                    string                              `mapstructure:"access_token_type"`
+	DefaultAccessTokenLifetime         time.Duration                       `mapstructure:"default_access_token_lifetime"`
+	DefaultRefreshTokenLifetime        time.Duration                       `mapstructure:"default_refresh_token_lifetime"`
+	RevokeRefreshToken                 *bool                               `mapstructure:"revoke_refresh_token"`
+	ConsentTTL                         time.Duration                       `mapstructure:"consent_ttl"`
+	ConsentMode                        string                              `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
+	TokenEndpointAllowGET              bool                                `mapstructure:"token_endpoint_allow_get"`
+	DeviceCodeExpiry                   time.Duration                       `mapstructure:"device_code_expiry"`
+	DeviceCodePollingInterval          int                                 `mapstructure:"device_code_polling_interval"`
+	DeviceCodeUserCodeLength           int                                 `mapstructure:"device_code_user_code_length"`
+	DynamicClientRegistration          OIDCDynamicClientRegistrationConfig `mapstructure:"dynamic_client_registration"`
 }
 
 // OIDCKey represents a single OIDC signing key.
@@ -534,8 +535,8 @@ func (o *OIDCConfig) String() string {
 		return "OIDCConfig: <nil>"
 	}
 
-	return fmt.Sprintf("OIDCConfig: {Enabled:%t Issuer:%s Clients:%+v ScopesSupported:%v ResponseTypesSupported:%v SubjectTypesSupported:%v IDTokenSigningAlgValuesSupported:%v TokenEndpointAuthMethodsSupported:%v ClaimsSupported:%v FrontChannelLogoutSupported:%v FrontChannelLogoutSessionSupported:%v BackChannelLogoutSupported:%v BackChannelLogoutSessionSupported:%v DefaultAccessTokenLifetime:%s DefaultRefreshTokenLifetime:%s SigningKeys:%v AutoKeyRotation:%t KeyRotationInterval:%s KeyMaxAge:%s TokenEndpointAllowGET:%t}",
-		o.Enabled, o.Issuer, o.Clients, o.ScopesSupported, o.ResponseTypesSupported, o.SubjectTypesSupported, o.IDTokenSigningAlgValuesSupported, o.TokenEndpointAuthMethodsSupported, o.ClaimsSupported, o.FrontChannelLogoutSupported, o.FrontChannelLogoutSessionSupported, o.BackChannelLogoutSupported, o.BackChannelLogoutSessionSupported, o.DefaultAccessTokenLifetime, o.DefaultRefreshTokenLifetime, o.SigningKeys, o.AutoKeyRotation, o.KeyRotationInterval, o.KeyMaxAge, o.TokenEndpointAllowGET)
+	return fmt.Sprintf("OIDCConfig: {Enabled:%t Issuer:%s Clients:%+v ScopesSupported:%v ResponseTypesSupported:%v SubjectTypesSupported:%v IDTokenSigningAlgValuesSupported:%v TokenEndpointAuthMethodsSupported:%v ClaimsSupported:%v FrontChannelLogoutSupported:%v FrontChannelLogoutSessionSupported:%v BackChannelLogoutSupported:%v BackChannelLogoutSessionSupported:%v DefaultAccessTokenLifetime:%s DefaultRefreshTokenLifetime:%s SigningKeys:%v AutoKeyRotation:%t KeyRotationInterval:%s KeyMaxAge:%s TokenEndpointAllowGET:%t DynamicClientRegistration:%s}",
+		o.Enabled, o.Issuer, o.Clients, o.ScopesSupported, o.ResponseTypesSupported, o.SubjectTypesSupported, o.IDTokenSigningAlgValuesSupported, o.TokenEndpointAuthMethodsSupported, o.ClaimsSupported, o.FrontChannelLogoutSupported, o.FrontChannelLogoutSessionSupported, o.BackChannelLogoutSupported, o.BackChannelLogoutSessionSupported, o.DefaultAccessTokenLifetime, o.DefaultRefreshTokenLifetime, o.SigningKeys, o.AutoKeyRotation, o.KeyRotationInterval, o.KeyMaxAge, o.TokenEndpointAllowGET, o.DynamicClientRegistration.String())
 }
 
 // GetSigningKey returns the signing key content.
@@ -961,6 +962,7 @@ type OIDCClient struct {
 	AllowRefreshTokenCombinedClientAuth bool          `mapstructure:"allow_refresh_token_combined_client_auth"`
 	RevokeRefreshToken                  *bool         `mapstructure:"revoke_refresh_token"`
 	FrontChannelLogoutSessionRequired   bool          `mapstructure:"frontchannel_logout_session_required"`
+	Dynamic                             bool          `mapstructure:"-" validate:"-"`
 }
 
 // GetEffectiveCustomScopes returns the merged custom scopes for a client.

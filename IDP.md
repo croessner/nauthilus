@@ -138,7 +138,80 @@ The `id` in `signing_keys` (also called KID) is simply a name for your signing k
       `key_rotation_interval`. Keys are stored encrypted in Redis and automatically rotated across all Nauthilus
       instances. Old keys remain available in JWKS until they reach `key_max_age`.
 
-### 3.2 OIDC Logout
+### 3.2 Restricted Native Dynamic Client Registration
+
+Nauthilus can expose an anonymous RFC 7591 registration endpoint for public native mail clients. The endpoint is
+disabled by default and intentionally implements a narrow profile rather than unrestricted dynamic registration:
+
+- RFC 8252 literal loopback redirects only: `http://127.0.0.1/...` and `http://[::1]/...`; `localhost`, custom URI
+  schemes, claimed HTTPS redirects, fragments, and userinfo are rejected.
+- Authorization Code flow only, with mandatory PKCE `S256`, `token_endpoint_auth_method=none`,
+  `application_type=native`, `subject_type=public`, and RS256 ID tokens.
+- Opaque access tokens with a hard lifetime ceiling of 15 minutes.
+- Refresh tokens only when registration explicitly requests both the `refresh_token` grant and the optional
+  `offline_access` scope. Refresh families rotate atomically; reuse of an ancestor revokes the active descendant.
+- Every authorization requires user interaction and consent. Anonymous dynamic clients never inherit a previous
+  consent decision.
+- Dynamic client state, rate limits, quotas, lifecycle state, and tombstones are stored in Redis. Security-sensitive
+  reads always use the authoritative primary/write handle and fail closed when Redis is unavailable.
+
+```yaml
+identity:
+  oidc:
+    enabled: true
+    issuer: "https://auth.example.com"
+    auto_key_rotation: true
+    custom_scopes:
+      - name: "mail:imap"
+        description: "Access IMAP mail"
+        claims:
+          - name: "mail_access"
+            type: "string"
+      - name: "mail:smtp"
+        description: "Submit mail through SMTP"
+        claims:
+          - name: "mail_submit"
+            type: "string"
+    dynamic_client_registration:
+      enabled: true
+      profile: "mail-client-v1"
+      profile_version: 1
+      required_scopes: [ "openid" ]
+      optional_scopes: [ "offline_access", "mail:imap", "mail:smtp" ]
+      allow_refresh_tokens: true
+      consent_mode: "all_or_nothing"
+      required_mfa_level: 0
+      access_token_lifetime: 15m
+      refresh_token_lifetime: 720h
+      source_hmac_key: "replace-with-at-least-32-random-bytes"
+      limits:
+        request_body_bytes: 16384
+        redirect_uris: 4
+        scopes: 16
+        client_name_runes: 128
+        string_bytes: 1024
+        active_clients: 10000
+        source_window: 10m
+        source_registrations: 5
+        source_daily_registrations: 20
+        global_window: 1m
+        global_registrations: 100
+      lifecycle:
+        unused_ttl: 24h
+        inactivity_ttl: 720h
+        maximum_ttl: 8760h
+        tombstone_ttl: 720h
+```
+
+The mail scope names and their audience semantics are deployment-owned. They must match the protected mail resource
+servers; Nauthilus does not assign IMAP or SMTP meaning to a scope name automatically.
+
+When enabled, discovery advertises `registration_endpoint` as `<issuer>/oidc/register`. The endpoint accepts only
+`POST` with `Content-Type: application/json`, returns `201 Created` with effective public metadata, and never returns a
+client secret, registration access token, or registration management URI. RFC 7592 client-management operations are
+not part of this profile.
+
+### 3.3 OIDC Logout
 
 Nauthilus supports both **Front-channel** and **Back-channel** logout to ensure that users are logged out of all
 connected applications when they end their session at the IdP.

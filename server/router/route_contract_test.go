@@ -247,6 +247,9 @@ func routeContractConfig() *config.FileSettings {
 			OIDC: config.OIDCConfig{
 				Enabled: true,
 				Issuer:  "https://nauthilus.example.com",
+				DynamicClientRegistration: config.OIDCDynamicClientRegistrationConfig{
+					Enabled: true,
+				},
 			},
 			SAML2: config.SAML2Config{
 				Enabled:  true,

@@ -51,6 +51,7 @@ const (
 	pathOIDCAuthorize                = "/oidc/authorize"
 	pathOIDCDeviceVerify             = "/oidc/device/verify"
 	pathOIDCJWKS                     = "/oidc/jwks"
+	pathOIDCRegister                 = "/oidc/register"
 	pathOIDCUserSessions             = "/api/v1/oidc/sessions/{user_id}"
 	pathSAMLSLO                      = "/saml/slo"
 	pathSAMLMetadata                 = "/saml/metadata"
@@ -100,6 +101,7 @@ var stableIDPOperations = []operationExpectation{
 	{method: methodGet, path: pathWellKnownOpenAPIJSON},
 	{method: methodGet, path: pathWellKnownOpenIDConfiguration},
 	{method: methodGet, path: pathOIDCAuthorize},
+	{method: methodPost, path: pathOIDCRegister},
 	{method: methodPost, path: "/oidc/token"},
 	{method: methodGet, path: "/oidc/userinfo"},
 	{method: methodPost, path: "/oidc/introspect"},
@@ -171,6 +173,30 @@ func TestIDPSpecDocumentsClientCredentialsGrant(t *testing.T) {
 
 	if _, ok := oidcDiscovery.Properties["introspection_endpoint_auth_signing_alg_values_supported"]; !ok {
 		t.Fatal("OIDCDiscovery.properties.introspection_endpoint_auth_signing_alg_values_supported missing")
+	}
+
+	if _, ok := oidcDiscovery.Properties["registration_endpoint"]; !ok {
+		t.Fatal("OIDCDiscovery.properties.registration_endpoint missing")
+	}
+
+	registrationRequest, ok := doc.Components.Schemas["DynamicClientRegistrationRequest"]
+	if !ok {
+		t.Fatal("components.schemas.DynamicClientRegistrationRequest missing")
+	}
+
+	if _, ok := registrationRequest.Properties["redirect_uris"]; !ok {
+		t.Fatal("DynamicClientRegistrationRequest.properties.redirect_uris missing")
+	}
+
+	registrationResponse, ok := doc.Components.Schemas["DynamicClientRegistrationResponse"]
+	if !ok {
+		t.Fatal("components.schemas.DynamicClientRegistrationResponse missing")
+	}
+
+	for _, forbidden := range []string{"client_secret", "registration_access_token", "registration_client_uri"} {
+		if _, ok := registrationResponse.Properties[forbidden]; ok {
+			t.Fatalf("DynamicClientRegistrationResponse unexpectedly exposes %s", forbidden)
+		}
 	}
 }
 

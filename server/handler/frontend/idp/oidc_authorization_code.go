@@ -31,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/frontend"
 	"github.com/croessner/nauthilus/v3/server/idp"
+	"github.com/croessner/nauthilus/v3/server/idp/dcr"
 	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/croessner/nauthilus/v3/server/middleware/csrf"
 	"github.com/croessner/nauthilus/v3/server/stats"
@@ -67,14 +68,7 @@ func readOIDCAuthorizeRequest(ctx *gin.Context) (oidcAuthorizeRequest, bool) {
 		codeChallenge: ctx.Query(oidcParamCodeChallenge),
 	}
 
-	codeChallengeMethod, err := normalizeCodeChallengeMethod(request.codeChallenge, ctx.Query(oidcParamCodeChallengeMethod))
-	if err != nil {
-		ctx.String(http.StatusBadRequest, err.Error())
-
-		return request, false
-	}
-
-	request.codeChallengeMethod = codeChallengeMethod
+	request.codeChallengeMethod = ctx.Query(oidcParamCodeChallengeMethod)
 
 	return request, true
 }
@@ -89,15 +83,15 @@ func setOIDCAuthorizeSpanAttributes(sp trace.Span, request oidcAuthorizeRequest)
 }
 
 // validateOIDCAuthorizeRequest verifies client, redirect, response type, and PKCE.
-func (h *OIDCHandler) validateOIDCAuthorizeRequest(ctx *gin.Context, request oidcAuthorizeRequest) (*config.OIDCClient, bool) {
-	if request.responseType != oidcResponseTypeCode {
-		ctx.String(http.StatusBadRequest, "Only response_type=code is supported")
+func (h *OIDCHandler) validateOIDCAuthorizeRequest(ctx *gin.Context, request *oidcAuthorizeRequest) (*config.OIDCClient, bool) {
+	client, err := h.idp.ResolveClient(ctx.Request.Context(), request.clientID)
+	if err != nil {
+		if strings.HasPrefix(request.clientID, dcr.ClientIDPrefix) && !errors.Is(err, dcr.ErrNotFound) {
+			ctx.JSON(http.StatusServiceUnavailable, gin.H{definitions.LogKeyError: oidcErrorServerError})
 
-		return nil, false
-	}
+			return nil, false
+		}
 
-	client, ok := h.idp.FindClient(request.clientID)
-	if !ok {
 		ctx.String(http.StatusBadRequest, "Invalid client_id")
 
 		return nil, false
@@ -109,23 +103,55 @@ func (h *OIDCHandler) validateOIDCAuthorizeRequest(ctx *gin.Context, request oid
 		return nil, false
 	}
 
-	if client.RequiresPKCE() && request.codeChallenge == "" {
-		ctx.String(http.StatusBadRequest, "PKCE is required for this client")
+	if request.responseType != oidcResponseTypeCode {
+		return rejectOIDCAuthorizeMetadata(ctx, client, *request, oidcErrorUnsupportedResponseType, "Only response_type=code is supported")
+	}
 
-		return nil, false
+	codeChallengeMethod, methodErr := normalizeCodeChallengeMethod(request.codeChallenge, request.codeChallengeMethod)
+	if methodErr != nil {
+		return rejectOIDCAuthorizeMetadata(ctx, client, *request, oidcErrorInvalidRequest, methodErr.Error())
+	}
+
+	request.codeChallengeMethod = codeChallengeMethod
+
+	if client.RequiresPKCE() && request.codeChallenge == "" {
+		return rejectOIDCAuthorizeMetadata(ctx, client, *request, oidcErrorInvalidRequest, "PKCE is required for this client")
 	}
 
 	return client, true
 }
 
-// redirectOIDCAuthorizeError redirects an authorization error to the client.
-func redirectOIDCAuthorizeError(ctx *gin.Context, redirectURI string, state string, errorCode string) {
-	target := fmt.Sprintf("%s?error=%s", redirectURI, errorCode)
-	if state != "" {
-		target += "&state=" + url.QueryEscape(state)
+// rejectOIDCAuthorizeMetadata redirects dynamic-client errors only after validating the redirect URI.
+func rejectOIDCAuthorizeMetadata(ctx *gin.Context, client *config.OIDCClient, request oidcAuthorizeRequest, errorCode string, message string) (*config.OIDCClient, bool) {
+	if client.Dynamic {
+		redirectOIDCAuthorizeError(ctx, request.redirectURI, request.state, errorCode)
+
+		return nil, false
 	}
 
-	ctx.Redirect(http.StatusFound, target)
+	ctx.String(http.StatusBadRequest, message)
+
+	return nil, false
+}
+
+// redirectOIDCAuthorizeError redirects an authorization error to the client.
+func redirectOIDCAuthorizeError(ctx *gin.Context, redirectURI string, state string, errorCode string) {
+	target, err := url.Parse(redirectURI)
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, "Invalid redirect_uri")
+
+		return
+	}
+
+	query := target.Query()
+	query.Set(definitions.LogKeyError, errorCode)
+	if state != "" {
+		query.Set(oidcParamState, state)
+	}
+
+	target.RawQuery = query.Encode()
+
+	ctx.Redirect(http.StatusFound, target.String())
 }
 
 // buildOIDCCallbackRedirectURL appends authorization response parameters safely.
@@ -397,11 +423,16 @@ func (h *OIDCHandler) buildOIDCAuthorizeSession(
 		CodeChallengeMethod: request.codeChallengeMethod,
 		IDTokenClaims:       idTokenClaims,
 		AccessTokenClaims:   accessTokenClaims,
+		RequiredMFALevel:    client.RequiredMFALevel,
 	}, filteredScopes, true
 }
 
 // oidcAuthorizeNeedsConsent reports whether the request must show consent.
 func oidcAuthorizeNeedsConsent(client *config.OIDCClient, oidcFlowContext *oidcAuthorizeFlowContext, request oidcAuthorizeRequest, filteredScopes []string) bool {
+	if client.Dynamic {
+		return true
+	}
+
 	if client.SkipConsent {
 		return false
 	}
@@ -464,6 +495,13 @@ func (h *OIDCHandler) issueOIDCAuthorizeCode(
 	code := ksuid.New().String()
 	if err := h.storage.StoreSession(ctx.Request.Context(), code, session, 10*time.Minute); err != nil {
 		ctx.String(http.StatusInternalServerError, "Internal error storing session")
+
+		return
+	}
+
+	if err := h.idp.TouchDynamicClient(ctx.Request.Context(), client, "authorization"); err != nil {
+		_ = h.storage.DeleteSession(ctx.Request.Context(), code)
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{definitions.LogKeyError: oidcErrorServerError})
 
 		return
 	}
@@ -544,9 +582,19 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	oidcFlowContext := newOIDCAuthorizeFlowContext(mgr)
 	account := oidcFlowContext.Account()
 
-	client, ok := h.validateOIDCAuthorizeRequest(ctx, request)
+	client, ok := h.validateOIDCAuthorizeRequest(ctx, &request)
 	if !ok {
 		return
+	}
+
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyIDPRequiredMFALevel, int64(client.RequiredMFALevel))
+
+		if err := mgr.Save(ctx); err != nil {
+			ctx.String(http.StatusInternalServerError, "Failed to save client policy snapshot")
+
+			return
+		}
 	}
 
 	if h.redirectUnauthenticatedOIDCAuthorize(ctx, mgr, oidcFlowContext, request, account) {
@@ -616,15 +664,12 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 	clientID := client.ClientID
 	code := formValue(ctx, oidcParamCode)
 
-	session, getErr := h.storage.GetSession(ctx.Request.Context(), code)
+	session, getErr := h.storage.ConsumeSession(ctx.Request.Context(), code)
 	if getErr != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
 
 		return
 	}
-
-	// Delete code after one-time use
-	_ = h.storage.DeleteSession(ctx.Request.Context(), code)
 
 	if session.ClientID != clientID {
 		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
@@ -649,6 +694,17 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 
 	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokens(ctx.Request.Context(), session)
 	if err != nil {
+		h.logTokenError(ctx, grantType, clientID, err)
+
+		return
+	}
+
+	if err := h.idp.TouchDynamicClient(ctx.Request.Context(), client, "authorization_code_exchange"); err != nil {
+		_ = h.storage.DeleteAccessToken(ctx.Request.Context(), accessToken)
+		if refreshToken != "" && client.Dynamic {
+			_ = h.storage.DeleteDynamicRefreshToken(ctx.Request.Context(), refreshToken)
+		}
+
 		h.logTokenError(ctx, grantType, clientID, err)
 
 		return
@@ -715,7 +771,7 @@ func (h *OIDCHandler) rejectOIDCConsentIfAuthFailure(ctx *gin.Context, mgr cooki
 	h.abortFlow(ctx, mgr)
 
 	if session != nil {
-		stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(session.ClientID, "deny").Inc()
+		stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(oidcMetricClientID(session.ClientID), "deny").Inc()
 	}
 
 	ctx.String(http.StatusForbidden, "Consent denied")
@@ -746,7 +802,7 @@ func (h *OIDCHandler) oidcConsentOptionalScopeChoices(ctx *gin.Context, client *
 }
 
 // oidcConsentPageData builds template data for the consent prompt.
-func (h *OIDCHandler) oidcConsentPageData(ctx *gin.Context, session *idp.OIDCSession, consentChallenge string, state string) gin.H {
+func (h *OIDCHandler) oidcConsentPageData(ctx *gin.Context, session *idp.OIDCSession, client *config.OIDCClient, consentChallenge string, state string) gin.H {
 	data := BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Consent")
 	data["Application"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Application")
@@ -759,7 +815,6 @@ func (h *OIDCHandler) oidcConsentPageData(ctx *gin.Context, session *idp.OIDCSes
 		data["ReturnTo"] = ctx.Request.URL.String()
 	}
 
-	client, _ := h.idp.FindClient(session.ClientID)
 	plan := buildConsentScopePlan(client, h.deps.Cfg.GetIDP().OIDC.GetConsentMode(), session.Scopes)
 	customScopes := h.deps.Cfg.GetIDP().OIDC.GetEffectiveCustomScopes(client)
 
@@ -794,7 +849,12 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 		return
 	}
 
-	ctx.HTML(http.StatusOK, "idp_consent.html", h.oidcConsentPageData(ctx, session, consentChallenge, state))
+	client, ok := h.findOIDCConsentClient(ctx, session)
+	if !ok {
+		return
+	}
+
+	ctx.HTML(http.StatusOK, "idp_consent.html", h.oidcConsentPageData(ctx, session, client, consentChallenge, state))
 }
 
 // oidcConsentPostState resolves state from form data or query fallback.
@@ -811,15 +871,21 @@ func oidcConsentPostState(ctx *gin.Context) string {
 func (h *OIDCHandler) denyOIDCConsent(ctx *gin.Context, consentChallenge string, clientID string) {
 	_ = h.storage.DeleteSession(ctx.Request.Context(), "consent:"+consentChallenge)
 
-	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(clientID, "deny").Inc()
+	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(oidcMetricClientID(clientID), "deny").Inc()
 
 	ctx.String(http.StatusForbidden, "Consent denied")
 }
 
 // findOIDCConsentClient resolves the client for a consent session.
 func (h *OIDCHandler) findOIDCConsentClient(ctx *gin.Context, session *idp.OIDCSession) (*config.OIDCClient, bool) {
-	client, ok := h.idp.FindClient(session.ClientID)
-	if !ok {
+	client, err := h.idp.ResolveClient(ctx.Request.Context(), session.ClientID)
+	if err != nil {
+		if strings.HasPrefix(session.ClientID, dcr.ClientIDPrefix) && !errors.Is(err, dcr.ErrNotFound) {
+			ctx.JSON(http.StatusServiceUnavailable, gin.H{definitions.LogKeyError: oidcErrorServerError})
+
+			return nil, false
+		}
+
 		ctx.String(http.StatusBadRequest, "Invalid client configuration")
 
 		return nil, false
@@ -866,10 +932,17 @@ func (h *OIDCHandler) applyGranularOIDCConsentSelection(ctx *gin.Context, sessio
 }
 
 // storeOIDCConsentAuthorizationCode persists the consent-approved OIDC session.
-func (h *OIDCHandler) storeOIDCConsentAuthorizationCode(ctx *gin.Context, session *idp.OIDCSession) (string, bool) {
+func (h *OIDCHandler) storeOIDCConsentAuthorizationCode(ctx *gin.Context, session *idp.OIDCSession, client *config.OIDCClient) (string, bool) {
 	code := ksuid.New().String()
 	if err := h.storage.StoreSession(ctx.Request.Context(), code, session, 10*time.Minute); err != nil {
 		ctx.String(http.StatusInternalServerError, "Internal error storing session")
+
+		return "", false
+	}
+
+	if err := h.idp.TouchDynamicClient(ctx.Request.Context(), client, "authorization"); err != nil {
+		_ = h.storage.DeleteSession(ctx.Request.Context(), code)
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{definitions.LogKeyError: oidcErrorServerError})
 
 		return "", false
 	}
@@ -921,7 +994,7 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 		return
 	}
 
-	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(session.ClientID, oidcConsentDecisionAllow).Inc()
+	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(oidcMetricClientID(session.ClientID), oidcConsentDecisionAllow).Inc()
 
 	client, ok := h.findOIDCConsentClient(ctx, session)
 	if !ok {
@@ -936,7 +1009,7 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 		return
 	}
 
-	code, ok := h.storeOIDCConsentAuthorizationCode(ctx, session)
+	code, ok := h.storeOIDCConsentAuthorizationCode(ctx, session, client)
 	if !ok {
 		return
 	}
@@ -982,19 +1055,21 @@ func (h *OIDCHandler) flowRedisPrefix() string {
 }
 
 func normalizeCodeChallengeMethod(codeChallenge, codeChallengeMethod string) (string, error) {
-	method := strings.TrimSpace(codeChallengeMethod)
-
-	challenge := strings.TrimSpace(codeChallenge)
-	if challenge == "" {
-		if method != "" {
+	if codeChallenge == "" {
+		if codeChallengeMethod != "" {
 			return "", fmt.Errorf("code_challenge_method requires code_challenge")
 		}
 
 		return "", nil
 	}
 
-	if !strings.EqualFold(method, oidcPKCEChallengeMethodS256) {
+	if codeChallengeMethod != oidcPKCEChallengeMethodS256 {
 		return "", fmt.Errorf("unsupported code_challenge_method: only S256 is allowed")
+	}
+
+	decoded, err := base64.RawURLEncoding.DecodeString(codeChallenge)
+	if err != nil || len(codeChallenge) != 43 || len(decoded) != sha256.Size || base64.RawURLEncoding.EncodeToString(decoded) != codeChallenge {
+		return "", fmt.Errorf("invalid S256 code_challenge")
 	}
 
 	return oidcPKCEChallengeMethodS256, nil
@@ -1006,8 +1081,7 @@ func validatePKCEVerifier(codeChallenge, codeChallengeMethod, codeVerifier strin
 		return nil
 	}
 
-	verifier := strings.TrimSpace(codeVerifier)
-	if !isValidCodeVerifier(verifier) {
+	if !isValidCodeVerifier(codeVerifier) {
 		return fmt.Errorf("invalid code_verifier")
 	}
 
@@ -1015,7 +1089,7 @@ func validatePKCEVerifier(codeChallenge, codeChallengeMethod, codeVerifier strin
 		return fmt.Errorf("unsupported code_challenge_method: only S256 is allowed")
 	}
 
-	sum := sha256.Sum256([]byte(verifier))
+	sum := sha256.Sum256([]byte(codeVerifier))
 	expected := base64.RawURLEncoding.EncodeToString(sum[:])
 
 	if subtle.ConstantTimeCompare([]byte(challenge), []byte(expected)) != 1 {

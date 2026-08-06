@@ -30,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/idp"
+	"github.com/croessner/nauthilus/v3/server/idp/dcr"
 	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/gin-gonic/gin"
 )
@@ -120,6 +121,10 @@ func (h *FrontendHandler) getRequiredMFALevel(mgr cookie.Manager) int {
 			return 0
 		}
 
+		if strings.HasPrefix(clientID, dcr.ClientIDPrefix) {
+			return int(mgr.GetInt64(definitions.SessionKeyIDPRequiredMFALevel, 0))
+		}
+
 		client, ok := idpInstance.FindClient(clientID)
 		if !ok {
 			return 0
@@ -149,6 +154,10 @@ func (h *FrontendHandler) getRequiredMFALevelByIdentifier(mgr cookie.Manager) in
 	idpInstance := idp.NewNauthilusIDP(h.deps)
 
 	if clientID := mgr.GetString(definitions.SessionKeyIDPClientID, ""); clientID != "" {
+		if strings.HasPrefix(clientID, dcr.ClientIDPrefix) {
+			return int(mgr.GetInt64(definitions.SessionKeyIDPRequiredMFALevel, 0))
+		}
+
 		if client, ok := idpInstance.FindClient(clientID); ok {
 			return oidcClientRequiredMFALevel(client)
 		}
@@ -722,6 +731,7 @@ func (h *FrontendHandler) prepareMFASelfServiceStepUp(
 	mgr.Set(definitions.SessionKeyProtocol, definitions.ProtoIDP)
 	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoIDP)
 	mgr.Delete(definitions.SessionKeyIDPClientID)
+	mgr.Delete(definitions.SessionKeyIDPRequiredMFALevel)
 	mgr.Delete(definitions.SessionKeyIDPSAMLEntityID)
 	core.StorePendingIDPMFAIdentity(mgr, user)
 	core.StorePendingIDPMFAFactor(mgr, user)

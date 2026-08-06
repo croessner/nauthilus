@@ -32,6 +32,7 @@ var idPFlowStateKeys = [...]string{
 	definitions.SessionKeyIDPAuthStatusLanguage,
 	definitions.SessionKeyOIDCGrantType,
 	definitions.SessionKeyIDPClientID,
+	definitions.SessionKeyIDPRequiredMFALevel,
 	definitions.SessionKeyIDPRedirectURI,
 	definitions.SessionKeyIDPScope,
 	definitions.SessionKeyIDPState,

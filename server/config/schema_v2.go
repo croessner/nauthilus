@@ -1095,26 +1095,27 @@ type IdentityTOTPSection struct {
 
 // OIDCWireConfig is the wire-level OIDC schema used by config unmarshalling.
 type OIDCWireConfig struct {
-	Enabled                           bool                `mapstructure:"enabled"`
-	Issuer                            string              `mapstructure:"issuer"`
-	SigningKeys                       []OIDCKey           `mapstructure:"signing_keys"`
-	AutoKeyRotation                   bool                `mapstructure:"auto_key_rotation"`
-	KeyRotationInterval               time.Duration       `mapstructure:"key_rotation_interval"`
-	KeyMaxAge                         time.Duration       `mapstructure:"key_max_age"`
-	Clients                           []OIDCClient        `mapstructure:"clients"`
-	CustomScopes                      []Oauth2CustomScope `mapstructure:"custom_scopes" validate:"omitempty,dive"`
-	ScopesSupported                   []string            `mapstructure:"scopes_supported"`
-	ResponseTypesSupported            []string            `mapstructure:"response_types_supported"`
-	SubjectTypesSupported             []string            `mapstructure:"subject_types_supported"`
-	IDTokenSigningAlgValuesSupported  []string            `mapstructure:"id_token_signing_alg_values_supported"`
-	TokenEndpointAuthMethodsSupported []string            `mapstructure:"token_endpoint_auth_methods_supported"`
-	CodeChallengeMethodsSupported     []string            `mapstructure:"code_challenge_methods_supported"`
-	ClaimsSupported                   []string            `mapstructure:"claims_supported"`
-	AccessTokenType                   string              `mapstructure:"access_token_type"`
-	Consent                           OIDCConsentSection  `mapstructure:"consent" validate:"omitempty"`
-	Tokens                            OIDCTokensSection   `mapstructure:"tokens" validate:"omitempty"`
-	Logout                            OIDCLogoutSection   `mapstructure:"logout" validate:"omitempty"`
-	DeviceFlow                        OIDCDeviceFlow      `mapstructure:"device_flow" validate:"omitempty"`
+	Enabled                           bool                                `mapstructure:"enabled"`
+	Issuer                            string                              `mapstructure:"issuer"`
+	SigningKeys                       []OIDCKey                           `mapstructure:"signing_keys"`
+	AutoKeyRotation                   bool                                `mapstructure:"auto_key_rotation"`
+	KeyRotationInterval               time.Duration                       `mapstructure:"key_rotation_interval"`
+	KeyMaxAge                         time.Duration                       `mapstructure:"key_max_age"`
+	Clients                           []OIDCClient                        `mapstructure:"clients"`
+	CustomScopes                      []Oauth2CustomScope                 `mapstructure:"custom_scopes" validate:"omitempty,dive"`
+	ScopesSupported                   []string                            `mapstructure:"scopes_supported"`
+	ResponseTypesSupported            []string                            `mapstructure:"response_types_supported"`
+	SubjectTypesSupported             []string                            `mapstructure:"subject_types_supported"`
+	IDTokenSigningAlgValuesSupported  []string                            `mapstructure:"id_token_signing_alg_values_supported"`
+	TokenEndpointAuthMethodsSupported []string                            `mapstructure:"token_endpoint_auth_methods_supported"`
+	CodeChallengeMethodsSupported     []string                            `mapstructure:"code_challenge_methods_supported"`
+	ClaimsSupported                   []string                            `mapstructure:"claims_supported"`
+	AccessTokenType                   string                              `mapstructure:"access_token_type"`
+	Consent                           OIDCConsentSection                  `mapstructure:"consent" validate:"omitempty"`
+	Tokens                            OIDCTokensSection                   `mapstructure:"tokens" validate:"omitempty"`
+	Logout                            OIDCLogoutSection                   `mapstructure:"logout" validate:"omitempty"`
+	DeviceFlow                        OIDCDeviceFlow                      `mapstructure:"device_flow" validate:"omitempty"`
+	DynamicClientRegistration         OIDCDynamicClientRegistrationConfig `mapstructure:"dynamic_client_registration" validate:"omitempty"`
 }
 
 // OIDCConsentSection configures consent defaults.
@@ -1515,5 +1516,6 @@ func (o OIDCWireConfig) Materialize() OIDCConfig {
 		DeviceCodeExpiry:                   o.DeviceFlow.CodeExpiry,
 		DeviceCodePollingInterval:          o.DeviceFlow.PollingInterval,
 		DeviceCodeUserCodeLength:           o.DeviceFlow.UserCodeLength,
+		DynamicClientRegistration:          o.DynamicClientRegistration,
 	}
 }

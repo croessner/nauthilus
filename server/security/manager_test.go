@@ -58,3 +58,14 @@ func TestManagerDecryptInvalidCiphertext(t *testing.T) {
 		t.Fatalf("expected decryption to fail for invalid ciphertext")
 	}
 }
+
+func TestManagerIndexDigestIsDeterministicAndNamespaced(t *testing.T) {
+	manager := NewManager(secret.New("testsecret12345678"))
+	first := manager.IndexDigest("access", "bearer-token")
+	second := manager.IndexDigest("access", "bearer-token")
+	other := manager.IndexDigest("refresh", "bearer-token")
+
+	if first == "" || first != second || first == other || first == "bearer-token" {
+		t.Fatalf("IndexDigest() values = %q %q %q", first, second, other)
+	}
+}

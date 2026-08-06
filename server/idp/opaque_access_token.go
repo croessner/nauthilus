@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/idp/dcr"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -46,9 +47,19 @@ func NewOpaqueAccessToken(session *OIDCSession, storage *RedisTokenStorage, toke
 
 // Issue generates an opaque access token and stores it in Redis.
 func (t *OpaqueAccessToken) Issue(ctx context.Context) (string, time.Duration, error) {
-	token, err := t.tokenGen.GenerateToken(definitions.OIDCTokenPrefixAccessToken)
+	prefix := definitions.OIDCTokenPrefixAccessToken
+	if strings.HasPrefix(t.session.ClientID, dcr.ClientIDPrefix) {
+		prefix += dcr.ClientIDPrefix
+	}
+
+	token, err := t.tokenGen.GenerateToken(prefix)
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to generate opaque access token: %w", err)
+	}
+
+	if strings.HasPrefix(t.session.ClientID, dcr.ClientIDPrefix) {
+		t.session.AccessTokenIssuedAt = time.Now().UTC()
+		t.session.AccessTokenExpiresAt = t.session.AccessTokenIssuedAt.Add(t.lifetime)
 	}
 
 	if err := t.storage.StoreAccessToken(ctx, token, t.session, t.lifetime); err != nil {

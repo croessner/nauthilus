@@ -17,8 +17,7 @@ package v1
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"net/http"
 	"sort"
 	"time"
@@ -28,14 +27,14 @@ import (
 	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 // OIDCSessionStore is the narrow session-management storage contract used by
 // the management API boundary.
 type OIDCSessionStore interface {
 	ListUserSessions(ctx context.Context, userID string) (map[string]*idp.OIDCSession, error)
-	GetAccessToken(ctx context.Context, token string) (*idp.OIDCSession, error)
-	DeleteAccessToken(ctx context.Context, token string) error
+	DeleteUserSession(ctx context.Context, userID string, managementID string) error
 	FlushUserTokens(ctx context.Context, userID string) error
 }
 
@@ -125,18 +124,13 @@ func (a *OIDCSessionsAPI) DeleteSession(ctx *gin.Context) {
 		return
 	}
 
-	session, err := a.storage.GetAccessToken(ctx.Request.Context(), token)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: err.Error()})
-		return
-	}
+	if err := a.storage.DeleteUserSession(ctx.Request.Context(), userID, token); err != nil {
+		if errors.Is(err, redis.Nil) {
+			ctx.JSON(http.StatusNotFound, gin.H{apiResponseKeyError: "session not found"})
 
-	if session == nil || session.UserID != userID {
-		ctx.JSON(http.StatusForbidden, gin.H{apiResponseKeyError: "session does not belong to user"})
-		return
-	}
+			return
+		}
 
-	if err := a.storage.DeleteAccessToken(ctx.Request.Context(), token); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{apiResponseKeyError: err.Error()})
 		return
 	}
@@ -194,7 +188,7 @@ func newOIDCSessionListResponse(sessions map[string]*idp.OIDCSession) oidcSessio
 // newOIDCSessionSummary copies non-secret session metadata into the API DTO.
 func newOIDCSessionSummary(token string, session *idp.OIDCSession) oidcSessionSummary {
 	return oidcSessionSummary{
-		ID:           oidcSessionID(token),
+		ID:           token,
 		ClientID:     session.ClientID,
 		UserID:       session.UserID,
 		Username:     session.Username,
@@ -205,11 +199,4 @@ func newOIDCSessionSummary(token string, session *idp.OIDCSession) oidcSessionSu
 		MFACompleted: session.MFACompleted,
 		MFAMethod:    session.MFAMethod,
 	}
-}
-
-// oidcSessionID derives a stable non-secret identifier from the stored token.
-func oidcSessionID(token string) string {
-	sum := sha256.Sum256([]byte(token))
-
-	return hex.EncodeToString(sum[:])
 }

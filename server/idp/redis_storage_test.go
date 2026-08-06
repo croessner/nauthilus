@@ -223,8 +223,10 @@ func assertDeleteUserAccessTokensNoTokens(t *testing.T, fixture redisTokenStorag
 
 	userID := "user-no-tokens"
 	userKey := fixture.prefix + "oidc:user_access_tokens:" + userID
+	dynamicUserKey := fixture.prefix + "oidc:dcr:{dynamic}:user_access_tokens:" + userID
 
 	fixture.mock.ExpectSMembers(userKey).SetVal([]string{})
+	fixture.mock.ExpectSMembers(dynamicUserKey).SetVal([]string{})
 
 	err := fixture.storage.DeleteUserAccessTokens(fixture.ctx, userID)
 	assert.NoError(t, err)
@@ -238,13 +240,20 @@ func assertFlushUserTokens(t *testing.T, fixture redisTokenStorageFixture) {
 	userID := "user-flush"
 	accessKey := fixture.prefix + "oidc:user_access_tokens:" + userID
 	refreshKey := fixture.prefix + "oidc:user_refresh_tokens:" + userID
+	dynamicEpochKey := fixture.prefix + "oidc:dcr:{dynamic}:dynamic_user_epoch:" + userID
 
+	fixture.mock.ExpectIncr(dynamicEpochKey).SetVal(1)
 	fixture.mock.ExpectSMembers(accessKey).SetVal([]string{"at1"})
 	fixture.mock.ExpectDel(fixture.prefix + "oidc:access_token:at1").SetVal(1)
 	fixture.mock.ExpectDel(accessKey).SetVal(1)
+	dynamicAccessKey := fixture.prefix + "oidc:dcr:{dynamic}:user_access_tokens:" + userID
+	fixture.mock.ExpectSMembers(dynamicAccessKey).SetVal(nil)
 	fixture.mock.ExpectSMembers(refreshKey).SetVal([]string{"rt1"})
 	fixture.mock.ExpectDel(fixture.prefix + "oidc:refresh_token:rt1").SetVal(1)
 	fixture.mock.ExpectDel(refreshKey).SetVal(1)
+	dynamicRefreshKey := fixture.prefix + "oidc:dcr:{dynamic}:user_refresh_tokens:" + userID
+	fixture.mock.ExpectSMembers(dynamicRefreshKey).SetVal(nil)
+	fixture.mock.ExpectDel(dynamicRefreshKey).SetVal(0)
 
 	err := fixture.storage.FlushUserTokens(fixture.ctx, userID)
 	assert.NoError(t, err)
@@ -308,6 +317,9 @@ func TestDeleteUserRefreshTokensAfterFormerIndexBoundary(t *testing.T) {
 	fixture.mock.ExpectSMembers(userKey).SetVal([]string{token})
 	fixture.mock.ExpectDel(fixture.prefix + "oidc:refresh_token:" + token).SetVal(1)
 	fixture.mock.ExpectDel(userKey).SetVal(1)
+	dynamicRefreshKey := fixture.prefix + "oidc:dcr:{dynamic}:user_refresh_tokens:" + userID
+	fixture.mock.ExpectSMembers(dynamicRefreshKey).SetVal(nil)
+	fixture.mock.ExpectDel(dynamicRefreshKey).SetVal(0)
 
 	err := fixture.storage.StoreRefreshToken(fixture.ctx, token, session, ttl)
 	assert.NoError(t, err)
@@ -367,6 +379,16 @@ func assertDeleteUserTokens(
 	}
 
 	mock.ExpectDel(userKey).SetVal(1)
+
+	switch tokenKind {
+	case oidcRefreshTokenKeyKind:
+		dynamicRefreshKey := prefix + "oidc:dcr:{dynamic}:user_refresh_tokens:" + userID
+		mock.ExpectSMembers(dynamicRefreshKey).SetVal(nil)
+		mock.ExpectDel(dynamicRefreshKey).SetVal(0)
+	case oidcAccessTokenKeyKind:
+		dynamicAccessKey := prefix + "oidc:dcr:{dynamic}:user_access_tokens:" + userID
+		mock.ExpectSMembers(dynamicAccessKey).SetVal(nil)
+	}
 
 	err := deleteUserTokens(context.Background(), userID)
 	assert.NoError(t, err)
