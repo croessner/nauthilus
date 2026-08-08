@@ -19,6 +19,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const roundcubeTestCodeChallenge = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 func TestExistingSessionAuthorizeCreatesCurrentFlowBeforeMFA(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
