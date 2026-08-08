@@ -72,6 +72,7 @@ var mfaStateKeys = [...]string{
 	definitions.SessionKeyMFAMethod,
 	definitions.SessionKeyMFACompleted,
 	definitions.SessionKeyRegistration,
+	definitions.SessionKeyWebAuthnCeremony,
 }
 
 // CleanupIDPState removes all temporary IDP flow keys from session storage.

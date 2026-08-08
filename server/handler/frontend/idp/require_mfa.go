@@ -597,12 +597,39 @@ func prepareProtocolMFAAssuranceSession(mgr cookie.Manager, protocol string, cli
 // setProtocolMFAAssuranceIdentifier records the active OIDC client or SAML SP.
 func setProtocolMFAAssuranceIdentifier(mgr cookie.Manager, clientID string, samlEntityID string) {
 	if clientID != "" {
+		clearSAMLFlowIdentifiers(mgr)
 		mgr.Set(definitions.SessionKeyIDPClientID, clientID)
 	}
 
 	if samlEntityID != "" {
+		clearOIDCFlowIdentifiers(mgr)
 		mgr.Set(definitions.SessionKeyIDPSAMLEntityID, samlEntityID)
 	}
+}
+
+// clearSAMLFlowIdentifiers removes SAML-only state before OIDC MFA handling.
+func clearSAMLFlowIdentifiers(mgr cookie.Manager) {
+	mgr.Delete(definitions.SessionKeyIDPSAMLRequest)
+	mgr.Delete(definitions.SessionKeyIDPSAMLRelayState)
+	mgr.Delete(definitions.SessionKeyIDPSAMLEntityID)
+	mgr.Delete(definitions.SessionKeyIDPOriginalURL)
+}
+
+// clearOIDCFlowIdentifiers removes OIDC-only state before SAML MFA handling.
+func clearOIDCFlowIdentifiers(mgr cookie.Manager) {
+	mgr.Delete(definitions.SessionKeyOIDCGrantType)
+	mgr.Delete(definitions.SessionKeyIDPClientID)
+	mgr.Delete(definitions.SessionKeyIDPRequiredMFALevel)
+	mgr.Delete(definitions.SessionKeyIDPRedirectURI)
+	mgr.Delete(definitions.SessionKeyIDPScope)
+	mgr.Delete(definitions.SessionKeyIDPState)
+	mgr.Delete(definitions.SessionKeyIDPNonce)
+	mgr.Delete(definitions.SessionKeyIDPResponseType)
+	mgr.Delete(definitions.SessionKeyIDPPrompt)
+	mgr.Delete(definitions.SessionKeyIDPCodeChallenge)
+	mgr.Delete(definitions.SessionKeyIDPCodeChallengeMethod)
+	mgr.Delete(definitions.SessionKeyIDPResumeFallbackURL)
+	mgr.Delete(definitions.SessionKeyIDPResumeFallbackAt)
 }
 
 // redirectExistingSessionMFAAssurance keeps first-factor sessions in the MFA challenge path.

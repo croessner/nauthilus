@@ -129,6 +129,22 @@ func completeFlow(ctx context.Context, mgr cookie.Manager, redisClient rediscli.
 	flowdomain.CleanupIDPState(mgr)
 }
 
+// saveCompletedBrowserFlow persists completed-flow cleanup before an endpoint
+// writes its final HTML or redirect response.
+func saveCompletedBrowserFlow(ctx *gin.Context, mgr cookie.Manager) bool {
+	if mgr == nil {
+		return true
+	}
+
+	if err := mgr.Save(ctx); err != nil {
+		ctx.String(http.StatusInternalServerError, "Failed to save session")
+
+		return false
+	}
+
+	return true
+}
+
 // abortFlow unconditionally deletes the flow state from Redis and cleans
 // up all IDP cookie keys.  Use this for denied consent or error paths
 // where the policy might not allow a regular Complete.

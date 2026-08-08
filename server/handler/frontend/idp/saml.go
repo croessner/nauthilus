@@ -651,7 +651,9 @@ func (h *SAMLHandler) handleAuthenticatedSAMLSSO(
 		return
 	}
 
-	h.completeSAMLSSOFlow(ctx, mgr)
+	if !h.completeSAMLSSOFlow(ctx, mgr) {
+		return
+	}
 
 	form, err := req.PostBinding()
 	if err != nil {
@@ -963,11 +965,13 @@ func samlStringAttribute(name, value string) saml.Attribute {
 }
 
 // completeSAMLSSOFlow advances and completes the server-side flow after assertion creation.
-func (h *SAMLHandler) completeSAMLSSOFlow(ctx *gin.Context, mgr cookie.Manager) {
+func (h *SAMLHandler) completeSAMLSSOFlow(ctx *gin.Context, mgr cookie.Manager) bool {
 	redisPrefix := h.deps.Cfg.GetServer().GetRedis().GetPrefix()
 
 	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.FlowStepCallback)
 	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
+
+	return saveCompletedBrowserFlow(ctx, mgr)
 }
 
 // renderSAMLPostBinding renders the browser auto-submit form for the SAML response.
@@ -1623,6 +1627,7 @@ func (h *SAMLHandler) performLocalSLOCleanupInternal(
 	}
 
 	if mgr != nil {
+		core.DeleteWebAuthnCeremony(ctx, core.AuthDeps{Cfg: h.deps.Cfg, Redis: h.deps.Redis}, mgr)
 		h.cleanupSLOBrowserFlowState(ctx, mgr)
 	}
 
