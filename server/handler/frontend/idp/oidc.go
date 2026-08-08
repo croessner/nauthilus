@@ -2061,6 +2061,8 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 	frontChannelTasks := h.oidcFrontChannelLogoutTasks(ctx, clientIDs, session.userID)
 	frontChannelTasks = append(frontChannelTasks, h.samlFrontChannelLogoutTasks(ctx.Request.Context(), session.account)...)
 	logoutTarget := h.oidcLogoutTarget(client, clientIDs, request)
+	mgr := cookie.GetManager(ctx)
+	core.DeleteWebAuthnCeremony(ctx, core.AuthDeps{Cfg: h.deps.Cfg, Redis: h.deps.Redis}, mgr)
 
 	if len(frontChannelTasks) > 0 {
 		core.SessionCleaner(ctx)

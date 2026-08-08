@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -215,6 +216,26 @@ func TestSecureManager_SaveLoad(t *testing.T) {
 	assert.Equal(t, "user@example.com", mgr2.GetString("account", ""))
 	assert.Equal(t, uint8(1), mgr2.GetUint8("auth_result", 0))
 	assert.Equal(t, true, mgr2.GetBool("authenticated", false))
+}
+
+func TestSecureManager_SaveRejectsOversizedCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(&testEnv{devMode: true})
+
+	mgr := NewSecureManager(testSecret, definitions.SecureDataCookieName, nil, &testEnv{devMode: true})
+	mgr.Set("large_value", strings.Repeat("x", maxSecureCookieHeaderBytes))
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+	if err := mgr.Save(ctx); err == nil {
+		t.Fatal("expected oversized secure cookie to be rejected")
+	}
+
+	if got := recorder.Header().Get("Set-Cookie"); got != "" {
+		t.Fatalf("unexpected oversized Set-Cookie header: %d bytes", len(got))
+	}
 }
 
 func TestSecureManager_Save_SkipsCookieWhenEmptyAndNoIncomingCookie(t *testing.T) {

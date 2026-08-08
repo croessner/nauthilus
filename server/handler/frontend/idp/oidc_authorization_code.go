@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/frontend"
@@ -332,13 +333,72 @@ func (h *OIDCHandler) ensureOIDCAuthorizeFlowState(
 		return true
 	}
 
-	if mgr.GetString(definitions.SessionKeyIDPFlowID, "") != "" {
+	if h.currentOIDCAuthorizeFlowState(ctx, mgr, request) {
 		return true
+	}
+
+	if mgr.GetString(definitions.SessionKeyIDPFlowID, "") != "" && !h.abortFlow(ctx, mgr) {
+		return false
 	}
 
 	_, ok := h.startOIDCAuthorizeLoginFlow(ctx, mgr, oidcFlowContext, request, account)
 
 	return ok
+}
+
+// currentOIDCAuthorizeFlowState verifies that the browser reference and its
+// persisted flow describe the authorization request currently being handled.
+func (h *OIDCHandler) currentOIDCAuthorizeFlowState(ctx *gin.Context, mgr cookie.Manager, request oidcAuthorizeRequest) bool {
+	if ctx == nil || mgr == nil || mgr.GetString(definitions.SessionKeyIDPFlowID, "") == "" {
+		return false
+	}
+
+	if !oidcAuthorizeRequestMatchesSession(mgr, request) {
+		return false
+	}
+
+	if h == nil || h.deps == nil || h.deps.Redis == nil || h.deps.Redis.GetWriteHandle() == nil {
+		return false
+	}
+
+	flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+	state, err := newFlowController(mgr, h.deps.Redis, h.flowRedisPrefix()).State(ctx.Request.Context(), flowID)
+	if err != nil || state == nil {
+		return false
+	}
+
+	return state.Type == flowdomain.FlowTypeOIDCAuthorization &&
+		state.Protocol == flowdomain.FlowProtocolOIDC &&
+		state.GrantType == definitions.OIDCFlowAuthorizationCode &&
+		oidcAuthorizeRequestMatchesMetadata(state.Metadata, request)
+}
+
+// oidcAuthorizeRequestMatchesSession binds reused OIDC flow state to every request parameter that affects a response.
+func oidcAuthorizeRequestMatchesSession(mgr cookie.Manager, request oidcAuthorizeRequest) bool {
+	return mgr.GetString(definitions.SessionKeyIDPFlowType, "") == definitions.ProtoOIDC &&
+		mgr.GetString(definitions.SessionKeyOIDCGrantType, "") == definitions.OIDCFlowAuthorizationCode &&
+		mgr.GetString(definitions.SessionKeyIDPClientID, "") == request.clientID &&
+		mgr.GetString(definitions.SessionKeyIDPRedirectURI, "") == request.redirectURI &&
+		mgr.GetString(definitions.SessionKeyIDPScope, "") == request.scope &&
+		mgr.GetString(definitions.SessionKeyIDPState, "") == request.state &&
+		mgr.GetString(definitions.SessionKeyIDPNonce, "") == request.nonce &&
+		mgr.GetString(definitions.SessionKeyIDPResponseType, "") == request.responseType &&
+		mgr.GetString(definitions.SessionKeyIDPPrompt, "") == request.prompt &&
+		mgr.GetString(definitions.SessionKeyIDPCodeChallenge, "") == request.codeChallenge &&
+		mgr.GetString(definitions.SessionKeyIDPCodeChallengeMethod, "") == request.codeChallengeMethod
+}
+
+// oidcAuthorizeRequestMatchesMetadata binds persisted OIDC flow state to the current authorization request.
+func oidcAuthorizeRequestMatchesMetadata(metadata map[string]string, request oidcAuthorizeRequest) bool {
+	return metadata[flowdomain.FlowMetadataClientID] == request.clientID &&
+		metadata[flowdomain.FlowMetadataRedirectURI] == request.redirectURI &&
+		metadata[flowdomain.FlowMetadataScope] == request.scope &&
+		metadata[flowdomain.FlowMetadataState] == request.state &&
+		metadata[flowdomain.FlowMetadataNonce] == request.nonce &&
+		metadata[flowdomain.FlowMetadataResponseType] == request.responseType &&
+		metadata[flowdomain.FlowMetadataPrompt] == request.prompt &&
+		metadata[flowdomain.FlowMetadataCodeChallenge] == request.codeChallenge &&
+		metadata[flowdomain.FlowMetadataCodeChallengeMethod] == request.codeChallengeMethod
 }
 
 // oidcAuthorizeSessionMFA returns MFA state from the current browser session.
@@ -426,7 +486,9 @@ func (h *OIDCHandler) redirectOIDCAuthorizeConsent(
 
 	if request.prompt == oidcClientAuthMethodNone {
 		if createdAuthorizeFlow {
-			h.abortFlow(ctx, mgr)
+			if !h.abortFlow(ctx, mgr) {
+				return true
+			}
 		}
 
 		redirectOIDCAuthorizeError(ctx, request.redirectURI, request.state, "consent_required")
@@ -472,6 +534,9 @@ func (h *OIDCHandler) issueOIDCAuthorizeCode(
 	oidcFlowContext.AddClientConsent(request.clientID, filteredScopes, consentTTLForClient(h.deps.Cfg, client))
 	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
 	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+	if !saveCompletedBrowserFlow(ctx, mgr) {
+		return
+	}
 
 	if mgr != nil {
 		mgr.Debug(ctx, h.deps.Logger, "OIDC authorization successful - client added to session")
@@ -553,15 +618,23 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		return
 	}
 
-	hadAuthorizeFlow := mgr != nil && mgr.GetString(definitions.SessionKeyIDPFlowID, "") != ""
+	previousAuthorizeFlowID := ""
+	if mgr != nil {
+		previousAuthorizeFlowID = mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+	}
+
 	if !h.ensureOIDCAuthorizeFlowState(ctx, mgr, oidcFlowContext, request, account) {
 		return
 	}
 
-	createdAuthorizeFlow := !hadAuthorizeFlow && mgr != nil && mgr.GetString(definitions.SessionKeyIDPFlowID, "") != ""
+	createdAuthorizeFlow := mgr != nil && mgr.GetString(definitions.SessionKeyIDPFlowID, "") != "" &&
+		mgr.GetString(definitions.SessionKeyIDPFlowID, "") != previousAuthorizeFlowID
 
 	if h.flowAuthFailureLatched(ctx, mgr) {
-		h.abortFlow(ctx, mgr)
+		if !h.abortFlow(ctx, mgr) {
+			return
+		}
+
 		ctx.String(http.StatusForbidden, "Authorization denied")
 
 		return
@@ -712,7 +785,9 @@ func (h *OIDCHandler) rejectOIDCConsentIfAuthFailure(ctx *gin.Context, mgr cooki
 	}
 
 	_ = h.storage.DeleteSession(ctx.Request.Context(), "consent:"+consentChallenge)
-	h.abortFlow(ctx, mgr)
+	if !h.abortFlow(ctx, mgr) {
+		return true
+	}
 
 	if session != nil {
 		stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(session.ClientID, "deny").Inc()
@@ -878,15 +953,21 @@ func (h *OIDCHandler) storeOIDCConsentAuthorizationCode(ctx *gin.Context, sessio
 }
 
 // completeOIDCConsentFlow records consent and completes the login flow.
-func (h *OIDCHandler) completeOIDCConsentFlow(ctx *gin.Context, mgr cookie.Manager, session *idp.OIDCSession, client *config.OIDCClient) {
+func (h *OIDCHandler) completeOIDCConsentFlow(ctx *gin.Context, mgr cookie.Manager, session *idp.OIDCSession, client *config.OIDCClient) bool {
 	if mgr == nil {
-		return
+		return true
 	}
 
 	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(session.ClientID, session.Scopes, consentTTLForClient(h.deps.Cfg, client))
 	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
 	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+	if !saveCompletedBrowserFlow(ctx, mgr) {
+		return false
+	}
+
 	mgr.Debug(ctx, h.deps.Logger, "OIDC consent granted - client added to session")
+
+	return true
 }
 
 // ConsentPOST handles the OIDC consent submission.
@@ -952,7 +1033,9 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 		return
 	}
 
-	h.completeOIDCConsentFlow(ctx, mgr, session, client)
+	if !h.completeOIDCConsentFlow(ctx, mgr, session, client) {
+		return
+	}
 
 	ctx.Redirect(http.StatusFound, target)
 }
@@ -965,12 +1048,15 @@ func (h *OIDCHandler) flowAuthFailureLatched(ctx *gin.Context, mgr cookie.Manage
 	return flowAuthFailureLatched(ctx.Request.Context(), mgr, h.deps.Redis, h.flowRedisPrefix())
 }
 
-func (h *OIDCHandler) abortFlow(ctx *gin.Context, mgr cookie.Manager) {
+func (h *OIDCHandler) abortFlow(ctx *gin.Context, mgr cookie.Manager) bool {
 	if h == nil || h.deps == nil || ctx == nil {
-		return
+		return false
 	}
 
+	core.DeleteWebAuthnCeremony(ctx, core.AuthDeps{Cfg: h.deps.Cfg, Redis: h.deps.Redis}, mgr)
 	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.flowRedisPrefix())
+
+	return saveCompletedBrowserFlow(ctx, mgr)
 }
 
 func (h *OIDCHandler) flowRedisPrefix() string {

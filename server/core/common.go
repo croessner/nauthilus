@@ -75,6 +75,7 @@ func sessionCleanerKeys() []string {
 		definitions.SessionKeyUniqueUserID,
 		definitions.SessionKeyDisplayName,
 		definitions.SessionKeyRegistration,
+		definitions.SessionKeyWebAuthnCeremony,
 		definitions.SessionKeyOIDCClients,
 		definitions.SessionKeyOIDCConsentExpiries,
 		definitions.SessionKeyTOTPSecret,

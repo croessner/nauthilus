@@ -150,6 +150,9 @@ const (
 	// SessionKeyRegistration is used during WebAuthn device registration.
 	SessionKeyRegistration = "webauthn_registration"
 
+	// SessionKeyWebAuthnCeremony stores the opaque reference to server-side WebAuthn ceremony data.
+	SessionKeyWebAuthnCeremony = "webauthn_ceremony"
+
 	// SessionKeyTOTPSecret temporarily holds a locally generated TOTP setup secret during flow.
 	SessionKeyTOTPSecret = "totp_secret"
 

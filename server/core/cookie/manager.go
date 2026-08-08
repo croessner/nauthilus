@@ -118,6 +118,8 @@ type SecureManager struct {
 	env        config.Environment
 }
 
+const maxSecureCookieHeaderBytes = 3800
+
 // sensitiveKeys lists keys whose values should be masked in debug output unless developer mode is enabled.
 var sensitiveKeys = map[string]bool{
 	"totp_secret":               true,
@@ -202,7 +204,7 @@ func (m *SecureManager) Save(ctx *gin.Context) error {
 		return fmt.Errorf("failed to encode cookie: %w", err)
 	}
 
-	http.SetCookie(ctx.Writer, &http.Cookie{
+	responseCookie := &http.Cookie{
 		Name:     m.cookieName,
 		Value:    encoded,
 		Path:     m.path,
@@ -210,7 +212,18 @@ func (m *SecureManager) Save(ctx *gin.Context) error {
 		Secure:   secure,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-	})
+	}
+
+	if len(responseCookie.String()) > maxSecureCookieHeaderBytes {
+		slog.Default().Warn("secure session cookie exceeds supported size limit",
+			"cookie_bytes", len(responseCookie.String()),
+			"limit_bytes", maxSecureCookieHeaderBytes,
+		)
+
+		return fmt.Errorf("secure session cookie exceeds supported size limit (%d bytes)", maxSecureCookieHeaderBytes)
+	}
+
+	http.SetCookie(ctx.Writer, responseCookie)
 
 	return nil
 }

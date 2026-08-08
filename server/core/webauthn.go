@@ -454,16 +454,8 @@ func beginRegistrationOptions(deps AuthDeps, user *backend.User) (*protocol.Cred
 	)
 }
 
-// saveRegistrationSession stores WebAuthn session data in the encrypted session cookie.
+// saveRegistrationSession stores WebAuthn registration ceremony data server-side.
 func saveRegistrationSession(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager, sessionData *webauthn.SessionData) bool {
-	sessionDataJSON, err := jsonIter.Marshal(*sessionData)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, err)
-		SessionCleaner(ctx)
-
-		return false
-	}
-
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
 		deps.Cfg,
@@ -471,14 +463,15 @@ func saveRegistrationSession(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager
 		definitions.DbgWebAuthn,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, "session data begin",
-		"content", fmt.Sprintf("%#v", sessionData),
 	)
 
-	mgr.Set(definitions.SessionKeyRegistration, sessionDataJSON)
+	store, err := newWebAuthnCeremonyStore(deps)
+	if err == nil {
+		err = store.Store(ctx, mgr, webAuthnCeremonyRegister, sessionData)
+	}
 
-	if err = mgr.Save(ctx); err != nil {
+	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, err)
-		SessionCleaner(ctx)
 
 		return false
 	}
@@ -524,22 +517,14 @@ func beginWebAuthnLoginOptions(user *backend.User) (*protocol.CredentialAssertio
 	return webAuthn.BeginLogin(user)
 }
 
-// saveLoginSession stores WebAuthn login session data when a session manager exists.
-func saveLoginSession(ctx *gin.Context, mgr cookie.Manager, sessionData *webauthn.SessionData) bool {
-	sessionDataJSON, err := jsonIter.Marshal(*sessionData)
+// saveLoginSession stores WebAuthn login ceremony data server-side.
+func saveLoginSession(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager, sessionData *webauthn.SessionData) bool {
+	store, err := newWebAuthnCeremonyStore(deps)
+	if err == nil {
+		err = store.Store(ctx, mgr, webAuthnCeremonyLogin, sessionData)
+	}
+
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, err.Error())
-
-		return false
-	}
-
-	if mgr == nil {
-		return true
-	}
-
-	mgr.Set(definitions.SessionKeyRegistration, sessionDataJSON)
-
-	if err = mgr.Save(ctx); err != nil {
 		ctx.JSON(http.StatusInternalServerError, err.Error())
 
 		return false
@@ -604,25 +589,26 @@ func finishRegistrationIdentityFromSession(ctx *gin.Context, deps AuthDeps, mgr 
 	return identity, true
 }
 
-// registrationSessionDataFromCookie loads registration session data from the session cookie.
-func registrationSessionDataFromCookie(ctx *gin.Context, mgr cookie.Manager) (*webauthn.SessionData, bool) {
-	cookieValue := mgr.GetBytes(definitions.SessionKeyRegistration, nil)
-	if cookieValue == nil {
+// registrationSessionDataFromStore consumes registration ceremony data from Redis.
+func registrationSessionDataFromStore(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager) (*webauthn.SessionData, bool) {
+	store, err := newWebAuthnCeremonyStore(deps)
+	if err == nil {
+		var sessionData *webauthn.SessionData
+
+		sessionData, err = store.Take(ctx, mgr, webAuthnCeremonyRegister)
+		if err == nil {
+			return sessionData, true
+		}
+	}
+
+	if err != nil {
 		SessionCleaner(ctx)
 		ctx.JSON(http.StatusBadRequest, errors.ErrWebAuthnSessionData)
 
 		return nil, false
 	}
 
-	sessionData := &webauthn.SessionData{}
-	if err := jsonIter.Unmarshal(cookieValue, sessionData); err != nil {
-		SessionCleaner(ctx)
-		ctx.JSON(http.StatusInternalServerError, err.Error())
-
-		return nil, false
-	}
-
-	return sessionData, true
+	return nil, false
 }
 
 // parseRegistrationFinishResponse parses the registration finish payload and optional device name.
@@ -706,6 +692,7 @@ func updateRegistrationUserCache(ctx *gin.Context, deps AuthDeps, authState *Aut
 // completeRegistrationSession clears registration state and saves the session.
 func completeRegistrationSession(ctx *gin.Context, mgr cookie.Manager) bool {
 	mgr.Delete(definitions.SessionKeyRegistration)
+	mgr.Delete(definitions.SessionKeyWebAuthnCeremony)
 	mgr.Set(definitions.SessionKeyHaveWebAuthn, true)
 
 	if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
@@ -730,7 +717,6 @@ func logRegistrationFinishContext(ctx *gin.Context, deps AuthDeps, identity webA
 		definitions.DbgWebAuthn,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, "session data finish",
-		"content", fmt.Sprintf("%#v", sessionData),
 	)
 
 	util.DebugModuleWithCfg(
@@ -822,7 +808,7 @@ func finishRegistration(ctx *gin.Context, deps AuthDeps) {
 		return
 	}
 
-	sessionData, ok := registrationSessionDataFromCookie(ctx, mgr)
+	sessionData, ok := registrationSessionDataFromStore(ctx, deps, mgr)
 	if !ok {
 		return
 	}
@@ -902,7 +888,7 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		if !saveLoginSession(ctx, mgr, sessionData) {
+		if !saveLoginSession(ctx, deps, mgr, sessionData) {
 			return
 		}
 
@@ -925,7 +911,7 @@ func CompleteLoginWebAuthn(ctx *gin.Context, deps AuthDeps) (*backend.User, bool
 
 	mgr := cookie.GetManager(ctx)
 
-	loginSession, ok := loadWebAuthnLoginSession(ctx, mgr)
+	loginSession, ok := loadWebAuthnLoginSession(ctx, deps, mgr)
 	if !ok {
 		return nil, false
 	}
@@ -981,8 +967,8 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 	}
 }
 
-// loadWebAuthnLoginSession reads the WebAuthn login identity and ceremony data from the session.
-func loadWebAuthnLoginSession(ctx *gin.Context, mgr cookie.Manager) (webAuthnLoginSession, bool) {
+// loadWebAuthnLoginSession reads the WebAuthn login identity and consumes its ceremony data.
+func loadWebAuthnLoginSession(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager) (webAuthnLoginSession, bool) {
 	var loginSession webAuthnLoginSession
 	if mgr == nil {
 		return loginSession, true
@@ -990,17 +976,17 @@ func loadWebAuthnLoginSession(ctx *gin.Context, mgr cookie.Manager) (webAuthnLog
 
 	loginSession.identity = sessionWebAuthnLoginIdentity(mgr)
 
-	cookieValue := mgr.GetBytes(definitions.SessionKeyRegistration, nil)
-	if cookieValue == nil {
+	store, err := newWebAuthnCeremonyStore(deps)
+	if err != nil {
 		return loginSession, true
 	}
 
-	loginSession.sessionData = &webauthn.SessionData{}
-	if err := jsonIter.Unmarshal(cookieValue, loginSession.sessionData); err != nil {
-		ctx.JSON(http.StatusInternalServerError, err.Error())
-
-		return loginSession, false
+	sessionData, err := store.Take(ctx, mgr, webAuthnCeremonyLogin)
+	if err != nil {
+		return loginSession, true
 	}
+
+	loginSession.sessionData = sessionData
 
 	return loginSession, true
 }

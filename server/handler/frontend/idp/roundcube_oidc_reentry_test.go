@@ -60,6 +60,104 @@ func TestExistingSessionAuthorizeCreatesCurrentFlowBeforeMFA(t *testing.T) {
 	}
 }
 
+func TestExistingSAMLFlowIsReplacedBeforeOIDCAuthorize(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx, mgr := newRoundcubeAuthorizeTestContext()
+	mgr.Set(definitions.SessionKeyIDPFlowID, "completed-saml-flow")
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoSAML)
+	mgr.Set(definitions.SessionKeyIDPSAMLEntityID, "https://saml.example.test/metadata")
+	mgr.Set(definitions.SessionKeyIDPOriginalURL, "/saml/sso?SAMLRequest=stale")
+
+	request, ok := readOIDCAuthorizeRequest(ctx)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	handler := newRoundcubeOIDCHandler()
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+	if !handler.ensureOIDCAuthorizeFlowState(ctx, mgr, flowContext, request, flowContext.Account()) {
+		t.Fatal("expected OIDC authorize flow state")
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyIDPFlowID, ""); got == "completed-saml-flow" {
+		t.Fatal("stale SAML flow id was reused for OIDC")
+	}
+
+	assertRoundcubeOIDCFlowSession(t, mgr)
+
+	if got := mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""); got != "" {
+		t.Fatalf("SAML entity id = %q, want cleanup", got)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyIDPOriginalURL, ""); got != "" {
+		t.Fatalf("SAML original URL = %q, want cleanup", got)
+	}
+}
+
+func TestOIDCAuthorizeRequestMatchesSessionBindsAllRequestFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	request := oidcAuthorizeRequest{
+		clientID:            "roundcube-client",
+		redirectURI:         "https://webmail.example.test/index.php/login/oauth",
+		scope:               "openid profile email",
+		state:               "state-1",
+		nonce:               "nonce-1",
+		responseType:        "code",
+		prompt:              "login",
+		codeChallenge:       roundcubeTestCodeChallenge,
+		codeChallengeMethod: oidcPKCEChallengeMethodS256,
+	}
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowType:            definitions.ProtoOIDC,
+		definitions.SessionKeyOIDCGrantType:          definitions.OIDCFlowAuthorizationCode,
+		definitions.SessionKeyIDPClientID:            request.clientID,
+		definitions.SessionKeyIDPRedirectURI:         request.redirectURI,
+		definitions.SessionKeyIDPScope:               request.scope,
+		definitions.SessionKeyIDPState:               request.state,
+		definitions.SessionKeyIDPNonce:               request.nonce,
+		definitions.SessionKeyIDPResponseType:        request.responseType,
+		definitions.SessionKeyIDPPrompt:              request.prompt,
+		definitions.SessionKeyIDPCodeChallenge:       request.codeChallenge,
+		definitions.SessionKeyIDPCodeChallengeMethod: request.codeChallengeMethod,
+	}}
+
+	if !oidcAuthorizeRequestMatchesSession(mgr, request) {
+		t.Fatal("expected identical OIDC request to match the active flow")
+	}
+
+	request.state = "different-state"
+	if oidcAuthorizeRequestMatchesSession(mgr, request) {
+		t.Fatal("OIDC request with a different state reused the active flow")
+	}
+}
+
+func TestCurrentOIDCAuthorizeFlowStateFailsClosedWithoutRedis(t *testing.T) {
+	ctx, mgr := newRoundcubeAuthorizeTestContext()
+	request, ok := readOIDCAuthorizeRequest(ctx)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	mgr.Set(definitions.SessionKeyIDPFlowID, "flow-oidc")
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
+	mgr.Set(definitions.SessionKeyIDPClientID, request.clientID)
+	mgr.Set(definitions.SessionKeyIDPRedirectURI, request.redirectURI)
+	mgr.Set(definitions.SessionKeyIDPScope, request.scope)
+	mgr.Set(definitions.SessionKeyIDPState, request.state)
+	mgr.Set(definitions.SessionKeyIDPNonce, request.nonce)
+	mgr.Set(definitions.SessionKeyIDPResponseType, request.responseType)
+	mgr.Set(definitions.SessionKeyIDPPrompt, request.prompt)
+	mgr.Set(definitions.SessionKeyIDPCodeChallenge, request.codeChallenge)
+	mgr.Set(definitions.SessionKeyIDPCodeChallengeMethod, request.codeChallengeMethod)
+
+	if newRoundcubeOIDCHandler().currentOIDCAuthorizeFlowState(ctx, mgr, request) {
+		t.Fatal("OIDC flow without Redis state was accepted")
+	}
+}
+
 func TestRoundcubeRequireMFADoesNotRestrictUnsetSupportedMethods(t *testing.T) {
 	handler := newRoundcubeFrontendHandler()
 	mgr := &mockCookieManager{data: map[string]any{
