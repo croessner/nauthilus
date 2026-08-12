@@ -55,6 +55,22 @@ func TestRunner_StartsPluginBeforeInitTasksAndStopsInReverse(t *testing.T) {
 	}
 }
 
+func TestRunnerCannotRestartStoppedPostActionSupervisorGeneration(t *testing.T) {
+	runner := newTestRunner(t, &runtimePlugin{}, nil)
+
+	if err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("first Start() error = %v", err)
+	}
+
+	if err := runner.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	if err := runner.Start(context.Background()); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("second Start() error = %v, want ErrNotReady", err)
+	}
+}
+
 func TestRunner_RequestTimeComponentsUnavailableBeforeReady(t *testing.T) {
 	runner := newTestRunner(t, &runtimePlugin{}, func(registrar pluginapi.Registrar) error {
 		return registrar.RegisterEnvironmentSource(runtimeEnvironmentSource{name: testRuntimeEnvironment})

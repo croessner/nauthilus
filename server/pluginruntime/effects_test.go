@@ -16,6 +16,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 	"github.com/prometheus/client_golang/prometheus"
@@ -134,7 +135,142 @@ func TestEffectBridgePassesArgsAndFactsToPostAction(t *testing.T) {
 		t.Fatal("post-action target was not invoked")
 	}
 
-	host.WaitWorkers()
+	waitForEffectBridge(t, bridge)
+}
+
+func TestEffectBridgeKeepsNestedHostWorkerInsideAcceptedOwnership(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	host := NewHost()
+	target := &hostWorkerPostActionTarget{
+		host:    host,
+		started: started,
+		release: release,
+	}
+	bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+		return registrar.RegisterPostActionTarget(target)
+	}, WithHost(host))
+	auth := newSubjectTestAuth(t)
+
+	handled, ok := bridge.ExecutePolicyEffect(auth.Request.HTTPClientContext, auth.View(), report.EffectRequest{
+		ID: effectPostActionQualified,
+	})
+	if !handled || !ok {
+		t.Fatalf("ExecutePolicyEffect() handled=%t ok=%t, want true/true", handled, ok)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("nested host worker did not start")
+	}
+
+	waitContext, cancelWait := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancelWait()
+
+	if err := bridge.WaitPostActions(waitContext); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitPostActions() error = %v, want context.DeadlineExceeded while nested work runs", err)
+	}
+
+	close(release)
+	waitForEffectBridge(t, bridge)
+}
+
+func TestRunnerRetriesStopAfterPostActionSupervisorTimeoutWithoutRestarting(t *testing.T) {
+	events := make([]string, 0, 2)
+	plugin := &runtimePlugin{events: &events}
+	target := &blockingPostActionTarget{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+
+	runner := newTestRunner(t, plugin, func(registrar pluginapi.Registrar) error {
+		return registrar.RegisterPostActionTarget(target)
+	})
+	if err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	bridge := NewEffectBridge(runner)
+	auth := newSubjectTestAuth(t)
+
+	handled, ok := bridge.ExecutePolicyEffect(auth.Request.HTTPClientContext, auth.View(), report.EffectRequest{
+		ID: effectPostActionQualified,
+	})
+	if !handled || !ok {
+		t.Fatalf("ExecutePolicyEffect() handled=%t ok=%t, want true/true", handled, ok)
+	}
+
+	select {
+	case <-target.started:
+	case <-time.After(time.Second):
+		t.Fatal("post-action target did not start")
+	}
+
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	err := runner.Stop(stopCtx)
+
+	cancelStop()
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first Stop() error = %v, want context deadline exceeded", err)
+	}
+
+	if err := runner.Start(context.Background()); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("Start() during incomplete stop error = %v, want ErrNotReady", err)
+	}
+
+	close(target.release)
+
+	retryCtx, cancelRetry := context.WithTimeout(context.Background(), time.Second)
+	defer cancelRetry()
+
+	if err := runner.Stop(retryCtx); err != nil {
+		t.Fatalf("second Stop() error = %v", err)
+	}
+
+	if got, want := events, []string{testRuntimeEventStart, testRuntimeEventStop}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("lifecycle events = %#v, want %#v", got, want)
+	}
+}
+
+func TestEffectBridgeMapsNestedHostWorkerErrorAndPanicToKnownFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		workerError error
+		workerPanic bool
+	}{
+		{name: "error", workerError: errors.New("nested worker failed")},
+		{name: "panic", workerPanic: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := &hostWorkerPostActionTarget{
+				host:        NewHost(),
+				started:     make(chan struct{}),
+				release:     closedSignal(),
+				workerError: test.workerError,
+				workerPanic: test.workerPanic,
+			}
+			bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+				return registrar.RegisterPostActionTarget(target)
+			}, WithHost(target.host))
+			auth := newSubjectTestAuth(t)
+
+			plan, err := bridge.newPostActionPlan(auth.Request.HTTPClientContext, auth, []core.PostActionPlanStep{
+				core.NewNativePostActionPlanStep(report.EffectRequest{ID: effectPostActionQualified}),
+			})
+			if err != nil {
+				t.Fatalf("newPostActionPlan() error = %v", err)
+			}
+			defer plan.Cleanup()
+
+			if got := plan.works[0].Execute(context.Background()).State(); got != effectsupervisor.StateFailed {
+				t.Fatalf("nested worker terminal state = %q, want %q", got, effectsupervisor.StateFailed)
+			}
+		})
+	}
 }
 
 func TestEffectBridgeAddsBuiltinDecisionSourcesAndClientNetToPostAction(t *testing.T) {
@@ -190,7 +326,7 @@ func TestEffectBridgeAddsBuiltinDecisionSourcesAndClientNetToPostAction(t *testi
 		t.Fatal("post-action target was not invoked")
 	}
 
-	host.WaitWorkers()
+	waitForEffectBridge(t, bridge)
 }
 
 func TestEffectBridgePostActionAcceptsBuiltinStringSetRuntime(t *testing.T) {
@@ -240,7 +376,7 @@ func TestEffectBridgePostActionAcceptsBuiltinStringSetRuntime(t *testing.T) {
 		t.Fatal("post-action target was not invoked")
 	}
 
-	host.WaitWorkers()
+	waitForEffectBridge(t, bridge)
 }
 
 func TestEffectBridgePassesCredentialsToPostAction(t *testing.T) {
@@ -296,7 +432,7 @@ func TestEffectBridgePassesCredentialsToPostAction(t *testing.T) {
 		t.Fatal("post-action target was not invoked")
 	}
 
-	host.WaitWorkers()
+	waitForEffectBridge(t, bridge)
 }
 
 func TestEffectBridgeAppliesObligationStatusLogsAndFacts(t *testing.T) {
@@ -463,7 +599,7 @@ func TestEffectBridgeEnqueuesPostActionUnderHostSupervision(t *testing.T) {
 		t.Fatal("post-action target was not invoked")
 	}
 
-	host.WaitWorkers()
+	waitForEffectBridge(t, bridge)
 }
 
 func TestEffectBridgeRunsPostActionPlanInOrderAndSharesRuntimeDelta(t *testing.T) {
@@ -502,7 +638,7 @@ func TestEffectBridgeRunsPostActionPlanInOrderAndSharesRuntimeDelta(t *testing.T
 		t.Fatalf("EnqueuePostActionPlan() handled=%t ok=%t, want true/true", handled, ok)
 	}
 
-	host.WaitWorkers()
+	waitForEffectBridge(t, bridge)
 
 	assertPostActionOrder(t, callOrder, effectProducerActionName, effectConsumerActionName)
 
@@ -514,6 +650,59 @@ func TestEffectBridgeRunsPostActionPlanInOrderAndSharesRuntimeDelta(t *testing.T
 		}
 	default:
 		t.Fatal("consumer post-action was not invoked")
+	}
+}
+
+func TestEffectBridgeOwnsOneTerminalOutcomePerSelectedEffectOrdinal(t *testing.T) {
+	producer := &fakePostActionTarget{name: effectProducerActionName}
+	consumer := &fakePostActionTarget{
+		name:   effectConsumerActionName,
+		result: pluginapi.PostActionEnqueueResult{Enqueued: true},
+		err:    errors.New("dispatch connection lost"),
+	}
+	bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+		if err := registrar.RegisterPostActionTarget(producer); err != nil {
+			return err
+		}
+
+		return registrar.RegisterPostActionTarget(consumer)
+	})
+	auth := newSubjectTestAuth(t)
+
+	plan, err := bridge.newPostActionPlan(auth.Request.HTTPClientContext, auth, []core.PostActionPlanStep{
+		core.NewNativePostActionPlanStep(report.EffectRequest{ID: effectProducerQualified}).WithEffectOrdinal(2),
+		core.NewNativePostActionPlanStep(report.EffectRequest{ID: effectConsumerQualified}).WithEffectOrdinal(4),
+	})
+	if err != nil {
+		t.Fatalf("newPostActionPlan() error = %v", err)
+	}
+	defer plan.Cleanup()
+
+	if got := plan.works[0].Execute(context.Background()).State(); got != effectsupervisor.StateSucceeded {
+		t.Fatalf("ordinal 2 state = %q, want %q", got, effectsupervisor.StateSucceeded)
+	}
+
+	if got := plan.works[1].Execute(context.Background()).State(); got != effectsupervisor.StateOutcomeUnknown {
+		t.Fatalf("ordinal 4 state = %q, want %q", got, effectsupervisor.StateOutcomeUnknown)
+	}
+
+	if plan.works[0].ordinal != 2 || plan.works[1].ordinal != 4 {
+		t.Fatalf("captured ordinals = %d/%d, want 2/4", plan.works[0].ordinal, plan.works[1].ordinal)
+	}
+}
+
+func TestEffectBridgeRejectsOversizedPostActionCapture(t *testing.T) {
+	bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+		return registrar.RegisterPostActionTarget(&fakePostActionTarget{})
+	})
+	auth := newSubjectTestAuth(t)
+	auth.Runtime.Context.Set("oversized", strings.Repeat("x", 257*1024))
+
+	_, err := bridge.newPostActionPlan(auth.Request.HTTPClientContext, auth, []core.PostActionPlanStep{
+		core.NewNativePostActionPlanStep(report.EffectRequest{ID: effectPostActionQualified}),
+	})
+	if !errors.Is(err, effectsupervisor.ErrWorkBounds) {
+		t.Fatalf("newPostActionPlan() error = %v, want ErrWorkBounds", err)
 	}
 }
 
@@ -611,15 +800,13 @@ func TestEffectBridgeRejectsInvalidPostActionRuntimeDelta(t *testing.T) {
 	}
 }
 
-func TestEffectBridgeDetachesPostActionFromCanceledRequestContext(t *testing.T) {
+func TestEffectBridgeRejectsCancellationBeforePostActionAcceptance(t *testing.T) {
 	ctxErrs := make(chan error, 1)
 	target := &fakePostActionTarget{ctxErrs: ctxErrs}
 	host := NewHost()
 	bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
 		return registrar.RegisterPostActionTarget(target)
 	}, WithHost(host))
-	t.Cleanup(host.WaitWorkers)
-
 	auth := newSubjectTestAuth(t)
 	reqCtx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -628,17 +815,14 @@ func TestEffectBridgeDetachesPostActionFromCanceledRequestContext(t *testing.T) 
 	auth.Request.HTTPClientRequest = auth.Request.HTTPClientContext.Request
 
 	handled, ok := bridge.ExecutePolicyEffect(auth.Request.HTTPClientContext, auth.View(), report.EffectRequest{ID: effectPostActionQualified})
-	if !handled || !ok {
-		t.Fatalf("ExecutePolicyEffect() handled=%t ok=%t, want true/true", handled, ok)
+	if !handled || ok {
+		t.Fatalf("ExecutePolicyEffect() handled=%t ok=%t, want true/false", handled, ok)
 	}
 
 	select {
-	case err := <-ctxErrs:
-		if err != nil {
-			t.Fatalf("post-action context err = %v, want nil", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("post-action target was not invoked")
+	case <-ctxErrs:
+		t.Fatal("rejected post-action target was invoked")
+	default:
 	}
 }
 
@@ -662,10 +846,47 @@ func TestEffectBridgeRecoversPostActionPanic(t *testing.T) {
 		t.Fatal("post-action target was not invoked")
 	}
 
-	host.WaitWorkers()
+	waitForEffectBridge(t, bridge)
 
 	if !observer.sawPanic(effectPostActionName, "Enqueue") {
 		t.Fatalf("observer records = %#v, want post-action panic", observer.records)
+	}
+}
+
+func TestEffectBridgeDistinguishesKnownFailureFromAmbiguousExternalDispatch(t *testing.T) {
+	tests := []struct {
+		name      string
+		enqueued  bool
+		wantState effectsupervisor.State
+	}{
+		{name: "known failure before dispatch", wantState: effectsupervisor.StateFailed},
+		{name: "ambiguous failure after dispatch", enqueued: true, wantState: effectsupervisor.StateOutcomeUnknown},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := &fakePostActionTarget{
+				result: pluginapi.PostActionEnqueueResult{Enqueued: test.enqueued},
+				err:    errors.New("provider failed"),
+			}
+
+			bridge := newEffectTestBridge(t, func(registrar pluginapi.Registrar) error {
+				return registrar.RegisterPostActionTarget(target)
+			})
+			auth := newSubjectTestAuth(t)
+
+			plan, err := bridge.newPostActionPlan(auth.Request.HTTPClientContext, auth, []core.PostActionPlanStep{
+				core.NewNativePostActionPlanStep(report.EffectRequest{ID: effectPostActionQualified}),
+			})
+			if err != nil {
+				t.Fatalf("newPostActionPlan() error = %v", err)
+			}
+			defer plan.Cleanup()
+
+			if got := plan.Execute(context.Background()).State(); got != test.wantState {
+				t.Fatalf("post-action state = %q, want %q", got, test.wantState)
+			}
+		})
 	}
 }
 
@@ -676,9 +897,8 @@ func TestEffectBridgeRecordsPostActionPlanDuration(t *testing.T) {
 	})
 	bridge.planObserver = metrics
 
-	plan := postActionPlan{
-		requestContext: context.Background(),
-		executionDone:  closedPostActionExecutionGate(),
+	plan := &postActionPlan{
+		bridge: bridge,
 		steps: []postActionPlanStep{{
 			kind:          core.PostActionPlanStepNative,
 			qualifiedName: effectPostActionQualified,
@@ -718,14 +938,6 @@ func (m *postActionPlanTestMetrics) Observe(duration time.Duration, result strin
 	m.duration.WithLabelValues(result).Observe(duration.Seconds())
 }
 
-// closedPostActionExecutionGate returns an already completed response gate.
-func closedPostActionExecutionGate() <-chan struct{} {
-	done := make(chan struct{})
-	close(done)
-
-	return done
-}
-
 func newEffectTestBridge(t *testing.T, register func(pluginapi.Registrar) error, options ...Option) *EffectBridge {
 	t.Helper()
 
@@ -735,6 +947,18 @@ func newEffectTestBridge(t *testing.T, register func(pluginapi.Registrar) error,
 	}
 
 	return NewEffectBridge(runner)
+}
+
+// waitForEffectBridge waits until supervisor cleanup has completed.
+func waitForEffectBridge(t *testing.T, bridge *EffectBridge) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := bridge.WaitPostActions(ctx); err != nil {
+		t.Fatalf("WaitPostActions() error = %v", err)
+	}
 }
 
 type fakeObligationTarget struct {
@@ -772,7 +996,67 @@ type fakePostActionTarget struct {
 	order        chan string
 	result       pluginapi.PostActionEnqueueResult
 	name         string
+	err          error
 	panicEnqueue bool
+}
+
+type hostWorkerPostActionTarget struct {
+	host        pluginapi.Host
+	started     chan struct{}
+	release     chan struct{}
+	workerError error
+	workerPanic bool
+}
+
+type blockingPostActionTarget struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+// Name returns the registered blocking test target name.
+func (*blockingPostActionTarget) Name() string {
+	return effectPostActionName
+}
+
+// Enqueue holds provider execution until the test releases it, ignoring cancellation deliberately.
+func (t *blockingPostActionTarget) Enqueue(context.Context, pluginapi.PostActionRequest) (pluginapi.PostActionEnqueueResult, error) {
+	close(t.started)
+	<-t.release
+
+	return pluginapi.PostActionEnqueueResult{Enqueued: true}, nil
+}
+
+// Name returns the registered post-action target name.
+func (*hostWorkerPostActionTarget) Name() string {
+	return effectPostActionName
+}
+
+// Enqueue starts nested host work that remains under accepted ownership.
+func (t *hostWorkerPostActionTarget) Enqueue(ctx context.Context, _ pluginapi.PostActionRequest) (pluginapi.PostActionEnqueueResult, error) {
+	t.host.Go(ctx, "nested-post-action", func(workerContext context.Context) error {
+		close(t.started)
+
+		if t.workerPanic {
+			panic("nested worker panic")
+		}
+
+		select {
+		case <-t.release:
+			return t.workerError
+		case <-workerContext.Done():
+			return workerContext.Err()
+		}
+	})
+
+	return pluginapi.PostActionEnqueueResult{Enqueued: true}, nil
+}
+
+// closedSignal returns an already-released test synchronization channel.
+func closedSignal() chan struct{} {
+	signal := make(chan struct{})
+	close(signal)
+
+	return signal
 }
 
 func (t *fakePostActionTarget) Name() string {
@@ -810,7 +1094,11 @@ func (t *fakePostActionTarget) Enqueue(ctx context.Context, request pluginapi.Po
 	}
 
 	if postActionResultIsSet(t.result) {
-		return t.result, nil
+		return t.result, t.err
+	}
+
+	if t.err != nil {
+		return pluginapi.PostActionEnqueueResult{}, t.err
 	}
 
 	return pluginapi.PostActionEnqueueResult{Enqueued: true}, nil

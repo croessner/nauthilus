@@ -2,10 +2,12 @@ package pluginruntime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
@@ -16,15 +18,19 @@ import (
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var _ core.PluginEffectBridge = (*EffectBridge)(nil)
+
+var errPostActionDispatchAmbiguous = errors.New("post-action external dispatch outcome is unknown")
 
 // EffectBridge adapts policy-selected native plugin effects into core.
 type EffectBridge struct {
@@ -103,14 +109,14 @@ func (b *EffectBridge) executeObligation(ctx *gin.Context, auth *core.AuthState,
 	return result.Applied || !result.Temporary
 }
 
-// EnqueuePostActionPlan starts one detached worker for ordered post-action steps.
+// EnqueuePostActionPlan synchronously transfers one ordered plan to the host supervisor.
 func (b *EffectBridge) EnqueuePostActionPlan(
 	ctx *gin.Context,
 	view *core.StateView,
 	steps []core.PostActionPlanStep,
 ) (bool, bool) {
 	auth := authFromView(view)
-	if b == nil || b.runner == nil || b.runner.host == nil || auth == nil || len(steps) == 0 {
+	if b == nil || b.runner == nil || b.runner.postActions == nil || auth == nil || len(steps) == 0 {
 		return false, false
 	}
 
@@ -121,9 +127,15 @@ func (b *EffectBridge) EnqueuePostActionPlan(
 		return true, false
 	}
 
-	b.runner.host.Go(plan.requestContext, postActionPlanWorkerName, func(workerCtx context.Context) error {
-		return b.runPostActionPlan(workerCtx, plan)
-	})
+	for index, work := range plan.works {
+		if _, err = b.runner.postActions.Accept(ctx, view, work.ordinal, work); err != nil {
+			for _, rejected := range plan.works[index:] {
+				rejected.Cleanup()
+			}
+
+			return true, false
+		}
+	}
 
 	return true, true
 }
@@ -136,14 +148,16 @@ const (
 )
 
 type postActionPlan struct {
-	requestContext context.Context
-	executionDone  <-chan struct{}
-	runtimeValues  map[string]any
-	sourceSteps    []core.PostActionPlanStep
-	steps          []postActionPlanStep
-	facts          []pluginapi.PolicyFact
-	snapshot       pluginapi.RequestSnapshot
-	passwordHash   string
+	runtimeValues map[string]any
+	sourceSteps   []core.PostActionPlanStep
+	steps         []postActionPlanStep
+	facts         []pluginapi.PolicyFact
+	snapshot      pluginapi.RequestSnapshot
+	passwordHash  string
+	bridge        *EffectBridge
+	works         []*postActionEffectWork
+	remaining     int
+	mu            sync.Mutex
 }
 
 type postActionPlanStep struct {
@@ -154,47 +168,256 @@ type postActionPlanStep struct {
 	kind          core.PostActionPlanStepKind
 }
 
+type postActionCaptureBounds struct {
+	runtime      map[string]any
+	args         []map[string]any
+	facts        []pluginapi.PolicyFact
+	snapshot     pluginapi.RequestSnapshot
+	passwordHash string
+}
+
+type postActionEffectWork struct {
+	plan        *postActionPlan
+	previous    <-chan bool
+	completed   chan bool
+	index       int
+	ordinal     uint32
+	finishOnce  sync.Once
+	cleanupOnce sync.Once
+}
+
 // newPostActionPlan captures request-local inputs before the detached worker starts.
 func (b *EffectBridge) newPostActionPlan(
 	ctx *gin.Context,
 	auth *core.AuthState,
 	steps []core.PostActionPlanStep,
-) (postActionPlan, error) {
+) (*postActionPlan, error) {
 	policyCtx := auth.PolicyDecisionContext(ctx)
 
 	facts, err := pluginEffectFacts(policyCtx)
 	if err != nil {
-		return postActionPlan{}, err
+		return nil, err
 	}
 
 	requestContext := context.WithoutCancel(contextFromGin(ctx))
-	runtimeValues := runtimeSnapshot(auth)
+
+	runtimeValues, err := cloneRuntimeMap(runtimeSnapshot(auth))
+	if err != nil {
+		return nil, err
+	}
+
 	addPolicyDecisionSources(runtimeValues, policyCtx)
 
 	snapshot := NewRequestSnapshotFromAuthState(auth, WithSnapshotConfig(auth.Cfg()))
 	snapshot.ClientNet = policyClientNet(policyCtx, snapshot.ClientNet)
+	passwordHash := postActionPasswordHash(auth)
 
-	plan := postActionPlan{
-		requestContext: requestContext,
-		executionDone:  core.PostActionExecutionDone(ctx),
-		runtimeValues:  runtimeValues,
-		sourceSteps:    append([]core.PostActionPlanStep(nil), steps...),
-		facts:          facts,
-		snapshot:       snapshot,
-		passwordHash:   postActionPasswordHash(auth),
-		steps:          make([]postActionPlanStep, 0, len(steps)),
+	if err := validatePostActionCaptureBounds(runtimeValues, facts, snapshot, passwordHash, steps); err != nil {
+		return nil, err
+	}
+
+	plan := &postActionPlan{
+		runtimeValues: runtimeValues,
+		sourceSteps:   append([]core.PostActionPlanStep(nil), steps...),
+		facts:         facts,
+		snapshot:      snapshot,
+		passwordHash:  passwordHash,
+		steps:         make([]postActionPlanStep, 0, len(steps)),
+		bridge:        b,
 	}
 
 	for _, requestedStep := range steps {
 		step, err := b.newPostActionPlanStep(requestContext, auth, requestedStep)
 		if err != nil {
-			return postActionPlan{}, err
+			plan.Cleanup()
+
+			return nil, err
 		}
 
 		plan.steps = append(plan.steps, step)
 	}
 
+	plan.works = newPostActionEffectWorks(plan)
+	plan.remaining = len(plan.works)
+
 	return plan, nil
+}
+
+// validatePostActionCaptureBounds rejects oversized concrete work before acceptance.
+func validatePostActionCaptureBounds(
+	runtimeValues map[string]any,
+	facts []pluginapi.PolicyFact,
+	snapshot pluginapi.RequestSnapshot,
+	passwordHash string,
+	steps []core.PostActionPlanStep,
+) error {
+	args := make([]map[string]any, 0, len(steps))
+	for _, step := range steps {
+		if effect, ok := step.NativeEffect(); ok {
+			args = append(args, effect.Args)
+		}
+	}
+
+	return effectsupervisor.ValidateBoundedValue(postActionCaptureBounds{
+		runtime:      runtimeValues,
+		args:         args,
+		facts:        facts,
+		snapshot:     snapshot,
+		passwordHash: passwordHash,
+	}, effectsupervisor.DefaultWorkBounds())
+}
+
+// newPostActionEffectWorks creates one ordered supervisor owner per effect ordinal.
+func newPostActionEffectWorks(plan *postActionPlan) []*postActionEffectWork {
+	previous := make(chan bool, 1)
+	previous <- true
+
+	works := make([]*postActionEffectWork, 0, len(plan.steps))
+
+	for index := range plan.steps {
+		completed := make(chan bool, 1)
+		ordinal := plan.sourceSteps[index].EffectOrdinal()
+
+		if ordinal == 0 {
+			ordinal = uint32(index + 1)
+		}
+
+		works = append(works, &postActionEffectWork{
+			plan:      plan,
+			previous:  previous,
+			completed: completed,
+			index:     index,
+			ordinal:   ordinal,
+		})
+		previous = completed
+	}
+
+	return works
+}
+
+// Validate confirms that the captured plugin plan has one runtime owner and executable step.
+func (p *postActionPlan) Validate() error {
+	if p == nil || p.bridge == nil || p.bridge.runner == nil || len(p.steps) == 0 {
+		return effectsupervisor.ErrInvalidWork
+	}
+
+	return nil
+}
+
+// Execute invokes the captured ordered plan once without automatic retry.
+func (p *postActionPlan) Execute(ctx context.Context) effectsupervisor.Result {
+	return postActionExecutionResult(p.bridge.runPostActionPlan(ctx, p))
+}
+
+// Cleanup releases copied source steps and sensitive values exactly once.
+func (p *postActionPlan) Cleanup() {
+	if p == nil {
+		return
+	}
+
+	if len(p.works) == 0 {
+		core.ReleasePostActionPlanSteps(p.sourceSteps)
+		p.clear()
+
+		return
+	}
+
+	for _, work := range p.works {
+		work.Cleanup()
+	}
+}
+
+// Validate confirms that one selected effect has an immutable sequence owner.
+func (w *postActionEffectWork) Validate() error {
+	if w == nil || w.plan == nil || w.previous == nil || w.completed == nil || w.index < 0 || w.index >= len(w.plan.steps) {
+		return effectsupervisor.ErrInvalidWork
+	}
+
+	return nil
+}
+
+// Execute waits for the prior effect and invokes its selected provider exactly once.
+func (w *postActionEffectWork) Execute(ctx context.Context) effectsupervisor.Result {
+	select {
+	case proceed := <-w.previous:
+		if !proceed {
+			w.finish(false)
+
+			return effectsupervisor.Failed("prior_step_failed")
+		}
+	case <-ctx.Done():
+		w.finish(false)
+
+		return effectsupervisor.Failed("canceled")
+	}
+
+	err := w.plan.bridge.runPostActionPlanEffect(ctx, w.plan, w.index)
+	w.finish(err == nil)
+
+	return postActionExecutionResult(err)
+}
+
+// Cleanup releases one captured effect and clears shared state after the last owner.
+func (w *postActionEffectWork) Cleanup() {
+	if w == nil {
+		return
+	}
+
+	w.cleanupOnce.Do(func() {
+		w.finish(false)
+		w.plan.sourceSteps[w.index].Release()
+
+		w.plan.mu.Lock()
+		w.plan.remaining--
+		last := w.plan.remaining == 0
+		w.plan.mu.Unlock()
+
+		if last {
+			w.plan.clear()
+		}
+	})
+}
+
+// finish publishes whether the next selected effect may execute.
+func (w *postActionEffectWork) finish(proceed bool) {
+	w.finishOnce.Do(func() {
+		w.completed <- proceed
+	})
+}
+
+// clear drops shared captured values after every effect owner releases them.
+func (p *postActionPlan) clear() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.sourceSteps = nil
+	p.steps = nil
+	p.works = nil
+	p.runtimeValues = nil
+	p.facts = nil
+	p.passwordHash = ""
+}
+
+// postActionExecutionResult maps plugin execution into a bounded supervisor outcome.
+func postActionExecutionResult(err error) effectsupervisor.Result {
+	if err == nil {
+		return effectsupervisor.Succeeded()
+	}
+
+	if errors.Is(err, errPostActionDispatchAmbiguous) {
+		return effectsupervisor.OutcomeUnknown("dispatch_ambiguous")
+	}
+
+	return effectsupervisor.Failed("provider_failure")
+}
+
+// WaitPostActions waits for every plan accepted by this bridge generation.
+func (b *EffectBridge) WaitPostActions(ctx context.Context) error {
+	if b == nil || b.runner == nil || b.runner.postActions == nil {
+		return nil
+	}
+
+	return b.runner.postActions.WaitIdle(ctx)
 }
 
 // addPolicyDecisionSources mirrors built-in policy outcomes into the public exchange keyspace.
@@ -325,6 +548,10 @@ func (b *EffectBridge) newPostActionPlanStep(
 			return postActionPlanStep{}, fmt.Errorf("lua post-action plan step %q is not runnable", requestedStep.ID())
 		}
 
+		if err := runner.ValidatePlanStep(); err != nil {
+			return postActionPlanStep{}, err
+		}
+
 		return postActionPlanStep{
 			luaRunner: runner,
 			kind:      core.PostActionPlanStepLua,
@@ -345,65 +572,27 @@ func (b *EffectBridge) newPostActionPlanStep(
 		return postActionPlanStep{}, err
 	}
 
+	args, err := cloneRuntimeMap(effect.Args)
+	if err != nil {
+		return postActionPlanStep{}, err
+	}
+
 	return postActionPlanStep{
 		credentials:   NewCredentialProvider(requestContext, auth.GetPassword(), b.runner.ModuleCapabilities(moduleName)),
-		args:          pluginregistry.NewArgsView(effect.Args),
+		args:          pluginregistry.NewArgsView(args),
 		qualifiedName: effect.ID,
 		kind:          core.PostActionPlanStepNative,
 	}, nil
 }
 
 // runPostActionPlan executes post-action steps sequentially and merges valid runtime deltas.
-func (b *EffectBridge) runPostActionPlan(ctx context.Context, plan postActionPlan) (err error) {
-	defer core.ReleasePostActionPlanSteps(plan.sourceSteps)
-
-	if err = core.WaitForPostActionExecution(ctx, plan.executionDone); err != nil {
-		return err
+func (b *EffectBridge) runPostActionPlan(ctx context.Context, plan *postActionPlan) (err error) {
+	if plan == nil {
+		return effectsupervisor.ErrInvalidWork
 	}
 
-	tr := monittrace.New("nauthilus/post_action")
-	planCtx, planSpan := tr.Start(ctx, "auth.post_action.plan",
-		attribute.Int("post_action.steps", len(plan.steps)),
-	)
-	startedAt := time.Now()
-
-	defer func() {
-		b.planObserver.Observe(time.Since(startedAt), pluginCallResult(CallRecord{Err: err}))
-
-		if err != nil {
-			planSpan.RecordError(err)
-			planSpan.SetStatus(codes.Error, "post-action plan failed")
-			planSpan.SetAttributes(attribute.String("post_action.result", "error"))
-		} else {
-			planSpan.SetAttributes(attribute.String("post_action.result", "ok"))
-		}
-
-		planSpan.End()
-	}()
-
-	runtimeValues, err := cloneRuntimeMap(plan.runtimeValues)
-	if err != nil {
-		return err
-	}
-
-	for _, step := range plan.steps {
-		runtimeContext, err := NewRuntimeContext(runtimeValues)
-		if err != nil {
-			return err
-		}
-
-		delta, err := b.runPostActionPlanStep(planCtx, plan, step, runtimeContext, runtimeValues)
-		if err != nil {
-			return err
-		}
-
-		runtimeValues, err = MergeRuntimeDeltas(
-			planCtx,
-			runtimeValues,
-			b.runner.host.Logger(postActionPlanWorkerName),
-			delta,
-		)
-		if err != nil {
+	for index := range plan.steps {
+		if err := b.runPostActionPlanEffect(ctx, plan, index); err != nil {
 			return err
 		}
 	}
@@ -411,10 +600,81 @@ func (b *EffectBridge) runPostActionPlan(ctx context.Context, plan postActionPla
 	return nil
 }
 
+// runPostActionPlanEffect executes one selected effect against ordered shared runtime state.
+func (b *EffectBridge) runPostActionPlanEffect(ctx context.Context, plan *postActionPlan, index int) (err error) {
+	if plan == nil || index < 0 || index >= len(plan.steps) {
+		return effectsupervisor.ErrInvalidWork
+	}
+
+	ordinal := uint32(index + 1)
+	if index < len(plan.works) {
+		ordinal = plan.works[index].ordinal
+	}
+
+	tr := monittrace.New("nauthilus/post_action")
+	planCtx, planSpan := tr.Start(ctx, "auth.post_action.plan",
+		attribute.Int("post_action.steps", 1),
+		attribute.Int("post_action.effect_ordinal", int(ordinal)),
+	)
+	startedAt := time.Now()
+
+	defer func() {
+		b.finishPostActionPlanEffect(planSpan, startedAt, err)
+	}()
+
+	plan.mu.Lock()
+	runtimeValues, err := cloneRuntimeMap(plan.runtimeValues)
+	plan.mu.Unlock()
+	if err != nil {
+		return err
+	}
+
+	runtimeContext, err := NewRuntimeContext(runtimeValues)
+	if err != nil {
+		return err
+	}
+
+	delta, err := b.runPostActionPlanStep(planCtx, plan, plan.steps[index], runtimeContext, runtimeValues)
+	if err != nil {
+		return err
+	}
+
+	runtimeValues, err = MergeRuntimeDeltas(
+		planCtx,
+		runtimeValues,
+		b.runner.host.Logger(postActionPlanWorkerName),
+		delta,
+	)
+	if err != nil {
+		return err
+	}
+
+	plan.mu.Lock()
+	plan.runtimeValues = runtimeValues
+	plan.mu.Unlock()
+
+	return nil
+}
+
+// finishPostActionPlanEffect records the terminal duration and span result for one selected effect.
+func (b *EffectBridge) finishPostActionPlanEffect(span trace.Span, startedAt time.Time, err error) {
+	b.planObserver.Observe(time.Since(startedAt), pluginCallResult(CallRecord{Err: err}))
+
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "post-action plan failed")
+		span.SetAttributes(attribute.String("post_action.result", "error"))
+	} else {
+		span.SetAttributes(attribute.String("post_action.result", "ok"))
+	}
+
+	span.End()
+}
+
 // runPostActionPlanStep executes one native or Lua step against the current plan runtime.
 func (b *EffectBridge) runPostActionPlanStep(
 	ctx context.Context,
-	plan postActionPlan,
+	plan *postActionPlan,
 	step postActionPlanStep,
 	runtimeContext pluginapi.RuntimeContext,
 	runtimeValues map[string]any,
@@ -430,6 +690,14 @@ func (b *EffectBridge) runPostActionPlanStep(
 			Facts:        plan.facts,
 		})
 		if err != nil {
+			if errors.Is(err, errPostActionWorkerFailed) {
+				return pluginapi.RuntimeDelta{}, err
+			}
+
+			if result.Enqueued {
+				return pluginapi.RuntimeDelta{}, errors.Join(errPostActionDispatchAmbiguous, err)
+			}
+
 			return pluginapi.RuntimeDelta{}, err
 		}
 
@@ -440,14 +708,17 @@ func (b *EffectBridge) runPostActionPlanStep(
 			return pluginapi.RuntimeDelta{}, err
 		}
 
-		delta, ok := step.luaRunner.RunPlanStep(ctx, core.PostActionPlanInput{
+		delta, result := step.luaRunner.RunPlanStep(ctx, core.PostActionPlanInput{
 			Runtime: stepRuntime,
 		})
-		if !ok {
+		switch result.State() {
+		case effectsupervisor.StateSucceeded:
+			return delta, nil
+		case effectsupervisor.StateOutcomeUnknown:
+			return pluginapi.RuntimeDelta{}, errPostActionDispatchAmbiguous
+		default:
 			return pluginapi.RuntimeDelta{}, fmt.Errorf("lua post-action plan step failed")
 		}
-
-		return delta, nil
 	default:
 		return pluginapi.RuntimeDelta{}, fmt.Errorf("unsupported post-action plan step kind %q", step.kind)
 	}

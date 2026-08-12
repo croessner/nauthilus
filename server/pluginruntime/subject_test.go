@@ -852,6 +852,8 @@ func newSubjectTestAuth(t *testing.T) *core.AuthState {
 
 	auth := newBackendTestAuth(t)
 	auth.Runtime.Context = lualib.NewContext()
+	gate := core.InstallPostActionExecutionGate(auth.Request.HTTPClientContext)
+	gate.Complete()
 
 	return auth
 }

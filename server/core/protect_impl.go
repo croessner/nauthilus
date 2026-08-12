@@ -115,7 +115,18 @@ func handleProtectedPreAuthBruteForce(ctx *gin.Context, auth *AuthState) bool {
 		return true
 	}
 
-	if auth.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) || auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
+	if handled, accepted := auth.applyConfiguredPreAuthControl(ctx); handled {
+		if !accepted {
+			auth.AuthTempFail(ctx, definitions.TempFailDefault)
+			ctx.Abort()
+
+			return true
+		}
+
+		return false
+	}
+
+	if auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
 		return false
 	}
 
@@ -125,7 +136,14 @@ func handleProtectedPreAuthBruteForce(ctx *gin.Context, auth *AuthState) bool {
 
 	auth.markEnvironmentRejected(ctx)
 	auth.UpdateBruteForceBucketsCounter(ctx)
-	protectedPostLuaAction(ctx, auth)
+
+	if !protectedPostLuaAction(ctx, auth) {
+		auth.AuthTempFail(ctx, definitions.TempFailDefault)
+		ctx.Abort()
+
+		return true
+	}
+
 	auth.AuthFail(ctx)
 	ctx.Abort()
 
@@ -137,19 +155,37 @@ func handleProtectedEnvironment(ctx *gin.Context, auth *AuthState) bool {
 	//nolint:exhaustive // Ignore some results
 	switch auth.HandleEnvironment(ctx) {
 	case definitions.AuthResultPreAuthTLS:
-		protectedPostLuaAction(ctx, auth)
+		if !protectedPostLuaAction(ctx, auth) {
+			auth.AuthTempFail(ctx, definitions.TempFailDefault)
+			ctx.Abort()
+
+			return true
+		}
+
 		HandleErrWithDeps(ctx, errors.ErrNoTLS, auth.deps)
 		ctx.Abort()
 
 		return true
 	case definitions.AuthResultPreAuthRelayDomain, definitions.AuthResultPreAuthRBL, definitions.AuthResultLuaEnvironment:
-		protectedPostLuaAction(ctx, auth)
+		if !protectedPostLuaAction(ctx, auth) {
+			auth.AuthTempFail(ctx, definitions.TempFailDefault)
+			ctx.Abort()
+
+			return true
+		}
+
 		auth.AuthFail(ctx)
 		ctx.Abort()
 
 		return true
 	case definitions.AuthResultTempFail:
-		protectedPostLuaAction(ctx, auth)
+		if !protectedPostLuaAction(ctx, auth) {
+			auth.AuthTempFail(ctx, definitions.TempFailDefault)
+			ctx.Abort()
+
+			return true
+		}
+
 		auth.AuthTempFail(ctx, definitions.TempFailDefault)
 		ctx.Abort()
 
@@ -160,8 +196,10 @@ func handleProtectedEnvironment(ctx *gin.Context, auth *AuthState) bool {
 }
 
 // protectedPostLuaAction runs post-action hooks with a pooled empty PassDB result.
-func protectedPostLuaAction(ctx *gin.Context, auth *AuthState) {
+func protectedPostLuaAction(ctx *gin.Context, auth *AuthState) bool {
 	result := GetPassDBResultFromPool()
-	auth.PostLuaAction(ctx, result)
+	accepted := auth.PostLuaAction(ctx, result)
 	PutPassDBResultToPool(result)
+
+	return accepted
 }

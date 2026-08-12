@@ -89,6 +89,8 @@ type Runner struct {
 	host             pluginapi.Host
 	observer         Observer
 	registry         *pluginregistry.Registry
+	postActions      *core.PostActionSupervisor
+	effectBridge     *EffectBridge
 	pluginConfig     *config.PluginsSection
 	modules          []moduleRuntime
 	startedModules   []string
@@ -96,7 +98,10 @@ type Runner struct {
 	moduleIndex      map[string]int
 	failedModules    map[string]error
 	mu               sync.RWMutex
+	stopMu           sync.Mutex
 	ready            bool
+	stopping         bool
+	stopped          bool
 }
 
 type moduleRuntime struct {
@@ -162,9 +167,13 @@ func NewRunnerFromInstances(
 		runner.pluginConfig = pluginSectionFromModules(runner.modules)
 	}
 
+	runner.postActions = core.NewPostActionSupervisor(context.Background())
+	runner.effectBridge = NewEffectBridge(runner)
+
 	core.RegisterPluginSubjectSourceBridge(NewSubjectSourceBridge(runner))
 	core.RegisterPluginEnvironmentSourceBridge(NewEnvironmentSourceBridge(runner))
-	core.RegisterPluginEffectBridge(NewEffectBridge(runner))
+	core.RegisterPostActionSupervisor(runner.postActions)
+	core.RegisterPluginEffectBridge(runner.effectBridge)
 
 	return runner
 }
@@ -219,6 +228,10 @@ func (r *Runner) Start(ctx context.Context) error {
 		return nil
 	}
 
+	if r.stopping || r.stopped || r.postActions == nil || r.postActions.IsShutdown() {
+		return ErrNotReady
+	}
+
 	for index := range r.modules {
 		if err := r.startModule(ctx, index); err != nil {
 			return err
@@ -242,10 +255,26 @@ func (r *Runner) Stop(ctx context.Context) error {
 		return nil
 	}
 
+	r.stopMu.Lock()
+	defer r.stopMu.Unlock()
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	if r.stopped {
+		r.mu.Unlock()
+
+		return nil
+	}
 
 	r.ready = false
+	r.stopping = true
+	r.mu.Unlock()
+
+	if err := r.postActions.Shutdown(ctx); err != nil {
+		return err
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	var errs []error
 
@@ -267,6 +296,8 @@ func (r *Runner) Stop(ctx context.Context) error {
 
 	r.startedInitTasks = nil
 	r.startedModules = nil
+	r.stopping = false
+	r.stopped = true
 
 	return errors.Join(errs...)
 }
@@ -356,9 +387,14 @@ func (r *Runner) EnqueuePostAction(
 	qualifiedName string,
 	request pluginapi.PostActionRequest,
 ) (pluginapi.PostActionEnqueueResult, error) {
-	return invokeTypedComponent(ctx, r, qualifiedName, pluginregistry.ComponentKindPostActionTarget, "Enqueue", func(callCtx context.Context, target pluginapi.PostActionTarget) (pluginapi.PostActionEnqueueResult, error) {
+	workers := &postActionWorkerGroup{}
+	ctx = withPostActionWorkerOwnership(ctx, workers)
+
+	result, err := invokeTypedComponent(ctx, r, qualifiedName, pluginregistry.ComponentKindPostActionTarget, "Enqueue", func(callCtx context.Context, target pluginapi.PostActionTarget) (pluginapi.PostActionEnqueueResult, error) {
 		return target.Enqueue(callCtx, request)
 	})
+
+	return result, errors.Join(err, workers.wait())
 }
 
 // ServeHook invokes one ready hook behind the host panic boundary.

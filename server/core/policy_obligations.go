@@ -37,7 +37,7 @@ const (
 type policyObligationHandlers struct {
 	updateBruteForce func(*gin.Context, bruteForceUpdateObligation) bool
 	dispatchLua      func(*gin.Context, luaActionObligation) bool
-	enqueuePost      func(*gin.Context)
+	enqueuePost      func(*gin.Context) bool
 }
 
 type policyObligationExecutor struct {
@@ -66,33 +66,33 @@ func newPolicyObligationExecutor(auth *AuthState) policyObligationExecutor {
 	executor.handlers = policyObligationHandlers{
 		updateBruteForce: auth.executeBruteForceUpdateObligation,
 		dispatchLua:      auth.executeLuaActionObligation,
-		enqueuePost: func(ctx *gin.Context) {
-			auth.enqueuePolicyPostAction(ctx)
-		},
+		enqueuePost:      auth.enqueuePolicyPostAction,
 	}
 
 	return executor
 }
 
-func (e policyObligationExecutor) Execute(ctx *gin.Context, final *report.FinalDecision) {
+func (e policyObligationExecutor) Execute(ctx *gin.Context, final *report.FinalDecision) bool {
 	if e.auth == nil || final == nil {
-		return
+		return true
 	}
 
 	if !policyObligationsEnabled(ctx) {
-		return
+		return true
 	}
 
 	postActionPlan := make([]PostActionPlanStep, 0)
-	for _, obligation := range final.Obligations {
-		if e.collectPostActionPlanStep(ctx, obligation, &postActionPlan) {
+
+	for index, obligation := range final.Obligations {
+		ordinal := uint32(index + 1)
+		if e.collectPostActionPlanStep(ctx, obligation, ordinal, &postActionPlan) {
 			continue
 		}
 
 		e.executeOne(ctx, obligation)
 	}
 
-	e.executePostActionPlan(ctx, postActionPlan)
+	return e.executePostActionPlan(ctx, postActionPlan)
 }
 
 func (e policyObligationExecutor) executeOne(ctx *gin.Context, obligation report.EffectRequest) {
@@ -123,7 +123,9 @@ func (e policyObligationExecutor) executeOne(ctx *gin.Context, obligation report
 			result = observability.ResultFailure
 		}
 	case policy.ObligationLuaPostActionEnqueue:
-		e.handlers.enqueuePost(ctx)
+		if !e.handlers.enqueuePost(ctx) {
+			result = observability.ResultFailure
+		}
 	default:
 		handled, ok := e.executePluginEffect(ctx, obligation)
 		if !handled {
@@ -180,18 +182,20 @@ func (e policyObligationExecutor) executePluginEffect(ctx *gin.Context, obligati
 func (e policyObligationExecutor) collectPostActionPlanStep(
 	ctx *gin.Context,
 	obligation report.EffectRequest,
+	ordinal uint32,
 	postActionPlan *[]PostActionPlanStep,
 ) bool {
-	if e.collectPluginPostAction(obligation, postActionPlan) {
+	if e.collectPluginPostAction(obligation, ordinal, postActionPlan) {
 		return true
 	}
 
-	return e.collectLuaPostAction(ctx, obligation, postActionPlan)
+	return e.collectLuaPostAction(ctx, obligation, ordinal, postActionPlan)
 }
 
 // collectPluginPostAction appends native post-action effects for one later plan enqueue.
 func (e policyObligationExecutor) collectPluginPostAction(
 	obligation report.EffectRequest,
+	ordinal uint32,
 	postActionPlan *[]PostActionPlanStep,
 ) bool {
 	if postActionPlan == nil {
@@ -203,7 +207,7 @@ func (e policyObligationExecutor) collectPluginPostAction(
 		return false
 	}
 
-	*postActionPlan = append(*postActionPlan, NewNativePostActionPlanStep(obligation))
+	*postActionPlan = append(*postActionPlan, NewNativePostActionPlanStep(obligation).WithEffectOrdinal(ordinal))
 
 	return true
 }
@@ -212,6 +216,7 @@ func (e policyObligationExecutor) collectPluginPostAction(
 func (e policyObligationExecutor) collectLuaPostAction(
 	ctx *gin.Context,
 	obligation report.EffectRequest,
+	ordinal uint32,
 	postActionPlan *[]PostActionPlanStep,
 ) bool {
 	if postActionPlan == nil || obligation.ID != policy.ObligationLuaPostActionEnqueue || e.auth == nil {
@@ -232,12 +237,12 @@ func (e policyObligationExecutor) collectLuaPostAction(
 		return false
 	}
 
-	*postActionPlan = append(*postActionPlan, NewLuaPostActionPlanStep(obligation.ID, runner, cleanup))
+	*postActionPlan = append(*postActionPlan, NewLuaPostActionPlanStep(obligation.ID, runner, cleanup).WithEffectOrdinal(ordinal))
 
 	return true
 }
 
-// luaPostActionPlanInput captures the post-action result until the detached plan consumes it.
+// luaPostActionPlanInput captures the post-action result until the accepted plan consumes it.
 func (e policyObligationExecutor) luaPostActionPlanInput(ctx *gin.Context) (PostActionInput, func()) {
 	result, release := takePolicyPostActionResult(ctx)
 	if result == nil {
@@ -258,9 +263,9 @@ func (e policyObligationExecutor) luaPostActionPlanInput(ctx *gin.Context) (Post
 func (e policyObligationExecutor) executePostActionPlan(
 	ctx *gin.Context,
 	steps []PostActionPlanStep,
-) {
+) bool {
 	if len(steps) == 0 {
-		return
+		return true
 	}
 
 	started := time.Now()
@@ -281,6 +286,8 @@ func (e policyObligationExecutor) executePostActionPlan(
 	if !handled {
 		ReleasePostActionPlanSteps(steps)
 	}
+
+	return handled && ok
 }
 
 // enqueuePostActionPlan delegates post-action scheduling to the runtime bridge.
@@ -296,7 +303,6 @@ func (e policyObligationExecutor) enqueuePostActionPlan(
 
 	if bridge == nil {
 		ok := e.runLuaPostActionFallback(ctx, steps)
-		ReleasePostActionPlanSteps(steps)
 
 		return true, ok
 	}
@@ -304,42 +310,25 @@ func (e policyObligationExecutor) enqueuePostActionPlan(
 	return bridge.EnqueuePostActionPlan(ctx, e.auth.View(), steps)
 }
 
-// runLuaPostActionFallback preserves Lua-only behavior when no native runtime bridge is registered.
+// runLuaPostActionFallback accepts Lua-only plans through the shared supervisor primitive.
 func (e policyObligationExecutor) runLuaPostActionFallback(ctx *gin.Context, steps []PostActionPlanStep) bool {
 	runners := make([]PostActionPlanRunner, 0, len(steps))
 	for _, step := range steps {
 		runner, ok := step.LuaStep()
 		if !ok {
+			ReleasePostActionPlanSteps(steps)
+
 			return false
 		}
 
 		runners = append(runners, runner)
 	}
 
-	parent := DetachedPostActionContext(contextFromGin(ctx))
-	executionDone := PostActionExecutionDone(ctx)
+	if _, err := EnqueueLuaPostActionPlan(ctx, e.auth.View(), 1, runners, steps); err != nil {
+		ReleasePostActionPlanSteps(steps)
 
-	go func() {
-		if WaitForPostActionExecution(parent, executionDone) != nil {
-			return
-		}
-
-		runtimeValues := make(map[string]any)
-		for _, runner := range runners {
-			delta, ok := runner.RunPlanStep(parent, PostActionPlanInput{Runtime: runtimeValues})
-			if !ok {
-				return
-			}
-
-			for key, value := range delta.Set {
-				runtimeValues[key] = value
-			}
-
-			for _, key := range delta.Delete {
-				delete(runtimeValues, key)
-			}
-		}
-	}()
+		return false
+	}
 
 	return true
 }
@@ -537,16 +526,18 @@ func (a *AuthState) refreshBruteForceLuaActionAccount() {
 	}
 }
 
-func (a *AuthState) enqueuePolicyPostAction(ctx *gin.Context) {
+func (a *AuthState) enqueuePolicyPostAction(ctx *gin.Context) bool {
 	result, release := takePolicyPostActionResult(ctx)
 	if result == nil {
 		result = GetPassDBResultFromPool()
 		release = true
 	}
 
-	a.PostLuaAction(ctx, result)
+	accepted := a.PostLuaAction(ctx, result)
 
 	if release {
 		PutPassDBResultToPool(result)
 	}
+
+	return accepted
 }

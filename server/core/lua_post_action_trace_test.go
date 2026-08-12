@@ -66,7 +66,7 @@ func expectPostActionParentSpan(t *testing.T, done chan<- struct{}, expected tra
 	t.Helper()
 
 	go func() {
-		act := <-action.RequestChan
+		act := <-action.PostActionRequestChan
 		if act == nil {
 			t.Errorf("action must not be nil")
 			close(done)

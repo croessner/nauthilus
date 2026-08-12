@@ -197,7 +197,7 @@ func unaryServerInterceptor(deps ServerDeps, requestMetrics grpc.UnaryServerInte
 	)
 }
 
-// postActionResponseCompletionInterceptor releases detached work after tracing and logging complete.
+// postActionResponseCompletionInterceptor opens the gate when the unary chain returns.
 func postActionResponseCompletionInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		requestContext, gate := core.ContextWithPostActionExecutionGate(ctx)

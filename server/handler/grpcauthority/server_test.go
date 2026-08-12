@@ -32,6 +32,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/secret"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -54,6 +56,8 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 func TestUnaryServerInterceptorAllowsValidBasicAuth(t *testing.T) {
@@ -95,6 +99,11 @@ func TestPostActionResponseCompletionInterceptorReleasesAfterHandlerReturn(t *te
 		func(ctx context.Context, _ any) (any, error) {
 			defer close(innerReturned)
 
+			gate := core.PostActionFinalizationGateFromContext(ctx)
+			if gate == nil || gate.Boundary() != effectsupervisor.BoundaryGRPCUnaryReturn {
+				t.Fatalf("gRPC finalization boundary = %v, want %q", gate, effectsupervisor.BoundaryGRPCUnaryReturn)
+			}
+
 			executionDone := core.PostActionExecutionDoneFromContext(ctx)
 			go func() {
 				<-executionDone
@@ -122,6 +131,124 @@ func TestPostActionResponseCompletionInterceptorReleasesAfterHandlerReturn(t *te
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("post-action gate was not released")
 	}
+}
+
+func TestGRPCSerializationFailureOccursAfterPostActionUnaryReturnGate(t *testing.T) {
+	listener := bufconn.Listen(1024 * 1024)
+	codec := &failingResponseCodec{
+		gate: make(chan (<-chan struct{}), 1),
+	}
+	server := grpc.NewServer(
+		grpc.ForceServerCodec(codec),
+		grpc.UnaryInterceptor(postActionResponseCompletionInterceptor()),
+	)
+	server.RegisterService(&serializationFailureServiceDesc, serializationFailureServer{gate: codec.gate})
+
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- server.Serve(listener)
+	}()
+
+	t.Cleanup(func() {
+		server.Stop()
+
+		_ = listener.Close()
+
+		<-serveDone
+	})
+
+	conn, err := grpc.NewClient("passthrough:///bufconn", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+		return listener.Dial()
+	}))
+	if err != nil {
+		t.Fatalf("grpc.NewClient() error = %v", err)
+	}
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			t.Errorf("Close() error = %v", closeErr)
+		}
+	}()
+
+	err = conn.Invoke(context.Background(), "/test.SerializationFailure/Call", wrapperspb.String("request"), &wrapperspb.StringValue{})
+	if err == nil {
+		t.Fatal("Invoke() succeeded despite forced response serialization failure")
+	}
+
+	if !codec.gateWasOpen.Load() {
+		t.Fatal("grpc-go attempted response serialization before the unary-return gate opened")
+	}
+}
+
+type serializationFailureService interface {
+	Call(context.Context, *wrapperspb.StringValue) (*wrapperspb.StringValue, error)
+}
+
+type serializationFailureServer struct {
+	gate chan<- (<-chan struct{})
+}
+
+// Call publishes the interceptor-owned gate and returns the final response object.
+func (s serializationFailureServer) Call(ctx context.Context, _ *wrapperspb.StringValue) (*wrapperspb.StringValue, error) {
+	s.gate <- core.PostActionExecutionDoneFromContext(ctx)
+
+	return wrapperspb.String("response"), nil
+}
+
+type failingResponseCodec struct {
+	gate        chan (<-chan struct{})
+	gateWasOpen atomic.Bool
+}
+
+// Name retains grpc-go's standard protobuf content subtype.
+func (*failingResponseCodec) Name() string {
+	return "proto"
+}
+
+// Unmarshal decodes the ordinary client request before the forced response failure.
+func (*failingResponseCodec) Unmarshal(data []byte, value any) error {
+	message, ok := value.(proto.Message)
+	if !ok {
+		return errors.New("codec value is not a protobuf message")
+	}
+
+	return proto.Unmarshal(data, message)
+}
+
+// Marshal fails only after verifying that unary-return finalization already occurred.
+func (c *failingResponseCodec) Marshal(any) ([]byte, error) {
+	executionDone := <-c.gate
+	select {
+	case <-executionDone:
+		c.gateWasOpen.Store(true)
+	default:
+		return nil, errors.New("response serialization began before unary return")
+	}
+
+	return nil, errors.New("forced response serialization failure")
+}
+
+var serializationFailureServiceDesc = grpc.ServiceDesc{
+	ServiceName: "test.SerializationFailure",
+	HandlerType: (*serializationFailureService)(nil),
+	Methods: []grpc.MethodDesc{{
+		MethodName: "Call",
+		Handler: func(service any, ctx context.Context, decode func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+			request := &wrapperspb.StringValue{}
+			if err := decode(request); err != nil {
+				return nil, err
+			}
+
+			if interceptor == nil {
+				return service.(serializationFailureService).Call(ctx, request)
+			}
+
+			info := &grpc.UnaryServerInfo{Server: service, FullMethod: "/test.SerializationFailure/Call"}
+
+			return interceptor(ctx, request, info, func(callContext context.Context, value any) (any, error) {
+				return service.(serializationFailureService).Call(callContext, value.(*wrapperspb.StringValue))
+			})
+		},
+	}},
 }
 
 func TestUnaryServerInterceptorRejectsInvalidBasicAuth(t *testing.T) {

@@ -1099,7 +1099,24 @@ func (n *NauthilusIDP) rejectBruteForceAuthentication(ctx *gin.Context, auth *co
 		return n.finishAuthenticationFailure(ctx, auth, sp, definitions.AuthResultFail, bruteForceAuthenticationError(), false)
 	}
 
-	if auth.ApplyConfiguredPreAuthControl(ctx) || auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
+	if handled, accepted := auth.ApplyConfiguredPreAuthControl(ctx); handled {
+		if !accepted {
+			auth.AuthTempFail(ctx, definitions.TempFailDefault)
+
+			return n.finishAuthenticationFailure(
+				ctx,
+				auth,
+				sp,
+				definitions.AuthResultTempFail,
+				fmt.Errorf("mandatory pre-auth post-action acceptance failed"),
+				false,
+			)
+		}
+
+		return nil
+	}
+
+	if auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
 		return nil
 	}
 

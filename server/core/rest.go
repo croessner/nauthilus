@@ -626,16 +626,32 @@ func (a *AuthState) applyPreAuthFSMOutcome(ctx *gin.Context, nextState authFSMSt
 	dispatchAuthFSMTerminalOutcome(nextState, authFSMTerminalHandlers{
 		onAuthFail: func() {
 			result := GetPassDBResultFromPool()
-			a.PostLuaAction(ctx, result)
+			accepted := a.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
+
+			if !accepted {
+				a.AuthTempFail(ctx, definitions.TempFailDefault)
+				ctx.Abort()
+
+				return
+			}
+
 			a.AuthFail(ctx)
 			ctx.Abort()
 		},
 		onAuthTempFail: func() {
 			if preAuthResult == definitions.AuthResultPreAuthTLS {
 				result := GetPassDBResultFromPool()
-				a.PostLuaAction(ctx, result)
+				accepted := a.PostLuaAction(ctx, result)
 				PutPassDBResultToPool(result)
+
+				if !accepted {
+					a.AuthTempFail(ctx, definitions.TempFailDefault)
+					ctx.Abort()
+
+					return
+				}
+
 				a.AuthTempFail(ctx, definitions.TempFailNoTLS)
 				ctx.Abort()
 

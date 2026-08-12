@@ -17,8 +17,8 @@ package core
 
 import (
 	"context"
-	"sync"
 
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/svcctx"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/trace"
@@ -28,35 +28,17 @@ const postActionExecutionGateKey = "nauthilus.post_action.execution_gate"
 
 type postActionExecutionGateContextKey struct{}
 
-// PostActionExecutionGate releases detached post-actions after the response boundary completes.
-type PostActionExecutionGate struct {
-	done chan struct{}
-	once sync.Once
-}
+// PostActionExecutionGate is the typed internal application-response finalization gate.
+type PostActionExecutionGate = effectsupervisor.Gate
 
-// NewPostActionExecutionGate creates a closed-once execution gate.
+// NewPostActionExecutionGate creates an HTTP commit execution gate.
 func NewPostActionExecutionGate() *PostActionExecutionGate {
-	return &PostActionExecutionGate{done: make(chan struct{})}
-}
-
-// Done returns the channel closed when detached post-actions may begin.
-func (g *PostActionExecutionGate) Done() <-chan struct{} {
-	if g == nil {
-		return nil
+	gate, err := effectsupervisor.NewGate(effectsupervisor.BoundaryHTTPCommit)
+	if err != nil {
+		panic(err)
 	}
 
-	return g.done
-}
-
-// Complete releases every post-action waiting on the response boundary.
-func (g *PostActionExecutionGate) Complete() {
-	if g == nil {
-		return
-	}
-
-	g.once.Do(func() {
-		close(g.done)
-	})
+	return gate
 }
 
 // InstallPostActionExecutionGate attaches a fresh execution gate to a Gin request.
@@ -75,9 +57,23 @@ func ContextWithPostActionExecutionGate(ctx context.Context) (context.Context, *
 		ctx = context.Background()
 	}
 
-	gate := NewPostActionExecutionGate()
+	gate, err := effectsupervisor.NewGate(effectsupervisor.BoundaryGRPCUnaryReturn)
+	if err != nil {
+		panic(err)
+	}
 
 	return context.WithValue(ctx, postActionExecutionGateContextKey{}, gate), gate
+}
+
+// PostActionFinalizationGateFromContext returns a typed standard-context response gate.
+func PostActionFinalizationGateFromContext(ctx context.Context) effectsupervisor.FinalizationGate {
+	if ctx == nil {
+		return nil
+	}
+
+	gate, _ := ctx.Value(postActionExecutionGateContextKey{}).(*PostActionExecutionGate)
+
+	return gate
 }
 
 // PostActionExecutionDoneFromContext returns a standard-context response gate.
@@ -86,12 +82,28 @@ func PostActionExecutionDoneFromContext(ctx context.Context) <-chan struct{} {
 		return nil
 	}
 
-	gate, _ := ctx.Value(postActionExecutionGateContextKey{}).(*PostActionExecutionGate)
+	gate := PostActionFinalizationGateFromContext(ctx)
 	if gate == nil {
 		return nil
 	}
 
 	return gate.Done()
+}
+
+// PostActionFinalizationGate returns the typed response gate attached to ctx.
+func PostActionFinalizationGate(ctx *gin.Context) effectsupervisor.FinalizationGate {
+	if ctx == nil {
+		return nil
+	}
+
+	value, exists := ctx.Get(postActionExecutionGateKey)
+	if !exists {
+		return nil
+	}
+
+	gate, _ := value.(*PostActionExecutionGate)
+
+	return gate
 }
 
 // AttachPostActionExecutionGate copies a standard-context gate into a Gin request.
@@ -106,19 +118,14 @@ func AttachPostActionExecutionGate(parent context.Context, ctx *gin.Context) {
 	}
 }
 
-// PostActionExecutionDone returns the response-completion channel attached to ctx.
+// PostActionExecutionDone returns the response-finalization channel attached to ctx.
 func PostActionExecutionDone(ctx *gin.Context) <-chan struct{} {
 	if ctx == nil {
 		return nil
 	}
 
-	value, exists := ctx.Get(postActionExecutionGateKey)
-	if !exists {
-		return nil
-	}
-
-	gate, ok := value.(*PostActionExecutionGate)
-	if !ok || gate == nil {
+	gate := PostActionFinalizationGate(ctx)
+	if gate == nil {
 		return nil
 	}
 
@@ -138,24 +145,6 @@ func CompletePostActionResponse(ctx *gin.Context) {
 
 	if gate, ok := value.(*PostActionExecutionGate); ok {
 		gate.Complete()
-	}
-}
-
-// WaitForPostActionExecution waits for response completion or worker cancellation.
-func WaitForPostActionExecution(ctx context.Context, executionDone <-chan struct{}) error {
-	if executionDone == nil {
-		return nil
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	select {
-	case <-executionDone:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
 	}
 }
 
@@ -180,9 +169,8 @@ func postActionResponseCompletionMiddleware() gin.HandlerFunc {
 			recovered := recover()
 			if recovered == nil {
 				ctx.Writer.WriteHeaderNow()
+				gate.Complete()
 			}
-
-			gate.Complete()
 
 			if recovered != nil {
 				panic(recovered)

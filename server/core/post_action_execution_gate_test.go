@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/testing/oteltest"
 
 	"github.com/gin-gonic/gin"
@@ -45,6 +46,11 @@ func TestPostActionResponseCompletionMiddlewareReleasesAfterInnerReturn(t *testi
 		ctx.Next()
 	})
 	engine.GET("/auth", func(ctx *gin.Context) {
+		gate := PostActionFinalizationGate(ctx)
+		if gate == nil || gate.Boundary() != effectsupervisor.BoundaryHTTPCommit {
+			t.Fatalf("HTTP finalization boundary = %v, want %q", gate, effectsupervisor.BoundaryHTTPCommit)
+		}
+
 		executionDone := PostActionExecutionDone(ctx)
 		go func() {
 			<-executionDone
@@ -91,7 +97,12 @@ func TestPostActionResponseCompletionMiddlewareDoesNotCommitOnPanic(t *testing.T
 
 	engine := gin.New()
 	engine.Use(postActionResponseCompletionMiddleware())
-	engine.GET("/panic", func(*gin.Context) {
+
+	var executionDone <-chan struct{}
+
+	engine.GET("/panic", func(ctx *gin.Context) {
+		executionDone = PostActionExecutionDone(ctx)
+
 		panic("boom")
 	})
 
@@ -105,6 +116,12 @@ func TestPostActionResponseCompletionMiddlewareDoesNotCommitOnPanic(t *testing.T
 
 		if response.Code != http.StatusOK || response.Flushed {
 			t.Fatalf("panic response was committed: code=%d flushed=%t", response.Code, response.Flushed)
+		}
+
+		select {
+		case <-executionDone:
+			t.Fatal("post-action gate opened without an HTTP response commit")
+		default:
 		}
 	}()
 

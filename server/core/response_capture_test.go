@@ -330,8 +330,10 @@ type countingPostAction struct {
 	count atomic.Int64
 }
 
-func (p *countingPostAction) Run(PostActionInput) {
+func (p *countingPostAction) Run(PostActionInput) bool {
 	p.count.Add(1)
+
+	return true
 }
 
 func (p *countingPostAction) Count() int64 {

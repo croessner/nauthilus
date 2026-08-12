@@ -299,7 +299,7 @@ type State interface {
 	SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult
 
 	// PostLuaAction performs actions or post-processing after executing Lua scripts during authentication workflow.
-	PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult)
+	PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) bool
 
 	// WithDefaults configures the State with default values derived from the provided gin.Context.
 	WithDefaults(ctx *gin.Context) State
@@ -2843,10 +2843,12 @@ func (a *AuthState) GetAccountField() string {
 }
 
 // PostLuaAction executes a Lua-based post-processing action using the given authentication result and context.
-func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) {
+func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) bool {
 	if disp := getPostAction(); disp != nil {
-		disp.Run(a.newPostActionInput(ctx, passDBResult))
+		return disp.Run(a.newPostActionInput(ctx, passDBResult))
 	}
+
+	return true
 }
 
 // newPostActionInput captures the request flags used by Lua post-actions.
@@ -3359,8 +3361,8 @@ func (a *AuthState) runPostBackendActions(ctx *gin.Context, passDBResult *PassDB
 
 	if a.HasConfiguredAuthPolicyAuthority(ctx) {
 		a.storePolicyPostActionResult(ctx, passDBResult)
-	} else {
-		a.PostLuaAction(ctx, passDBResult)
+	} else if !a.PostLuaAction(ctx, passDBResult) {
+		return definitions.AuthResultTempFail
 	}
 
 	return authResult
@@ -4664,7 +4666,15 @@ func (a *AuthState) handlePreAuthBruteForce(ctx *gin.Context, span trace.Span) b
 		return true
 	}
 
-	if a.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) {
+	if handled, accepted := a.applyConfiguredPreAuthControl(ctx); handled {
+		if !accepted {
+			a.AuthTempFail(ctx, definitions.TempFailDefault)
+			ctx.Abort()
+			span.SetAttributes(attribute.Bool("reject", true))
+
+			return true
+		}
+
 		span.SetAttributes(attribute.Bool("policy_skip_remaining", true))
 
 		return false
@@ -4693,8 +4703,16 @@ func (a *AuthState) rejectDefaultPreAuthBruteForce(ctx *gin.Context, span trace.
 	a.UpdateBruteForceBucketsCounter(ctx)
 
 	result := GetPassDBResultFromPool()
-	a.PostLuaAction(ctx, result)
+	accepted := a.PostLuaAction(ctx, result)
 	PutPassDBResultToPool(result)
+
+	if !accepted {
+		a.AuthTempFail(ctx, definitions.TempFailDefault)
+		span.SetAttributes(attribute.Bool("reject", true))
+
+		return
+	}
+
 	a.AuthFail(ctx)
 
 	span.SetAttributes(attribute.Bool("reject", true))

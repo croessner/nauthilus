@@ -30,6 +30,7 @@ import (
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -310,7 +311,8 @@ func TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks(t *testing.T) {
 		t.Fatal("neutral pre-auth control must not apply a terminal decision")
 	}
 
-	if !auth.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) {
+	handled, accepted := auth.applyConfiguredPreAuthControl(ctx)
+	if !handled || !accepted {
 		t.Fatal("configured brute-force control was not applied")
 	}
 
@@ -330,6 +332,37 @@ func TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks(t *testing.T) {
 
 	if got := len(policyCtx.Report().Policies); got != 1 {
 		t.Fatalf("selected policies = %d, want one configured control decision", got)
+	}
+}
+
+func TestConfiguredPreAuthControlMapsPostActionAcceptanceFailureToTempFail(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
+	snapshot := customEnforcePreAuthControlSnapshot()
+	stagePlan := snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth]
+	stagePlan.Policies[0].Then.Obligations = []policyruntime.EffectRequest{{ID: policyAuthorityPluginPostActionFirst}}
+	snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth] = stagePlan
+	activatePolicySnapshotForTest(t, snapshot)
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.recordPolicyBruteForce(ctx, true)
+	capture := NewCaptureResponseWriter(auth.Logger())
+	auth.deps.Resp = capture
+	bridge := &partialExecutionEffectBridge{postActionID: policyAuthorityPluginPostActionFirst}
+	previous := getPluginEffectBridge()
+
+	RegisterPluginEffectBridge(bridge)
+	t.Cleanup(func() { RegisterPluginEffectBridge(previous) })
+
+	if rejected := auth.handlePreAuthBruteForce(ctx, trace.SpanFromContext(ctx)); !rejected {
+		t.Fatal("pre-auth control continued after mandatory post-action acceptance failure")
+	}
+
+	if bridge.acceptanceCalls != 1 {
+		t.Fatalf("post-action acceptance calls = %d, want 1", bridge.acceptanceCalls)
+	}
+
+	if got := capture.Outcome().Decision; got != CapturedAuthDecisionTempFail {
+		t.Fatalf("pre-auth decision = %q, want %q", got, CapturedAuthDecisionTempFail)
 	}
 }
 

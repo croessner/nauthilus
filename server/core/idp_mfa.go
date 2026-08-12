@@ -251,15 +251,13 @@ func QueueCompletedIDPMFAPostAction(ctx *gin.Context, deps AuthDeps, user *backe
 
 	requestCopy := completedIDPMFAPostActionRequest(auth, user)
 
-	auth.QueueLuaPostAction(PostActionArgs{
+	return auth.QueueLuaPostAction(PostActionArgs{
 		Context:       auth.Runtime.Context,
 		HTTPRequest:   util.DetachedHTTPRequest(context.TODO(), ctx.Request),
 		ParentSpan:    trace.SpanContextFromContext(ctx.Request.Context()),
 		StatusMessage: authStatusMessageOK,
 		Request:       requestCopy,
 	})
-
-	return true
 }
 
 // LogIDPMFAuthResult writes a Notice log for the result of a second-factor verification

@@ -471,4 +471,4 @@ func (s currentBehaviorDenyingSubject) Analyze(_ *gin.Context, view *StateView, 
 
 type currentBehaviorPostAction struct{}
 
-func (currentBehaviorPostAction) Run(PostActionInput) {}
+func (currentBehaviorPostAction) Run(PostActionInput) bool { return true }

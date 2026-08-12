@@ -132,6 +132,7 @@ var (
 
 const (
 	metricBackendLabel          = "backend"
+	metricBoundaryLabel         = "boundary"
 	metricBucketLabel           = "bucket"
 	metricClientIDLabel         = "client_id"
 	metricCodeLabel             = "code"
@@ -158,6 +159,7 @@ const (
 	metricServerStatusLabel     = "server_status"
 	metricServiceLabel          = "service"
 	metricStatusLabel           = "status"
+	metricStateLabel            = "state"
 	metricTargetLabel           = "target"
 	metricTaskLabel             = "task"
 	metricToLabel               = "to"
@@ -365,8 +367,11 @@ type Metrics interface {
 	// GetPluginCallDurationSeconds tracks native plugin call duration with bounded component labels.
 	GetPluginCallDurationSeconds() *prometheus.HistogramVec
 
-	// GetPostActionPlanDurationSeconds tracks complete detached post-action plan duration by result.
+	// GetPostActionPlanDurationSeconds tracks complete accepted post-action plan duration by result.
 	GetPostActionPlanDurationSeconds() *prometheus.HistogramVec
+
+	// GetPostActionEffectStatesTotal tracks bounded supervisor transitions without correlation labels.
+	GetPostActionEffectStatesTotal() *prometheus.CounterVec
 }
 
 type metricsImpl struct {
@@ -435,6 +440,7 @@ type metricsImpl struct {
 	pluginCallsTotal               *prometheus.CounterVec
 	pluginCallDurationSeconds      *prometheus.HistogramVec
 	postActionPlanDuration         *prometheus.HistogramVec
+	postActionEffectStates         *prometheus.CounterVec
 }
 
 // GetInstanceInfo returns the instanceInfo field.
@@ -752,9 +758,14 @@ func (m *metricsImpl) GetPluginCallDurationSeconds() *prometheus.HistogramVec {
 	return m.pluginCallDurationSeconds
 }
 
-// GetPostActionPlanDurationSeconds returns the detached post-action plan duration histogram.
+// GetPostActionPlanDurationSeconds returns the accepted post-action plan duration histogram.
 func (m *metricsImpl) GetPostActionPlanDurationSeconds() *prometheus.HistogramVec {
 	return m.postActionPlanDuration
+}
+
+// GetPostActionEffectStatesTotal returns the bounded supervisor state counter.
+func (m *metricsImpl) GetPostActionEffectStatesTotal() *prometheus.CounterVec {
+	return m.postActionEffectStates
 }
 
 // NewMetrics provides the exported NewMetrics function.
@@ -913,7 +924,8 @@ func (m *metricsImpl) initIDPMetrics() {
 func (m *metricsImpl) initPluginMetrics() {
 	m.pluginCallsTotal = newCounterVecMetric("plugin_calls_total", "Total number of host-invoked native plugin calls", pluginCallMetricLabels...)
 	m.pluginCallDurationSeconds = newHistogramVecMetric("plugin_call_duration_seconds", "Duration of host-invoked native plugin calls", prometheus.ExponentialBuckets(0.001, 1.75, 15), pluginCallMetricLabels...)
-	m.postActionPlanDuration = newHistogramVecMetric("post_action_plan_duration_seconds", "Duration of complete detached post-action plans", prometheus.ExponentialBuckets(0.001, 1.75, 15), pluginCallMetricResultLabel)
+	m.postActionPlanDuration = newHistogramVecMetric("post_action_plan_duration_seconds", "Duration of complete accepted post-action plans", prometheus.ExponentialBuckets(0.001, 1.75, 15), pluginCallMetricResultLabel)
+	m.postActionEffectStates = newCounterVecMetric("post_action_effect_states_total", "Total host-internal post-action supervisor transitions", metricStateLabel, metricPhaseLabel, metricBoundaryLabel)
 }
 
 // GetMetrics initializes and returns a singleton instance of the Metrics interface.

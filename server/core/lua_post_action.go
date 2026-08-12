@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/lualib/action"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/croessner/nauthilus/v3/server/svcctx"
@@ -86,25 +87,69 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 	_ = NewPostActionRuntime(a).RunContext(svcctx.Get(), args)
 }
 
-// QueueLuaPostAction waits for the response boundary using only captured runtime data.
-func (a *AuthState) QueueLuaPostAction(args PostActionArgs) {
+// QueueLuaPostAction transfers captured direct Lua work into supervisor ownership.
+func (a *AuthState) QueueLuaPostAction(args PostActionArgs) bool {
+	if a == nil {
+		return false
+	}
+
+	if args.Context == nil {
+		args.Context = lualib.NewContext()
+	}
+
+	if err := ValidateLuaPostActionCapture(args); err != nil {
+		return false
+	}
+
 	runtime := NewPostActionRuntime(a)
-	executionDone := PostActionExecutionDone(a.Request.HTTPClientContext)
-	lifetime := DetachedPostActionContext(trace.ContextWithSpanContext(context.Background(), args.ParentSpan))
+	args.Request = args.Request.CloneForPostAction()
+	args.Context = args.Context.Clone()
+	args.HTTPRequest = util.DetachedHTTPRequest(svcctx.Get(), args.HTTPRequest)
+	work := &directLuaPostActionWork{runtime: runtime, args: args}
 
-	go func() {
-		if WaitForPostActionExecution(lifetime, executionDone) != nil {
-			return
-		}
+	if _, err := acceptAuthPostAction(a.Request.HTTPClientContext, a.View(), 1, work); err != nil {
+		work.Cleanup()
 
-		_ = runtime.RunContext(lifetime, args)
-	}()
+		return false
+	}
+
+	return true
 }
 
-// RunContext executes one Lua post-action and reports whether worker ownership completed.
+// ValidateLuaPostActionCapture rejects oversized request-owned Lua capture.
+func ValidateLuaPostActionCapture(args PostActionArgs) error {
+	var runtimeValues map[string]any
+	if args.Context != nil {
+		runtimeValues = args.Context.Snapshot()
+	}
+
+	var headers http.Header
+	if args.HTTPRequest != nil {
+		headers = args.HTTPRequest.Header
+	}
+
+	return effectsupervisor.ValidateBoundedValue(struct {
+		Runtime       map[string]any
+		Headers       http.Header
+		Request       lualib.CommonRequest
+		StatusMessage string
+	}{
+		Runtime:       runtimeValues,
+		Headers:       headers,
+		Request:       args.Request,
+		StatusMessage: args.StatusMessage,
+	}, effectsupervisor.DefaultWorkBounds())
+}
+
+// RunContext executes one Lua post-action and reports known successful completion.
 func (r PostActionRuntime) RunContext(ctx context.Context, args PostActionArgs) bool {
+	return r.RunResult(ctx, args).State() == effectsupervisor.StateSucceeded
+}
+
+// RunResult executes one Lua post-action and preserves bounded worker outcome semantics.
+func (r PostActionRuntime) RunResult(ctx context.Context, args PostActionArgs) effectsupervisor.Result {
 	if r.cfg == nil || !r.cfg.HasRuntimeModule(definitions.ControlBruteForce) || args.Request.ClientIP == "" {
-		return true
+		return effectsupervisor.Succeeded()
 	}
 
 	if ctx == nil {
@@ -113,46 +158,34 @@ func (r PostActionRuntime) RunContext(ctx context.Context, args PostActionArgs) 
 
 	postActionRequest := util.DetachedHTTPRequest(ctx, r.postActionHTTPRequest(args))
 	if util.IsHTTPRequestCanceled(r.logger, postActionRequest, args.Request.Session, "enqueue.lua_post_action") {
-		return false
+		return effectsupervisor.Failed("canceled")
 	}
 
 	defer r.stopPostActionTimer()()
 
 	finished := make(chan action.Done, 1)
 	cr := lualib.GetCommonRequest()
-
-	releaseCommonRequest := true
-	defer func() {
-		if releaseCommonRequest {
-			lualib.PutCommonRequest(cr)
-		}
-	}()
+	defer lualib.PutCommonRequest(cr)
 
 	clientNet, repeating := r.postActionBruteForceHints(args)
 	preparePostActionCommonRequest(cr, args, clientNet, repeating)
 
 	select {
-	case action.RequestChan <- newPostActionRequest(args, postActionRequest, cr, finished):
+	case action.PostActionRequestChan <- newPostActionRequest(args, postActionRequest, cr, finished):
 	case <-ctx.Done():
-		return false
+		return effectsupervisor.Failed("canceled")
 	}
 
-	select {
-	case <-finished:
-		return true
-	case <-ctx.Done():
-		releaseCommonRequest = false
-
-		go releasePostActionCommonRequest(finished, cr)
-
-		return false
+	completion := <-finished
+	if completion.Err == nil {
+		return effectsupervisor.Succeeded()
 	}
-}
 
-// releasePostActionCommonRequest waits for worker ownership to end before pooling the request.
-func releasePostActionCommonRequest(finished <-chan action.Done, cr *lualib.CommonRequest) {
-	<-finished
-	lualib.PutCommonRequest(cr)
+	if completion.OutcomeUnknown {
+		return effectsupervisor.OutcomeUnknown("lua_dispatch_ambiguous")
+	}
+
+	return effectsupervisor.Failed("lua_worker_failure")
 }
 
 // postActionHTTPRequest resolves the HTTP request used for cancellation checks.
@@ -242,6 +275,7 @@ func newPostActionRequest(
 		HTTPRequest:           httpRequest,
 		HTTPContext:           nil,
 		OTelParentSpanContext: args.ParentSpan,
+		ExecutionContext:      httpRequest.Context(),
 		CommonRequest:         cr,
 	}
 }

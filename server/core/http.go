@@ -143,7 +143,7 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 		r.Use(rateLimiter.Middleware())
 	}
 
-	// Install the response-completion boundary outside tracing so detached
+	// Install the response-finalization boundary outside tracing so accepted
 	// post-actions start only after the server span has ended and headers are committed.
 	r.Use(postActionResponseCompletionMiddleware())
 

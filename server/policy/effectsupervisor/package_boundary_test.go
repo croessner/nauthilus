@@ -1,0 +1,66 @@
+// Copyright (C) 2026 Christian Roessner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+package effectsupervisor
+
+import (
+	"go/parser"
+	"go/token"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+func TestEffectSupervisorHasNoTransportOrExtensionAPIDependencies(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("os.ReadDir(): %v", err)
+	}
+
+	forbidden := []string{
+		"github.com/gin-gonic/gin",
+		"/pluginapi/",
+		"/server/lualib",
+		"/server/openapi",
+		"/server/grpcapi",
+		"google.golang.org/grpc",
+		"google.golang.org/protobuf",
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+
+		parsed, err := parser.ParseFile(token.NewFileSet(), entry.Name(), nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("parser.ParseFile(%s): %v", entry.Name(), err)
+		}
+
+		for _, imported := range parsed.Imports {
+			path, err := strconv.Unquote(imported.Path.Value)
+			if err != nil {
+				t.Fatalf("strconv.Unquote(%s): %v", imported.Path.Value, err)
+			}
+
+			for _, fragment := range forbidden {
+				if strings.Contains(path, fragment) {
+					t.Fatalf("%s imports forbidden dependency %q", entry.Name(), path)
+				}
+			}
+		}
+	}
+}

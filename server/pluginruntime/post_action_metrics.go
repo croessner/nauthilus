@@ -38,7 +38,7 @@ func newPostActionPlanObserver() postActionPlanObserver {
 	}
 }
 
-// Observe records one complete detached post-action plan execution.
+// Observe records one complete accepted post-action plan execution.
 func (o *prometheusPostActionPlanObserver) Observe(duration time.Duration, result string) {
 	if o == nil || o.duration == nil {
 		return

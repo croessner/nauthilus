@@ -17,10 +17,12 @@ package core
 
 import (
 	"context"
+	"sync"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 	"github.com/gin-gonic/gin"
 )
@@ -74,10 +76,10 @@ type PostActionInput struct {
 //
 //goland:nointerface
 type PostAction interface {
-	Run(input PostActionInput)
+	Run(input PostActionInput) bool
 }
 
-// PostActionPlanInput supplies the detached plan runtime to one Lua post-action step.
+// PostActionPlanInput supplies the supervisor-owned plan runtime to one Lua post-action step.
 type PostActionPlanInput struct {
 	Runtime map[string]any
 }
@@ -89,7 +91,8 @@ type PostActionPlanPreparer interface {
 
 // PostActionPlanRunner executes one already captured shared-plan step.
 type PostActionPlanRunner interface {
-	RunPlanStep(ctx context.Context, input PostActionPlanInput) (pluginapi.RuntimeDelta, bool)
+	ValidatePlanStep() error
+	RunPlanStep(ctx context.Context, input PostActionPlanInput) (pluginapi.RuntimeDelta, effectsupervisor.Result)
 }
 
 // PostActionPlanStepKind identifies the executable post-action step type.
@@ -105,11 +108,17 @@ const (
 
 // PostActionPlanStep describes one ordered post-action step captured by the policy executor.
 type PostActionPlanStep struct {
-	cleanup   func()
+	release   *postActionPlanRelease
 	effect    report.EffectRequest
 	luaRunner PostActionPlanRunner
 	id        string
 	kind      PostActionPlanStepKind
+	ordinal   uint32
+}
+
+type postActionPlanRelease struct {
+	cleanup func()
+	once    sync.Once
 }
 
 // NewNativePostActionPlanStep creates a plan step for a native plugin post-action effect.
@@ -124,7 +133,7 @@ func NewNativePostActionPlanStep(effect report.EffectRequest) PostActionPlanStep
 // NewLuaPostActionPlanStep creates a plan step for a Lua post-action dispatcher.
 func NewLuaPostActionPlanStep(id string, runner PostActionPlanRunner, cleanup func()) PostActionPlanStep {
 	return PostActionPlanStep{
-		cleanup:   cleanup,
+		release:   &postActionPlanRelease{cleanup: cleanup},
 		luaRunner: runner,
 		id:        id,
 		kind:      PostActionPlanStepLua,
@@ -141,6 +150,18 @@ func (s PostActionPlanStep) Kind() PostActionPlanStepKind {
 	return s.kind
 }
 
+// EffectOrdinal returns the selected host-effect position within the decision.
+func (s PostActionPlanStep) EffectOrdinal() uint32 {
+	return s.ordinal
+}
+
+// WithEffectOrdinal returns a copied step with its decision-scoped ordinal.
+func (s PostActionPlanStep) WithEffectOrdinal(ordinal uint32) PostActionPlanStep {
+	s.ordinal = ordinal
+
+	return s
+}
+
 // NativeEffect returns the native effect carried by this step.
 func (s PostActionPlanStep) NativeEffect() (report.EffectRequest, bool) {
 	return s.effect, s.kind == PostActionPlanStepNative
@@ -153,9 +174,22 @@ func (s PostActionPlanStep) LuaStep() (PostActionPlanRunner, bool) {
 
 // Release frees resources owned by the captured plan step.
 func (s PostActionPlanStep) Release() {
-	if s.cleanup != nil {
-		s.cleanup()
+	if s.release != nil {
+		s.release.release()
 	}
+}
+
+// release invokes a shared copied-step cleanup exactly once.
+func (r *postActionPlanRelease) release() {
+	if r == nil {
+		return
+	}
+
+	r.once.Do(func() {
+		if r.cleanup != nil {
+			r.cleanup()
+		}
+	})
 }
 
 // ReleasePostActionPlanSteps releases resources owned by all captured plan steps.

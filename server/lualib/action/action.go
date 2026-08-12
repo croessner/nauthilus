@@ -48,12 +48,18 @@ import (
 var (
 	// RequestChan is a buffered channel of type `*Action` used to send action requests to a worker.
 	RequestChan chan *Action
+	// PostActionRequestChan transfers supervised post-actions only to a live Lua action worker.
+	PostActionRequestChan chan *Action
 
 	errLuaActionScriptFailed = errors.New("lua action script failed")
+	errLuaActionUnavailable  = errors.New("lua action worker could not execute request")
 )
 
-// Done is an empty struct that can be used to signal the completion of a task or operation.
-type Done struct{}
+// Done reports the known internal completion result of one Lua action request.
+type Done struct {
+	Err            error
+	OutcomeUnknown bool
+}
 
 // LuaScriptAction represents an action that can be executed using Lua script.
 type LuaScriptAction struct {
@@ -93,6 +99,9 @@ type Action struct {
 	// spans created from Lua remain attached to the originating HTTP request trace.
 	OTelParentSpanContext trace.SpanContext
 
+	// ExecutionContext binds supervised post-actions to their accepted lifetime.
+	ExecutionContext context.Context
+
 	*lualib.CommonRequest
 }
 
@@ -130,6 +139,7 @@ func NewWorker(cfg config.File, logger *slog.Logger, redisClient rediscli.Client
 	resultMap[0] = definitions.LuaSuccess
 	resultMap[1] = definitions.LuaFail
 	RequestChan = make(chan *Action, definitions.MaxChannelSize)
+	PostActionRequestChan = make(chan *Action)
 
 	return &Worker{
 		resultMap:   resultMap,
@@ -166,6 +176,8 @@ func (aw *Worker) Work(ctx context.Context) {
 
 			return
 		case aw.luaActionRequest = <-RequestChan:
+			aw.handleRequest(aw.luaActionRequest.HTTPRequest)
+		case aw.luaActionRequest = <-PostActionRequestChan:
 			aw.handleRequest(aw.luaActionRequest.HTTPRequest)
 		}
 	}
@@ -225,16 +237,36 @@ func (aw *Worker) logActionsSummary(logs *lualib.CustomLogKeyValue) {
 
 // handleRequest processes an HTTP request using Lua scripts and logs execution results for each script.
 func (aw *Worker) handleRequest(httpRequest *http.Request) {
+	var (
+		actionErr        error
+		possibleDispatch bool
+	)
+
 	defer func() {
-		aw.luaActionRequest.FinishedChan <- Done{}
+		if recover() != nil {
+			actionErr = errLuaActionUnavailable
+		}
+
+		aw.luaActionRequest.FinishedChan <- Done{
+			Err:            actionErr,
+			OutcomeUnknown: actionErr != nil && possibleDispatch,
+		}
 	}()
 
 	if aw.isCanceledHTTPRequest(httpRequest, "start.lua_post_action") {
+		actionErr = context.Canceled
+
 		return
 	}
 
 	actionCtx, cancelActionCtx := aw.actionContext(aw.actionBaseContext(), httpRequest)
 	defer cancelActionCtx()
+
+	if err := actionCtx.Err(); err != nil {
+		actionErr = err
+
+		return
+	}
 
 	if httpRequest != nil {
 		httpRequest = httpRequest.WithContext(actionCtx)
@@ -254,14 +286,14 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	lease, ok := aw.acquireActionLease(actx, httpRequest)
 	if !ok {
+		actionErr = errLuaActionUnavailable
+
 		return
 	}
 
 	L := lease.State()
 
-	var leaseErr error
-
-	defer lease.ReleaseRecoveringOnError(&leaseErr)
+	defer lease.ReleaseRecoveringOnError(&actionErr)
 
 	reqCtx, postSp := aw.startPostActionSpan(actx, httpRequest)
 	defer postSp.End()
@@ -273,12 +305,20 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	request := aw.setupRequest(L)
 
-	aw.runActionScripts(reqCtx, L, request, logs, httpRequest, &leaseErr)
+	possibleDispatch = aw.runActionScripts(reqCtx, L, request, logs, httpRequest, &actionErr)
+	if actionErr == nil && reqCtx.Err() != nil {
+		actionErr = reqCtx.Err()
+	}
+
 	aw.logActionsSummary(logs)
 }
 
 // actionBaseContext returns the context used as parent for action execution.
 func (aw *Worker) actionBaseContext() context.Context {
+	if aw.luaActionRequest != nil && aw.luaActionRequest.ExecutionContext != nil {
+		return aw.luaActionRequest.ExecutionContext
+	}
+
 	if aw.luaActionRequest != nil && aw.luaActionRequest.OTelParentSpanContext.IsValid() {
 		return trace.ContextWithSpanContext(svcctx.Get(), aw.luaActionRequest.OTelParentSpanContext)
 	}
@@ -373,7 +413,9 @@ func (aw *Worker) runActionScripts(
 	logs *lualib.CustomLogKeyValue,
 	httpRequest *http.Request,
 	leaseErr *error,
-) {
+) bool {
+	possibleDispatch := false
+
 	for index := range aw.actionScripts {
 		if aw.actionScripts[index].LuaAction != aw.luaActionRequest.LuaAction {
 			continue
@@ -387,6 +429,7 @@ func (aw *Worker) runActionScripts(
 			L.SetTop(0)
 		}
 
+		possibleDispatch = true
 		ret := aw.runScript(reqCtx, index, L, request, logs, httpRequest)
 		if ret < 0 {
 			*leaseErr = errLuaActionScriptFailed
@@ -394,6 +437,8 @@ func (aw *Worker) runActionScripts(
 
 		logs.Set(aw.actionScripts[index].ScriptPath, aw.createResultLogMessage(ret))
 	}
+
+	return possibleDispatch
 }
 
 // setupGlobals initializes and registers global Lua variables and functions into the provided Lua state.

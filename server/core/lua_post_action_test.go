@@ -17,8 +17,10 @@ package core_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/log"
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/lualib/action"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/util"
 	"go.opentelemetry.io/otel/trace"
@@ -85,7 +88,7 @@ func startLuaPostActionReader() (chan *action.Action, chan struct{}) {
 
 	go func() {
 		select {
-		case act := <-action.RequestChan:
+		case act := <-action.PostActionRequestChan:
 			gotAction <- act
 
 			if act != nil {
@@ -104,7 +107,7 @@ func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		act := <-action.RequestChan
+		act := <-action.PostActionRequestChan
 		if act == nil {
 			t.Errorf("action must not be nil")
 			close(done)
@@ -194,7 +197,7 @@ func TestRunLuaPostAction_DetachesCanceledHTTPRequest(t *testing.T) {
 	close(stopReader)
 }
 
-func TestPostActionRuntimeCancelKeepsCommonRequestOwnedUntilWorkerFinishes(t *testing.T) {
+func TestPostActionRuntimeCancelKeepsSupervisorOwnershipUntilWorkerFinishes(t *testing.T) {
 	cfg := prepareLuaPostActionTest(t)
 	auth := corepkg.NewAuthStateFromContextWithDeps(nil, corepkg.AuthDeps{Cfg: cfg}).(*corepkg.AuthState)
 	runtime := corepkg.NewPostActionRuntime(auth)
@@ -207,20 +210,96 @@ func TestPostActionRuntimeCancelKeepsCommonRequestOwnedUntilWorkerFinishes(t *te
 
 	var act *action.Action
 	select {
-	case act = <-action.RequestChan:
+	case act = <-action.PostActionRequestChan:
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected post action to be enqueued")
 	}
 
 	cancel()
 
-	if ok := <-completed; ok {
-		t.Fatal("RunContext() reported completion after cancellation")
+	select {
+	case <-completed:
+		t.Fatal("RunContext() returned before action worker completion")
+	case <-time.After(25 * time.Millisecond):
 	}
 
 	if act.CommonRequest == nil || act.Session != "guid-123" {
 		t.Fatalf("CommonRequest was released before worker completion: %#v", act.CommonRequest)
 	}
 
-	act.FinishedChan <- action.Done{}
+	act.FinishedChan <- action.Done{Err: context.Canceled}
+
+	if ok := <-completed; ok {
+		t.Fatal("RunContext() reported success for canceled action execution")
+	}
+}
+
+func TestPostActionRuntimePreservesAmbiguousLuaWorkerOutcome(t *testing.T) {
+	cfg := prepareLuaPostActionTest(t)
+	auth := corepkg.NewAuthStateFromContextWithDeps(nil, corepkg.AuthDeps{Cfg: cfg}).(*corepkg.AuthState)
+	runtime := corepkg.NewPostActionRuntime(auth)
+	completed := make(chan effectsupervisor.Result, 1)
+
+	go func() {
+		completed <- runtime.RunResult(context.Background(), newLuaPostActionArgs(nil))
+	}()
+
+	var act *action.Action
+	select {
+	case act = <-action.PostActionRequestChan:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected post action to be enqueued")
+	}
+
+	act.FinishedChan <- action.Done{
+		Err:            errors.New("provider result lost after dispatch"),
+		OutcomeUnknown: true,
+	}
+
+	select {
+	case result := <-completed:
+		if result.State() != effectsupervisor.StateOutcomeUnknown {
+			t.Fatalf("RunResult() state = %q, want %q", result.State(), effectsupervisor.StateOutcomeUnknown)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("RunResult() did not return worker outcome")
+	}
+}
+
+func TestPostActionRuntimeDoesNotTransferWorkToStoppedLuaWorker(t *testing.T) {
+	cfg := prepareLuaPostActionTest(t)
+	auth := corepkg.NewAuthStateFromContextWithDeps(nil, corepkg.AuthDeps{Cfg: cfg}).(*corepkg.AuthState)
+	runtime := corepkg.NewPostActionRuntime(auth)
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	completed := make(chan effectsupervisor.Result, 1)
+
+	go func() {
+		completed <- runtime.RunResult(runCtx, newLuaPostActionArgs(nil))
+	}()
+
+	select {
+	case result := <-completed:
+		t.Fatalf("RunResult() returned before cancellation with state %q", result.State())
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	cancelRun()
+
+	select {
+	case result := <-completed:
+		if result.State() != effectsupervisor.StateFailed {
+			t.Fatalf("RunResult() state = %q, want %q", result.State(), effectsupervisor.StateFailed)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("RunResult() remained blocked without a live Lua worker")
+	}
+}
+
+func TestValidateLuaPostActionCaptureRejectsOversizedRequestData(t *testing.T) {
+	args := newLuaPostActionArgs(nil)
+	args.StatusMessage = strings.Repeat("x", 257*1024)
+
+	if err := corepkg.ValidateLuaPostActionCapture(args); !errors.Is(err, effectsupervisor.ErrWorkBounds) {
+		t.Fatalf("ValidateLuaPostActionCapture() error = %v, want ErrWorkBounds", err)
+	}
 }

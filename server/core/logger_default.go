@@ -57,3 +57,14 @@ func getDefaultLogger() *slog.Logger {
 
 	panic("core: default logger not configured")
 }
+
+// optionalDefaultLogger returns the configured runtime logger without enforcing initialization.
+func optionalDefaultLogger() *slog.Logger {
+	if value := defaultLogger.Load(); value != nil {
+		if holder, ok := value.(loggerHolder); ok {
+			return holder.l
+		}
+	}
+
+	return nil
+}

@@ -72,6 +72,8 @@ func newMFAPostActionTestContext(t *testing.T, mgr *mockCookieManager) *gin.Cont
 	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 	ctx.Set(definitions.CtxSecureDataKey, mgr)
+	gate := corepkg.InstallPostActionExecutionGate(ctx)
+	gate.Complete()
 
 	return ctx
 }
@@ -109,11 +111,11 @@ func TestFinalizeMFALoginPreservesMFAMethodAndQueuesPostAction(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	requestChan := make(chan *action.Action, 1)
-	originalRequestChan := action.RequestChan
-	action.RequestChan = requestChan
+	originalRequestChan := action.PostActionRequestChan
+	action.PostActionRequestChan = requestChan
 
 	t.Cleanup(func() {
-		action.RequestChan = originalRequestChan
+		action.PostActionRequestChan = originalRequestChan
 	})
 
 	d := newMFACompletionDeps()
@@ -190,11 +192,11 @@ func runCompletedMFAPostActionProtocolCase(
 	t.Helper()
 
 	requestChan := make(chan *action.Action, 1)
-	originalRequestChan := action.RequestChan
-	action.RequestChan = requestChan
+	originalRequestChan := action.PostActionRequestChan
+	action.PostActionRequestChan = requestChan
 
 	t.Cleanup(func() {
-		action.RequestChan = originalRequestChan
+		action.PostActionRequestChan = originalRequestChan
 	})
 
 	mgr := &mockCookieManager{data: completedMFAPostActionCookieData(tc)}
@@ -241,11 +243,11 @@ func TestQueueCompletedIDPMFAPostActionUsesTrustedForwardedClientIP(t *testing.T
 	gin.SetMode(gin.TestMode)
 
 	requestChan := make(chan *action.Action, 1)
-	originalRequestChan := action.RequestChan
-	action.RequestChan = requestChan
+	originalRequestChan := action.PostActionRequestChan
+	action.PostActionRequestChan = requestChan
 
 	t.Cleanup(func() {
-		action.RequestChan = originalRequestChan
+		action.PostActionRequestChan = originalRequestChan
 	})
 
 	d := newMFACompletionDeps()

@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
@@ -568,6 +569,52 @@ func TestPolicyObligationExecutorEnqueuesPostActionsAsOrderedMixedPlan(t *testin
 	}
 }
 
+func TestPolicyObligationExecutorDoesNotRollbackCompletedSynchronousEffectAfterPostActionFailure(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    111,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	_ = auth.requestPolicyContext(ctx)
+	capture := NewCaptureResponseWriter(auth.Logger())
+	auth.deps.Resp = capture
+
+	bridge := &partialExecutionEffectBridge{postActionID: policyAuthorityPluginPostActionFirst}
+	previous := getPluginEffectBridge()
+
+	RegisterPluginEffectBridge(bridge)
+	t.Cleanup(func() {
+		RegisterPluginEffectBridge(previous)
+	})
+
+	final := &report.FinalDecision{
+		Stage:          policy.StageAuthDecision,
+		Effect:         policy.DecisionPermit,
+		FSMEventMarker: policy.FSMEventMarkerAuthPermit,
+		ResponseMarker: policy.ResponseMarkerOK,
+		Obligations: []report.EffectRequest{
+			{ID: policyAuthorityPluginEffectID},
+			{ID: policyAuthorityPluginPostActionFirst},
+		},
+	}
+	auth.applyPolicyDecision(ctx, final)
+
+	if bridge.synchronousCalls != 1 {
+		t.Fatalf("completed synchronous calls = %d, want 1", bridge.synchronousCalls)
+	}
+
+	if bridge.acceptanceCalls != 1 {
+		t.Fatalf("failed post-action acceptance calls = %d, want 1", bridge.acceptanceCalls)
+	}
+
+	if got := capture.Outcome().Decision; got != CapturedAuthDecisionTempFail {
+		t.Fatalf("auth decision after acceptance failure = %q, want %q", got, CapturedAuthDecisionTempFail)
+	}
+}
+
 func TestPolicyObligationExecutorRecordsPluginEffectFailure(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
@@ -761,6 +808,31 @@ type recordingPluginEffectBridge struct {
 	ok            bool
 }
 
+type partialExecutionEffectBridge struct {
+	postActionID     string
+	synchronousCalls int
+	acceptanceCalls  int
+}
+
+// IsPostActionEffect identifies the later failing post-action.
+func (b *partialExecutionEffectBridge) IsPostActionEffect(effect report.EffectRequest) bool {
+	return b != nil && effect.ID == b.postActionID
+}
+
+// EnqueuePostActionPlan records deterministic acceptance failure after synchronous completion.
+func (b *partialExecutionEffectBridge) EnqueuePostActionPlan(_ *gin.Context, _ *StateView, _ []PostActionPlanStep) (bool, bool) {
+	b.acceptanceCalls++
+
+	return true, false
+}
+
+// ExecutePolicyEffect records one already completed synchronous side effect.
+func (b *partialExecutionEffectBridge) ExecutePolicyEffect(_ *gin.Context, _ *StateView, _ report.EffectRequest) (bool, bool) {
+	b.synchronousCalls++
+
+	return true, true
+}
+
 func (b *recordingPluginEffectBridge) IsPostActionEffect(effect report.EffectRequest) bool {
 	return b.postActionIDs[effect.ID]
 }
@@ -782,14 +854,16 @@ func (b *recordingPluginEffectBridge) ExecutePolicyEffect(_ *gin.Context, _ *Sta
 
 type recordingPlanPostAction struct{}
 
-func (recordingPlanPostAction) Run(PostActionInput) {}
+func (recordingPlanPostAction) Run(PostActionInput) bool { return true }
 
 func (p recordingPlanPostAction) PreparePlanStep(PostActionInput) PostActionPlanRunner {
 	return p
 }
 
-func (recordingPlanPostAction) RunPlanStep(context.Context, PostActionPlanInput) (pluginapi.RuntimeDelta, bool) {
-	return pluginapi.RuntimeDelta{}, true
+func (recordingPlanPostAction) ValidatePlanStep() error { return nil }
+
+func (recordingPlanPostAction) RunPlanStep(context.Context, PostActionPlanInput) (pluginapi.RuntimeDelta, effectsupervisor.Result) {
+	return pluginapi.RuntimeDelta{}, effectsupervisor.Succeeded()
 }
 
 func postActionPlanStepIDs(steps []PostActionPlanStep) []string {
@@ -890,11 +964,13 @@ func (h *recordingObligationHandlers) dispatchLua(*gin.Context, luaActionObligat
 	return true
 }
 
-func (h *recordingObligationHandlers) enqueuePost(*gin.Context) {
+func (h *recordingObligationHandlers) enqueuePost(*gin.Context) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	h.postActionCount++
+
+	return true
 }
 
 func (h *recordingObligationHandlers) Total() int {

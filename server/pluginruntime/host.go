@@ -36,6 +36,16 @@ import (
 
 var _ pluginapi.Host = (*Host)(nil)
 
+var errPostActionWorkerFailed = errors.New("post-action nested host worker failed")
+
+type postActionWorkerOwnershipKey struct{}
+
+type postActionWorkerGroup struct {
+	errs []error
+	mu   sync.Mutex
+	wg   sync.WaitGroup
+}
+
 // ErrCompatibilityObservabilityDenied marks requests outside verified operator allowlists.
 var ErrCompatibilityObservabilityDenied = errors.New("compatibility observability denied")
 
@@ -412,28 +422,113 @@ func (h *Host) Go(ctx context.Context, name string, fn func(context.Context) err
 	h.goWithLogger(ctx, name, h.Logger(name), fn)
 }
 
-// goWithLogger starts a supervised worker using the supplied plugin logger.
+// goWithLogger keeps post-action descendants tracked by their accepting supervisor.
 func (h *Host) goWithLogger(ctx context.Context, _ string, logger pluginapi.Logger, fn func(context.Context) error) {
 	if h == nil || fn == nil {
 		return
 	}
 
+	group := postActionWorkerGroupFromContext(ctx)
 	workerCtx, cancel := context.WithCancel(detachedWorkerContext(ctx, h.workerLifetimeContext()))
+	if group != nil {
+		workerCtx, cancel = context.WithCancel(ctx)
+
+		group.add()
+	}
 
 	h.workers.Go(func() {
 		defer cancel()
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				logger.Error(workerCtx, "plugin worker panicked", pluginapi.LogField{Key: "panic", Value: true})
-			}
-		}()
 
-		go cancelWhenDone(workerCtx, h.workerLifetimeContext(), cancel)
+		if group != nil {
+			defer group.done()
+		}
 
-		if err := fn(workerCtx); err != nil {
-			logger.Error(workerCtx, "plugin worker stopped with error", pluginapi.LogField{Key: pluginLogFieldErrorClass, Value: "worker"})
+		if group == nil {
+			go cancelWhenDone(workerCtx, h.workerLifetimeContext(), cancel)
+		}
+
+		workerErr := runPluginWorker(workerCtx, logger, fn)
+		if group != nil && workerErr != nil {
+			group.record(workerErr)
 		}
 	})
+}
+
+// withPostActionWorkerOwnership marks nested plugin work as supervisor-owned.
+func withPostActionWorkerOwnership(ctx context.Context, group *postActionWorkerGroup) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	return context.WithValue(ctx, postActionWorkerOwnershipKey{}, group)
+}
+
+// postActionWorkerGroupFromContext returns the accepting call's nested-work collector.
+func postActionWorkerGroupFromContext(ctx context.Context) *postActionWorkerGroup {
+	if ctx == nil {
+		return nil
+	}
+
+	group, _ := ctx.Value(postActionWorkerOwnershipKey{}).(*postActionWorkerGroup)
+
+	return group
+}
+
+// runPluginWorker contains worker panics and reports bounded failures.
+func runPluginWorker(ctx context.Context, logger pluginapi.Logger, fn func(context.Context) error) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logger.Error(ctx, "plugin worker panicked", pluginapi.LogField{Key: "panic", Value: true})
+
+			err = errPostActionWorkerFailed
+		}
+	}()
+
+	if err = fn(ctx); err != nil {
+		logger.Error(ctx, "plugin worker stopped with error", pluginapi.LogField{Key: pluginLogFieldErrorClass, Value: "worker"})
+
+		return errors.Join(errPostActionWorkerFailed, err)
+	}
+
+	return nil
+}
+
+// add reserves one nested worker before its goroutine becomes observable.
+func (g *postActionWorkerGroup) add() {
+	if g != nil {
+		g.wg.Add(1)
+	}
+}
+
+// done releases one nested worker reservation.
+func (g *postActionWorkerGroup) done() {
+	if g != nil {
+		g.wg.Done()
+	}
+}
+
+// record retains one bounded nested worker failure for the accepting call.
+func (g *postActionWorkerGroup) record(err error) {
+	if g == nil || err == nil {
+		return
+	}
+
+	g.mu.Lock()
+	g.errs = append(g.errs, err)
+	g.mu.Unlock()
+}
+
+// wait joins every nested worker outcome before the target result is returned.
+func (g *postActionWorkerGroup) wait() error {
+	if g == nil {
+		return nil
+	}
+
+	g.wg.Wait()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	return errors.Join(g.errs...)
 }
 
 // detachedWorkerContext preserves caller values while leaving cancellation to the host worker lifetime.

@@ -18,6 +18,7 @@ package lualib
 import (
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -107,6 +108,52 @@ func TestCommonRequestResetIDPFields(t *testing.T) {
 
 	if cr.AllowedClientGrantTypes != nil {
 		t.Errorf("expected AllowedClientGrantTypes to be nil, got %v", cr.AllowedClientGrantTypes)
+	}
+}
+
+func TestCommonRequestCloneForPostActionOwnsMutableInputs(t *testing.T) {
+	statusMessage := "accepted"
+	usedBackendAddr := "192.0.2.10"
+	usedBackendPort := 389
+	original := CommonRequest{
+		BackendServers:          []*config.BackendServer{{Host: "backend.example.test"}},
+		TOTPRecoveryCodes:       []string{"code-1"},
+		RequestedScopes:         []string{"openid"},
+		UserGroups:              []string{"users"},
+		AllowedClientScopes:     []string{"profile"},
+		AllowedClientGrantTypes: []string{"authorization_code"},
+		Password:                []byte("secret"),
+		StatusMessage:           &statusMessage,
+		UsedBackendAddr:         &usedBackendAddr,
+		UsedBackendPort:         &usedBackendPort,
+	}
+
+	clone := original.CloneForPostAction()
+	original.BackendServers[0].Host = "mutated.example.test"
+	original.TOTPRecoveryCodes[0] = "mutated"
+	original.RequestedScopes[0] = "mutated"
+	original.UserGroups[0] = "mutated"
+	original.AllowedClientScopes[0] = "mutated"
+	original.AllowedClientGrantTypes[0] = "mutated"
+	original.Password[0] = 'X'
+	statusMessage = "mutated"
+	usedBackendAddr = "198.51.100.1"
+	usedBackendPort = 636
+
+	if clone.BackendServers[0].Host != "backend.example.test" {
+		t.Fatalf("cloned request reused backend server pointer: %#v", clone.BackendServers)
+	}
+
+	if clone.TOTPRecoveryCodes[0] != "code-1" || clone.RequestedScopes[0] != "openid" || clone.UserGroups[0] != "users" {
+		t.Fatalf("cloned request reused caller slices: %#v", clone)
+	}
+
+	if clone.AllowedClientScopes[0] != "profile" || clone.AllowedClientGrantTypes[0] != "authorization_code" {
+		t.Fatalf("cloned request reused client configuration slices: %#v", clone)
+	}
+
+	if string(clone.Password) != "secret" || *clone.StatusMessage != "accepted" || *clone.UsedBackendAddr != "192.0.2.10" || *clone.UsedBackendPort != 389 {
+		t.Fatalf("cloned request reused mutable values: %#v", clone)
 	}
 }
 

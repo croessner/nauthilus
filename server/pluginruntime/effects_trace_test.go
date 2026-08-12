@@ -46,20 +46,24 @@ func TestEffectBridgePostActionSpanKeepsRequestTraceAfterRequestCancel(t *testin
 	auth.Request.HTTPClientRequest = auth.Request.HTTPClientContext.Request
 	gate := core.InstallPostActionExecutionGate(auth.Request.HTTPClientContext)
 
-	cancelRequest()
-
 	handled, ok := bridge.ExecutePolicyEffect(auth.Request.HTTPClientContext, auth.View(), report.EffectRequest{ID: effectPostActionQualified})
 	if !handled || !ok {
 		t.Fatalf("ExecutePolicyEffect() handled=%t ok=%t, want true/true", handled, ok)
 	}
 
+	cancelRequest()
 	requestSpan.End()
 	gate.Complete()
-	host.WaitWorkers()
+	waitForEffectBridge(t, bridge)
+
+	supervisorSpan := requireEffectSupervisorSpan(t, collector)
+	if got, want := supervisorSpan.Parent().SpanID(), requestSpan.SpanContext().SpanID(); got != want {
+		t.Fatalf("effect supervisor span parent = %s, want request span %s", got, want)
+	}
 
 	planSpan := requirePostActionPlanSpan(t, collector)
-	if got, want := planSpan.Parent().SpanID(), requestSpan.SpanContext().SpanID(); got != want {
-		t.Fatalf("post-action plan span parent = %s, want request span %s", got, want)
+	if got, want := planSpan.Parent().SpanID(), supervisorSpan.SpanContext().SpanID(); got != want {
+		t.Fatalf("post-action plan span parent = %s, want supervisor span %s", got, want)
 	}
 
 	if planSpan.StartTime().Before(requestSpanEndTime(t, collector, requestSpan.SpanContext().SpanID())) {
@@ -70,6 +74,22 @@ func TestEffectBridgePostActionSpanKeepsRequestTraceAfterRequestCancel(t *testin
 	if got, want := pluginSpan.Parent().SpanID(), planSpan.SpanContext().SpanID(); got != want {
 		t.Fatalf("post-action plugin span parent = %s, want plan span %s", got, want)
 	}
+}
+
+// requireEffectSupervisorSpan finds the response-gated internal ownership span.
+func requireEffectSupervisorSpan(t *testing.T, collector *tracetest.Collector) sdktrace.ReadOnlySpan {
+	t.Helper()
+
+	span, ok := tracetest.FindByNameAndAttributes(
+		collector.Spans(),
+		"policy.effect.post_action",
+		attribute.String("nauthilus.policy.provider", "authn/post_action"),
+	)
+	if !ok {
+		t.Fatalf("missing effect supervisor span; exported spans: %v", collector.Spans())
+	}
+
+	return span
 }
 
 // requestSpanEndTime returns the exported end time for one request span ID.
@@ -108,7 +128,7 @@ func TestEffectBridgeWaitsForResponseCompletionBeforePostAction(t *testing.T) {
 	}
 
 	gate.Complete()
-	host.WaitWorkers()
+	waitForEffectBridge(t, bridge)
 
 	select {
 	case <-target.called:

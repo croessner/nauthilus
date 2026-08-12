@@ -16,6 +16,8 @@
 package lualib
 
 import (
+	"bytes"
+	"slices"
 	"sync"
 
 	"github.com/croessner/nauthilus/v3/server/config"
@@ -254,6 +256,43 @@ type CommonRequest struct {
 
 	// MFACompleted indicates whether MFA verification was successfully completed.
 	MFACompleted bool
+}
+
+// CloneForPostAction returns an owned request copy suitable for asynchronous execution.
+func (c CommonRequest) CloneForPostAction() CommonRequest {
+	clone := c
+
+	clone.BackendServers = make([]*config.BackendServer, len(c.BackendServers))
+	for index, server := range c.BackendServers {
+		if server != nil {
+			serverCopy := *server
+			clone.BackendServers[index] = &serverCopy
+		}
+	}
+
+	clone.TOTPRecoveryCodes = slices.Clone(c.TOTPRecoveryCodes)
+	clone.RequestedScopes = slices.Clone(c.RequestedScopes)
+	clone.UserGroups = slices.Clone(c.UserGroups)
+	clone.AllowedClientScopes = slices.Clone(c.AllowedClientScopes)
+	clone.AllowedClientGrantTypes = slices.Clone(c.AllowedClientGrantTypes)
+	clone.Password = bytes.Clone(c.Password)
+
+	if c.StatusMessage != nil {
+		statusMessage := *c.StatusMessage
+		clone.StatusMessage = &statusMessage
+	}
+
+	if c.UsedBackendAddr != nil {
+		usedBackendAddr := *c.UsedBackendAddr
+		clone.UsedBackendAddr = &usedBackendAddr
+	}
+
+	if c.UsedBackendPort != nil {
+		usedBackendPort := *c.UsedBackendPort
+		clone.UsedBackendPort = &usedBackendPort
+	}
+
+	return clone
 }
 
 // Reset resets all fields of the CommonRequest to their zero values.

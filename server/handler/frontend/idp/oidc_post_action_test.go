@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	domainidp "github.com/croessner/nauthilus/v3/server/idp"
@@ -54,14 +55,13 @@ func newOIDCTokenPostActionHandler() *OIDCHandler {
 	return &OIDCHandler{deps: d}
 }
 
-func newCanceledTokenContext(t *testing.T) *gin.Context {
+func newTokenPostActionContext(t *testing.T) (*gin.Context, context.CancelFunc, *core.PostActionExecutionGate) {
 	t.Helper()
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 
 	requestCtx, cancel := context.WithCancel(context.Background())
-	cancel()
 
 	req := httptest.NewRequest(http.MethodPost, "/oidc/token", nil).WithContext(requestCtx)
 	req.RemoteAddr = "192.0.2.10:12345"
@@ -69,8 +69,9 @@ func newCanceledTokenContext(t *testing.T) *gin.Context {
 	ctx.Set(definitions.CtxGUIDKey, "token-post-action-test")
 	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+	gate := core.InstallPostActionExecutionGate(ctx)
 
-	return ctx
+	return ctx, cancel, gate
 }
 
 func waitForQueuedAction(t *testing.T, requestChan <-chan *action.Action) {
@@ -117,19 +118,19 @@ func assertQueuedMFAPostAction(t *testing.T, requestChan <-chan *action.Action, 
 	}
 }
 
-func TestRunOIDCTokenPostActionQueuesActionWhenRequestContextCanceled(t *testing.T) {
+func TestRunOIDCTokenPostActionContinuesAfterAcceptedRequestCancellation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	requestChan := make(chan *action.Action, 1)
-	originalRequestChan := action.RequestChan
-	action.RequestChan = requestChan
+	originalRequestChan := action.PostActionRequestChan
+	action.PostActionRequestChan = requestChan
 
 	t.Cleanup(func() {
-		action.RequestChan = originalRequestChan
+		action.PostActionRequestChan = originalRequestChan
 	})
 
 	handler := newOIDCTokenPostActionHandler()
-	ctx := newCanceledTokenContext(t)
+	ctx, cancel, gate := newTokenPostActionContext(t)
 
 	handler.runOIDCTokenPostAction(
 		ctx,
@@ -141,6 +142,8 @@ func TestRunOIDCTokenPostActionQueuesActionWhenRequestContextCanceled(t *testing
 		5*time.Millisecond,
 	)
 
+	cancel()
+	gate.Complete()
 	waitForQueuedAction(t, requestChan)
 }
 
@@ -148,15 +151,15 @@ func TestRunOIDCTokenPostActionCopiesMFASessionState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	requestChan := make(chan *action.Action, 1)
-	originalRequestChan := action.RequestChan
-	action.RequestChan = requestChan
+	originalRequestChan := action.PostActionRequestChan
+	action.PostActionRequestChan = requestChan
 
 	t.Cleanup(func() {
-		action.RequestChan = originalRequestChan
+		action.PostActionRequestChan = originalRequestChan
 	})
 
 	handler := newOIDCTokenPostActionHandler()
-	ctx := newCanceledTokenContext(t)
+	ctx, cancel, gate := newTokenPostActionContext(t)
 	ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
 		definitions.SessionKeyMFAMethod:    "webauthn",
 		definitions.SessionKeyMFACompleted: true,
@@ -172,6 +175,8 @@ func TestRunOIDCTokenPostActionCopiesMFASessionState(t *testing.T) {
 		5*time.Millisecond,
 	)
 
+	cancel()
+	gate.Complete()
 	assertQueuedMFAPostAction(t, requestChan, "webauthn")
 }
 
@@ -179,15 +184,15 @@ func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	requestChan := make(chan *action.Action, 1)
-	originalRequestChan := action.RequestChan
-	action.RequestChan = requestChan
+	originalRequestChan := action.PostActionRequestChan
+	action.PostActionRequestChan = requestChan
 
 	t.Cleanup(func() {
-		action.RequestChan = originalRequestChan
+		action.PostActionRequestChan = originalRequestChan
 	})
 
 	handler := newOIDCTokenPostActionHandler()
-	ctx := newCanceledTokenContext(t)
+	ctx, cancel, gate := newTokenPostActionContext(t)
 	ctx.Set(definitions.CtxMFACompletedKey, true)
 	ctx.Set(definitions.CtxMFAMethodKey, "totp")
 
@@ -201,6 +206,8 @@ func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {
 		5*time.Millisecond,
 	)
 
+	cancel()
+	gate.Complete()
 	assertQueuedMFAPostAction(t, requestChan, "totp")
 }
 
@@ -208,15 +215,15 @@ func TestRunOIDCTokenPostActionCopiesOIDCSessionSubject(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	requestChan := make(chan *action.Action, 1)
-	originalRequestChan := action.RequestChan
-	action.RequestChan = requestChan
+	originalRequestChan := action.PostActionRequestChan
+	action.PostActionRequestChan = requestChan
 
 	t.Cleanup(func() {
-		action.RequestChan = originalRequestChan
+		action.PostActionRequestChan = originalRequestChan
 	})
 
 	handler := newOIDCTokenPostActionHandler()
-	ctx := newCanceledTokenContext(t)
+	ctx, cancel, gate := newTokenPostActionContext(t)
 
 	setOIDCTokenPostActionSubject(ctx, &domainidp.OIDCSession{
 		UserID:       "user-123",
@@ -235,6 +242,9 @@ func TestRunOIDCTokenPostActionCopiesOIDCSessionSubject(t *testing.T) {
 		"success",
 		5*time.Millisecond,
 	)
+
+	cancel()
+	gate.Complete()
 
 	select {
 	case act := <-requestChan:

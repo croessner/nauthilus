@@ -28,6 +28,7 @@ var (
 	regPluginSubject  PluginSubjectSourceBridge
 	regPluginEnv      PluginEnvironmentSourceBridge
 	regPostAction     PostAction
+	regPostSupervisor *PostActionSupervisor
 	regPluginEffect   PluginEffectBridge
 	regEnvironmentEng EnvironmentEngine
 	regActionDisp     ActionDispatcher
@@ -48,6 +49,9 @@ func RegisterPluginEnvironmentSourceBridge(b PluginEnvironmentSourceBridge) { re
 
 // RegisterPostAction registers the active PostAction implementation.
 func RegisterPostAction(p PostAction) { regPostAction = p }
+
+// RegisterPostActionSupervisor registers the current host post-action owner generation.
+func RegisterPostActionSupervisor(supervisor *PostActionSupervisor) { regPostSupervisor = supervisor }
 
 // RegisterPluginEffectBridge registers the native plugin policy effect adapter.
 func RegisterPluginEffectBridge(b PluginEffectBridge) { regPluginEffect = b }
@@ -77,6 +81,9 @@ func getPluginEnvironmentSourceBridge() PluginEnvironmentSourceBridge {
 	return regPluginEnv
 }
 func getPostAction() PostAction { return regPostAction }
+
+// getPostActionSupervisor returns the current host-owned acceptance generation.
+func getPostActionSupervisor() *PostActionSupervisor { return regPostSupervisor }
 func getPluginEffectBridge() PluginEffectBridge {
 	return regPluginEffect
 }

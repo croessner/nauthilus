@@ -31,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/lualib/action"
 	"github.com/croessner/nauthilus/v3/server/lualib/subject"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/croessner/nauthilus/v3/server/testing/oteltest"
@@ -267,7 +268,7 @@ func newDefaultPostActionAuth(ctx *gin.Context, cfg *config.FileSettings, guid s
 	return auth
 }
 
-func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T) {
+func TestDefaultPostAction_RejectsCanceledRequestBeforeAcceptance(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := prepareDefaultPostActionTest(t)
@@ -278,6 +279,9 @@ func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T
 	writer := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(writer)
 	ctx.Request = httptest.NewRequest("POST", "/auth", nil).WithContext(reqCtx)
+
+	gate := core.InstallPostActionExecutionGate(ctx)
+	defer gate.Complete()
 
 	auth := newDefaultPostActionAuth(ctx, cfg, "guid-canceled")
 
@@ -290,22 +294,11 @@ func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T
 	})
 
 	select {
-	case act := <-action.RequestChan:
-		if act == nil {
-			t.Fatal("expected post action to be scheduled")
-		}
-
-		if act.HTTPRequest == nil {
-			t.Fatal("expected detached HTTP request")
-		}
-
-		if err := act.HTTPRequest.Context().Err(); err != nil {
-			t.Fatalf("expected detached HTTP request context, got err=%v", err)
-		}
-
+	case act := <-action.PostActionRequestChan:
 		act.FinishedChan <- action.Done{}
+
+		t.Fatal("post action was invoked after pre-acceptance cancellation")
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("expected detached post action to be scheduled")
 	}
 }
 
@@ -328,7 +321,7 @@ func TestDefaultPostAction_WaitsForResponseCompletion(t *testing.T) {
 	})
 
 	select {
-	case act := <-action.RequestChan:
+	case act := <-action.PostActionRequestChan:
 		act.FinishedChan <- action.Done{}
 
 		t.Fatal("Lua post-action started before response completion")
@@ -338,7 +331,7 @@ func TestDefaultPostAction_WaitsForResponseCompletion(t *testing.T) {
 	gate.Complete()
 
 	select {
-	case act := <-action.RequestChan:
+	case act := <-action.PostActionRequestChan:
 		act.FinishedChan <- action.Done{}
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("Lua post-action did not start after response completion")
@@ -354,6 +347,8 @@ func TestDefaultPostAction_ForwardsEnvironmentRejectedToLuaRequest(t *testing.T)
 	ctx, _ := gin.CreateTestContext(writer)
 	ctx.Request = httptest.NewRequest("POST", "/auth", nil)
 	ctx.Set(definitions.CtxEnvironmentRejectedKey, true)
+	gate := core.InstallPostActionExecutionGate(ctx)
+	gate.Complete()
 
 	auth := newDefaultPostActionAuth(ctx, cfg, "guid-environment-rejected")
 
@@ -369,7 +364,7 @@ func TestDefaultPostAction_ForwardsEnvironmentRejectedToLuaRequest(t *testing.T)
 	})
 
 	select {
-	case act := <-action.RequestChan:
+	case act := <-action.PostActionRequestChan:
 		if act == nil || act.CommonRequest == nil {
 			t.Fatal("expected post action request")
 		}
@@ -407,7 +402,7 @@ func TestDefaultPostActionPlanStepSeedsRuntimeAndReturnsLuaDelta(t *testing.T) {
 	resultCh, okCh := runDefaultPostActionPlanStep(auth.Ctx(), auth)
 
 	select {
-	case act := <-action.RequestChan:
+	case act := <-action.PostActionRequestChan:
 		completePlanStepAction(t, act)
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected plan-step post action to be scheduled")
@@ -460,7 +455,7 @@ func TestDefaultPostActionPlanStepKeepsCanceledRequestTrace(t *testing.T) {
 	var actionParent trace.SpanContext
 
 	select {
-	case act := <-action.RequestChan:
+	case act := <-action.PostActionRequestChan:
 		actionParent = act.OTelParentSpanContext
 		if got := act.OTelParentSpanContext.TraceID(); got != parent.TraceID() {
 			t.Errorf("post-action TraceID = %s, want %s", got, parent.TraceID())
@@ -511,7 +506,7 @@ func runDefaultPostActionPlanStep(ctx context.Context, auth *core.AuthState) (<-
 	})
 
 	go func() {
-		delta, ok := runner.RunPlanStep(ctx, core.PostActionPlanInput{
+		delta, result := runner.RunPlanStep(ctx, core.PostActionPlanInput{
 			Runtime: map[string]any{
 				"native_value": "visible-to-lua",
 				"rt":           map[string]any{"existing": "kept"},
@@ -520,7 +515,7 @@ func runDefaultPostActionPlanStep(ctx context.Context, auth *core.AuthState) (<-
 
 		resultCh <- delta
 
-		okCh <- ok
+		okCh <- result.State() == effectsupervisor.StateSucceeded
 	}()
 
 	return resultCh, okCh

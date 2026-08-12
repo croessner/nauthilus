@@ -50,7 +50,10 @@ func (a *AuthState) defaultPolicyPreAuthResult(ctx *gin.Context, current definit
 	}
 
 	a.applyPolicyResponseMessage(final)
-	a.applyPolicyObligations(ctx, final)
+
+	if !a.applyPolicyObligations(ctx, final) {
+		return definitions.AuthResultTempFail
+	}
 
 	return preAuthResultFromPolicy(final, current)
 }
@@ -62,7 +65,10 @@ func (a *AuthState) configuredPolicyPreAuthResult(ctx *gin.Context, current defi
 	}
 
 	a.applyPolicyResponseMessage(final)
-	a.applyPolicyObligations(ctx, final)
+
+	if !a.applyPolicyObligations(ctx, final) {
+		return definitions.AuthResultTempFail, true
+	}
 
 	if configuredPreAuthControl(final) {
 		return definitions.AuthResultOK, true
@@ -93,7 +99,10 @@ func (a *AuthState) configuredPolicyAuthResult(ctx *gin.Context, current definit
 	}
 
 	a.applyPolicyResponseMessage(final)
-	a.applyPolicyObligations(ctx, final)
+
+	if !a.applyPolicyObligations(ctx, final) {
+		return definitions.AuthResultTempFail, true
+	}
 	releasePolicyPostActionResult(ctx)
 
 	return authResultFromPolicy(final, current), true
@@ -120,9 +129,9 @@ func (a *AuthState) ApplyConfiguredPreAuthDecision(ctx *gin.Context) bool {
 	return a.applyConfiguredPreAuthDecision(ctx)
 }
 
-// ApplyConfiguredPreAuthControl applies a configured pre-auth control when it is authoritative.
-func (a *AuthState) ApplyConfiguredPreAuthControl(ctx *gin.Context) bool {
-	return a.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail)
+// ApplyConfiguredPreAuthControl reports control selection and mandatory obligation acceptance.
+func (a *AuthState) ApplyConfiguredPreAuthControl(ctx *gin.Context) (bool, bool) {
+	return a.applyConfiguredPreAuthControl(ctx)
 }
 
 // HasConfiguredPreAuthPolicyAuthority reports whether configured pre-auth rules own production decisions.
@@ -191,16 +200,22 @@ func (a *AuthState) applyConfiguredPreAuthDecision(ctx *gin.Context) bool {
 	return true
 }
 
-func (a *AuthState) applyConfiguredPreAuthControl(ctx *gin.Context, _ definitions.AuthResult) bool {
+// applyConfiguredPreAuthControl applies selected obligations before publishing the skip marker.
+func (a *AuthState) applyConfiguredPreAuthControl(ctx *gin.Context) (bool, bool) {
 	final, ok := a.configuredPolicyPreAuthDecision(ctx)
 	if !ok || !configuredPreAuthControl(final) {
-		return false
+		return false, true
 	}
 
 	a.applyPolicyResponseMessage(final)
+
+	if !a.applyPolicyObligations(ctx, final) {
+		return true, false
+	}
+
 	a.markConfiguredPreAuthChecksSkipped(ctx)
 
-	return true
+	return true, true
 }
 
 func (a *AuthState) markConfiguredPreAuthChecksSkipped(ctx *gin.Context) {
@@ -393,7 +408,13 @@ func (a *AuthState) applyPolicyDecision(ctx *gin.Context, final *report.FinalDec
 	}
 
 	a.applyPolicyResponseMessage(final)
-	a.applyPolicyObligations(ctx, final)
+
+	if !a.applyPolicyObligations(ctx, final) {
+		a.AuthTempFail(ctx, definitions.TempFailDefault)
+		ctx.Abort()
+
+		return
+	}
 
 	switch final.Effect {
 	case policy.DecisionPermit:
@@ -429,12 +450,12 @@ func (a *AuthState) applyPolicyResponseMessage(final *report.FinalDecision) {
 	}
 }
 
-func (a *AuthState) applyPolicyObligations(ctx *gin.Context, final *report.FinalDecision) {
+func (a *AuthState) applyPolicyObligations(ctx *gin.Context, final *report.FinalDecision) bool {
 	if a == nil || final == nil {
-		return
+		return true
 	}
 
-	newPolicyObligationExecutor(a).Execute(ctx, final)
+	return newPolicyObligationExecutor(a).Execute(ctx, final)
 }
 
 func (a *AuthState) storePolicyPostActionResult(ctx *gin.Context, result *PassDBResult) {

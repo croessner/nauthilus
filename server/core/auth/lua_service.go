@@ -16,7 +16,6 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	stderrors "errors"
 	"fmt"
@@ -32,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib/subject"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/croessner/nauthilus/v3/server/util"
 
@@ -61,16 +61,7 @@ type luaPostActionTraceState struct {
 	userFound     bool
 }
 
-// luaPostActionInvocation owns one detached legacy Lua post-action execution.
-type luaPostActionInvocation struct {
-	parent        context.Context
-	executionDone <-chan struct{}
-	args          core.PostActionArgs
-	runtime       core.PostActionRuntime
-	traceState    luaPostActionTraceState
-}
-
-// preparedLuaPostActionPlan owns immutable Lua inputs captured before response completion.
+// preparedLuaPostActionPlan owns immutable Lua inputs captured before response finalization.
 type preparedLuaPostActionPlan struct {
 	args       core.PostActionArgs
 	runtime    core.PostActionRuntime
@@ -302,41 +293,39 @@ func applyLuaBackendGroups(auth *core.AuthState, luaBackendResult *lualib.LuaBac
 	passDBResult.GroupDistinguishedNames = auth.GetGroupDistinguishedNames()
 }
 
-// Run implements the Lua post action dispatch with identical behavior to the legacy inline method.
-func (DefaultPostAction) Run(input core.PostActionInput) {
+// Run captures and transfers the established Lua post action into supervisor ownership.
+func (DefaultPostAction) Run(input core.PostActionInput) bool {
+	if input.View == nil || input.View.Auth() == nil {
+		return false
+	}
+
 	auth := input.View.Auth()
-	passDBResult := input.Result
-
-	if !canRunLuaPostAction(auth, passDBResult) {
-		return
+	if !canRunLuaPostAction(auth, input.Result) || !luaPostActionReadyWithContext(auth, auth.Runtime.Context) {
+		return true
 	}
 
-	postActionContext := detachedPostActionContext(auth)
-	postActionRequest := util.DetachedHTTPRequest(postActionContext, auth.Request.HTTPClientRequest)
-
-	if util.IsHTTPRequestCanceled(auth.Logger(), postActionRequest, auth.Runtime.GUID, "schedule.lua_post_action") {
-		return
+	runner := DefaultPostAction{}.PreparePlanStep(input)
+	if runner == nil {
+		return false
 	}
 
-	if !luaPostActionReadyWithContext(auth, auth.Runtime.Context) {
-		return
+	if _, err := core.EnqueueLuaPostActionPlan(
+		auth.Request.HTTPClientContext,
+		input.View,
+		1,
+		[]core.PostActionPlanRunner{runner},
+		nil,
+	); err != nil {
+		_ = level.Warn(auth.Logger()).Log(
+			definitions.LogKeyGUID, auth.Runtime.GUID,
+			definitions.LogKeyMsg, "Post-action supervisor rejected Lua work",
+			"error_class", "acceptance_failed",
+		)
+
+		return false
 	}
 
-	cr := lualib.GetCommonRequest()
-	defer lualib.PutCommonRequest(cr)
-
-	auth.FillCommonRequest(cr)
-	prepareLuaPostActionCommonRequest(auth, input, passDBResult, cr)
-
-	invocation := luaPostActionInvocation{
-		parent:        postActionContext,
-		executionDone: core.PostActionExecutionDone(auth.Request.HTTPClientContext),
-		args:          newLuaPostActionArgs(postActionContext, auth, postActionRequest, cr),
-		runtime:       core.NewPostActionRuntime(auth),
-		traceState:    newLuaPostActionTraceState(auth, passDBResult),
-	}
-
-	go invocation.Run()
+	return true
 }
 
 // PreparePlanStep captures all request-bound Lua inputs before detached execution.
@@ -374,10 +363,19 @@ func (DefaultPostAction) PreparePlanStep(input core.PostActionInput) core.PostAc
 	return prepared
 }
 
-// RunPlanStep executes a prepared Lua step without reading request-bound state.
-func (p *preparedLuaPostActionPlan) RunPlanStep(ctx context.Context, input core.PostActionPlanInput) (pluginapi.RuntimeDelta, bool) {
+// ValidatePlanStep enforces bounded request capture before supervisor acceptance.
+func (p *preparedLuaPostActionPlan) ValidatePlanStep() error {
 	if p == nil || !p.enabled {
-		return pluginapi.RuntimeDelta{}, true
+		return nil
+	}
+
+	return core.ValidateLuaPostActionCapture(p.args)
+}
+
+// RunPlanStep executes a prepared Lua step without reading request-bound state.
+func (p *preparedLuaPostActionPlan) RunPlanStep(ctx context.Context, input core.PostActionPlanInput) (pluginapi.RuntimeDelta, effectsupervisor.Result) {
+	if p == nil || !p.enabled {
+		return pluginapi.RuntimeDelta{}, effectsupervisor.Succeeded()
 	}
 
 	lctx, lspan := startLuaPostActionSpan(ctx, p.traceState)
@@ -391,11 +389,12 @@ func (p *preparedLuaPostActionPlan) RunPlanStep(ctx context.Context, input core.
 	args.HTTPRequest = util.DetachedHTTPRequest(lctx, args.HTTPRequest)
 	args.ParentSpan = trace.SpanContextFromContext(lctx)
 
-	if !p.runtime.RunContext(ctx, args) {
-		return pluginapi.RuntimeDelta{}, false
+	result := p.runtime.RunResult(ctx, args)
+	if result.State() != effectsupervisor.StateSucceeded {
+		return pluginapi.RuntimeDelta{}, result
 	}
 
-	return luaContextDeltaToRuntimeDelta(luaCtx.Diff(before)), true
+	return luaContextDeltaToRuntimeDelta(luaCtx.Diff(before)), result
 }
 
 // canRunLuaPostAction checks whether a post-action request should be scheduled.
@@ -439,20 +438,6 @@ func newLuaPostActionTraceState(auth *core.AuthState, passDBResult *core.PassDBR
 	}
 
 	return state
-}
-
-// Run waits for response completion and executes one detached Lua post-action.
-func (i luaPostActionInvocation) Run() {
-	if core.WaitForPostActionExecution(i.parent, i.executionDone) != nil {
-		return
-	}
-
-	lctx, lspan := startLuaPostActionSpan(i.parent, i.traceState)
-	defer lspan.End()
-
-	i.args.HTTPRequest = util.DetachedHTTPRequest(lctx, i.args.HTTPRequest)
-	i.args.ParentSpan = trace.SpanContextFromContext(lctx)
-	_ = i.runtime.RunContext(i.parent, i.args)
 }
 
 // detachedPostActionContext preserves request trace values while removing request cancellation.
@@ -501,12 +486,12 @@ func applyLuaPostActionStatus(auth *core.AuthState, cr *lualib.CommonRequest) {
 	}
 }
 
-// newLuaPostActionArgs copies the common request into detached post-action args.
+// newLuaPostActionArgs copies the common request into supervisor-owned post-action args.
 func newLuaPostActionArgs(parent context.Context, auth *core.AuthState, postActionRequest *http.Request, cr *lualib.CommonRequest) core.PostActionArgs {
 	return newLuaPostActionArgsWithContext(parent, auth, postActionRequest, cr, auth.Runtime.Context)
 }
 
-// newLuaPostActionArgsWithContext copies the common request into detached post-action args.
+// newLuaPostActionArgsWithContext copies the common request into supervisor-owned post-action args.
 func newLuaPostActionArgsWithContext(
 	parent context.Context,
 	auth *core.AuthState,
@@ -514,7 +499,7 @@ func newLuaPostActionArgsWithContext(
 	cr *lualib.CommonRequest,
 	luaCtx *lualib.Context,
 ) core.PostActionArgs {
-	requestCopy := luaPostActionRequestCopy(cr)
+	requestCopy := cr.CloneForPostAction()
 
 	return core.PostActionArgs{
 		Context:       luaCtx,
@@ -523,18 +508,6 @@ func newLuaPostActionArgsWithContext(
 		StatusMessage: auth.Runtime.StatusMessage,
 		Request:       requestCopy,
 	}
-}
-
-// luaPostActionRequestCopy returns an isolated copy for detached execution.
-func luaPostActionRequestCopy(cr *lualib.CommonRequest) lualib.CommonRequest {
-	requestCopy := *cr
-	if len(cr.Password) > 0 {
-		requestCopy.Password = bytes.Clone(cr.Password)
-	} else {
-		requestCopy.Password = nil
-	}
-
-	return requestCopy
 }
 
 // luaContextDeltaToRuntimeDelta converts Lua context changes into plugin runtime changes.

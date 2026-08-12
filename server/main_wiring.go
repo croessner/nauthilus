@@ -437,11 +437,10 @@ func startRuntimeLoopServices(p *runtimeLifecycleParams) error {
 
 // stopRuntimeLifecycle runs the legacy shutdown sequence inside the fx lifecycle.
 func stopRuntimeLifecycle(stopCtx context.Context, p *runtimeLifecycleParams, pluginRunner *pluginruntime.Runner) error {
-	p.Cancel()
-
 	snap := p.Store.cfgProvider.Current()
 
 	stopRuntimePluginRunner(stopCtx, pluginRunner)
+	p.Cancel()
 	stopRuntimeLoopServices(stopCtx, p)
 	waitForRuntimeShutdown(stopCtx, p)
 	saveRuntimeStats(stopCtx, p, snap.File)
