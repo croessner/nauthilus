@@ -15,9 +15,11 @@
 
 package decision
 
-import "strings"
+import (
+	"strings"
 
-const maximumFactIDLength = 192
+	"github.com/croessner/nauthilus/v3/server/policy/internal/identifier"
+)
 
 // FactSource identifies the authority class that produced one fact.
 type FactSource string
@@ -125,6 +127,11 @@ func (s FactSource) valid() bool {
 	}
 }
 
+// IsValid reports whether the source is a closed contract member.
+func (s FactSource) IsValid() bool {
+	return s.valid()
+}
+
 // Fact is one immutable strict value with canonical provenance.
 type Fact struct {
 	id         string
@@ -195,6 +202,11 @@ func (c FactCategory) valid() bool {
 	}
 }
 
+// IsValid reports whether the category is a closed contract member.
+func (c FactCategory) IsValid() bool {
+	return c.valid()
+}
+
 // FactSet is a collision-free immutable fact collection.
 type FactSet struct {
 	index map[string]int
@@ -256,22 +268,7 @@ func (s FactSet) Facts() []Fact {
 
 // validFactID validates the generic canonical fact grammar.
 func validFactID(id string) bool {
-	if len(id) == 0 || len(id) > maximumFactIDLength {
-		return false
-	}
-
-	segments := strings.Split(id, ".")
-	if len(segments) < 2 {
-		return false
-	}
-
-	for _, segment := range segments {
-		if !validIdentifierSegment(segment, true) {
-			return false
-		}
-	}
-
-	return true
+	return identifier.Fact(id)
 }
 
 // validateFactOwnership binds every canonical family and provider owner to provenance.
@@ -300,7 +297,7 @@ func validateFactOwnership(id string, provenance Provenance) error {
 // validateProviderFactOwner binds lua/plugin fact identity to host-assigned authority.
 func validateProviderFactOwner(id string, authority string) error {
 	segments := strings.Split(id, ".")
-	if len(segments) < 3 || !validIdentifierSegment(authority, true) || segments[1] != authority {
+	if len(segments) < 3 || !identifier.Provider(authority) || segments[1] != authority {
 		return newContractError(
 			ErrFactSource,
 			ErrorCodeFactSource,

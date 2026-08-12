@@ -15,9 +15,7 @@
 
 package decision
 
-import "strings"
-
-const maximumTargetPartLength = 64
+import "github.com/croessner/nauthilus/v3/server/policy/internal/identifier"
 
 // Target identifies one exact policy namespace/action pair.
 type Target struct {
@@ -70,75 +68,10 @@ func (t Target) valid() bool {
 
 // validNamespace enforces the target namespace grammar.
 func validNamespace(value string) bool {
-	return validSegmentedIdentifier(value, '.', false)
+	return identifier.Namespace(value)
 }
 
 // validAction enforces the target action grammar.
 func validAction(value string) bool {
-	if len(value) == 0 || len(value) > maximumTargetPartLength {
-		return false
-	}
-
-	separator := false
-
-	for index := range len(value) {
-		current := value[index]
-		switch {
-		case validActionCharacter(current):
-			separator = false
-		case current == '-' || current == '_':
-			if index == 0 || index == len(value)-1 || separator {
-				return false
-			}
-
-			separator = true
-		default:
-			return false
-		}
-	}
-
-	return true
-}
-
-// validActionCharacter reports whether one byte is an action word character.
-func validActionCharacter(current byte) bool {
-	return current >= 'a' && current <= 'z' || current >= '0' && current <= '9'
-}
-
-// validSegmentedIdentifier validates lowercase ASCII identifiers with one separator.
-func validSegmentedIdentifier(value string, delimiter byte, allowHyphen bool) bool {
-	if len(value) == 0 || len(value) > maximumTargetPartLength {
-		return false
-	}
-
-	segments := strings.Split(value, string(delimiter))
-	for _, segment := range segments {
-		if !validIdentifierSegment(segment, allowHyphen) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// validIdentifierSegment validates one non-empty lowercase ASCII segment.
-func validIdentifierSegment(value string, allowHyphen bool) bool {
-	if value == "" {
-		return false
-	}
-
-	for index := range len(value) {
-		current := value[index]
-		if current >= 'a' && current <= 'z' || current >= '0' && current <= '9' || current == '_' {
-			continue
-		}
-
-		if allowHyphen && current == '-' {
-			continue
-		}
-
-		return false
-	}
-
-	return true
+	return identifier.Action(value)
 }

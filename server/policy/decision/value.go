@@ -50,6 +50,22 @@ const (
 	ValueKindTimestamp ValueKind = "timestamp"
 )
 
+// IsValid reports whether the kind is a closed contract member.
+func (k ValueKind) IsValid() bool {
+	switch k {
+	case ValueKindString,
+		ValueKindBoolean,
+		ValueKindInteger,
+		ValueKindDouble,
+		ValueKindStrings,
+		ValueKindBytes,
+		ValueKindTimestamp:
+		return true
+	default:
+		return false
+	}
+}
+
 // ValueInput is the constructor input for one strict value.
 type ValueInput struct {
 	String    *string
