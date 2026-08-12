@@ -30,3 +30,22 @@ func TestCoreConstantsUseTargetVocabulary(t *testing.T) {
 		t.Fatalf("BuiltinDefaultSet = %q, want standard_auth", BuiltinDefaultSet)
 	}
 }
+
+func TestLuaActionDispatchActionsAreDetachedAndDriveValidation(t *testing.T) {
+	actions := LuaActionDispatchActions()
+	if len(actions) != 5 {
+		t.Fatalf("LuaActionDispatchActions() length = %d, want 5", len(actions))
+	}
+
+	for _, action := range actions {
+		if !LuaActionDispatchActionAllowed(action) {
+			t.Fatalf("LuaActionDispatchActionAllowed(%q) = false", action)
+		}
+	}
+
+	actions[0] = "forged"
+
+	if LuaActionDispatchActionAllowed("forged") || !LuaActionDispatchActionAllowed(LuaActionDispatchBruteForce) {
+		t.Fatal("LuaActionDispatchActions() exposed mutable canonical state")
+	}
+}

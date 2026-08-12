@@ -95,5 +95,13 @@ func newTargetCatalogRecord(t *testing.T) (TargetCatalogRecord, []decision.FactS
 		t.Fatalf("decision.NewTarget() error = %v", err)
 	}
 
-	return TargetCatalogRecord{Target: target, Schema: schema}, factSources
+	record := TargetCatalogRecord{
+		Target:        target,
+		Schema:        schema,
+		Checkpoints:   []CheckpointRecord{{Name: "final_decision"}},
+		NoMatch:       registry.NoMatchDeny,
+		AuthorityMode: registry.AuthorityModeEnforce,
+	}
+
+	return completionRuntimeAuthorizeRecord(t, record), factSources
 }

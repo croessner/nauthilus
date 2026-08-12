@@ -159,8 +159,9 @@ func (f FactSchema) valid() bool {
 
 // SchemaDefinition is one immutable contributed exact schema version.
 type SchemaDefinition struct {
-	identity SchemaIdentity
-	facts    []FactSchema
+	identity    SchemaIdentity
+	facts       []FactSchema
+	builtinAuth bool
 }
 
 // NewSchemaDefinition validates and deeply owns one schema definition.
@@ -220,6 +221,11 @@ func (s SchemaDefinition) Identity() SchemaIdentity {
 // Facts returns detached immutable fact definitions.
 func (s SchemaDefinition) Facts() []FactSchema {
 	return cloneFactSchemas(s.facts)
+}
+
+// IsBuiltinAuth reports immutable builtin provenance for an authn schema.
+func (s SchemaDefinition) IsBuiltinAuth() bool {
+	return s.builtinAuth
 }
 
 // clone returns a detached schema definition.
@@ -399,9 +405,24 @@ func (o NamespaceOwnership) valid() bool {
 
 // DefinitionContribution is the sole immutable internal definition contribution DTO.
 type DefinitionContribution struct {
-	ownership NamespaceOwnership
-	targets   []TargetDefinition
-	schemas   []SchemaDefinition
+	ownership  NamespaceOwnership
+	targets    []TargetDefinition
+	schemas    []SchemaDefinition
+	policySets []PolicySetDefinition
+	plans      []DomainPlanDefinition
+	providers  []ProviderDefinition
+	effects    []EffectDefinition
+}
+
+// DefinitionContributionInput carries every catalog definition kind through one DTO.
+type DefinitionContributionInput struct {
+	Ownership  NamespaceOwnership
+	Targets    []TargetDefinition
+	Schemas    []SchemaDefinition
+	PolicySets []PolicySetDefinition
+	Plans      []DomainPlanDefinition
+	Providers  []ProviderDefinition
+	Effects    []EffectDefinition
 }
 
 // NewDefinitionContribution validates namespace ownership and deeply owns all definitions.
@@ -410,6 +431,16 @@ func NewDefinitionContribution(
 	targets []TargetDefinition,
 	schemas []SchemaDefinition,
 ) (DefinitionContribution, error) {
+	return NewCompleteDefinitionContribution(DefinitionContributionInput{
+		Ownership: ownership,
+		Targets:   targets,
+		Schemas:   schemas,
+	})
+}
+
+// NewCompleteDefinitionContribution validates and owns every catalog definition kind.
+func NewCompleteDefinitionContribution(input DefinitionContributionInput) (DefinitionContribution, error) {
+	ownership := input.Ownership
 	if !ownership.valid() {
 		return DefinitionContribution{}, newValidationError(
 			ErrNamespaceOwnership,
@@ -419,7 +450,9 @@ func NewDefinitionContribution(
 		)
 	}
 
-	if len(targets)+len(schemas) == 0 || len(targets)+len(schemas) > maximumContributionDefinitions {
+	definitionCount := len(input.Targets) + len(input.Schemas) + len(input.PolicySets) +
+		len(input.Plans) + len(input.Providers) + len(input.Effects)
+	if definitionCount == 0 || definitionCount > maximumContributionDefinitions {
 		return DefinitionContribution{}, newValidationError(
 			ErrDuplicateDefinition,
 			"contributor.definitions",
@@ -428,20 +461,44 @@ func NewDefinitionContribution(
 		)
 	}
 
-	clonedTargets, err := cloneContributionTargets(ownership, targets)
+	clonedTargets, err := cloneContributionTargets(ownership, input.Targets)
 	if err != nil {
 		return DefinitionContribution{}, err
 	}
 
-	clonedSchemas, err := cloneContributionSchemas(ownership, schemas)
+	clonedSchemas, err := cloneContributionSchemas(ownership, input.Schemas)
+	if err != nil {
+		return DefinitionContribution{}, err
+	}
+
+	clonedSets, err := cloneContributionPolicySets(ownership, input.PolicySets)
+	if err != nil {
+		return DefinitionContribution{}, err
+	}
+
+	clonedPlans, err := cloneContributionPlans(ownership, input.Plans)
+	if err != nil {
+		return DefinitionContribution{}, err
+	}
+
+	clonedProviders, err := cloneContributionProviders(ownership, input.Providers)
+	if err != nil {
+		return DefinitionContribution{}, err
+	}
+
+	clonedEffects, err := cloneContributionEffects(ownership, input.Effects)
 	if err != nil {
 		return DefinitionContribution{}, err
 	}
 
 	return DefinitionContribution{
-		ownership: ownership,
-		targets:   clonedTargets,
-		schemas:   clonedSchemas,
+		ownership:  ownership,
+		targets:    clonedTargets,
+		schemas:    clonedSchemas,
+		policySets: clonedSets,
+		plans:      clonedPlans,
+		providers:  clonedProviders,
+		effects:    clonedEffects,
 	}, nil
 }
 
@@ -470,6 +527,48 @@ func (c DefinitionContribution) Schemas() []SchemaDefinition {
 	return schemas
 }
 
+// PolicySets returns detached contributed namespace-nested sets.
+func (c DefinitionContribution) PolicySets() []PolicySetDefinition {
+	result := make([]PolicySetDefinition, 0, len(c.policySets))
+	for _, set := range c.policySets {
+		result = append(result, set.clone())
+	}
+
+	return result
+}
+
+// Plans returns detached target-owned domain plans.
+func (c DefinitionContribution) Plans() []DomainPlanDefinition {
+	result := make([]DomainPlanDefinition, 0, len(c.plans))
+	for _, plan := range c.plans {
+		result = append(result, plan.clone())
+	}
+
+	return result
+}
+
+// Providers returns detached provider descriptors.
+func (c DefinitionContribution) Providers() []ProviderDefinition {
+	result := append([]ProviderDefinition(nil), c.providers...)
+	for index := range result {
+		result[index].targets = result[index].Targets()
+		result[index].executions = result[index].Executions()
+	}
+
+	return result
+}
+
+// Effects returns detached effect descriptors.
+func (c DefinitionContribution) Effects() []EffectDefinition {
+	result := append([]EffectDefinition(nil), c.effects...)
+	for index := range result {
+		result[index].targets = result[index].Targets()
+		result[index].parameters = result[index].Parameters()
+	}
+
+	return result
+}
+
 // Validate rejects a contribution that did not pass through its immutable constructor.
 func (c DefinitionContribution) Validate() error {
 	if !c.ownership.valid() {
@@ -481,7 +580,7 @@ func (c DefinitionContribution) Validate() error {
 		)
 	}
 
-	if len(c.targets)+len(c.schemas) == 0 {
+	if len(c.targets)+len(c.schemas)+len(c.policySets)+len(c.plans)+len(c.providers)+len(c.effects) == 0 {
 		return newValidationError(
 			ErrInvalidContribution,
 			"contributor.definitions",
@@ -490,7 +589,15 @@ func (c DefinitionContribution) Validate() error {
 		)
 	}
 
-	_, err := NewDefinitionContribution(c.ownership, c.targets, c.schemas)
+	_, err := NewCompleteDefinitionContribution(DefinitionContributionInput{
+		Ownership:  c.ownership,
+		Targets:    c.targets,
+		Schemas:    c.schemas,
+		PolicySets: c.policySets,
+		Plans:      c.plans,
+		Providers:  c.providers,
+		Effects:    c.effects,
+	})
 
 	return err
 }
@@ -661,6 +768,128 @@ func cloneContributionSchemas(ownership NamespaceOwnership, schemas []SchemaDefi
 	}
 
 	return cloned, nil
+}
+
+// cloneContributionPolicySets validates set namespace ownership and collisions.
+func cloneContributionPolicySets(ownership NamespaceOwnership, sets []PolicySetDefinition) ([]PolicySetDefinition, error) {
+	result := make([]PolicySetDefinition, 0, len(sets))
+	seen := make(map[string]struct{}, len(sets))
+
+	for _, set := range sets {
+		identityValue := set.ID().String()
+		if !set.ID().valid() || !ownership.Owns(set.ID().Namespace()) {
+			return nil, newValidationError(ErrNamespaceOwnership, "contributor.policy_sets", identityValue, ownershipReason(ownership))
+		}
+
+		if _, exists := seen[identityValue]; exists {
+			return nil, newValidationError(ErrDuplicateDefinition, "contributor.policy_sets", identityValue, "policy set occurs more than once")
+		}
+
+		seen[identityValue] = struct{}{}
+
+		result = append(result, set.clone())
+	}
+
+	return result, nil
+}
+
+// cloneContributionPlans validates target namespace ownership and collisions.
+func cloneContributionPlans(ownership NamespaceOwnership, plans []DomainPlanDefinition) ([]DomainPlanDefinition, error) {
+	result := make([]DomainPlanDefinition, 0, len(plans))
+	seen := make(map[string]struct{}, len(plans))
+
+	for _, plan := range plans {
+		identityValue := plan.Target().String()
+		if !plan.valid() || !ownership.Owns(plan.Target().Namespace()) {
+			return nil, newValidationError(ErrNamespaceOwnership, "contributor.plans", identityValue, ownershipReason(ownership))
+		}
+
+		if _, exists := seen[identityValue]; exists {
+			return nil, newValidationError(ErrDuplicateDefinition, "contributor.plans", identityValue, "domain plan occurs more than once")
+		}
+
+		seen[identityValue] = struct{}{}
+
+		result = append(result, plan.clone())
+	}
+
+	return result, nil
+}
+
+// cloneContributionProviders validates provider namespace ownership and collisions.
+func cloneContributionProviders(ownership NamespaceOwnership, providers []ProviderDefinition) ([]ProviderDefinition, error) {
+	return cloneQualifiedDefinitions(
+		ownership,
+		providers,
+		"providers",
+		"provider",
+		func(provider ProviderDefinition) string { return provider.ID() },
+		func(provider ProviderDefinition) ProviderDefinition {
+			provider.targets = provider.Targets()
+			provider.executions = provider.Executions()
+
+			return provider
+		},
+	)
+}
+
+// cloneContributionEffects validates effect namespace ownership and collisions.
+func cloneContributionEffects(ownership NamespaceOwnership, effects []EffectDefinition) ([]EffectDefinition, error) {
+	return cloneQualifiedDefinitions(
+		ownership,
+		effects,
+		"effects",
+		"effect",
+		func(effect EffectDefinition) string { return effect.ID() },
+		func(effect EffectDefinition) EffectDefinition {
+			effect.targets = effect.Targets()
+			effect.parameters = effect.Parameters()
+
+			return effect
+		},
+	)
+}
+
+// cloneQualifiedDefinitions shares namespace ownership, collision, and copy rules.
+func cloneQualifiedDefinitions[T any](
+	ownership NamespaceOwnership,
+	values []T,
+	pathKind string,
+	identityKind string,
+	identityOf func(T) string,
+	clone func(T) T,
+) ([]T, error) {
+	result := make([]T, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	path := "contributor." + pathKind
+
+	for _, value := range values {
+		identityValue := identityOf(value)
+		if !identifier.Qualified(identityValue) || !ownership.Owns(qualifiedNamespace(identityValue)) {
+			return nil, newValidationError(ErrNamespaceOwnership, path, identityValue, ownershipReason(ownership))
+		}
+
+		if _, exists := seen[identityValue]; exists {
+			return nil, newValidationError(ErrDuplicateDefinition, path, identityValue, identityKind+" occurs more than once")
+		}
+
+		seen[identityValue] = struct{}{}
+
+		result = append(result, clone(value))
+	}
+
+	return result, nil
+}
+
+// qualifiedNamespace extracts a constructor-validated qualified identity namespace.
+func qualifiedNamespace(value string) string {
+	for index := range len(value) {
+		if value[index] == '/' {
+			return value[:index]
+		}
+	}
+
+	return ""
 }
 
 // cloneFactSchemas returns detached immutable fact schemas.

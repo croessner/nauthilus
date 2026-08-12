@@ -226,9 +226,14 @@ func (i SchemaIdentity) valid() bool {
 
 // TargetActivation is an immutable operator-owned exact target/schema selection.
 type TargetActivation struct {
-	target decision.Target
-	schema SchemaIdentity
-	path   string
+	policySetBindings []PolicySetImport
+	target            decision.Target
+	schema            SchemaIdentity
+	defaultPolicySet  PolicySetID
+	noMatch           NoMatchBehavior
+	path              string
+	authorityMode     AuthorityMode
+	policyConfigured  bool
 }
 
 // NewTargetActivation validates one explicit operator target activation.
@@ -268,6 +273,96 @@ func (a TargetActivation) Schema() SchemaIdentity {
 // Path returns the operator-owned activation path.
 func (a TargetActivation) Path() string {
 	return a.path
+}
+
+// WithPolicy returns an activation with its exact default and no-match selection.
+func (a TargetActivation) WithPolicy(defaultPolicySet string, noMatch string) (TargetActivation, error) {
+	if _, err := decision.NewTarget(a.target.Namespace(), a.target.Action()); err != nil || !a.schema.valid() {
+		return TargetActivation{}, newValidationError(
+			ErrTargetSchemaMismatch,
+			a.path,
+			a.target.String(),
+			"activation must be constructor validated before policy selection",
+		)
+	}
+
+	var (
+		defaultSet PolicySetID
+		err        error
+	)
+
+	if defaultPolicySet != "" {
+		defaultSet, err = ParsePolicySetID(a.path+".default_policy", defaultPolicySet)
+		if err != nil {
+			return TargetActivation{}, err
+		}
+	}
+
+	a.defaultPolicySet = defaultSet
+	a.noMatch = parseNoMatch(noMatch)
+	a.authorityMode = AuthorityModeEnforce
+	a.policyConfigured = true
+
+	return a, nil
+}
+
+// WithAuthorityMode returns an activation with one explicit enforce or observe authority contract.
+func (a TargetActivation) WithAuthorityMode(mode AuthorityMode) (TargetActivation, error) {
+	if !a.policyConfigured || !mode.Valid() {
+		return TargetActivation{}, newValidationError(
+			ErrInvalidAuthorityMode,
+			a.path+".mode",
+			string(mode),
+			"must select enforce or observe after policy configuration",
+		)
+	}
+
+	a.authorityMode = mode
+
+	return a, nil
+}
+
+// AuthorityMode returns the exact target authority selection.
+func (a TargetActivation) AuthorityMode() AuthorityMode {
+	return a.authorityMode
+}
+
+// DefaultPolicySet returns the exact configured target fallback set.
+func (a TargetActivation) DefaultPolicySet() PolicySetID {
+	return a.defaultPolicySet
+}
+
+// NoMatch returns the configured generic fallback or unset authn value.
+func (a TargetActivation) NoMatch() NoMatchBehavior {
+	return a.noMatch
+}
+
+// PolicyConfigured reports whether policy selection passed the immutable builder.
+func (a TargetActivation) PolicyConfigured() bool {
+	return a.policyConfigured
+}
+
+// WithPolicySetBindings returns an activation with explicit target/checkpoint set references.
+func (a TargetActivation) WithPolicySetBindings(bindings []PolicySetImport) (TargetActivation, error) {
+	for _, binding := range bindings {
+		if binding.Target().String() != a.target.String() {
+			return TargetActivation{}, newValidationError(
+				ErrTargetSchemaMismatch,
+				binding.Path(),
+				binding.Target().String(),
+				"policy-set binding must belong to the exact activated target",
+			)
+		}
+	}
+
+	a.policySetBindings = clonePolicySetImports(bindings)
+
+	return a, nil
+}
+
+// PolicySetBindings returns detached explicit target/checkpoint set references.
+func (a TargetActivation) PolicySetBindings() []PolicySetImport {
+	return clonePolicySetImports(a.policySetBindings)
 }
 
 // ClientAdmissionReference is an immutable future client-profile target/schema reference.

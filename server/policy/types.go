@@ -392,18 +392,28 @@ const (
 	LuaActionDispatchRBL = "rbl"
 )
 
+var luaActionDispatchActions = [...]string{
+	LuaActionDispatchBruteForce,
+	LuaActionDispatchLua,
+	LuaActionDispatchTLS,
+	LuaActionDispatchRelayDomains,
+	LuaActionDispatchRBL,
+}
+
+// LuaActionDispatchActions returns the detached closed synchronous Lua action vocabulary.
+func LuaActionDispatchActions() []string {
+	return append([]string(nil), luaActionDispatchActions[:]...)
+}
+
 // LuaActionDispatchActionAllowed reports whether name is a registered synchronous Lua action target.
 func LuaActionDispatchActionAllowed(name string) bool {
-	switch name {
-	case LuaActionDispatchBruteForce,
-		LuaActionDispatchLua,
-		LuaActionDispatchTLS,
-		LuaActionDispatchRelayDomains,
-		LuaActionDispatchRBL:
-		return true
-	default:
-		return false
+	for _, action := range luaActionDispatchActions {
+		if action == name {
+			return true
+		}
 	}
+
+	return false
 }
 
 const (

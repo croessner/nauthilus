@@ -21,6 +21,7 @@ import "strings"
 const (
 	maximumFactLength       = 192
 	maximumTargetPartLength = 64
+	maximumQualifiedLength  = 128
 )
 
 // Namespace reports whether value is a canonical policy namespace.
@@ -79,6 +80,22 @@ func Fact(value string) bool {
 // Provider reports whether value is one canonical provider-owner segment.
 func Provider(value string) bool {
 	return segment(value, true)
+}
+
+// Qualified reports whether value is one exact namespace/local-name identity.
+func Qualified(value string) bool {
+	if len(value) == 0 || len(value) > maximumQualifiedLength || strings.Count(value, "/") != 1 {
+		return false
+	}
+
+	parts := strings.SplitN(value, "/", 2)
+
+	return Namespace(parts[0]) && Action(parts[1])
+}
+
+// Diagnostic reports whether value is a bounded target-local public alias.
+func Diagnostic(value string) bool {
+	return Action(value)
 }
 
 // segmented validates a bounded identifier composed of canonical segments.

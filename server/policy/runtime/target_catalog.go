@@ -19,10 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v3/server/policy/internal/identifier"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 )
+
+const authnNamespace = "authn"
 
 var (
 	// ErrDuplicateCompiledTarget identifies repeated target records in one candidate.
@@ -30,12 +34,295 @@ var (
 
 	// ErrUnknownCompiledTarget identifies fact validation for an inactive target.
 	ErrUnknownCompiledTarget = errors.New("unknown compiled policy target")
+
+	// ErrInvalidCompiledTarget identifies a direct runtime record that bypasses compiler invariants.
+	ErrInvalidCompiledTarget = errors.New("invalid compiled policy target")
+
+	// ErrDuplicateCompiledCheckpoint identifies a silently ambiguous checkpoint key.
+	ErrDuplicateCompiledCheckpoint = errors.New("duplicate compiled policy checkpoint")
+
+	// ErrDuplicateCompiledProvider identifies a silently ambiguous provider key.
+	ErrDuplicateCompiledProvider = errors.New("duplicate compiled policy provider")
+
+	// ErrDuplicateCompiledEffect identifies a silently ambiguous effect key.
+	ErrDuplicateCompiledEffect = errors.New("duplicate compiled policy effect")
 )
 
 // TargetCatalogRecord carries one activated exact target/schema pair into the runtime candidate.
 type TargetCatalogRecord struct {
-	Target decision.Target
-	Schema registry.SchemaDefinition
+	Target                      decision.Target
+	Schema                      registry.SchemaDefinition
+	SourcePlan                  registry.DomainPlanDefinition
+	ActivationPolicySetBindings []registry.PolicySetImport
+	Checkpoints                 []CheckpointRecord
+	Providers                   []registry.ProviderDefinition
+	Effects                     []registry.EffectDefinition
+	DefaultPolicySet            registry.PolicySetID
+	NoMatch                     registry.NoMatchBehavior
+	AuthorityMode               registry.AuthorityMode
+}
+
+// CheckpointRecord carries one resolved exact plan checkpoint into the runtime candidate.
+type CheckpointRecord struct {
+	Name              string
+	PolicySetBindings []registry.PolicySetImport
+	PolicySetIDs      []registry.PolicySetID
+	ProviderIDs       []string
+	Rules             []CompiledRuleRecord
+}
+
+// CompiledRuleRecord carries one exact target-instantiated rule into the runtime boundary.
+type CompiledRuleRecord struct {
+	Target                           decision.Target
+	PolicySetID                      registry.PolicySetID
+	Name                             string
+	Checkpoint                       string
+	RequiredProviders                []string
+	Expression                       registry.PolicyExpression
+	Effects                          []registry.EffectUse
+	Advice                           []registry.EffectUse
+	Decision                         decision.Effect
+	Reason                           string
+	OutcomeMarker                    string
+	FSMEventMarker                   string
+	ResponseMarker                   string
+	ResponseMessage                  registry.PolicyResponseMessage
+	ResponseLanguage                 registry.PolicyResponseLanguage
+	SkipRemainingCheckpointProviders bool
+}
+
+// ProjectPolicyRule maps one source rule to its sole complete executable record representation.
+func ProjectPolicyRule(
+	target decision.Target,
+	setID registry.PolicySetID,
+	checkpoint string,
+	rule registry.PolicyRule,
+) CompiledRuleRecord {
+	return CompiledRuleRecord{
+		Target: target, PolicySetID: setID, Name: rule.Name(), Checkpoint: checkpoint,
+		RequiredProviders: rule.RequiredProviders(), Expression: rule.Expression(), Effects: rule.Effects(), Advice: rule.Advice(),
+		Decision: rule.Decision(), Reason: rule.Reason(), OutcomeMarker: rule.OutcomeMarker(),
+		FSMEventMarker: rule.FSMEventMarker(), ResponseMarker: rule.ResponseMarker(),
+		ResponseMessage: rule.ResponseMessage(), ResponseLanguage: rule.ResponseLanguage(),
+		SkipRemainingCheckpointProviders: rule.SkipRemainingCheckpointProviders(),
+	}
+}
+
+// CompiledCheckpoint is one immutable exact target plan checkpoint.
+type CompiledCheckpoint struct {
+	name                   string
+	policySetIDs           []string
+	providerIDs            []string
+	productionPolicySetIDs []string
+	comparisonPolicySetIDs []string
+}
+
+// Name returns the exact checkpoint identity.
+func (c CompiledCheckpoint) Name() string {
+	return c.name
+}
+
+// PolicySetIDs returns the exact reachable set order.
+func (c CompiledCheckpoint) PolicySetIDs() []string {
+	return append([]string(nil), c.policySetIDs...)
+}
+
+// ProviderIDs returns the exact scheduled provider order.
+func (c CompiledCheckpoint) ProviderIDs() []string {
+	return append([]string(nil), c.providerIDs...)
+}
+
+// ProductionPolicySetIDs returns the exact ordered production authority for this checkpoint.
+func (c CompiledCheckpoint) ProductionPolicySetIDs() []string {
+	return append([]string(nil), c.productionPolicySetIDs...)
+}
+
+// ComparisonPolicySetIDs returns configured rules evaluated without production authority.
+func (c CompiledCheckpoint) ComparisonPolicySetIDs() []string {
+	return append([]string(nil), c.comparisonPolicySetIDs...)
+}
+
+// ContainsPolicySet reports whether this checkpoint can execute an exact set.
+func (c CompiledCheckpoint) ContainsPolicySet(identity string) bool {
+	return slices.Contains(c.policySetIDs, identity)
+}
+
+// CompiledDomainPlan is one immutable ordered checkpoint topology.
+type CompiledDomainPlan struct {
+	checkpoints []CompiledCheckpoint
+	byName      map[string]CompiledCheckpoint
+}
+
+// Checkpoints returns detached ordered checkpoint descriptors.
+func (p CompiledDomainPlan) Checkpoints() []CompiledCheckpoint {
+	result := make([]CompiledCheckpoint, 0, len(p.checkpoints))
+	for _, checkpoint := range p.checkpoints {
+		result = append(result, cloneCompiledCheckpoint(checkpoint))
+	}
+
+	return result
+}
+
+// Checkpoint resolves one exact checkpoint identity.
+func (p CompiledDomainPlan) Checkpoint(name string) (CompiledCheckpoint, bool) {
+	checkpoint, ok := p.byName[name]
+
+	return cloneCompiledCheckpoint(checkpoint), ok
+}
+
+// clone returns one deeply detached plan.
+func (p CompiledDomainPlan) clone() CompiledDomainPlan {
+	checkpoints := p.Checkpoints()
+
+	byName := make(map[string]CompiledCheckpoint, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		byName[checkpoint.Name()] = cloneCompiledCheckpoint(checkpoint)
+	}
+
+	return CompiledDomainPlan{checkpoints: checkpoints, byName: byName}
+}
+
+// CompiledRule is one immutable target/checkpoint-instantiated executable rule.
+type CompiledRule struct {
+	target                           decision.Target
+	policySetID                      registry.PolicySetID
+	name                             string
+	checkpoint                       string
+	requiredProviders                []string
+	expression                       registry.PolicyExpression
+	effects                          []registry.EffectUse
+	advice                           []registry.EffectUse
+	decision                         decision.Effect
+	reason                           string
+	outcomeMarker                    string
+	fsmEventMarker                   string
+	responseMarker                   string
+	responseMessage                  registry.PolicyResponseMessage
+	responseLanguage                 registry.PolicyResponseLanguage
+	skipRemainingCheckpointProviders bool
+}
+
+// Target returns the exact instantiated rule target.
+func (r CompiledRule) Target() decision.Target {
+	return r.target
+}
+
+// PolicySetID returns the exact owning set identity.
+func (r CompiledRule) PolicySetID() registry.PolicySetID {
+	return r.policySetID
+}
+
+// Name returns the namespace-local source rule name.
+func (r CompiledRule) Name() string {
+	return r.name
+}
+
+// Checkpoint returns the exact instantiated checkpoint.
+func (r CompiledRule) Checkpoint() string {
+	return r.checkpoint
+}
+
+// RequiredProviders returns exact provider dependencies in the same checkpoint.
+func (r CompiledRule) RequiredProviders() []string {
+	return append([]string(nil), r.requiredProviders...)
+}
+
+// Expression returns the executable immutable source predicate.
+func (r CompiledRule) Expression() registry.PolicyExpression {
+	return r.expression
+}
+
+// Effects returns detached typed effect selections.
+func (r CompiledRule) Effects() []registry.EffectUse {
+	return append([]registry.EffectUse(nil), r.effects...)
+}
+
+// Advice returns detached selected non-authoritative effect requests.
+func (r CompiledRule) Advice() []registry.EffectUse {
+	return append([]registry.EffectUse(nil), r.advice...)
+}
+
+// Decision returns the configured authoritative result.
+func (r CompiledRule) Decision() decision.Effect {
+	return r.decision
+}
+
+// Reason returns the retained stable decision reason.
+func (r CompiledRule) Reason() string {
+	return r.reason
+}
+
+// OutcomeMarker returns the retained outcome adapter marker.
+func (r CompiledRule) OutcomeMarker() string {
+	return r.outcomeMarker
+}
+
+// FSMEventMarker returns the retained authentication-state marker.
+func (r CompiledRule) FSMEventMarker() string {
+	return r.fsmEventMarker
+}
+
+// ResponseMarker returns the retained response-profile marker.
+func (r CompiledRule) ResponseMarker() string {
+	return r.responseMarker
+}
+
+// ResponseMessage returns the retained immutable response-message source.
+func (r CompiledRule) ResponseMessage() registry.PolicyResponseMessage {
+	return r.responseMessage
+}
+
+// ResponseLanguage returns the retained immutable response-language source.
+func (r CompiledRule) ResponseLanguage() registry.PolicyResponseLanguage {
+	return r.responseLanguage
+}
+
+// SkipRemainingCheckpointProviders returns the checkpoint-local control marker.
+func (r CompiledRule) SkipRemainingCheckpointProviders() bool {
+	return r.skipRemainingCheckpointProviders
+}
+
+// CompiledPolicySet is one immutable catalog-owned set descriptor.
+type CompiledPolicySet struct {
+	definition registry.PolicySetDefinition
+	rules      []CompiledRule
+}
+
+// ID returns the canonical qualified set identity.
+func (s CompiledPolicySet) ID() registry.PolicySetID {
+	return s.definition.ID()
+}
+
+// Visibility returns the exact private/exported setting.
+func (s CompiledPolicySet) Visibility() registry.PolicySetVisibility {
+	return s.definition.Visibility()
+}
+
+// IsBuiltinStandardAuth reports whether the existing auth evaluator owns this set.
+func (s CompiledPolicySet) IsBuiltinStandardAuth() bool {
+	return s.definition.IsBuiltinStandardAuth()
+}
+
+// HasFinalDefaultDeny reports the immutable builtin final fallback contract.
+func (s CompiledPolicySet) HasFinalDefaultDeny() bool {
+	return s.definition.HasFinalDefaultDeny()
+}
+
+// DiagnosticID returns the optional target-local public alias.
+func (s CompiledPolicySet) DiagnosticID() string {
+	return s.definition.DiagnosticID()
+}
+
+// Rules returns detached exact target/checkpoint-instantiated rules.
+func (s CompiledPolicySet) Rules() []CompiledRule {
+	result := append([]CompiledRule(nil), s.rules...)
+	for index := range result {
+		result[index].effects = result[index].Effects()
+		result[index].advice = result[index].Advice()
+		result[index].requiredProviders = result[index].RequiredProviders()
+	}
+
+	return result
 }
 
 // CompiledSchema is an immutable request-time exact fact schema.
@@ -94,8 +381,16 @@ func (s CompiledSchema) clone() CompiledSchema {
 
 // CompiledTarget is one immutable activated target and selected exact schema.
 type CompiledTarget struct {
-	target decision.Target
-	schema CompiledSchema
+	target           decision.Target
+	schema           CompiledSchema
+	domainPlan       CompiledDomainPlan
+	providers        map[string]registry.ProviderDefinition
+	effects          map[string]registry.EffectDefinition
+	effectSelections map[string]string
+	policySets       map[string]CompiledPolicySet
+	defaultPolicySet registry.PolicySetID
+	noMatch          registry.NoMatchBehavior
+	authorityMode    registry.AuthorityMode
 }
 
 // Target returns the exact activated namespace/action pair.
@@ -108,47 +403,516 @@ func (t CompiledTarget) Schema() CompiledSchema {
 	return t.schema.clone()
 }
 
+// DomainPlan returns the detached authoritative checkpoint topology.
+func (t CompiledTarget) DomainPlan() CompiledDomainPlan {
+	return t.domainPlan.clone()
+}
+
+// DefaultPolicySet returns the target-specific qualified fallback set.
+func (t CompiledTarget) DefaultPolicySet() registry.PolicySetID {
+	return t.defaultPolicySet
+}
+
+// NoMatch returns the explicit generic fallback or unset authn value.
+func (t CompiledTarget) NoMatch() registry.NoMatchBehavior {
+	return t.noMatch
+}
+
+// AuthorityMode returns the exact enforce or observe target mode.
+func (t CompiledTarget) AuthorityMode() registry.AuthorityMode {
+	return t.authorityMode
+}
+
+// LookupPolicySet resolves one exact target-local instantiated policy set.
+func (t CompiledTarget) LookupPolicySet(id registry.PolicySetID) (CompiledPolicySet, bool) {
+	set, ok := t.policySets[id.String()]
+	if !ok {
+		return CompiledPolicySet{}, false
+	}
+
+	set.rules = set.Rules()
+
+	return set, true
+}
+
+// LookupProvider resolves one exact target-local provider descriptor.
+func (t CompiledTarget) LookupProvider(id string) (registry.ProviderDefinition, bool) {
+	provider, ok := t.providers[id]
+
+	return provider, ok
+}
+
+// ProviderIDs returns deterministic target-local provider identities.
+func (t CompiledTarget) ProviderIDs() []string {
+	result := make([]string, 0, len(t.providers))
+	for identity := range t.providers {
+		result = append(result, identity)
+	}
+
+	sort.Strings(result)
+
+	return result
+}
+
+// LookupEffect resolves one canonical target-local effect identity.
+func (t CompiledTarget) LookupEffect(id string) (registry.EffectDefinition, bool) {
+	effect, ok := t.effects[id]
+
+	return effect, ok
+}
+
+// EffectIDs returns deterministic target-local canonical effect identities.
+func (t CompiledTarget) EffectIDs() []string {
+	result := make([]string, 0, len(t.effects))
+	for identity := range t.effects {
+		result = append(result, identity)
+	}
+
+	sort.Strings(result)
+
+	return result
+}
+
+// LookupEffectSelection resolves a canonical or immutable legacy builtin selection identity.
+func (t CompiledTarget) LookupEffectSelection(id string) (registry.EffectDefinition, bool) {
+	canonical, ok := t.effectSelections[id]
+	if !ok {
+		return registry.EffectDefinition{}, false
+	}
+
+	return t.LookupEffect(canonical)
+}
+
 // clone returns a detached compiled target.
 func (t CompiledTarget) clone() CompiledTarget {
-	return CompiledTarget{target: t.target, schema: t.schema.clone()}
+	providers := make(map[string]registry.ProviderDefinition, len(t.providers))
+	for identity, provider := range t.providers {
+		providers[identity] = provider
+	}
+
+	effects := make(map[string]registry.EffectDefinition, len(t.effects))
+	for identity, effect := range t.effects {
+		effects[identity] = effect
+	}
+
+	selections := make(map[string]string, len(t.effectSelections))
+	for selection, identity := range t.effectSelections {
+		selections[selection] = identity
+	}
+
+	sets := make(map[string]CompiledPolicySet, len(t.policySets))
+	for identity, set := range t.policySets {
+		set.rules = set.Rules()
+		sets[identity] = set
+	}
+
+	return CompiledTarget{
+		target:           t.target,
+		schema:           t.schema.clone(),
+		domainPlan:       t.domainPlan.clone(),
+		providers:        providers,
+		effects:          effects,
+		effectSelections: selections,
+		policySets:       sets,
+		defaultPolicySet: t.defaultPolicySet,
+		noMatch:          t.noMatch,
+		authorityMode:    t.authorityMode,
+	}
 }
 
 // TargetCatalog is an immutable off-side candidate of explicitly activated targets.
 type TargetCatalog struct {
-	targets map[string]CompiledTarget
+	targets    map[string]CompiledTarget
+	policySets map[string]CompiledPolicySet
 }
 
 // NewTargetCatalog validates and deeply owns activated target records.
-func NewTargetCatalog(records []TargetCatalogRecord) (*TargetCatalog, error) {
+func NewTargetCatalog(records []TargetCatalogRecord, policySetGroups ...[]registry.PolicySetDefinition) (*TargetCatalog, error) {
 	targets := make(map[string]CompiledTarget, len(records))
 
+	policySets, err := policySetIndex(policySetGroups)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, record := range records {
-		target, err := decision.NewTarget(record.Target.Namespace(), record.Target.Action())
+		compiled, err := compileTargetRecord(record, policySets)
 		if err != nil {
 			return nil, err
 		}
 
-		identity := record.Schema.Identity()
-		if identity.Namespace() != target.Namespace() || identity.Name() != target.Action() {
-			return nil, fmt.Errorf(
-				"%w: target %s cannot select schema %s",
-				registry.ErrTargetSchemaMismatch,
-				target.String(),
-				identity.String(),
-			)
+		if _, exists := targets[compiled.Target().String()]; exists {
+			return nil, fmt.Errorf("%w: %s", ErrDuplicateCompiledTarget, compiled.Target().String())
 		}
 
-		if _, exists := targets[target.String()]; exists {
-			return nil, fmt.Errorf("%w: %s", ErrDuplicateCompiledTarget, target.String())
-		}
+		targets[compiled.Target().String()] = compiled
+	}
 
-		targets[target.String()] = CompiledTarget{
-			target: target,
-			schema: newCompiledSchema(identity, record.Schema.Facts()),
+	return &TargetCatalog{targets: targets, policySets: policySets}, nil
+}
+
+// policySetIndex validates and owns global immutable set definitions.
+func policySetIndex(groups [][]registry.PolicySetDefinition) (map[string]CompiledPolicySet, error) {
+	result := make(map[string]CompiledPolicySet)
+
+	for _, group := range groups {
+		for _, definition := range group {
+			identity := definition.ID().String()
+			if _, err := registry.ParsePolicySetID("runtime.policy_sets", identity); err != nil {
+				return nil, fmt.Errorf("%w: %s", ErrInvalidCompiledTarget, identity)
+			}
+
+			if _, exists := result[identity]; exists {
+				return nil, fmt.Errorf("duplicate compiled policy set: %s", identity)
+			}
+
+			result[identity] = CompiledPolicySet{definition: definition}
 		}
 	}
 
-	return &TargetCatalog{targets: targets}, nil
+	if err := validateRuntimePolicySetGraph(result); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// validateRuntimePolicySetGraph revalidates all source imports, cycles, and exported actual capabilities.
+func validateRuntimePolicySetGraph(sets map[string]CompiledPolicySet) error {
+	temporary := make(map[string]bool, len(sets))
+	permanent := make(map[string]bool, len(sets))
+
+	var visit func(string) error
+
+	visit = func(identity string) error {
+		if permanent[identity] {
+			return nil
+		}
+
+		if temporary[identity] {
+			return fmt.Errorf("%w: cyclic policy-set import at %s", ErrInvalidCompiledTarget, identity)
+		}
+
+		set, exists := sets[identity]
+		if !exists {
+			return fmt.Errorf("%w: unknown policy set %s", ErrInvalidCompiledTarget, identity)
+		}
+
+		temporary[identity] = true
+
+		for _, imported := range set.definition.Imports() {
+			child, childExists := sets[imported.Set().String()]
+			if !childExists {
+				return fmt.Errorf("%w: set %s imports unknown set %s", ErrInvalidCompiledTarget, identity, imported.Set().String())
+			}
+
+			if err := validateRuntimeSourceImport(set.definition, imported, child.definition); err != nil {
+				return err
+			}
+
+			if err := visit(imported.Set().String()); err != nil {
+				return err
+			}
+		}
+
+		delete(temporary, identity)
+		permanent[identity] = true
+
+		return nil
+	}
+
+	for _, identity := range sortedRuntimeKeys(sets) {
+		if err := visit(identity); err != nil {
+			return err
+		}
+	}
+
+	return validateRuntimePolicySetExports(sets)
+}
+
+// validateRuntimePolicySetExports proves declared and actual transitive capabilities are equal.
+func validateRuntimePolicySetExports(sets map[string]CompiledPolicySet) error {
+	definitions := compiledPolicySetDefinitions(sets)
+
+	for _, identity := range sortedRuntimeKeys(sets) {
+		set := sets[identity].definition
+
+		declared, exported := set.ExportContract()
+		if !exported {
+			continue
+		}
+
+		actual, err := registry.DerivePolicySetCapability(definitions, identity)
+		if err != nil {
+			return fmt.Errorf("%w: set %s capability derivation failed: %v", ErrInvalidCompiledTarget, identity, err)
+		}
+
+		if !declared.Equal(actual) {
+			return fmt.Errorf("%w: set %s export contract does not match its actual source capability", ErrInvalidCompiledTarget, identity)
+		}
+	}
+
+	return nil
+}
+
+// validateRuntimeSourceImport enforces exact source-owned cross-namespace edges.
+func validateRuntimeSourceImport(
+	owner registry.PolicySetDefinition,
+	imported registry.PolicySetImport,
+	child registry.PolicySetDefinition,
+) error {
+	if child.ID().String() == registry.BuiltinStandardAuthPolicySet {
+		return fmt.Errorf("%w: standard_auth cannot be imported by %s", ErrInvalidCompiledTarget, owner.ID().String())
+	}
+
+	if owner.ID().Namespace() == child.ID().Namespace() {
+		return nil
+	}
+
+	declared, exported := child.ExportContract()
+	requested := imported.Contract()
+
+	if child.Visibility() != registry.PolicySetVisibilityExported ||
+		!exported ||
+		!requested.Complete() ||
+		!requested.Equal(declared) ||
+		!declared.SupportsCheckpoint(imported.Checkpoint()) {
+		return fmt.Errorf("%w: set %s has an invalid import of %s", ErrInvalidCompiledTarget, owner.ID().String(), child.ID().String())
+	}
+
+	return nil
+}
+
+// compiledPolicySetDefinitions projects runtime wrappers to shared immutable source definitions.
+func compiledPolicySetDefinitions(sets map[string]CompiledPolicySet) map[string]registry.PolicySetDefinition {
+	result := make(map[string]registry.PolicySetDefinition, len(sets))
+	for identity, set := range sets {
+		result[identity] = set.definition
+	}
+
+	return result
+}
+
+// compileTargetRecord validates and owns one complete target runtime record.
+func compileTargetRecord(
+	record TargetCatalogRecord,
+	policySets map[string]CompiledPolicySet,
+) (CompiledTarget, error) {
+	target, identity, err := validateTargetRecordIdentity(record)
+	if err != nil {
+		return CompiledTarget{}, err
+	}
+
+	providers, err := providerIndex(record.Providers, target)
+	if err != nil {
+		return CompiledTarget{}, err
+	}
+
+	effects, selections, err := effectIndex(record.Effects, target, providers)
+	if err != nil {
+		return CompiledTarget{}, err
+	}
+
+	if err := validateBuiltinAuthDescriptors(target, record.Schema, record.SourcePlan, providers, effects, selections); err != nil {
+		return CompiledTarget{}, err
+	}
+
+	plan, rules, err := compileDomainPlanRecord(target, record, policySets, providers, effects)
+	if err != nil {
+		return CompiledTarget{}, err
+	}
+
+	if err := validateCompiledRules(rules, effects); err != nil {
+		return CompiledTarget{}, err
+	}
+
+	if err := validateCompiledDefaults(target, record, plan, policySets); err != nil {
+		return CompiledTarget{}, err
+	}
+
+	targetPolicySets := compileTargetPolicySets(policySets, record.Checkpoints, rules)
+	if err := validateRuntimeDiagnosticAliases(target, targetPolicySets, providers, effects); err != nil {
+		return CompiledTarget{}, err
+	}
+
+	return CompiledTarget{
+		target:           target,
+		schema:           newCompiledSchema(identity, record.Schema.Facts()),
+		domainPlan:       plan,
+		providers:        providers,
+		effects:          effects,
+		effectSelections: selections,
+		policySets:       targetPolicySets,
+		defaultPolicySet: record.DefaultPolicySet,
+		noMatch:          record.NoMatch,
+		authorityMode:    record.AuthorityMode,
+	}, nil
+}
+
+// validateTargetRecordIdentity validates one exact target/schema identity pair.
+func validateTargetRecordIdentity(record TargetCatalogRecord) (decision.Target, registry.SchemaIdentity, error) {
+	target, err := decision.NewTarget(record.Target.Namespace(), record.Target.Action())
+	if err != nil {
+		return decision.Target{}, registry.SchemaIdentity{}, err
+	}
+
+	identity := record.Schema.Identity()
+	if identity.Namespace() != target.Namespace() || identity.Name() != target.Action() {
+		return decision.Target{}, registry.SchemaIdentity{}, fmt.Errorf(
+			"%w: target %s cannot select schema %s",
+			registry.ErrTargetSchemaMismatch,
+			target.String(),
+			identity.String(),
+		)
+	}
+
+	return target, identity, nil
+}
+
+// validateBuiltinAuthDescriptors prevents direct callers from omitting or replacing host contracts.
+func validateBuiltinAuthDescriptors(
+	target decision.Target,
+	schema registry.SchemaDefinition,
+	plan registry.DomainPlanDefinition,
+	providers map[string]registry.ProviderDefinition,
+	effects map[string]registry.EffectDefinition,
+	selections map[string]string,
+) error {
+	if target.Namespace() != authnNamespace {
+		return nil
+	}
+
+	if !schema.IsBuiltinAuth() {
+		return fmt.Errorf("%w: target %s must use an immutable builtin auth schema", ErrInvalidCompiledTarget, target.String())
+	}
+
+	if err := validateBuiltinAuthPlanProviders(target, plan, providers); err != nil {
+		return err
+	}
+
+	return validateBuiltinAuthEffectSelections(target, providers, effects, selections)
+}
+
+// validateBuiltinAuthPlanProviders protects every immutable checkpoint provider binding.
+func validateBuiltinAuthPlanProviders(
+	target decision.Target,
+	plan registry.DomainPlanDefinition,
+	providers map[string]registry.ProviderDefinition,
+) error {
+	for _, checkpoint := range plan.Checkpoints() {
+		for _, providerID := range checkpoint.Providers() {
+			provider, exists := providers[providerID]
+			if !exists || !provider.IsBuiltin() {
+				return fmt.Errorf("%w: target %s has invalid builtin checkpoint provider %s", ErrInvalidCompiledTarget, target.String(), providerID)
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateBuiltinAuthEffectSelections protects every required established effect binding.
+func validateBuiltinAuthEffectSelections(
+	target decision.Target,
+	providers map[string]registry.ProviderDefinition,
+	effects map[string]registry.EffectDefinition,
+	selections map[string]string,
+) error {
+	expected := registry.BuiltinAuthEffectSelectionIDs(target.Action())
+	for _, selection := range expected {
+		canonical, exists := selections[selection]
+		effect, effectExists := effects[canonical]
+
+		if !exists || !effectExists || !effect.IsBuiltin() || effect.SelectionID() != selection {
+			return fmt.Errorf("%w: target %s has invalid builtin effect selection %s", ErrInvalidCompiledTarget, target.String(), selection)
+		}
+
+		provider, providerExists := providers[effect.Provider()]
+		if effect.Execution() != registry.ExecutionReturnOnly && (!providerExists || !provider.IsBuiltin()) {
+			return fmt.Errorf("%w: target %s has invalid builtin provider for %s", ErrInvalidCompiledTarget, target.String(), selection)
+		}
+	}
+
+	return nil
+}
+
+// validateRuntimeDiagnosticAliases rejects direct target-local public alias collisions.
+func validateRuntimeDiagnosticAliases(
+	target decision.Target,
+	sets map[string]CompiledPolicySet,
+	providers map[string]registry.ProviderDefinition,
+	effects map[string]registry.EffectDefinition,
+) error {
+	aliases := make(map[string]string)
+	claim := func(alias string, component string) error {
+		if alias == "" {
+			return nil
+		}
+
+		if existing, exists := aliases[alias]; exists {
+			return fmt.Errorf(
+				"%w: target %s diagnostic alias %s used by %s and %s",
+				ErrInvalidCompiledTarget,
+				target.String(),
+				alias,
+				existing,
+				component,
+			)
+		}
+
+		aliases[alias] = component
+
+		return nil
+	}
+
+	for _, identity := range sortedRuntimeKeys(sets) {
+		if err := claim(sets[identity].DiagnosticID(), "policy_set "+identity); err != nil {
+			return err
+		}
+	}
+
+	for _, identity := range sortedRuntimeKeys(providers) {
+		if err := claim(providers[identity].DiagnosticID(), "provider "+identity); err != nil {
+			return err
+		}
+	}
+
+	for _, identity := range sortedRuntimeKeys(effects) {
+		if err := claim(effects[identity].DiagnosticID(), "effect "+identity); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// sortedRuntimeKeys returns deterministic target-local descriptor order.
+func sortedRuntimeKeys[T any](values map[string]T) []string {
+	result := make([]string, 0, len(values))
+
+	for identity := range values {
+		result = append(result, identity)
+	}
+
+	sort.Strings(result)
+
+	return result
+}
+
+// LookupPolicySet returns one detached immutable global policy-set descriptor.
+func (c *TargetCatalog) LookupPolicySet(id registry.PolicySetID) (CompiledPolicySet, bool) {
+	if c == nil {
+		return CompiledPolicySet{}, false
+	}
+
+	set, ok := c.policySets[id.String()]
+
+	return set, ok
+}
+
+// AdmissionCount reports the separately owned client admission entries in this candidate.
+func (c *TargetCatalog) AdmissionCount() int {
+	return 0
 }
 
 // Len returns the number of explicitly activated targets.
@@ -195,7 +959,841 @@ func (c *TargetCatalog) Clone() *TargetCatalog {
 		targets[identity] = target.clone()
 	}
 
-	return &TargetCatalog{targets: targets}
+	policySets := make(map[string]CompiledPolicySet, len(c.policySets))
+	for identity, set := range c.policySets {
+		policySets[identity] = set
+	}
+
+	return &TargetCatalog{targets: targets, policySets: policySets}
+}
+
+// newCompiledDomainPlan indexes one ordered checkpoint record set and its authority projection.
+func newCompiledDomainPlan(
+	target decision.Target,
+	mode registry.AuthorityMode,
+	records []CheckpointRecord,
+	rules []CompiledRule,
+) CompiledDomainPlan {
+	checkpoints := make([]CompiledCheckpoint, 0, len(records))
+	byName := make(map[string]CompiledCheckpoint, len(records))
+
+	for _, record := range records {
+		setIDs := make([]string, 0, len(record.PolicySetIDs))
+		for _, setID := range record.PolicySetIDs {
+			setIDs = append(setIDs, setID.String())
+		}
+
+		checkpoint := CompiledCheckpoint{
+			name:         record.Name,
+			policySetIDs: setIDs,
+			providerIDs:  append([]string(nil), record.ProviderIDs...),
+		}
+		checkpoint.productionPolicySetIDs, checkpoint.comparisonPolicySetIDs = checkpointAuthority(
+			target,
+			mode,
+			checkpoint,
+			rules,
+		)
+		checkpoints = append(checkpoints, checkpoint)
+		byName[record.Name] = checkpoint
+	}
+
+	return CompiledDomainPlan{checkpoints: checkpoints, byName: byName}
+}
+
+// checkpointAuthority separates configured authn comparison from production ownership.
+func checkpointAuthority(
+	target decision.Target,
+	mode registry.AuthorityMode,
+	checkpoint CompiledCheckpoint,
+	rules []CompiledRule,
+) ([]string, []string) {
+	if target.Namespace() != authnNamespace {
+		return checkpoint.PolicySetIDs(), nil
+	}
+
+	configured := activeConfiguredPolicySets(checkpoint, rules)
+	if mode == registry.AuthorityModeObserve {
+		return []string{registry.BuiltinStandardAuthPolicySet}, configured
+	}
+
+	if len(configured) > 0 {
+		return configured, nil
+	}
+
+	return []string{registry.BuiltinStandardAuthPolicySet}, nil
+}
+
+// activeConfiguredPolicySets returns ordered non-builtin sets with executable rules.
+func activeConfiguredPolicySets(checkpoint CompiledCheckpoint, rules []CompiledRule) []string {
+	active := make(map[string]struct{})
+
+	for _, rule := range rules {
+		if rule.Checkpoint() == checkpoint.Name() {
+			active[rule.PolicySetID().String()] = struct{}{}
+		}
+	}
+
+	result := make([]string, 0, len(active))
+
+	for _, identity := range checkpoint.PolicySetIDs() {
+		if identity == registry.BuiltinStandardAuthPolicySet {
+			continue
+		}
+
+		if _, exists := active[identity]; exists {
+			result = append(result, identity)
+		}
+	}
+
+	return result
+}
+
+// compileDomainPlanRecord rejects malformed direct records and instantiates exact rules.
+func compileDomainPlanRecord(
+	target decision.Target,
+	record TargetCatalogRecord,
+	policySets map[string]CompiledPolicySet,
+	providers map[string]registry.ProviderDefinition,
+	effects map[string]registry.EffectDefinition,
+) (CompiledDomainPlan, []CompiledRule, error) {
+	if len(record.Checkpoints) == 0 {
+		return CompiledDomainPlan{}, nil, fmt.Errorf("%w: target %s has no checkpoints", ErrInvalidCompiledTarget, target.String())
+	}
+
+	seen := make(map[string]struct{}, len(record.Checkpoints))
+	for _, checkpoint := range record.Checkpoints {
+		if !identifier.Action(checkpoint.Name) {
+			return CompiledDomainPlan{}, nil, fmt.Errorf("%w: invalid checkpoint %s", ErrInvalidCompiledTarget, checkpoint.Name)
+		}
+
+		if _, exists := seen[checkpoint.Name]; exists {
+			return CompiledDomainPlan{}, nil, fmt.Errorf("%w: %s", ErrDuplicateCompiledCheckpoint, checkpoint.Name)
+		}
+
+		seen[checkpoint.Name] = struct{}{}
+	}
+
+	if err := validateSourcePlanRecord(target, record); err != nil {
+		return CompiledDomainPlan{}, nil, err
+	}
+
+	rules := make([]CompiledRule, 0)
+
+	for _, checkpoint := range record.Checkpoints {
+		if err := validateCheckpointRecord(target, record.Schema, checkpoint, policySets, providers, effects); err != nil {
+			return CompiledDomainPlan{}, nil, err
+		}
+
+		compiled, err := compileRuleRecords(target, record.Schema, checkpoint, policySets)
+		if err != nil {
+			return CompiledDomainPlan{}, nil, err
+		}
+
+		rules = append(rules, compiled...)
+	}
+
+	return newCompiledDomainPlan(target, record.AuthorityMode, record.Checkpoints, rules), rules, nil
+}
+
+// validateSourcePlanRecord proves checkpoint order, schedules, and merged roots came from one source plan.
+func validateSourcePlanRecord(target decision.Target, record TargetCatalogRecord) error {
+	sourceCheckpoints := record.SourcePlan.Checkpoints()
+	if record.SourcePlan.Target().String() != target.String() || len(sourceCheckpoints) == 0 {
+		return fmt.Errorf("%w: target %s has no matching source domain plan", ErrInvalidCompiledTarget, target.String())
+	}
+
+	if target.Namespace() == authnNamespace && !record.SourcePlan.IsBuiltinAuth() {
+		return fmt.Errorf("%w: target %s must use immutable builtin auth topology", ErrInvalidCompiledTarget, target.String())
+	}
+
+	if len(sourceCheckpoints) != len(record.Checkpoints) {
+		return fmt.Errorf("%w: target %s checkpoint count does not match its source plan", ErrInvalidCompiledTarget, target.String())
+	}
+
+	activationBindings, err := runtimeActivationBindingsByCheckpoint(record.ActivationPolicySetBindings, sourceCheckpoints)
+	if err != nil {
+		return err
+	}
+
+	for index, source := range sourceCheckpoints {
+		compiled := record.Checkpoints[index]
+		if compiled.Name != source.Name() || !slices.Equal(compiled.ProviderIDs, source.Providers()) {
+			return fmt.Errorf("%w: target %s checkpoint %d does not match its source schedule", ErrInvalidCompiledTarget, target.String(), index)
+		}
+
+		expectedBindings := append([]registry.PolicySetImport(nil), activationBindings[source.Name()]...)
+		expectedBindings = append(expectedBindings, source.PolicySets()...)
+
+		if !equalPolicySetImports(compiled.PolicySetBindings, expectedBindings) {
+			return fmt.Errorf("%w: target %s checkpoint %s roots do not match its source plan", ErrInvalidCompiledTarget, target.String(), source.Name())
+		}
+	}
+
+	return nil
+}
+
+// runtimeActivationBindingsByCheckpoint validates target-level roots against source topology.
+func runtimeActivationBindingsByCheckpoint(
+	bindings []registry.PolicySetImport,
+	checkpoints []registry.CheckpointDefinition,
+) (map[string][]registry.PolicySetImport, error) {
+	known := make(map[string]struct{}, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		known[checkpoint.Name()] = struct{}{}
+	}
+
+	result := make(map[string][]registry.PolicySetImport)
+
+	for _, binding := range bindings {
+		if _, exists := known[binding.Checkpoint()]; !exists {
+			return nil, fmt.Errorf("%w: activation binding %s references unknown checkpoint %s", ErrInvalidCompiledTarget, binding.Set().String(), binding.Checkpoint())
+		}
+
+		result[binding.Checkpoint()] = append(result[binding.Checkpoint()], binding)
+	}
+
+	return result, nil
+}
+
+// equalPolicySetImports compares exact ordered root binding descriptors.
+func equalPolicySetImports(left []registry.PolicySetImport, right []registry.PolicySetImport) bool {
+	if len(left) != len(right) {
+		return false
+	}
+
+	for index := range left {
+		if !left[index].Equal(right[index]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// validateCheckpointRecord resolves every exact set and provider reference.
+func validateCheckpointRecord(
+	target decision.Target,
+	schema registry.SchemaDefinition,
+	checkpoint CheckpointRecord,
+	policySets map[string]CompiledPolicySet,
+	providers map[string]registry.ProviderDefinition,
+	effects map[string]registry.EffectDefinition,
+) error {
+	resolved, err := resolveRuntimeCheckpointPolicySets(target, schema, checkpoint, policySets, effects)
+	if err != nil {
+		return err
+	}
+
+	if !equalPolicySetIDs(resolved, checkpoint.PolicySetIDs) {
+		return fmt.Errorf("%w: checkpoint %s policy-set closure does not match its exact bindings", ErrInvalidCompiledTarget, checkpoint.Name)
+	}
+
+	seenProviders := make(map[string]struct{}, len(checkpoint.ProviderIDs))
+	for _, providerID := range checkpoint.ProviderIDs {
+		if _, exists := providers[providerID]; !exists {
+			return fmt.Errorf("%w: checkpoint %s references unknown provider %s", ErrInvalidCompiledTarget, checkpoint.Name, providerID)
+		}
+
+		if _, exists := seenProviders[providerID]; exists {
+			return fmt.Errorf("%w: checkpoint %s repeats provider %s", ErrInvalidCompiledTarget, checkpoint.Name, providerID)
+		}
+
+		seenProviders[providerID] = struct{}{}
+	}
+
+	return nil
+}
+
+// runtimeCheckpointResolver revalidates exact root authority and its ordered import closure.
+type runtimeCheckpointResolver struct {
+	policySets map[string]CompiledPolicySet
+	effects    map[string]registry.EffectDefinition
+	schema     registry.SchemaDefinition
+	target     decision.Target
+	checkpoint string
+	result     []registry.PolicySetID
+	visited    map[string]bool
+	active     map[string]bool
+}
+
+// resolveRuntimeCheckpointPolicySets expands direct-runtime bindings without trusting compiler output.
+func resolveRuntimeCheckpointPolicySets(
+	target decision.Target,
+	schema registry.SchemaDefinition,
+	checkpoint CheckpointRecord,
+	policySets map[string]CompiledPolicySet,
+	effects map[string]registry.EffectDefinition,
+) ([]registry.PolicySetID, error) {
+	resolver := runtimeCheckpointResolver{
+		policySets: policySets,
+		effects:    effects,
+		schema:     schema,
+		target:     target,
+		checkpoint: checkpoint.Name,
+		result:     make([]registry.PolicySetID, 0, len(checkpoint.PolicySetIDs)),
+		visited:    make(map[string]bool),
+		active:     make(map[string]bool),
+	}
+	seenRoots := make(map[string]struct{}, len(checkpoint.PolicySetBindings))
+
+	for _, binding := range checkpoint.PolicySetBindings {
+		identity := binding.Set().String()
+		if _, exists := seenRoots[identity]; exists {
+			return nil, fmt.Errorf("%w: checkpoint %s repeats root binding %s", ErrInvalidCompiledTarget, checkpoint.Name, identity)
+		}
+
+		seenRoots[identity] = struct{}{}
+
+		if err := resolver.resolve(target.Namespace(), binding); err != nil {
+			return nil, err
+		}
+	}
+
+	return resolver.result, nil
+}
+
+// resolve validates one exact import edge before appending its source-owned closure.
+func (r *runtimeCheckpointResolver) resolve(ownerNamespace string, imported registry.PolicySetImport) error {
+	if imported.Target().String() != r.target.String() || imported.Checkpoint() != r.checkpoint {
+		return fmt.Errorf(
+			"%w: binding %s does not match target %s checkpoint %s",
+			ErrInvalidCompiledTarget,
+			imported.Set().String(),
+			r.target.String(),
+			r.checkpoint,
+		)
+	}
+
+	identity := imported.Set().String()
+	set, exists := r.policySets[identity]
+
+	if !exists {
+		return fmt.Errorf("%w: checkpoint %s references unknown set %s", ErrInvalidCompiledTarget, r.checkpoint, identity)
+	}
+
+	if err := r.validateImport(ownerNamespace, imported, set.definition); err != nil {
+		return err
+	}
+
+	if r.active[identity] {
+		return fmt.Errorf("%w: cyclic policy-set import at %s", ErrInvalidCompiledTarget, identity)
+	}
+
+	if r.visited[identity] {
+		return nil
+	}
+
+	r.active[identity] = true
+	r.visited[identity] = true
+	r.result = append(r.result, imported.Set())
+
+	for _, nested := range set.definition.Imports() {
+		if nested.Target().String() != r.target.String() || nested.Checkpoint() != r.checkpoint {
+			continue
+		}
+
+		if err := r.resolve(set.ID().Namespace(), nested); err != nil {
+			return err
+		}
+	}
+
+	delete(r.active, identity)
+
+	return nil
+}
+
+// validateImport enforces builtin isolation and exact cross-namespace capabilities.
+func (r *runtimeCheckpointResolver) validateImport(
+	ownerNamespace string,
+	imported registry.PolicySetImport,
+	definition registry.PolicySetDefinition,
+) error {
+	identity := definition.ID().String()
+	if identity == registry.BuiltinStandardAuthPolicySet {
+		if r.target.Namespace() != authnNamespace || ownerNamespace != authnNamespace || !definition.IsBuiltinStandardAuth() {
+			return fmt.Errorf("%w: standard_auth cannot bind target %s from namespace %s", ErrInvalidCompiledTarget, r.target.String(), ownerNamespace)
+		}
+	}
+
+	if ownerNamespace == definition.ID().Namespace() {
+		return nil
+	}
+
+	contract, exported := definition.ExportContract()
+	if definition.Visibility() != registry.PolicySetVisibilityExported || !exported {
+		return fmt.Errorf("%w: private set %s cannot cross namespace %s", ErrInvalidCompiledTarget, identity, ownerNamespace)
+	}
+
+	requested := imported.Contract()
+	if !requested.Complete() || !requested.Equal(contract) || !contract.SupportsCheckpoint(r.checkpoint) {
+		return fmt.Errorf("%w: set %s has an incomplete or incompatible import contract", ErrInvalidCompiledTarget, identity)
+	}
+
+	if err := validateRuntimeImportCapability(requested, r.target, r.schema, r.effects); err != nil {
+		return fmt.Errorf("%w: set %s: %v", ErrInvalidCompiledTarget, identity, err)
+	}
+
+	return nil
+}
+
+// validateRuntimeImportCapability resolves exact typed facts and effect allowlists.
+func validateRuntimeImportCapability(
+	contract registry.ExportContract,
+	target decision.Target,
+	schema registry.SchemaDefinition,
+	effects map[string]registry.EffectDefinition,
+) error {
+	facts := make(map[string]registry.FactSchema, len(schema.Facts()))
+	for _, fact := range schema.Facts() {
+		facts[fact.ID()] = fact
+	}
+
+	for _, required := range contract.Facts() {
+		fact, exists := facts[required.ID()]
+		if !exists || fact.Kind() != required.Kind() {
+			return fmt.Errorf("fact %s is absent or has an incompatible kind", required.ID())
+		}
+	}
+
+	for _, effectID := range contract.Effects() {
+		effect, exists := effects[effectID]
+		if !exists || !effect.AllowsTarget(target) {
+			return fmt.Errorf("effect %s is absent or disallows target %s", effectID, target.String())
+		}
+	}
+
+	return nil
+}
+
+// equalPolicySetIDs compares exact ordered resolved set identities.
+func equalPolicySetIDs(left []registry.PolicySetID, right []registry.PolicySetID) bool {
+	if len(left) != len(right) {
+		return false
+	}
+
+	for index := range left {
+		if left[index].String() != right[index].String() {
+			return false
+		}
+	}
+
+	return true
+}
+
+// compileRuleRecords validates exact target, set, checkpoint, schema, and source bindings.
+func compileRuleRecords(
+	target decision.Target,
+	schema registry.SchemaDefinition,
+	checkpoint CheckpointRecord,
+	policySets map[string]CompiledPolicySet,
+) ([]CompiledRule, error) {
+	expected := expectedRuntimeRuleRecords(target, checkpoint, policySets)
+	if len(expected) != len(checkpoint.Rules) {
+		return nil, fmt.Errorf(
+			"%w: checkpoint %s has %d rule records, want exact source projection %d",
+			ErrInvalidCompiledTarget,
+			checkpoint.Name,
+			len(checkpoint.Rules),
+			len(expected),
+		)
+	}
+
+	result := make([]CompiledRule, 0, len(expected))
+	for index, record := range checkpoint.Rules {
+		if err := validateCompiledRuleRecord(target, schema, checkpoint, record, expected[index], index); err != nil {
+			return nil, err
+		}
+
+		result = append(result, newCompiledRule(record))
+	}
+
+	return result, nil
+}
+
+// validateCompiledRuleRecord revalidates source authenticity and target-local dependencies.
+func validateCompiledRuleRecord(
+	target decision.Target,
+	schema registry.SchemaDefinition,
+	checkpoint CheckpointRecord,
+	record CompiledRuleRecord,
+	expected CompiledRuleRecord,
+	index int,
+) error {
+	if record.Target.String() != target.String() || record.Checkpoint != checkpoint.Name ||
+		!identifier.Action(record.Name) || !record.Expression.Valid() {
+		return fmt.Errorf("%w: malformed rule %s at checkpoint %s", ErrInvalidCompiledTarget, record.Name, checkpoint.Name)
+	}
+
+	if !slices.ContainsFunc(checkpoint.PolicySetIDs, func(id registry.PolicySetID) bool {
+		return id.String() == record.PolicySetID.String()
+	}) {
+		return fmt.Errorf("%w: rule %s references unbound set %s", ErrInvalidCompiledTarget, record.Name, record.PolicySetID.String())
+	}
+
+	if record.Decision != decision.EffectPermit && record.Decision != decision.EffectDeny {
+		return fmt.Errorf("%w: rule %s has reserved result %s", ErrInvalidCompiledTarget, record.Name, record.Decision)
+	}
+
+	if err := validateRuntimeRuleFacts(schema, record); err != nil {
+		return fmt.Errorf("%w: rule %s: %v", ErrInvalidCompiledTarget, record.Name, err)
+	}
+
+	for _, providerID := range record.RequiredProviders {
+		if !slices.Contains(checkpoint.ProviderIDs, providerID) {
+			return fmt.Errorf("%w: rule %s requires unscheduled provider %s", ErrInvalidCompiledTarget, record.Name, providerID)
+		}
+	}
+
+	if !equalCompiledRuleRecords(record, expected) {
+		return fmt.Errorf("%w: rule %s does not match exact source projection index %d", ErrInvalidCompiledTarget, record.Name, index)
+	}
+
+	return nil
+}
+
+// validateRuntimeRuleFacts resolves expression and response-metadata facts through one exact schema.
+func validateRuntimeRuleFacts(schema registry.SchemaDefinition, record CompiledRuleRecord) error {
+	if err := validateRuntimeRuleExpression(schema, record.Expression); err != nil {
+		return err
+	}
+
+	for _, factID := range []string{record.ResponseMessage.FactID(), record.ResponseLanguage.FactID()} {
+		if factID != "" && !runtimeSchemaContainsFact(schema, factID, decision.ValueKindString) {
+			return fmt.Errorf("response fact %s is absent or incompatible", factID)
+		}
+	}
+
+	return nil
+}
+
+// newCompiledRule deeply owns one authenticated exact runtime record.
+func newCompiledRule(record CompiledRuleRecord) CompiledRule {
+	return CompiledRule{
+		target: record.Target, policySetID: record.PolicySetID, name: record.Name, checkpoint: record.Checkpoint,
+		requiredProviders: append([]string(nil), record.RequiredProviders...), expression: record.Expression,
+		effects: append([]registry.EffectUse(nil), record.Effects...), advice: append([]registry.EffectUse(nil), record.Advice...),
+		decision: record.Decision, reason: record.Reason, outcomeMarker: record.OutcomeMarker,
+		fsmEventMarker: record.FSMEventMarker, responseMarker: record.ResponseMarker,
+		responseMessage: record.ResponseMessage, responseLanguage: record.ResponseLanguage,
+		skipRemainingCheckpointProviders: record.SkipRemainingCheckpointProviders,
+	}
+}
+
+// runtimeSchemaContainsFact resolves one exact response metadata fact contract.
+func runtimeSchemaContainsFact(schema registry.SchemaDefinition, factID string, kind decision.ValueKind) bool {
+	for _, fact := range schema.Facts() {
+		if fact.ID() == factID && fact.Kind() == kind {
+			return true
+		}
+	}
+
+	return false
+}
+
+// expectedRuntimeRuleRecords derives the sole ordered executable source projection.
+func expectedRuntimeRuleRecords(
+	target decision.Target,
+	checkpoint CheckpointRecord,
+	policySets map[string]CompiledPolicySet,
+) []CompiledRuleRecord {
+	result := make([]CompiledRuleRecord, 0)
+
+	for _, setID := range checkpoint.PolicySetIDs {
+		set := policySets[setID.String()]
+		for _, rule := range set.definition.Rules() {
+			if rule.Checkpoint() != checkpoint.Name || !rule.AllowsAction(target.Action()) {
+				continue
+			}
+
+			result = append(result, ProjectPolicyRule(target, setID, checkpoint.Name, rule))
+		}
+	}
+
+	return result
+}
+
+// equalCompiledRuleRecords compares every executable source-owned field.
+func equalCompiledRuleRecords(left CompiledRuleRecord, right CompiledRuleRecord) bool {
+	if left.Target.String() != right.Target.String() ||
+		left.PolicySetID.String() != right.PolicySetID.String() ||
+		left.Name != right.Name || left.Checkpoint != right.Checkpoint || left.Decision != right.Decision {
+		return false
+	}
+
+	return equalCompiledRuleInputs(left, right) && equalCompiledRuleOutputs(left, right)
+}
+
+// equalCompiledRuleInputs compares exact condition, provider, and effect selections.
+func equalCompiledRuleInputs(left CompiledRuleRecord, right CompiledRuleRecord) bool {
+	return slices.Equal(left.RequiredProviders, right.RequiredProviders) &&
+		left.Expression.Equal(right.Expression) &&
+		equalEffectUses(left.Effects, right.Effects) &&
+		equalEffectUses(left.Advice, right.Advice)
+}
+
+// equalCompiledRuleOutputs compares retained decision metadata and control markers.
+func equalCompiledRuleOutputs(left CompiledRuleRecord, right CompiledRuleRecord) bool {
+	return left.Reason == right.Reason && left.OutcomeMarker == right.OutcomeMarker &&
+		left.FSMEventMarker == right.FSMEventMarker && left.ResponseMarker == right.ResponseMarker &&
+		left.ResponseMessage.Equal(right.ResponseMessage) && left.ResponseLanguage.Equal(right.ResponseLanguage) &&
+		left.SkipRemainingCheckpointProviders == right.SkipRemainingCheckpointProviders
+}
+
+// equalEffectUses compares exact ordered selections and typed parameters.
+func equalEffectUses(left []registry.EffectUse, right []registry.EffectUse) bool {
+	if len(left) != len(right) {
+		return false
+	}
+
+	for index := range left {
+		if !left[index].Equal(right[index]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// validateRuntimeRuleExpression resolves one predicate through the selected exact schema.
+func validateRuntimeRuleExpression(schema registry.SchemaDefinition, expression registry.PolicyExpression) error {
+	facts := make(map[string]registry.FactSchema, len(schema.Facts()))
+	for _, fact := range schema.Facts() {
+		facts[fact.ID()] = fact
+	}
+
+	for _, required := range expression.FactContracts() {
+		fact, exists := facts[required.ID()]
+		if !exists || fact.Kind() != required.Kind() {
+			return fmt.Errorf("fact %s is absent or has an incompatible kind", required.ID())
+		}
+	}
+
+	return nil
+}
+
+// validateCompiledRules resolves every selected effect through the target registry.
+func validateCompiledRules(rules []CompiledRule, effects map[string]registry.EffectDefinition) error {
+	for _, rule := range rules {
+		if err := validateCompiledRuleEffectUses(rule, rule.effects, registry.EffectKindObligation, effects); err != nil {
+			return err
+		}
+
+		if err := validateCompiledRuleEffectUses(rule, rule.advice, registry.EffectKindAdvice, effects); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateCompiledRuleEffectUses resolves one exact obligation or advice class.
+func validateCompiledRuleEffectUses(
+	rule CompiledRule,
+	uses []registry.EffectUse,
+	wantKind registry.EffectKind,
+	effects map[string]registry.EffectDefinition,
+) error {
+	for _, use := range uses {
+		effect, exists := effects[use.ID()]
+		if !exists {
+			return fmt.Errorf("%w: rule %s references unknown effect %s", ErrInvalidCompiledTarget, rule.Name(), use.ID())
+		}
+
+		if effect.Kind() != wantKind {
+			return fmt.Errorf("%w: rule %s effect %s has incompatible class", ErrInvalidCompiledTarget, rule.Name(), use.ID())
+		}
+
+		if err := effect.ValidateUse(use); err != nil {
+			return fmt.Errorf("%w: rule %s effect %s: %v", ErrInvalidCompiledTarget, rule.Name(), use.ID(), err)
+		}
+	}
+
+	return nil
+}
+
+// validateCompiledDefaults enforces target-specific fallback and no-match invariants.
+func validateCompiledDefaults(
+	target decision.Target,
+	record TargetCatalogRecord,
+	plan CompiledDomainPlan,
+	policySets map[string]CompiledPolicySet,
+) error {
+	if !record.AuthorityMode.Valid() || (target.Namespace() != authnNamespace && record.AuthorityMode != registry.AuthorityModeEnforce) {
+		return fmt.Errorf("%w: target %s has invalid authority mode %s", ErrInvalidCompiledTarget, target.String(), record.AuthorityMode)
+	}
+
+	if err := validateCompiledFallback(target, record, plan); err != nil {
+		return err
+	}
+
+	if record.DefaultPolicySet.IsZero() {
+		return nil
+	}
+
+	if _, exists := policySets[record.DefaultPolicySet.String()]; !exists {
+		return fmt.Errorf("%w: target %s default set %s is unknown", ErrInvalidCompiledTarget, target.String(), record.DefaultPolicySet.String())
+	}
+
+	if record.DefaultPolicySet.Namespace() != target.Namespace() {
+		return fmt.Errorf("%w: target %s default set %s has a foreign namespace", ErrInvalidCompiledTarget, target.String(), record.DefaultPolicySet.String())
+	}
+
+	for _, checkpoint := range plan.Checkpoints() {
+		if checkpoint.ContainsPolicySet(record.DefaultPolicySet.String()) {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("%w: target %s default set %s is unbound", ErrInvalidCompiledTarget, target.String(), record.DefaultPolicySet.String())
+}
+
+// validateCompiledFallback separates authn standard authority from generic no-match validation.
+func validateCompiledFallback(
+	target decision.Target,
+	record TargetCatalogRecord,
+	plan CompiledDomainPlan,
+) error {
+	if target.Namespace() == authnNamespace {
+		if record.NoMatch != registry.NoMatchUnset || record.DefaultPolicySet.String() != registry.BuiltinStandardAuthPolicySet {
+			return fmt.Errorf("%w: authn target %s has invalid fallback", ErrInvalidCompiledTarget, target.String())
+		}
+
+		return nil
+	}
+
+	if !record.NoMatch.ValidGeneric() {
+		return fmt.Errorf("%w: generic target %s has invalid no-match", ErrInvalidCompiledTarget, target.String())
+	}
+
+	if _, exists := plan.Checkpoint("final_decision"); !exists {
+		return fmt.Errorf("%w: generic target %s has no final_decision checkpoint", ErrInvalidCompiledTarget, target.String())
+	}
+
+	return nil
+}
+
+// compileTargetPolicySets groups exact instantiated rules under catalog-owned definitions.
+func compileTargetPolicySets(
+	definitions map[string]CompiledPolicySet,
+	checkpoints []CheckpointRecord,
+	rules []CompiledRule,
+) map[string]CompiledPolicySet {
+	result := make(map[string]CompiledPolicySet)
+
+	for _, checkpoint := range checkpoints {
+		for _, identity := range checkpoint.PolicySetIDs {
+			result[identity.String()] = definitions[identity.String()]
+		}
+	}
+
+	for _, rule := range rules {
+		identity := rule.PolicySetID().String()
+		set := result[identity]
+		set.rules = append(set.rules, rule)
+		result[identity] = set
+	}
+
+	return result
+}
+
+// cloneCompiledCheckpoint returns one detached checkpoint.
+func cloneCompiledCheckpoint(checkpoint CompiledCheckpoint) CompiledCheckpoint {
+	checkpoint.policySetIDs = checkpoint.PolicySetIDs()
+	checkpoint.providerIDs = checkpoint.ProviderIDs()
+	checkpoint.productionPolicySetIDs = checkpoint.ProductionPolicySetIDs()
+	checkpoint.comparisonPolicySetIDs = checkpoint.ComparisonPolicySetIDs()
+
+	return checkpoint
+}
+
+// providerIndex owns target-local provider descriptors.
+func providerIndex(values []registry.ProviderDefinition, target decision.Target) (map[string]registry.ProviderDefinition, error) {
+	result := make(map[string]registry.ProviderDefinition, len(values))
+	for _, value := range values {
+		if _, exists := result[value.ID()]; exists {
+			return nil, fmt.Errorf("%w: %s", ErrDuplicateCompiledProvider, value.ID())
+		}
+
+		if !value.AllowsTarget(target) {
+			return nil, fmt.Errorf("%w: provider %s does not allow target %s", ErrInvalidCompiledTarget, value.ID(), target.String())
+		}
+
+		result[value.ID()] = value
+	}
+
+	return result, nil
+}
+
+// effectIndex owns collision-free target-local effect and selection descriptors.
+func effectIndex(
+	values []registry.EffectDefinition,
+	target decision.Target,
+	providers map[string]registry.ProviderDefinition,
+) (map[string]registry.EffectDefinition, map[string]string, error) {
+	result := make(map[string]registry.EffectDefinition, len(values))
+	selections := make(map[string]string, len(values)*2)
+
+	for _, value := range values {
+		if _, exists := result[value.ID()]; exists {
+			return nil, nil, fmt.Errorf("%w: %s", ErrDuplicateCompiledEffect, value.ID())
+		}
+
+		if err := validateEffectBinding(value, target, providers); err != nil {
+			return nil, nil, err
+		}
+
+		result[value.ID()] = value
+
+		if err := claimEffectSelections(selections, value); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return result, selections, nil
+}
+
+// validateEffectBinding resolves one exact target and internal host owner.
+func validateEffectBinding(
+	effect registry.EffectDefinition,
+	target decision.Target,
+	providers map[string]registry.ProviderDefinition,
+) error {
+	if !effect.AllowsTarget(target) {
+		return fmt.Errorf("%w: effect %s does not allow target %s", ErrInvalidCompiledTarget, effect.ID(), target.String())
+	}
+
+	if effect.Execution() == registry.ExecutionReturnOnly {
+		return nil
+	}
+
+	provider, exists := providers[effect.Provider()]
+	if !exists || !provider.Supports(target, effect.Execution()) {
+		return fmt.Errorf("%w: effect %s has unresolved provider %s", ErrInvalidCompiledTarget, effect.ID(), effect.Provider())
+	}
+
+	if effect.Execution() == registry.ExecutionHostPostAction && !provider.HasPostActionAcceptance() {
+		return fmt.Errorf("%w: effect %s has no post-action acceptance", ErrInvalidCompiledTarget, effect.ID())
+	}
+
+	return nil
+}
+
+// claimEffectSelections rejects canonical or legacy builtin selection collisions.
+func claimEffectSelections(selections map[string]string, effect registry.EffectDefinition) error {
+	for _, selection := range []string{effect.ID(), effect.SelectionID()} {
+		if selection == "" {
+			continue
+		}
+
+		if existing, exists := selections[selection]; exists && existing != effect.ID() {
+			return fmt.Errorf("%w: selection %s", ErrDuplicateCompiledEffect, selection)
+		}
+
+		selections[selection] = effect.ID()
+	}
+
+	return nil
 }
 
 // newCompiledSchema constructs a private exact-schema index from validated definitions.

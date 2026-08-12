@@ -36,7 +36,7 @@ func (c testCatalogContributor) Contribute(context.Context) (registry.Definition
 }
 
 func TestTargetCatalogRequiresExplicitActivationAndSeparateAdmission(t *testing.T) {
-	contributor := registry.NewBuiltinTargetContributor()
+	contributor := registry.NewBuiltinTargetContributor(catalogAcceptanceCapability{})
 	compiler := NewTargetCatalogCompiler(contributor)
 
 	catalog, err := compiler.Compile(context.Background(), nil)
@@ -186,7 +186,7 @@ func TestTargetCatalogValidatesFactsAgainstSelectedExactSchema(t *testing.T) {
 	v1 := mustCompilerSchema(t, "dkim2", "sign", "v1", decision.ValueKindString)
 	v2 := mustCompilerSchema(t, "dkim2", "sign", "v2", decision.ValueKindInteger)
 	target := mustCompilerTargetDefinition(t, "dkim2", "sign", v1.Identity(), v2.Identity())
-	contribution := mustCompilerDefinitionContribution(t, "test.catalog", "dkim2", []registry.TargetDefinition{target}, []registry.SchemaDefinition{v1, v2})
+	contribution := mustCompilerCompleteDefinitionContribution(t, "test.catalog", "dkim2", target, []registry.SchemaDefinition{v1, v2})
 	compiler := NewTargetCatalogCompiler(testCatalogContributor{contribution: contribution})
 
 	activation := mustCompilerActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v1")
@@ -233,7 +233,61 @@ func mustCompilerContribution(
 	schema := mustCompilerSchema(t, namespace, action, version, kind)
 	target := mustCompilerTargetDefinition(t, namespace, action, schema.Identity())
 
-	return mustCompilerDefinitionContribution(t, owner, namespace, []registry.TargetDefinition{target}, []registry.SchemaDefinition{schema})
+	return mustCompilerCompleteDefinitionContribution(t, owner, namespace, target, []registry.SchemaDefinition{schema})
+}
+
+// mustCompilerCompleteDefinitionContribution adds the minimum exact generic plan.
+func mustCompilerCompleteDefinitionContribution(
+	t *testing.T,
+	owner string,
+	namespace string,
+	target registry.TargetDefinition,
+	schemas []registry.SchemaDefinition,
+) registry.DefinitionContribution {
+	t.Helper()
+
+	setID, err := registry.NewPolicySetID(namespace, "root")
+	if err != nil {
+		t.Fatalf("registry.NewPolicySetID() error = %v", err)
+	}
+
+	set, err := registry.NewPolicySetDefinition(registry.PolicySetDefinitionInput{ID: setID})
+	if err != nil {
+		t.Fatalf("registry.NewPolicySetDefinition() error = %v", err)
+	}
+
+	binding, err := registry.NewPolicySetImport("test.plan", setID.String(), target.Target(), "final_decision", registry.ExportContract{})
+	if err != nil {
+		t.Fatalf("registry.NewPolicySetImport() error = %v", err)
+	}
+
+	checkpoint, err := registry.NewCheckpointDefinition("final_decision", []registry.PolicySetImport{binding}, nil)
+	if err != nil {
+		t.Fatalf("registry.NewCheckpointDefinition() error = %v", err)
+	}
+
+	plan, err := registry.NewDomainPlanDefinition(target.Target(), []registry.CheckpointDefinition{checkpoint})
+	if err != nil {
+		t.Fatalf("registry.NewDomainPlanDefinition() error = %v", err)
+	}
+
+	ownership, err := registry.NewNamespaceOwnership(owner, []string{namespace})
+	if err != nil {
+		t.Fatalf("registry.NewNamespaceOwnership() error = %v", err)
+	}
+
+	contribution, err := registry.NewCompleteDefinitionContribution(registry.DefinitionContributionInput{
+		Ownership:  ownership,
+		Targets:    []registry.TargetDefinition{target},
+		Schemas:    schemas,
+		PolicySets: []registry.PolicySetDefinition{set},
+		Plans:      []registry.DomainPlanDefinition{plan},
+	})
+	if err != nil {
+		t.Fatalf("registry.NewCompleteDefinitionContribution() error = %v", err)
+	}
+
+	return contribution
 }
 
 // mustCompilerDefinitionContribution owns the supplied definitions under one namespace.
@@ -337,6 +391,19 @@ func mustCompilerActivation(t *testing.T, path string, namespace string, action 
 	activation, err := registry.NewTargetActivation(path, namespace, action, schema)
 	if err != nil {
 		t.Fatalf("registry.NewTargetActivation() error = %v", err)
+	}
+
+	defaultSet := ""
+	noMatch := "deny"
+
+	if namespace == "authn" {
+		defaultSet = registry.BuiltinStandardAuthPolicySet
+		noMatch = ""
+	}
+
+	activation, err = activation.WithPolicy(defaultSet, noMatch)
+	if err != nil {
+		t.Fatalf("registry.TargetActivation.WithPolicy() error = %v", err)
 	}
 
 	return activation

@@ -17,6 +17,7 @@ package decision
 
 import (
 	"math"
+	"sort"
 	"strconv"
 	"time"
 	"unicode/utf8"
@@ -199,7 +200,16 @@ type ValueMap struct {
 // NewValueMap validates keys and deeply owns the map structure.
 func NewValueMap(input map[string]Value) (ValueMap, error) {
 	values := make(map[string]Value, len(input))
-	for key, value := range input {
+	keys := make([]string, 0, len(input))
+
+	for key := range input {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		value := input[key]
 		if !validValueMapKey(key) {
 			return ValueMap{}, invalidValue(key, "map key must be non-empty valid UTF-8")
 		}
