@@ -274,6 +274,10 @@ func validFactID(id string) bool {
 // validateFactOwnership binds every canonical family and provider owner to provenance.
 func validateFactOwnership(id string, provenance Provenance) error {
 	prefix := strings.SplitN(id, ".", 2)[0]
+	if prefix == string(FactSourceCaller) && provenance.source == FactSourceNauthilus {
+		return nil
+	}
+
 	if provenance.source == FactSourceCaller {
 		return validateCallerFactPrefix(prefix)
 	}

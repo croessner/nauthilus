@@ -922,28 +922,7 @@ func withinTimeWindow(actual any, expected any) bool {
 		return false
 	}
 
-	location, err := time.LoadLocation(window.LocationName)
-	if err != nil {
-		return false
-	}
-
-	local := timestamp.In(location)
-	if !weekdayAllowed(local.Weekday(), window.Days) {
-		return false
-	}
-
-	minute := local.Hour()*60 + local.Minute()
-	for _, interval := range window.Intervals {
-		if minute >= interval.StartMinute && minute < interval.EndMinute {
-			return true
-		}
-	}
-
-	return false
-}
-
-func weekdayAllowed(day time.Weekday, days []time.Weekday) bool {
-	return slices.Contains(days, day)
+	return window.Contains(timestamp)
 }
 
 func compareObserveDecisions(defaultFinal *report.FinalDecision, customFinal *report.FinalDecision) (string, bool) {

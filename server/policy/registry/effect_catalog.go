@@ -22,6 +22,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
@@ -62,6 +63,24 @@ const (
 // valid reports whether the class belongs to the closed contract.
 func (c ExecutionClass) valid() bool {
 	return c == ExecutionReturnOnly || c == ExecutionHostSync || c == ExecutionHostPostAction
+}
+
+// ProviderFailureBehavior controls one generic fact provider failure boundary.
+type ProviderFailureBehavior string
+
+const (
+	maximumProviderTimeout = 10 * time.Minute
+
+	// ProviderFailureIndeterminate fails the admitted evaluation closed.
+	ProviderFailureIndeterminate ProviderFailureBehavior = "indeterminate"
+
+	// ProviderFailureContinue omits failed output after compiler safety proof.
+	ProviderFailureContinue ProviderFailureBehavior = "continue"
+)
+
+// Valid reports whether the behavior belongs to the closed generic provider contract.
+func (b ProviderFailureBehavior) Valid() bool {
+	return b == ProviderFailureIndeterminate || b == ProviderFailureContinue
 }
 
 // EffectKind separates authoritative obligations from non-authoritative advice.
@@ -229,6 +248,10 @@ type ProviderDefinitionInput struct {
 	ID                   string
 	Targets              []decision.Target
 	Executions           []ExecutionClass
+	Requires             []string
+	ProducedFacts        []string
+	Failure              ProviderFailureBehavior
+	Timeout              time.Duration
 	DiagnosticID         string
 }
 
@@ -238,7 +261,11 @@ type ProviderDefinition struct {
 	id                   string
 	targets              []decision.Target
 	executions           []ExecutionClass
+	requires             []string
+	producedFacts        []string
 	diagnosticID         string
+	failure              ProviderFailureBehavior
+	timeout              time.Duration
 	builtin              bool
 }
 
@@ -287,14 +314,62 @@ func newProviderDefinition(input ProviderDefinitionInput, builtin bool) (Provide
 		seen[execution] = struct{}{}
 	}
 
+	requires, producedFacts, err := cloneProviderSchedule(input)
+	if err != nil {
+		return ProviderDefinition{}, err
+	}
+
 	return ProviderDefinition{
 		postActionAcceptance: input.PostActionAcceptance,
 		id:                   input.ID,
 		targets:              targets,
 		executions:           executions,
+		requires:             requires,
+		producedFacts:        producedFacts,
 		diagnosticID:         input.DiagnosticID,
+		failure:              input.Failure,
+		timeout:              input.Timeout,
 		builtin:              builtin,
 	}, nil
+}
+
+// cloneProviderSchedule validates and owns one optional generic fact-provider schedule contract.
+func cloneProviderSchedule(input ProviderDefinitionInput) ([]string, []string, error) {
+	scheduled := len(input.Requires) > 0 || len(input.ProducedFacts) > 0 || input.Failure != "" || input.Timeout != 0
+	if !scheduled {
+		return nil, nil, nil
+	}
+
+	if !input.Failure.Valid() || input.Timeout <= 0 || input.Timeout > maximumProviderTimeout {
+		return nil, nil, newValidationError(
+			ErrInvalidProviderDefinition,
+			input.ID+".schedule",
+			input.ID,
+			"generic providers require explicit failure behavior and a positive bounded timeout",
+		)
+	}
+
+	requires, err := cloneUniqueQualifiedIDs(input.Requires, input.ID+".requires")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	producedFacts := append([]string(nil), input.ProducedFacts...)
+	seen := make(map[string]struct{}, len(producedFacts))
+
+	for _, factID := range producedFacts {
+		if !identifier.Fact(factID) {
+			return nil, nil, newValidationError(ErrInvalidProviderDefinition, input.ID+".facts", factID, "must be a canonical fact identity")
+		}
+
+		if _, exists := seen[factID]; exists {
+			return nil, nil, newValidationError(ErrDuplicateDefinition, input.ID+".facts", factID, "fact occurs more than once")
+		}
+
+		seen[factID] = struct{}{}
+	}
+
+	return requires, producedFacts, nil
 }
 
 // ID returns the exact provider identity.
@@ -310,6 +385,31 @@ func (d ProviderDefinition) Targets() []decision.Target {
 // Executions returns the detached supported host execution classes.
 func (d ProviderDefinition) Executions() []ExecutionClass {
 	return append([]ExecutionClass(nil), d.executions...)
+}
+
+// Requires returns detached exact same-checkpoint provider dependencies.
+func (d ProviderDefinition) Requires() []string {
+	return append([]string(nil), d.requires...)
+}
+
+// ProducedFacts returns detached canonical fact output declarations.
+func (d ProviderDefinition) ProducedFacts() []string {
+	return append([]string(nil), d.producedFacts...)
+}
+
+// Failure returns the explicit generic provider failure behavior.
+func (d ProviderDefinition) Failure() ProviderFailureBehavior {
+	return d.failure
+}
+
+// Timeout returns the provider-local budget compiled into this descriptor.
+func (d ProviderDefinition) Timeout() time.Duration {
+	return d.timeout
+}
+
+// Scheduled reports whether this descriptor participates in generic fact collection.
+func (d ProviderDefinition) Scheduled() bool {
+	return d.failure.Valid() && d.timeout > 0
 }
 
 // Supports reports whether the provider is compatible with an exact target and class.

@@ -110,6 +110,7 @@ func (i AuthenticationInput) Protected() bool {
 type Invocation struct {
 	Request        DecisionRequestInput
 	Authentication AuthenticationInput
+	Finalization   EvaluationFinalization
 }
 
 // Checkpoint is one immutable checkpoint and its current admitted facts.

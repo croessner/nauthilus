@@ -67,6 +67,12 @@ const (
 	// StatusCodeNotApplicable reports completed evaluation without an applicable rule.
 	StatusCodeNotApplicable StatusCode = "not_applicable"
 
+	// StatusCodeNoApplicableRule reports an explicit not-applicable no-match result.
+	StatusCodeNoApplicableRule StatusCode = "no_applicable_rule"
+
+	// StatusCodeNoMatchDeny reports an explicit fail-closed no-match result.
+	StatusCodeNoMatchDeny StatusCode = "no_match_deny"
+
 	// StatusCodeEvaluationFailed reports a retryable reliable-evaluation failure.
 	StatusCodeEvaluationFailed StatusCode = "evaluation_failed"
 
@@ -406,6 +412,8 @@ func (c StatusCode) valid() bool {
 	case StatusCodePermit,
 		StatusCodePolicyDenied,
 		StatusCodeNotApplicable,
+		StatusCodeNoApplicableRule,
+		StatusCodeNoMatchDeny,
 		StatusCodeEvaluationFailed,
 		StatusCodeProviderUnavailable,
 		StatusCodeEffectOutcomeUnknown:

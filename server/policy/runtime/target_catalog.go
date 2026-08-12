@@ -113,6 +113,7 @@ type CompiledCheckpoint struct {
 	name                   string
 	policySetIDs           []string
 	providerIDs            []string
+	providerLevels         [][]string
 	productionPolicySetIDs []string
 	comparisonPolicySetIDs []string
 }
@@ -130,6 +131,16 @@ func (c CompiledCheckpoint) PolicySetIDs() []string {
 // ProviderIDs returns the exact scheduled provider order.
 func (c CompiledCheckpoint) ProviderIDs() []string {
 	return append([]string(nil), c.providerIDs...)
+}
+
+// ProviderLevels returns deterministic dependency levels for concurrent execution.
+func (c CompiledCheckpoint) ProviderLevels() [][]string {
+	result := make([][]string, 0, len(c.providerLevels))
+	for _, level := range c.providerLevels {
+		result = append(result, append([]string(nil), level...))
+	}
+
+	return result
 }
 
 // ProductionPolicySetIDs returns the exact ordered production authority for this checkpoint.
@@ -349,15 +360,8 @@ func (s CompiledSchema) Facts() []registry.FactSchema {
 
 // ValidateFacts verifies one immutable fact set against this exact schema version.
 func (s CompiledSchema) ValidateFacts(facts decision.FactSet) error {
-	for _, fact := range facts.Facts() {
-		definition, ok := s.facts[fact.ID()]
-		if !ok {
-			return schemaFactError(s.identity, fact.ID(), "fact is not declared by the selected exact schema")
-		}
-
-		if err := validateCompiledFact(definition, fact); err != nil {
-			return schemaFactError(s.identity, fact.ID(), err.Error())
-		}
+	if err := s.ValidatePresentFacts(facts); err != nil {
+		return err
 	}
 
 	for _, id := range s.ordered {
@@ -368,6 +372,22 @@ func (s CompiledSchema) ValidateFacts(facts decision.FactSet) error {
 
 		if _, ok := facts.Get(id); !ok {
 			return schemaFactError(s.identity, id, "required fact is missing")
+		}
+	}
+
+	return nil
+}
+
+// ValidatePresentFacts verifies supplied facts without requiring provider-produced values yet.
+func (s CompiledSchema) ValidatePresentFacts(facts decision.FactSet) error {
+	for _, fact := range facts.Facts() {
+		definition, ok := s.facts[fact.ID()]
+		if !ok {
+			return schemaFactError(s.identity, fact.ID(), "fact is not declared by the selected exact schema")
+		}
+
+		if err := validateCompiledFact(definition, fact); err != nil {
+			return schemaFactError(s.identity, fact.ID(), err.Error())
 		}
 	}
 
@@ -973,6 +993,7 @@ func newCompiledDomainPlan(
 	mode registry.AuthorityMode,
 	records []CheckpointRecord,
 	rules []CompiledRule,
+	providers map[string]registry.ProviderDefinition,
 ) CompiledDomainPlan {
 	checkpoints := make([]CompiledCheckpoint, 0, len(records))
 	byName := make(map[string]CompiledCheckpoint, len(records))
@@ -984,9 +1005,10 @@ func newCompiledDomainPlan(
 		}
 
 		checkpoint := CompiledCheckpoint{
-			name:         record.Name,
-			policySetIDs: setIDs,
-			providerIDs:  append([]string(nil), record.ProviderIDs...),
+			name:           record.Name,
+			policySetIDs:   setIDs,
+			providerIDs:    append([]string(nil), record.ProviderIDs...),
+			providerLevels: compileProviderLevels(record.ProviderIDs, providers),
 		}
 		checkpoint.productionPolicySetIDs, checkpoint.comparisonPolicySetIDs = checkpointAuthority(
 			target,
@@ -1093,7 +1115,11 @@ func compileDomainPlanRecord(
 		rules = append(rules, compiled...)
 	}
 
-	return newCompiledDomainPlan(target, record.AuthorityMode, record.Checkpoints, rules), rules, nil
+	if err := validateProviderContinuationSafety(record.Schema, record.Checkpoints, rules, providers); err != nil {
+		return CompiledDomainPlan{}, nil, err
+	}
+
+	return newCompiledDomainPlan(target, record.AuthorityMode, record.Checkpoints, rules, providers), rules, nil
 }
 
 // validateSourcePlanRecord proves checkpoint order, schedules, and merged roots came from one source plan.
@@ -1190,19 +1216,209 @@ func validateCheckpointRecord(
 	}
 
 	seenProviders := make(map[string]struct{}, len(checkpoint.ProviderIDs))
+	outputOwners := make(map[string]string)
+	declaredFacts := schemaFactIDs(schema)
+
 	for _, providerID := range checkpoint.ProviderIDs {
-		if _, exists := providers[providerID]; !exists {
-			return fmt.Errorf("%w: checkpoint %s references unknown provider %s", ErrInvalidCompiledTarget, checkpoint.Name, providerID)
+		if err := validateScheduledProvider(
+			target,
+			checkpoint.Name,
+			providerID,
+			providers,
+			seenProviders,
+			declaredFacts,
+			outputOwners,
+		); err != nil {
+			return err
 		}
+	}
 
-		if _, exists := seenProviders[providerID]; exists {
-			return fmt.Errorf("%w: checkpoint %s repeats provider %s", ErrInvalidCompiledTarget, checkpoint.Name, providerID)
-		}
-
-		seenProviders[providerID] = struct{}{}
+	if err := validateCheckpointProviderGraph(checkpoint, providers); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+// schemaFactIDs returns the exact fact identifiers declared by one target schema.
+func schemaFactIDs(schema registry.SchemaDefinition) map[string]struct{} {
+	result := make(map[string]struct{}, len(schema.Facts()))
+
+	for _, fact := range schema.Facts() {
+		result[fact.ID()] = struct{}{}
+	}
+
+	return result
+}
+
+// validateScheduledProvider validates one checkpoint member and reserves its fact outputs.
+func validateScheduledProvider(
+	target decision.Target,
+	checkpointName string,
+	providerID string,
+	providers map[string]registry.ProviderDefinition,
+	seenProviders map[string]struct{},
+	declaredFacts map[string]struct{},
+	outputOwners map[string]string,
+) error {
+	provider, exists := providers[providerID]
+	if !exists {
+		return fmt.Errorf("%w: checkpoint %s references unknown provider %s", ErrInvalidCompiledTarget, checkpointName, providerID)
+	}
+
+	if _, exists = seenProviders[providerID]; exists {
+		return fmt.Errorf("%w: checkpoint %s repeats provider %s", ErrInvalidCompiledTarget, checkpointName, providerID)
+	}
+
+	seenProviders[providerID] = struct{}{}
+
+	if target.Namespace() != authnNamespace && !provider.Scheduled() {
+		return fmt.Errorf("%w: generic provider %s requires explicit failure and timeout", ErrInvalidCompiledTarget, providerID)
+	}
+
+	for _, factID := range provider.ProducedFacts() {
+		if _, exists = declaredFacts[factID]; !exists {
+			return fmt.Errorf("%w: provider %s produces undeclared fact %s", ErrInvalidCompiledTarget, providerID, factID)
+		}
+
+		if owner, owned := outputOwners[factID]; owned {
+			return fmt.Errorf("%w: providers %s and %s both produce fact %s", ErrInvalidCompiledTarget, owner, providerID, factID)
+		}
+
+		outputOwners[factID] = providerID
+	}
+
+	return nil
+}
+
+// validateCheckpointProviderGraph rejects foreign dependencies and cycles before activation.
+func validateCheckpointProviderGraph(
+	checkpoint CheckpointRecord,
+	providers map[string]registry.ProviderDefinition,
+) error {
+	scheduled := make(map[string]struct{}, len(checkpoint.ProviderIDs))
+	for _, providerID := range checkpoint.ProviderIDs {
+		scheduled[providerID] = struct{}{}
+	}
+
+	for _, providerID := range checkpoint.ProviderIDs {
+		for _, dependency := range providers[providerID].Requires() {
+			if _, exists := scheduled[dependency]; !exists {
+				return fmt.Errorf("%w: provider %s requires unscheduled provider %s", ErrInvalidCompiledTarget, providerID, dependency)
+			}
+		}
+	}
+
+	if levels := compileProviderLevels(checkpoint.ProviderIDs, providers); len(levels) == 0 && len(checkpoint.ProviderIDs) > 0 {
+		return fmt.Errorf("%w: checkpoint %s provider dependency cycle", ErrInvalidCompiledTarget, checkpoint.Name)
+	}
+
+	return nil
+}
+
+// compileProviderLevels projects one acyclic provider graph into deterministic dependency levels.
+func compileProviderLevels(
+	providerIDs []string,
+	providers map[string]registry.ProviderDefinition,
+) [][]string {
+	remaining := make(map[string]int, len(providerIDs))
+	dependants := make(map[string][]string, len(providerIDs))
+
+	for _, providerID := range providerIDs {
+		dependencies := providers[providerID].Requires()
+		remaining[providerID] = len(dependencies)
+
+		for _, dependency := range dependencies {
+			dependants[dependency] = append(dependants[dependency], providerID)
+		}
+	}
+
+	levels := make([][]string, 0)
+	processed := 0
+
+	for processed < len(providerIDs) {
+		level := make([]string, 0)
+
+		for providerID, count := range remaining {
+			if count == 0 {
+				level = append(level, providerID)
+			}
+		}
+
+		if len(level) == 0 {
+			return nil
+		}
+
+		sort.Strings(level)
+		levels = append(levels, level)
+
+		for _, providerID := range level {
+			delete(remaining, providerID)
+
+			processed++
+
+			for _, dependant := range dependants[providerID] {
+				remaining[dependant]--
+			}
+		}
+	}
+
+	return levels
+}
+
+// validateProviderContinuationSafety proves omitted output cannot satisfy an unconditional requirement.
+func validateProviderContinuationSafety(
+	schema registry.SchemaDefinition,
+	checkpoints []CheckpointRecord,
+	rules []CompiledRule,
+	providers map[string]registry.ProviderDefinition,
+) error {
+	requiredFacts := make(map[string]struct{})
+
+	for _, fact := range schema.Facts() {
+		if fact.Required() {
+			requiredFacts[fact.ID()] = struct{}{}
+		}
+	}
+
+	rulesByCheckpoint := make(map[string][]CompiledRule)
+	for _, rule := range rules {
+		rulesByCheckpoint[rule.Checkpoint()] = append(rulesByCheckpoint[rule.Checkpoint()], rule)
+	}
+
+	for _, checkpoint := range checkpoints {
+		for _, providerID := range checkpoint.ProviderIDs {
+			provider := providers[providerID]
+			if provider.Failure() != registry.ProviderFailureContinue {
+				continue
+			}
+
+			for _, factID := range provider.ProducedFacts() {
+				if _, required := requiredFacts[factID]; required {
+					return fmt.Errorf("%w: provider %s continue cannot omit required fact %s", ErrInvalidCompiledTarget, providerID, factID)
+				}
+
+				for _, rule := range rulesByCheckpoint[checkpoint.Name] {
+					if ruleUsesFact(rule, factID) && !slices.Contains(rule.RequiredProviders(), providerID) {
+						return fmt.Errorf("%w: provider %s continue requires rule %s to declare the provider", ErrInvalidCompiledTarget, providerID, rule.Name())
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// ruleUsesFact reports whether one rule expression or response projection reads a fact.
+func ruleUsesFact(rule CompiledRule, factID string) bool {
+	for _, contract := range rule.Expression().FactContracts() {
+		if contract.ID() == factID {
+			return true
+		}
+	}
+
+	return rule.ResponseMessage().FactID() == factID || rule.ResponseLanguage().FactID() == factID
 }
 
 // runtimeCheckpointResolver revalidates exact root authority and its ordered import closure.
@@ -1701,6 +1917,7 @@ func compileTargetPolicySets(
 func cloneCompiledCheckpoint(checkpoint CompiledCheckpoint) CompiledCheckpoint {
 	checkpoint.policySetIDs = checkpoint.PolicySetIDs()
 	checkpoint.providerIDs = checkpoint.ProviderIDs()
+	checkpoint.providerLevels = checkpoint.ProviderLevels()
 	checkpoint.productionPolicySetIDs = checkpoint.ProductionPolicySetIDs()
 	checkpoint.comparisonPolicySetIDs = checkpoint.ComparisonPolicySetIDs()
 

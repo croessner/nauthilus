@@ -21,10 +21,11 @@ import (
 )
 
 type checkpointEvaluation struct {
-	request    decision.DecisionRequest
-	checkpoint decision.Checkpoint
-	supervisor effectsupervisor.Acceptor
-	generation uint64
+	request      decision.DecisionRequest
+	checkpoint   decision.Checkpoint
+	finalization decision.EvaluationFinalization
+	supervisor   effectsupervisor.Acceptor
+	generation   uint64
 }
 
 type runtimeEvaluation struct {
@@ -35,6 +36,7 @@ type runtimeEvaluation struct {
 type internalDecisionReport struct {
 	checkpoint string
 	generation uint64
+	runtime    runtimeReport
 }
 
 // valid reports whether runtime input retains the admitted request and generation authorities.

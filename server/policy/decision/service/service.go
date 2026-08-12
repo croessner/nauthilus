@@ -114,7 +114,7 @@ func (s *DecisionService) openSession(
 		return nil, fmt.Errorf("%w: authn sessions require the admitted builtin internal caller", ErrDecisionAdmission)
 	}
 
-	return &decisionSession{generation: generation, request: request}, nil
+	return &decisionSession{generation: generation, request: request, finalization: invocation.Finalization}, nil
 }
 
 // validAuthnTarget restricts reusable sessions to the exact builtin authn operations.
@@ -214,8 +214,9 @@ func validAuthenticationInput(input decision.AuthenticationInput) bool {
 }
 
 type decisionSession struct {
-	generation *runtimeGeneration
-	request    decision.DecisionRequest
+	generation   *runtimeGeneration
+	request      decision.DecisionRequest
+	finalization decision.EvaluationFinalization
 }
 
 // Evaluate runs one checkpoint on the generation and evaluator captured by the session.
@@ -233,10 +234,11 @@ func (s *decisionSession) Evaluate(
 	}
 
 	evaluation := checkpointEvaluation{
-		request:    s.request,
-		checkpoint: ownedCheckpoint,
-		supervisor: s.generation.supervisor,
-		generation: s.generation.id,
+		request:      s.request,
+		checkpoint:   ownedCheckpoint,
+		finalization: s.finalization,
+		supervisor:   s.generation.supervisor,
+		generation:   s.generation.id,
 	}
 	if !evaluation.valid() {
 		return decision.DecisionResponse{}, fmt.Errorf("%w: incomplete checkpoint runtime input", ErrDecisionEvaluation)

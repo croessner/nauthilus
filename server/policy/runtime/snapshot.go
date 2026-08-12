@@ -20,6 +20,7 @@ import (
 	"errors"
 	"maps"
 	"net/netip"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -164,6 +165,28 @@ type CompiledTimeWindow struct {
 	LocationName string
 	Days         []time.Weekday
 	Intervals    []CompiledTimeInterval
+}
+
+// Contains reports whether one instant falls in the recurring local-time schedule.
+func (w CompiledTimeWindow) Contains(instant time.Time) bool {
+	location, err := time.LoadLocation(w.LocationName)
+	if err != nil {
+		return false
+	}
+
+	local := instant.In(location)
+	if !slices.Contains(w.Days, local.Weekday()) {
+		return false
+	}
+
+	minute := local.Hour()*60 + local.Minute()
+	for _, interval := range w.Intervals {
+		if minute >= interval.StartMinute && minute < interval.EndMinute {
+			return true
+		}
+	}
+
+	return false
 }
 
 // CompiledTimeInterval contains minute offsets in local time.
