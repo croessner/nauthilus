@@ -252,8 +252,12 @@ func NewDecisionRequest(input DecisionRequestInput, caller CallerContext) (Decis
 		return DecisionRequest{}, invalidRequest("version", "unsupported contract version")
 	}
 
-	if !input.Target.valid() || !caller.valid() {
-		return DecisionRequest{}, invalidRequest("request", "target and caller must be constructor-validated")
+	if !input.Target.valid() {
+		return DecisionRequest{}, invalidRequest("request.target", "must be constructor-validated")
+	}
+
+	if !caller.valid() {
+		return DecisionRequest{}, invalidCaller("caller", "must be constructor-validated authenticator output")
 	}
 
 	requestID, err := optionalRequestID(input.RequestID)

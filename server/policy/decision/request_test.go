@@ -42,17 +42,17 @@ func TestDecisionRequestContainsExactlyOneInvocation(t *testing.T) {
 		t.Fatal("decision.Service has no Evaluate method")
 	}
 
-	requestType := reflect.TypeOf(decision.DecisionRequest{})
-	requestArguments := 0
+	invocationType := reflect.TypeOf(decision.Invocation{})
+	invocationArguments := 0
 
 	for index := range evaluate.Type.NumIn() {
-		if evaluate.Type.In(index) == requestType {
-			requestArguments++
+		if evaluate.Type.In(index) == invocationType {
+			invocationArguments++
 		}
 	}
 
-	if requestArguments != 1 {
-		t.Fatalf("Service.Evaluate has %d DecisionRequest arguments, want exactly 1", requestArguments)
+	if invocationArguments != 1 {
+		t.Fatalf("Service.Evaluate has %d Invocation arguments, want exactly 1", invocationArguments)
 	}
 
 	if serviceType.NumMethod() != 1 {

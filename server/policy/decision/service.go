@@ -19,5 +19,5 @@ import "context"
 
 // Service is the unary admission-enforcing decision application boundary.
 type Service interface {
-	Evaluate(context.Context, DecisionRequest) (DecisionResponse, error)
+	Evaluate(context.Context, Invocation) (DecisionResponse, error)
 }
