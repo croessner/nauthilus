@@ -25,12 +25,12 @@ import (
 	"sync"
 	"time"
 
+	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
+	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
-	identityv1 "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1"
 	"github.com/croessner/nauthilus/v3/server/model/authdto"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 

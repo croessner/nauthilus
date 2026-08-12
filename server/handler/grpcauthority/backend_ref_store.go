@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
+	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 
 	"github.com/redis/go-redis/v9"

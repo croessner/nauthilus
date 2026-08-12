@@ -25,6 +25,9 @@ import (
 	"testing"
 	"time"
 
+	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
+	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
+	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
@@ -35,9 +38,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core"
 	_ "github.com/croessner/nauthilus/v3/server/core/auth"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
-	commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
-	identityv1 "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1"
+	"github.com/croessner/nauthilus/v3/server/grpcapi/identitymapper"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
@@ -874,7 +875,7 @@ type remoteBackendDataAuthorityClient struct {
 func newRemoteBackendDataAuthorityClient(credentials ...mfa.PersistentCredential) *remoteBackendDataAuthorityClient {
 	protoCredentials := make([]*identityv1.WebAuthnCredential, 0, len(credentials))
 	for index := range credentials {
-		protoCredentials = append(protoCredentials, identityv1.PersistentCredentialToProto(&credentials[index]))
+		protoCredentials = append(protoCredentials, identitymapper.PersistentCredentialToProto(&credentials[index]))
 	}
 
 	return &remoteBackendDataAuthorityClient{

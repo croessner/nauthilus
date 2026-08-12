@@ -92,7 +92,7 @@ Internet clients.
 
 ### 3.1 Existing gRPC Auth API
 
-The existing source of truth is `server/grpcapi/auth/v1/auth.proto`.
+The existing source of truth is `api/auth/v1/auth.proto`.
 
 Current RPCs:
 
@@ -473,7 +473,7 @@ message AuthResponse {
 Add a shared package for transport messages used by more than one gRPC API:
 
 ```text
-server/grpcapi/common/v1/common.proto
+api/common/v1/common.proto
 package nauthilus.common.v1;
 ```
 
@@ -498,7 +498,7 @@ Rules:
 Add a new versioned service, proposed package:
 
 ```text
-server/grpcapi/identity/v1/identity_backend.proto
+api/identity/v1/identity_backend.proto
 package nauthilus.identity.v1;
 ```
 
@@ -555,7 +555,7 @@ syntax = "proto3";
 
 package nauthilus.common.v1;
 
-option go_package = "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1;commonv1";
+option go_package = "github.com/croessner/nauthilus/v3/api/common/v1;commonv1";
 
 enum OperationResult {
   OPERATION_RESULT_UNSPECIFIED = 0;
@@ -611,9 +611,9 @@ syntax = "proto3";
 package nauthilus.identity.v1;
 
 import "google/protobuf/timestamp.proto";
-import "server/grpcapi/common/v1/common.proto";
+import "api/common/v1/common.proto";
 
-option go_package = "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1;identityv1";
+option go_package = "github.com/croessner/nauthilus/v3/api/identity/v1;identityv1";
 
 message RequestContext {
   string username = 1;
@@ -1337,9 +1337,9 @@ This section names the expected code locations so implementation work can be spl
 | Config schema | `server/config/schema_v2.go`, `server/config/file.go`, `server/config/types.go` | Add `runtime.clients.grpc.nauthilus_authorities`, `runtime.servers.grpc.authority`, and `auth.backends.remote`; validate authority references, TLS, mTLS, caller auth, timeouts, allowed operations, and operation scope names. |
 | Config dump and schema tests | `server/config/dump.go`, `server/config/dump_test.go`, `server/config/schema_index.go`, `server/config/schema_index_test.go`, `server/config/mapstructure_tag_test.go` | Ensure every new key appears in dumps, schema index, env binding tests, and unknown-key validation. |
 | Backend enum and parsing | `server/definitions`, `server/config/server.go`, `server/core/auth.go` | Add final backend name `remote`; `AuthState.GetBackendManager` must return the remote manager for `remote` and must preserve backend name semantics. |
-| Existing gRPC auth contract | `server/grpcapi/auth/v1/auth.proto`, `server/grpcapi/auth/v1/request_mapper.go`, `server/handler/grpcauthority` | Import `common/v1`, switch `AuthResponse.attributes = 7` to `.nauthilus.common.v1.AttributeValues`, add additive `.nauthilus.common.v1.BackendRef backend_ref = 10`, keep `Authenticate`, `LookupIdentity`, and `ListAccounts` stable, and update mapper tests. |
-| Shared proto messages | `server/grpcapi/common/v1/common.proto`, generated Go files, `README.md` | Define reusable `BackendRef`, `OperationResult`, `ErrorDetail`, `OperationStatus`, and `AttributeValues`. This package is mandatory for Phase 1. |
-| Identity gRPC contract | `server/grpcapi/identity/v1/identity_backend.proto`, generated Go files, `README.md` | Add `IdentityBackendService`, domain messages, contract tests, mapper tests, and generator documentation. |
+| Existing gRPC auth contract | `api/auth/v1/auth.proto`, `server/grpcapi/authmapper/request_mapper.go`, `server/handler/grpcauthority` | Import `common/v1`, switch `AuthResponse.attributes = 7` to `.nauthilus.common.v1.AttributeValues`, add additive `.nauthilus.common.v1.BackendRef backend_ref = 10`, keep `Authenticate`, `LookupIdentity`, and `ListAccounts` stable, and update mapper tests. |
+| Shared proto messages | `api/common/v1/common.proto`, generated Go files, `README.md` | Define reusable `BackendRef`, `OperationResult`, `ErrorDetail`, `OperationStatus`, and `AttributeValues`. This package is mandatory for Phase 1. |
+| Identity gRPC contract | `api/identity/v1/identity_backend.proto`, generated Go files, `README.md` | Add `IdentityBackendService`, domain messages, contract tests, mapper tests, and generator documentation. |
 | gRPC server registration | `server/handler/grpcauthority/server.go`, `server/handler/grpcauthority/server_test.go` | Register `AuthService` unconditionally and `IdentityBackendService` only when backend refs are explicitly enabled; keep auth, mTLS, logging, tracing, and recovery interceptors shared. |
 | Authority identity handler | `server/handler/grpcauthority/identity_backend.go` | Implement RPC methods as transport adapters over existing core/backend services; enforce scopes before domain calls; map errors to stable status codes. |
 | Authority internal IdP client | `server/config/idp.go`, `server/handler/frontend/idp/oidc_client_credentials.go`, `server/idp/nauthilus_idp.go` | Reuse existing `client_credentials` issuance; validate the split profile requires `access_token_type=opaque`, short lifetime, and non-public token endpoint exposure. |
@@ -1361,7 +1361,7 @@ Package direction:
    pre-stable implementation detail and must be renamed to `grpcauthority` before this feature ships.
 2. The remote backend manager should live outside `server/core` if possible. `server/backend/remote/` keeps transport
    and mapper code away from the core auth state machine.
-3. Common proto messages belong in `server/grpcapi/common/v1`; keep that package intentionally small.
+3. Common proto messages belong in `api/common/v1`; keep that package intentionally small.
 4. The identity handler should call existing domain services or focused new services. It must not reimplement LDAP,
    Lua, TOTP, recovery-code, or WebAuthn storage logic inside the gRPC layer.
 
@@ -1570,15 +1570,15 @@ Add focused tests before behavior changes:
 
 Acceptance:
 
-- `GOEXPERIMENT=runtimesecret go test ./server/grpcapi/auth/v1 ./server/core ./server/handler/frontend/idp ./server/idp`
+- `GOEXPERIMENT=runtimesecret go test ./api/auth/v1 ./server/core ./server/handler/frontend/idp ./server/idp`
   passes for the focused tests.
 
 ### Phase 1: Protobuf Contracts
 
 Add:
 
-- `server/grpcapi/common/v1/common.proto`;
-- `server/grpcapi/identity/v1/identity_backend.proto`;
+- `api/common/v1/common.proto`;
+- `api/identity/v1/identity_backend.proto`;
 - additive `.nauthilus.common.v1.BackendRef AuthResponse.backend_ref = 10`;
 - generated Go files;
 - proto contract tests;
@@ -1929,7 +1929,7 @@ Reason:
 
 Decision:
 
-- `server/grpcapi/common/v1/common.proto` is a mandatory Phase-1 artifact;
+- `api/common/v1/common.proto` is a mandatory Phase-1 artifact;
 - `BackendRef`, `OperationResult`, `ErrorDetail`, `OperationStatus`, and `AttributeValues` live in
   `nauthilus.common.v1`;
 - `auth/v1` imports `common/v1` for `AuthResponse.attributes` and `AuthResponse.backend_ref`;

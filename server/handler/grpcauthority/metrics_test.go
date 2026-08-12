@@ -22,11 +22,11 @@ import (
 	"testing"
 	"time"
 
+	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
+	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
-	identityv1 "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1"
 	"github.com/croessner/nauthilus/v3/server/monitoring/authmetrics"
 	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/prometheus/client_golang/prometheus"

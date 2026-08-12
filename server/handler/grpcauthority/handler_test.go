@@ -19,11 +19,11 @@ import (
 	"context"
 	"testing"
 
+	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

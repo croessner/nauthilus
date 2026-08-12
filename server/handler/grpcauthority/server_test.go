@@ -35,10 +35,10 @@ import (
 	"testing"
 	"time"
 
+	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
 	"github.com/croessner/nauthilus/v3/server/secret"
 
 	"github.com/golang-jwt/jwt/v5"

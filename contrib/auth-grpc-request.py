@@ -15,7 +15,7 @@ from typing import Any
 
 
 DEFAULT_TARGET = "127.0.0.1:9444"
-PROTO_PATH = pathlib.Path("server/grpcapi/auth/v1/auth.proto")
+PROTO_PATH = pathlib.Path("api/auth/v1/auth.proto")
 RPC_TO_METHOD = {
     "authenticate": "Authenticate",
     "lookup-identity": "LookupIdentity",

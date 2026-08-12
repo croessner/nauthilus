@@ -20,8 +20,9 @@ import (
 	"errors"
 	"time"
 
-	commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
-	identityv1 "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1"
+	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
+	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
+	"github.com/croessner/nauthilus/v3/server/grpcapi/identitymapper"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 
 	"google.golang.org/grpc/codes"
@@ -299,7 +300,7 @@ func (h *Handler) SaveWebAuthnCredential(
 		return nil, err
 	}
 
-	input.Credential = identityv1.WebAuthnCredentialToPersistent(request.GetCredential())
+	input.Credential = identitymapper.WebAuthnCredentialToPersistent(request.GetCredential())
 	input.IdempotencyKey = request.GetIdempotencyKey()
 
 	result, err := h.resolveIdentityService().SaveWebAuthnCredential(ctx, input)
@@ -321,8 +322,8 @@ func (h *Handler) UpdateWebAuthnCredential(
 		return nil, err
 	}
 
-	input.OldCredential = identityv1.WebAuthnCredentialToPersistent(request.GetOldCredential())
-	input.NewCredential = identityv1.WebAuthnCredentialToPersistent(request.GetNewCredential())
+	input.OldCredential = identitymapper.WebAuthnCredentialToPersistent(request.GetOldCredential())
+	input.NewCredential = identitymapper.WebAuthnCredentialToPersistent(request.GetNewCredential())
 	input.IdempotencyKey = request.GetIdempotencyKey()
 
 	result, err := h.resolveIdentityService().UpdateWebAuthnCredential(ctx, input)
@@ -547,7 +548,7 @@ func credentialsToProto(credentials []mfa.PersistentCredential) []*identityv1.We
 
 	result := make([]*identityv1.WebAuthnCredential, 0, len(credentials))
 	for i := range credentials {
-		result = append(result, identityv1.PersistentCredentialToProto(&credentials[i]))
+		result = append(result, identitymapper.PersistentCredentialToProto(&credentials[i]))
 	}
 
 	return result

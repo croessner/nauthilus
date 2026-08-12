@@ -22,13 +22,14 @@ import (
 	"fmt"
 	"strings"
 
+	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
+	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
+	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
-	commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
-	identityv1 "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1"
+	"github.com/croessner/nauthilus/v3/server/grpcapi/authmapper"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -84,7 +85,7 @@ func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest)
 		return nil, status.Error(codes.Internal, "auth application service is not configured")
 	}
 
-	dto := authv1.AuthRequestToDTO(request)
+	dto := authmapper.AuthRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeAuthenticate, dto)
 	input = authInputWithIncomingMetadata(ctx, input)
 	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_Authenticate_FullMethodName)
@@ -120,7 +121,7 @@ func (h *Handler) LookupIdentity(
 		return nil, status.Error(codes.Internal, "auth application service is not configured")
 	}
 
-	dto := authv1.LookupIdentityRequestToDTO(request)
+	dto := authmapper.LookupIdentityRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeLookupIdentity, dto)
 	input = authInputWithIncomingMetadata(ctx, input)
 	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_LookupIdentity_FullMethodName)
@@ -151,7 +152,7 @@ func (h *Handler) ListAccounts(
 		return nil, status.Error(codes.Internal, "auth application service is not configured")
 	}
 
-	dto := authv1.ListAccountsRequestToDTO(request)
+	dto := authmapper.ListAccountsRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeListAccounts, dto)
 	input = authInputWithIncomingMetadata(ctx, input)
 	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_ListAccounts_FullMethodName)
@@ -452,14 +453,14 @@ func authDecisionToProto(decision core.AuthDecision) authv1.AuthDecision {
 	}
 }
 
-func attributeMappingToProto(attributes bktype.AttributeMapping) map[string]*authv1.AttributeValues {
+func attributeMappingToProto(attributes bktype.AttributeMapping) map[string]*commonv1.AttributeValues {
 	if len(attributes) == 0 {
 		return nil
 	}
 
-	result := make(map[string]*authv1.AttributeValues, len(attributes))
+	result := make(map[string]*commonv1.AttributeValues, len(attributes))
 	for key, values := range attributes {
-		result[key] = &authv1.AttributeValues{Values: stringifyAttributeValues(values)}
+		result[key] = &commonv1.AttributeValues{Values: stringifyAttributeValues(values)}
 	}
 
 	return result

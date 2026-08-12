@@ -78,7 +78,7 @@ Existing coverage kept as Phase 0 corpus material:
 | HTTP JSON response parity | `server/core/response_json_golden_test.go`, `server/core/response_fail_test.go`, `server/core/response_headers_test.go`. |
 | HTTP CBOR and list-accounts media parity | `server/core/rest_list_accounts_cbor_test.go`, `server/handler/auth/handler_test.go`, `server/util/contentneg/negotiator_test.go`. |
 | Nginx and header-style response parity | `server/core/response_headers_test.go`, `server/core/response_fail_test.go`, `server/core/nginx_password_test.go`. |
-| gRPC AuthService, LookupIdentity, and ListAccounts parity | `server/handler/grpcauth/server_test.go`, `server/handler/grpcauth/handler_test.go`, `server/grpcapi/auth/v1/request_mapper_test.go`. |
+| gRPC AuthService, LookupIdentity, and ListAccounts parity | `server/handler/grpcauthority/server_test.go`, `server/handler/grpcauthority/handler_test.go`, `server/grpcapi/authmapper/request_mapper_test.go`. |
 | IdP auth-flow parity | `server/handler/frontend/idp/login_test.go`, `server/handler/frontend/idp/oidc_test.go`, `server/handler/frontend/idp/saml_test.go`, `server/handler/frontend/idp/oidc_device_code_test.go`, and related IdP flow tests. |
 
 ## Active Temporary Adapters

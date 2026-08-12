@@ -6,15 +6,17 @@ import (
 	stderrors "errors"
 	"fmt"
 
+	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
+	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
+	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
-	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
-	commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
-	identityv1 "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1"
+	"github.com/croessner/nauthilus/v3/server/grpcapi/authmapper"
+	"github.com/croessner/nauthilus/v3/server/grpcapi/identitymapper"
 	authorityclient "github.com/croessner/nauthilus/v3/server/grpcclient/authority"
 	"github.com/croessner/nauthilus/v3/server/model/authdto"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
@@ -158,7 +160,7 @@ func (m *Manager) lookupPassDB(ctx context.Context, auth *core.AuthState, dto au
 		return m.resolveUserPassDB(ctx, auth)
 	}
 
-	response, err := m.client.LookupIdentity(ctx, authv1.DTOToLookupIdentityRequest(dto))
+	response, err := m.client.LookupIdentity(ctx, authmapper.DTOToLookupIdentityRequest(dto))
 	if err != nil {
 		return nil, mapAuthorityError(err)
 	}
@@ -191,7 +193,7 @@ func (m *Manager) authenticatePassDB(ctx context.Context, dto authdto.Request) (
 		return nil, ErrRemoteOperationDenied
 	}
 
-	response, err := m.client.Authenticate(ctx, authv1.DTOToAuthRequest(dto))
+	response, err := m.client.Authenticate(ctx, authmapper.DTOToAuthRequest(dto))
 	if err != nil {
 		return nil, mapAuthorityError(err)
 	}
@@ -212,7 +214,7 @@ func (m *Manager) AccountDB(auth *core.AuthState) (core.AccountList, error) {
 	ctx, cancel := m.requestContext(auth)
 	defer cancel()
 
-	response, err := m.client.ListAccounts(ctx, authv1.DTOToListAccountsRequest(authDTOFromState(auth)))
+	response, err := m.client.ListAccounts(ctx, authmapper.DTOToListAccountsRequest(authDTOFromState(auth)))
 	if err != nil {
 		return nil, mapAuthorityError(err)
 	}
@@ -239,7 +241,7 @@ func (m *Manager) BeginTOTPRegistration(auth *core.AuthState, idempotencyKey str
 	defer cancel()
 
 	response, err := m.client.BeginTOTPRegistration(ctx, &identityv1.BeginTOTPRegistrationRequest{
-		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Context:        identitymapper.DTOToRequestContext(authDTOFromState(auth)),
 		Username:       auth.GetUsername(),
 		Backend:        ref,
 		IdempotencyKey: idempotencyKey,
@@ -280,7 +282,7 @@ func (m *Manager) FinishTOTPRegistration(
 	defer cancel()
 
 	response, err := m.client.FinishTOTPRegistration(ctx, &identityv1.FinishTOTPRegistrationRequest{
-		Context:               identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Context:               identitymapper.DTOToRequestContext(authDTOFromState(auth)),
 		Username:              auth.GetUsername(),
 		Backend:               ref,
 		PendingRegistrationId: pendingRegistrationID,
@@ -309,7 +311,7 @@ func (m *Manager) VerifyTOTP(auth *core.AuthState, code string) (bool, error) {
 	defer cancel()
 
 	response, err := m.client.VerifyTOTP(ctx, &identityv1.VerifyTOTPRequest{
-		Context:  identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Context:  identitymapper.DTOToRequestContext(authDTOFromState(auth)),
 		Username: auth.GetUsername(),
 		Backend:  ref,
 		Code:     code,
@@ -345,7 +347,7 @@ func (m *Manager) GenerateRecoveryCodes(auth *core.AuthState, count uint32, idem
 	defer cancel()
 
 	response, err := m.client.GenerateRecoveryCodes(ctx, &identityv1.GenerateRecoveryCodesRequest{
-		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Context:        identitymapper.DTOToRequestContext(authDTOFromState(auth)),
 		Username:       auth.GetUsername(),
 		Backend:        ref,
 		Count:          count,
@@ -381,7 +383,7 @@ func (m *Manager) UseRecoveryCode(auth *core.AuthState, code string, idempotency
 	defer cancel()
 
 	response, err := m.client.UseRecoveryCode(ctx, &identityv1.UseRecoveryCodeRequest{
-		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Context:        identitymapper.DTOToRequestContext(authDTOFromState(auth)),
 		Username:       auth.GetUsername(),
 		Backend:        ref,
 		Code:           code,
@@ -446,7 +448,7 @@ func (m *Manager) GetPublicMFAState(auth *core.AuthState, includeWebAuthn bool) 
 	defer cancel()
 
 	response, err := m.client.GetMFAState(ctx, &identityv1.GetMFAStateRequest{
-		Context:                    identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Context:                    identitymapper.DTOToRequestContext(authDTOFromState(auth)),
 		Username:                   auth.GetUsername(),
 		Backend:                    ref,
 		IncludeWebauthnCredentials: includeWebAuthn,
@@ -477,7 +479,7 @@ func (m *Manager) GetWebAuthnCredentials(auth *core.AuthState) ([]mfa.Persistent
 	defer cancel()
 
 	response, err := m.client.GetWebAuthnCredentials(ctx, &identityv1.GetWebAuthnCredentialsRequest{
-		Context:  identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Context:  identitymapper.DTOToRequestContext(authDTOFromState(auth)),
 		Username: auth.GetUsername(),
 		Backend:  ref,
 	})
@@ -508,10 +510,10 @@ func (m *Manager) SaveWebAuthnCredential(auth *core.AuthState, credential *mfa.P
 	defer cancel()
 
 	response, err := m.client.SaveWebAuthnCredential(ctx, &identityv1.SaveWebAuthnCredentialRequest{
-		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Context:        identitymapper.DTOToRequestContext(authDTOFromState(auth)),
 		Username:       auth.GetUsername(),
 		Backend:        ref,
-		Credential:     identityv1.PersistentCredentialToProto(credential),
+		Credential:     identitymapper.PersistentCredentialToProto(credential),
 		IdempotencyKey: idempotencyKey,
 	})
 
@@ -539,7 +541,7 @@ func (m *Manager) DeleteWebAuthnCredential(auth *core.AuthState, credential *mfa
 	}
 
 	response, err := m.client.DeleteWebAuthnCredential(ctx, &identityv1.DeleteWebAuthnCredentialRequest{
-		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Context:        identitymapper.DTOToRequestContext(authDTOFromState(auth)),
 		Username:       auth.GetUsername(),
 		Backend:        ref,
 		CredentialId:   credentialID,
@@ -569,11 +571,11 @@ func (m *Manager) UpdateWebAuthnCredential(
 	defer cancel()
 
 	response, err := m.client.UpdateWebAuthnCredential(ctx, &identityv1.UpdateWebAuthnCredentialRequest{
-		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Context:        identitymapper.DTOToRequestContext(authDTOFromState(auth)),
 		Username:       auth.GetUsername(),
 		Backend:        ref,
-		OldCredential:  identityv1.PersistentCredentialToProto(oldCredential),
-		NewCredential:  identityv1.PersistentCredentialToProto(newCredential),
+		OldCredential:  identitymapper.PersistentCredentialToProto(oldCredential),
+		NewCredential:  identitymapper.PersistentCredentialToProto(newCredential),
 		IdempotencyKey: idempotencyKey,
 	})
 
@@ -600,7 +602,7 @@ func (m *Manager) runRemoteMFADelete(auth *core.AuthState, idempotencyKey string
 	ctx, cancel := m.requestContext(auth)
 	defer cancel()
 
-	requestContext := identityv1.DTOToRequestContext(authDTOFromState(auth))
+	requestContext := identitymapper.DTOToRequestContext(authDTOFromState(auth))
 	username := auth.GetUsername()
 
 	var response *identityv1.MFAWriteResponse
@@ -767,7 +769,7 @@ func (m *Manager) shouldResolveUserSnapshot(auth *core.AuthState) bool {
 func (m *Manager) resolveUserRequest(auth *core.AuthState, includeMFAState bool) (*identityv1.ResolveUserRequest, error) {
 	dto := authDTOFromState(auth)
 	request := &identityv1.ResolveUserRequest{
-		Context:                    identityv1.DTOToRequestContext(dto),
+		Context:                    identitymapper.DTOToRequestContext(dto),
 		Username:                   dto.Username,
 		Attributes:                 identityAttributeRequestToProto(defaultIdentityAttributeRequest(auth)),
 		IncludeMfaState:            includeMFAState,
@@ -1097,7 +1099,7 @@ func persistentCredentialsFromProto(credentials []*identityv1.WebAuthnCredential
 
 	result := make([]mfa.PersistentCredential, 0, len(credentials))
 	for _, credential := range credentials {
-		persistent := identityv1.WebAuthnCredentialToPersistent(credential)
+		persistent := identitymapper.WebAuthnCredentialToPersistent(credential)
 		if persistent != nil {
 			result = append(result, *persistent)
 		}

@@ -6,10 +6,10 @@ import (
 	"net"
 	"testing"
 
+	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
+	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
-	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
-	commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
 	grpcauthority "github.com/croessner/nauthilus/v3/server/grpcclient/authority"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"

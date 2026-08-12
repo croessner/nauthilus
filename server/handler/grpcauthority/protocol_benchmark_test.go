@@ -33,12 +33,12 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	_ "github.com/croessner/nauthilus/v3/server/core/auth"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
 	handlerauth "github.com/croessner/nauthilus/v3/server/handler/auth"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/lualib"

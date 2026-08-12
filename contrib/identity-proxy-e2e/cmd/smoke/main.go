@@ -34,10 +34,10 @@ import (
 	"strings"
 	"time"
 
+	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
+	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
+	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
-	commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
-	identityv1 "github.com/croessner/nauthilus/v3/server/grpcapi/identity/v1"
 	"github.com/croessner/nauthilus/v3/server/idp/clientauth"
 	"github.com/croessner/nauthilus/v3/server/idp/signing"
 	openapiclient "github.com/croessner/nauthilus/v3/server/openapi/client"
