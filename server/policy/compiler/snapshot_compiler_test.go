@@ -1634,6 +1634,12 @@ type compilerPluginOpener map[string]compilerPluginHandle
 
 func (o compilerPluginOpener) Open(path string) (pluginloader.PluginHandle, error) {
 	handle, ok := o[path]
+	if !ok && len(o) == 1 {
+		for _, fallback := range o {
+			return fallback, nil
+		}
+	}
+
 	if !ok {
 		return nil, os.ErrNotExist
 	}

@@ -31,6 +31,8 @@ import (
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
+const generationResourceCleanupTimeout = 30 * time.Second
+
 var (
 	// ErrGenerationUnavailable identifies capture before initial publication.
 	ErrGenerationUnavailable = errors.New("policy runtime generation is unavailable")
@@ -43,7 +45,81 @@ var (
 
 	// ErrCandidateConsumed identifies a candidate already committed or discarded.
 	ErrCandidateConsumed = errors.New("policy runtime generation candidate was already consumed")
+
+	// ErrGenerationStoreClosed identifies publication after process shutdown began.
+	ErrGenerationStoreClosed = errors.New("policy runtime generation store is closed")
+
+	// ErrGenerationRetirement identifies a resource-close failure retained by the store.
+	ErrGenerationRetirement = errors.New("policy runtime generation retirement failed")
 )
+
+type generationCommitError struct {
+	cause      error
+	generation uint64
+}
+
+type generationDrainError struct {
+	cause error
+}
+
+// Error reports that publication completed but predecessor retirement failed.
+func (e *generationCommitError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+
+	return fmt.Sprintf("runtime generation %d committed with retirement failure: %v", e.generation, e.cause)
+}
+
+// Unwrap exposes the retained retirement failure and its stable class.
+func (e *generationCommitError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+
+	return e.cause
+}
+
+// GenerationCommitted marks errors raised after the atomic publication point.
+func (*generationCommitError) GenerationCommitted() bool {
+	return true
+}
+
+// newGenerationCommitError preserves committed state without hiding retirement failure.
+func newGenerationCommitError(generation uint64, cause error) error {
+	return &generationCommitError{
+		cause:      fmt.Errorf("%w: %w", ErrGenerationRetirement, cause),
+		generation: generation,
+	}
+}
+
+// Error describes an interrupted generation-drain wait.
+func (e *generationDrainError) Error() string {
+	if e == nil || e.cause == nil {
+		return ErrGenerationRetirement.Error()
+	}
+
+	return e.cause.Error()
+}
+
+// Unwrap exposes the caller-wait failure and any retirement errors observed so far.
+func (e *generationDrainError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+
+	return e.cause
+}
+
+// GenerationDrainIncomplete distinguishes caller wait interruption from completed retirement errors.
+func (*generationDrainError) GenerationDrainIncomplete() bool {
+	return true
+}
+
+// newGenerationDrainError retains the interrupted wait and close errors already observed.
+func newGenerationDrainError(cause error) error {
+	return &generationDrainError{cause: cause}
+}
 
 // CallerAuthenticator creates trusted caller context from opaque credential evidence.
 type CallerAuthenticator interface {
@@ -155,6 +231,7 @@ type Generation struct {
 	bindings           *BindingSet
 	application        Application
 	resourceOwnership  *candidateResourceOwnership
+	lifetime           *generationLifetime
 	definitions        []registry.DefinitionContribution
 	credentialProfiles CredentialProfiles
 	admissionProfiles  AdmissionProfiles
@@ -272,15 +349,25 @@ func (g *Generation) Application() Application {
 
 // GenerationStore owns the process-visible atomic generation pointer.
 type GenerationStore struct {
-	active atomic.Pointer[Generation]
+	active           atomic.Pointer[Generation]
+	generations      map[*Generation]struct{}
+	retirementErrs   []error
+	shutdownDone     chan struct{}
+	mu               sync.Mutex
+	shuttingDown     bool
+	shutdownComplete bool
 }
 
 // NewGenerationStore constructs an empty generation store.
 func NewGenerationStore() *GenerationStore {
-	return &GenerationStore{}
+	return &GenerationStore{
+		generations:  make(map[*Generation]struct{}),
+		shutdownDone: make(chan struct{}),
+	}
 }
 
-// Active captures the complete currently published generation with one load.
+// Active returns a non-owning diagnostic or preparation view of the current generation.
+// Request and session code must use WithActive so retirement cannot invalidate resources.
 func (s *GenerationStore) Active() *Generation {
 	if s == nil {
 		return nil
@@ -289,7 +376,7 @@ func (s *GenerationStore) Active() *Generation {
 	return s.active.Load()
 }
 
-// RequireActive captures the complete generation or reports missing startup publication.
+// RequireActive returns a non-owning current generation or reports missing startup publication.
 func (s *GenerationStore) RequireActive() (*Generation, error) {
 	active := s.Active()
 	if active == nil {
@@ -302,8 +389,8 @@ func (s *GenerationStore) RequireActive() (*Generation, error) {
 // candidateResourceOwnership releases failed candidate resources in reverse order once.
 type candidateResourceOwnership struct {
 	resources []CandidateResource
-	once      sync.Once
 	err       error
+	once      sync.Once
 }
 
 // add takes candidate ownership of every non-nil returned resource.
@@ -324,9 +411,12 @@ func (o *candidateResourceOwnership) dispose(ctx context.Context) error {
 	}
 
 	o.once.Do(func() {
+		cleanupCtx, cancelCleanup := newGenerationCleanupContext(ctx)
+		defer cancelCleanup()
+
 		errs := make([]error, 0, len(o.resources))
 		for index := len(o.resources) - 1; index >= 0; index-- {
-			if err := o.resources[index].Dispose(ctx); err != nil {
+			if err := o.resources[index].Dispose(cleanupCtx); err != nil {
 				errs = append(errs, err)
 			}
 		}

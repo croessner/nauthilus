@@ -32,9 +32,9 @@ type Generation interface {
 	decisionGeneration() *runtimeGeneration
 }
 
-// GenerationSource captures the complete generation current for one call or session.
+// GenerationSource owns one complete generation for a bounded call or session scope.
 type GenerationSource interface {
-	Capture(context.Context) (Generation, error)
+	WithGeneration(context.Context, func(Generation) error) error
 }
 
 type callerAuthenticator interface {

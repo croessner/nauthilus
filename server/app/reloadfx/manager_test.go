@@ -28,6 +28,25 @@ type fakeGenerationCoordinator struct {
 	err   error
 }
 
+type committedGenerationTestError struct {
+	err error
+}
+
+// Error returns the injected post-commit failure.
+func (e committedGenerationTestError) Error() string {
+	return e.err.Error()
+}
+
+// Unwrap exposes the injected post-commit failure.
+func (e committedGenerationTestError) Unwrap() error {
+	return e.err
+}
+
+// GenerationCommitted reports that publication completed before this error.
+func (committedGenerationTestError) GenerationCommitted() bool {
+	return true
+}
+
 // Current returns the fake's active configuration snapshot.
 func (r *fakeReloader) Current() configfx.Snapshot {
 	return r.snap
@@ -200,6 +219,28 @@ func TestReloadManager_CallsApplyConfigInOrder(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("unexpected call order: got %v, want %v", got, want)
 		}
+	}
+}
+
+// TestReloadManagerContinuesAfterCommittedGenerationRetirementFailure keeps post-commit state aligned.
+func TestReloadManagerContinuesAfterCommittedGenerationRetirementFailure(t *testing.T) {
+	retirementFailure := errors.New("generation retirement failed")
+	recorder := &callRecorder{}
+	manager := NewManager(managerIn{
+		Gate:        opsfx.NewGate(),
+		Reloader:    &fakeReloader{snap: configfx.Snapshot{Version: 4}},
+		Coordinator: &fakeGenerationCoordinator{err: committedGenerationTestError{err: retirementFailure}},
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Reloadables: []Reloadable{&recordingReloadable{name: "post_commit", rec: recorder}},
+	})
+
+	err := manager.Reload(context.Background())
+	if !errors.Is(err, retirementFailure) {
+		t.Fatalf("Reload() error = %v, want committed retirement failure", err)
+	}
+
+	if got := recorder.snapshot(); len(got) != 1 || got[0] != "post_commit" {
+		t.Fatalf("post-commit calls = %v, want post_commit", got)
 	}
 }
 

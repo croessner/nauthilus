@@ -176,6 +176,53 @@ func TestVerifier_RejectsInvalidDetachedSignature(t *testing.T) {
 	}
 }
 
+// TestGenerationVerifierUsesOneArtifactSnapshot keeps every check on one immutable byte identity.
+func TestGenerationVerifierUsesOneArtifactSnapshot(t *testing.T) {
+	pluginDir := t.TempDir()
+	firstContent := []byte("native plugin identity A")
+	secondContent := []byte("native plugin identity B")
+	secondArtifact := writePluginArtifact(t, pluginDir, "second.so", secondContent)
+	keyPath, signature := writeMinisignFixture(t, pluginDir, secondArtifact)
+	artifact := writePluginArtifact(t, pluginDir, testPluginArtifactName, firstContent)
+	reader := &sequenceArtifactReader{contents: [][]byte{firstContent, secondContent}}
+	verifier := NewVerifier()
+	verifier.readArtifact = reader.ReadFile
+
+	_, err := verifySignedModuleWithVerifier(
+		t,
+		verifier,
+		pluginDir,
+		artifact,
+		keyPath,
+		signature,
+		config.PluginSignatureFormatMinisign,
+	)
+	if !errors.Is(err, ErrSignatureVerificationFailed) {
+		t.Fatalf("Verify() error = %v, want ErrSignatureVerificationFailed", err)
+	}
+
+	if reader.reads != 1 {
+		t.Fatalf("artifact snapshot reads = %d, want 1", reader.reads)
+	}
+}
+
+type sequenceArtifactReader struct {
+	contents [][]byte
+	reads    int
+}
+
+// ReadFile returns one detached artifact identity per verifier read.
+func (r *sequenceArtifactReader) ReadFile(string) ([]byte, error) {
+	if r.reads >= len(r.contents) {
+		return nil, errors.New("unexpected artifact snapshot read")
+	}
+
+	content := append([]byte(nil), r.contents[r.reads]...)
+	r.reads++
+
+	return content, nil
+}
+
 // verifySignedModule runs the verifier with one trusted signer and one signed module.
 func verifySignedModule(
 	t *testing.T,
@@ -187,7 +234,30 @@ func verifySignedModule(
 ) ([]VerifiedModule, error) {
 	t.Helper()
 
-	return NewVerifier().Verify(&config.PluginsSection{
+	return verifySignedModuleWithVerifier(
+		t,
+		NewVerifier(),
+		pluginDir,
+		artifact,
+		keyPath,
+		signature,
+		format,
+	)
+}
+
+// verifySignedModuleWithVerifier runs one signed-module fixture through a configured verifier.
+func verifySignedModuleWithVerifier(
+	t *testing.T,
+	verifier Verifier,
+	pluginDir string,
+	artifact string,
+	keyPath string,
+	signature string,
+	format string,
+) ([]VerifiedModule, error) {
+	t.Helper()
+
+	return verifier.Verify(&config.PluginsSection{
 		AllowedDirs:        []string{pluginDir},
 		VerificationPolicy: config.PluginVerificationPolicySignatureRequired,
 		Trust: config.PluginTrustSection{

@@ -23,6 +23,7 @@ import (
 	"net/netip"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -137,12 +138,14 @@ func TestDecisionServiceUsesConcreteRuntimeForGenericAndAuthnCheckpoints(t *test
 	)
 	authnService := mustDecisionService(t, &replaceableGenerationSource{generation: authnGeneration})
 
-	session, err := authnService.OpenSession(context.Background(), mustAuthorityInvocation(t, true))
-	if err != nil {
-		t.Fatalf("DecisionService.OpenSession() error = %v", err)
-	}
+	err := authnService.WithSession(context.Background(), mustAuthorityInvocation(t, true), func(session DecisionSession) error {
+		evaluateSessionCheckpoints(t, session, []string{"pre_auth", "auth_decision"})
 
-	evaluateSessionCheckpoints(t, session, []string{"pre_auth", "auth_decision"})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("DecisionService.WithSession() error = %v", err)
+	}
 
 	if genericIDs.callCount() != 1 || authnIDs.callCount() != 2 {
 		t.Fatalf("concrete runtime checkpoint calls = generic:%d authn:%d, want 1/2", genericIDs.callCount(), authnIDs.callCount())
@@ -430,7 +433,9 @@ func TestDecisionRuntimeEvaluationTimeoutCancelsProvider(t *testing.T) {
 func TestDecisionRuntimeDeadlineBoundsUncooperativeProvider(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	provider := &uncooperativeFactProvider{started: started, release: release}
+	provider := &capturingFactProvider{
+		provider: &uncooperativeFactProvider{started: started, release: release},
+	}
 	descriptor := decisionRuntimeProvider(t, "mail/stuck", "plugin.stuck.value", registry.ProviderFailureIndeterminate, nil)
 	catalog, target := decisionRuntimeCatalog(t, decision.EffectPermit, registry.NoMatchDeny, []registry.FactSchema{
 		decisionRuntimeFactSchema(t, "plugin.stuck.value", decision.FactSourcePlugin, false),
@@ -462,6 +467,10 @@ func TestDecisionRuntimeDeadlineBoundsUncooperativeProvider(t *testing.T) {
 		<-result
 
 		t.Fatal("evaluation exceeded its deadline while provider ignored cancellation")
+	}
+
+	if got := provider.captures.Load(); got != 1 {
+		t.Fatalf("provider call captures = %d, want 1", got)
 	}
 }
 
@@ -684,7 +693,9 @@ func TestDecisionRuntimeDeadlineBoundsUncooperativeSynchronousEffect(t *testing.
 	)
 	started := make(chan struct{})
 	release := make(chan struct{})
-	syncProvider := &uncooperativeSyncEffectProvider{started: started, release: release}
+	syncProvider := &capturingSyncEffectProvider{
+		provider: &uncooperativeSyncEffectProvider{started: started, release: release},
+	}
 	evaluator := mustCheckpointRuntime(t, checkpointRuntimeConfig{
 		catalog: catalog, ids: &sequenceIDGenerator{}, evaluationTimeout: 10 * time.Millisecond,
 		syncEffects: map[string]syncEffectBinding{"mail/sync_provider": {provider: syncProvider}},
@@ -709,6 +720,10 @@ func TestDecisionRuntimeDeadlineBoundsUncooperativeSynchronousEffect(t *testing.
 		<-result
 
 		t.Fatal("evaluation exceeded its deadline while synchronous effect ignored cancellation")
+	}
+
+	if got := syncProvider.captures.Load(); got != 1 {
+		t.Fatalf("synchronous effect call captures = %d, want 1", got)
 	}
 }
 
@@ -864,13 +879,16 @@ func TestDecisionRuntimeBoundsBlockingAndPanickingPostActionPreparation(t *testi
 		nil,
 	)
 	release := make(chan struct{})
+	capturedBlocking := &capturingPostActionProvider{
+		provider: &blockingPostActionProvider{release: release},
+	}
 
 	tests := []struct {
 		name     string
 		provider postActionProvider
 		release  chan struct{}
 	}{
-		{name: "blocking", provider: &blockingPostActionProvider{release: release}, release: release},
+		{name: "blocking", provider: capturedBlocking, release: release},
 		{name: "panic", provider: panickingPostActionProvider{}},
 	}
 
@@ -903,6 +921,10 @@ func TestDecisionRuntimeBoundsBlockingAndPanickingPostActionPreparation(t *testi
 				t.Fatal("post-action preparation exceeded the evaluation deadline")
 			}
 		})
+	}
+
+	if got := capturedBlocking.captures.Load(); got != 1 {
+		t.Fatalf("post-action preparation captures = %d, want 1", got)
 	}
 }
 
@@ -1034,6 +1056,23 @@ type uncooperativeSyncEffectProvider struct {
 	release <-chan struct{}
 }
 
+type capturingSyncEffectProvider struct {
+	provider syncEffectProvider
+	captures atomic.Int64
+}
+
+// Execute rejects synchronous work that bypasses pre-goroutine call capture.
+func (*capturingSyncEffectProvider) Execute(context.Context, effectExecution) effectsupervisor.Result {
+	return effectsupervisor.Failed("sync_effect_call_not_captured")
+}
+
+// captureSyncEffectCall records and returns one detached call owner.
+func (p *capturingSyncEffectProvider) captureSyncEffectCall() (syncEffectProvider, error) {
+	p.captures.Add(1)
+
+	return p.provider, nil
+}
+
 // Execute deliberately ignores cancellation until the test releases it.
 func (p *uncooperativeSyncEffectProvider) Execute(_ context.Context, _ effectExecution) effectsupervisor.Result {
 	close(p.started)
@@ -1087,6 +1126,26 @@ type recordingPostActionProvider struct {
 
 type blockingPostActionProvider struct {
 	release <-chan struct{}
+}
+
+type capturingPostActionProvider struct {
+	provider postActionProvider
+	captures atomic.Int64
+}
+
+// Prepare rejects post-action work that bypasses pre-goroutine call capture.
+func (*capturingPostActionProvider) Prepare(
+	context.Context,
+	effectExecution,
+) (effectsupervisor.Work, error) {
+	return nil, errors.New("post-action call was not captured")
+}
+
+// capturePostActionCall records and returns one detached preparation owner.
+func (p *capturingPostActionProvider) capturePostActionCall() (postActionProvider, error) {
+	p.captures.Add(1)
+
+	return p.provider, nil
 }
 
 type panickingPostActionProvider struct{}
@@ -1198,6 +1257,23 @@ type blockingFactProvider struct {
 type uncooperativeFactProvider struct {
 	started chan<- struct{}
 	release <-chan struct{}
+}
+
+type capturingFactProvider struct {
+	provider factProvider
+	captures atomic.Int64
+}
+
+// Collect rejects execution that bypasses pre-goroutine call capture.
+func (*capturingFactProvider) Collect(context.Context, factProviderInput) ([]providedFact, error) {
+	return nil, errors.New("fact provider call was not captured")
+}
+
+// captureFactProviderCall records and returns one detached call owner.
+func (p *capturingFactProvider) captureFactProviderCall() (factProvider, error) {
+	p.captures.Add(1)
+
+	return p.provider, nil
 }
 
 // Collect deliberately ignores cancellation until the test releases it.

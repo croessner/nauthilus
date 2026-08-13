@@ -17,6 +17,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -27,6 +28,7 @@ import (
 
 const (
 	candidateStatePrepared uint32 = iota
+	candidateStateValidating
 	candidateStateValidated
 	candidateStateCommitting
 	candidateStateCommitted
@@ -417,6 +419,7 @@ type candidateBuilder struct {
 	coordinator *Coordinator
 	previous    *Generation
 	resources   *candidateResourceOwnership
+	lifetime    *generationLifetime
 	config      config.File
 	policy      PolicyPreparation
 	extensions  ExtensionPreparation
@@ -425,6 +428,7 @@ type candidateBuilder struct {
 	admission   AdmissionPreparation
 	settings    SettingsPreparation
 	application ApplicationPreparation
+	bindings    *BindingSet
 	base        PreparationInput
 }
 
@@ -492,6 +496,7 @@ func newCandidateBuilder(
 	previous *Generation,
 ) *candidateBuilder {
 	base := PreparationInput{config: input.Config, id: input.ID}
+	resources := &candidateResourceOwnership{}
 	if previous != nil {
 		base.previous = previous.Config()
 	}
@@ -499,7 +504,8 @@ func newCandidateBuilder(
 	return &candidateBuilder{
 		coordinator: coordinator,
 		previous:    previous,
-		resources:   &candidateResourceOwnership{},
+		resources:   resources,
+		lifetime:    newGenerationLifetime(input.ID, resources, coordinator.logger),
 		config:      input.Config,
 		base:        base,
 	}
@@ -578,10 +584,12 @@ func (b *candidateBuilder) prepareSettings(ctx context.Context) error {
 
 // prepareApplication assembles the final generation-bound application authority.
 func (b *candidateBuilder) prepareApplication(ctx context.Context) error {
+	b.bindings = b.extensions.Bindings.withGenerationLifetime(b.lifetime)
+
 	prepared, err := b.coordinator.slots.Application.Prepare(ctx, ApplicationPreparationInput{
 		config: b.config, policy: b.policy.Snapshot, catalog: b.catalog.Catalog,
 		authenticator: b.caller.Authenticator, admission: b.admission.Authority,
-		bindings: b.extensions.Bindings, settings: b.settings.Settings, id: b.base.ID(),
+		bindings: b.bindings, settings: b.settings.Settings, id: b.base.ID(),
 	})
 
 	return completePreparation(ctx, b, "application", prepared, prepared.Resources, err, &b.application)
@@ -618,8 +626,9 @@ func (b *candidateBuilder) candidate() *Candidate {
 	generation := &Generation{
 		config: b.config, policy: b.policy.Snapshot.Clone(), catalog: b.catalog.Catalog.Clone(),
 		authenticator: b.caller.Authenticator, admission: b.admission.Authority,
-		bindings: b.extensions.Bindings.Clone(), application: b.application.Application,
+		bindings: b.bindings.Clone(), application: b.application.Application,
 		resourceOwnership:  b.resources,
+		lifetime:           b.lifetime,
 		definitions:        append([]registry.DefinitionContribution(nil), b.extensions.Definitions...),
 		credentialProfiles: CredentialProfiles{ids: b.caller.Credentials.IDs()},
 		admissionProfiles:  AdmissionProfiles{ids: b.admission.Profiles.IDs()},
@@ -634,7 +643,7 @@ func (c *Coordinator) Validate(ctx context.Context, candidate *Candidate) error 
 	ctx = normalizedGenerationContext(ctx)
 
 	if c == nil || candidate == nil || candidate.generation == nil ||
-		candidate.state.Load() != candidateStatePrepared {
+		!candidate.state.CompareAndSwap(candidateStatePrepared, candidateStateValidating) {
 		return ErrCandidateConsumed
 	}
 
@@ -648,7 +657,7 @@ func (c *Coordinator) Validate(ctx context.Context, candidate *Candidate) error 
 		}
 	}
 
-	if !candidate.state.CompareAndSwap(candidateStatePrepared, candidateStateValidated) {
+	if !candidate.state.CompareAndSwap(candidateStateValidating, candidateStateValidated) {
 		return ErrCandidateConsumed
 	}
 
@@ -664,11 +673,16 @@ func (c *Coordinator) Commit(ctx context.Context, candidate *Candidate) (*Genera
 		return nil, ErrCandidateConsumed
 	}
 
-	if !c.store.active.CompareAndSwap(candidate.previous, candidate.generation) {
+	committed, retirementErr := c.store.commit(ctx, candidate.previous, candidate.generation)
+	if !committed {
 		candidate.state.Store(candidateStateDiscarded)
-		_ = candidate.resources.dispose(ctx)
+		cleanupErr := candidate.resources.dispose(ctx)
 
-		return nil, ErrGenerationChanged
+		if retirementErr != nil {
+			return nil, errors.Join(retirementErr, cleanupErr)
+		}
+
+		return nil, errors.Join(ErrGenerationChanged, cleanupErr)
 	}
 
 	candidate.state.Store(candidateStateCommitted)
@@ -679,6 +693,19 @@ func (c *Coordinator) Commit(ctx context.Context, candidate *Candidate) (*Genera
 			"policy runtime generation committed",
 			slog.Uint64("runtime_generation", candidate.generation.ID()),
 		)
+	}
+
+	if retirementErr != nil && c.logger != nil {
+		c.logger.ErrorContext(
+			ctx,
+			"previous policy runtime generation retirement failed",
+			slog.Uint64("runtime_generation", candidate.previous.ID()),
+			slog.Any("error", retirementErr),
+		)
+	}
+
+	if retirementErr != nil {
+		return candidate.generation, newGenerationCommitError(candidate.generation.ID(), retirementErr)
 	}
 
 	return candidate.generation, nil
@@ -697,7 +724,7 @@ func (c *Coordinator) Discard(ctx context.Context, candidate *Candidate) error {
 			return ErrCandidateConsumed
 		case candidateStateDiscarded:
 			return candidate.resources.dispose(normalizedGenerationContext(ctx))
-		case candidateStateCommitting:
+		case candidateStateValidating, candidateStateCommitting:
 			return ErrCandidateConsumed
 		default:
 			if candidate.state.CompareAndSwap(state, candidateStateDiscarded) {
@@ -737,7 +764,7 @@ func (c *Coordinator) failPreparation(
 
 // failValidation marks and disposes one rejected complete candidate.
 func (c *Coordinator) failValidation(ctx context.Context, candidate *Candidate, cause error) error {
-	if candidate.state.CompareAndSwap(candidateStatePrepared, candidateStateDiscarded) {
+	if candidate.state.CompareAndSwap(candidateStateValidating, candidateStateDiscarded) {
 		cleanupErr := candidate.resources.dispose(ctx)
 		if cleanupErr != nil {
 			cause = fmt.Errorf("%w; candidate cleanup: %v", cause, cleanupErr)
@@ -829,4 +856,14 @@ func normalizedGenerationContext(ctx context.Context) context.Context {
 	}
 
 	return ctx
+}
+
+// retirementGenerationContext preserves values without starting cleanup time before final release.
+func retirementGenerationContext(ctx context.Context) context.Context {
+	return context.WithoutCancel(normalizedGenerationContext(ctx))
+}
+
+// newGenerationCleanupContext starts one bounded cleanup budget when disposal actually begins.
+func newGenerationCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(retirementGenerationContext(ctx), generationResourceCleanupTimeout)
 }

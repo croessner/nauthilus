@@ -950,21 +950,22 @@ func customBruteForcePolicy(name string, then policyruntime.DecisionPlan) policy
 	}
 }
 
+// activatePolicySnapshotForTest restores the exact prior policy authority semantics after one test.
 func activatePolicySnapshotForTest(t *testing.T, snapshot *policyruntime.Snapshot) {
 	t.Helper()
 
 	store := policyruntime.DefaultStore()
 
 	previous := store.Active()
+	if previous == nil {
+		previous = &policyruntime.Snapshot{DefaultPolicy: "test_inactive"}
+	}
+
 	if err := store.Activate(snapshot); err != nil {
 		t.Fatalf("activate policy snapshot: %v", err)
 	}
 
 	t.Cleanup(func() {
-		if previous == nil {
-			previous = &policyruntime.Snapshot{}
-		}
-
 		if err := store.Activate(previous); err != nil {
 			t.Fatalf("restore policy snapshot: %v", err)
 		}

@@ -105,6 +105,7 @@ type ModuleInstance struct {
 	VerifiedSigner    string
 	ModuleName        string
 	Status            ModuleStatus
+	ArtifactDigest    ArtifactDigest
 	Optional          bool
 }
 
@@ -172,20 +173,32 @@ func WithLogger(logger *slog.Logger) Option {
 }
 
 // Load opens, validates, and registers verified module artifacts.
-func (l *Loader) Load(verified []VerifiedModule) (*State, error) {
+func (l *Loader) Load(verified []VerifiedModule) (state *State, err error) {
 	if l == nil {
 		l = NewLoader()
 	}
 
 	registry := pluginregistry.NewRegistry()
-	state := &State{registry: registry}
+	state = &State{registry: registry}
+
+	if len(verified) == 0 {
+		return state, nil
+	}
+
+	stager, err := newVerifiedArtifactStager()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err = errors.Join(err, stager.close())
+	}()
 
 	for _, verifiedModule := range verified {
 		l.logModuleLoadStart(verifiedModule)
 
-		instance, err := l.loadModule(registry, verifiedModule)
-		if err != nil {
-			failed := failedModuleInstance(verifiedModule, err)
+		instance, loadErr := l.loadModule(registry, stager, verifiedModule)
+		if loadErr != nil {
+			failed := failedModuleInstance(verifiedModule, loadErr)
 			state.instances = append(state.instances, failed)
 
 			if verifiedModule.Module.Optional {
@@ -196,7 +209,7 @@ func (l *Loader) Load(verified []VerifiedModule) (*State, error) {
 
 			l.logRequiredFailure(failed)
 
-			return state, fmt.Errorf("%w: %w", ErrRequiredModuleFailed, err)
+			return state, fmt.Errorf("%w: %w", ErrRequiredModuleFailed, loadErr)
 		}
 
 		state.instances = append(state.instances, instance)
@@ -240,12 +253,17 @@ func DefaultState() (*State, bool) {
 }
 
 // loadModule performs the verified artifact to registered module transition.
-func (l *Loader) loadModule(registry *pluginregistry.Registry, verified VerifiedModule) (ModuleInstance, error) {
-	if err := checkVerifiedArtifact(verified.ArtifactPath); err != nil {
-		return ModuleInstance{}, moduleError(verified, "artifact", err)
+func (l *Loader) loadModule(
+	registry *pluginregistry.Registry,
+	stager *verifiedArtifactStager,
+	verified VerifiedModule,
+) (ModuleInstance, error) {
+	artifact, err := stager.stage(verified)
+	if err != nil {
+		return ModuleInstance{}, moduleError(verified, "artifact identity", err)
 	}
 
-	handle, err := l.opener.Open(verified.ArtifactPath)
+	handle, err := l.opener.Open(artifact.path)
 	if err != nil {
 		return ModuleInstance{}, moduleError(verified, "open", fmt.Errorf("%w: %w", ErrPluginOpenFailed, err))
 	}
@@ -283,6 +301,7 @@ func (l *Loader) loadModule(registry *pluginregistry.Registry, verified Verified
 		Capabilities:   registrar.Capabilities(),
 		ArtifactPath:   verified.ArtifactPath,
 		SignaturePath:  verified.SignaturePath,
+		ArtifactDigest: artifact.digest,
 		VerifiedSigner: verifiedSignerID(verified.Signer),
 		ModuleName:     verified.Module.Name,
 		Status:         ModuleStatusRegistered,
@@ -395,6 +414,7 @@ func failedModuleInstance(verified VerifiedModule, err error) ModuleInstance {
 		Module:            verified.Module,
 		ArtifactPath:      verified.ArtifactPath,
 		SignaturePath:     verified.SignaturePath,
+		ArtifactDigest:    verified.ArtifactDigest,
 		VerifiedSigner:    verifiedSignerID(verified.Signer),
 		ModuleName:        verified.Module.Name,
 		Status:            ModuleStatusFailed,

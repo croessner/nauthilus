@@ -17,12 +17,24 @@ package service
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
+
+type serviceGenerationResource struct {
+	disposals atomic.Int64
+}
+
+// Dispose records final generation retirement.
+func (r *serviceGenerationResource) Dispose(context.Context) error {
+	r.disposals.Add(1)
+
+	return nil
+}
 
 // TestGenerationSourceCapturesCommittedDecisionApplication proves one application capture seam.
 func TestGenerationSourceCapturesCommittedDecisionApplication(t *testing.T) {
@@ -42,9 +54,15 @@ func TestGenerationSourceCapturesCommittedDecisionApplication(t *testing.T) {
 		t.Fatalf("NewStoreGenerationSource() error = %v", err)
 	}
 
-	capturedFirst, err := source.Capture(context.Background())
+	var capturedFirst Generation
+
+	err = source.WithGeneration(context.Background(), func(generation Generation) error {
+		capturedFirst = generation
+
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("first Capture() error = %v", err)
+		t.Fatalf("first WithGeneration() error = %v", err)
 	}
 
 	if capturedFirst.decisionGeneration().id != first.ID() {
@@ -59,9 +77,15 @@ func TestGenerationSourceCapturesCommittedDecisionApplication(t *testing.T) {
 		t.Fatalf("second Apply() error = %v", err)
 	}
 
-	capturedSecond, err := source.Capture(context.Background())
+	var capturedSecond Generation
+
+	err = source.WithGeneration(context.Background(), func(generation Generation) error {
+		capturedSecond = generation
+
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("second Capture() error = %v", err)
+		t.Fatalf("second WithGeneration() error = %v", err)
 	}
 
 	if capturedSecond.decisionGeneration().id != second.ID() {
@@ -71,6 +95,165 @@ func TestGenerationSourceCapturesCommittedDecisionApplication(t *testing.T) {
 	if capturedFirst.decisionGeneration().id != 1 {
 		t.Fatal("previous capture changed after the next generation committed")
 	}
+}
+
+// TestGenerationSessionRetainsOneApplicationAcrossConcurrentReload proves checkpoint consistency and release.
+func TestGenerationSessionRetainsOneApplicationAcrossConcurrentReload(t *testing.T) {
+	store := policyruntime.NewGenerationStore()
+	firstResource := &serviceGenerationResource{}
+	secondResource := &serviceGenerationResource{}
+	firstEvaluator := &recordingCheckpointEvaluator{outcome: mustRuntimeEvaluation(t, 1, "generation-one")}
+	secondEvaluator := &recordingCheckpointEvaluator{outcome: mustRuntimeEvaluation(t, 2, "generation-two")}
+	coordinator := newTrackedServiceGenerationCoordinator(t, store, map[uint64]trackedServiceGeneration{
+		1: {evaluator: firstEvaluator, resource: firstResource},
+		2: {evaluator: secondEvaluator, resource: secondResource},
+	})
+
+	if err := applyTrackedServiceGeneration(coordinator, 1); err != nil {
+		t.Fatalf("first Apply() error = %v", err)
+	}
+
+	source, err := NewStoreGenerationSource(store)
+	if err != nil {
+		t.Fatalf("NewStoreGenerationSource() error = %v", err)
+	}
+
+	service := mustDecisionService(t, source)
+
+	err = service.WithSession(
+		context.Background(),
+		mustAuthorityInvocation(t, true),
+		func(session DecisionSession) error {
+			return exerciseSessionAcrossReload(t, session, coordinator, firstResource)
+		},
+	)
+	if err != nil {
+		t.Fatalf("DecisionService.WithSession() error = %v", err)
+	}
+
+	if got := firstResource.disposals.Load(); got != 1 {
+		t.Fatalf("first resource disposals after session = %d, want 1", got)
+	}
+
+	if firstEvaluator.callCount() != 2 || secondEvaluator.callCount() != 0 {
+		t.Fatalf(
+			"checkpoint calls = first:%d second:%d, want first:2 second:0",
+			firstEvaluator.callCount(),
+			secondEvaluator.callCount(),
+		)
+	}
+
+	if err = store.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	if got := secondResource.disposals.Load(); got != 1 {
+		t.Fatalf("second resource disposals after shutdown = %d, want 1", got)
+	}
+}
+
+// exerciseSessionAcrossReload proves both checkpoints retain the first generation owner.
+func exerciseSessionAcrossReload(
+	t *testing.T,
+	session DecisionSession,
+	coordinator *policyruntime.Coordinator,
+	firstResource *serviceGenerationResource,
+) error {
+	t.Helper()
+
+	evaluateSessionCheckpoints(t, session, []string{"pre_auth"})
+
+	reload := make(chan error, 1)
+
+	go func() {
+		reload <- applyTrackedServiceGeneration(coordinator, 2)
+	}()
+
+	if err := <-reload; err != nil {
+		return err
+	}
+
+	if got := firstResource.disposals.Load(); got != 0 {
+		t.Fatalf("first resource disposals during session = %d, want 0", got)
+	}
+
+	evaluateSessionCheckpoints(t, session, []string{"auth_decision"})
+
+	return nil
+}
+
+// applyTrackedServiceGeneration publishes one tracked Decision Service generation.
+func applyTrackedServiceGeneration(coordinator *policyruntime.Coordinator, id uint64) error {
+	_, err := coordinator.Apply(context.Background(), policyruntime.PrepareInput{
+		Config: &config.FileSettings{},
+		ID:     id,
+	})
+
+	return err
+}
+
+type trackedServiceGeneration struct {
+	evaluator checkpointEvaluator
+	resource  policyruntime.CandidateResource
+}
+
+// newTrackedServiceGenerationCoordinator builds generation-specific evaluators and resources.
+func newTrackedServiceGenerationCoordinator(
+	t *testing.T,
+	store *policyruntime.GenerationStore,
+	tracked map[uint64]trackedServiceGeneration,
+) *policyruntime.Coordinator {
+	t.Helper()
+
+	bindings, err := policyruntime.NewBindingSet(policyruntime.BindingSetInput{
+		PostActionAcceptance: &recordingEffectAcceptor{},
+	})
+	if err != nil {
+		t.Fatalf("NewBindingSet() error = %v", err)
+	}
+
+	slots := serviceGenerationSlots(t, bindings)
+	slots.CallerAuthentication = policyruntime.CallerAuthenticationPreparationFunc(func(
+		context.Context,
+		policyruntime.AuthorityPreparationInput,
+	) (policyruntime.CallerAuthenticationPreparation, error) {
+		return policyruntime.CallerAuthenticationPreparation{
+			Authenticator: &recordingCallerAuthenticator{caller: mustAuthorityCaller(t, true)},
+		}, nil
+	})
+	slots.Application = policyruntime.ApplicationPreparationFunc(func(
+		_ context.Context,
+		input policyruntime.ApplicationPreparationInput,
+	) (policyruntime.ApplicationPreparation, error) {
+		entry := tracked[input.ID()]
+
+		generation, generationErr := newRuntimeGeneration(input.ID(), runtimeGenerationDependencies{
+			authenticator: input.CallerAuthenticator(),
+			admission:     input.AdmissionAuthority(),
+			evaluator:     entry.evaluator,
+			supervisor:    bindings.PostActionAcceptance(),
+		})
+		if generationErr != nil {
+			return policyruntime.ApplicationPreparation{}, generationErr
+		}
+
+		application := generation.(policyruntime.Application)
+
+		return policyruntime.ApplicationPreparation{
+			Application: application,
+			Resources:   []policyruntime.CandidateResource{entry.resource},
+		}, nil
+	})
+
+	coordinator, err := policyruntime.NewCoordinator(policyruntime.CoordinatorConfig{
+		Store: store,
+		Slots: slots,
+	})
+	if err != nil {
+		t.Fatalf("NewCoordinator() error = %v", err)
+	}
+
+	return coordinator
 }
 
 // newServiceGenerationCoordinator assembles one explicit generation with the production application seam.

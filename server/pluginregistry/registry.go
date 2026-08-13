@@ -185,7 +185,7 @@ func (r *Registry) Components() []Component {
 
 	components := make([]Component, 0, len(r.order))
 	for _, name := range r.order {
-		components = append(components, cloneComponent(r.components[name]))
+		components = append(components, r.components[name].Clone())
 	}
 
 	return components
@@ -204,7 +204,7 @@ func (r *Registry) ComponentsByKind(kind ComponentKind) []Component {
 
 	components := make([]Component, 0, len(names))
 	for _, name := range names {
-		components = append(components, cloneComponent(r.components[name]))
+		components = append(components, r.components[name].Clone())
 	}
 
 	return components
@@ -311,7 +311,7 @@ func (r *Registry) Lookup(qualifiedName string) (Component, bool) {
 
 	component, ok := r.components[qualifiedName]
 
-	return cloneComponent(component), ok
+	return component.Clone(), ok
 }
 
 // register stores one committed component after collision checks.
@@ -326,7 +326,7 @@ func (r *Registry) register(component Component) error {
 	}
 
 	component.QualifiedName = qualifiedName
-	r.components[qualifiedName] = cloneComponent(component)
+	r.components[qualifiedName] = component.Clone()
 	r.byKind[component.Kind] = append(r.byKind[component.Kind], qualifiedName)
 	r.order = append(r.order, qualifiedName)
 
@@ -595,7 +595,7 @@ func (r *Registrar) Components() []Component {
 
 	components := make([]Component, 0, len(r.components))
 	for _, component := range r.components {
-		components = append(components, cloneComponent(component))
+		components = append(components, component.Clone())
 	}
 
 	return components
@@ -702,7 +702,7 @@ func (r *Registrar) registerComponent(component Component) error {
 
 	component.QualifiedName = qualifiedName
 	r.localNames[qualifiedName] = struct{}{}
-	r.components = append(r.components, cloneComponent(component))
+	r.components = append(r.components, component.Clone())
 
 	return nil
 }
@@ -844,8 +844,8 @@ func (r *Registrar) applyHookAuthorization(descriptor pluginapi.HookDescriptor) 
 	return descriptor, nil
 }
 
-// cloneComponent detaches mutable descriptor metadata from registry-owned state.
-func cloneComponent(component Component) Component {
+// Clone detaches mutable descriptor metadata while retaining the registered component owner.
+func (component Component) Clone() Component {
 	component.SourceDescriptor.Requires = slices.Clone(component.SourceDescriptor.Requires)
 	component.SourceDescriptor.After = slices.Clone(component.SourceDescriptor.After)
 	component.HookDescriptor.RequiredScopes = slices.Clone(component.HookDescriptor.RequiredScopes)

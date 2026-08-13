@@ -17,6 +17,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
@@ -39,6 +40,18 @@ type capturedSyncEffectProvider struct {
 
 type capturedPostActionProvider struct {
 	provider policyruntime.PostActionProvider
+}
+
+type runtimeFactProviderCallCapturer interface {
+	CaptureFactProviderCall() (policyruntime.FactProvider, error)
+}
+
+type runtimeSyncEffectCallCapturer interface {
+	CaptureSyncEffectCall() (policyruntime.SyncEffectProvider, error)
+}
+
+type runtimePostActionCallCapturer interface {
+	CapturePostActionCall() (policyruntime.PostActionProvider, error)
 }
 
 // NewRuntimeApplicationPreparationSlot returns the stable Decision Service assembly slot.
@@ -103,25 +116,31 @@ func (runtimeApplicationPreparationSlot) Prepare(
 	return policyruntime.ApplicationPreparation{Application: application}, nil
 }
 
-// Capture unwraps only the application authority owned by one atomic generation load.
-func (s *storeGenerationSource) Capture(context.Context) (Generation, error) {
+// WithGeneration unwraps one application authority under the store's complete lease scope.
+func (s *storeGenerationSource) WithGeneration(
+	ctx context.Context,
+	use func(Generation) error,
+) error {
 	if s == nil || s.store == nil {
-		return nil, fmt.Errorf("%w: generation store is required", ErrDecisionGenerationUnavailable)
+		return fmt.Errorf("%w: generation store is required", ErrDecisionGenerationUnavailable)
 	}
 
-	generation, err := s.store.RequireActive()
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDecisionGenerationUnavailable, err)
+	err := s.store.WithActive(ctx, func(generation *policyruntime.Generation) error {
+		application := generation.Application()
+
+		captured, ok := application.(Generation)
+		if !ok || nilDependency(captured) || application.GenerationID() != generation.ID() {
+			return fmt.Errorf("%w: generation application authority is incomplete", ErrDecisionGenerationUnavailable)
+		}
+
+		return use(captured)
+	})
+	if errors.Is(err, policyruntime.ErrGenerationUnavailable) ||
+		errors.Is(err, policyruntime.ErrGenerationStoreClosed) {
+		return fmt.Errorf("%w: %v", ErrDecisionGenerationUnavailable, err)
 	}
 
-	application := generation.Application()
-
-	captured, ok := application.(Generation)
-	if !ok || nilDependency(captured) || application.GenerationID() != generation.ID() {
-		return nil, fmt.Errorf("%w: generation application authority is incomplete", ErrDecisionGenerationUnavailable)
-	}
-
-	return captured, nil
+	return err
 }
 
 // Collect adapts the stable generation binding contract to the private evaluator contract.
@@ -149,6 +168,21 @@ func (p capturedFactProvider) Collect(
 	return result, nil
 }
 
+// captureFactProviderCall adapts one pre-retained runtime provider call.
+func (p capturedFactProvider) captureFactProviderCall() (factProvider, error) {
+	capturer, ok := p.provider.(runtimeFactProviderCallCapturer)
+	if !ok {
+		return p, nil
+	}
+
+	provider, err := capturer.CaptureFactProviderCall()
+	if err != nil {
+		return nil, err
+	}
+
+	return capturedFactProvider{provider: provider}, nil
+}
+
 // Execute adapts one private selected effect to the stable generation binding contract.
 func (p capturedSyncEffectProvider) Execute(
 	ctx context.Context,
@@ -162,6 +196,21 @@ func (p capturedSyncEffectProvider) Execute(
 	return p.provider.Execute(ctx, captured)
 }
 
+// captureSyncEffectCall adapts one pre-retained runtime effect call.
+func (p capturedSyncEffectProvider) captureSyncEffectCall() (syncEffectProvider, error) {
+	capturer, ok := p.provider.(runtimeSyncEffectCallCapturer)
+	if !ok {
+		return p, nil
+	}
+
+	provider, err := capturer.CaptureSyncEffectCall()
+	if err != nil {
+		return nil, err
+	}
+
+	return capturedSyncEffectProvider{provider: provider}, nil
+}
+
 // Prepare adapts one private post action to the stable generation binding contract.
 func (p capturedPostActionProvider) Prepare(
 	ctx context.Context,
@@ -173,6 +222,21 @@ func (p capturedPostActionProvider) Prepare(
 	}
 
 	return p.provider.Prepare(ctx, captured)
+}
+
+// capturePostActionCall adapts one pre-retained runtime preparation call.
+func (p capturedPostActionProvider) capturePostActionCall() (postActionProvider, error) {
+	capturer, ok := p.provider.(runtimePostActionCallCapturer)
+	if !ok {
+		return p, nil
+	}
+
+	provider, err := capturer.CapturePostActionCall()
+	if err != nil {
+		return nil, err
+	}
+
+	return capturedPostActionProvider{provider: provider}, nil
 }
 
 // capturedFactProviderBindings converts detached prepared bindings for evaluator ownership.

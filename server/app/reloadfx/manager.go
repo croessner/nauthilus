@@ -81,6 +81,7 @@ func NewManager(in managerIn) *Manager {
 func (m *Manager) Reload(ctx context.Context) error {
 	return m.gate.WithLock(func() error {
 		prev := m.reloader.Current()
+		errs := make([]error, 0)
 
 		snap, err := m.reloader.Prepare()
 		if err != nil {
@@ -89,17 +90,11 @@ func (m *Manager) Reload(ctx context.Context) error {
 		}
 
 		ctx = WithPreviousSnapshot(ctx, prev)
-		if err = m.coordinator.Apply(ctx, snap); err != nil {
-			m.logger.Error(
-				"policy runtime generation commit failed",
-				slog.Uint64("runtime_generation", snap.Version),
-				slog.Any("error", err),
-			)
-
+		if err = m.applyGeneration(ctx, snap); err != nil && !generationCommitted(err) {
 			return err
+		} else if err != nil {
+			errs = append(errs, err)
 		}
-
-		var errs []error
 
 		for _, r := range m.reloadables {
 			if r == nil {
@@ -116,4 +111,34 @@ func (m *Manager) Reload(ctx context.Context) error {
 
 		return errors.Join(errs...)
 	})
+}
+
+// applyGeneration publishes one complete candidate and records whether failure occurred before or after commit.
+func (m *Manager) applyGeneration(ctx context.Context, snap configfx.Snapshot) error {
+	err := m.coordinator.Apply(ctx, snap)
+	if err == nil {
+		return nil
+	}
+
+	message := "policy runtime generation commit failed"
+	if generationCommitted(err) {
+		message = "policy runtime generation committed with retirement failure"
+	}
+
+	m.logger.Error(
+		message,
+		slog.Uint64("runtime_generation", snap.Version),
+		slog.Any("error", err),
+	)
+
+	return err
+}
+
+// generationCommitted distinguishes post-publication failures from rejected candidates.
+func generationCommitted(err error) bool {
+	var committed interface {
+		GenerationCommitted() bool
+	}
+
+	return errors.As(err, &committed) && committed.GenerationCommitted()
 }

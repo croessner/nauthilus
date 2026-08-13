@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
@@ -34,9 +35,9 @@ const (
 
 var _ decision.Service = (*DecisionService)(nil)
 
-// DecisionSessionFactory is the narrow authn adapter boundary of the same authority.
+// DecisionSessionFactory is the scoped authn adapter boundary of the same authority.
 type DecisionSessionFactory interface {
-	OpenSession(context.Context, decision.Invocation) (DecisionSession, error)
+	WithSession(context.Context, decision.Invocation, func(DecisionSession) error) error
 }
 
 // DecisionSession evaluates multiple checkpoints on one admitted captured generation.
@@ -63,47 +64,71 @@ func (s *DecisionService) Evaluate(
 	ctx context.Context,
 	invocation decision.Invocation,
 ) (decision.DecisionResponse, error) {
-	session, err := s.openSession(ctx, invocation, false)
-	if err != nil {
-		return decision.DecisionResponse{}, err
-	}
+	var response decision.DecisionResponse
 
-	facts, err := decision.NewFactSet(nil)
-	if err != nil {
-		return decision.DecisionResponse{}, fmt.Errorf("%w: create unary fact set", ErrDecisionEvaluation)
-	}
+	err := s.withSession(ctx, invocation, false, func(session DecisionSession) error {
+		facts, factErr := decision.NewFactSet(nil)
+		if factErr != nil {
+			return fmt.Errorf("%w: create unary fact set", ErrDecisionEvaluation)
+		}
 
-	checkpoint, err := decision.NewCheckpoint(decision.CheckpointFinalDecision, facts)
-	if err != nil {
-		return decision.DecisionResponse{}, fmt.Errorf("%w: create unary checkpoint", ErrDecisionEvaluation)
-	}
+		checkpoint, checkpointErr := decision.NewCheckpoint(decision.CheckpointFinalDecision, facts)
+		if checkpointErr != nil {
+			return fmt.Errorf("%w: create unary checkpoint", ErrDecisionEvaluation)
+		}
 
-	return session.Evaluate(ctx, checkpoint)
+		var evaluationErr error
+
+		response, evaluationErr = session.Evaluate(ctx, checkpoint)
+
+		return evaluationErr
+	})
+
+	return response, err
 }
 
-// OpenSession authenticates and admits one exact builtin internal authn invocation.
-func (s *DecisionService) OpenSession(
+// WithSession owns one admitted builtin authn session for the complete callback scope.
+func (s *DecisionService) WithSession(
 	ctx context.Context,
 	invocation decision.Invocation,
-) (DecisionSession, error) {
-	return s.openSession(ctx, invocation, true)
+	use func(DecisionSession) error,
+) error {
+	return s.withSession(ctx, invocation, true, use)
 }
 
-// openSession owns the single authentication, admission, and generation-capture path.
-func (s *DecisionService) openSession(
+// withSession owns capture, authentication, admission, and scoped session release.
+func (s *DecisionService) withSession(
 	ctx context.Context,
 	invocation decision.Invocation,
 	requireInternalAuthn bool,
-) (*decisionSession, error) {
+	use func(DecisionSession) error,
+) error {
 	ctx = normalizeContext(ctx)
 
-	generation, err := s.captureGeneration(ctx)
-	if err != nil {
-		return nil, err
+	if use == nil {
+		return fmt.Errorf("%w: session callback is required", ErrDecisionServiceDependencyMissing)
 	}
 
-	ctx = policyruntime.ContextWithGeneration(ctx, generation.id)
+	return s.withGeneration(ctx, func(generation *runtimeGeneration) error {
+		generationCtx := policyruntime.ContextWithGeneration(ctx, generation.id)
 
+		session, err := s.openSession(generationCtx, generation, invocation, requireInternalAuthn)
+		if err != nil {
+			return err
+		}
+		defer session.close()
+
+		return use(session)
+	})
+}
+
+// openSession authenticates and admits one invocation against an already captured generation.
+func (s *DecisionService) openSession(
+	ctx context.Context,
+	generation *runtimeGeneration,
+	invocation decision.Invocation,
+	requireInternalAuthn bool,
+) (*decisionSession, error) {
 	caller, request, err := authenticateInvocation(ctx, generation, invocation)
 	if err != nil {
 		return nil, err
@@ -134,27 +159,27 @@ func validAuthnTarget(target decision.Target) bool {
 	}
 }
 
-// captureGeneration captures and validates the sole generation used by one call or session.
-func (s *DecisionService) captureGeneration(ctx context.Context) (*runtimeGeneration, error) {
+// withGeneration validates and uses the sole generation owned by one call or session.
+func (s *DecisionService) withGeneration(
+	ctx context.Context,
+	use func(*runtimeGeneration) error,
+) error {
 	if s == nil || nilDependency(s.generations) {
-		return nil, fmt.Errorf("%w: generation source is required", ErrDecisionServiceDependencyMissing)
+		return fmt.Errorf("%w: generation source is required", ErrDecisionServiceDependencyMissing)
 	}
 
-	captured, err := s.generations.Capture(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("%w: generation capture failed", ErrDecisionGenerationUnavailable)
-	}
+	return s.generations.WithGeneration(ctx, func(captured Generation) error {
+		if nilDependency(captured) {
+			return fmt.Errorf("%w: capture returned no generation", ErrDecisionGenerationUnavailable)
+		}
 
-	if nilDependency(captured) {
-		return nil, fmt.Errorf("%w: capture returned no generation", ErrDecisionGenerationUnavailable)
-	}
+		generation := captured.decisionGeneration()
+		if !generation.valid() {
+			return fmt.Errorf("%w: capture returned an incomplete generation", ErrDecisionGenerationUnavailable)
+		}
 
-	generation := captured.decisionGeneration()
-	if !generation.valid() {
-		return nil, fmt.Errorf("%w: capture returned an incomplete generation", ErrDecisionGenerationUnavailable)
-	}
-
-	return generation, nil
+		return use(generation)
+	})
 }
 
 // authenticateInvocation creates the sole trusted caller-bound request representation.
@@ -220,6 +245,9 @@ type decisionSession struct {
 	generation   *runtimeGeneration
 	request      decision.DecisionRequest
 	finalization decision.EvaluationFinalization
+	mu           sync.Mutex
+	evaluations  sync.WaitGroup
+	closed       bool
 }
 
 // Evaluate runs one checkpoint on the generation and evaluator captured by the session.
@@ -227,9 +255,10 @@ func (s *decisionSession) Evaluate(
 	ctx context.Context,
 	checkpoint decision.Checkpoint,
 ) (decision.DecisionResponse, error) {
-	if s == nil || !s.generation.valid() {
+	if s == nil || !s.beginEvaluation() {
 		return decision.DecisionResponse{}, fmt.Errorf("%w: invalid session or checkpoint", ErrDecisionEvaluation)
 	}
+	defer s.evaluations.Done()
 
 	ctx = policyruntime.ContextWithGeneration(ctx, s.generation.id)
 
@@ -259,4 +288,31 @@ func (s *decisionSession) Evaluate(
 	}
 
 	return outcome.response, nil
+}
+
+// beginEvaluation prevents checkpoint work from starting after scoped session release.
+func (s *decisionSession) beginEvaluation() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || !s.generation.valid() {
+		return false
+	}
+
+	s.evaluations.Add(1)
+
+	return true
+}
+
+// close rejects escaped checkpoints and waits for callbacks already in progress.
+func (s *decisionSession) close() {
+	if s == nil {
+		return
+	}
+
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+
+	s.evaluations.Wait()
 }

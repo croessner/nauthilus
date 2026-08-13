@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	stdlog "log"
 	"log/slog"
@@ -49,6 +50,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 	"github.com/croessner/nauthilus/v3/server/pluginruntime"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/privilege"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/util"
@@ -439,26 +441,62 @@ func startRuntimeLoopServices(p *runtimeLifecycleParams) error {
 func stopRuntimeLifecycle(stopCtx context.Context, p *runtimeLifecycleParams, pluginRunner *pluginruntime.Runner) error {
 	snap := p.Store.cfgProvider.Current()
 
-	stopRuntimePluginRunner(stopCtx, pluginRunner)
 	p.Cancel()
 	stopRuntimeLoopServices(stopCtx, p)
 	waitForRuntimeShutdown(stopCtx, p)
+	ownerErr := stopGenerationOwnedRuntime(
+		stopCtx,
+		policyruntime.DefaultGenerationStore().Shutdown,
+		func(ctx context.Context) error { return stopRuntimePluginRunner(ctx, pluginRunner) },
+		lualib.StopGlobalCache,
+	)
 	saveRuntimeStats(stopCtx, p, snap.File)
-	lualib.StopGlobalCache()
 	shutdownRuntimeTelemetry(stopCtx)
 
-	return nil
+	return ownerErr
 }
 
-// stopRuntimePluginRunner stops the native plugin runtime best-effort.
-func stopRuntimePluginRunner(stopCtx context.Context, pluginRunner *pluginruntime.Runner) {
+// stopGenerationOwnedRuntime preserves process-lifetime owners when generation drain is incomplete.
+func stopGenerationOwnedRuntime(
+	ctx context.Context,
+	shutdownGenerations func(context.Context) error,
+	stopPlugins func(context.Context) error,
+	stopLua func(),
+) error {
+	generationErr := shutdownGenerations(ctx)
+	if generationDrainIncomplete(generationErr) {
+		return generationErr
+	}
+
+	pluginErr := stopPlugins(ctx)
+
+	stopLua()
+
+	return errors.Join(generationErr, pluginErr)
+}
+
+// generationDrainIncomplete recognizes only caller-wait interruption reported by the generation owner.
+func generationDrainIncomplete(err error) bool {
+	var incomplete interface {
+		GenerationDrainIncomplete() bool
+	}
+
+	return errors.As(err, &incomplete) && incomplete.GenerationDrainIncomplete()
+}
+
+// stopRuntimePluginRunner stops process-lifetime native objects after generations drain.
+func stopRuntimePluginRunner(stopCtx context.Context, pluginRunner *pluginruntime.Runner) error {
 	if pluginRunner == nil {
-		return
+		return nil
 	}
 
 	if err := pluginRunner.Stop(stopCtx); err != nil {
 		stdlog.Printf("Unable to stop native plugin runtime. Error: %v", err)
+
+		return err
 	}
+
+	return nil
 }
 
 // stopRuntimeLoopServices stops runtime loop services best-effort.

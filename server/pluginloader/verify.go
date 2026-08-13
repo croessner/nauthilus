@@ -57,7 +57,8 @@ const (
 
 // Verifier validates configured plugin artifacts before plugin.Open is allowed.
 type Verifier struct {
-	logger *slog.Logger
+	readArtifact func(string) ([]byte, error)
+	logger       *slog.Logger
 }
 
 // VerifierOption customizes artifact verification.
@@ -65,11 +66,15 @@ type VerifierOption func(*Verifier)
 
 // VerifiedModule describes a module whose loader-owned artifact checks completed.
 type VerifiedModule struct {
-	Module        config.PluginModule
-	Signer        *config.PluginTrustSigner
-	ArtifactPath  string
-	SignaturePath string
+	Module         config.PluginModule
+	Signer         *config.PluginTrustSigner
+	ArtifactPath   string
+	SignaturePath  string
+	ArtifactDigest ArtifactDigest
 }
+
+// ArtifactDigest is the immutable SHA-256 identity of one loaded native artifact.
+type ArtifactDigest [sha256.Size]byte
 
 type detachedPublicKey struct {
 	keyID []byte
@@ -86,7 +91,7 @@ type detachedSignature struct {
 
 // NewVerifier returns the default plugin artifact verifier.
 func NewVerifier(options ...VerifierOption) Verifier {
-	verifier := Verifier{}
+	verifier := Verifier{readArtifact: os.ReadFile}
 	for _, option := range options {
 		option(&verifier)
 	}
@@ -152,25 +157,33 @@ func (v Verifier) verifyModule(
 		return VerifiedModule{}, fmt.Errorf("%w: %s", ErrArtifactOutsideAllowedDirs, artifactPath)
 	}
 
-	if err := v.verifyChecksum(plugins.EffectiveVerificationPolicy(), module, artifactPath); err != nil {
+	artifactContent, err := v.artifactSnapshot(artifactPath)
+	if err != nil {
 		return VerifiedModule{}, err
 	}
 
-	signaturePath, signer, err := v.verifySignature(plugins, module, artifactPath)
+	digest := sha256.Sum256(artifactContent)
+
+	if err := v.verifyChecksum(plugins.EffectiveVerificationPolicy(), module, digest); err != nil {
+		return VerifiedModule{}, err
+	}
+
+	signaturePath, signer, err := v.verifySignature(plugins, module, artifactPath, artifactContent)
 	if err != nil {
 		return VerifiedModule{}, err
 	}
 
 	return VerifiedModule{
-		Module:        *module,
-		Signer:        signer,
-		ArtifactPath:  artifactPath,
-		SignaturePath: signaturePath,
+		Module:         *module,
+		Signer:         signer,
+		ArtifactPath:   artifactPath,
+		SignaturePath:  signaturePath,
+		ArtifactDigest: digest,
 	}, nil
 }
 
 // verifyChecksum verifies SHA-256 metadata when policy or configured fields require it.
-func (v Verifier) verifyChecksum(policy string, module *config.PluginModule, artifactPath string) error {
+func (v Verifier) verifyChecksum(policy string, module *config.PluginModule, actual ArtifactDigest) error {
 	if policy == config.PluginVerificationPolicyOff || module.Checksum == "" {
 		return nil
 	}
@@ -180,12 +193,7 @@ func (v Verifier) verifyChecksum(policy string, module *config.PluginModule, art
 		return err
 	}
 
-	actual, err := artifactSHA256(artifactPath)
-	if err != nil {
-		return err
-	}
-
-	if subtle.ConstantTimeCompare(actual, checksum.Digest) != 1 {
+	if subtle.ConstantTimeCompare(actual[:], checksum.Digest) != 1 {
 		return fmt.Errorf("%w: %s", ErrChecksumMismatch, module.Name)
 	}
 
@@ -197,6 +205,7 @@ func (v Verifier) verifySignature(
 	plugins *config.PluginsSection,
 	module *config.PluginModule,
 	artifactPath string,
+	artifactContent []byte,
 ) (string, *config.PluginTrustSigner, error) {
 	if plugins.EffectiveVerificationPolicy() == config.PluginVerificationPolicyOff || module.Signature == "" {
 		return "", nil, nil
@@ -222,7 +231,13 @@ func (v Verifier) verifySignature(
 		return signaturePath, signer, err
 	}
 
-	if err := verifyDetachedSignature(signatureRef.Format, artifactPath, signaturePath, publicKey); err != nil {
+	if err := verifyDetachedSignature(
+		signatureRef.Format,
+		artifactPath,
+		artifactContent,
+		signaturePath,
+		publicKey,
+	); err != nil {
 		return signaturePath, signer, err
 	}
 
@@ -266,7 +281,13 @@ func parseDetachedPublicKey(raw []byte) (detachedPublicKey, error) {
 }
 
 // verifyDetachedSignature dispatches verification by configured signature format.
-func verifyDetachedSignature(format string, artifactPath string, signaturePath string, publicKey detachedPublicKey) error {
+func verifyDetachedSignature(
+	format string,
+	artifactPath string,
+	artifactContent []byte,
+	signaturePath string,
+	publicKey detachedPublicKey,
+) error {
 	raw, err := os.ReadFile(signaturePath)
 	if err != nil {
 		return fmt.Errorf("read plugin signature %q: %w", signaturePath, err)
@@ -279,14 +300,14 @@ func verifyDetachedSignature(format string, artifactPath string, signaturePath s
 			return err
 		}
 
-		return verifyMinisignSignature(artifactPath, publicKey, signature)
+		return verifyMinisignSignature(artifactPath, artifactContent, publicKey, signature)
 	case config.PluginSignatureFormatSignify:
 		signature, err := parseSignifySignature(raw)
 		if err != nil {
 			return err
 		}
 
-		return verifyPrimaryDetachedSignature(artifactPath, publicKey, signature)
+		return verifyPrimaryDetachedSignature(artifactPath, artifactContent, publicKey, signature)
 	default:
 		return fmt.Errorf("%w: unsupported signature format %q", ErrSignatureVerificationFailed, format)
 	}
@@ -358,8 +379,13 @@ func parseDetachedSignatureBlob(value string) (detachedSignature, error) {
 }
 
 // verifyMinisignSignature verifies both the artifact and trusted comment signatures.
-func verifyMinisignSignature(artifactPath string, publicKey detachedPublicKey, signature detachedSignature) error {
-	if err := verifyPrimaryDetachedSignature(artifactPath, publicKey, signature); err != nil {
+func verifyMinisignSignature(
+	artifactPath string,
+	artifactContent []byte,
+	publicKey detachedPublicKey,
+	signature detachedSignature,
+) error {
+	if err := verifyPrimaryDetachedSignature(artifactPath, artifactContent, publicKey, signature); err != nil {
 		return err
 	}
 
@@ -372,12 +398,17 @@ func verifyMinisignSignature(artifactPath string, publicKey detachedPublicKey, s
 }
 
 // verifyPrimaryDetachedSignature verifies the artifact payload signature.
-func verifyPrimaryDetachedSignature(artifactPath string, publicKey detachedPublicKey, signature detachedSignature) error {
+func verifyPrimaryDetachedSignature(
+	artifactPath string,
+	artifactContent []byte,
+	publicKey detachedPublicKey,
+	signature detachedSignature,
+) error {
 	if subtle.ConstantTimeCompare(publicKey.keyID, signature.keyID) != 1 {
 		return fmt.Errorf("%w: signer key id mismatch", ErrSignatureVerificationFailed)
 	}
 
-	message, err := artifactSignatureMessage(artifactPath, signature.algorithm)
+	message, err := artifactSignatureMessage(artifactPath, artifactContent, signature.algorithm)
 	if err != nil {
 		return err
 	}
@@ -389,23 +420,26 @@ func verifyPrimaryDetachedSignature(artifactPath string, publicKey detachedPubli
 	return nil
 }
 
-// artifactSignatureMessage returns the raw or BLAKE2b-prehashed artifact bytes.
-func artifactSignatureMessage(path string, algorithm string) ([]byte, error) {
+// artifactSignatureMessage returns the raw or BLAKE2b-prehashed artifact snapshot.
+func artifactSignatureMessage(
+	path string,
+	content []byte,
+	algorithm string,
+) ([]byte, error) {
 	switch algorithm {
 	case detachedSignatureAlgorithmRaw:
-		message, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read plugin artifact %q for signature verification: %w", path, err)
-		}
-
-		return message, nil
+		return content, nil
 	case detachedSignatureAlgorithmHashed:
-		sum, err := artifactBLAKE2b512(path)
+		hasher, err := blake2b.New512(nil)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("create BLAKE2b hasher: %w", err)
 		}
 
-		return sum, nil
+		if _, err = hasher.Write(content); err != nil {
+			return nil, fmt.Errorf("hash plugin artifact %q: %w", path, err)
+		}
+
+		return hasher.Sum(nil), nil
 	default:
 		return nil, fmt.Errorf("%w: unsupported signature algorithm", ErrSignatureVerificationFailed)
 	}
@@ -548,6 +582,38 @@ func artifactSHA256(path string) ([]byte, error) {
 	hasher := sha256.New()
 
 	return artifactHash(path, hasher)
+}
+
+// DigestArtifact streams an artifact into its immutable SHA-256 identity.
+func DigestArtifact(path string) (ArtifactDigest, error) {
+	encoded, err := artifactSHA256(path)
+	if err != nil {
+		return ArtifactDigest{}, err
+	}
+
+	var digest ArtifactDigest
+	copy(digest[:], encoded)
+
+	return digest, nil
+}
+
+// artifactReader returns the configured snapshot reader or the operating-system default.
+func (v Verifier) artifactReader() func(string) ([]byte, error) {
+	if v.readArtifact == nil {
+		return os.ReadFile
+	}
+
+	return v.readArtifact
+}
+
+// artifactSnapshot reads the only byte identity used by all verifier checks for one module.
+func (v Verifier) artifactSnapshot(path string) ([]byte, error) {
+	content, err := v.artifactReader()(path)
+	if err != nil {
+		return nil, fmt.Errorf("read plugin artifact %q for verification: %w", path, err)
+	}
+
+	return content, nil
 }
 
 // artifactHash streams an artifact through the supplied hash.

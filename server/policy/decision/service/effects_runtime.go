@@ -33,6 +33,14 @@ type postActionProvider interface {
 	Prepare(context.Context, effectExecution) (effectsupervisor.Work, error)
 }
 
+type syncEffectProviderCallCapturer interface {
+	captureSyncEffectCall() (syncEffectProvider, error)
+}
+
+type postActionProviderCallCapturer interface {
+	capturePostActionCall() (postActionProvider, error)
+}
+
 type syncEffectBinding struct {
 	provider syncEffectProvider
 }
@@ -382,6 +390,11 @@ func (r *checkpointRuntime) executeEffect(
 		result := make(chan effectsupervisor.Result, 1)
 		provider := r.syncEffects[planned.definition.Provider()].provider
 
+		provider, err := captureSyncEffectProvider(provider)
+		if err != nil {
+			return effectsupervisor.StateFailed, false
+		}
+
 		go executeSyncEffect(ctx, provider, planned.execution, result)
 
 		select {
@@ -427,11 +440,16 @@ func preparePostAction(
 	provider postActionProvider,
 	execution effectExecution,
 ) (effectsupervisor.Work, error) {
+	provider, err := capturePostActionProvider(provider)
+	if err != nil {
+		return nil, err
+	}
+
 	result := make(chan postActionPreparation)
 
 	go func() {
-		work, err := callPostActionPrepare(ctx, provider, execution)
-		prepared := postActionPreparation{work: work, err: err}
+		work, prepareErr := callPostActionPrepare(ctx, provider, execution)
+		prepared := postActionPreparation{work: work, err: prepareErr}
 
 		select {
 		case result <- prepared:
@@ -446,6 +464,26 @@ func preparePostAction(
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// captureSyncEffectProvider reserves generation ownership before effect goroutines start.
+func captureSyncEffectProvider(provider syncEffectProvider) (syncEffectProvider, error) {
+	capturer, ok := provider.(syncEffectProviderCallCapturer)
+	if !ok {
+		return provider, nil
+	}
+
+	return capturer.captureSyncEffectCall()
+}
+
+// capturePostActionProvider reserves generation ownership before preparation goroutines start.
+func capturePostActionProvider(provider postActionProvider) (postActionProvider, error) {
+	capturer, ok := provider.(postActionProviderCallCapturer)
+	if !ok {
+		return provider, nil
+	}
+
+	return capturer.capturePostActionCall()
 }
 
 // callPostActionPrepare converts a provider panic into a preparation error.

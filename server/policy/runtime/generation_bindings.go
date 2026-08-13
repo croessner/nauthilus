@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
@@ -228,11 +229,48 @@ type PostActionProvider interface {
 	Prepare(context.Context, EffectExecution) (effectsupervisor.Work, error)
 }
 
+type generationPostActionProvider struct {
+	provider PostActionProvider
+	lifetime *generationLifetime
+}
+
+type generationFactProvider struct {
+	provider FactProvider
+	lifetime *generationLifetime
+}
+
+type generationFactProviderCall struct {
+	provider FactProvider
+	lease    *generationLease
+}
+
+type generationSyncEffectProvider struct {
+	provider SyncEffectProvider
+	lifetime *generationLifetime
+}
+
+type generationSyncEffectProviderCall struct {
+	provider SyncEffectProvider
+	lease    *generationLease
+}
+
+type generationPostActionProviderCall struct {
+	provider PostActionProvider
+	lease    *generationLease
+}
+
+type generationExecutableWork struct {
+	work  effectsupervisor.ExecutableWork
+	lease *generationLease
+	once  sync.Once
+}
+
 // BindingSetInput carries every prepared provider binding into one immutable set.
 type BindingSetInput struct {
 	FactProviders        map[string]FactProviderBinding
 	SyncEffects          map[string]SyncEffectProvider
 	PostActions          map[string]PostActionProvider
+	NativeModules        []NativeModuleBindingInput
 	PostActionAcceptance effectsupervisor.Acceptor
 }
 
@@ -241,6 +279,7 @@ type BindingSet struct {
 	factProviders        map[string]FactProviderBinding
 	syncEffects          map[string]SyncEffectProvider
 	postActions          map[string]PostActionProvider
+	nativeModules        map[string]NativeModuleBinding
 	postActionAcceptance effectsupervisor.Acceptor
 }
 
@@ -265,10 +304,16 @@ func NewBindingSet(input BindingSetInput) (*BindingSet, error) {
 		return nil, err
 	}
 
+	nativeModules, err := newNativeModuleBindings(input.NativeModules)
+	if err != nil {
+		return nil, err
+	}
+
 	return &BindingSet{
 		factProviders:        factProviders,
 		syncEffects:          syncEffects,
 		postActions:          postActions,
+		nativeModules:        nativeModules,
 		postActionAcceptance: input.PostActionAcceptance,
 	}, nil
 }
@@ -283,8 +328,210 @@ func (s *BindingSet) Clone() *BindingSet {
 		factProviders:        cloneMapValues(s.factProviders),
 		syncEffects:          cloneMapValues(s.syncEffects),
 		postActions:          cloneMapValues(s.postActions),
+		nativeModules:        cloneNativeModuleBindings(s.nativeModules),
 		postActionAcceptance: s.postActionAcceptance,
 	}
+}
+
+// withGenerationLifetime binds detached post-action ownership to one candidate lifetime.
+func (s *BindingSet) withGenerationLifetime(lifetime *generationLifetime) *BindingSet {
+	if s == nil {
+		return nil
+	}
+
+	result := s.Clone()
+	for id, binding := range result.factProviders {
+		binding.Provider = &generationFactProvider{provider: binding.Provider, lifetime: lifetime}
+		result.factProviders[id] = binding
+	}
+
+	for id, provider := range result.syncEffects {
+		result.syncEffects[id] = &generationSyncEffectProvider{provider: provider, lifetime: lifetime}
+	}
+
+	for id, provider := range result.postActions {
+		result.postActions[id] = &generationPostActionProvider{provider: provider, lifetime: lifetime}
+	}
+
+	return result
+}
+
+// CaptureFactProviderCall retains one generation before asynchronous fact collection starts.
+func (p *generationFactProvider) CaptureFactProviderCall() (FactProvider, error) {
+	if p == nil || nilInterface(p.provider) || p.lifetime == nil {
+		return nil, fmt.Errorf("%w: generation fact-provider owner is incomplete", ErrInvalidGenerationBinding)
+	}
+
+	lease := p.lifetime.retain()
+	if lease == nil {
+		return nil, ErrGenerationUnavailable
+	}
+
+	return &generationFactProviderCall{provider: p.provider, lease: lease}, nil
+}
+
+// Collect provides safe synchronous fallback ownership for direct provider callers.
+func (p *generationFactProvider) Collect(
+	ctx context.Context,
+	input FactProviderInput,
+) ([]ProvidedFact, error) {
+	captured, err := p.CaptureFactProviderCall()
+	if err != nil {
+		return nil, err
+	}
+
+	return captured.Collect(ctx, input)
+}
+
+// Collect releases one captured provider-call lease after completion or panic unwinding.
+func (p *generationFactProviderCall) Collect(
+	ctx context.Context,
+	input FactProviderInput,
+) ([]ProvidedFact, error) {
+	defer func() {
+		_ = p.lease.release()
+	}()
+
+	return p.provider.Collect(ctx, input)
+}
+
+// CaptureSyncEffectCall retains one generation before asynchronous effect execution starts.
+func (p *generationSyncEffectProvider) CaptureSyncEffectCall() (SyncEffectProvider, error) {
+	if p == nil || nilInterface(p.provider) || p.lifetime == nil {
+		return nil, fmt.Errorf("%w: generation sync-effect owner is incomplete", ErrInvalidGenerationBinding)
+	}
+
+	lease := p.lifetime.retain()
+	if lease == nil {
+		return nil, ErrGenerationUnavailable
+	}
+
+	return &generationSyncEffectProviderCall{provider: p.provider, lease: lease}, nil
+}
+
+// Execute provides safe synchronous fallback ownership for direct effect callers.
+func (p *generationSyncEffectProvider) Execute(
+	ctx context.Context,
+	input EffectExecution,
+) effectsupervisor.Result {
+	captured, err := p.CaptureSyncEffectCall()
+	if err != nil {
+		return effectsupervisor.Failed("generation_unavailable")
+	}
+
+	return captured.Execute(ctx, input)
+}
+
+// Execute releases one captured effect-call lease after completion or panic unwinding.
+func (p *generationSyncEffectProviderCall) Execute(
+	ctx context.Context,
+	input EffectExecution,
+) effectsupervisor.Result {
+	defer func() {
+		_ = p.lease.release()
+	}()
+
+	return p.provider.Execute(ctx, input)
+}
+
+// CapturePostActionCall retains one generation before asynchronous preparation starts.
+func (p *generationPostActionProvider) CapturePostActionCall() (PostActionProvider, error) {
+	if p == nil || nilInterface(p.provider) || p.lifetime == nil {
+		return nil, fmt.Errorf("%w: generation post-action owner is incomplete", ErrInvalidGenerationBinding)
+	}
+
+	lease := p.lifetime.retain()
+	if lease == nil {
+		return nil, ErrGenerationUnavailable
+	}
+
+	return &generationPostActionProviderCall{provider: p.provider, lease: lease}, nil
+}
+
+// Prepare provides safe synchronous fallback capture for direct post-action callers.
+func (p *generationPostActionProvider) Prepare(
+	ctx context.Context,
+	execution EffectExecution,
+) (effectsupervisor.Work, error) {
+	captured, err := p.CapturePostActionCall()
+	if err != nil {
+		return nil, err
+	}
+
+	return captured.Prepare(ctx, execution)
+}
+
+// Prepare transfers its captured call lease to executable work or releases it on failure.
+func (p *generationPostActionProviderCall) Prepare(
+	ctx context.Context,
+	execution EffectExecution,
+) (effectsupervisor.Work, error) {
+	transferred := false
+	defer func() {
+		if !transferred {
+			_ = p.lease.release()
+		}
+	}()
+
+	work, err := p.provider.Prepare(ctx, execution)
+	if err != nil {
+		if executable, ok := work.(effectsupervisor.ExecutableWork); ok && !nilInterface(executable) {
+			cleanupRejectedGenerationWork(executable)
+		}
+
+		return nil, err
+	}
+
+	executable, ok := work.(effectsupervisor.ExecutableWork)
+	if !ok || nilInterface(executable) {
+		return nil, fmt.Errorf("%w: post-action work is not executable", ErrInvalidGenerationBinding)
+	}
+
+	transferred = true
+
+	return &generationExecutableWork{work: executable, lease: p.lease}, nil
+}
+
+// Validate delegates immutable work validation to the captured provider owner.
+func (w *generationExecutableWork) Validate() error {
+	if w == nil || nilInterface(w.work) {
+		return effectsupervisor.ErrInvalidWork
+	}
+
+	return w.work.Validate()
+}
+
+// Execute delegates detached execution without consulting ambient bindings.
+func (w *generationExecutableWork) Execute(ctx context.Context) effectsupervisor.Result {
+	if w == nil || nilInterface(w.work) {
+		return effectsupervisor.Failed("invalid_generation_work")
+	}
+
+	return w.work.Execute(ctx)
+}
+
+// Cleanup releases provider work and its retained generation exactly once.
+func (w *generationExecutableWork) Cleanup() {
+	if w == nil {
+		return
+	}
+
+	w.once.Do(func() {
+		defer func() {
+			_ = w.lease.release()
+		}()
+
+		w.work.Cleanup()
+	})
+}
+
+// cleanupRejectedGenerationWork contains cleanup panics when ownership cannot transfer.
+func cleanupRejectedGenerationWork(work effectsupervisor.ExecutableWork) {
+	defer func() {
+		_ = recover()
+	}()
+
+	work.Cleanup()
 }
 
 // FactProviderIDs returns deterministic prepared fact-provider identities.
@@ -314,6 +561,15 @@ func (s *BindingSet) PostActionIDs() []string {
 	return sortedBindingIDs(s.postActions)
 }
 
+// NativeModuleIDs returns deterministic captured native module identities.
+func (s *BindingSet) NativeModuleIDs() []string {
+	if s == nil {
+		return nil
+	}
+
+	return sortedBindingIDs(s.nativeModules)
+}
+
 // FactProviders returns a detached binding index over immutable prepared owners.
 func (s *BindingSet) FactProviders() map[string]FactProviderBinding {
 	if s == nil {
@@ -339,6 +595,15 @@ func (s *BindingSet) PostActions() map[string]PostActionProvider {
 	}
 
 	return cloneMapValues(s.postActions)
+}
+
+// NativeModules returns detached native indexes over process-lifetime component owners.
+func (s *BindingSet) NativeModules() map[string]NativeModuleBinding {
+	if s == nil {
+		return nil
+	}
+
+	return cloneNativeModuleBindings(s.nativeModules)
 }
 
 // PostActionAcceptance returns the captured host ownership-transfer authority.

@@ -203,20 +203,72 @@ func TestDecisionServiceUnaryCallCapturesOneGenerationDuringReplacement(t *testi
 
 func TestDecisionSessionReusesGenerationAndRuntimeAcrossCheckpoints(t *testing.T) {
 	evaluator := &recordingCheckpointEvaluator{outcome: mustRuntimeEvaluation(t, 7, "decision-session")}
+	replacementEvaluator := &recordingCheckpointEvaluator{outcome: mustRuntimeEvaluation(t, 8, "replacement-session")}
 	authenticator := &recordingCallerAuthenticator{caller: mustAuthorityCaller(t, true)}
 	admission := &recordingAdmissionAuthority{}
 	generation := mustRuntimeGeneration(t, 7, authenticator, admission, evaluator)
 	source := &replaceableGenerationSource{generation: generation}
 	service := mustDecisionService(t, source)
 
-	session, err := service.OpenSession(context.Background(), mustAuthorityInvocation(t, true))
+	err := service.WithSession(context.Background(), mustAuthorityInvocation(t, true), func(session DecisionSession) error {
+		evaluateSessionCheckpoints(t, session, []string{"pre_auth"})
+		source.replace(mustRuntimeGeneration(
+			t,
+			8,
+			&recordingCallerAuthenticator{caller: mustAuthorityCaller(t, true)},
+			&recordingAdmissionAuthority{},
+			replacementEvaluator,
+		))
+		evaluateSessionCheckpoints(t, session, []string{"auth_decision"})
+
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("DecisionService.OpenSession() error = %v", err)
+		t.Fatalf("DecisionService.WithSession() error = %v", err)
 	}
 
-	evaluateSessionCheckpoints(t, session, []string{"pre_auth", "auth_decision"})
 	assertSessionAuthorityCalls(t, source, authenticator, admission)
 	assertRecordedSessionCheckpoints(t, evaluator.recordedCalls())
+
+	if replacementEvaluator.callCount() != 0 {
+		t.Fatalf("replacement evaluator calls = %d, want 0", replacementEvaluator.callCount())
+	}
+}
+
+func TestDecisionSessionCannotEscapeCapturedGenerationLifetime(t *testing.T) {
+	generation := mustRuntimeGeneration(
+		t,
+		1,
+		&recordingCallerAuthenticator{caller: mustAuthorityCaller(t, true)},
+		&recordingAdmissionAuthority{},
+		&recordingCheckpointEvaluator{outcome: mustRuntimeEvaluation(t, 1, "scoped-session")},
+	)
+	service := mustDecisionService(t, &replaceableGenerationSource{generation: generation})
+
+	var escaped DecisionSession
+
+	err := service.WithSession(context.Background(), mustAuthorityInvocation(t, true), func(session DecisionSession) error {
+		escaped = session
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("DecisionService.WithSession() error = %v", err)
+	}
+
+	facts, err := NewFactSet(nil)
+	if err != nil {
+		t.Fatalf("NewFactSet() error = %v", err)
+	}
+
+	checkpoint, err := NewCheckpoint("escaped", facts)
+	if err != nil {
+		t.Fatalf("NewCheckpoint() error = %v", err)
+	}
+
+	if _, err = escaped.Evaluate(context.Background(), checkpoint); !errors.Is(err, ErrDecisionEvaluation) {
+		t.Fatalf("escaped DecisionSession.Evaluate() error = %v, want ErrDecisionEvaluation", err)
+	}
 }
 
 func TestDecisionSessionRequiresAdmittedBuiltinInternalAuthnCaller(t *testing.T) {
@@ -243,12 +295,17 @@ func TestDecisionSessionRequiresAdmittedBuiltinInternalAuthnCaller(t *testing.T)
 			)
 			service := mustDecisionService(t, &replaceableGenerationSource{generation: generation})
 
-			_, err := service.OpenSession(
+			err := service.WithSession(
 				context.Background(),
 				mustAuthorityTargetInvocation(t, test.namespace, test.action),
+				func(DecisionSession) error {
+					t.Fatal("rejected session callback was invoked")
+
+					return nil
+				},
 			)
 			if !errors.Is(err, ErrDecisionAdmission) {
-				t.Fatalf("DecisionService.OpenSession() error = %v, want ErrDecisionAdmission", err)
+				t.Fatalf("DecisionService.WithSession() error = %v, want ErrDecisionAdmission", err)
 			}
 
 			if evaluator.callCount() != 0 {
@@ -439,14 +496,17 @@ type replaceableGenerationSource struct {
 	captures   int
 }
 
-// Capture returns the generation current at the single capture instant.
-func (s *replaceableGenerationSource) Capture(context.Context) (Generation, error) {
+// WithGeneration returns one generation for the complete callback scope.
+func (s *replaceableGenerationSource) WithGeneration(
+	_ context.Context,
+	use func(Generation) error,
+) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.captures++
+	generation := s.generation
+	s.mu.Unlock()
 
-	return s.generation, nil
+	return use(generation)
 }
 
 // replace atomically changes the generation observed by the next capture.

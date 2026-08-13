@@ -18,6 +18,7 @@ package policyfx
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -28,6 +29,8 @@ import (
 	"github.com/croessner/nauthilus/v3/server/app/configfx"
 	"github.com/croessner/nauthilus/v3/server/app/reloadfx"
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/pluginloader"
+	"github.com/croessner/nauthilus/v3/server/pluginruntime"
 	"github.com/croessner/nauthilus/v3/server/policy/compiler"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/decision/service"
@@ -58,6 +61,7 @@ type snapshotPreparationSlot struct {
 
 type builtinExtensionPreparationSlot struct {
 	acceptor effectsupervisor.Acceptor
+	native   *pluginruntime.GenerationBindings
 }
 
 type targetCatalogPreparationSlot struct{}
@@ -107,7 +111,12 @@ func NewCoordinator(logger *slog.Logger) (*Coordinator, error) {
 		return nil, bindDefaultGenerationViewsErr
 	}
 
-	return newCoordinator(store, compiler.NewCompiler(), logger)
+	native, err := captureLoadedNativeBindings()
+	if err != nil {
+		return nil, err
+	}
+
+	return newCoordinatorWithNativeBindings(store, compiler.NewCompiler(), logger, native)
 }
 
 // bindDefaultGenerationViews installs read-only legacy projections exactly once.
@@ -146,6 +155,21 @@ func newCoordinator(
 	policyCompiler compiler.Compiler,
 	logger *slog.Logger,
 ) (*Coordinator, error) {
+	native, err := pluginruntime.CaptureGenerationBindings(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return newCoordinatorWithNativeBindings(store, policyCompiler, logger, native)
+}
+
+// newCoordinatorWithNativeBindings assembles one coordinator from the startup-loaded native snapshot.
+func newCoordinatorWithNativeBindings(
+	store *policyruntime.GenerationStore,
+	policyCompiler compiler.Compiler,
+	logger *slog.Logger,
+	native *pluginruntime.GenerationBindings,
+) (*Coordinator, error) {
 	acceptor := &closedPostActionAcceptor{}
 
 	coordinator, err := policyruntime.NewCoordinator(policyruntime.CoordinatorConfig{
@@ -153,7 +177,7 @@ func newCoordinator(
 		Logger: logger,
 		Slots: policyruntime.PreparationSlots{
 			Policy:               snapshotPreparationSlot{compiler: policyCompiler},
-			Extensions:           builtinExtensionPreparationSlot{acceptor: acceptor},
+			Extensions:           builtinExtensionPreparationSlot{acceptor: acceptor, native: native},
 			Catalog:              targetCatalogPreparationSlot{},
 			CallerAuthentication: closedCallerAuthenticationSlot{},
 			Admission:            closedAdmissionSlot{},
@@ -166,6 +190,16 @@ func newCoordinator(
 	}
 
 	return &Coordinator{runtime: coordinator}, nil
+}
+
+// captureLoadedNativeBindings detaches the startup loader state before generation publication.
+func captureLoadedNativeBindings() (*pluginruntime.GenerationBindings, error) {
+	state, ok := pluginloader.DefaultState()
+	if !ok {
+		return pluginruntime.CaptureGenerationBindings(nil)
+	}
+
+	return pluginruntime.CaptureGenerationBindings(state.Instances())
 }
 
 // Prepare compiles the exact legacy policy view without publishing it.
@@ -193,7 +227,7 @@ func (s builtinExtensionPreparationSlot) Prepare(
 	ctx context.Context,
 	input policyruntime.PreparationInput,
 ) (policyruntime.ExtensionPreparation, error) {
-	if err := validateRestartBoundBindings(input.PreviousConfig(), input.Config()); err != nil {
+	if err := validateRestartBoundBindings(input.PreviousConfig(), input.Config(), s.native); err != nil {
 		return policyruntime.ExtensionPreparation{}, err
 	}
 
@@ -203,6 +237,7 @@ func (s builtinExtensionPreparationSlot) Prepare(
 	}
 
 	bindings, err := policyruntime.NewBindingSet(policyruntime.BindingSetInput{
+		NativeModules:        nativeModuleBindingInputs(s.native),
 		PostActionAcceptance: s.acceptor,
 	})
 	if err != nil {
@@ -216,20 +251,69 @@ func (s builtinExtensionPreparationSlot) Prepare(
 }
 
 // validateRestartBoundBindings rejects config changes without immutable adapter preparation.
-func validateRestartBoundBindings(previous config.File, candidate config.File) error {
-	if previous == nil || candidate == nil {
-		return nil
+func validateRestartBoundBindings(
+	previous config.File,
+	candidate config.File,
+	native *pluginruntime.GenerationBindings,
+) error {
+	if previous != nil && candidate != nil {
+		if !reflect.DeepEqual(previous.GetLua(), candidate.GetLua()) {
+			return fmt.Errorf("%w: Lua configuration changed", errPolicyBindingsRestartRequired)
+		}
+
+		if !reflect.DeepEqual(previous.GetPlugins(), candidate.GetPlugins()) {
+			return fmt.Errorf(
+				"%w: %w: native plugin configuration changed",
+				errPolicyBindingsRestartRequired,
+				pluginruntime.ErrRestartRequired,
+			)
+		}
 	}
 
-	if !reflect.DeepEqual(previous.GetLua(), candidate.GetLua()) {
-		return fmt.Errorf("%w: Lua configuration changed", errPolicyBindingsRestartRequired)
-	}
-
-	if !reflect.DeepEqual(previous.GetPlugins(), candidate.GetPlugins()) {
-		return fmt.Errorf("%w: native plugin configuration changed", errPolicyBindingsRestartRequired)
+	if err := native.ValidateArtifacts(); err != nil {
+		return fmt.Errorf("%w: %w", errPolicyBindingsRestartRequired, err)
 	}
 
 	return nil
+}
+
+// nativeModuleBindingInputs maps loaded capabilities into generation-owned generic bindings.
+func nativeModuleBindingInputs(
+	bindings *pluginruntime.GenerationBindings,
+) []policyruntime.NativeModuleBindingInput {
+	modules := bindings.Modules()
+	result := make([]policyruntime.NativeModuleBindingInput, 0, len(modules))
+
+	for _, module := range modules {
+		components := module.Components()
+		componentInputs := make([]policyruntime.NativeComponentBindingInput, 0, len(components))
+
+		for _, component := range components {
+			componentInputs = append(componentInputs, policyruntime.NativeComponentBindingInput{
+				Value:         component.Value,
+				QualifiedName: component.QualifiedName,
+				Kind:          string(component.Kind),
+			})
+		}
+
+		capabilities := module.Capabilities()
+		capabilityNames := make([]string, 0, len(capabilities))
+
+		for _, capability := range capabilities {
+			capabilityNames = append(capabilityNames, string(capability))
+		}
+
+		digest := module.ArtifactDigest()
+		result = append(result, policyruntime.NativeModuleBindingInput{
+			Components:     componentInputs,
+			Capabilities:   capabilityNames,
+			ModuleName:     module.ModuleName(),
+			ArtifactPath:   module.ArtifactPath(),
+			ArtifactDigest: hex.EncodeToString(digest[:]),
+		})
+	}
+
+	return result
 }
 
 // Prepare compiles contributed definitions with no new production target activation.

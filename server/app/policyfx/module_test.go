@@ -18,10 +18,14 @@ package policyfx
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/app/configfx"
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/pluginloader"
+	"github.com/croessner/nauthilus/v3/server/pluginruntime"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/compiler"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
@@ -80,6 +84,95 @@ func TestGenerationCoordinatorKeepsActiveGenerationWhenPreparationFails(t *testi
 
 	if activeAfter == nil || activeAfter.ID() != 3 || activeAfter.PolicySnapshot().Generation != 3 {
 		t.Fatal("failed preparation did not retain the complete previous generation")
+	}
+}
+
+// TestGenerationReloadRejectsNativeBinaryReplacementWithoutMutation proves restart-only artifact identity.
+func TestGenerationReloadRejectsNativeBinaryReplacementWithoutMutation(t *testing.T) {
+	tests := []struct {
+		mutate func(*testing.T, string)
+		name   string
+	}{
+		{
+			name: "replacement",
+			mutate: func(t *testing.T, path string) {
+				t.Helper()
+
+				if err := os.WriteFile(path, []byte("replacement-native-binary"), 0o600); err != nil {
+					t.Fatalf("replace native binary: %v", err)
+				}
+			},
+		},
+		{
+			name: "removal",
+			mutate: func(t *testing.T, path string) {
+				t.Helper()
+
+				if err := os.Remove(path); err != nil {
+					t.Fatalf("remove native binary: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertNativeBinaryMutationRejected(t, test.mutate)
+		})
+	}
+}
+
+// assertNativeBinaryMutationRejected proves one restart-required artifact mutation is non-mutating.
+func assertNativeBinaryMutationRejected(t *testing.T, mutate func(*testing.T, string)) {
+	t.Helper()
+
+	artifact := filepath.Join(t.TempDir(), "native-generation.so")
+	if err := os.WriteFile(artifact, []byte("initial-native-binary"), 0o600); err != nil {
+		t.Fatalf("write native binary: %v", err)
+	}
+
+	digest, err := pluginloader.DigestArtifact(artifact)
+	if err != nil {
+		t.Fatalf("DigestArtifact() error = %v", err)
+	}
+
+	native, err := pluginruntime.CaptureGenerationBindings([]pluginloader.ModuleInstance{{
+		Module:       config.PluginModule{Name: "native_generation", Type: config.PluginModuleTypeGo, Path: artifact},
+		ArtifactPath: artifact, ArtifactDigest: digest, ModuleName: "native_generation",
+		Status: pluginloader.ModuleStatusRegistered,
+	}})
+	if err != nil {
+		t.Fatalf("CaptureGenerationBindings() error = %v", err)
+	}
+
+	store := policyruntime.NewGenerationStore()
+
+	coordinator, err := newCoordinatorWithNativeBindings(store, compiler.NewCompiler(), nil, native)
+	if err != nil {
+		t.Fatalf("newCoordinatorWithNativeBindings() error = %v", err)
+	}
+
+	file := &config.FileSettings{Plugins: &config.PluginsSection{Modules: []config.PluginModule{{
+		Name: "native_generation", Type: config.PluginModuleTypeGo, Path: artifact,
+	}}}}
+	if err = coordinator.Apply(context.Background(), configfx.Snapshot{File: file, Version: 1}); err != nil {
+		t.Fatalf("initial Apply() error = %v", err)
+	}
+
+	active := store.Active()
+	if got := active.Bindings().NativeModuleIDs(); len(got) != 1 || got[0] != "native_generation" {
+		t.Fatalf("captured native modules = %v, want native_generation", got)
+	}
+
+	mutate(t, artifact)
+
+	err = coordinator.Apply(context.Background(), configfx.Snapshot{File: file, Version: 2})
+	if !errors.Is(err, pluginruntime.ErrRestartRequired) {
+		t.Fatalf("replacement Apply() error = %v, want ErrRestartRequired", err)
+	}
+
+	if store.Active() != active {
+		t.Fatal("native artifact replacement changed the active generation")
 	}
 }
 

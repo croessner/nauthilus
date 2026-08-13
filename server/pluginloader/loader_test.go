@@ -36,6 +36,74 @@ func TestLoader_RejectsMissingArtifactAfterValidationHandoff(t *testing.T) {
 	}
 }
 
+func TestGenerationLoaderRejectsArtifactReplacementAfterVerification(t *testing.T) {
+	artifact := writeLoaderArtifact(t)
+
+	digest, err := DigestArtifact(artifact)
+	if err != nil {
+		t.Fatalf("DigestArtifact() error = %v", err)
+	}
+
+	verified := verifiedLoaderModule(testPluginModuleName, artifact, nil)
+	verified.ArtifactDigest = digest
+
+	if err = os.WriteFile(artifact, []byte("replacement plugin"), 0o600); err != nil {
+		t.Fatalf("replace verified artifact: %v", err)
+	}
+
+	opener := fakeFactoryOpener(artifact, func() (pluginapi.Plugin, error) {
+		return fakePlugin{metadata: validLoaderMetadata()}, nil
+	})
+
+	_, err = NewLoader(WithOpener(opener)).Load([]VerifiedModule{verified})
+	if !errors.Is(err, ErrArtifactUnavailable) {
+		t.Fatalf("Load() error = %v, want ErrArtifactUnavailable", err)
+	}
+}
+
+// TestGenerationLoaderOpensImmutableVerifiedArtifact reproduces replacement during the open handoff.
+func TestGenerationLoaderOpensImmutableVerifiedArtifact(t *testing.T) {
+	verifiedContent := []byte("verified native plugin")
+	artifact := filepath.Join(t.TempDir(), "verified-plugin.so")
+
+	if err := os.WriteFile(artifact, verifiedContent, 0o600); err != nil {
+		t.Fatalf("write verified artifact: %v", err)
+	}
+
+	digest, err := DigestArtifact(artifact)
+	if err != nil {
+		t.Fatalf("DigestArtifact() error = %v", err)
+	}
+
+	opener := &replacementDuringOpenOpener{
+		originalPath:    artifact,
+		verifiedContent: verifiedContent,
+		handle: fakeHandle{symbol: func() (pluginapi.Plugin, error) {
+			return fakePlugin{metadata: validLoaderMetadata()}, nil
+		}},
+	}
+	verified := verifiedLoaderModule(testPluginModuleName, artifact, nil)
+	verified.ArtifactDigest = digest
+
+	state, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{verified})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if opener.openedPath == artifact {
+		t.Fatal("loader reopened the mutable configured artifact path")
+	}
+
+	if _, statErr := os.Stat(filepath.Dir(opener.openedPath)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("private artifact staging directory still exists: %v", statErr)
+	}
+
+	instances := state.Instances()
+	if len(instances) != 1 || instances[0].ArtifactPath != artifact || instances[0].ArtifactDigest != digest {
+		t.Fatalf("loaded instance = %#v, want original path and verified digest", instances)
+	}
+}
+
 func TestLoader_RejectsMissingFactorySymbol(t *testing.T) {
 	artifact := writeLoaderArtifact(t)
 	opener := fakeOpener{
@@ -449,6 +517,12 @@ type fakeOpener map[string]fakeHandle
 
 func (o fakeOpener) Open(path string) (PluginHandle, error) {
 	handle, ok := o[path]
+	if !ok && len(o) == 1 {
+		for _, fallback := range o {
+			return fallback, nil
+		}
+	}
+
 	if !ok {
 		return nil, fmt.Errorf("unexpected plugin path %s", path)
 	}
@@ -460,6 +534,33 @@ func fakeFactoryOpener(path string, factory func() (pluginapi.Plugin, error)) fa
 	return fakeOpener{
 		path: fakeHandle{symbol: factory},
 	}
+}
+
+type replacementDuringOpenOpener struct {
+	handle          fakeHandle
+	originalPath    string
+	openedPath      string
+	verifiedContent []byte
+}
+
+// Open replaces the configured path before reading the loader-selected artifact.
+func (o *replacementDuringOpenOpener) Open(path string) (PluginHandle, error) {
+	o.openedPath = path
+
+	if err := os.WriteFile(o.originalPath, []byte("unverified replacement"), 0o600); err != nil {
+		return nil, err
+	}
+
+	opened, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	if string(opened) != string(o.verifiedContent) {
+		return nil, errors.New("opener observed unverified replacement bytes")
+	}
+
+	return o.handle, nil
 }
 
 type fakeHandle struct {

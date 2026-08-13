@@ -43,6 +43,10 @@ type factProvider interface {
 	Collect(context.Context, factProviderInput) ([]providedFact, error)
 }
 
+type factProviderCallCapturer interface {
+	captureFactProviderCall() (factProvider, error)
+}
+
 type factProviderInput struct {
 	facts      decision.FactSet
 	target     decision.Target
@@ -378,11 +382,22 @@ func (r *checkpointRuntime) startProviderLevel(
 
 		pending[providerID] = struct{}{}
 
-		go func(provider registry.ProviderDefinition) {
+		binding, err := captureFactProviderBinding(r.factProviders[providerID])
+		if err != nil {
 			started <- struct{}{}
 
-			results <- r.collectProviderSafely(ctx, target.Target(), checkpoint, provider, facts)
-		}(descriptor)
+			results <- providerLevelResult{
+				id: providerID, failure: descriptor.Failure(), state: providerStateFailed,
+			}
+
+			continue
+		}
+
+		go func(provider registry.ProviderDefinition, captured factProviderBinding) {
+			started <- struct{}{}
+
+			results <- r.collectProviderSafely(ctx, target.Target(), checkpoint, provider, captured, facts)
+		}(descriptor, binding)
 	}
 
 	for range pending {
@@ -392,12 +407,30 @@ func (r *checkpointRuntime) startProviderLevel(
 	return results, pending
 }
 
+// captureFactProviderBinding reserves generation ownership before provider goroutines start.
+func captureFactProviderBinding(binding factProviderBinding) (factProviderBinding, error) {
+	capturer, ok := binding.provider.(factProviderCallCapturer)
+	if !ok {
+		return binding, nil
+	}
+
+	provider, err := capturer.captureFactProviderCall()
+	if err != nil {
+		return factProviderBinding{}, err
+	}
+
+	binding.provider = provider
+
+	return binding, nil
+}
+
 // collectProviderSafely contains provider panics and returns a fail-closed level result.
 func (r *checkpointRuntime) collectProviderSafely(
 	ctx context.Context,
 	target decision.Target,
 	checkpoint string,
 	descriptor registry.ProviderDefinition,
+	binding factProviderBinding,
 	facts decision.FactSet,
 ) (result providerLevelResult) {
 	result = providerLevelResult{
@@ -412,7 +445,7 @@ func (r *checkpointRuntime) collectProviderSafely(
 		}
 	}()
 
-	return r.collectProvider(ctx, target, checkpoint, descriptor, facts)
+	return r.collectProvider(ctx, target, checkpoint, descriptor, binding, facts)
 }
 
 // canceledProviderResults projects deterministic failure records for output that will be discarded.
@@ -473,12 +506,12 @@ func (r *checkpointRuntime) collectProvider(
 	target decision.Target,
 	checkpoint string,
 	descriptor registry.ProviderDefinition,
+	binding factProviderBinding,
 	facts decision.FactSet,
 ) providerLevelResult {
 	result := providerLevelResult{id: descriptor.ID(), failure: descriptor.Failure(), state: providerStateFailed}
 
-	binding, exists := r.factProviders[descriptor.ID()]
-	if !exists || nilDependency(binding.provider) {
+	if nilDependency(binding.provider) {
 		return result
 	}
 

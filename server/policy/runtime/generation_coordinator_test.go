@@ -40,6 +40,7 @@ type generationFixture struct {
 	t            *testing.T
 	failAt       string
 	marker       string
+	disposeErr   error
 	omitBindings bool
 	mismatchAuth bool
 	resourcesMu  sync.Mutex
@@ -67,6 +68,7 @@ type testPostActionProvider struct{}
 type rejectingTestAcceptor struct{}
 
 type countingCandidateResource struct {
+	err       error
 	disposals atomic.Int64
 }
 
@@ -116,7 +118,7 @@ func (*rejectingTestAcceptor) Accept(context.Context, effectsupervisor.Plan) (ef
 func (r *countingCandidateResource) Dispose(context.Context) error {
 	r.disposals.Add(1)
 
-	return nil
+	return r.err
 }
 
 // TestGenerationCoordinatorRetainsCompleteActiveGenerationForEveryFailure covers every slot and validator.
@@ -634,7 +636,7 @@ func (f *generationFixture) failure(point string) error {
 
 // newResources records one owned candidate resource for a completed slot.
 func (f *generationFixture) newResources(_ string) []CandidateResource {
-	resource := &countingCandidateResource{}
+	resource := &countingCandidateResource{err: f.disposeErr}
 
 	f.resourcesMu.Lock()
 	f.resources = append(f.resources, resource)
