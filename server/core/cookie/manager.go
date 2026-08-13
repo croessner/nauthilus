@@ -114,7 +114,10 @@ type SecureManager struct {
 	data       map[string]any
 	path       string
 	maxAge     int
+	revision   uint64
+	savedAt    uint64
 	hadCookie  bool
+	hasSaved   bool
 	env        config.Environment
 }
 
@@ -157,6 +160,7 @@ func NewSecureManager(secret []byte, cookieName string, cfg config.File, env con
 // Set stores a key-value pair in the cookie data.
 func (m *SecureManager) Set(key string, value any) {
 	m.data[key] = value
+	m.revision++
 }
 
 // Get retrieves a value by key from the cookie data.
@@ -169,15 +173,21 @@ func (m *SecureManager) Get(key string) (any, bool) {
 // Delete removes a key from the cookie data.
 func (m *SecureManager) Delete(key string) {
 	delete(m.data, key)
+	m.revision++
 }
 
 // Clear removes all data from the cookie.
 func (m *SecureManager) Clear() {
 	m.data = make(map[string]any)
+	m.revision++
 }
 
 // Save persists the encrypted cookie to the response.
 func (m *SecureManager) Save(ctx *gin.Context) error {
+	if m.hasSaved && m.savedAt == m.revision {
+		return nil
+	}
+
 	secure := util.ShouldSetSecureCookie()
 
 	// If no user-visible session data exists, don't create a new cookie.
@@ -195,6 +205,8 @@ func (m *SecureManager) Save(ctx *gin.Context) error {
 				SameSite: http.SameSiteLaxMode,
 			})
 		}
+
+		m.markSaved()
 
 		return nil
 	}
@@ -224,12 +236,23 @@ func (m *SecureManager) Save(ctx *gin.Context) error {
 	}
 
 	http.SetCookie(ctx.Writer, responseCookie)
+	m.markSaved()
 
 	return nil
 }
 
+// markSaved records the session revision emitted by the current response.
+func (m *SecureManager) markSaved() {
+	m.savedAt = m.revision
+	m.hasSaved = true
+}
+
 // Load reads and decrypts the cookie from the request.
 func (m *SecureManager) Load(ctx *gin.Context) error {
+	m.revision = 0
+	m.savedAt = 0
+	m.hasSaved = false
+
 	cookies := ctx.Request.CookiesNamed(m.cookieName)
 	if len(cookies) == 0 {
 		m.hadCookie = false
@@ -468,6 +491,7 @@ func (m *SecureManager) isSensitiveKey(key string) bool {
 func (m *SecureManager) SetMaxAge(maxAge int) {
 	m.maxAge = maxAge
 	m.codec.SetMaxAge(maxAge)
+	m.revision++
 
 	if maxAge > 0 {
 		m.data[cookieMetaMaxAgeKey] = maxAge
@@ -481,6 +505,7 @@ func (m *SecureManager) SetMaxAge(maxAge int) {
 // SetPath sets the cookie path.
 func (m *SecureManager) SetPath(path string) {
 	m.path = path
+	m.revision++
 }
 
 // HasKey checks if a key exists in the cookie data.
@@ -548,6 +573,10 @@ var _ Manager = (*SecureManager)(nil)
 func Middleware(secret []byte, cfg config.File, env config.Environment) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		mgr := NewSecureManager(secret, definitions.SecureDataCookieName, cfg, env)
+		writer := newDeferredHeaderWriter(ctx.Writer, func() error {
+			return mgr.Save(ctx)
+		})
+		ctx.Writer = writer
 
 		// Load existing cookie data.
 		_ = mgr.Load(ctx)
@@ -558,9 +587,111 @@ func Middleware(secret []byte, cfg config.File, env config.Environment) gin.Hand
 		// Process request.
 		ctx.Next()
 
-		// Save cookie after all handlers complete.
-		_ = mgr.Save(ctx)
+		// Save cookie before the first response header is committed. A handler
+		// without a response body still reaches this explicit finalization path.
+		if err := writer.commit(); err != nil && !writer.Written() {
+			writer.failClosed()
+		}
 	}
+}
+
+// deferredHeaderWriter persists session state before Gin commits a response.
+type deferredHeaderWriter struct {
+	gin.ResponseWriter
+	beforeCommit func() error
+	committed    bool
+	commitErr    error
+}
+
+// newDeferredHeaderWriter wraps one response with a one-time pre-commit hook.
+func newDeferredHeaderWriter(writer gin.ResponseWriter, beforeCommit func() error) *deferredHeaderWriter {
+	return &deferredHeaderWriter{ResponseWriter: writer, beforeCommit: beforeCommit}
+}
+
+// commit executes the session save exactly once.
+func (w *deferredHeaderWriter) commit() error {
+	if w == nil {
+		return nil
+	}
+
+	if w.committed {
+		return w.commitErr
+	}
+
+	w.committed = true
+	if w.beforeCommit == nil {
+		return nil
+	}
+
+	w.commitErr = w.beforeCommit()
+
+	return w.commitErr
+}
+
+// failClosed commits an internal error without preserving redirect headers.
+func (w *deferredHeaderWriter) failClosed() {
+	if w == nil || w.ResponseWriter == nil {
+		return
+	}
+
+	w.ResponseWriter.Header().Del("Location")
+
+	if !w.Written() {
+		w.ResponseWriter.WriteHeader(http.StatusInternalServerError)
+		w.ResponseWriter.WriteHeaderNow()
+	}
+}
+
+// WriteHeader delegates buffered status selection to Gin. Session state is
+// persisted only when the response is actually committed.
+func (w *deferredHeaderWriter) WriteHeader(code int) {
+	if w.commitErr != nil {
+		return
+	}
+
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// Write persists session state before writing a response body.
+func (w *deferredHeaderWriter) Write(data []byte) (int, error) {
+	if err := w.commit(); err != nil {
+		w.failClosed()
+
+		return 0, err
+	}
+
+	return w.ResponseWriter.Write(data)
+}
+
+// WriteString persists session state before writing a string response body.
+func (w *deferredHeaderWriter) WriteString(value string) (int, error) {
+	if err := w.commit(); err != nil {
+		w.failClosed()
+
+		return 0, err
+	}
+
+	return w.ResponseWriter.WriteString(value)
+}
+
+// WriteHeaderNow persists session state before forcing response headers out.
+func (w *deferredHeaderWriter) WriteHeaderNow() {
+	if err := w.commit(); err != nil {
+		w.failClosed()
+
+		return
+	}
+
+	w.ResponseWriter.WriteHeaderNow()
+}
+
+// Flush persists session state before flushing a streaming response.
+func (w *deferredHeaderWriter) Flush() {
+	if err := w.commit(); err != nil {
+		w.failClosed()
+	}
+
+	w.ResponseWriter.Flush()
 }
 
 // GetManager retrieves the CookieManager from the gin.Context.

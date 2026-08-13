@@ -56,6 +56,14 @@ type oidcAuthorizeRequest struct {
 	codeChallengeMethod string
 }
 
+const ctxOIDCPromptNonePolicyPreflight = "oidc_prompt_none_policy_preflight"
+
+type oidcPromptNonePolicyPreflight struct {
+	clientID        string
+	requiredMethods string
+	requiredLevel   int
+}
+
 // readOIDCAuthorizeRequest reads and normalizes authorization request parameters.
 func readOIDCAuthorizeRequest(ctx *gin.Context) (oidcAuthorizeRequest, bool) {
 	request := oidcAuthorizeRequest{
@@ -359,6 +367,10 @@ func (h *OIDCHandler) ensureOIDCAuthorizeFlowState(
 		return true
 	}
 
+	if h.resumeOIDCAuthorizeDuringPendingRequiredMFA(ctx, mgr, request) {
+		return false
+	}
+
 	if h.currentOIDCAuthorizeFlowState(ctx, mgr, request) {
 		return true
 	}
@@ -370,6 +382,197 @@ func (h *OIDCHandler) ensureOIDCAuthorizeFlowState(
 	_, ok := h.startOIDCAuthorizeLoginFlow(ctx, mgr, oidcFlowContext, request, account)
 
 	return ok
+}
+
+// resumeOIDCAuthorizeDuringPendingRequiredMFA keeps a new authorization
+// request from replacing an incomplete mandatory enrollment sub-flow.
+func (h *OIDCHandler) resumeOIDCAuthorizeDuringPendingRequiredMFA(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	request oidcAuthorizeRequest,
+) bool {
+	if ctx == nil || mgr == nil {
+		return false
+	}
+
+	flowID, pending, validReference, residualContext := pendingRequiredMFAReferenceFromSession(mgr)
+	if !validReference {
+		if residualContext {
+			flowdomain.ClearRequireMFAContext(mgr)
+		}
+
+		return false
+	}
+
+	if !h.requiredMFAFlowStoreAvailable() {
+		ctx.String(http.StatusServiceUnavailable, "Required MFA registration state is unavailable")
+		return true
+	}
+
+	controller := newFlowController(mgr, h.deps.Redis, h.flowRedisPrefix())
+
+	state, err := controller.State(ctx.Request.Context(), flowID)
+	if err != nil {
+		if errors.Is(err, flowdomain.ErrFlowNotFound) {
+			flowdomain.ClearRequireMFAContext(mgr)
+			return false
+		}
+
+		ctx.String(http.StatusServiceUnavailable, "Required MFA registration state is unavailable")
+
+		return true
+	}
+
+	if !requiredMFAFlowStateMatchesSession(state, mgr, pending) {
+		ctx.String(http.StatusConflict, "Required MFA registration state is inconsistent")
+		return true
+	}
+
+	if !restoreRequiredMFAUniqueUserID(ctx, state, mgr) {
+		return true
+	}
+
+	nextTarget := (&FrontendHandler{}).nextRequiredMFARegistrationTarget(mgr)
+	if nextTarget == "" {
+		ctx.String(http.StatusConflict, "Required MFA registration state is inconsistent")
+		return true
+	}
+
+	if request.prompt == oidcClientAuthMethodNone {
+		redirectOIDCAuthorizeError(ctx, request.redirectURI, request.state, "interaction_required")
+		return true
+	}
+
+	ctx.Redirect(http.StatusFound, nextTarget)
+
+	return true
+}
+
+func (h *OIDCHandler) requiredMFAFlowStoreAvailable() bool {
+	return h != nil && h.deps != nil && h.deps.Cfg != nil &&
+		h.deps.Redis != nil && h.deps.Redis.GetWriteHandle() != nil
+}
+
+func pendingRequiredMFAReferenceFromSession(mgr cookie.Manager) (flowID string, pending string, valid bool, residual bool) {
+	flowID = mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+	pending = strings.TrimSpace(mgr.GetString(definitions.SessionKeyRequireMFAPending, ""))
+	parentFlowID := strings.TrimSpace(mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""))
+	requireMFAFlow := mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false)
+	valid = requireMFAFlow && flowdomain.IsRequireMFAFlowID(flowID) && pending != ""
+	residual = pending != "" || parentFlowID != "" || requireMFAFlow
+
+	return flowID, pending, valid, residual
+}
+
+// requiredMFAFlowStateMatchesSession binds a browser-carried pending list to
+// the persisted enrollment flow and its authenticated identity/client.
+func requiredMFAFlowStateMatchesSession(state *flowdomain.State, mgr cookie.Manager, pending string) bool {
+	if !requiredMFAChallengeState(state) || mgr == nil {
+		return false
+	}
+
+	if !requiredMFAFlowReferenceMatchesSession(state, mgr) || !requiredMFAFlowIdentityMatchesSession(state, mgr) {
+		return false
+	}
+
+	return pendingRequiredMFAMethodsBoundToFlow(pending, requireMFAMethodsFromMetadata(state.Metadata))
+}
+
+func requiredMFAChallengeState(state *flowdomain.State) bool {
+	return state != nil && state.Type == flowdomain.FlowTypeRequireMFA &&
+		state.Protocol == flowdomain.FlowProtocolOIDC && state.PendingMFA &&
+		state.CurrentStep == flowdomain.FlowStepRequireMFAChallenge
+}
+
+func requiredMFAFlowReferenceMatchesSession(state *flowdomain.State, mgr cookie.Manager) bool {
+	parentFlowID := mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, "")
+
+	return parentFlowID != "" && state.FlowID == flowdomain.NewRequireMFAFlowID(parentFlowID) &&
+		state.FlowID == mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+}
+
+func requiredMFAFlowIdentityMatchesSession(state *flowdomain.State, mgr cookie.Manager) bool {
+	if state.Metadata == nil || state.Metadata[flowdomain.FlowMetadataClientID] == "" ||
+		state.Metadata[flowdomain.FlowMetadataClientID] != mgr.GetString(definitions.SessionKeyIDPClientID, "") ||
+		state.Metadata[flowdomain.FlowMetadataAccount] == "" ||
+		state.Metadata[flowdomain.FlowMetadataAccount] != mgr.GetString(definitions.SessionKeyAccount, "") {
+		return false
+	}
+
+	return true
+}
+
+func reconcileRequiredMFAUniqueUserID(state *flowdomain.State, mgr cookie.Manager) (restored bool, matches bool) {
+	metadataUniqueUserID := state.Metadata[flowdomain.FlowMetadataUniqueUserID]
+	sessionUniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+
+	if sessionUniqueUserID == "" {
+		if metadataUniqueUserID == "" {
+			return false, true
+		}
+
+		mgr.Set(definitions.SessionKeyUniqueUserID, metadataUniqueUserID)
+
+		return true, true
+	}
+
+	return false, metadataUniqueUserID != "" && metadataUniqueUserID == sessionUniqueUserID
+}
+
+func restoreRequiredMFAUniqueUserID(ctx *gin.Context, state *flowdomain.State, mgr cookie.Manager) bool {
+	restored, matches := reconcileRequiredMFAUniqueUserID(state, mgr)
+	if !matches {
+		ctx.String(http.StatusConflict, "Required MFA registration state is inconsistent")
+
+		return false
+	}
+
+	if !restored {
+		return true
+	}
+
+	if err := mgr.Save(ctx); err != nil {
+		ctx.String(http.StatusInternalServerError, "Failed to save session")
+
+		return false
+	}
+
+	return true
+}
+
+// pendingRequiredMFAMethodsBoundToFlow accepts only an ordered, non-empty
+// remainder of the methods persisted when the mandatory flow was created.
+func pendingRequiredMFAMethodsBoundToFlow(pending string, required []string) bool {
+	if strings.TrimSpace(pending) == "" || len(required) == 0 {
+		return false
+	}
+
+	lastRequiredIndex := -1
+
+	for _, rawMethod := range strings.Split(pending, ",") {
+		method := normalizeMFAAssuranceMethod(rawMethod)
+		if method != definitions.MFAMethodTOTP && method != definitions.MFAMethodWebAuthn && method != definitions.MFAMethodRecoveryCodes {
+			return false
+		}
+
+		matchedIndex := -1
+
+		for requiredIndex := lastRequiredIndex + 1; requiredIndex < len(required); requiredIndex++ {
+			if required[requiredIndex] == method {
+				matchedIndex = requiredIndex
+
+				break
+			}
+		}
+
+		if matchedIndex < 0 {
+			return false
+		}
+
+		lastRequiredIndex = matchedIndex
+	}
+
+	return true
 }
 
 // currentOIDCAuthorizeFlowState verifies that the browser reference and its
@@ -550,6 +753,10 @@ func (h *OIDCHandler) issueOIDCAuthorizeCode(
 	session *idp.OIDCSession,
 	filteredScopes []string,
 ) {
+	if h.rejectPromptNoneOIDCPolicyInteraction(ctx, mgr, client, request) {
+		return
+	}
+
 	if !h.enforceOIDCAuthorizePolicyGates(ctx, mgr, client) {
 		return
 	}
@@ -590,19 +797,126 @@ func (h *OIDCHandler) issueOIDCAuthorizeCode(
 	ctx.Redirect(http.StatusFound, target)
 }
 
-// enforceOIDCAuthorizePolicyGates applies the security gates common to direct
-// authorization-code issuance and consent-approved code issuance.
-func (h *OIDCHandler) enforceOIDCAuthorizePolicyGates(ctx *gin.Context, mgr cookie.Manager, client *config.OIDCClient) bool {
-	if !h.enforceOIDCClientSSOMFAAssurance(ctx, mgr, client) {
+// rejectPromptNoneOIDCPolicyInteraction prevents non-interactive requests from
+// entering enrollment or assurance UI while preserving validated callback data.
+func (h *OIDCHandler) rejectPromptNoneOIDCPolicyInteraction(
+	ctx *gin.Context,
+	mgr cookie.Manager,
+	client *config.OIDCClient,
+	request oidcAuthorizeRequest,
+) bool {
+	if request.prompt != oidcClientAuthMethodNone {
 		return false
 	}
 
+	required := oidcClientRequiredMFAMethods(client)
+	requiredLevel := oidcClientRequiredMFALevel(client)
+
+	preflight := oidcPromptNonePolicyPreflight{
+		clientID:        client.ClientID,
+		requiredMethods: strings.Join(required, "\x00"),
+		requiredLevel:   requiredLevel,
+	}
+	if promptNonePolicyPreflightMatches(ctx, preflight) {
+		return false
+	}
+
+	if len(required) == 0 && requiredLevel <= 0 {
+		ctx.Set(ctxOIDCPromptNonePolicyPreflight, preflight)
+
+		return false
+	}
+
+	needsInteraction := !sessionSatisfiesIDPSSOMFAAssurancePolicy(
+		mgr,
+		required,
+		oidcMFAAssuranceScope(client.ClientID),
+		requiredLevel,
+		time.Now(),
+	)
+	if !needsInteraction && len(required) > 0 {
+		needsInteraction = !sessionProvesRequiredMFAEnrollment(mgr, required)
+	}
+
+	if !needsInteraction {
+		ctx.Set(ctxOIDCPromptNonePolicyPreflight, preflight)
+
+		return false
+	}
+
+	if !h.abortFlow(ctx, mgr) {
+		return true
+	}
+
+	redirectOIDCAuthorizeError(ctx, request.redirectURI, request.state, "interaction_required")
+
+	return true
+}
+
+func promptNonePolicyPreflightMatches(ctx *gin.Context, expected oidcPromptNonePolicyPreflight) bool {
+	if ctx == nil {
+		return false
+	}
+
+	value, ok := ctx.Get(ctxOIDCPromptNonePolicyPreflight)
+	if !ok {
+		return false
+	}
+
+	actual, ok := value.(oidcPromptNonePolicyPreflight)
+
+	return ok && actual == expected
+}
+
+func sessionProvesRequiredMFAEnrollment(mgr cookie.Manager, required []string) bool {
+	if mgr == nil {
+		return false
+	}
+
+	for _, method := range required {
+		switch normalizeMFAAssuranceMethod(method) {
+		case definitions.MFAMethodTOTP:
+			if !mgr.GetBool(definitions.SessionKeyHaveTOTP, false) {
+				return false
+			}
+		case definitions.MFAMethodWebAuthn:
+			if !mgr.GetBool(definitions.SessionKeyHaveWebAuthn, false) {
+				return false
+			}
+		case definitions.MFAMethodRecoveryCodes:
+			if !mgr.GetBool(definitions.SessionKeyHaveRecoveryCodes, false) &&
+				!mgr.GetBool(definitions.SessionKeyRecoveryCodesSaved, false) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+
+	return true
+}
+
+// enforceOIDCAuthorizePolicyGates applies the security gates common to direct
+// authorization-code issuance and consent-approved code issuance.
+func (h *OIDCHandler) enforceOIDCAuthorizePolicyGates(ctx *gin.Context, mgr cookie.Manager, client *config.OIDCClient) bool {
 	frontendHandler := h.frontend
 	if frontendHandler == nil {
 		frontendHandler = &FrontendHandler{deps: h.deps}
 	}
 
-	if frontendHandler.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
+	required := oidcClientRequiredMFAMethods(client)
+
+	preflight := oidcPromptNonePolicyPreflight{
+		clientID:        client.ClientID,
+		requiredMethods: strings.Join(required, "\x00"),
+		requiredLevel:   oidcClientRequiredMFALevel(client),
+	}
+	if !promptNonePolicyPreflightMatches(ctx, preflight) &&
+		frontendHandler.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
+		return false
+	}
+
+	if !h.enforceOIDCClientSSOMFAAssurance(ctx, mgr, client) {
 		return false
 	}
 
@@ -685,6 +999,10 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 
 		ctx.String(http.StatusForbidden, "Authorization denied")
 
+		return
+	}
+
+	if h.rejectPromptNoneOIDCPolicyInteraction(ctx, mgr, client, request) {
 		return
 	}
 

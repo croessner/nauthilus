@@ -3,6 +3,7 @@
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const {execFileSync} = require('node:child_process');
 const fs = require('node:fs');
 const https = require('node:https');
 const path = require('node:path');
@@ -18,6 +19,7 @@ try {
 const edgeA = process.env.NAUTHILUS_E2E_EDGE_A || 'https://split.example.test:18080';
 const edgeB = process.env.NAUTHILUS_E2E_EDGE_B || 'https://split.example.test:18082';
 const edgeAAPI = process.env.NAUTHILUS_E2E_EDGE_A_API || 'https://127.0.0.1:18080';
+const edgeBAPI = process.env.NAUTHILUS_E2E_EDGE_B_API || 'https://127.0.0.1:18082';
 const callbackBindHost = process.env.NAUTHILUS_E2E_CALLBACK_BIND_HOST || '127.0.0.1';
 const callbackPublicHost = process.env.NAUTHILUS_E2E_CALLBACK_PUBLIC_HOST || 'split.example.test';
 const callbackPort = Number.parseInt(process.env.NAUTHILUS_E2E_CALLBACK_PORT || '19094', 10);
@@ -31,6 +33,7 @@ const webAuthnLoginFinishRoute = '**/login/webauthn/finish**';
 const username = process.env.NAUTHILUS_E2E_USERNAME || 'split-user@example.test';
 const password = process.env.NAUTHILUS_E2E_PASSWORD || 'split-password';
 const mfaUsername = `${username}.mfa`;
+const requiredMFAJourneyUsername = `${username}.required-mfa-journey`;
 const selfServiceUsername = `${username}.self-service`;
 const masterUsername = `${username}.master`;
 const masterWithoutMFAUsername = `${username}.master-no-mfa`;
@@ -60,6 +63,11 @@ const delayedMFAClient = {
   secret: 'split-e2e-mfa-delayed-secret',
 };
 
+const requiredMFAJourneyClient = {
+  id: 'split-e2e-required-mfa-journey',
+  secret: 'split-e2e-required-mfa-journey-secret',
+};
+
 const consentClient = {
   id: 'split-e2e-consent',
   secret: 'split-e2e-consent-secret',
@@ -80,6 +88,7 @@ async function main() {
     await runAuthorizationCodeFlow(browser);
     await runNegativeIDPChecks(browser);
     await runDeviceCodeFlow(browser);
+    await runRequiredMFAJourneyStateMachine(browser);
     const webAuthnCredentials = await runRequiredMFAFlows(browser);
     await runMultiEdgeContinuity(browser);
     await runMultiEdgeWebAuthnContinuity(browser, webAuthnCredentials);
@@ -783,6 +792,254 @@ async function withPageState(page, label, run) {
     error.message = `${error.message}; ${label} ended at ${page.url()}`;
     throw error;
   }
+}
+
+// runRequiredMFAJourneyStateMachine proves that mandatory enrollment owns the
+// original OIDC continuation until every required method has been registered.
+async function runRequiredMFAJourneyStateMachine(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  let totpSecret = '';
+
+  try {
+    const callback = await withPageState(page, 'required MFA journey state machine', async () =>
+      withCallbackServer('required MFA journey state machine', async (redirectURI, callbackPromise) => {
+        let callbackObserved = false;
+        callbackPromise.then(() => {
+          callbackObserved = true;
+        });
+
+        const originalAuthorizeURL = buildAuthorizeURL(
+          edgeA,
+          requiredMFAJourneyClient.id,
+          redirectURI,
+          'openid profile email',
+        );
+        const originalState = new URL(originalAuthorizeURL).searchParams.get('state');
+
+        await page.goto(originalAuthorizeURL);
+        await submitParallelPasswordLogin(page, requiredMFAJourneyUsername, password);
+        await assertCallbackNotObserved(() => callbackObserved, 'parallel initial login');
+
+        const enrollmentFlow = requiredMFAJourneyFlowState();
+        assertRequiredMFAJourneyFlow(enrollmentFlow, 'initial enrollment');
+        console.log('ok oidc-required-mfa-parallel-initialization');
+
+        const secondAuthorizeURL = buildAuthorizeURL(
+          edgeA,
+          requiredMFAJourneyClient.id,
+          redirectURI,
+          'openid profile email',
+        );
+        const secondResponse = await requestAuthorizeWithoutRedirect(context, secondAuthorizeURL, edgeAAPI);
+        assertRequiredMFAResumeResponse(secondResponse, edgeA, 'second authorize');
+        await assertCallbackNotObserved(() => callbackObserved, 'second authorize');
+        assertSameRequiredMFAJourneyFlow(enrollmentFlow, 'second authorize');
+        console.log('ok oidc-required-mfa-pending-authorize-resume');
+
+        const silentAuthorizeURL = new URL(buildAuthorizeURL(
+          edgeA,
+          requiredMFAJourneyClient.id,
+          redirectURI,
+          'openid profile email',
+        ));
+        silentAuthorizeURL.searchParams.set('prompt', 'none');
+        const silentState = silentAuthorizeURL.searchParams.get('state');
+        const silentResponse = await requestAuthorizeWithoutRedirect(context, silentAuthorizeURL.toString(), edgeAAPI);
+        assert.equal(silentResponse.status(), 302, 'prompt=none pending enrollment must return to the client');
+        const silentLocation = new URL(silentResponse.headers().location || '', edgeA);
+        assert.equal(silentLocation.origin + silentLocation.pathname, redirectURI,
+          'prompt=none pending enrollment must use the validated client callback');
+        assert.equal(silentLocation.searchParams.get('error'), 'interaction_required',
+          'prompt=none pending enrollment must fail without interactive navigation');
+        assert.equal(silentLocation.searchParams.get('state'), silentState,
+          'prompt=none pending enrollment must preserve the new request state');
+        assertSameRequiredMFAJourneyFlow(enrollmentFlow, 'prompt=none authorize');
+        console.log('ok oidc-required-mfa-prompt-none-interaction-required');
+
+        const parallelResponses = await Promise.all([
+          requestAuthorizeWithoutRedirect(context, buildAuthorizeURL(
+            edgeA,
+            requiredMFAJourneyClient.id,
+            redirectURI,
+            'openid profile email',
+          ), edgeAAPI),
+          requestAuthorizeWithoutRedirect(context, buildAuthorizeURL(
+            edgeB,
+            requiredMFAJourneyClient.id,
+            redirectURI,
+            'openid profile email',
+          ), edgeBAPI),
+        ]);
+        assertRequiredMFAResumeResponse(parallelResponses[0], edgeA, 'parallel authorize on edge-a');
+        assertRequiredMFAResumeResponse(parallelResponses[1], edgeB, 'parallel authorize on edge-b');
+        await assertCallbackNotObserved(() => callbackObserved, 'parallel authorize');
+        assertSameRequiredMFAJourneyFlow(enrollmentFlow, 'parallel authorize');
+        console.log('ok oidc-required-mfa-parallel-authorize-bound');
+
+        await page.goto(secondAuthorizeURL);
+        await page.waitForURL(/\/mfa\/totp\/register/, {timeout: 15000});
+        assertSameRequiredMFAJourneyFlow(enrollmentFlow, 'browser resume');
+
+        totpSecret = await completeTOTPRegistration(page);
+        await page.waitForURL(/\/mfa\/recovery\/register/, {timeout: 15000});
+        assert.doesNotMatch(page.url(), /\/mfa\/webauthn\/register/,
+          'optional WebAuthn enrollment must not enter the mandatory chain');
+        assertSameRequiredMFAJourneyFlow(enrollmentFlow, 'recovery-code enrollment');
+        console.log('ok oidc-required-mfa-optional-webauthn-skipped');
+
+        const recoveryCodes = await completeRecoveryRegistration(page);
+        assert.ok(recoveryCodes.length > 0, 'required MFA journey generated recovery codes');
+
+        const completedCallback = await callbackPromise;
+        assert.equal(completedCallback.state, originalState,
+          'mandatory enrollment must resume the original bound OIDC state');
+        console.log('ok oidc-required-mfa-original-callback-bound');
+        console.log('ok oidc-required-mfa-delayed-response-chain');
+
+        return completedCallback;
+      }));
+
+    assert.ok(callback.code, 'required MFA journey completed with an authorization code');
+    assert.ok(totpSecret, 'required MFA journey generated a TOTP secret');
+    assertNoRequiredMFAJourneyFlow();
+
+    const token = await exchangeCode(
+      edgeAAPI,
+      requiredMFAJourneyClient,
+      callback.code,
+      callback.redirectURI,
+    );
+    assert.ok(token.id_token, 'required MFA journey returned an ID token');
+    await expectFormError(`${edgeAAPI}/oidc/token`, {
+      grant_type: 'authorization_code',
+      client_id: requiredMFAJourneyClient.id,
+      client_secret: requiredMFAJourneyClient.secret,
+      code: callback.code,
+      redirect_uri: callback.redirectURI,
+    }, 400, 'invalid_grant', 'oidc-required-mfa-code-replay-rejected');
+
+    await page.goto(`${edgeA}/oidc/logout?id_token_hint=${encodeURIComponent(token.id_token)}`);
+    await page.waitForURL(/\/logged_out/, {timeout: 15000});
+
+    const reloginCallback = await withPageState(page, 'required MFA logout and login', async () =>
+      withCallbackServer('required MFA logout and login', async (redirectURI, callbackPromise) => {
+        await page.goto(buildAuthorizeURL(
+          edgeA,
+          requiredMFAJourneyClient.id,
+          redirectURI,
+          'openid profile email',
+        ));
+        await submitPasswordLogin(page, requiredMFAJourneyUsername, password);
+        await page.waitForURL(/\/login\/(?:mfa|totp|webauthn|recovery)/, {timeout: 15000});
+        await completeTOTPLogin(page, totpSecret);
+
+        return callbackPromise;
+      }));
+    assert.ok(reloginCallback.code, 'logout/login journey completed dynamic MFA step-up');
+    const reloginToken = await exchangeCode(
+      edgeAAPI,
+      requiredMFAJourneyClient,
+      reloginCallback.code,
+      reloginCallback.redirectURI,
+    );
+    assert.ok(reloginToken.access_token, 'logout/login journey returned an access token');
+    console.log('ok oidc-required-mfa-logout-login-step-up');
+  } finally {
+    await context.close();
+  }
+}
+
+async function requestAuthorizeWithoutRedirect(context, authorizeURL, apiBase) {
+  const browserCookies = await context.cookies(edgeA);
+  const cookieHeader = browserCookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ');
+  const target = new URL(authorizeURL);
+  const apiTarget = new URL(`${target.pathname}/en${target.search}`, apiBase);
+
+  return context.request.get(apiTarget.toString(), {
+    headers: {cookie: cookieHeader},
+    maxRedirects: 0,
+  });
+}
+
+function assertRequiredMFAResumeResponse(response, baseURL, label) {
+  assert.equal(response.status(), 302, `${label} must safely resume with HTTP 302`);
+  const location = response.headers().location || '';
+  assert.ok(location, `${label} must include a server-selected Location`);
+  const target = new URL(location, baseURL);
+  assert.equal(target.pathname, '/mfa/totp/register', `${label} must resume the pending TOTP enrollment`);
+  assert.equal(target.searchParams.has('code'), false, `${label} must not issue an authorization code`);
+}
+
+async function assertCallbackNotObserved(observed, label) {
+  await delay(150);
+  assert.equal(observed(), false, `${label} must not reach the OIDC callback before enrollment completes`);
+}
+
+function requiredMFAJourneyFlowState() {
+  const matches = readRequiredMFAFlowStates().filter(({state}) =>
+    state.metadata &&
+      state.metadata.client_id === requiredMFAJourneyClient.id &&
+      state.metadata.account === requiredMFAJourneyUsername);
+
+  if (matches.length !== 1) {
+    throw new Error(`required MFA journey must own exactly one Redis flow; found ${matches.length}`);
+  }
+
+  return matches[0];
+}
+
+function assertRequiredMFAJourneyFlow(flow, label) {
+  assert.equal(flow.state.flow_type, 'require_mfa', `${label} must use a require-MFA flow`);
+  assert.equal(flow.state.protocol, 'oidc', `${label} must remain bound to OIDC`);
+  assert.equal(flow.state.current_step, 'require_mfa_challenge', `${label} must remain in enrollment`);
+  assert.equal(flow.state.pending_mfa, true, `${label} must keep the mandatory MFA marker`);
+  assert.equal(flow.state.metadata.require_mfa, 'totp,recovery_codes',
+    `${label} must preserve the ordered mandatory chain`);
+  assert.equal(flow.key.endsWith(`:${flow.state.flow_id}`), true,
+    `${label} Redis key must be bound to the persisted flow id`);
+}
+
+function assertSameRequiredMFAJourneyFlow(expected, label) {
+  const current = requiredMFAJourneyFlowState();
+  assertRequiredMFAJourneyFlow(current, label);
+  assert.equal(current.key, expected.key, `${label} must not replace the Redis flow key`);
+  assert.equal(current.state.flow_id, expected.state.flow_id, `${label} must preserve the enrollment flow id`);
+}
+
+function assertNoRequiredMFAJourneyFlow() {
+  const matches = readRequiredMFAFlowStates().filter(({state}) =>
+    state.metadata &&
+      state.metadata.client_id === requiredMFAJourneyClient.id &&
+      state.metadata.account === requiredMFAJourneyUsername);
+  assert.equal(matches.length, 0, 'completed required MFA journey must remove its Redis sub-flow');
+}
+
+function readRequiredMFAFlowStates() {
+  const root = path.join(__dirname, '..');
+  const composeFile = path.join(root, 'docker-compose.yml');
+  const composeArgs = ['compose', '--project-directory', root, '-f', composeFile, 'exec', '-T', 'edge-redis'];
+  const keysRaw = execFileSync('docker', [
+    ...composeArgs,
+    'redis-cli',
+    '--raw',
+    '--scan',
+    '--pattern',
+    'edge:idp:flow:require-mfa-flow:*',
+  ], {encoding: 'utf8'});
+  const keys = keysRaw.split('\n').map((value) => value.trim()).filter(Boolean);
+
+  return keys.map((key) => {
+    const encoded = execFileSync('docker', [
+      ...composeArgs,
+      'redis-cli',
+      '--raw',
+      'GET',
+      key,
+    ], {encoding: 'utf8'}).trim();
+
+    return {key, state: JSON.parse(encoded)};
+  });
 }
 
 // runRequiredMFAFlows exercises required MFA enrollment and all browser-visible MFA login variants.
@@ -1968,6 +2225,50 @@ async function submitPasswordLogin(page, user, secret) {
   ]);
 }
 
+// submitParallelPasswordLogin starts two identical initial enrollment decisions
+// against one browser session before either response can navigate the page.
+async function submitParallelPasswordLogin(page, user, secret) {
+  await page.waitForSelector('input[name="username"]');
+  await page.fill('input[name="username"]', user);
+  await page.fill('input[name="password"]', secret);
+
+  const responses = await page.evaluate(async () => {
+    const form = document.querySelector('form');
+    if (!form) {
+      throw new Error('login form not found');
+    }
+
+    const submit = async () => {
+      const response = await fetch(form.action || '/login', {
+        method: (form.method || 'POST').toUpperCase(),
+        headers: {'content-type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams(new FormData(form)),
+      });
+
+      return {status: response.status, url: response.url};
+    };
+
+    return Promise.all([submit(), submit()]);
+  });
+
+  let enrollmentResponses = 0;
+  for (const [index, response] of responses.entries()) {
+    assert.equal(response.status, 200, `parallel initial login ${index + 1} must complete safely`);
+    const target = new URL(response.url);
+    assert.ok(
+      /^\/mfa\/totp\/register(?:\/|$)/.test(target.pathname) || /^\/login(?:\/|$)/.test(target.pathname),
+      `parallel initial login ${index + 1} must either enroll or remain fail-closed at login`,
+    );
+    assert.equal(target.searchParams.has('code'), false,
+      `parallel initial login ${index + 1} must not issue an authorization code`);
+    if (/^\/mfa\/totp\/register(?:\/|$)/.test(target.pathname)) {
+      enrollmentResponses++;
+    }
+  }
+
+  assert.ok(enrollmentResponses >= 1, 'parallel initial login must produce one enrollment winner');
+}
+
 async function completeTOTPRegistration(page) {
   await page.waitForURL(/\/mfa\/totp\/register/);
   await traceCookieSizes(page, 'after TOTP registration page');
@@ -1984,8 +2285,9 @@ async function completeTOTPRegistration(page) {
     const hxRedirect = response.headers()['hx-redirect'];
     trace(`TOTP registration response status=${response.status()} hx-redirect=${hxRedirect || ''} url=${page.url()}`);
     if (response.ok() && hxRedirect) {
-      await page.goto(new URL(hxRedirect, edgeA).toString());
-      await page.waitForLoadState('networkidle').catch(() => undefined);
+      // HTMX follows HX-Redirect itself. Replaying the same navigation would
+      // consume stateful registration pages, such as remote recovery codes,
+      // twice and no longer model real browser behavior.
       await waitForMFARegistrationStep(page);
 
       return secret;
@@ -2105,10 +2407,10 @@ async function completeRecoveryRegistration(page) {
   const codes = (await page.locator('#recovery-codes-grid div').allInnerTexts())
     .map((value) => value.trim())
     .filter(Boolean);
-  await Promise.all([
-    page.waitForResponse((response) => response.url().includes('/mfa/recovery/register/save')).catch(() => undefined),
-    page.click('#download-btn'),
-  ]);
+  const saveResponsePromise = page.waitForResponse((response) => response.url().includes('/mfa/recovery/register/save'));
+  await page.click('#download-btn');
+  const saveResponse = await saveResponsePromise;
+  assert.equal(saveResponse.status(), 200, 'recovery-code save must complete successfully');
   await page.waitForSelector('#continue-btn:not([disabled])');
   await page.click('#continue-btn');
   await page.waitForURL(/callback|\/mfa\/register\/continue|\/mfa\/register\/home/, {timeout: 15000});

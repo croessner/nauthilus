@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
@@ -50,6 +51,118 @@ func TestClearBrowserCookies(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestClearBrowserCookiesRemainsFinalAtResponseCommit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, test := range clearBrowserCookiesCommitCases() {
+		t.Run(test.name, func(t *testing.T) {
+			assertBrowserCookieDeletionFinal(t, test)
+		})
+	}
+}
+
+type clearBrowserCookiesCommitCase struct {
+	respond      func(*gin.Context)
+	name         string
+	wantStatus   int
+	explicitSave bool
+}
+
+func clearBrowserCookiesCommitCases() []clearBrowserCookiesCommitCase {
+	return []clearBrowserCookiesCommitCase{
+		{
+			name:       "redirect logout",
+			wantStatus: http.StatusFound,
+			respond: func(ctx *gin.Context) {
+				ctx.Redirect(http.StatusFound, "/logged_out")
+			},
+		},
+		{
+			name:       "front-channel logout body",
+			wantStatus: http.StatusOK,
+			respond: func(ctx *gin.Context) {
+				ctx.String(http.StatusOK, "logged out")
+			},
+		},
+		{
+			name:       "logout error response",
+			wantStatus: http.StatusInternalServerError,
+			respond: func(ctx *gin.Context) {
+				ctx.String(http.StatusInternalServerError, "logout failed")
+			},
+		},
+		{
+			name:         "saved session rotation followed by logout",
+			wantStatus:   http.StatusFound,
+			explicitSave: true,
+			respond: func(ctx *gin.Context) {
+				ctx.Redirect(http.StatusFound, "/logged_out")
+			},
+		},
+	}
+}
+
+func assertBrowserCookieDeletionFinal(t *testing.T, test clearBrowserCookiesCommitCase) {
+	t.Helper()
+
+	env := &config.EnvironmentSettings{DevMode: true}
+	util.SetDefaultEnvironment(env)
+
+	router := gin.New()
+	router.Use(cookie.Middleware([]byte("0123456789abcdef0123456789abcdef"), nil, env))
+	router.GET("/logout", func(ctx *gin.Context) {
+		mgr := cookie.MustGetManager(ctx)
+		mgr.Set(definitions.SessionKeyIDPFlowID, "flow-left-after-cleaner")
+		mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
+
+		if test.explicitSave {
+			if err := mgr.Save(ctx); err != nil {
+				t.Errorf("save rotating session: %v", err)
+			}
+		}
+
+		ClearBrowserCookies(ctx)
+		test.respond(ctx)
+	})
+
+	writer := httptest.NewRecorder()
+	router.ServeHTTP(writer, httptest.NewRequest(http.MethodGet, "/logout", nil))
+
+	if writer.Code != test.wantStatus {
+		t.Fatalf("status = %d, want %d", writer.Code, test.wantStatus)
+	}
+
+	assertNoSecureCookieAfterDeletion(t, writer.Result().Cookies())
+}
+
+// assertNoSecureCookieAfterDeletion verifies that response finalization cannot
+// append a live session after an explicit browser-cookie deletion.
+func assertNoSecureCookieAfterDeletion(t *testing.T, cookies []*http.Cookie) {
+	t.Helper()
+
+	deletionSeen := false
+
+	for _, responseCookie := range cookies {
+		if responseCookie.Name != definitions.SecureDataCookieName {
+			continue
+		}
+
+		if responseCookie.MaxAge < 0 && responseCookie.Value == "" {
+			deletionSeen = true
+
+			continue
+		}
+
+		if deletionSeen {
+			t.Fatalf("live secure cookie was emitted after deletion: MaxAge=%d", responseCookie.MaxAge)
+		}
+	}
+
+	if !deletionSeen {
+		t.Fatal("secure cookie deletion was not emitted")
+	}
 }
 
 type clearBrowserCookiesSecureCase struct {

@@ -108,6 +108,13 @@ func sessionCleanerKeys() []string {
 // ClearBrowserCookies explicitly overwrites security-relevant cookies in the browser with an expired state.
 // After the CookieManager migration, only SecureDataCookieName exists as the encrypted secure data cookie.
 func ClearBrowserCookies(ctx *gin.Context) {
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		mgr.Clear()
+		mgr.SetMaxAge(-1)
+
+		return
+	}
+
 	secure := util.ShouldSetSecureCookie()
 
 	ctx.SetCookie(definitions.SecureDataCookieName, "", -1, "/", "", secure, true)

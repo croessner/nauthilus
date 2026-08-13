@@ -81,6 +81,37 @@ func (c *Controller) Start(ctx context.Context, state *State, now time.Time) (De
 	return decision, nil
 }
 
+// StartAtStep validates a flow start and its first transition, then persists
+// the resulting state in one store operation.
+func (c *Controller) StartAtStep(ctx context.Context, state *State, to Step, now time.Time) (Decision, error) {
+	decision, err := c.PreviewStart(state, now)
+	if err != nil {
+		return Decision{}, err
+	}
+
+	if c == nil || c.store == nil {
+		return Decision{}, fmt.Errorf("flow controller: missing store")
+	}
+
+	policy, err := PolicyForFlowType(state.Type)
+	if err != nil {
+		return Decision{}, err
+	}
+
+	if !policy.AllowsAction(state.CurrentStep, FlowActionAdvance) || !policy.CanTransition(state.CurrentStep, to) {
+		return Decision{}, TransitionError{Type: state.Type, From: state.CurrentStep, To: to, Action: FlowActionAdvance}
+	}
+
+	state.CurrentStep = to
+	state.Normalize(now)
+
+	if err = c.store.Save(ctx, state); err != nil {
+		return Decision{}, err
+	}
+
+	return decision, nil
+}
+
 // Advance transitions the flow to the requested next step.
 func (c *Controller) Advance(ctx context.Context, flowID string, to Step, now time.Time) (Decision, error) {
 	return c.transition(ctx, flowID, to, FlowActionAdvance, now)

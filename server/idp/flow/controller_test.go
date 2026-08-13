@@ -23,14 +23,46 @@ import (
 )
 
 type memoryStore struct {
-	state *State
+	state     *State
+	saveCalls int
 }
 
 func (m *memoryStore) Load(_ context.Context, _ string) (*State, error) { return m.state, nil }
 func (m *memoryStore) Save(_ context.Context, state *State) error {
 	m.state = state
+	m.saveCalls++
 
 	return nil
+}
+
+func TestControllerStartAtStepPersistsFirstTransitionOnce(t *testing.T) {
+	store := &memoryStore{}
+	controller := NewController(store)
+	state := &State{
+		FlowID:       "require-mfa-flow:1",
+		Type:         FlowTypeRequireMFA,
+		Protocol:     FlowProtocolOIDC,
+		CurrentStep:  FlowStepStart,
+		ReturnTarget: "/mfa/totp/register",
+		PendingMFA:   true,
+	}
+
+	decision, err := controller.StartAtStep(t.Context(), state, FlowStepRequireMFAChallenge, time.Now())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if decision.RedirectURI != "/mfa/totp/register" {
+		t.Fatalf("redirect = %q, want TOTP registration", decision.RedirectURI)
+	}
+
+	if store.saveCalls != 1 {
+		t.Fatalf("save calls = %d, want 1", store.saveCalls)
+	}
+
+	if store.state == nil || store.state.CurrentStep != FlowStepRequireMFAChallenge {
+		t.Fatalf("persisted state = %#v, want challenge step", store.state)
+	}
 }
 func (m *memoryStore) Delete(_ context.Context, _ string) error {
 	m.state = nil

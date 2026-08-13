@@ -34,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	_ "github.com/croessner/nauthilus/v3/server/core/auth"
+	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	authv1 "github.com/croessner/nauthilus/v3/server/grpcapi/auth/v1"
 	commonv1 "github.com/croessner/nauthilus/v3/server/grpcapi/common/v1"
@@ -96,6 +97,8 @@ const (
 	remoteBackendDataAttributeMail     = "mail"
 	remoteBackendDataBackendRef        = "remote-backend-ref"
 	backendDataPluginResponseHeader    = "X-Nauthilus-Lookup-Response"
+	delegatedTargetStaleBackendRef     = "delegated-target-stale-ref"
+	delegatedFactorBackendRef          = "delegated-factor-ref"
 )
 
 func TestGetUserBackendDataCapturesIdentityAndMFAState(t *testing.T) {
@@ -208,6 +211,198 @@ func TestPurgeCachedAuthenticationForUserIgnoresConsumedStructuredBody(t *testin
 
 	assert.Equal(t, http.StatusNoContent, recorder.Code)
 	assert.Empty(t, recorder.Body.String())
+}
+
+func TestLoadCompletedMFAUserRefreshesDelegatedTargetBackendRef(t *testing.T) {
+	fixture := newBackendDataRemoteFixture(t)
+	client := newRemoteBackendDataAuthorityClient()
+	client.rejectResolveBackendRef = delegatedTargetStaleBackendRef
+
+	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
+	defer cleanup()
+
+	fixture.expectAccountMappingForClient(backendDataUsername, definitions.ProtoOIDC, "completed-mfa-client", backendDataUsername)
+	fixture.expectAccountMappingForClient(backendDataUsername, definitions.ProtoOIDC, "completed-mfa-client", backendDataUsername)
+
+	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
+	mgr := completedMFARefTestManager(delegatedTargetStaleBackendRef, delegatedFactorBackendRef, "master@example.test")
+	ctx := completedMFARefTestContext(mgr)
+	sess := &mfaSessionState{
+		mgr:        mgr,
+		username:   backendDataUsername + "*master@example.test",
+		factorUser: "master@example.test",
+		oidcCID:    "completed-mfa-client",
+	}
+
+	user, err := handler.loadCompletedMFAUser(ctx, sess, &backend.User{Name: backendDataUsername})
+
+	if assert.NoError(t, err) && assert.NotNil(t, user) {
+		assert.Equal(t, backendDataUsername, user.Name)
+	}
+
+	if assert.Len(t, client.resolveUserRequests, 1) {
+		assert.Nil(t, client.resolveUserRequests[0].GetBackend())
+	}
+
+	assertRemoteBackendRefToken(t, mgr, remoteBackendDataBackendRef)
+	assertMFAFactorRemoteBackendRefToken(t, mgr, delegatedFactorBackendRef)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+func TestLoadCompletedMFAUserReusesSameAccountBackendRef(t *testing.T) {
+	fixture := newBackendDataRemoteFixture(t)
+	client := newRemoteBackendDataAuthorityClient()
+	client.resolveUserResponse.User.Backend.OpaqueToken = remoteBackendDataBackendRef
+	client.resolveUserResponse.User.Backend.Protocol = definitions.ProtoOIDC
+
+	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
+	defer cleanup()
+
+	fixture.expectAccountMappingForClient(backendDataUsername, definitions.ProtoOIDC, "completed-mfa-client", backendDataUsername)
+	fixture.expectAccountMappingForClient(backendDataUsername, definitions.ProtoOIDC, "completed-mfa-client", backendDataUsername)
+
+	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
+	mgr := completedMFARefTestManager(remoteBackendDataBackendRef, remoteBackendDataBackendRef, backendDataUsername)
+	ctx := completedMFARefTestContext(mgr)
+	sess := &mfaSessionState{
+		mgr:        mgr,
+		username:   backendDataUsername,
+		factorUser: backendDataUsername,
+		oidcCID:    "completed-mfa-client",
+	}
+
+	user, err := handler.loadCompletedMFAUser(ctx, sess, &backend.User{Name: backendDataUsername})
+
+	if assert.NoError(t, err) && assert.NotNil(t, user) {
+		assert.Equal(t, backendDataUsername, user.Name)
+	}
+
+	if assert.Len(t, client.resolveUserRequests, 1) {
+		assert.Equal(t, remoteBackendDataBackendRef, client.resolveUserRequests[0].GetBackend().GetOpaqueToken())
+	}
+
+	assertRemoteBackendRefToken(t, mgr, remoteBackendDataBackendRef)
+	assertMFAFactorRemoteBackendRefToken(t, mgr, remoteBackendDataBackendRef)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+func TestPostLoginWebAuthnFinishRefreshesOnlyDelegatedTargetBackendRef(t *testing.T) {
+	testCases := []struct {
+		name           string
+		factorAccount  string
+		targetRef      string
+		wantTargetRef  string
+		wantTargetHave bool
+	}{
+		{
+			name:          "delegated target lookup starts fresh",
+			factorAccount: "master@example.test",
+			targetRef:     delegatedTargetStaleBackendRef,
+		},
+		{
+			name:           "same account reuses backend reference",
+			factorAccount:  backendDataUsername,
+			targetRef:      remoteBackendDataBackendRef,
+			wantTargetRef:  remoteBackendDataBackendRef,
+			wantTargetHave: true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			mgr := completedMFARefTestManager(testCase.targetRef, delegatedFactorBackendRef, testCase.factorAccount)
+			setCompletedMFAWebAuthnFlowState(mgr)
+
+			ctx := completedMFARefTestContext(mgr)
+			handler := newContinueMFAFrontendHandlerWithIDP(&config.IDPSection{})
+			factorRefSeen := ""
+			handler.webAuthnLoginCompleter = func(_ *gin.Context, _ core.AuthDeps) (*backend.User, bool) {
+				if ref, ok := core.MFAFactorRemoteBackendRefFromSession(mgr); ok {
+					factorRefSeen = ref.OpaqueToken
+				}
+
+				factorUser := &backend.User{Name: testCase.factorAccount, ID: "factor-uid"}
+				finalUser := core.ResolveCompletedIDPMFAUser(mgr, factorUser)
+				core.StoreCompletedIDPMFASession(mgr, factorUser, definitions.MFAMethodWebAuthn)
+
+				return finalUser, true
+			}
+
+			handler.PostLoginWebAuthnFinish(ctx)
+
+			assert.Equal(t, http.StatusOK, ctx.Writer.Status())
+			assert.Equal(t, delegatedFactorBackendRef, factorRefSeen)
+
+			targetRef, haveTargetRef := core.RemoteBackendRefFromSession(mgr)
+			assert.Equal(t, testCase.wantTargetHave, haveTargetRef)
+			assert.Equal(t, testCase.wantTargetRef, targetRef.OpaqueToken)
+		})
+	}
+}
+
+// setCompletedMFAWebAuthnFlowState adds the OIDC parent data needed after WebAuthn completion.
+func setCompletedMFAWebAuthnFlowState(mgr cookie.Manager) {
+	mgr.Set(definitions.SessionKeyIDPFlowID, "completed-mfa-flow")
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
+	mgr.Set(definitions.SessionKeyIDPClientID, "completed-mfa-client")
+	mgr.Set(definitions.SessionKeyIDPRedirectURI, "https://client.example.test/callback")
+	mgr.Set(definitions.SessionKeyIDPScope, "openid")
+	mgr.Set(definitions.SessionKeyIDPState, "completed-mfa-state")
+	mgr.Set(definitions.SessionKeyIDPResponseType, "code")
+	mgr.Set(definitions.SessionKeyProtocol, definitions.ProtoOIDC)
+}
+
+func completedMFARefTestManager(targetRef, factorRef, factorAccount string) *mockCookieManager {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyMFAAccount:       backendDataUsername,
+		definitions.SessionKeyMFAFactorAccount: factorAccount,
+	}}
+	core.StoreRemoteBackendRef(mgr, core.RemoteBackendRef{
+		Type:        definitions.BackendLDAPName,
+		Name:        remoteBackendDataAuthorityBackend,
+		Protocol:    definitions.ProtoOIDC,
+		Authority:   remoteBackendDataAuthority,
+		OpaqueToken: targetRef,
+	})
+	core.StorePendingIDPMFAFactorRemoteBackendRef(mgr, core.RemoteBackendRef{
+		Type:        definitions.BackendLDAPName,
+		Name:        remoteBackendDataAuthorityBackend,
+		Protocol:    definitions.ProtoOIDC,
+		Authority:   remoteBackendDataAuthority,
+		OpaqueToken: factorRef,
+	})
+
+	return mgr
+}
+
+func completedMFARefTestContext(mgr cookie.Manager) *gin.Context {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/login/totp/en", nil)
+	ctx.Request.RemoteAddr = "127.0.0.1:12345"
+	ctx.Set(definitions.CtxGUIDKey, "completed-mfa-guid")
+	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
+	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+	ctx.Set(definitions.CtxSecureDataKey, mgr)
+
+	return ctx
+}
+
+func assertRemoteBackendRefToken(t *testing.T, mgr cookie.Manager, expected string) {
+	t.Helper()
+
+	ref, ok := core.RemoteBackendRefFromSession(mgr)
+	assert.True(t, ok)
+	assert.Equal(t, expected, ref.OpaqueToken)
+}
+
+func assertMFAFactorRemoteBackendRefToken(t *testing.T, mgr cookie.Manager, expected string) {
+	t.Helper()
+
+	ref, ok := core.MFAFactorRemoteBackendRefFromSession(mgr)
+	assert.True(t, ok)
+	assert.Equal(t, expected, ref.OpaqueToken)
 }
 
 func TestHasWebAuthnIgnoresConsumedStructuredBody(t *testing.T) {
@@ -736,8 +931,12 @@ func (f *backendDataLDAPFixture) encrypt(t *testing.T, value string) string {
 }
 
 func (f *backendDataBaseFixture) expectAccountMapping(username, protocol, account string) {
+	f.expectAccountMappingForClient(username, protocol, "", account)
+}
+
+func (f *backendDataBaseFixture) expectAccountMappingForClient(username, protocol, clientID, account string) {
 	key := rediscli.GetUserHashKey(f.cfg.GetServer().GetRedis().GetPrefix(), username)
-	field := accountcache.GetAccountMappingField(username, protocol, "")
+	field := accountcache.GetAccountMappingField(username, protocol, clientID)
 
 	f.mock.ExpectHGet(key, field).RedisNil()
 	f.mock.ExpectHSet(key, field, account).SetVal(1)
@@ -869,6 +1068,7 @@ type remoteBackendDataAuthorityClient struct {
 	authenticateRequests    []*authv1.AuthRequest
 	listAccountsRequests    []*authv1.ListAccountsRequest
 	webAuthnCredentialReads []*identityv1.GetWebAuthnCredentialsRequest
+	rejectResolveBackendRef string
 }
 
 func newRemoteBackendDataAuthorityClient(credentials ...mfa.PersistentCredential) *remoteBackendDataAuthorityClient {
@@ -950,6 +1150,9 @@ func (c *remoteBackendDataAuthorityClient) ResolveUser(
 	request *identityv1.ResolveUserRequest,
 ) (*identityv1.UserSnapshotResponse, error) {
 	c.resolveUserRequests = append(c.resolveUserRequests, request)
+	if request.GetBackend().GetOpaqueToken() == c.rejectResolveBackendRef && c.rejectResolveBackendRef != "" {
+		return nil, errors.New("backend reference username mismatch")
+	}
 
 	return c.resolveUserResponse, nil
 }
