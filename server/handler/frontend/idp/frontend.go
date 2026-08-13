@@ -56,10 +56,11 @@ const webAuthnDeviceNameMaxRunes = 64
 
 // FrontendHandler handles general IDP frontend pages like login and consent.
 type FrontendHandler struct {
-	deps        *deps.Deps
-	mfa         idp.MFAProvider
-	deviceStore idp.DeviceCodeStore
-	tracer      monittrace.Tracer
+	deps                   *deps.Deps
+	mfa                    idp.MFAProvider
+	deviceStore            idp.DeviceCodeStore
+	webAuthnLoginCompleter func(*gin.Context, core.AuthDeps) (*backend.User, bool)
+	tracer                 monittrace.Tracer
 }
 
 type mfaAvailability struct {
@@ -74,10 +75,11 @@ func NewFrontendHandler(d *deps.Deps) *FrontendHandler {
 	prefix := d.Cfg.GetServer().GetRedis().GetPrefix()
 
 	return &FrontendHandler{
-		deps:        d,
-		mfa:         idp.NewMFAService(d),
-		deviceStore: idp.NewRedisDeviceCodeStoreWithConfig(d.Redis, prefix, d.Cfg),
-		tracer:      monittrace.New("nauthilus/idp/frontend"),
+		deps:                   d,
+		mfa:                    idp.NewMFAService(d),
+		deviceStore:            idp.NewRedisDeviceCodeStoreWithConfig(d.Redis, prefix, d.Cfg),
+		webAuthnLoginCompleter: core.CompleteLoginWebAuthn,
+		tracer:                 monittrace.New("nauthilus/idp/frontend"),
 	}
 }
 
@@ -732,13 +734,15 @@ func (h *FrontendHandler) resumeExistingLoginSession(ctx *gin.Context, mgr cooki
 		return false
 	}
 
+	if h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
+		return true
+	}
+
 	if h.redirectExistingSessionMFAAssurance(ctx, mgr) {
 		return true
 	}
 
-	if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
-		h.resumeIDPFlow(ctx, mgr)
-	}
+	h.resumeIDPFlow(ctx, mgr)
 
 	return true
 }
@@ -1660,11 +1664,14 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 // PostLoginWebAuthnFinish completes WebAuthn MFA and returns the server-derived
 // continuation target for the surrounding IDP flow.
 func (h *FrontendHandler) PostLoginWebAuthnFinish(ctx *gin.Context) {
-	if _, ok := core.CompleteLoginWebAuthn(ctx, h.deps.Auth()); !ok {
+	mgr := cookie.GetManager(ctx)
+	targetAccount, factorAccount := pendingCompletedMFAAccounts(mgr)
+
+	if _, ok := h.completeLoginWebAuthn(ctx); !ok {
 		return
 	}
 
-	mgr := cookie.GetManager(ctx)
+	prepareDelegatedTargetBackendLookup(mgr, targetAccount, factorAccount)
 
 	redirectURI, ok := h.loginWebAuthnCompletionRedirect(ctx, mgr)
 	if !ok {
@@ -1680,6 +1687,15 @@ func (h *FrontendHandler) PostLoginWebAuthnFinish(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, webAuthnFinishResponse{Redirect: redirectURI})
 }
 
+// completeLoginWebAuthn runs the WebAuthn verifier through the injected test seam.
+func (h *FrontendHandler) completeLoginWebAuthn(ctx *gin.Context) (*backend.User, bool) {
+	if h.webAuthnLoginCompleter != nil {
+		return h.webAuthnLoginCompleter(ctx, h.deps.Auth())
+	}
+
+	return core.CompleteLoginWebAuthn(ctx, h.deps.Auth())
+}
+
 // loginWebAuthnCompletionRedirect mirrors the post-MFA continuation used by
 // TOTP, but returns a transport-neutral target for the JavaScript WebAuthn flow.
 func (h *FrontendHandler) loginWebAuthnCompletionRedirect(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
@@ -1691,7 +1707,14 @@ func (h *FrontendHandler) loginWebAuthnCompletionRedirect(ctx *gin.Context, mgr 
 		return "", false
 	}
 
-	if redirectURI, ok := h.requireMFARegistrationRedirectURI(ctx, mgr); ok {
+	redirectURI, ok, err := h.requireMFARegistrationRedirectURI(ctx, mgr)
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, "Failed to initialize required MFA registration")
+
+		return "", false
+	}
+
+	if ok {
 		return redirectURI, true
 	}
 
@@ -2094,6 +2117,8 @@ func (h *FrontendHandler) loadCompletedMFAUser(ctx *gin.Context, sess *mfaSessio
 		return fallback, nil
 	}
 
+	prepareDelegatedTargetBackendLookup(sess.mgr, username, sess.factorUser)
+
 	idpInstance := idp.NewNauthilusIDP(h.deps)
 
 	user, err := idpInstance.GetUserByUsername(ctx, username, sess.oidcCID, sess.samlEntityID)
@@ -2102,6 +2127,26 @@ func (h *FrontendHandler) loadCompletedMFAUser(ctx *gin.Context, sess *mfaSessio
 	}
 
 	return user, nil
+}
+
+// pendingCompletedMFAAccounts snapshots the target and factor before MFA cleanup.
+func pendingCompletedMFAAccounts(mgr cookie.Manager) (string, string) {
+	if mgr == nil {
+		return "", ""
+	}
+
+	return mgr.GetString(definitions.SessionKeyMFAAccount, ""),
+		mgr.GetString(definitions.SessionKeyMFAFactorAccount, "")
+}
+
+// prepareDelegatedTargetBackendLookup removes only the default factor-owned
+// reference so a delegated target lookup establishes fresh backend affinity.
+func prepareDelegatedTargetBackendLookup(mgr cookie.Manager, targetAccount, factorAccount string) {
+	if mgr == nil || targetAccount == "" || factorAccount == "" || targetAccount == factorAccount {
+		return
+	}
+
+	core.ClearRemoteBackendRef(mgr)
 }
 
 // PostLoginRecovery handles the recovery code verification during login.
@@ -2989,10 +3034,8 @@ func (h *FrontendHandler) validateRecoveryCodesPayload(ctx *gin.Context, context
 
 // finishSaveRecoveryCodes updates cache and session state after successful save.
 func (h *FrontendHandler) finishSaveRecoveryCodes(ctx *gin.Context, context saveRecoveryCodesContext) {
-	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
-	if state != nil {
-		state.PurgeCacheFor(context.username)
-	}
+	state := core.NewAuthStateFromContextWithDeps(ctx, h.deps.Auth())
+	state.PurgeCacheFor(context.username)
 
 	if context.mgr == nil {
 		return

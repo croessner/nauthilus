@@ -112,6 +112,8 @@ func TestSplitDeploymentProfileKeepsAuthorityAndEdgeSeparated(t *testing.T) {
 	assertOIDCTokenLifetimes(t, edgeB, "edge-b")
 	assertEdgeNegativeOIDCClients(t, edgeA, "edge-a")
 	assertEdgeNegativeOIDCClients(t, edgeB, "edge-b")
+	assertRequiredMFAJourneyClient(t, edgeA, "edge-a")
+	assertRequiredMFAJourneyClient(t, edgeB, "edge-b")
 }
 
 // assertAuthorityBackendRefs verifies that the split authority explicitly enables backend references.
@@ -269,6 +271,13 @@ func oidcDeviceSmokePlanScenarios() []string {
 // mfaSmokePlanScenarios returns MFA and recovery-code checks.
 func mfaSmokePlanScenarios() []string {
 	return []string{
+		"oidc-required-mfa-pending-authorize-resume",
+		"oidc-required-mfa-parallel-authorize-bound",
+		"oidc-required-mfa-optional-webauthn-skipped",
+		"oidc-required-mfa-original-callback-bound",
+		"oidc-required-mfa-delayed-response-chain",
+		"oidc-required-mfa-code-replay-rejected",
+		"oidc-required-mfa-logout-login-step-up",
 		"oidc-totp-invalid-code",
 		"oidc-recovery-invalid-code",
 		"oidc-delayed-response-recovery-invalid-code",
@@ -392,6 +401,10 @@ func TestBrowserAutomationUsesCDPVirtualAuthenticator(t *testing.T) {
 		"runWebAuthnSignCountRollback",
 		"runRecoveryCodeMatrix",
 		"runDelayedResponseRecoveryFailure",
+		"runRequiredMFAJourneyStateMachine",
+		"requiredMFAJourneyFlowState",
+		"assertRequiredMFAResumeResponse",
+		"edge:idp:flow:require-mfa-flow:*",
 		"runRecoveryCodeReuseRejected",
 		"runMFASelfServiceStepUpChecks",
 		"submitSelfServiceMutation",
@@ -713,6 +726,29 @@ func assertEdgeNegativeOIDCClients(t *testing.T, cfg map[string]any, label strin
 	}
 }
 
+// assertRequiredMFAJourneyClient keeps the full browser regression bound to
+// mandatory enrollment, optional enrollment, step-up, and delayed response.
+func assertRequiredMFAJourneyClient(t *testing.T, cfg map[string]any, label string) {
+	t.Helper()
+
+	client := findClient(t, sequenceMaps(cfg, "identity", "oidc", "clients"), "split-e2e-required-mfa-journey")
+	if !boolValue(client, "delayed_response") {
+		t.Fatalf("%s required-MFA journey client must enable delayed_response", label)
+	}
+
+	if !reflect.DeepEqual(sequence(client, "require_mfa"), []string{"totp", "recovery_codes"}) {
+		t.Fatalf("%s required-MFA journey client has an unexpected mandatory chain", label)
+	}
+
+	if !contains(sequence(client, "supported_mfa"), "webauthn") || contains(sequence(client, "require_mfa"), "webauthn") {
+		t.Fatalf("%s required-MFA journey client must keep WebAuthn optional", label)
+	}
+
+	if intValue(client, "required_mfa_level") != 2 {
+		t.Fatalf("%s required-MFA journey client must require assurance level 2", label)
+	}
+}
+
 func assertServiceNetworks(t *testing.T, compose map[string]any, service string, want []string) {
 	t.Helper()
 
@@ -834,6 +870,16 @@ func boolValue(root map[string]any, key string) bool {
 	}
 
 	value, _ := root[key].(bool)
+
+	return value
+}
+
+func intValue(root map[string]any, key string) int {
+	if root == nil {
+		return 0
+	}
+
+	value, _ := root[key].(int)
 
 	return value
 }

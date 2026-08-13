@@ -35,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/frontend"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
+	"github.com/croessner/nauthilus/v3/server/lualib"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
@@ -1275,6 +1276,33 @@ func TestExistingSessionRequireMFAResumeRedirectsToStepUp(t *testing.T) {
 	assert.True(t, mgr.HasKey(definitions.SessionKeyAuthResult))
 }
 
+func TestExistingSessionChecksRequiredMFAEnrollmentBeforeStepUp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRoundcubeAuthorizePublicPathBoundaryTest()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/login/en", nil)
+	ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
+
+	h := newOIDCRequireMFATestHandler("oidc-client", []string{definitions.MFAMethodTOTP})
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:      "alice",
+		definitions.SessionKeyUniqueUserID: "alice-id",
+		definitions.SessionKeyIDPFlowID:    "flow-parent",
+		definitions.SessionKeyIDPFlowType:  definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID:  "oidc-client",
+	}}
+
+	if !h.resumeExistingLoginSession(ctx, mgr) {
+		t.Fatal("expected authenticated session to be handled")
+	}
+
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+	assert.Empty(t, recorder.Header().Get("Location"))
+	assert.False(t, mgr.HasKey(definitions.SessionKeyMFAAccount))
+}
+
 // newOIDCRequireMFATestHandler builds a frontend handler with one require-MFA OIDC client.
 func newOIDCRequireMFATestHandler(clientID string, requireMFA []string) *FrontendHandler {
 	return &FrontendHandler{
@@ -1879,6 +1907,37 @@ type mfaSelfServiceProvider struct {
 	generateRecoveryCalls int
 }
 
+type recoverySaveProvider struct {
+	mfaSelfServiceProvider
+	saveCalls int
+}
+
+func (p *recoverySaveProvider) SaveRecoveryCodes(_ *gin.Context, _ string, _ []string, _ uint8) error {
+	p.saveCalls++
+
+	return nil
+}
+
+func TestSaveRecoveryCodesDoesNotRebindConsumedJSONForCachePurge(t *testing.T) {
+	provider := &recoverySaveProvider{}
+	handler, _ := newMFASelfServiceTestHandler()
+	handler.mfa = provider
+	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/recovery/register/save/en", map[string]any{
+		definitions.SessionKeyAccount:                      frontendTestAccount,
+		definitions.SessionKeyUserBackend:                  uint8(definitions.BackendRemote),
+		definitions.SessionKeyRecoveryCodesRemoteGenerated: true,
+	}, bytes.NewReader([]byte(`{"codes":["one","two"]}`)))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
+	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+
+	handler.SaveRecoveryCodes(ctx)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, 1, provider.saveCalls)
+	assert.NotContains(t, recorder.Body.String(), "EOF")
+}
+
 func (p *mfaSelfServiceProvider) GenerateTOTPSecret(_ *gin.Context, _ string) (string, string, error) {
 	return "", "", errors.New("unexpected GenerateTOTPSecret call")
 }
@@ -2291,10 +2350,10 @@ func TestRequiredMFAFlowIDsAreIsolatedPerParentFlow(t *testing.T) {
 				Name: tc.account,
 			}
 
-			redirectURI, redirected := handler.startRequireMFARegistrationFlow(ctx, mgr, user, definitions.ProtoOIDC, []string{definitions.MFAMethodTOTP})
+			redirectURI, err := handler.startRequireMFARegistrationFlow(ctx, mgr, user, definitions.ProtoOIDC, []string{definitions.MFAMethodTOTP})
 			flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
 
-			assert.True(t, redirected)
+			assert.NoError(t, err)
 			assert.NotEmpty(t, redirectURI)
 			assert.NotEmpty(t, flowID)
 			assert.NotEqual(t, flowdomain.FlowIDRequireMFA, flowID)

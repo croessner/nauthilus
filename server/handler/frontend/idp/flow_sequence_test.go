@@ -2,6 +2,7 @@ package idp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -572,7 +573,7 @@ func TestStartRequiredMFARegistrationFallsBackToIDPFlowProtocol(t *testing.T) {
 		Name: "user@example.test",
 	}
 
-	redirectURI, redirected := newContinueMFAFrontendHandler().startRequireMFARegistrationFlow(
+	redirectURI, err := newContinueMFAFrontendHandler().startRequireMFARegistrationFlow(
 		ctx,
 		mgr,
 		user,
@@ -580,8 +581,8 @@ func TestStartRequiredMFARegistrationFallsBackToIDPFlowProtocol(t *testing.T) {
 		[]string{definitions.MFAMethodRecoveryCodes},
 	)
 
-	if !redirected {
-		t.Fatal("expected required MFA registration redirect")
+	if err != nil {
+		t.Fatalf("expected required MFA registration redirect: %v", err)
 	}
 
 	if redirectURI == "" {
@@ -595,6 +596,134 @@ func TestStartRequiredMFARegistrationFallsBackToIDPFlowProtocol(t *testing.T) {
 	if got := mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""); got != "flow-parent" {
 		t.Fatalf("parent flow id = %q, want flow-parent", got)
 	}
+}
+
+func TestStartRequiredMFARegistrationPreservesMandatoryStateOnStoreFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db, mock := redismock.NewClientMock()
+	handler := newContinueMFAFrontendHandler()
+	handler.deps.Redis = rediscli.NewTestClient(db)
+
+	mock.Regexp().ExpectSet("idp:flow:require-mfa-flow:.*", ".*", 10*time.Minute).
+		SetErr(errors.New("redis unavailable"))
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/login", nil)
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowID:              "flow-parent",
+		definitions.SessionKeyIDPFlowType:            definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID:            "client-1",
+		definitions.SessionKeyRequireMFAParentFlowID: "flow-parent",
+		definitions.SessionKeyRequireMFAPending:      definitions.MFAMethodTOTP,
+		definitions.SessionKeyRequireMFAFlow:         true,
+		definitions.SessionKeyAccount:                "user@example.test",
+		definitions.SessionKeyUniqueUserID:           "uid-user",
+	}}
+	user := &backend.User{ID: "uid-user", Name: "user@example.test"}
+
+	redirectURI, err := handler.startRequireMFARegistrationFlow(
+		ctx,
+		mgr,
+		user,
+		definitions.ProtoOIDC,
+		[]string{definitions.MFAMethodTOTP},
+	)
+
+	if err == nil || redirectURI != "" {
+		t.Fatal("store failure must not redirect into an unpersisted registration flow")
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyRequireMFAPending, ""); got != definitions.MFAMethodTOTP {
+		t.Fatalf("pending method = %q, want preserved mandatory TOTP registration", got)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""); got != "flow-parent" {
+		t.Fatalf("parent flow id = %q, want flow-parent", got)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func TestStartRequiredMFARegistrationPersistsChallengeInOneWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db, mock := redismock.NewClientMock()
+	handler := newContinueMFAFrontendHandler()
+	handler.deps.Redis = rediscli.NewTestClient(db)
+
+	mock.CustomMatch(matchPersistedRequireMFAChallenge).
+		ExpectSet("", "", 10*time.Minute).
+		SetVal("OK")
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/login", nil)
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIDPFlowID:              "flow-parent",
+		definitions.SessionKeyIDPFlowType:            definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID:            "client-1",
+		definitions.SessionKeyRequireMFAParentFlowID: "flow-parent",
+		definitions.SessionKeyRequireMFAPending:      definitions.MFAMethodTOTP,
+		definitions.SessionKeyRequireMFAFlow:         true,
+		definitions.SessionKeyAccount:                "user@example.test",
+		definitions.SessionKeyUniqueUserID:           "uid-user",
+	}}
+
+	redirectURI, err := handler.startRequireMFARegistrationFlow(
+		ctx,
+		mgr,
+		&backend.User{ID: "uid-user", Name: "user@example.test"},
+		definitions.ProtoOIDC,
+		[]string{definitions.MFAMethodTOTP},
+	)
+	if err != nil {
+		t.Fatalf("start required MFA registration: %v", err)
+	}
+
+	if redirectURI != definitions.MFARoot+"/totp/register" {
+		t.Fatalf("redirect = %q, want TOTP registration", redirectURI)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("required MFA flow was not persisted atomically: %v", err)
+	}
+}
+
+func matchPersistedRequireMFAChallenge(_ []interface{}, actual []interface{}) error {
+	if len(actual) < 3 {
+		return errors.New("missing Redis SET arguments")
+	}
+
+	key, ok := actual[1].(string)
+	if !ok || !strings.Contains(key, "idp:flow:require-mfa-flow:") {
+		return errors.New("unexpected required-MFA Redis key")
+	}
+
+	var encoded []byte
+
+	switch value := actual[2].(type) {
+	case []byte:
+		encoded = value
+	case string:
+		encoded = []byte(value)
+	default:
+		return errors.New("unexpected required-MFA Redis value")
+	}
+
+	state := &flowdomain.State{}
+	if err := json.Unmarshal(encoded, state); err != nil {
+		return err
+	}
+
+	if state.CurrentStep != flowdomain.FlowStepRequireMFAChallenge {
+		return errors.New("required-MFA flow was not persisted at challenge step")
+	}
+
+	return nil
 }
 
 func TestWebAuthnCompletionResumesAuthorizationFlow(t *testing.T) {
