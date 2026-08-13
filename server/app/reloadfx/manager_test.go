@@ -12,7 +12,6 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/app/configfx"
 	"github.com/croessner/nauthilus/v3/server/app/opsfx"
-	"github.com/croessner/nauthilus/v3/server/config"
 )
 
 type fakeReloader struct {
@@ -23,24 +22,19 @@ type fakeReloader struct {
 	err     error
 }
 
-type fakePluginRuntime struct {
-	file  any
+type fakeGenerationCoordinator struct {
 	calls atomic.Int64
+	snap  configfx.Snapshot
 	err   error
 }
 
-func (r *fakePluginRuntime) Reconfigure(_ context.Context, file config.File) error {
-	r.calls.Add(1)
-	r.file = file
-
-	return r.err
-}
-
+// Current returns the fake's active configuration snapshot.
 func (r *fakeReloader) Current() configfx.Snapshot {
 	return r.snap
 }
 
-func (r *fakeReloader) Reload() (configfx.Snapshot, error) {
+// Prepare records and optionally blocks one candidate preparation.
+func (r *fakeReloader) Prepare() (configfx.Snapshot, error) {
 	r.calls.Add(1)
 
 	if r.enter != nil {
@@ -57,17 +51,27 @@ func (r *fakeReloader) Reload() (configfx.Snapshot, error) {
 	return r.snap, r.err
 }
 
+// Apply records one atomic generation publication attempt.
+func (c *fakeGenerationCoordinator) Apply(_ context.Context, snap configfx.Snapshot) error {
+	c.calls.Add(1)
+	c.snap = snap
+
+	return c.err
+}
+
 type callRecorder struct {
 	mu    sync.Mutex
 	calls []string
 }
 
+// add appends one observed component call safely.
 func (r *callRecorder) add(name string) {
 	r.mu.Lock()
 	r.calls = append(r.calls, name)
 	r.mu.Unlock()
 }
 
+// snapshot returns a detached copy of observed component calls.
 func (r *callRecorder) snapshot() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -86,9 +90,13 @@ type recordingReloadable struct {
 	err error
 }
 
+// Name returns the fake reloadable identity.
 func (r *recordingReloadable) Name() string { return r.name }
-func (r *recordingReloadable) Order() int   { return r.order }
 
+// Order returns the fake reloadable ordering key.
+func (r *recordingReloadable) Order() int { return r.order }
+
+// ApplyConfig records one post-commit invocation.
 func (r *recordingReloadable) ApplyConfig(_ context.Context, _ configfx.Snapshot) error {
 	if r.rec != nil {
 		r.rec.add(r.name)
@@ -97,6 +105,7 @@ func (r *recordingReloadable) ApplyConfig(_ context.Context, _ configfx.Snapshot
 	return r.err
 }
 
+// TestReloadManager_SerializesConcurrentReloads proves candidate preparation cannot overlap.
 func TestReloadManager_SerializesConcurrentReloads(t *testing.T) {
 	reloader := &fakeReloader{
 		enter:   make(chan struct{}, 1),
@@ -105,9 +114,10 @@ func TestReloadManager_SerializesConcurrentReloads(t *testing.T) {
 	}
 
 	manager := NewManager(managerIn{
-		Gate:     opsfx.NewGate(),
-		Reloader: reloader,
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Gate:        opsfx.NewGate(),
+		Reloader:    reloader,
+		Coordinator: &fakeGenerationCoordinator{},
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 
 	ctx := context.Background()
@@ -129,7 +139,7 @@ func TestReloadManager_SerializesConcurrentReloads(t *testing.T) {
 	}()
 
 	if got := reloader.calls.Load(); got != 1 {
-		t.Fatalf("expected exactly 1 Reload() call while first reload is blocked, got %d", got)
+		t.Fatalf("expected exactly 1 Prepare() call while first reload is blocked, got %d", got)
 	}
 
 	close(reloader.release)
@@ -153,10 +163,11 @@ func TestReloadManager_SerializesConcurrentReloads(t *testing.T) {
 	}
 
 	if got := reloader.calls.Load(); got != 2 {
-		t.Fatalf("expected 2 Reload() calls, got %d", got)
+		t.Fatalf("expected 2 Prepare() calls, got %d", got)
 	}
 }
 
+// TestReloadManager_CallsApplyConfigInOrder proves deterministic post-commit ordering.
 func TestReloadManager_CallsApplyConfigInOrder(t *testing.T) {
 	reloader := &fakeReloader{snap: configfx.Snapshot{Version: 3}}
 
@@ -169,6 +180,7 @@ func TestReloadManager_CallsApplyConfigInOrder(t *testing.T) {
 	manager := NewManager(managerIn{
 		Gate:        opsfx.NewGate(),
 		Reloader:    reloader,
+		Coordinator: &fakeGenerationCoordinator{},
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Reloadables: []Reloadable{r2, r3, r1},
 	})
@@ -191,6 +203,7 @@ func TestReloadManager_CallsApplyConfigInOrder(t *testing.T) {
 	}
 }
 
+// TestReloadManager_ContinuesOnComponentError proves non-policy reload remains best effort.
 func TestReloadManager_ContinuesOnComponentError(t *testing.T) {
 	reloader := &fakeReloader{snap: configfx.Snapshot{Version: 4}}
 
@@ -202,6 +215,7 @@ func TestReloadManager_ContinuesOnComponentError(t *testing.T) {
 	manager := NewManager(managerIn{
 		Gate:        opsfx.NewGate(),
 		Reloader:    reloader,
+		Coordinator: &fakeGenerationCoordinator{},
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Reloadables: []Reloadable{r1, r2},
 	})
@@ -221,20 +235,60 @@ func TestReloadManager_ContinuesOnComponentError(t *testing.T) {
 	}
 }
 
-func TestPluginReloadable_AppliesSnapshotToRuntime(t *testing.T) {
-	runtime := &fakePluginRuntime{}
-	reloadable := NewPluginReloadableWithRuntime(runtime)
-	snap := configfx.Snapshot{File: &config.FileSettings{}}
+// TestReloadManager_PreparationFailureSkipsGenerationAndReloadables proves fail-closed ordering.
+func TestReloadManager_PreparationFailureSkipsGenerationAndReloadables(t *testing.T) {
+	errPreparation := errors.New("candidate rejected")
+	reloader := &fakeReloader{err: errPreparation}
+	coordinator := &fakeGenerationCoordinator{}
+	recorder := &callRecorder{}
 
-	if err := reloadable.ApplyConfig(context.Background(), snap); err != nil {
-		t.Fatalf("ApplyConfig() error = %v", err)
+	manager := NewManager(managerIn{
+		Gate:        opsfx.NewGate(),
+		Reloader:    reloader,
+		Coordinator: coordinator,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Reloadables: []Reloadable{&recordingReloadable{name: "later", rec: recorder}},
+	})
+
+	err := manager.Reload(context.Background())
+	if !errors.Is(err, errPreparation) {
+		t.Fatalf("Reload() error = %v, want preparation failure", err)
 	}
 
-	if got := runtime.calls.Load(); got != 1 {
-		t.Fatalf("Reconfigure() calls = %d, want 1", got)
+	if got := coordinator.calls.Load(); got != 0 {
+		t.Fatalf("generation Apply() calls = %d, want 0", got)
 	}
 
-	if runtime.file != snap.File {
-		t.Fatal("runtime did not receive snapshot file")
+	if got := recorder.snapshot(); len(got) != 0 {
+		t.Fatalf("reloadables ran after rejected preparation: %v", got)
+	}
+}
+
+// TestReloadManager_GenerationFailureSkipsIndependentReloadables proves commit failure is terminal.
+func TestReloadManager_GenerationFailureSkipsIndependentReloadables(t *testing.T) {
+	errGeneration := errors.New("generation rejected")
+	reloader := &fakeReloader{snap: configfx.Snapshot{Version: 5}}
+	coordinator := &fakeGenerationCoordinator{err: errGeneration}
+	recorder := &callRecorder{}
+
+	manager := NewManager(managerIn{
+		Gate:        opsfx.NewGate(),
+		Reloader:    reloader,
+		Coordinator: coordinator,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Reloadables: []Reloadable{&recordingReloadable{name: "later", rec: recorder}},
+	})
+
+	err := manager.Reload(context.Background())
+	if !errors.Is(err, errGeneration) {
+		t.Fatalf("Reload() error = %v, want generation failure", err)
+	}
+
+	if got := coordinator.calls.Load(); got != 1 {
+		t.Fatalf("generation Apply() calls = %d, want 1", got)
+	}
+
+	if got := recorder.snapshot(); len(got) != 0 {
+		t.Fatalf("post-commit reloadables ran before a successful generation commit: %v", got)
 	}
 }

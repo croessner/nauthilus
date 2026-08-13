@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/internal/flagutil"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/app/policyfx"
 	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -37,8 +39,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib/hook"
 	"github.com/croessner/nauthilus/v3/server/lualib/subject"
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
-	"github.com/croessner/nauthilus/v3/server/policy/compiler"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/croessner/nauthilus/v3/server/util/keygen"
@@ -264,7 +264,7 @@ func SetupConfiguration() error {
 		}
 	}
 
-	file, err := config.NewFile()
+	file, err := config.PrepareFile()
 	if err != nil {
 		return fmt.Errorf("unable to load config file: %w", err)
 	}
@@ -286,11 +286,13 @@ func SetupConfiguration() error {
 		return err
 	}
 
-	if err := compiler.CompileAndActivate(context.Background(), policyruntime.DefaultStore(), compiler.NewCompiler(), compiler.Input{
-		Config:     file,
-		Generation: 1,
-	}); err != nil {
-		return fmt.Errorf("unable to build policy snapshot: %w", err)
+	coordinator, err := policyfx.NewCoordinator(log.GetLogger())
+	if err != nil {
+		return fmt.Errorf("unable to construct policy runtime coordinator: %w", err)
+	}
+
+	if err = coordinator.Apply(context.Background(), configfx.Snapshot{File: file, Version: 1}); err != nil {
+		return fmt.Errorf("unable to build policy runtime generation: %w", err)
 	}
 
 	return nil

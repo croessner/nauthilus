@@ -64,6 +64,15 @@ type runtimeGeneration struct {
 	id            uint64
 }
 
+// GenerationID returns the immutable server-state generation identity.
+func (g *runtimeGeneration) GenerationID() uint64 {
+	if g == nil {
+		return 0
+	}
+
+	return g.id
+}
+
 // newRuntimeGeneration constructs one complete immutable application authority generation.
 func newRuntimeGeneration(id uint64, deps runtimeGenerationDependencies) (Generation, error) {
 	if id == 0 ||

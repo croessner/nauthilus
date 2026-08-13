@@ -156,7 +156,8 @@ runtime:
 	}
 }
 
-func TestConfigLoader_LoadFromFile_EnvFromViper(t *testing.T) {
+// TestConfigLoader_LoadFromFile_EnvFromProcessEnvironment proves isolated environment selection.
+func TestConfigLoader_LoadFromFile_EnvFromProcessEnvironment(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 

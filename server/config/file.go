@@ -58,6 +58,14 @@ var file atomic.Value // stores File
 // We cannot store a nil interface value in atomic.Value, so we track the loaded state separately.
 var fileLoaded atomic.Bool
 
+// activeFileSource projects the config view from the atomic runtime generation after boot.
+var activeFileSource atomic.Value // stores func() File
+
+var activeFileSourceBound atomic.Bool
+
+// ErrIndependentConfigPublication rejects config-only reload after generation ownership.
+var ErrIndependentConfigPublication = stderrors.New("configuration publication requires the runtime generation coordinator")
+
 // ConfigFilePath stores the path to the configuration file specified via the -config flag
 var ConfigFilePath string
 
@@ -67,6 +75,12 @@ var ConfigFileType = "yaml"
 
 // GetFile returns the loaded FileSettings configuration instance.
 func GetFile() File {
+	if sourceValue := activeFileSource.Load(); sourceValue != nil {
+		if active := sourceValue.(func() File)(); active != nil {
+			return active
+		}
+	}
+
 	if !fileLoaded.Load() {
 		panic("FileSettings not loaded")
 	}
@@ -81,7 +95,26 @@ func GetFile() File {
 
 // IsFileLoaded reports whether a FileSettings configuration has been loaded.
 func IsFileLoaded() bool {
+	if sourceValue := activeFileSource.Load(); sourceValue != nil && sourceValue.(func() File)() != nil {
+		return true
+	}
+
 	return fileLoaded.Load()
+}
+
+// BindActiveFileSource installs the read-only config projection over atomic server state.
+func BindActiveFileSource(source func() File) error {
+	if source == nil {
+		return fmt.Errorf("active config source is nil")
+	}
+
+	if !activeFileSourceBound.CompareAndSwap(false, true) {
+		return fmt.Errorf("active config source is already bound")
+	}
+
+	activeFileSource.Store(source)
+
+	return nil
 }
 
 // SetTestFile sets the global `file` variable to the provided `testFile` implementing the `File` interface.
@@ -357,6 +390,7 @@ type File interface {
 // FileSettings represents a comprehensive configuration structure utilized to manage server settings, blackhole lists, brute force,
 // Lua scripting, OAuth2, LDAP, and other miscellaneous configurations. It includes synchronization via a mutex.
 type FileSettings struct {
+	rawSettings   map[string]any        `mapstructure:"-" validate:"-"`
 	Runtime       *RuntimeSection       `mapstructure:"runtime" validate:"omitempty"`
 	Observability *ObservabilitySection `mapstructure:"observability" validate:"omitempty"`
 	Storage       *StorageSection       `mapstructure:"storage" validate:"omitempty"`
@@ -375,6 +409,7 @@ type FileSettings struct {
 	IDP                     *IDPSection              `mapstructure:"-" validate:"-"`
 	Other                   map[string]any           `mapstructure:",remain"`
 	Mu                      sync.Mutex               `mapstructure:"-"`
+	developerMode           bool                     `mapstructure:"-" validate:"-"`
 }
 
 var _ File = (*FileSettings)(nil)
@@ -384,7 +419,10 @@ func (f *FileSettings) GetConfigFileAsJSON() ([]byte, error) {
 	f.Mu.Lock()
 	defer f.Mu.Unlock()
 
-	allSettings := viper.AllSettings()
+	allSettings := f.rawSettings
+	if allSettings == nil {
+		allSettings = viper.AllSettings()
+	}
 
 	jsonBytes, err := json.Marshal(allSettings)
 
@@ -2660,7 +2698,7 @@ func (f *FileSettings) validateRemoteAuthorityClients() error {
 			return fmt.Errorf("%s.address: %w", path, err)
 		}
 
-		if err := validateRemoteAuthorityCallerAuth(path, authority.GetCallerAuth()); err != nil {
+		if err := validateRemoteAuthorityCallerAuth(path, authority.GetCallerAuth(), f.developerMode); err != nil {
 			return err
 		}
 
@@ -2672,7 +2710,12 @@ func (f *FileSettings) validateRemoteAuthorityClients() error {
 	return nil
 }
 
-func validateRemoteAuthorityCallerAuth(path string, callerAuth *AuthorityCallerAuthSection) error {
+// validateRemoteAuthorityCallerAuth validates one isolated candidate's caller credentials.
+func validateRemoteAuthorityCallerAuth(
+	path string,
+	callerAuth *AuthorityCallerAuthSection,
+	developerMode bool,
+) error {
 	if callerAuth == nil || !callerAuth.HasCallerAuth() {
 		return fmt.Errorf("%s.caller_auth requires caller auth for authority RPCs", path)
 	}
@@ -2686,7 +2729,7 @@ func validateRemoteAuthorityCallerAuth(path string, callerAuth *AuthorityCallerA
 		return err
 	}
 
-	if oidc.GetStaticTokenFile() != "" && !viper.GetBool("developer_mode") && !oidc.StaticTokenAllowed() {
+	if oidc.GetStaticTokenFile() != "" && !developerMode && !oidc.StaticTokenAllowed() {
 		return fmt.Errorf("%s.caller_auth.oidc_bearer.static_token_file requires developer_mode=true or static_token_emergency_mode=true", path)
 	}
 
@@ -3800,19 +3843,31 @@ func decodeSecretValue(data any) (any, error) {
 // HandleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
 // Nauthilus has a working configuration.
 func (f *FileSettings) HandleFile() (err error) {
+	return f.handleFile(viper.GetViper())
+}
+
+// handleFile decodes and validates settings from one explicit Viper owner.
+func (f *FileSettings) handleFile(reader *viper.Viper) (err error) {
 	if f == nil {
 		return nil
+	}
+
+	if reader == nil {
+		return fmt.Errorf("config reader is nil")
 	}
 
 	f.Mu.Lock()
 
 	defer f.Mu.Unlock()
 
-	if err = f.unmarshalAndNormalize(); err != nil {
+	f.rawSettings = reader.AllSettings()
+	f.developerMode = reader.GetBool("developer_mode")
+
+	if err = f.unmarshalAndNormalize(reader); err != nil {
 		return err
 	}
 
-	if err = validateUnknownConfigSettings(viper.AllSettings()); err != nil {
+	if err = validateUnknownConfigSettings(f.rawSettings); err != nil {
 		return err
 	}
 
@@ -3824,9 +3879,9 @@ func (f *FileSettings) HandleFile() (err error) {
 	return f.validateLoadedConfig(validate)
 }
 
-// unmarshalAndNormalize loads Viper settings and applies alias normalization.
-func (f *FileSettings) unmarshalAndNormalize() error {
-	if err := viper.UnmarshalExact(f, createDecoderOption()); err != nil {
+// unmarshalAndNormalize loads explicit settings and applies alias normalization.
+func (f *FileSettings) unmarshalAndNormalize(reader *viper.Viper) error {
+	if err := reader.UnmarshalExact(f, createDecoderOption()); err != nil {
 		return formatDecodeErrors(err)
 	}
 
@@ -4135,6 +4190,11 @@ func (f *FileSettings) normalizeBackendHealthCheckTargets() {
 // i is the pointer to the struct to process, and parts is a slice of strings used to construct nested keys recursively.
 // Returns an error if environment variable binding fails for any key.
 func bindEnvs(i any, parts ...string) error {
+	return bindEnvsWith(viper.GetViper(), i, parts...)
+}
+
+// bindEnvsWith recursively binds one configuration shape to an explicit Viper owner.
+func bindEnvsWith(target *viper.Viper, i any, parts ...string) error {
 	ifv := reflect.ValueOf(i)
 	if ifv.Kind() == reflect.Pointer {
 		ifv = ifv.Elem()
@@ -4144,7 +4204,7 @@ func bindEnvs(i any, parts ...string) error {
 	types := newEnvBindTypes()
 
 	for i := range ift.NumField() {
-		if err := bindEnvField(ifv.Field(i), ift.Field(i), parts, types); err != nil {
+		if err := bindEnvField(target, ifv.Field(i), ift.Field(i), parts, types); err != nil {
 			return err
 		}
 	}
@@ -4172,7 +4232,13 @@ func newEnvBindTypes() envBindTypes {
 }
 
 // bindEnvField binds environment variables for one struct field.
-func bindEnvField(value reflect.Value, field reflect.StructField, parts []string, types envBindTypes) error {
+func bindEnvField(
+	target *viper.Viper,
+	value reflect.Value,
+	field reflect.StructField,
+	parts []string,
+	types envBindTypes,
+) error {
 	tag, ok := envFieldTag(field)
 	if !ok {
 		return nil
@@ -4186,13 +4252,13 @@ func bindEnvField(value reflect.Value, field reflect.StructField, parts []string
 			value.Set(reflect.New(field.Type.Elem()))
 		}
 
-		return bindEnvs(value.Interface(), nextParts...)
+		return bindEnvsWith(target, value.Interface(), nextParts...)
 	case field.Type.Kind() == reflect.Map:
-		return bindEnvMapField(field.Type, nextParts)
+		return bindEnvMapField(target, field.Type, nextParts)
 	case shouldRecurseEnvStruct(value, field, types):
-		return bindEnvs(value.Addr().Interface(), nextParts...)
+		return bindEnvsWith(target, value.Addr().Interface(), nextParts...)
 	default:
-		return bindEnvKey(nextParts)
+		return bindEnvKey(target, nextParts)
 	}
 }
 
@@ -4237,25 +4303,26 @@ func (t envBindTypes) isLeafType(fieldType reflect.Type) bool {
 }
 
 // bindEnvMapField binds a map field and any supported map element leaf paths.
-func bindEnvMapField(mapType reflect.Type, parts []string) error {
-	if err := bindEnvKey(parts); err != nil {
+func bindEnvMapField(target *viper.Viper, mapType reflect.Type, parts []string) error {
+	if err := bindEnvKey(target, parts); err != nil {
 		return err
 	}
 
-	return bindMapElementEnvs(mapType, parts...)
+	return bindMapElementEnvs(target, mapType, parts...)
 }
 
 // bindEnvKey binds one dot-separated environment key.
-func bindEnvKey(parts []string) error {
+func bindEnvKey(target *viper.Viper, parts []string) error {
 	key := strings.Join(parts, ".")
-	if err := viper.BindEnv(key); err != nil {
+	if err := target.BindEnv(key); err != nil {
 		return fmt.Errorf("failed to bind %q: %w", key, err)
 	}
 
 	return nil
 }
 
-func bindMapElementEnvs(mapType reflect.Type, parts ...string) error {
+// bindMapElementEnvs binds discovered dynamic map element leaves.
+func bindMapElementEnvs(target *viper.Viper, mapType reflect.Type, parts ...string) error {
 	if mapType.Kind() != reflect.Map {
 		return nil
 	}
@@ -4272,7 +4339,7 @@ func bindMapElementEnvs(mapType reflect.Type, parts ...string) error {
 
 	envPrefix := "NAUTHILUS_" + strings.ToUpper(strings.ReplaceAll(strings.Join(parts, "_"), ".", "_")) + "_"
 	for _, entry := range os.Environ() {
-		if err := bindMapElementEnvEntry(entry, envPrefix, parts, leafPaths); err != nil {
+		if err := bindMapElementEnvEntry(target, entry, envPrefix, parts, leafPaths); err != nil {
 			return err
 		}
 	}
@@ -4280,7 +4347,14 @@ func bindMapElementEnvs(mapType reflect.Type, parts ...string) error {
 	return nil
 }
 
-func bindMapElementEnvEntry(entry string, envPrefix string, parts []string, leafPaths []string) error {
+// bindMapElementEnvEntry binds one matching environment entry without exposing its value.
+func bindMapElementEnvEntry(
+	target *viper.Viper,
+	entry string,
+	envPrefix string,
+	parts []string,
+	leafPaths []string,
+) error {
 	envName, envValue, ok := strings.Cut(entry, "=")
 	if !ok || !strings.HasPrefix(envName, envPrefix) {
 		return nil
@@ -4288,7 +4362,7 @@ func bindMapElementEnvEntry(entry string, envPrefix string, parts []string, leaf
 
 	remainder := strings.TrimPrefix(envName, envPrefix)
 	for _, leafPath := range leafPaths {
-		bound, err := bindMapLeafEnv(remainder, envValue, parts, leafPath)
+		bound, err := bindMapLeafEnv(target, remainder, envValue, parts, leafPath)
 		if err != nil {
 			return err
 		}
@@ -4301,7 +4375,14 @@ func bindMapElementEnvEntry(entry string, envPrefix string, parts []string, leaf
 	return nil
 }
 
-func bindMapLeafEnv(remainder string, envValue string, parts []string, leafPath string) (bool, error) {
+// bindMapLeafEnv maps one dynamic environment suffix to its candidate key.
+func bindMapLeafEnv(
+	target *viper.Viper,
+	remainder string,
+	envValue string,
+	parts []string,
+	leafPath string,
+) (bool, error) {
 	leafEnv := strings.ToUpper(strings.ReplaceAll(leafPath, ".", "_"))
 	if remainder == leafEnv || !strings.HasSuffix(remainder, "_"+leafEnv) {
 		return false, nil
@@ -4316,11 +4397,11 @@ func bindMapLeafEnv(remainder string, envValue string, parts []string, leafPath 
 	configParts := append(append(parts, mapKey), strings.Split(leafPath, ".")...)
 
 	configKey := strings.Join(configParts, ".")
-	if err := viper.BindEnv(configKey); err != nil {
+	if err := target.BindEnv(configKey); err != nil {
 		return false, fmt.Errorf("failed to bind %q: %w", configKey, err)
 	}
 
-	viper.Set(configKey, envValue)
+	target.Set(configKey, envValue)
 
 	return true, nil
 }
@@ -4392,50 +4473,59 @@ func collectConfigStructLeafPaths(typ reflect.Type, prefix string, paths *[]stri
 	}
 }
 
-// NewFile is the constructor for a ConfigFile object.
-func NewFile() (newCfg File, err error) {
-	newCfg = &FileSettings{}
+// PrepareFile decodes and validates a complete candidate without publishing ambient state.
+func PrepareFile() (File, error) {
+	reader := viper.New()
+	setDefaultEnvVarsFor(reader)
 
+	return prepareFileWithReader(reader)
+}
+
+// prepareFileWithReader decodes and validates one file using an explicit settings owner.
+func prepareFileWithReader(reader *viper.Viper) (File, error) {
 	mergedSettings, rootPath, err := loadMergedConfigSettings(ConfigFileType)
 	if err != nil {
 		return nil, err
 	}
 
-	if err = applyMergedConfigSettings(mergedSettings, ConfigFileType, rootPath); err != nil {
+	if err = applyMergedConfigSettingsTo(reader, mergedSettings, ConfigFileType, rootPath); err != nil {
 		return nil, err
 	}
 
-	// Register all known config variables with env variables.
-	if err = bindEnvs(&FileSettings{}); err != nil {
+	if err = bindEnvsWith(reader, &FileSettings{}); err != nil {
 		return nil, err
 	}
 
-	err = newCfg.HandleFile()
+	candidate := &FileSettings{}
+	if err = candidate.handleFile(reader); err != nil {
+		return nil, err
+	}
+
+	return candidate, nil
+}
+
+// NewFile is the constructor for a ConfigFile object.
+func NewFile() (newCfg File, err error) {
+	newCfg, err = prepareFileWithReader(viper.GetViper())
+	if err != nil {
+		return nil, err
+	}
 
 	file.Store(newCfg)
 	fileLoaded.Store(true)
 
-	return newCfg, err
+	return newCfg, nil
 }
 
-// ReloadConfigFile is a thread safe function to reload a ConfigFile object.
-//
-//nolint:forcetypeassert,gocognit // Ignore
+// ReloadConfigFile supports only legacy pre-generation callers and rejects production rebinding.
 func ReloadConfigFile() (err error) {
-	newCfgReload := &FileSettings{}
+	if activeFileSourceBound.Load() {
+		return ErrIndependentConfigPublication
+	}
 
-	mergedSettings, rootPath, err := loadMergedConfigSettings(ConfigFileType)
+	newCfgReload, err := prepareFileWithReader(viper.GetViper())
 	if err != nil {
 		return err
-	}
-
-	if err = applyMergedConfigSettings(mergedSettings, ConfigFileType, rootPath); err != nil {
-		return err
-	}
-
-	// Construct new configuration
-	if err = newCfgReload.HandleFile(); err != nil {
-		return
 	}
 
 	// Replace existing configuration

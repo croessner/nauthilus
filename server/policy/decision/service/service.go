@@ -22,6 +22,7 @@ import (
 	"fmt"
 
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 const (
@@ -100,6 +101,8 @@ func (s *DecisionService) openSession(
 	if err != nil {
 		return nil, err
 	}
+
+	ctx = policyruntime.ContextWithGeneration(ctx, generation.id)
 
 	caller, request, err := authenticateInvocation(ctx, generation, invocation)
 	if err != nil {
@@ -227,6 +230,8 @@ func (s *decisionSession) Evaluate(
 	if s == nil || !s.generation.valid() {
 		return decision.DecisionResponse{}, fmt.Errorf("%w: invalid session or checkpoint", ErrDecisionEvaluation)
 	}
+
+	ctx = policyruntime.ContextWithGeneration(ctx, s.generation.id)
 
 	ownedCheckpoint, err := decision.NewCheckpoint(checkpoint.Name(), checkpoint.Facts())
 	if err != nil {

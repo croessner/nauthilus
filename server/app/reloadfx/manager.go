@@ -30,11 +30,12 @@ import (
 
 // Manager coordinates a configuration reload.
 //
-// A reload is serialized via opsfx.Gate, swaps the config snapshot via configfx.Reloader,
-// and then calls all registered Reloadable components in a deterministic order.
+// A reload is serialized via opsfx.Gate, prepares config off-side, commits the complete
+// policy generation, and then calls non-policy Reloadable components in deterministic order.
 type Manager struct {
 	gate        *opsfx.Gate
 	reloader    configfx.Reloader
+	coordinator GenerationCoordinator
 	logger      *slog.Logger
 	reloadables []Reloadable
 }
@@ -42,9 +43,10 @@ type Manager struct {
 type managerIn struct {
 	fx.In
 
-	Gate     *opsfx.Gate
-	Reloader configfx.Reloader
-	Logger   *slog.Logger
+	Gate        *opsfx.Gate
+	Reloader    configfx.Reloader
+	Coordinator GenerationCoordinator
+	Logger      *slog.Logger
 
 	Reloadables []Reloadable `group:"reloadables"`
 }
@@ -63,6 +65,7 @@ func NewManager(in managerIn) *Manager {
 	return &Manager{
 		gate:        in.Gate,
 		reloader:    in.Reloader,
+		coordinator: in.Coordinator,
 		logger:      in.Logger,
 		reloadables: rls,
 	}
@@ -72,19 +75,29 @@ func NewManager(in managerIn) *Manager {
 //
 // Behavior:
 //   - serialized (no overlap with other ops sharing the same gate)
-//   - best-effort: continues applying config even if a component fails
+//   - fail-closed before the atomic policy generation commit
+//   - best-effort for non-policy components after the commit
 //   - returns an aggregated error (via errors.Join) if one or more components fail
 func (m *Manager) Reload(ctx context.Context) error {
 	return m.gate.WithLock(func() error {
 		prev := m.reloader.Current()
 
-		snap, err := m.reloader.Reload()
+		snap, err := m.reloader.Prepare()
 		if err != nil {
-			m.logger.Error("configuration reload failed", slog.Any("error", err))
+			m.logger.Error("configuration candidate preparation failed", slog.Any("error", err))
 			return err
 		}
 
 		ctx = WithPreviousSnapshot(ctx, prev)
+		if err = m.coordinator.Apply(ctx, snap); err != nil {
+			m.logger.Error(
+				"policy runtime generation commit failed",
+				slog.Uint64("runtime_generation", snap.Version),
+				slog.Any("error", err),
+			)
+
+			return err
+		}
 
 		var errs []error
 

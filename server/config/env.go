@@ -60,18 +60,28 @@ func (env *EnvironmentSettings) GetDevMode() bool {
 
 // setCommonDefaultEnvVars sets default values for commonly used environment variables related to backend services configuration.
 func setCommonDefaultEnvVars() {
-	viper.SetDefault("developer_mode", false)
+	setCommonDefaultEnvVarsFor(viper.GetViper())
+}
+
+// setCommonDefaultEnvVarsFor applies shared defaults to one explicit Viper owner.
+func setCommonDefaultEnvVarsFor(target *viper.Viper) {
+	target.SetDefault("developer_mode", false)
 }
 
 // setDefaultEnvVars initializes default environment variables using the viper package for configuration management.
 func setDefaultEnvVars() {
-	viper.SetEnvPrefix("nauthilus")
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	setDefaultEnvVarsFor(viper.GetViper())
+}
 
-	setCommonDefaultEnvVars()
+// setDefaultEnvVarsFor configures environment resolution on one explicit Viper owner.
+func setDefaultEnvVarsFor(target *viper.Viper) {
+	target.SetEnvPrefix("nauthilus")
+	target.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
-	viper.AllowEmptyEnv(true)
-	viper.AutomaticEnv()
+	setCommonDefaultEnvVarsFor(target)
+
+	target.AllowEmptyEnv(true)
+	target.AutomaticEnv()
 }
 
 // String returns the name of the Config object.

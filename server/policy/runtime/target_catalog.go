@@ -944,6 +944,22 @@ func (c *TargetCatalog) Len() int {
 	return len(c.targets)
 }
 
+// Targets returns detached activated targets in deterministic identity order.
+func (c *TargetCatalog) Targets() []CompiledTarget {
+	if c == nil {
+		return nil
+	}
+
+	identities := sortedRuntimeKeys(c.targets)
+
+	result := make([]CompiledTarget, 0, len(identities))
+	for _, identity := range identities {
+		result = append(result, c.targets[identity].clone())
+	}
+
+	return result
+}
+
 // Lookup returns a detached compiled target by exact identity.
 func (c *TargetCatalog) Lookup(target decision.Target) (CompiledTarget, bool) {
 	if c == nil {

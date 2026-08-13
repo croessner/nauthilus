@@ -30,3 +30,8 @@ type Reloadable interface {
 	Order() int
 	ApplyConfig(ctx context.Context, snap configfx.Snapshot) error
 }
+
+// GenerationCoordinator atomically validates and publishes policy-critical candidate state.
+type GenerationCoordinator interface {
+	Apply(context.Context, configfx.Snapshot) error
+}

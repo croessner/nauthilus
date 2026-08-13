@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 // Snapshot represents an immutable configuration view.
@@ -36,15 +37,16 @@ type Provider interface {
 	Current() Snapshot
 }
 
-// Reloader extends Provider with a reload capability.
+// Reloader extends Provider with candidate-only configuration preparation.
 type Reloader interface {
 	Provider
 
-	Reload() (Snapshot, error)
+	Prepare() (Snapshot, error)
 }
 
 type provider struct {
-	snapshot atomic.Value // stores Snapshot
+	generations *policyruntime.GenerationStore
+	snapshot    atomic.Value // stores Snapshot only before generation ownership is available
 }
 
 var _ Reloader = (*provider)(nil)
@@ -61,17 +63,27 @@ func NewProviderWithSnapshot(file config.File) Provider {
 //
 // It does not load configuration itself; the legacy startup path still calls `config.NewFile()`.
 func NewProvider() (Reloader, error) {
-	if !config.IsFileLoaded() {
+	generations := policyruntime.DefaultGenerationStore()
+	if generations.Active() == nil && !config.IsFileLoaded() {
 		return nil, config.ErrConfigNotLoaded{}
 	}
 
-	p := &provider{}
-	p.snapshot.Store(Snapshot{File: config.GetFile(), Version: 1})
+	p := &provider{generations: generations}
+	if generations.Active() == nil {
+		p.snapshot.Store(Snapshot{File: config.GetFile(), Version: 1})
+	}
 
 	return p, nil
 }
 
+// Current captures config and version through one generation load when available.
 func (p *provider) Current() Snapshot {
+	if p != nil && p.generations != nil {
+		if generation := p.generations.Active(); generation != nil {
+			return Snapshot{File: generation.Config(), Version: generation.ID()}
+		}
+	}
+
 	v := p.snapshot.Load()
 	if v == nil {
 		return Snapshot{}
@@ -80,14 +92,16 @@ func (p *provider) Current() Snapshot {
 	return v.(Snapshot)
 }
 
-func (p *provider) Reload() (Snapshot, error) {
-	if err := config.ReloadConfigFile(); err != nil {
-		return p.Current(), err
+// Prepare decodes and validates the next config without publishing any state.
+func (p *provider) Prepare() (Snapshot, error) {
+	cur := p.Current()
+
+	candidate, err := config.PrepareFile()
+	if err != nil {
+		return cur, err
 	}
 
-	cur := p.Current()
-	next := Snapshot{File: config.GetFile(), Version: cur.Version + 1}
-	p.snapshot.Store(next)
+	next := Snapshot{File: candidate, Version: cur.Version + 1}
 
 	return next, nil
 }

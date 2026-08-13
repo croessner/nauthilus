@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Christian Rößner
+// Copyright (C) 2026 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,13 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package reloadfx
+package runtime
 
-import "go.uber.org/fx"
+var defaultGenerationStore = NewGenerationStore()
 
-// Module provides the exported Module function.
-func Module() fx.Option {
-	return fx.Options(
-		fx.Provide(NewManager),
-	)
+// DefaultGenerationStore returns the process-wide atomic server-state generation store.
+func DefaultGenerationStore() *GenerationStore {
+	return defaultGenerationStore
 }

@@ -31,6 +31,9 @@ import (
 // ErrNilSnapshot is returned when activation receives no candidate snapshot.
 var ErrNilSnapshot = errors.New("policy snapshot is nil")
 
+// ErrIndependentSnapshotPublication rejects mutation after generation ownership is installed.
+var ErrIndependentSnapshotPublication = errors.New("policy snapshot publication requires the generation coordinator")
+
 // Snapshot is the immutable request-time policy runtime handle.
 type Snapshot struct {
 	CreatedAt          time.Time
@@ -322,7 +325,8 @@ type DecisionControl struct {
 
 // SnapshotStore publishes complete snapshots atomically.
 type SnapshotStore struct {
-	active atomic.Pointer[Snapshot]
+	generationSource atomic.Pointer[GenerationStore]
+	active           atomic.Pointer[Snapshot]
 }
 
 // NewSnapshotStore returns a store initialized with the provided snapshot.
@@ -337,11 +341,24 @@ func NewSnapshotStore(initial *Snapshot) *SnapshotStore {
 
 // Active returns the currently active snapshot.
 func (s *SnapshotStore) Active() *Snapshot {
+	if source := s.generationSource.Load(); source != nil {
+		generation := source.Active()
+		if generation == nil {
+			return nil
+		}
+
+		return generation.PolicySnapshot()
+	}
+
 	return s.active.Load().Clone()
 }
 
 // Activate publishes a complete candidate snapshot.
 func (s *SnapshotStore) Activate(candidate *Snapshot) error {
+	if s.generationSource.Load() != nil {
+		return ErrIndependentSnapshotPublication
+	}
+
 	if candidate == nil {
 		return ErrNilSnapshot
 	}

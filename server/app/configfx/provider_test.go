@@ -7,6 +7,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 )
 
+// TestProviderNewProviderRequiresConfigLoaded preserves the pre-generation startup guard.
 func TestProviderNewProviderRequiresConfigLoaded(t *testing.T) {
 	// Ensure global config is not set.
 	config.SetTestFile(nil)
@@ -21,7 +22,8 @@ func TestProviderNewProviderRequiresConfigLoaded(t *testing.T) {
 	}
 }
 
-func TestProviderVersionMonotonicOnReload(t *testing.T) {
+// TestProviderVersionMonotonicOnCandidatePreparationFailure proves failed preparation is unpublished.
+func TestProviderVersionMonotonicOnCandidatePreparationFailure(t *testing.T) {
 	// Use a test file to avoid reading from disk.
 	config.SetTestFile(&config.FileSettings{})
 
@@ -35,8 +37,8 @@ func TestProviderVersionMonotonicOnReload(t *testing.T) {
 		t.Fatalf("expected version 1, got %d", cur.Version)
 	}
 
-	// Reload will fail because viper has no config; ensure version does not change.
-	_, err = p.Reload()
+	// Candidate preparation will fail because Viper has no config; ensure version does not change.
+	_, err = p.Prepare()
 	if err == nil {
 		t.Fatalf("expected reload error")
 	}

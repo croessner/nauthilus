@@ -17,21 +17,35 @@ package policyfx
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/app/configfx"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/compiler"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
-func TestReloaderKeepsActiveSnapshotWhenCompileFails(t *testing.T) {
-	store := policyruntime.NewSnapshotStore(&policyruntime.Snapshot{Generation: 3})
-	reloader := &Reloader{
-		store: store,
+// TestGenerationCoordinatorKeepsActiveGenerationWhenPreparationFails proves compiler isolation.
+func TestGenerationCoordinatorKeepsActiveGenerationWhenPreparationFails(t *testing.T) {
+	store := policyruntime.NewGenerationStore()
+
+	coordinator, err := newCoordinator(store, compiler.NewCompiler(), nil)
+	if err != nil {
+		t.Fatalf("newCoordinator() error = %v", err)
 	}
 
-	err := reloader.ApplyConfig(context.Background(), configfx.Snapshot{
+	if err = coordinator.Apply(context.Background(), configfx.Snapshot{
+		File:    &config.FileSettings{},
+		Version: 3,
+	}); err != nil {
+		t.Fatalf("initial Apply() error = %v", err)
+	}
+
+	activeBefore := store.Active()
+
+	err = coordinator.Apply(context.Background(), configfx.Snapshot{
 		File: &config.FileSettings{
 			Auth: &config.AuthSection{
 				Policy: config.AuthPolicySection{
@@ -56,15 +70,66 @@ func TestReloaderKeepsActiveSnapshotWhenCompileFails(t *testing.T) {
 		Version: 4,
 	})
 	if err == nil {
-		t.Fatal("ApplyConfig() error = nil, want compile error")
+		t.Fatal("Apply() error = nil, want compile error")
 	}
 
-	active := store.Active()
-	if active == nil {
-		t.Fatal("active snapshot is nil")
+	activeAfter := store.Active()
+	if activeAfter != activeBefore {
+		t.Fatal("failed preparation replaced the active generation")
 	}
 
-	if active.Generation != 3 {
-		t.Fatalf("active generation = %d, want 3", active.Generation)
+	if activeAfter == nil || activeAfter.ID() != 3 || activeAfter.PolicySnapshot().Generation != 3 {
+		t.Fatal("failed preparation did not retain the complete previous generation")
+	}
+}
+
+// TestGenerationPreparationKeepsLuaAndNativeBindingChangesRestartBound proves safe adapter deferral.
+func TestGenerationPreparationKeepsLuaAndNativeBindingChangesRestartBound(t *testing.T) {
+	tests := []struct {
+		name      string
+		candidate *config.FileSettings
+	}{
+		{
+			name: "Lua",
+			candidate: &config.FileSettings{Lua: &config.LuaSection{
+				Actions: []config.LuaAction{{ScriptName: "candidate"}},
+			}},
+		},
+		{
+			name: "native plugin",
+			candidate: &config.FileSettings{Plugins: &config.PluginsSection{
+				VerificationPolicy: "strict",
+			}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := policyruntime.NewGenerationStore()
+
+			coordinator, err := newCoordinator(store, compiler.NewCompiler(), nil)
+			if err != nil {
+				t.Fatalf("newCoordinator() error = %v", err)
+			}
+
+			if err = coordinator.Apply(context.Background(), configfx.Snapshot{
+				File: &config.FileSettings{}, Version: 1,
+			}); err != nil {
+				t.Fatalf("initial Apply() error = %v", err)
+			}
+
+			active := store.Active()
+
+			err = coordinator.Apply(context.Background(), configfx.Snapshot{
+				File: test.candidate, Version: 2,
+			})
+			if !errors.Is(err, errPolicyBindingsRestartRequired) {
+				t.Fatalf("binding Apply() error = %v, want restart-required rejection", err)
+			}
+
+			if store.Active() != active {
+				t.Fatal("restart-bound binding change replaced the active generation")
+			}
+		})
 	}
 }

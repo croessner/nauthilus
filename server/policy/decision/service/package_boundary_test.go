@@ -129,6 +129,17 @@ func assertApplicationFileBoundary(t *testing.T, path string) {
 		t.Fatalf("%s contains forbidden AuthState dependency", path)
 	}
 
+	for _, selector := range []string{
+		"config.GetFile(",
+		"DefaultStore(",
+		"DefaultState(",
+		"DefaultRunner(",
+	} {
+		if strings.Contains(string(source), selector) {
+			t.Fatalf("%s reads forbidden ambient policy authority through %q", path, selector)
+		}
+	}
+
 	parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Clean(path), source, parser.ImportsOnly)
 	if err != nil {
 		t.Fatalf("parser.ParseFile(%s): %v", path, err)
@@ -138,8 +149,12 @@ func assertApplicationFileBoundary(t *testing.T, path string) {
 		"github.com/gin-gonic/gin",
 		"/api/",
 		"/server/core",
+		"/server/config",
 		"/server/grpcapi",
+		"/server/lualib",
 		"/server/openapi",
+		"/server/pluginloader",
+		"/server/pluginruntime",
 		"google.golang.org/grpc",
 		"google.golang.org/protobuf",
 	}

@@ -32,6 +32,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/app/logfx"
 	"github.com/croessner/nauthilus/v3/server/app/loopsfx"
 	"github.com/croessner/nauthilus/v3/server/app/opsfx"
+	"github.com/croessner/nauthilus/v3/server/app/policyfx"
 	"github.com/croessner/nauthilus/v3/server/app/reloadfx"
 	"github.com/croessner/nauthilus/v3/server/app/restartfx"
 	"github.com/croessner/nauthilus/v3/server/app/signalsfx"
@@ -120,6 +121,7 @@ func newHookOnlyTestApp(ctx context.Context, cancel context.CancelFunc) *fx.App 
 		languagefx.Module(),
 		loopsfx.Module(),
 		opsfx.Module(),
+		policyfx.Module(),
 		reloadfx.Module(),
 		restartfx.Module(),
 		fx.Provide(newActionWorkers),

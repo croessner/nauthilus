@@ -294,10 +294,11 @@ func (IncludeResolverFromConfig) Resolve(root map[string]any) ([]IncludeFile, er
 	return includeFiles, nil
 }
 
+// resolveEnvName selects an explicit file value or the process environment without ambient Viper state.
 func resolveEnvName(root map[string]any) (string, error) {
 	raw, ok := root[envKey]
 	if !ok {
-		return strings.TrimSpace(viper.GetString(envKey)), nil
+		return strings.TrimSpace(os.Getenv("NAUTHILUS_ENV")), nil
 	}
 
 	envName, ok := raw.(string)
@@ -548,19 +549,30 @@ func loadMergedConfigSettings(configType string) (map[string]any, string, error)
 	return merged, rootPath, nil
 }
 
+// applyMergedConfigSettings decodes merged settings into the legacy global Viper owner.
 func applyMergedConfigSettings(settings map[string]any, configType string, rootPath string) error {
+	return applyMergedConfigSettingsTo(viper.GetViper(), settings, configType, rootPath)
+}
+
+// applyMergedConfigSettingsTo decodes merged settings into one isolated Viper owner.
+func applyMergedConfigSettingsTo(
+	target *viper.Viper,
+	settings map[string]any,
+	configType string,
+	rootPath string,
+) error {
 	configBytes, err := encodeSettings(settings, configType)
 	if err != nil {
 		return err
 	}
 
-	viper.SetConfigType(configType)
+	target.SetConfigType(configType)
 
 	if rootPath != "" {
-		viper.SetConfigFile(rootPath)
+		target.SetConfigFile(rootPath)
 	}
 
-	if err := viper.ReadConfig(bytes.NewReader(configBytes)); err != nil {
+	if err := target.ReadConfig(bytes.NewReader(configBytes)); err != nil {
 		return fmt.Errorf("read merged config: %w", err)
 	}
 

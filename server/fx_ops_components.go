@@ -64,6 +64,7 @@ func (r *reloadOrchestrator) Order() int {
 	return 100
 }
 
+// ApplyConfig refreshes non-policy runtime services after an atomic generation commit.
 func (r *reloadOrchestrator) ApplyConfig(ctx context.Context, snap configfx.Snapshot) error {
 	opCtx, cancel := context.WithTimeout(ctx, reloadTimeout)
 	defer cancel()
@@ -91,11 +92,12 @@ func (r *reloadOrchestrator) ApplyConfig(ctx context.Context, snap configfx.Snap
 
 	bootfx.DebugLoadableConfig(snap.File, logger)
 
-	if err := bootfx.SetupLuaScripts(snap.File, logger); err != nil {
-		level.Error(logger).Log(definitions.LogKeyMsg, "Unable to setup Lua scripts", definitions.LogKeyError, err)
-	} else {
-		bootfx.RunLuaInitScript(ctx, snap.File, logger, r.store.redisClient)
-	}
+	level.Debug(logger).Log(
+		definitions.LogKeyMsg,
+		"Lua and native policy binding changes remain restart-bound",
+		"runtime_generation",
+		snap.Version,
+	)
 
 	bootfx.EnableBlockProfile(snap.File)
 	r.restartMonitoring(ctx)

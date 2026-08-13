@@ -21,3 +21,24 @@ var defaultStore = NewSnapshotStore(nil)
 func DefaultStore() *SnapshotStore {
 	return defaultStore
 }
+
+// BindDefaultStoreToGeneration makes the legacy reader a read-only generation projection.
+func BindDefaultStoreToGeneration(store *GenerationStore) error {
+	if store == nil {
+		return ErrInvalidGeneration
+	}
+
+	if current := defaultStore.generationSource.Load(); current != nil {
+		if current != store {
+			return ErrIndependentSnapshotPublication
+		}
+
+		return nil
+	}
+
+	if !defaultStore.generationSource.CompareAndSwap(nil, store) && defaultStore.generationSource.Load() != store {
+		return ErrIndependentSnapshotPublication
+	}
+
+	return nil
+}
