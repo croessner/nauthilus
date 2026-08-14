@@ -149,29 +149,11 @@ func (s *authnCandidateApplicationService) run(
 	var result authnApplicationResult
 
 	err = s.sessions.WithSession(ctx, invocation, func(session decisionservice.DecisionSession) error {
-		current, currentErr := s.runCurrent(ctx, input, operation)
-		if currentErr != nil {
-			return currentErr
-		}
+		var traversalErr error
 
-		facts, factsErr := s.facts.Build(input, operation, current, decision.FactSet{})
-		if factsErr != nil {
-			return fmt.Errorf("build authn candidate facts: %w", factsErr)
-		}
+		result, traversalErr = s.runCheckpointPlan(ctx, session, input, operation)
 
-		checkpoint, checkpointErr := decision.NewCheckpoint(string(policy.StageAuthDecision), facts)
-		if checkpointErr != nil {
-			return fmt.Errorf("build authn candidate checkpoint: %w", checkpointErr)
-		}
-
-		response, evaluationErr := session.Evaluate(ctx, checkpoint)
-		if evaluationErr != nil {
-			return evaluationErr
-		}
-
-		result, evaluationErr = current.mapEffect(response.Effect())
-
-		return evaluationErr
+		return traversalErr
 	})
 	if err != nil {
 		return authnApplicationResult{}, fmt.Errorf("authn candidate decision session: %w", err)
@@ -182,6 +164,125 @@ func (s *authnCandidateApplicationService) run(
 	}
 
 	return result, nil
+}
+
+// runCheckpointPlan traverses the captured compiled order and runs host work before its final checkpoint.
+func (s *authnCandidateApplicationService) runCheckpointPlan(
+	ctx context.Context,
+	session decisionservice.DecisionSession,
+	input AuthInput,
+	operation policy.Operation,
+) (authnApplicationResult, error) {
+	checkpoints := session.Checkpoints()
+	if len(checkpoints) == 0 {
+		return authnApplicationResult{}, fmt.Errorf("authn candidate session has no compiled checkpoints")
+	}
+
+	lastCheckpoint := len(checkpoints) - 1
+	current := authnApplicationResult{}
+
+	for index, name := range checkpoints {
+		final := index == lastCheckpoint
+		if final {
+			var err error
+
+			current, err = s.runCurrent(ctx, input, operation)
+			if err != nil {
+				return authnApplicationResult{}, err
+			}
+		}
+
+		facts, err := s.checkpointFacts(input, operation, current, final)
+		if err != nil {
+			return authnApplicationResult{}, err
+		}
+
+		response, err := evaluateAuthnCandidateCheckpoint(ctx, session, name, facts)
+		if err != nil {
+			return authnApplicationResult{}, err
+		}
+
+		if final {
+			return current.mapEffect(response.Effect())
+		}
+
+		if terminalAuthnCheckpointEffect(response.Effect()) {
+			return newAuthnTerminalResult(operation, response.Effect())
+		}
+
+		if response.Effect() != decision.EffectNotApplicable {
+			return authnApplicationResult{}, fmt.Errorf("unsupported intermediate authn candidate effect %q", response.Effect())
+		}
+	}
+
+	return authnApplicationResult{}, ErrAuthOutcomeMissing
+}
+
+// checkpointFacts keeps pre-backend checkpoints empty and maps current state only at the final boundary.
+func (s *authnCandidateApplicationService) checkpointFacts(
+	input AuthInput,
+	operation policy.Operation,
+	current authnApplicationResult,
+	final bool,
+) (decision.FactSet, error) {
+	if !final {
+		facts, err := decision.NewFactSet(nil)
+		if err != nil {
+			return decision.FactSet{}, fmt.Errorf("build authn candidate checkpoint facts: %w", err)
+		}
+
+		return facts, nil
+	}
+
+	facts, err := s.facts.Build(input, operation, current, decision.FactSet{})
+	if err != nil {
+		return decision.FactSet{}, fmt.Errorf("build authn candidate facts: %w", err)
+	}
+
+	return facts, nil
+}
+
+// evaluateAuthnCandidateCheckpoint constructs and evaluates one plan-selected checkpoint.
+func evaluateAuthnCandidateCheckpoint(
+	ctx context.Context,
+	session decisionservice.DecisionSession,
+	name string,
+	facts decision.FactSet,
+) (decision.DecisionResponse, error) {
+	checkpoint, err := decision.NewCheckpoint(name, facts)
+	if err != nil {
+		return decision.DecisionResponse{}, fmt.Errorf("build authn candidate checkpoint: %w", err)
+	}
+
+	return session.Evaluate(ctx, checkpoint)
+}
+
+// terminalAuthnCheckpointEffect identifies fail-closed decisions before later host work.
+func terminalAuthnCheckpointEffect(effect decision.Effect) bool {
+	return effect == decision.EffectDeny || effect == decision.EffectIndeterminate
+}
+
+// newAuthnTerminalResult preserves the established public category without fabricating backend payloads.
+func newAuthnTerminalResult(
+	operation policy.Operation,
+	effect decision.Effect,
+) (authnApplicationResult, error) {
+	var mapped AuthDecision
+
+	switch effect {
+	case decision.EffectDeny:
+		mapped = AuthDecisionFail
+	case decision.EffectIndeterminate:
+		mapped = AuthDecisionTempFail
+	default:
+		return authnApplicationResult{}, fmt.Errorf("unsupported terminal authn candidate effect %q", effect)
+	}
+
+	if operation == policy.OperationListAccounts {
+		return authnApplicationResult{accounts: &ListAccountsOutcome{Decision: mapped}}, nil
+	}
+
+	return authnApplicationResult{auth: &AuthOutcome{Decision: mapped}}, nil
 }
 
 // runCurrent invokes exactly one existing operation while the captured session remains open.

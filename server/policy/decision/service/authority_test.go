@@ -450,6 +450,19 @@ type recordingCheckpointEvaluator struct {
 	calls   []recordedCheckpointEvaluation
 }
 
+// Checkpoints returns the operation-specific plan used by recording authn sessions.
+func (e *recordingCheckpointEvaluator) Checkpoints(target decision.Target) ([]string, error) {
+	if target.Namespace() != "authn" {
+		return []string{decision.CheckpointFinalDecision}, nil
+	}
+
+	if target.Action() == "list_accounts" {
+		return []string{"auth_decision"}, nil
+	}
+
+	return []string{"pre_auth", "auth_decision"}, nil
+}
+
 // Evaluate records the package-private checkpoint runtime input.
 func (e *recordingCheckpointEvaluator) Evaluate(_ context.Context, input checkpointEvaluation) (runtimeEvaluation, error) {
 	e.mu.Lock()

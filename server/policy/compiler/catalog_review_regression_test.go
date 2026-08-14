@@ -168,28 +168,33 @@ func TestBuiltinAuthnProvidersUseExactEstablishedTargetAllowlists(t *testing.T) 
 }
 
 func TestBuiltinAuthnPlansPreserveExactCheckpointProviderSchedules(t *testing.T) {
+	type checkpointExpectation struct {
+		name      string
+		providers []string
+	}
+
 	tests := []struct {
 		action      string
-		checkpoints map[string][]string
+		checkpoints []checkpointExpectation
 	}{
 		{
 			action: "authenticate",
-			checkpoints: map[string][]string{
-				"pre_auth":      {"authn/brute_force"},
-				"auth_decision": {"authn/environment", "authn/tls_encryption", "authn/relay_domains", "authn/rbl", "authn/auth_backend", "authn/subject"},
+			checkpoints: []checkpointExpectation{
+				{name: "pre_auth", providers: []string{"authn/brute_force"}},
+				{name: "auth_decision", providers: []string{"authn/environment", "authn/tls_encryption", "authn/relay_domains", "authn/rbl", "authn/auth_backend", "authn/subject"}},
 			},
 		},
 		{
 			action: "lookup_identity",
-			checkpoints: map[string][]string{
-				"pre_auth":      {"authn/environment", "authn/tls_encryption", "authn/rbl"},
-				"auth_decision": {"authn/auth_backend", "authn/subject"},
+			checkpoints: []checkpointExpectation{
+				{name: "pre_auth", providers: []string{"authn/environment", "authn/tls_encryption", "authn/rbl"}},
+				{name: "auth_decision", providers: []string{"authn/auth_backend", "authn/subject"}},
 			},
 		},
 		{
 			action: "list_accounts",
-			checkpoints: map[string][]string{
-				"auth_decision": {"authn/account_provider"},
+			checkpoints: []checkpointExpectation{
+				{name: "auth_decision", providers: []string{"authn/account_provider"}},
 			},
 		},
 	}
@@ -215,14 +220,15 @@ func TestBuiltinAuthnPlansPreserveExactCheckpointProviderSchedules(t *testing.T)
 				t.Fatal("compiled authn target missing")
 			}
 
-			if len(target.DomainPlan().Checkpoints()) != len(test.checkpoints) {
-				t.Fatalf("checkpoint count = %d, want %d", len(target.DomainPlan().Checkpoints()), len(test.checkpoints))
+			compiled := target.DomainPlan().Checkpoints()
+			if len(compiled) != len(test.checkpoints) {
+				t.Fatalf("checkpoint count = %d, want %d", len(compiled), len(test.checkpoints))
 			}
 
-			for checkpointName, providers := range test.checkpoints {
-				checkpoint, checkpointExists := target.DomainPlan().Checkpoint(checkpointName)
-				if !checkpointExists || !reflect.DeepEqual(checkpoint.ProviderIDs(), providers) {
-					t.Fatalf("checkpoint %s providers = %v, want %v", checkpointName, checkpoint.ProviderIDs(), providers)
+			for index, want := range test.checkpoints {
+				checkpoint := compiled[index]
+				if checkpoint.Name() != want.name || !reflect.DeepEqual(checkpoint.ProviderIDs(), want.providers) {
+					t.Fatalf("checkpoint %d = %s/%v, want %s/%v", index, checkpoint.Name(), checkpoint.ProviderIDs(), want.name, want.providers)
 				}
 			}
 		})
@@ -681,7 +687,7 @@ func TestAuthnConfiguredCheckpointDoesNotEvictStandardFallback(t *testing.T) {
 			decision.EffectDeny,
 		)},
 	})
-	compiler, activation, target := configuredAuthnCatalog(t, configured)
+	compiler, activation, target := configuredAuthnCatalog(t, configured, "pre_auth")
 
 	catalog, err := compiler.Compile(context.Background(), []registry.TargetActivation{activation})
 	if err != nil {
@@ -733,6 +739,38 @@ func TestAuthnConfiguredCheckpointDoesNotEvictStandardFallback(t *testing.T) {
 	}
 }
 
+func TestAuthnConfiguredFinalCheckpointPreservesStandardPreAuth(t *testing.T) {
+	configuredID := mustCatalogSetID(t, "authn/configured_final")
+	configured := mustCatalogPolicySet(t, registry.PolicySetDefinitionInput{
+		ID: configuredID,
+		Rules: []registry.PolicyRule{mustCatalogExpressionDecisionRule(
+			t,
+			"configured_final_deny",
+			"auth_decision",
+			mustCatalogExpression(t, "", registry.ExpressionOperatorAlways),
+			decision.EffectDeny,
+		)},
+	})
+	compiler, activation, target := configuredAuthnCatalog(t, configured, "auth_decision")
+
+	catalog, err := compiler.Compile(context.Background(), []registry.TargetActivation{activation})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	compiled, _ := catalog.Lookup(target)
+
+	preAuth, _ := compiled.DomainPlan().Checkpoint("pre_auth")
+	if got := preAuth.ProductionPolicySetIDs(); !reflect.DeepEqual(got, []string{registry.BuiltinStandardAuthPolicySet}) {
+		t.Fatalf("pre_auth production authority = %v, want standard_auth", got)
+	}
+
+	authDecision, _ := compiled.DomainPlan().Checkpoint("auth_decision")
+	if got := authDecision.ProductionPolicySetIDs(); !reflect.DeepEqual(got, []string{configuredID.String()}) {
+		t.Fatalf("auth_decision production authority = %v, want configured final set", got)
+	}
+}
+
 func TestAuthnEnforceIgnoresConfiguredSetWithoutApplicableCheckpointRules(t *testing.T) {
 	configured := mustCatalogPolicySet(t, registry.PolicySetDefinitionInput{
 		ID: mustCatalogSetID(t, "authn/configured"),
@@ -743,7 +781,7 @@ func TestAuthnEnforceIgnoresConfiguredSetWithoutApplicableCheckpointRules(t *tes
 			"lookup_identity",
 		)},
 	})
-	compiler, activation, target := configuredAuthnCatalog(t, configured)
+	compiler, activation, target := configuredAuthnCatalog(t, configured, "pre_auth")
 
 	catalog, err := compiler.Compile(context.Background(), []registry.TargetActivation{activation})
 	if err != nil {
@@ -762,6 +800,7 @@ func TestAuthnEnforceIgnoresConfiguredSetWithoutApplicableCheckpointRules(t *tes
 func configuredAuthnCatalog(
 	t *testing.T,
 	configured registry.PolicySetDefinition,
+	checkpoint string,
 ) (*TargetCatalogCompiler, registry.TargetActivation, decision.Target) {
 	t.Helper()
 
@@ -779,7 +818,7 @@ func configuredAuthnCatalog(
 		t.Fatalf("NewCompleteDefinitionContribution() error = %v", err)
 	}
 
-	binding := mustCatalogImport(t, configured.ID().String(), target, "pre_auth", registry.ExportContract{})
+	binding := mustCatalogImport(t, configured.ID().String(), target, checkpoint, registry.ExportContract{})
 	compiler, activation := builtinAuthnCatalog(t, "")
 
 	activation, err = activation.WithPolicySetBindings([]registry.PolicySetImport{binding})

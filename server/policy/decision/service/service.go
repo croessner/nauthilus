@@ -36,6 +36,7 @@ type DecisionSessionFactory interface {
 
 // DecisionSession evaluates multiple checkpoints on one admitted captured generation.
 type DecisionSession interface {
+	Checkpoints() []string
 	Evaluate(context.Context, decision.Checkpoint) (decision.DecisionResponse, error)
 }
 
@@ -136,7 +137,40 @@ func (s *DecisionService) openSession(
 		return nil, fmt.Errorf("%w: authn sessions require the admitted builtin internal caller", ErrDecisionAdmission)
 	}
 
-	return &decisionSession{generation: generation, request: request, finalization: invocation.Finalization}, nil
+	checkpoints, err := sessionCheckpointPlan(generation.evaluator, request.Target(), requireInternalAuthn)
+	if err != nil {
+		return nil, err
+	}
+
+	return &decisionSession{
+		generation:   generation,
+		request:      request,
+		finalization: invocation.Finalization,
+		checkpoints:  checkpoints,
+	}, nil
+}
+
+// sessionCheckpointPlan captures one target plan from the same generation evaluator.
+func sessionCheckpointPlan(
+	evaluator checkpointEvaluator,
+	target decision.Target,
+	requireCompiledPlan bool,
+) ([]string, error) {
+	source, ok := evaluator.(checkpointPlanSource)
+	if !ok {
+		if requireCompiledPlan {
+			return nil, fmt.Errorf("%w: authn evaluator has no compiled checkpoint plan", ErrDecisionEvaluation)
+		}
+
+		return []string{decision.CheckpointFinalDecision}, nil
+	}
+
+	checkpoints, err := source.Checkpoints(target)
+	if err != nil || len(checkpoints) == 0 {
+		return nil, fmt.Errorf("%w: target has no compiled checkpoint plan", ErrDecisionEvaluation)
+	}
+
+	return append([]string(nil), checkpoints...), nil
 }
 
 // validAuthnTarget restricts reusable sessions to the exact builtin authn operations.
@@ -242,9 +276,28 @@ type decisionSession struct {
 	generation   *runtimeGeneration
 	request      decision.DecisionRequest
 	finalization decision.EvaluationFinalization
+	checkpoints  []string
 	mu           sync.Mutex
 	evaluations  sync.WaitGroup
+	next         int
+	evaluating   bool
 	closed       bool
+}
+
+// Checkpoints returns the detached compiled plan while the session is in scope.
+func (s *decisionSession) Checkpoints() []string {
+	if s == nil {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return nil
+	}
+
+	return append([]string(nil), s.checkpoints...)
 }
 
 // Evaluate runs one checkpoint on the generation and evaluator captured by the session.
@@ -252,10 +305,10 @@ func (s *decisionSession) Evaluate(
 	ctx context.Context,
 	checkpoint decision.Checkpoint,
 ) (decision.DecisionResponse, error) {
-	if s == nil || !s.beginEvaluation() {
+	if s == nil || !s.beginEvaluation(checkpoint.Name()) {
 		return decision.DecisionResponse{}, fmt.Errorf("%w: invalid session or checkpoint", ErrDecisionEvaluation)
 	}
-	defer s.evaluations.Done()
+	defer s.endEvaluation()
 
 	ctx = policyruntime.ContextWithGeneration(ctx, s.generation.id)
 
@@ -287,18 +340,29 @@ func (s *decisionSession) Evaluate(
 	return outcome.response, nil
 }
 
-// beginEvaluation prevents checkpoint work from starting after scoped session release.
-func (s *decisionSession) beginEvaluation() bool {
+// beginEvaluation enforces compiled checkpoint order and serial session execution.
+func (s *decisionSession) beginEvaluation(checkpoint string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.closed || !s.generation.valid() {
+	if s.closed || s.evaluating || !s.generation.valid() || s.next >= len(s.checkpoints) || s.checkpoints[s.next] != checkpoint {
 		return false
 	}
 
+	s.next++
+	s.evaluating = true
 	s.evaluations.Add(1)
 
 	return true
+}
+
+// endEvaluation releases the serial checkpoint slot before session closure can finish.
+func (s *decisionSession) endEvaluation() {
+	s.mu.Lock()
+	s.evaluating = false
+	s.mu.Unlock()
+
+	s.evaluations.Done()
 }
 
 // close rejects escaped checkpoints and waits for callbacks already in progress.

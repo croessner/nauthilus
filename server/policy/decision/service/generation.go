@@ -49,6 +49,11 @@ type checkpointEvaluator interface {
 	Evaluate(context.Context, checkpointEvaluation) (runtimeEvaluation, error)
 }
 
+// checkpointPlanSource exposes the target plan owned by the captured evaluator.
+type checkpointPlanSource interface {
+	Checkpoints(decision.Target) ([]string, error)
+}
+
 type runtimeGenerationDependencies struct {
 	authenticator callerAuthenticator
 	admission     admissionAuthority

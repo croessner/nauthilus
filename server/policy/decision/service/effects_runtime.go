@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
@@ -85,7 +86,7 @@ func (r *checkpointRuntime) finalizeSelection(
 	requestID string,
 	report runtimeReport,
 ) (decision.DecisionResponse, runtimeReport, bool) {
-	selection := projectDecisionSelection(target, selected)
+	selection := projectDecisionSelection(target, input.checkpoint.Name(), selected)
 	report.policySet = selection.policySet
 	report.rule = selection.ruleName
 	report.outcomeCode = selection.code
@@ -136,9 +137,13 @@ func (r *checkpointRuntime) finalizeSelection(
 	return response, report, true
 }
 
-// projectDecisionSelection normalizes explicit rule and no-match output into one plan input.
-func projectDecisionSelection(target policyruntime.CompiledTarget, selected selectedRule) decisionSelection {
-	effect, code := noMatchProjection(target.NoMatch())
+// projectDecisionSelection normalizes explicit rule and checkpoint fallback into one plan input.
+func projectDecisionSelection(
+	target policyruntime.CompiledTarget,
+	checkpoint string,
+	selected selectedRule,
+) decisionSelection {
+	effect, code := targetNoMatchProjection(target, checkpoint)
 	result := decisionSelection{
 		policySet: target.DefaultPolicySet().String(),
 		effect:    effect,
@@ -157,6 +162,22 @@ func projectDecisionSelection(target policyruntime.CompiledTarget, selected sele
 	result.advice = selected.rule.Advice()
 
 	return result
+}
+
+// targetNoMatchProjection preserves neutral authn pre-auth and fail-closed final authority.
+func targetNoMatchProjection(
+	target policyruntime.CompiledTarget,
+	checkpoint string,
+) (decision.Effect, decision.StatusCode) {
+	if target.Target().Namespace() != policy.AuthnNamespace {
+		return noMatchProjection(target.NoMatch())
+	}
+
+	if checkpoint != string(policy.StageAuthDecision) {
+		return decision.EffectNotApplicable, decision.StatusCodeNoApplicableRule
+	}
+
+	return decision.EffectDeny, decision.StatusCodeNoMatchDeny
 }
 
 // executePreparedEffects attempts every selected host effect at most once in policy order.

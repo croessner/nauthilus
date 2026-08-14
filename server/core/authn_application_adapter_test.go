@@ -36,7 +36,10 @@ func TestAuthnApplicationAdapterTraversesOneDecisionSessionForEveryOperation(t *
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			current := newRecordingAuthApplicationService()
-			session := &recordingAuthnDecisionSession{response: mustAuthnDecisionResponse(t, decision.EffectNotApplicable)}
+			session := newRecordingAuthnDecisionSession(
+				test.checkpointNames(),
+				repeatAuthnDecisionEffect(t, decision.EffectNotApplicable, len(test.checkpointNames()))...,
+			)
 			factory := &recordingAuthnDecisionSessionFactory{session: session}
 
 			adapter, err := NewAuthnCandidateApplicationService(current, factory, mustAuthnCandidateAuthentication(t))
@@ -51,8 +54,8 @@ func TestAuthnApplicationAdapterTraversesOneDecisionSessionForEveryOperation(t *
 				t.Fatalf("candidate operation error = %v", err)
 			}
 
-			if factory.calls != 1 || session.calls != 1 {
-				t.Fatalf("session calls = %d/%d, want 1/1", factory.calls, session.calls)
+			if factory.calls != 1 || session.calls != len(test.checkpointNames()) {
+				t.Fatalf("session calls = %d/%d, want 1/%d", factory.calls, session.calls, len(test.checkpointNames()))
 			}
 
 			if current.callCount(test.operation) != 1 || current.totalCalls() != 1 {
@@ -74,7 +77,53 @@ func TestAuthnApplicationAdapterTraversesOneDecisionSessionForEveryOperation(t *
 
 			assertAuthnRequestAssertions(t, invocation.Request, input)
 			assertAuthnInvocationTransport(t, invocation.Authentication, input.Context.Transport, test.grpcMethod)
-			assertAuthnOperationFacts(t, session.checkpoints[0].Facts(), test)
+			assertAuthnCheckpointSequence(t, session.checkpoints, test.checkpointNames())
+			assertAuthnOperationFacts(t, session.checkpoints[len(session.checkpoints)-1].Facts(), test)
+		})
+	}
+}
+
+func TestAuthnApplicationAdapterBruteForceCheckpointStopsLaterWork(t *testing.T) {
+	tests := []struct {
+		name         string
+		effect       decision.Effect
+		wantDecision AuthDecision
+	}{
+		{name: "deny", effect: decision.EffectDeny, wantDecision: AuthDecisionFail},
+		{name: "indeterminate", effect: decision.EffectIndeterminate, wantDecision: AuthDecisionTempFail},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			current := newRecordingAuthApplicationService()
+			session := newRecordingAuthnDecisionSession(
+				[]string{string(policy.StagePreAuth), string(policy.StageAuthDecision)},
+				mustAuthnDecisionResponse(t, test.effect),
+				mustAuthnDecisionResponse(t, decision.EffectPermit),
+			)
+			factory := &recordingAuthnDecisionSessionFactory{session: session}
+
+			adapter, err := NewAuthnCandidateApplicationService(current, factory, mustAuthnCandidateAuthentication(t))
+			if err != nil {
+				t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
+			}
+
+			outcome, err := adapter.Authenticate(context.Background(), authnApplicationTestInput(AuthModeAuthenticate))
+			if err != nil {
+				t.Fatalf("Authenticate() error = %v", err)
+			}
+
+			if outcome.Decision != test.wantDecision {
+				t.Fatalf("terminal checkpoint decision = %q, want %q", outcome.Decision, test.wantDecision)
+			}
+
+			if current.totalCalls() != 0 {
+				t.Fatalf("later environment/backend/subject calls = %d, want 0", current.totalCalls())
+			}
+
+			if session.calls != 1 || len(session.checkpoints) != 1 || session.checkpoints[0].Name() != string(policy.StagePreAuth) {
+				t.Fatalf("evaluated checkpoints = %#v, want only pre_auth", checkpointNames(session.checkpoints))
+			}
 		})
 	}
 }
@@ -97,7 +146,16 @@ func TestAuthnApplicationAdapterMapsEffectsWithoutReplacingOutcomePayloads(t *te
 				current := newRecordingAuthApplicationService()
 				originalAuth := current.authOutcome
 				originalAccounts := current.listOutcome
-				session := &recordingAuthnDecisionSession{response: mustAuthnDecisionResponse(t, effect.effect)}
+
+				responses := []decision.DecisionResponse{mustAuthnDecisionResponse(t, effect.effect)}
+				if operation.operation != policy.OperationListAccounts {
+					responses = append(
+						[]decision.DecisionResponse{mustAuthnDecisionResponse(t, decision.EffectNotApplicable)},
+						responses...,
+					)
+				}
+
+				session := newRecordingAuthnDecisionSession(operation.checkpointNames(), responses...)
 				factory := &recordingAuthnDecisionSessionFactory{session: session}
 
 				adapter, err := NewAuthnCandidateApplicationService(current, factory, mustAuthnCandidateAuthentication(t))
@@ -292,6 +350,15 @@ func (c authnApplicationOperationCase) runForDecision(
 	}
 }
 
+// checkpointNames returns the exact compiled checkpoint topology for one authn operation.
+func (c authnApplicationOperationCase) checkpointNames() []string {
+	if c.operation == policy.OperationListAccounts {
+		return []string{string(policy.StageAuthDecision)}
+	}
+
+	return []string{string(policy.StagePreAuth), string(policy.StageAuthDecision)}
+}
+
 // mappedAuthnTestResult projects one current auth outcome for shared assertions.
 func mappedAuthnTestResult(outcome *AuthOutcome, err error) (authnMappedTestResult, error) {
 	if err != nil {
@@ -408,6 +475,31 @@ func assertAuthnOperationFacts(
 			t.Fatalf("credential leaked through fact %q", fact.ID())
 		}
 	}
+}
+
+// assertAuthnCheckpointSequence verifies plan order and the pre-backend fact boundary.
+func assertAuthnCheckpointSequence(t *testing.T, checkpoints []decision.Checkpoint, want []string) {
+	t.Helper()
+
+	if got := checkpointNames(checkpoints); !reflect.DeepEqual(got, want) {
+		t.Fatalf("checkpoint sequence = %v, want %v", got, want)
+	}
+
+	for _, checkpoint := range checkpoints[:len(checkpoints)-1] {
+		if len(checkpoint.Facts().Facts()) != 0 {
+			t.Fatalf("pre-backend checkpoint %q facts = %#v, want none", checkpoint.Name(), checkpoint.Facts().Facts())
+		}
+	}
+}
+
+// checkpointNames projects exact checkpoint names for concise test failures.
+func checkpointNames(checkpoints []decision.Checkpoint) []string {
+	result := make([]string, 0, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		result = append(result, checkpoint.Name())
+	}
+
+	return result
 }
 
 // assertAuthnRequestAssertions verifies typed caller facts before admitted provenance is attached.
@@ -546,6 +638,18 @@ func mustAuthnDecisionResponse(t *testing.T, effect decision.Effect) decision.De
 	return response
 }
 
+// repeatAuthnDecisionEffect constructs one response per planned checkpoint.
+func repeatAuthnDecisionEffect(t *testing.T, effect decision.Effect, count int) []decision.DecisionResponse {
+	t.Helper()
+
+	responses := make([]decision.DecisionResponse, 0, count)
+	for range count {
+		responses = append(responses, mustAuthnDecisionResponse(t, effect))
+	}
+
+	return responses
+}
+
 type recordingAuthnDecisionSessionFactory struct {
 	session     *recordingAuthnDecisionSession
 	openErr     error
@@ -570,10 +674,27 @@ func (f *recordingAuthnDecisionSessionFactory) WithSession(
 }
 
 type recordingAuthnDecisionSession struct {
-	response    decision.DecisionResponse
+	plan        []string
+	responses   []decision.DecisionResponse
 	evaluateErr error
 	checkpoints []decision.Checkpoint
 	calls       int
+}
+
+// newRecordingAuthnDecisionSession returns one immutable plan-driven response sequence.
+func newRecordingAuthnDecisionSession(
+	plan []string,
+	responses ...decision.DecisionResponse,
+) *recordingAuthnDecisionSession {
+	return &recordingAuthnDecisionSession{
+		plan:      append([]string(nil), plan...),
+		responses: append([]decision.DecisionResponse(nil), responses...),
+	}
+}
+
+// Checkpoints returns a detached recording copy of the compiled plan order.
+func (s *recordingAuthnDecisionSession) Checkpoints() []string {
+	return append([]string(nil), s.plan...)
 }
 
 // Evaluate records one candidate checkpoint and returns the configured generic result.
@@ -583,8 +704,16 @@ func (s *recordingAuthnDecisionSession) Evaluate(
 ) (decision.DecisionResponse, error) {
 	s.calls++
 	s.checkpoints = append(s.checkpoints, checkpoint)
+	if len(s.responses) == 0 {
+		return decision.DecisionResponse{}, s.evaluateErr
+	}
 
-	return s.response, s.evaluateErr
+	index := s.calls - 1
+	if index >= len(s.responses) {
+		index = len(s.responses) - 1
+	}
+
+	return s.responses[index], s.evaluateErr
 }
 
 type recordingAuthApplicationService struct {

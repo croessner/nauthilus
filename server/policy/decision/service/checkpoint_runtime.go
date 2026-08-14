@@ -112,12 +112,15 @@ type effectRecord struct {
 }
 
 type runtimeReport struct {
-	facts       decision.FactSet
-	providers   []providerRecord
-	effects     []effectRecord
-	policySet   string
-	rule        string
-	outcomeCode decision.StatusCode
+	facts               decision.FactSet
+	providers           []providerRecord
+	effects             []effectRecord
+	policySet           string
+	rule                string
+	comparisonPolicySet string
+	comparisonRule      string
+	comparisonEffect    decision.Effect
+	outcomeCode         decision.StatusCode
 }
 
 // newCheckpointRuntime constructs the package-private catalog-bound evaluator.
@@ -156,6 +159,27 @@ func newCheckpointRuntime(config checkpointRuntimeConfig) (*checkpointRuntime, e
 		evaluationTimeout: timeout,
 		postActionBudget:  budget,
 	}, nil
+}
+
+// Checkpoints returns the compiled target order owned by this runtime candidate.
+func (r *checkpointRuntime) Checkpoints(target decision.Target) ([]string, error) {
+	if r == nil || r.catalog == nil {
+		return nil, fmt.Errorf("%w: target catalog is unavailable", ErrDecisionEvaluation)
+	}
+
+	compiled, ok := r.catalog.Lookup(target)
+	if !ok {
+		return nil, fmt.Errorf("%w: admitted target is absent", ErrDecisionEvaluation)
+	}
+
+	checkpoints := compiled.DomainPlan().Checkpoints()
+
+	result := make([]string, 0, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		result = append(result, checkpoint.Name())
+	}
+
+	return result, nil
 }
 
 // Evaluate executes one complete checkpoint lifecycle on captured generation state.
@@ -207,6 +231,9 @@ func (r *checkpointRuntime) Evaluate(ctx context.Context, input checkpointEvalua
 	if err := target.Schema().ValidateFacts(facts); err != nil {
 		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeProviderUnavailable, report), nil
 	}
+
+	comparison := r.selectComparisonRule(target, checkpoint, facts, report.providers)
+	recordComparisonSelection(&report, comparison)
 
 	selected := r.selectRule(target, checkpoint, facts, report.providers)
 	response, report, _ := r.finalizeSelection(evaluationContext, input, target, selected, decisionID, requestID, report)

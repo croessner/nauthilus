@@ -39,7 +39,40 @@ func (r *checkpointRuntime) selectRule(
 	facts decision.FactSet,
 	providers []providerRecord,
 ) selectedRule {
-	for _, policySetID := range checkpoint.ProductionPolicySetIDs() {
+	return r.selectRuleFromPolicySets(
+		target,
+		checkpoint.Name(),
+		checkpoint.ProductionPolicySetIDs(),
+		facts,
+		providers,
+	)
+}
+
+// selectComparisonRule evaluates observe-only sets without selecting their effects.
+func (r *checkpointRuntime) selectComparisonRule(
+	target policyruntime.CompiledTarget,
+	checkpoint policyruntime.CompiledCheckpoint,
+	facts decision.FactSet,
+	providers []providerRecord,
+) selectedRule {
+	return r.selectRuleFromPolicySets(
+		target,
+		checkpoint.Name(),
+		checkpoint.ComparisonPolicySetIDs(),
+		facts,
+		providers,
+	)
+}
+
+// selectRuleFromPolicySets applies one deterministic set order for production or comparison.
+func (r *checkpointRuntime) selectRuleFromPolicySets(
+	target policyruntime.CompiledTarget,
+	checkpoint string,
+	policySetIDs []string,
+	facts decision.FactSet,
+	providers []providerRecord,
+) selectedRule {
+	for _, policySetID := range policySetIDs {
 		setID, err := registry.ParsePolicySetID("runtime.policy_set", policySetID)
 		if err != nil {
 			continue
@@ -51,7 +84,7 @@ func (r *checkpointRuntime) selectRule(
 		}
 
 		for _, rule := range set.Rules() {
-			if rule.Checkpoint() != checkpoint.Name() || !requiredProvidersCompleted(rule, providers) {
+			if rule.Checkpoint() != checkpoint || !requiredProvidersCompleted(rule, providers) {
 				continue
 			}
 
@@ -62,6 +95,17 @@ func (r *checkpointRuntime) selectRule(
 	}
 
 	return selectedRule{}
+}
+
+// recordComparisonSelection stores observe evidence without preparing or executing effects.
+func recordComparisonSelection(report *runtimeReport, selected selectedRule) {
+	if report == nil || !selected.matched {
+		return
+	}
+
+	report.comparisonPolicySet = selected.policySet
+	report.comparisonRule = selected.rule.Name()
+	report.comparisonEffect = selected.rule.Decision()
 }
 
 // requiredProvidersCompleted applies compiler-approved provider-dependent rule skipping.
