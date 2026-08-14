@@ -15,7 +15,7 @@ The profile is intentionally local and repeatable. It uses Docker Compose, gener
 - Edge-to-authority gRPC uses mTLS, caller bearer tokens, operation scopes, backend references, and idempotency.
 - OIDC authorization-code and device-code logins work through the edge with remote identity data.
 - Negative IdP checks reject redirect smuggling, OAuth parameter pollution, bad client auth, PKCE misuse, refresh-token misuse, CSRF/session attacks, and device-code abuse.
-- Required TOTP, recovery-code, and WebAuthn flows work through the edge and persist on the authority, including normal and delayed-response recovery-code checks for users and formatted Master-User logins.
+- Required TOTP, recovery-code, and WebAuthn flows work through the edge and persist on the authority, including rejection of wrong-password delayed responses before enrollment and normal delayed-response checks for existing factors.
 - Negative WebAuthn checks reject missing credentials, tampered assertions, wrong challenges/origins, unknown credentials, replayed assertions, and sign-count rollback.
 - WebAuthn browser automation uses a CDP virtual authenticator.
 - WebAuthn sign-count updates are visible through authority-side state.
@@ -217,6 +217,12 @@ Run the complete smoke:
 GOEXPERIMENT=runtimesecret make identity-proxy-e2e
 ```
 
+Run all release-sensitive quality, vulnerability, and Compose/Playwright E2E gates with guaranteed stack cleanup:
+
+```sh
+GOEXPERIMENT=runtimesecret make release-guardrails
+```
+
 Clean up afterward:
 
 ```sh
@@ -338,6 +344,7 @@ ok oidc-device-token-consent-denied
 ok oidc-device-consent-denied
 ok oidc-device-code-login
 ok oidc-device-token-reuse-rejected
+ok oidc-required-mfa-delayed-response-wrong-password-before-enrollment-rejected
 ok totp-registration
 ok webauthn-registration
 ok recovery-code-generation
@@ -475,6 +482,7 @@ ok authority-webauthn-sign-count
 | `oidc-device-consent-denied`                          | Browser device-flow negative  | The browser denial path must terminate the device authorization cleanly.                                                                                      | Denying consent for a device request renders a terminal failed authorization page.                                                                                                    |
 | `oidc-device-code-login`                              | Browser device flow           | Positive baseline for the normal device authorization flow.                                                                                                   | A valid device authorization can be approved in the browser and exchanged for an access token.                                                                                        |
 | `oidc-device-token-reuse-rejected`                    | Device token negative         | A successfully redeemed device code is replayed to obtain a second token.                                                                                     | A successfully redeemed device code is deleted and cannot be reused.                                                                                                                  |
+| `oidc-required-mfa-delayed-response-wrong-password-before-enrollment-rejected` | Browser MFA negative | A known account without enrolled MFA submits a wrong password to a `delayed_response` client that requires MFA. | The login is rejected generically without creating a required-MFA flow, entering registration, or reaching the OIDC callback. |
 | `totp-registration`                                   | Browser MFA                   | Positive baseline for required TOTP enrollment through the edge.                                                                                              | Required TOTP registration completes through the edge while state is persisted on the authority.                                                                                      |
 | `webauthn-registration`                               | Browser MFA                   | Positive baseline for deterministic WebAuthn enrollment without platform authenticators.                                                                      | WebAuthn registration completes through a CDP virtual authenticator.                                                                                                                  |
 | `recovery-code-generation`                            | Browser MFA                   | Positive baseline for required recovery-code generation and flow resumption.                                                                                  | Required recovery-code registration generates plaintext codes once and resumes the OIDC flow.                                                                                         |

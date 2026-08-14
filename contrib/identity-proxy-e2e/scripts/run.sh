@@ -111,7 +111,7 @@ browser() {
 }
 
 reset_stack() {
-  "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  "${COMPOSE[@]}" down -v --remove-orphans
 }
 
 smoke() {

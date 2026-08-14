@@ -88,6 +88,7 @@ async function main() {
     await runAuthorizationCodeFlow(browser);
     await runNegativeIDPChecks(browser);
     await runDeviceCodeFlow(browser);
+    await runRequiredMFADelayedResponseWrongPasswordWithoutEnrollment(browser);
     await runRequiredMFAJourneyStateMachine(browser);
     const webAuthnCredentials = await runRequiredMFAFlows(browser);
     await runMultiEdgeContinuity(browser);
@@ -794,6 +795,43 @@ async function withPageState(page, label, run) {
   }
 }
 
+// runRequiredMFADelayedResponseWrongPasswordWithoutEnrollment proves that a
+// failed first factor cannot enter mandatory enrollment when no MFA exists yet.
+async function runRequiredMFADelayedResponseWrongPasswordWithoutEnrollment(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  try {
+    await withPageState(page, 'required MFA wrong password before enrollment', async () =>
+      withCallbackServer('required MFA wrong password before enrollment', async (redirectURI, callbackPromise) => {
+        let callbackObserved = false;
+        callbackPromise.then(() => {
+          callbackObserved = true;
+        });
+
+        await page.goto(buildAuthorizeURL(
+          edgeA,
+          requiredMFAJourneyClient.id,
+          redirectURI,
+          'openid profile email',
+        ));
+        await submitPasswordLogin(page, username, `${password}-wrong`);
+
+        assert.match(page.url(), /\/login(?:\/[^/?#]+)?$/,
+          'wrong password without enrolled MFA must remain on the login flow');
+        assert.doesNotMatch(page.url(), /\/mfa\/.+\/register/,
+          'wrong password without enrolled MFA must never enter registration');
+        await expectPageText(page, /Invalid login or password/);
+        await assertCallbackNotObserved(() => callbackObserved, 'wrong password before enrollment');
+        assertNoRequiredMFAJourneyFlow();
+      }));
+
+    console.log('ok oidc-required-mfa-delayed-response-wrong-password-before-enrollment-rejected');
+  } finally {
+    await context.close();
+  }
+}
+
 // runRequiredMFAJourneyStateMachine proves that mandatory enrollment owns the
 // original OIDC continuation until every required method has been registered.
 async function runRequiredMFAJourneyStateMachine(browser) {
@@ -1007,12 +1045,13 @@ function assertSameRequiredMFAJourneyFlow(expected, label) {
   assert.equal(current.state.flow_id, expected.state.flow_id, `${label} must preserve the enrollment flow id`);
 }
 
+// assertNoRequiredMFAJourneyFlow proves the exclusive journey client owns no
+// required-MFA sub-flow, including an orphan without account metadata.
 function assertNoRequiredMFAJourneyFlow() {
   const matches = readRequiredMFAFlowStates().filter(({state}) =>
     state.metadata &&
-      state.metadata.client_id === requiredMFAJourneyClient.id &&
-      state.metadata.account === requiredMFAJourneyUsername);
-  assert.equal(matches.length, 0, 'completed required MFA journey must remove its Redis sub-flow');
+      state.metadata.client_id === requiredMFAJourneyClient.id);
+  assert.equal(matches.length, 0, 'required MFA journey client must own no Redis sub-flow');
 }
 
 function readRequiredMFAFlowStates() {

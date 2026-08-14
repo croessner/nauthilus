@@ -271,6 +271,7 @@ func oidcDeviceSmokePlanScenarios() []string {
 // mfaSmokePlanScenarios returns MFA and recovery-code checks.
 func mfaSmokePlanScenarios() []string {
 	return []string{
+		"oidc-required-mfa-delayed-response-wrong-password-before-enrollment-rejected",
 		"oidc-required-mfa-pending-authorize-resume",
 		"oidc-required-mfa-parallel-authorize-bound",
 		"oidc-required-mfa-optional-webauthn-skipped",
