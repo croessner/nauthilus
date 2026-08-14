@@ -70,6 +70,7 @@ scenarios:
   - oidc-device-token-consent-denied
   - oidc-device-consent-denied
   - oidc-device-token-reuse-rejected
+  - oidc-required-mfa-delayed-response-wrong-password-before-enrollment-rejected
   - oidc-required-mfa-pending-authorize-resume
   - oidc-required-mfa-parallel-authorize-bound
   - oidc-required-mfa-optional-webauthn-skipped

@@ -39,7 +39,7 @@ This document captures practical, project-specific details to build, configure, 
   - make race: runs tests with -race in short mode.
   - make msan: runs tests with -msan in short mode (requires platform support).
   - make govulncheck: runs Go vulnerability analysis across all packages (requires `govulncheck` in PATH).
-  - make release-guardrails: runs the normal guardrails plus `govulncheck`; use this before publishing `main` or version tags.
+  - make release-guardrails: runs the normal guardrails, `govulncheck`, and the complete identity-proxy Compose/Playwright E2E gate; use this before publishing `main` or version tags. The release E2E wrapper always removes its Compose stack on exit.
   - make install|uninstall: manages /usr/local/sbin/nauthilus and systemd unit.
   - make install-hooks: installs the repository Git hooks; the pre-push hook runs `make govulncheck` before pushing `main` or `v*` tags.
 - Direct build (without Make)
@@ -217,7 +217,7 @@ We verified this flow by temporarily adding a trivial test under server/util and
   - Some packages do not have tests (handlers, router); create tests at the boundary with httptest and fake config states.
 - CI expectations
   - The repository includes a GitHub Actions workflow for stable builds. Aim for `go test -short ./...` to pass without external services.
-  - `govulncheck` is a release-sensitive gate. Before pushing `main` or any `v*` version tag, run `make release-guardrails` or use hooks installed by `make install-hooks`.
+  - Before pushing `main` or any `v*` version tag, run `make release-guardrails`. The installed pre-push hook supplements this with `govulncheck` but does not replace the Compose/Playwright E2E gate.
   - Release-sensitive pushes must be made from a clean checkout whose `HEAD` is the pushed `main` or version-tag commit, so local `govulncheck` analyzes the exact content being published.
   - Treat `govulncheck` findings as publish blockers for `main` and version tags unless a documented maintainer exception is made.
 
