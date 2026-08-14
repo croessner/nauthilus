@@ -143,6 +143,11 @@ func (h *Handler) FinishTOTPRegistration(
 	input.IdempotencyKey = request.GetIdempotencyKey()
 
 	result, err := h.resolveIdentityService().FinishTOTPRegistration(ctx, input)
+	if retryableTOTPValidation(result, err) {
+		if releaseErr := h.releaseIdempotency(ctx, AuthorityOperationFinishTOTPRegistration, request.GetIdempotencyKey()); releaseErr != nil {
+			return nil, releaseErr
+		}
+	}
 
 	return h.mfaWriteResponse(result, request.GetBackend(), err)
 }
@@ -504,6 +509,26 @@ func (h *Handler) reserveIdempotency(ctx context.Context, operation AuthorityOpe
 	}
 
 	return nil
+}
+
+// releaseIdempotency permits a corrected retry after a side-effect-free validation failure.
+func (h *Handler) releaseIdempotency(ctx context.Context, operation AuthorityOperation, key string) error {
+	store := h.idempotency
+	if store == nil {
+		return nil
+	}
+
+	principal := authorityCallerFromContext(ctx).Principal
+	if err := store.Release(ctx, operation, principal, key); err != nil {
+		return status.Error(codes.Internal, "idempotency key release failed")
+	}
+
+	return nil
+}
+
+// retryableTOTPValidation identifies code failures that did not mutate registration state.
+func retryableTOTPValidation(result *AuthorityIdentityResult, err error) bool {
+	return err == nil && result != nil && result.Status != nil && result.Status.GetErrorCode() == "totp_invalid"
 }
 
 func identityUsername(username string, requestContext *identityv1.RequestContext) string {

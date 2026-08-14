@@ -710,6 +710,17 @@ func TestIDPUISubmitDisableDefersNativeFormHandling(t *testing.T) {
 	assert.Contains(t, script, "deferNativeFormSubmitDisable(form, submitter);")
 }
 
+func TestIDPUIFollowsSafeHtmxRedirectAfterSuccessfulMutation(t *testing.T) {
+	script := loadIDPUIScript(t)
+
+	assert.Contains(t, script, "function followSafeHtmxRedirect(event)")
+	assert.Contains(t, script, "xhr.getResponseHeader('HX-Redirect')")
+	assert.Contains(t, script, "function isSafeHtmxRedirect(redirect)")
+	assert.Contains(t, script, "new URL(redirect, window.location.href).origin === window.location.origin")
+	assert.Contains(t, script, "window.location.assign(redirect)")
+	assert.Contains(t, script, "followSafeHtmxRedirect(evt);")
+}
+
 func TestIDPUIWebAuthnPreservesCredentialMetadata(t *testing.T) {
 	script := loadIDPUIScript(t)
 
@@ -1936,6 +1947,32 @@ func TestSaveRecoveryCodesDoesNotRebindConsumedJSONForCachePurge(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Equal(t, 1, provider.saveCalls)
 	assert.NotContains(t, recorder.Body.String(), "EOF")
+}
+
+func TestPostRegisterTOTPRepeatedRequiredEnrollmentResumesNextStep(t *testing.T) {
+	handler := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg:         &mockFrontendCfg{},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+		tracer: monittrace.New("test/frontend"),
+	}
+	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/totp/register/en", map[string]any{
+		definitions.SessionKeyAccount:           frontendTestAccount,
+		definitions.SessionKeyHaveTOTP:          true,
+		definitions.SessionKeyRequireMFAFlow:    true,
+		definitions.SessionKeyRequireMFAPending: definitions.MFAMethodRecoveryCodes,
+		definitions.SessionKeyUserBackend:       uint8(definitions.BackendLDAP),
+	}, bytes.NewReader([]byte("code=123456")))
+	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	handler.PostRegisterTOTP(ctx)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, definitions.MFARoot+"/register/continue", recorder.Header().Get("HX-Redirect"))
+	assert.NotContains(t, recorder.Body.String(), "Invalid request")
 }
 
 func (p *mfaSelfServiceProvider) GenerateTOTPSecret(_ *gin.Context, _ string) (string, string, error) {

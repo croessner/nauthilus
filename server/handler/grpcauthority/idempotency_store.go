@@ -34,6 +34,7 @@ var (
 
 type idempotencyStore interface {
 	Reserve(ctx context.Context, operation AuthorityOperation, principal string, key string) error
+	Release(ctx context.Context, operation AuthorityOperation, principal string, key string) error
 }
 
 type memoryIdempotencyStore struct {
@@ -75,6 +76,26 @@ func (s *memoryIdempotencyStore) Reserve(_ context.Context, operation AuthorityO
 	}
 
 	s.entries[entryKey] = now.Add(s.ttl)
+
+	return nil
+}
+
+// Release forgets a reservation when validation proved that no mutation occurred.
+func (s *memoryIdempotencyStore) Release(_ context.Context, operation AuthorityOperation, principal string, key string) error {
+	if key == "" {
+		return ErrIdempotencyKeyMissing
+	}
+
+	if s == nil {
+		return nil
+	}
+
+	entryKey := string(operation) + ":" + principal + ":" + key
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.entries, entryKey)
 
 	return nil
 }
