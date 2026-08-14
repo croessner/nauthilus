@@ -4779,6 +4779,7 @@ func (a *AuthState) ApplyContextData(x AuthContext) {
 		{x.SSLSerial, &a.Request.SSLSerial},
 		{x.SSLFingerprint, &a.Request.SSLFingerprint},
 		{x.OIDCCID, &a.Request.OIDCCID},
+		{x.SAMLEntityID, &a.Request.SAMLEntityID},
 	}
 
 	// Apply all string field mappings

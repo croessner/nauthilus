@@ -22,15 +22,9 @@ import (
 	"fmt"
 	"sync"
 
+	policy "github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
-)
-
-const (
-	authnNamespace            = "authn"
-	authnActionAuthenticate   = "authenticate"
-	authnActionLookupIdentity = "lookup_identity"
-	authnActionListAccounts   = "list_accounts"
 )
 
 var _ decision.Service = (*DecisionService)(nil)
@@ -147,12 +141,12 @@ func (s *DecisionService) openSession(
 
 // validAuthnTarget restricts reusable sessions to the exact builtin authn operations.
 func validAuthnTarget(target decision.Target) bool {
-	if target.Namespace() != authnNamespace {
+	if target.Namespace() != policy.AuthnNamespace {
 		return false
 	}
 
-	switch target.Action() {
-	case authnActionAuthenticate, authnActionLookupIdentity, authnActionListAccounts:
+	switch policy.Operation(target.Action()) {
+	case policy.OperationAuthenticate, policy.OperationLookupIdentity, policy.OperationListAccounts:
 		return true
 	default:
 		return false
@@ -233,6 +227,9 @@ func validAuthenticationInput(input decision.AuthenticationInput) bool {
 		Kind:          input.Kind(),
 		Credential:    input.Credential(),
 		TransportKind: input.TransportKind(),
+		Listener:      input.Listener(),
+		HTTPRoute:     input.HTTPRoute(),
+		GRPCMethod:    input.GRPCMethod(),
 		Peer:          input.Peer(),
 		MTLSIdentity:  input.MTLSIdentity(),
 		Protected:     input.Protected(),

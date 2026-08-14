@@ -47,6 +47,33 @@ const (
 	FactSourcePlugin FactSource = "plugin"
 )
 
+const (
+	// FactCallerPrincipal identifies the authenticated service caller.
+	FactCallerPrincipal = "caller.principal"
+	// FactCallerClientID identifies the authenticated service client.
+	FactCallerClientID = "caller.client_id"
+	// FactCallerAuthenticationKind identifies the validated caller credential kind.
+	FactCallerAuthenticationKind = "caller.authentication_kind"
+	// FactCallerScopes identifies the validated caller scopes.
+	FactCallerScopes = "caller.scopes"
+	// FactTokenSubject identifies the validated token subject.
+	FactTokenSubject = "token.subject"
+	// FactTokenIssuer identifies the validated token issuer.
+	FactTokenIssuer = "token.issuer"
+	// FactTransportKind identifies the server-observed transport class.
+	FactTransportKind = "transport.kind"
+	// FactTransportListener identifies the server-selected listener.
+	FactTransportListener = "transport.listener"
+	// FactTransportHTTPRoute identifies the normalized matched HTTP route.
+	FactTransportHTTPRoute = "transport.http_route"
+	// FactTransportGRPCMethod identifies the normalized full gRPC method.
+	FactTransportGRPCMethod = "transport.grpc_method"
+	// FactTransportMTLSIdentity identifies the verified mutual-TLS identity.
+	FactTransportMTLSIdentity = "transport.mtls_identity"
+	// FactTransportSourceIP identifies the server-observed caller address.
+	FactTransportSourceIP = "transport.source_ip"
+)
+
 // FactCategory identifies the policy category of a fact.
 type FactCategory string
 

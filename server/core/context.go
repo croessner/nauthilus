@@ -58,6 +58,7 @@ func WithPassword(p secret.Value) CredentialOption { return func(c *Credentials)
 // Only non-empty fields are applied to avoid altering existing precedence.
 type AuthContext struct {
 	RequestMetadata map[string][]string
+	Transport       AuthTransportContext
 
 	Method    string
 	UserAgent string
@@ -91,7 +92,19 @@ type AuthContext struct {
 	SSLSerial      string
 	SSLFingerprint string
 
-	OIDCCID string
+	OIDCCID      string
+	SAMLEntityID string
+}
+
+// AuthTransportContext carries server-observed transport metadata without a Gin dependency.
+type AuthTransportContext struct {
+	Kind         string
+	Listener     string
+	HTTPRoute    string
+	GRPCMethod   string
+	Peer         string
+	MTLSIdentity string
+	Protected    bool
 }
 
 // AuthContextOption mutates an AuthContext during construction.
@@ -241,6 +254,16 @@ func WithSSLFingerprint(v string) AuthContextOption {
 // WithOIDCCID provides the exported WithOIDCCID function.
 func WithOIDCCID(v string) AuthContextOption {
 	return func(c *AuthContext) { c.OIDCCID = v }
+}
+
+// WithSAMLEntityID stores the request-bound SAML service-provider identity.
+func WithSAMLEntityID(v string) AuthContextOption {
+	return func(c *AuthContext) { c.SAMLEntityID = v }
+}
+
+// WithAuthTransportContext stores detached server-observed transport metadata.
+func WithAuthTransportContext(transport AuthTransportContext) AuthContextOption {
+	return func(c *AuthContext) { c.Transport = transport }
 }
 
 // WithRequestMetadata stores allowlisted transport metadata candidates for policy facts.

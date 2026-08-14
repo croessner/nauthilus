@@ -133,6 +133,15 @@ func TestApplyContextDataStoresExternalSessionInAuthStateAndGinContext(t *testin
 	assert.Equal(t, testExternalSessionID, ctx.GetString(definitions.CtxExternalSessionKey))
 }
 
+func TestApplyContextDataStoresSAMLServiceProviderIdentity(t *testing.T) {
+	t.Parallel()
+
+	auth := &AuthState{}
+	auth.ApplyContextData(NewAuthContext(WithSAMLEntityID("https://sp.example.test/metadata")))
+
+	assert.Equal(t, "https://sp.example.test/metadata", auth.Request.SAMLEntityID)
+}
+
 func TestSetAuthenticationFieldsMapsExternalSessionFromJSONRequest(t *testing.T) {
 	t.Parallel()
 

@@ -66,8 +66,10 @@ const (
 )
 
 const (
+	authInputFieldMode            = "mode"
 	authInputFieldUsername        = "username"
 	authInputReasonRequired       = "required"
+	authInputReasonUnsupported    = "unsupported"
 	authResponseJSONErrorsKey     = "errors"
 	authStatusMessageOK           = "OK"
 	authUnsupportedAuthorization  = "missing or invalid authorization header"

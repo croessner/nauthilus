@@ -693,20 +693,20 @@ func trustedRequestFacts(
 ) ([]decision.Fact, error) {
 	caller := request.Caller()
 	values := make(map[string]trustedFactValue)
-	addTrustedString(values, "caller.principal", caller.Principal(), decision.FactSourceNauthilus)
-	addTrustedString(values, "caller.client_id", caller.ClientID(), decision.FactSourceNauthilus)
-	addTrustedString(values, "caller.authentication_kind", caller.AuthenticationKind(), decision.FactSourceNauthilus)
-	addTrustedStrings(values, "caller.scopes", caller.Scopes(), decision.FactSourceNauthilus)
-	addTrustedString(values, "token.subject", caller.Subject(), decision.FactSourceToken)
-	addTrustedString(values, "token.issuer", caller.Issuer(), decision.FactSourceToken)
-	addTrustedString(values, "transport.kind", caller.TransportKind(), decision.FactSourceTransport)
-	addTrustedString(values, "transport.listener", caller.Listener(), decision.FactSourceTransport)
-	addTrustedString(values, "transport.http_route", caller.HTTPRoute(), decision.FactSourceTransport)
-	addTrustedString(values, "transport.grpc_method", caller.GRPCMethod(), decision.FactSourceTransport)
-	addTrustedString(values, "transport.mtls_identity", caller.MTLSIdentity(), decision.FactSourceTransport)
+	addTrustedString(values, decision.FactCallerPrincipal, caller.Principal(), decision.FactSourceNauthilus)
+	addTrustedString(values, decision.FactCallerClientID, caller.ClientID(), decision.FactSourceNauthilus)
+	addTrustedString(values, decision.FactCallerAuthenticationKind, caller.AuthenticationKind(), decision.FactSourceNauthilus)
+	addTrustedStrings(values, decision.FactCallerScopes, caller.Scopes(), decision.FactSourceNauthilus)
+	addTrustedString(values, decision.FactTokenSubject, caller.Subject(), decision.FactSourceToken)
+	addTrustedString(values, decision.FactTokenIssuer, caller.Issuer(), decision.FactSourceToken)
+	addTrustedString(values, decision.FactTransportKind, caller.TransportKind(), decision.FactSourceTransport)
+	addTrustedString(values, decision.FactTransportListener, caller.Listener(), decision.FactSourceTransport)
+	addTrustedString(values, decision.FactTransportHTTPRoute, caller.HTTPRoute(), decision.FactSourceTransport)
+	addTrustedString(values, decision.FactTransportGRPCMethod, caller.GRPCMethod(), decision.FactSourceTransport)
+	addTrustedString(values, decision.FactTransportMTLSIdentity, caller.MTLSIdentity(), decision.FactSourceTransport)
 
 	if caller.SourceIP().IsValid() {
-		addTrustedString(values, "transport.source_ip", caller.SourceIP().String(), decision.FactSourceTransport)
+		addTrustedString(values, decision.FactTransportSourceIP, caller.SourceIP().String(), decision.FactSourceTransport)
 	}
 
 	result := make([]decision.Fact, 0, len(values))

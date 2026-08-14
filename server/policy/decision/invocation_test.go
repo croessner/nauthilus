@@ -28,6 +28,11 @@ func TestDecisionServiceAuthenticationInputOwnsOpaqueEvidence(t *testing.T) {
 		Kind:          "bearer",
 		Credential:    credential,
 		TransportKind: "http",
+		Listener:      "http.policy",
+		HTTPRoute:     "/api/v1/policy/decisions",
+		GRPCMethod:    "/nauthilus.policy.v1.DecisionService/Evaluate",
+		Peer:          "192.0.2.10",
+		MTLSIdentity:  "spiffe://example.test/policy-client",
 		Protected:     true,
 	})
 	if err != nil {
@@ -40,6 +45,15 @@ func TestDecisionServiceAuthenticationInputOwnsOpaqueEvidence(t *testing.T) {
 
 	if string(input.Credential()) != "opaque-evidence" {
 		t.Fatal("AuthenticationInput exposed mutable credential storage")
+	}
+
+	if input.Listener() != "http.policy" ||
+		input.HTTPRoute() != "/api/v1/policy/decisions" ||
+		input.GRPCMethod() != "/nauthilus.policy.v1.DecisionService/Evaluate" ||
+		input.Peer() != "192.0.2.10" ||
+		input.MTLSIdentity() != "spiffe://example.test/policy-client" ||
+		!input.Protected() {
+		t.Fatal("AuthenticationInput did not preserve server-observed transport evidence")
 	}
 }
 

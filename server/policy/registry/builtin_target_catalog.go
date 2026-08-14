@@ -28,24 +28,26 @@ import (
 const builtinTargetContributorID = "builtin.authn"
 
 const (
-	builtinBruteForceProvider   = "authn/brute_force"
-	builtinLuaActionProvider    = "authn/lua_action"
-	builtinPostActionProvider   = "authn/post_action"
-	builtinBruteForceEffect     = "authn/brute_force_update"
-	builtinLuaActionEffect      = "authn/lua_action_dispatch"
-	builtinPostActionEffect     = "authn/lua_post_action_enqueue"
-	builtinActionListAccounts   = string(policy.OperationListAccounts)
-	builtinActionAuthenticate   = string(policy.OperationAuthenticate)
-	builtinActionLookupIdentity = string(policy.OperationLookupIdentity)
-	builtinCheckpointDecision   = string(policy.StageAuthDecision)
-	builtinCheckpointPreAuth    = string(policy.StagePreAuth)
-	builtinEnvironmentProvider  = "authn/environment"
-	builtinTLSProvider          = "authn/tls_encryption"
-	builtinRelayProvider        = "authn/relay_domains"
-	builtinRBLProvider          = "authn/rbl"
-	builtinAuthBackendProvider  = "authn/auth_backend"
-	builtinSubjectProvider      = "authn/subject"
-	builtinAccountProvider      = "authn/account_provider"
+	builtinAuthnMaximumFactText  = 4096
+	builtinAuthnMaximumFactItems = 1024
+	builtinBruteForceProvider    = "authn/brute_force"
+	builtinLuaActionProvider     = "authn/lua_action"
+	builtinPostActionProvider    = "authn/post_action"
+	builtinBruteForceEffect      = "authn/brute_force_update"
+	builtinLuaActionEffect       = "authn/lua_action_dispatch"
+	builtinPostActionEffect      = "authn/lua_post_action_enqueue"
+	builtinActionListAccounts    = string(policy.OperationListAccounts)
+	builtinActionAuthenticate    = string(policy.OperationAuthenticate)
+	builtinActionLookupIdentity  = string(policy.OperationLookupIdentity)
+	builtinCheckpointDecision    = string(policy.StageAuthDecision)
+	builtinCheckpointPreAuth     = string(policy.StagePreAuth)
+	builtinEnvironmentProvider   = "authn/environment"
+	builtinTLSProvider           = "authn/tls_encryption"
+	builtinRelayProvider         = "authn/relay_domains"
+	builtinRBLProvider           = "authn/rbl"
+	builtinAuthBackendProvider   = "authn/auth_backend"
+	builtinSubjectProvider       = "authn/subject"
+	builtinAccountProvider       = "authn/account_provider"
 )
 
 type builtinTargetContributor struct {
@@ -68,7 +70,7 @@ func (c builtinTargetContributor) Contribute(ctx context.Context) (DefinitionCon
 		return DefinitionContribution{}, err
 	}
 
-	ownership, err := NewNamespaceOwnership(builtinTargetContributorID, []string{"authn"})
+	ownership, err := NewNamespaceOwnership(builtinTargetContributorID, []string{policy.AuthnNamespace})
 	if err != nil {
 		return DefinitionContribution{}, err
 	}
@@ -114,6 +116,117 @@ func builtinAuthnActions() []string {
 	return []string{builtinActionAuthenticate, builtinActionLookupIdentity, builtinActionListAccounts}
 }
 
+// builtinAuthnFactSchemas constructs the exact candidate fact contract for one operation.
+func builtinAuthnFactSchemas(action string) ([]FactSchema, error) {
+	inputs := builtinAuthnCommonFactSchemaInputs()
+
+	switch action {
+	case builtinActionAuthenticate:
+		inputs = append(inputs, builtinAuthnBackendFactSchemaInputs(policy.AuthnFactAuthenticated)...)
+	case builtinActionLookupIdentity:
+		inputs = append(inputs, builtinAuthnBackendFactSchemaInputs(policy.AuthnFactIdentityFound)...)
+	case builtinActionListAccounts:
+		inputs = append(inputs,
+			builtinAuthnFactSchemaInput(
+				policy.AuthnFactAccountCount,
+				decision.FactCategorySubject,
+				decision.ValueKindInteger,
+				decision.FactSourceBackend,
+			),
+			builtinAuthnFactSchemaInput(
+				policy.AuthnFactAccountProviderCompleted,
+				decision.FactCategorySubject,
+				decision.ValueKindBoolean,
+				decision.FactSourceBackend,
+			),
+		)
+	default:
+		return nil, fmt.Errorf("unsupported builtin authn action %q", action)
+	}
+
+	facts := make([]FactSchema, 0, len(inputs))
+	for _, input := range inputs {
+		fact, err := NewFactSchema(input)
+		if err != nil {
+			return nil, err
+		}
+
+		facts = append(facts, fact)
+	}
+
+	return facts, nil
+}
+
+// builtinAuthnCommonFactSchemaInputs declares shared request, host, and transport facts.
+func builtinAuthnCommonFactSchemaInputs() []FactSchemaInput {
+	return []FactSchemaInput{
+		builtinAuthnFactSchemaInput(policy.AuthnFactOperation, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceNauthilus),
+		builtinAuthnFactSchemaInput(policy.AuthnFactService, decision.FactCategoryResource, decision.ValueKindString, decision.FactSourceNauthilus),
+		builtinAuthnFactSchemaInput(policy.AuthnFactCurrentDecision, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceNauthilus),
+		builtinAuthnFactSchemaInput(policy.AuthnFactUsername, decision.FactCategorySubject, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactProtocol, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactMethod, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactUserAgent, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactClientIP, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactClientPort, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactClientHostname, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactClientID, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactLocalIP, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactLocalPort, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactIDPClientID, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactSAMLServiceProviderID, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(policy.AuthnFactLoginAttempt, decision.FactCategoryEnvironment, decision.ValueKindInteger, decision.FactSourceCaller),
+		builtinAuthnFactSchemaInput(decision.FactCallerPrincipal, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceNauthilus),
+		builtinAuthnFactSchemaInput(decision.FactCallerClientID, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceNauthilus),
+		builtinAuthnFactSchemaInput(decision.FactCallerAuthenticationKind, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceNauthilus),
+		builtinAuthnFactSchemaInput(decision.FactCallerScopes, decision.FactCategoryEnvironment, decision.ValueKindStrings, decision.FactSourceNauthilus),
+		builtinAuthnFactSchemaInput(decision.FactTokenSubject, decision.FactCategorySubject, decision.ValueKindString, decision.FactSourceToken),
+		builtinAuthnFactSchemaInput(decision.FactTokenIssuer, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceToken),
+		builtinAuthnFactSchemaInput(decision.FactTransportKind, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceTransport),
+		builtinAuthnFactSchemaInput(decision.FactTransportListener, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceTransport),
+		builtinAuthnFactSchemaInput(decision.FactTransportHTTPRoute, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceTransport),
+		builtinAuthnFactSchemaInput(decision.FactTransportGRPCMethod, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceTransport),
+		builtinAuthnFactSchemaInput(decision.FactTransportSourceIP, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceTransport),
+		builtinAuthnFactSchemaInput(decision.FactTransportMTLSIdentity, decision.FactCategoryEnvironment, decision.ValueKindString, decision.FactSourceTransport),
+	}
+}
+
+// builtinAuthnBackendFactSchemaInputs declares shared backend state plus one operation result.
+func builtinAuthnBackendFactSchemaInputs(resultID string) []FactSchemaInput {
+	return []FactSchemaInput{
+		builtinAuthnFactSchemaInput(policy.AuthnFactBackend, decision.FactCategorySubject, decision.ValueKindString, decision.FactSourceBackend),
+		builtinAuthnFactSchemaInput(resultID, decision.FactCategorySubject, decision.ValueKindBoolean, decision.FactSourceBackend),
+		builtinAuthnFactSchemaInput(policy.AuthnFactAccountField, decision.FactCategorySubject, decision.ValueKindString, decision.FactSourceBackend),
+		builtinAuthnFactSchemaInput(policy.AuthnFactGroups, decision.FactCategorySubject, decision.ValueKindStrings, decision.FactSourceBackend),
+		builtinAuthnFactSchemaInput(policy.AuthnFactGroupDistinguishedNames, decision.FactCategorySubject, decision.ValueKindStrings, decision.FactSourceBackend),
+	}
+}
+
+// builtinAuthnFactSchemaInput applies one bounded shape for every strict value kind.
+func builtinAuthnFactSchemaInput(
+	id string,
+	category decision.FactCategory,
+	kind decision.ValueKind,
+	source decision.FactSource,
+) FactSchemaInput {
+	input := FactSchemaInput{
+		ID:             id,
+		AllowedSources: []decision.FactSource{source},
+		Category:       category,
+		Kind:           kind,
+	}
+
+	switch kind {
+	case decision.ValueKindString:
+		input.MaxLength = builtinAuthnMaximumFactText
+	case decision.ValueKindStrings:
+		input.MaxLength = builtinAuthnMaximumFactText
+		input.MaxItems = builtinAuthnMaximumFactItems
+	}
+
+	return input
+}
+
 // buildBuiltinAuthnDefinitions constructs target, schema, and checkpoint topology together.
 func buildBuiltinAuthnDefinitions() (
 	[]TargetDefinition,
@@ -151,14 +264,19 @@ func buildBuiltinAuthnTarget(
 		return decision.Target{}, SchemaDefinition{}, TargetDefinition{}, DomainPlanDefinition{}, err
 	}
 
-	schema, err := NewSchemaDefinition(schemaIdentity, nil)
+	facts, err := builtinAuthnFactSchemas(action)
+	if err != nil {
+		return decision.Target{}, SchemaDefinition{}, TargetDefinition{}, DomainPlanDefinition{}, err
+	}
+
+	schema, err := NewSchemaDefinition(schemaIdentity, facts)
 	if err != nil {
 		return decision.Target{}, SchemaDefinition{}, TargetDefinition{}, DomainPlanDefinition{}, err
 	}
 
 	schema.builtinAuth = true
 
-	target, err := decision.NewTarget("authn", action)
+	target, err := decision.NewTarget(policy.AuthnNamespace, action)
 	if err != nil {
 		return decision.Target{}, SchemaDefinition{}, TargetDefinition{}, DomainPlanDefinition{}, err
 	}

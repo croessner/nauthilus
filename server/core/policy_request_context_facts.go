@@ -406,12 +406,18 @@ func grpcPeerIP(ctx context.Context) string {
 	return strings.TrimSpace(requestPeer.Addr.String())
 }
 
+// requestTransportKind returns the stable transport class for the current auth state.
 func (a *AuthState) requestTransportKind() string {
 	if a == nil {
 		return requestPolicyTransportUnknown
 	}
 
-	switch a.Request.Service {
+	return requestTransportKindForService(a.Request.Service)
+}
+
+// requestTransportKindForService maps one response surface to stable transport metadata.
+func requestTransportKindForService(service string) string {
+	switch service {
 	case definitions.ServGRPC:
 		return requestPolicyTransportGRPC
 	case definitions.ServIDP:
@@ -423,12 +429,18 @@ func (a *AuthState) requestTransportKind() string {
 	}
 }
 
+// requestListenerName returns the stable listener identity for the current auth state.
 func (a *AuthState) requestListenerName() string {
 	if a == nil {
 		return ""
 	}
 
-	switch a.Request.Service {
+	return requestListenerNameForService(a.Request.Service)
+}
+
+// requestListenerNameForService maps one response surface to its stable listener identity.
+func requestListenerNameForService(service string) string {
+	switch service {
 	case definitions.ServGRPC:
 		return requestPolicyListenerGRPCAuthority
 	case definitions.ServIDP:

@@ -27,6 +27,9 @@ type AuthenticationEvidence struct {
 	Kind          string
 	Credential    []byte
 	TransportKind string
+	Listener      string
+	HTTPRoute     string
+	GRPCMethod    string
 	Peer          string
 	MTLSIdentity  string
 	Protected     bool
@@ -37,6 +40,9 @@ type AuthenticationInput struct {
 	credential    []byte
 	kind          string
 	transportKind string
+	listener      string
+	httpRoute     string
+	grpcMethod    string
 	peer          string
 	mtlsIdentity  string
 	protected     bool
@@ -58,18 +64,28 @@ func NewAuthenticationInput(input AuthenticationEvidence) (AuthenticationInput, 
 		)
 	}
 
-	if (input.Peer != "" && !validIdentityText(input.Peer)) ||
-		(input.MTLSIdentity != "" && !validIdentityText(input.MTLSIdentity)) {
-		return AuthenticationInput{}, invalidCaller(
-			"authentication.transport",
-			"contains invalid peer or mutual-TLS identity text",
-		)
+	for _, value := range []string{
+		input.Listener,
+		input.HTTPRoute,
+		input.GRPCMethod,
+		input.Peer,
+		input.MTLSIdentity,
+	} {
+		if value != "" && !validIdentityText(value) {
+			return AuthenticationInput{}, invalidCaller(
+				"authentication.transport",
+				"contains invalid server-observed transport text",
+			)
+		}
 	}
 
 	return AuthenticationInput{
 		credential:    append([]byte(nil), input.Credential...),
 		kind:          input.Kind,
 		transportKind: input.TransportKind,
+		listener:      input.Listener,
+		httpRoute:     input.HTTPRoute,
+		grpcMethod:    input.GRPCMethod,
 		peer:          input.Peer,
 		mtlsIdentity:  input.MTLSIdentity,
 		protected:     input.Protected,
@@ -89,6 +105,21 @@ func (i AuthenticationInput) Credential() []byte {
 // TransportKind returns the host-selected transport kind.
 func (i AuthenticationInput) TransportKind() string {
 	return i.transportKind
+}
+
+// Listener returns the host-selected listener identity.
+func (i AuthenticationInput) Listener() string {
+	return i.listener
+}
+
+// HTTPRoute returns the normalized matched HTTP route.
+func (i AuthenticationInput) HTTPRoute() string {
+	return i.httpRoute
+}
+
+// GRPCMethod returns the normalized full gRPC method.
+func (i AuthenticationInput) GRPCMethod() string {
+	return i.grpcMethod
 }
 
 // Peer returns bounded host-observed peer evidence.
