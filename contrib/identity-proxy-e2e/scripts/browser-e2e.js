@@ -2315,6 +2315,8 @@ async function completeTOTPRegistration(page) {
   const counter = Math.floor(Date.now() / 30000);
   const codes = [counter, counter - 1, counter + 1].map((value) => totp(secret, value));
 
+  await assertWrongTOTPRegistrationKeepsRetryableState(page, codes);
+
   for (const code of codes) {
     await page.fill('input[name="code"]', code);
     const responsePromise = page.waitForResponse((response) =>
@@ -2324,10 +2326,13 @@ async function completeTOTPRegistration(page) {
     const hxRedirect = response.headers()['hx-redirect'];
     trace(`TOTP registration response status=${response.status()} hx-redirect=${hxRedirect || ''} url=${page.url()}`);
     if (response.ok() && hxRedirect) {
+      const csrfToken = response.request().headers()['x-csrf-token'] || '';
+
       // HTMX follows HX-Redirect itself. Replaying the same navigation would
       // consume stateful registration pages, such as remote recovery codes,
       // twice and no longer model real browser behavior.
       await waitForMFARegistrationStep(page);
+      await assertRepeatedTOTPRegistrationResumes(page, response.url(), code, csrfToken);
 
       return secret;
     }
@@ -2339,6 +2344,55 @@ async function completeTOTPRegistration(page) {
   }
 
   throw new Error(`TOTP registration did not advance from ${page.url()}: ${await visiblePageText(page)}`);
+}
+
+// assertWrongTOTPRegistrationKeepsRetryableState proves one typo does not consume CSRF or enrollment state.
+async function assertWrongTOTPRegistrationKeepsRetryableState(page, validCodes) {
+  const wrongCode = validCodes.includes('000000') ? '999999' : '000000';
+  await page.fill('input[name="code"]', wrongCode);
+  const responsePromise = page.waitForResponse((response) =>
+    response.url().includes('/mfa/totp/register') && response.request().method() === 'POST');
+  await page.click('button[type="submit"]');
+  const response = await responsePromise;
+
+  assert.equal(response.status(), 200, 'wrong TOTP enrollment code must return a retryable modal');
+  assert.equal(response.headers()['hx-redirect'] || '', '', 'wrong TOTP enrollment code must not advance');
+  assert.match(await response.text(), /Failed to register TOTP/,
+    'wrong TOTP enrollment code must explain the failed verification');
+  await page.locator('#error-modal-close').click();
+  await page.waitForSelector('#error-modal', {state: 'detached'});
+  assert.match(page.url(), /\/mfa\/totp\/register/,
+    'wrong TOTP enrollment code must keep the registration page active');
+  console.log('ok oidc-totp-registration-wrong-code-retryable');
+}
+
+// assertRepeatedTOTPRegistrationResumes models a browser retry after the first successful enrollment response.
+async function assertRepeatedTOTPRegistrationResumes(page, responseURL, code, csrfToken) {
+  const endpoint = new URL(responseURL).pathname;
+  const repeated = await page.evaluate(async ({endpoint: path, code: otpCode, csrfToken: csrf}) => {
+    const response = await fetch(path, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-CSRF-Token': csrf,
+      },
+      body: new URLSearchParams({code: otpCode}),
+    });
+
+    return {
+      body: await response.text(),
+      hxRedirect: response.headers.get('HX-Redirect') || '',
+      status: response.status,
+    };
+  }, {endpoint, code, csrfToken});
+
+  assert.equal(repeated.status, 200, 'repeated successful TOTP enrollment must remain idempotent');
+  assert.equal(repeated.hxRedirect, '/mfa/register/continue',
+    'repeated successful TOTP enrollment must resume the mandatory chain');
+  assert.doesNotMatch(repeated.body, /Invalid request/i,
+    'repeated successful TOTP enrollment must not render an invalid-request modal');
+  console.log('ok oidc-totp-registration-repeat-resumes');
 }
 
 async function completeTOTPLogin(page, secret, options = {}) {

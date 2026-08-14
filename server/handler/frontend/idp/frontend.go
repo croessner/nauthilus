@@ -2743,6 +2743,12 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 	}
 
+	if mgr != nil && mgr.GetBool(definitions.SessionKeyHaveTOTP, false) {
+		h.redirectAfterTOTPRegistration(ctx, mgr, false)
+
+		return
+	}
+
 	code := ctx.PostForm("code")
 
 	if username == "" || code == "" || (sourceBackend != uint8(definitions.BackendRemote) && secret == "") {
@@ -2770,11 +2776,15 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 		mgr.Delete(definitions.SessionKeyTOTPSecret)
 	}
 
-	// In a forced-registration flow the pending list must be updated and the browser
-	// must be sent to the continue endpoint so that the next required method (if any)
-	// is registered before the IDP flow resumes.
+	h.redirectAfterTOTPRegistration(ctx, mgr, true)
+}
+
+// redirectAfterTOTPRegistration advances new enrollments once and makes repeated successful submissions idempotent.
+func (h *FrontendHandler) redirectAfterTOTPRegistration(ctx *gin.Context, mgr cookie.Manager, newlyRegistered bool) {
 	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		h.removeCompletedRequireMFAMethod(ctx, mgr, definitions.MFAMethodTOTP)
+		if newlyRegistered {
+			h.removeCompletedRequireMFAMethod(ctx, mgr, definitions.MFAMethodTOTP)
+		}
 
 		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/continue")
 		ctx.Status(http.StatusOK)

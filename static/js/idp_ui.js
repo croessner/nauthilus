@@ -195,6 +195,49 @@
     }
 
     /**
+     * Validates an HTMX navigation target without allowing cross-origin redirects.
+     *
+     * @param {unknown} redirect
+     * @returns {boolean}
+     */
+    function isSafeHtmxRedirect(redirect) {
+        if (!isSafeRelativeRedirect(redirect) && !isSafeAbsoluteRedirect(redirect)) {
+            return false;
+        }
+
+        try {
+            return new URL(redirect, window.location.href).origin === window.location.origin;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Replays a safe HX-Redirect when a browser leaves the completed request page active.
+     *
+     * @param {Event} event
+     * @returns {void}
+     */
+    function followSafeHtmxRedirect(event) {
+        if (!(event instanceof CustomEvent) || !event.detail || typeof event.detail !== 'object') {
+            return;
+        }
+
+        const detail = /** @type {{xhr?: unknown}} */ (event.detail);
+        const xhr = detail.xhr;
+        if (!(xhr instanceof XMLHttpRequest)) {
+            return;
+        }
+
+        const redirect = xhr.getResponseHeader('HX-Redirect');
+        if (!isSafeHtmxRedirect(redirect)) {
+            return;
+        }
+
+        window.location.assign(redirect);
+    }
+
+    /**
      * Returns the global QRCode constructor when available.
      *
      * @returns {QRCodeGlobal | null}
@@ -1906,6 +1949,10 @@
 
     ['htmx:afterRequest', 'htmx:sendError', 'htmx:timeout'].forEach((eventName) => {
         document.addEventListener(eventName, (evt) => {
+            if (eventName === 'htmx:afterRequest') {
+                followSafeHtmxRedirect(evt);
+            }
+
             const {elt} = getHtmxRequestDetail(evt);
             restoreAutoDisabledControls(elt);
         });
