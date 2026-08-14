@@ -1,6 +1,8 @@
 package idp
 
 import (
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,9 +16,12 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/idp"
+	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/croessner/nauthilus/v3/server/lualib"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redismock/v9"
 )
 
 const roundcubeTestCodeChallenge = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -157,6 +162,669 @@ func TestCurrentOIDCAuthorizeFlowStateFailsClosedWithoutRedis(t *testing.T) {
 
 	if newRoundcubeOIDCHandler().currentOIDCAuthorizeFlowState(ctx, mgr, request) {
 		t.Fatal("OIDC flow without Redis state was accepted")
+	}
+}
+
+func TestOIDCAuthorizeResumesPendingRequiredMFARegistration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
+	parentFlowID := "flow-parent"
+	flowID := flowdomain.NewRequireMFAFlowID(parentFlowID)
+	mgr.Set(definitions.SessionKeyIDPFlowID, flowID)
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
+	mgr.Set(definitions.SessionKeyIDPClientID, "roundcube-client")
+	mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
+	mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
+	mgr.Set(definitions.SessionKeyRequireMFAPending, definitions.MFAMethodRecoveryCodes)
+
+	request, ok := readOIDCAuthorizeRequest(ctx)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	handler, mock := newRoundcubeOIDCHandlerWithRedis()
+	expectRequiredMFAFlowState(t, mock, flowID, definitions.MFAMethodRecoveryCodes)
+
+	if handler.deps.Redis == nil || handler.deps.Redis.GetWriteHandle() == nil {
+		t.Fatal("test Redis dependency is unavailable")
+	}
+
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+	if handler.ensureOIDCAuthorizeFlowState(ctx, mgr, flowContext, request, flowContext.Account()) {
+		t.Fatal("second authorize request must not replace an incomplete required-MFA registration")
+	}
+
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusFound, recorder.Body.String())
+	}
+
+	if got := recorder.Header().Get("Location"); got != definitions.MFARoot+"/recovery/register" {
+		t.Fatalf("resume target = %q, want recovery-code registration", got)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyIDPFlowID, ""); got != flowdomain.NewRequireMFAFlowID(parentFlowID) {
+		t.Fatalf("flow id = %q, want pending required-MFA flow", got)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyRequireMFAPending, ""); got != definitions.MFAMethodRecoveryCodes {
+		t.Fatalf("pending method = %q, want preserved recovery-code registration", got)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func TestOIDCAuthorizePromptNoneRejectsPendingRequiredMFAInteraction(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newRoundcubeOIDCHandlerWithRedis()
+	recorder, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?client_id=roundcube-client&redirect_uri=https%3A%2F%2Fwebmail.example.test%2Findex.php%2Flogin%2Foauth&response_type=code&scope=openid+profile+email&state=state-1&nonce=nonce-1&prompt=none&code_challenge=challenge-1&code_challenge_method=S256", nil)
+	parentFlowID := "flow-parent"
+	flowID := flowdomain.NewRequireMFAFlowID(parentFlowID)
+	mgr.Set(definitions.SessionKeyIDPFlowID, flowID)
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
+	mgr.Set(definitions.SessionKeyIDPClientID, "roundcube-client")
+	mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
+	mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
+	mgr.Set(definitions.SessionKeyRequireMFAPending, definitions.MFAMethodRecoveryCodes)
+	expectRequiredMFAFlowState(t, mock, flowID, definitions.MFAMethodRecoveryCodes)
+
+	request, ok := readOIDCAuthorizeRequest(ctx)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+	if handler.ensureOIDCAuthorizeFlowState(ctx, mgr, flowContext, request, flowContext.Account()) {
+		t.Fatal("prompt=none must not continue a pending interactive registration")
+	}
+
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusFound, recorder.Body.String())
+	}
+
+	if got := recorder.Header().Get("Location"); got != "https://webmail.example.test/index.php/login/oauth?error=interaction_required&state=state-1" {
+		t.Fatalf("redirect = %q, want interaction_required callback", got)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyIDPFlowID, ""); got != flowID {
+		t.Fatalf("flow id = %q, want pending flow preserved", got)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyRequireMFAPending, ""); got != definitions.MFAMethodRecoveryCodes {
+		t.Fatalf("pending method = %q, want preserved registration", got)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func TestOIDCAuthorizeResumesPendingRequiredMFAWithoutOptionalUniqueUserID(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		promptNone bool
+		wantTarget string
+	}{
+		{
+			name:       "interactive resume",
+			wantTarget: definitions.MFARoot + "/recovery/register",
+		},
+		{
+			name:       "prompt none callback",
+			promptNone: true,
+			wantTarget: "https://webmail.example.test/index.php/login/oauth?error=interaction_required&state=state-1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertPendingRequiredMFAResumesWithoutUniqueUserID(t, tc.promptNone, tc.wantTarget)
+		})
+	}
+}
+
+func TestOIDCAuthorizeRestoresMissingSessionUniqueUserIDFromBoundRequiredMFAFlow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newRoundcubeOIDCHandlerWithRedis()
+	recorder, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
+	delete(mgr.data, definitions.SessionKeyUniqueUserID)
+	prepareBoundRequiredMFAResume(
+		t,
+		mock,
+		mgr,
+		"flow-parent-missing-session-uid",
+		definitions.MFAMethodTOTP,
+		definitions.MFAMethodTOTP+","+definitions.MFAMethodRecoveryCodes,
+		"uid-user",
+	)
+	mgr.mutations = nil
+
+	resumePendingRequiredMFAAuthorize(t, handler, ctx, mgr)
+
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusFound, recorder.Body.String())
+	}
+
+	if got := recorder.Header().Get("Location"); got != definitions.MFARoot+"/totp/register" {
+		t.Fatalf("resume target = %q, want TOTP registration", got)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyUniqueUserID, ""); got != "uid-user" {
+		t.Fatalf("restored unique user ID = %q, want metadata binding", got)
+	}
+
+	assertUniqueUserIDRestoreSaved(t, mgr)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func TestOIDCAuthorizeRejectsMismatchedRequiredMFAUniqueUserID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newRoundcubeOIDCHandlerWithRedis()
+	recorder, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
+	mgr.Set(definitions.SessionKeyUniqueUserID, "uid-other")
+	prepareBoundRequiredMFAResume(
+		t,
+		mock,
+		mgr,
+		"flow-parent-mismatched-session-uid",
+		definitions.MFAMethodTOTP,
+		definitions.MFAMethodTOTP+","+definitions.MFAMethodRecoveryCodes,
+		"uid-user",
+	)
+	mgr.mutations = nil
+
+	resumePendingRequiredMFAAuthorize(t, handler, ctx, mgr)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusConflict, recorder.Body.String())
+	}
+
+	if got := recorder.Header().Get("Location"); got != "" {
+		t.Fatalf("mismatched identity redirected to %q", got)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyUniqueUserID, ""); got != "uid-other" {
+		t.Fatalf("session unique user ID = %q, want mismatch preserved for rejection", got)
+	}
+
+	if mgr.saves != 0 || len(mgr.mutations) != 0 {
+		t.Fatalf("mismatched identity mutated session: saves=%d mutations=%v", mgr.saves, mgr.mutations)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func TestOIDCAuthorizeFailsClosedWhenRestoredRequiredMFAUniqueUserIDCannotBeSaved(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newRoundcubeOIDCHandlerWithRedis()
+	recorder, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
+	delete(mgr.data, definitions.SessionKeyUniqueUserID)
+	prepareBoundRequiredMFAResume(
+		t,
+		mock,
+		mgr,
+		"flow-parent-uid-save-error",
+		definitions.MFAMethodTOTP,
+		definitions.MFAMethodTOTP+","+definitions.MFAMethodRecoveryCodes,
+		"uid-user",
+	)
+	mgr.mutations = nil
+	mgr.saveErr = errors.New("injected cookie save failure")
+
+	resumePendingRequiredMFAAuthorize(t, handler, ctx, mgr)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusInternalServerError, recorder.Body.String())
+	}
+
+	if got := recorder.Header().Get("Location"); got != "" {
+		t.Fatalf("failed session save redirected to %q", got)
+	}
+
+	assertUniqueUserIDRestoreSaved(t, mgr)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func prepareBoundRequiredMFAResume(
+	t *testing.T,
+	mock redismock.ClientMock,
+	mgr *mockCookieManager,
+	parentFlowID string,
+	pending string,
+	required string,
+	uniqueUserID string,
+) {
+	t.Helper()
+
+	flowID := flowdomain.NewRequireMFAFlowID(parentFlowID)
+	mgr.Set(definitions.SessionKeyIDPFlowID, flowID)
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
+	mgr.Set(definitions.SessionKeyIDPClientID, "roundcube-client")
+	mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
+	mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
+	mgr.Set(definitions.SessionKeyRequireMFAPending, pending)
+	expectRequiredMFAFlowStateWithUniqueUserID(t, mock, flowID, required, uniqueUserID)
+}
+
+func resumePendingRequiredMFAAuthorize(t *testing.T, handler *OIDCHandler, ctx *gin.Context, mgr *mockCookieManager) {
+	t.Helper()
+
+	request, ok := readOIDCAuthorizeRequest(ctx)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+	if handler.ensureOIDCAuthorizeFlowState(ctx, mgr, flowContext, request, flowContext.Account()) {
+		t.Fatal("pending required-MFA flow must be handled without starting a replacement")
+	}
+}
+
+func assertUniqueUserIDRestoreSaved(t *testing.T, mgr *mockCookieManager) {
+	t.Helper()
+
+	wantSet := "set:" + definitions.SessionKeyUniqueUserID
+	if mgr.saves != 1 || len(mgr.mutations) != 2 || mgr.mutations[0] != wantSet || mgr.mutations[1] != "save" {
+		t.Fatalf("unique user ID restore order = %v, saves=%d; want [%s save]", mgr.mutations, mgr.saves, wantSet)
+	}
+}
+
+func assertPendingRequiredMFAResumesWithoutUniqueUserID(t *testing.T, promptNone bool, wantTarget string) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newRoundcubeOIDCHandlerWithRedis()
+	recorder, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
+	delete(mgr.data, definitions.SessionKeyUniqueUserID)
+
+	if promptNone {
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?client_id=roundcube-client&redirect_uri=https%3A%2F%2Fwebmail.example.test%2Findex.php%2Flogin%2Foauth&response_type=code&scope=openid+profile+email&state=state-1&nonce=nonce-1&prompt=none&code_challenge=challenge-1&code_challenge_method=S256", nil)
+	}
+
+	parentFlowID := "flow-parent-without-optional-uid"
+	flowID := flowdomain.NewRequireMFAFlowID(parentFlowID)
+	mgr.Set(definitions.SessionKeyIDPFlowID, flowID)
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
+	mgr.Set(definitions.SessionKeyIDPClientID, "roundcube-client")
+	mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
+	mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
+	mgr.Set(definitions.SessionKeyRequireMFAPending, definitions.MFAMethodRecoveryCodes)
+	expectRequiredMFAFlowStateWithUniqueUserID(t, mock, flowID, definitions.MFAMethodRecoveryCodes, "")
+
+	request, ok := readOIDCAuthorizeRequest(ctx)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+	if handler.ensureOIDCAuthorizeFlowState(ctx, mgr, flowContext, request, flowContext.Account()) {
+		t.Fatal("pending enrollment without optional unique user ID must be resumed")
+	}
+
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusFound, recorder.Body.String())
+	}
+
+	if got := recorder.Header().Get("Location"); got != wantTarget {
+		t.Fatalf("target = %q, want %q", got, wantTarget)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyIDPFlowID, ""); got != flowID {
+		t.Fatalf("flow id = %q, want live pending flow %q", got, flowID)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func TestOIDCAuthorizeDoesNotTrustForgedRequiredMFAMarkers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	_, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
+	mgr.Set(definitions.SessionKeyIDPFlowID, "attacker-controlled-flow")
+	mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, "flow-parent")
+	mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
+	mgr.Set(definitions.SessionKeyRequireMFAPending, definitions.MFAMethodRecoveryCodes)
+
+	request, ok := readOIDCAuthorizeRequest(ctx)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	handler := newRoundcubeOIDCHandler()
+
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+	if !handler.ensureOIDCAuthorizeFlowState(ctx, mgr, flowContext, request, flowContext.Account()) {
+		t.Fatal("forged required-MFA markers must not lock the browser flow")
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyIDPFlowID, ""); flowdomain.IsRequireMFAFlowID(got) || got == "attacker-controlled-flow" {
+		t.Fatalf("flow id = %q, want a fresh authorization flow", got)
+	}
+
+	if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+		t.Fatal("forged pending-MFA marker was not cleared")
+	}
+}
+
+func TestOIDCAuthorizeExpiredRequiredMFAFlowStartsFreshParent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newRoundcubeOIDCHandlerWithRedis()
+	_, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
+	oldParentFlowID := "flow-parent-expired"
+	expiredFlowID := flowdomain.NewRequireMFAFlowID(oldParentFlowID)
+	mgr.Set(definitions.SessionKeyIDPFlowID, expiredFlowID)
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
+	mgr.Set(definitions.SessionKeyIDPClientID, "roundcube-client")
+	mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, oldParentFlowID)
+	mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
+	mgr.Set(definitions.SessionKeyRequireMFAPending, definitions.MFAMethodTOTP)
+	mock.ExpectGet("nt:idp:flow:" + expiredFlowID).RedisNil()
+	mock.Regexp().ExpectSet("nt:idp:flow:.*", ".*", 10*time.Minute).SetVal("OK")
+
+	request, ok := readOIDCAuthorizeRequest(ctx)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+	if !handler.ensureOIDCAuthorizeFlowState(ctx, mgr, flowContext, request, flowContext.Account()) {
+		t.Fatal("expired required-MFA state must allow a fresh authorize parent flow")
+	}
+
+	newFlowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+	if newFlowID == "" || newFlowID == expiredFlowID || newFlowID == oldParentFlowID || flowdomain.IsRequireMFAFlowID(newFlowID) {
+		t.Fatalf("flow id = %q, want fresh OIDC parent", newFlowID)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""); got != "" {
+		t.Fatalf("stale required-MFA parent = %q, want cleared", got)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyRequireMFAPending, ""); got != "" {
+		t.Fatalf("stale pending methods = %q, want cleared", got)
+	}
+
+	if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+		t.Fatal("stale required-MFA marker was not cleared")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func TestOIDCAuthorizePromptNoneAfterExpiredRequiredMFAFlowAbortsFreshParent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newRoundcubeOIDCHandlerWithRedis()
+	recorder, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?client_id=roundcube-client&redirect_uri=https%3A%2F%2Fwebmail.example.test%2Findex.php%2Flogin%2Foauth&response_type=code&scope=openid+profile+email&state=state-1&nonce=nonce-1&prompt=none&code_challenge=challenge-1&code_challenge_method=S256", nil)
+	oldParentFlowID := "flow-parent-expired-prompt-none"
+	expiredFlowID := flowdomain.NewRequireMFAFlowID(oldParentFlowID)
+	mgr.Set(definitions.SessionKeyIDPFlowID, expiredFlowID)
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
+	mgr.Set(definitions.SessionKeyIDPClientID, "roundcube-client")
+	mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, oldParentFlowID)
+	mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
+	mgr.Set(definitions.SessionKeyRequireMFAPending, definitions.MFAMethodTOTP)
+	mock.ExpectGet("nt:idp:flow:" + expiredFlowID).RedisNil()
+	mock.Regexp().ExpectSet("nt:idp:flow:.*", ".*", 10*time.Minute).SetVal("OK")
+
+	request, ok := readOIDCAuthorizeRequest(ctx)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+	if !handler.ensureOIDCAuthorizeFlowState(ctx, mgr, flowContext, request, flowContext.Account()) {
+		t.Fatal("expired required-MFA state must allow a fresh authorize parent flow")
+	}
+
+	newFlowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+	if newFlowID == "" || newFlowID == expiredFlowID || flowdomain.IsRequireMFAFlowID(newFlowID) {
+		t.Fatalf("flow id = %q, want fresh OIDC parent", newFlowID)
+	}
+
+	mgr.Set(definitions.SessionKeyMFACompleted, true)
+	mgr.Set(definitions.SessionKeyMFAAssuranceMethod, definitions.MFAMethodTOTP)
+	mgr.Set(definitions.SessionKeyMFAAssuranceAt, time.Now().Unix())
+	mgr.Set(definitions.SessionKeyMFAAssuranceScope, oidcMFAAssuranceScope("roundcube-client"))
+	mgr.Set(definitions.SessionKeyMFAAssuranceLevel, 2)
+	mock.ExpectDel("nt:idp:flow:" + newFlowID).SetVal(1)
+
+	client := config.OIDCClient{
+		ClientID:   "roundcube-client",
+		RequireMFA: []string{definitions.MFAMethodTOTP, definitions.MFAMethodRecoveryCodes},
+	}
+
+	handler.issueOIDCAuthorizeCode(
+		ctx,
+		mgr,
+		flowContext,
+		&client,
+		request,
+		&idp.OIDCSession{ClientID: client.ClientID},
+		[]string{definitions.ScopeOpenID},
+	)
+
+	assertPromptNoneExpiredFlowAbort(t, recorder, mgr)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func assertPromptNoneExpiredFlowAbort(t *testing.T, recorder *httptest.ResponseRecorder, mgr *mockCookieManager) {
+	t.Helper()
+
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusFound, recorder.Body.String())
+	}
+
+	if got := recorder.Header().Get("Location"); got != "https://webmail.example.test/index.php/login/oauth?error=interaction_required&state=state-1" {
+		t.Fatalf("redirect = %q, want interaction_required callback", got)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyIDPFlowID, ""); got != "" {
+		t.Fatalf("fresh parent flow reference = %q, want abort cleanup", got)
+	}
+}
+
+func TestOIDCAuthorizeAfterEnrollmentCompletionTTLExpiryClearsOrphanContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newRoundcubeOIDCHandlerWithRedis()
+	oldParentFlowID := "flow-parent-expired-during-completion"
+	expiredFlowID := flowdomain.NewRequireMFAFlowID(oldParentFlowID)
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:                "user@example.test",
+		definitions.SessionKeyUniqueUserID:           "uid-user",
+		definitions.SessionKeyDisplayName:            "User Example",
+		definitions.SessionKeySubject:                "uid-user",
+		definitions.SessionKeyIDPFlowID:              expiredFlowID,
+		definitions.SessionKeyIDPFlowType:            definitions.ProtoOIDC,
+		definitions.SessionKeyOIDCGrantType:          definitions.OIDCFlowAuthorizationCode,
+		definitions.SessionKeyIDPClientID:            "roundcube-client",
+		definitions.SessionKeyRequireMFAParentFlowID: oldParentFlowID,
+		definitions.SessionKeyRequireMFAFlow:         true,
+		definitions.SessionKeyRequireMFAPending:      definitions.MFAMethodTOTP + "," + definitions.MFAMethodRecoveryCodes,
+	}}
+	mock.ExpectGet("nt:idp:flow:" + expiredFlowID).RedisNil()
+
+	completionContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	completionContext.Request = httptest.NewRequest(http.MethodPost, "/mfa/totp/register", nil)
+	frontendHandler := &FrontendHandler{deps: handler.deps}
+
+	remaining := frontendHandler.removeCompletedRequireMFAMethod(
+		completionContext,
+		mgr,
+		definitions.MFAMethodTOTP,
+	)
+	if remaining != definitions.MFAMethodRecoveryCodes {
+		t.Fatalf("remaining methods = %q, want recovery codes", remaining)
+	}
+
+	assertRequiredMFAOrphanAfterCompletionTTLExpiry(t, mgr, oldParentFlowID)
+
+	recorder, authorizeContext, _ := newRoundcubeAuthorizeRecorderContext()
+	authorizeContext.Set(definitions.CtxSecureDataKey, mgr)
+
+	request, ok := readOIDCAuthorizeRequest(authorizeContext)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	mock.Regexp().ExpectSet("nt:idp:flow:.*", ".*", 10*time.Minute).SetVal("OK")
+
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+	if !handler.ensureOIDCAuthorizeFlowState(authorizeContext, mgr, flowContext, request, flowContext.Account()) {
+		t.Fatalf("orphaned enrollment context blocked fresh authorize: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+
+	assertFreshOIDCParentAfterOrphanCleanup(t, mgr, oldParentFlowID)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func assertRequiredMFAOrphanAfterCompletionTTLExpiry(t *testing.T, mgr *mockCookieManager, oldParentFlowID string) {
+	t.Helper()
+
+	if got := mgr.GetString(definitions.SessionKeyIDPFlowID, ""); got != "" {
+		t.Fatalf("completion TTL miss left flow id = %q, want reference cleanup", got)
+	}
+
+	if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+		t.Fatal("completion TTL miss left required-MFA flow flag")
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""); got != oldParentFlowID {
+		t.Fatalf("test precondition parent = %q, want orphan %q", got, oldParentFlowID)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyRequireMFAPending, ""); got != definitions.MFAMethodRecoveryCodes {
+		t.Fatalf("test precondition pending = %q, want orphan recovery codes", got)
+	}
+}
+
+func assertFreshOIDCParentAfterOrphanCleanup(t *testing.T, mgr *mockCookieManager, oldParentFlowID string) {
+	t.Helper()
+
+	newParentFlowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
+	if newParentFlowID == "" || newParentFlowID == oldParentFlowID || flowdomain.IsRequireMFAFlowID(newParentFlowID) {
+		t.Fatalf("flow id = %q, want fresh parent", newParentFlowID)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""); got != "" {
+		t.Fatalf("stale parent flow = %q, want cleared", got)
+	}
+
+	if got := mgr.GetString(definitions.SessionKeyRequireMFAPending, ""); got != "" {
+		t.Fatalf("stale pending methods = %q, want cleared", got)
+	}
+}
+
+func TestOIDCAuthorizeResumeBindsPendingRegistrationToRedisFlow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db, mock := redismock.NewClientMock()
+	dependencies := newRoundcubeDeps()
+	dependencies.Redis = rediscli.NewTestClient(db)
+	handler := NewOIDCHandler(dependencies, idp.NewNauthilusIDP(dependencies), nil)
+	recorder, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
+	parentFlowID := "flow-parent"
+	flowID := flowdomain.NewRequireMFAFlowID(parentFlowID)
+	mgr.Set(definitions.SessionKeyIDPFlowID, flowID)
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
+	mgr.Set(definitions.SessionKeyIDPClientID, "roundcube-client")
+	mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
+	mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
+	mgr.Set(definitions.SessionKeyRequireMFAPending, definitions.MFAMethodTOTP)
+	expectRequiredMFAFlowState(t, mock, flowID, definitions.MFAMethodTOTP+","+definitions.MFAMethodRecoveryCodes)
+
+	request, ok := readOIDCAuthorizeRequest(ctx)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+	if handler.ensureOIDCAuthorizeFlowState(ctx, mgr, flowContext, request, flowContext.Account()) {
+		t.Fatal("pending required-MFA flow must resume instead of being replaced")
+	}
+
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusFound, recorder.Body.String())
+	}
+
+	if got := recorder.Header().Get("Location"); got != definitions.MFARoot+"/totp/register" {
+		t.Fatalf("resume target = %q, want TOTP registration", got)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func TestOIDCAuthorizeDoesNotResumePendingMethodsOutsideBoundRedisFlow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newRoundcubeOIDCHandlerWithRedis()
+	recorder, ctx, mgr := newRoundcubeAuthorizeRecorderContext()
+	parentFlowID := "flow-parent"
+	flowID := flowdomain.NewRequireMFAFlowID(parentFlowID)
+	mgr.Set(definitions.SessionKeyIDPFlowID, flowID)
+	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
+	mgr.Set(definitions.SessionKeyIDPClientID, "roundcube-client")
+	mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
+	mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
+	mgr.Set(definitions.SessionKeyRequireMFAPending, definitions.MFAMethodWebAuthn)
+	expectRequiredMFAFlowState(t, mock, flowID, definitions.MFAMethodTOTP+","+definitions.MFAMethodRecoveryCodes)
+
+	request, ok := readOIDCAuthorizeRequest(ctx)
+	if !ok {
+		t.Fatal("expected valid authorize request")
+	}
+
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+	if handler.ensureOIDCAuthorizeFlowState(ctx, mgr, flowContext, request, flowContext.Account()) {
+		t.Fatal("unbound pending method must fail closed")
+	}
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusConflict, recorder.Body.String())
+	}
+
+	if got := recorder.Header().Get("Location"); got != "" {
+		t.Fatalf("unbound pending method redirected to %q", got)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
 	}
 }
 
@@ -662,6 +1330,48 @@ func newRoundcubeOIDCHandler() *OIDCHandler {
 	dependencies := newRoundcubeDeps()
 
 	return NewOIDCHandler(dependencies, idp.NewNauthilusIDP(dependencies), nil)
+}
+
+func newRoundcubeOIDCHandlerWithRedis() (*OIDCHandler, redismock.ClientMock) {
+	db, mock := redismock.NewClientMock()
+	dependencies := newRoundcubeDeps()
+	dependencies.Redis = rediscli.NewTestClient(db)
+
+	return NewOIDCHandler(dependencies, idp.NewNauthilusIDP(dependencies), nil), mock
+}
+
+func expectRequiredMFAFlowState(t *testing.T, mock redismock.ClientMock, flowID string, required string) {
+	expectRequiredMFAFlowStateWithUniqueUserID(t, mock, flowID, required, "uid-user")
+}
+
+func expectRequiredMFAFlowStateWithUniqueUserID(t *testing.T, mock redismock.ClientMock, flowID string, required string, uniqueUserID string) {
+	t.Helper()
+
+	metadata := map[string]string{
+		"require_mfa":                      required,
+		flowdomain.FlowMetadataClientID:    "roundcube-client",
+		flowdomain.FlowMetadataAccount:     "user@example.test",
+		flowdomain.FlowMetadataDisplayName: "User Example",
+	}
+	if uniqueUserID != "" {
+		metadata[flowdomain.FlowMetadataUniqueUserID] = uniqueUserID
+	}
+
+	state := &flowdomain.State{
+		FlowID:      flowID,
+		Type:        flowdomain.FlowTypeRequireMFA,
+		Protocol:    flowdomain.FlowProtocolOIDC,
+		CurrentStep: flowdomain.FlowStepRequireMFAChallenge,
+		PendingMFA:  true,
+		Metadata:    metadata,
+	}
+
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal required-MFA flow: %v", err)
+	}
+
+	mock.ExpectGet("nt:idp:flow:" + flowID).SetVal(string(encoded))
 }
 
 func newRoundcubeFrontendHandler() *FrontendHandler {

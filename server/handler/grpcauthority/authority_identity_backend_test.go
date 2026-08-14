@@ -563,6 +563,48 @@ func TestBufconnIdentityBackendServiceEnforcesMutatingIdempotencyKeys(t *testing
 	}
 }
 
+func TestBufconnFinishTOTPRegistrationAllowsRetryAfterInvalidCode(t *testing.T) {
+	denied := authorityIdentityResultForTest()
+	denied.Status = validationOperationStatus("totp_invalid", "TOTP code is invalid")
+	service := &recordingAuthorityIdentityService{
+		results: []*AuthorityIdentityResult{denied, authorityIdentityResultForTest()},
+	}
+	store := newRecordingBackendRefStore()
+	client := newBufconnIdentityBackendServiceClient(t, service, store, grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}))
+	ctx := outgoingBasicAuthContext(context.Background())
+	request := &identityv1.FinishTOTPRegistrationRequest{
+		Context:               identityRequestContextForTest(),
+		Username:              authorityTestUsername,
+		Backend:               backendRefProtoForTest("opaque-input-token"),
+		PendingRegistrationId: authorityTestTOTPPendingID,
+		Code:                  "000000",
+		IdempotencyKey:        "finish-totp-retry-key",
+	}
+
+	first, err := client.FinishTOTPRegistration(ctx, request)
+	if err != nil {
+		t.Fatalf("first FinishTOTPRegistration() error = %v", err)
+	}
+
+	if first.GetStatus().GetErrorCode() != "totp_invalid" {
+		t.Fatalf("first status = %#v, want totp_invalid", first.GetStatus())
+	}
+
+	request.Code = "123456"
+
+	second, err := client.FinishTOTPRegistration(ctx, request)
+	if err != nil {
+		t.Fatalf("retry FinishTOTPRegistration() error = %v", err)
+	}
+
+	assertOperationOK(t, second.GetStatus())
+
+	_, err = client.FinishTOTPRegistration(ctx, request)
+	if status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("successful replay code = %v, want %v", status.Code(err), codes.AlreadyExists)
+	}
+}
+
 //nolint:funlen
 func TestUnaryServerInterceptorEnforcesIdentityScopeMatrix(t *testing.T) {
 	cfg := grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{Enabled: true})
@@ -763,6 +805,7 @@ func enableGRPCAuthBackendRefs(cfg *config.FileSettings) *config.FileSettings {
 
 type recordingAuthorityIdentityService struct {
 	result    *AuthorityIdentityResult
+	results   []*AuthorityIdentityResult
 	err       error
 	calls     int
 	lastInput AuthorityIdentityInput
@@ -781,7 +824,13 @@ func (s *recordingAuthorityIdentityService) record(
 	s.calls++
 	s.lastInput = input
 
-	return s.result, s.err
+	result := s.result
+	if len(s.results) > 0 {
+		result = s.results[0]
+		s.results = s.results[1:]
+	}
+
+	return result, s.err
 }
 
 func (s *recordingAuthorityIdentityService) ResolveUser(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {

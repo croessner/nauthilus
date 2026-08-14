@@ -18,6 +18,7 @@ package idp
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -1236,7 +1237,13 @@ func restoreRequireMFAFlowIdentifiers(mgr cookie.Manager, oidcClientID string, s
 //
 // Returns false when no registration is required and the caller may proceed normally.
 func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Context, mgr cookie.Manager) bool {
-	redirectURI, ok := h.requireMFARegistrationRedirectURI(ctx, mgr)
+	redirectURI, ok, err := h.requireMFARegistrationRedirectURI(ctx, mgr)
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, "Failed to initialize required MFA registration")
+
+		return true
+	}
+
 	if !ok {
 		return false
 	}
@@ -1248,48 +1255,71 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 
 // requireMFARegistrationRedirectURI prepares a required-MFA registration flow
 // and returns its next target without committing to a concrete HTTP transport.
-func (h *FrontendHandler) requireMFARegistrationRedirectURI(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
+func (h *FrontendHandler) requireMFARegistrationRedirectURI(ctx *gin.Context, mgr cookie.Manager) (string, bool, error) {
+	plan, err := h.requireMFARegistrationPlan(ctx, mgr)
+	if err != nil {
+		return "", false, err
+	}
+
+	if !plan.needed {
+		h.clearRequireMFARegistrationState(mgr)
+
+		return "", false, nil
+	}
+
+	flowdomain.SetRequireMFAPending(mgr, strings.Join(plan.missing, ","))
+
+	redirectURI, err := h.startRequireMFARegistrationFlow(ctx, mgr, plan.user, plan.protocol, plan.missing)
+	if err != nil {
+		return "", false, err
+	}
+
+	return redirectURI, true, nil
+}
+
+type requireMFARegistrationPlanResult struct {
+	user     *backend.User
+	protocol string
+	missing  []string
+	needed   bool
+}
+
+// requireMFARegistrationPlan computes mandatory enrollment without mutating
+// browser or persisted flow state.
+func (h *FrontendHandler) requireMFARegistrationPlan(ctx *gin.Context, mgr cookie.Manager) (requireMFARegistrationPlanResult, error) {
 	if mgr == nil {
-		return "", false
+		return requireMFARegistrationPlanResult{}, nil
+	}
+
+	required := h.getRequiredMFAMethods(mgr)
+	if len(required) == 0 {
+		return requireMFARegistrationPlanResult{}, nil
 	}
 
 	if mgr.GetString(definitions.SessionKeyIDPFlowID, "") == "" {
-		return "", false
+		return requireMFARegistrationPlanResult{}, fmt.Errorf("required MFA registration: missing parent flow")
 	}
 
 	lookupCtx := backendDataLookupContext(ctx)
-	required, user, protocol, ok := h.requireMFARegistrationContext(lookupCtx, mgr)
 
-	if !ok {
-		return "", false
+	user, protocol, err := h.requireMFARegistrationContext(lookupCtx, mgr)
+	if err != nil {
+		return requireMFARegistrationPlanResult{}, err
 	}
 
 	missing := h.missingRequireMFAMethods(lookupCtx, mgr, user, protocol, required)
 	if len(missing) == 0 {
-		h.clearRequireMFARegistrationState(mgr)
-
-		return "", false
+		return requireMFARegistrationPlanResult{user: user, protocol: protocol}, nil
 	}
 
-	flowdomain.SetRequireMFAPending(mgr, strings.Join(missing, ","))
-
-	return h.startRequireMFARegistrationFlow(lookupCtx, mgr, user, protocol, missing)
+	return requireMFARegistrationPlanResult{user: user, protocol: protocol, missing: missing, needed: true}, nil
 }
 
-// requireMFARegistrationContext loads configured requirements and current user.
-func (h *FrontendHandler) requireMFARegistrationContext(ctx *gin.Context, mgr cookie.Manager) ([]string, *backend.User, string, bool) {
-	required := h.getRequiredMFAMethods(mgr)
-	if len(required) == 0 {
-		h.clearRequireMFARegistrationState(mgr)
-
-		return nil, nil, "", false
-	}
-
+// requireMFARegistrationContext loads the current user for a configured requirement.
+func (h *FrontendHandler) requireMFARegistrationContext(ctx *gin.Context, mgr cookie.Manager) (*backend.User, string, error) {
 	username := mgr.GetString(definitions.SessionKeyAccount, "")
 	if username == "" || h.deps == nil {
-		h.clearRequireMFARegistrationState(mgr)
-
-		return nil, nil, "", false
+		return nil, "", fmt.Errorf("required MFA registration: missing authenticated account context")
 	}
 
 	idpInstance := idp.NewNauthilusIDP(h.deps)
@@ -1297,12 +1327,10 @@ func (h *FrontendHandler) requireMFARegistrationContext(ctx *gin.Context, mgr co
 
 	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
 	if err != nil {
-		h.clearRequireMFARegistrationState(mgr)
-
-		return nil, nil, "", false
+		return nil, "", fmt.Errorf("required MFA registration: load user: %w", err)
 	}
 
-	return required, user, idpProtocolFromSession(mgr), true
+	return user, idpProtocolFromSession(mgr), nil
 }
 
 // idpProtocolFromSession resolves the protocol used to persist internal sub-flows.
@@ -1348,7 +1376,7 @@ func (h *FrontendHandler) requireMFAMethodMissing(ctx *gin.Context, mgr cookie.M
 	case definitions.MFAMethodRecoveryCodes:
 		return !h.hasRecoveryCodesForRequireMFA(ctx, mgr, user)
 	default:
-		return false
+		return true
 	}
 }
 
@@ -1371,7 +1399,7 @@ func (h *FrontendHandler) startRequireMFARegistrationFlow(
 	user *backend.User,
 	protocol string,
 	missing []string,
-) (string, bool) {
+) (string, error) {
 	parentFlowID := requireMFAParentFlowID(mgr)
 	if parentFlowID != "" {
 		mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
@@ -1379,21 +1407,21 @@ func (h *FrontendHandler) startRequireMFARegistrationFlow(
 
 	flowID := flowdomain.NewRequireMFAFlowID(parentFlowID)
 	if flowID == "" {
-		h.clearRequireMFARegistrationState(mgr)
-
-		return "", false
+		return "", fmt.Errorf("required MFA registration: missing parent flow reference")
 	}
 
 	nextTarget := h.nextRequiredMFARegistrationTarget(mgr)
 	if nextTarget == "" {
-		h.clearRequireMFARegistrationState(mgr)
+		return "", fmt.Errorf("required MFA registration: unsupported pending method")
+	}
 
-		return "", false
+	if h == nil || h.deps == nil || h.deps.Cfg == nil {
+		return "", fmt.Errorf("required MFA registration: missing handler dependencies")
 	}
 
 	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
-	decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
+	decision, err := controller.StartAtStep(ctx.Request.Context(), &flowdomain.State{
 		FlowID:       flowID,
 		Type:         flowdomain.FlowTypeRequireMFA,
 		Protocol:     requireMFAFlowProtocol(protocol),
@@ -1401,22 +1429,16 @@ func (h *FrontendHandler) startRequireMFARegistrationFlow(
 		ReturnTarget: nextTarget,
 		PendingMFA:   true,
 		Metadata:     requireMFAFlowMetadata(mgr, user, strings.Join(missing, ",")),
-	}, time.Now())
+	}, flowdomain.FlowStepRequireMFAChallenge, time.Now())
 	if err != nil {
-		h.clearRequireMFARegistrationState(mgr)
-
-		return "", false
+		return "", fmt.Errorf("required MFA registration: persist sub-flow: %w", err)
 	}
 
 	if decision.RedirectURI == "" {
-		h.clearRequireMFARegistrationState(mgr)
-
-		return "", false
+		return "", fmt.Errorf("required MFA registration: missing redirect target")
 	}
 
-	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepRequireMFAChallenge)
-
-	return decision.RedirectURI, true
+	return decision.RedirectURI, nil
 }
 
 func requireMFAFlowMetadata(mgr cookie.Manager, user *backend.User, missing string) map[string]string {

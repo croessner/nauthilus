@@ -110,9 +110,15 @@ func (s *pendingTOTPStore) create(username string, backend BackendRefPayload, se
 	return id, expiresAt, nil
 }
 
-func (s *pendingTOTPStore) consume(id string, username string, backend BackendRefPayload) (string, bool) {
+// consumeValid retains the pending registration when user-code validation fails.
+func (s *pendingTOTPStore) consumeValid(
+	id string,
+	username string,
+	backend BackendRefPayload,
+	validate func(string) error,
+) (string, bool, error) {
 	if s == nil || id == "" {
-		return "", false
+		return "", false, nil
 	}
 
 	now := time.Now().UTC()
@@ -124,12 +130,16 @@ func (s *pendingTOTPStore) consume(id string, username string, backend BackendRe
 
 	registration, ok := s.entries[id]
 	if !ok || registration.username != username || !sameBackendBinding(registration.backend, backend) {
-		return "", false
+		return "", false, nil
+	}
+
+	if err := validate(registration.secret); err != nil {
+		return "", true, err
 	}
 
 	delete(s.entries, id)
 
-	return registration.secret, true
+	return registration.secret, true, nil
 }
 
 func (s *pendingTOTPStore) pruneLocked(now time.Time) {
@@ -333,7 +343,14 @@ func (s *backendManagerIdentityService) BeginTOTPRegistration(_ context.Context,
 }
 
 func (s *backendManagerIdentityService) FinishTOTPRegistration(_ context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
-	secret, ok := s.totpPending.consume(input.PendingRegistrationID, input.Username, input.Backend)
+	secret, ok, validationErr := s.totpPending.consumeValid(
+		input.PendingRegistrationID,
+		input.Username,
+		input.Backend,
+		func(secret string) error {
+			return core.ValidateTOTPCode(input.Code, secret, s.authDeps)
+		},
+	)
 	if !ok {
 		return &AuthorityIdentityResult{
 			Status:  validationOperationStatus("totp_pending_invalid", "TOTP registration is invalid or expired"),
@@ -341,7 +358,7 @@ func (s *backendManagerIdentityService) FinishTOTPRegistration(_ context.Context
 		}, nil
 	}
 
-	if err := core.ValidateTOTPCode(input.Code, secret, s.authDeps); err != nil {
+	if validationErr != nil {
 		return &AuthorityIdentityResult{
 			Status:  validationOperationStatus("totp_invalid", "TOTP code is invalid"),
 			Backend: input.Backend,

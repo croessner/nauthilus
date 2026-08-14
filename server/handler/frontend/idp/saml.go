@@ -616,7 +616,7 @@ func (h *SAMLHandler) handleAuthenticatedSAMLSSO(
 		return
 	}
 
-	if !h.enforceSAMLServiceProviderMFAAssurance(ctx, mgr, samlSP) {
+	if len(samlSP.RequireMFA) == 0 && !h.enforceSAMLServiceProviderMFAAssurance(ctx, mgr, samlSP) {
 		return
 	}
 
@@ -628,6 +628,10 @@ func (h *SAMLHandler) handleAuthenticatedSAMLSSO(
 	}
 
 	if h.checkRequireMFARegistrationAndRedirect(ctx, mgr, user) {
+		return
+	}
+
+	if len(samlSP.RequireMFA) > 0 && !h.enforceSAMLServiceProviderMFAAssurance(ctx, mgr, samlSP) {
 		return
 	}
 
@@ -686,8 +690,8 @@ func (h *SAMLHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Context, m
 
 	lookupCtx := backendDataLookupContext(ctx)
 
-	redirectURI, ok := frontendHandler.startRequireMFARegistrationFlow(lookupCtx, mgr, user, definitions.ProtoSAML, missing)
-	if !ok {
+	redirectURI, err := frontendHandler.startRequireMFARegistrationFlow(lookupCtx, mgr, user, definitions.ProtoSAML, missing)
+	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Failed to initialize required MFA registration")
 
 		return true
@@ -725,7 +729,7 @@ func samlRequireMFAMethodMissing(h *FrontendHandler, mgr cookie.Manager, user *b
 	case definitions.MFAMethodRecoveryCodes:
 		return !samlHasRecoveryCodesForRequireMFA(h, mgr, user)
 	default:
-		return false
+		return true
 	}
 }
 

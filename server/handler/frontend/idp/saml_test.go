@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"html"
 	"html/template"
@@ -414,6 +415,7 @@ func TestSAMLExistingSessionRequireMFABlocksMissingAssurance(t *testing.T) {
 		definitions.SessionKeyUniqueUserID: "alice-id",
 		definitions.SessionKeyDisplayName:  "Alice Example",
 		definitions.SessionKeySubject:      "alice-id",
+		definitions.SessionKeyHaveTOTP:     true,
 	})
 	recorder, ctx := newSAMLSSOTestContext(target, mgr)
 
@@ -421,7 +423,7 @@ func TestSAMLExistingSessionRequireMFABlocksMissingAssurance(t *testing.T) {
 
 	assert.Equal(t, http.StatusFound, recorder.Code)
 	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
-	assert.Equal(t, 0, fakeIDP.userLookups)
+	assert.Equal(t, 1, fakeIDP.userLookups)
 	assert.Equal(t, definitions.ProtoSAML, mgr.GetString(definitions.SessionKeyProtocol, ""))
 	assert.Equal(t, "https://sp.example.com/saml/metadata", mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""))
 	assert.NotContains(t, recorder.Body.String(), "SAMLResponse")
@@ -473,6 +475,27 @@ func TestSAMLExistingSessionRequiredMFALevelBlocksLowerSSOAssurance(t *testing.T
 	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
 	assert.Equal(t, 0, fakeIDP.userLookups)
 	assert.NotContains(t, recorder.Body.String(), "SAMLResponse")
+}
+
+func TestSAMLExistingSessionRequiredMFALevelRedirectsWhenUserBackendIsUnavailable(t *testing.T) {
+	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
+		EntityID:         "https://sp.example.com/saml/metadata",
+		ACSURL:           "https://sp.example.com/saml/acs",
+		RequiredMFALevel: 3,
+	}, map[string]any{
+		definitions.SessionKeyAccount:           "alice",
+		definitions.SessionKeyMFACompleted:      true,
+		definitions.SessionKeyMFAAssuranceLevel: 2,
+	})
+	fakeIDP.err = errors.New("backend unavailable")
+	recorder, ctx := newSAMLSSOTestContext(target, mgr)
+
+	handler.SSO(ctx)
+
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
+	assert.Equal(t, 0, fakeIDP.userLookups)
+	assert.NotContains(t, recorder.Body.String(), "Failed to load user details")
 }
 
 func TestSAMLExistingSessionRequiredMFALevelPermitsFreshLevel(t *testing.T) {
@@ -1047,6 +1070,7 @@ func spCertPEMToCertificate(t *testing.T, certPEM []byte) *x509.Certificate {
 type fakeSAMLIdentityProvider struct {
 	sp          config.SAML2ServiceProvider
 	user        *backend.User
+	err         error
 	userLookups int
 }
 
@@ -1064,6 +1088,9 @@ func (f *fakeSAMLIdentityProvider) GetUserByUsernameForSAML(
 	_ *config.SAML2ServiceProvider,
 ) (*backend.User, error) {
 	f.userLookups++
+	if f.err != nil {
+		return nil, f.err
+	}
 
 	if f.user != nil {
 		return f.user, nil

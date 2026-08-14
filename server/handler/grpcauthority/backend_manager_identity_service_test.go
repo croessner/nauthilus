@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"sync"
 	"testing"
+	"time"
 
 	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
@@ -29,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/pquerna/otp/totp"
 )
 
 const (
@@ -107,6 +109,58 @@ func TestBackendManagerIdentityServiceBeginTOTPRegistrationUsesConfiguredIssuer(
 	if got := parsed.Query().Get("issuer"); got != authorityTOTPIssuer {
 		t.Fatalf("issuer = %q, want %s", got, authorityTOTPIssuer)
 	}
+}
+
+func TestBackendManagerIdentityServiceKeepsTOTPRegistrationAfterInvalidCode(t *testing.T) {
+	backendName := "authority-totp-retry"
+	username := "totp-retry@example.test"
+	deps := core.AuthDeps{}
+	service := NewBackendManagerIdentityService(BackendManagerIdentityServiceDeps{AuthDeps: deps})
+	input := authorityMFATestInput(backendName, username)
+
+	registration, err := service.BeginTOTPRegistration(context.Background(), input)
+	if err != nil {
+		t.Fatalf("BeginTOTPRegistration() error = %v", err)
+	}
+
+	validCode, err := totp.GenerateCode(registration.TOTPSecret, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("GenerateCode() error = %v", err)
+	}
+
+	input.PendingRegistrationID = registration.PendingRegistrationID
+	input.Code = differentTOTPCode(validCode)
+
+	invalidResult, err := service.FinishTOTPRegistration(context.Background(), input)
+	if err != nil {
+		t.Fatalf("FinishTOTPRegistration(invalid) error = %v", err)
+	}
+
+	if invalidResult.Status.GetErrorCode() != "totp_invalid" {
+		t.Fatalf("invalid status = %#v, want totp_invalid", invalidResult.Status)
+	}
+
+	input.Code = validCode
+
+	validResult, err := service.FinishTOTPRegistration(context.Background(), input)
+	if err != nil {
+		t.Fatalf("FinishTOTPRegistration(valid retry) error = %v", err)
+	}
+
+	assertOperationOK(t, validResult.Status)
+}
+
+// differentTOTPCode changes one digit while preserving the submitted code shape.
+func differentTOTPCode(code string) string {
+	if code == "" {
+		return "000000"
+	}
+
+	if code[0] == '0' {
+		return "1" + code[1:]
+	}
+
+	return "0" + code[1:]
 }
 
 func TestAuthorityUserSnapshotFiltersMFASecretAttributes(t *testing.T) {

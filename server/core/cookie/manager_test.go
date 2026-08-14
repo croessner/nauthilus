@@ -16,6 +16,7 @@
 package cookie
 
 import (
+	"errors"
 	"log/slog"
 	"math"
 	"net/http"
@@ -675,6 +676,143 @@ func TestMiddleware_PreservesRememberMaxAgeOnSubsequentRequest(t *testing.T) {
 	}
 
 	assert.Equal(t, 86400, secureCookie.MaxAge)
+}
+
+func TestMiddlewarePersistsSessionBeforeRedirect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(&testEnv{devMode: true})
+
+	router := gin.New()
+	router.Use(Middleware(testSecret, nil, &testEnv{devMode: true}))
+	router.GET("/login", func(ctx *gin.Context) {
+		mgr := MustGetManager(ctx)
+		mgr.Set(definitions.SessionKeyAccount, "user@example.com")
+		ctx.Redirect(http.StatusFound, "/continue")
+	})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/login", nil))
+
+	secureCookie := findSecureDataCookie(w.Result().Cookies())
+	if !assert.NotNil(t, secureCookie) {
+		return
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/continue", nil)
+	request.AddCookie(secureCookie)
+
+	manager := NewSecureManager(testSecret, definitions.SecureDataCookieName, nil, &testEnv{devMode: true})
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = request
+
+	assert.NoError(t, manager.Load(ctx))
+	assert.Equal(t, "user@example.com", manager.GetString(definitions.SessionKeyAccount, ""))
+}
+
+func TestMiddlewareDoesNotDuplicateExplicitSessionSave(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(&testEnv{devMode: true})
+
+	router := gin.New()
+	router.Use(Middleware(testSecret, nil, &testEnv{devMode: true}))
+	router.GET("/login", func(ctx *gin.Context) {
+		mgr := MustGetManager(ctx)
+		mgr.Set(definitions.SessionKeyAccount, "user@example.com")
+		assert.NoError(t, mgr.Save(ctx))
+		ctx.Redirect(http.StatusFound, "/continue")
+	})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/login", nil))
+
+	secureCookieCount := 0
+
+	for _, responseCookie := range w.Result().Cookies() {
+		if responseCookie.Name == definitions.SecureDataCookieName {
+			secureCookieCount++
+		}
+	}
+
+	assert.Equal(t, 1, secureCookieCount)
+}
+
+func TestSecureManagerExplicitDeletionOverridesEarlierSave(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(&testEnv{devMode: true})
+
+	router := gin.New()
+	router.Use(Middleware(testSecret, nil, &testEnv{devMode: true}))
+	router.GET("/logout", func(ctx *gin.Context) {
+		mgr := MustGetManager(ctx)
+		mgr.Set(definitions.SessionKeyAccount, "user@example.com")
+		assert.NoError(t, mgr.Save(ctx))
+
+		mgr.Clear()
+		mgr.SetMaxAge(-1)
+		ctx.Redirect(http.StatusFound, "/logged_out")
+	})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/logout", nil))
+
+	cookies := w.Result().Cookies()
+	if !assert.Len(t, cookies, 2) {
+		return
+	}
+
+	assert.NotEmpty(t, cookies[0].Value)
+	assert.Equal(t, -1, cookies[1].MaxAge)
+	assert.Empty(t, cookies[1].Value)
+}
+
+func TestDeferredHeaderWriterFailsClosedBeforeRedirect(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/login", nil)
+	saveErr := errors.New("session persistence failed")
+	ctx.Writer = newDeferredHeaderWriter(ctx.Writer, func() error { return saveErr })
+
+	ctx.Redirect(http.StatusFound, "/continue")
+
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+	assert.Empty(t, recorder.Header().Get("Location"))
+}
+
+func TestDeferredHeaderWriterDoesNotCommitOnBufferedStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(&testEnv{devMode: true})
+
+	for _, status := range []int{http.StatusFound, http.StatusBadRequest, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			router := gin.New()
+			router.Use(Middleware(testSecret, nil, &testEnv{devMode: true}))
+			router.GET("/buffered", func(ctx *gin.Context) {
+				mgr := MustGetManager(ctx)
+				mgr.Set("before_status", true)
+				ctx.Status(status)
+				mgr.Set("after_status", true)
+				ctx.String(status, "status prepared")
+			})
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/buffered", nil))
+
+			secureCookie := findSecureDataCookie(recorder.Result().Cookies())
+			if !assert.NotNil(t, secureCookie) {
+				return
+			}
+
+			request := httptest.NewRequest(http.MethodGet, "/next", nil)
+			request.AddCookie(secureCookie)
+
+			mgr := NewSecureManager(testSecret, definitions.SecureDataCookieName, nil, &testEnv{devMode: true})
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = request
+			assert.NoError(t, mgr.Load(ctx))
+			assert.True(t, mgr.GetBool("before_status", false))
+			assert.True(t, mgr.GetBool("after_status", false))
+		})
+	}
 }
 
 // newRememberMaxAgeRouter builds the middleware router used by remember-me tests.

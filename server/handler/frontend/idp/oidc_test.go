@@ -1504,11 +1504,14 @@ func Test_cleanupMFAState(t *testing.T) {
 
 // mockCookieManager implements cookie.Manager for testing.
 type mockCookieManager struct {
-	data  map[string]any
-	saves int
+	data      map[string]any
+	saves     int
+	saveErr   error
+	mutations []string
 }
 
 func (m *mockCookieManager) Set(key string, value any) {
+	m.mutations = append(m.mutations, "set:"+key)
 	m.data[key] = value
 }
 
@@ -1518,16 +1521,20 @@ func (m *mockCookieManager) Get(key string) (any, bool) {
 }
 
 func (m *mockCookieManager) Delete(key string) {
+	m.mutations = append(m.mutations, "delete:"+key)
 	delete(m.data, key)
 }
 
 func (m *mockCookieManager) Clear() {
+	m.mutations = append(m.mutations, "clear")
 	m.data = make(map[string]any)
 }
 
 func (m *mockCookieManager) Save(_ *gin.Context) error {
+	m.mutations = append(m.mutations, "save")
 	m.saves++
-	return nil
+
+	return m.saveErr
 }
 
 func (m *mockCookieManager) Load(_ *gin.Context) error {
@@ -1621,7 +1628,9 @@ func (m *mockCookieManager) GetBytes(key string, defaultValue []byte) []byte {
 	return defaultValue
 }
 
-func (m *mockCookieManager) SetMaxAge(_ int) {}
+func (m *mockCookieManager) SetMaxAge(maxAge int) {
+	m.mutations = append(m.mutations, fmt.Sprintf("max-age:%d", maxAge))
+}
 
 func (m *mockCookieManager) ComputeHMAC(data []byte) []byte {
 	// Deterministic mock HMAC for testing: SHA256 of data with a fixed test key.
@@ -1662,11 +1671,11 @@ func TestOIDCConsentRedirectEncodesDelimiterState(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestOIDCConsentPOSTRequireMFABlocksMissingAssurance(t *testing.T) {
+func TestOIDCConsentPOSTRequiredMFALevelBlocksMissingAssurance(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	client := latchedConsentOIDCClient()
-	client.RequireMFA = []string{definitions.MFAMethodTOTP}
+	client.RequiredMFALevel = 2
 	handler, mock := newOIDCConsentCallbackRedirectTestHandlerWithClient(t, client, false)
 	ctx, recorder := newOIDCConsentRedirectTestContext("state-requires-mfa")
 	ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
@@ -1867,6 +1876,302 @@ func TestOIDCAuthorizationCodeRequiredMFALevelPermitsFreshLevel(t *testing.T) {
 
 	assert.Equal(t, http.StatusFound, recorder.Code)
 	assert.Contains(t, recorder.Header().Get("Location"), oidcParamCode+"=")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOIDCAuthorizationCodePromptNoneReturnsInteractionRequiredForMFAPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		client      config.OIDCClient
+		sessionData map[string]any
+	}{
+		{
+			name: "required enrollment",
+			client: config.OIDCClient{
+				ClientID:    latchedConsentClientID,
+				RequireMFA:  []string{definitions.MFAMethodTOTP},
+				SkipConsent: true,
+			},
+			sessionData: map[string]any{
+				definitions.SessionKeyAccount:      "alice",
+				definitions.SessionKeyUniqueUserID: "alice-id",
+			},
+		},
+		{
+			name: "required assurance level",
+			client: config.OIDCClient{
+				ClientID:         latchedConsentClientID,
+				RequiredMFALevel: 3,
+				SkipConsent:      true,
+			},
+			sessionData: map[string]any{
+				definitions.SessionKeyAccount:            "alice",
+				definitions.SessionKeyMFACompleted:       true,
+				definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodTOTP,
+				definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+				definitions.SessionKeyMFAAssuranceLevel:  2,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, mock := newOIDCCallbackRedirectTestHandlerWithClient(t, tc.client)
+			ctx, recorder := newOIDCAssuranceCodeContext(tc.sessionData)
+			request := newOIDCAssuranceCodeRequest()
+			request.prompt = oidcClientAuthMethodNone
+
+			mgr := cookieManagerFromContext(t, ctx)
+			handler.issueOIDCAuthorizeCode(
+				ctx,
+				mgr,
+				newOIDCAuthorizeFlowContext(mgr),
+				&tc.client,
+				request,
+				newOIDCAssuranceCodeSession(false, ""),
+				[]string{definitions.ScopeOpenID},
+			)
+
+			assert.Equal(t, http.StatusFound, recorder.Code)
+			assert.Equal(t, "https://app.example.com/callback?error=interaction_required&state=state-1", recorder.Header().Get("Location"))
+			assert.NotContains(t, recorder.Header().Get("Location"), frontendMFASelectPath)
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestOIDCAuthorizationCodePromptNoneEnrollmentPreflightIsSessionOnly(t *testing.T) {
+	setupRoundcubeAuthorizePublicPathBoundaryTest()
+
+	client := config.OIDCClient{
+		ClientID:    latchedConsentClientID,
+		RequireMFA:  []string{definitions.MFAMethodTOTP},
+		SkipConsent: true,
+	}
+	handler, mock := newOIDCCallbackRedirectTestHandlerWithClient(t, client)
+	flowID := "flow-prompt-none-enrollment-preflight"
+	ctx, recorder := newOIDCAssuranceCodeContext(map[string]any{
+		definitions.SessionKeyAccount:            "alice",
+		definitions.SessionKeyUniqueUserID:       "alice-id",
+		definitions.SessionKeyIDPFlowID:          flowID,
+		definitions.SessionKeyIDPFlowType:        definitions.ProtoOIDC,
+		definitions.SessionKeyOIDCGrantType:      definitions.OIDCFlowAuthorizationCode,
+		definitions.SessionKeyIDPClientID:        client.ClientID,
+		definitions.SessionKeyMFACompleted:       true,
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope(client.ClientID),
+		definitions.SessionKeyMFAAssuranceLevel:  2,
+	})
+	request := newOIDCAssuranceCodeRequest()
+	request.prompt = oidcClientAuthMethodNone
+	mgr := cookieManagerFromContext(t, ctx).(*mockCookieManager)
+
+	mock.ExpectDel("test:idp:flow:" + flowID).SetVal(1)
+
+	handler.issueOIDCAuthorizeCode(
+		ctx,
+		mgr,
+		newOIDCAuthorizeFlowContext(mgr),
+		&client,
+		request,
+		newOIDCAssuranceCodeSession(true, definitions.MFAMethodTOTP),
+		[]string{definitions.ScopeOpenID},
+	)
+
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Equal(t, "https://app.example.com/callback?error=interaction_required&state=state-1", recorder.Header().Get("Location"))
+	assert.Equal(t, 1, mgr.saves)
+
+	for _, mutation := range mgr.mutations {
+		assert.False(t, strings.HasPrefix(mutation, "set:"), "silent enrollment preflight mutated the session: %s", mutation)
+	}
+
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOIDCAuthorizationCodePromptNonePermitsProvenEnrollmentAndAssurance(t *testing.T) {
+	setupRoundcubeAuthorizePublicPathBoundaryTest()
+
+	client := config.OIDCClient{
+		ClientID:    latchedConsentClientID,
+		RequireMFA:  []string{definitions.MFAMethodTOTP},
+		SkipConsent: true,
+	}
+	handler, mock := newOIDCCallbackRedirectTestHandlerWithClient(t, client)
+	ctx, recorder := newOIDCAssuranceCodeContext(map[string]any{
+		definitions.SessionKeyAccount:            "alice",
+		definitions.SessionKeyUniqueUserID:       "alice-id",
+		definitions.SessionKeyIDPFlowType:        definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID:        client.ClientID,
+		definitions.SessionKeyHaveTOTP:           true,
+		definitions.SessionKeyMFACompleted:       true,
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope(client.ClientID),
+		definitions.SessionKeyMFAAssuranceLevel:  2,
+	})
+	request := newOIDCAssuranceCodeRequest()
+	request.prompt = oidcClientAuthMethodNone
+
+	expectOIDCAuthorizationCodeStorage(mock)
+
+	mgr := cookieManagerFromContext(t, ctx)
+	handler.issueOIDCAuthorizeCode(
+		ctx,
+		mgr,
+		newOIDCAuthorizeFlowContext(mgr),
+		&client,
+		request,
+		newOIDCAssuranceCodeSession(true, definitions.MFAMethodTOTP),
+		[]string{definitions.ScopeOpenID},
+	)
+
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Contains(t, recorder.Header().Get("Location"), oidcParamCode+"=")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOIDCAuthorizationCodePromptNoneWithoutMFAPolicyIssuesCode(t *testing.T) {
+	client := config.OIDCClient{
+		ClientID:    latchedConsentClientID,
+		SkipConsent: true,
+	}
+	handler, mock := newOIDCCallbackRedirectTestHandlerWithClient(t, client)
+	ctx, recorder := newOIDCAssuranceCodeContext(map[string]any{
+		definitions.SessionKeyAccount:     "alice",
+		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID: client.ClientID,
+	})
+	request := newOIDCAssuranceCodeRequest()
+	request.prompt = oidcClientAuthMethodNone
+
+	expectOIDCAuthorizationCodeStorage(mock)
+
+	mgr := cookieManagerFromContext(t, ctx)
+	handler.issueOIDCAuthorizeCode(
+		ctx,
+		mgr,
+		newOIDCAuthorizeFlowContext(mgr),
+		&client,
+		request,
+		newOIDCAssuranceCodeSession(false, ""),
+		[]string{definitions.ScopeOpenID},
+	)
+
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Contains(t, recorder.Header().Get("Location"), oidcParamCode+"=")
+	assert.NotContains(t, recorder.Header().Get("Location"), "error=")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOIDCAuthorizationCodePromptNoneWithoutMFAPolicyPreservesConsentRequired(t *testing.T) {
+	client := config.OIDCClient{ClientID: latchedConsentClientID}
+	handler, mock := newOIDCCallbackRedirectTestHandlerWithClient(t, client)
+	ctx, recorder := newOIDCAssuranceCodeContext(map[string]any{
+		definitions.SessionKeyAccount:     "alice",
+		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID: client.ClientID,
+	})
+	request := newOIDCAssuranceCodeRequest()
+	request.prompt = oidcClientAuthMethodNone
+	mgr := cookieManagerFromContext(t, ctx)
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+
+	if handler.rejectPromptNoneOIDCPolicyInteraction(ctx, mgr, &client, request) {
+		t.Fatal("client without MFA policy was rejected before consent evaluation")
+	}
+
+	if !handler.redirectOIDCAuthorizeConsent(
+		ctx,
+		mgr,
+		&client,
+		flowContext,
+		request,
+		newOIDCAssuranceCodeSession(false, ""),
+		[]string{definitions.ScopeOpenID},
+		false,
+	) {
+		t.Fatal("expected prompt=none consent requirement")
+	}
+
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Equal(t, "https://app.example.com/callback?error=consent_required&state=state-1", recorder.Header().Get("Location"))
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOIDCAuthorizationCodePromptNonePermitsFulfilledLevelOnlyPolicy(t *testing.T) {
+	client := config.OIDCClient{
+		ClientID:         latchedConsentClientID,
+		RequiredMFALevel: 3,
+		SkipConsent:      true,
+	}
+	handler, mock := newOIDCCallbackRedirectTestHandlerWithClient(t, client)
+	ctx, recorder := newOIDCAssuranceCodeContext(map[string]any{
+		definitions.SessionKeyAccount:            "alice",
+		definitions.SessionKeyMFACompleted:       true,
+		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodWebAuthn,
+		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
+		definitions.SessionKeyMFAAssuranceLevel:  3,
+	})
+	request := newOIDCAssuranceCodeRequest()
+	request.prompt = oidcClientAuthMethodNone
+
+	expectOIDCAuthorizationCodeStorage(mock)
+
+	mgr := cookieManagerFromContext(t, ctx)
+	handler.issueOIDCAuthorizeCode(
+		ctx,
+		mgr,
+		newOIDCAuthorizeFlowContext(mgr),
+		&client,
+		request,
+		newOIDCAssuranceCodeSession(true, definitions.MFAMethodWebAuthn),
+		[]string{definitions.ScopeOpenID},
+	)
+
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Contains(t, recorder.Header().Get("Location"), oidcParamCode+"=")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOIDCAuthorizationCodePromptNoneAbortSaveFailureDoesNotCallback(t *testing.T) {
+	setupRoundcubeAuthorizePublicPathBoundaryTest()
+
+	client := config.OIDCClient{
+		ClientID:    latchedConsentClientID,
+		RequireMFA:  []string{definitions.MFAMethodTOTP},
+		SkipConsent: true,
+	}
+	handler, mock := newOIDCCallbackRedirectTestHandlerWithClient(t, client)
+	flowID := "flow-prompt-none-save-failure"
+	ctx, recorder := newOIDCAssuranceCodeContext(map[string]any{
+		definitions.SessionKeyAccount:        "alice",
+		definitions.SessionKeyIDPFlowID:      flowID,
+		definitions.SessionKeyIDPFlowType:    definitions.ProtoOIDC,
+		definitions.SessionKeyIDPClientID:    client.ClientID,
+		definitions.SessionKeyMFACompleted:   true,
+		definitions.SessionKeyMFAMethod:      definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFAAssuranceAt: time.Now().Unix(),
+	})
+	request := newOIDCAssuranceCodeRequest()
+	request.prompt = oidcClientAuthMethodNone
+	mgr := cookieManagerFromContext(t, ctx).(*mockCookieManager)
+	mgr.saveErr = fmt.Errorf("injected cookie save failure")
+
+	mock.ExpectDel("test:idp:flow:" + flowID).SetVal(1)
+
+	handler.issueOIDCAuthorizeCode(
+		ctx,
+		mgr,
+		newOIDCAuthorizeFlowContext(mgr),
+		&client,
+		request,
+		newOIDCAssuranceCodeSession(true, definitions.MFAMethodTOTP),
+		[]string{definitions.ScopeOpenID},
+	)
+
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+	assert.Empty(t, recorder.Header().Get("Location"))
+	assert.Equal(t, 1, mgr.saves)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -291,6 +291,36 @@ identity:
             - claim: "name"
               attribute: "displayName"
 
+      - name: "Split Required MFA Journey Client"
+        client_id: "split-e2e-required-mfa-journey"
+        client_secret: "split-e2e-required-mfa-journey-secret"
+        redirect_uris:
+          - "https://split.example.test:19094/callback"
+        grant_types:
+          - authorization_code
+        token_endpoint_auth_method: "client_secret_post"
+        skip_consent: true
+        delayed_response: true
+        require_mfa:
+          - totp
+          - recovery_codes
+        supported_mfa:
+          - totp
+          - webauthn
+          - recovery_codes
+        required_mfa_level: 2
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+        id_token_claims:
+          mappings:
+            - claim: "email"
+              attribute: "uid"
+            - claim: "name"
+              attribute: "displayName"
+
       - name: "Split Consent Browser Client"
         client_id: "split-e2e-consent"
         client_secret: "split-e2e-consent-secret"
