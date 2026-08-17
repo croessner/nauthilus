@@ -338,6 +338,32 @@ Required invariant for this handler:
 - The continuation redirect must be derived server-side from flow state; the
   browser must only follow a safe relative redirect returned by the server.
 
+### WebAuthn ceremony restart contract
+
+The dedicated `nauthilus_webauthn_ceremony` cookie is the only accepted browser
+representation of an active WebAuthn ceremony. A reference in the primary
+session cookie is legacy cleanup input, never continuation input. A missing,
+malformed, stale, conflicting, kind-mismatched, or binding-mismatched ceremony
+causes the server to consume or delete every identifiable Redis ceremony key,
+clear both browser representations plus pending registration state, and persist
+that targeted cleanup before returning an error. Cleanup failures remain
+fail-closed and never permit the submitted assertion or attestation to continue.
+
+Both authentication and registration finish endpoints return HTTP 400 with
+`no webauthn session data found`. The JavaScript keeps the user on the current
+WebAuthn page, displays the error, and re-enables the action button. The next
+button press calls the matching begin endpoint and creates a fresh challenge;
+the rejected finish request is never retried. Targeted cleanup preserves the
+surrounding OIDC or SAML flow and its authenticated identity, so a fresh begin
+can resume the same parent flow without accepting the old ceremony.
+
+This canonical representation is intentionally not compatible with mixed old
+and new binaries. Old binaries cannot read dedicated-cookie ceremonies and new
+binaries reject primary-cookie ceremonies. Deploy by controlled replacement so
+no browser request can move between old and new versions during a ceremony;
+drain or otherwise eliminate old browser-serving pods before admitting traffic
+to the new version. No configuration switch or legacy fallback exists.
+
 ## Required-MFA Registration
 
 `require_mfa` is about factor enrollment, not about the current login method

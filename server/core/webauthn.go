@@ -602,7 +602,6 @@ func registrationSessionDataFromStore(ctx *gin.Context, deps AuthDeps, mgr cooki
 	}
 
 	if err != nil {
-		SessionCleaner(ctx)
 		ctx.JSON(http.StatusBadRequest, errors.ErrWebAuthnSessionData)
 
 		return nil, false
