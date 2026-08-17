@@ -358,6 +358,12 @@ type Metrics interface {
 	// GetIdpDynamicClientRegistrationDurationSeconds tracks DCR request latency without unbounded labels.
 	GetIdpDynamicClientRegistrationDurationSeconds() prometheus.Histogram
 
+	// GetWebAuthnCeremonyReferenceCookieBytes tracks the bounded dedicated cookie size.
+	GetWebAuthnCeremonyReferenceCookieBytes() prometheus.Histogram
+
+	// GetWebAuthnCeremonyReferenceOperationsTotal tracks bounded store, take, and delete outcomes.
+	GetWebAuthnCeremonyReferenceOperationsTotal() *prometheus.CounterVec
+
 	// GetAuthFSMTransitionsTotal tracks auth FSM transitions labeled by from/event/to.
 	GetAuthFSMTransitionsTotal() *prometheus.CounterVec
 
@@ -436,6 +442,8 @@ type metricsImpl struct {
 	idpMfaOperationsTotal          *prometheus.CounterVec
 	idpDynamicRegistrations        *prometheus.CounterVec
 	idpDynamicRegistrationDuration prometheus.Histogram
+	webAuthnCeremonyCookieSize     prometheus.Histogram
+	webAuthnCeremonyOperations     *prometheus.CounterVec
 	authFSMTransitionsTotal        *prometheus.CounterVec
 	pluginCallsTotal               *prometheus.CounterVec
 	pluginCallDurationSeconds      *prometheus.HistogramVec
@@ -743,6 +751,16 @@ func (m *metricsImpl) GetIdpDynamicClientRegistrationDurationSeconds() prometheu
 	return m.idpDynamicRegistrationDuration
 }
 
+// GetWebAuthnCeremonyReferenceCookieBytes returns the dedicated cookie-size histogram.
+func (m *metricsImpl) GetWebAuthnCeremonyReferenceCookieBytes() prometheus.Histogram {
+	return m.webAuthnCeremonyCookieSize
+}
+
+// GetWebAuthnCeremonyReferenceOperationsTotal returns bounded ceremony-reference outcomes.
+func (m *metricsImpl) GetWebAuthnCeremonyReferenceOperationsTotal() *prometheus.CounterVec {
+	return m.webAuthnCeremonyOperations
+}
+
 // GetAuthFSMTransitionsTotal returns the authFSMTransitionsTotal field.
 func (m *metricsImpl) GetAuthFSMTransitionsTotal() *prometheus.CounterVec {
 	return m.authFSMTransitionsTotal
@@ -917,6 +935,17 @@ func (m *metricsImpl) initIDPMetrics() {
 	m.idpMfaOperationsTotal = newCounterVecMetric("idp_mfa_operations_total", "The total number of IDP MFA operations", metricTypeLabel, metricMethodLabel, metricStatusLabel)
 	m.idpDynamicRegistrations = newCounterVecMetric("idp_dynamic_client_registrations_total", "The total number of dynamic OIDC client registration outcomes", metricOutcomeLabel, metricCodeLabel)
 	m.idpDynamicRegistrationDuration = newHistogramMetric("idp_dynamic_client_registration_duration_seconds", "Duration of dynamic OIDC client registration requests", prometheus.ExponentialBuckets(0.001, 1.7, 15))
+	m.webAuthnCeremonyCookieSize = newHistogramMetric(
+		"webauthn_ceremony_reference_cookie_bytes",
+		"Serialized size of the dedicated WebAuthn ceremony reference cookie.",
+		[]float64{128, 192, 256, 384, 512},
+	)
+	m.webAuthnCeremonyOperations = newCounterVecMetric(
+		"webauthn_ceremony_reference_operations_total",
+		"WebAuthn ceremony reference operations by bounded outcome.",
+		metricOpLabel,
+		metricOutcomeLabel,
+	)
 	m.authFSMTransitionsTotal = newCounterVecMetric("auth_fsm_transitions_total", "Total number of auth FSM transitions", metricFromLabel, metricEventLabel, metricToLabel)
 }
 

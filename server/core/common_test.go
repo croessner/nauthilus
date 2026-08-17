@@ -30,7 +30,7 @@ import (
 func TestClearBrowserCookies(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	t.Run("sets only secure data cookie", func(t *testing.T) {
+	t.Run("deletes both encrypted browser cookies", func(t *testing.T) {
 		util.SetDefaultEnvironment(&config.EnvironmentSettings{DevMode: false})
 
 		ctx, writer := newClearBrowserCookiesContext()
@@ -142,26 +142,31 @@ func assertBrowserCookieDeletionFinal(t *testing.T, test clearBrowserCookiesComm
 func assertNoSecureCookieAfterDeletion(t *testing.T, cookies []*http.Cookie) {
 	t.Helper()
 
-	deletionSeen := false
+	deletionSeen := map[string]bool{
+		definitions.SecureDataCookieName:       false,
+		definitions.WebAuthnCeremonyCookieName: false,
+	}
 
 	for _, responseCookie := range cookies {
-		if responseCookie.Name != definitions.SecureDataCookieName {
+		if _, tracked := deletionSeen[responseCookie.Name]; !tracked {
 			continue
 		}
 
 		if responseCookie.MaxAge < 0 && responseCookie.Value == "" {
-			deletionSeen = true
+			deletionSeen[responseCookie.Name] = true
 
 			continue
 		}
 
-		if deletionSeen {
-			t.Fatalf("live secure cookie was emitted after deletion: MaxAge=%d", responseCookie.MaxAge)
+		if deletionSeen[responseCookie.Name] {
+			t.Fatalf("live %s cookie was emitted after deletion: MaxAge=%d", responseCookie.Name, responseCookie.MaxAge)
 		}
 	}
 
-	if !deletionSeen {
-		t.Fatal("secure cookie deletion was not emitted")
+	for cookieName, seen := range deletionSeen {
+		if !seen {
+			t.Fatalf("%s cookie deletion was not emitted", cookieName)
+		}
 	}
 }
 
@@ -200,17 +205,24 @@ func newClearBrowserCookiesContext() (*gin.Context, *httptest.ResponseRecorder) 
 func assertOnlySecureDataCookieDeleted(t *testing.T, cookies []*http.Cookie) {
 	t.Helper()
 
-	if len(cookies) != 1 {
-		t.Fatalf("expected exactly 1 cookie, got %d", len(cookies))
+	if len(cookies) != 2 {
+		t.Fatalf("expected exactly 2 cookies, got %d", len(cookies))
 	}
 
-	cookie := cookies[0]
-	if cookie.Name != definitions.SecureDataCookieName {
-		t.Errorf("unexpected cookie %q", cookie.Name)
+	wantNames := map[string]bool{
+		definitions.SecureDataCookieName:       false,
+		definitions.WebAuthnCeremonyCookieName: false,
 	}
+	for _, responseCookie := range cookies {
+		if _, ok := wantNames[responseCookie.Name]; !ok {
+			t.Errorf("unexpected cookie %q", responseCookie.Name)
+		}
 
-	if cookie.MaxAge != -1 {
-		t.Errorf("cookie %q MaxAge=%d, want -1", cookie.Name, cookie.MaxAge)
+		wantNames[responseCookie.Name] = true
+
+		if responseCookie.MaxAge != -1 {
+			t.Errorf("cookie %q MaxAge=%d, want -1", responseCookie.Name, responseCookie.MaxAge)
+		}
 	}
 }
 
@@ -247,4 +259,30 @@ func TestSessionCleaner_RemovesLegacyLanguageFromSecureSession(t *testing.T) {
 	if _, ok := mgr.Get(definitions.SessionKeyLang); ok {
 		t.Fatalf("expected %q to be removed from secure session", definitions.SessionKeyLang)
 	}
+}
+
+func TestSessionCleanerDeletesDedicatedWebAuthnCeremonyCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	env := &config.EnvironmentSettings{DevMode: true}
+	util.SetDefaultEnvironment(env)
+
+	router := gin.New()
+	router.Use(cookie.Middleware([]byte("0123456789abcdef0123456789abcdef"), nil, env))
+	router.GET("/cleanup", func(ctx *gin.Context) {
+		mgr := cookie.MustGetManager(ctx)
+		mgr.Set(definitions.SessionKeyAccount, "user@example.test")
+		mgr.Set(definitions.SessionKeyWebAuthnCeremony, "dedicated-reference")
+
+		if err := mgr.Save(ctx); err != nil {
+			t.Fatalf("save browser session: %v", err)
+		}
+
+		SessionCleaner(ctx)
+		ctx.Status(http.StatusOK)
+	})
+
+	writer := httptest.NewRecorder()
+	router.ServeHTTP(writer, httptest.NewRequest(http.MethodGet, "/cleanup", nil))
+	assertNoSecureCookieAfterDeletion(t, writer.Result().Cookies())
 }

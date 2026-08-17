@@ -30,6 +30,9 @@ const callbackKey = process.env.NAUTHILUS_E2E_CALLBACK_KEY
   || path.join(__dirname, '..', '.work', 'certs', 'edge-http.key');
 const csrfProbeTimeoutMs = 250;
 const webAuthnLoginFinishRoute = '**/login/webauthn/finish**';
+const webAuthnRegistrationFinishRoute = '**/mfa/webauthn/register/finish**';
+const secureDataCookieName = 'nauthilus_secure_data';
+const webAuthnCeremonyCookieName = 'nauthilus_webauthn_ceremony';
 const username = process.env.NAUTHILUS_E2E_USERNAME || 'split-user@example.test';
 const password = process.env.NAUTHILUS_E2E_PASSWORD || 'split-password';
 const mfaUsername = `${username}.mfa`;
@@ -1088,11 +1091,15 @@ async function runRequiredMFAFlows(browser) {
     label: 'required MFA registration',
     totpOKName: 'totp-registration',
     webAuthnOKName: 'webauthn-registration',
+    authorizeOverrides: heavyOIDCAuthorizeOverrides(),
+    webAuthnRegistrationBase: edgeB,
+    assertHeavyWebAuthnCookie: true,
   });
   const recoveryCodes = registration.recoveryCodes;
   const totpSecret = registration.totpSecret;
   console.log('ok recovery-code-generation');
   let webAuthnCredentials = registration.webAuthnCredentials;
+  console.log('ok oidc-heavy-webauthn-registration-both-edges');
 
   const masterMFA = await registerMasterUserMFA(browser, webAuthnCredentials);
   webAuthnCredentials = masterMFA.webAuthnCredentials;
@@ -1494,14 +1501,30 @@ async function registerRequiredMFAProfile(browser, options) {
   let totpSecret = '';
   const registration = await withPageState(page, options.label, async () =>
     withCallbackServer(options.label, async (redirectURI, callbackPromise) => {
-      await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+      await page.goto(buildAuthorizeURL(
+        edgeA,
+        mfaClient.id,
+        redirectURI,
+        'openid profile email',
+        options.authorizeOverrides || {},
+      ));
       await submitPasswordLogin(page, options.user, password);
       totpSecret = await completeTOTPRegistration(page);
       if (options.totpOKName) {
         console.log(`ok ${options.totpOKName}`);
       }
 
-      await completeWebAuthnRegistration(page);
+      if (options.webAuthnRegistrationBase) {
+        const registrationURL = new URL(page.url());
+        const registrationBase = new URL(options.webAuthnRegistrationBase);
+        registrationURL.protocol = registrationBase.protocol;
+        registrationURL.host = registrationBase.host;
+        await page.goto(registrationURL.toString());
+      }
+
+      await completeWebAuthnRegistration(page, {
+        assertHeavyCookie: options.assertHeavyWebAuthnCookie === true,
+      });
       if (options.webAuthnOKName) {
         console.log(`ok ${options.webAuthnOKName}`);
       }
@@ -2130,7 +2153,13 @@ async function runMultiEdgeWebAuthnContinuity(browser, webAuthnCredentials) {
 
   const callback = await withPageState(page, 'multi-edge WebAuthn continuity', async () =>
     withCallbackServer('multi-edge WebAuthn continuity', async (redirectURI, callbackPromise) => {
-    await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+    await page.goto(buildAuthorizeURL(
+      edgeA,
+      mfaClient.id,
+      redirectURI,
+      'openid profile email',
+      heavyOIDCAuthorizeOverrides(),
+    ));
     await submitPasswordLogin(page, mfaUsername, password);
     await page.waitForURL(/\/login\/webauthn|\/login\/mfa/, {timeout: 15000});
 
@@ -2142,6 +2171,7 @@ async function runMultiEdgeWebAuthnContinuity(browser, webAuthnCredentials) {
   }));
   assert.ok(callback.code, 'WebAuthn flow that started on edge-a completed on edge-b');
   console.log('ok multi-edge-webauthn-continuity');
+  console.log('ok oidc-heavy-webauthn-login-both-edges');
 
   await context.close();
 }
@@ -2443,7 +2473,7 @@ async function completeTOTPChallenge(page, secret, finalURLPattern) {
   throw new Error(`TOTP login did not advance from ${page.url()}: ${await visiblePageText(page)}`);
 }
 
-async function completeWebAuthnRegistration(page) {
+async function completeWebAuthnRegistration(page, options = {}) {
   if (!/\/mfa\/webauthn\/register/.test(page.url())) {
     await page.goto(`${edgeA}/mfa/webauthn/register`);
   }
@@ -2459,13 +2489,42 @@ async function completeWebAuthnRegistration(page) {
       response.request().method() === 'POST',
   {timeout: 15000});
 
+  let resumeFinish;
+  let cookieSnapshotPromise;
+  if (options.assertHeavyCookie) {
+    let resolveSnapshot;
+    cookieSnapshotPromise = new Promise((resolve) => {
+      resolveSnapshot = resolve;
+    });
+    const resumePromise = new Promise((resolve) => {
+      resumeFinish = resolve;
+    });
+    await page.route(webAuthnRegistrationFinishRoute, async (route) => {
+      resolveSnapshot(await page.context().cookies(edgeA));
+      await resumePromise;
+      await route.continue();
+    });
+  }
+
   await page.click('#register-button');
   const beginResponse = await beginResponsePromise;
   if (!beginResponse.ok()) {
+    if (resumeFinish) {
+      resumeFinish();
+    }
     throw new Error(
       `WebAuthn registration begin failed with status=${beginResponse.status()} ` +
       `body=${await compactResponseText(beginResponse)} page=${await visiblePageText(page)}`,
     );
+  }
+
+  if (cookieSnapshotPromise) {
+    const cookies = await cookieSnapshotPromise;
+    try {
+      assertHeavyWebAuthnCookieSnapshot(cookies);
+    } finally {
+      resumeFinish();
+    }
   }
 
   const finishResponse = await finishResponsePromise;
@@ -2481,6 +2540,30 @@ async function completeWebAuthnRegistration(page) {
     await page.goto(`${edgeA}/mfa/register/continue`);
     await page.waitForURL(/callback|\/mfa\/recovery\/register|\/mfa\/register\/home/, {timeout: 15000});
   }
+}
+
+function heavyOIDCAuthorizeOverrides() {
+  return {
+    state: base64URL(crypto.randomBytes(512)),
+    nonce: base64URL(crypto.randomBytes(256)),
+  };
+}
+
+function assertHeavyWebAuthnCookieSnapshot(cookies) {
+  const primary = cookies.find((cookie) => cookie.name === secureDataCookieName);
+  const ceremony = cookies.find((cookie) => cookie.name === webAuthnCeremonyCookieName);
+
+  assert.ok(primary, 'heavy OIDC WebAuthn flow must retain the primary secure cookie');
+  assert.ok(primary.value.length >= 1800,
+    `heavy OIDC primary cookie must be deliberately large; got ${primary.value.length} bytes`);
+  assert.ok(ceremony, 'WebAuthn begin must emit the dedicated ceremony-reference cookie');
+  assert.ok(ceremony.value.length < 512,
+    `dedicated WebAuthn ceremony-reference cookie must remain below 512 bytes; got ${ceremony.value.length}`);
+  assert.equal(ceremony.httpOnly, true, 'dedicated WebAuthn ceremony-reference cookie must be HttpOnly');
+  assert.equal(ceremony.secure, true, 'dedicated WebAuthn ceremony-reference cookie must be Secure');
+  assert.equal(ceremony.sameSite, 'Lax', 'dedicated WebAuthn ceremony-reference cookie must be SameSite=Lax');
+  assert.equal(ceremony.path, '/', 'dedicated WebAuthn ceremony-reference cookie must use Path=/');
+  console.log('ok oidc-heavy-webauthn-reference-cookie-bounded');
 }
 
 async function completeRecoveryRegistration(page) {

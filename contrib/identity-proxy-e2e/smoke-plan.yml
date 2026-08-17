@@ -110,6 +110,8 @@ scenarios:
   - oidc-delayed-response-recovery-code-login
   - recovery-code-generation-consumption
   - webauthn-registration-login
+  - oidc-heavy-webauthn-registration-both-edges
+  - oidc-heavy-webauthn-reference-cookie-bounded
   - mfa-self-service-missing-step-up-rejected
   - mfa-self-service-recovery-regeneration-step-up
   - mfa-self-service-totp-delete-step-up
@@ -127,6 +129,7 @@ scenarios:
   - authority-webauthn-sign-count
   - multi-edge-oidc-continuity
   - multi-edge-webauthn-continuity
+  - oidc-heavy-webauthn-login-both-edges
   - edge-no-local-credentials
   - redis-network-separation
   - missing-caller-auth
