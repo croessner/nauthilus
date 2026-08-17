@@ -28,7 +28,8 @@ type EvaluationFinalization struct {
 }
 
 type evaluationFinalizationState struct {
-	done     chan struct{}
+	done     <-chan struct{}
+	complete func()
 	once     sync.Once
 	boundary string
 }
@@ -40,7 +41,21 @@ func NewEvaluationFinalization[T ~string](boundary T) EvaluationFinalization {
 		return EvaluationFinalization{}
 	}
 
-	return EvaluationFinalization{state: &evaluationFinalizationState{done: make(chan struct{}), boundary: value}}
+	done := make(chan struct{})
+
+	return EvaluationFinalization{state: &evaluationFinalizationState{
+		done: done, boundary: value, complete: func() { close(done) },
+	}}
+}
+
+// NewExternalEvaluationFinalization binds evaluation to a transport-owned gate.
+func NewExternalEvaluationFinalization[T ~string](boundary T, done <-chan struct{}) EvaluationFinalization {
+	value := string(boundary)
+	if done == nil || (value != finalizationHTTPCommit && value != finalizationGRPCUnaryDone) {
+		return EvaluationFinalization{}
+	}
+
+	return EvaluationFinalization{state: &evaluationFinalizationState{done: done, boundary: value}}
 }
 
 // Done closes after the application response becomes immutable.
@@ -63,13 +78,11 @@ func (f EvaluationFinalization) Boundary() string {
 
 // Complete opens the response finalization gate exactly once.
 func (f EvaluationFinalization) Complete() {
-	if f.state == nil {
+	if f.state == nil || f.state.complete == nil {
 		return
 	}
 
-	f.state.once.Do(func() {
-		close(f.state.done)
-	})
+	f.state.once.Do(f.state.complete)
 }
 
 // Valid reports whether the host selected one supported boundary.

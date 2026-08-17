@@ -18,6 +18,7 @@ func TestAuthenticateUserLoadsBruteForceHistoriesWithoutCacheBackend(t *testing.
 	cfg.Server.Redis.AccountLocalCache.Enabled = true
 
 	auth, ctx, mock := newCurrentBehaviorAuthState(t, cfg)
+	auth.deps.BackendAuthenticationCache = NewPositiveBackendAuthenticationCache(time.Now)
 	auth.AccountCache().Set(cfg, auth.Request.Username, auth.Request.Protocol.Get(), "", auth.Request.Username)
 
 	bruteForce := &recordingBruteForceService{}

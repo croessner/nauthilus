@@ -940,6 +940,7 @@ func completionBuiltinAuthRuntimeRecordForAction(
 	target := completionContributionTarget(t, contribution, targetIdentity)
 	schema := completionContributionSchema(t, contribution, schemaIdentity)
 	plan := completionContributionPlan(t, contribution, target)
+	policySets := contribution.PolicySets()
 	standardID := completionRuntimeSetID(t, "authn", "standard_auth")
 	checkpoints := make([]CheckpointRecord, 0)
 
@@ -947,6 +948,7 @@ func completionBuiltinAuthRuntimeRecordForAction(
 		checkpoints = append(checkpoints, CheckpointRecord{
 			Name: checkpoint.Name(), PolicySetBindings: checkpoint.PolicySets(),
 			PolicySetIDs: []registry.PolicySetID{standardID}, ProviderIDs: checkpoint.Providers(),
+			Rules: completionRuntimeRulesForCheckpoint(t, target, checkpoint.Name(), standardID, policySets),
 		})
 	}
 
@@ -970,7 +972,40 @@ func completionBuiltinAuthRuntimeRecordForAction(
 		Target: target, Schema: schema, SourcePlan: plan, Checkpoints: checkpoints,
 		Providers: providers, Effects: effects, DefaultPolicySet: standardID,
 		AuthorityMode: registry.AuthorityModeEnforce,
-	}, contribution.PolicySets()
+	}, policySets
+}
+
+// completionRuntimeRulesForCheckpoint projects exact source-owned rules into one fixture checkpoint.
+func completionRuntimeRulesForCheckpoint(
+	t *testing.T,
+	target decision.Target,
+	checkpoint string,
+	setID registry.PolicySetID,
+	policySets []registry.PolicySetDefinition,
+) []CompiledRuleRecord {
+	t.Helper()
+
+	for _, set := range policySets {
+		if set.ID().String() != setID.String() {
+			continue
+		}
+
+		result := make([]CompiledRuleRecord, 0)
+
+		for _, rule := range set.Rules() {
+			if rule.Checkpoint() != checkpoint || !rule.AllowsAction(target.Action()) {
+				continue
+			}
+
+			result = append(result, ProjectPolicyRule(target, setID, checkpoint, rule))
+		}
+
+		return result
+	}
+
+	t.Fatalf("policy set %s missing", setID.String())
+
+	return nil
 }
 
 // completionContributionTarget resolves one exact contributed target.

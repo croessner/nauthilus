@@ -22,6 +22,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 // Generation is a sealed captured policy authority generation.
@@ -51,7 +52,11 @@ type checkpointEvaluator interface {
 
 // checkpointPlanSource exposes the target plan owned by the captured evaluator.
 type checkpointPlanSource interface {
-	Checkpoints(decision.Target) ([]string, error)
+	Checkpoints(decision.Target) ([]CheckpointPlan, error)
+}
+
+type authnPolicySnapshotSource interface {
+	authnPolicySnapshot() *policyruntime.Snapshot
 }
 
 type runtimeGenerationDependencies struct {

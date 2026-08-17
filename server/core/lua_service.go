@@ -76,7 +76,66 @@ type PostActionInput struct {
 //
 //goland:nointerface
 type PostAction interface {
-	Run(input PostActionInput) bool
+	Run(input PostActionInput) PostActionResult
+}
+
+// PostActionState classifies the synchronous preparation and acceptance boundary.
+type PostActionState string
+
+const (
+	// PostActionStateSucceeded includes accepted work and intentionally skipped work.
+	PostActionStateSucceeded PostActionState = "succeeded"
+	// PostActionStateAcceptanceRejected identifies a non-context supervisor rejection.
+	PostActionStateAcceptanceRejected PostActionState = "acceptance_rejected"
+	// PostActionStateCanceled identifies request cancellation before ownership transfer.
+	PostActionStateCanceled PostActionState = "canceled"
+	// PostActionStatePreparationFailed identifies invalid or incomplete work capture.
+	PostActionStatePreparationFailed PostActionState = "preparation_failed"
+)
+
+// PostActionResult carries a secret-safe synchronous post-action cause.
+type PostActionResult struct {
+	state PostActionState
+}
+
+// PostActionSucceeded returns an accepted or intentionally skipped result.
+func PostActionSucceeded() PostActionResult {
+	return PostActionResult{state: PostActionStateSucceeded}
+}
+
+// PostActionAcceptanceRejected returns an explicit supervisor rejection result.
+func PostActionAcceptanceRejected() PostActionResult {
+	return PostActionResult{state: PostActionStateAcceptanceRejected}
+}
+
+// PostActionCanceled returns a pre-acceptance context-cancellation result.
+func PostActionCanceled() PostActionResult {
+	return PostActionResult{state: PostActionStateCanceled}
+}
+
+// PostActionPreparationFailed returns a pre-acceptance capture failure result.
+func PostActionPreparationFailed() PostActionResult {
+	return PostActionResult{state: PostActionStatePreparationFailed}
+}
+
+// State returns the bounded result classification.
+func (r PostActionResult) State() PostActionState {
+	return r.state
+}
+
+// Succeeded reports accepted or intentionally skipped work.
+func (r PostActionResult) Succeeded() bool {
+	return r.state == PostActionStateSucceeded
+}
+
+// AcceptanceRejected reports only explicit supervisor rejection.
+func (r PostActionResult) AcceptanceRejected() bool {
+	return r.state == PostActionStateAcceptanceRejected
+}
+
+// Canceled reports request cancellation before ownership transfer.
+func (r PostActionResult) Canceled() bool {
+	return r.state == PostActionStateCanceled
 }
 
 // PostActionPlanInput supplies the supervisor-owned plan runtime to one Lua post-action step.
@@ -211,6 +270,15 @@ type PluginEffectBridge interface {
 
 	// ExecutePolicyEffect runs a synchronous native policy effect.
 	ExecutePolicyEffect(ctx *gin.Context, view *StateView, effect report.EffectRequest) (handled bool, ok bool)
+}
+
+// PluginPostActionWorkPreparer captures one native effect for external supervisor ownership.
+type PluginPostActionWorkPreparer interface {
+	PreparePostActionWork(
+		ctx *gin.Context,
+		view *StateView,
+		step PostActionPlanStep,
+	) (effectsupervisor.ExecutableWork, bool)
 }
 
 // EnvironmentEngine encapsulates the evaluation of Lua environment sources.

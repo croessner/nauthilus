@@ -83,6 +83,34 @@ func TestDecisionReportRedactionExcludesSensitiveDetails(t *testing.T) {
 	}
 }
 
+func TestCloneFinalDecisionOwnsMutableEffectArguments(t *testing.T) {
+	strings := []string{"first", "second"}
+	bytes := []byte("payload")
+	original := &FinalDecision{
+		ResponseMessage: &ResponseMessageSelection{Message: "original"},
+		Obligations: []EffectRequest{{
+			ID: "effect",
+			Args: map[string]any{
+				"strings": strings,
+				"bytes":   bytes,
+			},
+		}},
+	}
+
+	cloned := CloneFinalDecision(original)
+	cloned.ResponseMessage.Message = "changed"
+	cloned.Obligations[0].Args["strings"].([]string)[0] = "changed"
+	cloned.Obligations[0].Args["bytes"].([]byte)[0] = 'X'
+
+	if original.ResponseMessage.Message != "original" {
+		t.Fatalf("original response message = %q, want original", original.ResponseMessage.Message)
+	}
+
+	if strings[0] != "first" || string(bytes) != "payload" {
+		t.Fatalf("original effect arguments changed: strings=%v bytes=%q", strings, bytes)
+	}
+}
+
 func containsString(payload []byte, needle string) bool {
 	return string(payload) != "" && json.Valid(payload) && contains(string(payload), needle)
 }

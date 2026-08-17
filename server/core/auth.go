@@ -53,7 +53,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/evaluation"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/secret"
@@ -2842,13 +2841,18 @@ func (a *AuthState) GetAccountField() string {
 	return a.Runtime.AccountField
 }
 
-// PostLuaAction executes a Lua-based post-processing action using the given authentication result and context.
+// PostLuaAction executes a Lua post-action and reports whether ownership succeeded.
 func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) bool {
+	return a.postLuaActionResult(ctx, passDBResult).Succeeded()
+}
+
+// postLuaActionResult preserves the synchronous preparation and acceptance cause.
+func (a *AuthState) postLuaActionResult(ctx *gin.Context, passDBResult *PassDBResult) PostActionResult {
 	if disp := getPostAction(); disp != nil {
 		return disp.Run(a.newPostActionInput(ctx, passDBResult))
 	}
 
-	return true
+	return PostActionSucceeded()
 }
 
 // newPostActionInput captures the request flags used by Lua post-actions.
@@ -2907,6 +2911,10 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 	authResult = defaultAuthenticator.Authenticate(ctx, a)
 	if authResult == definitions.AuthResultEmptyUsername || authResult == definitions.AuthResultEmptyPassword {
 		a.recordPolicyBackendResult(ctx, authResult, nil, nil)
+	}
+
+	if authnCandidateRuntimeOwnsPolicy(ctx) {
+		return authResult
 	}
 
 	if configuredResult, ok := a.configuredPolicyAuthResult(ctx, authResult); ok {
@@ -3361,7 +3369,9 @@ func (a *AuthState) runPostBackendActions(ctx *gin.Context, passDBResult *PassDB
 
 	if a.HasConfiguredAuthPolicyAuthority(ctx) {
 		a.storePolicyPostActionResult(ctx, passDBResult)
-	} else if !a.PostLuaAction(ctx, passDBResult) {
+	} else if result := a.postLuaActionResult(ctx, passDBResult); !result.Succeeded() {
+		markAuthnCandidatePostActionFailure(ctx, result)
+
 		return definitions.AuthResultTempFail
 	}
 
@@ -3652,9 +3662,14 @@ func (a *AuthState) logAccountDBError(err error) {
 	)
 }
 
+// finishListAccountsPolicy records account facts and applies the active decision owner.
 func (a *AuthState) finishListAccountsPolicy(ctx *gin.Context, count int, errSeen bool) bool {
 	a.recordPolicyAccountProvider(ctx, count, errSeen)
 	a.completePolicyStage(ctx, policy.StageAccountProvider)
+
+	if authnCandidateRuntimeOwnsPolicy(ctx) {
+		return true
+	}
 
 	final, configured := a.listAccountsPolicyDecision(ctx)
 	if final == nil {
@@ -3669,7 +3684,7 @@ func (a *AuthState) finishListAccountsPolicy(ctx *gin.Context, count int, errSee
 		}
 	}
 
-	if err := a.applyAuthFSMMarkers(evaluation.TargetFSMEventMarkers(a.policyReport(ctx), final)); err != nil {
+	if err := a.applySelectedAuthFSMMarkers(ctx, final); err != nil {
 		_ = level.Error(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, err.Error())
 	}
 

@@ -174,6 +174,28 @@ func (v Value) Timestamp() (time.Time, bool) {
 	return v.timestamp, v.kind == ValueKindTimestamp
 }
 
+// Any returns a detached member in the closed policy-value vocabulary.
+func (v Value) Any() (any, bool) {
+	switch v.kind {
+	case ValueKindString:
+		return v.stringValue, true
+	case ValueKindBoolean:
+		return v.boolean, true
+	case ValueKindInteger:
+		return v.integer, true
+	case ValueKindDouble:
+		return v.double, true
+	case ValueKindStrings:
+		return append([]string(nil), v.strings...), true
+	case ValueKindBytes:
+		return append([]byte(nil), v.bytes...), true
+	case ValueKindTimestamp:
+		return v.timestamp, true
+	default:
+		return nil, false
+	}
+}
+
 // valid reports whether a value satisfies its constructor invariant.
 func (v Value) valid() bool {
 	switch v.kind {

@@ -27,7 +27,13 @@ import (
 )
 
 func TestAuthnApplicationAdapterImportsOnlyDecisionServiceBoundary(t *testing.T) {
-	for _, filename := range []string{"authn_application_adapter.go", "authn_application_facts.go"} {
+	for _, filename := range []string{
+		"authn_application_adapter.go",
+		"authn_application_facts.go",
+		"authn_candidate_runtime.go",
+		"authn_policy_facts.go",
+		"authn_policy_effects.go",
+	} {
 		parsed := parseAuthnBoundaryFile(t, filename)
 		for _, imported := range parsed.Imports {
 			path, err := strconv.Unquote(imported.Path.Value)
@@ -35,12 +41,19 @@ func TestAuthnApplicationAdapterImportsOnlyDecisionServiceBoundary(t *testing.T)
 				t.Fatalf("unquote import in %s: %v", filename, err)
 			}
 
-			for _, forbidden := range []string{
+			forbiddenImports := []string{
 				"/server/policy/compiler",
 				"/server/policy/evaluation",
-				"/server/policy/registry",
-				"/server/policy/runtime",
-			} {
+			}
+			if filename != "authn_policy_effects.go" {
+				forbiddenImports = append(forbiddenImports, "/server/policy/runtime")
+			}
+
+			if filename != "authn_policy_effects.go" && filename != "authn_policy_facts.go" {
+				forbiddenImports = append(forbiddenImports, "/server/policy/registry")
+			}
+
+			for _, forbidden := range forbiddenImports {
 				if strings.HasPrefix(path, "github.com/croessner/nauthilus/v3"+forbidden) {
 					t.Fatalf("%s imports forbidden policy implementation %q", filename, path)
 				}

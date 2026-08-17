@@ -28,7 +28,6 @@ import (
 )
 
 const (
-	pluginSubjectCheckPrefix     = "plugin_subject_"
 	pluginSubjectConfigRefPrefix = "plugins.modules."
 	pluginErrorDetailKey         = "reason_code"
 	pluginErrorReason            = "plugin_error"
@@ -372,20 +371,7 @@ func applySubjectLevelResults(
 }
 
 func subjectPlan(components []pluginregistry.Component, mode pipeline.ModeMask) (pipeline.Plan, error) {
-	nodes := make([]pipeline.Node, 0, len(components))
-	for index, component := range components {
-		dependencies := append([]string(nil), component.SourceDescriptor.Requires...)
-		dependencies = append(dependencies, component.SourceDescriptor.After...)
-		nodes = append(nodes, pipeline.Node{
-			Name:      component.QualifiedName,
-			DependsOn: dependencies,
-			Index:     index,
-			Modes:     pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated | pipeline.ModeNoAuth,
-			Value:     component,
-		})
-	}
-
-	return pipeline.BuildPlan(nodes, mode)
+	return pluginregistry.BuildSourcePlan(components, mode)
 }
 
 func subjectMode(auth *core.AuthState, passDBResult *core.PassDBResult, current definitions.AuthResult) pipeline.ModeMask {
@@ -937,7 +923,7 @@ func policyOperationAllowed(operations []policy.Operation, operation policy.Oper
 }
 
 func pluginSubjectCheckName(component pluginregistry.Component) string {
-	return pluginSubjectCheckPrefix + strings.ReplaceAll(component.QualifiedName, ".", "_")
+	return policy.PluginSubjectCheckName(component.ModuleName, component.LocalName)
 }
 
 func pluginSubjectConfigRef(component pluginregistry.Component) string {

@@ -355,7 +355,7 @@ func (a *AuthState) defaultPolicyPreAuthDecision(ctx *gin.Context) (*report.Fina
 		return nil, false
 	}
 
-	return evaluation.EvaluateStandardPreAuth(policyCtx.Report()).Final, true
+	return standardPolicyDecision(policyCtx.Report(), policy.StagePreAuth), true
 }
 
 func (a *AuthState) defaultPolicyAuthDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
@@ -364,7 +364,16 @@ func (a *AuthState) defaultPolicyAuthDecision(ctx *gin.Context) (*report.FinalDe
 		return nil, false
 	}
 
-	return evaluation.EvaluateStandardAuth(policyCtx.Report()).Final, true
+	return standardPolicyDecision(policyCtx.Report(), policy.StageAuthDecision), true
+}
+
+// standardPolicyDecision evaluates the single established builtin representation for one checkpoint.
+func standardPolicyDecision(policyReport *report.DecisionReport, stage policy.Stage) *report.FinalDecision {
+	if stage == policy.StagePreAuth {
+		return evaluation.EvaluateStandardPreAuth(policyReport).Final
+	}
+
+	return evaluation.EvaluateStandardAuth(policyReport).Final
 }
 
 func (a *AuthState) defaultPolicyContext(ctx *gin.Context, stage policy.Stage) (*policycollection.DecisionContext, bool) {
@@ -401,7 +410,7 @@ func (a *AuthState) applyPolicyDecision(ctx *gin.Context, final *report.FinalDec
 		a.markEnvironmentRejected(ctx)
 	}
 
-	if err := a.applyAuthFSMMarkers(evaluation.TargetFSMEventMarkers(a.policyReport(ctx), final)); err != nil {
+	if err := a.applySelectedAuthFSMMarkers(ctx, final); err != nil {
 		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
 
 		return
@@ -427,6 +436,11 @@ func (a *AuthState) applyPolicyDecision(ctx *gin.Context, final *report.FinalDec
 		ctx.Abort()
 	default:
 	}
+}
+
+// applySelectedAuthFSMMarkers maps one selected decision through the established FSM projection.
+func (a *AuthState) applySelectedAuthFSMMarkers(ctx *gin.Context, final *report.FinalDecision) error {
+	return a.applyAuthFSMMarkers(evaluation.TargetFSMEventMarkers(a.policyReport(ctx), final))
 }
 
 func (a *AuthState) policyReport(ctx *gin.Context) *report.DecisionReport {

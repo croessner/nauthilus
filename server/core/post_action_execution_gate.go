@@ -53,16 +53,45 @@ func InstallPostActionExecutionGate(ctx *gin.Context) *PostActionExecutionGate {
 
 // ContextWithPostActionExecutionGate installs a gate on a standard request context.
 func ContextWithPostActionExecutionGate(ctx context.Context) (context.Context, *PostActionExecutionGate) {
+	return contextWithPostActionExecutionBoundary(ctx, effectsupervisor.BoundaryGRPCUnaryReturn)
+}
+
+// ContextWithHTTPPostActionExecutionGate installs a transport-owned HTTP commit gate.
+func ContextWithHTTPPostActionExecutionGate(ctx context.Context) (context.Context, *PostActionExecutionGate) {
+	return contextWithPostActionExecutionBoundary(ctx, effectsupervisor.BoundaryHTTPCommit)
+}
+
+// contextWithPostActionExecutionBoundary installs one transport-selected standard-context gate.
+func contextWithPostActionExecutionBoundary(
+	ctx context.Context,
+	boundary effectsupervisor.Boundary,
+) (context.Context, *PostActionExecutionGate) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	gate, err := effectsupervisor.NewGate(effectsupervisor.BoundaryGRPCUnaryReturn)
+	gate, err := effectsupervisor.NewGate(boundary)
 	if err != nil {
 		panic(err)
 	}
 
-	return context.WithValue(ctx, postActionExecutionGateContextKey{}, gate), gate
+	return contextWithPostActionExecutionGate(ctx, gate), gate
+}
+
+// contextWithPostActionExecutionGate attaches one already transport-owned gate.
+func contextWithPostActionExecutionGate(
+	ctx context.Context,
+	gate *PostActionExecutionGate,
+) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if gate == nil {
+		return ctx
+	}
+
+	return context.WithValue(ctx, postActionExecutionGateContextKey{}, gate)
 }
 
 // PostActionFinalizationGateFromContext returns a typed standard-context response gate.
@@ -164,6 +193,7 @@ func DetachedPostActionContext(requestContext context.Context) context.Context {
 func postActionResponseCompletionMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		gate := InstallPostActionExecutionGate(ctx)
+		ctx.Request = ctx.Request.WithContext(contextWithPostActionExecutionGate(ctx.Request.Context(), gate))
 
 		defer func() {
 			recovered := recover()

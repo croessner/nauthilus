@@ -208,20 +208,10 @@ func applyEnvironmentLevelResults(
 
 // environmentPlan builds the dependency plan for pre-auth environment sources.
 func environmentPlan(components []pluginregistry.Component) (pipeline.Plan, error) {
-	nodes := make([]pipeline.Node, 0, len(components))
-	for index, component := range components {
-		dependencies := append([]string(nil), component.SourceDescriptor.Requires...)
-		dependencies = append(dependencies, component.SourceDescriptor.After...)
-		nodes = append(nodes, pipeline.Node{
-			Name:      component.QualifiedName,
-			DependsOn: dependencies,
-			Index:     index,
-			Modes:     pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated | pipeline.ModeNoAuth,
-			Value:     component,
-		})
-	}
-
-	return pipeline.BuildPlan(nodes, pipeline.ModeUnauthenticated|pipeline.ModeNoAuth|pipeline.ModeAuthenticated)
+	return pluginregistry.BuildSourcePlan(
+		components,
+		pipeline.ModeUnauthenticated|pipeline.ModeNoAuth|pipeline.ModeAuthenticated,
+	)
 }
 
 // environmentRequest maps AuthState into the stable plugin API request shape.

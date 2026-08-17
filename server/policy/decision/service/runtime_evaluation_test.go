@@ -576,6 +576,10 @@ func TestDecisionRuntimeEffectOwnershipFailureAndAmbiguity(t *testing.T) {
 		t.Fatalf("acceptance failure effect/sync/accept = %q/%d/%d", outcome.response.Effect(), syncProvider.callCount(), acceptor.callCount())
 	}
 
+	if outcome.response.Status().Code() != decision.StatusCodeEffectAcceptanceRejected {
+		t.Fatalf("acceptance failure status = %q, want %q", outcome.response.Status().Code(), decision.StatusCodeEffectAcceptanceRejected)
+	}
+
 	if work.cleanupCount() != 1 {
 		t.Fatalf("rejected post-action cleanup count = %d, want 1", work.cleanupCount())
 	}
@@ -928,7 +932,7 @@ func TestDecisionRuntimeBoundsBlockingAndPanickingPostActionPreparation(t *testi
 	}
 }
 
-func TestDecisionRuntimeBoundsCleanupAfterLaterPreparationFailure(t *testing.T) {
+func TestDecisionRuntimePreservesAcceptedPostActionAfterLaterPreparationFailure(t *testing.T) {
 	target, _ := decision.NewTarget("mail", "submit")
 	provider := decisionRuntimeHostProvider(t, target, "mail/post_provider", registry.ExecutionHostPostAction, &recordingEffectAcceptor{})
 	effects := []registry.EffectDefinition{
@@ -942,40 +946,21 @@ func TestDecisionRuntimeBoundsCleanupAfterLaterPreparationFailure(t *testing.T) 
 	catalog, target := decisionRuntimeCatalogWithSelections(
 		t, decision.EffectPermit, registry.NoMatchDeny, nil, []registry.ProviderDefinition{provider}, effects, uses, nil,
 	)
-	release := make(chan struct{})
-	started := make(chan struct{})
-	work := &blockingCleanupWork{started: started, release: release}
+	work := &recordingPostActionWork{result: effectsupervisor.Succeeded()}
 	evaluator := mustCheckpointRuntime(t, checkpointRuntimeConfig{
-		catalog: catalog, ids: &sequenceIDGenerator{}, evaluationTimeout: 10 * time.Millisecond,
+		catalog: catalog, ids: &sequenceIDGenerator{}, evaluationTimeout: time.Second,
 		postActions: map[string]postActionBinding{
 			"mail/post_provider": {provider: &laterFailingPostActionProvider{work: work}},
 		},
 	})
-	result := make(chan runtimeEvaluation, 1)
 
-	go func() {
-		result <- evaluateRuntimeOutcome(t, evaluator, target, &recordingEffectAcceptor{})
-	}()
-
-	select {
-	case <-started:
-	case <-time.After(100 * time.Millisecond):
-		close(release)
-
-		t.Fatal("prepared work cleanup did not start")
+	outcome := evaluateRuntimeOutcome(t, evaluator, target, &recordingEffectAcceptor{})
+	if outcome.response.Effect() != decision.EffectIndeterminate {
+		t.Fatalf("later preparation failure effect = %q, want indeterminate", outcome.response.Effect())
 	}
 
-	select {
-	case outcome := <-result:
-		close(release)
-
-		if outcome.response.Effect() != decision.EffectIndeterminate {
-			t.Fatalf("cleanup failure effect = %q, want indeterminate", outcome.response.Effect())
-		}
-	case <-time.After(100 * time.Millisecond):
-		close(release)
-
-		t.Fatal("blocking cleanup exceeded the evaluation deadline")
+	if work.cleanupCount() != 0 {
+		t.Fatalf("accepted earlier work cleanup count = %d, want 0", work.cleanupCount())
 	}
 }
 
@@ -1155,11 +1140,6 @@ type laterFailingPostActionProvider struct {
 	calls int
 }
 
-type blockingCleanupWork struct {
-	started chan<- struct{}
-	release <-chan struct{}
-}
-
 type panickingFactProvider struct{}
 
 // Prepare returns one explicitly owned executable work item.
@@ -1179,7 +1159,7 @@ func (panickingPostActionProvider) Prepare(context.Context, effectExecution) (ef
 	panic("post-action prepare panic")
 }
 
-// Prepare returns one work item before failing the later complete-plan preparation.
+// Prepare returns one accepted work item before a later ordinal fails preparation.
 func (p *laterFailingPostActionProvider) Prepare(context.Context, effectExecution) (effectsupervisor.Work, error) {
 	p.calls++
 
@@ -1188,22 +1168,6 @@ func (p *laterFailingPostActionProvider) Prepare(context.Context, effectExecutio
 	}
 
 	return nil, errors.New("later preparation failed")
-}
-
-// Validate accepts the cleanup containment fixture.
-func (w *blockingCleanupWork) Validate() error {
-	return nil
-}
-
-// Execute is unreachable because complete preparation fails first.
-func (w *blockingCleanupWork) Execute(context.Context) effectsupervisor.Result {
-	return effectsupervisor.Failed("unexpected_execution")
-}
-
-// Cleanup deliberately blocks until the test releases it.
-func (w *blockingCleanupWork) Cleanup() {
-	close(w.started)
-	<-w.release
 }
 
 // Collect panics to prove fact-provider faults fail closed.

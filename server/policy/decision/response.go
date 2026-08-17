@@ -81,6 +81,9 @@ const (
 
 	// StatusCodeEffectOutcomeUnknown reports non-retryable ambiguous synchronous effect delivery.
 	StatusCodeEffectOutcomeUnknown StatusCode = "effect_outcome_unknown"
+
+	// StatusCodeEffectAcceptanceRejected reports rejected mandatory post-action ownership.
+	StatusCodeEffectAcceptanceRejected StatusCode = "effect_acceptance_rejected"
 )
 
 // NewValidationDetail constructs a safe field-level detail for later status validation.
@@ -416,7 +419,8 @@ func (c StatusCode) valid() bool {
 		StatusCodeNoMatchDeny,
 		StatusCodeEvaluationFailed,
 		StatusCodeProviderUnavailable,
-		StatusCodeEffectOutcomeUnknown:
+		StatusCodeEffectOutcomeUnknown,
+		StatusCodeEffectAcceptanceRejected:
 		return true
 	default:
 		return false
@@ -425,7 +429,9 @@ func (c StatusCode) valid() bool {
 
 // retryable derives retry guidance from the stable taxonomy.
 func (c StatusCode) retryable() bool {
-	return c == StatusCodeEvaluationFailed || c == StatusCodeProviderUnavailable
+	return c == StatusCodeEvaluationFailed ||
+		c == StatusCodeProviderUnavailable ||
+		c == StatusCodeEffectAcceptanceRejected
 }
 
 // validQualifiedIdentity validates a namespace/name identity.

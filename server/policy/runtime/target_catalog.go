@@ -77,6 +77,7 @@ type CompiledRuleRecord struct {
 	PolicySetID                      registry.PolicySetID
 	Name                             string
 	Checkpoint                       string
+	PresentationStage                string
 	RequiredProviders                []string
 	Expression                       registry.PolicyExpression
 	Effects                          []registry.EffectUse
@@ -100,6 +101,7 @@ func ProjectPolicyRule(
 ) CompiledRuleRecord {
 	return CompiledRuleRecord{
 		Target: target, PolicySetID: setID, Name: rule.Name(), Checkpoint: checkpoint,
+		PresentationStage: rule.PresentationStage(),
 		RequiredProviders: rule.RequiredProviders(), Expression: rule.Expression(), Effects: rule.Effects(), Advice: rule.Advice(),
 		Decision: rule.Decision(), Reason: rule.Reason(), OutcomeMarker: rule.OutcomeMarker(),
 		FSMEventMarker: rule.FSMEventMarker(), ResponseMarker: rule.ResponseMarker(),
@@ -199,6 +201,7 @@ type CompiledRule struct {
 	policySetID                      registry.PolicySetID
 	name                             string
 	checkpoint                       string
+	presentationStage                string
 	requiredProviders                []string
 	expression                       registry.PolicyExpression
 	effects                          []registry.EffectUse
@@ -256,6 +259,11 @@ func (r CompiledRule) Advice() []registry.EffectUse {
 // Decision returns the configured authoritative result.
 func (r CompiledRule) Decision() decision.Effect {
 	return r.decision
+}
+
+// PresentationStage returns the optional builtin authn semantic stage.
+func (r CompiledRule) PresentationStage() string {
+	return r.presentationStage
 }
 
 // Reason returns the retained stable decision reason.
@@ -1633,7 +1641,7 @@ func compileRuleRecords(
 
 	result := make([]CompiledRule, 0, len(expected))
 	for index, record := range checkpoint.Rules {
-		if err := validateCompiledRuleRecord(target, schema, checkpoint, record, expected[index], index); err != nil {
+		if err := validateCompiledRuleRecord(target, schema, checkpoint, record, expected[index], policySets, index); err != nil {
 			return nil, err
 		}
 
@@ -1650,6 +1658,7 @@ func validateCompiledRuleRecord(
 	checkpoint CheckpointRecord,
 	record CompiledRuleRecord,
 	expected CompiledRuleRecord,
+	policySets map[string]CompiledPolicySet,
 	index int,
 ) error {
 	if record.Target.String() != target.String() || record.Checkpoint != checkpoint.Name ||
@@ -1663,7 +1672,8 @@ func validateCompiledRuleRecord(
 		return fmt.Errorf("%w: rule %s references unbound set %s", ErrInvalidCompiledTarget, record.Name, record.PolicySetID.String())
 	}
 
-	if record.Decision != decision.EffectPermit && record.Decision != decision.EffectDeny {
+	set := policySets[record.PolicySetID.String()]
+	if !runtimeRuleDecisionAllowed(record.Decision, set.IsBuiltinStandardAuth()) {
 		return fmt.Errorf("%w: rule %s has reserved result %s", ErrInvalidCompiledTarget, record.Name, record.Decision)
 	}
 
@@ -1703,6 +1713,7 @@ func validateRuntimeRuleFacts(schema registry.SchemaDefinition, record CompiledR
 func newCompiledRule(record CompiledRuleRecord) CompiledRule {
 	return CompiledRule{
 		target: record.Target, policySetID: record.PolicySetID, name: record.Name, checkpoint: record.Checkpoint,
+		presentationStage: record.PresentationStage,
 		requiredProviders: append([]string(nil), record.RequiredProviders...), expression: record.Expression,
 		effects: append([]registry.EffectUse(nil), record.Effects...), advice: append([]registry.EffectUse(nil), record.Advice...),
 		decision: record.Decision, reason: record.Reason, outcomeMarker: record.OutcomeMarker,
@@ -1710,6 +1721,15 @@ func newCompiledRule(record CompiledRuleRecord) CompiledRule {
 		responseMessage: record.ResponseMessage, responseLanguage: record.ResponseLanguage,
 		skipRemainingCheckpointProviders: record.SkipRemainingCheckpointProviders,
 	}
+}
+
+// runtimeRuleDecisionAllowed retains reserved outcomes only for authenticated builtin standard rules.
+func runtimeRuleDecisionAllowed(effect decision.Effect, builtinStandardAuth bool) bool {
+	if effect == decision.EffectPermit || effect == decision.EffectDeny {
+		return true
+	}
+
+	return builtinStandardAuth && (effect == decision.EffectIndeterminate || effect == decision.EffectNotApplicable)
 }
 
 // runtimeSchemaContainsFact resolves one exact response metadata fact contract.
@@ -1749,7 +1769,8 @@ func expectedRuntimeRuleRecords(
 func equalCompiledRuleRecords(left CompiledRuleRecord, right CompiledRuleRecord) bool {
 	if left.Target.String() != right.Target.String() ||
 		left.PolicySetID.String() != right.PolicySetID.String() ||
-		left.Name != right.Name || left.Checkpoint != right.Checkpoint || left.Decision != right.Decision {
+		left.Name != right.Name || left.Checkpoint != right.Checkpoint ||
+		left.PresentationStage != right.PresentationStage || left.Decision != right.Decision {
 		return false
 	}
 

@@ -240,6 +240,10 @@ func compileAttributeRegistry(
 		return nil, nil, policyruntime.RequestAttributeSettings{}, err
 	}
 
+	if err := registerStandardAuthSourceAttributes(file, attributeRegistry); err != nil {
+		return nil, nil, policyruntime.RequestAttributeSettings{}, err
+	}
+
 	if err := registerGeneratedBruteForceBucketAttributes(file, attributeRegistry); err != nil {
 		return nil, nil, policyruntime.RequestAttributeSettings{}, err
 	}

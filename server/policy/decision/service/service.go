@@ -36,8 +36,57 @@ type DecisionSessionFactory interface {
 
 // DecisionSession evaluates multiple checkpoints on one admitted captured generation.
 type DecisionSession interface {
-	Checkpoints() []string
+	Checkpoints() []CheckpointPlan
+	RequestContext(context.Context) context.Context
 	Evaluate(context.Context, decision.Checkpoint) (decision.DecisionResponse, error)
+}
+
+// CheckpointPlan is one detached checkpoint and its immutable provider order.
+type CheckpointPlan struct {
+	name        string
+	providerIDs []string
+}
+
+// newCheckpointPlan constructs one detached runtime-owned checkpoint plan.
+func newCheckpointPlan(name string, providerIDs []string) CheckpointPlan {
+	return CheckpointPlan{name: name, providerIDs: append([]string(nil), providerIDs...)}
+}
+
+// NewCheckpointPlan constructs one detached session-boundary checkpoint descriptor.
+func NewCheckpointPlan(name string, providerIDs []string) (CheckpointPlan, error) {
+	if name == "" {
+		return CheckpointPlan{}, fmt.Errorf("%w: checkpoint name is required", ErrDecisionEvaluation)
+	}
+
+	seen := make(map[string]struct{}, len(providerIDs))
+	for _, providerID := range providerIDs {
+		if providerID == "" {
+			return CheckpointPlan{}, fmt.Errorf("%w: provider identity is required", ErrDecisionEvaluation)
+		}
+
+		if _, exists := seen[providerID]; exists {
+			return CheckpointPlan{}, fmt.Errorf("%w: duplicate provider identity", ErrDecisionEvaluation)
+		}
+
+		seen[providerID] = struct{}{}
+	}
+
+	return newCheckpointPlan(name, providerIDs), nil
+}
+
+// Name returns the exact checkpoint identity.
+func (p CheckpointPlan) Name() string {
+	return p.name
+}
+
+// ProviderIDs returns the detached scheduled host-provider order.
+func (p CheckpointPlan) ProviderIDs() []string {
+	return append([]string(nil), p.providerIDs...)
+}
+
+// clone returns one deeply detached checkpoint plan.
+func (p CheckpointPlan) clone() CheckpointPlan {
+	return newCheckpointPlan(p.name, p.providerIDs)
 }
 
 // DecisionService is the sole callable policy decision application authority.
@@ -155,14 +204,14 @@ func sessionCheckpointPlan(
 	evaluator checkpointEvaluator,
 	target decision.Target,
 	requireCompiledPlan bool,
-) ([]string, error) {
+) ([]CheckpointPlan, error) {
 	source, ok := evaluator.(checkpointPlanSource)
 	if !ok {
 		if requireCompiledPlan {
 			return nil, fmt.Errorf("%w: authn evaluator has no compiled checkpoint plan", ErrDecisionEvaluation)
 		}
 
-		return []string{decision.CheckpointFinalDecision}, nil
+		return []CheckpointPlan{newCheckpointPlan(decision.CheckpointFinalDecision, nil)}, nil
 	}
 
 	checkpoints, err := source.Checkpoints(target)
@@ -170,7 +219,7 @@ func sessionCheckpointPlan(
 		return nil, fmt.Errorf("%w: target has no compiled checkpoint plan", ErrDecisionEvaluation)
 	}
 
-	return append([]string(nil), checkpoints...), nil
+	return cloneCheckpointPlans(checkpoints), nil
 }
 
 // validAuthnTarget restricts reusable sessions to the exact builtin authn operations.
@@ -276,7 +325,7 @@ type decisionSession struct {
 	generation   *runtimeGeneration
 	request      decision.DecisionRequest
 	finalization decision.EvaluationFinalization
-	checkpoints  []string
+	checkpoints  []CheckpointPlan
 	mu           sync.Mutex
 	evaluations  sync.WaitGroup
 	next         int
@@ -284,8 +333,25 @@ type decisionSession struct {
 	closed       bool
 }
 
+// RequestContext binds host work to the exact policy view captured by this session.
+func (s *decisionSession) RequestContext(ctx context.Context) context.Context {
+	ctx = normalizeContext(ctx)
+	if s == nil || s.generation == nil {
+		return ctx
+	}
+
+	ctx = policyruntime.ContextWithGeneration(ctx, s.generation.id)
+	source, ok := s.generation.evaluator.(authnPolicySnapshotSource)
+
+	if !ok {
+		return ctx
+	}
+
+	return policyruntime.ContextWithPolicySnapshot(ctx, source.authnPolicySnapshot())
+}
+
 // Checkpoints returns the detached compiled plan while the session is in scope.
-func (s *decisionSession) Checkpoints() []string {
+func (s *decisionSession) Checkpoints() []CheckpointPlan {
 	if s == nil {
 		return nil
 	}
@@ -297,7 +363,17 @@ func (s *decisionSession) Checkpoints() []string {
 		return nil
 	}
 
-	return append([]string(nil), s.checkpoints...)
+	return cloneCheckpointPlans(s.checkpoints)
+}
+
+// cloneCheckpointPlans detaches checkpoint identities and provider schedules together.
+func cloneCheckpointPlans(plans []CheckpointPlan) []CheckpointPlan {
+	result := make([]CheckpointPlan, 0, len(plans))
+	for _, plan := range plans {
+		result = append(result, plan.clone())
+	}
+
+	return result
 }
 
 // Evaluate runs one checkpoint on the generation and evaluator captured by the session.
@@ -345,7 +421,7 @@ func (s *decisionSession) beginEvaluation(checkpoint string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.closed || s.evaluating || !s.generation.valid() || s.next >= len(s.checkpoints) || s.checkpoints[s.next] != checkpoint {
+	if s.closed || s.evaluating || !s.generation.valid() || s.next >= len(s.checkpoints) || s.checkpoints[s.next].Name() != checkpoint {
 		return false
 	}
 

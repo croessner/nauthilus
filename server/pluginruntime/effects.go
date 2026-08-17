@@ -29,6 +29,7 @@ import (
 )
 
 var _ core.PluginEffectBridge = (*EffectBridge)(nil)
+var _ core.PluginPostActionWorkPreparer = (*EffectBridge)(nil)
 
 var errPostActionDispatchAmbiguous = errors.New("post-action external dispatch outcome is unknown")
 
@@ -138,6 +139,31 @@ func (b *EffectBridge) EnqueuePostActionPlan(
 	}
 
 	return true, true
+}
+
+// PreparePostActionWork captures one native plan step for the caller's supervisor.
+func (b *EffectBridge) PreparePostActionWork(
+	ctx *gin.Context,
+	view *core.StateView,
+	step core.PostActionPlanStep,
+) (effectsupervisor.ExecutableWork, bool) {
+	auth := authFromView(view)
+	if b == nil || b.runner == nil || auth == nil || step.Kind() != core.PostActionPlanStepNative {
+		return nil, false
+	}
+
+	plan, err := b.newPostActionPlan(ctx, auth, []core.PostActionPlanStep{step})
+	if err != nil {
+		return nil, false
+	}
+
+	if len(plan.works) != 1 {
+		plan.Cleanup()
+
+		return nil, false
+	}
+
+	return plan.works[0], true
 }
 
 const postActionPlanWorkerName = "post_action_plan"

@@ -41,6 +41,7 @@ const (
 // CapturedAuthOutcome stores the transport-neutral terminal auth outcome.
 type CapturedAuthOutcome struct {
 	Attributes              bktype.AttributeMapping
+	FSMEventPath            []string
 	Decision                CapturedAuthDecision
 	TerminalState           string
 	Session                 string
@@ -88,6 +89,7 @@ func (w *CaptureResponseWriter) Outcome() CapturedAuthOutcome {
 
 	out := w.outcome
 	out.Attributes = cloneAttributeMapping(out.Attributes)
+	out.FSMEventPath = append([]string(nil), out.FSMEventPath...)
 	out.Groups = append([]string(nil), out.Groups...)
 	out.GroupDistinguishedNames = append([]string(nil), out.GroupDistinguishedNames...)
 
@@ -145,6 +147,7 @@ func (w *CaptureResponseWriter) captureOutcome(
 
 	w.outcome = CapturedAuthOutcome{
 		Attributes:              auth.GetAttributesCopy(),
+		FSMEventPath:            append([]string(nil), auth.Runtime.AuthFSMEventPath...),
 		Decision:                decision,
 		TerminalState:           string(terminalState),
 		Session:                 auth.Runtime.GUID,

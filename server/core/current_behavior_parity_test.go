@@ -362,7 +362,8 @@ func newCurrentBehaviorAuthState(t *testing.T, cfg *config.FileSettings) (*AuthS
 	return auth, ctx, mock
 }
 
-func withCurrentBehaviorLuaEnvironment(t *testing.T, script string) {
+// withCurrentBehaviorLuaEnvironment installs one compiled source and returns its configured path.
+func withCurrentBehaviorLuaEnvironment(t *testing.T, script string) string {
 	t.Helper()
 
 	scriptPath := filepath.Join(t.TempDir(), "environment.lua")
@@ -389,6 +390,8 @@ func withCurrentBehaviorLuaEnvironment(t *testing.T, script string) {
 	t.Cleanup(func() {
 		environmentlib.LuaEnvironmentSources = previous
 	})
+
+	return scriptPath
 }
 
 func newCurrentBehaviorApplicationService(
@@ -471,4 +474,4 @@ func (s currentBehaviorDenyingSubject) Analyze(_ *gin.Context, view *StateView, 
 
 type currentBehaviorPostAction struct{}
 
-func (currentBehaviorPostAction) Run(PostActionInput) bool { return true }
+func (currentBehaviorPostAction) Run(PostActionInput) PostActionResult { return PostActionSucceeded() }

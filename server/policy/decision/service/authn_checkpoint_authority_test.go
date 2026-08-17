@@ -36,6 +36,12 @@ const (
 	authnObservedProvider  = "authn/observed_mutation_owner"
 )
 
+type authnOperationPlanCase struct {
+	action        string
+	want          []string
+	wantProviders [][]string
+}
+
 func TestAuthnStandardAuthCheckpointFallbackIsNeutralThenDefaultDeny(t *testing.T) {
 	evaluator, _ := mustBuiltinAuthnCheckpointRuntime(t)
 	generation := mustRuntimeGeneration(
@@ -49,7 +55,7 @@ func TestAuthnStandardAuthCheckpointFallbackIsNeutralThenDefaultDeny(t *testing.
 
 	err := service.WithSession(context.Background(), mustAuthorityInvocation(t, true), func(session DecisionSession) error {
 		wantPlan := []string{string(policy.StagePreAuth), string(policy.StageAuthDecision)}
-		if got := session.Checkpoints(); !reflect.DeepEqual(got, wantPlan) {
+		if got := checkpointPlanNames(session.Checkpoints()); !reflect.DeepEqual(got, wantPlan) {
 			t.Fatalf("session checkpoints = %v, want %v", got, wantPlan)
 		}
 
@@ -71,13 +77,39 @@ func TestAuthnStandardAuthCheckpointFallbackIsNeutralThenDefaultDeny(t *testing.
 }
 
 func TestAuthnCheckpointSessionUsesExactOperationPlans(t *testing.T) {
-	tests := []struct {
-		action string
-		want   []string
-	}{
-		{action: string(policy.OperationAuthenticate), want: []string{"pre_auth", "auth_decision"}},
-		{action: string(policy.OperationLookupIdentity), want: []string{"pre_auth", "auth_decision"}},
-		{action: string(policy.OperationListAccounts), want: []string{"auth_decision"}},
+	tests := []authnOperationPlanCase{
+		{
+			action: string(policy.OperationAuthenticate),
+			want:   []string{"pre_auth", "auth_decision"},
+			wantProviders: [][]string{
+				{policy.AuthnProviderBruteForce},
+				{
+					policy.AuthnProviderEnvironment,
+					policy.AuthnProviderTLSEncryption,
+					policy.AuthnProviderRelayDomains,
+					policy.AuthnProviderRBL,
+					policy.AuthnProviderBackend,
+					policy.AuthnProviderSubject,
+				},
+			},
+		},
+		{
+			action: string(policy.OperationLookupIdentity),
+			want:   []string{"pre_auth", "auth_decision"},
+			wantProviders: [][]string{
+				{
+					policy.AuthnProviderEnvironment,
+					policy.AuthnProviderTLSEncryption,
+					policy.AuthnProviderRBL,
+				},
+				{policy.AuthnProviderBackend, policy.AuthnProviderSubject},
+			},
+		},
+		{
+			action:        string(policy.OperationListAccounts),
+			want:          []string{"auth_decision"},
+			wantProviders: [][]string{{policy.AuthnProviderAccount}},
+		},
 	}
 
 	service := mustAuthnOperationPlanService(t, tests)
@@ -88,8 +120,13 @@ func TestAuthnCheckpointSessionUsesExactOperationPlans(t *testing.T) {
 				context.Background(),
 				mustAuthorityTargetInvocation(t, policy.AuthnNamespace, test.action),
 				func(session DecisionSession) error {
-					if got := session.Checkpoints(); !reflect.DeepEqual(got, test.want) {
+					plans := session.Checkpoints()
+					if got := checkpointPlanNames(plans); !reflect.DeepEqual(got, test.want) {
 						t.Fatalf("checkpoints = %v, want %v", got, test.want)
+					}
+
+					if got := checkpointProviderPlans(plans); !reflect.DeepEqual(got, test.wantProviders) {
+						t.Fatalf("checkpoint providers = %v, want %v", got, test.wantProviders)
 					}
 
 					return nil
@@ -115,10 +152,16 @@ func TestAuthnCheckpointSessionRejectsOutOfOrderEvaluation(t *testing.T) {
 
 	err := service.WithSession(context.Background(), mustAuthorityInvocation(t, true), func(session DecisionSession) error {
 		detached := session.Checkpoints()
-		detached[0] = "auth_decision"
+		providers := detached[0].ProviderIDs()
+		providers[0] = "authn/tampered"
+		detached[0] = newCheckpointPlan("auth_decision", []string{"authn/tampered"})
 
-		if got := session.Checkpoints()[0]; got != "pre_auth" {
+		if got := session.Checkpoints()[0].Name(); got != "pre_auth" {
 			t.Fatalf("mutated session checkpoint = %q, want pre_auth", got)
+		}
+
+		if got := session.Checkpoints()[0].ProviderIDs()[0]; got != policy.AuthnProviderBruteForce {
+			t.Fatalf("mutated session provider = %q, want %q", got, policy.AuthnProviderBruteForce)
 		}
 
 		facts, factErr := decision.NewFactSet(nil)
@@ -143,6 +186,26 @@ func TestAuthnCheckpointSessionRejectsOutOfOrderEvaluation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecisionService.WithSession() error = %v", err)
 	}
+}
+
+// checkpointPlanNames projects only checkpoint identities for order assertions.
+func checkpointPlanNames(plans []CheckpointPlan) []string {
+	result := make([]string, 0, len(plans))
+	for _, plan := range plans {
+		result = append(result, plan.Name())
+	}
+
+	return result
+}
+
+// checkpointProviderPlans projects detached provider orders for schedule assertions.
+func checkpointProviderPlans(plans []CheckpointPlan) [][]string {
+	result := make([][]string, 0, len(plans))
+	for _, plan := range plans {
+		result = append(result, plan.ProviderIDs())
+	}
+
+	return result
 }
 
 func TestAuthnObserveCheckpointRecordsComparisonWithoutEffects(t *testing.T) {
@@ -244,10 +307,7 @@ func evaluateAuthnRuntimeCheckpoint(
 // mustAuthnOperationPlanService compiles every requested builtin operation into one runtime.
 func mustAuthnOperationPlanService(
 	t *testing.T,
-	tests []struct {
-		action string
-		want   []string
-	},
+	tests []authnOperationPlanCase,
 ) *DecisionService {
 	t.Helper()
 

@@ -80,7 +80,13 @@ func (a *AuthState) requestPolicyContext(ctx *gin.Context) *policycollection.Dec
 		clearPolicyContext(ctx)
 	}
 
-	snapshot := policyruntime.DefaultStore().Active()
+	requestContext := contextFromGin(ctx)
+	snapshot := policyruntime.PolicySnapshotFromContext(requestContext)
+
+	if snapshot == nil && !authnCandidateRuntimeOwnsPolicy(ctx) {
+		snapshot = policyruntime.DefaultStore().Active()
+	}
+
 	if snapshot == nil {
 		return nil
 	}

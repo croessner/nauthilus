@@ -85,6 +85,7 @@ func (runtimeApplicationPreparationSlot) Prepare(
 
 	evaluator, err := newCheckpointRuntime(checkpointRuntimeConfig{
 		catalog:           input.TargetCatalog(),
+		policySnapshot:    input.PolicySnapshot(),
 		factProviders:     capturedFactProviderBindings(bindings),
 		syncEffects:       capturedSyncEffectBindings(bindings),
 		postActions:       capturedPostActionBindings(bindings),

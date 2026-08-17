@@ -121,6 +121,8 @@ type AttributeDefinition struct {
 	ProducerTypes []string
 	// ProducerCheck names one compiled policy check that must be active.
 	ProducerCheck string
+	// ProducerOrder preserves host source execution order when rule precedence depends on it.
+	ProducerOrder uint32
 	Category      AttributeCategory
 	Type          AttributeType
 	Source        AttributeSource
@@ -169,6 +171,26 @@ func (r *AttributeRegistry) Lookup(id string) (AttributeDefinition, bool) {
 	}
 
 	return CloneDefinition(definition), true
+}
+
+// SetProducerOrder annotates an existing definition with captured host execution order.
+func (r *AttributeRegistry) SetProducerOrder(id string, order uint32) bool {
+	if r == nil || id == "" || order == 0 {
+		return false
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	definition, exists := r.attribute[id]
+	if !exists {
+		return false
+	}
+
+	definition.ProducerOrder = order
+	r.attribute[id] = definition
+
+	return true
 }
 
 // Snapshot returns a detached copy of all registered definitions.

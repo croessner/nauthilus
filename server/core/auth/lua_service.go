@@ -294,19 +294,19 @@ func applyLuaBackendGroups(auth *core.AuthState, luaBackendResult *lualib.LuaBac
 }
 
 // Run captures and transfers the established Lua post action into supervisor ownership.
-func (DefaultPostAction) Run(input core.PostActionInput) bool {
+func (DefaultPostAction) Run(input core.PostActionInput) core.PostActionResult {
 	if input.View == nil || input.View.Auth() == nil {
-		return false
+		return core.PostActionPreparationFailed()
 	}
 
 	auth := input.View.Auth()
 	if !canRunLuaPostAction(auth, input.Result) || !luaPostActionReadyWithContext(auth, auth.Runtime.Context) {
-		return true
+		return core.PostActionSucceeded()
 	}
 
 	runner := DefaultPostAction{}.PreparePlanStep(input)
 	if runner == nil {
-		return false
+		return defaultPostActionPreparationResult(auth)
 	}
 
 	if _, err := core.EnqueueLuaPostActionPlan(
@@ -316,16 +316,41 @@ func (DefaultPostAction) Run(input core.PostActionInput) bool {
 		[]core.PostActionPlanRunner{runner},
 		nil,
 	); err != nil {
+		result := defaultPostActionSupervisorResult(err)
 		_ = level.Warn(auth.Logger()).Log(
 			definitions.LogKeyGUID, auth.Runtime.GUID,
 			definitions.LogKeyMsg, "Post-action supervisor rejected Lua work",
-			"error_class", "acceptance_failed",
+			"error_class", string(result.State()),
 		)
 
-		return false
+		return result
 	}
 
-	return true
+	return core.PostActionSucceeded()
+}
+
+// defaultPostActionPreparationResult distinguishes cancellation from capture failure.
+func defaultPostActionPreparationResult(auth *core.AuthState) core.PostActionResult {
+	if auth != nil && auth.Request.HTTPClientRequest != nil {
+		if err := auth.Request.HTTPClientRequest.Context().Err(); err != nil {
+			return core.PostActionCanceled()
+		}
+	}
+
+	return core.PostActionPreparationFailed()
+}
+
+// defaultPostActionSupervisorResult preserves the synchronous failure cause class.
+func defaultPostActionSupervisorResult(err error) core.PostActionResult {
+	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+		return core.PostActionCanceled()
+	}
+
+	if stderrors.Is(err, effectsupervisor.ErrSaturated) || stderrors.Is(err, effectsupervisor.ErrShutdown) {
+		return core.PostActionAcceptanceRejected()
+	}
+
+	return core.PostActionPreparationFailed()
 }
 
 // PreparePlanStep captures all request-bound Lua inputs before detached execution.

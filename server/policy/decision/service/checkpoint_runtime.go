@@ -68,6 +68,7 @@ type factProviderBinding struct {
 
 type checkpointRuntimeConfig struct {
 	catalog           *policyruntime.TargetCatalog
+	policySnapshot    *policyruntime.Snapshot
 	factProviders     map[string]factProviderBinding
 	syncEffects       map[string]syncEffectBinding
 	postActions       map[string]postActionBinding
@@ -80,6 +81,7 @@ type checkpointRuntimeConfig struct {
 
 type checkpointRuntime struct {
 	catalog           *policyruntime.TargetCatalog
+	policySnapshot    *policyruntime.Snapshot
 	factProviders     map[string]factProviderBinding
 	syncEffects       map[string]syncEffectBinding
 	postActions       map[string]postActionBinding
@@ -150,6 +152,7 @@ func newCheckpointRuntime(config checkpointRuntimeConfig) (*checkpointRuntime, e
 
 	return &checkpointRuntime{
 		catalog:           config.catalog.Clone(),
+		policySnapshot:    config.policySnapshot.Clone(),
 		factProviders:     cloneFactProviderBindings(config.factProviders),
 		syncEffects:       cloneSyncEffectBindings(config.syncEffects),
 		postActions:       clonePostActionBindings(config.postActions),
@@ -161,8 +164,17 @@ func newCheckpointRuntime(config checkpointRuntimeConfig) (*checkpointRuntime, e
 	}, nil
 }
 
-// Checkpoints returns the compiled target order owned by this runtime candidate.
-func (r *checkpointRuntime) Checkpoints(target decision.Target) ([]string, error) {
+// authnPolicySnapshot returns the exact legacy-view projection captured with this runtime.
+func (r *checkpointRuntime) authnPolicySnapshot() *policyruntime.Snapshot {
+	if r == nil {
+		return nil
+	}
+
+	return r.policySnapshot.Clone()
+}
+
+// Checkpoints returns the compiled target and provider order owned by this runtime candidate.
+func (r *checkpointRuntime) Checkpoints(target decision.Target) ([]CheckpointPlan, error) {
 	if r == nil || r.catalog == nil {
 		return nil, fmt.Errorf("%w: target catalog is unavailable", ErrDecisionEvaluation)
 	}
@@ -174,9 +186,9 @@ func (r *checkpointRuntime) Checkpoints(target decision.Target) ([]string, error
 
 	checkpoints := compiled.DomainPlan().Checkpoints()
 
-	result := make([]string, 0, len(checkpoints))
+	result := make([]CheckpointPlan, 0, len(checkpoints))
 	for _, checkpoint := range checkpoints {
-		result = append(result, checkpoint.Name())
+		result = append(result, newCheckpointPlan(checkpoint.Name(), checkpoint.ProviderIDs()))
 	}
 
 	return result, nil
@@ -206,7 +218,17 @@ func (r *checkpointRuntime) Evaluate(ctx context.Context, input checkpointEvalua
 		return runtimeEvaluation{}, fmt.Errorf("%w: correlation identity generation failed", ErrDecisionEvaluation)
 	}
 
-	facts, err := buildAdmittedFacts(input.request, input.checkpoint.Facts(), target.Schema())
+	checkpointFacts, err := collectAuthnSourceFacts(
+		evaluationContext,
+		target.Target(),
+		checkpoint.Name(),
+		input.checkpoint.Facts(),
+	)
+	if err != nil {
+		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
+	}
+
+	facts, err := buildAdmittedFacts(input.request, checkpointFacts, target.Schema())
 	if err != nil {
 		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
 	}
@@ -236,7 +258,25 @@ func (r *checkpointRuntime) Evaluate(ctx context.Context, input checkpointEvalua
 	recordComparisonSelection(&report, comparison)
 
 	selected := r.selectRule(target, checkpoint, facts, report.providers)
-	response, report, _ := r.finalizeSelection(evaluationContext, input, target, selected, decisionID, requestID, report)
+
+	selection, selectedFinal, selectedControls, err := resolveAuthnDecisionSelection(
+		evaluationContext,
+		target,
+		checkpoint.Name(),
+		facts,
+		selected,
+	)
+	if err != nil {
+		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, report), nil
+	}
+
+	for _, control := range selectedControls {
+		captureAuthnDecisionSelection(evaluationContext, target.Target(), checkpoint.Name(), control)
+	}
+
+	captureAuthnDecisionSelection(evaluationContext, target.Target(), checkpoint.Name(), selectedFinal)
+
+	response, report, _ := r.finalizeSelection(evaluationContext, input, target, selection, decisionID, requestID, report)
 
 	return runtimeEvaluation{
 		response: response,

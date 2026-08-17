@@ -30,11 +30,11 @@ import (
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policyfsm "github.com/croessner/nauthilus/v3/server/policy/fsm"
 	"github.com/croessner/nauthilus/v3/server/policy/observability"
+	"github.com/croessner/nauthilus/v3/server/policy/presentation"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	"go.opentelemetry.io/otel/attribute"
-	"golang.org/x/text/language"
 )
 
 const (
@@ -542,12 +542,7 @@ func attributeResponseLanguage(
 }
 
 func normalizeRuntimeLanguage(value string) (string, bool) {
-	tag, err := language.Parse(strings.TrimSpace(value))
-	if err != nil {
-		return "", false
-	}
-
-	return tag.String(), true
+	return presentation.NormalizeResponseLanguage(value)
 }
 
 func attributeDetailMessage(

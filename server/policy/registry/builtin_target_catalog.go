@@ -30,7 +30,7 @@ const builtinTargetContributorID = "builtin.authn"
 const (
 	builtinAuthnMaximumFactText  = 4096
 	builtinAuthnMaximumFactItems = 1024
-	builtinBruteForceProvider    = "authn/brute_force"
+	builtinBruteForceProvider    = policy.AuthnProviderBruteForce
 	builtinLuaActionProvider     = "authn/lua_action"
 	builtinPostActionProvider    = "authn/post_action"
 	builtinBruteForceEffect      = "authn/brute_force_update"
@@ -41,17 +41,63 @@ const (
 	builtinActionLookupIdentity  = string(policy.OperationLookupIdentity)
 	builtinCheckpointDecision    = string(policy.StageAuthDecision)
 	builtinCheckpointPreAuth     = string(policy.StagePreAuth)
-	builtinEnvironmentProvider   = "authn/environment"
-	builtinTLSProvider           = "authn/tls_encryption"
-	builtinRelayProvider         = "authn/relay_domains"
-	builtinRBLProvider           = "authn/rbl"
-	builtinAuthBackendProvider   = "authn/auth_backend"
-	builtinSubjectProvider       = "authn/subject"
-	builtinAccountProvider       = "authn/account_provider"
+	builtinEnvironmentProvider   = policy.AuthnProviderEnvironment
+	builtinTLSProvider           = policy.AuthnProviderTLSEncryption
+	builtinRelayProvider         = policy.AuthnProviderRelayDomains
+	builtinRBLProvider           = policy.AuthnProviderRBL
+	builtinAuthBackendProvider   = policy.AuthnProviderBackend
+	builtinSubjectProvider       = policy.AuthnProviderSubject
+	builtinAccountProvider       = policy.AuthnProviderAccount
 )
+
+// BuiltinAuthEffectBinding describes one immutable standard-auth execution owner.
+type BuiltinAuthEffectBinding struct {
+	Selection string
+	EffectID  string
+	Provider  string
+	Execution ExecutionClass
+}
+
+var builtinAuthEffectBindings = []BuiltinAuthEffectBinding{
+	{
+		Selection: policy.ObligationBruteForceUpdate,
+		EffectID:  builtinBruteForceEffect,
+		Provider:  builtinBruteForceProvider,
+		Execution: ExecutionHostSync,
+	},
+	{
+		Selection: policy.ObligationLuaActionDispatch,
+		EffectID:  builtinLuaActionEffect,
+		Provider:  builtinLuaActionProvider,
+		Execution: ExecutionHostSync,
+	},
+	{
+		Selection: policy.ObligationLuaPostActionEnqueue,
+		EffectID:  builtinPostActionEffect,
+		Provider:  builtinPostActionProvider,
+		Execution: ExecutionHostPostAction,
+	},
+}
+
+// BuiltinAuthEffectBindings returns detached immutable standard-auth owner mappings.
+func BuiltinAuthEffectBindings() []BuiltinAuthEffectBinding {
+	return append([]BuiltinAuthEffectBinding(nil), builtinAuthEffectBindings...)
+}
+
+// BuiltinAuthEffectBindingForEffect resolves a canonical effect to its standard-auth selection owner.
+func BuiltinAuthEffectBindingForEffect(effectID string) (BuiltinAuthEffectBinding, bool) {
+	for _, binding := range builtinAuthEffectBindings {
+		if binding.EffectID == effectID {
+			return binding, true
+		}
+	}
+
+	return BuiltinAuthEffectBinding{}, false
+}
 
 type builtinTargetContributor struct {
 	postActionAcceptance effectsupervisor.Acceptor
+	policyAttributes     map[string]AttributeDefinition
 }
 
 // NewBuiltinTargetContributor returns the internal authn definition contributor.
@@ -62,6 +108,27 @@ func NewBuiltinTargetContributor(postActionAcceptance ...effectsupervisor.Accept
 	}
 
 	return builtinTargetContributor{postActionAcceptance: capability}
+}
+
+// NewBuiltinTargetContributorWithAuthnPolicy binds captured auth attribute definitions to the candidate catalog.
+func NewBuiltinTargetContributorWithAuthnPolicy(
+	attributes map[string]AttributeDefinition,
+	postActionAcceptance ...effectsupervisor.Acceptor,
+) Contributor {
+	contributor := NewBuiltinTargetContributor(postActionAcceptance...).(builtinTargetContributor)
+	contributor.policyAttributes = cloneAuthnPolicyAttributes(attributes)
+
+	return contributor
+}
+
+// cloneAuthnPolicyAttributes deeply owns the captured legacy attribute vocabulary.
+func cloneAuthnPolicyAttributes(attributes map[string]AttributeDefinition) map[string]AttributeDefinition {
+	result := make(map[string]AttributeDefinition, len(attributes))
+	for id, definition := range attributes {
+		result[id] = CloneDefinition(definition)
+	}
+
+	return result
 }
 
 // Contribute returns inactive authn target and exact schema definitions.
@@ -75,12 +142,12 @@ func (c builtinTargetContributor) Contribute(ctx context.Context) (DefinitionCon
 		return DefinitionContribution{}, err
 	}
 
-	targets, schemas, targetValues, plans, err := buildBuiltinAuthnDefinitions()
+	targets, schemas, targetValues, plans, err := buildBuiltinAuthnDefinitions(c.policyAttributes)
 	if err != nil {
 		return DefinitionContribution{}, err
 	}
 
-	standardAuth, err := newBuiltinStandardAuthPolicySet()
+	standardAuth, err := newBuiltinStandardAuthPolicySet(c.policyAttributes)
 	if err != nil {
 		return DefinitionContribution{}, err
 	}
@@ -117,8 +184,19 @@ func builtinAuthnActions() []string {
 }
 
 // builtinAuthnFactSchemas constructs the exact candidate fact contract for one operation.
-func builtinAuthnFactSchemas(action string) ([]FactSchema, error) {
+func builtinAuthnFactSchemas(
+	action string,
+	policyAttributes map[string]AttributeDefinition,
+) ([]FactSchema, error) {
 	inputs := builtinAuthnCommonFactSchemaInputs()
+	inputs = append(inputs, builtinStandardAuthFactSchemaInputs(action)...)
+
+	dynamic, err := builtinAuthnPolicyFactSchemaInputs(action, policyAttributes)
+	if err != nil {
+		return nil, err
+	}
+
+	inputs = append(inputs, dynamic...)
 
 	switch action {
 	case builtinActionAuthenticate:
@@ -228,7 +306,7 @@ func builtinAuthnFactSchemaInput(
 }
 
 // buildBuiltinAuthnDefinitions constructs target, schema, and checkpoint topology together.
-func buildBuiltinAuthnDefinitions() (
+func buildBuiltinAuthnDefinitions(policyAttributes map[string]AttributeDefinition) (
 	[]TargetDefinition,
 	[]SchemaDefinition,
 	[]decision.Target,
@@ -241,7 +319,7 @@ func buildBuiltinAuthnDefinitions() (
 	plans := make([]DomainPlanDefinition, 0, len(builtinAuthnActions()))
 
 	for _, action := range builtinAuthnActions() {
-		target, schema, targetDefinition, plan, err := buildBuiltinAuthnTarget(action)
+		target, schema, targetDefinition, plan, err := buildBuiltinAuthnTarget(action, policyAttributes)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -258,13 +336,14 @@ func buildBuiltinAuthnDefinitions() (
 // buildBuiltinAuthnTarget constructs one exact authn target family.
 func buildBuiltinAuthnTarget(
 	action string,
+	policyAttributes map[string]AttributeDefinition,
 ) (decision.Target, SchemaDefinition, TargetDefinition, DomainPlanDefinition, error) {
 	schemaIdentity, err := NewSchemaIdentity("authn", action, "v1")
 	if err != nil {
 		return decision.Target{}, SchemaDefinition{}, TargetDefinition{}, DomainPlanDefinition{}, err
 	}
 
-	facts, err := builtinAuthnFactSchemas(action)
+	facts, err := builtinAuthnFactSchemas(action, policyAttributes)
 	if err != nil {
 		return decision.Target{}, SchemaDefinition{}, TargetDefinition{}, DomainPlanDefinition{}, err
 	}
@@ -381,7 +460,7 @@ func builtinAuthnProviders(
 		{
 			PostActionAcceptance: postActionAcceptance,
 			ID:                   builtinPostActionProvider,
-			Targets:              authenticate,
+			Targets:              authAndLookup,
 			Executions:           []ExecutionClass{ExecutionHostPostAction},
 		},
 		{ID: builtinEnvironmentProvider, Targets: authAndLookup, Executions: []ExecutionClass{ExecutionHostSync}},
@@ -413,41 +492,26 @@ func builtinAuthnEffects(targets []decision.Target) ([]EffectDefinition, error) 
 		return nil, err
 	}
 
-	inputs := []EffectDefinitionInput{
-		{
-			ID:         builtinBruteForceEffect,
+	inputs := make([]EffectDefinitionInput, 0, len(builtinAuthEffectBindings))
+	for _, binding := range builtinAuthEffectBindings {
+		parameters := luaParameters
+		if binding.Selection == policy.ObligationBruteForceUpdate {
+			parameters = bruteForceParameters
+		}
+
+		inputs = append(inputs, EffectDefinitionInput{
+			ID:         binding.EffectID,
 			Kind:       EffectKindObligation,
-			Execution:  ExecutionHostSync,
-			Targets:    builtinTargetsForEffectSelection(targets, policy.ObligationBruteForceUpdate),
-			Provider:   builtinBruteForceProvider,
-			Parameters: bruteForceParameters,
-		},
-		{
-			ID:         builtinLuaActionEffect,
-			Kind:       EffectKindObligation,
-			Execution:  ExecutionHostSync,
-			Targets:    builtinTargetsForEffectSelection(targets, policy.ObligationLuaActionDispatch),
-			Provider:   builtinLuaActionProvider,
-			Parameters: luaParameters,
-		},
-		{
-			ID:         builtinPostActionEffect,
-			Kind:       EffectKindObligation,
-			Execution:  ExecutionHostPostAction,
-			Targets:    builtinTargetsForEffectSelection(targets, policy.ObligationLuaPostActionEnqueue),
-			Provider:   builtinPostActionProvider,
-			Parameters: luaParameters,
-		},
-	}
-	selections := []string{
-		policy.ObligationBruteForceUpdate,
-		policy.ObligationLuaActionDispatch,
-		policy.ObligationLuaPostActionEnqueue,
+			Execution:  binding.Execution,
+			Targets:    builtinTargetsForEffectSelection(targets, binding.Selection),
+			Provider:   binding.Provider,
+			Parameters: parameters,
+		})
 	}
 
 	result := make([]EffectDefinition, 0, len(inputs))
 	for index, input := range inputs {
-		effect, err := newEffectDefinitionWithSelection(input, true, selections[index])
+		effect, err := newEffectDefinitionWithSelection(input, true, builtinAuthEffectBindings[index].Selection)
 		if err != nil {
 			return nil, err
 		}
@@ -468,7 +532,11 @@ func BuiltinAuthEffectSelectionIDs(action string) []string {
 			policy.ObligationLuaPostActionEnqueue,
 		}
 	case builtinActionLookupIdentity:
-		return []string{policy.ObligationBruteForceUpdate, policy.ObligationLuaActionDispatch}
+		return []string{
+			policy.ObligationBruteForceUpdate,
+			policy.ObligationLuaActionDispatch,
+			policy.ObligationLuaPostActionEnqueue,
+		}
 	default:
 		return nil
 	}

@@ -581,6 +581,7 @@ type PolicyRuleInput struct {
 type PolicyRule struct {
 	name                             string
 	checkpoint                       string
+	presentationStage                string
 	actions                          []string
 	requiredProviders                []string
 	expression                       PolicyExpression
@@ -594,11 +595,17 @@ type PolicyRule struct {
 	responseMessage                  PolicyResponseMessage
 	responseLanguage                 PolicyResponseLanguage
 	skipRemainingCheckpointProviders bool
+	builtinAuth                      bool
 }
 
 // NewPolicyRule validates one exact target-aware rule descriptor.
 func NewPolicyRule(input PolicyRuleInput) (PolicyRule, error) {
-	if err := validatePolicyRuleInput(input); err != nil {
+	return newPolicyRule(input, false)
+}
+
+// newPolicyRule constructs configured or explicitly trusted builtin auth rules.
+func newPolicyRule(input PolicyRuleInput, builtinAuth bool) (PolicyRule, error) {
+	if err := validatePolicyRuleInput(input, builtinAuth); err != nil {
 		return PolicyRule{}, err
 	}
 
@@ -623,12 +630,14 @@ func NewPolicyRule(input PolicyRuleInput) (PolicyRule, error) {
 		responseMessage:                  input.ResponseMessage,
 		responseLanguage:                 input.ResponseLanguage,
 		skipRemainingCheckpointProviders: input.SkipRemainingCheckpointProviders,
+		builtinAuth:                      builtinAuth,
 	}, nil
 }
 
 // validatePolicyRuleInput validates one rule's scalar and retained output metadata.
-func validatePolicyRuleInput(input PolicyRuleInput) error {
-	if !identifier.Action(input.Name) || !validCheckpoint(input.Checkpoint) || !input.Expression.valid() || !ruleDecision(input.Decision) {
+func validatePolicyRuleInput(input PolicyRuleInput, builtinAuth bool) error {
+	if !identifier.Action(input.Name) || !validCheckpoint(input.Checkpoint) || !input.Expression.valid() ||
+		!validPolicyRuleDecision(input.Decision, builtinAuth) {
 		return newValidationError(
 			ErrInvalidPolicySetDefinition,
 			"policy_rule",
@@ -649,6 +658,27 @@ func validatePolicyRuleInput(input PolicyRuleInput) error {
 	_, err := policyRuleFactContracts(input.Expression, input.ResponseMessage, input.ResponseLanguage)
 
 	return err
+}
+
+// newBuiltinAuthPolicyRule constructs one immutable standard-auth catalog rule.
+func newBuiltinAuthPolicyRule(input PolicyRuleInput, presentationStage string) (PolicyRule, error) {
+	rule, err := newPolicyRule(input, true)
+	if err != nil {
+		return PolicyRule{}, err
+	}
+
+	if presentationStage != "" && !validCheckpoint(presentationStage) {
+		return PolicyRule{}, newValidationError(
+			ErrInvalidPolicySetDefinition,
+			"policy_rule.presentation_stage",
+			presentationStage,
+			"must be an exact checkpoint-shaped auth stage",
+		)
+	}
+
+	rule.presentationStage = presentationStage
+
+	return rule, nil
 }
 
 // clonePolicyRuleSelections deeply owns action, provider, obligation, and advice lists.
@@ -699,6 +729,11 @@ func (r PolicyRule) RequiredProviders() []string {
 // Checkpoint returns the exact rule checkpoint.
 func (r PolicyRule) Checkpoint() string {
 	return r.checkpoint
+}
+
+// PresentationStage returns the optional authn semantic stage retained by the builtin rule.
+func (r PolicyRule) PresentationStage() string {
+	return r.presentationStage
 }
 
 // Expression returns the immutable executable source predicate.
@@ -769,7 +804,9 @@ func (r PolicyRule) FactContracts() []FactContract {
 
 // valid reports whether a source rule satisfies its constructor invariant.
 func (r PolicyRule) valid() bool {
-	if !identifier.Action(r.name) || !validCheckpoint(r.checkpoint) || !r.expression.valid() || !ruleDecision(r.decision) {
+	if !identifier.Action(r.name) || !validCheckpoint(r.checkpoint) || !r.expression.valid() ||
+		!validPolicyRuleDecision(r.decision, r.builtinAuth) ||
+		(r.presentationStage != "" && !validCheckpoint(r.presentationStage)) {
 		return false
 	}
 
@@ -1083,14 +1120,19 @@ func (d PolicySetDefinition) clone() PolicySetDefinition {
 	return d
 }
 
-// newBuiltinStandardAuthPolicySet constructs the unconfigurable authn evaluator binding.
-func newBuiltinStandardAuthPolicySet() (PolicySetDefinition, error) {
+// newBuiltinStandardAuthPolicySet constructs the unconfigurable executable authn rule set.
+func newBuiltinStandardAuthPolicySet(attributes map[string]AttributeDefinition) (PolicySetDefinition, error) {
 	id, err := ParsePolicySetID("builtin.policy_set", BuiltinStandardAuthPolicySet)
 	if err != nil {
 		return PolicySetDefinition{}, err
 	}
 
-	set, err := newPolicySetDefinition(PolicySetDefinitionInput{ID: id})
+	rules, err := builtinStandardAuthRules(attributes)
+	if err != nil {
+		return PolicySetDefinition{}, err
+	}
+
+	set, err := newPolicySetDefinition(PolicySetDefinitionInput{ID: id, Rules: rules})
 	if err != nil {
 		return PolicySetDefinition{}, err
 	}
@@ -1271,6 +1313,15 @@ func ruleDecision(value decision.Effect) bool {
 	return value == decision.EffectPermit || value == decision.EffectDeny
 }
 
+// validPolicyRuleDecision permits runtime-only outcomes solely for immutable builtin auth rules.
+func validPolicyRuleDecision(value decision.Effect, builtinAuth bool) bool {
+	if ruleDecision(value) {
+		return true
+	}
+
+	return builtinAuth && (value == decision.EffectIndeterminate || value == decision.EffectNotApplicable)
+}
+
 // cloneEffectUses deeply owns selected typed effects.
 func cloneEffectUses(values []EffectUse) ([]EffectUse, error) {
 	result := make([]EffectUse, 0, len(values))
@@ -1301,18 +1352,18 @@ func cloneEffectUses(values []EffectUse) ([]EffectUse, error) {
 // clonePolicyRules owns and deduplicates rule names.
 func clonePolicyRules(values []PolicyRule) ([]PolicyRule, error) {
 	result := make([]PolicyRule, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
+	seen := make(map[string][]PolicyRule, len(values))
 
 	for _, value := range values {
 		if !value.valid() {
 			return nil, newValidationError(ErrInvalidPolicySetDefinition, "policy_set.rules", value.Name(), "rule must be constructor validated")
 		}
 
-		if _, ok := seen[value.Name()]; ok {
+		if builtinAuthRuleNameConflicts(seen[value.Name()], value) {
 			return nil, newValidationError(ErrDuplicateDefinition, "policy_set.rules", value.Name(), "rule name occurs more than once")
 		}
 
-		seen[value.Name()] = struct{}{}
+		seen[value.Name()] = append(seen[value.Name()], value)
 
 		effects, err := cloneEffectUses(value.effects)
 		if err != nil {
@@ -1334,6 +1385,33 @@ func clonePolicyRules(values []PolicyRule) ([]PolicyRule, error) {
 	}
 
 	return result, nil
+}
+
+// builtinAuthRuleNameConflicts permits one legacy name across disjoint builtin target scopes.
+func builtinAuthRuleNameConflicts(existing []PolicyRule, candidate PolicyRule) bool {
+	for _, rule := range existing {
+		if !rule.builtinAuth || !candidate.builtinAuth ||
+			(rule.Checkpoint() == candidate.Checkpoint() && policyRuleActionsOverlap(rule.Actions(), candidate.Actions())) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// policyRuleActionsOverlap reports whether two optional action restrictions can select one target.
+func policyRuleActionsOverlap(left []string, right []string) bool {
+	if len(left) == 0 || len(right) == 0 {
+		return true
+	}
+
+	for _, action := range left {
+		if slices.Contains(right, action) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // clonePolicySetImports deeply owns imported contracts.

@@ -285,13 +285,16 @@ func TestDefaultPostAction_RejectsCanceledRequestBeforeAcceptance(t *testing.T) 
 
 	auth := newDefaultPostActionAuth(ctx, cfg, "guid-canceled")
 
-	DefaultPostAction{}.Run(core.PostActionInput{
+	result := DefaultPostAction{}.Run(core.PostActionInput{
 		View: auth.View(),
 		Result: &core.PassDBResult{
 			Authenticated: true,
 			UserFound:     true,
 		},
 	})
+	if !result.Canceled() || result.AcceptanceRejected() {
+		t.Fatalf("canceled post-action result = %q, want canceled without acceptance rejection", result.State())
+	}
 
 	select {
 	case act := <-action.PostActionRequestChan:

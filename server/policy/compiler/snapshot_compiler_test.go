@@ -886,6 +886,79 @@ func TestCompilerAcceptsPluginEnvironmentCheckType(t *testing.T) {
 	}
 }
 
+func TestCompilerRegistersUnscheduledLuaExecutionFacts(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Checks = nil
+	cfg.Auth.Policy.Policies = nil
+	cfg.Lua = &config.LuaSection{
+		EnvironmentSources: []config.LuaEnvironmentSource{{Name: "default_environment", ScriptPath: "/test/environment.lua"}},
+		SubjectSources:     []config.LuaSubjectSource{{Name: "default_subject", ScriptPath: "/test/subject.lua"}},
+	}
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	assertUnscheduledExecutionAttribute(
+		t,
+		snapshot,
+		"auth.lua.environment.default_environment.triggered",
+		policyregistry.AttributeCategoryEnvironment,
+	)
+	assertUnscheduledExecutionAttribute(
+		t,
+		snapshot,
+		"auth.lua.subject.default_subject.rejected",
+		policyregistry.AttributeCategorySubject,
+	)
+}
+
+func TestCompilerRegistersUnscheduledNativeExecutionFacts(t *testing.T) {
+	publishCompilerPluginState(t, loadCompilerPluginStateForModule(t, "default_auth", compilerTerminalSourcesPlugin{}))
+
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Checks = nil
+	cfg.Auth.Policy.Policies = nil
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	assertUnscheduledExecutionAttribute(
+		t,
+		snapshot,
+		policy.PluginEnvironmentAttributeID("default_auth", "environment", "triggered"),
+		policyregistry.AttributeCategoryEnvironment,
+	)
+	assertUnscheduledExecutionAttribute(
+		t,
+		snapshot,
+		policy.PluginSubjectAttributeID("default_auth", "subject", "rejected"),
+		policyregistry.AttributeCategorySubject,
+	)
+}
+
+// assertUnscheduledExecutionAttribute verifies default standard-auth source capture without a configured check.
+func assertUnscheduledExecutionAttribute(
+	t *testing.T,
+	snapshot *policyruntime.Snapshot,
+	attributeID string,
+	category policyregistry.AttributeCategory,
+) {
+	t.Helper()
+
+	definition, ok := snapshot.AttributeRegistry[attributeID]
+	if !ok {
+		t.Fatalf("unscheduled execution attribute %q missing", attributeID)
+	}
+
+	if definition.Category != category || len(definition.Operations) == 0 || definition.ProducerCheck == "" {
+		t.Fatalf("unscheduled execution attribute %q = %#v", attributeID, definition)
+	}
+}
+
 func TestCompilerRegistersPluginEnvironmentExecutionFacts(t *testing.T) {
 	publishCompilerPluginState(t, loadCompilerPluginStateForModule(t, "rns_auth", compilerEnvironmentPlugin{}))
 
@@ -1660,6 +1733,20 @@ type compilerPolicyPlugin struct{}
 type compilerGeoIPPrivacyPlugin struct{}
 
 type compilerEnvironmentPlugin struct{}
+
+type compilerTerminalSourcesPlugin struct{}
+
+func (compilerTerminalSourcesPlugin) Metadata() pluginapi.Metadata {
+	return pluginapi.Metadata{Name: "default_auth", Version: "1.0.0", APIVersion: pluginapi.APIVersion}
+}
+
+func (compilerTerminalSourcesPlugin) Register(registrar pluginapi.Registrar) error {
+	if err := registrar.RegisterEnvironmentSource(compilerNamedEnvironmentSource{name: "environment"}); err != nil {
+		return err
+	}
+
+	return registrar.RegisterSubjectSource(compilerSubjectSource{})
+}
 
 func (compilerEnvironmentPlugin) Metadata() pluginapi.Metadata {
 	return pluginapi.Metadata{Name: "rns_auth", Version: "1.0.0", APIVersion: pluginapi.APIVersion}

@@ -196,7 +196,7 @@ func (r *DecisionReport) Redacted() *DecisionReport {
 		MissingChecks: make(map[string]string, len(r.MissingChecks)),
 		Unavailable:   make(map[string]UnavailableFact, len(r.Unavailable)),
 		Policies:      clonePolicyDecisions(r.Policies),
-		Final:         cloneFinalDecision(r.Final),
+		Final:         CloneFinalDecision(r.Final),
 		Observe:       cloneObserveReport(r.Observe),
 	}
 
@@ -226,7 +226,8 @@ func clonePolicyDecisions(decisions []PolicyDecision) []PolicyDecision {
 	return cloned
 }
 
-func cloneFinalDecision(decision *FinalDecision) *FinalDecision {
+// CloneFinalDecision returns a detached copy of mutable decision presentation and effect data.
+func CloneFinalDecision(decision *FinalDecision) *FinalDecision {
 	if decision == nil {
 		return nil
 	}
@@ -247,8 +248,8 @@ func cloneObserveReport(observe *ObserveReport) *ObserveReport {
 	}
 
 	cloned := *observe
-	cloned.Production = cloneFinalDecision(observe.Production)
-	cloned.Shadow = cloneFinalDecision(observe.Shadow)
+	cloned.Production = CloneFinalDecision(observe.Production)
+	cloned.Shadow = CloneFinalDecision(observe.Shadow)
 
 	return &cloned
 }
@@ -291,12 +292,26 @@ func cloneEffectRequests(requests []EffectRequest) []EffectRequest {
 		}
 
 		args := make(map[string]any, len(cloned[index].Args))
-		maps.Copy(args, cloned[index].Args)
+		for key, value := range cloned[index].Args {
+			args[key] = cloneEffectArgument(value)
+		}
 
 		cloned[index].Args = args
 	}
 
 	return cloned
+}
+
+// cloneEffectArgument owns mutable members of the bounded effect-argument vocabulary.
+func cloneEffectArgument(input any) any {
+	switch value := input.(type) {
+	case []string:
+		return append([]string(nil), value...)
+	case []byte:
+		return append([]byte(nil), value...)
+	default:
+		return input
+	}
 }
 
 // Redacted returns an attribute copy with unsafe details removed or masked.

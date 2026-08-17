@@ -854,7 +854,7 @@ func (b *recordingPluginEffectBridge) ExecutePolicyEffect(_ *gin.Context, _ *Sta
 
 type recordingPlanPostAction struct{}
 
-func (recordingPlanPostAction) Run(PostActionInput) bool { return true }
+func (recordingPlanPostAction) Run(PostActionInput) PostActionResult { return PostActionSucceeded() }
 
 func (p recordingPlanPostAction) PreparePlanStep(PostActionInput) PostActionPlanRunner {
 	return p

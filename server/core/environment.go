@@ -578,10 +578,28 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 	}
 }
 
-// HandleEnvironment processes multiple environment controls associated with authentication requests and returns the result.
-// It checks for various environment controls like TLS encryption, relay domains, RBL, and Lua scripting.
-// The method returns an appropriate authentication result based on the environment controls that are triggered or skipped.
+type authnEnvironmentProviderPlan struct {
+	environment bool
+	tls         bool
+	relay       bool
+	rbl         bool
+}
+
+// HandleEnvironment processes the complete established environment provider sequence.
 func (a *AuthState) HandleEnvironment(ctx *gin.Context) definitions.AuthResult {
+	return a.handleEnvironmentProviders(ctx, authnEnvironmentProviderPlan{
+		environment: true,
+		tls:         true,
+		relay:       true,
+		rbl:         true,
+	})
+}
+
+// handleEnvironmentProviders runs only the providers selected by the captured authn plan.
+func (a *AuthState) handleEnvironmentProviders(
+	ctx *gin.Context,
+	plan authnEnvironmentProviderPlan,
+) definitions.AuthResult {
 	if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "environment.evaluate") {
 		return definitions.AuthResultTempFail
 	}
@@ -600,23 +618,33 @@ func (a *AuthState) HandleEnvironment(ctx *gin.Context) definitions.AuthResult {
 		a.refreshUserAccount()
 	}
 
-	if result, handled := a.handleLuaEnvironmentResult(ctx, fsp); handled {
-		return result
+	if plan.environment {
+		if result, handled := a.handleLuaEnvironmentResult(ctx, fsp); handled {
+			return result
+		}
+
+		if result, handled := a.handlePluginEnvironmentResult(ctx, fsp); handled {
+			return result
+		}
 	}
 
-	if result, handled := a.handlePluginEnvironmentResult(ctx, fsp); handled {
-		return result
+	if plan.tls {
+		if result, handled := a.handleTLSEnvironmentResult(ctx, fsp); handled {
+			return result
+		}
 	}
 
-	if result, handled := a.handleTLSEnvironmentResult(ctx, fsp); handled {
-		return result
+	if plan.relay {
+		if result, handled := a.handleRelayDomainEnvironmentResult(ctx, fsp); handled {
+			return result
+		}
 	}
 
-	if result, handled := a.handleRelayDomainEnvironmentResult(ctx, fsp); handled {
-		return result
+	if plan.rbl {
+		return a.handleRBLEnvironmentResult(ctx, fsp)
 	}
 
-	return a.handleRBLEnvironmentResult(ctx, fsp)
+	return finishPreAuthEnvironmentOK(fsp, false)
 }
 
 func (a *AuthState) startEnvironmentEvaluation(ctx *gin.Context) (trace.Span, *requestContextScope) {
@@ -813,12 +841,20 @@ func (a *AuthState) handleRBLEnvironmentResult(ctx *gin.Context, span trace.Span
 	return definitions.AuthResultOK
 }
 
+// resolvePreAuthEnvironmentOutcome delegates selection to the active request-local authority.
 func (a *AuthState) resolvePreAuthEnvironmentOutcome(
 	ctx *gin.Context,
 	span trace.Span,
 	outcome preAuthEnvironmentOutcome,
 ) (definitions.AuthResult, bool) {
 	span.SetAttributes(attribute.String("decision", outcome.decision))
+
+	if authnCandidateRuntimeOwnsPolicy(ctx) {
+		markEnvironmentRejected(ctx, outcome.reject)
+		span.End()
+
+		return outcome.current, true
+	}
 
 	if result, handled := a.configuredPolicyPreAuthResult(ctx, outcome.current); handled {
 		markEnvironmentRejected(ctx, outcome.reject)

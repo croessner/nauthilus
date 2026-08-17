@@ -85,6 +85,7 @@ func TestStatusDerivesRetryabilityFromStableTaxonomy(t *testing.T) {
 		valid     bool
 	}{
 		{name: "evaluation failure", code: decision.StatusCodeEvaluationFailed, retryable: true, valid: true},
+		{name: "acceptance rejection", code: decision.StatusCodeEffectAcceptanceRejected, retryable: true, valid: true},
 		{name: "ambiguous effect", code: decision.StatusCodeEffectOutcomeUnknown, valid: true},
 		{name: "unknown code", code: decision.StatusCode("provider_raw_error")},
 	}

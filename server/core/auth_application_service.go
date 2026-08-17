@@ -99,6 +99,7 @@ type AuthInput struct {
 // AuthOutcome contains the captured terminal authentication result.
 type AuthOutcome struct {
 	Attributes              bktype.AttributeMapping
+	FSMEventPath            []string
 	Decision                AuthDecision
 	TerminalState           string
 	Session                 string
@@ -487,6 +488,7 @@ func (f *applicationGinContextFactory) New(parent context.Context, input AuthInp
 func authOutcomeFromCaptured(captured CapturedAuthOutcome) *AuthOutcome {
 	return &AuthOutcome{
 		Attributes:              captured.Attributes,
+		FSMEventPath:            append([]string(nil), captured.FSMEventPath...),
 		Decision:                authDecisionFromCaptured(captured.Decision),
 		TerminalState:           captured.TerminalState,
 		Session:                 captured.Session,

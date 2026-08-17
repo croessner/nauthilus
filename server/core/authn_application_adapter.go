@@ -18,12 +18,15 @@ package core
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strings"
 
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 )
 
 const (
@@ -146,12 +149,26 @@ func (s *authnCandidateApplicationService) run(
 		return authnApplicationResult{}, fmt.Errorf("build authn candidate invocation: %w", err)
 	}
 
-	var result authnApplicationResult
+	var (
+		result    authnApplicationResult
+		execution *authnCandidateExecution
+	)
 
 	err = s.sessions.WithSession(ctx, invocation, func(session decisionservice.DecisionSession) error {
+		evaluationCtx := session.RequestContext(ctx)
+
+		if host, ok := s.current.(authnCandidateHost); ok {
+			var prepareErr error
+
+			execution, evaluationCtx, prepareErr = host.prepareAuthnCandidateExecution(evaluationCtx, input, operation)
+			if prepareErr != nil {
+				return prepareErr
+			}
+		}
+
 		var traversalErr error
 
-		result, traversalErr = s.runCheckpointPlan(ctx, session, input, operation)
+		result, traversalErr = s.runCheckpointPlan(evaluationCtx, session, input, operation, execution)
 
 		return traversalErr
 	})
@@ -172,6 +189,7 @@ func (s *authnCandidateApplicationService) runCheckpointPlan(
 	session decisionservice.DecisionSession,
 	input AuthInput,
 	operation policy.Operation,
+	execution *authnCandidateExecution,
 ) (authnApplicationResult, error) {
 	checkpoints := session.Checkpoints()
 	if len(checkpoints) == 0 {
@@ -181,9 +199,16 @@ func (s *authnCandidateApplicationService) runCheckpointPlan(
 	lastCheckpoint := len(checkpoints) - 1
 	current := authnApplicationResult{}
 
-	for index, name := range checkpoints {
+	for index, checkpoint := range checkpoints {
 		final := index == lastCheckpoint
-		if final {
+		if execution != nil {
+			var err error
+
+			current, err = execution.prepareCheckpoint(checkpoint)
+			if err != nil {
+				return authnApplicationResult{}, err
+			}
+		} else if final {
 			var err error
 
 			current, err = s.runCurrent(ctx, input, operation)
@@ -197,16 +222,24 @@ func (s *authnCandidateApplicationService) runCheckpointPlan(
 			return authnApplicationResult{}, err
 		}
 
-		response, err := evaluateAuthnCandidateCheckpoint(ctx, session, name, facts)
+		response, err := evaluateAuthnCandidateCheckpoint(ctx, session, checkpoint.Name(), facts)
 		if err != nil {
 			return authnApplicationResult{}, err
 		}
 
 		if final {
+			if execution != nil {
+				return execution.finalize(checkpoint.Name(), response, current)
+			}
+
 			return current.mapEffect(response.Effect())
 		}
 
 		if terminalAuthnCheckpointEffect(response.Effect()) {
+			if execution != nil {
+				return execution.finalize(checkpoint.Name(), response, current)
+			}
+
 			return newAuthnTerminalResult(operation, response.Effect())
 		}
 
@@ -331,16 +364,45 @@ func (r authnApplicationResult) mapEffect(effect decision.Effect) (authnApplicat
 	if r.auth != nil {
 		outcome := cloneAuthnCandidateOutcome(r.auth)
 		outcome.Decision = mapped
+		if mapped == AuthDecisionTempFail {
+			applyAuthnCandidateTempFail(outcome)
+		}
 		r.auth = outcome
 	}
 
 	if r.accounts != nil {
 		outcome := cloneAuthnCandidateListOutcome(r.accounts)
 		outcome.Decision = mapped
+		if mapped == AuthDecisionTempFail {
+			applyAuthnCandidateListTempFail(outcome)
+		}
 		r.accounts = outcome
 	}
 
 	return r, nil
+}
+
+// applyAuthnCandidateTempFail publishes the established complete temporary-failure surface.
+func applyAuthnCandidateTempFail(outcome *AuthOutcome) {
+	if outcome == nil {
+		return
+	}
+
+	outcome.TerminalState = string(authFSMStateAuthTempFail)
+	outcome.StatusMessage = definitions.TempFailDefault
+	outcome.Error = definitions.TempFailDefault
+	outcome.HTTPStatus = http.StatusInternalServerError
+}
+
+// applyAuthnCandidateListTempFail publishes the list-accounts temporary-failure surface.
+func applyAuthnCandidateListTempFail(outcome *ListAccountsOutcome) {
+	if outcome == nil {
+		return
+	}
+
+	outcome.StatusMessage = definitions.TempFailDefault
+	outcome.Error = definitions.TempFailDefault
+	outcome.HTTPStatus = http.StatusInternalServerError
 }
 
 // validFor reports whether the current operation produced its established outcome type.
@@ -360,6 +422,7 @@ func cloneAuthnCandidateOutcome(input *AuthOutcome) *AuthOutcome {
 
 	output := *input
 	output.Attributes = input.Attributes.Clone()
+	output.FSMEventPath = append([]string(nil), input.FSMEventPath...)
 	output.Groups = append([]string(nil), input.Groups...)
 	output.GroupDistinguishedNames = append([]string(nil), input.GroupDistinguishedNames...)
 
@@ -426,6 +489,11 @@ func newAuthnCandidateInvocation(
 		return decision.Invocation{}, err
 	}
 
+	finalization := authnCandidateFinalization(ctx, input)
+	if !finalization.Valid() {
+		return decision.Invocation{}, fmt.Errorf("authn candidate finalization gate is unavailable")
+	}
+
 	return decision.Invocation{
 		Request: decision.DecisionRequestInput{
 			Version:     decision.ContractVersion,
@@ -436,7 +504,30 @@ func newAuthnCandidateInvocation(
 			Attributes:  requestAttributes.input,
 		},
 		Authentication: authenticationInput,
+		Finalization:   finalization,
 	}, nil
+}
+
+// authnCandidateFinalization selects the immutable application-response boundary.
+func authnCandidateFinalization(ctx context.Context, input AuthInput) decision.EvaluationFinalization {
+	gate := PostActionFinalizationGateFromContext(ctx)
+	boundary := authnCandidateFinalizationBoundary(input)
+
+	if gate == nil || gate.Boundary() != boundary {
+		return decision.EvaluationFinalization{}
+	}
+
+	return decision.NewExternalEvaluationFinalization(boundary, gate.Done())
+}
+
+// authnCandidateFinalizationBoundary returns the transport-owned immutability boundary.
+func authnCandidateFinalizationBoundary(input AuthInput) effectsupervisor.Boundary {
+	boundary := effectsupervisor.BoundaryHTTPCommit
+	if input.Service == definitions.ServGRPC || input.Context.Transport.Kind == requestPolicyTransportGRPC {
+		boundary = effectsupervisor.BoundaryGRPCUnaryReturn
+	}
+
+	return boundary
 }
 
 // newAuthnCandidateAuthentication preserves server-observed transport metadata as opaque evidence.

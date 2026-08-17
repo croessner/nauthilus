@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
@@ -28,6 +29,7 @@ import (
 
 type selectedRule struct {
 	rule      policyruntime.CompiledRule
+	controls  []policyruntime.CompiledRule
 	policySet string
 	matched   bool
 }
@@ -39,10 +41,22 @@ func (r *checkpointRuntime) selectRule(
 	facts decision.FactSet,
 	providers []providerRecord,
 ) selectedRule {
-	return r.selectRuleFromPolicySets(
+	selected := r.selectRuleFromPolicySets(
 		target,
 		checkpoint.Name(),
 		checkpoint.ProductionPolicySetIDs(),
+		facts,
+		providers,
+	)
+	if selected.matched || target.Target().Namespace() != policy.AuthnNamespace ||
+		!checkpoint.ContainsPolicySet(registry.BuiltinStandardAuthPolicySet) {
+		return selected
+	}
+
+	return r.selectRuleFromPolicySets(
+		target,
+		checkpoint.Name(),
+		[]string{registry.BuiltinStandardAuthPolicySet},
 		facts,
 		providers,
 	)
@@ -72,6 +86,8 @@ func (r *checkpointRuntime) selectRuleFromPolicySets(
 	facts decision.FactSet,
 	providers []providerRecord,
 ) selectedRule {
+	controls := make([]policyruntime.CompiledRule, 0)
+
 	for _, policySetID := range policySetIDs {
 		setID, err := registry.ParsePolicySetID("runtime.policy_set", policySetID)
 		if err != nil {
@@ -88,13 +104,35 @@ func (r *checkpointRuntime) selectRuleFromPolicySets(
 				continue
 			}
 
-			if r.expressionMatches(rule.Expression(), facts) {
-				return selectedRule{rule: rule, policySet: policySetID, matched: true}
+			if !r.expressionMatches(rule.Expression(), facts) {
+				continue
 			}
+
+			if authnNonterminalCheckpointControl(target, checkpoint, set, rule) {
+				controls = append(controls, rule)
+
+				continue
+			}
+
+			return selectedRule{rule: rule, controls: controls, policySet: policySetID, matched: true}
 		}
 	}
 
-	return selectedRule{}
+	return selectedRule{controls: controls}
+}
+
+// authnNonterminalCheckpointControl keeps final-checkpoint host controls as evidence while selection continues.
+func authnNonterminalCheckpointControl(
+	target policyruntime.CompiledTarget,
+	checkpoint string,
+	set policyruntime.CompiledPolicySet,
+	rule policyruntime.CompiledRule,
+) bool {
+	return target.Target().Namespace() == policy.AuthnNamespace &&
+		checkpoint == string(policy.StageAuthDecision) &&
+		set.IsBuiltinStandardAuth() &&
+		rule.Decision() == decision.EffectNotApplicable &&
+		rule.SkipRemainingCheckpointProviders()
 }
 
 // recordComparisonSelection stores observe evidence without preparing or executing effects.

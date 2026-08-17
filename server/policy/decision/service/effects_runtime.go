@@ -17,6 +17,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/croessner/nauthilus/v3/server/policy"
@@ -61,10 +62,17 @@ type effectExecution struct {
 }
 
 type plannedEffect struct {
-	definition registry.EffectDefinition
-	use        registry.EffectUse
-	execution  effectExecution
-	work       effectsupervisor.Work
+	syncProvider syncEffectProvider
+	postProvider postActionProvider
+	definition   registry.EffectDefinition
+	use          registry.EffectUse
+	execution    effectExecution
+}
+
+type effectExecutionOutcome struct {
+	state              effectsupervisor.State
+	accepted           bool
+	acceptanceRejected bool
 }
 
 type decisionSelection struct {
@@ -81,18 +89,16 @@ func (r *checkpointRuntime) finalizeSelection(
 	ctx context.Context,
 	input checkpointEvaluation,
 	target policyruntime.CompiledTarget,
-	selected selectedRule,
+	selection decisionSelection,
 	decisionID string,
 	requestID string,
 	report runtimeReport,
 ) (decision.DecisionResponse, runtimeReport, bool) {
-	selection := projectDecisionSelection(target, input.checkpoint.Name(), selected)
 	report.policySet = selection.policySet
 	report.rule = selection.ruleName
 	report.outcomeCode = selection.code
 
 	plan, projectedObligations, projectedAdvice, err := r.prepareEffects(
-		ctx,
 		input,
 		target,
 		decisionID,
@@ -190,35 +196,36 @@ func (r *checkpointRuntime) executePreparedEffects(
 	for index, planned := range plan {
 		if ctx.Err() != nil {
 			appendUnstartedPlannedEffects(report, plan[index:])
-			releasePreparedEffects(ctx, plan[index:])
 
 			return decision.StatusCodeEvaluationFailed, true
 		}
 
 		report.effects = append(report.effects, plannedEffectRecord(planned, effectsupervisor.StateAttempted))
 
-		state, accepted := r.executeEffect(ctx, input, planned)
+		execution := r.executeEffect(ctx, input, planned)
+		state := execution.state
 		report.effects = append(report.effects, effectRecord{
 			id: planned.definition.ID(), provider: planned.definition.Provider(), state: state, ordinal: planned.execution.ordinal,
 		})
 
 		if state == effectsupervisor.StateOutcomeUnknown {
 			appendUnstartedPlannedEffects(report, plan[index+1:])
-			releasePreparedEffects(ctx, plan[index+1:])
 
 			return decision.StatusCodeEffectOutcomeUnknown, true
 		}
 
-		if state == effectsupervisor.StateFailed || !accepted {
+		if state == effectsupervisor.StateFailed || !execution.accepted {
 			appendUnstartedPlannedEffects(report, plan[index+1:])
-			releasePreparedEffects(ctx, plan[index+1:])
+
+			if execution.acceptanceRejected {
+				return decision.StatusCodeEffectAcceptanceRejected, true
+			}
 
 			return decision.StatusCodeEvaluationFailed, true
 		}
 
 		if ctx.Err() != nil {
 			appendUnstartedPlannedEffects(report, plan[index+1:])
-			releasePreparedEffects(ctx, plan[index+1:])
 
 			return decision.StatusCodeEvaluationFailed, true
 		}
@@ -262,9 +269,8 @@ func appendSelectedUnstartedEffects(
 	}
 }
 
-// prepareEffects validates every selected effect before any host-owned execution starts.
+// prepareEffects validates every selection and resolves its owner before execution starts.
 func (r *checkpointRuntime) prepareEffects(
-	ctx context.Context,
 	input checkpointEvaluation,
 	target policyruntime.CompiledTarget,
 	decisionID string,
@@ -276,10 +282,8 @@ func (r *checkpointRuntime) prepareEffects(
 	ordinal := uint32(0)
 
 	for _, use := range obligations {
-		planned, projected, hostOwned, err := r.prepareObligation(ctx, input, target, decisionID, use, ordinal+1)
+		planned, projected, hostOwned, err := r.prepareObligation(input, target, decisionID, use, ordinal+1)
 		if err != nil {
-			releasePreparedEffects(ctx, plan)
-
 			return nil, nil, nil, err
 		}
 
@@ -294,8 +298,6 @@ func (r *checkpointRuntime) prepareEffects(
 
 	projectedAdvice, err := prepareAdvice(target, advice)
 	if err != nil {
-		releasePreparedEffects(ctx, plan)
-
 		return nil, nil, nil, err
 	}
 
@@ -304,7 +306,6 @@ func (r *checkpointRuntime) prepareEffects(
 
 // prepareObligation validates and captures one return-only or host-owned selection.
 func (r *checkpointRuntime) prepareObligation(
-	ctx context.Context,
 	input checkpointEvaluation,
 	target policyruntime.CompiledTarget,
 	decisionID string,
@@ -332,16 +333,15 @@ func (r *checkpointRuntime) prepareObligation(
 	}
 	planned := plannedEffect{definition: definition, use: use, execution: execution}
 
-	if err := r.prepareHostEffect(ctx, input, &planned); err != nil {
+	if err := r.bindHostEffect(input, &planned); err != nil {
 		return plannedEffect{}, decision.EffectRequest{}, false, err
 	}
 
 	return planned, decision.EffectRequest{}, true, nil
 }
 
-// prepareHostEffect resolves one exact synchronous binding or captures post-action work.
-func (r *checkpointRuntime) prepareHostEffect(
-	ctx context.Context,
+// bindHostEffect resolves one exact owner without snapshotting mutable request state.
+func (r *checkpointRuntime) bindHostEffect(
 	input checkpointEvaluation,
 	planned *plannedEffect,
 ) error {
@@ -352,6 +352,8 @@ func (r *checkpointRuntime) prepareHostEffect(
 			return fmt.Errorf("sync effect provider %s is absent", planned.definition.Provider())
 		}
 
+		planned.syncProvider = binding.provider
+
 		return nil
 	case registry.ExecutionHostPostAction:
 		binding, exists := r.postActions[planned.definition.Provider()]
@@ -359,12 +361,7 @@ func (r *checkpointRuntime) prepareHostEffect(
 			return fmt.Errorf("post-action provider or finalization gate is absent")
 		}
 
-		work, err := preparePostAction(ctx, binding.provider, planned.execution)
-		if err != nil || nilDependency(work) {
-			return fmt.Errorf("post-action preparation failed")
-		}
-
-		planned.work = work
+		planned.postProvider = binding.provider
 
 		return nil
 	default:
@@ -405,49 +402,66 @@ func (r *checkpointRuntime) executeEffect(
 	ctx context.Context,
 	input checkpointEvaluation,
 	planned plannedEffect,
-) (effectsupervisor.State, bool) {
+) effectExecutionOutcome {
 	switch planned.definition.Execution() {
 	case registry.ExecutionHostSync:
 		result := make(chan effectsupervisor.Result, 1)
-		provider := r.syncEffects[planned.definition.Provider()].provider
 
-		provider, err := captureSyncEffectProvider(provider)
-		if err != nil {
-			return effectsupervisor.StateFailed, false
+		provider, err := captureSyncEffectProvider(planned.syncProvider)
+		if err != nil || nilDependency(provider) {
+			return effectExecutionOutcome{state: effectsupervisor.StateFailed}
 		}
 
 		go executeSyncEffect(ctx, provider, planned.execution, result)
 
 		select {
 		case completed := <-result:
-			return completed.State(), completed.State() == effectsupervisor.StateSucceeded
+			return effectExecutionOutcome{
+				state:    completed.State(),
+				accepted: completed.State() == effectsupervisor.StateSucceeded,
+			}
 		case <-ctx.Done():
-			return effectsupervisor.StateOutcomeUnknown, false
+			return effectExecutionOutcome{state: effectsupervisor.StateOutcomeUnknown}
 		}
 	case registry.ExecutionHostPostAction:
+		work, err := preparePostAction(ctx, planned.postProvider, planned.execution)
+		if err != nil || nilDependency(work) {
+			return effectExecutionOutcome{state: effectsupervisor.StateFailed}
+		}
+
 		plan, err := effectsupervisor.NewPlan(effectsupervisor.PlanInput{
-			Gate: effectFinalizationGate{finalization: input.finalization}, Work: planned.work,
+			Gate: effectFinalizationGate{finalization: input.finalization}, Work: work,
 			DecisionID: planned.execution.decisionID, Target: planned.execution.target.String(),
 			Provider: planned.execution.provider, DeadlineBudget: r.postActionBudget,
 			EffectOrdinal: planned.execution.ordinal,
 			Observability: effectsupervisor.ObservabilityMetadata{RuntimeGeneration: input.generation, Source: "decision_service"},
 		})
 		if err != nil {
-			releasePreparedWork(ctx, planned.work)
+			releasePreparedWork(ctx, work)
 
-			return effectsupervisor.StateFailed, false
+			return effectExecutionOutcome{state: effectsupervisor.StateFailed}
 		}
 
 		if _, err = input.supervisor.Accept(ctx, plan); err != nil {
-			releasePreparedWork(ctx, planned.work)
+			releasePreparedWork(ctx, work)
 
-			return effectsupervisor.StateFailed, false
+			return effectExecutionOutcome{
+				state:              effectsupervisor.StateFailed,
+				acceptanceRejected: postActionAcceptanceRejected(err),
+			}
 		}
 
-		return effectsupervisor.StateAccepted, true
+		return effectExecutionOutcome{state: effectsupervisor.StateAccepted, accepted: true}
 	default:
-		return effectsupervisor.StateFailed, false
+		return effectExecutionOutcome{state: effectsupervisor.StateFailed}
 	}
+}
+
+// postActionAcceptanceRejected excludes request cancellation from supervisor rejection.
+func postActionAcceptanceRejected(err error) bool {
+	return err != nil &&
+		!errors.Is(err, context.Canceled) &&
+		!errors.Is(err, context.DeadlineExceeded)
 }
 
 type postActionPreparation struct {
@@ -455,14 +469,14 @@ type postActionPreparation struct {
 	err  error
 }
 
-// preparePostAction bounds provider preparation and contains provider panics.
+// preparePostAction snapshots mutable request state at the selected post-action ordinal.
 func preparePostAction(
 	ctx context.Context,
 	provider postActionProvider,
 	execution effectExecution,
 ) (effectsupervisor.Work, error) {
 	provider, err := capturePostActionProvider(provider)
-	if err != nil {
+	if err != nil || nilDependency(provider) {
 		return nil, err
 	}
 
@@ -539,15 +553,6 @@ func executeSyncEffect(
 	result <- provider.Execute(ctx, execution)
 }
 
-// releasePreparedEffects releases post-action work that never transferred ownership.
-func releasePreparedEffects(ctx context.Context, plan []plannedEffect) {
-	for _, planned := range plan {
-		if planned.definition.Execution() == registry.ExecutionHostPostAction {
-			releasePreparedWork(ctx, planned.work)
-		}
-	}
-}
-
 // releasePreparedWork bounds idempotent pre-acceptance cleanup by evaluation cancellation.
 func releasePreparedWork(ctx context.Context, work effectsupervisor.Work) {
 	if nilDependency(work) {
@@ -604,11 +609,16 @@ func projectEffectRequest(
 
 // decisionCode maps explicit rule outcomes to stable status taxonomy.
 func decisionCode(effect decision.Effect) decision.StatusCode {
-	if effect == decision.EffectPermit {
+	switch effect {
+	case decision.EffectPermit:
 		return decision.StatusCodePermit
+	case decision.EffectDeny:
+		return decision.StatusCodePolicyDenied
+	case decision.EffectNotApplicable:
+		return decision.StatusCodeNoApplicableRule
+	default:
+		return decision.StatusCodeEvaluationFailed
 	}
-
-	return decision.StatusCodePolicyDenied
 }
 
 // noMatchProjection applies the target's explicit compiled fallback.

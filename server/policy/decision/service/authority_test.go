@@ -451,16 +451,19 @@ type recordingCheckpointEvaluator struct {
 }
 
 // Checkpoints returns the operation-specific plan used by recording authn sessions.
-func (e *recordingCheckpointEvaluator) Checkpoints(target decision.Target) ([]string, error) {
+func (e *recordingCheckpointEvaluator) Checkpoints(target decision.Target) ([]CheckpointPlan, error) {
 	if target.Namespace() != "authn" {
-		return []string{decision.CheckpointFinalDecision}, nil
+		return []CheckpointPlan{newCheckpointPlan(decision.CheckpointFinalDecision, nil)}, nil
 	}
 
 	if target.Action() == "list_accounts" {
-		return []string{"auth_decision"}, nil
+		return []CheckpointPlan{newCheckpointPlan("auth_decision", nil)}, nil
 	}
 
-	return []string{"pre_auth", "auth_decision"}, nil
+	return []CheckpointPlan{
+		newCheckpointPlan("pre_auth", nil),
+		newCheckpointPlan("auth_decision", nil),
+	}, nil
 }
 
 // Evaluate records the package-private checkpoint runtime input.

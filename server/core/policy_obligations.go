@@ -16,12 +16,14 @@
 package core
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/policy/observability"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 	"github.com/croessner/nauthilus/v3/server/stats"
@@ -95,7 +97,8 @@ func (e policyObligationExecutor) Execute(ctx *gin.Context, final *report.FinalD
 	return e.executePostActionPlan(ctx, postActionPlan)
 }
 
-func (e policyObligationExecutor) executeOne(ctx *gin.Context, obligation report.EffectRequest) {
+// executeOne invokes one selected synchronous owner and reports its exact result.
+func (e policyObligationExecutor) executeOne(ctx *gin.Context, obligation report.EffectRequest) bool {
 	started := time.Now()
 	result := observability.ResultSuccess
 
@@ -140,6 +143,48 @@ func (e policyObligationExecutor) executeOne(ctx *gin.Context, obligation report
 	}
 
 	e.record(ctx, obligation.ID, time.Since(started), result)
+
+	return result == observability.ResultSuccess
+}
+
+// preparePostActionWork captures one selected post-action without accepting or executing it.
+func (e policyObligationExecutor) preparePostActionWork(
+	ctx *gin.Context,
+	obligation report.EffectRequest,
+	ordinal uint32,
+) (effectsupervisor.ExecutableWork, error) {
+	steps := make([]PostActionPlanStep, 0, 1)
+	if !e.collectPostActionPlanStep(ctx, obligation, ordinal, &steps) || len(steps) != 1 {
+		return nil, fmt.Errorf("post-action effect %q has no preparer", obligation.ID)
+	}
+
+	step := steps[0]
+	if runner, ok := step.LuaStep(); ok {
+		works, err := newLuaPostActionStepWorks([]PostActionPlanRunner{runner}, steps)
+		if err != nil {
+			ReleasePostActionPlanSteps(steps)
+
+			return nil, err
+		}
+
+		return works[0], nil
+	}
+
+	preparer, ok := getPluginEffectBridge().(PluginPostActionWorkPreparer)
+	if !ok || preparer == nil {
+		ReleasePostActionPlanSteps(steps)
+
+		return nil, fmt.Errorf("post-action effect %q has no native preparer", obligation.ID)
+	}
+
+	work, ok := preparer.PreparePostActionWork(ctx, e.auth.View(), step)
+	if !ok || work == nil {
+		ReleasePostActionPlanSteps(steps)
+
+		return nil, fmt.Errorf("post-action effect %q preparation failed", obligation.ID)
+	}
+
+	return work, nil
 }
 
 func (e policyObligationExecutor) record(
@@ -341,6 +386,11 @@ func policyObligationsEnabled(ctx *gin.Context) bool {
 
 	mode, _, _ := policyCtx.SnapshotMetadata()
 
+	return policyEffectsEnabled(mode)
+}
+
+// policyEffectsEnabled applies the shared enforce-versus-observe effect gate.
+func policyEffectsEnabled(mode string) bool {
 	return mode == "" || mode == policyModeEnforce
 }
 

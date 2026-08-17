@@ -35,6 +35,16 @@ func PluginSubjectIdentity(moduleName string, localName string) string {
 	return moduleName + "." + localName
 }
 
+// PluginSubjectCheckName returns the scheduler-visible check name for one native subject source.
+func PluginSubjectCheckName(moduleName string, localName string) string {
+	identity := PluginSubjectIdentity(moduleName, localName)
+	if identity == "" {
+		return ""
+	}
+
+	return pluginSubjectCheckPrefix + strings.ReplaceAll(identity, ".", "_")
+}
+
 // PluginSubjectIdentityFromCheck derives the canonical subject identity from a compiled check.
 func PluginSubjectIdentityFromCheck(configRef string, checkName string) string {
 	moduleName, ok := pluginModuleNameFromConfigRef(configRef, pluginSubjectRefSuffix)

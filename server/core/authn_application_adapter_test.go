@@ -19,15 +19,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
+	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/secret"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestAuthnApplicationAdapterTraversesOneDecisionSessionForEveryOperation(t *testing.T) {
@@ -108,7 +114,9 @@ func TestAuthnApplicationAdapterBruteForceCheckpointStopsLaterWork(t *testing.T)
 				t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
 			}
 
-			outcome, err := adapter.Authenticate(context.Background(), authnApplicationTestInput(AuthModeAuthenticate))
+			outcome, err := authenticateAuthnCandidateForTest(
+				context.Background(), adapter, authnApplicationTestInput(AuthModeAuthenticate),
+			)
 			if err != nil {
 				t.Fatalf("Authenticate() error = %v", err)
 			}
@@ -133,11 +141,12 @@ func TestAuthnApplicationAdapterMapsEffectsWithoutReplacingOutcomePayloads(t *te
 		name         string
 		effect       decision.Effect
 		wantDecision AuthDecision
+		wantStatus   string
 	}{
-		{name: "neutral", effect: decision.EffectNotApplicable, wantDecision: AuthDecisionOK},
-		{name: "permit", effect: decision.EffectPermit, wantDecision: AuthDecisionOK},
-		{name: "deny", effect: decision.EffectDeny, wantDecision: AuthDecisionFail},
-		{name: "indeterminate", effect: decision.EffectIndeterminate, wantDecision: AuthDecisionTempFail},
+		{name: "neutral", effect: decision.EffectNotApplicable, wantDecision: AuthDecisionOK, wantStatus: "existing-status"},
+		{name: "permit", effect: decision.EffectPermit, wantDecision: AuthDecisionOK, wantStatus: "existing-status"},
+		{name: "deny", effect: decision.EffectDeny, wantDecision: AuthDecisionFail, wantStatus: "existing-status"},
+		{name: "indeterminate", effect: decision.EffectIndeterminate, wantDecision: AuthDecisionTempFail, wantStatus: definitions.TempFailDefault},
 	}
 
 	for _, operation := range authnApplicationOperationCases() {
@@ -172,8 +181,8 @@ func TestAuthnApplicationAdapterMapsEffectsWithoutReplacingOutcomePayloads(t *te
 					t.Fatalf("decision = %q, want %q", result.decision, effect.wantDecision)
 				}
 
-				if result.status != "existing-status" || result.session != "existing-session" {
-					t.Fatalf("preserved payload = %q/%q, want existing values", result.status, result.session)
+				if result.status != effect.wantStatus || result.session != "existing-session" {
+					t.Fatalf("mapped payload = %q/%q, want %q/existing-session", result.status, result.session, effect.wantStatus)
 				}
 
 				if operation.operation == policy.OperationListAccounts && !reflect.DeepEqual(result.accounts, []string{"alpha", "beta"}) {
@@ -230,6 +239,138 @@ func TestAuthnApplicationAdapterRequiresExplicitAdmissionPresentation(t *testing
 	_, err := NewAuthnCandidateApplicationService(current, factory, decision.AuthenticationInput{})
 	if !errors.Is(err, ErrAuthApplicationDependencyMissing) {
 		t.Fatalf("constructor error = %v, want missing admission presentation", err)
+	}
+}
+
+func TestAuthnApplicationAdapterFinalizesAcceptedPostActionsAtGRPCUnaryReturn(t *testing.T) {
+	current := newRecordingAuthApplicationService()
+	session := newRecordingAuthnDecisionSession(
+		[]string{string(policy.StagePreAuth), string(policy.StageAuthDecision)},
+		mustAuthnDecisionResponse(t, decision.EffectNotApplicable),
+		mustAuthnDecisionResponse(t, decision.EffectPermit),
+	)
+	factory := &recordingAuthnDecisionSessionFactory{session: session}
+
+	adapter, err := NewAuthnCandidateApplicationService(current, factory, mustAuthnCandidateAuthentication(t))
+	if err != nil {
+		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
+	}
+
+	input := authnApplicationTestInput(AuthModeAuthenticate)
+
+	ctx, gate := authnCandidateTestContext(context.Background(), input)
+	if _, err = adapter.Authenticate(ctx, input); err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
+	}
+
+	if !session.finalizationValid || session.finalizedDuringEvaluation {
+		t.Fatalf(
+			"finalization valid/during evaluation = %t/%t, want true/false",
+			session.finalizationValid,
+			session.finalizedDuringEvaluation,
+		)
+	}
+
+	finalization := factory.invocations[0].Finalization
+	if finalization.Boundary() != string(effectsupervisor.BoundaryGRPCUnaryReturn) {
+		t.Fatalf("finalization boundary = %q, want gRPC unary return", finalization.Boundary())
+	}
+
+	select {
+	case <-finalization.Done():
+		t.Fatal("candidate finalization opened before the gRPC unary boundary")
+	default:
+	}
+
+	gate.Complete()
+
+	select {
+	case <-finalization.Done():
+	case <-time.After(time.Second):
+		t.Fatal("candidate finalization remained closed after the gRPC unary boundary")
+	}
+}
+
+func TestAuthnApplicationAdapterHTTPFinalizationWaitsForCommittedHandlerReturn(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	current := newRecordingAuthApplicationService()
+	session := newRecordingAuthnDecisionSession(
+		[]string{string(policy.StagePreAuth), string(policy.StageAuthDecision)},
+		mustAuthnDecisionResponse(t, decision.EffectNotApplicable),
+		mustAuthnDecisionResponse(t, decision.EffectPermit),
+	)
+	factory := &recordingAuthnDecisionSessionFactory{session: session}
+
+	adapter, err := NewAuthnCandidateApplicationService(current, factory, mustAuthnCandidateAuthentication(t))
+	if err != nil {
+		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
+	}
+
+	engine := gin.New()
+	engine.Use(postActionResponseCompletionMiddleware())
+	engine.GET("/auth", func(ctx *gin.Context) {
+		input := authnApplicationTestInput(AuthModeAuthenticate)
+		input.Service = definitions.ServJSON
+		input.Context.Transport.Kind = requestPolicyTransportHTTP
+
+		if _, authErr := adapter.Authenticate(ctx.Request.Context(), input); authErr != nil {
+			t.Fatalf("Authenticate() error = %v", authErr)
+		}
+
+		finalization := factory.invocations[0].Finalization
+		select {
+		case <-finalization.Done():
+			t.Fatal("candidate finalization opened before HTTP response commit")
+		default:
+		}
+
+		ctx.Status(http.StatusNoContent)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/auth", http.NoBody)
+	engine.ServeHTTP(response, request)
+
+	finalization := factory.invocations[0].Finalization
+	select {
+	case <-finalization.Done():
+	case <-time.After(time.Second):
+		t.Fatal("candidate finalization remained closed after HTTP response commit")
+	}
+}
+
+func TestAuthnApplicationAdapterMapsAcceptanceFailureToCompleteTempFailOutcome(t *testing.T) {
+	current := newRecordingAuthApplicationService()
+	session := newRecordingAuthnDecisionSession(
+		[]string{string(policy.StagePreAuth), string(policy.StageAuthDecision)},
+		mustAuthnDecisionResponse(t, decision.EffectNotApplicable),
+		mustAuthnDecisionResponse(t, decision.EffectIndeterminate),
+	)
+	factory := &recordingAuthnDecisionSessionFactory{session: session}
+
+	adapter, err := NewAuthnCandidateApplicationService(current, factory, mustAuthnCandidateAuthentication(t))
+	if err != nil {
+		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
+	}
+
+	outcome, err := authenticateAuthnCandidateForTest(
+		context.Background(), adapter, authnApplicationTestInput(AuthModeAuthenticate),
+	)
+	if err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
+	}
+
+	if outcome.Decision != AuthDecisionTempFail || outcome.TerminalState != string(authFSMStateAuthTempFail) {
+		t.Fatalf("tempfail decision/state = %q/%q, want %q/%q", outcome.Decision, outcome.TerminalState, AuthDecisionTempFail, authFSMStateAuthTempFail)
+	}
+
+	if outcome.StatusMessage != definitions.TempFailDefault || outcome.Error != definitions.TempFailDefault {
+		t.Fatalf("tempfail message/error = %q/%q, want default tempfail", outcome.StatusMessage, outcome.Error)
+	}
+
+	if outcome.HTTPStatus != http.StatusInternalServerError {
+		t.Fatalf("tempfail HTTP status = %d, want %d", outcome.HTTPStatus, http.StatusInternalServerError)
 	}
 }
 
@@ -324,6 +465,9 @@ func (c authnApplicationOperationCase) runForDecision(
 	service AuthApplicationService,
 	input AuthInput,
 ) (authnMappedTestResult, error) {
+	ctx, gate := authnCandidateTestContext(ctx, input)
+	defer gate.Complete()
+
 	switch c.operation {
 	case policy.OperationAuthenticate:
 		outcome, err := service.Authenticate(ctx, input)
@@ -348,6 +492,32 @@ func (c authnApplicationOperationCase) runForDecision(
 	default:
 		return authnMappedTestResult{}, fmt.Errorf("unsupported test operation %q", c.operation)
 	}
+}
+
+// authnCandidateTestContext simulates the transport-owned finalization boundary.
+func authnCandidateTestContext(
+	ctx context.Context,
+	input AuthInput,
+) (context.Context, *PostActionExecutionGate) {
+	if authnCandidateFinalizationBoundary(input) == effectsupervisor.BoundaryHTTPCommit {
+		return ContextWithHTTPPostActionExecutionGate(ctx)
+	}
+
+	return ContextWithPostActionExecutionGate(ctx)
+}
+
+// authenticateAuthnCandidateForTest invokes one candidate before simulating handler return.
+func authenticateAuthnCandidateForTest(
+	ctx context.Context,
+	service AuthApplicationService,
+	input AuthInput,
+) (*AuthOutcome, error) {
+	ctx, gate := authnCandidateTestContext(ctx, input)
+	outcome, err := service.Authenticate(ctx, input)
+
+	gate.Complete()
+
+	return outcome, err
 }
 
 // checkpointNames returns the exact compiled checkpoint topology for one authn operation.
@@ -583,6 +753,18 @@ func mustAuthnStringValue(t *testing.T, input string) decision.Value {
 	return value
 }
 
+// mustAuthnBooleanValue creates one strict boolean fixture value.
+func mustAuthnBooleanValue(t *testing.T, input bool) decision.Value {
+	t.Helper()
+
+	value, err := decision.NewValue(decision.ValueInput{Boolean: &input})
+	if err != nil {
+		t.Fatalf("NewValue(boolean) error = %v", err)
+	}
+
+	return value
+}
+
 // mustAuthnCandidateAuthentication constructs explicit test-only internal admission evidence.
 func mustAuthnCandidateAuthentication(t *testing.T) decision.AuthenticationInput {
 	t.Helper()
@@ -613,6 +795,17 @@ func mustAuthnDecisionResponse(t *testing.T, effect decision.Effect) decision.De
 	case decision.EffectIndeterminate:
 		code = decision.StatusCodeEvaluationFailed
 	}
+
+	return mustAuthnDecisionResponseWithCode(t, effect, code)
+}
+
+// mustAuthnDecisionResponseWithCode constructs one valid response with an exact cause.
+func mustAuthnDecisionResponseWithCode(
+	t *testing.T,
+	effect decision.Effect,
+	code decision.StatusCode,
+) decision.DecisionResponse {
+	t.Helper()
 
 	status, err := decision.NewStatus(code, "candidate result", nil)
 	if err != nil {
@@ -665,6 +858,9 @@ func (f *recordingAuthnDecisionSessionFactory) WithSession(
 ) error {
 	f.calls++
 	f.invocations = append(f.invocations, invocation)
+	if f.session != nil {
+		f.session.finalization = invocation.Finalization
+	}
 
 	if f.openErr != nil {
 		return f.openErr
@@ -674,11 +870,14 @@ func (f *recordingAuthnDecisionSessionFactory) WithSession(
 }
 
 type recordingAuthnDecisionSession struct {
-	plan        []string
-	responses   []decision.DecisionResponse
-	evaluateErr error
-	checkpoints []decision.Checkpoint
-	calls       int
+	plan                      []decisionservice.CheckpointPlan
+	responses                 []decision.DecisionResponse
+	evaluateErr               error
+	checkpoints               []decision.Checkpoint
+	calls                     int
+	finalization              decision.EvaluationFinalization
+	finalizationValid         bool
+	finalizedDuringEvaluation bool
 }
 
 // newRecordingAuthnDecisionSession returns one immutable plan-driven response sequence.
@@ -686,15 +885,30 @@ func newRecordingAuthnDecisionSession(
 	plan []string,
 	responses ...decision.DecisionResponse,
 ) *recordingAuthnDecisionSession {
+	checkpoints := make([]decisionservice.CheckpointPlan, 0, len(plan))
+	for _, name := range plan {
+		checkpoint, err := decisionservice.NewCheckpointPlan(name, nil)
+		if err != nil {
+			panic(err)
+		}
+
+		checkpoints = append(checkpoints, checkpoint)
+	}
+
 	return &recordingAuthnDecisionSession{
-		plan:      append([]string(nil), plan...),
+		plan:      checkpoints,
 		responses: append([]decision.DecisionResponse(nil), responses...),
 	}
 }
 
 // Checkpoints returns a detached recording copy of the compiled plan order.
-func (s *recordingAuthnDecisionSession) Checkpoints() []string {
-	return append([]string(nil), s.plan...)
+func (s *recordingAuthnDecisionSession) Checkpoints() []decisionservice.CheckpointPlan {
+	return append([]decisionservice.CheckpointPlan(nil), s.plan...)
+}
+
+// RequestContext retains the caller context for the boundary-only session double.
+func (*recordingAuthnDecisionSession) RequestContext(ctx context.Context) context.Context {
+	return ctx
 }
 
 // Evaluate records one candidate checkpoint and returns the configured generic result.
@@ -704,6 +918,16 @@ func (s *recordingAuthnDecisionSession) Evaluate(
 ) (decision.DecisionResponse, error) {
 	s.calls++
 	s.checkpoints = append(s.checkpoints, checkpoint)
+
+	s.finalizationValid = s.finalization.Valid()
+
+	if s.finalization.Valid() {
+		select {
+		case <-s.finalization.Done():
+			s.finalizedDuringEvaluation = true
+		default:
+		}
+	}
 	if len(s.responses) == 0 {
 		return decision.DecisionResponse{}, s.evaluateErr
 	}

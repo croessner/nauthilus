@@ -24,11 +24,11 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/observability"
+	"github.com/croessner/nauthilus/v3/server/policy/presentation"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 )
 
@@ -58,7 +58,7 @@ const (
 	outcomeMarkerDefaultDeny         = "auth.outcome.default_deny"
 	outcomeMarkerPreAuthOK           = "auth.outcome.pre_auth_ok"
 	requireResultSatisfied           = "satisfied"
-	maxSelectedResponseMessageLength = 256
+	maxSelectedResponseMessageLength = presentation.DefaultResponseMessageLength
 )
 
 var (
@@ -947,60 +947,15 @@ func attributeMessage(attributeID string, fallback string) func(*report.Decision
 }
 
 func defaultResponseMessage(responseMarker string) *report.ResponseMessageSelection {
-	message := ""
-
-	switch responseMarker {
-	case responseMarkerFail:
-		message = definitions.PasswordFail
-	case responseMarkerTempFail:
-		message = definitions.TempFailDefault
-	case responseMarkerNoTLS:
-		message = definitions.TempFailNoTLS
-	}
-
-	if message == "" {
-		return nil
-	}
-
-	return &report.ResponseMessageSelection{
-		Source:  "response_marker",
-		Message: message,
-	}
+	return presentation.DefaultResponseMessage(responseMarker)
 }
 
 func sanitizeResponseMessage(message string, maxLength int) string {
-	sanitized, _ := sanitizeResponseMessageWithState(message, maxLength)
-
-	return sanitized
+	return presentation.SanitizeResponseMessage(message, maxLength)
 }
 
 func sanitizeResponseMessageWithState(message string, maxLength int) (string, bool) {
-	if maxLength <= 0 {
-		maxLength = maxSelectedResponseMessageLength
-	}
-
-	builder := strings.Builder{}
-	truncated := false
-
-	for _, r := range message {
-		if r == '\n' || r == '\r' || r == 0 {
-			continue
-		}
-
-		if unicode.IsControl(r) && r != '\t' {
-			continue
-		}
-
-		builder.WriteRune(r)
-
-		if builder.Len() >= maxLength {
-			truncated = len(message) > builder.Len()
-
-			break
-		}
-	}
-
-	return builder.String(), truncated
+	return presentation.SanitizeResponseMessageWithState(message, maxLength)
 }
 
 func obligationsMatch(left []report.EffectRequest, right []report.EffectRequest) bool {

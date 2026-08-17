@@ -80,7 +80,7 @@ func TestBuiltinStandardAuthEffectsUseExactEstablishedTargetAllowlists(t *testin
 	want := map[string][]string{
 		policy.ObligationBruteForceUpdate:     {"authn/authenticate", "authn/lookup_identity"},
 		policy.ObligationLuaActionDispatch:    {"authn/authenticate", "authn/lookup_identity"},
-		policy.ObligationLuaPostActionEnqueue: {"authn/authenticate"},
+		policy.ObligationLuaPostActionEnqueue: {"authn/authenticate", "authn/lookup_identity"},
 	}
 
 	for _, effect := range contribution.Effects() {
@@ -145,7 +145,7 @@ func TestBuiltinAuthnProvidersUseExactEstablishedTargetAllowlists(t *testing.T) 
 	want := map[string][]string{
 		"authn/brute_force":      authAndLookup,
 		"authn/lua_action":       authAndLookup,
-		"authn/post_action":      {"authn/authenticate"},
+		"authn/post_action":      authAndLookup,
 		"authn/environment":      authAndLookup,
 		"authn/tls_encryption":   authAndLookup,
 		"authn/relay_domains":    {"authn/authenticate"},
