@@ -6,6 +6,7 @@ package sessionstate
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -22,6 +23,12 @@ type Record struct {
 	ExpiresAt time.Time
 }
 
+// Reference binds one record handle to its owning browser session.
+type Reference struct {
+	Session Handle
+	Record  Handle
+}
+
 // Versioned is one typed record together with its compare-and-swap revision.
 type Versioned[T any] struct {
 	Value    T
@@ -30,6 +37,7 @@ type Versioned[T any] struct {
 
 // CommitRequest describes one typed revision-checked write without prescribing a Redis encoding.
 type CommitRequest[T any] struct {
+	Reference        Reference
 	ExpectedRevision Revision
 	Value            T
 	TTL              time.Duration
@@ -37,7 +45,7 @@ type CommitRequest[T any] struct {
 
 // DeleteRequest describes one revision-checked cleanup operation.
 type DeleteRequest struct {
-	Handle           Handle
+	Reference        Reference
 	ExpectedRevision Revision
 }
 
@@ -53,7 +61,7 @@ type HandleGenerator interface {
 
 // Repository is the revision-aware persistence boundary for one typed record family.
 type Repository[T any] interface {
-	Load(ctx context.Context, handle Handle) (Versioned[T], error)
+	Load(ctx context.Context, reference Reference) (Versioned[T], error)
 	Commit(ctx context.Context, request CommitRequest[T]) (Revision, error)
 	Delete(ctx context.Context, request DeleteRequest) error
 }
@@ -85,10 +93,13 @@ type TransactionFactory interface {
 
 // TransactionRequest groups typed writes and deletions that must become visible together.
 type TransactionRequest struct {
-	Session *CommitRequest[SessionAnchor]
-	OIDC    []CommitRequest[OIDCFlow]
-	SAML    []CommitRequest[SAMLFlow]
-	Deletes []DeleteRequest
+	Session      *CommitRequest[SessionAnchor]
+	OIDC         []CommitRequest[OIDCFlow]
+	SAML         []CommitRequest[SAMLFlow]
+	Enrollment   []CommitRequest[EnrollmentRecord]
+	StepUp       []CommitRequest[StepUpRecord]
+	Ceremony     []CommitRequest[CeremonyRecord]
+	TOTPRecovery []CommitRequest[TOTPRecoveryRecord]
 }
 
 // TransactionReceipt reports the committed anchor revision.
@@ -99,20 +110,129 @@ type TransactionReceipt struct {
 // SessionAnchor is the bounded server-side identity and active-flow index for one browser session.
 type SessionAnchor struct {
 	Record
-	OIDCFlows []Handle
-	SAMLFlows []Handle
+	SchemaVersion     uint8
+	CreatedAt         time.Time
+	IdleExpiresAt     time.Time
+	AbsoluteExpiresAt time.Time
+	LastTouchedAt     time.Time
+	Authenticated     bool
+	IdentityReference string
+	Assurance         AssuranceSummary
+	RotatedFrom       Handle
+	OIDCFlows         []Handle
+	SAMLFlows         []Handle
+	Revoked           bool
+	Tombstone         bool
+}
+
+// AssuranceSummary is the stable, non-secret MFA assurance shared by protocol flows.
+type AssuranceSummary struct {
+	Level     int
+	Method    string
+	ProvenAt  time.Time
+	ExpiresAt time.Time
 }
 
 // OIDCFlow identifies one isolated OIDC flow record.
 type OIDCFlow struct {
 	Record
-	Session Handle
+	Session             Handle
+	ParentFlow          Handle
+	ClientID            string
+	RedirectURI         string
+	ResponseType        string
+	GrantType           string
+	Scopes              []string
+	State               string
+	Nonce               string
+	Prompt              string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	ConsentDecision     string
+	DelayedResponse     bool
+	Authenticated       bool
+	AssuranceSatisfied  bool
+	Issuable            bool
+	Issued              bool
+	Consumed            bool
 }
 
 // SAMLFlow identifies one isolated SAML flow record.
 type SAMLFlow struct {
 	Record
-	Session Handle
+	Session            Handle
+	ParentFlow         Handle
+	EntityID           string
+	RequestID          string
+	RequestDigest      string
+	RelayState         string
+	Destination        string
+	Logout             bool
+	DelayedResponse    bool
+	Authenticated      bool
+	EnrollmentComplete bool
+	AssuranceSatisfied bool
+	Issuable           bool
+	Issued             bool
+	Consumed           bool
+}
+
+// EnrollmentRecord owns one required-factor enrollment state machine.
+type EnrollmentRecord struct {
+	Record
+	Session           Handle
+	Flow              Handle
+	AccountReference  string
+	IdentityReference string
+	RequiredMethods   []string
+	CompletedMethods  []string
+	CurrentStep       string
+	Continuation      string
+	Completed         bool
+}
+
+// StepUpRecord owns one dynamic assurance or self-service proof operation.
+type StepUpRecord struct {
+	Record
+	Session              Handle
+	Flow                 Handle
+	SelfServiceOperation string
+	RequestedLevel       int
+	SupportedMethods     []string
+	ProofMethod          string
+	CompletedAt          time.Time
+	FreshUntil           time.Time
+	Scope                string
+	Completed            bool
+}
+
+// CeremonyRecord owns one short-lived single-use WebAuthn operation.
+type CeremonyRecord struct {
+	Record
+	Session           Handle
+	Flow              Handle
+	IdentityReference string
+	Protocol          string
+	Kind              string
+	Attempt           uint64
+	Payload           json.RawMessage
+	ConsumedAt        time.Time
+}
+
+// TOTPRecoveryRecord owns short-lived TOTP or recovery-code operation state.
+type TOTPRecoveryRecord struct {
+	Record
+	Session           Handle
+	Flow              Handle
+	AccountReference  string
+	IdentityReference string
+	OperationID       string
+	Kind              string
+	PendingMaterial   []byte
+	RecoveryCodes     []string
+	Generated         bool
+	Saved             bool
+	RetryCount        uint8
 }
 
 // EventKind is a bounded identifier-free session telemetry classification.

@@ -60,3 +60,33 @@ records to determine the intended protocol-specific and cross-protocol effect.
 
 Slice A defines contracts only. It does not write the opaque envelope, switch
 production behavior, or introduce a compatibility runtime.
+
+## Typed Redis Store Contract
+
+Slice B adds an unused server-side store package. Redis keys are derived as
+`browser-session:{HMAC(session-handle)}:<owner>:HMAC(record-handle)`. Both
+digests use a dedicated secret of at least 32 bytes. Raw session and child
+handles never appear in Redis keys. The shared keyed session digest is the
+Redis Cluster hash tag, so one anchor and its coordinated child records occupy
+one slot while record families remain separately keyed.
+
+| Record family | Hash owner | Lifetime | Atomicity and failure rule |
+| --- | --- | --- | --- |
+| Session anchor | `session_anchor` | minimum of idle and absolute expiry | revision CAS; bounded idle touch; missing timestamps, TTL, revocation, or tombstone fail closed |
+| OIDC flow | `oidc_flow` | interactive TTL capped to live parent | isolated CAS; never loads through SAML repository |
+| SAML flow | `saml_flow` | interactive TTL capped to live parent | isolated CAS; never loads through OIDC repository |
+| Required-MFA enrollment | `required_mfa_enrollment` | short flow TTL capped to live parent | session and flow binding required |
+| Dynamic step-up | `step_up` | freshness/operation TTL capped to live parent | enrollment-independent revision CAS |
+| WebAuthn ceremony | `webauthn_ceremony` | short ceremony TTL capped to live parent | typed binding; later ceremony slice owns single-use consume |
+| TOTP/recovery operation | `totp_recovery` | short operation TTL capped to live parent | pending material remains server-side |
+
+Every hash carries schema version, owner, revision, payload, explicit expiry,
+and Redis PTTL. The anchor also carries creation, idle, absolute, last-touch,
+revocation, and tombstone fields. A Lua preflight validates every expected
+revision before a multi-record transaction publishes any write. Revocation
+writes the anchor tombstone before idempotent child deletion. Loading a child
+without a live matching parent purges the orphan and returns a fail-closed
+classification.
+
+These stores are not connected to cookie middleware or production browser
+flows in Slice B.

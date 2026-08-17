@@ -84,7 +84,7 @@ func (contractHandleGenerator) NewHandle() (Handle, error) { return Handle("opaq
 type contractRepository struct{}
 
 // Load satisfies the repository read contract.
-func (contractRepository) Load(context.Context, Handle) (Versioned[Record], error) {
+func (contractRepository) Load(context.Context, Reference) (Versioned[Record], error) {
 	return Versioned[Record]{}, nil
 }
 
