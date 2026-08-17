@@ -945,22 +945,27 @@ func TestBrowserSessionManagerSavesPrimaryBeforeCeremony(t *testing.T) {
 	}
 }
 
-func TestBrowserSessionManagerRoutesAndDualReadsCeremonyReference(t *testing.T) {
+func TestBrowserSessionManagerRoutesDedicatedCeremonyReferenceOnly(t *testing.T) {
 	mgr := newBrowserSessionManager(testSecret, nil, &testEnv{devMode: true})
 	mgr.primary.Set(definitions.SessionKeyWebAuthnCeremony, "legacy-reference")
 
-	assert.Equal(t, "legacy-reference", mgr.GetString(definitions.SessionKeyWebAuthnCeremony, ""))
-	assert.Equal(t, []string{"legacy-reference"}, mgr.WebAuthnCeremonyReferences())
+	assert.Empty(t, mgr.GetString(definitions.SessionKeyWebAuthnCeremony, ""))
+	assert.False(t, mgr.HasKey(definitions.SessionKeyWebAuthnCeremony))
+	assert.Equal(t, WebAuthnCeremonyReferenceState{Legacy: "legacy-reference"}, mgr.WebAuthnCeremonyReferenceState())
 
 	mgr.Set(definitions.SessionKeyWebAuthnCeremony, "dedicated-reference")
 
 	assert.False(t, mgr.primary.HasKey(definitions.SessionKeyWebAuthnCeremony))
 	assert.True(t, mgr.ceremony.HasKey(definitions.SessionKeyWebAuthnCeremony))
 	assert.Equal(t, "dedicated-reference", mgr.GetString(definitions.SessionKeyWebAuthnCeremony, ""))
-	assert.Equal(t, []string{"dedicated-reference"}, mgr.WebAuthnCeremonyReferences())
+	assert.Equal(t, WebAuthnCeremonyReferenceState{Dedicated: "dedicated-reference"}, mgr.WebAuthnCeremonyReferenceState())
 
 	mgr.primary.Set(definitions.SessionKeyWebAuthnCeremony, "rolling-legacy-reference")
-	assert.Equal(t, []string{"dedicated-reference", "rolling-legacy-reference"}, mgr.WebAuthnCeremonyReferences())
+	assert.Equal(t, "dedicated-reference", mgr.GetString(definitions.SessionKeyWebAuthnCeremony, ""))
+	assert.Equal(t, WebAuthnCeremonyReferenceState{
+		Dedicated: "dedicated-reference",
+		Legacy:    "rolling-legacy-reference",
+	}, mgr.WebAuthnCeremonyReferenceState())
 
 	mgr.Delete(definitions.SessionKeyWebAuthnCeremony)
 	assert.False(t, mgr.primary.HasKey(definitions.SessionKeyWebAuthnCeremony))

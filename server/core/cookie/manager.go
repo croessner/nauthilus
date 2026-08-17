@@ -110,9 +110,17 @@ type Manager interface {
 	ComputeHMAC(data []byte) []byte
 }
 
-// WebAuthnCeremonyReferenceManager exposes both rolling-compatible reference representations.
-type WebAuthnCeremonyReferenceManager interface {
-	WebAuthnCeremonyReferences() []string
+// WebAuthnCeremonyReferenceState is the browser's dedicated reference plus any
+// legacy primary-cookie remnant that must only be inspected for cleanup.
+type WebAuthnCeremonyReferenceState struct {
+	Dedicated string
+	Legacy    string
+}
+
+// WebAuthnCeremonyReferenceStateManager exposes both browser representations
+// without making the legacy representation available through Manager.Get.
+type WebAuthnCeremonyReferenceStateManager interface {
+	WebAuthnCeremonyReferenceState() WebAuthnCeremonyReferenceState
 }
 
 // SecureManager implements Manager using ChaCha20-Poly1305 for encryption.
@@ -610,10 +618,8 @@ func Middleware(secret []byte, cfg config.File, env config.Environment) gin.Hand
 	}
 }
 
-// browserSessionManager keeps the primary session and the WebAuthn reference
-// in independently encrypted cookies while preserving the Manager contract.
-// New binaries can read legacy primary references, but old binaries cannot read
-// dedicated-cookie writes; operators must use a controlled compatible cutover.
+// browserSessionManager keeps the primary session and the canonical WebAuthn
+// reference in independently encrypted cookies while preserving the Manager contract.
 type browserSessionManager struct {
 	primary  Manager
 	ceremony Manager
@@ -642,18 +648,16 @@ func (m *browserSessionManager) Set(key string, value any) {
 	m.primary.Set(key, value)
 }
 
-// Get prefers the dedicated ceremony representation and falls back to legacy state.
+// Get returns ceremony references only from the canonical dedicated cookie.
 func (m *browserSessionManager) Get(key string) (any, bool) {
 	if key == definitions.SessionKeyWebAuthnCeremony {
-		if value, ok := m.ceremony.Get(key); ok {
-			return value, true
-		}
+		return m.ceremony.Get(key)
 	}
 
 	return m.primary.Get(key)
 }
 
-// Delete removes ceremony references from both rolling-compatible representations.
+// Delete removes ceremony references from both browser representations.
 func (m *browserSessionManager) Delete(key string) {
 	m.primary.Delete(key)
 
@@ -677,7 +681,7 @@ func (m *browserSessionManager) Save(ctx *gin.Context) error {
 	return m.ceremony.Save(ctx)
 }
 
-// Load reads both cookie representations in compatibility order.
+// Load reads the primary and dedicated cookies so legacy remnants can be purged.
 func (m *browserSessionManager) Load(ctx *gin.Context) error {
 	if err := m.primary.Load(ctx); err != nil {
 		return err
@@ -686,7 +690,7 @@ func (m *browserSessionManager) Load(ctx *gin.Context) error {
 	return m.ceremony.Load(ctx)
 }
 
-// GetString returns a dedicated or primary string value.
+// GetString returns a dedicated ceremony value or a primary non-ceremony value.
 func (m *browserSessionManager) GetString(key string, defaultValue string) string {
 	value, ok := m.Get(key)
 	if !ok {
@@ -741,10 +745,10 @@ func (m *browserSessionManager) Debug(ctx *gin.Context, logger *slog.Logger, msg
 	m.primary.Debug(ctx, logger, msg)
 }
 
-// HasKey checks the dedicated representation before legacy primary state.
+// HasKey checks only the canonical dedicated representation for ceremony state.
 func (m *browserSessionManager) HasKey(key string) bool {
-	if key == definitions.SessionKeyWebAuthnCeremony && m.ceremony.HasKey(key) {
-		return true
+	if key == definitions.SessionKeyWebAuthnCeremony {
+		return m.ceremony.HasKey(key)
 	}
 
 	return m.primary.HasKey(key)
@@ -764,25 +768,17 @@ func (m *browserSessionManager) ComputeHMAC(data []byte) []byte {
 	return m.primary.ComputeHMAC(data)
 }
 
-// WebAuthnCeremonyReferences returns dedicated then legacy references without duplicates.
-func (m *browserSessionManager) WebAuthnCeremonyReferences() []string {
-	references := make([]string, 0, 2)
-
-	dedicatedReference := m.ceremony.GetString(definitions.SessionKeyWebAuthnCeremony, "")
-	if dedicatedReference != "" {
-		references = append(references, dedicatedReference)
+// WebAuthnCeremonyReferenceState separates the canonical dedicated reference
+// from a legacy primary-cookie remnant that callers may purge but never consume.
+func (m *browserSessionManager) WebAuthnCeremonyReferenceState() WebAuthnCeremonyReferenceState {
+	return WebAuthnCeremonyReferenceState{
+		Dedicated: m.ceremony.GetString(definitions.SessionKeyWebAuthnCeremony, ""),
+		Legacy:    m.primary.GetString(definitions.SessionKeyWebAuthnCeremony, ""),
 	}
-
-	legacyReference := m.primary.GetString(definitions.SessionKeyWebAuthnCeremony, "")
-	if legacyReference != "" && legacyReference != dedicatedReference {
-		references = append(references, legacyReference)
-	}
-
-	return references
 }
 
 var _ Manager = (*browserSessionManager)(nil)
-var _ WebAuthnCeremonyReferenceManager = (*browserSessionManager)(nil)
+var _ WebAuthnCeremonyReferenceStateManager = (*browserSessionManager)(nil)
 
 // deferredHeaderWriter persists session state before Gin commits a response.
 type deferredHeaderWriter struct {

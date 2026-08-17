@@ -16,6 +16,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -27,6 +28,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
+
+var errWebAuthnCeremonyRestart = errors.New("webauthn ceremony restart required")
 
 const (
 	webAuthnCeremonyTTL      = 5 * time.Minute
@@ -73,7 +76,8 @@ func (s *webAuthnCeremonyStore) Store(ctx *gin.Context, mgr cookie.Manager, kind
 		return fmt.Errorf("invalid webauthn ceremony state")
 	}
 
-	previousReferences := webAuthnCeremonyReferences(mgr)
+	previousState := webAuthnCeremonyReferenceState(mgr)
+	previousReferences := webAuthnCeremonyCleanupReferences(previousState)
 	reference, err := util.GenerateRandomString(32)
 	if err != nil {
 		return fmt.Errorf("generate webauthn ceremony reference: %w", err)
@@ -119,7 +123,7 @@ func DeleteWebAuthnCeremony(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager)
 		return
 	}
 
-	references := webAuthnCeremonyReferences(mgr)
+	references := webAuthnCeremonyCleanupReferences(webAuthnCeremonyReferenceState(mgr))
 	mgr.Delete(definitions.SessionKeyWebAuthnCeremony)
 	mgr.Delete(definitions.SessionKeyRegistration)
 
@@ -155,35 +159,39 @@ func (s *webAuthnCeremonyStore) Take(ctx *gin.Context, mgr cookie.Manager, kind 
 		return nil, fmt.Errorf("invalid webauthn ceremony lookup")
 	}
 
-	references := webAuthnCeremonyReferences(mgr)
-	if len(references) == 0 {
-		return nil, fmt.Errorf("missing webauthn ceremony reference")
+	state := webAuthnCeremonyReferenceState(mgr)
+
+	references := webAuthnCeremonyCleanupReferences(state)
+	if state.Dedicated == "" || state.Legacy != "" || !validWebAuthnCeremonyReference(state.Dedicated) {
+		cleanupErr := s.failClosed(ctx, mgr, references)
+
+		return nil, webAuthnCeremonyRestartError("invalid browser reference state", cleanupErr)
 	}
 
-	reference := references[0]
+	reference := state.Dedicated
 
 	payload, err := s.deps.Redis.GetWriteHandle().GetDel(ctx.Request.Context(), s.redisKey(reference)).Bytes()
-	mgr.Delete(definitions.SessionKeyWebAuthnCeremony)
-	mgr.Delete(definitions.SessionKeyRegistration)
 	if err != nil {
-		return nil, fmt.Errorf("load webauthn ceremony: %w", err)
+		cleanupErr := s.failClosed(ctx, mgr, references)
+
+		return nil, webAuthnCeremonyRestartError(fmt.Sprintf("load webauthn ceremony: %v", err), cleanupErr)
 	}
 
-	if err = s.deleteReferences(ctx, references[1:]); err != nil {
-		return nil, fmt.Errorf("clean alternate webauthn ceremony reference: %w", err)
+	if err = clearAndSaveWebAuthnCeremony(ctx, mgr); err != nil {
+		return nil, webAuthnCeremonyRestartError("save consumed browser reference cleanup", err)
 	}
 
 	record := &webAuthnCeremonyRecord{}
 	if err = jsonIter.Unmarshal(payload, record); err != nil {
-		return nil, fmt.Errorf("decode webauthn ceremony: %w", err)
+		return nil, webAuthnCeremonyRestartError(fmt.Sprintf("decode webauthn ceremony: %v", err), nil)
 	}
 
 	if record.Kind != kind {
-		return nil, fmt.Errorf("webauthn ceremony kind mismatch")
+		return nil, webAuthnCeremonyRestartError("webauthn ceremony kind mismatch", nil)
 	}
 
 	if record.Binding != webAuthnCeremonyBinding(mgr, kind) {
-		return nil, fmt.Errorf("webauthn ceremony binding mismatch")
+		return nil, webAuthnCeremonyRestartError("webauthn ceremony binding mismatch", nil)
 	}
 
 	return &record.SessionData, nil
@@ -204,22 +212,63 @@ func recordWebAuthnCeremonyDelete(outcome string) {
 	stats.GetMetrics().GetWebAuthnCeremonyReferenceOperationsTotal().WithLabelValues("delete", outcome).Inc()
 }
 
-// webAuthnCeremonyReferences returns dedicated then legacy references for rolling compatibility.
-func webAuthnCeremonyReferences(mgr cookie.Manager) []string {
+// webAuthnCeremonyReferenceState returns the canonical dedicated reference and
+// any legacy primary-cookie remnant that is eligible only for cleanup.
+func webAuthnCeremonyReferenceState(mgr cookie.Manager) cookie.WebAuthnCeremonyReferenceState {
 	if mgr == nil {
-		return nil
+		return cookie.WebAuthnCeremonyReferenceState{}
 	}
 
-	if referenceManager, ok := mgr.(cookie.WebAuthnCeremonyReferenceManager); ok {
-		return referenceManager.WebAuthnCeremonyReferences()
+	if stateManager, ok := mgr.(cookie.WebAuthnCeremonyReferenceStateManager); ok {
+		return stateManager.WebAuthnCeremonyReferenceState()
 	}
 
-	reference := mgr.GetString(definitions.SessionKeyWebAuthnCeremony, "")
-	if reference == "" {
-		return nil
+	return cookie.WebAuthnCeremonyReferenceState{
+		Dedicated: mgr.GetString(definitions.SessionKeyWebAuthnCeremony, ""),
+	}
+}
+
+// webAuthnCeremonyCleanupReferences returns unique non-empty browser references.
+func webAuthnCeremonyCleanupReferences(state cookie.WebAuthnCeremonyReferenceState) []string {
+	references := make([]string, 0, 2)
+	if state.Dedicated != "" {
+		references = append(references, state.Dedicated)
 	}
 
-	return []string{reference}
+	if state.Legacy != "" && state.Legacy != state.Dedicated {
+		references = append(references, state.Legacy)
+	}
+
+	return references
+}
+
+// validWebAuthnCeremonyReference accepts only values emitted by GenerateRandomString.
+func validWebAuthnCeremonyReference(reference string) bool {
+	if len(reference) != 32 {
+		return false
+	}
+
+	for _, character := range reference {
+		if character >= '0' && character <= '9' ||
+			character >= 'A' && character <= 'Z' ||
+			character >= 'a' && character <= 'z' {
+			continue
+		}
+
+		return false
+	}
+
+	return true
+}
+
+// webAuthnCeremonyRestartError preserves one stable restart contract without
+// exposing Redis or browser-session details to callers.
+func webAuthnCeremonyRestartError(reason string, cleanupErr error) error {
+	if cleanupErr != nil {
+		return fmt.Errorf("%w: %s; cleanup failed: %v", errWebAuthnCeremonyRestart, reason, cleanupErr)
+	}
+
+	return fmt.Errorf("%w: %s", errWebAuthnCeremonyRestart, reason)
 }
 
 // deleteReferences removes every supplied Redis reference and reports the first failure.
@@ -251,6 +300,24 @@ func (s *webAuthnCeremonyStore) cleanupFailedReplacement(
 	mgr.Delete(definitions.SessionKeyWebAuthnCeremony)
 	mgr.Delete(definitions.SessionKeyRegistration)
 	_ = mgr.Save(ctx)
+}
+
+// failClosed clears both browser representations, persists the deletion, and
+// removes every identifiable Redis remnant without permitting continuation.
+func (s *webAuthnCeremonyStore) failClosed(ctx *gin.Context, mgr cookie.Manager, references []string) error {
+	redisErr := s.deleteReferences(ctx, references)
+	saveErr := clearAndSaveWebAuthnCeremony(ctx, mgr)
+
+	return errors.Join(redisErr, saveErr)
+}
+
+// clearAndSaveWebAuthnCeremony persists targeted ceremony cleanup while keeping
+// the surrounding OIDC or SAML flow available for a fresh begin request.
+func clearAndSaveWebAuthnCeremony(ctx *gin.Context, mgr cookie.Manager) error {
+	mgr.Delete(definitions.SessionKeyWebAuthnCeremony)
+	mgr.Delete(definitions.SessionKeyRegistration)
+
+	return mgr.Save(ctx)
 }
 
 // webAuthnCeremonyBinding binds a ceremony reference to its current browser identity and IDP flow.
