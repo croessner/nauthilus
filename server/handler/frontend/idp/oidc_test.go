@@ -911,6 +911,7 @@ func TestOIDCHandler_Logout(t *testing.T) {
 	t.Run("Logout with valid post_logout_redirect_uri", fixture.assertPostLogoutRedirect)
 	t.Run("Logout with client in session and LogoutRedirectURI", fixture.assertSessionClientLogoutRedirect)
 	t.Run("Logout with front-channel task renders orchestration page", fixture.assertFrontChannelLogoutPage)
+	t.Run("Logout deletes WebAuthn ceremony", fixture.assertWebAuthnCeremonyLogoutCleanup)
 }
 
 func TestOIDCBackChannelLogoutDoesNotFollowRedirect(t *testing.T) {
@@ -1113,6 +1114,20 @@ func (f *oidcLogoutTest) assertFrontChannelLogoutPage(t *testing.T) {
 	assert.Contains(t, body, "https://app.com/post-logout?state=s-1")
 	assert.Contains(t, body, "frontchannel.example.com/logout")
 	assert.Contains(t, body, "\"protocol\":\"oidc\"")
+	assert.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// assertWebAuthnCeremonyLogoutCleanup verifies OIDC logout consumes the Redis reference.
+func (f *oidcLogoutTest) assertWebAuthnCeremonyLogoutCleanup(t *testing.T) {
+	sessionData := map[string]any{definitions.SessionKeyWebAuthnCeremony: "logout-reference"}
+
+	f.mock.ExpectDel("test:webauthn:ceremony:logout-reference").SetVal(1)
+
+	w := f.serveLogout("/logout", sessionData, "")
+
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Equal(t, "/logged_out", w.Header().Get("Location"))
+	assert.Empty(t, sessionData)
 	assert.NoError(t, f.mock.ExpectationsWereMet())
 }
 

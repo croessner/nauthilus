@@ -30,11 +30,15 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
 )
 
-const cookieMetaMaxAgeKey = "__nauthilus_meta_max_age"
+const (
+	cookieMetaMaxAgeKey                 = "__nauthilus_meta_max_age"
+	webAuthnCeremonyCookieMaxAgeSeconds = 5 * 60
+)
 
 func init() {
 	// Register types that will be stored in the cookie map.
@@ -104,6 +108,11 @@ type Manager interface {
 	// ComputeHMAC returns an HMAC-SHA256 tag for the given data using the codec's auth key.
 	// Used for defense-in-depth integrity checks on security-critical session values.
 	ComputeHMAC(data []byte) []byte
+}
+
+// WebAuthnCeremonyReferenceManager exposes both rolling-compatible reference representations.
+type WebAuthnCeremonyReferenceManager interface {
+	WebAuthnCeremonyReferences() []string
 }
 
 // SecureManager implements Manager using ChaCha20-Poly1305 for encryption.
@@ -204,6 +213,7 @@ func (m *SecureManager) Save(ctx *gin.Context) error {
 				HttpOnly: true,
 				SameSite: http.SameSiteLaxMode,
 			})
+			m.hadCookie = false
 		}
 
 		m.markSaved()
@@ -236,6 +246,11 @@ func (m *SecureManager) Save(ctx *gin.Context) error {
 	}
 
 	http.SetCookie(ctx.Writer, responseCookie)
+
+	m.hadCookie = true
+	if m.cookieName == definitions.WebAuthnCeremonyCookieName {
+		stats.GetMetrics().GetWebAuthnCeremonyReferenceCookieBytes().Observe(float64(len(responseCookie.String())))
+	}
 	m.markSaved()
 
 	return nil
@@ -572,7 +587,7 @@ var _ Manager = (*SecureManager)(nil)
 // The CookieManager is stored in the gin.Context under CtxSecureDataKey.
 func Middleware(secret []byte, cfg config.File, env config.Environment) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		mgr := NewSecureManager(secret, definitions.SecureDataCookieName, cfg, env)
+		mgr := newBrowserSessionManager(secret, cfg, env)
 		writer := newDeferredHeaderWriter(ctx.Writer, func() error {
 			return mgr.Save(ctx)
 		})
@@ -594,6 +609,180 @@ func Middleware(secret []byte, cfg config.File, env config.Environment) gin.Hand
 		}
 	}
 }
+
+// browserSessionManager keeps the primary session and the WebAuthn reference
+// in independently encrypted cookies while preserving the Manager contract.
+// New binaries can read legacy primary references, but old binaries cannot read
+// dedicated-cookie writes; operators must use a controlled compatible cutover.
+type browserSessionManager struct {
+	primary  Manager
+	ceremony Manager
+}
+
+// newBrowserSessionManager constructs the ordered primary and ceremony managers.
+func newBrowserSessionManager(secret []byte, cfg config.File, env config.Environment) *browserSessionManager {
+	ceremony := NewSecureManager(secret, definitions.WebAuthnCeremonyCookieName, cfg, env)
+	ceremony.SetMaxAge(webAuthnCeremonyCookieMaxAgeSeconds)
+
+	return &browserSessionManager{
+		primary:  NewSecureManager(secret, definitions.SecureDataCookieName, cfg, env),
+		ceremony: ceremony,
+	}
+}
+
+// Set stores ceremony references only in the dedicated manager.
+func (m *browserSessionManager) Set(key string, value any) {
+	if key == definitions.SessionKeyWebAuthnCeremony {
+		m.primary.Delete(key)
+		m.ceremony.Set(key, value)
+
+		return
+	}
+
+	m.primary.Set(key, value)
+}
+
+// Get prefers the dedicated ceremony representation and falls back to legacy state.
+func (m *browserSessionManager) Get(key string) (any, bool) {
+	if key == definitions.SessionKeyWebAuthnCeremony {
+		if value, ok := m.ceremony.Get(key); ok {
+			return value, true
+		}
+	}
+
+	return m.primary.Get(key)
+}
+
+// Delete removes ceremony references from both rolling-compatible representations.
+func (m *browserSessionManager) Delete(key string) {
+	m.primary.Delete(key)
+
+	if key == definitions.SessionKeyWebAuthnCeremony {
+		m.ceremony.Delete(key)
+	}
+}
+
+// Clear removes both primary session state and the dedicated ceremony reference.
+func (m *browserSessionManager) Clear() {
+	m.primary.Clear()
+	m.ceremony.Clear()
+}
+
+// Save persists the primary manager before the dedicated ceremony manager.
+func (m *browserSessionManager) Save(ctx *gin.Context) error {
+	if err := m.primary.Save(ctx); err != nil {
+		return err
+	}
+
+	return m.ceremony.Save(ctx)
+}
+
+// Load reads both cookie representations in compatibility order.
+func (m *browserSessionManager) Load(ctx *gin.Context) error {
+	if err := m.primary.Load(ctx); err != nil {
+		return err
+	}
+
+	return m.ceremony.Load(ctx)
+}
+
+// GetString returns a dedicated or primary string value.
+func (m *browserSessionManager) GetString(key string, defaultValue string) string {
+	value, ok := m.Get(key)
+	if !ok {
+		return defaultValue
+	}
+
+	result, ok := value.(string)
+	if !ok {
+		return defaultValue
+	}
+
+	return result
+}
+
+// GetInt delegates non-ceremony integer values to the primary manager.
+func (m *browserSessionManager) GetInt(key string, defaultValue int) int {
+	return m.primary.GetInt(key, defaultValue)
+}
+
+// GetInt64 delegates non-ceremony integer values to the primary manager.
+func (m *browserSessionManager) GetInt64(key string, defaultValue int64) int64 {
+	return m.primary.GetInt64(key, defaultValue)
+}
+
+// GetUint8 delegates non-ceremony integer values to the primary manager.
+func (m *browserSessionManager) GetUint8(key string, defaultValue uint8) uint8 {
+	return m.primary.GetUint8(key, defaultValue)
+}
+
+// GetBool delegates non-ceremony boolean values to the primary manager.
+func (m *browserSessionManager) GetBool(key string, defaultValue bool) bool {
+	return m.primary.GetBool(key, defaultValue)
+}
+
+// GetStringSlice delegates non-ceremony string slices to the primary manager.
+func (m *browserSessionManager) GetStringSlice(key string, defaultValue []string) []string {
+	return m.primary.GetStringSlice(key, defaultValue)
+}
+
+// GetDuration delegates non-ceremony durations to the primary manager.
+func (m *browserSessionManager) GetDuration(key string, defaultValue time.Duration) time.Duration {
+	return m.primary.GetDuration(key, defaultValue)
+}
+
+// GetBytes delegates non-ceremony byte slices to the primary manager.
+func (m *browserSessionManager) GetBytes(key string, defaultValue []byte) []byte {
+	return m.primary.GetBytes(key, defaultValue)
+}
+
+// Debug logs only primary data so opaque ceremony references are never exposed.
+func (m *browserSessionManager) Debug(ctx *gin.Context, logger *slog.Logger, msg string) {
+	m.primary.Debug(ctx, logger, msg)
+}
+
+// HasKey checks the dedicated representation before legacy primary state.
+func (m *browserSessionManager) HasKey(key string) bool {
+	if key == definitions.SessionKeyWebAuthnCeremony && m.ceremony.HasKey(key) {
+		return true
+	}
+
+	return m.primary.HasKey(key)
+}
+
+// SetMaxAge keeps the ceremony lifetime fixed except during explicit deletion.
+func (m *browserSessionManager) SetMaxAge(maxAge int) {
+	m.primary.SetMaxAge(maxAge)
+
+	if maxAge < 0 {
+		m.ceremony.SetMaxAge(maxAge)
+	}
+}
+
+// ComputeHMAC preserves the primary session integrity contract.
+func (m *browserSessionManager) ComputeHMAC(data []byte) []byte {
+	return m.primary.ComputeHMAC(data)
+}
+
+// WebAuthnCeremonyReferences returns dedicated then legacy references without duplicates.
+func (m *browserSessionManager) WebAuthnCeremonyReferences() []string {
+	references := make([]string, 0, 2)
+
+	dedicatedReference := m.ceremony.GetString(definitions.SessionKeyWebAuthnCeremony, "")
+	if dedicatedReference != "" {
+		references = append(references, dedicatedReference)
+	}
+
+	legacyReference := m.primary.GetString(definitions.SessionKeyWebAuthnCeremony, "")
+	if legacyReference != "" && legacyReference != dedicatedReference {
+		references = append(references, legacyReference)
+	}
+
+	return references
+}
+
+var _ Manager = (*browserSessionManager)(nil)
+var _ WebAuthnCeremonyReferenceManager = (*browserSessionManager)(nil)
 
 // deferredHeaderWriter persists session state before Gin commits a response.
 type deferredHeaderWriter struct {

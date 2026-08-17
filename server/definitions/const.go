@@ -24,6 +24,9 @@ const (
 	// This is the primary cookie used for all session data storage.
 	SecureDataCookieName = "nauthilus_secure_data"
 
+	// WebAuthnCeremonyCookieName is the encrypted cookie dedicated to one opaque ceremony reference.
+	WebAuthnCeremonyCookieName = "nauthilus_webauthn_ceremony"
+
 	// LanguageCookieName is the name of the plain language preference cookie.
 	// It stores only the selected language tag (e.g. "en", "de").
 	LanguageCookieName = "nauthilus_lang"

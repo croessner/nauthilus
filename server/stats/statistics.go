@@ -351,6 +351,12 @@ type Metrics interface {
 	// GetIdpMfaOperationsTotal tracks the total number of IDP MFA operations.
 	GetIdpMfaOperationsTotal() *prometheus.CounterVec
 
+	// GetWebAuthnCeremonyReferenceCookieBytes tracks the bounded dedicated cookie size.
+	GetWebAuthnCeremonyReferenceCookieBytes() prometheus.Histogram
+
+	// GetWebAuthnCeremonyReferenceOperationsTotal tracks bounded store, take, and delete outcomes.
+	GetWebAuthnCeremonyReferenceOperationsTotal() *prometheus.CounterVec
+
 	// GetAuthFSMTransitionsTotal tracks auth FSM transitions labeled by from/event/to.
 	GetAuthFSMTransitionsTotal() *prometheus.CounterVec
 
@@ -424,6 +430,8 @@ type metricsImpl struct {
 	idpTokensIssuedTotal       *prometheus.CounterVec
 	idpConsentTotal            *prometheus.CounterVec
 	idpMfaOperationsTotal      *prometheus.CounterVec
+	webAuthnCeremonyCookieSize prometheus.Histogram
+	webAuthnCeremonyOperations *prometheus.CounterVec
 	authFSMTransitionsTotal    *prometheus.CounterVec
 	pluginCallsTotal           *prometheus.CounterVec
 	pluginCallDurationSeconds  *prometheus.HistogramVec
@@ -720,6 +728,16 @@ func (m *metricsImpl) GetIdpMfaOperationsTotal() *prometheus.CounterVec {
 	return m.idpMfaOperationsTotal
 }
 
+// GetWebAuthnCeremonyReferenceCookieBytes returns the dedicated cookie-size histogram.
+func (m *metricsImpl) GetWebAuthnCeremonyReferenceCookieBytes() prometheus.Histogram {
+	return m.webAuthnCeremonyCookieSize
+}
+
+// GetWebAuthnCeremonyReferenceOperationsTotal returns bounded ceremony-reference outcomes.
+func (m *metricsImpl) GetWebAuthnCeremonyReferenceOperationsTotal() *prometheus.CounterVec {
+	return m.webAuthnCeremonyOperations
+}
+
 // GetAuthFSMTransitionsTotal returns the authFSMTransitionsTotal field.
 func (m *metricsImpl) GetAuthFSMTransitionsTotal() *prometheus.CounterVec {
 	return m.authFSMTransitionsTotal
@@ -887,6 +905,17 @@ func (m *metricsImpl) initIDPMetrics() {
 	m.idpTokensIssuedTotal = newCounterVecMetric("idp_tokens_issued_total", "The total number of IDP tokens issued", metricProtocolLabel, metricClientIDLabel, metricGrantTypeLabel)
 	m.idpConsentTotal = newCounterVecMetric("idp_consent_total", "The total number of IDP consent operations", metricClientIDLabel, metricStatusLabel)
 	m.idpMfaOperationsTotal = newCounterVecMetric("idp_mfa_operations_total", "The total number of IDP MFA operations", metricTypeLabel, metricMethodLabel, metricStatusLabel)
+	m.webAuthnCeremonyCookieSize = newHistogramMetric(
+		"webauthn_ceremony_reference_cookie_bytes",
+		"Serialized size of the dedicated WebAuthn ceremony reference cookie.",
+		[]float64{128, 192, 256, 384, 512},
+	)
+	m.webAuthnCeremonyOperations = newCounterVecMetric(
+		"webauthn_ceremony_reference_operations_total",
+		"WebAuthn ceremony reference operations by bounded outcome.",
+		metricOpLabel,
+		metricOutcomeLabel,
+	)
 	m.authFSMTransitionsTotal = newCounterVecMetric("auth_fsm_transitions_total", "Total number of auth FSM transitions", metricFromLabel, metricEventLabel, metricToLabel)
 }
 

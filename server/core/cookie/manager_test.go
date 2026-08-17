@@ -756,13 +756,16 @@ func TestSecureManagerExplicitDeletionOverridesEarlierSave(t *testing.T) {
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/logout", nil))
 
 	cookies := w.Result().Cookies()
-	if !assert.Len(t, cookies, 2) {
+	if !assert.Len(t, cookies, 3) {
 		return
 	}
 
 	assert.NotEmpty(t, cookies[0].Value)
 	assert.Equal(t, -1, cookies[1].MaxAge)
 	assert.Empty(t, cookies[1].Value)
+	assert.Equal(t, definitions.WebAuthnCeremonyCookieName, cookies[2].Name)
+	assert.Equal(t, -1, cookies[2].MaxAge)
+	assert.Empty(t, cookies[2].Value)
 }
 
 func TestDeferredHeaderWriterFailsClosedBeforeRedirect(t *testing.T) {
@@ -891,4 +894,75 @@ func TestMiddleware_DoesNotCreateSecureDataCookieWhenNoStateExists(t *testing.T)
 	for _, c := range w.Result().Cookies() {
 		assert.NotEqual(t, definitions.SecureDataCookieName, c.Name)
 	}
+}
+
+type saveRecordingManager struct {
+	Manager
+	order   *[]string
+	name    string
+	saveErr error
+}
+
+// Save records ordered browser-session persistence for composite-manager tests.
+func (m *saveRecordingManager) Save(_ *gin.Context) error {
+	*m.order = append(*m.order, m.name)
+
+	return m.saveErr
+}
+
+func TestBrowserSessionManagerSavesPrimaryBeforeCeremony(t *testing.T) {
+	saveErr := errors.New("primary save failed")
+	tests := []struct {
+		primaryErr error
+		wantErr    error
+		name       string
+		wantOrder  []string
+	}{
+		{
+			name:      "successful ordered save",
+			wantOrder: []string{"primary", "ceremony"},
+		},
+		{
+			name:       "primary failure stops dedicated save",
+			primaryErr: saveErr,
+			wantErr:    saveErr,
+			wantOrder:  []string{"primary"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			order := make([]string, 0, 2)
+			mgr := &browserSessionManager{
+				primary:  &saveRecordingManager{order: &order, name: "primary", saveErr: test.primaryErr},
+				ceremony: &saveRecordingManager{order: &order, name: "ceremony"},
+			}
+
+			err := mgr.Save(nil)
+			assert.ErrorIs(t, err, test.wantErr)
+			assert.Equal(t, test.wantOrder, order)
+		})
+	}
+}
+
+func TestBrowserSessionManagerRoutesAndDualReadsCeremonyReference(t *testing.T) {
+	mgr := newBrowserSessionManager(testSecret, nil, &testEnv{devMode: true})
+	mgr.primary.Set(definitions.SessionKeyWebAuthnCeremony, "legacy-reference")
+
+	assert.Equal(t, "legacy-reference", mgr.GetString(definitions.SessionKeyWebAuthnCeremony, ""))
+	assert.Equal(t, []string{"legacy-reference"}, mgr.WebAuthnCeremonyReferences())
+
+	mgr.Set(definitions.SessionKeyWebAuthnCeremony, "dedicated-reference")
+
+	assert.False(t, mgr.primary.HasKey(definitions.SessionKeyWebAuthnCeremony))
+	assert.True(t, mgr.ceremony.HasKey(definitions.SessionKeyWebAuthnCeremony))
+	assert.Equal(t, "dedicated-reference", mgr.GetString(definitions.SessionKeyWebAuthnCeremony, ""))
+	assert.Equal(t, []string{"dedicated-reference"}, mgr.WebAuthnCeremonyReferences())
+
+	mgr.primary.Set(definitions.SessionKeyWebAuthnCeremony, "rolling-legacy-reference")
+	assert.Equal(t, []string{"dedicated-reference", "rolling-legacy-reference"}, mgr.WebAuthnCeremonyReferences())
+
+	mgr.Delete(definitions.SessionKeyWebAuthnCeremony)
+	assert.False(t, mgr.primary.HasKey(definitions.SessionKeyWebAuthnCeremony))
+	assert.False(t, mgr.ceremony.HasKey(definitions.SessionKeyWebAuthnCeremony))
 }

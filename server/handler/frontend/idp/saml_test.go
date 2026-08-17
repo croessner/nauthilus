@@ -118,6 +118,25 @@ func (m *mockSAMLCfg) GetLDAP() *config.LDAPSection {
 	return &config.LDAPSection{}
 }
 
+func TestSAMLLocalCleanupDeletesWebAuthnCeremony(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newSLOFanoutTestHandler(&mockSAMLCfg{redisPrefix: "test:"})
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/saml/slo", nil)
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyWebAuthnCeremony: "saml-logout-reference",
+	}}
+	ctx.Set(definitions.CtxSecureDataKey, mgr)
+	mock.ExpectDel("test:webauthn:ceremony:saml-logout-reference").SetVal(1)
+
+	handler.performLocalSLOCleanupInternal(ctx, "", nil, false)
+
+	assert.Empty(t, mgr.data)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestSAMLUnrestrictedAttributesSuppressSensitive(t *testing.T) {
 	session := &saml.Session{}
 	user := newSAMLAttributeUser(map[string][]any{
