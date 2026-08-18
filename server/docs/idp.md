@@ -26,51 +26,102 @@ fully integrated into the Nauthilus core, leveraging existing authentication and
 
 ### Component Map
 
-- **`server/idp/`**: The "Brain" of the IdP. Defines the `IdentityProvider` interface and implements the `NauthilusIdP`
-  which orchestrates authentication and token issuance.
-- **`server/idp/flow/`**: The "Flow Engine". Central flow orchestration with `Controller`, `State`, `Store`
-  (Redis/Hybrid), `URIBuilder`, and `Policy` / `TransitionGraph`. All flow lifecycle operations (Start, Advance,
-  Back, Cancel, Complete, Resume, Abort, Recover) are routed through this package.
-- **`server/handler/api/v1/`**: The "JSON Interface".
-    - `mfa.go`: Provides a clean JSON API for managing TOTP, Recovery Codes, and WebAuthn credentials.
-- **`server/handler/frontend/idp/`**: The "Face" and "Voice".
-    - `oidc.go`: Core OIDC handler (Discovery, Token, Introspect, UserInfo, JWKS, Logout) and route registration.
-      Also exposes `CleanupIdPFlowState` and `CleanupMFAState` which delegate to the flow package.
-    - `oidc_authorization_code.go`: Implements the Authorization Code Grant (Authorize, Consent, token exchange,
-      refresh token exchange).
-    - `oidc_client_credentials.go`: Implements the Client Credentials Grant token exchange.
-    - `oidc_device_code.go`: Implements the Device Authorization Grant (RFC 8628) including device authorization,
-      user verification with MFA support, device consent, and token polling.
-    - `oidc_flow_context.go`: Flow context objects (`oidcAuthorizeFlowContext`, `oidcDeviceFlowContext`) that
-      encapsulate OIDC-specific cookie access (store/read request parameters, consent tracking).
-    - `saml.go`: Implements the SAML 2.0 Identity Provider logic (Metadata, SSO).
-    - `saml_flow_context.go`: Flow context object (`samlFlowContext`) that encapsulates SAML-specific cookie access.
-    - `flow_controller_factory.go`: Factory function `newFlowController` that builds a `flow.Controller` with
-      the appropriate store (HybridStore when Redis is available, FlowReferenceAdapter otherwise).
-    - `frontend.go`: Manages the web-based flows (Login, MFA, 2FA Portal) and handles post-authentication
-      redirection for all grant types including device code flow completion after MFA.
-- **`server/idp/redis_storage.go`**: The "Short-term Memory". Handles volatile state like OIDC codes and session data in
-  Redis.
+- **`server/core/cookie/`**: The canonical browser-session boundary. It validates or creates the opaque v1 envelope,
+  loads the typed `SessionAnchor`, rotates session handles after authentication, and performs tombstone-first
+  revocation.
+- **`server/sessionstate/`**: The only browser-flow persistence authority. It provides typed, revision-bound Redis
+  repositories for anchors, OIDC and SAML flows, enrollment, step-up, WebAuthn ceremonies, recovery, consent grants,
+  and logout indexes.
+- **`server/idp/flow/`**: The protocol flow engine. `Controller`, `TypedStore`, `State`, and the transition policy move
+  typed OIDC and SAML records through their allowed steps. There is no browser-cookie fallback store.
+- **`server/idp/`**: The protocol and identity core. It resolves clients and service providers, performs backend-bound
+  user lookup, maps claims, issues tokens, and owns the cookie-free token and device-code stores.
+- **`server/handler/frontend/idp/`**: The browser-facing composition layer. Its sole route registrars install canonical
+  checkpoints and dispatch to canonical login, MFA, OIDC, SAML, device, consent, and logout handlers.
+- **`server/handler/mfa_backchannel/`**: The separately authenticated machine MFA API under
+  `/api/v1/mfa-backchannel/*`. It does not use browser session state.
+- **`server/idp/redis_storage.go`**: Volatile protocol storage for authorization codes, refresh-token families, and
+  other cookie-free token operations.
 - **`server/core/auth.go`**: The "Engine". Manages the complex multi-step authentication process (Password -> MFA ->
   Success).
 
-## 2. Signal Flow Diagram
+### Canonical Browser Session Model
 
-The following diagram shows how a request moves through the system:
+The browser carries only an authenticated, opaque v1 envelope. It does not carry identity data, client IDs, scopes,
+redirect URIs, MFA decisions, consent state, or protocol payloads. The envelope selects one server-side
+`SessionAnchor`; every child object is a typed Redis record owned by that anchor or by an explicitly documented
+long-lived identity binding.
 
 ```mermaid
-graph TD
-    User([User Browser]) <--> FE[HTMX Frontend server/handler/frontend/idp/frontend.go]
-    FE <--> PH[Protocol Handlers server/handler/frontend/idp/oidc, saml.go]
-    PH <--> FC[Flow Engine server/idp/flow/]
-    FC <--> RFS[Redis Flow Store]
-    PH <--> IC[IdP Core server/idp/nauthilus_idp.go]
-    IC <--> AS[AuthState server/core/auth.go]
-    AS <--> BE[Backends server/backend]
-    IC <--> RTS[Redis Token Storage server/idp/redis_storage.go]
-    PH <--> RTS
-    FE <--> MS[Canonical MFA orchestration server/handler/frontend/idp/canonical_*]
-    MS <--> AS
+flowchart LR
+    B[Browser] -->|opaque v1 envelope| M[Canonical middleware]
+    M --> A[(SessionAnchor)]
+    M --> C{Route checkpoint}
+    C -->|Protocol entry| N[Create or resume an anchor]
+    C -->|Continuation| V[Require a valid existing anchor]
+    N --> H[Canonical handler]
+    V --> H
+    H --> O[(OIDCFlow)]
+    H --> S[(SAMLFlow)]
+    H --> U[(StepUp or Enrollment)]
+    H --> W[(WebAuthn Ceremony)]
+    H --> G[(ConsentGrant or LogoutIndex)]
+    H --> I[Identity and protocol services]
+```
+
+`Protocol entry` is used only where a new browser journey may legitimately begin, for example OIDC authorization,
+device verification, SAML SSO, or an inbound SAML LogoutRequest. `Continuation` is used where an existing bound
+session and flow must already exist. A missing, malformed, or legacy browser representation is rejected and purged
+before the endpoint handler runs.
+
+### Hard Cutover and Legacy Retirement
+
+There is one executable browser-session architecture. The production composition root registers only the canonical
+Frontend, OIDC, and SAML route families. Old browser cookies and old Redis keys are inert residue: runtime code must
+never read, adopt, translate, refresh, or delete them.
+
+```mermaid
+flowchart TD
+    R[Browser request] --> E{Canonical v1 envelope valid?}
+    E -->|yes| H[Canonical handler]
+    E -->|no, absent continuation, malformed, or legacy| P[Purge browser representations]
+    P --> X[Reject and restart]
+    H --> V[(Current-v1 typed Redis only)]
+    L[(Legacy Redis residue)] -. never read by runtime .-> X
+    O[Operator retirement tool] -->|dry-run by default; explicit apply| L
+```
+
+The fixed-allowlist operator tool under `contrib/session-keyspace-retirement` is the only permitted legacy-key
+retirement path. It is not imported by the server and does not turn legacy records into current-v1 sessions.
+
+## 2. Signal Flow Diagram
+
+The following diagram shows one browser request moving through the active architecture:
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant M as Canonical middleware
+    participant A as SessionAnchor
+    participant H as Canonical handler
+    participant F as Typed flow store
+    participant I as IdP core
+    participant E as Selected backend
+    B->>M: Request plus opaque envelope
+    alt permitted protocol entry without an envelope
+        M->>A: Create current-v1 anchor
+    else continuation
+        M->>A: Validate envelope and load anchor
+    end
+    M->>H: Dispatch only after the checkpoint succeeds
+    H->>F: Start or load a revision-bound typed record
+    H->>I: Authenticate or materialize claims
+    I->>E: Use the explicitly selected backend affinity
+    E-->>I: Identity and attributes
+    I-->>H: Typed result
+    H->>F: CAS transition or atomic consume
+    H->>A: Commit identity, assurance, indexes, or revocation
+    H-->>B: Render, redirect, token, assertion, or terminal result
 ```
 
 ## 3. Detailed Signal Flows
@@ -79,10 +130,10 @@ graph TD
 
 This is the primary flow for modern applications. It ensures that user credentials never touch the client application.
 
-**Security Note:** The IdP uses a hybrid flow-state model.
-The encrypted cookie (`nauthilus_secure_data`) stores only a minimal flow reference (for example `flow_id`).
-The full flow state is persisted in Redis and resolved centrally through the flow layer.
-No flow state (like `return_to`) is passed via URL parameters to prevent Open Redirect vulnerabilities.
+**Security Note:** The authorization request is stored only in typed Redis state. The browser receives an opaque flow
+ticket in local continuation URLs, but the ticket has no authority without the matching canonical envelope,
+`SessionAnchor`, record ownership, revision, and request bindings. Validated client redirect targets are never accepted
+from an untrusted continuation parameter.
 
 ```mermaid
 sequenceDiagram
@@ -93,42 +144,42 @@ sequenceDiagram
     participant R as Redis
     participant A as AuthState
     Note over B, A: Initial Authorization Request
-    B ->> H: GET /idp/oidc/auth?client_id=...&scope=openid...
+    B ->> H: GET /oidc/authorize?client_id=...&scope=openid...
     H ->> I: FindClient(clientID)
     I -->> H: Client Config
     H ->> H: Validate Redirect URI
-    H ->> H: FlowController.Start() → store state in Redis + cookie reference
-    H ->> H: Store OIDC params in encrypted cookie via oidcAuthorizeFlowContext
-    H ->> B: 302 Redirect to decision.RedirectURI (default: /login, no query params)
+    H ->> R: Start typed OIDCFlow and index it in SessionAnchor
+    H ->> B: 302 Redirect to /login?flow=opaque-ticket
     Note over B, A: Authentication Phase
     B ->> F: GET /login
-    F ->> F: Read flow state from cookie
+    F ->> R: Load bound OIDCFlow through typed store
     F -->> B: Render idp_login.html (HTMX)
     B ->> F: POST /login (username, password)
-    F ->> F: Read flow state from cookie
-    F ->> I: Authenticate(ctx, username, password, ...)
+    F ->> R: Reload revision-bound OIDCFlow
+    F ->> I: Authenticate with typed protocol context
     I ->> A: NewAuthState(ctx, ...)
     A ->> A: Evaluate MFA requirements
     A -->> I: Success or Failure
     Note right of I: Delayed Response logic: always proceed to MFA if enabled and user exists
     I -->> F: User (even if password incorrect, if Delayed Response enabled)
-    F ->> F: Create Partial Session (in cookie)
-    F ->> B: 302 Redirect to /login/totp (no query params)
+    F ->> R: Commit canonical identity or start parent-bound StepUp
+    F ->> B: 302 Redirect to /login/totp?flow=opaque-ticket
     B ->> F: POST /login/totp (code)
-    F ->> F: Verify TOTP and check original password result
-    F ->> F: Final Session Creation or Error
-    F ->> B: 302 Redirect to /oidc/authorize (reconstructed from cookie)
+    F ->> R: Verify and atomically complete or consume StepUp
+    F ->> R: Advance parent OIDCFlow
+    F ->> B: 302 Redirect to /oidc/authorize?flow=opaque-ticket
     Note over B, A: Consent & Code Issuance
-    B ->> H: GET /idp/oidc/authorize (user now logged in)
-    H ->> H: Read consent state
-    H ->> B: 302 Redirect to /oidc/consent
-    B ->> F: GET /idp/oidc/consent
+    B ->> H: GET /oidc/authorize?flow=opaque-ticket (user now logged in)
+    H ->> R: Check identity-client-scope-bound ConsentGrant
+    H ->> B: 302 Redirect to /oidc/consent?flow=opaque-ticket when needed
+    B ->> F: GET /oidc/consent?flow=opaque-ticket
     F -->> B: Render idp_consent.html
-    B ->> F: POST /idp/oidc/consent (Accept)
-    F ->> R: StoreSession(code, sessionData, TTL)
+    B ->> F: POST /oidc/consent (Accept plus flow ticket)
+    F ->> R: Persist ConsentGrant and single-use authorization code
+    F ->> R: Consume typed OIDCFlow
     F ->> B: 302 Redirect to client_redirect_uri?code=...
     Note over B, A: Token Exchange
-    B ->> H: POST /idp/oidc/token (code, client_secret)
+    B ->> H: POST /oidc/token (code, client_secret)
     H ->> R: GetSession(code)
     R -->> H: sessionData
     H ->> I: IssueTokens(ctx, sessionData)
@@ -137,7 +188,7 @@ sequenceDiagram
     H ->> R: DeleteSession(code)
     H -->> B: 200 OK (JSON Tokens)
     Note over B, A: Refresh Token Flow
-    B ->> H: POST /idp/oidc/token (grant_type=refresh_token, refresh_token=...)
+    B ->> H: POST /oidc/token (grant_type=refresh_token, refresh_token=...)
     H ->> R: GetRefreshToken(rt)
     R -->> H: sessionData
     H ->> I: ExchangeRefreshToken(ctx, rt)
@@ -148,39 +199,38 @@ sequenceDiagram
     H -->> B: 200 OK (JSON Tokens)
 ```
 
-### 3.1.1 Hybrid Flow State (Cookie Reference + Redis State)
+### 3.1.1 Canonical Envelope and Typed Redis State
 
-The IdP stores only a minimal flow reference in the encrypted `nauthilus_secure_data` cookie.
-The full flow state is persisted in Redis and resolved via the cookie reference (`flow_id`).
+The browser envelope and the server-side flow ticket solve different problems:
 
-**Session Keys for IdP Flow:**
+| Object | Location | Purpose | Contains business state |
+| --- | --- | --- | --- |
+| Canonical v1 envelope | Browser cookie | Authenticated reference to one browser session and key epoch | No |
+| `SessionAnchor` | Redis | Identity, backend affinity, assurance, expiry, and bounded child indexes | Yes |
+| Flow ticket | Local URL parameter | Opaque selector for one child record | No |
+| Typed child record | Redis | OIDC/SAML request binding, step-up, enrollment, ceremony, or recovery state | Yes |
+| `ConsentGrant` | Redis | Identity-client-scope-bound remembered consent | Yes |
+| `LogoutIndex` | Redis | Bounded set of issued OIDC client sessions for this browser session | Yes |
 
-| Key                   | Description                                                                             |
-|-----------------------|-----------------------------------------------------------------------------------------|
-| `idp_flow_id`         | Opaque flow identifier referencing the full state in Redis                              |
-| `idp_flow_type`       | Flow type: `oidc` or `saml`                                                             |
-| `idp_client_id`       | OIDC client_id                                                                          |
-| `idp_redirect_uri`    | Validated OIDC redirect_uri                                                             |
-| `idp_scope`           | Requested OIDC scopes                                                                   |
-| `idp_state`           | OIDC state parameter                                                                    |
-| `idp_nonce`           | OIDC nonce parameter                                                                    |
-| `idp_original_url`    | SAML original request URL                                                               |
-| `oidc_grant_type`     | OIDC grant type (`authorization_code` or `device_code`) to distinguish flows            |
-| `device_code`         | Device code string during the device code MFA flow                                      |
-| `require_mfa_flow`    | Flow reference flag for the require_mfa flow (managed by `FlowController`)              |
-| `require_mfa_pending` | Comma-separated list of MFA methods still requiring registration (e.g. `totp,webauthn`) |
+Every mutation is revision-bound. Terminal operations atomically consume a record and remove its anchor index where
+required, so a replay cannot issue a second code, assertion, device authorization, or MFA completion. No active browser
+path reads `cookie.Manager`, legacy session keys, `ReferenceAdapter`, or `HybridStore`.
 
-**How it works:**
-
-1. `/oidc/authorize` validates all parameters and calls `FlowController.Start()` which stores full flow state in Redis
-2. The encrypted cookie stores only the flow reference (`flow_id`, `flow_type`, `require_mfa_flow`) via
-   `FlowReferenceAdapter`
-3. OIDC request parameters are stored separately in the cookie via `oidcAuthorizeFlowContext`
-4. Redirects to `decision.RedirectURI` (resolved by `URIBuilder`, default `/login`) without query parameters
-5. `/login` loads the flow via `flow_id` from Redis through the `HybridStore` and validates it centrally
-6. After successful authentication, redirects back through centralized `FlowController` decisions
-7. On completion/abort, `CleanupIdPFlowState` delegates to `flow.CleanupIdPState()` which removes all flow keys from the
-   cookie
+```mermaid
+stateDiagram-v2
+    [*] --> Start
+    Start --> Login
+    Login --> Enrollment: required method missing
+    Enrollment --> Login: method registered
+    Login --> StepUp: assurance required
+    StepUp --> Consent: proof accepted
+    Login --> Consent: assurance already sufficient
+    Consent --> Callback: approved
+    Consent --> Denied: denied
+    Callback --> Consumed: atomic terminal consume
+    Consumed --> [*]
+    Denied --> [*]
+```
 
 ### 3.1.2 CSRF Protection
 
@@ -430,7 +480,7 @@ sequenceDiagram
     participant B as Client Application
     participant H as OIDC Handler
     participant I as IdP Core
-    B ->> H: POST /idp/oidc/introspect (token, client_id, client_secret)
+    B ->> H: POST /oidc/introspect (token, client_id, client_secret)
     H ->> H: Authenticate Client
     H ->> I: ValidateToken(ctx, token)
     I -->> H: Claims (if valid)
@@ -464,17 +514,18 @@ Parties (RPs) when they end their session at the IdP.
 
 #### Signal Flow
 
-1. **Logout Initiation**: The user or an RP redirects the browser to `/idp/oidc/logout`.
+1. **Logout Initiation**: The user or an RP redirects the browser to `/oidc/logout`.
 2. **Validation**: If an `id_token_hint` and `post_logout_redirect_uri` are provided, the IdP validates them against the
    client configuration.
-3. **Session Identification**: The IdP uses a session cookie (`oidc_clients`) to track which RPs the user has logged
-   into during the current session.
+3. **Session Identification**: The current-v1 `LogoutIndex` stores a bounded, identity-bound list of OIDC clients in
+   Redis. The canonical envelope contains no RP list.
 4. **Back-channel Logout**: For all RPs that have a `backchannel_logout_uri` configured, the IdP asynchronously sends a
    POST request with a signed `logout_token` (JWT).
 5. **Front-channel Logout**: If any RPs have a `frontchannel_logout_uri`, the IdP renders a page
    (`idp_logout_frames.html`) containing hidden iFrames for each RP. This allows the browser to trigger logout at the
    RPs directly.
-6. **Local Logout**: The IdP clears the local user session.
+6. **Local Logout**: The IdP first tombstones the `SessionAnchor`, then removes its indexed current-v1 children and
+   purges both browser representations. Revocation failure is terminal and cannot fall back to legacy state.
 7. **Redirection**: Finally, the user is redirected to the `post_logout_redirect_uri` or back to the login page.
 
 ### 3.4 SAML 2.0 SSO Flow (Redirect/POST Binding)
@@ -490,35 +541,35 @@ sequenceDiagram
     participant R as Redis
     participant A as AuthState
     Note over B, A: Initial SSO Request
-    B -> H: GET /idp/saml/sso?SAMLRequest=...
+    B -> H: GET /saml/sso?SAMLRequest=...
     H -> I: getSAMLIdP(ctx)
     H -> H: Validate SAML Request
-    H -> H: FlowController.Start() → store state in Redis + cookie reference
-    H -> H: Store SAML params in cookie via samlFlowContext
-    H -> B: 302 Redirect to decision.RedirectURI (default: /login, no query params)
+    H -> R: Start typed SAMLFlow with request ID, digest, RelayState, and destination
+    H -> B: 302 Redirect to /login?flow=opaque-ticket
     Note over B, A: Authentication Phase (Shared with OIDC)
     B -> F: GET /login
-    F -> F: Load flow state from Redis via flow_id
+    F -> R: Load anchor-owned SAMLFlow through typed store
     F -> B: Render Login UI
     B -> F: POST /login
     F -> I: Authenticate(...)
     I -> A: Verify Credentials
     Note over B, A: SAML Response Generation
-    B -> H: GET /idp/saml/sso (with session)
-    H -> I: GetUserByUsername(...)
+    B -> H: GET /saml/sso with canonical envelope and flow ticket
+    H -> I: GetUserByUsernameForSAMLCanonical(...)
     H -> H: Create SAML Session & Assertion
-    H -> H: CleanupIdPFlowState → flow.CleanupIdPState()
+    H -> R: Advance to callback and atomically consume SAMLFlow
     H -> B: 200 OK (SAMLResponse via POST Binding)
 ```
 
 1. **Metadata**: The SP fetches `/saml/metadata` to obtain the IdP's entity ID and public signing certificate.
 2. **SSO Request**: The SP redirects the user to `/saml/sso` with a `SAMLRequest`.
-3. **Flow Initialization**: The SAML handler calls `FlowController.Start()` which stores the full flow state in Redis
-   and a minimal reference in the cookie. SAML-specific parameters (entity ID, original URL) are stored separately via
-   `samlFlowContext`. The redirect target is determined by `URIBuilder`.
+3. **Flow Initialization**: The SAML handler validates the request and signature, hashes the validated XML, and stores
+   entity ID, request ID, digest, RelayState, destination, and original URL in one typed `SAMLFlow`. The browser sees
+   only the canonical envelope and an opaque local flow ticket.
 4. **Authentication**: If not already logged in, the user is sent to the `/login` page (shared with OIDC).
-5. **SAML Response**: After authentication, the IdP generates a signed XML `SAMLResponse` and sends it back to the SP
-   via the browser (usually a POST binding). Flow state is cleaned up via `CleanupIdPFlowState`.
+5. **SAML Response**: After authentication and any required assurance, the IdP generates the signed assertion,
+   prepares the POST binding, advances the flow to callback, atomically consumes it, persists the SLO participant, and
+   only then renders the response. Replay cannot publish a second assertion.
 
 ### 3.5 SAML 2.0 SLO (Single Logout)
 
@@ -788,26 +839,28 @@ If `logout_requests_signed` or `logout_responses_signed` are omitted, both defau
 sequenceDiagram
     participant B as Browser
     participant F as Frontend Handler
-    participant I as IdP Core
-    participant R as Redis
-    Note over B, I: After successful login + MFA verification
-    F ->> F: Check require_mfa against user's registered methods
+    participant A as SessionAnchor
+    participant R as Typed Redis stores
+    Note over B, R: After successful first-factor authentication
+    F ->> F: Resolve policy from the parent OIDCFlow or SAMLFlow
+    F ->> R: Compare required and registered methods
     alt Missing MFA methods
-        F ->> F: Store pending methods in cookie (require_mfa_pending)
-        F ->> R: FlowController.Start(flowID=derived required-MFA sub-flow, FlowTypeRequireMFA)
-        F ->> B: 302 Redirect to decision.RedirectURI (e.g. /mfa/totp/register, /mfa/webauthn/register, or /mfa/recovery/register)
+        F ->> R: Begin parent-bound Enrollment record
+        R ->> A: Add bounded enrollment index
+        F ->> B: 302 Redirect to registration target with opaque ticket
         B ->> F: Complete registration
-        F ->> F: GET /mfa/register/continue
-        F ->> F: Remove completed method from pending list
+        F ->> R: Commit ceremony or recovery result
+        B ->> F: GET /mfa/register/continue with ticket
+        F ->> R: Advance or consume Enrollment record
         alt More methods pending
             F ->> B: 302 Redirect to next registration page
         else All methods registered
-            F ->> R: FlowController.Abort(derived required-MFA sub-flow)
-            F ->> F: Clear require_mfa session keys
-            F ->> B: 302 Redirect to IdP endpoint (authorize / SSO)
+            F ->> R: Resume the exact parent protocol flow
+            F ->> B: 302 Redirect to bound authorize or SSO continuation
         end
     else All methods already registered
-        F ->> B: 302 Redirect to IdP endpoint
+        F ->> R: Continue parent protocol flow
+        F ->> B: 302 Redirect to bound authorize or SSO continuation
     end
 ```
 
@@ -822,23 +875,19 @@ sequenceDiagram
 
 ### Behavior Details
 
-- **Sequential registration**: If multiple methods are required (e.g., `totp`, `webauthn`, and `recovery_codes`), the
-  user registers them one at a time. After each successful registration, `/mfa/register/continue` removes the completed
-  method from the pending list and redirects to the next one. The registration targets are `/mfa/totp/register`,
-  `/mfa/webauthn/register`, and `/mfa/recovery/register` respectively.
-- **Cancel path**: The user can cancel at any point via `/mfa/register/cancel`, which safely clears the session and
-  logs the user out.
+- **Sequential registration**: If multiple methods are required, the typed `EnrollmentRecord` owns the bounded pending
+  method list and the parent-flow binding. `/mfa/register/continue` advances that record and redirects to the next
+  registration target.
+- **Cancel path**: The user can cancel via `/mfa/register/cancel`; the enrollment and parent relationship are
+  terminalized without consulting browser-carried business state.
 - **UI indicators**: During the forced-registration flow, the registration pages display an informational banner
   explaining that the application requires the MFA method, along with a cancel button.
-- **Recovery codes detection**: The flow uses a multi-layered check (`hasRecoveryCodesForRequireMFA`) to determine
-  whether recovery codes are already registered: first checking the backend user data, then the
-  `recovery_codes_saved` session flag (set after in-session generation), and finally re-fetching fresh backend data
-  (with cache purge) to avoid false positives from stale authentication cache.
-- **Template variables**: `RequireMFAFlow` (bool), `RequireMFAMessage` (string), and `Cancel` (cancel URL) are passed
-  to the TOTP, WebAuthn, and recovery codes registration templates when the forced flow is active.
-- **Session cleanup**: On completion, `FlowController.Abort()` removes the flow state from Redis and the cookie
-  reference. The `require_mfa_pending` session key is removed separately. On overall IdP flow cleanup,
-  `CleanupIdPFlowState` (which delegates to `flow.CleanupIdPState()`) removes all flow-related session keys.
+- **Recovery codes detection**: Registered methods are resolved through the selected backend affinity and typed
+  canonical identity. There is no browser-session flag that can assert registration.
+- **Template state**: Registration pages are rendered from the validated enrollment selection and its typed parent
+  binding.
+- **Cleanup**: Terminal enrollment operations use revision checks and remove the anchor index. Full browser-session
+  revocation deletes every explicitly indexed current-v1 child after the anchor tombstone is published.
 
 ### Configuration Field Reference
 
@@ -870,30 +919,34 @@ The `FrontendHandler` uses **HTMX** to provide a single-page-application (SPA) f
 - **OIDC Authorization Code Flow**: The handler manages the login redirect, session establishment, and code generation.
   It supports **Delayed Response** by hiding authentication failures until after the MFA step. If `/login` is called
   without a protocol-specific context, it redirects to the MFA portal after successful authentication.
-- **Device Code Flow MFA**: When a device code verification detects that the user has MFA configured, it calls
-  `FlowController.Start()` which stores the flow state in Redis and a minimal reference in the cookie. MFA context
-  (username, device code, client ID, etc.) is stored via `oidcDeviceFlowContext`. The user is redirected to
-  `decision.RedirectURI`. After successful MFA, `FrontendHandler.completeDeviceCodeFlow` authorizes the device code,
-  optionally showing a consent page before completion.
+- **Device Code Flow MFA**: The user code is atomically claimed, and a typed OIDC device-code flow binds its digest,
+  device code, client, scopes, and parent session. Login, assurance, claims hydration, consent, and terminal device CAS
+  use that server-side state only.
 - **Multi-Factor Authentication (MFA)**:
     - **TOTP**: Uses the `otp` package for generation and validation. Secrets are stored in the backend (LDAP or Lua).
       Verification is integrated into the login flow (`/login/totp`).
     - **WebAuthn**: Implements the FIDO2 standard. Registration and authentication flows are handled via
       `/webauthn/register` and `/webauthn/login`.
-- **Step-up Authentication**: For security-sensitive actions (like deleting a 2FA method), the handler verifies if the
-  user has recently performed a full password authentication (`mfa_stepup` key in Redis).
+- **Step-up Authentication**: Security-sensitive actions use an indexed `StepUpRecord` and the assurance embedded in
+  the `SessionAnchor`. The record binds scope, level, supported method, parent flow or self-service operation, and
+  expected revision.
 
 ### 4.3 Redis Storage & Key Schema
 
-All IdP state is transient and stored in Redis.
+Browser-flow and token state is transient and stored in Redis, but the ownership models are deliberately separate.
 
-| Key                                            | Format | TTL | Purpose                                        |
-|:-----------------------------------------------|:-------|:----|:-----------------------------------------------|
-| `{prefix}:idp:flow:{flowID}`                   | JSON   | 10m | Full IdP flow state (managed by `RedisStore`). |
-| `{prefix}nauthilus:oidc:code:{code}`           | JSON   | 5m  | Stores OIDC session during code exchange.      |
-| `{prefix}nauthilus:oidc:refresh_token:{token}` | JSON   | var | Stores OIDC session for refresh tokens.        |
-| `{prefix}nauthilus:webauthn:session:{id}`      | Binary | 10m | WebAuthn challenge/state.                      |
-| `{prefix}nauthilus:mfa:stepup:{session}`       | String | 15m | Step-up auth verification flag.                |
+| Record family | Ownership | Purpose |
+|:---|:---|:---|
+| `SessionAnchor` | Canonical browser handle | Identity, backend affinity, assurance, expiry, and bounded child indexes |
+| `OIDCFlow`, `SAMLFlow` | Anchor plus flow handle | Validated protocol request and lifecycle state |
+| `EnrollmentRecord`, `StepUpRecord` | Anchor plus operation handle | Required registration and assurance operations |
+| WebAuthn ceremony, TOTP recovery | Anchor plus operation handle | Single-use challenge and recovery state |
+| `ConsentGrant` | Identity plus OIDC client | Remembered, scope-bounded consent |
+| `LogoutIndex` | Canonical browser handle | Bounded issued-client inventory for logout fanout |
+| Authorization code and refresh family | Protocol storage | Cookie-free token exchange and rotation |
+
+Repository keys are derived from owner and typed references; handlers do not assemble or scan legacy browser-session
+keyspaces.
 
 ## 5. Observability & Debugging
 
@@ -1575,35 +1628,22 @@ sequenceDiagram
     AS -->> D: device_code, user_code, verification_uri, expires_in, interval
     Note over D, U: Phase 2: User Verification
     D ->> D: Display user_code and verification_uri to user
-    U ->> AS: POST /oidc/device/verify (user_code, username, password)
-    AS ->> AS: Authenticate user
-    alt MFA Required
-        AS ->> AS: FlowController.Start() → store flow state in Redis + cookie reference
-        AS ->> AS: Store MFA context in cookie via oidcDeviceFlowContext
-        AS ->> U: 302 Redirect to decision.RedirectURI (/login/totp, /login/webauthn, or /login/mfa)
-        U ->> F: POST /login/totp (code) or WebAuthn assertion
-        F ->> F: Verify MFA
-        F ->> F: completeDeviceCodeFlow()
-        alt Consent Required
-            F ->> U: 302 Redirect to /oidc/device/consent
-            U ->> AS: GET /oidc/device/consent
-            AS -->> U: Render consent page
-            U ->> AS: POST /oidc/device/consent (Accept)
-            AS ->> AS: Update device code status → authorized
-        else Consent Skipped
-            F ->> F: Update device code status → authorized
-        end
-        F -->> U: Render success page
-    else No MFA
-        alt Consent Required
-            AS ->> U: 302 Redirect to /oidc/device/consent
-            U ->> AS: POST /oidc/device/consent (Accept)
-            AS ->> AS: Update device code status → authorized
-        else Consent Skipped
-            AS ->> AS: Update device code status → authorized
-        end
-        AS -->> U: Render success page
+    U ->> AS: POST /oidc/device/verify (user_code)
+    AS ->> AS: Atomically claim code and consume user-code index
+    AS ->> AS: Start typed device flow bound to code digest, client, and scopes
+    AS ->> U: 303 Redirect to /login?flow=opaque-ticket
+    U ->> F: Authenticate through canonical login
+    alt Assurance Required
+        F ->> U: Redirect to typed TOTP, WebAuthn, or recovery StepUp
+        U ->> F: Submit proof with the same bound flow
+        F ->> F: Atomically complete StepUp
     end
+    F ->> U: Redirect to /oidc/device/consent?flow=opaque-ticket
+    U ->> AS: POST consent decision and optional scopes
+    AS ->> AS: Hydrate claims from selected backend
+    AS ->> AS: Terminal device CAS
+    AS ->> AS: Persist grant and consume typed browser flow
+    AS -->> U: Render authorized or denied terminal page
     Note over D, U: Phase 3: Token Polling
     D ->> AS: POST /oidc/token (grant_type=device_code, device_code, client_id)
     AS -->> D: { "error": "authorization_pending" }
@@ -1651,26 +1691,20 @@ The device initiates the flow by requesting a device code and user code.
 
 **`POST /oidc/device/verify`**
 
-The user submits the user code along with their credentials to authorize the device.
+The user submits only the displayed user code. The canonical device handler claims that code exactly once and then
+redirects to the shared canonical login flow. Credentials are never accepted by the device-code entry endpoint.
 
 **Request parameters:**
 
 | Parameter   | Required | Description                           |
 |-------------|----------|---------------------------------------|
 | `user_code` | Yes      | The user code displayed by the device |
-| `username`  | Yes      | The user's login name                 |
-| `password`  | Yes      | The user's password                   |
 
 **Behavior:**
 
-After successful password authentication, the endpoint checks whether the user has MFA (TOTP or WebAuthn) configured:
-
-- **No MFA**: If the client does not require consent (or the user has already consented), the device code is immediately
-  authorized and a success page is rendered. Otherwise, the user is redirected to `/oidc/device/consent`.
-- **MFA required**: The handler calls `FlowController.Start()` which stores the full flow state in Redis and a minimal
-  reference in the cookie. MFA context (username, device code, client ID, etc.) is stored via `oidcDeviceFlowContext`.
-  The user is redirected to `decision.RedirectURI` (the appropriate MFA page). After successful MFA verification, the
-  shared `FrontendHandler` completes the device code flow, optionally showing a consent page.
+The claim operation removes the user-code index and locks the pending device request in one Redis transaction. The
+typed browser flow retains only a non-reversible user-code digest and the validated device/client/scope binding. The
+shared login and MFA policy then establish identity and assurance before device consent can be loaded.
 
 **Error responses:**
 
@@ -1679,7 +1713,7 @@ After successful password authentication, the endpoint checks whether the user h
 | 400         | `invalid_request` | Missing required parameters  |
 | 400         | `invalid_grant`   | Invalid or expired user code |
 | 400         | `expired_token`   | Device code has expired      |
-| 403         | `access_denied`   | Authentication failed        |
+| 409         | conflict          | Claimed, replayed, or mismatched code |
 
 **Security note:** The user code is normalized (uppercased, hyphens/spaces removed) before lookup, so users can enter
 it in any format (e.g., `abcd-efgh`, `ABCDEFGH`, or `ABCD EFGH`).
@@ -1693,17 +1727,19 @@ the user to accept or deny the authorization.
 
 **`POST /oidc/device/consent`**
 
-Processes the user's consent decision. On acceptance, the device code status is set to `authorized`. On denial, the
-device code status is set to `denied`.
+Processes the bound user's consent decision. On acceptance, optional scopes may only narrow the original scope set;
+claims are hydrated through the selected backend and the terminal device CAS publishes `authorized`. On denial, the
+same terminal CAS publishes `denied`. Replay is rejected.
 
 **Request parameters:**
 
-| Parameter  | Required | Description                                    |
-|------------|----------|------------------------------------------------|
-| `decision` | Yes      | `accept` to authorize, any other value to deny |
+| Parameter        | Required | Description                                      |
+|------------------|----------|--------------------------------------------------|
+| `submit`         | Yes      | `allow` or `deny`                                |
+| `optional_scope` | No       | Repeated checked optional scopes; cannot expand |
 
-Consent is tracked in the session cookie (`oidc_clients`), so subsequent authorizations for the same client within the
-same session skip the consent page (unless `skip_consent` is configured on the client).
+Remembered consent is a typed `ConsentGrant` bound to identity reference, client ID, normalized scopes, grant time,
+and grant expiry. It is not browser-session data.
 
 #### 9.3.4 Token Endpoint (Device Code Grant)
 
@@ -1811,68 +1847,54 @@ The device authorization endpoint is advertised in the OpenID Connect Discovery 
   reduce user input errors.
 - **Polling rate limiting:** The `slow_down` error is returned when a client polls faster than the configured interval,
   per RFC 8628 §3.5.
-- **One-time use:** Device codes are deleted from Redis after successful token issuance or denial.
+- **One-time use:** The user-code index is consumed when the browser claims it; the device record then permits only one
+  terminal pending-and-locked to authorized-or-denied CAS, and successful token polling consumes the result.
 - **Encryption at rest:** Device code data in Redis is encrypted using the configured Redis security manager
   (ChaCha20-Poly1305 when an encryption secret is set).
 - **Expiration:** Device codes automatically expire in Redis after the configured TTL.
-- **Authentication on verification:** The user must provide valid credentials during the verification step. Failed
-  authentication immediately marks the device code as denied.
+- **Authentication on verification:** Verification redirects into the canonical login flow. The device entry endpoint
+  itself accepts no credentials.
 - **MFA enforcement:** When a user has MFA configured (TOTP or WebAuthn), the device code verification endpoint enforces
   MFA before authorizing the device. The MFA flow reuses the shared login infrastructure, ensuring consistent security
   policies across all grant types.
 - **Consent enforcement:** The device code flow enforces user consent unless the client has `skip_consent` configured.
-  Consent decisions are tracked per session to avoid repeated prompts.
+  Remembered decisions are scope-bounded typed grants, not browser cookie fields.
 
 ### 9.7 Package Structure
 
 ```
+server/core/cookie/
+├── envelope.go                # Authenticated opaque v1 browser envelope
+├── canonical_middleware.go    # Protocol-entry and continuation checkpoints
+├── runtime.go                 # SessionAnchor lifecycle and tombstone-first revocation
+├── login_completion.go        # Identity publication and handle rotation
+└── step_up_completion.go      # Revision-bound assurance completion
+server/sessionstate/
+├── contracts.go               # SessionAnchor and typed child record contracts
+├── redis_store.go             # Atomic indexed commits, consumes, and revocation
+├── consent_grant.go           # Identity-client-scope-bound remembered consent
+└── keyspace.go                # Fixed current-v1 owner keyspace
 server/idp/
-├── device_code.go              # DeviceCodeStore interface, RedisDeviceCodeStore, UserCodeGenerator
-├── device_code_test.go         # Unit tests for storage and code generation
+├── device_code.go             # Atomic user-code claim and terminal device CAS
+└── redis_storage.go           # Authorization-code and token-family storage
 server/idp/flow/
-├── types.go                    # FlowType, FlowStep, FlowProtocol, FlowAction enums with validation
-├── state.go                    # State domain object (FlowID, FlowType, Protocol, CurrentStep, etc.)
-├── state_test.go               # Unit tests for state validation and normalization
-├── decision.go                 # Decision type (Render, Redirect, Error) returned by Controller
-├── errors.go                   # Sentinel errors (ErrEmptyFlowID, ErrInvalidFlowType, etc.)
-├── store.go                    # Store interface (Load, Save, Delete, TouchTTL)
-├── redis_store.go              # RedisStore: full state persistence in Redis with TTL
-├── reference_adapter.go        # FlowReferenceAdapter: minimal flow reference in session cookie
-├── hybrid_store.go             # HybridStore: composes FlowReferenceAdapter + RedisStore
-├── hybrid_store_test.go        # Unit tests for hybrid store behavior
-├── store_metrics.go            # Prometheus metrics for store operations (read/write/ttl/orphan)
-├── controller.go               # Controller: Start, Advance, Back, Cancel, Complete, Resume, Abort, Recover
-├── controller_test.go          # Unit tests for controller lifecycle operations
-├── policy.go                   # Policy interface + static policies per flow type (transition rules)
-├── policy_test.go              # Unit tests for policy rules and transitions
-├── uri_builder.go              # URIBuilder: resolves redirect targets per (FlowType, Step, Action)
-├── uri_builder_test.go         # Unit tests for URI resolution
-├── transition_audit.go         # Audit logging for flow transitions
-├── cleanup.go                  # CleanupIdPState, CleanupMFAState: centralized session key removal
+├── state.go                   # Protocol-neutral state and canonical metadata bindings
+├── typed_store.go             # Typed OIDC/SAML persistence and atomic consume
+├── protocol_aggregate.go      # Parent-flow load and transition composition
+├── controller.go              # Policy-controlled lifecycle transitions
+├── policy.go                  # Allowed transitions per flow type
+└── transition_audit.go        # Audit logging for state changes
 server/handler/frontend/idp/
-├── oidc.go                     # OIDCHandler struct, route registration, Discovery, Token, JWKS, Logout,
-│                               # CleanupIdPFlowState (delegates to flow.CleanupIdPState),
-│                               # CleanupMFAState (delegates to flow.CleanupMFAState)
-├── oidc_authorization_code.go  # Authorize, ConsentGET/POST, authorization code & refresh token exchange
-├── oidc_client_credentials.go  # Client credentials token exchange
-├── oidc_device_code.go         # DeviceAuthorization, DeviceVerify (with MFA), DeviceConsentGET/POST,
-│                               # handleDeviceCodeTokenExchange, issueDeviceCodeTokens
-├── oidc_flow_context.go        # oidcAuthorizeFlowContext (consent, request storage),
-│                               # oidcDeviceFlowContext (MFA context, device code access)
-├── saml_flow_context.go        # samlFlowContext (entity ID, original URL storage)
-├── flow_controller_factory.go  # newFlowController: builds Controller with HybridStore or FlowReferenceAdapter
-├── frontend.go                 # FrontendHandler: Login, MFA flows, completeDeviceCodeFlow (post-MFA)
-├── require_mfa.go              # Forced MFA registration: getRequiredMFAMethods,
-│                               # checkRequireMFARegistrationAndRedirect,
-│                               # nextRequiredMFARegistrationTarget,
-│                               # redirectToNextRequiredMFARegistration,
-│                               # removeFromMFAPendingList,
-│                               # ContinueRequiredMFARegistration, CancelRequiredMFARegistration
-server/definitions/
-├── const.go                    # OIDCFlowAuthorizationCode, OIDCFlowDeviceCode, SessionKeyDeviceCode,
-│                               # SessionKeyOIDCGrantType, SessionKeyIdPFlowID, SessionKeyIdPFlowType,
-│                               # default interval/expiry/length constants
-server/config/
-├── idp.go                      # DeviceCodeExpiry, DeviceCodePollingInterval, DeviceCodeUserCodeLength fields,
-│                               # RequireMFA on OIDCClient and SAML2ServiceProvider
+├── canonical_runtime.go       # Canonical runtime composition
+├── frontend.go                # Canonical frontend route registrar and login UI
+├── canonical_oidc_authorization.go # Authorize, consent, code issuance, and tracking
+├── canonical_oidc_device.go   # Device verification, consent, claims, and terminal publish
+├── canonical_saml.go          # SSO request binding, assertion, and single-use completion
+├── canonical_mfa_selection.go # Parent-bound assurance selection
+├── canonical_totp*.go         # TOTP verification and enrollment
+├── canonical_webauthn*.go     # WebAuthn ceremonies and enrollment
+├── canonical_recovery*.go     # Recovery verification and enrollment
+├── canonical_self_service.go  # Authenticated self-service operations
+├── oidc.go                    # Sole OIDC registrar plus cookie-free backchannels and logout fanout
+└── saml.go                    # Sole SAML registrar, metadata, and canonical SLO
 ```
