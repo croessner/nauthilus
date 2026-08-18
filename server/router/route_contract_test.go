@@ -26,19 +26,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/croessner/nauthilus/v3/server/config"
-	handlerapiv1 "github.com/croessner/nauthilus/v3/server/handler/api/v1"
 	handlerbackchannel "github.com/croessner/nauthilus/v3/server/handler/backchannel"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
 	handleridp "github.com/croessner/nauthilus/v3/server/handler/frontend/idp"
 	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/croessner/nauthilus/v3/server/openapi"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	approuter "github.com/croessner/nauthilus/v3/server/router"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
+	"github.com/redis/go-redis/v9"
 	textlanguage "golang.org/x/text/language"
 )
 
@@ -123,6 +125,23 @@ func TestManagementRoutesDoNotExposeConfigLoad(t *testing.T) {
 	}
 }
 
+func TestManagementRoutesRetireLegacyBrowserMFAAPI(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	document := loadRouteContractDocument(t, openapi.ManagementYAML())
+	routes := routeSetFromGinRoutes(buildManagementContractRouter(t).Routes())
+
+	for _, retired := range retiredBrowserMFARoutes() {
+		if _, ok := routes[retired]; ok {
+			t.Fatalf("%s is still registered", retired.label())
+		}
+
+		if _, ok := document.operationSet()[retired]; ok {
+			t.Fatalf("%s is still documented", retired.label())
+		}
+	}
+}
+
 func TestIDPRoutesMatchOpenAPIContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -182,7 +201,7 @@ func buildManagementContractRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 
 	cfg := routeContractConfig()
-	deps := routeContractDeps(cfg)
+	deps := routeContractDeps(t, cfg)
 
 	engine := gin.New()
 	engine.Use(gin.Recovery())
@@ -191,9 +210,19 @@ func buildManagementContractRouter(t *testing.T) *gin.Engine {
 		t.Fatalf("register backchannel routes: %v", err)
 	}
 
-	handlerapiv1.NewMFAAPI(deps).Register(engine)
-
 	return engine
+}
+
+func retiredBrowserMFARoutes() []routeOperation {
+	return []routeOperation{
+		{method: contractMethodGet, path: "/api/v1/mfa/totp/setup"},
+		{method: contractMethodPost, path: "/api/v1/mfa/totp/register"},
+		{method: contractMethodDelete, path: "/api/v1/mfa/totp"},
+		{method: contractMethodPost, path: "/api/v1/mfa/recovery-codes/generate"},
+		{method: contractMethodGet, path: "/api/v1/mfa/webauthn/register/begin"},
+		{method: contractMethodPost, path: "/api/v1/mfa/webauthn/register/finish"},
+		{method: contractMethodDelete, path: "/api/v1/mfa/webauthn/{credentialID}"},
+	}
 }
 
 // assertManagementOIDCSessionsUseBackchannelGuard verifies session management is not mounted raw.
@@ -214,16 +243,24 @@ func buildIDPContractRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 
 	cfg := routeContractConfig()
-	deps := routeContractDeps(cfg)
+	deps := routeContractDeps(t, cfg)
 
 	engine := approuter.NewRouter(cfg).WithIDPOpenAPI().Build()
 
-	frontend := handleridp.NewFrontendHandler(deps)
+	canonicalRuntime, err := handleridp.NewCanonicalBrowserRuntime(deps)
+	if err != nil {
+		t.Fatalf("compose canonical browser runtime: %v", err)
+	}
+
+	frontend, err := handleridp.NewCanonicalFrontendHandler(deps, canonicalRuntime)
+	if err != nil {
+		t.Fatalf("compose canonical frontend handler: %v", err)
+	}
 	frontend.Register(engine)
 
 	nauthilusIDP := idp.NewNauthilusIDP(deps)
-	handleridp.NewOIDCHandler(deps, nauthilusIDP, frontend).Register(engine)
-	handleridp.NewSAMLHandler(deps, nauthilusIDP).Register(engine)
+	handleridp.NewOIDCHandler(deps, nauthilusIDP, frontend).Register(engine, canonicalRuntime)
+	handleridp.NewSAMLHandler(deps, nauthilusIDP).Register(engine, canonicalRuntime)
 
 	return engine
 }
@@ -238,7 +275,7 @@ func routeContractConfig() *config.FileSettings {
 			},
 			Frontend: config.Frontend{
 				Enabled:               true,
-				EncryptionSecret:      secret.New("0123456789abcdef"),
+				EncryptionSecret:      secret.New("canonical-route-contract-secret-32"),
 				HTMLStaticContentPath: "static/templates",
 				DefaultLanguage:       "en",
 			},
@@ -259,16 +296,23 @@ func routeContractConfig() *config.FileSettings {
 	}
 }
 
-func routeContractDeps(cfg config.File) *handlerdeps.Deps {
+func routeContractDeps(t *testing.T, cfg config.File) *handlerdeps.Deps {
+	t.Helper()
+
 	env := config.NewTestEnvironmentConfig()
 	config.SetTestEnvironmentConfig(env)
 	util.SetDefaultEnvironment(env)
 
+	mini := miniredis.RunT(t)
+
 	return &handlerdeps.Deps{
-		Cfg:          cfg,
-		Env:          env,
-		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		LangManager:  routeContractLangManager{},
+		Cfg:         cfg,
+		Env:         env,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		LangManager: routeContractLangManager{},
+		Redis: rediscli.NewTestClient(redis.NewClient(&redis.Options{
+			Addr: mini.Addr(),
+		})),
 		TokenFlusher: idp.NewRedisTokenStorage(nil, "test:"),
 	}
 }
@@ -605,7 +649,7 @@ func managementOpenAPIDocumentOperations() []routeOperation {
 func hasProtectedSecurityScheme(operation *openapi3.Operation) bool {
 	for _, scheme := range operationSecuritySchemes(operation) {
 		switch scheme {
-		case "backchannelBasic", "backchannelBearer", "sessionCookie", "userBasic":
+		case "backchannelBasic", "backchannelBearer", "userBasic":
 			return true
 		}
 	}

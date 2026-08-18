@@ -32,6 +32,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/idp/dcr"
@@ -62,7 +63,7 @@ const (
 	idpLookupTOTPRecoveryField = "totpRecovery"
 )
 
-func TestNauthilusIDPGetUserByUsernameUsesNativePluginNoAuthIdentity(t *testing.T) {
+func TestNauthilusIDPCanonicalOIDCUserLookupUsesNativePluginNoAuthIdentity(t *testing.T) {
 	const (
 		username = "lookup@example.test"
 		clientID = "lookup-client"
@@ -74,9 +75,19 @@ func TestNauthilusIDPGetUserByUsernameUsesNativePluginNoAuthIdentity(t *testing.
 	installIDPLookupPluginRunner(t, pluginBackend, subjectSource)
 	idp, ctx, mock := newIDPLookupTestIDP(t, username, clientID)
 
-	user, err := idp.GetUserByUsername(ctx, username, clientID, "")
+	user, err := idp.GetUserByUsernameForOIDCClaimsCanonical(
+		ctx,
+		username,
+		&config.OIDCClient{ClientID: clientID},
+		[]string{"openid"},
+		core.RemoteBackendRef{},
+		core.IDPRequestContext{
+			GrantType:       definitions.OIDCFlowAuthorizationCode,
+			RequestedScopes: []string{"openid"},
+		},
+	)
 	if err != nil {
-		t.Fatalf("GetUserByUsername() error = %v", err)
+		t.Fatalf("GetUserByUsernameForOIDCClaimsCanonical() error = %v", err)
 	}
 
 	if !pluginBackend.called || !pluginBackend.sawNoAuth {
@@ -190,7 +201,7 @@ func assertIDPLookupUser(t *testing.T, user *backend.User) {
 	t.Helper()
 
 	if user == nil {
-		t.Fatal("GetUserByUsername() user = nil")
+		t.Fatal("canonical OIDC user lookup returned nil")
 	}
 
 	assert.Equal(t, idpLookupAccount, user.Name)

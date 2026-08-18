@@ -9,6 +9,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/errors"
 	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
@@ -41,23 +42,32 @@ type webAuthnCredentialProvider interface {
 	GetWebAuthnCredentials() ([]mfa.PersistentCredential, error)
 }
 
+type selectedBackendWebAuthnProvider struct {
+	state *core.AuthState
+}
+
+func (p selectedBackendWebAuthnProvider) GetWebAuthnCredentials() ([]mfa.PersistentCredential, error) {
+	if p.state == nil {
+		return nil, errors.ErrUnknownDatabaseBackend
+	}
+
+	return p.state.GetWebAuthnCredentialsFromSelectedBackend()
+}
+
 // GetUserBackendData performs backend lookups and returns encapsulated user data.
 func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData, error) {
-	mgr := cookie.GetManager(ctx)
-
-	username := h.backendDataUsername(ctx, mgr)
+	username := h.backendDataUsername(ctx)
 	if username == "" {
 		return nil, nil
 	}
 
-	return h.getUserBackendDataForIdentity(ctx, mgr, username, definitions.ProtoIDP, core.RemoteBackendRef{})
+	return h.getUserBackendDataForIdentity(ctx, username, definitions.ProtoIDP, core.RemoteBackendRef{})
 }
 
 // getUserBackendDataForIdentity performs a no-auth lookup for one identity and
 // optional authority backend reference.
 func (h *FrontendHandler) getUserBackendDataForIdentity(
 	ctx *gin.Context,
-	mgr cookie.Manager,
 	username string,
 	protocolName string,
 	backendRef core.RemoteBackendRef,
@@ -84,7 +94,7 @@ func (h *FrontendHandler) getUserBackendDataForIdentity(
 
 	applyBackendIdentityData(data, authState)
 
-	if err := h.applyBackendMFAData(lookupCtx, mgr, data, authState); err != nil {
+	if err := h.applyBackendMFAData(lookupCtx, data, authState); err != nil {
 		return nil, err
 	}
 
@@ -119,11 +129,11 @@ func backendDataLookupContext(ctx *gin.Context) *gin.Context {
 	return lookupCtx
 }
 
-// backendDataUsername resolves the backend-data username from session or bearer token.
-func (h *FrontendHandler) backendDataUsername(ctx *gin.Context, mgr cookie.Manager) string {
-	if mgr != nil {
-		if username := mgr.GetString(definitions.SessionKeyAccount, ""); username != "" {
-			return username
+// backendDataUsername resolves the backend-data username from canonical state or bearer token.
+func (h *FrontendHandler) backendDataUsername(ctx *gin.Context) string {
+	if session := cookie.GetCanonicalSession(ctx); session != nil {
+		if identity, authenticated := session.Identity(); authenticated {
+			return identity.Account
 		}
 	}
 
@@ -189,7 +199,6 @@ func applyBackendIdentityData(data *UserBackendData, authState *core.AuthState) 
 // applyBackendMFAData fills MFA state from public backends or legacy AuthState fields.
 func (h *FrontendHandler) applyBackendMFAData(
 	ctx *gin.Context,
-	mgr cookie.Manager,
 	data *UserBackendData,
 	authState *core.AuthState,
 ) error {
@@ -202,7 +211,7 @@ func (h *FrontendHandler) applyBackendMFAData(
 		return nil
 	}
 
-	h.applyLegacyBackendMFAData(ctx, mgr, data, authState)
+	h.applyLegacyBackendMFAData(ctx, data, authState)
 
 	return nil
 }
@@ -210,7 +219,6 @@ func (h *FrontendHandler) applyBackendMFAData(
 // applyLegacyBackendMFAData fills MFA state from legacy AuthState getters.
 func (h *FrontendHandler) applyLegacyBackendMFAData(
 	ctx *gin.Context,
-	mgr cookie.Manager,
 	data *UserBackendData,
 	authState *core.AuthState,
 ) {
@@ -221,7 +229,7 @@ func (h *FrontendHandler) applyLegacyBackendMFAData(
 	codes := authState.GetTOTPRecoveryCodes()
 	data.NumRecoveryCodes = len(codes)
 
-	h.resolveWebAuthnUser(ctx, mgr, data, authState)
+	h.resolveWebAuthnUser(ctx, data, selectedBackendWebAuthnProvider{state: authState})
 }
 
 func (h *FrontendHandler) applyPublicMFAState(ctx *gin.Context, data *UserBackendData, authState *core.AuthState) (bool, error) {
@@ -289,12 +297,14 @@ func (h *FrontendHandler) publicMFAStateProvider(authState *core.AuthState) (cor
 }
 
 // resolveWebAuthnUser resolves WebAuthn credentials from cache or backend state.
-func (h *FrontendHandler) resolveWebAuthnUser(ctx *gin.Context, mgr cookie.Manager, data *UserBackendData, provider webAuthnCredentialProvider) {
+func (h *FrontendHandler) resolveWebAuthnUser(
+	ctx *gin.Context,
+	data *UserBackendData,
+	provider webAuthnCredentialProvider,
+) {
 	if data == nil || provider == nil {
 		return
 	}
-
-	applyUniqueUserIDFromSession(mgr, data)
 
 	if h.applyCachedWebAuthnUser(ctx, data) {
 		return
@@ -314,17 +324,6 @@ func (h *FrontendHandler) resolveWebAuthnUser(ctx *gin.Context, mgr cookie.Manag
 	}
 
 	h.cacheWebAuthnUser(ctx, user)
-}
-
-// applyUniqueUserIDFromSession fills missing unique user IDs from the secure session.
-func applyUniqueUserIDFromSession(mgr cookie.Manager, data *UserBackendData) {
-	if data.UniqueUserID != "" || mgr == nil {
-		return
-	}
-
-	if uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, ""); uniqueUserID != "" {
-		data.UniqueUserID = uniqueUserID
-	}
 }
 
 // applyCachedWebAuthnUser loads WebAuthn credentials from Redis when available.

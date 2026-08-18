@@ -22,6 +22,8 @@ var (
 	ErrEmptyFlowID = errors.New("empty flow id")
 	// ErrFlowNotFound is an exported package value.
 	ErrFlowNotFound = errors.New("flow not found")
+	// ErrAmbiguousProtocolFlow rejects one ticket that resolves in more than one protocol repository.
+	ErrAmbiguousProtocolFlow = errors.New("ambiguous protocol flow")
 	// ErrInvalidFlowType reports an unsupported flow type.
 	ErrInvalidFlowType = errors.New("invalid flow type")
 	// ErrInvalidProtocol reports an unsupported flow protocol.

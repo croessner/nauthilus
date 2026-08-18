@@ -49,22 +49,6 @@ var flowStoreTouchTTLTotal = promauto.NewCounterVec(
 	[]string{flowMetricLabelBackend, flowMetricLabelResult},
 )
 
-var flowStoreTTLExpiredTotal = promauto.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "flow_store_ttl_expired_total",
-		Help: "Number of flow reference lookups where the Redis state had already expired.",
-	},
-	[]string{flowMetricLabelBackend},
-)
-
-var flowStoreOrphanCleanupTotal = promauto.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "flow_store_orphan_cleanup_total",
-		Help: "Number of orphaned flow references cleaned up.",
-	},
-	[]string{flowMetricLabelBackend, "reason"},
-)
-
 func reportStoreRead(backend, result string) {
 	flowStoreReadTotal.WithLabelValues(backend, result).Inc()
 }
@@ -75,12 +59,4 @@ func reportStoreWrite(backend, result string) {
 
 func reportStoreTouchTTL(backend, result string) {
 	flowStoreTouchTTLTotal.WithLabelValues(backend, result).Inc()
-}
-
-func reportStoreTTLExpired(backend string) {
-	flowStoreTTLExpiredTotal.WithLabelValues(backend).Inc()
-}
-
-func reportStoreOrphanCleanup(backend, reason string) {
-	flowStoreOrphanCleanupTotal.WithLabelValues(backend, reason).Inc()
 }

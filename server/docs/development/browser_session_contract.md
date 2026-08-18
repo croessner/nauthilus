@@ -3,10 +3,11 @@
 The target runtime has one canonical versioned opaque browser envelope. It is
 only a reference to a server-side session anchor. It never carries identity,
 protocol request data, MFA state, credentials, recovery material, redirect
-targets, or ceremony state. Legacy, unrecognized, malformed, missing, expired,
-or inconsistent envelopes and referenced records are purged fail-closed. The
-affected OIDC, SAML, or MFA operation restarts at its documented safe entry
-point. There is no dual-read or dual-write compatibility mode.
+targets, or ceremony state. Legacy, unrecognized, or malformed envelopes are
+removed from the browser. Missing, expired, or inconsistent canonical records
+fail closed and are cleaned only within the canonical keyspace. The affected
+OIDC, SAML, or MFA operation restarts at its documented safe entry point. There
+is no dual-read or dual-write compatibility mode.
 
 ## Legacy Key Ownership
 
@@ -21,27 +22,69 @@ The only deletion-only field is the deprecated `lang` value. Language remains
 owned by the dedicated language cookie. All other legacy fields move to their
 typed server-side owner before the canonical runtime is enabled.
 
-## Direct Cookie Manager Call Sites
+## Legacy Redis Data After Cutover
 
-This is the removal inventory for production code. Each row names all files in
-the area that either accepts `cookie.Manager`, retrieves it from Gin context,
-or reads, writes, saves, clears, or deletes legacy session keys.
+The hard cutover is intentionally not a Redis data migration. Records written
+by the legacy browser-session and IDP-flow implementation are incompatible
+legacy state: the canonical runtime neither reads nor adopts them, and their
+presence must not change canonical authentication, MFA, OIDC, or SAML behavior.
+They may remain until their existing TTLs expire.
 
-| Area | Current files | Target boundary |
+Production request paths must not scan, backfill, translate, or delete legacy
+Redis namespaces. Operators may optionally use the allowlisted, dry-run-first
+tool under `contrib/session-keyspace-retirement` after a verified uniform
+rollout. That tool is operational housekeeping only; it is not a cutover
+prerequisite, compatibility mechanism, startup action, or request-path fallback.
+
+Review must therefore treat residual legacy Redis records as expected inert
+data. A review finding is warranted only if the canonical runtime reads them,
+derives decisions from them, writes legacy formats, or makes cleanup necessary
+for correctness.
+
+## Executable Browser Boundary
+
+Frontend login, MFA, enrollment, authenticated self-service, OIDC browser
+flows, and SAML SSO/SLO use only the canonical v1 envelope and typed Redis
+records. Direct `cookie.Manager`, legacy session keys, `ReferenceAdapter`, or
+`HybridStore` access from an executable browser handler, middleware, helper,
+or composition root is release-blocking. Dormant alternate browser runtimes
+must be removed rather than retained as fallback code.
+
+OIDC discovery, token, userinfo, introspection, JWKS, dynamic registration,
+and device authorization remain cookie-free server/API routes. The only MFA
+machine interface is the scoped `/api/v1/mfa-backchannel/*` API. The former
+session-cookie `/api/v1/mfa/*` routes are retired and must not be registered,
+documented, or restored as a compatibility path. Route inventory tests,
+handler reachability tests, single-use issuance tests, and session-revocation
+tests are the executable proof of this boundary.
+
+## Direct Cookie Manager Prohibition Matrix
+
+| Executable boundary | Browser state authority | Direct `cookie.Manager` allowed | Required proof |
+| --- | --- | --- | --- |
+| Frontend login, MFA, enrollment, and authenticated self-service | Canonical v1 envelope plus typed Redis records | No | Registrar and handler reachability tests; legacy-only browser state rejects before the handler |
+| OIDC authorize, consent, device verification, device consent, and logout | Canonical v1 envelope plus typed OIDC/session records | No | Protocol-entry/continuation route tests, issuance single-use tests, and logout revocation tests |
+| SAML SSO and SLO | Canonical v1 envelope plus typed SAML/session records | No | Protocol-entry/continuation route tests, assertion single-use tests, and SLO revocation tests |
+| OIDC discovery, token, userinfo, introspection, JWKS, dynamic registration, and device authorization | Protocol request and server-side token/device stores; no browser session | No browser manager | Cookie-free route inventory and backchannel regression tests |
+| MFA machine backchannel | Scoped API authentication context and provider state; no browser session | No browser manager | Cookie-free route inventory and API regression tests |
+| Rejected legacy or malformed browser state | None | No | Canonical middleware purges browser representations and does not invoke the handler |
+| Legacy Redis retirement | Operator-invoked fixed-allowlist contrib tool only | Not applicable | Dry-run default, aggregate-only output, explicit apply, and no server import edge |
+
+Any executable browser handler, middleware, helper, or composition root that
+reads or writes `cookie.Manager`, `ReferenceAdapter`, `HybridStore`, or a legacy
+session key is a release-blocking architecture violation. Dead legacy source
+must be removed, not retained as a dormant alternate runtime.
+
+## Executable Route Matrix
+
+| Route family | Checkpoint | Runtime handler family |
 | --- | --- | --- |
-| Cookie middleware and response commit | `server/core/cookie/manager.go`, `server/core/cookie/auth_result.go` | Envelope codec plus transaction commit |
-| Authentication session and logout cleanup | `server/core/auth.go`, `server/core/common.go`, `server/core/sensitive_output.go` | Session anchor and typed cleanup service |
-| Identity and backend affinity | `server/core/idp_mfa.go`, `server/core/remote_backend_session.go`, `server/idp/mfa.go`, `server/idp/nauthilus_idp.go` | Session anchor, enrollment, and step-up repositories |
-| WebAuthn registration and login | `server/core/webauthn.go`, `server/core/webauthn_ceremony_store.go` | WebAuthn ceremony repository with single-use consume |
-| MFA API and self-service pages | `server/handler/api/v1/mfa.go`, `server/handler/frontend/idp/frontend.go`, `server/handler/frontend/idp/require_mfa.go` | Enrollment, step-up, TOTP, recovery, and ceremony repositories |
-| Shared IDP flow adapter and cleanup | `server/idp/flow/reference_adapter.go`, `server/idp/flow/session_context.go`, `server/idp/flow/cleanup.go` | Protocol-flow repositories and session anchor indexes |
-| IDP controller and delayed response | `server/handler/frontend/idp/flow_controller_factory.go`, `server/handler/frontend/idp/backend_data.go`, `server/handler/frontend/idp/auth_status_bridge.go` | Transaction commit before response plus protocol-session records |
-| OIDC | `server/handler/frontend/idp/oidc.go`, `server/handler/frontend/idp/oidc_authorization_code.go`, `server/handler/frontend/idp/oidc_device_code.go`, `server/handler/frontend/idp/oidc_flow_context.go` | OIDC flow, consent, and protocol-session repositories |
-| SAML | `server/handler/frontend/idp/saml.go`, `server/handler/frontend/idp/saml_flow_context.go` | SAML flow and protocol-session repositories |
-
-OIDC cleanup must not delete SAML records or anchor references. SAML cleanup
-must not delete OIDC records or anchor references. Logout uses typed index
-records to determine the intended protocol-specific and cross-protocol effect.
+| Frontend login/MFA/enrollment/self-service | Continuation | Canonical frontend handlers and `CanonicalAuthMiddleware` |
+| OIDC authorize and device verification | Protocol entry | Canonical OIDC entry handlers |
+| OIDC consent, device consent, and logout | Continuation | Canonical OIDC continuation handlers |
+| SAML SSO and inbound SLO request | Protocol entry | Canonical SAML handlers |
+| SAML SLO response | Continuation | Canonical SAML handler with message-type checkpoint selection |
+| OIDC backchannels and MFA machine backchannel | Cookie-free | Existing non-browser handlers, with no canonical or legacy browser-session middleware |
 
 ## Executable Invariant Matrix
 
@@ -58,12 +101,13 @@ records to determine the intended protocol-specific and cross-protocol effect.
 | Uniform-version rollout | contract catalog | Release guardrail and documented no-mix deployment gate |
 | Failure atomicity | transaction contract | Save, Redis, cleanup, and no-response-before-commit tests |
 
-Slice A defines contracts only. It does not write the opaque envelope, switch
-production behavior, or introduce a compatibility runtime.
+These invariants are active in the production composition root. Frontend,
+OIDC, and SAML register only their normal-named canonical route sets; there is
+no compatibility runtime or fallback registrar.
 
 ## Typed Redis Store Contract
 
-Slice B adds an unused server-side store package. Redis keys are derived as
+The active server-side store derives Redis keys as
 `browser-session:{HMAC(session-handle)}:<owner>:HMAC(record-handle)`. Both
 digests use a dedicated secret of at least 32 bytes. Raw session and child
 handles never appear in Redis keys. The shared keyed session digest is the

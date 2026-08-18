@@ -21,7 +21,6 @@ import (
 	stderrors "errors"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/frontend"
@@ -67,19 +66,6 @@ func idpAuthFailureAllowsDelayedResponse(err error) bool {
 	}
 
 	return failure.Status.DelayedResponseEligible
-}
-
-func storeIDPAuthStatusBridgeFromError(mgr cookie.Manager, err error) bool {
-	status, ok := idpAuthStatusBridgeFromError(err)
-	if !ok {
-		clearIDPAuthStatusBridge(mgr)
-
-		return false
-	}
-
-	storeIDPAuthStatusBridge(mgr, status)
-
-	return true
 }
 
 func idpAuthStatusBridgeFromError(err error) (idpAuthStatusBridge, bool) {
@@ -128,59 +114,6 @@ func renderIDPAuthStatusBridgeMessage(
 	}
 
 	return idpFallbackStatusMessage(ctx, d, fallback, genericMessage)
-}
-
-func storeIDPAuthStatusBridge(mgr cookie.Manager, status idpAuthStatusBridge) {
-	if mgr == nil || strings.TrimSpace(status.I18NKey) == "" {
-		return
-	}
-
-	mgr.Set(definitions.SessionKeyIDPAuthStatusMessage, status.StatusMessage)
-	mgr.Set(definitions.SessionKeyIDPAuthStatusI18NKey, status.I18NKey)
-	mgr.Set(definitions.SessionKeyIDPAuthStatusLanguage, status.ResponseLanguage)
-}
-
-func loadIDPAuthStatusBridge(mgr cookie.Manager) (idpAuthStatusBridge, bool) {
-	if mgr == nil {
-		return idpAuthStatusBridge{}, false
-	}
-
-	status := idpAuthStatusBridge{
-		StatusMessage:    mgr.GetString(definitions.SessionKeyIDPAuthStatusMessage, ""),
-		I18NKey:          mgr.GetString(definitions.SessionKeyIDPAuthStatusI18NKey, ""),
-		ResponseLanguage: mgr.GetString(definitions.SessionKeyIDPAuthStatusLanguage, ""),
-	}
-	if strings.TrimSpace(status.I18NKey) == "" {
-		return idpAuthStatusBridge{}, false
-	}
-
-	return status, true
-}
-
-func clearIDPAuthStatusBridge(mgr cookie.Manager) {
-	if mgr == nil {
-		return
-	}
-
-	mgr.Delete(definitions.SessionKeyIDPAuthStatusMessage)
-	mgr.Delete(definitions.SessionKeyIDPAuthStatusI18NKey)
-	mgr.Delete(definitions.SessionKeyIDPAuthStatusLanguage)
-}
-
-func renderStoredIDPAuthStatusBridgeMessage(
-	ctx *gin.Context,
-	d *deps.Deps,
-	mgr cookie.Manager,
-	genericMessage string,
-) string {
-	status, ok := loadIDPAuthStatusBridge(mgr)
-	clearIDPAuthStatusBridge(mgr)
-
-	if !ok {
-		return localizedIDPGenericMessage(ctx, d, genericMessage)
-	}
-
-	return renderIDPAuthStatusBridgeMessage(ctx, d, status, genericMessage)
 }
 
 func idpFallbackStatusMessage(ctx *gin.Context, d *deps.Deps, fallback string, genericMessage string) string {

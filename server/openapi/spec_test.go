@@ -84,13 +84,6 @@ var stableMachineOperations = []operationExpectation{
 	{method: methodDelete, path: "/api/v1/cache/flush"},
 	{method: methodDelete, path: "/api/v1/cache/flush/async"},
 	{method: methodGet, path: "/api/v1/async/jobs/{jobId}"},
-	{method: methodGet, path: "/api/v1/mfa/totp/setup"},
-	{method: methodPost, path: "/api/v1/mfa/totp/register"},
-	{method: methodDelete, path: "/api/v1/mfa/totp"},
-	{method: methodPost, path: "/api/v1/mfa/recovery-codes/generate"},
-	{method: methodGet, path: "/api/v1/mfa/webauthn/register/begin"},
-	{method: methodPost, path: "/api/v1/mfa/webauthn/register/finish"},
-	{method: methodDelete, path: "/api/v1/mfa/webauthn/{credentialID}"},
 	{method: methodGet, path: pathOIDCUserSessions},
 	{method: methodDelete, path: pathOIDCUserSessions},
 	{method: methodDelete, path: "/api/v1/oidc/sessions/{user_id}/{token}"},
@@ -116,10 +109,39 @@ var stableIDPOperations = []operationExpectation{
 	{method: methodPost, path: pathBrowserLogin},
 }
 
+var retiredBrowserMFAOperations = []operationExpectation{
+	{method: methodGet, path: "/api/v1/mfa/totp/setup"},
+	{method: methodPost, path: "/api/v1/mfa/totp/register"},
+	{method: methodDelete, path: "/api/v1/mfa/totp"},
+	{method: methodPost, path: "/api/v1/mfa/recovery-codes/generate"},
+	{method: methodGet, path: "/api/v1/mfa/webauthn/register/begin"},
+	{method: methodPost, path: "/api/v1/mfa/webauthn/register/finish"},
+	{method: methodDelete, path: "/api/v1/mfa/webauthn/{credentialID}"},
+}
+
 func TestManagementSpecYAMLDocumentsStableMachineAPIs(t *testing.T) {
 	doc := parseYAMLSpec(t, ManagementYAML())
 
 	assertSpecDocumentsOperations(t, doc, "Nauthilus", stableMachineOperations)
+}
+
+func TestManagementSpecRetiresLegacyBrowserMFAAPI(t *testing.T) {
+	doc := parseYAMLSpec(t, ManagementYAML())
+
+	for _, retired := range retiredBrowserMFAOperations {
+		operations, ok := doc.Paths[retired.path]
+		if ok {
+			_, ok = operations[retired.method]
+		}
+
+		if ok {
+			t.Fatalf("legacy browser MFA operation remains documented: %s %s", retired.method, retired.path)
+		}
+	}
+
+	if _, ok := doc.Components.SecuritySchemes["sessionCookie"]; ok {
+		t.Fatal("legacy browser sessionCookie security scheme remains documented")
+	}
 }
 
 func TestIDPSpecYAMLDocumentsStableIDPEndpoints(t *testing.T) {
@@ -353,7 +375,8 @@ type openAPISpec struct {
 }
 
 type openAPIComponents struct {
-	Schemas map[string]openAPISchema `json:"schemas" yaml:"schemas"`
+	Schemas         map[string]openAPISchema `json:"schemas" yaml:"schemas"`
+	SecuritySchemes map[string]any           `json:"securitySchemes" yaml:"securitySchemes"`
 }
 
 type openAPISchema struct {

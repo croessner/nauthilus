@@ -10,6 +10,7 @@
 
             <form action="{{ .PostConsentEndpoint }}" method="POST">
                 <input name="csrf_token" type="hidden" value="{{ .CSRFToken }}"/>
+                {{ if .FlowTicket }}<input name="flow" type="hidden" value="{{ .FlowTicket }}"/>{{ end }}
                 <input name="consent_challenge" type="hidden" value="{{ .ConsentChallenge }}"/>
                 <input name="state" type="hidden" value="{{ .State }}"/>
 

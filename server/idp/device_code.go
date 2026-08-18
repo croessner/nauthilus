@@ -47,6 +47,13 @@ const (
 	DeviceCodeStatusDenied DeviceCodeStatus = "denied"
 )
 
+// ErrDeviceCodeNotFound reports an absent or expired device request.
+// ErrDeviceCodeConflict reports a replay or mismatched device transition.
+var (
+	ErrDeviceCodeNotFound = errors.New("device code not found")
+	ErrDeviceCodeConflict = errors.New("device code state conflict")
+)
+
 // DeviceCodeRequest represents the stored data for a device authorization request.
 type DeviceCodeRequest struct {
 	ClientID                    string                  `json:"client_id"`
@@ -240,14 +247,7 @@ func (s *RedisDeviceCodeStore) GetDeviceCode(ctx context.Context, deviceCode str
 
 // GetDeviceCodeByUserCode retrieves a device code request by looking up the user code.
 func (s *RedisDeviceCodeStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string) (string, *DeviceCodeRequest, error) {
-	// Normalize user code: uppercase, remove hyphens and spaces
-	normalizedCode := strings.ToUpper(strings.NewReplacer("-", "", " ", "").Replace(userCode))
-
-	// Reconstruct the formatted code for lookup
-	if len(normalizedCode) >= definitions.OIDCDeviceCodeDefaultUserCodeLength {
-		half := len(normalizedCode) / 2
-		userCode = normalizedCode[:half] + "-" + normalizedCode[half:]
-	}
+	userCode = NormalizeDeviceUserCode(userCode)
 
 	userCodeKey := s.userCodeKey(userCode)
 	readCtx, cancel := s.redisReadContext(ctx)
@@ -270,6 +270,276 @@ func (s *RedisDeviceCodeStore) GetDeviceCodeByUserCode(ctx context.Context, user
 	}
 
 	return deviceCode, request, nil
+}
+
+// NormalizeDeviceUserCode returns the one canonical lookup representation.
+func NormalizeDeviceUserCode(userCode string) string {
+	normalized := strings.ToUpper(strings.NewReplacer("-", "", " ", "").Replace(userCode))
+	if len(normalized) < definitions.OIDCDeviceCodeDefaultUserCodeLength {
+		return normalized
+	}
+
+	half := len(normalized) / 2
+
+	return normalized[:half] + "-" + normalized[half:]
+}
+
+func redisDeviceCodeString(ctx context.Context, commands redis.Cmdable, key string) (string, error) {
+	value, err := commands.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrDeviceCodeNotFound
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	return value, nil
+}
+
+func redisDeviceCodeTTL(ctx context.Context, commands redis.Cmdable, key string) (time.Duration, error) {
+	ttl, err := commands.TTL(ctx, key).Result()
+	if err != nil || ttl <= 0 {
+		return 0, ErrDeviceCodeNotFound
+	}
+
+	return ttl, nil
+}
+
+func deviceCodeClaimable(request *DeviceCodeRequest, userCode string) bool {
+	return request != nil && request.Status == DeviceCodeStatusPending && !request.VerificationLocked &&
+		NormalizeDeviceUserCode(request.UserCode) == userCode
+}
+
+func deviceCodeTerminalTransitionValid(current *DeviceCodeRequest, desired *DeviceCodeRequest) bool {
+	return current != nil && current.Status == DeviceCodeStatusPending && current.VerificationLocked &&
+		current.ClientID == desired.ClientID &&
+		NormalizeDeviceUserCode(current.UserCode) == NormalizeDeviceUserCode(desired.UserCode) &&
+		current.ExpiresAt.Equal(desired.ExpiresAt) && deviceCodeScopesBounded(desired.Scopes, current.Scopes)
+}
+
+func (s *RedisDeviceCodeStore) claimDeviceCodeTransaction(
+	ctx context.Context,
+	tx *redis.Tx,
+	userKey string,
+	deviceKey string,
+	deviceCode string,
+	userCode string,
+) (*DeviceCodeRequest, error) {
+	mapped, err := redisDeviceCodeString(ctx, tx, userKey)
+	if err != nil {
+		return nil, err
+	}
+
+	if mapped != deviceCode {
+		return nil, ErrDeviceCodeConflict
+	}
+
+	encoded, err := redisDeviceCodeString(ctx, tx, deviceKey)
+	if err != nil {
+		return nil, err
+	}
+
+	request, err := s.decodeDeviceCodeRequest(encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	if !deviceCodeClaimable(request, userCode) {
+		return nil, ErrDeviceCodeConflict
+	}
+
+	ttl, err := redisDeviceCodeTTL(ctx, tx, deviceKey)
+	if err != nil {
+		return nil, err
+	}
+
+	request.VerificationLocked = true
+
+	encoded, err = s.encodeDeviceCodeRequest(request)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Del(ctx, userKey)
+		pipe.Set(ctx, deviceKey, encoded, ttl)
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return request, nil
+}
+
+func (s *RedisDeviceCodeStore) completeDeviceCodeTransaction(
+	ctx context.Context,
+	tx *redis.Tx,
+	deviceKey string,
+	desired *DeviceCodeRequest,
+) error {
+	encoded, err := redisDeviceCodeString(ctx, tx, deviceKey)
+	if err != nil {
+		return err
+	}
+
+	current, err := s.decodeDeviceCodeRequest(encoded)
+	if err != nil {
+		return err
+	}
+
+	if !deviceCodeTerminalTransitionValid(current, desired) {
+		return ErrDeviceCodeConflict
+	}
+
+	ttl, err := redisDeviceCodeTTL(ctx, tx, deviceKey)
+	if err != nil {
+		return err
+	}
+
+	encoded, err = s.encodeDeviceCodeRequest(desired)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Set(ctx, deviceKey, encoded, ttl)
+
+		return nil
+	})
+
+	return err
+}
+
+// ClaimDeviceCodeByUserCode atomically consumes the user-code index and locks its device request.
+func (s *RedisDeviceCodeStore) ClaimDeviceCodeByUserCode(
+	ctx context.Context,
+	userCode string,
+) (string, *DeviceCodeRequest, error) {
+	userCode = NormalizeDeviceUserCode(userCode)
+	if userCode == "" {
+		return "", nil, ErrDeviceCodeNotFound
+	}
+
+	handle := s.redis.GetWriteHandle()
+
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	userKey := s.userCodeKey(userCode)
+
+	deviceCode, err := redisDeviceCodeString(writeCtx, handle, userKey)
+	if err != nil {
+		return "", nil, fmt.Errorf("claim device code mapping: %w", err)
+	}
+
+	deviceKey := s.deviceCodeKey(deviceCode)
+
+	var claimed *DeviceCodeRequest
+
+	err = handle.Watch(writeCtx, func(tx *redis.Tx) error {
+		claimed, err = s.claimDeviceCodeTransaction(
+			writeCtx, tx, userKey, deviceKey, deviceCode, userCode,
+		)
+
+		return err
+	}, userKey, deviceKey)
+	if errors.Is(err, redis.TxFailedErr) {
+		err = ErrDeviceCodeConflict
+	}
+
+	if err != nil {
+		return "", nil, fmt.Errorf("claim device code: %w", err)
+	}
+
+	return deviceCode, claimed, nil
+}
+
+// CompleteClaimedDeviceCode performs the only terminal transition for a claimed request.
+func (s *RedisDeviceCodeStore) CompleteClaimedDeviceCode(
+	ctx context.Context,
+	deviceCode string,
+	desired *DeviceCodeRequest,
+) error {
+	if desired == nil || !desired.VerificationLocked ||
+		(desired.Status != DeviceCodeStatusAuthorized && desired.Status != DeviceCodeStatusDenied) {
+		return ErrDeviceCodeConflict
+	}
+
+	deviceKey := s.deviceCodeKey(deviceCode)
+	handle := s.redis.GetWriteHandle()
+
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	err := handle.Watch(writeCtx, func(tx *redis.Tx) error {
+		return s.completeDeviceCodeTransaction(writeCtx, tx, deviceKey, desired)
+	}, deviceKey)
+	if errors.Is(err, redis.TxFailedErr) {
+		err = ErrDeviceCodeConflict
+	}
+
+	if err != nil {
+		return fmt.Errorf("complete claimed device code: %w", err)
+	}
+
+	return nil
+}
+
+func deviceCodeScopesBounded(granted []string, requested []string) bool {
+	if len(granted) == 0 || len(granted) > len(requested) {
+		return false
+	}
+
+	allowed := make(map[string]struct{}, len(requested))
+	for _, scope := range requested {
+		allowed[scope] = struct{}{}
+	}
+
+	seen := make(map[string]struct{}, len(granted))
+	for _, scope := range granted {
+		if _, ok := allowed[scope]; !ok {
+			return false
+		}
+
+		if _, duplicate := seen[scope]; duplicate {
+			return false
+		}
+
+		seen[scope] = struct{}{}
+	}
+
+	return true
+}
+
+func (s *RedisDeviceCodeStore) decodeDeviceCodeRequest(encoded string) (*DeviceCodeRequest, error) {
+	plain, err := s.redis.GetSecurityManager().Decrypt(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt device code data: %w", err)
+	}
+
+	request := &DeviceCodeRequest{}
+	if err = json.Unmarshal([]byte(plain), request); err != nil {
+		return nil, fmt.Errorf("unmarshal device code request: %w", err)
+	}
+
+	return request, nil
+}
+
+func (s *RedisDeviceCodeStore) encodeDeviceCodeRequest(request *DeviceCodeRequest) (string, error) {
+	data, err := json.Marshal(request)
+	if err != nil {
+		return "", fmt.Errorf("marshal device code request: %w", err)
+	}
+
+	encoded, err := s.redis.GetSecurityManager().Encrypt(string(data))
+	if err != nil {
+		return "", fmt.Errorf("encrypt device code data: %w", err)
+	}
+
+	return encoded, nil
 }
 
 // UpdateDeviceCode updates the stored device code request, preserving the original TTL.

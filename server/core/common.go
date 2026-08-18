@@ -18,9 +18,6 @@ package core
 import (
 	"net/http"
 
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
 )
 
@@ -33,89 +30,4 @@ func HandleErrWithDeps(ctx *gin.Context, err error, _ AuthDeps) {
 	}
 
 	ctx.String(http.StatusBadRequest, err.Error())
-}
-
-// SessionCleaner removes all user information from the secure cookie.
-// After migration to the CookieManager, session data is stored in the encrypted
-// nauthilus_secure_data cookie. This function clears all sensitive session keys.
-func SessionCleaner(ctx *gin.Context) {
-	mgr := cookie.GetManager(ctx)
-	if mgr == nil {
-		return
-	}
-
-	for _, key := range sessionCleanerKeys() {
-		mgr.Delete(key)
-	}
-
-	// Cookie is automatically saved by the cookie.Middleware after the handler chain.
-}
-
-// sessionCleanerKeys returns all sensitive browser-session keys.
-func sessionCleanerKeys() []string {
-	return []string{
-		definitions.SessionKeyAuthResult,
-		definitions.SessionKeyUsername,
-		definitions.SessionKeyAccount,
-		definitions.SessionKeyHaveTOTP,
-		definitions.SessionKeyHaveWebAuthn,
-		definitions.SessionKeyHaveRecoveryCodes,
-		definitions.SessionKeyTOTPURL,
-		definitions.SessionKeyUserBackend,
-		definitions.SessionKeyRemoteBackendRefType,
-		definitions.SessionKeyRemoteBackendRefName,
-		definitions.SessionKeyRemoteBackendRefProtocol,
-		definitions.SessionKeyRemoteBackendRefAuthority,
-		definitions.SessionKeyRemoteBackendRefToken,
-		definitions.SessionKeyMFAFactorRemoteBackendRefType,
-		definitions.SessionKeyMFAFactorRemoteBackendRefName,
-		definitions.SessionKeyMFAFactorRemoteBackendRefProtocol,
-		definitions.SessionKeyMFAFactorRemoteBackendRefAuthority,
-		definitions.SessionKeyMFAFactorRemoteBackendRefToken,
-		definitions.SessionKeyUniqueUserID,
-		definitions.SessionKeyDisplayName,
-		definitions.SessionKeyRegistration,
-		definitions.SessionKeyWebAuthnCeremony,
-		definitions.SessionKeyOIDCClients,
-		definitions.SessionKeyOIDCConsentExpiries,
-		definitions.SessionKeyTOTPSecret,
-		definitions.SessionKeyTOTPPendingRegistration,
-		definitions.SessionKeyTOTPOperationID,
-		definitions.SessionKeyRecoveryCodes,
-		definitions.SessionKeyRecoveryCodesRemoteGenerated,
-		definitions.SessionKeyRecoveryOperationID,
-		definitions.SessionKeySubject,
-		definitions.SessionKeyUserBackendName,
-		definitions.SessionKeyProtocol,
-		definitions.SessionKeyLang,
-		definitions.SessionKeyRememberTTL,
-		definitions.SessionKeyLoginError,
-		definitions.SessionKeyMFAAccount,
-		definitions.SessionKeyMFADisplayName,
-		definitions.SessionKeyMFAFactorAccount,
-		definitions.SessionKeyMFAFactorUniqueUserID,
-		definitions.SessionKeyMFAFactorDisplayName,
-		definitions.SessionKeyMFAMulti,
-		definitions.SessionKeyMFAMethod,
-		definitions.SessionKeyMFACompleted,
-		definitions.SessionKeyMFAAssuranceAt,
-		definitions.SessionKeyMFAAssuranceMethod,
-		definitions.SessionKeyMFAAssuranceLevel,
-		definitions.SessionKeyMFAAssuranceScope,
-	}
-}
-
-// ClearBrowserCookies explicitly overwrites security-relevant cookies in the browser with an expired state.
-func ClearBrowserCookies(ctx *gin.Context) {
-	if mgr := cookie.GetManager(ctx); mgr != nil {
-		mgr.Clear()
-		mgr.SetMaxAge(-1)
-
-		return
-	}
-
-	secure := util.ShouldSetSecureCookie()
-
-	ctx.SetCookie(definitions.SecureDataCookieName, "", -1, "/", "", secure, true)
-	ctx.SetCookie(definitions.WebAuthnCeremonyCookieName, "", -1, "/", "", secure, true)
 }

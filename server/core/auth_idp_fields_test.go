@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/model/authdto"
@@ -114,6 +115,38 @@ func TestFillIDPFieldsUsesEmptyUserGroupsWhenNotSet(t *testing.T) {
 	auth.fillIDPFields(request)
 
 	assert.Nil(t, request.UserGroups)
+}
+
+func TestFillIDPFieldsUsesTypedProtocolContextInsteadOfLegacyManager(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("GET", "/oidc/authorize", nil)
+	ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyOIDCGrantType:  "legacy-grant",
+		definitions.SessionKeyIDPRedirectURI: "https://legacy.example.test/callback",
+		definitions.SessionKeyIDPScope:       "legacy",
+		definitions.SessionKeyMFACompleted:   false,
+		definitions.SessionKeyMFAMethod:      "legacy-method",
+	}})
+	auth := &AuthState{
+		Request: AuthRequest{HTTPClientContext: ctx},
+		Runtime: AuthRuntime{IDPContext: &IDPRequestContext{
+			GrantType: "authorization_code", RedirectURI: "https://client.example.test/callback",
+			RequestedScopes: []string{"openid", "profile"}, MFACompleted: true, MFAMethod: "totp",
+		}},
+	}
+
+	request := &lualib.CommonRequest{}
+	auth.fillIDPFields(request)
+
+	assert.Equal(t, "authorization_code", request.GrantType)
+	assert.Equal(t, "https://client.example.test/callback", request.RedirectURI)
+	assert.Equal(t, []string{"openid", "profile"}, request.RequestedScopes)
+	assert.True(t, request.MFACompleted)
+	assert.Equal(t, "totp", request.MFAMethod)
+	assert.NotNil(t, cookie.GetManager(ctx), "test requires a stale legacy manager")
 }
 
 func TestApplyContextDataStoresExternalSessionInAuthStateAndGinContext(t *testing.T) {

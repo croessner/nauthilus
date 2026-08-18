@@ -26,7 +26,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/idp/dcr"
@@ -42,7 +41,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// NauthilusIDP implements the IdentityProvider interface using Nauthilus core.
+// NauthilusIDP provides the canonical OIDC and SAML identity services.
 type NauthilusIDP struct {
 	deps           *deps.Deps
 	storage        *RedisTokenStorage
@@ -1013,8 +1012,36 @@ func (n *NauthilusIDP) resolveEdDSAPublicKey(ctx context.Context, kid string) (a
 	return signer.PublicKey(), nil
 }
 
-// Authenticate performs user authentication using AuthState.
-func (n *NauthilusIDP) Authenticate(ctx *gin.Context, username, password string, oidcCID string, samlEntityID string) (*backend.User, error) {
+// PasswordAuthentication is the typed password-authentication result used by canonical browser flows.
+type PasswordAuthentication struct {
+	User       *backend.User
+	BackendRef core.RemoteBackendRef
+}
+
+// AuthenticateWithBackend authenticates without reading or writing browser session state.
+func (n *NauthilusIDP) AuthenticateWithBackend(
+	ctx *gin.Context,
+	username string,
+	password string,
+	oidcCID string,
+	samlEntityID string,
+	protocolContext core.IDPRequestContext,
+) (PasswordAuthentication, error) {
+	typedContext := protocolContext
+	typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
+	result, _, err := n.authenticatePassword(ctx, username, password, oidcCID, samlEntityID, &typedContext)
+
+	return result, err
+}
+
+func (n *NauthilusIDP) authenticatePassword(
+	ctx *gin.Context,
+	username string,
+	password string,
+	oidcCID string,
+	samlEntityID string,
+	protocolContext *core.IDPRequestContext,
+) (PasswordAuthentication, *core.AuthState, error) {
 	spanCtx, sp := n.tracer.Start(ctx.Request.Context(), "idp.authenticate",
 		attribute.String("username", username),
 		attribute.String("oidc_cid", oidcCID),
@@ -1025,26 +1052,40 @@ func (n *NauthilusIDP) Authenticate(ctx *gin.Context, username, password string,
 	defer requestScope.Restore()
 	defer sp.End()
 
-	auth, err := n.newPasswordAuthState(ctx, username, password, oidcCID, samlEntityID, sp)
+	auth, err := n.newPasswordAuthState(ctx, username, password, oidcCID, samlEntityID, protocolContext, sp)
 	if err != nil {
-		return nil, err
+		return PasswordAuthentication{}, nil, err
 	}
 
 	if err := n.rejectBruteForceAuthentication(ctx, auth, sp); err != nil {
-		return nil, err
+		return PasswordAuthentication{}, auth, err
 	}
 
 	if err := n.rejectEnvironmentAuthentication(ctx, auth, sp); err != nil {
-		return nil, err
+		return PasswordAuthentication{}, auth, err
 	}
 
 	if err := n.rejectPasswordAuthentication(ctx, auth, sp); err != nil {
-		return nil, err
+		result, _ := n.passwordAuthenticationFromState(auth)
+
+		return result, auth, err
 	}
 
-	n.storeAuthenticationSession(ctx, auth)
+	result, err := n.passwordAuthenticationFromState(auth)
+	if err != nil {
+		return PasswordAuthentication{}, auth, err
+	}
 
-	return n.userFromAuthState(auth)
+	return result, auth, nil
+}
+
+func (n *NauthilusIDP) passwordAuthenticationFromState(auth *core.AuthState) (PasswordAuthentication, error) {
+	user, err := n.userFromAuthState(auth)
+	if err != nil {
+		return PasswordAuthentication{}, err
+	}
+
+	return PasswordAuthentication{User: user, BackendRef: auth.Runtime.RemoteBackendRef}, nil
 }
 
 // newPasswordAuthState creates and configures AuthState for password authentication.
@@ -1054,6 +1095,7 @@ func (n *NauthilusIDP) newPasswordAuthState(
 	password string,
 	oidcCID string,
 	samlEntityID string,
+	protocolContext *core.IDPRequestContext,
 	sp trace.Span,
 ) (*core.AuthState, error) {
 	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
@@ -1067,6 +1109,12 @@ func (n *NauthilusIDP) newPasswordAuthState(
 	}
 
 	configurePasswordAuthState(auth, username, password, oidcCID, samlEntityID)
+
+	if protocolContext != nil {
+		typedContext := *protocolContext
+		typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
+		auth.Runtime.IDPContext = &typedContext
+	}
 	auth.FinishSetup(ctx)
 
 	return auth, nil
@@ -1174,23 +1222,9 @@ func (n *NauthilusIDP) finishAuthenticationFailure(
 	return n.authFailureError(ctx, auth, err)
 }
 
-// storeAuthenticationSession persists backend affinity data for the browser session.
-func (n *NauthilusIDP) storeAuthenticationSession(ctx *gin.Context, auth *core.AuthState) {
-	if mgr := cookie.GetManager(ctx); mgr != nil {
-		mgr.Set(definitions.SessionKeyUserBackend, uint8(auth.GetSourcePassDBBackend()))
-		mgr.Set(definitions.SessionKeyUserBackendName, auth.GetUsedPassDBBackendName())
-		core.StoreRemoteBackendRef(mgr, auth.Runtime.RemoteBackendRef)
-	}
-}
-
 // bruteForceAuthenticationError returns the shared brute-force authentication failure.
 func bruteForceAuthenticationError() error {
 	return fmt.Errorf("authentication failed due to brute force protection")
-}
-
-// GetUserByUsername retrieves user details and attributes without performing password authentication.
-func (n *NauthilusIDP) GetUserByUsername(ctx *gin.Context, username string, oidcCID string, samlEntityID string) (*backend.User, error) {
-	return n.getUserByUsername(ctx, username, oidcCID, samlEntityID, nil)
 }
 
 // GetUserByUsernameForOIDCClaims retrieves user data needed for OIDC claim materialization.
@@ -1201,50 +1235,47 @@ func (n *NauthilusIDP) GetUserByUsernameForOIDCClaims(
 	scopes []string,
 ) (*backend.User, error) {
 	if client == nil {
-		return n.getUserByUsername(ctx, username, "", "", nil)
+		return nil, fmt.Errorf("OIDC user lookup unavailable: client is nil")
 	}
 
-	effectiveScopes := n.deps.Cfg.GetIDP().OIDC.GetEffectiveCustomScopes(client)
-	request := core.NewOIDCIdentityAttributeRequest(client, scopes, effectiveScopes)
-
-	return n.getUserByUsername(ctx, username, client.ClientID, "", request)
-}
-
-// GetUserByUsernameForSAML retrieves user data needed for SAML attribute materialization.
-func (n *NauthilusIDP) GetUserByUsernameForSAML(
-	ctx *gin.Context,
-	username string,
-	sp *config.SAML2ServiceProvider,
-) (*backend.User, error) {
-	if sp == nil {
-		return n.getUserByUsername(ctx, username, "", "", nil)
-	}
-
-	request := core.NewSAMLIdentityAttributeRequest(sp)
-
-	return n.getUserByUsername(ctx, username, "", sp.EntityID, request)
-}
-
-func (n *NauthilusIDP) getUserByUsername(
-	ctx *gin.Context,
-	username string,
-	oidcCID string,
-	samlEntityID string,
-	attributeRequest *core.IdentityAttributeRequest,
-) (*backend.User, error) {
-	spanCtx, sp := n.tracer.Start(ctx.Request.Context(), "idp.get_user_by_username",
-		attribute.String("username", username),
-		attribute.String("oidc_cid", oidcCID),
-		attribute.String("saml_entity_id", samlEntityID),
+	return n.GetUserByUsernameForOIDCClaimsCanonical(
+		ctx,
+		username,
+		client,
+		scopes,
+		core.RemoteBackendRef{},
+		core.IDPRequestContext{
+			GrantType:       definitions.OIDCFlowDeviceCode,
+			RequestedScopes: append([]string(nil), scopes...),
+		},
 	)
-	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+}
 
+// GetUserByUsernameForOIDCClaimsCanonical loads OIDC claim material through only typed request state.
+func (n *NauthilusIDP) GetUserByUsernameForOIDCClaimsCanonical(
+	ctx *gin.Context,
+	username string,
+	client *config.OIDCClient,
+	scopes []string,
+	backendRef core.RemoteBackendRef,
+	protocolContext core.IDPRequestContext,
+) (*backend.User, error) {
+	if n == nil || ctx == nil || ctx.Request == nil || client == nil {
+		return nil, fmt.Errorf("canonical OIDC user lookup unavailable")
+	}
+
+	spanCtx, sp := n.tracer.Start(
+		ctx.Request.Context(), "idp.get_user_by_username.canonical",
+		attribute.String("oidc_cid", client.ClientID),
+	)
+
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
 	defer requestScope.Restore()
 	defer sp.End()
 
 	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
-	auth, ok := authRaw.(*core.AuthState)
 
+	auth, ok := authRaw.(*core.AuthState)
 	if !ok || auth == nil {
 		err := fmt.Errorf("failed to create AuthState")
 		sp.RecordError(err)
@@ -1252,24 +1283,67 @@ func (n *NauthilusIDP) getUserByUsername(
 		return nil, err
 	}
 
-	prepareUserLookupAuthState(ctx, auth, username, oidcCID, samlEntityID, attributeRequest)
-	bindUserLookupRemoteBackendRef(auth, cookie.GetManager(ctx))
+	effectiveScopes := n.deps.Cfg.GetIDP().OIDC.GetEffectiveCustomScopes(client)
+	attributeRequest := core.NewOIDCIdentityAttributeRequest(client, scopes, effectiveScopes)
+	prepareUserLookupAuthState(ctx, auth, username, client.ClientID, "", attributeRequest)
 
-	// We use HandlePassword with NoAuth=true which should skip password check but load attributes
-	// depending on how backends handle NoAuth.
-	// Alternatively, we can use a more direct way if AuthState supports it.
-	result := auth.HandlePassword(ctx)
-	if result != definitions.AuthResultOK {
+	typedContext := protocolContext
+	typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
+	auth.Runtime.IDPContext = &typedContext
+	auth.Runtime.RemoteBackendRef = backendRef
+
+	if result := auth.HandlePassword(ctx); result != definitions.AuthResultOK {
 		err := fmt.Errorf("failed to load user: %d", result)
 		sp.RecordError(err)
 
 		return nil, err
 	}
 
-	if mgr := cookie.GetManager(ctx); mgr != nil {
-		mgr.Set(definitions.SessionKeyUserBackend, uint8(auth.GetSourcePassDBBackend()))
-		mgr.Set(definitions.SessionKeyUserBackendName, auth.GetUsedPassDBBackendName())
-		core.StoreRemoteBackendRef(mgr, auth.Runtime.RemoteBackendRef)
+	return n.userFromAuthState(auth)
+}
+
+// GetUserByUsernameForSAMLCanonical loads SAML attributes through only typed request state.
+func (n *NauthilusIDP) GetUserByUsernameForSAMLCanonical(
+	ctx *gin.Context,
+	username string,
+	spConfig *config.SAML2ServiceProvider,
+	backendRef core.RemoteBackendRef,
+	protocolContext core.IDPRequestContext,
+) (*backend.User, error) {
+	if n == nil || ctx == nil || ctx.Request == nil || spConfig == nil {
+		return nil, fmt.Errorf("canonical SAML user lookup unavailable")
+	}
+
+	spanCtx, traceSpan := n.tracer.Start(
+		ctx.Request.Context(), "idp.get_user_by_username.saml.canonical",
+		attribute.String("saml_entity_id", spConfig.EntityID),
+	)
+	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
+	defer requestScope.Restore()
+	defer traceSpan.End()
+
+	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
+	auth, ok := authRaw.(*core.AuthState)
+	if !ok || auth == nil {
+		err := fmt.Errorf("failed to create AuthState")
+		traceSpan.RecordError(err)
+
+		return nil, err
+	}
+
+	attributeRequest := core.NewSAMLIdentityAttributeRequest(spConfig)
+	prepareUserLookupAuthState(ctx, auth, username, "", spConfig.EntityID, attributeRequest)
+
+	typedContext := protocolContext
+	typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
+	auth.Runtime.IDPContext = &typedContext
+	auth.Runtime.RemoteBackendRef = backendRef
+
+	if result := auth.HandlePassword(ctx); result != definitions.AuthResultOK {
+		err := fmt.Errorf("failed to load user: %d", result)
+		traceSpan.RecordError(err)
+
+		return nil, err
 	}
 
 	return n.userFromAuthState(auth)
@@ -1299,13 +1373,6 @@ func prepareUserLookupAuthState(
 	}
 
 	auth.SetNoAuth(true)
-}
-
-// bindUserLookupRemoteBackendRef selects the backend reference for the lookup identity.
-func bindUserLookupRemoteBackendRef(auth *core.AuthState, mgr cookie.Manager) {
-	if ref, ok := core.RemoteBackendRefForAuthSession(auth, mgr); ok {
-		auth.Runtime.RemoteBackendRef = ref
-	}
 }
 
 func (n *NauthilusIDP) userFromAuthState(auth *core.AuthState) (*backend.User, error) {

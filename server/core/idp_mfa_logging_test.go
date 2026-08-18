@@ -21,7 +21,15 @@ func TestLogIDPMFAuthResult_Success(t *testing.T) {
 
 	ctx, logBuf := newIDPMFALogContext(t)
 
-	LogIDPMFAuthResult(ctx, AuthDeps{Cfg: newIDPMFALogConfig(), Logger: newIDPMFALogger(logBuf)}, "alice", definitions.MFAMethodTOTP, "", true)
+	LogIDPMFAuthResult(
+		ctx,
+		AuthDeps{Cfg: newIDPMFALogConfig(), Logger: newIDPMFALogger(logBuf)},
+		IDPMFAProtocolContext{Protocol: definitions.ProtoOIDC, OIDCClientID: "test-client"},
+		"alice",
+		definitions.MFAMethodTOTP,
+		"",
+		true,
+	)
 
 	output := logBuf.String()
 
@@ -40,7 +48,15 @@ func TestLogIDPMFAuthResult_FailureNormalizesRecoveryMethod(t *testing.T) {
 
 	ctx, logBuf := newIDPMFALogContext(t)
 
-	LogIDPMFAuthResult(ctx, AuthDeps{Cfg: newIDPMFALogConfig(), Logger: newIDPMFALogger(logBuf)}, "alice", "recovery", "Invalid recovery code", false)
+	LogIDPMFAuthResult(
+		ctx,
+		AuthDeps{Cfg: newIDPMFALogConfig(), Logger: newIDPMFALogger(logBuf)},
+		IDPMFAProtocolContext{Protocol: definitions.ProtoOIDC, OIDCClientID: "test-client"},
+		"alice",
+		"recovery",
+		"Invalid recovery code",
+		false,
+	)
 
 	output := logBuf.String()
 

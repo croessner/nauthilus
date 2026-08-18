@@ -60,7 +60,8 @@ func (h *SAMLHandler) respondToLogoutRequest(
 }
 
 func samlLogoutResponseStatusFromCleanup(cleanupResult sloLocalCleanupResult) saml.Status {
-	if cleanupResult.TransitionErr == nil && cleanupResult.ParticipantCleanupErr == nil {
+	if cleanupResult.TransitionErr == nil && cleanupResult.SessionRevocationErr == nil &&
+		cleanupResult.ParticipantCleanupErr == nil {
 		return saml.Status{
 			StatusCode: saml.StatusCode{
 				Value: saml.StatusSuccess,
@@ -72,8 +73,11 @@ func samlLogoutResponseStatusFromCleanup(cleanupResult sloLocalCleanupResult) sa
 		Value: saml.StatusResponder,
 	}
 	statusMessage := "local logout cleanup failed"
+	if cleanupResult.SessionRevocationErr != nil {
+		statusMessage = "local browser session revocation failed"
+	}
 
-	if cleanupResult.ParticipantCleanupErr != nil {
+	if cleanupResult.SessionRevocationErr == nil && cleanupResult.ParticipantCleanupErr != nil {
 		statusCode.StatusCode = &saml.StatusCode{
 			Value: saml.StatusPartialLogout,
 		}

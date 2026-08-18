@@ -197,7 +197,8 @@ func newRegistrationTestRouter(t *testing.T, service dynamicRegistrationService)
 
 	handler.registrationService = service
 	router := gin.New()
-	handler.Register(router)
+	runtime, _, _ := seedCanonicalIDPFlow(t, nil)
+	handler.Register(router, runtime)
 
 	return router
 }

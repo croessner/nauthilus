@@ -31,10 +31,10 @@ import (
 	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/core/language"
 	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	handlerapiv1 "github.com/croessner/nauthilus/v3/server/handler/api/v1"
 	handlerbackchannel "github.com/croessner/nauthilus/v3/server/handler/backchannel"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
 	handleridp "github.com/croessner/nauthilus/v3/server/handler/frontend/idp"
@@ -515,10 +515,31 @@ func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
 		return nil
 	}
 
+	deps.Env = runtime.env
+	deps.Redis = runtime.store.redisClient
+
+	canonicalRuntime, err := handleridp.NewCanonicalBrowserRuntime(deps)
+	if err != nil {
+		_ = level.Error(runtime.logger).Log(
+			definitions.LogKeyMsg, "Canonical IDP browser runtime initialization failed",
+			definitions.LogKeyError, err.Error(),
+		)
+
+		return nil
+	}
+
+	frontendHandler, err := handleridp.NewCanonicalFrontendHandler(deps, canonicalRuntime)
+	if err != nil {
+		_ = level.Error(runtime.logger).Log(
+			definitions.LogKeyMsg, "Canonical IDP frontend initialization failed",
+			definitions.LogKeyError, err.Error(),
+		)
+
+		return nil
+	}
+
 	return func(e *gin.Engine) {
-		deps.Env = runtime.env
-		deps.Redis = runtime.store.redisClient
-		registerIDPRoutes(e, runtime, deps)
+		registerIDPRoutes(e, runtime, deps, canonicalRuntime, frontendHandler)
 	}
 }
 
@@ -550,22 +571,22 @@ func registerIDPRoutes(
 	e *gin.Engine,
 	runtime httpServerRuntime,
 	deps *handlerdeps.Deps,
+	canonicalRuntime *cookie.CanonicalRuntime,
+	frontendHandler *handleridp.FrontendHandler,
 ) {
 	nauthilusIDP := idp.NewNauthilusIDP(deps)
 	if runtime.cfg.GetIDP().OIDC.Enabled {
 		nauthilusIDP.GetKeyManager().StartRotationJob(runtime.store.server.ctx)
 	}
 
-	frontendHandler := handleridp.NewFrontendHandler(deps)
 	frontendHandler.Register(e)
-	handlerapiv1.NewMFAAPI(deps).Register(e)
 
 	if runtime.cfg.GetIDP().OIDC.Enabled {
-		handleridp.NewOIDCHandler(deps, nauthilusIDP, frontendHandler).Register(e)
+		handleridp.NewOIDCHandler(deps, nauthilusIDP, frontendHandler).Register(e, canonicalRuntime)
 	}
 
 	if runtime.cfg.GetIDP().SAML2.Enabled {
-		handleridp.NewSAMLHandler(deps, nauthilusIDP).Register(e)
+		handleridp.NewSAMLHandler(deps, nauthilusIDP).Register(e, canonicalRuntime)
 	}
 }
 

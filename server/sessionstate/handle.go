@@ -56,3 +56,13 @@ func validateHandle(handle Handle) error {
 
 	return nil
 }
+
+// ParseHandle validates and returns one canonical 256-bit opaque handle.
+func ParseHandle(value string) (Handle, error) {
+	handle := Handle(value)
+	if err := validateHandle(handle); err != nil {
+		return "", err
+	}
+
+	return handle, nil
+}

@@ -15,7 +15,59 @@
 
 package flow
 
-import "testing"
+import (
+	"net/http/httptest"
+	"net/url"
+	"testing"
+)
+
+func TestURIBuilderCarriesCanonicalFlowTicketOnLocalInteractionTargets(t *testing.T) {
+	t.Parallel()
+
+	flowID := "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN"
+	state := &State{
+		FlowID: flowID, Type: FlowTypeOIDCAuthorization, Protocol: FlowProtocolOIDC,
+		CurrentStep: FlowStepStart, ReturnTarget: "/login?language=en",
+	}
+	target := NewURIBuilder().Resolve(state, FlowActionStart)
+
+	parsed, err := url.Parse(target)
+	if err != nil {
+		t.Fatalf("parse target: %v", err)
+	}
+
+	if parsed.Query().Get(FlowTicketParameter) != flowID {
+		t.Fatalf("flow ticket = %q in %q, want %q", parsed.Query().Get(FlowTicketParameter), target, flowID)
+	}
+
+	if parsed.Query().Get("language") != "en" {
+		t.Fatalf("existing target query was lost: %q", target)
+	}
+
+	external := "https://client.example.test/callback"
+
+	state.ReturnTarget = external
+	if target = NewURIBuilder().Resolve(state, FlowActionStart); target != external {
+		t.Fatalf("external target was decorated: %q", target)
+	}
+}
+
+func TestTicketFromRequestAcceptsOnlyCanonicalOpaqueHandle(t *testing.T) {
+	t.Parallel()
+
+	valid := "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO"
+	request := httptest.NewRequest("GET", "/login?flow="+valid, nil)
+
+	ticket, err := TicketFromRequest(request)
+	if err != nil || string(ticket) != valid {
+		t.Fatalf("canonical ticket: value=%q err=%v", ticket, err)
+	}
+
+	request = httptest.NewRequest("GET", "/login?flow=legacy-flow-id", nil)
+	if _, err = TicketFromRequest(request); err == nil {
+		t.Fatal("legacy flow selector was accepted")
+	}
+}
 
 func TestURIBuilderResolve(t *testing.T) {
 	builder := NewURIBuilder()

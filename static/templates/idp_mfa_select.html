@@ -9,6 +9,7 @@
                 {{ if .RecommendedMethod }}
                 {{ if eq .RecommendedMethod "webauthn" }}
                 <form action="{{ .WebAuthnLoginEndpoint }}" method="get">
+                    {{ if .FlowTicket }}<input name="flow" type="hidden" value="{{ .FlowTicket }}"/>{{ end }}
                     <button autofocus class="btn btn-primary btn-lg w-full flex justify-center items-center"
                             type="submit">
                         <div class="flex items-center gap-4">
@@ -26,6 +27,7 @@
 
                 {{ if eq .RecommendedMethod "totp" }}
                 <form action="{{ .TOTPLoginEndpoint }}" method="get">
+                    {{ if .FlowTicket }}<input name="flow" type="hidden" value="{{ .FlowTicket }}"/>{{ end }}
                     <button autofocus class="btn btn-primary btn-lg w-full flex justify-center items-center"
                             type="submit">
                         <div class="flex items-center gap-4">
@@ -43,6 +45,7 @@
 
                 {{ if eq .RecommendedMethod "recovery" }}
                 <form action="{{ .RecoveryLoginEndpoint }}" method="get">
+                    {{ if .FlowTicket }}<input name="flow" type="hidden" value="{{ .FlowTicket }}"/>{{ end }}
                     <button autofocus class="btn btn-primary btn-lg w-full flex justify-center items-center"
                             type="submit">
                         <span>{{ .RecoveryCode }}</span>

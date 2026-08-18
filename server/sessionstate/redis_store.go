@@ -9,15 +9,18 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
 const (
-	redisSchemaVersion = 1
-	defaultRecordTTL   = 10 * time.Minute
-	defaultTouchWindow = 5 * time.Minute
+	redisSchemaVersion  = 1
+	defaultRecordTTL    = 10 * time.Minute
+	defaultTouchWindow  = 5 * time.Minute
+	redisMissingMarker  = "__missing__"
+	redisConflictMarker = "__conflict__"
 )
 
 const redisCommitScript = `
@@ -51,6 +54,62 @@ if not current then return 0 end
 if current ~= ARGV[1] then return -1 end
 redis.call('DEL', KEYS[1])
 return 1
+`
+
+const redisConsumeScript = `
+local current = redis.call('HGET', KEYS[1], 'revision')
+if not current then return {'__missing__'} end
+if current ~= ARGV[1] then return {'__conflict__'} end
+local values = redis.call('HGETALL', KEYS[1])
+redis.call('DEL', KEYS[1])
+return values
+`
+
+const redisIndexedDeleteScript = `
+local anchor_current = redis.call('HGET', KEYS[1], 'revision')
+local child_current = redis.call('HGET', KEYS[2], 'revision')
+if (not anchor_current) or (not child_current) then return -2 end
+if anchor_current ~= ARGV[1] or child_current ~= ARGV[13] then return -1 end
+local next_revision = tonumber(ARGV[1]) + 1
+redis.call('HSET', KEYS[1],
+  'schema_version', ARGV[2],
+  'owner', ARGV[3],
+  'revision', tostring(next_revision),
+  'payload', ARGV[4],
+  'expires_at_ms', ARGV[5],
+  'created_at_ms', ARGV[6],
+  'idle_expires_at_ms', ARGV[7],
+  'absolute_expires_at_ms', ARGV[8],
+  'last_touched_at_ms', ARGV[9],
+  'revoked', ARGV[10],
+  'tombstone', ARGV[11])
+redis.call('PEXPIRE', KEYS[1], ARGV[12])
+redis.call('DEL', KEYS[2])
+return next_revision
+`
+
+const redisIndexedConsumeScript = `
+local anchor_current = redis.call('HGET', KEYS[1], 'revision')
+local child_current = redis.call('HGET', KEYS[2], 'revision')
+if (not anchor_current) or (not child_current) then return {'__missing__'} end
+if anchor_current ~= ARGV[1] or child_current ~= ARGV[13] then return {'__conflict__'} end
+local values = redis.call('HGETALL', KEYS[2])
+local next_revision = tonumber(ARGV[1]) + 1
+redis.call('HSET', KEYS[1],
+  'schema_version', ARGV[2],
+  'owner', ARGV[3],
+  'revision', tostring(next_revision),
+  'payload', ARGV[4],
+  'expires_at_ms', ARGV[5],
+  'created_at_ms', ARGV[6],
+  'idle_expires_at_ms', ARGV[7],
+  'absolute_expires_at_ms', ARGV[8],
+  'last_touched_at_ms', ARGV[9],
+  'revoked', ARGV[10],
+  'tombstone', ARGV[11])
+redis.call('PEXPIRE', KEYS[1], ARGV[12])
+redis.call('DEL', KEYS[2])
+return values
 `
 
 const redisTouchScript = `
@@ -134,7 +193,10 @@ var (
 	ErrExpired          = errors.New("session record expired")
 	ErrRevoked          = errors.New("session record revoked")
 	ErrInvalidTTL       = errors.New("session record invalid TTL")
+	ErrActiveFlowLimit  = errors.New("session active flow limit reached")
 )
+
+const maxActiveProtocolFlows = 16
 
 // RedisStoreConfig defines namespace and write-amortization policy for typed stores.
 type RedisStoreConfig struct {
@@ -166,6 +228,8 @@ type RedisStores struct {
 	StepUp       *RedisRepository[StepUpRecord]
 	Ceremony     *RedisRepository[CeremonyRecord]
 	TOTPRecovery *RedisRepository[TOTPRecoveryRecord]
+	Consent      *RedisRepository[ConsentGrant]
+	Logout       *RedisRepository[LogoutIndex]
 	keyspace     Keyspace
 	client       redis.UniversalClient
 	clock        Clock
@@ -213,6 +277,8 @@ func NewRedisStores(
 	stores.StepUp = newRedisRepository[StepUpRecord](client, keyspace, OwnerStepUp, clock, defaultTTL, true)
 	stores.Ceremony = newRedisRepository[CeremonyRecord](client, keyspace, OwnerWebAuthnCeremony, clock, defaultTTL, true)
 	stores.TOTPRecovery = newRedisRepository[TOTPRecoveryRecord](client, keyspace, OwnerTOTPRecovery, clock, defaultTTL, true)
+	stores.Consent = newRedisRepository[ConsentGrant](client, keyspace, OwnerConsent, clock, defaultTTL, false)
+	stores.Logout = newRedisRepository[LogoutIndex](client, keyspace, OwnerConsent, clock, defaultTTL, true)
 
 	return stores, nil
 }
@@ -341,6 +407,75 @@ func (r *RedisRepository[T]) Delete(ctx context.Context, request DeleteRequest) 
 	return nil
 }
 
+// Consume atomically returns and deletes one record at the expected revision.
+// Callers must not expose the value unless this operation succeeds.
+func (r *RedisRepository[T]) Consume(ctx context.Context, request DeleteRequest) (Versioned[T], error) {
+	var empty Versioned[T]
+
+	key, err := r.key(request.Reference)
+	if err != nil {
+		return empty, err
+	}
+
+	if r.requireParent {
+		if _, err = r.parentRemainingTTL(ctx, request.Reference.Session); err != nil {
+			_ = r.client.Del(ctx, key).Err()
+
+			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrExpired) || errors.Is(err, ErrRevoked) {
+				return empty, ErrParentMissing
+			}
+
+			return empty, err
+		}
+	}
+
+	result, err := r.client.Eval(
+		ctx,
+		redisConsumeScript,
+		[]string{key},
+		strconv.FormatUint(uint64(request.ExpectedRevision), 10),
+	).Slice()
+	if err != nil {
+		return empty, fmt.Errorf("session redis consume: %w", err)
+	}
+
+	if len(result) == 1 {
+		switch fmt.Sprint(result[0]) {
+		case redisMissingMarker:
+			return empty, ErrNotFound
+		case redisConflictMarker:
+			return empty, ErrRevisionConflict
+		}
+	}
+
+	values, err := redisHashResult(result)
+	if err != nil {
+		return empty, err
+	}
+
+	return r.decode(values, request.Reference)
+}
+
+func redisHashResult(result []any) (map[string]string, error) {
+	if len(result) == 0 || len(result)%2 != 0 {
+		return nil, ErrBindingMismatch
+	}
+
+	values := make(map[string]string, len(result)/2)
+	for index := 0; index < len(result); index += 2 {
+		key, keyOK := result[index].(string)
+		value, valueOK := result[index+1].(string)
+
+		if !keyOK || !valueOK {
+			return nil, ErrBindingMismatch
+		}
+
+		values[key] = value
+	}
+
+	return values, nil
+}
+
 // key validates the repository and derives its non-disclosing Redis key.
 func (r *RedisRepository[T]) key(reference Reference) (string, error) {
 	if r == nil || r.client == nil || r.clock == nil {
@@ -373,6 +508,10 @@ func (r *RedisRepository[T]) commitParameters(
 		boundedTTL, ttlErr := r.capAnchorTTL(request.Value, ttl)
 
 		return key, boundedTTL, ttlErr
+	}
+
+	if !r.requireParent {
+		return key, ttl, nil
 	}
 
 	parentTTL, err := r.parentRemainingTTL(ctx, request.Reference.Session)
@@ -590,6 +729,18 @@ func validateRecordBinding[T any](value T, reference Reference) error {
 		recordHandle, sessionHandle = typed.Handle, typed.Session
 	case TOTPRecoveryRecord:
 		recordHandle, sessionHandle = typed.Handle, typed.Session
+	case ConsentGrant:
+		if err := validateConsentGrant(typed, reference); err != nil {
+			return err
+		}
+
+		recordHandle, sessionHandle = typed.Handle, reference.Session
+	case LogoutIndex:
+		if err := validateLogoutIndex(typed); err != nil {
+			return err
+		}
+
+		recordHandle, sessionHandle = typed.Handle, typed.Session
 	default:
 		return ErrBindingMismatch
 	}
@@ -621,7 +772,38 @@ func normalizeLoadedRecord[T any](value *T, revision Revision, expiresAt time.Ti
 		typed.Revision, typed.ExpiresAt = revision, expiresAt
 	case *TOTPRecoveryRecord:
 		typed.Revision, typed.ExpiresAt = revision, expiresAt
+	case *ConsentGrant:
+		typed.Revision, typed.ExpiresAt = revision, expiresAt
+	case *LogoutIndex:
+		typed.Revision, typed.ExpiresAt = revision, expiresAt
 	}
+}
+
+func validateLogoutIndex(index LogoutIndex) error {
+	if strings.TrimSpace(index.IdentityReference) == "" || len(index.IdentityReference) > 512 ||
+		strings.TrimSpace(index.Account) == "" || len(index.Account) > 512 {
+		return ErrBindingMismatch
+	}
+
+	if len(index.OIDCClientIDs) > maxActiveProtocolFlows {
+		return ErrActiveFlowLimit
+	}
+
+	seen := make(map[string]struct{}, len(index.OIDCClientIDs))
+	for _, clientID := range index.OIDCClientIDs {
+		clientID = strings.TrimSpace(clientID)
+		if clientID == "" || len(clientID) > 512 {
+			return ErrBindingMismatch
+		}
+
+		if _, duplicate := seen[clientID]; duplicate {
+			return ErrBindingMismatch
+		}
+
+		seen[clientID] = struct{}{}
+	}
+
+	return nil
 }
 
 // boolRedisValue encodes booleans without an open-ended textual vocabulary.
@@ -702,6 +884,362 @@ func (s *RedisStores) Commit(ctx context.Context, request TransactionRequest) (T
 	return TransactionReceipt{Revision: Revision(result)}, nil
 }
 
+// CommitOIDCFlow atomically adds one bounded OIDC index entry and commits its typed child.
+func (s *RedisStores) CommitOIDCFlow(ctx context.Context, request CommitRequest[OIDCFlow]) (Revision, error) {
+	return commitIndexedFlow(ctx, s, request, appendOIDCIndex, assignOIDCMutation)
+}
+
+// CommitSAMLFlow atomically adds one bounded SAML index entry and commits its typed child.
+func (s *RedisStores) CommitSAMLFlow(ctx context.Context, request CommitRequest[SAMLFlow]) (Revision, error) {
+	return commitIndexedFlow(ctx, s, request, appendSAMLIndex, assignSAMLMutation)
+}
+
+// CommitCeremony atomically indexes and commits one short-lived WebAuthn operation.
+func (s *RedisStores) CommitCeremony(ctx context.Context, request CommitRequest[CeremonyRecord]) (Revision, error) {
+	return commitIndexedFlow(ctx, s, request, appendCeremonyIndex, assignCeremonyMutation)
+}
+
+// CommitEnrollment atomically indexes and commits one required-factor enrollment.
+func (s *RedisStores) CommitEnrollment(ctx context.Context, request CommitRequest[EnrollmentRecord]) (Revision, error) {
+	return commitIndexedFlow(ctx, s, request, appendEnrollmentIndex, assignEnrollmentMutation)
+}
+
+// CommitStepUp atomically indexes and commits one dynamic-assurance operation.
+func (s *RedisStores) CommitStepUp(ctx context.Context, request CommitRequest[StepUpRecord]) (Revision, error) {
+	return commitIndexedFlow(ctx, s, request, appendStepUpIndex, assignStepUpMutation)
+}
+
+// CommitTOTPRecovery atomically indexes and commits one TOTP or recovery operation.
+func (s *RedisStores) CommitTOTPRecovery(ctx context.Context, request CommitRequest[TOTPRecoveryRecord]) (Revision, error) {
+	return commitIndexedFlow(ctx, s, request, appendTOTPRecoveryIndex, assignTOTPRecoveryMutation)
+}
+
+// CommitLogoutIndex atomically indexes and commits the current-v1 browser logout record.
+func (s *RedisStores) CommitLogoutIndex(ctx context.Context, request CommitRequest[LogoutIndex]) (Revision, error) {
+	return commitIndexedFlow(ctx, s, request, appendLogoutIndex, assignLogoutMutation)
+}
+
+func commitIndexedFlow[T any](
+	ctx context.Context,
+	s *RedisStores,
+	request CommitRequest[T],
+	appendIndex func(anchor *SessionAnchor, handle Handle) error,
+	assignChild func(transaction *TransactionRequest, child CommitRequest[T]),
+) (Revision, error) {
+	for range 4 {
+		anchor, err := s.loadAnchorForChild(ctx, request.Reference)
+		if err != nil {
+			return 0, err
+		}
+
+		if err = appendIndex(&anchor.Value, request.Reference.Record); err != nil {
+			return 0, err
+		}
+
+		transaction := TransactionRequest{
+			Session: &CommitRequest[SessionAnchor]{
+				Reference:        Reference{Session: request.Reference.Session, Record: request.Reference.Session},
+				ExpectedRevision: anchor.Revision, Value: anchor.Value, TTL: anchor.Value.ExpiresAt.Sub(s.clock.Now()),
+			},
+		}
+		assignChild(&transaction, request)
+
+		_, err = s.Commit(ctx, transaction)
+		if !errors.Is(err, ErrRevisionConflict) {
+			if err != nil {
+				return 0, err
+			}
+
+			return request.ExpectedRevision + 1, nil
+		}
+	}
+
+	return 0, ErrRevisionConflict
+}
+
+func appendOIDCIndex(anchor *SessionAnchor, handle Handle) error {
+	return appendActiveFlow(&anchor.OIDCFlows, handle)
+}
+
+func appendSAMLIndex(anchor *SessionAnchor, handle Handle) error {
+	return appendActiveFlow(&anchor.SAMLFlows, handle)
+}
+
+func appendCeremonyIndex(anchor *SessionAnchor, handle Handle) error {
+	return appendActiveFlow(&anchor.Ceremonies, handle)
+}
+
+func appendEnrollmentIndex(anchor *SessionAnchor, handle Handle) error {
+	return appendActiveFlow(&anchor.Enrollments, handle)
+}
+
+func appendStepUpIndex(anchor *SessionAnchor, handle Handle) error {
+	return appendActiveFlow(&anchor.StepUps, handle)
+}
+
+func appendTOTPRecoveryIndex(anchor *SessionAnchor, handle Handle) error {
+	return appendActiveFlow(&anchor.TOTPRecovery, handle)
+}
+
+func appendLogoutIndex(anchor *SessionAnchor, handle Handle) error {
+	return appendActiveFlow(&anchor.LogoutIndexes, handle)
+}
+
+func assignOIDCMutation(transaction *TransactionRequest, child CommitRequest[OIDCFlow]) {
+	transaction.OIDC = []CommitRequest[OIDCFlow]{child}
+}
+
+func assignSAMLMutation(transaction *TransactionRequest, child CommitRequest[SAMLFlow]) {
+	transaction.SAML = []CommitRequest[SAMLFlow]{child}
+}
+
+func assignCeremonyMutation(transaction *TransactionRequest, child CommitRequest[CeremonyRecord]) {
+	transaction.Ceremony = []CommitRequest[CeremonyRecord]{child}
+}
+
+func assignEnrollmentMutation(transaction *TransactionRequest, child CommitRequest[EnrollmentRecord]) {
+	transaction.Enrollment = []CommitRequest[EnrollmentRecord]{child}
+}
+
+func assignStepUpMutation(transaction *TransactionRequest, child CommitRequest[StepUpRecord]) {
+	transaction.StepUp = []CommitRequest[StepUpRecord]{child}
+}
+
+func assignTOTPRecoveryMutation(transaction *TransactionRequest, child CommitRequest[TOTPRecoveryRecord]) {
+	transaction.TOTPRecovery = []CommitRequest[TOTPRecoveryRecord]{child}
+}
+
+func assignLogoutMutation(transaction *TransactionRequest, child CommitRequest[LogoutIndex]) {
+	transaction.Logout = []CommitRequest[LogoutIndex]{child}
+}
+
+func (s *RedisStores) loadAnchorForChild(ctx context.Context, reference Reference) (Versioned[SessionAnchor], error) {
+	if reference.Session == "" || reference.Record == "" {
+		return Versioned[SessionAnchor]{}, ErrBindingMismatch
+	}
+
+	return s.Session.Load(ctx, Reference{Session: reference.Session, Record: reference.Session})
+}
+
+func appendActiveFlow(index *[]Handle, handle Handle) error {
+	for _, current := range *index {
+		if current == handle {
+			return nil
+		}
+	}
+
+	if len(*index) >= maxActiveProtocolFlows {
+		return ErrActiveFlowLimit
+	}
+
+	*index = append(*index, handle)
+
+	return nil
+}
+
+// DeleteOIDCFlow atomically removes one OIDC child and its anchor index entry.
+func (s *RedisStores) DeleteOIDCFlow(ctx context.Context, request DeleteRequest) error {
+	return s.deleteIndexedFlow(ctx, OwnerOIDCFlow, request, func(anchor *SessionAnchor) {
+		anchor.OIDCFlows = removeActiveFlow(anchor.OIDCFlows, request.Reference.Record)
+	})
+}
+
+// DeleteSAMLFlow atomically removes one SAML child and its anchor index entry.
+func (s *RedisStores) DeleteSAMLFlow(ctx context.Context, request DeleteRequest) error {
+	return s.deleteIndexedFlow(ctx, OwnerSAMLFlow, request, func(anchor *SessionAnchor) {
+		anchor.SAMLFlows = removeActiveFlow(anchor.SAMLFlows, request.Reference.Record)
+	})
+}
+
+// DeleteEnrollment atomically removes one enrollment child and its anchor index entry.
+func (s *RedisStores) DeleteEnrollment(ctx context.Context, request DeleteRequest) error {
+	return s.deleteIndexedFlow(ctx, OwnerEnrollment, request, func(anchor *SessionAnchor) {
+		anchor.Enrollments = removeActiveFlow(anchor.Enrollments, request.Reference.Record)
+	})
+}
+
+// DeleteStepUp atomically removes one step-up child and its anchor index entry.
+func (s *RedisStores) DeleteStepUp(ctx context.Context, request DeleteRequest) error {
+	return s.deleteIndexedFlow(ctx, OwnerStepUp, request, func(anchor *SessionAnchor) {
+		anchor.StepUps = removeActiveFlow(anchor.StepUps, request.Reference.Record)
+	})
+}
+
+// DeleteTOTPRecovery atomically removes one TOTP/recovery child and its anchor index entry.
+func (s *RedisStores) DeleteTOTPRecovery(ctx context.Context, request DeleteRequest) error {
+	return s.deleteIndexedFlow(ctx, OwnerTOTPRecovery, request, func(anchor *SessionAnchor) {
+		anchor.TOTPRecovery = removeActiveFlow(anchor.TOTPRecovery, request.Reference.Record)
+	})
+}
+
+// DeleteLogoutIndex atomically removes one logout index and its anchor entry.
+func (s *RedisStores) DeleteLogoutIndex(ctx context.Context, request DeleteRequest) error {
+	return s.deleteIndexedFlow(ctx, OwnerConsent, request, func(anchor *SessionAnchor) {
+		anchor.LogoutIndexes = removeActiveFlow(anchor.LogoutIndexes, request.Reference.Record)
+	})
+}
+
+// ConsumeCeremony atomically removes a ceremony and its bounded anchor index before returning the payload.
+func (s *RedisStores) ConsumeCeremony(
+	ctx context.Context,
+	request DeleteRequest,
+) (Versioned[CeremonyRecord], error) {
+	return consumeIndexedRecord(ctx, s, s.Ceremony, request, func(anchor *SessionAnchor) {
+		anchor.Ceremonies = removeActiveFlow(anchor.Ceremonies, request.Reference.Record)
+	})
+}
+
+// ConsumeStepUp atomically removes one terminal step-up and its bounded anchor index.
+func (s *RedisStores) ConsumeStepUp(
+	ctx context.Context,
+	request DeleteRequest,
+) (Versioned[StepUpRecord], error) {
+	return consumeIndexedRecord(ctx, s, s.StepUp, request, func(anchor *SessionAnchor) {
+		anchor.StepUps = removeActiveFlow(anchor.StepUps, request.Reference.Record)
+	})
+}
+
+// ConsumeOIDCFlow atomically removes one OIDC flow and its bounded anchor index before returning the payload.
+func (s *RedisStores) ConsumeOIDCFlow(
+	ctx context.Context,
+	request DeleteRequest,
+) (Versioned[OIDCFlow], error) {
+	return consumeIndexedRecord(ctx, s, s.OIDC, request, func(anchor *SessionAnchor) {
+		anchor.OIDCFlows = removeActiveFlow(anchor.OIDCFlows, request.Reference.Record)
+	})
+}
+
+// ConsumeSAMLFlow atomically removes one SAML flow and its bounded anchor index before returning the payload.
+func (s *RedisStores) ConsumeSAMLFlow(
+	ctx context.Context,
+	request DeleteRequest,
+) (Versioned[SAMLFlow], error) {
+	return consumeIndexedRecord(ctx, s, s.SAML, request, func(anchor *SessionAnchor) {
+		anchor.SAMLFlows = removeActiveFlow(anchor.SAMLFlows, request.Reference.Record)
+	})
+}
+
+func consumeIndexedRecord[T any](
+	ctx context.Context,
+	stores *RedisStores,
+	repository *RedisRepository[T],
+	request DeleteRequest,
+	remove func(anchor *SessionAnchor),
+) (Versioned[T], error) {
+	var empty Versioned[T]
+
+	childKey, err := repository.key(request.Reference)
+	if err != nil {
+		return empty, err
+	}
+
+	for range 4 {
+		anchor, loadErr := stores.loadAnchorForChild(ctx, request.Reference)
+		if loadErr != nil {
+			return empty, loadErr
+		}
+
+		remove(&anchor.Value)
+		anchorRequest := CommitRequest[SessionAnchor]{
+			Reference:        Reference{Session: request.Reference.Session, Record: request.Reference.Session},
+			ExpectedRevision: anchor.Revision, Value: anchor.Value, TTL: anchor.Value.ExpiresAt.Sub(stores.clock.Now()),
+		}
+
+		mutations := make([]transactionMutation, 0, 1)
+		if _, err = appendTransactionMutation(ctx, &mutations, stores.Session, anchorRequest); err != nil {
+			return empty, err
+		}
+
+		arguments := append(mutations[0].args, strconv.FormatUint(uint64(request.ExpectedRevision), 10))
+
+		result, evalErr := stores.client.Eval(
+			ctx, redisIndexedConsumeScript, []string{mutations[0].key, childKey}, arguments...,
+		).Slice()
+		if evalErr != nil {
+			return empty, fmt.Errorf("session redis indexed consume: %w", evalErr)
+		}
+
+		if len(result) == 1 {
+			switch fmt.Sprint(result[0]) {
+			case redisMissingMarker:
+				return empty, ErrNotFound
+			case redisConflictMarker:
+				continue
+			}
+		}
+
+		values, decodeErr := redisHashResult(result)
+		if decodeErr != nil {
+			return empty, decodeErr
+		}
+
+		return repository.decode(values, request.Reference)
+	}
+
+	return empty, ErrRevisionConflict
+}
+
+func (s *RedisStores) deleteIndexedFlow(
+	ctx context.Context,
+	owner Owner,
+	request DeleteRequest,
+	remove func(anchor *SessionAnchor),
+) error {
+	childKey, err := s.keyspace.Key(owner, request.Reference)
+	if err != nil {
+		return err
+	}
+
+	for range 4 {
+		anchor, loadErr := s.loadAnchorForChild(ctx, request.Reference)
+		if loadErr != nil {
+			return loadErr
+		}
+
+		remove(&anchor.Value)
+		anchorRequest := CommitRequest[SessionAnchor]{
+			Reference:        Reference{Session: request.Reference.Session, Record: request.Reference.Session},
+			ExpectedRevision: anchor.Revision, Value: anchor.Value, TTL: anchor.Value.ExpiresAt.Sub(s.clock.Now()),
+		}
+
+		mutations := make([]transactionMutation, 0, 1)
+		if _, err = appendTransactionMutation(ctx, &mutations, s.Session, anchorRequest); err != nil {
+			return err
+		}
+
+		arguments := append(mutations[0].args, strconv.FormatUint(uint64(request.ExpectedRevision), 10))
+
+		result, evalErr := s.client.Eval(
+			ctx, redisIndexedDeleteScript, []string{mutations[0].key, childKey}, arguments...,
+		).Int64()
+		if evalErr != nil {
+			return fmt.Errorf("session redis indexed delete: %w", evalErr)
+		}
+
+		switch result {
+		case -2:
+			return ErrNotFound
+		case -1:
+			continue
+		default:
+			return nil
+		}
+	}
+
+	return ErrRevisionConflict
+}
+
+func removeActiveFlow(index []Handle, handle Handle) []Handle {
+	kept := index[:0]
+	for _, current := range index {
+		if current != handle {
+			kept = append(kept, current)
+		}
+	}
+
+	return kept
+}
+
 // transactionMutations validates and serializes every typed transaction member.
 func (s *RedisStores) transactionMutations(
 	ctx context.Context,
@@ -709,31 +1247,36 @@ func (s *RedisStores) transactionMutations(
 ) ([]transactionMutation, error) {
 	mutations := make([]transactionMutation, 0, transactionRequestSize(request))
 
-	if err := appendTransactionMutation(ctx, &mutations, s.Session, *request.Session); err != nil {
+	anchorTTL, err := appendTransactionMutation(ctx, &mutations, s.Session, *request.Session)
+	if err != nil {
 		return nil, err
 	}
 
-	if err := appendTransactionMutations(ctx, &mutations, s.OIDC, request.OIDC); err != nil {
+	if err = appendTransactionChildMutations(&mutations, s.OIDC, request.OIDC, anchorTTL); err != nil {
 		return nil, err
 	}
 
-	if err := appendTransactionMutations(ctx, &mutations, s.SAML, request.SAML); err != nil {
+	if err = appendTransactionChildMutations(&mutations, s.SAML, request.SAML, anchorTTL); err != nil {
 		return nil, err
 	}
 
-	if err := appendTransactionMutations(ctx, &mutations, s.Enrollment, request.Enrollment); err != nil {
+	if err = appendTransactionChildMutations(&mutations, s.Enrollment, request.Enrollment, anchorTTL); err != nil {
 		return nil, err
 	}
 
-	if err := appendTransactionMutations(ctx, &mutations, s.StepUp, request.StepUp); err != nil {
+	if err = appendTransactionChildMutations(&mutations, s.StepUp, request.StepUp, anchorTTL); err != nil {
 		return nil, err
 	}
 
-	if err := appendTransactionMutations(ctx, &mutations, s.Ceremony, request.Ceremony); err != nil {
+	if err = appendTransactionChildMutations(&mutations, s.Ceremony, request.Ceremony, anchorTTL); err != nil {
 		return nil, err
 	}
 
-	if err := appendTransactionMutations(ctx, &mutations, s.TOTPRecovery, request.TOTPRecovery); err != nil {
+	if err = appendTransactionChildMutations(&mutations, s.TOTPRecovery, request.TOTPRecovery, anchorTTL); err != nil {
+		return nil, err
+	}
+
+	if err = appendTransactionChildMutations(&mutations, s.Logout, request.Logout, anchorTTL); err != nil {
 		return nil, err
 	}
 
@@ -743,18 +1286,18 @@ func (s *RedisStores) transactionMutations(
 // transactionRequestSize returns the bounded mutation capacity needed for one request.
 func transactionRequestSize(request TransactionRequest) int {
 	return 1 + len(request.OIDC) + len(request.SAML) + len(request.Enrollment) +
-		len(request.StepUp) + len(request.Ceremony) + len(request.TOTPRecovery)
+		len(request.StepUp) + len(request.Ceremony) + len(request.TOTPRecovery) + len(request.Logout)
 }
 
 // appendTransactionMutations serializes one typed request family.
-func appendTransactionMutations[T any](
-	ctx context.Context,
+func appendTransactionChildMutations[T any](
 	mutations *[]transactionMutation,
 	repository *RedisRepository[T],
 	requests []CommitRequest[T],
+	parentTTL time.Duration,
 ) error {
 	for _, request := range requests {
-		if err := appendTransactionMutation(ctx, mutations, repository, request); err != nil {
+		if err := appendTransactionChildMutation(mutations, repository, request, parentTTL); err != nil {
 			return err
 		}
 	}
@@ -768,12 +1311,59 @@ func appendTransactionMutation[T any](
 	mutations *[]transactionMutation,
 	repository *RedisRepository[T],
 	request CommitRequest[T],
-) error {
+) (time.Duration, error) {
 	key, ttl, err := repository.commitParameters(ctx, request)
+	if err != nil {
+		return 0, err
+	}
+
+	if err = appendSerializedTransactionMutation(mutations, repository, request, key, ttl); err != nil {
+		return 0, err
+	}
+
+	return ttl, nil
+}
+
+// appendTransactionChildMutation validates one child against the anchor mutation in the same transaction.
+func appendTransactionChildMutation[T any](
+	mutations *[]transactionMutation,
+	repository *RedisRepository[T],
+	request CommitRequest[T],
+	parentTTL time.Duration,
+) error {
+	key, err := repository.key(request.Reference)
 	if err != nil {
 		return err
 	}
 
+	if err = validateRecordBinding(request.Value, request.Reference); err != nil {
+		return err
+	}
+
+	ttl := request.TTL
+	if ttl <= 0 {
+		ttl = repository.defaultTTL
+	}
+
+	if ttl > parentTTL {
+		ttl = parentTTL
+	}
+
+	if ttl <= 0 {
+		return ErrInvalidTTL
+	}
+
+	return appendSerializedTransactionMutation(mutations, repository, request, key, ttl)
+}
+
+// appendSerializedTransactionMutation encodes one already validated fixed-width Redis mutation.
+func appendSerializedTransactionMutation[T any](
+	mutations *[]transactionMutation,
+	repository *RedisRepository[T],
+	request CommitRequest[T],
+	key string,
+	ttl time.Duration,
+) error {
 	payload, err := json.Marshal(request.Value)
 	if err != nil {
 		return fmt.Errorf("session redis transaction: encode payload: %w", err)
@@ -899,7 +1489,8 @@ func (s *RedisStores) revocationChildKeys(session Handle, children []OwnedRefere
 // isChildOwner restricts cleanup to typed child namespaces.
 func isChildOwner(owner Owner) bool {
 	switch owner {
-	case OwnerOIDCFlow, OwnerSAMLFlow, OwnerEnrollment, OwnerStepUp, OwnerWebAuthnCeremony, OwnerTOTPRecovery:
+	case OwnerOIDCFlow, OwnerSAMLFlow, OwnerEnrollment, OwnerStepUp, OwnerWebAuthnCeremony, OwnerTOTPRecovery,
+		OwnerConsent:
 		return true
 	default:
 		return false

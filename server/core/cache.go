@@ -171,11 +171,6 @@ func applyPositivePasswordCacheSpan(csp trace.Span, authenticated bool) {
 	)
 }
 
-// cachePasswordHash returns the canonical prepared hash for new positive-cache writes.
-func (auth *AuthState) cachePasswordHash() string {
-	return auth.cachePasswordHashCandidates().Full()
-}
-
 // cachePasswordHashCandidates returns bounded canonical and legacy Redis read candidates.
 func (auth *AuthState) cachePasswordHashCandidates() internalpasswordhash.RedisCompatibilityCandidates {
 	var candidates internalpasswordhash.RedisCompatibilityCandidates

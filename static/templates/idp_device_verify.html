@@ -21,6 +21,7 @@
 
             <form action="{{ .PostDeviceVerifyEndpoint }}" method="POST">
                 <input name="csrf_token" type="hidden" value="{{ .CSRFToken }}"/>
+                {{ if .FlowTicket }}<input name="flow" type="hidden" value="{{ .FlowTicket }}"/>{{ end }}
 
                 <div class="form-control w-full">
                     <label class="label">
@@ -37,6 +38,7 @@
                     </label>
                 </div>
 
+                {{ if not .DeviceCodeOnly }}
                 <div class="form-control w-full mt-4">
                     <label class="label">
                         <span class="label-text">{{ .UsernameLabel }}</span>
@@ -58,6 +60,7 @@
                                required type="password"/>
                     </label>
                 </div>
+                {{ end }}
 
                 <div class="form-control mt-6">
                     <button class="btn btn-primary" type="submit">{{ .Submit }}</button>

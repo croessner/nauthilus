@@ -30,10 +30,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"encoding/xml"
-	"errors"
-	"fmt"
 	"html"
-	"html/template"
 	"io"
 	"log/slog"
 	"math/big"
@@ -52,7 +49,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	serveridp "github.com/croessner/nauthilus/v3/server/idp"
 	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/util"
@@ -116,25 +112,6 @@ func (m *mockSAMLCfg) GetServer() *config.ServerSection {
 
 func (m *mockSAMLCfg) GetLDAP() *config.LDAPSection {
 	return &config.LDAPSection{}
-}
-
-func TestSAMLLocalCleanupDeletesWebAuthnCeremony(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	handler, mock := newSLOFanoutTestHandler(&mockSAMLCfg{redisPrefix: "test:"})
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/saml/slo", nil)
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyWebAuthnCeremony: "saml-logout-reference",
-	}}
-	ctx.Set(definitions.CtxSecureDataKey, mgr)
-	mock.ExpectDel("test:webauthn:ceremony:saml-logout-reference").SetVal(1)
-
-	handler.performLocalSLOCleanupInternal(ctx, "", nil, false)
-
-	assert.Empty(t, mgr.data)
-	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestSAMLUnrestrictedAttributesSuppressSensitive(t *testing.T) {
@@ -352,7 +329,8 @@ func TestSAML_Routes_HaveLuaContext(t *testing.T) {
 	h := NewSAMLHandler(d, nil)
 
 	r := gin.New()
-	h.Register(r)
+	runtime, _, _ := seedCanonicalIDPFlow(t, nil)
+	h.Register(r, runtime)
 
 	routes := []string{"/saml/metadata", "/saml/sso"}
 	for _, path := range routes {
@@ -366,7 +344,7 @@ func TestSAML_Routes_HaveLuaContext(t *testing.T) {
 				c.Next()
 				capturedCtx = c
 			})
-			h.Register(r)
+			h.Register(r, runtime)
 
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest("GET", path, nil)
@@ -379,346 +357,6 @@ func TestSAML_Routes_HaveLuaContext(t *testing.T) {
 			assert.Equal(t, definitions.ServIDP, svc)
 		})
 	}
-}
-
-func TestSAMLHandler_SSOStoresValidatedIssuerForLoginResume(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	const (
-		idpEntityID = "https://auth.example.com/saml/metadata"
-		idpSSOURL   = "https://auth.example.com/saml/sso"
-		spEntityID  = "https://localhost:19095/saml/metadata"
-		spACSURL    = "https://localhost:19095/saml/acs"
-	)
-
-	idpKey, _, idpCertPEM := mustGenerateRSACertificate(t, "saml-idp")
-	cfg := &mockSAMLCfg{
-		entityID:    idpEntityID,
-		certificate: string(idpCertPEM),
-		key:         string(mustEncodeRSAPrivateKeyPEM(t, idpKey)),
-		sps: []config.SAML2ServiceProvider{
-			{
-				EntityID: spEntityID,
-				ACSURL:   spACSURL,
-			},
-		},
-	}
-	handlerDeps := &deps.Deps{
-		Cfg:    cfg,
-		Logger: slog.Default(),
-	}
-	handler := NewSAMLHandler(handlerDeps, serveridp.NewNauthilusIDP(handlerDeps))
-	mgr := &mockCookieManager{data: map[string]any{}}
-
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest(http.MethodGet, mustBuildSAMLAuthnRedirectTarget(t, spEntityID, spACSURL, idpSSOURL), nil)
-	ctx.Set(definitions.CtxSecureDataKey, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusFound, w.Code)
-	assert.Equal(t, frontendLoginPath, w.Header().Get("Location"))
-	assert.Equal(t, definitions.ProtoSAML, mgr.GetString(definitions.SessionKeyIDPFlowType, ""))
-	assert.Equal(t, spEntityID, mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""))
-	assert.NotEmpty(t, mgr.GetString(definitions.SessionKeyIDPOriginalURL, ""))
-}
-
-func TestSAMLExistingSessionRequireMFABlocksMissingAssurance(t *testing.T) {
-	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID:   "https://sp.example.com/saml/metadata",
-		ACSURL:     "https://sp.example.com/saml/acs",
-		RequireMFA: []string{definitions.MFAMethodTOTP},
-	}, map[string]any{
-		definitions.SessionKeyAccount:      "alice",
-		definitions.SessionKeyUniqueUserID: "alice-id",
-		definitions.SessionKeyDisplayName:  "Alice Example",
-		definitions.SessionKeySubject:      "alice-id",
-		definitions.SessionKeyHaveTOTP:     true,
-	})
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusFound, recorder.Code)
-	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
-	assert.Equal(t, 1, fakeIDP.userLookups)
-	assert.Equal(t, definitions.ProtoSAML, mgr.GetString(definitions.SessionKeyProtocol, ""))
-	assert.Equal(t, "https://sp.example.com/saml/metadata", mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""))
-	assert.NotContains(t, recorder.Body.String(), "SAMLResponse")
-}
-
-func TestSAMLExistingSessionRequireMFAPermitsFreshAssurance(t *testing.T) {
-	spEntityID := "https://sp.example.com/saml/metadata"
-	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID:   spEntityID,
-		ACSURL:     "https://sp.example.com/saml/acs",
-		RequireMFA: []string{definitions.MFAMethodTOTP},
-	}, map[string]any{
-		definitions.SessionKeyAccount:           "alice",
-		definitions.SessionKeyMFACompleted:      true,
-		definitions.SessionKeyMFAMethod:         definitions.MFAMethodTOTP,
-		definitions.SessionKeyMFAAssuranceAt:    time.Now().Unix(),
-		definitions.SessionKeyMFAAssuranceScope: definitions.ProtoSAML + ":" + spEntityID,
-		definitions.SessionKeyHaveTOTP:          true,
-	})
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.Equal(t, 1, fakeIDP.userLookups)
-	assert.NotEmpty(t, recorder.Body.String())
-}
-
-func TestSAMLExistingSessionRequiredMFALevelBlocksLowerSSOAssurance(t *testing.T) {
-	spEntityID := "https://sp.example.com/saml/metadata"
-	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID:         spEntityID,
-		ACSURL:           "https://sp.example.com/saml/acs",
-		RequiredMFALevel: 3,
-	}, map[string]any{
-		definitions.SessionKeyAccount:            "alice",
-		definitions.SessionKeyMFACompleted:       true,
-		definitions.SessionKeyMFAMethod:          definitions.MFAMethodTOTP,
-		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodTOTP,
-		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
-		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
-		definitions.SessionKeyMFAAssuranceLevel:  2,
-	})
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusFound, recorder.Code)
-	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
-	assert.Equal(t, 0, fakeIDP.userLookups)
-	assert.NotContains(t, recorder.Body.String(), "SAMLResponse")
-}
-
-func TestSAMLExistingSessionRequiredMFALevelRedirectsWhenUserBackendIsUnavailable(t *testing.T) {
-	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID:         "https://sp.example.com/saml/metadata",
-		ACSURL:           "https://sp.example.com/saml/acs",
-		RequiredMFALevel: 3,
-	}, map[string]any{
-		definitions.SessionKeyAccount:           "alice",
-		definitions.SessionKeyMFACompleted:      true,
-		definitions.SessionKeyMFAAssuranceLevel: 2,
-	})
-	fakeIDP.err = errors.New("backend unavailable")
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusFound, recorder.Code)
-	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
-	assert.Equal(t, 0, fakeIDP.userLookups)
-	assert.NotContains(t, recorder.Body.String(), "Failed to load user details")
-}
-
-func TestSAMLExistingSessionRequiredMFALevelPermitsFreshLevel(t *testing.T) {
-	spEntityID := "https://sp.example.com/saml/metadata"
-	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID:         spEntityID,
-		ACSURL:           "https://sp.example.com/saml/acs",
-		RequiredMFALevel: 3,
-	}, map[string]any{
-		definitions.SessionKeyAccount:            "alice",
-		definitions.SessionKeyMFACompleted:       true,
-		definitions.SessionKeyMFAMethod:          definitions.MFAMethodWebAuthn,
-		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodWebAuthn,
-		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
-		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
-		definitions.SessionKeyMFAAssuranceLevel:  3,
-	})
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.Equal(t, 1, fakeIDP.userLookups)
-	assert.NotEmpty(t, recorder.Body.String())
-}
-
-func TestSAMLExistingSessionRequireMFAStartsRegistrationWhenEnrollmentMissing(t *testing.T) {
-	spEntityID := "https://sp.example.com/saml/metadata"
-	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID:   spEntityID,
-		ACSURL:     "https://sp.example.com/saml/acs",
-		RequireMFA: []string{definitions.MFAMethodTOTP},
-	}, map[string]any{
-		definitions.SessionKeyAccount:            "alice",
-		definitions.SessionKeyMFACompleted:       true,
-		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodWebAuthn,
-		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
-		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
-	})
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusFound, recorder.Code)
-	assert.Equal(t, definitions.MFARoot+"/totp/register", recorder.Header().Get("Location"))
-	assert.Equal(t, 1, fakeIDP.userLookups)
-	assert.True(t, mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false))
-	assert.NotContains(t, recorder.Body.String(), "SAMLResponse")
-}
-
-func TestSAMLExistingSessionRequireMFAIgnoresStaleFlowMetadata(t *testing.T) {
-	spEntityID := "https://sp.example.com/saml/metadata"
-	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID:   spEntityID,
-		ACSURL:     "https://sp.example.com/saml/acs",
-		RequireMFA: []string{definitions.MFAMethodTOTP},
-	}, map[string]any{
-		definitions.SessionKeyAccount:            "alice",
-		definitions.SessionKeyIDPFlowID:          "stale-saml-flow",
-		definitions.SessionKeyIDPFlowType:        definitions.ProtoSAML,
-		definitions.SessionKeyIDPSAMLEntityID:    "https://old-sp.example.com/saml/metadata",
-		definitions.SessionKeyIDPOriginalURL:     "/saml/sso?SAMLRequest=stale",
-		definitions.SessionKeyMFACompleted:       true,
-		definitions.SessionKeyMFAAssuranceMethod: definitions.MFAMethodWebAuthn,
-		definitions.SessionKeyMFAAssuranceAt:     time.Now().Unix(),
-		definitions.SessionKeyMFAAssuranceScope:  oidcMFAAssuranceScope("heimdal-client"),
-	})
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusFound, recorder.Code)
-	assert.Equal(t, definitions.MFARoot+"/totp/register", recorder.Header().Get("Location"))
-	assert.Equal(t, 1, fakeIDP.userLookups)
-	assert.Equal(t, definitions.ProtoSAML, mgr.GetString(definitions.SessionKeyIDPFlowType, ""))
-	assert.Equal(t, spEntityID, mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""))
-	assert.True(t, mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false))
-	assert.NotContains(t, recorder.Body.String(), "SAMLResponse")
-}
-
-func TestSAMLExistingSessionNoRequireMFAPreservesSSO(t *testing.T) {
-	handler, target, mgr, fakeIDP := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID: "https://sp.example.com/saml/metadata",
-		ACSURL:   "https://sp.example.com/saml/acs",
-	}, map[string]any{
-		definitions.SessionKeyAccount: "alice",
-	})
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.Equal(t, 1, fakeIDP.userLookups)
-	assert.NotEmpty(t, recorder.Body.String())
-}
-
-func TestSAMLAuthnRequestSignatureRequiredRejectsUnsigned(t *testing.T) {
-	spKey, _, spCertPEM := mustGenerateRSACertificate(t, "saml-sp")
-	handler, target, mgr, _ := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID:            "https://sp.example.com/saml/metadata",
-		ACSURL:              "https://sp.example.com/saml/acs",
-		AuthnRequestsSigned: true,
-		Cert:                string(spCertPEM),
-	}, nil)
-	_ = spKey
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusBadRequest, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "AuthnRequest signature")
-}
-
-func TestSAMLAuthnRequestSignatureAllowsUnsignedWhenNotRequired(t *testing.T) {
-	handler, target, mgr, _ := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID: "https://sp.example.com/saml/metadata",
-		ACSURL:   "https://sp.example.com/saml/acs",
-	}, nil)
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusFound, recorder.Code)
-	assert.Equal(t, frontendLoginPath, recorder.Header().Get("Location"))
-}
-
-func TestSAMLAuthnRequestSignatureRequiredAcceptsSigned(t *testing.T) {
-	spKey, _, spCertPEM := mustGenerateRSACertificate(t, "saml-sp")
-	handler, _, mgr, _ := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID:            "https://sp.example.com/saml/metadata",
-		ACSURL:              "https://sp.example.com/saml/acs",
-		AuthnRequestsSigned: true,
-		Cert:                string(spCertPEM),
-	}, nil)
-	target := mustBuildSAMLAuthnRedirectTargetWithSigning(
-		t,
-		"https://sp.example.com/saml/metadata",
-		"https://sp.example.com/saml/acs",
-		"https://auth.example.com/saml/sso",
-		spKey,
-		spCertPEMToCertificate(t, spCertPEM),
-		dsig.RSASHA256SignatureMethod,
-	)
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusFound, recorder.Code)
-	assert.Equal(t, frontendLoginPath, recorder.Header().Get("Location"))
-}
-
-func TestSAMLAuthnRequestSignatureRequiredRejectsInvalidSignature(t *testing.T) {
-	spKey, _, spCertPEM := mustGenerateRSACertificate(t, "saml-sp")
-	handler, _, mgr, _ := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID:            "https://sp.example.com/saml/metadata",
-		ACSURL:              "https://sp.example.com/saml/acs",
-		AuthnRequestsSigned: true,
-		Cert:                string(spCertPEM),
-	}, nil)
-	target := mustBuildSAMLAuthnRedirectTargetWithSigning(
-		t,
-		"https://sp.example.com/saml/metadata",
-		"https://sp.example.com/saml/acs",
-		"https://auth.example.com/saml/sso",
-		spKey,
-		spCertPEMToCertificate(t, spCertPEM),
-		dsig.RSASHA256SignatureMethod,
-	)
-	parsedTarget, err := url.Parse(target)
-	assert.NoError(t, err)
-
-	query := parsedTarget.Query()
-	query.Set("RelayState", "tampered")
-	parsedTarget.RawQuery = query.Encode()
-	recorder, ctx := newSAMLSSOTestContext(parsedTarget.String(), mgr)
-
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusBadRequest, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "AuthnRequest signature")
-}
-
-func TestSAMLMetadataAuthnRequestsSignedMatchesRuntimeEnforcement(t *testing.T) {
-	_, _, spCertPEM := mustGenerateRSACertificate(t, "saml-sp")
-	handler, target, mgr, _ := newSAMLSSOTestFixture(t, config.SAML2ServiceProvider{
-		EntityID:            "https://sp.example.com/saml/metadata",
-		ACSURL:              "https://sp.example.com/saml/acs",
-		AuthnRequestsSigned: true,
-		Cert:                string(spCertPEM),
-	}, nil)
-
-	metadata, err := handler.GetServiceProvider(
-		httptest.NewRequest(http.MethodGet, "/saml/metadata", nil),
-		"https://sp.example.com/saml/metadata",
-	)
-	assert.NoError(t, err)
-	assert.NotNil(t, metadata.SPSSODescriptors[0].AuthnRequestsSigned)
-	assert.True(t, *metadata.SPSSODescriptors[0].AuthnRequestsSigned)
-
-	recorder, ctx := newSAMLSSOTestContext(target, mgr)
-	handler.SSO(ctx)
-
-	assert.Equal(t, http.StatusBadRequest, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "AuthnRequest signature")
 }
 
 func TestSAMLHandler_registerSLOParticipantSession(t *testing.T) {
@@ -1070,22 +708,6 @@ func mustBuildSAMLAuthnRedirectTargetWithSigning(
 	return redirectURL.String()
 }
 
-func spCertPEMToCertificate(t *testing.T, certPEM []byte) *x509.Certificate {
-	t.Helper()
-
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		t.Fatal("failed to decode SP certificate PEM")
-	}
-
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		t.Fatalf("failed to parse SP certificate: %v", err)
-	}
-
-	return cert
-}
-
 type fakeSAMLIdentityProvider struct {
 	sp          config.SAML2ServiceProvider
 	user        *backend.User
@@ -1162,78 +784,6 @@ func newSAMLSSOTestFixture(
 	}
 
 	return handler, target, &mockCookieManager{data: sessionData}, fakeIDP
-}
-
-func newSAMLSSOTestContext(target string, mgr *mockCookieManager) (*httptest.ResponseRecorder, *gin.Context) {
-	recorder := httptest.NewRecorder()
-	ctx, engine := gin.CreateTestContext(recorder)
-	engine.SetHTMLTemplate(template.Must(template.New("idp_saml_post.html").Parse(`{{ .SAMLResponse }}`)))
-
-	ctx.Request = httptest.NewRequest(http.MethodGet, target, nil)
-	ctx.Set(definitions.CtxSecureDataKey, mgr)
-
-	return recorder, ctx
-}
-
-func mustBuildSPLogoutResponseValidator(
-	t *testing.T,
-	spEntityID string,
-	sloURL string,
-	idpEntityID string,
-	idpCert *x509.Certificate,
-) *saml.ServiceProvider {
-	t.Helper()
-
-	metadataURL, err := url.Parse(spEntityID)
-	if err != nil {
-		t.Fatalf("failed to parse SP metadata URL: %v", err)
-	}
-
-	logoutURL, err := url.Parse(sloURL)
-	if err != nil {
-		t.Fatalf("failed to parse SP SLO URL: %v", err)
-	}
-
-	if idpCert == nil {
-		t.Fatal("idp certificate is nil")
-	}
-
-	idpCertB64 := base64.StdEncoding.EncodeToString(idpCert.Raw)
-
-	return &saml.ServiceProvider{
-		MetadataURL: *metadataURL,
-		SloURL:      *logoutURL,
-		IDPMetadata: &saml.EntityDescriptor{
-			EntityID: idpEntityID,
-			IDPSSODescriptors: []saml.IDPSSODescriptor{
-				{
-					SSODescriptor: saml.SSODescriptor{
-						RoleDescriptor: saml.RoleDescriptor{
-							KeyDescriptors: []saml.KeyDescriptor{
-								{
-									Use: "signing",
-									KeyInfo: saml.KeyInfo{
-										X509Data: saml.X509Data{
-											X509Certificates: []saml.X509Certificate{
-												{Data: idpCertB64},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-// mustDecodeRedirectLogoutResponse inflates and decodes a redirect-binding LogoutResponse.
-func mustDecodeRedirectLogoutResponse(t *testing.T, encodedResponse string) *saml.LogoutResponse {
-	t.Helper()
-
-	return mustDecodeRedirectSAMLMessage[saml.LogoutResponse](t, encodedResponse, "logout response")
 }
 
 // mustDecodeRedirectLogoutRequest inflates and decodes a redirect-binding LogoutRequest.
@@ -1319,23 +869,6 @@ func assertSLODispatchBadRequest(t *testing.T, target string, expectedBody strin
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), expectedBody)
-}
-
-func mustDecodePostLogoutResponse(t *testing.T, encodedResponse string) *saml.LogoutResponse {
-	t.Helper()
-
-	rawResponse, err := base64.StdEncoding.DecodeString(encodedResponse)
-	if err != nil {
-		t.Fatalf("failed to decode post logout response base64: %v", err)
-	}
-
-	var response saml.LogoutResponse
-
-	if err = xml.Unmarshal(rawResponse, &response); err != nil {
-		t.Fatalf("failed to unmarshal post logout response XML: %v", err)
-	}
-
-	return &response
 }
 
 func mustExtractHiddenFormValue(t *testing.T, responseHTML string, fieldName string) string {
@@ -2018,12 +1551,6 @@ func TestSAMLHandler_SLOPayloadValidationAndDispatch(t *testing.T) {
 		assertSLODispatchBadRequest(t, "/saml/slo?SAMLRequest=req-1", "Invalid SAML LogoutRequest signature")
 	})
 
-	t.Run("dispatches signed logout request and returns signed redirect logout response", func(t *testing.T) {
-		fixture := newSignedRedirectSLOFixture(t, "id-handler-1", "relay-state", "_idx-handler", nil)
-		result := runSignedRedirectSLOFixture(t, fixture)
-
-		assertSignedRedirectSLOSuccessResponse(t, fixture, result)
-	})
 }
 
 type signedRedirectSLOFixture struct {
@@ -2036,12 +1563,6 @@ type signedRedirectSLOFixture struct {
 	requestID   string
 	relayState  string
 	target      string
-}
-
-type redirectSLOResponseResult struct {
-	locationURL     *url.URL
-	response        *saml.LogoutResponse
-	rawSAMLResponse string
 }
 
 // newSignedRedirectSLOFixture builds a signed Redirect-binding handler fixture.
@@ -2169,250 +1690,6 @@ func newSignedRedirectSLOLogoutRequest(requestID, spEntityID, nameID string) *sa
 	}
 }
 
-// runSignedRedirectSLOFixture executes a signed Redirect-binding SLO request.
-func runSignedRedirectSLOFixture(t *testing.T, fixture signedRedirectSLOFixture) redirectSLOResponseResult {
-	t.Helper()
-
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest(http.MethodGet, fixture.target, nil)
-
-	fixture.handler.SLO(ctx)
-
-	assert.Equal(t, http.StatusFound, w.Code)
-
-	locationURL, err := url.Parse(w.Header().Get("Location"))
-	if !assert.NoError(t, err) {
-		return redirectSLOResponseResult{}
-	}
-
-	rawSAMLResponse := locationURL.Query().Get("SAMLResponse")
-	if !assert.NotEmpty(t, rawSAMLResponse) {
-		return redirectSLOResponseResult{locationURL: locationURL}
-	}
-
-	return redirectSLOResponseResult{
-		locationURL:     locationURL,
-		response:        mustDecodeRedirectLogoutResponse(t, rawSAMLResponse),
-		rawSAMLResponse: rawSAMLResponse,
-	}
-}
-
-// assertSignedRedirectSLOSuccessResponse verifies a successful Redirect SLO response.
-func assertSignedRedirectSLOSuccessResponse(
-	t *testing.T,
-	fixture signedRedirectSLOFixture,
-	result redirectSLOResponseResult,
-) {
-	t.Helper()
-
-	assert.Equal(t, fixture.spSLOURL, result.locationURL.Scheme+"://"+result.locationURL.Host+result.locationURL.Path)
-	assert.Equal(t, fixture.relayState, result.locationURL.Query().Get("RelayState"))
-	assert.Equal(t, fixture.requestID, result.response.InResponseTo)
-	assert.Equal(t, fixture.spSLOURL, result.response.Destination)
-
-	if assert.NotNil(t, result.response.Issuer) {
-		assert.Equal(t, fixture.idpEntityID, result.response.Issuer.Value)
-	}
-
-	assert.Equal(t, saml.StatusSuccess, result.response.Status.StatusCode.Value)
-	assert.NotNil(t, result.response.Signature)
-
-	validatorSP := mustBuildSPLogoutResponseValidator(t, fixture.spEntityID, fixture.spSLOURL, fixture.idpEntityID, fixture.idpCert)
-	assert.NoError(t, validatorSP.ValidateLogoutResponseRedirect(result.rawSAMLResponse))
-	assert.NoError(t, fixture.mock.ExpectationsWereMet())
-}
-
-func TestSAMLHandler_SLOSignedLogoutResponse_POST(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
-
-	fixture := newSignedPostSLOFixture(t)
-	result := runSignedPostSLOFixture(t, fixture)
-
-	assertSignedPostSLOSuccessResponse(t, fixture, result)
-}
-
-type signedPostSLOFixture struct {
-	handler     *SAMLHandler
-	mock        redismock.ClientMock
-	idpCert     *x509.Certificate
-	spEntityID  string
-	spSLOURL    string
-	idpEntityID string
-	requestID   string
-	relayState  string
-	formBody    string
-}
-
-type postSLOResponseResult struct {
-	response        *saml.LogoutResponse
-	rawSAMLResponse string
-}
-
-// newSignedPostSLOFixture builds a signed POST-binding handler fixture.
-func newSignedPostSLOFixture(t *testing.T) signedPostSLOFixture {
-	t.Helper()
-
-	db, mock := redismock.NewClientMock()
-	redisClient := rediscli.NewTestClient(db)
-	spEntityID := "https://sp.example.com/saml/metadata"
-	spSLOURL := "https://sp.example.com/saml/slo"
-	nameID := "alice@example.com"
-	relayState := "relay-post-state"
-
-	spKey, spCert, spCertPEM := mustGenerateRSACertificate(t, "sp.example.com")
-	idpKey, idpCert, idpCertPEM := mustGenerateRSACertificate(t, "auth.example.com")
-	idpKeyPEM := mustEncodeRSAPrivateKeyPEM(t, idpKey)
-
-	requestSigningSP := newPostLogoutRequestSigningSP(t, spKey, spCert, spEntityID)
-	requestXML := mustBuildSignedLogoutRequestXML(t, requestSigningSP, "https://auth.example.com/saml/slo", nameID)
-	requestID := mustUnmarshalLogoutRequestID(t, requestXML)
-
-	expectSLOParticipantLookupAndCleanup(t, mock, nameID, spEntityID, requestID, "_idx-handler-post", nil)
-
-	handler := newSignedSLOTestHandler(t, redisClient, spEntityID, spSLOURL, spCertPEM, idpCertPEM, idpKeyPEM)
-	formBody := mustBuildPostLogoutBody(t, requestXML) + "&RelayState=" + url.QueryEscape(relayState)
-
-	return signedPostSLOFixture{
-		handler:     handler,
-		mock:        mock,
-		idpCert:     idpCert,
-		spEntityID:  spEntityID,
-		spSLOURL:    spSLOURL,
-		idpEntityID: "https://auth.example.com/saml/metadata",
-		requestID:   requestID,
-		relayState:  relayState,
-		formBody:    formBody,
-	}
-}
-
-// newPostLogoutRequestSigningSP creates the SP used to sign POST LogoutRequests.
-func newPostLogoutRequestSigningSP(
-	t *testing.T,
-	spKey *rsa.PrivateKey,
-	spCert *x509.Certificate,
-	spEntityID string,
-) *saml.ServiceProvider {
-	t.Helper()
-
-	spMetadataURL, err := url.Parse(spEntityID)
-	if !assert.NoError(t, err) {
-		return nil
-	}
-
-	spACSParsedURL, err := url.Parse("https://sp.example.com/saml/acs")
-	if !assert.NoError(t, err) {
-		return nil
-	}
-
-	return &saml.ServiceProvider{
-		Key:             spKey,
-		Certificate:     spCert,
-		MetadataURL:     *spMetadataURL,
-		IDPMetadata:     &saml.EntityDescriptor{EntityID: "https://auth.example.com/saml/metadata"},
-		EntityID:        spEntityID,
-		AcsURL:          *spACSParsedURL,
-		SignatureMethod: dsig.RSASHA256SignatureMethod,
-	}
-}
-
-// mustUnmarshalLogoutRequestID reads a LogoutRequest ID from serialized XML.
-func mustUnmarshalLogoutRequestID(t *testing.T, requestXML []byte) string {
-	t.Helper()
-
-	var logoutRequest saml.LogoutRequest
-	if err := xml.Unmarshal(requestXML, &logoutRequest); !assert.NoError(t, err) {
-		return ""
-	}
-
-	return logoutRequest.ID
-}
-
-// runSignedPostSLOFixture executes a signed POST-binding SLO request.
-func runSignedPostSLOFixture(t *testing.T, fixture signedPostSLOFixture) postSLOResponseResult {
-	t.Helper()
-
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/saml/slo", strings.NewReader(fixture.formBody))
-	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	fixture.handler.SLO(ctx)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "id=\"SAMLResponseForm\"")
-
-	rawSAMLResponse := mustExtractHiddenFormValue(t, w.Body.String(), "SAMLResponse")
-	assert.Equal(t, fixture.relayState, mustExtractHiddenFormValue(t, w.Body.String(), "RelayState"))
-
-	return postSLOResponseResult{
-		response:        mustDecodePostLogoutResponse(t, rawSAMLResponse),
-		rawSAMLResponse: rawSAMLResponse,
-	}
-}
-
-// assertSignedPostSLOSuccessResponse verifies a successful POST SLO response.
-func assertSignedPostSLOSuccessResponse(t *testing.T, fixture signedPostSLOFixture, result postSLOResponseResult) {
-	t.Helper()
-
-	assert.Equal(t, fixture.requestID, result.response.InResponseTo)
-	assert.Equal(t, fixture.spSLOURL, result.response.Destination)
-
-	if assert.NotNil(t, result.response.Issuer) {
-		assert.Equal(t, fixture.idpEntityID, result.response.Issuer.Value)
-	}
-
-	assert.Equal(t, saml.StatusSuccess, result.response.Status.StatusCode.Value)
-	assert.NotNil(t, result.response.Signature)
-
-	validatorSP := mustBuildSPLogoutResponseValidator(t, fixture.spEntityID, fixture.spSLOURL, fixture.idpEntityID, fixture.idpCert)
-	assert.NoError(t, validatorSP.ValidateLogoutResponseForm(result.rawSAMLResponse))
-	assert.NoError(t, fixture.mock.ExpectationsWereMet())
-}
-
-func TestSAMLHandler_SLOSignedLogoutResponse_PartialLogoutStatus(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
-
-	fixture := newSignedRedirectSLOFixture(
-		t,
-		"id-handler-partial",
-		"relay-partial-state",
-		"_idx-handler-partial",
-		fmt.Errorf("redis cleanup failure"),
-	)
-	result := runSignedRedirectSLOFixture(t, fixture)
-
-	assertSignedRedirectSLOPartialResponse(t, fixture, result)
-}
-
-// assertSignedRedirectSLOPartialResponse verifies a partial Redirect SLO response.
-func assertSignedRedirectSLOPartialResponse(
-	t *testing.T,
-	fixture signedRedirectSLOFixture,
-	result redirectSLOResponseResult,
-) {
-	t.Helper()
-
-	assert.Equal(t, fixture.spSLOURL, result.locationURL.Scheme+"://"+result.locationURL.Host+result.locationURL.Path)
-	assert.Equal(t, fixture.relayState, result.locationURL.Query().Get("RelayState"))
-	assert.Equal(t, fixture.requestID, result.response.InResponseTo)
-	assert.Equal(t, saml.StatusResponder, result.response.Status.StatusCode.Value)
-
-	if assert.NotNil(t, result.response.Status.StatusCode.StatusCode) {
-		assert.Equal(t, saml.StatusPartialLogout, result.response.Status.StatusCode.StatusCode.Value)
-	}
-
-	assert.NotNil(t, result.response.Signature)
-
-	validatorSP := mustBuildSPLogoutResponseValidator(t, fixture.spEntityID, fixture.spSLOURL, fixture.idpEntityID, fixture.idpCert)
-	err := validatorSP.ValidateLogoutResponseRedirect(result.rawSAMLResponse)
-	assert.Error(t, err)
-	assert.ErrorContains(t, err, "status code was not")
-	assert.NoError(t, fixture.mock.ExpectationsWereMet())
-}
-
 func TestSAMLHandler_newValidatedSLOTransaction(t *testing.T) {
 	handler := NewSAMLHandler(&deps.Deps{
 		Cfg: &mockSAMLCfg{},
@@ -2439,113 +1716,4 @@ func TestSAMLHandler_newValidatedSLOTransaction(t *testing.T) {
 	_, err = handler.newValidatedSLOTransaction(&saml.LogoutRequest{}, slodomain.SLOBindingRedirect)
 	assert.Error(t, err)
 	assert.ErrorContains(t, err, "logout request id is missing")
-}
-
-func TestSAMLHandler_performLocalSLOCleanup_Idempotent(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
-
-	db, mock := redismock.NewClientMock()
-	redisClient := rediscli.NewTestClient(db)
-
-	handler := NewSAMLHandler(&deps.Deps{
-		Cfg: &mockSAMLCfg{
-			redisPrefix: "test:",
-		},
-		Logger: slog.Default(),
-		Redis:  redisClient,
-	}, nil)
-
-	mgr := newLocalSLOCleanupCookieManager()
-
-	expectLocalSLOCleanupRedis(mock)
-
-	transaction := mustValidatedLocalSLOTransaction(t)
-	ctx, w := newLocalSLOCleanupContext(mgr)
-
-	handler.performLocalSLOCleanup(ctx, "alice@example.com", transaction)
-	handler.performLocalSLOCleanup(ctx, "alice@example.com", transaction)
-
-	assertLocalSLOCleanupResult(t, w, mgr, transaction, mock)
-}
-
-// newLocalSLOCleanupCookieManager creates a populated SLO session fixture.
-func newLocalSLOCleanupCookieManager() *mockCookieManager {
-	return &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyAccount:                "alice@example.com",
-		definitions.SessionKeyIDPFlowID:              "flow-local-cleanup",
-		definitions.SessionKeyIDPFlowType:            definitions.ProtoSAML,
-		definitions.SessionKeyIDPSAMLEntityID:        "https://sp.example.com/saml/metadata",
-		definitions.SessionKeyUsername:               "alice",
-		definitions.SessionKeyMFAMethod:              "totp",
-		definitions.SessionKeyRequireMFAFlow:         true,
-		definitions.SessionKeyRequireMFAPending:      "webauthn",
-		definitions.SessionKeyRequireMFAParentFlowID: "flow-parent",
-	}}
-}
-
-// expectLocalSLOCleanupRedis registers idempotent local cleanup expectations.
-func expectLocalSLOCleanupRedis(mock redismock.ClientMock) {
-	flowStateKey := "test:idp:flow:flow-local-cleanup"
-	participantIndexKey := sloTestParticipantIndexKey("test:", "alice@example.com")
-
-	mock.ExpectDel(flowStateKey).SetVal(1)
-	mock.ExpectSMembers(participantIndexKey).SetVal(nil)
-	mock.ExpectDel(participantIndexKey).SetVal(1)
-	mock.ExpectSMembers(participantIndexKey).SetVal(nil)
-	mock.ExpectDel(participantIndexKey).SetVal(1)
-}
-
-// mustValidatedLocalSLOTransaction creates a transaction ready for local cleanup.
-func mustValidatedLocalSLOTransaction(t *testing.T) *slodomain.Transaction {
-	t.Helper()
-
-	transaction, err := slodomain.NewTransaction(
-		"tx-local-cleanup",
-		"request-local-cleanup",
-		slodomain.SLODirectionSPInitiated,
-		slodomain.SLOBindingRedirect,
-		time.Now().UTC(),
-	)
-	if !assert.NoError(t, err) {
-		return nil
-	}
-
-	err = transaction.TransitionTo(slodomain.SLOStatusValidated, time.Now().UTC())
-	if !assert.NoError(t, err) {
-		return nil
-	}
-
-	return transaction
-}
-
-// newLocalSLOCleanupContext creates a Gin context with secure session data.
-func newLocalSLOCleanupContext(mgr *mockCookieManager) (*gin.Context, *httptest.ResponseRecorder) {
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/saml/slo", nil)
-	ctx.Set(definitions.CtxSecureDataKey, mgr)
-
-	return ctx, w
-}
-
-// assertLocalSLOCleanupResult verifies session, redirect, and Redis cleanup state.
-func assertLocalSLOCleanupResult(
-	t *testing.T,
-	w *httptest.ResponseRecorder,
-	mgr *mockCookieManager,
-	transaction *slodomain.Transaction,
-	mock redismock.ClientMock,
-) {
-	t.Helper()
-
-	assert.Equal(t, http.StatusFound, w.Code)
-	assert.Equal(t, "/logged_out", w.Header().Get("Location"))
-	assert.Equal(t, slodomain.SLOStatusLocalDone, transaction.Status)
-	assert.Empty(t, mgr.GetString(definitions.SessionKeyAccount, ""))
-	assert.Empty(t, mgr.GetString(definitions.SessionKeyIDPFlowID, ""))
-	assert.Empty(t, mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, ""))
-	assert.Empty(t, mgr.GetString(definitions.SessionKeyUsername, ""))
-	assert.Empty(t, mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""))
-	assert.NoError(t, mock.ExpectationsWereMet())
 }

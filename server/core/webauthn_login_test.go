@@ -1,17 +1,5 @@
-// Copyright (C) 2025 Christian Rößner
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
+// Copyright 2025-2026 Nauthilus authors
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package core
 
@@ -22,48 +10,22 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
-	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/stretchr/testify/assert"
 )
 
-const (
-	testWebAuthnTargetLogin    = "target@example.test"
-	testWebAuthnMasterLogin    = "master@example.test"
-	testWebAuthnFormattedLogin = testWebAuthnTargetLogin + "*" + testWebAuthnMasterLogin
-	testWebAuthnTargetUniqueID = "target-uid"
-	testWebAuthnMasterUniqueID = "master-uid"
-	testWebAuthnTargetDisplay  = "Target User"
-	testWebAuthnMasterDisplay  = "Master User"
-)
-
-// TestLoginWebAuthnBeginUsesSessionUniqueUserID is skipped as it requires a fully initialized
-// WebAuthn environment. The session handling for WebAuthn is now tested in webauthn_registration_test.go.
-func TestLoginWebAuthnBeginUsesSessionUniqueUserID(t *testing.T) {
-	t.Skip("Skipping WebAuthn login test - requires fully initialized WebAuthn environment")
-}
-
 func TestConfiguredWebAuthnUserVerificationReachesLoginOptions(t *testing.T) {
 	originalWebAuthn := webAuthn
 
-	t.Cleanup(func() {
-		webAuthn = originalWebAuthn
-	})
+	t.Cleanup(func() { webAuthn = originalWebAuthn })
 
-	idpCfg := &config.IDPSection{
-		WebAuthn: config.WebAuthn{
-			ResidentKey:      "preferred",
-			UserVerification: "required",
-		},
-	}
-
+	idpCfg := &config.IDPSection{WebAuthn: config.WebAuthn{
+		ResidentKey: "preferred", UserVerification: "required",
+	}}
 	configuredWebAuthn, err := webauthn.New(newWebAuthnConfig(
-		idpCfg,
-		"login.example.test",
-		[]string{"https://login.example.test"},
+		idpCfg, "login.example.test", []string{"https://login.example.test"},
 	))
 	if !assert.NoError(t, err) {
 		return
@@ -71,13 +33,11 @@ func TestConfiguredWebAuthnUserVerificationReachesLoginOptions(t *testing.T) {
 
 	webAuthn = configuredWebAuthn
 	user := &backend.User{
-		ID:   "user-id",
-		Name: "alice",
-		Credentials: []mfa.PersistentCredential{
-			{Credential: webauthn.Credential{ID: []byte("credential-id")}},
-		},
+		ID: "user-id", Name: "alice",
+		Credentials: []mfa.PersistentCredential{{
+			Credential: webauthn.Credential{ID: []byte("credential-id")},
+		}},
 	}
-
 	for _, testCase := range []struct {
 		name string
 		user *backend.User
@@ -97,165 +57,16 @@ func TestConfiguredWebAuthnUserVerificationReachesLoginOptions(t *testing.T) {
 	}
 }
 
-// TestIsMFAAuthResultValid tests the authentication result validation after MFA verification.
-// This test ensures that "Fall B Punkt 1" from the IDP login flow specification is correctly
-// implemented: if the initial credentials were wrong (delayed response), the user must be
-// rejected even after successful MFA verification.
-//
-// Default-deny: all cases without a valid HMAC-verified AuthResultOK must return false.
-func TestIsMFAAuthResultValid(t *testing.T) {
-	const testUser = "testuser"
-
-	tests := []struct {
-		name     string
-		setup    func(mgr *mockCookieManager)
-		expected bool
-	}{
-		{
-			name: "AuthResultOK with valid HMAC should allow login",
-			setup: func(mgr *mockCookieManager) {
-				cookie.SetAuthResult(mgr, testUser, definitions.AuthResultOK)
-			},
-			expected: true,
-		},
-		{
-			name: "AuthResultFail with valid HMAC should reject login (Fall B Punkt 1)",
-			setup: func(mgr *mockCookieManager) {
-				cookie.SetAuthResult(mgr, testUser, definitions.AuthResultFail)
-			},
-			expected: false,
-		},
-		{
-			name: "No AuthResult set should reject login (default-deny)",
-			setup: func(_ *mockCookieManager) {
-				// No AuthResult set at all
-			},
-			expected: false,
-		},
-		{
-			name: "AuthResult without HMAC should reject login (tampered)",
-			setup: func(mgr *mockCookieManager) {
-				// Raw set without HMAC — simulates tampering
-				mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultOK))
-			},
-			expected: false,
-		},
-		{
-			name: "AuthResult with wrong username in HMAC should reject login",
-			setup: func(mgr *mockCookieManager) {
-				// Set with different username than what we verify with
-				cookie.SetAuthResult(mgr, "otheruser", definitions.AuthResultOK)
-			},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mgr := &mockCookieManager{data: make(map[string]any)}
-			tt.setup(mgr)
-
-			result := isMFAAuthResultValid(mgr, testUser)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestIsMFAAuthResultValidNilManager tests that a nil manager denies login (default-deny).
-func TestIsMFAAuthResultValidNilManager(t *testing.T) {
-	result := isMFAAuthResultValid(nil, "testuser")
-	assert.False(t, result, "Nil manager must deny login (default-deny)")
-}
-
-func TestSessionWebAuthnLoginIdentityPrefersMFAFactorAccount(t *testing.T) {
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyUsername:              testWebAuthnFormattedLogin,
-		definitions.SessionKeyUniqueUserID:          testWebAuthnTargetUniqueID,
-		definitions.SessionKeyMFAFactorAccount:      testWebAuthnMasterLogin,
-		definitions.SessionKeyMFAFactorUniqueUserID: testWebAuthnMasterUniqueID,
-		definitions.SessionKeyMFAFactorDisplayName:  testWebAuthnMasterDisplay,
-		definitions.SessionKeyMFAAccount:            testWebAuthnTargetLogin,
-		definitions.SessionKeyMFADisplayName:        testWebAuthnTargetDisplay,
-	}}
-
-	identity := sessionWebAuthnLoginIdentity(mgr)
-
-	assert.Equal(t, testWebAuthnMasterLogin, identity.userName)
-	assert.Equal(t, testWebAuthnMasterUniqueID, identity.uniqueUserID)
-	assert.Equal(t, testWebAuthnMasterDisplay, identity.displayName)
-}
-
-func TestSessionWebAuthnLoginIdentityFallsBackToSubmittedLogin(t *testing.T) {
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyUsername:     "alice@example.test",
-		definitions.SessionKeyUniqueUserID: "alice-uid",
-	}}
-
-	identity := sessionWebAuthnLoginIdentity(mgr)
-
-	assert.Equal(t, "alice@example.test", identity.userName)
-	assert.Equal(t, "alice-uid", identity.uniqueUserID)
-	assert.Empty(t, identity.displayName)
-}
-
-func TestWebAuthnBackendLookupUsernamePrefersAccountName(t *testing.T) {
-	username := webAuthnBackendLookupUsername(testWebAuthnMasterLogin, testWebAuthnMasterUniqueID)
-
-	assert.Equal(t, testWebAuthnMasterLogin, username)
-}
-
-// TestDelayedResponseWithWrongCredentialsRejectAfterMFA documents the expected behavior
-// for "Fall B Punkt 1": When delayed_response is enabled and the user provides wrong
-// initial credentials but has MFA configured, the flow should:
-// 1. Continue to MFA verification (hiding whether credentials were correct)
-// 2. After successful MFA, reject the login because initial credentials were wrong
-// This prevents attackers from using MFA bypass techniques to circumvent password verification.
-func TestDelayedResponseWithWrongCredentialsRejectAfterMFA(t *testing.T) {
-	mgr := &mockCookieManager{data: make(map[string]any)}
-
-	// Simulate delayed response with wrong credentials (using HMAC-protected setter)
-	cookie.SetAuthResult(mgr, "testuser", definitions.AuthResultFail)
-	mgr.Set(definitions.SessionKeyUsername, "testuser")
-
-	// After MFA verification, the auth result should still be checked
-	isValid := isMFAAuthResultValid(mgr, "testuser")
-
-	// User should be rejected because initial credentials were wrong
-	assert.False(t, isValid, "User with wrong initial credentials must be rejected after MFA")
-}
-
-// TestDelayedResponseWithCorrectCredentialsAllowAfterMFA documents the expected behavior
-// when the user provides correct initial credentials with delayed_response enabled.
-func TestDelayedResponseWithCorrectCredentialsAllowAfterMFA(t *testing.T) {
-	mgr := &mockCookieManager{data: make(map[string]any)}
-
-	// Simulate delayed response with correct credentials (using HMAC-protected setter)
-	cookie.SetAuthResult(mgr, "testuser", definitions.AuthResultOK)
-	mgr.Set(definitions.SessionKeyUsername, "testuser")
-
-	// After MFA verification, the auth result should allow login
-	isValid := isMFAAuthResultValid(mgr, "testuser")
-
-	// User should be allowed because initial credentials were correct
-	assert.True(t, isValid, "User with correct initial credentials must be allowed after MFA")
-}
-
 func TestPersistWebAuthnLoginUpdateFailsClosedOnRejectedPersistence(t *testing.T) {
 	persistenceErr := errors.New("authority rejected WebAuthn update")
 	user := &backend.User{
-		ID:   "uid-123",
-		Name: "testuser-closed",
-		Credentials: []mfa.PersistentCredential{
-			{
-				Credential: webauthn.Credential{
-					ID: []byte("device-a"),
-					Authenticator: webauthn.Authenticator{
-						SignCount: 3,
-					},
-				},
-				Name: "Security key",
+		ID: "uid-123", Name: "testuser-closed",
+		Credentials: []mfa.PersistentCredential{{
+			Credential: webauthn.Credential{
+				ID: []byte("device-a"), Authenticator: webauthn.Authenticator{SignCount: 3},
 			},
-		},
+			Name: "Security key",
+		}},
 	}
 	oldCredential := user.Credentials[0]
 	newCredential := oldCredential
@@ -266,55 +77,41 @@ func TestPersistWebAuthnLoginUpdateFailsClosedOnRejectedPersistence(t *testing.T
 	if !errors.Is(err, persistenceErr) {
 		t.Fatalf("persistWebAuthnLoginUpdate() error = %v, want %v", err, persistenceErr)
 	}
-
 	if got := user.Credentials[0].Authenticator.SignCount; got != 3 {
 		t.Fatalf("cached credential sign count = %d, want unchanged 3", got)
 	}
 }
 
-type failingWebAuthnCredentialUpdater struct {
-	err error
-}
+type failingWebAuthnCredentialUpdater struct{ err error }
 
-func (u failingWebAuthnCredentialUpdater) UpdateWebAuthnCredential(*mfa.PersistentCredential, *mfa.PersistentCredential) error {
+func (u failingWebAuthnCredentialUpdater) UpdateWebAuthnCredential(
+	*mfa.PersistentCredential,
+	*mfa.PersistentCredential,
+) error {
 	return u.err
 }
 
 func TestUpdateWebAuthnCredentialAfterLoginKeepsDeviceData(t *testing.T) {
 	now := time.Date(2026, time.January, 30, 12, 0, 0, 0, time.UTC)
-
 	credentials := []mfa.PersistentCredential{
 		{
 			Credential: webauthn.Credential{
-				ID: []byte("device-a"),
-				Authenticator: webauthn.Authenticator{
-					SignCount: 3,
-				},
+				ID: []byte("device-a"), Authenticator: webauthn.Authenticator{SignCount: 3},
 			},
-			Name:     "TouchID",
-			LastUsed: time.Date(2026, time.January, 29, 10, 0, 0, 0, time.UTC),
+			Name: "TouchID", LastUsed: time.Date(2026, time.January, 29, 10, 0, 0, 0, time.UTC),
 		},
 		{
 			Credential: webauthn.Credential{
-				ID: []byte("device-b"),
-				Authenticator: webauthn.Authenticator{
-					SignCount: 0,
-				},
+				ID: []byte("device-b"), Authenticator: webauthn.Authenticator{SignCount: 0},
 			},
-			Name:     "YubiKey",
-			LastUsed: time.Date(2026, time.January, 28, 11, 0, 0, 0, time.UTC),
+			Name: "YubiKey", LastUsed: time.Date(2026, time.January, 28, 11, 0, 0, 0, time.UTC),
 		},
 	}
-
 	loginCredential := &webauthn.Credential{
-		ID: []byte("device-b"),
-		Authenticator: webauthn.Authenticator{
-			SignCount: 6,
-		},
+		ID: []byte("device-b"), Authenticator: webauthn.Authenticator{SignCount: 6},
 	}
 
 	oldCredential, updatedCredential := updateWebAuthnCredentialAfterLogin(credentials, loginCredential, now)
-
 	if assert.NotNil(t, oldCredential) && assert.NotNil(t, updatedCredential) {
 		assert.Equal(t, "YubiKey", oldCredential.Name)
 		assert.Equal(t, "YubiKey", updatedCredential.Name)
@@ -326,27 +123,17 @@ func TestUpdateWebAuthnCredentialAfterLoginKeepsDeviceData(t *testing.T) {
 
 func TestUpdateWebAuthnCredentialAfterLoginRejectsStaleSignCount(t *testing.T) {
 	now := time.Date(2026, time.January, 30, 12, 0, 0, 0, time.UTC)
-	credentials := []mfa.PersistentCredential{
-		{
-			Credential: webauthn.Credential{
-				ID: []byte("device-a"),
-				Authenticator: webauthn.Authenticator{
-					SignCount: 7,
-				},
-			},
-			Name:     "Security key",
-			LastUsed: time.Date(2026, time.January, 29, 10, 0, 0, 0, time.UTC),
+	credentials := []mfa.PersistentCredential{{
+		Credential: webauthn.Credential{
+			ID: []byte("device-a"), Authenticator: webauthn.Authenticator{SignCount: 7},
 		},
-	}
+		Name: "Security key", LastUsed: time.Date(2026, time.January, 29, 10, 0, 0, 0, time.UTC),
+	}}
 	loginCredential := &webauthn.Credential{
-		ID: []byte("device-a"),
-		Authenticator: webauthn.Authenticator{
-			SignCount: 7,
-		},
+		ID: []byte("device-a"), Authenticator: webauthn.Authenticator{SignCount: 7},
 	}
 
 	oldCredential, updatedCredential := updateWebAuthnCredentialAfterLogin(credentials, loginCredential, now)
-
 	assert.Nil(t, oldCredential)
 	assert.Nil(t, updatedCredential)
 }

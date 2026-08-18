@@ -69,8 +69,7 @@ graph TD
     AS <--> BE[Backends server/backend]
     IC <--> RTS[Redis Token Storage server/idp/redis_storage.go]
     PH <--> RTS
-    FE <--> MFA[MFA API server/handler/api/v1/mfa.go]
-    MFA <--> MS[MFA Service server/idp/mfa.go]
+    FE <--> MS[Canonical MFA orchestration server/handler/frontend/idp/canonical_*]
     MS <--> AS
 ```
 
@@ -394,48 +393,18 @@ runtime:
 Policies are evaluated in order. The first active policy with a matching `path_prefixes` entry is used.
 Use explicit origin lists in production.
 
-## 4. MFA Management API (/api/v1/mfa)
+## 4. MFA Interfaces
 
-The IdP provides a JSON API for managing Multi-Factor Authentication. This API is used internally by the HTMX frontend
-and can be used by external clients.
+Browser MFA enrollment and management use the canonical `/mfa/*` HTML flows.
+They are bound to the canonical browser envelope and typed Redis state. The old
+session-cookie JSON routes below `/api/v1/mfa/*` are retired and are not a
+compatibility surface.
 
-### 4.1 TOTP Management
+Machine-to-machine MFA operations use the scoped
+`/api/v1/mfa-backchannel/*` API with Basic or Bearer authentication. They never
+consume browser-session state.
 
-- **`GET /api/v1/mfa/totp/setup`**:
-    - Starts the TOTP registration process.
-    - Returns JSON: `{"secret": "...", "qr_code_url": "..."}`.
-    - Stores the secret in the user's session for verification.
-- **`POST /api/v1/mfa/totp/register`**:
-    - Finalizes TOTP registration by verifying a code.
-    - Request Body: `{"code": "123456"}`.
-    - Returns 200 OK on success.
-- **`DELETE /api/v1/mfa/totp`**:
-    - Deletes the TOTP configuration for the user.
-    - Returns 200 OK on success.
-
-### 4.2 Recovery Codes
-
-- **`POST /api/v1/mfa/recovery-codes/generate`**:
-    - Generates and returns a new set of 10 recovery codes.
-    - Replaces any existing recovery codes in the backend.
-    - Returns JSON: `{"codes": ["...", "..."]}`.
-
-### 4.3 WebAuthn Management
-
-- **`GET /api/v1/mfa/webauthn/register/begin`**:
-    - Initiates WebAuthn registration.
-    - Returns `CredentialCreationOptions` as JSON (standard WebAuthn format).
-- **`POST /api/v1/mfa/webauthn/register/finish`**:
-    - Finalizes WebAuthn registration.
-  - Request Body: Either the raw credential object from `navigator.credentials.create()` or an object containing a
-    `name` and `credential` payload (e.g. `{"name": "Office YubiKey", "credential": { ... }}`) to store a
-    user-friendly device name.
-    - Returns 200 OK on success.
-- **`DELETE /api/v1/mfa/webauthn/:credentialID`**:
-    - Deletes a specific WebAuthn credential by its ID.
-    - Returns 200 OK on success.
-
-### 4.4 WebAuthn Devices Portal
+### 4.1 WebAuthn Devices Portal
 
 The IdP includes a dedicated view for managing registered WebAuthn devices:
 

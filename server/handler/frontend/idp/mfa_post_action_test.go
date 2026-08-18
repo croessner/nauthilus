@@ -107,46 +107,6 @@ func waitForQueuedPostAction(t *testing.T, requestChan <-chan *action.Action) *a
 	return nil
 }
 
-func TestFinalizeMFALoginPreservesMFAMethodAndQueuesPostAction(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	requestChan := make(chan *action.Action, 1)
-	originalRequestChan := action.PostActionRequestChan
-	action.PostActionRequestChan = requestChan
-
-	t.Cleanup(func() {
-		action.PostActionRequestChan = originalRequestChan
-	})
-
-	d := newMFACompletionDeps()
-	handler := &FrontendHandler{deps: d}
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyMFAMethod:   "totp",
-		definitions.SessionKeyProtocol:    definitions.ProtoOIDC,
-		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
-		definitions.SessionKeyIDPClientID: "test-client",
-	}}
-	ctx := newMFAPostActionTestContext(t, mgr)
-	user := backend.NewUser("alice", "Alice Example", "uid-1")
-
-	handler.finalizeMFALogin(ctx, user)
-
-	assert.Equal(t, "totp", mgr.GetString(definitions.SessionKeyMFAMethod, ""))
-	assert.True(t, mgr.GetBool(definitions.SessionKeyMFACompleted, false))
-
-	act := waitForQueuedPostAction(t, requestChan)
-	assert.Equal(t, "totp", act.MFAMethod)
-	assert.True(t, act.MFACompleted)
-	assert.Equal(t, definitions.ProtoOIDC, act.Protocol)
-	assert.Equal(t, "test-client", act.OIDCCID)
-	assert.False(t, act.EnvironmentStageExpected)
-	assert.False(t, act.SubjectStageExpected)
-	assert.Equal(t, "alice", act.Account)
-	assert.Equal(t, "uid-1", act.UniqueUserID)
-
-	act.FinishedChan <- action.Done{}
-}
-
 func TestQueueCompletedIDPMFAPostActionUsesCurrentProtocolState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -199,27 +159,23 @@ func runCompletedMFAPostActionProtocolCase(
 		action.PostActionRequestChan = originalRequestChan
 	})
 
-	mgr := &mockCookieManager{data: completedMFAPostActionCookieData(tc)}
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyProtocol:        definitions.ProtoSAML,
+		definitions.SessionKeyIDPFlowType:     definitions.ProtoSAML,
+		definitions.SessionKeyIDPClientID:     "legacy-client",
+		definitions.SessionKeyIDPSAMLEntityID: "https://legacy-sp.example.test/metadata",
+	}}
 	ctx := newMFAPostActionTestContext(t, mgr)
 	user := backend.NewUser("alice", "Alice Example", "uid-1")
 
-	if !corepkg.QueueCompletedIDPMFAPostAction(ctx, newMFACompletionDeps().Auth(), user) {
+	if !corepkg.QueueCompletedIDPMFAPostAction(ctx, newMFACompletionDeps().Auth(), user, corepkg.IDPMFAProtocolContext{
+		Protocol: tc.flowType, OIDCClientID: tc.oidcClientID, SAMLEntityID: tc.samlEntityID,
+		Request: corepkg.IDPRequestContext{MFACompleted: true, MFAMethod: tc.method},
+	}) {
 		t.Fatal("expected MFA post action to be queued")
 	}
 
 	return waitForQueuedPostAction(t, requestChan)
-}
-
-// completedMFAPostActionCookieData returns session state for one completed MFA case.
-func completedMFAPostActionCookieData(tc completedMFAPostActionProtocolCase) map[string]any {
-	return map[string]any{
-		definitions.SessionKeyProtocol:        tc.flowType,
-		definitions.SessionKeyIDPFlowType:     tc.flowType,
-		definitions.SessionKeyMFAMethod:       tc.method,
-		definitions.SessionKeyMFACompleted:    true,
-		definitions.SessionKeyIDPClientID:     tc.oidcClientID,
-		definitions.SessionKeyIDPSAMLEntityID: tc.samlEntityID,
-	}
 }
 
 // assertCompletedMFAPostActionProtocol verifies protocol-specific queued action fields.
@@ -267,7 +223,10 @@ func TestQueueCompletedIDPMFAPostActionUsesTrustedForwardedClientIP(t *testing.T
 
 	user := backend.NewUser("alice", "Alice Example", "uid-1")
 
-	if !corepkg.QueueCompletedIDPMFAPostAction(ctx, d.Auth(), user) {
+	if !corepkg.QueueCompletedIDPMFAPostAction(ctx, d.Auth(), user, corepkg.IDPMFAProtocolContext{
+		Protocol: definitions.ProtoOIDC, OIDCClientID: "test-client",
+		Request: corepkg.IDPRequestContext{MFACompleted: true, MFAMethod: definitions.MFAMethodTOTP},
+	}) {
 		t.Fatal("expected MFA post action to be queued")
 	}
 

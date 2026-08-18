@@ -48,12 +48,24 @@ const (
 	FlowMetadataCodeChallenge = "code_challenge"
 	// FlowMetadataCodeChallengeMethod stores the PKCE code challenge method.
 	FlowMetadataCodeChallengeMethod = "code_challenge_method"
+	// FlowMetadataConsentChallenge binds a consent surface to its owning typed OIDC flow.
+	FlowMetadataConsentChallenge = "consent_challenge"
 	// FlowMetadataSAMLEntityID stores the SAML entity identifier.
 	FlowMetadataSAMLEntityID = "saml_entity_id"
+	// FlowMetadataSAMLRequestID binds the parsed AuthnRequest identifier.
+	FlowMetadataSAMLRequestID = "saml_request_id"
+	// FlowMetadataSAMLRequestDigest binds the validated inbound request without retaining it in the browser envelope.
+	FlowMetadataSAMLRequestDigest = "saml_request_digest"
+	// FlowMetadataSAMLRelayState stores the request-bound relay state in typed Redis.
+	FlowMetadataSAMLRelayState = "saml_relay_state"
+	// FlowMetadataSAMLDestination stores the validated IdP destination.
+	FlowMetadataSAMLDestination = "saml_destination"
 	// FlowMetadataOriginalURL stores the original frontend URL.
 	FlowMetadataOriginalURL = "original_url"
 	// FlowMetadataDeviceCode stores the OAuth 2.0 device code.
 	FlowMetadataDeviceCode = "device_code"
+	// FlowMetadataDeviceUserCodeDigest binds a claimed user code without persisting the code itself.
+	FlowMetadataDeviceUserCodeDigest = "device_user_code_digest"
 	// FlowMetadataAccount stores the authenticated account name across required MFA hops.
 	FlowMetadataAccount = "account"
 	// FlowMetadataUniqueUserID stores the backend unique user id across required MFA hops.
@@ -84,6 +96,7 @@ func IsRequireMFAFlowID(flowID string) bool {
 // State stores the domain-level state of an IDP flow.
 type State struct {
 	FlowID       string            `json:"flow_id"`
+	Revision     uint64            `json:"revision,omitzero"`
 	GrantType    string            `json:"grant_type,omitzero"`
 	CancelTarget string            `json:"cancel_target,omitzero"`
 	ReturnTarget string            `json:"return_target,omitzero"`
@@ -95,6 +108,14 @@ type State struct {
 	CreatedAt    time.Time         `json:"created_at,omitzero"`
 	UpdatedAt    time.Time         `json:"updated_at,omitzero"`
 	PendingMFA   bool              `json:"pending_mfa"`
+}
+
+func (s *State) metadataValue(key string) string {
+	if s == nil || s.Metadata == nil {
+		return ""
+	}
+
+	return s.Metadata[key]
 }
 
 // AuthOutcome captures the first-factor authentication result relevant for flow transitions.

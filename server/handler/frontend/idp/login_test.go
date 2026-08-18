@@ -5,8 +5,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -16,7 +19,7 @@ func TestLoginRedirects(t *testing.T) {
 
 	for _, tt := range loginRedirectCases() {
 		t.Run(tt.name, func(t *testing.T) {
-			recorder := runLoginRedirect(tt.cookieData)
+			recorder := runLoginRedirect(t, tt)
 
 			assertLoginRedirectResponse(t, recorder, tt)
 		})
@@ -26,79 +29,94 @@ func TestLoginRedirects(t *testing.T) {
 type loginRedirectCase struct {
 	name             string
 	location         string
-	cookieData       map[string]any
+	state            *flowdomain.State
 	locationContains []string
 	status           int
+	authenticated    bool
 }
 
 // loginRedirectCases returns login redirect and rejection scenarios.
 func loginRedirectCases() []loginRedirectCase {
 	return []loginRedirectCase{
 		{
-			name: "Error if direct access without IDP flow in cookie",
-			cookieData: map[string]any{
-				definitions.SessionKeyAccount: "testuser",
-			},
+			name:   "Error if direct access has no canonical typed IDP flow",
 			status: http.StatusBadRequest,
 		},
 		{
-			name: "Redirect to OIDC authorize if already logged in with valid OIDC flow in cookie",
-			cookieData: map[string]any{
-				definitions.SessionKeyAccount:        "testuser",
-				definitions.SessionKeyIDPFlowID:      "flow-oidc",
-				definitions.SessionKeyIDPFlowType:    definitions.ProtoOIDC,
-				definitions.SessionKeyOIDCGrantType:  definitions.OIDCFlowAuthorizationCode,
-				definitions.SessionKeyIDPClientID:    "test-client",
-				definitions.SessionKeyIDPRedirectURI: "https://example.com/callback",
-				definitions.SessionKeyIDPScope:       "openid profile",
-				definitions.SessionKeyIDPState:       "state123",
+			name: "Redirect to OIDC authorize if canonical session is authenticated",
+			state: &flowdomain.State{
+				FlowID: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", Type: flowdomain.FlowTypeOIDCAuthorization,
+				Protocol: flowdomain.FlowProtocolOIDC, CurrentStep: flowdomain.FlowStepLogin,
+				AuthOutcome: flowdomain.AuthOutcomeOK, ReturnTarget: "/oidc/authorize?client_id=test-client",
+				Metadata: map[string]string{
+					flowdomain.FlowMetadataClientID: "test-client", flowdomain.FlowMetadataRedirectURI: "https://example.com/callback",
+					flowdomain.FlowMetadataResponseType: oidcParamCode,
+				},
 			},
 			locationContains: []string{"/oidc/authorize", "client_id=test-client"},
 			status:           http.StatusFound,
+			authenticated:    true,
 		},
 		{
-			name: "Redirect to SAML SSO if already logged in with valid SAML2 flow in cookie",
-			cookieData: map[string]any{
-				definitions.SessionKeyAccount:         "testuser",
-				definitions.SessionKeyIDPFlowID:       "flow-saml",
-				definitions.SessionKeyIDPFlowType:     definitions.ProtoSAML,
-				definitions.SessionKeyIDPSAMLEntityID: "sp-1",
-				definitions.SessionKeyIDPOriginalURL:  "/saml/sso?SAMLRequest=abc123",
+			name: "Redirect to SAML SSO if canonical session is authenticated",
+			state: &flowdomain.State{
+				FlowID: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", Type: flowdomain.FlowTypeSAML,
+				Protocol: flowdomain.FlowProtocolSAML, CurrentStep: flowdomain.FlowStepLogin,
+				AuthOutcome: flowdomain.AuthOutcomeOK, ReturnTarget: "/saml/sso?SAMLRequest=abc123",
+				Metadata: map[string]string{
+					flowdomain.FlowMetadataSAMLEntityID: "sp-1", flowdomain.FlowMetadataOriginalURL: "/saml/sso?SAMLRequest=abc123",
+				},
 			},
-			location: "/saml/sso?SAMLRequest=abc123",
-			status:   http.StatusFound,
+			locationContains: []string{"/saml/sso", "SAMLRequest=abc123"},
+			status:           http.StatusFound,
+			authenticated:    true,
 		},
 		{
-			name: "Error if IDP flow type is invalid",
-			cookieData: map[string]any{
-				definitions.SessionKeyAccount:     "testuser",
-				definitions.SessionKeyIDPFlowID:   "flow-invalid",
-				definitions.SessionKeyIDPFlowType: "invalid",
+			name: "Error if canonical typed flow metadata is incomplete",
+			state: &flowdomain.State{
+				FlowID: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", Type: flowdomain.FlowTypeOIDCAuthorization,
+				Protocol: flowdomain.FlowProtocolOIDC, CurrentStep: flowdomain.FlowStepLogin,
+				AuthOutcome: flowdomain.AuthOutcomeUnknown,
 			},
 			status: http.StatusBadRequest,
 		},
 	}
 }
 
-// runLoginRedirect executes the login endpoint with one cookie state.
-func runLoginRedirect(cookieData map[string]any) *httptest.ResponseRecorder {
+// runLoginRedirect executes the login endpoint with one canonical envelope and optional typed flow.
+func runLoginRedirect(t *testing.T, test loginRedirectCase) *httptest.ResponseRecorder {
+	t.Helper()
+
+	runtime, browserCookie, flowID := seedCanonicalIDPFlow(t, test.state)
+	if test.authenticated {
+		authenticateCanonicalFixture(t, runtime, browserCookie)
+	}
+
+	handler := &FrontendHandler{}
+	if test.authenticated {
+		handler = canonicalLoginRedirectHandler()
+	}
+
 	r := gin.New()
-	r.Use(secureDataTestMiddleware(cookieData))
-	r.GET(frontendLoginPath, (&FrontendHandler{}).Login)
+	r.Use(cookie.CanonicalMiddleware(runtime, cookie.CanonicalContinuation))
+	r.GET(frontendLoginPath, handler.Login)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, frontendLoginPath, nil)
+	req, _ := http.NewRequest(http.MethodGet, flowdomain.AppendTicket(frontendLoginPath, flowID), nil)
+	req.AddCookie(browserCookie)
 	r.ServeHTTP(w, req)
 
 	return w
 }
 
-// secureDataTestMiddleware installs a mock secure-data cookie manager.
-func secureDataTestMiddleware(cookieData map[string]any) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: cookieData})
-		ctx.Next()
-	}
+// canonicalLoginRedirectHandler resolves zero-policy OIDC and SAML clients from authoritative configuration.
+func canonicalLoginRedirectHandler() *FrontendHandler {
+	return &FrontendHandler{deps: &deps.Deps{Cfg: &mockFrontendCfg{FileSettings: config.FileSettings{
+		IDP: &config.IDPSection{
+			OIDC:  config.OIDCConfig{Clients: []config.OIDCClient{{ClientID: "test-client"}}},
+			SAML2: config.SAML2Config{ServiceProviders: []config.SAML2ServiceProvider{{EntityID: "sp-1"}}},
+		},
+	}}}}
 }
 
 // assertLoginRedirectResponse verifies status and optional Location expectations.
@@ -122,15 +140,16 @@ func TestIsValidIDPFlow(t *testing.T) {
 
 	for _, tt := range validIDPFlowCases() {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, runIsValidIDPFlow(tt.cookieData))
+			assert.Equal(t, tt.expected, runIsValidIDPFlow(t, tt.state, tt.ticket))
 		})
 	}
 }
 
 type validIDPFlowCase struct {
-	name       string
-	cookieData map[string]any
-	expected   bool
+	state    *flowdomain.State
+	name     string
+	ticket   string
+	expected bool
 }
 
 // validIDPFlowCases returns valid and invalid IDP flow cookie states.
@@ -147,23 +166,19 @@ func validIDPFlowCases() []validIDPFlowCase {
 func baselineIDPFlowCases() []validIDPFlowCase {
 	return []validIDPFlowCase{
 		{
-			name:       "No cookie data",
-			cookieData: map[string]any{},
-			expected:   false,
+			name: "No canonical flow ticket", expected: false,
 		},
 		{
-			name: "Flow not active",
-			cookieData: map[string]any{
-				definitions.SessionKeyIDPFlowID: "",
-			},
-			expected: false,
+			name: "Flow not active", ticket: "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM", expected: false,
 		},
 		{
 			name: "Invalid flow type",
-			cookieData: map[string]any{
-				definitions.SessionKeyIDPFlowID:   "flow-invalid",
-				definitions.SessionKeyIDPFlowType: "invalid",
+			state: &flowdomain.State{
+				FlowID: "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII", Type: flowdomain.FlowTypeUnknown,
+				Protocol: flowdomain.FlowProtocolOIDC, CurrentStep: flowdomain.FlowStepLogin,
+				AuthOutcome: flowdomain.AuthOutcomeUnknown,
 			},
+			ticket:   "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
 			expected: false,
 		},
 	}
@@ -174,52 +189,68 @@ func oidcIDPFlowCases() []validIDPFlowCase {
 	return []validIDPFlowCase{
 		{
 			name: "Valid OIDC authorization code flow",
-			cookieData: map[string]any{
-				definitions.SessionKeyIDPFlowID:      "flow-oidc",
-				definitions.SessionKeyIDPFlowType:    definitions.ProtoOIDC,
-				definitions.SessionKeyOIDCGrantType:  definitions.OIDCFlowAuthorizationCode,
-				definitions.SessionKeyIDPClientID:    "test-client",
-				definitions.SessionKeyIDPRedirectURI: "https://example.com/callback",
+			state: &flowdomain.State{
+				FlowID: "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO", Type: flowdomain.FlowTypeOIDCAuthorization,
+				Protocol: flowdomain.FlowProtocolOIDC, CurrentStep: flowdomain.FlowStepLogin,
+				AuthOutcome: flowdomain.AuthOutcomeUnknown,
+				Metadata: map[string]string{
+					flowdomain.FlowMetadataClientID: "test-client", flowdomain.FlowMetadataRedirectURI: "https://example.com/callback",
+					flowdomain.FlowMetadataResponseType: "code",
+				},
 			},
+			ticket:   "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
 			expected: true,
 		},
 		{
-			name: "OIDC flow without grant type is invalid",
-			cookieData: map[string]any{
-				definitions.SessionKeyIDPFlowID:   "flow-oidc-no-grant",
-				definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
+			name: "OIDC flow without response type is invalid",
+			state: &flowdomain.State{
+				FlowID: "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN", Type: flowdomain.FlowTypeOIDCAuthorization,
+				Protocol: flowdomain.FlowProtocolOIDC, CurrentStep: flowdomain.FlowStepLogin,
+				AuthOutcome: flowdomain.AuthOutcomeUnknown,
+				Metadata: map[string]string{
+					flowdomain.FlowMetadataClientID: "test-client", flowdomain.FlowMetadataRedirectURI: "https://example.com/callback",
+				},
 			},
+			ticket:   "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",
 			expected: false,
 		},
 		{
 			name: "Valid OIDC device code flow",
-			cookieData: map[string]any{
-				definitions.SessionKeyIDPFlowID:     "flow-device",
-				definitions.SessionKeyIDPFlowType:   definitions.ProtoOIDC,
-				definitions.SessionKeyOIDCGrantType: definitions.OIDCFlowDeviceCode,
-				definitions.SessionKeyIDPClientID:   "device-client",
-				definitions.SessionKeyDeviceCode:    "ABCD-1234",
+			state: &flowdomain.State{
+				FlowID: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD", Type: flowdomain.FlowTypeOIDCDeviceCode,
+				Protocol: flowdomain.FlowProtocolOIDC, CurrentStep: flowdomain.FlowStepLogin,
+				AuthOutcome: flowdomain.AuthOutcomeUnknown, GrantType: definitions.OIDCFlowDeviceCode,
+				Metadata: map[string]string{
+					flowdomain.FlowMetadataClientID: "device-client", flowdomain.FlowMetadataDeviceCode: "ABCD-1234",
+				},
 			},
+			ticket:   "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
 			expected: true,
 		},
 		{
 			name: "OIDC flow without client_id",
-			cookieData: map[string]any{
-				definitions.SessionKeyIDPFlowID:      "flow-oidc",
-				definitions.SessionKeyIDPFlowType:    definitions.ProtoOIDC,
-				definitions.SessionKeyIDPRedirectURI: "https://example.com/callback",
-				definitions.SessionKeyOIDCGrantType:  definitions.OIDCFlowAuthorizationCode,
+			state: &flowdomain.State{
+				FlowID: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", Type: flowdomain.FlowTypeOIDCAuthorization,
+				Protocol: flowdomain.FlowProtocolOIDC, CurrentStep: flowdomain.FlowStepLogin,
+				AuthOutcome: flowdomain.AuthOutcomeUnknown,
+				Metadata: map[string]string{
+					flowdomain.FlowMetadataRedirectURI: "https://example.com/callback", flowdomain.FlowMetadataResponseType: "code",
+				},
 			},
+			ticket:   "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
 			expected: false,
 		},
 		{
 			name: "OIDC flow without redirect_uri",
-			cookieData: map[string]any{
-				definitions.SessionKeyIDPFlowID:     "flow-oidc",
-				definitions.SessionKeyIDPFlowType:   definitions.ProtoOIDC,
-				definitions.SessionKeyIDPClientID:   "test-client",
-				definitions.SessionKeyOIDCGrantType: definitions.OIDCFlowAuthorizationCode,
+			state: &flowdomain.State{
+				FlowID: "UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU", Type: flowdomain.FlowTypeOIDCAuthorization,
+				Protocol: flowdomain.FlowProtocolOIDC, CurrentStep: flowdomain.FlowStepLogin,
+				AuthOutcome: flowdomain.AuthOutcomeUnknown,
+				Metadata: map[string]string{
+					flowdomain.FlowMetadataClientID: "test-client", flowdomain.FlowMetadataResponseType: "code",
+				},
 			},
+			ticket:   "UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU",
 			expected: false,
 		},
 	}
@@ -230,28 +261,38 @@ func samlIDPFlowCases() []validIDPFlowCase {
 	return []validIDPFlowCase{
 		{
 			name: "Valid SAML2 flow",
-			cookieData: map[string]any{
-				definitions.SessionKeyIDPFlowID:      "flow-saml",
-				definitions.SessionKeyIDPFlowType:    definitions.ProtoSAML,
-				definitions.SessionKeyIDPOriginalURL: "/saml/sso?SAMLRequest=abc",
+			state: &flowdomain.State{
+				FlowID: "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS", Type: flowdomain.FlowTypeSAML,
+				Protocol: flowdomain.FlowProtocolSAML, CurrentStep: flowdomain.FlowStepLogin,
+				AuthOutcome: flowdomain.AuthOutcomeUnknown,
+				Metadata: map[string]string{
+					flowdomain.FlowMetadataSAMLEntityID: "sp-1", flowdomain.FlowMetadataOriginalURL: "/saml/sso?SAMLRequest=abc",
+				},
 			},
+			ticket:   "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS",
 			expected: true,
 		},
 		{
 			name: "SAML2 flow without original URL",
-			cookieData: map[string]any{
-				definitions.SessionKeyIDPFlowID:   "flow-saml",
-				definitions.SessionKeyIDPFlowType: definitions.ProtoSAML,
+			state: &flowdomain.State{
+				FlowID: "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL", Type: flowdomain.FlowTypeSAML,
+				Protocol: flowdomain.FlowProtocolSAML, CurrentStep: flowdomain.FlowStepLogin,
+				AuthOutcome: flowdomain.AuthOutcomeUnknown,
+				Metadata:    map[string]string{flowdomain.FlowMetadataSAMLEntityID: "sp-1"},
 			},
+			ticket:   "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL",
 			expected: false,
 		},
 	}
 }
 
 // runIsValidIDPFlow executes flow validation inside a Gin request.
-func runIsValidIDPFlow(cookieData map[string]any) bool {
+func runIsValidIDPFlow(t *testing.T, state *flowdomain.State, ticket string) bool {
+	t.Helper()
+
+	runtime, browserCookie, _ := seedCanonicalIDPFlow(t, state)
 	r := gin.New()
-	r.Use(secureDataTestMiddleware(cookieData))
+	r.Use(cookie.CanonicalMiddleware(runtime, cookie.CanonicalContinuation))
 
 	var result bool
 
@@ -261,7 +302,8 @@ func runIsValidIDPFlow(cookieData map[string]any) bool {
 	})
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/test?flow="+ticket, nil)
+	req.AddCookie(browserCookie)
 	r.ServeHTTP(w, req)
 
 	return result
@@ -311,40 +353,4 @@ func TestIsLoginSelfResume(t *testing.T) {
 			assert.Equal(t, tt.want, isLoginSelfResume(tt.requestPath, tt.redirectURI))
 		})
 	}
-}
-
-func TestShouldDenyDeviceCodeAfterMFA(t *testing.T) {
-	handler := &FrontendHandler{}
-
-	t.Run("nil manager does not deny", func(t *testing.T) {
-		assert.False(t, handler.shouldDenyDeviceCodeAfterMFA(nil, nil))
-	})
-
-	t.Run("missing auth result does not deny", func(t *testing.T) {
-		mgr := &mockCookieManager{data: map[string]any{}}
-		assert.False(t, handler.shouldDenyDeviceCodeAfterMFA(nil, mgr))
-	})
-
-	t.Run("explicit auth fail with valid HMAC denies", func(t *testing.T) {
-		mgr := &mockCookieManager{data: map[string]any{}}
-		mgr.Set(definitions.SessionKeyUsername, "testuser")
-		cookie.SetAuthResult(mgr, "testuser", definitions.AuthResultFail)
-		assert.True(t, handler.shouldDenyDeviceCodeAfterMFA(nil, mgr))
-	})
-
-	t.Run("auth ok with valid HMAC does not deny", func(t *testing.T) {
-		mgr := &mockCookieManager{data: map[string]any{}}
-		mgr.Set(definitions.SessionKeyUsername, "testuser")
-		cookie.SetAuthResult(mgr, "testuser", definitions.AuthResultOK)
-		assert.False(t, handler.shouldDenyDeviceCodeAfterMFA(nil, mgr))
-	})
-
-	t.Run("tampered auth result (raw set without HMAC) denies", func(t *testing.T) {
-		mgr := &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyUsername:   "testuser",
-			definitions.SessionKeyAuthResult: uint8(definitions.AuthResultOK),
-		}}
-		// No HMAC set — should be treated as tampered and denied
-		assert.True(t, handler.shouldDenyDeviceCodeAfterMFA(nil, mgr))
-	})
 }

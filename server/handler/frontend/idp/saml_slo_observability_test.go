@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crewjam/saml"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
 	"github.com/croessner/nauthilus/v3/server/middleware/limit"
@@ -129,9 +130,28 @@ func TestSLOTerminalStatusFromCleanup(t *testing.T) {
 	)
 	assert.Equal(
 		t,
+		slodomain.SLOStatusFailed,
+		sloTerminalStatusFromCleanup(sloLocalCleanupResult{SessionRevocationErr: errors.New("session revocation failed")}),
+	)
+	assert.Equal(
+		t,
 		slodomain.SLOStatusPartial,
 		sloTerminalStatusFromCleanup(sloLocalCleanupResult{ParticipantCleanupErr: errors.New("participant cleanup failed")}),
 	)
+}
+
+func TestSAMLLogoutResponseReportsCanonicalRevocationFailure(t *testing.T) {
+	status := samlLogoutResponseStatusFromCleanup(sloLocalCleanupResult{
+		SessionRevocationErr:  errors.New("session revocation failed"),
+		ParticipantCleanupErr: errors.New("participant cleanup failed"),
+	})
+
+	assert.Equal(t, saml.StatusResponder, status.StatusCode.Value)
+	assert.Nil(t, status.StatusCode.StatusCode)
+
+	if assert.NotNil(t, status.StatusMessage) {
+		assert.Equal(t, "local browser session revocation failed", status.StatusMessage.Value)
+	}
 }
 
 func sloDurationSampleCount(t *testing.T, binding, messageType, outcome string) uint64 {

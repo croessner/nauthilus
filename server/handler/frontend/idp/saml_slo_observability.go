@@ -137,6 +137,8 @@ func sloRequestOutcomeFromHTTPStatus(httpStatus int) string {
 
 func sloTerminalStatusFromCleanup(cleanupResult sloLocalCleanupResult) slodomain.Status {
 	switch {
+	case cleanupResult.SessionRevocationErr != nil:
+		return slodomain.SLOStatusFailed
 	case cleanupResult.ParticipantCleanupErr != nil:
 		return slodomain.SLOStatusPartial
 	case cleanupResult.TransitionErr != nil:

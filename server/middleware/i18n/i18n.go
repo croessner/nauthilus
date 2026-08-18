@@ -48,6 +48,25 @@ type languageSources struct {
 
 // WithLanguage is a middleware function that handles the language setup for the application.
 func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Manager) gin.HandlerFunc {
+	return withLanguage(cfg, logger, langManager, util.ShouldSetSecureCookie)
+}
+
+// WithLanguageCookieSecurity builds language middleware with explicit cookie transport policy.
+func WithLanguageCookieSecurity(
+	cfg config.File,
+	logger *slog.Logger,
+	langManager corelang.Manager,
+	secureCookie bool,
+) gin.HandlerFunc {
+	return withLanguage(cfg, logger, langManager, func() bool { return secureCookie })
+}
+
+func withLanguage(
+	cfg config.File,
+	logger *slog.Logger,
+	langManager corelang.Manager,
+	secureCookie func() bool,
+) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		sources := newLanguageSources(ctx, cfg, langManager)
 		if !validateResolvedLanguage(ctx, sources) {
@@ -55,7 +74,7 @@ func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Man
 		}
 
 		localizer := i18n.NewLocalizer(langManager.GetBundle(), sources.lang, sources.accept)
-		saveLanguageCookie(ctx, logger, sources)
+		saveLanguageCookie(ctx, logger, sources, secureCookie())
 		ctx.Set(definitions.CtxLocalizedKey, localizer)
 
 		if redirectLanguageRequest(ctx, sources) {
@@ -117,7 +136,7 @@ func validateResolvedLanguage(ctx *gin.Context, sources languageSources) bool {
 }
 
 // saveLanguageCookie persists the resolved language when cookie state changed.
-func saveLanguageCookie(ctx *gin.Context, logger *slog.Logger, sources languageSources) {
+func saveLanguageCookie(ctx *gin.Context, logger *slog.Logger, sources languageSources, secureCookie bool) {
 	if !sources.needCookie {
 		return
 	}
@@ -128,7 +147,7 @@ func saveLanguageCookie(ctx *gin.Context, logger *slog.Logger, sources languageS
 		languageCookieMaxAgeSeconds,
 		"/",
 		"",
-		util.ShouldSetSecureCookie(),
+		secureCookie,
 		true,
 	)
 

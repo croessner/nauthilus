@@ -45,19 +45,13 @@ var authStateCallSiteInventory = map[string]authStateInventoryEntry{
 	"server/core/auth.go|NewAuthStateFromContextWithDeps":                                              {owner: "constructor implementation", count: 1},
 	"server/core/idp_mfa.go|NewAuthStateFromContextWithDeps":                                           {owner: "IdP and MFA convergence", count: 2},
 	"server/core/protect_impl.go|AuthState literal":                                                    {owner: "protected endpoint compatibility", count: 1},
-	"server/core/webauthn.go|NewAuthStateFromContextWithDeps":                                          {owner: "IdP and WebAuthn convergence", count: 4},
-	"server/handler/api/v1/mfa.go|NewAuthStateWithSetupWithDeps":                                       {owner: "MFA route convergence", count: 1},
 	"server/handler/auth/handler.go|NewAuthStateWithSetupWithDeps":                                     {owner: "auth route convergence", count: 1},
 	"server/handler/frontend/idp/backend_data.go|NewAuthStateWithSetupWithDeps":                        {owner: "IdP convergence", count: 1},
-	"server/handler/frontend/idp/frontend.go|NewAuthStateFromContextWithDeps":                          {owner: "IdP convergence", count: 2},
-	"server/handler/frontend/idp/frontend.go|NewAuthStateWithSetupWithDeps":                            {owner: "IdP convergence", count: 3},
 	"server/handler/frontend/idp/oidc.go|NewAuthStateFromContextWithDeps":                              {owner: "IdP convergence", count: 1},
-	"server/handler/frontend/idp/require_mfa.go|NewAuthStateWithSetupWithDeps":                         {owner: "IdP and MFA convergence", count: 1},
 	"server/handler/grpcauthority/backend_manager_identity_service.go|NewAuthStateFromContextWithDeps": {owner: "identity backend compatibility", count: 1},
 	"server/handler/health/healthz.go|NewAuthStateFromContextWithDeps":                                 {owner: "health compatibility", count: 1},
 	"server/handler/mfa_backchannel/handler.go|NewAuthStateFromContextWithDeps":                        {owner: "MFA backchannel convergence", count: 1},
-	"server/idp/mfa.go|NewAuthStateFromContextWithDeps":                                                {owner: "IdP and MFA convergence", count: 1},
-	"server/idp/nauthilus_idp.go|NewAuthStateFromContextWithDeps":                                      {owner: "IdP convergence", count: 3},
+	"server/idp/nauthilus_idp.go|NewAuthStateFromContextWithDeps":                                      {owner: "IdP convergence", count: 4},
 }
 
 func TestAuthnAuthStateConstructionCallSiteInventoryIsComplete(t *testing.T) {

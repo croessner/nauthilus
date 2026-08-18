@@ -40,7 +40,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/croessner/nauthilus/v3/server/idp/clientauth"
 	"github.com/croessner/nauthilus/v3/server/idp/dcr"
-	"github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/croessner/nauthilus/v3/server/idp/signing"
 	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
 	"github.com/croessner/nauthilus/v3/server/lualib"
@@ -160,14 +159,18 @@ func oidcRequestValues(ctx *gin.Context, key string) []string {
 
 // OIDCHandler handles OIDC protocol requests.
 type OIDCHandler struct {
-	deps                *deps.Deps
-	idp                 *idp.NauthilusIDP
-	storage             *idp.RedisTokenStorage
-	deviceStore         idp.DeviceCodeStore
-	userCodeGen         idp.UserCodeGenerator
-	registrationService dynamicRegistrationService
-	frontend            *FrontendHandler
-	tracer              monittrace.Tracer
+	deps                             *deps.Deps
+	idp                              *idp.NauthilusIDP
+	storage                          *idp.RedisTokenStorage
+	deviceStore                      idp.DeviceCodeStore
+	userCodeGen                      idp.UserCodeGenerator
+	registrationService              dynamicRegistrationService
+	frontend                         *FrontendHandler
+	canonicalAuthorizeSessionBuilder canonicalOIDCAuthorizeSessionBuilder
+	canonicalAuthorizeUserLoader     canonicalOIDCAuthorizeUserLoader
+	canonicalDeviceGrantPersister    canonicalDeviceGrantPersister
+	canonicalDeviceFlowConsumer      canonicalDeviceFlowConsumer
+	tracer                           monittrace.Tracer
 }
 
 const (
@@ -214,65 +217,58 @@ func NewOIDCHandler(d *deps.Deps, idpInstance *idp.NauthilusIDP, frontendHandler
 	}
 }
 
-// Register registers the OIDC routes.
-func (h *OIDCHandler) Register(router gin.IRouter) {
+// Register registers OIDC routes with explicit canonical browser checkpoints.
+func (h *OIDCHandler) Register(router gin.IRouter, runtime *cookie.CanonicalRuntime) {
 	router.Use(func(ctx *gin.Context) {
 		ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 		ctx.Next()
 	}, mdlua.ContextMiddleware())
 
-	var frontendSecret []byte
-
-	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithBytes(func(value []byte) {
-		if len(value) == 0 {
-			return
-		}
-
-		frontendSecret = bytes.Clone(value)
-	})
-	secureMW := cookie.Middleware(frontendSecret, h.deps.Cfg, h.deps.Env)
-	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
-	csrfMW := csrf.New()
 	securityMW := securityheaders.New(securityheaders.MiddlewareConfig{Config: h.deps.Cfg}).Handler()
+	csrfMW := csrf.NewHandler(csrf.WithBaseCookie(http.Cookie{
+		MaxAge: csrf.MaxAge, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		Secure: !h.deps.Env.GetDevMode(), Path: "/",
+	})).Middleware()
+	i18nMW := i18n.WithLanguageCookieSecurity(
+		h.deps.Cfg, h.deps.Logger, h.deps.LangManager, !h.deps.Env.GetDevMode(),
+	)
+	protocolEntryMW := cookie.CanonicalMiddleware(runtime, cookie.CanonicalProtocolEntry)
+	continuationMW := cookie.CanonicalMiddleware(runtime, cookie.CanonicalContinuation)
 
 	router.GET("/.well-known/openid-configuration", h.Discovery)
-
 	if h.deps.Cfg.GetIDP().OIDC.DynamicClientRegistration.Enabled {
 		if engine, ok := router.(*gin.Engine); ok {
 			engine.HandleMethodNotAllowed = true
 		}
-
 		router.Use(registrationNoStoreMiddleware())
 		router.POST(oidcRegistrationEndpointPath, h.RegisterDynamicClient)
 	}
-	router.GET("/oidc/authorize", securityMW, secureMW, i18nMW, h.Authorize)
-	router.GET("/oidc/authorize/:languageTag", securityMW, secureMW, i18nMW, h.Authorize)
-	router.POST("/oidc/token", h.Token)
 
+	router.GET("/oidc/authorize", securityMW, protocolEntryMW, i18nMW, h.AuthorizeCanonical)
+	router.GET("/oidc/authorize/:languageTag", securityMW, protocolEntryMW, i18nMW, h.AuthorizeCanonical)
+	router.POST("/oidc/token", h.Token)
 	if h.deps.Cfg.GetIDP().OIDC.IsTokenEndpointGETAllowed() {
 		router.GET("/oidc/token", h.Token)
 	}
-
 	router.GET("/oidc/userinfo", h.UserInfo)
 	router.POST("/oidc/introspect", h.Introspect)
 	router.GET("/oidc/jwks", h.JWKS)
 	router.POST("/oidc/device", h.DeviceAuthorization)
-	router.GET(frontendDeviceVerifyPath, securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
-	router.GET(frontendDeviceVerifyPath+"/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
-	router.GET("/oidc/device/verify/failed", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyFailedPage)
-	router.GET("/oidc/device/verify/failed/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyFailedPage)
-	router.POST(frontendDeviceVerifyPath, securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerify)
-	router.POST(frontendDeviceVerifyPath+"/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerify)
-	router.GET(frontendDeviceConsentPath, securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentGET)
-	router.GET(frontendDeviceConsentPath+"/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentGET)
-	router.POST(frontendDeviceConsentPath, securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentPOST)
-	router.POST(frontendDeviceConsentPath+"/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentPOST)
-	router.GET("/oidc/logout", securityMW, secureMW, h.Logout)
-	router.GET("/logout", securityMW, secureMW, h.Logout)
-	router.GET("/oidc/consent", securityMW, csrfMW, secureMW, i18nMW, h.ConsentGET)
-	router.GET("/oidc/consent/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.ConsentGET)
-	router.POST("/oidc/consent", securityMW, csrfMW, secureMW, i18nMW, h.ConsentPOST)
-	router.POST("/oidc/consent/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.ConsentPOST)
+
+	router.GET(frontendDeviceVerifyPath, securityMW, protocolEntryMW, csrfMW, i18nMW, h.DeviceVerifyPageCanonical)
+	router.GET(frontendDeviceVerifyPath+"/:languageTag", securityMW, protocolEntryMW, csrfMW, i18nMW, h.DeviceVerifyPageCanonical)
+	router.POST(frontendDeviceVerifyPath, securityMW, protocolEntryMW, csrfMW, i18nMW, h.DeviceVerifyCanonical)
+	router.POST(frontendDeviceVerifyPath+"/:languageTag", securityMW, protocolEntryMW, csrfMW, i18nMW, h.DeviceVerifyCanonical)
+	router.GET(frontendDeviceConsentPath, securityMW, continuationMW, csrfMW, i18nMW, h.DeviceConsentGETCanonical)
+	router.GET(frontendDeviceConsentPath+"/:languageTag", securityMW, continuationMW, csrfMW, i18nMW, h.DeviceConsentGETCanonical)
+	router.POST(frontendDeviceConsentPath, securityMW, continuationMW, csrfMW, i18nMW, h.DeviceConsentPOSTCanonical)
+	router.POST(frontendDeviceConsentPath+"/:languageTag", securityMW, continuationMW, csrfMW, i18nMW, h.DeviceConsentPOSTCanonical)
+	router.GET("/oidc/logout", securityMW, continuationMW, h.LogoutCanonical)
+	router.GET("/logout", securityMW, continuationMW, h.LogoutCanonical)
+	router.GET("/oidc/consent", securityMW, continuationMW, csrfMW, i18nMW, h.ConsentGETCanonical)
+	router.GET("/oidc/consent/:languageTag", securityMW, continuationMW, csrfMW, i18nMW, h.ConsentGETCanonical)
+	router.POST("/oidc/consent", securityMW, continuationMW, csrfMW, i18nMW, h.ConsentPOSTCanonical)
+	router.POST("/oidc/consent/:languageTag", securityMW, continuationMW, csrfMW, i18nMW, h.ConsentPOSTCanonical)
 }
 
 // Discovery returns the OIDC discovery document.
@@ -1899,7 +1895,6 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 
 // oidcLogoutSession captures session-derived identity data for logout.
 type oidcLogoutSession struct {
-	manager      cookie.Manager
 	account      string
 	uniqueUserID string
 	userID       string
@@ -1921,20 +1916,6 @@ func readOIDCLogoutRequest(ctx *gin.Context) oidcLogoutRequest {
 	}
 }
 
-// readOIDCLogoutSession captures cookie-backed logout identity data.
-func readOIDCLogoutSession(ctx *gin.Context) oidcLogoutSession {
-	session := oidcLogoutSession{manager: cookie.GetManager(ctx)}
-	if session.manager == nil {
-		return session
-	}
-
-	session.account = session.manager.GetString(definitions.SessionKeyAccount, "")
-	session.uniqueUserID = session.manager.GetString(definitions.SessionKeyUniqueUserID, "")
-	session.userID = oidcLogoutUserID(session.account, session.uniqueUserID)
-
-	return session
-}
-
 // oidcLogoutUserID prefers unique user IDs over account names.
 func oidcLogoutUserID(account string, uniqueUserID string) string {
 	if uniqueUserID != "" {
@@ -1944,25 +1925,39 @@ func oidcLogoutUserID(account string, uniqueUserID string) string {
 	return account
 }
 
-// applyOIDCLogoutIDTokenHint validates id_token_hint and fills client/user context.
-func (h *OIDCHandler) applyOIDCLogoutIDTokenHint(ctx *gin.Context, request oidcLogoutRequest, session *oidcLogoutSession) *config.OIDCClient {
+// applyCanonicalOIDCLogoutIDTokenHint binds a valid hint to the typed session identity.
+func (h *OIDCHandler) applyCanonicalOIDCLogoutIDTokenHint(
+	ctx *gin.Context,
+	request oidcLogoutRequest,
+	session *oidcLogoutSession,
+) (*config.OIDCClient, error) {
 	if request.idTokenHint == "" {
-		return nil
+		return nil, nil
 	}
 
 	claims, err := h.idp.ValidateToken(ctx.Request.Context(), request.idTokenHint)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("validate canonical logout token hint: %w", err)
+	}
+
+	subject, ok := claims["sub"].(string)
+	if !ok || strings.TrimSpace(subject) == "" {
+		return nil, fmt.Errorf("canonical logout token hint subject is missing")
+	}
+
+	if session.userID != "" && subject != session.userID {
+		return nil, fmt.Errorf("canonical logout token hint identity mismatch")
 	}
 
 	client := h.oidcLogoutClientFromClaims(claims)
+	if client == nil {
+		return nil, fmt.Errorf("canonical logout token hint client is missing")
+	}
 	if session.userID == "" {
-		if sub, ok := claims["sub"].(string); ok {
-			session.userID = sub
-		}
+		session.userID = subject
 	}
 
-	return client
+	return client, nil
 }
 
 // oidcLogoutClientFromClaims resolves the client referenced by token claims.
@@ -1975,22 +1970,6 @@ func (h *OIDCHandler) oidcLogoutClientFromClaims(claims map[string]any) *config.
 	client, _ := h.idp.FindClient(cid)
 
 	return client
-}
-
-// oidcLogoutClientIDs returns tracked OIDC clients from the session.
-func (h *OIDCHandler) oidcLogoutClientIDs(ctx *gin.Context, session oidcLogoutSession) []string {
-	if session.manager == nil {
-		return nil
-	}
-
-	oidcClients := session.manager.GetString(definitions.SessionKeyOIDCClients, "")
-	session.manager.Debug(ctx, h.deps.Logger, "OIDC logout initiated - session data before cleanup")
-
-	if oidcClients == "" {
-		return nil
-	}
-
-	return strings.Split(oidcClients, ",")
 }
 
 // oidcFrontChannelLogoutTask builds a browser logout task for an OIDC client.
@@ -2095,47 +2074,76 @@ func (h *OIDCHandler) oidcLogoutPageData(ctx *gin.Context, tasks []frontChannelL
 	return data
 }
 
-// Logout handles the OIDC logout request.
-func (h *OIDCHandler) Logout(ctx *gin.Context) {
-	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "oidc.logout")
+// LogoutCanonical ends one typed browser session without consulting legacy cookie state.
+//
+//nolint:funlen // Logout keeps hint binding, token flush, fanout, revocation, and final response in strict order.
+func (h *OIDCHandler) LogoutCanonical(ctx *gin.Context) {
+	spanCtx, span := h.tracer.Start(ctx.Request.Context(), "oidc.logout.canonical")
 	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
-
 	defer requestScope.Restore()
-	defer sp.End()
+	defer span.End()
 
 	h.logIncomingOIDCFlowRequest(ctx, "logout", "", "")
 	defer h.logCompletedOIDCFlowRequest(ctx, "logout", "", "")
 
-	request := readOIDCLogoutRequest(ctx)
-	session := readOIDCLogoutSession(ctx)
+	session := cookie.GetCanonicalSession(ctx)
+	if session == nil {
+		ctx.Status(http.StatusConflict)
 
-	client := h.applyOIDCLogoutIDTokenHint(ctx, request, &session)
-	if session.userID != "" {
-		if err := h.storage.FlushUserTokens(ctx.Request.Context(), session.userID); err != nil {
+		return
+	}
+
+	logout, err := session.OIDCLogoutContext(ctx.Request.Context())
+	if err != nil {
+		_ = session.Revoke(ctx.Request.Context(), ctx.Writer)
+		ctx.JSON(http.StatusConflict, gin.H{definitions.LogKeyError: oidcErrorInvalidRequest})
+
+		return
+	}
+
+	request := readOIDCLogoutRequest(ctx)
+	identitySession := oidcLogoutSession{
+		account:      logout.Identity.Account,
+		uniqueUserID: logout.Identity.Reference,
+		userID:       oidcLogoutUserID(logout.Identity.Account, logout.Identity.Reference),
+	}
+
+	client, err := h.applyCanonicalOIDCLogoutIDTokenHint(ctx, request, &identitySession)
+	if err != nil {
+		_ = session.Revoke(ctx.Request.Context(), ctx.Writer)
+		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidRequest})
+
+		return
+	}
+
+	if identitySession.userID != "" {
+		if err = h.storage.FlushUserTokens(ctx.Request.Context(), identitySession.userID); err != nil {
+			_ = session.Revoke(ctx.Request.Context(), ctx.Writer)
 			ctx.JSON(http.StatusServiceUnavailable, gin.H{definitions.LogKeyError: oidcErrorServerError})
 
 			return
 		}
 	}
 
-	clientIDs := h.oidcLogoutClientIDs(ctx, session)
-	frontChannelTasks := h.oidcFrontChannelLogoutTasks(ctx, clientIDs, session.userID)
-	frontChannelTasks = append(frontChannelTasks, h.samlFrontChannelLogoutTasks(ctx.Request.Context(), session.account)...)
+	clientIDs := logout.ClientIDs
+	frontChannelTasks := h.oidcFrontChannelLogoutTasks(ctx, clientIDs, identitySession.userID)
+	frontChannelTasks = append(
+		frontChannelTasks,
+		h.samlFrontChannelLogoutTasks(ctx.Request.Context(), identitySession.account)...,
+	)
 	logoutTarget := h.oidcLogoutTarget(client, clientIDs, request)
-	mgr := cookie.GetManager(ctx)
-	core.DeleteWebAuthnCeremony(ctx, core.AuthDeps{Cfg: h.deps.Cfg, Redis: h.deps.Redis}, mgr)
 
-	if len(frontChannelTasks) > 0 {
-		core.SessionCleaner(ctx)
-		core.ClearBrowserCookies(ctx)
-
-		ctx.HTML(http.StatusOK, "idp_logout_frames.html", h.oidcLogoutPageData(ctx, frontChannelTasks, logoutTarget))
+	if err = session.Revoke(ctx.Request.Context(), ctx.Writer); err != nil {
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{definitions.LogKeyError: oidcErrorServerError})
 
 		return
 	}
 
-	core.SessionCleaner(ctx)
-	core.ClearBrowserCookies(ctx)
+	if len(frontChannelTasks) > 0 {
+		ctx.HTML(http.StatusOK, "idp_logout_frames.html", h.oidcLogoutPageData(ctx, frontChannelTasks, logoutTarget))
+
+		return
+	}
 
 	ctx.Redirect(http.StatusFound, logoutTarget)
 }
@@ -2179,20 +2187,4 @@ func newOIDCBackChannelLogoutHTTPClient(transport http.RoundTripper) *http.Clien
 			return http.ErrUseLastResponse
 		},
 	}
-}
-
-// CleanupIDPFlowState removes all temporary IDP flow state keys from the cookie.
-// These keys are only needed during the login redirect cycle
-// (e.g. /oidc/authorize → /login → /oidc/authorize or /saml/sso → /login → /saml/sso)
-// and should be cleaned up after the flow completes successfully.
-// This covers OIDC (authorization code, device code) and SAML flows.
-func CleanupIDPFlowState(mgr cookie.Manager) {
-	flow.CleanupIDPState(mgr)
-}
-
-// CleanupMFAState removes all temporary MFA flow keys from the cookie.
-// These keys are only needed during MFA verification and should be cleaned up
-// after the MFA flow completes successfully (in finalizeMFALogin).
-func CleanupMFAState(mgr cookie.Manager) {
-	flow.CleanupMFAState(mgr)
 }

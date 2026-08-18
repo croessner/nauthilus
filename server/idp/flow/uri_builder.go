@@ -15,10 +15,20 @@
 
 package flow
 
+import (
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/croessner/nauthilus/v3/server/sessionstate"
+)
+
 const (
 	defaultStartURI  = "/login"
 	defaultCancelURI = "/"
 	defaultErrorURI  = "/login"
+	// FlowTicketParameter carries a server-verifiable opaque child handle across interaction requests.
+	FlowTicketParameter = "flow"
 )
 
 // URIBuilder resolves navigation targets for flow decisions.
@@ -61,14 +71,47 @@ func (b *URIBuilder) Resolve(state *State, action Action) string {
 	}
 
 	if uri, ok := explicitFlowTarget(state, action); ok {
-		return uri
+		return AppendTicket(uri, state.FlowID)
 	}
 
 	if uri, ok := b.transitionTarget(state, action); ok {
-		return uri
+		return AppendTicket(uri, state.FlowID)
 	}
 
-	return defaultFlowTarget(action)
+	return AppendTicket(defaultFlowTarget(action), state.FlowID)
+}
+
+// TicketFromRequest validates the opaque flow selector carried by URL or form state.
+func TicketFromRequest(request *http.Request) (sessionstate.Handle, error) {
+	if request == nil {
+		return "", ErrEmptyFlowID
+	}
+
+	value := strings.TrimSpace(request.FormValue(FlowTicketParameter))
+	if value == "" {
+		return "", ErrEmptyFlowID
+	}
+
+	return sessionstate.ParseHandle(value)
+}
+
+// AppendTicket adds a canonical opaque selector to one local interaction URL.
+func AppendTicket(target string, flowID string) string {
+	handle, err := sessionstate.ParseHandle(flowID)
+	if err != nil {
+		return target
+	}
+
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/") {
+		return target
+	}
+
+	query := parsed.Query()
+	query.Set(FlowTicketParameter, string(handle))
+	parsed.RawQuery = query.Encode()
+
+	return parsed.String()
 }
 
 // explicitFlowTarget returns the target carried by the current flow state.

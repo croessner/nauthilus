@@ -140,6 +140,51 @@ func TestRedisStoresEnforceCASIsolationExpiryAndParentBinding(t *testing.T) {
 	}
 }
 
+func TestCeremonyRepositoryConsumesExactlyOnce(t *testing.T) {
+	t.Parallel()
+
+	fixture := newRedisStoresFixture(t)
+	ctx := context.Background()
+	session := Handle("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG")
+	ceremony := Handle("HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH")
+	anchorReference := Reference{Session: session, Record: session}
+	ceremonyReference := Reference{Session: session, Record: ceremony}
+
+	anchor := SessionAnchor{
+		Record: Record{Handle: session}, CreatedAt: fixture.clock.Now(),
+		IdleExpiresAt: fixture.clock.Now().Add(30 * time.Minute), AbsoluteExpiresAt: fixture.clock.Now().Add(time.Hour),
+	}
+	if _, err := fixture.stores.Session.Commit(ctx, CommitRequest[SessionAnchor]{
+		Reference: anchorReference, Value: anchor, TTL: time.Hour,
+	}); err != nil {
+		t.Fatalf("commit anchor: %v", err)
+	}
+
+	record := CeremonyRecord{
+		Record: Record{Handle: ceremony}, Session: session, Kind: "login", Payload: []byte(`{"challenge":"opaque"}`),
+	}
+
+	revision, err := fixture.stores.Ceremony.Commit(ctx, CommitRequest[CeremonyRecord]{
+		Reference: ceremonyReference, Value: record, TTL: 5 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("commit ceremony: %v", err)
+	}
+
+	consumed, err := fixture.stores.Ceremony.Consume(ctx, DeleteRequest{
+		Reference: ceremonyReference, ExpectedRevision: revision,
+	})
+	if err != nil || consumed.Value.Kind != "login" {
+		t.Fatalf("consume ceremony: value=%#v err=%v", consumed, err)
+	}
+
+	if _, err = fixture.stores.Ceremony.Consume(ctx, DeleteRequest{
+		Reference: ceremonyReference, ExpectedRevision: revision,
+	}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("replayed consume error = %v, want not found", err)
+	}
+}
+
 // TestRedisStoresBoundTouchesAndPurgeOrphans proves idle-write bounds and fail-closed cleanup.
 func TestRedisStoresBoundTouchesAndPurgeOrphans(t *testing.T) {
 	t.Parallel()

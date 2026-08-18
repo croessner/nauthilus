@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+//nolint:funlen // Backend-affinity tests keep the full remote authority contract together.
 package idp
 
 import (
@@ -41,6 +42,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/grpcapi/identitymapper"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
@@ -155,6 +157,78 @@ func TestGetUserBackendDataUsesRemoteAuthorityMFAStateWithoutLocalBackends(t *te
 	assert.NoError(t, fixture.mock.ExpectationsWereMet())
 }
 
+func TestCanonicalWebAuthnBackendDataUsesTargetBoundSessionAffinity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	fixture := newBackendDataRemoteFixture(t)
+	credential := newBackendDataTestCredential()
+	client := newRemoteBackendDataAuthorityClient(credential)
+
+	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
+	defer cleanup()
+
+	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoOIDC, backendDataUsername)
+	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoOIDC, backendDataUsername)
+	fixture.expectSavedWebAuthnCache(t, &backend.User{
+		ID:          backendDataUniqueUserID,
+		Name:        backendDataUsername,
+		DisplayName: backendDataDisplayName,
+		Credentials: []mfa.PersistentCredential{credential},
+	})
+
+	runtime, browserCookie, flowID := seedCanonicalIDPFlow(t, canonicalDecisionOIDCState(""))
+
+	session := openCanonicalFixture(t, runtime, browserCookie)
+	if err := session.CommitIdentity(context.Background(), cookie.IdentityUpdate{
+		Reference: backendDataUniqueUserID,
+		Account:   backendDataUsername,
+		Subject:   backendDataUniqueUserID,
+		Protocol:  definitions.ProtoOIDC,
+		BackendAffinity: &cookie.SessionBackendAffinity{
+			Type: definitions.BackendLDAPName, Name: remoteBackendDataAuthorityBackend,
+			Protocol: definitions.ProtoIDP, Authority: remoteBackendDataAuthority,
+			OpaqueToken: remoteBackendDataBackendRef,
+		},
+	}); err != nil {
+		t.Fatalf("commit canonical backend affinity: %v", err)
+	}
+
+	identity, authenticated := session.Identity()
+	if !authenticated {
+		t.Fatal("canonical identity is not authenticated")
+	}
+
+	legacyManager := completedMFARefTestManager(
+		delegatedTargetStaleBackendRef,
+		delegatedFactorBackendRef,
+		"master@example.test",
+	)
+	ctx := completedMFARefTestContext(legacyManager)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/login/webauthn/begin", nil)
+	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
+
+	data, err := handler.canonicalWebAuthnBackendData(ctx, canonicalMFASelectionState{
+		session:  session,
+		identity: identity,
+		parent: &flowdomain.State{
+			FlowID: flowID, Protocol: flowdomain.FlowProtocolOIDC,
+		},
+	})
+	if assert.NoError(t, err) && assert.NotNil(t, data) {
+		assert.Equal(t, backendDataUsername, data.Username)
+		assert.Equal(t, backendDataUniqueUserID, data.UniqueUserID)
+	}
+
+	if assert.Len(t, client.resolveUserRequests, 1) {
+		requestRef := client.resolveUserRequests[0].GetBackend().GetOpaqueToken()
+		assert.Equal(t, remoteBackendDataBackendRef, requestRef)
+		assert.NotEqual(t, delegatedTargetStaleBackendRef, requestRef)
+		assert.NotEqual(t, delegatedFactorBackendRef, requestRef)
+	}
+
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
 func TestGetUserBackendDataPurgesStaleWebAuthnCacheWhenAuthorityHasNoCredentials(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -187,192 +261,21 @@ func TestGetUserBackendDataPurgesStaleWebAuthnCacheWhenAuthorityHasNoCredentials
 	assert.NoError(t, fixture.mock.ExpectationsWereMet())
 }
 
-func TestPurgeCachedAuthenticationForUserIgnoresConsumedStructuredBody(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	fixture := newBackendDataRemoteFixture(t)
-	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
-
-	router := gin.New()
-	router.POST("/login/webauthn/finish", func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxGUIDKey, "baseline-backend-data-guid")
-		ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
-		ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
-
-		handler.purgeCachedAuthenticationForUser(ctx, backendDataUsername)
-
-		ctx.Status(http.StatusNoContent)
-	})
-
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/login/webauthn/finish", strings.NewReader(""))
-	request.Header.Set("Content-Type", "application/json")
-	request.RemoteAddr = "127.0.0.1:12345"
-	router.ServeHTTP(recorder, request)
-
-	assert.Equal(t, http.StatusNoContent, recorder.Code)
-	assert.Empty(t, recorder.Body.String())
-}
-
-func TestLoadCompletedMFAUserRefreshesDelegatedTargetBackendRef(t *testing.T) {
-	fixture := newBackendDataRemoteFixture(t)
-	client := newRemoteBackendDataAuthorityClient()
-	client.rejectResolveBackendRef = delegatedTargetStaleBackendRef
-
-	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
-	defer cleanup()
-
-	fixture.expectAccountMappingForClient(backendDataUsername, definitions.ProtoOIDC, "completed-mfa-client", backendDataUsername)
-	fixture.expectAccountMappingForClient(backendDataUsername, definitions.ProtoOIDC, "completed-mfa-client", backendDataUsername)
-
-	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
-	mgr := completedMFARefTestManager(delegatedTargetStaleBackendRef, delegatedFactorBackendRef, "master@example.test")
-	ctx := completedMFARefTestContext(mgr)
-	sess := &mfaSessionState{
-		mgr:        mgr,
-		username:   backendDataUsername + "*master@example.test",
-		factorUser: "master@example.test",
-		oidcCID:    "completed-mfa-client",
-	}
-
-	user, err := handler.loadCompletedMFAUser(ctx, sess, &backend.User{Name: backendDataUsername})
-
-	if assert.NoError(t, err) && assert.NotNil(t, user) {
-		assert.Equal(t, backendDataUsername, user.Name)
-	}
-
-	if assert.Len(t, client.resolveUserRequests, 1) {
-		assert.Nil(t, client.resolveUserRequests[0].GetBackend())
-	}
-
-	assertRemoteBackendRefToken(t, mgr, remoteBackendDataBackendRef)
-	assertMFAFactorRemoteBackendRefToken(t, mgr, delegatedFactorBackendRef)
-	assert.NoError(t, fixture.mock.ExpectationsWereMet())
-}
-
-func TestLoadCompletedMFAUserReusesSameAccountBackendRef(t *testing.T) {
-	fixture := newBackendDataRemoteFixture(t)
-	client := newRemoteBackendDataAuthorityClient()
-	client.resolveUserResponse.User.Backend.OpaqueToken = remoteBackendDataBackendRef
-	client.resolveUserResponse.User.Backend.Protocol = definitions.ProtoOIDC
-
-	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
-	defer cleanup()
-
-	fixture.expectAccountMappingForClient(backendDataUsername, definitions.ProtoOIDC, "completed-mfa-client", backendDataUsername)
-	fixture.expectAccountMappingForClient(backendDataUsername, definitions.ProtoOIDC, "completed-mfa-client", backendDataUsername)
-
-	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
-	mgr := completedMFARefTestManager(remoteBackendDataBackendRef, remoteBackendDataBackendRef, backendDataUsername)
-	ctx := completedMFARefTestContext(mgr)
-	sess := &mfaSessionState{
-		mgr:        mgr,
-		username:   backendDataUsername,
-		factorUser: backendDataUsername,
-		oidcCID:    "completed-mfa-client",
-	}
-
-	user, err := handler.loadCompletedMFAUser(ctx, sess, &backend.User{Name: backendDataUsername})
-
-	if assert.NoError(t, err) && assert.NotNil(t, user) {
-		assert.Equal(t, backendDataUsername, user.Name)
-	}
-
-	if assert.Len(t, client.resolveUserRequests, 1) {
-		assert.Equal(t, remoteBackendDataBackendRef, client.resolveUserRequests[0].GetBackend().GetOpaqueToken())
-	}
-
-	assertRemoteBackendRefToken(t, mgr, remoteBackendDataBackendRef)
-	assertMFAFactorRemoteBackendRefToken(t, mgr, remoteBackendDataBackendRef)
-	assert.NoError(t, fixture.mock.ExpectationsWereMet())
-}
-
-func TestPostLoginWebAuthnFinishRefreshesOnlyDelegatedTargetBackendRef(t *testing.T) {
-	testCases := []struct {
-		name           string
-		factorAccount  string
-		targetRef      string
-		wantTargetRef  string
-		wantTargetHave bool
-	}{
-		{
-			name:          "delegated target lookup starts fresh",
-			factorAccount: "master@example.test",
-			targetRef:     delegatedTargetStaleBackendRef,
-		},
-		{
-			name:           "same account reuses backend reference",
-			factorAccount:  backendDataUsername,
-			targetRef:      remoteBackendDataBackendRef,
-			wantTargetRef:  remoteBackendDataBackendRef,
-			wantTargetHave: true,
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			mgr := completedMFARefTestManager(testCase.targetRef, delegatedFactorBackendRef, testCase.factorAccount)
-			setCompletedMFAWebAuthnFlowState(mgr)
-
-			ctx := completedMFARefTestContext(mgr)
-			handler := newContinueMFAFrontendHandlerWithIDP(&config.IDPSection{})
-			factorRefSeen := ""
-			handler.webAuthnLoginCompleter = func(_ *gin.Context, _ core.AuthDeps) (*backend.User, bool) {
-				if ref, ok := core.MFAFactorRemoteBackendRefFromSession(mgr); ok {
-					factorRefSeen = ref.OpaqueToken
-				}
-
-				factorUser := &backend.User{Name: testCase.factorAccount, ID: "factor-uid"}
-				finalUser := core.ResolveCompletedIDPMFAUser(mgr, factorUser)
-				core.StoreCompletedIDPMFASession(mgr, factorUser, definitions.MFAMethodWebAuthn)
-
-				return finalUser, true
-			}
-
-			handler.PostLoginWebAuthnFinish(ctx)
-
-			assert.Equal(t, http.StatusOK, ctx.Writer.Status())
-			assert.Equal(t, delegatedFactorBackendRef, factorRefSeen)
-
-			targetRef, haveTargetRef := core.RemoteBackendRefFromSession(mgr)
-			assert.Equal(t, testCase.wantTargetHave, haveTargetRef)
-			assert.Equal(t, testCase.wantTargetRef, targetRef.OpaqueToken)
-		})
-	}
-}
-
-// setCompletedMFAWebAuthnFlowState adds the OIDC parent data needed after WebAuthn completion.
-func setCompletedMFAWebAuthnFlowState(mgr cookie.Manager) {
-	mgr.Set(definitions.SessionKeyIDPFlowID, "completed-mfa-flow")
-	mgr.Set(definitions.SessionKeyIDPFlowType, definitions.ProtoOIDC)
-	mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
-	mgr.Set(definitions.SessionKeyIDPClientID, "completed-mfa-client")
-	mgr.Set(definitions.SessionKeyIDPRedirectURI, "https://client.example.test/callback")
-	mgr.Set(definitions.SessionKeyIDPScope, "openid")
-	mgr.Set(definitions.SessionKeyIDPState, "completed-mfa-state")
-	mgr.Set(definitions.SessionKeyIDPResponseType, "code")
-	mgr.Set(definitions.SessionKeyProtocol, definitions.ProtoOIDC)
-}
-
 func completedMFARefTestManager(targetRef, factorRef, factorAccount string) *mockCookieManager {
 	mgr := &mockCookieManager{data: map[string]any{
 		definitions.SessionKeyMFAAccount:       backendDataUsername,
 		definitions.SessionKeyMFAFactorAccount: factorAccount,
 	}}
-	core.StoreRemoteBackendRef(mgr, core.RemoteBackendRef{
-		Type:        definitions.BackendLDAPName,
-		Name:        remoteBackendDataAuthorityBackend,
-		Protocol:    definitions.ProtoOIDC,
-		Authority:   remoteBackendDataAuthority,
-		OpaqueToken: targetRef,
-	})
-	core.StorePendingIDPMFAFactorRemoteBackendRef(mgr, core.RemoteBackendRef{
-		Type:        definitions.BackendLDAPName,
-		Name:        remoteBackendDataAuthorityBackend,
-		Protocol:    definitions.ProtoOIDC,
-		Authority:   remoteBackendDataAuthority,
-		OpaqueToken: factorRef,
-	})
+	mgr.Set(definitions.SessionKeyRemoteBackendRefType, definitions.BackendLDAPName)
+	mgr.Set(definitions.SessionKeyRemoteBackendRefName, remoteBackendDataAuthorityBackend)
+	mgr.Set(definitions.SessionKeyRemoteBackendRefProtocol, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyRemoteBackendRefAuthority, remoteBackendDataAuthority)
+	mgr.Set(definitions.SessionKeyRemoteBackendRefToken, targetRef)
+	mgr.Set(definitions.SessionKeyMFAFactorRemoteBackendRefType, definitions.BackendLDAPName)
+	mgr.Set(definitions.SessionKeyMFAFactorRemoteBackendRefName, remoteBackendDataAuthorityBackend)
+	mgr.Set(definitions.SessionKeyMFAFactorRemoteBackendRefProtocol, definitions.ProtoOIDC)
+	mgr.Set(definitions.SessionKeyMFAFactorRemoteBackendRefAuthority, remoteBackendDataAuthority)
+	mgr.Set(definitions.SessionKeyMFAFactorRemoteBackendRefToken, factorRef)
 
 	return mgr
 }
@@ -388,53 +291,6 @@ func completedMFARefTestContext(mgr cookie.Manager) *gin.Context {
 	ctx.Set(definitions.CtxSecureDataKey, mgr)
 
 	return ctx
-}
-
-func assertRemoteBackendRefToken(t *testing.T, mgr cookie.Manager, expected string) {
-	t.Helper()
-
-	ref, ok := core.RemoteBackendRefFromSession(mgr)
-	assert.True(t, ok)
-	assert.Equal(t, expected, ref.OpaqueToken)
-}
-
-func assertMFAFactorRemoteBackendRefToken(t *testing.T, mgr cookie.Manager, expected string) {
-	t.Helper()
-
-	ref, ok := core.MFAFactorRemoteBackendRefFromSession(mgr)
-	assert.True(t, ok)
-	assert.Equal(t, expected, ref.OpaqueToken)
-}
-
-func TestHasWebAuthnIgnoresConsumedStructuredBody(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	fixture := newBackendDataRemoteFixture(t)
-	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
-
-	router := gin.New()
-	router.POST("/login/webauthn/finish", func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxGUIDKey, "baseline-backend-data-guid")
-		ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
-		ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
-
-		ok := handler.hasWebAuthn(ctx, &backend.User{
-			ID:   backendDataUniqueUserID,
-			Name: backendDataUsername,
-		}, definitions.ProtoIDP)
-
-		assert.False(t, ok)
-		ctx.Status(http.StatusNoContent)
-	})
-
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/login/webauthn/finish", strings.NewReader(""))
-	request.Header.Set("Content-Type", "application/json")
-	request.RemoteAddr = "127.0.0.1:12345"
-	router.ServeHTTP(recorder, request)
-
-	assert.Equal(t, http.StatusNoContent, recorder.Code)
-	assert.Empty(t, recorder.Body.String())
 }
 
 func TestBackendDataLookupContextDoesNotExposePluginResponseBoundary(t *testing.T) {
@@ -500,11 +356,10 @@ func runGetUserBackendDataRequest(t *testing.T, handler *FrontendHandler) (*User
 		ctx.Set(definitions.CtxGUIDKey, "baseline-backend-data-guid")
 		ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
 		ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
-		ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyAccount: backendDataUsername,
-		}})
 
-		result, err := handler.GetUserBackendData(ctx)
+		result, err := handler.getUserBackendDataForIdentity(
+			ctx, backendDataUsername, definitions.ProtoIDP, core.RemoteBackendRef{},
+		)
 		if err != nil {
 			t.Fatalf("GetUserBackendData returned error: %v", err)
 		}
@@ -569,18 +424,6 @@ func TestResolveWebAuthnUserFallbacksToBackend(t *testing.T) {
 		assert.Len(t, data.WebAuthnUser.Credentials, 1)
 	}
 
-	assert.NoError(t, fixture.mock.ExpectationsWereMet())
-}
-
-func TestHasWebAuthnWithProviderFallbacksToBackend(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	fixture := newWebAuthnFallbackFixture(t)
-	fixture.expectBackendFallbackCacheRefresh(t)
-
-	statusCode := fixture.runHasWebAuthnWithProvider(t)
-
-	assert.Equal(t, http.StatusOK, statusCode)
 	assert.NoError(t, fixture.mock.ExpectationsWereMet())
 }
 
@@ -689,30 +532,17 @@ func (f *webAuthnFallbackFixture) encryptedCredentialsValue(t *testing.T) string
 func (f *webAuthnFallbackFixture) runResolveWebAuthnUser(t *testing.T) (*UserBackendData, int) {
 	t.Helper()
 
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyUniqueUserID: f.uniqueUserID,
-	}}
 	data := &UserBackendData{
-		Username:    "test1",
-		DisplayName: "Test User",
+		Username:     "test1",
+		DisplayName:  "Test User",
+		UniqueUserID: f.uniqueUserID,
 	}
 
 	statusCode := runWebAuthnFallbackRoute(func(c *gin.Context) {
-		f.handler.resolveWebAuthnUser(c, mgr, data, f.provider)
+		f.handler.resolveWebAuthnUser(c, data, f.provider)
 	})
 
 	return data, statusCode
-}
-
-// runHasWebAuthnWithProvider executes hasWebAuthnWithProvider through a Gin route.
-func (f *webAuthnFallbackFixture) runHasWebAuthnWithProvider(t *testing.T) int {
-	t.Helper()
-
-	user := &backend.User{ID: f.uniqueUserID, Name: "test1", DisplayName: "Test User"}
-
-	return runWebAuthnFallbackRoute(func(c *gin.Context) {
-		assert.True(t, f.handler.hasWebAuthnWithProvider(c, user, "", f.provider))
-	})
 }
 
 // runWebAuthnFallbackRoute executes a single fallback assertion route.

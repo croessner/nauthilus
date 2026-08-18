@@ -58,11 +58,6 @@ func (env *EnvironmentSettings) GetDevMode() bool {
 	return env.DevMode
 }
 
-// setCommonDefaultEnvVars sets default values for commonly used environment variables related to backend services configuration.
-func setCommonDefaultEnvVars() {
-	setCommonDefaultEnvVarsFor(viper.GetViper())
-}
-
 // setCommonDefaultEnvVarsFor applies shared defaults to one explicit Viper owner.
 func setCommonDefaultEnvVarsFor(target *viper.Viper) {
 	target.SetDefault("developer_mode", false)

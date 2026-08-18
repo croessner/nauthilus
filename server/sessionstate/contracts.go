@@ -100,6 +100,7 @@ type TransactionRequest struct {
 	StepUp       []CommitRequest[StepUpRecord]
 	Ceremony     []CommitRequest[CeremonyRecord]
 	TOTPRecovery []CommitRequest[TOTPRecoveryRecord]
+	Logout       []CommitRequest[LogoutIndex]
 }
 
 // TransactionReceipt reports the committed anchor revision.
@@ -117,18 +118,43 @@ type SessionAnchor struct {
 	LastTouchedAt     time.Time
 	Authenticated     bool
 	IdentityReference string
+	Identity          IdentitySummary
+	BackendAffinity   BackendAffinitySummary
 	Assurance         AssuranceSummary
 	RotatedFrom       Handle
 	OIDCFlows         []Handle
 	SAMLFlows         []Handle
+	Enrollments       []Handle
+	StepUps           []Handle
+	Ceremonies        []Handle
+	TOTPRecovery      []Handle
+	LogoutIndexes     []Handle
 	Revoked           bool
 	Tombstone         bool
+}
+
+// IdentitySummary is the bounded, non-secret authenticated identity projection used by browser flows.
+type IdentitySummary struct {
+	Account     string
+	Subject     string
+	DisplayName string
+	Protocol    string
+}
+
+// BackendAffinitySummary binds follow-up operations to an authority backend without browser exposure.
+type BackendAffinitySummary struct {
+	Type        string
+	Name        string
+	Protocol    string
+	Authority   string
+	OpaqueToken string
 }
 
 // AssuranceSummary is the stable, non-secret MFA assurance shared by protocol flows.
 type AssuranceSummary struct {
 	Level     int
 	Method    string
+	Scope     string
 	ProvenAt  time.Time
 	ExpiresAt time.Time
 }
@@ -136,25 +162,37 @@ type AssuranceSummary struct {
 // OIDCFlow identifies one isolated OIDC flow record.
 type OIDCFlow struct {
 	Record
-	Session             Handle
-	ParentFlow          Handle
-	ClientID            string
-	RedirectURI         string
-	ResponseType        string
-	GrantType           string
-	Scopes              []string
-	State               string
-	Nonce               string
-	Prompt              string
-	CodeChallenge       string
-	CodeChallengeMethod string
-	ConsentDecision     string
-	DelayedResponse     bool
-	Authenticated       bool
-	AssuranceSatisfied  bool
-	Issuable            bool
-	Issued              bool
-	Consumed            bool
+	Session              Handle
+	ParentFlow           Handle
+	FlowType             string
+	CurrentStep          string
+	AuthOutcome          string
+	CancelTarget         string
+	ReturnTarget         string
+	ResumeTarget         string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	PendingMFA           bool
+	ClientID             string
+	RedirectURI          string
+	ResponseType         string
+	GrantType            string
+	DeviceCode           string
+	DeviceUserCodeDigest string
+	Scopes               []string
+	State                string
+	Nonce                string
+	Prompt               string
+	CodeChallenge        string
+	CodeChallengeMethod  string
+	ConsentChallenge     string
+	ConsentDecision      string
+	DelayedResponse      bool
+	Authenticated        bool
+	AssuranceSatisfied   bool
+	Issuable             bool
+	Issued               bool
+	Consumed             bool
 }
 
 // SAMLFlow identifies one isolated SAML flow record.
@@ -162,11 +200,21 @@ type SAMLFlow struct {
 	Record
 	Session            Handle
 	ParentFlow         Handle
+	FlowType           string
+	CurrentStep        string
+	AuthOutcome        string
+	CancelTarget       string
+	ReturnTarget       string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	PendingMFA         bool
 	EntityID           string
 	RequestID          string
 	RequestDigest      string
 	RelayState         string
 	Destination        string
+	OriginalURL        string
+	ResumeTarget       string
 	Logout             bool
 	DelayedResponse    bool
 	Authenticated      bool
@@ -194,16 +242,22 @@ type EnrollmentRecord struct {
 // StepUpRecord owns one dynamic assurance or self-service proof operation.
 type StepUpRecord struct {
 	Record
-	Session              Handle
-	Flow                 Handle
-	SelfServiceOperation string
-	RequestedLevel       int
-	SupportedMethods     []string
-	ProofMethod          string
-	CompletedAt          time.Time
-	FreshUntil           time.Time
-	Scope                string
-	Completed            bool
+	Session                  Handle
+	Flow                     Handle
+	AuthOutcome              string
+	PendingIdentityReference string
+	PendingIdentity          IdentitySummary
+	PendingBackendAffinity   BackendAffinitySummary
+	SelfServiceOperation     string
+	SelfServiceCredentialID  string
+	SelfServiceDeviceName    string
+	RequestedLevel           int
+	SupportedMethods         []string
+	ProofMethod              string
+	CompletedAt              time.Time
+	FreshUntil               time.Time
+	Scope                    string
+	Completed                bool
 }
 
 // CeremonyRecord owns one short-lived single-use WebAuthn operation.
@@ -233,6 +287,26 @@ type TOTPRecoveryRecord struct {
 	Generated         bool
 	Saved             bool
 	RetryCount        uint8
+}
+
+// ConsentGrant is one longer-lived OIDC consent bound to a stable identity and client.
+type ConsentGrant struct {
+	Record
+	IdentityReference string
+	ClientID          string
+	Scopes            []string
+	GrantedAt         time.Time
+	GrantExpiresAt    time.Time
+}
+
+// LogoutIndex is the bounded per-browser list of issued OIDC client sessions.
+// It is current-v1 session-owned state and never contains tokens or browser data.
+type LogoutIndex struct {
+	Record
+	Session           Handle
+	IdentityReference string
+	Account           string
+	OIDCClientIDs     []string
 }
 
 // EventKind is a bounded identifier-free session telemetry classification.

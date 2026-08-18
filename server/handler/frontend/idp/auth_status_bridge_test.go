@@ -149,32 +149,6 @@ func TestIDPAuthFailureAllowsDelayedResponseForEligiblePolicyFailure(t *testing.
 	}
 }
 
-func TestIDPAuthStatusBridgePersistsDelayedResponseMetadata(t *testing.T) {
-	mgr := &mockCookieManager{data: map[string]any{}}
-	status := idpAuthStatusBridge{
-		StatusMessage:    authStatusBridgeFallback,
-		I18NKey:          authStatusBridgeKey,
-		ResponseLanguage: "de",
-	}
-
-	storeIDPAuthStatusBridge(mgr, status)
-
-	loaded, ok := loadIDPAuthStatusBridge(mgr)
-	if !ok {
-		t.Fatal("expected stored auth status bridge")
-	}
-
-	if loaded != status {
-		t.Fatalf("loaded status = %#v, want %#v", loaded, status)
-	}
-
-	clearIDPAuthStatusBridge(mgr)
-
-	if _, ok := loadIDPAuthStatusBridge(mgr); ok {
-		t.Fatal("expected auth status bridge to be cleared")
-	}
-}
-
 type recordingIDPStatusResolver struct {
 	selection  localization.StatusMessage
 	preference localization.LanguagePreference

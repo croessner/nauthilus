@@ -621,145 +621,6 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/Error"
-  /api/v1/mfa/totp/setup:
-    get:
-      tags:
-        - MFA
-      operationId: setupTOTP
-      summary: Start TOTP registration for the current session account.
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: TOTP registration secret and QR code URL.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TOTPSetupResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/Error"
-  /api/v1/mfa/totp/register:
-    post:
-      tags:
-        - MFA
-      operationId: registerTOTP
-      summary: Complete TOTP registration for the current session account.
-      security:
-        - sessionCookie: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/TOTPRegisterRequest"
-      responses:
-        "200":
-          $ref: "#/components/responses/StatusMessage"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/v1/mfa/totp:
-    delete:
-      tags:
-        - MFA
-      operationId: deleteTOTP
-      summary: Remove TOTP for the current session account.
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          $ref: "#/components/responses/StatusMessage"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/Error"
-  /api/v1/mfa/recovery-codes/generate:
-    post:
-      tags:
-        - MFA
-      operationId: generateRecoveryCodes
-      summary: Generate recovery codes for the current session account.
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: Newly generated recovery codes.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RecoveryCodesResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/Error"
-  /api/v1/mfa/webauthn/register/begin:
-    get:
-      tags:
-        - MFA
-      operationId: beginWebAuthnRegistration
-      summary: Begin WebAuthn credential registration.
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: WebAuthn public key credential creation options.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WebAuthnOptions"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/Error"
-  /api/v1/mfa/webauthn/register/finish:
-    post:
-      tags:
-        - MFA
-      operationId: finishWebAuthnRegistration
-      summary: Finish WebAuthn credential registration.
-      security:
-        - sessionCookie: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/WebAuthnFinishRequest"
-      responses:
-        "200":
-          $ref: "#/components/responses/StatusMessage"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/Error"
-  /api/v1/mfa/webauthn/{credentialID}:
-    delete:
-      tags:
-        - MFA
-      operationId: deleteWebAuthnCredential
-      summary: Remove a WebAuthn credential for the current session account.
-      security:
-        - sessionCookie: []
-      parameters:
-        - name: credentialID
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          $ref: "#/components/responses/StatusMessage"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/Error"
   /api/v1/oidc/sessions/{user_id}:
     get:
       tags:
@@ -857,11 +718,6 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Backchannel OIDC bearer token. Some admin endpoints require security or admin scope.
-    sessionCookie:
-      type: apiKey
-      in: cookie
-      name: nauthilus_secure_data
-      description: Encrypted browser session cookie used by MFA management routes.
   parameters:
     AuthMode:
       name: mode
@@ -1279,12 +1135,6 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
-    StatusMessage:
-      description: Operation status message.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/StatusMessage"
     Unauthorized:
       description: Authentication is missing or invalid.
       content:
@@ -1674,15 +1524,6 @@ components:
           type: integer
         has_more:
           type: boolean
-    RecoveryCodesResponse:
-      type: object
-      required:
-        - codes
-      properties:
-        codes:
-          type: array
-          items:
-            type: string
     ResultEnvelope:
       type: object
       required:
@@ -1698,42 +1539,3 @@ components:
         operation:
           type: string
         result: {}
-    StatusMessage:
-      type: object
-      properties:
-        status:
-          type: string
-        message:
-          type: string
-    TOTPRegisterRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - code
-      properties:
-        code:
-          type: string
-    TOTPSetupResponse:
-      type: object
-      required:
-        - secret
-        - qr_code_url
-      properties:
-        secret:
-          type: string
-        qr_code_url:
-          type: string
-    WebAuthnFinishRequest:
-      type: object
-      required:
-        - name
-        - credential
-      properties:
-        name:
-          type: string
-        credential:
-          type: object
-          additionalProperties: true
-    WebAuthnOptions:
-      type: object
-      additionalProperties: true

@@ -27,8 +27,9 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
+	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/croessner/nauthilus/v3/server/openapi/requesttest"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/gin-gonic/gin"
@@ -189,15 +190,10 @@ func assertJWKSContractBody(t *testing.T, body []byte) {
 func runLoginFormResponseContract(t *testing.T, validator *requesttest.Validator) {
 	t.Helper()
 
-	router := newLoginResponseContractRouter(t, map[string]any{
-		definitions.SessionKeyIDPFlowID:      "flow-form",
-		definitions.SessionKeyIDPFlowType:    definitions.ProtoOIDC,
-		definitions.SessionKeyOIDCGrantType:  definitions.OIDCFlowAuthorizationCode,
-		definitions.SessionKeyIDPClientID:    latchedConsentClientID,
-		definitions.SessionKeyIDPRedirectURI: oidcContractRedirectURI,
-	})
+	router, browserCookie, flowID := newLoginResponseContractRouter(t, false)
 
-	request := httptest.NewRequest(http.MethodGet, "/login", nil)
+	request := httptest.NewRequest(http.MethodGet, flowdomain.AppendTicket("/login", flowID), nil)
+	request.AddCookie(browserCookie)
 	recorder := httptest.NewRecorder()
 
 	router.ServeHTTP(recorder, request)
@@ -218,19 +214,10 @@ func runLoginFormResponseContract(t *testing.T, validator *requesttest.Validator
 func runLoggedInLoginRedirectContract(t *testing.T, validator *requesttest.Validator) {
 	t.Helper()
 
-	router := newLoginResponseContractRouter(t, map[string]any{
-		definitions.SessionKeyAccount:         frontendTestAccount,
-		definitions.SessionKeyIDPFlowID:       "flow-redirect",
-		definitions.SessionKeyIDPFlowType:     definitions.ProtoOIDC,
-		definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
-		definitions.SessionKeyIDPClientID:     latchedConsentClientID,
-		definitions.SessionKeyIDPRedirectURI:  oidcContractRedirectURI,
-		definitions.SessionKeyIDPScope:        oidcContractScope,
-		definitions.SessionKeyIDPState:        oidcContractState,
-		definitions.SessionKeyIDPResponseType: oidcParamCode,
-	})
+	router, browserCookie, flowID := newLoginResponseContractRouter(t, true)
 
-	request := httptest.NewRequest(http.MethodGet, "/login", nil)
+	request := httptest.NewRequest(http.MethodGet, flowdomain.AppendTicket("/login", flowID), nil)
+	request.AddCookie(browserCookie)
 	recorder := httptest.NewRecorder()
 
 	router.ServeHTTP(recorder, request)
@@ -260,11 +247,31 @@ func oidcTokenContractForm(pairs ...string) string {
 	return values.Encode()
 }
 
-func newLoginResponseContractRouter(t *testing.T, sessionData map[string]any) *gin.Engine {
+func newLoginResponseContractRouter(t *testing.T, authenticated bool) (*gin.Engine, *http.Cookie, string) {
 	t.Helper()
 
+	state := &flowdomain.State{
+		FlowID: "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR", Type: flowdomain.FlowTypeOIDCAuthorization,
+		Protocol: flowdomain.FlowProtocolOIDC, CurrentStep: flowdomain.FlowStepLogin,
+		AuthOutcome: flowdomain.AuthOutcomeOK, ReturnTarget: "/oidc/authorize?client_id=" + latchedConsentClientID,
+		Metadata: map[string]string{
+			flowdomain.FlowMetadataClientID:     latchedConsentClientID,
+			flowdomain.FlowMetadataRedirectURI:  oidcContractRedirectURI,
+			flowdomain.FlowMetadataScope:        oidcContractScope,
+			flowdomain.FlowMetadataState:        oidcContractState,
+			flowdomain.FlowMetadataResponseType: oidcParamCode,
+		},
+	}
+
+	runtime, browserCookie, flowID := seedCanonicalIDPFlow(t, state)
+	if authenticated {
+		authenticateCanonicalFixture(t, runtime, browserCookie)
+	}
+
 	d := &deps.Deps{
-		Cfg:         &mockFrontendCfg{},
+		Cfg: &mockFrontendCfg{FileSettings: config.FileSettings{IDP: &config.IDPSection{
+			OIDC: config.OIDCConfig{Clients: []config.OIDCClient{{ClientID: latchedConsentClientID}}},
+		}}},
 		Env:         config.NewTestEnvironmentConfig(),
 		LangManager: &mockLangManager{},
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -275,11 +282,8 @@ func newLoginResponseContractRouter(t *testing.T, sessionData map[string]any) *g
 	router.SetHTMLTemplate(template.Must(template.New("idp_login.html").Parse(
 		`<html><body><form method="post" action="{{ .PostLoginEndpoint }}"><input name="username"><input name="password" type="password"></form></body></html>`,
 	)))
-	router.Use(func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: sessionData})
-		ctx.Next()
-	})
+	router.Use(cookie.CanonicalMiddleware(runtime, cookie.CanonicalContinuation))
 	router.GET("/login", handler.Login)
 
-	return router
+	return router, browserCookie, flowID
 }

@@ -147,7 +147,7 @@ func TestRunOIDCTokenPostActionContinuesAfterAcceptedRequestCancellation(t *test
 	waitForQueuedAction(t, requestChan)
 }
 
-func TestRunOIDCTokenPostActionCopiesMFASessionState(t *testing.T) {
+func TestRunOIDCTokenPostActionIgnoresLegacyMFASessionState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	requestChan := make(chan *action.Action, 1)
@@ -177,7 +177,20 @@ func TestRunOIDCTokenPostActionCopiesMFASessionState(t *testing.T) {
 
 	cancel()
 	gate.Complete()
-	assertQueuedMFAPostAction(t, requestChan, "webauthn")
+
+	select {
+	case act := <-requestChan:
+		if act == nil || act.CommonRequest == nil {
+			t.Fatal("expected queued action with CommonRequest")
+		}
+
+		assert.Empty(t, act.MFAMethod)
+		assert.False(t, act.MFACompleted)
+
+		act.FinishedChan <- action.Done{}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected post action to be queued")
+	}
 }
 
 func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {

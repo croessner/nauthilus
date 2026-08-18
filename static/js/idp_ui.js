@@ -769,7 +769,13 @@
                 return;
             }
 
-            const options = await beginResponse.json();
+            const beginPayload = await beginResponse.json();
+            const options = beginPayload.options;
+            const ceremony = beginPayload.ceremony;
+            if (!options || !options.publicKey || typeof ceremony !== 'string' || ceremony.length === 0) {
+                throw new Error(unknownErrorText);
+            }
+
             options.publicKey.challenge = base64URLToUint8Array(options.publicKey.challenge);
 
             if (Array.isArray(options.publicKey.allowCredentials)) {
@@ -786,7 +792,10 @@
                 ui.statusText.innerText = completingText;
             }
 
-            const finishResponse = await fetch(finishEndpoint, {
+            const finishURL = new URL(finishEndpoint, window.location.origin);
+            finishURL.searchParams.set('ceremony', ceremony);
+
+            const finishResponse = await fetch(finishURL.toString(), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -855,7 +864,12 @@
                 return;
             }
 
-            const options = await beginResponse.json();
+            const beginData = await beginResponse.json();
+            const options = beginData.options;
+            const ceremony = beginData.ceremony;
+            if (!options || !ceremony) {
+                throw new Error(unknownErrorText);
+            }
             options.publicKey.challenge = base64URLToUint8Array(options.publicKey.challenge);
             options.publicKey.user.id = base64URLToUint8Array(options.publicKey.user.id);
 
@@ -873,7 +887,9 @@
                 ui.statusText.innerText = completingText;
             }
 
-            const finishResponse = await fetch(finishEndpoint, {
+            const finishURL = new URL(finishEndpoint, window.location.origin);
+            finishURL.searchParams.set('ceremony', ceremony);
+            const finishResponse = await fetch(finishURL.toString(), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -889,7 +905,7 @@
                 return;
             }
 
-            window.location.href = nextURL;
+            window.location.href = await webAuthnLoginRedirectURL(finishResponse, nextURL);
         } catch (error) {
             showWebAuthnCaughtError(error, unknownErrorText, ui, trigger);
         }

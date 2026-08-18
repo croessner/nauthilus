@@ -42,7 +42,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/bruteforce"
 	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/v3/server/errors"
@@ -454,6 +453,9 @@ type AuthRequest struct {
 
 // AuthRuntime holds process-related data generated or tracked during the authentication request.
 type AuthRuntime struct {
+	// IDPContext carries typed request-local protocol facts for canonical browser flows.
+	IDPContext *IDPRequestContext
+
 	// StartTime is the time when the authentication request started.
 	StartTime time.Time
 
@@ -580,6 +582,15 @@ type AuthRuntime struct {
 	MasterUserMode bool
 }
 
+// IDPRequestContext is the bounded protocol projection used by policy/Lua requests without browser-state reads.
+type IDPRequestContext struct {
+	GrantType       string
+	RedirectURI     string
+	RequestedScopes []string
+	MFACompleted    bool
+	MFAMethod       string
+}
+
 // AuthSecurity manages counters, managers and history related to brute-force and security.
 type AuthSecurity struct {
 	// Tolerate is the brute-force tolerance configuration.
@@ -695,26 +706,8 @@ func (a *AuthState) GetLogger() *slog.Logger {
 
 // GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the backend.
 func (a *AuthState) GetWebAuthnCredentials() (credentials []mfa.PersistentCredential, err error) {
-	var (
-		passDB      definitions.Backend
-		backendName string
-	)
-
-	mgr := cookie.GetManager(a.Request.HTTPClientContext)
-	a.restoreRemoteBackendRefFromSession(mgr)
-
-	// We expect the same Database for credentials that was used for authenticating a user!
-	if mgr != nil {
-		cookieValue := mgr.GetUint8(definitions.SessionKeyUserBackend, 0)
-
-		if cookieValue != 0 {
-			passDB = definitions.Backend(cookieValue)
-			backendName = mgr.GetString(definitions.SessionKeyUserBackendName, "")
-
-			if backendMgr := a.GetBackendManager(passDB, backendName); backendMgr != nil {
-				return backendMgr.GetWebAuthnCredentials(a)
-			}
-		}
+	if a.Runtime.UsedPassDBBackend != definitions.BackendUnknown {
+		return a.GetWebAuthnCredentialsFromSelectedBackend()
 	}
 
 	// No cookie (default login page), search all configured databases.
@@ -741,26 +734,8 @@ func (a *AuthState) GetWebAuthnCredentials() (credentials []mfa.PersistentCreden
 
 // SaveWebAuthnCredential saves a WebAuthn credential for the user in the backend.
 func (a *AuthState) SaveWebAuthnCredential(credential *mfa.PersistentCredential) (err error) {
-	var (
-		passDB      definitions.Backend
-		backendName string
-	)
-
-	mgr := cookie.GetManager(a.Request.HTTPClientContext)
-	a.restoreRemoteBackendRefFromSession(mgr)
-
-	// We expect the same Database for credentials that was used for authenticating a user!
-	if mgr != nil {
-		cookieValue := mgr.GetUint8(definitions.SessionKeyUserBackend, 0)
-
-		if cookieValue != 0 {
-			passDB = definitions.Backend(cookieValue)
-			backendName = mgr.GetString(definitions.SessionKeyUserBackendName, "")
-
-			if backendMgr := a.GetBackendManager(passDB, backendName); backendMgr != nil {
-				return backendMgr.SaveWebAuthnCredential(a, credential)
-			}
-		}
+	if a.Runtime.UsedPassDBBackend != definitions.BackendUnknown {
+		return a.SaveWebAuthnCredentialToSelectedBackend(credential)
 	}
 
 	// Default to first LDAP backend if none specified (safest bet for registration).
@@ -784,26 +759,8 @@ func (a *AuthState) SaveWebAuthnCredential(credential *mfa.PersistentCredential)
 
 // DeleteWebAuthnCredential removes a WebAuthn credential for the user in the backend.
 func (a *AuthState) DeleteWebAuthnCredential(credential *mfa.PersistentCredential) (err error) {
-	var (
-		passDB      definitions.Backend
-		backendName string
-	)
-
-	mgr := cookie.GetManager(a.Request.HTTPClientContext)
-	a.restoreRemoteBackendRefFromSession(mgr)
-
-	// We expect the same Database for credentials that was used for authenticating a user!
-	if mgr != nil {
-		cookieValue := mgr.GetUint8(definitions.SessionKeyUserBackend, 0)
-
-		if cookieValue != 0 {
-			passDB = definitions.Backend(cookieValue)
-			backendName = mgr.GetString(definitions.SessionKeyUserBackendName, "")
-
-			if backendMgr := a.GetBackendManager(passDB, backendName); backendMgr != nil {
-				return backendMgr.DeleteWebAuthnCredential(a, credential)
-			}
-		}
+	if a.Runtime.UsedPassDBBackend != definitions.BackendUnknown {
+		return a.DeleteWebAuthnCredentialFromSelectedBackend(credential)
 	}
 
 	// No cookie, search all backends to find where it is stored and delete it.
@@ -824,26 +781,8 @@ func (a *AuthState) DeleteWebAuthnCredential(credential *mfa.PersistentCredentia
 
 // UpdateWebAuthnCredential updates an existing WebAuthn credential in the backend.
 func (a *AuthState) UpdateWebAuthnCredential(oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error) {
-	var (
-		passDB      definitions.Backend
-		backendName string
-	)
-
-	mgr := cookie.GetManager(a.Request.HTTPClientContext)
-	a.restoreRemoteBackendRefFromSession(mgr)
-
-	// We expect the same Database for credentials that was used for authenticating a user!
-	if mgr != nil {
-		cookieValue := mgr.GetUint8(definitions.SessionKeyUserBackend, 0)
-
-		if cookieValue != 0 {
-			passDB = definitions.Backend(cookieValue)
-			backendName = mgr.GetString(definitions.SessionKeyUserBackendName, "")
-
-			if backendMgr := a.GetBackendManager(passDB, backendName); backendMgr != nil {
-				return backendMgr.UpdateWebAuthnCredential(a, oldCredential, newCredential)
-			}
-		}
+	if a.Runtime.UsedPassDBBackend != definitions.BackendUnknown {
+		return a.UpdateWebAuthnCredentialInSelectedBackend(oldCredential, newCredential)
 	}
 
 	// No cookie, search all backends to find where it is stored and update it.
@@ -860,6 +799,62 @@ func (a *AuthState) UpdateWebAuthnCredential(oldCredential *mfa.PersistentCreden
 	}
 
 	return errors.ErrUnknownDatabaseBackend
+}
+
+// GetWebAuthnCredentialsFromSelectedBackend retrieves credentials only from the backend selected by authentication.
+func (a *AuthState) GetWebAuthnCredentialsFromSelectedBackend() ([]mfa.PersistentCredential, error) {
+	manager, err := a.selectedWebAuthnBackendManager()
+	if err != nil {
+		return nil, err
+	}
+
+	return manager.GetWebAuthnCredentials(a)
+}
+
+// SaveWebAuthnCredentialToSelectedBackend saves a credential only to the backend selected by authentication.
+func (a *AuthState) SaveWebAuthnCredentialToSelectedBackend(credential *mfa.PersistentCredential) error {
+	manager, err := a.selectedWebAuthnBackendManager()
+	if err != nil {
+		return err
+	}
+
+	return manager.SaveWebAuthnCredential(a, credential)
+}
+
+// DeleteWebAuthnCredentialFromSelectedBackend deletes a credential only from the backend selected by authentication.
+func (a *AuthState) DeleteWebAuthnCredentialFromSelectedBackend(credential *mfa.PersistentCredential) error {
+	manager, err := a.selectedWebAuthnBackendManager()
+	if err != nil {
+		return err
+	}
+
+	return manager.DeleteWebAuthnCredential(a, credential)
+}
+
+// UpdateWebAuthnCredentialInSelectedBackend updates a credential only in the backend selected by authentication.
+func (a *AuthState) UpdateWebAuthnCredentialInSelectedBackend(
+	oldCredential *mfa.PersistentCredential,
+	newCredential *mfa.PersistentCredential,
+) error {
+	manager, err := a.selectedWebAuthnBackendManager()
+	if err != nil {
+		return err
+	}
+
+	return manager.UpdateWebAuthnCredential(a, oldCredential, newCredential)
+}
+
+func (a *AuthState) selectedWebAuthnBackendManager() (BackendManager, error) {
+	if a == nil || a.Runtime.UsedPassDBBackend == definitions.BackendUnknown {
+		return nil, errors.ErrUnknownDatabaseBackend
+	}
+
+	manager := a.GetBackendManager(a.Runtime.UsedPassDBBackend, a.Runtime.BackendName)
+	if manager == nil {
+		return nil, errors.ErrUnknownDatabaseBackend
+	}
+
+	return manager, nil
 }
 
 // GetBackendManager returns a BackendManager based on the provided backend type and name.
@@ -2559,24 +2554,19 @@ func (a *AuthState) findOIDCClient(clientID string) *config.OIDCClient {
 	return nil
 }
 
-// fillIDPFields enriches the CommonRequest with IDP-specific data read from the
-// session cookie (grant type, scopes, redirect URI, MFA status) and the OIDC client
-// configuration (client name, allowed scopes, allowed grant types).
+// fillIDPFields enriches the CommonRequest with explicit typed protocol data and
+// the OIDC client configuration.
 func (a *AuthState) fillIDPFields(cr *lualib.CommonRequest) {
 	if a.Request.HTTPClientContext == nil {
 		return
 	}
 
-	mgr := cookie.GetManager(a.Request.HTTPClientContext)
-	if mgr != nil {
-		cr.GrantType = mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
-		cr.RedirectURI = mgr.GetString(definitions.SessionKeyIDPRedirectURI, "")
-		cr.MFACompleted = mgr.GetBool(definitions.SessionKeyMFACompleted, false)
-		cr.MFAMethod = mgr.GetString(definitions.SessionKeyMFAMethod, "")
-
-		if scopeStr := mgr.GetString(definitions.SessionKeyIDPScope, ""); scopeStr != "" {
-			cr.RequestedScopes = strings.Split(scopeStr, " ")
-		}
+	if typed := a.Runtime.IDPContext; typed != nil {
+		cr.GrantType = typed.GrantType
+		cr.RedirectURI = typed.RedirectURI
+		cr.RequestedScopes = slices.Clone(typed.RequestedScopes)
+		cr.MFACompleted = typed.MFACompleted
+		cr.MFAMethod = typed.MFAMethod
 	}
 
 	if a.Request.OIDCCID != "" {

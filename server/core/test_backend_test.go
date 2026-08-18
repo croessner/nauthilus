@@ -13,16 +13,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+//nolint:funlen // Selected-backend tests keep the full stale-session negative contract together.
 package core
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core/cookie"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
@@ -192,6 +198,84 @@ func TestTestBackendWebAuthnCredentialPersistenceContract(t *testing.T) {
 	}
 
 	assertStoredWebAuthnCredentials(t, manager, auth, nil)
+}
+
+func TestSelectedBackendWebAuthnOperationsIgnoreLegacySessionBackend(t *testing.T) {
+	setupMinimalTestConfig(t)
+	util.SetDefaultConfigFile(config.GetFile())
+	util.SetDefaultEnvironment(config.GetEnvironment())
+	gin.SetMode(gin.TestMode)
+
+	const (
+		username      = "canonical-webauthn@example.test"
+		canonicalName = "canonical-webauthn-backend"
+		legacyName    = "legacy-webauthn-backend"
+	)
+
+	canonicalManager := NewTestBackendManager(canonicalName, AuthDeps{})
+	legacyManager := NewTestBackendManager(legacyName, AuthDeps{})
+	canonicalCredential := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{ID: []byte("canonical-credential")},
+		Name:       "Canonical key",
+	}
+	legacyCredential := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{ID: []byte("legacy-credential")},
+		Name:       "Legacy key",
+	}
+
+	seedAuth := newTestBackendPasswordAuth(username, "unused")
+	if err := canonicalManager.SaveWebAuthnCredential(seedAuth, canonicalCredential); err != nil {
+		t.Fatalf("seed canonical credential: %v", err)
+	}
+
+	if err := legacyManager.SaveWebAuthnCredential(seedAuth, legacyCredential); err != nil {
+		t.Fatalf("seed legacy credential: %v", err)
+	}
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/mfa/webauthn/devices", nil)
+	ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyUserBackend:     uint8(definitions.BackendTest),
+		definitions.SessionKeyUserBackendName: legacyName,
+	}})
+
+	auth := &AuthState{deps: AuthDeps{Cfg: config.GetFile()}}
+	auth.Request.HTTPClientContext = ctx
+	auth.Request.Username = username
+	auth.Request.Protocol = config.NewProtocol(definitions.ProtoIDP)
+	auth.Runtime.UsedPassDBBackend = definitions.BackendTest
+	auth.Runtime.BackendName = canonicalName
+
+	credentials, err := auth.GetWebAuthnCredentialsFromSelectedBackend()
+	if err != nil || len(credentials) != 1 || string(credentials[0].ID) != "canonical-credential" {
+		t.Fatalf("selected backend credentials = %#v, err = %v", credentials, err)
+	}
+
+	added := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{ID: []byte("added-credential")},
+		Name:       "Added key",
+	}
+	if err = auth.SaveWebAuthnCredentialToSelectedBackend(added); err != nil {
+		t.Fatalf("save selected backend credential: %v", err)
+	}
+
+	updated := *canonicalCredential
+
+	updated.Name = "Renamed canonical key"
+	if err = auth.UpdateWebAuthnCredentialInSelectedBackend(canonicalCredential, &updated); err != nil {
+		t.Fatalf("update selected backend credential: %v", err)
+	}
+
+	if err = auth.DeleteWebAuthnCredentialFromSelectedBackend(added); err != nil {
+		t.Fatalf("delete selected backend credential: %v", err)
+	}
+
+	assertStoredWebAuthnCredentials(t, canonicalManager, seedAuth, []mfa.PersistentCredential{updated})
+	assertStoredWebAuthnCredentials(t, legacyManager, seedAuth, []mfa.PersistentCredential{*legacyCredential})
+
+	if cookie.GetManager(ctx) == nil {
+		t.Fatal("test requires a stale legacy manager in the request context")
+	}
 }
 
 func newTestBackendPasswordAuth(username, password string) *AuthState {

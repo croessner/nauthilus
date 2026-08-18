@@ -115,18 +115,6 @@ func TestNauthilusIDP_Authenticate_Integration(t *testing.T) {
 		})
 	}
 
-	t.Run("GetUserByUsername Setup", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = httptest.NewRequest("GET", "/user", nil)
-		setupMockContext(ctx, "test-getuser-guid", definitions.ServIDP)
-
-		user, err := idp.GetUserByUsername(ctx, "user3", "client1", "")
-
-		assert.Error(t, err)
-		assert.Nil(t, user)
-		assert.Contains(t, err.Error(), "failed to load user")
-	})
 }
 
 type authIntegrationFlowCase struct {
@@ -179,9 +167,16 @@ func assertAuthIntegrationFlow(t *testing.T, idp *NauthilusIDP, mock redismock.C
 	mock.ExpectHGet(tc.redisKey, tc.redisField).RedisNil()
 
 	// Authentication is expected to fail because this test intentionally omits backends.
-	user, err := idp.Authenticate(ctx, tc.username, tc.password, tc.clientID, tc.serviceProviderID)
+	result, err := idp.AuthenticateWithBackend(
+		ctx,
+		tc.username,
+		tc.password,
+		tc.clientID,
+		tc.serviceProviderID,
+		core.IDPRequestContext{},
+	)
 
 	assert.Error(t, err)
-	assert.Nil(t, user)
+	assert.Nil(t, result.User)
 	assert.Contains(t, err.Error(), "authentication failed with result")
 }

@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/config"
@@ -35,13 +36,14 @@ import (
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/idp"
 	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
+	"github.com/croessner/nauthilus/v3/server/idp/mfastate"
 	"github.com/croessner/nauthilus/v3/server/middleware/csrf"
 	"github.com/croessner/nauthilus/v3/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/v3/server/middleware/lua"
 	"github.com/croessner/nauthilus/v3/server/middleware/securityheaders"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v3/server/sessionstate"
 	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
@@ -52,16 +54,60 @@ import (
 	"golang.org/x/text/language/display"
 )
 
-const webAuthnDeviceNameMaxRunes = 64
+const canonicalAuthenticatedViewContextKey = "canonical_authenticated_view"
+
+const (
+	webAuthnDeviceNameMaxRunes    = 64
+	canonicalLoginErrorContextKey = "canonical_login_error"
+	notLoggedInMessage            = "Not logged in"
+)
 
 // FrontendHandler handles general IDP frontend pages like login and consent.
 type FrontendHandler struct {
-	deps                   *deps.Deps
-	mfa                    idp.MFAProvider
-	deviceStore            idp.DeviceCodeStore
-	webAuthnLoginCompleter func(*gin.Context, core.AuthDeps) (*backend.User, bool)
-	tracer                 monittrace.Tracer
+	deps                                  *deps.Deps
+	canonicalRuntime                      *cookie.CanonicalRuntime
+	canonicalPasswordAuthenticator        canonicalPasswordAuthenticator
+	deviceStore                           idp.DeviceCodeStore
+	canonicalEnrollmentResolver           canonicalEnrollmentResolver
+	canonicalMFAAvailabilityResolver      canonicalMFAAvailabilityResolver
+	canonicalTOTPVerifier                 canonicalTOTPVerifier
+	canonicalRecoveryVerifier             canonicalRecoveryVerifier
+	canonicalWebAuthnBegin                canonicalWebAuthnBegin
+	canonicalWebAuthnFinish               canonicalWebAuthnFinish
+	canonicalTOTPEnrollmentStarter        canonicalTOTPEnrollmentStarter
+	canonicalTOTPEnrollmentFinisher       canonicalTOTPEnrollmentFinisher
+	canonicalRecoveryEnrollmentGenerator  canonicalRecoveryEnrollmentGenerator
+	canonicalRecoveryEnrollmentSaver      canonicalRecoveryEnrollmentSaver
+	canonicalWebAuthnEnrollmentBegin      canonicalWebAuthnEnrollmentBegin
+	canonicalWebAuthnEnrollmentFinish     canonicalWebAuthnEnrollmentFinish
+	canonicalSelfServiceRename            canonicalSelfServiceRename
+	canonicalSelfServiceBackendResolver   canonicalSelfServiceBackendResolver
+	canonicalSelfServiceTOTPDeleter       canonicalSelfServiceTOTPDeleter
+	canonicalSelfServiceRecoveryGenerator canonicalSelfServiceRecoveryGenerator
+	canonicalWebAuthnCredentialDelete     func(*core.AuthState, *mfa.PersistentCredential) error
+	canonicalWebAuthnCredentialUpdate     func(*core.AuthState, *mfa.PersistentCredential, *mfa.PersistentCredential) error
+	tracer                                monittrace.Tracer
 }
+
+// NewCanonicalFrontendHandler binds the sole canonical runtime explicitly.
+func NewCanonicalFrontendHandler(d *deps.Deps, runtime *cookie.CanonicalRuntime) (*FrontendHandler, error) {
+	if d == nil || d.Cfg == nil || d.Env == nil || runtime == nil {
+		return nil, stderrors.New("canonical frontend: missing required dependency")
+	}
+
+	handler := NewFrontendHandler(d)
+	handler.canonicalRuntime = runtime
+
+	return handler, nil
+}
+
+type canonicalEnrollmentResolver func(
+	*gin.Context,
+	*cookie.CanonicalSession,
+	*flowdomain.State,
+	cookie.SessionIdentity,
+	[]string,
+) ([]string, error)
 
 type mfaAvailability struct {
 	haveTOTP          bool
@@ -75,33 +121,10 @@ func NewFrontendHandler(d *deps.Deps) *FrontendHandler {
 	prefix := d.Cfg.GetServer().GetRedis().GetPrefix()
 
 	return &FrontendHandler{
-		deps:                   d,
-		mfa:                    idp.NewMFAService(d),
-		deviceStore:            idp.NewRedisDeviceCodeStoreWithConfig(d.Redis, prefix, d.Cfg),
-		webAuthnLoginCompleter: core.CompleteLoginWebAuthn,
-		tracer:                 monittrace.New("nauthilus/idp/frontend"),
+		deps:        d,
+		deviceStore: idp.NewRedisDeviceCodeStoreWithConfig(d.Redis, prefix, d.Cfg),
+		tracer:      monittrace.New("nauthilus/idp/frontend"),
 	}
-}
-
-func (h *FrontendHandler) getLoginURL(ctx *gin.Context) string {
-	return h.appendQueryString(h.getLoginPath(ctx), ctx.Request.URL.RawQuery)
-}
-
-func (h *FrontendHandler) getLoginPath(ctx *gin.Context) string {
-	// For device code flow, redirect back to the device verify page
-	if mgr := cookie.GetManager(ctx); mgr != nil {
-		if mgr.GetString(definitions.SessionKeyOIDCGrantType, "") == definitions.OIDCFlowDeviceCode {
-			return h.deviceVerifyPath(ctx)
-		}
-	}
-
-	lang := ctx.Param("languageTag")
-
-	if lang != "" {
-		return "/login/" + lang
-	}
-
-	return frontendLoginPath
 }
 
 // deviceVerifyPath returns the device verify page path with optional language tag.
@@ -171,54 +194,63 @@ func (h *FrontendHandler) appendQueryString(path string, query string) string {
 	return path + separator + query
 }
 
-// isValidIDPFlow checks if an active IDP flow exists in the secure session cookie.
-// A valid IDP flow is either an OIDC request (authorization code or device code grant)
-// or a SAML2 SSO request.
-// The /login endpoint MUST NOT be accessed directly without a proper IDP flow.
-// All flow state is stored in the encrypted cookie - no URL parameters are used for security.
+// canonicalIDPFlow resolves and validates exactly one typed flow selected by the canonical request ticket.
+func (h *FrontendHandler) canonicalIDPFlow(ctx *gin.Context) (*flowdomain.State, bool) {
+	session := cookie.GetCanonicalSession(ctx)
+
+	ticket, err := flowdomain.TicketFromRequest(ctx.Request)
+	if session == nil || err != nil {
+		return nil, false
+	}
+
+	state, err := flowdomain.NewProtocolAggregate(session.Stores, session.Handle, 0).
+		Load(ctx.Request.Context(), string(ticket))
+	if err != nil {
+		return nil, false
+	}
+
+	valid := false
+
+	switch state.Protocol {
+	case flowdomain.FlowProtocolOIDC:
+		valid = validCanonicalOIDCLoginFlow(state)
+	case flowdomain.FlowProtocolSAML:
+		valid = validCanonicalSAMLLoginFlow(state)
+	}
+
+	return state, valid
+}
+
+// isValidIDPFlow reports whether the request resolves to one valid canonical protocol flow.
 func (h *FrontendHandler) isValidIDPFlow(ctx *gin.Context) bool {
-	mgr := cookie.GetManager(ctx)
-	if !hasActiveIDPFlow(mgr) {
+	_, valid := h.canonicalIDPFlow(ctx)
+
+	return valid
+}
+
+func validCanonicalOIDCLoginFlow(state *flowdomain.State) bool {
+	if state == nil || state.Protocol != flowdomain.FlowProtocolOIDC || state.Metadata == nil {
 		return false
 	}
 
-	flowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
-	switch flowType {
-	case definitions.ProtoOIDC:
-		return h.isValidOIDCFlow(mgr)
-	case definitions.ProtoSAML:
-		return h.isValidSAMLFlow(mgr)
+	switch state.Type {
+	case flowdomain.FlowTypeOIDCAuthorization:
+		return state.Metadata[flowdomain.FlowMetadataClientID] != "" &&
+			state.Metadata[flowdomain.FlowMetadataRedirectURI] != "" &&
+			state.Metadata[flowdomain.FlowMetadataResponseType] != ""
+	case flowdomain.FlowTypeOIDCDeviceCode:
+		return state.Metadata[flowdomain.FlowMetadataClientID] != "" &&
+			state.Metadata[flowdomain.FlowMetadataDeviceCode] != ""
 	default:
 		return false
 	}
 }
 
-// hasActiveIDPFlow verifies that a secure session references an IDP flow.
-func hasActiveIDPFlow(mgr cookie.Manager) bool {
-	if mgr == nil {
-		return false
-	}
-
-	return mgr.GetString(definitions.SessionKeyIDPFlowID, "") != ""
-}
-
-// isValidOIDCFlow verifies the required cookie state for an OIDC flow.
-func (h *FrontendHandler) isValidOIDCFlow(mgr cookie.Manager) bool {
-	grantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
-	switch grantType {
-	case definitions.OIDCFlowDeviceCode:
-		return newOIDCDeviceFlowContext(mgr).DeviceCode() != "" &&
-			mgr.GetString(definitions.SessionKeyIDPClientID, "") != ""
-	case definitions.OIDCFlowAuthorizationCode:
-		return newOIDCAuthorizeFlowContext(mgr).ResumeAuthorizeURL() != ""
-	default:
-		return false
-	}
-}
-
-// isValidSAMLFlow verifies the required cookie state for a SAML flow.
-func (h *FrontendHandler) isValidSAMLFlow(mgr cookie.Manager) bool {
-	return newSAMLFlowContext(mgr).OriginalURL() != ""
+func validCanonicalSAMLLoginFlow(state *flowdomain.State) bool {
+	return state != nil && state.Type == flowdomain.FlowTypeSAML &&
+		state.Protocol == flowdomain.FlowProtocolSAML &&
+		state.Metadata[flowdomain.FlowMetadataSAMLEntityID] != "" &&
+		state.Metadata[flowdomain.FlowMetadataOriginalURL] != ""
 }
 
 // frontendErrorPage describes one browser-safe frontend error response.
@@ -268,23 +300,25 @@ func (h *FrontendHandler) renderExpiredSelfServiceSessionError(ctx *gin.Context)
 	})
 }
 
-// Register adds frontend routes to the router.
+// Register adds frontend routes using only the canonical browser-session boundary.
 func (h *FrontendHandler) Register(router gin.IRouter) {
 	registerFrontendStaticAssets(router, h.frontendAssetBase())
 	registerIDPContextMiddleware(router)
 
 	middlewares := h.newFrontendRouteMiddlewares()
-	h.registerLoginRoutes(router, middlewares)
-	h.registerAuthRoutes(router, middlewares)
+	h.registerLoginRoutes(router, middlewares, frontendRouteHandlers)
+	h.registerAuthRoutes(router, middlewares, frontendAuthRouteHandlers, h.CanonicalAuthMiddleware())
 	h.registerLoggedOutRoutes(router, middlewares)
 }
 
 type frontendRouteMiddlewares struct {
-	security gin.HandlerFunc
-	csrf     gin.HandlerFunc
-	secure   gin.HandlerFunc
-	i18n     gin.HandlerFunc
+	security  gin.HandlerFunc
+	csrf      gin.HandlerFunc
+	canonical gin.HandlerFunc
+	i18n      gin.HandlerFunc
 }
+
+type frontendRouteChain func(frontendRouteMiddlewares, gin.HandlerFunc) []gin.HandlerFunc
 
 // frontendAssetBase resolves the directory that contains public frontend assets.
 func (h *FrontendHandler) frontendAssetBase() string {
@@ -326,37 +360,29 @@ func idpServiceMiddleware() gin.HandlerFunc {
 
 // newFrontendRouteMiddlewares builds the shared middleware chain for frontend pages.
 func (h *FrontendHandler) newFrontendRouteMiddlewares() frontendRouteMiddlewares {
+	csrfMiddleware := csrf.NewHandler(csrf.WithBaseCookie(http.Cookie{
+		MaxAge: csrf.MaxAge, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		Secure: !h.deps.Env.GetDevMode(), Path: "/",
+	})).Middleware()
+
 	return frontendRouteMiddlewares{
-		security: securityheaders.New(securityheaders.MiddlewareConfig{Config: h.deps.Cfg}).Handler(),
-		csrf:     csrf.New(),
-		secure:   cookie.Middleware(h.frontendEncryptionSecret(), h.deps.Cfg, h.deps.Env),
-		i18n:     i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager),
+		security:  securityheaders.New(securityheaders.MiddlewareConfig{Config: h.deps.Cfg}).Handler(),
+		csrf:      csrfMiddleware,
+		canonical: cookie.CanonicalMiddleware(h.canonicalRuntime, cookie.CanonicalContinuation),
+		i18n: i18n.WithLanguageCookieSecurity(
+			h.deps.Cfg, h.deps.Logger, h.deps.LangManager, !h.deps.Env.GetDevMode(),
+		),
 	}
 }
 
-// frontendEncryptionSecret copies the configured frontend cookie encryption secret.
-func (h *FrontendHandler) frontendEncryptionSecret() []byte {
-	var frontendSecret []byte
-
-	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithBytes(func(value []byte) {
-		if len(value) == 0 {
-			return
-		}
-
-		frontendSecret = bytes.Clone(value)
-	})
-
-	return frontendSecret
-}
-
-// frontendRouteHandlers appends the endpoint handler to the standard frontend chain.
+// frontendRouteHandlers builds the canonical browser-session chain without legacy cookie middleware.
 func frontendRouteHandlers(middlewares frontendRouteMiddlewares, handler gin.HandlerFunc) []gin.HandlerFunc {
-	return []gin.HandlerFunc{middlewares.security, middlewares.csrf, middlewares.secure, middlewares.i18n, handler}
+	return []gin.HandlerFunc{middlewares.security, middlewares.canonical, middlewares.csrf, middlewares.i18n, handler}
 }
 
-// frontendAuthRouteHandlers appends authentication middleware to the standard frontend chain.
+// frontendAuthRouteHandlers builds the authenticated canonical self-service chain.
 func frontendAuthRouteHandlers(middlewares frontendRouteMiddlewares, auth gin.HandlerFunc) []gin.HandlerFunc {
-	return []gin.HandlerFunc{middlewares.security, middlewares.csrf, middlewares.secure, middlewares.i18n, auth}
+	return []gin.HandlerFunc{middlewares.security, middlewares.canonical, middlewares.csrf, middlewares.i18n, auth}
 }
 
 // frontendCookieFreeRouteHandlers builds a chain that does not write the secure session cookie.
@@ -365,34 +391,41 @@ func frontendCookieFreeRouteHandlers(middlewares frontendRouteMiddlewares, handl
 }
 
 // registerLoginRoutes registers login, MFA challenge, and recovery-code login routes.
-func (h *FrontendHandler) registerLoginRoutes(router gin.IRouter, middlewares frontendRouteMiddlewares) {
-	loginWebAuthnBegin := core.LoginWebAuthnBegin(h.deps.Auth())
-
-	router.GET(frontendLoginPath, frontendRouteHandlers(middlewares, h.Login)...)
-	router.GET("/login/:languageTag", frontendRouteHandlers(middlewares, h.Login)...)
-	router.POST(frontendLoginPath, frontendRouteHandlers(middlewares, h.PostLogin)...)
-	router.POST("/login/:languageTag", frontendRouteHandlers(middlewares, h.PostLogin)...)
-	router.GET("/login/totp", frontendRouteHandlers(middlewares, h.LoginTOTP)...)
-	router.GET("/login/totp/:languageTag", frontendRouteHandlers(middlewares, h.LoginTOTP)...)
-	router.POST("/login/totp", frontendRouteHandlers(middlewares, h.PostLoginTOTP)...)
-	router.POST("/login/totp/:languageTag", frontendRouteHandlers(middlewares, h.PostLoginTOTP)...)
-	router.GET("/login/webauthn", frontendRouteHandlers(middlewares, h.LoginWebAuthn)...)
-	router.GET("/login/webauthn/:languageTag", frontendRouteHandlers(middlewares, h.LoginWebAuthn)...)
-	router.GET("/login/webauthn/begin", frontendRouteHandlers(middlewares, loginWebAuthnBegin)...)
-	router.GET("/login/webauthn/begin/:languageTag", frontendRouteHandlers(middlewares, loginWebAuthnBegin)...)
-	router.POST("/login/webauthn/finish", frontendRouteHandlers(middlewares, h.PostLoginWebAuthnFinish)...)
-	router.POST("/login/webauthn/finish/:languageTag", frontendRouteHandlers(middlewares, h.PostLoginWebAuthnFinish)...)
-	router.GET("/login/mfa", frontendRouteHandlers(middlewares, h.LoginMFASelect)...)
-	router.GET("/login/mfa/:languageTag", frontendRouteHandlers(middlewares, h.LoginMFASelect)...)
-	router.GET("/login/recovery", frontendRouteHandlers(middlewares, h.LoginRecovery)...)
-	router.GET("/login/recovery/:languageTag", frontendRouteHandlers(middlewares, h.LoginRecovery)...)
-	router.POST("/login/recovery", frontendRouteHandlers(middlewares, h.PostLoginRecovery)...)
-	router.POST("/login/recovery/:languageTag", frontendRouteHandlers(middlewares, h.PostLoginRecovery)...)
+func (h *FrontendHandler) registerLoginRoutes(
+	router gin.IRouter,
+	middlewares frontendRouteMiddlewares,
+	routeHandlers frontendRouteChain,
+) {
+	router.GET(frontendLoginPath, routeHandlers(middlewares, h.Login)...)
+	router.GET("/login/:languageTag", routeHandlers(middlewares, h.Login)...)
+	router.POST(frontendLoginPath, routeHandlers(middlewares, h.PostLogin)...)
+	router.POST("/login/:languageTag", routeHandlers(middlewares, h.PostLogin)...)
+	router.GET("/login/totp", routeHandlers(middlewares, h.LoginTOTP)...)
+	router.GET("/login/totp/:languageTag", routeHandlers(middlewares, h.LoginTOTP)...)
+	router.POST("/login/totp", routeHandlers(middlewares, h.PostLoginTOTP)...)
+	router.POST("/login/totp/:languageTag", routeHandlers(middlewares, h.PostLoginTOTP)...)
+	router.GET("/login/webauthn", routeHandlers(middlewares, h.LoginWebAuthn)...)
+	router.GET("/login/webauthn/:languageTag", routeHandlers(middlewares, h.LoginWebAuthn)...)
+	router.GET("/login/webauthn/begin", routeHandlers(middlewares, h.LoginWebAuthnBegin)...)
+	router.GET("/login/webauthn/begin/:languageTag", routeHandlers(middlewares, h.LoginWebAuthnBegin)...)
+	router.POST("/login/webauthn/finish", routeHandlers(middlewares, h.PostLoginWebAuthnFinish)...)
+	router.POST("/login/webauthn/finish/:languageTag", routeHandlers(middlewares, h.PostLoginWebAuthnFinish)...)
+	router.GET("/login/mfa", routeHandlers(middlewares, h.LoginMFASelect)...)
+	router.GET("/login/mfa/:languageTag", routeHandlers(middlewares, h.LoginMFASelect)...)
+	router.GET("/login/recovery", routeHandlers(middlewares, h.LoginRecovery)...)
+	router.GET("/login/recovery/:languageTag", routeHandlers(middlewares, h.LoginRecovery)...)
+	router.POST("/login/recovery", routeHandlers(middlewares, h.PostLoginRecovery)...)
+	router.POST("/login/recovery/:languageTag", routeHandlers(middlewares, h.PostLoginRecovery)...)
 }
 
 // registerAuthRoutes registers protected MFA self-service routes.
-func (h *FrontendHandler) registerAuthRoutes(router gin.IRouter, middlewares frontendRouteMiddlewares) {
-	authGroup := router.Group(definitions.MFARoot, frontendAuthRouteHandlers(middlewares, h.AuthMiddleware())...)
+func (h *FrontendHandler) registerAuthRoutes(
+	router gin.IRouter,
+	middlewares frontendRouteMiddlewares,
+	routeHandlers frontendRouteChain,
+	auth gin.HandlerFunc,
+) {
+	authGroup := router.Group(definitions.MFARoot, routeHandlers(middlewares, auth)...)
 
 	h.registerAuthHomeRoutes(authGroup)
 	h.registerAuthTOTPRoutes(authGroup)
@@ -419,15 +452,12 @@ func (h *FrontendHandler) registerAuthTOTPRoutes(router gin.IRouter) {
 
 // registerAuthWebAuthnRoutes registers protected WebAuthn management routes.
 func (h *FrontendHandler) registerAuthWebAuthnRoutes(router gin.IRouter) {
-	beginRegistration := core.BeginRegistration(h.deps.Auth())
-	finishRegistration := core.FinishRegistration(h.deps.Auth())
-
 	router.GET("/webauthn/register", h.RegisterWebAuthn)
 	router.GET("/webauthn/register/:languageTag", h.RegisterWebAuthn)
-	router.GET("/webauthn/register/begin", beginRegistration)
-	router.GET("/webauthn/register/begin/:languageTag", beginRegistration)
-	router.POST("/webauthn/register/finish", finishRegistration)
-	router.POST("/webauthn/register/finish/:languageTag", finishRegistration)
+	router.GET("/webauthn/register/begin", h.BeginWebAuthnRegistration)
+	router.GET("/webauthn/register/begin/:languageTag", h.BeginWebAuthnRegistration)
+	router.POST("/webauthn/register/finish", h.FinishWebAuthnRegistration)
+	router.POST("/webauthn/register/finish/:languageTag", h.FinishWebAuthnRegistration)
 	router.DELETE("/webauthn", h.DeleteWebAuthn)
 	router.DELETE("/webauthn/:languageTag", h.DeleteWebAuthn)
 	router.GET("/webauthn/devices", h.WebAuthnDevices)
@@ -466,25 +496,25 @@ func (h *FrontendHandler) registerLoggedOutRoutes(router gin.IRouter, middleware
 	router.GET("/logged_out/:languageTag", frontendCookieFreeRouteHandlers(middlewares, h.LoggedOut)...)
 }
 
-// AuthMiddleware ensures the user is logged in for protected pages like 2FA Self-Service.
-// Users must already have a valid session from a completed IDP flow.
-// Direct access without a prior login redirects to an error page.
-func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
+// CanonicalAuthMiddleware requires one authenticated typed browser session for protected self-service routes.
+func (h *FrontendHandler) CanonicalAuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		mgr := cookie.GetManager(ctx)
-		account := ""
-
-		if mgr != nil {
-			account = mgr.GetString(definitions.SessionKeyAccount, "")
-		}
-
-		if account == "" {
+		session := cookie.GetCanonicalSession(ctx)
+		if session == nil {
 			h.renderExpiredSelfServiceSessionError(ctx)
 			ctx.Abort()
 
 			return
 		}
 
+		if _, authenticated := session.Identity(); !authenticated {
+			h.renderExpiredSelfServiceSessionError(ctx)
+			ctx.Abort()
+
+			return
+		}
+
+		ctx.Set(canonicalAuthenticatedViewContextKey, true)
 		ctx.Next()
 	}
 }
@@ -494,6 +524,9 @@ func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {
 
 	data["DevMode"] = h.deps.Env.GetDevMode()
 	data["HXRequest"] = ctx.GetHeader("HX-Request") != ""
+	if ticket, err := flowdomain.TicketFromRequest(ctx.Request); err == nil {
+		data["FlowTicket"] = string(ticket)
+	}
 
 	return data
 }
@@ -505,7 +538,30 @@ func (h *FrontendHandler) setLoginRememberData(ctx *gin.Context, data gin.H, oid
 
 // BasePageData returns the common data for all IDP frontend pages.
 func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manager) gin.H {
-	sessionData := basePageSessionDataFromContext(ctx)
+	return basePageDataForSession(ctx, cfg, langManager, basePageSessionDataFromContext(ctx))
+}
+
+func canonicalBasePageData(
+	ctx *gin.Context,
+	cfg config.File,
+	langManager corelang.Manager,
+	identity cookie.SessionIdentity,
+	flowType string,
+	oidcClientID string,
+	samlEntityID string,
+) gin.H {
+	return basePageDataForSession(ctx, cfg, langManager, basePageSessionData{
+		username: identity.Account, flowType: flowType,
+		oidcClientID: oidcClientID, samlEntityID: samlEntityID,
+	})
+}
+
+func basePageDataForSession(
+	ctx *gin.Context,
+	cfg config.File,
+	langManager corelang.Manager,
+	sessionData basePageSessionData,
+) gin.H {
 	languageData := basePageLanguageDataFromContext(ctx, langManager)
 	idpClientName := resolveIDPClientName(
 		cfg,
@@ -551,26 +607,23 @@ type basePageLanguageData struct {
 	path          string
 }
 
-// basePageSessionDataFromContext extracts user and IDP client state from the secure session.
+// basePageSessionDataFromContext extracts only the canonical session identity.
 func basePageSessionDataFromContext(ctx *gin.Context) basePageSessionData {
-	mgr := cookie.GetManager(ctx)
-	if mgr == nil {
+	if ctx == nil || !ctx.GetBool(canonicalAuthenticatedViewContextKey) {
 		return basePageSessionData{}
 	}
 
-	sessionData := basePageSessionData{
-		username: mgr.GetString(definitions.SessionKeyAccount, ""),
-		flowType: mgr.GetString(definitions.SessionKeyIDPFlowType, ""),
+	session := cookie.GetCanonicalSession(ctx)
+	if session == nil {
+		return basePageSessionData{}
 	}
 
-	switch sessionData.flowType {
-	case definitions.ProtoOIDC:
-		sessionData.oidcClientID = mgr.GetString(definitions.SessionKeyIDPClientID, "")
-	case definitions.ProtoSAML:
-		sessionData.samlEntityID = mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
+	identity, authenticated := session.Identity()
+	if !authenticated {
+		return basePageSessionData{}
 	}
 
-	return sessionData
+	return basePageSessionData{username: identity.Account}
 }
 
 // basePageLanguageDataFromContext resolves language display data for frontend templates.
@@ -672,18 +725,18 @@ func resolveIDPClientName(cfg config.File, flowType string, oidcClientID string,
 
 // Login renders the modern login page.
 // This endpoint is ONLY for IDP flows (OIDC/SAML2). Direct access without a proper flow is rejected.
-// All flow state is read from the secure encrypted cookie - no URL parameters are used.
+// The opaque URL ticket selects server-side flow state bound to the canonical browser session.
 func (h *FrontendHandler) Login(ctx *gin.Context) {
-	if !h.isValidIDPFlow(ctx) {
+	protocolState, valid := h.canonicalIDPFlow(ctx)
+	if !valid {
 		h.renderNoFlowError(ctx)
 
 		return
 	}
 
-	mgr := cookie.GetManager(ctx)
-	flowState := h.loginFlowState(mgr)
+	flowState := h.loginFlowState(protocolState)
 
-	if h.resumeExistingLoginSession(ctx, mgr) {
+	if h.resumeCanonicalExistingLoginSession(ctx, cookie.GetCanonicalSession(ctx), protocolState) {
 		return
 	}
 
@@ -693,11 +746,7 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 		return
 	}
 
-	if mgr != nil {
-		mgr.Delete(definitions.SessionKeyMFAMulti)
-	}
-
-	h.renderLoginPage(ctx, mgr, flowState)
+	h.renderLoginPage(ctx, flowState)
 }
 
 type loginFlowState struct {
@@ -707,44 +756,113 @@ type loginFlowState struct {
 	samlEntityID string
 }
 
-// loginFlowState extracts flow identifiers used by the login page.
-func (h *FrontendHandler) loginFlowState(mgr cookie.Manager) loginFlowState {
-	if mgr == nil {
+// loginFlowState extracts page-safe identifiers from one typed protocol record.
+func (h *FrontendHandler) loginFlowState(state *flowdomain.State) loginFlowState {
+	if state == nil {
 		return loginFlowState{}
 	}
 
-	oidcCID, samlEntityID := h.getFlowClientIdentifiers(mgr)
-
-	flowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
-	if flowType == definitions.ProtoSAML && samlEntityID == "" {
-		samlEntityID = definitions.ProtoSAML
-	}
-
 	return loginFlowState{
-		flowType:     flowType,
-		grantType:    mgr.GetString(definitions.SessionKeyOIDCGrantType, ""),
-		oidcCID:      oidcCID,
-		samlEntityID: samlEntityID,
+		flowType:     string(state.Protocol),
+		grantType:    state.GrantType,
+		oidcCID:      state.Metadata[flowdomain.FlowMetadataClientID],
+		samlEntityID: state.Metadata[flowdomain.FlowMetadataSAMLEntityID],
 	}
 }
 
-// resumeExistingLoginSession resumes the IDP flow for an already authenticated session.
-func (h *FrontendHandler) resumeExistingLoginSession(ctx *gin.Context, mgr cookie.Manager) bool {
-	if mgr == nil || mgr.GetString(definitions.SessionKeyAccount, "") == "" {
+// resumeCanonicalExistingLoginSession applies enrollment and assurance policy before typed protocol resume.
+//
+//nolint:gocyclo // Existing-login resume owns the complete enrollment, assurance, and protocol continuation decision.
+func (h *FrontendHandler) resumeCanonicalExistingLoginSession(
+	ctx *gin.Context,
+	session *cookie.CanonicalSession,
+	state *flowdomain.State,
+) bool {
+	if h == nil || ctx == nil || session == nil || state == nil {
 		return false
 	}
 
-	if h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
+	identity, authenticated := session.Identity()
+	if !authenticated {
+		return false
+	}
+
+	policy, ok := h.canonicalFlowMFAPolicy(ctx.Request.Context(), state)
+	if !ok {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+
 		return true
 	}
 
-	if h.redirectExistingSessionMFAAssurance(ctx, mgr) {
+	missing, ok := h.canonicalMissingEnrollment(ctx, session, state, identity, policy.required)
+	if !ok {
 		return true
 	}
 
-	h.resumeIDPFlow(ctx, mgr)
+	satisfied := canonicalSessionSatisfiesMFAPolicy(session, policy, session.EvaluationTime())
+	if canonicalPromptNone(state) && (len(missing) > 0 || !satisfied) {
+		redirectOIDCAuthorizeError(
+			ctx,
+			state.Metadata[flowdomain.FlowMetadataRedirectURI],
+			state.Metadata[flowdomain.FlowMetadataState],
+			"interaction_required",
+		)
+
+		return true
+	}
+
+	if len(missing) > 0 {
+		if !h.startCanonicalRequiredMFAEnrollment(ctx, session, state, identity, missing) && !ctx.Writer.Written() {
+			ctx.AbortWithStatus(http.StatusServiceUnavailable)
+		}
+
+		return true
+	}
+
+	if !satisfied {
+		if !h.startCanonicalMFAAssuranceStepUp(ctx, session, state, identity, policy) && !ctx.Writer.Written() {
+			ctx.AbortWithStatus(http.StatusServiceUnavailable)
+		}
+
+		return true
+	}
+
+	if !h.resumeCanonicalIDPFlow(ctx, session, state) && !ctx.Writer.Written() {
+		ctx.AbortWithStatus(http.StatusConflict)
+	}
 
 	return true
+}
+
+func (h *FrontendHandler) canonicalMissingEnrollment(
+	ctx *gin.Context,
+	session *cookie.CanonicalSession,
+	state *flowdomain.State,
+	identity cookie.SessionIdentity,
+	required []string,
+) ([]string, bool) {
+	if len(required) == 0 {
+		return nil, true
+	}
+
+	resolver := h.canonicalEnrollmentResolver
+	if resolver == nil {
+		resolver = h.canonicalMissingRequiredMFA
+	}
+
+	missing, err := resolver(ctx, session, state, identity, required)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+
+		return nil, false
+	}
+
+	return missing, true
+}
+
+func canonicalPromptNone(state *flowdomain.State) bool {
+	return state != nil && state.Protocol == flowdomain.FlowProtocolOIDC &&
+		strings.TrimSpace(state.Metadata[flowdomain.FlowMetadataPrompt]) == oidcClientAuthMethodNone
 }
 
 // webAuthnFinishResponse is returned to browser JavaScript after a successful
@@ -755,7 +873,7 @@ type webAuthnFinishResponse struct {
 }
 
 // renderLoginPage renders the initial username/password login page.
-func (h *FrontendHandler) renderLoginPage(ctx *gin.Context, mgr cookie.Manager, flowState loginFlowState) {
+func (h *FrontendHandler) renderLoginPage(ctx *gin.Context, flowState loginFlowState) {
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
 		h.deps.Cfg,
@@ -768,7 +886,7 @@ func (h *FrontendHandler) renderLoginPage(ctx *gin.Context, mgr cookie.Manager, 
 
 	data := h.basePageData(ctx)
 	h.applyLoginPageLabels(ctx, data)
-	h.applyLoginErrorData(ctx, mgr, data)
+	h.applyLoginErrorData(ctx, data)
 	h.setLoginRememberData(ctx, data, flowState.oidcCID, flowState.samlEntityID)
 
 	ctx.HTML(http.StatusOK, "idp_login.html", data)
@@ -787,464 +905,20 @@ func (h *FrontendHandler) applyLoginPageLabels(ctx *gin.Context, data gin.H) {
 	data["PostLoginEndpoint"] = ctx.Request.URL.Path
 }
 
-// applyLoginErrorData adds and clears a stored login error after MFA retry paths.
-func (h *FrontendHandler) applyLoginErrorData(ctx *gin.Context, mgr cookie.Manager, data gin.H) {
-	if mgr != nil {
-		if loginError := mgr.GetString(definitions.SessionKeyLoginError, ""); loginError != "" {
-			data["HaveError"] = true
-			data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, loginError)
+// applyLoginErrorData exposes only an error produced in the current request.
+func (h *FrontendHandler) applyLoginErrorData(ctx *gin.Context, data gin.H) {
+	loginError, _ := ctx.Get(canonicalLoginErrorContextKey)
 
-			mgr.Delete(definitions.SessionKeyLoginError)
-			_ = mgr.Save(ctx)
+	message, _ := loginError.(string)
+	if message != "" {
+		data["HaveError"] = true
+		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, message)
 
-			return
-		}
+		return
 	}
 
 	data["HaveError"] = false
 	data["ErrorMessage"] = ""
-}
-
-// deviceCodeNeedsConsent checks whether the device code flow requires user consent for the given client.
-// It mirrors the consent logic from the authorization code grant: consent is needed when
-// the client has not set skip_consent and the user has not previously consented in this session.
-func (h *FrontendHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string, requestedScopes []string) bool {
-	idpInstance := idp.NewNauthilusIDP(h.deps)
-
-	client, ok := idpInstance.FindClient(clientID)
-	if !ok {
-		return false
-	}
-
-	if client.SkipConsent {
-		return false
-	}
-
-	mgr := cookie.GetManager(ctx)
-
-	return !newOIDCAuthorizeFlowContext(mgr).HasClientConsent(clientID, requestedScopes)
-}
-
-// completeDeviceCodeFlow authorizes the device code and renders the success page.
-// This is called after successful authentication (and MFA if required) in the device code flow.
-func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Manager) {
-	deviceCode, request, ok := h.deviceCodeRequestFromSession(ctx, mgr)
-	if !ok {
-		ctx.Redirect(http.StatusFound, "/")
-
-		return
-	}
-
-	if h.denyDeviceCodeAfterDelayedMFA(ctx, mgr, deviceCode, request) {
-		return
-	}
-
-	if h.redirectDeviceCodeConsent(ctx, request) {
-		return
-	}
-
-	idpInstance := idp.NewNauthilusIDP(h.deps)
-
-	client, ok := h.deviceCodeClientOrDeny(ctx, mgr, deviceCode, request, idpInstance)
-	if !ok {
-		return
-	}
-
-	if !h.authorizeDeviceCodeRequest(ctx, mgr, deviceCode, request, idpInstance, client) {
-		return
-	}
-
-	h.finishAuthorizedDeviceCodeFlow(ctx, mgr, request, client)
-}
-
-// deviceCodeRequestFromSession loads the device-code request referenced by session state.
-func (h *FrontendHandler) deviceCodeRequestFromSession(
-	ctx *gin.Context,
-	mgr cookie.Manager,
-) (string, *idp.DeviceCodeRequest, bool) {
-	deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
-	if deviceCode == "" {
-		return "", nil, false
-	}
-
-	request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
-	if err != nil || request == nil {
-		return "", nil, false
-	}
-
-	return deviceCode, request, true
-}
-
-// denyDeviceCodeAfterDelayedMFA handles fail-latched device-code MFA completion.
-func (h *FrontendHandler) denyDeviceCodeAfterDelayedMFA(
-	ctx *gin.Context,
-	mgr cookie.Manager,
-	deviceCode string,
-	request *idp.DeviceCodeRequest,
-) bool {
-	if !h.shouldDenyDeviceCodeAfterMFA(ctx, mgr) {
-		return false
-	}
-
-	h.denyDeviceCodeAndAbort(ctx, mgr, deviceCode, request)
-	util.DebugModuleWithCfg(
-		ctx.Request.Context(),
-		h.deps.Cfg,
-		h.deps.Logger,
-		definitions.DbgIdp,
-		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "Device code denied after delayed-response MFA completion",
-		"client_id", request.ClientID,
-		"user_code", request.UserCode,
-	)
-
-	renderDeviceCodeFailed(
-		ctx,
-		h.deps,
-		renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, mgr, idpGenericInvalidLoginMessage),
-	)
-
-	return true
-}
-
-// denyDeviceCodeAndAbort marks the request denied and aborts the surrounding flow.
-func (h *FrontendHandler) denyDeviceCodeAndAbort(
-	ctx *gin.Context,
-	mgr cookie.Manager,
-	deviceCode string,
-	request *idp.DeviceCodeRequest,
-) {
-	request.Status = idp.DeviceCodeStatusDenied
-	_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
-	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-}
-
-// redirectDeviceCodeConsent redirects to consent when the device flow still needs approval.
-func (h *FrontendHandler) redirectDeviceCodeConsent(ctx *gin.Context, request *idp.DeviceCodeRequest) bool {
-	if !h.deviceCodeNeedsConsent(ctx, request.ClientID, request.Scopes) {
-		return false
-	}
-
-	util.DebugModuleWithCfg(
-		ctx.Request.Context(),
-		h.deps.Cfg,
-		h.deps.Logger,
-		definitions.DbgIdp,
-		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "Device code flow requires consent (after MFA)",
-		"client_id", request.ClientID,
-	)
-
-	ctx.Redirect(http.StatusFound, frontendDeviceConsentPathWithLanguage(ctx))
-
-	return true
-}
-
-// frontendDeviceConsentPathWithLanguage returns the localized consent path when needed.
-func frontendDeviceConsentPathWithLanguage(ctx *gin.Context) string {
-	lang := ctx.Param("languageTag")
-	if lang == "" {
-		return frontendDeviceConsentPath
-	}
-
-	return frontendDeviceConsentPath + "/" + lang
-}
-
-// deviceCodeClientOrDeny resolves the client or denies the device code on missing config.
-func (h *FrontendHandler) deviceCodeClientOrDeny(
-	ctx *gin.Context,
-	mgr cookie.Manager,
-	deviceCode string,
-	request *idp.DeviceCodeRequest,
-	idpInstance *idp.NauthilusIDP,
-) (*config.OIDCClient, bool) {
-	client, ok := idpInstance.FindClient(request.ClientID)
-	if !ok {
-		h.denyDeviceCodeAndAbort(ctx, mgr, deviceCode, request)
-		renderDeviceCodeFailed(ctx, h.deps, "Internal server error")
-
-		return nil, false
-	}
-
-	return client, true
-}
-
-// authorizeDeviceCodeRequest populates claims and persists an authorized device-code request.
-func (h *FrontendHandler) authorizeDeviceCodeRequest(
-	ctx *gin.Context,
-	mgr cookie.Manager,
-	deviceCode string,
-	request *idp.DeviceCodeRequest,
-	idpInstance *idp.NauthilusIDP,
-	client *config.OIDCClient,
-) bool {
-	request.Status = idp.DeviceCodeStatusAuthorized
-	request.UserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
-	applyDeviceCodeMFASessionState(mgr, request)
-
-	if err := hydrateDeviceRequestClaims(ctx, idpInstance, request, client, nil); err != nil {
-		h.denyDeviceCodeAndAbort(ctx, mgr, deviceCode, request)
-
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "Device code flow completion failed to hydrate claims",
-			"client_id", request.ClientID,
-			"user_id", request.UserID,
-			"error", err,
-		)
-
-		renderDeviceCodeFailed(ctx, h.deps, "Internal server error")
-
-		return false
-	}
-
-	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
-		ctx.Redirect(http.StatusFound, "/")
-
-		return false
-	}
-
-	return true
-}
-
-// finishAuthorizedDeviceCodeFlow records consent, advances flow state, and renders success.
-func (h *FrontendHandler) finishAuthorizedDeviceCodeFlow(
-	ctx *gin.Context,
-	mgr cookie.Manager,
-	request *idp.DeviceCodeRequest,
-	client *config.OIDCClient,
-) {
-	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID, request.Scopes, consentTTLForClient(h.deps.Cfg, client))
-
-	util.DebugModuleWithCfg(
-		ctx.Request.Context(),
-		h.deps.Cfg,
-		h.deps.Logger,
-		definitions.DbgIdp,
-		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "Device code authorized via MFA flow (consent skipped)",
-		"client_id", request.ClientID,
-		"user_id", request.UserID,
-		"user_code", request.UserCode,
-	)
-
-	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
-	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-
-	renderDeviceCodeSuccess(ctx, h.deps)
-}
-
-// shouldDenyDeviceCodeAfterMFA checks whether a device-code flow should be denied
-// because the original password authentication failed (delayed response case).
-// Uses HMAC-verified auth result for default-deny behavior.
-func (h *FrontendHandler) shouldDenyDeviceCodeAfterMFA(ctx *gin.Context, mgr cookie.Manager) bool {
-	if mgr == nil {
-		return false
-	}
-
-	username := mgr.GetString(definitions.SessionKeyUsername, "")
-	if username == "" {
-		return false
-	}
-
-	if h != nil && h.deps != nil {
-		if flowAuthFailureLatched(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix()) {
-			return true
-		}
-	}
-
-	result, ok := cookie.VerifyAuthResult(mgr, username)
-	if !ok {
-		// HMAC verification failed or auth_result missing — deny to be safe.
-		return mgr.HasKey(definitions.SessionKeyAuthResult)
-	}
-
-	return result == definitions.AuthResultFail
-}
-
-func (h *FrontendHandler) handleDeviceCodeDelayedAuthFailure(ctx *gin.Context, mgr cookie.Manager) bool {
-	if mgr == nil || mgr.GetString(definitions.SessionKeyOIDCGrantType, "") != definitions.OIDCFlowDeviceCode {
-		return false
-	}
-
-	deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
-
-	if deviceCode != "" {
-		request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
-		if err == nil && request != nil {
-			request.Status = idp.DeviceCodeStatusDenied
-			_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
-		}
-	}
-
-	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-	renderDeviceCodeFailed(
-		ctx,
-		h.deps,
-		renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, mgr, idpGenericInvalidLoginMessage),
-	)
-
-	return true
-}
-
-// handleDelayedResponseFailure checks whether the original password authentication failed
-// (delayed response case) and, if so, renders the login page with an error message.
-// Returns true if the failure was handled (caller should return), false if auth was OK.
-//
-// Default-deny: if the HMAC verification fails, mgr is nil, or auth_result is missing,
-// the login is rejected.
-func (h *FrontendHandler) handleDelayedResponseFailure(ctx *gin.Context, sess *mfaSessionState, mfaMethod string) bool {
-	if h != nil && h.deps != nil && sess != nil {
-		if outcome, ok := getFlowAuthOutcome(ctx.Request.Context(), sess.mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix()); ok {
-			if outcome == flowdomain.AuthOutcomeOK {
-				return false
-			}
-		}
-	}
-
-	result, ok := cookie.VerifyAuthResult(sess.mgr, sess.username)
-	if ok && result == definitions.AuthResultOK {
-		return false
-	}
-
-	// Device code flow has its own failure path.
-	if h.handleDeviceCodeDelayedAuthFailure(ctx, sess.mgr) {
-		return true
-	}
-
-	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
-
-	util.DebugModuleWithCfg(
-		ctx.Request.Context(),
-		h.deps.Cfg,
-		h.deps.Logger,
-		definitions.DbgIdp,
-		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "Delayed-response login rejected after MFA",
-		"mfa_method", mfaMethod,
-		"username", sess.username,
-	)
-
-	data := h.basePageData(ctx)
-	h.applyDelayedLoginFailureData(ctx, sess, data)
-
-	h.resetDelayedResponseFailureForRetry(ctx, sess.mgr)
-
-	// Clean up MFA cookie state so the next login attempt starts fresh.
-	CleanupMFAState(sess.mgr)
-
-	ctx.HTML(http.StatusOK, "idp_login.html", data)
-
-	return true
-}
-
-// applyDelayedLoginFailureData fills login-page data for fail-latched MFA completion.
-func (h *FrontendHandler) applyDelayedLoginFailureData(ctx *gin.Context, sess *mfaSessionState, data gin.H) {
-	h.applyLoginPageLabels(ctx, data)
-	h.applyLoginMFAFallbackLabels(ctx, data)
-	data["PostLoginEndpoint"] = localizedLoginEndpoint(ctx)
-	data["HaveError"] = true
-	data["ErrorMessage"] = renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, sess.mgr, idpGenericInvalidLoginMessage)
-
-	h.setLoginRememberData(ctx, data, sess.oidcCID, sess.samlEntityID)
-}
-
-// applyLoginMFAFallbackLabels adds optional WebAuthn login labels to login pages.
-func (h *FrontendHandler) applyLoginMFAFallbackLabels(ctx *gin.Context, data gin.H) {
-	data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
-	data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
-	data["WebAuthnLoginURL"] = h.getMFAURLFromCookie(ctx, "webauthn")
-}
-
-// localizedLoginEndpoint returns the localized login endpoint for retry posts.
-func localizedLoginEndpoint(ctx *gin.Context) string {
-	lang := ctx.Param("languageTag")
-	if lang == "" {
-		return frontendLoginPath
-	}
-
-	return "/login/" + lang
-}
-
-func (h *FrontendHandler) resetDelayedResponseFailureForRetry(ctx *gin.Context, mgr cookie.Manager) bool {
-	if ctx == nil {
-		return false
-	}
-
-	var (
-		redisClient rediscli.Client
-		redisPrefix string
-	)
-
-	if h != nil && h.deps != nil {
-		redisClient = h.deps.Redis
-		if h.deps.Cfg != nil && h.deps.Cfg.GetServer() != nil {
-			redisPrefix = h.deps.Cfg.GetServer().GetRedis().GetPrefix()
-		}
-	}
-
-	return resetFlowAuthOutcomeForRetry(ctx.Request.Context(), mgr, redisClient, redisPrefix)
-}
-
-// renderPostLoginFailure renders the IDP login form with a generic authentication error.
-func (h *FrontendHandler) renderPostLoginFailure(ctx *gin.Context, oidcCID string, samlEntityID string, message string) {
-	data := h.basePageData(ctx)
-	h.applyLoginPageLabels(ctx, data)
-	h.applyLoginMFAFallbackLabels(ctx, data)
-	data["HaveError"] = true
-	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, message)
-
-	h.setLoginRememberData(ctx, data, oidcCID, samlEntityID)
-
-	ctx.HTML(http.StatusOK, "idp_login.html", data)
-}
-
-// preAuthMFASessionOptions carries the identity and flow state required before MFA verification starts.
-type preAuthMFASessionOptions struct {
-	user          *backend.User
-	factorUser    *backend.User
-	username      string
-	protocol      string
-	authResult    definitions.AuthResult
-	authOutcome   flowdomain.AuthOutcome
-	factorRef     core.RemoteBackendRef
-	rememberMeTTL int
-	redisPrefix   string
-	debugMessage  string
-}
-
-// storePreAuthMFASession stores the submitted login for factor checks and the canonical identity for finalization.
-func (h *FrontendHandler) storePreAuthMFASession(ctx *gin.Context, mgr cookie.Manager, options preAuthMFASessionOptions) {
-	if mgr == nil || options.user == nil {
-		return
-	}
-
-	mgr.Set(definitions.SessionKeyUsername, options.username)
-	core.StorePendingIDPMFAIdentity(mgr, options.user)
-	core.StorePendingIDPMFAFactor(mgr, options.mfaFactorUser())
-	core.StorePendingIDPMFAFactorRemoteBackendRef(mgr, options.factorRef)
-	cookie.SetAuthResult(mgr, options.username, options.authResult)
-	mgr.Set(definitions.SessionKeyProtocol, options.protocol)
-	_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, options.redisPrefix, options.authOutcome)
-
-	if options.rememberMeTTL > 0 {
-		mgr.Set(definitions.SessionKeyRememberTTL, options.rememberMeTTL)
-	}
-
-	mgr.Debug(ctx, h.deps.Logger, options.debugMessage)
-}
-
-// mfaFactorUser returns the account whose second factor should be verified.
-func (o preAuthMFASessionOptions) mfaFactorUser() *backend.User {
-	if o.factorUser != nil {
-		return o.factorUser
-	}
-
-	return o.user
 }
 
 // parseSubmittedMasterUser resolves the target and master account from a submitted login.
@@ -1268,63 +942,15 @@ func (h *FrontendHandler) parseSubmittedMasterUser(submittedUsername string, tar
 	return targetUsername, masterUsername, true
 }
 
-// resolveMFAFactorUser loads the Master-User account when the submitted login uses master mode.
-func (h *FrontendHandler) resolveMFAFactorUser(
-	ctx *gin.Context,
-	idpInstance *idp.NauthilusIDP,
-	submittedUsername string,
-	targetUser *backend.User,
-	oidcCID string,
-	samlEntityID string,
-) (*backend.User, bool, core.RemoteBackendRef, error) {
-	if h == nil || h.deps == nil || h.deps.Cfg == nil || h.deps.Cfg.GetServer() == nil {
-		return targetUser, false, core.RemoteBackendRef{}, nil
-	}
-
-	_, masterUsername, ok := h.parseSubmittedMasterUser(submittedUsername, targetUser)
-	if !ok {
-		return targetUser, false, core.RemoteBackendRef{}, nil
-	}
-
-	if idpInstance == nil {
-		return nil, true, core.RemoteBackendRef{}, stderrors.New("missing IDP instance")
-	}
-
-	mgr := cookie.GetManager(ctx)
-	targetRef, haveTargetRef := core.RemoteBackendRefFromSession(mgr)
-
-	if mgr != nil {
-		core.ClearRemoteBackendRef(mgr)
-
-		defer func() {
-			if haveTargetRef {
-				core.StoreRemoteBackendRef(mgr, targetRef)
-
-				return
-			}
-
-			core.ClearRemoteBackendRef(mgr)
-		}()
-	}
-
-	factorUser, err := idpInstance.GetUserByUsername(ctx, masterUsername, oidcCID, samlEntityID)
-	if err != nil {
-		return nil, true, core.RemoteBackendRef{}, err
-	}
-
-	factorRef, _ := core.RemoteBackendRefFromSession(mgr)
-
-	return factorUser, true, factorRef, nil
-}
-
 // postLoginFlowContext carries IDP flow state required for login.
 type postLoginFlowContext struct {
-	mgr          cookie.Manager
+	session      *cookie.CanonicalSession
+	state        *flowdomain.State
 	flowType     string
+	grantType    string
 	oidcCID      string
 	samlEntityID string
 	protocol     string
-	redisPrefix  string
 }
 
 // postLoginCredentials carries submitted login credentials.
@@ -1334,47 +960,88 @@ type postLoginCredentials struct {
 	rememberMeTTL int
 }
 
-// postLoginMFAState carries resolved MFA information for login.
-type postLoginMFAState struct {
-	user         *backend.User
-	factorUser   *backend.User
-	factorRef    core.RemoteBackendRef
-	availability mfaAvailability
+type canonicalPasswordAuthentication struct {
+	user             *backend.User
+	backendRef       core.RemoteBackendRef
+	availableMethods []string
 }
 
-// readPostLoginFlowContext reads flow identifiers from the encrypted session.
-func (h *FrontendHandler) readPostLoginFlowContext(ctx *gin.Context) postLoginFlowContext {
-	context := postLoginFlowContext{
-		mgr:         cookie.GetManager(ctx),
-		protocol:    definitions.ProtoIDP,
-		redisPrefix: h.deps.Cfg.GetServer().GetRedis().GetPrefix(),
-	}
-	if context.mgr == nil {
-		return context
-	}
+type canonicalPasswordAuthenticator func(
+	*gin.Context,
+	postLoginFlowContext,
+	postLoginCredentials,
+) (canonicalPasswordAuthentication, error)
 
-	context.flowType = context.mgr.GetString(definitions.SessionKeyIDPFlowType, "")
-	switch context.flowType {
-	case definitions.ProtoOIDC:
-		context.oidcCID = context.mgr.GetString(definitions.SessionKeyIDPClientID, "")
-		context.protocol = definitions.ProtoOIDC
-	case definitions.ProtoSAML:
-		context.samlEntityID = context.mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
-		if context.samlEntityID == "" {
-			context.samlEntityID = definitions.ProtoSAML
-		}
-
-		context.protocol = definitions.ProtoSAML
+func (h *FrontendHandler) authenticateCanonicalPassword(
+	ctx *gin.Context,
+	flowContext postLoginFlowContext,
+	credentials postLoginCredentials,
+) (canonicalPasswordAuthentication, error) {
+	if h.canonicalPasswordAuthenticator != nil {
+		return h.canonicalPasswordAuthenticator(ctx, flowContext, credentials)
 	}
 
-	return context
+	result, err := idp.NewNauthilusIDP(h.deps).AuthenticateWithBackend(
+		ctx, credentials.username, credentials.password, flowContext.oidcCID, flowContext.samlEntityID,
+		core.IDPRequestContext{
+			GrantType:       flowContext.grantType,
+			RedirectURI:     flowContext.state.Metadata[flowdomain.FlowMetadataRedirectURI],
+			RequestedScopes: strings.Fields(flowContext.state.Metadata[flowdomain.FlowMetadataScope]),
+		},
+	)
+
+	return canonicalPasswordAuthentication{
+		user: result.User, backendRef: result.BackendRef,
+		availableMethods: h.canonicalPasswordMFAMethods(result.User),
+	}, err
+}
+
+func (h *FrontendHandler) canonicalPasswordMFAMethods(user *backend.User) []string {
+	methods := make([]string, 0, 3)
+	if h.hasTOTP(user) {
+		methods = append(methods, definitions.MFAMethodTOTP)
+	}
+
+	if user != nil && len(user.Credentials) > 0 {
+		methods = append(methods, definitions.MFAMethodWebAuthn)
+	}
+
+	if h.hasRecoveryCodes(user) {
+		methods = append(methods, definitions.MFAMethodRecoveryCodes)
+	}
+
+	return methods
+}
+
+// readPostLoginFlowContext composes request services with one typed protocol record.
+func (h *FrontendHandler) readPostLoginFlowContext(ctx *gin.Context, state *flowdomain.State) postLoginFlowContext {
+	result := postLoginFlowContextFromState(state)
+	result.session = cookie.GetCanonicalSession(ctx)
+	result.state = state
+
+	return result
+}
+
+// postLoginFlowContextFromState maps typed protocol state into first-factor login inputs.
+func postLoginFlowContextFromState(state *flowdomain.State) postLoginFlowContext {
+	result := postLoginFlowContext{protocol: definitions.ProtoIDP}
+	if state == nil {
+		return result
+	}
+
+	result.flowType = string(state.Protocol)
+	result.grantType = state.GrantType
+	result.oidcCID = state.Metadata[flowdomain.FlowMetadataClientID]
+	result.samlEntityID = state.Metadata[flowdomain.FlowMetadataSAMLEntityID]
+	result.protocol = string(state.Protocol)
+
+	return result
 }
 
 // isDeviceCodeLoginFlow reports whether login must continue via device verification.
 func (context postLoginFlowContext) isDeviceCodeLoginFlow() bool {
 	return context.flowType == definitions.ProtoOIDC &&
-		context.mgr != nil &&
-		context.mgr.GetString(definitions.SessionKeyOIDCGrantType, "") == definitions.OIDCFlowDeviceCode
+		context.grantType == definitions.OIDCFlowDeviceCode
 }
 
 // readPostLoginCredentials reads submitted credentials and remember-me settings.
@@ -1425,139 +1092,136 @@ func (h *FrontendHandler) renderDetailedPostLoginFailure(ctx *gin.Context, flowC
 	ctx.HTML(http.StatusOK, "idp_login.html", data)
 }
 
-// delayedPostLoginMFAState resolves MFA state for delayed-response failures.
-func (h *FrontendHandler) delayedPostLoginMFAState(
+func (h *FrontendHandler) handleCanonicalPostLoginAuthFailure(
 	ctx *gin.Context,
 	sp trace.Span,
-	idpInstance *idp.NauthilusIDP,
 	flowContext postLoginFlowContext,
-	credentials postLoginCredentials,
-	err error,
-) (postLoginMFAState, bool) {
-	state := postLoginMFAState{}
-	if !idpAuthFailureAllowsDelayedResponse(err) || !idpInstance.IsDelayedResponse(flowContext.oidcCID, flowContext.samlEntityID) {
-		return state, false
-	}
-
-	user, _ := idpInstance.GetUserByUsername(ctx, credentials.username, flowContext.oidcCID, flowContext.samlEntityID)
-	if user == nil {
-		return state, false
-	}
-
-	factorUser, _, factorRef, factorErr := h.resolveMFAFactorUser(ctx, idpInstance, credentials.username, user, flowContext.oidcCID, flowContext.samlEntityID)
-	if factorErr != nil {
-		sp.RecordError(factorErr)
-
-		factorUser = nil
-	}
-
-	state.user = user
-	state.factorUser = factorUser
-	state.factorRef = factorRef
-	state.availability = h.getMFAAvailabilityWithBackendRef(ctx, factorUser, flowContext.protocol, flowContext.mgr, factorRef)
-
-	return state, state.availability.count > 0
-}
-
-// redirectPostLoginMFA stores pre-auth state and redirects to MFA.
-func (h *FrontendHandler) redirectPostLoginMFA(
-	ctx *gin.Context,
-	flowContext postLoginFlowContext,
-	credentials postLoginCredentials,
-	mfaState postLoginMFAState,
-	authResult definitions.AuthResult,
-	authOutcome flowdomain.AuthOutcome,
-	debugMessage string,
-	advance bool,
-) {
-	if flowContext.mgr != nil {
-		h.storePreAuthMFASession(ctx, flowContext.mgr, preAuthMFASessionOptions{
-			user:          mfaState.user,
-			factorUser:    mfaState.factorUser,
-			username:      credentials.username,
-			protocol:      flowContext.protocol,
-			authResult:    authResult,
-			authOutcome:   authOutcome,
-			factorRef:     mfaState.factorRef,
-			rememberMeTTL: credentials.rememberMeTTL,
-			redisPrefix:   flowContext.redisPrefix,
-			debugMessage:  debugMessage,
-		})
-	}
-
-	if advance && flowContext.mgr != nil {
-		advanceFlow(ctx.Request.Context(), flowContext.mgr, h.deps.Redis, flowContext.redisPrefix, flowdomain.FlowStepLogin)
-		advanceFlow(ctx.Request.Context(), flowContext.mgr, h.deps.Redis, flowContext.redisPrefix, flowdomain.FlowStepMFA)
-	}
-
-	if redirectURL, ok := h.getMFARedirectURLFromAvailability(mfaState.availability); ok {
-		ctx.Redirect(http.StatusFound, redirectURL)
-
-		return
-	}
-
-	ctx.Redirect(http.StatusFound, "/login/mfa")
-}
-
-// handlePostLoginAuthFailure handles failed password auth including delayed response.
-func (h *FrontendHandler) handlePostLoginAuthFailure(
-	ctx *gin.Context,
-	sp trace.Span,
-	idpInstance *idp.NauthilusIDP,
-	flowContext postLoginFlowContext,
-	credentials postLoginCredentials,
+	authentication canonicalPasswordAuthentication,
 	err error,
 ) {
 	sp.RecordError(err)
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
 
-	mfaState, ok := h.delayedPostLoginMFAState(ctx, sp, idpInstance, flowContext, credentials, err)
-	if ok {
-		if flowContext.mgr != nil {
-			storeIDPAuthStatusBridgeFromError(flowContext.mgr, err)
-		}
-
-		h.redirectPostLoginMFA(
-			ctx,
-			flowContext,
-			credentials,
-			mfaState,
-			definitions.AuthResultFail,
-			flowdomain.AuthOutcomeFailLatched,
-			"MFA required - pre-auth session data stored (delayed response)",
-			false,
-		)
+	idpInstance := idp.NewNauthilusIDP(h.deps)
+	if !idpAuthFailureAllowsDelayedResponse(err) ||
+		!idpInstance.IsDelayedResponse(flowContext.oidcCID, flowContext.samlEntityID) ||
+		authentication.user == nil {
+		h.renderDetailedPostLoginFailure(ctx, flowContext, err)
 
 		return
 	}
 
-	h.renderDetailedPostLoginFailure(ctx, flowContext, err)
-}
+	policy, ok := h.canonicalFlowMFAPolicy(ctx.Request.Context(), flowContext.state)
+	if !ok {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
-// resolvePostLoginMFAState resolves factor account and availability after successful auth.
-func (h *FrontendHandler) resolvePostLoginMFAState(
-	ctx *gin.Context,
-	sp trace.Span,
-	idpInstance *idp.NauthilusIDP,
-	flowContext postLoginFlowContext,
-	credentials postLoginCredentials,
-	user *backend.User,
-) (postLoginMFAState, bool) {
-	factorUser, _, factorRef, err := h.resolveMFAFactorUser(ctx, idpInstance, credentials.username, user, flowContext.oidcCID, flowContext.samlEntityID)
-	if err != nil {
-		sp.RecordError(err)
-		stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
-		h.renderPostLoginFailure(ctx, flowContext.oidcCID, flowContext.samlEntityID, "Invalid login or password")
-
-		return postLoginMFAState{}, false
+		return
 	}
 
-	return postLoginMFAState{
-		user:         user,
-		factorUser:   factorUser,
-		factorRef:    factorRef,
-		availability: h.getMFAAvailabilityWithBackendRef(ctx, factorUser, flowContext.protocol, flowContext.mgr, factorRef),
-	}, true
+	availability := filterCanonicalMFAAvailability(mfaAvailability{
+		haveTOTP:          slices.Contains(authentication.availableMethods, definitions.MFAMethodTOTP),
+		haveWebAuthn:      slices.Contains(authentication.availableMethods, definitions.MFAMethodWebAuthn),
+		haveRecoveryCodes: slices.Contains(authentication.availableMethods, definitions.MFAMethodRecoveryCodes),
+	}, policy.supported)
+	if availability.count == 0 {
+		h.renderDetailedPostLoginFailure(ctx, flowContext, err)
+
+		return
+	}
+
+	if !h.startCanonicalFailLatchedStepUp(ctx, flowContext, authentication, availability, policy) &&
+		!ctx.Writer.Written() {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+	}
+}
+
+//nolint:gocyclo,funlen // Delayed failure publication binds parent outcome, pending identity, affinity, and factor challenge.
+func (h *FrontendHandler) startCanonicalFailLatchedStepUp(
+	ctx *gin.Context,
+	flowContext postLoginFlowContext,
+	authentication canonicalPasswordAuthentication,
+	availability mfaAvailability,
+	policy canonicalMFAPolicy,
+) bool {
+	if ctx == nil || flowContext.session == nil || flowContext.state == nil || authentication.user == nil ||
+		availability.count == 0 || policy.scope == "" {
+		return false
+	}
+
+	if err := flowContext.state.UpdateAuthOutcome(flowdomain.AuthOutcomeFailLatched); err != nil {
+		ctx.AbortWithStatus(http.StatusConflict)
+
+		return false
+	}
+
+	flowContext.state.PendingMFA = true
+	if err := flowdomain.NewTypedStore(
+		flowContext.session.Stores, flowContext.session.Handle, flowContext.state.Protocol, canonicalStepUpTTL,
+	).Save(ctx.Request.Context(), flowContext.state); err != nil {
+		ctx.AbortWithStatus(http.StatusConflict)
+
+		return false
+	}
+
+	handle, err := sessionstate.NewRandomHandleGenerator(nil).NewHandle()
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+
+		return false
+	}
+
+	user := authentication.user
+
+	record := &sessionstate.StepUpRecord{
+		Record: sessionstate.Record{Handle: handle}, Session: flowContext.session.Handle,
+		Flow: sessionstate.Handle(flowContext.state.FlowID), AuthOutcome: string(flowdomain.AuthOutcomeFailLatched),
+		PendingIdentityReference: user.ID,
+		PendingIdentity: sessionstate.IdentitySummary{
+			Account: user.Name, Subject: user.ID, DisplayName: user.DisplayName, Protocol: flowContext.protocol,
+		},
+		RequestedLevel: max(policy.requiredLevel, 1), Scope: policy.scope,
+		SupportedMethods: canonicalAvailabilityMethods(availability),
+	}
+	if !authentication.backendRef.IsZero() {
+		record.PendingBackendAffinity = sessionstate.BackendAffinitySummary{
+			Type: authentication.backendRef.Type, Name: authentication.backendRef.Name,
+			Protocol: authentication.backendRef.Protocol, Authority: authentication.backendRef.Authority,
+			OpaqueToken: authentication.backendRef.OpaqueToken,
+		}
+	}
+
+	if err = mfastate.NewAggregate(flowContext.session.Stores, flowContext.session.Handle, canonicalStepUpTTL).
+		BeginStepUp(ctx.Request.Context(), record); err != nil {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+
+		return false
+	}
+
+	target := h.getMFASelectPath(ctx)
+	if direct, ok := h.getMFARedirectURLFromAvailability(availability); ok {
+		target = direct
+	}
+
+	ctx.Redirect(http.StatusFound, flowdomain.AppendTicket(target, string(handle)))
+
+	return true
+}
+
+func canonicalAvailabilityMethods(availability mfaAvailability) []string {
+	methods := make([]string, 0, availability.count)
+	if availability.haveTOTP {
+		methods = append(methods, definitions.MFAMethodTOTP)
+	}
+
+	if availability.haveWebAuthn {
+		methods = append(methods, definitions.MFAMethodWebAuthn)
+	}
+
+	if availability.haveRecoveryCodes {
+		methods = append(methods, definitions.MFAMethodRecoveryCodes)
+	}
+
+	return methods
 }
 
 // storeSuccessfulPostLoginSession persists the completed first-factor login.
@@ -1566,24 +1230,50 @@ func (h *FrontendHandler) storeSuccessfulPostLoginSession(
 	flowContext postLoginFlowContext,
 	credentials postLoginCredentials,
 	user *backend.User,
-) {
-	if flowContext.mgr == nil {
-		return
+	backendRef core.RemoteBackendRef,
+) bool {
+	if ctx == nil || flowContext.session == nil || flowContext.state == nil || user == nil {
+		if ctx != nil {
+			ctx.AbortWithStatus(http.StatusServiceUnavailable)
+		}
+
+		return false
 	}
 
-	flowContext.mgr.Set(definitions.SessionKeyAccount, user.Name)
-	flowContext.mgr.Set(definitions.SessionKeyUniqueUserID, user.ID)
-	flowContext.mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
-	flowContext.mgr.Set(definitions.SessionKeySubject, user.ID)
-	flowContext.mgr.Set(definitions.SessionKeyProtocol, flowContext.protocol)
-	_ = setFlowAuthOutcome(ctx.Request.Context(), flowContext.mgr, h.deps.Redis, flowContext.redisPrefix, flowdomain.AuthOutcomeOK)
-
-	if credentials.rememberMeTTL > 0 {
-		flowContext.mgr.SetMaxAge(credentials.rememberMeTTL)
+	var affinity *cookie.SessionBackendAffinity
+	if !backendRef.IsZero() {
+		affinity = &cookie.SessionBackendAffinity{
+			Type: backendRef.Type, Name: backendRef.Name, Protocol: backendRef.Protocol,
+			Authority: backendRef.Authority, OpaqueToken: backendRef.OpaqueToken,
+		}
 	}
 
-	flowContext.mgr.Debug(ctx, h.deps.Logger, "Login successful - session data stored")
-	advanceFlow(ctx.Request.Context(), flowContext.mgr, h.deps.Redis, flowContext.redisPrefix, flowdomain.FlowStepLogin)
+	rotated, err := flowContext.session.CompleteLogin(ctx.Request.Context(), ctx.Writer, cookie.LoginCompletionInput{
+		Identity: cookie.IdentityUpdate{
+			Reference: user.ID, Account: user.Name, Subject: user.ID, DisplayName: user.DisplayName,
+			Protocol: flowContext.protocol, BackendAffinity: affinity,
+		},
+		Flow: sessionstate.Handle(flowContext.state.FlowID), Protocol: flowContext.protocol,
+		NextStep:    string(flowdomain.FlowStepLogin),
+		RememberTTL: time.Duration(credentials.rememberMeTTL) * time.Second,
+	})
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+
+		return false
+	}
+
+	cookie.SetCanonicalSession(ctx, rotated)
+
+	if h != nil && h.deps != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Login successful - canonical session committed",
+		)
+	}
+
+	return true
 }
 
 // annotatePostLoginSpan records non-secret login identifiers on the active trace span.
@@ -1605,13 +1295,14 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	defer requestScope.Restore()
 	defer sp.End()
 
-	if !h.isValidIDPFlow(ctx) {
+	protocolState, valid := h.canonicalIDPFlow(ctx)
+	if !valid {
 		h.renderNoFlowError(ctx)
 
 		return
 	}
 
-	flowContext := h.readPostLoginFlowContext(ctx)
+	flowContext := h.readPostLoginFlowContext(ctx, protocolState)
 	if flowContext.isDeviceCodeLoginFlow() {
 		ctx.Redirect(http.StatusFound, h.deviceVerifyPath(ctx))
 
@@ -1621,104 +1312,33 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	credentials := h.readPostLoginCredentials(ctx, flowContext)
 	h.logPostLoginAttempt(ctx, flowContext, credentials)
 
-	idpInstance := idp.NewNauthilusIDP(h.deps)
-	_ = resetFlowAuthOutcomeForLoginAttempt(ctx.Request.Context(), flowContext.mgr, h.deps.Redis, flowContext.redisPrefix)
-	clearIDPAuthStatusBridge(flowContext.mgr)
-
 	annotatePostLoginSpan(sp, flowContext, credentials)
 
-	user, err := idpInstance.Authenticate(ctx, credentials.username, credentials.password, flowContext.oidcCID, flowContext.samlEntityID)
+	authentication, err := h.authenticateCanonicalPassword(ctx, flowContext, credentials)
 	if err != nil {
-		h.handlePostLoginAuthFailure(ctx, sp, idpInstance, flowContext, credentials, err)
-		return
-	}
-
-	mfaState, ok := h.resolvePostLoginMFAState(ctx, sp, idpInstance, flowContext, credentials, user)
-	if !ok {
-		return
-	}
-
-	if mfaState.availability.count > 0 {
-		h.redirectPostLoginMFA(
-			ctx,
-			flowContext,
-			credentials,
-			mfaState,
-			definitions.AuthResultOK,
-			flowdomain.AuthOutcomeOK,
-			"MFA required - pre-auth session data stored",
-			true,
-		)
+		h.handleCanonicalPostLoginAuthFailure(ctx, sp, flowContext, authentication, err)
 
 		return
 	}
 
-	h.storeSuccessfulPostLoginSession(ctx, flowContext, credentials, user)
+	if !h.storeSuccessfulPostLoginSession(
+		ctx, flowContext, credentials, authentication.user, authentication.backendRef,
+	) {
+		return
+	}
+
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
-	if !h.checkRequireMFARegistrationAndRedirect(ctx, flowContext.mgr) {
-		h.resumeIDPFlow(ctx, flowContext.mgr)
+	if !h.resumeCanonicalExistingLoginSession(ctx, cookie.GetCanonicalSession(ctx), flowContext.state) &&
+		!ctx.Writer.Written() {
+		ctx.AbortWithStatus(http.StatusConflict)
 	}
 }
 
 // PostLoginWebAuthnFinish completes WebAuthn MFA and returns the server-derived
 // continuation target for the surrounding IDP flow.
 func (h *FrontendHandler) PostLoginWebAuthnFinish(ctx *gin.Context) {
-	mgr := cookie.GetManager(ctx)
-	targetAccount, factorAccount := pendingCompletedMFAAccounts(mgr)
-
-	if _, ok := h.completeLoginWebAuthn(ctx); !ok {
-		return
-	}
-
-	prepareDelegatedTargetBackendLookup(mgr, targetAccount, factorAccount)
-
-	redirectURI, ok := h.loginWebAuthnCompletionRedirect(ctx, mgr)
-	if !ok {
-		return
-	}
-
-	if redirectURI == flowdomain.FlowMetadataResumeTargetDeviceCodeComplete {
-		h.completeDeviceCodeFlow(ctx, mgr)
-
-		return
-	}
-
-	ctx.JSON(http.StatusOK, webAuthnFinishResponse{Redirect: redirectURI})
-}
-
-// completeLoginWebAuthn runs the WebAuthn verifier through the injected test seam.
-func (h *FrontendHandler) completeLoginWebAuthn(ctx *gin.Context) (*backend.User, bool) {
-	if h.webAuthnLoginCompleter != nil {
-		return h.webAuthnLoginCompleter(ctx, h.deps.Auth())
-	}
-
-	return core.CompleteLoginWebAuthn(ctx, h.deps.Auth())
-}
-
-// loginWebAuthnCompletionRedirect mirrors the post-MFA continuation used by
-// TOTP, but returns a transport-neutral target for the JavaScript WebAuthn flow.
-func (h *FrontendHandler) loginWebAuthnCompletionRedirect(ctx *gin.Context, mgr cookie.Manager) (string, bool) {
-	if redirectURI, ok := h.pendingSelfServiceStepUpRedirectURI(ctx, mgr); ok {
-		return redirectURI, true
-	}
-
-	if ctx.Writer.Written() {
-		return "", false
-	}
-
-	redirectURI, ok, err := h.requireMFARegistrationRedirectURI(ctx, mgr)
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, "Failed to initialize required MFA registration")
-
-		return "", false
-	}
-
-	if ok {
-		return redirectURI, true
-	}
-
-	return h.resumeIDPFlowRedirectURI(ctx, mgr)
+	h.completeCanonicalWebAuthn(ctx)
 }
 
 func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
@@ -1760,76 +1380,6 @@ func safeLDAPSearchConfig(cfg config.File) []config.LDAPSearchProtocol {
 	return ldapConfig.GetSearch()
 }
 
-// hasWebAuthn reports whether the user has any registered WebAuthn credential.
-func (h *FrontendHandler) hasWebAuthn(ctx *gin.Context, user *backend.User, protocolName string) bool {
-	if mgr := cookie.GetManager(ctx); mgr != nil && mgr.GetBool(definitions.SessionKeyHaveWebAuthn, false) {
-		return true
-	}
-
-	return h.hasWebAuthnWithBackendRef(ctx, user, protocolName, core.RemoteBackendRef{})
-}
-
-// hasWebAuthnWithBackendRef binds credential lookups to an explicit authority backend reference when present.
-func (h *FrontendHandler) hasWebAuthnWithBackendRef(ctx *gin.Context, user *backend.User, protocolName string, backendRef core.RemoteBackendRef) bool {
-	return h.hasWebAuthnWithProviderAndBackendRef(ctx, user, protocolName, nil, backendRef)
-}
-
-// hasWebAuthnWithProvider checks credentials through the supplied provider or a session-derived AuthState.
-func (h *FrontendHandler) hasWebAuthnWithProvider(ctx *gin.Context, user *backend.User, protocolName string, provider webAuthnCredentialProvider) bool {
-	return h.hasWebAuthnWithProviderAndBackendRef(ctx, user, protocolName, provider, core.RemoteBackendRef{})
-}
-
-// hasWebAuthnWithProviderAndBackendRef resolves WebAuthn credentials while preserving the selected backend authority.
-func (h *FrontendHandler) hasWebAuthnWithProviderAndBackendRef(ctx *gin.Context, user *backend.User, protocolName string, provider webAuthnCredentialProvider, backendRef core.RemoteBackendRef) bool {
-	if ctx == nil || user == nil {
-		return false
-	}
-
-	lookupCtx := backendDataLookupContext(ctx)
-	mgr := cookie.GetManager(ctx)
-
-	if provider == nil {
-		authDeps := h.deps.Auth()
-
-		state := core.NewAuthStateWithSetupWithDeps(lookupCtx, authDeps)
-		if state == nil {
-			return false
-		}
-
-		resolvedProtocol := protocolName
-		if resolvedProtocol == "" && mgr != nil {
-			resolvedProtocol = mgr.GetString(definitions.SessionKeyProtocol, "")
-		}
-
-		if resolvedProtocol == "" {
-			resolvedProtocol = definitions.ProtoIDP
-		}
-
-		authState := state.(*core.AuthState)
-		authState.SetUsername(user.Name)
-		authState.SetProtocol(config.NewProtocol(resolvedProtocol))
-		authState.SetNoAuth(true)
-
-		if !backendRef.IsZero() {
-			authState.Runtime.RemoteBackendRef = backendRef
-		} else if ref, ok := core.RemoteBackendRefForAuthSession(authState, mgr); ok {
-			authState.Runtime.RemoteBackendRef = ref
-		}
-
-		provider = authState
-	}
-
-	data := &UserBackendData{
-		Username:     user.Name,
-		DisplayName:  user.DisplayName,
-		UniqueUserID: user.ID,
-	}
-
-	h.resolveWebAuthnUser(lookupCtx, nil, data, provider)
-
-	return data.HaveWebAuthn
-}
-
 func (h *FrontendHandler) hasRecoveryCodes(user *backend.User) bool {
 	if user == nil {
 		return false
@@ -1856,68 +1406,29 @@ func (h *FrontendHandler) hasRecoveryCodes(user *backend.User) bool {
 	return false
 }
 
-// LoginMFASelect renders the MFA selection page.
-// All flow state is read from the encrypted cookie - no URL parameters are used.
+// LoginMFASelect renders the MFA selection page from one typed step-up ticket.
 func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
-	mgr := cookie.GetManager(ctx)
-	h.prepareExistingSessionMFAAssuranceChallenge(mgr)
-
-	username, protocol := readLoginMFASelectSession(mgr)
-	if username == "" {
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return
-	}
-
-	user, ok := h.loginMFASelectUser(ctx, mgr, username)
-	if !ok {
-		return
-	}
-
-	availability := h.getMFAAvailability(ctx, user, protocol, mgr)
-	if mgr != nil {
-		mgr.Set(definitions.SessionKeyMFAMulti, availability.count > 1)
-	}
-
-	if redirectURL, ok := h.getMFARedirectURLFromCookie(ctx, user); ok {
-		ctx.Redirect(http.StatusFound, redirectURL)
-		return
-	}
-
-	ctx.HTML(http.StatusOK, "idp_mfa_select.html", h.loginMFASelectPageData(ctx, availability))
-}
-
-// readLoginMFASelectSession returns the username and protocol for MFA selection.
-func readLoginMFASelectSession(mgr cookie.Manager) (string, string) {
-	if mgr == nil {
-		return "", ""
-	}
-
-	username := mgr.GetString(definitions.SessionKeyUsername, "")
-	if factorUser := mgr.GetString(definitions.SessionKeyMFAFactorAccount, ""); factorUser != "" {
-		username = factorUser
-	}
-
-	if username == "" {
-		username = mgr.GetString(definitions.SessionKeyAccount, "")
-	}
-
-	return username, mgr.GetString(definitions.SessionKeyIDPFlowType, "")
-}
-
-// loginMFASelectUser loads the user for MFA availability checks.
-func (h *FrontendHandler) loginMFASelectUser(ctx *gin.Context, mgr cookie.Manager, username string) (*backend.User, bool) {
-	idpInstance := idp.NewNauthilusIDP(h.deps)
-	oidcCID, samlEntityID := h.getFlowClientIdentifiers(mgr)
-
-	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
+	selection, err := h.canonicalMFASelection(ctx)
 	if err != nil {
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
+		ctx.AbortWithStatus(http.StatusConflict)
 
-		return nil, false
+		return
 	}
 
-	return user, true
+	if redirectURL, ok := h.getMFARedirectURLFromAvailability(selection.availability); ok {
+		ctx.Redirect(http.StatusFound, currentFlowTicketURL(ctx, localizedLoginPath(ctx, redirectURL)))
+
+		return
+	}
+
+	backURL, ok := canonicalMFASelectionBackURL(ctx, selection)
+	if !ok {
+		ctx.AbortWithStatus(http.StatusConflict)
+
+		return
+	}
+
+	ctx.HTML(http.StatusOK, "idp_mfa_select.html", h.loginMFASelectPageData(ctx, selection.availability, backURL))
 }
 
 // recommendedMFAMethod returns the last usable MFA method.
@@ -1950,7 +1461,11 @@ func hasOtherMFAMethods(availability mfaAvailability, recommendedMethod string) 
 }
 
 // loginMFASelectPageData builds template data for MFA selection.
-func (h *FrontendHandler) loginMFASelectPageData(ctx *gin.Context, availability mfaAvailability) gin.H {
+func (h *FrontendHandler) loginMFASelectPageData(
+	ctx *gin.Context,
+	availability mfaAvailability,
+	backURL string,
+) gin.H {
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
 	data["SelectMFA"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Select Multi-Factor Authentication")
@@ -1966,9 +1481,9 @@ func (h *FrontendHandler) loginMFASelectPageData(ctx *gin.Context, availability 
 	data["HaveTOTP"] = availability.haveTOTP
 	data["HaveWebAuthn"] = availability.haveWebAuthn
 	data["HaveRecoveryCodes"] = availability.haveRecoveryCodes
-	data["TOTPLoginEndpoint"] = localizedLoginPath(ctx, "/login/totp")
-	data["WebAuthnLoginEndpoint"] = localizedLoginPath(ctx, "/login/webauthn")
-	data["RecoveryLoginEndpoint"] = localizedLoginPath(ctx, "/login/recovery")
+	data["TOTPLoginEndpoint"] = currentFlowTicketURL(ctx, localizedLoginPath(ctx, "/login/totp"))
+	data["WebAuthnLoginEndpoint"] = currentFlowTicketURL(ctx, localizedLoginPath(ctx, "/login/webauthn"))
+	data["RecoveryLoginEndpoint"] = currentFlowTicketURL(ctx, localizedLoginPath(ctx, "/login/recovery"))
 
 	lastMFA, recommendedMethod := recommendedMFAMethod(ctx, availability)
 
@@ -1976,358 +1491,32 @@ func (h *FrontendHandler) loginMFASelectPageData(ctx *gin.Context, availability 
 	data["RecommendedMethod"] = recommendedMethod
 	data["HasOtherMethods"] = hasOtherMFAMethods(availability, recommendedMethod)
 	data["OtherMethods"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Other methods")
-	data["BackURL"] = h.getLoginPath(ctx)
+	data["BackURL"] = backURL
 
 	return data
 }
 
-// loginMFAVerificationPage describes the localized data required for a login MFA verification page.
-type loginMFAVerificationPage struct {
-	method          string
-	templateName    string
-	messageDataKey  string
-	messageText     string
-	codeText        string
-	postEndpointKey string
-}
-
-// renderLoginMFAVerificationPage renders a cookie-bound login MFA challenge page.
-func (h *FrontendHandler) renderLoginMFAVerificationPage(ctx *gin.Context, page loginMFAVerificationPage) {
-	mgr := cookie.GetManager(ctx)
-	h.prepareExistingSessionMFAAssuranceChallenge(mgr)
-
-	if username, _ := readLoginMFASelectSession(mgr); username == "" {
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return
+func currentFlowTicketURL(ctx *gin.Context, target string) string {
+	if ctx == nil {
+		return target
 	}
 
-	if !h.isMFAMethodSupported(mgr, page.method) {
-		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
-
-		return
+	ticket, err := flowdomain.TicketFromRequest(ctx.Request)
+	if err != nil {
+		return target
 	}
 
-	data := h.basePageData(ctx)
-	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
-	data[page.messageDataKey] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, page.messageText)
-	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, page.codeText)
-	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
-	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
-
-	data["CSRFToken"] = csrf.Token(ctx)
-	data[page.postEndpointKey] = ctx.Request.URL.Path
-	data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
-	data["HaveError"] = false
-
-	ctx.HTML(http.StatusOK, page.templateName, data)
+	return flowdomain.AppendTicket(target, string(ticket))
 }
 
-// LoginRecovery renders the recovery code verification page during login.
-// All flow state is read from the encrypted cookie - no URL parameters are used.
+// LoginRecovery renders the recovery code verification page from one typed step-up ticket.
 func (h *FrontendHandler) LoginRecovery(ctx *gin.Context) {
-	h.renderLoginMFAVerificationPage(ctx, loginMFAVerificationPage{
-		method:          definitions.MFAMethodRecoveryCodes,
-		templateName:    "idp_recovery_login.html",
-		messageDataKey:  "RecoveryVerifyMessage",
-		messageText:     "Please enter one of your recovery codes",
-		codeText:        "Recovery Code",
-		postEndpointKey: "PostRecoveryVerifyEndpoint",
-	})
+	h.renderCanonicalRecovery(ctx, false)
 }
 
-// mfaSessionState holds the common session state extracted for MFA verification handlers.
-type mfaSessionState struct {
-	mgr          cookie.Manager
-	username     string
-	factorUser   string
-	oidcCID      string
-	samlEntityID string
-}
-
-// extractMFASessionAndUser reads the MFA session state and form code from the cookie/request,
-// validates presence of required fields, and looks up the user. Returns nil if any step fails
-// (the caller is redirected to the login page in that case).
-func (h *FrontendHandler) extractMFASessionAndUser(ctx *gin.Context) (*mfaSessionState, *backend.User, string) {
-	mgr := cookie.GetManager(ctx)
-
-	var (
-		username      string
-		factorUser    string
-		hasAuthResult bool
-		oidcCID       string
-		samlEntityID  string
-	)
-
-	if mgr != nil {
-		username = mgr.GetString(definitions.SessionKeyUsername, "")
-		factorUser = mgr.GetString(definitions.SessionKeyMFAFactorAccount, "")
-		hasAuthResult = mgr.HasKey(definitions.SessionKeyAuthResult)
-
-		flowType := mgr.GetString(definitions.SessionKeyIDPFlowType, "")
-
-		switch flowType {
-		case definitions.ProtoOIDC:
-			oidcCID = mgr.GetString(definitions.SessionKeyIDPClientID, "")
-		case definitions.ProtoSAML:
-			samlEntityID = mgr.GetString(definitions.SessionKeyIDPSAMLEntityID, "")
-			if samlEntityID == "" {
-				samlEntityID = definitions.ProtoSAML
-			}
-		}
-	}
-
-	code := ctx.PostForm("code")
-
-	if username == "" || !hasAuthResult || code == "" {
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return nil, nil, ""
-	}
-
-	if factorUser == "" {
-		factorUser = username
-	}
-
-	state := &mfaSessionState{
-		mgr:          mgr,
-		username:     username,
-		factorUser:   factorUser,
-		oidcCID:      oidcCID,
-		samlEntityID: samlEntityID,
-	}
-
-	user := &backend.User{
-		Name:        mgr.GetString(definitions.SessionKeyMFAAccount, username),
-		ID:          mgr.GetString(definitions.SessionKeyUniqueUserID, ""),
-		DisplayName: mgr.GetString(definitions.SessionKeyMFADisplayName, ""),
-	}
-
-	return state, user, code
-}
-
-// loadCompletedMFAUser refreshes the target account after factor verification succeeded.
-func (h *FrontendHandler) loadCompletedMFAUser(ctx *gin.Context, sess *mfaSessionState, fallback *backend.User) (*backend.User, error) {
-	if sess == nil || sess.mgr == nil {
-		return fallback, nil
-	}
-
-	username := sess.mgr.GetString(definitions.SessionKeyMFAAccount, sess.username)
-	if username == "" {
-		return fallback, nil
-	}
-
-	prepareDelegatedTargetBackendLookup(sess.mgr, username, sess.factorUser)
-
-	idpInstance := idp.NewNauthilusIDP(h.deps)
-
-	user, err := idpInstance.GetUserByUsername(ctx, username, sess.oidcCID, sess.samlEntityID)
-	if err != nil {
-		return nil, err
-	}
-
-	return user, nil
-}
-
-// pendingCompletedMFAAccounts snapshots the target and factor before MFA cleanup.
-func pendingCompletedMFAAccounts(mgr cookie.Manager) (string, string) {
-	if mgr == nil {
-		return "", ""
-	}
-
-	return mgr.GetString(definitions.SessionKeyMFAAccount, ""),
-		mgr.GetString(definitions.SessionKeyMFAFactorAccount, "")
-}
-
-// prepareDelegatedTargetBackendLookup removes only the default factor-owned
-// reference so a delegated target lookup establishes fresh backend affinity.
-func prepareDelegatedTargetBackendLookup(mgr cookie.Manager, targetAccount, factorAccount string) {
-	if mgr == nil || targetAccount == "" || factorAccount == "" || targetAccount == factorAccount {
-		return
-	}
-
-	core.ClearRemoteBackendRef(mgr)
-}
-
-// PostLoginRecovery handles the recovery code verification during login.
-// All flow state is read from the encrypted cookie - no form parameters for flow state.
+// PostLoginRecovery consumes one recovery code and completes one typed step-up.
 func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
-	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_recovery")
-	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
-
-	defer requestScope.Restore()
-	defer sp.End()
-
-	sess, user, code := h.extractMFASessionAndUser(ctx)
-	if sess == nil {
-		return
-	}
-
-	if !h.isMFAMethodSupported(sess.mgr, definitions.MFAMethodRecoveryCodes) {
-		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
-
-		return
-	}
-
-	success, err := h.mfa.UseRecoveryCode(ctx, sess.factorUser, code, userBackendFromMFASession(sess.mgr))
-	if err != nil {
-		h.deps.Logger.Error("Failed to use recovery code", "error", err)
-	}
-
-	if !success {
-		h.renderRecoveryCodeFailure(ctx, sess, err)
-
-		return
-	}
-
-	core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.factorUser, definitions.MFAMethodRecoveryCodes, "", true)
-
-	// MFA OK. Now check if the original password was OK (delayed response case).
-	if h.handleDelayedResponseFailure(ctx, sess, "recovery") {
-		return
-	}
-
-	// All OK!
-	h.setLastMFAMethod(ctx, "recovery")
-
-	user, err = h.loadCompletedMFAUser(ctx, sess, user)
-	if err != nil {
-		sp.RecordError(err)
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return
-	}
-
-	h.finalizeMFALogin(ctx, user)
-}
-
-// renderRecoveryCodeFailure renders the recovery-code form after a failed code attempt.
-func (h *FrontendHandler) renderRecoveryCodeFailure(ctx *gin.Context, sess *mfaSessionState, err error) {
-	core.LogIDPMFAuthResult(
-		ctx,
-		h.deps.Auth(),
-		sess.factorUser,
-		definitions.MFAMethodRecoveryCodes,
-		mfaFailureStatus("Invalid recovery code", err),
-		false,
-	)
-
-	data := h.basePageData(ctx)
-	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
-	data["RecoveryVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter one of your recovery codes")
-	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recovery Code")
-	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
-	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
-	data["CSRFToken"] = csrf.Token(ctx)
-	data["PostRecoveryVerifyEndpoint"] = ctx.Request.URL.Path
-	data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
-	data["HaveError"] = true
-	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid recovery code")
-
-	ctx.HTML(http.StatusOK, "idp_recovery_login.html", data)
-}
-
-// userBackendFromMFASession returns the backend type recorded for MFA verification.
-func userBackendFromMFASession(mgr cookie.Manager) uint8 {
-	if mgr == nil {
-		return uint8(definitions.BackendLDAP)
-	}
-
-	return mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
-}
-
-// mfaFailureStatus returns the log status for an MFA failure.
-func mfaFailureStatus(defaultStatus string, err error) string {
-	if err != nil {
-		return err.Error()
-	}
-
-	return defaultStatus
-}
-
-func (h *FrontendHandler) setLastMFAMethod(ctx *gin.Context, method string) {
-	secure := util.ShouldSetSecureCookie()
-
-	ctx.SetCookie("last_mfa_method", method, 365*24*60*60, "/", "", secure, true)
-
-	if mgr := cookie.GetManager(ctx); mgr != nil {
-		mgr.Set(definitions.SessionKeyMFAMethod, method)
-	}
-}
-
-func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.User, protocolParam string, mgr cookie.Manager) mfaAvailability {
-	return h.getMFAAvailabilityWithBackendRef(ctx, user, protocolParam, mgr, core.RemoteBackendRef{})
-}
-
-// getMFAAvailabilityWithBackendRef evaluates active MFA methods against the selected backend identity.
-func (h *FrontendHandler) getMFAAvailabilityWithBackendRef(ctx *gin.Context, user *backend.User, protocolParam string, mgr cookie.Manager, backendRef core.RemoteBackendRef) mfaAvailability {
-	availability := mfaAvailability{
-		haveTOTP:          h.hasTOTP(user),
-		haveWebAuthn:      h.hasWebAuthnWithBackendRef(ctx, user, protocolParam, backendRef),
-		haveRecoveryCodes: h.hasRecoveryCodes(user),
-	}
-
-	h.mergeBackendMFAAvailability(ctx, mgr, user, protocolParam, backendRef, &availability)
-	applySessionMFAAvailabilitySnapshot(mgr, &availability)
-	h.applySupportedMFAFilter(mgr, &availability)
-	availability.count = countMFAAvailability(availability)
-	storeMFAAvailabilitySnapshot(mgr, availability)
-
-	return availability
-}
-
-// applySessionMFAAvailabilitySnapshot preserves factor facts already proven in
-// this encrypted browser session before applying the client supported_mfa allow-list.
-func applySessionMFAAvailabilitySnapshot(mgr cookie.Manager, availability *mfaAvailability) {
-	if mgr == nil || availability == nil {
-		return
-	}
-
-	availability.haveTOTP = availability.haveTOTP || mgr.GetBool(definitions.SessionKeyHaveTOTP, false)
-	availability.haveWebAuthn = availability.haveWebAuthn || mgr.GetBool(definitions.SessionKeyHaveWebAuthn, false)
-	availability.haveRecoveryCodes = availability.haveRecoveryCodes || mgr.GetBool(definitions.SessionKeyHaveRecoveryCodes, false)
-}
-
-// mergeBackendMFAAvailability adds public backend MFA state to attribute-based checks.
-func (h *FrontendHandler) mergeBackendMFAAvailability(
-	ctx *gin.Context,
-	mgr cookie.Manager,
-	user *backend.User,
-	protocolParam string,
-	backendRef core.RemoteBackendRef,
-	availability *mfaAvailability,
-) {
-	if h == nil || h.deps == nil || ctx == nil || user == nil || availability == nil {
-		return
-	}
-
-	data, err := h.getUserBackendDataForIdentity(ctx, mgr, user.Name, protocolParam, backendRef)
-	if err != nil || data == nil {
-		return
-	}
-
-	availability.haveTOTP = availability.haveTOTP || data.HaveTOTP
-	availability.haveWebAuthn = availability.haveWebAuthn || data.HaveWebAuthn
-	availability.haveRecoveryCodes = availability.haveRecoveryCodes || data.NumRecoveryCodes > 0
-}
-
-// applySupportedMFAFilter removes methods disallowed by the active client policy.
-func (h *FrontendHandler) applySupportedMFAFilter(mgr cookie.Manager, availability *mfaAvailability) {
-	if h == nil || availability == nil {
-		return
-	}
-
-	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP) {
-		availability.haveTOTP = false
-	}
-
-	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn) {
-		availability.haveWebAuthn = false
-	}
-
-	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodRecoveryCodes) {
-		availability.haveRecoveryCodes = false
-	}
+	h.completeCanonicalRecovery(ctx)
 }
 
 // countMFAAvailability counts recovery codes only when another MFA method exists.
@@ -2347,37 +1536,6 @@ func countMFAAvailability(availability mfaAvailability) int {
 	}
 
 	return count
-}
-
-// storeMFAAvailabilitySnapshot preserves enrolled-factor facts across MFA cleanup.
-func storeMFAAvailabilitySnapshot(mgr cookie.Manager, availability mfaAvailability) {
-	if mgr == nil {
-		return
-	}
-
-	mgr.Set(definitions.SessionKeyHaveTOTP, availability.haveTOTP)
-	mgr.Set(definitions.SessionKeyHaveWebAuthn, availability.haveWebAuthn)
-	mgr.Set(definitions.SessionKeyHaveRecoveryCodes, availability.haveRecoveryCodes)
-}
-
-// getMFARedirectURLFromCookie returns the MFA redirect URL based on user's available MFA methods.
-// All flow state is read from the encrypted cookie - no URL parameters are used.
-func (h *FrontendHandler) getMFARedirectURLFromCookie(ctx *gin.Context, user *backend.User) (string, bool) {
-	mgr := cookie.GetManager(ctx)
-	protocolParam := ""
-
-	if mgr != nil {
-		protocolParam = mgr.GetString(definitions.SessionKeyIDPFlowType, "")
-	}
-
-	availability := h.getMFAAvailability(ctx, user, protocolParam, mgr)
-
-	path, ok := h.getMFARedirectURLFromAvailability(availability)
-	if !ok {
-		return "", false
-	}
-
-	return localizedLoginPath(ctx, path), true
 }
 
 // getMFARedirectURLFromAvailability returns the direct challenge URL when exactly one method is available.
@@ -2409,179 +1567,19 @@ func (h *FrontendHandler) getMFAURLFromCookie(ctx *gin.Context, mfaType string) 
 	return localizedLoginPath(ctx, "/login/"+mfaType)
 }
 
-// getLoginMFABackURLFromCookie returns the URL to go back from MFA verification.
-// All flow state is read from the encrypted cookie - no URL parameters are used.
-func (h *FrontendHandler) getLoginMFABackURLFromCookie(ctx *gin.Context) string {
-	mgr := cookie.GetManager(ctx)
-	multi := false
-
-	if mgr != nil {
-		multi = mgr.GetBool(definitions.SessionKeyMFAMulti, false)
-	}
-
-	if !multi {
-		return h.getLoginPath(ctx)
-	}
-
-	return h.getMFASelectPath(ctx)
-}
-
-// finalizeMFALogin completes the MFA login process and redirects to the IDP endpoint.
-// All flow state is read from the encrypted cookie - no URL parameters are used.
-func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User) {
-	mgr := cookie.GetManager(ctx)
-
-	if mgr != nil {
-		core.StoreCompletedIDPMFASession(mgr, user, mgr.GetString(definitions.SessionKeyMFAMethod, ""))
-		mgr.Debug(ctx, h.deps.Logger, "MFA login finalized - session data stored")
-	}
-
-	core.QueueCompletedIDPMFAPostAction(ctx, h.deps.Auth(), user)
-
-	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
-
-	// Redirect back to IDP endpoint; check for mandatory MFA registration first.
-	if h.redirectPendingSelfServiceStepUp(ctx, mgr) {
-		return
-	}
-
-	if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
-		h.resumeIDPFlow(ctx, mgr)
-	}
-}
-
-// LoginWebAuthn renders the WebAuthn verification page during login.
-// All flow state is read from the encrypted cookie - no URL parameters are used.
+// LoginWebAuthn renders the WebAuthn verification page from one typed step-up ticket.
 func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
-	mgr := cookie.GetManager(ctx)
-	h.prepareExistingSessionMFAAssuranceChallenge(mgr)
-
-	username := ""
-
-	if mgr != nil {
-		username = mgr.GetString(definitions.SessionKeyUsername, "")
-	}
-
-	if username == "" {
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return
-	}
-
-	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn) {
-		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
-
-		return
-	}
-
-	data := h.basePageData(ctx)
-	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
-	data["WebAuthnVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please use your security key to login")
-	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
-	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
-
-	data["CSRFToken"] = csrf.Token(ctx)
-	data["WebAuthnBeginEndpoint"] = h.getMFAURLFromCookie(ctx, "webauthn/begin")
-	data["WebAuthnFinishEndpoint"] = h.getMFAURLFromCookie(ctx, "webauthn/finish")
-	data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
-
-	// JS Localizations
-	data["JSInteractWithKey"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please interact with your security key...")
-	data["JSCompletingLogin"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Completing login...")
-	data["JSUnknownError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An unknown error occurred")
-
-	ctx.HTML(http.StatusOK, "idp_webauthn_verify.html", data)
+	h.renderCanonicalWebAuthn(ctx)
 }
 
-// LoginTOTP renders the TOTP verification page during login.
-// All flow state is read from the encrypted cookie - no URL parameters are used.
+// LoginTOTP renders the TOTP verification page from one typed step-up ticket.
 func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
-	h.renderLoginMFAVerificationPage(ctx, loginMFAVerificationPage{
-		method:          definitions.MFAMethodTOTP,
-		templateName:    "idp_totp_verify.html",
-		messageDataKey:  "TOTPVerifyMessage",
-		messageText:     "Please enter your 2FA code",
-		codeText:        "OTP Code",
-		postEndpointKey: "PostTOTPVerifyEndpoint",
-	})
+	h.renderCanonicalTOTP(ctx, false)
 }
 
-// PostLoginTOTP handles the TOTP verification during login.
-// All flow state is read from the encrypted cookie - no form parameters for flow state.
+// PostLoginTOTP verifies TOTP against the canonical identity and completes one typed step-up.
 func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
-	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_totp")
-	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
-
-	defer requestScope.Restore()
-	defer sp.End()
-
-	sess, user, code := h.extractMFASessionAndUser(ctx)
-	if sess == nil {
-		return
-	}
-
-	if !h.isMFAMethodSupported(sess.mgr, definitions.MFAMethodTOTP) {
-		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
-
-		return
-	}
-
-	valid, err := h.mfa.VerifyTOTP(ctx, sess.factorUser, code, userBackendFromMFASession(sess.mgr))
-	if err != nil || !valid {
-		if err != nil {
-			sp.RecordError(err)
-		}
-
-		h.renderTOTPLoginFailure(ctx, sess, err)
-
-		return
-	}
-
-	core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.factorUser, definitions.MFAMethodTOTP, "", true)
-
-	// MFA OK. Now check if the original password was OK (delayed response case).
-	if h.handleDelayedResponseFailure(ctx, sess, "totp") {
-		return
-	}
-
-	// All OK!
-	h.setLastMFAMethod(ctx, "totp")
-
-	user, err = h.loadCompletedMFAUser(ctx, sess, user)
-	if err != nil {
-		sp.RecordError(err)
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return
-	}
-
-	h.finalizeMFALogin(ctx, user)
-}
-
-// renderTOTPLoginFailure renders the TOTP form after a failed OTP attempt.
-func (h *FrontendHandler) renderTOTPLoginFailure(ctx *gin.Context, sess *mfaSessionState, err error) {
-	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "totp", "fail").Inc()
-	core.LogIDPMFAuthResult(
-		ctx,
-		h.deps.Auth(),
-		sess.factorUser,
-		definitions.MFAMethodTOTP,
-		mfaFailureStatus("Invalid OTP code", err),
-		false,
-	)
-
-	data := h.basePageData(ctx)
-	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
-	data["TOTPVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your 2FA code")
-	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
-	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
-	data["CSRFToken"] = csrf.Token(ctx)
-	data["PostTOTPVerifyEndpoint"] = ctx.Request.URL.Path
-	data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
-	data["HaveError"] = true
-	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid OTP code")
-
-	ctx.HTML(http.StatusOK, "idp_totp_verify.html", data)
+	h.completeCanonicalTOTP(ctx)
 }
 
 // TwoFAHome renders the 2FA management overview.
@@ -2595,7 +1593,6 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 		definitions.LogKeyMsg, "IDP 2FA Self-Service home request",
 	)
 
-	mgr := cookie.GetManager(ctx)
 	data := h.basePageData(ctx)
 
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Self-Service")
@@ -2620,7 +1617,7 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	data["RecoveryGenerateEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/recovery/generate")
 	data["Home"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Home")
 
-	userData, err := h.GetUserBackendData(ctx)
+	_, _, userData, _, err := h.canonicalSelfServiceBackend(ctx)
 	if err != nil || userData == nil {
 		h.handleTwoFAHomeError(ctx, data, err, "")
 
@@ -2633,11 +1630,6 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	data["HaveRecoveryCodes"] = userData.NumRecoveryCodes > 0
 	data["NumRecoveryCodes"] = userData.NumRecoveryCodes
 	data["HaveWebAuthn"] = userData.HaveWebAuthn
-
-	// Sync cookie if account exists
-	if mgr != nil && mgr.GetString(definitions.SessionKeyAccount, "") != "" {
-		mgr.Set(definitions.SessionKeyHaveTOTP, userData.HaveTOTP)
-	}
 
 	data["CSRFToken"] = csrf.Token(ctx)
 
@@ -2660,258 +1652,12 @@ func (h *FrontendHandler) handleTwoFAHomeError(ctx *gin.Context, data gin.H, err
 
 // RegisterTOTP renders the TOTP registration page.
 func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
-	mgr := cookie.GetManager(ctx)
-
-	haveTOTP := false
-	account := ""
-	sourceBackend := uint8(definitions.BackendLDAP)
-
-	if mgr != nil {
-		haveTOTP = mgr.GetBool(definitions.SessionKeyHaveTOTP, false)
-		account = mgr.GetString(definitions.SessionKeyAccount, "")
-		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
-	}
-
-	if haveTOTP {
-		// In a forced-registration flow redirect to the continue endpoint so the
-		// next required method (if any) is handled; otherwise go to the self-service home.
-		if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-			ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/continue")
-		} else {
-			ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
-			ctx.Status(http.StatusFound)
-		}
-
-		return
-	}
-
-	if account == "" {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
-
-		return
-	}
-
-	secret, qrCodeURL, err := h.mfa.GenerateTOTPSecret(ctx, account)
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, "Failed to generate TOTP key")
-
-		return
-	}
-
-	if mgr != nil && sourceBackend != uint8(definitions.BackendRemote) {
-		mgr.Set(definitions.SessionKeyTOTPSecret, secret)
-	} else if mgr != nil {
-		mgr.Delete(definitions.SessionKeyTOTPSecret)
-	}
-
-	data := h.basePageData(ctx)
-	data["QRCode"] = qrCodeURL
-	data["Secret"] = secret
-	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Register TOTP")
-	data["TOTPMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please scan and verify the following QR code")
-	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
-	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
-	data["CSRFToken"] = csrf.Token(ctx)
-	data["PostTOTPRegisterPath"] = localizedMFARootPath(ctx, definitions.MFARoot+"/totp/register")
-
-	requireFlow := mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false)
-
-	data["RequireMFAFlow"] = requireFlow
-	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
-	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
-	data["CancelMFAEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/register/cancel")
-
-	ctx.HTML(http.StatusOK, "idp_totp_register.html", data)
+	h.renderCanonicalTOTPEnrollment(ctx)
 }
 
 // PostRegisterTOTP handles the TOTP registration submission.
 func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
-	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_register_totp")
-	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
-
-	defer requestScope.Restore()
-	defer sp.End()
-
-	mgr := cookie.GetManager(ctx)
-	secret := ""
-	username := ""
-	sourceBackend := uint8(definitions.BackendLDAP)
-
-	if mgr != nil {
-		secret = mgr.GetString(definitions.SessionKeyTOTPSecret, "")
-		username = mgr.GetString(definitions.SessionKeyAccount, "")
-		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
-	}
-
-	if mgr != nil && mgr.GetBool(definitions.SessionKeyHaveTOTP, false) {
-		h.redirectAfterTOTPRegistration(ctx, mgr, false)
-
-		return
-	}
-
-	code := ctx.PostForm("code")
-
-	if username == "" || code == "" || (sourceBackend != uint8(definitions.BackendRemote) && secret == "") {
-		h.renderErrorModal(ctx, "Invalid request")
-
-		return
-	}
-
-	if err := h.mfa.VerifyAndSaveTOTP(ctx, username, secret, code, sourceBackend); err != nil {
-		sp.RecordError(err)
-		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "fail").Inc()
-		h.renderErrorModalWithErr(ctx, "Failed to register TOTP", err)
-
-		return
-	}
-
-	auth := core.NewAuthStateFromContextWithDeps(ctx, h.deps.Auth())
-	auth.PurgeCacheFor(username)
-
-	// Success!
-	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "success").Inc()
-
-	if mgr != nil {
-		mgr.Set(definitions.SessionKeyHaveTOTP, true)
-		mgr.Delete(definitions.SessionKeyTOTPSecret)
-	}
-
-	h.redirectAfterTOTPRegistration(ctx, mgr, true)
-}
-
-// redirectAfterTOTPRegistration advances new enrollments once and makes repeated successful submissions idempotent.
-func (h *FrontendHandler) redirectAfterTOTPRegistration(ctx *gin.Context, mgr cookie.Manager, newlyRegistered bool) {
-	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		if newlyRegistered {
-			h.removeCompletedRequireMFAMethod(ctx, mgr, definitions.MFAMethodTOTP)
-		}
-
-		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/continue")
-		ctx.Status(http.StatusOK)
-
-		return
-	}
-
-	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
-	ctx.Status(http.StatusOK)
-}
-
-// recoveryRegistrationContext carries session state for recovery-code registration.
-type recoveryRegistrationContext struct {
-	mgr           cookie.Manager
-	account       string
-	sourceBackend uint8
-	requireFlow   bool
-}
-
-// newRecoveryRegistrationContext reads recovery-code registration state.
-func newRecoveryRegistrationContext(ctx *gin.Context) recoveryRegistrationContext {
-	context := recoveryRegistrationContext{
-		mgr:           cookie.GetManager(ctx),
-		sourceBackend: uint8(definitions.BackendLDAP),
-	}
-	if context.mgr == nil {
-		return context
-	}
-
-	context.account = context.mgr.GetString(definitions.SessionKeyAccount, "")
-	context.sourceBackend = context.mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
-	context.requireFlow = context.mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false)
-	context.mgr.Delete(definitions.SessionKeyRecoveryCodesSaved)
-	context.mgr.Delete(definitions.SessionKeyRecoveryCodesRemoteGenerated)
-
-	return context
-}
-
-// missingRecoveryRegistrationMethods returns required MFA methods still missing.
-func missingRecoveryRegistrationMethods(required []string, userData *UserBackendData) []string {
-	missing := make([]string, 0, len(required))
-
-	for _, method := range required {
-		if recoveryRegistrationMethodMissing(method, userData) {
-			missing = append(missing, method)
-		}
-	}
-
-	return missing
-}
-
-// recoveryRegistrationMethodMissing checks one required MFA method.
-func recoveryRegistrationMethodMissing(method string, userData *UserBackendData) bool {
-	switch method {
-	case definitions.MFAMethodTOTP:
-		return !userData.HaveTOTP
-	case definitions.MFAMethodWebAuthn:
-		return !userData.HaveWebAuthn
-	case definitions.MFAMethodRecoveryCodes:
-		return userData.NumRecoveryCodes == 0
-	default:
-		return false
-	}
-}
-
-// updateRecoveryRequireFlow refreshes required-MFA state from backend data.
-func (h *FrontendHandler) updateRecoveryRequireFlow(context *recoveryRegistrationContext, userData *UserBackendData) {
-	if context.mgr == nil || context.requireFlow || context.mgr.GetString(definitions.SessionKeyIDPFlowID, "") == "" {
-		return
-	}
-
-	required := h.getRequiredMFAMethods(context.mgr)
-	if len(required) == 0 {
-		return
-	}
-
-	missing := missingRecoveryRegistrationMethods(required, userData)
-	if len(missing) == 0 {
-		return
-	}
-
-	context.requireFlow = true
-	flowdomain.SetRequireMFAPending(context.mgr, strings.Join(missing, ","))
-}
-
-// redirectExistingRecoveryCodes handles users who already have recovery codes.
-func (h *FrontendHandler) redirectExistingRecoveryCodes(ctx *gin.Context, requireFlow bool) {
-	if requireFlow {
-		ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/continue")
-
-		return
-	}
-
-	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
-	ctx.Status(http.StatusFound)
-}
-
-// generateRecoveryRegistrationCodes creates codes for remote or local backends.
-func (h *FrontendHandler) generateRecoveryRegistrationCodes(ctx *gin.Context, context recoveryRegistrationContext) ([]string, bool) {
-	if context.sourceBackend == uint8(definitions.BackendRemote) {
-		codes, err := h.mfa.GenerateRecoveryCodes(ctx, context.account, context.sourceBackend)
-		if err != nil {
-			h.renderErrorModalWithErr(ctx, "Failed to generate recovery codes", err)
-
-			return nil, false
-		}
-
-		if context.mgr != nil {
-			context.mgr.Set(definitions.SessionKeyRecoveryCodesRemoteGenerated, true)
-		}
-
-		return codes, true
-	}
-
-	recovery, err := core.GenerateBackupCodes()
-	if err != nil {
-		h.renderErrorModalWithErr(ctx, "Failed to generate recovery codes", err)
-
-		return nil, false
-	}
-
-	codes := recovery.GetCodes()
-	if context.mgr != nil {
-		context.mgr.Set(definitions.SessionKeyRecoveryCodes, strings.Join(codes, ","))
-	}
-
-	return codes, true
+	h.completeCanonicalTOTPEnrollment(ctx)
 }
 
 // recoveryCodesRegisterPageData builds the registration page data.
@@ -2939,251 +1685,21 @@ func (h *FrontendHandler) recoveryCodesRegisterPageData(ctx *gin.Context, codes 
 
 // RegisterRecoveryCodes renders the recovery codes registration page.
 func (h *FrontendHandler) RegisterRecoveryCodes(ctx *gin.Context) {
-	context := newRecoveryRegistrationContext(ctx)
-	if context.account == "" {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
-
-		return
-	}
-
-	userData, err := h.GetUserBackendData(ctx)
-	if err != nil || userData == nil {
-		h.renderErrorModal(ctx, "Failed to fetch user data")
-
-		return
-	}
-
-	h.updateRecoveryRequireFlow(&context, userData)
-
-	if userData.NumRecoveryCodes > 0 {
-		h.redirectExistingRecoveryCodes(ctx, context.requireFlow)
-		return
-	}
-
-	codes, ok := h.generateRecoveryRegistrationCodes(ctx, context)
-	if !ok {
-		return
-	}
-
-	ctx.HTML(http.StatusOK, "idp_recovery_codes_register.html", h.recoveryCodesRegisterPageData(ctx, codes, context.requireFlow))
-}
-
-// saveRecoveryCodesContext carries state needed to persist generated codes.
-type saveRecoveryCodesContext struct {
-	mgr             cookie.Manager
-	username        string
-	stored          string
-	sourceBackend   uint8
-	remoteGenerated bool
+	h.renderCanonicalRecoveryEnrollment(ctx)
 }
 
 type recoveryCodesPayload struct {
 	Codes []string `json:"codes"`
 }
 
-// newSaveRecoveryCodesContext reads session state for saving recovery codes.
-func newSaveRecoveryCodesContext(ctx *gin.Context) saveRecoveryCodesContext {
-	context := saveRecoveryCodesContext{
-		mgr:           cookie.GetManager(ctx),
-		sourceBackend: uint8(definitions.BackendLDAP),
-	}
-	if context.mgr == nil {
-		return context
-	}
-
-	context.username = context.mgr.GetString(definitions.SessionKeyAccount, "")
-	context.sourceBackend = context.mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
-	context.stored = context.mgr.GetString(definitions.SessionKeyRecoveryCodes, "")
-	context.remoteGenerated = context.mgr.GetBool(definitions.SessionKeyRecoveryCodesRemoteGenerated, false)
-
-	return context
-}
-
-// validateSaveRecoveryContext checks whether a save request has session state.
-func (h *FrontendHandler) validateSaveRecoveryContext(ctx *gin.Context, context saveRecoveryCodesContext) bool {
-	if context.username == "" || (context.stored == "" && !context.remoteGenerated) {
-		h.renderErrorModal(ctx, "Invalid request")
-
-		return false
-	}
-
-	return true
-}
-
-// bindRecoveryCodesPayload decodes the submitted recovery-code confirmation.
-func (h *FrontendHandler) bindRecoveryCodesPayload(ctx *gin.Context) (recoveryCodesPayload, bool) {
-	var payload recoveryCodesPayload
-	if err := ctx.ShouldBindJSON(&payload); err != nil {
-		h.renderErrorModal(ctx, "Invalid request")
-
-		return payload, false
-	}
-
-	return payload, true
-}
-
-// recoveryCodesFromSession returns generated codes stored in the session.
-func recoveryCodesFromSession(stored string) []string {
-	if stored == "" {
-		return nil
-	}
-
-	return strings.Split(stored, ",")
-}
-
-// validateRecoveryCodesPayload checks that local generated codes match the browser payload.
-func (h *FrontendHandler) validateRecoveryCodesPayload(ctx *gin.Context, context saveRecoveryCodesContext, payload recoveryCodesPayload, storedCodes []string) bool {
-	if !context.remoteGenerated && len(payload.Codes) > 0 && !slices.Equal(payload.Codes, storedCodes) {
-		h.renderErrorModal(ctx, "Invalid request")
-
-		return false
-	}
-
-	return true
-}
-
-// finishSaveRecoveryCodes updates cache and session state after successful save.
-func (h *FrontendHandler) finishSaveRecoveryCodes(ctx *gin.Context, context saveRecoveryCodesContext) {
-	state := core.NewAuthStateFromContextWithDeps(ctx, h.deps.Auth())
-	state.PurgeCacheFor(context.username)
-
-	if context.mgr == nil {
-		return
-	}
-
-	context.mgr.Delete(definitions.SessionKeyRecoveryCodes)
-	context.mgr.Delete(definitions.SessionKeyRecoveryCodesRemoteGenerated)
-	context.mgr.Set(definitions.SessionKeyRecoveryCodesSaved, true)
-	context.mgr.Set(definitions.SessionKeyHaveRecoveryCodes, true)
-
-	if context.mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		h.removeCompletedRequireMFAMethod(ctx, context.mgr, definitions.MFAMethodRecoveryCodes)
-	}
-}
-
 // SaveRecoveryCodes persists the recovery codes once the user downloaded them.
 func (h *FrontendHandler) SaveRecoveryCodes(ctx *gin.Context) {
-	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.save_recovery_codes")
-	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
-
-	defer requestScope.Restore()
-	defer sp.End()
-
-	context := newSaveRecoveryCodesContext(ctx)
-	if !h.validateSaveRecoveryContext(ctx, context) {
-		return
-	}
-
-	payload, ok := h.bindRecoveryCodesPayload(ctx)
-	if !ok {
-		return
-	}
-
-	storedCodes := recoveryCodesFromSession(context.stored)
-	if !h.validateRecoveryCodesPayload(ctx, context, payload, storedCodes) {
-		return
-	}
-
-	if err := h.mfa.SaveRecoveryCodes(ctx, context.username, storedCodes, context.sourceBackend); err != nil {
-		sp.RecordError(err)
-		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "recovery", "fail").Inc()
-		h.renderErrorModalWithErr(ctx, "Failed to save recovery codes", err)
-
-		return
-	}
-
-	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "recovery", "success").Inc()
-
-	h.finishSaveRecoveryCodes(ctx, context)
-	ctx.Status(http.StatusOK)
-}
-
-// recoveryCodesSavedOrPresent checks whether the user can continue past recovery setup.
-func (h *FrontendHandler) recoveryCodesSavedOrPresent(ctx *gin.Context, mgr cookie.Manager, userData *UserBackendData) bool {
-	if userData.NumRecoveryCodes > 0 {
-		return true
-	}
-
-	saved := false
-	if mgr != nil {
-		saved = mgr.GetBool(definitions.SessionKeyRecoveryCodesSaved, false)
-	}
-
-	if !saved {
-		h.renderErrorModal(ctx, "Recovery codes have not been saved")
-
-		return false
-	}
-
-	return true
-}
-
-// continueAfterRecoveryRegistration redirects or resumes after recovery-code setup.
-func (h *FrontendHandler) continueAfterRecoveryRegistration(ctx *gin.Context, mgr cookie.Manager) {
-	if mgr != nil {
-		mgr.Delete(definitions.SessionKeyRecoveryCodesSaved)
-	}
-
-	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		h.removeCompletedRequireMFAMethod(ctx, mgr, definitions.MFAMethodRecoveryCodes)
-		ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/continue")
-
-		return
-	}
-
-	if mgr != nil && mgr.GetString(definitions.SessionKeyIDPFlowID, "") != "" {
-		if h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
-			return
-		}
-
-		h.resumeIDPFlow(ctx, mgr)
-
-		return
-	}
-
-	if ctx.GetHeader("HX-Request") != "" {
-		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
-		ctx.Status(http.StatusOK)
-
-		return
-	}
-
-	ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/home")
+	h.saveCanonicalRecoveryEnrollment(ctx)
 }
 
 // PostRegisterRecoveryCodes handles the continue action after recovery codes are saved.
 func (h *FrontendHandler) PostRegisterRecoveryCodes(ctx *gin.Context) {
-	spanCtx, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_register_recovery_codes")
-	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
-
-	defer requestScope.Restore()
-	defer sp.End()
-
-	mgr := cookie.GetManager(ctx)
-	username := ""
-
-	if mgr != nil {
-		username = mgr.GetString(definitions.SessionKeyAccount, "")
-	}
-
-	if username == "" {
-		h.renderErrorModal(ctx, "Invalid request")
-
-		return
-	}
-
-	userData, err := h.GetUserBackendData(ctx)
-	if err != nil || userData == nil {
-		h.renderErrorModal(ctx, "Failed to fetch user data")
-
-		return
-	}
-
-	if !h.recoveryCodesSavedOrPresent(ctx, mgr, userData) {
-		return
-	}
-
-	h.continueAfterRecoveryRegistration(ctx, mgr)
+	h.completeCanonicalRecoveryEnrollment(ctx)
 }
 
 // PostGenerateRecoveryCodes handles generating new recovery codes.
@@ -3194,27 +1710,12 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	defer requestScope.Restore()
 	defer sp.End()
 
-	if !h.enforceMFASelfServiceStepUp(ctx) {
+	if !h.authorizeCanonicalSelfServiceCaller(ctx, nil) {
 		return
 	}
 
-	mgr := cookie.GetManager(ctx)
-	username := ""
-	sourceBackend := uint8(definitions.BackendLDAP)
-
-	if mgr != nil {
-		username = mgr.GetString(definitions.SessionKeyAccount, "")
-		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
-	}
-
-	if username == "" {
-		h.renderErrorModal(ctx, "Invalid request")
-
-		return
-	}
-
-	userData, err := h.GetUserBackendData(ctx)
-	if err != nil || userData == nil {
+	_, _, userData, _, err := h.canonicalSelfServiceBackend(ctx)
+	if err != nil {
 		h.renderErrorModal(ctx, "Failed to fetch user data")
 
 		return
@@ -3226,7 +1727,12 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 		return
 	}
 
-	codes, err := h.mfa.GenerateRecoveryCodes(ctx, username, sourceBackend)
+	generator := h.canonicalSelfServiceRecoveryGenerator
+	if generator == nil {
+		generator = h.generateCanonicalSelfServiceRecoveryCodes
+	}
+
+	codes, err := generator(ctx, userData)
 	if err != nil {
 		sp.RecordError(err)
 		h.renderErrorModalWithErr(ctx, "Failed to generate recovery codes", err)
@@ -3237,9 +1743,8 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	// Success!
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "recovery", "success").Inc()
 
-	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
-	if state != nil {
-		state.PurgeCacheFor(username)
+	if userData.AuthState != nil {
+		userData.AuthState.PurgeCacheFor(userData.Username)
 	}
 
 	data := h.basePageData(ctx)
@@ -3265,26 +1770,23 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	defer requestScope.Restore()
 	defer sp.End()
 
-	if !h.enforceMFASelfServiceStepUp(ctx) {
+	if !h.authorizeCanonicalSelfServiceCaller(ctx, nil) {
 		return
 	}
 
-	mgr := cookie.GetManager(ctx)
-	username := ""
-	sourceBackend := uint8(definitions.BackendLDAP)
-
-	if mgr != nil {
-		username = mgr.GetString(definitions.SessionKeyAccount, "")
-		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
-	}
-
-	if username == "" {
+	_, _, userData, _, err := h.canonicalSelfServiceBackend(ctx)
+	if err != nil {
 		h.renderErrorModal(ctx, "Invalid request")
 
 		return
 	}
 
-	if err := h.mfa.DeleteTOTP(ctx, username, sourceBackend); err != nil {
+	deleter := h.canonicalSelfServiceTOTPDeleter
+	if deleter == nil {
+		deleter = h.deleteCanonicalSelfServiceTOTP
+	}
+
+	if err = deleter(ctx, userData); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "totp", "fail").Inc()
 		h.renderErrorModalWithErr(ctx, "Failed to delete TOTP secret", err)
@@ -3294,35 +1796,16 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "totp", "success").Inc()
 
-	if mgr != nil {
-		mgr.Set(definitions.SessionKeyHaveTOTP, false)
+	if userData.AuthState != nil {
+		userData.AuthState.PurgeCacheFor(userData.Username)
 	}
-
-	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
-	if state == nil {
-		h.renderErrorModal(ctx, "Failed to initialize auth state")
-
-		return
-	}
-
-	state.PurgeCacheFor(username)
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
 }
 
-// deleteWebAuthnIdentity reads the current session identity for WebAuthn deletion.
-func deleteWebAuthnIdentity(ctx *gin.Context) (string, string) {
-	mgr := cookie.GetManager(ctx)
-	if mgr == nil {
-		return "", ""
-	}
-
-	return mgr.GetString(definitions.SessionKeyUniqueUserID, ""), mgr.GetString(definitions.SessionKeyAccount, "")
-}
-
 // deleteWebAuthnCredentials removes every stored WebAuthn credential from the backend.
-func deleteWebAuthnCredentials(userData *UserBackendData) error {
+func (h *FrontendHandler) deleteCanonicalWebAuthnCredentials(userData *UserBackendData) error {
 	if userData.WebAuthnUser == nil || len(userData.WebAuthnUser.Credentials) == 0 {
 		return nil
 	}
@@ -3330,12 +1813,43 @@ func deleteWebAuthnCredentials(userData *UserBackendData) error {
 	for _, cred := range userData.WebAuthnUser.Credentials {
 		credential := cred
 
-		if err := userData.AuthState.DeleteWebAuthnCredential(&credential); err != nil {
+		if err := h.deleteCanonicalWebAuthnCredential(userData.AuthState, &credential); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func (h *FrontendHandler) deleteCanonicalWebAuthnCredential(
+	state *core.AuthState,
+	credential *mfa.PersistentCredential,
+) error {
+	if h.canonicalWebAuthnCredentialDelete != nil {
+		return h.canonicalWebAuthnCredentialDelete(state, credential)
+	}
+
+	if state == nil {
+		return errors.ErrUnknownDatabaseBackend
+	}
+
+	return state.DeleteWebAuthnCredentialFromSelectedBackend(credential)
+}
+
+func (h *FrontendHandler) updateCanonicalWebAuthnCredential(
+	state *core.AuthState,
+	oldCredential *mfa.PersistentCredential,
+	newCredential *mfa.PersistentCredential,
+) error {
+	if h.canonicalWebAuthnCredentialUpdate != nil {
+		return h.canonicalWebAuthnCredentialUpdate(state, oldCredential, newCredential)
+	}
+
+	if state == nil {
+		return errors.ErrUnknownDatabaseBackend
+	}
+
+	return state.UpdateWebAuthnCredentialInSelectedBackend(oldCredential, newCredential)
 }
 
 // DeleteWebAuthn removes WebAuthn credentials for the user.
@@ -3346,18 +1860,11 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	defer requestScope.Restore()
 	defer sp.End()
 
-	if !h.enforceMFASelfServiceStepUp(ctx) {
+	if !h.authorizeCanonicalSelfServiceCaller(ctx, nil) {
 		return
 	}
 
-	userID, username := deleteWebAuthnIdentity(ctx)
-	if userID == "" || username == "" {
-		h.renderErrorModal(ctx, "Invalid request")
-
-		return
-	}
-
-	userData, err := h.GetUserBackendData(ctx)
+	_, identity, userData, _, err := h.canonicalSelfServiceBackend(ctx)
 	if err != nil || userData == nil || userData.AuthState == nil {
 		if err != nil {
 			sp.RecordError(err)
@@ -3369,7 +1876,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 		return
 	}
 
-	if err := deleteWebAuthnCredentials(userData); err != nil {
+	if err := h.deleteCanonicalWebAuthnCredentials(userData); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "fail").Inc()
 		h.renderErrorModalWithErr(ctx, "Failed to delete WebAuthn credential", err)
@@ -3378,7 +1885,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	}
 
 	// First, clear the Redis cache
-	key := h.deps.Cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + userID
+	key := h.deps.Cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + identity.Reference
 	if err := h.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err(); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "fail").Inc()
@@ -3389,11 +1896,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "success").Inc()
 
-	if mgr := cookie.GetManager(ctx); mgr != nil {
-		mgr.Set(definitions.SessionKeyHaveWebAuthn, false)
-	}
-
-	userData.AuthState.PurgeCacheFor(username)
+	userData.AuthState.PurgeCacheFor(identity.Account)
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
@@ -3401,68 +1904,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 
 // RegisterWebAuthn renders the WebAuthn registration page.
 func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
-	mgr := cookie.GetManager(ctx)
-
-	if mgr == nil {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
-
-		return
-	}
-
-	if !h.restoreRequireMFAIdentityContextFromStore(ctx, mgr) {
-		h.clearRequireMFARegistrationState(mgr)
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
-
-		return
-	}
-
-	uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, "")
-	if uniqueUserID == "" {
-		// Defensive recovery: older/partial sessions can miss unique_userid even
-		// when account is present. Try to reconstruct backend identity once.
-		if userData, err := h.GetUserBackendData(ctx); err == nil && userData != nil && userData.UniqueUserID != "" {
-			mgr.Set(definitions.SessionKeyUniqueUserID, userData.UniqueUserID)
-			uniqueUserID = userData.UniqueUserID
-		}
-	}
-
-	if uniqueUserID == "" {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
-
-		return
-	}
-
-	requireFlow := mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false)
-
-	data := h.basePageData(ctx)
-	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Register WebAuthn")
-	data["WebAuthnMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please connect your security key and follow the instructions")
-	data["DeviceNameLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Device name")
-	data["DeviceNamePlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "e.g. Office YubiKey")
-	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
-
-	// JS Localizations
-	data["JSInteractWithKey"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please interact with your security key...")
-	data["JSCompletingRegistration"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Completing registration...")
-	data["JSDeviceNameRequired"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter a device name")
-	data["JSUnknownError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An unknown error occurred")
-	data["CSRFToken"] = csrf.Token(ctx)
-	data["WebAuthnBeginEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/register/begin")
-	data["WebAuthnFinishEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/register/finish")
-
-	webAuthnNextEndpoint := definitions.MFARoot + "/register/home"
-	if requireFlow {
-		webAuthnNextEndpoint = definitions.MFARoot + "/register/continue"
-	}
-
-	data["WebAuthnNextEndpoint"] = localizedMFARootPath(ctx, webAuthnNextEndpoint)
-
-	data["RequireMFAFlow"] = requireFlow
-	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
-	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
-	data["CancelMFAEndpoint"] = localizedMFARootPath(ctx, definitions.MFARoot+"/register/cancel")
-
-	ctx.HTML(http.StatusOK, "idp_webauthn_register.html", data)
+	h.renderCanonicalWebAuthnEnrollment(ctx)
 }
 
 // LoggedOut renders the logout confirmation page.
@@ -3506,7 +1948,7 @@ func (h *FrontendHandler) renderErrorModalWithErr(ctx *gin.Context, msg string, 
 func (h *FrontendHandler) WebAuthnDevices(ctx *gin.Context) {
 	data := h.basePageData(ctx)
 
-	userData, err := h.GetUserBackendData(ctx)
+	_, _, userData, _, err := h.canonicalSelfServiceBackend(ctx)
 	if err != nil || userData == nil {
 		h.handleTwoFAHomeError(ctx, data, err, "")
 
@@ -3575,7 +2017,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 	defer requestScope.Restore()
 	defer sp.End()
 
-	if !h.enforceMFASelfServiceStepUp(ctx) {
+	if !h.authorizeCanonicalSelfServiceCaller(ctx, nil) {
 		return
 	}
 
@@ -3584,8 +2026,10 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 		return
 	}
 
-	userData, ok := h.webAuthnDeviceUserData(ctx)
-	if !ok {
+	_, _, userData, _, err := h.canonicalSelfServiceBackend(ctx)
+	if err != nil || userData == nil || userData.AuthState == nil || userData.WebAuthnUser == nil {
+		h.renderErrorModal(ctx, notLoggedInMessage)
+
 		return
 	}
 
@@ -3597,7 +2041,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 	}
 
 	targetCred := userData.WebAuthnUser.Credentials[targetIndex]
-	if err := userData.AuthState.DeleteWebAuthnCredential(&targetCred); err != nil {
+	if err := h.deleteCanonicalWebAuthnCredential(userData.AuthState, &targetCred); err != nil {
 		sp.RecordError(err)
 		h.renderErrorModalWithErr(ctx, "Failed to delete credential", err)
 
@@ -3672,11 +2116,21 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 		webAuthnCredentialID: ctx.Param("id"),
 		webAuthnDeviceName:   name,
 	}
-	if !h.enforceMFASelfServiceStepUpMutation(ctx, mutation) {
+	if !h.authorizeCanonicalSelfServiceCaller(ctx, mutation) {
 		return
 	}
 
-	if failure := h.performWebAuthnDeviceNameUpdate(ctx, decodedID, name, ""); failure != nil {
+	_, _, userData, _, err := h.canonicalSelfServiceBackend(ctx)
+	if err != nil {
+		sp.RecordError(err)
+		h.renderWebAuthnDeviceNameUpdateFailure(ctx, &webAuthnDeviceNameUpdateFailure{
+			err: err, message: notLoggedInMessage,
+		})
+
+		return
+	}
+
+	if failure := h.applyWebAuthnDeviceNameUpdate(ctx, decodedID, name, userData); failure != nil {
 		if failure.err != nil {
 			sp.RecordError(failure.err)
 		}
@@ -3695,35 +2149,17 @@ type webAuthnDeviceNameUpdateFailure struct {
 	message string
 }
 
-// performWebAuthnDeviceNameUpdate applies a validated credential rename without choosing a transport response.
-func (h *FrontendHandler) performWebAuthnDeviceNameUpdate(
+func (h *FrontendHandler) applyWebAuthnDeviceNameUpdate(
 	ctx *gin.Context,
 	decodedID []byte,
 	name string,
-	verifiedUsername string,
+	userData *UserBackendData,
 ) *webAuthnDeviceNameUpdateFailure {
-	var (
-		userData *UserBackendData
-		err      error
-	)
-
-	if verifiedUsername == "" {
-		userData, err = h.GetUserBackendData(ctx)
-	} else {
-		userData, err = h.getUserBackendDataForIdentity(
-			ctx,
-			cookie.GetManager(ctx),
-			verifiedUsername,
-			definitions.ProtoIDP,
-			core.RemoteBackendRef{},
-		)
+	if userData == nil {
+		return &webAuthnDeviceNameUpdateFailure{message: notLoggedInMessage}
 	}
 
-	if err != nil || userData == nil {
-		return &webAuthnDeviceNameUpdateFailure{err: err, message: "Not logged in"}
-	}
-
-	if userData.WebAuthnUser == nil {
+	if userData.WebAuthnUser == nil || userData.AuthState == nil {
 		return &webAuthnDeviceNameUpdateFailure{message: "User not found"}
 	}
 
@@ -3736,7 +2172,7 @@ func (h *FrontendHandler) performWebAuthnDeviceNameUpdate(
 	newCredential := oldCredential
 	newCredential.Name = name
 
-	if err := userData.AuthState.UpdateWebAuthnCredential(&oldCredential, &newCredential); err != nil {
+	if err := h.updateCanonicalWebAuthnCredential(userData.AuthState, &oldCredential, &newCredential); err != nil {
 		return &webAuthnDeviceNameUpdateFailure{err: err, message: "Failed to update credential"}
 	}
 
@@ -3803,24 +2239,6 @@ func (h *FrontendHandler) webAuthnDeviceNameUpdate(ctx *gin.Context) ([]byte, st
 	}
 
 	return decodedID, name, true
-}
-
-// webAuthnDeviceUserData loads user backend data required by WebAuthn device mutations.
-func (h *FrontendHandler) webAuthnDeviceUserData(ctx *gin.Context) (*UserBackendData, bool) {
-	userData, err := h.GetUserBackendData(ctx)
-	if err != nil || userData == nil {
-		h.renderErrorModal(ctx, "Not logged in")
-
-		return nil, false
-	}
-
-	if userData.WebAuthnUser == nil {
-		h.renderErrorModal(ctx, "User not found")
-
-		return nil, false
-	}
-
-	return userData, true
 }
 
 // findWebAuthnCredentialIndex returns the index of a credential by raw ID.

@@ -17,7 +17,6 @@ package idp
 
 import (
 	"bytes"
-	"errors"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -34,23 +33,13 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/frontend"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
-	"github.com/croessner/nauthilus/v3/server/lualib"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v3/server/sessionstate"
 	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/text/language"
-)
-
-const (
-	frontendRecoveryRegisterPath = "/mfa/recovery/register"
-	frontendTOTPRegisterPath     = "/mfa/totp/register"
-	frontendTestAccount          = "testuser"
-	frontendTestDisplayName      = "Test User"
-	frontendTestUniqueUserID     = "uid-123"
-	frontendTestUser             = "test-user"
 )
 
 type mockLangManager struct {
@@ -263,9 +252,28 @@ func assertBasePageIDPClientName(
 ) {
 	t.Helper()
 
-	runBasePageDataRequest(t, cfg, sessionData, "", func(data gin.H) {
+	r := gin.New()
+	r.GET("/test", func(ctx *gin.Context) {
+		lm := &mockLangManager{}
+		ctx.Set(definitions.CtxLocalizedKey, i18n.NewLocalizer(lm.GetBundle(), "en"))
+		data := canonicalBasePageData(
+			ctx, cfg, lm, cookie.SessionIdentity{},
+			stringValue(sessionData[definitions.SessionKeyIDPFlowType]),
+			stringValue(sessionData[definitions.SessionKeyIDPClientID]),
+			stringValue(sessionData[definitions.SessionKeyIDPSAMLEntityID]),
+		)
 		assert.Equal(t, expectedName, data["IDPClientName"])
+		ctx.Status(http.StatusOK)
 	})
+
+	response := httptest.NewRecorder()
+	r.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/test", nil))
+}
+
+func stringValue(value any) string {
+	result, _ := value.(string)
+
+	return result
 }
 
 // runBasePageDataRequest executes BasePageData inside a Gin request context.
@@ -286,7 +294,22 @@ func runBasePageDataRequest(
 		c.Set(definitions.CtxCSPNonceKey, "nonce-123")
 
 		if sessionData != nil {
-			c.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: sessionData})
+			account := stringValue(sessionData[definitions.SessionKeyAccount])
+			if account != "" {
+				cookie.SetCanonicalSession(c, &cookie.CanonicalSession{
+					Anchor: sessionstate.Versioned[sessionstate.SessionAnchor]{Value: sessionstate.SessionAnchor{
+						Authenticated: true, IdentityReference: "identity-test",
+						Identity: sessionstate.IdentitySummary{
+							Account: account, Subject: "identity-test", Protocol: definitions.ProtoOIDC,
+						},
+					}},
+				})
+			}
+
+			c.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
+				definitions.SessionKeyAccount: "legacy-account",
+			}})
+			c.Set(canonicalAuthenticatedViewContextKey, true)
 		}
 
 		assertData(BasePageData(c, cfg, lm))
@@ -303,33 +326,12 @@ func runBasePageDataRequest(
 	r.ServeHTTP(w, req)
 }
 
-func TestURLParamsPreservation(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
+func TestAppendQueryString(t *testing.T) {
 	h := &FrontendHandler{}
 
-	t.Run("getLoginURL with params", func(t *testing.T) {
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Request, _ = http.NewRequest("GET", "/login?client_id=foo&return_to=bar", nil)
-		ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
-
-		url := h.getLoginURL(ctx)
-		assert.Equal(t, "/login/en?client_id=foo&return_to=bar", url)
-	})
-
-	t.Run("getLoginURL without lang with params", func(t *testing.T) {
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Request, _ = http.NewRequest("GET", "/login?client_id=foo", nil)
-
-		url := h.getLoginURL(ctx)
-		assert.Equal(t, "/login?client_id=foo", url)
-	})
-
-	t.Run("appendQueryString helper", func(t *testing.T) {
-		assert.Equal(t, "/path?q=v", h.appendQueryString("/path", "q=v"))
-		assert.Equal(t, "/path?a=b&q=v", h.appendQueryString("/path?a=b", "q=v"))
-		assert.Equal(t, "/path", h.appendQueryString("/path", ""))
-	})
+	assert.Equal(t, "/path?q=v", h.appendQueryString("/path", "q=v"))
+	assert.Equal(t, "/path?a=b&q=v", h.appendQueryString("/path?a=b", "q=v"))
+	assert.Equal(t, "/path", h.appendQueryString("/path", ""))
 }
 
 func TestMFASelectTemplateRecommended(t *testing.T) {
@@ -450,59 +452,6 @@ func TestWebAuthnDevicesTemplateUsesLocalizedMFASelfServiceEndpoints(t *testing.
 	assert.NotContains(t, output.String(), `href="/mfa/webauthn/register"`)
 }
 
-func TestAuthMiddlewareExplainsExpiredSelfServiceSession(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	handler := &FrontendHandler{}
-	router := gin.New()
-	router.Use(func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{}})
-	})
-	router.GET("/mfa/register/home", handler.AuthMiddleware(), func(ctx *gin.Context) {
-		ctx.Status(http.StatusNoContent)
-	})
-
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/mfa/register/home", nil))
-
-	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "self_service_session_expired")
-	assert.Contains(t, recorder.Body.String(), "self-service session has expired")
-	assert.NotContains(t, recorder.Body.String(), "OIDC or SAML2 authentication flow")
-}
-
-func TestAuthMiddlewareAllowsActiveSelfServiceSession(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	handler := &FrontendHandler{}
-	router := gin.New()
-	router.Use(func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyAccount: "alice",
-		}})
-	})
-	router.GET("/mfa/register/home", handler.AuthMiddleware(), func(ctx *gin.Context) {
-		ctx.Status(http.StatusNoContent)
-	})
-
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/mfa/register/home", nil))
-
-	assert.Equal(t, http.StatusNoContent, recorder.Code)
-}
-
-func TestAuthMiddlewareRendersSelfServiceRestartGuidance(t *testing.T) {
-	handler, _ := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodGet, "/mfa/register/home", nil, nil)
-
-	handler.AuthMiddleware()(ctx)
-
-	assert.Equal(t, http.StatusUnauthorized, ctx.Writer.Status())
-	assert.Contains(t, recorder.Body.String(), "Session Expired")
-	assert.Contains(t, recorder.Body.String(), "sign in again through your application")
-	assert.NotContains(t, recorder.Body.String(), "OIDC or SAML2 authentication flow")
-}
-
 func TestMFARegistrationTemplatesUseLocalizedSelfServiceEndpoints(t *testing.T) {
 	for _, tc := range mfaRegistrationTemplateEndpointTests() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -526,83 +475,6 @@ func TestMFARegistrationTemplatesUseLocalizedSelfServiceEndpoints(t *testing.T) 
 			}
 		})
 	}
-}
-
-func TestRegisterWebAuthnPageUsesFlowAwareNextEndpoint(t *testing.T) {
-	testCases := []struct {
-		name         string
-		languageTag  string
-		requireFlow  bool
-		expectedNext string
-	}{
-		{
-			name:         "required MFA flow localized",
-			languageTag:  "de",
-			requireFlow:  true,
-			expectedNext: definitions.MFARoot + "/register/continue/de",
-		},
-		{
-			name:         "required MFA flow default language",
-			requireFlow:  true,
-			expectedNext: definitions.MFARoot + "/register/continue",
-		},
-		{
-			name:         "self-service localized",
-			languageTag:  "de",
-			expectedNext: definitions.MFARoot + "/register/home/de",
-		},
-		{
-			name:         "self-service default language",
-			expectedNext: definitions.MFARoot + "/register/home",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			output := renderRegisterWebAuthnPage(t, tc.languageTag, tc.requireFlow)
-
-			assert.Contains(t, output, `data-webauthn-next-url="`+tc.expectedNext+`"`)
-		})
-	}
-}
-
-// renderRegisterWebAuthnPage renders the real WebAuthn registration handler
-// with a minimal authenticated session.
-func renderRegisterWebAuthnPage(t *testing.T, languageTag string, requireFlow bool) string {
-	t.Helper()
-
-	recorder := httptest.NewRecorder()
-	ctx, engine := gin.CreateTestContext(recorder)
-	engine.SetHTMLTemplate(loadIDPChromeTemplate(t, "idp_webauthn_register.html"))
-
-	path := definitions.MFARoot + "/webauthn/register"
-	if languageTag != "" {
-		path += "/" + languageTag
-		ctx.Params = gin.Params{{Key: "languageTag", Value: languageTag}}
-	}
-
-	ctx.Request = httptest.NewRequest(http.MethodGet, path, nil)
-	ctx.Set(definitions.CtxLocalizedKey, i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en"))
-	ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyAccount:        frontendTestAccount,
-		definitions.SessionKeyUniqueUserID:   frontendTestUniqueUserID,
-		definitions.SessionKeyRequireMFAFlow: requireFlow,
-	}})
-
-	handler := &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg:         &mockFrontendCfg{},
-			Env:         config.NewTestEnvironmentConfig(),
-			LangManager: &mockLangManager{},
-			Logger:      slog.Default(),
-		},
-	}
-
-	handler.RegisterWebAuthn(ctx)
-
-	assert.Equal(t, http.StatusOK, recorder.Code)
-
-	return recorder.Body.String()
 }
 
 type registrationTemplateEndpointTest struct {
@@ -994,58 +866,6 @@ func renderIDPFooterTemplate(t *testing.T, tmpl *template.Template, termsOfServi
 	return buf.String()
 }
 
-func TestGetFlowClientIdentifiers(t *testing.T) {
-	testCases := []struct {
-		name              string
-		sessionData       map[string]any
-		expectedOIDCCID   string
-		expectedSAMLEntID string
-	}{
-		{
-			name: "OIDC flow returns client ID",
-			sessionData: map[string]any{
-				definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
-				definitions.SessionKeyIDPClientID: "oidc-client",
-			},
-			expectedOIDCCID: "oidc-client",
-		},
-		{
-			name: "SAML flow returns entity ID",
-			sessionData: map[string]any{
-				definitions.SessionKeyIDPFlowType:     definitions.ProtoSAML,
-				definitions.SessionKeyIDPSAMLEntityID: "sp-entity",
-			},
-			expectedSAMLEntID: "sp-entity",
-		},
-		{
-			name: "Unknown flow returns empty identifiers",
-			sessionData: map[string]any{
-				definitions.SessionKeyIDPFlowType: "invalid",
-			},
-		},
-	}
-
-	h := &FrontendHandler{}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			mgr := &mockCookieManager{data: tc.sessionData}
-
-			oidcCID, samlEntityID := h.getFlowClientIdentifiers(mgr)
-
-			assert.Equal(t, tc.expectedOIDCCID, oidcCID)
-			assert.Equal(t, tc.expectedSAMLEntID, samlEntityID)
-		})
-	}
-
-	t.Run("Nil manager returns empty identifiers", func(t *testing.T) {
-		oidcCID, samlEntityID := h.getFlowClientIdentifiers(nil)
-
-		assert.Empty(t, oidcCID)
-		assert.Empty(t, samlEntityID)
-	})
-}
-
 func TestGetRememberMeTTL(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -1165,475 +985,6 @@ func assertRememberMeTTLExpectations(
 	}
 }
 
-func TestIsMFAMethodSupported(t *testing.T) {
-	h := &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg: &mockFrontendCfg{
-				FileSettings: config.FileSettings{
-					IDP: &config.IDPSection{
-						OIDC: config.OIDCConfig{
-							Clients: []config.OIDCClient{
-								{
-									ClientID:     "oidc-client",
-									SupportedMFA: []string{definitions.MFAMethodWebAuthn},
-								},
-							},
-						},
-					},
-				},
-			},
-			Env:         config.NewTestEnvironmentConfig(),
-			LangManager: &mockLangManager{},
-			Logger:      slog.Default(),
-		},
-	}
-
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
-		definitions.SessionKeyIDPClientID: "oidc-client",
-	}}
-
-	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn))
-	assert.False(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP))
-}
-
-func TestIsMFAMethodSupported_DefaultsToAllWhenUnset(t *testing.T) {
-	h := &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg: &mockFrontendCfg{
-				FileSettings: config.FileSettings{
-					IDP: &config.IDPSection{
-						OIDC: config.OIDCConfig{
-							Clients: []config.OIDCClient{
-								{
-									ClientID: "oidc-client",
-								},
-							},
-						},
-					},
-				},
-			},
-			Env:         config.NewTestEnvironmentConfig(),
-			LangManager: &mockLangManager{},
-			Logger:      slog.Default(),
-		},
-	}
-
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyIDPFlowType: definitions.ProtoOIDC,
-		definitions.SessionKeyIDPClientID: "oidc-client",
-	}}
-
-	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn))
-	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP))
-	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodRecoveryCodes))
-}
-
-func TestCheckRequireMFARegistrationAndRedirectClearsStaleSessionState(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/login/mfa", nil)
-
-	h := newOIDCRequireMFATestHandler("different-client", []string{definitions.MFAMethodRecoveryCodes})
-
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyIDPFlowID:         "flow-require-mfa",
-		definitions.SessionKeyRequireMFAFlow:    true,
-		definitions.SessionKeyRequireMFAPending: definitions.MFAMethodRecoveryCodes,
-		definitions.SessionKeyIDPFlowType:       definitions.ProtoOIDC,
-		definitions.SessionKeyIDPClientID:       "stale-client",
-		definitions.SessionKeyAccount:           "testuser",
-	}}
-
-	redirected := h.checkRequireMFARegistrationAndRedirect(ctx, mgr)
-
-	assert.False(t, redirected)
-	assert.False(t, mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false))
-	assert.Empty(t, mgr.GetString(definitions.SessionKeyRequireMFAPending, ""))
-	assert.Equal(t, "flow-require-mfa", mgr.GetString(definitions.SessionKeyIDPFlowID, ""))
-	assert.Equal(t, definitions.ProtoOIDC, mgr.GetString(definitions.SessionKeyIDPFlowType, ""))
-	assert.Empty(t, recorder.Header().Get("Location"))
-	assert.Equal(t, http.StatusOK, recorder.Code)
-}
-
-func TestExistingSessionRequireMFAResumeRedirectsToStepUp(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/login/en", nil)
-	ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
-
-	h := newOIDCRequireMFATestHandler("oidc-client", []string{definitions.MFAMethodTOTP})
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyAccount:      "alice",
-		definitions.SessionKeyUniqueUserID: "alice-id",
-		definitions.SessionKeyDisplayName:  "Alice Example",
-		definitions.SessionKeySubject:      "alice-id",
-		definitions.SessionKeyIDPFlowType:  definitions.ProtoOIDC,
-		definitions.SessionKeyIDPClientID:  "oidc-client",
-	}}
-
-	redirected := h.redirectExistingSessionMFAAssurance(ctx, mgr)
-
-	assert.True(t, redirected)
-	assert.Equal(t, http.StatusFound, recorder.Code)
-	assert.Equal(t, "/login/mfa/en", recorder.Header().Get("Location"))
-	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyUsername, ""))
-	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyMFAAccount, ""))
-	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyMFAFactorAccount, ""))
-	assert.True(t, mgr.HasKey(definitions.SessionKeyAuthResult))
-}
-
-func TestExistingSessionChecksRequiredMFAEnrollmentBeforeStepUp(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	setupRoundcubeAuthorizePublicPathBoundaryTest()
-
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/login/en", nil)
-	ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
-
-	h := newOIDCRequireMFATestHandler("oidc-client", []string{definitions.MFAMethodTOTP})
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyAccount:      "alice",
-		definitions.SessionKeyUniqueUserID: "alice-id",
-		definitions.SessionKeyIDPFlowID:    "flow-parent",
-		definitions.SessionKeyIDPFlowType:  definitions.ProtoOIDC,
-		definitions.SessionKeyIDPClientID:  "oidc-client",
-	}}
-
-	if !h.resumeExistingLoginSession(ctx, mgr) {
-		t.Fatal("expected authenticated session to be handled")
-	}
-
-	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
-	assert.Empty(t, recorder.Header().Get("Location"))
-	assert.False(t, mgr.HasKey(definitions.SessionKeyMFAAccount))
-}
-
-// newOIDCRequireMFATestHandler builds a frontend handler with one require-MFA OIDC client.
-func newOIDCRequireMFATestHandler(clientID string, requireMFA []string) *FrontendHandler {
-	return &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg: &mockFrontendCfg{
-				FileSettings: config.FileSettings{
-					IDP: &config.IDPSection{
-						OIDC: config.OIDCConfig{
-							Clients: []config.OIDCClient{{
-								ClientID:     clientID,
-								RequireMFA:   requireMFA,
-								GrantTypes:   []string{definitions.OIDCFlowAuthorizationCode},
-								RedirectURIs: []string{"https://example.invalid/callback"},
-							}},
-						},
-					},
-				},
-			},
-			Env:         config.NewTestEnvironmentConfig(),
-			LangManager: &mockLangManager{},
-			Logger:      slog.Default(),
-		},
-	}
-}
-
-func TestLoginWebAuthnRebuildsExistingSessionRequireMFAStepUp(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	h := &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg: &mockFrontendCfg{
-				FileSettings: config.FileSettings{
-					IDP: &config.IDPSection{
-						OIDC: config.OIDCConfig{
-							Clients: []config.OIDCClient{{
-								ClientID:   "oidc-client",
-								RequireMFA: []string{definitions.MFAMethodWebAuthn},
-							}},
-						},
-					},
-				},
-			},
-			Env:         config.NewTestEnvironmentConfig(),
-			LangManager: &mockLangManager{},
-			Logger:      slog.Default(),
-		},
-	}
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyAccount:      "alice",
-		definitions.SessionKeyUniqueUserID: "alice-id",
-		definitions.SessionKeyDisplayName:  "Alice Example",
-		definitions.SessionKeySubject:      "alice-id",
-		definitions.SessionKeyIDPFlowType:  definitions.ProtoOIDC,
-		definitions.SessionKeyIDPClientID:  "oidc-client",
-	}}
-
-	router := gin.New()
-	router.SetHTMLTemplate(template.Must(template.New("webauthn-step-up").Parse(`
-{{ define "idp_webauthn_verify.html" }}webauthn step-up{{ end }}
-`)))
-	router.GET("/login/webauthn/en", func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxLocalizedKey, i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en"))
-		ctx.Set(definitions.CtxSecureDataKey, mgr)
-		ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
-		h.LoginWebAuthn(ctx)
-	})
-
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/login/webauthn/en", nil)
-
-	router.ServeHTTP(recorder, request)
-
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyUsername, ""))
-	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyMFAAccount, ""))
-	assert.True(t, mgr.HasKey(definitions.SessionKeyAuthResult))
-	assert.Contains(t, recorder.Body.String(), "webauthn step-up")
-}
-
-func TestHasCompletedMethodForRequireMFA(t *testing.T) {
-	testCases := []struct {
-		name  string
-		path  string
-		data  map[string]any
-		check func(*FrontendHandler, *gin.Context, *mockCookieManager, *backend.User) bool
-		want  bool
-	}{
-		{
-			name: "recovery codes session saved flag",
-			path: frontendRecoveryRegisterPath,
-			data: map[string]any{
-				definitions.SessionKeyRecoveryCodesSaved: true,
-			},
-			check: func(h *FrontendHandler, ctx *gin.Context, mgr *mockCookieManager, user *backend.User) bool {
-				return h.hasRecoveryCodesForRequireMFA(ctx, mgr, user)
-			},
-			want: true,
-		},
-		{
-			name: "recovery codes no data",
-			path: frontendRecoveryRegisterPath,
-			data: map[string]any{},
-			check: func(h *FrontendHandler, ctx *gin.Context, mgr *mockCookieManager, user *backend.User) bool {
-				return h.hasRecoveryCodesForRequireMFA(ctx, mgr, user)
-			},
-			want: false,
-		},
-		{
-			name: "TOTP session flag",
-			path: frontendTOTPRegisterPath,
-			data: map[string]any{
-				definitions.SessionKeyHaveTOTP: true,
-			},
-			check: func(h *FrontendHandler, ctx *gin.Context, mgr *mockCookieManager, user *backend.User) bool {
-				return h.hasTOTPForRequireMFA(ctx, mgr, user)
-			},
-			want: true,
-		},
-		{
-			name: "TOTP no session or attribute data",
-			path: frontendTOTPRegisterPath,
-			data: map[string]any{},
-			check: func(h *FrontendHandler, ctx *gin.Context, mgr *mockCookieManager, user *backend.User) bool {
-				return h.hasTOTPForRequireMFA(ctx, mgr, user)
-			},
-			want: false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := newFrontendTestContext(tc.path)
-			h := &FrontendHandler{}
-			mgr := &mockCookieManager{data: tc.data}
-
-			assert.Equal(t, tc.want, tc.check(h, ctx, mgr, newFrontendTestUser()))
-		})
-	}
-}
-
-func TestMFASelfServiceTOTPDeleteRejectsMissingStepUp(t *testing.T) {
-	handler, provider := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodDelete, "/mfa/totp", map[string]any{
-		definitions.SessionKeyAccount:     "alice",
-		definitions.SessionKeyUserBackend: uint8(definitions.BackendLDAP),
-	}, nil)
-
-	handler.DeleteTOTP(ctx)
-
-	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, provider.deleteTOTPCalls, "totp_delete", definitions.MFARoot+"/register/home")
-}
-
-func TestMFASelfServiceTOTPDeleteRejectsStaleStepUp(t *testing.T) {
-	handler, provider := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodDelete, "/mfa/totp", map[string]any{
-		definitions.SessionKeyAccount:        "alice",
-		definitions.SessionKeyUserBackend:    uint8(definitions.BackendLDAP),
-		definitions.SessionKeyMFACompleted:   true,
-		definitions.SessionKeyMFAMethod:      definitions.MFAMethodTOTP,
-		definitions.SessionKeyMFAAssuranceAt: time.Now().Add(-25 * time.Hour).Unix(),
-	}, nil)
-
-	handler.DeleteTOTP(ctx)
-
-	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, provider.deleteTOTPCalls, "totp_delete", definitions.MFARoot+"/register/home")
-}
-
-func TestMFASelfServiceTOTPDeletePermitsFreshStepUp(t *testing.T) {
-	handler, provider := newMFASelfServiceTestHandler()
-	ctx, _ := newMFASelfServiceContext(http.MethodDelete, "/mfa/totp", map[string]any{
-		definitions.SessionKeyAccount:           "alice",
-		definitions.SessionKeyUserBackend:       uint8(definitions.BackendLDAP),
-		definitions.SessionKeyMFACompleted:      true,
-		definitions.SessionKeyMFAMethod:         definitions.MFAMethodTOTP,
-		definitions.SessionKeyMFAAssuranceAt:    time.Now().Unix(),
-		definitions.SessionKeyMFAAssuranceScope: definitions.ProtoIDP,
-	}, nil)
-
-	handler.DeleteTOTP(ctx)
-
-	assert.Equal(t, 1, provider.deleteTOTPCalls)
-}
-
-func TestMFASelfServiceTOTPDeleteRejectsFreshOIDCAssurance(t *testing.T) {
-	handler, provider := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodDelete, "/mfa/totp", map[string]any{
-		definitions.SessionKeyAccount:           "alice",
-		definitions.SessionKeyUserBackend:       uint8(definitions.BackendLDAP),
-		definitions.SessionKeyMFACompleted:      true,
-		definitions.SessionKeyMFAMethod:         definitions.MFAMethodTOTP,
-		definitions.SessionKeyMFAAssuranceAt:    time.Now().Unix(),
-		definitions.SessionKeyMFAAssuranceScope: oidcMFAAssuranceScope("mail-client"),
-	}, nil)
-
-	handler.DeleteTOTP(ctx)
-
-	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, provider.deleteTOTPCalls, "totp_delete", definitions.MFARoot+"/register/home")
-}
-
-func TestMFASelfServiceWebAuthnDeleteRejectsMissingStepUp(t *testing.T) {
-	handler, _ := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodDelete, "/mfa/webauthn", map[string]any{
-		definitions.SessionKeyAccount:      "alice",
-		definitions.SessionKeyUniqueUserID: "uid-123",
-	}, nil)
-
-	handler.DeleteWebAuthn(ctx)
-
-	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, 0, "webauthn_delete", definitions.MFARoot+"/register/home")
-}
-
-func TestMFASelfServiceRecoveryRegenerationRejectsMissingStepUp(t *testing.T) {
-	handler, provider := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/recovery/generate", map[string]any{
-		definitions.SessionKeyAccount:     "alice",
-		definitions.SessionKeyUserBackend: uint8(definitions.BackendLDAP),
-	}, nil)
-
-	handler.PostGenerateRecoveryCodes(ctx)
-
-	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, provider.generateRecoveryCalls, "recovery_generate", definitions.MFARoot+"/register/home")
-}
-
-func TestMFASelfServiceWebAuthnDeviceDeleteRejectsMissingStepUp(t *testing.T) {
-	handler, _ := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodDelete, "/mfa/webauthn/device/Y3JlZC0x", map[string]any{
-		definitions.SessionKeyAccount:      "alice",
-		definitions.SessionKeyUniqueUserID: "uid-123",
-	}, nil)
-	ctx.Params = gin.Params{{Key: "id", Value: "Y3JlZC0x"}}
-
-	handler.DeleteWebAuthnDevice(ctx)
-
-	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, 0, "webauthn_device_delete", definitions.MFARoot+"/webauthn/devices")
-}
-
-func TestMFASelfServiceWebAuthnDeviceRenamePreservesValidatedMutationForStepUp(t *testing.T) {
-	handler, _ := newMFASelfServiceTestHandler()
-	body := bytes.NewReader([]byte("name=Renamed+key"))
-	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/webauthn/device/Y3JlZC0x/name", map[string]any{
-		definitions.SessionKeyAccount:      "alice",
-		definitions.SessionKeyUniqueUserID: "uid-123",
-	}, body)
-	ctx.Params = gin.Params{{Key: "id", Value: "Y3JlZC0x"}}
-	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	handler.UpdateWebAuthnDeviceName(ctx)
-
-	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
-	mgr := mfaSelfServiceTestManager(t, ctx)
-	assert.Equal(t, "Y3JlZC0x", mgr.GetString("mfa_self_service_step_up_webauthn_credential_id", ""))
-	assert.Equal(t, "Renamed key", mgr.GetString("mfa_self_service_step_up_webauthn_device_name", ""))
-	assert.Equal(t, "alice", mgr.GetString("mfa_self_service_step_up_account", ""))
-}
-
-func TestMFASelfServiceStepUpIgnoresUntrustedReturnTargets(t *testing.T) {
-	handler, provider := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/recovery/generate?return=https://evil.example/", map[string]any{
-		definitions.SessionKeyAccount:     "alice",
-		definitions.SessionKeyUserBackend: uint8(definitions.BackendLDAP),
-	}, nil)
-	ctx.Request.Header.Set("Referer", "https://evil.example/mfa/register/home")
-
-	handler.PostGenerateRecoveryCodes(ctx)
-
-	assertMFASelfServiceStepUpRedirect(t, ctx, recorder, provider.generateRecoveryCalls, "recovery_generate", definitions.MFARoot+"/register/home")
-	mgr := mfaSelfServiceTestManager(t, ctx)
-	assert.NotContains(t, mgr.GetString("mfa_self_service_step_up_return", ""), "evil.example")
-}
-
-func TestMFASelfServiceStepUpUsesHXRedirectForHTMX(t *testing.T) {
-	handler, provider := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/recovery/generate", map[string]any{
-		definitions.SessionKeyAccount:     "alice",
-		definitions.SessionKeyUserBackend: uint8(definitions.BackendLDAP),
-	}, nil)
-	ctx.Request.Header.Set("HX-Request", "true")
-
-	handler.PostGenerateRecoveryCodes(ctx)
-
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("HX-Redirect"))
-	assert.Zero(t, provider.generateRecoveryCalls)
-}
-
-func TestMFASelfServiceLocalizedStepUpUsesLocalizedHXRedirectForHTMX(t *testing.T) {
-	for _, tc := range localizedSelfServiceStepUpTests() {
-		t.Run(tc.name, func(t *testing.T) {
-			handler, _ := newMFASelfServiceTestHandler()
-
-			var body *bytes.Reader
-
-			if tc.wantAction == mfaSelfServiceActionWebAuthnDeviceName {
-				body = bytes.NewReader([]byte("name=Renamed+key"))
-			}
-
-			ctx, recorder := newMFASelfServiceContext(tc.method, tc.path, map[string]any{
-				definitions.SessionKeyAccount:      "alice",
-				definitions.SessionKeyUserBackend:  uint8(definitions.BackendLDAP),
-				definitions.SessionKeyUniqueUserID: "uid-123",
-			}, body)
-			ctx.Params = tc.params
-			ctx.Request.Header.Set("HX-Request", "true")
-
-			if body != nil {
-				ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			}
-
-			tc.handle(handler, ctx)
-
-			assert.Equal(t, http.StatusOK, recorder.Code)
-			assert.Equal(t, frontendMFASelectPath+"/de", recorder.Header().Get("HX-Redirect"))
-
-			mgr := mfaSelfServiceTestManager(t, ctx)
-			assert.Equal(t, tc.wantAction, mgr.GetString("mfa_self_service_step_up_action", ""))
-			assert.Equal(t, tc.wantReturn, mgr.GetString("mfa_self_service_step_up_return", ""))
-		})
-	}
-}
-
 func TestRedirectWebAuthnDevicesUsesLocalizedBrowserNavigation(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
@@ -1669,346 +1020,27 @@ func TestRedirectWebAuthnDevicesUsesLocalizedBrowserNavigation(t *testing.T) {
 	}
 }
 
-type localizedSelfServiceStepUpTest struct {
-	name       string
-	method     string
-	path       string
-	params     gin.Params
-	handle     func(*FrontendHandler, *gin.Context)
-	wantAction string
-	wantReturn string
-}
-
-// localizedSelfServiceStepUpTests returns sensitive localized mutations that
-// must redirect HTMX callers to localized self-service MFA step-up.
-func localizedSelfServiceStepUpTests() []localizedSelfServiceStepUpTest {
-	return []localizedSelfServiceStepUpTest{
-		localizedRecoveryGenerateStepUpTest(),
-		localizedTOTPDeleteStepUpTest(),
-		localizedWebAuthnDeviceDeleteStepUpTest(),
-		localizedWebAuthnDeviceRenameStepUpTest(),
-	}
-}
-
-// localizedRecoveryGenerateStepUpTest covers recovery-code regeneration.
-func localizedRecoveryGenerateStepUpTest() localizedSelfServiceStepUpTest {
-	return localizedSelfServiceStepUpTest{
-		name:       "recovery generation",
-		method:     http.MethodPost,
-		path:       definitions.MFARoot + "/recovery/generate/de",
-		params:     gin.Params{{Key: "languageTag", Value: "de"}},
-		handle:     (*FrontendHandler).PostGenerateRecoveryCodes,
-		wantAction: "recovery_generate",
-		wantReturn: definitions.MFARoot + "/register/home/de",
-	}
-}
-
-// localizedTOTPDeleteStepUpTest covers TOTP deactivation.
-func localizedTOTPDeleteStepUpTest() localizedSelfServiceStepUpTest {
-	return localizedSelfServiceStepUpTest{
-		name:       "TOTP delete",
-		method:     http.MethodDelete,
-		path:       definitions.MFARoot + "/totp/de",
-		params:     gin.Params{{Key: "languageTag", Value: "de"}},
-		handle:     (*FrontendHandler).DeleteTOTP,
-		wantAction: "totp_delete",
-		wantReturn: definitions.MFARoot + "/register/home/de",
-	}
-}
-
-// localizedWebAuthnDeviceDeleteStepUpTest covers WebAuthn device deletion.
-func localizedWebAuthnDeviceDeleteStepUpTest() localizedSelfServiceStepUpTest {
-	return localizedSelfServiceStepUpTest{
-		name:   "WebAuthn device delete",
-		method: http.MethodDelete,
-		path:   definitions.MFARoot + "/webauthn/device/Y3JlZC0x/de",
-		params: gin.Params{
-			{Key: "id", Value: "Y3JlZC0x"},
-			{Key: "languageTag", Value: "de"},
-		},
-		handle:     (*FrontendHandler).DeleteWebAuthnDevice,
-		wantAction: "webauthn_device_delete",
-		wantReturn: definitions.MFARoot + "/webauthn/devices/de",
-	}
-}
-
-// localizedWebAuthnDeviceRenameStepUpTest covers WebAuthn device renaming.
-func localizedWebAuthnDeviceRenameStepUpTest() localizedSelfServiceStepUpTest {
-	return localizedSelfServiceStepUpTest{
-		name:   "WebAuthn device rename",
-		method: http.MethodPost,
-		path:   definitions.MFARoot + "/webauthn/device/Y3JlZC0x/name/de",
-		params: gin.Params{
-			{Key: "id", Value: "Y3JlZC0x"},
-			{Key: "languageTag", Value: "de"},
-		},
-		handle:     (*FrontendHandler).UpdateWebAuthnDeviceName,
-		wantAction: "webauthn_device_name",
-		wantReturn: definitions.MFARoot + "/webauthn/devices/de",
-	}
-}
-
-func TestMFASelfServiceStepUpReturnTargetIsConsumedAfterMFA(t *testing.T) {
-	handler, _ := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/login/totp", map[string]any{
-		definitions.SessionKeyAccount:      "alice",
-		"mfa_self_service_step_up_action":  "totp_delete",
-		"mfa_self_service_step_up_return":  definitions.MFARoot + "/register/home",
-		"mfa_self_service_step_up_at":      time.Now().Unix(),
-		"mfa_self_service_step_up_account": "alice",
-	}, nil)
-
-	redirected := handler.redirectPendingSelfServiceStepUp(ctx, cookie.GetManager(ctx))
-
-	assert.True(t, redirected)
-	assert.Equal(t, http.StatusFound, ctx.Writer.Status())
-	assert.Equal(t, definitions.MFARoot+"/register/home", recorder.Header().Get("Location"))
-
-	mgr := mfaSelfServiceTestManager(t, ctx)
-	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_action", ""))
-	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_return", ""))
-}
-
-func TestMFASelfServiceStepUpReturnTargetFollowsLanguageSwitch(t *testing.T) {
-	handler, _ := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/login/totp/en", map[string]any{
-		definitions.SessionKeyAccount:      "alice",
-		"mfa_self_service_step_up_action":  "totp_delete",
-		"mfa_self_service_step_up_return":  definitions.MFARoot + "/register/home/de",
-		"mfa_self_service_step_up_at":      time.Now().Unix(),
-		"mfa_self_service_step_up_account": "alice",
-	}, nil)
-	ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
-
-	redirected := handler.redirectPendingSelfServiceStepUp(ctx, cookie.GetManager(ctx))
-
-	assert.True(t, redirected)
-	assert.Equal(t, http.StatusFound, ctx.Writer.Status())
-	assert.Equal(t, definitions.MFARoot+"/register/home/en", recorder.Header().Get("Location"))
-
-	mgr := mfaSelfServiceTestManager(t, ctx)
-	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_action", ""))
-	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_return", ""))
-}
-
-func TestMFASelfServiceStepUpConsumesValidatedWebAuthnRenameContinuation(t *testing.T) {
-	now := time.Now()
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyAccount:                     "alice",
-		"mfa_self_service_step_up_action":                 "webauthn_device_name",
-		"mfa_self_service_step_up_return":                 definitions.MFARoot + "/webauthn/devices/de",
-		"mfa_self_service_step_up_at":                     now.Unix(),
-		"mfa_self_service_step_up_account":                "alice",
-		"mfa_self_service_step_up_webauthn_credential_id": "Y3JlZC0x",
-		"mfa_self_service_step_up_webauthn_device_name":   "Renamed key",
-	}}
-	ctx, _ := newMFASelfServiceContext(http.MethodPost, "/login/webauthn/finish/de", nil, nil)
-	ctx.Params = gin.Params{{Key: "languageTag", Value: "de"}}
-
-	continuation, ok := popPendingSelfServiceStepUpContinuation(ctx, mgr, now)
-
-	assert.True(t, ok)
-	assert.Equal(t, "webauthn_device_name", continuation.action)
-	assert.Equal(t, definitions.MFARoot+"/webauthn/devices/de", continuation.returnPath)
-	assert.Equal(t, "alice", continuation.account)
-	assert.Equal(t, "Y3JlZC0x", continuation.webAuthnCredentialID)
-	assert.Equal(t, "Renamed key", continuation.webAuthnDeviceName)
-	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_action", ""))
-	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_webauthn_credential_id", ""))
-	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_webauthn_device_name", ""))
-}
-
-func TestMFASelfServiceStepUpRejectsContinuationForDifferentAccount(t *testing.T) {
-	now := time.Now()
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyAccount:                     "bob",
-		"mfa_self_service_step_up_action":                 "webauthn_device_name",
-		"mfa_self_service_step_up_return":                 definitions.MFARoot + "/webauthn/devices",
-		"mfa_self_service_step_up_at":                     now.Unix(),
-		"mfa_self_service_step_up_account":                "alice",
-		"mfa_self_service_step_up_webauthn_credential_id": "Y3JlZC0x",
-		"mfa_self_service_step_up_webauthn_device_name":   "Renamed key",
-	}}
-	ctx, _ := newMFASelfServiceContext(http.MethodGet, "/mfa/self-service/continue", nil, nil)
-
-	_, ok := popPendingSelfServiceStepUpContinuation(ctx, mgr, now)
-
-	assert.False(t, ok)
-}
-
-func TestMFASelfServiceWebAuthnRenameDefersMutationUntilFreshSessionRequest(t *testing.T) {
-	now := time.Now()
-	handler, _ := newMFASelfServiceTestHandler()
-	ctx, _ := newMFASelfServiceContext(http.MethodPost, "/login/webauthn/finish/en", map[string]any{
-		definitions.SessionKeyAccount:                     "alice",
-		"mfa_self_service_step_up_action":                 "webauthn_device_name",
-		"mfa_self_service_step_up_return":                 definitions.MFARoot + "/webauthn/devices/en",
-		"mfa_self_service_step_up_at":                     now.Unix(),
-		"mfa_self_service_step_up_account":                "alice",
-		"mfa_self_service_step_up_webauthn_credential_id": "Y3JlZC0x",
-		"mfa_self_service_step_up_webauthn_device_name":   "Renamed key",
-	}, nil)
-	ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
-	mgr := mfaSelfServiceTestManager(t, ctx)
-
-	target, ok := handler.pendingSelfServiceStepUpRedirectURI(ctx, mgr)
-
-	assert.True(t, ok)
-	assert.Equal(t, definitions.MFARoot+"/self-service/continue/en", target)
-	assert.Equal(t, "webauthn_device_name", mgr.GetString("mfa_self_service_step_up_action", ""))
-	assert.Equal(t, "Renamed key", mgr.GetString("mfa_self_service_step_up_webauthn_device_name", ""))
-	assert.Zero(t, mgr.saves)
-}
-
-func TestMFASelfServiceStepUpRejectsArbitraryPendingAction(t *testing.T) {
-	handler, _ := newMFASelfServiceTestHandler()
-	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/login/totp", map[string]any{
-		"mfa_self_service_step_up_action": "/login/webauthn",
-		"mfa_self_service_step_up_return": definitions.MFARoot + "/register/home",
-	}, nil)
-
-	redirected := handler.redirectPendingSelfServiceStepUp(ctx, cookie.GetManager(ctx))
-
-	assert.False(t, redirected)
-	assert.Equal(t, http.StatusOK, recorder.Code)
-
-	mgr := mfaSelfServiceTestManager(t, ctx)
-	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_action", ""))
-	assert.Empty(t, mgr.GetString("mfa_self_service_step_up_return", ""))
-}
-
-func assertMFASelfServiceStepUpRedirect(
-	t *testing.T,
-	ctx *gin.Context,
-	recorder *httptest.ResponseRecorder,
-	mutationCalls int,
-	action string,
-	returnTarget string,
-) {
-	t.Helper()
-
-	assert.Equal(t, http.StatusSeeOther, ctx.Writer.Status())
-	assert.Equal(t, frontendMFASelectPath, recorder.Header().Get("Location"))
-	assert.Zero(t, mutationCalls)
-
-	mgr := mfaSelfServiceTestManager(t, ctx)
-	assert.Equal(t, action, mgr.GetString("mfa_self_service_step_up_action", ""))
-	assert.Equal(t, returnTarget, mgr.GetString("mfa_self_service_step_up_return", ""))
-	assert.Equal(t, "alice", mgr.GetString("mfa_self_service_step_up_account", ""))
-	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyUsername, ""))
-	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyMFAAccount, ""))
-	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyMFAFactorAccount, ""))
-	assert.True(t, mgr.HasKey(definitions.SessionKeyAuthResult))
-	assert.Equal(t, 1, mgr.saves)
-}
-
-func mfaSelfServiceTestManager(t *testing.T, ctx *gin.Context) *mockCookieManager {
-	t.Helper()
-
-	mgr, ok := cookie.GetManager(ctx).(*mockCookieManager)
-	if !ok {
-		t.Fatal("expected mock cookie manager")
-	}
-
-	return mgr
-}
-
 type mfaSelfServiceProvider struct {
 	deleteTOTPCalls       int
 	generateRecoveryCalls int
+	lastAccount           string
 }
 
-type recoverySaveProvider struct {
-	mfaSelfServiceProvider
-	saveCalls int
-}
-
-func (p *recoverySaveProvider) SaveRecoveryCodes(_ *gin.Context, _ string, _ []string, _ uint8) error {
-	p.saveCalls++
-
-	return nil
-}
-
-func TestSaveRecoveryCodesDoesNotRebindConsumedJSONForCachePurge(t *testing.T) {
-	provider := &recoverySaveProvider{}
-	handler, _ := newMFASelfServiceTestHandler()
-	handler.mfa = provider
-	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/recovery/register/save/en", map[string]any{
-		definitions.SessionKeyAccount:                      frontendTestAccount,
-		definitions.SessionKeyUserBackend:                  uint8(definitions.BackendRemote),
-		definitions.SessionKeyRecoveryCodesRemoteGenerated: true,
-	}, bytes.NewReader([]byte(`{"codes":["one","two"]}`)))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
-	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
-
-	handler.SaveRecoveryCodes(ctx)
-
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.Equal(t, 1, provider.saveCalls)
-	assert.NotContains(t, recorder.Body.String(), "EOF")
-}
-
-func TestPostRegisterTOTPRepeatedRequiredEnrollmentResumesNextStep(t *testing.T) {
-	handler := &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg:         &mockFrontendCfg{},
-			Env:         config.NewTestEnvironmentConfig(),
-			LangManager: &mockLangManager{},
-			Logger:      slog.Default(),
-		},
-		tracer: monittrace.New("test/frontend"),
-	}
-	ctx, recorder := newMFASelfServiceContext(http.MethodPost, "/mfa/totp/register/en", map[string]any{
-		definitions.SessionKeyAccount:           frontendTestAccount,
-		definitions.SessionKeyHaveTOTP:          true,
-		definitions.SessionKeyRequireMFAFlow:    true,
-		definitions.SessionKeyRequireMFAPending: definitions.MFAMethodRecoveryCodes,
-		definitions.SessionKeyUserBackend:       uint8(definitions.BackendLDAP),
-	}, bytes.NewReader([]byte("code=123456")))
-	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	handler.PostRegisterTOTP(ctx)
-
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.Equal(t, definitions.MFARoot+"/register/continue", recorder.Header().Get("HX-Redirect"))
-	assert.NotContains(t, recorder.Body.String(), "Invalid request")
-}
-
-func (p *mfaSelfServiceProvider) GenerateTOTPSecret(_ *gin.Context, _ string) (string, string, error) {
-	return "", "", errors.New("unexpected GenerateTOTPSecret call")
-}
-
-func (p *mfaSelfServiceProvider) VerifyAndSaveTOTP(_ *gin.Context, _ string, _ string, _ string, _ uint8) error {
-	return errors.New("unexpected VerifyAndSaveTOTP call")
-}
-
-func (p *mfaSelfServiceProvider) VerifyTOTP(_ *gin.Context, _ string, _ string, _ uint8) (bool, error) {
-	return false, errors.New("unexpected VerifyTOTP call")
-}
-
-func (p *mfaSelfServiceProvider) DeleteTOTP(_ *gin.Context, _ string, _ uint8) error {
+func (p *mfaSelfServiceProvider) deleteTOTP(_ *gin.Context, data *UserBackendData) error {
 	p.deleteTOTPCalls++
+	p.lastAccount = data.Username
 
 	return nil
 }
 
-func (p *mfaSelfServiceProvider) GenerateRecoveryCodes(_ *gin.Context, _ string, _ uint8) ([]string, error) {
+func (p *mfaSelfServiceProvider) generateRecoveryCodes(
+	_ *gin.Context,
+	data *UserBackendData,
+) ([]string, error) {
 	p.generateRecoveryCalls++
+	p.lastAccount = data.Username
 
 	return []string{"recovery-one", "recovery-two"}, nil
-}
-
-func (p *mfaSelfServiceProvider) SaveRecoveryCodes(_ *gin.Context, _ string, _ []string, _ uint8) error {
-	return errors.New("unexpected SaveRecoveryCodes call")
-}
-
-func (p *mfaSelfServiceProvider) UseRecoveryCode(_ *gin.Context, _ string, _ string, _ uint8) (bool, error) {
-	return false, errors.New("unexpected UseRecoveryCode call")
-}
-
-func (p *mfaSelfServiceProvider) DeleteWebAuthnCredential(_ *gin.Context, _ string, _ string, _ uint8) error {
-	return errors.New("unexpected DeleteWebAuthnCredential call")
 }
 
 func newMFASelfServiceTestHandler() (*FrontendHandler, *mfaSelfServiceProvider) {
@@ -2031,8 +1063,9 @@ func newMFASelfServiceTestHandler() (*FrontendHandler, *mfaSelfServiceProvider) 
 			LangManager: &mockLangManager{},
 			Logger:      slog.Default(),
 		},
-		mfa:    provider,
-		tracer: monittrace.New("test/frontend"),
+		canonicalSelfServiceTOTPDeleter:       provider.deleteTOTP,
+		canonicalSelfServiceRecoveryGenerator: provider.generateRecoveryCodes,
+		tracer:                                monittrace.New("test/frontend"),
 	}
 
 	return handler, provider
@@ -2055,6 +1088,8 @@ func newMFASelfServiceContext(method string, path string, sessionData map[string
 {{ define "idp_error_modal.html" }}{{ .Message }}{{ end }}
 {{ define "idp_error.html" }}{{ .ErrorTitle }}: {{ .ErrorMessage }}{{ end }}
 {{ define "idp_recovery_codes_modal.html" }}{{ range .Codes }}{{ . }} {{ end }}{{ end }}
+{{ define "idp_2fa_home.html" }}{{ .Username }}|{{ .DisplayName }}{{ end }}
+{{ define "idp_2fa_webauthn_devices.html" }}{{ range .Devices }}{{ .Name }}{{ end }}{{ end }}
 `)))
 
 	ctx.Request = httptest.NewRequest(method, path, body)
@@ -2063,40 +1098,6 @@ func newMFASelfServiceContext(method string, path string, sessionData map[string
 	ctx.Set(definitions.CtxLocalizedKey, i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en"))
 
 	return ctx, recorder
-}
-
-func newFrontendTestContext(path string) *gin.Context {
-	gin.SetMode(gin.TestMode)
-
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, path, nil)
-
-	return ctx
-}
-
-func newFrontendTestUser() *backend.User {
-	return backend.NewUser(frontendTestUser, "", frontendTestUniqueUserID)
-}
-
-func TestLoginMFAViewsDoNotExpose2FAHomeMenuBeforeMFACompletion(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	h := newLoginMFAViewHandler()
-	tmpl := loginMFATestTemplate()
-	testCases := loginMFAViewCases(h)
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			assertLoginMFAViewHidesHomeMenu(t, tmpl, tc.path, tc.handler)
-		})
-	}
-}
-
-type loginMFAViewCase struct {
-	handler gin.HandlerFunc
-	name    string
-	path    string
 }
 
 // newLoginMFAViewHandler creates a frontend handler for MFA login view tests.
@@ -2118,107 +1119,6 @@ func loginMFATestTemplate() *template.Template {
 {{ define "idp_totp_verify.html" }}{{ if .Username }}2FA Verwaltung{{ end }}{{ end }}
 {{ define "idp_recovery_login.html" }}{{ if .Username }}2FA Verwaltung{{ end }}{{ end }}
 `))
-}
-
-// loginMFAViewCases returns the MFA login views that must hide self-service navigation.
-func loginMFAViewCases(h *FrontendHandler) []loginMFAViewCase {
-	return []loginMFAViewCase{
-		{
-			name:    "WebAuthn verify page",
-			path:    "/login/webauthn/de",
-			handler: h.LoginWebAuthn,
-		},
-		{
-			name:    "TOTP verify page",
-			path:    "/login/totp/de",
-			handler: h.LoginTOTP,
-		},
-		{
-			name:    "Recovery verify page",
-			path:    "/login/recovery/de",
-			handler: h.LoginRecovery,
-		},
-	}
-}
-
-// assertLoginMFAViewHidesHomeMenu verifies that pending MFA pages omit the 2FA home link.
-func assertLoginMFAViewHidesHomeMenu(
-	t *testing.T,
-	tmpl *template.Template,
-	path string,
-	handler gin.HandlerFunc,
-) {
-	t.Helper()
-
-	r := gin.New()
-	r.SetHTMLTemplate(tmpl)
-	r.Use(loginMFAViewSessionMiddleware())
-	r.GET(path, handler)
-
-	resp := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, path, nil)
-
-	r.ServeHTTP(resp, req)
-
-	assert.Equal(t, http.StatusOK, resp.Code)
-	assert.NotContains(t, resp.Body.String(), "2FA Verwaltung")
-}
-
-// loginMFAViewSessionMiddleware installs localized and secure-session state for view tests.
-func loginMFAViewSessionMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "de")
-		c.Set(definitions.CtxLocalizedKey, localizer)
-		c.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyUsername: "alice",
-		}})
-		c.Next()
-	}
-}
-
-func TestDelayedResponseFirstFactorLatchSurvivesTOTPCompletion(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyUsername: "alice",
-	}}
-	cookie.SetAuthResult(mgr, "alice", definitions.AuthResultFail)
-
-	h := &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg:         &mockFrontendCfg{},
-			Env:         config.NewTestEnvironmentConfig(),
-			LangManager: &mockLangManager{},
-			Logger:      slog.Default(),
-		},
-	}
-
-	tmpl := template.Must(template.New("login-template").Parse(`
-{{ define "idp_login.html" }}{{ if .HaveError }}latched failure{{ end }}{{ end }}
-`))
-
-	r := gin.New()
-	r.SetHTMLTemplate(tmpl)
-	r.POST("/login/totp", func(c *gin.Context) {
-		localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en")
-		c.Set(definitions.CtxLocalizedKey, localizer)
-		c.Set(definitions.CtxSecureDataKey, mgr)
-
-		handled := h.handleDelayedResponseFailure(c, &mfaSessionState{
-			mgr:      mgr,
-			username: "alice",
-		}, definitions.MFAMethodTOTP)
-
-		assert.True(t, handled)
-	})
-
-	resp := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodPost, "/login/totp", nil)
-
-	r.ServeHTTP(resp, req)
-
-	assert.Equal(t, http.StatusOK, resp.Code)
-	assert.Contains(t, resp.Body.String(), "latched failure")
 }
 
 func loadMFASelectTemplate(t *testing.T) *template.Template {
@@ -2296,179 +1196,6 @@ func loadStaticTemplate(t *testing.T, name string) string {
 	}
 
 	return string(content)
-}
-
-func TestRegisterWebAuthnAllowsExistingSession(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	r := gin.New()
-	r.SetHTMLTemplate(template.Must(template.New("idp_webauthn_register.html").Parse("ok")))
-
-	h := &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg:         &mockFrontendCfg{},
-			Env:         config.NewTestEnvironmentConfig(),
-			LangManager: &mockLangManager{},
-			Logger:      slog.Default(),
-		},
-	}
-
-	r.GET("/mfa/webauthn/register", func(c *gin.Context) {
-		localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en")
-		c.Set(definitions.CtxLocalizedKey, localizer)
-
-		mgr := &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyUniqueUserID: frontendTestUniqueUserID,
-			definitions.SessionKeyAccount:      frontendTestAccount,
-		}}
-		c.Set(definitions.CtxSecureDataKey, mgr)
-
-		h.RegisterWebAuthn(c)
-	})
-
-	resp := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/mfa/webauthn/register", nil)
-	r.ServeHTTP(resp, req)
-
-	assert.Equal(t, http.StatusOK, resp.Code)
-}
-
-func TestRestoreRequireMFAIdentityContextFromFlowState(t *testing.T) {
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyUniqueUserID: "uid-before",
-	}}
-	state := &flowdomain.State{
-		Type: flowdomain.FlowTypeRequireMFA,
-		Metadata: map[string]string{
-			flowdomain.FlowMetadataAccount:      frontendTestAccount,
-			flowdomain.FlowMetadataUniqueUserID: "uid-before",
-			flowdomain.FlowMetadataDisplayName:  frontendTestDisplayName,
-		},
-	}
-
-	restoreRequireMFAIdentityContext(mgr, state)
-
-	assert.Equal(t, frontendTestAccount, mgr.GetString(definitions.SessionKeyAccount, ""))
-	assert.Equal(t, "uid-before", mgr.GetString(definitions.SessionKeyUniqueUserID, ""))
-	assert.Equal(t, frontendTestDisplayName, mgr.GetString(definitions.SessionKeyDisplayName, ""))
-}
-
-func TestRequiredMFAFlowIDsAreIsolatedPerParentFlow(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	handler := &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg: &mockFrontendCfg{},
-		},
-	}
-	flowIDs := make(map[string]string)
-
-	for _, tc := range []struct {
-		name     string
-		parentID string
-		account  string
-		userID   string
-	}{
-		{name: "alice", parentID: "parent-flow-alice", account: "alice", userID: "uid-alice"},
-		{name: "bob", parentID: "parent-flow-bob", account: "bob", userID: "uid-bob"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-			ctx.Request = httptest.NewRequest(http.MethodGet, "/login", nil)
-			mgr := &mockCookieManager{data: map[string]any{
-				definitions.SessionKeyAccount:           tc.account,
-				definitions.SessionKeyIDPFlowID:         tc.parentID,
-				definitions.SessionKeyProtocol:          definitions.ProtoOIDC,
-				definitions.SessionKeyRequireMFAPending: definitions.MFAMethodTOTP,
-				definitions.SessionKeyUniqueUserID:      tc.userID,
-			}}
-			user := &backend.User{
-				ID:   tc.userID,
-				Name: tc.account,
-			}
-
-			redirectURI, err := handler.startRequireMFARegistrationFlow(ctx, mgr, user, definitions.ProtoOIDC, []string{definitions.MFAMethodTOTP})
-			flowID := mgr.GetString(definitions.SessionKeyIDPFlowID, "")
-
-			assert.NoError(t, err)
-			assert.NotEmpty(t, redirectURI)
-			assert.NotEmpty(t, flowID)
-			assert.NotEqual(t, flowdomain.FlowIDRequireMFA, flowID)
-			assert.Equal(t, tc.parentID, mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, ""))
-
-			flowIDs[tc.name] = flowID
-		})
-	}
-
-	assert.NotEqual(t, flowIDs["alice"], flowIDs["bob"])
-}
-
-func TestRequiredMFAResumeRejectsMismatchedIdentityMetadata(t *testing.T) {
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyAccount: "alice",
-	}}
-	state := &flowdomain.State{
-		Type: flowdomain.FlowTypeRequireMFA,
-		Metadata: map[string]string{
-			flowdomain.FlowMetadataAccount:      "bob",
-			flowdomain.FlowMetadataUniqueUserID: "uid-bob",
-			flowdomain.FlowMetadataDisplayName:  "Bob Example",
-		},
-	}
-
-	restoreRequireMFAIdentityContext(mgr, state)
-
-	assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyAccount, ""))
-	assert.Empty(t, mgr.GetString(definitions.SessionKeyUniqueUserID, ""))
-	assert.Empty(t, mgr.GetString(definitions.SessionKeyDisplayName, ""))
-}
-
-func TestRequireMFAFlowIDRequiresParentReference(t *testing.T) {
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyRequireMFAFlow: true,
-	}}
-
-	assert.Empty(t, requireMFAFlowIDFromSession(mgr))
-}
-
-func TestRequireMFAFlowIDDerivesFromParentReference(t *testing.T) {
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyRequireMFAFlow:         true,
-		definitions.SessionKeyRequireMFAParentFlowID: "parent-flow",
-	}}
-
-	assert.Equal(t, flowdomain.NewRequireMFAFlowID("parent-flow"), requireMFAFlowIDFromSession(mgr))
-}
-
-func TestRegisterWebAuthnRedirectsWithoutSession(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	r := gin.New()
-	r.SetHTMLTemplate(template.Must(template.New("idp_webauthn_register.html").Parse("ok")))
-
-	h := &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg:         &mockFrontendCfg{},
-			Env:         config.NewTestEnvironmentConfig(),
-			LangManager: &mockLangManager{},
-			Logger:      slog.Default(),
-		},
-	}
-
-	r.GET("/mfa/webauthn/register", func(c *gin.Context) {
-		localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en")
-		c.Set(definitions.CtxLocalizedKey, localizer)
-
-		// No cookie manager set - simulates no session
-		h.RegisterWebAuthn(c)
-	})
-
-	resp := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/mfa/webauthn/register", nil)
-	r.ServeHTTP(resp, req)
-
-	assert.Equal(t, http.StatusFound, resp.Code)
-	assert.Equal(t, "/login", resp.Header().Get("Location"))
 }
 
 func TestLoggedOutRoute_DoesNotSetSecureDataCookie(t *testing.T) {
