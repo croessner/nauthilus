@@ -128,6 +128,94 @@ func TestCanonicalWebAuthnCeremonyCompletesBoundStepUpAndResumesOnce(t *testing.
 	}
 }
 
+func TestCanonicalWebAuthnCompletionRefreshesAnchorAfterCeremonyConsume(t *testing.T) {
+	t.Parallel()
+
+	runtime, browserCookie, flowID := seedCanonicalIDPFlow(t, canonicalDecisionOIDCState(""))
+	authenticateCanonicalFixture(t, runtime, browserCookie)
+	stepUpHandle := seedCanonicalWebAuthnStepUp(t, runtime, browserCookie, flowID)
+	ceremonyHandle := sessionstate.Handle("YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY")
+
+	handler := newLoginMFAViewHandler()
+	handler.canonicalMFAAvailabilityResolver = canonicalWebAuthnAvailability
+	handler.canonicalWebAuthnFinish = func(
+		ctx *gin.Context,
+		selection canonicalMFASelectionState,
+		_ sessionstate.Handle,
+	) (*backend.User, error) {
+		reference := sessionstate.Reference{
+			Session: selection.session.Handle,
+			Record:  ceremonyHandle,
+		}
+		if _, err := selection.session.Stores.CommitCeremony(
+			ctx.Request.Context(),
+			sessionstate.CommitRequest[sessionstate.CeremonyRecord]{
+				Reference: reference,
+				Value: sessionstate.CeremonyRecord{
+					Record:  sessionstate.Record{Handle: ceremonyHandle},
+					Session: selection.session.Handle,
+					Flow:    selection.stepUp.Value.Flow,
+				},
+				TTL: 5 * time.Minute,
+			},
+		); err != nil {
+			return nil, err
+		}
+
+		if _, err := selection.session.Stores.ConsumeCeremony(
+			ctx.Request.Context(),
+			sessionstate.DeleteRequest{Reference: reference, ExpectedRevision: 1},
+		); err != nil {
+			return nil, err
+		}
+
+		return nil, nil
+	}
+
+	router := gin.New()
+	router.POST(
+		"/login/webauthn/finish",
+		cookie.CanonicalMiddleware(runtime, cookie.CanonicalContinuation),
+		handler.PostLoginWebAuthnFinish,
+	)
+
+	finishURL := "/login/webauthn/finish?flow=" + string(stepUpHandle) + "&ceremony=" + string(ceremonyHandle)
+	request := httptest.NewRequest(http.MethodPost, finishURL, strings.NewReader(`{"id":"opaque-credential"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(browserCookie)
+
+	writer := httptest.NewRecorder()
+	router.ServeHTTP(writer, request)
+
+	if writer.Code != http.StatusOK {
+		t.Fatalf("canonical WebAuthn completion after ceremony consume = status %d body %q, want 200",
+			writer.Code, writer.Body.String())
+	}
+
+	assertCanonicalWebAuthnCompleted(t, runtime, browserCookie, stepUpHandle)
+}
+
+func TestCanonicalWebAuthnSelfServiceUsesStepUpAsCeremonyBinding(t *testing.T) {
+	t.Parallel()
+
+	selection := canonicalMFASelectionState{
+		identity: cookie.SessionIdentity{Protocol: definitions.ProtoOIDC},
+		stepUp: sessionstate.Versioned[sessionstate.StepUpRecord]{
+			Value: sessionstate.StepUpRecord{
+				Record: sessionstate.Record{Handle: "step-up-handle"},
+			},
+		},
+	}
+
+	if got := canonicalMFABoundFlow(selection); got != "step-up-handle" {
+		t.Fatalf("self-service ceremony binding = %q", got)
+	}
+
+	if got := canonicalMFAProtocol(selection); got != definitions.ProtoOIDC {
+		t.Fatalf("self-service ceremony protocol = %q", got)
+	}
+}
+
 func TestCanonicalLoginWebAuthnViewDoesNotExpose2FAHomeMenuBeforeCompletion(t *testing.T) {
 	t.Parallel()
 

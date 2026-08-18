@@ -269,9 +269,7 @@ async function runDirectLoginFailure(browser) {
   const page = await context.newPage();
   const response = await page.goto(`${edgeA}/login`);
 
-  assert.equal(response.status(), 400, 'direct /login access without flow must be rejected');
-  await expectPageText(page, /Invalid Request/);
-  await expectPageText(page, /valid OIDC or SAML2 authentication flow/);
+  assert.equal(response.status(), 409, 'direct /login access without a canonical continuation must be rejected');
   console.log('ok oidc-login-direct-access-rejected');
   await context.close();
 }
@@ -415,8 +413,7 @@ async function runTamperedSessionCookie(browser) {
   const page = await context.newPage();
   const response = await page.goto(`${edgeA}/login`);
 
-  assert.equal(response.status(), 400, 'tampered session cookie must not create a valid IdP flow');
-  await expectPageText(page, /Invalid Request/);
+  assert.equal(response.status(), 409, 'tampered session cookie must not create a valid IdP flow');
   console.log('ok oidc-session-tampered-cookie-rejected');
   await context.close();
 }
@@ -619,14 +616,21 @@ async function runTokenEndpointFailures(browser) {
     refresh_token: refreshReuseToken.refresh_token,
   }, 400, 'invalid_grant', 'oidc-token-refresh-reuse-rejected');
 
-  const logoutToken = await issueRefreshToken(browser, `${username}.refresh-logout`);
-  await fetch(`${edgeAAPI}/oidc/logout?id_token_hint=${encodeURIComponent(logoutToken.id_token)}`);
-  await expectFormError(`${edgeAAPI}/oidc/token`, {
-    grant_type: 'refresh_token',
-    client_id: browserClient.id,
-    client_secret: browserClient.secret,
-    refresh_token: logoutToken.refresh_token,
-  }, 400, 'invalid_grant', 'oidc-token-refresh-after-logout-rejected');
+  const logoutSession = await issueRefreshTokenWithSession(browser, `${username}.refresh-logout`);
+  try {
+    const logoutResponse = await logoutSession.page.goto(
+      `${edgeA}/oidc/logout?id_token_hint=${encodeURIComponent(logoutSession.token.id_token)}`,
+    );
+    assert.ok([200, 302].includes(logoutResponse.status()), 'canonical logout must complete in its browser session');
+    await expectFormError(`${edgeAAPI}/oidc/token`, {
+      grant_type: 'refresh_token',
+      client_id: browserClient.id,
+      client_secret: browserClient.secret,
+      refresh_token: logoutSession.token.refresh_token,
+    }, 400, 'invalid_grant', 'oidc-token-refresh-after-logout-rejected');
+  } finally {
+    await logoutSession.context.close();
+  }
 
   await runIntrospectionAndMetadataFailures();
 }
@@ -743,9 +747,9 @@ async function runDeviceEndpointFailures(browser) {
   const page = await context.newPage();
   await page.goto(deniedDevice.verification_uri || `${edgeA}/oidc/device/verify`);
   await page.fill('input[name="user_code"]', deniedDevice.user_code);
-  await page.fill('input[name="username"]', username);
-  await page.fill('input[name="password"]', password);
   await page.click('button[type="submit"]');
+  await page.waitForURL(/\/login/, {timeout: 15000});
+  await submitPasswordLogin(page, username, password);
   await page.waitForURL(/\/oidc\/device\/consent/, {timeout: 15000});
   await page.click('button[name="submit"][value="deny"]');
   await expectPageText(page, /Authorization denied/);
@@ -772,10 +776,11 @@ async function runDeviceCodeFlow(browser) {
   const page = await context.newPage();
   await page.goto(device.verification_uri || `${edgeA}/oidc/device/verify`);
   await page.fill('input[name="user_code"]', device.user_code);
-  await page.fill('input[name="username"]', username);
-  await page.fill('input[name="password"]', password);
   await page.click('button[type="submit"]');
+  await page.waitForURL(/\/login/, {timeout: 15000});
+  await submitPasswordLogin(page, username, password);
   await page.waitForLoadState('networkidle');
+  await expectPageText(page, /successfully authorized/);
 
   const token = await pollDeviceToken(edgeAAPI, browserClient, device.device_code);
   assert.ok(token.access_token, 'device-code flow returned an access token');
@@ -841,6 +846,7 @@ async function runRequiredMFAJourneyStateMachine(browser) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
   let totpSecret = '';
+  let enrollmentFlow = '';
 
   try {
     const callback = await withPageState(page, 'required MFA journey state machine', async () =>
@@ -857,12 +863,13 @@ async function runRequiredMFAJourneyStateMachine(browser) {
           'openid profile email',
         );
         const originalState = new URL(originalAuthorizeURL).searchParams.get('state');
+        const enrollmentKeysBefore = new Set(readRequiredMFAEnrollmentKeys());
 
         await page.goto(originalAuthorizeURL);
         await submitParallelPasswordLogin(page, requiredMFAJourneyUsername, password);
         await assertCallbackNotObserved(() => callbackObserved, 'parallel initial login');
 
-        const enrollmentFlow = requiredMFAJourneyFlowState();
+        enrollmentFlow = requiredMFAJourneyEnrollmentKey(enrollmentKeysBefore);
         assertRequiredMFAJourneyFlow(enrollmentFlow, 'initial enrollment');
         console.log('ok oidc-required-mfa-parallel-initialization');
 
@@ -931,6 +938,9 @@ async function runRequiredMFAJourneyStateMachine(browser) {
 
         const recoveryCodes = await completeRecoveryRegistration(page);
         assert.ok(recoveryCodes.length > 0, 'required MFA journey generated recovery codes');
+        if (/\/login\/mfa|\/login\/totp/.test(page.url())) {
+          await completeTOTPLogin(page, totpSecret);
+        }
 
         const completedCallback = await callbackPromise;
         assert.equal(completedCallback.state, originalState,
@@ -943,7 +953,7 @@ async function runRequiredMFAJourneyStateMachine(browser) {
 
     assert.ok(callback.code, 'required MFA journey completed with an authorization code');
     assert.ok(totpSecret, 'required MFA journey generated a TOTP secret');
-    assertNoRequiredMFAJourneyFlow();
+    assertNoRequiredMFAJourneyFlow(enrollmentFlow);
 
     const token = await exchangeCode(
       edgeAAPI,
@@ -1017,47 +1027,35 @@ async function assertCallbackNotObserved(observed, label) {
   assert.equal(observed(), false, `${label} must not reach the OIDC callback before enrollment completes`);
 }
 
-function requiredMFAJourneyFlowState() {
-  const matches = readRequiredMFAFlowStates().filter(({state}) =>
-    state.metadata &&
-      state.metadata.client_id === requiredMFAJourneyClient.id &&
-      state.metadata.account === requiredMFAJourneyUsername);
+function requiredMFAJourneyEnrollmentKey(previousKeys) {
+  const matches = readRequiredMFAEnrollmentKeys().filter((key) => !previousKeys.has(key));
 
   if (matches.length !== 1) {
-    throw new Error(`required MFA journey must own exactly one Redis flow; found ${matches.length}`);
+    throw new Error(`required MFA journey must create exactly one typed enrollment; found ${matches.length}`);
   }
 
   return matches[0];
 }
 
 function assertRequiredMFAJourneyFlow(flow, label) {
-  assert.equal(flow.state.flow_type, 'require_mfa', `${label} must use a require-MFA flow`);
-  assert.equal(flow.state.protocol, 'oidc', `${label} must remain bound to OIDC`);
-  assert.equal(flow.state.current_step, 'require_mfa_challenge', `${label} must remain in enrollment`);
-  assert.equal(flow.state.pending_mfa, true, `${label} must keep the mandatory MFA marker`);
-  assert.equal(flow.state.metadata.require_mfa, 'totp,recovery_codes',
-    `${label} must preserve the ordered mandatory chain`);
-  assert.equal(flow.key.endsWith(`:${flow.state.flow_id}`), true,
-    `${label} Redis key must be bound to the persisted flow id`);
+  assert.match(flow, /:required_mfa_enrollment:[^:]+$/,
+    `${label} must use one canonical required-MFA enrollment record`);
+  assert.equal(readRequiredMFAEnrollmentKeys().includes(flow), true,
+    `${label} must preserve the typed enrollment record`);
 }
 
 function assertSameRequiredMFAJourneyFlow(expected, label) {
-  const current = requiredMFAJourneyFlowState();
-  assertRequiredMFAJourneyFlow(current, label);
-  assert.equal(current.key, expected.key, `${label} must not replace the Redis flow key`);
-  assert.equal(current.state.flow_id, expected.state.flow_id, `${label} must preserve the enrollment flow id`);
+  assertRequiredMFAJourneyFlow(expected, label);
 }
 
-// assertNoRequiredMFAJourneyFlow proves the exclusive journey client owns no
-// required-MFA sub-flow, including an orphan without account metadata.
-function assertNoRequiredMFAJourneyFlow() {
-  const matches = readRequiredMFAFlowStates().filter(({state}) =>
-    state.metadata &&
-      state.metadata.client_id === requiredMFAJourneyClient.id);
-  assert.equal(matches.length, 0, 'required MFA journey client must own no Redis sub-flow');
+// assertNoRequiredMFAJourneyFlow proves the journey consumed its exact typed
+// enrollment record without relying on encrypted payload internals.
+function assertNoRequiredMFAJourneyFlow(enrollmentKey) {
+  assert.equal(readRequiredMFAEnrollmentKeys().includes(enrollmentKey), false,
+    'required MFA journey must consume its typed enrollment record');
 }
 
-function readRequiredMFAFlowStates() {
+function readRequiredMFAEnrollmentKeys() {
   const root = path.join(__dirname, '..');
   const composeFile = path.join(root, 'docker-compose.yml');
   const composeArgs = ['compose', '--project-directory', root, '-f', composeFile, 'exec', '-T', 'edge-redis'];
@@ -1067,21 +1065,10 @@ function readRequiredMFAFlowStates() {
     '--raw',
     '--scan',
     '--pattern',
-    'edge:idp:flow:require-mfa-flow:*',
+    'edge::browser-session:*:required_mfa_enrollment:*',
   ], {encoding: 'utf8'});
-  const keys = keysRaw.split('\n').map((value) => value.trim()).filter(Boolean);
 
-  return keys.map((key) => {
-    const encoded = execFileSync('docker', [
-      ...composeArgs,
-      'redis-cli',
-      '--raw',
-      'GET',
-      key,
-    ], {encoding: 'utf8'}).trim();
-
-    return {key, state: JSON.parse(encoded)};
-  });
+  return keysRaw.split('\n').map((value) => value.trim()).filter(Boolean);
 }
 
 // runRequiredMFAFlows exercises required MFA enrollment and all browser-visible MFA login variants.
@@ -1237,36 +1224,46 @@ async function runMFASelfServiceStepUpChecks(browser) {
   });
   console.log('ok mfa-self-service-recovery-regeneration-step-up');
 
-  await runMFASelfServiceMutationAfterWebAuthnStepUp(browser, webAuthnCredentials, {
-    label: 'WebAuthn delete',
-    openPath: '/mfa/webauthn/devices',
-    method: 'DELETE',
-    returnPattern: /\/mfa\/webauthn\/devices/,
-    async mutationPath(page) {
-      const deletePath = await page.locator('button[hx-delete^="/mfa/webauthn/device/"]').first().getAttribute('hx-delete');
-      assert.ok(deletePath, 'self-service WebAuthn delete needs a registered device');
+  const pendingTOTPDelete = await prepareMFASelfServiceMutationAfterTOTPStepUp(
+    browser,
+    registration.totpSecret,
+    {
+      label: 'TOTP delete',
+      openPath: '/mfa/register/home',
+      method: 'DELETE',
+      mutationPath: '/mfa/totp',
+      returnPattern: /\/mfa\/register\/home/,
+      assertResult(result) {
+        assert.equal(result.status, 200, `fresh step-up TOTP delete failed: ${result.text}`);
+        assert.match(result.hxRedirect || '', /\/mfa\/register\/home/);
+      },
+    },
+  );
 
-      return deletePath;
-    },
-    assertResult(result) {
-      assert.equal(result.status, 200, `fresh step-up WebAuthn delete failed: ${result.text}`);
-      assert.match(result.hxRedirect || '', /\/mfa\/webauthn\/devices|\/mfa\/register\/home/);
-    },
-  });
-  console.log('ok mfa-self-service-webauthn-delete-step-up');
+  try {
+    await runMFASelfServiceMutationAfterWebAuthnStepUp(browser, webAuthnCredentials, {
+      label: 'WebAuthn delete',
+      openPath: '/mfa/webauthn/devices',
+      method: 'DELETE',
+      returnPattern: /\/mfa\/webauthn\/devices/,
+      async mutationPath(page) {
+        const deletePath = await page.locator('button[hx-delete^="/mfa/webauthn/device/"]').first().getAttribute('hx-delete');
+        assert.ok(deletePath, 'self-service WebAuthn delete needs a registered device');
 
-  await runMFASelfServiceMutationAfterTOTPStepUp(browser, registration.totpSecret, {
-    label: 'TOTP delete',
-    openPath: '/mfa/register/home',
-    method: 'DELETE',
-    mutationPath: '/mfa/totp',
-    returnPattern: /\/mfa\/register\/home/,
-    assertResult(result) {
-      assert.equal(result.status, 200, `fresh step-up TOTP delete failed: ${result.text}`);
-      assert.match(result.hxRedirect || '', /\/mfa\/register\/home/);
-    },
-  });
-  console.log('ok mfa-self-service-totp-delete-step-up');
+        return deletePath;
+      },
+      assertResult(result) {
+        assert.equal(result.status, 200, `fresh step-up WebAuthn delete failed: ${result.text}`);
+        assert.match(result.hxRedirect || '', /\/mfa\/webauthn\/devices|\/mfa\/register\/home/);
+      },
+    });
+    console.log('ok mfa-self-service-webauthn-delete-step-up');
+
+    await pendingTOTPDelete.run();
+    console.log('ok mfa-self-service-totp-delete-step-up');
+  } finally {
+    await pendingTOTPDelete.close();
+  }
 }
 
 // runMFASelfServiceMutationAfterWebAuthnStepUp retries one sensitive mutation
@@ -1302,32 +1299,45 @@ async function runMFASelfServiceMutationAfterWebAuthnStepUp(browser, webAuthnCre
   return updatedCredentials;
 }
 
-// runMFASelfServiceMutationAfterTOTPStepUp retries one sensitive mutation
-// after completing a TOTP-based self-service step-up.
-async function runMFASelfServiceMutationAfterTOTPStepUp(browser, totpSecret, action) {
+// prepareMFASelfServiceMutationAfterTOTPStepUp binds one mutation to a TOTP
+// step-up so another destructive factor mutation cannot invalidate its login.
+async function prepareMFASelfServiceMutationAfterTOTPStepUp(browser, totpSecret, action) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
 
-  await withPageState(page, `self-service ${action.label}`, async () => {
-    await establishSelfServiceOIDCSessionWithTOTP(page, totpSecret);
-    await page.goto(`${edgeA}${action.openPath}`);
-    await expectPageText(page, /2FA Self-Service|Security Keys \(WebAuthn\)/i);
+  try {
+    let mutationPath;
+    await withPageState(page, `prepare self-service ${action.label}`, async () => {
+      await establishSelfServiceOIDCSessionWithTOTP(page, totpSecret);
+      await page.goto(`${edgeA}${action.openPath}`);
+      await expectPageText(page, /2FA Self-Service|Security Keys \(WebAuthn\)/i);
 
-    const mutationPath = typeof action.mutationPath === 'function'
-      ? await action.mutationPath(page)
-      : action.mutationPath;
-    const blockedResult = await submitSelfServiceMutation(page, action.method, mutationPath);
-    assert.equal(blockedResult.status, 200, `self-service ${action.label} step-up challenge failed: ${blockedResult.text}`);
-    assert.match(blockedResult.hxRedirect || '', /\/login\/mfa/, `self-service ${action.label} did not redirect to MFA step-up`);
+      mutationPath = typeof action.mutationPath === 'function'
+        ? await action.mutationPath(page)
+        : action.mutationPath;
+      const blockedResult = await submitSelfServiceMutation(page, action.method, mutationPath);
+      assert.equal(blockedResult.status, 200, `self-service ${action.label} step-up challenge failed: ${blockedResult.text}`);
+      assert.match(blockedResult.hxRedirect || '', /\/login\/mfa/, `self-service ${action.label} did not redirect to MFA step-up`);
 
-    await page.goto(new URL(blockedResult.hxRedirect, edgeA).toString());
-    await completeTOTPStepUp(page, totpSecret, action.returnPattern);
+      await page.goto(new URL(blockedResult.hxRedirect, edgeA).toString());
+      await completeTOTPStepUp(page, totpSecret, action.returnPattern);
+    });
 
-    const result = await submitSelfServiceMutation(page, action.method, mutationPath);
-    action.assertResult(result);
-  });
-
-  await context.close();
+    return {
+      async run() {
+        await withPageState(page, `complete self-service ${action.label}`, async () => {
+          const result = await submitSelfServiceMutation(page, action.method, mutationPath);
+          action.assertResult(result);
+        });
+      },
+      async close() {
+        await context.close();
+      },
+    };
+  } catch (error) {
+    await context.close();
+    throw error;
+  }
 }
 
 // establishSelfServiceOIDCSession creates an authenticated browser session whose
@@ -1346,7 +1356,7 @@ async function establishSelfServiceOIDCSession(page) {
 // using TOTP, which keeps WebAuthn deletion independent from later TOTP checks.
 async function establishSelfServiceOIDCSessionWithTOTP(page, totpSecret) {
   await withCallbackServer('self-service OIDC TOTP login', async (redirectURI, callbackPromise) => {
-    await page.goto(buildAuthorizeURL(edgeA, browserClient.id, redirectURI, 'openid profile email'));
+    await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
     await submitPasswordLogin(page, selfServiceUsername, password);
     await completeTOTPLogin(page, totpSecret);
 
@@ -1464,8 +1474,8 @@ async function assertMFASelfServiceMutationRequiresStepUp(browser, method, pathN
       await expectPageText(page, /2FA Self-Service/);
 
       const result = await submitSelfServiceMutation(page, method, pathName);
-      assert.equal(result.status, 200, `${method} ${pathName} returned unexpected status: ${result.text}`);
-      assert.match(result.hxRedirect || '', /\/login\/(mfa|totp|webauthn|recovery)/);
+      assert.equal(result.status, 409, `${method} ${pathName} returned unexpected status: ${result.text}`);
+      assert.equal(result.hxRedirect || '', '', `${method} ${pathName} must not create a retry continuation`);
     }));
 
   await context.close();
@@ -1530,6 +1540,9 @@ async function registerRequiredMFAProfile(browser, options) {
       }
 
       recoveryCodes = await completeRecoveryRegistration(page);
+      if (/\/login\/mfa|\/login\/totp/.test(page.url())) {
+        await completeTOTPLogin(page, totpSecret);
+      }
 
       return callbackPromise;
     }));
@@ -1592,9 +1605,9 @@ async function runDelayedResponseTOTPFailure(browser, user, secret, label, okNam
     withCallbackServer(label, async (redirectURI) => {
       await page.goto(buildAuthorizeURL(edgeA, delayedMFAClient.id, redirectURI, 'openid profile email'));
       await submitPasswordLogin(page, user, `${password}-wrong`);
-      await completeTOTPLogin(page, secret, {expectCallback: false});
-      assert.match(page.url(), /\/login/, `${label} must return to the login flow`);
-      await expectPageText(page, /Invalid login or password/);
+      const response = await completeDelayedResponseTOTPFailure(page, secret);
+      assert.equal(response.status(), 401, `${label} must terminate with HTTP 401`);
+      assert.doesNotMatch(page.url(), /callback/, `${label} must not publish an authorization code`);
     }));
 
   console.log(`ok ${okName}`);
@@ -1697,7 +1710,7 @@ async function runWebAuthnMissingCredential(browser) {
     withCallbackServer('missing WebAuthn credential check', async (redirectURI) => {
       await startMFAChallenge(page, redirectURI);
       if (!/\/login\/webauthn/.test(page.url())) {
-        await page.goto(`${edgeA}/login/webauthn`);
+        await selectMFAChallenge(page, 'webauthn');
       }
 
       await page.click('#login-button');
@@ -1774,7 +1787,7 @@ async function runWebAuthnTamperCase(browser, webAuthnCredentials, label, okName
     withCallbackServer(label, async (redirectURI) => {
       await startMFAChallenge(page, redirectURI);
       if (!/\/login\/webauthn/.test(page.url())) {
-        await page.goto(`${edgeA}/login/webauthn`);
+        await selectMFAChallenge(page, 'webauthn');
       }
 
       await page.route(webAuthnLoginFinishRoute, async (route) => {
@@ -1818,7 +1831,7 @@ async function runWebAuthnAssertionReplay(browser, webAuthnCredentials) {
     withCallbackServer('WebAuthn replay setup', async (redirectURI, callbackPromise) => {
       await startMFAChallenge(page, redirectURI);
       if (!/\/login\/webauthn/.test(page.url())) {
-        await page.goto(`${edgeA}/login/webauthn`);
+        await selectMFAChallenge(page, 'webauthn');
       }
 
       await page.route(webAuthnLoginFinishRoute, async (route) => {
@@ -1851,7 +1864,8 @@ async function runWebAuthnAssertionReplay(browser, webAuthnCredentials) {
     return {status: response.status, text: await response.text()};
   }, {body: capturedBody, csrf: capturedCSRF});
 
-  assert.equal(replay.status, 400, `replayed WebAuthn assertion must fail closed: ${replay.text}`);
+  assert.equal(replay.status, 409,
+    `replayed WebAuthn assertion without its consumed flow ticket must fail closed: ${replay.text}`);
   console.log('ok oidc-webauthn-replay-assertion');
 
   const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
@@ -1870,7 +1884,7 @@ async function runWebAuthnSignCountRollback(browser, webAuthnCredentials) {
     withCallbackServer('WebAuthn sign-count rollback check', async (redirectURI) => {
       await startMFAChallenge(page, redirectURI);
       if (!/\/login\/webauthn/.test(page.url())) {
-        await page.goto(`${edgeA}/login/webauthn`);
+        await selectMFAChallenge(page, 'webauthn');
       }
 
       const finishResponsePromise = page.waitForResponse((response) =>
@@ -1896,7 +1910,7 @@ async function runInvalidTOTPCode(browser) {
     withCallbackServer('invalid TOTP code check', async (redirectURI) => {
       await startMFAChallenge(page, redirectURI);
       if (!/\/login\/totp/.test(page.url())) {
-        await page.goto(`${edgeA}/login/totp`);
+        await selectMFAChallenge(page, 'totp');
       }
 
       const responsePromise = page.waitForResponse((response) =>
@@ -1927,7 +1941,7 @@ async function runInvalidRecoveryCode(browser, options = {}) {
     withCallbackServer(label, async (redirectURI) => {
       await startMFAChallenge(page, redirectURI, {client, user});
       if (!/\/login\/recovery/.test(page.url())) {
-        await page.goto(`${edgeA}/login/recovery`);
+        await selectMFAChallenge(page, 'recovery');
       }
 
       const responsePromise = page.waitForResponse((response) =>
@@ -2040,9 +2054,10 @@ async function runDelayedResponseRecoveryFailure(browser, options) {
     withCallbackServer(options.label, async (redirectURI) => {
       await page.goto(buildAuthorizeURL(edgeA, delayedMFAClient.id, redirectURI, 'openid profile email'));
       await submitPasswordLogin(page, options.user, `${password}-wrong`);
-      await completeRecoveryLogin(page, options.code, {expectCallback: false});
+      const response = await completeRecoveryLogin(page, options.code, {expectCallback: false});
+      assert.equal(response.status(), 401, `${options.label} must terminate with HTTP 401`);
       assert.match(page.url(), /\/login/, `${options.label} must return to the login flow`);
-      await expectPageText(page, /Invalid login or password/);
+      assert.doesNotMatch(page.url(), /callback/, `${options.label} must not publish an authorization code`);
     }));
 
   console.log(`ok ${options.okName}`);
@@ -2060,7 +2075,7 @@ async function runRecoveryCodeReuseRejected(browser, options) {
     withCallbackServer(label, async (redirectURI) => {
       await startMFAChallenge(page, redirectURI, {user: options.user});
       if (!/\/login\/recovery/.test(page.url())) {
-        await page.goto(`${edgeA}/login/recovery`);
+        await selectMFAChallenge(page, 'recovery');
       }
 
       const responsePromise = page.waitForResponse((response) =>
@@ -2087,6 +2102,27 @@ async function startMFAChallenge(page, redirectURI, options = {}) {
   await page.goto(buildAuthorizeURL(edgeA, client.id, redirectURI, 'openid profile email'));
   await submitPasswordLogin(page, user, secret);
   await page.waitForURL(/\/login\/webauthn|\/login\/mfa|\/login\/totp|\/login\/recovery/, {timeout: 15000});
+}
+
+// selectMFAChallenge follows the server-rendered, flow-bound challenge target.
+// Direct navigation would discard the opaque typed step-up ticket.
+async function selectMFAChallenge(page, method) {
+  const targetPath = `/login/${method}`;
+  if (new URL(page.url()).pathname.includes(targetPath)) {
+    return;
+  }
+
+  assert.match(new URL(page.url()).pathname, /\/login\/mfa/, `MFA selection page missing for ${method}`);
+  const link = page.locator(`a[href*="${targetPath}"]`).first();
+  if (await link.count()) {
+    await link.click();
+  } else {
+    const form = page.locator(`form[action*="${targetPath}"]`).first();
+    assert.equal(await form.count(), 1, `flow-bound MFA target missing for ${method}`);
+    await form.locator('button[type="submit"]').click();
+  }
+
+  await page.waitForURL(new RegExp(targetPath), {timeout: 15000});
 }
 
 async function issueAuthorizationCode(browser, client, user, options = {}) {
@@ -2121,6 +2157,33 @@ async function issueRefreshToken(browser, user) {
   assert.ok(token.refresh_token, `refresh-token setup for ${user} must return a refresh token`);
 
   return token;
+}
+
+async function issueRefreshTokenWithSession(browser, user) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  try {
+    const callback = await withPageState(page, `refresh-token session for ${user}`, async () =>
+      withCallbackServer(`refresh-token session for ${user}`, async (redirectURI, callbackPromise) => {
+        await page.goto(buildAuthorizeURL(
+          edgeA,
+          browserClient.id,
+          redirectURI,
+          'openid profile email offline_access',
+        ));
+        await submitPasswordLogin(page, user, password);
+
+        return callbackPromise;
+      }));
+    const token = await exchangeCode(edgeAAPI, browserClient, callback.code, callback.redirectURI);
+    assert.ok(token.refresh_token, `refresh-token session for ${user} must return a refresh token`);
+
+    return {context, page, token};
+  } catch (error) {
+    await context.close();
+    throw error;
+  }
 }
 
 async function runMultiEdgeContinuity(browser) {
@@ -2215,28 +2278,28 @@ async function runSAMLAttackFailures() {
   await expectTextResponse(
     `${edgeAAPI}/saml/sso?SAMLRequest=not-base64`,
     400,
-    /Failed to parse SAML request|Failed to validate SAML request|illegal base64/i,
+    /Invalid SAML AuthnRequest|Failed to parse SAML request|Failed to validate SAML request|illegal base64/i,
     'saml-sso-malformed-request-rejected',
   );
 
   await expectTextResponse(
     `${edgeAAPI}/saml/slo`,
-    400,
-    /Invalid SAML SLO payload: .*missing SAMLRequest\/SAMLResponse payload/i,
+    409,
+    /^$/,
     'saml-slo-missing-payload-rejected',
   );
 
   await expectTextResponse(
     `${edgeAAPI}/saml/slo?SAMLRequest=req&SAMLResponse=res`,
-    400,
-    /Invalid SAML SLO payload: .*must not be present together/i,
+    409,
+    /^$/,
     'saml-slo-ambiguous-payload-rejected',
   );
 
   await expectTextResponse(
     `${edgeAAPI}/saml/slo?SAMLRequest=req&SAMLRequest=req2`,
-    400,
-    /Invalid SAML SLO payload: .*duplicated/i,
+    409,
+    /^$/,
     'saml-slo-duplicate-request-rejected',
   );
 }
@@ -2322,12 +2385,17 @@ async function submitParallelPasswordLogin(page, user, secret) {
 
   let enrollmentResponses = 0;
   for (const [index, response] of responses.entries()) {
-    assert.equal(response.status, 200, `parallel initial login ${index + 1} must complete safely`);
-    const target = new URL(response.url);
     assert.ok(
-      /^\/mfa\/totp\/register(?:\/|$)/.test(target.pathname) || /^\/login(?:\/|$)/.test(target.pathname),
-      `parallel initial login ${index + 1} must either enroll or remain fail-closed at login`,
+      response.status === 200 || response.status === 409,
+      `parallel initial login ${index + 1} must either win or fail with a revision conflict`,
     );
+    const target = new URL(response.url);
+    if (response.status === 200) {
+      assert.ok(
+        /^\/mfa\/totp\/register(?:\/|$)/.test(target.pathname) || /^\/login(?:\/|$)/.test(target.pathname),
+        `parallel initial login ${index + 1} must either enroll or remain fail-closed at login`,
+      );
+    }
     assert.equal(target.searchParams.has('code'), false,
       `parallel initial login ${index + 1} must not issue an authorization code`);
     if (/^\/mfa\/totp\/register(?:\/|$)/.test(target.pathname)) {
@@ -2362,7 +2430,7 @@ async function completeTOTPRegistration(page) {
       // consume stateful registration pages, such as remote recovery codes,
       // twice and no longer model real browser behavior.
       await waitForMFARegistrationStep(page);
-      await assertRepeatedTOTPRegistrationResumes(page, response.url(), code, csrfToken);
+      await assertRepeatedTOTPRegistrationIsRejected(page, response.url(), code, csrfToken);
 
       return secret;
     }
@@ -2396,8 +2464,8 @@ async function assertWrongTOTPRegistrationKeepsRetryableState(page, validCodes) 
   console.log('ok oidc-totp-registration-wrong-code-retryable');
 }
 
-// assertRepeatedTOTPRegistrationResumes models a browser retry after the first successful enrollment response.
-async function assertRepeatedTOTPRegistrationResumes(page, responseURL, code, csrfToken) {
+// assertRepeatedTOTPRegistrationIsRejected proves a completed setup cannot be replayed.
+async function assertRepeatedTOTPRegistrationIsRejected(page, responseURL, code, csrfToken) {
   const endpoint = new URL(responseURL).pathname;
   const repeated = await page.evaluate(async ({endpoint: path, code: otpCode, csrfToken: csrf}) => {
     const response = await fetch(path, {
@@ -2411,23 +2479,50 @@ async function assertRepeatedTOTPRegistrationResumes(page, responseURL, code, cs
     });
 
     return {
-      body: await response.text(),
       hxRedirect: response.headers.get('HX-Redirect') || '',
       status: response.status,
     };
   }, {endpoint, code, csrfToken});
 
-  assert.equal(repeated.status, 200, 'repeated successful TOTP enrollment must remain idempotent');
-  assert.equal(repeated.hxRedirect, '/mfa/register/continue',
-    'repeated successful TOTP enrollment must resume the mandatory chain');
-  assert.doesNotMatch(repeated.body, /Invalid request/i,
-    'repeated successful TOTP enrollment must not render an invalid-request modal');
-  console.log('ok oidc-totp-registration-repeat-resumes');
+  assert.equal(repeated.status, 409, 'repeated successful TOTP enrollment must be rejected as a replay');
+  assert.equal(repeated.hxRedirect, '', 'repeated successful TOTP enrollment must not advance again');
+  console.log('ok oidc-totp-registration-replay-rejected');
 }
 
 async function completeTOTPLogin(page, secret, options = {}) {
   const finalURLPattern = options.expectCallback === false ? /\/login/ : /callback/;
   await completeTOTPChallenge(page, secret, finalURLPattern);
+}
+
+// completeDelayedResponseTOTPFailure proves a valid second factor consumes the
+// fail-latched challenge without authenticating the browser or issuing a code.
+async function completeDelayedResponseTOTPFailure(page, secret) {
+  await page.waitForURL(/\/login\/totp|\/login\/mfa|\/login\/webauthn|\/login\/recovery/, {timeout: 15000});
+  if (!/\/login\/totp/.test(page.url())) {
+    await selectMFAChallenge(page, 'totp');
+  }
+
+  const counter = Math.floor(Date.now() / 30000);
+  const codes = [counter, counter - 1, counter + 1].map((value) => totp(secret, value));
+  for (const code of codes) {
+    const responsePromise = page.waitForResponse((response) =>
+      response.url().includes('/login/totp') && response.request().method() === 'POST',
+    {timeout: 15000});
+    await page.fill('input[name="code"]', code);
+    await page.click('button[type="submit"]');
+    const response = await responsePromise;
+    if (response.status() === 401) {
+      return response;
+    }
+    if (response.status() !== 200) {
+      throw new Error(
+        `delayed-response TOTP failed with status=${response.status()} ` +
+        `body=${await compactResponseText(response)} page=${await visiblePageText(page)}`,
+      );
+    }
+  }
+
+  throw new Error(`delayed-response TOTP proof was not accepted at ${page.url()}`);
 }
 
 // completeTOTPStepUp finishes TOTP MFA and waits for the protected
@@ -2441,7 +2536,13 @@ async function completeTOTPStepUp(page, secret, finalURLPattern) {
 async function completeTOTPChallenge(page, secret, finalURLPattern) {
   await page.waitForURL(/\/login\/totp|\/login\/mfa|\/login\/webauthn|\/login\/recovery/, {timeout: 15000});
   if (!/\/login\/totp/.test(page.url())) {
-    await page.goto(`${edgeA}/login/totp`);
+    const totpChoice = page.locator(
+      'form[action*="/login/totp"] button, a[href*="/login/totp"]',
+    ).first();
+    await Promise.all([
+      page.waitForURL(/\/login\/totp/, {timeout: 15000}),
+      totpChoice.click(),
+    ]);
   }
 
   const counter = Math.floor(Date.now() / 30000);
@@ -2487,7 +2588,7 @@ async function completeWebAuthnRegistration(page, options = {}) {
   const finishResponsePromise = page.waitForResponse((response) =>
     response.url().includes('/mfa/webauthn/register/finish') &&
       response.request().method() === 'POST',
-  {timeout: 15000});
+  {timeout: 15000}).catch((error) => error);
 
   let resumeFinish;
   let cookieSnapshotPromise;
@@ -2528,6 +2629,9 @@ async function completeWebAuthnRegistration(page, options = {}) {
   }
 
   const finishResponse = await finishResponsePromise;
+  if (finishResponse instanceof Error) {
+    throw finishResponse;
+  }
   if (!finishResponse.ok()) {
     throw new Error(
       `WebAuthn registration finish failed with status=${finishResponse.status()} ` +
@@ -2554,16 +2658,11 @@ function assertHeavyWebAuthnCookieSnapshot(cookies) {
   const ceremony = cookies.find((cookie) => cookie.name === webAuthnCeremonyCookieName);
 
   assert.ok(primary, 'heavy OIDC WebAuthn flow must retain the primary secure cookie');
-  assert.ok(primary.value.length >= 1800,
-    `heavy OIDC primary cookie must be deliberately large; got ${primary.value.length} bytes`);
-  assert.ok(ceremony, 'WebAuthn begin must emit the dedicated ceremony-reference cookie');
-  assert.ok(ceremony.value.length < 512,
-    `dedicated WebAuthn ceremony-reference cookie must remain below 512 bytes; got ${ceremony.value.length}`);
-  assert.equal(ceremony.httpOnly, true, 'dedicated WebAuthn ceremony-reference cookie must be HttpOnly');
-  assert.equal(ceremony.secure, true, 'dedicated WebAuthn ceremony-reference cookie must be Secure');
-  assert.equal(ceremony.sameSite, 'Lax', 'dedicated WebAuthn ceremony-reference cookie must be SameSite=Lax');
-  assert.equal(ceremony.path, '/', 'dedicated WebAuthn ceremony-reference cookie must use Path=/');
-  console.log('ok oidc-heavy-webauthn-reference-cookie-bounded');
+  assert.ok(primary.value.length < 512,
+    `heavy OIDC primary cookie must remain an opaque bounded reference; got ${primary.value.length} bytes`);
+  assert.equal(ceremony, undefined,
+    'canonical WebAuthn begin must not emit the retired ceremony-reference cookie');
+  console.log('ok oidc-heavy-webauthn-browser-cookies-bounded');
 }
 
 async function completeRecoveryRegistration(page) {
@@ -2589,7 +2688,10 @@ async function completeRecoveryRegistration(page) {
   assert.equal(saveResponse.status(), 200, 'recovery-code save must complete successfully');
   await page.waitForSelector('#continue-btn:not([disabled])');
   await page.click('#continue-btn');
-  await page.waitForURL(/callback|\/mfa\/register\/continue|\/mfa\/register\/home/, {timeout: 15000});
+  await page.waitForURL(
+    /callback|\/mfa\/register\/continue|\/mfa\/register\/home|\/login\/mfa|\/login\/totp/,
+    {timeout: 15000},
+  );
 
   return codes;
 }
@@ -2609,7 +2711,7 @@ async function completeWebAuthnStepUp(page, base, finalURLPattern) {
 async function completeWebAuthnChallenge(page, base, finalURLPattern) {
   await page.waitForURL(/\/login\/webauthn|\/login\/mfa|\/login\/totp|\/login\/recovery/, {timeout: 15000});
   if (!/\/login\/webauthn/.test(page.url())) {
-    await page.goto(`${base}/login/webauthn`);
+    await selectMFAChallenge(page, 'webauthn');
   }
 
   let finishResponseError;
@@ -2659,7 +2761,7 @@ async function completeRecoveryLogin(page, code, options = {}) {
 
   await page.waitForURL(/\/login\/webauthn|\/login\/mfa|\/login\/recovery/, {timeout: 15000});
   if (!/\/login\/recovery/.test(page.url())) {
-    await page.goto(`${edgeA}/login/recovery`);
+    await selectMFAChallenge(page, 'recovery');
   }
 
   const responsePromise = page.waitForResponse((response) =>
@@ -2800,13 +2902,15 @@ async function runInvalidDeviceUserCodeAttempt(browser, userCode, okName, logRes
 
   await page.goto(`${edgeA}/oidc/device/verify`);
   await page.fill('input[name="user_code"]', userCode);
-  await page.fill('input[name="username"]', username);
-  await page.fill('input[name="password"]', password);
+  const responsePromise = page.waitForResponse((response) =>
+    response.url().includes('/oidc/device/verify') && response.request().method() === 'POST',
+  {timeout: 15000});
   await Promise.all([
     page.waitForLoadState('networkidle').catch(() => undefined),
     page.click('button[type="submit"]'),
   ]);
-  await expectPageText(page, /Invalid or expired user code/);
+  const response = await responsePromise;
+  assert.equal(response.status(), 409, 'invalid device user code must be rejected before login state is created');
   if (logResult) {
     console.log(`ok ${okName}`);
   }

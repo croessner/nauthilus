@@ -94,7 +94,10 @@ func (h *FrontendHandler) authorizeCanonicalSelfServiceMutation(
 		return false
 	}
 
-	ctx.Redirect(http.StatusSeeOther, flowdomain.AppendTicket(h.getMFASelectPath(ctx), string(handle)))
+	redirectCanonicalBrowserMutation(
+		ctx,
+		flowdomain.AppendTicket(h.getMFASelectPath(ctx), string(handle)),
+	)
 
 	return false
 }

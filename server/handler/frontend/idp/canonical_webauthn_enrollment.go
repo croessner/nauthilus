@@ -12,6 +12,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/frontend"
 	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/croessner/nauthilus/v3/server/idp/mfastate"
+	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/middleware/csrf"
 	"github.com/croessner/nauthilus/v3/server/sessionstate"
 	"github.com/croessner/nauthilus/v3/server/stats"
@@ -116,6 +117,11 @@ func (h *FrontendHandler) FinishWebAuthnRegistration(ctx *gin.Context) {
 
 	if err = finish(ctx, selection, ceremony); err != nil {
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
+		level.Error(h.deps.Logger).Log(
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Canonical WebAuthn enrollment completion failed",
+			definitions.LogKeyError, err,
+		)
 
 		if !ctx.Writer.Written() {
 			ctx.AbortWithStatus(http.StatusServiceUnavailable)

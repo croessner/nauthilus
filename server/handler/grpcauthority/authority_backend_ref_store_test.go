@@ -22,10 +22,31 @@ import (
 	"time"
 
 	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 
 	"github.com/go-redis/redismock/v9"
 )
+
+func TestServerDepsBackendRefStoreBindsAuthorityInstance(t *testing.T) {
+	db, _ := redismock.NewClientMock()
+	settings := &config.FileSettings{Server: &config.ServerSection{InstanceName: authorityTestAuthority}}
+
+	store, err := (ServerDeps{Cfg: settings, Redis: rediscli.NewTestClient(db)}).
+		backendRefStore(&config.RuntimeGRPCBackendRefsSection{Enabled: true})
+	if err != nil {
+		t.Fatalf("backendRefStore() error = %v", err)
+	}
+
+	redisStore, ok := store.(*RedisBackendRefStore)
+	if !ok {
+		t.Fatalf("backendRefStore() type = %T, want *RedisBackendRefStore", store)
+	}
+
+	if redisStore.authority != authorityTestAuthority {
+		t.Fatalf("backend ref authority = %q, want %q", redisStore.authority, authorityTestAuthority)
+	}
+}
 
 const (
 	authorityTestAuthority    = "authority-a"

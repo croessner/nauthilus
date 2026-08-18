@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -339,12 +340,16 @@ func TestMFASelectTemplateRecommended(t *testing.T) {
 		"HaveRecoveryCodes": true,
 		"RecommendedMethod": "totp",
 		"HasOtherMethods":   true,
+		"FlowTicket":        "step-up-ticket",
+		"TOTPLoginEndpoint": "/login/totp?flow=step-up-ticket",
 	})
 
 	assert.Contains(t, output, "autofocus")
 	assert.Contains(t, output, "Other methods")
 	assert.Contains(t, output, "/login/totp")
 	assert.Contains(t, output, "/login/webauthn")
+	assert.NotContains(t, output, `name="flow"`)
+	assert.Equal(t, 1, strings.Count(output, "flow=step-up-ticket"))
 }
 
 func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {

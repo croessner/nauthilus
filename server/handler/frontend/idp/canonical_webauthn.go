@@ -149,6 +149,16 @@ func (h *FrontendHandler) completeCanonicalWebAuthn(ctx *gin.Context) {
 		return
 	}
 
+	if err = selection.session.RefreshAnchor(ctx.Request.Context()); err != nil {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+
+		return
+	}
+
+	if completeCanonicalFailLatchedMFA(ctx, selection, definitions.MFAMethodWebAuthn) {
+		return
+	}
+
 	completion, err := selection.session.CompleteStepUp(
 		ctx.Request.Context(),
 		selection.stepUp.Value.Handle,
@@ -227,9 +237,9 @@ func (h *FrontendHandler) beginCanonicalWebAuthn(
 	return core.BeginCanonicalWebAuthnLogin(
 		ctx.Request.Context(),
 		selection.session,
-		selection.stepUp.Value.Flow,
+		canonicalMFABoundFlow(selection),
 		selection.identity.Reference,
-		string(selection.parent.Protocol),
+		canonicalMFAProtocol(selection),
 		data.WebAuthnUser,
 	)
 }
@@ -250,9 +260,9 @@ func (h *FrontendHandler) finishCanonicalWebAuthn(
 		h.deps.Auth(),
 		selection.session,
 		ceremony,
-		selection.stepUp.Value.Flow,
+		canonicalMFABoundFlow(selection),
 		selection.identity.Reference,
-		string(selection.parent.Protocol),
+		canonicalMFAProtocol(selection),
 		canonicalMFAProtocolContext(selection, definitions.MFAMethodWebAuthn, false),
 		data.WebAuthnUser,
 		data.AuthState,
@@ -272,8 +282,8 @@ func (h *FrontendHandler) canonicalWebAuthnBackendData(
 	data, err := h.getUserBackendDataForIdentity(
 		ctx,
 		selection.identity.Account,
-		string(selection.parent.Protocol),
-		canonicalRemoteBackendRef(selection.session),
+		canonicalMFAProtocol(selection),
+		selection.backendRef,
 	)
 	if err != nil {
 		return nil, err

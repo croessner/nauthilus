@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/idp/signing"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v3/server/sessionstate"
 	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -43,13 +44,22 @@ import (
 
 // NauthilusIDP provides the canonical OIDC and SAML identity services.
 type NauthilusIDP struct {
-	deps           *deps.Deps
-	storage        *RedisTokenStorage
-	tracer         monittrace.Tracer
-	keyMgr         *oidckeys.Manager
-	tokenGen       TokenGenerator
-	dynamicClients *dcr.Repository
+	deps                   *deps.Deps
+	storage                *RedisTokenStorage
+	tracer                 monittrace.Tracer
+	keyMgr                 *oidckeys.Manager
+	tokenGen               TokenGenerator
+	dynamicClients         *dcr.Repository
+	passwordIdentityLoader passwordIdentityLoader
 }
+
+type passwordIdentityLoader func(
+	*gin.Context,
+	string,
+	string,
+	string,
+	core.IDPRequestContext,
+) (PasswordAuthentication, error)
 
 var (
 	// ErrInvalidRefreshToken indicates the submitted refresh token was unknown or expired.
@@ -1014,8 +1024,10 @@ func (n *NauthilusIDP) resolveEdDSAPublicKey(ctx context.Context, kid string) (a
 
 // PasswordAuthentication is the typed password-authentication result used by canonical browser flows.
 type PasswordAuthentication struct {
-	User       *backend.User
-	BackendRef core.RemoteBackendRef
+	User          *backend.User
+	MFAUser       *backend.User
+	BackendRef    core.RemoteBackendRef
+	MFABackendRef core.RemoteBackendRef
 }
 
 // AuthenticateWithBackend authenticates without reading or writing browser session state.
@@ -1030,8 +1042,174 @@ func (n *NauthilusIDP) AuthenticateWithBackend(
 	typedContext := protocolContext
 	typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
 	result, _, err := n.authenticatePassword(ctx, username, password, oidcCID, samlEntityID, &typedContext)
+	if err != nil && n.IsDelayedResponse(oidcCID, samlEntityID) &&
+		delayedPasswordFailureEligible(err) {
+		if hydrated, lookupErr := n.lookupPasswordIdentity(
+			ctx, username, oidcCID, samlEntityID, typedContext,
+		); lookupErr == nil {
+			result = hydrated
+		} else if n.deps.Logger != nil {
+			n.deps.Logger.Warn(
+				"Delayed password identity lookup failed",
+				definitions.LogKeyError, lookupErr,
+			)
+		}
+	}
+
+	if result.User != nil {
+		bound, bindErr := n.bindPasswordMFAIdentity(
+			ctx, username, oidcCID, samlEntityID, typedContext, result,
+		)
+		if bindErr != nil {
+			if err == nil {
+				return PasswordAuthentication{}, bindErr
+			}
+
+			if n.deps.Logger != nil {
+				n.deps.Logger.Warn(
+					"Delayed password MFA identity lookup failed",
+					definitions.LogKeyError, bindErr,
+				)
+			}
+		} else {
+			result = bound
+		}
+	}
 
 	return result, err
+}
+
+func delayedPasswordFailureEligible(err error) bool {
+	var failure *AuthFailureError
+
+	return errors.As(err, &failure) && failure.Status.DelayedResponseEligible
+}
+
+// bindPasswordMFAIdentity separates the asserted target from the account proving MFA.
+func (n *NauthilusIDP) bindPasswordMFAIdentity(
+	ctx *gin.Context,
+	username string,
+	oidcCID string,
+	samlEntityID string,
+	protocolContext core.IDPRequestContext,
+	result PasswordAuthentication,
+) (PasswordAuthentication, error) {
+	if result.User == nil {
+		return PasswordAuthentication{}, fmt.Errorf("password MFA identity: target user is missing")
+	}
+
+	result.MFAUser = result.User
+	result.MFABackendRef = result.BackendRef
+
+	server := n.deps.Cfg.GetServer()
+	if server == nil || !server.GetMasterUser().IsEnabled() {
+		return result, nil
+	}
+
+	target, master, masterLogin := config.ParseMasterUserLogin(
+		username, server.GetMasterUser().GetUserFormat(),
+	)
+	if !masterLogin {
+		return result, nil
+	}
+
+	if target != result.User.Name {
+		return PasswordAuthentication{}, sessionstate.ErrBindingMismatch
+	}
+
+	factor, err := n.lookupPasswordIdentity(ctx, master, oidcCID, samlEntityID, protocolContext)
+	if err != nil {
+		return PasswordAuthentication{}, err
+	}
+
+	if factor.User == nil || factor.User.Name != master || factor.User.ID == "" || factor.BackendRef.IsZero() {
+		return PasswordAuthentication{}, sessionstate.ErrBindingMismatch
+	}
+
+	result.MFAUser = factor.User
+	result.MFABackendRef = factor.BackendRef
+
+	return result, nil
+}
+
+// lookupPasswordIdentity resolves one explicit account without password verification or browser state.
+func (n *NauthilusIDP) lookupPasswordIdentity(
+	ctx *gin.Context,
+	username string,
+	oidcCID string,
+	samlEntityID string,
+	protocolContext core.IDPRequestContext,
+) (PasswordAuthentication, error) {
+	if n == nil || ctx == nil || ctx.Request == nil {
+		return PasswordAuthentication{}, fmt.Errorf("password identity lookup unavailable")
+	}
+
+	if n.passwordIdentityLoader != nil {
+		return n.passwordIdentityLoader(ctx, username, oidcCID, samlEntityID, protocolContext)
+	}
+
+	attributeRequest, err := n.delayedPasswordIdentityAttributes(ctx.Request.Context(), oidcCID, samlEntityID, protocolContext)
+	if err != nil {
+		return PasswordAuthentication{}, err
+	}
+
+	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
+
+	auth, ok := authRaw.(*core.AuthState)
+	if !ok || auth == nil {
+		return PasswordAuthentication{}, fmt.Errorf("failed to create password identity AuthState")
+	}
+
+	prepareUserLookupAuthState(ctx, auth, username, oidcCID, samlEntityID, attributeRequest)
+
+	typedContext := protocolContext
+	typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
+	auth.Runtime.IDPContext = &typedContext
+
+	if result := auth.HandlePassword(ctx); result != definitions.AuthResultOK {
+		return PasswordAuthentication{}, fmt.Errorf("failed to load password identity: %d", result)
+	}
+
+	result, err := n.passwordAuthenticationFromState(auth)
+	if err != nil {
+		return PasswordAuthentication{}, fmt.Errorf(
+			"password identity materialization: %w (user_found=%t account=%q account_field=%q)",
+			err, auth.Runtime.UserFound, auth.GetAccount(), auth.Runtime.AccountField,
+		)
+	}
+
+	return result, nil
+}
+
+func (n *NauthilusIDP) delayedPasswordIdentityAttributes(
+	ctx context.Context,
+	oidcCID string,
+	samlEntityID string,
+	protocolContext core.IDPRequestContext,
+) (*core.IdentityAttributeRequest, error) {
+	if oidcCID != "" {
+		client, err := n.ResolveClient(ctx, oidcCID)
+		if err != nil {
+			return nil, err
+		}
+
+		effectiveScopes := n.deps.Cfg.GetIDP().OIDC.GetEffectiveCustomScopes(client)
+
+		return core.NewOIDCIdentityAttributeRequest(
+			client, protocolContext.RequestedScopes, effectiveScopes,
+		), nil
+	}
+
+	if samlEntityID != "" {
+		serviceProvider, ok := n.FindSAMLServiceProvider(samlEntityID)
+		if !ok {
+			return nil, fmt.Errorf("delayed password SAML service provider not found")
+		}
+
+		return core.NewSAMLIdentityAttributeRequest(serviceProvider), nil
+	}
+
+	return nil, fmt.Errorf("delayed password protocol binding is missing")
 }
 
 func (n *NauthilusIDP) authenticatePassword(
@@ -1200,7 +1378,7 @@ func (n *NauthilusIDP) rejectPasswordAuthentication(ctx *gin.Context, auth *core
 	err := fmt.Errorf("authentication failed with result: %d", result)
 	sp.RecordError(err)
 
-	return n.authFailureError(ctx, auth, err)
+	return n.authFailureError(ctx, auth, err, true)
 }
 
 // finishAuthenticationFailure records a failed authentication with optional AuthFail side effects.
@@ -1219,7 +1397,7 @@ func (n *NauthilusIDP) finishAuthenticationFailure(
 	auth.FinishLogging(ctx, result)
 	sp.RecordError(err)
 
-	return n.authFailureError(ctx, auth, err)
+	return n.authFailureError(ctx, auth, err, false)
 }
 
 // bruteForceAuthenticationError returns the shared brute-force authentication failure.
@@ -1394,7 +1572,12 @@ func (n *NauthilusIDP) userFromAuthState(auth *core.AuthState) (*backend.User, e
 	return user, nil
 }
 
-func (n *NauthilusIDP) authFailureError(ctx *gin.Context, auth *core.AuthState, err error) error {
+func (n *NauthilusIDP) authFailureError(
+	ctx *gin.Context,
+	auth *core.AuthState,
+	err error,
+	ordinaryPasswordFailure bool,
+) error {
 	if auth == nil {
 		return err
 	}
@@ -1410,6 +1593,9 @@ func (n *NauthilusIDP) authFailureError(ctx *gin.Context, auth *core.AuthState, 
 		status.DelayedResponseEligible = auth.ConfiguredPolicyAllowsIDPDelayedResponse(ctx)
 	} else if status.HasI18NStatus() {
 		status.PolicyTerminal = true
+		status.DelayedResponseEligible = ordinaryPasswordFailure
+	} else {
+		status.DelayedResponseEligible = ordinaryPasswordFailure
 	}
 
 	return NewAuthFailureError(err, status)

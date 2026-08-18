@@ -230,6 +230,13 @@ func (h *FrontendHandler) persistCanonicalRecoveryEnrollment(
 	_ sessionstate.Handle,
 	codes []string,
 ) error {
+	if selection.session != nil {
+		if affinity, ok := selection.session.BackendAffinity(); ok && affinity.Authority != "" {
+			// Authority generation already persisted the codes atomically; the browser save only acknowledges receipt.
+			return nil
+		}
+	}
+
 	data, err := h.canonicalEnrollmentBackendData(ctx, selection)
 	if err != nil {
 		return err
@@ -299,8 +306,7 @@ func (h *FrontendHandler) completeCanonicalRecoveryEnrollment(ctx *gin.Context) 
 		return
 	}
 
-	ctx.Header("HX-Redirect", target)
-	ctx.Status(http.StatusOK)
+	redirectCanonicalBrowserMutation(ctx, target)
 }
 
 func (h *FrontendHandler) loadCanonicalRecoveryEnrollment(

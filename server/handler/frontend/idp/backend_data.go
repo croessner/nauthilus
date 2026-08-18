@@ -72,7 +72,8 @@ func (h *FrontendHandler) getUserBackendDataForIdentity(
 	protocolName string,
 	backendRef core.RemoteBackendRef,
 ) (*UserBackendData, error) {
-	lookupCtx := backendDataLookupContext(ctx)
+	lookupCtx, restore := backendDataLookupContext(ctx)
+	defer restore()
 
 	authState := h.newBackendDataAuthState(lookupCtx, username)
 	if authState == nil {
@@ -104,29 +105,35 @@ func (h *FrontendHandler) getUserBackendDataForIdentity(
 // backendDataLookupContext prevents no-auth backend-data lookups from parsing
 // the body of the request that triggered the lookup, such as a WebAuthn finish
 // JSON payload that has already been consumed by the assertion verifier.
-func backendDataLookupContext(ctx *gin.Context) *gin.Context {
+func backendDataLookupContext(ctx *gin.Context) (*gin.Context, func()) {
+	restore := func() {}
 	if ctx == nil || ctx.Request == nil {
-		return ctx
+		return ctx, restore
 	}
 
 	contentType := ctx.GetHeader("Content-Type")
 	if ctx.Request.Method != http.MethodPost ||
 		!strings.HasPrefix(contentType, "application/json") && !strings.HasPrefix(contentType, "application/cbor") {
-		return ctx
+		return ctx, restore
 	}
 
-	lookupCtx := ctx.Copy()
-	lookupCtx.Set(definitions.CtxPluginResponseMutationDisabledKey, true)
-
-	request := ctx.Request.Clone(ctx.Request.Context())
+	originalRequest := ctx.Request
+	originalMutationDisabled := ctx.GetBool(definitions.CtxPluginResponseMutationDisabledKey)
+	request := originalRequest.Clone(originalRequest.Context())
 	request.Method = http.MethodGet
 	request.Body = http.NoBody
 	request.ContentLength = 0
 	request.Header = request.Header.Clone()
 	request.Header.Del("Content-Type")
-	lookupCtx.Request = request
+	ctx.Request = request
+	ctx.Set(definitions.CtxPluginResponseMutationDisabledKey, true)
 
-	return lookupCtx
+	restore = func() {
+		ctx.Request = originalRequest
+		ctx.Set(definitions.CtxPluginResponseMutationDisabledKey, originalMutationDisabled)
+	}
+
+	return ctx, restore
 }
 
 // backendDataUsername resolves the backend-data username from canonical state or bearer token.

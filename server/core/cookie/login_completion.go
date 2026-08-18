@@ -67,8 +67,12 @@ func (s *CanonicalSession) CompleteLogin(
 	}
 
 	prepared.anchor.Revision = receipt.Revision
-	if err = s.revokeLoginCompletionSession(ctx, s.Handle, s.Anchor.Revision, oldLoginCompletionChildren(s.Anchor.Value)); err != nil {
-		rollbackErr := s.revokeLoginCompletionSession(ctx, prepared.newHandle, receipt.Revision, prepared.children)
+	if err = s.revokeLoginCompletionSession(
+		ctx, s.Handle, s.Anchor.Revision, oldLoginCompletionChildren(s.Anchor.Value), true,
+	); err != nil {
+		rollbackErr := s.revokeLoginCompletionSession(
+			ctx, prepared.newHandle, receipt.Revision, prepared.children, false,
+		)
 
 		return nil, errors.Join(err, rollbackErr)
 	}
@@ -90,7 +94,7 @@ func (s *CanonicalSession) prepareLoginCompletion(
 ) (preparedLoginCompletion, error) {
 	var prepared preparedLoginCompletion
 
-	identity, affinity, err := validateLoginCompletionInput(input)
+	identity, err := validateLoginCompletionInput(input)
 	if err != nil {
 		return prepared, err
 	}
@@ -108,7 +112,7 @@ func (s *CanonicalSession) prepareLoginCompletion(
 	now := s.clock.Now().UTC()
 	absoluteTTL, cookieMaxAge := normalizedRememberTTL(input.RememberTTL)
 	anchorTTL := min(canonicalIdleTTL, absoluteTTL)
-	prepared.anchor = s.loginCompletionAnchor(prepared.newHandle, now, anchorTTL, absoluteTTL, identity, affinity)
+	prepared.anchor = s.loginCompletionAnchor(prepared.newHandle, now, anchorTTL, absoluteTTL, identity)
 
 	prepared.transaction, prepared.children, err = loginCompletionTransaction(
 		prepared.newHandle, prepared.anchor, records, input, now, anchorTTL,
@@ -136,29 +140,12 @@ func (s *CanonicalSession) prepareLoginCompletion(
 
 func validateLoginCompletionInput(
 	input LoginCompletionInput,
-) (sessionstate.IdentitySummary, sessionstate.BackendAffinitySummary, error) {
-	input.Identity.Reference = strings.TrimSpace(input.Identity.Reference)
-	input.Identity.Account = strings.TrimSpace(input.Identity.Account)
-	input.Identity.Subject = strings.TrimSpace(input.Identity.Subject)
-	input.Identity.Protocol = strings.TrimSpace(input.Identity.Protocol)
-
-	if input.Identity.Reference == "" || input.Identity.Account == "" ||
-		input.Identity.Subject != input.Identity.Reference || input.Identity.Protocol == "" ||
-		input.Flow == "" || strings.TrimSpace(input.Protocol) == "" || strings.TrimSpace(input.NextStep) == "" {
-		return sessionstate.IdentitySummary{}, sessionstate.BackendAffinitySummary{}, sessionstate.ErrBindingMismatch
+) (validatedIdentityUpdate, error) {
+	if input.Flow == "" || strings.TrimSpace(input.Protocol) == "" || strings.TrimSpace(input.NextStep) == "" {
+		return validatedIdentityUpdate{}, sessionstate.ErrBindingMismatch
 	}
 
-	affinity, err := backendAffinitySummary(input.Identity.BackendAffinity)
-	if err != nil {
-		return sessionstate.IdentitySummary{}, sessionstate.BackendAffinitySummary{}, err
-	}
-
-	return sessionstate.IdentitySummary{
-		Account:     input.Identity.Account,
-		Subject:     input.Identity.Subject,
-		DisplayName: input.Identity.DisplayName,
-		Protocol:    input.Identity.Protocol,
-	}, affinity, nil
+	return validateIdentityUpdate(input.Identity)
 }
 
 func normalizedRememberTTL(requested time.Duration) (time.Duration, int) {
@@ -176,8 +163,7 @@ func (s *CanonicalSession) loginCompletionAnchor(
 	now time.Time,
 	idleTTL time.Duration,
 	absoluteTTL time.Duration,
-	identity sessionstate.IdentitySummary,
-	affinity sessionstate.BackendAffinitySummary,
+	identity validatedIdentityUpdate,
 ) sessionstate.SessionAnchor {
 	anchor := s.Anchor.Value
 	anchor.Record = sessionstate.Record{Handle: handle, ExpiresAt: now.Add(idleTTL)}
@@ -186,9 +172,12 @@ func (s *CanonicalSession) loginCompletionAnchor(
 	anchor.IdleExpiresAt = now.Add(idleTTL)
 	anchor.AbsoluteExpiresAt = now.Add(absoluteTTL)
 	anchor.Authenticated = true
-	anchor.IdentityReference = identity.Subject
-	anchor.Identity = identity
-	anchor.BackendAffinity = affinity
+	anchor.IdentityReference = identity.identity.Subject
+	anchor.Identity = identity.identity
+	anchor.BackendAffinity = identity.affinity
+	anchor.MFAIdentityReference = identity.mfaIdentity.Subject
+	anchor.MFAIdentity = identity.mfaIdentity
+	anchor.MFABackendAffinity = identity.mfaAffinity
 	anchor.RotatedFrom = s.Handle
 	anchor.Revoked = false
 	anchor.Tombstone = false
@@ -493,11 +482,13 @@ func (s *CanonicalSession) revokeLoginCompletionSession(
 	handle sessionstate.Handle,
 	revision sessionstate.Revision,
 	children []sessionstate.OwnedReference,
+	rejectRevoked bool,
 ) error {
 	return s.Stores.RevokeSession(ctx, sessionstate.RevocationRequest{
 		Reference:        sessionstate.Reference{Session: handle, Record: handle},
 		ExpectedRevision: revision,
 		TombstoneTTL:     loginCompletionTombstoneTTL,
 		Children:         children,
+		RejectRevoked:    rejectRevoked,
 	})
 }

@@ -534,6 +534,106 @@ func (h *OIDCHandler) DeviceVerifyCanonical(ctx *gin.Context) {
 	ctx.Redirect(http.StatusSeeOther, decision.RedirectURI)
 }
 
+// ContinueDeviceLoginCanonical advances an authenticated typed device flow to consent or terminal approval.
+func (h *OIDCHandler) ContinueDeviceLoginCanonical(
+	ctx *gin.Context,
+	session *cookie.CanonicalSession,
+	state *flowdomain.State,
+) bool {
+	if h == nil || ctx == nil || session == nil || state == nil ||
+		state.Type != flowdomain.FlowTypeOIDCDeviceCode {
+		return false
+	}
+
+	store, current, selection, err := h.advanceCanonicalOIDCDeviceLoginToConsent(ctx, session, state)
+	if err != nil {
+		ctx.AbortWithStatus(h.canonicalOIDCDeviceFailureStatus(err))
+
+		return true
+	}
+
+	if !selection.client.SkipConsent {
+		ctx.Redirect(
+			http.StatusSeeOther,
+			flowdomain.AppendTicket(canonicalOIDCDeviceConsentTarget(ctx), current.FlowID),
+		)
+
+		return true
+	}
+
+	err = h.approveCanonicalOIDCDeviceWithoutConsent(ctx, session, store, current, selection)
+	if err != nil && !errors.Is(err, errCanonicalOIDCDeviceTerminal) {
+		ctx.AbortWithStatus(h.canonicalOIDCDeviceFailureStatus(err))
+
+		return true
+	}
+
+	h.renderCanonicalOIDCDeviceResult(ctx, selection.identity, true)
+
+	return true
+}
+
+func (h *OIDCHandler) advanceCanonicalOIDCDeviceLoginToConsent(
+	ctx *gin.Context,
+	session *cookie.CanonicalSession,
+	state *flowdomain.State,
+) (*flowdomain.TypedStore, *flowdomain.State, canonicalOIDCDeviceSelection, error) {
+	store := flowdomain.NewTypedStore(
+		session.Stores, session.Handle, flowdomain.FlowProtocolOIDC, canonicalOIDCDeviceTTL,
+	)
+
+	current, err := store.Load(ctx.Request.Context(), state.FlowID)
+	if err != nil {
+		return nil, nil, canonicalOIDCDeviceSelection{}, err
+	}
+
+	if current.CurrentStep != flowdomain.FlowStepLogin || current.AuthOutcome != flowdomain.AuthOutcomeOK {
+		return nil, nil, canonicalOIDCDeviceSelection{}, fmt.Errorf("canonical device login state mismatch")
+	}
+
+	if _, err = flowdomain.NewController(store).Advance(
+		ctx.Request.Context(), current.FlowID, flowdomain.FlowStepConsent, session.EvaluationTime(),
+	); err != nil {
+		return nil, nil, canonicalOIDCDeviceSelection{}, err
+	}
+
+	selection, err := h.loadCanonicalOIDCDeviceConsent(ctx, current.FlowID)
+	if err != nil {
+		return nil, nil, canonicalOIDCDeviceSelection{}, err
+	}
+
+	return store, current, selection, nil
+}
+
+func canonicalOIDCDeviceConsentTarget(ctx *gin.Context) string {
+	target := frontendDeviceConsentPath
+	if language := ctx.Param("languageTag"); language != "" {
+		target += "/" + language
+	}
+
+	return target
+}
+
+func (h *OIDCHandler) approveCanonicalOIDCDeviceWithoutConsent(
+	ctx *gin.Context,
+	session *cookie.CanonicalSession,
+	store *flowdomain.TypedStore,
+	current *flowdomain.State,
+	selection canonicalOIDCDeviceSelection,
+) error {
+	if err := h.hydrateCanonicalOIDCDeviceClaims(ctx, selection); err != nil {
+		return err
+	}
+
+	if _, err := flowdomain.NewController(store).Advance(
+		ctx.Request.Context(), current.FlowID, flowdomain.FlowStepCallback, session.EvaluationTime(),
+	); err != nil {
+		return err
+	}
+
+	return h.completeCanonicalOIDCDeviceVerification(ctx.Request.Context(), selection, true)
+}
+
 func canonicalOIDCDeviceStoreError(err error) error {
 	switch {
 	case errors.Is(err, domainidp.ErrDeviceCodeNotFound):

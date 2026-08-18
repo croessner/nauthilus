@@ -42,7 +42,12 @@ func TestAuthResponseRoundTripUsesCommonMessages(t *testing.T) {
 		Attributes: map[string]*commonv1.AttributeValues{
 			authResponseAttributeUID: {Values: []string{authResponseAttributeID}},
 		},
-		StatusMessage: "OK",
+		StatusMessage:     "OK",
+		TotpRecoveryField: "recoveryCodes",
+		UniqueUserIdField: "uid",
+		DisplayNameField:  "displayName",
+		Groups:            []string{"mail-users", "mfa-users"},
+		GroupDns:          []string{"cn=mail-users,dc=example,dc=test"},
 		BackendRef: &commonv1.BackendRef{
 			Type:        "ldap",
 			Name:        "default",

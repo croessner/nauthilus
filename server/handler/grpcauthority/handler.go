@@ -350,15 +350,20 @@ func cloneIncomingMetadata(md metadata.MD) map[string][]string {
 
 func authOutcomeToProto(outcome *core.AuthOutcome) *authv1.AuthResponse {
 	return &authv1.AuthResponse{
-		Ok:              outcome.Decision == core.AuthDecisionOK,
-		Decision:        authDecisionToProto(outcome.Decision),
-		Session:         outcome.Session,
-		AccountField:    outcome.AccountField,
-		TotpSecretField: outcome.TOTPSecretField,
-		Backend:         uint32(outcome.Backend),
-		Attributes:      attributeMappingToProto(outcome.Attributes),
-		StatusMessage:   outcome.StatusMessage,
-		Error:           outcome.Error,
+		Ok:                outcome.Decision == core.AuthDecisionOK,
+		Decision:          authDecisionToProto(outcome.Decision),
+		Session:           outcome.Session,
+		AccountField:      outcome.AccountField,
+		TotpSecretField:   outcome.TOTPSecretField,
+		TotpRecoveryField: outcome.TOTPRecoveryField,
+		UniqueUserIdField: outcome.UniqueUserIDField,
+		DisplayNameField:  outcome.DisplayNameField,
+		Backend:           uint32(outcome.Backend),
+		Attributes:        attributeMappingToProto(outcome.Attributes),
+		StatusMessage:     outcome.StatusMessage,
+		Error:             outcome.Error,
+		Groups:            append([]string(nil), outcome.Groups...),
+		GroupDns:          append([]string(nil), outcome.GroupDistinguishedNames...),
 	}
 }
 

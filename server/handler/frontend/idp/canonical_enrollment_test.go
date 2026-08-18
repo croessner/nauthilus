@@ -106,9 +106,9 @@ func TestCanonicalRecoveryEnrollmentGeneratesSavesAndAdvancesOnce(t *testing.T) 
 	continued := postCanonicalRecoveryContinue(router, browserCookie, enrollment, operation)
 
 	wantNext := flowdomain.AppendTicket(definitions.MFARoot+"/webauthn/register", string(enrollment))
-	if continued.Code != http.StatusOK || continued.Header().Get("HX-Redirect") != wantNext {
+	if continued.Code != http.StatusSeeOther || continued.Header().Get("Location") != wantNext {
 		t.Fatalf("canonical recovery continue = status %d redirect %q body %q",
-			continued.Code, continued.Header().Get("HX-Redirect"), continued.Body.String())
+			continued.Code, continued.Header().Get("Location"), continued.Body.String())
 	}
 
 	assertCanonicalEnrollmentStep(t, runtime, browserCookie, enrollment, definitions.MFAMethodWebAuthn,
@@ -116,8 +116,37 @@ func TestCanonicalRecoveryEnrollmentGeneratesSavesAndAdvancesOnce(t *testing.T) 
 	assertCanonicalRecoveryOperationDeleted(t, runtime, browserCookie, operation)
 
 	replay := postCanonicalRecoveryContinue(router, browserCookie, enrollment, operation)
+
 	if replay.Code != http.StatusConflict || saveCalls != 1 {
 		t.Fatalf("canonical recovery replay = status %d save calls %d", replay.Code, saveCalls)
+	}
+}
+
+func TestCanonicalRecoveryEnrollmentAuthoritySaveDoesNotMutateTwice(t *testing.T) {
+	runtime, browserCookie, _ := seedCanonicalIDPFlow(t, canonicalDecisionOIDCState(""))
+
+	session := openCanonicalFixture(t, runtime, browserCookie)
+	if err := session.CommitIdentity(context.Background(), cookie.IdentityUpdate{
+		Reference: "identity-42", Account: "alice", Subject: "identity-42", Protocol: "oidc",
+		BackendAffinity: &cookie.SessionBackendAffinity{
+			Type: "ldap", Name: "target", Protocol: "idp", Authority: "authority-a", OpaqueToken: "opaque-ref",
+		},
+	}); err != nil {
+		t.Fatalf("commit authority identity: %v", err)
+	}
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mfa/recovery/register/save", nil)
+	handler := &FrontendHandler{}
+
+	err := handler.persistCanonicalRecoveryEnrollment(ctx, canonicalEnrollmentSelectionState{
+		session: session,
+		identity: cookie.SessionIdentity{
+			Reference: "identity-42", Account: "alice", Subject: "identity-42", Protocol: "oidc",
+		},
+	}, "operation", []string{"recovery-code"})
+	if err != nil {
+		t.Fatalf("persist authority recovery enrollment: %v", err)
 	}
 }
 
@@ -266,8 +295,10 @@ func TestCanonicalTOTPEnrollmentPersistsPendingMaterialAndAdvancesOnce(t *testin
 	assertCanonicalTOTPPendingOperation(t, runtime, browserCookie, operation, enrollment, false)
 
 	wrong := postCanonicalTOTPEnrollment(router, browserCookie, enrollment, operation, "000000")
-	if wrong.Code != http.StatusUnauthorized || finishCalls != 1 {
-		t.Fatalf("canonical TOTP enrollment wrong code = status %d calls %d", wrong.Code, finishCalls)
+	if wrong.Code != http.StatusOK || finishCalls != 1 ||
+		!strings.Contains(wrong.Body.String(), "Failed to register TOTP") {
+		t.Fatalf("canonical TOTP enrollment wrong code = status %d calls %d body %q",
+			wrong.Code, finishCalls, wrong.Body.String())
 	}
 
 	assertCanonicalEnrollmentStep(t, runtime, browserCookie, enrollment, definitions.MFAMethodTOTP, nil)
@@ -382,7 +413,8 @@ func canonicalTOTPEnrollmentRouter(
 ) *gin.Engine {
 	router := gin.New()
 	router.SetHTMLTemplate(template.Must(template.New("canonical-totp-enrollment").Parse(
-		`{{ define "idp_totp_register.html" }}post={{ .PostTOTPRegisterPath }};secret={{ .Secret }}{{ end }}`,
+		`{{ define "idp_totp_register.html" }}post={{ .PostTOTPRegisterPath }};secret={{ .Secret }}{{ end }}
+{{ define "idp_error_modal.html" }}{{ .Message }}{{ end }}`,
 	)))
 	router.GET(
 		"/mfa/totp/register",
@@ -536,6 +568,7 @@ func postCanonicalTOTPEnrollment(
 	target := "/mfa/totp/register?flow=" + string(enrollment) + "&operation=" + string(operation)
 	request := httptest.NewRequest(http.MethodPost, target, strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("HX-Request", "true")
 	request.AddCookie(browserCookie)
 
 	writer := httptest.NewRecorder()

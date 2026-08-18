@@ -322,6 +322,49 @@ func TestCanonicalSelfServiceMutationCallersPersistTypedOperations(t *testing.T)
 	}
 }
 
+func TestCanonicalSelfServiceHTMXMutationStartsClientRedirect(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	runtime, browserCookie, _ := seedCanonicalIDPFlow(t, nil)
+	authenticateCanonicalFixture(t, runtime, browserCookie)
+
+	handler, _ := newMFASelfServiceTestHandler()
+	handler.canonicalMFAAvailabilityResolver = canonicalSelfServiceMethodHandler(
+		t, definitions.MFAMethodTOTP,
+	).canonicalMFAAvailabilityResolver
+
+	router := gin.New()
+	router.POST(
+		definitions.MFARoot+"/recovery/generate",
+		cookie.CanonicalMiddleware(runtime, cookie.CanonicalContinuation),
+		handler.PostGenerateRecoveryCodes,
+	)
+
+	request := httptest.NewRequest(http.MethodPost, definitions.MFARoot+"/recovery/generate", nil)
+	request.Header.Set("HX-Request", "true")
+	request.AddCookie(browserCookie)
+
+	writer := httptest.NewRecorder()
+	router.ServeHTTP(writer, request)
+
+	redirect := writer.Header().Get("HX-Redirect")
+
+	parsed, err := url.Parse(redirect)
+	if err != nil {
+		t.Fatalf("parse HTMX redirect: %v", err)
+	}
+
+	if writer.Code != http.StatusOK || writer.Header().Get("Location") != "" || parsed.Path != "/login/mfa" {
+		t.Fatalf("HTMX self-service start = status:%d location:%q redirect:%q",
+			writer.Code, writer.Header().Get("Location"), redirect)
+	}
+
+	if _, err = sessionstate.ParseHandle(parsed.Query().Get(flowdomain.FlowTicketParameter)); err != nil {
+		t.Fatalf("parse HTMX self-service ticket: %v", err)
+	}
+}
+
 func TestCanonicalSelfServiceRenameContinueConsumesTypedOperationOnce(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)

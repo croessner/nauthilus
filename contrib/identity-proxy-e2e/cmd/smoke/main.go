@@ -65,6 +65,7 @@ const (
 	smokeLocalPort      = "19444"
 	smokeProtocol       = "imap"
 	smokeMethod         = "plain"
+	smokeAuthority      = "authority"
 
 	openAPIManagementScenario     = "openapi-management-cache-flush-async-status"
 	openAPIManagementUserSuffix   = ".openapi-management"
@@ -139,7 +140,7 @@ func parseOptions() options {
 	flag.StringVar(&opts.clientKeyID, "client-key-id", "edge-e2e-rs256", "authority service-principal key id")
 	flag.StringVar(&opts.edgeCluster, "edge-cluster", "edge-e2e", "edge cluster metadata")
 	flag.StringVar(&opts.edgeInstance, "edge-instance", "edge-a", "edge instance metadata")
-	flag.StringVar(&opts.serverName, "server-name", "authority", "authority TLS server name")
+	flag.StringVar(&opts.serverName, "server-name", smokeAuthority, "authority TLS server name")
 	flag.StringVar(&opts.username, "username", "split-user@example.test", "smoke username")
 	flag.StringVar(&opts.password, "password", "split-password", "smoke password")
 	flag.StringVar(&opts.webauthnUsername, "webauthn-username", "split-user@example.test.mfa", "username registered by the browser WebAuthn smoke")
@@ -451,8 +452,12 @@ func (r *runner) authenticate(parent context.Context, token string, username str
 		return nil, fmt.Errorf("authenticate RPC failed: %w", err)
 	}
 
-	if !response.GetOk() || response.GetBackendRef().GetOpaqueToken() == "" {
-		return nil, fmt.Errorf("authenticate returned ok=%v backend_ref=%q", response.GetOk(), response.GetBackendRef().GetOpaqueToken())
+	if !response.GetOk() {
+		return nil, fmt.Errorf("authenticate returned ok=%v", response.GetOk())
+	}
+
+	if err = validateBackendRef(response.GetBackendRef()); err != nil {
+		return nil, fmt.Errorf("authenticate backend reference: %w", err)
 	}
 
 	return response, nil
@@ -479,11 +484,40 @@ func (r *runner) lookupIdentity(parent context.Context, token string, username s
 		return nil, fmt.Errorf("lookup identity RPC failed: %w", err)
 	}
 
-	if !response.GetOk() || response.GetBackendRef().GetOpaqueToken() == "" {
-		return nil, fmt.Errorf("lookup identity returned ok=%v backend_ref=%q", response.GetOk(), response.GetBackendRef().GetOpaqueToken())
+	if !response.GetOk() {
+		return nil, fmt.Errorf("lookup identity returned ok=%v", response.GetOk())
+	}
+
+	if err = validateBackendRef(response.GetBackendRef()); err != nil {
+		return nil, fmt.Errorf("lookup identity backend reference: %w", err)
 	}
 
 	return response, nil
+}
+
+func validateBackendRef(ref *commonv1.BackendRef) error {
+	if ref == nil {
+		return errors.New("missing")
+	}
+
+	missing := make([]string, 0, 5)
+
+	for name, value := range map[string]string{
+		"type": ref.GetType(), "name": ref.GetName(), "protocol": ref.GetProtocol(),
+		smokeAuthority: ref.GetAuthority(), "opaque_token": ref.GetOpaqueToken(),
+	} {
+		if strings.TrimSpace(value) == "" {
+			missing = append(missing, name)
+		}
+	}
+
+	if len(missing) > 0 {
+		slices.Sort(missing)
+
+		return fmt.Errorf("missing fields: %s", strings.Join(missing, ", "))
+	}
+
+	return nil
 }
 
 func (r *runner) listAccounts(parent context.Context, token string, username string) error {
@@ -863,7 +897,7 @@ func (r *runner) rpcContext(parent context.Context, token string) (context.Conte
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 
 	values := []string{
-		"x-nauthilus-authority", "authority",
+		"x-nauthilus-authority", smokeAuthority,
 		"x-nauthilus-edge-cluster", r.opts.edgeCluster,
 		"x-nauthilus-edge-instance", r.opts.edgeInstance,
 	}

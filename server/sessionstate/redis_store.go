@@ -173,7 +173,10 @@ return anchor_revision
 const redisRevokeScript = `
 local current = redis.call('HGET', KEYS[1], 'revision')
 if not current then return -2 end
-if redis.call('HGET', KEYS[1], 'revoked') == '1' then return tonumber(current) end
+if redis.call('HGET', KEYS[1], 'revoked') == '1' then
+  if ARGV[3] == '1' then return -1 end
+  return tonumber(current)
+end
 if current ~= ARGV[1] then return -1 end
 local next_revision = tonumber(current) + 1
 redis.call('HSET', KEYS[1],
@@ -217,6 +220,7 @@ type RevocationRequest struct {
 	ExpectedRevision Revision
 	TombstoneTTL     time.Duration
 	Children         []OwnedReference
+	RejectRevoked    bool
 }
 
 // RedisStores groups separately keyed typed repositories that share one cluster keyspace.
@@ -1438,6 +1442,7 @@ func (s *RedisStores) RevokeSession(ctx context.Context, request RevocationReque
 	result, err := s.client.Eval(ctx, redisRevokeScript, []string{anchorKey},
 		strconv.FormatUint(uint64(request.ExpectedRevision), 10),
 		strconv.FormatInt(request.TombstoneTTL.Milliseconds(), 10),
+		boolRedisValue(request.RejectRevoked),
 	).Int64()
 	if err != nil {
 		return fmt.Errorf("session redis revoke: %w", err)

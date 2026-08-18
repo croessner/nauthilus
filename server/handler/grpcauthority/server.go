@@ -308,7 +308,12 @@ func (d ServerDeps) backendRefStore(settings *config.RuntimeGRPCBackendRefsSecti
 		return nil, stderrors.New("runtime.servers.grpc.authority.backend_refs.enabled requires Redis or an injected backend reference store")
 	}
 
-	return NewRedisBackendRefStore(d.Redis, RedisBackendRefStoreOptions{}), nil
+	authority := definitions.InstanceName
+	if d.Cfg != nil {
+		authority = d.Cfg.GetServer().GetInstanceName()
+	}
+
+	return NewRedisBackendRefStore(d.Redis, RedisBackendRefStoreOptions{Authority: authority}), nil
 }
 
 func (d ServerDeps) effectiveLogger() *slog.Logger {

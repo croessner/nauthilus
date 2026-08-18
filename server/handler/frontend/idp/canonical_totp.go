@@ -86,27 +86,7 @@ func (h *FrontendHandler) completeCanonicalTOTP(ctx *gin.Context) {
 		return
 	}
 
-	if selection.failLatched {
-		_, err = selection.session.ConsumeFailLatchedStepUp(
-			ctx.Request.Context(), selection.stepUp.Value.Handle, definitions.MFAMethodTOTP,
-		)
-		if err != nil {
-			if errors.Is(err, sessionstate.ErrBindingMismatch) ||
-				errors.Is(err, sessionstate.ErrRevisionConflict) ||
-				errors.Is(err, sessionstate.ErrNotFound) ||
-				errors.Is(err, sessionstate.ErrExpired) {
-				ctx.AbortWithStatus(http.StatusConflict)
-
-				return
-			}
-
-			ctx.AbortWithStatus(http.StatusServiceUnavailable)
-
-			return
-		}
-
-		ctx.AbortWithStatus(http.StatusUnauthorized)
-
+	if completeCanonicalFailLatchedMFA(ctx, selection, definitions.MFAMethodTOTP) {
 		return
 	}
 
@@ -169,7 +149,7 @@ func (h *FrontendHandler) verifyCanonicalTOTP(
 	data, err := h.getUserBackendDataForIdentity(
 		ctx,
 		selection.identity.Account,
-		string(selection.parent.Protocol),
+		canonicalMFAProtocol(selection),
 		selection.backendRef,
 	)
 	if err != nil {

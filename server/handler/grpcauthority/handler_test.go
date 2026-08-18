@@ -278,6 +278,23 @@ func TestAllowedOperationsAfterAuthenticateIncludesResolveUser(t *testing.T) {
 	}
 }
 
+func TestAuthOutcomeToProtoPreservesCanonicalIdentityMetadata(t *testing.T) {
+	response := authOutcomeToProto(&core.AuthOutcome{
+		TOTPRecoveryField:       "recovery",
+		UniqueUserIDField:       "entryUUID",
+		DisplayNameField:        "displayName",
+		Groups:                  []string{"users", "operators"},
+		GroupDistinguishedNames: []string{"cn=users,dc=example,dc=test"},
+	})
+
+	if response.GetTotpRecoveryField() != "recovery" ||
+		response.GetUniqueUserIdField() != "entryUUID" ||
+		response.GetDisplayNameField() != "displayName" ||
+		len(response.GetGroups()) != 2 || len(response.GetGroupDns()) != 1 {
+		t.Fatalf("auth response identity metadata = %#v", response)
+	}
+}
+
 func TestHandlerAuthenticateBackendRefUsesResolvedAccount(t *testing.T) {
 	refStore := newRecordingBackendRefStore()
 	service := &recordingService{

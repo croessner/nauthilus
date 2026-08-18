@@ -111,26 +111,29 @@ type TransactionReceipt struct {
 // SessionAnchor is the bounded server-side identity and active-flow index for one browser session.
 type SessionAnchor struct {
 	Record
-	SchemaVersion     uint8
-	CreatedAt         time.Time
-	IdleExpiresAt     time.Time
-	AbsoluteExpiresAt time.Time
-	LastTouchedAt     time.Time
-	Authenticated     bool
-	IdentityReference string
-	Identity          IdentitySummary
-	BackendAffinity   BackendAffinitySummary
-	Assurance         AssuranceSummary
-	RotatedFrom       Handle
-	OIDCFlows         []Handle
-	SAMLFlows         []Handle
-	Enrollments       []Handle
-	StepUps           []Handle
-	Ceremonies        []Handle
-	TOTPRecovery      []Handle
-	LogoutIndexes     []Handle
-	Revoked           bool
-	Tombstone         bool
+	SchemaVersion        uint8
+	CreatedAt            time.Time
+	IdleExpiresAt        time.Time
+	AbsoluteExpiresAt    time.Time
+	LastTouchedAt        time.Time
+	Authenticated        bool
+	IdentityReference    string
+	Identity             IdentitySummary
+	BackendAffinity      BackendAffinitySummary
+	MFAIdentityReference string
+	MFAIdentity          IdentitySummary
+	MFABackendAffinity   BackendAffinitySummary
+	Assurance            AssuranceSummary
+	RotatedFrom          Handle
+	OIDCFlows            []Handle
+	SAMLFlows            []Handle
+	Enrollments          []Handle
+	StepUps              []Handle
+	Ceremonies           []Handle
+	TOTPRecovery         []Handle
+	LogoutIndexes        []Handle
+	Revoked              bool
+	Tombstone            bool
 }
 
 // IdentitySummary is the bounded, non-secret authenticated identity projection used by browser flows.

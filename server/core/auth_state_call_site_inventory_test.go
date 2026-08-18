@@ -51,7 +51,7 @@ var authStateCallSiteInventory = map[string]authStateInventoryEntry{
 	"server/handler/grpcauthority/backend_manager_identity_service.go|NewAuthStateFromContextWithDeps": {owner: "identity backend compatibility", count: 1},
 	"server/handler/health/healthz.go|NewAuthStateFromContextWithDeps":                                 {owner: "health compatibility", count: 1},
 	"server/handler/mfa_backchannel/handler.go|NewAuthStateFromContextWithDeps":                        {owner: "MFA backchannel convergence", count: 1},
-	"server/idp/nauthilus_idp.go|NewAuthStateFromContextWithDeps":                                      {owner: "IdP convergence", count: 4},
+	"server/idp/nauthilus_idp.go|NewAuthStateFromContextWithDeps":                                      {owner: "IdP convergence", count: 5},
 }
 
 func TestAuthnAuthStateConstructionCallSiteInventoryIsComplete(t *testing.T) {

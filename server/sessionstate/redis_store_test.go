@@ -354,6 +354,19 @@ func revokeAndAssertCleanup(t *testing.T, fixture redisStoresFixture, state tran
 		t.Fatalf("revoke session: %v", err)
 	}
 
+	if err = fixture.stores.RevokeSession(ctx, RevocationRequest{
+		Reference: state.anchorReference, ExpectedRevision: state.anchorRevision, TombstoneTTL: 5 * time.Minute,
+	}); err != nil {
+		t.Fatalf("idempotent revoke: %v", err)
+	}
+
+	if err = fixture.stores.RevokeSession(ctx, RevocationRequest{
+		Reference: state.anchorReference, ExpectedRevision: state.anchorRevision, TombstoneTTL: 5 * time.Minute,
+		RejectRevoked: true,
+	}); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("exclusive revoke error = %v, want revision conflict", err)
+	}
+
 	if _, err = fixture.stores.Session.Load(ctx, state.anchorReference); !errors.Is(err, ErrRevoked) {
 		t.Fatalf("revoked anchor load error = %v, want revoked", err)
 	}

@@ -13,6 +13,8 @@ import (
 	"github.com/croessner/nauthilus/v3/server/sessionstate"
 )
 
+const maxEnrollmentContinuationBytes = 8192
+
 // Aggregate exposes typed enrollment, step-up, and TOTP/recovery operations without browser keys.
 type Aggregate struct {
 	stores  *sessionstate.RedisStores
@@ -186,7 +188,7 @@ func validateNewEnrollmentBinding(record *sessionstate.EnrollmentRecord) error {
 	if record == nil || record.Revision != 0 || record.Flow == "" ||
 		strings.TrimSpace(record.AccountReference) == "" || strings.TrimSpace(record.IdentityReference) == "" ||
 		len(record.RequiredMethods) == 0 || len(record.CompletedMethods) != 0 || record.Completed ||
-		len(record.Continuation) > 512 {
+		len(record.Continuation) > maxEnrollmentContinuationBytes {
 		return sessionstate.ErrBindingMismatch
 	}
 

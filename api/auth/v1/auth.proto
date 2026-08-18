@@ -109,6 +109,11 @@ message AuthResponse {
   string status_message = 8;
   string error = 9;
   .nauthilus.common.v1.BackendRef backend_ref = 10;
+  string totp_recovery_field = 11;
+  string unique_user_id_field = 12;
+  string display_name_field = 13;
+  repeated string groups = 14;
+  repeated string group_dns = 15;
 }
 
 message ListAccountsResponse {

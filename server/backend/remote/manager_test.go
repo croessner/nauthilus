@@ -63,6 +63,28 @@ const (
 	remoteTestWebAuthnDeleteKey    = "delete-webauthn:alice:remote-guid"
 )
 
+func TestPassDBResultFromResponsePreservesCanonicalIdentityMetadata(t *testing.T) {
+	result, err := (&Manager{}).passDBResultFromResponse(&authv1.AuthResponse{
+		Ok:                true,
+		Decision:          authv1.AuthDecision_AUTH_DECISION_OK,
+		TotpRecoveryField: "recovery",
+		UniqueUserIdField: "entryUUID",
+		DisplayNameField:  "displayName",
+		Groups:            []string{"users", "operators"},
+		GroupDns:          []string{"cn=users,dc=example,dc=test"},
+	}, true)
+	if err != nil {
+		t.Fatalf("map authority response: %v", err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	if result.TOTPRecoveryField != "recovery" || result.UniqueUserIDField != "entryUUID" ||
+		result.DisplayNameField != "displayName" || len(result.Groups) != 2 ||
+		len(result.GroupDistinguishedNames) != 1 {
+		t.Fatalf("remote result identity metadata = %#v", result)
+	}
+}
+
 func TestMain(m *testing.M) {
 	core.InitPassDBResultPool()
 
@@ -344,6 +366,30 @@ func TestManagerRemoteTOTPOperationsUseAuthority(t *testing.T) {
 	assertFinishTOTPRegistration(t, manager, auth, client, registration)
 	assertRemoteTOTPVerification(t, manager, auth, client)
 	assertRemoteTOTPDeletion(t, manager, auth, client)
+}
+
+func TestManagerFinishTOTPRegistrationPreservesRetryableValidation(t *testing.T) {
+	client := &fakeAuthorityClient{
+		writeResponse: &identityv1.MFAWriteResponse{
+			Status: &commonv1.OperationStatus{
+				Result:      commonv1.OperationResult_OPERATION_RESULT_DENIED,
+				ErrorCode:   "totp_invalid",
+				SafeMessage: "TOTP code is invalid",
+			},
+		},
+	}
+	manager := NewManagerForTest(
+		remoteTestBackendName,
+		remoteTestAuthorityName,
+		remoteBackendConfig(config.RemoteBackendOperationMFAWrite),
+		client,
+	)
+	auth := newRemoteAuthStateWithRef(t)
+
+	err := manager.FinishTOTPRegistration(auth, "pending-registration", "000000", remoteTestFinishTOTPKey)
+	if !stderrors.Is(err, core.ErrMFAProofRejected) {
+		t.Fatalf("FinishTOTPRegistration() error = %v, want ErrMFAProofRejected", err)
+	}
 }
 
 func TestManagerRemoteRecoveryOperationsUseAuthority(t *testing.T) {

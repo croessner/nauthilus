@@ -193,6 +193,43 @@ func TestLoginCompletionPermitsSuccessLoggingOnlyAfterEnvelopeCommit(t *testing.
 	}
 }
 
+func TestLoginCompletionPublishesSeparateMasterUserMFAIdentity(t *testing.T) {
+	t.Parallel()
+
+	fixture := newLoginCompletionFixture(t)
+	seedLoginCompletionProtocolFlows(t, fixture)
+	fixture.refreshSession(t)
+	input := fixture.input(0)
+	input.Identity.MFAIdentity = &SessionIdentity{
+		Reference: "master-identity", Account: "admin@example.test", Subject: "master-identity",
+		DisplayName: "Admin", Protocol: "oidc",
+	}
+	input.Identity.MFABackendAffinity = &SessionBackendAffinity{
+		Type: "remote", Name: "authority", Protocol: "oidc",
+		Authority: "authority-a", OpaqueToken: "master-capability",
+	}
+
+	rotated, err := fixture.session.CompleteLogin(context.Background(), httptest.NewRecorder(), input)
+	if err != nil {
+		t.Fatalf("complete master-user login: %v", err)
+	}
+
+	identity, authenticated := rotated.Identity()
+	if !authenticated || identity.Reference != "identity-42" || identity.Account != "alice" {
+		t.Fatalf("target identity = %#v authenticated=%t", identity, authenticated)
+	}
+
+	factor, ok := rotated.MFAIdentity()
+	if !ok || factor.Reference != "master-identity" || factor.Account != "admin@example.test" {
+		t.Fatalf("MFA identity = %#v ok=%t", factor, ok)
+	}
+
+	affinity, ok := rotated.MFABackendAffinity()
+	if !ok || affinity.OpaqueToken != "master-capability" {
+		t.Fatalf("MFA backend affinity = %#v ok=%t", affinity, ok)
+	}
+}
+
 func newLoginCompletionFixture(t *testing.T) *loginCompletionFixture {
 	t.Helper()
 

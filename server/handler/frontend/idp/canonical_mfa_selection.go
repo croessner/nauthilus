@@ -4,7 +4,9 @@
 package idp
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -39,6 +41,54 @@ type canonicalMFASelectionState struct {
 	stepUp       sessionstate.Versioned[sessionstate.StepUpRecord]
 	availability mfaAvailability
 	failLatched  bool
+}
+
+func canonicalMFABoundFlow(selection canonicalMFASelectionState) sessionstate.Handle {
+	if selection.stepUp.Value.Flow != "" {
+		return selection.stepUp.Value.Flow
+	}
+
+	return selection.stepUp.Value.Handle
+}
+
+func canonicalMFAProtocol(selection canonicalMFASelectionState) string {
+	if selection.parent != nil {
+		return string(selection.parent.Protocol)
+	}
+
+	return selection.identity.Protocol
+}
+
+func completeCanonicalFailLatchedMFA(
+	ctx *gin.Context,
+	selection canonicalMFASelectionState,
+	method string,
+) bool {
+	if !selection.failLatched {
+		return false
+	}
+
+	_, err := selection.session.ConsumeFailLatchedStepUp(
+		ctx.Request.Context(), selection.stepUp.Value.Handle, method,
+	)
+	if err != nil {
+		if errors.Is(err, sessionstate.ErrBindingMismatch) ||
+			errors.Is(err, sessionstate.ErrRevisionConflict) ||
+			errors.Is(err, sessionstate.ErrNotFound) ||
+			errors.Is(err, sessionstate.ErrExpired) {
+			ctx.AbortWithStatus(http.StatusConflict)
+
+			return true
+		}
+
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+
+		return true
+	}
+
+	ctx.AbortWithStatus(http.StatusUnauthorized)
+
+	return true
 }
 
 func (h *FrontendHandler) observeCanonicalMFA(
@@ -150,8 +200,7 @@ func (h *FrontendHandler) canonicalMFASelection(ctx *gin.Context) (canonicalMFAS
 		return canonicalMFASelectionState{}, sessionstate.ErrBindingMismatch
 	}
 
-	identity, authenticated := session.Identity()
-	backendRef := canonicalRemoteBackendRef(session)
+	_, authenticated := session.Identity()
 
 	failLatched := stepUp.Value.AuthOutcome == string(flowdomain.AuthOutcomeFailLatched)
 	if failLatched {
@@ -163,12 +212,12 @@ func (h *FrontendHandler) canonicalMFASelection(ctx *gin.Context) (canonicalMFAS
 			return canonicalMFASelectionState{}, sessionstate.ErrBindingMismatch
 		}
 
-		identity = cookie.SessionIdentity{
+		identity := cookie.SessionIdentity{
 			Reference: stepUp.Value.PendingIdentityReference, Account: pending.Account,
 			Subject: pending.Subject, DisplayName: pending.DisplayName, Protocol: pending.Protocol,
 		}
 		affinity := stepUp.Value.PendingBackendAffinity
-		backendRef = core.RemoteBackendRef{
+		backendRef := core.RemoteBackendRef{
 			Type: affinity.Type, Name: affinity.Name, Protocol: affinity.Protocol,
 			Authority: affinity.Authority, OpaqueToken: affinity.OpaqueToken,
 		}
@@ -183,6 +232,13 @@ func (h *FrontendHandler) canonicalMFASelection(ctx *gin.Context) (canonicalMFAS
 			stepUp: stepUp, availability: availability, failLatched: true,
 		}, nil
 	}
+
+	identity, mfaIdentityBound := session.MFAIdentity()
+	if !mfaIdentityBound {
+		return canonicalMFASelectionState{}, sessionstate.ErrBindingMismatch
+	}
+
+	backendRef := canonicalRemoteMFABackendRef(session)
 
 	if stepUp.Value.AuthOutcome != "" || !authenticated ||
 		parent != nil && parent.AuthOutcome != flowdomain.AuthOutcomeOK {
@@ -232,7 +288,7 @@ func (h *FrontendHandler) resolveCanonicalMFAAvailability(
 		return mfaAvailability{}, fmt.Errorf("canonical MFA availability: unavailable")
 	}
 
-	boundIdentity, authenticated := session.Identity()
+	boundIdentity, authenticated := session.MFAIdentity()
 	if !authenticated || boundIdentity != identity {
 		return mfaAvailability{}, sessionstate.ErrBindingMismatch
 	}
@@ -247,7 +303,7 @@ func (h *FrontendHandler) resolveCanonicalMFAAvailability(
 	}
 
 	data, err := h.getUserBackendDataForIdentity(
-		ctx, identity.Account, protocol, canonicalRemoteBackendRef(session),
+		ctx, identity.Account, protocol, canonicalRemoteMFABackendRef(session),
 	)
 	if err != nil {
 		return mfaAvailability{}, err
@@ -264,6 +320,18 @@ func (h *FrontendHandler) resolveCanonicalMFAAvailability(
 
 func canonicalRemoteBackendRef(session *cookie.CanonicalSession) core.RemoteBackendRef {
 	affinity, ok := session.BackendAffinity()
+	if !ok {
+		return core.RemoteBackendRef{}
+	}
+
+	return core.RemoteBackendRef{
+		Type: affinity.Type, Name: affinity.Name, Protocol: affinity.Protocol,
+		Authority: affinity.Authority, OpaqueToken: affinity.OpaqueToken,
+	}
+}
+
+func canonicalRemoteMFABackendRef(session *cookie.CanonicalSession) core.RemoteBackendRef {
+	affinity, ok := session.MFABackendAffinity()
 	if !ok {
 		return core.RemoteBackendRef{}
 	}

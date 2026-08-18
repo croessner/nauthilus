@@ -24,7 +24,9 @@ func TestIDPCompositionRootUsesOnlyCanonicalBrowserRuntime(t *testing.T) {
 		"handleridp.NewCanonicalBrowserRuntime(deps)",
 		"handleridp.NewCanonicalFrontendHandler(deps, canonicalRuntime)",
 		"frontendHandler.Register(e)",
-		"NewOIDCHandler(deps, nauthilusIDP, frontendHandler).Register(e, canonicalRuntime)",
+		"oidcHandler := handleridp.NewOIDCHandler(deps, nauthilusIDP, frontendHandler)",
+		"frontendHandler.SetCanonicalOIDCDeviceLoginContinuer(oidcHandler.ContinueDeviceLoginCanonical)",
+		"oidcHandler.Register(e, canonicalRuntime)",
 		"NewSAMLHandler(deps, nauthilusIDP).Register(e, canonicalRuntime)",
 	} {
 		if !strings.Contains(setup+registrar, required) {

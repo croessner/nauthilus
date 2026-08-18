@@ -117,6 +117,39 @@ func TestCanonicalPostLoginWithoutMFAPolicyResumesTypedFlow(t *testing.T) {
 	}
 }
 
+func TestCanonicalPostLoginRejectsSecondPrimaryAuthenticationAfterRotation(t *testing.T) {
+	fixture := newCanonicalPostLoginFixture(t)
+	authenticatorCalls := 0
+	originalAuthenticator := fixture.handler.canonicalPasswordAuthenticator
+	fixture.handler.canonicalPasswordAuthenticator = func(
+		ctx *gin.Context,
+		flowContext postLoginFlowContext,
+		credentials postLoginCredentials,
+	) (canonicalPasswordAuthentication, error) {
+		authenticatorCalls++
+
+		return originalAuthenticator(ctx, flowContext, credentials)
+	}
+
+	first := fixture.post(t, fixture.password)
+
+	second := fixture.postWithCookie(t, fixture.password, fixture.responseCookie(first))
+	if second.Code != http.StatusConflict || authenticatorCalls != 1 {
+		t.Fatalf(
+			"second canonical primary login = status %d authenticator calls %d, want %d/1",
+			second.Code, authenticatorCalls, http.StatusConflict,
+		)
+	}
+
+	session := fixture.openResponseSession(t, first)
+	if len(session.Anchor.Value.StepUps) != 1 || len(session.Anchor.Value.Enrollments) != 0 {
+		t.Fatalf(
+			"second canonical primary login duplicated children: step-ups=%v enrollments=%v",
+			session.Anchor.Value.StepUps, session.Anchor.Value.Enrollments,
+		)
+	}
+}
+
 func TestCanonicalPostLoginFailLatchedStepUpNeverAuthenticatesAndConsumesOnce(t *testing.T) {
 	fixture := newCanonicalPostLoginFixture(t)
 
@@ -324,10 +357,20 @@ func newCanonicalPostLoginFixture(t *testing.T) canonicalPostLoginFixture {
 func (fixture canonicalPostLoginFixture) post(t *testing.T, password string) *httptest.ResponseRecorder {
 	t.Helper()
 
+	return fixture.postWithCookie(t, password, fixture.browserCookie)
+}
+
+func (fixture canonicalPostLoginFixture) postWithCookie(
+	t *testing.T,
+	password string,
+	browserCookie *http.Cookie,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
 	form := url.Values{"username": {fixture.username}, "password": {password}}
 	request := httptest.NewRequest(http.MethodPost, "/login?flow="+fixture.flowID, strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.AddCookie(fixture.browserCookie)
+	request.AddCookie(browserCookie)
 
 	writer := httptest.NewRecorder()
 	router := gin.New()

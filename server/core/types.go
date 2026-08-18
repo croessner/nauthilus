@@ -16,12 +16,16 @@
 package core
 
 import (
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 )
+
+// ErrMFAProofRejected reports a valid MFA operation whose submitted proof did not verify.
+var ErrMFAProofRejected = errors.New("MFA proof rejected")
 
 const (
 	// PassDBAdditionalAttributePluginFacts stores validated policy facts emitted

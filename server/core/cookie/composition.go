@@ -35,12 +35,14 @@ type SessionBackendAffinity struct {
 
 // IdentityUpdate is the complete successful-authentication projection committed to the anchor.
 type IdentityUpdate struct {
-	Reference       string
-	Account         string
-	Subject         string
-	DisplayName     string
-	Protocol        string
-	BackendAffinity *SessionBackendAffinity
+	Reference          string
+	Account            string
+	Subject            string
+	DisplayName        string
+	Protocol           string
+	BackendAffinity    *SessionBackendAffinity
+	MFAIdentity        *SessionIdentity
+	MFABackendAffinity *SessionBackendAffinity
 }
 
 // SessionAssurance is the bounded, non-secret MFA proof shared across protocol flows.
@@ -175,6 +177,25 @@ func (s *CanonicalSession) EvaluationTime() time.Time {
 	return s.clock.Now().UTC()
 }
 
+// RefreshAnchor reloads the current typed anchor after an indexed child mutation.
+func (s *CanonicalSession) RefreshAnchor(ctx context.Context) error {
+	if s == nil || s.Stores == nil || s.Handle == "" {
+		return sessionstate.ErrBindingMismatch
+	}
+
+	anchor, err := s.Stores.Session.Load(
+		ctx,
+		sessionstate.Reference{Session: s.Handle, Record: s.Handle},
+	)
+	if err != nil {
+		return err
+	}
+
+	s.Anchor = anchor
+
+	return nil
+}
+
 // Identity returns a consistent authenticated identity binding from the session anchor.
 func (s *CanonicalSession) Identity() (SessionIdentity, bool) {
 	if s == nil || !s.Anchor.Value.Authenticated {
@@ -200,7 +221,39 @@ func (s *CanonicalSession) BackendAffinity() (SessionBackendAffinity, bool) {
 		return SessionBackendAffinity{}, false
 	}
 
-	affinity := s.Anchor.Value.BackendAffinity
+	return sessionBackendAffinity(s.Anchor.Value.BackendAffinity)
+}
+
+// MFAIdentity returns the account whose factor proves assurance for this session.
+func (s *CanonicalSession) MFAIdentity() (SessionIdentity, bool) {
+	if s == nil || !s.Anchor.Value.Authenticated {
+		return SessionIdentity{}, false
+	}
+
+	reference := strings.TrimSpace(s.Anchor.Value.MFAIdentityReference)
+
+	identity := s.Anchor.Value.MFAIdentity
+	if reference == "" || strings.TrimSpace(identity.Account) == "" ||
+		strings.TrimSpace(identity.Subject) != reference || strings.TrimSpace(identity.Protocol) == "" {
+		return SessionIdentity{}, false
+	}
+
+	return SessionIdentity{
+		Reference: reference, Account: identity.Account, Subject: identity.Subject,
+		DisplayName: identity.DisplayName, Protocol: identity.Protocol,
+	}, true
+}
+
+// MFABackendAffinity returns the capability bound to the assurance identity.
+func (s *CanonicalSession) MFABackendAffinity() (SessionBackendAffinity, bool) {
+	if s == nil {
+		return SessionBackendAffinity{}, false
+	}
+
+	return sessionBackendAffinity(s.Anchor.Value.MFABackendAffinity)
+}
+
+func sessionBackendAffinity(affinity sessionstate.BackendAffinitySummary) (SessionBackendAffinity, bool) {
 	if strings.TrimSpace(affinity.OpaqueToken) == "" || strings.TrimSpace(affinity.Type) == "" ||
 		strings.TrimSpace(affinity.Name) == "" || strings.TrimSpace(affinity.Protocol) == "" ||
 		strings.TrimSpace(affinity.Authority) == "" {
@@ -302,16 +355,7 @@ func (s *CanonicalSession) CommitIdentity(ctx context.Context, update IdentityUp
 		return fmt.Errorf("canonical identity commit: unavailable session")
 	}
 
-	update.Reference = strings.TrimSpace(update.Reference)
-	update.Account = strings.TrimSpace(update.Account)
-	update.Subject = strings.TrimSpace(update.Subject)
-
-	update.Protocol = strings.TrimSpace(update.Protocol)
-	if update.Reference == "" || update.Account == "" || update.Subject != update.Reference || update.Protocol == "" {
-		return sessionstate.ErrBindingMismatch
-	}
-
-	affinity, err := backendAffinitySummary(update.BackendAffinity)
+	validated, err := validateIdentityUpdate(update)
 	if err != nil {
 		return err
 	}
@@ -324,11 +368,12 @@ func (s *CanonicalSession) CommitIdentity(ctx context.Context, update IdentityUp
 	}
 
 	anchor.Authenticated = true
-	anchor.IdentityReference = update.Reference
-	anchor.Identity = sessionstate.IdentitySummary{
-		Account: update.Account, Subject: update.Subject, DisplayName: update.DisplayName, Protocol: update.Protocol,
-	}
-	anchor.BackendAffinity = affinity
+	anchor.IdentityReference = validated.identity.Subject
+	anchor.Identity = validated.identity
+	anchor.BackendAffinity = validated.affinity
+	anchor.MFAIdentityReference = validated.mfaIdentity.Subject
+	anchor.MFAIdentity = validated.mfaIdentity
+	anchor.MFABackendAffinity = validated.mfaAffinity
 
 	revision, err := s.Stores.Session.Commit(ctx, sessionstate.CommitRequest[sessionstate.SessionAnchor]{
 		Reference:        sessionstate.Reference{Session: s.Handle, Record: s.Handle},
@@ -342,6 +387,78 @@ func (s *CanonicalSession) CommitIdentity(ctx context.Context, update IdentityUp
 	s.Anchor = sessionstate.Versioned[sessionstate.SessionAnchor]{Value: anchor, Revision: revision}
 
 	return nil
+}
+
+type validatedIdentityUpdate struct {
+	identity    sessionstate.IdentitySummary
+	mfaIdentity sessionstate.IdentitySummary
+	affinity    sessionstate.BackendAffinitySummary
+	mfaAffinity sessionstate.BackendAffinitySummary
+}
+
+func validateIdentityUpdate(update IdentityUpdate) (validatedIdentityUpdate, error) {
+	var validated validatedIdentityUpdate
+
+	identity, err := normalizedSessionIdentity(SessionIdentity{
+		Reference: update.Reference, Account: update.Account, Subject: update.Subject,
+		DisplayName: update.DisplayName, Protocol: update.Protocol,
+	})
+	if err != nil {
+		return validated, err
+	}
+
+	validated.identity = sessionstate.IdentitySummary{
+		Account: identity.Account, Subject: identity.Subject,
+		DisplayName: identity.DisplayName, Protocol: identity.Protocol,
+	}
+
+	validated.affinity, err = backendAffinitySummary(update.BackendAffinity)
+	if err != nil {
+		return validatedIdentityUpdate{}, err
+	}
+
+	if update.MFAIdentity == nil {
+		if update.MFABackendAffinity != nil {
+			return validatedIdentityUpdate{}, sessionstate.ErrBindingMismatch
+		}
+
+		validated.mfaIdentity = validated.identity
+		validated.mfaAffinity = validated.affinity
+
+		return validated, nil
+	}
+
+	mfaIdentity, err := normalizedSessionIdentity(*update.MFAIdentity)
+	if err != nil {
+		return validatedIdentityUpdate{}, err
+	}
+
+	validated.mfaIdentity = sessionstate.IdentitySummary{
+		Account: mfaIdentity.Account, Subject: mfaIdentity.Subject,
+		DisplayName: mfaIdentity.DisplayName, Protocol: mfaIdentity.Protocol,
+	}
+
+	validated.mfaAffinity, err = backendAffinitySummary(update.MFABackendAffinity)
+	if err != nil {
+		return validatedIdentityUpdate{}, err
+	}
+
+	return validated, nil
+}
+
+func normalizedSessionIdentity(identity SessionIdentity) (SessionIdentity, error) {
+	identity.Reference = strings.TrimSpace(identity.Reference)
+	identity.Account = strings.TrimSpace(identity.Account)
+	identity.Subject = strings.TrimSpace(identity.Subject)
+
+	identity.Protocol = strings.TrimSpace(identity.Protocol)
+	if identity.Reference == "" || identity.Account == "" || identity.Subject != identity.Reference ||
+		identity.Protocol == "" || len(identity.Reference) > 512 || len(identity.Account) > 512 ||
+		len(identity.Subject) > 512 || len(identity.DisplayName) > 512 || len(identity.Protocol) > 64 {
+		return SessionIdentity{}, sessionstate.ErrBindingMismatch
+	}
+
+	return identity, nil
 }
 
 func backendAffinitySummary(affinity *SessionBackendAffinity) (sessionstate.BackendAffinitySummary, error) {

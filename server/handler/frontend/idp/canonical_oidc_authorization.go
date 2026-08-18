@@ -20,6 +20,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/frontend"
 	"github.com/croessner/nauthilus/v3/server/idp"
 	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
+	"github.com/croessner/nauthilus/v3/server/idp/mfastate"
 	"github.com/croessner/nauthilus/v3/server/middleware/csrf"
 	"github.com/croessner/nauthilus/v3/server/sessionstate"
 	"github.com/croessner/nauthilus/v3/server/stats"
@@ -112,7 +113,106 @@ func (h *OIDCHandler) AuthorizeCanonical(ctx *gin.Context) {
 		return
 	}
 
+	resumed, err := resumeCanonicalPendingOIDCEnrollment(
+		ctx, session, identity, request,
+	)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+
+		return
+	}
+
+	if resumed {
+		return
+	}
+
 	h.authorizeCanonicalAuthenticated(ctx, session, identity, client, request)
+}
+
+// resumeCanonicalPendingOIDCEnrollment keeps one interactive client on the
+// original parent flow until its required enrollment chain is complete.
+func resumeCanonicalPendingOIDCEnrollment(
+	ctx *gin.Context,
+	session *cookie.CanonicalSession,
+	identity cookie.SessionIdentity,
+	request oidcAuthorizeRequest,
+) (bool, error) {
+	if ctx == nil || ctx.Request == nil || session == nil || session.Stores == nil ||
+		request.prompt == oidcClientAuthMethodNone ||
+		strings.TrimSpace(ctx.Query(flowdomain.FlowTicketParameter)) != "" {
+		return false, nil
+	}
+
+	for _, handle := range session.Anchor.Value.Enrollments {
+		target, err := canonicalPendingOIDCEnrollmentTarget(
+			ctx.Request.Context(), session, handle, identity, request,
+		)
+		if err != nil {
+			return false, err
+		}
+
+		if target == "" {
+			continue
+		}
+
+		ctx.Redirect(http.StatusFound, target)
+
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func canonicalPendingOIDCEnrollmentTarget(
+	ctx context.Context,
+	session *cookie.CanonicalSession,
+	handle sessionstate.Handle,
+	identity cookie.SessionIdentity,
+	request oidcAuthorizeRequest,
+) (string, error) {
+	enrollment, err := mfastate.NewAggregate(session.Stores, session.Handle, 0).
+		LoadEnrollment(ctx, handle)
+
+	if errors.Is(err, sessionstate.ErrNotFound) || errors.Is(err, sessionstate.ErrExpired) {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	if enrollment.Value.Completed || enrollment.Value.IdentityReference != identity.Reference ||
+		enrollment.Value.AccountReference != identity.Account {
+		return "", nil
+	}
+
+	parent, err := flowdomain.NewProtocolAggregate(session.Stores, session.Handle, 0).
+		Load(ctx, string(enrollment.Value.Flow))
+	if errors.Is(err, flowdomain.ErrFlowNotFound) || errors.Is(err, sessionstate.ErrNotFound) {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	if !canonicalOIDCEnrollmentParentBound(parent, request) {
+		return "", nil
+	}
+
+	target := canonicalRequiredMFARegistrationTarget(enrollment.Value.CurrentStep)
+	if target == "" {
+		return "", sessionstate.ErrBindingMismatch
+	}
+
+	return flowdomain.AppendTicket(target, string(handle)), nil
+}
+
+func canonicalOIDCEnrollmentParentBound(parent *flowdomain.State, request oidcAuthorizeRequest) bool {
+	return parent != nil && parent.Type == flowdomain.FlowTypeOIDCAuthorization &&
+		parent.Protocol == flowdomain.FlowProtocolOIDC && parent.AuthOutcome == flowdomain.AuthOutcomeOK &&
+		parent.Metadata[flowdomain.FlowMetadataClientID] == request.clientID &&
+		parent.Metadata[flowdomain.FlowMetadataRedirectURI] == request.redirectURI
 }
 
 //nolint:gocyclo,funlen // Authenticated authorization binds policy, consent, claims, and single-use issuance.
@@ -956,8 +1056,19 @@ func loadCanonicalOIDCAuthorization(
 
 func validCanonicalOIDCResumeTarget(target string) bool {
 	parsed, err := url.ParseRequestURI(strings.TrimSpace(target))
+	if err != nil || parsed.IsAbs() || parsed.Host != "" {
+		return false
+	}
 
-	return err == nil && !parsed.IsAbs() && parsed.Host == "" && parsed.Path == "/oidc/authorize"
+	const authorizePath = "/oidc/authorize"
+	if parsed.Path == authorizePath {
+		return true
+	}
+
+	languageTag := strings.TrimPrefix(parsed.Path, authorizePath+"/")
+
+	return languageTag != parsed.Path && languageTag != "" && len(languageTag) <= 64 &&
+		!strings.ContainsAny(languageTag, "/\\")
 }
 
 func (h *OIDCHandler) canonicalAuthorizeState(

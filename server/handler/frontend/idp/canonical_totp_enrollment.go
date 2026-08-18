@@ -5,6 +5,7 @@ package idp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -279,7 +280,7 @@ func (h *FrontendHandler) completeCanonicalTOTPEnrollment(ctx *gin.Context) {
 	}
 
 	if !valid {
-		ctx.AbortWithStatus(http.StatusUnauthorized)
+		h.renderErrorModal(ctx, "Failed to register TOTP")
 
 		return
 	}
@@ -314,8 +315,19 @@ func (h *FrontendHandler) completeCanonicalTOTPEnrollment(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Header("HX-Redirect", target)
-	ctx.Status(http.StatusOK)
+	redirectCanonicalBrowserMutation(ctx, target)
+}
+
+// redirectCanonicalBrowserMutation supports both HTMX mutations and native form submissions.
+func redirectCanonicalBrowserMutation(ctx *gin.Context, target string) {
+	if ctx.GetHeader("HX-Request") != "" {
+		ctx.Header("HX-Redirect", target)
+		ctx.Status(http.StatusOK)
+
+		return
+	}
+
+	ctx.Redirect(http.StatusSeeOther, target)
 }
 
 // loadCanonicalTOTPEnrollment loads and validates one pending typed setup operation.
@@ -374,7 +386,9 @@ func (h *FrontendHandler) finishCanonicalTOTPEnrollment(
 			pending.PendingRegistrationID,
 			code,
 			"totp-enrollment-finish:"+string(operation),
-		); err != nil {
+		); errors.Is(err, core.ErrMFAProofRejected) {
+			return false, nil
+		} else if err != nil {
 			return false, err
 		}
 

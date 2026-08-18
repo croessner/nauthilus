@@ -768,6 +768,8 @@ func completeCanonicalPostLogin(ctx *gin.Context) {
 		postLoginCredentials{},
 		&backend.User{ID: "identity-42", Name: "alice", DisplayName: "Alice Example"},
 		core.RemoteBackendRef{},
+		nil,
+		core.RemoteBackendRef{},
 	) {
 		ctx.Status(http.StatusNoContent)
 	}

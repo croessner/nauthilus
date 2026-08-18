@@ -123,6 +123,7 @@ func TestCanonicalOIDCDeviceLifecycleClaimsBindsAndCompletesOnce(t *testing.T) {
 	assert.ErrorIs(t, err, sessionstate.ErrNotFound)
 
 	store := flow.NewTypedStore(session.Stores, session.Handle, flow.FlowProtocolOIDC, canonicalOIDCDeviceTTL)
+
 	controller := flow.NewController(store)
 	_, err = controller.Advance(context.Background(), selection.state.FlowID, flow.FlowStepLogin, now)
 	assert.NoError(t, err)
@@ -150,6 +151,74 @@ func TestCanonicalOIDCDeviceLifecycleClaimsBindsAndCompletesOnce(t *testing.T) {
 	assert.True(t, errors.Is(err, sessionstate.ErrNotFound) || errors.Is(err, flow.ErrFlowNotFound))
 
 	assertCanonicalDeviceGrant(t, session, request.ClientID, request.Scopes)
+}
+
+func TestCanonicalOIDCDeviceLoginContinuationCompletesSkipConsentClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	runtime, browserCookie, _ := seedCanonicalIDPFlow(t, nil)
+	authenticateCanonicalFixture(t, runtime, browserCookie)
+	session := openCanonicalFixture(t, runtime, browserCookie)
+	client := latchedConsentOIDCClient()
+	client.SkipConsent = true
+	handler, _ := newOIDCCallbackRedirectTestHandlerWithClient(t, client)
+	handler.canonicalAuthorizeUserLoader = func(
+		_ *gin.Context,
+		_ *cookie.CanonicalSession,
+		identity cookie.SessionIdentity,
+		_ *config.OIDCClient,
+		_ []string,
+	) (*backend.User, error) {
+		return &backend.User{ID: identity.Reference, Name: identity.Account, DisplayName: identity.DisplayName}, nil
+	}
+	request := &domainidp.DeviceCodeRequest{
+		ClientID: client.ClientID, Scopes: []string{definitions.ScopeOpenID, "profile"},
+		UserCode: "SKIP-CNST", Status: domainidp.DeviceCodeStatusPending,
+		ExpiresAt: session.EvaluationTime().Add(10 * time.Minute),
+	}
+	deviceStore := &canonicalDeviceStoreFixture{deviceCode: "device-skip-consent", request: request}
+	handler.deviceStore = deviceStore
+
+	selection, err := handler.beginCanonicalOIDCDeviceVerification(context.Background(), session, request.UserCode)
+	if err != nil {
+		t.Fatalf("begin canonical device verification: %v", err)
+	}
+
+	store := flow.NewTypedStore(session.Stores, session.Handle, flow.FlowProtocolOIDC, canonicalOIDCDeviceTTL)
+
+	controller := flow.NewController(store)
+	if _, err = controller.Advance(
+		context.Background(), selection.state.FlowID, flow.FlowStepLogin, session.EvaluationTime(),
+	); err != nil {
+		t.Fatalf("advance device to login: %v", err)
+	}
+
+	state, err := store.Load(context.Background(), selection.state.FlowID)
+	if err != nil {
+		t.Fatalf("load device login state: %v", err)
+	}
+
+	state.AuthOutcome = flow.AuthOutcomeOK
+	if err = store.Save(context.Background(), state); err != nil {
+		t.Fatalf("save successful device login state: %v", err)
+	}
+
+	writer := httptest.NewRecorder()
+	ctx, engine := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/login?flow="+selection.state.FlowID, nil)
+	cookie.SetCanonicalSession(ctx, session)
+	engine.SetHTMLTemplate(template.Must(template.New("idp_device_verify_success.html").Parse(
+		`{{define "idp_device_verify_success.html"}}{{.DeviceVerifySuccessMessage}}{{end}}`,
+	)))
+
+	if !handler.ContinueDeviceLoginCanonical(ctx, session, state) {
+		t.Fatal("canonical device login continuation was not handled")
+	}
+
+	if writer.Code != http.StatusOK || deviceStore.completed != 1 ||
+		deviceStore.request.Status != domainidp.DeviceCodeStatusAuthorized {
+		t.Fatalf("skip-consent continuation = %d, request %#v, completions %d", writer.Code, deviceStore.request, deviceStore.completed)
+	}
 }
 
 func TestCanonicalOIDCDeviceTerminalCASFailureCreatesNoConsentGrant(t *testing.T) {

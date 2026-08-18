@@ -85,6 +85,10 @@ func (h *FrontendHandler) completeCanonicalRecovery(ctx *gin.Context) {
 		return
 	}
 
+	if completeCanonicalFailLatchedMFA(ctx, selection, definitions.MFAMethodRecoveryCodes) {
+		return
+	}
+
 	completion, err := selection.session.CompleteStepUp(
 		ctx.Request.Context(),
 		selection.stepUp.Value.Handle,
@@ -145,8 +149,8 @@ func (h *FrontendHandler) verifyCanonicalRecovery(
 	data, err := h.getUserBackendDataForIdentity(
 		ctx,
 		selection.identity.Account,
-		string(selection.parent.Protocol),
-		canonicalRemoteBackendRef(selection.session),
+		canonicalMFAProtocol(selection),
+		selection.backendRef,
 	)
 	if err != nil {
 		return false, err

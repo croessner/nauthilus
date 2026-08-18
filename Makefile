@@ -110,7 +110,7 @@ generate-grpc-proto: ## Generate committed gRPC API bindings
 generate-grpc-proto-check: ## Verify committed gRPC API bindings are up to date
 	./scripts/generate-grpc-proto.sh --check
 
-grpc-proto-compatibility-check: ## Verify public gRPC wire descriptors match the frozen baseline
+grpc-proto-compatibility-check: ## Verify public gRPC wire descriptors match the reviewed baseline
 	./scripts/check-grpc-descriptor-compatibility.sh
 
 generate-grpc-auth-proto: generate-grpc-proto ## Generate committed gRPC API bindings

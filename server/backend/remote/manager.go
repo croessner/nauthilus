@@ -293,6 +293,10 @@ func (m *Manager) FinishTOTPRegistration(
 		return mapAuthorityError(err)
 	}
 
+	if response.GetStatus().GetErrorCode() == "totp_invalid" {
+		return core.ErrMFAProofRejected
+	}
+
 	return operationStatusError(response.GetStatus())
 }
 
@@ -862,7 +866,12 @@ func (m *Manager) passDBResultFromResponse(response *authv1.AuthResponse, passwo
 	result.BackendName = m.backendName
 	result.AccountField = response.GetAccountField()
 	result.TOTPSecretField = response.GetTotpSecretField()
+	result.TOTPRecoveryField = response.GetTotpRecoveryField()
+	result.UniqueUserIDField = response.GetUniqueUserIdField()
+	result.DisplayNameField = response.GetDisplayNameField()
 	result.Attributes = attributeMappingFromProto(response.GetAttributes())
+	result.Groups = append([]string(nil), response.GetGroups()...)
+	result.GroupDistinguishedNames = append([]string(nil), response.GetGroupDns()...)
 	result.BackendRef = backendRefFromProto(response.GetBackendRef())
 
 	return result, nil

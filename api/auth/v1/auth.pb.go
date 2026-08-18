@@ -743,19 +743,24 @@ func (x *LookupIdentityRequest) GetOidcCid() string {
 }
 
 type AuthResponse struct {
-	state           protoimpl.MessageState         `protogen:"open.v1"`
-	Ok              bool                           `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
-	Decision        AuthDecision                   `protobuf:"varint,2,opt,name=decision,proto3,enum=nauthilus.auth.v1.AuthDecision" json:"decision,omitempty"`
-	Session         string                         `protobuf:"bytes,3,opt,name=session,proto3" json:"session,omitempty"`
-	AccountField    string                         `protobuf:"bytes,4,opt,name=account_field,json=accountField,proto3" json:"account_field,omitempty"`
-	TotpSecretField string                         `protobuf:"bytes,5,opt,name=totp_secret_field,json=totpSecretField,proto3" json:"totp_secret_field,omitempty"`
-	Backend         uint32                         `protobuf:"varint,6,opt,name=backend,proto3" json:"backend,omitempty"`
-	Attributes      map[string]*v1.AttributeValues `protobuf:"bytes,7,rep,name=attributes,proto3" json:"attributes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	StatusMessage   string                         `protobuf:"bytes,8,opt,name=status_message,json=statusMessage,proto3" json:"status_message,omitempty"`
-	Error           string                         `protobuf:"bytes,9,opt,name=error,proto3" json:"error,omitempty"`
-	BackendRef      *v1.BackendRef                 `protobuf:"bytes,10,opt,name=backend_ref,json=backendRef,proto3" json:"backend_ref,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state             protoimpl.MessageState         `protogen:"open.v1"`
+	Ok                bool                           `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Decision          AuthDecision                   `protobuf:"varint,2,opt,name=decision,proto3,enum=nauthilus.auth.v1.AuthDecision" json:"decision,omitempty"`
+	Session           string                         `protobuf:"bytes,3,opt,name=session,proto3" json:"session,omitempty"`
+	AccountField      string                         `protobuf:"bytes,4,opt,name=account_field,json=accountField,proto3" json:"account_field,omitempty"`
+	TotpSecretField   string                         `protobuf:"bytes,5,opt,name=totp_secret_field,json=totpSecretField,proto3" json:"totp_secret_field,omitempty"`
+	Backend           uint32                         `protobuf:"varint,6,opt,name=backend,proto3" json:"backend,omitempty"`
+	Attributes        map[string]*v1.AttributeValues `protobuf:"bytes,7,rep,name=attributes,proto3" json:"attributes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	StatusMessage     string                         `protobuf:"bytes,8,opt,name=status_message,json=statusMessage,proto3" json:"status_message,omitempty"`
+	Error             string                         `protobuf:"bytes,9,opt,name=error,proto3" json:"error,omitempty"`
+	BackendRef        *v1.BackendRef                 `protobuf:"bytes,10,opt,name=backend_ref,json=backendRef,proto3" json:"backend_ref,omitempty"`
+	TotpRecoveryField string                         `protobuf:"bytes,11,opt,name=totp_recovery_field,json=totpRecoveryField,proto3" json:"totp_recovery_field,omitempty"`
+	UniqueUserIdField string                         `protobuf:"bytes,12,opt,name=unique_user_id_field,json=uniqueUserIdField,proto3" json:"unique_user_id_field,omitempty"`
+	DisplayNameField  string                         `protobuf:"bytes,13,opt,name=display_name_field,json=displayNameField,proto3" json:"display_name_field,omitempty"`
+	Groups            []string                       `protobuf:"bytes,14,rep,name=groups,proto3" json:"groups,omitempty"`
+	GroupDns          []string                       `protobuf:"bytes,15,rep,name=group_dns,json=groupDns,proto3" json:"group_dns,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *AuthResponse) Reset() {
@@ -854,6 +859,41 @@ func (x *AuthResponse) GetError() string {
 func (x *AuthResponse) GetBackendRef() *v1.BackendRef {
 	if x != nil {
 		return x.BackendRef
+	}
+	return nil
+}
+
+func (x *AuthResponse) GetTotpRecoveryField() string {
+	if x != nil {
+		return x.TotpRecoveryField
+	}
+	return ""
+}
+
+func (x *AuthResponse) GetUniqueUserIdField() string {
+	if x != nil {
+		return x.UniqueUserIdField
+	}
+	return ""
+}
+
+func (x *AuthResponse) GetDisplayNameField() string {
+	if x != nil {
+		return x.DisplayNameField
+	}
+	return ""
+}
+
+func (x *AuthResponse) GetGroups() []string {
+	if x != nil {
+		return x.Groups
+	}
+	return nil
+}
+
+func (x *AuthResponse) GetGroupDns() []string {
+	if x != nil {
+		return x.GroupDns
 	}
 	return nil
 }
@@ -1005,7 +1045,7 @@ const file_api_auth_v1_auth_proto_rawDesc = "" +
 	"\n" +
 	"ssl_serial\x18\x1a \x01(\tR\tsslSerial\x12'\n" +
 	"\x0fssl_fingerprint\x18\x1b \x01(\tR\x0esslFingerprint\x12\x19\n" +
-	"\boidc_cid\x18\x1c \x01(\tR\aoidcCid\"\x95\x04\n" +
+	"\boidc_cid\x18\x1c \x01(\tR\aoidcCid\"\xd9\x05\n" +
 	"\fAuthResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12;\n" +
 	"\bdecision\x18\x02 \x01(\x0e2\x1f.nauthilus.auth.v1.AuthDecisionR\bdecision\x12\x18\n" +
@@ -1020,7 +1060,12 @@ const file_api_auth_v1_auth_proto_rawDesc = "" +
 	"\x05error\x18\t \x01(\tR\x05error\x12@\n" +
 	"\vbackend_ref\x18\n" +
 	" \x01(\v2\x1f.nauthilus.common.v1.BackendRefR\n" +
-	"backendRef\x1ac\n" +
+	"backendRef\x12.\n" +
+	"\x13totp_recovery_field\x18\v \x01(\tR\x11totpRecoveryField\x12/\n" +
+	"\x14unique_user_id_field\x18\f \x01(\tR\x11uniqueUserIdField\x12,\n" +
+	"\x12display_name_field\x18\r \x01(\tR\x10displayNameField\x12\x16\n" +
+	"\x06groups\x18\x0e \x03(\tR\x06groups\x12\x1b\n" +
+	"\tgroup_dns\x18\x0f \x03(\tR\bgroupDns\x1ac\n" +
 	"\x0fAttributesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
 	"\x05value\x18\x02 \x01(\v2$.nauthilus.common.v1.AttributeValuesR\x05value:\x028\x01\"L\n" +

@@ -67,6 +67,7 @@ type FrontendHandler struct {
 	deps                                  *deps.Deps
 	canonicalRuntime                      *cookie.CanonicalRuntime
 	canonicalPasswordAuthenticator        canonicalPasswordAuthenticator
+	canonicalOIDCDeviceLoginContinuer     canonicalOIDCDeviceLoginContinuer
 	deviceStore                           idp.DeviceCodeStore
 	canonicalEnrollmentResolver           canonicalEnrollmentResolver
 	canonicalMFAAvailabilityResolver      canonicalMFAAvailabilityResolver
@@ -125,17 +126,6 @@ func NewFrontendHandler(d *deps.Deps) *FrontendHandler {
 		deviceStore: idp.NewRedisDeviceCodeStoreWithConfig(d.Redis, prefix, d.Cfg),
 		tracer:      monittrace.New("nauthilus/idp/frontend"),
 	}
-}
-
-// deviceVerifyPath returns the device verify page path with optional language tag.
-func (h *FrontendHandler) deviceVerifyPath(ctx *gin.Context) string {
-	lang := ctx.Param("languageTag")
-
-	if lang != "" {
-		return frontendDeviceVerifyPath + "/" + lang
-	}
-
-	return frontendDeviceVerifyPath
 }
 
 func (h *FrontendHandler) getMFASelectPath(ctx *gin.Context) string {
@@ -740,12 +730,6 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 		return
 	}
 
-	if flowState.grantType == definitions.OIDCFlowDeviceCode {
-		ctx.Redirect(http.StatusFound, h.deviceVerifyPath(ctx))
-
-		return
-	}
-
 	h.renderLoginPage(ctx, flowState)
 }
 
@@ -827,6 +811,15 @@ func (h *FrontendHandler) resumeCanonicalExistingLoginSession(
 		return true
 	}
 
+	if state.Type == flowdomain.FlowTypeOIDCDeviceCode {
+		if h.canonicalOIDCDeviceLoginContinuer == nil ||
+			!h.canonicalOIDCDeviceLoginContinuer(ctx, session, state) && !ctx.Writer.Written() {
+			ctx.AbortWithStatus(http.StatusServiceUnavailable)
+		}
+
+		return true
+	}
+
 	if !h.resumeCanonicalIDPFlow(ctx, session, state) && !ctx.Writer.Written() {
 		ctx.AbortWithStatus(http.StatusConflict)
 	}
@@ -852,6 +845,12 @@ func (h *FrontendHandler) canonicalMissingEnrollment(
 
 	missing, err := resolver(ctx, session, state, identity, required)
 	if err != nil {
+		if h != nil && h.deps != nil && h.deps.Logger != nil {
+			h.deps.Logger.Error(
+				"Canonical MFA enrollment policy lookup failed",
+				definitions.LogKeyError, err,
+			)
+		}
 		ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
 		return nil, false
@@ -962,7 +961,9 @@ type postLoginCredentials struct {
 
 type canonicalPasswordAuthentication struct {
 	user             *backend.User
+	mfaUser          *backend.User
 	backendRef       core.RemoteBackendRef
+	mfaBackendRef    core.RemoteBackendRef
 	availableMethods []string
 }
 
@@ -972,13 +973,28 @@ type canonicalPasswordAuthenticator func(
 	postLoginCredentials,
 ) (canonicalPasswordAuthentication, error)
 
+type canonicalOIDCDeviceLoginContinuer func(
+	*gin.Context,
+	*cookie.CanonicalSession,
+	*flowdomain.State,
+) bool
+
+// SetCanonicalOIDCDeviceLoginContinuer composes the typed device continuation without a package-global handler.
+func (h *FrontendHandler) SetCanonicalOIDCDeviceLoginContinuer(continuer canonicalOIDCDeviceLoginContinuer) {
+	if h != nil {
+		h.canonicalOIDCDeviceLoginContinuer = continuer
+	}
+}
+
 func (h *FrontendHandler) authenticateCanonicalPassword(
 	ctx *gin.Context,
 	flowContext postLoginFlowContext,
 	credentials postLoginCredentials,
 ) (canonicalPasswordAuthentication, error) {
 	if h.canonicalPasswordAuthenticator != nil {
-		return h.canonicalPasswordAuthenticator(ctx, flowContext, credentials)
+		result, err := h.canonicalPasswordAuthenticator(ctx, flowContext, credentials)
+
+		return result.withDefaultMFAIdentity(), err
 	}
 
 	result, err := idp.NewNauthilusIDP(h.deps).AuthenticateWithBackend(
@@ -990,10 +1006,78 @@ func (h *FrontendHandler) authenticateCanonicalPassword(
 		},
 	)
 
+	mfaUser := result.MFAUser
+	if mfaUser == nil {
+		mfaUser = result.User
+	}
+
+	mfaBackendRef := result.MFABackendRef
+	if mfaBackendRef.IsZero() {
+		mfaBackendRef = result.BackendRef
+	}
+
+	methods := h.canonicalPasswordMFAMethods(mfaUser)
+	if err != nil && mfaUser != nil && !mfaBackendRef.IsZero() {
+		if resolved, resolveErr := h.canonicalPasswordMFAMethodsForBackend(
+			ctx, flowContext, mfaUser, mfaBackendRef,
+		); resolveErr == nil {
+			methods = resolved
+		} else if h.deps != nil && h.deps.Logger != nil {
+			h.deps.Logger.Warn(
+				"Delayed password MFA state lookup failed",
+				definitions.LogKeyError, resolveErr,
+			)
+		}
+	}
+
 	return canonicalPasswordAuthentication{
-		user: result.User, backendRef: result.BackendRef,
-		availableMethods: h.canonicalPasswordMFAMethods(result.User),
+		user: result.User, mfaUser: mfaUser,
+		backendRef: result.BackendRef, mfaBackendRef: mfaBackendRef,
+		availableMethods: methods,
 	}, err
+}
+
+func (a canonicalPasswordAuthentication) withDefaultMFAIdentity() canonicalPasswordAuthentication {
+	if a.mfaUser == nil {
+		a.mfaUser = a.user
+	}
+
+	if a.mfaBackendRef.IsZero() {
+		a.mfaBackendRef = a.backendRef
+	}
+
+	return a
+}
+
+func (h *FrontendHandler) canonicalPasswordMFAMethodsForBackend(
+	ctx *gin.Context,
+	flowContext postLoginFlowContext,
+	user *backend.User,
+	backendRef core.RemoteBackendRef,
+) ([]string, error) {
+	data, err := h.getUserBackendDataForIdentity(ctx, user.Name, flowContext.protocol, backendRef)
+	if err != nil {
+		return nil, err
+	}
+
+	if data == nil || data.Username != user.Name || data.UniqueUserID != user.ID {
+		return nil, sessionstate.ErrBindingMismatch
+	}
+
+	methods := make([]string, 0, 3)
+	if data.HaveTOTP {
+		methods = append(methods, definitions.MFAMethodTOTP)
+	}
+
+	if data.HaveWebAuthn {
+		methods = append(methods, definitions.MFAMethodWebAuthn)
+	}
+
+	if data.NumRecoveryCodes > 0 {
+		methods = append(methods, definitions.MFAMethodRecoveryCodes)
+	}
+
+	return methods, nil
 }
 
 func (h *FrontendHandler) canonicalPasswordMFAMethods(user *backend.User) []string {
@@ -1170,7 +1254,7 @@ func (h *FrontendHandler) startCanonicalFailLatchedStepUp(
 		return false
 	}
 
-	user := authentication.user
+	user := authentication.mfaUser
 
 	record := &sessionstate.StepUpRecord{
 		Record: sessionstate.Record{Handle: handle}, Session: flowContext.session.Handle,
@@ -1182,11 +1266,11 @@ func (h *FrontendHandler) startCanonicalFailLatchedStepUp(
 		RequestedLevel: max(policy.requiredLevel, 1), Scope: policy.scope,
 		SupportedMethods: canonicalAvailabilityMethods(availability),
 	}
-	if !authentication.backendRef.IsZero() {
+	if !authentication.mfaBackendRef.IsZero() {
 		record.PendingBackendAffinity = sessionstate.BackendAffinitySummary{
-			Type: authentication.backendRef.Type, Name: authentication.backendRef.Name,
-			Protocol: authentication.backendRef.Protocol, Authority: authentication.backendRef.Authority,
-			OpaqueToken: authentication.backendRef.OpaqueToken,
+			Type: authentication.mfaBackendRef.Type, Name: authentication.mfaBackendRef.Name,
+			Protocol: authentication.mfaBackendRef.Protocol, Authority: authentication.mfaBackendRef.Authority,
+			OpaqueToken: authentication.mfaBackendRef.OpaqueToken,
 		}
 	}
 
@@ -1231,6 +1315,8 @@ func (h *FrontendHandler) storeSuccessfulPostLoginSession(
 	credentials postLoginCredentials,
 	user *backend.User,
 	backendRef core.RemoteBackendRef,
+	mfaUser *backend.User,
+	mfaBackendRef core.RemoteBackendRef,
 ) bool {
 	if ctx == nil || flowContext.session == nil || flowContext.state == nil || user == nil {
 		if ctx != nil {
@@ -1240,25 +1326,37 @@ func (h *FrontendHandler) storeSuccessfulPostLoginSession(
 		return false
 	}
 
-	var affinity *cookie.SessionBackendAffinity
-	if !backendRef.IsZero() {
-		affinity = &cookie.SessionBackendAffinity{
-			Type: backendRef.Type, Name: backendRef.Name, Protocol: backendRef.Protocol,
-			Authority: backendRef.Authority, OpaqueToken: backendRef.OpaqueToken,
-		}
+	if mfaUser == nil {
+		mfaUser = user
 	}
+
+	if mfaBackendRef.IsZero() {
+		mfaBackendRef = backendRef
+	}
+
+	affinity := canonicalSessionBackendAffinity(backendRef)
+	mfaAffinity := canonicalSessionBackendAffinity(mfaBackendRef)
 
 	rotated, err := flowContext.session.CompleteLogin(ctx.Request.Context(), ctx.Writer, cookie.LoginCompletionInput{
 		Identity: cookie.IdentityUpdate{
 			Reference: user.ID, Account: user.Name, Subject: user.ID, DisplayName: user.DisplayName,
 			Protocol: flowContext.protocol, BackendAffinity: affinity,
+			MFAIdentity: &cookie.SessionIdentity{
+				Reference: mfaUser.ID, Account: mfaUser.Name, Subject: mfaUser.ID,
+				DisplayName: mfaUser.DisplayName, Protocol: flowContext.protocol,
+			},
+			MFABackendAffinity: mfaAffinity,
 		},
 		Flow: sessionstate.Handle(flowContext.state.FlowID), Protocol: flowContext.protocol,
 		NextStep:    string(flowdomain.FlowStepLogin),
 		RememberTTL: time.Duration(credentials.rememberMeTTL) * time.Second,
 	})
 	if err != nil {
-		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+		if stderrors.Is(err, sessionstate.ErrRevisionConflict) || stderrors.Is(err, sessionstate.ErrRevoked) {
+			ctx.AbortWithStatus(http.StatusConflict)
+		} else {
+			ctx.AbortWithStatus(http.StatusServiceUnavailable)
+		}
 
 		return false
 	}
@@ -1274,6 +1372,17 @@ func (h *FrontendHandler) storeSuccessfulPostLoginSession(
 	}
 
 	return true
+}
+
+func canonicalSessionBackendAffinity(backendRef core.RemoteBackendRef) *cookie.SessionBackendAffinity {
+	if backendRef.IsZero() {
+		return nil
+	}
+
+	return &cookie.SessionBackendAffinity{
+		Type: backendRef.Type, Name: backendRef.Name, Protocol: backendRef.Protocol,
+		Authority: backendRef.Authority, OpaqueToken: backendRef.OpaqueToken,
+	}
 }
 
 // annotatePostLoginSpan records non-secret login identifiers on the active trace span.
@@ -1302,13 +1411,14 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		return
 	}
 
-	flowContext := h.readPostLoginFlowContext(ctx, protocolState)
-	if flowContext.isDeviceCodeLoginFlow() {
-		ctx.Redirect(http.StatusFound, h.deviceVerifyPath(ctx))
+	if protocolState.CurrentStep != flowdomain.FlowStepLogin ||
+		protocolState.AuthOutcome != flowdomain.AuthOutcomeUnknown || protocolState.PendingMFA {
+		ctx.AbortWithStatus(http.StatusConflict)
 
 		return
 	}
 
+	flowContext := h.readPostLoginFlowContext(ctx, protocolState)
 	credentials := h.readPostLoginCredentials(ctx, flowContext)
 	h.logPostLoginAttempt(ctx, flowContext, credentials)
 
@@ -1323,6 +1433,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 
 	if !h.storeSuccessfulPostLoginSession(
 		ctx, flowContext, credentials, authentication.user, authentication.backendRef,
+		authentication.mfaUser, authentication.mfaBackendRef,
 	) {
 		return
 	}

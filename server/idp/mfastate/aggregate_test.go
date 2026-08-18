@@ -6,6 +6,7 @@ package mfastate
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +103,30 @@ func TestAggregateAdvancesEnrollmentInOrderAndRejectsReplacementOrReplay(t *test
 	completed, err := aggregate.CompleteEnrollmentMethod(context.Background(), enrollment.Handle, "webauthn")
 	if err != nil || !completed.Value.Completed || completed.Value.CurrentStep != "complete" {
 		t.Fatalf("completed enrollment = %#v, err = %v", completed, err)
+	}
+}
+
+func TestAggregateBoundsEnrollmentContinuationAtValidRequestURISize(t *testing.T) {
+	t.Parallel()
+
+	base := sessionstate.EnrollmentRecord{
+		Record:            sessionstate.Record{Handle: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"},
+		Session:           "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS",
+		Flow:              "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+		AccountReference:  "alice",
+		IdentityReference: "identity-42",
+		RequiredMethods:   []string{"totp"},
+		CurrentStep:       "totp",
+		Continuation:      "/" + strings.Repeat("a", maxEnrollmentContinuationBytes-1),
+	}
+
+	if err := validateNewEnrollment(&base); err != nil {
+		t.Fatalf("maximum bounded continuation rejected: %v", err)
+	}
+
+	base.Continuation += "a"
+	if err := validateNewEnrollment(&base); !errors.Is(err, sessionstate.ErrBindingMismatch) {
+		t.Fatalf("oversized continuation error = %v, want %v", err, sessionstate.ErrBindingMismatch)
 	}
 }
 

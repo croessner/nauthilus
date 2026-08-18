@@ -94,6 +94,41 @@ flowchart TD
 The fixed-allowlist operator tool under `contrib/session-keyspace-retirement` is the only permitted legacy-key
 retirement path. It is not imported by the server and does not turn legacy records into current-v1 sessions.
 
+### Verification and Management Backchannels
+
+The browser-session cutover does not remove authenticated management APIs. In
+particular, `DELETE /api/v1/cache/flush` and
+`DELETE /api/v1/cache/flush/async` remain cookie-free backchannels protected by
+the required administration or security scope. They do not read the canonical
+browser envelope and never fall back to a legacy cookie manager.
+
+The split identity-proxy proof under `contrib/identity-proxy-e2e` is the
+executable integration contract. Its `smoke` target validates profile
+invariants, gRPC authority operations, generated OpenAPI cache-flush bindings,
+Redis isolation, browser OIDC/device/MFA journeys, SAML, and post-browser
+single-use state:
+
+```console
+contrib/identity-proxy-e2e/scripts/run.sh profile-check
+contrib/identity-proxy-e2e/scripts/run.sh smoke
+```
+
+For split edge/authority deployments, the additive gRPC `AuthResponse` fields
+also carry the canonical identity material required after primary
+authentication: unique identity reference, display name, groups, group DNs,
+and the TOTP-recovery attribute name. The edge combines these with the opaque,
+authority-bound backend reference; it does not reconstruct identity or backend
+selection from browser state.
+
+For an interactive loopback-only browser check, the companion
+`nauthilus-tests` repository contains `local-browser.yml` and
+`scripts/local-browser.sh`. That profile uses only the in-memory test backend,
+a dedicated Redis prefix, public fixture credentials, and the current sibling
+Nauthilus source tree; it does not include the nested Kubernetes repository.
+Besides the basic consent journey, `scripts/local-browser.sh delayed-url`
+selects a TOTP-required `delayed_response` client for an interactive
+fail-latched check.
+
 ## 2. Signal Flow Diagram
 
 The following diagram shows one browser request moving through the active architecture:
@@ -159,10 +194,10 @@ sequenceDiagram
     F ->> I: Authenticate with typed protocol context
     I ->> A: NewAuthState(ctx, ...)
     A ->> A: Evaluate MFA requirements
-    A -->> I: Success or Failure
-    Note right of I: Delayed Response logic: always proceed to MFA if enabled and user exists
-    I -->> F: User (even if password incorrect, if Delayed Response enabled)
-    F ->> R: Commit canonical identity or start parent-bound StepUp
+    A -->> I: Typed password result plus selected backend affinity
+    Note right of I: Delayed response may defer a normal password failure when a bound factor exists
+    I -->> F: Success, terminal failure, or fail-latched candidate
+    F ->> R: Commit identity on success, or create an unauthenticated fail-latched StepUp
     F ->> B: 302 Redirect to /login/totp?flow=opaque-ticket
     B ->> F: POST /login/totp (code)
     F ->> R: Verify and atomically complete or consume StepUp
@@ -232,7 +267,76 @@ stateDiagram-v2
     Denied --> [*]
 ```
 
-### 3.1.2 CSRF Protection
+### 3.1.2 Target Identity and MFA Identity Are Separate
+
+The canonical anchor distinguishes the identity that receives the OIDC or SAML result from the identity whose factor
+is verified. For an ordinary login both projections are identical. For a formatted Master-User login, however, the
+target account remains the claim and assertion subject while TOTP, WebAuthn, or recovery-code verification uses the
+Master User's separately bound MFA identity and backend capability.
+
+Both projections are published atomically after a successful password authentication. A factor verifier never derives
+its principal from the submitted login string, from browser data, or from a legacy session manager. OIDC claims, SAML
+attributes, consent, and logout continue to use only the target identity; MFA verification uses only the bound MFA
+identity and MFA backend affinity.
+
+```mermaid
+flowchart LR
+    P[Successful password authentication] --> C[Atomic canonical login completion]
+    C --> T[Target identity and backend affinity]
+    C --> M[MFA identity and MFA backend affinity]
+    T --> O[OIDC claims, SAML assertion, consent, logout]
+    M --> F[TOTP, WebAuthn, or recovery verification]
+    F --> A[Canonical assurance for the target browser session]
+```
+
+### 3.1.3 Delayed Response Without Premature Authentication
+
+`delayed_response` remains supported, but it no longer depends on a legacy pre-authentication cookie. A normal password
+failure may proceed to a factor challenge only when the selected backend returned a bounded identity snapshot and at
+least one usable factor. The browser anchor remains unauthenticated and has assurance level zero throughout that
+challenge.
+
+In a split edge/authority deployment, a password-failure snapshot is treated as partial even when it already contains
+an account name. The edge performs an explicit identity lookup and then loads only the authority's public MFA summary
+through the returned opaque backend reference. TOTP secrets, recovery codes, and private WebAuthn material never cross
+that boundary.
+
+The pending identity, selected backend affinity, parent flow, allowed factor methods, and `fail_latched` outcome live in
+one revision-bound `StepUpRecord`. A valid factor proof consumes that record exactly once and returns the original
+authentication failure. It never promotes the pending identity into the `SessionAnchor`, never creates assurance, and
+never issues an OIDC code or SAML assertion. Brute-force, environment, policy-terminal, unknown-user, and no-factor
+failures are not deferred.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant F as Canonical frontend
+    participant A as Selected authority or backend
+    participant R as Typed Redis state
+    B->>F: Password login
+    F->>A: Authenticate with typed protocol context
+    A-->>F: Normal password failure plus bounded known identity
+    alt delayed_response enabled and a bound factor exists
+        F->>R: Mark parent fail_latched
+        F->>R: Create parent-bound StepUp with pending identity and backend affinity
+        F-->>B: Redirect to the allowed MFA method
+        B->>F: Submit factor proof
+        F->>A: Verify against the same backend affinity
+        A-->>F: Factor accepted
+        F->>R: Atomically consume StepUp
+        Note over F,R: Anchor stays unauthenticated and assurance stays zero
+        F-->>B: Generic authentication failure (HTTP 401)
+    else no safe delayed path
+        F-->>B: Generic authentication failure
+    end
+```
+
+Focused handler contracts prove fail-latched TOTP, WebAuthn, and recovery-code completion, including unauthenticated
+anchor state, one verifier call, terminal consume, parent-flow latching, and replay rejection. The split identity-proxy
+browser suite additionally exercises all three factor types with ordinary and Master-User identities, plus no-factor
+`delayed_response` rejection.
+
+### 3.1.4 CSRF Protection
 
 All IdP frontend pages use CSRF protection via a custom middleware (`server/middleware/csrf`). The CSRF token is:
 
@@ -273,7 +377,7 @@ const response = await fetch("/mfa/webauthn/register/finish", {
 });
 ```
 
-### 3.1.3 Redirect URI Validation Rules
+### 3.1.4 Redirect URI Validation Rules
 
 Nauthilus validates `identity.oidc.clients[].redirect_uris` with strict matching plus controlled wildcard and loopback rules:
 
@@ -296,7 +400,7 @@ Security hardening notes:
 - Prefer specific redirect URIs over broad wildcard patterns.
 - `post_logout_redirect_uri` remains an exact-match check against `post_logout_redirect_uris`.
 
-### 3.1.4 Frontend Security Headers & CSP Nonce
+### 3.1.5 Frontend Security Headers & CSP Nonce
 
 Frontend routes support strict configurable browser security headers via:
 
@@ -418,7 +522,7 @@ If full control is required, set `form-action` directly.
 
 The placeholder `{{nonce}}` is replaced per request. Inline script tags in templates are emitted with this nonce.
 
-### 3.1.5 Central CORS (`runtime.servers.http.cors`)
+### 3.1.6 Central CORS (`runtime.servers.http.cors`)
 
 Cross-origin behavior is configured centrally under `runtime.servers.http.cors` and is independent from frontend security headers.
 
@@ -1178,8 +1282,10 @@ that protocol handlers remain independent of the underlying storage technology.
       secret from the attribute defined in `totp_secret_field`.
     - **MFA (WebAuthn)**: If the user has WebAuthn credentials registered, the system performs a FIDO2 assertion (
       Login). Nauthilus supports multiple security keys.
-3. **Delayed Response**: If enabled, the system will always proceed to the MFA step (TOTP or WebAuthn) even if the
-   password was incorrect, to prevent username enumeration and credential validation by attackers.
+3. **Delayed Response**: If enabled, a normal password failure may proceed to a bound TOTP, WebAuthn, or recovery-code
+   challenge only when the selected backend returned a bounded known identity and at least one usable registered factor.
+   Accepting that factor still returns the generic authentication failure and never authenticates the browser session;
+   see [Delayed Response Without Premature Authentication](#313-delayed-response-without-premature-authentication).
 
 ### 7.2 MFA Storage in LDAP
 

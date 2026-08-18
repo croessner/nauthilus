@@ -29,8 +29,8 @@ Verify the committed output without modifying the worktree:
 make generate-grpc-proto-check
 ```
 
-Verify common, auth, and identity wire descriptors against the frozen
-pre-relocation baseline:
+Verify common, auth, and identity wire descriptors against the frozen,
+reviewed public API baseline:
 
 ```sh
 make grpc-proto-compatibility-check

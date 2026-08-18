@@ -143,7 +143,7 @@ identity:
 
   frontend:
     enabled: true
-    encryption_secret: "edgeFrontendSharedSecret2026!"
+    encryption_secret: "edgeFrontendSharedFixtureSecret2026!"
     assets:
       html_static_content_path: "/usr/app/static/templates"
       language_resources: "/usr/app/server/resources"

@@ -41,6 +41,11 @@ const (
 	authFieldStatusMessage    protoreflect.Name = "status_message"
 	authFieldError            protoreflect.Name = "error"
 	authFieldBackendRef       protoreflect.Name = "backend_ref"
+	authFieldTOTPRecovery     protoreflect.Name = "totp_recovery_field"
+	authFieldUniqueUserID     protoreflect.Name = "unique_user_id_field"
+	authFieldDisplayName      protoreflect.Name = "display_name_field"
+	authFieldGroups           protoreflect.Name = "groups"
+	authFieldGroupDNS         protoreflect.Name = "group_dns"
 )
 
 const (
@@ -189,6 +194,11 @@ func assertAuthResponseFieldNumbers(t *testing.T, fileDescriptor protoreflect.Fi
 		{fieldName: authFieldStatusMessage, number: 8},
 		{fieldName: authFieldError, number: 9},
 		{fieldName: authFieldBackendRef, number: 10},
+		{fieldName: authFieldTOTPRecovery, number: 11},
+		{fieldName: authFieldUniqueUserID, number: 12},
+		{fieldName: authFieldDisplayName, number: 13},
+		{fieldName: authFieldGroups, number: 14},
+		{fieldName: authFieldGroupDNS, number: 15},
 	}
 
 	for _, testCase := range cases {

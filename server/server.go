@@ -582,7 +582,9 @@ func registerIDPRoutes(
 	frontendHandler.Register(e)
 
 	if runtime.cfg.GetIDP().OIDC.Enabled {
-		handleridp.NewOIDCHandler(deps, nauthilusIDP, frontendHandler).Register(e, canonicalRuntime)
+		oidcHandler := handleridp.NewOIDCHandler(deps, nauthilusIDP, frontendHandler)
+		frontendHandler.SetCanonicalOIDCDeviceLoginContinuer(oidcHandler.ContinueDeviceLoginCanonical)
+		oidcHandler.Register(e, canonicalRuntime)
 	}
 
 	if runtime.cfg.GetIDP().SAML2.Enabled {

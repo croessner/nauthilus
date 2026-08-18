@@ -80,6 +80,67 @@ func TestOIDCAuthorizeCanonicalAuthenticatedIssuesOnceWithoutLegacyManager(t *te
 	}
 }
 
+func TestCanonicalOIDCAuthorizeResumesOriginalPendingEnrollment(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	state := canonicalDecisionOIDCState("")
+	runtime, browserCookie, flowID := seedCanonicalIDPFlow(t, state)
+	authenticateCanonicalFixture(t, runtime, browserCookie)
+	enrollment := seedCanonicalEnrollmentForMethods(
+		t, runtime, browserCookie, flowID, []string{definitions.MFAMethodTOTP},
+	)
+	session := openCanonicalFixture(t, runtime, browserCookie)
+
+	response := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(response)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?client_id=client-a", nil)
+
+	resumed, err := resumeCanonicalPendingOIDCEnrollment(ctx, session, cookie.SessionIdentity{
+		Reference: "identity-42", Account: "alice", Subject: "identity-42", DisplayName: "Alice", Protocol: "oidc",
+	}, oidcAuthorizeRequest{
+		clientID: "client-a", redirectURI: "https://client.example.test/callback",
+	})
+	if err != nil || !resumed || response.Code != http.StatusFound {
+		t.Fatalf("resume pending enrollment = %t, status = %d, err = %v", resumed, response.Code, err)
+	}
+
+	want := flow.AppendTicket(definitions.MFARoot+"/totp/register", string(enrollment))
+	if location := response.Header().Get("Location"); location != want {
+		t.Fatalf("pending enrollment redirect = %q, want %q", location, want)
+	}
+
+	indexed := openCanonicalFixture(t, runtime, browserCookie)
+	if len(indexed.Anchor.Value.OIDCFlows) != 1 || indexed.Anchor.Value.OIDCFlows[0] != sessionstate.Handle(flowID) ||
+		len(indexed.Anchor.Value.Enrollments) != 1 || indexed.Anchor.Value.Enrollments[0] != enrollment {
+		t.Fatalf("pending enrollment indexes = oidc %v enrollment %v", indexed.Anchor.Value.OIDCFlows,
+			indexed.Anchor.Value.Enrollments)
+	}
+}
+
+func TestCanonicalOIDCResumeTargetAcceptsOneLocalizedAuthorizeSegment(t *testing.T) {
+	t.Parallel()
+
+	for _, target := range []string{
+		"/oidc/authorize?client_id=test-client",
+		"/oidc/authorize/en?client_id=test-client",
+		"/oidc/authorize/de-DE?client_id=test-client",
+	} {
+		if !validCanonicalOIDCResumeTarget(target) {
+			t.Fatalf("valid localized authorize target rejected: %q", target)
+		}
+	}
+
+	for _, target := range []string{
+		"/oidc/authorize/en/extra?client_id=test-client",
+		"https://attacker.example/oidc/authorize/en",
+		"/oidc/consent/en",
+	} {
+		if validCanonicalOIDCResumeTarget(target) {
+			t.Fatalf("invalid authorize target accepted: %q", target)
+		}
+	}
+}
+
 func TestOIDCAuthorizeCanonicalUsesOnlyTypedRememberedConsent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

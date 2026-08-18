@@ -208,8 +208,9 @@ func TestCanonicalWebAuthnBackendDataUsesTargetBoundSessionAffinity(t *testing.T
 	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
 
 	data, err := handler.canonicalWebAuthnBackendData(ctx, canonicalMFASelectionState{
-		session:  session,
-		identity: identity,
+		session:    session,
+		identity:   identity,
+		backendRef: canonicalRemoteBackendRef(session),
 		parent: &flowdomain.State{
 			FlowID: flowID, Protocol: flowdomain.FlowProtocolOIDC,
 		},
@@ -305,8 +306,8 @@ func TestBackendDataLookupContextDoesNotExposePluginResponseBoundary(t *testing.
 	)
 	ctx.Request.Header.Set("Content-Type", "application/json")
 
-	lookupCtx := backendDataLookupContext(ctx)
-	assert.NotSame(t, ctx, lookupCtx)
+	lookupCtx, restore := backendDataLookupContext(ctx)
+	assert.Same(t, ctx, lookupCtx)
 
 	cfg := &config.FileSettings{Server: &config.ServerSection{}}
 	authState := core.NewAuthStateFromContextWithDeps(lookupCtx, core.AuthDeps{Cfg: cfg}).(*core.AuthState)
@@ -320,6 +321,58 @@ func TestBackendDataLookupContextDoesNotExposePluginResponseBoundary(t *testing.
 		})
 	})
 	assert.Empty(t, recorder.Header().Get(backendDataPluginResponseHeader))
+	restore()
+	assert.Equal(t, http.MethodPost, ctx.Request.Method)
+	assert.False(t, ctx.GetBool(definitions.CtxPluginResponseMutationDisabledKey))
+}
+
+func TestBackendDataLookupFromWebAuthnFinishUsesCanonicalRemoteAffinity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	fixture := newBackendDataRemoteFixture(t)
+	client := newRemoteBackendDataAuthorityClient()
+
+	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
+	defer cleanup()
+
+	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoOIDC, backendDataUsername)
+	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoOIDC, backendDataUsername)
+	fixture.mock.ExpectDel(
+		fixture.cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + backendDataUniqueUserID,
+	).SetVal(0)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/mfa/webauthn/register/finish",
+		strings.NewReader(`{"name":"security key","credential":{}}`),
+	)
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Request.RemoteAddr = "127.0.0.1:12345"
+	ctx.Set(definitions.CtxGUIDKey, "canonical-webauthn-finish-backend-data")
+	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
+	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+
+	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
+
+	data, err := handler.getUserBackendDataForIdentity(
+		ctx,
+		backendDataUsername,
+		definitions.ProtoOIDC,
+		core.RemoteBackendRef{
+			Type: definitions.BackendLDAPName, Name: remoteBackendDataAuthorityBackend,
+			Protocol: definitions.ProtoIDP, Authority: remoteBackendDataAuthority,
+			OpaqueToken: remoteBackendDataBackendRef,
+		},
+	)
+	if assert.NoError(t, err) && assert.NotNil(t, data) {
+		assert.Equal(t, backendDataUsername, data.Username)
+		assert.Equal(t, backendDataUniqueUserID, data.UniqueUserID)
+	}
+
+	assert.Len(t, client.resolveUserRequests, 1)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
 }
 
 func newBackendDataTestCredential() mfa.PersistentCredential {
