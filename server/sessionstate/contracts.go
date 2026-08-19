@@ -81,6 +81,11 @@ type SAMLFlowRepository interface {
 	Repository[SAMLFlow]
 }
 
+// SelfServiceFlowRepository persists internal browser-login state independently from external protocols.
+type SelfServiceFlowRepository interface {
+	Repository[SelfServiceFlow]
+}
+
 // Transaction begins one atomic multi-record mutation.
 type Transaction interface {
 	Commit(ctx context.Context, request TransactionRequest) (TransactionReceipt, error)
@@ -96,6 +101,7 @@ type TransactionRequest struct {
 	Session      *CommitRequest[SessionAnchor]
 	OIDC         []CommitRequest[OIDCFlow]
 	SAML         []CommitRequest[SAMLFlow]
+	SelfService  []CommitRequest[SelfServiceFlow]
 	Enrollment   []CommitRequest[EnrollmentRecord]
 	StepUp       []CommitRequest[StepUpRecord]
 	Ceremony     []CommitRequest[CeremonyRecord]
@@ -127,6 +133,7 @@ type SessionAnchor struct {
 	RotatedFrom          Handle
 	OIDCFlows            []Handle
 	SAMLFlows            []Handle
+	SelfServiceFlows     []Handle
 	Enrollments          []Handle
 	StepUps              []Handle
 	Ceremonies           []Handle
@@ -226,6 +233,19 @@ type SAMLFlow struct {
 	Issuable           bool
 	Issued             bool
 	Consumed           bool
+}
+
+// SelfServiceFlow identifies one internal primary-login flow for the MFA portal.
+type SelfServiceFlow struct {
+	FlowType     string
+	CurrentStep  string
+	AuthOutcome  string
+	LoginTarget  string
+	ResumeTarget string
+	Record
+	Session   Handle
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // EnrollmentRecord owns one required-factor enrollment state machine.

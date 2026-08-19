@@ -53,6 +53,13 @@ func (s *TypedStore) Load(ctx context.Context, flowID string) (*State, error) {
 		}
 
 		return stateFromSAML(versioned), nil
+	case FlowProtocolInternal:
+		versioned, loadErr := s.stores.SelfService.Load(ctx, reference)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+
+		return stateFromSelfService(versioned), nil
 	default:
 		return nil, fmt.Errorf("typed flow store: unsupported protocol %q", s.protocol)
 	}
@@ -94,6 +101,19 @@ func (s *TypedStore) saveWithTTL(ctx context.Context, state *State, ttl time.Dur
 		state.Revision = uint64(revision)
 
 		return commitErr
+	case FlowProtocolInternal:
+		revision, commitErr := s.stores.CommitSelfServiceFlow(
+			ctx,
+			sessionstate.CommitRequest[sessionstate.SelfServiceFlow]{
+				Reference:        reference,
+				ExpectedRevision: sessionstate.Revision(state.Revision),
+				Value:            selfServiceFromState(s.session, state),
+				TTL:              ttl,
+			},
+		)
+		state.Revision = uint64(revision)
+
+		return commitErr
 	default:
 		return fmt.Errorf("typed flow store: unsupported protocol %q", s.protocol)
 	}
@@ -118,57 +138,82 @@ func (s *TypedStore) Delete(ctx context.Context, flowID string) error {
 	request := sessionstate.DeleteRequest{
 		Reference: reference, ExpectedRevision: sessionstate.Revision(state.Revision),
 	}
-	if s.protocol == FlowProtocolOIDC {
-		return s.stores.DeleteOIDCFlow(ctx, request)
-	}
 
-	return s.stores.DeleteSAMLFlow(ctx, request)
+	switch s.protocol {
+	case FlowProtocolOIDC:
+		return s.stores.DeleteOIDCFlow(ctx, request)
+	case FlowProtocolSAML:
+		return s.stores.DeleteSAMLFlow(ctx, request)
+	case FlowProtocolInternal:
+		return s.stores.DeleteSelfServiceFlow(ctx, request)
+	default:
+		return fmt.Errorf("typed flow store: unsupported protocol %q", s.protocol)
+	}
 }
 
 // ConsumeOIDC atomically removes one revision-bound OIDC flow and its anchor index before returning it.
-//
-//nolint:dupl // Protocol-specific consume calls keep their distinct typed repository ownership explicit.
 func (s *TypedStore) ConsumeOIDC(ctx context.Context, flowID string, expectedRevision uint64) (*State, error) {
-	if s == nil || s.protocol != FlowProtocolOIDC {
+	if s == nil {
 		return nil, sessionstate.ErrBindingMismatch
 	}
 
-	reference, err := s.reference(flowID)
-	if err != nil {
-		return nil, err
-	}
-
-	versioned, err := s.stores.ConsumeOIDCFlow(ctx, sessionstate.DeleteRequest{
-		Reference: reference, ExpectedRevision: sessionstate.Revision(expectedRevision),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return stateFromOIDC(versioned), nil
+	return consumeTypedFlow(
+		ctx, s, flowID, expectedRevision, FlowProtocolOIDC,
+		s.stores.ConsumeOIDCFlow, stateFromOIDC,
+	)
 }
 
 // ConsumeSAML atomically removes one revision-bound SAML flow and its anchor index before returning it.
-//
-//nolint:dupl // Protocol-specific consume calls keep their distinct typed repository ownership explicit.
 func (s *TypedStore) ConsumeSAML(ctx context.Context, flowID string, expectedRevision uint64) (*State, error) {
-	if s == nil || s.protocol != FlowProtocolSAML {
+	if s == nil {
 		return nil, sessionstate.ErrBindingMismatch
 	}
 
-	reference, err := s.reference(flowID)
+	return consumeTypedFlow(
+		ctx, s, flowID, expectedRevision, FlowProtocolSAML,
+		s.stores.ConsumeSAMLFlow, stateFromSAML,
+	)
+}
+
+// ConsumeInternal atomically removes one revision-bound internal browser flow.
+func (s *TypedStore) ConsumeInternal(ctx context.Context, flowID string, expectedRevision uint64) (*State, error) {
+	if s == nil {
+		return nil, sessionstate.ErrBindingMismatch
+	}
+
+	return consumeTypedFlow(
+		ctx, s, flowID, expectedRevision, FlowProtocolInternal,
+		s.stores.ConsumeSelfServiceFlow, stateFromSelfService,
+	)
+}
+
+// consumeTypedFlow applies the shared revision-bound consume contract to one typed repository family.
+func consumeTypedFlow[T any](
+	ctx context.Context,
+	store *TypedStore,
+	flowID string,
+	expectedRevision uint64,
+	protocol Protocol,
+	consume func(context.Context, sessionstate.DeleteRequest) (sessionstate.Versioned[T], error),
+	restore func(sessionstate.Versioned[T]) *State,
+) (*State, error) {
+	if store.protocol != protocol {
+		return nil, sessionstate.ErrBindingMismatch
+	}
+
+	reference, err := store.reference(flowID)
 	if err != nil {
 		return nil, err
 	}
 
-	versioned, err := s.stores.ConsumeSAMLFlow(ctx, sessionstate.DeleteRequest{
+	versioned, err := consume(ctx, sessionstate.DeleteRequest{
 		Reference: reference, ExpectedRevision: sessionstate.Revision(expectedRevision),
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return stateFromSAML(versioned), nil
+	return restore(versioned), nil
 }
 
 // TouchTTL extends a live flow with the same revision and bounded parent lifetime.
@@ -228,6 +273,17 @@ func samlFromState(session sessionstate.Handle, state *State) sessionstate.SAMLF
 	}
 }
 
+// selfServiceFromState maps one internal login flow into its dedicated durable record.
+func selfServiceFromState(session sessionstate.Handle, state *State) sessionstate.SelfServiceFlow {
+	return sessionstate.SelfServiceFlow{
+		FlowType: string(state.Type), CurrentStep: string(state.CurrentStep),
+		AuthOutcome: string(state.AuthOutcome), LoginTarget: state.ReturnTarget,
+		ResumeTarget: state.metadataValue(FlowMetadataResumeTarget),
+		Record:       sessionstate.Record{Handle: sessionstate.Handle(state.FlowID)}, Session: session,
+		CreatedAt: state.CreatedAt, UpdatedAt: state.UpdatedAt,
+	}
+}
+
 func stateFromOIDC(versioned sessionstate.Versioned[sessionstate.OIDCFlow]) *State {
 	value := versioned.Value
 
@@ -267,5 +323,17 @@ func stateFromSAML(versioned sessionstate.Versioned[sessionstate.SAMLFlow]) *Sta
 			FlowMetadataOriginalURL:       value.OriginalURL,
 			FlowMetadataResumeTarget:      value.ResumeTarget,
 		},
+	}
+}
+
+// stateFromSelfService restores one internal login flow from its durable record.
+func stateFromSelfService(versioned sessionstate.Versioned[sessionstate.SelfServiceFlow]) *State {
+	value := versioned.Value
+
+	return &State{
+		FlowID: string(value.Handle), Revision: uint64(versioned.Revision), ReturnTarget: value.LoginTarget,
+		Type: Type(value.FlowType), Protocol: FlowProtocolInternal, CurrentStep: Step(value.CurrentStep),
+		AuthOutcome: AuthOutcome(value.AuthOutcome), CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
+		Metadata: map[string]string{FlowMetadataResumeTarget: value.ResumeTarget},
 	}
 }

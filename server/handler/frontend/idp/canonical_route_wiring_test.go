@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -25,11 +26,22 @@ func TestCanonicalFrontendRouteChainsNeverInstallLegacySecureMiddleware(t *testi
 	gin.SetMode(gin.TestMode)
 
 	for _, testCase := range []struct {
-		name  string
-		chain func(frontendRouteMiddlewares, gin.HandlerFunc) []gin.HandlerFunc
+		name     string
+		chain    func(frontendRouteMiddlewares, gin.HandlerFunc) []gin.HandlerFunc
+		expected []string
 	}{
-		{name: "login_and_mfa", chain: frontendRouteHandlers},
-		{name: "authenticated_self_service", chain: frontendAuthRouteHandlers},
+		{
+			name: "login_and_mfa", chain: frontendRouteHandlers,
+			expected: []string{"security", "canonical", "csrf", "i18n", "handler"},
+		},
+		{
+			name: "authenticated_self_service", chain: frontendAuthRouteHandlers,
+			expected: []string{"security", "canonical", "csrf", "i18n", "handler"},
+		},
+		{
+			name: "self_service_entry", chain: frontendSelfServiceEntryRouteHandlers,
+			expected: []string{"security", "self-service-entry", "csrf", "i18n", "handler"},
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			sequence := make([]string, 0, 5)
@@ -42,8 +54,9 @@ func TestCanonicalFrontendRouteChainsNeverInstallLegacySecureMiddleware(t *testi
 			}
 			middlewares := frontendRouteMiddlewares{
 				security: middleware("security"), csrf: middleware("csrf"),
-				canonical: middleware("canonical"),
-				i18n:      middleware("i18n"),
+				canonical:        middleware("canonical"),
+				selfServiceEntry: middleware("self-service-entry"),
+				i18n:             middleware("i18n"),
 			}
 			final := func(ctx *gin.Context) {
 				sequence = append(sequence, "handler")
@@ -58,7 +71,7 @@ func TestCanonicalFrontendRouteChainsNeverInstallLegacySecureMiddleware(t *testi
 			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/route", nil))
 
 			if response.Code != http.StatusNoContent || slices.Contains(sequence, "legacy-secure") ||
-				!slices.Equal(sequence, []string{"security", "canonical", "csrf", "i18n", "handler"}) {
+				!slices.Equal(sequence, testCase.expected) {
 				t.Fatalf("canonical route sequence = %v, status = %d", sequence, response.Code)
 			}
 		})
@@ -108,7 +121,7 @@ func TestNewCanonicalBrowserRuntimeUsesExplicitV1Composition(t *testing.T) {
 	}
 }
 
-func TestFrontendRegisterCanonicalBindsLoginAndSelfServiceAsContinuations(t *testing.T) {
+func TestFrontendRegisterCanonicalBindsLoginAndProtectedRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	runtime, _, _ := seedCanonicalIDPFlow(t, nil)
@@ -143,7 +156,43 @@ func TestFrontendRegisterCanonicalBindsLoginAndSelfServiceAsContinuations(t *tes
 	}
 
 	assertCanonicalContinuationRejectsAbsentEnvelope(t, router, frontendLoginPath)
-	assertCanonicalContinuationRejectsAbsentEnvelope(t, router, definitions.MFARoot+"/register/home")
+}
+
+func TestCanonicalSelfServiceHomeStartsLoginForMissingEnvelope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	runtime, _, _ := seedCanonicalIDPFlow(t, nil)
+
+	handler, err := NewCanonicalFrontendHandler(&deps.Deps{
+		Cfg: &mockFrontendCfg{}, Env: config.NewTestEnvironmentConfig(),
+		LangManager: &mockMultiLangManager{}, Logger: slog.Default(),
+	}, runtime)
+	if err != nil {
+		t.Fatalf("compose canonical frontend registrar: %v", err)
+	}
+
+	router := gin.New()
+	handler.Register(router)
+
+	request := httptest.NewRequest(http.MethodGet, definitions.MFARoot+"/register/home/de", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusFound {
+		t.Fatalf("self-service entry status = %d, want %d", response.Code, http.StatusFound)
+	}
+
+	location := response.Header().Get("Location")
+	if !strings.HasPrefix(location, "/login/de?flow=") {
+		t.Fatalf("self-service login location = %q", location)
+	}
+
+	cookies := response.Result().Cookies()
+	if !slices.ContainsFunc(cookies, func(current *http.Cookie) bool {
+		return current.Name == definitions.SecureDataCookieName && current.Value != ""
+	}) {
+		t.Fatalf("self-service entry cookies = %#v, want purge pair and fresh canonical envelope", cookies)
+	}
 }
 
 func TestOIDCRegisterCanonicalBindsExplicitBrowserModesWithoutLegacyFailurePage(t *testing.T) {

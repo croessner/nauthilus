@@ -64,11 +64,17 @@ func canonicalOwnedChildren(
 	anchor sessionstate.SessionAnchor,
 ) []sessionstate.OwnedReference {
 	children := make([]sessionstate.OwnedReference, 0,
-		len(anchor.OIDCFlows)+len(anchor.SAMLFlows)+len(anchor.Enrollments)+
+		len(anchor.OIDCFlows)+len(anchor.SAMLFlows)+len(anchor.SelfServiceFlows)+len(anchor.Enrollments)+
 			len(anchor.StepUps)+len(anchor.Ceremonies)+len(anchor.TOTPRecovery)+len(anchor.LogoutIndexes),
 	)
 	children = appendCanonicalOwnedChildren(children, sessionstate.OwnerOIDCFlow, session, anchor.OIDCFlows)
 	children = appendCanonicalOwnedChildren(children, sessionstate.OwnerSAMLFlow, session, anchor.SAMLFlows)
+	children = appendCanonicalOwnedChildren(
+		children,
+		sessionstate.OwnerSelfServiceFlow,
+		session,
+		anchor.SelfServiceFlows,
+	)
 	children = appendCanonicalOwnedChildren(children, sessionstate.OwnerEnrollment, session, anchor.Enrollments)
 	children = appendCanonicalOwnedChildren(children, sessionstate.OwnerStepUp, session, anchor.StepUps)
 	children = appendCanonicalOwnedChildren(children, sessionstate.OwnerWebAuthnCeremony, session, anchor.Ceremonies)

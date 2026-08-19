@@ -24,6 +24,8 @@ var (
 	ErrFlowNotFound = errors.New("flow not found")
 	// ErrAmbiguousProtocolFlow rejects one ticket that resolves in more than one protocol repository.
 	ErrAmbiguousProtocolFlow = errors.New("ambiguous protocol flow")
+	// ErrAmbiguousLoginFlow rejects one ticket that resolves as both external and internal login state.
+	ErrAmbiguousLoginFlow = errors.New("ambiguous login flow")
 	// ErrInvalidFlowType reports an unsupported flow type.
 	ErrInvalidFlowType = errors.New("invalid flow type")
 	// ErrInvalidProtocol reports an unsupported flow protocol.

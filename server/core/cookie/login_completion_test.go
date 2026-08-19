@@ -58,7 +58,8 @@ func TestLoginCompletionRotatesAllCurrentV1ChildFamilies(t *testing.T) {
 	}
 
 	if rotated.Handle != fixture.newHandle || len(rotated.Anchor.Value.OIDCFlows) != 1 ||
-		len(rotated.Anchor.Value.SAMLFlows) != 1 || len(rotated.Anchor.Value.Enrollments) != 1 ||
+		len(rotated.Anchor.Value.SAMLFlows) != 1 || len(rotated.Anchor.Value.SelfServiceFlows) != 1 ||
+		len(rotated.Anchor.Value.Enrollments) != 1 ||
 		len(rotated.Anchor.Value.StepUps) != 1 || len(rotated.Anchor.Value.Ceremonies) != 1 ||
 		len(rotated.Anchor.Value.TOTPRecovery) != 1 {
 		t.Fatalf("rotated session = %#v", rotated)
@@ -93,6 +94,30 @@ func TestLoginCompletionAdvancesOnlySelectedProtocolFlow(t *testing.T) {
 	})
 	if err != nil || untouched.Value.AuthOutcome != "unknown" || untouched.Value.CurrentStep != "start" {
 		t.Fatalf("untouched flow = %#v, err = %v", untouched, err)
+	}
+}
+
+func TestLoginCompletionAdvancesSelectedSelfServiceFlow(t *testing.T) {
+	t.Parallel()
+
+	fixture := newLoginCompletionFixture(t)
+	seedLoginCompletionSelfServiceFlow(t, fixture)
+	fixture.refreshSession(t)
+	input := fixture.input(0)
+	input.Protocol = "internal"
+	input.NextStep = "callback"
+	input.Identity.Protocol = definitions.ProtoIDP
+
+	rotated, err := fixture.session.CompleteLogin(context.Background(), httptest.NewRecorder(), input)
+	if err != nil {
+		t.Fatalf("complete self-service login: %v", err)
+	}
+
+	selected, err := rotated.Stores.SelfService.Load(context.Background(), sessionstate.Reference{
+		Session: rotated.Handle, Record: fixture.flowHandle,
+	})
+	if err != nil || selected.Value.AuthOutcome != "ok" || selected.Value.CurrentStep != "callback" {
+		t.Fatalf("selected self-service flow = %#v, err = %v", selected, err)
 	}
 }
 
@@ -309,9 +334,44 @@ func seedLoginCompletionProtocolFlows(t *testing.T, fixture *loginCompletionFixt
 	}
 }
 
+func seedLoginCompletionSelfServiceFlow(t *testing.T, fixture *loginCompletionFixture) {
+	t.Helper()
+
+	if _, err := fixture.session.Stores.CommitSelfServiceFlow(
+		context.Background(),
+		sessionstate.CommitRequest[sessionstate.SelfServiceFlow]{
+			Reference: sessionstate.Reference{Session: fixture.oldHandle, Record: fixture.flowHandle},
+			Value: sessionstate.SelfServiceFlow{
+				Record: sessionstate.Record{Handle: fixture.flowHandle}, Session: fixture.oldHandle,
+				FlowType: "self_service_login", CurrentStep: "login", AuthOutcome: "unknown",
+			},
+			TTL: 10 * time.Minute,
+		},
+	); err != nil {
+		t.Fatalf("seed self-service flow: %v", err)
+	}
+}
+
 func seedLoginCompletionFamilies(t *testing.T, fixture *loginCompletionFixture) {
 	t.Helper()
 	seedLoginCompletionProtocolFlows(t, fixture)
+
+	selfService := sessionstate.Handle(strings.Repeat("I", 43))
+
+	_, err := fixture.session.Stores.CommitSelfServiceFlow(
+		context.Background(),
+		sessionstate.CommitRequest[sessionstate.SelfServiceFlow]{
+			Reference: sessionstate.Reference{Session: fixture.oldHandle, Record: selfService},
+			Value: sessionstate.SelfServiceFlow{
+				Record: sessionstate.Record{Handle: selfService}, Session: fixture.oldHandle,
+				FlowType: "self_service_login", CurrentStep: "login", AuthOutcome: "unknown",
+			},
+			TTL: 5 * time.Minute,
+		},
+	)
+	if err != nil {
+		t.Fatalf("seed self-service: %v", err)
+	}
 
 	ctx := context.Background()
 	commit := func(owner string, err error) {
@@ -323,7 +383,7 @@ func seedLoginCompletionFamilies(t *testing.T, fixture *loginCompletionFixture) 
 	}
 
 	enrollment := sessionstate.Handle(strings.Repeat("E", 43))
-	_, err := fixture.session.Stores.CommitEnrollment(ctx, sessionstate.CommitRequest[sessionstate.EnrollmentRecord]{
+	_, err = fixture.session.Stores.CommitEnrollment(ctx, sessionstate.CommitRequest[sessionstate.EnrollmentRecord]{
 		Reference: sessionstate.Reference{Session: fixture.oldHandle, Record: enrollment},
 		Value:     sessionstate.EnrollmentRecord{Record: sessionstate.Record{Handle: enrollment}, Session: fixture.oldHandle},
 		TTL:       5 * time.Minute,

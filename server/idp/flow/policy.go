@@ -75,6 +75,7 @@ func DefaultPolicies() map[Type]Policy {
 		FlowTypeOIDCDeviceCode:    oidcDevicePolicy(),
 		FlowTypeSAML:              samlPolicy(),
 		FlowTypeRequireMFA:        requireMFAPolicy(),
+		FlowTypeSelfServiceLogin:  selfServiceLoginPolicy(),
 	}
 }
 
@@ -203,15 +204,26 @@ func samlPolicy() Policy {
 	}
 }
 
+// requireMFAPolicy limits required enrollment to one challenge and completion.
 func requireMFAPolicy() Policy {
+	return linearInteractionPolicy(FlowTypeRequireMFA, FlowStepRequireMFAChallenge)
+}
+
+// selfServiceLoginPolicy limits the internal portal login to primary authentication and completion.
+func selfServiceLoginPolicy() Policy {
+	return linearInteractionPolicy(FlowTypeSelfServiceLogin, FlowStepLogin)
+}
+
+// linearInteractionPolicy composes one start, interaction, callback, and done state machine.
+func linearInteractionPolicy(flowType Type, interaction Step) Policy {
 	return staticPolicy{
-		flowType: FlowTypeRequireMFA,
+		flowType: flowType,
 		allowedActions: map[Step]map[Action]struct{}{
 			FlowStepStart: {
 				FlowActionStart:   {},
 				FlowActionAdvance: {},
 			},
-			FlowStepRequireMFAChallenge: {
+			interaction: {
 				FlowActionAdvance: {},
 				FlowActionCancel:  {},
 			},
@@ -220,11 +232,11 @@ func requireMFAPolicy() Policy {
 				FlowActionAbort:    {},
 			},
 		},
-		allowedSteps: stepsToSet(FlowStepStart, FlowStepRequireMFAChallenge, FlowStepCallback, FlowStepDone),
+		allowedSteps: stepsToSet(FlowStepStart, interaction, FlowStepCallback, FlowStepDone),
 		allowedNextStep: map[Step]map[Step]struct{}{
-			FlowStepStart:               stepsToSet(FlowStepRequireMFAChallenge),
-			FlowStepRequireMFAChallenge: stepsToSet(FlowStepCallback),
-			FlowStepCallback:            stepsToSet(FlowStepDone),
+			FlowStepStart:    stepsToSet(interaction),
+			interaction:      stepsToSet(FlowStepCallback),
+			FlowStepCallback: stepsToSet(FlowStepDone),
 		},
 	}
 }

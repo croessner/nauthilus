@@ -228,6 +228,7 @@ type RedisStores struct {
 	Session      *RedisRepository[SessionAnchor]
 	OIDC         *RedisRepository[OIDCFlow]
 	SAML         *RedisRepository[SAMLFlow]
+	SelfService  *RedisRepository[SelfServiceFlow]
 	Enrollment   *RedisRepository[EnrollmentRecord]
 	StepUp       *RedisRepository[StepUpRecord]
 	Ceremony     *RedisRepository[CeremonyRecord]
@@ -277,6 +278,9 @@ func NewRedisStores(
 	stores.Session = newRedisRepository[SessionAnchor](client, keyspace, OwnerSessionAnchor, clock, defaultTTL, false)
 	stores.OIDC = newRedisRepository[OIDCFlow](client, keyspace, OwnerOIDCFlow, clock, defaultTTL, true)
 	stores.SAML = newRedisRepository[SAMLFlow](client, keyspace, OwnerSAMLFlow, clock, defaultTTL, true)
+	stores.SelfService = newRedisRepository[SelfServiceFlow](
+		client, keyspace, OwnerSelfServiceFlow, clock, defaultTTL, true,
+	)
 	stores.Enrollment = newRedisRepository[EnrollmentRecord](client, keyspace, OwnerEnrollment, clock, defaultTTL, true)
 	stores.StepUp = newRedisRepository[StepUpRecord](client, keyspace, OwnerStepUp, clock, defaultTTL, true)
 	stores.Ceremony = newRedisRepository[CeremonyRecord](client, keyspace, OwnerWebAuthnCeremony, clock, defaultTTL, true)
@@ -725,6 +729,8 @@ func validateRecordBinding[T any](value T, reference Reference) error {
 		recordHandle, sessionHandle = typed.Handle, typed.Session
 	case SAMLFlow:
 		recordHandle, sessionHandle = typed.Handle, typed.Session
+	case SelfServiceFlow:
+		recordHandle, sessionHandle = typed.Handle, typed.Session
 	case EnrollmentRecord:
 		recordHandle, sessionHandle = typed.Handle, typed.Session
 	case StepUpRecord:
@@ -767,6 +773,8 @@ func normalizeLoadedRecord[T any](value *T, revision Revision, expiresAt time.Ti
 	case *OIDCFlow:
 		typed.Revision, typed.ExpiresAt = revision, expiresAt
 	case *SAMLFlow:
+		typed.Revision, typed.ExpiresAt = revision, expiresAt
+	case *SelfServiceFlow:
 		typed.Revision, typed.ExpiresAt = revision, expiresAt
 	case *EnrollmentRecord:
 		typed.Revision, typed.ExpiresAt = revision, expiresAt
@@ -898,6 +906,14 @@ func (s *RedisStores) CommitSAMLFlow(ctx context.Context, request CommitRequest[
 	return commitIndexedFlow(ctx, s, request, appendSAMLIndex, assignSAMLMutation)
 }
 
+// CommitSelfServiceFlow atomically indexes and commits one bounded internal-login flow.
+func (s *RedisStores) CommitSelfServiceFlow(
+	ctx context.Context,
+	request CommitRequest[SelfServiceFlow],
+) (Revision, error) {
+	return commitIndexedFlow(ctx, s, request, appendSelfServiceIndex, assignSelfServiceMutation)
+}
+
 // CommitCeremony atomically indexes and commits one short-lived WebAuthn operation.
 func (s *RedisStores) CommitCeremony(ctx context.Context, request CommitRequest[CeremonyRecord]) (Revision, error) {
 	return commitIndexedFlow(ctx, s, request, appendCeremonyIndex, assignCeremonyMutation)
@@ -969,6 +985,11 @@ func appendSAMLIndex(anchor *SessionAnchor, handle Handle) error {
 	return appendActiveFlow(&anchor.SAMLFlows, handle)
 }
 
+// appendSelfServiceIndex binds one internal-login handle to its canonical session.
+func appendSelfServiceIndex(anchor *SessionAnchor, handle Handle) error {
+	return appendActiveFlow(&anchor.SelfServiceFlows, handle)
+}
+
 func appendCeremonyIndex(anchor *SessionAnchor, handle Handle) error {
 	return appendActiveFlow(&anchor.Ceremonies, handle)
 }
@@ -995,6 +1016,11 @@ func assignOIDCMutation(transaction *TransactionRequest, child CommitRequest[OID
 
 func assignSAMLMutation(transaction *TransactionRequest, child CommitRequest[SAMLFlow]) {
 	transaction.SAML = []CommitRequest[SAMLFlow]{child}
+}
+
+// assignSelfServiceMutation assigns one internal-login mutation to a transaction.
+func assignSelfServiceMutation(transaction *TransactionRequest, child CommitRequest[SelfServiceFlow]) {
+	transaction.SelfService = []CommitRequest[SelfServiceFlow]{child}
 }
 
 func assignCeremonyMutation(transaction *TransactionRequest, child CommitRequest[CeremonyRecord]) {
@@ -1052,6 +1078,13 @@ func (s *RedisStores) DeleteOIDCFlow(ctx context.Context, request DeleteRequest)
 func (s *RedisStores) DeleteSAMLFlow(ctx context.Context, request DeleteRequest) error {
 	return s.deleteIndexedFlow(ctx, OwnerSAMLFlow, request, func(anchor *SessionAnchor) {
 		anchor.SAMLFlows = removeActiveFlow(anchor.SAMLFlows, request.Reference.Record)
+	})
+}
+
+// DeleteSelfServiceFlow atomically removes one internal-login child and its anchor index entry.
+func (s *RedisStores) DeleteSelfServiceFlow(ctx context.Context, request DeleteRequest) error {
+	return s.deleteIndexedFlow(ctx, OwnerSelfServiceFlow, request, func(anchor *SessionAnchor) {
+		anchor.SelfServiceFlows = removeActiveFlow(anchor.SelfServiceFlows, request.Reference.Record)
 	})
 }
 
@@ -1120,6 +1153,16 @@ func (s *RedisStores) ConsumeSAMLFlow(
 ) (Versioned[SAMLFlow], error) {
 	return consumeIndexedRecord(ctx, s, s.SAML, request, func(anchor *SessionAnchor) {
 		anchor.SAMLFlows = removeActiveFlow(anchor.SAMLFlows, request.Reference.Record)
+	})
+}
+
+// ConsumeSelfServiceFlow atomically removes one internal-login flow and its bounded anchor index.
+func (s *RedisStores) ConsumeSelfServiceFlow(
+	ctx context.Context,
+	request DeleteRequest,
+) (Versioned[SelfServiceFlow], error) {
+	return consumeIndexedRecord(ctx, s, s.SelfService, request, func(anchor *SessionAnchor) {
+		anchor.SelfServiceFlows = removeActiveFlow(anchor.SelfServiceFlows, request.Reference.Record)
 	})
 }
 
@@ -1264,6 +1307,10 @@ func (s *RedisStores) transactionMutations(
 		return nil, err
 	}
 
+	if err = appendTransactionChildMutations(&mutations, s.SelfService, request.SelfService, anchorTTL); err != nil {
+		return nil, err
+	}
+
 	if err = appendTransactionChildMutations(&mutations, s.Enrollment, request.Enrollment, anchorTTL); err != nil {
 		return nil, err
 	}
@@ -1289,7 +1336,7 @@ func (s *RedisStores) transactionMutations(
 
 // transactionRequestSize returns the bounded mutation capacity needed for one request.
 func transactionRequestSize(request TransactionRequest) int {
-	return 1 + len(request.OIDC) + len(request.SAML) + len(request.Enrollment) +
+	return 1 + len(request.OIDC) + len(request.SAML) + len(request.SelfService) + len(request.Enrollment) +
 		len(request.StepUp) + len(request.Ceremony) + len(request.TOTPRecovery) + len(request.Logout)
 }
 
@@ -1494,8 +1541,8 @@ func (s *RedisStores) revocationChildKeys(session Handle, children []OwnedRefere
 // isChildOwner restricts cleanup to typed child namespaces.
 func isChildOwner(owner Owner) bool {
 	switch owner {
-	case OwnerOIDCFlow, OwnerSAMLFlow, OwnerEnrollment, OwnerStepUp, OwnerWebAuthnCeremony, OwnerTOTPRecovery,
-		OwnerConsent:
+	case OwnerOIDCFlow, OwnerSAMLFlow, OwnerSelfServiceFlow, OwnerEnrollment, OwnerStepUp,
+		OwnerWebAuthnCeremony, OwnerTOTPRecovery, OwnerConsent:
 		return true
 	default:
 		return false

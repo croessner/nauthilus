@@ -29,12 +29,15 @@ const (
 	FlowTypeSAML Type = "saml"
 	// FlowTypeRequireMFA is the internal mandatory-MFA completion flow.
 	FlowTypeRequireMFA Type = "require_mfa"
+	// FlowTypeSelfServiceLogin is the internal primary-login flow for the MFA portal.
+	FlowTypeSelfServiceLogin Type = "self_service_login"
 )
 
 // Valid reports whether the flow type is a known value.
 func (f Type) Valid() bool {
 	switch f {
-	case FlowTypeOIDCAuthorization, FlowTypeOIDCDeviceCode, FlowTypeSAML, FlowTypeRequireMFA:
+	case FlowTypeOIDCAuthorization, FlowTypeOIDCDeviceCode, FlowTypeSAML, FlowTypeRequireMFA,
+		FlowTypeSelfServiceLogin:
 		return true
 	default:
 		return false

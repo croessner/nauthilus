@@ -186,6 +186,16 @@ func (h *FrontendHandler) appendQueryString(path string, query string) string {
 
 // canonicalIDPFlow resolves and validates exactly one typed flow selected by the canonical request ticket.
 func (h *FrontendHandler) canonicalIDPFlow(ctx *gin.Context) (*flowdomain.State, bool) {
+	state, valid := h.canonicalLoginFlow(ctx)
+	if !valid || state.Protocol == flowdomain.FlowProtocolInternal {
+		return nil, false
+	}
+
+	return state, true
+}
+
+// canonicalLoginFlow resolves and validates one external or internal typed browser-login flow.
+func (h *FrontendHandler) canonicalLoginFlow(ctx *gin.Context) (*flowdomain.State, bool) {
 	session := cookie.GetCanonicalSession(ctx)
 
 	ticket, err := flowdomain.TicketFromRequest(ctx.Request)
@@ -193,7 +203,7 @@ func (h *FrontendHandler) canonicalIDPFlow(ctx *gin.Context) (*flowdomain.State,
 		return nil, false
 	}
 
-	state, err := flowdomain.NewProtocolAggregate(session.Stores, session.Handle, 0).
+	state, err := flowdomain.NewLoginAggregate(session.Stores, session.Handle, 0).
 		Load(ctx.Request.Context(), string(ticket))
 	if err != nil {
 		return nil, false
@@ -206,6 +216,8 @@ func (h *FrontendHandler) canonicalIDPFlow(ctx *gin.Context) (*flowdomain.State,
 		valid = validCanonicalOIDCLoginFlow(state)
 	case flowdomain.FlowProtocolSAML:
 		valid = validCanonicalSAMLLoginFlow(state)
+	case flowdomain.FlowProtocolInternal:
+		valid = validCanonicalSelfServiceLoginFlow(ctx, state)
 	}
 
 	return state, valid
@@ -302,10 +314,11 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 }
 
 type frontendRouteMiddlewares struct {
-	security  gin.HandlerFunc
-	csrf      gin.HandlerFunc
-	canonical gin.HandlerFunc
-	i18n      gin.HandlerFunc
+	security         gin.HandlerFunc
+	csrf             gin.HandlerFunc
+	canonical        gin.HandlerFunc
+	selfServiceEntry gin.HandlerFunc
+	i18n             gin.HandlerFunc
 }
 
 type frontendRouteChain func(frontendRouteMiddlewares, gin.HandlerFunc) []gin.HandlerFunc
@@ -359,6 +372,10 @@ func (h *FrontendHandler) newFrontendRouteMiddlewares() frontendRouteMiddlewares
 		security:  securityheaders.New(securityheaders.MiddlewareConfig{Config: h.deps.Cfg}).Handler(),
 		csrf:      csrfMiddleware,
 		canonical: cookie.CanonicalMiddleware(h.canonicalRuntime, cookie.CanonicalContinuation),
+		selfServiceEntry: cookie.CanonicalMiddleware(
+			h.canonicalRuntime,
+			cookie.CanonicalSelfServiceEntry,
+		),
 		i18n: i18n.WithLanguageCookieSecurity(
 			h.deps.Cfg, h.deps.Logger, h.deps.LangManager, !h.deps.Env.GetDevMode(),
 		),
@@ -373,6 +390,20 @@ func frontendRouteHandlers(middlewares frontendRouteMiddlewares, handler gin.Han
 // frontendAuthRouteHandlers builds the authenticated canonical self-service chain.
 func frontendAuthRouteHandlers(middlewares frontendRouteMiddlewares, auth gin.HandlerFunc) []gin.HandlerFunc {
 	return []gin.HandlerFunc{middlewares.security, middlewares.canonical, middlewares.csrf, middlewares.i18n, auth}
+}
+
+// frontendSelfServiceEntryRouteHandlers builds the bounded fresh-session chain for the MFA portal home.
+func frontendSelfServiceEntryRouteHandlers(
+	middlewares frontendRouteMiddlewares,
+	auth gin.HandlerFunc,
+) []gin.HandlerFunc {
+	return []gin.HandlerFunc{
+		middlewares.security,
+		middlewares.selfServiceEntry,
+		middlewares.csrf,
+		middlewares.i18n,
+		auth,
+	}
 }
 
 // frontendCookieFreeRouteHandlers builds a chain that does not write the secure session cookie.
@@ -415,9 +446,14 @@ func (h *FrontendHandler) registerAuthRoutes(
 	routeHandlers frontendRouteChain,
 	auth gin.HandlerFunc,
 ) {
+	homeGroup := router.Group(
+		definitions.MFARoot,
+		frontendSelfServiceEntryRouteHandlers(middlewares, h.CanonicalSelfServiceLoginMiddleware())...,
+	)
+	h.registerAuthHomeRoutes(homeGroup)
+
 	authGroup := router.Group(definitions.MFARoot, routeHandlers(middlewares, auth)...)
 
-	h.registerAuthHomeRoutes(authGroup)
 	h.registerAuthTOTPRoutes(authGroup)
 	h.registerAuthWebAuthnRoutes(authGroup)
 	h.registerAuthRecoveryRoutes(authGroup)
@@ -717,7 +753,7 @@ func resolveIDPClientName(cfg config.File, flowType string, oidcClientID string,
 // This endpoint is ONLY for IDP flows (OIDC/SAML2). Direct access without a proper flow is rejected.
 // The opaque URL ticket selects server-side flow state bound to the canonical browser session.
 func (h *FrontendHandler) Login(ctx *gin.Context) {
-	protocolState, valid := h.canonicalIDPFlow(ctx)
+	protocolState, valid := h.canonicalLoginFlow(ctx)
 	if !valid {
 		h.renderNoFlowError(ctx)
 
@@ -769,6 +805,10 @@ func (h *FrontendHandler) resumeCanonicalExistingLoginSession(
 	identity, authenticated := session.Identity()
 	if !authenticated {
 		return false
+	}
+
+	if state.Type == flowdomain.FlowTypeSelfServiceLogin {
+		return h.resumeCanonicalSelfServiceLogin(ctx, session, state)
 	}
 
 	policy, ok := h.canonicalFlowMFAPolicy(ctx.Request.Context(), state)
@@ -1118,6 +1158,9 @@ func postLoginFlowContextFromState(state *flowdomain.State) postLoginFlowContext
 	result.oidcCID = state.Metadata[flowdomain.FlowMetadataClientID]
 	result.samlEntityID = state.Metadata[flowdomain.FlowMetadataSAMLEntityID]
 	result.protocol = string(state.Protocol)
+	if state.Protocol == flowdomain.FlowProtocolInternal {
+		result.protocol = definitions.ProtoIDP
+	}
 
 	return result
 }
@@ -1337,6 +1380,11 @@ func (h *FrontendHandler) storeSuccessfulPostLoginSession(
 	affinity := canonicalSessionBackendAffinity(backendRef)
 	mfaAffinity := canonicalSessionBackendAffinity(mfaBackendRef)
 
+	nextStep := flowdomain.FlowStepLogin
+	if flowContext.state.Type == flowdomain.FlowTypeSelfServiceLogin {
+		nextStep = flowdomain.FlowStepCallback
+	}
+
 	rotated, err := flowContext.session.CompleteLogin(ctx.Request.Context(), ctx.Writer, cookie.LoginCompletionInput{
 		Identity: cookie.IdentityUpdate{
 			Reference: user.ID, Account: user.Name, Subject: user.ID, DisplayName: user.DisplayName,
@@ -1347,8 +1395,8 @@ func (h *FrontendHandler) storeSuccessfulPostLoginSession(
 			},
 			MFABackendAffinity: mfaAffinity,
 		},
-		Flow: sessionstate.Handle(flowContext.state.FlowID), Protocol: flowContext.protocol,
-		NextStep:    string(flowdomain.FlowStepLogin),
+		Flow: sessionstate.Handle(flowContext.state.FlowID), Protocol: string(flowContext.state.Protocol),
+		NextStep:    string(nextStep),
 		RememberTTL: time.Duration(credentials.rememberMeTTL) * time.Second,
 	})
 	if err != nil {
@@ -1404,7 +1452,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	defer requestScope.Restore()
 	defer sp.End()
 
-	protocolState, valid := h.canonicalIDPFlow(ctx)
+	protocolState, valid := h.canonicalLoginFlow(ctx)
 	if !valid {
 		h.renderNoFlowError(ctx)
 
@@ -1439,6 +1487,18 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	}
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
+
+	if flowContext.state.Type == flowdomain.FlowTypeSelfServiceLogin {
+		if !h.completeCanonicalSelfServiceLogin(
+			ctx,
+			cookie.GetCanonicalSession(ctx),
+			flowContext.state.FlowID,
+		) && !ctx.Writer.Written() {
+			ctx.AbortWithStatus(http.StatusConflict)
+		}
+
+		return
+	}
 
 	if !h.resumeCanonicalExistingLoginSession(ctx, cookie.GetCanonicalSession(ctx), flowContext.state) &&
 		!ctx.Writer.Written() {

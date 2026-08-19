@@ -16,33 +16,45 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestCanonicalMiddlewareCreatesProtocolEntrySession(t *testing.T) {
+func TestCanonicalMiddlewareCreatesEntrySession(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
-	mini := miniredis.RunT(t)
-	runtime := newCanonicalMiddlewareRuntime(t, mini, "canonical-middleware")
-	called := false
-	router := gin.New()
-	router.GET("/oidc/authorize", CanonicalMiddleware(runtime, CanonicalProtocolEntry), func(ctx *gin.Context) {
-		called = true
+	for _, testCase := range []struct {
+		name string
+		path string
+		mode CanonicalMode
+	}{
+		{name: "protocol", path: "/oidc/authorize", mode: CanonicalProtocolEntry},
+		{name: "self_service", path: "/mfa/register/home/de", mode: CanonicalSelfServiceEntry},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			mini := miniredis.RunT(t)
+			runtime := newCanonicalMiddlewareRuntime(t, mini, "canonical-entry-"+testCase.name)
+			called := false
+			router := gin.New()
+			router.GET(testCase.path, CanonicalMiddleware(runtime, testCase.mode), func(ctx *gin.Context) {
+				called = true
 
-		if GetCanonicalSession(ctx) == nil {
-			t.Fatal("protocol entry did not receive canonical session")
-		}
+				if GetCanonicalSession(ctx) == nil {
+					t.Fatalf("%s entry did not receive canonical session", testCase.name)
+				}
 
-		ctx.Status(http.StatusNoContent)
-	})
+				ctx.Status(http.StatusNoContent)
+			})
 
-	writer := httptest.NewRecorder()
-	router.ServeHTTP(writer, httptest.NewRequest(http.MethodGet, "/oidc/authorize", nil))
+			writer := httptest.NewRecorder()
+			router.ServeHTTP(writer, httptest.NewRequest(http.MethodGet, testCase.path, nil))
 
-	if !called || writer.Code != http.StatusNoContent {
-		t.Fatalf("protocol entry: called=%t status=%d", called, writer.Code)
-	}
+			if !called || writer.Code != http.StatusNoContent {
+				t.Fatalf("%s entry: called=%t status=%d", testCase.name, called, writer.Code)
+			}
 
-	if cookies := writer.Result().Cookies(); len(cookies) != 3 || cookies[2].Name != definitions.SecureDataCookieName {
-		t.Fatalf("protocol entry cookies = %#v, want two purge cookies then one canonical envelope", cookies)
+			cookies := writer.Result().Cookies()
+			if len(cookies) != 3 || cookies[2].Name != definitions.SecureDataCookieName {
+				t.Fatalf("%s entry cookies = %#v, want purge pair and canonical envelope", testCase.name, cookies)
+			}
+		})
 	}
 }
 

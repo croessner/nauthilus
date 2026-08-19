@@ -1207,6 +1207,7 @@ async function runMFASelfServiceStepUpChecks(browser) {
     label: 'self-service MFA registration',
   });
 
+  await runMFASelfServiceDirectLogin(browser);
   await runMFASelfServiceMissingStepUpRejected(browser);
   await runMFASelfServiceLocalizedVisibleStepUp(browser, registration);
 
@@ -1338,6 +1339,24 @@ async function prepareMFASelfServiceMutationAfterTOTPStepUp(browser, totpSecret,
     await context.close();
     throw error;
   }
+}
+
+// runMFASelfServiceDirectLogin proves a browser without a live OIDC session can
+// authenticate normally and land on the localized 2FA management portal.
+async function runMFASelfServiceDirectLogin(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await withPageState(page, 'direct self-service login', async () => {
+    await page.goto(`${edgeA}/mfa/register/home/en`);
+    await page.waitForURL(/\/login\/en\?flow=/, {timeout: 15000});
+    await submitPasswordLogin(page, selfServiceUsername, password);
+    await page.waitForURL(/\/mfa\/register\/home\/en$/, {timeout: 15000});
+    await expectPageText(page, /2FA Self-Service/);
+  });
+
+  console.log('ok mfa-self-service-direct-login');
+  await context.close();
 }
 
 // establishSelfServiceOIDCSession creates an authenticated browser session whose

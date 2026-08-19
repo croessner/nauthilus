@@ -18,6 +18,8 @@ type CanonicalMode uint8
 const (
 	// CanonicalProtocolEntry may create a fresh anchor after purging a rejected or absent representation.
 	CanonicalProtocolEntry CanonicalMode = iota + 1
+	// CanonicalSelfServiceEntry may create a fresh anonymous anchor for the bounded MFA portal entry.
+	CanonicalSelfServiceEntry
 	// CanonicalContinuation requires an already valid canonical anchor and never reconstructs state.
 	CanonicalContinuation
 )
@@ -41,7 +43,7 @@ func CanonicalMiddleware(runtime *CanonicalRuntime, mode CanonicalMode) gin.Hand
 
 		runtime.PurgeBrowser(ctx.Writer)
 
-		if mode != CanonicalProtocolEntry || !errors.Is(err, ErrEnvelopeRejected) {
+		if !mayCreateCanonicalSession(mode, err) {
 			ctx.AbortWithStatus(http.StatusConflict)
 
 			return
@@ -57,6 +59,15 @@ func CanonicalMiddleware(runtime *CanonicalRuntime, mode CanonicalMode) gin.Hand
 		ctx.Set(canonicalSessionContextKey, session)
 		ctx.Next()
 	}
+}
+
+// mayCreateCanonicalSession restricts fresh anchors to explicit entry modes and rejected envelopes.
+func mayCreateCanonicalSession(mode CanonicalMode, err error) bool {
+	if !errors.Is(err, ErrEnvelopeRejected) {
+		return false
+	}
+
+	return mode == CanonicalProtocolEntry || mode == CanonicalSelfServiceEntry
 }
 
 // GetCanonicalSession returns the request-scoped typed browser session.

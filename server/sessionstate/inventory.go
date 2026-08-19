@@ -14,6 +14,7 @@ const (
 	OwnerSessionAnchor    Owner = "session_anchor"
 	OwnerOIDCFlow         Owner = "oidc_flow"
 	OwnerSAMLFlow         Owner = "saml_flow"
+	OwnerSelfServiceFlow  Owner = "self_service_flow"
 	OwnerEnrollment       Owner = "required_mfa_enrollment"
 	OwnerStepUp           Owner = "step_up"
 	OwnerWebAuthnCeremony Owner = "webauthn_ceremony"

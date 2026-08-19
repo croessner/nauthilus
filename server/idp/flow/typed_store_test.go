@@ -36,6 +36,51 @@ func TestTypedStorePartitionsParallelOIDCAndSAMLFlows(t *testing.T) {
 	assertTypedFlowBindingAndDelete(t, fixture)
 }
 
+func TestTypedStorePersistsAndConsumesInternalSelfServiceFlow(t *testing.T) {
+	t.Parallel()
+
+	fixture := seedParallelTypedFlows(t)
+	flowID := "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII"
+	store := NewTypedStore(
+		fixture.stores,
+		fixture.anchorRef.Session,
+		FlowProtocolInternal,
+		10*time.Minute,
+	)
+
+	state := &State{
+		FlowID: flowID, Type: FlowTypeSelfServiceLogin, Protocol: FlowProtocolInternal,
+		CurrentStep: FlowStepLogin, AuthOutcome: AuthOutcomeUnknown,
+		ReturnTarget: "/login/de",
+		Metadata: map[string]string{
+			FlowMetadataResumeTarget: "/mfa/register/home/de",
+		},
+	}
+	if err := store.Save(fixture.ctx, state); err != nil {
+		t.Fatalf("save internal self-service flow: %v", err)
+	}
+
+	loaded, err := store.Load(fixture.ctx, flowID)
+	if err != nil || loaded.Type != FlowTypeSelfServiceLogin || loaded.ReturnTarget != "/login/de" ||
+		loaded.Metadata[FlowMetadataResumeTarget] != "/mfa/register/home/de" {
+		t.Fatalf("loaded internal self-service flow = %#v, err = %v", loaded, err)
+	}
+
+	consumed, err := store.ConsumeInternal(fixture.ctx, flowID, loaded.Revision)
+	if err != nil || consumed.FlowID != flowID {
+		t.Fatalf("consume internal self-service flow = %#v, err = %v", consumed, err)
+	}
+
+	anchor, err := fixture.stores.Session.Load(fixture.ctx, fixture.anchorRef)
+	if err != nil || len(anchor.Value.SelfServiceFlows) != 0 {
+		t.Fatalf("self-service anchor index after consume = %#v, err = %v", anchor.Value.SelfServiceFlows, err)
+	}
+
+	if _, err = store.ConsumeInternal(fixture.ctx, flowID, loaded.Revision); !errors.Is(err, sessionstate.ErrNotFound) {
+		t.Fatalf("replayed internal consume error = %v, want not found", err)
+	}
+}
+
 type parallelTypedFlowFixture struct {
 	ctx        context.Context
 	stores     *sessionstate.RedisStores

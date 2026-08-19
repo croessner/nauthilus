@@ -32,6 +32,7 @@ type LoginCompletionInput struct {
 type loginCompletionRecords struct {
 	oidc         []sessionstate.Versioned[sessionstate.OIDCFlow]
 	saml         []sessionstate.Versioned[sessionstate.SAMLFlow]
+	selfService  []sessionstate.Versioned[sessionstate.SelfServiceFlow]
 	enrollment   []sessionstate.Versioned[sessionstate.EnrollmentRecord]
 	stepUp       []sessionstate.Versioned[sessionstate.StepUpRecord]
 	ceremony     []sessionstate.Versioned[sessionstate.CeremonyRecord]
@@ -200,6 +201,16 @@ func (s *CanonicalSession) loadLoginCompletionRecords(ctx context.Context) (logi
 		return records, err
 	}
 
+	records.selfService, err = loadLoginCompletionFamily(
+		ctx,
+		s.Stores.SelfService,
+		s.Handle,
+		s.Anchor.Value.SelfServiceFlows,
+	)
+	if err != nil {
+		return records, err
+	}
+
 	records.enrollment, err = loadLoginCompletionFamily(ctx, s.Stores.Enrollment, s.Handle, s.Anchor.Value.Enrollments)
 	if err != nil {
 		return records, err
@@ -274,6 +285,18 @@ func loginCompletionTransaction(
 	transaction.SAML = saml
 
 	children = append(children, samlChildren...)
+
+	selfService, selfServiceChildren, selected, err := appendLoginCompletionProtocol(
+		records.selfService, newHandle, now, anchorTTL, input, selected, "internal",
+		sessionstate.OwnerSelfServiceFlow, rebindLoginCompletionSelfService, advanceLoginCompletionSelfService,
+	)
+	if err != nil {
+		return transaction, nil, err
+	}
+
+	transaction.SelfService = selfService
+
+	children = append(children, selfServiceChildren...)
 
 	if !selected {
 		return transaction, nil, sessionstate.ErrBindingMismatch
@@ -410,6 +433,22 @@ func advanceLoginCompletionSAML(value *sessionstate.SAMLFlow, nextStep string) {
 	value.CurrentStep = nextStep
 }
 
+// rebindLoginCompletionSelfService moves one internal-login record to the rotated session.
+func rebindLoginCompletionSelfService(
+	value *sessionstate.SelfServiceFlow,
+	session sessionstate.Handle,
+) (sessionstate.Handle, time.Time) {
+	value.Session = session
+
+	return value.Handle, value.ExpiresAt
+}
+
+// advanceLoginCompletionSelfService publishes successful primary authentication on the selected flow.
+func advanceLoginCompletionSelfService(value *sessionstate.SelfServiceFlow, nextStep string) {
+	value.AuthOutcome = loginCompletionSuccessOutcome
+	value.CurrentStep = nextStep
+}
+
 func rebindLoginCompletionEnrollment(
 	value *sessionstate.EnrollmentRecord,
 	session sessionstate.Handle,
@@ -457,7 +496,7 @@ func remainingLoginCompletionTTL(expiresAt time.Time, now time.Time, anchorTTL t
 
 func oldLoginCompletionChildren(anchor sessionstate.SessionAnchor) []sessionstate.OwnedReference {
 	children := make([]sessionstate.OwnedReference, 0,
-		len(anchor.OIDCFlows)+len(anchor.SAMLFlows)+len(anchor.Enrollments)+len(anchor.StepUps)+
+		len(anchor.OIDCFlows)+len(anchor.SAMLFlows)+len(anchor.SelfServiceFlows)+len(anchor.Enrollments)+len(anchor.StepUps)+
 			len(anchor.Ceremonies)+len(anchor.TOTPRecovery))
 	appendOwner := func(owner sessionstate.Owner, handles []sessionstate.Handle) {
 		for _, handle := range handles {
@@ -469,6 +508,7 @@ func oldLoginCompletionChildren(anchor sessionstate.SessionAnchor) []sessionstat
 	}
 	appendOwner(sessionstate.OwnerOIDCFlow, anchor.OIDCFlows)
 	appendOwner(sessionstate.OwnerSAMLFlow, anchor.SAMLFlows)
+	appendOwner(sessionstate.OwnerSelfServiceFlow, anchor.SelfServiceFlows)
 	appendOwner(sessionstate.OwnerEnrollment, anchor.Enrollments)
 	appendOwner(sessionstate.OwnerStepUp, anchor.StepUps)
 	appendOwner(sessionstate.OwnerWebAuthnCeremony, anchor.Ceremonies)
