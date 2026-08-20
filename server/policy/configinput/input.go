@@ -56,12 +56,12 @@ func Normalize(ctx context.Context, document policyconfig.Document) (UnifiedPoli
 		return UnifiedPolicyInput{}, err
 	}
 
-	builtin, err := registry.NewBuiltinTargetContributor().Contribute(ctx)
+	material, err := newPolicyNormalizer(normalized.Policy, nil).normalize()
 	if err != nil {
-		return UnifiedPolicyInput{}, fmt.Errorf("build unified builtin authn definitions: %w", err)
+		return UnifiedPolicyInput{}, err
 	}
 
-	material, err := newPolicyNormalizer(normalized.Policy, nil).normalize()
+	builtin, err := configuredBuiltinAuthnContribution(ctx, normalized.Policy, nil)
 	if err != nil {
 		return UnifiedPolicyInput{}, err
 	}
@@ -111,14 +111,75 @@ func (i UnifiedPolicyInput) materialize(
 		return nil, normalizedMaterial{}, err
 	}
 
+	builtin, err := configuredBuiltinAuthnContribution(ctx, document.Policy, acceptance)
+	if err != nil {
+		return nil, normalizedMaterial{}, err
+	}
+
 	contributors := make([]registry.Contributor, 0, len(material.definitions)+1)
-	contributors = append(contributors, registry.NewBuiltinTargetContributor(acceptance))
+	contributors = append(contributors, staticContributor{definition: builtin})
 
 	for _, definition := range material.definitions {
 		contributors = append(contributors, staticContributor{definition: definition})
 	}
 
 	return contributors, material, nil
+}
+
+// configuredBuiltinAuthnContribution removes only builtin plans explicitly replaced by standalone configuration.
+func configuredBuiltinAuthnContribution(
+	ctx context.Context,
+	configured policyconfig.PolicyConfig,
+	acceptance effectsupervisor.Acceptor,
+) (registry.DefinitionContribution, error) {
+	builtin, err := registry.NewBuiltinTargetContributor(acceptance).Contribute(ctx)
+	if err != nil {
+		return registry.DefinitionContribution{}, fmt.Errorf("build unified builtin authn definitions: %w", err)
+	}
+
+	overrides := configuredAuthnPlanTargets(configured)
+	if len(overrides) == 0 {
+		return builtin, nil
+	}
+
+	plans := make([]registry.DomainPlanDefinition, 0, len(builtin.Plans()))
+	for _, plan := range builtin.Plans() {
+		if _, replaced := overrides[plan.Target().String()]; replaced {
+			continue
+		}
+
+		plans = append(plans, plan)
+	}
+
+	composed, err := registry.NewCompleteDefinitionContribution(registry.DefinitionContributionInput{
+		Ownership:  builtin.Ownership(),
+		Targets:    builtin.Targets(),
+		Schemas:    builtin.Schemas(),
+		PolicySets: builtin.PolicySets(),
+		Plans:      plans,
+		Providers:  builtin.Providers(),
+		Effects:    builtin.Effects(),
+	})
+	if err != nil {
+		return registry.DefinitionContribution{}, fmt.Errorf("compose unified builtin authn definitions: %w", err)
+	}
+
+	return composed, nil
+}
+
+// configuredAuthnPlanTargets indexes exact builtin targets with an explicit standalone plan selection.
+func configuredAuthnPlanTargets(configured policyconfig.PolicyConfig) map[string]struct{} {
+	overrides := make(map[string]struct{})
+
+	for _, target := range configured.Targets {
+		if target.Namespace != policy.AuthnNamespace || target.DomainPlan == "" {
+			continue
+		}
+
+		overrides[target.Namespace+"/"+target.Action] = struct{}{}
+	}
+
+	return overrides
 }
 
 // Compile builds a standalone catalog candidate and validates each client-owned admission batch.
@@ -165,6 +226,7 @@ func (c staticContributor) Contribute(ctx context.Context) (registry.DefinitionC
 // builtinActivations constructs the three immutable default authn activations.
 func builtinActivations() ([]registry.TargetActivation, error) {
 	activations := make([]registry.TargetActivation, 0, len(builtinAuthnTargets))
+	report := registry.NewTargetReportSettings(false, true, true, false)
 
 	for index, target := range builtinAuthnTargets {
 		path := fmt.Sprintf("policy.defaults.authn[%d]", index)
@@ -180,6 +242,11 @@ func builtinActivations() ([]registry.TargetActivation, error) {
 		}
 
 		activation, err = activation.WithAuthorityMode(registry.AuthorityModeEnforce)
+		if err != nil {
+			return nil, err
+		}
+
+		activation, err = activation.WithReport(report)
 		if err != nil {
 			return nil, err
 		}

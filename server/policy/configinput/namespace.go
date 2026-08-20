@@ -18,6 +18,8 @@ import (
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
+const effectKindLuaAction = "lua_action"
+
 // normalizeNamespace maps every catalog-representable namespace-owned definition.
 func (n *policyNormalizer) normalizeNamespace(
 	namespace string,
@@ -152,41 +154,138 @@ func (n *policyNormalizer) normalizeEffects(
 	effects := make([]registry.EffectDefinition, 0, len(configured))
 
 	for _, name := range sortedKeys(configured) {
-		path := "policy.namespaces." + namespace + ".effects." + name
-		effect := configured[name]
-
-		targets, err := normalizeTargetReferences(path+".targets", namespace, effect.Targets)
+		definition, err := normalizeEffect(namespace, name, configured[name])
 		if err != nil {
 			return nil, err
-		}
-
-		parameters, err := normalizeEffectParameters(path+".parameters", effect.Parameters)
-		if err != nil {
-			return nil, err
-		}
-
-		provider := effect.Provider
-		if provider != "" {
-			provider = qualify(namespace, provider)
-		}
-
-		definition, err := registry.NewEffectDefinition(registry.EffectDefinitionInput{
-			ID:           namespace + "/" + name,
-			Provider:     provider,
-			DiagnosticID: effect.Diagnostics.PublicID,
-			Targets:      targets,
-			Parameters:   parameters,
-			Kind:         normalizeEffectKind(effect.Kind),
-			Execution:    registry.ExecutionClass(effect.Execution),
-		})
-		if err != nil {
-			return nil, atPath(path, err)
 		}
 
 		effects = append(effects, definition)
 	}
 
 	return effects, nil
+}
+
+// normalizeEffect constructs one typed effect descriptor with canonical host ownership.
+func normalizeEffect(
+	namespace string,
+	name string,
+	effect policyconfig.EffectConfig,
+) (registry.EffectDefinition, error) {
+	path := "policy.namespaces." + namespace + ".effects." + name
+
+	targets, err := normalizeEffectTargets(path, namespace, effect)
+	if err != nil {
+		return registry.EffectDefinition{}, err
+	}
+
+	parameters, err := normalizeEffectParameters(path+".parameters", effect.Parameters)
+	if err != nil {
+		return registry.EffectDefinition{}, err
+	}
+
+	provider, err := normalizeEffectProvider(path, namespace, effect)
+	if err != nil {
+		return registry.EffectDefinition{}, err
+	}
+
+	definition, err := registry.NewEffectDefinition(registry.EffectDefinitionInput{
+		ID:           namespace + "/" + name,
+		Provider:     provider,
+		DiagnosticID: effect.Diagnostics.PublicID,
+		Targets:      targets,
+		Parameters:   parameters,
+		Kind:         normalizeEffectKind(effect.Kind),
+		Execution:    registry.ExecutionClass(effect.Execution),
+	})
+	if err != nil {
+		return registry.EffectDefinition{}, atPath(path, err)
+	}
+
+	return definition, nil
+}
+
+// normalizeEffectTargets applies immutable authentication surfaces when a Lua action omits targets.
+func normalizeEffectTargets(
+	path string,
+	namespace string,
+	effect policyconfig.EffectConfig,
+) ([]decision.Target, error) {
+	targets, err := normalizeTargetReferences(path+".targets", namespace, effect.Targets)
+	if err != nil {
+		return nil, err
+	}
+
+	if namespace != policy.AuthnNamespace || effect.Kind != effectKindLuaAction || len(targets) > 0 {
+		return targets, nil
+	}
+
+	targets, err = builtinLuaActionTargets()
+	if err != nil {
+		return nil, atPath(path+".targets", err)
+	}
+
+	return targets, nil
+}
+
+// normalizeEffectProvider resolves immutable Lua ownership or qualifies an authored provider reference.
+func normalizeEffectProvider(
+	path string,
+	namespace string,
+	effect policyconfig.EffectConfig,
+) (string, error) {
+	if namespace == policy.AuthnNamespace && effect.Kind == effectKindLuaAction && effect.Provider == "" {
+		provider, err := builtinLuaActionProvider(effect.ActionType, registry.ExecutionClass(effect.Execution))
+		if err != nil {
+			return "", atPath(path+".provider", err)
+		}
+
+		return provider, nil
+	}
+
+	if effect.Provider != "" {
+		return qualify(namespace, effect.Provider), nil
+	}
+
+	return "", nil
+}
+
+// builtinLuaActionTargets returns the immutable authentication surfaces served by Lua action owners.
+func builtinLuaActionTargets() ([]decision.Target, error) {
+	actions := []policy.Operation{policy.OperationAuthenticate, policy.OperationLookupIdentity}
+	targets := make([]decision.Target, 0, len(actions))
+
+	for _, action := range actions {
+		target, err := decision.NewTarget(policy.AuthnNamespace, string(action))
+		if err != nil {
+			return nil, err
+		}
+
+		targets = append(targets, target)
+	}
+
+	return targets, nil
+}
+
+// builtinLuaActionProvider resolves host ownership without exposing an operator provider field.
+func builtinLuaActionProvider(actionType string, execution registry.ExecutionClass) (string, error) {
+	selection := policy.ObligationLuaActionDispatch
+	if actionType == "post" {
+		selection = policy.ObligationLuaPostActionEnqueue
+	}
+
+	for _, binding := range registry.BuiltinAuthEffectBindings() {
+		if binding.Selection != selection {
+			continue
+		}
+
+		if binding.Execution != execution {
+			return "", fmt.Errorf("action_type %s requires %s execution", actionType, binding.Execution)
+		}
+
+		return binding.Provider, nil
+	}
+
+	return "", fmt.Errorf("no immutable Lua action host provider for action_type %s", actionType)
 }
 
 // normalizeTargetReferences qualifies namespace-owned target action allowlists.

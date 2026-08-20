@@ -1218,6 +1218,18 @@ func cloneUniqueQualifiedIDs(values []string, path string) ([]string, error) {
 	)
 }
 
+// cloneUniqueProviderIDs owns and deduplicates canonical provider identities.
+func cloneUniqueProviderIDs(values []string, path string) ([]string, error) {
+	return cloneValidatedUniqueStrings(
+		values,
+		path,
+		identifier.ProviderIdentity,
+		ErrInvalidExportContract,
+		"must contain exact provider identities",
+		"provider identity occurs more than once",
+	)
+}
+
 // cloneUniqueCheckpoints owns and deduplicates compatible checkpoint identities.
 func cloneUniqueCheckpoints(values []string) ([]string, error) {
 	if len(values) == 0 || len(values) > maximumPolicySetEntries {
@@ -1246,16 +1258,21 @@ func cloneUniqueActions(values []string, path string) ([]string, error) {
 	)
 }
 
-// cloneUniqueQualifiedIDsForRule owns exact provider dependencies with rule-specific errors.
+// cloneUniqueQualifiedIDsForRule owns provider identities or local instance references with rule-specific errors.
 func cloneUniqueQualifiedIDsForRule(values []string, path string) ([]string, error) {
 	return cloneValidatedUniqueStrings(
 		values,
 		path,
-		identifier.Qualified,
+		validPolicyRuleProviderReference,
 		ErrInvalidPolicySetDefinition,
-		"must contain exact qualified provider identities",
-		"provider identity occurs more than once",
+		"must contain exact provider identities or local instance names",
+		"provider reference occurs more than once",
 	)
+}
+
+// validPolicyRuleProviderReference accepts compiled provider identities and configured instance names.
+func validPolicyRuleProviderReference(value string) bool {
+	return identifier.ProviderIdentity(value) || identifier.Action(value)
 }
 
 // validRuleTextFields bounds retained reason and adapter marker strings.

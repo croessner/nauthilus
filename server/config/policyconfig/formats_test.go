@@ -228,40 +228,6 @@ func policyCanonicalRoundTripFixtures() map[string]string {
 	return fixtures
 }
 
-func TestPolicyRejectsRemovedAlternativeShapes(t *testing.T) {
-	tests := []struct {
-		name string
-		yaml string
-		path string
-	}{
-		{
-			name: "old root",
-			yaml: "auth:\n  policy: {}\n",
-			path: "auth",
-		},
-		{
-			name: "global policy sets",
-			yaml: "policy:\n  policy_sets: {}\n",
-			path: "policy.policy_sets",
-		},
-		{
-			name: "target inline set",
-			yaml: "policy:\n  targets:\n    - namespace: dkim2\n      action: sign-message-instance\n      policy_sets: {}\n",
-			path: "policy.targets[0].policy_sets",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := Decode("yaml", strings.NewReader(test.yaml))
-
-			var pathError *PathError
-			requireErrorAs(t, err, &pathError)
-			requireEqual(t, test.path, pathError.Path)
-		})
-	}
-}
-
 func TestPolicyJSONRejectsDuplicateFields(t *testing.T) {
 	_, err := Decode("json", strings.NewReader(`{"policy":{"api":{"enabled":true,"enabled":false}}}`))
 

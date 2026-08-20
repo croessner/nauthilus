@@ -620,6 +620,7 @@ func compileActivatedRecord(
 		DefaultPolicySet:            activation.DefaultPolicySet(),
 		NoMatch:                     activation.NoMatch(),
 		AuthorityMode:               activation.AuthorityMode(),
+		Report:                      activation.Report(),
 	}, nil
 }
 
@@ -793,7 +794,11 @@ func mergeCheckpointBindings(
 	sets := append([]registry.PolicySetImport(nil), bindings...)
 	sets = append(sets, checkpoint.PolicySets()...)
 
-	return registry.NewCheckpointDefinition(checkpoint.Name(), sets, checkpoint.Providers())
+	return registry.NewCheckpointDefinitionWithProviderInstances(
+		checkpoint.Name(),
+		sets,
+		checkpoint.ProviderInstances(),
+	)
 }
 
 // compileCheckpoint validates and resolves one exact target plan checkpoint.
@@ -830,7 +835,7 @@ func compileCheckpoint(
 			set,
 			target,
 			checkpoint.Name(),
-			checkpoint.Providers(),
+			checkpointProviderReferences(checkpoint),
 			schema,
 			definitions.effects,
 			usedEffects,
@@ -851,8 +856,29 @@ func compileCheckpoint(
 		PolicySetBindings: checkpoint.PolicySets(),
 		PolicySetIDs:      setIDs,
 		ProviderIDs:       checkpoint.Providers(),
+		ProviderInstances: checkpoint.ProviderInstances(),
 		Rules:             compiledRules,
 	}, nil
+}
+
+// checkpointProviderReferences exposes instance names and exact uses for rule compatibility validation.
+func checkpointProviderReferences(checkpoint registry.CheckpointDefinition) []string {
+	instances := checkpoint.ProviderInstances()
+	references := make([]string, 0, len(instances)*2)
+	seen := make(map[string]struct{}, len(instances)*2)
+
+	for _, instance := range instances {
+		for _, reference := range []string{instance.Name(), instance.Use()} {
+			if _, exists := seen[reference]; exists {
+				continue
+			}
+
+			seen[reference] = struct{}{}
+			references = append(references, reference)
+		}
+	}
+
+	return references
 }
 
 // validateCheckpointProviders resolves exact target-aware scheduled providers.
@@ -862,7 +888,9 @@ func validateCheckpointProviders(
 	checkpoint registry.CheckpointDefinition,
 	used map[string]struct{},
 ) error {
-	for _, providerID := range checkpoint.Providers() {
+	for _, instance := range checkpoint.ProviderInstances() {
+		providerID := instance.Use()
+
 		provider, exists := providers[providerID]
 		if !exists {
 			return fmt.Errorf("%w: checkpoint %s provider %s", ErrUnknownEffectProvider, checkpoint.Name(), providerID)

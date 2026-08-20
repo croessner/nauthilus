@@ -24,7 +24,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-func TestPolicyStandaloneSchemaLeavesProductionRootUnchanged(t *testing.T) {
+func TestPolicyCutoverLeavesProductionRootUnchanged(t *testing.T) {
 	wantRoots := []string{"runtime", "observability", "storage", "auth", "identity", "plugins"}
 	settingsType := reflect.TypeFor[FileSettings]()
 	gotRoots := make([]string, 0, len(wantRoots))
@@ -49,7 +49,7 @@ func TestPolicyStandaloneSchemaLeavesProductionRootUnchanged(t *testing.T) {
 	}
 }
 
-func TestPolicyStandaloneSchemaPreservesLegacyAuthPolicyAuthority(t *testing.T) {
+func TestPolicyCutoverPreservesLegacyAuthPolicyAuthority(t *testing.T) {
 	authType := reflect.TypeFor[AuthSection]()
 
 	field, ok := authType.FieldByName("Policy")
@@ -64,9 +64,19 @@ func TestPolicyStandaloneSchemaPreservesLegacyAuthPolicyAuthority(t *testing.T) 
 	if got, want := field.Type, reflect.TypeFor[AuthPolicySection](); got != want {
 		t.Fatalf("AuthSection.Policy type = %v, want %v", got, want)
 	}
+
+	method, ok := reflect.TypeFor[*FileSettings]().MethodByName("GetAuthPolicy")
+	if !ok {
+		t.Fatal("FileSettings.GetAuthPolicy is missing, want legacy production reader")
+	}
+
+	wantMethod := reflect.TypeFor[func(*FileSettings) AuthPolicySection]()
+	if method.Type != wantMethod {
+		t.Fatalf("FileSettings.GetAuthPolicy type = %v, want %v", method.Type, wantMethod)
+	}
 }
 
-func TestPolicyStandaloneSchemaIsAbsentFromProductionSyntaxKeys(t *testing.T) {
+func TestPolicyCutoverStandaloneRootIsAbsentFromProductionSyntaxKeys(t *testing.T) {
 	roots, _, _, err := KnownConfigSyntaxKeys()
 	if err != nil {
 		t.Fatalf("KnownConfigSyntaxKeys() error = %v", err)
@@ -77,7 +87,7 @@ func TestPolicyStandaloneSchemaIsAbsentFromProductionSyntaxKeys(t *testing.T) {
 	}
 }
 
-func TestPolicyStandaloneSchemaIsRejectedByProductionDecoder(t *testing.T) {
+func TestPolicyCutoverStandaloneRootIsRejectedByProductionDecoder(t *testing.T) {
 	reader := viper.New()
 	reader.Set("policy", map[string]any{
 		"api": map[string]any{

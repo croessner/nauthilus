@@ -259,10 +259,8 @@ func normalizeTargets(targets []TargetConfig) []TargetConfig {
 			target.DefaultPolicy = standardAuthPolicy
 		}
 
-		if !target.Report.Enabled {
-			target.Report.IncludeFSM = true
-			target.Report.IncludeChecks = true
-		}
+		target.Report.IncludeFSM = true
+		target.Report.IncludeChecks = true
 	}
 
 	return result

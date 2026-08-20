@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/internal/identifier"
@@ -53,6 +54,7 @@ type TargetCatalogRecord struct {
 	Target                      decision.Target
 	Schema                      registry.SchemaDefinition
 	SourcePlan                  registry.DomainPlanDefinition
+	Report                      registry.TargetReportSettings
 	ActivationPolicySetBindings []registry.PolicySetImport
 	Checkpoints                 []CheckpointRecord
 	Providers                   []registry.ProviderDefinition
@@ -68,7 +70,76 @@ type CheckpointRecord struct {
 	PolicySetBindings []registry.PolicySetImport
 	PolicySetIDs      []registry.PolicySetID
 	ProviderIDs       []string
+	ProviderInstances []registry.ProviderInstanceDefinition
 	Rules             []CompiledRuleRecord
+}
+
+// CompiledProviderInstance is one immutable resolved checkpoint-local provider binding.
+type CompiledProviderInstance struct {
+	dependencies []string
+	definition   registry.ProviderInstanceDefinition
+}
+
+// Path returns the configuration-owned provider source path.
+func (i CompiledProviderInstance) Path() string {
+	return i.definition.Path()
+}
+
+// Name returns the exact checkpoint-local instance identity.
+func (i CompiledProviderInstance) Name() string {
+	return i.definition.Name()
+}
+
+// Use returns the qualified provider definition identity.
+func (i CompiledProviderInstance) Use() string {
+	return i.definition.Use()
+}
+
+// Actions returns detached target-action restrictions.
+func (i CompiledProviderInstance) Actions() []string {
+	return i.definition.Actions()
+}
+
+// After returns detached authored instance dependencies.
+func (i CompiledProviderInstance) After() []string {
+	return i.definition.After()
+}
+
+// Dependencies returns the resolved union of authored and definition-owned dependencies.
+func (i CompiledProviderInstance) Dependencies() []string {
+	return append([]string(nil), i.dependencies...)
+}
+
+// RunIfAuthState returns the effective authn structural scheduling state.
+func (i CompiledProviderInstance) RunIfAuthState() string {
+	return i.definition.RunIfAuthState()
+}
+
+// SkipIf returns detached plan-local scheduler guard references.
+func (i CompiledProviderInstance) SkipIf() []string {
+	return i.definition.SkipIf()
+}
+
+// ObserveSafe returns the effective provider observation safety value.
+func (i CompiledProviderInstance) ObserveSafe() bool {
+	return i.definition.ObserveSafe()
+}
+
+// ObserveSafeAuthored reports whether observation safety was explicitly configured.
+func (i CompiledProviderInstance) ObserveSafeAuthored() bool {
+	return i.definition.ObserveSafeAuthored()
+}
+
+// Output returns the optional canonical fact output identity.
+func (i CompiledProviderInstance) Output() string {
+	return i.definition.Output()
+}
+
+// clone returns one deeply detached compiled provider instance.
+func (i CompiledProviderInstance) clone() CompiledProviderInstance {
+	i.dependencies = i.Dependencies()
+
+	return i
 }
 
 // CompiledRuleRecord carries one exact target-instantiated rule into the runtime boundary.
@@ -112,12 +183,14 @@ func ProjectPolicyRule(
 
 // CompiledCheckpoint is one immutable exact target plan checkpoint.
 type CompiledCheckpoint struct {
-	name                   string
-	policySetIDs           []string
-	providerIDs            []string
-	providerLevels         [][]string
-	productionPolicySetIDs []string
-	comparisonPolicySetIDs []string
+	providerInstancesByName map[string]CompiledProviderInstance
+	policySetIDs            []string
+	providerIDs             []string
+	providerInstances       []CompiledProviderInstance
+	providerLevels          [][]string
+	productionPolicySetIDs  []string
+	comparisonPolicySetIDs  []string
+	name                    string
 }
 
 // Name returns the exact checkpoint identity.
@@ -133,6 +206,23 @@ func (c CompiledCheckpoint) PolicySetIDs() []string {
 // ProviderIDs returns the exact scheduled provider order.
 func (c CompiledCheckpoint) ProviderIDs() []string {
 	return append([]string(nil), c.providerIDs...)
+}
+
+// ProviderInstances returns detached ordered checkpoint-local provider bindings.
+func (c CompiledCheckpoint) ProviderInstances() []CompiledProviderInstance {
+	result := make([]CompiledProviderInstance, 0, len(c.providerInstances))
+	for _, instance := range c.providerInstances {
+		result = append(result, instance.clone())
+	}
+
+	return result
+}
+
+// LookupProviderInstance resolves one exact checkpoint-local instance identity.
+func (c CompiledCheckpoint) LookupProviderInstance(name string) (CompiledProviderInstance, bool) {
+	instance, ok := c.providerInstancesByName[name]
+
+	return instance.clone(), ok
 }
 
 // ProviderLevels returns deterministic dependency levels for concurrent execution.
@@ -162,8 +252,10 @@ func (c CompiledCheckpoint) ContainsPolicySet(identity string) bool {
 
 // CompiledDomainPlan is one immutable ordered checkpoint topology.
 type CompiledDomainPlan struct {
-	checkpoints []CompiledCheckpoint
-	byName      map[string]CompiledCheckpoint
+	byName                map[string]CompiledCheckpoint
+	schedulerGuardsByName map[string]registry.SchedulerGuardDefinition
+	checkpoints           []CompiledCheckpoint
+	schedulerGuards       []registry.SchedulerGuardDefinition
 }
 
 // Checkpoints returns detached ordered checkpoint descriptors.
@@ -183,6 +275,18 @@ func (p CompiledDomainPlan) Checkpoint(name string) (CompiledCheckpoint, bool) {
 	return cloneCompiledCheckpoint(checkpoint), ok
 }
 
+// SchedulerGuards returns detached ordered plan-local scheduling predicates.
+func (p CompiledDomainPlan) SchedulerGuards() []registry.SchedulerGuardDefinition {
+	return append([]registry.SchedulerGuardDefinition(nil), p.schedulerGuards...)
+}
+
+// SchedulerGuard resolves one exact plan-local scheduling predicate.
+func (p CompiledDomainPlan) SchedulerGuard(name string) (registry.SchedulerGuardDefinition, bool) {
+	guard, ok := p.schedulerGuardsByName[name]
+
+	return guard, ok
+}
+
 // clone returns one deeply detached plan.
 func (p CompiledDomainPlan) clone() CompiledDomainPlan {
 	checkpoints := p.Checkpoints()
@@ -192,7 +296,17 @@ func (p CompiledDomainPlan) clone() CompiledDomainPlan {
 		byName[checkpoint.Name()] = cloneCompiledCheckpoint(checkpoint)
 	}
 
-	return CompiledDomainPlan{checkpoints: checkpoints, byName: byName}
+	guards := p.SchedulerGuards()
+
+	guardsByName := make(map[string]registry.SchedulerGuardDefinition, len(guards))
+	for _, guard := range guards {
+		guardsByName[guard.Name()] = guard
+	}
+
+	return CompiledDomainPlan{
+		checkpoints: checkpoints, byName: byName,
+		schedulerGuards: guards, schedulerGuardsByName: guardsByName,
+	}
 }
 
 // CompiledRule is one immutable target/checkpoint-instantiated executable rule.
@@ -417,6 +531,7 @@ type CompiledTarget struct {
 	effectSelections map[string]string
 	policySets       map[string]CompiledPolicySet
 	defaultPolicySet registry.PolicySetID
+	report           registry.TargetReportSettings
 	noMatch          registry.NoMatchBehavior
 	authorityMode    registry.AuthorityMode
 }
@@ -449,6 +564,11 @@ func (t CompiledTarget) NoMatch() registry.NoMatchBehavior {
 // AuthorityMode returns the exact enforce or observe target mode.
 func (t CompiledTarget) AuthorityMode() registry.AuthorityMode {
 	return t.authorityMode
+}
+
+// Report returns the exact target-local diagnostic report selection.
+func (t CompiledTarget) Report() registry.TargetReportSettings {
+	return t.report
 }
 
 // LookupPolicySet resolves one exact target-local instantiated policy set.
@@ -543,6 +663,7 @@ func (t CompiledTarget) clone() CompiledTarget {
 		effectSelections: selections,
 		policySets:       sets,
 		defaultPolicySet: t.defaultPolicySet,
+		report:           t.report,
 		noMatch:          t.noMatch,
 		authorityMode:    t.authorityMode,
 	}
@@ -772,6 +893,7 @@ func compileTargetRecord(
 		effectSelections: selections,
 		policySets:       targetPolicySets,
 		defaultPolicySet: record.DefaultPolicySet,
+		report:           record.Report,
 		noMatch:          record.NoMatch,
 		authorityMode:    record.AuthorityMode,
 	}, nil
@@ -821,7 +943,7 @@ func validateBuiltinAuthDescriptors(
 	return validateBuiltinAuthEffectSelections(target, providers, effects, selections)
 }
 
-// validateBuiltinAuthPlanProviders protects every immutable checkpoint provider binding.
+// validateBuiltinAuthPlanProviders resolves configured bindings without allowing host identity replacement.
 func validateBuiltinAuthPlanProviders(
 	target decision.Target,
 	plan registry.DomainPlanDefinition,
@@ -830,7 +952,7 @@ func validateBuiltinAuthPlanProviders(
 	for _, checkpoint := range plan.Checkpoints() {
 		for _, providerID := range checkpoint.Providers() {
 			provider, exists := providers[providerID]
-			if !exists || !provider.IsBuiltin() {
+			if !exists || registry.IsBuiltinAuthProviderID(providerID) && !provider.IsBuiltin() {
 				return fmt.Errorf("%w: target %s has invalid builtin checkpoint provider %s", ErrInvalidCompiledTarget, target.String(), providerID)
 			}
 		}
@@ -1018,21 +1140,38 @@ func newCompiledDomainPlan(
 	records []CheckpointRecord,
 	rules []CompiledRule,
 	providers map[string]registry.ProviderDefinition,
-) CompiledDomainPlan {
+) (CompiledDomainPlan, error) {
 	checkpoints := make([]CompiledCheckpoint, 0, len(records))
 	byName := make(map[string]CompiledCheckpoint, len(records))
 
 	for _, record := range records {
+		instances, err := checkpointProviderInstances(record)
+		if err != nil {
+			return CompiledDomainPlan{}, err
+		}
+
+		compiledInstances, err := compileProviderInstances(instances, providers)
+		if err != nil {
+			return CompiledDomainPlan{}, err
+		}
+
+		instancesByName := make(map[string]CompiledProviderInstance, len(compiledInstances))
+		for _, instance := range compiledInstances {
+			instancesByName[instance.Name()] = instance.clone()
+		}
+
 		setIDs := make([]string, 0, len(record.PolicySetIDs))
 		for _, setID := range record.PolicySetIDs {
 			setIDs = append(setIDs, setID.String())
 		}
 
 		checkpoint := CompiledCheckpoint{
-			name:           record.Name,
-			policySetIDs:   setIDs,
-			providerIDs:    append([]string(nil), record.ProviderIDs...),
-			providerLevels: compileProviderLevels(record.ProviderIDs, providers),
+			name:                    record.Name,
+			policySetIDs:            setIDs,
+			providerIDs:             providerInstanceUses(instances),
+			providerInstances:       compiledInstances,
+			providerInstancesByName: instancesByName,
+			providerLevels:          compileProviderLevels(compiledInstances),
 		}
 		checkpoint.productionPolicySetIDs, checkpoint.comparisonPolicySetIDs = checkpointAuthority(
 			target,
@@ -1044,7 +1183,7 @@ func newCompiledDomainPlan(
 		byName[record.Name] = checkpoint
 	}
 
-	return CompiledDomainPlan{checkpoints: checkpoints, byName: byName}
+	return CompiledDomainPlan{checkpoints: checkpoints, byName: byName}, nil
 }
 
 // checkpointAuthority separates configured authn comparison from production ownership.
@@ -1143,7 +1282,19 @@ func compileDomainPlanRecord(
 		return CompiledDomainPlan{}, nil, err
 	}
 
-	return newCompiledDomainPlan(target, record.AuthorityMode, record.Checkpoints, rules, providers), rules, nil
+	plan, err := newCompiledDomainPlan(target, record.AuthorityMode, record.Checkpoints, rules, providers)
+	if err != nil {
+		return CompiledDomainPlan{}, nil, err
+	}
+
+	plan.schedulerGuards = record.SourcePlan.SchedulerGuards()
+
+	plan.schedulerGuardsByName = make(map[string]registry.SchedulerGuardDefinition, len(plan.schedulerGuards))
+	for _, guard := range plan.schedulerGuards {
+		plan.schedulerGuardsByName[guard.Name()] = guard
+	}
+
+	return plan, rules, nil
 }
 
 // validateSourcePlanRecord proves checkpoint order, schedules, and merged roots came from one source plan.
@@ -1168,7 +1319,13 @@ func validateSourcePlanRecord(target decision.Target, record TargetCatalogRecord
 
 	for index, source := range sourceCheckpoints {
 		compiled := record.Checkpoints[index]
-		if compiled.Name != source.Name() || !slices.Equal(compiled.ProviderIDs, source.Providers()) {
+
+		instances, instanceErr := checkpointProviderInstances(compiled)
+		if instanceErr != nil {
+			return instanceErr
+		}
+
+		if compiled.Name != source.Name() || !equalProviderInstanceDefinitions(instances, source.ProviderInstances()) {
 			return fmt.Errorf("%w: target %s checkpoint %d does not match its source schedule", ErrInvalidCompiledTarget, target.String(), index)
 		}
 
@@ -1221,6 +1378,52 @@ func equalPolicySetImports(left []registry.PolicySetImport, right []registry.Pol
 	return true
 }
 
+// checkpointProviderInstances returns exact source metadata or a compatibility projection.
+func checkpointProviderInstances(checkpoint CheckpointRecord) ([]registry.ProviderInstanceDefinition, error) {
+	if len(checkpoint.ProviderInstances) == 0 {
+		compatibility, err := registry.NewCheckpointDefinition(checkpoint.Name, nil, checkpoint.ProviderIDs)
+		if err != nil {
+			return nil, fmt.Errorf("%w: checkpoint %s has invalid provider identities: %v", ErrInvalidCompiledTarget, checkpoint.Name, err)
+		}
+
+		return compatibility.ProviderInstances(), nil
+	}
+
+	if !slices.Equal(checkpoint.ProviderIDs, providerInstanceUses(checkpoint.ProviderInstances)) {
+		return nil, fmt.Errorf("%w: checkpoint %s provider identities do not match its instance projection", ErrInvalidCompiledTarget, checkpoint.Name)
+	}
+
+	return append([]registry.ProviderInstanceDefinition(nil), checkpoint.ProviderInstances...), nil
+}
+
+// providerInstanceUses projects ordered provider definitions for compatibility consumers.
+func providerInstanceUses(instances []registry.ProviderInstanceDefinition) []string {
+	result := make([]string, 0, len(instances))
+	for _, instance := range instances {
+		result = append(result, instance.Use())
+	}
+
+	return result
+}
+
+// equalProviderInstanceDefinitions compares every exact source-owned provider field.
+func equalProviderInstanceDefinitions(
+	left []registry.ProviderInstanceDefinition,
+	right []registry.ProviderInstanceDefinition,
+) bool {
+	if len(left) != len(right) {
+		return false
+	}
+
+	for index := range left {
+		if !left[index].Equal(right[index]) {
+			return false
+		}
+	}
+
+	return true
+}
+
 // validateCheckpointRecord resolves every exact set and provider reference.
 func validateCheckpointRecord(
 	target decision.Target,
@@ -1230,6 +1433,11 @@ func validateCheckpointRecord(
 	providers map[string]registry.ProviderDefinition,
 	effects map[string]registry.EffectDefinition,
 ) error {
+	instances, err := checkpointProviderInstances(checkpoint)
+	if err != nil {
+		return err
+	}
+
 	resolved, err := resolveRuntimeCheckpointPolicySets(target, schema, checkpoint, policySets, effects)
 	if err != nil {
 		return err
@@ -1239,15 +1447,15 @@ func validateCheckpointRecord(
 		return fmt.Errorf("%w: checkpoint %s policy-set closure does not match its exact bindings", ErrInvalidCompiledTarget, checkpoint.Name)
 	}
 
-	seenProviders := make(map[string]struct{}, len(checkpoint.ProviderIDs))
+	seenProviders := make(map[string]struct{}, len(instances))
 	outputOwners := make(map[string]string)
 	declaredFacts := schemaFactIDs(schema)
 
-	for _, providerID := range checkpoint.ProviderIDs {
+	for _, instance := range instances {
 		if err := validateScheduledProvider(
 			target,
 			checkpoint.Name,
-			providerID,
+			instance,
 			providers,
 			seenProviders,
 			declaredFacts,
@@ -1257,7 +1465,7 @@ func validateCheckpointRecord(
 		}
 	}
 
-	if err := validateCheckpointProviderGraph(checkpoint, providers); err != nil {
+	if err := validateCheckpointProviderGraph(checkpoint.Name, instances, providers); err != nil {
 		return err
 	}
 
@@ -1279,22 +1487,23 @@ func schemaFactIDs(schema registry.SchemaDefinition) map[string]struct{} {
 func validateScheduledProvider(
 	target decision.Target,
 	checkpointName string,
-	providerID string,
+	instance registry.ProviderInstanceDefinition,
 	providers map[string]registry.ProviderDefinition,
 	seenProviders map[string]struct{},
 	declaredFacts map[string]struct{},
 	outputOwners map[string]string,
 ) error {
+	providerID := instance.Use()
 	provider, exists := providers[providerID]
 	if !exists {
 		return fmt.Errorf("%w: checkpoint %s references unknown provider %s", ErrInvalidCompiledTarget, checkpointName, providerID)
 	}
 
-	if _, exists = seenProviders[providerID]; exists {
-		return fmt.Errorf("%w: checkpoint %s repeats provider %s", ErrInvalidCompiledTarget, checkpointName, providerID)
+	if _, exists = seenProviders[instance.Name()]; exists {
+		return fmt.Errorf("%w: checkpoint %s repeats provider instance %s", ErrInvalidCompiledTarget, checkpointName, instance.Name())
 	}
 
-	seenProviders[providerID] = struct{}{}
+	seenProviders[instance.Name()] = struct{}{}
 
 	if target.Namespace() != authnNamespace && !provider.Scheduled() {
 		return fmt.Errorf("%w: generic provider %s requires explicit failure and timeout", ErrInvalidCompiledTarget, providerID)
@@ -1306,10 +1515,22 @@ func validateScheduledProvider(
 		}
 
 		if owner, owned := outputOwners[factID]; owned {
-			return fmt.Errorf("%w: providers %s and %s both produce fact %s", ErrInvalidCompiledTarget, owner, providerID, factID)
+			return fmt.Errorf("%w: providers %s and %s both produce fact %s", ErrInvalidCompiledTarget, owner, instance.Name(), factID)
 		}
 
-		outputOwners[factID] = providerID
+		outputOwners[factID] = instance.Name()
+	}
+
+	if instance.Output() != "" {
+		if _, exists = declaredFacts[instance.Output()]; !exists {
+			return fmt.Errorf("%w: provider instance %s produces undeclared fact %s", ErrInvalidCompiledTarget, instance.Name(), instance.Output())
+		}
+
+		if owner, owned := outputOwners[instance.Output()]; owned {
+			return fmt.Errorf("%w: providers %s and %s both produce fact %s", ErrInvalidCompiledTarget, owner, instance.Name(), instance.Output())
+		}
+
+		outputOwners[instance.Output()] = instance.Name()
 	}
 
 	return nil
@@ -1317,50 +1538,120 @@ func validateScheduledProvider(
 
 // validateCheckpointProviderGraph rejects foreign dependencies and cycles before activation.
 func validateCheckpointProviderGraph(
-	checkpoint CheckpointRecord,
+	checkpointName string,
+	instances []registry.ProviderInstanceDefinition,
 	providers map[string]registry.ProviderDefinition,
 ) error {
-	scheduled := make(map[string]struct{}, len(checkpoint.ProviderIDs))
-	for _, providerID := range checkpoint.ProviderIDs {
-		scheduled[providerID] = struct{}{}
+	compiled, err := compileProviderInstances(instances, providers)
+	if err != nil {
+		return err
 	}
 
-	for _, providerID := range checkpoint.ProviderIDs {
-		for _, dependency := range providers[providerID].Requires() {
-			if _, exists := scheduled[dependency]; !exists {
-				return fmt.Errorf("%w: provider %s requires unscheduled provider %s", ErrInvalidCompiledTarget, providerID, dependency)
-			}
-		}
-	}
-
-	if levels := compileProviderLevels(checkpoint.ProviderIDs, providers); len(levels) == 0 && len(checkpoint.ProviderIDs) > 0 {
-		return fmt.Errorf("%w: checkpoint %s provider dependency cycle", ErrInvalidCompiledTarget, checkpoint.Name)
+	if levels := compileProviderLevels(compiled); len(levels) == 0 && len(compiled) > 0 {
+		return fmt.Errorf("%w: checkpoint %s provider dependency cycle", ErrInvalidCompiledTarget, checkpointName)
 	}
 
 	return nil
 }
 
+// compileProviderInstances resolves authored and definition-owned dependency edges by instance name.
+func compileProviderInstances(
+	instances []registry.ProviderInstanceDefinition,
+	providers map[string]registry.ProviderDefinition,
+) ([]CompiledProviderInstance, error) {
+	names := make(map[string]struct{}, len(instances))
+	namesByUse := make(map[string][]string, len(instances))
+
+	for _, instance := range instances {
+		if _, exists := names[instance.Name()]; exists {
+			return nil, fmt.Errorf("%w: duplicate provider instance %s", ErrInvalidCompiledTarget, instance.Name())
+		}
+
+		names[instance.Name()] = struct{}{}
+		namesByUse[instance.Use()] = append(namesByUse[instance.Use()], instance.Name())
+	}
+
+	result := make([]CompiledProviderInstance, 0, len(instances))
+	for _, instance := range instances {
+		provider, exists := providers[instance.Use()]
+		if !exists {
+			return nil, fmt.Errorf("%w: provider instance %s references unknown provider %s", ErrInvalidCompiledTarget, instance.Name(), instance.Use())
+		}
+
+		dependencies, err := resolveProviderInstanceDependencies(instance, provider, names, namesByUse)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, CompiledProviderInstance{
+			definition:   instance,
+			dependencies: dependencies,
+		})
+	}
+
+	return result, nil
+}
+
+// resolveProviderInstanceDependencies merges local after edges with exact provider-definition requirements.
+func resolveProviderInstanceDependencies(
+	instance registry.ProviderInstanceDefinition,
+	provider registry.ProviderDefinition,
+	names map[string]struct{},
+	namesByUse map[string][]string,
+) ([]string, error) {
+	dependencies := append([]string(nil), instance.After()...)
+	seen := make(map[string]struct{}, len(dependencies)+len(provider.Requires()))
+
+	for _, dependency := range dependencies {
+		if _, exists := names[dependency]; !exists {
+			return nil, fmt.Errorf("%w: provider instance %s follows unknown instance %s", ErrInvalidCompiledTarget, instance.Name(), dependency)
+		}
+
+		seen[dependency] = struct{}{}
+	}
+
+	for _, requiredUse := range provider.Requires() {
+		candidates := namesByUse[requiredUse]
+		if len(candidates) == 0 {
+			return nil, fmt.Errorf("%w: provider %s requires unscheduled provider %s", ErrInvalidCompiledTarget, instance.Use(), requiredUse)
+		}
+
+		if len(candidates) > 1 {
+			return nil, fmt.Errorf("%w: provider %s has ambiguous required use %s across instances %s", ErrInvalidCompiledTarget, instance.Use(), requiredUse, strings.Join(candidates, ","))
+		}
+
+		dependency := candidates[0]
+		if _, exists := seen[dependency]; exists {
+			continue
+		}
+
+		seen[dependency] = struct{}{}
+		dependencies = append(dependencies, dependency)
+	}
+
+	return dependencies, nil
+}
+
 // compileProviderLevels projects one acyclic provider graph into deterministic dependency levels.
 func compileProviderLevels(
-	providerIDs []string,
-	providers map[string]registry.ProviderDefinition,
+	instances []CompiledProviderInstance,
 ) [][]string {
-	remaining := make(map[string]int, len(providerIDs))
-	dependants := make(map[string][]string, len(providerIDs))
+	remaining := make(map[string]int, len(instances))
+	dependants := make(map[string][]string, len(instances))
 
-	for _, providerID := range providerIDs {
-		dependencies := providers[providerID].Requires()
-		remaining[providerID] = len(dependencies)
+	for _, instance := range instances {
+		dependencies := instance.Dependencies()
+		remaining[instance.Name()] = len(dependencies)
 
 		for _, dependency := range dependencies {
-			dependants[dependency] = append(dependants[dependency], providerID)
+			dependants[dependency] = append(dependants[dependency], instance.Name())
 		}
 	}
 
 	levels := make([][]string, 0)
 	processed := 0
 
-	for processed < len(providerIDs) {
+	for processed < len(instances) {
 		level := make([]string, 0)
 
 		for providerID, count := range remaining {
@@ -1411,20 +1702,31 @@ func validateProviderContinuationSafety(
 	}
 
 	for _, checkpoint := range checkpoints {
-		for _, providerID := range checkpoint.ProviderIDs {
-			provider := providers[providerID]
+		instances, err := checkpointProviderInstances(checkpoint)
+		if err != nil {
+			return err
+		}
+
+		for _, instance := range instances {
+			provider := providers[instance.Use()]
 			if provider.Failure() != registry.ProviderFailureContinue {
 				continue
 			}
 
-			for _, factID := range provider.ProducedFacts() {
+			producedFacts := append([]string(nil), provider.ProducedFacts()...)
+			if instance.Output() != "" && !slices.Contains(producedFacts, instance.Output()) {
+				producedFacts = append(producedFacts, instance.Output())
+			}
+
+			for _, factID := range producedFacts {
 				if _, required := requiredFacts[factID]; required {
-					return fmt.Errorf("%w: provider %s continue cannot omit required fact %s", ErrInvalidCompiledTarget, providerID, factID)
+					return fmt.Errorf("%w: provider %s continue cannot omit required fact %s", ErrInvalidCompiledTarget, instance.Name(), factID)
 				}
 
 				for _, rule := range rulesByCheckpoint[checkpoint.Name] {
-					if ruleUsesFact(rule, factID) && !slices.Contains(rule.RequiredProviders(), providerID) {
-						return fmt.Errorf("%w: provider %s continue requires rule %s to declare the provider", ErrInvalidCompiledTarget, providerID, rule.Name())
+					if ruleUsesFact(rule, factID) &&
+						!requiredProvidersContainInstance(rule.RequiredProviders(), instance) {
+						return fmt.Errorf("%w: provider %s continue requires rule %s to declare the provider", ErrInvalidCompiledTarget, instance.Name(), rule.Name())
 					}
 				}
 			}
@@ -1443,6 +1745,52 @@ func ruleUsesFact(rule CompiledRule, factID string) bool {
 	}
 
 	return rule.ResponseMessage().FactID() == factID || rule.ResponseLanguage().FactID() == factID
+}
+
+// requiredProvidersContainInstance accepts local names and qualified-use compatibility references.
+func requiredProvidersContainInstance(
+	required []string,
+	instance registry.ProviderInstanceDefinition,
+) bool {
+	return slices.Contains(required, instance.Name()) || slices.Contains(required, instance.Use())
+}
+
+// resolveRequiredProviderReferences maps source names or unique uses to executable instance names.
+func resolveRequiredProviderReferences(
+	references []string,
+	instances []registry.ProviderInstanceDefinition,
+) ([]string, error) {
+	result := make([]string, 0, len(references))
+
+	for _, reference := range references {
+		if slices.ContainsFunc(instances, func(instance registry.ProviderInstanceDefinition) bool {
+			return instance.Name() == reference
+		}) {
+			result = append(result, reference)
+
+			continue
+		}
+
+		matches := make([]string, 0, 1)
+
+		for _, instance := range instances {
+			if instance.Use() == reference {
+				matches = append(matches, instance.Name())
+			}
+		}
+
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("requires unscheduled provider %s", reference)
+		}
+
+		if len(matches) > 1 {
+			return nil, fmt.Errorf("requires ambiguous provider use %s across instances %s", reference, strings.Join(matches, ","))
+		}
+
+		result = append(result, matches[0])
+	}
+
+	return result, nil
 }
 
 // runtimeCheckpointResolver revalidates exact root authority and its ordered import closure.
@@ -1628,6 +1976,11 @@ func compileRuleRecords(
 	checkpoint CheckpointRecord,
 	policySets map[string]CompiledPolicySet,
 ) ([]CompiledRule, error) {
+	instances, err := checkpointProviderInstances(checkpoint)
+	if err != nil {
+		return nil, err
+	}
+
 	expected := expectedRuntimeRuleRecords(target, checkpoint, policySets)
 	if len(expected) != len(checkpoint.Rules) {
 		return nil, fmt.Errorf(
@@ -1645,7 +1998,12 @@ func compileRuleRecords(
 			return nil, err
 		}
 
-		result = append(result, newCompiledRule(record))
+		requiredProviders, err := resolveRequiredProviderReferences(record.RequiredProviders, instances)
+		if err != nil {
+			return nil, fmt.Errorf("%w: rule %s: %v", ErrInvalidCompiledTarget, record.Name, err)
+		}
+
+		result = append(result, newCompiledRule(record, requiredProviders))
 	}
 
 	return result, nil
@@ -1681,10 +2039,13 @@ func validateCompiledRuleRecord(
 		return fmt.Errorf("%w: rule %s: %v", ErrInvalidCompiledTarget, record.Name, err)
 	}
 
-	for _, providerID := range record.RequiredProviders {
-		if !slices.Contains(checkpoint.ProviderIDs, providerID) {
-			return fmt.Errorf("%w: rule %s requires unscheduled provider %s", ErrInvalidCompiledTarget, record.Name, providerID)
-		}
+	instances, err := checkpointProviderInstances(checkpoint)
+	if err != nil {
+		return err
+	}
+
+	if _, err := resolveRequiredProviderReferences(record.RequiredProviders, instances); err != nil {
+		return fmt.Errorf("%w: rule %s: %v", ErrInvalidCompiledTarget, record.Name, err)
 	}
 
 	if !equalCompiledRuleRecords(record, expected) {
@@ -1710,11 +2071,11 @@ func validateRuntimeRuleFacts(schema registry.SchemaDefinition, record CompiledR
 }
 
 // newCompiledRule deeply owns one authenticated exact runtime record.
-func newCompiledRule(record CompiledRuleRecord) CompiledRule {
+func newCompiledRule(record CompiledRuleRecord, requiredProviders []string) CompiledRule {
 	return CompiledRule{
 		target: record.Target, policySetID: record.PolicySetID, name: record.Name, checkpoint: record.Checkpoint,
 		presentationStage: record.PresentationStage,
-		requiredProviders: append([]string(nil), record.RequiredProviders...), expression: record.Expression,
+		requiredProviders: append([]string(nil), requiredProviders...), expression: record.Expression,
 		effects: append([]registry.EffectUse(nil), record.Effects...), advice: append([]registry.EffectUse(nil), record.Advice...),
 		decision: record.Decision, reason: record.Reason, outcomeMarker: record.OutcomeMarker,
 		fsmEventMarker: record.FSMEventMarker, responseMarker: record.ResponseMarker,
@@ -1954,6 +2315,13 @@ func compileTargetPolicySets(
 func cloneCompiledCheckpoint(checkpoint CompiledCheckpoint) CompiledCheckpoint {
 	checkpoint.policySetIDs = checkpoint.PolicySetIDs()
 	checkpoint.providerIDs = checkpoint.ProviderIDs()
+	checkpoint.providerInstances = checkpoint.ProviderInstances()
+
+	checkpoint.providerInstancesByName = make(map[string]CompiledProviderInstance, len(checkpoint.providerInstances))
+	for _, instance := range checkpoint.providerInstances {
+		checkpoint.providerInstancesByName[instance.Name()] = instance.clone()
+	}
+
 	checkpoint.providerLevels = checkpoint.ProviderLevels()
 	checkpoint.productionPolicySetIDs = checkpoint.ProductionPolicySetIDs()
 	checkpoint.comparisonPolicySetIDs = checkpoint.ComparisonPolicySetIDs()

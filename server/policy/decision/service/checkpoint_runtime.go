@@ -301,10 +301,13 @@ func validateAdmittedFacts(
 
 	produced := make(map[string]struct{})
 
-	for _, providerID := range checkpoint.ProviderIDs() {
-		provider, _ := target.LookupProvider(providerID)
+	for _, instance := range checkpoint.ProviderInstances() {
+		provider, exists := target.LookupProvider(instance.Use())
+		if !exists {
+			return fmt.Errorf("scheduled provider instance %s has no host provider %s", instance.Name(), instance.Use())
+		}
 
-		for _, factID := range provider.ProducedFacts() {
+		for factID := range declaredProviderOutputs(instance, provider) {
 			produced[factID] = struct{}{}
 		}
 	}
@@ -352,7 +355,7 @@ func (r *checkpointRuntime) runProviders(
 	states := make(map[string]providerState)
 
 	for _, level := range checkpoint.ProviderLevels() {
-		levelFacts, reliable := r.runProviderLevel(ctx, target, checkpoint.Name(), level, facts, states, report)
+		levelFacts, reliable := r.runProviderLevel(ctx, target, checkpoint, level, facts, states, report)
 		if !reliable {
 			return facts, false
 		}
@@ -382,7 +385,7 @@ type providerLevelResult struct {
 func (r *checkpointRuntime) runProviderLevel(
 	ctx context.Context,
 	target policyruntime.CompiledTarget,
-	checkpoint string,
+	checkpoint policyruntime.CompiledCheckpoint,
 	level []string,
 	facts decision.FactSet,
 	states map[string]providerState,
@@ -428,7 +431,7 @@ func (r *checkpointRuntime) runProviderLevel(
 func (r *checkpointRuntime) startProviderLevel(
 	ctx context.Context,
 	target policyruntime.CompiledTarget,
-	checkpoint string,
+	checkpoint policyruntime.CompiledCheckpoint,
 	level []string,
 	facts decision.FactSet,
 	states map[string]providerState,
@@ -438,33 +441,19 @@ func (r *checkpointRuntime) startProviderLevel(
 	pending := make(map[string]struct{}, len(level))
 	started := make(chan struct{}, len(level))
 
-	for _, providerID := range level {
-		descriptor, _ := target.LookupProvider(providerID)
-		if providerDependencySkipped(descriptor, states) {
-			states[providerID] = providerStateSkipped
-			report.providers = append(report.providers, providerRecord{id: providerID, state: providerStateSkipped})
-
-			continue
-		}
-
-		pending[providerID] = struct{}{}
-
-		binding, err := captureFactProviderBinding(r.factProviders[providerID])
-		if err != nil {
-			started <- struct{}{}
-
-			results <- providerLevelResult{
-				id: providerID, failure: descriptor.Failure(), state: providerStateFailed,
-			}
-
-			continue
-		}
-
-		go func(provider registry.ProviderDefinition, captured factProviderBinding) {
-			started <- struct{}{}
-
-			results <- r.collectProviderSafely(ctx, target.Target(), checkpoint, provider, captured, facts)
-		}(descriptor, binding)
+	for _, instanceName := range level {
+		r.startProviderInstance(
+			ctx,
+			target,
+			checkpoint,
+			instanceName,
+			facts,
+			states,
+			report,
+			results,
+			pending,
+			started,
+		)
 	}
 
 	for range pending {
@@ -472,6 +461,73 @@ func (r *checkpointRuntime) startProviderLevel(
 	}
 
 	return results, pending
+}
+
+// startProviderInstance resolves and opens one checkpoint-local scheduled provider instance.
+func (r *checkpointRuntime) startProviderInstance(
+	ctx context.Context,
+	target policyruntime.CompiledTarget,
+	checkpoint policyruntime.CompiledCheckpoint,
+	instanceName string,
+	facts decision.FactSet,
+	states map[string]providerState,
+	report *runtimeReport,
+	results chan<- providerLevelResult,
+	pending map[string]struct{},
+	started chan<- struct{},
+) {
+	instance, exists := checkpoint.LookupProviderInstance(instanceName)
+	if !exists {
+		queueProviderStartFailure(instanceName, registry.ProviderFailureIndeterminate, results, pending, started)
+
+		return
+	}
+
+	descriptor, exists := target.LookupProvider(instance.Use())
+	if !exists {
+		queueProviderStartFailure(instanceName, registry.ProviderFailureIndeterminate, results, pending, started)
+
+		return
+	}
+
+	if providerDependencySkipped(instance.Dependencies(), states) {
+		states[instanceName] = providerStateSkipped
+		report.providers = append(report.providers, providerRecord{id: instanceName, state: providerStateSkipped})
+
+		return
+	}
+
+	binding, err := captureFactProviderBinding(r.factProviders[instance.Use()])
+	if err != nil {
+		queueProviderStartFailure(instanceName, descriptor.Failure(), results, pending, started)
+
+		return
+	}
+
+	pending[instanceName] = struct{}{}
+
+	go func() {
+		started <- struct{}{}
+
+		results <- r.collectProviderSafely(ctx, target.Target(), checkpoint.Name(), instance, descriptor, binding, facts)
+	}()
+}
+
+// queueProviderStartFailure records one provider instance that could not enter its execution goroutine.
+func queueProviderStartFailure(
+	instanceName string,
+	failure registry.ProviderFailureBehavior,
+	results chan<- providerLevelResult,
+	pending map[string]struct{},
+	started chan<- struct{},
+) {
+	pending[instanceName] = struct{}{}
+
+	started <- struct{}{}
+
+	results <- providerLevelResult{
+		id: instanceName, failure: failure, state: providerStateFailed,
+	}
 }
 
 // captureFactProviderBinding reserves generation ownership before provider goroutines start.
@@ -496,39 +552,40 @@ func (r *checkpointRuntime) collectProviderSafely(
 	ctx context.Context,
 	target decision.Target,
 	checkpoint string,
+	instance policyruntime.CompiledProviderInstance,
 	descriptor registry.ProviderDefinition,
 	binding factProviderBinding,
 	facts decision.FactSet,
 ) (result providerLevelResult) {
 	result = providerLevelResult{
-		id: descriptor.ID(), failure: registry.ProviderFailureIndeterminate, state: providerStateFailed,
+		id: instance.Name(), failure: registry.ProviderFailureIndeterminate, state: providerStateFailed,
 	}
 
 	defer func() {
 		if recover() != nil {
 			result = providerLevelResult{
-				id: descriptor.ID(), failure: registry.ProviderFailureIndeterminate, state: providerStateFailed,
+				id: instance.Name(), failure: registry.ProviderFailureIndeterminate, state: providerStateFailed,
 			}
 		}
 	}()
 
-	return r.collectProvider(ctx, target, checkpoint, descriptor, binding, facts)
+	return r.collectProvider(ctx, target, checkpoint, instance, descriptor, binding, facts)
 }
 
 // canceledProviderResults projects deterministic failure records for output that will be discarded.
 func canceledProviderResults(pending map[string]struct{}, state providerState) []providerLevelResult {
 	results := make([]providerLevelResult, 0, len(pending))
 
-	for providerID := range pending {
+	for instanceName := range pending {
 		results = append(results, providerLevelResult{
-			id: providerID, state: state, failure: registry.ProviderFailureIndeterminate,
+			id: instanceName, state: state, failure: registry.ProviderFailureIndeterminate,
 		})
 	}
 
 	return results
 }
 
-// sortProviderResults orders one completed or canceled level by canonical provider identity.
+// sortProviderResults orders one completed or canceled level by checkpoint-local instance identity.
 func sortProviderResults(results []providerLevelResult) []providerLevelResult {
 	sort.Slice(results, func(left int, right int) bool { return results[left].id < results[right].id })
 
@@ -572,11 +629,12 @@ func (r *checkpointRuntime) collectProvider(
 	ctx context.Context,
 	target decision.Target,
 	checkpoint string,
+	instance policyruntime.CompiledProviderInstance,
 	descriptor registry.ProviderDefinition,
 	binding factProviderBinding,
 	facts decision.FactSet,
 ) providerLevelResult {
-	result := providerLevelResult{id: descriptor.ID(), failure: descriptor.Failure(), state: providerStateFailed}
+	result := providerLevelResult{id: instance.Name(), failure: descriptor.Failure(), state: providerStateFailed}
 
 	if nilDependency(binding.provider) {
 		return result
@@ -601,7 +659,7 @@ func (r *checkpointRuntime) collectProvider(
 		return result
 	}
 
-	declared := stringSet(descriptor.ProducedFacts())
+	declared := declaredProviderOutputs(instance, descriptor)
 	result.facts = make([]decision.Fact, 0, len(provided))
 
 	for _, output := range provided {
@@ -627,9 +685,23 @@ func (r *checkpointRuntime) collectProvider(
 	return result
 }
 
-// providerDependencySkipped applies transitive safe skipping through level state.
-func providerDependencySkipped(provider registry.ProviderDefinition, states map[string]providerState) bool {
-	for _, dependency := range provider.Requires() {
+// declaredProviderOutputs unifies provider-wide and checkpoint-local fact output authority.
+func declaredProviderOutputs(
+	instance policyruntime.CompiledProviderInstance,
+	descriptor registry.ProviderDefinition,
+) map[string]struct{} {
+	declared := stringSet(descriptor.ProducedFacts())
+
+	if instance.Output() != "" {
+		declared[instance.Output()] = struct{}{}
+	}
+
+	return declared
+}
+
+// providerDependencySkipped applies transitive safe skipping through compiled instance state.
+func providerDependencySkipped(dependencies []string, states map[string]providerState) bool {
+	for _, dependency := range dependencies {
 		if states[dependency] != providerStateCompleted {
 			return true
 		}

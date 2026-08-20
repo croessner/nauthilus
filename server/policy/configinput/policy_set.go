@@ -9,8 +9,10 @@ package configinput
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
+	policy "github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 )
@@ -31,7 +33,7 @@ func (n *policyNormalizer) normalizePolicySets(
 			return nil, atPath(path, err)
 		}
 
-		rules, err := normalizePolicyRules(path+".rules", namespace, set.Rules)
+		rules, err := n.normalizePolicyRules(path+".rules", namespace, identity.String(), set.Rules)
 		if err != nil {
 			return nil, err
 		}
@@ -99,9 +101,10 @@ func normalizeExportContract(
 }
 
 // normalizePolicyRules constructs ordered executable rule descriptors.
-func normalizePolicyRules(
+func (n *policyNormalizer) normalizePolicyRules(
 	path string,
 	namespace string,
+	setID string,
 	configured []policyconfig.PolicyRuleConfig,
 ) ([]registry.PolicyRule, error) {
 	rules := make([]registry.PolicyRule, 0, len(configured))
@@ -109,7 +112,7 @@ func normalizePolicyRules(
 	for index, rule := range configured {
 		rulePath := fmt.Sprintf("%s[%d]", path, index)
 
-		definition, err := normalizePolicyRule(rulePath, namespace, rule)
+		definition, err := n.normalizePolicyRule(rulePath, namespace, setID, rule)
 		if err != nil {
 			return nil, err
 		}
@@ -121,9 +124,10 @@ func normalizePolicyRules(
 }
 
 // normalizePolicyRule constructs one complete executable rule descriptor.
-func normalizePolicyRule(
+func (n *policyNormalizer) normalizePolicyRule(
 	path string,
 	namespace string,
+	setID string,
 	rule policyconfig.PolicyRuleConfig,
 ) (registry.PolicyRule, error) {
 	expression, err := normalizeExpression(path+".if", rule.If)
@@ -157,8 +161,13 @@ func normalizePolicyRule(
 	}
 
 	requiredProviders := make([]string, 0, len(rule.RequireProviders))
-	for _, provider := range rule.RequireProviders {
-		requiredProviders = append(requiredProviders, qualify(namespace, provider))
+	for index, provider := range rule.RequireProviders {
+		resolved, resolveErr := n.resolveRequiredProviderReference(namespace, setID, rule, provider)
+		if resolveErr != nil {
+			return registry.PolicyRule{}, atPath(fmt.Sprintf("%s.require_providers[%d]", path, index), resolveErr)
+		}
+
+		requiredProviders = append(requiredProviders, resolved)
 	}
 
 	definition, err := registry.NewPolicyRule(registry.PolicyRuleInput{
@@ -173,6 +182,110 @@ func normalizePolicyRule(
 	}
 
 	return definition, nil
+}
+
+// resolveRequiredProviderReference retains configured instance names and adapts only immutable builtin schedules.
+func (n *policyNormalizer) resolveRequiredProviderReference(
+	namespace string,
+	setID string,
+	rule policyconfig.PolicyRuleConfig,
+	reference string,
+) (string, error) {
+	references := make(map[string]struct{})
+	bound := false
+
+	for _, target := range n.targets {
+		if target.target.Namespace() != namespace || !ruleAllowsTargetAction(rule.Actions, target.target.Action()) ||
+			!targetBindsPolicySet(target, rule.Checkpoint, setID) {
+			continue
+		}
+
+		bound = true
+
+		resolved, err := n.requiredProviderReferenceForTarget(namespace, rule, reference, target)
+		if err != nil {
+			return "", err
+		}
+
+		references[resolved] = struct{}{}
+	}
+
+	if !bound {
+		return qualify(namespace, reference), nil
+	}
+
+	if len(references) > 1 {
+		return "", fmt.Errorf("provider instance %s resolves to incompatible configured and compatibility identities", reference)
+	}
+
+	for resolved := range references {
+		return resolved, nil
+	}
+
+	return "", fmt.Errorf("provider instance %s has no compatible schedule reference", reference)
+}
+
+// requiredProviderReferenceForTarget resolves one target-specific configured or compatibility schedule identity.
+func (n *policyNormalizer) requiredProviderReferenceForTarget(
+	namespace string,
+	rule policyconfig.PolicyRuleConfig,
+	reference string,
+	target normalizedTarget,
+) (string, error) {
+	if target.config.DomainPlan == "" {
+		if namespace != policy.AuthnNamespace {
+			return qualify(namespace, reference), nil
+		}
+
+		use, exists := policy.AuthnBuiltinProviderUse(
+			reference,
+			policy.Operation(target.target.Action()),
+			policy.Stage(rule.Checkpoint),
+		)
+		if !exists {
+			return "", fmt.Errorf(
+				"builtin provider instance %s is unavailable at checkpoint %s for action %s",
+				reference,
+				rule.Checkpoint,
+				target.target.Action(),
+			)
+		}
+
+		return use, nil
+	}
+
+	plan, err := n.selectedDomainPlan(target)
+	if err != nil {
+		return "", err
+	}
+
+	checkpoint, exists := plan.Checkpoints[rule.Checkpoint]
+	if exists {
+		for _, instance := range checkpoint.Providers {
+			if instance.Name == reference && providerInstanceAllowsAction(instance, target.target.Action()) {
+				return reference, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf(
+		"provider instance %s is unavailable at checkpoint %s for action %s",
+		reference,
+		rule.Checkpoint,
+		target.target.Action(),
+	)
+}
+
+// targetBindsPolicySet reports whether one exact target checkpoint selects a configured set root.
+func targetBindsPolicySet(target normalizedTarget, checkpoint string, setID string) bool {
+	binding, exists := target.config.Plans[checkpoint]
+
+	return exists && slices.Contains(binding.PolicySets, setID)
+}
+
+// ruleAllowsTargetAction applies an omitted rule action list to every target action.
+func ruleAllowsTargetAction(actions []string, action string) bool {
+	return len(actions) == 0 || slices.Contains(actions, action)
 }
 
 // normalizeEffectUses constructs exact typed obligation or advice selections.

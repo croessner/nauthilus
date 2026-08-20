@@ -1,0 +1,140 @@
+auth:
+  policy:
+    mode: observe
+    default_policy: standard_auth
+    localization:
+      catalogs:
+        - namespace: auth.policy.contract
+          language: en
+          entries:
+            denied: Access denied by the migration contract.
+    sets:
+      networks:
+        trusted_clients: [10.0.0.0/8, 2001:db8::/32]
+      strings:
+        privileged_services: [imap, smtp]
+      time_windows:
+        business_hours:
+          timezone: Europe/Berlin
+          days: [mon, tue]
+          intervals:
+            - start: "08:00"
+              end: "18:00"
+    scheduler_guards:
+      service_allowed:
+        if:
+          attribute: request.protocol
+          in: "@string.privileged_services"
+        on_missing_attribute: run
+    report:
+      enabled: true
+      include_fsm: true
+      include_checks: true
+      include_attributes: true
+    attribute_sources:
+      lua:
+        environment:
+          - name: shared
+            script_path: /etc/nauthilus/lua/environment/shared.lua
+        subject:
+          - name: shared
+            script_path: /etc/nauthilus/lua/subject/shared.lua
+    obligation_targets:
+      lua:
+        actions:
+          - name: notify
+            type: lua
+            script_path: /etc/nauthilus/lua/actions/notify.lua
+    registry_scripts:
+      - testdata/policy_migration/registry.lua
+    request_headers:
+      - header: X-Tenant
+        attribute: request.header.tenant
+        visibility: public
+        normalize:
+          trim: true
+          case: lower
+          max_length: 128
+    request_metadata:
+      - key: x-tenant
+        attribute: request.metadata.tenant
+        visibility: public
+        normalize:
+          trim: true
+          case: lower
+          max_length: 128
+    attribute_exports:
+      - name: account_tier
+        attribute: account.tier
+        type: string
+        sensitivity: internal
+    checks:
+      - name: brute_force
+        type: builtin.brute_force
+        stage: pre_auth
+        operations: [authenticate]
+        config_ref: auth.controls.brute_force.buckets
+        skip_if: [service_allowed]
+      - name: environment_shared
+        type: lua.environment
+        stage: pre_auth
+        operations: [authenticate]
+        config_ref: auth.policy.attribute_sources.lua.environment.shared
+        output: nauthilus.auth.tls.secure
+        run_if:
+          auth_state: unauthenticated
+        after: [brute_force]
+        skip_if: [service_allowed]
+        observe_safe: true
+      - name: ldap_backend
+        type: backend.ldap
+        stage: auth_backend
+        operations: [authenticate]
+        config_ref: auth.backends.ldap.default
+      - name: subject_shared
+        type: lua.subject
+        stage: subject_analysis
+        operations: [authenticate]
+        config_ref: auth.policy.attribute_sources.lua.subject.shared
+        observe_safe: true
+    policies:
+      - name: deny_brute_force
+        stage: pre_auth
+        operations: [authenticate]
+        require_checks: [brute_force]
+        if:
+          attribute: auth.brute_force.triggered
+          is: true
+        then:
+          decision: deny
+          reason: migration_contract
+          outcome_marker: auth.outcome.migration_denied
+          fsm_event_marker: auth.fsm.event.pre_auth_deny
+          response_marker: auth.response.fail
+          response_message:
+            from: literal
+            text: Access denied.
+          response_language:
+            from: literal
+            language: en
+          obligations:
+            - id: auth.obligation.brute_force.update
+              args:
+                feature: migration_contract
+          advice:
+            - id: auth.advice.audit_reason
+              args:
+                reason: migration_contract
+          control:
+            skip_remaining_stage_checks: true
+      - name: final_contract_deny
+        stage: auth_decision
+        operations: [authenticate]
+        if:
+          always: true
+        then:
+          decision: deny
+          reason: final_contract
+          outcome_marker: auth.outcome.auth_failure
+          fsm_event_marker: auth.fsm.event.auth_deny
+          response_marker: auth.response.fail

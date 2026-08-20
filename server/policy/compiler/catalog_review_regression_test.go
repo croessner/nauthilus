@@ -106,7 +106,7 @@ func TestBuiltinStandardAuthEffectsUseExactEstablishedOwnersAndClasses(t *testin
 		execution registry.ExecutionClass
 	}{
 		policy.ObligationBruteForceUpdate: {
-			provider: "authn/brute_force", execution: registry.ExecutionHostSync,
+			provider: policy.AuthnProviderBruteForce, execution: registry.ExecutionHostSync,
 		},
 		policy.ObligationLuaActionDispatch: {
 			provider: "authn/lua_action", execution: registry.ExecutionHostSync,
@@ -143,16 +143,19 @@ func TestBuiltinAuthnProvidersUseExactEstablishedTargetAllowlists(t *testing.T) 
 
 	authAndLookup := []string{"authn/authenticate", "authn/lookup_identity"}
 	want := map[string][]string{
-		"authn/brute_force":      authAndLookup,
-		"authn/lua_action":       authAndLookup,
-		"authn/post_action":      authAndLookup,
-		"authn/environment":      authAndLookup,
-		"authn/tls_encryption":   authAndLookup,
-		"authn/relay_domains":    {"authn/authenticate"},
-		"authn/rbl":              authAndLookup,
-		"authn/auth_backend":     authAndLookup,
-		"authn/subject":          authAndLookup,
-		"authn/account_provider": {"authn/list_accounts"},
+		policy.AuthnProviderBruteForce:         authAndLookup,
+		"authn/lua_action":                     authAndLookup,
+		"authn/post_action":                    authAndLookup,
+		policy.AuthnProviderEnvironment:        authAndLookup,
+		policy.AuthnProviderTLSEncryption:      authAndLookup,
+		policy.AuthnProviderRelayDomains:       {"authn/authenticate"},
+		policy.AuthnProviderRBL:                authAndLookup,
+		policy.AuthnProviderBackend:            authAndLookup,
+		policy.AuthnProviderSubject:            authAndLookup,
+		policy.AuthnProviderLDAPBackend:        authAndLookup,
+		policy.AuthnProviderLuaBackend:         authAndLookup,
+		policy.AuthnProviderPluginBackendOrder: authAndLookup,
+		policy.AuthnProviderAccount:            {"authn/list_accounts"},
 	}
 
 	for _, provider := range contribution.Providers() {
@@ -167,71 +170,83 @@ func TestBuiltinAuthnProvidersUseExactEstablishedTargetAllowlists(t *testing.T) 
 	}
 }
 
-func TestBuiltinAuthnPlansPreserveExactCheckpointProviderSchedules(t *testing.T) {
-	type checkpointExpectation struct {
-		name      string
-		providers []string
-	}
+type authnCheckpointExpectation struct {
+	name      string
+	providers []string
+}
 
-	tests := []struct {
-		action      string
-		checkpoints []checkpointExpectation
-	}{
+type authnPlanScheduleExpectation struct {
+	action      string
+	checkpoints []authnCheckpointExpectation
+}
+
+func TestBuiltinAuthnPlansPreserveExactCheckpointProviderSchedules(t *testing.T) {
+	for _, test := range builtinAuthnPlanScheduleExpectations() {
+		t.Run(test.action, func(t *testing.T) {
+			assertBuiltinAuthnPlanSchedule(t, test)
+		})
+	}
+}
+
+// builtinAuthnPlanScheduleExpectations defines the exact provider schedule for every builtin authn target.
+func builtinAuthnPlanScheduleExpectations() []authnPlanScheduleExpectation {
+	return []authnPlanScheduleExpectation{
 		{
 			action: "authenticate",
-			checkpoints: []checkpointExpectation{
-				{name: "pre_auth", providers: []string{"authn/brute_force"}},
-				{name: "auth_decision", providers: []string{"authn/environment", "authn/tls_encryption", "authn/relay_domains", "authn/rbl", "authn/auth_backend", "authn/subject"}},
+			checkpoints: []authnCheckpointExpectation{
+				{name: "pre_auth", providers: []string{policy.AuthnProviderBruteForce}},
+				{name: "auth_decision", providers: []string{policy.AuthnProviderEnvironment, policy.AuthnProviderTLSEncryption, policy.AuthnProviderRelayDomains, policy.AuthnProviderRBL, policy.AuthnProviderBackend, policy.AuthnProviderSubject}},
 			},
 		},
 		{
 			action: "lookup_identity",
-			checkpoints: []checkpointExpectation{
-				{name: "pre_auth", providers: []string{"authn/environment", "authn/tls_encryption", "authn/rbl"}},
-				{name: "auth_decision", providers: []string{"authn/auth_backend", "authn/subject"}},
+			checkpoints: []authnCheckpointExpectation{
+				{name: "pre_auth", providers: []string{policy.AuthnProviderEnvironment, policy.AuthnProviderTLSEncryption, policy.AuthnProviderRBL}},
+				{name: "auth_decision", providers: []string{policy.AuthnProviderBackend, policy.AuthnProviderSubject}},
 			},
 		},
 		{
 			action: "list_accounts",
-			checkpoints: []checkpointExpectation{
-				{name: "auth_decision", providers: []string{"authn/account_provider"}},
+			checkpoints: []authnCheckpointExpectation{
+				{name: "auth_decision", providers: []string{policy.AuthnProviderAccount}},
 			},
 		},
 	}
+}
 
-	for _, test := range tests {
-		t.Run(test.action, func(t *testing.T) {
-			compiler := NewTargetCatalogCompiler(registry.NewBuiltinTargetContributor(catalogAcceptanceCapability{}))
-			activation := mustCompilerActivation(
-				t,
-				"policy.targets.authn."+test.action,
-				"authn",
-				test.action,
-				"authn/"+test.action+"/v1",
-			)
+// assertBuiltinAuthnPlanSchedule compiles and compares one builtin authn target schedule.
+func assertBuiltinAuthnPlanSchedule(t *testing.T, expectation authnPlanScheduleExpectation) {
+	t.Helper()
 
-			catalog, err := compiler.Compile(context.Background(), []registry.TargetActivation{activation})
-			if err != nil {
-				t.Fatalf("Compile() error = %v", err)
-			}
+	compiler := NewTargetCatalogCompiler(registry.NewBuiltinTargetContributor(catalogAcceptanceCapability{}))
+	activation := mustCompilerActivation(
+		t,
+		"policy.targets.authn."+expectation.action,
+		"authn",
+		expectation.action,
+		"authn/"+expectation.action+"/v1",
+	)
 
-			target, exists := catalog.Lookup(mustCatalogTarget(t, "authn", test.action))
-			if !exists {
-				t.Fatal("compiled authn target missing")
-			}
+	catalog, err := compiler.Compile(context.Background(), []registry.TargetActivation{activation})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
 
-			compiled := target.DomainPlan().Checkpoints()
-			if len(compiled) != len(test.checkpoints) {
-				t.Fatalf("checkpoint count = %d, want %d", len(compiled), len(test.checkpoints))
-			}
+	target, exists := catalog.Lookup(mustCatalogTarget(t, "authn", expectation.action))
+	if !exists {
+		t.Fatal("compiled authn target missing")
+	}
 
-			for index, want := range test.checkpoints {
-				checkpoint := compiled[index]
-				if checkpoint.Name() != want.name || !reflect.DeepEqual(checkpoint.ProviderIDs(), want.providers) {
-					t.Fatalf("checkpoint %d = %s/%v, want %s/%v", index, checkpoint.Name(), checkpoint.ProviderIDs(), want.name, want.providers)
-				}
-			}
-		})
+	compiled := target.DomainPlan().Checkpoints()
+	if len(compiled) != len(expectation.checkpoints) {
+		t.Fatalf("checkpoint count = %d, want %d", len(compiled), len(expectation.checkpoints))
+	}
+
+	for index, want := range expectation.checkpoints {
+		checkpoint := compiled[index]
+		if checkpoint.Name() != want.name || !reflect.DeepEqual(checkpoint.ProviderIDs(), want.providers) {
+			t.Fatalf("checkpoint %d = %s/%v, want %s/%v", index, checkpoint.Name(), checkpoint.ProviderIDs(), want.name, want.providers)
+		}
 	}
 }
 
@@ -328,19 +343,19 @@ func assertStandardAuthProviderOrder(t *testing.T, target policyruntime.Compiled
 	t.Helper()
 
 	preAuth, exists := target.DomainPlan().Checkpoint("pre_auth")
-	if !exists || !reflect.DeepEqual(preAuth.ProviderIDs(), []string{"authn/brute_force"}) {
+	if !exists || !reflect.DeepEqual(preAuth.ProviderIDs(), []string{policy.AuthnProviderBruteForce}) {
 		t.Fatalf("pre_auth providers = %v, want brute-force hard-cut owner", preAuth.ProviderIDs())
 	}
 
 	authDecision, exists := target.DomainPlan().Checkpoint("auth_decision")
 
 	wantProviders := []string{
-		"authn/environment",
-		"authn/tls_encryption",
-		"authn/relay_domains",
-		"authn/rbl",
-		"authn/auth_backend",
-		"authn/subject",
+		policy.AuthnProviderEnvironment,
+		policy.AuthnProviderTLSEncryption,
+		policy.AuthnProviderRelayDomains,
+		policy.AuthnProviderRBL,
+		policy.AuthnProviderBackend,
+		policy.AuthnProviderSubject,
 	}
 	if !exists || !reflect.DeepEqual(authDecision.ProviderIDs(), wantProviders) {
 		t.Fatalf("auth_decision providers = %v, want %v", authDecision.ProviderIDs(), wantProviders)

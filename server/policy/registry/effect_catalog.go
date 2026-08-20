@@ -349,7 +349,7 @@ func cloneProviderSchedule(input ProviderDefinitionInput) ([]string, []string, e
 		)
 	}
 
-	requires, err := cloneUniqueQualifiedIDs(input.Requires, input.ID+".requires")
+	requires, err := cloneUniqueProviderIDs(input.Requires, input.ID+".requires")
 	if err != nil {
 		return nil, nil, err
 	}

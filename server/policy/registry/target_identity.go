@@ -230,6 +230,7 @@ type TargetActivation struct {
 	target            decision.Target
 	schema            SchemaIdentity
 	defaultPolicySet  PolicySetID
+	report            TargetReportSettings
 	noMatch           NoMatchBehavior
 	path              string
 	authorityMode     AuthorityMode
@@ -363,6 +364,68 @@ func (a TargetActivation) WithPolicySetBindings(bindings []PolicySetImport) (Tar
 // PolicySetBindings returns detached explicit target/checkpoint set references.
 func (a TargetActivation) PolicySetBindings() []PolicySetImport {
 	return clonePolicySetImports(a.policySetBindings)
+}
+
+// TargetReportSettings is one immutable target-local diagnostic report selection.
+type TargetReportSettings struct {
+	enabled           bool
+	includeFSM        bool
+	includeChecks     bool
+	includeAttributes bool
+}
+
+// NewTargetReportSettings constructs one exact target report selection.
+func NewTargetReportSettings(
+	enabled bool,
+	includeFSM bool,
+	includeChecks bool,
+	includeAttributes bool,
+) TargetReportSettings {
+	return TargetReportSettings{
+		enabled: enabled, includeFSM: includeFSM,
+		includeChecks: includeChecks, includeAttributes: includeAttributes,
+	}
+}
+
+// Enabled reports whether target report construction is selected.
+func (s TargetReportSettings) Enabled() bool {
+	return s.enabled
+}
+
+// IncludeFSM reports whether the authentication state machine is retained.
+func (s TargetReportSettings) IncludeFSM() bool {
+	return s.includeFSM
+}
+
+// IncludeChecks reports whether provider/check diagnostics are retained.
+func (s TargetReportSettings) IncludeChecks() bool {
+	return s.includeChecks
+}
+
+// IncludeAttributes reports whether report attributes are retained.
+func (s TargetReportSettings) IncludeAttributes() bool {
+	return s.includeAttributes
+}
+
+// WithReport returns an activation with one immutable diagnostic report selection.
+func (a TargetActivation) WithReport(settings TargetReportSettings) (TargetActivation, error) {
+	if _, err := decision.NewTarget(a.target.Namespace(), a.target.Action()); err != nil || !a.schema.valid() {
+		return TargetActivation{}, newValidationError(
+			ErrTargetSchemaMismatch,
+			a.path+".report",
+			a.target.String(),
+			"activation must be constructor validated before report selection",
+		)
+	}
+
+	a.report = settings
+
+	return a, nil
+}
+
+// Report returns the exact target-local diagnostic report selection.
+func (a TargetActivation) Report() TargetReportSettings {
+	return a.report
 }
 
 // ClientAdmissionReference is an immutable future client-profile target/schema reference.

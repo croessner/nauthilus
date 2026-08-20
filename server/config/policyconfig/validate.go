@@ -10,17 +10,31 @@ package policyconfig
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/croessner/nauthilus/v3/server/policy"
+	"golang.org/x/net/http/httpguts"
+	"golang.org/x/text/language"
 )
 
 var (
 	// ErrValidation identifies a semantic unified policy contract violation.
 	ErrValidation = errors.New("invalid standalone policy configuration")
 
-	exactSchemaPattern = regexp.MustCompile(`^([a-z0-9_]+(?:\.[a-z0-9_]+)*)/([a-z0-9]+(?:[-_][a-z0-9]+)*)/v([1-9][0-9]*)$`)
+	exactSchemaPattern       = regexp.MustCompile(`^([a-z0-9_]+(?:\.[a-z0-9_]+)*)/([a-z0-9]+(?:[-_][a-z0-9]+)*)/v([1-9][0-9]*)$`)
+	metadataKeyPattern       = regexp.MustCompile(`^[0-9a-z_.-]+$`)
+	policyConditionSetName   = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	unsafeRequestSourceNames = map[string]struct{}{
+		"authorization":       {},
+		"proxy-authorization": {},
+		"cookie":              {},
+		"set-cookie":          {},
+	}
 )
 
 const (
@@ -35,6 +49,20 @@ const (
 	keywordPlugin                = "plugin"
 	decisionDeny                 = "deny"
 	decisionNotApplicable        = "not_applicable"
+	requestHeaderFactPrefix      = "request.header."
+	requestMetadataFactPrefix    = "request.metadata."
+	requestFactVisibility        = "public"
+	providerKindLuaEnvironment   = "lua_environment"
+	providerKindLuaSubject       = "lua_subject"
+	effectKindLuaAction          = "lua_action"
+	luaActionTypeLua             = "lua"
+	luaActionTypePost            = "post"
+	pluginBindingEnvironment     = "environment"
+	pluginBindingSubject         = "subject"
+	valueTypeString              = "string"
+	luaEnvironmentPrefix         = "lua_environment_"
+	luaSubjectPrefix             = "lua_subject_"
+	luaActionPrefix              = "lua_action_"
 )
 
 // Validate enforces path-aware semantic invariants on an isolated document.
@@ -50,6 +78,10 @@ func Validate(document Document) error {
 	}
 
 	if err := validateTargets(document.Policy.Targets); err != nil {
+		return err
+	}
+
+	if err := validateConfiguredReferences(document); err != nil {
 		return err
 	}
 
@@ -231,8 +263,8 @@ func validateNamespace(namespaceName string, namespace NamespaceConfig, path str
 		},
 		func() error { return validateFactSources(namespace.FactSources, path+".fact_sources") },
 		func() error { return validateProviders(namespaceName, namespace.Providers, path+".providers") },
-		func() error { return validateEffects(namespace.Effects, path+".effects") },
-		func() error { return validateDomainPlans(namespaceName, namespace.DomainPlans, path+".domain_plans") },
+		func() error { return validateEffects(namespaceName, namespace.Effects, path+".effects") },
+		func() error { return validateDomainPlans(namespaceName, namespace, path+".domain_plans") },
 		func() error { return validatePolicySets(namespaceName, namespace.PolicySets, path+".policy_sets") },
 	}
 
@@ -245,49 +277,231 @@ func validateNamespace(namespaceName string, namespace NamespaceConfig, path str
 	return nil
 }
 
-// validateLocalization checks required catalog identity and entries.
+// validateLocalization preserves unique, bounded translation catalog semantics.
 func validateLocalization(localization LocalizationConfig, path string) error {
+	seen := make(map[string]struct{}, len(localization.Catalogs))
+
 	for index, catalog := range localization.Catalogs {
 		catalogPath := fmt.Sprintf("%s.catalogs[%d]", path, index)
-		if strings.TrimSpace(catalog.Namespace) == "" {
-			return invalid(catalogPath+".namespace", "must be non-empty")
+		if err := validateLocalizationCatalog(catalog, catalogPath); err != nil {
+			return err
 		}
 
-		if strings.TrimSpace(catalog.Language) == "" {
-			return invalid(catalogPath+".language", "must be non-empty")
+		identity := catalog.Namespace + "\x00" + catalog.Language
+		if _, exists := seen[identity]; exists {
+			return invalid(catalogPath, "duplicates an existing namespace and language catalog")
 		}
 
-		if catalog.Entries == nil {
-			return invalid(catalogPath+".entries", "must be present")
+		seen[identity] = struct{}{}
+
+		if err := validateLocalizationEntries(catalog.Entries, catalogPath+".entries"); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-// validateConditionSets checks named time-window structure and bounds.
+// validateLocalizationCatalog checks one bounded catalog before duplicate detection.
+func validateLocalizationCatalog(catalog TranslationCatalogConfig, path string) error {
+	if strings.TrimSpace(catalog.Namespace) == "" || len(catalog.Namespace) > 64 || !printableASCII(catalog.Namespace) {
+		return invalid(path+".namespace", "must be non-empty bounded printable ASCII")
+	}
+
+	if strings.TrimSpace(catalog.Language) == "" || len(catalog.Language) > 35 || !printableASCII(catalog.Language) {
+		return invalid(path+".language", "must be a bounded BCP 47 language tag")
+	}
+
+	if _, err := language.Parse(catalog.Language); err != nil {
+		return invalid(path+".language", "must be a valid BCP 47 language tag")
+	}
+
+	if catalog.Entries == nil {
+		return invalid(path+".entries", "must be present")
+	}
+
+	if len(catalog.Entries) > 1024 {
+		return invalid(path+".entries", "must not contain more than 1024 messages")
+	}
+
+	return nil
+}
+
+// validateLocalizationEntries checks stable non-empty message keys and bounded values.
+func validateLocalizationEntries(entries map[string]string, path string) error {
+	for _, key := range sortedMapKeys(entries) {
+		if strings.TrimSpace(key) == "" {
+			return invalid(path, "message key must not be blank")
+		}
+
+		entryPath := path + "." + key
+		if len(key) > 256 {
+			return invalid(entryPath, "message key must not exceed 256 bytes")
+		}
+
+		message := entries[key]
+		if strings.TrimSpace(message) == "" {
+			return invalid(entryPath, "message must not be blank")
+		}
+
+		if len(message) > 4096 {
+			return invalid(entryPath, "message must not exceed 4096 bytes")
+		}
+	}
+
+	return nil
+}
+
+// validateConditionSets preserves typed network, string, and local-time operands.
 func validateConditionSets(sets ConditionSetsConfig, path string) error {
+	if err := validateNetworkConditionSets(sets.Networks, path+".networks"); err != nil {
+		return err
+	}
+
+	if err := validateStringConditionSets(sets.Strings, path+".strings"); err != nil {
+		return err
+	}
+
 	for _, name := range sortedTimeWindowNames(sets.TimeWindows) {
 		window := sets.TimeWindows[name]
 
 		windowPath := path + ".time_windows." + name
-		if !validAction(name) {
+		if !validConditionSetName(name) {
 			return invalid(windowPath, "must use a canonical local name")
+		}
+
+		if _, err := time.LoadLocation(window.Timezone); err != nil {
+			return invalid(windowPath+".timezone", "must be an IANA timezone name")
+		}
+
+		for index, day := range window.Days {
+			if !validWeekday(day) {
+				return invalid(fmt.Sprintf("%s.days[%d]", windowPath, index), "must be one of mon, tue, wed, thu, fri, sat, or sun")
+			}
 		}
 
 		for index, interval := range window.Intervals {
 			intervalPath := fmt.Sprintf("%s.intervals[%d]", windowPath, index)
-			if strings.TrimSpace(interval.Start) == "" {
-				return invalid(intervalPath+".start", "must be non-empty")
+
+			start, err := parseClockMinute(interval.Start)
+			if err != nil {
+				return invalid(intervalPath+".start", "must use HH:MM")
 			}
 
-			if strings.TrimSpace(interval.End) == "" {
-				return invalid(intervalPath+".end", "must be non-empty")
+			end, err := parseClockMinute(interval.End)
+			if err != nil {
+				return invalid(intervalPath+".end", "must use HH:MM")
+			}
+
+			if end <= start {
+				return invalid(intervalPath, "must not cross midnight")
 			}
 		}
 	}
 
 	return nil
+}
+
+// validateNetworkConditionSets checks canonical names and every IP or CIDR operand.
+func validateNetworkConditionSets(sets map[string][]string, path string) error {
+	for _, name := range sortedMapKeys(sets) {
+		setPath := path + "." + name
+		if !validConditionSetName(name) {
+			return invalid(setPath, "must use lowercase letters, digits, and underscores")
+		}
+
+		for index, entry := range sets[name] {
+			if !validNetworkOperand(entry) {
+				return invalid(fmt.Sprintf("%s[%d]", setPath, index), "must be an IP address or CIDR")
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateStringConditionSets checks non-empty exact values without duplicates.
+func validateStringConditionSets(sets map[string][]string, path string) error {
+	for _, name := range sortedMapKeys(sets) {
+		setPath := path + "." + name
+		if !validConditionSetName(name) {
+			return invalid(setPath, "must use lowercase letters, digits, and underscores")
+		}
+
+		entries := sets[name]
+		if len(entries) == 0 {
+			return invalid(setPath, "must not be empty")
+		}
+
+		seen := make(map[string]struct{}, len(entries))
+		for index, entry := range entries {
+			entryPath := fmt.Sprintf("%s[%d]", setPath, index)
+			if strings.TrimSpace(entry) == "" {
+				return invalid(entryPath, "must not be empty")
+			}
+
+			if _, exists := seen[entry]; exists {
+				return invalid(entryPath, "duplicates an earlier value")
+			}
+
+			seen[entry] = struct{}{}
+		}
+	}
+
+	return nil
+}
+
+// validNetworkOperand reports whether a value is one parseable address or prefix.
+func validNetworkOperand(value string) bool {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "/") {
+		_, err := netip.ParsePrefix(value)
+
+		return err == nil
+	}
+
+	_, err := netip.ParseAddr(value)
+
+	return err == nil
+}
+
+// validConditionSetName preserves the old simple local-name contract.
+func validConditionSetName(value string) bool {
+	return policyConditionSetName.MatchString(value)
+}
+
+// validWeekday recognizes the retained case-insensitive weekday abbreviations.
+func validWeekday(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "mon", "tue", "wed", "thu", "fri", "sat", "sun":
+		return true
+	default:
+		return false
+	}
+}
+
+// parseClockMinute parses one retained local-time HH:MM value.
+func parseClockMinute(value string) (int, error) {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("invalid time")
+	}
+
+	hour, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, err
+	}
+
+	minute, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, err
+	}
+
+	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, fmt.Errorf("invalid time")
+	}
+
+	return hour*60 + minute, nil
 }
 
 // validateSchemaContributions rejects empty registry-script identities.
@@ -303,33 +517,133 @@ func validateSchemaContributions(contributions SchemaContributionsConfig, path s
 
 // validateFactSources validates bounded source-to-fact projections.
 func validateFactSources(sources FactSourcesConfig, path string) error {
+	seen := make(map[string]string, len(sources.HTTPHeaders)+len(sources.GRPCMetadata)+len(sources.BackendAttributes))
+
 	for index, source := range sources.HTTPHeaders {
 		sourcePath := fmt.Sprintf("%s.http_headers[%d]", path, index)
-		if strings.TrimSpace(source.Header) == "" {
-			return invalid(sourcePath+".header", "must be non-empty")
-		}
-
-		if !validFact(source.Attribute) {
-			return invalid(sourcePath+".attribute", "must be a canonical fact identity")
+		if err := validateHTTPHeaderFactSource(source, sourcePath, seen); err != nil {
+			return err
 		}
 	}
 
 	for index, source := range sources.GRPCMetadata {
 		sourcePath := fmt.Sprintf("%s.grpc_metadata[%d]", path, index)
-		if strings.TrimSpace(source.Key) == "" {
-			return invalid(sourcePath+".key", "must be non-empty")
-		}
-
-		if !validFact(source.Attribute) {
-			return invalid(sourcePath+".attribute", "must be a canonical fact identity")
+		if err := validateGRPCMetadataFactSource(source, sourcePath, seen); err != nil {
+			return err
 		}
 	}
 
-	return validateBackendFactSources(sources.BackendAttributes, path+".backend_attributes")
+	return validateBackendFactSources(sources.BackendAttributes, path+".backend_attributes", seen)
+}
+
+// validateHTTPHeaderFactSource validates one safe header projection and its destination.
+func validateHTTPHeaderFactSource(
+	source HTTPHeaderFactSourceConfig,
+	path string,
+	seen map[string]string,
+) error {
+	header := strings.TrimSpace(source.Header)
+	if header == "" || !httpguts.ValidHeaderFieldName(header) {
+		return invalid(path+".header", "must be a valid HTTP header name")
+	}
+
+	if unsafeRequestSourceName(header) {
+		return invalid(path+".header", "must not expose credential or session headers")
+	}
+
+	if err := validateRequestFact(source.Attribute, requestHeaderFactPrefix, path+".attribute", seen, path); err != nil {
+		return err
+	}
+
+	if err := validateFactSourceNormalization(source.Normalize, path+".normalize"); err != nil {
+		return err
+	}
+
+	return validateFactSourceVisibility(source.Visibility, path+".visibility")
+}
+
+// validateGRPCMetadataFactSource validates one safe metadata projection and its destination.
+func validateGRPCMetadataFactSource(
+	source GRPCMetadataFactSourceConfig,
+	path string,
+	seen map[string]string,
+) error {
+	key := strings.TrimSpace(source.Key)
+	if key == "" || key != strings.ToLower(key) || !metadataKeyPattern.MatchString(key) {
+		return invalid(path+".key", "must be a lowercase gRPC metadata key")
+	}
+
+	if unsafeRequestSourceName(key) {
+		return invalid(path+".key", "must not expose credential or session metadata")
+	}
+
+	if err := validateRequestFact(source.Attribute, requestMetadataFactPrefix, path+".attribute", seen, path); err != nil {
+		return err
+	}
+
+	if err := validateFactSourceNormalization(source.Normalize, path+".normalize"); err != nil {
+		return err
+	}
+
+	return validateFactSourceVisibility(source.Visibility, path+".visibility")
+}
+
+// validateRequestFact enforces a source-specific identity and namespace-wide uniqueness.
+func validateRequestFact(value string, prefix string, path string, seen map[string]string, ownerPath string) error {
+	if !strings.HasPrefix(value, prefix) || !validFact(value) {
+		return invalid(path, "must be a canonical request fact with the correct source prefix")
+	}
+
+	return recordFactSource(value, path, ownerPath, seen)
+}
+
+// validateFactSourceNormalization preserves the retained lower/upper and non-negative bound contract.
+func validateFactSourceNormalization(normalize NormalizeConfig, path string) error {
+	caseMode := strings.TrimSpace(normalize.Case)
+	if caseMode != "" && caseMode != "lower" && caseMode != "upper" {
+		return invalid(path+".case", "must be lower or upper")
+	}
+
+	if normalize.MaxLength < 0 {
+		return invalid(path+".max_length", "must not be negative")
+	}
+
+	return nil
+}
+
+// validateFactSourceVisibility preserves public-only request projection behavior.
+func validateFactSourceVisibility(value string, path string) error {
+	if value != "" && value != requestFactVisibility {
+		return invalid(path, "must be public")
+	}
+
+	return nil
+}
+
+// unsafeRequestSourceName reports whether a request source can carry credentials or sessions.
+func unsafeRequestSourceName(value string) bool {
+	_, unsafe := unsafeRequestSourceNames[strings.ToLower(strings.TrimSpace(value))]
+
+	return unsafe
+}
+
+// recordFactSource rejects duplicate destinations across every namespace-owned fact source family.
+func recordFactSource(value string, path string, ownerPath string, seen map[string]string) error {
+	if previous, exists := seen[value]; exists {
+		return invalid(path, "duplicates fact source from "+previous)
+	}
+
+	seen[value] = ownerPath
+
+	return nil
 }
 
 // validateBackendFactSources validates backend attribute export contracts.
-func validateBackendFactSources(sources []BackendAttributeFactSourceConfig, path string) error {
+func validateBackendFactSources(
+	sources []BackendAttributeFactSourceConfig,
+	path string,
+	seen map[string]string,
+) error {
 	for index, source := range sources {
 		sourcePath := fmt.Sprintf("%s[%d]", path, index)
 		if strings.TrimSpace(source.Name) == "" {
@@ -340,8 +654,12 @@ func validateBackendFactSources(sources []BackendAttributeFactSourceConfig, path
 			return invalid(sourcePath+".attribute", "must be a canonical fact identity")
 		}
 
-		if !validValueKind(source.Type) {
-			return invalid(sourcePath+".type", "must be an exact value kind")
+		if err := recordFactSource(source.Attribute, sourcePath+".attribute", sourcePath, seen); err != nil {
+			return err
+		}
+
+		if !validBackendFactType(source.Type) {
+			return invalid(sourcePath+".type", "must be bool, string, string_list, or number")
 		}
 
 		if source.Sensitivity != "" && source.Sensitivity != "public" && source.Sensitivity != "internal" && source.Sensitivity != "secret" {
@@ -358,8 +676,8 @@ func validateProviders(namespace string, providers map[string]ProviderConfig, pa
 		provider := providers[name]
 
 		providerPath := path + "." + name
-		if !validAction(name) {
-			return invalid(providerPath, "must use a canonical local name")
+		if !validProviderLocalName(namespace, name, provider.Kind) {
+			return invalid(providerPath, "must use a canonical local name or exact authn plugin identity")
 		}
 
 		if !validProviderKind(provider.Kind) {
@@ -367,6 +685,10 @@ func validateProviders(namespace string, providers map[string]ProviderConfig, pa
 		}
 
 		if err := validateProviderSchedule(namespace, provider, providerPath); err != nil {
+			return err
+		}
+
+		if err := validateProviderBinding(namespace, name, provider, providerPath); err != nil {
 			return err
 		}
 
@@ -381,6 +703,97 @@ func validateProviders(namespace string, providers map[string]ProviderConfig, pa
 		if err := validateDiagnosticID(provider.Diagnostics.PublicID, providerPath+".diagnostics.public_id"); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+// validateProviderBinding delegates each provider kind to its binding boundary.
+func validateProviderBinding(namespace string, name string, provider ProviderConfig, path string) error {
+	if err := validateReservedAuthnProviderKind(namespace, name, provider.Kind, path); err != nil {
+		return err
+	}
+
+	switch provider.Kind {
+	case providerKindLuaEnvironment:
+		return validateLuaProviderBinding(
+			namespace,
+			name,
+			provider.ScriptPath,
+			luaEnvironmentPrefix,
+			pluginBindingEnvironment,
+			path,
+		)
+	case providerKindLuaSubject:
+		return validateLuaProviderBinding(
+			namespace,
+			name,
+			provider.ScriptPath,
+			luaSubjectPrefix,
+			pluginBindingSubject,
+			path,
+		)
+	case keywordPlugin:
+		return validatePluginProviderBinding(namespace, name, provider.Module, path)
+	}
+
+	return nil
+}
+
+// validateReservedAuthnProviderKind protects the two qualified Lua identity families from kind spoofing.
+func validateReservedAuthnProviderKind(namespace string, name string, kind string, path string) error {
+	if namespace != authnNamespace {
+		return nil
+	}
+
+	if strings.HasPrefix(name, luaEnvironmentPrefix) && kind != providerKindLuaEnvironment {
+		return invalid(path+".kind", "the lua_environment_ prefix is reserved for Lua environment providers")
+	}
+
+	if strings.HasPrefix(name, luaSubjectPrefix) && kind != providerKindLuaSubject {
+		return invalid(path+".kind", "the lua_subject_ prefix is reserved for Lua subject providers")
+	}
+
+	return nil
+}
+
+// validateLuaProviderBinding enforces a source-specific authn prefix and non-empty script path.
+func validateLuaProviderBinding(
+	namespace string,
+	name string,
+	scriptPath string,
+	prefix string,
+	source string,
+	path string,
+) error {
+	if namespace == authnNamespace && !strings.HasPrefix(name, prefix) {
+		return invalid(path, "authn Lua "+source+" providers require the "+prefix+" prefix")
+	}
+
+	if strings.TrimSpace(scriptPath) == "" {
+		return invalid(path+".script_path", "Lua "+source+" providers require a script path")
+	}
+
+	return nil
+}
+
+// validatePluginProviderBinding matches one authn plugin definition to its embedded module identity.
+func validatePluginProviderBinding(namespace string, name string, module string, path string) error {
+	if namespace != authnNamespace {
+		return nil
+	}
+
+	identityModule, _, ok := parseAuthnPluginProviderLocal(name)
+	if !ok {
+		return invalid(path, "authn plugin providers require an exact plugin.<module>.environment or plugin.<module>.subject.<local> identity")
+	}
+
+	if !validNamespace(module) {
+		return invalid(path+".module", "must name one canonical plugin module")
+	}
+
+	if module != identityModule {
+		return invalid(path+".module", "must match the module embedded in the provider identity")
 	}
 
 	return nil
@@ -426,7 +839,7 @@ func validateExecutions(executions []string, path string) error {
 }
 
 // validateEffects validates execution ownership, providers, parameters, and diagnostics.
-func validateEffects(effects map[string]EffectConfig, path string) error {
+func validateEffects(namespace string, effects map[string]EffectConfig, path string) error {
 	for _, name := range sortedEffectNames(effects) {
 		effect := effects[name]
 
@@ -435,7 +848,7 @@ func validateEffects(effects map[string]EffectConfig, path string) error {
 			return invalid(effectPath, "must use a canonical local name")
 		}
 
-		if err := validateEffect(effect, effectPath); err != nil {
+		if err := validateEffect(namespace, name, effect, effectPath); err != nil {
 			return err
 		}
 	}
@@ -444,16 +857,20 @@ func validateEffects(effects map[string]EffectConfig, path string) error {
 }
 
 // validateEffect enforces exactly one effect execution owner.
-func validateEffect(effect EffectConfig, path string) error {
-	if effect.Kind != defaultEffectKind && effect.Kind != effectKindAdvice && effect.Kind != "lua_action" {
+func validateEffect(namespace string, name string, effect EffectConfig, path string) error {
+	if namespace == authnNamespace && strings.HasPrefix(name, luaActionPrefix) && effect.Kind != effectKindLuaAction {
+		return invalid(path+".kind", "the lua_action_ prefix is reserved for Lua action effects")
+	}
+
+	if effect.Kind != defaultEffectKind && effect.Kind != effectKindAdvice && effect.Kind != effectKindLuaAction {
 		return invalid(path+".kind", "must be obligation, advice, or lua_action")
 	}
 
-	if err := validateEffectOwnership(effect, path); err != nil {
-		return err
-	}
-
-	if err := validateLuaActionExecution(effect, path); err != nil {
+	if effect.Kind == effectKindLuaAction {
+		if err := validateLuaActionEffect(namespace, name, effect, path); err != nil {
+			return err
+		}
+	} else if err := validateEffectOwnership(effect, path); err != nil {
 		return err
 	}
 
@@ -489,14 +906,14 @@ func validateEffectOwnership(effect EffectConfig, path string) error {
 	return nil
 }
 
-// validateLuaActionExecution preserves the exact action-type host ownership mapping.
-func validateLuaActionExecution(effect EffectConfig, path string) error {
-	if effect.ActionType == "" {
-		return nil
+// validateLuaActionEffect preserves reserved identity, script, and exact host ownership.
+func validateLuaActionEffect(namespace string, name string, effect EffectConfig, path string) error {
+	if !validLuaActionType(effect.ActionType) {
+		return invalid(path+".action_type", "must be brute_force, rbl, tls_encryption, relay_domains, lua, or post")
 	}
 
 	want := executionHostSync
-	if effect.ActionType == "post" {
+	if effect.ActionType == luaActionTypePost {
 		want = executionHostPostAction
 	}
 
@@ -504,7 +921,33 @@ func validateLuaActionExecution(effect EffectConfig, path string) error {
 		return invalid(path+".execution", "does not match action_type host ownership")
 	}
 
+	if strings.TrimSpace(effect.ScriptPath) == "" {
+		return invalid(path+".script_path", "Lua actions require a script path")
+	}
+
+	if namespace != authnNamespace {
+		return invalid(path+".kind", "Lua actions are restricted to the authn namespace")
+	}
+
+	if !strings.HasPrefix(name, luaActionPrefix) {
+		return invalid(path, "authn Lua action effects require the lua_action_ prefix")
+	}
+
+	if effect.Provider != "" {
+		return invalid(path+".provider", "Lua action execution is bound internally and forbids an operator provider")
+	}
+
 	return nil
+}
+
+// validLuaActionType reports whether value belongs to the retained Lua action vocabulary.
+func validLuaActionType(value string) bool {
+	switch value {
+	case "brute_force", "rbl", "tls_encryption", "relay_domains", luaActionTypeLua, luaActionTypePost:
+		return true
+	default:
+		return false
+	}
 }
 
 // validateEffectParameters validates typed parameter declarations.
@@ -530,9 +973,9 @@ func validateEffectParameters(parameters map[string]EffectParameterConfig, path 
 }
 
 // validateDomainPlans validates checkpoint ownership and provider instances.
-func validateDomainPlans(namespace string, plans map[string]DomainPlanConfig, path string) error {
-	for _, name := range sortedDomainPlanNames(plans) {
-		plan := plans[name]
+func validateDomainPlans(namespaceName string, namespace NamespaceConfig, path string) error {
+	for _, name := range sortedDomainPlanNames(namespace.DomainPlans) {
+		plan := namespace.DomainPlans[name]
 
 		planPath := path + "." + name
 		if !validAction(name) {
@@ -543,7 +986,7 @@ func validateDomainPlans(namespace string, plans map[string]DomainPlanConfig, pa
 			return err
 		}
 
-		if err := validateCheckpoints(namespace, plan.Checkpoints, planPath+".checkpoints"); err != nil {
+		if err := validateCheckpoints(namespaceName, namespace.Providers, plan, planPath+".checkpoints"); err != nil {
 			return err
 		}
 	}
@@ -561,29 +1004,67 @@ func validateSchedulerGuards(guards map[string]SchedulerGuardConfig, path string
 			return invalid(guardPath, "must use a canonical local name")
 		}
 
-		if guard.OnMissingAttribute != "" && guard.OnMissingAttribute != "skip" && guard.OnMissingAttribute != "run" {
-			return invalid(guardPath+".on_missing_attribute", "must be skip or run")
+		if guard.OnMissingAttribute != "" && guard.OnMissingAttribute != "run" {
+			return invalid(guardPath+".on_missing_attribute", "must be run")
+		}
+
+		if err := validateCondition(guard.If, guardPath+".if"); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-// validateCheckpoints validates provider instance names, references, and auth-only guards.
-func validateCheckpoints(namespace string, checkpoints map[string]CheckpointConfig, path string) error {
-	for _, name := range sortedCheckpointNames(checkpoints) {
-		checkpoint := checkpoints[name]
+// validateCheckpoints validates provider instances, local references, and dependency order.
+func validateCheckpoints(
+	namespace string,
+	providers map[string]ProviderConfig,
+	plan DomainPlanConfig,
+	path string,
+) error {
+	seenOutputs := make(map[string]string)
+
+	for _, name := range sortedCheckpointNames(plan.Checkpoints) {
+		checkpoint := plan.Checkpoints[name]
 
 		checkpointPath := path + "." + name
 		if !validAction(name) {
 			return invalid(checkpointPath, "must use a canonical checkpoint name")
 		}
 
+		instances := make(map[string]int, len(checkpoint.Providers))
 		for index, provider := range checkpoint.Providers {
 			providerPath := fmt.Sprintf("%s.providers[%d]", checkpointPath, index)
 			if err := validateProviderInstance(namespace, provider, providerPath); err != nil {
 				return err
 			}
+
+			if previous, exists := instances[provider.Name]; exists {
+				return invalid(providerPath+".name", fmt.Sprintf("duplicates provider instance at index %d", previous))
+			}
+
+			instances[provider.Name] = index
+
+			if !providerUseResolvable(namespace, provider.Use, providers) {
+				return invalid(providerPath+".use", "does not resolve to a provider owned by this namespace")
+			}
+
+			if provider.Output != "" {
+				if !validFact(provider.Output) {
+					return invalid(providerPath+".output", "must be a canonical fact identity")
+				}
+
+				if previous, exists := seenOutputs[provider.Output]; exists {
+					return invalid(providerPath+".output", "duplicates provider output from "+previous)
+				}
+
+				seenOutputs[provider.Output] = providerPath
+			}
+		}
+
+		if err := validateCheckpointReferences(checkpoint, plan.SchedulerGuards, instances, checkpointPath); err != nil {
+			return err
 		}
 	}
 
@@ -596,24 +1077,185 @@ func validateProviderInstance(namespace string, provider ProviderInstanceConfig,
 		return invalid(path+".name", "must be a canonical instance name")
 	}
 
-	if !validQualified(provider.Use) {
+	if !validProviderUse(provider.Use) {
 		return invalid(path+".use", "must be an exact qualified provider identity")
 	}
 
-	if provider.RunIf.AuthState != "" {
-		if namespace != authnNamespace {
-			return invalid(path+".run_if.auth_state", "is restricted to authn domain plans")
+	if err := validateProviderObserveSafety(namespace, provider, path); err != nil {
+		return err
+	}
+
+	if err := validateProviderAuthState(namespace, provider.RunIf.AuthState, path+".run_if.auth_state"); err != nil {
+		return err
+	}
+
+	if err := validateUniqueLocalNames(provider.Actions, path+".actions", "action"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateProviderObserveSafety rejects assertions unsupported by immutable authn provider semantics.
+func validateProviderObserveSafety(namespace string, provider ProviderInstanceConfig, path string) error {
+	if provider.ObserveSafe == nil || !*provider.ObserveSafe || namespace != authnNamespace {
+		return nil
+	}
+
+	defaultSafe, allowsAssertion, known := policy.AuthnProviderObserveSafety(provider.Use)
+	if known && !defaultSafe && !allowsAssertion {
+		return invalid(path+".observe_safe", "cannot be asserted for this authn provider")
+	}
+
+	return nil
+}
+
+// validateProviderAuthState restricts auth-state predicates to authn and the closed state vocabulary.
+func validateProviderAuthState(namespace string, authState string, path string) error {
+	if authState == "" {
+		return nil
+	}
+
+	if namespace != authnNamespace {
+		return invalid(path, "is restricted to authn domain plans")
+	}
+
+	if authState != "authenticated" && authState != "unauthenticated" && authState != keywordAny {
+		return invalid(path, "must be authenticated, unauthenticated, or any")
+	}
+
+	return nil
+}
+
+// validateCheckpointReferences resolves dependencies and exact plan-local scheduler guards.
+func validateCheckpointReferences(
+	checkpoint CheckpointConfig,
+	guards map[string]SchedulerGuardConfig,
+	instances map[string]int,
+	path string,
+) error {
+	for index, provider := range checkpoint.Providers {
+		providerPath := fmt.Sprintf("%s.providers[%d]", path, index)
+
+		if err := validateProviderDependencies(provider, instances, providerPath); err != nil {
+			return err
 		}
 
-		if provider.RunIf.AuthState != "authenticated" && provider.RunIf.AuthState != "unauthenticated" && provider.RunIf.AuthState != keywordAny {
-			return invalid(path+".run_if.auth_state", "must be authenticated, unauthenticated, or any")
+		seenGuards := make(map[string]struct{}, len(provider.SkipIf))
+		for guardIndex, guard := range provider.SkipIf {
+			guardPath := fmt.Sprintf("%s.skip_if[%d]", providerPath, guardIndex)
+			if !validAction(guard) {
+				return invalid(guardPath, "must be a canonical scheduler guard name")
+			}
+
+			if _, exists := seenGuards[guard]; exists {
+				return invalid(guardPath, "must be unique")
+			}
+
+			seenGuards[guard] = struct{}{}
+			if _, exists := guards[guard]; !exists {
+				return invalid(guardPath, "references an unknown scheduler guard in this domain plan")
+			}
 		}
 	}
 
-	for index, action := range provider.Actions {
-		if !validAction(action) {
-			return invalid(fmt.Sprintf("%s.actions[%d]", path, index), "must be a canonical action")
+	return validateProviderDependencyCycles(checkpoint, instances, path)
+}
+
+// validateProviderDependencies resolves checkpoint-local or immutable builtin prerequisites.
+func validateProviderDependencies(
+	provider ProviderInstanceConfig,
+	instances map[string]int,
+	path string,
+) error {
+	seen := make(map[string]struct{}, len(provider.After))
+	for index, dependency := range provider.After {
+		dependencyPath := fmt.Sprintf("%s.after[%d]", path, index)
+		if !validAction(dependency) {
+			return invalid(dependencyPath, "must be a canonical provider instance name")
 		}
+
+		if _, exists := seen[dependency]; exists {
+			return invalid(dependencyPath, "must be unique")
+		}
+
+		seen[dependency] = struct{}{}
+		if _, exists := instances[dependency]; exists {
+			continue
+		}
+
+		return invalid(dependencyPath, "references an unknown provider instance in this checkpoint")
+	}
+
+	return nil
+}
+
+// validateProviderDependencyCycles rejects checkpoint-local scheduling cycles at the closing edge.
+func validateProviderDependencyCycles(
+	checkpoint CheckpointConfig,
+	instances map[string]int,
+	path string,
+) error {
+	visiting := make(map[string]bool, len(instances))
+	visited := make(map[string]bool, len(instances))
+
+	var visit func(string) error
+
+	visit = func(name string) error {
+		if visited[name] {
+			return nil
+		}
+
+		visiting[name] = true
+		providerIndex := instances[name]
+		provider := checkpoint.Providers[providerIndex]
+
+		for dependencyIndex, dependency := range provider.After {
+			if _, local := instances[dependency]; !local {
+				continue
+			}
+
+			if visiting[dependency] {
+				return invalid(
+					fmt.Sprintf("%s.providers[%d].after[%d]", path, providerIndex, dependencyIndex),
+					"creates a provider dependency cycle",
+				)
+			}
+
+			if err := visit(dependency); err != nil {
+				return err
+			}
+		}
+
+		visiting[name] = false
+		visited[name] = true
+
+		return nil
+	}
+
+	for _, provider := range checkpoint.Providers {
+		if err := visit(provider.Name); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateUniqueLocalNames checks canonical non-duplicated names in source order.
+func validateUniqueLocalNames(values []string, path string, description string) error {
+	seen := make(map[string]struct{}, len(values))
+	for index, value := range values {
+		valuePath := fmt.Sprintf("%s[%d]", path, index)
+		if !validAction(value) {
+			return invalid(valuePath, "must be a canonical "+description)
+		}
+
+		if _, exists := seen[value]; exists {
+			return invalid(valuePath, "must be unique")
+		}
+
+		seen[value] = struct{}{}
 	}
 
 	return nil
@@ -716,10 +1358,12 @@ func validatePolicyRule(rule PolicyRuleConfig, path string) error {
 		return invalid(path+".checkpoint", "must be a canonical checkpoint selector")
 	}
 
-	for index, action := range rule.Actions {
-		if !validAction(action) {
-			return invalid(fmt.Sprintf("%s.actions[%d]", path, index), "must be a canonical action")
-		}
+	if err := validateUniqueLocalNames(rule.Actions, path+".actions", "action"); err != nil {
+		return err
+	}
+
+	if err := validateUniqueLocalNames(rule.RequireProviders, path+".require_providers", "provider instance name"); err != nil {
+		return err
 	}
 
 	if err := validateCondition(rule.If, path+".if"); err != nil {
@@ -1070,6 +1714,235 @@ func validateTargetReport(target TargetConfig, path string) error {
 	return nil
 }
 
+// validateConfiguredReferences resolves explicit target-owned plans and required provider instances.
+func validateConfiguredReferences(document Document) error {
+	for targetIndex, target := range document.Policy.Targets {
+		targetPath := fmt.Sprintf("policy.targets[%d]", targetIndex)
+
+		plan, hasPlan, err := resolveTargetDomainPlan(document.Policy.Namespaces, target, targetPath+".domain_plan")
+		if err != nil {
+			return err
+		}
+
+		for _, checkpoint := range sortedTargetPlanNames(target.Plans) {
+			if err := validateTargetCheckpointReferences(
+				document.Policy.Namespaces,
+				target,
+				target.Plans[checkpoint],
+				plan,
+				hasPlan,
+				checkpoint,
+				targetPath+".plans."+checkpoint,
+			); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// resolveTargetDomainPlan resolves one private namespace-owned plan selected by an activation.
+func resolveTargetDomainPlan(
+	namespaces map[string]NamespaceConfig,
+	target TargetConfig,
+	path string,
+) (DomainPlanConfig, bool, error) {
+	if target.DomainPlan == "" {
+		return DomainPlanConfig{}, false, nil
+	}
+
+	owner, name, ok := strings.Cut(target.DomainPlan, "/")
+	if !ok || owner != target.Namespace {
+		return DomainPlanConfig{}, false, invalid(path, "must reference a domain plan owned by the target namespace")
+	}
+
+	namespace, exists := namespaces[owner]
+	if !exists {
+		return DomainPlanConfig{}, false, invalid(path, "references an unknown namespace")
+	}
+
+	plan, exists := namespace.DomainPlans[name]
+	if !exists {
+		return DomainPlanConfig{}, false, invalid(path, "references an unknown domain plan")
+	}
+
+	return plan, true, nil
+}
+
+// validateTargetCheckpointReferences validates set imports and target-aware provider requirements.
+func validateTargetCheckpointReferences(
+	namespaces map[string]NamespaceConfig,
+	target TargetConfig,
+	binding TargetPlanConfig,
+	domainPlan DomainPlanConfig,
+	hasDomainPlan bool,
+	checkpoint string,
+	path string,
+) error {
+	instances, err := resolveTargetCheckpointInstances(domainPlan, hasDomainPlan, checkpoint, path)
+	if err != nil {
+		return err
+	}
+
+	for referenceIndex, reference := range binding.PolicySets {
+		referencePath := fmt.Sprintf("%s.policy_sets[%d]", path, referenceIndex)
+		if err := validateTargetPolicySetReference(
+			namespaces,
+			target,
+			reference,
+			checkpoint,
+			instances,
+			hasDomainPlan,
+			referencePath,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// resolveTargetCheckpointInstances indexes one selected checkpoint's provider instances by local name.
+func resolveTargetCheckpointInstances(
+	domainPlan DomainPlanConfig,
+	hasDomainPlan bool,
+	checkpoint string,
+	path string,
+) (map[string]ProviderInstanceConfig, error) {
+	instances := make(map[string]ProviderInstanceConfig)
+	if !hasDomainPlan {
+		return instances, nil
+	}
+
+	configuredCheckpoint, exists := domainPlan.Checkpoints[checkpoint]
+	if !exists {
+		return nil, invalid(path, "is not declared by the selected domain plan")
+	}
+
+	for _, provider := range configuredCheckpoint.Providers {
+		instances[provider.Name] = provider
+	}
+
+	return instances, nil
+}
+
+// validateTargetPolicySetReference resolves one import and its target-specific provider requirements.
+func validateTargetPolicySetReference(
+	namespaces map[string]NamespaceConfig,
+	target TargetConfig,
+	reference string,
+	checkpoint string,
+	instances map[string]ProviderInstanceConfig,
+	hasDomainPlan bool,
+	path string,
+) error {
+	owner, name, ok := strings.Cut(reference, "/")
+	if !ok {
+		return invalid(path, "must use an exact qualified policy-set identity")
+	}
+
+	if target.Namespace == authnNamespace && reference == standardAuthPolicy {
+		return nil
+	}
+
+	namespace, exists := namespaces[owner]
+	if !exists {
+		return invalid(path, "references an unknown policy-set namespace")
+	}
+
+	policySet, exists := namespace.PolicySets[name]
+	if !exists {
+		return invalid(path, "references an unknown policy set")
+	}
+
+	if owner != target.Namespace && policySet.Visibility != VisibilityExported {
+		return invalid(path, "cross-namespace policy sets must be exported")
+	}
+
+	return validateRequiredProvidersForTarget(
+		policySet,
+		owner,
+		name,
+		target,
+		checkpoint,
+		instances,
+		hasDomainPlan,
+	)
+}
+
+// validateRequiredProvidersForTarget resolves rule requirements by instance name and checkpoint action.
+func validateRequiredProvidersForTarget(
+	policySet PolicySetConfig,
+	setNamespace string,
+	setName string,
+	target TargetConfig,
+	checkpoint string,
+	instances map[string]ProviderInstanceConfig,
+	hasDomainPlan bool,
+) error {
+	for ruleIndex, rule := range policySet.Rules {
+		if rule.Checkpoint != checkpoint || !ruleAppliesToAction(rule, target.Action) {
+			continue
+		}
+
+		for requirementIndex, requirement := range rule.RequireProviders {
+			path := fmt.Sprintf(
+				"policy.namespaces.%s.policy_sets.%s.rules[%d].require_providers[%d]",
+				setNamespace,
+				setName,
+				ruleIndex,
+				requirementIndex,
+			)
+
+			provider, exists := instances[requirement]
+			if exists && providerAppliesToAction(provider, target.Action) {
+				continue
+			}
+
+			if !hasDomainPlan && target.Namespace == authnNamespace {
+				_, available := policy.AuthnBuiltinProviderUse(
+					requirement,
+					policy.Operation(target.Action),
+					policy.Stage(checkpoint),
+				)
+				if available {
+					continue
+				}
+			}
+
+			if !hasDomainPlan {
+				return invalid(path, "requires an explicit domain plan provider instance")
+			}
+
+			return invalid(path, "references an unavailable provider instance for this checkpoint and action")
+		}
+	}
+
+	return nil
+}
+
+// ruleAppliesToAction reports whether a rule participates in one target action.
+func ruleAppliesToAction(rule PolicyRuleConfig, action string) bool {
+	return len(rule.Actions) == 0 || slicesContain(rule.Actions, action)
+}
+
+// providerAppliesToAction reports whether a provider instance participates in one target action.
+func providerAppliesToAction(provider ProviderInstanceConfig, action string) bool {
+	return len(provider.Actions) == 0 || slicesContain(provider.Actions, action)
+}
+
+// slicesContain reports exact membership without importing target-specific policy packages.
+func slicesContain(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+
+	return false
+}
+
 // validateProviderBudgets keeps explicit provider timeouts inside every matching target budget.
 func validateProviderBudgets(document Document) error {
 	for _, namespaceName := range sortedNamespaceNames(document.Policy.Namespaces) {
@@ -1327,6 +2200,99 @@ func validFact(value string) bool {
 	return true
 }
 
+// validProviderUse accepts configured provider IDs and exact immutable authn provider families.
+func validProviderUse(value string) bool {
+	if validQualified(value) {
+		return true
+	}
+
+	if policy.IsAuthnBuiltinProviderIdentity(value) {
+		return true
+	}
+
+	return validAuthnPluginProviderUse(value)
+}
+
+// validAuthnPluginProviderUse validates the two host-owned native plugin provider forms.
+func validAuthnPluginProviderUse(value string) bool {
+	owner, local, ok := strings.Cut(value, "/")
+	if !ok || owner != authnNamespace {
+		return false
+	}
+
+	_, _, ok = parseAuthnPluginProviderLocal(local)
+
+	return ok
+}
+
+// validProviderLocalName accepts dotted local identities only for exact authn plugin definitions.
+func validProviderLocalName(namespace string, name string, kind string) bool {
+	if validAction(name) {
+		return true
+	}
+
+	if namespace != authnNamespace || kind != keywordPlugin {
+		return false
+	}
+
+	_, _, ok := parseAuthnPluginProviderLocal(name)
+
+	return ok
+}
+
+// parseAuthnPluginProviderLocal extracts the module and binding family from one exact local identity.
+func parseAuthnPluginProviderLocal(value string) (string, string, bool) {
+	const prefix = "plugin."
+	if !strings.HasPrefix(value, prefix) {
+		return "", "", false
+	}
+
+	local := strings.TrimPrefix(value, prefix)
+	if module, ok := strings.CutSuffix(local, "."+pluginBindingEnvironment); ok && validNamespace(module) {
+		return module, pluginBindingEnvironment, true
+	}
+
+	subjectSeparator := "." + pluginBindingSubject + "."
+	subject := strings.LastIndex(local, subjectSeparator)
+
+	if subject <= 0 {
+		return "", "", false
+	}
+
+	module := local[:subject]
+	name := local[subject+len(subjectSeparator):]
+
+	if !validNamespace(module) || !validAction(name) {
+		return "", "", false
+	}
+
+	return module, pluginBindingSubject, true
+}
+
+// providerUseResolvable enforces namespace-private configured providers and immutable host bindings.
+func providerUseResolvable(namespace string, use string, providers map[string]ProviderConfig) bool {
+	if policy.IsAuthnBuiltinProviderIdentity(use) {
+		return namespace == authnNamespace
+	}
+
+	owner, name, ok := strings.Cut(use, "/")
+	if !ok || owner != namespace {
+		return false
+	}
+
+	if namespace == authnNamespace {
+		if module, _, plugin := parseAuthnPluginProviderLocal(name); plugin {
+			provider, exists := providers[name]
+
+			return exists && provider.Kind == keywordPlugin && provider.Module == module
+		}
+	}
+
+	_, exists := providers[name]
+
+	return exists
+}
+
 // validQualified reports whether value is one exact namespace/local identity.
 func validQualified(value string) bool {
 	if len(value) == 0 || len(value) > 128 || strings.Count(value, "/") != 1 {
@@ -1338,10 +2304,31 @@ func validQualified(value string) bool {
 	return validNamespace(parts[0]) && validAction(parts[1])
 }
 
+// validBackendFactType preserves the old backend-export value vocabulary.
+func validBackendFactType(value string) bool {
+	switch value {
+	case "bool", valueTypeString, "string_list", "number":
+		return true
+	default:
+		return false
+	}
+}
+
+// printableASCII reports whether every byte belongs to the retained printable ASCII set.
+func printableASCII(value string) bool {
+	for index := range len(value) {
+		if value[index] < 0x20 || value[index] > 0x7e {
+			return false
+		}
+	}
+
+	return true
+}
+
 // validValueKind reports whether value belongs to the compiler's closed kind set.
 func validValueKind(value string) bool {
 	switch value {
-	case "string", "boolean", "integer", "double", "strings", "bytes", "timestamp":
+	case valueTypeString, "boolean", "integer", "double", "strings", "bytes", "timestamp":
 		return true
 	default:
 		return false
@@ -1351,7 +2338,7 @@ func validValueKind(value string) bool {
 // validProviderKind reports whether one configured provider uses a registered binding family.
 func validProviderKind(value string) bool {
 	switch value {
-	case "lua_environment", "lua_subject", "native", keywordPlugin:
+	case providerKindLuaEnvironment, providerKindLuaSubject, "native", keywordPlugin:
 		return true
 	default:
 		return false

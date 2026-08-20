@@ -22,21 +22,27 @@ const (
 	AuthnNamespace = "authn"
 
 	// AuthnProviderBruteForce owns the request-local brute-force check.
-	AuthnProviderBruteForce = "authn/brute_force"
+	AuthnProviderBruteForce = "authn/builtin/brute_force"
 	// AuthnProviderEnvironment owns Lua and native environment collection.
 	AuthnProviderEnvironment = "authn/environment"
 	// AuthnProviderTLSEncryption owns transport-encryption checks.
-	AuthnProviderTLSEncryption = "authn/tls_encryption"
+	AuthnProviderTLSEncryption = "authn/builtin/tls_encryption"
 	// AuthnProviderRelayDomains owns relay-domain checks.
-	AuthnProviderRelayDomains = "authn/relay_domains"
+	AuthnProviderRelayDomains = "authn/builtin/relay_domains"
 	// AuthnProviderRBL owns realtime block-list checks.
-	AuthnProviderRBL = "authn/rbl"
+	AuthnProviderRBL = "authn/builtin/rbl"
 	// AuthnProviderBackend owns cache and authentication backend work.
 	AuthnProviderBackend = "authn/auth_backend"
 	// AuthnProviderSubject owns request-local post-backend subject work.
 	AuthnProviderSubject = "authn/subject"
+	// AuthnProviderLDAPBackend identifies the typed LDAP backend binding.
+	AuthnProviderLDAPBackend = "authn/builtin/ldap_backend"
+	// AuthnProviderLuaBackend identifies the configured Lua backend binding.
+	AuthnProviderLuaBackend = "authn/builtin/lua_backend"
+	// AuthnProviderPluginBackendOrder identifies the typed native backend order binding.
+	AuthnProviderPluginBackendOrder = "authn/builtin/plugin_backend_order"
 	// AuthnProviderAccount owns account-provider work.
-	AuthnProviderAccount = "authn/account_provider"
+	AuthnProviderAccount = "authn/builtin/account_provider"
 
 	// AuthnFactOperation identifies the host-selected authentication operation.
 	AuthnFactOperation = "nauthilus.auth.operation"
@@ -113,6 +119,100 @@ const (
 	// AuthnFactAccountProviderTempFail records an unreliable account-provider result.
 	AuthnFactAccountProviderTempFail = "nauthilus.auth.account_provider.tempfail"
 )
+
+var authnBuiltinProviderIdentities = map[string]string{
+	"brute_force":          AuthnProviderBruteForce,
+	"tls_encryption":       AuthnProviderTLSEncryption,
+	"relay_domains":        AuthnProviderRelayDomains,
+	"rbl":                  AuthnProviderRBL,
+	"ldap_backend":         AuthnProviderLDAPBackend,
+	"lua_backend":          AuthnProviderLuaBackend,
+	"plugin_backend_order": AuthnProviderPluginBackendOrder,
+	"account_provider":     AuthnProviderAccount,
+}
+
+// AuthnBuiltinProviderIdentity resolves one canonical builtin instance name to its exact provider use.
+func AuthnBuiltinProviderIdentity(instance string) (string, bool) {
+	identity, exists := authnBuiltinProviderIdentities[instance]
+
+	return identity, exists
+}
+
+// IsAuthnBuiltinProviderIdentity reports whether an exact use belongs to the migrated builtin check vocabulary.
+func IsAuthnBuiltinProviderIdentity(identity string) bool {
+	for _, candidate := range authnBuiltinProviderIdentities {
+		if candidate == identity {
+			return true
+		}
+	}
+
+	return false
+}
+
+// AuthnBuiltinCheckpointProviderIDs returns the immutable provider schedule for one exact authn checkpoint.
+func AuthnBuiltinCheckpointProviderIDs(operation Operation, checkpoint Stage) []string {
+	switch {
+	case operation == OperationAuthenticate && checkpoint == StagePreAuth:
+		return []string{AuthnProviderBruteForce}
+	case operation == OperationAuthenticate && checkpoint == StageAuthDecision:
+		return []string{
+			AuthnProviderEnvironment,
+			AuthnProviderTLSEncryption,
+			AuthnProviderRelayDomains,
+			AuthnProviderRBL,
+			AuthnProviderBackend,
+			AuthnProviderSubject,
+		}
+	case operation == OperationLookupIdentity && checkpoint == StagePreAuth:
+		return []string{AuthnProviderEnvironment, AuthnProviderTLSEncryption, AuthnProviderRBL}
+	case operation == OperationLookupIdentity && checkpoint == StageAuthDecision:
+		return []string{AuthnProviderBackend, AuthnProviderSubject}
+	case operation == OperationListAccounts && checkpoint == StageAuthDecision:
+		return []string{AuthnProviderAccount}
+	default:
+		return nil
+	}
+}
+
+// AuthnBuiltinProviderUse resolves an instance only when the immutable target checkpoint schedules it.
+func AuthnBuiltinProviderUse(instance string, operation Operation, checkpoint Stage) (string, bool) {
+	identity, exists := AuthnBuiltinProviderIdentity(instance)
+	if !exists {
+		return "", false
+	}
+
+	for _, scheduled := range AuthnBuiltinCheckpointProviderIDs(operation, checkpoint) {
+		if scheduled == identity {
+			return identity, true
+		}
+	}
+
+	return "", false
+}
+
+// AuthnProviderObserveSafety returns the established default and assertion capability for one migrated provider use.
+func AuthnProviderObserveSafety(use string) (defaultSafe bool, allowsAssertion bool, known bool) {
+	switch use {
+	case AuthnProviderTLSEncryption, AuthnProviderRelayDomains:
+		return true, false, true
+	case AuthnProviderBruteForce,
+		AuthnProviderRBL,
+		AuthnProviderLDAPBackend,
+		AuthnProviderAccount:
+		return false, false, true
+	case AuthnProviderLuaBackend, AuthnProviderPluginBackendOrder:
+		return false, true, true
+	}
+
+	switch {
+	case strings.HasPrefix(use, AuthnNamespace+"/lua_environment_"),
+		strings.HasPrefix(use, AuthnNamespace+"/lua_subject_"),
+		strings.HasPrefix(use, AuthnNamespace+"/plugin."):
+		return false, true, true
+	default:
+		return false, false, false
+	}
+}
 
 var authnBuiltinAttributeFacts = map[string]string{
 	AttributeBruteForceError:         AuthnFactBruteForceError,

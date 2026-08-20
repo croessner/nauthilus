@@ -823,6 +823,7 @@ func cloneContributionProviders(ownership NamespaceOwnership, providers []Provid
 		providers,
 		"providers",
 		"provider",
+		identifier.ProviderIdentity,
 		func(provider ProviderDefinition) string { return provider.ID() },
 		func(provider ProviderDefinition) ProviderDefinition {
 			provider.targets = provider.Targets()
@@ -840,6 +841,7 @@ func cloneContributionEffects(ownership NamespaceOwnership, effects []EffectDefi
 		effects,
 		"effects",
 		"effect",
+		identifier.Qualified,
 		func(effect EffectDefinition) string { return effect.ID() },
 		func(effect EffectDefinition) EffectDefinition {
 			effect.targets = effect.Targets()
@@ -856,6 +858,7 @@ func cloneQualifiedDefinitions[T any](
 	values []T,
 	pathKind string,
 	identityKind string,
+	validIdentity func(string) bool,
 	identityOf func(T) string,
 	clone func(T) T,
 ) ([]T, error) {
@@ -865,7 +868,7 @@ func cloneQualifiedDefinitions[T any](
 
 	for _, value := range values {
 		identityValue := identityOf(value)
-		if !identifier.Qualified(identityValue) || !ownership.Owns(qualifiedNamespace(identityValue)) {
+		if !validIdentity(identityValue) || !ownership.Owns(qualifiedNamespace(identityValue)) {
 			return nil, newValidationError(ErrNamespaceOwnership, path, identityValue, ownershipReason(ownership))
 		}
 

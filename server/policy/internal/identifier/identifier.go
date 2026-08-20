@@ -82,6 +82,24 @@ func Provider(value string) bool {
 	return segment(value, true)
 }
 
+// ProviderIdentity reports whether value is one canonical namespace/provider identity.
+func ProviderIdentity(value string) bool {
+	if len(value) == 0 || len(value) > maximumQualifiedLength {
+		return false
+	}
+
+	namespace, local, found := strings.Cut(value, "/")
+	if !found || !Namespace(namespace) || local == "" {
+		return false
+	}
+
+	if strings.Contains(local, "/") {
+		return providerSlashIdentity(local)
+	}
+
+	return segmented(local, '.', true, maximumQualifiedLength)
+}
+
 // Qualified reports whether value is one exact namespace/local-name identity.
 func Qualified(value string) bool {
 	if len(value) == 0 || len(value) > maximumQualifiedLength || strings.Count(value, "/") != 1 {
@@ -91,6 +109,17 @@ func Qualified(value string) bool {
 	parts := strings.SplitN(value, "/", 2)
 
 	return Namespace(parts[0]) && Action(parts[1])
+}
+
+// providerSlashIdentity validates the canonical owner/name provider form without mixed delimiters.
+func providerSlashIdentity(value string) bool {
+	if strings.Count(value, "/") != 1 || strings.Contains(value, ".") {
+		return false
+	}
+
+	owner, name, _ := strings.Cut(value, "/")
+
+	return Provider(owner) && Provider(name)
 }
 
 // Diagnostic reports whether value is a bounded target-local public alias.

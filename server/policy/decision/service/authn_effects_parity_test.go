@@ -51,7 +51,7 @@ func TestAuthnStandardAuthPostActionRejectionPreservesPriorSyncEffects(t *testin
 	}
 
 	wantOrder := []string{
-		"sync:authn/brute_force:1",
+		fmt.Sprintf("sync:%s:1", policy.AuthnProviderBruteForce),
 		"sync:authn/lua_action:2",
 		"prepare:authn/post_action:3",
 		"accept:authn/post_action:3",
@@ -363,13 +363,13 @@ func authnRuntimeFailureBindings(
 	switch mode {
 	case authnRuntimeSyncFailure:
 		return map[string]syncEffectBinding{
-			"authn/brute_force": {provider: &recordingSyncEffectProvider{
+			policy.AuthnProviderBruteForce: {provider: &recordingSyncEffectProvider{
 				result: effectsupervisor.Failed("known_failure"),
 			}},
 		}, nil
 	case authnRuntimeOutcomeUnknown:
 		return map[string]syncEffectBinding{
-			"authn/brute_force": {provider: &recordingSyncEffectProvider{
+			policy.AuthnProviderBruteForce: {provider: &recordingSyncEffectProvider{
 				result: effectsupervisor.OutcomeUnknown("dispatch_ambiguous"),
 			}},
 		}, nil
@@ -379,7 +379,7 @@ func authnRuntimeFailureBindings(
 		}
 	case authnRuntimeCancellation:
 		return map[string]syncEffectBinding{
-			"authn/brute_force": {provider: cancelingAuthnSyncEffectProvider{cancel: cancel}},
+			policy.AuthnProviderBruteForce: {provider: cancelingAuthnSyncEffectProvider{cancel: cancel}},
 		}, nil
 	default:
 		return nil, nil
@@ -681,7 +681,7 @@ type authnTerminalPreAuthEffectCase struct {
 func authnTerminalPreAuthEffectCases() []authnTerminalPreAuthEffectCase {
 	authenticated := authnBackendBooleanFact(policy.AuthnFactAuthenticated, true)
 	threeEffects := []string{
-		"sync:authn/brute_force:1",
+		fmt.Sprintf("sync:%s:1", policy.AuthnProviderBruteForce),
 		"sync:authn/lua_action:2",
 		"prepare:authn/post_action:3",
 		"accept:authn/post_action:3",
@@ -861,8 +861,8 @@ func mustAuthnEffectRuntimeWithPolicy(
 	}
 
 	syncEffects := map[string]syncEffectBinding{
-		"authn/brute_force": {provider: &orderedAuthnSyncEffectProvider{log: log}},
-		"authn/lua_action":  {provider: &orderedAuthnSyncEffectProvider{log: log}},
+		policy.AuthnProviderBruteForce: {provider: &orderedAuthnSyncEffectProvider{log: log}},
+		"authn/lua_action":             {provider: &orderedAuthnSyncEffectProvider{log: log}},
 	}
 	for providerID, binding := range syncOverrides {
 		syncEffects[providerID] = binding

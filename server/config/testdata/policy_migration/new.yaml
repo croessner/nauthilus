@@ -1,0 +1,172 @@
+policy:
+  namespaces:
+    authn:
+      localization:
+        catalogs:
+          - namespace: auth.policy.contract
+            language: en
+            entries:
+              denied: Access denied by the migration contract.
+      condition_sets:
+        networks:
+          trusted_clients: [10.0.0.0/8, 2001:db8::/32]
+        strings:
+          privileged_services: [imap, smtp]
+        time_windows:
+          business_hours:
+            timezone: Europe/Berlin
+            days: [mon, tue]
+            intervals:
+              - start: "08:00"
+                end: "18:00"
+      schema_contributions:
+        lua:
+          registry_scripts:
+            - testdata/policy_migration/registry.lua
+      fact_sources:
+        http_headers:
+          - header: X-Tenant
+            attribute: request.header.tenant
+            visibility: public
+            normalize:
+              trim: true
+              case: lower
+              max_length: 128
+        grpc_metadata:
+          - key: x-tenant
+            attribute: request.metadata.tenant
+            visibility: public
+            normalize:
+              trim: true
+              case: lower
+              max_length: 128
+        backend_attributes:
+          - name: account_tier
+            attribute: account.tier
+            type: string
+            sensitivity: internal
+      providers:
+        lua_environment_shared:
+          kind: lua_environment
+          script_path: /etc/nauthilus/lua/environment/shared.lua
+          targets: [{action: authenticate}]
+          executions: [host_sync]
+        lua_subject_shared:
+          kind: lua_subject
+          script_path: /etc/nauthilus/lua/subject/shared.lua
+          targets: [{action: authenticate}]
+          executions: [host_sync]
+      effects:
+        lua_action_notify:
+          kind: lua_action
+          action_type: lua
+          script_path: /etc/nauthilus/lua/actions/notify.lua
+          targets: [{action: authenticate}]
+          execution: host_sync
+        audit_reason:
+          kind: advice
+          targets: [{action: authenticate}]
+          execution: return_only
+          parameters:
+            reason:
+              type: string
+              max_length: 128
+              non_empty: true
+      domain_plans:
+        migrated_authenticate:
+          scheduler_guards:
+            service_allowed:
+              if:
+                attribute: request.protocol
+                in: "@string.privileged_services"
+              on_missing_attribute: run
+          checkpoints:
+            pre_auth:
+              providers:
+                - name: brute_force
+                  use: authn/builtin/brute_force
+                  actions: [authenticate]
+                  skip_if: [service_allowed]
+                - name: environment_shared
+                  use: authn/lua_environment_shared
+                  actions: [authenticate]
+                  output: nauthilus.auth.tls.secure
+                  run_if:
+                    auth_state: unauthenticated
+                  after: [brute_force]
+                  skip_if: [service_allowed]
+                  observe_safe: true
+            auth_backend:
+              providers:
+                - name: ldap_backend
+                  use: authn/builtin/ldap_backend
+                  actions: [authenticate]
+            subject_analysis:
+              providers:
+                - name: subject_shared
+                  use: authn/lua_subject_shared
+                  actions: [authenticate]
+                  observe_safe: true
+            auth_decision:
+              providers: []
+      policy_sets:
+        configured:
+          visibility: private
+          rules:
+            - name: deny_brute_force
+              checkpoint: pre_auth
+              actions: [authenticate]
+              require_providers: [brute_force]
+              if:
+                attribute: nauthilus.auth.brute_force.triggered
+                is: true
+              then:
+                decision: deny
+                reason: migration_contract
+                outcome_marker: auth.outcome.migration_denied
+                fsm_event_marker: auth.fsm.event.pre_auth_deny
+                response_marker: auth.response.fail
+                response_message:
+                  from: literal
+                  text: Access denied.
+                response_language:
+                  from: literal
+                  language: en
+                obligations:
+                  - id: authn/brute_force_update
+                    parameters:
+                      feature: migration_contract
+                advice:
+                  - id: authn/audit_reason
+                    parameters:
+                      reason: migration_contract
+                control:
+                  skip_remaining_checkpoint_providers: true
+            - name: final_contract_deny
+              checkpoint: auth_decision
+              actions: [authenticate]
+              if:
+                always: true
+              then:
+                decision: deny
+                reason: final_contract
+                outcome_marker: auth.outcome.auth_failure
+                fsm_event_marker: auth.fsm.event.auth_deny
+                response_marker: auth.response.fail
+  targets:
+    - namespace: authn
+      action: authenticate
+      schema: authn/authenticate/v1
+      domain_plan: authn/migrated_authenticate
+      mode: observe
+      default_policy: authn/standard_auth
+      report:
+        enabled: true
+        include_fsm: true
+        include_checks: true
+        include_attributes: true
+      plans:
+        pre_auth:
+          policy_sets: [authn/configured]
+        auth_decision:
+          policy_sets: [authn/configured]

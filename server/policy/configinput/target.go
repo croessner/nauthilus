@@ -25,7 +25,9 @@ func (n *policyNormalizer) normalizeTargetPlans(buckets map[string]*namespaceDef
 				return atPath(target.path+".schema", fmt.Errorf("authn accepts only builtin exact v1 schemas"))
 			}
 
-			continue
+			if target.config.DomainPlan == "" {
+				continue
+			}
 		}
 
 		bucket := buckets[target.target.Namespace()]
@@ -52,43 +54,386 @@ func (n *policyNormalizer) normalizeDomainPlan(target normalizedTarget) (registr
 		return registry.DomainPlanDefinition{}, err
 	}
 
-	checkpointNames := make(map[string]struct{}, len(target.config.Plans)+len(configured.Checkpoints))
-	for name := range target.config.Plans {
-		checkpointNames[name] = struct{}{}
-	}
-
-	for name := range configured.Checkpoints {
-		checkpointNames[name] = struct{}{}
-	}
-
+	planPath := selectedDomainPlanPath(target)
+	checkpointNames := normalizedCheckpointNames(target, configured)
 	checkpoints := make([]registry.CheckpointDefinition, 0, len(checkpointNames))
-	for _, name := range sortedKeys(checkpointNames) {
-		providers := configured.Checkpoints[name].Providers
-		providerIDs := make([]string, 0, len(providers))
 
-		for index, provider := range providers {
-			path := target.path + ".domain_plan.checkpoints." + name + fmt.Sprintf(".providers[%d].use", index)
-			if provider.Use == "" {
-				return registry.DomainPlanDefinition{}, atPath(path, fmt.Errorf("provider use is required"))
-			}
+	for _, name := range checkpointNames {
+		checkpointPath := planPath + ".checkpoints." + name
 
-			providerIDs = append(providerIDs, provider.Use)
+		providerInstances, providerErr := orderedProviderInstances(
+			checkpointPath+".providers",
+			target.target.Namespace(),
+			target.target.Action(),
+			configured.Checkpoints[name].Providers,
+		)
+		if providerErr != nil {
+			return registry.DomainPlanDefinition{}, providerErr
 		}
 
-		checkpoint, err := registry.NewCheckpointDefinition(name, nil, providerIDs)
+		policySets, bindingErr := authnFallbackBindings(target, checkpointPath, name)
+		if bindingErr != nil {
+			return registry.DomainPlanDefinition{}, bindingErr
+		}
+
+		checkpoint, err := registry.NewCheckpointDefinitionWithProviderInstances(name, policySets, providerInstances)
 		if err != nil {
-			return registry.DomainPlanDefinition{}, atPath(target.path+".plans."+name, err)
+			return registry.DomainPlanDefinition{}, atPath(checkpointPath, err)
 		}
 
 		checkpoints = append(checkpoints, checkpoint)
 	}
 
-	plan, err := registry.NewDomainPlanDefinition(target.target, checkpoints)
+	guards, err := normalizeSchedulerGuards(planPath+".scheduler_guards", configured.SchedulerGuards)
 	if err != nil {
-		return registry.DomainPlanDefinition{}, atPath(target.path+".domain_plan", err)
+		return registry.DomainPlanDefinition{}, err
+	}
+
+	var plan registry.DomainPlanDefinition
+	if target.target.Namespace() == policy.AuthnNamespace {
+		plan, err = registry.NewAuthnDomainPlanDefinitionWithSchedulerGuards(target.target, checkpoints, guards)
+	} else {
+		plan, err = registry.NewDomainPlanDefinitionWithSchedulerGuards(target.target, checkpoints, guards)
+	}
+
+	if err != nil {
+		return registry.DomainPlanDefinition{}, atPath(planPath, err)
 	}
 
 	return plan, nil
+}
+
+// normalizeSchedulerGuards compiles plan-local guard expressions through the standalone expression authority.
+func normalizeSchedulerGuards(
+	path string,
+	configured map[string]policyconfig.SchedulerGuardConfig,
+) ([]registry.SchedulerGuardDefinition, error) {
+	guards := make([]registry.SchedulerGuardDefinition, 0, len(configured))
+
+	for _, name := range sortedKeys(configured) {
+		guardPath := path + "." + name
+		guardConfig := configured[name]
+
+		expression, err := normalizeExpression(guardPath+".if", guardConfig.If)
+		if err != nil {
+			return nil, err
+		}
+
+		guard, err := registry.NewSchedulerGuardDefinition(registry.SchedulerGuardDefinitionInput{
+			Path: guardPath, Name: name, Expression: expression,
+			OnMissingAttribute: guardConfig.OnMissingAttribute,
+		})
+		if err != nil {
+			return nil, atPath(guardPath, err)
+		}
+
+		guards = append(guards, guard)
+	}
+
+	return guards, nil
+}
+
+// normalizedCheckpointNames returns exact configured topology in deterministic execution order.
+func normalizedCheckpointNames(
+	target normalizedTarget,
+	configured policyconfig.DomainPlanConfig,
+) []string {
+	checkpointNames := make(map[string]struct{}, len(target.config.Plans)+len(configured.Checkpoints))
+
+	if target.config.DomainPlan == "" {
+		for name := range target.config.Plans {
+			checkpointNames[name] = struct{}{}
+		}
+	} else {
+		for name := range configured.Checkpoints {
+			checkpointNames[name] = struct{}{}
+		}
+	}
+
+	names := sortedKeys(checkpointNames)
+	if target.target.Namespace() != policy.AuthnNamespace {
+		return names
+	}
+
+	slices.SortStableFunc(names, func(left string, right string) int {
+		return authnCheckpointRank(left) - authnCheckpointRank(right)
+	})
+
+	return names
+}
+
+// authnCheckpointRank preserves established authentication checkpoint order before lexical fallback.
+func authnCheckpointRank(checkpoint string) int {
+	switch policy.Stage(checkpoint) {
+	case policy.StagePreAuth:
+		return 0
+	case policy.StageAuthBackend:
+		return 1
+	case policy.StageSubjectAnalysis:
+		return 2
+	case policy.StageAccountProvider:
+		return 3
+	case policy.StageAuthDecision:
+		return 4
+	default:
+		return 5
+	}
+}
+
+// authnFallbackBindings retains immutable standard-auth fallback in configured authn topology.
+func authnFallbackBindings(
+	target normalizedTarget,
+	checkpointPath string,
+	checkpoint string,
+) ([]registry.PolicySetImport, error) {
+	if target.target.Namespace() != policy.AuthnNamespace {
+		return nil, nil
+	}
+
+	binding, err := registry.NewPolicySetImport(
+		checkpointPath+".builtin_standard_auth",
+		registry.BuiltinStandardAuthPolicySet,
+		target.target,
+		checkpoint,
+		registry.ExportContract{},
+	)
+	if err != nil {
+		return nil, atPath(checkpointPath, err)
+	}
+
+	return []registry.PolicySetImport{binding}, nil
+}
+
+// providerInstanceNode retains source position around one checkpoint-local provider instance.
+type providerInstanceNode struct {
+	configured policyconfig.ProviderInstanceConfig
+	index      int
+}
+
+// orderedProviderInstances validates dependencies and retains complete action-filtered instance metadata.
+func orderedProviderInstances(
+	path string,
+	namespace string,
+	action string,
+	configured []policyconfig.ProviderInstanceConfig,
+) ([]registry.ProviderInstanceDefinition, error) {
+	nodes, byName, err := indexProviderInstances(path, configured)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err = topologicallyOrderProviderInstances(path, nodes, byName); err != nil {
+		return nil, err
+	}
+
+	applicable := make([]providerInstanceNode, 0, len(nodes))
+	applicableByName := make(map[string]providerInstanceNode, len(nodes))
+
+	for _, node := range nodes {
+		if !providerInstanceAllowsAction(node.configured, action) {
+			continue
+		}
+
+		applicable = append(applicable, node)
+		applicableByName[node.configured.Name] = node
+	}
+
+	if err = validateApplicableProviderDependencies(path, action, applicable, applicableByName); err != nil {
+		return nil, err
+	}
+
+	ordered, err := topologicallyOrderProviderInstances(path, applicable, applicableByName)
+	if err != nil {
+		return nil, err
+	}
+
+	instances := make([]registry.ProviderInstanceDefinition, 0, len(ordered))
+	for _, node := range ordered {
+		instancePath := fmt.Sprintf("%s[%d]", path, node.index)
+
+		instance, err := normalizeProviderInstance(instancePath, namespace, node.configured)
+		if err != nil {
+			return nil, err
+		}
+
+		instances = append(instances, instance)
+	}
+
+	return instances, nil
+}
+
+// validateApplicableProviderDependencies preserves old scheduler compatibility after action filtering.
+func validateApplicableProviderDependencies(
+	path string,
+	action string,
+	nodes []providerInstanceNode,
+	byName map[string]providerInstanceNode,
+) error {
+	for _, node := range nodes {
+		for dependencyIndex, dependency := range node.configured.After {
+			dependencyPath := fmt.Sprintf("%s[%d].after[%d]", path, node.index, dependencyIndex)
+
+			dependencyNode, exists := byName[dependency]
+			if !exists {
+				return atPath(dependencyPath, fmt.Errorf("dependency %s does not apply to action %s", dependency, action))
+			}
+
+			if !providerRunIfCovers(dependencyNode.configured.RunIf.AuthState, node.configured.RunIf.AuthState) {
+				return atPath(dependencyPath, fmt.Errorf("dependency %s has incompatible run_if.auth_state", dependency))
+			}
+
+			if !providerGuardsCover(node.configured.SkipIf, dependencyNode.configured.SkipIf) {
+				return atPath(dependencyPath, fmt.Errorf("must include scheduler guards used by dependency %s", dependency))
+			}
+		}
+	}
+
+	return nil
+}
+
+// providerRunIfCovers requires dependencies to run in every auth state of the dependent instance.
+func providerRunIfCovers(dependency string, dependent string) bool {
+	if dependency == "" {
+		dependency = policy.RunIfAny
+	}
+
+	if dependent == "" {
+		dependent = policy.RunIfAny
+	}
+
+	return dependency == policy.RunIfAny || dependency == dependent
+}
+
+// providerGuardsCover prevents a dependent from running when one of its dependencies was skipped.
+func providerGuardsCover(dependent []string, dependency []string) bool {
+	for _, guard := range dependency {
+		if !slices.Contains(dependent, guard) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// normalizeProviderInstance projects one complete provider binding and its effective observe safety.
+func normalizeProviderInstance(
+	path string,
+	namespace string,
+	configured policyconfig.ProviderInstanceConfig,
+) (registry.ProviderInstanceDefinition, error) {
+	defaultSafe, _, _ := policy.AuthnProviderObserveSafety(configured.Use)
+	observeSafeAuthored := configured.ObserveSafe != nil
+	observeSafe := defaultSafe || (observeSafeAuthored && *configured.ObserveSafe)
+
+	runIfAuthState := configured.RunIf.AuthState
+	if namespace == policy.AuthnNamespace && runIfAuthState == "" {
+		runIfAuthState = policy.RunIfAny
+	}
+
+	instance, err := registry.NewProviderInstanceDefinition(registry.ProviderInstanceDefinitionInput{
+		Path: path, Name: configured.Name, Use: configured.Use,
+		Actions: configured.Actions, After: configured.After, SkipIf: configured.SkipIf,
+		RunIfAuthState: runIfAuthState, Output: configured.Output,
+		ObserveSafe: observeSafe, ObserveSafeAuthored: observeSafeAuthored,
+	})
+	if err != nil {
+		return registry.ProviderInstanceDefinition{}, atPath(path, err)
+	}
+
+	return instance, nil
+}
+
+// indexProviderInstances owns checkpoint-local names and validates exact after references.
+func indexProviderInstances(
+	path string,
+	configured []policyconfig.ProviderInstanceConfig,
+) ([]providerInstanceNode, map[string]providerInstanceNode, error) {
+	nodes := make([]providerInstanceNode, 0, len(configured))
+	byName := make(map[string]providerInstanceNode, len(configured))
+
+	for index, instance := range configured {
+		if _, exists := byName[instance.Name]; exists {
+			return nil, nil, atPath(fmt.Sprintf("%s[%d].name", path, index), fmt.Errorf("provider instance name %s occurs more than once", instance.Name))
+		}
+
+		node := providerInstanceNode{configured: instance, index: index}
+		nodes = append(nodes, node)
+		byName[instance.Name] = node
+	}
+
+	for _, node := range nodes {
+		for dependencyIndex, dependency := range node.configured.After {
+			if _, exists := byName[dependency]; !exists {
+				dependencyPath := fmt.Sprintf("%s[%d].after[%d]", path, node.index, dependencyIndex)
+
+				return nil, nil, atPath(dependencyPath, fmt.Errorf("unknown provider instance %s", dependency))
+			}
+		}
+	}
+
+	return nodes, byName, nil
+}
+
+// topologicallyOrderProviderInstances preserves author order while placing dependencies first.
+func topologicallyOrderProviderInstances(
+	path string,
+	nodes []providerInstanceNode,
+	byName map[string]providerInstanceNode,
+) ([]providerInstanceNode, error) {
+	visiting := make(map[string]bool, len(nodes))
+	visited := make(map[string]bool, len(nodes))
+	ordered := make([]providerInstanceNode, 0, len(nodes))
+
+	var visit func(providerInstanceNode) error
+
+	visit = func(node providerInstanceNode) error {
+		name := node.configured.Name
+		if visited[name] {
+			return nil
+		}
+
+		if visiting[name] {
+			return atPath(path, fmt.Errorf("contains cyclic after dependencies"))
+		}
+
+		visiting[name] = true
+
+		for _, dependency := range node.configured.After {
+			if err := visit(byName[dependency]); err != nil {
+				return err
+			}
+		}
+
+		visiting[name] = false
+		visited[name] = true
+
+		ordered = append(ordered, node)
+
+		return nil
+	}
+
+	for _, node := range nodes {
+		if err := visit(node); err != nil {
+			return nil, err
+		}
+	}
+
+	return ordered, nil
+}
+
+// providerInstanceAllowsAction applies an omitted action list to every target action.
+func providerInstanceAllowsAction(instance policyconfig.ProviderInstanceConfig, action string) bool {
+	return len(instance.Actions) == 0 || slices.Contains(instance.Actions, action)
+}
+
+// selectedDomainPlanPath returns the canonical source owner for one selected plan.
+func selectedDomainPlanPath(target normalizedTarget) string {
+	namespace, name, ok := strings.Cut(target.config.DomainPlan, "/")
+	if !ok {
+		return target.path + ".domain_plan"
+	}
+
+	return "policy.namespaces." + namespace + ".domain_plans." + name
 }
 
 // selectedDomainPlan resolves an optional exact qualified namespace-local plan.
@@ -100,6 +445,10 @@ func (n *policyNormalizer) selectedDomainPlan(target normalizedTarget) (policyco
 	namespace, name, ok := strings.Cut(target.config.DomainPlan, "/")
 	if !ok || namespace == "" || name == "" || strings.Contains(name, "/") {
 		return policyconfig.DomainPlanConfig{}, atPath(target.path+".domain_plan", fmt.Errorf("must use exact namespace/name form"))
+	}
+
+	if namespace != target.target.Namespace() {
+		return policyconfig.DomainPlanConfig{}, atPath(target.path+".domain_plan", fmt.Errorf("must belong to target namespace %s", target.target.Namespace()))
 	}
 
 	owner, exists := n.policy.Namespaces[namespace]
@@ -180,6 +529,18 @@ func (n *policyNormalizer) normalizeActivation(target normalizedTarget) (registr
 	activation, err = activation.WithAuthorityMode(registry.AuthorityMode(target.config.Mode))
 	if err != nil {
 		return registry.TargetActivation{}, atPath(target.path+".mode", err)
+	}
+
+	report := registry.NewTargetReportSettings(
+		target.config.Report.Enabled,
+		target.config.Report.IncludeFSM,
+		target.config.Report.IncludeChecks,
+		target.config.Report.IncludeAttributes,
+	)
+
+	activation, err = activation.WithReport(report)
+	if err != nil {
+		return registry.TargetActivation{}, atPath(target.path+".report", err)
 	}
 
 	bindings, err := n.normalizeTargetBindings(target)

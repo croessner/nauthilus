@@ -47,6 +47,9 @@ const (
 	builtinRBLProvider           = policy.AuthnProviderRBL
 	builtinAuthBackendProvider   = policy.AuthnProviderBackend
 	builtinSubjectProvider       = policy.AuthnProviderSubject
+	builtinLDAPBackendProvider   = policy.AuthnProviderLDAPBackend
+	builtinLuaBackendProvider    = policy.AuthnProviderLuaBackend
+	builtinPluginBackendProvider = policy.AuthnProviderPluginBackendOrder
 	builtinAccountProvider       = policy.AuthnProviderAccount
 )
 
@@ -77,6 +80,29 @@ var builtinAuthEffectBindings = []BuiltinAuthEffectBinding{
 		Provider:  builtinPostActionProvider,
 		Execution: ExecutionHostPostAction,
 	},
+}
+
+var builtinAuthProviderIDs = map[string]struct{}{
+	builtinBruteForceProvider:    {},
+	builtinLuaActionProvider:     {},
+	builtinPostActionProvider:    {},
+	builtinEnvironmentProvider:   {},
+	builtinTLSProvider:           {},
+	builtinRelayProvider:         {},
+	builtinRBLProvider:           {},
+	builtinAuthBackendProvider:   {},
+	builtinSubjectProvider:       {},
+	builtinLDAPBackendProvider:   {},
+	builtinLuaBackendProvider:    {},
+	builtinPluginBackendProvider: {},
+	builtinAccountProvider:       {},
+}
+
+// IsBuiltinAuthProviderID reports whether an identity is reserved by the immutable authn host catalog.
+func IsBuiltinAuthProviderID(identity string) bool {
+	_, exists := builtinAuthProviderIDs[identity]
+
+	return exists
 }
 
 // BuiltinAuthEffectBindings returns detached immutable standard-auth owner mappings.
@@ -402,39 +428,15 @@ func builtinAuthnPlan(target decision.Target) (DomainPlanDefinition, error) {
 		checkpoints = append(checkpoints, checkpoint)
 	}
 
-	plan, err := NewDomainPlanDefinition(target, checkpoints)
-	if err != nil {
-		return DomainPlanDefinition{}, err
-	}
-
-	plan.builtinAuth = true
-
-	return plan, nil
+	return NewAuthnDomainPlanDefinition(target, checkpoints)
 }
 
 // builtinCheckpointProviders preserves the established auth work order before each checkpoint.
 func builtinCheckpointProviders(target decision.Target, checkpoint string) []string {
-	switch {
-	case target.Action() == builtinActionAuthenticate && checkpoint == builtinCheckpointPreAuth:
-		return []string{builtinBruteForceProvider}
-	case target.Action() == builtinActionAuthenticate && checkpoint == builtinCheckpointDecision:
-		return []string{
-			builtinEnvironmentProvider,
-			builtinTLSProvider,
-			builtinRelayProvider,
-			builtinRBLProvider,
-			builtinAuthBackendProvider,
-			builtinSubjectProvider,
-		}
-	case target.Action() == builtinActionLookupIdentity && checkpoint == builtinCheckpointPreAuth:
-		return []string{builtinEnvironmentProvider, builtinTLSProvider, builtinRBLProvider}
-	case target.Action() == builtinActionLookupIdentity && checkpoint == builtinCheckpointDecision:
-		return []string{builtinAuthBackendProvider, builtinSubjectProvider}
-	case target.Action() == builtinActionListAccounts:
-		return []string{builtinAccountProvider}
-	default:
-		return nil
-	}
+	return policy.AuthnBuiltinCheckpointProviderIDs(
+		policy.Operation(target.Action()),
+		policy.Stage(checkpoint),
+	)
 }
 
 // builtinAuthnProviders declares immutable host ownership classes.
@@ -469,6 +471,9 @@ func builtinAuthnProviders(
 		{ID: builtinRBLProvider, Targets: authAndLookup, Executions: []ExecutionClass{ExecutionHostSync}},
 		{ID: builtinAuthBackendProvider, Targets: authAndLookup, Executions: []ExecutionClass{ExecutionHostSync}},
 		{ID: builtinSubjectProvider, Targets: authAndLookup, Executions: []ExecutionClass{ExecutionHostSync}},
+		{ID: builtinLDAPBackendProvider, Targets: authAndLookup, Executions: []ExecutionClass{ExecutionHostSync}},
+		{ID: builtinLuaBackendProvider, Targets: authAndLookup, Executions: []ExecutionClass{ExecutionHostSync}},
+		{ID: builtinPluginBackendProvider, Targets: authAndLookup, Executions: []ExecutionClass{ExecutionHostSync}},
 		{ID: builtinAccountProvider, Targets: listAccounts, Executions: []ExecutionClass{ExecutionHostSync}},
 	}
 
