@@ -172,20 +172,13 @@ func validateClientProfile(client ClientProfileConfig, limits APILimitsConfig, p
 		return invalid(path+".principal", "must be non-empty")
 	}
 
-	for index, kind := range client.AuthenticationKinds {
-		if kind != "oidc_bearer" && kind != "basic" {
-			return invalid(fmt.Sprintf("%s.authentication_kinds[%d]", path, index), "must be oidc_bearer or basic")
-		}
+	authenticationKinds, err := validateClientAuthenticationKinds(client.AuthenticationKinds, path+".authentication_kinds")
+	if err != nil {
+		return err
 	}
 
-	if client.Authentication.Basic != nil {
-		if strings.TrimSpace(client.Authentication.Basic.Username) == "" {
-			return invalid(path+".authentication.basic.username", "must be non-empty")
-		}
-
-		if client.Authentication.Basic.Password.IsZero() {
-			return invalid(path+".authentication.basic.password", "must be non-empty")
-		}
+	if err := validateClientAuthentication(client.Authentication, authenticationKinds, path+".authentication"); err != nil {
+		return err
 	}
 
 	if err := validateClientTargets(client.Targets, path+".targets"); err != nil {
@@ -197,6 +190,55 @@ func validateClientProfile(client ClientProfileConfig, limits APILimitsConfig, p
 	}
 
 	return validateClientLimit(client.MaxFacts, limits.MaxFacts, path+".max_facts")
+}
+
+// validateClientAuthenticationKinds validates one non-empty set of supported authentication kinds.
+func validateClientAuthenticationKinds(kinds []string, path string) (map[string]struct{}, error) {
+	if len(kinds) == 0 {
+		return nil, invalid(path, "must contain at least one authentication kind")
+	}
+
+	uniqueKinds := make(map[string]struct{}, len(kinds))
+	for index, kind := range kinds {
+		kindPath := fmt.Sprintf("%s[%d]", path, index)
+		if kind != policy.CallerAuthenticationKindBearer && kind != policy.CallerAuthenticationKindBasic {
+			return nil, invalid(kindPath, "must be oidc_bearer or basic")
+		}
+
+		if _, exists := uniqueKinds[kind]; exists {
+			return nil, invalid(kindPath, "must not duplicate an authentication kind")
+		}
+
+		uniqueKinds[kind] = struct{}{}
+	}
+
+	return uniqueKinds, nil
+}
+
+// validateClientAuthentication enforces profile ownership of dedicated Policy-Basic material.
+func validateClientAuthentication(authentication ClientAuthenticationConfig, kinds map[string]struct{}, path string) error {
+	_, basicEnabled := kinds[policy.CallerAuthenticationKindBasic]
+	if basicEnabled && authentication.Basic == nil {
+		return invalid(path+".basic", "must be configured for the basic authentication kind")
+	}
+
+	if !basicEnabled && authentication.Basic != nil {
+		return invalid(path+".basic", "requires the basic authentication kind")
+	}
+
+	if authentication.Basic == nil {
+		return nil
+	}
+
+	if strings.TrimSpace(authentication.Basic.Username) == "" {
+		return invalid(path+".basic.username", "must be non-empty")
+	}
+
+	if authentication.Basic.Password.IsZero() {
+		return invalid(path+".basic.password", "must be non-empty")
+	}
+
+	return nil
 }
 
 // validateClientTargets validates namespace/action admission references.

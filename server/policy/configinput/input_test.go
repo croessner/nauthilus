@@ -74,6 +74,7 @@ const exactGenericTargetFixture = `policy:
   api:
     clients:
       - principal: dkim2-client
+        authentication_kinds: [oidc_bearer]
         targets:
           - namespace: dkim2
             actions: [sign-message-instance]

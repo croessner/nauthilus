@@ -15,10 +15,12 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	policy "github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
 	"github.com/croessner/nauthilus/v3/server/policy/compiler"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v3/server/secret"
 )
 
 var builtinAuthnTargets = []struct {
@@ -32,11 +34,12 @@ var builtinAuthnTargets = []struct {
 
 // UnifiedPolicyInput owns the single standalone transport-neutral compiler envelope.
 type UnifiedPolicyInput struct {
-	Policy            policyconfig.PolicyConfig
-	Definitions       []registry.DefinitionContribution
-	Activations       []registry.TargetActivation
-	Admissions        []registry.ClientAdmissionReference
-	AdmissionProfiles []ClientAdmissionProfile
+	Policy               policyconfig.PolicyConfig
+	Definitions          []registry.DefinitionContribution
+	Activations          []registry.TargetActivation
+	Admissions           []registry.ClientAdmissionReference
+	AdmissionProfiles    []ClientAdmissionProfile
+	callerAuthentication callerauth.Configuration
 }
 
 // ClientAdmissionProfile preserves profile ownership around exact catalog references.
@@ -71,12 +74,93 @@ func Normalize(ctx context.Context, document policyconfig.Document) (UnifiedPoli
 	definitions = append(definitions, material.definitions...)
 
 	return UnifiedPolicyInput{
-		Policy:            normalized.Policy,
-		Definitions:       definitions,
-		Activations:       material.activations,
-		Admissions:        material.admissions,
-		AdmissionProfiles: material.admissionProfiles,
+		Policy:               normalized.Policy,
+		Definitions:          definitions,
+		Activations:          material.activations,
+		Admissions:           material.admissions,
+		AdmissionProfiles:    material.admissionProfiles,
+		callerAuthentication: projectCallerAuthentication(normalized.Policy.API),
 	}, nil
+}
+
+// CallerAuthentication returns a detached caller-authentication projection for generation assembly.
+func (i UnifiedPolicyInput) CallerAuthentication() callerauth.Configuration {
+	return cloneCallerAuthentication(i.callerAuthentication)
+}
+
+// projectCallerAuthentication captures only operator-owned caller rules from one normalized API snapshot.
+func projectCallerAuthentication(api policyconfig.APIConfig) callerauth.Configuration {
+	configuration := callerauth.Configuration{RequireGRPCMTLS: api.GRPC.RequireMTLS}
+	if api.Clients == nil {
+		return configuration
+	}
+
+	configuration.ExternalProfiles = make([]callerauth.ExternalProfile, len(api.Clients))
+	for index, profile := range api.Clients {
+		configuration.ExternalProfiles[index] = callerauth.ExternalProfile{
+			Basic:               projectBasicCredential(profile.Authentication.Basic),
+			AuthenticationKinds: append([]string(nil), profile.AuthenticationKinds...),
+			Principal:           profile.Principal,
+			RequireMTLS:         profile.RequireMTLS,
+		}
+	}
+
+	return configuration
+}
+
+// projectBasicCredential detaches dedicated Policy-Basic material from its configuration owner.
+func projectBasicCredential(configured *policyconfig.BasicAuthenticationConfig) *callerauth.BasicCredential {
+	if configured == nil {
+		return nil
+	}
+
+	return &callerauth.BasicCredential{
+		Password: cloneSecret(configured.Password),
+		Username: configured.Username,
+	}
+}
+
+// cloneCallerAuthentication detaches every mutable caller-authentication projection value.
+func cloneCallerAuthentication(configuration callerauth.Configuration) callerauth.Configuration {
+	cloned := callerauth.Configuration{RequireGRPCMTLS: configuration.RequireGRPCMTLS}
+	if configuration.ExternalProfiles == nil {
+		return cloned
+	}
+
+	cloned.ExternalProfiles = make([]callerauth.ExternalProfile, len(configuration.ExternalProfiles))
+	for index, profile := range configuration.ExternalProfiles {
+		cloned.ExternalProfiles[index] = callerauth.ExternalProfile{
+			Basic:               cloneBasicCredential(profile.Basic),
+			AuthenticationKinds: append([]string(nil), profile.AuthenticationKinds...),
+			Principal:           profile.Principal,
+			RequireMTLS:         profile.RequireMTLS,
+		}
+	}
+
+	return cloned
+}
+
+// cloneBasicCredential returns detached Policy-Basic material without converting it to a string.
+func cloneBasicCredential(credential *callerauth.BasicCredential) *callerauth.BasicCredential {
+	if credential == nil {
+		return nil
+	}
+
+	return &callerauth.BasicCredential{
+		Password: cloneSecret(credential.Password),
+		Username: credential.Username,
+	}
+}
+
+// cloneSecret owns one opaque secret copy through its scoped byte boundary.
+func cloneSecret(value secret.Value) secret.Value {
+	var cloned secret.Value
+
+	value.WithBytes(func(bytes []byte) {
+		cloned = secret.FromBytes(bytes)
+	})
+
+	return cloned
 }
 
 // Contributors rebuilds capability-bearing definitions at the standalone compile boundary.

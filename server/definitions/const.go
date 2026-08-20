@@ -340,6 +340,12 @@ const (
 	// ScopeAdmin grants full administrative access to the backchannel API.
 	ScopeAdmin = "nauthilus:admin"
 
+	// ScopePolicyEvaluate grants access to Policy evaluation operations.
+	ScopePolicyEvaluate = "nauthilus:policy_evaluate"
+
+	// ScopePolicyDiagnostics grants access to Policy diagnostic operations.
+	ScopePolicyDiagnostics = "nauthilus:policy_diagnostics"
+
 	// ScopeSecurity grants access to security-related controls such as metrics and brute-force listings.
 	ScopeSecurity = "nauthilus:security"
 

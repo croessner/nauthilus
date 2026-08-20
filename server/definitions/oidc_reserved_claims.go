@@ -29,6 +29,9 @@ const (
 
 	// AudienceBackchannelAPI is the protected resource audience for Nauthilus backchannel APIs.
 	AudienceBackchannelAPI = "nauthilus:backchannel"
+
+	// AudiencePolicyAPI is the dedicated protected resource audience for Policy APIs.
+	AudiencePolicyAPI = "nauthilus:policy"
 )
 
 const (

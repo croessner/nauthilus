@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
@@ -445,32 +446,9 @@ func normalizedProfileIDs(ids []string) ([]string, error) {
 	return owned, nil
 }
 
-// validProfileID accepts bounded lowercase profile identities and separators.
+// validProfileID preserves exact bounded UTF-8 OAuth and internal profile identities.
 func validProfileID(id string) bool {
-	if id == "" || len(id) > 128 || strings.TrimSpace(id) != id {
-		return false
-	}
-
-	for _, current := range id {
-		if !validProfileRune(current) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// validProfileRune accepts the closed lowercase profile identity alphabet.
-func validProfileRune(current rune) bool {
-	if current >= 'a' && current <= 'z' {
-		return true
-	}
-
-	if current >= '0' && current <= '9' {
-		return true
-	}
-
-	return strings.ContainsRune("-_./", current)
+	return id != "" && len(id) <= 512 && strings.TrimSpace(id) == id && utf8.ValidString(id)
 }
 
 // cloneDefinitionContributions rebuilds detached immutable contribution DTOs.
