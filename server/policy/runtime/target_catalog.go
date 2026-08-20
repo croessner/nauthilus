@@ -311,108 +311,101 @@ func (p CompiledDomainPlan) clone() CompiledDomainPlan {
 
 // CompiledRule is one immutable target/checkpoint-instantiated executable rule.
 type CompiledRule struct {
-	target                           decision.Target
-	policySetID                      registry.PolicySetID
-	name                             string
-	checkpoint                       string
-	presentationStage                string
-	requiredProviders                []string
-	expression                       registry.PolicyExpression
-	effects                          []registry.EffectUse
-	advice                           []registry.EffectUse
-	decision                         decision.Effect
-	reason                           string
-	outcomeMarker                    string
-	fsmEventMarker                   string
-	responseMarker                   string
-	responseMessage                  registry.PolicyResponseMessage
-	responseLanguage                 registry.PolicyResponseLanguage
-	skipRemainingCheckpointProviders bool
+	record CompiledRuleRecord
 }
 
 // Target returns the exact instantiated rule target.
 func (r CompiledRule) Target() decision.Target {
-	return r.target
+	return r.record.Target
 }
 
 // PolicySetID returns the exact owning set identity.
 func (r CompiledRule) PolicySetID() registry.PolicySetID {
-	return r.policySetID
+	return r.record.PolicySetID
 }
 
 // Name returns the namespace-local source rule name.
 func (r CompiledRule) Name() string {
-	return r.name
+	return r.record.Name
 }
 
 // Checkpoint returns the exact instantiated checkpoint.
 func (r CompiledRule) Checkpoint() string {
-	return r.checkpoint
+	return r.record.Checkpoint
 }
 
 // RequiredProviders returns exact provider dependencies in the same checkpoint.
 func (r CompiledRule) RequiredProviders() []string {
-	return append([]string(nil), r.requiredProviders...)
+	return append([]string(nil), r.record.RequiredProviders...)
 }
 
 // Expression returns the executable immutable source predicate.
 func (r CompiledRule) Expression() registry.PolicyExpression {
-	return r.expression
+	return r.record.Expression
 }
 
 // Effects returns detached typed effect selections.
 func (r CompiledRule) Effects() []registry.EffectUse {
-	return append([]registry.EffectUse(nil), r.effects...)
+	return append([]registry.EffectUse(nil), r.record.Effects...)
 }
 
 // Advice returns detached selected non-authoritative effect requests.
 func (r CompiledRule) Advice() []registry.EffectUse {
-	return append([]registry.EffectUse(nil), r.advice...)
+	return append([]registry.EffectUse(nil), r.record.Advice...)
 }
 
 // Decision returns the configured authoritative result.
 func (r CompiledRule) Decision() decision.Effect {
-	return r.decision
+	return r.record.Decision
 }
 
 // PresentationStage returns the optional builtin authn semantic stage.
 func (r CompiledRule) PresentationStage() string {
-	return r.presentationStage
+	return r.record.PresentationStage
 }
 
 // Reason returns the retained stable decision reason.
 func (r CompiledRule) Reason() string {
-	return r.reason
+	return r.record.Reason
 }
 
 // OutcomeMarker returns the retained outcome adapter marker.
 func (r CompiledRule) OutcomeMarker() string {
-	return r.outcomeMarker
+	return r.record.OutcomeMarker
 }
 
 // FSMEventMarker returns the retained authentication-state marker.
 func (r CompiledRule) FSMEventMarker() string {
-	return r.fsmEventMarker
+	return r.record.FSMEventMarker
 }
 
 // ResponseMarker returns the retained response-profile marker.
 func (r CompiledRule) ResponseMarker() string {
-	return r.responseMarker
+	return r.record.ResponseMarker
 }
 
 // ResponseMessage returns the retained immutable response-message source.
 func (r CompiledRule) ResponseMessage() registry.PolicyResponseMessage {
-	return r.responseMessage
+	return r.record.ResponseMessage
 }
 
 // ResponseLanguage returns the retained immutable response-language source.
 func (r CompiledRule) ResponseLanguage() registry.PolicyResponseLanguage {
-	return r.responseLanguage
+	return r.record.ResponseLanguage
 }
 
 // SkipRemainingCheckpointProviders returns the checkpoint-local control marker.
 func (r CompiledRule) SkipRemainingCheckpointProviders() bool {
-	return r.skipRemainingCheckpointProviders
+	return r.record.SkipRemainingCheckpointProviders
+}
+
+// clone returns one deeply detached immutable runtime rule.
+func (r CompiledRule) clone() CompiledRule {
+	r.record.RequiredProviders = r.RequiredProviders()
+	r.record.Effects = r.Effects()
+	r.record.Advice = r.Advice()
+
+	return r
 }
 
 // CompiledPolicySet is one immutable catalog-owned set descriptor.
@@ -450,9 +443,7 @@ func (s CompiledPolicySet) DiagnosticID() string {
 func (s CompiledPolicySet) Rules() []CompiledRule {
 	result := append([]CompiledRule(nil), s.rules...)
 	for index := range result {
-		result[index].effects = result[index].Effects()
-		result[index].advice = result[index].Advice()
-		result[index].requiredProviders = result[index].RequiredProviders()
+		result[index] = result[index].clone()
 	}
 
 	return result
@@ -2072,16 +2063,11 @@ func validateRuntimeRuleFacts(schema registry.SchemaDefinition, record CompiledR
 
 // newCompiledRule deeply owns one authenticated exact runtime record.
 func newCompiledRule(record CompiledRuleRecord, requiredProviders []string) CompiledRule {
-	return CompiledRule{
-		target: record.Target, policySetID: record.PolicySetID, name: record.Name, checkpoint: record.Checkpoint,
-		presentationStage: record.PresentationStage,
-		requiredProviders: append([]string(nil), requiredProviders...), expression: record.Expression,
-		effects: append([]registry.EffectUse(nil), record.Effects...), advice: append([]registry.EffectUse(nil), record.Advice...),
-		decision: record.Decision, reason: record.Reason, outcomeMarker: record.OutcomeMarker,
-		fsmEventMarker: record.FSMEventMarker, responseMarker: record.ResponseMarker,
-		responseMessage: record.ResponseMessage, responseLanguage: record.ResponseLanguage,
-		skipRemainingCheckpointProviders: record.SkipRemainingCheckpointProviders,
-	}
+	record.RequiredProviders = append([]string(nil), requiredProviders...)
+	record.Effects = append([]registry.EffectUse(nil), record.Effects...)
+	record.Advice = append([]registry.EffectUse(nil), record.Advice...)
+
+	return CompiledRule{record: record}
 }
 
 // runtimeRuleDecisionAllowed retains reserved outcomes only for authenticated builtin standard rules.
@@ -2189,11 +2175,11 @@ func validateRuntimeRuleExpression(schema registry.SchemaDefinition, expression 
 // validateCompiledRules resolves every selected effect through the target registry.
 func validateCompiledRules(rules []CompiledRule, effects map[string]registry.EffectDefinition) error {
 	for _, rule := range rules {
-		if err := validateCompiledRuleEffectUses(rule, rule.effects, registry.EffectKindObligation, effects); err != nil {
+		if err := validateCompiledRuleEffectUses(rule, rule.Effects(), registry.EffectKindObligation, effects); err != nil {
 			return err
 		}
 
-		if err := validateCompiledRuleEffectUses(rule, rule.advice, registry.EffectKindAdvice, effects); err != nil {
+		if err := validateCompiledRuleEffectUses(rule, rule.Advice(), registry.EffectKindAdvice, effects); err != nil {
 			return err
 		}
 	}

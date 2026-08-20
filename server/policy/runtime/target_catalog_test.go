@@ -62,6 +62,62 @@ func TestTargetCatalogOwnsCompiledRecords(t *testing.T) {
 	}
 }
 
+func TestCompiledRuleOwnsBoundaryRecordSlices(t *testing.T) {
+	effect := mustPolicyEffectUse(t, "mail/obligation")
+	advice := mustPolicyEffectUse(t, "mail/advice")
+	requiredProviders := []string{"provider/required"}
+	effects := []registry.EffectUse{effect}
+	adviceUses := []registry.EffectUse{advice}
+
+	rule := newCompiledRule(CompiledRuleRecord{Effects: effects, Advice: adviceUses}, requiredProviders)
+	requiredProviders[0] = "provider/mutated"
+	effects[0] = advice
+	adviceUses[0] = effect
+
+	assertCompiledRuleSlices(t, rule, "provider/required", "mail/obligation", "mail/advice")
+
+	policySet := CompiledPolicySet{rules: []CompiledRule{rule}}
+	returned := policySet.Rules()
+	returned[0].record.RequiredProviders[0] = "provider/returned"
+	returned[0].record.Effects[0] = advice
+	returned[0].record.Advice[0] = effect
+
+	assertCompiledRuleSlices(t, policySet.Rules()[0], "provider/required", "mail/obligation", "mail/advice")
+}
+
+// mustPolicyEffectUse constructs one valid effect selection for ownership tests.
+func mustPolicyEffectUse(t *testing.T, id string) registry.EffectUse {
+	t.Helper()
+
+	use, err := registry.NewEffectUse(id, nil)
+	if err != nil {
+		t.Fatalf("registry.NewEffectUse(%q) error = %v", id, err)
+	}
+
+	return use
+}
+
+// assertCompiledRuleSlices verifies all mutable record slices retain their expected values.
+func assertCompiledRuleSlices(t *testing.T, rule CompiledRule, provider string, effect string, advice string) {
+	t.Helper()
+
+	providers := rule.RequiredProviders()
+	effects := rule.Effects()
+	adviceUses := rule.Advice()
+
+	if len(providers) != 1 || providers[0] != provider {
+		t.Fatalf("RequiredProviders() = %v, want [%s]", providers, provider)
+	}
+
+	if len(effects) != 1 || effects[0].ID() != effect {
+		t.Fatalf("Effects() = %v, want [%s]", effects, effect)
+	}
+
+	if len(adviceUses) != 1 || adviceUses[0].ID() != advice {
+		t.Fatalf("Advice() = %v, want [%s]", adviceUses, advice)
+	}
+}
+
 // newTargetCatalogRecord constructs one mutable input record for ownership tests.
 func newTargetCatalogRecord(t *testing.T) (TargetCatalogRecord, []decision.FactSource) {
 	t.Helper()
