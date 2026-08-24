@@ -3744,9 +3744,26 @@ func (authnCandidateAdmission) Admit(
 	context.Context,
 	decision.CallerContext,
 	decision.DecisionRequest,
-) error {
-	return nil
+) (policyruntime.AdmissionPermit, error) {
+	facts, err := decision.NewFactSet(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return authnCandidatePermit{facts: facts}, nil
 }
+
+type authnCandidatePermit struct {
+	facts decision.FactSet
+}
+
+// Facts returns the empty admitted fact set used by this candidate-only test.
+func (p authnCandidatePermit) Facts() decision.FactSet {
+	return p.facts
+}
+
+// Release has no capacity to return for this candidate-only test.
+func (authnCandidatePermit) Release() {}
 
 type authnCandidateAcceptAll struct{}
 

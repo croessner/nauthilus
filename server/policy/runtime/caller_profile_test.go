@@ -16,6 +16,7 @@
 package runtime
 
 import (
+	"errors"
 	"slices"
 	"testing"
 )
@@ -38,5 +39,23 @@ func TestPolicyCallerCredentialProfilesPreserveExactOAuthPrincipal(t *testing.T)
 	expected := []string{"Policy-Client@Example", "urn:client:service"}
 	if !slices.Equal(credentials.IDs(), expected) || !slices.Equal(admission.IDs(), expected) {
 		t.Fatalf("profile identities = %v/%v, want exact %v", credentials.IDs(), admission.IDs(), expected)
+	}
+}
+
+func TestCallerAdmissionProfilesRequireExactCredentialParity(t *testing.T) {
+	t.Parallel()
+
+	credentials, err := NewCredentialProfiles([]string{"registered", "unregistered"})
+	if err != nil {
+		t.Fatalf("NewCredentialProfiles() error = %v", err)
+	}
+
+	admission, err := NewAdmissionProfiles([]string{"registered"})
+	if err != nil {
+		t.Fatalf("NewAdmissionProfiles() error = %v", err)
+	}
+
+	if err = admission.ValidateCredentials(credentials); !errors.Is(err, ErrInvalidGeneration) {
+		t.Fatalf("ValidateCredentials() error = %v, want ErrInvalidGeneration", err)
 	}
 }

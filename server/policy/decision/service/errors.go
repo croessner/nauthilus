@@ -33,3 +33,22 @@ var (
 	// ErrDecisionEvaluation identifies an invalid or failed checkpoint evaluation.
 	ErrDecisionEvaluation = errors.New("decision checkpoint evaluation failed")
 )
+
+type decisionAdmissionError struct {
+	cause error
+}
+
+// Error returns the stable secret-free application-boundary description.
+func (e *decisionAdmissionError) Error() string {
+	return "decision caller admission failed: caller or invocation was rejected"
+}
+
+// Unwrap preserves both the service boundary and admission category for later status mapping.
+func (e *decisionAdmissionError) Unwrap() []error {
+	return []error{ErrDecisionAdmission, e.cause}
+}
+
+// newDecisionAdmissionError preserves a safe admission category without rendering its detail.
+func newDecisionAdmissionError(cause error) error {
+	return &decisionAdmissionError{cause: cause}
+}

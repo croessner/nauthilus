@@ -172,6 +172,25 @@ policy:
 	requireNoError(t, Validate(normalized))
 }
 
+func TestPolicyNormalizeAppliesFiniteCallerAdmissionLimits(t *testing.T) {
+	normalized := Normalize(Document{})
+	limits := normalized.Policy.API.Limits
+
+	want := APILimitsConfig{
+		MaxRequestBytes:            1 << 20,
+		MaxFacts:                   512,
+		PerClientConcurrency:       8,
+		PerClientRequestsPerSecond: 25,
+	}
+
+	if limits.MaxRequestBytes != want.MaxRequestBytes ||
+		limits.MaxFacts != want.MaxFacts ||
+		limits.PerClientConcurrency != want.PerClientConcurrency ||
+		limits.PerClientRequestsPerSecond != want.PerClientRequestsPerSecond {
+		t.Fatalf("normalized caller admission limits = %+v, want %+v", limits, want)
+	}
+}
+
 func TestPolicyNormalizeOwnsNestedMutableState(t *testing.T) {
 	document := Document{Policy: PolicyConfig{Namespaces: map[string]NamespaceConfig{
 		"shared": {

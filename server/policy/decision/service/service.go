@@ -178,22 +178,44 @@ func (s *DecisionService) openSession(
 		return nil, err
 	}
 
-	if err := generation.admission.Admit(ctx, caller, request); err != nil {
+	permit, err := generation.admission.Admit(ctx, caller, request)
+	if err != nil {
+		if !nilDependency(permit) {
+			permit.Release()
+		}
+
+		return nil, newDecisionAdmissionError(err)
+	}
+
+	if nilDependency(permit) {
 		return nil, fmt.Errorf("%w: caller or invocation was rejected", ErrDecisionAdmission)
 	}
 
 	if requireInternalAuthn && (!caller.Internal() || !validAuthnTarget(request.Target())) {
+		permit.Release()
+
 		return nil, fmt.Errorf("%w: authn sessions require the admitted builtin internal caller", ErrDecisionAdmission)
 	}
 
 	checkpoints, err := sessionCheckpointPlan(generation.evaluator, request.Target(), requireInternalAuthn)
 	if err != nil {
+		permit.Release()
+
 		return nil, err
+	}
+
+	facts, err := decision.NewFactSet(permit.Facts().Facts())
+	if err != nil {
+		permit.Release()
+
+		return nil, fmt.Errorf("%w: admission returned invalid facts", ErrDecisionAdmission)
 	}
 
 	return &decisionSession{
 		generation:   generation,
 		request:      request,
+		facts:        facts,
+		permit:       permit,
 		finalization: invocation.Finalization,
 		checkpoints:  checkpoints,
 	}, nil
@@ -324,6 +346,8 @@ func validAuthenticationInput(input decision.AuthenticationInput) bool {
 type decisionSession struct {
 	generation   *runtimeGeneration
 	request      decision.DecisionRequest
+	facts        decision.FactSet
+	permit       admissionPermit
 	finalization decision.EvaluationFinalization
 	checkpoints  []CheckpointPlan
 	mu           sync.Mutex
@@ -396,6 +420,7 @@ func (s *decisionSession) Evaluate(
 	evaluation := checkpointEvaluation{
 		request:      s.request,
 		checkpoint:   ownedCheckpoint,
+		facts:        s.facts,
 		finalization: s.finalization,
 		supervisor:   s.generation.supervisor,
 		generation:   s.generation.id,
@@ -448,8 +473,20 @@ func (s *decisionSession) close() {
 	}
 
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+
+		return
+	}
+
 	s.closed = true
+	permit := s.permit
+	s.permit = nil
 	s.mu.Unlock()
 
 	s.evaluations.Wait()
+
+	if permit != nil {
+		permit.Release()
+	}
 }

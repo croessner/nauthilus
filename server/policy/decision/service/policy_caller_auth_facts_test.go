@@ -25,9 +25,11 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/admission"
 	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 const (
@@ -303,17 +305,45 @@ func policyCallerFactsFromCaller(t *testing.T, caller decision.CallerContext) de
 		t.Fatalf("NewDecisionRequest() error = %v", err)
 	}
 
-	empty, err := decision.NewFactSet(nil)
+	reference, err := registry.NewClientAdmissionReference(
+		"test.policy-caller-facts",
+		target.Namespace(),
+		target.Action(),
+		compiled.Schema().Identity().String(),
+	)
 	if err != nil {
-		t.Fatalf("NewFactSet() error = %v", err)
+		t.Fatalf("NewClientAdmissionReference() error = %v", err)
 	}
 
-	admitted, err := buildAdmittedFacts(request, empty, compiled.Schema())
+	credentials, err := policyruntime.NewCredentialProfiles([]string{policyCallerFactsPrincipal})
 	if err != nil {
-		t.Fatalf("buildAdmittedFacts() error = %v", err)
+		t.Fatalf("NewCredentialProfiles() error = %v", err)
 	}
 
-	return admitted
+	prepared, err := admission.Prepare(admission.Configuration{
+		GlobalLimits: admission.Limits{
+			MaxRequestBytes:   4096,
+			MaxFacts:          16,
+			MaxConcurrency:    1,
+			RequestsPerSecond: 1000,
+		},
+		Profiles: []admission.Profile{{
+			Principal:           policyCallerFactsPrincipal,
+			AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer},
+			References:          []registry.ClientAdmissionReference{reference},
+		}},
+	}, catalog, credentials)
+	if err != nil {
+		t.Fatalf("admission.Prepare() error = %v", err)
+	}
+
+	permit, err := prepared.Authority.Admit(context.Background(), caller, request)
+	if err != nil {
+		t.Fatalf("AdmissionAuthority.Admit() error = %v", err)
+	}
+	defer permit.Release()
+
+	return permit.Facts()
 }
 
 // assertPolicyCallerFact verifies exact value and host-assigned authentication provenance.

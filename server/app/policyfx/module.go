@@ -398,8 +398,8 @@ func (*closedAdmissionAuthority) Admit(
 	context.Context,
 	decision.CallerContext,
 	decision.DecisionRequest,
-) error {
-	return errPolicyDecisionUnavailable
+) (policyruntime.AdmissionPermit, error) {
+	return nil, errPolicyDecisionUnavailable
 }
 
 // Accept rejects detached work because no generic post-action adapter is active yet.

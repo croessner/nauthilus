@@ -295,6 +295,20 @@ func newPolicyCallerAuthGenerationCoordinator(
 
 		return callerauth.Prepare(configuration)
 	})
+	slots.Admission = policyruntime.AdmissionPreparationFunc(func(
+		_ context.Context,
+		input policyruntime.AdmissionPreparationInput,
+	) (policyruntime.AdmissionPreparation, error) {
+		profiles, profileErr := policyruntime.NewAdmissionProfiles(input.CredentialProfiles().IDs())
+		if profileErr != nil {
+			return policyruntime.AdmissionPreparation{}, profileErr
+		}
+
+		return policyruntime.AdmissionPreparation{
+			Authority: &recordingAdmissionAuthority{},
+			Profiles:  profiles,
+		}, nil
+	})
 	slots.Application = policyruntime.ApplicationPreparationFunc(func(
 		_ context.Context,
 		input policyruntime.ApplicationPreparationInput,

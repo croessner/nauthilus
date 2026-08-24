@@ -15,6 +15,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	policy "github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/admission"
 	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
 	"github.com/croessner/nauthilus/v3/server/policy/compiler"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
@@ -39,6 +40,7 @@ type UnifiedPolicyInput struct {
 	Activations          []registry.TargetActivation
 	Admissions           []registry.ClientAdmissionReference
 	AdmissionProfiles    []ClientAdmissionProfile
+	callerAdmission      admission.Configuration
 	callerAuthentication callerauth.Configuration
 }
 
@@ -79,13 +81,75 @@ func Normalize(ctx context.Context, document policyconfig.Document) (UnifiedPoli
 		Activations:          material.activations,
 		Admissions:           material.admissions,
 		AdmissionProfiles:    material.admissionProfiles,
+		callerAdmission:      projectCallerAdmission(normalized.Policy.API, material.admissionProfiles),
 		callerAuthentication: projectCallerAuthentication(normalized.Policy.API),
 	}, nil
+}
+
+// CallerAdmission returns a detached caller-admission projection for generation assembly.
+func (i UnifiedPolicyInput) CallerAdmission() admission.Configuration {
+	return cloneCallerAdmission(i.callerAdmission)
 }
 
 // CallerAuthentication returns a detached caller-authentication projection for generation assembly.
 func (i UnifiedPolicyInput) CallerAuthentication() callerauth.Configuration {
 	return cloneCallerAuthentication(i.callerAuthentication)
+}
+
+// projectCallerAdmission joins normalized external profiles with their exact expanded references.
+func projectCallerAdmission(
+	api policyconfig.APIConfig,
+	profiles []ClientAdmissionProfile,
+) admission.Configuration {
+	configuration := admission.Configuration{
+		GlobalLimits: newAdmissionLimits(
+			api.Limits.MaxRequestBytes,
+			api.Limits.MaxFacts,
+			api.Limits.PerClientConcurrency,
+			api.Limits.PerClientRequestsPerSecond,
+		),
+	}
+	if api.Clients == nil {
+		return configuration
+	}
+
+	configuration.Profiles = make([]admission.Profile, len(api.Clients))
+	for index, client := range api.Clients {
+		configuration.Profiles[index] = admission.Profile{
+			References:                   cloneSlice(profiles[index].References),
+			AuthenticationKinds:          cloneSlice(client.AuthenticationKinds),
+			AllowedSubjectAttributes:     cloneSlice(client.AllowedSubjectAttributes),
+			AllowedResourceAttributes:    cloneSlice(client.AllowedResourceAttributes),
+			AllowedEnvironmentAttributes: cloneSlice(client.AllowedEnvironmentAttributes),
+			AllowedInputAttributes:       cloneSlice(client.AllowedInputAttributes),
+			Principal:                    client.Principal,
+			Limits: newAdmissionLimits(
+				client.MaxRequestBytes,
+				client.MaxFacts,
+				client.MaxConcurrency,
+				client.RequestsPerSecond,
+			),
+			Diagnostics: client.Diagnostics,
+			Internal:    false,
+		}
+	}
+
+	return configuration
+}
+
+// newAdmissionLimits maps the shared four-bound contract without transport-specific policy.
+func newAdmissionLimits(
+	maxRequestBytes int,
+	maxFacts int,
+	maxConcurrency int,
+	requestsPerSecond int,
+) admission.Limits {
+	return admission.Limits{
+		MaxRequestBytes:   maxRequestBytes,
+		MaxFacts:          maxFacts,
+		MaxConcurrency:    maxConcurrency,
+		RequestsPerSecond: requestsPerSecond,
+	}
 }
 
 // projectCallerAuthentication captures only operator-owned caller rules from one normalized API snapshot.
@@ -99,7 +163,7 @@ func projectCallerAuthentication(api policyconfig.APIConfig) callerauth.Configur
 	for index, profile := range api.Clients {
 		configuration.ExternalProfiles[index] = callerauth.ExternalProfile{
 			Basic:               projectBasicCredential(profile.Authentication.Basic),
-			AuthenticationKinds: append([]string(nil), profile.AuthenticationKinds...),
+			AuthenticationKinds: cloneSlice(profile.AuthenticationKinds),
 			Principal:           profile.Principal,
 			RequireMTLS:         profile.RequireMTLS,
 		}
@@ -120,6 +184,39 @@ func projectBasicCredential(configured *policyconfig.BasicAuthenticationConfig) 
 	}
 }
 
+// cloneCallerAdmission detaches every mutable caller-admission projection value.
+func cloneCallerAdmission(configuration admission.Configuration) admission.Configuration {
+	return admission.Configuration{
+		Profiles:     cloneAdmissionProfiles(configuration.Profiles),
+		GlobalLimits: configuration.GlobalLimits,
+	}
+}
+
+// cloneAdmissionProfiles owns each external or generation-injected profile independently.
+func cloneAdmissionProfiles(profiles []admission.Profile) []admission.Profile {
+	if profiles == nil {
+		return nil
+	}
+
+	cloned := make([]admission.Profile, len(profiles))
+	for index, profile := range profiles {
+		cloned[index] = admission.Profile{
+			References:                   cloneSlice(profile.References),
+			AuthenticationKinds:          cloneSlice(profile.AuthenticationKinds),
+			AllowedSubjectAttributes:     cloneSlice(profile.AllowedSubjectAttributes),
+			AllowedResourceAttributes:    cloneSlice(profile.AllowedResourceAttributes),
+			AllowedEnvironmentAttributes: cloneSlice(profile.AllowedEnvironmentAttributes),
+			AllowedInputAttributes:       cloneSlice(profile.AllowedInputAttributes),
+			Principal:                    profile.Principal,
+			Limits:                       profile.Limits,
+			Diagnostics:                  profile.Diagnostics,
+			Internal:                     profile.Internal,
+		}
+	}
+
+	return cloned
+}
+
 // cloneCallerAuthentication detaches every mutable caller-authentication projection value.
 func cloneCallerAuthentication(configuration callerauth.Configuration) callerauth.Configuration {
 	cloned := callerauth.Configuration{RequireGRPCMTLS: configuration.RequireGRPCMTLS}
@@ -131,13 +228,18 @@ func cloneCallerAuthentication(configuration callerauth.Configuration) calleraut
 	for index, profile := range configuration.ExternalProfiles {
 		cloned.ExternalProfiles[index] = callerauth.ExternalProfile{
 			Basic:               cloneBasicCredential(profile.Basic),
-			AuthenticationKinds: append([]string(nil), profile.AuthenticationKinds...),
+			AuthenticationKinds: cloneSlice(profile.AuthenticationKinds),
 			Principal:           profile.Principal,
 			RequireMTLS:         profile.RequireMTLS,
 		}
 	}
 
 	return cloned
+}
+
+// cloneSlice detaches one ordered projection slice while preserving immutable elements.
+func cloneSlice[T any](values []T) []T {
+	return append([]T(nil), values...)
 }
 
 // cloneBasicCredential returns detached Policy-Basic material without converting it to a string.

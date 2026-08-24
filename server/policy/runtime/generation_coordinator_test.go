@@ -85,8 +85,8 @@ func (a *rejectingTestAdmission) Admit(
 	context.Context,
 	decision.CallerContext,
 	decision.DecisionRequest,
-) error {
-	return fmt.Errorf("admission %s rejected request", a.marker)
+) (AdmissionPermit, error) {
+	return nil, fmt.Errorf("admission %s rejected request", a.marker)
 }
 
 // GenerationID returns the immutable test application generation identity.

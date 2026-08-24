@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/text/language"
 )
@@ -185,11 +186,15 @@ func validateClientProfile(client ClientProfileConfig, limits APILimitsConfig, p
 		return err
 	}
 
-	if err := validateClientLimit(client.MaxRequestBytes, limits.MaxRequestBytes, path+".max_request_bytes"); err != nil {
+	if err := validateClientAttributeAllowlists(client, path); err != nil {
 		return err
 	}
 
-	return validateClientLimit(client.MaxFacts, limits.MaxFacts, path+".max_facts")
+	if err := validateClientAllowedSchemas(client.AllowedSchemas, path+".allowed_schemas"); err != nil {
+		return err
+	}
+
+	return validateClientLimits(client, limits, path)
 }
 
 // validateClientAuthenticationKinds validates one non-empty set of supported authentication kinds.
@@ -243,8 +248,12 @@ func validateClientAuthentication(authentication ClientAuthenticationConfig, kin
 
 // validateClientTargets validates namespace/action admission references.
 func validateClientTargets(targets []ClientTargetConfig, path string) error {
+	seenTargets := make(map[string]struct{}, len(targets))
+	seenActions := make(map[string]struct{})
+
 	for index, target := range targets {
 		targetPath := fmt.Sprintf("%s[%d]", path, index)
+
 		if !validNamespace(target.Namespace) {
 			return invalid(targetPath+".namespace", "must be a canonical namespace")
 		}
@@ -254,16 +263,124 @@ func validateClientTargets(targets []ClientTargetConfig, path string) error {
 		}
 
 		for actionIndex, action := range target.Actions {
+			actionPath := fmt.Sprintf("%s.actions[%d]", targetPath, actionIndex)
+
 			if !validAction(action) {
-				return invalid(fmt.Sprintf("%s.actions[%d]", targetPath, actionIndex), "must be a canonical action")
+				return invalid(actionPath, "must be a canonical action")
 			}
+
+			qualifiedAction := target.Namespace + "/" + action
+
+			if _, exists := seenActions[qualifiedAction]; exists {
+				return invalid(actionPath, "must not duplicate an action grant")
+			}
+
+			seenActions[qualifiedAction] = struct{}{}
+		}
+
+		if _, exists := seenTargets[target.Namespace]; exists {
+			return invalid(targetPath+".namespace", "must not duplicate a target grant")
+		}
+
+		seenTargets[target.Namespace] = struct{}{}
+	}
+
+	return nil
+}
+
+// validateClientAttributeAllowlists validates category-relative caller fact identities.
+func validateClientAttributeAllowlists(client ClientProfileConfig, path string) error {
+	allowlists := []struct {
+		attributes []string
+		category   string
+		path       string
+	}{
+		{client.AllowedSubjectAttributes, string(decision.FactCategorySubject), path + ".allowed_subject_attributes"},
+		{client.AllowedResourceAttributes, string(decision.FactCategoryResource), path + ".allowed_resource_attributes"},
+		{client.AllowedEnvironmentAttributes, string(decision.FactCategoryEnvironment), path + ".allowed_environment_attributes"},
+		{client.AllowedInputAttributes, "input", path + ".allowed_input_attributes"},
+	}
+
+	for _, allowlist := range allowlists {
+		if err := validateClientAttributeAllowlist(allowlist.attributes, allowlist.category, allowlist.path); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-// validateClientLimit keeps a per-client limit positive and no broader than a configured server limit.
+// validateClientAttributeAllowlist rejects non-canonical, trusted, and duplicate relative attributes.
+func validateClientAttributeAllowlist(attributes []string, category string, path string) error {
+	seen := make(map[string]struct{}, len(attributes))
+
+	for index, attribute := range attributes {
+		attributePath := fmt.Sprintf("%s[%d]", path, index)
+		prefix, _, _ := strings.Cut(attribute, ".")
+
+		if decision.FactSource(prefix).IsValid() {
+			return invalid(attributePath, "trusted fact families cannot be caller supplied")
+		}
+
+		canonical := category + "." + attribute
+		if !validFact(canonical) {
+			return invalid(attributePath, "must form a canonical caller fact under its category")
+		}
+
+		if _, exists := seen[canonical]; exists {
+			return invalid(attributePath, "must not duplicate an allowed attribute")
+		}
+
+		seen[canonical] = struct{}{}
+	}
+
+	return nil
+}
+
+// validateClientAllowedSchemas validates unique exact schema references.
+func validateClientAllowedSchemas(schemas []string, path string) error {
+	seen := make(map[string]struct{}, len(schemas))
+
+	for index, schema := range schemas {
+		schemaPath := fmt.Sprintf("%s[%d]", path, index)
+
+		if _, _, err := parseExactSchemaReference(schema, schemaPath); err != nil {
+			return err
+		}
+
+		if _, exists := seen[schema]; exists {
+			return invalid(schemaPath, "must not duplicate an allowed schema")
+		}
+
+		seen[schema] = struct{}{}
+	}
+
+	return nil
+}
+
+// validateClientLimits checks every profile override against its global bound.
+func validateClientLimits(client ClientProfileConfig, limits APILimitsConfig, path string) error {
+	clientLimits := []struct {
+		path        string
+		serverValue int
+		value       int
+	}{
+		{path + ".max_request_bytes", limits.MaxRequestBytes, client.MaxRequestBytes},
+		{path + ".max_facts", limits.MaxFacts, client.MaxFacts},
+		{path + ".max_concurrency", limits.PerClientConcurrency, client.MaxConcurrency},
+		{path + ".requests_per_second", limits.PerClientRequestsPerSecond, client.RequestsPerSecond},
+	}
+
+	for _, limit := range clientLimits {
+		if err := validateClientLimit(limit.value, limit.serverValue, limit.path); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateClientLimit keeps a per-client limit non-negative and no broader than a configured server limit.
 func validateClientLimit(value int, serverValue int, path string) error {
 	if value < 0 {
 		return invalid(path, "must not be negative")
@@ -1658,20 +1775,30 @@ func validateTargetMode(target TargetConfig, path string) error {
 
 // validateTargetSchema requires one exact version matching the activated target.
 func validateTargetSchema(target TargetConfig, path string) error {
-	matches := exactSchemaPattern.FindStringSubmatch(target.Schema)
-	if len(matches) != 4 {
-		return invalid(path, "must be an exact namespace/action/vN schema reference")
+	namespace, action, err := parseExactSchemaReference(target.Schema, path)
+	if err != nil {
+		return err
 	}
 
-	if matches[1] != target.Namespace || matches[2] != target.Action {
+	if namespace != target.Namespace || action != target.Action {
 		return invalid(path, "must match the activated namespace and action")
 	}
 
-	if _, err := strconv.ParseUint(matches[3], 10, 32); err != nil {
-		return invalid(path, "schema version is out of range")
+	return nil
+}
+
+// parseExactSchemaReference validates and splits one namespace/action/vN reference.
+func parseExactSchemaReference(value string, path string) (string, string, error) {
+	matches := exactSchemaPattern.FindStringSubmatch(value)
+	if len(matches) != 4 {
+		return "", "", invalid(path, "must be an exact namespace/action/vN schema reference")
 	}
 
-	return nil
+	if _, err := strconv.ParseUint(matches[3], 10, 32); err != nil {
+		return "", "", invalid(path, "schema version is out of range")
+	}
+
+	return matches[1], matches[2], nil
 }
 
 // validateTargetFallback separates authn-owned and generic fallback contracts.

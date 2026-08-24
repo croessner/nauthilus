@@ -10,21 +10,51 @@ package policyconfig
 import "reflect"
 
 const (
-	defaultAuthorityMode = "enforce"
-	defaultEffectKind    = "obligation"
-	defaultFactTextBound = 4096
-	defaultFactItemBound = 1024
-	defaultFactByteBound = 64 * 1024
-	standardAuthPolicy   = "authn/standard_auth"
+	defaultAuthorityMode           = "enforce"
+	defaultEffectKind              = "obligation"
+	defaultFactTextBound           = 4096
+	defaultFactItemBound           = 1024
+	defaultFactByteBound           = 64 * 1024
+	defaultAPIMaxRequestBytes      = 1 << 20
+	defaultAPIMaxFacts             = 512
+	defaultAPIPerClientConcurrency = 8
+	defaultAPIRequestsPerSecond    = 25
+	standardAuthPolicy             = "authn/standard_auth"
 )
 
 // Normalize applies semantic defaults without registering a production config root.
 func Normalize(document Document) Document {
 	document = cloneDocument(document)
+	document.Policy.API.Limits = normalizeAPILimits(document.Policy.API.Limits)
 	document.Policy.Namespaces = normalizeNamespaces(document.Policy.Namespaces)
 	document.Policy.Targets = normalizeTargets(document.Policy.Targets)
 
 	return document
+}
+
+// normalizeAPILimits supplies finite admission defaults for omitted standalone bounds.
+func normalizeAPILimits(limits APILimitsConfig) APILimitsConfig {
+	limits.MaxRequestBytes = defaultAdmissionLimit(limits.MaxRequestBytes, defaultAPIMaxRequestBytes)
+	limits.MaxFacts = defaultAdmissionLimit(limits.MaxFacts, defaultAPIMaxFacts)
+	limits.PerClientConcurrency = defaultAdmissionLimit(
+		limits.PerClientConcurrency,
+		defaultAPIPerClientConcurrency,
+	)
+	limits.PerClientRequestsPerSecond = defaultAdmissionLimit(
+		limits.PerClientRequestsPerSecond,
+		defaultAPIRequestsPerSecond,
+	)
+
+	return limits
+}
+
+// defaultAdmissionLimit replaces only an omitted zero while preserving invalid negatives for validation.
+func defaultAdmissionLimit(value int, fallback int) int {
+	if value == 0 {
+		return fallback
+	}
+
+	return value
 }
 
 // cloneDocument deeply owns mutable standalone configuration state before defaults are applied.

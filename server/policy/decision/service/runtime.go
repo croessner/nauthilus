@@ -23,6 +23,7 @@ import (
 type checkpointEvaluation struct {
 	request      decision.DecisionRequest
 	checkpoint   decision.Checkpoint
+	facts        decision.FactSet
 	finalization decision.EvaluationFinalization
 	supervisor   effectsupervisor.Acceptor
 	generation   uint64

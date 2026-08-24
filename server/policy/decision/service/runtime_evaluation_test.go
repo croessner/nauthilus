@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/netip"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -187,25 +186,7 @@ func TestDecisionRuntimeBuildsProvenanceAndFailsClosedOnCollision(t *testing.T) 
 	}
 }
 
-func TestDecisionRuntimeRejectsTrustedFactOverwrite(t *testing.T) {
-	catalog, target := decisionRuntimeCatalog(t, decision.EffectPermit, registry.NoMatchDeny, []registry.FactSchema{
-		decisionRuntimeFactSchema(t, "caller.principal", decision.FactSourceNauthilus, false),
-	}, nil, nil)
-
-	compiled, ok := catalog.Lookup(target)
-	if !ok {
-		t.Fatal("compiled target missing")
-	}
-
-	caller := mustAuthorityCaller(t, false)
-
-	request, err := decision.NewDecisionRequest(decision.DecisionRequestInput{
-		Version: decision.ContractVersion, RequestID: "request-trusted-collision", Target: target,
-	}, caller)
-	if err != nil {
-		t.Fatalf("NewDecisionRequest() error = %v", err)
-	}
-
+func TestDecisionRuntimeRejectsAdmittedFactOverwrite(t *testing.T) {
 	value := runtimeStringValue(t, "forged-principal")
 	provenance, _ := decision.NewProvenance(decision.FactSourceNauthilus, "nauthilus", "test")
 
@@ -214,42 +195,50 @@ func TestDecisionRuntimeRejectsTrustedFactOverwrite(t *testing.T) {
 		t.Fatalf("NewFact() error = %v", err)
 	}
 
+	admittedFact := mustRuntimeTrustedFact(
+		t,
+		"caller.principal",
+		decision.FactSourceNauthilus,
+		runtimeStringValue(t, "trusted-client"),
+	)
+	admitted, _ := decision.NewFactSet([]decision.Fact{admittedFact})
 	checkpointFacts, _ := decision.NewFactSet([]decision.Fact{forged})
 
-	if _, err = buildAdmittedFacts(request, checkpointFacts, compiled.Schema()); err == nil {
-		t.Fatal("buildAdmittedFacts() trusted overwrite error = nil")
+	if _, err = mergeAdmittedFacts(admitted, checkpointFacts); err == nil {
+		t.Fatal("mergeAdmittedFacts() overwrite error = nil")
 	}
 }
 
-func TestDecisionRuntimeProjectsAuthenticatedScopeKindAndSourceIPFacts(t *testing.T) {
-	facts := []registry.FactSchema{
-		decisionRuntimeStringListFactSchema(t, "caller.scopes", decision.FactSourceNauthilus),
-		decisionRuntimeFactSchema(t, "caller.authentication_kind", decision.FactSourceNauthilus, false),
-		decisionRuntimeFactSchema(t, "transport.source_ip", decision.FactSourceTransport, false),
-	}
-	catalog, target := decisionRuntimeCatalog(t, decision.EffectPermit, registry.NoMatchDeny, facts, nil, nil)
-	compiled, _ := catalog.Lookup(target)
-
-	caller, err := decision.NewCallerContext(decision.TrustedCallerInput{
-		Principal: "trusted-client", Scopes: []string{"scope:z", "scope:a"}, AuthenticationKind: "bearer",
-		SourceIP: netip.MustParseAddr("192.0.2.10"), TransportKind: "http",
+func TestDecisionRuntimePreservesAdmittedAuthenticationFacts(t *testing.T) {
+	admitted, err := decision.NewFactSet([]decision.Fact{
+		mustRuntimeTrustedFact(
+			t,
+			"caller.scopes",
+			decision.FactSourceNauthilus,
+			runtimeStringListValue(t, []string{"scope:a", "scope:z"}),
+		),
+		mustRuntimeTrustedFact(
+			t,
+			"caller.authentication_kind",
+			decision.FactSourceNauthilus,
+			runtimeStringValue(t, "bearer"),
+		),
+		mustRuntimeTrustedFact(
+			t,
+			"transport.source_ip",
+			decision.FactSourceTransport,
+			runtimeStringValue(t, "192.0.2.10"),
+		),
 	})
 	if err != nil {
-		t.Fatalf("NewCallerContext() error = %v", err)
-	}
-
-	request, err := decision.NewDecisionRequest(decision.DecisionRequestInput{
-		Version: decision.ContractVersion, RequestID: "request-trusted-facts", Target: target,
-	}, caller)
-	if err != nil {
-		t.Fatalf("NewDecisionRequest() error = %v", err)
+		t.Fatalf("NewFactSet() error = %v", err)
 	}
 
 	empty, _ := decision.NewFactSet(nil)
 
-	admitted, err := buildAdmittedFacts(request, empty, compiled.Schema())
+	admitted, err = mergeAdmittedFacts(admitted, empty)
 	if err != nil {
-		t.Fatalf("buildAdmittedFacts() error = %v", err)
+		t.Fatalf("mergeAdmittedFacts() error = %v", err)
 	}
 
 	assertTrustedRuntimeFact(t, admitted, "caller.scopes", decision.FactSourceNauthilus)
@@ -1478,10 +1467,11 @@ func evaluateRuntimeCheckpointWithInput(
 	}
 
 	empty, _ := decision.NewFactSet(nil)
+	admitted := runtimeCallerFactSet(t, "input", decision.FactCategoryEnvironment, attributes)
 	checkpoint, _ := decision.NewCheckpoint(decision.CheckpointFinalDecision, empty)
 
 	outcome, err := evaluator.Evaluate(context.Background(), checkpointEvaluation{
-		request: request, checkpoint: checkpoint, supervisor: &recordingEffectAcceptor{}, generation: 1,
+		request: request, checkpoint: checkpoint, facts: admitted, supervisor: &recordingEffectAcceptor{}, generation: 1,
 		finalization: decision.NewEvaluationFinalization(effectsupervisor.BoundaryHTTPCommit),
 	})
 	if err != nil {
@@ -1513,10 +1503,11 @@ func evaluateRuntimeCheckpointOptions(
 	}
 
 	empty, _ := decision.NewFactSet(nil)
+	admitted := runtimeCallerFactSet(t, "subject", decision.FactCategorySubject, attributes)
 	checkpoint, _ := decision.NewCheckpoint(decision.CheckpointFinalDecision, empty)
 
 	outcome, err := evaluator.Evaluate(context.Background(), checkpointEvaluation{
-		request: request, checkpoint: checkpoint, supervisor: &recordingEffectAcceptor{}, generation: 1,
+		request: request, checkpoint: checkpoint, facts: admitted, supervisor: &recordingEffectAcceptor{}, generation: 1,
 		finalization: decision.NewEvaluationFinalization(effectsupervisor.BoundaryHTTPCommit),
 	})
 	if err != nil {
@@ -1551,10 +1542,12 @@ func evaluateRuntimeCheckpointInput(
 	}
 
 	empty, _ := decision.NewFactSet(nil)
+	admitted := runtimeCallerFactSet(t, "subject", decision.FactCategorySubject, attributes)
 	checkpoint, _ := decision.NewCheckpoint(decision.CheckpointFinalDecision, empty)
 
 	outcome, err := evaluator.Evaluate(context.Background(), checkpointEvaluation{
-		request: request, checkpoint: checkpoint, supervisor: &recordingEffectAcceptor{}, generation: 1, finalization: finalization,
+		request: request, checkpoint: checkpoint, facts: admitted,
+		supervisor: &recordingEffectAcceptor{}, generation: 1, finalization: finalization,
 	})
 	if err != nil {
 		t.Fatalf("Evaluate() error = %v", err)
@@ -1916,6 +1909,79 @@ func runtimeStringValue(t *testing.T, value string) decision.Value {
 	result, err := decision.NewValue(decision.ValueInput{String: &value})
 	if err != nil {
 		t.Fatalf("NewValue() error = %v", err)
+	}
+
+	return result
+}
+
+// runtimeStringListValue constructs one strict test string list.
+func runtimeStringListValue(t *testing.T, values []string) decision.Value {
+	t.Helper()
+
+	result, err := decision.NewValue(decision.ValueInput{Strings: values})
+	if err != nil {
+		t.Fatalf("NewValue(strings) error = %v", err)
+	}
+
+	return result
+}
+
+// mustRuntimeTrustedFact constructs one authenticator-owned admitted test fact.
+func mustRuntimeTrustedFact(
+	t *testing.T,
+	id string,
+	source decision.FactSource,
+	value decision.Value,
+) decision.Fact {
+	t.Helper()
+
+	provenance, err := decision.NewProvenance(source, "trusted-client", "authenticator")
+	if err != nil {
+		t.Fatalf("NewProvenance() error = %v", err)
+	}
+
+	fact, err := decision.NewFact(id, decision.FactCategoryEnvironment, value, provenance)
+	if err != nil {
+		t.Fatalf("NewFact(%s) error = %v", id, err)
+	}
+
+	return fact
+}
+
+// runtimeCallerFactSet constructs the already-admitted caller facts for private evaluator tests.
+func runtimeCallerFactSet(
+	t *testing.T,
+	prefix string,
+	category decision.FactCategory,
+	attributes map[string]decision.Value,
+) decision.FactSet {
+	t.Helper()
+
+	provenance, err := decision.NewProvenance(decision.FactSourceCaller, "test-authority", "request")
+	if err != nil {
+		t.Fatalf("NewProvenance() error = %v", err)
+	}
+
+	keys := make([]string, 0, len(attributes))
+	for key := range attributes {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	facts := make([]decision.Fact, 0, len(keys))
+	for _, key := range keys {
+		fact, factErr := decision.NewFact(prefix+"."+key, category, attributes[key], provenance)
+		if factErr != nil {
+			t.Fatalf("NewFact(%s.%s) error = %v", prefix, key, factErr)
+		}
+
+		facts = append(facts, fact)
+	}
+
+	result, err := decision.NewFactSet(facts)
+	if err != nil {
+		t.Fatalf("NewFactSet() error = %v", err)
 	}
 
 	return result

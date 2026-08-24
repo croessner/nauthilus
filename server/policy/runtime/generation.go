@@ -129,7 +129,13 @@ type CallerAuthenticator interface {
 
 // AdmissionAuthority authorizes one authenticated caller and exact request.
 type AdmissionAuthority interface {
-	Admit(context.Context, decision.CallerContext, decision.DecisionRequest) error
+	Admit(context.Context, decision.CallerContext, decision.DecisionRequest) (AdmissionPermit, error)
+}
+
+// AdmissionPermit owns admitted facts and request-scoped limit capacity.
+type AdmissionPermit interface {
+	Facts() decision.FactSet
+	Release()
 }
 
 // Application is the generation-bound application authority captured by callers.
@@ -211,12 +217,10 @@ func (p AdmissionProfiles) IDs() []string {
 	return append([]string(nil), p.ids...)
 }
 
-// ValidateCredentials rejects admission profiles without credential metadata.
+// ValidateCredentials requires every credential profile to have one admission profile and vice versa.
 func (p AdmissionProfiles) ValidateCredentials(credentials CredentialProfiles) error {
-	for _, id := range p.ids {
-		if !slices.Contains(credentials.ids, id) {
-			return fmt.Errorf("%w: admission profile %q has no credential profile", ErrInvalidGeneration, id)
-		}
+	if !slices.Equal(p.ids, credentials.ids) {
+		return fmt.Errorf("%w: credential and admission profile identities differ", ErrInvalidGeneration)
 	}
 
 	return nil

@@ -228,7 +228,7 @@ func (r *checkpointRuntime) Evaluate(ctx context.Context, input checkpointEvalua
 		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
 	}
 
-	facts, err := buildAdmittedFacts(input.request, checkpointFacts, target.Schema())
+	facts, err := mergeAdmittedFacts(input.facts, checkpointFacts)
 	if err != nil {
 		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
 	}
@@ -753,178 +753,11 @@ func policyMetadata(
 	return metadata
 }
 
-// buildAdmittedFacts constructs request-local caller and trusted facts without mutating schema state.
-func buildAdmittedFacts(
-	request decision.DecisionRequest,
-	checkpointFacts decision.FactSet,
-	schema policyruntime.CompiledSchema,
-) (decision.FactSet, error) {
-	definitions := make(map[string]registry.FactSchema)
-	for _, definition := range schema.Facts() {
-		definitions[definition.ID()] = definition
-	}
-
-	callerProvenance, err := decision.NewProvenance(decision.FactSourceCaller, request.Caller().Principal(), "request")
-	if err != nil {
-		return decision.FactSet{}, err
-	}
-
-	facts := append([]decision.Fact(nil), checkpointFacts.Facts()...)
-	if err := appendCallerAttributes(&facts, "subject", request.Subject().Attributes(), definitions, callerProvenance); err != nil {
-		return decision.FactSet{}, err
-	}
-
-	if err := appendCallerAttributes(&facts, "resource", request.Resource().Attributes(), definitions, callerProvenance); err != nil {
-		return decision.FactSet{}, err
-	}
-
-	if err := appendCallerAttributes(&facts, "environment", request.Environment().Attributes(), definitions, callerProvenance); err != nil {
-		return decision.FactSet{}, err
-	}
-
-	if err := appendCallerAttributes(&facts, "input", request.Attributes(), definitions, callerProvenance); err != nil {
-		return decision.FactSet{}, err
-	}
-
-	trusted, err := trustedRequestFacts(request, definitions)
-	if err != nil {
-		return decision.FactSet{}, err
-	}
-
-	facts = append(facts, trusted...)
+// mergeAdmittedFacts adds checkpoint-local host facts without rebuilding caller authority.
+func mergeAdmittedFacts(admitted decision.FactSet, checkpoint decision.FactSet) (decision.FactSet, error) {
+	facts := append(admitted.Facts(), checkpoint.Facts()...)
 
 	return decision.NewFactSet(facts)
-}
-
-// appendCallerAttributes adds one exact admitted assertion category with caller provenance.
-func appendCallerAttributes(
-	facts *[]decision.Fact,
-	prefix string,
-	values decision.ValueMap,
-	definitions map[string]registry.FactSchema,
-	provenance decision.Provenance,
-) error {
-	owned := values.Values()
-
-	for _, key := range sortedValueKeys(values) {
-		id := prefix + "." + key
-
-		definition, exists := definitions[id]
-		if !exists {
-			return fmt.Errorf("caller fact %s is undeclared", id)
-		}
-
-		fact, err := decision.NewFact(id, definition.Category(), owned[key], provenance)
-		if err != nil {
-			return err
-		}
-
-		*facts = append(*facts, fact)
-	}
-
-	return nil
-}
-
-// trustedRequestFacts projects only exact schema-declared caller, token, and transport evidence.
-func trustedRequestFacts(
-	request decision.DecisionRequest,
-	definitions map[string]registry.FactSchema,
-) ([]decision.Fact, error) {
-	caller := request.Caller()
-	values := make(map[string]trustedFactValue)
-	addTrustedString(values, decision.FactCallerPrincipal, caller.Principal(), decision.FactSourceNauthilus)
-	addTrustedString(values, decision.FactCallerClientID, caller.ClientID(), decision.FactSourceNauthilus)
-	addTrustedString(values, decision.FactCallerAuthenticationKind, caller.AuthenticationKind(), decision.FactSourceNauthilus)
-	addTrustedStrings(values, decision.FactCallerScopes, caller.Scopes(), decision.FactSourceNauthilus)
-	addTrustedString(values, decision.FactTokenSubject, caller.Subject(), decision.FactSourceToken)
-	addTrustedString(values, decision.FactTokenIssuer, caller.Issuer(), decision.FactSourceToken)
-	addTrustedString(values, decision.FactTransportKind, caller.TransportKind(), decision.FactSourceTransport)
-	addTrustedString(values, decision.FactTransportListener, caller.Listener(), decision.FactSourceTransport)
-	addTrustedString(values, decision.FactTransportHTTPRoute, caller.HTTPRoute(), decision.FactSourceTransport)
-	addTrustedString(values, decision.FactTransportGRPCMethod, caller.GRPCMethod(), decision.FactSourceTransport)
-	addTrustedString(values, decision.FactTransportMTLSIdentity, caller.MTLSIdentity(), decision.FactSourceTransport)
-
-	if caller.SourceIP().IsValid() {
-		addTrustedString(values, decision.FactTransportSourceIP, caller.SourceIP().String(), decision.FactSourceTransport)
-	}
-
-	result := make([]decision.Fact, 0, len(values))
-	keys := make([]string, 0, len(values))
-
-	for id := range values {
-		keys = append(keys, id)
-	}
-
-	sort.Strings(keys)
-
-	for _, id := range keys {
-		definition, declared := definitions[id]
-		if !declared {
-			continue
-		}
-
-		entry := values[id]
-
-		provenance, provenanceErr := decision.NewProvenance(entry.source, caller.Principal(), "authenticator")
-		if provenanceErr != nil {
-			return nil, provenanceErr
-		}
-
-		fact, factErr := decision.NewFact(id, definition.Category(), entry.value, provenance)
-		if factErr != nil {
-			return nil, factErr
-		}
-
-		result = append(result, fact)
-	}
-
-	return result, nil
-}
-
-type trustedFactValue struct {
-	value  decision.Value
-	source decision.FactSource
-}
-
-// addTrustedString constructs one non-empty trusted scalar without exposing raw caller input.
-func addTrustedString(values map[string]trustedFactValue, id string, input string, source decision.FactSource) {
-	if input == "" {
-		return
-	}
-
-	value, err := decision.NewValue(decision.ValueInput{String: &input})
-	if err == nil {
-		values[id] = trustedFactValue{value: value, source: source}
-	}
-}
-
-// addTrustedStrings constructs one deterministic non-empty trusted string list.
-func addTrustedStrings(values map[string]trustedFactValue, id string, input []string, source decision.FactSource) {
-	if len(input) == 0 {
-		return
-	}
-
-	owned := append([]string(nil), input...)
-	sort.Strings(owned)
-
-	value, err := decision.NewValue(decision.ValueInput{Strings: owned})
-	if err == nil {
-		values[id] = trustedFactValue{value: value, source: source}
-	}
-}
-
-// sortedValueKeys returns deterministic immutable map traversal order.
-func sortedValueKeys(values decision.ValueMap) []string {
-	owned := values.Values()
-	keys := make([]string, 0, len(owned))
-
-	for key := range owned {
-		keys = append(keys, key)
-	}
-
-	sort.Strings(keys)
-
-	return keys
 }
 
 // stringSet indexes exact immutable identities.

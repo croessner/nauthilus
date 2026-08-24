@@ -146,6 +146,63 @@ func TestDecisionServiceAuthenticationAndAdmissionCannotBeBypassed(t *testing.T)
 	}
 }
 
+func TestDecisionServiceAdmissionPermitScopesFactsAndRelease(t *testing.T) {
+	permit := &recordingAdmissionPermit{facts: mustAuthorityAdmissionFacts(t)}
+	admission := &recordingAdmissionAuthority{permit: permit}
+	evaluator := &recordingCheckpointEvaluator{outcome: mustRuntimeEvaluation(t, 1, "decision-admitted")}
+	generation := mustRuntimeGeneration(
+		t,
+		1,
+		&recordingCallerAuthenticator{caller: mustAuthorityCaller(t, false)},
+		admission,
+		evaluator,
+	)
+	service := mustDecisionService(t, &replaceableGenerationSource{generation: generation})
+
+	if _, err := service.Evaluate(context.Background(), mustAuthorityInvocation(t, false)); err != nil {
+		t.Fatalf("DecisionService.Evaluate() error = %v", err)
+	}
+
+	calls := evaluator.recordedCalls()
+	if len(calls) != 1 || calls[0].facts.Len() != 1 {
+		t.Fatalf("evaluator admitted facts = %d calls/%d facts, want 1/1", len(calls), calls[0].facts.Len())
+	}
+
+	if _, exists := calls[0].facts.Get("input.admitted"); !exists {
+		t.Fatal("evaluator did not receive the admission-owned fact set")
+	}
+
+	if permit.releaseCount() != 1 {
+		t.Fatalf("admission permit releases = %d, want 1", permit.releaseCount())
+	}
+}
+
+func TestDecisionServiceReleasesPermitReturnedWithAdmissionError(t *testing.T) {
+	permit := &recordingAdmissionPermit{facts: mustAuthorityEmptyFacts(t)}
+	admission := &recordingAdmissionAuthority{
+		permit:              permit,
+		err:                 errors.New("rejected after capacity acquisition"),
+		returnPermitOnError: true,
+	}
+	evaluator := &recordingCheckpointEvaluator{}
+	generation := mustRuntimeGeneration(
+		t,
+		1,
+		&recordingCallerAuthenticator{caller: mustAuthorityCaller(t, false)},
+		admission,
+		evaluator,
+	)
+	service := mustDecisionService(t, &replaceableGenerationSource{generation: generation})
+
+	if _, err := service.Evaluate(context.Background(), mustAuthorityInvocation(t, false)); !errors.Is(err, ErrDecisionAdmission) {
+		t.Fatalf("DecisionService.Evaluate() error = %v, want ErrDecisionAdmission", err)
+	}
+
+	if permit.releaseCount() != 1 || evaluator.callCount() != 0 {
+		t.Fatalf("permit releases/evaluator calls = %d/%d, want 1/0", permit.releaseCount(), evaluator.callCount())
+	}
+}
+
 func TestDecisionServiceUnaryCallCapturesOneGenerationDuringReplacement(t *testing.T) {
 	firstEvaluator := &recordingCheckpointEvaluator{outcome: mustRuntimeEvaluation(t, 1, "decision-first")}
 	secondEvaluator := &recordingCheckpointEvaluator{outcome: mustRuntimeEvaluation(t, 2, "decision-second")}
@@ -286,11 +343,13 @@ func TestDecisionSessionRequiresAdmittedBuiltinInternalAuthnCaller(t *testing.T)
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			evaluator := &recordingCheckpointEvaluator{}
+			permit := &recordingAdmissionPermit{facts: mustAuthorityEmptyFacts(t)}
+			admission := &recordingAdmissionAuthority{permit: permit}
 			generation := mustRuntimeGeneration(
 				t,
 				1,
 				&recordingCallerAuthenticator{caller: mustAuthorityCaller(t, test.internal)},
-				&recordingAdmissionAuthority{},
+				admission,
 				evaluator,
 			)
 			service := mustDecisionService(t, &replaceableGenerationSource{generation: generation})
@@ -310,6 +369,10 @@ func TestDecisionSessionRequiresAdmittedBuiltinInternalAuthnCaller(t *testing.T)
 
 			if evaluator.callCount() != 0 {
 				t.Fatalf("evaluator calls = %d, want 0", evaluator.callCount())
+			}
+
+			if permit.releaseCount() != 1 {
+				t.Fatalf("admission permit releases = %d, want 1", permit.releaseCount())
 			}
 		})
 	}
@@ -414,19 +477,37 @@ func (a *recordingCallerAuthenticator) callCount() int {
 }
 
 type recordingAdmissionAuthority struct {
-	err   error
-	mu    sync.Mutex
-	calls int
+	permit              *recordingAdmissionPermit
+	err                 error
+	mu                  sync.Mutex
+	calls               int
+	returnPermitOnError bool
 }
 
 // Admit records one explicit caller/request authorization attempt.
-func (a *recordingAdmissionAuthority) Admit(_ context.Context, _ CallerContext, _ DecisionRequest) error {
+func (a *recordingAdmissionAuthority) Admit(
+	_ context.Context,
+	_ CallerContext,
+	_ DecisionRequest,
+) (admissionPermit, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	a.calls++
+	if a.err != nil {
+		if a.returnPermitOnError {
+			return a.permit, a.err
+		}
 
-	return a.err
+		return nil, a.err
+	}
+
+	if a.permit == nil {
+		facts, _ := decision.NewFactSet(nil)
+		a.permit = &recordingAdmissionPermit{facts: facts}
+	}
+
+	return a.permit, nil
 }
 
 // callCount returns the synchronized admission call count.
@@ -437,8 +518,36 @@ func (a *recordingAdmissionAuthority) callCount() int {
 	return a.calls
 }
 
+type recordingAdmissionPermit struct {
+	facts    FactSet
+	mu       sync.Mutex
+	releases int
+}
+
+// Facts returns the immutable fact set assembled during admission.
+func (p *recordingAdmissionPermit) Facts() FactSet {
+	return p.facts
+}
+
+// Release records deterministic permit ownership release.
+func (p *recordingAdmissionPermit) Release() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.releases++
+}
+
+// releaseCount returns the synchronized permit release count.
+func (p *recordingAdmissionPermit) releaseCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.releases
+}
+
 type recordedCheckpointEvaluation struct {
 	checkpoint Checkpoint
+	facts      FactSet
 	supervisor effectsupervisor.Acceptor
 	generation uint64
 }
@@ -473,6 +582,7 @@ func (e *recordingCheckpointEvaluator) Evaluate(_ context.Context, input checkpo
 
 	e.calls = append(e.calls, recordedCheckpointEvaluation{
 		checkpoint: input.checkpoint,
+		facts:      input.facts,
 		supervisor: input.supervisor,
 		generation: input.generation,
 	})
@@ -481,6 +591,47 @@ func (e *recordingCheckpointEvaluator) Evaluate(_ context.Context, input checkpo
 	outcome.report.checkpoint = input.checkpoint.Name()
 
 	return outcome, e.err
+}
+
+// mustAuthorityEmptyFacts constructs one valid empty admission fact set.
+func mustAuthorityEmptyFacts(t *testing.T) FactSet {
+	t.Helper()
+
+	facts, err := decision.NewFactSet(nil)
+	if err != nil {
+		t.Fatalf("NewFactSet() error = %v", err)
+	}
+
+	return facts
+}
+
+// mustAuthorityAdmissionFacts constructs one caller-owned fact for permit propagation.
+func mustAuthorityAdmissionFacts(t *testing.T) FactSet {
+	t.Helper()
+
+	valueText := "yes"
+
+	value, err := decision.NewValue(decision.ValueInput{String: &valueText})
+	if err != nil {
+		t.Fatalf("NewValue() error = %v", err)
+	}
+
+	provenance, err := decision.NewProvenance(decision.FactSourceCaller, "test-authority", "request")
+	if err != nil {
+		t.Fatalf("NewProvenance() error = %v", err)
+	}
+
+	fact, err := decision.NewFact("input.admitted", decision.FactCategoryEnvironment, value, provenance)
+	if err != nil {
+		t.Fatalf("NewFact() error = %v", err)
+	}
+
+	facts, err := decision.NewFactSet([]decision.Fact{fact})
+	if err != nil {
+		t.Fatalf("NewFactSet() error = %v", err)
+	}
+
+	return facts
 }
 
 // callCount returns the synchronized evaluator call count.

@@ -42,8 +42,10 @@ type callerAuthenticator interface {
 	Authenticate(context.Context, decision.AuthenticationInput) (decision.CallerContext, error)
 }
 
+type admissionPermit = policyruntime.AdmissionPermit
+
 type admissionAuthority interface {
-	Admit(context.Context, decision.CallerContext, decision.DecisionRequest) error
+	Admit(context.Context, decision.CallerContext, decision.DecisionRequest) (admissionPermit, error)
 }
 
 type checkpointEvaluator interface {
