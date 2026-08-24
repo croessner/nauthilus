@@ -61,6 +61,7 @@ const (
 	contractPathBrowserMFATOTPRegister      = "/mfa/totp/register"
 	contractPathManagementOpenAPIJSON       = "/api/v1/openapi.json"
 	contractPathManagementOpenAPIYAML       = "/api/v1/openapi.yaml"
+	contractPathPolicyDecisions             = "/api/v1/policy/decisions"
 )
 
 type routeOperation struct {
@@ -106,6 +107,7 @@ func TestManagementRoutesMatchOpenAPIContract(t *testing.T) {
 
 	assertAPIV1OperationsDeclareProtectedSecurity(t, document.operations)
 	assertManagementOpenAPIDocumentsUseBackchannelGuard(t, document.operations)
+	assertPolicyOperationUsesDedicatedGuard(t, document.operations)
 	assertManagementOIDCSessionsUseBackchannelGuard(t, buildManagementContractRouter(t))
 }
 
@@ -639,6 +641,18 @@ func assertManagementOpenAPIDocumentsUseBackchannelGuard(
 	}
 }
 
+// assertPolicyOperationUsesDedicatedGuard prevents Policy from inheriting management credentials.
+func assertPolicyOperationUsesDedicatedGuard(t *testing.T, operations map[routeOperation]*openapi3.Operation) {
+	t.Helper()
+
+	key := routeOperation{method: contractMethodPost, path: contractPathPolicyDecisions}
+
+	operation, ok := operations[key]
+	if !ok || !hasExactSecurityAlternatives(operation, "policyBasic", "policyBearer") {
+		t.Fatalf("%s must use only the dedicated Policy Basic/Bearer guard", key.label())
+	}
+}
+
 func managementOpenAPIDocumentOperations() []routeOperation {
 	return []routeOperation{
 		{method: contractMethodGet, path: contractPathManagementOpenAPIYAML},
@@ -649,7 +663,7 @@ func managementOpenAPIDocumentOperations() []routeOperation {
 func hasProtectedSecurityScheme(operation *openapi3.Operation) bool {
 	for _, scheme := range operationSecuritySchemes(operation) {
 		switch scheme {
-		case "backchannelBasic", "backchannelBearer", "userBasic":
+		case "backchannelBasic", "backchannelBearer", "policyBasic", "policyBearer", "userBasic":
 			return true
 		}
 	}

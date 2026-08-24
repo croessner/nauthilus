@@ -67,6 +67,7 @@ const (
 )
 
 var stableMachineOperations = []operationExpectation{
+	{method: methodPost, path: "/api/v1/policy/decisions"},
 	{method: methodGet, path: "/api/v1/openapi.yaml"},
 	{method: methodGet, path: "/api/v1/openapi.json"},
 	{method: methodGet, path: pathAuthJSON},
@@ -141,6 +142,79 @@ func TestManagementSpecRetiresLegacyBrowserMFAAPI(t *testing.T) {
 
 	if _, ok := doc.Components.SecuritySchemes["sessionCookie"]; ok {
 		t.Fatal("legacy browser sessionCookie security scheme remains documented")
+	}
+}
+
+func TestManagementSpecExposesOnlyUnaryPolicyEvaluation(t *testing.T) {
+	doc := parseYAMLSpec(t, ManagementYAML())
+
+	for path := range doc.Paths {
+		if !strings.Contains(path, "/policy/") {
+			continue
+		}
+
+		if path != "/api/v1/policy/decisions" {
+			t.Fatalf("unexpected Policy contract route %q", path)
+		}
+	}
+}
+
+//nolint:gocyclo // This contract test intentionally groups all public Policy surface assertions.
+func TestManagementSpecPolicyBoundaryUsesDedicatedSecurityAndSafeSurfaces(t *testing.T) {
+	doc := parseYAMLSpec(t, ManagementYAML())
+	for _, name := range []string{"policyBearer", "policyBasic"} {
+		if _, ok := doc.Components.SecuritySchemes[name]; !ok {
+			t.Fatalf("Policy security scheme %q missing", name)
+		}
+	}
+
+	operation, ok := doc.Paths["/api/v1/policy/decisions"][methodPost].(map[string]any)
+	if !ok {
+		t.Fatal("Policy operation is missing or malformed")
+	}
+
+	security, ok := operation["security"].([]any)
+	if !ok || len(security) != 2 {
+		t.Fatalf("Policy operation security = %#v, want dedicated Bearer and Policy-Basic alternatives", operation["security"])
+	}
+
+	for _, scheme := range []string{"policyBearer", "policyBasic"} {
+		found := false
+
+		for _, alternative := range security {
+			credentials, credentialsOK := alternative.(map[string]any)
+			if credentialsOK {
+				_, found = credentials[scheme]
+			}
+
+			if found {
+				break
+			}
+		}
+
+		if !found {
+			t.Fatalf("Policy operation does not declare %s", scheme)
+		}
+	}
+
+	for _, schemaName := range []string{
+		"PolicyDecisionRequest", "PolicyDecisionResponse", "PolicyDiagnostics", "PolicyError",
+		"PolicyObligation", "PolicyAdvice", "PolicyStatus", "PolicyTarget", "PolicyValue",
+	} {
+		schema, exists := doc.Components.Schemas[schemaName]
+		if !exists {
+			t.Fatalf("Policy public schema %q missing", schemaName)
+		}
+
+		for _, forbidden := range []string{"authorization", "credential", "caller", "token", "cache", "replay", "outcome"} {
+			if _, exists = schema.Properties[forbidden]; exists {
+				t.Fatalf("Policy public schema %s exposes forbidden property %q", schemaName, forbidden)
+			}
+		}
+	}
+
+	if format := requireSchemaProperty(t, doc, "PolicyValue", "double").Format; format != "double" {
+		t.Fatalf("PolicyValue.double format = %q, want double", format)
 	}
 }
 
@@ -384,7 +458,8 @@ type openAPISchema struct {
 }
 
 type openAPIProperty struct {
-	Enum []string `json:"enum" yaml:"enum"`
+	Enum   []string `json:"enum" yaml:"enum"`
+	Format string   `json:"format" yaml:"format"`
 }
 
 type openAPIServer struct {

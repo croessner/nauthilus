@@ -38,7 +38,46 @@ tags:
   - name: OIDCSessions
     x-displayName: /api/v1/oidc/sessions
     description: Backchannel OIDC session administration endpoints.
+  - name: Policy
+    x-displayName: /api/v1/policy/decisions
+    description: Unary Policy decision evaluation endpoint.
 paths:
+  /api/v1/policy/decisions:
+    post:
+      tags:
+        - Policy
+      operationId: evaluatePolicyDecision
+      summary: Evaluate one Policy decision.
+      description: >
+        Evaluates exactly one admitted Policy request. Responses are never
+        cacheable and do not expose retry, replay, cache, or outcome-reporting
+        controls.
+      security:
+        - policyBearer: []
+        - policyBasic: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyDecisionRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/PolicyDecision"
+        "400":
+          $ref: "#/components/responses/PolicyBadRequest"
+        "401":
+          $ref: "#/components/responses/PolicyUnauthorized"
+        "403":
+          $ref: "#/components/responses/PolicyForbidden"
+        "413":
+          $ref: "#/components/responses/PolicyRequestTooLarge"
+        "415":
+          $ref: "#/components/responses/PolicyUnsupportedMediaType"
+        "429":
+          $ref: "#/components/responses/PolicyRateLimited"
+        "503":
+          $ref: "#/components/responses/PolicyUnavailable"
   /api/v1/openapi.yaml:
     get:
       tags:
@@ -709,6 +748,15 @@ paths:
           $ref: "#/components/responses/Error"
 components:
   securitySchemes:
+    policyBasic:
+      type: http
+      scheme: basic
+      description: Dedicated Policy client credentials; never management Basic credentials.
+    policyBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Policy-resource Bearer token with nauthilus:policy_evaluate scope.
     backchannelBasic:
       type: http
       scheme: basic
@@ -983,6 +1031,54 @@ components:
         type: string
       description: Client certificate fingerprint.
   responses:
+    PolicyDecision:
+      description: Completed Policy evaluation, including an indeterminate effect when safe to construct.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyDecisionResponse"
+    PolicyBadRequest:
+      description: Strict JSON or public-field validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyError"
+    PolicyForbidden:
+      description: The authenticated Policy caller is not admitted for this request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyError"
+    PolicyRequestTooLarge:
+      description: The request or a submitted value exceeded an admitted limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyError"
+    PolicyRateLimited:
+      description: The admitted client exceeded concurrency or rate limits.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyError"
+    PolicyUnauthorized:
+      description: Policy credentials are missing or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyError"
+    PolicyUnsupportedMediaType:
+      description: The Policy endpoint accepts application/json only.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyError"
+    PolicyUnavailable:
+      description: The Policy service was unavailable before evaluation began.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyError"
     AuthHeaderFailure:
       description: Header-mode authentication failure. The response body is JSON null; Auth-Status carries the status message.
       headers:
@@ -1148,6 +1244,196 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    PolicyAdvice:
+      type: object
+      additionalProperties: false
+      required: [id, parameters]
+      properties:
+        id:
+          type: string
+          maxLength: 512
+        parameters:
+          $ref: "#/components/schemas/PolicyValueMap"
+    PolicyDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [version, target]
+      properties:
+        version:
+          type: string
+          enum: ["1"]
+        request_id:
+          type: string
+          maxLength: 128
+        target:
+          $ref: "#/components/schemas/PolicyTarget"
+        subject:
+          $ref: "#/components/schemas/PolicyEntity"
+        resource:
+          $ref: "#/components/schemas/PolicyEntity"
+        environment:
+          $ref: "#/components/schemas/PolicyEnvironment"
+        attributes:
+          $ref: "#/components/schemas/PolicyValueMap"
+        options:
+          $ref: "#/components/schemas/PolicyEvaluationOptions"
+    PolicyDecisionResponse:
+      type: object
+      additionalProperties: false
+      required: [decision_id, effect, status]
+      properties:
+        decision_id:
+          type: string
+          maxLength: 128
+        effect:
+          type: string
+          enum: [permit, deny, not_applicable, indeterminate]
+        status:
+          $ref: "#/components/schemas/PolicyStatus"
+        obligations:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyObligation"
+        advice:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyAdvice"
+        diagnostics:
+          $ref: "#/components/schemas/PolicyDiagnostics"
+    PolicyDiagnostics:
+      type: object
+      additionalProperties: false
+      required: [entries]
+      properties:
+        entries:
+          $ref: "#/components/schemas/PolicyValueMap"
+    PolicyEntity:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          maxLength: 512
+        id:
+          type: string
+          maxLength: 512
+        attributes:
+          $ref: "#/components/schemas/PolicyValueMap"
+    PolicyEnvironment:
+      type: object
+      additionalProperties: false
+      properties:
+        service:
+          type: string
+          maxLength: 512
+        instance:
+          type: string
+          maxLength: 512
+        protocol:
+          type: string
+          maxLength: 512
+        attributes:
+          $ref: "#/components/schemas/PolicyValueMap"
+    PolicyError:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyValidationDetail"
+    PolicyEvaluationOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        include_diagnostics:
+          type: boolean
+    PolicyObligation:
+      type: object
+      additionalProperties: false
+      required: [id, parameters]
+      properties:
+        id:
+          type: string
+          maxLength: 512
+        parameters:
+          $ref: "#/components/schemas/PolicyValueMap"
+    PolicyStatus:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retryable:
+          type: boolean
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyValidationDetail"
+    PolicyTarget:
+      type: object
+      additionalProperties: false
+      required: [namespace, action]
+      properties:
+        namespace:
+          type: string
+          maxLength: 64
+        action:
+          type: string
+          maxLength: 64
+    PolicyValidationDetail:
+      type: object
+      additionalProperties: false
+      required: [field, reason]
+      properties:
+        field:
+          type: string
+        reason:
+          type: string
+    PolicyValue:
+      type: object
+      additionalProperties: false
+      oneOf:
+        - required: [string]
+        - required: [boolean]
+        - required: [integer]
+        - required: [double]
+        - required: [strings]
+        - required: [bytes]
+        - required: [timestamp]
+      properties:
+        string:
+          type: string
+        boolean:
+          type: boolean
+        integer:
+          type: string
+          pattern: "^-?(0|[1-9][0-9]*)$"
+        double:
+          type: number
+          format: double
+        strings:
+          type: array
+          items:
+            type: string
+        bytes:
+          type: string
+          contentEncoding: base64
+        timestamp:
+          type: string
+          format: date-time
+    PolicyValueMap:
+      type: object
+      additionalProperties:
+        $ref: "#/components/schemas/PolicyValue"
     AccountList:
       type: array
       items:

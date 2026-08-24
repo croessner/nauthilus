@@ -10,4 +10,5 @@ output-options:
     - BruteForce
     - Config
     - OIDCSessions
+    - Policy
 output: server/openapi/generated/management/bindings.gen.go

@@ -38,6 +38,12 @@ var (
 
 	// ErrLimitExceeded identifies request size, fact count, concurrency, or rate exhaustion.
 	ErrLimitExceeded = errors.New("policy caller admission limit exceeded")
+
+	// ErrRequestLimitExceeded identifies profile request-size or submitted-fact limits.
+	ErrRequestLimitExceeded = fmt.Errorf("%w: request", ErrLimitExceeded)
+
+	// ErrCapacityLimitExceeded identifies profile concurrency or rate exhaustion.
+	ErrCapacityLimitExceeded = fmt.Errorf("%w: capacity", ErrLimitExceeded)
 )
 
 // Configuration contains every caller-admission profile captured by one runtime generation.

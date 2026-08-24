@@ -35,6 +35,7 @@ import (
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/handler/devui"
 	"github.com/croessner/nauthilus/v3/server/handler/mfa_backchannel"
+	"github.com/croessner/nauthilus/v3/server/handler/policyhttp"
 	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/croessner/nauthilus/v3/server/pluginruntime"
 
@@ -222,6 +223,8 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 	}
 
+	registerPolicyRoutes(router, deps)
+
 	cfg := deps.Cfg
 	developerMode := deps.Env != nil && deps.Env.GetDevMode()
 
@@ -234,6 +237,15 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 	registerDevUIRoutes(deps, authenticatedGroup)
 
 	return nil
+}
+
+// registerPolicyRoutes keeps Policy credentials outside management backchannel middleware.
+func registerPolicyRoutes(router *gin.Engine, deps *handlerdeps.Deps) {
+	if router == nil {
+		return
+	}
+
+	policyhttp.New(deps.PolicyDecision, deps.PolicyTransport).Register(router.Group("/api/v1"))
 }
 
 // registerAuthenticatedBackchannelRoutes registers protected management API routes.

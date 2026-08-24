@@ -74,23 +74,28 @@ func (auth BackchannelAuth) managementRequestEditor() (management.RequestEditorF
 }
 
 func (auth BackchannelAuth) authorizationHeader() (string, error) {
-	switch auth.scheme {
+	return clientAuthorizationHeader(auth.scheme, auth.token, auth.username, auth.password, ErrInvalidBackchannelAuth)
+}
+
+// clientAuthorizationHeader serializes one complete supported-client credential without sharing its public auth type.
+func clientAuthorizationHeader(scheme string, token string, username string, password string, invalid error) (string, error) {
+	switch scheme {
 	case bearerAuthScheme:
-		token := strings.TrimSpace(auth.token)
+		token := strings.TrimSpace(token)
 		if token == "" {
-			return "", ErrInvalidBackchannelAuth
+			return "", invalid
 		}
 
 		return "Bearer " + token, nil
 	case basicAuthScheme:
-		if auth.username == "" || auth.password == "" {
-			return "", ErrInvalidBackchannelAuth
+		if username == "" || password == "" {
+			return "", invalid
 		}
 
-		encodedCredentials := base64.StdEncoding.EncodeToString([]byte(auth.username + ":" + auth.password))
+		encodedCredentials := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
 
 		return "Basic " + encodedCredentials, nil
 	default:
-		return "", ErrInvalidBackchannelAuth
+		return "", invalid
 	}
 }

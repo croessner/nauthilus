@@ -26,6 +26,8 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/language"
 	"github.com/croessner/nauthilus/v3/server/core/localization"
+	"github.com/croessner/nauthilus/v3/server/handler/policyhttp"
+	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -94,4 +96,8 @@ type Deps struct {
 	TokenFlusher core.TokenFlusher
 	// MessageResolver resolves policy-selected status messages for IDP UI rendering.
 	MessageResolver localization.MessageResolver
+	// PolicyDecision is the admission-enforcing application authority for Policy transports.
+	PolicyDecision decision.Service
+	// PolicyTransport resolves trusted HTTP protection evidence for the Policy boundary.
+	PolicyTransport policyhttp.TransportEvidence
 }

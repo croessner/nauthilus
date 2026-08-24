@@ -64,11 +64,11 @@ func (a *authority) Admit(
 	}
 
 	if submittedFactCount(request) > profile.limits.MaxFacts {
-		return nil, admissionError(ErrLimitExceeded, "submitted fact count exceeds the profile limit")
+		return nil, admissionError(ErrRequestLimitExceeded, "submitted fact count exceeds the profile limit")
 	}
 
 	if logicalRequestSize(request) > profile.limits.MaxRequestBytes {
-		return nil, admissionError(ErrLimitExceeded, "logical request size exceeds the profile limit")
+		return nil, admissionError(ErrRequestLimitExceeded, "logical request size exceeds the profile limit")
 	}
 
 	facts, err := buildAdmittedFacts(caller, request, profile.fields, grant.schema)
@@ -127,13 +127,13 @@ func (p *compiledProfile) acquire(facts decision.FactSet) (policyruntime.Admissi
 	select {
 	case p.concurrency <- struct{}{}:
 	default:
-		return nil, admissionError(ErrLimitExceeded, "profile concurrency is exhausted")
+		return nil, admissionError(ErrCapacityLimitExceeded, "profile concurrency is exhausted")
 	}
 
 	if !p.limiter.Allow() {
 		<-p.concurrency
 
-		return nil, admissionError(ErrLimitExceeded, "profile request rate is exhausted")
+		return nil, admissionError(ErrCapacityLimitExceeded, "profile request rate is exhausted")
 	}
 
 	return &permit{facts: facts, concurrency: p.concurrency}, nil

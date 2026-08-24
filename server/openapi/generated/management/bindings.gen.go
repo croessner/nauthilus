@@ -58,6 +58,45 @@ func (e AsyncJobStatusPayloadStatus) Valid() bool {
 	}
 }
 
+// Defines values for PolicyDecisionRequestVersion.
+const (
+	N1 PolicyDecisionRequestVersion = "1"
+)
+
+// Valid indicates whether the value is a known member of the PolicyDecisionRequestVersion enum.
+func (e PolicyDecisionRequestVersion) Valid() bool {
+	switch e {
+	case N1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PolicyDecisionResponseEffect.
+const (
+	Deny          PolicyDecisionResponseEffect = "deny"
+	Indeterminate PolicyDecisionResponseEffect = "indeterminate"
+	NotApplicable PolicyDecisionResponseEffect = "not_applicable"
+	Permit        PolicyDecisionResponseEffect = "permit"
+)
+
+// Valid indicates whether the value is a known member of the PolicyDecisionResponseEffect enum.
+func (e PolicyDecisionResponseEffect) Valid() bool {
+	switch e {
+	case Deny:
+		return true
+	case Indeterminate:
+		return true
+	case NotApplicable:
+		return true
+	case Permit:
+		return true
+	default:
+		return false
+	}
+}
+
 // AsyncAcceptedPayload defines model for AsyncAcceptedPayload.
 type AsyncAcceptedPayload struct {
 	JobId string `json:"jobId"`
@@ -199,6 +238,134 @@ type OIDCSessions struct {
 	Sessions []OIDCSessionSummary `json:"sessions"`
 }
 
+// PolicyAdvice defines model for PolicyAdvice.
+type PolicyAdvice struct {
+	Id         string         `json:"id"`
+	Parameters PolicyValueMap `json:"parameters"`
+}
+
+// PolicyDecisionRequest defines model for PolicyDecisionRequest.
+type PolicyDecisionRequest struct {
+	Attributes  *PolicyValueMap              `json:"attributes,omitempty"`
+	Environment *PolicyEnvironment           `json:"environment,omitempty"`
+	Options     *PolicyEvaluationOptions     `json:"options,omitempty"`
+	RequestId   *string                      `json:"request_id,omitempty"`
+	Resource    *PolicyEntity                `json:"resource,omitempty"`
+	Subject     *PolicyEntity                `json:"subject,omitempty"`
+	Target      PolicyTarget                 `json:"target"`
+	Version     PolicyDecisionRequestVersion `json:"version"`
+}
+
+// PolicyDecisionRequestVersion defines model for PolicyDecisionRequest.Version.
+type PolicyDecisionRequestVersion string
+
+// PolicyDecisionResponse defines model for PolicyDecisionResponse.
+type PolicyDecisionResponse struct {
+	Advice      *[]PolicyAdvice              `json:"advice,omitempty"`
+	DecisionId  string                       `json:"decision_id"`
+	Diagnostics *PolicyDiagnostics           `json:"diagnostics,omitempty"`
+	Effect      PolicyDecisionResponseEffect `json:"effect"`
+	Obligations *[]PolicyObligation          `json:"obligations,omitempty"`
+	Status      PolicyStatus                 `json:"status"`
+}
+
+// PolicyDecisionResponseEffect defines model for PolicyDecisionResponse.Effect.
+type PolicyDecisionResponseEffect string
+
+// PolicyDiagnostics defines model for PolicyDiagnostics.
+type PolicyDiagnostics struct {
+	Entries PolicyValueMap `json:"entries"`
+}
+
+// PolicyEntity defines model for PolicyEntity.
+type PolicyEntity struct {
+	Attributes *PolicyValueMap `json:"attributes,omitempty"`
+	Id         *string         `json:"id,omitempty"`
+	Type       *string         `json:"type,omitempty"`
+}
+
+// PolicyEnvironment defines model for PolicyEnvironment.
+type PolicyEnvironment struct {
+	Attributes *PolicyValueMap `json:"attributes,omitempty"`
+	Instance   *string         `json:"instance,omitempty"`
+	Protocol   *string         `json:"protocol,omitempty"`
+	Service    *string         `json:"service,omitempty"`
+}
+
+// PolicyError defines model for PolicyError.
+type PolicyError struct {
+	Code    string                    `json:"code"`
+	Details *[]PolicyValidationDetail `json:"details,omitempty"`
+	Message string                    `json:"message"`
+}
+
+// PolicyEvaluationOptions defines model for PolicyEvaluationOptions.
+type PolicyEvaluationOptions struct {
+	IncludeDiagnostics *bool `json:"include_diagnostics,omitempty"`
+}
+
+// PolicyObligation defines model for PolicyObligation.
+type PolicyObligation struct {
+	Id         string         `json:"id"`
+	Parameters PolicyValueMap `json:"parameters"`
+}
+
+// PolicyStatus defines model for PolicyStatus.
+type PolicyStatus struct {
+	Code      string                    `json:"code"`
+	Details   *[]PolicyValidationDetail `json:"details,omitempty"`
+	Message   string                    `json:"message"`
+	Retryable bool                      `json:"retryable"`
+}
+
+// PolicyTarget defines model for PolicyTarget.
+type PolicyTarget struct {
+	Action    string `json:"action"`
+	Namespace string `json:"namespace"`
+}
+
+// PolicyValidationDetail defines model for PolicyValidationDetail.
+type PolicyValidationDetail struct {
+	Field  string `json:"field"`
+	Reason string `json:"reason"`
+}
+
+// PolicyValue defines model for PolicyValue.
+type PolicyValue struct {
+	Boolean   *bool      `json:"boolean,omitempty"`
+	Bytes     *[]byte    `json:"bytes,omitempty"`
+	Double    *float64   `json:"double,omitempty"`
+	Integer   *string    `json:"integer,omitempty"`
+	String    *string    `json:"string,omitempty"`
+	Strings   *[]string  `json:"strings,omitempty"`
+	Timestamp *time.Time `json:"timestamp,omitempty"`
+	union     json.RawMessage
+}
+
+// PolicyValue0 defines model for PolicyValue.0.
+type PolicyValue0 = interface{}
+
+// PolicyValue1 defines model for PolicyValue.1.
+type PolicyValue1 = interface{}
+
+// PolicyValue2 defines model for PolicyValue.2.
+type PolicyValue2 = interface{}
+
+// PolicyValue3 defines model for PolicyValue.3.
+type PolicyValue3 = interface{}
+
+// PolicyValue4 defines model for PolicyValue.4.
+type PolicyValue4 = interface{}
+
+// PolicyValue5 defines model for PolicyValue.5.
+type PolicyValue5 = interface{}
+
+// PolicyValue6 defines model for PolicyValue.6.
+type PolicyValue6 = interface{}
+
+// PolicyValueMap defines model for PolicyValueMap.
+type PolicyValueMap map[string]PolicyValue
+
 // ResultEnvelope defines model for ResultEnvelope.
 type ResultEnvelope struct {
 	Object    string      `json:"object"`
@@ -229,6 +396,30 @@ type JSONValidationError struct {
 
 // NotFound defines model for NotFound.
 type NotFound = ErrorResponse
+
+// PolicyBadRequest defines model for PolicyBadRequest.
+type PolicyBadRequest = PolicyError
+
+// PolicyDecision defines model for PolicyDecision.
+type PolicyDecision = PolicyDecisionResponse
+
+// PolicyForbidden defines model for PolicyForbidden.
+type PolicyForbidden = PolicyError
+
+// PolicyRateLimited defines model for PolicyRateLimited.
+type PolicyRateLimited = PolicyError
+
+// PolicyRequestTooLarge defines model for PolicyRequestTooLarge.
+type PolicyRequestTooLarge = PolicyError
+
+// PolicyUnauthorized defines model for PolicyUnauthorized.
+type PolicyUnauthorized = PolicyError
+
+// PolicyUnavailable defines model for PolicyUnavailable.
+type PolicyUnavailable = PolicyError
+
+// PolicyUnsupportedMediaType defines model for PolicyUnsupportedMediaType.
+type PolicyUnsupportedMediaType = PolicyError
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = ErrorResponse
@@ -265,6 +456,319 @@ type FlushUserCacheJSONRequestBody = CacheFlushRequest
 
 // EnqueueUserCacheFlushJSONRequestBody defines body for EnqueueUserCacheFlush for application/json ContentType.
 type EnqueueUserCacheFlushJSONRequestBody = CacheFlushRequest
+
+// EvaluatePolicyDecisionJSONRequestBody defines body for EvaluatePolicyDecision for application/json ContentType.
+type EvaluatePolicyDecisionJSONRequestBody = PolicyDecisionRequest
+
+// AsPolicyValue0 returns the union data inside the PolicyValue as a PolicyValue0
+func (t PolicyValue) AsPolicyValue0() (PolicyValue0, error) {
+	var body PolicyValue0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyValue0 overwrites any union data inside the PolicyValue as the provided PolicyValue0
+func (t *PolicyValue) FromPolicyValue0(v PolicyValue0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyValue0 performs a merge with any union data inside the PolicyValue, using the provided PolicyValue0
+func (t *PolicyValue) MergePolicyValue0(v PolicyValue0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyValue1 returns the union data inside the PolicyValue as a PolicyValue1
+func (t PolicyValue) AsPolicyValue1() (PolicyValue1, error) {
+	var body PolicyValue1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyValue1 overwrites any union data inside the PolicyValue as the provided PolicyValue1
+func (t *PolicyValue) FromPolicyValue1(v PolicyValue1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyValue1 performs a merge with any union data inside the PolicyValue, using the provided PolicyValue1
+func (t *PolicyValue) MergePolicyValue1(v PolicyValue1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyValue2 returns the union data inside the PolicyValue as a PolicyValue2
+func (t PolicyValue) AsPolicyValue2() (PolicyValue2, error) {
+	var body PolicyValue2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyValue2 overwrites any union data inside the PolicyValue as the provided PolicyValue2
+func (t *PolicyValue) FromPolicyValue2(v PolicyValue2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyValue2 performs a merge with any union data inside the PolicyValue, using the provided PolicyValue2
+func (t *PolicyValue) MergePolicyValue2(v PolicyValue2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyValue3 returns the union data inside the PolicyValue as a PolicyValue3
+func (t PolicyValue) AsPolicyValue3() (PolicyValue3, error) {
+	var body PolicyValue3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyValue3 overwrites any union data inside the PolicyValue as the provided PolicyValue3
+func (t *PolicyValue) FromPolicyValue3(v PolicyValue3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyValue3 performs a merge with any union data inside the PolicyValue, using the provided PolicyValue3
+func (t *PolicyValue) MergePolicyValue3(v PolicyValue3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyValue4 returns the union data inside the PolicyValue as a PolicyValue4
+func (t PolicyValue) AsPolicyValue4() (PolicyValue4, error) {
+	var body PolicyValue4
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyValue4 overwrites any union data inside the PolicyValue as the provided PolicyValue4
+func (t *PolicyValue) FromPolicyValue4(v PolicyValue4) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyValue4 performs a merge with any union data inside the PolicyValue, using the provided PolicyValue4
+func (t *PolicyValue) MergePolicyValue4(v PolicyValue4) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyValue5 returns the union data inside the PolicyValue as a PolicyValue5
+func (t PolicyValue) AsPolicyValue5() (PolicyValue5, error) {
+	var body PolicyValue5
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyValue5 overwrites any union data inside the PolicyValue as the provided PolicyValue5
+func (t *PolicyValue) FromPolicyValue5(v PolicyValue5) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyValue5 performs a merge with any union data inside the PolicyValue, using the provided PolicyValue5
+func (t *PolicyValue) MergePolicyValue5(v PolicyValue5) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyValue6 returns the union data inside the PolicyValue as a PolicyValue6
+func (t PolicyValue) AsPolicyValue6() (PolicyValue6, error) {
+	var body PolicyValue6
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyValue6 overwrites any union data inside the PolicyValue as the provided PolicyValue6
+func (t *PolicyValue) FromPolicyValue6(v PolicyValue6) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyValue6 performs a merge with any union data inside the PolicyValue, using the provided PolicyValue6
+func (t *PolicyValue) MergePolicyValue6(v PolicyValue6) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t PolicyValue) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	object := make(map[string]json.RawMessage)
+	if t.union != nil {
+		err = json.Unmarshal(b, &object)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if t.Boolean != nil {
+		object["boolean"], err = json.Marshal(t.Boolean)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'boolean': %w", err)
+		}
+	}
+
+	if t.Bytes != nil {
+		object["bytes"], err = json.Marshal(t.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'bytes': %w", err)
+		}
+	}
+
+	if t.Double != nil {
+		object["double"], err = json.Marshal(t.Double)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'double': %w", err)
+		}
+	}
+
+	if t.Integer != nil {
+		object["integer"], err = json.Marshal(t.Integer)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'integer': %w", err)
+		}
+	}
+
+	if t.String != nil {
+		object["string"], err = json.Marshal(t.String)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'string': %w", err)
+		}
+	}
+
+	if t.Strings != nil {
+		object["strings"], err = json.Marshal(t.Strings)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'strings': %w", err)
+		}
+	}
+
+	if t.Timestamp != nil {
+		object["timestamp"], err = json.Marshal(t.Timestamp)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'timestamp': %w", err)
+		}
+	}
+	b, err = json.Marshal(object)
+	return b, err
+}
+
+func (t *PolicyValue) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	if err != nil {
+		return err
+	}
+	object := make(map[string]json.RawMessage)
+	err = json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["boolean"]; found {
+		err = json.Unmarshal(raw, &t.Boolean)
+		if err != nil {
+			return fmt.Errorf("error reading 'boolean': %w", err)
+		}
+	}
+
+	if raw, found := object["bytes"]; found {
+		err = json.Unmarshal(raw, &t.Bytes)
+		if err != nil {
+			return fmt.Errorf("error reading 'bytes': %w", err)
+		}
+	}
+
+	if raw, found := object["double"]; found {
+		err = json.Unmarshal(raw, &t.Double)
+		if err != nil {
+			return fmt.Errorf("error reading 'double': %w", err)
+		}
+	}
+
+	if raw, found := object["integer"]; found {
+		err = json.Unmarshal(raw, &t.Integer)
+		if err != nil {
+			return fmt.Errorf("error reading 'integer': %w", err)
+		}
+	}
+
+	if raw, found := object["string"]; found {
+		err = json.Unmarshal(raw, &t.String)
+		if err != nil {
+			return fmt.Errorf("error reading 'string': %w", err)
+		}
+	}
+
+	if raw, found := object["strings"]; found {
+		err = json.Unmarshal(raw, &t.Strings)
+		if err != nil {
+			return fmt.Errorf("error reading 'strings': %w", err)
+		}
+	}
+
+	if raw, found := object["timestamp"]; found {
+		err = json.Unmarshal(raw, &t.Timestamp)
+		if err != nil {
+			return fmt.Errorf("error reading 'timestamp': %w", err)
+		}
+	}
+
+	return err
+}
 
 // AsErrorResponse returns the union data inside the JSONValidationError as a ErrorResponse
 func (t JSONValidationError) AsErrorResponse() (ErrorResponse, error) {
@@ -506,6 +1010,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1/openapi.yaml (the `GetOpenAPIYAML` operationId).
 	GetOpenAPIYAML(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// EvaluatePolicyDecisionWithBody Evaluate one Policy decision.
+	//
+	// Evaluates exactly one admitted Policy request. Responses are never cacheable and do not expose retry, replay, cache, or outcome-reporting controls.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/policy/decisions (the `EvaluatePolicyDecision` operationId).
+	EvaluatePolicyDecisionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// EvaluatePolicyDecision Evaluate one Policy decision.
+	//
+	// Evaluates exactly one admitted Policy request. Responses are never cacheable and do not expose retry, replay, cache, or outcome-reporting controls.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/policy/decisions (the `EvaluatePolicyDecision` operationId).
+	EvaluatePolicyDecision(ctx context.Context, body EvaluatePolicyDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // GetAsyncJobStatus Get the status of an asynchronous backchannel job.
@@ -773,6 +1295,44 @@ func (c *Client) GetOpenAPIJSON(ctx context.Context, reqEditors ...RequestEditor
 // Corresponds with GET /api/v1/openapi.yaml (the `GetOpenAPIYAML` operationId).
 func (c *Client) GetOpenAPIYAML(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetOpenAPIYAMLRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// EvaluatePolicyDecisionWithBody Evaluate one Policy decision.
+//
+// Evaluates exactly one admitted Policy request. Responses are never cacheable and do not expose retry, replay, cache, or outcome-reporting controls.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/policy/decisions (the `EvaluatePolicyDecision` operationId).
+func (c *Client) EvaluatePolicyDecisionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEvaluatePolicyDecisionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// EvaluatePolicyDecision Evaluate one Policy decision.
+//
+// Evaluates exactly one admitted Policy request. Responses are never cacheable and do not expose retry, replay, cache, or outcome-reporting controls.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/policy/decisions (the `EvaluatePolicyDecision` operationId).
+func (c *Client) EvaluatePolicyDecision(ctx context.Context, body EvaluatePolicyDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEvaluatePolicyDecisionRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1285,6 +1845,46 @@ func NewGetOpenAPIYAMLRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewEvaluatePolicyDecisionRequest calls the generic EvaluatePolicyDecision builder with application/json body
+func NewEvaluatePolicyDecisionRequest(server string, body EvaluatePolicyDecisionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewEvaluatePolicyDecisionRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewEvaluatePolicyDecisionRequestWithBody constructs an http.Request for the EvaluatePolicyDecision method, with any body, and a specified content type
+func NewEvaluatePolicyDecisionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/policy/decisions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -1447,6 +2047,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v1/openapi.yaml (the `GetOpenAPIYAML` operationId).
 	GetOpenAPIYAMLWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOpenAPIYAMLResponse, error)
+
+	// EvaluatePolicyDecisionWithBodyWithResponse Evaluate one Policy decision.
+	//
+	// Evaluates exactly one admitted Policy request. Responses are never cacheable and do not expose retry, replay, cache, or outcome-reporting controls.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/policy/decisions (the `EvaluatePolicyDecision` operationId).
+	EvaluatePolicyDecisionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EvaluatePolicyDecisionResponse, error)
+
+	// EvaluatePolicyDecisionWithResponse Evaluate one Policy decision.
+	//
+	// Evaluates exactly one admitted Policy request. Responses are never cacheable and do not expose retry, replay, cache, or outcome-reporting controls.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/policy/decisions (the `EvaluatePolicyDecision` operationId).
+	EvaluatePolicyDecisionWithResponse(ctx context.Context, body EvaluatePolicyDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*EvaluatePolicyDecisionResponse, error)
 }
 
 type GetAsyncJobStatusResponse struct {
@@ -2193,6 +2811,96 @@ func (r GetOpenAPIYAMLResponse) ContentType() string {
 	return ""
 }
 
+type EvaluatePolicyDecisionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PolicyDecision
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *PolicyBadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *PolicyUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *PolicyForbidden
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *PolicyRequestTooLarge
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *PolicyUnsupportedMediaType
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *PolicyRateLimited
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *PolicyUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r EvaluatePolicyDecisionResponse) GetJSON200() *PolicyDecision {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r EvaluatePolicyDecisionResponse) GetJSON400() *PolicyBadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r EvaluatePolicyDecisionResponse) GetJSON401() *PolicyUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r EvaluatePolicyDecisionResponse) GetJSON403() *PolicyForbidden {
+	return r.JSON403
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r EvaluatePolicyDecisionResponse) GetJSON413() *PolicyRequestTooLarge {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r EvaluatePolicyDecisionResponse) GetJSON415() *PolicyUnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r EvaluatePolicyDecisionResponse) GetJSON429() *PolicyRateLimited {
+	return r.JSON429
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r EvaluatePolicyDecisionResponse) GetJSON503() *PolicyUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r EvaluatePolicyDecisionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r EvaluatePolicyDecisionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r EvaluatePolicyDecisionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r EvaluatePolicyDecisionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetAsyncJobStatusWithResponse Get the status of an asynchronous backchannel job.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -2412,6 +3120,36 @@ func (c *ClientWithResponses) GetOpenAPIYAMLWithResponse(ctx context.Context, re
 		return nil, err
 	}
 	return ParseGetOpenAPIYAMLResponse(rsp)
+}
+
+// EvaluatePolicyDecisionWithBodyWithResponse Evaluate one Policy decision.
+//
+// Evaluates exactly one admitted Policy request. Responses are never cacheable and do not expose retry, replay, cache, or outcome-reporting controls.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/policy/decisions (the `EvaluatePolicyDecision` operationId).
+func (c *ClientWithResponses) EvaluatePolicyDecisionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EvaluatePolicyDecisionResponse, error) {
+	rsp, err := c.EvaluatePolicyDecisionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEvaluatePolicyDecisionResponse(rsp)
+}
+
+// EvaluatePolicyDecisionWithResponse Evaluate one Policy decision.
+//
+// Evaluates exactly one admitted Policy request. Responses are never cacheable and do not expose retry, replay, cache, or outcome-reporting controls.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/policy/decisions (the `EvaluatePolicyDecision` operationId).
+func (c *ClientWithResponses) EvaluatePolicyDecisionWithResponse(ctx context.Context, body EvaluatePolicyDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*EvaluatePolicyDecisionResponse, error) {
+	rsp, err := c.EvaluatePolicyDecision(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEvaluatePolicyDecisionResponse(rsp)
 }
 
 // ParseGetAsyncJobStatusResponse parses an HTTP response from a GetAsyncJobStatusWithResponse call
@@ -2978,6 +3716,81 @@ func ParseGetOpenAPIYAMLResponse(rsp *http.Response) (*GetOpenAPIYAMLResponse, e
 			return nil, err
 		}
 		response.YAML200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseEvaluatePolicyDecisionResponse parses an HTTP response from a EvaluatePolicyDecisionWithResponse call
+func ParseEvaluatePolicyDecisionResponse(rsp *http.Response) (*EvaluatePolicyDecisionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &EvaluatePolicyDecisionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PolicyDecision
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest PolicyBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest PolicyUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest PolicyForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest PolicyRequestTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest PolicyUnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest PolicyRateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest PolicyUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 

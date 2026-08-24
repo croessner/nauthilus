@@ -41,11 +41,14 @@ import (
 	handlerauthority "github.com/croessner/nauthilus/v3/server/handler/grpcauthority"
 	handlerhealth "github.com/croessner/nauthilus/v3/server/handler/health"
 	handlermetrics "github.com/croessner/nauthilus/v3/server/handler/metrics"
+	handlerpolicyhttp "github.com/croessner/nauthilus/v3/server/handler/policyhttp"
 	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/lualib/action"
 	"github.com/croessner/nauthilus/v3/server/lualib/redislib"
+	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/util"
 
@@ -600,14 +603,23 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 	)
 
 	return func(e *gin.Engine) {
+		policyDecision, err := newHTTPPolicyDecisionService()
+		if err != nil {
+			_ = level.Error(runtime.logger).Log(definitions.LogKeyMsg, "Policy decision service initialization failed", definitions.LogKeyError, err)
+		}
+
 		deps := &handlerdeps.Deps{
-			Cfg:          runtime.cfg,
-			CfgProvider:  runtime.store.cfgProvider,
-			Env:          runtime.env,
-			Logger:       runtime.logger,
-			Redis:        runtime.store.redisClient,
-			LangManager:  runtime.store.langManager,
-			TokenFlusher: tokenStorage,
+			Cfg:            runtime.cfg,
+			CfgProvider:    runtime.store.cfgProvider,
+			Env:            runtime.env,
+			Logger:         runtime.logger,
+			Redis:          runtime.store.redisClient,
+			LangManager:    runtime.store.langManager,
+			TokenFlusher:   tokenStorage,
+			PolicyDecision: policyDecision,
+			PolicyTransport: handlerpolicyhttp.NewTrustedProxyTransportEvidence(
+				runtime.cfg.GetServer().GetTrustedProxies(),
+			),
 		}
 
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
@@ -615,6 +627,16 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 			_ = level.Error(runtime.logger).Log(definitions.LogKeyMsg, "Backchannel route setup failed", definitions.LogKeyError, err)
 		}
 	}
+}
+
+// newHTTPPolicyDecisionService connects HTTP only to the generation-capturing application authority.
+func newHTTPPolicyDecisionService() (*decisionservice.DecisionService, error) {
+	source, err := decisionservice.NewStoreGenerationSource(policyruntime.DefaultGenerationStore())
+	if err != nil {
+		return nil, err
+	}
+
+	return decisionservice.NewDecisionService(source)
 }
 
 func startGRPCAuthorityForHTTP(

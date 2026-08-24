@@ -98,6 +98,71 @@ func TestSupportedManagementClientRejectsMissingBackchannelAuth(t *testing.T) {
 	})
 }
 
+func TestSupportedPolicyClientUsesDedicatedCredentials(t *testing.T) {
+	request := management.EvaluatePolicyDecisionJSONRequestBody{
+		Version: management.N1,
+		Target:  management.PolicyTarget{Namespace: "dkim2", Action: "sign-message"},
+	}
+	responseBody := management.PolicyDecisionResponse{
+		DecisionId: "decision-client",
+		Effect:     management.Permit,
+		Status:     management.PolicyStatus{Code: "permit", Message: "permitted"},
+	}
+	doer := requesttest.NewClientSmokeDoer(t, requesttest.ClientSmokeRoute{
+		Request: request, Response: responseBody, Method: http.MethodPost, Path: "/api/v1/policy/decisions", Status: http.StatusOK,
+		Headers: map[string]string{authorizationHeader: "Bearer " + supportedClientBearerToken},
+	})
+
+	client, err := NewPolicyClient(supportedClientBaseURL, PolicyBearerToken(supportedClientBearerToken), management.WithHTTPClient(doer))
+	if err != nil {
+		t.Fatalf("new policy client: %v", err)
+	}
+
+	response, err := client.Evaluate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("evaluate policy: %v", err)
+	}
+
+	if response.StatusCode() != http.StatusOK || response.JSON200 == nil || response.JSON200.Effect != management.Permit {
+		t.Fatalf("Policy Evaluate response = %#v, want permit", response)
+	}
+
+	if _, err := NewPolicyClient(supportedClientBaseURL, PolicyBasicCredentials("", supportedClientBasicPassword)); err == nil {
+		t.Fatal("empty dedicated Policy-Basic user was accepted")
+	}
+}
+
+func TestSupportedPolicyClientUsesDedicatedBasicCredentials(t *testing.T) {
+	request := management.EvaluatePolicyDecisionJSONRequestBody{
+		Version: management.N1,
+		Target:  management.PolicyTarget{Namespace: "dkim2", Action: "sign-message"},
+	}
+	responseBody := management.PolicyDecisionResponse{
+		DecisionId: "decision-basic-client",
+		Effect:     management.Deny,
+		Status:     management.PolicyStatus{Code: "policy_denied", Message: "denied"},
+	}
+	header := "Basic " + base64.StdEncoding.EncodeToString([]byte(supportedClientBasicUser+":"+supportedClientBasicPassword))
+	doer := requesttest.NewClientSmokeDoer(t, requesttest.ClientSmokeRoute{
+		Request: request, Response: responseBody, Method: http.MethodPost, Path: "/api/v1/policy/decisions", Status: http.StatusOK,
+		Headers: map[string]string{authorizationHeader: header},
+	})
+
+	client, err := NewPolicyClient(supportedClientBaseURL, PolicyBasicCredentials(supportedClientBasicUser, supportedClientBasicPassword), management.WithHTTPClient(doer))
+	if err != nil {
+		t.Fatalf("new Policy-Basic client: %v", err)
+	}
+
+	response, err := client.Evaluate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("evaluate Policy-Basic request: %v", err)
+	}
+
+	if response.StatusCode() != http.StatusOK || response.JSON200 == nil || response.JSON200.Effect != management.Deny {
+		t.Fatalf("Policy-Basic Evaluate response = %#v, want deny", response)
+	}
+}
+
 func TestSupportedManagementClientGetsAsyncJobStatus(t *testing.T) {
 	responseBody := management.AsyncJobStatusResult{
 		Session:   supportedClientCacheSession,

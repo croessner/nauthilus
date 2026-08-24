@@ -25,6 +25,13 @@ Management API:
 - `BearerToken`
 - `BasicCredentials`
 
+Policy API:
+
+- `NewPolicyClient`
+- `PolicyClient.Evaluate`
+- `PolicyBearerToken`
+- `PolicyBasicCredentials`
+
 IdP public discovery API:
 
 - `NewIDPDiscoveryClient`
@@ -38,6 +45,11 @@ The management client boundary requires backchannel authentication. Use
 `BearerToken` for `Authorization: Bearer ...` or `BasicCredentials` for
 `Authorization: Basic ...`. The request and response values stay generated
 types from `server/openapi/generated/management`.
+
+The Policy client is a separate boundary. Its `PolicyAuth` type is deliberately
+not assignable to `BackchannelAuth`; Policy Bearer tokens and Policy-Basic
+credentials are accepted only by `/api/v1/policy/decisions` and must never be
+used to imply management/backchannel access.
 
 Document-style downloads such as OpenAPI YAML and SAML metadata intentionally
 return raw `*http.Response` values from the generated client. JSON management
