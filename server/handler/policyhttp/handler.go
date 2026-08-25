@@ -35,9 +35,8 @@ import (
 )
 
 const (
-	pathDecisions       = "/policy/decisions"
-	noStore             = "no-store"
-	maximumRequestBytes = 64 * 1024
+	pathDecisions = "/policy/decisions"
+	noStore       = "no-store"
 )
 
 // TransportEvidence resolves protected transport from server-observed HTTP evidence.
@@ -124,7 +123,7 @@ func New(service decision.Service, transport TransportEvidence) *Handler {
 		transport = DirectTLSTransportEvidence{}
 	}
 
-	return &Handler{service: service, transport: transport, maxBody: maximumRequestBytes}
+	return &Handler{service: service, transport: transport, maxBody: decision.MaximumOpaqueCredentialBytes}
 }
 
 // Register mounts only the unary Policy endpoint and its unconditional no-store response policy.

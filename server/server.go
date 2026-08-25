@@ -603,7 +603,7 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 	)
 
 	return func(e *gin.Engine) {
-		policyDecision, err := newHTTPPolicyDecisionService()
+		policyDecision, err := newPolicyDecisionService()
 		if err != nil {
 			_ = level.Error(runtime.logger).Log(definitions.LogKeyMsg, "Policy decision service initialization failed", definitions.LogKeyError, err)
 		}
@@ -629,8 +629,8 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 	}
 }
 
-// newHTTPPolicyDecisionService connects HTTP only to the generation-capturing application authority.
-func newHTTPPolicyDecisionService() (*decisionservice.DecisionService, error) {
+// newPolicyDecisionService connects each Policy transport to the generation-capturing application authority.
+func newPolicyDecisionService() (*decisionservice.DecisionService, error) {
 	source, err := decisionservice.NewStoreGenerationSource(policyruntime.DefaultGenerationStore())
 	if err != nil {
 		return nil, err
@@ -647,6 +647,11 @@ func startGRPCAuthorityForHTTP(
 	logger *slog.Logger,
 	options httpServerStartOptions,
 ) error {
+	policyDecision, policyErr := newPolicyDecisionService()
+	if policyErr != nil {
+		return fmt.Errorf("create Policy decision service: %w", policyErr)
+	}
+
 	grpcAuthorityDone, err := options.effectiveGRPCAuthorityStarter()(ctx, handlerauthority.ServerDeps{
 		Cfg: cfg,
 		CurrentConfig: func() config.File {
@@ -657,6 +662,7 @@ func startGRPCAuthorityForHTTP(
 		Redis:           store.redisClient,
 		AccountCache:    store.accountCache,
 		Channel:         store.channel,
+		PolicyService:   policyDecision,
 		MessageResolver: newDefaultPolicyMessageResolver(cfg),
 	})
 	if err != nil {

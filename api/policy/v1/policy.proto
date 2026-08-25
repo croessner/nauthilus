@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package nauthilus.policy.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/croessner/nauthilus/v3/api/policy/v1;policyv1";
+
+// PolicyDecisionService evaluates one admitted Policy request per unary call.
+service PolicyDecisionService {
+  rpc Evaluate(DecisionRequest) returns (DecisionResponse);
+}
+
+// DecisionRequest is the public unary Policy evaluation request.
+message DecisionRequest {
+  string version = 1;
+  string request_id = 2;
+  Target target = 3;
+  Entity subject = 4;
+  Entity resource = 5;
+  Environment environment = 6;
+  map<string, Value> attributes = 7;
+  EvaluationOptions options = 8;
+}
+
+// Target identifies the namespace and action selected for evaluation.
+message Target {
+  string namespace = 1;
+  string action = 2;
+}
+
+// Entity carries caller-asserted subject or resource fields.
+message Entity {
+  string type = 1;
+  string id = 2;
+  map<string, Value> attributes = 3;
+}
+
+// Environment carries caller-asserted request environment fields.
+message Environment {
+  string service = 1;
+  string instance = 2;
+  string protocol = 3;
+  map<string, Value> attributes = 4;
+}
+
+// EvaluationOptions contains the sole public evaluation option.
+message EvaluationOptions {
+  bool include_diagnostics = 1;
+}
+
+// StringList owns the string-list branch of Value's closed oneof.
+message StringList {
+  repeated string values = 1;
+}
+
+// Value carries exactly one typed public value member after protobuf normalization.
+message Value {
+  oneof kind {
+    string string = 1;
+    bool boolean = 2;
+    sint64 integer = 3;
+    double double = 4;
+    StringList strings = 5;
+    bytes bytes = 6;
+    google.protobuf.Timestamp timestamp = 7;
+  }
+}
+
+// DecisionResponse is the complete successful application decision result.
+message DecisionResponse {
+  string decision_id = 1;
+  Effect effect = 2;
+  Status status = 3;
+  repeated Obligation obligations = 4;
+  repeated Advice advice = 5;
+  Diagnostics diagnostics = 6;
+}
+
+// Effect is the closed evaluated Policy result set.
+enum Effect {
+  EFFECT_UNSPECIFIED = 0;
+  EFFECT_PERMIT = 1;
+  EFFECT_DENY = 2;
+  EFFECT_NOT_APPLICABLE = 3;
+  EFFECT_INDETERMINATE = 4;
+}
+
+// Status carries public result metadata for an evaluated decision.
+message Status {
+  string code = 1;
+  string message = 2;
+  repeated ValidationDetail details = 3;
+  bool retryable = 4;
+}
+
+// ValidationDetail identifies one safe validation detail.
+message ValidationDetail {
+  string field = 1;
+  string reason = 2;
+}
+
+// Obligation is one return-only selected Policy obligation.
+message Obligation {
+  string id = 1;
+  map<string, Value> parameters = 2;
+}
+
+// Advice is one return-only selected Policy advice.
+message Advice {
+  string id = 1;
+  map<string, Value> parameters = 2;
+}
+
+// Diagnostics contains admitted bounded diagnostic entries.
+message Diagnostics {
+  map<string, Value> entries = 1;
+}

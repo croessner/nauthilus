@@ -10,6 +10,7 @@ proto_files=(
   "api/common/v1/common.proto"
   "api/auth/v1/auth.proto"
   "api/identity/v1/identity_backend.proto"
+  "api/policy/v1/policy.proto"
 )
 
 case "${1:-}" in

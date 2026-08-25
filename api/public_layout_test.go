@@ -44,6 +44,9 @@ func TestPublicProtobufLayout(t *testing.T) {
 		"api/identity/v1/identity_backend.pb.go",
 		"api/identity/v1/identity_backend_grpc.pb.go",
 		"api/policy/v1/README.md",
+		"api/policy/v1/policy.proto",
+		"api/policy/v1/policy.pb.go",
+		"api/policy/v1/policy_grpc.pb.go",
 	}
 
 	for _, relativePath := range expectedFiles {
@@ -71,19 +74,12 @@ func TestRemovedPublicProtobufPathsAreAbsent(t *testing.T) {
 	}
 }
 
-func TestPolicyProtobufOwnershipIsReservedWithoutRPC(t *testing.T) {
+func TestPolicyProtobufOwnershipIncludesGeneratedUnaryContract(t *testing.T) {
 	t.Parallel()
 
 	repositoryRoot := findRepositoryRoot(t)
-	for _, pattern := range []string{"*.proto", "*.pb.go"} {
-		matches, err := filepath.Glob(filepath.Join(repositoryRoot, "api/policy/v1", pattern))
-		if err != nil {
-			t.Fatalf("resolve reserved Policy API pattern %q: %v", pattern, err)
-		}
-
-		if len(matches) != 0 {
-			t.Errorf("Policy RPC is outside this layout change, found generated contract artifacts: %v", matches)
-		}
+	for _, path := range []string{"policy.proto", "policy.pb.go", "policy_grpc.pb.go"} {
+		assertRegularFile(t, filepath.Join(repositoryRoot, "api/policy/v1", path))
 	}
 }
 

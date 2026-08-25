@@ -15,7 +15,8 @@
 
 package decision
 
-const maximumOpaqueCredentialBytes = 64 * 1024
+// MaximumOpaqueCredentialBytes bounds transport-owned opaque credentials and unary Policy payloads.
+const MaximumOpaqueCredentialBytes = 64 * 1024
 
 const (
 	// CheckpointFinalDecision is the sole checkpoint driven by generic unary evaluation.
@@ -57,7 +58,7 @@ func NewAuthenticationInput(input AuthenticationEvidence) (AuthenticationInput, 
 		)
 	}
 
-	if len(input.Credential) == 0 || len(input.Credential) > maximumOpaqueCredentialBytes {
+	if len(input.Credential) == 0 || len(input.Credential) > MaximumOpaqueCredentialBytes {
 		return AuthenticationInput{}, invalidCaller(
 			"authentication.credential",
 			"must contain bounded opaque credential evidence",

@@ -31,6 +31,7 @@ import (
 
 	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
 	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
+	policyv1 "github.com/croessner/nauthilus/v3/api/policy/v1"
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v3/server/config"
@@ -38,11 +39,15 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/handler/policygrpc"
 	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/croessner/nauthilus/v3/server/log/level"
 	mdauth "github.com/croessner/nauthilus/v3/server/middleware/auth"
 	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	policy "github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v3/server/policy/transportsecurity"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/croessner/nauthilus/v3/server/util"
@@ -55,10 +60,13 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
 	authorizationMetadataKey          = "authorization"
+	authorizationSchemeBearer         = "bearer"
+	authorizationSchemeBasic          = "basic"
 	edgeClusterMetadataKey            = "x-nauthilus-edge-cluster"
 	edgeInstanceMetadataKey           = "x-nauthilus-edge-instance"
 	authorityServicePrincipalFallback = "grpc-authority-caller"
@@ -74,6 +82,7 @@ type ServerDeps struct {
 	AccountCache    *accountcache.Manager
 	Channel         backend.Channel
 	AuthService     core.AuthApplicationService
+	PolicyService   decision.Service
 	IdentityService AuthorityIdentityService
 	BackendRefs     BackendRefStore
 	MessageResolver localization.MessageResolver
@@ -174,6 +183,10 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 		identityv1.RegisterIdentityBackendServiceServer(server, handler)
 	}
 
+	if deps.PolicyService != nil {
+		policyv1.RegisterPolicyDecisionServiceServer(server, policygrpc.New(deps.PolicyService))
+	}
+
 	return server, nil
 }
 
@@ -193,6 +206,7 @@ func unaryServerInterceptor(deps ServerDeps, requestMetrics grpc.UnaryServerInte
 		traceContextInterceptor(),
 		loggingTracingInterceptor(deps),
 		mtlsInterceptor(deps),
+		policyMessageLimitInterceptor(),
 		backchannelAuthInterceptor(deps),
 	)
 }
@@ -204,6 +218,20 @@ func postActionResponseCompletionInterceptor() grpc.UnaryServerInterceptor {
 		defer gate.Complete()
 
 		return handler(requestContext, req)
+	}
+}
+
+// policyMessageLimitInterceptor applies the Policy API's request limit without changing Auth or Identity contracts.
+func policyMessageLimitInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if grpcFullMethod(info) == policyv1.PolicyDecisionService_Evaluate_FullMethodName {
+			message, ok := req.(proto.Message)
+			if !ok || proto.Size(message) > decision.MaximumOpaqueCredentialBytes {
+				return nil, status.Error(codes.ResourceExhausted, "Policy request exceeds the message limit")
+			}
+		}
+
+		return handler(ctx, req)
 	}
 }
 
@@ -635,9 +663,23 @@ func mtlsInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 
 func backchannelAuthInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		fullMethod := grpcFullMethod(info)
+		if fullMethod == policyv1.PolicyDecisionService_Evaluate_FullMethodName {
+			policyContext, err := policyAuthenticationContext(ctx)
+			if err != nil {
+				return nil, err
+			}
+
+			return handler(policyContext, req)
+		}
+
+		if !knownAuthorityMethod(fullMethod) {
+			return nil, status.Error(codes.Unimplemented, "unknown gRPC authority method")
+		}
+
 		authCtx := context.WithValue(ctx, authorityRequestContextKey{}, req)
 
-		result, err := authenticateCaller(authCtx, deps, grpcFullMethod(info))
+		result, err := authenticateCaller(authCtx, deps, fullMethod)
 		if err != nil {
 			return nil, err
 		}
@@ -650,6 +692,132 @@ func backchannelAuthInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 
 		return handler(ctx, req)
 	}
+}
+
+// policyAuthenticationContext attaches only interceptor-created opaque Policy evidence.
+func policyAuthenticationContext(ctx context.Context) (context.Context, error) {
+	authentication, err := policyAuthenticationEvidence(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return policygrpc.ContextWithAuthentication(ctx, authentication), nil
+}
+
+// policyAuthenticationEvidence extracts presentation and transport evidence without Policy validation.
+func policyAuthenticationEvidence(ctx context.Context) (decision.AuthenticationInput, error) {
+	kind, credential, err := policyAuthorizationCredential(authorizationMetadata(ctx))
+	if err != nil {
+		if status.Code(err) == codes.ResourceExhausted {
+			return decision.AuthenticationInput{}, err
+		}
+
+		return decision.AuthenticationInput{}, status.Error(codes.Unauthenticated, "policy credentials required")
+	}
+	defer zeroBytes(credential)
+
+	evidence := transportsecurity.NewGRPC(policyPeerAuthInfo(ctx), policyMTLSIdentity(ctx))
+	mtlsIdentity, _ := evidence.MTLSIdentity()
+
+	input, err := decision.NewAuthenticationInput(decision.AuthenticationEvidence{
+		Kind:          kind,
+		Credential:    credential,
+		TransportKind: "grpc",
+		Listener:      "grpc.authority",
+		GRPCMethod:    policyv1.PolicyDecisionService_Evaluate_FullMethodName,
+		Peer:          callerPeerIP(ctx),
+		MTLSIdentity:  mtlsIdentity,
+		Protected:     evidence.Protected(),
+	})
+	if err != nil {
+		return decision.AuthenticationInput{}, status.Error(codes.Unauthenticated, "policy credentials required")
+	}
+
+	return input, nil
+}
+
+// policyAuthorizationCredential accepts exactly one opaque Bearer or Policy-Basic metadata presentation.
+func policyAuthorizationCredential(values []string) (string, []byte, error) {
+	if len(values) != 1 {
+		return "", nil, stderrors.New("one policy authorization value is required")
+	}
+
+	scheme, payload, ok := splitAuthorization(values[0])
+	if !ok {
+		return "", nil, stderrors.New("invalid policy authorization metadata")
+	}
+
+	switch scheme {
+	case authorizationSchemeBearer:
+		if len(payload) > decision.MaximumOpaqueCredentialBytes {
+			return "", nil, status.Error(codes.ResourceExhausted, "Policy credentials exceed the message limit")
+		}
+
+		return policy.CallerAuthenticationKindBearer, []byte(payload), nil
+	case authorizationSchemeBasic:
+		if len(payload) > base64.StdEncoding.EncodedLen(decision.MaximumOpaqueCredentialBytes) {
+			return "", nil, status.Error(codes.ResourceExhausted, "Policy credentials exceed the message limit")
+		}
+
+		decoded, err := base64.StdEncoding.DecodeString(payload)
+		if err != nil || len(decoded) == 0 || len(decoded) > decision.MaximumOpaqueCredentialBytes {
+			return "", nil, stderrors.New("invalid Policy-Basic presentation")
+		}
+
+		return policy.CallerAuthenticationKindBasic, decoded, nil
+	default:
+		return "", nil, stderrors.New("unsupported policy authorization metadata")
+	}
+}
+
+// policyPeerAuthInfo returns only gRPC's concrete peer authentication evidence.
+func policyPeerAuthInfo(ctx context.Context) credentials.AuthInfo {
+	requestPeer, ok := peer.FromContext(ctx)
+	if !ok || requestPeer == nil {
+		return nil
+	}
+
+	return requestPeer.AuthInfo
+}
+
+// policyMTLSIdentity returns the leaf identity candidate for later verified-chain gating.
+func policyMTLSIdentity(ctx context.Context) string {
+	requestPeer, ok := peer.FromContext(ctx)
+	if !ok || requestPeer == nil {
+		return ""
+	}
+
+	switch tlsInfo := requestPeer.AuthInfo.(type) {
+	case credentials.TLSInfo:
+		return peerCertificateCommonName(tlsInfo.State.PeerCertificates)
+	case *credentials.TLSInfo:
+		if tlsInfo == nil {
+			return ""
+		}
+
+		return peerCertificateCommonName(tlsInfo.State.PeerCertificates)
+	default:
+		return ""
+	}
+}
+
+// peerCertificateCommonName returns the leaf common name without claiming chain verification.
+func peerCertificateCommonName(certificates []*x509.Certificate) string {
+	if len(certificates) == 0 || certificates[0] == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(certificates[0].Subject.CommonName)
+}
+
+// knownAuthorityMethod identifies only methods deliberately handled by this listener.
+func knownAuthorityMethod(fullMethod string) bool {
+	if _, ok := staticScopeRequirements[fullMethod]; ok {
+		return true
+	}
+
+	return fullMethod == identityv1.IdentityBackendService_ResolveUser_FullMethodName ||
+		fullMethod == identityv1.IdentityBackendService_GetMFAState_FullMethodName
 }
 
 type callerAuthResult struct {
@@ -798,7 +966,7 @@ func authenticateBasicCaller(ctx context.Context, cfg config.File, values []stri
 
 	for _, value := range values {
 		scheme, payload, ok := splitAuthorization(value)
-		if !ok || scheme != "basic" {
+		if !ok || scheme != authorizationSchemeBasic {
 			continue
 		}
 
@@ -819,7 +987,7 @@ func authenticateBearerCaller(ctx context.Context, deps ServerDeps, fullMethod s
 
 	for _, value := range values {
 		scheme, payload, ok := splitAuthorization(value)
-		if !ok || scheme != "bearer" {
+		if !ok || scheme != authorizationSchemeBearer {
 			continue
 		}
 
@@ -946,7 +1114,7 @@ func requiredScopesForRPC(fullMethod string, request any) []string {
 	case identityv1.IdentityBackendService_GetMFAState_FullMethodName:
 		return getMFAStateRequiredScopes(request)
 	default:
-		return []string{definitions.ScopeAuthenticate}
+		return nil
 	}
 }
 
@@ -1042,6 +1210,8 @@ func grpcSpanName(fullMethod string) string {
 		return "grpc.authority_lookup_identity"
 	case authv1.AuthService_ListAccounts_FullMethodName:
 		return "grpc.authority_list_accounts"
+	case policyv1.PolicyDecisionService_Evaluate_FullMethodName:
+		return "grpc.policy_evaluate"
 	}
 
 	identityMethodPrefix := "/" + identityv1.IdentityBackendService_ServiceDesc.ServiceName + "/"

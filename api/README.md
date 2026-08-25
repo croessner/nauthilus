@@ -10,7 +10,7 @@ Current public protobuf domains are:
 - `common/v1` for shared transport messages;
 - `auth/v1` for authentication RPCs;
 - `identity/v1` for identity and MFA backend RPCs;
-- `policy/v1`, reserved for the future Policy RPC.
+- `policy/v1`, the public unary Policy decision RPC.
 
 Regenerate or verify all committed bindings through the central workflow:
 

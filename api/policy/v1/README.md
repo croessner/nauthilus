@@ -1,9 +1,6 @@
 # Policy gRPC API v1
 
-This directory reserves public protobuf ownership for the Policy API. The
-Policy RPC and generated DTOs are intentionally not part of the public
-protobuf layout change.
+This directory owns the public unary Policy gRPC API.
 
-When the Policy contract is introduced, its protobuf source and generated Go
-bindings must live here and participate in the central
-`make generate-grpc-proto` workflow.
+`PolicyDecisionService.Evaluate` is the only RPC. Generated Go bindings are
+committed and are produced exclusively through `make generate-grpc-proto`.

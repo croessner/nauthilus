@@ -255,7 +255,7 @@ func TestPolicyHTTPCoversEveryEffectDiagnosticsAndBodyLimit(t *testing.T) {
 		})
 	}
 
-	response := servePolicyRequest(policyEngine(&recordingService{response: testResponse(t)}), `{"version":"1","target":{"namespace":"dkim2","action":"sign-message"},"attributes":{"x":{"string":"`+strings.Repeat("a", maximumRequestBytes)+`"}}}`, "Bearer opaque")
+	response := servePolicyRequest(policyEngine(&recordingService{response: testResponse(t)}), `{"version":"1","target":{"namespace":"dkim2","action":"sign-message"},"attributes":{"x":{"string":"`+strings.Repeat("a", decision.MaximumOpaqueCredentialBytes)+`"}}}`, "Bearer opaque")
 	if response.Code != http.StatusRequestEntityTooLarge || response.Header().Get("Cache-Control") != noStore {
 		t.Fatalf("oversized status/cache = %d/%q", response.Code, response.Header().Get("Cache-Control"))
 	}
