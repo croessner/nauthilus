@@ -551,8 +551,7 @@ func (c DefinitionContribution) Plans() []DomainPlanDefinition {
 func (c DefinitionContribution) Providers() []ProviderDefinition {
 	result := append([]ProviderDefinition(nil), c.providers...)
 	for index := range result {
-		result[index].targets = result[index].Targets()
-		result[index].executions = result[index].Executions()
+		result[index] = result[index].clone()
 	}
 
 	return result
@@ -562,8 +561,7 @@ func (c DefinitionContribution) Providers() []ProviderDefinition {
 func (c DefinitionContribution) Effects() []EffectDefinition {
 	result := append([]EffectDefinition(nil), c.effects...)
 	for index := range result {
-		result[index].targets = result[index].Targets()
-		result[index].parameters = result[index].Parameters()
+		result[index] = result[index].clone()
 	}
 
 	return result
@@ -825,12 +823,7 @@ func cloneContributionProviders(ownership NamespaceOwnership, providers []Provid
 		"provider",
 		identifier.ProviderIdentity,
 		func(provider ProviderDefinition) string { return provider.ID() },
-		func(provider ProviderDefinition) ProviderDefinition {
-			provider.targets = provider.Targets()
-			provider.executions = provider.Executions()
-
-			return provider
-		},
+		func(provider ProviderDefinition) (ProviderDefinition, error) { return provider.validatedClone() },
 	)
 }
 
@@ -843,12 +836,7 @@ func cloneContributionEffects(ownership NamespaceOwnership, effects []EffectDefi
 		"effect",
 		identifier.Qualified,
 		func(effect EffectDefinition) string { return effect.ID() },
-		func(effect EffectDefinition) EffectDefinition {
-			effect.targets = effect.Targets()
-			effect.parameters = effect.Parameters()
-
-			return effect
-		},
+		func(effect EffectDefinition) (EffectDefinition, error) { return effect.validatedClone() },
 	)
 }
 
@@ -860,7 +848,7 @@ func cloneQualifiedDefinitions[T any](
 	identityKind string,
 	validIdentity func(string) bool,
 	identityOf func(T) string,
-	clone func(T) T,
+	validatedClone func(T) (T, error),
 ) ([]T, error) {
 	result := make([]T, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
@@ -878,7 +866,12 @@ func cloneQualifiedDefinitions[T any](
 
 		seen[identityValue] = struct{}{}
 
-		result = append(result, clone(value))
+		cloned, err := validatedClone(value)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, cloned)
 	}
 
 	return result, nil

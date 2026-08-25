@@ -75,6 +75,12 @@ const (
 
 	// ComponentKindHook identifies a hook component.
 	ComponentKindHook ComponentKind = "hook"
+
+	// ComponentKindDecisionFactProvider identifies a generic decision fact provider.
+	ComponentKindDecisionFactProvider ComponentKind = "decision_fact_provider"
+
+	// ComponentKindDecisionEffectProvider identifies a generic decision effect provider.
+	ComponentKindDecisionEffectProvider ComponentKind = "decision_effect_provider"
 )
 
 // ComponentOrigin identifies which integration surface registered a component.
@@ -94,14 +100,16 @@ const (
 
 // Component describes one registered plugin component without enabling execution.
 type Component struct {
-	Value            any
-	SourceDescriptor pluginapi.SourceDescriptor
-	HookDescriptor   pluginapi.HookDescriptor
-	QualifiedName    string
-	ModuleName       string
-	LocalName        string
-	Kind             ComponentKind
-	Origin           ComponentOrigin
+	Value                            any
+	DecisionFactProviderDescriptor   pluginapi.DecisionFactProviderDescriptor
+	DecisionEffectProviderDescriptor pluginapi.DecisionEffectProviderDescriptor
+	SourceDescriptor                 pluginapi.SourceDescriptor
+	HookDescriptor                   pluginapi.HookDescriptor
+	QualifiedName                    string
+	ModuleName                       string
+	LocalName                        string
+	Kind                             ComponentKind
+	Origin                           ComponentOrigin
 }
 
 // DebugModule describes one registered plugin debug selector.
@@ -846,6 +854,8 @@ func (r *Registrar) applyHookAuthorization(descriptor pluginapi.HookDescriptor) 
 
 // Clone detaches mutable descriptor metadata while retaining the registered component owner.
 func (component Component) Clone() Component {
+	component.DecisionFactProviderDescriptor = cloneDecisionFactProviderDescriptor(component.DecisionFactProviderDescriptor)
+	component.DecisionEffectProviderDescriptor = cloneDecisionEffectProviderDescriptor(component.DecisionEffectProviderDescriptor)
 	component.SourceDescriptor.Requires = slices.Clone(component.SourceDescriptor.Requires)
 	component.SourceDescriptor.After = slices.Clone(component.SourceDescriptor.After)
 	component.HookDescriptor.RequiredScopes = slices.Clone(component.HookDescriptor.RequiredScopes)

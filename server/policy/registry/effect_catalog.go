@@ -242,6 +242,27 @@ func (s ParameterSchema) NonEmpty() bool {
 	return s.nonEmpty
 }
 
+// input returns the complete constructor state for validation and cloning.
+func (s ParameterSchema) input() ParameterSchemaInput {
+	return ParameterSchemaInput{
+		Name:           s.name,
+		Kind:           s.kind,
+		MaxLength:      s.maxLength,
+		MaxItems:       s.maxItems,
+		MaxBytes:       s.maxBytes,
+		AllowedStrings: s.AllowedStrings(),
+		NonEmpty:       s.nonEmpty,
+		Required:       s.required,
+	}
+}
+
+// clone returns one detached parameter schema.
+func (s ParameterSchema) clone() ParameterSchema {
+	s.allowedStrings = s.AllowedStrings()
+
+	return s
+}
+
 // ProviderDefinitionInput carries one resolved host provider into its constructor.
 type ProviderDefinitionInput struct {
 	PostActionAcceptance effectsupervisor.Acceptor
@@ -250,6 +271,7 @@ type ProviderDefinitionInput struct {
 	Executions           []ExecutionClass
 	Requires             []string
 	ProducedFacts        []string
+	Outputs              []ProviderFactOutput
 	Failure              ProviderFailureBehavior
 	Timeout              time.Duration
 	DiagnosticID         string
@@ -263,6 +285,7 @@ type ProviderDefinition struct {
 	executions           []ExecutionClass
 	requires             []string
 	producedFacts        []string
+	outputs              []ProviderFactOutput
 	diagnosticID         string
 	failure              ProviderFailureBehavior
 	timeout              time.Duration
@@ -276,12 +299,14 @@ func NewProviderDefinition(input ProviderDefinitionInput) (ProviderDefinition, e
 
 // newProviderDefinition validates configured and builtin provider bindings.
 func newProviderDefinition(input ProviderDefinitionInput, builtin bool) (ProviderDefinition, error) {
-	if !validProviderID(input.ID) || len(input.Targets) == 0 || len(input.Executions) == 0 {
+	scheduled := providerScheduleDeclared(input)
+
+	if !validProviderID(input.ID) || len(input.Targets) == 0 || len(input.Executions) == 0 && !scheduled {
 		return ProviderDefinition{}, newValidationError(
 			ErrInvalidProviderDefinition,
 			"provider",
 			input.ID,
-			"must declare an exact identity, target allowlist, and execution allowlist",
+			"must declare an exact identity, target allowlist, and execution allowlist or fact-provider schedule",
 		)
 	}
 
@@ -314,7 +339,7 @@ func newProviderDefinition(input ProviderDefinitionInput, builtin bool) (Provide
 		seen[execution] = struct{}{}
 	}
 
-	requires, producedFacts, err := cloneProviderSchedule(input)
+	requires, producedFacts, outputs, err := cloneProviderSchedule(input)
 	if err != nil {
 		return ProviderDefinition{}, err
 	}
@@ -326,6 +351,7 @@ func newProviderDefinition(input ProviderDefinitionInput, builtin bool) (Provide
 		executions:           executions,
 		requires:             requires,
 		producedFacts:        producedFacts,
+		outputs:              outputs,
 		diagnosticID:         input.DiagnosticID,
 		failure:              input.Failure,
 		timeout:              input.Timeout,
@@ -334,14 +360,13 @@ func newProviderDefinition(input ProviderDefinitionInput, builtin bool) (Provide
 }
 
 // cloneProviderSchedule validates and owns one optional generic fact-provider schedule contract.
-func cloneProviderSchedule(input ProviderDefinitionInput) ([]string, []string, error) {
-	scheduled := len(input.Requires) > 0 || len(input.ProducedFacts) > 0 || input.Failure != "" || input.Timeout != 0
-	if !scheduled {
-		return nil, nil, nil
+func cloneProviderSchedule(input ProviderDefinitionInput) ([]string, []string, []ProviderFactOutput, error) {
+	if !providerScheduleDeclared(input) {
+		return nil, nil, nil, nil
 	}
 
 	if !input.Failure.Valid() || input.Timeout <= 0 || input.Timeout > maximumProviderTimeout {
-		return nil, nil, newValidationError(
+		return nil, nil, nil, newValidationError(
 			ErrInvalidProviderDefinition,
 			input.ID+".schedule",
 			input.ID,
@@ -351,25 +376,125 @@ func cloneProviderSchedule(input ProviderDefinitionInput) ([]string, []string, e
 
 	requires, err := cloneUniqueProviderIDs(input.Requires, input.ID+".requires")
 	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	producedFacts, outputs, err := cloneProviderOutputs(input)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return requires, producedFacts, outputs, nil
+}
+
+// providerScheduleDeclared reports whether any generic fact-provider schedule field is present.
+func providerScheduleDeclared(input ProviderDefinitionInput) bool {
+	return len(input.Requires) > 0 || len(input.ProducedFacts) > 0 || len(input.Outputs) > 0 ||
+		input.Failure != "" || input.Timeout != 0
+}
+
+// cloneProviderOutputs validates and owns compatible legacy IDs and typed provider output contracts.
+func cloneProviderOutputs(input ProviderDefinitionInput) ([]string, []ProviderFactOutput, error) {
+	producedFacts, err := cloneUniqueProviderFactIDs(input.ID, input.ProducedFacts)
+	if err != nil {
 		return nil, nil, err
 	}
 
-	producedFacts := append([]string(nil), input.ProducedFacts...)
-	seen := make(map[string]struct{}, len(producedFacts))
+	outputs, err := cloneTypedProviderFactOutputs(input.ID, input.Outputs)
+	if err != nil {
+		return nil, nil, err
+	}
 
-	for _, factID := range producedFacts {
+	if len(producedFacts) == 0 {
+		producedFacts = providerOutputIDs(outputs)
+	}
+
+	if len(input.Outputs) > 0 && !providerOutputIDsMatch(producedFacts, outputs) {
+		return nil, nil, newValidationError(
+			ErrInvalidProviderDefinition,
+			input.ID+".outputs",
+			input.ID,
+			"typed output identities must exactly match the produced fact declarations",
+		)
+	}
+
+	return producedFacts, outputs, nil
+}
+
+// cloneUniqueProviderFactIDs validates and owns legacy produced-fact identity declarations.
+func cloneUniqueProviderFactIDs(providerID string, input []string) ([]string, error) {
+	result := append([]string(nil), input...)
+	seen := make(map[string]struct{}, len(result))
+
+	for _, factID := range result {
 		if !identifier.Fact(factID) {
-			return nil, nil, newValidationError(ErrInvalidProviderDefinition, input.ID+".facts", factID, "must be a canonical fact identity")
+			return nil, newValidationError(ErrInvalidProviderDefinition, providerID+".facts", factID, "must be a canonical fact identity")
 		}
 
 		if _, exists := seen[factID]; exists {
-			return nil, nil, newValidationError(ErrDuplicateDefinition, input.ID+".facts", factID, "fact occurs more than once")
+			return nil, newValidationError(ErrDuplicateDefinition, providerID+".facts", factID, "fact occurs more than once")
 		}
 
 		seen[factID] = struct{}{}
 	}
 
-	return requires, producedFacts, nil
+	return result, nil
+}
+
+// cloneTypedProviderFactOutputs validates, deduplicates, and owns typed output capability metadata.
+func cloneTypedProviderFactOutputs(providerID string, input []ProviderFactOutput) ([]ProviderFactOutput, error) {
+	if len(input) > maximumContributionDefinitions {
+		return nil, newValidationError(
+			ErrInvalidProviderDefinition,
+			providerID+".outputs",
+			providerID,
+			"contains too many typed fact outputs",
+		)
+	}
+
+	result := make([]ProviderFactOutput, 0, len(input))
+	seen := make(map[string]struct{}, len(input))
+
+	for _, output := range input {
+		cloned, err := NewProviderFactOutput(output.input())
+		if err != nil {
+			return nil, err
+		}
+
+		if _, exists := seen[cloned.ID()]; exists {
+			return nil, newValidationError(ErrDuplicateDefinition, providerID+".outputs", cloned.ID(), "typed fact output occurs more than once")
+		}
+
+		seen[cloned.ID()] = struct{}{}
+		result = append(result, cloned)
+	}
+
+	return result, nil
+}
+
+// providerOutputIDs returns the exact identity order of typed output capability metadata.
+func providerOutputIDs(outputs []ProviderFactOutput) []string {
+	result := make([]string, 0, len(outputs))
+	for _, output := range outputs {
+		result = append(result, output.ID())
+	}
+
+	return result
+}
+
+// providerOutputIDsMatch reports whether typed output identities preserve the exact produced-fact order.
+func providerOutputIDsMatch(producedFacts []string, outputs []ProviderFactOutput) bool {
+	if len(producedFacts) != len(outputs) {
+		return false
+	}
+
+	for index, output := range outputs {
+		if producedFacts[index] != output.ID() {
+			return false
+		}
+	}
+
+	return true
 }
 
 // ID returns the exact provider identity.
@@ -395,6 +520,11 @@ func (d ProviderDefinition) Requires() []string {
 // ProducedFacts returns detached canonical fact output declarations.
 func (d ProviderDefinition) ProducedFacts() []string {
 	return append([]string(nil), d.producedFacts...)
+}
+
+// Outputs returns detached typed provider fact capability contracts.
+func (d ProviderDefinition) Outputs() []ProviderFactOutput {
+	return append([]ProviderFactOutput(nil), d.outputs...)
 }
 
 // Failure returns the explicit generic provider failure behavior.
@@ -452,6 +582,38 @@ func (d ProviderDefinition) DiagnosticID() string {
 // IsBuiltin reports whether the provider class is an immutable host contribution.
 func (d ProviderDefinition) IsBuiltin() bool {
 	return d.builtin
+}
+
+// input returns the complete constructor state for validation and cloning.
+func (d ProviderDefinition) input() ProviderDefinitionInput {
+	return ProviderDefinitionInput{
+		PostActionAcceptance: d.postActionAcceptance,
+		ID:                   d.id,
+		Targets:              d.Targets(),
+		Executions:           d.Executions(),
+		Requires:             d.Requires(),
+		ProducedFacts:        d.ProducedFacts(),
+		Outputs:              d.Outputs(),
+		Failure:              d.failure,
+		Timeout:              d.timeout,
+		DiagnosticID:         d.diagnosticID,
+	}
+}
+
+// clone returns one detached provider definition.
+func (d ProviderDefinition) clone() ProviderDefinition {
+	d.targets = d.Targets()
+	d.executions = d.Executions()
+	d.requires = d.Requires()
+	d.producedFacts = d.ProducedFacts()
+	d.outputs = d.Outputs()
+
+	return d
+}
+
+// validatedClone reconstructs one provider through its immutable constructor.
+func (d ProviderDefinition) validatedClone() (ProviderDefinition, error) {
+	return newProviderDefinition(d.input(), d.builtin)
 }
 
 // EffectDefinitionInput carries one typed target-aware effect into its constructor.
@@ -553,19 +715,21 @@ func cloneEffectParameters(id string, input []ParameterSchema) ([]ParameterSchem
 		return nil, newValidationError(ErrInvalidEffectDefinition, id+".parameters", id, "contains too many parameter definitions")
 	}
 
-	parameters := append([]ParameterSchema(nil), input...)
-	seen := make(map[string]struct{}, len(parameters))
+	parameters := make([]ParameterSchema, 0, len(input))
+	seen := make(map[string]struct{}, len(input))
 
-	for _, parameter := range parameters {
-		if !identifier.Action(parameter.Name()) || !parameter.Kind().IsValid() {
+	for _, parameter := range input {
+		cloned, err := NewParameterSchema(parameter.input())
+		if err != nil {
 			return nil, newValidationError(ErrInvalidEffectDefinition, id+".parameters", parameter.Name(), "must be constructor validated")
 		}
 
-		if _, exists := seen[parameter.Name()]; exists {
-			return nil, newValidationError(ErrDuplicateDefinition, id+".parameters", parameter.Name(), "parameter occurs more than once")
+		if _, exists := seen[cloned.Name()]; exists {
+			return nil, newValidationError(ErrDuplicateDefinition, id+".parameters", cloned.Name(), "parameter occurs more than once")
 		}
 
-		seen[parameter.Name()] = struct{}{}
+		seen[cloned.Name()] = struct{}{}
+		parameters = append(parameters, cloned)
 	}
 
 	return parameters, nil
@@ -598,7 +762,12 @@ func (d EffectDefinition) Targets() []decision.Target {
 
 // Parameters returns detached typed parameter schemas.
 func (d EffectDefinition) Parameters() []ParameterSchema {
-	return append([]ParameterSchema(nil), d.parameters...)
+	parameters := append([]ParameterSchema(nil), d.parameters...)
+	for index := range parameters {
+		parameters[index] = parameters[index].clone()
+	}
+
+	return parameters
 }
 
 // Kind returns the obligation/advice class.
@@ -621,6 +790,32 @@ func (d EffectDefinition) AllowsTarget(target decision.Target) bool {
 	return slices.ContainsFunc(d.targets, func(candidate decision.Target) bool {
 		return candidate.String() == target.String()
 	})
+}
+
+// input returns the complete constructor state for validation and cloning.
+func (d EffectDefinition) input() EffectDefinitionInput {
+	return EffectDefinitionInput{
+		ID:           d.id,
+		Provider:     d.provider,
+		DiagnosticID: d.diagnosticID,
+		Targets:      d.Targets(),
+		Parameters:   d.Parameters(),
+		Kind:         d.kind,
+		Execution:    d.execution,
+	}
+}
+
+// clone returns one detached effect definition.
+func (d EffectDefinition) clone() EffectDefinition {
+	d.targets = d.Targets()
+	d.parameters = d.Parameters()
+
+	return d
+}
+
+// validatedClone reconstructs one effect through its immutable constructor.
+func (d EffectDefinition) validatedClone() (EffectDefinition, error) {
+	return newEffectDefinitionWithSelection(d.input(), d.builtin, d.selectionID)
 }
 
 // ValidateUse validates one typed rule selection against the parameter schema.

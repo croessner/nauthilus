@@ -31,6 +31,22 @@ func TestPublicPackageDoesNotImportServerInternals(t *testing.T) {
 		t.Fatalf("read public package files: %v", err)
 	}
 
+	assertNoForbiddenPublicImports(t, files)
+}
+
+func TestExternalStylePluginFixtureDoesNotImportServerInternals(t *testing.T) {
+	files, err := publicPackageGoFiles(filepath.Join("testdata", "sampleplugin"))
+	if err != nil {
+		t.Fatalf("read external fixture files: %v", err)
+	}
+
+	assertNoForbiddenPublicImports(t, files)
+}
+
+// assertNoForbiddenPublicImports checks one production file set against the public boundary.
+func assertNoForbiddenPublicImports(t *testing.T, files []string) {
+	t.Helper()
+
 	for _, name := range files {
 		parsed, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.ImportsOnly)
 		if err != nil {

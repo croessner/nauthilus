@@ -875,6 +875,55 @@ serializable, reportable, and safe to bridge between Lua and Go extension paths.
 The extension point names should be domain-specific and neutral. Lua and Go can be implementations of the same internal
 concept.
 
+### Target-Aware Decision Contributions
+
+Generic policy contributions use an additive contract that is separate from the authentication-shaped extension
+points below. The existing `Plugin` and `Registrar` interfaces remain unchanged. A plugin discovers generic
+registration support by asserting the optional `DecisionRegistrar` interface during `Register`:
+
+```go
+type DecisionRegistrar interface {
+    RegisterDecisionFactProvider(DecisionFactProvider) error
+    RegisterDecisionEffectProvider(DecisionEffectProvider) error
+}
+
+type DecisionFactProvider interface {
+    Descriptor() DecisionFactProviderDescriptor
+    Collect(context.Context, DecisionFactRequest) (DecisionFactResult, error)
+}
+
+type DecisionEffectProvider interface {
+    Descriptor() DecisionEffectProviderDescriptor
+    Execute(context.Context, DecisionEffectRequest) (DecisionEffectResult, error)
+}
+```
+
+These interfaces are target-aware capability declarations, not scheduling or decision APIs. Descriptors carry an exact
+contributed namespace, a component-local name, bounded exact target selectors, declared fact outputs, typed effect
+parameters, and a bounded fact-provider timeout. The host qualifies local fact outputs with the configured module
+authority and revalidates every descriptor while adapting it into the internal immutable contribution DTO. The DTO
+retains each qualified output's category, value kind, and bounds as provider capability metadata; the active target
+schema remains the catalog-owned authority and later generation binding must cross-check the capability against it. A
+target selector may reference an exact catalog target outside the contributed definition namespace; it grants no
+target activation or catalog ownership.
+
+Requests contain only detached target, redacted caller, admitted fact, selected-effect, and typed parameter values.
+Fact results identify only predeclared local outputs, and effect results use the closed
+`succeeded|failed|outcome_unknown` states with a bounded error class. Neither request family exposes the broad `Host`
+facade, raw credentials, HTTP state, a response object, mutable trusted provenance, a finalization gate, or detached
+work scheduling.
+
+Generic descriptors and results intentionally contain no decision, abort, activation, checkpoint-order, priority,
+retry, replay, idempotency, or deduplication controls. Policy remains the decision and effect-selection authority;
+catalog compilation owns activation and provider scheduling; and the effect supervisor owns accepted post-actions.
+Only selected `host_sync` and `host_post_action` obligations have generic executors. `return_only` obligations need no
+host executor, and advice is never executed.
+
+Existing native and Lua authentication extensions retain their current behavior and remain implicitly bound to the
+`authn` namespace. The generic registration contract does not add execution wiring to those paths. The separate Lua
+contract freezes `policy.facts.collect` plus typed selected-effect request/result values; Lua callback registration,
+effect dispatch shape, generation binding, and execution remain work for the integration slice.
+
 Environment and subject sources use the same deterministic dependency concepts. Environment sources and ordinary
 subject configurations retain separate Lua and Go source sets. Subject analysis also supports one narrow mixed boundary:
 a `lua.subject` policy check may name a `plugin.subject` policy check in `after`. The host then executes non-deferred Lua

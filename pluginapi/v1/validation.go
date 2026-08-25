@@ -65,7 +65,7 @@ var reservedDebugModuleNames = map[string]struct{}{
 	"jwt":                       {},
 	"ldap":                      {},
 	"ldappool":                  {},
-	"lua":                       {},
+	decisionLuaFactQualifier:    {},
 	"none":                      {},
 	PluginPolicyAttributePrefix: {},
 	"policy":                    {},

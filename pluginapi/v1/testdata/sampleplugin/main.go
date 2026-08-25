@@ -34,14 +34,16 @@ const (
 )
 
 var (
-	_ pluginapi.Plugin            = samplePlugin{}
-	_ pluginapi.RuntimePlugin     = samplePlugin{}
-	_ pluginapi.Backend           = sampleBackend{}
-	_ pluginapi.EnvironmentSource = sampleEnvironmentSource{}
-	_ pluginapi.SubjectSource     = sampleSubjectSource{}
-	_ pluginapi.ObligationTarget  = sampleObligationTarget{}
-	_ pluginapi.Hook              = sampleHook{}
-	_ pluginapi.Hook              = sampleTextmapHook{}
+	_ pluginapi.Plugin                 = samplePlugin{}
+	_ pluginapi.RuntimePlugin          = samplePlugin{}
+	_ pluginapi.Backend                = sampleBackend{}
+	_ pluginapi.EnvironmentSource      = sampleEnvironmentSource{}
+	_ pluginapi.SubjectSource          = sampleSubjectSource{}
+	_ pluginapi.ObligationTarget       = sampleObligationTarget{}
+	_ pluginapi.DecisionFactProvider   = sampleDecisionFactProvider{}
+	_ pluginapi.DecisionEffectProvider = sampleDecisionEffectProvider{}
+	_ pluginapi.Hook                   = sampleHook{}
+	_ pluginapi.Hook                   = sampleTextmapHook{}
 )
 
 // NauthilusPlugin returns a new plugin instance for one configured module.
@@ -153,7 +155,20 @@ func (samplePlugin) Register(registrar pluginapi.Registrar) error {
 		return err
 	}
 
-	return registrar.RegisterHook(sampleTextmapHook{name: "textmap_head", method: http.MethodHead})
+	if err := registrar.RegisterHook(sampleTextmapHook{name: "textmap_head", method: http.MethodHead}); err != nil {
+		return err
+	}
+
+	decisionRegistrar, supportsDecisionExtensions := registrar.(pluginapi.DecisionRegistrar)
+	if !supportsDecisionExtensions {
+		return nil
+	}
+
+	if err := decisionRegistrar.RegisterDecisionFactProvider(sampleDecisionFactProvider{}); err != nil {
+		return err
+	}
+
+	return decisionRegistrar.RegisterDecisionEffectProvider(sampleDecisionEffectProvider{})
 }
 
 // sampleOptionalMFAInterfaceDiscovery demonstrates independent optional MFA interface checks.
@@ -387,6 +402,91 @@ func (sampleObligationTarget) Execute(_ context.Context, request pluginapi.Oblig
 			},
 		},
 	}, nil
+}
+
+type sampleDecisionFactProvider struct{}
+
+// Descriptor returns an additive target-aware fact capability with a host-owned timeout.
+func (sampleDecisionFactProvider) Descriptor() pluginapi.DecisionFactProviderDescriptor {
+	return pluginapi.DecisionFactProviderDescriptor{
+		Namespace: "mail.security",
+		Name:      "risk",
+		Targets: []pluginapi.DecisionTargetSelector{
+			{Namespace: "authn", Action: "authenticate"},
+		},
+		Outputs: []pluginapi.DecisionFactOutputDescriptor{
+			{
+				Name:      "risk.score",
+				Category:  pluginapi.DecisionFactCategoryEnvironment,
+				Kind:      pluginapi.DecisionValueKindString,
+				MaxLength: 16,
+			},
+		},
+		Timeout: time.Second,
+	}
+}
+
+// Collect emits only a provider-local fact name and strict value.
+func (sampleDecisionFactProvider) Collect(
+	_ context.Context,
+	request pluginapi.DecisionFactRequest,
+) (pluginapi.DecisionFactResult, error) {
+	score := "low"
+	if request.Caller().Principal() == "" {
+		score = "unknown"
+	}
+
+	value, err := pluginapi.NewDecisionValue(pluginapi.DecisionValueInput{String: &score})
+	if err != nil {
+		return pluginapi.DecisionFactResult{}, err
+	}
+
+	return pluginapi.DecisionFactResult{
+		Facts: []pluginapi.DecisionFactOutput{{Name: "risk.score", Value: value}},
+	}, nil
+}
+
+type sampleDecisionEffectProvider struct{}
+
+// Descriptor returns policy-selectable host execution without lifecycle controls.
+func (sampleDecisionEffectProvider) Descriptor() pluginapi.DecisionEffectProviderDescriptor {
+	return pluginapi.DecisionEffectProviderDescriptor{
+		Namespace: "mail.security",
+		Name:      "notifier",
+		Effects: []pluginapi.DecisionEffectDescriptor{
+			{
+				Name:      "notify",
+				Execution: pluginapi.DecisionEffectExecutionHostSync,
+				Targets: []pluginapi.DecisionTargetSelector{
+					{Namespace: "authn", Action: "authenticate"},
+				},
+				Parameters: []pluginapi.DecisionEffectParameterDescriptor{
+					{
+						Name:      "recipient",
+						Kind:      pluginapi.DecisionValueKindString,
+						MaxLength: 128,
+						NonEmpty:  true,
+						Required:  true,
+					},
+				},
+			},
+		},
+	}
+}
+
+// Execute reports only the observed result of a host-selected effect.
+func (sampleDecisionEffectProvider) Execute(
+	_ context.Context,
+	request pluginapi.DecisionEffectRequest,
+) (pluginapi.DecisionEffectResult, error) {
+	if _, exists := request.Parameter("recipient"); !exists {
+		return pluginapi.DecisionEffectResult{
+			Outcome:    pluginapi.DecisionEffectOutcomeFailed,
+			ErrorClass: pluginapi.DecisionErrorClassInvalidInput,
+		}, nil
+	}
+
+	return pluginapi.DecisionEffectResult{Outcome: pluginapi.DecisionEffectOutcomeSucceeded}, nil
 }
 
 type sampleHook struct{}

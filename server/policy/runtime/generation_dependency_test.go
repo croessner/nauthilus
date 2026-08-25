@@ -49,21 +49,49 @@ func TestGenerationCoordinatorHasNoTransportOrPublicExtensionDependencies(t *tes
 			continue
 		}
 
-		parsed, parseErr := parser.ParseFile(token.NewFileSet(), entry.Name(), nil, parser.ImportsOnly)
-		if parseErr != nil {
-			t.Fatalf("parser.ParseFile(%s): %v", entry.Name(), parseErr)
+		assertFileExcludesImports(t, entry.Name(), forbidden, "generation")
+	}
+}
+
+// TestTargetCatalogImportBoundaryExcludesPublicExtensionAPIs protects catalog ownership from adapter dependencies.
+func TestTargetCatalogImportBoundaryExcludesPublicExtensionAPIs(t *testing.T) {
+	files := []string{
+		"../compiler/target_catalog.go",
+		"../registry/effect_catalog.go",
+		"../registry/target_contribution.go",
+		"target_catalog.go",
+	}
+	forbidden := []string{
+		"/pluginapi/",
+		"/server/lualib",
+		"/server/pluginloader",
+		"/server/pluginregistry",
+		"/server/pluginruntime",
+	}
+
+	for _, name := range files {
+		assertFileExcludesImports(t, name, forbidden, "target catalog")
+	}
+}
+
+// assertFileExcludesImports rejects one production file that crosses an internal dependency boundary.
+func assertFileExcludesImports(t *testing.T, name string, forbidden []string, boundary string) {
+	t.Helper()
+
+	parsed, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.ImportsOnly)
+	if err != nil {
+		t.Fatalf("parser.ParseFile(%s): %v", name, err)
+	}
+
+	for _, imported := range parsed.Imports {
+		path, err := strconv.Unquote(imported.Path.Value)
+		if err != nil {
+			t.Fatalf("strconv.Unquote(%s): %v", imported.Path.Value, err)
 		}
 
-		for _, imported := range parsed.Imports {
-			path, unquoteErr := strconv.Unquote(imported.Path.Value)
-			if unquoteErr != nil {
-				t.Fatalf("strconv.Unquote(%s): %v", imported.Path.Value, unquoteErr)
-			}
-
-			for _, fragment := range forbidden {
-				if strings.Contains(path, fragment) {
-					t.Fatalf("%s imports forbidden generation dependency %q", entry.Name(), path)
-				}
+		for _, fragment := range forbidden {
+			if strings.Contains(path, fragment) {
+				t.Fatalf("%s imports forbidden %s dependency %q", name, boundary, path)
 			}
 		}
 	}
