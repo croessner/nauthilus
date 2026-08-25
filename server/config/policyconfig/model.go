@@ -15,6 +15,9 @@ import (
 )
 
 const (
+	// ProviderKindLua selects the standalone target-aware Lua provider path.
+	ProviderKindLua = "lua"
+
 	// VisibilityPrivate keeps a policy set inside its owning namespace.
 	VisibilityPrivate = "private"
 
@@ -225,6 +228,15 @@ type ProviderConfig struct {
 	Failure       string                  `mapstructure:"failure"`
 	Timeout       time.Duration           `mapstructure:"timeout"`
 	Diagnostics   DiagnosticsConfig       `mapstructure:"diagnostics"`
+}
+
+// CanonicalID derives the internal provider identity while preserving legacy and native names.
+func (p ProviderConfig) CanonicalID(namespace string, name string) string {
+	if p.Kind == ProviderKindLua {
+		return namespace + "/lua." + p.Module + "." + name
+	}
+
+	return namespace + "/" + name
 }
 
 // EffectConfig declares one namespace-owned typed effect definition.

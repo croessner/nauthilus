@@ -58,14 +58,11 @@ func (n *policyNormalizer) normalizeProviders(
 	for _, name := range sortedKeys(configured) {
 		path := "policy.namespaces." + namespace + ".providers." + name
 		provider := configured[name]
+		providerID := CanonicalProviderID(namespace, name, provider)
 
-		targets, err := normalizeTargetReferences(path+".targets", namespace, provider.Targets)
+		targets, err := n.providerTargets(namespace, name, provider)
 		if err != nil {
 			return nil, err
-		}
-
-		if len(targets) == 0 {
-			targets = n.deriveProviderTargets(namespace + "/" + name)
 		}
 
 		executions, err := normalizeExecutions(path+".executions", provider.Executions)
@@ -73,9 +70,7 @@ func (n *policyNormalizer) normalizeProviders(
 			return nil, err
 		}
 
-		if len(executions) == 0 && len(targets) > 0 {
-			executions = []registry.ExecutionClass{registry.ExecutionHostSync}
-		}
+		executions = defaultProviderExecutions(provider, targets, executions)
 
 		timeout := provider.Timeout
 		if namespace != policy.AuthnNamespace {
@@ -87,16 +82,22 @@ func (n *policyNormalizer) normalizeProviders(
 
 		requires := make([]string, 0, len(provider.Requires))
 		for _, requirement := range provider.Requires {
-			requires = append(requires, qualify(namespace, requirement))
+			requires = append(requires, n.resolveProviderReference(namespace, requirement))
+		}
+
+		outputs, err := n.normalizeProviderOutputs(namespace, name, provider, targets)
+		if err != nil {
+			return nil, err
 		}
 
 		definition, err := registry.NewProviderDefinition(registry.ProviderDefinitionInput{
 			PostActionAcceptance: n.acceptance,
-			ID:                   namespace + "/" + name,
+			ID:                   providerID,
 			Targets:              targets,
 			Executions:           executions,
 			Requires:             requires,
 			ProducedFacts:        provider.ProducedFacts,
+			Outputs:              outputs,
 			Failure:              registry.ProviderFailureBehavior(provider.Failure),
 			Timeout:              timeout,
 			DiagnosticID:         provider.Diagnostics.PublicID,
@@ -109,6 +110,45 @@ func (n *policyNormalizer) normalizeProviders(
 	}
 
 	return providers, nil
+}
+
+// defaultProviderExecutions preserves legacy defaults while keeping generic Lua effect ownership explicit.
+func defaultProviderExecutions(
+	provider policyconfig.ProviderConfig,
+	targets []decision.Target,
+	executions []registry.ExecutionClass,
+) []registry.ExecutionClass {
+	if len(executions) == 0 && len(targets) > 0 && provider.Kind != policyconfig.ProviderKindLua {
+		return []registry.ExecutionClass{registry.ExecutionHostSync}
+	}
+
+	return executions
+}
+
+// normalizeProviderOutputs projects schema-owned capabilities only for generic Lua providers.
+func (n *policyNormalizer) normalizeProviderOutputs(
+	namespace string,
+	name string,
+	provider policyconfig.ProviderConfig,
+	targets []decision.Target,
+) ([]registry.ProviderFactOutput, error) {
+	if provider.Kind != policyconfig.ProviderKindLua {
+		return nil, nil
+	}
+
+	projected, err := n.projectLuaProviderOutputs(namespace, name, provider, targets)
+	if err != nil {
+		return nil, err
+	}
+
+	outputs, err := registryLuaProviderOutputs(projected)
+	if err != nil {
+		path := "policy.namespaces." + namespace + ".providers." + name + ".produced_facts"
+
+		return nil, atPath(path, err)
+	}
+
+	return outputs, nil
 }
 
 // normalizeProviderTimeout applies the shortest matching target default when a generic provider omits one.
@@ -154,7 +194,7 @@ func (n *policyNormalizer) normalizeEffects(
 	effects := make([]registry.EffectDefinition, 0, len(configured))
 
 	for _, name := range sortedKeys(configured) {
-		definition, err := normalizeEffect(namespace, name, configured[name])
+		definition, err := n.normalizeEffect(namespace, name, configured[name])
 		if err != nil {
 			return nil, err
 		}
@@ -166,7 +206,7 @@ func (n *policyNormalizer) normalizeEffects(
 }
 
 // normalizeEffect constructs one typed effect descriptor with canonical host ownership.
-func normalizeEffect(
+func (n *policyNormalizer) normalizeEffect(
 	namespace string,
 	name string,
 	effect policyconfig.EffectConfig,
@@ -183,7 +223,7 @@ func normalizeEffect(
 		return registry.EffectDefinition{}, err
 	}
 
-	provider, err := normalizeEffectProvider(path, namespace, effect)
+	provider, err := n.normalizeEffectProvider(path, namespace, effect)
 	if err != nil {
 		return registry.EffectDefinition{}, err
 	}
@@ -228,7 +268,7 @@ func normalizeEffectTargets(
 }
 
 // normalizeEffectProvider resolves immutable Lua ownership or qualifies an authored provider reference.
-func normalizeEffectProvider(
+func (n *policyNormalizer) normalizeEffectProvider(
 	path string,
 	namespace string,
 	effect policyconfig.EffectConfig,
@@ -243,7 +283,7 @@ func normalizeEffectProvider(
 	}
 
 	if effect.Provider != "" {
-		return qualify(namespace, effect.Provider), nil
+		return n.resolveProviderReference(namespace, effect.Provider), nil
 	}
 
 	return "", nil
@@ -361,29 +401,72 @@ func normalizeEffectKind(kind string) registry.EffectKind {
 // deriveProviderTargets finds exact plan usages when the descriptor omits a redundant allowlist.
 func (n *policyNormalizer) deriveProviderTargets(providerID string) []decision.Target {
 	targets := make([]decision.Target, 0)
-	seen := make(map[string]struct{})
 
 	for _, target := range n.targets {
-		plan, err := n.selectedDomainPlan(target)
-		if err != nil {
+		if !n.providerBoundToTarget(providerID, target) {
 			continue
 		}
 
-		for _, checkpoint := range plan.Checkpoints {
-			for _, instance := range checkpoint.Providers {
-				if instance.Use != providerID {
-					continue
-				}
+		targets = append(targets, target.target)
+	}
 
-				if _, exists := seen[target.target.String()]; !exists {
-					seen[target.target.String()] = struct{}{}
-					targets = append(targets, target.target)
-				}
+	return targets
+}
+
+// providerBoundToTarget joins raw plan and effect references for one exact configured target.
+func (n *policyNormalizer) providerBoundToTarget(providerID string, target normalizedTarget) bool {
+	plan, err := n.selectedDomainPlan(target)
+	if err == nil && n.planUsesProvider(target.target.Namespace(), plan, providerID) {
+		return true
+	}
+
+	configuredNamespace := n.policy.Namespaces[target.target.Namespace()]
+
+	return n.effectsUseProvider(target.target, configuredNamespace.Effects, providerID)
+}
+
+// planUsesProvider reports whether one configured checkpoint schedules the canonical provider.
+func (n *policyNormalizer) planUsesProvider(
+	namespace string,
+	plan policyconfig.DomainPlanConfig,
+	providerID string,
+) bool {
+	for _, checkpoint := range plan.Checkpoints {
+		for _, instance := range checkpoint.Providers {
+			if n.resolveProviderReference(namespace, instance.Use) == providerID {
+				return true
 			}
 		}
 	}
 
-	return targets
+	return false
+}
+
+// effectsUseProvider reports whether one exact target binds an effect to the canonical provider.
+func (n *policyNormalizer) effectsUseProvider(
+	target decision.Target,
+	effects map[string]policyconfig.EffectConfig,
+	providerID string,
+) bool {
+	for _, effect := range effects {
+		if n.resolveProviderReference(target.Namespace(), effect.Provider) == providerID &&
+			targetReferenceAllowsAction(effect.Targets, target.Action()) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// targetReferenceAllowsAction reports whether an explicit effect target includes one action.
+func targetReferenceAllowsAction(references []policyconfig.TargetReferenceConfig, action string) bool {
+	for _, reference := range references {
+		if reference.Action == action {
+			return true
+		}
+	}
+
+	return false
 }
 
 // qualify applies namespace ownership only to local component references.

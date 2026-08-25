@@ -49,6 +49,7 @@ type factProviderCallCapturer interface {
 
 type factProviderInput struct {
 	facts      decision.FactSet
+	caller     decision.CallerContext
 	target     decision.Target
 	checkpoint string
 }
@@ -238,7 +239,14 @@ func (r *checkpointRuntime) Evaluate(ctx context.Context, input checkpointEvalua
 	}
 
 	report := runtimeReport{facts: facts}
-	facts, providersReliable := r.runProviders(evaluationContext, target, checkpoint, facts, &report)
+	facts, providersReliable := r.runProviders(
+		evaluationContext,
+		target,
+		checkpoint,
+		facts,
+		input.request.Caller(),
+		&report,
+	)
 	report.facts = facts
 
 	if !providersReliable || evaluationContext.Err() != nil {
@@ -350,12 +358,13 @@ func (r *checkpointRuntime) runProviders(
 	target policyruntime.CompiledTarget,
 	checkpoint policyruntime.CompiledCheckpoint,
 	facts decision.FactSet,
+	caller decision.CallerContext,
 	report *runtimeReport,
 ) (decision.FactSet, bool) {
 	states := make(map[string]providerState)
 
 	for _, level := range checkpoint.ProviderLevels() {
-		levelFacts, reliable := r.runProviderLevel(ctx, target, checkpoint, level, facts, states, report)
+		levelFacts, reliable := r.runProviderLevel(ctx, target, checkpoint, level, facts, caller, states, report)
 		if !reliable {
 			return facts, false
 		}
@@ -388,13 +397,14 @@ func (r *checkpointRuntime) runProviderLevel(
 	checkpoint policyruntime.CompiledCheckpoint,
 	level []string,
 	facts decision.FactSet,
+	caller decision.CallerContext,
 	states map[string]providerState,
 	report *runtimeReport,
 ) ([]decision.Fact, bool) {
 	levelContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	results, pending := r.startProviderLevel(levelContext, target, checkpoint, level, facts, states, report)
+	results, pending := r.startProviderLevel(levelContext, target, checkpoint, level, facts, caller, states, report)
 	ordered := make([]providerLevelResult, 0, len(pending))
 
 	for len(pending) > 0 {
@@ -434,6 +444,7 @@ func (r *checkpointRuntime) startProviderLevel(
 	checkpoint policyruntime.CompiledCheckpoint,
 	level []string,
 	facts decision.FactSet,
+	caller decision.CallerContext,
 	states map[string]providerState,
 	report *runtimeReport,
 ) (<-chan providerLevelResult, map[string]struct{}) {
@@ -448,6 +459,7 @@ func (r *checkpointRuntime) startProviderLevel(
 			checkpoint,
 			instanceName,
 			facts,
+			caller,
 			states,
 			report,
 			results,
@@ -470,6 +482,7 @@ func (r *checkpointRuntime) startProviderInstance(
 	checkpoint policyruntime.CompiledCheckpoint,
 	instanceName string,
 	facts decision.FactSet,
+	caller decision.CallerContext,
 	states map[string]providerState,
 	report *runtimeReport,
 	results chan<- providerLevelResult,
@@ -509,7 +522,16 @@ func (r *checkpointRuntime) startProviderInstance(
 	go func() {
 		started <- struct{}{}
 
-		results <- r.collectProviderSafely(ctx, target.Target(), checkpoint.Name(), instance, descriptor, binding, facts)
+		results <- r.collectProviderSafely(
+			ctx,
+			target,
+			checkpoint.Name(),
+			instance,
+			descriptor,
+			binding,
+			facts,
+			caller,
+		)
 	}()
 }
 
@@ -550,12 +572,13 @@ func captureFactProviderBinding(binding factProviderBinding) (factProviderBindin
 // collectProviderSafely contains provider panics and returns a fail-closed level result.
 func (r *checkpointRuntime) collectProviderSafely(
 	ctx context.Context,
-	target decision.Target,
+	target policyruntime.CompiledTarget,
 	checkpoint string,
 	instance policyruntime.CompiledProviderInstance,
 	descriptor registry.ProviderDefinition,
 	binding factProviderBinding,
 	facts decision.FactSet,
+	caller decision.CallerContext,
 ) (result providerLevelResult) {
 	result = providerLevelResult{
 		id: instance.Name(), failure: registry.ProviderFailureIndeterminate, state: providerStateFailed,
@@ -569,7 +592,7 @@ func (r *checkpointRuntime) collectProviderSafely(
 		}
 	}()
 
-	return r.collectProvider(ctx, target, checkpoint, instance, descriptor, binding, facts)
+	return r.collectProvider(ctx, target, checkpoint, instance, descriptor, binding, facts, caller)
 }
 
 // canceledProviderResults projects deterministic failure records for output that will be discarded.
@@ -627,12 +650,13 @@ func applyProviderResults(
 // collectProvider invokes one exact binding and assigns host-owned provenance.
 func (r *checkpointRuntime) collectProvider(
 	ctx context.Context,
-	target decision.Target,
+	target policyruntime.CompiledTarget,
 	checkpoint string,
 	instance policyruntime.CompiledProviderInstance,
 	descriptor registry.ProviderDefinition,
 	binding factProviderBinding,
 	facts decision.FactSet,
+	caller decision.CallerContext,
 ) providerLevelResult {
 	result := providerLevelResult{id: instance.Name(), failure: descriptor.Failure(), state: providerStateFailed}
 
@@ -643,9 +667,16 @@ func (r *checkpointRuntime) collectProvider(
 	providerContext, cancel := context.WithTimeout(ctx, descriptor.Timeout())
 	defer cancel()
 
-	provided, err := binding.provider.Collect(providerContext, factProviderInput{facts: facts, target: target, checkpoint: checkpoint})
+	provided, err := binding.provider.Collect(providerContext, factProviderInput{
+		facts: facts, caller: caller, target: target.Target(), checkpoint: checkpoint,
+	})
 	if err != nil {
-		if errors.Is(providerContext.Err(), context.DeadlineExceeded) {
+		if errors.Is(err, policyruntime.ErrProviderContractViolation) {
+			result.failure = registry.ProviderFailureIndeterminate
+		}
+
+		if errors.Is(providerContext.Err(), context.DeadlineExceeded) ||
+			errors.Is(err, context.DeadlineExceeded) {
 			result.state = providerStateTimedOut
 		}
 
@@ -671,6 +702,13 @@ func (r *checkpointRuntime) collectProvider(
 
 		fact, factErr := decision.NewFact(output.id, output.category, output.value, provenance)
 		if factErr != nil {
+			result.failure = registry.ProviderFailureIndeterminate
+
+			return result
+		}
+
+		candidate, candidateErr := decision.NewFactSet([]decision.Fact{fact})
+		if candidateErr != nil || target.Schema().ValidatePresentFacts(candidate) != nil {
 			result.failure = registry.ProviderFailureIndeterminate
 
 			return result

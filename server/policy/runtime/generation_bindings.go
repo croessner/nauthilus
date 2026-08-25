@@ -32,11 +32,15 @@ import (
 var (
 	// ErrInvalidGenerationBinding identifies incomplete prepared runtime bindings.
 	ErrInvalidGenerationBinding = errors.New("invalid policy generation binding")
+
+	// ErrProviderContractViolation identifies output that violated host-owned provider authority.
+	ErrProviderContractViolation = errors.New("policy provider contract violation")
 )
 
 // FactProviderInput is the immutable captured input supplied to one fact provider.
 type FactProviderInput struct {
 	facts      decision.FactSet
+	caller     decision.CallerContext
 	target     decision.Target
 	checkpoint string
 }
@@ -45,6 +49,7 @@ type FactProviderInput struct {
 func NewFactProviderInput(
 	facts decision.FactSet,
 	target decision.Target,
+	caller decision.CallerContext,
 	checkpoint string,
 ) (FactProviderInput, error) {
 	ownedFacts, err := decision.NewFactSet(facts.Facts())
@@ -61,7 +66,14 @@ func NewFactProviderInput(
 		return FactProviderInput{}, fmt.Errorf("%w: checkpoint is empty", ErrInvalidGenerationBinding)
 	}
 
-	return FactProviderInput{facts: ownedFacts, target: ownedTarget, checkpoint: checkpoint}, nil
+	ownedCaller, err := cloneBindingCaller(caller)
+	if err != nil {
+		return FactProviderInput{}, fmt.Errorf("%w: caller: %v", ErrInvalidGenerationBinding, err)
+	}
+
+	return FactProviderInput{
+		facts: ownedFacts, caller: ownedCaller, target: ownedTarget, checkpoint: checkpoint,
+	}, nil
 }
 
 // Facts returns the detached facts visible before this provider runs.
@@ -69,6 +81,13 @@ func (i FactProviderInput) Facts() decision.FactSet {
 	facts, _ := decision.NewFactSet(i.facts.Facts())
 
 	return facts
+}
+
+// Caller returns detached redacted caller evidence for this provider call.
+func (i FactProviderInput) Caller() decision.CallerContext {
+	caller, _ := cloneBindingCaller(i.caller)
+
+	return caller
 }
 
 // Target returns the exact captured target.
@@ -134,6 +153,8 @@ type FactProviderBinding struct {
 
 // EffectExecutionInput carries one selected host effect into its immutable constructor.
 type EffectExecutionInput struct {
+	Facts      decision.FactSet
+	Caller     decision.CallerContext
 	Parameters decision.ValueMap
 	Target     decision.Target
 	EffectID   string
@@ -145,6 +166,8 @@ type EffectExecutionInput struct {
 
 // EffectExecution is one immutable selected host-effect invocation.
 type EffectExecution struct {
+	facts      decision.FactSet
+	caller     decision.CallerContext
 	parameters decision.ValueMap
 	target     decision.Target
 	effectID   string
@@ -156,6 +179,16 @@ type EffectExecution struct {
 
 // NewEffectExecution validates and deeply owns one selected effect invocation.
 func NewEffectExecution(input EffectExecutionInput) (EffectExecution, error) {
+	facts, err := decision.NewFactSet(input.Facts.Facts())
+	if err != nil {
+		return EffectExecution{}, fmt.Errorf("%w: effect facts: %v", ErrInvalidGenerationBinding, err)
+	}
+
+	caller, err := cloneBindingCaller(input.Caller)
+	if err != nil {
+		return EffectExecution{}, fmt.Errorf("%w: effect caller: %v", ErrInvalidGenerationBinding, err)
+	}
+
 	parameters, err := decision.NewValueMap(input.Parameters.Values())
 	if err != nil {
 		return EffectExecution{}, fmt.Errorf("%w: effect parameters: %v", ErrInvalidGenerationBinding, err)
@@ -172,6 +205,8 @@ func NewEffectExecution(input EffectExecutionInput) (EffectExecution, error) {
 	}
 
 	return EffectExecution{
+		facts:      facts,
+		caller:     caller,
 		parameters: parameters,
 		target:     target,
 		effectID:   input.EffectID,
@@ -180,6 +215,20 @@ func NewEffectExecution(input EffectExecutionInput) (EffectExecution, error) {
 		generation: input.Generation,
 		ordinal:    input.Ordinal,
 	}, nil
+}
+
+// Facts returns the detached evaluation facts visible when policy selected the effect.
+func (e EffectExecution) Facts() decision.FactSet {
+	facts, _ := decision.NewFactSet(e.facts.Facts())
+
+	return facts
+}
+
+// Caller returns detached redacted caller evidence for the selected effect.
+func (e EffectExecution) Caller() decision.CallerContext {
+	caller, _ := cloneBindingCaller(e.caller)
+
+	return caller
 }
 
 // Parameters returns a detached strict parameter map.
@@ -217,6 +266,25 @@ func (e EffectExecution) Generation() uint64 {
 // Ordinal returns the stable selected-effect ordinal.
 func (e EffectExecution) Ordinal() uint32 {
 	return e.ordinal
+}
+
+// cloneBindingCaller reconstructs trusted caller evidence without sharing mutable slices.
+func cloneBindingCaller(caller decision.CallerContext) (decision.CallerContext, error) {
+	return decision.NewCallerContext(decision.TrustedCallerInput{
+		Principal:          caller.Principal(),
+		ClientID:           caller.ClientID(),
+		Subject:            caller.Subject(),
+		Issuer:             caller.Issuer(),
+		Scopes:             caller.Scopes(),
+		AuthenticationKind: caller.AuthenticationKind(),
+		SourceIP:           caller.SourceIP(),
+		MTLSIdentity:       caller.MTLSIdentity(),
+		TransportKind:      caller.TransportKind(),
+		Listener:           caller.Listener(),
+		HTTPRoute:          caller.HTTPRoute(),
+		GRPCMethod:         caller.GRPCMethod(),
+		Internal:           caller.Internal(),
+	})
 }
 
 // SyncEffectProvider executes one generation-captured synchronous host effect.

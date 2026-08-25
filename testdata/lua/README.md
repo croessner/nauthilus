@@ -20,7 +20,16 @@ testdata/lua/
 ├── backend_test.json            # Mock data for backend tests
 ├── hook_test.json               # Mock data for hook tests
 ├── backend_ldap_test.json       # Mock data for LDAP backend test
-└── backend_db_test.json         # Mock data for DB backend test
+├── backend_db_test.json         # Mock data for DB backend test
+└── policyprovider/              # Restricted generic fact/effect callback fixtures
+    ├── typed_callbacks.lua        # Strict values, fresh state, and selected effect
+    ├── cancelled.lua              # Deadline and cancellation containment
+    ├── invalid_authority.lua      # Closed-result/forbidden-authority rejection
+    ├── secret_error.lua           # Secret-safe Lua failure classification
+    ├── scheduler_failure.lua      # Shared failure/dependency scheduler behavior
+    ├── behavior_matrix_facts.lua  # Declared/invalid fact-result matrix
+    ├── behavior_matrix_effects.lua # Selection, ambiguity, and post-action outcomes
+    └── behavior_matrix_missing_fact_callback.lua # Exact registration rejection
 ```
 
 ## Running Tests
@@ -65,6 +74,40 @@ The `--test-callback` flag accepts the following values:
 - **backend**: Tests backend authentication scripts (returns `result, backend_result`)
 - **hook**: Tests HTTP hook scripts (returns nil or result table)
 - **cache_flush**: Tests cache flush scripts (returns `additional_keys` table and optional `account_name`)
+
+The generic `_G["policy.facts.collect"]` and `_G["policy.effects.execute"]` callbacks are intentionally not additional
+`--test-callback` values. They use a separate restricted request/value boundary rather than the legacy auth mock-module
+environment. Their fixtures under `policyprovider/` are compiled and executed by Go-hosted tests in
+`server/lualib/policyprovider` and are included in `./scripts/run-lua-plugin-tests.sh`.
+
+## Generic policy-provider fixtures
+
+Run the focused generic fixture lane with:
+
+```bash
+GOEXPERIMENT=runtimesecret go test ./server/lualib/policyprovider \
+  -run '^TestLua' -count=1 -v
+```
+
+`typed_callbacks.lua` registers both exact callback keys. It proves the target, redacted caller, admitted facts, strict
+typed value encoding, policy-selected effect identity, and typed parameters. It also uses a script-local invocation
+counter to prove each callback receives a fresh Lua state instead of reusing state across requests.
+
+`cancelled.lua` loops until the host context cancels the request. The Go harness asserts bounded deadline/cancellation
+exit and the closed `timeout`/`outcome_unknown` behavior. `invalid_authority.lua` adds a forbidden result field, and
+`secret_error.lua` includes secret-looking Lua error text; the harness verifies that both are reduced to stable bounded
+error classes without logging or returning the Lua text.
+
+The `behavior_matrix_*` fixtures cover declared facts, wrong types, undeclared or duplicate outputs, attempted source
+and namespace injection, foreign authority names, exact target isolation, missing callback registration, unselected
+effect rejection, explicit `outcome_unknown`, and supervisor-owned post-action execution timing.
+`scheduler_failure.lua` supplies one bounded failure through the real Lua adapter so the shared scheduler tests prove
+both fail-closed `indeterminate` and compiler-safe `continue` with dependency skipping.
+
+Generic requests and results use closed tables. Values are wrapped as `{kind = ..., value = ...}`; signed integers are
+base-10 strings, bytes are standard Base64, and timestamps are RFC 3339 strings. Fixtures must return local fact names,
+not `lua.*` or `plugin.*` identities. The host applies the configured Lua authority and validates schema, source,
+category, kind, and bounds before facts enter an evaluation.
 
 ## Mock Data Format
 

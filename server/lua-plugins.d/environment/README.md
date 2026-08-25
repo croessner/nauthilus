@@ -13,6 +13,10 @@ environment source attributes are registered by `../policy/registry.lua` and use
 `lua.plugin.blocklist.matched` or `lua.plugin.failed_login_hotspot.triggered`. The same values remain available under
 `policy_facts` for later actions.
 
+This environment-source contract is authentication compatibility behavior. It remains implicitly bound to `authn`,
+retains its established callback name and ordering, and never runs for a generic target. Standalone generic Lua fact
+providers use the separate `_G["policy.facts.collect"]` contract documented in [`../policy/README.md`](../policy/).
+
 ## Available Plugins
 
 ### blocklist.lua

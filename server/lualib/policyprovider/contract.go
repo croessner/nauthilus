@@ -15,8 +15,8 @@
 
 // Package policyprovider defines the value-only generic Lua policy-provider
 // boundary. Callback execution and generation activation remain host-owned.
-// Execution adapters must validate and deeply copy exported request values
-// before translating them into deterministic Lua tables.
+// Restricted execution adapters validate and deeply copy exported request
+// values before translating them into deterministic Lua tables.
 package policyprovider
 
 import (
@@ -38,6 +38,9 @@ const (
 
 	// PolicyFactsCollectCallback is the stable generic Lua fact callback name.
 	PolicyFactsCollectCallback = "policy.facts.collect"
+
+	// PolicyEffectsExecuteCallback is the stable selected-effect callback name.
+	PolicyEffectsExecuteCallback = "policy.effects.execute"
 )
 
 var (
@@ -180,7 +183,7 @@ type EffectParameter struct {
 	Value decision.Value
 }
 
-// EffectRequest contains one policy-selected effect and detached evaluation views.
+// EffectRequest contains one qualified policy-selected effect and detached evaluation views.
 type EffectRequest struct {
 	Facts      []FactView
 	Parameters []EffectParameter

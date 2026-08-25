@@ -66,6 +66,71 @@ provide positive `timeouts.evaluation` and `timeouts.provider_default` values;
 authn continues to use its host-owned timeout sources. This is a new generic
 target requirement, not a migrated eighteenth row.
 
+## Generic Lua provider configuration
+
+Generic Lua providers likewise have no removed `auth.policy` source and do not add a mapping row. They use the
+standalone namespace-owned `kind: lua` path and remain inactive in production until the later atomic policy-root
+cutover. They must not be represented as `lua_environment`, `lua_subject`, or `lua_action`: those kinds preserve the
+existing implicit `authn` behavior only.
+
+```yaml
+policy:
+  namespaces:
+    dkim2:
+      schema_contributions:
+        static:
+          sign-message:
+            versions:
+              v1:
+                facts:
+                  - attribute: lua.reputation.risk_score
+                    category: environment
+                    type: integer
+                    allowed_sources: [lua]
+      providers:
+        risk:
+          kind: lua
+          module: reputation
+          script_path: /etc/nauthilus/lua/reputation.lua
+          targets: [{action: sign-message}]
+          produced_facts: [lua.reputation.risk_score]
+          executions: [host_sync]
+          requires: []
+          failure: indeterminate
+          timeout: 100ms
+          diagnostics: {public_id: reputation}
+      effects:
+        record-audit:
+          kind: obligation
+          provider: dkim2/risk
+          targets: [{action: sign-message}]
+          execution: host_sync
+          parameters:
+            message:
+              type: string
+              max_length: 32
+              non_empty: true
+              required: true
+```
+
+`module` is the canonical lowercase Lua authority. The example's authored provider key resolves to the immutable
+internal identity `dkim2/lua.reputation.risk`, and the callback returns local `risk_score` for the host-qualified fact
+`lua.reputation.risk_score`. Every produced fact must exist with identical category, type, and bounds in every exact
+target schema and must allow source `lua`. Explicit targets are used as written; when omitted, target-aware preparation
+derives them only from exact plan and effect bindings.
+
+`failure` is mandatory and is exactly `indeterminate` or compiler-safe `continue`. The shared scheduler handles
+dependencies and `skipped_dependency`; Lua cannot return an auth-style abort or reorder the plan. Contract violations
+such as undeclared facts, source/authority mismatch, wrong type or bounds, or fact collisions always fail closed as
+`indeterminate` regardless of `continue`.
+
+Generic scripts register `_G["policy.facts.collect"]` and, when the provider owns selected host effects,
+`_G["policy.effects.execute"]`. Only selected `host_sync` and `host_post_action` obligations execute. Advice and
+`return_only` effects never call Lua. Post-actions require host-supervisor acceptance before response finalization, and
+Lua receives neither the finalization gate nor detached-work authority. The generic contract has no automatic retry,
+replay, idempotency, or deduplication fields. The exact Lua tables and strict typed-value encodings are documented in
+`server/lua-plugins.d/policy/README.md`.
+
 ## Nested rule, effect, and scheduler mappings
 
 The owner paths above do not change the following nested semantic contract.

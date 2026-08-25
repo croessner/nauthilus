@@ -66,6 +66,7 @@ func (n *policyNormalizer) normalizeDomainPlan(target normalizedTarget) (registr
 			target.target.Namespace(),
 			target.target.Action(),
 			configured.Checkpoints[name].Providers,
+			n.resolveProviderReference,
 		)
 		if providerErr != nil {
 			return registry.DomainPlanDefinition{}, providerErr
@@ -216,6 +217,7 @@ func orderedProviderInstances(
 	namespace string,
 	action string,
 	configured []policyconfig.ProviderInstanceConfig,
+	resolveProvider func(string, string) string,
 ) ([]registry.ProviderInstanceDefinition, error) {
 	nodes, byName, err := indexProviderInstances(path, configured)
 	if err != nil {
@@ -251,7 +253,12 @@ func orderedProviderInstances(
 	for _, node := range ordered {
 		instancePath := fmt.Sprintf("%s[%d]", path, node.index)
 
-		instance, err := normalizeProviderInstance(instancePath, namespace, node.configured)
+		instance, err := normalizeProviderInstance(
+			instancePath,
+			namespace,
+			node.configured,
+			resolveProvider(namespace, node.configured.Use),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -320,8 +327,9 @@ func normalizeProviderInstance(
 	path string,
 	namespace string,
 	configured policyconfig.ProviderInstanceConfig,
+	providerID string,
 ) (registry.ProviderInstanceDefinition, error) {
-	defaultSafe, _, _ := policy.AuthnProviderObserveSafety(configured.Use)
+	defaultSafe, _, _ := policy.AuthnProviderObserveSafety(providerID)
 	observeSafeAuthored := configured.ObserveSafe != nil
 	observeSafe := defaultSafe || (observeSafeAuthored && *configured.ObserveSafe)
 
@@ -331,7 +339,7 @@ func normalizeProviderInstance(
 	}
 
 	instance, err := registry.NewProviderInstanceDefinition(registry.ProviderInstanceDefinitionInput{
-		Path: path, Name: configured.Name, Use: configured.Use,
+		Path: path, Name: configured.Name, Use: providerID,
 		Actions: configured.Actions, After: configured.After, SkipIf: configured.SkipIf,
 		RunIfAuthState: runIfAuthState, Output: configured.Output,
 		ObserveSafe: observeSafe, ObserveSafeAuthored: observeSafeAuthored,

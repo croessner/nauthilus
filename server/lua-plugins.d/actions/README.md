@@ -9,6 +9,16 @@ obligations, notifications, metrics, and response follow-up. When a preceding en
 `policy_facts`, actions can read them with `nauthilus_context.context_get("policy_facts")` and include selected
 public facts in notifications or reports.
 
+These action callbacks, including the existing post-action path, remain compatibility behavior for authentication and
+are implicitly `authn`-scoped. Their callback names and execution order are not used by standalone generic targets.
+
+Generic `kind: lua` providers use the separate `_G["policy.effects.execute"]` callback documented in
+[`../policy/README.md`](../policy/). It is invoked only for a policy-selected, target-allowed, schema-valid
+`host_sync` or `host_post_action` obligation. Advice and `return_only` effects never invoke Lua. A generic post-action is
+captured and accepted by the host supervisor before response finalization; the script receives no finalization gate and
+must not launch detached host work. The host makes no automatic retry and preserves `outcome_unknown` as an observable,
+non-retryable result.
+
 ## Available Plugins
 
 ### analytics.lua

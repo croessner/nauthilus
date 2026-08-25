@@ -52,6 +52,8 @@ type postActionBinding struct {
 }
 
 type effectExecution struct {
+	facts      decision.FactSet
+	caller     decision.CallerContext
 	parameters decision.ValueMap
 	target     decision.Target
 	effectID   string
@@ -102,6 +104,7 @@ func (r *checkpointRuntime) finalizeSelection(
 		input,
 		target,
 		decisionID,
+		report.facts,
 		selection.obligations,
 		selection.advice,
 	)
@@ -274,6 +277,7 @@ func (r *checkpointRuntime) prepareEffects(
 	input checkpointEvaluation,
 	target policyruntime.CompiledTarget,
 	decisionID string,
+	facts decision.FactSet,
 	obligations []registry.EffectUse,
 	advice []registry.EffectUse,
 ) ([]plannedEffect, []decision.EffectRequest, []decision.EffectRequest, error) {
@@ -282,7 +286,14 @@ func (r *checkpointRuntime) prepareEffects(
 	ordinal := uint32(0)
 
 	for _, use := range obligations {
-		planned, projected, hostOwned, err := r.prepareObligation(input, target, decisionID, use, ordinal+1)
+		planned, projected, hostOwned, err := r.prepareObligation(
+			input,
+			target,
+			decisionID,
+			facts,
+			use,
+			ordinal+1,
+		)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -309,6 +320,7 @@ func (r *checkpointRuntime) prepareObligation(
 	input checkpointEvaluation,
 	target policyruntime.CompiledTarget,
 	decisionID string,
+	facts decision.FactSet,
 	use registry.EffectUse,
 	ordinal uint32,
 ) (plannedEffect, decision.EffectRequest, bool, error) {
@@ -328,7 +340,8 @@ func (r *checkpointRuntime) prepareObligation(
 	}
 
 	execution := effectExecution{
-		parameters: use.Parameters(), target: target.Target(), effectID: definition.ID(), decisionID: decisionID,
+		facts: facts, caller: input.request.Caller(), parameters: use.Parameters(),
+		target: target.Target(), effectID: definition.ID(), decisionID: decisionID,
 		provider: definition.Provider(), generation: input.generation, ordinal: ordinal,
 	}
 	planned := plannedEffect{definition: definition, use: use, execution: execution}

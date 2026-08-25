@@ -903,7 +903,7 @@ contributed namespace, a component-local name, bounded exact target selectors, d
 parameters, and a bounded fact-provider timeout. The host qualifies local fact outputs with the configured module
 authority and revalidates every descriptor while adapting it into the internal immutable contribution DTO. The DTO
 retains each qualified output's category, value kind, and bounds as provider capability metadata; the active target
-schema remains the catalog-owned authority and later generation binding must cross-check the capability against it. A
+schema remains the catalog-owned authority, and generation binding cross-checks the capability against it. A
 target selector may reference an exact catalog target outside the contributed definition namespace; it grants no
 target activation or catalog ownership.
 
@@ -921,8 +921,19 @@ host executor, and advice is never executed.
 
 Existing native and Lua authentication extensions retain their current behavior and remain implicitly bound to the
 `authn` namespace. The generic registration contract does not add execution wiring to those paths. The separate Lua
-contract freezes `policy.facts.collect` plus typed selected-effect request/result values; Lua callback registration,
-effect dispatch shape, generation binding, and execution remain work for the integration slice.
+contract now registers the exact `_G["policy.facts.collect"]` and `_G["policy.effects.execute"]` callback keys in a
+fresh request-owned restricted state. Candidate preparation freezes target selectors, typed fact outputs, scheduling,
+failure behavior, selected-effect definitions, and runtime bindings before catalog compilation. Runtime collection
+qualifies only declared local facts with the host-assigned Lua authority and revalidates source, category, kind, bounds,
+and the active target schema before insertion. Contract violations fail closed even for a compiler-safe `continue`
+provider; ordinary continuation and `requires` dependency skipping remain shared-scheduler behavior.
+
+The generic Lua effect adapter invokes only policy-selected `host_sync` and `host_post_action` obligations after target
+and parameter validation. Post-actions are captured as immutable supervisor work, require acceptance before response
+finalization, and execute under supervisor ownership; Lua receives neither the finalization gate nor detached scheduling
+authority. Advice and `return_only` effects have no executor path. Callback errors, panics, cancellation, and timeouts are
+contained behind bounded secret-safe classes, and the adapter defines no retry, replay, idempotency, or cross-invocation
+deduplication behavior. Production activation of the standalone `policy` root remains the separate atomic cutover work.
 
 Environment and subject sources use the same deterministic dependency concepts. Environment sources and ordinary
 subject configurations retain separate Lua and Go source sets. Subject analysis also supports one narrow mixed boundary:

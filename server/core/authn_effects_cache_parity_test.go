@@ -496,6 +496,18 @@ func TestAuthnPolicyEffectRequestRestoresExactLegacySelectionAndParameters(t *te
 		t.Fatalf("NewTarget() error = %v", err)
 	}
 
+	caller, err := decision.NewCallerContext(decision.TrustedCallerInput{
+		Principal: "authn-parity", AuthenticationKind: "internal", TransportKind: "internal", Internal: true,
+	})
+	if err != nil {
+		t.Fatalf("NewCallerContext() error = %v", err)
+	}
+
+	facts, err := decision.NewFactSet(nil)
+	if err != nil {
+		t.Fatalf("NewFactSet() error = %v", err)
+	}
+
 	action := policy.LuaActionDispatchBruteForce
 	environment := "candidate_environment"
 	wait := false
@@ -524,6 +536,7 @@ func TestAuthnPolicyEffectRequestRestoresExactLegacySelectionAndParameters(t *te
 		}
 
 		execution, executionErr := policyruntime.NewEffectExecution(policyruntime.EffectExecutionInput{
+			Facts: facts, Caller: caller,
 			Parameters: valueMap, Target: target, EffectID: binding.EffectID,
 			DecisionID: "decision-authn-effect", Provider: binding.Provider,
 			Generation: 1, Ordinal: uint32(ordinal + 1),

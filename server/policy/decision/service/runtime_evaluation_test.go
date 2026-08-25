@@ -20,17 +20,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/v3/server/lualib/policyprovider"
 	"github.com/croessner/nauthilus/v3/server/policy/compiler"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+)
+
+const (
+	decisionRuntimeLuaFailureProviderID = "mail/lua.scheduler.failed"
+	decisionRuntimeLuaFailureFactID     = "lua.scheduler.failed"
 )
 
 func TestDecisionRuntimeProjectsRulesAndExplicitNoMatch(t *testing.T) {
@@ -186,6 +193,52 @@ func TestDecisionRuntimeBuildsProvenanceAndFailsClosedOnCollision(t *testing.T) 
 	}
 }
 
+func TestDecisionRuntimeRejectsProviderSchemaViolationBeforeFactInsertion(t *testing.T) {
+	provider := &recordingFactProvider{facts: []providedFact{{
+		id:       "plugin.reputation.score",
+		category: decision.FactCategoryEnvironment,
+		value:    runtimeBooleanValue(t, true),
+	}}}
+	descriptor := decisionRuntimeProvider(
+		t,
+		"mail/reputation",
+		"plugin.reputation.score",
+		registry.ProviderFailureContinue,
+		nil,
+	)
+	catalog, target := decisionRuntimeCatalog(
+		t,
+		decision.EffectPermit,
+		registry.NoMatchDeny,
+		[]registry.FactSchema{
+			decisionRuntimeFactSchema(t, "plugin.reputation.score", decision.FactSourcePlugin, false),
+		},
+		[]registry.ProviderDefinition{descriptor},
+		nil,
+	)
+	evaluator := mustCheckpointRuntime(t, checkpointRuntimeConfig{
+		catalog: catalog,
+		factProviders: map[string]factProviderBinding{
+			"mail/reputation": decisionRuntimeFactBinding(provider, "reputation"),
+		},
+		ids: &sequenceIDGenerator{}, evaluationTimeout: time.Second,
+	})
+
+	outcome := evaluateRuntimeOutcome(t, evaluator, target, &recordingEffectAcceptor{})
+	if outcome.response.Effect() != decision.EffectIndeterminate {
+		t.Fatalf("effect = %q, want indeterminate", outcome.response.Effect())
+	}
+
+	if len(outcome.report.runtime.providers) != 1 ||
+		outcome.report.runtime.providers[0].state != providerStateFailed {
+		t.Fatalf("provider records = %#v, want one failed schema validation", outcome.report.runtime.providers)
+	}
+
+	if _, exists := outcome.report.runtime.facts.Get("plugin.reputation.score"); exists {
+		t.Fatal("schema-invalid provider fact reached the evaluation fact set")
+	}
+}
+
 func TestDecisionRuntimeRejectsAdmittedFactOverwrite(t *testing.T) {
 	value := runtimeStringValue(t, "forged-principal")
 	provenance, _ := decision.NewProvenance(decision.FactSourceNauthilus, "nauthilus", "test")
@@ -338,6 +391,105 @@ func TestDecisionRuntimeProviderFailureAndDependencySemantics(t *testing.T) {
 				t.Fatalf("dependent/independent calls = %d/%d, want %d/%d", dependent.callCount(), independent.callCount(), test.wantDependent, test.wantIndependent)
 			}
 		})
+	}
+}
+
+func TestDecisionRuntimeLuaProviderUsesSharedFailureAndDependencySemantics(t *testing.T) {
+	tests := []struct {
+		name       string
+		failure    registry.ProviderFailureBehavior
+		wantEffect decision.Effect
+	}{
+		{name: "continue skips dependent", failure: registry.ProviderFailureContinue, wantEffect: decision.EffectPermit},
+		{name: "indeterminate stops evaluation", failure: registry.ProviderFailureIndeterminate, wantEffect: decision.EffectIndeterminate},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			luaDefinition, luaBinding := decisionRuntimeLuaFailureBinding(t, test.failure)
+			dependent := &countingFactProvider{facts: []providedFact{{
+				id: "plugin.dependent.value", category: decision.FactCategoryEnvironment,
+				value: runtimeStringValue(t, "late"),
+			}}}
+			providers := []registry.ProviderDefinition{
+				luaDefinition,
+				decisionRuntimeProvider(
+					t,
+					"mail/dependent",
+					"plugin.dependent.value",
+					registry.ProviderFailureIndeterminate,
+					[]string{decisionRuntimeLuaFailureProviderID},
+				),
+			}
+			facts := []registry.FactSchema{
+				decisionRuntimeFactSchema(t, decisionRuntimeLuaFailureFactID, decision.FactSourceLua, false),
+				decisionRuntimeFactSchema(t, "plugin.dependent.value", decision.FactSourcePlugin, false),
+			}
+			catalog, target := decisionRuntimeCatalog(t, decision.EffectPermit, registry.NoMatchDeny, facts, providers, nil)
+			evaluator := mustCheckpointRuntime(t, checkpointRuntimeConfig{
+				catalog: catalog,
+				factProviders: map[string]factProviderBinding{
+					decisionRuntimeLuaFailureProviderID: luaBinding,
+					"mail/dependent":                    decisionRuntimeFactBinding(dependent, "dependent"),
+				},
+				ids: &sequenceIDGenerator{}, evaluationTimeout: time.Second,
+			})
+
+			response := evaluateRuntimeCheckpoint(
+				t,
+				evaluator,
+				target,
+				decision.NewEvaluationFinalization(effectsupervisor.BoundaryHTTPCommit),
+			)
+			if response.Effect() != test.wantEffect {
+				t.Fatalf("effect = %q, want %q", response.Effect(), test.wantEffect)
+			}
+
+			if dependent.callCount() != 0 {
+				t.Fatalf("dependent calls = %d, want 0", dependent.callCount())
+			}
+		})
+	}
+}
+
+func TestDecisionRuntimeProviderContractViolationOverridesContinue(t *testing.T) {
+	provider := &blockingFactProvider{err: fmt.Errorf(
+		"%w: undeclared Lua result",
+		policyruntime.ErrProviderContractViolation,
+	)}
+	descriptor := decisionRuntimeProvider(
+		t,
+		"mail/lua-risk",
+		"plugin.failed.value",
+		registry.ProviderFailureContinue,
+		nil,
+	)
+	catalog, target := decisionRuntimeCatalog(
+		t,
+		decision.EffectPermit,
+		registry.NoMatchDeny,
+		[]registry.FactSchema{
+			decisionRuntimeFactSchema(t, "plugin.failed.value", decision.FactSourcePlugin, false),
+		},
+		[]registry.ProviderDefinition{descriptor},
+		nil,
+	)
+	evaluator := mustCheckpointRuntime(t, checkpointRuntimeConfig{
+		catalog: catalog,
+		factProviders: map[string]factProviderBinding{
+			"mail/lua-risk": decisionRuntimeFactBinding(provider, "failed"),
+		},
+		ids: &sequenceIDGenerator{}, evaluationTimeout: time.Second,
+	})
+
+	response := evaluateRuntimeCheckpoint(
+		t,
+		evaluator,
+		target,
+		decision.NewEvaluationFinalization(effectsupervisor.BoundaryHTTPCommit),
+	)
+	if response.Effect() != decision.EffectIndeterminate {
+		t.Fatalf("effect = %q, want indeterminate", response.Effect())
 	}
 }
 
@@ -1822,6 +1974,69 @@ func decisionRuntimeStringListFactSchema(t *testing.T, id string, source decisio
 func decisionRuntimeFactBinding(provider factProvider, authority string) factProviderBinding {
 	return factProviderBinding{
 		provider: provider, source: decision.FactSourcePlugin, authority: authority, component: "mail/" + authority,
+	}
+}
+
+// decisionRuntimeLuaFailureBinding prepares one real restricted Lua callback for scheduler tests.
+func decisionRuntimeLuaFailureBinding(
+	t *testing.T,
+	failure registry.ProviderFailureBehavior,
+) (registry.ProviderDefinition, factProviderBinding) {
+	t.Helper()
+
+	script, err := policyprovider.CompileScriptFile(filepath.Join(
+		"..", "..", "..", "..", "testdata", "lua", "policyprovider", "scheduler_failure.lua",
+	))
+	if err != nil {
+		t.Fatalf("CompileScriptFile() error = %v", err)
+	}
+
+	collector, err := policyprovider.NewLuaFactCollector(t.Context(), script, policyprovider.FactProviderDescriptor{
+		Namespace: "mail", Name: "failed", Timeout: time.Second,
+		Targets: []policyprovider.TargetSelector{{Namespace: "mail", Action: "submit"}},
+		Outputs: []policyprovider.FactOutputDescriptor{{
+			Name: "failed", Category: decision.FactCategoryEnvironment,
+			Kind: decision.ValueKindString, MaxLength: 64,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewLuaFactCollector() error = %v", err)
+	}
+
+	ownership, err := registry.NewNamespaceOwnership("lua.scheduler", []string{"mail"})
+	if err != nil {
+		t.Fatalf("NewNamespaceOwnership() error = %v", err)
+	}
+
+	prepared, err := policyprovider.PrepareGeneration(t.Context(), policyprovider.GenerationInput{
+		PostActionAcceptance: &recordingEffectAcceptor{},
+		Ownership:            ownership,
+		Authority:            "scheduler",
+		FactProviders: []policyprovider.FactProviderRegistration{{
+			Collector: collector, Failure: failure,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("PrepareGeneration() error = %v", err)
+	}
+
+	preparation, err := prepared.ExtensionPreparation(nil)
+	if err != nil {
+		t.Fatalf("ExtensionPreparation() error = %v", err)
+	}
+
+	definitions := preparation.Definitions[0].Providers()
+
+	binding, exists := preparation.Bindings.FactProviders()[decisionRuntimeLuaFailureProviderID]
+	if len(definitions) != 1 || !exists {
+		t.Fatalf("Lua definitions/binding = %d/%t, want 1/true", len(definitions), exists)
+	}
+
+	return definitions[0], factProviderBinding{
+		provider:  capturedFactProvider{provider: binding.Provider},
+		source:    binding.Source,
+		authority: binding.Authority,
+		component: binding.Component,
 	}
 }
 

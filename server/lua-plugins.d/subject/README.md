@@ -15,6 +15,10 @@ registered by `../policy/registry.lua` and use IDs below `lua.plugin.*`, for exa
 `lua.plugin.geoip.rejected` or `lua.plugin.account_protection.active`. The same values remain available as
 request-local `policy_facts` for later actions and custom-log correlation.
 
+This subject-source contract is authentication compatibility behavior. It remains implicitly bound to `authn`, retains
+its established callback name and ordering, and never runs for a generic target. Standalone generic Lua fact providers
+use the separate `_G["policy.facts.collect"]` contract documented in [`../policy/README.md`](../policy/).
+
 ## Available Plugins
 
 ### account_centric_monitoring.lua

@@ -149,7 +149,12 @@ func (p capturedFactProvider) Collect(
 	ctx context.Context,
 	input factProviderInput,
 ) ([]providedFact, error) {
-	capturedInput, err := policyruntime.NewFactProviderInput(input.facts, input.target, input.checkpoint)
+	capturedInput, err := policyruntime.NewFactProviderInput(
+		input.facts,
+		input.target,
+		input.caller,
+		input.checkpoint,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -276,6 +281,8 @@ func capturedPostActionBindings(bindings *policyruntime.BindingSet) map[string]p
 // capturedEffectExecution validates and owns one effect adapter invocation.
 func capturedEffectExecution(input effectExecution) (policyruntime.EffectExecution, error) {
 	return policyruntime.NewEffectExecution(policyruntime.EffectExecutionInput{
+		Facts:      input.facts,
+		Caller:     input.caller,
 		Parameters: input.parameters,
 		Target:     input.target,
 		EffectID:   input.effectID,

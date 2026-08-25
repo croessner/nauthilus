@@ -52,6 +52,31 @@ Use `emit`/`emit_many` for internal policy attributes, `emit_public`/`emit_many_
 copied to custom logs, and `status_message` for a normal Nauthilus status message plus a policy-visible message
 attribute.
 
+These environment, subject, action, and post-action callbacks are legacy authentication extensions. Their names,
+ordering, request shape, and implicit `authn` binding remain unchanged; they are never reused for a generic target such
+as `dkim2` or `mcp`.
+
+## Generic target-aware policy providers
+
+The standalone policy model has a separate `kind: lua` provider path for explicitly configured targets. It does not use
+`nauthilus_call_environment`, `nauthilus_call_subject`, or `nauthilus_call_action`. A generic provider registers the exact
+global callback keys `_G["policy.facts.collect"]` and, when it owns selected host effects,
+`_G["policy.effects.execute"]`.
+
+Generic scripts run in a fresh request-owned restricted Lua state. The host supplies only bounded target, redacted
+caller, admitted fact, selected-effect, and typed parameter values. Every declared output is registered in the candidate
+generation before catalog compilation, and every returned fact is qualified with the configured Lua module authority
+and checked against the active target schema before insertion. A target selector is a capability allowlist, not target
+activation or decision authority.
+
+Only policy-selected `host_sync` and `host_post_action` obligations can reach the effect callback. Advice and
+`return_only` obligations have no Lua execution path. Post-actions are captured and accepted by the Nauthilus effect
+supervisor before response finalization; Lua receives neither the finalization gate nor detached-work scheduling
+authority. There is no automatic retry, replay, idempotency, or cross-invocation deduplication contract.
+
+See [policy/README.md](./policy/) for the exact callback tables, strict value encoding, failure behavior, and generic
+configuration example.
+
 The Nauthilus authentication system executes plugins in a specific order during the authentication process:
 
 1. **Initialization**: When the system starts, all plugins in the `init` directory are executed to set up the environment.

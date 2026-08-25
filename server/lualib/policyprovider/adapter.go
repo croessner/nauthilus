@@ -66,7 +66,14 @@ func (a DefinitionAdapter) Adapt(
 	factProviders []FactProviderDescriptor,
 	effectProviders []EffectProviderDescriptor,
 ) (registry.DefinitionContribution, error) {
-	providers := make([]registry.ExtensionProviderDefinition, 0, len(factProviders)+len(effectProviders))
+	type adaptedProvider struct {
+		definition registry.ExtensionProviderDefinition
+		fact       bool
+		effect     bool
+	}
+
+	providerOrder := make([]string, 0, len(factProviders)+len(effectProviders))
+	providerIndex := make(map[string]adaptedProvider, len(factProviders)+len(effectProviders))
 	effects := make([]registry.EffectDefinition, 0)
 
 	for _, descriptor := range factProviders {
@@ -75,7 +82,28 @@ func (a DefinitionAdapter) Adapt(
 			return registry.DefinitionContribution{}, err
 		}
 
-		providers = append(providers, provider)
+		providerID := provider.Definition.ID()
+
+		adapted, exists := providerIndex[providerID]
+		if exists && adapted.fact {
+			return registry.DefinitionContribution{}, invalidContribution(
+				"fact provider %q occurs more than once",
+				providerID,
+			)
+		}
+
+		if exists {
+			provider, err = mergeAdaptedProviders(adapted.definition, provider)
+			if err != nil {
+				return registry.DefinitionContribution{}, err
+			}
+		} else {
+			providerOrder = append(providerOrder, providerID)
+		}
+
+		providerIndex[providerID] = adaptedProvider{
+			definition: provider, fact: true, effect: adapted.effect,
+		}
 	}
 
 	for _, descriptor := range effectProviders {
@@ -84,12 +112,38 @@ func (a DefinitionAdapter) Adapt(
 			return registry.DefinitionContribution{}, err
 		}
 
-		providers = append(providers, provider)
+		providerID := provider.Definition.ID()
+
+		adapted, exists := providerIndex[providerID]
+		if exists && adapted.effect {
+			return registry.DefinitionContribution{}, invalidContribution(
+				"effect provider %q occurs more than once",
+				providerID,
+			)
+		}
+
+		if exists {
+			provider, err = mergeAdaptedProviders(adapted.definition, provider)
+			if err != nil {
+				return registry.DefinitionContribution{}, err
+			}
+		} else {
+			providerOrder = append(providerOrder, providerID)
+		}
+
+		providerIndex[providerID] = adaptedProvider{
+			definition: provider, fact: adapted.fact, effect: true,
+		}
 		effects = append(effects, providerEffects...)
 	}
 
-	if len(providers) == 0 {
+	if len(providerIndex) == 0 {
 		return registry.DefinitionContribution{}, invalidContribution("definition set must not be empty")
+	}
+
+	providers := make([]registry.ExtensionProviderDefinition, 0, len(providerOrder))
+	for _, providerID := range providerOrder {
+		providers = append(providers, providerIndex[providerID].definition)
 	}
 
 	contribution, err := registry.NewExtensionDefinitionContribution(registry.ExtensionDefinitionContributionInput{
@@ -102,6 +156,78 @@ func (a DefinitionAdapter) Adapt(
 	}
 
 	return contribution, nil
+}
+
+// mergeAdaptedProviders combines one provider's fact and selected-effect capabilities.
+func mergeAdaptedProviders(
+	left registry.ExtensionProviderDefinition,
+	right registry.ExtensionProviderDefinition,
+) (registry.ExtensionProviderDefinition, error) {
+	if left.Definition.ID() != right.Definition.ID() {
+		return registry.ExtensionProviderDefinition{}, invalidContribution("provider identities do not match")
+	}
+
+	scheduled := left.Definition
+	effect := right.Definition
+	prefix := left.ProducedFactPrefix
+
+	if len(right.Definition.ProducedFacts()) > 0 {
+		scheduled = right.Definition
+		effect = left.Definition
+		prefix = right.ProducedFactPrefix
+	}
+
+	if len(scheduled.ProducedFacts()) == 0 || len(effect.ProducedFacts()) != 0 {
+		return registry.ExtensionProviderDefinition{}, invalidContribution(
+			"provider %q may merge only one fact and one effect capability",
+			left.Definition.ID(),
+		)
+	}
+
+	definition, err := registry.NewProviderDefinition(registry.ProviderDefinitionInput{
+		PostActionAcceptance: effect.PostActionAcceptance(),
+		ID:                   scheduled.ID(),
+		Targets:              mergeProviderTargets(scheduled.Targets(), effect.Targets()),
+		Executions:           effect.Executions(),
+		Requires:             scheduled.Requires(),
+		ProducedFacts:        scheduled.ProducedFacts(),
+		Outputs:              scheduled.Outputs(),
+		Failure:              scheduled.Failure(),
+		Timeout:              scheduled.Timeout(),
+		DiagnosticID:         scheduled.DiagnosticID(),
+	})
+	if err != nil {
+		return registry.ExtensionProviderDefinition{}, invalidContribution(
+			"merged provider %q rejected: %v",
+			scheduled.ID(),
+			err,
+		)
+	}
+
+	return registry.ExtensionProviderDefinition{
+		Definition: definition, ProducedFactPrefix: prefix,
+	}, nil
+}
+
+// mergeProviderTargets preserves exact descriptor order while removing overlap.
+func mergeProviderTargets(left []decision.Target, right []decision.Target) []decision.Target {
+	result := append([]decision.Target(nil), left...)
+	seen := make(map[string]struct{}, len(left)+len(right))
+
+	for _, target := range left {
+		seen[target.String()] = struct{}{}
+	}
+
+	for _, target := range right {
+		if _, exists := seen[target.String()]; exists {
+			continue
+		}
+
+		seen[target.String()] = struct{}{}
+		result = append(result, target)
+	}
+
+	return result
 }
 
 // adaptFactProvider converts one fact descriptor and derives host-owned identities.

@@ -55,6 +55,7 @@ const (
 	requestFactVisibility        = "public"
 	providerKindLuaEnvironment   = "lua_environment"
 	providerKindLuaSubject       = "lua_subject"
+	providerKindLua              = ProviderKindLua
 	effectKindLuaAction          = "lua_action"
 	luaActionTypeLua             = "lua"
 	luaActionTypePost            = "post"
@@ -840,7 +841,7 @@ func validateProviders(namespace string, providers map[string]ProviderConfig, pa
 		}
 
 		if !validProviderKind(provider.Kind) {
-			return invalid(providerPath+".kind", "must be lua_environment, lua_subject, native, or plugin")
+			return invalid(providerPath+".kind", "must be lua, lua_environment, lua_subject, native, or plugin")
 		}
 
 		if err := validateProviderSchedule(namespace, provider, providerPath); err != nil {
@@ -874,7 +875,13 @@ func validateProviderBinding(namespace string, name string, provider ProviderCon
 	}
 
 	switch provider.Kind {
+	case providerKindLua:
+		return validateGenericLuaProviderBinding(namespace, name, provider, path)
 	case providerKindLuaEnvironment:
+		if namespace != authnNamespace {
+			return invalid(path+".kind", "Lua environment providers are restricted to the authn namespace")
+		}
+
 		return validateLuaProviderBinding(
 			namespace,
 			name,
@@ -884,6 +891,10 @@ func validateProviderBinding(namespace string, name string, provider ProviderCon
 			path,
 		)
 	case providerKindLuaSubject:
+		if namespace != authnNamespace {
+			return invalid(path+".kind", "Lua subject providers are restricted to the authn namespace")
+		}
+
 		return validateLuaProviderBinding(
 			namespace,
 			name,
@@ -897,6 +908,45 @@ func validateProviderBinding(namespace string, name string, provider ProviderCon
 	}
 
 	return nil
+}
+
+// validateGenericLuaProviderBinding binds one standalone script to an exact host-owned Lua authority.
+func validateGenericLuaProviderBinding(
+	namespace string,
+	name string,
+	provider ProviderConfig,
+	path string,
+) error {
+	if !validLuaAuthority(provider.Module) || len(provider.CanonicalID(namespace, name)) > 128 {
+		return invalid(path+".module", "must name one canonical Lua authority that fits the derived provider identity")
+	}
+
+	if strings.TrimSpace(provider.ScriptPath) == "" {
+		return invalid(path+".script_path", "generic Lua providers require a script path")
+	}
+
+	prefix := "lua." + provider.Module + "."
+	seen := make(map[string]struct{}, len(provider.ProducedFacts))
+
+	for index, fact := range provider.ProducedFacts {
+		factPath := fmt.Sprintf("%s.produced_facts[%d]", path, index)
+		if !validFact(fact) || !strings.HasPrefix(fact, prefix) {
+			return invalid(factPath, "must belong to the exact host-assigned Lua fact authority "+prefix)
+		}
+
+		if _, exists := seen[fact]; exists {
+			return invalid(factPath, "must be unique")
+		}
+
+		seen[fact] = struct{}{}
+	}
+
+	return nil
+}
+
+// validLuaAuthority accepts one canonical provider-owner segment without namespace separators.
+func validLuaAuthority(authority string) bool {
+	return len(authority) <= 64 && validIdentifierSegment(authority, true)
 }
 
 // validateReservedAuthnProviderKind protects the two qualified Lua identity families from kind spoofing.
@@ -2507,7 +2557,7 @@ func validValueKind(value string) bool {
 // validProviderKind reports whether one configured provider uses a registered binding family.
 func validProviderKind(value string) bool {
 	switch value {
-	case providerKindLuaEnvironment, providerKindLuaSubject, "native", keywordPlugin:
+	case providerKindLua, providerKindLuaEnvironment, providerKindLuaSubject, "native", keywordPlugin:
 		return true
 	default:
 		return false
