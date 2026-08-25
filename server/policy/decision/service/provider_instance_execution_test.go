@@ -34,6 +34,7 @@ const providerInstanceExecutionFixture = `policy:
       providers:
         shared:
           kind: native
+          module: shared
           targets: [{action: submit}]
           executions: [host_sync]
           failure: indeterminate
@@ -44,9 +45,9 @@ const providerInstanceExecutionFixture = `policy:
             final_decision:
               providers:
                 - name: primary
-                  use: mail/shared
+                  use: mail/plugin.shared.shared
                 - name: dependent
-                  use: mail/shared
+                  use: mail/plugin.shared.shared
                   after: [primary]
       policy_sets:
         default:
@@ -108,8 +109,8 @@ func newProviderInstanceExecutionHarness(t *testing.T) providerInstanceExecution
 	evaluator, err := newCheckpointRuntime(checkpointRuntimeConfig{
 		catalog: catalog,
 		factProviders: map[string]factProviderBinding{
-			"mail/shared": {
-				provider: provider, source: decision.FactSourcePlugin, authority: "shared", component: "mail/shared",
+			"mail/plugin.shared.shared": {
+				provider: provider, source: decision.FactSourcePlugin, authority: "shared", component: "mail/plugin.shared.shared",
 			},
 		},
 		ids: &sequenceIDGenerator{}, evaluationTimeout: time.Second,

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"golang.org/x/net/http/httpguts"
@@ -56,6 +57,7 @@ const (
 	providerKindLuaEnvironment   = "lua_environment"
 	providerKindLuaSubject       = "lua_subject"
 	providerKindLua              = ProviderKindLua
+	providerKindNative           = ProviderKindNative
 	effectKindLuaAction          = "lua_action"
 	luaActionTypeLua             = "lua"
 	luaActionTypePost            = "post"
@@ -877,6 +879,8 @@ func validateProviderBinding(namespace string, name string, provider ProviderCon
 	switch provider.Kind {
 	case providerKindLua:
 		return validateGenericLuaProviderBinding(namespace, name, provider, path)
+	case providerKindNative:
+		return validateGenericNativeProviderBinding(namespace, name, provider, path)
 	case providerKindLuaEnvironment:
 		if namespace != authnNamespace {
 			return invalid(path+".kind", "Lua environment providers are restricted to the authn namespace")
@@ -910,6 +914,33 @@ func validateProviderBinding(namespace string, name string, provider ProviderCon
 	return nil
 }
 
+// validateGenericNativeProviderBinding binds configuration to one exact plugin module authority.
+func validateGenericNativeProviderBinding(
+	namespace string,
+	name string,
+	provider ProviderConfig,
+	path string,
+) error {
+	if pluginapi.ValidateComponentName(name) != nil {
+		return invalid(path, "must use the canonical public plugin component grammar")
+	}
+
+	if pluginapi.ValidateModuleName(provider.Module) != nil || len(provider.CanonicalID(namespace, name)) > 128 {
+		return invalid(path+".module", "must name one canonical plugin module that fits the derived provider identity")
+	}
+
+	if strings.TrimSpace(provider.ScriptPath) != "" {
+		return invalid(path+".script_path", "generic native providers do not accept a script path")
+	}
+
+	return validateProducedFactAuthority(
+		provider.ProducedFacts,
+		"plugin."+provider.Module+".",
+		"plugin",
+		path,
+	)
+}
+
 // validateGenericLuaProviderBinding binds one standalone script to an exact host-owned Lua authority.
 func validateGenericLuaProviderBinding(
 	namespace string,
@@ -925,13 +956,22 @@ func validateGenericLuaProviderBinding(
 		return invalid(path+".script_path", "generic Lua providers require a script path")
 	}
 
-	prefix := "lua." + provider.Module + "."
-	seen := make(map[string]struct{}, len(provider.ProducedFacts))
+	return validateProducedFactAuthority(
+		provider.ProducedFacts,
+		"lua."+provider.Module+".",
+		"Lua",
+		path,
+	)
+}
 
-	for index, fact := range provider.ProducedFacts {
+// validateProducedFactAuthority enforces one source-owned prefix and unique fact identities.
+func validateProducedFactAuthority(facts []string, prefix string, source string, path string) error {
+	seen := make(map[string]struct{}, len(facts))
+
+	for index, fact := range facts {
 		factPath := fmt.Sprintf("%s.produced_facts[%d]", path, index)
 		if !validFact(fact) || !strings.HasPrefix(fact, prefix) {
-			return invalid(factPath, "must belong to the exact host-assigned Lua fact authority "+prefix)
+			return invalid(factPath, "must belong to the exact host-assigned "+source+" fact authority "+prefix)
 		}
 
 		if _, exists := seen[fact]; exists {
@@ -989,7 +1029,7 @@ func validateLuaProviderBinding(
 // validatePluginProviderBinding matches one authn plugin definition to its embedded module identity.
 func validatePluginProviderBinding(namespace string, name string, module string, path string) error {
 	if namespace != authnNamespace {
-		return nil
+		return invalid(path+".kind", "plugin providers are restricted to the authn namespace")
 	}
 
 	identityModule, _, ok := parseAuthnPluginProviderLocal(name)
@@ -1104,7 +1144,7 @@ func validateEffectOwnership(effect EffectConfig, path string) error {
 		return invalid(path+".provider", "return_only effects cannot bind a provider")
 	}
 
-	if effect.Execution != executionReturnOnly && !validQualified(effect.Provider) {
+	if effect.Execution != executionReturnOnly && !validHostEffectProviderUse(effect.Provider) {
 		return invalid(path+".provider", "host effects require one exact qualified provider")
 	}
 
@@ -1113,6 +1153,11 @@ func validateEffectOwnership(effect EffectConfig, path string) error {
 	}
 
 	return nil
+}
+
+// validHostEffectProviderUse accepts configured local IDs and exact native provider families.
+func validHostEffectProviderUse(value string) bool {
+	return validQualified(value) || validGenericNativeProviderUse(value) || validAuthnPluginProviderUse(value)
 }
 
 // validateLuaActionEffect preserves reserved identity, script, and exact host ownership.
@@ -2429,7 +2474,33 @@ func validProviderUse(value string) bool {
 		return true
 	}
 
-	return validAuthnPluginProviderUse(value)
+	return validGenericNativeProviderUse(value) || validAuthnPluginProviderUse(value)
+}
+
+// validGenericNativeProviderUse accepts one exact host-derived native provider identity.
+func validGenericNativeProviderUse(value string) bool {
+	_, _, _, ok := parseGenericNativeProviderUse(value)
+
+	return ok
+}
+
+// parseGenericNativeProviderUse extracts an exact namespace, plugin module, and component identity.
+func parseGenericNativeProviderUse(value string) (string, string, string, bool) {
+	if len(value) == 0 || len(value) > 128 || strings.Count(value, "/") != 1 {
+		return "", "", "", false
+	}
+
+	namespace, local, ok := strings.Cut(value, "/")
+	if !ok || !validNamespace(namespace) || !strings.HasPrefix(local, "plugin.") {
+		return "", "", "", false
+	}
+
+	module, component, ok := strings.Cut(strings.TrimPrefix(local, "plugin."), ".")
+	if !ok || pluginapi.ValidateModuleName(module) != nil || pluginapi.ValidateComponentName(component) != nil {
+		return "", "", "", false
+	}
+
+	return namespace, module, component, true
 }
 
 // validAuthnPluginProviderUse validates the two host-owned native plugin provider forms.
@@ -2492,6 +2563,19 @@ func parseAuthnPluginProviderLocal(value string) (string, string, bool) {
 func providerUseResolvable(namespace string, use string, providers map[string]ProviderConfig) bool {
 	if policy.IsAuthnBuiltinProviderIdentity(use) {
 		return namespace == authnNamespace
+	}
+
+	if owner, module, component, native := parseGenericNativeProviderUse(use); native {
+		if owner != namespace {
+			return false
+		}
+
+		if provider, exists := providers[component]; exists &&
+			provider.Kind == ProviderKindNative &&
+			provider.Module == module &&
+			provider.CanonicalID(owner, component) == use {
+			return true
+		}
 	}
 
 	owner, name, ok := strings.Cut(use, "/")
@@ -2557,7 +2641,7 @@ func validValueKind(value string) bool {
 // validProviderKind reports whether one configured provider uses a registered binding family.
 func validProviderKind(value string) bool {
 	switch value {
-	case providerKindLua, providerKindLuaEnvironment, providerKindLuaSubject, "native", keywordPlugin:
+	case providerKindLua, providerKindLuaEnvironment, providerKindLuaSubject, providerKindNative, keywordPlugin:
 		return true
 	default:
 		return false

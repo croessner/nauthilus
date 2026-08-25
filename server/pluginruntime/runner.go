@@ -64,22 +64,6 @@ const extensionPointPlugin = "plugin"
 // Option customizes a Runner.
 type Option func(*Runner)
 
-// CallRecord describes one host-invoked plugin method call.
-type CallRecord struct {
-	Err            error
-	Duration       time.Duration
-	ModuleName     string
-	ComponentName  string
-	ExtensionPoint string
-	Method         string
-	Panicked       bool
-}
-
-// Observer receives automatic plugin call observations.
-type Observer interface {
-	ObservePluginCall(CallRecord)
-}
-
 type debugRegistryHost interface {
 	SetDebugRegistry(*pluginregistry.Registry)
 }
@@ -659,7 +643,12 @@ func (r *Runner) moduleConfigLocked(moduleName string) pluginapi.ConfigView {
 }
 
 // invoke runs one host-invoked plugin method with panic recovery and call observation.
-func (r *Runner) invoke(ctx context.Context, spec invokeSpec, fn func(context.Context) error) (err error) {
+func (r *Runner) invoke(ctx context.Context, spec invokeSpec, fn func(context.Context) error) error {
+	return invokePluginCall(ctx, r.observer, spec, fn)
+}
+
+// invokePluginCall runs one captured native method through the shared panic and observability boundary.
+func invokePluginCall(ctx context.Context, observer Observer, spec invokeSpec, fn func(context.Context) error) (err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -681,7 +670,7 @@ func (r *Runner) invoke(ctx context.Context, spec invokeSpec, fn func(context.Co
 		}
 
 		finishPluginCallSpan(span, err, panicked)
-		r.observe(CallRecord{
+		observePluginCall(observer, CallRecord{
 			Err:            err,
 			Duration:       time.Since(start),
 			ModuleName:     spec.moduleName,
@@ -736,13 +725,17 @@ func pluginCallSpanName(spec invokeSpec) string {
 	return "plugin." + spec.extensionPoint + "." + spec.method
 }
 
-// observe emits a call record through the configured observer.
-func (r *Runner) observe(record CallRecord) {
-	if r == nil || r.observer == nil {
+// observePluginCall emits one bounded call record without allowing observer panics to escape.
+func observePluginCall(observer Observer, record CallRecord) {
+	if observer == nil {
 		return
 	}
 
-	r.observer.ObservePluginCall(record)
+	defer func() {
+		_ = recover()
+	}()
+
+	observer.ObservePluginCall(record)
 }
 
 // componentInvokeSpec builds a stable observation scope from a component.

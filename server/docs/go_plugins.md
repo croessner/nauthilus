@@ -265,6 +265,92 @@ Host-managed HTTP keeps explicitly configured direct HTTP endpoints available fo
 fail-closed: they are limited to ten hops, must use credential-free HTTPS, and must remain on the original HTTPS origin.
 Operators should configure the final endpoint directly when an upstream redirects across hosts, ports, or schemes.
 
+## Generic Policy Providers
+
+Native plugins may register additive target-aware fact and effect capabilities through
+`pluginapi.DecisionRegistrar`. Registration is discovery, not activation: it cannot add an active target, schedule a
+provider, select a decision or effect, mutate a catalog, or authorize a caller. Static operator policy configuration
+remains the sole activation authority.
+
+The standalone candidate configuration uses `kind: native`, the required configured module name, and a provider-local
+key. The resulting internal provider identity is `<namespace>/plugin.<module>.<local>`. Facts are qualified as
+`plugin.<module>.<local-output>`. An effect names the authored local provider key in the same namespace; candidate
+normalization resolves that reference to the same canonical native provider identity.
+
+The following shape documents isolated candidate preparation before the production top-level policy-root cutover. It is
+not yet a production activation example:
+
+```yaml
+policy:
+  namespaces:
+    mail.security:
+      providers:
+        risk:
+          kind: native
+          module: mailguard
+          targets:
+            - action: evaluate
+          produced_facts:
+            - plugin.mailguard.risk.score
+          failure: indeterminate
+          timeout: 500ms
+        notifier:
+          kind: native
+          module: mailguard
+          targets:
+            - action: evaluate
+          executions: [host_sync]
+          failure: indeterminate
+          timeout: 500ms
+      effects:
+        notify:
+          kind: obligation
+          provider: mail.security/plugin.mailguard.notifier
+          targets:
+            - action: evaluate
+          execution: host_sync
+          parameters:
+            recipient:
+              type: string
+              max_length: 128
+              non_empty: true
+              required: true
+```
+
+Candidate preparation resolves every configured native provider against the capabilities registered by the named loaded
+module. The configured targets, outputs, executions, effects, and parameter schema must be an exact supported subset of
+the registered descriptors. Missing modules or components, duplicate identities, foreign namespaces, unsupported target
+selectors, incompatible schemas, and extra authority are candidate errors. A failed candidate leaves the previously
+active generation unchanged.
+
+Successful preparation freezes provider references and the selected capability subset into an immutable runtime generation.
+Fact calls use bounded redacted values and host-owned context deadlines. Returned facts must match the active target
+schema, declared type and bounds, source `plugin`, namespace, module authority, and collision rules. Contract violations
+fail closed. Ordinary provider failure follows the configured `indeterminate|continue` scheduler behavior; unsafe
+continuation is rejected during compilation, and required dependencies are skipped when their prerequisites fail.
+The runtime contains provider errors and panics, maps timeout and cancellation through bounded result classes, and keeps
+raw errors, callers, facts, parameters, and secrets out of automatic logs, metric labels, and trace attributes.
+
+The configured provider timeout is a fact-collection budget. Synchronous effects instead inherit the Decision evaluation
+context, and accepted post-actions use the supervisor plan deadline. Effect-only provider definitions do not become
+scheduled fact providers merely because the uniform configuration shape contains failure or timeout values.
+
+Only policy-selected, target-valid, typed `host_sync` and `host_post_action` effects call a native provider. Unselected
+effects, `return_only` obligations, and advice do not. Post-actions must be accepted synchronously by the internal effect
+supervisor before application-response finalization and execute only after its gate opens. Acceptance failure is
+synchronous; failures after finalization are recorded without changing the response.
+
+Each selected effect ordinal has at most one host attempt per Decision invocation. Nauthilus does not automatically
+retry on error, cancellation, timeout, panic, or an ambiguous external dispatch. `outcome_unknown` means the provider
+may have dispatched externally but cannot establish the remote result; the internal attempt identity is correlation
+data, not a public idempotency key. Providers may implement domain-specific idempotency voluntarily, but it is outside
+the generic Policy API/provider contract and the runtime does not rely on it.
+
+Existing native environment, subject, backend, obligation, and post-action extensions keep their implicit `authn`
+binding and current configuration. Generic registration does not make those auth extensions callable for another
+target. Production publication of the standalone top-level `policy` root remains a later atomic cutover; the native
+generic provider implementation currently supports isolated candidate preparation and runtime validation only.
+
 ## Declarative Policy Initialization
 
 Policy response translations and per-account network exceptions are authoritative operator configuration. Native
@@ -380,6 +466,10 @@ tokens, passwords, SQL statements, or raw plugin errors into metric labels or ho
 SIGHUP can apply plugin-owned `config` changes only when the plugin implements `pluginapi.ReloadablePlugin`. If
 `Reconfigure` returns an error, Nauthilus keeps the previous working plugin config.
 
+Generic policy deactivation is generation-bound. A successfully prepared reload can omit a previously configured native
+provider or effect from the new generation, while requests and accepted post-actions holding the old generation continue
+through their immutable bindings until they drain. This is config deactivation, not module unloading.
+
 These changes require a process restart:
 
 - adding or removing modules
@@ -392,6 +482,9 @@ These changes require a process restart:
 - changing API version or loader contract fields
 
 Go plugin code cannot be unloaded or replaced after `plugin.Open`; SIGUSR1 does not attempt restartless code replacement.
+If candidate artifact validation detects that a loaded `.so` was replaced or removed, preparation reports restart
+required and retains the current generation. Restore the exact loaded artifact if appropriate or perform a controlled
+process restart; do not expect reload to adopt the changed binary.
 
 ## Reference Plugin
 

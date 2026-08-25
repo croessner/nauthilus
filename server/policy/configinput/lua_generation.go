@@ -34,10 +34,7 @@ type configuredGenerationBuilder struct {
 	ctx                 context.Context
 	acceptance          effectsupervisor.Acceptor
 	policy              policyconfig.PolicyConfig
-	providers           map[string]registry.ProviderDefinition
-	effectsByProvider   map[string][]registry.EffectDefinition
-	effectIDs           map[string]struct{}
-	configuredEffects   map[string]policyconfig.EffectConfig
+	definitions         configuredDefinitionIndex
 	authorities         map[string]*configuredLuaAuthority
 	scripts             map[string]*luaprovider.Script
 	preparedDefinitions []registry.DefinitionContribution
@@ -60,12 +57,12 @@ func PrepareConfiguredLuaGeneration(
 	ctx context.Context,
 	input ConfiguredLuaGenerationInput,
 ) (policyruntime.ExtensionPreparation, error) {
-	ctx = normalizeLuaPreparationContext(ctx)
+	ctx = normalizeConfiguredPreparationContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return policyruntime.ExtensionPreparation{}, err
 	}
 
-	if nilLuaPreparationDependency(input.PostActionAcceptance) {
+	if nilConfiguredPreparationDependency(input.PostActionAcceptance) {
 		return policyruntime.ExtensionPreparation{}, invalidGenerationRegistration(
 			"post-action acceptance is required",
 		)
@@ -96,15 +93,12 @@ func newConfiguredGenerationBuilder(
 ) *configuredGenerationBuilder {
 	return &configuredGenerationBuilder{
 		ctx: ctx, acceptance: acceptance, policy: policy,
-		providers:         make(map[string]registry.ProviderDefinition),
-		effectsByProvider: make(map[string][]registry.EffectDefinition),
-		effectIDs:         make(map[string]struct{}),
-		configuredEffects: make(map[string]policyconfig.EffectConfig),
-		authorities:       make(map[string]*configuredLuaAuthority),
-		scripts:           make(map[string]*luaprovider.Script),
-		factBindings:      make(map[string]policyruntime.FactProviderBinding),
-		syncBindings:      make(map[string]policyruntime.SyncEffectProvider),
-		postBindings:      make(map[string]policyruntime.PostActionProvider),
+		definitions:  newConfiguredDefinitionIndex(policy),
+		authorities:  make(map[string]*configuredLuaAuthority),
+		scripts:      make(map[string]*luaprovider.Script),
+		factBindings: make(map[string]policyruntime.FactProviderBinding),
+		syncBindings: make(map[string]policyruntime.SyncEffectProvider),
+		postBindings: make(map[string]policyruntime.PostActionProvider),
 	}
 }
 
@@ -112,34 +106,7 @@ func newConfiguredGenerationBuilder(
 func (b *configuredGenerationBuilder) indexDefinitions(
 	contributions []registry.DefinitionContribution,
 ) error {
-	for _, contribution := range contributions {
-		for _, provider := range contribution.Providers() {
-			if _, exists := b.providers[provider.ID()]; exists {
-				return invalidGenerationRegistration("normalized provider identity is ambiguous")
-			}
-
-			b.providers[provider.ID()] = provider
-		}
-
-		for _, effect := range contribution.Effects() {
-			if _, exists := b.effectIDs[effect.ID()]; exists {
-				return invalidGenerationRegistration("normalized effect identity is ambiguous")
-			}
-
-			b.effectIDs[effect.ID()] = struct{}{}
-
-			configured, exists := configuredEffect(b.policy, effect.ID())
-			if exists {
-				b.configuredEffects[effect.ID()] = configured
-			}
-
-			if effect.Provider() != "" {
-				b.effectsByProvider[effect.Provider()] = append(b.effectsByProvider[effect.Provider()], effect)
-			}
-		}
-	}
-
-	return nil
+	return b.definitions.index(contributions, invalidGenerationRegistration)
 }
 
 // prepareAuthorities compiles configured scripts and freezes each module authority independently.
@@ -192,7 +159,7 @@ func (b *configuredGenerationBuilder) prepareProvider(
 
 	providerID := CanonicalProviderID(namespace, name, configured)
 
-	definition, exists := b.providers[providerID]
+	definition, exists := b.definitions.providers[providerID]
 	if !exists || definition.ID() != providerID {
 		return invalidGenerationRegistration("configured Lua provider definition is missing")
 	}
@@ -220,7 +187,7 @@ func (b *configuredGenerationBuilder) prepareProvider(
 		registered = true
 	}
 
-	effects := b.effectsByProvider[providerID]
+	effects := b.definitions.effectsByProvider[providerID]
 	if len(effects) > 0 {
 		if err = b.registerEffects(group, namespace, name, definition, effects, script); err != nil {
 			return err
@@ -384,7 +351,12 @@ func (b *configuredGenerationBuilder) exactContribution(
 ) (registry.DefinitionContribution, error) {
 	providers := make([]registry.ExtensionProviderDefinition, 0, len(group.providers))
 	for _, definition := range group.providers {
-		configured, err := configuredProviderDefinition(definition, b.acceptance)
+		configuredDefinition := configuredEffectProviderDefinition
+		if len(definition.Outputs()) > 0 {
+			configuredDefinition = configuredProviderDefinition
+		}
+
+		configured, err := configuredDefinition(definition, b.acceptance)
 		if err != nil {
 			return registry.DefinitionContribution{}, invalidGenerationRegistration(
 				"configured Lua provider metadata was rejected",
@@ -415,35 +387,38 @@ func (b *configuredGenerationBuilder) exactContribution(
 
 // mergePreparedBindings rejects collisions while aggregating authority-owned callback owners.
 func (b *configuredGenerationBuilder) mergePreparedBindings(prepared *policyruntime.BindingSet) error {
-	if err := mergeConfiguredBindings(b.factBindings, prepared.FactProviders()); err != nil {
+	if err := mergeConfiguredBindings(
+		b.factBindings,
+		prepared.FactProviders(),
+		invalidGenerationRegistration,
+	); err != nil {
 		return err
 	}
 
-	if err := mergeConfiguredBindings(b.syncBindings, prepared.SyncEffects()); err != nil {
+	if err := mergeConfiguredBindings(
+		b.syncBindings,
+		prepared.SyncEffects(),
+		invalidGenerationRegistration,
+	); err != nil {
 		return err
 	}
 
-	return mergeConfiguredBindings(b.postBindings, prepared.PostActions())
+	return mergeConfiguredBindings(
+		b.postBindings,
+		prepared.PostActions(),
+		invalidGenerationRegistration,
+	)
 }
 
 // extensionPreparation owns the aggregate maps and includes native module bindings exactly once.
 func (b *configuredGenerationBuilder) extensionPreparation(
 	nativeModules []policyruntime.NativeModuleBindingInput,
 ) (policyruntime.ExtensionPreparation, error) {
-	bindings, err := policyruntime.NewBindingSet(policyruntime.BindingSetInput{
-		FactProviders: b.factBindings, SyncEffects: b.syncBindings, PostActions: b.postBindings,
-		NativeModules: nativeModules, PostActionAcceptance: b.acceptance,
+	return configuredExtensionPreparation(configuredExtensionPreparationInput{
+		acceptance: b.acceptance, definitions: b.preparedDefinitions,
+		factBindings: b.factBindings, syncBindings: b.syncBindings, postBindings: b.postBindings,
+		nativeModules: nativeModules, reject: invalidGenerationRegistration,
 	})
-	if err != nil {
-		return policyruntime.ExtensionPreparation{}, invalidGenerationRegistration(
-			"configured Lua binding aggregate was rejected",
-		)
-	}
-
-	return policyruntime.ExtensionPreparation{
-		Definitions: append([]registry.DefinitionContribution(nil), b.preparedDefinitions...),
-		Bindings:    bindings,
-	}, nil
 }
 
 // configuredFactDescriptor projects exact normalized targets and local fact capabilities.
@@ -505,7 +480,7 @@ func (b *configuredGenerationBuilder) configuredEffect(
 ) (luaprovider.EffectDescriptor, error) {
 	local, found := strings.CutPrefix(effect.ID(), namespace+"/")
 
-	configured, configuredFound := b.configuredEffects[effect.ID()]
+	configured, configuredFound := b.definitions.configuredEffects[effect.ID()]
 	if !found || local == "" || !configuredFound || effect.Provider() != provider.ID() ||
 		effect.Kind() != registry.EffectKindObligation {
 		return luaprovider.EffectDescriptor{}, invalidGenerationRegistration("configured Lua effect ownership does not match")
@@ -564,10 +539,33 @@ func configuredProviderDefinition(
 	definition registry.ProviderDefinition,
 	acceptance effectsupervisor.Acceptor,
 ) (registry.ProviderDefinition, error) {
+	return newConfiguredProviderDefinition(definition, acceptance, true)
+}
+
+// configuredEffectProviderDefinition removes inert schedule metadata from an effect-only catalog owner.
+func configuredEffectProviderDefinition(
+	definition registry.ProviderDefinition,
+	acceptance effectsupervisor.Acceptor,
+) (registry.ProviderDefinition, error) {
+	return newConfiguredProviderDefinition(definition, acceptance, false)
+}
+
+// newConfiguredProviderDefinition reconstructs exact shared metadata with optional fact scheduling.
+func newConfiguredProviderDefinition(
+	definition registry.ProviderDefinition,
+	acceptance effectsupervisor.Acceptor,
+	includeSchedule bool,
+) (registry.ProviderDefinition, error) {
 	input := registry.ProviderDefinitionInput{
 		ID: definition.ID(), Targets: definition.Targets(), Executions: definition.Executions(),
-		Requires: definition.Requires(), ProducedFacts: definition.ProducedFacts(), Outputs: definition.Outputs(),
-		Failure: definition.Failure(), Timeout: definition.Timeout(), DiagnosticID: definition.DiagnosticID(),
+		DiagnosticID: definition.DiagnosticID(),
+	}
+	if includeSchedule {
+		input.Requires = definition.Requires()
+		input.ProducedFacts = definition.ProducedFacts()
+		input.Outputs = definition.Outputs()
+		input.Failure = definition.Failure()
+		input.Timeout = definition.Timeout()
 	}
 
 	if slices.Contains(input.Executions, registry.ExecutionHostPostAction) {
@@ -642,11 +640,15 @@ func configuredEffect(
 	return effect, exists
 }
 
-// mergeConfiguredBindings inserts immutable owners once across all Lua authorities.
-func mergeConfiguredBindings[T any](destination map[string]T, source map[string]T) error {
+// mergeConfiguredBindings inserts immutable owners once across all configured authorities.
+func mergeConfiguredBindings[T any](
+	destination map[string]T,
+	source map[string]T,
+	reject func(string) error,
+) error {
 	for id, binding := range source {
 		if _, exists := destination[id]; exists {
-			return invalidGenerationRegistration("configured Lua binding identity occurs more than once")
+			return reject("configured binding identity occurs more than once")
 		}
 
 		destination[id] = binding
@@ -676,8 +678,8 @@ func configuredPreparationError(ctx context.Context, reason string) error {
 	return invalidGenerationRegistration(reason)
 }
 
-// normalizeLuaPreparationContext supplies a usable cancellation root for direct callers.
-func normalizeLuaPreparationContext(ctx context.Context) context.Context {
+// normalizeConfiguredPreparationContext supplies a usable cancellation root for direct callers.
+func normalizeConfiguredPreparationContext(ctx context.Context) context.Context {
 	if ctx == nil {
 		return context.Background()
 	}
@@ -685,8 +687,8 @@ func normalizeLuaPreparationContext(ctx context.Context) context.Context {
 	return ctx
 }
 
-// nilLuaPreparationDependency rejects nil and typed-nil host capabilities.
-func nilLuaPreparationDependency(input any) bool {
+// nilConfiguredPreparationDependency rejects nil and typed-nil host capabilities.
+func nilConfiguredPreparationDependency(input any) bool {
 	if input == nil {
 		return true
 	}

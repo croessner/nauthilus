@@ -25,14 +25,17 @@ const configuredAuthnPlanFixture = `policy:
       providers:
         primary:
           kind: native
+          module: test
           targets: [{action: authenticate}]
           executions: [host_sync]
         dependent:
           kind: native
+          module: test
           targets: [{action: authenticate}]
           executions: [host_sync]
         lookup_only:
           kind: native
+          module: test
           targets: [{action: lookup_identity}]
           executions: [host_sync]
       domain_plans:
@@ -102,14 +105,17 @@ const sharedAuthnPlanFixture = `policy:
       providers:
         shared:
           kind: native
+          module: test
           targets: [{action: authenticate}, {action: lookup_identity}]
           executions: [host_sync]
         auth_only:
           kind: native
+          module: test
           targets: [{action: authenticate}]
           executions: [host_sync]
         lookup_only:
           kind: native
+          module: test
           targets: [{action: lookup_identity}]
           executions: [host_sync]
       domain_plans:
@@ -150,11 +156,13 @@ const genericRequiredProviderFixture = `policy:
       providers:
         primary:
           kind: native
+          module: test
           targets: [{action: submit}]
           executions: [host_sync]
           failure: indeterminate
         dependent:
           kind: native
+          module: test
           targets: [{action: submit}]
           executions: [host_sync]
           failure: indeterminate
@@ -300,8 +308,8 @@ func TestPolicyCompiledPlanFiltersSharedAuthnPlanProvidersByTargetAction(t *test
 		action string
 		want   []string
 	}{
-		{action: string(policy.OperationAuthenticate), want: []string{"authn/shared", "authn/auth_only"}},
-		{action: string(policy.OperationLookupIdentity), want: []string{"authn/shared", "authn/lookup_only"}},
+		{action: string(policy.OperationAuthenticate), want: []string{"authn/plugin.test.shared", "authn/plugin.test.auth_only"}},
+		{action: string(policy.OperationLookupIdentity), want: []string{"authn/plugin.test.shared", "authn/plugin.test.lookup_only"}},
 	}
 
 	for _, test := range tests {
@@ -701,7 +709,12 @@ func assertConfiguredAuthnPreAuth(t *testing.T, target policyruntime.CompiledTar
 		t.Fatal("configured pre_auth checkpoint is missing")
 	}
 
-	wantProviders := []string{"authn/primary", "authn/dependent", policy.AuthnProviderTLSEncryption, "authn/primary"}
+	wantProviders := []string{
+		"authn/plugin.test.primary",
+		"authn/plugin.test.dependent",
+		policy.AuthnProviderTLSEncryption,
+		"authn/plugin.test.primary",
+	}
 	if got := preAuth.ProviderIDs(); !slices.Equal(got, wantProviders) {
 		t.Fatalf("pre_auth providers = %v, want stable dependency order %v", got, wantProviders)
 	}
@@ -779,8 +792,8 @@ func invalidProviderDependenciesFixture(providers string) string {
   namespaces:
     authn:
       providers:
-        primary: {kind: native, targets: [{action: authenticate}], executions: [host_sync]}
-        dependent: {kind: native, targets: [{action: authenticate}], executions: [host_sync]}
+        primary: {kind: native, module: test, targets: [{action: authenticate}], executions: [host_sync]}
+        dependent: {kind: native, module: test, targets: [{action: authenticate}], executions: [host_sync]}
       domain_plans:
         migrated:
           scheduler_guards:
@@ -878,13 +891,13 @@ func assertCompiledProviderInstances(t *testing.T, checkpoint policyruntime.Comp
 
 	want := []providerInstanceSnapshot{
 		{
-			name: "primary", use: "authn/primary", actions: "authenticate", runIfAuthState: policy.RunIfAny,
+			name: "primary", use: "authn/plugin.test.primary", actions: "authenticate", runIfAuthState: policy.RunIfAny,
 			output:              policy.AuthnFactTLSSecure,
 			path:                "policy.namespaces.authn.domain_plans.migrated.checkpoints.pre_auth.providers[4]",
 			observeSafeAuthored: true,
 		},
 		{
-			name: "dependent", use: "authn/dependent", actions: "authenticate", after: "primary",
+			name: "dependent", use: "authn/plugin.test.dependent", actions: "authenticate", after: "primary",
 			runIfAuthState: "unauthenticated", skipIf: "known_client", output: policy.AuthnFactRBLThresholdReached,
 			path:        "policy.namespaces.authn.domain_plans.migrated.checkpoints.pre_auth.providers[0]",
 			observeSafe: true, observeSafeAuthored: true,
@@ -896,7 +909,7 @@ func assertCompiledProviderInstances(t *testing.T, checkpoint policyruntime.Comp
 			observeSafe:    true,
 		},
 		{
-			name: "primary_alias", use: "authn/primary", actions: "authenticate", after: "primary",
+			name: "primary_alias", use: "authn/plugin.test.primary", actions: "authenticate", after: "primary",
 			runIfAuthState: policy.RunIfAny,
 			path:           "policy.namespaces.authn.domain_plans.migrated.checkpoints.pre_auth.providers[3]",
 		},

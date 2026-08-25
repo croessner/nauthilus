@@ -111,6 +111,7 @@ var providerAndEffectValidationPathCases = []policyValidationPathCase{
       providers:
         risk:
           kind: native
+          module: risk
           failure: abort
 `,
 		path: "policy.namespaces.dkim2.providers.risk.failure",
@@ -280,6 +281,7 @@ policy:
       providers:
         signer:
           kind: native
+          module: signer
           failure: indeterminate
           timeout: 100ms
           secrets:
@@ -410,6 +412,7 @@ policy:
       providers:
         risk:
           kind: native
+          module: risk
           targets: [{action: sign-message-instance}]
           failure: indeterminate
           timeout: 100ms
@@ -454,6 +457,7 @@ policy:
       providers:
         risk:
           kind: native
+          module: risk
           targets: [{action: sign-message-instance}]
           failure: indeterminate
           timeout: `+test.timeout+`

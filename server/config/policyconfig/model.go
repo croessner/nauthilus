@@ -18,6 +18,9 @@ const (
 	// ProviderKindLua selects the standalone target-aware Lua provider path.
 	ProviderKindLua = "lua"
 
+	// ProviderKindNative selects a generation-bound native Go provider.
+	ProviderKindNative = "native"
+
 	// VisibilityPrivate keeps a policy set inside its owning namespace.
 	VisibilityPrivate = "private"
 
@@ -230,10 +233,13 @@ type ProviderConfig struct {
 	Diagnostics   DiagnosticsConfig       `mapstructure:"diagnostics"`
 }
 
-// CanonicalID derives the internal provider identity while preserving legacy and native names.
+// CanonicalID derives host-owned generic identities while preserving legacy provider names.
 func (p ProviderConfig) CanonicalID(namespace string, name string) string {
-	if p.Kind == ProviderKindLua {
+	switch p.Kind {
+	case ProviderKindLua:
 		return namespace + "/lua." + p.Module + "." + name
+	case ProviderKindNative:
+		return namespace + "/plugin." + p.Module + "." + name
 	}
 
 	return namespace + "/" + name

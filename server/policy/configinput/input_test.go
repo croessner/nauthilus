@@ -383,6 +383,7 @@ func TestUnifiedPolicyInputNormalizesProviderFailureAndEffectExecution(t *testin
       providers:
         dispatch:
           kind: native
+          module: test
           targets:
             - action: sign-message-instance
           executions: [host_sync]
@@ -415,7 +416,7 @@ func TestUnifiedPolicyInputNormalizesProviderFailureAndEffectExecution(t *testin
 	input, err := Normalize(context.Background(), document)
 	requireNoError(t, err)
 
-	provider, effect := findProviderAndEffect(t, input, "dkim2/dispatch", "dkim2/notify")
+	provider, effect := findProviderAndEffect(t, input, "dkim2/plugin.test.dispatch", "dkim2/notify")
 	if provider.Failure() != registry.ProviderFailureContinue {
 		t.Fatalf("provider failure = %q, want continue", provider.Failure())
 	}
@@ -442,6 +443,7 @@ func TestUnifiedPolicyInputAppliesTargetProviderDefaultTimeout(t *testing.T) {
       providers:
         risk:
           kind: native
+          module: test
           targets: [{action: sign-message-instance}]
           executions: [host_sync]
           failure: indeterminate
@@ -471,7 +473,7 @@ func TestUnifiedPolicyInputAppliesTargetProviderDefaultTimeout(t *testing.T) {
 	input, err := Normalize(context.Background(), document)
 	requireNoError(t, err)
 
-	provider, _ := findProviderAndEffectOptional(input, "dkim2/risk", "")
+	provider, _ := findProviderAndEffectOptional(input, "dkim2/plugin.test.risk", "")
 	if provider.Timeout() != 500*time.Millisecond {
 		t.Fatalf("provider timeout = %s, want target default 500ms", provider.Timeout())
 	}

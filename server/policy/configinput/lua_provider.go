@@ -64,7 +64,7 @@ func LuaProviderOutputs(
 		return nil, err
 	}
 
-	return normalizer.projectLuaProviderOutputs(namespace, name, provider, targets)
+	return normalizer.projectProviderOutputs(namespace, name, provider, targets, decision.FactSourceLua)
 }
 
 // configuredLuaProvider resolves one exact generic Lua provider definition.
@@ -111,12 +111,13 @@ func (n *policyNormalizer) providerTargets(
 	return n.deriveProviderTargets(CanonicalProviderID(namespace, name, provider)), nil
 }
 
-// projectLuaProviderOutputs joins every declared output with every exact target schema.
-func (n *policyNormalizer) projectLuaProviderOutputs(
+// projectProviderOutputs joins every declared output with every exact target schema and source.
+func (n *policyNormalizer) projectProviderOutputs(
 	namespace string,
 	name string,
 	provider policyconfig.ProviderConfig,
 	targets []decision.Target,
+	source decision.FactSource,
 ) ([]LuaProviderOutput, error) {
 	path := "policy.namespaces." + namespace + ".providers." + name
 
@@ -132,7 +133,7 @@ func (n *policyNormalizer) projectLuaProviderOutputs(
 	for index, factID := range provider.ProducedFacts {
 		factPath := fmt.Sprintf("%s.produced_facts[%d]", path, index)
 
-		output, err := n.projectLuaProviderOutput(factPath, factID, targets)
+		output, err := n.projectProviderOutput(factPath, factID, targets, source)
 		if err != nil {
 			return nil, err
 		}
@@ -143,11 +144,12 @@ func (n *policyNormalizer) projectLuaProviderOutputs(
 	return outputs, nil
 }
 
-// projectLuaProviderOutput requires one identical Lua-compatible shape across all target schemas.
-func (n *policyNormalizer) projectLuaProviderOutput(
+// projectProviderOutput requires one identical source-compatible shape across all target schemas.
+func (n *policyNormalizer) projectProviderOutput(
 	path string,
 	factID string,
 	targets []decision.Target,
+	source decision.FactSource,
 ) (LuaProviderOutput, error) {
 	var projected LuaProviderOutput
 
@@ -157,8 +159,11 @@ func (n *policyNormalizer) projectLuaProviderOutput(
 			return LuaProviderOutput{}, atPath(path, err)
 		}
 
-		if !slices.Contains(fact.AllowedSources, string(decision.FactSourceLua)) {
-			return LuaProviderOutput{}, atPath(factPath+".allowed_sources", fmt.Errorf("must allow the lua source"))
+		if !slices.Contains(fact.AllowedSources, string(source)) {
+			return LuaProviderOutput{}, atPath(
+				factPath+".allowed_sources",
+				fmt.Errorf("must allow the %s source", source),
+			)
 		}
 
 		candidate := newLuaProviderOutput(fact)
@@ -215,8 +220,8 @@ func newLuaProviderOutput(fact policyconfig.StaticFactSchemaConfig) LuaProviderO
 	}
 }
 
-// registryLuaProviderOutputs reconstructs immutable registry capabilities from neutral projections.
-func registryLuaProviderOutputs(outputs []LuaProviderOutput) ([]registry.ProviderFactOutput, error) {
+// registryProviderOutputs reconstructs immutable registry capabilities from neutral projections.
+func registryProviderOutputs(outputs []LuaProviderOutput) ([]registry.ProviderFactOutput, error) {
 	result := make([]registry.ProviderFactOutput, 0, len(outputs))
 	for _, output := range outputs {
 		projected, err := registry.NewProviderFactOutput(registry.ProviderFactOutputInput{

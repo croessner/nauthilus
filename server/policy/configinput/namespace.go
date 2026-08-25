@@ -112,36 +112,44 @@ func (n *policyNormalizer) normalizeProviders(
 	return providers, nil
 }
 
-// defaultProviderExecutions preserves legacy defaults while keeping generic Lua effect ownership explicit.
+// defaultProviderExecutions preserves legacy defaults while keeping generic provider effect ownership explicit.
 func defaultProviderExecutions(
 	provider policyconfig.ProviderConfig,
 	targets []decision.Target,
 	executions []registry.ExecutionClass,
 ) []registry.ExecutionClass {
-	if len(executions) == 0 && len(targets) > 0 && provider.Kind != policyconfig.ProviderKindLua {
+	if len(executions) == 0 && len(targets) > 0 &&
+		provider.Kind != policyconfig.ProviderKindLua && provider.Kind != policyconfig.ProviderKindNative {
 		return []registry.ExecutionClass{registry.ExecutionHostSync}
 	}
 
 	return executions
 }
 
-// normalizeProviderOutputs projects schema-owned capabilities only for generic Lua providers.
+// normalizeProviderOutputs projects schema-owned capabilities for generic extension providers.
 func (n *policyNormalizer) normalizeProviderOutputs(
 	namespace string,
 	name string,
 	provider policyconfig.ProviderConfig,
 	targets []decision.Target,
 ) ([]registry.ProviderFactOutput, error) {
-	if provider.Kind != policyconfig.ProviderKindLua {
+	var source decision.FactSource
+
+	switch provider.Kind {
+	case policyconfig.ProviderKindLua:
+		source = decision.FactSourceLua
+	case policyconfig.ProviderKindNative:
+		source = decision.FactSourcePlugin
+	default:
 		return nil, nil
 	}
 
-	projected, err := n.projectLuaProviderOutputs(namespace, name, provider, targets)
+	projected, err := n.projectProviderOutputs(namespace, name, provider, targets, source)
 	if err != nil {
 		return nil, err
 	}
 
-	outputs, err := registryLuaProviderOutputs(projected)
+	outputs, err := registryProviderOutputs(projected)
 	if err != nil {
 		path := "policy.namespaces." + namespace + ".providers." + name + ".produced_facts"
 

@@ -131,6 +131,132 @@ Lua receives neither the finalization gate nor detached-work authority. The gene
 replay, idempotency, or deduplication fields. The exact Lua tables and strict typed-value encodings are documented in
 `server/lua-plugins.d/policy/README.md`.
 
+## Generic native provider configuration
+
+```yaml
+policy:
+  namespaces:
+    dkim2:
+      schema_contributions:
+        static:
+          sign-message:
+            versions:
+              v1:
+                facts:
+                  - attribute: plugin.reputation.risk_score
+                    category: environment
+                    type: integer
+                    allowed_sources: [plugin]
+      providers:
+        risk:
+          kind: native
+          module: reputation
+          targets: [{action: sign-message}]
+          produced_facts: [plugin.reputation.risk_score]
+          requires: []
+          failure: indeterminate
+          timeout: 100ms
+          diagnostics: {public_id: reputation}
+        notifier:
+          kind: native
+          module: reputation
+          targets: [{action: sign-message}]
+          executions: [host_sync]
+          requires: []
+          produced_facts: []
+          failure: indeterminate
+          timeout: 100ms
+      effects:
+        record-audit:
+          kind: obligation
+          provider: dkim2/plugin.reputation.notifier
+          targets: [{action: sign-message}]
+          execution: host_sync
+          parameters:
+            channel:
+              type: string
+              allowed_strings: [security]
+              max_length: 16
+              non_empty: true
+              required: true
+      domain_plans:
+        default:
+          checkpoints:
+            final_decision:
+              providers:
+                - name: risk
+                  use: dkim2/plugin.reputation.risk
+                  actions: [sign-message]
+      policy_sets:
+        default:
+          rules:
+            - name: record-high-risk
+              checkpoint: final_decision
+              actions: [sign-message]
+              require_providers: [risk]
+              if:
+                attribute: plugin.reputation.risk_score
+                gte: 50
+              then:
+                decision: permit
+                obligations:
+                  - id: dkim2/record-audit
+                    parameters: {channel: security}
+  targets:
+    - namespace: dkim2
+      action: sign-message
+      schema: dkim2/sign-message/v1
+      domain_plan: dkim2/default
+      default_policy: dkim2/default
+      no_match: deny
+      timeouts: {evaluation: 2s, provider_default: 500ms}
+      plans:
+        final_decision:
+          policy_sets: [dkim2/default]
+```
+
+This standalone example has no removed `auth.policy` source and does not add a mapping row. It remains pre-cutover
+configuration until the atomic policy-root cutover. `kind: native`, `module: reputation`, and the local key `risk`
+derive the exact fact-provider identity `dkim2/plugin.reputation.risk`; they do not name or load a shared object. The
+separate local key `notifier` derives the effect-provider identity `dkim2/plugin.reputation.notifier`, because one
+registered native component has one local identity and implements one generic provider boundary. The schema permits
+the `plugin` source, while `plugin.reputation.risk_score` fixes the module-owned fact authority and exact configured
+output. Each configured target, output shape, execution class, and typed effect parameter must match the loaded
+module's immutable capability descriptor.
+
+Registering a native descriptor advertises capability but does not activate it. Candidate-generation preparation
+resolves only configured provider identities against the already loaded module registry, validates their exact
+targets and fact/effect contracts, and freezes the resulting bindings into that generation. An unconfigured
+contribution is absent from the prepared catalog; a configured identity that cannot be resolved rejects candidate
+generation. A provider cannot activate itself, mutate the catalog, choose an effect, reorder a plan, or schedule
+detached work. Existing native environment, subject, and effect extensions retain their separate implicit `authn`
+binding and are not converted into generic targets.
+
+The shared scheduler applies configured `failure` and `timeout` values to fact collection. A fact call is context-bound
+to the shortest host budget, and a panic, cancellation, timeout, invalid fact type, wrong source or authority,
+undeclared output, or collision is classified by the host. `continue` is available only when the compiler proves
+continuation safe; contract violations remain `indeterminate`. Dependencies of a failed required provider are skipped
+by the shared scheduler. Synchronous effects inherit the Decision evaluation context, while accepted post-actions use
+the supervisor plan deadline; effect-only providers are not scheduled as fact collectors.
+
+Only an obligation selected by the compiled decision, such as `dkim2/record-audit` above, can invoke its native
+provider. Unselected obligations, advice, and `return_only` effects never call a host provider. `host_sync` execution
+finishes before response finalization. `host_post_action` work must be resolved and accepted by the internal effect
+supervisor synchronously before finalization, then waits for the response gate; a later failure is observable but
+cannot mutate the response.
+
+The host makes at most one effect attempt for each Decision and effect ordinal. It does not automatically retry an
+error, timeout, cancellation, panic, or ambiguous dispatch. Ambiguity after an external dispatch is reported as
+`outcome_unknown` and is not retried. A provider may voluntarily implement domain-specific idempotency using its own
+stable domain data, but that behavior is outside the generic contract. No internal attempt identity is exposed or
+usable as a public idempotency key, and configuration adds no retry, replay, deduplication, or idempotency field.
+
+Compatible configuration deactivation is generation-bound: a newly prepared generation omits the provider while an
+older leased generation may finish in-flight work with its frozen binding. Native Go modules remain loaded for the
+process lifetime. Adding or removing a module, changing its identity or capability set, or removing, replacing, or
+changing the configured binary requires a process restart; configuration reload cannot unload or replace a Go
+shared object.
+
 ## Nested rule, effect, and scheduler mappings
 
 The owner paths above do not change the following nested semantic contract.

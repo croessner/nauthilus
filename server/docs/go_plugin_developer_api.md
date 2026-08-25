@@ -55,6 +55,11 @@ classDiagram
         +RegisterDebugModule(DebugModuleDefinition) error
     }
 
+    class DecisionRegistrar {
+        +RegisterDecisionFactProvider(DecisionFactProvider) error
+        +RegisterDecisionEffectProvider(DecisionEffectProvider) error
+    }
+
     class Host {
         +ServiceContext() context.Context
         +Logger(scope string) Logger
@@ -104,6 +109,16 @@ classDiagram
         +Enqueue(context.Context, PostActionRequest) (PostActionEnqueueResult, error)
     }
 
+    class DecisionFactProvider {
+        +Descriptor() DecisionFactProviderDescriptor
+        +Collect(context.Context, DecisionFactRequest) (DecisionFactResult, error)
+    }
+
+    class DecisionEffectProvider {
+        +Descriptor() DecisionEffectProviderDescriptor
+        +Execute(context.Context, DecisionEffectRequest) (DecisionEffectResult, error)
+    }
+
     class Hook {
         +Descriptor() HookDescriptor
         +Serve(context.Context, HookRequest) (HookResponse, error)
@@ -112,6 +127,7 @@ classDiagram
     Plugin <|.. RuntimePlugin
     Plugin <|.. ReloadablePlugin
     Plugin --> Registrar : Register
+    Registrar ..> DecisionRegistrar : optional assertion
     RuntimePlugin --> Host : Start
     Registrar --> InitTask
     Registrar --> EnvironmentSource
@@ -120,6 +136,8 @@ classDiagram
     Registrar --> ObligationTarget
     Registrar --> PostActionTarget
     Registrar --> Hook
+    DecisionRegistrar --> DecisionFactProvider
+    DecisionRegistrar --> DecisionEffectProvider
 ```
 
 ## Names And Identity
@@ -260,6 +278,11 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 Use `Registrar.Config()` for plugin-owned module config. Nauthilus passes the root `plugins.modules[].config` subtree as
 a read-only `ConfigView`. `Decode` is strict and should be treated as part of plugin startup validation.
 
+Generic decision providers are registered through the additive `pluginapi.DecisionRegistrar` interface. Assert that
+optional interface inside `Register`; do not require a change to the base `Plugin` or `Registrar` method set. A generic
+descriptor declares a capability only. Registration does not activate a target, schedule a provider, or authorize an
+effect.
+
 ### Debug Modules
 
 Every configured module automatically has an operator-facing debug selector named `plugin.<module>`, where `<module>` is
@@ -339,6 +362,14 @@ Implement `pluginapi.ReloadablePlugin` only when plugin-owned config can be chan
 
 Changes outside `plugins.modules[].config` are restart-only. Module identity, artifact path, checksum, signature, signer,
 optional flag, capability allowlist, hook authorization, and verification settings require a process restart.
+
+Generic decision bindings have an additional generation boundary. A successful candidate preparation resolves the
+operator-configured subset of registered capabilities and freezes its provider references, target selectors, fact and
+effect schemas, fact scheduling/failure behavior/timeouts, and effect execution classes. Synchronous effects remain
+bounded by the Decision evaluation context, while accepted post-actions use the supervisor deadline budget. Config
+deactivation therefore affects only the newly published generation. An older generation keeps its immutable binding
+while admitted requests and accepted post-actions drain. This does not make the `.so` unloadable: removing a module or
+replacing/removing its artifact remains restart-required.
 
 ## Host Facades
 
@@ -815,6 +846,69 @@ flowchart TD
     H --> J["Asynchronous post-actions"]
     K["HTTP custom route"] --> L["Go hook"]
 ```
+
+### Generic Decision Fact And Effect Providers
+
+Generic policy providers are additive and target-aware. They are deliberately separate from authentication-shaped
+`EnvironmentSource`, `SubjectSource`, `ObligationTarget`, and `PostActionTarget` components. Register them only when the
+registrar also implements `pluginapi.DecisionRegistrar`:
+
+```go
+func registerDecisionProviders(registrar pluginapi.Registrar) error {
+    decisionRegistrar, ok := registrar.(pluginapi.DecisionRegistrar)
+    if !ok {
+        return nil
+    }
+
+    if err := decisionRegistrar.RegisterDecisionFactProvider(riskProvider{}); err != nil {
+        return err
+    }
+
+    return decisionRegistrar.RegisterDecisionEffectProvider(notifierProvider{})
+}
+```
+
+A fact descriptor declares an exact contributed namespace, a component-local name, exact target selectors, bounded
+typed local outputs, and a timeout. For a module named `mailguard`, configured provider `risk` has internal identity
+`mail.security/plugin.mailguard.risk`, while an output named `risk.score` becomes
+`plugin.mailguard.risk.score`. The active target schema remains authoritative: the runtime accepts a result only when
+its output was declared, its type and bounds match, the target schema permits source `plugin`, and its namespace and
+module authority are exact. Duplicate facts, collisions with existing facts, undeclared outputs, and foreign namespace
+or authority claims fail closed.
+
+`DecisionFactRequest` and `DecisionEffectRequest` are immutable, detached inputs. They expose the exact selected target,
+a redacted caller view, admitted facts, and, for effects, only the selected effect and its validated typed parameters.
+They do not expose credentials, transport state, mutable provenance, response mutation, catalog mutation, the response
+finalization gate, or detached scheduling. Provider calls receive host-owned contexts with bounded deadlines and must
+return when canceled.
+
+The operator configuration is the activation authority. During candidate-generation preparation, `kind: native` plus
+the exact `module` and local provider key resolves a registered capability; only the configured subset of descriptor
+targets, outputs, and effects is frozen into the candidate. A descriptor by itself cannot make a provider callable.
+Missing, duplicate, or mismatched configured registrations reject candidate preparation without changing the active
+generation. Registered capabilities that are not selected by configuration remain inactive and absent from the candidate.
+
+Effects remain policy-selected. The shared Decision Service invokes only selected `host_sync` or `host_post_action`
+effects after target and parameter validation. Unselected effects, `return_only` obligations, and advice never call the
+provider. Post-actions must be accepted synchronously by the internal effect supervisor before application-response
+finalization, then wait for the host-owned finalization gate. A late provider or transport failure is observable but
+cannot mutate the completed decision or response.
+
+Each selected effect ordinal is attempted at most once per Decision invocation. Nauthilus does not retry after errors,
+timeouts, cancellation, panic, or an ambiguous external dispatch, and an internal attempt identity is correlation data,
+not a public idempotency key. Report `outcome_unknown` only when an external side effect may have been dispatched but its
+remote result cannot be established. A provider may voluntarily implement domain-specific idempotency, but that remains
+provider-owned behavior outside the generic Policy API and provider contract; the host neither requires nor infers it.
+
+Provider errors and panics are contained behind bounded, secret-safe classifications. Configured ordinary provider
+failure follows the shared `indeterminate|continue` scheduler semantics, including dependency skipping; contract,
+schema, source, namespace, authority, and collision failures always fail closed. Logs, metrics, and traces must use
+bounded identities and classes rather than caller data, fact values, parameters, secrets, or raw errors.
+
+Existing native authentication components remain implicitly `authn`-only and retain their existing request/result
+contracts. Registering a generic decision provider does not widen or reroute those extensions. The generic native
+candidate machinery is available for isolated preparation and runtime tests; production publication of the standalone
+top-level `policy` root remains a later atomic cutover and is not active yet.
 
 ### Environment Sources
 
@@ -1386,6 +1480,10 @@ Write unit tests for plugin logic without loading `.so` artifacts when possible:
 Add at least one build/load smoke test for exported factory compatibility. The reference plugin uses a helper program
 under `contrib/plugins/geoip/testdata/loadplugin` for this purpose.
 
+The compile-only fixture under `pluginapi/v1/testdata/sampleplugin` demonstrates the optional `DecisionRegistrar`
+assertion plus target-aware fact and effect implementations without importing `server/*`. Use it as the public import
+boundary reference for generic provider tests.
+
 Use the required project test environment for Go tests:
 
 ```sh
@@ -1433,6 +1531,9 @@ The following implementation notes are visible in the current codebase and shoul
 | LDAP results | `Host.LDAP().Search` returns an explicit `LDAPSearchResult`; `Modify` returns its error. Entry values are copied public `LDAPEntry` values and are not attached to backend-result state. | Call LDAP explicitly, handle errors, then deliberately return allowed plugin outputs. |
 | Response mutation | Subject sources and synchronous obligations can set or delete allowed response headers while the HTTP response is still mutable. Post-actions have no response mutation field. | Use result-bound `ResponseMutation`; do not expect async work, gRPC paths, already-written responses, or forbidden headers to mutate client output. |
 | Effect requests | Native obligations and post-actions receive policy-selected `Args` and validated Lua/native plugin `Facts` from the active decision context. | Keep effects policy-selected; use explicit logs for public output and register every fact before emission. Use `clickhouse.post_action` and `haveibeenpwnd.post_action` for the bundled native action replacements. |
+| Generic decision facts | An exact operator-configured subset of registered `DecisionFactProvider` capabilities is resolved and frozen during candidate-generation preparation. Calls use immutable redacted requests, context deadlines, the shared scheduler, and strict schema/source/namespace/authority validation. | Keep descriptors exact and bounded; emit only declared local outputs. Registration alone never activates a target or provider. |
+| Generic decision effects | Only selected, target-valid, parameter-valid `host_sync` and `host_post_action` effects reach `DecisionEffectProvider`. Post-actions use supervisor acceptance and the response-finalization gate; advice and `return_only` obligations never invoke a provider. | Treat each call as one at-most-once attempt. Report ambiguity as `outcome_unknown`; do not expect host retries or a public idempotency key. |
+| Generic generation lifecycle | Native provider references and their configured capability subset are immutable generation bindings. Config deactivation applies to a newly published generation while older leased generations drain; module or artifact addition, removal, or replacement remains restart-required. | Keep one loaded module instance safe for concurrent calls and do not interpret config reload as code replacement or unload. |
 | Host-managed HTTP | `Host.HTTP(scope)` validates outbound requests, injects trace headers, applies context timeouts and response body limits, records `host_http_client_*` metrics, and logs only bounded fields. | Prefer this facade for Lua-style outbound HTTP migrations such as blocklist, GeoIP, HIBP, proxy backends, Telegram, and ClickHouse inserts when the value-oriented request shape is sufficient. |
 | Redis keys and scripts | `Host.Redis()` exposes command handles, key construction, and a named script registry with `NOSCRIPT` recovery. | Use host key helpers for prefixed, cluster-safe keys and upload scripts before running them by deterministic name. |
 | Redis named pools | Host-owned named Redis pools are intentionally not exposed. | Build module-owned clients only when the configured host Redis facade is insufficient; close and redact them yourself. |
@@ -1459,9 +1560,13 @@ Before shipping a plugin:
 - Set `Metadata().APIVersion` to `pluginapi.APIVersion`.
 - Validate module config during `Register` and `Reconfigure`.
 - Register every component and policy attribute in `Register`.
+- Assert `DecisionRegistrar` before registering generic providers, and treat descriptors as capabilities rather than
+  activation or scheduling authority.
 - Require `credentials` only when needed and only access passwords through `CredentialProvider`.
 - Keep `Start`, request callbacks, and `Stop` context-bounded.
 - Return only registered policy facts.
+- For generic facts, return only declared local outputs and let the host assign namespace and module authority.
+- For generic effects, implement no host retry assumption; keep optional domain idempotency private to the provider.
 - Use deterministic merge-friendly runtime keys; use `plugin.exchange.*` for cross-plugin analytics and post-action
   handoff values.
 - Test direct plugin behavior and at least one `.so` load path.

@@ -919,6 +919,31 @@ catalog compilation owns activation and provider scheduling; and the effect supe
 Only selected `host_sync` and `host_post_action` obligations have generic executors. `return_only` obligations need no
 host executor, and advice is never executed.
 
+The native registrar validates each public descriptor and adapts it into the internal contribution DTO under authority
+`plugin.<module>`. This registration records a capability only. During candidate-generation preparation, each configured
+`kind: native` provider names one required module and one local provider key. Resolution cross-checks the exact configured
+subset of targets, fact outputs, executions, effects, and parameter schemas against the registered capability and freezes
+the provider reference into the immutable generation binding. Its canonical provider identity is
+`<namespace>/plugin.<module>.<local>`, and a local fact output is qualified as
+`plugin.<module>.<local-output>`. Unconfigured contributions remain absent and cannot become callable through a
+descriptor target selector.
+
+Native fact collection uses the shared scheduler and context deadline. The adapter builds a detached
+`DecisionFactRequest` from the exact target, redacted caller, and admitted bounded facts, contains provider errors and
+panics, and converts only declared local outputs. The shared validator then enforces the active schema, source `plugin`,
+category, value kind and bounds, namespace, provider authority, and collision rules. Contract violations always fail
+closed; ordinary provider failures use the configured `indeterminate|continue` semantics, including dependency
+skipping, only after compiler analysis has established that continuation is safe.
+
+Native effects use the same selection and supervision path as builtins and Lua. The adapter receives a
+`DecisionEffectRequest` only after exact target and parameter validation. A selected `host_sync` effect executes once
+inside the Decision call, while a selected `host_post_action` is resolved, captured as immutable work, and accepted by
+the internal supervisor before application-response finalization. Accepted work waits for the supervisor's gate; late
+failure cannot mutate the completed response. Each selected Decision/effect ordinal has at most one host attempt, with no
+automatic retry after error, timeout, cancellation, panic, or ambiguous external dispatch. `outcome_unknown` is reserved
+for possible external dispatch with an unestablished remote result. The internal attempt identity is correlation data,
+not a public idempotency key. Voluntary domain idempotency remains provider-owned and outside the generic contract.
+
 Existing native and Lua authentication extensions retain their current behavior and remain implicitly bound to the
 `authn` namespace. The generic registration contract does not add execution wiring to those paths. The separate Lua
 contract now registers the exact `_G["policy.facts.collect"]` and `_G["policy.effects.execute"]` callback keys in a
@@ -1535,15 +1560,25 @@ Go plugin module set and binary replacement should be restart-only. Config-only 
 if the plugin implements `ReloadablePlugin`. Adding modules, removing modules, replacing `.so` files, or changing loader
 and artifact fields requires an operator process restart.
 
+Generic decision activation follows immutable runtime-generation ownership rather than mutable module state. Candidate
+preparation resolves and freezes the configured native contribution subset before publication. Config deactivation is
+therefore visible only in the new generation; an older generation retains its provider references while admitted requests
+and accepted post-actions hold generation leases and drain. Failed candidate preparation leaves the active generation
+unchanged.
+
 Loader and artifact fields are not reloadable. Changes to `name`, `type`, `path`, `checksum`, `signature`, `signer`, API
 version, symbol name, verification policy, trust anchors, or allowed directories require a process restart. SIGUSR1
 should not attempt to replace or unload Go plugin code because loaded Go plugins remain resident until process exit.
+Candidate artifact validation reports restart required if a loaded binary is replaced or removed and retains the
+current generation; reload never adopts the changed code.
 
 ## Concurrency Rules
 
 Plugins can use goroutines, but the API must define ownership:
 
 - Request-time calls receive a context with deadline and cancellation.
+- Generic fact and effect callbacks receive only their request context and must not detach policy work. Generic
+  post-actions are captured and gated by the internal effect supervisor rather than scheduled through the plugin API.
 - Plugins must return before the request deadline unless they explicitly schedule detached work through `Host.Go`.
 - Host-managed goroutines are preferred because they get panic recovery and shutdown coordination.
 - `Host.Go` carries context values such as OpenTelemetry span context into the worker, but the worker context is detached
@@ -1566,6 +1601,11 @@ Startup-time failures in `Register`, `Start`, or init task startup follow the pl
 from request-time extension points should map to the existing Nauthilus error semantics. In the auth pipeline, plugin
 panics and unexpected technical errors should become temporary failures where comparable Lua or backend errors already
 do so.
+
+Generic decision adapters classify errors, timeouts, cancellation, and panics through bounded secret-safe values. They
+must not log raw provider errors, caller values, fact values, effect parameters, or secrets. A synchronous generic
+`outcome_unknown` is an `indeterminate` non-retryable decision result; the same result after accepted post-action
+finalization is operational evidence only and cannot revise the response.
 
 ## Security And Operations
 
@@ -1652,6 +1692,11 @@ type ReloadablePlugin interface {
 Only the plugin-owned `config` block is eligible for live reconfiguration. Loader, artifact, capability, and hook
 authorization fields require restart because Go plugin code cannot be unloaded or replaced after `plugin.Open`.
 
+Operator policy configuration may deactivate a generic provider or effect in a new runtime generation without removing
+the loaded module. Existing leased generations keep their frozen bindings until they drain. Adding or removing a module,
+or replacing or removing its `.so` artifact, still requires restart; artifact drift rejects candidate preparation and
+does not change the current generation.
+
 If `Reconfigure` fails, the host should keep the previous working plugin configuration and report the reload failure
 through logs and metrics. Plugins that do not implement `ReloadablePlugin` continue running with their existing
 configuration until process restart.
@@ -1683,8 +1728,14 @@ config
   -> extension registry
        -> Lua adapter descriptors
        -> .so Go plugin descriptors
-  -> policy compiler
-  -> request pipeline
+  -> candidate-generation preparation
+       -> immutable contribution catalog
+       -> configured Lua/native provider bindings
+  -> shared Decision Service
+       -> fact scheduler
+       -> selected synchronous effects
+       -> post-action supervisor acceptance and finalization gate
+  -> existing auth request pipeline
        -> environment sources
        -> backend managers
        -> subject sources
@@ -1692,8 +1743,9 @@ config
 ```
 
 This keeps registration, policy fact declaration, observability, and result aggregation under one host-owned extension
-model. In v1, Lua and Go source sets still execute through separate adapters and graphs while sharing scheduler semantics
-and deterministic merge rules inside each source family.
+model. Generic Lua and native providers share the target-aware scheduler and effect supervisor. Existing auth-shaped Lua
+and Go source sets keep their separate adapters and implicit `authn` binding. Production publication of the standalone
+top-level policy root remains the later atomic cutover boundary.
 
 ## Process Model
 
@@ -1711,6 +1763,15 @@ rules. Those concerns are useful when isolation is required, but they are not th
   specific native add-ons rather than the normal Lua integration path.
 - Native Go plugins use a two-checkpoint lifecycle: `Register` for declarations and `Start` for service-backed runtime
   work.
+- Generic native fact and effect providers are registered through the optional additive `DecisionRegistrar`; the base
+  `Plugin` and `Registrar` interfaces and existing auth-shaped extensions remain unchanged.
+- Generic native registrations are capabilities only. Exact operator `kind: native` bindings are resolved and frozen
+  during candidate-generation preparation, and only the configured target/output/effect subset is executable.
+- Native generic fact calls use immutable redacted requests, shared scheduling, context deadlines, and strict
+  schema/source/namespace/authority validation. Native generic effects run only when selected and use the shared internal
+  supervisor for post-action acceptance and finalization gating.
+- Generic effect attempts are at most once per Decision/effect ordinal with no host retry. `outcome_unknown` reports
+  possible external dispatch ambiguity, and optional provider-owned idempotency creates no public or runtime guarantee.
 - Nauthilus owns only loader-level configuration such as name, type, path, checksum, signature, signer, and
   optionality. Each plugin receives an opaque structured `config` block and is responsible for validating, defaulting,
   and documenting its own parameters.
@@ -1888,7 +1949,13 @@ The current v1 implementation covers the native plugin surfaces needed for produ
 - host-managed Redis key/script helpers, module-local process cache, deterministic helper functions, outbound HTTP,
   SMTP/LMTP mail contract, bounded metrics/tracing, connection-target observability, and supervised workers;
 - native hook request/response adapters for GET, HEAD, aliases, query/header/body copies, response filtering, and a
-  dynamic textmap-style sample fixture.
+  dynamic textmap-style sample fixture;
+- additive target-aware native fact/effect registration, internal contribution adaptation, immutable configured
+  generation bindings, shared fact scheduling and validation, selected-effect execution, and internal post-action
+  supervisor acceptance without changing existing auth extension behavior.
+
+The generic native provider path is available for isolated candidate preparation and runtime tests. Production
+publication of the standalone top-level `policy` root remains later atomic cutover work and is not active yet.
 
 Known v1 parity limits are intentional and documented in the developer and operator guides: extra or named Redis pools,
 raw TCP/dialer behavior, SQL/Telegram/template libraries, and the Lua GeoIP bridge remain plugin-owned; full mutable
