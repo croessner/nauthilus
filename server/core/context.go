@@ -100,6 +100,7 @@ type AuthContext struct {
 type AuthTransportContext struct {
 	Kind         string
 	Listener     string
+	HTTPMethod   string
 	HTTPRoute    string
 	GRPCMethod   string
 	Peer         string

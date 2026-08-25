@@ -82,6 +82,74 @@ func TestRequestContextDirectPeerEmitsTypedClientIPFacts(t *testing.T) {
 	assertRequestContextValue(t, policyReport, requestInitiatorKindAttribute, "external_user")
 }
 
+func TestRequestContextUsesTransportNeutralBoundaryEvidence(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, requestContextSnapshotForTest())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Request.ClientIP = "203.0.113.81"
+	auth.Request.Transport = AuthTransportContext{
+		Kind:      requestPolicyTransportHTTP,
+		Listener:  "http.backchannel",
+		HTTPRoute: "/api/v1/auth/json",
+		Peer:      "198.51.100.81",
+		Protected: true,
+	}
+	ctx.Request.RemoteAddr = "192.0.2.200:443"
+
+	policyReport := requestContextReport(t, auth, ctx)
+
+	assertRequestContextValue(t, policyReport, requestTransportKindAttribute, requestPolicyTransportHTTP)
+	assertRequestContextValue(t, policyReport, requestListenerNameAttribute, "http.backchannel")
+	assertRequestContextValue(t, policyReport, requestHTTPRouteAttribute, "/api/v1/auth/json")
+	assertRequestContextValue(t, policyReport, requestConnectionTLSAttribute, true)
+	assertRequestContextValue(t, policyReport, policy.AttributeRequestCallerIP, netip.MustParseAddr("198.51.100.81"))
+}
+
+func TestRequestContextTransportNeutralPeerClassifiesDirectClient(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, requestContextSnapshotForTest())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Request.ClientIP = "203.0.113.82"
+	auth.Request.Transport = AuthTransportContext{
+		Kind: requestPolicyTransportHTTP,
+		Peer: "203.0.113.82",
+	}
+	ctx.Request.RemoteAddr = ""
+
+	policyReport := requestContextReport(t, auth, ctx)
+
+	assertRequestContextValue(t, policyReport, policy.AttributeRequestClientIP, netip.MustParseAddr("203.0.113.82"))
+	assertRequestContextValue(t, policyReport, requestClientIPTrustedAttribute, true)
+	assertRequestContextValue(t, policyReport, requestClientIPSourceAttribute, requestClientIPSourceDirectPeer)
+	assertRequestContextValue(t, policyReport, policy.AttributeRequestCallerIP, netip.MustParseAddr("203.0.113.82"))
+}
+
+func TestRequestContextTransportNeutralPeerClassifiesTrustedProxy(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	cfg.Server.TrustedProxies = []string{"198.51.100.10"}
+	cfg.Server.DefaultHTTPRequestHeader.ClientIP = requestContextClientIPHeader
+
+	activatePolicySnapshotForTest(t, requestContextSnapshotForTest())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Request.ClientIP = "203.0.113.83"
+	auth.Request.Transport = AuthTransportContext{
+		Kind: requestPolicyTransportHTTP,
+		Peer: "198.51.100.10",
+	}
+	ctx.Request.RemoteAddr = ""
+	ctx.Request.Header.Set(requestContextClientIPHeader, auth.Request.ClientIP)
+
+	policyReport := requestContextReport(t, auth, ctx)
+
+	assertRequestContextValue(t, policyReport, policy.AttributeRequestClientIP, netip.MustParseAddr("203.0.113.83"))
+	assertRequestContextValue(t, policyReport, requestClientIPTrustedAttribute, true)
+	assertRequestContextValue(t, policyReport, requestClientIPSourceAttribute, requestClientIPSourceTrustedProxy)
+	assertRequestContextValue(t, policyReport, policy.AttributeRequestCallerIP, netip.MustParseAddr("198.51.100.10"))
+}
+
 func TestRequestContextEmptyClientIPFailsClosed(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
 	activatePolicySnapshotForTest(t, requestContextSnapshotForTest())

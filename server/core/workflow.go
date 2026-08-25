@@ -18,6 +18,7 @@ package core
 import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/stats"
+	"github.com/croessner/nauthilus/v3/server/util"
 
 	"github.com/gin-gonic/gin"
 )
@@ -75,8 +76,10 @@ var defaultAuthenticator = Authenticator{
 // Authenticate runs the full password authentication flow.
 // Behavior mirrors the legacy HandlePassword implementation exactly.
 func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authResult definitions.AuthResult) {
+	resource := util.RequestResource(ctx, ctx.Request, auth.Request.Service)
+
 	// Overall auth orchestration timer
-	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_overall_total", ctx.FullPath()); stop != nil {
+	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_overall_total", resource); stop != nil {
 		defer stop()
 	}
 
@@ -94,7 +97,7 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 	}
 
 	// Measure backend type resolution
-	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_handle_backend_types_total", ctx.FullPath()); stop != nil {
+	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_handle_backend_types_total", resource); stop != nil {
 		defer stop()
 	}
 

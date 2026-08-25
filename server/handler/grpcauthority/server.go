@@ -165,14 +165,17 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 		return nil, err
 	}
 
+	authService := deps.authApplicationService()
+
 	var identityService AuthorityIdentityService
+
 	if backendRefs != nil {
-		identityService = deps.authorityIdentityService()
+		identityService = deps.authorityIdentityService(authService)
 	}
 
 	server := grpc.NewServer(options...)
 	handler := NewWithServices(
-		deps.authApplicationService(),
+		authService,
 		deps.MessageResolver,
 		identityService,
 		backendRefs,
@@ -303,13 +306,14 @@ func (d ServerDeps) authApplicationService() core.AuthApplicationService {
 	})
 }
 
-func (d ServerDeps) authorityIdentityService() AuthorityIdentityService {
+// authorityIdentityService reuses the exact AuthService instance owned by the gRPC server.
+func (d ServerDeps) authorityIdentityService(authService core.AuthApplicationService) AuthorityIdentityService {
 	if d.IdentityService != nil {
 		return d.IdentityService
 	}
 
 	return NewBackendManagerIdentityService(BackendManagerIdentityServiceDeps{
-		AuthService: d.authApplicationService(),
+		AuthService: authService,
 		AuthDeps: core.AuthDeps{
 			Cfg:           d.Cfg,
 			CurrentConfig: d.CurrentConfig,
@@ -722,8 +726,8 @@ func policyAuthenticationEvidence(ctx context.Context) (decision.AuthenticationI
 	input, err := decision.NewAuthenticationInput(decision.AuthenticationEvidence{
 		Kind:          kind,
 		Credential:    credential,
-		TransportKind: "grpc",
-		Listener:      "grpc.authority",
+		TransportKind: grpcTransportKind,
+		Listener:      grpcAuthorityListener,
 		GRPCMethod:    policyv1.PolicyDecisionService_Evaluate_FullMethodName,
 		Peer:          callerPeerIP(ctx),
 		MTLSIdentity:  mtlsIdentity,

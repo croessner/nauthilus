@@ -32,36 +32,40 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-type applicationContextTestKey struct{}
-
-func TestApplicationGinContextFactoryBuildsModeSpecificRequests(t *testing.T) {
-	factory := newApplicationGinContextFactory()
-	parent := context.WithValue(context.Background(), applicationContextTestKey{}, "parent")
-
+func TestAuthApplicationLegacyExecutorMapsTransportNeutralControls(t *testing.T) {
 	tests := []struct {
-		name      string
-		mode      AuthMode
-		wantPath  string
-		wantQuery string
+		name  string
+		input AuthInput
+		want  string
 	}{
-		{name: "authenticate", mode: AuthModeAuthenticate, wantPath: "/grpc/auth/v1/Authenticate"},
-		{name: "lookup", mode: AuthModeLookupIdentity, wantPath: "/grpc/auth/v1/LookupIdentity", wantQuery: "mode=no-auth"},
-		{name: "list", mode: AuthModeListAccounts, wantPath: "/grpc/auth/v1/ListAccounts", wantQuery: "mode=list-accounts"},
+		{
+			name:  "authenticate",
+			input: AuthInput{Mode: AuthModeAuthenticate},
+			want:  "/grpc/auth/v1/Authenticate",
+		},
+		{
+			name:  "lookup",
+			input: AuthInput{Mode: AuthModeLookupIdentity},
+			want:  "/grpc/auth/v1/LookupIdentity?mode=no-auth",
+		},
+		{
+			name: "list HTTP route and cache controls",
+			input: AuthInput{
+				Mode:               AuthModeListAccounts,
+				DisableMemoryCache: true,
+				DisableCache:       true,
+				Context: AuthContext{Transport: AuthTransportContext{
+					HTTPRoute: "/api/v1/auth/json",
+				}},
+			},
+			want: "/api/v1/auth/json?cache=0&in-memory=0&mode=list-accounts",
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			ginCtx, err := factory.New(parent, AuthInput{Mode: test.mode, Service: definitions.ServGRPC})
-			if err != nil {
-				t.Fatalf("New() error = %v", err)
-			}
-
-			if ginCtx.Request.Method != "POST" || ginCtx.Request.URL.Path != test.wantPath || ginCtx.Request.URL.RawQuery != test.wantQuery {
-				t.Fatalf("request = %s %s, want POST %s?%s", ginCtx.Request.Method, ginCtx.Request.URL.String(), test.wantPath, test.wantQuery)
-			}
-
-			if got := ginCtx.Request.Context().Value(applicationContextTestKey{}); got != "parent" {
-				t.Fatalf("parent context value = %v, want parent", got)
+			if got := legacyAuthApplicationPath(test.input); got != test.want {
+				t.Fatalf("legacy application path = %q, want %q", got, test.want)
 			}
 		})
 	}
@@ -368,6 +372,35 @@ func TestAuthApplicationService_ValidatesRequiredInputs(t *testing.T) {
 
 			if inputErr.Field != testCase.wantField {
 				t.Fatalf("field = %q, want %q", inputErr.Field, testCase.wantField)
+			}
+		})
+	}
+}
+
+func TestValidateLookupIdentityInputPreservesHTTPAndGRPCContracts(t *testing.T) {
+	tests := []struct {
+		name     string
+		service  string
+		username string
+		wantErr  bool
+	}{
+		{name: "HTTP empty username reaches legacy host", service: definitions.ServJSON},
+		{name: "HTTP invalid username reaches legacy host", service: definitions.ServCBOR, username: "invalid username"},
+		{name: "gRPC empty username is rejected", service: definitions.ServGRPC, wantErr: true},
+		{name: "gRPC invalid username is rejected", service: definitions.ServGRPC, username: "invalid username", wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := AuthInput{
+				Credentials: NewCredentials(WithUsername(test.username)),
+				Mode:        AuthModeLookupIdentity,
+				Service:     test.service,
+			}
+			err := validateLookupIdentityInput(input)
+
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateLookupIdentityInput() error = %v, wantErr %t", err, test.wantErr)
 			}
 		})
 	}

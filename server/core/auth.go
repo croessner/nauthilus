@@ -351,6 +351,9 @@ type AuthRequest struct {
 	// RequestMetadata contains incoming transport metadata such as gRPC metadata.
 	RequestMetadata map[string][]string
 
+	// Transport contains server-observed transport evidence supplied by the boundary adapter.
+	Transport AuthTransportContext
+
 	// Method is the authentication method.
 	Method string
 
@@ -1898,53 +1901,6 @@ func (a *AuthState) ResetLoginAttemptsOnSuccess() {
 	a.Security.LoginAttempts = lam.FailCount()
 }
 
-// setFailureHeaders sets the failure headers for the given authentication context.
-// It sets Auth-Status to the selected response-boundary status message.
-// It sets X-Nauthilus-Session to the authentication GUID.
-// It falls back to the default password-failure message when no status message was selected.
-//
-// If the Service field of the authentication is equal to global.ServUserInfo, it also sets the following headers:
-//   - "X-User-Found" header to the string representation of the UserFound field of the authentication
-//   - If the PasswordHistory field is not nil, it responds with a JSON representation of the PasswordHistory.
-//     If the PasswordHistory field is nil, it responds with an empty JSON object.
-//
-// If the Service field is not equal to global.ServUserInfo, it responds with the selected status message as plain text.
-func (a *AuthState) setFailureHeaders(ctx *gin.Context, render responseMessageRenderer) {
-	a.prepareAuthFailure()
-
-	statusMessage := a.Runtime.StatusMessage
-	if render != nil {
-		statusMessage = render(ctx, a)
-	}
-
-	ctx.Header("Auth-Status", statusMessage)
-	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
-
-	switch a.Request.Service {
-	case definitions.ServHeader, definitions.ServNginx, definitions.ServJSON:
-		a.setAuthWaitHeader(ctx)
-
-		// Do not include password history in responses; always return JSON null on failure
-		ctx.JSON(a.Runtime.StatusCodeFail, nil)
-	case definitions.ServCBOR:
-		a.setAuthWaitHeader(ctx)
-
-		sendCBOR(ctx, a.Runtime.StatusCodeFail, nil)
-	default:
-		ctx.String(a.Runtime.StatusCodeFail, statusMessage)
-	}
-}
-
-func (a *AuthState) setAuthWaitHeader(ctx *gin.Context) {
-	maxWaitDelay := uint(a.Cfg().GetServer().GetNginxWaitDelay())
-	if maxWaitDelay == 0 {
-		return
-	}
-
-	waitDelay := bfWaitDelay(maxWaitDelay, a.Security.LoginAttempts)
-	ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
-}
-
 // loginAttemptProcessing performs processing for a failed login attempt.
 // It checks the verbosity level in the GetEnvironment() configuration and logs the failed login attempt if it is greater than LogLevelWarn.
 // It then increments the LoginsCounter with the LabelFailure.
@@ -1966,18 +1922,6 @@ func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
 
 	stats.GetMetrics().GetRejectedProtocols().WithLabelValues(a.Request.Protocol.Get()).Inc()
 	stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelFailure).Inc()
-}
-
-// setSMPTHeaders sets SMTP headers in the specified `gin.Context` if the `Service` is `ServNginx` and the `Protocol` is `ProtoSMTP`.
-// It adds the `Auth-Error-Code` header with the value `TempFailCode` from the declaration package.
-//
-// Example usage:
-//
-//	a.setSMPTHeaders(ctx)
-func (a *AuthState) setSMPTHeaders(ctx *gin.Context) {
-	if a.Request.Service == definitions.ServNginx && a.Request.Protocol.Get() == definitions.ProtoSMTP {
-		ctx.Header("Auth-Error-Code", definitions.TempFailCode)
-	}
 }
 
 // IsMasterUser checks whether the current user matches the configured master-user login format.
@@ -3081,7 +3025,7 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 	)
 	defer waitSpan.End()
 
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_verify_password_total", ctx.FullPath()); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_verify_password_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
 		defer stop()
 	}
 
@@ -3311,7 +3255,7 @@ func (a *AuthState) processPositivePasswordCache(ctx *gin.Context, authenticated
 
 	defer cspan.End()
 
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_process_cache_total", ctx.FullPath()); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_process_cache_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
 		defer stop()
 	}
 
@@ -3425,7 +3369,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, plan backendExecutionPlan
 	defer requestScope.Restore()
 	defer aspan.End()
 
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_authenticate_user_total", ctx.FullPath()); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_authenticate_user_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
 		defer stop()
 	}
 
@@ -3495,7 +3439,7 @@ func (a *AuthState) SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) def
 
 	defer lspan.End()
 
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_subject_lua_total", ctx.FullPath()); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_subject_lua_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
 		defer stop()
 	}
 
@@ -3855,7 +3799,7 @@ func (a *AuthState) HasOIDCScope(ctx *gin.Context, scope string) bool {
 //	  auth.setOperationMode(ctx)
 //	}
 func (a *AuthState) SetOperationMode(ctx *gin.Context) {
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_set_operation_mode_total", ctx.FullPath()); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_set_operation_mode_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
 		defer stop()
 	}
 
@@ -3922,7 +3866,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	if a, ok := auth.(*AuthState); ok {
 		cfg = a.cfg()
 
-		if stop := stats.PrometheusTimer(cfg, definitions.PromRequest, "request_headers_parse_total", ctx.FullPath()); stop != nil {
+		if stop := stats.PrometheusTimer(cfg, definitions.PromRequest, "request_headers_parse_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
 			defer stop()
 		}
 	}
@@ -3986,7 +3930,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 // It sets the method, user_agent, username, usernameOrig, password, protocol, xLocalIP, xPort, xSSL, and xSSLProtocol fields in the AuthState object.
 func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
 	if a, ok := auth.(*AuthState); ok {
-		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_form_decode_total", ctx.FullPath()); stop != nil {
+		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_form_decode_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
 			defer stop()
 		}
 	}
@@ -4040,7 +3984,7 @@ type authRequestDecoder func(ctx *gin.Context, request *authdto.Request) error
 
 func processStructuredAuthRequest(ctx *gin.Context, auth State, metricName string, decoder authRequestDecoder) {
 	if a, ok := auth.(*AuthState); ok {
-		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, metricName, ctx.FullPath()); stop != nil {
+		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, metricName, util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
 			defer stop()
 		}
 	}
@@ -4303,7 +4247,7 @@ func setupAuthTimer(ctx *gin.Context, auth State) func() {
 		return nil
 	}
 
-	return stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_setup_total", ctx.FullPath())
+	return stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_setup_total", util.RequestResource(ctx, ctx.Request, a.Request.Service))
 }
 
 // ensureAuthProtocol initializes an empty protocol holder when none exists.
@@ -4751,6 +4695,10 @@ func (a *AuthState) ApplyContextData(x AuthContext) {
 
 	if x.RequestMetadata != nil {
 		a.Request.RequestMetadata = cloneRequestMetadata(x.RequestMetadata)
+	}
+
+	if x.Transport != (AuthTransportContext{}) {
+		a.Request.Transport = x.Transport
 	}
 
 	// Field mappings for simple string assignments

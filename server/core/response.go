@@ -19,7 +19,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
@@ -31,7 +30,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/stats"
 
 	"github.com/gin-gonic/gin"
-	jsoniter "github.com/json-iterator/go"
 )
 
 // StateView is a read-only snapshot wrapper around AuthState used by response and header layers.
@@ -73,17 +71,10 @@ type ResponseDeps struct {
 	Resolver localization.MessageResolver
 }
 
-type responseMessageRenderer func(*gin.Context, *AuthState) string
-
-// globalResponseWriter keeps legacy behavior without requiring config/env/logger to be loaded
-// during package init.
-//
-// This type is used as the process default until the HTTP boundary overwrites it via
-// `SetDefaultResponseWriter(...)` with a DI-configured writer.
-type globalResponseWriter struct{}
-
-type depResponseWriter struct {
-	deps ResponseDeps
+// stateResponseWriter renders AuthState outcomes through the shared HTTP projector.
+// A nil dependency pointer keeps package initialization free of config access.
+type stateResponseWriter struct {
+	deps *ResponseDeps
 }
 
 const responseBodyFieldError = "error"
@@ -106,7 +97,7 @@ func init() {
 	// Backward-compatible default: do not touch config/env/logging globals during init.
 	// Many tests compile/run without having loaded the config singleton.
 	// atomic.Value must never store values of different concrete types.
-	defaultResponseWriter.Store(writerHolder{w: ResponseWriter(globalResponseWriter{})})
+	defaultResponseWriter.Store(writerHolder{w: ResponseWriter(stateResponseWriter{})})
 }
 
 func getDefaultResponseWriter() ResponseWriter {
@@ -119,7 +110,7 @@ func getDefaultResponseWriter() ResponseWriter {
 	}
 
 	// Should not happen, but keep behavior safe.
-	return globalResponseWriter{}
+	return stateResponseWriter{}
 }
 
 // SetDefaultResponseWriter configures the process-wide response writer.
@@ -135,7 +126,7 @@ func SetDefaultResponseWriter(w ResponseWriter) {
 
 // NewDefaultResponseWriter constructs the default response writer with injected dependencies.
 func NewDefaultResponseWriter(deps ResponseDeps) ResponseWriter {
-	return depResponseWriter{deps: deps}
+	return stateResponseWriter{deps: &deps}
 }
 
 func (a *AuthState) responseWriter() ResponseWriter {
@@ -177,7 +168,7 @@ func (a *AuthState) prepareAuthTempFail(reason string) {
 }
 
 func (a *AuthState) shouldLogAuthTempFail() bool {
-	return a.Request.Service != definitions.ServJSON
+	return a.Request.Service != definitions.ServJSON && a.Request.Service != definitions.ServCBOR
 }
 
 func (a *AuthState) logAuthTempFail(ctx *gin.Context, logger *slog.Logger) {
@@ -191,55 +182,41 @@ func (a *AuthState) logAuthTempFail(ctx *gin.Context, logger *slog.Logger) {
 	_ = level.Warn(logger).WithContext(ctx).Log(keyvals...)
 }
 
-func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
+// OK renders success before applying the established logging and metric side effects.
+func (w stateResponseWriter) OK(ctx *gin.Context, view *StateView) {
 	a := view.auth
+	deps := w.effectiveDeps(a)
+
 	// On successful authentication, reset the internal fail counter to
 	// ensure future logging reflects fresh attempts. Brute-force storage
 	// remains authoritative for persistence.
 	a.ResetLoginAttemptsOnSuccess()
-	setCommonHeaders(ctx, a)
-
-	switch a.Request.Service {
-	case definitions.ServNginx:
-		setNginxHeaders(ctx, a)
-	case definitions.ServHeader:
-		setHeaderHeaders(ctx, a)
-	case definitions.ServJSON, definitions.ServCBOR:
-		sendAuthResponse(ctx, a)
-	}
+	w.render(ctx, a, deps, AuthDecisionOK, "", a.Runtime.StatusCodeOK)
 
 	a.finishAuthSuccessSideEffects(ctx)
 }
 
-func (globalResponseWriter) Fail(ctx *gin.Context, view *StateView) {
+// Fail renders denial before applying the established failure logging and metrics.
+func (w stateResponseWriter) Fail(ctx *gin.Context, view *StateView) {
 	a := view.auth
-	a.setFailureHeaders(ctx, nil)
+	deps := w.effectiveDeps(a)
+
+	a.prepareAuthFailure()
+	w.render(ctx, a, deps, AuthDecisionFail, "", a.Runtime.StatusCodeFail)
 	a.loginAttemptProcessing(ctx)
 }
 
-func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason string) {
+// TempFail renders temporary failure before preserving legacy service-specific logging.
+func (w stateResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason string) {
 	a := view.auth
+	deps := w.effectiveDeps(a)
+
 	a.prepareAuthTempFail(reason)
-	statusMessage := renderResponseStatusMessage(ctx, a, nil, nil)
+	w.render(ctx, a, deps, AuthDecisionTempFail, reason, a.Runtime.StatusCodeInternalError)
 
-	ctx.Header("Auth-Status", statusMessage)
-	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
-	a.setSMPTHeaders(ctx)
-
-	if a.Request.Service == definitions.ServJSON {
-		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
-
-		return
+	if a.Request.Service != definitions.ServJSON && a.Request.Service != definitions.ServCBOR {
+		a.logAuthTempFail(ctx, deps.Logger)
 	}
-
-	if a.Request.Service == definitions.ServCBOR {
-		sendCBOR(ctx, a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
-
-		return
-	}
-
-	ctx.String(a.Runtime.StatusCodeInternalError, statusMessage)
-	a.logAuthTempFail(ctx, getDefaultLogger())
 }
 
 // AuthOK is the general method to indicate authentication success.
@@ -275,102 +252,84 @@ func (a *AuthState) markAuthenticationMetric(ctx *gin.Context, outcome AuthDecis
 	ctx.Set(definitions.CtxAuthProtocolKey, a.GetProtocol().Get())
 }
 
-// OK implements the success response logic (unchanged behavior).
-func (w depResponseWriter) OK(ctx *gin.Context, view *StateView) {
-	a := view.auth
-	// On successful authentication, reset the internal fail counter to
-	// ensure future logging reflects fresh attempts. Brute-force storage
-	// remains authoritative for persistence.
-	a.ResetLoginAttemptsOnSuccess()
-	setCommonHeaders(ctx, a)
-
-	switch a.Request.Service {
-	case definitions.ServNginx:
-		setNginxHeadersWithDeps(w.deps.Cfg, w.deps.Logger, ctx, a)
-	case definitions.ServHeader:
-		setHeaderHeaders(ctx, a)
-	case definitions.ServJSON, definitions.ServCBOR:
-		sendAuthResponse(ctx, a)
+// effectiveDeps selects immutable request config while preserving injected response services.
+func (w stateResponseWriter) effectiveDeps(auth *AuthState) ResponseDeps {
+	deps := ResponseDeps{}
+	if w.deps != nil {
+		deps = *w.deps
 	}
 
-	a.finishAuthSuccessSideEffects(ctx)
-}
-
-// Fail implements the failure response logic with response-boundary localization.
-func (w depResponseWriter) Fail(ctx *gin.Context, view *StateView) {
-	a := view.auth
-	a.setFailureHeaders(ctx, w.renderStatusMessage)
-	a.loginAttemptProcessing(ctx)
-}
-
-// TempFail implements the temporary failure logic with response-boundary localization.
-func (w depResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason string) {
-	a := view.auth
-	a.prepareAuthTempFail(reason)
-	statusMessage := w.renderStatusMessage(ctx, a)
-
-	ctx.Header("Auth-Status", statusMessage)
-	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
-	a.setSMPTHeaders(ctx)
-
-	if a.Request.Service == definitions.ServJSON {
-		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
-
-		return
+	if auth != nil && auth.Cfg() != nil {
+		deps.Cfg = auth.Cfg()
 	}
 
-	if a.Request.Service == definitions.ServCBOR {
-		sendCBOR(ctx, a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
-
-		return
+	if deps.Logger == nil {
+		deps.Logger = getDefaultLogger()
 	}
 
-	ctx.String(a.Runtime.StatusCodeInternalError, statusMessage)
-	a.logAuthTempFail(ctx, w.deps.Logger)
+	return deps
 }
 
-func (w depResponseWriter) renderStatusMessage(ctx *gin.Context, auth *AuthState) string {
-	return renderResponseStatusMessage(ctx, auth, w.deps.Resolver, w.deps.Cfg)
-}
-
-func renderResponseStatusMessage(
+// render projects one AuthState terminal response through the shared renderer.
+func (w stateResponseWriter) render(
 	ctx *gin.Context,
 	auth *AuthState,
-	resolver localization.MessageResolver,
-	cfg config.File,
-) string {
+	deps ResponseDeps,
+	decision AuthDecision,
+	reason string,
+	status int,
+) {
 	if auth == nil {
+		return
+	}
+
+	outcome := authOutcomeFromState(
+		ctx,
+		auth,
+		decision,
+		authTerminalState(decision),
+		reason,
+		status,
+		newAuthResponseSettings(deps.Cfg),
+	)
+	input := AuthInput{
+		Context: AuthContext{Protocol: auth.GetProtocol().Get()},
+		Mode:    authModeFromState(auth),
+		Service: auth.Request.Service,
+	}
+
+	NewHTTPAuthResponseRenderer(deps).RenderAuth(ctx, input, outcome)
+}
+
+// authModeFromState returns the transport-neutral operation represented by AuthState.
+func authModeFromState(auth *AuthState) AuthMode {
+	if auth == nil {
+		return AuthModeAuthenticate
+	}
+
+	if auth.Request.ListAccounts {
+		return AuthModeListAccounts
+	}
+
+	if auth.Request.NoAuth {
+		return AuthModeLookupIdentity
+	}
+
+	return AuthModeAuthenticate
+}
+
+// authTerminalState maps a public terminal decision onto the established FSM state.
+func authTerminalState(decision AuthDecision) string {
+	switch decision {
+	case AuthDecisionOK:
+		return string(authFSMStateAuthOK)
+	case AuthDecisionFail:
+		return string(authFSMStateAuthFail)
+	case AuthDecisionTempFail:
+		return string(authFSMStateAuthTempFail)
+	default:
 		return ""
 	}
-
-	fallback := auth.Runtime.StatusMessage
-
-	key := strings.TrimSpace(auth.Runtime.StatusMessageI18NKey)
-	if key == "" || resolver == nil {
-		return fallback
-	}
-
-	resolved := resolver.ResolveStatusMessage(
-		statusMessageContext(ctx),
-		localization.StatusMessage{
-			Text:    fallback,
-			I18NKey: key,
-		},
-		localization.LanguagePreference{
-			Policy:  auth.Runtime.ResponseLanguage,
-			Header:  acceptLanguageHeader(ctx),
-			Default: defaultResponseLanguage(cfg),
-		},
-	)
-	if strings.TrimSpace(resolved.Language) != "" && ctx != nil {
-		ctx.Header("Content-Language", resolved.Language)
-	}
-
-	if resolved.Text == "" {
-		return fallback
-	}
-
-	return resolved.Text
 }
 
 func statusMessageContext(ctx *gin.Context) context.Context {
@@ -387,47 +346,6 @@ func acceptLanguageHeader(ctx *gin.Context) string {
 	}
 
 	return ctx.GetHeader("Accept-Language")
-}
-
-func defaultResponseLanguage(cfg config.File) string {
-	if cfg == nil || cfg.GetServer() == nil {
-		return ""
-	}
-
-	return cfg.GetServer().Frontend.GetDefaultLanguage()
-}
-
-// sendAuthResponse sends a structured success response with the appropriate
-// media type based on the AuthState.
-func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
-	resp := authResponse{
-		OK:           true,
-		AccountField: auth.Runtime.AccountField,
-		TOTPSecret:   "",
-		Backend:      int(auth.Runtime.SourcePassDBBackend),
-		Attributes: FilterSensitiveOutputAttributes(
-			auth.GetAttributesCopy(),
-			auth.Runtime.TOTPSecretField,
-			auth.Runtime.TOTPRecoveryField,
-		),
-	}
-
-	if auth.Request.Service == definitions.ServCBOR {
-		sendCBOR(ctx, auth.Runtime.StatusCodeOK, resp)
-
-		return
-	}
-
-	// Use stable JSON encoding to avoid parallel_mismatched in client tests
-	// caused by non-deterministic map key ordering.
-	b, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(resp)
-	if err != nil {
-		ctx.AbortWithStatus(http.StatusInternalServerError)
-
-		return
-	}
-
-	ctx.Data(auth.Runtime.StatusCodeOK, "application/json; charset=utf-8", b)
 }
 
 func sendCBOR(ctx *gin.Context, status int, body any) {

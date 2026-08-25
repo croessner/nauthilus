@@ -30,11 +30,17 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/grpcapi/authmapper"
+	"github.com/croessner/nauthilus/v3/server/policy/transportsecurity"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+)
+
+const (
+	grpcTransportKind     = "grpc"
+	grpcAuthorityListener = "grpc.authority"
 )
 
 // Handler implements the authority-side gRPC service contracts.
@@ -87,8 +93,7 @@ func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest)
 
 	dto := authmapper.AuthRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeAuthenticate, dto)
-	input = authInputWithIncomingMetadata(ctx, input)
-	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_Authenticate_FullMethodName)
+	ctx, input = authInputWithGRPCTransport(ctx, input, authv1.AuthService_Authenticate_FullMethodName)
 	dto.Password = ""
 
 	if request != nil {
@@ -123,8 +128,7 @@ func (h *Handler) LookupIdentity(
 
 	dto := authmapper.LookupIdentityRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeLookupIdentity, dto)
-	input = authInputWithIncomingMetadata(ctx, input)
-	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_LookupIdentity_FullMethodName)
+	ctx, input = authInputWithGRPCTransport(ctx, input, authv1.AuthService_LookupIdentity_FullMethodName)
 
 	outcome, err := h.service.LookupIdentity(ctx, input)
 	if err != nil {
@@ -154,8 +158,7 @@ func (h *Handler) ListAccounts(
 
 	dto := authmapper.ListAccountsRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeListAccounts, dto)
-	input = authInputWithIncomingMetadata(ctx, input)
-	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_ListAccounts_FullMethodName)
+	ctx, input = authInputWithGRPCTransport(ctx, input, authv1.AuthService_ListAccounts_FullMethodName)
 
 	outcome, err := h.service.ListAccounts(ctx, input)
 	if err != nil {
@@ -328,17 +331,32 @@ func acceptLanguageMetadata(ctx context.Context) string {
 	return strings.Join(values, ",")
 }
 
-func authInputWithIncomingMetadata(ctx context.Context, input core.AuthInput) core.AuthInput {
+// authInputWithGRPCTransport attaches cloned request metadata and server-observed transport evidence.
+func authInputWithGRPCTransport(
+	ctx context.Context,
+	input core.AuthInput,
+	fullMethod string,
+) (context.Context, core.AuthInput) {
 	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok || len(md) == 0 {
-		return input
+	if ok && len(md) > 0 {
+		input.Context.RequestMetadata = cloneIncomingMetadata(md)
 	}
 
-	input.Context.RequestMetadata = cloneIncomingMetadata(md)
+	evidence := transportsecurity.NewGRPC(policyPeerAuthInfo(ctx), policyMTLSIdentity(ctx))
+	mtlsIdentity, _ := evidence.MTLSIdentity()
+	input.Context.Transport = core.AuthTransportContext{
+		Kind:         grpcTransportKind,
+		Listener:     grpcAuthorityListener,
+		GRPCMethod:   fullMethod,
+		Peer:         callerPeerIP(ctx),
+		MTLSIdentity: mtlsIdentity,
+		Protected:    evidence.Protected(),
+	}
 
-	return input
+	return core.ContextWithGRPCMethod(ctx, fullMethod), input
 }
 
+// cloneIncomingMetadata detaches application input from mutable gRPC metadata slices.
 func cloneIncomingMetadata(md metadata.MD) map[string][]string {
 	values := make(map[string][]string, len(md))
 	for key, entries := range md {

@@ -29,6 +29,7 @@ import (
 )
 
 const (
+	pluginResponseHeaderDeletesContextKey  = "nauthilus.plugin.response_header_deletes"
 	pluginResponseHeaderAuthStatus         = "Auth-Status"
 	pluginResponseHeaderAuthorization      = "Authorization"
 	pluginResponseHeaderConnection         = "Connection"
@@ -101,10 +102,12 @@ func (a pluginResponseMutationApplier) apply(ctx *gin.Context, auth *AuthState, 
 
 	for _, name := range a.normalizedDeletes(mutation.Headers.Delete) {
 		headers.Del(name)
+		recordPluginResponseHeaderDelete(ctx, name)
 	}
 
 	for _, item := range a.normalizedSets(mutation.Headers.Set) {
 		headers.Del(item.name)
+		cancelPluginResponseHeaderDelete(ctx, item.name)
 
 		for _, value := range item.values {
 			headers.Add(item.name, value)
@@ -114,6 +117,75 @@ func (a pluginResponseMutationApplier) apply(ctx *gin.Context, auth *AuthState, 
 	if mutation.StatusHeader && auth != nil && strings.TrimSpace(auth.Runtime.StatusMessage) != "" {
 		headers.Set(pluginResponseHeaderAuthStatus, auth.Runtime.StatusMessage)
 	}
+}
+
+// recordPluginResponseHeaderDelete retains one allowed deletion for boundary replay.
+func recordPluginResponseHeaderDelete(ctx *gin.Context, name string) {
+	if ctx == nil || name == "" {
+		return
+	}
+
+	deletes := pluginResponseHeaderDeleteSet(ctx)
+	deletes[name] = struct{}{}
+}
+
+// cancelPluginResponseHeaderDelete removes a tombstone superseded by a later set.
+func cancelPluginResponseHeaderDelete(ctx *gin.Context, name string) {
+	if ctx == nil || name == "" {
+		return
+	}
+
+	value, exists := ctx.Get(pluginResponseHeaderDeletesContextKey)
+	if !exists {
+		return
+	}
+
+	deletes, ok := value.(map[string]struct{})
+	if !ok {
+		return
+	}
+
+	delete(deletes, name)
+}
+
+// capturedResponseHeaderDeletes returns sorted detached response-header tombstones.
+func capturedResponseHeaderDeletes(ctx *gin.Context) []string {
+	if ctx == nil {
+		return nil
+	}
+
+	value, exists := ctx.Get(pluginResponseHeaderDeletesContextKey)
+	if !exists {
+		return nil
+	}
+
+	deletes, ok := value.(map[string]struct{})
+	if !ok || len(deletes) == 0 {
+		return nil
+	}
+
+	output := make([]string, 0, len(deletes))
+	for name := range deletes {
+		output = append(output, name)
+	}
+
+	sort.Strings(output)
+
+	return output
+}
+
+// pluginResponseHeaderDeleteSet returns the request-local tombstone set.
+func pluginResponseHeaderDeleteSet(ctx *gin.Context) map[string]struct{} {
+	if value, exists := ctx.Get(pluginResponseHeaderDeletesContextKey); exists {
+		if deletes, ok := value.(map[string]struct{}); ok {
+			return deletes
+		}
+	}
+
+	deletes := make(map[string]struct{})
+	ctx.Set(pluginResponseHeaderDeletesContextKey, deletes)
+
+	return deletes
 }
 
 // normalizedDeletes returns sorted, allowed canonical header names.

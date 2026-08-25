@@ -111,14 +111,14 @@ func (a *AuthState) recordRequestContextFacts(
 	localEndpoint.record(policyCtx, operation)
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestTransportKind, policy.StagePreAuth, operation, transportKind))
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestListenerName, policy.StagePreAuth, operation, a.requestListenerName()))
-	policyCtx.RecordAttribute(policycollection.BoolAttribute(policy.AttributeRequestConnectionTLS, policy.StagePreAuth, operation, requestConnectionTLS(ctx), nil))
+	policyCtx.RecordAttribute(policycollection.BoolAttribute(policy.AttributeRequestConnectionTLS, policy.StagePreAuth, operation, a.requestConnectionTLS(ctx), nil))
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestInitiatorKind, policy.StagePreAuth, operation, a.requestInitiatorKind()))
 
-	if route := normalizedHTTPRoute(ctx); route != "" {
+	if route := a.requestHTTPRoute(ctx); route != "" {
 		policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestHTTPRoute, policy.StagePreAuth, operation, route))
 	}
 
-	if method := grpcMethodFromContext(contextFromGin(ctx)); method != "" && transportKind == requestPolicyTransportGRPC {
+	if method := a.requestGRPCMethod(ctx); method != "" && transportKind == requestPolicyTransportGRPC {
 		policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestGRPCMethod, policy.StagePreAuth, operation, method))
 	}
 
@@ -217,6 +217,15 @@ func (a *AuthState) requestClientIPFacts(ctx *gin.Context) requestClientIPFacts 
 
 // requestCallerIPFacts resolves the peer that connected to Nauthilus.
 func (a *AuthState) requestCallerIPFacts(ctx *gin.Context) requestIPFacts {
+	if a != nil && strings.TrimSpace(a.Request.Transport.Peer) != "" {
+		source := requestPolicyClientIPSourceDirectPeer
+		if a.Request.Transport.Kind == requestPolicyTransportGRPC {
+			source = requestPolicyClientIPSourceGRPCPeer
+		}
+
+		return parseRequestIPFacts(a.Request.Transport.Peer, source)
+	}
+
 	if a != nil && a.Request.Service == definitions.ServGRPC {
 		return requestGRPCCallerIPFacts(ctx)
 	}
@@ -280,7 +289,12 @@ func (a *AuthState) requestClientIPTrust(ctx *gin.Context, candidate string, fal
 	}
 
 	if a.Request.Service == definitions.ServGRPC {
-		if sameIP(candidate, grpcPeerIP(contextFromGin(ctx))) {
+		peerIP := a.Request.Transport.Peer
+		if peerIP == "" {
+			peerIP = grpcPeerIP(contextFromGin(ctx))
+		}
+
+		if sameIP(candidate, peerIP) {
 			return requestPolicyClientIPSourceGRPCPeer, true
 		}
 
@@ -295,7 +309,7 @@ func (a *AuthState) requestClientIPTrust(ctx *gin.Context, candidate string, fal
 		return requestPolicyClientIPSourceMetadata, false
 	}
 
-	directPeer := directPeerIP(ctx)
+	directPeer := a.requestDirectPeerIP(ctx)
 	if sameIP(candidate, directPeer) {
 		if a.proxyProtocolEnabled() {
 			return requestPolicyClientIPSourceProxyProtocol, true
@@ -329,12 +343,23 @@ func (a *AuthState) directPeerIsTrustedProxy(ctx *gin.Context) bool {
 		return false
 	}
 
-	peerIP := directPeerIP(ctx)
+	peerIP := a.requestDirectPeerIP(ctx)
 	if peerIP == "" {
 		return false
 	}
 
 	return util.IsInNetworkWithCfg(contextFromGin(ctx), a.Cfg(), a.Logger(), a.Cfg().GetServer().GetTrustedProxies(), a.Runtime.GUID, peerIP)
+}
+
+// requestDirectPeerIP prefers boundary-observed transport evidence and falls back to the legacy HTTP request.
+func (a *AuthState) requestDirectPeerIP(ctx *gin.Context) string {
+	if a != nil {
+		if peerIP := strings.TrimSpace(a.Request.Transport.Peer); peerIP != "" {
+			return peerIP
+		}
+	}
+
+	return directPeerIP(ctx)
 }
 
 func (a *AuthState) proxyProtocolEnabled() bool {
@@ -412,6 +437,10 @@ func (a *AuthState) requestTransportKind() string {
 		return requestPolicyTransportUnknown
 	}
 
+	if kind := strings.TrimSpace(a.Request.Transport.Kind); kind != "" {
+		return kind
+	}
+
 	return requestTransportKindForService(a.Request.Service)
 }
 
@@ -433,6 +462,10 @@ func requestTransportKindForService(service string) string {
 func (a *AuthState) requestListenerName() string {
 	if a == nil {
 		return ""
+	}
+
+	if listener := strings.TrimSpace(a.Request.Transport.Listener); listener != "" {
+		return listener
 	}
 
 	return requestListenerNameForService(a.Request.Service)
@@ -464,7 +497,11 @@ func (a *AuthState) requestInitiatorKind() string {
 	return requestPolicyInitiatorExternalUser
 }
 
-func requestConnectionTLS(ctx *gin.Context) bool {
+func (a *AuthState) requestConnectionTLS(ctx *gin.Context) bool {
+	if a != nil && a.Request.Transport.Protected {
+		return true
+	}
+
 	if ctx == nil || ctx.Request == nil {
 		return false
 	}
@@ -481,6 +518,28 @@ func requestConnectionTLS(ctx *gin.Context) bool {
 	_, ok = requestPeer.AuthInfo.(credentials.TLSInfo)
 
 	return ok
+}
+
+// requestHTTPRoute prefers the boundary-observed route and falls back to Gin routing metadata.
+func (a *AuthState) requestHTTPRoute(ctx *gin.Context) string {
+	if a != nil {
+		if route := strings.TrimSpace(a.Request.Transport.HTTPRoute); route != "" {
+			return route
+		}
+	}
+
+	return normalizedHTTPRoute(ctx)
+}
+
+// requestGRPCMethod prefers the boundary-observed method and falls back to request context metadata.
+func (a *AuthState) requestGRPCMethod(ctx *gin.Context) string {
+	if a != nil {
+		if method := normalizeGRPCMethod(a.Request.Transport.GRPCMethod); method != "" {
+			return method
+		}
+	}
+
+	return grpcMethodFromContext(contextFromGin(ctx))
 }
 
 func normalizedHTTPRoute(ctx *gin.Context) string {

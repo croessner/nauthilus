@@ -17,8 +17,10 @@ package core
 
 import (
 	"log/slog"
+	"net/http"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 
 	"github.com/gin-gonic/gin"
@@ -41,10 +43,14 @@ const (
 // CapturedAuthOutcome stores the transport-neutral terminal auth outcome.
 type CapturedAuthOutcome struct {
 	Attributes              bktype.AttributeMapping
+	ResponseHeaders         http.Header
+	ResponseHeaderDeletes   []string
 	FSMEventPath            []string
+	ResponseSettings        AuthResponseSettings
 	Decision                CapturedAuthDecision
 	TerminalState           string
 	Session                 string
+	Account                 string
 	AccountField            string
 	TOTPSecretField         string
 	TOTPRecoveryField       string
@@ -56,14 +62,21 @@ type CapturedAuthOutcome struct {
 	Error                   string
 	Groups                  []string
 	GroupDistinguishedNames []string
+	Protocol                string
+	UsedBackendIP           string
 	Backend                 definitions.Backend
+	UsedBackendPort         int
 	HTTPStatus              int
+	LoginAttempts           uint
+	MemoryCacheHit          bool
+	DelayedResponseEligible bool
 }
 
 // CaptureResponseWriter captures auth terminal outcomes without rendering HTTP.
 type CaptureResponseWriter struct {
-	logger  *slog.Logger
-	outcome CapturedAuthOutcome
+	logger           *slog.Logger
+	outcome          CapturedAuthOutcome
+	responseSettings AuthResponseSettings
 }
 
 // NewCaptureResponseWriter creates a request-scoped outcome collector.
@@ -78,7 +91,10 @@ func NewCaptureResponseWriter(logger *slog.Logger) *CaptureResponseWriter {
 
 // NewDefaultCaptureResponseWriter creates a capture writer based on DI response dependencies.
 func NewDefaultCaptureResponseWriter(deps ResponseDeps) *CaptureResponseWriter {
-	return NewCaptureResponseWriter(deps.Logger)
+	w := NewCaptureResponseWriter(deps.Logger)
+	w.responseSettings = newAuthResponseSettings(deps.Cfg)
+
+	return w
 }
 
 // Outcome returns a copy of the last captured outcome.
@@ -89,6 +105,8 @@ func (w *CaptureResponseWriter) Outcome() CapturedAuthOutcome {
 
 	out := w.outcome
 	out.Attributes = cloneAttributeMapping(out.Attributes)
+	out.ResponseHeaders = out.ResponseHeaders.Clone()
+	out.ResponseHeaderDeletes = append([]string(nil), out.ResponseHeaderDeletes...)
 	out.FSMEventPath = append([]string(nil), out.FSMEventPath...)
 	out.Groups = append([]string(nil), out.Groups...)
 	out.GroupDistinguishedNames = append([]string(nil), out.GroupDistinguishedNames...)
@@ -104,7 +122,7 @@ func (w *CaptureResponseWriter) OK(ctx *gin.Context, view *StateView) {
 
 	auth := view.auth
 	auth.applyAuthSuccessSideEffects(ctx)
-	w.captureOutcome(auth, authFSMStateAuthOK, CapturedAuthDecisionOK, "", auth.Runtime.StatusCodeOK)
+	w.captureOutcome(ctx, auth, authFSMStateAuthOK, CapturedAuthDecisionOK, "", auth.Runtime.StatusCodeOK)
 }
 
 // Fail applies failure side effects and captures the failure outcome.
@@ -115,7 +133,7 @@ func (w *CaptureResponseWriter) Fail(ctx *gin.Context, view *StateView) {
 
 	auth := view.auth
 	auth.applyAuthFailureSideEffects(ctx)
-	w.captureOutcome(auth, authFSMStateAuthFail, CapturedAuthDecisionFail, "", auth.Runtime.StatusCodeFail)
+	w.captureOutcome(ctx, auth, authFSMStateAuthFail, CapturedAuthDecisionFail, "", auth.Runtime.StatusCodeFail)
 }
 
 // TempFail applies temporary-failure side effects and captures the temporary failure outcome.
@@ -131,10 +149,11 @@ func (w *CaptureResponseWriter) TempFail(ctx *gin.Context, view *StateView, reas
 		auth.logAuthTempFail(ctx, w.logger)
 	}
 
-	w.captureOutcome(auth, authFSMStateAuthTempFail, CapturedAuthDecisionTempFail, reason, auth.Runtime.StatusCodeInternalError)
+	w.captureOutcome(ctx, auth, authFSMStateAuthTempFail, CapturedAuthDecisionTempFail, reason, auth.Runtime.StatusCodeInternalError)
 }
 
 func (w *CaptureResponseWriter) captureOutcome(
+	ctx *gin.Context,
 	auth *AuthState,
 	terminalState authFSMState,
 	decision CapturedAuthDecision,
@@ -145,12 +164,77 @@ func (w *CaptureResponseWriter) captureOutcome(
 		return
 	}
 
-	w.outcome = CapturedAuthOutcome{
-		Attributes:              auth.GetAttributesCopy(),
+	projected := authOutcomeFromState(
+		ctx,
+		auth,
+		authDecisionFromCaptured(decision),
+		string(terminalState),
+		reason,
+		status,
+		w.responseSettings,
+	)
+	w.outcome = capturedAuthOutcomeFromAuthOutcome(projected, decision)
+}
+
+// capturedResponseHeaders detaches response mutations selected before terminal rendering.
+func capturedResponseHeaders(ctx *gin.Context) http.Header {
+	if ctx == nil || ctx.Writer == nil {
+		return nil
+	}
+
+	return ctx.Writer.Header().Clone()
+}
+
+// listAccountsSuccessOutcome captures response mutations and metadata without a terminal writer decision.
+func listAccountsSuccessOutcome(
+	auth *AuthState,
+	ginCtx *gin.Context,
+	accounts AccountList,
+) *ListAccountsOutcome {
+	if auth == nil {
+		return nil
+	}
+
+	return &ListAccountsOutcome{
+		ResponseHeaders:         capturedResponseHeaders(ginCtx),
+		ResponseHeaderDeletes:   capturedResponseHeaderDeletes(ginCtx),
 		FSMEventPath:            append([]string(nil), auth.Runtime.AuthFSMEventPath...),
-		Decision:                decision,
-		TerminalState:           string(terminalState),
+		Accounts:                append(AccountList(nil), accounts...),
+		ResponseSettings:        newAuthResponseSettings(auth.Cfg()),
+		Decision:                AuthDecisionOK,
 		Session:                 auth.Runtime.GUID,
+		Protocol:                auth.GetProtocol().Get(),
+		HTTPStatus:              http.StatusOK,
+		LoginAttempts:           auth.GetFailCount(),
+		MemoryCacheHit:          ginCtx != nil && ginCtx.GetBool(definitions.CtxLocalCacheAuthKey),
+		DelayedResponseEligible: auth.ConfiguredPolicyAllowsIDPDelayedResponse(ginCtx),
+	}
+}
+
+// authOutcomeFromState detaches the complete terminal projection from AuthState.
+func authOutcomeFromState(
+	ctx *gin.Context,
+	auth *AuthState,
+	decision AuthDecision,
+	terminalState string,
+	reason string,
+	status int,
+	settings AuthResponseSettings,
+) *AuthOutcome {
+	if auth == nil {
+		return nil
+	}
+
+	return &AuthOutcome{
+		Attributes:              auth.GetAttributesCopy(),
+		ResponseHeaders:         capturedResponseHeaders(ctx),
+		ResponseHeaderDeletes:   capturedResponseHeaderDeletes(ctx),
+		FSMEventPath:            append([]string(nil), auth.Runtime.AuthFSMEventPath...),
+		ResponseSettings:        settings,
+		Decision:                decision,
+		TerminalState:           terminalState,
+		Session:                 auth.Runtime.GUID,
+		Account:                 auth.GetAccount(),
 		AccountField:            auth.Runtime.AccountField,
 		TOTPSecretField:         auth.Runtime.TOTPSecretField,
 		TOTPRecoveryField:       auth.Runtime.TOTPRecoveryField,
@@ -162,9 +246,78 @@ func (w *CaptureResponseWriter) captureOutcome(
 		Error:                   reason,
 		Groups:                  auth.GetGroups(),
 		GroupDistinguishedNames: auth.GetGroupDistinguishedNames(),
+		Protocol:                auth.GetProtocol().Get(),
+		UsedBackendIP:           auth.Runtime.UsedBackendIP,
 		Backend:                 auth.Runtime.SourcePassDBBackend,
+		UsedBackendPort:         auth.Runtime.UsedBackendPort,
 		HTTPStatus:              status,
+		LoginAttempts:           auth.GetFailCount(),
+		MemoryCacheHit:          ctx != nil && ctx.GetBool(definitions.CtxLocalCacheAuthKey),
+		DelayedResponseEligible: auth.ConfiguredPolicyAllowsIDPDelayedResponse(ctx),
 	}
+}
+
+// capturedAuthOutcomeFromAuthOutcome preserves the capture-specific decision vocabulary.
+func capturedAuthOutcomeFromAuthOutcome(
+	outcome *AuthOutcome,
+	decision CapturedAuthDecision,
+) CapturedAuthOutcome {
+	if outcome == nil {
+		return CapturedAuthOutcome{Decision: CapturedAuthDecisionUnset}
+	}
+
+	return CapturedAuthOutcome{
+		Attributes:              outcome.Attributes.Clone(),
+		ResponseHeaders:         outcome.ResponseHeaders.Clone(),
+		ResponseHeaderDeletes:   append([]string(nil), outcome.ResponseHeaderDeletes...),
+		FSMEventPath:            append([]string(nil), outcome.FSMEventPath...),
+		ResponseSettings:        outcome.ResponseSettings,
+		Decision:                decision,
+		TerminalState:           outcome.TerminalState,
+		Session:                 outcome.Session,
+		Account:                 outcome.Account,
+		AccountField:            outcome.AccountField,
+		TOTPSecretField:         outcome.TOTPSecretField,
+		TOTPRecoveryField:       outcome.TOTPRecoveryField,
+		UniqueUserIDField:       outcome.UniqueUserIDField,
+		DisplayNameField:        outcome.DisplayNameField,
+		StatusMessage:           outcome.StatusMessage,
+		StatusMessageI18NKey:    outcome.StatusMessageI18NKey,
+		ResponseLanguage:        outcome.ResponseLanguage,
+		Error:                   outcome.Error,
+		Groups:                  append([]string(nil), outcome.Groups...),
+		GroupDistinguishedNames: append([]string(nil), outcome.GroupDistinguishedNames...),
+		Protocol:                outcome.Protocol,
+		UsedBackendIP:           outcome.UsedBackendIP,
+		Backend:                 outcome.Backend,
+		UsedBackendPort:         outcome.UsedBackendPort,
+		HTTPStatus:              outcome.HTTPStatus,
+		LoginAttempts:           outcome.LoginAttempts,
+		MemoryCacheHit:          outcome.MemoryCacheHit,
+		DelayedResponseEligible: outcome.DelayedResponseEligible,
+	}
+}
+
+// newAuthResponseSettings detaches config-derived renderer inputs from one runtime generation.
+func newAuthResponseSettings(cfg config.File) AuthResponseSettings {
+	settings := AuthResponseSettings{Captured: true}
+	if cfg == nil || cfg.GetServer() == nil {
+		return settings
+	}
+
+	server := cfg.GetServer()
+	settings.SMTPBackendAddress = server.GetSMTPBackendAddress()
+	settings.IMAPBackendAddress = server.GetIMAPBackendAddress()
+	settings.POP3BackendAddress = server.GetPOP3BackendAddress()
+	settings.DefaultLanguage = server.Frontend.GetDefaultLanguage()
+	settings.InstanceName = server.GetInstanceName()
+	settings.SMTPBackendPort = server.GetSMTPBackendPort()
+	settings.IMAPBackendPort = server.GetIMAPBackendPort()
+	settings.POP3BackendPort = server.GetPOP3BackendPort()
+	settings.NginxWaitDelay = uint(server.GetNginxWaitDelay())
+	settings.BackendHealthChecks = cfg.HasRuntimeModule(definitions.ServiceBackendHealthChecks)
+
+	return settings
 }
 
 func cloneAttributeMapping(source bktype.AttributeMapping) bktype.AttributeMapping {

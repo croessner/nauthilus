@@ -264,12 +264,7 @@ func authnEnvironmentProviderRank(providerID string) int {
 // currentResult projects collected host state without publishing a terminal response.
 func (e *authnCandidateExecution) currentResult() authnApplicationResult {
 	if e.operation == policy.OperationListAccounts {
-		return authnApplicationResult{accounts: &ListAccountsOutcome{
-			Accounts:   append(AccountList(nil), e.accounts...),
-			Decision:   AuthDecisionOK,
-			Session:    e.auth.Runtime.GUID,
-			HTTPStatus: http.StatusOK,
-		}}
+		return authnApplicationResult{accounts: listAccountsSuccessOutcome(e.auth, e.ginCtx, e.accounts)}
 	}
 
 	result := e.authResult
@@ -286,23 +281,27 @@ func authnCandidateOutcomeFromRuntime(auth *AuthState, result definitions.AuthRe
 		return nil
 	}
 
-	return &AuthOutcome{
-		Attributes:              auth.GetAttributesCopy(),
-		FSMEventPath:            append([]string(nil), auth.Runtime.AuthFSMEventPath...),
-		Decision:                authnCandidateDecisionFromResult(result),
-		Session:                 auth.Runtime.GUID,
-		AccountField:            auth.Runtime.AccountField,
-		TOTPSecretField:         auth.Runtime.TOTPSecretField,
-		TOTPRecoveryField:       auth.Runtime.TOTPRecoveryField,
-		UniqueUserIDField:       auth.Runtime.UniqueUserIDField,
-		DisplayNameField:        auth.Runtime.DisplayNameField,
-		StatusMessage:           auth.Runtime.StatusMessage,
-		StatusMessageI18NKey:    auth.Runtime.StatusMessageI18NKey,
-		ResponseLanguage:        auth.Runtime.ResponseLanguage,
-		Groups:                  auth.GetGroups(),
-		GroupDistinguishedNames: auth.GetGroupDistinguishedNames(),
-		Backend:                 auth.Runtime.SourcePassDBBackend,
+	decision := authnCandidateDecisionFromResult(result)
+	status := auth.Runtime.StatusCodeOK
+
+	switch decision {
+	case AuthDecisionFail:
+		status = auth.Runtime.StatusCodeFail
+	case AuthDecisionTempFail:
+		status = auth.Runtime.StatusCodeInternalError
 	}
+
+	ctx := auth.Request.HTTPClientContext
+
+	return authOutcomeFromState(
+		ctx,
+		auth,
+		decision,
+		authTerminalState(decision),
+		"",
+		status,
+		newAuthResponseSettings(auth.Cfg()),
+	)
 }
 
 // authnCandidateDecisionFromResult maps the existing backend result before policy selection.

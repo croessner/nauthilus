@@ -533,7 +533,9 @@ func (a *AuthState) dispatchBruteForceLuaAction(ctx *gin.Context, request luaAct
 	restore := a.prepareBruteForceLuaActionState()
 	defer restore()
 
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_lua_action_total", ctx.FullPath()); stop != nil {
+	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
+
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_lua_action_total", resource); stop != nil {
 		defer stop()
 	}
 

@@ -17,6 +17,10 @@ package grpcauthority
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"net"
 	"testing"
 
 	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
@@ -27,7 +31,9 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -115,6 +121,185 @@ func TestHandlerAuthenticatePassesIncomingMetadataToApplicationInput(t *testing.
 	if len(values) != 1 || values[0] != " CompanyDE " {
 		t.Fatalf("request metadata = %#v, want x-company-domain value", service.authInput.Context.RequestMetadata)
 	}
+}
+
+type grpcTransportOperationCase struct {
+	invoke     func(*Handler, context.Context) error
+	input      func(*recordingService) core.AuthInput
+	name       string
+	fullMethod string
+	wantMode   core.AuthMode
+}
+
+func TestHandlerBackchannelOperationsBuildTrustedGRPCTransportInput(t *testing.T) {
+	for _, test := range grpcTransportOperationCases() {
+		t.Run(test.name, func(t *testing.T) {
+			assertGRPCTransportOperation(t, test)
+		})
+	}
+}
+
+// grpcTransportOperationCases returns the transport-mapping case for each backchannel operation.
+func grpcTransportOperationCases() []grpcTransportOperationCase {
+	return []grpcTransportOperationCase{
+		{
+			name:       "authenticate",
+			fullMethod: authv1.AuthService_Authenticate_FullMethodName,
+			wantMode:   core.AuthModeAuthenticate,
+			invoke: func(handler *Handler, ctx context.Context) error {
+				_, err := handler.Authenticate(ctx, &authv1.AuthRequest{
+					Username: "transport-user@example.test",
+					Password: "secret",
+				})
+
+				return err
+			},
+			input: func(service *recordingService) core.AuthInput { return service.authInput },
+		},
+		{
+			name:       "lookup identity",
+			fullMethod: authv1.AuthService_LookupIdentity_FullMethodName,
+			wantMode:   core.AuthModeLookupIdentity,
+			invoke: func(handler *Handler, ctx context.Context) error {
+				_, err := handler.LookupIdentity(ctx, &authv1.LookupIdentityRequest{
+					Username: "transport-user@example.test",
+				})
+
+				return err
+			},
+			input: func(service *recordingService) core.AuthInput { return service.lookupInput },
+		},
+		{
+			name:       "list accounts",
+			fullMethod: authv1.AuthService_ListAccounts_FullMethodName,
+			wantMode:   core.AuthModeListAccounts,
+			invoke: func(handler *Handler, ctx context.Context) error {
+				_, err := handler.ListAccounts(ctx, &authv1.ListAccountsRequest{})
+
+				return err
+			},
+			input: func(service *recordingService) core.AuthInput { return service.listInput },
+		},
+	}
+}
+
+// assertGRPCTransportOperation verifies trusted transport facts for one handler operation.
+func assertGRPCTransportOperation(t *testing.T, test grpcTransportOperationCase) {
+	t.Helper()
+
+	service := &recordingService{
+		authOutcome:   &core.AuthOutcome{Decision: core.AuthDecisionOK},
+		lookupOutcome: &core.AuthOutcome{Decision: core.AuthDecisionOK},
+		listOutcome:   &core.ListAccountsOutcome{Decision: core.AuthDecisionOK},
+	}
+	handler := New(service)
+	incoming := metadata.Pairs(
+		"x-company-domain", " CompanyDE ",
+		"x-nauthilus-transport-kind", "http",
+		"x-nauthilus-listener", "spoofed-listener",
+		"x-nauthilus-grpc-method", "/spoofed.Service/Method",
+		"x-nauthilus-peer", "192.0.2.99",
+		"x-nauthilus-mtls-identity", "spoofed-client",
+		"x-nauthilus-protected", "false",
+	)
+	ctx := verifiedBackchannelGRPCContext(incoming)
+
+	if err := test.invoke(handler, ctx); err != nil {
+		t.Fatalf("operation returned error: %v", err)
+	}
+
+	input := test.input(service)
+
+	if input.Mode != test.wantMode {
+		t.Fatalf("mode = %q, want %q", input.Mode, test.wantMode)
+	}
+
+	if values := input.Context.RequestMetadata["x-company-domain"]; len(values) != 1 || values[0] != " CompanyDE " {
+		t.Fatalf("request metadata = %#v, want cloned domain value", input.Context.RequestMetadata)
+	}
+
+	incoming["x-company-domain"][0] = "mutated-after-call"
+
+	if got := input.Context.RequestMetadata["x-company-domain"][0]; got != " CompanyDE " {
+		t.Fatalf("cloned metadata changed to %q after source mutation", got)
+	}
+
+	transport := input.Context.Transport
+
+	if transport.Kind != grpcTransportKind || transport.Listener != grpcAuthorityListener {
+		t.Fatalf("transport kind/listener = %q/%q, want grpc/grpc.authority", transport.Kind, transport.Listener)
+	}
+
+	if transport.GRPCMethod != test.fullMethod {
+		t.Fatalf("gRPC method = %q, want %q", transport.GRPCMethod, test.fullMethod)
+	}
+
+	if transport.Peer != "203.0.113.45" {
+		t.Fatalf("peer = %q, want server-observed 203.0.113.45", transport.Peer)
+	}
+
+	if !transport.Protected || transport.MTLSIdentity != "verified-backchannel-client" {
+		t.Fatalf("protected/mTLS = %t/%q, want true/verified-backchannel-client", transport.Protected, transport.MTLSIdentity)
+	}
+}
+
+func TestHandlerBackchannelTransportDoesNotExportUnverifiedMTLSIdentity(t *testing.T) {
+	service := &recordingService{authOutcome: &core.AuthOutcome{Decision: core.AuthDecisionOK}}
+	handler := New(service)
+	ctx := unverifiedBackchannelGRPCContext(metadata.Pairs(
+		"x-nauthilus-mtls-identity", "spoofed-client",
+		"x-nauthilus-protected", "true",
+	))
+
+	_, err := handler.Authenticate(ctx, &authv1.AuthRequest{
+		Username: "unverified-user@example.test",
+		Password: "secret",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate returned error: %v", err)
+	}
+
+	transport := service.authInput.Context.Transport
+	if !transport.Protected {
+		t.Fatal("protected = false, want completed confidential TLS transport")
+	}
+
+	if transport.MTLSIdentity != "" {
+		t.Fatalf("mTLS identity = %q, want no unverified identity", transport.MTLSIdentity)
+	}
+}
+
+// verifiedBackchannelGRPCContext constructs server-observed peer evidence with a verified client chain.
+func verifiedBackchannelGRPCContext(md metadata.MD) context.Context {
+	return backchannelGRPCContext(md, true)
+}
+
+// unverifiedBackchannelGRPCContext constructs protected TLS evidence without a verified client chain.
+func unverifiedBackchannelGRPCContext(md metadata.MD) context.Context {
+	return backchannelGRPCContext(md, false)
+}
+
+// backchannelGRPCContext constructs the listener evidence used by transport-mapping tests.
+func backchannelGRPCContext(md metadata.MD, verified bool) context.Context {
+	certificate := &x509.Certificate{Subject: pkix.Name{CommonName: "verified-backchannel-client"}}
+
+	state := tls.ConnectionState{
+		HandshakeComplete: true,
+		PeerCertificates:  []*x509.Certificate{certificate},
+	}
+	if verified {
+		state.VerifiedChains = [][]*x509.Certificate{{certificate}}
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	return peer.NewContext(ctx, &peer.Peer{
+		Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.45"), Port: 43123},
+		AuthInfo: credentials.TLSInfo{
+			State:          state,
+			CommonAuthInfo: credentials.CommonAuthInfo{SecurityLevel: credentials.PrivacyAndIntegrity},
+		},
+	})
 }
 
 func TestHandlerAuthenticateLocalizesPolicyI18NStatusFromIncomingMetadata(t *testing.T) {

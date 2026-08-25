@@ -622,6 +622,7 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 			),
 		}
 
+		deps.AuthApplication = core.NewAuthApplicationService(deps.Auth())
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 		if err := handlerbackchannel.Setup(e, deps); err != nil {
 			_ = level.Error(runtime.logger).Log(definitions.LogKeyMsg, "Backchannel route setup failed", definitions.LogKeyError, err)

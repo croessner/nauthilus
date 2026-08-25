@@ -17,112 +17,12 @@ package core
 
 import (
 	"fmt"
-	"log/slog"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/log/level"
 
 	"github.com/gin-gonic/gin"
 )
-
-// setCommonHeaders sets common headers for the given gin.Context and AuthState.
-// It sets the "Auth-Status" header to "OK" and the "X-Nauthilus-Session" header to the GUID of the AuthState.
-// If the AuthState's Service is not definitions.ServBasic, and the HaveAccountField flag is true,
-// it retrieves the account from the AuthState and sets the "Auth-User" header
-func setCommonHeaders(ctx *gin.Context, auth *AuthState) {
-	ctx.Header("Auth-Status", "OK")
-	ctx.Header("X-Nauthilus-Session", auth.Runtime.GUID)
-
-	if auth.Request.Service != definitions.ServBasic {
-		if account, found := auth.GetAccountOk(); found {
-			ctx.Header("Auth-User", account)
-		}
-	}
-
-	cachedAuth := ctx.GetBool(definitions.CtxLocalCacheAuthKey)
-
-	if cachedAuth {
-		ctx.Header("X-Nauthilus-Memory-Cache", "Hit")
-	} else {
-		ctx.Header("X-Nauthilus-Memory-Cache", "Miss")
-	}
-}
-
-// setNginxHeaders sets the appropriate headers for the given gin.Context and AuthState based on the configuration and runtime module flags.
-// If the definitions.ServiceBackendHealthChecks service is enabled, it checks if the AuthState's UsedBackendAddress and UsedBackendPort are set.
-// If they are, it sets the "Auth-Server" header to the UsedBackendAddress and the "Auth-Port" header to the UsedBackendPort.
-// If the definitions.ServiceBackendHealthChecks service is disabled, it checks the AuthState's Protocol.
-// If the Protocol is definitions.ProtoSMTP, it sets the "Auth-Server" header to the SMTPBackendAddress and the "Auth-Port" header to the SMTPBackendPort.
-// If the Protocol is definitions.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
-// If the Protocol is definitions.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
-func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
-	setNginxHeadersWithDeps(getDefaultConfigFile(), getDefaultLogger(), ctx, auth)
-}
-
-func setNginxHeadersWithDeps(cfg config.File, logger *slog.Logger, ctx *gin.Context, auth *AuthState) {
-	if cfg.HasRuntimeModule(definitions.ServiceBackendHealthChecks) {
-		if BackendServers.GetTotalServers() == 0 {
-			ctx.Header("Auth-Status", "Internal failure")
-			level.Error(logger).Log(
-				definitions.LogKeyGUID, auth.Runtime.GUID,
-				definitions.LogKeyMsg, "No backend servers found for backend_health_checks service",
-				definitions.LogKeyError, "No backend servers found for backend_health_checks service",
-				definitions.LogKeyInstance, cfg.GetServer().GetInstanceName(),
-			)
-		} else {
-			if auth.Runtime.UsedBackendIP != "" && auth.Runtime.UsedBackendPort > 0 {
-				ctx.Header("Auth-Server", auth.Runtime.UsedBackendIP)
-				ctx.Header("Auth-Port", fmt.Sprintf("%d", auth.Runtime.UsedBackendPort))
-			}
-		}
-	} else {
-		switch auth.Request.Protocol.Get() {
-		case definitions.ProtoSMTP:
-			ctx.Header("Auth-Server", cfg.GetServer().GetSMTPBackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", cfg.GetServer().GetSMTPBackendPort()))
-		case definitions.ProtoIMAP:
-			ctx.Header("Auth-Server", cfg.GetServer().GetIMAPBackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", cfg.GetServer().GetIMAPBackendPort()))
-		case definitions.ProtoPOP3:
-			ctx.Header("Auth-Server", cfg.GetServer().GetPOP3BackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", cfg.GetServer().GetPOP3BackendPort()))
-		}
-	}
-}
-
-// setHeaderHeaders sets the specified headers in the given gin.Context based on the attributes in the AuthState object.
-// It iterates through the attributes and calls the handleAttributeValue function for each attribute.
-//
-// Parameters:
-// - ctx: The gin.Context object to set the headers on.
-// - a: The AuthState object containing the attributes.
-//
-// Example:
-//
-//	a := &AuthState{
-//	    SearchAttributes: map[string][]any{
-//	        "Attribute1": []any{"Value1"},
-//	        "Attribute2": []any{"Value2_1", "Value2_2"},
-//	    },
-//	}
-//	setHeaderHeaders(ctx, a)
-//
-// Resulting headers in ctx:
-// - X-Nauthilus-Attribute1: "Value1"
-// - X-Nauthilus-Attribute2: "Value2_1,Value2_2"
-func setHeaderHeaders(ctx *gin.Context, auth *AuthState) {
-	if len(auth.Attributes.Attributes) > 0 {
-		for name, value := range auth.Attributes.Attributes {
-			if IsSensitiveOutputAttribute(name, auth.Runtime.TOTPSecretField, auth.Runtime.TOTPRecoveryField) {
-				continue
-			}
-
-			handleAttributeValue(ctx, name, value)
-		}
-	}
-}
 
 // handleAttributeValue sets the value of a header in the given gin.Context based on the name and value provided.
 // If the value length is 1, it formats the value as a string and assigns it to the headerValue variable.

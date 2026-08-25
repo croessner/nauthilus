@@ -16,6 +16,8 @@
 package auth
 
 import (
+	"context"
+	stderrors "errors"
 	"net/http"
 
 	"github.com/croessner/nauthilus/v3/server/core"
@@ -28,7 +30,8 @@ import (
 
 // Handler registers authentication-related routes.
 type Handler struct {
-	deps *handlerdeps.Deps
+	deps        *handlerdeps.Deps
+	application core.AuthApplicationService
 }
 
 // New constructs the auth handler with injected dependencies.
@@ -37,7 +40,17 @@ func New(deps *handlerdeps.Deps) *Handler {
 		return &Handler{}
 	}
 
-	return &Handler{deps: deps}
+	application := deps.AuthApplication
+	if application == nil {
+		application = core.NewAuthApplicationService(deps.Auth())
+	}
+
+	return NewWithApplicationService(deps, application)
+}
+
+// NewWithApplicationService constructs an auth handler with an explicit application boundary.
+func NewWithApplicationService(deps *handlerdeps.Deps, application core.AuthApplicationService) *Handler {
+	return &Handler{deps: deps, application: application}
 }
 
 // Register provides the exported Register method.
@@ -82,6 +95,16 @@ func (h *Handler) nginx(ctx *gin.Context) {
 
 // handleWithTrace runs an auth endpoint with the endpoint-specific disabled check and tracing span.
 func (h *Handler) handleWithTrace(ctx *gin.Context, disabled func() bool, spanName string) {
+	h.handleWithTraceAndProcess(ctx, disabled, spanName, h.process)
+}
+
+// handleWithTraceAndProcess runs one transport processor within the established request trace scope.
+func (h *Handler) handleWithTraceAndProcess(
+	ctx *gin.Context,
+	disabled func() bool,
+	spanName string,
+	process gin.HandlerFunc,
+) {
 	if disabled() {
 		ctx.AbortWithStatus(http.StatusNotFound)
 
@@ -97,27 +120,136 @@ func (h *Handler) handleWithTrace(ctx *gin.Context, disabled func() bool, spanNa
 
 	defer requestScope.Restore()
 
-	h.process(ctx)
+	process(ctx)
 }
 
+// process converts an HTTP request, dispatches one application operation, and renders its outcome.
 func (h *Handler) process(ctx *gin.Context) {
-	auth := h.newAuthState(ctx)
+	if h == nil || h.deps == nil || h.application == nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
 
-	if auth == nil {
+		return
+	}
+
+	input, ok := newHTTPAuthInputBuilder(h.deps).Build(ctx)
+	if !ok {
+		return
+	}
+
+	ctx.Set(definitions.CtxAuthProtocolKey, input.Context.Protocol)
+	applicationContext := h.applicationContext(ctx)
+	renderer := core.NewHTTPAuthResponseRenderer(h.responseDeps())
+
+	if input.Mode == core.AuthModeListAccounts {
+		outcome, err := h.application.ListAccounts(applicationContext, input)
+		if err != nil {
+			h.renderApplicationError(ctx, renderer, input, err)
+
+			return
+		}
+
+		if outcome == nil {
+			ctx.AbortWithStatus(http.StatusInternalServerError)
+
+			return
+		}
+
+		renderer.RenderListAccounts(ctx, input, outcome)
+
+		return
+	}
+
+	var (
+		outcome *core.AuthOutcome
+		err     error
+	)
+
+	if input.Mode == core.AuthModeLookupIdentity {
+		outcome, err = h.application.LookupIdentity(applicationContext, input)
+	} else {
+		outcome, err = h.application.Authenticate(applicationContext, input)
+	}
+
+	if err != nil {
+		h.renderApplicationError(ctx, renderer, input, err)
+
+		return
+	}
+
+	h.renderAuthOutcome(ctx, renderer, input, outcome)
+}
+
+// applicationContext carries validated bearer claims into the transport-neutral scope check.
+func (h *Handler) applicationContext(ctx *gin.Context) context.Context {
+	applicationContext := ctx.Request.Context()
+	if claims, exists := ctx.Get(definitions.CtxOIDCClaimsKey); exists {
+		applicationContext = core.ContextWithOIDCClaims(applicationContext, claims)
+	}
+
+	return applicationContext
+}
+
+// responseDeps resolves the request-bound configuration used by the pure HTTP renderer.
+func (h *Handler) responseDeps() core.ResponseDeps {
+	authDeps := h.deps.Auth()
+
+	return core.ResponseDeps{
+		Cfg:      authDeps.Cfg,
+		Env:      authDeps.Env,
+		Logger:   authDeps.Logger,
+		Resolver: h.deps.MessageResolver,
+	}
+}
+
+// renderApplicationError maps typed application failures without invoking domain logic in the handler.
+func (h *Handler) renderApplicationError(
+	ctx *gin.Context,
+	renderer *core.HTTPAuthResponseRenderer,
+	input core.AuthInput,
+	err error,
+) {
+	var preprocessError *core.AuthPreprocessRejectedError
+	if stderrors.As(err, &preprocessError) && preprocessError.Outcome != nil {
+		h.renderAuthOutcome(ctx, renderer, input, preprocessError.Outcome)
+
+		return
+	}
+
+	var inputError *core.AuthInputError
+	if stderrors.As(err, &inputError) {
 		ctx.AbortWithStatus(http.StatusBadRequest)
 
 		return
 	}
 
-	ctx.Set(definitions.CtxAuthProtocolKey, auth.GetProtocol().Get())
+	var permissionError *core.AuthPermissionDeniedError
+	if stderrors.As(err, &permissionError) {
+		ctx.AbortWithStatus(http.StatusForbidden)
 
-	if reject := auth.PreproccessAuthRequest(ctx); reject {
 		return
 	}
 
-	auth.HandleAuthentication(ctx)
+	ctx.AbortWithStatus(http.StatusInternalServerError)
 }
 
-func (h *Handler) newAuthState(ctx *gin.Context) core.State {
-	return core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
+// renderAuthOutcome publishes terminal metric metadata before rendering the HTTP response.
+func (h *Handler) renderAuthOutcome(
+	ctx *gin.Context,
+	renderer *core.HTTPAuthResponseRenderer,
+	input core.AuthInput,
+	outcome *core.AuthOutcome,
+) {
+	if outcome == nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return
+	}
+
+	ctx.Set(definitions.CtxAuthOutcomeKey, string(outcome.Decision))
+
+	if outcome.Protocol != "" {
+		ctx.Set(definitions.CtxAuthProtocolKey, outcome.Protocol)
+	}
+
+	renderer.RenderAuth(ctx, input, outcome)
 }

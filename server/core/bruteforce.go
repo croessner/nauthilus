@@ -136,7 +136,8 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		return false
 	}
 
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "brute_force_check_request_total", ctx.FullPath())
+	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "brute_force_check_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -193,7 +194,9 @@ func (a *AuthState) startBruteForceCheckTrace(ctx *gin.Context) (monittrace.Trac
 
 // startBruteForceOverallTimer starts the top-level brute-force check metric timer.
 func (a *AuthState) startBruteForceOverallTimer(ctx *gin.Context) func() {
-	return stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_overall_total", ctx.FullPath())
+	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
+
+	return stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_overall_total", resource)
 }
 
 // isBruteForceWhitelisted checks both soft and hard brute-force whitelists.
@@ -633,8 +636,10 @@ func (a *AuthState) updateBruteForceBucketsCounter(ctx *gin.Context, learningSou
 	defer requestScope.Restore()
 	defer uspan.End()
 
+	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
+
 	// Overall timer for updating BF buckets after an auth failure
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_overall_total", ctx.FullPath()); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_overall_total", resource); stop != nil {
 		defer stop()
 	}
 
@@ -810,11 +815,12 @@ func (a *AuthState) saveBruteForceBucketCounters(ctx *gin.Context, bm bruteforce
 	}
 
 	ip := net.ParseIP(a.Request.ClientIP)
+	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
 
 	for _, rule := range a.cfg().GetBruteForceRules() {
 		// Per-rule iteration timer
 		var stopIter func()
-		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_loop_total", ctx.FullPath()); s != nil {
+		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_loop_total", resource); s != nil {
 			stopIter = s
 		}
 

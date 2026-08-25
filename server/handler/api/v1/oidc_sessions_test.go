@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/idp"
@@ -207,6 +208,7 @@ func newOIDCSessionsTestDeps(redisClient rediscli.Client) *deps.Deps {
 	return &deps.Deps{
 		Logger: log.GetLogger(),
 		Redis:  redisClient,
+		Cfg:    &config.FileSettings{Server: &config.ServerSection{}},
 	}
 }
 

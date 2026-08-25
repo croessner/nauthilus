@@ -21,20 +21,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
-	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/log/level"
-	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/model/authdto"
-	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/util"
-
-	"github.com/gin-gonic/gin"
-	"github.com/segmentio/ksuid"
-	"go.opentelemetry.io/otel/attribute"
 )
 
 // AuthMode describes the application-level auth operation.
@@ -89,20 +81,42 @@ const (
 
 // AuthInput contains transport-neutral authentication input.
 type AuthInput struct {
-	Credentials      Credentials
-	Context          AuthContext
-	Mode             AuthMode
-	Service          string
-	AuthLoginAttempt uint
+	Credentials        Credentials
+	Context            AuthContext
+	CorrelationID      string
+	Mode               AuthMode
+	Service            string
+	AuthLoginAttempt   uint
+	DisableMemoryCache bool
+	DisableCache       bool
+}
+
+// AuthResponseSettings snapshots config-derived response inputs from one runtime generation.
+type AuthResponseSettings struct {
+	SMTPBackendAddress  string
+	IMAPBackendAddress  string
+	POP3BackendAddress  string
+	DefaultLanguage     string
+	InstanceName        string
+	SMTPBackendPort     int
+	IMAPBackendPort     int
+	POP3BackendPort     int
+	NginxWaitDelay      uint
+	BackendHealthChecks bool
+	Captured            bool
 }
 
 // AuthOutcome contains the captured terminal authentication result.
 type AuthOutcome struct {
 	Attributes              bktype.AttributeMapping
+	ResponseHeaders         http.Header
+	ResponseHeaderDeletes   []string
 	FSMEventPath            []string
+	ResponseSettings        AuthResponseSettings
 	Decision                AuthDecision
 	TerminalState           string
 	Session                 string
+	Account                 string
 	AccountField            string
 	TOTPSecretField         string
 	TOTPRecoveryField       string
@@ -114,20 +128,35 @@ type AuthOutcome struct {
 	Error                   string
 	Groups                  []string
 	GroupDistinguishedNames []string
+	Protocol                string
+	UsedBackendIP           string
 	Backend                 definitions.Backend
+	UsedBackendPort         int
 	HTTPStatus              int
+	LoginAttempts           uint
+	MemoryCacheHit          bool
+	DelayedResponseEligible bool
 }
 
 // ListAccountsOutcome contains the account-provider response.
 type ListAccountsOutcome struct {
-	Accounts             AccountList
-	Decision             AuthDecision
-	Session              string
-	StatusMessage        string
-	StatusMessageI18NKey string
-	ResponseLanguage     string
-	Error                string
-	HTTPStatus           int
+	ResponseHeaders         http.Header
+	ResponseHeaderDeletes   []string
+	FSMEventPath            []string
+	Accounts                AccountList
+	ResponseSettings        AuthResponseSettings
+	Decision                AuthDecision
+	TerminalState           string
+	Session                 string
+	StatusMessage           string
+	StatusMessageI18NKey    string
+	ResponseLanguage        string
+	Error                   string
+	Protocol                string
+	HTTPStatus              int
+	LoginAttempts           uint
+	MemoryCacheHit          bool
+	DelayedResponseEligible bool
 }
 
 // AuthApplicationService runs auth use cases behind transport adapters.
@@ -190,26 +219,16 @@ func (e *AuthPermissionDeniedError) Error() string {
 }
 
 type authApplicationService struct {
-	contextFactory *applicationGinContextFactory
-	deps           AuthDeps
+	executor *legacyAuthApplicationExecutor
+	deps     AuthDeps
 }
 
 // NewAuthApplicationService constructs the transport-neutral auth service.
 func NewAuthApplicationService(deps AuthDeps) AuthApplicationService {
 	return &authApplicationService{
-		contextFactory: newApplicationGinContextFactory(),
-		deps:           deps,
+		executor: newLegacyAuthApplicationExecutor(),
+		deps:     deps,
 	}
-}
-
-// applicationGinContextFactory reuses the immutable Gin engine across application requests.
-type applicationGinContextFactory struct {
-	engine *gin.Engine
-}
-
-// newApplicationGinContextFactory constructs the synthetic request context factory.
-func newApplicationGinContextFactory() *applicationGinContextFactory {
-	return &applicationGinContextFactory{engine: gin.New()}
 }
 
 // ContextWithOIDCClaims stores validated backchannel OIDC claims for auth
@@ -326,12 +345,7 @@ func (s *authApplicationService) ListAccounts(ctx context.Context, input AuthInp
 		return listAccountsOutcomeFromCaptured(captured), nil
 	}
 
-	return &ListAccountsOutcome{
-		Accounts:   accounts,
-		Decision:   AuthDecisionOK,
-		Session:    auth.Runtime.GUID,
-		HTTPStatus: http.StatusOK,
-	}, nil
+	return listAccountsSuccessOutcome(auth, ginCtx, accounts), nil
 }
 
 func normalizeAuthInput(input AuthInput, defaultMode AuthMode) AuthInput {
@@ -357,6 +371,10 @@ func validateAuthenticateInput(input AuthInput) error {
 }
 
 func validateLookupIdentityInput(input AuthInput) error {
+	if requestTransportKindForService(input.Service) == requestPolicyTransportHTTP {
+		return nil
+	}
+
 	return validateUsernameInput(input)
 }
 
@@ -370,61 +388,6 @@ func validateUsernameInput(input AuthInput) error {
 	}
 
 	return nil
-}
-
-func (s *authApplicationService) newAuthState(
-	parent context.Context,
-	input AuthInput,
-) (*AuthState, *gin.Context, *CaptureResponseWriter, error) {
-	deps, err := s.effectiveDeps()
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	capture := NewDefaultCaptureResponseWriter(ResponseDeps{
-		Cfg:    deps.Cfg,
-		Env:    deps.Env,
-		Logger: deps.Logger,
-	})
-	deps.Resp = capture
-
-	ginCtx, err := s.contextFactory.New(parent, input)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	AttachPostActionExecutionGate(parent, ginCtx)
-	auth := NewAuthStateFromContextWithDeps(ginCtx, deps).(*AuthState)
-
-	tr := monittrace.New("nauthilus/auth")
-	setupCtx, span := tr.Start(parent, "auth.setup",
-		attribute.String("service", input.Service),
-		attribute.String("mode", string(input.Mode)),
-	)
-
-	requestScope := auth.scopeRequestContext(setupCtx, ginCtx)
-
-	defer requestScope.Restore()
-	defer span.End()
-
-	auth.SetProtocol(&config.Protocol{})
-	auth.ApplyCredentials(input.Credentials)
-	auth.ApplyContextData(input.Context)
-
-	if input.AuthLoginAttempt > 0 {
-		auth.Request.AuthLoginAttempt = input.AuthLoginAttempt
-		auth.SyncLoginAttemptsFromAttemptOrdinal(input.AuthLoginAttempt)
-	}
-
-	auth.postResolvDNS(ginCtx.Request.Context())
-	auth.InitMethodAndUserAgent()
-	auth.WithDefaults(ginCtx)
-	auth.SetStatusCodes(input.Service)
-	auth.SetOperationMode(ginCtx)
-	auth.traceSetupDetails(span)
-	logProcessingRequest(ginCtx, auth)
-
-	return auth, ginCtx, capture, nil
 }
 
 func (s *authApplicationService) effectiveDeps() (AuthDeps, error) {
@@ -452,46 +415,17 @@ func (s *authApplicationService) effectiveDeps() (AuthDeps, error) {
 	return deps, nil
 }
 
-// New builds a request-scoped Gin context without allocating a Gin engine.
-func (f *applicationGinContextFactory) New(parent context.Context, input AuthInput) (*gin.Context, error) {
-	path := "/grpc/auth/v1/Authenticate"
-
-	switch input.Mode {
-	case AuthModeLookupIdentity:
-		path = "/grpc/auth/v1/LookupIdentity?mode=no-auth"
-	case AuthModeListAccounts:
-		path = "/grpc/auth/v1/ListAccounts?mode=list-accounts"
-	}
-
-	recorder := httptest.NewRecorder()
-	ginCtx := gin.CreateTestContextOnly(recorder, f.engine)
-
-	request, err := http.NewRequestWithContext(parent, http.MethodPost, path, http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("build application request: %w", err)
-	}
-
-	ginCtx.Request = request
-	ginCtx.Set(definitions.CtxCategoryKey, definitions.CatAuth)
-	ginCtx.Set(definitions.CtxServiceKey, input.Service)
-	ginCtx.Set(definitions.CtxGUIDKey, ksuid.New().String())
-	ginCtx.Set(definitions.CtxLocalCacheAuthKey, false)
-	ginCtx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
-
-	if claims := parent.Value(authApplicationOIDCClaimsKey); claims != nil {
-		ginCtx.Set(definitions.CtxOIDCClaimsKey, claims)
-	}
-
-	return ginCtx, nil
-}
-
 func authOutcomeFromCaptured(captured CapturedAuthOutcome) *AuthOutcome {
 	return &AuthOutcome{
 		Attributes:              captured.Attributes,
+		ResponseHeaders:         captured.ResponseHeaders.Clone(),
+		ResponseHeaderDeletes:   append([]string(nil), captured.ResponseHeaderDeletes...),
 		FSMEventPath:            append([]string(nil), captured.FSMEventPath...),
+		ResponseSettings:        captured.ResponseSettings,
 		Decision:                authDecisionFromCaptured(captured.Decision),
 		TerminalState:           captured.TerminalState,
 		Session:                 captured.Session,
+		Account:                 captured.Account,
 		AccountField:            captured.AccountField,
 		TOTPSecretField:         captured.TOTPSecretField,
 		TOTPRecoveryField:       captured.TOTPRecoveryField,
@@ -503,20 +437,35 @@ func authOutcomeFromCaptured(captured CapturedAuthOutcome) *AuthOutcome {
 		Error:                   captured.Error,
 		Groups:                  append([]string(nil), captured.Groups...),
 		GroupDistinguishedNames: append([]string(nil), captured.GroupDistinguishedNames...),
+		Protocol:                captured.Protocol,
+		UsedBackendIP:           captured.UsedBackendIP,
 		Backend:                 captured.Backend,
+		UsedBackendPort:         captured.UsedBackendPort,
 		HTTPStatus:              captured.HTTPStatus,
+		LoginAttempts:           captured.LoginAttempts,
+		MemoryCacheHit:          captured.MemoryCacheHit,
+		DelayedResponseEligible: captured.DelayedResponseEligible,
 	}
 }
 
 func listAccountsOutcomeFromCaptured(captured CapturedAuthOutcome) *ListAccountsOutcome {
 	return &ListAccountsOutcome{
-		Decision:             authDecisionFromCaptured(captured.Decision),
-		Session:              captured.Session,
-		StatusMessage:        captured.StatusMessage,
-		StatusMessageI18NKey: captured.StatusMessageI18NKey,
-		ResponseLanguage:     captured.ResponseLanguage,
-		Error:                captured.Error,
-		HTTPStatus:           captured.HTTPStatus,
+		ResponseHeaders:         captured.ResponseHeaders.Clone(),
+		ResponseHeaderDeletes:   append([]string(nil), captured.ResponseHeaderDeletes...),
+		FSMEventPath:            append([]string(nil), captured.FSMEventPath...),
+		ResponseSettings:        captured.ResponseSettings,
+		Decision:                authDecisionFromCaptured(captured.Decision),
+		TerminalState:           captured.TerminalState,
+		Session:                 captured.Session,
+		StatusMessage:           captured.StatusMessage,
+		StatusMessageI18NKey:    captured.StatusMessageI18NKey,
+		ResponseLanguage:        captured.ResponseLanguage,
+		Error:                   captured.Error,
+		Protocol:                captured.Protocol,
+		HTTPStatus:              captured.HTTPStatus,
+		LoginAttempts:           captured.LoginAttempts,
+		MemoryCacheHit:          captured.MemoryCacheHit,
+		DelayedResponseEligible: captured.DelayedResponseEligible,
 	}
 }
 

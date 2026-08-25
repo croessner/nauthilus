@@ -443,10 +443,16 @@ func WithNotAvailable(value string) string {
 // or a stable fallback label.
 func RequestResource(httpCtx *gin.Context, httpReq *http.Request, fallback string) string {
 	if httpCtx != nil {
-		return httpCtx.FullPath()
+		if resource := httpCtx.FullPath(); resource != "" {
+			return resource
+		}
+
+		if httpReq == nil {
+			httpReq = httpCtx.Request
+		}
 	}
 
-	if httpReq != nil && httpReq.URL != nil {
+	if httpReq != nil && httpReq.URL != nil && httpReq.URL.Path != "" {
 		return httpReq.URL.Path
 	}
 

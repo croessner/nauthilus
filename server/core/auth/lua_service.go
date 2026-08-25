@@ -104,7 +104,9 @@ func analyzeLuaSubject(
 		return definitions.AuthResultFail
 	}
 
-	stopTimer := stats.PrometheusTimer(auth.Cfg(), definitions.PromSubject, "lua_subject_request_total", ctx.FullPath())
+	resource := util.RequestResource(ctx, ctx.Request, auth.Request.Service)
+	stopTimer := stats.PrometheusTimer(auth.Cfg(), definitions.PromSubject, "lua_subject_request_total", resource)
+
 	if stopTimer != nil {
 		defer stopTimer()
 	}

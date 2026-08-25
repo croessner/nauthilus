@@ -35,10 +35,10 @@ const (
 )
 
 type authnCandidateApplicationService struct {
-	current        AuthApplicationService
-	sessions       decisionservice.DecisionSessionFactory
-	authentication authnAuthenticationPresentation
-	facts          authnFactBuilder
+	current  AuthApplicationService
+	sessions decisionservice.DecisionSessionFactory
+	profiles AuthnInternalCallerProfiles
+	facts    authnFactBuilder
 }
 
 type authnAuthenticationPresentation struct {
@@ -46,9 +46,57 @@ type authnAuthenticationPresentation struct {
 	kind       string
 }
 
+// AuthnInternalCallerProfiles owns exact host-created admission presentations by authn operation.
+//
+// The bundle is candidate-only and contains no production configuration authority.
+// Its opaque credentials are detached during construction and never derived from
+// end-user authentication material.
+type AuthnInternalCallerProfiles struct {
+	authenticate   authnAuthenticationPresentation
+	lookupIdentity authnAuthenticationPresentation
+	listAccounts   authnAuthenticationPresentation
+}
+
 type authnApplicationResult struct {
 	auth     *AuthOutcome
 	accounts *ListAccountsOutcome
+}
+
+// NewAuthnInternalCallerProfiles constructs the complete candidate operation-profile bundle.
+func NewAuthnInternalCallerProfiles(
+	authenticate decision.AuthenticationInput,
+	lookupIdentity decision.AuthenticationInput,
+	listAccounts decision.AuthenticationInput,
+) (AuthnInternalCallerProfiles, error) {
+	authenticatePresentation, err := newAuthnAuthenticationPresentation(
+		authenticate,
+		policy.OperationAuthenticate,
+	)
+	if err != nil {
+		return AuthnInternalCallerProfiles{}, err
+	}
+
+	lookupPresentation, err := newAuthnAuthenticationPresentation(
+		lookupIdentity,
+		policy.OperationLookupIdentity,
+	)
+	if err != nil {
+		return AuthnInternalCallerProfiles{}, err
+	}
+
+	listPresentation, err := newAuthnAuthenticationPresentation(
+		listAccounts,
+		policy.OperationListAccounts,
+	)
+	if err != nil {
+		return AuthnInternalCallerProfiles{}, err
+	}
+
+	return AuthnInternalCallerProfiles{
+		authenticate:   authenticatePresentation,
+		lookupIdentity: lookupPresentation,
+		listAccounts:   listPresentation,
+	}, nil
 }
 
 // NewAuthnCandidateApplicationService constructs an inactive authn Decision Service adapter.
@@ -61,16 +109,27 @@ func NewAuthnCandidateApplicationService(
 	sessions decisionservice.DecisionSessionFactory,
 	authentication decision.AuthenticationInput,
 ) (AuthApplicationService, error) {
+	profiles, err := NewAuthnInternalCallerProfiles(authentication, authentication, authentication)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewAuthnCandidateApplicationServiceWithInternalProfiles(current, sessions, profiles)
+}
+
+// NewAuthnCandidateApplicationServiceWithInternalProfiles constructs an inactive adapter
+// that resolves an exact host-created admission presentation for every authn operation.
+func NewAuthnCandidateApplicationServiceWithInternalProfiles(
+	current AuthApplicationService,
+	sessions decisionservice.DecisionSessionFactory,
+	profiles AuthnInternalCallerProfiles,
+) (AuthApplicationService, error) {
 	if nilAuthnCandidateDependency(current) || nilAuthnCandidateDependency(sessions) {
 		return nil, fmt.Errorf("%w: authn candidate service", ErrAuthApplicationDependencyMissing)
 	}
 
-	presentation := authnAuthenticationPresentation{
-		credential: authentication.Credential(),
-		kind:       authentication.Kind(),
-	}
-	if presentation.kind == "" || len(presentation.credential) == 0 {
-		return nil, fmt.Errorf("%w: authn candidate authentication", ErrAuthApplicationDependencyMissing)
+	if err := profiles.validate(); err != nil {
+		return nil, err
 	}
 
 	facts, err := newAuthnFactBuilder()
@@ -79,10 +138,10 @@ func NewAuthnCandidateApplicationService(
 	}
 
 	return &authnCandidateApplicationService{
-		current:        current,
-		sessions:       sessions,
-		authentication: presentation,
-		facts:          facts,
+		current:  current,
+		sessions: sessions,
+		profiles: profiles,
+		facts:    facts,
 	}, nil
 }
 
@@ -144,7 +203,12 @@ func (s *authnCandidateApplicationService) run(
 		return authnApplicationResult{}, err
 	}
 
-	invocation, err := newAuthnCandidateInvocation(ctx, input, operation, s.facts, s.authentication)
+	authentication, err := s.profiles.authenticationFor(operation)
+	if err != nil {
+		return authnApplicationResult{}, err
+	}
+
+	invocation, err := newAuthnCandidateInvocation(ctx, input, operation, s.facts, authentication)
 	if err != nil {
 		return authnApplicationResult{}, fmt.Errorf("build authn candidate invocation: %w", err)
 	}
@@ -363,19 +427,25 @@ func (r authnApplicationResult) mapEffect(effect decision.Effect) (authnApplicat
 
 	if r.auth != nil {
 		outcome := cloneAuthnCandidateOutcome(r.auth)
+
 		outcome.Decision = mapped
+
 		if mapped == AuthDecisionTempFail {
 			applyAuthnCandidateTempFail(outcome)
 		}
+
 		r.auth = outcome
 	}
 
 	if r.accounts != nil {
 		outcome := cloneAuthnCandidateListOutcome(r.accounts)
+
 		outcome.Decision = mapped
+
 		if mapped == AuthDecisionTempFail {
 			applyAuthnCandidateListTempFail(outcome)
 		}
+
 		r.accounts = outcome
 	}
 
@@ -402,6 +472,7 @@ func applyAuthnCandidateListTempFail(outcome *ListAccountsOutcome) {
 
 	outcome.StatusMessage = definitions.TempFailDefault
 	outcome.Error = definitions.TempFailDefault
+	outcome.TerminalState = string(authFSMStateAuthTempFail)
 	outcome.HTTPStatus = http.StatusInternalServerError
 }
 
@@ -422,6 +493,8 @@ func cloneAuthnCandidateOutcome(input *AuthOutcome) *AuthOutcome {
 
 	output := *input
 	output.Attributes = input.Attributes.Clone()
+	output.ResponseHeaders = input.ResponseHeaders.Clone()
+	output.ResponseHeaderDeletes = append([]string(nil), input.ResponseHeaderDeletes...)
 	output.FSMEventPath = append([]string(nil), input.FSMEventPath...)
 	output.Groups = append([]string(nil), input.Groups...)
 	output.GroupDistinguishedNames = append([]string(nil), input.GroupDistinguishedNames...)
@@ -429,13 +502,16 @@ func cloneAuthnCandidateOutcome(input *AuthOutcome) *AuthOutcome {
 	return &output
 }
 
-// cloneAuthnCandidateListOutcome detaches the account list before changing the candidate decision.
+// cloneAuthnCandidateListOutcome detaches mutable list projection fields before changing the candidate decision.
 func cloneAuthnCandidateListOutcome(input *ListAccountsOutcome) *ListAccountsOutcome {
 	if input == nil {
 		return nil
 	}
 
 	output := *input
+	output.ResponseHeaders = input.ResponseHeaders.Clone()
+	output.ResponseHeaderDeletes = append([]string(nil), input.ResponseHeaderDeletes...)
+	output.FSMEventPath = append([]string(nil), input.FSMEventPath...)
 	output.Accounts = append(AccountList(nil), input.Accounts...)
 
 	return &output
@@ -578,13 +654,91 @@ func authModeForOperation(operation policy.Operation) AuthMode {
 	}
 }
 
+// newAuthnAuthenticationPresentation validates and owns one opaque operation presentation.
+func newAuthnAuthenticationPresentation(
+	input decision.AuthenticationInput,
+	operation policy.Operation,
+) (authnAuthenticationPresentation, error) {
+	presentation := authnAuthenticationPresentation{
+		credential: append([]byte(nil), input.Credential()...),
+		kind:       input.Kind(),
+	}
+
+	if err := validateAuthnAuthenticationPresentation(presentation, operation); err != nil {
+		return authnAuthenticationPresentation{}, err
+	}
+
+	return presentation, nil
+}
+
+// authenticationFor returns a detached exact presentation for one supported operation.
+func (p AuthnInternalCallerProfiles) authenticationFor(
+	operation policy.Operation,
+) (authnAuthenticationPresentation, error) {
+	var presentation authnAuthenticationPresentation
+
+	switch operation {
+	case policy.OperationAuthenticate:
+		presentation = p.authenticate
+	case policy.OperationLookupIdentity:
+		presentation = p.lookupIdentity
+	case policy.OperationListAccounts:
+		presentation = p.listAccounts
+	default:
+		return authnAuthenticationPresentation{}, &AuthInputError{
+			Field:  authInputFieldMode,
+			Reason: authInputReasonUnsupported,
+		}
+	}
+
+	presentation.credential = append([]byte(nil), presentation.credential...)
+
+	return presentation, nil
+}
+
+// validate requires an exact non-empty presentation for every authn operation.
+func (p AuthnInternalCallerProfiles) validate() error {
+	for _, operation := range []policy.Operation{
+		policy.OperationAuthenticate,
+		policy.OperationLookupIdentity,
+		policy.OperationListAccounts,
+	} {
+		presentation, err := p.authenticationFor(operation)
+		if err != nil {
+			return err
+		}
+
+		if err = validateAuthnAuthenticationPresentation(presentation, operation); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateAuthnAuthenticationPresentation enforces one complete opaque profile presentation.
+func validateAuthnAuthenticationPresentation(
+	presentation authnAuthenticationPresentation,
+	operation policy.Operation,
+) error {
+	if presentation.kind == "" || len(presentation.credential) == 0 {
+		return fmt.Errorf(
+			"%w: authn candidate %s authentication",
+			ErrAuthApplicationDependencyMissing,
+			operation,
+		)
+	}
+
+	return nil
+}
+
 // validateAuthnCandidateInput preserves existing validation before Decision Service admission.
 func validateAuthnCandidateInput(input AuthInput, operation policy.Operation) error {
 	switch operation {
 	case policy.OperationAuthenticate:
 		return validateAuthenticateInput(input)
 	case policy.OperationLookupIdentity:
-		return validateLookupIdentityInput(input)
+		return validateUsernameInput(input)
 	case policy.OperationListAccounts:
 		return nil
 	default:

@@ -106,7 +106,8 @@ func environmentControlStringSet(value any) config.StringSet {
 
 // EnvironmentLua runs Lua environment source scripts and returns a trigger result.
 func (a *AuthState) EnvironmentLua(ctx *gin.Context) (triggered bool, skipRemainingEnvironment bool, err error) {
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromEnvironment, definitions.ControlLua, ctx.FullPath())
+	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromEnvironment, definitions.ControlLua, resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -159,7 +160,8 @@ func (a *AuthState) ControlTLSEncryption(ctx *gin.Context) (triggered bool) {
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromEnvironment, definitions.ControlTLSEncryption, ctx.FullPath())
+	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromEnvironment, definitions.ControlTLSEncryption, resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -290,7 +292,9 @@ func (a *AuthState) ControlRBL(ctx *gin.Context) (triggered bool, err error) {
 
 	defer requestScope.Restore()
 
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromDNS, definitions.ControlRBL, ctx.FullPath())
+	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromDNS, definitions.ControlRBL, resource)
+
 	if stopTimer != nil {
 		defer stopTimer()
 	}
