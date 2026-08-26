@@ -17,6 +17,7 @@ package mfa_backchannel
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -24,12 +25,41 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redismock/v9"
 	"github.com/golang-jwt/jwt/v5"
 )
+
+type recordingMFABackchannelApplication struct {
+	lookupInputs []core.AuthInput
+	outcome      *core.AuthOutcome
+}
+
+// Authenticate rejects password evaluation from the MFA mutation adapter.
+func (a *recordingMFABackchannelApplication) Authenticate(context.Context, core.AuthInput) (*core.AuthOutcome, error) {
+	return nil, errors.New("unexpected MFA backchannel authentication")
+}
+
+// LookupIdentity records the admitted mutation target.
+func (a *recordingMFABackchannelApplication) LookupIdentity(
+	_ context.Context,
+	input core.AuthInput,
+) (*core.AuthOutcome, error) {
+	a.lookupInputs = append(a.lookupInputs, input)
+
+	return a.outcome, nil
+}
+
+// ListAccounts rejects enumeration from the MFA mutation adapter.
+func (a *recordingMFABackchannelApplication) ListAccounts(context.Context, core.AuthInput) (*core.ListAccountsOutcome, error) {
+	return nil, errors.New("unexpected MFA backchannel account listing")
+}
 
 func performRequest(t *testing.T, handler gin.HandlerFunc, method string, url string, body string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -113,6 +143,124 @@ func TestMFABackchannelMutationRejectsBaseScopeBearer(t *testing.T) {
 	}
 }
 
+func TestBuildAuthStateUsesApplicationAdmissionAndExactBackendBinding(t *testing.T) {
+	application := &recordingMFABackchannelApplication{outcome: &core.AuthOutcome{
+		Decision: core.AuthDecisionOK, Account: "alice", Protocol: definitions.ProtoIDP,
+		Backend: definitions.BackendLua, BackendName: definitions.DefaultBackendName,
+	}}
+	handler := newRecordingMFABackchannelHandler(application)
+	ctx := newMFABackchannelApplicationContext(t)
+
+	selection, err := newMFABackendSelection(definitions.BackendLuaName, definitions.DefaultBackendName)
+	if err != nil {
+		t.Fatalf("newMFABackendSelection() error = %v", err)
+	}
+
+	authState, err := handler.buildAuthState(ctx, selection, "alice", "external-session-42")
+	if err != nil {
+		t.Fatalf("buildAuthState() error = %v", err)
+	}
+
+	assertMFABackchannelApplicationInput(t, application, selection, authState)
+}
+
+func TestBuildAuthStateRejectsBackendMismatchBeforeMutation(t *testing.T) {
+	application := &recordingMFABackchannelApplication{outcome: &core.AuthOutcome{
+		Decision: core.AuthDecisionOK, Account: "alice", Protocol: definitions.ProtoIDP,
+		Backend: definitions.BackendLDAP, BackendName: definitions.DefaultBackendName,
+	}}
+	handler := newRecordingMFABackchannelHandler(application)
+	ctx := newMFABackchannelApplicationContext(t)
+
+	selection, err := newMFABackendSelection(definitions.BackendLuaName, definitions.DefaultBackendName)
+	if err != nil {
+		t.Fatalf("newMFABackendSelection() error = %v", err)
+	}
+
+	if _, err = handler.buildAuthState(ctx, selection, "alice", "external-session-42"); err == nil {
+		t.Fatal("buildAuthState() accepted a mismatched application backend")
+	}
+
+	if len(application.lookupInputs) != 1 {
+		t.Fatalf("application lookup calls = %d, want 1", len(application.lookupInputs))
+	}
+}
+
+// assertMFABackchannelApplicationInput verifies detached admission and specialized state mapping.
+func assertMFABackchannelApplicationInput(
+	t *testing.T,
+	application *recordingMFABackchannelApplication,
+	selection mfaBackendSelection,
+	authState *core.AuthState,
+) {
+	t.Helper()
+
+	if len(application.lookupInputs) != 1 {
+		t.Fatalf("application lookup calls = %d, want 1", len(application.lookupInputs))
+	}
+
+	input := application.lookupInputs[0]
+	if input.Mode != core.AuthModeLookupIdentity || input.EntryPoint != core.AuthnEntryIDPMFABackend {
+		t.Fatalf("application operation = %q/%d, want lookup/MFA backend", input.Mode, input.EntryPoint)
+	}
+
+	if input.Credentials.Username != "alice" || input.Context.Protocol != definitions.ProtoIDP {
+		t.Fatalf("application identity/protocol = %q/%q, want alice/idp", input.Credentials.Username, input.Context.Protocol)
+	}
+
+	if input.IDP.ExistingBackendRef != selection.backendRef {
+		t.Fatalf("application backend ref = %#v, want %#v", input.IDP.ExistingBackendRef, selection.backendRef)
+	}
+
+	if _, ok := input.Context.RequestMetadata["authorization"]; ok {
+		t.Fatal("authorization header crossed the application boundary")
+	}
+
+	if _, ok := input.Context.RequestMetadata["cookie"]; ok {
+		t.Fatal("cookie header crossed the application boundary")
+	}
+
+	if authState.Request.ExternalSessionID != "external-session-42" {
+		t.Fatalf("specialized external session = %q, want external-session-42", authState.Request.ExternalSessionID)
+	}
+
+	if !selection.matches(authState) {
+		t.Fatal("specialized state lost the admitted backend binding")
+	}
+}
+
+// newRecordingMFABackchannelHandler builds the smallest application-backed handler fixture.
+func newRecordingMFABackchannelHandler(application core.AuthApplicationService) *Handler {
+	db, _ := redismock.NewClientMock()
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{Redis: config.Redis{Prefix: "mfa-backchannel-application:"}},
+		IDP:    &config.IDPSection{},
+	}
+
+	return New(&handlerdeps.Deps{
+		Cfg: cfg, Env: config.NewTestEnvironmentConfig(), Logger: slog.Default(),
+		Redis: rediscli.NewTestClient(db), AuthApplication: application,
+	})
+}
+
+// newMFABackchannelApplicationContext returns protected transport evidence without browser-state ownership.
+func newMFABackchannelApplicationContext(t *testing.T) *gin.Context {
+	t.Helper()
+
+	gin.SetMode(gin.TestMode)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "https://idp.example.test/api/v1/mfa-backchannel/totp", nil)
+	ctx.Request.RemoteAddr = "192.0.2.60:4242"
+	ctx.Request.Header.Set("Authorization", "Bearer service-token")
+	ctx.Request.Header.Set("Cookie", "must-not-cross=browser-state")
+	ctx.Set(definitions.CtxGUIDKey, "mfa-backchannel-application-request")
+	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
+	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+
+	return ctx
+}
+
 // newMFABackchannelScopeRouter builds MFA backchannel routes behind bearer base auth.
 func newMFABackchannelScopeRouter(scope string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -125,6 +273,7 @@ func newMFABackchannelScopeRouter(scope string) *gin.Engine {
 	validator := &mfaBackchannelTokenValidator{
 		claims: jwt.MapClaims{
 			"aud":                      definitions.AudienceBackchannelAPI,
+			definitions.ClaimClientID:  "mfa-client",
 			"scope":                    scope,
 			"sub":                      "mfa-client",
 			definitions.ClaimTokenType: definitions.TokenTypeAccessToken,

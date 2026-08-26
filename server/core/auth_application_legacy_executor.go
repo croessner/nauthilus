@@ -81,6 +81,7 @@ func (s *authApplicationService) newAuthState(
 	auth.SetProtocol(&config.Protocol{})
 	auth.ApplyCredentials(input.Credentials)
 	auth.ApplyContextData(input.Context)
+	applyAuthIDPContext(auth, input.IDP)
 
 	if input.AuthLoginAttempt > 0 {
 		auth.Request.AuthLoginAttempt = input.AuthLoginAttempt
@@ -96,6 +97,25 @@ func (s *authApplicationService) newAuthState(
 	logProcessingRequest(ginCtx, auth)
 
 	return auth, ginCtx, capture, nil
+}
+
+// applyAuthIDPContext installs detached protocol, attribute-release, and affinity values on the compatibility host.
+func applyAuthIDPContext(auth *AuthState, idpContext AuthIDPContext) {
+	if auth == nil {
+		return
+	}
+
+	if !idpRequestContextIsZero(idpContext.Request) {
+		auth.Runtime.IDPContext = idpContext.Request.toIDPRequestContext()
+	}
+
+	auth.Runtime.IdentityAttributeRequest = idpContext.IdentityAttributeRequest.Clone()
+	auth.Runtime.RemoteBackendRef = idpContext.ExistingBackendRef
+}
+
+// idpRequestContextIsZero reports whether no bounded protocol request value was supplied.
+func idpRequestContextIsZero(request AuthIDPRequestContext) bool {
+	return request.GrantType == "" && request.RedirectURI == "" && len(request.RequestedScopes) == 0
 }
 
 // newContext builds the private compatibility context needed by the legacy FSM host.

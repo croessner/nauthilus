@@ -148,9 +148,11 @@ func (h *FrontendHandler) verifyCanonicalRecovery(
 ) (bool, error) {
 	data, err := h.getUserBackendDataForIdentity(
 		ctx,
-		selection.identity.Account,
-		canonicalMFAProtocol(selection),
-		selection.backendRef,
+		newBackendDataLookupRequest(
+			selection.identity.Account,
+			selection.backendRef,
+			canonicalMFAProtocolContext(selection, "", false),
+		),
 	)
 	if err != nil {
 		return false, err

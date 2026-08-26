@@ -139,6 +139,34 @@ func TestBackchannelAuthMiddlewareAllowsEitherBasicOrBearer(t *testing.T) {
 	})
 }
 
+func TestBackchannelAuthMiddlewareRejectsCrossResourceTokens(t *testing.T) {
+	cfg := backchannelAuthConfig(false, true, false)
+
+	for _, testCase := range []struct {
+		name     string
+		audience any
+	}{
+		{name: "Policy resource", audience: definitions.AudiencePolicyAPI},
+		{name: "mixed Policy and backchannel resources", audience: []any{definitions.AudienceBackchannelAPI, definitions.AudiencePolicyAPI}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			claims := backchannelTestClaims(definitions.ScopeAuthenticate)
+			claims["aud"] = testCase.audience
+
+			validator := &recordingTokenValidator{claims: claims}
+			router := newBackchannelAuthTestRouter(cfg, validator)
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/probe", nil)
+			request.Header.Set("Authorization", "Bearer cross-resource-token")
+
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+
+			assert.Equal(t, http.StatusUnauthorized, response.Code)
+			assert.Equal(t, 1, validator.calls)
+		})
+	}
+}
+
 func TestSetupRegistersProtectedManagementOpenAPI(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -350,6 +378,7 @@ type recordingTokenValidator struct {
 func backchannelTestClaims(scope string) jwt.MapClaims {
 	return jwt.MapClaims{
 		"aud":                      definitions.AudienceBackchannelAPI,
+		definitions.ClaimClientID:  "api-client",
 		"scope":                    scope,
 		"sub":                      "api-client",
 		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,

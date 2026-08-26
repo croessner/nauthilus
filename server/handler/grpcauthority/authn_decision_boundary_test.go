@@ -427,6 +427,10 @@ func assertGRPCBoundaryCurrentInput(
 ) {
 	t.Helper()
 
+	if input.EntryPoint != core.AuthnEntryBackchannel {
+		t.Fatalf("current entry point = %q, want explicit backchannel", input.EntryPoint)
+	}
+
 	values := input.Context.RequestMetadata[grpcBoundaryMetadataKey]
 	if len(values) != 1 || values[0] != grpcBoundaryMetadata {
 		t.Fatalf("current request metadata = %#v, want exact domain metadata", input.Context.RequestMetadata)

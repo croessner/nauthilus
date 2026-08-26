@@ -4383,15 +4383,15 @@ func (a *AuthState) WithDefaults(ctx *gin.Context) State {
 	a.Runtime.Authenticated = false // not decided yet
 	a.Runtime.Authorized = true     // default allow unless subject analysis rejects
 
-	switch a.Request.Service {
-	case definitions.ServBasic:
-		a.SetProtocol(config.NewProtocol(definitions.ProtoHTTP))
-	case definitions.ServIDP:
-		a.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
-	}
-
 	if a.Request.Protocol.Get() == "" {
-		a.SetProtocol(config.NewProtocol(definitions.ProtoDefault))
+		switch a.Request.Service {
+		case definitions.ServBasic:
+			a.SetProtocol(config.NewProtocol(definitions.ProtoHTTP))
+		case definitions.ServIDP:
+			a.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
+		default:
+			a.SetProtocol(config.NewProtocol(definitions.ProtoDefault))
+		}
 	}
 
 	return a

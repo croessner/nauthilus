@@ -355,7 +355,7 @@ func assertNativeHookAdminAuthStatus(t *testing.T, scope string, wantStatus int,
 func nativeHookAccessClaims(scope string) jwt.MapClaims {
 	return jwt.MapClaims{
 		"aud":                      definitions.AudienceBackchannelAPI,
-		"client_id":                nativeHookTestClientID,
+		definitions.ClaimClientID:  nativeHookTestClientID,
 		"sub":                      nativeHookTestClientID,
 		nativeHookClaimScope:       scope,
 		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,

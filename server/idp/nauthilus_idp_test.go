@@ -22,8 +22,12 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,11 +45,13 @@ import (
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 	"github.com/croessner/nauthilus/v3/server/pluginruntime"
+	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -143,15 +149,18 @@ func newIDPLookupTestIDP(t *testing.T, username string, clientID string) (*Nauth
 	mappingField := accountcache.GetAccountMappingField(username, definitions.ProtoOIDC, clientID)
 
 	mock.ExpectHGet(userKey, mappingField).RedisNil()
+	mock.ExpectHGet(userKey, mappingField).RedisNil()
 	mock.ExpectHSet(userKey, mappingField, idpLookupAccount).SetVal(1)
 	mock.ExpectHGet(userKey, mappingField).SetVal(idpLookupAccount)
 
-	idp := NewNauthilusIDP(&deps.Deps{
+	d := &deps.Deps{
 		Cfg:          cfg,
 		Env:          config.NewTestEnvironmentConfig(),
 		Redis:        redisClient,
 		AccountCache: accountcache.NewManager(cfg),
-	})
+	}
+	d.AuthApplication = core.NewAuthApplicationService(d.Auth())
+	idp := NewNauthilusIDP(d)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 
 	ctx.Request = httptest.NewRequest("GET", "/idp/user", nil)
@@ -310,7 +319,12 @@ const (
 	claimIssuedAt = "iat"
 	claimExpires  = "exp"
 	claimScope    = "scope"
+	claimClientID = "client_id"
+
+	fixedClientCredentialsTokenBody = "fixed-client-credentials-token"
 )
+
+var errUnexpectedRedisActivity = errors.New("unexpected Redis activity")
 
 func generateTestKey() string {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -331,14 +345,100 @@ type mockIdpConfig struct {
 type mockTokenGenerator struct {
 	token string
 	err   error
+	calls int
 }
 
 func (m *mockTokenGenerator) GenerateToken(prefix string) (string, error) {
+	m.calls++
+
 	if m.err != nil {
 		return "", m.err
 	}
 
 	return prefix + m.token, nil
+}
+
+type blockingTokenGenerator struct {
+	token   string
+	entered chan struct{}
+	release chan struct{}
+}
+
+// GenerateToken pauses issuance so tests can mutate the caller-owned scope slice safely.
+func (g *blockingTokenGenerator) GenerateToken(prefix string) (string, error) {
+	close(g.entered)
+	<-g.release
+
+	return prefix + g.token, nil
+}
+
+type redisActivityCounter struct {
+	commands atomic.Int64
+}
+
+// DialHook leaves connection setup unchanged because only command activity matters here.
+func (c *redisActivityCounter) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+// ProcessHook counts and rejects every Redis command attempted through the guarded client.
+func (c *redisActivityCounter) ProcessHook(_ redis.ProcessHook) redis.ProcessHook {
+	return func(_ context.Context, _ redis.Cmder) error {
+		c.commands.Add(1)
+
+		return errUnexpectedRedisActivity
+	}
+}
+
+// ProcessPipelineHook counts and rejects every Redis pipeline command attempt.
+func (c *redisActivityCounter) ProcessPipelineHook(_ redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(_ context.Context, cmds []redis.Cmder) error {
+		c.commands.Add(int64(len(cmds)))
+
+		return errUnexpectedRedisActivity
+	}
+}
+
+// Count returns the number of Redis commands observed by the guard.
+func (c *redisActivityCounter) Count() int64 {
+	return c.commands.Load()
+}
+
+type redisSetValueCapture struct {
+	value string
+	mu    sync.Mutex
+}
+
+// Match validates a Redis expectation while capturing its serialized SET value.
+func (c *redisSetValueCapture) Match(expected, actual []interface{}) error {
+	for index := range expected {
+		if index == 2 {
+			value, ok := actual[index].(string)
+			if !ok {
+				return fmt.Errorf("captured Redis SET value has type %T", actual[index])
+			}
+
+			c.mu.Lock()
+			c.value = value
+			c.mu.Unlock()
+
+			continue
+		}
+
+		if !reflect.DeepEqual(expected[index], actual[index]) {
+			return fmt.Errorf("Redis SET argument %d = %#v, want %#v", index, actual[index], expected[index])
+		}
+	}
+
+	return nil
+}
+
+// Value returns the last serialized session written to the selected key.
+func (c *redisSetValueCapture) Value() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.value
 }
 
 func (m *mockIdpConfig) GetIDP() *config.IDPSection {
@@ -1343,10 +1443,6 @@ func TestNauthilusIDP_FindSAMLServiceProvider_ReturnsSliceElement(t *testing.T) 
 func TestNauthilusIDP_ClientCredentials(t *testing.T) {
 	idpInst := newClientCredentialsTestIDP()
 
-	t.Run("IssueClientCredentialsToken_Success", func(t *testing.T) {
-		assertIssueClientCredentialsToken(t, idpInst)
-	})
-
 	t.Run("IssueClientCredentialsToken_UnsupportedGrant", func(t *testing.T) {
 		assertClientCredentialsTokenError(t, idpInst, "authcode-only", []string{"openid"}, "does not support client_credentials")
 	})
@@ -1359,9 +1455,103 @@ func TestNauthilusIDP_ClientCredentials(t *testing.T) {
 		assertClientCredentialsTokenError(t, idpInst, "nonexistent", nil, "client not found")
 	})
 
+	t.Run("IssueClientCredentialsToken_MixedScopesPersistNothing", func(t *testing.T) {
+		assertMixedClientCredentialsScopesPersistNothing(t)
+	})
+
 	t.Run("SupportsGrantType", func(t *testing.T) {
 		assertClientCredentialsGrantTypes(t, idpInst)
 	})
+}
+
+func TestNauthilusIDP_ClientCredentialsResourceTokenParity(t *testing.T) {
+	tokenTypes := []string{"jwt", accessTokenTypeOpaque}
+	resources := []struct {
+		name     string
+		audience string
+		scopes   []string
+	}{
+		{
+			name:     "backchannel",
+			audience: definitions.AudienceBackchannelAPI,
+			scopes:   []string{"api.read"},
+		},
+		{
+			name:     "policy",
+			audience: definitions.AudiencePolicyAPI,
+			scopes:   []string{definitions.ScopePolicyEvaluate},
+		},
+	}
+
+	for _, tokenType := range tokenTypes {
+		for _, resource := range resources {
+			t.Run(tokenType+"_"+resource.name, func(t *testing.T) {
+				idpInst, mock, capture := newClientCredentialsTokenTypeTestIDP(t, tokenType)
+
+				if tokenType == accessTokenTypeOpaque {
+					expectOpaqueClientCredentialsTokenStore(mock, capture)
+				}
+
+				accessToken := issueClientCredentialsToken(t, idpInst, tokenType, resource.scopes)
+				validationCount := 1
+
+				if resource.audience == definitions.AudiencePolicyAPI {
+					validationCount++
+				}
+
+				expectClientCredentialsTokenValidation(t, mock, capture, tokenType, accessToken, validationCount)
+				assertClientCredentialsTokenClaims(t, idpInst, accessToken, resource.scopes, resource.audience)
+
+				if resource.audience == definitions.AudiencePolicyAPI {
+					assertPolicyClaimsAdapterAcceptsClientCredentialsToken(t, idpInst, accessToken, resource.scopes)
+				}
+
+				assert.NoError(t, mock.ExpectationsWereMet())
+			})
+		}
+	}
+}
+
+func TestNauthilusIDP_ClientCredentialsScopesDetachedBeforeOpaquePersistence(t *testing.T) {
+	idpInst, mock, capture := newClientCredentialsTokenTypeTestIDP(t, accessTokenTypeOpaque)
+	expectOpaqueClientCredentialsTokenStore(mock, capture)
+
+	tokenGen := &blockingTokenGenerator{
+		token:   fixedClientCredentialsTokenBody,
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	idpInst.tokenGen = tokenGen
+
+	scopes := []string{definitions.ScopePolicyEvaluate}
+	result := make(chan error, 1)
+
+	go func() {
+		_, _, err := idpInst.IssueClientCredentialsToken(t.Context(), "cc-client", scopes)
+		result <- err
+	}()
+
+	select {
+	case <-tokenGen.entered:
+	case <-time.After(time.Second):
+		close(tokenGen.release)
+		t.Fatal("client-credentials issuance did not reach token generation")
+	}
+
+	scopes[0] = definitions.ScopeAuthenticate
+
+	close(tokenGen.release)
+
+	assert.NoError(t, <-result)
+
+	storedSession, err := idpInst.storage.decryptSession(capture.Value())
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Equal(t, []string{definitions.ScopePolicyEvaluate}, storedSession.Scopes)
+	assert.Equal(t, definitions.AudiencePolicyAPI, storedSession.AccessTokenAudience)
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 // newClientCredentialsTestIDP builds the IDP fixture for client-credentials tests.
@@ -1382,6 +1572,30 @@ func newClientCredentialsTestIDP() *NauthilusIDP {
 	return NewNauthilusIDP(&deps.Deps{Cfg: cfg, Redis: redisClient})
 }
 
+// newClientCredentialsTokenTypeTestIDP builds an IDP with observable Redis persistence.
+func newClientCredentialsTokenTypeTestIDP(t *testing.T, tokenType string) (*NauthilusIDP, redismock.ClientMock, *redisSetValueCapture) {
+	t.Helper()
+
+	cfg := &mockIdpConfig{
+		FileSettings: &config.FileSettings{
+			Server: &config.ServerSection{
+				Redis: config.Redis{Prefix: testRedisPrefix},
+			},
+		},
+		oidc: clientCredentialsOIDCConfig(),
+	}
+	cfg.oidc.Clients[0].AccessTokenType = tokenType
+
+	db, mock := redismock.NewClientMock()
+	capture := &redisSetValueCapture{}
+
+	redisClient := rediscli.NewTestClient(db)
+	idpInst := NewNauthilusIDP(&deps.Deps{Cfg: cfg, Redis: redisClient})
+	idpInst.tokenGen = &mockTokenGenerator{token: fixedClientCredentialsTokenBody}
+
+	return idpInst, mock, capture
+}
+
 // clientCredentialsOIDCConfig returns clients for client-credentials grant tests.
 func clientCredentialsOIDCConfig() config.OIDCConfig {
 	return config.OIDCConfig{
@@ -1389,10 +1603,16 @@ func clientCredentialsOIDCConfig() config.OIDCConfig {
 		SigningKeys: []config.OIDCKey{{ID: "default", Key: secret.New(generateTestKey()), Active: true}},
 		Clients: []config.OIDCClient{
 			{
-				ClientID:            "cc-client",
-				ClientSecret:        secret.New("cc-secret"),
-				GrantTypes:          []string{"client_credentials"},
-				Scopes:              []string{definitions.ScopeOpenID, "api.read", "api.write"},
+				ClientID:     "cc-client",
+				ClientSecret: secret.New("cc-secret"),
+				GrantTypes:   []string{"client_credentials"},
+				Scopes: []string{
+					definitions.ScopeOpenID,
+					definitions.ScopePolicyEvaluate,
+					definitions.ScopePolicyDiagnostics,
+					"api.read",
+					"api.write",
+				},
 				AccessTokenLifetime: time.Hour,
 			},
 			{
@@ -1404,23 +1624,143 @@ func clientCredentialsOIDCConfig() config.OIDCConfig {
 	}
 }
 
-// assertIssueClientCredentialsToken verifies successful client-credentials token issuance.
-func assertIssueClientCredentialsToken(t *testing.T, idpInst *NauthilusIDP) {
+// issueClientCredentialsToken issues one token and verifies its transport shape.
+func issueClientCredentialsToken(t *testing.T, idpInst *NauthilusIDP, tokenType string, scopes []string) string {
 	t.Helper()
 
 	ctx := t.Context()
-	accessToken, expiresIn, err := idpInst.IssueClientCredentialsToken(ctx, "cc-client", []string{"api.read"})
-	assert.NoError(t, err)
+	accessToken, expiresIn, err := idpInst.IssueClientCredentialsToken(ctx, "cc-client", scopes)
+
+	if !assert.NoError(t, err) {
+		return ""
+	}
+
 	assert.NotEmpty(t, accessToken)
 	assert.Equal(t, time.Hour, expiresIn)
-	assert.Contains(t, accessToken, ".")
 
-	claims, err := idpInst.ValidateToken(ctx, accessToken)
-	assert.NoError(t, err)
+	if tokenType == accessTokenTypeOpaque {
+		assert.NotContains(t, accessToken, ".")
+	} else {
+		assert.Contains(t, accessToken, ".")
+	}
+
+	return accessToken
+}
+
+// assertClientCredentialsTokenClaims reloads and verifies exact issuer-owned claims.
+func assertClientCredentialsTokenClaims(t *testing.T, idpInst *NauthilusIDP, accessToken string, scopes []string, audience string) {
+	t.Helper()
+
+	claims, err := idpInst.ValidateToken(t.Context(), accessToken)
+
+	if !assert.NoError(t, err) {
+		return
+	}
+
 	assert.Equal(t, "cc-client", claims[claimSubject])
-	assert.Equal(t, definitions.AudienceBackchannelAPI, claims[claimAudience])
+	assert.Equal(t, "cc-client", claims[claimClientID])
+	assert.Equal(t, audience, claims[claimAudience])
 	assert.Equal(t, testIssuer, claims[claimIssuer])
+	assert.Equal(t, strings.Join(scopes, " "), claims[claimScope])
 	assert.Equal(t, definitions.TokenTypeAccessToken, claims[definitions.ClaimTokenType])
+}
+
+// expectOpaqueClientCredentialsTokenStore requires and captures the complete token-session write pipeline.
+func expectOpaqueClientCredentialsTokenStore(mock redismock.ClientMock, capture *redisSetValueCapture) {
+	accessToken := definitions.OIDCTokenPrefixAccessToken + fixedClientCredentialsTokenBody
+	userKey := testUserAccessTokensKey("cc-client")
+
+	mock.CustomMatch(capture.Match).ExpectSet(testAccessTokenKey(accessToken), "captured-session", time.Hour).SetVal("OK")
+	mock.ExpectSAdd(userKey, accessToken).SetVal(1)
+	expectUserTokenIndexTTL(mock, userKey, time.Hour)
+}
+
+// expectClientCredentialsTokenValidation configures exact JWT denial or opaque reload reads.
+func expectClientCredentialsTokenValidation(
+	t *testing.T,
+	mock redismock.ClientMock,
+	capture *redisSetValueCapture,
+	tokenType string,
+	accessToken string,
+	count int,
+) {
+	t.Helper()
+
+	if tokenType == accessTokenTypeOpaque {
+		storedSession := capture.Value()
+
+		if !assert.NotEmpty(t, storedSession) {
+			return
+		}
+
+		for range count {
+			mock.ExpectGet(testAccessTokenKey(accessToken)).SetVal(storedSession)
+		}
+
+		return
+	}
+
+	for range count {
+		mock.ExpectGet(testDeniedAccessTokenKey(accessToken)).RedisNil()
+	}
+}
+
+// assertPolicyClaimsAdapterAcceptsClientCredentialsToken verifies the real Policy claims boundary.
+func assertPolicyClaimsAdapterAcceptsClientCredentialsToken(t *testing.T, idpInst *NauthilusIDP, accessToken string, scopes []string) {
+	t.Helper()
+
+	validator, err := callerauth.NewClaimsAccessTokenValidator(idpInst, testIssuer)
+
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	validated, err := validator.ValidateAccessToken(t.Context(), []byte(accessToken))
+
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Equal(t, "cc-client", validated.ClientID)
+	assert.Equal(t, "cc-client", validated.Subject)
+	assert.Equal(t, testIssuer, validated.Issuer)
+	assert.Equal(t, definitions.TokenTypeAccessToken, validated.TokenType)
+	assert.Equal(t, []string{definitions.AudiencePolicyAPI}, validated.Audiences)
+	assert.Equal(t, scopes, validated.Scopes)
+}
+
+// assertMixedClientCredentialsScopesPersistNothing verifies rejection precedes token generation and Redis activity.
+func assertMixedClientCredentialsScopesPersistNothing(t *testing.T) {
+	t.Helper()
+
+	cfg := &mockIdpConfig{
+		FileSettings: &config.FileSettings{
+			Server: &config.ServerSection{
+				Redis: config.Redis{Prefix: testRedisPrefix},
+			},
+		},
+		oidc: clientCredentialsOIDCConfig(),
+	}
+	cfg.oidc.Clients[0].AccessTokenType = accessTokenTypeOpaque
+
+	db := redis.NewClient(&redis.Options{MaxRetries: -2})
+	activity := &redisActivityCounter{}
+	db.AddHook(activity)
+
+	tokenGen := &mockTokenGenerator{token: "must-not-be-generated"}
+	redisClient := rediscli.NewTestClient(db)
+	idpInst := NewNauthilusIDP(&deps.Deps{Cfg: cfg, Redis: redisClient})
+	idpInst.tokenGen = tokenGen
+
+	_, _, err := idpInst.IssueClientCredentialsToken(
+		t.Context(),
+		"cc-client",
+		[]string{definitions.ScopePolicyEvaluate, definitions.ScopeAuthenticate},
+	)
+
+	assert.ErrorIs(t, err, ErrClientCredentialsMixedResourceScopes)
+	assert.Zero(t, tokenGen.calls)
+	assert.Zero(t, activity.Count())
 }
 
 // assertClientCredentialsTokenError verifies a failing client-credentials token request.

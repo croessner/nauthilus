@@ -1095,7 +1095,14 @@ func (h *FrontendHandler) canonicalPasswordMFAMethodsForBackend(
 	user *backend.User,
 	backendRef core.RemoteBackendRef,
 ) ([]string, error) {
-	data, err := h.getUserBackendDataForIdentity(ctx, user.Name, flowContext.protocol, backendRef)
+	data, err := h.getUserBackendDataForIdentity(
+		ctx,
+		newBackendDataLookupRequest(
+			user.Name,
+			backendRef,
+			backendDataProtocolContext(flowContext.state, flowContext.protocol),
+		),
+	)
 	if err != nil {
 		return nil, err
 	}

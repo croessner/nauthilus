@@ -79,12 +79,75 @@ const (
 	webAuthnDebugSignCountZero    = "sign_count_zero"
 )
 
+// AuthIDPRequestContext carries protocol facts while excluding browser-owned MFA state.
+type AuthIDPRequestContext struct {
+	RequestedScopes []string
+	GrantType       string
+	RedirectURI     string
+}
+
+// newAuthIDPRequestContext copies only generic protocol facts from the domain-owned request.
+func newAuthIDPRequestContext(request IDPRequestContext) AuthIDPRequestContext {
+	return AuthIDPRequestContext{
+		RequestedScopes: append([]string(nil), request.RequestedScopes...),
+		GrantType:       request.GrantType,
+		RedirectURI:     request.RedirectURI,
+	}
+}
+
+// clone returns a detached copy of the bounded IdP request facts.
+func (c AuthIDPRequestContext) clone() AuthIDPRequestContext {
+	c.RequestedScopes = append([]string(nil), c.RequestedScopes...)
+
+	return c
+}
+
+// toIDPRequestContext reconstructs the compatibility host projection with browser MFA fields unset.
+func (c AuthIDPRequestContext) toIDPRequestContext() *IDPRequestContext {
+	return &IDPRequestContext{
+		GrantType:       c.GrantType,
+		RedirectURI:     c.RedirectURI,
+		RequestedScopes: append([]string(nil), c.RequestedScopes...),
+	}
+}
+
+// AuthIDPContext carries only bounded IdP values needed by authentication and identity lookup.
+type AuthIDPContext struct {
+	IdentityAttributeRequest *IdentityAttributeRequest
+	Request                  AuthIDPRequestContext
+	ExistingBackendRef       RemoteBackendRef
+}
+
+// NewAuthIDPContext constructs a detached IdP application context.
+func NewAuthIDPContext(
+	request IDPRequestContext,
+	identityAttributeRequest *IdentityAttributeRequest,
+	existingBackendRef RemoteBackendRef,
+) AuthIDPContext {
+	return AuthIDPContext{
+		IdentityAttributeRequest: identityAttributeRequest.Clone(),
+		Request:                  newAuthIDPRequestContext(request),
+		ExistingBackendRef:       existingBackendRef,
+	}
+}
+
+// Clone returns a detached copy of the IdP application context.
+func (c AuthIDPContext) Clone() AuthIDPContext {
+	return AuthIDPContext{
+		IdentityAttributeRequest: c.IdentityAttributeRequest.Clone(),
+		Request:                  c.Request.clone(),
+		ExistingBackendRef:       c.ExistingBackendRef,
+	}
+}
+
 // AuthInput contains transport-neutral authentication input.
 type AuthInput struct {
 	Credentials        Credentials
 	Context            AuthContext
+	IDP                AuthIDPContext
 	CorrelationID      string
 	Mode               AuthMode
+	EntryPoint         AuthnEntryPoint
 	Service            string
 	AuthLoginAttempt   uint
 	DisableMemoryCache bool
@@ -106,22 +169,25 @@ type AuthResponseSettings struct {
 	Captured            bool
 }
 
-// AuthOutcome contains the captured terminal authentication result.
-type AuthOutcome struct {
+// authOutcomeProjection owns the shared terminal payload independently of its decision vocabulary.
+type authOutcomeProjection[D ~string] struct {
 	Attributes              bktype.AttributeMapping
 	ResponseHeaders         http.Header
 	ResponseHeaderDeletes   []string
 	FSMEventPath            []string
 	ResponseSettings        AuthResponseSettings
-	Decision                AuthDecision
+	Decision                D
 	TerminalState           string
 	Session                 string
 	Account                 string
 	AccountField            string
+	DisplayName             string
+	UniqueUserID            string
 	TOTPSecretField         string
 	TOTPRecoveryField       string
 	UniqueUserIDField       string
 	DisplayNameField        string
+	BackendName             string
 	StatusMessage           string
 	StatusMessageI18NKey    string
 	ResponseLanguage        string
@@ -130,12 +196,59 @@ type AuthOutcome struct {
 	GroupDistinguishedNames []string
 	Protocol                string
 	UsedBackendIP           string
+	RemoteBackendRef        RemoteBackendRef
 	Backend                 definitions.Backend
 	UsedBackendPort         int
 	HTTPStatus              int
 	LoginAttempts           uint
 	MemoryCacheHit          bool
 	DelayedResponseEligible bool
+	PolicyTerminal          bool
+}
+
+// AuthOutcome contains the captured terminal authentication result.
+type AuthOutcome = authOutcomeProjection[AuthDecision]
+
+// convertAuthOutcomeProjection changes decision vocabulary while detaching every mutable payload.
+func convertAuthOutcomeProjection[S ~string, D ~string](
+	input authOutcomeProjection[S],
+	decision D,
+) authOutcomeProjection[D] {
+	return authOutcomeProjection[D]{
+		Attributes:              cloneAttributeMapping(input.Attributes),
+		ResponseHeaders:         input.ResponseHeaders.Clone(),
+		ResponseHeaderDeletes:   append([]string(nil), input.ResponseHeaderDeletes...),
+		FSMEventPath:            append([]string(nil), input.FSMEventPath...),
+		ResponseSettings:        input.ResponseSettings,
+		Decision:                decision,
+		TerminalState:           input.TerminalState,
+		Session:                 input.Session,
+		Account:                 input.Account,
+		AccountField:            input.AccountField,
+		DisplayName:             input.DisplayName,
+		UniqueUserID:            input.UniqueUserID,
+		TOTPSecretField:         input.TOTPSecretField,
+		TOTPRecoveryField:       input.TOTPRecoveryField,
+		UniqueUserIDField:       input.UniqueUserIDField,
+		DisplayNameField:        input.DisplayNameField,
+		BackendName:             input.BackendName,
+		StatusMessage:           input.StatusMessage,
+		StatusMessageI18NKey:    input.StatusMessageI18NKey,
+		ResponseLanguage:        input.ResponseLanguage,
+		Error:                   input.Error,
+		Groups:                  append([]string(nil), input.Groups...),
+		GroupDistinguishedNames: append([]string(nil), input.GroupDistinguishedNames...),
+		Protocol:                input.Protocol,
+		UsedBackendIP:           input.UsedBackendIP,
+		RemoteBackendRef:        input.RemoteBackendRef,
+		Backend:                 input.Backend,
+		UsedBackendPort:         input.UsedBackendPort,
+		HTTPStatus:              input.HTTPStatus,
+		LoginAttempts:           input.LoginAttempts,
+		MemoryCacheHit:          input.MemoryCacheHit,
+		DelayedResponseEligible: input.DelayedResponseEligible,
+		PolicyTerminal:          input.PolicyTerminal,
+	}
 }
 
 // ListAccountsOutcome contains the account-provider response.
@@ -348,12 +461,14 @@ func (s *authApplicationService) ListAccounts(ctx context.Context, input AuthInp
 	return listAccountsSuccessOutcome(auth, ginCtx, accounts), nil
 }
 
+// normalizeAuthInput applies operation defaults and detaches mutable IdP input values.
 func normalizeAuthInput(input AuthInput, defaultMode AuthMode) AuthInput {
 	if input.Service == "" {
 		input.Service = definitions.ServGRPC
 	}
 
 	input.Mode = defaultMode
+	input.IDP = input.IDP.Clone()
 
 	return input
 }
@@ -415,37 +530,11 @@ func (s *authApplicationService) effectiveDeps() (AuthDeps, error) {
 	return deps, nil
 }
 
+// authOutcomeFromCaptured detaches the compatibility host capture into the public application result.
 func authOutcomeFromCaptured(captured CapturedAuthOutcome) *AuthOutcome {
-	return &AuthOutcome{
-		Attributes:              captured.Attributes,
-		ResponseHeaders:         captured.ResponseHeaders.Clone(),
-		ResponseHeaderDeletes:   append([]string(nil), captured.ResponseHeaderDeletes...),
-		FSMEventPath:            append([]string(nil), captured.FSMEventPath...),
-		ResponseSettings:        captured.ResponseSettings,
-		Decision:                authDecisionFromCaptured(captured.Decision),
-		TerminalState:           captured.TerminalState,
-		Session:                 captured.Session,
-		Account:                 captured.Account,
-		AccountField:            captured.AccountField,
-		TOTPSecretField:         captured.TOTPSecretField,
-		TOTPRecoveryField:       captured.TOTPRecoveryField,
-		UniqueUserIDField:       captured.UniqueUserIDField,
-		DisplayNameField:        captured.DisplayNameField,
-		StatusMessage:           captured.StatusMessage,
-		StatusMessageI18NKey:    captured.StatusMessageI18NKey,
-		ResponseLanguage:        captured.ResponseLanguage,
-		Error:                   captured.Error,
-		Groups:                  append([]string(nil), captured.Groups...),
-		GroupDistinguishedNames: append([]string(nil), captured.GroupDistinguishedNames...),
-		Protocol:                captured.Protocol,
-		UsedBackendIP:           captured.UsedBackendIP,
-		Backend:                 captured.Backend,
-		UsedBackendPort:         captured.UsedBackendPort,
-		HTTPStatus:              captured.HTTPStatus,
-		LoginAttempts:           captured.LoginAttempts,
-		MemoryCacheHit:          captured.MemoryCacheHit,
-		DelayedResponseEligible: captured.DelayedResponseEligible,
-	}
+	outcome := convertAuthOutcomeProjection(captured, authDecisionFromCaptured(captured.Decision))
+
+	return &outcome
 }
 
 func listAccountsOutcomeFromCaptured(captured CapturedAuthOutcome) *ListAccountsOutcome {

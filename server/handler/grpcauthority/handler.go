@@ -30,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/grpcapi/authmapper"
+	"github.com/croessner/nauthilus/v3/server/model/authdto"
 	"github.com/croessner/nauthilus/v3/server/policy/transportsecurity"
 
 	"google.golang.org/grpc"
@@ -92,7 +93,7 @@ func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest)
 	}
 
 	dto := authmapper.AuthRequestToDTO(request)
-	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeAuthenticate, dto)
+	input := newGRPCBackchannelAuthInput(core.AuthModeAuthenticate, dto)
 	ctx, input = authInputWithGRPCTransport(ctx, input, authv1.AuthService_Authenticate_FullMethodName)
 	dto.Password = ""
 
@@ -127,7 +128,7 @@ func (h *Handler) LookupIdentity(
 	}
 
 	dto := authmapper.LookupIdentityRequestToDTO(request)
-	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeLookupIdentity, dto)
+	input := newGRPCBackchannelAuthInput(core.AuthModeLookupIdentity, dto)
 	ctx, input = authInputWithGRPCTransport(ctx, input, authv1.AuthService_LookupIdentity_FullMethodName)
 
 	outcome, err := h.service.LookupIdentity(ctx, input)
@@ -157,7 +158,7 @@ func (h *Handler) ListAccounts(
 	}
 
 	dto := authmapper.ListAccountsRequestToDTO(request)
-	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeListAccounts, dto)
+	input := newGRPCBackchannelAuthInput(core.AuthModeListAccounts, dto)
 	ctx, input = authInputWithGRPCTransport(ctx, input, authv1.AuthService_ListAccounts_FullMethodName)
 
 	outcome, err := h.service.ListAccounts(ctx, input)
@@ -354,6 +355,14 @@ func authInputWithGRPCTransport(
 	}
 
 	return core.ContextWithGRPCMethod(ctx, fullMethod), input
+}
+
+// newGRPCBackchannelAuthInput maps trusted authority operations to the explicit backchannel entry profile.
+func newGRPCBackchannelAuthInput(mode core.AuthMode, request authdto.Request) core.AuthInput {
+	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, mode, request)
+	input.EntryPoint = core.AuthnEntryBackchannel
+
+	return input
 }
 
 // cloneIncomingMetadata detaches application input from mutable gRPC metadata slices.

@@ -68,6 +68,7 @@ func (b *httpAuthInputBuilder) Build(ctx *gin.Context) (core.AuthInput, bool) {
 	input.CorrelationID = ctx.GetString(definitions.CtxGUIDKey)
 	input.Mode = mode
 	input.Service = service
+	input.EntryPoint = core.AuthnEntryBackchannel
 	input.DisableMemoryCache = ctx.Query("in-memory") == "0"
 	input.DisableCache = ctx.Query("cache") == "0"
 
@@ -298,7 +299,7 @@ func (b *httpAuthInputBuilder) baseContext(ctx *gin.Context) core.AuthContext {
 		core.WithSSLFingerprint(decodedHTTPAuthHeader(ctx, headers.GetSSLFingerprint())),
 		core.WithOIDCCID(decodedHTTPAuthHeader(ctx, cfg.GetOIDCCID())),
 		core.WithAuthTransportContext(transport),
-		core.WithRequestMetadata(nonSecretHTTPAuthMetadata(ctx.Request.Header, cfg.GetPassword(), cfg.GetPasswordEncoded())),
+		core.WithRequestMetadata(core.SanitizeHTTPMetadata(ctx.Request.Header, cfg.GetPassword(), cfg.GetPasswordEncoded())),
 	)
 }
 
@@ -484,33 +485,4 @@ func verifiedHTTPAuthMTLSIdentity(request *http.Request) string {
 	}
 
 	return strings.TrimSpace(certificate.Subject.String())
-}
-
-// nonSecretHTTPAuthMetadata clones request headers after excluding credential-bearing names.
-func nonSecretHTTPAuthMetadata(headers http.Header, passwordHeader string, encodedHeader string) map[string][]string {
-	blocked := map[string]struct{}{
-		"authorization":       {},
-		"cookie":              {},
-		"proxy-authorization": {},
-		"set-cookie":          {},
-		strings.ToLower(strings.TrimSpace(passwordHeader)): {},
-		strings.ToLower(strings.TrimSpace(encodedHeader)):  {},
-	}
-	delete(blocked, "")
-
-	metadata := make(map[string][]string, len(headers))
-	for name, values := range headers {
-		normalizedName := strings.ToLower(strings.TrimSpace(name))
-		if normalizedName == "" {
-			continue
-		}
-
-		if _, forbidden := blocked[normalizedName]; forbidden {
-			continue
-		}
-
-		metadata[normalizedName] = append([]string(nil), values...)
-	}
-
-	return metadata
 }

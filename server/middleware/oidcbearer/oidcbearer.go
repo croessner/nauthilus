@@ -22,8 +22,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -206,7 +206,19 @@ func ValidateAndStoreClaims(ctx *gin.Context, validator TokenValidator, cfg conf
 // IsBackchannelAccessToken reports whether claims target the protected backchannel API.
 func IsBackchannelAccessToken(claims jwt.MapClaims) bool {
 	return HasTokenType(claims, definitions.TokenTypeAccessToken) &&
-		HasAudience(claims, definitions.AudienceBackchannelAPI)
+		hasServiceTokenClientID(claims) &&
+		hasExactAudienceSet(claims, definitions.AudienceBackchannelAPI)
+}
+
+// hasServiceTokenClientID requires the issuer-owned discriminator emitted only for service tokens.
+func hasServiceTokenClientID(claims jwt.MapClaims) bool {
+	if claims == nil {
+		return false
+	}
+
+	clientID, ok := claims[definitions.ClaimClientID].(string)
+
+	return ok && clientID != ""
 }
 
 // HasTokenType reports whether claims carry the expected issuer-owned token purpose.
@@ -222,31 +234,61 @@ func HasTokenType(claims jwt.MapClaims, tokenType string) bool {
 
 // HasAudience reports whether claims are bound to the expected audience.
 func HasAudience(claims jwt.MapClaims, audience string) bool {
-	if claims == nil || audience == "" {
+	if audience == "" {
 		return false
 	}
 
-	switch value := claims["aud"].(type) {
-	case string:
-		return value == audience
-	case []string:
-		return slices.Contains(value, audience)
-	case []any:
-		return anySliceContainsString(value, audience)
-	default:
+	audiences, ok := normalizedAudienceSet(claims)
+
+	if !ok {
 		return false
 	}
+
+	_, ok = audiences[audience]
+
+	return ok
 }
 
-// anySliceContainsString reports whether a mixed audience list contains a string.
-func anySliceContainsString(values []any, expected string) bool {
-	for _, value := range values {
-		if audience, ok := value.(string); ok && audience == expected {
-			return true
-		}
+// hasExactAudienceSet reports whether the normalized audience set contains only the expected resource.
+func hasExactAudienceSet(claims jwt.MapClaims, expected string) bool {
+	if expected == "" {
+		return false
 	}
 
-	return false
+	audiences, ok := normalizedAudienceSet(claims)
+
+	if !ok || len(audiences) != 1 {
+		return false
+	}
+
+	_, ok = audiences[expected]
+
+	return ok
+}
+
+// normalizedAudienceSet parses supported claim shapes into one validated, deduplicated resource set.
+func normalizedAudienceSet(claims jwt.MapClaims) (map[string]struct{}, bool) {
+	if claims == nil {
+		return nil, false
+	}
+
+	audiences, err := claims.GetAudience()
+
+	if err != nil || len(audiences) == 0 {
+		return nil, false
+	}
+
+	result := make(map[string]struct{}, len(audiences))
+
+	for _, audience := range audiences {
+		if audience == "" || strings.TrimSpace(audience) != audience || !utf8.ValidString(audience) {
+			return nil, false
+		}
+
+		result[audience] = struct{}{}
+	}
+
+	return result, true
 }
 
 // ExtractBearerToken extracts the Bearer token from the Authorization header.

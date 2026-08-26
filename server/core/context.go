@@ -16,6 +16,7 @@
 package core
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/croessner/nauthilus/v3/server/secret"
@@ -270,6 +271,43 @@ func WithAuthTransportContext(transport AuthTransportContext) AuthContextOption 
 // WithRequestMetadata stores allowlisted transport metadata candidates for policy facts.
 func WithRequestMetadata(values map[string][]string) AuthContextOption {
 	return func(c *AuthContext) { c.RequestMetadata = cloneRequestMetadata(values) }
+}
+
+// SanitizeHTTPMetadata returns detached lowercase request headers without credential-bearing values.
+func SanitizeHTTPMetadata(headers http.Header, credentialHeaderNames ...string) map[string][]string {
+	if headers == nil {
+		return nil
+	}
+
+	blocked := map[string]struct{}{
+		"authorization":       {},
+		"cookie":              {},
+		"proxy-authorization": {},
+		"set-cookie":          {},
+	}
+
+	for _, name := range credentialHeaderNames {
+		normalizedName := strings.ToLower(strings.TrimSpace(name))
+		if normalizedName != "" {
+			blocked[normalizedName] = struct{}{}
+		}
+	}
+
+	metadata := make(map[string][]string, len(headers))
+	for name, values := range headers {
+		normalizedName := strings.ToLower(strings.TrimSpace(name))
+		if normalizedName == "" {
+			continue
+		}
+
+		if _, forbidden := blocked[normalizedName]; forbidden {
+			continue
+		}
+
+		metadata[normalizedName] = append([]string(nil), values...)
+	}
+
+	return metadata
 }
 
 // FieldMapping groups configurable field names to reduce scattered getters.

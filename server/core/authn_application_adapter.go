@@ -32,7 +32,61 @@ import (
 const (
 	authnCandidateSubjectType  = "authentication-subject"
 	authnCandidateResourceType = "authentication-service"
+	authnInputFieldEntryPoint  = "entry_point"
 )
+
+// AuthnEntryPoint identifies one host-owned authentication entry path.
+//
+// Transport adapters must select this value from trusted routing and flow state.
+// Request routes, scopes, client identifiers, and other user input never select it.
+type AuthnEntryPoint uint8
+
+const (
+	// AuthnEntryDefault preserves the operation-specific profile used by existing callers.
+	AuthnEntryDefault AuthnEntryPoint = iota
+	// AuthnEntryBackchannel explicitly selects the existing backchannel operation profile.
+	AuthnEntryBackchannel
+	// AuthnEntryIDPInternal selects protocol-unbound internal and self-service IdP paths.
+	AuthnEntryIDPInternal
+	// AuthnEntryIDPOIDCAuthorizationCode selects OIDC authorization-code IdP paths.
+	AuthnEntryIDPOIDCAuthorizationCode
+	// AuthnEntryIDPOIDCDeviceCode selects OIDC device-code IdP paths.
+	AuthnEntryIDPOIDCDeviceCode
+	// AuthnEntryIDPSAML selects SAML IdP paths.
+	AuthnEntryIDPSAML
+	// AuthnEntryIDPDelayedIdentity selects delayed-response identity hydration.
+	AuthnEntryIDPDelayedIdentity
+	// AuthnEntryIDPMasterFactor selects master-user factor identity hydration.
+	AuthnEntryIDPMasterFactor
+	// AuthnEntryIDPMFABackend selects specialized MFA backend identity lookup.
+	AuthnEntryIDPMFABackend
+)
+
+// String returns the stable host-side name of the entry point.
+func (e AuthnEntryPoint) String() string {
+	switch e {
+	case AuthnEntryDefault:
+		return "default"
+	case AuthnEntryBackchannel:
+		return "backchannel"
+	case AuthnEntryIDPInternal:
+		return "idp-internal"
+	case AuthnEntryIDPOIDCAuthorizationCode:
+		return "idp-oidc-code"
+	case AuthnEntryIDPOIDCDeviceCode:
+		return "idp-oidc-device"
+	case AuthnEntryIDPSAML:
+		return "idp-saml"
+	case AuthnEntryIDPDelayedIdentity:
+		return "idp-delayed-identity"
+	case AuthnEntryIDPMasterFactor:
+		return "idp-master-factor"
+	case AuthnEntryIDPMFABackend:
+		return "idp-mfa-backend"
+	default:
+		return requestPolicyClientIPSourceUnknown
+	}
+}
 
 type authnCandidateApplicationService struct {
 	current  AuthApplicationService
@@ -46,12 +100,28 @@ type authnAuthenticationPresentation struct {
 	kind       string
 }
 
+type authnEntryProfileKey struct {
+	operation  policy.Operation
+	entryPoint AuthnEntryPoint
+}
+
+// AuthnEntryCallerProfiles binds host-created authenticate and lookup evidence to one entry path.
+type AuthnEntryCallerProfiles struct {
+	// Authenticate is the opaque internal caller evidence for password authentication.
+	Authenticate decision.AuthenticationInput
+	// LookupIdentity is the opaque internal caller evidence for identity lookup.
+	LookupIdentity decision.AuthenticationInput
+	// EntryPoint is selected exclusively by the trusted host adapter.
+	EntryPoint AuthnEntryPoint
+}
+
 // AuthnInternalCallerProfiles owns exact host-created admission presentations by authn operation.
 //
 // The bundle is candidate-only and contains no production configuration authority.
 // Its opaque credentials are detached during construction and never derived from
 // end-user authentication material.
 type AuthnInternalCallerProfiles struct {
+	entryProfiles  map[authnEntryProfileKey]authnAuthenticationPresentation
 	authenticate   authnAuthenticationPresentation
 	lookupIdentity authnAuthenticationPresentation
 	listAccounts   authnAuthenticationPresentation
@@ -97,6 +167,25 @@ func NewAuthnInternalCallerProfiles(
 		lookupIdentity: lookupPresentation,
 		listAccounts:   listPresentation,
 	}, nil
+}
+
+// NewAuthnInternalCallerProfilesWithEntries adds exact host-owned entry presentations to generic defaults.
+func NewAuthnInternalCallerProfilesWithEntries(
+	defaults AuthnInternalCallerProfiles,
+	entries ...AuthnEntryCallerProfiles,
+) (AuthnInternalCallerProfiles, error) {
+	if err := defaults.validate(); err != nil {
+		return AuthnInternalCallerProfiles{}, err
+	}
+
+	profiles := defaults.clone()
+	for _, entry := range entries {
+		if err := profiles.addEntryProfiles(entry); err != nil {
+			return AuthnInternalCallerProfiles{}, err
+		}
+	}
+
+	return profiles, nil
 }
 
 // NewAuthnCandidateApplicationService constructs an inactive authn Decision Service adapter.
@@ -203,7 +292,7 @@ func (s *authnCandidateApplicationService) run(
 		return authnApplicationResult{}, err
 	}
 
-	authentication, err := s.profiles.authenticationFor(operation)
+	authentication, err := s.profiles.authenticationFor(input.EntryPoint, operation)
 	if err != nil {
 		return authnApplicationResult{}, err
 	}
@@ -379,7 +468,7 @@ func newAuthnTerminalResult(
 		return authnApplicationResult{accounts: &ListAccountsOutcome{Decision: mapped}}, nil
 	}
 
-	return authnApplicationResult{auth: &AuthOutcome{Decision: mapped}}, nil
+	return authnApplicationResult{auth: &AuthOutcome{Decision: mapped, PolicyTerminal: true}}, nil
 }
 
 // runCurrent invokes exactly one existing operation while the captured session remains open.
@@ -429,6 +518,10 @@ func (r authnApplicationResult) mapEffect(effect decision.Effect) (authnApplicat
 		outcome := cloneAuthnCandidateOutcome(r.auth)
 
 		outcome.Decision = mapped
+		if terminalAuthnCheckpointEffect(effect) {
+			outcome.PolicyTerminal = true
+			outcome.DelayedResponseEligible = false
+		}
 
 		if mapped == AuthDecisionTempFail {
 			applyAuthnCandidateTempFail(outcome)
@@ -671,8 +764,40 @@ func newAuthnAuthenticationPresentation(
 	return presentation, nil
 }
 
-// authenticationFor returns a detached exact presentation for one supported operation.
+// authenticationFor returns the exact host-selected entry and operation presentation.
 func (p AuthnInternalCallerProfiles) authenticationFor(
+	entryPoint AuthnEntryPoint,
+	operation policy.Operation,
+) (authnAuthenticationPresentation, error) {
+	if entryPoint == AuthnEntryDefault || entryPoint == AuthnEntryBackchannel {
+		return p.defaultAuthenticationFor(operation)
+	}
+
+	if !entryPoint.valid() || !entryPoint.supports(operation) {
+		return authnAuthenticationPresentation{}, &AuthInputError{
+			Field:  authnInputFieldEntryPoint,
+			Reason: authInputReasonUnsupported,
+		}
+	}
+
+	presentation, found := p.entryProfiles[authnEntryProfileKey{entryPoint: entryPoint, operation: operation}]
+
+	if !found {
+		return authnAuthenticationPresentation{}, fmt.Errorf(
+			"%w: authn candidate %s profile for entry %s",
+			ErrAuthApplicationDependencyMissing,
+			operation,
+			entryPoint.String(),
+		)
+	}
+
+	presentation.credential = append([]byte(nil), presentation.credential...)
+
+	return presentation, nil
+}
+
+// defaultAuthenticationFor returns the detached generic operation presentation.
+func (p AuthnInternalCallerProfiles) defaultAuthenticationFor(
 	operation policy.Operation,
 ) (authnAuthenticationPresentation, error) {
 	var presentation authnAuthenticationPresentation
@@ -696,6 +821,129 @@ func (p AuthnInternalCallerProfiles) authenticationFor(
 	return presentation, nil
 }
 
+// clone detaches the mutable entry-profile map and every opaque credential.
+func (p AuthnInternalCallerProfiles) clone() AuthnInternalCallerProfiles {
+	result := p
+	result.authenticate.credential = append([]byte(nil), p.authenticate.credential...)
+	result.lookupIdentity.credential = append([]byte(nil), p.lookupIdentity.credential...)
+	result.listAccounts.credential = append([]byte(nil), p.listAccounts.credential...)
+	result.entryProfiles = make(map[authnEntryProfileKey]authnAuthenticationPresentation, len(p.entryProfiles))
+
+	for key, presentation := range p.entryProfiles {
+		presentation.credential = append([]byte(nil), presentation.credential...)
+		result.entryProfiles[key] = presentation
+	}
+
+	return result
+}
+
+// addEntryProfiles validates and owns every supplied presentation for one entry path.
+func (p *AuthnInternalCallerProfiles) addEntryProfiles(entry AuthnEntryCallerProfiles) error {
+	if p == nil || !entry.EntryPoint.configurable() {
+		return &AuthInputError{Field: authnInputFieldEntryPoint, Reason: authInputReasonUnsupported}
+	}
+
+	added := false
+	candidates := []struct {
+		authentication decision.AuthenticationInput
+		operation      policy.Operation
+	}{
+		{authentication: entry.Authenticate, operation: policy.OperationAuthenticate},
+		{authentication: entry.LookupIdentity, operation: policy.OperationLookupIdentity},
+	}
+
+	for _, candidate := range candidates {
+		if !authnAuthenticationInputPresent(candidate.authentication) {
+			continue
+		}
+
+		if err := p.addEntryProfile(entry.EntryPoint, candidate.operation, candidate.authentication); err != nil {
+			return err
+		}
+
+		added = true
+	}
+
+	if !added {
+		return fmt.Errorf(
+			"%w: authn candidate profile for entry %s",
+			ErrAuthApplicationDependencyMissing,
+			entry.EntryPoint.String(),
+		)
+	}
+
+	return nil
+}
+
+// addEntryProfile validates and stores one exact entry and operation presentation.
+func (p *AuthnInternalCallerProfiles) addEntryProfile(
+	entryPoint AuthnEntryPoint,
+	operation policy.Operation,
+	authentication decision.AuthenticationInput,
+) error {
+	if !entryPoint.supports(operation) {
+		return &AuthInputError{Field: authnInputFieldEntryPoint, Reason: authInputReasonUnsupported}
+	}
+
+	key := authnEntryProfileKey{entryPoint: entryPoint, operation: operation}
+	if _, duplicate := p.entryProfiles[key]; duplicate {
+		return fmt.Errorf("duplicate authn candidate %s profile for entry %s", operation, entryPoint.String())
+	}
+
+	presentation, err := newAuthnAuthenticationPresentation(authentication, operation)
+	if err != nil {
+		return err
+	}
+
+	p.entryProfiles[key] = presentation
+
+	return nil
+}
+
+// authnAuthenticationInputPresent distinguishes an omitted profile from malformed supplied evidence.
+func authnAuthenticationInputPresent(input decision.AuthenticationInput) bool {
+	return input.Kind() != "" || len(input.Credential()) > 0
+}
+
+// valid reports whether the identifier belongs to the closed host-owned entry set.
+func (e AuthnEntryPoint) valid() bool {
+	switch e {
+	case AuthnEntryDefault,
+		AuthnEntryBackchannel,
+		AuthnEntryIDPInternal,
+		AuthnEntryIDPOIDCAuthorizationCode,
+		AuthnEntryIDPOIDCDeviceCode,
+		AuthnEntryIDPSAML,
+		AuthnEntryIDPDelayedIdentity,
+		AuthnEntryIDPMasterFactor,
+		AuthnEntryIDPMFABackend:
+		return true
+	default:
+		return false
+	}
+}
+
+// configurable reports whether an entry may own profiles beyond the generic defaults.
+func (e AuthnEntryPoint) configurable() bool {
+	return e.valid() && e != AuthnEntryDefault && e != AuthnEntryBackchannel
+}
+
+// supports reports whether one entry path permits the requested authn operation.
+func (e AuthnEntryPoint) supports(operation policy.Operation) bool {
+	switch e {
+	case AuthnEntryDefault, AuthnEntryBackchannel:
+		return operation == policy.OperationAuthenticate ||
+			operation == policy.OperationLookupIdentity ||
+			operation == policy.OperationListAccounts
+	case AuthnEntryIDPInternal, AuthnEntryIDPOIDCAuthorizationCode, AuthnEntryIDPOIDCDeviceCode, AuthnEntryIDPSAML:
+		return operation == policy.OperationAuthenticate || operation == policy.OperationLookupIdentity
+	case AuthnEntryIDPDelayedIdentity, AuthnEntryIDPMasterFactor, AuthnEntryIDPMFABackend:
+		return operation == policy.OperationLookupIdentity
+	default:
+		return false
+	}
+}
+
 // validate requires an exact non-empty presentation for every authn operation.
 func (p AuthnInternalCallerProfiles) validate() error {
 	for _, operation := range []policy.Operation{
@@ -703,12 +951,22 @@ func (p AuthnInternalCallerProfiles) validate() error {
 		policy.OperationLookupIdentity,
 		policy.OperationListAccounts,
 	} {
-		presentation, err := p.authenticationFor(operation)
+		presentation, err := p.defaultAuthenticationFor(operation)
 		if err != nil {
 			return err
 		}
 
 		if err = validateAuthnAuthenticationPresentation(presentation, operation); err != nil {
+			return err
+		}
+	}
+
+	for key, presentation := range p.entryProfiles {
+		if !key.entryPoint.configurable() || !key.entryPoint.supports(key.operation) {
+			return &AuthInputError{Field: authnInputFieldEntryPoint, Reason: authInputReasonUnsupported}
+		}
+
+		if err := validateAuthnAuthenticationPresentation(presentation, key.operation); err != nil {
 			return err
 		}
 	}

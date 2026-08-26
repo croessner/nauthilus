@@ -143,7 +143,12 @@ func (h *FrontendHandler) canonicalMissingRequiredMFA(
 	}
 
 	data, err := h.getUserBackendDataForIdentity(
-		ctx, identity.Account, string(state.Protocol), canonicalRemoteBackendRef(session),
+		ctx,
+		newBackendDataLookupRequest(
+			identity.Account,
+			canonicalRemoteBackendRef(session),
+			backendDataProtocolContext(state, identity.Protocol),
+		),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("canonical enrollment policy: backend state: %w", err)

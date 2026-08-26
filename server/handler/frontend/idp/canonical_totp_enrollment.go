@@ -417,9 +417,11 @@ func (h *FrontendHandler) canonicalEnrollmentBackendData(
 ) (*UserBackendData, error) {
 	data, err := h.getUserBackendDataForIdentity(
 		ctx,
-		selection.identity.Account,
-		string(selection.parent.Protocol),
-		canonicalRemoteBackendRef(selection.session),
+		newBackendDataLookupRequest(
+			selection.identity.Account,
+			canonicalRemoteBackendRef(selection.session),
+			backendDataProtocolContext(selection.parent, selection.identity.Protocol),
+		),
 	)
 	if err != nil {
 		return nil, err

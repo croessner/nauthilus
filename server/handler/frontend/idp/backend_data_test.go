@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/grpcapi/identitymapper"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
@@ -76,8 +76,41 @@ type mockWebAuthnProvider struct {
 	err         error
 }
 
+type recordingBackendDataApplication struct {
+	lookupInputs []core.AuthInput
+	outcome      *core.AuthOutcome
+}
+
 func (m *mockWebAuthnProvider) GetWebAuthnCredentials() ([]mfa.PersistentCredential, error) {
 	return m.credentials, m.err
+}
+
+// Authenticate rejects password evaluation from the specialized backend-data adapter.
+func (a *recordingBackendDataApplication) Authenticate(context.Context, core.AuthInput) (*core.AuthOutcome, error) {
+	return nil, errors.New("unexpected backend-data authentication")
+}
+
+// LookupIdentity records the exact detached backend-data application input.
+func (a *recordingBackendDataApplication) LookupIdentity(
+	_ context.Context,
+	input core.AuthInput,
+) (*core.AuthOutcome, error) {
+	recorded := input
+	recorded.IDP = input.IDP.Clone()
+
+	recorded.Context.RequestMetadata = make(map[string][]string, len(input.Context.RequestMetadata))
+	for key, values := range input.Context.RequestMetadata {
+		recorded.Context.RequestMetadata[key] = append([]string(nil), values...)
+	}
+
+	a.lookupInputs = append(a.lookupInputs, recorded)
+
+	return a.outcome, nil
+}
+
+// ListAccounts rejects account enumeration from the specialized backend-data adapter.
+func (a *recordingBackendDataApplication) ListAccounts(context.Context, core.AuthInput) (*core.ListAccountsOutcome, error) {
+	return nil, errors.New("unexpected backend-data account listing")
 }
 
 const (
@@ -103,6 +136,101 @@ const (
 	delegatedTargetStaleBackendRef     = "delegated-target-stale-ref"
 	delegatedFactorBackendRef          = "delegated-factor-ref"
 )
+
+func TestBackendDataLookupUsesSharedApplicationWithExactProtocolFacts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	backendRef := core.RemoteBackendRef{
+		Type: definitions.BackendRemoteName, Name: remoteBackendDataAuthorityBackend,
+		Protocol: definitions.ProtoOIDC, Authority: remoteBackendDataAuthority,
+		OpaqueToken: remoteBackendDataBackendRef,
+	}
+	application := &recordingBackendDataApplication{outcome: &core.AuthOutcome{
+		Decision: core.AuthDecisionOK, Account: backendDataUsername,
+		DisplayName: backendDataDisplayName, Protocol: definitions.ProtoOIDC,
+		RemoteBackendRef: backendRef,
+	}}
+	db, _ := redismock.NewClientMock()
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{Redis: config.Redis{Prefix: "frontend-application:"}},
+		IDP:    &config.IDPSection{},
+	}
+	d := &deps.Deps{
+		Cfg: cfg, Env: config.NewTestEnvironmentConfig(), Logger: slog.Default(),
+		Redis: rediscli.NewTestClient(db), AuthApplication: application,
+	}
+	handler := &FrontendHandler{deps: d}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodPost,
+		"https://idp.example.test/login/webauthn/finish",
+		strings.NewReader(`{"browser":"ceremony-state"}`),
+	)
+	ctx.Request.RemoteAddr = "192.0.2.55:4242"
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Request.Header.Set("Authorization", "Bearer browser-token")
+	ctx.Request.Header.Set("Cookie", "session=browser-state")
+	ctx.Request.Header.Set("X-Request-ID", "frontend-application-request")
+	ctx.Set(definitions.CtxGUIDKey, "frontend-application-request")
+	ctx.Set(definitions.CtxServiceKey, definitions.ServIDP)
+	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+	ctx.Set(definitions.SessionKeyWebAuthnCeremony, "browser-ceremony-state")
+
+	requestContext := core.IDPRequestContext{
+		GrantType: definitions.OIDCFlowDeviceCode, RedirectURI: "https://client.example.test/callback",
+		RequestedScopes: []string{definitions.ScopeOpenID, definitions.ScopeEmail},
+		MFACompleted:    true, MFAMethod: definitions.MFAMethodWebAuthn,
+	}
+
+	data, err := handler.getUserBackendDataForIdentity(
+		ctx,
+		newBackendDataLookupRequest(
+			backendDataUsername,
+			backendRef,
+			core.IDPMFAProtocolContext{
+				Protocol: definitions.ProtoOIDC, OIDCClientID: "device-client", Request: requestContext,
+			},
+		),
+	)
+	if err != nil {
+		t.Fatalf("getUserBackendDataForIdentity() error = %v", err)
+	}
+
+	if data == nil || data.AuthState == nil {
+		t.Fatal("backend-data lookup did not materialize specialized state")
+	}
+
+	if len(application.lookupInputs) != 1 {
+		t.Fatalf("application lookup calls = %d, want 1", len(application.lookupInputs))
+	}
+
+	input := application.lookupInputs[0]
+	assert.Equal(t, core.AuthModeLookupIdentity, input.Mode)
+	assert.Equal(t, core.AuthnEntryIDPMFABackend, input.EntryPoint)
+	assert.Equal(t, definitions.ServIDP, input.Service)
+	assert.Equal(t, backendDataUsername, input.Credentials.Username)
+	assert.Equal(t, definitions.ProtoOIDC, input.Context.Protocol)
+	assert.Equal(t, "device-client", input.Context.OIDCCID)
+	assert.Empty(t, input.Context.SAMLEntityID)
+	assert.Equal(t, requestContext.GrantType, input.IDP.Request.GrantType)
+	assert.Equal(t, requestContext.RedirectURI, input.IDP.Request.RedirectURI)
+	assert.Equal(t, requestContext.RequestedScopes, input.IDP.Request.RequestedScopes)
+	requestType := reflect.TypeOf(input.IDP.Request)
+	_, hasMFACompleted := requestType.FieldByName("MFACompleted")
+	_, hasMFAMethod := requestType.FieldByName("MFAMethod")
+
+	assert.False(t, hasMFACompleted, "generic IdP request captured browser MFA completion state")
+	assert.False(t, hasMFAMethod, "generic IdP request captured browser MFA method state")
+	assert.Equal(t, backendRef, input.IDP.ExistingBackendRef)
+	assert.Equal(t, http.MethodGet, input.Context.Transport.HTTPMethod)
+	assert.Equal(t, "/login/webauthn/finish", input.Context.Transport.HTTPRoute)
+	assert.NotContains(t, input.Context.RequestMetadata, "authorization")
+	assert.NotContains(t, input.Context.RequestMetadata, "cookie")
+	assert.NotContains(t, input.Context.RequestMetadata, "content-type")
+	assert.Equal(t, backendRef, data.AuthState.Runtime.RemoteBackendRef)
+	assert.Equal(t, http.MethodPost, ctx.Request.Method)
+}
 
 func TestGetUserBackendDataCapturesIdentityAndMFAState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -133,8 +261,7 @@ func TestGetUserBackendDataUsesRemoteAuthorityMFAStateWithoutLocalBackends(t *te
 	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
 	defer cleanup()
 
-	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoIDP, backendDataUsername)
-	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoIDP, backendDataUsername)
+	fixture.expectAccountMappings(backendDataUsername, definitions.ProtoIDP, backendDataUsername, 2)
 	fixture.expectSavedWebAuthnCache(t, &backend.User{
 		ID:          backendDataUniqueUserID,
 		Name:        backendDataUsername,
@@ -167,8 +294,9 @@ func TestCanonicalWebAuthnBackendDataUsesTargetBoundSessionAffinity(t *testing.T
 	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
 	defer cleanup()
 
-	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoOIDC, backendDataUsername)
-	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoOIDC, backendDataUsername)
+	fixture.expectAccountMappingsForClient(
+		backendDataUsername, definitions.ProtoOIDC, "client-a", backendDataUsername, 2,
+	)
 	fixture.expectSavedWebAuthnCache(t, &backend.User{
 		ID:          backendDataUniqueUserID,
 		Name:        backendDataUsername,
@@ -176,7 +304,8 @@ func TestCanonicalWebAuthnBackendDataUsesTargetBoundSessionAffinity(t *testing.T
 		Credentials: []mfa.PersistentCredential{credential},
 	})
 
-	runtime, browserCookie, flowID := seedCanonicalIDPFlow(t, canonicalDecisionOIDCState(""))
+	parent := canonicalDecisionOIDCState("")
+	runtime, browserCookie, _ := seedCanonicalIDPFlow(t, parent)
 
 	session := openCanonicalFixture(t, runtime, browserCookie)
 	if err := session.CommitIdentity(context.Background(), cookie.IdentityUpdate{
@@ -211,9 +340,7 @@ func TestCanonicalWebAuthnBackendDataUsesTargetBoundSessionAffinity(t *testing.T
 		session:    session,
 		identity:   identity,
 		backendRef: canonicalRemoteBackendRef(session),
-		parent: &flowdomain.State{
-			FlowID: flowID, Protocol: flowdomain.FlowProtocolOIDC,
-		},
+		parent:     parent,
 	})
 	if assert.NoError(t, err) && assert.NotNil(t, data) {
 		assert.Equal(t, backendDataUsername, data.Username)
@@ -242,8 +369,7 @@ func TestGetUserBackendDataPurgesStaleWebAuthnCacheWhenAuthorityHasNoCredentials
 	defer cleanup()
 
 	redisKey := fixture.cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + backendDataUniqueUserID
-	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoIDP, backendDataUsername)
-	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoIDP, backendDataUsername)
+	fixture.expectAccountMappings(backendDataUsername, definitions.ProtoIDP, backendDataUsername, 2)
 	fixture.mock.ExpectDel(redisKey).SetVal(1)
 
 	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
@@ -335,8 +461,7 @@ func TestBackendDataLookupFromWebAuthnFinishUsesCanonicalRemoteAffinity(t *testi
 	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
 	defer cleanup()
 
-	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoOIDC, backendDataUsername)
-	fixture.expectAccountMapping(backendDataUsername, definitions.ProtoOIDC, backendDataUsername)
+	fixture.expectAccountMappings(backendDataUsername, definitions.ProtoOIDC, backendDataUsername, 2)
 	fixture.mock.ExpectDel(
 		fixture.cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + backendDataUniqueUserID,
 	).SetVal(0)
@@ -358,13 +483,15 @@ func TestBackendDataLookupFromWebAuthnFinishUsesCanonicalRemoteAffinity(t *testi
 
 	data, err := handler.getUserBackendDataForIdentity(
 		ctx,
-		backendDataUsername,
-		definitions.ProtoOIDC,
-		core.RemoteBackendRef{
-			Type: definitions.BackendLDAPName, Name: remoteBackendDataAuthorityBackend,
-			Protocol: definitions.ProtoIDP, Authority: remoteBackendDataAuthority,
-			OpaqueToken: remoteBackendDataBackendRef,
-		},
+		newBackendDataLookupRequest(
+			backendDataUsername,
+			core.RemoteBackendRef{
+				Type: definitions.BackendLDAPName, Name: remoteBackendDataAuthorityBackend,
+				Protocol: definitions.ProtoIDP, Authority: remoteBackendDataAuthority,
+				OpaqueToken: remoteBackendDataBackendRef,
+			},
+			core.IDPMFAProtocolContext{Protocol: definitions.ProtoOIDC},
+		),
 	)
 	if assert.NoError(t, err) && assert.NotNil(t, data) {
 		assert.Equal(t, backendDataUsername, data.Username)
@@ -388,14 +515,17 @@ func newBackendDataTestCredential() mfa.PersistentCredential {
 }
 
 func newBackendDataFrontendHandler(fixture *backendDataBaseFixture) *FrontendHandler {
+	d := &deps.Deps{
+		Cfg:          fixture.cfg,
+		Env:          config.NewTestEnvironmentConfig(),
+		Logger:       slog.Default(),
+		Redis:        fixture.redis,
+		AccountCache: accountcache.NewManager(fixture.cfg),
+	}
+	d.AuthApplication = core.NewAuthApplicationService(d.Auth())
+
 	return &FrontendHandler{
-		deps: &deps.Deps{
-			Cfg:          fixture.cfg,
-			Env:          config.NewTestEnvironmentConfig(),
-			Logger:       slog.Default(),
-			Redis:        fixture.redis,
-			AccountCache: accountcache.NewManager(fixture.cfg),
-		},
+		deps: d,
 	}
 }
 
@@ -411,7 +541,12 @@ func runGetUserBackendDataRequest(t *testing.T, handler *FrontendHandler) (*User
 		ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 
 		result, err := handler.getUserBackendDataForIdentity(
-			ctx, backendDataUsername, definitions.ProtoIDP, core.RemoteBackendRef{},
+			ctx,
+			newBackendDataLookupRequest(
+				backendDataUsername,
+				core.RemoteBackendRef{},
+				core.IDPMFAProtocolContext{Protocol: definitions.ProtoIDP},
+			),
 		)
 		if err != nil {
 			t.Fatalf("GetUserBackendData returned error: %v", err)
@@ -814,20 +949,33 @@ func (f *backendDataLDAPFixture) encrypt(t *testing.T, value string) string {
 	return encrypted
 }
 
-func (f *backendDataBaseFixture) expectAccountMapping(username, protocol, account string) {
-	f.expectAccountMappingForClient(username, protocol, "", account)
+// expectAccountMappings records admission plus concurrent read-before-write account mapping.
+func (f *backendDataBaseFixture) expectAccountMappings(
+	username string,
+	protocol string,
+	account string,
+	count int,
+) {
+	f.expectAccountMappingsForClient(username, protocol, "", account, count)
 }
 
-func (f *backendDataBaseFixture) expectAccountMappingForClient(username, protocol, clientID, account string) {
+// expectAccountMappingsForClient records admitted account mapping bound to an OIDC client.
+func (f *backendDataBaseFixture) expectAccountMappingsForClient(
+	username string,
+	protocol string,
+	clientID string,
+	account string,
+	count int,
+) {
 	key := rediscli.GetUserHashKey(f.cfg.GetServer().GetRedis().GetPrefix(), username)
 	field := accountcache.GetAccountMappingField(username, protocol, clientID)
 
 	f.mock.ExpectHGet(key, field).RedisNil()
-	f.mock.ExpectHSet(key, field, account).SetVal(1)
-}
 
-func (f *backendDataLDAPFixture) expectAccountMapping(username, protocol, account string) {
-	f.backendDataBaseFixture.expectAccountMapping(username, protocol, account)
+	for range count {
+		f.mock.ExpectHGet(key, field).RedisNil()
+		f.mock.ExpectHSet(key, field, account).SetVal(1)
+	}
 }
 
 func (f *backendDataLDAPFixture) expectEmptyWebAuthnCache(uniqueUserID string) {
@@ -866,8 +1014,7 @@ func (f *backendDataLDAPFixture) expectSavedWebAuthnCache(t *testing.T, user *ba
 func (f *backendDataLDAPFixture) expectBackendDataRequestFlow(t *testing.T, credential mfa.PersistentCredential) {
 	t.Helper()
 
-	f.expectAccountMapping(backendDataUsername, definitions.ProtoIDP, backendDataUsername)
-	f.expectAccountMapping(backendDataUsername, definitions.ProtoIDP, backendDataUsername)
+	f.expectAccountMappings(backendDataUsername, definitions.ProtoIDP, backendDataUsername, 2)
 	f.expectEmptyWebAuthnCache(backendDataUniqueUserID)
 	f.expectSavedWebAuthnCache(t, &backend.User{
 		ID:          backendDataUniqueUserID,

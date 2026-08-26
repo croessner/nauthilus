@@ -5,12 +5,12 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/v3/server/backend"
-	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
 	"github.com/croessner/nauthilus/v3/server/idp"
+	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
 	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/gin-gonic/gin"
@@ -46,6 +46,54 @@ type selectedBackendWebAuthnProvider struct {
 	state *core.AuthState
 }
 
+// newBackendDataLookupRequest maps one bounded protocol context to the shared IdP application request.
+func newBackendDataLookupRequest(
+	username string,
+	backendRef core.RemoteBackendRef,
+	protocolContext core.IDPMFAProtocolContext,
+) idp.MFAIdentityLookupRequest {
+	return idp.MFAIdentityLookupRequest{
+		ProtocolContext: protocolContext.Request,
+		BackendRef:      backendRef,
+		Username:        username,
+		Protocol:        protocolContext.Protocol,
+		OIDCClientID:    protocolContext.OIDCClientID,
+		SAMLEntityID:    protocolContext.SAMLEntityID,
+	}
+}
+
+// backendDataProtocolContext maps only protocol facts from a typed flow state.
+func backendDataProtocolContext(
+	state *flowdomain.State,
+	fallbackProtocol string,
+) core.IDPMFAProtocolContext {
+	result := core.IDPMFAProtocolContext{Protocol: fallbackProtocol}
+	if state == nil {
+		return result
+	}
+
+	result.Protocol = string(state.Protocol)
+	if state.Protocol == flowdomain.FlowProtocolInternal {
+		result.Protocol = definitions.ProtoIDP
+	}
+
+	result.Request = core.IDPRequestContext{
+		GrantType:       state.GrantType,
+		RedirectURI:     state.Metadata[flowdomain.FlowMetadataRedirectURI],
+		RequestedScopes: strings.Fields(state.Metadata[flowdomain.FlowMetadataScope]),
+	}
+
+	switch state.Protocol {
+	case flowdomain.FlowProtocolOIDC:
+		result.OIDCClientID = state.Metadata[flowdomain.FlowMetadataClientID]
+	case flowdomain.FlowProtocolSAML:
+		result.SAMLEntityID = state.Metadata[flowdomain.FlowMetadataSAMLEntityID]
+	case flowdomain.FlowProtocolInternal:
+	}
+
+	return result
+}
+
 func (p selectedBackendWebAuthnProvider) GetWebAuthnCredentials() ([]mfa.PersistentCredential, error) {
 	if p.state == nil {
 		return nil, errors.ErrUnknownDatabaseBackend
@@ -61,41 +109,33 @@ func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData
 		return nil, nil
 	}
 
-	return h.getUserBackendDataForIdentity(ctx, username, definitions.ProtoIDP, core.RemoteBackendRef{})
+	return h.getUserBackendDataForIdentity(
+		ctx,
+		newBackendDataLookupRequest(
+			username,
+			core.RemoteBackendRef{},
+			core.IDPMFAProtocolContext{Protocol: definitions.ProtoIDP},
+		),
+	)
 }
 
 // getUserBackendDataForIdentity performs a no-auth lookup for one identity and
-// optional authority backend reference.
+// materializes only the specialized state needed by MFA backend operations.
 func (h *FrontendHandler) getUserBackendDataForIdentity(
 	ctx *gin.Context,
-	username string,
-	protocolName string,
-	backendRef core.RemoteBackendRef,
+	request idp.MFAIdentityLookupRequest,
 ) (*UserBackendData, error) {
 	lookupCtx, restore := backendDataLookupContext(ctx)
 	defer restore()
 
-	authState := h.newBackendDataAuthState(lookupCtx, username)
-	if authState == nil {
-		return nil, nil
+	lookup, err := idp.NewNauthilusIDP(h.deps).LookupMFAIdentity(lookupCtx, request)
+	if err != nil {
+		return nil, err
 	}
 
-	if protocolName != "" {
-		authState.SetProtocol(config.NewProtocol(protocolName))
-	}
+	data := newUserBackendData(lookup.User, lookup.AuthState)
 
-	if !backendRef.IsZero() {
-		authState.Runtime.RemoteBackendRef = backendRef
-	}
-
-	data := newUserBackendData(username, authState)
-	if authState.HandlePassword(lookupCtx) != definitions.AuthResultOK {
-		return data, nil
-	}
-
-	applyBackendIdentityData(data, authState)
-
-	if err := h.applyBackendMFAData(lookupCtx, data, authState); err != nil {
+	if err = h.applyBackendMFAData(lookupCtx, data, lookup.AuthState); err != nil {
 		return nil, err
 	}
 
@@ -169,37 +209,17 @@ func (h *FrontendHandler) backendDataUsernameFromBearer(ctx *gin.Context) string
 	return sub
 }
 
-// newBackendDataAuthState creates the no-auth IDP AuthState used for data lookups.
-func (h *FrontendHandler) newBackendDataAuthState(ctx *gin.Context, username string) *core.AuthState {
-	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
-	if state == nil {
+// newUserBackendData creates the backend-data DTO from an admitted detached identity.
+func newUserBackendData(user *backend.User, authState *core.AuthState) *UserBackendData {
+	if user == nil {
 		return nil
 	}
 
-	authState := state.(*core.AuthState)
-	authState.SetUsername(username)
-	authState.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
-	authState.SetNoAuth(true)
-
-	return authState
-}
-
-// newUserBackendData creates the backend-data DTO for an initialized AuthState.
-func newUserBackendData(username string, authState *core.AuthState) *UserBackendData {
 	return &UserBackendData{
-		Username:  username,
-		AuthState: authState,
-	}
-}
-
-// applyBackendIdentityData copies display and stable user identifiers from AuthState.
-func applyBackendIdentityData(data *UserBackendData, authState *core.AuthState) {
-	if disp, ok := authState.GetDisplayNameOk(); ok {
-		data.DisplayName = disp
-	}
-
-	if uniqueID, ok := authState.GetUniqueUserIDOk(); ok {
-		data.UniqueUserID = uniqueID
+		Username:     user.Name,
+		DisplayName:  user.DisplayName,
+		UniqueUserID: user.ID,
+		AuthState:    authState,
 	}
 }
 

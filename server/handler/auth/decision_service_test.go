@@ -210,6 +210,10 @@ func runHTTPDecisionRouteTest(t *testing.T, profiles core.AuthnInternalCallerPro
 	}
 
 	call := current.onlyCall(t)
+	if call.input.EntryPoint != core.AuthnEntryBackchannel {
+		t.Fatalf("current entry point = %q, want explicit backchannel", call.input.EntryPoint)
+	}
+
 	assertHTTPDecisionRequestMetadata(t, call.input.Context.RequestMetadata)
 	assertHTTPDecisionInvocation(t, factory.onlyInvocation(t), test)
 	assertHTTPDecisionCheckpoints(t, session.checkpointNames(), test.checkpoints)

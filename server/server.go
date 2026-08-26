@@ -518,9 +518,6 @@ func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
 		return nil
 	}
 
-	deps.Env = runtime.env
-	deps.Redis = runtime.store.redisClient
-
 	canonicalRuntime, err := handleridp.NewCanonicalBrowserRuntime(deps)
 	if err != nil {
 		_ = level.Error(runtime.logger).Log(
@@ -550,12 +547,15 @@ func frontendHandlerDeps(runtime httpServerRuntime) *handlerdeps.Deps {
 	deps := &handlerdeps.Deps{
 		Cfg:             runtime.cfg,
 		CfgProvider:     runtime.store.cfgProvider,
+		Env:             runtime.env,
 		Logger:          runtime.logger,
+		Redis:           runtime.store.redisClient,
 		Channel:         runtime.store.channel,
 		AccountCache:    runtime.store.accountCache,
 		LangManager:     runtime.store.langManager,
 		MessageResolver: newDefaultPolicyMessageResolver(runtime.cfg),
 	}
+	deps.AuthApplication = core.NewAuthApplicationService(deps.Auth())
 	deps.Svc = handlerdeps.NewDefaultServices(deps)
 
 	return deps

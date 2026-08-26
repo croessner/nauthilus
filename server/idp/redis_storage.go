@@ -122,27 +122,29 @@ type ClientAssertionReplayStore interface {
 
 // OIDCSession represents the data stored in Redis for an OIDC authorization flow.
 type OIDCSession struct {
+	Scopes               []string       `json:"scopes"`
 	ClientID             string         `json:"client_id"`
 	UserID               string         `json:"user_id"`
 	Username             string         `json:"username"`
 	DisplayName          string         `json:"display_name"`
-	Scopes               []string       `json:"scopes"`
 	RedirectURI          string         `json:"redirect_uri"`
-	AuthTime             time.Time      `json:"auth_time"`
-	AccessTokenIssuedAt  time.Time      `json:"access_token_issued_at,omitzero"`
-	AccessTokenExpiresAt time.Time      `json:"access_token_expires_at,omitzero"`
-	MFACompleted         bool           `json:"mfa_completed,omitempty"`
 	MFAMethod            string         `json:"mfa_method,omitempty"`
 	Nonce                string         `json:"nonce,omitempty"`
 	CodeChallenge        string         `json:"code_challenge,omitempty"`
 	CodeChallengeMethod  string         `json:"code_challenge_method,omitempty"`
 	AccessToken          string         `json:"access_token,omitempty"`
 	AccessTokenAudience  string         `json:"access_token_audience,omitempty"`
-	IDTokenClaims        map[string]any `json:"id_token_claims"`
-	AccessTokenClaims    map[string]any `json:"access_token_claims"`
+	AccessTokenIssuer    string         `json:"access_token_issuer,omitempty"`
 	RefreshFamilyID      string         `json:"refresh_family_id,omitempty"`
 	DynamicUserEpoch     string         `json:"dynamic_user_epoch,omitempty"`
+	IDTokenClaims        map[string]any `json:"id_token_claims"`
+	AccessTokenClaims    map[string]any `json:"access_token_claims"`
+	AuthTime             time.Time      `json:"auth_time"`
+	AccessTokenIssuedAt  time.Time      `json:"access_token_issued_at,omitzero"`
+	AccessTokenExpiresAt time.Time      `json:"access_token_expires_at,omitzero"`
 	RequiredMFALevel     int            `json:"required_mfa_level,omitempty"`
+	MFACompleted         bool           `json:"mfa_completed,omitempty"`
+	ServiceToken         bool           `json:"service_token,omitempty"`
 }
 
 // RedisTokenStorage handles OIDC token/session persistence in Redis.

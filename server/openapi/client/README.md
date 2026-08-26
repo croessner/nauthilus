@@ -51,6 +51,46 @@ not assignable to `BackchannelAuth`; Policy Bearer tokens and Policy-Basic
 credentials are accepted only by `/api/v1/policy/decisions` and must never be
 used to imply management/backchannel access.
 
+## Exact Resource Authentication
+
+`BearerToken` is for the management/backchannel resource and requires an access
+token whose exact single audience is `nauthilus:backchannel` plus the issuer-owned
+non-empty `client_id` emitted for service tokens. A browser access token cannot
+qualify by using a colliding client audience. `PolicyBearerToken`
+is for the Policy resource and requires all of the following:
+
+- the normalized audience set is exactly `{nauthilus:policy}`;
+- `nauthilus:policy_evaluate` is present;
+- `nauthilus:policy_diagnostics` is also present when sanitized diagnostics are
+  explicitly requested; and
+- the token contains one issuer-validated, issuer-owned `client_id` that matches
+  an admitted Policy client profile.
+
+Policy authentication never substitutes `sub`, `azp`, or `iss` for a missing
+or ambiguous `client_id`. Policy endpoints reject backchannel tokens, and
+management/backchannel endpoints reject Policy tokens. The constructors do not
+rewrite scopes or infer an audience; they preserve the caller's explicit token
+choice.
+
+For Nauthilus-issued client-credentials tokens, scope families are classified
+before persistence. A request containing one or both Policy-family scopes
+(`nauthilus:policy_evaluate`, `nauthilus:policy_diagnostics`) and no backchannel
+scope receives `aud=nauthilus:policy`. A request with no Policy scope, including
+an empty request or one containing only existing non-Policy service scopes,
+receives `aud=nauthilus:backchannel`. Mixing either Policy scope with a
+backchannel scope fails with `invalid_scope` and writes no token, session, or
+flow state. If client filtering would remove or replace an explicitly requested
+resource family, the request also fails with `invalid_scope` before issuance.
+A client that calls both resources must obtain, cache, and rotate
+two independent tokens. External issuers must preserve the same exact resource
+separation.
+
+`PolicyBasicCredentials` is also distinct from management Basic credentials.
+Policy-Basic has no OAuth scope and receives authority only from its exact
+enabled Policy client profile over a protected transport. This supported
+client boundary does not activate the standalone production Policy
+configuration; that remains an atomic server-configuration cutover.
+
 Document-style downloads such as OpenAPI YAML and SAML metadata intentionally
 return raw `*http.Response` values from the generated client. JSON management
 and discovery workflows return generated response wrappers.

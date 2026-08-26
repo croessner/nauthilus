@@ -84,6 +84,22 @@ identity:
 - **Dynamic Mapping**: LDAP attributes or Lua results are mapped to OIDC claims at runtime.
 - **Logout**: Supports RP-initiated logout as well as Front-channel and Back-channel logout.
 
+### Authentication Boundary And Browser State
+
+OIDC authorization-code and device-code login, SAML authentication, delayed response, and the identity lookups needed
+by MFA, WebAuthn, backend affinity, and claim release use the common authentication application boundary. Each protocol
+adapter selects an exact host-owned internal caller profile and maps the operation's explicit transport, OIDC-client or
+SAML-SP, correlation, localization, requested-attribute, and existing backend-affinity facts. Generation-backed
+candidate tests prove that these profiles enter the shared Decision Service admission and checkpoint runtime. Production
+continues to use the current application executor; the candidate Decision Service is not constructed there before the
+later atomic authority cutover.
+
+Browser and protocol state stays with the IdP. The browser carries only an authenticated opaque session envelope and
+opaque local flow or ceremony handles. Identity, backend affinity, OIDC/SAML/device flows, delayed-response latches,
+MFA assurance, enrollment, WebAuthn ceremonies, consent, and claim-release lifecycle live in their typed server-side
+owners. These records are not copied into generic target evaluation; IdP handlers apply the detached authentication or
+identity outcome after the current application returns. The candidate checkpoint proof receives none of this state.
+
 ### 3.1 Important OIDC Terms for Administrators
 
 To configure Nauthilus optimally, you should be familiar with the following terms:
@@ -118,11 +134,29 @@ Nauthilus now also supports **Opaque Access Tokens**. When enabled:
 
 This can be configured globally or per client using the `access_token_type: "opaque"` setting.
 
-Client-credentials access tokens are bound to the protected Nauthilus backchannel API. JWT tokens carry
-`token_type=access_token` and `aud=nauthilus:backchannel`; opaque tokens expose the same claims after validation.
-Backchannel bearer authentication rejects tokens without that purpose and audience.
+Client-credentials access tokens are bound to exactly one Nauthilus resource. Nauthilus classifies the requested
+scopes before writing any token, session, or flow state:
+
+- A request containing one or both Policy-family scopes (`nauthilus:policy_evaluate` and
+  `nauthilus:policy_diagnostics`) and no backchannel scope receives the single audience `nauthilus:policy`.
+- A request with no Policy scope, including an empty request or one containing only existing non-Policy service scopes,
+  receives the single audience `nauthilus:backchannel`.
+- A request that mixes either Policy scope with any backchannel scope fails with `invalid_scope` before persistence.
+- An explicit requested resource family that client filtering would remove or replace also fails with `invalid_scope`;
+  it cannot silently become a token for the other resource.
+
+JWT tokens carry `token_type=access_token`, the exact resource audience, and the issuer-owned `client_id`. Opaque-token
+validation and introspection expose the same claims. Policy HTTP and gRPC endpoints require the normalized audience set
+to be exactly `{nauthilus:policy}` and use only the validated `client_id` as the service-client identity; they do not
+fall back to `sub`, `azp`, or `iss`. Backchannel routes reject Policy tokens, and Policy routes reject backchannel
+tokens. Backchannel HTTP and gRPC additionally require the issuer-owned non-empty `client_id` emitted for service
+tokens, so a browser access token with a colliding client audience is rejected. A client that needs both resources must
+request, cache, and rotate two independent tokens. Audience is an
+issuer-owned token/session property after issuance and is never inferred from scopes by a protected endpoint.
+
 The `openid` scope is rejected for `client_credentials` with `invalid_scope`; service tokens do not represent an
-end-user identity and cannot receive ID tokens or UserInfo claims.
+end-user identity and cannot receive ID tokens or UserInfo claims. This resource contract does not activate the
+standalone production Policy configuration, which remains an atomic configuration-cutover concern.
 
 #### KID (Signing Key ID)
 

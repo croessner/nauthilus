@@ -58,6 +58,35 @@ documented, or restored as a compatibility path. Route inventory tests,
 handler reachability tests, single-use issuance tests, and session-revocation
 tests are the executable proof of this boundary.
 
+## Authentication Application Boundary
+
+OIDC authorization-code and device-code journeys, SAML, delayed response, MFA
+follow-up lookups, WebAuthn backend lookups, backend affinity, identity
+materialization, and claim release use the common `AuthApplicationService`
+boundary when they need authentication-domain work. Each adapter selects an
+exact host-owned internal caller profile and supplies explicit operation,
+protocol or transport, OIDC-client or SAML-SP, correlation, localization,
+requested-attribute, and existing backend-affinity facts. The shared Decision
+Service admission and common authentication checkpoints are proven by a
+generation-backed candidate harness. Production continues to construct the
+current application executor; the candidate Decision Service remains inactive
+there until the later atomic authority cutover.
+
+That boundary does not absorb browser state. The envelope, `SessionAnchor`,
+OIDC/SAML flow, device verification, delayed-response latch, consent,
+enrollment, step-up, assurance, WebAuthn ceremony, and claim-release lifecycle
+remain owned by their canonical IdP/session repositories. Generic target input
+contains none of those records. Domain handlers validate and transition them,
+invoke the application service with the minimum typed facts for the current
+operation, and apply the detached outcome afterward. Ceremony verification and
+protocol issuance therefore remain domain operations rather than alternate
+policy evaluators.
+
+This convergence does not activate the standalone production Policy
+configuration. Its configuration and runtime generation remain one later
+atomic server-state cutover, with no second active policy authority in the
+browser runtime.
+
 ## Direct Cookie Manager Prohibition Matrix
 
 | Executable boundary | Browser state authority | Direct `cookie.Manager` allowed | Required proof |
@@ -88,7 +117,7 @@ must be removed, not retained as a dormant alternate runtime.
 
 ## Executable Invariant Matrix
 
-| Invariant | Slice A structural test | Future runtime owner and proof |
+| Invariant | Structural proof | Runtime owner and proof |
 | --- | --- | --- |
 | Bounded envelope size | `TestContractCatalogCoversCanonicalRuntimeInvariants` | Envelope codec size and cookie-property tests |
 | Server-side business-state ownership | `TestCanonicalEnvelopeOwnsNoBusinessState` | Typed repository and browser-cookie tests |
@@ -121,7 +150,7 @@ one slot while record families remain separately keyed.
 | SAML flow | `saml_flow` | interactive TTL capped to live parent | isolated CAS; never loads through OIDC repository |
 | Required-MFA enrollment | `required_mfa_enrollment` | short flow TTL capped to live parent | session and flow binding required |
 | Dynamic step-up | `step_up` | freshness/operation TTL capped to live parent | enrollment-independent revision CAS |
-| WebAuthn ceremony | `webauthn_ceremony` | short ceremony TTL capped to live parent | typed binding; later ceremony slice owns single-use consume |
+| WebAuthn ceremony | `webauthn_ceremony` | short ceremony TTL capped to live parent | typed binding and atomic single-use consume |
 | TOTP/recovery operation | `totp_recovery` | short operation TTL capped to live parent | pending material remains server-side |
 
 Every hash carries schema version, owner, revision, payload, explicit expiry,
@@ -132,5 +161,6 @@ writes the anchor tombstone before idempotent child deletion. Loading a child
 without a live matching parent purges the orphan and returns a fail-closed
 classification.
 
-These stores are not connected to cookie middleware or production browser
-flows in Slice B.
+These stores are the active production browser-state authority behind the
+canonical middleware and handlers. The canonical envelope remains only an
+authenticated reference; no typed record payload is serialized into it.

@@ -18,7 +18,6 @@ package idp
 import (
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
@@ -57,37 +56,6 @@ func setupMockContext(ctx *gin.Context, guid, service string) {
 	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 }
 
-func TestPrepareUserLookupAuthStateKeepsExplicitUsername(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	body := strings.NewReader("username=target%40example.test%2Amaster%40example.test&password=secret")
-	ctx.Request = httptest.NewRequest("POST", "/login", body)
-	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	setupMockContext(ctx, "test-lookup-username-guid", definitions.ServIDP)
-
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			Redis: config.Redis{
-				Prefix: testRedisPrefix,
-			},
-		},
-	}
-	db, _ := redismock.NewClientMock()
-	authRaw := core.NewAuthStateFromContextWithDeps(ctx, (&deps.Deps{
-		Cfg:          cfg,
-		Redis:        rediscli.NewTestClient(db),
-		AccountCache: accountcache.NewManager(cfg),
-	}).Auth())
-	authState := authRaw.(*core.AuthState)
-
-	prepareUserLookupAuthState(ctx, authState, "master@example.test", "client1", "", nil)
-
-	assert.Equal(t, "master@example.test", authState.GetUsername())
-	assert.True(t, authState.Request.NoAuth)
-}
-
 func TestNauthilusIDP_Authenticate_Integration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -104,9 +72,11 @@ func TestNauthilusIDP_Authenticate_Integration(t *testing.T) {
 
 	d := &deps.Deps{
 		Cfg:          cfg,
+		Env:          config.NewTestEnvironmentConfig(),
 		Redis:        redisClient,
 		AccountCache: accountcache.NewManager(cfg),
 	}
+	d.AuthApplication = core.NewAuthApplicationService(d.Auth())
 	idp := NewNauthilusIDP(d)
 
 	for _, tc := range authIntegrationFlowCases() {
@@ -167,16 +137,21 @@ func assertAuthIntegrationFlow(t *testing.T, idp *NauthilusIDP, mock redismock.C
 	mock.ExpectHGet(tc.redisKey, tc.redisField).RedisNil()
 
 	// Authentication is expected to fail because this test intentionally omits backends.
+	protocolContext := core.IDPRequestContext{}
+	if tc.clientID != "" {
+		protocolContext.GrantType = definitions.OIDCFlowAuthorizationCode
+	}
+
 	result, err := idp.AuthenticateWithBackend(
 		ctx,
 		tc.username,
 		tc.password,
 		tc.clientID,
 		tc.serviceProviderID,
-		core.IDPRequestContext{},
+		protocolContext,
 	)
 
 	assert.Error(t, err)
 	assert.Nil(t, result.User)
-	assert.Contains(t, err.Error(), "authentication failed with result")
+	assert.Contains(t, err.Error(), "authentication failed with decision")
 }

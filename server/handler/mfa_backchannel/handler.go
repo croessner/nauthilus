@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/gin-gonic/gin"
@@ -83,58 +84,104 @@ type webauthnRequest struct {
 	OldCredential string `json:"old_credential"`
 }
 
-func (h *Handler) buildAuthState(ctx *gin.Context, username string, externalSessionID string) (*core.AuthState, error) {
+type mfaBackendSelection struct {
+	backendRef core.RemoteBackendRef
+	name       string
+	backend    definitions.Backend
+}
+
+// buildAuthState admits the target identity and adds only operation-specific external-session context.
+func (h *Handler) buildAuthState(
+	ctx *gin.Context,
+	selection mfaBackendSelection,
+	username string,
+	externalSessionID string,
+) (*core.AuthState, error) {
 	if h.deps == nil {
 		return nil, errors.New("handler dependencies are missing")
 	}
 
-	if ctx.GetString(definitions.CtxServiceKey) == "" {
-		ctx.Set(definitions.CtxServiceKey, definitions.ServBasic)
+	lookup, err := idp.NewNauthilusIDP(h.deps).LookupMFAIdentity(ctx, idp.MFAIdentityLookupRequest{
+		BackendRef: selection.backendRef,
+		Username:   username,
+		Protocol:   definitions.ProtoIDP,
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	state := core.NewAuthStateFromContextWithDeps(ctx, h.deps.Auth())
-	authState := state.(*core.AuthState)
-
-	svc := ctx.GetString(definitions.CtxServiceKey)
-	if svc == "" {
-		svc = definitions.ServBasic
+	if lookup.User == nil || lookup.AuthState == nil || lookup.User.Name != strings.TrimSpace(username) {
+		return nil, errors.New("MFA backchannel identity binding mismatch")
 	}
 
-	authState.SetStatusCodes(svc)
-	authState.WithClientInfo(ctx)
-	authState.WithLocalInfo(ctx)
-	authState.WithUserAgent(ctx)
-	authState.WithXSSL(ctx)
-	authState.InitMethodAndUserAgent()
-	authState.WithDefaults(ctx)
-	authState.SetUsername(username)
-	authState.ApplyContextData(core.NewAuthContext(core.WithExternalSessionID(externalSessionID)))
+	if !selection.matches(lookup.AuthState) {
+		return nil, errors.New("MFA backchannel backend binding mismatch")
+	}
 
-	return authState, nil
+	lookup.AuthState.ApplyContextData(core.NewAuthContext(core.WithExternalSessionID(externalSessionID)))
+
+	return lookup.AuthState, nil
 }
 
+// newMFABackendSelection normalizes the explicit mutation target before identity admission.
+func newMFABackendSelection(backendType string, backendName string) (mfaBackendSelection, error) {
+	name := strings.TrimSpace(backendName)
+	if name == "" {
+		name = definitions.DefaultBackendName
+	}
+
+	selection := mfaBackendSelection{name: name}
+
+	switch strings.ToLower(strings.TrimSpace(backendType)) {
+	case "", definitions.BackendLuaName:
+		selection.backend = definitions.BackendLua
+		selection.backendRef = core.RemoteBackendRef{
+			Type: definitions.BackendLuaName, Name: name, Protocol: definitions.ProtoIDP,
+		}
+	case definitions.BackendLDAPName:
+		selection.backend = definitions.BackendLDAP
+		selection.backendRef = core.RemoteBackendRef{
+			Type: definitions.BackendLDAPName, Name: name, Protocol: definitions.ProtoIDP,
+		}
+	default:
+		return mfaBackendSelection{}, errors.New("unsupported backend")
+	}
+
+	return selection, nil
+}
+
+// matches reports whether application admission resolved the exact requested mutation backend.
+func (s mfaBackendSelection) matches(authState *core.AuthState) bool {
+	if authState == nil || authState.Runtime.UsedPassDBBackend != s.backend {
+		return false
+	}
+
+	resolvedName := strings.TrimSpace(authState.Runtime.BackendName)
+	if resolvedName == "" {
+		resolvedName = definitions.DefaultBackendName
+	}
+
+	return resolvedName == s.name
+}
+
+// resolveBackend admits the identity and returns only its exact selected backend manager.
 func (h *Handler) resolveBackend(ctx *gin.Context, backendType string, backendName string, username string, externalSessionID string) (core.BackendManager, *core.AuthState, error) {
-	authState, err := h.buildAuthState(ctx, username, externalSessionID)
+	selection, err := newMFABackendSelection(backendType, backendName)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if backendName == "" {
-		backendName = definitions.DefaultBackendName
+	authState, err := h.buildAuthState(ctx, selection, username, externalSessionID)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	backendType = strings.ToLower(strings.TrimSpace(backendType))
-
-	authDeps := h.deps.Auth()
-
-	switch backendType {
-	case "", "lua":
-		return core.NewLuaManager(backendName, authDeps), authState, nil
-	case "ldap":
-		return core.NewLDAPManager(backendName, authDeps), authState, nil
-	default:
-		return nil, nil, errors.New("unsupported backend")
+	manager := authState.GetBackendManager(selection.backend, selection.name)
+	if manager == nil {
+		return nil, nil, errors.New("MFA backchannel backend unavailable")
 	}
+
+	return manager, authState, nil
 }
 
 func parseCredential(raw string) (*mfa.PersistentCredential, error) {

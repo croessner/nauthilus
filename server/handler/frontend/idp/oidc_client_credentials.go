@@ -42,13 +42,14 @@ func (h *OIDCHandler) handleClientCredentialsTokenExchange(ctx *gin.Context, cli
 	}
 
 	requestedScopes := strings.Fields(formValue(ctx, "scope"))
-	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
-	if err := oidcserver.ValidateClientCredentialsScopes(filteredScopes); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			frontChannelLogoutTaskStatusError: oidcErrorInvalidScope,
-			oidcJSONErrorDescriptionKey:       err.Error(),
-		})
 
+	if !validateClientCredentialsTokenScopes(ctx, requestedScopes) {
+		return
+	}
+
+	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
+
+	if !validateClientCredentialsTokenScopeTransition(ctx, requestedScopes, filteredScopes) {
 		return
 	}
 
@@ -63,4 +64,31 @@ func (h *OIDCHandler) handleClientCredentialsTokenExchange(ctx *gin.Context, cli
 		accessToken: accessToken,
 		expiresIn:   expiresIn,
 	})
+}
+
+// validateClientCredentialsTokenScopes rejects identity and mixed-resource scope sets.
+func validateClientCredentialsTokenScopes(ctx *gin.Context, scopes []string) bool {
+	return acceptClientCredentialsScopeValidation(ctx, oidcserver.ValidateClientCredentialsScopes(scopes))
+}
+
+// validateClientCredentialsTokenScopeTransition rejects resource-family changes introduced by client filtering.
+func validateClientCredentialsTokenScopeTransition(ctx *gin.Context, requestedScopes []string, effectiveScopes []string) bool {
+	return acceptClientCredentialsScopeValidation(
+		ctx,
+		oidcserver.ValidateClientCredentialsScopeTransition(requestedScopes, effectiveScopes),
+	)
+}
+
+// acceptClientCredentialsScopeValidation maps one resource-classification result to the OAuth boundary.
+func acceptClientCredentialsScopeValidation(ctx *gin.Context, err error) bool {
+	if err == nil {
+		return true
+	}
+
+	ctx.JSON(http.StatusBadRequest, gin.H{
+		frontChannelLogoutTaskStatusError: oidcErrorInvalidScope,
+		oidcJSONErrorDescriptionKey:       err.Error(),
+	})
+
+	return false
 }

@@ -111,6 +111,7 @@ func TestAccessTokenReservedClaimsRemainCanonical(t *testing.T) {
 	assert.Equal(t, "client1", signer.claims["aud"])
 	assert.Equal(t, "openid profile", signer.claims["scope"])
 	assert.Nil(t, signer.claims["active"])
+	assert.Nil(t, signer.claims["client_id"])
 	assert.NotEqual(t, int64(1), signer.claims["exp"])
 	assert.NotEqual(t, int64(1), signer.claims["iat"])
 	assert.Equal(t, definitions.TokenTypeAccessToken, signer.claims[definitions.ClaimTokenType])
@@ -123,11 +124,48 @@ func TestAccessTokenReservedClaimsRemainCanonical(t *testing.T) {
 	assert.Equal(t, "client1", claims["aud"])
 	assert.Equal(t, "openid profile", claims["scope"])
 	assert.Nil(t, claims["active"])
+	assert.Nil(t, claims["client_id"])
 	assert.Nil(t, claims["iss"])
 	assert.Nil(t, claims["exp"])
 	assert.Nil(t, claims["iat"])
 	assert.Equal(t, definitions.TokenTypeAccessToken, claims[definitions.ClaimTokenType])
 	assert.Equal(t, "allowed", claims["custom_access"])
+}
+
+func TestClientCredentialsAccessTokenClaimsIdentifyIssuerAndClient(t *testing.T) {
+	const (
+		clientID = "policy-client"
+		issuer   = "https://issuer.local"
+	)
+
+	session := &OIDCSession{
+		ClientID:            clientID,
+		UserID:              clientID,
+		Scopes:              []string{definitions.ScopePolicyEvaluate},
+		AccessTokenAudience: definitions.AudiencePolicyAPI,
+		AccessTokenIssuer:   issuer,
+		ServiceToken:        true,
+		AccessTokenClaims: map[string]any{
+			"client_id": "attacker-client",
+			"iss":       "https://evil.example.test",
+		},
+	}
+	signer := &captureAccessTokenSigner{}
+
+	jwtToken := NewJWTAccessToken(issuer, signer, session, time.Hour)
+	_, _, err := jwtToken.Issue(t.Context())
+
+	assert.NoError(t, err)
+	assert.Equal(t, definitions.AudiencePolicyAPI, signer.claims["aud"])
+	assert.Equal(t, clientID, signer.claims["client_id"])
+	assert.Equal(t, issuer, signer.claims["iss"])
+
+	opaqueToken := NewOpaqueAccessToken(session, nil, nil, time.Hour)
+	claims := opaqueToken.ClaimsFromSession(session)
+
+	assert.Equal(t, definitions.AudiencePolicyAPI, claims["aud"])
+	assert.Equal(t, clientID, claims["client_id"])
+	assert.Equal(t, issuer, claims["iss"])
 }
 
 type captureAccessTokenSigner struct {

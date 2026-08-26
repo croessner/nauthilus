@@ -94,7 +94,7 @@ type Deps struct {
 	Svc          Services
 	LangManager  language.Manager
 	TokenFlusher core.TokenFlusher
-	// AuthApplication is the shared authentication application boundary for backchannel transports.
+	// AuthApplication is the shared authentication application boundary for backchannel and IdP transports.
 	AuthApplication core.AuthApplicationService
 	// MessageResolver resolves policy-selected status messages for IDP UI rendering.
 	MessageResolver localization.MessageResolver

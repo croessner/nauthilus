@@ -32,9 +32,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/idp/oidckeys"
 	"github.com/croessner/nauthilus/v3/server/idp/signing"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
-	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/croessner/nauthilus/v3/server/sessionstate"
-	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
@@ -44,22 +42,14 @@ import (
 
 // NauthilusIDP provides the canonical OIDC and SAML identity services.
 type NauthilusIDP struct {
-	deps                   *deps.Deps
-	storage                *RedisTokenStorage
-	tracer                 monittrace.Tracer
-	keyMgr                 *oidckeys.Manager
-	tokenGen               TokenGenerator
-	dynamicClients         *dcr.Repository
-	passwordIdentityLoader passwordIdentityLoader
+	deps            *deps.Deps
+	storage         *RedisTokenStorage
+	tracer          monittrace.Tracer
+	keyMgr          *oidckeys.Manager
+	tokenGen        TokenGenerator
+	dynamicClients  *dcr.Repository
+	authApplication *idpAuthApplicationBridge
 }
-
-type passwordIdentityLoader func(
-	*gin.Context,
-	string,
-	string,
-	string,
-	core.IDPRequestContext,
-) (PasswordAuthentication, error)
 
 var (
 	// ErrInvalidRefreshToken indicates the submitted refresh token was unknown or expired.
@@ -74,12 +64,13 @@ func NewNauthilusIDP(d *deps.Deps) *NauthilusIDP {
 	dynamicPolicy := d.Cfg.GetIDP().OIDC.DynamicClientRegistration
 
 	return &NauthilusIDP{
-		deps:           d,
-		storage:        NewRedisTokenStorageWithConfig(d.Redis, prefix, d.Cfg, dcr.NewSlogAuditor(d.Logger)),
-		tracer:         monittrace.New("nauthilus/idp"),
-		keyMgr:         oidckeys.NewManager(d),
-		tokenGen:       NewDefaultTokenGenerator(),
-		dynamicClients: dcr.NewRepository(d.Redis, prefix, dynamicPolicy.GetLifecycle(), dcr.NewSlogAuditor(d.Logger)),
+		deps:            d,
+		storage:         NewRedisTokenStorageWithConfig(d.Redis, prefix, d.Cfg, dcr.NewSlogAuditor(d.Logger)),
+		tracer:          monittrace.New("nauthilus/idp"),
+		keyMgr:          oidckeys.NewManager(d),
+		tokenGen:        NewDefaultTokenGenerator(),
+		dynamicClients:  dcr.NewRepository(d.Redis, prefix, dynamicPolicy.GetLifecycle(), dcr.NewSlogAuditor(d.Logger)),
+		authApplication: newIDPAuthApplicationBridge(d),
 	}
 }
 
@@ -532,11 +523,13 @@ func (n *NauthilusIDP) IssueClientCredentialsToken(ctx context.Context, clientID
 		return "", 0, fmt.Errorf("client_credentials requires confidential client authentication")
 	}
 
-	if err := ValidateClientCredentialsScopes(scopes); err != nil {
+	resource, err := classifyClientCredentialsScopes(scopes)
+	if err != nil {
 		return "", 0, err
 	}
 
 	accessTokenLifetime := client.AccessTokenLifetime
+
 	if accessTokenLifetime == 0 {
 		accessTokenLifetime = n.deps.Cfg.GetIDP().OIDC.GetDefaultAccessTokenLifetime()
 	}
@@ -550,14 +543,16 @@ func (n *NauthilusIDP) IssueClientCredentialsToken(ctx context.Context, clientID
 		return "", 0, fmt.Errorf("failed to get active signing key: %w", err)
 	}
 
-	// Build session for client credentials (no user, client is the subject)
+	// Build a service-token session without browser or user-flow state.
 	session := &OIDCSession{
 		ClientID:            clientID,
 		UserID:              clientID,
-		Scopes:              scopes,
+		Scopes:              slices.Clone(scopes),
 		AuthTime:            time.Now(),
-		AccessTokenAudience: clientCredentialsAccessTokenAudience(scopes),
+		AccessTokenAudience: resource.audience(),
+		AccessTokenIssuer:   issuer,
 		AccessTokenClaims:   make(map[string]any),
+		ServiceToken:        true,
 	}
 
 	// Access Token
@@ -1039,13 +1034,39 @@ func (n *NauthilusIDP) AuthenticateWithBackend(
 	samlEntityID string,
 	protocolContext core.IDPRequestContext,
 ) (PasswordAuthentication, error) {
+	if n == nil || n.authApplication == nil {
+		return PasswordAuthentication{}, fmt.Errorf("%w: idp auth application", core.ErrAuthApplicationDependencyMissing)
+	}
+
 	typedContext := protocolContext
 	typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
-	result, _, err := n.authenticatePassword(ctx, username, password, oidcCID, samlEntityID, &typedContext)
+
+	entryPoint, err := idpAuthenticationEntry(oidcCID, samlEntityID, typedContext)
+	if err != nil {
+		return PasswordAuthentication{}, err
+	}
+
+	outcome, _, err := n.authApplication.authenticate(ctx, idpAuthApplicationRequest{
+		protocolContext: typedContext,
+		username:        username,
+		password:        password,
+		oidcClientID:    oidcCID,
+		samlEntityID:    samlEntityID,
+		entryPoint:      entryPoint,
+	})
+	if err != nil {
+		return PasswordAuthentication{}, err
+	}
+
+	result, err := passwordAuthenticationFromOutcome(outcome)
+	if err == nil {
+		err = authFailureFromOutcome(outcome)
+	}
+
 	if err != nil && n.IsDelayedResponse(oidcCID, samlEntityID) &&
 		delayedPasswordFailureEligible(err) {
 		if hydrated, lookupErr := n.lookupPasswordIdentity(
-			ctx, username, oidcCID, samlEntityID, typedContext,
+			ctx, username, oidcCID, samlEntityID, core.AuthnEntryIDPDelayedIdentity, typedContext,
 		); lookupErr == nil {
 			result = hydrated
 		} else if n.deps.Logger != nil {
@@ -1077,6 +1098,23 @@ func (n *NauthilusIDP) AuthenticateWithBackend(
 	}
 
 	return result, err
+}
+
+// passwordAuthenticationFromOutcome projects admitted identity and backend ownership from an application outcome.
+func passwordAuthenticationFromOutcome(outcome *core.AuthOutcome) (PasswordAuthentication, error) {
+	if outcome == nil {
+		return PasswordAuthentication{}, core.ErrAuthOutcomeMissing
+	}
+
+	result := PasswordAuthentication{
+		User:       backendUserFromOutcomeIdentity(outcome),
+		BackendRef: outcome.RemoteBackendRef,
+	}
+	if outcome.Decision == core.AuthDecisionOK && result.User == nil {
+		return PasswordAuthentication{}, fmt.Errorf("successful password authentication returned no identity")
+	}
+
+	return result, nil
 }
 
 func delayedPasswordFailureEligible(err error) bool {
@@ -1117,7 +1155,9 @@ func (n *NauthilusIDP) bindPasswordMFAIdentity(
 		return PasswordAuthentication{}, sessionstate.ErrBindingMismatch
 	}
 
-	factor, err := n.lookupPasswordIdentity(ctx, master, oidcCID, samlEntityID, protocolContext)
+	factor, err := n.lookupPasswordIdentity(
+		ctx, master, oidcCID, samlEntityID, core.AuthnEntryIDPMasterFactor, protocolContext,
+	)
 	if err != nil {
 		return PasswordAuthentication{}, err
 	}
@@ -1138,14 +1178,11 @@ func (n *NauthilusIDP) lookupPasswordIdentity(
 	username string,
 	oidcCID string,
 	samlEntityID string,
+	entryPoint core.AuthnEntryPoint,
 	protocolContext core.IDPRequestContext,
 ) (PasswordAuthentication, error) {
-	if n == nil || ctx == nil || ctx.Request == nil {
+	if n == nil || n.authApplication == nil || ctx == nil || ctx.Request == nil {
 		return PasswordAuthentication{}, fmt.Errorf("password identity lookup unavailable")
-	}
-
-	if n.passwordIdentityLoader != nil {
-		return n.passwordIdentityLoader(ctx, username, oidcCID, samlEntityID, protocolContext)
 	}
 
 	attributeRequest, err := n.delayedPasswordIdentityAttributes(ctx.Request.Context(), oidcCID, samlEntityID, protocolContext)
@@ -1153,32 +1190,26 @@ func (n *NauthilusIDP) lookupPasswordIdentity(
 		return PasswordAuthentication{}, err
 	}
 
-	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
-
-	auth, ok := authRaw.(*core.AuthState)
-	if !ok || auth == nil {
-		return PasswordAuthentication{}, fmt.Errorf("failed to create password identity AuthState")
-	}
-
-	prepareUserLookupAuthState(ctx, auth, username, oidcCID, samlEntityID, attributeRequest)
-
 	typedContext := protocolContext
 	typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
-	auth.Runtime.IDPContext = &typedContext
 
-	if result := auth.HandlePassword(ctx); result != definitions.AuthResultOK {
-		return PasswordAuthentication{}, fmt.Errorf("failed to load password identity: %d", result)
-	}
-
-	result, err := n.passwordAuthenticationFromState(auth)
+	outcome, _, err := n.authApplication.lookupIdentity(ctx, idpAuthApplicationRequest{
+		attributeRequest: attributeRequest,
+		protocolContext:  typedContext,
+		username:         username,
+		oidcClientID:     oidcCID,
+		samlEntityID:     samlEntityID,
+		entryPoint:       entryPoint,
+	})
 	if err != nil {
-		return PasswordAuthentication{}, fmt.Errorf(
-			"password identity materialization: %w (user_found=%t account=%q account_field=%q)",
-			err, auth.Runtime.UserFound, auth.GetAccount(), auth.Runtime.AccountField,
-		)
+		return PasswordAuthentication{}, err
 	}
 
-	return result, nil
+	if err := authFailureFromOutcome(outcome); err != nil {
+		return PasswordAuthentication{}, err
+	}
+
+	return passwordAuthenticationFromOutcome(outcome)
 }
 
 func (n *NauthilusIDP) delayedPasswordIdentityAttributes(
@@ -1210,199 +1241,6 @@ func (n *NauthilusIDP) delayedPasswordIdentityAttributes(
 	}
 
 	return nil, fmt.Errorf("delayed password protocol binding is missing")
-}
-
-func (n *NauthilusIDP) authenticatePassword(
-	ctx *gin.Context,
-	username string,
-	password string,
-	oidcCID string,
-	samlEntityID string,
-	protocolContext *core.IDPRequestContext,
-) (PasswordAuthentication, *core.AuthState, error) {
-	spanCtx, sp := n.tracer.Start(ctx.Request.Context(), "idp.authenticate",
-		attribute.String("username", username),
-		attribute.String("oidc_cid", oidcCID),
-		attribute.String("saml_entity_id", samlEntityID),
-	)
-	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
-
-	defer requestScope.Restore()
-	defer sp.End()
-
-	auth, err := n.newPasswordAuthState(ctx, username, password, oidcCID, samlEntityID, protocolContext, sp)
-	if err != nil {
-		return PasswordAuthentication{}, nil, err
-	}
-
-	if err := n.rejectBruteForceAuthentication(ctx, auth, sp); err != nil {
-		return PasswordAuthentication{}, auth, err
-	}
-
-	if err := n.rejectEnvironmentAuthentication(ctx, auth, sp); err != nil {
-		return PasswordAuthentication{}, auth, err
-	}
-
-	if err := n.rejectPasswordAuthentication(ctx, auth, sp); err != nil {
-		result, _ := n.passwordAuthenticationFromState(auth)
-
-		return result, auth, err
-	}
-
-	result, err := n.passwordAuthenticationFromState(auth)
-	if err != nil {
-		return PasswordAuthentication{}, auth, err
-	}
-
-	return result, auth, nil
-}
-
-func (n *NauthilusIDP) passwordAuthenticationFromState(auth *core.AuthState) (PasswordAuthentication, error) {
-	user, err := n.userFromAuthState(auth)
-	if err != nil {
-		return PasswordAuthentication{}, err
-	}
-
-	return PasswordAuthentication{User: user, BackendRef: auth.Runtime.RemoteBackendRef}, nil
-}
-
-// newPasswordAuthState creates and configures AuthState for password authentication.
-func (n *NauthilusIDP) newPasswordAuthState(
-	ctx *gin.Context,
-	username string,
-	password string,
-	oidcCID string,
-	samlEntityID string,
-	protocolContext *core.IDPRequestContext,
-	sp trace.Span,
-) (*core.AuthState, error) {
-	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
-
-	auth, ok := authRaw.(*core.AuthState)
-	if !ok || auth == nil {
-		err := fmt.Errorf("failed to create AuthState")
-		sp.RecordError(err)
-
-		return nil, err
-	}
-
-	configurePasswordAuthState(auth, username, password, oidcCID, samlEntityID)
-
-	if protocolContext != nil {
-		typedContext := *protocolContext
-		typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
-		auth.Runtime.IDPContext = &typedContext
-	}
-	auth.FinishSetup(ctx)
-
-	return auth, nil
-}
-
-// configurePasswordAuthState applies caller credentials and protocol metadata.
-func configurePasswordAuthState(auth *core.AuthState, username string, password string, oidcCID string, samlEntityID string) {
-	auth.SetUsername(username)
-	auth.SetPassword(secret.New(password))
-	auth.SetMethod(definitions.AuthMethodPassword)
-	auth.SetOIDCCID(oidcCID)
-	auth.SetSAMLEntityID(samlEntityID)
-
-	if oidcCID != "" {
-		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
-	} else if samlEntityID != "" {
-		auth.SetProtocol(config.NewProtocol(definitions.ProtoSAML))
-	} else {
-		auth.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
-	}
-}
-
-// rejectBruteForceAuthentication applies pre-auth brute-force protection decisions.
-func (n *NauthilusIDP) rejectBruteForceAuthentication(ctx *gin.Context, auth *core.AuthState, sp trace.Span) error {
-	if !auth.CheckBruteForce(ctx) {
-		return nil
-	}
-
-	if auth.ApplyConfiguredPreAuthDecision(ctx) {
-		return n.finishAuthenticationFailure(ctx, auth, sp, definitions.AuthResultFail, bruteForceAuthenticationError(), false)
-	}
-
-	if handled, accepted := auth.ApplyConfiguredPreAuthControl(ctx); handled {
-		if !accepted {
-			auth.AuthTempFail(ctx, definitions.TempFailDefault)
-
-			return n.finishAuthenticationFailure(
-				ctx,
-				auth,
-				sp,
-				definitions.AuthResultTempFail,
-				fmt.Errorf("mandatory pre-auth post-action acceptance failed"),
-				false,
-			)
-		}
-
-		return nil
-	}
-
-	if auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
-		return nil
-	}
-
-	if auth.ApplyDefaultPreAuthDecision(ctx) {
-		return n.finishAuthenticationFailure(ctx, auth, sp, definitions.AuthResultFail, bruteForceAuthenticationError(), false)
-	}
-
-	auth.UpdateBruteForceBucketsCounter(ctx)
-
-	return n.finishAuthenticationFailure(ctx, auth, sp, definitions.AuthResultFail, bruteForceAuthenticationError(), true)
-}
-
-// rejectEnvironmentAuthentication fails authentication when pre-auth environment checks reject it.
-func (n *NauthilusIDP) rejectEnvironmentAuthentication(ctx *gin.Context, auth *core.AuthState, sp trace.Span) error {
-	res := auth.HandleEnvironment(ctx)
-	if res == definitions.AuthResultOK || res == definitions.AuthResultUnset {
-		return nil
-	}
-
-	return n.finishAuthenticationFailure(ctx, auth, sp, res, fmt.Errorf("authentication failed with pre-auth result: %d", res), true)
-}
-
-// rejectPasswordAuthentication fails authentication when password verification rejects it.
-func (n *NauthilusIDP) rejectPasswordAuthentication(ctx *gin.Context, auth *core.AuthState, sp trace.Span) error {
-	result := auth.HandlePassword(ctx)
-
-	auth.FinishLogging(ctx, result)
-
-	if result == definitions.AuthResultOK {
-		return nil
-	}
-
-	err := fmt.Errorf("authentication failed with result: %d", result)
-	sp.RecordError(err)
-
-	return n.authFailureError(ctx, auth, err, true)
-}
-
-// finishAuthenticationFailure records a failed authentication with optional AuthFail side effects.
-func (n *NauthilusIDP) finishAuthenticationFailure(
-	ctx *gin.Context,
-	auth *core.AuthState,
-	sp trace.Span,
-	result definitions.AuthResult,
-	err error,
-	markAuthFail bool,
-) error {
-	if markAuthFail {
-		auth.AuthFail(ctx)
-	}
-
-	auth.FinishLogging(ctx, result)
-	sp.RecordError(err)
-
-	return n.authFailureError(ctx, auth, err, false)
-}
-
-// bruteForceAuthenticationError returns the shared brute-force authentication failure.
-func bruteForceAuthenticationError() error {
-	return fmt.Errorf("authentication failed due to brute force protection")
 }
 
 // GetUserByUsernameForOIDCClaims retrieves user data needed for OIDC claim materialization.
@@ -1442,42 +1280,33 @@ func (n *NauthilusIDP) GetUserByUsernameForOIDCClaimsCanonical(
 		return nil, fmt.Errorf("canonical OIDC user lookup unavailable")
 	}
 
-	spanCtx, sp := n.tracer.Start(
-		ctx.Request.Context(), "idp.get_user_by_username.canonical",
-		attribute.String("oidc_cid", client.ClientID),
-	)
-
-	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
-	defer requestScope.Restore()
-	defer sp.End()
-
-	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
-
-	auth, ok := authRaw.(*core.AuthState)
-	if !ok || auth == nil {
-		err := fmt.Errorf("failed to create AuthState")
-		sp.RecordError(err)
-
-		return nil, err
-	}
-
 	effectiveScopes := n.deps.Cfg.GetIDP().OIDC.GetEffectiveCustomScopes(client)
 	attributeRequest := core.NewOIDCIdentityAttributeRequest(client, scopes, effectiveScopes)
-	prepareUserLookupAuthState(ctx, auth, username, client.ClientID, "", attributeRequest)
-
 	typedContext := protocolContext
 	typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
-	auth.Runtime.IDPContext = &typedContext
-	auth.Runtime.RemoteBackendRef = backendRef
 
-	if result := auth.HandlePassword(ctx); result != definitions.AuthResultOK {
-		err := fmt.Errorf("failed to load user: %d", result)
-		sp.RecordError(err)
-
+	entryPoint, err := idpOIDCLookupEntry(typedContext)
+	if err != nil {
 		return nil, err
 	}
 
-	return n.userFromAuthState(auth)
+	outcome, _, err := n.authApplication.lookupIdentity(ctx, idpAuthApplicationRequest{
+		attributeRequest: attributeRequest,
+		protocolContext:  typedContext,
+		backendRef:       backendRef,
+		username:         username,
+		oidcClientID:     client.ClientID,
+		entryPoint:       entryPoint,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := authFailureFromOutcome(outcome); err != nil {
+		return nil, err
+	}
+
+	return backendUserFromAuthOutcome(outcome)
 }
 
 // GetUserByUsernameForSAMLCanonical loads SAML attributes through only typed request state.
@@ -1492,113 +1321,27 @@ func (n *NauthilusIDP) GetUserByUsernameForSAMLCanonical(
 		return nil, fmt.Errorf("canonical SAML user lookup unavailable")
 	}
 
-	spanCtx, traceSpan := n.tracer.Start(
-		ctx.Request.Context(), "idp.get_user_by_username.saml.canonical",
-		attribute.String("saml_entity_id", spConfig.EntityID),
-	)
-	requestScope := util.NewHTTPRequestContextScope(spanCtx, &ctx.Request)
-	defer requestScope.Restore()
-	defer traceSpan.End()
-
-	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
-	auth, ok := authRaw.(*core.AuthState)
-	if !ok || auth == nil {
-		err := fmt.Errorf("failed to create AuthState")
-		traceSpan.RecordError(err)
-
-		return nil, err
-	}
-
 	attributeRequest := core.NewSAMLIdentityAttributeRequest(spConfig)
-	prepareUserLookupAuthState(ctx, auth, username, "", spConfig.EntityID, attributeRequest)
-
 	typedContext := protocolContext
 	typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
-	auth.Runtime.IDPContext = &typedContext
-	auth.Runtime.RemoteBackendRef = backendRef
 
-	if result := auth.HandlePassword(ctx); result != definitions.AuthResultOK {
-		err := fmt.Errorf("failed to load user: %d", result)
-		traceSpan.RecordError(err)
-
+	outcome, _, err := n.authApplication.lookupIdentity(ctx, idpAuthApplicationRequest{
+		attributeRequest: attributeRequest,
+		protocolContext:  typedContext,
+		backendRef:       backendRef,
+		username:         username,
+		samlEntityID:     spConfig.EntityID,
+		entryPoint:       core.AuthnEntryIDPSAML,
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	return n.userFromAuthState(auth)
-}
-
-// prepareUserLookupAuthState applies the requested identity lookup inputs before no-auth loading.
-func prepareUserLookupAuthState(
-	ctx *gin.Context,
-	auth *core.AuthState,
-	username string,
-	oidcCID string,
-	samlEntityID string,
-	attributeRequest *core.IdentityAttributeRequest,
-) {
-	auth.FinishSetup(ctx)
-	auth.SetUsername(username)
-	auth.SetOIDCCID(oidcCID)
-	auth.SetSAMLEntityID(samlEntityID)
-	auth.Runtime.IdentityAttributeRequest = attributeRequest.Clone()
-
-	if oidcCID != "" {
-		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
-	} else if samlEntityID != "" {
-		auth.SetProtocol(config.NewProtocol(definitions.ProtoSAML))
-	} else {
-		auth.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
+	if err := authFailureFromOutcome(outcome); err != nil {
+		return nil, err
 	}
 
-	auth.SetNoAuth(true)
-}
-
-func (n *NauthilusIDP) userFromAuthState(auth *core.AuthState) (*backend.User, error) {
-	accountName, ok := auth.GetAccountOk()
-	if !ok {
-		return nil, fmt.Errorf("failed to get account name")
-	}
-
-	displayName := auth.GetDisplayName()
-	uniqueID := auth.GetUniqueUserID()
-
-	user := backend.NewUser(accountName, displayName, uniqueID)
-	user.Attributes = auth.GetAttributes()
-	user.Groups = auth.GetGroups()
-	user.GroupDistinguishedNames = auth.GetGroupDistinguishedNames()
-	user.TOTPSecretField = auth.GetTOTPSecretField()
-	user.TOTPRecoveryField = auth.GetTOTPRecoveryField()
-
-	return user, nil
-}
-
-func (n *NauthilusIDP) authFailureError(
-	ctx *gin.Context,
-	auth *core.AuthState,
-	err error,
-	ordinaryPasswordFailure bool,
-) error {
-	if auth == nil {
-		return err
-	}
-
-	status := AuthFailureStatus{
-		StatusMessage:    auth.Runtime.StatusMessage,
-		I18NKey:          auth.Runtime.StatusMessageI18NKey,
-		ResponseLanguage: auth.Runtime.ResponseLanguage,
-	}
-
-	if _, ok := auth.ConfiguredPolicyTerminalDecision(ctx); ok {
-		status.PolicyTerminal = true
-		status.DelayedResponseEligible = auth.ConfiguredPolicyAllowsIDPDelayedResponse(ctx)
-	} else if status.HasI18NStatus() {
-		status.PolicyTerminal = true
-		status.DelayedResponseEligible = ordinaryPasswordFailure
-	} else {
-		status.DelayedResponseEligible = ordinaryPasswordFailure
-	}
-
-	return NewAuthFailureError(err, status)
+	return backendUserFromAuthOutcome(outcome)
 }
 
 // GetClaims retrieves user attributes and maps them to OIDC/SAML claims for a specific client.

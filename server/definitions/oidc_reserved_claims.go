@@ -18,6 +18,9 @@ package definitions
 import "strings"
 
 const (
+	// ClaimClientID identifies the issuer-owned OAuth client identity.
+	ClaimClientID = "client_id"
+
 	// ClaimTokenType identifies the issuer-owned access-token purpose claim.
 	ClaimTokenType = "token_type"
 
@@ -45,7 +48,7 @@ const (
 var reservedAccessTokenClaims = map[string]struct{}{
 	"active":               {},
 	reservedClaimAudience:  {},
-	"client_id":            {},
+	ClaimClientID:          {},
 	reservedClaimExpiresAt: {},
 	reservedClaimIssuedAt:  {},
 	reservedClaimIssuer:    {},

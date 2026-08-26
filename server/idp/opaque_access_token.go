@@ -89,6 +89,7 @@ func (t *OpaqueAccessToken) ClaimsFromSession(session *OIDCSession) jwt.MapClaim
 	}
 
 	copyCustomAccessTokenClaims(claims, session.AccessTokenClaims)
+	copyServiceTokenClaims(claims, session)
 
 	return claims
 }

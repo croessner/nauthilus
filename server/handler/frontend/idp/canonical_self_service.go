@@ -309,7 +309,12 @@ func (h *FrontendHandler) renameCanonicalSelfServiceDevice(
 	deviceName string,
 ) error {
 	data, err := h.getUserBackendDataForIdentity(
-		ctx, identity.Account, identity.Protocol, canonicalRemoteBackendRef(session),
+		ctx,
+		newBackendDataLookupRequest(
+			identity.Account,
+			canonicalRemoteBackendRef(session),
+			core.IDPMFAProtocolContext{Protocol: identity.Protocol},
+		),
 	)
 	if err != nil {
 		return err
@@ -364,7 +369,12 @@ func (h *FrontendHandler) resolveCanonicalSelfServiceBackend(
 	identity cookie.SessionIdentity,
 ) (*UserBackendData, uint8, error) {
 	data, err := h.getUserBackendDataForIdentity(
-		ctx, identity.Account, identity.Protocol, canonicalRemoteBackendRef(session),
+		ctx,
+		newBackendDataLookupRequest(
+			identity.Account,
+			canonicalRemoteBackendRef(session),
+			core.IDPMFAProtocolContext{Protocol: identity.Protocol},
+		),
 	)
 	if err != nil {
 		return nil, 0, err

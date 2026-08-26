@@ -303,7 +303,15 @@ func (h *FrontendHandler) resolveCanonicalMFAAvailability(
 	}
 
 	data, err := h.getUserBackendDataForIdentity(
-		ctx, identity.Account, protocol, canonicalRemoteMFABackendRef(session),
+		ctx,
+		newBackendDataLookupRequest(
+			identity.Account,
+			canonicalRemoteMFABackendRef(session),
+			canonicalMFAProtocolContext(canonicalMFASelectionState{
+				identity: identity,
+				parent:   parent,
+			}, "", false),
+		),
 	)
 	if err != nil {
 		return mfaAvailability{}, err

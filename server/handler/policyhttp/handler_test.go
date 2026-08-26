@@ -219,6 +219,7 @@ func TestPolicyHTTPEvaluatesThroughRealGeneration(t *testing.T) {
 	}{
 		{name: "admitted exact Bearer", token: "policy-valid", want: http.StatusOK},
 		{name: "wrong audience", token: "policy-wrong-audience", want: http.StatusUnauthorized},
+		{name: "multiple audiences", token: "policy-multiple-audience", want: http.StatusUnauthorized},
 		{name: "missing evaluate scope", token: "policy-missing-scope", want: http.StatusUnauthorized},
 		{name: "unregistered profile", token: "policy-unregistered", want: http.StatusUnauthorized},
 	} {
@@ -455,6 +456,8 @@ func (generatedPolicyTokenValidator) ValidateAccessToken(_ context.Context, cred
 		return token, nil
 	case "policy-wrong-audience":
 		token.Audiences = []string{definitions.AudienceBackchannelAPI}
+	case "policy-multiple-audience":
+		token.Audiences = []string{definitions.AudiencePolicyAPI, definitions.AudienceBackchannelAPI}
 	case "policy-missing-scope":
 		token.Scopes = []string{definitions.ScopeAdmin}
 	case "policy-unregistered":

@@ -2075,6 +2075,83 @@ func (f *oidcTokenTest) assertClientCredentialsOpenIDScopeRejected(t *testing.T)
 	assert.Equal(t, oidcErrorInvalidScope, resp[definitions.LogKeyError])
 }
 
+type clientCredentialsResourceRejectionCase struct {
+	name            string
+	requested       string
+	allowed         []string
+	implied         []string
+	wantDescription string
+}
+
+// clientCredentialsResourceRejectionCases returns mixed and filtered-family rejection scenarios.
+func clientCredentialsResourceRejectionCases() []clientCredentialsResourceRejectionCase {
+	return []clientCredentialsResourceRejectionCase{
+		{
+			name:            "raw mixed scopes rejected before filtering",
+			requested:       definitions.ScopePolicyEvaluate + " " + definitions.ScopeAuthenticate,
+			allowed:         []string{definitions.ScopePolicyEvaluate},
+			wantDescription: idp.ErrClientCredentialsMixedResourceScopes.Error(),
+		},
+		{
+			name:            "effective mixed scopes rejected",
+			requested:       definitions.ScopePolicyEvaluate + " " + definitions.ScopeAuthenticate,
+			allowed:         []string{definitions.ScopePolicyEvaluate, definitions.ScopeAuthenticate},
+			wantDescription: idp.ErrClientCredentialsMixedResourceScopes.Error(),
+		},
+		{
+			name:            "implied backchannel scope makes policy request mixed",
+			requested:       definitions.ScopePolicyEvaluate,
+			allowed:         []string{definitions.ScopePolicyEvaluate, definitions.ScopeAuthenticate},
+			implied:         []string{definitions.ScopeAuthenticate},
+			wantDescription: idp.ErrClientCredentialsMixedResourceScopes.Error(),
+		},
+		{
+			name:            "filtered policy scope cannot become an empty backchannel grant",
+			requested:       definitions.ScopePolicyEvaluate,
+			allowed:         []string{definitions.ScopeAuthenticate},
+			wantDescription: "requested client_credentials resource scope family is not authorized",
+		},
+	}
+}
+
+// assertClientCredentialsMixedScopesRejected verifies raw and effective resource-family separation.
+func (f *oidcTokenTest) assertClientCredentialsMixedScopesRejected(t *testing.T) {
+	t.Helper()
+
+	originalClient := f.cfg.clients[0]
+	defer func() {
+		f.cfg.clients[0] = originalClient
+	}()
+
+	for _, testCase := range clientCredentialsResourceRejectionCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			testCase.run(t, f, originalClient)
+		})
+	}
+}
+
+// run verifies one rejected client-credentials resource scope request.
+func (testCase clientCredentialsResourceRejectionCase) run(t *testing.T, fixture *oidcTokenTest, originalClient config.OIDCClient) {
+	client := originalClient
+	client.GrantTypes = []string{oidcGrantTypeClientCredentials}
+	client.Scopes = testCase.allowed
+	client.ImpliedScopes = testCase.implied
+	client.AccessTokenType = "opaque"
+	fixture.cfg.clients[0] = client
+
+	form := url.Values{}
+	form.Add(oidcParamGrantType, oidcGrantTypeClientCredentials)
+	form.Add(oidcParamScope, testCase.requested)
+
+	w := fixture.postToken(t, form, withBasicTokenAuth("test-client", "test-secret"))
+	response := mustDecodeOIDCTestJSON(t, w)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, oidcErrorInvalidScope, response[definitions.LogKeyError])
+	assert.Equal(t, testCase.wantDescription, response[oidcJSONErrorDescriptionKey])
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
 // assertPublicClientCredentialsRejected verifies public clients cannot use confidential grants.
 func (f *oidcTokenTest) assertPublicClientCredentialsRejected(t *testing.T) {
 	publicClient := config.OIDCClient{
@@ -2227,4 +2304,11 @@ func TestOIDCHandler_ConfidentialClientCredentialsAccepted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	newOIDCTokenTest(t).assertConfidentialClientCredentialsAccepted(t)
+}
+
+func TestOIDCHandler_ClientCredentialsMixedScopesRejected(t *testing.T) {
+	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
+	gin.SetMode(gin.TestMode)
+
+	newOIDCTokenTest(t).assertClientCredentialsMixedScopesRejected(t)
 }

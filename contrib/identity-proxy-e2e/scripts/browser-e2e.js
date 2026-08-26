@@ -1086,6 +1086,7 @@ async function runRequiredMFAFlows(browser) {
   const totpSecret = registration.totpSecret;
   console.log('ok recovery-code-generation');
   let webAuthnCredentials = registration.webAuthnCredentials;
+  const webAuthnLoginCredential = webAuthnCredentials[0];
   console.log('ok oidc-heavy-webauthn-registration-both-edges');
 
   const masterMFA = await registerMasterUserMFA(browser, webAuthnCredentials);
@@ -1113,14 +1114,18 @@ async function runRequiredMFAFlows(browser) {
   const webAuthnPage = await webAuthnContext.newPage();
   const webAuthnAuthenticator = await installVirtualAuthenticator(webAuthnPage);
   await importVirtualAuthenticatorCredentials(webAuthnAuthenticator, webAuthnCredentials);
-  const webAuthnLogin = await withPageState(webAuthnPage, 'WebAuthn login', async () =>
-    withCallbackServer('WebAuthn login', async (redirectURI, callbackPromise) => {
-    await webAuthnPage.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
-    await submitPasswordLogin(webAuthnPage, mfaUsername, password);
-    await completeWebAuthnLogin(webAuthnPage, edgeA);
+  const webAuthnLogin = await assertVirtualCredentialSignCountIncreased(
+    webAuthnAuthenticator,
+    webAuthnLoginCredential,
+    () => withPageState(webAuthnPage, 'WebAuthn login', async () =>
+      withCallbackServer('WebAuthn login', async (redirectURI, callbackPromise) => {
+        await webAuthnPage.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+        await submitPasswordLogin(webAuthnPage, mfaUsername, password);
+        await completeWebAuthnLogin(webAuthnPage, edgeA);
 
-    return callbackPromise;
-  }));
+        return callbackPromise;
+      })),
+  );
   assert.ok(webAuthnLogin.code, 'WebAuthn login completed the OIDC flow');
   console.log('ok webauthn-login');
   let updatedWebAuthnCredentials = await exportVirtualAuthenticatorCredentials(webAuthnAuthenticator);
@@ -2340,14 +2345,46 @@ async function installVirtualAuthenticator(page) {
   return {cdp, authenticatorId: result.authenticatorId};
 }
 
-async function exportVirtualAuthenticatorCredentials(authenticator) {
+// readVirtualAuthenticatorCredentials returns the current CDP credential state.
+async function readVirtualAuthenticatorCredentials(authenticator) {
   const result = await authenticator.cdp.send('WebAuthn.getCredentials', {
     authenticatorId: authenticator.authenticatorId,
   });
-  const credentials = result.credentials || [];
+
+  return result.credentials || [];
+}
+
+// exportVirtualAuthenticatorCredentials verifies and exports reusable credentials.
+async function exportVirtualAuthenticatorCredentials(authenticator) {
+  const credentials = await readVirtualAuthenticatorCredentials(authenticator);
   assert.ok(credentials.length > 0, 'WebAuthn registration produced a virtual credential');
 
   return credentials;
+}
+
+// assertVirtualCredentialSignCountIncreased proves one successful login used the target credential.
+async function assertVirtualCredentialSignCountIncreased(authenticator, targetCredential, successfulLogin) {
+  assert.ok(targetCredential?.credentialId, 'WebAuthn sign-count proof needs a target credential');
+
+  const snapshotCredential = async () => {
+    const credentials = await readVirtualAuthenticatorCredentials(authenticator);
+    const credential = credentials.find((candidate) => candidate.credentialId === targetCredential.credentialId);
+
+    assert.ok(credential, 'WebAuthn sign-count proof could not find the target credential');
+    assert.ok(Number.isInteger(credential.signCount), 'WebAuthn target credential must expose a local signCount');
+
+    return credential;
+  };
+  const beforeCredential = await snapshotCredential();
+  const loginResult = await successfulLogin();
+  const afterCredential = await snapshotCredential();
+
+  assert.ok(
+    afterCredential.signCount > beforeCredential.signCount,
+    `successful WebAuthn login must increase local signCount: before=${beforeCredential.signCount} after=${afterCredential.signCount}`,
+  );
+
+  return loginResult;
 }
 
 async function importVirtualAuthenticatorCredentials(authenticator, credentials) {

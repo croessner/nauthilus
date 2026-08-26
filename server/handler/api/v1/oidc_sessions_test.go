@@ -225,6 +225,7 @@ func newOIDCSessionsTokenValidator(scopes ...string) *oidcSessionsTokenValidator
 func (v *oidcSessionsTokenValidator) ValidateToken(context.Context, string) (jwt.MapClaims, error) {
 	return jwt.MapClaims{
 		"aud":                      definitions.AudienceBackchannelAPI,
+		definitions.ClaimClientID:  "oidc-session-client",
 		"scope":                    v.scope,
 		"sub":                      "oidc-session-client",
 		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,

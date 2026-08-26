@@ -4,11 +4,11 @@ This document provides a detailed technical overview of the integrated Identity 
 SAML2, and the modern HTMX-based frontend. It is intended for developers who want to understand the internal signal
 flows, component interactions, and the overall design of the IdP.
 
-Migration baseline artifacts:
+Related architecture and flow documents:
 
-1. `server/docs/idp_flow_adr.md`
-2. `server/docs/idp_flow_matrix.md`
-3. `server/docs/idp_flow_test_gap.md`
+1. [Browser session contract](development/browser_session_contract.md)
+2. [IdP and MFA flow](development/idp-mfa-flow.md)
+3. [SAML SLO test strategy](saml_slo_test_strategy.md)
 
 ## 1. High-Level Architecture
 
@@ -36,14 +36,29 @@ fully integrated into the Nauthilus core, leveraging existing authentication and
   typed OIDC and SAML records through their allowed steps. There is no browser-cookie fallback store.
 - **`server/idp/`**: The protocol and identity core. It resolves clients and service providers, performs backend-bound
   user lookup, maps claims, issues tokens, and owns the cookie-free token and device-code stores.
+- **`server/core/auth_application_service.go`**: The transport-neutral authentication and identity application
+  boundary. IdP adapters use its typed operations instead of constructing an independent authentication pipeline.
+- **`server/core/authn_application_adapter.go`** and **`server/policy/decision/service/`**: The generation-backed
+  candidate admission adapter and shared checkpoint runtime used by convergence proof tests. Every migrated IdP entry
+  selects an exact host-owned internal caller profile and maps only protocol, transport, OIDC-client or SAML-SP,
+  localization, correlation, requested-attribute, and backend-affinity facts needed by that operation.
 - **`server/handler/frontend/idp/`**: The browser-facing composition layer. Its sole route registrars install canonical
   checkpoints and dispatch to canonical login, MFA, OIDC, SAML, device, consent, and logout handlers.
 - **`server/handler/mfa_backchannel/`**: The separately authenticated machine MFA API under
   `/api/v1/mfa-backchannel/*`. It does not use browser session state.
 - **`server/idp/redis_storage.go`**: Volatile protocol storage for authorization codes, refresh-token families, and
   other cookie-free token operations.
-- **`server/core/auth.go`**: The "Engine". Manages the complex multi-step authentication process (Password -> MFA ->
-  Success).
+- **`server/core/auth.go`**: The existing authentication engine executed behind the common application boundary.
+
+The application boundary does not own browser or protocol state. `SessionAnchor`, OIDC/SAML flow, consent, step-up,
+MFA enrollment, delayed-response latch, and WebAuthn ceremony records remain in their canonical IdP/session packages.
+Handlers apply the detached application outcome to those typed records after evaluation; generic target input never
+captures the records themselves. Specialized ceremony and claim-release adapters are projections or side-effect
+boundaries, not second policy evaluators.
+
+The common application boundary is active, but production continues to use its current application executor. The
+candidate adapter and Decision Service remain inactive outside generation-backed proof tests until the new Policy root
+and runtime generation are activated together by the later atomic configuration cutover.
 
 ### Canonical Browser Session Model
 
@@ -131,7 +146,9 @@ fail-latched check.
 
 ## 2. Signal Flow Diagram
 
-The following diagram shows one browser request moving through the active architecture:
+The following diagram shows the convergence contract. The application and protocol-state path is active. The Decision
+Service interactions are a generation-backed candidate proof only; production does not construct that candidate before
+the later atomic authority cutover.
 
 ```mermaid
 sequenceDiagram
@@ -141,6 +158,8 @@ sequenceDiagram
     participant H as Canonical handler
     participant F as Typed flow store
     participant I as IdP core
+    participant P as Auth application
+    participant D as Candidate Decision Service
     participant E as Selected backend
     B->>M: Request plus opaque envelope
     alt permitted protocol entry without an envelope
@@ -150,10 +169,20 @@ sequenceDiagram
     end
     M->>H: Dispatch only after the checkpoint succeeds
     H->>F: Start or load a revision-bound typed record
-    H->>I: Authenticate or materialize claims
-    I->>E: Use the explicitly selected backend affinity
-    E-->>I: Identity and attributes
-    I-->>H: Typed result
+    H->>I: Map protocol operation and explicit facts
+    I->>P: Authenticate or look up identity
+    opt Generation-backed candidate proof; production inactive
+        P->>D: Admit exact internal caller and open shared checkpoints
+        D-->>P: Admitted checkpoint session
+    end
+    P->>E: Execute with explicit backend affinity
+    E-->>P: Identity and attributes
+    opt Generation-backed candidate proof; production inactive
+        P->>D: Complete final checkpoint with detached outcome
+        D-->>P: Terminal decision
+    end
+    P-->>I: Typed application outcome
+    I-->>H: Protocol projection
     H->>F: CAS transition or atomic consume
     H->>A: Commit identity, assurance, indexes, or revocation
     H-->>B: Render, redirect, token, assertion, or terminal result
@@ -177,24 +206,28 @@ sequenceDiagram
     participant F as Frontend Handler
     participant I as IdP Core
     participant R as Redis
-    participant A as AuthState
-    Note over B, A: Initial Authorization Request
+    participant P as Auth Application
+    participant D as Candidate Decision Service
+    Note over B, D: Initial Authorization Request
     B ->> H: GET /oidc/authorize?client_id=...&scope=openid...
     H ->> I: FindClient(clientID)
     I -->> H: Client Config
     H ->> H: Validate Redirect URI
     H ->> R: Start typed OIDCFlow and index it in SessionAnchor
     H ->> B: 302 Redirect to /login?flow=opaque-ticket
-    Note over B, A: Authentication Phase
+    Note over B, D: Authentication Phase
     B ->> F: GET /login
     F ->> R: Load bound OIDCFlow through typed store
     F -->> B: Render idp_login.html (HTMX)
     B ->> F: POST /login (username, password)
     F ->> R: Reload revision-bound OIDCFlow
     F ->> I: Authenticate with typed protocol context
-    I ->> A: NewAuthState(ctx, ...)
-    A ->> A: Evaluate MFA requirements
-    A -->> I: Typed password result plus selected backend affinity
+    I ->> P: Authenticate(AuthInput, OIDC internal profile)
+    opt Generation-backed candidate proof; production inactive
+        P ->> D: Admit and run shared authn checkpoints
+        D -->> P: Terminal auth decision
+    end
+    P -->> I: Typed password outcome plus selected backend affinity
     Note right of I: Delayed response may defer a normal password failure when a bound factor exists
     I -->> F: Success, terminal failure, or fail-latched candidate
     F ->> R: Commit identity on success, or create an unauthenticated fail-latched StepUp
@@ -203,7 +236,7 @@ sequenceDiagram
     F ->> R: Verify and atomically complete or consume StepUp
     F ->> R: Advance parent OIDCFlow
     F ->> B: 302 Redirect to /oidc/authorize?flow=opaque-ticket
-    Note over B, A: Consent & Code Issuance
+    Note over B, D: Consent & Code Issuance
     B ->> H: GET /oidc/authorize?flow=opaque-ticket (user now logged in)
     H ->> R: Check identity-client-scope-bound ConsentGrant
     H ->> B: 302 Redirect to /oidc/consent?flow=opaque-ticket when needed
@@ -213,7 +246,7 @@ sequenceDiagram
     F ->> R: Persist ConsentGrant and single-use authorization code
     F ->> R: Consume typed OIDCFlow
     F ->> B: 302 Redirect to client_redirect_uri?code=...
-    Note over B, A: Token Exchange
+    Note over B, D: Token Exchange
     B ->> H: POST /oidc/token (code, client_secret)
     H ->> R: GetSession(code)
     R -->> H: sessionData
@@ -222,7 +255,7 @@ sequenceDiagram
     I -->> H: {access_token, id_token, refresh_token, expires_in}
     H ->> R: DeleteSession(code)
     H -->> B: 200 OK (JSON Tokens)
-    Note over B, A: Refresh Token Flow
+    Note over B, D: Refresh Token Flow
     B ->> H: POST /oidc/token (grant_type=refresh_token, refresh_token=...)
     H ->> R: GetRefreshToken(rt)
     R -->> H: sessionData
@@ -643,23 +676,35 @@ sequenceDiagram
     participant F as Frontend Handler
     participant I as IdP Core
     participant R as Redis
-    participant A as AuthState
-    Note over B, A: Initial SSO Request
+    participant P as Auth Application
+    participant D as Candidate Decision Service
+    Note over B, D: Initial SSO Request
     B -> H: GET /saml/sso?SAMLRequest=...
     H -> I: getSAMLIdP(ctx)
     H -> H: Validate SAML Request
     H -> R: Start typed SAMLFlow with request ID, digest, RelayState, and destination
     H -> B: 302 Redirect to /login?flow=opaque-ticket
-    Note over B, A: Authentication Phase (Shared with OIDC)
+    Note over B, D: Authentication Phase (Shared with OIDC)
     B -> F: GET /login
     F -> R: Load anchor-owned SAMLFlow through typed store
     F -> B: Render Login UI
     B -> F: POST /login
-    F -> I: Authenticate(...)
-    I -> A: Verify Credentials
-    Note over B, A: SAML Response Generation
+    F -> I: Authenticate with SAML SP and transport facts
+    I -> P: Authenticate(AuthInput, SAML internal profile)
+    opt Generation-backed candidate proof; production inactive
+        P -> D: Admit and run shared authn checkpoints
+        D -->> P: Terminal auth decision
+    end
+    P -->> I: Detached identity and backend-affinity outcome
+    Note over B, D: SAML Response Generation
     B -> H: GET /saml/sso with canonical envelope and flow ticket
     H -> I: GetUserByUsernameForSAMLCanonical(...)
+    I -> P: LookupIdentity(AuthInput, SAML claim-release profile)
+    opt Generation-backed candidate proof; production inactive
+        P -> D: Admit and run shared identity checkpoint
+        D -->> P: Terminal identity decision
+    end
+    P -->> I: Detached attributes and groups
     H -> H: Create SAML Session & Assertion
     H -> R: Advance to callback and atomically consume SAMLFlow
     H -> B: 200 OK (SAMLResponse via POST Binding)
@@ -1011,10 +1056,18 @@ The `NauthilusIdP` struct is the central orchestrator. It holds references to:
 
 Key Methods:
 
-- `Authenticate`: Wraps the core `AuthState` logic to provide a simplified interface for protocol handlers.
+- `Authenticate`: Maps protocol input to the common `AuthApplicationService` operation and its exact internal caller
+  profile. Generation-backed candidate tests prove admission through the same Decision Service checkpoint runtime used
+  by other authentication entry paths; production retains the current application executor until the atomic cutover.
+- `LookupIdentity`: Resolves identity and backend affinity through the same application boundary for claim release,
+  SAML, delayed-response, device-code, and MFA-related lookups that require authentication-domain data.
 - `IssueTokens`: Generates ID tokens and Access tokens. It performs **Claim Mapping** by taking raw backend attributes
   and transforming them according to the client's configuration (e.g., mapping LDAP groups to the `groups` claim).
 - `ValidateToken`: Decodes and verifies the signature of an access token.
+
+These methods return detached outcomes. Browser session, protocol-flow, MFA, WebAuthn, consent, and claim-release
+lifecycle state remains owned by the IdP/frontend packages and typed Redis repositories; it is not embedded in generic
+Decision Service input.
 
 ### 4.2 Frontend & MFA Self-Service
 
@@ -1097,7 +1150,7 @@ identity:
                     attribute: "mail"         # Map LDAP 'mail' to OIDC 'email'
                     type: "string"
                 -   claim: "groups"
-                    from: "groups"                   # Use resolved groups from AuthState
+                    from: "groups"                   # Use groups from the resolved identity outcome
                     type: "string_array"
         access_token_claims:
             mappings:
@@ -1119,8 +1172,9 @@ Mapping source options:
 - `attribute`: read claim values from backend attributes.
 - `from`: read built-in runtime sources (`groups`, `group_dns`).
 
-When groups are enabled in LDAP/Lua backends, Nauthilus stores memberships as dedicated AuthState fields (`groups`,
-`group_dns`). Claim mappings can consume them via `from: "groups"` and `from: "group_dns"`.
+When groups are enabled in LDAP/Lua backends, the common identity outcome carries dedicated `groups` and `group_dns`
+fields. Claim mappings can consume them via `from: "groups"` and `from: "group_dns"`. Claim release projects that
+already resolved outcome; it does not run a second evaluator or copy consent/protocol state into a generic request.
 
 Role claims are mapped from backend attributes directly (for example LDAP `roles`) using `attribute: "roles"`.
 
@@ -1600,11 +1654,35 @@ curl -X POST https://issuer.example.com/oidc/token \
   -d "scope=api.read"
 ```
 
-Client-credentials access tokens issued by Nauthilus are resource-bound to the protected backchannel API. JWT access
-tokens carry `token_type=access_token` and `aud=nauthilus:backchannel`; opaque access tokens produce the same claims
-after validation. Backchannel bearer authentication rejects tokens that do not carry that purpose and audience.
+Client-credentials access tokens issued by Nauthilus are resource-bound to exactly one protected API. Scope-family
+classification happens before any token, session, or flow write:
+
+| Requested scope family | Issued audience | Result |
+| --- | --- | --- |
+| One or both Policy-family scopes (`nauthilus:policy_evaluate`, `nauthilus:policy_diagnostics`) and no backchannel scope | Exact single audience `nauthilus:policy` | Policy token |
+| No Policy scope, including an empty request or only existing non-Policy service scopes | Exact single audience `nauthilus:backchannel` | Backchannel token |
+| Either Policy scope plus any backchannel scope | None | `invalid_scope`; nothing is persisted |
+
+If client filtering would remove or replace an explicitly requested resource family, the request also fails with
+`invalid_scope` before token generation or persistence. It cannot silently receive the other resource's audience. An
+empty request may still receive configured implied scopes because it did not select a conflicting resource family.
+
+JWT access tokens carry `token_type=access_token`, the classified resource audience, and the issuer-owned `client_id`;
+opaque validation and introspection produce the same claims. The classified audience is persisted as an explicit
+token/session property and is not inferred from scopes after issuance.
+
+Policy HTTP and gRPC endpoints require the normalized audience set to be exactly `{nauthilus:policy}`. They identify
+the service client only by the issuer-validated `client_id`; missing or ambiguous values fail authentication, with no
+fallback to `sub`, `azp`, or `iss`. Existing authentication, identity, management, and MFA backchannel routes retain
+their backchannel contract and reject Policy tokens. Backchannel HTTP and gRPC also require the issuer-owned non-empty
+`client_id` emitted for a service token; a browser access token with a colliding client audience is rejected. Policy
+endpoints reject backchannel tokens. External issuers must honor the same separation, and clients that need both
+resources must request, cache, and rotate two independent tokens.
+
 The `openid` scope is not valid for `client_credentials`; requests that include it fail with `invalid_scope` because
-service tokens do not represent an end-user identity and cannot receive ID tokens or UserInfo claims.
+service tokens do not represent an end-user identity and cannot receive ID tokens or UserInfo claims. Resource-bound
+issuance does not activate the standalone production Policy configuration; that remains an atomic configuration
+cutover.
 
 ### 8.4 Configuration
 
@@ -1728,6 +1806,8 @@ sequenceDiagram
     participant D as Device / CLI
     participant AS as Authorization Server
     participant F as Frontend Handler
+    participant A as Auth Application
+    participant P as Candidate Decision Service
     participant U as User (Browser)
     Note over D, U: Phase 1: Device Authorization Request
     D ->> AS: POST /oidc/device (client_id, scope)
@@ -1738,7 +1818,13 @@ sequenceDiagram
     AS ->> AS: Atomically claim code and consume user-code index
     AS ->> AS: Start typed device flow bound to code digest, client, and scopes
     AS ->> U: 303 Redirect to /login?flow=opaque-ticket
-    U ->> F: Authenticate through canonical login
+    U ->> F: Submit credentials through canonical login
+    F ->> A: Authenticate(AuthInput, device internal profile)
+    opt Generation-backed candidate proof; production inactive
+        A ->> P: Admit and run shared authn checkpoints
+        P -->> A: Terminal auth decision
+    end
+    A -->> F: Detached identity and backend-affinity outcome
     alt Assurance Required
         F ->> U: Redirect to typed TOTP, WebAuthn, or recovery StepUp
         U ->> F: Submit proof with the same bound flow
@@ -1746,7 +1832,12 @@ sequenceDiagram
     end
     F ->> U: Redirect to /oidc/device/consent?flow=opaque-ticket
     U ->> AS: POST consent decision and optional scopes
-    AS ->> AS: Hydrate claims from selected backend
+    AS ->> A: LookupIdentity(AuthInput, device claim-release profile)
+    opt Generation-backed candidate proof; production inactive
+        A ->> P: Admit and run shared identity checkpoint
+        P -->> A: Terminal identity decision
+    end
+    A -->> AS: Detached claims input
     AS ->> AS: Terminal device CAS
     AS ->> AS: Persist grant and consume typed browser flow
     AS -->> U: Render authorized or denied terminal page

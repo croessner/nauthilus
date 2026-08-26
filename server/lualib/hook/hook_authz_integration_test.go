@@ -48,6 +48,7 @@ func (m *mockTokenValidator) ValidateToken(_ context.Context, _ string) (jwt.Map
 func hookAccessClaims(scope string) jwt.MapClaims {
 	return jwt.MapClaims{
 		"aud":                      definitions.AudienceBackchannelAPI,
+		definitions.ClaimClientID:  "hook-client",
 		"scope":                    scope,
 		"sub":                      "hook-client",
 		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,

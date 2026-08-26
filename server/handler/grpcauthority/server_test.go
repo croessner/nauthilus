@@ -354,6 +354,40 @@ func TestUnaryServerInterceptorAllowsBearerWithAuthenticateScope(t *testing.T) {
 	}
 }
 
+func TestUnaryServerInterceptorRejectsCrossResourceBearer(t *testing.T) {
+	cfg := grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{Enabled: true})
+
+	for _, testCase := range []struct {
+		name     string
+		audience any
+	}{
+		{name: "Policy resource", audience: definitions.AudiencePolicyAPI},
+		{name: "mixed Policy and backchannel resources", audience: []any{definitions.AudienceBackchannelAPI, definitions.AudiencePolicyAPI}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			claims := grpcBackchannelAccessClaims(definitions.ScopeAuthenticate)
+			claims["aud"] = testCase.audience
+
+			interceptor := UnaryServerInterceptor(ServerDeps{
+				Cfg:           cfg,
+				OIDCValidator: staticTokenValidator{claims: claims},
+				Logger:        slog.Default(),
+			})
+			ctx := metadata.NewIncomingContext(
+				context.Background(),
+				metadata.Pairs("authorization", "Bearer cross-resource-token"),
+			)
+
+			_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{
+				FullMethod: authv1.AuthService_Authenticate_FullMethodName,
+			}, okUnaryHandler)
+			if status.Code(err) != codes.Unauthenticated {
+				t.Fatalf("code = %v, want %v", status.Code(err), codes.Unauthenticated)
+			}
+		})
+	}
+}
+
 func TestUnaryServerInterceptorRejectsBearerListAccountsWithoutScope(t *testing.T) {
 	cfg := grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{Enabled: true})
 	interceptor := UnaryServerInterceptor(ServerDeps{
@@ -1314,6 +1348,7 @@ func basicAuthorization(username, password string) string {
 func grpcBackchannelAccessClaims(scope string) jwt.MapClaims {
 	return jwt.MapClaims{
 		"aud":                      definitions.AudienceBackchannelAPI,
+		definitions.ClaimClientID:  "grpc-client",
 		"scope":                    scope,
 		"sub":                      "grpc-client",
 		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,

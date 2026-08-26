@@ -25,7 +25,7 @@ import (
 
 const (
 	claimAudience = "aud"
-	claimClientID = "client_id"
+	claimClientID = definitions.ClaimClientID
 	claimIssuer   = "iss"
 	claimScope    = "scope"
 	claimSubject  = "sub"

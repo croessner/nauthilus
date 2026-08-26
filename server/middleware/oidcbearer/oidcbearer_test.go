@@ -82,6 +82,7 @@ func scopeClaims(scope string) jwt.MapClaims {
 func backchannelAccessClaims(scope string) jwt.MapClaims {
 	return jwt.MapClaims{
 		"aud":                      definitions.AudienceBackchannelAPI,
+		definitions.ClaimClientID:  "test-client",
 		"scope":                    scope,
 		"sub":                      "test-client",
 		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
@@ -306,6 +307,49 @@ func TestValidateAndStoreClaims_ValidToken(t *testing.T) {
 
 	assert.NotNil(t, stored)
 	assert.Equal(t, "test-client", stored["sub"])
+}
+
+func TestIsBackchannelAccessTokenRequiresExactAudienceSet(t *testing.T) {
+	tests := []struct {
+		name            string
+		audience        any
+		audiencePresent bool
+		clientID        any
+		clientIDPresent bool
+		want            bool
+	}{
+		{name: "exact singleton string", audience: definitions.AudienceBackchannelAPI, audiencePresent: true, clientID: "service-client", clientIDPresent: true, want: true},
+		{name: "normalized duplicate string slice", audience: []string{definitions.AudienceBackchannelAPI, definitions.AudienceBackchannelAPI}, audiencePresent: true, clientID: "service-client", clientIDPresent: true, want: true},
+		{name: "normalized duplicate interface slice", audience: []any{definitions.AudienceBackchannelAPI, definitions.AudienceBackchannelAPI}, audiencePresent: true, clientID: "service-client", clientIDPresent: true, want: true},
+		{name: "browser token audience collision without service client id", audience: definitions.AudienceBackchannelAPI, audiencePresent: true},
+		{name: "empty service client id", audience: definitions.AudienceBackchannelAPI, audiencePresent: true, clientID: "", clientIDPresent: true},
+		{name: "non-string service client id", audience: definitions.AudienceBackchannelAPI, audiencePresent: true, clientID: []string{"service-client"}, clientIDPresent: true},
+		{name: "Policy only", audience: definitions.AudiencePolicyAPI, audiencePresent: true, clientID: "service-client", clientIDPresent: true},
+		{name: "mixed Policy and backchannel resources", audience: []any{definitions.AudienceBackchannelAPI, definitions.AudiencePolicyAPI}, audiencePresent: true, clientID: "service-client", clientIDPresent: true},
+		{name: "malformed mixed-type audience", audience: []any{definitions.AudienceBackchannelAPI, 42}, audiencePresent: true, clientID: "service-client", clientIDPresent: true},
+		{name: "empty member", audience: []string{definitions.AudienceBackchannelAPI, ""}, audiencePresent: true, clientID: "service-client", clientIDPresent: true},
+		{name: "empty string", audience: "", audiencePresent: true, clientID: "service-client", clientIDPresent: true},
+		{name: "empty audience list", audience: []string{}, audiencePresent: true, clientID: "service-client", clientIDPresent: true},
+		{name: "missing audience"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			claims := jwt.MapClaims{
+				definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+			}
+
+			if testCase.audiencePresent {
+				claims["aud"] = testCase.audience
+			}
+
+			if testCase.clientIDPresent {
+				claims[definitions.ClaimClientID] = testCase.clientID
+			}
+
+			assert.Equal(t, testCase.want, IsBackchannelAccessToken(claims))
+		})
+	}
 }
 
 func TestValidateAndStoreClaimsRejectsIDTokenTokenType(t *testing.T) {

@@ -41,36 +41,7 @@ const (
 )
 
 // CapturedAuthOutcome stores the transport-neutral terminal auth outcome.
-type CapturedAuthOutcome struct {
-	Attributes              bktype.AttributeMapping
-	ResponseHeaders         http.Header
-	ResponseHeaderDeletes   []string
-	FSMEventPath            []string
-	ResponseSettings        AuthResponseSettings
-	Decision                CapturedAuthDecision
-	TerminalState           string
-	Session                 string
-	Account                 string
-	AccountField            string
-	TOTPSecretField         string
-	TOTPRecoveryField       string
-	UniqueUserIDField       string
-	DisplayNameField        string
-	StatusMessage           string
-	StatusMessageI18NKey    string
-	ResponseLanguage        string
-	Error                   string
-	Groups                  []string
-	GroupDistinguishedNames []string
-	Protocol                string
-	UsedBackendIP           string
-	Backend                 definitions.Backend
-	UsedBackendPort         int
-	HTTPStatus              int
-	LoginAttempts           uint
-	MemoryCacheHit          bool
-	DelayedResponseEligible bool
-}
+type CapturedAuthOutcome = authOutcomeProjection[CapturedAuthDecision]
 
 // CaptureResponseWriter captures auth terminal outcomes without rendering HTTP.
 type CaptureResponseWriter struct {
@@ -212,6 +183,7 @@ func listAccountsSuccessOutcome(
 }
 
 // authOutcomeFromState detaches the complete terminal projection from AuthState.
+// authOutcomeFromState projects one terminal compatibility host state into a detached application outcome.
 func authOutcomeFromState(
 	ctx *gin.Context,
 	auth *AuthState,
@@ -236,10 +208,13 @@ func authOutcomeFromState(
 		Session:                 auth.Runtime.GUID,
 		Account:                 auth.GetAccount(),
 		AccountField:            auth.Runtime.AccountField,
+		DisplayName:             auth.GetDisplayName(),
+		UniqueUserID:            auth.GetUniqueUserID(),
 		TOTPSecretField:         auth.Runtime.TOTPSecretField,
 		TOTPRecoveryField:       auth.Runtime.TOTPRecoveryField,
 		UniqueUserIDField:       auth.Runtime.UniqueUserIDField,
 		DisplayNameField:        auth.Runtime.DisplayNameField,
+		BackendName:             auth.Runtime.BackendName,
 		StatusMessage:           auth.Runtime.StatusMessage,
 		StatusMessageI18NKey:    auth.Runtime.StatusMessageI18NKey,
 		ResponseLanguage:        auth.Runtime.ResponseLanguage,
@@ -248,13 +223,47 @@ func authOutcomeFromState(
 		GroupDistinguishedNames: auth.GetGroupDistinguishedNames(),
 		Protocol:                auth.GetProtocol().Get(),
 		UsedBackendIP:           auth.Runtime.UsedBackendIP,
+		RemoteBackendRef:        auth.Runtime.RemoteBackendRef,
 		Backend:                 auth.Runtime.SourcePassDBBackend,
 		UsedBackendPort:         auth.Runtime.UsedBackendPort,
 		HTTPStatus:              status,
 		LoginAttempts:           auth.GetFailCount(),
 		MemoryCacheHit:          ctx != nil && ctx.GetBool(definitions.CtxLocalCacheAuthKey),
-		DelayedResponseEligible: auth.ConfiguredPolicyAllowsIDPDelayedResponse(ctx),
+		DelayedResponseEligible: authOutcomeDelayedResponseEligible(ctx, auth, decision),
+		PolicyTerminal:          authOutcomePolicyTerminal(ctx, auth),
 	}
+}
+
+// authOutcomePolicyTerminal reports whether configured policy selected a terminal decision.
+func authOutcomePolicyTerminal(ctx *gin.Context, auth *AuthState) bool {
+	if auth == nil {
+		return false
+	}
+
+	_, terminal := auth.ConfiguredPolicyTerminalDecision(ctx)
+
+	return terminal
+}
+
+// authOutcomeDelayedResponseEligible preserves the ordinary IdP password-failure boundary.
+func authOutcomeDelayedResponseEligible(ctx *gin.Context, auth *AuthState, decision AuthDecision) bool {
+	if !authOutcomeIsIDPPasswordFailure(auth, decision) {
+		return false
+	}
+
+	if authOutcomePolicyTerminal(ctx, auth) {
+		return auth.ConfiguredPolicyAllowsIDPDelayedResponse(ctx)
+	}
+
+	return true
+}
+
+// authOutcomeIsIDPPasswordFailure enforces the request invariant shared by ordinary and policy-selected delay.
+func authOutcomeIsIDPPasswordFailure(auth *AuthState, decision AuthDecision) bool {
+	return auth != nil && decision == AuthDecisionFail &&
+		auth.Request.Service == definitions.ServIDP &&
+		auth.Request.Method == definitions.AuthMethodPassword &&
+		!auth.Request.NoAuth && !auth.Request.ListAccounts
 }
 
 // capturedAuthOutcomeFromAuthOutcome preserves the capture-specific decision vocabulary.
@@ -266,36 +275,7 @@ func capturedAuthOutcomeFromAuthOutcome(
 		return CapturedAuthOutcome{Decision: CapturedAuthDecisionUnset}
 	}
 
-	return CapturedAuthOutcome{
-		Attributes:              outcome.Attributes.Clone(),
-		ResponseHeaders:         outcome.ResponseHeaders.Clone(),
-		ResponseHeaderDeletes:   append([]string(nil), outcome.ResponseHeaderDeletes...),
-		FSMEventPath:            append([]string(nil), outcome.FSMEventPath...),
-		ResponseSettings:        outcome.ResponseSettings,
-		Decision:                decision,
-		TerminalState:           outcome.TerminalState,
-		Session:                 outcome.Session,
-		Account:                 outcome.Account,
-		AccountField:            outcome.AccountField,
-		TOTPSecretField:         outcome.TOTPSecretField,
-		TOTPRecoveryField:       outcome.TOTPRecoveryField,
-		UniqueUserIDField:       outcome.UniqueUserIDField,
-		DisplayNameField:        outcome.DisplayNameField,
-		StatusMessage:           outcome.StatusMessage,
-		StatusMessageI18NKey:    outcome.StatusMessageI18NKey,
-		ResponseLanguage:        outcome.ResponseLanguage,
-		Error:                   outcome.Error,
-		Groups:                  append([]string(nil), outcome.Groups...),
-		GroupDistinguishedNames: append([]string(nil), outcome.GroupDistinguishedNames...),
-		Protocol:                outcome.Protocol,
-		UsedBackendIP:           outcome.UsedBackendIP,
-		Backend:                 outcome.Backend,
-		UsedBackendPort:         outcome.UsedBackendPort,
-		HTTPStatus:              outcome.HTTPStatus,
-		LoginAttempts:           outcome.LoginAttempts,
-		MemoryCacheHit:          outcome.MemoryCacheHit,
-		DelayedResponseEligible: outcome.DelayedResponseEligible,
-	}
+	return convertAuthOutcomeProjection(*outcome, decision)
 }
 
 // newAuthResponseSettings detaches config-derived renderer inputs from one runtime generation.
