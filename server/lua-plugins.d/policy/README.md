@@ -6,25 +6,28 @@ This directory contains Lua registry scripts for custom policy attributes emitte
 
 Registers the `lua.plugin.*` attributes emitted through `share/nauthilus_policy_facts.lua`.
 
-Configure it under `auth.policy.registry_scripts`:
+Configure it under the `authn` namespace schema contribution:
 
 ```yaml
-auth:
-  policy:
-    registry_scripts:
-      - "/etc/nauthilus/lua-plugins.d/policy/registry.lua"
+policy:
+  namespaces:
+    authn:
+      schema_contributions:
+        lua:
+          registry_scripts:
+            - "/etc/nauthilus/lua-plugins.d/policy/registry.lua"
 ```
 
 The registry script is compile-time material. Runtime plugins emit only attributes that were registered in the active
 policy snapshot. If an emitting plugin tries to write an unknown attribute, Nauthilus fails that Lua execution instead
 of treating the value as a loose fact.
 
-This registry-script path remains part of the legacy authentication integration and is implicitly `authn`-scoped. It is
+This registry-script path remains part of the authentication integration and is explicitly `authn`-scoped. It is
 separate from the generic target-aware provider contract below.
 
 ## Generic Lua provider callbacks
 
-A standalone provider with `kind: lua` contributes facts and selected host effects through two exact global callback
+A generic provider with `kind: lua` contributes facts and selected host effects through two exact global callback
 keys:
 
 ```lua

@@ -26,7 +26,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/app/bootfx"
 	"github.com/croessner/nauthilus/v3/server/app/envfx"
 	"github.com/croessner/nauthilus/v3/server/app/languagefx"
-	"github.com/croessner/nauthilus/v3/server/app/localizationfx"
 	"github.com/croessner/nauthilus/v3/server/app/logfx"
 	"github.com/croessner/nauthilus/v3/server/app/loopsfx"
 	"github.com/croessner/nauthilus/v3/server/app/opsfx"
@@ -41,7 +40,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/svcctx"
 	"github.com/croessner/nauthilus/v3/server/testing/luatest"
 
-	"github.com/spf13/viper"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )
@@ -51,12 +49,16 @@ var (
 	buildTime = ""
 )
 
-type bootstrapped struct{}
+type bootstrapped struct {
+	file config.File
+}
 
-// newBootstrapped returns a token that enforces ordering for fx providers
-// that depend on configuration being loaded.
-func newBootstrapped() *bootstrapped {
-	return &bootstrapped{}
+// configurationSnapshotSetup prepares one unpublished command-mode configuration view.
+type configurationSnapshotSetup func() (config.File, error)
+
+// bootstrapOption supplies the unpublished initial configuration to the Fx graph.
+func bootstrapOption(file config.File) fx.Option {
+	return fx.Supply(&bootstrapped{file: file})
 }
 
 // rootContextOption provides the root context and cancellation function as interface types.
@@ -82,12 +84,13 @@ func main() {
 		return
 	}
 
-	if err := bootfx.SetupConfiguration(); err != nil {
+	prepared, err := bootfx.PrepareConfiguration()
+	if err != nil {
 		stdlog.Fatalln("unable to load config file:", err)
 	}
 
 	ctx, cancel := svcctx.GetCtxWithCancel()
-	fApp := newFxApplication(ctx, cancel)
+	fApp := newFxApplication(ctx, cancel, prepared)
 
 	runFxApplication(ctx, fApp)
 }
@@ -110,14 +113,18 @@ func handleEarlyExitModes() bool {
 	}
 
 	if bootfx.IsConfigCheckMode() {
-		os.Exit(runConfigCheck(bootfx.SetupConfiguration, os.Stderr))
+		os.Exit(runConfigCheck(func() error {
+			_, err := bootfx.SetupConfiguration()
+
+			return err
+		}, os.Stderr))
 	}
 
 	return false
 }
 
 // newFxApplication builds the fx application with the production module graph.
-func newFxApplication(ctx context.Context, cancel context.CancelFunc) *fx.App {
+func newFxApplication(ctx context.Context, cancel context.CancelFunc, prepared config.File) *fx.App {
 	return fx.New(
 		fx.WithLogger(func(logger *slog.Logger) fxevent.Logger {
 			if logger.Enabled(context.Background(), slog.LevelDebug) {
@@ -127,22 +134,25 @@ func newFxApplication(ctx context.Context, cancel context.CancelFunc) *fx.App {
 			return fxevent.NopLogger
 		}),
 		rootContextOption(ctx, cancel),
-		fx.Provide(newBootstrapped),
+		bootstrapOption(prepared),
+		fx.Provide(newPolicyGenerationStore),
 		fx.Provide(newConfigDeps),
 		fx.Provide(newLogger),
 		fx.Provide(newDbgModuleMapping),
 		fx.Provide(newRedisDeps),
+		fx.Provide(newPluginState),
+		fx.Provide(newRouteArtifacts),
 		fx.Provide(newAccountCache),
 		fx.Provide(newBackendChannel),
+		fx.Provide(newBruteForceTolerate),
+		policyFactoryModule(),
 		envfx.Module(),
 		languagefx.Module(),
-		localizationfx.Module(),
 		loopsfx.Module(),
 		opsfx.Module(),
 		policyfx.Module(),
 		reloadfx.Module(),
 		restartfx.Module(),
-		fx.Provide(newActionWorkers),
 		fx.Provide(newContextStoreForRuntime),
 		fx.Provide(newReloadOrchestrator),
 		fx.Provide(newRestartOrchestrator),
@@ -216,7 +226,22 @@ func runConfigDumpDefaults(stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
-func runConfigDumpNonDefaults(setupConfiguration func() error, stdout io.Writer, stderr io.Writer) int {
+func runConfigDumpNonDefaults(setupConfiguration configurationSnapshotSetup, stdout io.Writer, stderr io.Writer) int {
+	return runConfigDumpNonDefaultsWithFormat(
+		setupConfiguration,
+		bootfx.GetConfigDumpFormat(),
+		stdout,
+		stderr,
+	)
+}
+
+// runConfigDumpNonDefaultsWithFormat renders one prepared snapshot in the requested format.
+func runConfigDumpNonDefaultsWithFormat(
+	setupConfiguration configurationSnapshotSetup,
+	dumpFormat config.DumpFormat,
+	stdout io.Writer,
+	stderr io.Writer,
+) int {
 	if bootfx.IsConfigDumpDefaultsMode() {
 		_, _ = fmt.Fprintln(stderr, "configuration dump failed: use either -d or -n, not both")
 
@@ -229,15 +254,15 @@ func runConfigDumpNonDefaults(setupConfiguration func() error, stdout io.Writer,
 		return 1
 	}
 
-	if err := setupConfiguration(); err != nil {
+	file, err := setupConfiguration()
+	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "configuration dump failed: %v\n", err)
 
 		return 1
 	}
 
-	dumpFormat := bootfx.GetConfigDumpFormat()
+	output, err := config.RenderNonDefaultConfigSnapshotDumpWithFormat(file, dumpFormat)
 
-	output, err := config.RenderNonDefaultConfigDumpWithFormat(viper.AllSettings(), dumpFormat)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "configuration dump failed: %v\n", err)
 

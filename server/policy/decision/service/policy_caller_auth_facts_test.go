@@ -128,7 +128,11 @@ func mustPolicyCallerFactsAuthenticator(t *testing.T, validationErr error) *call
 			Principal:           policyCallerFactsPrincipal,
 			RequireMTLS:         validationErr == nil,
 		}},
-		TransportCapabilities: callerauth.TransportCapabilities{HTTPProtected: true, GRPCProtected: true},
+		TransportCapabilities: callerauth.TransportCapabilities{
+			HTTPProtected:                 true,
+			GRPCProtected:                 true,
+			GRPCVerifiedClientCertificate: true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("callerauth.New() error = %v", err)

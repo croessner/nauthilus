@@ -18,8 +18,17 @@ const (
 	// ProviderKindLua selects the standalone target-aware Lua provider path.
 	ProviderKindLua = "lua"
 
+	// ProviderKindLuaEnvironment selects one generation-bound authn environment source.
+	ProviderKindLuaEnvironment = "lua_environment"
+
+	// ProviderKindLuaSubject selects one generation-bound authn subject source.
+	ProviderKindLuaSubject = "lua_subject"
+
 	// ProviderKindNative selects a generation-bound native Go provider.
 	ProviderKindNative = "native"
+
+	// ProviderKindPlugin selects an existing public auth-shaped native extension.
+	ProviderKindPlugin = "plugin"
 
 	// VisibilityPrivate keeps a policy set inside its owning namespace.
 	VisibilityPrivate = "private"
@@ -219,6 +228,9 @@ type DiagnosticsConfig struct {
 }
 
 // ProviderConfig declares one namespace-owned provider definition.
+//
+// Secrets reserves stable schema and redaction paths. The production generation
+// rejects non-empty values until a typed provider credential carrier exists.
 type ProviderConfig struct {
 	Secrets       map[string]secret.Value `mapstructure:"secrets"`
 	Kind          string                  `mapstructure:"kind"`
@@ -246,6 +258,9 @@ func (p ProviderConfig) CanonicalID(namespace string, name string) string {
 }
 
 // EffectConfig declares one namespace-owned typed effect definition.
+//
+// Secrets reserves stable schema and redaction paths. The production generation
+// rejects non-empty values until a typed effect credential carrier exists.
 type EffectConfig struct {
 	Secrets     map[string]secret.Value          `mapstructure:"secrets"`
 	Parameters  map[string]EffectParameterConfig `mapstructure:"parameters"`

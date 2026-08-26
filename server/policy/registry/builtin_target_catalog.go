@@ -31,11 +31,13 @@ const (
 	builtinAuthnMaximumFactText  = 4096
 	builtinAuthnMaximumFactItems = 1024
 	builtinBruteForceProvider    = policy.AuthnProviderBruteForce
-	builtinLuaActionProvider     = "authn/lua_action"
-	builtinPostActionProvider    = "authn/post_action"
-	builtinBruteForceEffect      = "authn/brute_force_update"
-	builtinLuaActionEffect       = "authn/lua_action_dispatch"
-	builtinPostActionEffect      = "authn/lua_post_action_enqueue"
+	// AuthnLuaActionProviderID owns exact configured synchronous authn Lua actions.
+	AuthnLuaActionProviderID = "authn/lua_action"
+	// AuthnPostActionProviderID owns exact configured authn Lua post-actions.
+	AuthnPostActionProviderID    = "authn/post_action"
+	builtinLuaActionProvider     = AuthnLuaActionProviderID
+	builtinPostActionProvider    = AuthnPostActionProviderID
+	builtinBruteForceEffect      = policy.EffectBruteForceUpdate
 	builtinActionListAccounts    = string(policy.OperationListAccounts)
 	builtinActionAuthenticate    = string(policy.OperationAuthenticate)
 	builtinActionLookupIdentity  = string(policy.OperationLookupIdentity)
@@ -55,7 +57,6 @@ const (
 
 // BuiltinAuthEffectBinding describes one immutable standard-auth execution owner.
 type BuiltinAuthEffectBinding struct {
-	Selection string
 	EffectID  string
 	Provider  string
 	Execution ExecutionClass
@@ -63,22 +64,9 @@ type BuiltinAuthEffectBinding struct {
 
 var builtinAuthEffectBindings = []BuiltinAuthEffectBinding{
 	{
-		Selection: policy.ObligationBruteForceUpdate,
 		EffectID:  builtinBruteForceEffect,
 		Provider:  builtinBruteForceProvider,
 		Execution: ExecutionHostSync,
-	},
-	{
-		Selection: policy.ObligationLuaActionDispatch,
-		EffectID:  builtinLuaActionEffect,
-		Provider:  builtinLuaActionProvider,
-		Execution: ExecutionHostSync,
-	},
-	{
-		Selection: policy.ObligationLuaPostActionEnqueue,
-		EffectID:  builtinPostActionEffect,
-		Provider:  builtinPostActionProvider,
-		Execution: ExecutionHostPostAction,
 	},
 }
 
@@ -110,7 +98,7 @@ func BuiltinAuthEffectBindings() []BuiltinAuthEffectBinding {
 	return append([]BuiltinAuthEffectBinding(nil), builtinAuthEffectBindings...)
 }
 
-// BuiltinAuthEffectBindingForEffect resolves a canonical effect to its standard-auth selection owner.
+// BuiltinAuthEffectBindingForEffect resolves a canonical effect to its standard-auth execution owner.
 func BuiltinAuthEffectBindingForEffect(effectID string) (BuiltinAuthEffectBinding, bool) {
 	for _, binding := range builtinAuthEffectBindings {
 		if binding.EffectID == effectID {
@@ -492,31 +480,26 @@ func builtinAuthnProviders(
 
 // builtinAuthnEffects declares immutable mappings for established auth effects.
 func builtinAuthnEffects(targets []decision.Target) ([]EffectDefinition, error) {
-	bruteForceParameters, luaParameters, err := builtinEffectParameters()
+	bruteForceParameters, err := builtinEffectParameters()
 	if err != nil {
 		return nil, err
 	}
 
 	inputs := make([]EffectDefinitionInput, 0, len(builtinAuthEffectBindings))
 	for _, binding := range builtinAuthEffectBindings {
-		parameters := luaParameters
-		if binding.Selection == policy.ObligationBruteForceUpdate {
-			parameters = bruteForceParameters
-		}
-
 		inputs = append(inputs, EffectDefinitionInput{
 			ID:         binding.EffectID,
 			Kind:       EffectKindObligation,
 			Execution:  binding.Execution,
-			Targets:    builtinTargetsForEffectSelection(targets, binding.Selection),
+			Targets:    builtinTargetsForEffectID(targets, binding.EffectID),
 			Provider:   binding.Provider,
-			Parameters: parameters,
+			Parameters: bruteForceParameters,
 		})
 	}
 
 	result := make([]EffectDefinition, 0, len(inputs))
-	for index, input := range inputs {
-		effect, err := newEffectDefinitionWithSelection(input, true, builtinAuthEffectBindings[index].Selection)
+	for _, input := range inputs {
+		effect, err := newEffectDefinition(input, true)
 		if err != nil {
 			return nil, err
 		}
@@ -527,32 +510,22 @@ func builtinAuthnEffects(targets []decision.Target) ([]EffectDefinition, error) 
 	return result, nil
 }
 
-// BuiltinAuthEffectSelectionIDs returns the immutable established selections required by one authn action.
-func BuiltinAuthEffectSelectionIDs(action string) []string {
+// BuiltinAuthEffectIDs returns the canonical effects required by one authn action.
+func BuiltinAuthEffectIDs(action string) []string {
 	switch action {
-	case builtinActionAuthenticate:
-		return []string{
-			policy.ObligationBruteForceUpdate,
-			policy.ObligationLuaActionDispatch,
-			policy.ObligationLuaPostActionEnqueue,
-		}
-	case builtinActionLookupIdentity:
-		return []string{
-			policy.ObligationBruteForceUpdate,
-			policy.ObligationLuaActionDispatch,
-			policy.ObligationLuaPostActionEnqueue,
-		}
+	case builtinActionAuthenticate, builtinActionLookupIdentity:
+		return []string{builtinBruteForceEffect}
 	default:
 		return nil
 	}
 }
 
-// builtinTargetsForEffectSelection derives exact target allowlists from the shared requirement owner.
-func builtinTargetsForEffectSelection(targets []decision.Target, selection string) []decision.Target {
+// builtinTargetsForEffectID derives exact target allowlists from the shared canonical requirement owner.
+func builtinTargetsForEffectID(targets []decision.Target, effectID string) []decision.Target {
 	result := make([]decision.Target, 0, len(targets))
 
 	for _, target := range targets {
-		if slices.Contains(BuiltinAuthEffectSelectionIDs(target.Action()), selection) {
+		if slices.Contains(BuiltinAuthEffectIDs(target.Action()), effectID) {
 			result = append(result, target)
 		}
 	}
@@ -578,40 +551,18 @@ func builtinTargetsForActions(targets []decision.Target, actions ...string) []de
 }
 
 // builtinEffectParameters preserves the established standard-auth obligation arguments.
-func builtinEffectParameters() ([]ParameterSchema, []ParameterSchema, error) {
+func builtinEffectParameters() ([]ParameterSchema, error) {
 	optionalFeature, err := NewParameterSchema(ParameterSchemaInput{
 		Name: policy.ObligationArgFeature, Kind: decision.ValueKindString, MaxLength: 128, NonEmpty: true,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	optionalEnvironment, err := NewParameterSchema(ParameterSchemaInput{Name: policy.ObligationArgEnvironment, Kind: decision.ValueKindString, MaxLength: 128})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	requiredAction, err := NewParameterSchema(ParameterSchemaInput{
-		Name: policy.ObligationArgAction, Kind: decision.ValueKindString, MaxLength: 128, Required: true,
-		AllowedStrings: policy.LuaActionDispatchActions(),
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	requiredFeature, err := NewParameterSchema(ParameterSchemaInput{
-		Name: policy.ObligationArgFeature, Kind: decision.ValueKindString, MaxLength: 128, Required: true, NonEmpty: true,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	optionalWait, err := NewParameterSchema(ParameterSchemaInput{Name: policy.ObligationArgWait, Kind: decision.ValueKindBoolean})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return []ParameterSchema{optionalFeature, optionalEnvironment},
-		[]ParameterSchema{requiredAction, requiredFeature, optionalEnvironment, optionalWait},
-		nil
+	return []ParameterSchema{optionalFeature, optionalEnvironment}, nil
 }

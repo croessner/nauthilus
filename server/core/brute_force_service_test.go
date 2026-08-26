@@ -16,17 +16,13 @@
 package core_test
 
 import (
-	corepkg "github.com/croessner/nauthilus/v3/server/core"
-	_ "github.com/croessner/nauthilus/v3/server/core/auth"
-
 	"testing"
+
+	coreauth "github.com/croessner/nauthilus/v3/server/core/auth"
 )
 
 func TestWaitDelayMonotonicAndBounded(t *testing.T) {
-	svc := corepkg.GetBruteForceService()
-	if svc == nil {
-		t.Fatal("brute force service not registered")
-	}
+	svc := coreauth.DefaultBruteForceService{}
 
 	maxDelay := uint(100)
 

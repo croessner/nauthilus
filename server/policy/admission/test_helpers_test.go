@@ -22,7 +22,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/compiler"
+	"github.com/croessner/nauthilus/v3/server/policy/catalogcompile"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
@@ -135,7 +135,7 @@ func admissionTestCatalog(
 	contribution := admissionTestContribution(t, targetDefinition, schema)
 	activation := admissionTestActivation(t, target, identity)
 
-	catalog, err := compiler.NewTargetCatalogCompiler(
+	catalog, err := catalogcompile.NewTargetCatalogCompiler(
 		admissionTestContributor{contribution: contribution},
 	).Compile(context.Background(), []registry.TargetActivation{activation})
 	if err != nil {

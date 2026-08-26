@@ -56,7 +56,7 @@ func TestGenerationCoordinatorHasNoTransportOrPublicExtensionDependencies(t *tes
 // TestTargetCatalogImportBoundaryExcludesPublicExtensionAPIs protects catalog ownership from adapter dependencies.
 func TestTargetCatalogImportBoundaryExcludesPublicExtensionAPIs(t *testing.T) {
 	files := []string{
-		"../compiler/target_catalog.go",
+		"../catalogcompile/target_catalog.go",
 		"../registry/effect_catalog.go",
 		"../registry/target_contribution.go",
 		"target_catalog.go",

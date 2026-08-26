@@ -267,7 +267,7 @@ func (f *FileSettings) validateIDPSAMLSigningSettings() error {
 				continue
 			}
 
-			certStr, err := sp.GetCert()
+			certStr, err := GetContent(sp.Cert, sp.CertFile)
 			if err != nil {
 				return fmt.Errorf("identity.saml.service_providers[%s]: failed to read cert: %w", sp.EntityID, err)
 			}
@@ -537,17 +537,6 @@ func (o *OIDCConfig) String() string {
 
 	return fmt.Sprintf("OIDCConfig: {Enabled:%t Issuer:%s Clients:%+v ScopesSupported:%v ResponseTypesSupported:%v SubjectTypesSupported:%v IDTokenSigningAlgValuesSupported:%v TokenEndpointAuthMethodsSupported:%v ClaimsSupported:%v FrontChannelLogoutSupported:%v FrontChannelLogoutSessionSupported:%v BackChannelLogoutSupported:%v BackChannelLogoutSessionSupported:%v DefaultAccessTokenLifetime:%s DefaultRefreshTokenLifetime:%s SigningKeys:%v AutoKeyRotation:%t KeyRotationInterval:%s KeyMaxAge:%s TokenEndpointAllowGET:%t DynamicClientRegistration:%s}",
 		o.Enabled, o.Issuer, o.Clients, o.ScopesSupported, o.ResponseTypesSupported, o.SubjectTypesSupported, o.IDTokenSigningAlgValuesSupported, o.TokenEndpointAuthMethodsSupported, o.ClaimsSupported, o.FrontChannelLogoutSupported, o.FrontChannelLogoutSessionSupported, o.BackChannelLogoutSupported, o.BackChannelLogoutSessionSupported, o.DefaultAccessTokenLifetime, o.DefaultRefreshTokenLifetime, o.SigningKeys, o.AutoKeyRotation, o.KeyRotationInterval, o.KeyMaxAge, o.TokenEndpointAllowGET, o.DynamicClientRegistration.String())
-}
-
-// GetSigningKey returns the signing key content.
-func (o *OIDCConfig) GetSigningKey() (string, error) {
-	for _, k := range o.SigningKeys {
-		if k.Active {
-			return GetContent(k.Key, k.KeyFile)
-		}
-	}
-
-	return "", fmt.Errorf("no signing key configured")
 }
 
 // GetScopesSupported returns the supported scopes.
@@ -1218,15 +1207,6 @@ func (c *OIDCClient) SupportsGrantType(grantType string) bool {
 	return slices.Contains(c.GetGrantTypes(), grantType)
 }
 
-// GetClientPublicKey returns the client's public key content (inline or from file).
-func (c *OIDCClient) GetClientPublicKey() (string, error) {
-	if c == nil {
-		return "", fmt.Errorf("client is nil")
-	}
-
-	return GetContent(c.ClientPublicKey, c.ClientPublicKeyFile)
-}
-
 // GetClientPublicKeyAlgorithm returns the algorithm for the client's public key.
 // Defaults to "RS256" if not configured.
 func (c *OIDCClient) GetClientPublicKeyAlgorithm() string {
@@ -1278,16 +1258,6 @@ func (s *SAML2Config) String() string {
 
 	return fmt.Sprintf("SAML2Config: {Enabled:%t EntityID:%s ServiceProviders:%+v SignatureMethod:%s DefaultExpireTime:%s NameIDFormat:%s}",
 		s.Enabled, s.EntityID, s.ServiceProviders, s.SignatureMethod, s.DefaultExpireTime, s.NameIDFormat)
-}
-
-// GetCert returns the certificate content.
-func (s *SAML2Config) GetCert() (string, error) {
-	return GetContent(s.Cert, s.CertFile)
-}
-
-// GetKey returns the key content.
-func (s *SAML2Config) GetKey() (string, error) {
-	return GetContent(s.Key, s.KeyFile)
 }
 
 // GetSignatureMethod returns the signature method.
@@ -1505,15 +1475,6 @@ func (s *SAML2ServiceProvider) GetMFAPolicyLevels(parentLevels map[string]int) m
 	}
 
 	return s.MFAPolicy.GetLevels(parentLevels)
-}
-
-// GetCert returns the SP certificate content (inline or from file).
-func (s *SAML2ServiceProvider) GetCert() (string, error) {
-	if s == nil {
-		return "", nil
-	}
-
-	return GetContent(s.Cert, s.CertFile)
 }
 
 // AreAuthnRequestsSigned returns whether this SP signs AuthnRequests.

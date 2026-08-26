@@ -57,7 +57,7 @@ func TestIDPCompositionRootSuppliesSharedAuthApplicationBeforeAdapters(t *testin
 	functions := compositionFunctions(parsed)
 	dependencyBuilder := requireCompositionFunction(t, functions, "frontendHandlerDeps")
 	dependencyName, returnPosition := returnedCompositionDependency(t, dependencyBuilder)
-	applicationPosition := requireAuthApplicationInitialization(t, dependencyBuilder, dependencyName)
+	applicationPosition := requireRuntimeAuthApplicationAssignment(t, dependencyBuilder, dependencyName)
 
 	if applicationPosition >= returnPosition {
 		t.Fatal("frontend IDP dependencies return before AuthApplication initialization")
@@ -154,8 +154,8 @@ func returnedCompositionDependency(t *testing.T, function *ast.FuncDecl) (string
 	return dependency, position
 }
 
-// requireAuthApplicationInitialization proves the returned dependency receives a constructed application.
-func requireAuthApplicationInitialization(t *testing.T, function *ast.FuncDecl, dependency string) token.Pos {
+// requireRuntimeAuthApplicationAssignment proves the returned dependency receives the sole runtime-owned application.
+func requireRuntimeAuthApplicationAssignment(t *testing.T, function *ast.FuncDecl, dependency string) token.Pos {
 	t.Helper()
 
 	var position token.Pos
@@ -179,8 +179,15 @@ func requireAuthApplicationInitialization(t *testing.T, function *ast.FuncDecl, 
 			}
 
 			value := compositionAssignmentValue(assignment, index)
-			if _, constructed := value.(*ast.CallExpr); !constructed {
-				t.Fatalf("%s assigns AuthApplication without constructing a non-nil application", function.Name.Name)
+
+			selector, selected = value.(*ast.SelectorExpr)
+			if !selected {
+				t.Fatalf("%s assigns AuthApplication from %T, want runtime.authApplication", function.Name.Name, value)
+			}
+
+			root, rooted = selectorRootIdentifier(selector)
+			if !rooted || root != "runtime" || selector.Sel.Name != "authApplication" {
+				t.Fatalf("%s assigns AuthApplication from %T, want runtime.authApplication", function.Name.Name, value)
 			}
 
 			position = assignment.Pos()

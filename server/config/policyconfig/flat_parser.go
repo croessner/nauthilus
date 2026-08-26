@@ -105,7 +105,7 @@ func (decoder *flatSettingsDecoder) decodeLine(rawLine string) error {
 
 	updated, err := decoder.assignPath(decoder.root, tokens, value)
 	if err != nil {
-		return err
+		return fmt.Errorf("configuration path %q: %w", key, err)
 	}
 
 	decoder.root = updated.(map[string]any)

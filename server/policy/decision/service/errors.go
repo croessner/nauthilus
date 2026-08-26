@@ -32,6 +32,9 @@ var (
 
 	// ErrDecisionEvaluation identifies an invalid or failed checkpoint evaluation.
 	ErrDecisionEvaluation = errors.New("decision checkpoint evaluation failed")
+
+	// ErrDecisionRouteUnavailable identifies a transport disabled by the captured generation.
+	ErrDecisionRouteUnavailable = errors.New("decision route unavailable")
 )
 
 type decisionAdmissionError struct {

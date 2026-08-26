@@ -834,7 +834,7 @@ func cloneContributionEffects(ownership NamespaceOwnership, effects []EffectDefi
 		effects,
 		"effects",
 		"effect",
-		identifier.Qualified,
+		validEffectID,
 		func(effect EffectDefinition) string { return effect.ID() },
 		func(effect EffectDefinition) (EffectDefinition, error) { return effect.validatedClone() },
 	)

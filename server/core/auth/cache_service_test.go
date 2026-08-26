@@ -47,7 +47,6 @@ func TestDefaultCacheService_OnSuccess_WritesRedisHashAndTTL(t *testing.T) {
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
 	config.SetTestFile(cfg)
-	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
@@ -76,9 +75,16 @@ func TestDefaultCacheService_OnSuccess_WritesRedisHashAndTTL(t *testing.T) {
 
 	// Build expected hash map matching SaveUserDataToRedis behavior
 	attrsJSONBytes, _ := jsoniter.ConfigFastest.Marshal(auth.Attributes.Attributes)
+
+	preparedPassword, ok := util.PreparePasswordBytesWithConfig([]byte(auth.PasswordString()), cfg)
+	if !ok {
+		t.Fatal("prepare password with explicit request config")
+	}
+	defer clear(preparedPassword)
+
 	expected := map[string]any{
 		"backend":       int(definitions.BackendLDAP),
-		"password":      util.GetHash(util.PreparePassword(auth.PasswordString())),
+		"password":      util.GetHashBytes(preparedPassword),
 		"account_field": auth.Runtime.AccountField,
 		"attributes":    string(attrsJSONBytes),
 	}

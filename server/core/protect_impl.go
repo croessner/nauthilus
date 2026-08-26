@@ -109,40 +109,14 @@ func protectedEndpointTrustedClient(ctx *gin.Context, cfg config.File, logger *s
 	return clientIP, clientPort
 }
 
-// handleProtectedPreAuthBruteForce applies configured and fallback pre-auth brute-force decisions.
+// handleProtectedPreAuthBruteForce defers an admitted request to generation-owned selection.
 func handleProtectedPreAuthBruteForce(ctx *gin.Context, auth *AuthState) bool {
-	if auth.applyConfiguredPreAuthDecision(ctx) {
-		return true
-	}
-
-	if handled, accepted := auth.applyConfiguredPreAuthControl(ctx); handled {
-		if !accepted {
-			auth.AuthTempFail(ctx, definitions.TempFailDefault)
-			ctx.Abort()
-
-			return true
-		}
-
+	if authnCandidateRuntimeOwnsPolicy(ctx) {
 		return false
-	}
-
-	if auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
-		return false
-	}
-
-	if auth.applyDefaultPreAuthDecision(ctx) {
-		return true
 	}
 
 	auth.markEnvironmentRejected(ctx)
 	auth.UpdateBruteForceBucketsCounter(ctx)
-
-	if !protectedPostLuaAction(ctx, auth) {
-		auth.AuthTempFail(ctx, definitions.TempFailDefault)
-		ctx.Abort()
-
-		return true
-	}
 
 	auth.AuthFail(ctx)
 	ctx.Abort()
@@ -155,37 +129,16 @@ func handleProtectedEnvironment(ctx *gin.Context, auth *AuthState) bool {
 	//nolint:exhaustive // Ignore some results
 	switch auth.HandleEnvironment(ctx) {
 	case definitions.AuthResultPreAuthTLS:
-		if !protectedPostLuaAction(ctx, auth) {
-			auth.AuthTempFail(ctx, definitions.TempFailDefault)
-			ctx.Abort()
-
-			return true
-		}
-
 		HandleErrWithDeps(ctx, errors.ErrNoTLS, auth.deps)
 		ctx.Abort()
 
 		return true
 	case definitions.AuthResultPreAuthRelayDomain, definitions.AuthResultPreAuthRBL, definitions.AuthResultLuaEnvironment:
-		if !protectedPostLuaAction(ctx, auth) {
-			auth.AuthTempFail(ctx, definitions.TempFailDefault)
-			ctx.Abort()
-
-			return true
-		}
-
 		auth.AuthFail(ctx)
 		ctx.Abort()
 
 		return true
 	case definitions.AuthResultTempFail:
-		if !protectedPostLuaAction(ctx, auth) {
-			auth.AuthTempFail(ctx, definitions.TempFailDefault)
-			ctx.Abort()
-
-			return true
-		}
-
 		auth.AuthTempFail(ctx, definitions.TempFailDefault)
 		ctx.Abort()
 
@@ -193,13 +146,4 @@ func handleProtectedEnvironment(ctx *gin.Context, auth *AuthState) bool {
 	default:
 		return false
 	}
-}
-
-// protectedPostLuaAction runs post-action hooks with a pooled empty PassDB result.
-func protectedPostLuaAction(ctx *gin.Context, auth *AuthState) bool {
-	result := GetPassDBResultFromPool()
-	accepted := auth.PostLuaAction(ctx, result)
-	PutPassDBResultToPool(result)
-
-	return accepted
 }

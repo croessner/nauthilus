@@ -519,7 +519,6 @@ type CompiledTarget struct {
 	domainPlan       CompiledDomainPlan
 	providers        map[string]registry.ProviderDefinition
 	effects          map[string]registry.EffectDefinition
-	effectSelections map[string]string
 	policySets       map[string]CompiledPolicySet
 	defaultPolicySet registry.PolicySetID
 	report           registry.TargetReportSettings
@@ -581,6 +580,38 @@ func (t CompiledTarget) LookupProvider(id string) (registry.ProviderDefinition, 
 	return provider, ok
 }
 
+// HostPreparesProvider reports whether authn host orchestration owns a scheduled provider before evaluation.
+func (t CompiledTarget) HostPreparesProvider(id string) bool {
+	if t.target.Namespace() != authnNamespace {
+		return false
+	}
+
+	provider, ok := t.providers[id]
+	if !ok {
+		return false
+	}
+
+	if provider.IsBuiltin() {
+		return true
+	}
+
+	return strings.HasPrefix(id, authnNamespace+"/lua_environment_") ||
+		strings.HasPrefix(id, authnNamespace+"/lua_subject_") ||
+		authnNativeSourceProvider(id)
+}
+
+// authnNativeSourceProvider recognizes only the two configured public auth source identity families.
+func authnNativeSourceProvider(id string) bool {
+	const prefix = authnNamespace + "/plugin."
+	if !strings.HasPrefix(id, prefix) {
+		return false
+	}
+
+	local := strings.TrimPrefix(id, prefix)
+
+	return strings.HasSuffix(local, ".environment") || strings.Contains(local, ".subject.")
+}
+
 // ProviderIDs returns deterministic target-local provider identities.
 func (t CompiledTarget) ProviderIDs() []string {
 	result := make([]string, 0, len(t.providers))
@@ -612,16 +643,6 @@ func (t CompiledTarget) EffectIDs() []string {
 	return result
 }
 
-// LookupEffectSelection resolves a canonical or immutable legacy builtin selection identity.
-func (t CompiledTarget) LookupEffectSelection(id string) (registry.EffectDefinition, bool) {
-	canonical, ok := t.effectSelections[id]
-	if !ok {
-		return registry.EffectDefinition{}, false
-	}
-
-	return t.LookupEffect(canonical)
-}
-
 // clone returns a detached compiled target.
 func (t CompiledTarget) clone() CompiledTarget {
 	providers := make(map[string]registry.ProviderDefinition, len(t.providers))
@@ -632,11 +653,6 @@ func (t CompiledTarget) clone() CompiledTarget {
 	effects := make(map[string]registry.EffectDefinition, len(t.effects))
 	for identity, effect := range t.effects {
 		effects[identity] = effect
-	}
-
-	selections := make(map[string]string, len(t.effectSelections))
-	for selection, identity := range t.effectSelections {
-		selections[selection] = identity
 	}
 
 	sets := make(map[string]CompiledPolicySet, len(t.policySets))
@@ -651,7 +667,6 @@ func (t CompiledTarget) clone() CompiledTarget {
 		domainPlan:       t.domainPlan.clone(),
 		providers:        providers,
 		effects:          effects,
-		effectSelections: selections,
 		policySets:       sets,
 		defaultPolicySet: t.defaultPolicySet,
 		report:           t.report,
@@ -848,12 +863,12 @@ func compileTargetRecord(
 		return CompiledTarget{}, err
 	}
 
-	effects, selections, err := effectIndex(record.Effects, target, providers)
+	effects, err := effectIndex(record.Effects, target, providers)
 	if err != nil {
 		return CompiledTarget{}, err
 	}
 
-	if err := validateBuiltinAuthDescriptors(target, record.Schema, record.SourcePlan, providers, effects, selections); err != nil {
+	if err := validateBuiltinAuthDescriptors(target, record.Schema, record.SourcePlan, providers, effects); err != nil {
 		return CompiledTarget{}, err
 	}
 
@@ -881,7 +896,6 @@ func compileTargetRecord(
 		domainPlan:       plan,
 		providers:        providers,
 		effects:          effects,
-		effectSelections: selections,
 		policySets:       targetPolicySets,
 		defaultPolicySet: record.DefaultPolicySet,
 		report:           record.Report,
@@ -917,7 +931,6 @@ func validateBuiltinAuthDescriptors(
 	plan registry.DomainPlanDefinition,
 	providers map[string]registry.ProviderDefinition,
 	effects map[string]registry.EffectDefinition,
-	selections map[string]string,
 ) error {
 	if target.Namespace() != authnNamespace {
 		return nil
@@ -931,7 +944,7 @@ func validateBuiltinAuthDescriptors(
 		return err
 	}
 
-	return validateBuiltinAuthEffectSelections(target, providers, effects, selections)
+	return validateBuiltinAuthEffects(target, providers, effects)
 }
 
 // validateBuiltinAuthPlanProviders resolves configured bindings without allowing host identity replacement.
@@ -952,25 +965,23 @@ func validateBuiltinAuthPlanProviders(
 	return nil
 }
 
-// validateBuiltinAuthEffectSelections protects every required established effect binding.
-func validateBuiltinAuthEffectSelections(
+// validateBuiltinAuthEffects protects every required canonical effect binding.
+func validateBuiltinAuthEffects(
 	target decision.Target,
 	providers map[string]registry.ProviderDefinition,
 	effects map[string]registry.EffectDefinition,
-	selections map[string]string,
 ) error {
-	expected := registry.BuiltinAuthEffectSelectionIDs(target.Action())
-	for _, selection := range expected {
-		canonical, exists := selections[selection]
-		effect, effectExists := effects[canonical]
+	expected := registry.BuiltinAuthEffectIDs(target.Action())
+	for _, effectID := range expected {
+		effect, exists := effects[effectID]
 
-		if !exists || !effectExists || !effect.IsBuiltin() || effect.SelectionID() != selection {
-			return fmt.Errorf("%w: target %s has invalid builtin effect selection %s", ErrInvalidCompiledTarget, target.String(), selection)
+		if !exists || !effect.IsBuiltin() || effect.ID() != effectID {
+			return fmt.Errorf("%w: target %s has invalid builtin effect %s", ErrInvalidCompiledTarget, target.String(), effectID)
 		}
 
 		provider, providerExists := providers[effect.Provider()]
 		if effect.Execution() != registry.ExecutionReturnOnly && (!providerExists || !provider.IsBuiltin()) {
-			return fmt.Errorf("%w: target %s has invalid builtin provider for %s", ErrInvalidCompiledTarget, target.String(), selection)
+			return fmt.Errorf("%w: target %s has invalid builtin provider for %s", ErrInvalidCompiledTarget, target.String(), effectID)
 		}
 	}
 
@@ -1369,15 +1380,18 @@ func equalPolicySetImports(left []registry.PolicySetImport, right []registry.Pol
 	return true
 }
 
-// checkpointProviderInstances returns exact source metadata or a compatibility projection.
+// checkpointProviderInstances returns exact source-owned provider metadata.
 func checkpointProviderInstances(checkpoint CheckpointRecord) ([]registry.ProviderInstanceDefinition, error) {
 	if len(checkpoint.ProviderInstances) == 0 {
-		compatibility, err := registry.NewCheckpointDefinition(checkpoint.Name, nil, checkpoint.ProviderIDs)
-		if err != nil {
-			return nil, fmt.Errorf("%w: checkpoint %s has invalid provider identities: %v", ErrInvalidCompiledTarget, checkpoint.Name, err)
+		if len(checkpoint.ProviderIDs) == 0 {
+			return nil, nil
 		}
 
-		return compatibility.ProviderInstances(), nil
+		return nil, fmt.Errorf(
+			"%w: checkpoint %s requires exact provider instances",
+			ErrInvalidCompiledTarget,
+			checkpoint.Name,
+		)
 	}
 
 	if !slices.Equal(checkpoint.ProviderIDs, providerInstanceUses(checkpoint.ProviderInstances)) {
@@ -1387,7 +1401,7 @@ func checkpointProviderInstances(checkpoint CheckpointRecord) ([]registry.Provid
 	return append([]registry.ProviderInstanceDefinition(nil), checkpoint.ProviderInstances...), nil
 }
 
-// providerInstanceUses projects ordered provider definitions for compatibility consumers.
+// providerInstanceUses projects the exact ordered uses for record integrity checks.
 func providerInstanceUses(instances []registry.ProviderInstanceDefinition) []string {
 	result := make([]string, 0, len(instances))
 	for _, instance := range instances {
@@ -1738,15 +1752,15 @@ func ruleUsesFact(rule CompiledRule, factID string) bool {
 	return rule.ResponseMessage().FactID() == factID || rule.ResponseLanguage().FactID() == factID
 }
 
-// requiredProvidersContainInstance accepts local names and qualified-use compatibility references.
+// requiredProvidersContainInstance accepts only exact checkpoint-local instance names.
 func requiredProvidersContainInstance(
 	required []string,
 	instance registry.ProviderInstanceDefinition,
 ) bool {
-	return slices.Contains(required, instance.Name()) || slices.Contains(required, instance.Use())
+	return slices.Contains(required, instance.Name())
 }
 
-// resolveRequiredProviderReferences maps source names or unique uses to executable instance names.
+// resolveRequiredProviderReferences validates exact source instance names.
 func resolveRequiredProviderReferences(
 	references []string,
 	instances []registry.ProviderInstanceDefinition,
@@ -1762,23 +1776,7 @@ func resolveRequiredProviderReferences(
 			continue
 		}
 
-		matches := make([]string, 0, 1)
-
-		for _, instance := range instances {
-			if instance.Use() == reference {
-				matches = append(matches, instance.Name())
-			}
-		}
-
-		if len(matches) == 0 {
-			return nil, fmt.Errorf("requires unscheduled provider %s", reference)
-		}
-
-		if len(matches) > 1 {
-			return nil, fmt.Errorf("requires ambiguous provider use %s across instances %s", reference, strings.Join(matches, ","))
-		}
-
-		result = append(result, matches[0])
+		return nil, fmt.Errorf("requires unscheduled provider instance %s", reference)
 	}
 
 	return result, nil
@@ -2333,32 +2331,27 @@ func providerIndex(values []registry.ProviderDefinition, target decision.Target)
 	return result, nil
 }
 
-// effectIndex owns collision-free target-local effect and selection descriptors.
+// effectIndex owns collision-free target-local canonical effect descriptors.
 func effectIndex(
 	values []registry.EffectDefinition,
 	target decision.Target,
 	providers map[string]registry.ProviderDefinition,
-) (map[string]registry.EffectDefinition, map[string]string, error) {
+) (map[string]registry.EffectDefinition, error) {
 	result := make(map[string]registry.EffectDefinition, len(values))
-	selections := make(map[string]string, len(values)*2)
 
 	for _, value := range values {
 		if _, exists := result[value.ID()]; exists {
-			return nil, nil, fmt.Errorf("%w: %s", ErrDuplicateCompiledEffect, value.ID())
+			return nil, fmt.Errorf("%w: %s", ErrDuplicateCompiledEffect, value.ID())
 		}
 
 		if err := validateEffectBinding(value, target, providers); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		result[value.ID()] = value
-
-		if err := claimEffectSelections(selections, value); err != nil {
-			return nil, nil, err
-		}
 	}
 
-	return result, selections, nil
+	return result, nil
 }
 
 // validateEffectBinding resolves one exact target and internal host owner.
@@ -2382,23 +2375,6 @@ func validateEffectBinding(
 
 	if effect.Execution() == registry.ExecutionHostPostAction && !provider.HasPostActionAcceptance() {
 		return fmt.Errorf("%w: effect %s has no post-action acceptance", ErrInvalidCompiledTarget, effect.ID())
-	}
-
-	return nil
-}
-
-// claimEffectSelections rejects canonical or legacy builtin selection collisions.
-func claimEffectSelections(selections map[string]string, effect registry.EffectDefinition) error {
-	for _, selection := range []string{effect.ID(), effect.SelectionID()} {
-		if selection == "" {
-			continue
-		}
-
-		if existing, exists := selections[selection]; exists && existing != effect.ID() {
-			return fmt.Errorf("%w: selection %s", ErrDuplicateCompiledEffect, selection)
-		}
-
-		selections[selection] = effect.ID()
 	}
 
 	return nil

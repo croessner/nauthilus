@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -20,10 +21,13 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	policy "github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/admission"
 	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
+	"github.com/croessner/nauthilus/v3/server/policy/configinput"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
@@ -127,6 +131,11 @@ func TestPolicyHTTPRejectsNonJSONMediaType(t *testing.T) {
 }
 
 func TestPolicyHTTPMapsApplicationErrorsAndFinalizesAfterCommit(t *testing.T) {
+	t.Run("route disabled", func(t *testing.T) {
+		response := servePolicyRequest(policyEngine(&recordingService{err: decisionservice.ErrDecisionRouteUnavailable}), validRequestJSON, "Bearer opaque")
+		requirePolicyStatus(t, response, http.StatusNotFound)
+	})
+
 	t.Run("authentication", func(t *testing.T) {
 		response := servePolicyRequest(policyEngine(&recordingService{err: decisionservice.ErrDecisionAuthentication}), validRequestJSON, "Bearer opaque")
 		requirePolicyStatus(t, response, http.StatusUnauthorized)
@@ -176,6 +185,33 @@ func TestPolicyHTTPMapsApplicationErrorsAndFinalizesAfterCommit(t *testing.T) {
 			t.Fatal("response finalization gate opened before the handler committed the response")
 		}
 	})
+}
+
+func TestPolicyHTTPDisabledRoutePrecedesRequestPreparation(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		body          string
+		authorization string
+	}{
+		{name: "missing credentials", body: validRequestJSON},
+		{name: "malformed payload", body: `{`, authorization: "Bearer opaque"},
+		{name: "oversized payload", body: strings.Repeat("x", decision.MaximumOpaqueCredentialBytes+1), authorization: "Bearer opaque"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			service := &recordingService{err: decisionservice.ErrDecisionRouteUnavailable}
+			response := servePolicyRequest(policyEngine(service), testCase.body, testCase.authorization)
+
+			requirePolicyStatus(t, response, http.StatusNotFound)
+
+			if service.transportKind != policyHTTPTransportKind {
+				t.Fatalf("transport kind = %q, want %q", service.transportKind, policyHTTPTransportKind)
+			}
+
+			if service.calls != 0 {
+				t.Fatalf("evaluation calls = %d, want zero", service.calls)
+			}
+		})
+	}
 }
 
 func TestPolicyHTTPEvaluatesThroughRealGeneration(t *testing.T) {
@@ -295,13 +331,47 @@ func TestTrustedProxyTransportEvidenceRejectsSpoofedForwarding(t *testing.T) {
 	}
 }
 
+func TestPolicyHTTPDerivesTrustedProxyEvidenceFromCapturedConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	service := &recordingService{
+		response: testResponse(t),
+		captured: &config.FileSettings{Server: &config.ServerSection{
+			TrustedProxies: []string{"192.0.2.0/24"},
+		}},
+	}
+	engine := gin.New()
+	New(service, nil).Register(engine.Group("/api/v1"))
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/policy/decisions", strings.NewReader(validRequestJSON))
+	request.RemoteAddr = "192.0.2.44:41234"
+	request.Header.Set("Authorization", "Bearer opaque")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Forwarded-Proto", "https")
+
+	response := httptest.NewRecorder()
+
+	engine.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+
+	if !service.authentication.Protected() {
+		t.Fatal("captured trusted-proxy configuration did not protect the prepared invocation")
+	}
+}
+
 const validRequestJSON = `{"version":"1","target":{"namespace":"dkim2","action":"sign-message"}}`
 
 type recordingService struct {
 	response                    decision.DecisionResponse
 	err                         error
+	captured                    config.File
+	authentication              decision.AuthenticationInput
 	finalization                *decision.EvaluationFinalization
 	gatePendingDuringEvaluation bool
+	transportKind               string
 	calls                       int
 }
 
@@ -310,6 +380,7 @@ type recordingService struct {
 //nolint:wsl_v5 // The observation sequence must remain adjacent to one invocation capture.
 func (s *recordingService) Evaluate(_ context.Context, invocation decision.Invocation) (decision.DecisionResponse, error) {
 	s.calls++
+	s.authentication = invocation.Authentication
 	s.finalization = &invocation.Finalization
 	select {
 	case <-invocation.Finalization.Done():
@@ -321,8 +392,32 @@ func (s *recordingService) Evaluate(_ context.Context, invocation decision.Invoc
 	return s.response, s.err
 }
 
+// EvaluatePrepared records the invocation prepared under a deterministic captured configuration.
+func (s *recordingService) EvaluatePrepared(
+	ctx context.Context,
+	transportKind string,
+	prepare func(config.File) (decision.Invocation, error),
+) (decision.DecisionResponse, error) {
+	s.transportKind = transportKind
+	if errors.Is(s.err, decisionservice.ErrDecisionRouteUnavailable) {
+		return decision.DecisionResponse{}, s.err
+	}
+
+	captured := s.captured
+	if captured == nil {
+		captured = enabledHTTPPolicyConfig()
+	}
+
+	invocation, err := prepare(captured)
+	if err != nil {
+		return decision.DecisionResponse{}, err
+	}
+
+	return s.Evaluate(ctx, invocation)
+}
+
 // policyEngine builds the real Gin route around a recording DecisionService seam.
-func policyEngine(service decision.Service) *gin.Engine {
+func policyEngine(service decisionservice.PreparedService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
 	engine := gin.New()
@@ -431,11 +526,42 @@ func (s *commitProbeService) Evaluate(ctx context.Context, invocation decision.I
 	return response, err
 }
 
+// EvaluatePrepared preserves the commit probe while preparing under one captured configuration.
+func (s *commitProbeService) EvaluatePrepared(
+	ctx context.Context,
+	_ string,
+	prepare func(config.File) (decision.Invocation, error),
+) (decision.DecisionResponse, error) {
+	invocation, err := prepare(enabledHTTPPolicyConfig())
+	if err != nil {
+		return decision.DecisionResponse{}, err
+	}
+
+	return s.Evaluate(ctx, invocation)
+}
+
 type acceptingPostAction struct{}
 
 // Accept confirms ownership for a fixture without scheduling any post-action work.
 func (acceptingPostAction) Accept(context.Context, effectsupervisor.Plan) (effectsupervisor.Receipt, error) {
 	return effectsupervisor.Receipt{}, nil
+}
+
+type acceptingPolicyBasicThrottler struct{}
+
+// BeforeAttempt accepts one focused adapter-fixture verification attempt.
+func (*acceptingPolicyBasicThrottler) BeforeAttempt(context.Context, callerauth.BasicThrottleKey) error {
+	return nil
+}
+
+// RecordFailure accepts one focused adapter-fixture verification failure.
+func (*acceptingPolicyBasicThrottler) RecordFailure(context.Context, callerauth.BasicThrottleKey) error {
+	return nil
+}
+
+// RecordSuccess accepts one focused adapter-fixture verification success.
+func (*acceptingPolicyBasicThrottler) RecordSuccess(context.Context, callerauth.BasicThrottleKey) error {
+	return nil
 }
 
 type generatedPolicyTokenValidator struct{}
@@ -493,6 +619,7 @@ func newGeneratedDecisionService(t *testing.T) (*decisionservice.DecisionService
 			Principal:           "policy-bearer",
 		}},
 		TokenValidator:        generatedPolicyTokenValidator{},
+		Throttler:             &acceptingPolicyBasicThrottler{},
 		TransportCapabilities: callerauth.TransportCapabilities{HTTPProtected: true},
 	}
 	admissionConfiguration := admission.Configuration{
@@ -513,8 +640,13 @@ func newGeneratedDecisionService(t *testing.T) (*decisionservice.DecisionService
 	coordinator, err := policyruntime.NewCoordinator(policyruntime.CoordinatorConfig{
 		Store: store,
 		Slots: policyruntime.PreparationSlots{
-			Policy: policyruntime.PolicyPreparationFunc(func(_ context.Context, input policyruntime.PreparationInput) (policyruntime.PolicyPreparation, error) {
-				return policyruntime.PolicyPreparation{Snapshot: &policyruntime.Snapshot{Generation: input.ID()}}, nil
+			Policy: policyruntime.PolicyPreparationFunc(func(ctx context.Context, input policyruntime.PreparationInput) (policyruntime.PolicyPreparation, error) {
+				prepared, prepareErr := configinput.PreparePolicy(ctx, input.ID(), input.Config().GetPolicy())
+				if prepareErr != nil {
+					return policyruntime.PolicyPreparation{}, prepareErr
+				}
+
+				return policyruntime.PolicyPreparation{Policy: prepared}, nil
 			}),
 			Extensions: policyruntime.ExtensionPreparationFunc(func(context.Context, policyruntime.PreparationInput) (policyruntime.ExtensionPreparation, error) {
 				return policyruntime.ExtensionPreparation{Bindings: bindings}, nil
@@ -529,10 +661,13 @@ func newGeneratedDecisionService(t *testing.T) (*decisionservice.DecisionService
 				return admission.Prepare(admissionConfiguration, input.TargetCatalog(), input.CredentialProfiles())
 			}),
 			Settings: policyruntime.SettingsPreparationFunc(func(context.Context, policyruntime.SettingsPreparationInput) (policyruntime.SettingsPreparation, error) {
-				return policyruntime.SettingsPreparation{Settings: policyruntime.GenerationSettings{
-					Limits:  policyruntime.DecisionLimits{EvaluationTimeout: time.Second, PostActionBudget: time.Second, MaxDiagnosticsEntries: 8},
-					Reports: policyruntime.DecisionReportSettings{MaxEntries: 8},
-				}}, nil
+				return policyruntime.SettingsPreparation{
+					MessageResolver: localization.NewResolver(localization.NewMapCatalog(nil), "en"),
+					Settings: policyruntime.GenerationSettings{
+						Limits:  policyruntime.DecisionLimits{EvaluationTimeout: time.Second, PostActionBudget: time.Second, MaxDiagnosticsEntries: 8},
+						Reports: policyruntime.DecisionReportSettings{MaxEntries: 8},
+					},
+				}, nil
 			}),
 			Application: decisionservice.NewRuntimeApplicationPreparationSlot(),
 		},
@@ -541,7 +676,7 @@ func newGeneratedDecisionService(t *testing.T) (*decisionservice.DecisionService
 		t.Fatalf("new coordinator: %v", err)
 	}
 
-	if _, err = coordinator.Apply(context.Background(), policyruntime.PrepareInput{Config: &config.FileSettings{}, ID: 1}); err != nil {
+	if _, err = coordinator.Apply(context.Background(), policyruntime.PrepareInput{Config: enabledHTTPPolicyConfig(), ID: 1}); err != nil {
 		t.Fatalf("apply generated policy runtime: %v", err)
 	}
 
@@ -559,6 +694,18 @@ func newGeneratedDecisionService(t *testing.T) (*decisionservice.DecisionService
 		if shutdownErr := store.Shutdown(context.Background()); shutdownErr != nil {
 			t.Errorf("shutdown generated policy runtime: %v", shutdownErr)
 		}
+	}
+}
+
+// enabledHTTPPolicyConfig supplies generation-owned HTTP activation and wire bounds to adapter fixtures.
+func enabledHTTPPolicyConfig() config.File {
+	return &config.FileSettings{
+		Server: &config.ServerSection{},
+		Policy: policyconfig.PolicyConfig{API: policyconfig.APIConfig{
+			Enabled: true,
+			HTTP:    policyconfig.HTTPConfig{Enabled: true},
+			Limits:  policyconfig.APILimitsConfig{MaxRequestBytes: decision.MaximumOpaqueCredentialBytes},
+		}},
 	}
 }
 
@@ -609,3 +756,4 @@ func generatedPolicyCatalog(t *testing.T) (*policyruntime.TargetCatalog, registr
 }
 
 var _ decision.Service = (*recordingService)(nil)
+var _ decisionservice.PreparedService = (*recordingService)(nil)

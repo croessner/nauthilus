@@ -50,7 +50,7 @@ Takeaway: The rule‑based brute‑force system is strong. The gap is IP‑based
   - Derive metrics: attempts_per_ip, attempts_per_user, ips_per_user.
   - Compare to historical baselines (EWMA/quantiles). On anomaly: introduce small, system‑wide friction (e.g., +50–200 ms delay) or elevate account‑level protections for top‑targeted users.
 - Password spraying without storing plaintext
-  - Count prepared password tokens across many accounts/IPs using HMAC(secret, PreparePassword(pw)).
+  - Count prepared password tokens across many accounts/IPs using an HMAC over password bytes prepared with the request-captured configuration.
   - If a token spikes globally in 24h/7d windows, impose stricter controls for that token (e.g., immediate step‑up or stronger rate limits when that prepared password is attempted).
 
 3) Protocol‑specific responses (without client fingerprinting)
@@ -69,8 +69,8 @@ Takeaway: The rule‑based brute‑force system is strong. The gap is IP‑based
   - Ops: ZADD, ZREMRANGEBYSCORE, ZCOUNT. Use windows like 3600, 86400, 604800. TTL ~2×window.
 - Unique counts with HyperLogLog
   - Key: ntc:hll:acct:<username>:ips:<window>; PFADD ip; PFCOUNT returns cardinality.
-- Password‑spray counters (privacy‑preserving)
-  - Token: HMAC(secret, PreparePassword(pw)).
+- Password-spray counters (privacy-preserving)
+  - Token: HMAC(secret, request-config-prepared password bytes).
   - Per window ZSET/HLL to count token occurrences without storing plaintext passwords.
 - Per‑account failures
   - ZSET key: ntc:z:acct:<username>:fails records failure timestamps.
@@ -162,7 +162,7 @@ end
 Password‑spray counters (privacy‑preserving):
 
 ```lua
--- pw_token is HMAC(secret, PreparePassword(pw)) provided by the caller
+-- pw_token is an HMAC over request-config-prepared password bytes supplied by the caller
 local function update_sprayed_pw(redis, pw_token)
   local now = os.time()
   local windows = { 86400, 604800 } -- 24h, 7d

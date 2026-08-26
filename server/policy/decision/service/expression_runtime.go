@@ -104,7 +104,7 @@ func (r *checkpointRuntime) selectRuleFromPolicySets(
 				continue
 			}
 
-			if !r.expressionMatches(rule.Expression(), facts) {
+			if !r.expressionMatches(target.Target().Namespace(), rule.Expression(), facts) {
 				continue
 			}
 
@@ -158,13 +158,17 @@ func requiredProvidersCompleted(rule policyruntime.CompiledRule, providers []pro
 }
 
 // expressionMatches evaluates one immutable compiled condition tree.
-func (r *checkpointRuntime) expressionMatches(expression registry.PolicyExpression, facts decision.FactSet) bool {
+func (r *checkpointRuntime) expressionMatches(
+	namespace string,
+	expression registry.PolicyExpression,
+	facts decision.FactSet,
+) bool {
 	switch expression.Kind() {
 	case registry.ExpressionKindAlways:
 		return true
 	case registry.ExpressionKindAll:
 		for _, child := range expression.Children() {
-			if !r.expressionMatches(child, facts) {
+			if !r.expressionMatches(namespace, child, facts) {
 				return false
 			}
 		}
@@ -172,7 +176,7 @@ func (r *checkpointRuntime) expressionMatches(expression registry.PolicyExpressi
 		return true
 	case registry.ExpressionKindAny:
 		for _, child := range expression.Children() {
-			if r.expressionMatches(child, facts) {
+			if r.expressionMatches(namespace, child, facts) {
 				return true
 			}
 		}
@@ -181,9 +185,9 @@ func (r *checkpointRuntime) expressionMatches(expression registry.PolicyExpressi
 	case registry.ExpressionKindNot:
 		children := expression.Children()
 
-		return len(children) == 1 && !r.expressionMatches(children[0], facts)
+		return len(children) == 1 && !r.expressionMatches(namespace, children[0], facts)
 	case registry.ExpressionKindAttribute:
-		return r.attributeExpressionMatches(expression, facts)
+		return r.attributeExpressionMatches(namespace, expression, facts)
 	default:
 		return false
 	}
@@ -191,6 +195,7 @@ func (r *checkpointRuntime) expressionMatches(expression registry.PolicyExpressi
 
 // attributeExpressionMatches evaluates one strict typed fact predicate.
 func (r *checkpointRuntime) attributeExpressionMatches(
+	namespace string,
 	expression registry.PolicyExpression,
 	facts decision.FactSet,
 ) bool {
@@ -206,12 +211,13 @@ func (r *checkpointRuntime) attributeExpressionMatches(
 	}
 
 	if expression.Operator() == registry.ExpressionOperatorWithinTimeWindow {
-		return r.runtimeWithinTimeWindow(fact.Value(), expression.Reference())
+		return r.runtimeWithinTimeWindow(namespace, fact.Value(), expression.Reference())
 	}
 
 	operands := expression.Values()
 	if expression.Reference() != "" {
-		operands = append([]decision.Value(nil), r.conditionSets[expression.Reference()]...)
+		key := policyruntime.ConditionMaterialKey(namespace, expression.Reference())
+		operands = append([]decision.Value(nil), r.conditionSets[key]...)
 	}
 
 	return matchAttributeOperator(expression.Operator(), fact.Value(), operands)
@@ -471,18 +477,21 @@ func runtimeCIDRContains(fact decision.Value, operands []decision.Value) bool {
 }
 
 // runtimeWithinTimeWindow evaluates one source-owned recurring local-time schedule.
-func (r *checkpointRuntime) runtimeWithinTimeWindow(fact decision.Value, reference string) bool {
+func (r *checkpointRuntime) runtimeWithinTimeWindow(
+	namespace string,
+	fact decision.Value,
+	reference string,
+) bool {
 	instant, ok := fact.Timestamp()
 	if !ok {
 		return false
 	}
 
-	name, ok := strings.CutPrefix(reference, "@time_window.")
-	if !ok {
+	if _, ok := strings.CutPrefix(reference, "@time_window."); !ok {
 		return false
 	}
 
-	window, ok := r.timeWindows[name]
+	window, ok := r.timeWindows[policyruntime.ConditionMaterialKey(namespace, reference)]
 
 	return ok && window.Contains(instant)
 }

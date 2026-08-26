@@ -422,6 +422,7 @@ func authFailureFromOutcome(outcome *core.AuthOutcome) error {
 	return NewAuthFailureError(
 		fmt.Errorf("authentication failed with decision: %s", outcome.Decision),
 		AuthFailureStatus{
+			MessageResolver:         outcome.MessageResolver,
 			StatusMessage:           outcome.StatusMessage,
 			I18NKey:                 outcome.StatusMessageI18NKey,
 			ResponseLanguage:        outcome.ResponseLanguage,

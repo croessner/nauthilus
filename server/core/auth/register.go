@@ -19,18 +19,18 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core"
 )
 
-// Package auth wires the default implementations for pluggable auth services
-// via init() to avoid import cycles. It lives in subpackage server/core/auth
-// and only registers implementations defined in core.
+// NewDefaultHostServices constructs the explicit production host implementation bundle.
+func NewDefaultHostServices() core.AuthnHostServices {
+	services, err := core.NewAuthnHostServices(core.AuthnHostServicesInput{
+		PasswordVerifier: DefaultPasswordVerifier{},
+		Cache:            DefaultCacheService{},
+		BruteForce:       DefaultBruteForceService{},
+		Subject:          DefaultLuaSubject{},
+		RBL:              DefaultRBLService{},
+	})
+	if err != nil {
+		panic(err)
+	}
 
-func init() {
-	// Register default implementations provided by subpackage.
-	core.RegisterLuaSubject(DefaultLuaSubject{})
-	core.RegisterPostAction(DefaultPostAction{})
-	core.RegisterEnvironmentEngine(DefaultEnvironmentEngine{})
-	core.RegisterActionDispatcher(DefaultActionDispatcher{})
-	core.RegisterRBLService(DefaultRBLService{})
-	core.RegisterBruteForceService(DefaultBruteForceService{})
-	core.RegisterCacheService(DefaultCacheService{})
-	core.RegisterPasswordVerifier(DefaultPasswordVerifier{})
+	return services
 }

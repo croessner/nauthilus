@@ -125,10 +125,6 @@ func assertApplicationFileBoundary(t *testing.T, path string) {
 		t.Fatalf("os.ReadFile(%s): %v", path, err)
 	}
 
-	if strings.Contains(string(source), "AuthState") {
-		t.Fatalf("%s contains forbidden AuthState dependency", path)
-	}
-
 	for _, selector := range []string{
 		"config.GetFile(",
 		"DefaultStore(",
@@ -140,9 +136,13 @@ func assertApplicationFileBoundary(t *testing.T, path string) {
 		}
 	}
 
-	parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Clean(path), source, parser.ImportsOnly)
+	parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Clean(path), source, 0)
 	if err != nil {
 		t.Fatalf("parser.ParseFile(%s): %v", path, err)
+	}
+
+	if containsIdentifier(parsed, "AuthState") {
+		t.Fatalf("%s contains forbidden AuthState dependency", path)
 	}
 
 	forbidden := []string{
@@ -171,4 +171,22 @@ func assertApplicationFileBoundary(t *testing.T, path string) {
 			}
 		}
 	}
+}
+
+// containsIdentifier reports whether one exact Go identifier occurs in the parsed source.
+func containsIdentifier(parsed *ast.File, name string) bool {
+	found := false
+
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		identifier, ok := node.(*ast.Ident)
+		if ok && identifier.Name == name {
+			found = true
+
+			return false
+		}
+
+		return !found
+	})
+
+	return found
 }

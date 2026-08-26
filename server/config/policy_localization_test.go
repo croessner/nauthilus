@@ -18,13 +18,12 @@ func TestPolicyLocalizationCatalogsDecodeValidateAndDump(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
-	setPolicyConfigTestStorage()
-	viper.Set("auth.policy.localization.catalogs", []any{
+	viper.Set("policy.namespaces.rns.localization.catalogs", []any{
 		map[string]any{
 			"namespace": "rns-auth",
 			"language":  "de",
 			"entries": map[string]any{
-				"auth.policy.rns.account_disabled": "Konto gesperrt.",
+				"rns.account_disabled": "Konto gesperrt.",
 			},
 		},
 	})
@@ -39,8 +38,8 @@ func TestPolicyLocalizationCatalogsDecodeValidateAndDump(t *testing.T) {
 		t.Fatalf("catalogs = %#v, want decoded rns-auth German catalog", catalogs)
 	}
 
-	catalogs[0].Entries["auth.policy.rns.account_disabled"] = "mutated"
-	if got := cfg.GetPolicyLocalizationCatalogs()[0].Entries["auth.policy.rns.account_disabled"]; got != "Konto gesperrt." {
+	catalogs[0].Entries["rns.account_disabled"] = "mutated"
+	if got := cfg.GetPolicyLocalizationCatalogs()[0].Entries["rns.account_disabled"]; got != "Konto gesperrt." {
 		t.Fatalf("catalog mutation changed config state: %q", got)
 	}
 
@@ -50,9 +49,9 @@ func TestPolicyLocalizationCatalogsDecodeValidateAndDump(t *testing.T) {
 	}
 
 	for _, expected := range []string{
-		`auth.policy.localization.catalogs[0].namespace = "rns-auth"`,
-		`auth.policy.localization.catalogs[0].language = "de"`,
-		`auth.policy.localization.catalogs[0].entries = {"auth.policy.rns.account_disabled": "Konto gesperrt."}`,
+		`policy.namespaces.rns.localization.catalogs[0].namespace = "rns-auth"`,
+		`policy.namespaces.rns.localization.catalogs[0].language = "de"`,
+		`policy.namespaces.rns.localization.catalogs[0].entries = {"rns.account_disabled": "Konto gesperrt."}`,
 	} {
 		if !strings.Contains(dump, expected) {
 			t.Fatalf("config dump missing %q in %q", expected, dump)
@@ -71,15 +70,15 @@ func TestPolicyLocalizationCatalogsRejectInvalidDeclarations(t *testing.T) {
 		{
 			name:       "invalid language",
 			language:   "not a language",
-			key:        "auth.policy.rns.account_disabled",
-			wantPath:   "auth.policy.localization.catalogs[0].language",
+			key:        "rns.account_disabled",
+			wantPath:   "policy.namespaces.rns.localization.catalogs[0].language",
 			wantDetail: "BCP 47",
 		},
 		{
 			name:       "blank message key",
 			language:   "de",
 			key:        " ",
-			wantPath:   "auth.policy.localization.catalogs[0].entries",
+			wantPath:   "policy.namespaces.rns.localization.catalogs[0].entries",
 			wantDetail: "message key",
 		},
 	}
@@ -89,8 +88,7 @@ func TestPolicyLocalizationCatalogsRejectInvalidDeclarations(t *testing.T) {
 			viper.Reset()
 			t.Cleanup(viper.Reset)
 
-			setPolicyConfigTestStorage()
-			viper.Set("auth.policy.localization.catalogs", []any{
+			viper.Set("policy.namespaces.rns.localization.catalogs", []any{
 				map[string]any{
 					"namespace": "rns-auth",
 					"language":  test.language,

@@ -52,17 +52,31 @@
 
 local N = "idp_policy"
 
-local nauthilus_util = require("nauthilus_util")
 local policy_facts = require("nauthilus_policy_facts")
+
+-- contains reports whether a list contains the exact requested value.
+local function contains(values, expected)
+    if type(values) ~= "table" then
+        return false
+    end
+
+    for _, value in ipairs(values) do
+        if value == expected then
+            return true
+        end
+    end
+
+    return false
+end
 
 -- Helper: check if a user belongs to at least one of the given groups.
 local function has_any_group(user_groups, required_groups)
-    if not nauthilus_util.is_table(user_groups) then
+    if type(user_groups) ~= "table" then
         return false
     end
 
     for _, group in ipairs(required_groups) do
-        if nauthilus_util.exists_in_table(user_groups, group) then
+        if contains(user_groups, group) then
             return true
         end
     end
@@ -94,7 +108,7 @@ end
 -- Refresh tokens (offline_access) are long-lived credentials. Limiting them to
 -- trusted groups reduces the risk of token theft.
 local function restrict_offline_access(request)
-    if not nauthilus_util.exists_in_table(request.requested_scopes, "offline_access") then
+    if not contains(request.requested_scopes, "offline_access") then
         return nil
     end
 
@@ -134,7 +148,7 @@ end
 -- When a client requests the "groups" scope (which exposes group memberships),
 -- require that MFA was completed with a strong method (not recovery codes).
 local function require_strong_mfa_for_groups_scope(request)
-    if not nauthilus_util.exists_in_table(request.requested_scopes, "groups") then
+    if not contains(request.requested_scopes, "groups") then
         return nil
     end
 
@@ -203,20 +217,6 @@ function nauthilus_call_subject(request)
         local reason = rule(request)
 
         if reason then
-            nauthilus_util.log_warn(request, {
-                caller = N .. ".lua",
-                message = "Policy rejected",
-                reason = reason,
-                username = request.username or "",
-                account = request.account or "",
-                client_ip = request.client_ip or "",
-                oidc_cid = request.oidc_cid or "",
-                oidc_client_name = request.oidc_client_name or "",
-                grant_type = request.grant_type or "",
-                mfa_completed = tostring(request.mfa_completed),
-                mfa_method = request.mfa_method or "",
-            })
-
             nauthilus_builtin.custom_log_add(N .. "_rejected_reason", reason)
             local response_message = "Access denied: " .. reason
             policy_facts.emit_public(N, "rejected", true, { status_message = response_message })
@@ -230,13 +230,6 @@ function nauthilus_call_subject(request)
     end
 
     -- All policies passed
-    nauthilus_util.log_info(request, {
-        caller = N .. ".lua",
-        message = "Policy accepted",
-        username = request.username or "",
-        oidc_cid = request.oidc_cid or "",
-        grant_type = request.grant_type or "",
-    })
     policy_facts.emit(N, "rejected", false)
     policy_facts.emit(N, "oidc_cid", request.oidc_cid or "")
     policy_facts.emit(N, "grant_type", request.grant_type or "")

@@ -1,5 +1,10 @@
 # Nauthilus Policy Decision Layer Final Acceptance
 
+> **Historical record:** this acceptance report predates the production Policy
+> configuration hard cut. Its nested policy root, converter, and transitional
+> runtime boundaries are not current operator contracts. See the
+> [Policy configuration breaking-change guide](../policy_configuration_migration.md).
+
 ## Goal
 
 This acceptance pass closes the implemented Policy Decision Layer rollout against
@@ -34,8 +39,9 @@ phases and are extended by the Phase 7 retrofit validation.
 - Registry and mapping tables from spec section 17.
 - Built-in `standard_auth` mapping for pre-auth, backend, subject-source, auth-decision,
   account-provider, response, FSM markers, obligations, and advice.
-- Config UX: `mapstructure` decoding, schema index, `ConfigProblem` formatting,
-  config dump defaults and redaction, and the v1-to-v2 converter.
+- Historical config UX: `mapstructure` decoding, schema index, `ConfigProblem`
+  formatting, config dump defaults and redaction, and the since-removed
+  converter.
 - Observability: policy debug module, normal logs, decision reports, Prometheus
   recorders, OTel attributes, and report redaction.
 - Atomic reload and immutable snapshot behavior.
@@ -47,10 +53,10 @@ phases and are extended by the Phase 7 retrofit validation.
 | Area | Status | Evidence |
 | --- | --- | --- |
 | No separate legacy pipeline | Pass | Runtime authority flows through policy contexts; old behavior is represented by `standard_auth` or documented adapters. |
-| Old behavior only through `standard_auth` or documented migration adapters | Pass | Default policy constant remains `standard_auth`; converter maps old config into `auth.policy`. |
+| Old behavior only through `standard_auth` or documented migration adapters | Historical pass | The former converter mapped old config into the former nested policy root. Both surfaces are now removed. |
 | Brute force is first-class policy/FSM material | Pass | Brute-force check type, attributes, standard decisions, FSM markers, metrics, and obligation are modeled in policy code. |
 | Synchronous Lua actions are policy-owned obligations | Pass | `auth.obligation.lua_action.dispatch` is registered, typed, planned by `standard_auth`, and executed only from selected decisions. |
-| Policy config under `auth.policy` | Pass | Config structs, compiler paths, dumps, and converter output all use `auth.policy`; `policy_engine` is only present in spec/temp text and converter negative assertions. |
+| Former nested policy config | Historical pass | The nested root and its converter output were valid for this archived acceptance point; production now rejects them. |
 | No historical public target names | Pass | Compiler rejects old FSM event strings; target markers and response markers use `auth.*` policy IDs. |
 | No new Go `phase` names | Pass | The Go diff check is part of validation and had no matches. |
 | Observe comparison bounded to observe mode | Pass | `CompareCustomObserve` is the remaining comparison path and is gated by configured observe mode. |
@@ -292,7 +298,8 @@ Passed:
 - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestPolicyEmitter|TestPolicyFactsHelperStoresContextAndPublicLogs|TestCompilerLoadsBundledLuaPluginRegistry' ./server/lualib ./server/testing/luatest ./server/policy/compiler`
 - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/lualib ./server/lualib/environment ./server/lualib/subject ./server/testing/luatest ./server/policy/compiler`
 - `./scripts/run-lua-plugin-tests.sh`
-- `python3 scripts/test_convert_config_v1_to_v2.py`
+- The former converter regression suite passed at this archived acceptance point;
+  the converter and its tests are no longer present.
 - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryConfiguredPreAuthDecision(WithoutLuaActionObligationSkipsSynchronousAction|RunsSelectedLuaActionObligationOnce)|TestPolicyObligationExecutorSkipsMutableEffectsInObserveMode|TestCompiler(AcceptsLuaActionDispatchObligationArgs|RejectsLuaActionDispatchInvalidArgs)' ./server/core ./server/policy/compiler`
 - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestPolicyObligationExecutorSkipsMutableEffectsWithoutPolicyContext' ./server/core`
 - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestPolicyBruteForceLuaActionPreservesCommonRequestShape' ./server/core`

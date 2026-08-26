@@ -2,6 +2,13 @@
 
 This directory contains Lua plugins for the Nauthilus authentication system. These plugins extend and customize the functionality of Nauthilus, allowing for flexible authentication workflows, security features, and integrations with external systems.
 
+## Production Policy VM status
+
+The checked-in directory is both an active plugin source and a historical example collection; file presence is not an
+activation or support claim. [`POLICY_VM_COMPATIBILITY.md`](POLICY_VM_COMPATIBILITY.md) is the normative classification
+for every environment, subject, and action callback under the generation-owned authentication Policy VM. Candidate
+preparation rejects callbacks that require ambient or effectful capabilities outside that profile.
+
 ## Plugin Directory Structure
 
 The plugins are organized into subdirectories based on their purpose and when they are executed in the authentication workflow:
@@ -10,7 +17,8 @@ The plugins are organized into subdirectories based on their purpose and when th
 Action plugins are executed in response to authentication events and can perform various tasks such as tracking failed logins, implementing dynamic security responses, and sending notifications.
 
 ### [backend](./backend/)
-Backend plugins provide integration with external data sources for user authentication, account management, and credential verification.
+Backend plugins run in a sealed, generation-owned backend runtime only when explicitly selected through
+`authn/builtin/lua_backend`; they are not Policy source or effect scripts.
 
 ### [environment](./environment/)
 Lua environment source plugins collect pre-authentication signals and can trigger environment-derived decisions.
@@ -19,22 +27,23 @@ Lua environment source plugins collect pre-authentication signals and can trigge
 Lua subject source plugins run with subject context and can emit subject-derived policy attributes.
 
 ### [hooks](./hooks/)
-Hook plugins are executed at specific points in the system's lifecycle or in response to specific events, allowing for custom processing, administrative functions, and integration with external systems.
+Hook plugins are process-owned custom HTTP callbacks. They are not authentication Policy callbacks.
 
 ### [init](./init/)
-Initialization plugins are executed when the system starts up, setting up required components, registering services, and preparing the environment for other plugins.
+Initialization plugins are process-owned startup callbacks. They do not expand a request Policy VM's capabilities.
 
 ### [policy](./policy/)
-Policy registry scripts register the custom Lua-owned attributes emitted by bundled plugins.
+Policy registry scripts register candidate-owned Lua attributes during preparation; they do not execute per request.
 
 ### [share](./share/)
-Shared utility modules provide common functions and utilities that can be used by other plugins throughout the system, promoting code reuse and consistency.
+Shared modules are captured dependencies. The owning VM profile still controls which host functions a helper may call.
 
 ## Plugin Execution Flow
 
-The policy decision layer owns the effective execution plan for Lua environment and subject attribute sources. A configured
-`auth.policy.checks` entry with type `lua.environment` or `lua.subject` selects the script by `config_ref`, applies its
-`after` scheduling dependencies, and records the script result as policy attributes:
+The policy decision layer owns the effective execution plan for Lua environment and subject attribute sources. Define
+`kind: lua_environment` or `kind: lua_subject` below `policy.namespaces.authn.providers`, then bind its exact qualified
+identity with `use` below the owning domain-plan checkpoint. Provider instances retain `after` scheduling dependencies
+and record script results as policy attributes:
 
 - Lua environment sources: `auth.lua.environment.<name>.triggered`, `auth.lua.environment.<name>.abort`, and
   `auth.lua.environment.<name>.error`
@@ -43,9 +52,9 @@ The policy decision layer owns the effective execution plan for Lua environment 
 
 The bundled policy-aware plugins use `share/nauthilus_policy_facts.lua` to emit custom Lua-owned attributes such as
 `lua.plugin.blocklist.matched` or `lua.plugin.geoip.rejected` into the request-local policy report. These attributes are
-registered by `policy/registry.lua` and must be made available through `auth.policy.registry_scripts` before emitted
-plugin attributes can be used by policy rules. Missing or mistyped registrations fail at runtime instead of becoming
-silent facts.
+registered by `policy/registry.lua` and must be listed under
+`policy.namespaces.authn.schema_contributions.lua.registry_scripts` before emitted plugin attributes can be used by
+policy rules. Missing or mistyped registrations fail at runtime instead of becoming silent facts.
 
 The helper still stores the same values under `nauthilus_context.context_get("policy_facts")` for later Lua actions.
 Use `emit`/`emit_many` for internal policy attributes, `emit_public`/`emit_many_public` when the value should also be
@@ -58,7 +67,7 @@ as `dkim2` or `mcp`.
 
 ## Generic target-aware policy providers
 
-The standalone policy model has a separate `kind: lua` provider path for explicitly configured targets. It does not use
+The top-level policy model has a separate `kind: lua` provider path for explicitly configured targets. It does not use
 `nauthilus_call_environment`, `nauthilus_call_subject`, or `nauthilus_call_action`. A generic provider registers the exact
 global callback keys `_G["policy.facts.collect"]` and, when it owns selected host effects,
 `_G["policy.effects.execute"]`.
@@ -85,7 +94,7 @@ The Nauthilus authentication system executes plugins in a specific order during 
    - **Environment sources**: Lua environment sources run in `pre_auth` when selected by policy.
    - **Backend**: The appropriate backend plugin is used to verify credentials and retrieve user information.
    - **Subject sources**: Lua subject sources run in `subject_analysis` after backend facts are available.
-   - **Actions**: Lua actions are configured as `auth.policy.obligation_targets.lua.actions` and run only when selected by policy obligations.
+   - **Actions**: Lua actions are configured as `policy.namespaces.authn.effects.lua_action_<name>` and run only when selected by qualified policy obligations.
 
 3. **Hooks**: Hook plugins can be executed at various points in the system's lifecycle, either on a schedule or in response to specific events.
 

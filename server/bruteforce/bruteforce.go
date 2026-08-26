@@ -2314,7 +2314,11 @@ func (bm *bucketManagerImpl) currentPasswordHashCandidates() internalpasswordhas
 			return
 		}
 
-		prepared := util.PreparePasswordBytes(value)
+		prepared, ok := util.PreparePasswordBytesWithConfig(value, bm.cfg())
+		if !ok {
+			return
+		}
+
 		defer clear(prepared)
 
 		candidates = internalpasswordhash.DeriveRedisCompatibilityCandidates(prepared)

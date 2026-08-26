@@ -359,6 +359,52 @@ func TestHandlerAuthenticateLocalizesPolicyI18NStatusFromIncomingMetadata(t *tes
 	}
 }
 
+func TestHandlerAuthenticateUsesCapturedOutcomeResolver(t *testing.T) {
+	captured := &recordingGRPCStatusResolver{
+		t: t,
+		wantSelection: localization.StatusMessage{
+			Text:    grpcI18NLockedText,
+			I18NKey: grpcI18NLockedKey,
+		},
+		resolved: localization.ResolvedStatusMessage{
+			Text:      "Generation one denial",
+			Language:  "en",
+			Key:       grpcI18NLockedKey,
+			Localized: true,
+		},
+	}
+	fallback := &recordingGRPCStatusResolver{t: t, failOnCall: true}
+	service := &recordingService{
+		authOutcome: &core.AuthOutcome{
+			MessageResolver:      captured,
+			Decision:             core.AuthDecisionFail,
+			Session:              "captured-grpc-resolver",
+			StatusMessage:        grpcI18NLockedText,
+			StatusMessageI18NKey: grpcI18NLockedKey,
+			HTTPStatus:           403,
+		},
+	}
+	handler := NewWithResolver(service, fallback)
+
+	response, err := handler.Authenticate(context.Background(), &authv1.AuthRequest{
+		Username: "captured@example.test",
+		Password: "secret",
+		ClientIp: "203.0.113.20",
+		Protocol: "imap",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate returned error: %v", err)
+	}
+
+	if captured.calls != 1 || fallback.calls != 0 {
+		t.Fatalf("captured/fallback resolver calls = %d/%d, want 1/0", captured.calls, fallback.calls)
+	}
+
+	if got := response.GetStatusMessage(); got != "Generation one denial" {
+		t.Fatalf("status message = %q, want captured-generation message", got)
+	}
+}
+
 func TestHandlerAuthenticatePolicyLanguageOverridesIncomingMetadata(t *testing.T) {
 	service := &recordingService{
 		authOutcome: &core.AuthOutcome{

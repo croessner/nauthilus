@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/idp"
@@ -84,6 +85,10 @@ func (m *mockOIDCCfg) GetIDP() *config.IDPSection {
 
 func (m *mockOIDCCfg) GetPlugins() *config.PluginsSection {
 	return &config.PluginsSection{}
+}
+
+func (m *mockOIDCCfg) GetPolicy() policyconfig.PolicyConfig {
+	return policyconfig.PolicyConfig{}
 }
 
 func TestFormValue(t *testing.T) {

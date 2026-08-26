@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -71,8 +72,6 @@ type internalRule struct {
 	requireProtected     bool
 }
 
-type noopBasicThrottler struct{}
-
 // New validates, compiles, and deeply owns one caller-authentication generation.
 func New(configuration Configuration) (*Authenticator, error) {
 	if err := validateConfigurationDependencies(configuration); err != nil {
@@ -86,9 +85,6 @@ func New(configuration Configuration) (*Authenticator, error) {
 		basic:           make(map[string]*externalRule),
 		internal:        make(map[string][]internalRule),
 		requireGRPCMTLS: configuration.RequireGRPCMTLS,
-	}
-	if authenticator.throttler == nil {
-		authenticator.throttler = noopBasicThrottler{}
 	}
 
 	hasBearer, hasBasic, err := authenticator.compileExternalProfiles(configuration.ExternalProfiles)
@@ -104,8 +100,16 @@ func New(configuration Configuration) (*Authenticator, error) {
 		return nil, configurationError("Policy-Basic requires an enabled protected transport capability")
 	}
 
-	if configuration.RequireGRPCMTLS && !configuration.TransportCapabilities.GRPCProtected {
-		return nil, configurationError("required gRPC mTLS needs a protected gRPC transport capability")
+	if configuration.TransportCapabilities.GRPCVerifiedClientCertificate && !configuration.TransportCapabilities.GRPCProtected {
+		return nil, configurationError("verified gRPC client certificates require a protected gRPC transport capability")
+	}
+
+	if authenticator.requiresExternalMTLS() && !configuration.TransportCapabilities.GRPCVerifiedClientCertificate {
+		return nil, configurationError("client-required mTLS needs an enabled gRPC transport with verified client certificates")
+	}
+
+	if configuration.RequireGRPCMTLS && !configuration.TransportCapabilities.GRPCVerifiedClientCertificate {
+		return nil, configurationError("required gRPC mTLS needs an enabled gRPC transport with verified client certificates")
 	}
 
 	if err = authenticator.compileInternalCallers(configuration.InternalCallers); err != nil {
@@ -117,10 +121,25 @@ func New(configuration Configuration) (*Authenticator, error) {
 	return authenticator, nil
 }
 
+// requiresExternalMTLS reports whether any compiled client profile requires verified certificate identity.
+func (a *Authenticator) requiresExternalMTLS() bool {
+	for _, rule := range a.external {
+		if rule.requireMTLS {
+			return true
+		}
+	}
+
+	return false
+}
+
 // validateConfigurationDependencies rejects interface values that conceal nil references.
 func validateConfigurationDependencies(configuration Configuration) error {
 	if typedNilInterface(configuration.TokenValidator) || typedNilInterface(configuration.Throttler) {
 		return configurationError("caller-authentication dependency is typed nil")
+	}
+
+	if configuration.RequiresBasicThrottler() && configuration.Throttler == nil {
+		return configurationError("Policy-Basic profiles require a generation-owned throttler")
 	}
 
 	return nil
@@ -480,7 +499,9 @@ func (a *Authenticator) beforeBasicAttempt(ctx context.Context, key BasicThrottl
 	}
 
 	if err := a.throttler.BeforeAttempt(ctx, key); err != nil {
-		a.basicThrottleUnavailable.Store(true)
+		if !errors.Is(err, ErrBasicThrottleLimit) {
+			a.basicThrottleUnavailable.Store(true)
+		}
 
 		return false
 	}
@@ -709,19 +730,4 @@ func configurationError(format string, arguments ...any) error {
 // rejected returns the sole secret-free authentication failure shape.
 func rejected() (decision.CallerContext, error) {
 	return decision.CallerContext{}, ErrAuthentication
-}
-
-// BeforeAttempt permits all attempts when no generation-specific throttler was configured.
-func (noopBasicThrottler) BeforeAttempt(context.Context, BasicThrottleKey) error {
-	return nil
-}
-
-// RecordFailure records nothing for the generation-local no-op throttler.
-func (noopBasicThrottler) RecordFailure(context.Context, BasicThrottleKey) error {
-	return nil
-}
-
-// RecordSuccess records nothing for the generation-local no-op throttler.
-func (noopBasicThrottler) RecordSuccess(context.Context, BasicThrottleKey) error {
-	return nil
 }

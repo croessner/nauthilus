@@ -371,7 +371,7 @@ func NewPool(ctx context.Context, cfg config.File, logger *slog.Logger, poolType
 
 	lp := newLDAPPoolImpl(ctx, cfg, logger, poolType, source, layout, conf, conn)
 	seedLDAPPoolTokens(lp)
-	startLDAPPoolHealthLoop(layout.name, conf)
+	startLDAPPoolHealthLoop(cfg, layout.name, conf)
 	configureLDAPPoolAuthLimiter(poolType, layout.name, conf)
 
 	return lp
@@ -549,9 +549,9 @@ func seedLDAPPoolTokens(lp *ldapPoolImpl) {
 }
 
 // startLDAPPoolHealthLoop starts the active target health checker for this pool.
-func startLDAPPoolHealthLoop(name string, conf []*config.LDAPConf) {
+func startLDAPPoolHealthLoop(cfg config.File, name string, conf []*config.LDAPConf) {
 	if len(conf) > 0 && conf[0] != nil {
-		go startHealthLoop(name, conf[0])
+		go startHealthLoop(name, cfg, conf[0])
 	}
 }
 

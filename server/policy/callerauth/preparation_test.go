@@ -61,10 +61,104 @@ func TestPolicyCallerAuthenticationPreparationRejectsInvalidCandidate(t *testing
 	}
 }
 
+func TestPolicyCallerAuthenticationPreparationRejectsClientMTLSWithoutVerifiedCertificateTransport(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		capabilities TransportCapabilities
+	}{
+		{name: "HTTP only", capabilities: TransportCapabilities{HTTPProtected: true}},
+		{name: "gRPC without verified client certificates", capabilities: TransportCapabilities{GRPCProtected: true}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			preparation, err := Prepare(Configuration{
+				TokenValidator:        policyStaticTokenValidator{},
+				TransportCapabilities: test.capabilities,
+				ExternalProfiles: []ExternalProfile{{
+					AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer},
+					Principal:           policyTestPrincipal,
+					RequireMTLS:         true,
+				}},
+			})
+			if !errors.Is(err, ErrConfiguration) {
+				t.Fatalf("Prepare() error = %v, want ErrConfiguration", err)
+			}
+
+			if preparation.Authenticator != nil || len(preparation.Credentials.IDs()) != 0 || len(preparation.Resources) != 0 {
+				t.Fatalf("failed preparation = %#v, want zero", preparation)
+			}
+		})
+	}
+}
+
+func TestPolicyCallerAuthenticationPreparationAcceptsClientMTLSWithVerifiedCertificateTransport(t *testing.T) {
+	t.Parallel()
+
+	preparation, err := Prepare(Configuration{
+		TokenValidator: policyStaticTokenValidator{},
+		TransportCapabilities: TransportCapabilities{
+			GRPCProtected:                 true,
+			GRPCVerifiedClientCertificate: true,
+		},
+		ExternalProfiles: []ExternalProfile{{
+			AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer},
+			Principal:           policyTestPrincipal,
+			RequireMTLS:         true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	if preparation.Authenticator == nil {
+		t.Fatal("Prepare() returned no authenticator")
+	}
+}
+
+func TestPolicyCallerAuthenticationPreparationRequiresBasicThrottler(t *testing.T) {
+	t.Parallel()
+
+	configuration := policyPreparationConfiguration()
+	configuration.Throttler = nil
+
+	preparation, err := Prepare(configuration)
+	if !errors.Is(err, ErrConfiguration) {
+		t.Fatalf("Prepare() error = %v, want ErrConfiguration", err)
+	}
+
+	if preparation.Authenticator != nil || len(preparation.Credentials.IDs()) != 0 || len(preparation.Resources) != 0 {
+		t.Fatalf("failed preparation = %#v, want zero", preparation)
+	}
+}
+
+func TestPolicyCallerAuthenticationPreparationNeedsNoThrottlerWithoutBasic(t *testing.T) {
+	t.Parallel()
+
+	preparation, err := Prepare(Configuration{InternalCallers: []InternalCaller{{
+		Capability:     secret.New(policyPreparationInternalCapability),
+		TransportKinds: []string{"internal"},
+		Principal:      policyPreparationInternalPrincipal,
+		EvidenceKind:   policyPreparationInternalKind,
+	}}})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	if preparation.Authenticator == nil {
+		t.Fatal("Prepare() returned no authenticator")
+	}
+}
+
 // policyPreparationConfiguration builds one mixed case-sensitive preparation fixture.
 func policyPreparationConfiguration() Configuration {
 	return Configuration{
 		TokenValidator:        policyStaticTokenValidator{},
+		Throttler:             &policyRecordingThrottler{},
 		TransportCapabilities: TransportCapabilities{HTTPProtected: true},
 		ExternalProfiles: []ExternalProfile{
 			{

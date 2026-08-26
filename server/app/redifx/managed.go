@@ -144,7 +144,11 @@ func (m *ManagedClient) Rebuild(cfg config.File, logger *slog.Logger) error {
 	defer m.rebuildMu.Unlock()
 
 	old := m.get()
-	newClient := rediscli.NewClientWithDeps(cfg, logger)
+
+	newClient, err := rediscli.NewClientWithDeps(cfg, logger)
+	if err != nil {
+		return err
+	}
 	m.cur.Store(clientHolder{c: newClient})
 
 	if old != nil {

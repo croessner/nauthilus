@@ -36,9 +36,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
-	"github.com/croessner/nauthilus/v3/server/policy"
-	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
@@ -84,6 +81,31 @@ const (
 	backendTestOpDeleteWebAuthnCredential = "delete-webauthn-credential"
 	backendTestOpPublicMFAState           = "public-mfa-state"
 )
+
+func TestNewBackendManagerRequiresExplicitRunnerFactory(t *testing.T) {
+	runner := newBackendTestRunner(t, nil)
+
+	if factory := NewBackendManagerFactory(nil); factory != nil {
+		t.Fatalf("NewBackendManagerFactory(nil) = %T, want nil", factory)
+	}
+
+	if manager := NewBackendManager(backendTestQualified, core.AuthDeps{}); manager != nil {
+		t.Fatalf("NewBackendManager() without explicit factory = %T, want nil", manager)
+	}
+
+	manager := NewBackendManager(backendTestQualified, core.AuthDeps{
+		PluginBackendFactory: NewBackendManagerFactory(runner),
+	})
+
+	typedManager, ok := manager.(*BackendManager)
+	if !ok {
+		t.Fatalf("NewBackendManager() = %T, want *BackendManager", manager)
+	}
+
+	if typedManager.runner != runner {
+		t.Fatal("NewBackendManager() did not retain the explicitly injected runner")
+	}
+}
 
 func TestBackendManagerPassDBMapsAuthenticatedResult(t *testing.T) {
 	backend := &fakePluginBackend{
@@ -418,8 +440,6 @@ func TestBackendManagerPassDBRejectsInvalidAccountField(t *testing.T) {
 }
 
 func TestBackendManagerAccountDBPropagatesListAccountFactsToPolicy(t *testing.T) {
-	activateAccountProviderPluginSnapshot(t, backendTestProviderAttr)
-
 	backend := &fakePluginBackend{
 		list: func(context.Context, pluginapi.AccountListRequest) (pluginapi.AccountListResult, error) {
 			return pluginapi.AccountListResult{
@@ -438,10 +458,9 @@ func TestBackendManagerAccountDBPropagatesListAccountFactsToPolicy(t *testing.T)
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	restoreDefaultRunner := replaceDefaultRunnerForTest(runner)
-	defer restoreDefaultRunner()
-
-	auth := newBackendTestAuth(t)
+	auth := newBackendTestAuthWithDeps(t, core.AuthDeps{
+		PluginBackendFactory: NewBackendManagerFactory(runner),
+	})
 	auth.Request.ListAccounts = true
 	auth.Cfg().GetServer().Backends = []*config.Backend{mustBackendSelector(t, "plugin("+backendTestQualified+")")}
 
@@ -1024,7 +1043,13 @@ func newBackendTestRunner(t *testing.T, modules []backendTestModule) *Runner {
 	return NewRunnerFromInstances(registry, instances)
 }
 
+// newBackendTestAuth builds an authentication state without optional dependencies.
 func newBackendTestAuth(t *testing.T) *core.AuthState {
+	return newBackendTestAuthWithDeps(t, core.AuthDeps{})
+}
+
+// newBackendTestAuthWithDeps builds an authentication state with explicit optional dependencies.
+func newBackendTestAuthWithDeps(t *testing.T, deps core.AuthDeps) *core.AuthState {
 	t.Helper()
 
 	initBackendTestPools()
@@ -1035,7 +1060,8 @@ func newBackendTestAuth(t *testing.T) *core.AuthState {
 	ctx.Request = httptest.NewRequest("POST", "https://nauthilus.test/auth", nil)
 
 	cfg := &config.FileSettings{Server: &config.ServerSection{}}
-	auth := core.NewAuthStateFromContextWithDeps(ctx, core.AuthDeps{Cfg: cfg}).(*core.AuthState)
+	deps.Cfg = cfg
+	auth := core.NewAuthStateFromContextWithDeps(ctx, deps).(*core.AuthState)
 	auth.Runtime.Context = lualib.NewContext()
 	auth.Runtime.GUID = backendTestGUID
 	auth.Request.Username = backendTestAccount
@@ -1616,53 +1642,6 @@ func initBackendTestPools() {
 	backendTestPoolInit.Do(core.InitPassDBResultPool)
 }
 
-// activateAccountProviderPluginSnapshot publishes a minimal snapshot for plugin account-provider facts.
-func activateAccountProviderPluginSnapshot(t *testing.T, attribute string) {
-	t.Helper()
-
-	snapshot := &policyruntime.Snapshot{
-		Generation:    1,
-		Mode:          "enforce",
-		DefaultPolicy: policy.BuiltinDefaultSet,
-		AttributeRegistry: map[string]policyregistry.AttributeDefinition{
-			attribute: {
-				ID:         attribute,
-				Stage:      policy.StageAccountProvider,
-				Operations: []policy.Operation{policy.OperationListAccounts},
-				Category:   policyregistry.AttributeCategoryEnvironment,
-				Type:       policyregistry.AttributeTypeBool,
-				Source:     policyregistry.SourcePlugin,
-			},
-		},
-		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
-			policy.OperationListAccounts: {
-				policy.StageAccountProvider: {
-					Stage: policy.StageAccountProvider,
-					Checks: []policyruntime.CompiledCheck{
-						{
-							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
-							Name:       "account_provider",
-							Type:       policy.CheckTypeAccountProvider,
-							ConfigRef:  "auth.backends",
-							Stage:      policy.StageAccountProvider,
-							Operations: []policy.Operation{policy.OperationListAccounts},
-						},
-					},
-				},
-			},
-		},
-	}
-	if err := policyruntime.DefaultStore().Activate(snapshot); err != nil {
-		t.Fatalf("Activate() error = %v", err)
-	}
-
-	t.Cleanup(func() {
-		if err := policyruntime.DefaultStore().Activate(&policyruntime.Snapshot{}); err != nil {
-			t.Fatalf("restore policy snapshot: %v", err)
-		}
-	})
-}
-
 // mustBackendSelector parses a backend selector and fails the test on invalid syntax.
 func mustBackendSelector(t *testing.T, selector string) *config.Backend {
 	t.Helper()
@@ -1673,21 +1652,4 @@ func mustBackendSelector(t *testing.T, selector string) *config.Backend {
 	}
 
 	return backend
-}
-
-// replaceDefaultRunnerForTest swaps the process-wide plugin runner for one test.
-func replaceDefaultRunnerForTest(runner *Runner) func() {
-	previous, ok := DefaultRunner()
-
-	SetDefaultRunner(runner)
-
-	return func() {
-		if ok {
-			SetDefaultRunner(previous)
-
-			return
-		}
-
-		SetDefaultRunner(NewRunnerFromInstances(pluginregistry.NewRegistry(), nil))
-	}
 }

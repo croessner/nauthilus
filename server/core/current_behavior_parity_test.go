@@ -16,7 +16,6 @@
 package core
 
 import (
-	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -32,10 +31,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/log"
 	"github.com/croessner/nauthilus/v3/server/lualib"
-	environmentlib "github.com/croessner/nauthilus/v3/server/lualib/environment"
-	"github.com/croessner/nauthilus/v3/server/lualib/pipeline"
-	"github.com/croessner/nauthilus/v3/server/model/authdto"
-	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/croessner/nauthilus/v3/server/util"
@@ -52,13 +48,16 @@ type currentBehaviorBuiltInControlCase struct {
 	wantResult definitions.AuthResult
 }
 
-func TestCurrentBehaviorParityLuaEnvironmentTriggerAndAbort(t *testing.T) {
-	cases := []struct {
-		name        string
-		script      string
-		wantResult  definitions.AuthResult
-		wantMessage string
-	}{
+type currentBehaviorLuaEnvironmentCase struct {
+	name        string
+	script      string
+	wantMessage string
+	wantTrigger bool
+	wantAbort   bool
+}
+
+func TestGenerationOwnedLuaEnvironmentSourceTriggerAndAbort(t *testing.T) {
+	cases := []currentBehaviorLuaEnvironmentCase{
 		{
 			name: "trigger returns Lua environment result",
 			script: `
@@ -67,7 +66,8 @@ function nauthilus_call_environment(request)
     return nauthilus_builtin.ENVIRONMENT_TRIGGER_YES, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
 `,
-			wantResult: definitions.AuthResultLuaEnvironment,
+			wantTrigger: true,
+			wantMessage: "Lua environment denied",
 		},
 		{
 			name: "abort allows remaining auth flow",
@@ -76,29 +76,54 @@ function nauthilus_call_environment(request)
     return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_YES, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
 `,
-			wantResult: definitions.AuthResultOK,
+			wantAbort: true,
 		},
 	}
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			cfg := newCurrentBehaviorConfig(t, definitions.ControlLua)
-			auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-			withCurrentBehaviorLuaEnvironment(t, testCase.script)
-
-			got := auth.HandleEnvironment(ctx)
-			if got != testCase.wantResult {
-				t.Fatalf("environment result = %v, want %v", got, testCase.wantResult)
-			}
-
-			if auth.Runtime.StatusMessage != testCase.wantMessage {
-				t.Fatalf("status message = %q, want %q", auth.Runtime.StatusMessage, testCase.wantMessage)
-			}
-
-			if testCase.wantResult == definitions.AuthResultLuaEnvironment && !ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
-				t.Fatal("expected environment rejection flag for triggered Lua environment source")
-			}
+			assertCurrentBehaviorLuaEnvironmentCase(t, testCase)
 		})
+	}
+}
+
+// assertCurrentBehaviorLuaEnvironmentCase executes and verifies one captured environment source.
+func assertCurrentBehaviorLuaEnvironmentCase(t *testing.T, testCase currentBehaviorLuaEnvironmentCase) {
+	t.Helper()
+
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlLua)
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	scriptPath := withCurrentBehaviorLuaEnvironment(t, testCase.script)
+
+	prototype, err := compileLuaTestFile(scriptPath)
+	if err != nil {
+		t.Fatalf("compile generation-owned Lua environment source: %v", err)
+	}
+
+	triggered, aborted, err := auth.EnvironmentLuaSource(
+		ctx,
+		"current_behavior_environment",
+		prototype,
+		vmpool.NewManager(),
+		vmpool.PoolKey("test:current_behavior_environment:"+testCase.name),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("EnvironmentLuaSource() error = %v", err)
+	}
+
+	if triggered != testCase.wantTrigger || aborted != testCase.wantAbort {
+		t.Fatalf(
+			"EnvironmentLuaSource() = triggered:%t aborted:%t, want triggered:%t aborted:%t",
+			triggered,
+			aborted,
+			testCase.wantTrigger,
+			testCase.wantAbort,
+		)
+	}
+
+	if auth.Runtime.StatusMessage != testCase.wantMessage {
+		t.Fatalf("status message = %q, want %q", auth.Runtime.StatusMessage, testCase.wantMessage)
 	}
 }
 
@@ -122,23 +147,6 @@ func TestCurrentBehaviorParityBuiltInPreAuthControls(t *testing.T) {
 				t.Fatalf("pre-auth result = %v, want %v", got, testCase.wantResult)
 			}
 		})
-	}
-}
-
-func TestCurrentBehaviorParityPolicyConfigDoesNotChangePreAuthControls(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
-	cfg.Auth = &config.AuthSection{
-		Policy: config.AuthPolicySection{
-			Mode:          "enforce",
-			DefaultPolicy: policy.BuiltinDefaultSet,
-		},
-	}
-
-	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-
-	got := auth.HandleEnvironment(ctx)
-	if got != definitions.AuthResultPreAuthTLS {
-		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultPreAuthTLS)
 	}
 }
 
@@ -239,53 +247,6 @@ func TestCurrentBehaviorParityBruteForceDirectBlock(t *testing.T) {
 	}
 }
 
-func TestCurrentBehaviorParityLuaSubjectStatusMessage(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t)
-	service, mock := newCurrentBehaviorApplicationService(t, cfg)
-	username := "subject-denied@example.test"
-	expectCurrentBehaviorAccountMapping(t, cfg, mock, username, definitions.ProtoIMAP)
-
-	previousVerifier := getPasswordVerifier()
-	previousSubject := getLuaSubject()
-	previousPostAction := getPostAction()
-
-	RegisterPasswordVerifier(currentBehaviorPasswordVerifier{})
-	RegisterLuaSubject(currentBehaviorDenyingSubject{message: "Lua subject denied"})
-	RegisterPostAction(currentBehaviorPostAction{})
-	t.Cleanup(func() {
-		RegisterPasswordVerifier(previousVerifier)
-		RegisterLuaSubject(previousSubject)
-		RegisterPostAction(previousPostAction)
-	})
-
-	outcome, err := service.Authenticate(context.Background(), NewAuthInputFromStructuredRequest(definitions.ServGRPC, AuthModeAuthenticate, authdto.Request{
-		Username: username,
-		Password: "secret",
-		ClientIP: "203.0.113.20",
-		Protocol: definitions.ProtoIMAP,
-		Method:   "plain",
-	}))
-	if err != nil {
-		t.Fatalf("Authenticate returned error: %v", err)
-	}
-
-	if outcome.Decision != AuthDecisionFail {
-		t.Fatalf("decision = %q, want %q", outcome.Decision, AuthDecisionFail)
-	}
-
-	if outcome.StatusMessage != "Lua subject denied" {
-		t.Fatalf("status message = %q, want Lua subject denied", outcome.StatusMessage)
-	}
-
-	if outcome.TerminalState != string(authFSMStateAuthFail) {
-		t.Fatalf("terminal state = %q, want %q", outcome.TerminalState, authFSMStateAuthFail)
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("redis expectations were not met: %v", err)
-	}
-}
-
 func newCurrentBehaviorConfig(t *testing.T, enabledRuntimeModules ...string) *config.FileSettings {
 	t.Helper()
 
@@ -305,16 +266,17 @@ func newCurrentBehaviorConfig(t *testing.T, enabledRuntimeModules ...string) *co
 			},
 		},
 	}
+	cfg.Policy.API.Enabled = true
+	cfg.Policy.API.HTTP.Enabled = true
+	cfg.Policy.API.GRPC.Enabled = true
 
 	for _, environmentName := range enabledRuntimeModules {
 		cfg.Server.RuntimeModules = append(cfg.Server.RuntimeModules, mustCurrentBehaviorModule(t, environmentName))
 	}
 
 	config.SetTestFile(cfg)
-	SetDefaultConfigFile(cfg)
 	SetDefaultEnvironment(env)
 	SetDefaultLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultEnvironment(env)
 
 	return cfg
@@ -347,6 +309,7 @@ func newCurrentBehaviorAuthState(t *testing.T, cfg *config.FileSettings) (*AuthS
 		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:        rediscli.NewTestClient(db),
 		AccountCache: accountcache.NewManager(cfg),
+		HostServices: registeredAuthnHostServices(),
 	}
 
 	auth := NewAuthStateFromContextWithDeps(ctx, deps).(*AuthState)
@@ -362,7 +325,7 @@ func newCurrentBehaviorAuthState(t *testing.T, cfg *config.FileSettings) (*AuthS
 	return auth, ctx, mock
 }
 
-// withCurrentBehaviorLuaEnvironment installs one compiled source and returns its configured path.
+// withCurrentBehaviorLuaEnvironment writes one source and returns its exact path.
 func withCurrentBehaviorLuaEnvironment(t *testing.T, script string) string {
 	t.Helper()
 
@@ -371,61 +334,7 @@ func withCurrentBehaviorLuaEnvironment(t *testing.T, script string) string {
 		t.Fatalf("failed to write Lua environment source: %v", err)
 	}
 
-	luaEnvironment, err := environmentlib.NewLuaEnvironmentSource("current_behavior_environment", scriptPath)
-	if err != nil {
-		t.Fatalf("failed to compile Lua environment source: %v", err)
-	}
-
-	luaEnvironment.Modes = pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated | pipeline.ModeNoAuth
-
-	previous := environmentlib.LuaEnvironmentSources
-
-	compiled := &environmentlib.PreCompiledLuaEnvironmentSources{LuaScripts: []*environmentlib.LuaEnvironmentSource{luaEnvironment}}
-	if err := compiled.RebuildPlans(); err != nil {
-		t.Fatalf("failed to build Lua environment plan: %v", err)
-	}
-
-	environmentlib.LuaEnvironmentSources = compiled
-
-	t.Cleanup(func() {
-		environmentlib.LuaEnvironmentSources = previous
-	})
-
 	return scriptPath
-}
-
-func newCurrentBehaviorApplicationService(
-	t *testing.T,
-	cfg *config.FileSettings,
-) (AuthApplicationService, redismock.ClientMock) {
-	t.Helper()
-
-	db, mock := redismock.NewClientMock()
-	deps := AuthDeps{
-		Cfg:          cfg,
-		Env:          config.NewTestEnvironmentConfig(),
-		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Redis:        rediscli.NewTestClient(db),
-		AccountCache: accountcache.NewManager(cfg),
-	}
-
-	return NewAuthApplicationService(deps), mock
-}
-
-func expectCurrentBehaviorAccountMapping(
-	t *testing.T,
-	cfg *config.FileSettings,
-	mock redismock.ClientMock,
-	username string,
-	protocol string,
-) {
-	t.Helper()
-
-	key := rediscli.GetUserHashKey(cfg.GetServer().GetRedis().GetPrefix(), username)
-	field := accountcache.GetAccountMappingField(username, protocol, "")
-
-	mock.ExpectHGet(key, field).RedisNil()
-	mock.ExpectHSet(key, field, username).SetVal(1)
 }
 
 type currentBehaviorRBLService struct {
@@ -461,17 +370,3 @@ func (currentBehaviorPasswordVerifier) Verify(
 
 	return result, nil
 }
-
-type currentBehaviorDenyingSubject struct {
-	message string
-}
-
-func (s currentBehaviorDenyingSubject) Analyze(_ *gin.Context, view *StateView, _ *PassDBResult) definitions.AuthResult {
-	view.Auth().Runtime.StatusMessage = s.message
-
-	return definitions.AuthResultFail
-}
-
-type currentBehaviorPostAction struct{}
-
-func (currentBehaviorPostAction) Run(PostActionInput) PostActionResult { return PostActionSucceeded() }

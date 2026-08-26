@@ -17,24 +17,17 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"maps"
-	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/bruteforce"
 	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
-	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
-	"github.com/croessner/nauthilus/v3/server/policy/evaluation"
 	"github.com/croessner/nauthilus/v3/server/policy/observability"
-	"github.com/croessner/nauthilus/v3/server/policy/report"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	"github.com/gin-gonic/gin"
@@ -43,10 +36,6 @@ import (
 const (
 	policyCollectionContextKey  = "policy_collection"
 	policyAttributeSuffixError  = "error"
-	policyConfigRefBruteForce   = "auth.controls.brute_force"
-	policyConfigRefRBL          = "auth.controls.rbl"
-	policyConfigRefRelay        = "auth.controls.relay_domains"
-	policyConfigRefTLS          = "auth.controls.tls_encryption"
 	policyDetailBackend         = "backend"
 	policyDetailCount           = "count"
 	policyDetailError           = "error"
@@ -54,7 +43,6 @@ const (
 	policyDetailReasonCode      = "reason_code"
 	policyDetailRetryable       = "retryable"
 	policyDetailSoftAllowlisted = "soft_allowlisted"
-	policyModeObserve           = "observe"
 )
 
 type policyCheckResult struct {
@@ -81,23 +69,13 @@ func (a *AuthState) requestPolicyContext(ctx *gin.Context) *policycollection.Dec
 	}
 
 	requestContext := contextFromGin(ctx)
-	snapshot := policyruntime.PolicySnapshotFromContext(requestContext)
-
-	if snapshot == nil && !authnCandidateRuntimeOwnsPolicy(ctx) {
-		snapshot = policyruntime.DefaultStore().Active()
-	}
-
-	if snapshot == nil {
-		return nil
-	}
-
-	policyCtx := policycollection.NewDecisionContext(snapshot, operation, observability.DefaultRecorder())
+	generation, _ := policyruntime.GenerationFromContext(requestContext)
+	policyCtx := policycollection.NewDecisionContext(operation, observability.DefaultRecorder(), generation)
 	policyCtx.Report().SessionID = a.Runtime.GUID
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestOperation, policy.StagePreAuth, operation, string(operation)))
 	policyCtx.RecordAttribute(policycollection.TimeAttribute(policy.AttributeRequestTime, policy.StagePreAuth, operation, time.Now()))
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestProtocol, policy.StagePreAuth, operation, a.requestProtocol()))
 	a.recordRequestContextFacts(policyCtx, ctx, operation)
-	a.recordRequestPolicyAttributes(policyCtx, ctx, operation, snapshot.RequestAttributes)
 	ctx.Set(policyCollectionContextKey, policyCtx)
 
 	return policyCtx
@@ -109,10 +87,7 @@ func clearPolicyContext(ctx *gin.Context) {
 	}
 
 	delete(ctx.Keys, policyCollectionContextKey)
-	delete(ctx.Keys, policyConfiguredPreAuthDecisionContextKey)
-	delete(ctx.Keys, policyConfiguredAuthDecisionContextKey)
 	delete(ctx.Keys, policyPostActionResultContextKey)
-	delete(ctx.Keys, policySkipPreAuthChecksContextKey)
 }
 
 func (a *AuthState) policyOperation() policy.Operation {
@@ -139,22 +114,13 @@ func (a *AuthState) requestProtocol() string {
 	return a.Request.Protocol.Get()
 }
 
-func (a *AuthState) policyAuthState() policycollection.AuthState {
-	if a != nil && a.Runtime.Authenticated {
-		return policycollection.AuthStateAuthenticated
-	}
-
-	return policycollection.AuthStateUnauthenticated
-}
-
 func (a *AuthState) completePolicyStage(ctx *gin.Context, stage policy.Stage) {
 	policyCtx := a.requestPolicyContext(ctx)
 	if policyCtx == nil {
 		return
 	}
 
-	policyCtx.CompleteStage(stage, a.policyAuthState())
-	a.emitPolicyReport(ctx, policyCtx, stage)
+	policyCtx.Report().Stage = stage
 }
 
 func (a *AuthState) beginPolicyCheck(ctx *gin.Context, selector policycollection.CheckSelector) *policycollection.ActiveCheck {
@@ -164,20 +130,6 @@ func (a *AuthState) beginPolicyCheck(ctx *gin.Context, selector policycollection
 	}
 
 	return policyCtx.BeginCheck(contextFromGin(ctx), selector)
-}
-
-func (a *AuthState) policyCheckScheduled(ctx *gin.Context, selector policycollection.CheckSelector) bool {
-	policyCtx := a.requestPolicyContext(ctx)
-	if policyCtx == nil {
-		return true
-	}
-
-	mode, _, _ := policyCtx.SnapshotMetadata()
-	if mode == policyModeObserve {
-		return true
-	}
-
-	return policyCtx.CheckScheduled(contextFromGin(ctx), selector, a.policyAuthState())
 }
 
 func (a *AuthState) finishPolicyCheck(check *policycollection.ActiveCheck, result policyCheckResult) {
@@ -206,7 +158,6 @@ func bruteForcePolicySelector() policycollection.CheckSelector {
 		CheckType: policy.CheckTypeBruteForce,
 		Stage:     policy.StagePreAuth,
 		Name:      definitions.ControlBruteForce,
-		ConfigRef: policyConfigRefBruteForce,
 	}
 }
 
@@ -215,7 +166,6 @@ func tlsPolicySelector() policycollection.CheckSelector {
 		CheckType: policy.CheckTypeTLSEncryption,
 		Stage:     policy.StagePreAuth,
 		Name:      definitions.ControlTLSEncryption,
-		ConfigRef: policyConfigRefTLS,
 	}
 }
 
@@ -224,7 +174,6 @@ func relayDomainsPolicySelector() policycollection.CheckSelector {
 		CheckType: policy.CheckTypeRelayDomains,
 		Stage:     policy.StagePreAuth,
 		Name:      definitions.ControlRelayDomains,
-		ConfigRef: policyConfigRefRelay,
 	}
 }
 
@@ -233,83 +182,6 @@ func rblPolicySelector() policycollection.CheckSelector {
 		CheckType: policy.CheckTypeRBL,
 		Stage:     policy.StagePreAuth,
 		Name:      definitions.ControlRBL,
-		ConfigRef: policyConfigRefRBL,
-	}
-}
-
-func (a *AuthState) observeConfiguredPolicyDecision(ctx *gin.Context) {
-	policyCtx := existingPolicyContext(ctx)
-	if policyCtx == nil {
-		return
-	}
-
-	mode, defaultPolicy, generation := policyCtx.SnapshotMetadata()
-	result := policyCtx.CompareCustomObserve(contextFromGin(ctx), evaluation.CompareInput{
-		Mode:       mode,
-		Set:        defaultPolicy,
-		Generation: generation,
-		Recorder:   observability.DefaultRecorder(),
-		Logger:     a.logger(),
-		Surface:    a.policyResponseSurface(),
-	})
-
-	if !result.Mismatch || result.Shadow == nil {
-		return
-	}
-
-	observability.Debug(
-		contextFromGin(ctx),
-		a.Cfg(),
-		a.Logger(),
-		observability.ComponentObserve,
-		definitions.LogKeyGUID, a.Runtime.GUID,
-		"operation", string(policyCtx.Report().Operation),
-		"stage", string(result.Shadow.Stage),
-		"snapshot_generation", generation,
-		"mismatch_type", result.MismatchType,
-		"default_policy_name", result.Production.PolicyName,
-		"custom_policy_name", result.Shadow.PolicyName,
-		"default_effect", string(result.Production.Effect),
-		"custom_effect", string(result.Shadow.Effect),
-		"default_response_marker", result.Production.ResponseMarker,
-		"custom_response_marker", result.Shadow.ResponseMarker,
-		"default_fsm_event_marker", result.Production.FSMEventMarker,
-		"custom_fsm_event_marker", result.Shadow.FSMEventMarker,
-	)
-}
-
-func (a *AuthState) policyResponseSurface() string {
-	if a == nil {
-		return policyDetailHTTPJSON
-	}
-
-	if a.Request.ListAccounts {
-		if a.Request.Service == definitions.ServGRPC {
-			return "grpc_list_accounts"
-		}
-
-		return "http_list_accounts"
-	}
-
-	if a.Request.NoAuth && a.Request.Service == definitions.ServGRPC {
-		return "grpc_lookup_identity"
-	}
-
-	switch a.Request.Service {
-	case definitions.ServCBOR:
-		return "http_cbor"
-	case definitions.ServNginx:
-		return "nginx_auth_request"
-	case definitions.ServHeader:
-		return "http_header"
-	case definitions.ServGRPC:
-		return "grpc_auth_service"
-	case definitions.ServIDP:
-		return "idp_browser"
-	case definitions.ServJSON:
-		return "http_json"
-	default:
-		return "http_plain"
 	}
 }
 
@@ -691,7 +563,7 @@ func bruteForceBucketPolicyDetails(identifier string, fact bruteforce.BucketPoli
 }
 
 func (a *AuthState) recordPolicyBackendResult(ctx *gin.Context, authResult definitions.AuthResult, passDBResult *PassDBResult, err error) {
-	checkType, name, configRef := backendPolicySelector(a.Runtime.UsedPassDBBackend, passDBResult)
+	checkType, name := backendPolicySelector(a.Runtime.UsedPassDBBackend, passDBResult)
 	status := policy.CheckStatusOK
 	reason := ""
 	details := backendPolicyDetails(name)
@@ -711,13 +583,11 @@ func (a *AuthState) recordPolicyBackendResult(ctx *gin.Context, authResult defin
 
 	attributes = append(attributes, backendOutcomeAttributes(a, authResult, passDBResult, details)...)
 	attributes = append(attributes, pluginBackendPolicyAttributes(a, passDBResult, details)...)
-	attributes = append(attributes, subjectAttributePolicyAttributes(a, passDBResult)...)
 
 	check := a.beginPolicyCheck(ctx, policycollection.CheckSelector{
 		CheckType: checkType,
 		Stage:     policy.StageAuthBackend,
 		Name:      name,
-		ConfigRef: configRef,
 	})
 	a.finishPolicyCheck(check, policyCheckResult{
 		Err:          err,
@@ -755,7 +625,6 @@ func (a *AuthState) recordPolicyAccountProvider(ctx *gin.Context, count int, err
 		CheckType: policy.CheckTypeAccountProvider,
 		Stage:     policy.StageAccountProvider,
 		Name:      "account_provider",
-		ConfigRef: "auth.backends",
 	})
 	a.finishPolicyCheck(check, policyCheckResult{
 		Status:       status,
@@ -822,7 +691,7 @@ func accountProviderDecision(errSeen bool) policy.Decision {
 	return policy.DecisionPermit
 }
 
-func backendPolicySelector(runtimeBackend definitions.Backend, passDBResult *PassDBResult) (string, string, string) {
+func backendPolicySelector(runtimeBackend definitions.Backend, passDBResult *PassDBResult) (string, string) {
 	backendType := runtimeBackend
 	if passDBResult != nil && passDBResult.Backend != definitions.BackendUnknown {
 		backendType = passDBResult.Backend
@@ -830,16 +699,16 @@ func backendPolicySelector(runtimeBackend definitions.Backend, passDBResult *Pas
 
 	switch backendType {
 	case definitions.BackendLua:
-		return policy.CheckTypeLuaBackend, "lua_backend", "auth.backends.lua.backend"
+		return policy.CheckTypeLuaBackend, "lua_backend"
 	case definitions.BackendPlugin:
 		name := definitions.BackendPluginName
 		if passDBResult != nil && passDBResult.BackendName != "" {
 			name = passDBResult.BackendName
 		}
 
-		return policy.CheckTypePluginBackend, name, "auth.backends.order"
+		return policy.CheckTypePluginBackend, name
 	default:
-		return policy.CheckTypeLDAPBackend, "ldap_backend", "auth.backends.ldap"
+		return policy.CheckTypeLDAPBackend, "ldap_backend"
 	}
 }
 
@@ -961,185 +830,6 @@ func masterUserPolicyDetails(
 	details["target_user"] = policycollection.InternalDetail(identity.targetUser)
 
 	return details
-}
-
-type authPolicyConfigProvider interface {
-	GetAuthPolicy() config.AuthPolicySection
-}
-
-func subjectAttributePolicyAttributes(
-	auth *AuthState,
-	passDBResult *PassDBResult,
-) []policycollection.AttributeValue {
-	if auth == nil {
-		return nil
-	}
-
-	exports := auth.policyAttributeExports()
-	if len(exports) == 0 {
-		return nil
-	}
-
-	source := auth.GetAttributesCopy()
-	if passDBResult != nil && len(passDBResult.Attributes) > 0 {
-		source = passDBResult.Attributes.Clone()
-	}
-
-	operation := auth.policyOperation()
-
-	attributes := make([]policycollection.AttributeValue, 0, len(exports))
-	for _, exportConfig := range exports {
-		attributes = append(attributes, subjectAttributePolicyAttribute(exportConfig, source, operation))
-	}
-
-	return attributes
-}
-
-func (a *AuthState) policyAttributeExports() []config.PolicyAttributeExportConfig {
-	if a == nil || a.cfg() == nil {
-		return nil
-	}
-
-	provider, ok := a.cfg().(authPolicyConfigProvider)
-	if !ok {
-		return nil
-	}
-
-	policyConfig := provider.GetAuthPolicy()
-
-	return policyConfig.AttributeExports
-}
-
-func subjectAttributePolicyAttribute(
-	exportConfig config.PolicyAttributeExportConfig,
-	source bktype.AttributeMapping,
-	operation policy.Operation,
-) policycollection.AttributeValue {
-	identifier := policy.IdentifierSegment(exportConfig.Name)
-	values, present := source[exportConfig.Attribute]
-	details := subjectAttributePolicyDetails(exportConfig, values, present)
-
-	return policycollection.BoolAttribute(
-		policy.SubjectAttributeID(identifier),
-		policy.StageAuthBackend,
-		operation,
-		present && len(values) > 0,
-		details,
-	)
-}
-
-func subjectAttributePolicyDetails(
-	exportConfig config.PolicyAttributeExportConfig,
-	values []any,
-	present bool,
-) map[string]policycollection.DetailValue {
-	sensitivity := policyDetailSensitivity(exportConfig.Sensitivity)
-	details := map[string]policycollection.DetailValue{
-		"attribute": policycollection.InternalDetail(exportConfig.Attribute),
-		"count":     policycollection.InternalDetail(float64(len(values))),
-	}
-
-	if !present || len(values) == 0 {
-		return details
-	}
-
-	switch strings.TrimSpace(exportConfig.Type) {
-	case "bool":
-		if value, ok := boolPolicyValue(values[0]); ok {
-			details["value"] = sensitivePolicyDetail(value, sensitivity)
-		}
-	case "number":
-		if value, ok := numberPolicyValue(values[0]); ok {
-			details["value"] = sensitivePolicyDetail(value, sensitivity)
-		}
-	case "string_list":
-		details["values"] = sensitivePolicyDetail(stringPolicyValues(values), sensitivity)
-	default:
-		details["value"] = sensitivePolicyDetail(stringPolicyValue(values[0]), sensitivity)
-	}
-
-	return details
-}
-
-func policyDetailSensitivity(value string) report.Sensitivity {
-	switch strings.TrimSpace(value) {
-	case string(report.SensitivityPublic):
-		return report.SensitivityPublic
-	case string(report.SensitivitySecret):
-		return report.SensitivitySecret
-	default:
-		return report.SensitivityInternal
-	}
-}
-
-func sensitivePolicyDetail(value any, sensitivity report.Sensitivity) policycollection.DetailValue {
-	return policycollection.DetailValue{Value: value, Sensitivity: sensitivity}
-}
-
-func boolPolicyValue(value any) (bool, bool) {
-	switch v := value.(type) {
-	case bool:
-		return v, true
-	case string:
-		parsed, err := strconv.ParseBool(strings.TrimSpace(v))
-
-		return parsed, err == nil
-	default:
-		number, ok := numberPolicyValue(value)
-
-		return number != 0, ok
-	}
-}
-
-func numberPolicyValue(value any) (float64, bool) {
-	if value == nil {
-		return 0, false
-	}
-
-	switch v := value.(type) {
-	case string:
-		parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-
-		return parsed, err == nil
-	}
-
-	return reflectedNumberPolicyValue(reflect.ValueOf(value))
-}
-
-// reflectedNumberPolicyValue converts scalar numeric values into the report representation.
-func reflectedNumberPolicyValue(value reflect.Value) (float64, bool) {
-	switch value.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return float64(value.Int()), true
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return float64(value.Uint()), true
-	case reflect.Float32, reflect.Float64:
-		return value.Convert(reflect.TypeOf(float64(0))).Float(), true
-	default:
-		return 0, false
-	}
-}
-
-func stringPolicyValue(value any) string {
-	switch v := value.(type) {
-	case string:
-		return v
-	case fmt.Stringer:
-		return v.String()
-	case []byte:
-		return string(v)
-	default:
-		return fmt.Sprint(v)
-	}
-}
-
-func stringPolicyValues(values []any) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		result = append(result, stringPolicyValue(value))
-	}
-
-	return result
 }
 
 func backendPolicyMatched(authResult definitions.AuthResult, passDBResult *PassDBResult, err error) bool {

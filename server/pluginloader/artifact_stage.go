@@ -19,7 +19,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 )
 
@@ -30,11 +29,16 @@ type stagedArtifact struct {
 
 type verifiedArtifactStager struct {
 	artifacts map[string]stagedArtifact
+	readFile  func(string) ([]byte, error)
 	directory string
 }
 
 // newVerifiedArtifactStager creates one private staging owner for a loader run.
-func newVerifiedArtifactStager() (*verifiedArtifactStager, error) {
+func newVerifiedArtifactStager(reader func(string) ([]byte, error)) (*verifiedArtifactStager, error) {
+	if reader == nil {
+		return nil, ErrArtifactReaderRequired
+	}
+
 	directory, err := os.MkdirTemp("", "nauthilus-plugin-artifacts-")
 	if err != nil {
 		return nil, fmt.Errorf("create private plugin artifact staging directory: %w", err)
@@ -48,6 +52,7 @@ func newVerifiedArtifactStager() (*verifiedArtifactStager, error) {
 
 	return &verifiedArtifactStager{
 		artifacts: make(map[string]stagedArtifact),
+		readFile:  reader,
 		directory: directory,
 	}, nil
 }
@@ -66,11 +71,7 @@ func (s *verifiedArtifactStager) stage(verified VerifiedModule) (stagedArtifact,
 		return existing, nil
 	}
 
-	if err := checkVerifiedArtifact(verified.ArtifactPath); err != nil {
-		return stagedArtifact{}, err
-	}
-
-	artifact, err := s.copyArtifact(verified.ArtifactPath)
+	artifact, err := s.copyArtifact(verified.Module.Path)
 	if err != nil {
 		return stagedArtifact{}, err
 	}
@@ -86,14 +87,11 @@ func (s *verifiedArtifactStager) stage(verified VerifiedModule) (stagedArtifact,
 
 // copyArtifact writes one source stream into an exclusive private file while hashing the exact staged bytes.
 func (s *verifiedArtifactStager) copyArtifact(sourcePath string) (artifact stagedArtifact, err error) {
-	source, err := os.Open(sourcePath)
+	source, err := s.readFile(sourcePath)
 	if err != nil {
-		return stagedArtifact{}, fmt.Errorf("%w: open source artifact: %v", ErrArtifactUnavailable, err)
+		return stagedArtifact{}, fmt.Errorf("%w: read source artifact: %v", ErrArtifactUnavailable, err)
 	}
-
-	defer func() {
-		err = errors.Join(err, source.Close())
-	}()
+	defer clear(source)
 
 	destination, err := os.CreateTemp(s.directory, "verified-*.so")
 	if err != nil {
@@ -113,8 +111,7 @@ func (s *verifiedArtifactStager) copyArtifact(sourcePath string) (artifact stage
 		err = errors.Join(err, closeErr)
 	}()
 
-	hasher := sha256.New()
-	if _, err = io.Copy(io.MultiWriter(destination, hasher), source); err != nil {
+	if _, err = destination.Write(source); err != nil {
 		return stagedArtifact{}, fmt.Errorf("%w: copy staged artifact: %v", ErrArtifactUnavailable, err)
 	}
 
@@ -126,8 +123,7 @@ func (s *verifiedArtifactStager) copyArtifact(sourcePath string) (artifact stage
 		return stagedArtifact{}, fmt.Errorf("%w: protect staged artifact: %v", ErrArtifactUnavailable, err)
 	}
 
-	var digest ArtifactDigest
-	copy(digest[:], hasher.Sum(nil))
+	digest := ArtifactDigest(sha256.Sum256(source))
 
 	keep = true
 

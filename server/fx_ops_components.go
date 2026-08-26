@@ -32,8 +32,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/log"
 	"github.com/croessner/nauthilus/v3/server/log/level"
-	"github.com/croessner/nauthilus/v3/server/lualib/action"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/stats"
 
 	"go.uber.org/fx"
@@ -46,7 +44,6 @@ import (
 // the HTTP server) and delegates to existing helpers for worker/Redis/script handling.
 type reloadOrchestrator struct {
 	store          *contextStore
-	actionWorkers  []*action.Worker
 	monitoringSvc  *loopsfx.BackendMonitoringService
 	redisRebuilder redifx.Rebuilder
 }
@@ -247,9 +244,7 @@ func (r *reloadOrchestrator) restartMonitoring(ctx context.Context) {
 type restartOrchestrator struct {
 	ctx context.Context
 
-	store         *contextStore
-	actionWorkers []*action.Worker
-
+	store          *contextStore
 	statsSvc       *loopsfx.StatsService
 	monitoringSvc  *loopsfx.BackendMonitoringService
 	connMgrSvc     *loopsfx.ConnMgrService
@@ -293,7 +288,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	r.stopLoopServices(opCtx, logger, &step)
 
-	reloader := &reloadOrchestrator{store: r.store, actionWorkers: r.actionWorkers}
+	reloader := &reloadOrchestrator{store: r.store}
 
 	if err := r.stopWorkersForRestart(opCtx, reloader, &step); err != nil {
 		return err
@@ -395,37 +390,25 @@ func (r *restartOrchestrator) stopLoopServices(ctx context.Context, logger *slog
 	}
 }
 
-// stopWorkersForRestart stops backend and action workers before Redis is rebuilt.
+// stopWorkersForRestart stops backend workers before Redis is rebuilt.
 func (r *restartOrchestrator) stopWorkersForRestart(ctx context.Context, reloader *reloadOrchestrator, step *string) error {
 	*step = "stop_workers"
 
 	reloader.stopWorkersForConfig(ctx, getConfigFile(r.store))
 
-	if r.store == nil || r.store.action == nil {
-		return nil
-	}
-
-	*step = "stop_action_workers"
-
-	stopContext(r.store.action)
-
-	if waitForActionWorkers(ctx, r.actionWorkers) {
-		return nil
-	}
-
-	*step = "wait_action_workers_done"
-
-	return ctx.Err()
+	return nil
 }
 
 // rebuildRedisForRestart rebuilds the Redis client and reruns Redis setup for restart.
 func (r *restartOrchestrator) rebuildRedisForRestart(ctx context.Context, cfg config.File, logger *slog.Logger, step *string) error {
-	if r.redisRebuilder != nil {
-		if err := r.redisRebuilder.Rebuild(cfg, logger); err != nil {
-			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to rebuild Redis client via DI", definitions.LogKeyError, err)
-		}
-	} else {
-		rediscli.RebuildClient()
+	*step = "rebuild_redis"
+
+	if r.redisRebuilder == nil {
+		return fmt.Errorf("redis restart rebuilder dependency is nil")
+	}
+
+	if err := r.redisRebuilder.Rebuild(cfg, logger); err != nil {
+		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to rebuild Redis client via DI", definitions.LogKeyError, err)
 	}
 
 	redisReadyCtx, redisReadyCancel := context.WithTimeout(ctx, definitions.RestartRedisReadyTimeout)
@@ -443,22 +426,11 @@ func (r *restartOrchestrator) rebuildRedisForRestart(ctx context.Context, cfg co
 	return nil
 }
 
-// startWorkersForRestart starts backend and action workers after Redis setup.
+// startWorkersForRestart starts backend workers after Redis setup.
 func (r *restartOrchestrator) startWorkersForRestart(reloader *reloadOrchestrator, step *string) {
 	*step = "start_workers"
 
 	reloader.startWorkersForConfig(r.ctx, getConfigFile(r.store))
-
-	if r.store == nil || r.store.action == nil {
-		return
-	}
-
-	*step = "start_action_workers"
-	r.store.action.ctx, r.store.action.cancel = context.WithCancel(r.ctx)
-
-	for i := 0; i < len(r.actionWorkers); i++ {
-		go r.actionWorkers[i].Work(r.store.action.ctx)
-	}
 }
 
 // startLoopServices starts optional loop services after workers are available again.
@@ -497,7 +469,7 @@ func (r *restartOrchestrator) startLoopServices(logger *slog.Logger, step *strin
 }
 
 // newReloadOrchestrator registers the reload orchestrator as a grouped reloadable.
-func newReloadOrchestrator(store *contextStore, monitoringSvc *loopsfx.BackendMonitoringService, actionWorkers []*action.Worker, redisRebuilder redifx.Rebuilder) (struct {
+func newReloadOrchestrator(store *contextStore, monitoringSvc *loopsfx.BackendMonitoringService, redisRebuilder redifx.Rebuilder) (struct {
 	fx.Out
 	Reloadable reloadfx.Reloadable `group:"reloadables"`
 }, error) {
@@ -512,7 +484,7 @@ func newReloadOrchestrator(store *contextStore, monitoringSvc *loopsfx.BackendMo
 		fx.Out
 		Reloadable reloadfx.Reloadable `group:"reloadables"`
 	}{
-		Reloadable: &reloadOrchestrator{store: store, actionWorkers: actionWorkers, monitoringSvc: monitoringSvc, redisRebuilder: redisRebuilder},
+		Reloadable: &reloadOrchestrator{store: store, monitoringSvc: monitoringSvc, redisRebuilder: redisRebuilder},
 	}, nil
 }
 
@@ -520,7 +492,6 @@ func newReloadOrchestrator(store *contextStore, monitoringSvc *loopsfx.BackendMo
 func newRestartOrchestrator(
 	ctx context.Context,
 	store *contextStore,
-	actionWorkers []*action.Worker,
 	statsSvc *loopsfx.StatsService,
 	monitoringSvc *loopsfx.BackendMonitoringService,
 	connMgrSvc *loopsfx.ConnMgrService,
@@ -543,7 +514,6 @@ func newRestartOrchestrator(
 		Restartable: &restartOrchestrator{
 			ctx:            ctx,
 			store:          store,
-			actionWorkers:  actionWorkers,
 			statsSvc:       statsSvc,
 			monitoringSvc:  monitoringSvc,
 			connMgrSvc:     connMgrSvc,
@@ -556,7 +526,7 @@ func newRestartOrchestrator(
 //
 // This keeps behavior parity with the legacy shutdown coordinator while avoiding
 // indefinite blocking during fx shutdown.
-func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
+func waitForShutdown(ctx context.Context, store *contextStore) {
 	if !waitForServerShutdown(ctx, store) {
 		return
 	}
@@ -565,7 +535,6 @@ func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*
 		return
 	}
 
-	waitForActionWorkers(ctx, actionWorkers)
 }
 
 // waitForBackendShutdown waits for backend worker goroutines to terminate.
@@ -648,17 +617,6 @@ func waitForLDAPBackendShutdown(ctx context.Context, cfg config.File, ldapChanne
 func waitForLuaBackendShutdown(ctx context.Context, luaChannel backend.LuaChannel) bool {
 	for _, backendName := range luaChannel.GetBackendNames() {
 		if !waitForDone(ctx, luaChannel.GetLookupEndChan(backendName)) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// waitForActionWorkers waits until all action workers report completion.
-func waitForActionWorkers(ctx context.Context, actionWorkers []*action.Worker) bool {
-	for i := range actionWorkers {
-		if !waitForDone(ctx, actionWorkers[i].DoneChan) {
 			return false
 		}
 	}

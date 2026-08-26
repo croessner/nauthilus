@@ -114,6 +114,15 @@ func (r *I18NRuntime) CommitCatalogSession() error {
 	return nil
 }
 
+// CatalogSessionOverlays returns detached startup overlays without publishing them.
+func (r *I18NRuntime) CatalogSessionOverlays() []localization.CatalogOverlay {
+	if r == nil || r.catalogSession == nil {
+		return nil
+	}
+
+	return r.catalogSession.snapshot()
+}
+
 var defaultI18NRuntime = struct {
 	runtime *I18NRuntime
 	mu      sync.RWMutex
@@ -171,10 +180,15 @@ func LoaderModI18N(runtime *I18NRuntime, mode I18NMode) lua.LGFunction {
 			runtime: resolveI18NRuntime(runtime),
 			mode:    mode,
 		}
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnI18NGetLocalized:    module.getLocalized,
-			definitions.LuaFnI18NRegisterCatalog: module.registerCatalog,
-		})
+
+		functions := map[string]lua.LGFunction{
+			definitions.LuaFnI18NGetLocalized: module.getLocalized,
+		}
+		if mode == I18NModeStartup {
+			functions[definitions.LuaFnI18NRegisterCatalog] = module.registerCatalog
+		}
+
+		mod := L.SetFuncs(L.NewTable(), functions)
 		L.Push(mod)
 
 		return 1
@@ -338,6 +352,18 @@ func (s *I18NCatalogSession) commit() ([]localization.CatalogOverride, error) {
 	}
 
 	return s.base.Registry.RegisterOverlays(s.overlays...)
+}
+
+// snapshot returns detached startup overlays while leaving the base registry unchanged.
+func (s *I18NCatalogSession) snapshot() []localization.CatalogOverlay {
+	if s == nil {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return localization.CloneCatalogOverlays(s.overlays)
 }
 
 func (r *I18NRuntime) resolver() localization.MessageResolver {

@@ -1,19 +1,29 @@
-# Operator-owned policy translations and soft allowlists.
-auth:
-  policy:
-    localization:
-      catalogs:
-        - namespace: rns-auth
-          language: de
-          entries:
-            auth.policy.rns.account_disabled: "Das Konto ist deaktiviert."
-        - namespace: rns-auth
-          language: en
-          entries:
-            auth.policy.rns.account_disabled: "The account is disabled."
+# Complete non-secret configuration for operator-owned translations and soft
+# allowlists. Validate a copy with:
+# nauthilus --config-check --config /path/to/policy_localization_and_allowlists.yml
+policy:
+  namespaces:
+    authn:
+      localization:
+        catalogs:
+          - namespace: rns-auth
+            language: de
+            entries:
+              rns.account_disabled: "Das Konto ist deaktiviert."
+          - namespace: rns-auth
+            language: en
+            entries:
+              rns.account_disabled: "The account is disabled."
 
+auth:
   controls:
     brute_force:
+      buckets:
+        - name: documentation-window
+          period: 1m
+          cidr: 32
+          ipv4: true
+          failed_requests: 5
       allowlist:
         monitoring-account:
           - 192.0.2.0/24

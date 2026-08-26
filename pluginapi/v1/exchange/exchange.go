@@ -496,7 +496,7 @@ func factsByNamespace(facts []pluginapi.PolicyFact) map[string]map[string]any {
 	return result
 }
 
-// factNamespaceKey extracts feature namespace and field from known fact IDs.
+// factNamespaceKey indexes generic and authentication-shaped public plugin fact contracts without aliases.
 func factNamespaceKey(attribute string) (string, string, bool) {
 	attribute = strings.TrimSpace(attribute)
 	if strings.HasPrefix(attribute, factPrefixLuaPlugin) {
@@ -504,7 +504,7 @@ func factNamespaceKey(attribute string) (string, string, bool) {
 	}
 
 	if strings.HasPrefix(attribute, factPrefixPlugin) {
-		return namespaceAfterNativeProducer(attribute)
+		return namespaceAfterNativeFact(attribute)
 	}
 
 	return "", "", false
@@ -520,14 +520,28 @@ func namespaceAfterPrefix(attribute string, prefix string) (string, string, bool
 	return parts[0], strings.Join(parts[1:], "."), true
 }
 
-// namespaceAfterNativeProducer extracts namespace and field after plugin.<producer>.
-func namespaceAfterNativeProducer(attribute string) (string, string, bool) {
+// namespaceAfterNativeFact classifies a legacy producer or indexes a generic module fact directly.
+func namespaceAfterNativeFact(attribute string) (string, string, bool) {
 	parts := strings.Split(strings.TrimPrefix(attribute, factPrefixPlugin), ".")
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		return "", "", false
 	}
 
-	return parts[1], strings.Join(parts[2:], "."), true
+	if isLegacyNativeFactProducer(parts[0]) && len(parts) >= 3 {
+		return parts[1], strings.Join(parts[2:], "."), true
+	}
+
+	return parts[0], strings.Join(parts[1:], "."), true
+}
+
+// isLegacyNativeFactProducer recognizes the closed authentication-shaped producer vocabulary.
+func isLegacyNativeFactProducer(value string) bool {
+	switch value {
+	case "backend", "environment", "resource", "subject":
+		return true
+	default:
+		return false
+	}
 }
 
 // reputationDecisionTriggersSource reports whether reputation caused a suspicious decision.

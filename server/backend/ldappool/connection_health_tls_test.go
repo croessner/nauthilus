@@ -161,7 +161,15 @@ func runInitialHealthProbe(t *testing.T, pool string, conf *config.LDAPConf, ini
 	t.Helper()
 	setHealth(pool, conf.ServerURIs[0], initial)
 
-	go startHealthLoop(pool, conf)
+	configured := &config.FileSettings{
+		Server: &config.ServerSection{},
+		LDAP:   &config.LDAPSection{Config: conf},
+	}
+	if _, err := config.EnsureArtifactSnapshot(configured); err != nil {
+		t.Fatalf("EnsureArtifactSnapshot() error = %v", err)
+	}
+
+	go startHealthLoop(pool, configured, conf)
 
 	deadline := time.Now().Add(healthProbeTestTimeout)
 	for time.Now().Before(deadline) {

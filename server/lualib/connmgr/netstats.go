@@ -450,14 +450,33 @@ func (m *PsnetManager) luaRegisterTarget(L *lua.LState) int {
 
 // LoaderModPsnet is a function that registers the "psnet" module in the given Lua state.
 func LoaderModPsnet(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return newPsnetLoader(ctx, cfg, logger, true)
+}
+
+// LoaderModPsnetRequest exposes connection counters without process-global target registration.
+func LoaderModPsnetRequest(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return newPsnetLoader(ctx, cfg, logger, false)
+}
+
+// newPsnetLoader builds the psnet module for either process or Policy request ownership.
+func newPsnetLoader(
+	ctx context.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	allowTargetRegistration bool,
+) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
 		m := NewPsnetManager(ctx, cfg, logger)
 
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnRegisterConnectionTarget: m.luaRegisterTarget,
-			definitions.LuaFnGetConnectionTarget:      m.luaCountOpenConnections,
-		})
+		functions := map[string]lua.LGFunction{
+			definitions.LuaFnGetConnectionTarget: m.luaCountOpenConnections,
+		}
+		if allowTargetRegistration {
+			functions[definitions.LuaFnRegisterConnectionTarget] = m.luaRegisterTarget
+		}
+
+		mod := L.SetFuncs(L.NewTable(), functions)
 
 		if ctx != nil {
 			lualib.BindRequestRuntimeContext(ctx, L, mod)

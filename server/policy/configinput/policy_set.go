@@ -215,17 +215,17 @@ func (n *policyNormalizer) resolveRequiredProviderReference(
 	}
 
 	if len(references) > 1 {
-		return "", fmt.Errorf("provider instance %s resolves to incompatible configured and compatibility identities", reference)
+		return "", fmt.Errorf("provider instance %s resolves to incompatible configured and builtin schedule identities", reference)
 	}
 
 	for resolved := range references {
 		return resolved, nil
 	}
 
-	return "", fmt.Errorf("provider instance %s has no compatible schedule reference", reference)
+	return "", fmt.Errorf("provider instance %s has no exact schedule reference", reference)
 }
 
-// requiredProviderReferenceForTarget resolves one target-specific configured or compatibility schedule identity.
+// requiredProviderReferenceForTarget resolves one target-specific configured or builtin schedule identity.
 func (n *policyNormalizer) requiredProviderReferenceForTarget(
 	namespace string,
 	rule policyconfig.PolicyRuleConfig,

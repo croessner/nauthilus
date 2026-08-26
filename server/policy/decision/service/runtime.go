@@ -21,12 +21,15 @@ import (
 )
 
 type checkpointEvaluation struct {
-	request      decision.DecisionRequest
-	checkpoint   decision.Checkpoint
-	facts        decision.FactSet
-	finalization decision.EvaluationFinalization
-	supervisor   effectsupervisor.Acceptor
-	generation   uint64
+	request       decision.DecisionRequest
+	checkpoint    decision.Checkpoint
+	facts         decision.FactSet
+	hostStates    map[string]providerState
+	hostReasons   map[string]string
+	finalization  decision.EvaluationFinalization
+	supervisor    effectsupervisor.Acceptor
+	generation    uint64
+	authenticated bool
 }
 
 type runtimeEvaluation struct {

@@ -61,12 +61,25 @@ type BackendManager struct {
 
 // NewBackendManager constructs a backend manager for a fully qualified plugin backend.
 func NewBackendManager(backendName string, deps core.AuthDeps) core.BackendManager {
-	runner, _ := DefaultRunner()
+	if deps.PluginBackendFactory == nil {
+		return nil
+	}
 
-	return &BackendManager{
-		runner:        runner,
-		deps:          deps,
-		qualifiedName: backendName,
+	return deps.PluginBackendFactory(backendName, deps)
+}
+
+// NewBackendManagerFactory binds native backend managers to one explicit process runner.
+func NewBackendManagerFactory(runner *Runner) core.BackendManagerFactory {
+	if runner == nil {
+		return nil
+	}
+
+	return func(backendName string, deps core.AuthDeps) core.BackendManager {
+		return &BackendManager{
+			runner:        runner,
+			deps:          deps,
+			qualifiedName: backendName,
+		}
 	}
 }
 

@@ -400,15 +400,11 @@ func newDeviceCodeOIDCSession(request *idp.DeviceCodeRequest) *idp.OIDCSession {
 
 // issueDeviceCodeTokens generates and returns tokens after successful device authorization.
 func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string, request *idp.DeviceCodeRequest, client *config.OIDCClient) {
-	setOIDCTokenPostActionMFAOverrides(ctx, request.MFACompleted, request.MFAMethod)
-
 	if !h.ensureDeviceCodeRequestClaims(ctx, deviceCode, request, client) {
 		return
 	}
 
 	session := newDeviceCodeOIDCSession(request)
-
-	setOIDCTokenPostActionSubject(ctx, session)
 
 	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokens(ctx.Request.Context(), session)
 	if err != nil {

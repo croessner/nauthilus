@@ -22,6 +22,7 @@ import (
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
 // GenerationBindings is an immutable native module view captured from process-lifetime plugins.
@@ -31,12 +32,13 @@ type GenerationBindings struct {
 
 // GenerationModuleBinding owns one generation's detached capabilities and component bindings.
 type GenerationModuleBinding struct {
-	components     []pluginregistry.Component
-	capabilities   []pluginapi.Capability
-	artifactPath   string
-	configuredPath string
-	moduleName     string
-	artifactDigest pluginloader.ArtifactDigest
+	components       []pluginregistry.Component
+	policyAttributes []policyregistry.AttributeDefinition
+	capabilities     []pluginapi.Capability
+	artifactPath     string
+	configuredPath   string
+	moduleName       string
+	artifactDigest   pluginloader.ArtifactDigest
 }
 
 // CaptureGenerationBindings detaches loaded native capabilities from mutable loader slices.
@@ -80,12 +82,13 @@ func CaptureGenerationBindings(instances []pluginloader.ModuleInstance) (*Genera
 		}
 
 		modules = append(modules, GenerationModuleBinding{
-			components:     cloneGenerationComponents(instance.Descriptors),
-			capabilities:   slices.Clone(instance.Capabilities),
-			artifactPath:   instance.ArtifactPath,
-			configuredPath: configuredPath,
-			moduleName:     name,
-			artifactDigest: digest,
+			components:       cloneGenerationComponents(instance.Descriptors),
+			policyAttributes: cloneGenerationPolicyAttributes(instance.PolicyAttributes),
+			capabilities:     slices.Clone(instance.Capabilities),
+			artifactPath:     instance.ArtifactPath,
+			configuredPath:   configuredPath,
+			moduleName:       name,
+			artifactDigest:   digest,
 		})
 	}
 
@@ -177,12 +180,30 @@ func (b GenerationModuleBinding) Components() []pluginregistry.Component {
 	return cloneGenerationComponents(b.components)
 }
 
+// PolicyAttributes returns detached native policy metadata captured with this module.
+func (b GenerationModuleBinding) PolicyAttributes() []policyregistry.AttributeDefinition {
+	return cloneGenerationPolicyAttributes(b.policyAttributes)
+}
+
 // clone detaches all mutable module binding metadata.
 func (b GenerationModuleBinding) clone() GenerationModuleBinding {
 	b.components = cloneGenerationComponents(b.components)
+	b.policyAttributes = cloneGenerationPolicyAttributes(b.policyAttributes)
 	b.capabilities = slices.Clone(b.capabilities)
 
 	return b
+}
+
+// cloneGenerationPolicyAttributes detaches registry metadata from loader-owned slices and maps.
+func cloneGenerationPolicyAttributes(
+	attributes []policyregistry.AttributeDefinition,
+) []policyregistry.AttributeDefinition {
+	result := make([]policyregistry.AttributeDefinition, 0, len(attributes))
+	for _, definition := range attributes {
+		result = append(result, policyregistry.CloneDefinition(definition))
+	}
+
+	return result
 }
 
 // cloneGenerationComponents detaches descriptor slices while preserving process-lifetime values.

@@ -6,6 +6,8 @@ This directory contains shared Lua utility modules for the Nauthilus authenticat
 
 ### nauthilus_policy_facts.lua
 Stores request-local policy facts, emits Lua-owned policy attributes, and optionally writes redaction-safe custom logs.
+It declares `nauthilus_policy` as a static captured dependency so candidate validation can prove the exact module graph;
+it never selects a module dynamically.
 
 **Functions:**
 - `set(namespace, key, value)`: Stores an internal fact under `policy_facts.<namespace>.<key>`
@@ -30,9 +32,9 @@ policy_facts.emit_public("geoip", "rejected", true, {
 policy_facts.status_message("geoip", "Policy violation")
 ```
 
-Configure `auth.policy.registry_scripts` with `lua-plugins.d/policy/registry.lua` before using bundled emitted
-attributes in policy rules. Use `emit_public` only for data that is already safe for normal custom logs. Use `emit` for
-policy material that should not be copied to logs.
+Configure `policy.namespaces.authn.schema_contributions.lua.registry_scripts` with
+`lua-plugins.d/policy/registry.lua` before using bundled emitted attributes in policy rules. Use `emit_public` only for
+data that is already safe for normal custom logs. Use `emit` for policy material that should not be copied to logs.
 
 ### nauthilus_geoip_bridge.lua
 Copies native Go GeoIP runtime data from `plugin.environment.geoip` into the legacy Lua `rt.geoip_info` shape without
@@ -55,6 +57,11 @@ GeoIP policy service when they already exist, while adding native fields such as
 
 ### nauthilus_util.lua
 A comprehensive utility module that provides common functions used throughout the Nauthilus plugin system.
+
+`get_current_timestamp()` is UTC-only and does not inspect the process environment. `getenv()` remains a process-callback
+helper for historical backend/hook/init scripts. Authentication Policy callbacks must not import `nauthilus_util`: the
+static candidate validator rejects its complete dependency graph because it contains ambient environment lookup and
+cache mutation, even if the callback intends to use only a different helper.
 
 **Features:**
 - **Table Operations**

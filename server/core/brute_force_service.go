@@ -20,7 +20,7 @@ import (
 )
 
 // BruteForceService encapsulates backoff calculations and history/counter loading.
-// Implementations live in a subpackage and register themselves via services_registry.
+// Production injects one implementation through the immutable AuthnHostServices bundle.
 type BruteForceService interface {
 	// WaitDelay returns the wait time in seconds based on configured max and login attempts.
 	WaitDelay(maxWaitDelay, loginAttempt uint) int

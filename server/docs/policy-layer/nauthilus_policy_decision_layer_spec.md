@@ -1,10 +1,15 @@
 # Nauthilus Policy Decision Layer
 
-**Status:** Implementation-ready specification v0.6
+**Status:** Historical specification, superseded by the production Policy hard cut
 **Date:** 2026-05-06
 **Purpose:** align the Policy Decision Layer specification with the current Nauthilus codebase and `config v2` surface, then define a non-legacy target model
 **Scope:** authentication decision flow, pre-auth controls, backend/subject-source outcomes, Lua-triggered decisions, auth-FSM integration, decision reporting
 **Out of scope:** implementing the layer described here
+
+> This document is retained as design history. It does not define the current
+> configuration or runtime authority. See the
+> [Policy configuration breaking-change guide](../policy_configuration_migration.md)
+> for the supported top-level `policy` contract.
 
 ---
 
@@ -4252,15 +4257,11 @@ Implementation requirements:
 7. report mismatches through logs, reports, metrics, and OTel spans;
 8. keep current output authoritative.
 
-### Phase 5: Config Conversion Tool and Target Config Cut
+### Historical config conversion and target config cut
 
-Update the config conversion tool before target policy config becomes mandatory for migrated installations.
-
-The repository tool is currently:
-
-```text
-scripts/convert-config-v1-to-v2.py
-```
+This historical design used a converter before target policy config became
+mandatory for migrated installations. The converter was removed by the
+production hard cut and has no supported replacement.
 
 Conversion requirements:
 

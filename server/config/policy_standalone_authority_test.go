@@ -21,11 +21,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	"github.com/spf13/viper"
 )
 
-func TestPolicyCutoverLeavesProductionRootUnchanged(t *testing.T) {
-	wantRoots := []string{"runtime", "observability", "storage", "auth", "identity", "plugins"}
+func TestPolicyCutoverInstallsProductionRootAuthority(t *testing.T) {
+	wantRoots := []string{"runtime", "observability", "storage", "auth", "identity", "plugins", "policy"}
 	settingsType := reflect.TypeFor[FileSettings]()
 	gotRoots := make([]string, 0, len(wantRoots))
 
@@ -44,50 +45,50 @@ func TestPolicyCutoverLeavesProductionRootUnchanged(t *testing.T) {
 		t.Fatalf("FileSettings roots = %v, want %v", gotRoots, wantRoots)
 	}
 
-	if _, ok := settingsType.FieldByName("Policy"); ok {
-		t.Fatal("FileSettings.Policy exists, want standalone policy schema only")
+	field, ok := settingsType.FieldByName("Policy")
+	if !ok {
+		t.Fatal("FileSettings.Policy is missing")
+	}
+
+	if got, want := field.Type, reflect.TypeFor[policyconfig.PolicyConfig](); got != want {
+		t.Fatalf("FileSettings.Policy type = %v, want %v", got, want)
 	}
 }
 
-func TestPolicyCutoverPreservesLegacyAuthPolicyAuthority(t *testing.T) {
+func TestPolicyCutoverRemovesLegacyAuthPolicyAuthority(t *testing.T) {
 	authType := reflect.TypeFor[AuthSection]()
 
-	field, ok := authType.FieldByName("Policy")
+	if _, ok := authType.FieldByName("Policy"); ok {
+		t.Fatal("AuthSection.Policy exists after the hard cutover")
+	}
+
+	if _, ok := reflect.TypeFor[*FileSettings]().MethodByName("GetAuthPolicy"); ok {
+		t.Fatal("FileSettings.GetAuthPolicy exists after the hard cutover")
+	}
+
+	method, ok := reflect.TypeFor[*FileSettings]().MethodByName("GetPolicy")
 	if !ok {
-		t.Fatal("AuthSection.Policy is missing, want legacy production authority")
+		t.Fatal("FileSettings.GetPolicy is missing")
 	}
 
-	if got, want := field.Tag.Get("mapstructure"), "policy"; got != want {
-		t.Fatalf("AuthSection.Policy mapstructure tag = %q, want %q", got, want)
-	}
-
-	if got, want := field.Type, reflect.TypeFor[AuthPolicySection](); got != want {
-		t.Fatalf("AuthSection.Policy type = %v, want %v", got, want)
-	}
-
-	method, ok := reflect.TypeFor[*FileSettings]().MethodByName("GetAuthPolicy")
-	if !ok {
-		t.Fatal("FileSettings.GetAuthPolicy is missing, want legacy production reader")
-	}
-
-	wantMethod := reflect.TypeFor[func(*FileSettings) AuthPolicySection]()
+	wantMethod := reflect.TypeFor[func(*FileSettings) policyconfig.PolicyConfig]()
 	if method.Type != wantMethod {
-		t.Fatalf("FileSettings.GetAuthPolicy type = %v, want %v", method.Type, wantMethod)
+		t.Fatalf("FileSettings.GetPolicy type = %v, want %v", method.Type, wantMethod)
 	}
 }
 
-func TestPolicyCutoverStandaloneRootIsAbsentFromProductionSyntaxKeys(t *testing.T) {
+func TestPolicyCutoverProductionRootIsPresentInSyntaxKeys(t *testing.T) {
 	roots, _, _, err := KnownConfigSyntaxKeys()
 	if err != nil {
 		t.Fatalf("KnownConfigSyntaxKeys() error = %v", err)
 	}
 
-	if slices.Contains(roots, "policy") {
-		t.Fatalf("KnownConfigSyntaxKeys() roots = %v, want no standalone policy root", roots)
+	if !slices.Contains(roots, "policy") {
+		t.Fatalf("KnownConfigSyntaxKeys() roots = %v, want policy root", roots)
 	}
 }
 
-func TestPolicyCutoverStandaloneRootIsRejectedByProductionDecoder(t *testing.T) {
+func TestPolicyCutoverProductionRootIsAcceptedByProductionDecoder(t *testing.T) {
 	reader := viper.New()
 	reader.Set("policy", map[string]any{
 		"api": map[string]any{
@@ -97,13 +98,30 @@ func TestPolicyCutoverStandaloneRootIsRejectedByProductionDecoder(t *testing.T) 
 
 	cfg := &FileSettings{}
 
-	err := cfg.handleFile(reader)
-	if err == nil {
-		t.Fatal("handleFile() error = nil, want standalone policy root rejection")
+	if err := cfg.handleFile(reader); err != nil {
+		t.Fatalf("handleFile() error = %v", err)
 	}
 
-	want := "configuration errors: field 'policy.api.enabled' is not a supported configuration key"
-	if err.Error() != want {
-		t.Fatalf("handleFile() error = %q, want %q", err, want)
+	policyConfig := cfg.GetPolicy()
+	if !policyConfig.API.Enabled {
+		t.Fatal("GetPolicy().API.Enabled = false, want true")
+	}
+
+	if got, want := policyConfig.API.Limits.MaxRequestBytes, 1<<20; got != want {
+		t.Fatalf("GetPolicy().API.Limits.MaxRequestBytes = %d, want %d", got, want)
+	}
+}
+
+func TestPolicyCutoverProductionDecoderRejectsLegacyAuthRoot(t *testing.T) {
+	reader := viper.New()
+	reader.Set("auth.policy.mode", "enforce")
+
+	err := (&FileSettings{}).handleFile(reader)
+	if err == nil {
+		t.Fatal("handleFile() error = nil, want legacy root rejection")
+	}
+
+	if !strings.Contains(err.Error(), "auth.policy") {
+		t.Fatalf("handleFile() error = %q, want auth.policy path", err)
 	}
 }

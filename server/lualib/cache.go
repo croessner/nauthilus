@@ -188,6 +188,20 @@ func LoaderModCache(ctx context.Context, cfg config.File, logger *slog.Logger) l
 	}
 }
 
+// LoaderModCacheRequest exposes read-only process-cache observations to Policy request VMs.
+func LoaderModCacheRequest(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return func(L *lua.LState) int {
+		manager := NewCacheManager(ctx, cfg, logger)
+
+		return pushLuaModule(L, map[string]lua.LGFunction{
+			definitions.LuaFnCacheGet:    manager.Get,
+			definitions.LuaFnCacheExists: manager.Exists,
+			definitions.LuaFnCacheKeys:   manager.Keys,
+			definitions.LuaFnCacheSize:   manager.Size,
+		})
+	}
+}
+
 // cacheValueFunctions returns Lua cache functions for scalar cache operations.
 func cacheValueFunctions(manager *CacheManager) map[string]lua.LGFunction {
 	return map[string]lua.LGFunction{

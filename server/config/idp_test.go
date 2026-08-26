@@ -22,7 +22,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
-	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -64,85 +64,25 @@ func TestGetIDP(t *testing.T) {
 	})
 }
 
-func TestOIDCConfig_GetSigningKey(t *testing.T) {
-	t.Run("from list", func(t *testing.T) {
-		cfg := OIDCConfig{
-			SigningKeys: []OIDCKey{
-				{ID: "test-key", Key: secret.New("test-key-content"), Active: true},
-			},
-		}
-		key, err := cfg.GetSigningKey()
-		assert.NoError(t, err)
-		assert.Equal(t, "test-key-content", key)
-	})
+func TestIdentityCredentialTypesDoNotExposeLiveFileGetters(t *testing.T) {
+	tests := []struct {
+		typeOf     reflect.Type
+		methodName string
+	}{
+		{typeOf: reflect.TypeOf((*OIDCConfig)(nil)), methodName: "GetSigningKey"},
+		{typeOf: reflect.TypeOf((*OIDCClient)(nil)), methodName: "GetClientPublicKey"},
+		{typeOf: reflect.TypeOf((*SAML2Config)(nil)), methodName: "GetCert"},
+		{typeOf: reflect.TypeOf((*SAML2Config)(nil)), methodName: "GetKey"},
+		{typeOf: reflect.TypeOf((*SAML2ServiceProvider)(nil)), methodName: "GetCert"},
+	}
 
-	t.Run("from file in list", func(t *testing.T) {
-		tmpFile, err := os.CreateTemp("", "signing_key")
-		assert.NoError(t, err)
-
-		defer func() { _ = os.Remove(tmpFile.Name()) }()
-
-		content := "file-key"
-		_, err = tmpFile.WriteString(content)
-		assert.NoError(t, err)
-		assert.NoError(t, tmpFile.Close())
-
-		cfg := OIDCConfig{
-			SigningKeys: []OIDCKey{
-				{ID: "test-key", KeyFile: tmpFile.Name(), Active: true},
-			},
-		}
-		key, err := cfg.GetSigningKey()
-		assert.NoError(t, err)
-		assert.Equal(t, content, key)
-	})
-}
-
-func TestSAML2Config_GetCertAndKey(t *testing.T) {
-	t.Run("from string", func(t *testing.T) {
-		cfg := SAML2Config{
-			Cert: "test-cert",
-			Key:  "test-key",
-		}
-		cert, err := cfg.GetCert()
-		assert.NoError(t, err)
-		assert.Equal(t, "test-cert", cert)
-
-		key, err := cfg.GetKey()
-		assert.NoError(t, err)
-		assert.Equal(t, "test-key", key)
-	})
-
-	t.Run("from file", func(t *testing.T) {
-		tmpCert, err := os.CreateTemp("", "cert")
-		assert.NoError(t, err)
-
-		defer func() { _ = os.Remove(tmpCert.Name()) }()
-
-		_, _ = tmpCert.WriteString("file-cert")
-		assert.NoError(t, tmpCert.Close())
-
-		tmpKey, err := os.CreateTemp("", "key")
-		assert.NoError(t, err)
-
-		defer func() { _ = os.Remove(tmpKey.Name()) }()
-
-		_, _ = tmpKey.WriteString("file-key")
-		assert.NoError(t, tmpKey.Close())
-
-		cfg := SAML2Config{
-			CertFile: tmpCert.Name(),
-			KeyFile:  tmpKey.Name(),
-		}
-
-		cert, err := cfg.GetCert()
-		assert.NoError(t, err)
-		assert.Equal(t, "file-cert", cert)
-
-		key, err := cfg.GetKey()
-		assert.NoError(t, err)
-		assert.Equal(t, "file-key", key)
-	})
+	for _, test := range tests {
+		t.Run(test.typeOf.Elem().Name()+"_"+test.methodName, func(t *testing.T) {
+			if _, ok := test.typeOf.MethodByName(test.methodName); ok {
+				t.Fatalf("%s exposes removed live-file method %s", test.typeOf, test.methodName)
+			}
+		})
+	}
 }
 
 func TestSAML2Config_SLOSettings(t *testing.T) {
@@ -1091,97 +1031,6 @@ func TestSAML2ServiceProvider_LogoutSigningDefaults(t *testing.T) {
 
 		assert.False(t, sp.AreLogoutRequestsSigned())
 		assert.False(t, sp.AreLogoutResponsesSigned())
-	})
-}
-
-func TestSAML2ServiceProvider_GetCert(t *testing.T) {
-	assertSAMLGetCertEmptyCases(t)
-	assertSAMLGetCertInlineCases(t)
-	assertSAMLGetCertFileCases(t)
-}
-
-// assertSAMLGetCertEmptyCases verifies empty certificate results.
-func assertSAMLGetCertEmptyCases(t *testing.T) {
-	t.Helper()
-
-	t.Run("NilServiceProvider", func(t *testing.T) {
-		var sp *SAML2ServiceProvider
-
-		cert, err := sp.GetCert()
-
-		assert.NoError(t, err)
-		assert.Empty(t, cert)
-	})
-
-	t.Run("NoCert", func(t *testing.T) {
-		sp := &SAML2ServiceProvider{}
-
-		cert, err := sp.GetCert()
-
-		assert.NoError(t, err)
-		assert.Empty(t, cert)
-	})
-}
-
-// assertSAMLGetCertInlineCases verifies inline certificate behavior.
-func assertSAMLGetCertInlineCases(t *testing.T) {
-	t.Helper()
-
-	t.Run("InlineCert", func(t *testing.T) {
-		sp := &SAML2ServiceProvider{
-			Cert: "inline-cert-content",
-		}
-
-		cert, err := sp.GetCert()
-
-		assert.NoError(t, err)
-		assert.Equal(t, "inline-cert-content", cert)
-	})
-
-	t.Run("InlineTakesPrecedence", func(t *testing.T) {
-		sp := &SAML2ServiceProvider{
-			Cert:     "inline-cert",
-			CertFile: "/some/file",
-		}
-
-		cert, err := sp.GetCert()
-
-		assert.NoError(t, err)
-		assert.Equal(t, "inline-cert", cert)
-	})
-}
-
-// assertSAMLGetCertFileCases verifies file-backed certificate behavior.
-func assertSAMLGetCertFileCases(t *testing.T) {
-	t.Helper()
-
-	t.Run("CertFromFile", func(t *testing.T) {
-		tmpFile, err := os.CreateTemp("", "sp-cert")
-		assert.NoError(t, err)
-
-		defer func() { _ = os.Remove(tmpFile.Name()) }()
-
-		_, _ = tmpFile.WriteString("file-cert-content")
-		assert.NoError(t, tmpFile.Close())
-
-		sp := &SAML2ServiceProvider{
-			CertFile: tmpFile.Name(),
-		}
-
-		cert, err := sp.GetCert()
-
-		assert.NoError(t, err)
-		assert.Equal(t, "file-cert-content", cert)
-	})
-
-	t.Run("CertFromMissingFile", func(t *testing.T) {
-		sp := &SAML2ServiceProvider{
-			CertFile: "/nonexistent/path/cert.pem",
-		}
-
-		_, err := sp.GetCert()
-
-		assert.Error(t, err)
 	})
 }
 

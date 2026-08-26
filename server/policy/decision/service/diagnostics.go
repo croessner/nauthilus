@@ -91,7 +91,7 @@ func addProviderDiagnostics(
 	providers []providerRecord,
 ) {
 	for _, provider := range providers {
-		descriptor, ok := target.LookupProvider(provider.id)
+		descriptor, ok := target.LookupProvider(provider.use)
 		if ok && descriptor.DiagnosticID() != "" {
 			addDiagnosticString(entries, "provider."+descriptor.DiagnosticID(), providerAliasStatus(provider.state))
 		}
@@ -117,7 +117,7 @@ func executedProviderCount(records []providerRecord) int {
 	count := 0
 
 	for _, record := range records {
-		if record.state != providerStateSkipped {
+		if record.state != providerStateSkipped && record.state != providerStateUnavailable {
 			count++
 		}
 	}

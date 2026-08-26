@@ -20,11 +20,12 @@ import (
 
 // ConfiguredNativeGenerationInput carries static activation and frozen native capabilities into one candidate.
 type ConfiguredNativeGenerationInput struct {
-	Bindings             nativebinding.DecisionBindingPreparer
-	PostActionAcceptance effectsupervisor.Acceptor
-	Observer             nativebinding.Observer
-	Policy               policyconfig.PolicyConfig
-	NativeModules        []policyruntime.NativeModuleBindingInput
+	Bindings              nativebinding.DecisionBindingPreparer
+	PostActionAcceptance  effectsupervisor.Acceptor
+	Observer              nativebinding.Observer
+	Policy                policyconfig.PolicyConfig
+	NativeModules         []policyruntime.NativeModuleBindingInput
+	FactProvidersPrepared bool
 }
 
 // configuredNativeGenerationBuilder resolves one static snapshot without ambient plugin lookup.
@@ -42,6 +43,7 @@ type configuredNativeGenerationBuilder struct {
 	factBindings        map[string]policyruntime.FactProviderBinding
 	syncBindings        map[string]policyruntime.SyncEffectProvider
 	postBindings        map[string]policyruntime.PostActionProvider
+	preparedFactIDs     map[string]struct{}
 }
 
 // configuredNativeAuthority groups exact configured definitions by one plugin module owner.
@@ -74,12 +76,22 @@ func PrepareConfiguredNativeGeneration(
 		}
 	}
 
-	normalized, err := Normalize(ctx, policyconfig.Document{Policy: input.Policy})
+	policyInput := input.Policy
+
+	preparedFactIDs := make(map[string]struct{})
+	if input.FactProvidersPrepared {
+		preparedFactIDs = configuredNativeFactProviderIDs(input.Policy)
+		policyInput = structuralPolicy(input.Policy)
+	}
+
+	normalized, err := Normalize(ctx, policyconfig.Document{Policy: policyInput})
 	if err != nil {
 		return policyruntime.ExtensionPreparation{}, nativePreparationError(ctx, "policy configuration was rejected")
 	}
 
 	builder := newConfiguredNativeGenerationBuilder(ctx, normalized.Policy, input)
+
+	builder.preparedFactIDs = preparedFactIDs
 	if err = builder.definitions.index(normalized.Definitions, invalidNativeGenerationRegistration); err != nil {
 		return policyruntime.ExtensionPreparation{}, err
 	}
@@ -159,6 +171,9 @@ func (b *configuredNativeGenerationBuilder) prepareProvider(
 	configured policyconfig.ProviderConfig,
 ) error {
 	providerID := CanonicalProviderID(namespace, name, configured)
+	if _, prepared := b.preparedFactIDs[providerID]; prepared {
+		return nil
+	}
 
 	definition, exists := b.definitions.providers[providerID]
 	if !exists || definition.ID() != providerID {
@@ -204,6 +219,21 @@ func (b *configuredNativeGenerationBuilder) prepareProvider(
 	group.effects = append(group.effects, effects...)
 
 	return nil
+}
+
+// configuredNativeFactProviderIDs indexes generic native facts already prepared through descriptor authority.
+func configuredNativeFactProviderIDs(policy policyconfig.PolicyConfig) map[string]struct{} {
+	result := make(map[string]struct{})
+
+	for namespace, configuredNamespace := range policy.Namespaces {
+		for name, provider := range configuredNamespace.Providers {
+			if provider.Kind == policyconfig.ProviderKindNative && len(provider.ProducedFacts) > 0 {
+				result[provider.CanonicalID(namespace, name)] = struct{}{}
+			}
+		}
+	}
+
+	return result
 }
 
 // authority returns one deterministic plugin-module preparation group.

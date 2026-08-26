@@ -48,6 +48,8 @@ func TestNewServerRegistersAuthorityServices(t *testing.T) {
 	server, err := NewServer(ServerDeps{
 		Cfg:             enableGRPCAuthBackendRefs(grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{})),
 		Logger:          slog.Default(),
+		AuthService:     &recordingService{},
+		PolicyService:   effectPolicyService{},
 		IdentityService: &recordingAuthorityIdentityService{},
 		BackendRefs:     newRecordingBackendRefStore(),
 	})
@@ -66,10 +68,12 @@ func TestNewServerRegistersAuthorityServices(t *testing.T) {
 	}
 }
 
-func TestNewServerDefaultsToAuthServiceWithoutBackendRefs(t *testing.T) {
+func TestNewServerKeepsIdentityBackendDisabledWithoutBackendRefs(t *testing.T) {
 	server, err := NewServer(ServerDeps{
 		Cfg:             grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
 		Logger:          slog.Default(),
+		AuthService:     &recordingService{},
+		PolicyService:   effectPolicyService{},
 		IdentityService: &recordingAuthorityIdentityService{},
 		BackendRefs:     newRecordingBackendRefStore(),
 	})
@@ -90,8 +94,10 @@ func TestNewServerDefaultsToAuthServiceWithoutBackendRefs(t *testing.T) {
 
 func TestNewServerRejectsEnabledBackendRefsWithoutStore(t *testing.T) {
 	_, err := NewServer(ServerDeps{
-		Cfg:    enableGRPCAuthBackendRefs(grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{})),
-		Logger: slog.Default(),
+		Cfg:         enableGRPCAuthBackendRefs(grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{})),
+		Logger:      slog.Default(),
+		AuthService: &recordingService{},
+		PolicyService: effectPolicyService{},
 	})
 	if err == nil {
 		t.Fatal("NewServer() error = nil, want missing backend ref store error")
@@ -736,6 +742,8 @@ func newBufconnIdentityBackendServiceClientWithValidator(
 	server, err := NewServer(ServerDeps{
 		Cfg:             cfg,
 		Logger:          slog.Default(),
+		AuthService:     &recordingService{},
+		PolicyService:   effectPolicyService{},
 		IdentityService: service,
 		BackendRefs:     store,
 		OIDCValidator:   validator,

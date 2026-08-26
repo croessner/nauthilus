@@ -99,7 +99,7 @@ func TestRunSignWritesSignatureAcceptedByVerifier(t *testing.T) {
 
 	publicKeyPath := writePublicKeyForPrivateKey(t, pluginDir, privateKeyPath)
 
-	_, err = pluginloader.NewVerifier().Verify(&config.PluginsSection{
+	_, err = pluginloader.NewVerifier(pluginloader.WithArtifactReader(os.ReadFile)).Verify(&config.PluginsSection{
 		AllowedDirs:        []string{pluginDir},
 		VerificationPolicy: config.PluginVerificationPolicySignatureRequired,
 		Trust: config.PluginTrustSection{

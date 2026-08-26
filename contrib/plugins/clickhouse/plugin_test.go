@@ -134,13 +134,13 @@ func TestNoAuthNonOIDCRequestSkipsWithoutHTTP(t *testing.T) {
 	}), testRunnerOptions{})
 	defer harness.stop(t)
 
-	result, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{
+	result, err := harness.enqueuePostAction(context.Background(), testRequest(t, requestOptions{
 		noAuth:   true,
 		protocol: "imap",
 		service:  "imap",
 	}))
 	if err != nil {
-		t.Fatalf("EnqueuePostAction() error = %v", err)
+		t.Fatalf("Enqueue() error = %v", err)
 	}
 
 	if result.Enqueued {
@@ -159,7 +159,7 @@ func TestOIDCTokenPostActionRowContainsIDPFields(t *testing.T) {
 	}), testRunnerOptions{})
 	defer harness.stop(t)
 
-	_, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{
+	_, err := harness.enqueuePostAction(context.Background(), testRequest(t, requestOptions{
 		noAuth:        true,
 		authenticated: true,
 		protocol:      "oidc",
@@ -170,7 +170,7 @@ func TestOIDCTokenPostActionRowContainsIDPFields(t *testing.T) {
 		disableRedis:  true,
 	}))
 	if err != nil {
-		t.Fatalf("EnqueuePostAction() error = %v", err)
+		t.Fatalf("Enqueue() error = %v", err)
 	}
 
 	row := decodeFirstRow(t, harness.transport.onlyRequest().body)
@@ -195,7 +195,7 @@ func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:
 	}), testRunnerOptions{})
 	defer harness.stop(t)
 
-	_, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{
+	_, err := harness.enqueuePostAction(context.Background(), testRequest(t, requestOptions{
 		protocol: "imap",
 		service:  "imap",
 		runtimeValues: map[string]any{
@@ -254,7 +254,7 @@ func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:
 		passwordHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}))
 	if err != nil {
-		t.Fatalf("EnqueuePostAction() error = %v", err)
+		t.Fatalf("Enqueue() error = %v", err)
 	}
 
 	row := decodeFirstRow(t, harness.transport.onlyRequest().body)
@@ -388,9 +388,9 @@ func TestCacheOnlyPathBelowBatchThreshold(t *testing.T) {
 	}), testRunnerOptions{})
 	defer harness.stop(t)
 
-	_, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{}))
+	_, err := harness.enqueuePostAction(context.Background(), testRequest(t, requestOptions{}))
 	if err != nil {
-		t.Fatalf("EnqueuePostAction() error = %v", err)
+		t.Fatalf("Enqueue() error = %v", err)
 	}
 
 	if got := len(harness.transport.requests); got != 0 {
@@ -412,8 +412,8 @@ func TestThresholdFlushEmitsOneNDJSONBody(t *testing.T) {
 	defer harness.stop(t)
 
 	for range 2 {
-		if _, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{})); err != nil {
-			t.Fatalf("EnqueuePostAction() error = %v", err)
+		if _, err := harness.enqueuePostAction(context.Background(), testRequest(t, requestOptions{})); err != nil {
+			t.Fatalf("Enqueue() error = %v", err)
 		}
 	}
 
@@ -433,9 +433,9 @@ func TestFailedInsertRequeuesRows(t *testing.T) {
 	}), testRunnerOptions{transport: transport})
 	defer harness.stop(t)
 
-	_, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{}))
+	_, err := harness.enqueuePostAction(context.Background(), testRequest(t, requestOptions{}))
 	if err == nil {
-		t.Fatal("EnqueuePostAction() error = nil, want status failure")
+		t.Fatal("Enqueue() error = nil, want status failure")
 	}
 
 	rows := popCachedRows(t, harness.host, testCacheKey)
@@ -454,11 +454,11 @@ func TestAuthenticatedRedisDedupSkipsDuplicates(t *testing.T) {
 	}), testRunnerOptions{redis: pluginruntime.NewRedisFacade(rediscli.NewTestClient(db))})
 	defer harness.stop(t)
 
-	result, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{
+	result, err := harness.enqueuePostAction(context.Background(), testRequest(t, requestOptions{
 		authenticated: true,
 	}))
 	if err != nil {
-		t.Fatalf("EnqueuePostAction() error = %v", err)
+		t.Fatalf("Enqueue() error = %v", err)
 	}
 
 	if result.Enqueued {
@@ -484,11 +484,11 @@ func TestRedisDedupErrorFailsOpen(t *testing.T) {
 	}), testRunnerOptions{redis: pluginruntime.NewRedisFacade(rediscli.NewTestClient(db))})
 	defer harness.stop(t)
 
-	result, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{
+	result, err := harness.enqueuePostAction(context.Background(), testRequest(t, requestOptions{
 		authenticated: true,
 	}))
 	if err != nil {
-		t.Fatalf("EnqueuePostAction() error = %v", err)
+		t.Fatalf("Enqueue() error = %v", err)
 	}
 
 	if !result.Enqueued {
@@ -517,8 +517,8 @@ func TestClickHouseAuthHeadersAreBuiltWithoutLoggingSecrets(t *testing.T) {
 	}), testRunnerOptions{logger: logger})
 	defer harness.stop(t)
 
-	if _, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, requestOptions{})); err != nil {
-		t.Fatalf("EnqueuePostAction() error = %v", err)
+	if _, err := harness.enqueuePostAction(context.Background(), testRequest(t, requestOptions{})); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
 	}
 
 	request := harness.transport.onlyRequest()
@@ -559,9 +559,10 @@ type testRunnerOptions struct {
 }
 
 type testHarness struct {
-	runner    *pluginruntime.Runner
-	host      *pluginruntime.Host
-	transport *recordingTransport
+	runner     *pluginruntime.Runner
+	host       *pluginruntime.Host
+	postAction pluginapi.PostActionTarget
+	transport  *recordingTransport
 }
 
 // startTestRunner registers, starts, and returns a ClickHouse plugin runtime.
@@ -621,7 +622,20 @@ func startTestRunner(t *testing.T, module config.PluginModule, options testRunne
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	return testHarness{runner: runner, host: host, transport: transport}
+	return testHarness{
+		runner:     runner,
+		host:       host,
+		postAction: testPostActionTarget(t, registry),
+		transport:  transport,
+	}
+}
+
+// enqueuePostAction invokes the registered target directly after Runner has established lifecycle readiness.
+func (h testHarness) enqueuePostAction(
+	ctx context.Context,
+	request pluginapi.PostActionRequest,
+) (pluginapi.PostActionEnqueueResult, error) {
+	return h.postAction.Enqueue(ctx, request)
 }
 
 // stop stops a started test runner.
@@ -631,6 +645,23 @@ func (h testHarness) stop(t *testing.T) {
 	if err := h.runner.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
+}
+
+// testPostActionTarget resolves the single ClickHouse target registered by the test plugin.
+func testPostActionTarget(t *testing.T, registry *pluginregistry.Registry) pluginapi.PostActionTarget {
+	t.Helper()
+
+	targets := registry.PostActionTargets()
+	if len(targets) != 1 {
+		t.Fatalf("PostActionTargets() length = %d, want 1", len(targets))
+	}
+
+	target, ok := targets[0].Value.(pluginapi.PostActionTarget)
+	if !ok {
+		t.Fatalf("PostActionTargets()[0] type = %T, want pluginapi.PostActionTarget", targets[0].Value)
+	}
+
+	return target
 }
 
 // registerTestPlugin registers a ClickHouse plugin in the real component registry.
@@ -682,9 +713,9 @@ func singleRowForRequest(t *testing.T, options requestOptions) map[string]any {
 	}), testRunnerOptions{})
 	defer harness.stop(t)
 
-	_, err := harness.runner.EnqueuePostAction(context.Background(), "clickhouse.post_action", testRequest(t, options))
+	_, err := harness.enqueuePostAction(context.Background(), testRequest(t, options))
 	if err != nil {
-		t.Fatalf("EnqueuePostAction() error = %v", err)
+		t.Fatalf("Enqueue() error = %v", err)
 	}
 
 	return decodeFirstRow(t, harness.transport.onlyRequest().body)

@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
+	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
@@ -45,6 +47,7 @@ type PrepareInput struct {
 type PreparationInput struct {
 	config   config.File
 	previous config.File
+	policy   PolicyModel
 	id       uint64
 }
 
@@ -63,23 +66,36 @@ func (i PreparationInput) PreviousConfig() config.File {
 	return i.previous
 }
 
-// PolicyPreparation contains one exact off-side policy view and its resources.
+// Policy returns the normalized policy prepared earlier in the same candidate protocol.
+func (i PreparationInput) Policy() PolicyModel {
+	if nilInterface(i.policy) {
+		return nil
+	}
+
+	return i.policy.ClonePolicyModel()
+}
+
+// PolicyPreparation contains one normalized immutable policy model and its resources.
 type PolicyPreparation struct {
-	Snapshot  *Snapshot
+	Policy    PolicyModel
 	Resources []CandidateResource
 }
 
 // ExtensionPreparation contains immutable definitions, bindings, and their resources.
 type ExtensionPreparation struct {
-	Bindings    *BindingSet
-	Definitions []registry.DefinitionContribution
-	Resources   []CandidateResource
+	Bindings            *BindingSet
+	Definitions         []registry.DefinitionContribution
+	ImplicitDefinitions []registry.DefinitionContribution
+	Resources           []CandidateResource
 }
 
 // CatalogPreparationInput contains definitions required to compile exact targets.
 type CatalogPreparationInput struct {
-	base        PreparationInput
-	definitions []registry.DefinitionContribution
+	base                PreparationInput
+	policy              PolicyModel
+	bindings            *BindingSet
+	definitions         []registry.DefinitionContribution
+	implicitDefinitions []registry.DefinitionContribution
 }
 
 // Config returns the complete decoded candidate configuration.
@@ -97,15 +113,36 @@ func (i CatalogPreparationInput) Definitions() []registry.DefinitionContribution
 	return cloneDefinitionContributions(i.definitions)
 }
 
+// ImplicitDefinitions returns captured authn-only public extension contributions.
+func (i CatalogPreparationInput) ImplicitDefinitions() []registry.DefinitionContribution {
+	return cloneDefinitionContributions(i.implicitDefinitions)
+}
+
+// Policy returns the detached normalized policy candidate.
+func (i CatalogPreparationInput) Policy() PolicyModel {
+	if nilInterface(i.policy) {
+		return nil
+	}
+
+	return i.policy.ClonePolicyModel()
+}
+
+// Bindings returns detached indexes over all prepared extension bindings.
+func (i CatalogPreparationInput) Bindings() *BindingSet {
+	return i.bindings.Clone()
+}
+
 // CatalogPreparation contains one compiled exact target catalog and its resources.
 type CatalogPreparation struct {
-	Catalog   *TargetCatalog
-	Resources []CandidateResource
+	Catalog     *TargetCatalog
+	Definitions []registry.DefinitionContribution
+	Resources   []CandidateResource
 }
 
 // AuthorityPreparationInput contains the complete candidate views needed by caller auth.
 type AuthorityPreparationInput struct {
 	base     PreparationInput
+	policy   PolicyModel
 	catalog  *TargetCatalog
 	bindings *BindingSet
 }
@@ -120,6 +157,15 @@ func (i AuthorityPreparationInput) ID() uint64 {
 	return i.base.ID()
 }
 
+// Policy returns the detached normalized policy candidate.
+func (i AuthorityPreparationInput) Policy() PolicyModel {
+	if nilInterface(i.policy) {
+		return nil
+	}
+
+	return i.policy.ClonePolicyModel()
+}
+
 // TargetCatalog returns a detached exact candidate catalog.
 func (i AuthorityPreparationInput) TargetCatalog() *TargetCatalog {
 	return i.catalog.Clone()
@@ -132,14 +178,16 @@ func (i AuthorityPreparationInput) Bindings() *BindingSet {
 
 // CallerAuthenticationPreparation contains caller credential authority and metadata.
 type CallerAuthenticationPreparation struct {
-	Authenticator CallerAuthenticator
-	Credentials   CredentialProfiles
-	Resources     []CandidateResource
+	Authenticator         CallerAuthenticator
+	Credentials           CredentialProfiles
+	InternalPresentations map[string]decision.AuthenticationInput
+	Resources             []CandidateResource
 }
 
 // AdmissionPreparationInput contains candidate caller and target authority metadata.
 type AdmissionPreparationInput struct {
 	base        PreparationInput
+	policy      PolicyModel
 	catalog     *TargetCatalog
 	credentials CredentialProfiles
 }
@@ -152,6 +200,15 @@ func (i AdmissionPreparationInput) Config() config.File {
 // ID returns the candidate generation identity.
 func (i AdmissionPreparationInput) ID() uint64 {
 	return i.base.ID()
+}
+
+// Policy returns the detached normalized policy candidate.
+func (i AdmissionPreparationInput) Policy() PolicyModel {
+	if nilInterface(i.policy) {
+		return nil
+	}
+
+	return i.policy.ClonePolicyModel()
 }
 
 // TargetCatalog returns a detached exact candidate catalog.
@@ -174,7 +231,7 @@ type AdmissionPreparation struct {
 // SettingsPreparationInput contains every candidate view needed to derive limits.
 type SettingsPreparationInput struct {
 	base    PreparationInput
-	policy  *Snapshot
+	policy  PolicyModel
 	catalog *TargetCatalog
 }
 
@@ -188,9 +245,13 @@ func (i SettingsPreparationInput) ID() uint64 {
 	return i.base.ID()
 }
 
-// PolicySnapshot returns a detached exact candidate policy view.
-func (i SettingsPreparationInput) PolicySnapshot() *Snapshot {
-	return i.policy.Clone()
+// Policy returns the detached normalized policy candidate.
+func (i SettingsPreparationInput) Policy() PolicyModel {
+	if nilInterface(i.policy) {
+		return nil
+	}
+
+	return i.policy.ClonePolicyModel()
 }
 
 // TargetCatalog returns a detached exact candidate catalog.
@@ -200,20 +261,23 @@ func (i SettingsPreparationInput) TargetCatalog() *TargetCatalog {
 
 // SettingsPreparation contains immutable limits, report settings, and resources.
 type SettingsPreparation struct {
-	Settings  GenerationSettings
-	Resources []CandidateResource
+	MessageResolver localization.MessageResolver
+	Settings        GenerationSettings
+	Resources       []CandidateResource
 }
 
 // ApplicationPreparationInput contains every prepared candidate application dependency.
 type ApplicationPreparationInput struct {
-	config        config.File
-	policy        *Snapshot
-	catalog       *TargetCatalog
-	authenticator CallerAuthenticator
-	admission     AdmissionAuthority
-	bindings      *BindingSet
-	settings      GenerationSettings
-	id            uint64
+	config                config.File
+	policy                PolicyModel
+	catalog               *TargetCatalog
+	authenticator         CallerAuthenticator
+	admission             AdmissionAuthority
+	bindings              *BindingSet
+	internalPresentations map[string]decision.AuthenticationInput
+	settings              GenerationSettings
+	messageResolver       localization.MessageResolver
+	id                    uint64
 }
 
 // Config returns the complete decoded candidate configuration.
@@ -226,9 +290,13 @@ func (i ApplicationPreparationInput) ID() uint64 {
 	return i.id
 }
 
-// PolicySnapshot returns a detached exact candidate policy view.
-func (i ApplicationPreparationInput) PolicySnapshot() *Snapshot {
-	return i.policy.Clone()
+// Policy returns the detached normalized policy candidate.
+func (i ApplicationPreparationInput) Policy() PolicyModel {
+	if nilInterface(i.policy) {
+		return nil
+	}
+
+	return i.policy.ClonePolicyModel()
 }
 
 // TargetCatalog returns a detached exact candidate catalog.
@@ -254,6 +322,11 @@ func (i ApplicationPreparationInput) Bindings() *BindingSet {
 // Settings returns the prepared immutable limits and report settings.
 func (i ApplicationPreparationInput) Settings() GenerationSettings {
 	return i.settings
+}
+
+// DecisionServiceMaterial returns validated config, API, and internal-presentation authority.
+func (i ApplicationPreparationInput) DecisionServiceMaterial() (DecisionServiceMaterial, error) {
+	return NewDecisionServiceMaterial(i.config, i.internalPresentations, i.messageResolver)
 }
 
 // ApplicationPreparation contains the final generation-bound application authority.
@@ -532,11 +605,16 @@ func (b *candidateBuilder) prepare(ctx context.Context) error {
 	return nil
 }
 
-// preparePolicy builds and owns the exact legacy policy candidate.
+// preparePolicy builds and owns the sole normalized policy candidate.
 func (b *candidateBuilder) preparePolicy(ctx context.Context) error {
 	prepared, err := b.coordinator.slots.Policy.Prepare(ctx, b.base)
+	if err = completePreparation(ctx, b, "policy", prepared, prepared.Resources, err, &b.policy); err != nil {
+		return err
+	}
 
-	return completePreparation(ctx, b, "policy", prepared, prepared.Resources, err, &b.policy)
+	b.base.policy = b.policy.Policy
+
+	return nil
 }
 
 // prepareExtensions builds and owns immutable definitions and provider bindings.
@@ -549,7 +627,8 @@ func (b *candidateBuilder) prepareExtensions(ctx context.Context) error {
 // prepareCatalog compiles the exact catalog from prepared definitions.
 func (b *candidateBuilder) prepareCatalog(ctx context.Context) error {
 	prepared, err := b.coordinator.slots.Catalog.Prepare(ctx, CatalogPreparationInput{
-		base: b.base, definitions: b.extensions.Definitions,
+		base: b.base, policy: b.policy.Policy, bindings: b.extensions.Bindings,
+		definitions: b.extensions.Definitions, implicitDefinitions: b.extensions.ImplicitDefinitions,
 	})
 
 	return completePreparation(ctx, b, "catalog", prepared, prepared.Resources, err, &b.catalog)
@@ -558,7 +637,7 @@ func (b *candidateBuilder) prepareCatalog(ctx context.Context) error {
 // prepareCallerAuthentication builds caller credentials against candidate authority.
 func (b *candidateBuilder) prepareCallerAuthentication(ctx context.Context) error {
 	prepared, err := b.coordinator.slots.CallerAuthentication.Prepare(ctx, AuthorityPreparationInput{
-		base: b.base, catalog: b.catalog.Catalog, bindings: b.extensions.Bindings,
+		base: b.base, policy: b.policy.Policy, catalog: b.catalog.Catalog, bindings: b.extensions.Bindings,
 	})
 
 	return completePreparation(ctx, b, "caller authentication", prepared, prepared.Resources, err, &b.caller)
@@ -567,7 +646,7 @@ func (b *candidateBuilder) prepareCallerAuthentication(ctx context.Context) erro
 // prepareAdmission builds request admission against candidate credentials and catalog.
 func (b *candidateBuilder) prepareAdmission(ctx context.Context) error {
 	prepared, err := b.coordinator.slots.Admission.Prepare(ctx, AdmissionPreparationInput{
-		base: b.base, catalog: b.catalog.Catalog, credentials: b.caller.Credentials,
+		base: b.base, policy: b.policy.Policy, catalog: b.catalog.Catalog, credentials: b.caller.Credentials,
 	})
 
 	return completePreparation(ctx, b, "admission", prepared, prepared.Resources, err, &b.admission)
@@ -576,7 +655,7 @@ func (b *candidateBuilder) prepareAdmission(ctx context.Context) error {
 // prepareSettings derives bounded report and evaluation settings.
 func (b *candidateBuilder) prepareSettings(ctx context.Context) error {
 	prepared, err := b.coordinator.slots.Settings.Prepare(ctx, SettingsPreparationInput{
-		base: b.base, policy: b.policy.Snapshot, catalog: b.catalog.Catalog,
+		base: b.base, policy: b.policy.Policy, catalog: b.catalog.Catalog,
 	})
 
 	return completePreparation(ctx, b, "settings", prepared, prepared.Resources, err, &b.settings)
@@ -587,9 +666,10 @@ func (b *candidateBuilder) prepareApplication(ctx context.Context) error {
 	b.bindings = b.extensions.Bindings.withGenerationLifetime(b.lifetime)
 
 	prepared, err := b.coordinator.slots.Application.Prepare(ctx, ApplicationPreparationInput{
-		config: b.config, policy: b.policy.Snapshot, catalog: b.catalog.Catalog,
+		config: b.config, policy: b.policy.Policy, catalog: b.catalog.Catalog,
 		authenticator: b.caller.Authenticator, admission: b.admission.Authority,
-		bindings: b.bindings, settings: b.settings.Settings, id: b.base.ID(),
+		bindings: b.bindings, internalPresentations: b.caller.InternalPresentations,
+		settings: b.settings.Settings, messageResolver: b.settings.MessageResolver, id: b.base.ID(),
 	})
 
 	return completePreparation(ctx, b, "application", prepared, prepared.Resources, err, &b.application)
@@ -624,12 +704,12 @@ func (b *candidateBuilder) preparationError(ctx context.Context, component strin
 // candidate freezes the complete prepared component graph for validation.
 func (b *candidateBuilder) candidate() *Candidate {
 	generation := &Generation{
-		config: b.config, policy: b.policy.Snapshot.Clone(), catalog: b.catalog.Catalog.Clone(),
+		config: b.config, policy: b.policy.Policy.ClonePolicyModel(), catalog: b.catalog.Catalog.Clone(),
 		authenticator: b.caller.Authenticator, admission: b.admission.Authority,
 		bindings: b.bindings.Clone(), application: b.application.Application,
 		resourceOwnership:  b.resources,
 		lifetime:           b.lifetime,
-		definitions:        append([]registry.DefinitionContribution(nil), b.extensions.Definitions...),
+		definitions:        cloneDefinitionContributions(b.catalog.Definitions),
 		credentialProfiles: CredentialProfiles{ids: b.caller.Credentials.IDs()},
 		admissionProfiles:  AdmissionProfiles{ids: b.admission.Profiles.IDs()},
 		settings:           b.settings.Settings, id: b.base.ID(),
@@ -814,7 +894,7 @@ func validateGenerationComponents(generation *Generation) error {
 		return fmt.Errorf("%w: config and identity are mandatory", ErrInvalidGeneration)
 	}
 
-	if generation.policy == nil || generation.catalog == nil || generation.bindings == nil {
+	if nilInterface(generation.policy) || generation.catalog == nil || generation.bindings == nil {
 		return fmt.Errorf("%w: policy, catalog, and bindings are mandatory", ErrInvalidGeneration)
 	}
 
@@ -831,8 +911,12 @@ func validateGenerationComponents(generation *Generation) error {
 
 // validateGenerationIdentities rejects policy or application views from another candidate.
 func validateGenerationIdentities(generation *Generation) error {
-	if generation.policy.Generation != generation.id || generation.application.GenerationID() != generation.id {
+	if generation.policy.GenerationID() != generation.id || generation.application.GenerationID() != generation.id {
 		return fmt.Errorf("%w: component generation identities differ", ErrInvalidGeneration)
+	}
+
+	if err := generation.policy.ValidatePolicyModel(); err != nil {
+		return fmt.Errorf("%w: normalized policy model: %v", ErrInvalidGeneration, err)
 	}
 
 	return nil

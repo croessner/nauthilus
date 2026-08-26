@@ -12,12 +12,14 @@ package configinput
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"slices"
 
 	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	policy "github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/admission"
 	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
-	"github.com/croessner/nauthilus/v3/server/policy/compiler"
+	"github.com/croessner/nauthilus/v3/server/policy/catalogcompile"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
@@ -66,7 +68,7 @@ func Normalize(ctx context.Context, document policyconfig.Document) (UnifiedPoli
 		return UnifiedPolicyInput{}, err
 	}
 
-	builtin, err := configuredBuiltinAuthnContribution(ctx, normalized.Policy, nil)
+	builtin, err := configuredBuiltinAuthnContribution(ctx, normalized.Policy, nil, nil)
 	if err != nil {
 		return UnifiedPolicyInput{}, err
 	}
@@ -270,7 +272,7 @@ func (i UnifiedPolicyInput) Contributors(
 	ctx context.Context,
 	acceptance effectsupervisor.Acceptor,
 ) ([]registry.Contributor, error) {
-	contributors, _, err := i.materialize(ctx, acceptance)
+	contributors, _, err := i.materialize(ctx, acceptance, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -282,6 +284,7 @@ func (i UnifiedPolicyInput) Contributors(
 func (i UnifiedPolicyInput) materialize(
 	ctx context.Context,
 	acceptance effectsupervisor.Acceptor,
+	authnPolicyAttributes map[string]registry.AttributeDefinition,
 ) ([]registry.Contributor, normalizedMaterial, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, normalizedMaterial{}, err
@@ -297,7 +300,7 @@ func (i UnifiedPolicyInput) materialize(
 		return nil, normalizedMaterial{}, err
 	}
 
-	builtin, err := configuredBuiltinAuthnContribution(ctx, document.Policy, acceptance)
+	builtin, err := configuredBuiltinAuthnContribution(ctx, document.Policy, acceptance, authnPolicyAttributes)
 	if err != nil {
 		return nil, normalizedMaterial{}, err
 	}
@@ -317,8 +320,14 @@ func configuredBuiltinAuthnContribution(
 	ctx context.Context,
 	configured policyconfig.PolicyConfig,
 	acceptance effectsupervisor.Acceptor,
+	authnPolicyAttributes map[string]registry.AttributeDefinition,
 ) (registry.DefinitionContribution, error) {
-	builtin, err := registry.NewBuiltinTargetContributor(acceptance).Contribute(ctx)
+	contributor := registry.NewBuiltinTargetContributor(acceptance)
+	if len(authnPolicyAttributes) > 0 {
+		contributor = registry.NewBuiltinTargetContributorWithAuthnPolicy(authnPolicyAttributes, acceptance)
+	}
+
+	builtin, err := contributor.Contribute(ctx)
 	if err != nil {
 		return registry.DefinitionContribution{}, fmt.Errorf("build unified builtin authn definitions: %w", err)
 	}
@@ -373,23 +382,302 @@ func (i UnifiedPolicyInput) Compile(
 	ctx context.Context,
 	acceptance effectsupervisor.Acceptor,
 ) (*policyruntime.TargetCatalog, error) {
-	contributors, material, err := i.materialize(ctx, acceptance)
+	catalog, _, err := i.compileMaterial(ctx, acceptance)
+
+	return catalog, err
+}
+
+// compileMaterial builds the catalog and returns the exact capability-bearing definitions used by it.
+func (i UnifiedPolicyInput) compileMaterial(
+	ctx context.Context,
+	acceptance effectsupervisor.Acceptor,
+) (*policyruntime.TargetCatalog, []registry.DefinitionContribution, error) {
+	return i.compileMaterialWithExtensions(ctx, acceptance, i.Policy, nil, nil, nil, nil)
+}
+
+// compileMaterialWithExtensions validates real bound extension metadata before compiling one authority.
+func (i UnifiedPolicyInput) compileMaterialWithExtensions(
+	ctx context.Context,
+	acceptance effectsupervisor.Acceptor,
+	configured policyconfig.PolicyConfig,
+	extensions []registry.DefinitionContribution,
+	authnLuaFacts []registry.AuthnLuaFactDeclaration,
+	authnPolicyAttributes map[string]registry.AttributeDefinition,
+	implicitExtensions []registry.DefinitionContribution,
+) (*policyruntime.TargetCatalog, []registry.DefinitionContribution, error) {
+	contributors, material, err := i.materialize(ctx, acceptance, authnPolicyAttributes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	catalog, err := compiler.NewTargetCatalogCompiler(contributors...).Compile(ctx, material.activations)
-	if err != nil {
-		return nil, err
+	definitions := make([]registry.DefinitionContribution, 0, len(contributors))
+	for _, contributor := range contributors {
+		definition, contributionErr := contributor.Contribute(ctx)
+		if contributionErr != nil {
+			return nil, nil, contributionErr
+		}
+
+		definitions = append(definitions, definition)
 	}
 
-	for _, profile := range material.admissionProfiles {
-		if err := compiler.ValidateAdmissionReferences(catalog, profile.References); err != nil {
-			return nil, fmt.Errorf("policy client %s admission: %w", profile.Principal, err)
+	if extensions != nil || len(authnLuaFacts) > 0 {
+		definitions, err = composeConfiguredExtensionDefinitions(configured, definitions, extensions, authnLuaFacts)
+		if err != nil {
+			return nil, nil, err
 		}
 	}
 
-	return catalog, nil
+	definitions = append(definitions, implicitExtensions...)
+
+	contributors = staticContributors(definitions)
+
+	catalog, err := catalogcompile.NewTargetCatalogCompiler(contributors...).Compile(ctx, material.activations)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err = validateCompiledSchedulerGuards(catalog, configured); err != nil {
+		return nil, nil, err
+	}
+
+	for _, profile := range material.admissionProfiles {
+		if err := catalogcompile.ValidateAdmissionReferences(catalog, profile.References); err != nil {
+			return nil, nil, fmt.Errorf("policy client %s admission: %w", profile.Principal, err)
+		}
+	}
+
+	return catalog, definitions, nil
+}
+
+// composeConfiguredExtensionDefinitions replaces structural placeholders with exact real binding metadata.
+func composeConfiguredExtensionDefinitions(
+	configured policyconfig.PolicyConfig,
+	definitions []registry.DefinitionContribution,
+	extensions []registry.DefinitionContribution,
+	authnLuaFacts []registry.AuthnLuaFactDeclaration,
+) ([]registry.DefinitionContribution, error) {
+	configuredProviders := configuredExtensionProviders(configured)
+	expectedProviders, expectedEffects := configuredExtensionDefinitionIndexes(configuredProviders, definitions)
+
+	actualProviders, actualEffects, err := extensionDefinitionIndexes(extensions)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = validatePreparedExtensionMetadata(
+		configuredProviders,
+		expectedProviders,
+		expectedEffects,
+		actualProviders,
+		actualEffects,
+	); err != nil {
+		return nil, err
+	}
+
+	composed := make([]registry.DefinitionContribution, len(definitions))
+	for index, definition := range definitions {
+		providers := definition.Providers()
+		for providerIndex, provider := range providers {
+			if replacement, found := actualProviders[provider.ID()]; found {
+				providers[providerIndex] = replacement
+			}
+		}
+
+		effects := definition.Effects()
+		for effectIndex, effect := range effects {
+			if replacement, found := actualEffects[effect.ID()]; found {
+				effects[effectIndex] = replacement
+			}
+		}
+
+		composed[index], err = registry.NewCompleteDefinitionContribution(registry.DefinitionContributionInput{
+			Ownership:  definition.Ownership(),
+			Targets:    definition.Targets(),
+			Schemas:    definition.Schemas(),
+			PolicySets: definition.PolicySets(),
+			Plans:      definition.Plans(),
+			Providers:  providers,
+			Effects:    effects,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("compose prepared Policy extension definitions: %w", err)
+		}
+	}
+
+	if err = extendBuiltinAuthnDefinition(composed, extensions, authnLuaFacts); err != nil {
+		return nil, err
+	}
+
+	return composed, nil
+}
+
+// configuredExtensionProviders indexes exact operator-owned Lua/native selections.
+func configuredExtensionProviders(configured policyconfig.PolicyConfig) map[string]policyconfig.ProviderConfig {
+	providers := make(map[string]policyconfig.ProviderConfig)
+
+	for namespace, namespaceConfig := range configured.Namespaces {
+		for name, provider := range namespaceConfig.Providers {
+			if provider.Kind == policyconfig.ProviderKindLua || provider.Kind == policyconfig.ProviderKindNative {
+				providers[provider.CanonicalID(namespace, name)] = provider
+			}
+		}
+	}
+
+	return providers
+}
+
+// configuredExtensionDefinitionIndexes selects structural metadata for configured extension identities.
+func configuredExtensionDefinitionIndexes(
+	identities map[string]policyconfig.ProviderConfig,
+	definitions []registry.DefinitionContribution,
+) (map[string]registry.ProviderDefinition, map[string]registry.EffectDefinition) {
+	providers := make(map[string]registry.ProviderDefinition, len(identities))
+	effects := make(map[string]registry.EffectDefinition)
+
+	for _, definition := range definitions {
+		for _, provider := range definition.Providers() {
+			if _, expected := identities[provider.ID()]; expected {
+				providers[provider.ID()] = provider
+			}
+		}
+
+		for _, effect := range definition.Effects() {
+			if _, expected := identities[effect.Provider()]; expected {
+				effects[effect.ID()] = effect
+			}
+		}
+	}
+
+	return providers, effects
+}
+
+// validatePreparedExtensionMetadata proves descriptor authority matches every operator-owned selection.
+func validatePreparedExtensionMetadata(
+	configured map[string]policyconfig.ProviderConfig,
+	expectedProviders map[string]registry.ProviderDefinition,
+	expectedEffects map[string]registry.EffectDefinition,
+	actualProviders map[string]registry.ProviderDefinition,
+	actualEffects map[string]registry.EffectDefinition,
+) error {
+	if len(configured) != len(expectedProviders) || len(configured) != len(actualProviders) {
+		return fmt.Errorf("configured Policy extension provider set does not match prepared bindings")
+	}
+
+	for identity, providerConfig := range configured {
+		expected, expectedFound := expectedProviders[identity]
+
+		actual, actualFound := actualProviders[identity]
+		if !expectedFound || !actualFound ||
+			!sameConfiguredProviderSchedule(providerConfig, expected, actual) ||
+			!slices.Equal(providerConfig.ProducedFacts, actual.ProducedFacts()) {
+			return fmt.Errorf("configured Policy extension provider %s does not match prepared binding", identity)
+		}
+
+		outputs := actual.Outputs()
+		if len(outputs) != len(providerConfig.ProducedFacts) {
+			return fmt.Errorf("configured Policy extension provider %s has incomplete typed outputs", identity)
+		}
+
+		for index, output := range outputs {
+			if output.ID() != providerConfig.ProducedFacts[index] {
+				return fmt.Errorf("configured Policy extension provider %s output order does not match", identity)
+			}
+		}
+	}
+
+	if !reflect.DeepEqual(expectedEffects, actualEffects) {
+		return fmt.Errorf("configured Policy extension effects do not match prepared bindings")
+	}
+
+	return nil
+}
+
+// sameConfiguredProviderSchedule compares operator-owned scheduling while recognizing the synthetic fact placeholder.
+func sameConfiguredProviderSchedule(
+	configured policyconfig.ProviderConfig,
+	expected registry.ProviderDefinition,
+	actual registry.ProviderDefinition,
+) bool {
+	executionsMatch := reflect.DeepEqual(expected.Executions(), actual.Executions())
+	if len(configured.ProducedFacts) > 0 &&
+		slices.Equal(expected.Executions(), []registry.ExecutionClass{registry.ExecutionHostSync}) &&
+		len(actual.Executions()) == 0 {
+		executionsMatch = true
+	}
+
+	return reflect.DeepEqual(expected.Targets(), actual.Targets()) &&
+		executionsMatch &&
+		reflect.DeepEqual(expected.Requires(), actual.Requires()) &&
+		expected.Failure() == actual.Failure() &&
+		expected.Timeout() == actual.Timeout() &&
+		expected.DiagnosticID() == actual.DiagnosticID()
+}
+
+// extensionDefinitionIndexes rejects duplicate real provider or effect metadata.
+func extensionDefinitionIndexes(
+	extensions []registry.DefinitionContribution,
+) (map[string]registry.ProviderDefinition, map[string]registry.EffectDefinition, error) {
+	providers := make(map[string]registry.ProviderDefinition)
+	effects := make(map[string]registry.EffectDefinition)
+
+	for _, definition := range extensions {
+		for _, provider := range definition.Providers() {
+			if _, duplicate := providers[provider.ID()]; duplicate {
+				return nil, nil, fmt.Errorf("prepared Policy extension provider %s is duplicated", provider.ID())
+			}
+
+			providers[provider.ID()] = provider
+		}
+
+		for _, effect := range definition.Effects() {
+			if _, duplicate := effects[effect.ID()]; duplicate {
+				return nil, nil, fmt.Errorf("prepared Policy extension effect %s is duplicated", effect.ID())
+			}
+
+			effects[effect.ID()] = effect
+		}
+	}
+
+	return providers, effects, nil
+}
+
+// extendBuiltinAuthnDefinition merges exact bound extension outputs into builtin action schemas.
+func extendBuiltinAuthnDefinition(
+	definitions []registry.DefinitionContribution,
+	extensions []registry.DefinitionContribution,
+	authnLuaFacts []registry.AuthnLuaFactDeclaration,
+) error {
+	for index, definition := range definitions {
+		if definition.Ownership().Owner() != "builtin.authn" {
+			continue
+		}
+
+		extended, err := registry.ExtendBuiltinAuthnSchemas(definition, extensions...)
+		if err != nil {
+			return err
+		}
+
+		extended, err = registry.ExtendBuiltinAuthnSchemasWithLuaFacts(extended, authnLuaFacts)
+		if err != nil {
+			return err
+		}
+
+		definitions[index] = extended
+
+		return nil
+	}
+
+	return fmt.Errorf("builtin authn definition is unavailable")
+}
+
+// staticContributors rebuilds compiler inputs without duplicating definition authority.
+func staticContributors(definitions []registry.DefinitionContribution) []registry.Contributor {
+	contributors := make([]registry.Contributor, 0, len(definitions))
+	for _, definition := range definitions {
+		contributors = append(contributors, staticContributor{definition: definition})
+	}
+
+	return contributors
 }
 
 type staticContributor struct {

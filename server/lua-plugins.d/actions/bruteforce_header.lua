@@ -18,36 +18,34 @@
 --
 -- Usage:
 --   - Place this file in server/lua-plugins.d/actions/
---   - Enable it in your actions chain after the brute_force logic.
---   - The header name can be overridden via env BRUTEFORCE_HEADER_NAME (default: "X-Nauthilus-Bruteforce").
+--   - Configure it as a synchronous top-level Policy action after the brute-force decision input.
+--   - Change the captured HEADER_NAME constant before candidate preparation if a different name is required.
 --   - Additional header with the bucket name will be set if available:
 --       X-Nauthilus-Bruteforce-Bucket: <bucket>
-
-local nauthilus_util = require("nauthilus_util")
 
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_http_response = require("nauthilus_http_response")
 
-local HEADER_NAME = nauthilus_util.getenv("BRUTEFORCE_HEADER_NAME", "X-Nauthilus-Bruteforce")
+local HEADER_NAME = "X-Nauthilus-Bruteforce"
 local HEADER_BUCKET = "X-Nauthilus-Bruteforce-Bucket"
 
 function nauthilus_call_action(request)
-    -- Detect if brute-force logic has been applied
+    -- Prefer generation-owned brute-force request fields.
     local is_bruteforce = false
-
-    -- 1) Explicit flag set by other actions (e.g., actions/bruteforce.lua)
-    local rt = nauthilus_context.context_get("rt")
-    if nauthilus_util.is_table(rt) and rt.brute_force_haproxy then
-        is_bruteforce = true
-    end
-
-    -- 2) Presence of brute-force classification/counter in request fields
     if (request.brute_force_bucket ~= nil and request.brute_force_bucket ~= "") then
         is_bruteforce = true
     elseif (request.brute_force_counter ~= nil) then
         -- Treat numeric or string values > 0 as a sign of brute-force triggering
         local n = tonumber(request.brute_force_counter)
         if n ~= nil and n > 0 then
+            is_bruteforce = true
+        end
+    end
+
+    -- Retain the request-local runtime marker when the context facade is present.
+    if not is_bruteforce and type(nauthilus_context.context_get) == "function" then
+        local rt = nauthilus_context.context_get("rt")
+        if type(rt) == "table" and rt.brute_force_haproxy then
             is_bruteforce = true
         end
     end

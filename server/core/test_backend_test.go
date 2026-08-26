@@ -40,11 +40,10 @@ const (
 
 func TestTestBackendPassDBReturnsAccountAttribute(t *testing.T) {
 	setupMinimalTestConfig(t)
-	util.SetDefaultConfigFile(config.GetFile())
 	util.SetDefaultEnvironment(config.GetEnvironment())
 
 	manager := NewTestBackendManager("cbor-smoke", AuthDeps{})
-	auth := &AuthState{}
+	auth := &AuthState{deps: AuthDeps{Cfg: config.GetFile()}}
 	auth.Request.Username = "cbor@example.test"
 	auth.Request.Password = secret.New("secret")
 	auth.Request.Protocol = config.NewProtocol("imap")
@@ -66,7 +65,6 @@ func TestTestBackendPassDBReturnsAccountAttribute(t *testing.T) {
 
 func TestTestBackendPassDBRejectsChangedPassword(t *testing.T) {
 	setupMinimalTestConfig(t)
-	util.SetDefaultConfigFile(config.GetFile())
 	util.SetDefaultEnvironment(config.GetEnvironment())
 
 	manager := NewTestBackendManager("test_backend_password_contract", AuthDeps{})
@@ -100,9 +98,40 @@ func TestTestBackendPassDBRejectsChangedPassword(t *testing.T) {
 	}
 }
 
+func TestTestBackendPasswordHashUsesRequestConfigurationNonce(t *testing.T) {
+	setupMinimalTestConfig(t)
+
+	firstConfig := &config.FileSettings{Server: &config.ServerSection{Redis: config.Redis{
+		PasswordNonce: secret.New("request-nonce-one"),
+	}}}
+	secondConfig := &config.FileSettings{Server: &config.ServerSection{Redis: config.Redis{
+		PasswordNonce: secret.New("request-nonce-two"),
+	}}}
+	manager := NewTestBackendManager("request_nonce_contract", AuthDeps{Cfg: firstConfig})
+	username := "request-nonce@example.test"
+	first := newTestBackendPasswordAuth(username, "same-password")
+	first.deps.Cfg = firstConfig
+
+	firstResult, err := manager.PassDB(first)
+	if err != nil || !firstResult.Authenticated {
+		t.Fatalf("first PassDB() = (%#v, %v), want authenticated", firstResult, err)
+	}
+
+	second := newTestBackendPasswordAuth(username, "same-password")
+	second.deps.Cfg = secondConfig
+
+	secondResult, err := manager.PassDB(second)
+	if err != nil {
+		t.Fatalf("second PassDB() error = %v", err)
+	}
+
+	if secondResult.Authenticated {
+		t.Fatal("second request authenticated with a hash derived from the ambient nonce")
+	}
+}
+
 func TestTestBackendPassDBResolvesMasterUserToTargetAccount(t *testing.T) {
 	setupMinimalTestConfig(t)
-	util.SetDefaultConfigFile(config.GetFile())
 	util.SetDefaultEnvironment(config.GetEnvironment())
 
 	cfg, ok := config.GetFile().(*config.FileSettings)
@@ -152,7 +181,6 @@ func TestTestBackendPassDBResolvesMasterUserToTargetAccount(t *testing.T) {
 
 func TestTestBackendWebAuthnCredentialPersistenceContract(t *testing.T) {
 	setupMinimalTestConfig(t)
-	util.SetDefaultConfigFile(config.GetFile())
 	util.SetDefaultEnvironment(config.GetEnvironment())
 
 	manager := NewTestBackendManager("baseline_webauthn_contract", AuthDeps{})
@@ -202,7 +230,6 @@ func TestTestBackendWebAuthnCredentialPersistenceContract(t *testing.T) {
 
 func TestSelectedBackendWebAuthnOperationsIgnoreLegacySessionBackend(t *testing.T) {
 	setupMinimalTestConfig(t)
-	util.SetDefaultConfigFile(config.GetFile())
 	util.SetDefaultEnvironment(config.GetEnvironment())
 	gin.SetMode(gin.TestMode)
 
@@ -279,7 +306,7 @@ func TestSelectedBackendWebAuthnOperationsIgnoreLegacySessionBackend(t *testing.
 }
 
 func newTestBackendPasswordAuth(username, password string) *AuthState {
-	auth := &AuthState{}
+	auth := &AuthState{deps: AuthDeps{Cfg: config.GetFile()}}
 	auth.Request.Username = username
 	auth.Request.Password = secret.New(password)
 	auth.Request.Protocol = config.NewProtocol("idp")

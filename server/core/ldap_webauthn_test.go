@@ -19,6 +19,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +34,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+func TestLDAPManagerHasNoAmbientQueueFallback(t *testing.T) {
+	source, err := os.ReadFile("ldap.go")
+	if err != nil {
+		t.Fatalf("read LDAP manager source: %v", err)
+	}
+
+	for _, forbidden := range []string{
+		"return priorityqueue.LDAPQueue",
+		"return priorityqueue.LDAPAuthQueue",
+	} {
+		if strings.Contains(string(source), forbidden) {
+			t.Errorf("LDAP manager retains ambient queue fallback %q", forbidden)
+		}
+	}
+}
 
 type mockConfig struct {
 	mock.Mock
@@ -77,7 +95,7 @@ func newLDAPWebAuthnTestManager(poolName string, protocolName string) (*ldapMana
 	mcfg := new(mockConfig)
 	mcfg.On("GetLDAPSearchProtocol", protocolName, poolName).Return(protocol, nil)
 
-	deps := AuthDeps{Cfg: mcfg}
+	deps := ldapQueueTestDeps(mcfg)
 	lm := &ldapManagerImpl{
 		poolName: poolName,
 		deps:     deps,
@@ -86,6 +104,15 @@ func newLDAPWebAuthnTestManager(poolName string, protocolName string) (*ldapMana
 	priorityqueue.LDAPQueue.AddPoolName(poolName)
 
 	return lm, deps, mcfg
+}
+
+// ldapQueueTestDeps binds WebAuthn fixtures to the same explicit queues they consume.
+func ldapQueueTestDeps(cfg config.File) AuthDeps {
+	return AuthDeps{
+		Cfg:           cfg,
+		LDAPQueue:     priorityqueue.LDAPQueue,
+		LDAPAuthQueue: priorityqueue.LDAPAuthQueue,
+	}
 }
 
 // newLDAPWebAuthnTestAuth creates an AuthState with an optional request protocol.
@@ -178,7 +205,7 @@ func TestLDAPGetWebAuthnCredentials(t *testing.T) {
 	mcfg := new(mockConfig)
 	mcfg.On("GetLDAPSearchProtocol", mock.Anything, "test").Return(protocol, nil)
 
-	deps := AuthDeps{Cfg: mcfg}
+	deps := ldapQueueTestDeps(mcfg)
 	lm := &ldapManagerImpl{
 		poolName: "test",
 		deps:     deps,
@@ -238,7 +265,7 @@ func TestLDAPGetWebAuthnCredentialsDefaultsProtocol(t *testing.T) {
 	mcfg := new(mockConfig)
 	mcfg.On("GetLDAPSearchProtocol", definitions.ProtoIDP, "test").Return(protocol, nil)
 
-	deps := AuthDeps{Cfg: mcfg}
+	deps := ldapQueueTestDeps(mcfg)
 	lm := &ldapManagerImpl{
 		poolName: "test",
 		deps:     deps,
@@ -297,7 +324,7 @@ func TestLDAPGetWebAuthnCredentialsNilProtocolDefaults(t *testing.T) {
 	mcfg := new(mockConfig)
 	mcfg.On("GetLDAPSearchProtocol", definitions.ProtoIDP, "test").Return(protocol, nil)
 
-	deps := AuthDeps{Cfg: mcfg}
+	deps := ldapQueueTestDeps(mcfg)
 	lm := &ldapManagerImpl{
 		poolName: "test",
 		deps:     deps,
@@ -421,7 +448,7 @@ func TestLDAPDeleteWebAuthnCredential(t *testing.T) {
 	mcfg := new(mockConfig)
 	mcfg.On("GetLDAPSearchProtocol", mock.Anything, "test").Return(protocol, nil)
 
-	deps := AuthDeps{Cfg: mcfg}
+	deps := ldapQueueTestDeps(mcfg)
 	lm := &ldapManagerImpl{
 		poolName: "test",
 		deps:     deps,

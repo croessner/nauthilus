@@ -360,7 +360,7 @@ func registerCustomHookRoutes(router *gin.Engine, deps *handlerdeps.Deps, nauthi
 		deps.Logger,
 		deps.Redis,
 		nauthilusIDP,
-		custom.WithNativeHooks(nativeHookBindings()),
+		custom.WithNativeHooks(nativeHookBindings(deps.PluginRunner)),
 	).Register(hookGroup)
 }
 
@@ -371,10 +371,9 @@ func registerDevUIRoutes(deps *handlerdeps.Deps, authenticatedGroup *gin.RouterG
 	}
 }
 
-// nativeHookBindings adapts registered native plugin hooks into custom routes.
-func nativeHookBindings() []custom.NativeHook {
-	runner, ok := pluginruntime.DefaultRunner()
-	if !ok {
+// nativeHookBindings adapts hooks from the explicitly injected native runtime into custom routes.
+func nativeHookBindings(runner *pluginruntime.Runner) []custom.NativeHook {
+	if runner == nil {
 		return nil
 	}
 

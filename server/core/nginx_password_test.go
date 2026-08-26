@@ -84,7 +84,6 @@ func newNginxPasswordAuthState(t *testing.T, passwordHeader string) *AuthState {
 	ctx.Set(definitions.CtxGUIDKey, "test-guid")
 	ctx.Set(definitions.CtxDataExchangeKey, &lualib.Context{})
 
-	SetDefaultConfigFile(cfg)
 	auth := NewAuthStateFromContextWithDeps(ctx, AuthDeps{Cfg: cfg})
 	setupHeaderBasedAuth(ctx, auth)
 

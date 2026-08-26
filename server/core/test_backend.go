@@ -32,6 +32,7 @@ import (
 	"sync"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/localcache"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
@@ -128,7 +129,13 @@ func (s *testBackendStore) getUser(backendName, username string) (*testBackendUs
 }
 
 // withUser creates or updates a user while holding the store lock.
-func (s *testBackendStore) withUser(backendName, username, password string, update func(user *testBackendUser)) *testBackendUser {
+func (s *testBackendStore) withUser(
+	cfg config.File,
+	backendName string,
+	username string,
+	password string,
+	update func(user *testBackendUser),
+) *testBackendUser {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -138,7 +145,12 @@ func (s *testBackendStore) withUser(backendName, username, password string, upda
 	}
 
 	if password != "" && user.PasswordHash == "" {
-		user.PasswordHash = util.GetHash(util.PreparePassword(password))
+		prepared, ok := util.PreparePasswordBytesWithConfig([]byte(password), cfg)
+		if ok {
+			defer clear(prepared)
+
+			user.PasswordHash = util.GetHashBytes(prepared)
+		}
 	}
 
 	if update != nil {
@@ -199,7 +211,7 @@ func (tm *testBackendManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBR
 	}
 
 	password := auth.passwordString()
-	user := tm.store.withUser(tm.backendName, username, password, nil)
+	user := tm.store.withUser(auth.Cfg(), tm.backendName, username, password, nil)
 
 	passDBResult.UserFound = true
 	passDBResult.AccountField = testBackendFieldUID
@@ -241,7 +253,13 @@ func (tm *testBackendManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBR
 		return tm.completeMasterUserPassDB(auth, passDBResult)
 	}
 
-	passDBResult.Authenticated = util.GetHash(util.PreparePassword(password)) == user.PasswordHash
+	prepared, ok := util.PreparePasswordBytesWithConfig([]byte(password), auth.Cfg())
+	if !ok {
+		return tm.completeMasterUserPassDB(auth, passDBResult)
+	}
+	defer clear(prepared)
+
+	passDBResult.Authenticated = util.GetHashBytes(prepared) == user.PasswordHash
 
 	return tm.completeMasterUserPassDB(auth, passDBResult)
 }
@@ -292,7 +310,7 @@ func (tm *testBackendManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPS
 		return nil
 	}
 
-	tm.store.withUser(tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
+	tm.store.withUser(tm.deps.Cfg, tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
 		user.TOTPSecret = totp
 	})
 
@@ -301,7 +319,7 @@ func (tm *testBackendManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPS
 
 // DeleteTOTPSecret clears the stored TOTP secret for the user.
 func (tm *testBackendManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
-	tm.store.withUser(tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
+	tm.store.withUser(tm.deps.Cfg, tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
 		user.TOTPSecret = nil
 	})
 
@@ -314,7 +332,7 @@ func (tm *testBackendManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery
 		return nil
 	}
 
-	tm.store.withUser(tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
+	tm.store.withUser(tm.deps.Cfg, tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
 		user.TOTPRecovery = recovery
 	})
 
@@ -323,7 +341,7 @@ func (tm *testBackendManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery
 
 // DeleteTOTPRecoveryCodes removes recovery codes for the user.
 func (tm *testBackendManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err error) {
-	tm.store.withUser(tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
+	tm.store.withUser(tm.deps.Cfg, tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
 		user.TOTPRecovery = nil
 	})
 
@@ -377,7 +395,7 @@ func (tm *testBackendManagerImpl) SaveWebAuthnCredential(auth *AuthState, creden
 		return nil
 	}
 
-	tm.store.withUser(tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
+	tm.store.withUser(tm.deps.Cfg, tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
 		for i := range user.WebAuthnCredentials {
 			if bytes.Equal(user.WebAuthnCredentials[i].ID, credential.ID) {
 				user.WebAuthnCredentials[i] = *credential
@@ -398,7 +416,7 @@ func (tm *testBackendManagerImpl) DeleteWebAuthnCredential(auth *AuthState, cred
 		return nil
 	}
 
-	tm.store.withUser(tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
+	tm.store.withUser(tm.deps.Cfg, tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
 		for i := range user.WebAuthnCredentials {
 			if bytes.Equal(user.WebAuthnCredentials[i].ID, credential.ID) {
 				user.WebAuthnCredentials = append(user.WebAuthnCredentials[:i], user.WebAuthnCredentials[i+1:]...)
@@ -417,7 +435,7 @@ func (tm *testBackendManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldC
 		return nil
 	}
 
-	tm.store.withUser(tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
+	tm.store.withUser(tm.deps.Cfg, tm.backendName, auth.Request.Username, "", func(user *testBackendUser) {
 		if oldCredential != nil {
 			for i := range user.WebAuthnCredentials {
 				if bytes.Equal(user.WebAuthnCredentials[i].ID, oldCredential.ID) {

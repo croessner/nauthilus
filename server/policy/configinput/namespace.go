@@ -112,7 +112,7 @@ func (n *policyNormalizer) normalizeProviders(
 	return providers, nil
 }
 
-// defaultProviderExecutions preserves legacy defaults while keeping generic provider effect ownership explicit.
+// defaultProviderExecutions assigns host ownership when a non-extension provider omits its execution class.
 func defaultProviderExecutions(
 	provider policyconfig.ProviderConfig,
 	targets []decision.Target,
@@ -314,26 +314,25 @@ func builtinLuaActionTargets() ([]decision.Target, error) {
 	return targets, nil
 }
 
-// builtinLuaActionProvider resolves host ownership without exposing an operator provider field.
+// builtinLuaActionProvider resolves exact configured Lua ownership without a legacy effect translation.
 func builtinLuaActionProvider(actionType string, execution registry.ExecutionClass) (string, error) {
-	selection := policy.ObligationLuaActionDispatch
 	if actionType == "post" {
-		selection = policy.ObligationLuaPostActionEnqueue
-	}
-
-	for _, binding := range registry.BuiltinAuthEffectBindings() {
-		if binding.Selection != selection {
-			continue
+		if execution != registry.ExecutionHostPostAction {
+			return "", fmt.Errorf("action_type post requires %s execution", registry.ExecutionHostPostAction)
 		}
 
-		if binding.Execution != execution {
-			return "", fmt.Errorf("action_type %s requires %s execution", actionType, binding.Execution)
-		}
-
-		return binding.Provider, nil
+		return registry.AuthnPostActionProviderID, nil
 	}
 
-	return "", fmt.Errorf("no immutable Lua action host provider for action_type %s", actionType)
+	if !policy.LuaActionDispatchActionAllowed(actionType) {
+		return "", fmt.Errorf("unsupported synchronous Lua action_type %s", actionType)
+	}
+
+	if execution != registry.ExecutionHostSync {
+		return "", fmt.Errorf("action_type %s requires %s execution", actionType, registry.ExecutionHostSync)
+	}
+
+	return registry.AuthnLuaActionProviderID, nil
 }
 
 // normalizeTargetReferences qualifies namespace-owned target action allowlists.

@@ -19,9 +19,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	stderrors "errors"
 	"fmt"
-	stdlog "log"
 	"log/slog"
 	"math/big"
 	"net"
@@ -31,7 +32,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -207,19 +207,6 @@ func serverPasswordError(err error) error {
 	}
 }
 
-// PreparePassword provides the exported PreparePassword function.
-func PreparePassword(password string) string {
-	prepared := PreparePasswordBytes([]byte(password))
-	defer clear(prepared)
-
-	return string(prepared)
-}
-
-// PreparePasswordBytes provides the exported PreparePasswordBytes function.
-func PreparePasswordBytes(password []byte) []byte {
-	return preparePasswordBytes(password, getDefaultConfigFile().GetServer().GetRedis().GetPasswordNonce())
-}
-
 // PreparePasswordBytesWithConfig prepares a password only when request configuration is available.
 func PreparePasswordBytesWithConfig(password []byte, cfg config.File) ([]byte, bool) {
 	if cfg == nil {
@@ -327,50 +314,19 @@ func RemoveCRLFFromQueryOrFilter(value string, sep string) string {
 	return re.ReplaceAllString(value, sep)
 }
 
-type cfgHolder struct {
-	cfg config.File
-}
-
 type loggerHolder struct {
 	logger *slog.Logger
 }
 
-var (
-	defaultCfg atomic.Value
-	defaultLog atomic.Value
-)
-
-var warnMissingCfgOnce sync.Once
+var defaultLog atomic.Value
 
 func init() {
-	defaultCfg.Store(cfgHolder{cfg: nil})
 	defaultLog.Store(loggerHolder{logger: nil})
-}
-
-// SetDefaultConfigFile provides the exported SetDefaultConfigFile function.
-func SetDefaultConfigFile(cfg config.File) {
-	defaultCfg.Store(cfgHolder{cfg: cfg})
 }
 
 // SetDefaultLogger provides the exported SetDefaultLogger function.
 func SetDefaultLogger(logger *slog.Logger) {
 	defaultLog.Store(loggerHolder{logger: logger})
-}
-
-func getDefaultConfigFile() config.File {
-	if v := defaultCfg.Load(); v != nil {
-		if h, ok := v.(cfgHolder); ok {
-			if h.cfg != nil {
-				return h.cfg
-			}
-		}
-	}
-
-	warnMissingCfgOnce.Do(func() {
-		stdlog.Printf("ERROR: util default config snapshot is not configured. Ensure the boundary calls util.SetDefaultConfigFile(...)\n")
-	})
-
-	panic("util: default config snapshot not configured")
 }
 
 // DebugModule provides the exported DebugModule function.
@@ -858,11 +814,25 @@ func NewHTTPClientTransport(cfg config.File) *http.Transport {
 		baseTransport.IdleConnTimeout = idleConnTimeout
 	}
 
-	if tlsConfig := httpClientConfig.GetTLS().ToTLSConfig(); tlsConfig != nil {
+	tlsConfig, err := config.BuildClientTLSConfig(cfg, httpClientConfig.GetTLS())
+	if err != nil {
+		baseTransport.TLSClientConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    x509.NewCertPool(),
+		}
+		baseTransport.DialTLSContext = rejectUnsealedTLS(err)
+	} else if tlsConfig != nil {
 		baseTransport.TLSClientConfig = tlsConfig
 	}
 
 	return baseTransport
+}
+
+// rejectUnsealedTLS prevents HTTPS from falling back to ambient trust after artifact failure.
+func rejectUnsealedTLS(err error) func(context.Context, string, string) (net.Conn, error) {
+	return func(context.Context, string, string) (net.Conn, error) {
+		return nil, fmt.Errorf("outbound TLS configuration unavailable: %w", err)
+	}
 }
 
 func defaultHTTPTransport() *http.Transport {

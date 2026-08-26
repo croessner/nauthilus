@@ -44,8 +44,8 @@ func resolveAuthnDecisionSelection(
 		return selection, nil, nil, nil
 	}
 
-	legacyStandard := selected.policySet == registry.BuiltinStandardAuthPolicySet
-	final := authnFinalDecisionFromRule(selected.rule, checkpoint, facts, legacyStandard)
+	builtinStandard := selected.policySet == registry.BuiltinStandardAuthPolicySet
+	final := authnFinalDecisionFromRule(selected.rule, checkpoint, facts, builtinStandard)
 	controls := authnControlDecisions(selected.controls, checkpoint, facts)
 
 	effectsEnabled := standardAuthEffectsEnabled(
@@ -53,15 +53,6 @@ func resolveAuthnDecisionSelection(
 		target.Target(),
 		checkpoint,
 	)
-	if effectsEnabled && authnImplicitPostActionRequired(target.Target(), checkpoint, selected.rule) {
-		withPostAction, err := registry.WithBuiltinAuthPostAction(selection.obligations)
-		if err != nil {
-			return decisionSelection{}, nil, nil, err
-		}
-
-		selection.obligations = withPostAction
-	}
-
 	if !effectsEnabled {
 		selection.obligations = nil
 		selection.advice = nil
@@ -70,31 +61,6 @@ func resolveAuthnDecisionSelection(
 	}
 
 	return selection, final, controls, nil
-}
-
-// authnImplicitPostActionRequired preserves the existing terminal pre-auth lifecycle hook.
-func authnImplicitPostActionRequired(
-	target decision.Target,
-	checkpoint string,
-	rule policyruntime.CompiledRule,
-) bool {
-	if target.Action() != string(policy.OperationAuthenticate) &&
-		target.Action() != string(policy.OperationLookupIdentity) {
-		return false
-	}
-
-	stage := rule.PresentationStage()
-	if stage == "" {
-		stage = checkpoint
-	}
-
-	if stage != string(policy.StagePreAuth) {
-		return false
-	}
-
-	return rule.Decision() == decision.EffectDeny ||
-		(rule.Decision() == decision.EffectIndeterminate &&
-			rule.ResponseMarker() == policy.ResponseMarkerTempFailNoTLS)
 }
 
 // authnControlDecisions projects nonterminal catalog controls in their matched order.
@@ -142,11 +108,11 @@ func authnFinalDecisionFromRule(
 	rule policyruntime.CompiledRule,
 	checkpoint string,
 	facts decision.FactSet,
-	legacyStandard bool,
+	builtinStandard bool,
 ) *report.FinalDecision {
 	responseMessage := authnRuleResponseMessage(rule.ResponseMessage(), rule.ResponseMarker(), facts)
-	if legacyStandard {
-		responseMessage = authnLegacyResponseMessage(responseMessage, rule.ResponseMessage())
+	if builtinStandard {
+		responseMessage = authnBuiltinResponseMessage(responseMessage, rule.ResponseMessage())
 	}
 
 	stage := policy.Stage(checkpoint)
@@ -174,8 +140,8 @@ func authnFinalDecisionFromRule(
 	return final
 }
 
-// authnLegacyResponseMessage restores the established report identity without changing public text.
-func authnLegacyResponseMessage(
+// authnBuiltinResponseMessage preserves the builtin standard-auth report identity without changing public text.
+func authnBuiltinResponseMessage(
 	selection *report.ResponseMessageSelection,
 	message registry.PolicyResponseMessage,
 ) *report.ResponseMessageSelection {
@@ -183,18 +149,18 @@ func authnLegacyResponseMessage(
 		return nil
 	}
 
-	legacy := *selection
+	projected := *selection
 
-	legacy.Truncated = false
-	if legacy.Source == policy.ResponseSourceAttributeDetail {
-		legacy.AttributeID = authnLegacyResponseAttributeID(message.FactID(), message.Detail())
+	projected.Truncated = false
+	if projected.Source == policy.ResponseSourceAttributeDetail {
+		projected.AttributeID = authnBuiltinResponseAttributeID(message.FactID(), message.Detail())
 	}
 
-	return &legacy
+	return &projected
 }
 
-// authnLegacyResponseAttributeID maps one canonical detail fact back to its collected attribute.
-func authnLegacyResponseAttributeID(factID string, detail string) string {
+// authnBuiltinResponseAttributeID maps one canonical detail fact to its builtin presentation attribute.
+func authnBuiltinResponseAttributeID(factID string, detail string) string {
 	attributeID := factID
 	if detail != "" {
 		attributeID = strings.TrimSuffix(factID, "."+detail)
@@ -221,7 +187,7 @@ func authnPolicyDecision(effect decision.Effect) policy.Decision {
 	}
 }
 
-// authnReportEffectRequests restores established authn selection IDs and detached scalar parameters.
+// authnReportEffectRequests projects canonical effect identities and detached scalar parameters.
 func authnReportEffectRequests(uses []registry.EffectUse) []report.EffectRequest {
 	requests := make([]report.EffectRequest, 0, len(uses))
 
@@ -235,12 +201,7 @@ func authnReportEffectRequests(uses []registry.EffectUse) []report.EffectRequest
 			args[key] = authnEffectParameterValue(value)
 		}
 
-		selectionID := use.ID()
-		if binding, exists := registry.BuiltinAuthEffectBindingForEffect(use.ID()); exists {
-			selectionID = binding.Selection
-		}
-
-		requests = append(requests, report.EffectRequest{ID: selectionID, Args: args})
+		requests = append(requests, report.EffectRequest{ID: use.ID(), Args: args})
 	}
 
 	return requests

@@ -22,14 +22,17 @@ Good examples for native extensions:
 
 The current Lua model provides the main shape for Go plugins:
 
-- `server/app/bootfx/boot.go` precompiles Lua environment sources, subject sources, init scripts, and hooks through
-  `SetupLuaScripts`.
+- `server/app/policyfx/module.go` prepares each activated authn Lua environment provider, subject provider, and action
+  effect from the top-level `policy` model as generation-owned captured source and bindings.
+- `server/app/bootfx/boot.go` retains only process-lifecycle Lua initialization and hook setup; it neither owns nor
+  schedules authn providers.
 - `server/lua-plugins.d/README.md` describes the operator-visible categories: `init`, `environment`, `subject`,
   `backend`, `actions`, `hooks`, `policy`, and `share`.
-- `server/config/schema_v2.go` materializes Lua environment and subject sources from
-  `auth.policy.attribute_sources.lua.*`, and Lua actions from `auth.policy.obligation_targets.lua.actions`.
-- `server/lualib/environment/environment.go` and `server/lualib/subject/subject.go` already execute sources through a
-  dependency plan with per-level parallelism.
+- The top-level `policy` model materializes Lua environment and subject providers below
+  `policy.namespaces.authn.providers` and Lua action effects below `policy.namespaces.authn.effects`.
+- `server/core/authn_candidate_runtime.go` resolves each exact host provider from the captured Decision session;
+  `server/lualib/environment/environment.go` and `server/lualib/subject/subject.go` execute only that prepared source in
+  its generation-specific VM pool.
 - `server/lualib/context.go` provides a request-local, thread-safe Lua context with snapshot, diff, and merge support.
 - `server/core/types.go` already has a `BackendManager` interface plus a factory registry, but the current contract
   exposes `*core.AuthState`, which is too internal for a stable plugin API.
@@ -612,7 +615,7 @@ status, rejection, or temporary failure.
 entries and copies every attribute value slice; plugins receive neither internal entries nor LDAP connections.
 
 Policy response catalogs and per-account soft allowlists are deliberately not plugin mutation APIs. Operators declare
-catalogs under `auth.policy.localization.catalogs` and network exceptions under the existing
+catalogs under `policy.namespaces.authn.localization.catalogs` and network exceptions under the existing
 `auth.controls.brute_force.allowlist` and `auth.controls.relay_domains.allowlist` paths. The localization registry keeps
 system, startup Lua, and operator layers distinct; operator entries have final precedence, and config reload replaces
 only that layer after the complete candidate validates. Authentication request boundaries consume the current config
@@ -944,27 +947,29 @@ automatic retry after error, timeout, cancellation, panic, or ambiguous external
 for possible external dispatch with an unestablished remote result. The internal attempt identity is correlation data,
 not a public idempotency key. Voluntary domain idempotency remains provider-owned and outside the generic contract.
 
-Existing native and Lua authentication extensions retain their current behavior and remain implicitly bound to the
-`authn` namespace. The generic registration contract does not add execution wiring to those paths. The separate Lua
-contract now registers the exact `_G["policy.facts.collect"]` and `_G["policy.effects.execute"]` callback keys in a
-fresh request-owned restricted state. Candidate preparation freezes target selectors, typed fact outputs, scheduling,
-failure behavior, selected-effect definitions, and runtime bindings before catalog compilation. Runtime collection
-qualifies only declared local facts with the host-assigned Lua authority and revalidates source, category, kind, bounds,
-and the active target schema before insertion. Contract violations fail closed even for a compiler-safe `continue`
-provider; ordinary continuation and `requires` dependency skipping remain shared-scheduler behavior.
+Existing native authentication extensions retain their current behavior and `authn` binding. Lua environment, subject,
+and action execution is activated only by the top-level `policy` model and resolved through providers captured by the
+active generation; there is no boot-owned or process-global Lua source list. The separate generic Lua contract registers
+the exact `_G["policy.facts.collect"]` and `_G["policy.effects.execute"]` callback keys in a fresh request-owned restricted
+state. Candidate preparation freezes target selectors, typed fact outputs, scheduling, failure behavior,
+selected-effect definitions, and runtime bindings before catalog compilation. Runtime collection qualifies only
+declared local facts with the host-assigned Lua authority and revalidates source, category, kind, bounds, and the active
+target schema before insertion. Contract violations fail closed even for a compiler-safe `continue` provider; ordinary
+continuation and `requires` dependency skipping remain shared-scheduler behavior.
 
 The generic Lua effect adapter invokes only policy-selected `host_sync` and `host_post_action` obligations after target
 and parameter validation. Post-actions are captured as immutable supervisor work, require acceptance before response
 finalization, and execute under supervisor ownership; Lua receives neither the finalization gate nor detached scheduling
 authority. Advice and `return_only` effects have no executor path. Callback errors, panics, cancellation, and timeouts are
 contained behind bounded secret-safe classes, and the adapter defines no retry, replay, idempotency, or cross-invocation
-deduplication behavior. Production activation of the standalone `policy` root remains the separate atomic cutover work.
+deduplication behavior. Production publishes these bindings only with the complete top-level `policy` generation.
 
-Environment and subject sources use the same deterministic dependency concepts. Environment sources and ordinary
-subject configurations retain separate Lua and Go source sets. Subject analysis also supports one narrow mixed boundary:
-a `lua.subject` policy check may name a `plugin.subject` policy check in `after`. The host then executes non-deferred Lua
-subject checks, the native subject bridge, and deferred Lua subject checks. Graphs that would alternate back to native
-execution after deferred Lua are rejected by the compiler.
+Environment and subject providers use the same deterministic dependency concepts. Lua environment and subject provider
+instances are declared below `policy.namespaces.authn.providers` and scheduled by the target's generation-owned domain
+plan. Subject analysis also supports one narrow mixed boundary: a Lua subject provider instance may name a native plugin
+subject provider instance in `after`. The host then executes non-deferred Lua providers, the native subject bridge, and
+deferred Lua providers. Candidate generation rejects graphs that would alternate back to native execution after deferred
+Lua execution.
 
 ```go
 type SourceDescriptor struct {
@@ -984,7 +989,9 @@ continue to publish request-context deltas through the existing Lua request cont
 Dependency names in `Requires` and `After` are resolved relative to the registering module first. A local component name
 such as `asn` can refer to `geoip.asn` when declared by the `geoip` module. Dependencies outside the module must use
 fully qualified plugin component names. These descriptor dependencies remain native-only. The mixed subject boundary is
-declared separately through `auth.policy.checks[].after`, using policy check names rather than component IDs.
+declared separately through the `after` field on provider instances below
+`policy.namespaces.authn.domain_plans.<plan>.checkpoints.subject_analysis.providers`, using checkpoint-local instance
+names rather than component IDs.
 
 ### Init
 
@@ -1486,7 +1493,7 @@ code accidentally returns body bytes.
 
 ## Policy Integration
 
-Plugins should register policy attributes before policy snapshots compile:
+Plugins should register policy attributes before candidate Policy generation preparation:
 
 ```go
 type Registrar interface {
@@ -1515,7 +1522,8 @@ The process-scoped lifecycle host does not expose a policy facade in v1. The cur
 safety rule: runtime emission of unknown attributes fails instead of silently creating unplanned facts. Go plugin result
 facts should follow the same rule.
 
-Decision: native Go plugins must register their policy attributes during `Register`, before policy snapshot compilation.
+Decision: native Go plugins must register their policy attributes during `Register`, before candidate Policy generation
+preparation.
 Returning an unknown result fact is an error and should be reported through plugin logs, metrics, and the current
 extension-point result where applicable.
 
@@ -1546,13 +1554,14 @@ Decision: use two clear lifecycle checkpoints:
 Recommended lifecycle checkpoints:
 
 - Load plugin metadata after configuration is available and logging is configured.
-- Register policy attributes and extension descriptors before policy snapshot compilation.
+- Register policy attributes and extension descriptors before candidate Policy generation preparation.
 - Start telemetry before plugin `Start` so plugin initialization can be traced.
 - Call plugin `Start` before starting registered `InitTask` instances or enabling request-time extension execution. This
   lets a module initialize shared resources, such as SQL pools, that its init tasks and backend components can use.
 - Start plugin init tasks only after the managed service dependencies they may use are configured and plugin `Start`
   succeeded.
-- Start request-time extension execution only after workers, queues, policy snapshots, and host services are ready.
+- Start request-time extension execution only after workers, queues, the active Policy generation, and host services are
+  ready.
 - Stop plugins during shutdown before closing host-owned clients. Shutdown should use a global plugin stop timeout with
   an optional per-module `stop_timeout` override.
 
@@ -1744,8 +1753,8 @@ config
 
 This keeps registration, policy fact declaration, observability, and result aggregation under one host-owned extension
 model. Generic Lua and native providers share the target-aware scheduler and effect supervisor. Existing auth-shaped Lua
-and Go source sets keep their separate adapters and implicit `authn` binding. Production publication of the standalone
-top-level policy root remains the later atomic cutover boundary.
+and Go source sets keep their separate adapters and `authn` binding. The complete provider catalog, bindings, and routes
+are published together from the top-level `policy` generation.
 
 ## Process Model
 
@@ -1867,13 +1876,13 @@ rules. Those concerns are useful when isolation is required, but they are not th
   policy data belongs in `PolicyFact` values.
 - A single `.so` plugin may register multiple extension points. Each registered component must still have its own stable
   name, logging scope, metrics scope, and lifecycle status.
-- Go environment sources and ordinary subject configurations retain separate Lua and Go plans. A Lua subject policy
-  check may be deferred past the native subject bridge with `after: [<plugin.subject check>]`; descriptor-level
-  `Requires` and `After` remain native-only, and a second native boundary is rejected.
+- Native environment and subject descriptor dependencies remain a native-only subgraph. The active Policy generation
+  owns the Lua provider schedule and the domain-plan boundary around the native bridge. A Lua subject provider instance
+  may be deferred past that bridge with `after: [<native provider instance>]`; a second native boundary is rejected.
 - Source descriptor dependencies resolve local names inside the registering plugin module and require fully qualified
   names for dependencies on other plugin modules.
-- Native Go plugins must register policy attributes before policy snapshots compile. Runtime emission of unknown
-  attributes is an error.
+- Native Go plugins must register policy attributes before candidate Policy generation preparation. Runtime emission of
+  unknown attributes is an error.
 - `PolicyFact.Value` uses JSON/CBOR-compatible values, matching the runtime context value discipline.
 - Native Go plugins may provide HTTP hooks, but hooks are separate from auth-pipeline sources and use API-level request
   and response values instead of `*gin.Context`.
@@ -1954,8 +1963,8 @@ The current v1 implementation covers the native plugin surfaces needed for produ
   generation bindings, shared fact scheduling and validation, selected-effect execution, and internal post-action
   supervisor acceptance without changing existing auth extension behavior.
 
-The generic native provider path is available for isolated candidate preparation and runtime tests. Production
-publication of the standalone top-level `policy` root remains later atomic cutover work and is not active yet.
+The generic native provider path is active for the exact configured subset. Preparation and runtime validation freeze
+that subset into the production generation, while a failed candidate leaves the prior complete generation active.
 
 Known v1 parity limits are intentional and documented in the developer and operator guides: extra or named Redis pools,
 raw TCP/dialer behavior, SQL/Telegram/template libraries, and the Lua GeoIP bridge remain plugin-owned; full mutable

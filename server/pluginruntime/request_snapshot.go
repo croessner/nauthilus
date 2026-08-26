@@ -244,6 +244,7 @@ func runtimeFlagsFromAuthState(auth *core.AuthState) pluginapi.RuntimeFlags {
 	}
 
 	noAuth := auth.Request.NoAuth
+	stageFlags := auth.AuthnRequestStageFlags()
 
 	return pluginapi.RuntimeFlags{
 		Debug:                    debugEnabled(auth),
@@ -254,9 +255,9 @@ func runtimeFlagsFromAuthState(auth *core.AuthState) pluginapi.RuntimeFlags {
 		Authorized:               auth.Runtime.Authorized,
 		Repeating:                auth.Runtime.BFRepeating,
 		RWP:                      auth.Runtime.BFRWP,
-		EnvironmentRejected:      environmentRejected(auth),
-		EnvironmentStageExpected: stageExpected(auth, stageEnvironment),
-		SubjectStageExpected:     stageExpected(auth, stageSubject),
+		EnvironmentRejected:      stageFlags.EnvironmentRejected,
+		EnvironmentStageExpected: stageFlags.EnvironmentStageExpected,
+		SubjectStageExpected:     stageFlags.SubjectStageExpected,
 	}
 }
 
@@ -338,38 +339,6 @@ func debugEnabled(auth *core.AuthState) bool {
 	}
 
 	return auth.Cfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-}
-
-// environmentRejected reports whether the request was rejected before subject analysis.
-func environmentRejected(auth *core.AuthState) bool {
-	if auth == nil || auth.Request.HTTPClientContext == nil {
-		return false
-	}
-
-	return auth.Request.HTTPClientContext.GetBool(definitions.CtxEnvironmentRejectedKey)
-}
-
-type requestStage string
-
-const (
-	stageEnvironment requestStage = "environment"
-	stageSubject     requestStage = "subject"
-)
-
-// stageExpected reports whether the configured request path includes a Lua stage.
-func stageExpected(auth *core.AuthState, stage requestStage) bool {
-	if auth == nil || auth.Cfg() == nil {
-		return false
-	}
-
-	switch stage {
-	case stageEnvironment:
-		return auth.Cfg().HaveLuaEnvironmentSources()
-	case stageSubject:
-		return auth.Cfg().HaveLuaSubjectSources()
-	default:
-		return false
-	}
 }
 
 // latencyMillis returns elapsed request time in milliseconds when the start time is known.

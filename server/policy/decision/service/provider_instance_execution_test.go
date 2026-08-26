@@ -180,8 +180,8 @@ func assertProviderInstanceOutcome(
 	}
 
 	want := []providerRecord{
-		{id: "primary", state: providerStateCompleted},
-		{id: "dependent", state: providerStateCompleted},
+		{id: "primary", use: "mail/plugin.shared.shared", state: providerStateCompleted},
+		{id: "dependent", use: "mail/plugin.shared.shared", state: providerStateCompleted},
 	}
 	if !slices.Equal(outcome.report.runtime.providers, want) {
 		t.Fatalf("provider report = %#v, want instance identities %#v", outcome.report.runtime.providers, want)
@@ -243,7 +243,7 @@ func TestPolicyCompiledPlanExecutesInstanceDeclaredOutput(t *testing.T) {
 		t.Fatalf("checkpointRuntime.Evaluate() error = %v", err)
 	}
 
-	wantProviders := []providerRecord{{id: "output", state: providerStateCompleted}}
+	wantProviders := []providerRecord{{id: "output", use: "mail/output", state: providerStateCompleted}}
 	if !slices.Equal(outcome.report.runtime.providers, wantProviders) {
 		t.Fatalf(
 			"provider report = %#v, want %#v; effect = %q",

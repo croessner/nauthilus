@@ -23,33 +23,40 @@ import (
 	stdlog "log"
 	"log/slog"
 	"net/http"
+	"reflect"
+	"slices"
+	"sync"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/app/bootfx"
 	"github.com/croessner/nauthilus/v3/server/app/configfx"
 	"github.com/croessner/nauthilus/v3/server/app/envfx"
-	"github.com/croessner/nauthilus/v3/server/app/localizationfx"
 	"github.com/croessner/nauthilus/v3/server/app/logfx"
 	"github.com/croessner/nauthilus/v3/server/app/loopsfx"
+	"github.com/croessner/nauthilus/v3/server/app/policyfx"
 	"github.com/croessner/nauthilus/v3/server/app/redifx"
+	"github.com/croessner/nauthilus/v3/server/app/reloadfx"
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v3/server/backend/ldappool"
 	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
-	"github.com/croessner/nauthilus/v3/server/bruteforce"
 	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/language"
 	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
+	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/croessner/nauthilus/v3/server/lualib"
-	"github.com/croessner/nauthilus/v3/server/lualib/action"
 	"github.com/croessner/nauthilus/v3/server/lualib/redislib"
 	"github.com/croessner/nauthilus/v3/server/monitoring"
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 	"github.com/croessner/nauthilus/v3/server/pluginruntime"
+	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
+	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/privilege"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
@@ -58,6 +65,8 @@ import (
 	"go.uber.org/fx"
 )
 
+const runtimePluginPolicyConfigKey = "policy"
+
 type configDeps struct {
 	fx.Out
 
@@ -65,15 +74,81 @@ type configDeps struct {
 	Reloader configfx.Reloader
 }
 
+type policyHTTPTransportBaseline struct {
+	trustedProxies []string
+	cipherSuites   []string
+	cert           string
+	key            string
+	caFile         string
+	minTLSVersion  string
+	enabled        bool
+	skipVerify     bool
+}
+
+type policyGRPCTransportBaseline struct {
+	address           string
+	cert              string
+	key               string
+	clientCA          string
+	minTLSVersion     string
+	listenerEnabled   bool
+	tlsEnabled        bool
+	requireClientCert bool
+}
+
+type policyTransportBaseline struct {
+	http policyHTTPTransportBaseline
+	grpc policyGRPCTransportBaseline
+}
+
+type policyTokenAuthorityBaseline struct {
+	oidc     config.OIDCConfig
+	redis    config.Redis
+	timeouts config.Timeouts
+}
+
+type policyAccessTokenAuthority struct {
+	bootstrap    config.File
+	environment  config.Environment
+	logger       *slog.Logger
+	redisClient  redifx.Client
+	accountCache *accountcache.Manager
+	channel      backend.Channel
+	validator    callerauth.AccessTokenValidator
+	validatorErr error
+	once         sync.Once
+	baseline     policyTokenAuthorityBaseline
+}
+
+// newPolicyGenerationStore constructs the sole process-wide generation authority for Fx.
+func newPolicyGenerationStore() *policyruntime.GenerationStore {
+	return policyruntime.NewGenerationStore()
+}
+
 // newConfigDeps constructs config dependencies for fx.
 //
-// It depends on the bootstrap token to ensure the legacy configuration has been
-// loaded before the config snapshot provider is created.
-func newConfigDeps(_ *bootstrapped) (configDeps, error) {
-	r, err := configfx.NewProvider()
-	if err != nil {
-		return configDeps{}, err
+// It depends on the bootstrap token to keep the candidate unpublished until generation commit.
+func newConfigDeps(bootstrap *bootstrapped, generations *policyruntime.GenerationStore) (configDeps, error) {
+	if bootstrap == nil || bootstrap.file == nil {
+		return configDeps{}, fmt.Errorf("prepared configuration is nil")
 	}
+
+	if generations == nil {
+		return configDeps{}, fmt.Errorf("policy generation store is nil")
+	}
+
+	if err := config.BindActiveFileSource(func() config.File {
+		active := generations.Active()
+		if active == nil {
+			return bootstrap.file
+		}
+
+		return active.Config()
+	}); err != nil {
+		return configDeps{}, fmt.Errorf("bind active generation config projection: %w", err)
+	}
+
+	r := configfx.NewProviderWithCandidate(bootstrap.file, generations)
 
 	return configDeps{Provider: r, Reloader: r}, nil
 }
@@ -112,11 +187,14 @@ type redisDeps struct {
 
 // newRedisDeps provides a swap-capable Redis facade (Client) and its rebuild controller.
 //
-// Restart orchestration should rebuild Redis via the injected Rebuilder,
-// not via the global `rediscli.RebuildClient()`.
+// Restart orchestration rebuilds Redis exclusively through the injected Rebuilder.
 func newRedisDeps(lc fx.Lifecycle, _ *bootstrapped, cfgProvider configfx.Provider, logger *slog.Logger) (redisDeps, error) {
 	snap := cfgProvider.Current()
-	client := rediscli.NewClientWithDeps(snap.File, logger)
+
+	client, err := rediscli.NewClientWithDeps(snap.File, logger)
+	if err != nil {
+		return redisDeps{}, err
+	}
 	managed := redifx.NewManagedClient(client)
 
 	// Ensure the current underlying client is closed on process stop.
@@ -129,18 +207,304 @@ func newRedisDeps(lc fx.Lifecycle, _ *bootstrapped, cfgProvider configfx.Provide
 	return redisDeps{Client: managed, Rebuilder: managed}, nil
 }
 
-// newActionWorkers constructs the action worker pool used by the legacy worker orchestration.
-func newActionWorkers(_ *bootstrapped, cfgProvider configfx.Provider, logger *slog.Logger, redisClient rediscli.Client, env config.Environment) ([]*action.Worker, error) {
+// policyFactoryModule registers candidate-scoped production authentication and transport factories.
+func policyFactoryModule() fx.Option {
+	return fx.Options(
+		fx.Provide(newPolicyAccessTokenValidatorFactory),
+		fx.Provide(newPolicyBasicThrottlerFactory),
+		fx.Provide(newPolicyTransportCapabilitiesFactory),
+	)
+}
+
+// newPolicyAccessTokenValidatorFactory builds one real candidate-owned IDP claims adapter.
+func newPolicyAccessTokenValidatorFactory(
+	bootstrap *bootstrapped,
+	environment config.Environment,
+	logger *slog.Logger,
+	redisClient redifx.Client,
+	accountCache *accountcache.Manager,
+	channel backend.Channel,
+) (policyfx.AccessTokenValidatorFactory, error) {
+	if bootstrap == nil || bootstrap.file == nil {
+		return nil, fmt.Errorf("policy access-token bootstrap config is nil")
+	}
+
+	baseline, err := capturePolicyTokenAuthorityBaseline(bootstrap.file)
+	if err != nil {
+		return nil, err
+	}
+
+	authority := &policyAccessTokenAuthority{
+		bootstrap: bootstrap.file, environment: environment, logger: logger,
+		redisClient: redisClient, accountCache: accountCache, channel: channel,
+		baseline: baseline,
+	}
+
+	return authority.validate, nil
+}
+
+// validate returns the one boot-bound real validator after rejecting token-authority drift.
+func (a *policyAccessTokenAuthority) validate(
+	ctx context.Context,
+	candidate config.File,
+) (callerauth.AccessTokenValidator, error) {
+	if a == nil || ctx == nil || candidate == nil {
+		return nil, fmt.Errorf("policy access-token validator dependencies are incomplete")
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	candidateBaseline, err := capturePolicyTokenAuthorityBaseline(candidate)
+	if err != nil {
+		return nil, err
+	}
+
+	if !a.baseline.equal(candidateBaseline) {
+		return nil, fmt.Errorf("%w: live OIDC token authority changed", pluginruntime.ErrRestartRequired)
+	}
+
+	a.once.Do(a.initialize)
+
+	return a.validator, a.validatorErr
+}
+
+// initialize constructs the sole Policy claims adapter from the live boot IDP authority.
+func (a *policyAccessTokenAuthority) initialize() {
+	if a.bootstrap == nil || a.environment == nil || a.logger == nil || a.redisClient == nil ||
+		a.accountCache == nil || a.channel == nil {
+		a.validatorErr = fmt.Errorf("policy access-token validator dependencies are incomplete")
+
+		return
+	}
+
+	oidc := a.bootstrap.GetIDP().OIDC
+	if !oidc.Enabled {
+		a.validatorErr = fmt.Errorf("policy Bearer authentication requires the live OIDC issuer")
+
+		return
+	}
+
+	liveIDP := idp.NewNauthilusIDP(&handlerdeps.Deps{
+		Cfg:          a.bootstrap,
+		Env:          a.environment,
+		Logger:       a.logger,
+		Redis:        a.redisClient,
+		AccountCache: a.accountCache,
+		Channel:      a.channel,
+	})
+	a.validator, a.validatorErr = callerauth.NewClaimsAccessTokenValidator(liveIDP, oidc.Issuer)
+}
+
+// capturePolicyTokenAuthorityBaseline captures immutable boot token state without serializing secrets.
+func capturePolicyTokenAuthorityBaseline(candidate config.File) (policyTokenAuthorityBaseline, error) {
+	if candidate == nil {
+		return policyTokenAuthorityBaseline{}, fmt.Errorf("policy token authority config is nil")
+	}
+
+	return policyTokenAuthorityBaseline{
+		oidc:     candidate.GetIDP().OIDC,
+		redis:    *candidate.GetServer().GetRedis(),
+		timeouts: *candidate.GetServer().GetTimeouts(),
+	}, nil
+}
+
+// equal compares secret-bearing token state in memory without rendering or logging it.
+func (b policyTokenAuthorityBaseline) equal(candidate policyTokenAuthorityBaseline) bool {
+	return reflect.DeepEqual(b, candidate)
+}
+
+// newPolicyBasicThrottlerFactory binds Policy-Basic state to the explicit swap-capable Redis facade.
+func newPolicyBasicThrottlerFactory(redisClient redifx.Client) policyfx.BasicThrottlerFactory {
+	return func(ctx context.Context, candidate config.File) (callerauth.BasicThrottler, error) {
+		if ctx == nil || candidate == nil {
+			return nil, fmt.Errorf("policy-Basic candidate dependencies are incomplete")
+		}
+
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		return callerauth.NewDefaultRedisBasicThrottler(redisClient)
+	}
+}
+
+// newPolicyTransportCapabilitiesFactory freezes the listener/evidence baseline used by live transports.
+func newPolicyTransportCapabilitiesFactory(
+	bootstrap *bootstrapped,
+) (policyfx.TransportCapabilitiesFactory, error) {
+	if bootstrap == nil || bootstrap.file == nil {
+		return nil, fmt.Errorf("policy transport bootstrap config is nil")
+	}
+
+	baseline, err := capturePolicyTransportBaseline(bootstrap.file)
+	if err != nil {
+		return nil, err
+	}
+
+	return func(ctx context.Context, candidate config.File) (callerauth.TransportCapabilities, error) {
+		if ctx == nil || candidate == nil {
+			return callerauth.TransportCapabilities{}, fmt.Errorf("policy transport candidate is incomplete")
+		}
+
+		if err := ctx.Err(); err != nil {
+			return callerauth.TransportCapabilities{}, err
+		}
+
+		candidateBaseline, err := capturePolicyTransportBaseline(candidate)
+		if err != nil {
+			return callerauth.TransportCapabilities{}, err
+		}
+
+		if !baseline.equal(candidateBaseline) {
+			return callerauth.TransportCapabilities{}, fmt.Errorf(
+				"%w: live Policy transport listener or trust evidence changed",
+				pluginruntime.ErrRestartRequired,
+			)
+		}
+
+		return baseline.capabilities(candidate.GetPolicy())
+	}, nil
+}
+
+// capturePolicyTransportBaseline detaches every listener-owned protection setting.
+func capturePolicyTransportBaseline(candidate config.File) (policyTransportBaseline, error) {
+	if candidate == nil {
+		return policyTransportBaseline{}, fmt.Errorf("policy transport config is nil")
+	}
+
+	grpcProvider, ok := candidate.(config.RuntimeGRPCAuthServerProvider)
+	if !ok {
+		return policyTransportBaseline{}, fmt.Errorf("policy transport config has no gRPC listener authority")
+	}
+
+	server := candidate.GetServer()
+	httpTLS := server.GetTLS()
+	grpcServer := grpcProvider.GetRuntimeGRPCAuthServer()
+	grpcTLS := grpcServer.GetTLS()
+
+	return policyTransportBaseline{
+		http: policyHTTPTransportBaseline{
+			trustedProxies: append([]string(nil), server.GetTrustedProxies()...),
+			cipherSuites:   append([]string(nil), httpTLS.GetCipherSuites()...),
+			cert:           httpTLS.GetCert(),
+			key:            httpTLS.GetKey(),
+			caFile:         httpTLS.GetCAFile(),
+			minTLSVersion:  httpTLS.GetMinTLSVersion(),
+			enabled:        httpTLS.IsEnabled(),
+			skipVerify:     httpTLS.GetSkipVerify(),
+		},
+		grpc: policyGRPCTransportBaseline{
+			address:           grpcServer.GetAddress(),
+			cert:              grpcTLS.GetCert(),
+			key:               grpcTLS.GetKey(),
+			clientCA:          grpcTLS.GetClientCA(),
+			minTLSVersion:     grpcTLS.GetMinTLSVersion(),
+			listenerEnabled:   grpcServer.IsEnabled(),
+			tlsEnabled:        grpcTLS.IsEnabled(),
+			requireClientCert: grpcTLS.RequiresClientCert(),
+		},
+	}, nil
+}
+
+// equal reports whether a candidate still matches every boot-instantiated transport setting.
+func (b policyTransportBaseline) equal(candidate policyTransportBaseline) bool {
+	return b.http.cert == candidate.http.cert &&
+		b.http.key == candidate.http.key &&
+		b.http.caFile == candidate.http.caFile &&
+		b.http.minTLSVersion == candidate.http.minTLSVersion &&
+		b.http.enabled == candidate.http.enabled &&
+		b.http.skipVerify == candidate.http.skipVerify &&
+		slices.Equal(b.http.trustedProxies, candidate.http.trustedProxies) &&
+		slices.Equal(b.http.cipherSuites, candidate.http.cipherSuites) &&
+		b.grpc == candidate.grpc
+}
+
+// capabilities validates enabled Policy routes against the frozen live transport baseline.
+func (b policyTransportBaseline) capabilities(
+	policyConfig policyconfig.PolicyConfig,
+) (callerauth.TransportCapabilities, error) {
+	httpEnabled := policyConfig.API.Enabled && policyConfig.API.HTTP.Enabled
+	grpcEnabled := policyConfig.API.Enabled && policyConfig.API.GRPC.Enabled
+	httpProtected := b.http.enabled || len(b.http.trustedProxies) > 0
+	grpcProtected := b.grpc.listenerEnabled && b.grpc.tlsEnabled
+
+	if err := validatePolicyHTTPTransport(httpEnabled, httpProtected); err != nil {
+		return callerauth.TransportCapabilities{}, err
+	}
+
+	if err := validatePolicyGRPCTransport(
+		grpcEnabled,
+		grpcProtected,
+		policyConfig.API.GRPC.RequireMTLS,
+		b.grpc.requireClientCert,
+	); err != nil {
+		return callerauth.TransportCapabilities{}, err
+	}
+
+	return callerauth.TransportCapabilities{
+		HTTPProtected:                 httpEnabled && httpProtected,
+		GRPCProtected:                 grpcEnabled && grpcProtected,
+		GRPCVerifiedClientCertificate: grpcEnabled && grpcProtected && b.grpc.clientCA != "",
+	}, nil
+}
+
+// validatePolicyHTTPTransport rejects enabled HTTP routes without live protection.
+func validatePolicyHTTPTransport(enabled bool, protected bool) error {
+	if enabled && !protected {
+		return fmt.Errorf("enabled Policy HTTP API has no live protected transport")
+	}
+
+	return nil
+}
+
+// validatePolicyGRPCTransport rejects enabled gRPC routes without their configured TLS guarantees.
+func validatePolicyGRPCTransport(enabled bool, protected bool, requireMTLS bool, requireClientCert bool) error {
+	if enabled && !protected {
+		return fmt.Errorf("enabled Policy gRPC API has no live TLS listener")
+	}
+
+	if enabled && requireMTLS && !requireClientCert {
+		return fmt.Errorf("policy gRPC mTLS requires the live listener to require client certificates")
+	}
+
+	return nil
+}
+
+// newPluginState loads and validates native modules from the unpublished boot candidate.
+func newPluginState(_ *bootstrapped, cfgProvider configfx.Provider, logger *slog.Logger) (*pluginloader.State, error) {
 	if cfgProvider == nil {
-		return nil, fmt.Errorf("config provider is nil")
+		return nil, fmt.Errorf("prepared configuration is nil")
 	}
 
-	snap := cfgProvider.Current()
-	if snap.File == nil {
-		return nil, fmt.Errorf("config snapshot file is nil")
+	snapshot := cfgProvider.Current()
+	if snapshot.File == nil {
+		return nil, fmt.Errorf("prepared configuration is nil")
 	}
 
-	return initializeActionWorkers(snap.File, logger, redisClient, env), nil
+	return bootfx.SetupGoPlugins(snapshot.File, logger)
+}
+
+// newRouteArtifacts parses every inbound listener and HTTP-served file before the initial generation commit.
+func newRouteArtifacts(_ *bootstrapped, cfgProvider configfx.Provider) (*core.RouteArtifacts, error) {
+	if cfgProvider == nil || cfgProvider.Current().File == nil {
+		return nil, fmt.Errorf("prepared route configuration is unavailable")
+	}
+
+	configured := cfgProvider.Current().File
+
+	snapshot, err := config.ArtifactSnapshotFor(configured)
+	if err != nil {
+		return nil, fmt.Errorf("resolve sealed route artifacts: %w", err)
+	}
+
+	artifacts, err := core.PrepareRouteArtifacts(configured, snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("prepare route artifacts: %w", err)
+	}
+
+	return artifacts, nil
 }
 
 // newContextStoreForRuntime constructs the runtime context store.
@@ -148,7 +512,6 @@ func newActionWorkers(_ *bootstrapped, cfgProvider configfx.Provider, logger *sl
 // The store is the legacy coordination struct that still carries context tuples and
 // injected dependencies for partially migrated code paths.
 func newContextStoreForRuntime(
-	ctx context.Context,
 	_ *bootstrapped,
 	cfgProvider configfx.Provider,
 	env envfx.Environment,
@@ -157,16 +520,23 @@ func newContextStoreForRuntime(
 	channel backend.Channel,
 	accountCache *accountcache.Manager,
 	langManager language.Manager,
+	bruteForceTolerate tolerate.Tolerate,
+	policyStore *policyruntime.GenerationStore,
+	policyDecision *decisionservice.DecisionService,
+	routeArtifacts *core.RouteArtifacts,
 ) *contextStore {
 	store := &contextStore{
-		cfgProvider:  cfgProvider,
-		env:          env,
-		logger:       logger,
-		redisClient:  redisClient,
-		channel:      channel,
-		accountCache: accountCache,
-		langManager:  langManager,
-		action:       newContextTuple(ctx),
+		cfgProvider:        cfgProvider,
+		env:                env,
+		logger:             logger,
+		redisClient:        redisClient,
+		channel:            channel,
+		accountCache:       accountCache,
+		langManager:        langManager,
+		bruteForceTolerate: bruteForceTolerate,
+		policyStore:        policyStore,
+		policyDecision:     policyDecision,
+		routeArtifacts:     routeArtifacts,
 	}
 
 	return store
@@ -180,13 +550,33 @@ func newBackendChannel(cfgProvider configfx.Provider) backend.Channel {
 	return backend.NewChannel(cfgProvider.Current().File)
 }
 
+// newBruteForceTolerate constructs the single boot-lifetime tolerance owner without publishing a package global.
+func newBruteForceTolerate(
+	_ *bootstrapped,
+	cfgProvider configfx.Provider,
+	logger *slog.Logger,
+	redisClient redifx.Client,
+) (tolerate.Tolerate, error) {
+	if cfgProvider == nil || cfgProvider.Current().File == nil {
+		return nil, fmt.Errorf("brute-force tolerate configuration is unavailable")
+	}
+
+	cfg := cfgProvider.Current().File
+
+	return tolerate.NewTolerateWithDeps(
+		cfg,
+		logger,
+		redisClient,
+		cfg.GetBruteForce().GetToleratePercent(),
+	), nil
+}
+
 type runtimeLifecycleParams struct {
 	fx.In
 
 	Ctx           context.Context
 	Cancel        context.CancelFunc
 	Store         *contextStore
-	ActionWorkers []*action.Worker
 	StatsSvc      *loopsfx.StatsService
 	MonitoringSvc *loopsfx.BackendMonitoringService
 	ConnMgrSvc    *loopsfx.ConnMgrService
@@ -194,6 +584,9 @@ type runtimeLifecycleParams struct {
 	Env           config.Environment
 	Channel       backend.Channel
 	LangManager   language.Manager
+	PluginState   *pluginloader.State
+	PolicyStartup *policyfx.StartupCatalog
+	PolicyApply   reloadfx.GenerationCoordinator
 }
 
 // registerRuntimeLifecycle wires the legacy startup/shutdown sequence into fx.Lifecycle.
@@ -221,14 +614,9 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 }
 
 // startRuntimeLifecycle runs the legacy startup sequence inside the fx lifecycle.
-func startRuntimeLifecycle(p *runtimeLifecycleParams) (*pluginruntime.Runner, error) {
+func startRuntimeLifecycle(p *runtimeLifecycleParams) (_ *pluginruntime.Runner, err error) {
 	snap := p.Store.cfgProvider.Current()
 	startRuntimeTelemetryAndConfig(p, snap.File)
-
-	pluginState, err := loadRuntimePluginState(snap.File, p.Store.logger)
-	if err != nil {
-		return nil, err
-	}
 
 	if err := configureRuntimeDefaults(p, snap.File); err != nil {
 		return nil, err
@@ -238,12 +626,39 @@ func startRuntimeLifecycle(p *runtimeLifecycleParams) (*pluginruntime.Runner, er
 		return nil, err
 	}
 
-	pluginRunner, err := startRuntimePluginRunner(p, snap.File, pluginState)
+	pluginRunner, err := startRuntimePluginRunner(p, snap.File, p.PluginState)
 	if err != nil {
 		return nil, err
 	}
 
-	bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
+	p.Store.pluginRunner = pluginRunner
+
+	defer func() {
+		if err == nil {
+			return
+		}
+
+		stopCtx, cancel := context.WithTimeout(context.Background(), definitions.FxStopTimeout)
+		defer cancel()
+
+		cleanupErr := stopRuntimePluginRunner(stopCtx, pluginRunner)
+		p.Store.pluginRunner = nil
+		err = errors.Join(err, cleanupErr)
+	}()
+
+	if err = prepareInitialPolicyGeneration(
+		p.Ctx,
+		snap,
+		p.Store.logger,
+		p.Store.redisClient,
+		p.Store.bruteForceTolerate,
+		localization.NewManagerCatalog(p.LangManager),
+		p.PolicyStartup,
+		p.PolicyApply,
+	); err != nil {
+		return nil, err
+	}
+
 	core.LoadStatsFromRedis(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
 
 	if err := startHTTPAndDropPrivileges(p, snap.File); err != nil {
@@ -257,6 +672,48 @@ func startRuntimeLifecycle(p *runtimeLifecycleParams) (*pluginruntime.Runner, er
 	return pluginRunner, nil
 }
 
+// prepareInitialPolicyGeneration captures successful startup overlays before the first atomic commit.
+func prepareInitialPolicyGeneration(
+	ctx context.Context,
+	snapshot configfx.Snapshot,
+	logger *slog.Logger,
+	redis rediscli.Client,
+	tolerance tolerate.Tolerate,
+	system localization.Catalog,
+	startup *policyfx.StartupCatalog,
+	coordinator reloadfx.GenerationCoordinator,
+) error {
+	if snapshot.File == nil || snapshot.Version == 0 {
+		return fmt.Errorf("policy generation boot candidate is incomplete")
+	}
+
+	if startup == nil || coordinator == nil {
+		return fmt.Errorf("policy generation startup dependencies are incomplete")
+	}
+
+	preparation, err := bootfx.PrepareLuaInitCatalogs(
+		ctx,
+		snapshot.File,
+		logger,
+		redis,
+		tolerance,
+		system,
+	)
+	if err != nil {
+		return fmt.Errorf("prepare startup Lua localization: %w", err)
+	}
+
+	if err = startup.Capture(snapshot.File, preparation); err != nil {
+		return fmt.Errorf("capture startup Lua localization: %w", err)
+	}
+
+	if err = coordinator.Apply(ctx, snapshot); err != nil {
+		return fmt.Errorf("commit initial policy runtime generation: %w", err)
+	}
+
+	return nil
+}
+
 // startRuntimeTelemetryAndConfig runs early config-dependent process initialization.
 func startRuntimeTelemetryAndConfig(p *runtimeLifecycleParams, cfg config.File) {
 	// Initialize OpenTelemetry tracing early (no-op if disabled)
@@ -266,30 +723,24 @@ func startRuntimeTelemetryAndConfig(p *runtimeLifecycleParams, cfg config.File) 
 	bootfx.DebugLoadableConfig(cfg, p.Store.logger)
 }
 
-// loadRuntimePluginState returns the current plugin loader state or initializes it.
-func loadRuntimePluginState(cfg config.File, logger *slog.Logger) (*pluginloader.State, error) {
-	pluginState, ok := pluginloader.DefaultState()
-	if ok {
-		return pluginState, nil
-	}
-
-	return bootfx.SetupGoPlugins(cfg, logger)
-}
-
 // configureRuntimeDefaults wires legacy package-level defaults for runtime code.
 func configureRuntimeDefaults(p *runtimeLifecycleParams, cfg config.File) error {
 	if err := bootfx.SetupLuaScripts(cfg, p.Store.logger); err != nil {
-		stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
+		return fmt.Errorf("setup Lua scripts: %w", err)
 	}
 
 	bootfx.EnableBlockProfile(cfg)
-	bootfx.InitializeBruteForceTolerate(p.Ctx, cfg, p.Store.logger, p.Store.redisClient)
+
+	if p.Store.bruteForceTolerate == nil {
+		return fmt.Errorf("brute-force tolerate owner is unavailable")
+	}
+
+	go p.Store.bruteForceTolerate.StartHouseKeeping(p.Ctx)
 
 	if err := configureRuntimeI18N(p, cfg); err != nil {
 		return err
 	}
 
-	bootfx.RunLuaInitScript(p.Ctx, cfg, p.Store.logger, p.Store.redisClient)
 	core.InitPassDBResultPool()
 
 	if cfg == nil {
@@ -312,39 +763,29 @@ func configureRuntimeI18N(p *runtimeLifecycleParams, cfg config.File) error {
 		return fmt.Errorf("configure Lua i18n runtime: %w", err)
 	}
 
-	registry := lualib.DefaultI18NRuntime().Registry
-	if _, err := registry.ReloadOperatorOverlays(localizationfx.CatalogOverlays(cfg)...); err != nil {
-		return fmt.Errorf("configure operator localization catalogs: %w", err)
-	}
-
 	return nil
 }
 
 // setRuntimePackageDefaults publishes injected dependencies to legacy package defaults.
 func setRuntimePackageDefaults(p *runtimeLifecycleParams, cfg config.File) {
 	// Provide core defaults for legacy call sites that are not fully constructor-injected yet.
-	core.SetDefaultConfigFile(cfg)
 	core.SetDefaultLogger(p.Store.logger)
 	core.SetDefaultAccountCache(p.Store.accountCache)
 	core.SetDefaultChannel(p.Channel)
 	core.SetDefaultEnvironment(p.Env)
 
 	// Provide util defaults for legacy call sites.
-	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultLogger(p.Store.logger)
 	util.SetDefaultEnvironment(p.Env)
 
 	// Provide ldappool defaults.
 	ldappool.SetDefaultEnvironment(p.Env)
 
-	// Provide action defaults.
-	action.SetDefaultEnvironment(p.Env)
 }
 
 // setupRuntimeWorkersAndRedis starts workers and initializes Redis-backed defaults.
 func setupRuntimeWorkersAndRedis(p *runtimeLifecycleParams, cfg config.File) error {
-	p.ActionWorkers = initializeActionWorkers(cfg, p.Store.logger, p.Store.redisClient, p.Env)
-	setupWorkers(p.Ctx, p.Store, p.ActionWorkers, cfg, p.Store.logger, p.Store.redisClient, p.Channel)
+	setupWorkers(p.Ctx, p.Store, cfg, p.Store.logger, p.Store.redisClient, p.Channel)
 
 	if err := setupRedis(p.Ctx, p.Ctx, cfg, p.Store.logger, p.Store.redisClient); err != nil {
 		return err
@@ -355,17 +796,8 @@ func setupRuntimeWorkersAndRedis(p *runtimeLifecycleParams, cfg config.File) err
 	return nil
 }
 
-// setRuntimeRedisDefaults publishes the injected Redis client to legacy package defaults.
+// setRuntimeRedisDefaults publishes the injected Redis client to the remaining runtime owners.
 func setRuntimeRedisDefaults(p *runtimeLifecycleParams) {
-	// Ensure backend package uses the injected Redis client.
-	backend.SetDefaultRedisClient(p.Store.redisClient)
-
-	// Ensure bruteforce package uses the injected Redis client.
-	bruteforce.SetDefaultRedisClient(p.Store.redisClient)
-
-	// Ensure core helpers use the injected Redis client.
-	core.SetDefaultRedisClient(p.Store.redisClient)
-
 	// Ensure bruteforce tolerations use the injected Redis client.
 	tolerate.SetDefaultClient(p.Store.redisClient)
 
@@ -381,7 +813,6 @@ func startRuntimePluginRunner(p *runtimeLifecycleParams, cfg config.File, plugin
 			p.Ctx,
 			p.Store.logger,
 			cfg,
-			p.Store.cfgProvider,
 			p.Store.redisClient,
 			priorityqueue.LDAPQueue,
 		)),
@@ -391,8 +822,6 @@ func startRuntimePluginRunner(p *runtimeLifecycleParams, cfg config.File, plugin
 		)),
 		pluginruntime.WithPluginConfig(cfg.GetPlugins()),
 	)
-	pluginruntime.SetDefaultRunner(pluginRunner)
-
 	if err := pluginRunner.Start(p.Ctx); err != nil {
 		return nil, err
 	}
@@ -446,8 +875,13 @@ func stopRuntimeLifecycle(stopCtx context.Context, p *runtimeLifecycleParams, pl
 	waitForRuntimeShutdown(stopCtx, p)
 	ownerErr := stopGenerationOwnedRuntime(
 		stopCtx,
-		policyruntime.DefaultGenerationStore().Shutdown,
-		func(ctx context.Context) error { return stopRuntimePluginRunner(ctx, pluginRunner) },
+		p.Store.policyStore.Shutdown,
+		func(ctx context.Context) error {
+			err := stopRuntimePluginRunner(ctx, pluginRunner)
+			p.Store.pluginRunner = nil
+
+			return err
+		},
 		lualib.StopGlobalCache,
 	)
 	saveRuntimeStats(stopCtx, p, snap.File)
@@ -522,7 +956,7 @@ func stopRuntimeLoopServices(stopCtx context.Context, p *runtimeLifecycleParams)
 func waitForRuntimeShutdown(stopCtx context.Context, p *runtimeLifecycleParams) {
 	// Best-effort: do not spend the entire fx stop budget on shutdown waits.
 	waitCtx, waitCancel := context.WithTimeout(stopCtx, definitions.FxShutdownWaitTimeout)
-	waitForShutdown(waitCtx, p.Store, p.ActionWorkers)
+	waitForShutdown(waitCtx, p.Store)
 	waitCancel()
 }
 
@@ -547,7 +981,6 @@ func newRuntimePluginHost(
 	ctx context.Context,
 	logger *slog.Logger,
 	cfg config.File,
-	cfgProvider configfx.Provider,
 	redisClient rediscli.Client,
 	ldapQueue pluginruntime.LDAPQueue,
 ) *pluginruntime.Host {
@@ -572,16 +1005,9 @@ func newRuntimePluginHost(
 	}
 
 	if ldapQueue != nil {
-		currentConfig := func() config.File {
-			if cfgProvider == nil {
-				return cfg
-			}
-
-			return cfgProvider.Current().File
-		}
 		options = append(options, pluginruntime.WithLDAP(pluginruntime.NewLDAPFacade(
 			pluginruntime.NewLDAPQueueExecutor(ldapQueue),
-			pluginruntime.NewLDAPConfigEndpointResolver(currentConfig),
+			pluginruntime.NewLDAPConfigEndpointResolver(func() config.File { return cfg }),
 		)))
 	}
 
@@ -598,7 +1024,7 @@ func runtimePluginConfigView(cfg config.File) pluginapi.ConfigView {
 	return pluginregistry.NewConfigView(values)
 }
 
-// runtimePluginConfigMap materializes the active file snapshot without exposing raw Viper state.
+// runtimePluginConfigMap materializes non-policy process settings without exposing raw Viper state.
 func runtimePluginConfigMap(cfg config.File) (map[string]any, error) {
 	if cfg == nil {
 		return nil, nil
@@ -617,6 +1043,8 @@ func runtimePluginConfigMap(cfg config.File) (map[string]any, error) {
 	if err := json.Unmarshal(raw, &values); err != nil {
 		return nil, err
 	}
+
+	delete(values, runtimePluginPolicyConfigKey)
 
 	return values, nil
 }

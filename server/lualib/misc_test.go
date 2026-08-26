@@ -26,6 +26,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/pluginapi/v1/password"
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/croessner/nauthilus/v3/server/util"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -34,11 +35,11 @@ func TestPasswordManagerGeneratePasswordHashReturnsFullSHA256(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
 
-	util.SetDefaultConfigFile(&config.FileSettings{Server: &config.ServerSection{}})
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 	L.Push(lua.LString("contract-password"))
 
-	manager := NewPasswordManager(context.TODO(), nil, nil)
+	manager := NewPasswordManager(context.TODO(), cfg, nil)
 	manager.generatePasswordHash(L)
 	got := L.ToString(-2)
 
@@ -49,6 +50,50 @@ func TestPasswordManagerGeneratePasswordHashReturnsFullSHA256(t *testing.T) {
 	if _, err := hex.DecodeString(got); err != nil {
 		t.Fatalf("generate_password_hash returned malformed digest %q: %v", got, err)
 	}
+}
+
+func TestPasswordManagerGeneratePasswordHashUsesCapturedConfig(t *testing.T) {
+	const plainPassword = "captured-config-password"
+
+	processConfig := passwordManagerTestConfig("process-owned-nonce")
+	capturedConfig := passwordManagerTestConfig("captured-generation-nonce")
+
+	L := lua.NewState()
+	defer L.Close()
+
+	L.Push(lua.LString(plainPassword))
+
+	manager := NewPasswordManager(t.Context(), capturedConfig, nil)
+	manager.generatePasswordHash(L)
+	got := L.ToString(-2)
+
+	wantBytes, ok := util.PreparePasswordBytesWithConfig([]byte(plainPassword), capturedConfig)
+	if !ok {
+		t.Fatal("captured password config was unavailable")
+	}
+	defer clear(wantBytes)
+
+	want := util.GetHashBytes(wantBytes)
+	if got != want {
+		t.Fatalf("generatePasswordHash() = %q, want captured-config digest %q", got, want)
+	}
+
+	processBytes, ok := util.PreparePasswordBytesWithConfig([]byte(plainPassword), processConfig)
+	if !ok {
+		t.Fatal("process password config was unavailable")
+	}
+	defer clear(processBytes)
+
+	if got == util.GetHashBytes(processBytes) {
+		t.Fatal("generatePasswordHash() used the process-wide password nonce")
+	}
+}
+
+// passwordManagerTestConfig constructs one exact password-nonce authority for Lua tests.
+func passwordManagerTestConfig(nonce string) config.File {
+	return &config.FileSettings{Server: &config.ServerSection{
+		Redis: config.Redis{PasswordNonce: secret.New(nonce)},
+	}}
 }
 
 func TestBundledGeneralPasswordHashConsumersUseCanonicalLuaAPI(t *testing.T) {
@@ -193,12 +238,12 @@ func TestPasswordManagerGeneratePasswordHashMatchesPublicHelper(t *testing.T) {
 
 	const plainPassword = "s3cret"
 
-	util.SetDefaultConfigFile(&config.FileSettings{Server: &config.ServerSection{}})
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	L.Push(lua.LString(plainPassword))
 
-	m := NewPasswordManager(context.TODO(), nil, nil)
+	m := NewPasswordManager(context.TODO(), cfg, nil)
 
 	m.generatePasswordHash(L)
 

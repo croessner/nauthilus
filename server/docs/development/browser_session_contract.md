@@ -66,11 +66,9 @@ materialization, and claim release use the common `AuthApplicationService`
 boundary when they need authentication-domain work. Each adapter selects an
 exact host-owned internal caller profile and supplies explicit operation,
 protocol or transport, OIDC-client or SAML-SP, correlation, localization,
-requested-attribute, and existing backend-affinity facts. The shared Decision
-Service admission and common authentication checkpoints are proven by a
-generation-backed candidate harness. Production continues to construct the
-current application executor; the candidate Decision Service remains inactive
-there until the later atomic authority cutover.
+requested-attribute, and existing backend-affinity facts. The active shared
+Decision Service admits those profiles and runs the common authentication
+checkpoints from the current atomic generation.
 
 That boundary does not absorb browser state. The envelope, `SessionAnchor`,
 OIDC/SAML flow, device verification, delayed-response latch, consent,
@@ -82,10 +80,9 @@ operation, and apply the detached outcome afterward. Ceremony verification and
 protocol issuance therefore remain domain operations rather than alternate
 policy evaluators.
 
-This convergence does not activate the standalone production Policy
-configuration. Its configuration and runtime generation remain one later
-atomic server-state cutover, with no second active policy authority in the
-browser runtime.
+The top-level `policy` configuration, catalog, caller admission, extensions,
+and routes are committed as one generation. The browser runtime has no second
+policy authority or fallback evaluator.
 
 ## Direct Cookie Manager Prohibition Matrix
 

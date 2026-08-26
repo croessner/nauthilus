@@ -161,9 +161,15 @@ func TestBearerTokenSourceBuildsPrivateKeyJWTAssertion(t *testing.T) {
 	db, mock := redismock.NewClientMock()
 	redisClient := rediscli.NewTestClient(db)
 	cfg := privateKeyJWTConfig(keyPath)
+	artifacts := mustCaptureAuthorityArtifacts(t, keyPath)
+
+	if err = os.WriteFile(keyPath, []byte("mutated after candidate seal\n"), 0o600); err != nil {
+		t.Fatalf("mutate private_key_jwt key after seal: %v", err)
+	}
 
 	source := newTestBearerTokenSource(BearerTokenSourceOptions{
 		AuthorityName: tokenSourceAuthorityName,
+		Artifacts:     artifacts,
 		Config:        cfg,
 		Redis:         redisClient,
 		HTTPClient:    httpClient,
@@ -187,7 +193,7 @@ func TestBearerTokenSourceBuildsPrivateKeyJWTAssertion(t *testing.T) {
 	assertPrivateKeyJWT(t, assertion)
 }
 
-func TestBearerTokenSourceStaticTokenFileFallbackRejectsJWTInStrictMode(t *testing.T) {
+func TestBearerTokenSourceStaticTokenFileFallbackRejectsSealedJWTInStrictMode(t *testing.T) {
 	tokenPath := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(tokenPath, []byte("aaa.bbb.ccc\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -196,9 +202,11 @@ func TestBearerTokenSourceStaticTokenFileFallbackRejectsJWTInStrictMode(t *testi
 	cfg := clientCredentialsConfig(tokenSourceEndpoint)
 	cfg.Enabled = false
 	cfg.StaticTokenFile = tokenPath
+	artifacts := mustCaptureAuthorityArtifacts(t, tokenPath)
 
 	source := newTestBearerTokenSource(BearerTokenSourceOptions{
 		AuthorityName:    tokenSourceAuthorityName,
+		Artifacts:        artifacts,
 		Config:           cfg,
 		StrictSplitMode:  true,
 		Now:              fixedTokenSourceNow,
@@ -214,13 +222,42 @@ func TestBearerTokenSourceStaticTokenFileFallbackRejectsJWTInStrictMode(t *testi
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	token, err := source.Token(context.Background())
-	if err != nil {
-		t.Fatalf("Token() opaque fallback error = %v", err)
+	if _, err = source.Token(context.Background()); err == nil || !strings.Contains(err.Error(), "JWT caller tokens") {
+		t.Fatalf("Token() after live mutation error = %v, want sealed JWT rejection", err)
+	}
+}
+
+func TestBearerTokenSourceUsesSealedStaticTokenBytes(t *testing.T) {
+	tokenPath := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenPath, []byte("sealed-opaque-token\n"), 0o600); err != nil {
+		t.Fatalf("write static token: %v", err)
 	}
 
-	if token != "opaque-dev-token" {
-		t.Fatalf("Token() = %q, want opaque-dev-token", token)
+	cfg := clientCredentialsConfig(tokenSourceEndpoint)
+	cfg.Enabled = false
+	cfg.StaticTokenFile = tokenPath
+	artifacts := mustCaptureAuthorityArtifacts(t, tokenPath)
+
+	if err := os.WriteFile(tokenPath, []byte("mutated-opaque-token\n"), 0o600); err != nil {
+		t.Fatalf("mutate static token after seal: %v", err)
+	}
+
+	source := newTestBearerTokenSource(BearerTokenSourceOptions{
+		AuthorityName:    tokenSourceAuthorityName,
+		Artifacts:        artifacts,
+		Config:           cfg,
+		StrictSplitMode:  true,
+		Now:              fixedTokenSourceNow,
+		StaticTokenFiles: true,
+	})
+
+	token, err := source.Token(context.Background())
+	if err != nil {
+		t.Fatalf("Token() error = %v", err)
+	}
+
+	if token != "sealed-opaque-token" {
+		t.Fatalf("Token() = %q, want sealed-opaque-token", token)
 	}
 }
 
@@ -318,6 +355,18 @@ func writeEd25519PrivateKey(t *testing.T, privateKey ed25519.PrivateKey) string 
 	}
 
 	return path
+}
+
+// mustCaptureAuthorityArtifacts seals exact authority credential bytes for one test candidate.
+func mustCaptureAuthorityArtifacts(t *testing.T, paths ...string) *config.ArtifactSnapshot {
+	t.Helper()
+
+	snapshot, err := config.CaptureArtifactSnapshot(config.ArtifactSnapshotSpec{Paths: paths})
+	if err != nil {
+		t.Fatalf("CaptureArtifactSnapshot() error = %v", err)
+	}
+
+	return snapshot
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

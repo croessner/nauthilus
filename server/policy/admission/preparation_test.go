@@ -263,11 +263,13 @@ func TestPrepareRejectsProfileFieldWithWrongSchemaAuthorityOrCategory(t *testing
 	t.Parallel()
 
 	tests := []struct {
-		fact registry.FactSchema
-		name string
+		fact  registry.FactSchema
+		name  string
+		index int
 	}{
 		{
-			name: "wrong source",
+			name:  "wrong source",
+			index: 3,
 			fact: admissionTestFactSchema(
 				t,
 				"input.request_id",
@@ -280,11 +282,12 @@ func TestPrepareRejectsProfileFieldWithWrongSchemaAuthorityOrCategory(t *testing
 			),
 		},
 		{
-			name: "wrong category",
+			name:  "wrong category",
+			index: 0,
 			fact: admissionTestFactSchema(
 				t,
-				"input.request_id",
-				decision.FactCategorySubject,
+				"subject.account",
+				decision.FactCategoryEnvironment,
 				decision.ValueKindString,
 				decision.FactSourceCaller,
 				64,
@@ -297,7 +300,7 @@ func TestPrepareRejectsProfileFieldWithWrongSchemaAuthorityOrCategory(t *testing
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			facts := admissionTestSchemaFacts(t)
-			facts[3] = test.fact
+			facts[test.index] = test.fact
 			catalog, _, reference := admissionTestCatalog(t, facts)
 			configuration := admissionTestConfiguration(t, reference)
 			credentials := admissionTestCredentials(t, []string{admissionTestPrincipal})

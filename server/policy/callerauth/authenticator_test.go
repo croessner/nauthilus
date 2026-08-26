@@ -266,6 +266,27 @@ func TestPolicyBasicAuthenticationFailsClosedWhenThrottled(t *testing.T) {
 	}
 }
 
+func TestPolicyBasicThrottleLimitDoesNotPoisonGeneration(t *testing.T) {
+	t.Parallel()
+
+	throttler := &policyRecordingThrottler{beforeErr: ErrBasicThrottleLimit}
+	authenticator := policyBasicAuthenticator(t, throttler)
+	input := mustPolicyAuthenticationInput(t, policy.CallerAuthenticationKindBasic, "policy-user:"+policyTestPassword, "http", true, "")
+
+	caller, err := authenticator.Authenticate(context.Background(), input)
+	assertPolicyAuthenticationRejected(t, caller, err)
+
+	throttler.beforeErr = nil
+	input = mustPolicyAuthenticationInput(t, policy.CallerAuthenticationKindBasic, "policy-user:"+policyTestPassword, "http", true, "")
+
+	caller, err = authenticator.Authenticate(context.Background(), input)
+	assertPolicyBasicAuthenticationResult(t, caller, err, true)
+
+	if throttler.before != 2 || throttler.success != 1 {
+		t.Fatalf("throttle calls after limit expiry = before:%d success:%d", throttler.before, throttler.success)
+	}
+}
+
 func TestPolicyBasicThrottleKeyUsesNormalizedPeerIP(t *testing.T) {
 	t.Parallel()
 
@@ -344,8 +365,11 @@ func TestPolicyCallerAuthenticationEnforcesMTLSAsCorroboratingEvidence(t *testin
 					[]string{definitions.AudiencePolicyAPI},
 					[]string{definitions.ScopePolicyEvaluate},
 				)},
-				TransportCapabilities: TransportCapabilities{GRPCProtected: test.requireGRPC},
-				RequireGRPCMTLS:       test.requireGRPC,
+				TransportCapabilities: TransportCapabilities{
+					GRPCProtected:                 test.requireGRPC || test.requireMTLS,
+					GRPCVerifiedClientCertificate: test.requireGRPC || test.requireMTLS,
+				},
+				RequireGRPCMTLS: test.requireGRPC,
 				ExternalProfiles: []ExternalProfile{{
 					AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer},
 					Principal:           policyTestPrincipal,
@@ -443,6 +467,7 @@ func TestPolicyCallerAuthenticatorOwnsCredentialRules(t *testing.T) {
 		TransportKinds: transports,
 	}}
 	authenticator := mustPolicyAuthenticator(t, Configuration{
+		Throttler:             &policyRecordingThrottler{},
 		TransportCapabilities: TransportCapabilities{HTTPProtected: true},
 		ExternalProfiles:      profiles,
 		InternalCallers:       internal,
@@ -481,7 +506,7 @@ func TestPolicyCallerAuthenticatorOwnsCredentialRules(t *testing.T) {
 func TestPolicyCallerAuthRejectsBasicWithoutProtectedTransportCapability(t *testing.T) {
 	t.Parallel()
 
-	_, err := New(Configuration{ExternalProfiles: []ExternalProfile{{
+	_, err := New(Configuration{Throttler: &policyRecordingThrottler{}, ExternalProfiles: []ExternalProfile{{
 		Basic:               &BasicCredential{Username: "policy-user", Password: secret.New(policyTestPassword)},
 		AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic},
 		Principal:           policyTestPrincipal,
@@ -508,11 +533,12 @@ func TestPolicyCallerAuthRejectsInvalidConfiguration(t *testing.T) {
 		configuration Configuration
 	}{
 		{name: "Bearer profile without validator", configuration: Configuration{ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}}}},
-		{name: "Basic kind without material", configuration: Configuration{TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}}}},
-		{name: "Basic material without kind", configuration: Configuration{TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, Basic: &BasicCredential{Username: "policy-user", Password: secret.New(policyTestPassword)}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}}, TokenValidator: policyStaticTokenValidator{}}},
+		{name: "Basic kind without material", configuration: Configuration{Throttler: &policyRecordingThrottler{}, TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}}}},
+		{name: "Basic material without kind", configuration: Configuration{Throttler: &policyRecordingThrottler{}, TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, Basic: &BasicCredential{Username: "policy-user", Password: secret.New(policyTestPassword)}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}}, TokenValidator: policyStaticTokenValidator{}}},
 		{name: "duplicate principals", configuration: Configuration{TokenValidator: policyStaticTokenValidator{}, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}, {Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}}}},
-		{name: "duplicate Basic usernames", configuration: Configuration{TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: "first", Basic: &BasicCredential{Username: "shared", Password: secret.New("first")}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}, {Principal: "second", Basic: &BasicCredential{Username: "shared", Password: secret.New("second")}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}}}},
+		{name: "duplicate Basic usernames", configuration: Configuration{Throttler: &policyRecordingThrottler{}, TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: "first", Basic: &BasicCredential{Username: "shared", Password: secret.New("first")}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}, {Principal: "second", Basic: &BasicCredential{Username: "shared", Password: secret.New("second")}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}}}},
 		{name: "global gRPC mTLS without capable transport", configuration: Configuration{RequireGRPCMTLS: true}},
+		{name: "verified client certificate without protected gRPC", configuration: Configuration{TransportCapabilities: TransportCapabilities{GRPCVerifiedClientCertificate: true}}},
 		{name: "internal caller without transport", configuration: Configuration{InternalCallers: []InternalCaller{{Principal: "internal", EvidenceKind: "internal-kind", Capability: secret.New("capability")}}}},
 		{name: "internal caller reuses external evidence kind", configuration: Configuration{InternalCallers: []InternalCaller{{Principal: "internal", EvidenceKind: policy.CallerAuthenticationKindBasic, Capability: secret.New("capability"), TransportKinds: []string{"internal"}}}}},
 		{name: "typed nil token validator", configuration: Configuration{TokenValidator: typedNilTokenValidator, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}}}},

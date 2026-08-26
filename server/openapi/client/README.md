@@ -87,9 +87,10 @@ separation.
 
 `PolicyBasicCredentials` is also distinct from management Basic credentials.
 Policy-Basic has no OAuth scope and receives authority only from its exact
-enabled Policy client profile over a protected transport. This supported
-client boundary does not activate the standalone production Policy
-configuration; that remains an atomic server-configuration cutover.
+enabled Policy client profile over a protected transport. The supported client
+boundary reaches the active top-level `policy` generation used by the gRPC
+adapter and the internal authentication applications; there is no secondary
+Policy catalog or authentication fallback.
 
 Document-style downloads such as OpenAPI YAML and SAML metadata intentionally
 return raw `*http.Response` values from the generated client. JSON management

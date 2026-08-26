@@ -4,11 +4,12 @@
 #   /usr/local/lib/nauthilus/plugins/haveibeenpwnd.so
 #   /usr/local/lib/nauthilus/plugins/haveibeenpwnd.so.minisig
 #
-# Reference the native effect ID `haveibeenpwnd.post_action` from policy
-# obligations after the module is loaded. The module must allow the `credentials`
-# capability because the password is read only through the request-scoped
-# credential provider. If config.mail.enabled is set to true, also allow the
-# `mail` capability before restarting the process.
+# This module registers the authentication-shaped `PostActionTarget` only. The
+# authn generation exposes the exact Policy effect
+# `authn/plugin.haveibeenpwnd.post_action`; it does not expose a generic
+# `DecisionEffectProvider` to any other target namespace. The
+# module must allow the `credentials` capability. If config.mail.enabled is
+# true, also allow `mail` before restart.
 
 plugins:
   verification_policy: signature_required
@@ -57,20 +58,44 @@ plugins:
           template_path: ""
           subject_template: "Password leak detected for your account <{{ .Account }}>"
 
-auth:
-  policy:
-    policies:
-      - name: check_compromised_password
-        stage: auth_decision
-        operations:
-          - authenticate
-        if:
-          attribute: auth.authenticated
-          is: true
-        then:
-          decision: permit
-          outcome_marker: auth.outcome.auth_success
-          fsm_event_marker: auth.fsm.event.auth_permit
-          response_marker: auth.response.ok
-          obligations:
-            - id: haveibeenpwnd.post_action
+policy:
+  namespaces:
+    authn:
+      domain_plans:
+        haveibeenpwnd_post_action:
+          checkpoints:
+            pre_auth:
+              providers:
+                - name: brute_force
+                  use: authn/builtin/brute_force
+                  actions: [authenticate]
+            auth_backend:
+              providers:
+                # Replace this binding when authentication uses another backend.
+                - name: ldap_backend
+                  use: authn/builtin/ldap_backend
+                  actions: [authenticate]
+            auth_decision:
+              providers: []
+      policy_sets:
+        haveibeenpwnd_post_action:
+          rules:
+            - name: inspect_successful_authentication
+              checkpoint: auth_decision
+              actions: [authenticate]
+              if:
+                attribute: backend.authenticated
+                is: true
+              then:
+                decision: permit
+                obligations:
+                  - id: authn/plugin.haveibeenpwnd.post_action
+  targets:
+    - namespace: authn
+      action: authenticate
+      schema: authn/authenticate/v1
+      domain_plan: authn/haveibeenpwnd_post_action
+      default_policy: authn/standard_auth
+      plans:
+        auth_decision:
+          policy_sets: [authn/haveibeenpwnd_post_action]

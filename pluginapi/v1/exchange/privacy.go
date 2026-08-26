@@ -88,7 +88,7 @@ type GeoIPPrivacyAnalytics struct {
 
 // GeoIPAnalytics returns exchange-first GeoIP data with policy-fact privacy fallback.
 func (s Snapshot) GeoIPAnalytics() GeoIPAnalytics {
-	fields := s.Map(KeyGeoIP)
+	fields := factFallbackFields(s.Map(KeyGeoIP), s.facts["geoip"])
 	view := GeoIPAnalytics{
 		Fields: fields,
 		Privacy: GeoIPPrivacyAnalytics{
@@ -112,6 +112,27 @@ func (s Snapshot) GeoIPAnalytics() GeoIPAnalytics {
 	}
 
 	return view
+}
+
+// factFallbackFields adds detached policy facts only where standard runtime fields are absent.
+func factFallbackFields(runtimeFields map[string]any, factFields map[string]any) map[string]any {
+	if len(factFields) == 0 {
+		return runtimeFields
+	}
+
+	if runtimeFields == nil {
+		runtimeFields = make(map[string]any, len(factFields))
+	}
+
+	for field, value := range factFields {
+		if _, exists := runtimeFields[field]; exists {
+			continue
+		}
+
+		runtimeFields[field] = cloneValue(value)
+	}
+
+	return runtimeFields
 }
 
 // privacyClassificationsAvailable rejects negative claims from unavailable lookup states.

@@ -167,18 +167,17 @@ func listAccountsSuccessOutcome(
 	}
 
 	return &ListAccountsOutcome{
-		ResponseHeaders:         capturedResponseHeaders(ginCtx),
-		ResponseHeaderDeletes:   capturedResponseHeaderDeletes(ginCtx),
-		FSMEventPath:            append([]string(nil), auth.Runtime.AuthFSMEventPath...),
-		Accounts:                append(AccountList(nil), accounts...),
-		ResponseSettings:        newAuthResponseSettings(auth.Cfg()),
-		Decision:                AuthDecisionOK,
-		Session:                 auth.Runtime.GUID,
-		Protocol:                auth.GetProtocol().Get(),
-		HTTPStatus:              http.StatusOK,
-		LoginAttempts:           auth.GetFailCount(),
-		MemoryCacheHit:          ginCtx != nil && ginCtx.GetBool(definitions.CtxLocalCacheAuthKey),
-		DelayedResponseEligible: auth.ConfiguredPolicyAllowsIDPDelayedResponse(ginCtx),
+		ResponseHeaders:       capturedResponseHeaders(ginCtx),
+		ResponseHeaderDeletes: capturedResponseHeaderDeletes(ginCtx),
+		FSMEventPath:          append([]string(nil), auth.Runtime.AuthFSMEventPath...),
+		Accounts:              append(AccountList(nil), accounts...),
+		ResponseSettings:      newAuthResponseSettings(auth.Cfg()),
+		Decision:              AuthDecisionOK,
+		Session:               auth.Runtime.GUID,
+		Protocol:              auth.GetProtocol().Get(),
+		HTTPStatus:            http.StatusOK,
+		LoginAttempts:         auth.GetFailCount(),
+		MemoryCacheHit:        ginCtx != nil && ginCtx.GetBool(definitions.CtxLocalCacheAuthKey),
 	}
 }
 
@@ -229,33 +228,13 @@ func authOutcomeFromState(
 		HTTPStatus:              status,
 		LoginAttempts:           auth.GetFailCount(),
 		MemoryCacheHit:          ctx != nil && ctx.GetBool(definitions.CtxLocalCacheAuthKey),
-		DelayedResponseEligible: authOutcomeDelayedResponseEligible(ctx, auth, decision),
-		PolicyTerminal:          authOutcomePolicyTerminal(ctx, auth),
+		DelayedResponseEligible: authOutcomeDelayedResponseEligible(auth, decision),
 	}
 }
 
-// authOutcomePolicyTerminal reports whether configured policy selected a terminal decision.
-func authOutcomePolicyTerminal(ctx *gin.Context, auth *AuthState) bool {
-	if auth == nil {
-		return false
-	}
-
-	_, terminal := auth.ConfiguredPolicyTerminalDecision(ctx)
-
-	return terminal
-}
-
-// authOutcomeDelayedResponseEligible preserves the ordinary IdP password-failure boundary.
-func authOutcomeDelayedResponseEligible(ctx *gin.Context, auth *AuthState, decision AuthDecision) bool {
-	if !authOutcomeIsIDPPasswordFailure(auth, decision) {
-		return false
-	}
-
-	if authOutcomePolicyTerminal(ctx, auth) {
-		return auth.ConfiguredPolicyAllowsIDPDelayedResponse(ctx)
-	}
-
-	return true
+// authOutcomeDelayedResponseEligible preserves the host's ordinary IdP password-failure boundary.
+func authOutcomeDelayedResponseEligible(auth *AuthState, decision AuthDecision) bool {
+	return authOutcomeIsIDPPasswordFailure(auth, decision)
 }
 
 // authOutcomeIsIDPPasswordFailure enforces the request invariant shared by ordinary and policy-selected delay.

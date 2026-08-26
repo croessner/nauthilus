@@ -9,8 +9,9 @@ obligations, notifications, metrics, and response follow-up. When a preceding en
 `policy_facts`, actions can read them with `nauthilus_context.context_get("policy_facts")` and include selected
 public facts in notifications or reports.
 
-These action callbacks, including the existing post-action path, remain compatibility behavior for authentication and
-are implicitly `authn`-scoped. Their callback names and execution order are not used by standalone generic targets.
+These action callbacks, including the existing post-action path, remain authentication-specific behavior and are
+explicitly configured in the `authn` namespace. Their callback names and execution order are not used by generic
+targets.
 
 Generic `kind: lua` providers use the separate `_G["policy.effects.execute"]` callback documented in
 [`../policy/README.md`](../policy/). It is invoked only for a policy-selected, target-allowed, schema-valid
@@ -18,6 +19,17 @@ Generic `kind: lua` providers use the separate `_G["policy.effects.execute"]` ca
 captured and accepted by the host supervisor before response finalization; the script receives no finalization gate and
 must not launch detached host work. The host makes no automatic retry and preserves `outcome_unknown` as an observable,
 non-retryable result.
+
+## Bundled callback status
+
+Only `bruteforce_header.lua` is a supported production example, and only as a synchronous response action. The other
+operational Lua actions require Redis/cache mutation, outbound HTTP/TCP/mail, ambient credentials/tuning, or legacy
+runtime exchange; `test_context_chain.lua` is test-only. Use native
+`authn/plugin.clickhouse.post_action` and `authn/plugin.haveibeenpwnd.post_action` for those two bundled replacements.
+The normative per-file classification is [`../POLICY_VM_COMPATIBILITY.md`](../POLICY_VM_COMPATIBILITY.md).
+
+The checked-in synchronous response-action configuration is
+[`../examples/policy-safe-bruteforce-header.yml`](../examples/policy-safe-bruteforce-header.yml).
 
 ## Available Plugins
 
@@ -30,8 +42,7 @@ A plugin that collects and analyzes authentication data for reporting and visual
 - Supports data aggregation for reporting dashboards
 - Provides insights into system usage patterns
 
-**Usage:**
-The plugin runs automatically on each authentication attempt. No manual configuration is required beyond enabling the plugin in your Nauthilus configuration.
+**Production status:** Reference-only. It has not been promoted as a generation-owned Policy action example.
 
 ### bruteforce.lua
 Detects and mitigates brute force attacks by monitoring failed login attempts and implementing countermeasures when suspicious activity is detected.
@@ -42,8 +53,8 @@ Detects and mitigates brute force attacks by monitoring failed login attempts an
 - Can temporarily block IPs with excessive failed attempts
 - Logs detailed information about potential brute force attacks
 
-**Usage:**
-Configure the plugin through environment variables:
+**Historical configuration:**
+The reference-only callback used the following ambient values:
 - `HAPROXY_STATS`: HAProxy stats socket endpoint
 - `HAPROXY_SMTP_MAP`: HAProxy map file for SMTP protocol
 - `HAPROXY_GENERIC_MAP`: HAProxy map file for other protocols
@@ -58,13 +69,13 @@ Implements a sophisticated security response system that dynamically adjusts sec
 - Uses Redis to store and track metrics, suspicious IPs, and regions
 - Dynamically adjusts security settings like captcha requirements and rate limiting
 
-**Usage:**
-Configure the plugin through environment variables:
+**Historical configuration:**
+The reference-only callback used the following ambient values:
 - `SMTP_*` variables for email notifications
 - `ADMIN_EMAIL_ADDRESSES`: Comma-separated list of admin email addresses for notifications
 - `CUSTOM_REDIS_POOL_NAME`: Optional custom Redis pool name
 
-The plugin automatically calculates threat levels and applies appropriate security measures without manual intervention.
+The historical callback calculated threat levels and attempted to apply security measures without manual intervention.
 
 ### failed_login_tracker.lua
 Tracks failed login attempts for unrecognized accounts, maintaining a top-100 list of usernames with the most failed attempts.
@@ -75,14 +86,14 @@ Tracks failed login attempts for unrecognized accounts, maintaining a top-100 li
 - Maintains a top-100 list of failed logins
 - Provides logging and context information
 
-**Usage:**
-The plugin runs automatically on each authentication attempt. You can optionally configure a custom Redis pool using the `CUSTOM_REDIS_POOL_NAME` environment variable.
+**Production status:** Reference-only. Its Redis write pipeline and custom-pool selection are unavailable in the Policy
+VM.
 
 ### haveibeenpwnd.lua
 Checks user credentials against the "Have I Been Pwned" database to identify compromised passwords.
 
 Native replacement: configure the bundled Go plugin `haveibeenpwnd` and reference the native policy effect ID
-`haveibeenpwnd.post_action`. The native plugin keeps the k-anonymity HTTP, Redis gate, cache behavior, and SMTP/LMTP
+`authn/plugin.haveibeenpwnd.post_action`. The native plugin keeps the k-anonymity HTTP, Redis gate, cache behavior, and SMTP/LMTP
 mail notification through `Host.Mail("haveibeenpwnd")`. Enable mail in `plugins.modules[].config.mail` and add the
 `mail` capability beside `credentials` before restart. During migration, account for the Lua gate mismatch:
 `init/init.lua` returns `send_email`, while this action checks `send_mail`. The native plugin intentionally avoids that
@@ -94,8 +105,8 @@ script and uses a direct Redis `HSETNX` on the `send_mail` hash field.
 - Alerts users and administrators about compromised credentials
 - Integrates with the Nauthilus notification system
 
-**Usage:**
-Configure the plugin through environment variables:
+**Historical Lua configuration:**
+The reference-only Lua callback used the following ambient values; the native replacement uses typed module config:
 - `CUSTOM_REDIS_POOL_NAME`: Optional custom Redis pool name
 - `SMTP_*` variables: SMTP server configuration for sending notifications (SMTP_USE_LMTP, SMTP_SERVER, SMTP_PORT, SMTP_HELO_NAME, SMTP_TLS, SMTP_STARTTLS, SMTP_USERNAME, SMTP_PASSWORD, SMTP_MAIL_FROM)
 - `SSP_WEBSITE`: URL to the self-service password change website
@@ -113,12 +124,12 @@ Sends security notifications and alerts to a Telegram channel or group.
 **Behavior (v1.8.2):**
 - The plugin only sends a Telegram message if `request.account` is set and non-empty.
 - If a `request.password` is present, the plugin computes a full hash via the Go-backed Lua module `nauthilus_password.generate_password_hash(password)`.
-  - This hash is identical to the one stored/used server-side for Redis password history: `util.GetHash(util.PreparePassword(password))`.
+  - This hash is identical to `util.GetHashBytes` applied to bytes returned by `util.PreparePasswordBytesWithConfig` with the request-captured configuration.
   - It uses the server's configured nonce internally and returns a 64-character lowercase SHA-256 hex string.
 - The rendered Telegram message includes the field "PASSWORD HASH" along with other context.
 
-**Usage:**
-Configure the plugin through environment variables:
+**Historical configuration:**
+The reference-only callback used the following ambient credentials:
 - `TELEGRAM_PASSWORD`: Your Telegram bot token/password
 - `TELEGRAM_CHAT_ID`: The chat ID to send notifications to
 
@@ -131,7 +142,7 @@ Configure the plugin through environment variables:
 Exports metrics about non-authenticated requests (including those without an existing account) to ClickHouse using batched inserts.
 
 Native replacement: configure the bundled Go plugin `clickhouse` and reference the native policy effect ID
-`clickhouse.post_action`. The native plugin writes the same JSONEachRow field names through host-managed HTTP, Redis, and
+`authn/plugin.clickhouse.post_action`. The native plugin writes the same JSONEachRow field names through host-managed HTTP, Redis, and
 cache facades. Native post-actions cannot apply runtime deltas, so the Lua `rt.post_clickhouse = true` marker is not
 mutated back into request runtime state.
 
@@ -228,7 +239,7 @@ SETTINGS index_granularity = 8192;
 Notes:
 - ts is DateTime64(3, 'UTC'); other fields are String for schema stability. ClickHouse JSONEachRow will parse ISO-like timestamp strings for ts automatically.
 
-Configuration (environment variables):
+Historical Lua configuration (environment variables):
 - CLICKHOUSE_INSERT_URL: Full HTTP endpoint including the INSERT and FORMAT JSONEachRow, e.g.
   http://clickhouse:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow
 - CLICKHOUSE_USER / CLICKHOUSE_PASSWORD: Optional; sent via X-ClickHouse-User/Key headers.
@@ -240,6 +251,6 @@ Batching details:
 - When the heuristics suggest the threshold is reached, it flushes with nauthilus_cache.cache_pop_all and sends one NDJSON body (one JSON per line).
 - On HTTP errors, rows are requeued best-effort with nauthilus_cache.cache_push.
 
-Enabling the action:
-- Ensure your post-actions configuration invokes server/lua-plugins.d/actions/clickhouse.lua after authentication processing.
-- For the native replacement, use policy obligations with `id: clickhouse.post_action` instead of the Lua action dispatch.
+Production activation:
+- Do not configure `actions/clickhouse.lua` as a Policy action.
+- Use policy obligations with `id: authn/plugin.clickhouse.post_action` after configuring the native module.

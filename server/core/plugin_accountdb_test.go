@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
 )
 
 const pluginAccountDBBackendName = "customer.passdb"
@@ -31,13 +30,13 @@ func TestListUserAccountsUsesPluginBackend(t *testing.T) {
 
 	fake := &accountDBBackendManager{accounts: AccountList{"plugin-user@example.test"}}
 
-	replaceBackendManagerFactoryForTest(t, definitions.BackendPlugin, func(backendName string, _ AuthDeps) BackendManager {
+	auth.deps.PluginBackendFactory = func(backendName string, _ AuthDeps) BackendManager {
 		if backendName != pluginAccountDBBackendName {
 			t.Fatalf("backendName = %q, want %s", backendName, pluginAccountDBBackendName)
 		}
 
 		return fake
-	})
+	}
 
 	accounts := auth.ListUserAccounts()
 	if len(accounts) != 1 || accounts[0] != fake.accounts[0] {
@@ -62,22 +61,6 @@ func mustPluginAccountDBBackend(t *testing.T) *config.Backend {
 	}
 
 	return backend
-}
-
-func replaceBackendManagerFactoryForTest(t *testing.T, backendType definitions.Backend, factory BackendManagerFactory) {
-	t.Helper()
-
-	previous, hadPrevious := backendManagerFactories.Load(backendType)
-	RegisterBackendManagerFactory(backendType, factory)
-	t.Cleanup(func() {
-		if hadPrevious {
-			backendManagerFactories.Store(backendType, previous)
-
-			return
-		}
-
-		backendManagerFactories.Delete(backendType)
-	})
 }
 
 type accountDBBackendManager struct {

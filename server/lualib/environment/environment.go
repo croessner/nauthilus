@@ -26,7 +26,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -35,8 +34,8 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/lualib/luamod"
 	"github.com/croessner/nauthilus/v3/server/lualib/luapool"
+	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v3/server/lualib/pipeline"
-	"github.com/croessner/nauthilus/v3/server/lualib/policyschedule"
 	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/policy"
@@ -51,40 +50,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// LuaEnvironmentSources holds pre-compiled Lua environment sources for the application.
-var LuaEnvironmentSources *PreCompiledLuaEnvironmentSources
+// errEnvironmentSourcePoolKeyMissing rejects generation-owned execution without an isolated pool identity.
+var errEnvironmentSourcePoolKeyMissing = stderrors.New("generation-owned Lua environment VM pool key is required")
 
-// PreCompileLuaEnvironmentSources pre-compiles Lua environment sources listed in the configuration.
-// Returns an error if the pre-compilation process or Lua environment source initialization fails, otherwise returns nil.
-func PreCompileLuaEnvironmentSources(cfg config.File, _ *slog.Logger) (err error) {
-	if cfg.HaveLuaEnvironmentSources() {
-		if LuaEnvironmentSources == nil {
-			LuaEnvironmentSources = &PreCompiledLuaEnvironmentSources{}
-		} else {
-			LuaEnvironmentSources.Reset()
-		}
-
-		sources := cfg.GetLua().GetEnvironmentSources()
-		for index := range sources {
-			var luaEnvironmentSource *LuaEnvironmentSource
-
-			cfgSource := sources[index]
-
-			luaEnvironmentSource, err = NewLuaEnvironmentSource(cfgSource.Name, cfgSource.ScriptPath)
-			if err != nil {
-				return err
-			}
-
-			LuaEnvironmentSources.Add(luaEnvironmentSource)
-		}
-
-		if err = LuaEnvironmentSources.RebuildPlans(); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
+// errEnvironmentSourcePoolManagerMissing rejects execution without the generation-captured pool owner.
+var errEnvironmentSourcePoolManagerMissing = stderrors.New("generation-owned Lua environment VM pool manager is required")
 
 // PreCompiledLuaEnvironmentSources represents a collection of pre-compiled Lua environment sources.
 // It contains an array of LuaEnvironmentSource objects and a read-write mutex for synchronization.
@@ -145,49 +115,14 @@ func (a *PreCompiledLuaEnvironmentSources) planForMode(mode pipeline.ModeMask) (
 	return plan, false, nil
 }
 
-func (a *PreCompiledLuaEnvironmentSources) planForRequest(r *Request, mode pipeline.ModeMask) (pipeline.Plan, bool, error) {
-	if r != nil && r.ScriptRecorder != nil {
-		scriptPlan := r.ScriptRecorder.ScriptPlan(policycollection.ScriptKindEnvironment, requestEnvironmentAuthState(r))
-		if scriptPlan.Configured {
-			plan, err := policyschedule.BuildPlan(environmentPipelineNodes(a.LuaScripts), scriptPlan, mode)
-
-			return plan, false, err
-		}
-	}
-
-	return a.planForMode(mode)
-}
-
 // LuaEnvironmentSource represents a Lua environment source that has been compiled.
 // It contains a name identifying the environment source and the compiled Lua script.
 type LuaEnvironmentSource struct {
 	Name           string
 	CompiledScript *lua.FunctionProto
+	Modules        *luaseal.Modules
 	Dependencies   []string
 	Modes          pipeline.ModeMask
-}
-
-// NewLuaEnvironmentSource creates a new LuaEnvironmentSource instance by compiling the Lua script found at the given path and assigning its name.
-// Returns the LuaEnvironmentSource instance or an error if either the name or scriptPath is empty, or if script compilation fails.
-func NewLuaEnvironmentSource(name string, scriptPath string) (*LuaEnvironmentSource, error) {
-	if name == "" {
-		return nil, errors.ErrEnvironmentSourceLuaNameMissing
-	}
-
-	if scriptPath == "" {
-		return nil, errors.ErrEnvironmentSourceLuaScriptPathEmpty
-	}
-
-	compiledScript, err := lualib.CompileLua(scriptPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return &LuaEnvironmentSource{
-		Name:           name,
-		CompiledScript: compiledScript,
-		Modes:          pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated,
-	}, nil
 }
 
 func environmentPipelineNodes(sources []*LuaEnvironmentSource) []pipeline.Node {
@@ -218,14 +153,6 @@ func requestEnvironmentMode(r *Request) pipeline.ModeMask {
 	return pipeline.ModeUnauthenticated
 }
 
-func requestEnvironmentAuthState(r *Request) policycollection.AuthState {
-	if r != nil && r.Authenticated {
-		return policycollection.AuthStateAuthenticated
-	}
-
-	return policycollection.AuthStateUnauthenticated
-}
-
 // Request represents a request data structure with all the necessary information about a connection and SSL usage.
 type Request struct {
 	Session              string
@@ -246,6 +173,8 @@ type Request struct {
 
 	HTTPClientContext *gin.Context
 	HTTPClientRequest *http.Request
+	// Tolerate is the request-owned brute-force tolerance authority.
+	Tolerate          tolerate.Tolerate
 	ScriptRecorder    policycollection.ScriptRecorder
 	PolicyContext     *policycollection.DecisionContext
 	Authenticated     bool
@@ -254,9 +183,50 @@ type Request struct {
 	MasterUserMode    bool
 }
 
-// CallEnvironmentLua executes Lua environment source scripts within the context of a request.
-// It returns whether an environment source was triggered, whether later sources should be aborted, and any execution error.
-func (r *Request) CallEnvironmentLua(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client) (triggered bool, skipRemainingEnvironment bool, err error) {
+// CallEnvironmentLuaSource executes exactly one caller-owned precompiled source.
+func (r *Request) CallEnvironmentLuaSource(
+	ctx *gin.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	redisClient rediscli.Client,
+	source *LuaEnvironmentSource,
+	pools *vmpool.Manager,
+	poolKey vmpool.PoolKey,
+) (triggered bool, skipRemainingEnvironment bool, err error) {
+	if pools == nil {
+		return false, false, errEnvironmentSourcePoolManagerMissing
+	}
+
+	if poolKey == "" {
+		return false, false, errEnvironmentSourcePoolKeyMissing
+	}
+
+	if source == nil || source.Name == "" || source.CompiledScript == nil {
+		return false, false, errors.ErrEnvironmentSourceLuaNameMissing
+	}
+
+	sources := &PreCompiledLuaEnvironmentSources{LuaScripts: []*LuaEnvironmentSource{source}}
+	if err = sources.RebuildPlans(); err != nil {
+		return false, false, err
+	}
+
+	return r.callEnvironmentLua(ctx, cfg, logger, redisClient, sources, pools, poolKey)
+}
+
+// callEnvironmentLua executes one immutable source collection without selecting ambient authority.
+func (r *Request) callEnvironmentLua(
+	ctx *gin.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	redisClient rediscli.Client,
+	sources *PreCompiledLuaEnvironmentSources,
+	pools *vmpool.Manager,
+	poolKey vmpool.PoolKey,
+) (triggered bool, skipRemainingEnvironment bool, err error) {
+	if pools == nil {
+		return false, false, errEnvironmentSourcePoolManagerMissing
+	}
+
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
@@ -268,20 +238,20 @@ func (r *Request) CallEnvironmentLua(ctx *gin.Context, cfg config.File, logger *
 		r.Logs.Set(definitions.LogKeyEnvironmentLatency, util.FormatDurationMs(latency))
 	}()
 
-	if LuaEnvironmentSources == nil || len(LuaEnvironmentSources.LuaScripts) == 0 {
+	if sources == nil || len(sources.LuaScripts) == 0 {
 		return
 	}
 
-	LuaEnvironmentSources.Mu.RLock()
+	sources.Mu.RLock()
 
-	defer LuaEnvironmentSources.Mu.RUnlock()
+	defer sources.Mu.RUnlock()
 
-	pool := vmpool.GetManager().GetOrCreate("environment:default", vmpool.PoolOptions{
+	pool := pools.GetOrCreate(poolKey, vmpool.PoolOptions{
 		MaxVMs: cfg.GetLuaEnvironmentSourceVMPoolSize(),
 		Config: cfg,
 	})
 
-	triggered, skipRemainingEnvironment, err = r.executeScripts(ctx, cfg, logger, redisClient, pool)
+	triggered, skipRemainingEnvironment, err = r.executeScripts(ctx, cfg, logger, redisClient, pool, sources)
 
 	return
 }
@@ -290,7 +260,14 @@ func (r *Request) CallEnvironmentLua(ctx *gin.Context, cfg config.File, logger *
 // then aggregates their results considering error, abort, and triggered semantics.
 //
 //nolint:gocyclo,funlen
-func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, pool *vmpool.Pool) (triggered bool, skipRemainingEnvironment bool, err error) {
+func (r *Request) executeScripts(
+	ctx *gin.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	redisClient rediscli.Client,
+	pool *vmpool.Pool,
+	sources *PreCompiledLuaEnvironmentSources,
+) (triggered bool, skipRemainingEnvironment bool, err error) {
 	type environmentResult struct {
 		name         string
 		scriptIdx    int
@@ -317,7 +294,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 	pctx, pspan := tr.Start(ctx.Request.Context(), "environment.plan.lookup")
 	_ = pctx
 
-	plan, cached, err := LuaEnvironmentSources.planForRequest(r, mode)
+	plan, cached, err := sources.planForMode(mode)
 	pspan.SetAttributes(
 		attribute.Bool("cached", cached),
 		attribute.Int("levels", len(plan.Levels)),
@@ -406,6 +383,10 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 				var localStatus *string
 
+				if err = luaseal.PreparePolicyProfile(Llocal, source.Modules, luaseal.PolicyProfileEnvironment); err != nil {
+					return err
+				}
+
 				envCtx, envSpan := tr.Start(traceCtx, "environment_sources.env.prepare",
 					attribute.String("name", source.Name),
 					attribute.String("mode", modeText),
@@ -463,7 +444,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 				modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
 
-				modManager.BindAllDefault(luaCtx, Llocal, localRequest.Context, tolerate.GetTolerate())
+				modManager.BindAllPolicyRequest(luaCtx, Llocal, localRequest.Context, localRequest.Tolerate)
 				modManager.BindModule(
 					Llocal,
 					definitions.LuaModPolicy,
@@ -474,8 +455,6 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					modManager.BindHTTP(Llocal, lualib.NewHTTPMetaFromRequest(ctx.Request))
 				}
 
-				modManager.BindHTTPResponse(Llocal, ctx)
-				modManager.BindLDAP(Llocal, backend.LoaderModLDAP(luaCtx, cfg))
 				mspan.End()
 				envSpan.End()
 
@@ -487,9 +466,9 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					attribute.Int("level", levelIndex),
 				)
 
-				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.package_path")
+				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.module_authority")
 
-				if e := lualib.PackagePath(Llocal, cfg); e != nil {
+				if e := luaseal.InstallPolicyProfile(Llocal, source.Modules, luaseal.PolicyProfileEnvironment); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, source.Name, stopTimer)
 					packagePathSpan.RecordError(e)
 					packagePathSpan.End()

@@ -24,9 +24,6 @@ import (
 
 // LuaSection describes the exported LuaSection type.
 type LuaSection struct {
-	Actions             []LuaAction            `mapstructure:"actions" validate:"omitempty,dive"`
-	EnvironmentSources  []LuaEnvironmentSource `mapstructure:"-" validate:"omitempty,dive"`
-	SubjectSources      []LuaSubjectSource     `mapstructure:"-" validate:"omitempty,dive"`
 	Hooks               []LuaHooks             `mapstructure:"hooks" validate:"omitempty,dive"`
 	Config              *LuaConf               `mapstructure:"config" validate:"omitempty"`
 	OptionalLuaBackends map[string]*LuaConf    `mapstructure:"optional_lua_backends" validate:"omitempty,dive"`
@@ -82,33 +79,6 @@ func (l *LuaSection) GetOptionalLuaBackends() map[string]*LuaConf {
 	return l.OptionalLuaBackends
 }
 
-// GetActions retrieves the list of LuaAction from the LuaSection. Returns an empty slice if the LuaSection is nil.
-func (l *LuaSection) GetActions() []LuaAction {
-	if l == nil {
-		return []LuaAction{}
-	}
-
-	return l.Actions
-}
-
-// GetEnvironmentSources retrieves the Lua environment sources from the LuaSection.
-func (l *LuaSection) GetEnvironmentSources() []LuaEnvironmentSource {
-	if l == nil {
-		return []LuaEnvironmentSource{}
-	}
-
-	return l.EnvironmentSources
-}
-
-// GetSubjectSources retrieves the Lua subject sources from the LuaSection.
-func (l *LuaSection) GetSubjectSources() []LuaSubjectSource {
-	if l == nil {
-		return []LuaSubjectSource{}
-	}
-
-	return l.SubjectSources
-}
-
 // GetHooks retrieves the list of LuaHooks from the LuaSection. Returns an empty slice if the LuaSection is nil.
 func (l *LuaSection) GetHooks() []LuaHooks {
 	if l == nil {
@@ -116,126 +86,6 @@ func (l *LuaSection) GetHooks() []LuaHooks {
 	}
 
 	return l.Hooks
-}
-
-// LuaAction describes the exported LuaAction type.
-type LuaAction struct {
-	ActionType string `mapstructure:"type" validate:"required,oneof=brute_force rbl tls_encryption relay_domains lua post"`
-	ScriptName string `mapstructure:"name" validate:"required"`
-	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
-}
-
-func (l *LuaAction) String() string {
-	if l == nil {
-		return configStringNil
-	}
-
-	return fmt.Sprintf("{ActionType: %s}, {BackendScriptPath: %s}", l.ActionType, l.ScriptPath)
-}
-
-// GetAction returns the ActionType, ScriptName, and ScriptPath of a LuaAction.
-// It is a method of the LuaAction struct.
-// The ActionType field represents the type of the Lua action.
-// The ScriptName field represents the name of the Lua script.
-// The ScriptPath field represents the path to the Lua script file.
-// It returns these values as strings.
-func (l *LuaAction) GetAction() (string, string, string) {
-	if l == nil {
-		return "", "", ""
-	}
-
-	return l.ActionType, l.ScriptName, l.ScriptPath
-}
-
-// GetActionType retrieves the ActionType from the LuaAction. Returns an empty string if the LuaAction is nil.
-func (l *LuaAction) GetActionType() string {
-	if l == nil {
-		return ""
-	}
-
-	return l.ActionType
-}
-
-// GetScriptName retrieves the ScriptName from the LuaAction. Returns an empty string if the LuaAction is nil.
-func (l *LuaAction) GetScriptName() string {
-	if l == nil {
-		return ""
-	}
-
-	return l.ScriptName
-}
-
-// GetScriptPath retrieves the ScriptPath from the LuaAction. Returns an empty string if the LuaAction is nil.
-func (l *LuaAction) GetScriptPath() string {
-	if l == nil {
-		return ""
-	}
-
-	return l.ScriptPath
-}
-
-// LuaEnvironmentSource configures one Lua script that emits or evaluates environment attributes.
-type LuaEnvironmentSource struct {
-	Name       string `mapstructure:"name" validate:"required"`
-	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
-}
-
-func (l *LuaEnvironmentSource) String() string {
-	if l == nil {
-		return configStringNil
-	}
-
-	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
-}
-
-// GetName retrieves the Name from the LuaEnvironmentSource. Returns an empty string if the LuaEnvironmentSource is nil.
-func (l *LuaEnvironmentSource) GetName() string {
-	if l == nil {
-		return ""
-	}
-
-	return l.Name
-}
-
-// GetScriptPath retrieves the ScriptPath from the LuaEnvironmentSource. Returns an empty string if the LuaEnvironmentSource is nil.
-func (l *LuaEnvironmentSource) GetScriptPath() string {
-	if l == nil {
-		return ""
-	}
-
-	return l.ScriptPath
-}
-
-// LuaSubjectSource configures one Lua script that evaluates or enriches subject attributes.
-type LuaSubjectSource struct {
-	Name       string `mapstructure:"name" validate:"required"`
-	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
-}
-
-func (l *LuaSubjectSource) String() string {
-	if l == nil {
-		return configStringNil
-	}
-
-	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
-}
-
-// GetName retrieves the Name from the LuaSubjectSource. Returns an empty string if the LuaSubjectSource is nil.
-func (l *LuaSubjectSource) GetName() string {
-	if l == nil {
-		return ""
-	}
-
-	return l.Name
-}
-
-// GetScriptPath retrieves the ScriptPath from the LuaSubjectSource. Returns an empty string if the LuaSubjectSource is nil.
-func (l *LuaSubjectSource) GetScriptPath() string {
-	if l == nil {
-		return ""
-	}
-
-	return l.ScriptPath
 }
 
 // LuaConf describes the exported LuaConf type.

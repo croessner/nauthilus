@@ -1,8 +1,9 @@
 # GeoIP/ASN Reference Plugin
 
-This directory contains a small native Go plugin that demonstrates the Nauthilus `pluginapi/v1` environment source path.
-It enriches pre-auth requests from a local JSON fixture or MaxMind `.mmdb` GeoIP/ASN database and emits policy facts
-under `plugin.environment.geoip.*`.
+This directory contains a native Go plugin with one request-time component owner: the target-aware generic
+`DecisionFactProvider` named `geoip.environment`. Top-level `policy` configuration binds its canonical ID
+`authn/plugin.geoip.environment`; the host qualifies its 26 outputs under `plugin.geoip.*`. The plugin does not
+register an authentication-shaped `EnvironmentSource` or another request-time adapter.
 
 Runtime debug output is controlled with `server.log.debug_modules`. The module-level selector `plugin.geoip` is
 registered automatically; the plugin currently does not declare additional local debug selectors.
@@ -73,10 +74,10 @@ The plugin-owned config subtree accepts:
 
 ### Free network privacy intelligence
 
-`privacy_intelligence` is disabled by default. When enabled, it extends this same environment source with local,
-immutable evidence about Tor exits, known VPN exits, community VPN exits, public proxies, privacy relays, shared public
-egress, and hosting networks. It does not make authentication decisions, and it does not perform network or file I/O
-while evaluating a request. Policy remains the only decision authority.
+`privacy_intelligence` is disabled by default. When enabled, it extends the same internal lookup used by the generic
+provider with local, immutable evidence about Tor exits, known VPN exits, community VPN exits, public proxies, privacy
+relays, shared public egress, and hosting networks. It does not make authentication decisions, and it does not perform
+network or file I/O while evaluating a request. Policy remains the only decision authority.
 
 VPN coverage is necessarily incomplete. A negative result means that the address was not present in the configured,
 valid snapshots; it is not proof that the client is not using a VPN. Likewise, a hosting or cloud match is only network
@@ -95,8 +96,6 @@ The main settings are:
 - `lookup_timeout`: bounds the in-memory privacy lookup and may not exceed the parent `lookup_timeout`; default `10ms`.
 - `max_snapshot_entries`: bounds entries accepted from one source; default `1000000`.
 - `max_download_bytes`: bounds one remote response and persistent-cache load; default 32 MiB.
-- `public_log_fields`: emits only the approved bounded central fields for `evaluated` or `stale` lookups; default
-  `false`.
 - `refresh.cache_dir`: optional absolute directory for atomically written mode-0600 remote-source caches.
 - `refresh.max_concurrent_downloads`: shared remote download bound, default `2`, maximum `8`.
 - `refresh.startup_jitter`: initial worker jitter, default `30s`.
@@ -191,57 +190,55 @@ Lookup state preserves tri-state semantics:
 - `no_sources`: there is no usable configured source state.
 - `invalid_ip`: the request client address was invalid; classification booleans are omitted.
 
-Public request logs are intentionally narrower than policy facts and exchange values. When enabled, they may contain only
-`policy_fact_geoip_privacy_primary_class`, `policy_fact_geoip_privacy_confidence`,
-`policy_fact_geoip_privacy_data_stale`, `policy_fact_geoip_is_tor_exit_node`,
-`policy_fact_geoip_is_known_vpn_exit`, `policy_fact_geoip_is_public_proxy`, and
-`policy_fact_geoip_is_hosting_network`, and `policy_fact_geoip_is_shared_egress`. They are emitted only for `evaluated`
-or `stale` state and never include source
-IDs, provider names, URLs, license data, override reasons, or raw evidence.
-
 See [server/docs/go_plugins.md](../../../server/docs/go_plugins.md) for operations guidance and
 [server/docs/examples/go_plugin_geoip.yml](../../../server/docs/examples/go_plugin_geoip.yml) for a complete loader and
 policy example.
 
-## Emitted Facts
+## Generic Policy facts
 
-- `plugin.environment.geoip.matched`
-- `plugin.environment.geoip.country_iso`
-- `plugin.environment.geoip.country_name`
-- `plugin.environment.geoip.city_name`
-- `plugin.environment.geoip.asn`
-- `plugin.environment.geoip.asn_org`
-- `plugin.environment.geoip.asn_prefix`
-- `plugin.environment.geoip.asn_registry`
-- `plugin.environment.geoip.asn_country_iso`
-- `plugin.environment.geoip.asn_allocated`
-- `plugin.environment.geoip.asn_status`
-- `plugin.environment.geoip.privacy_lookup_state`
-- `plugin.environment.geoip.privacy_detected`
-- `plugin.environment.geoip.privacy_classes`
-- `plugin.environment.geoip.privacy_primary_class`
-- `plugin.environment.geoip.privacy_confidence`
-- `plugin.environment.geoip.privacy_source_authorities`
-- `plugin.environment.geoip.privacy_data_stale`
-- `plugin.environment.geoip.privacy_data_age_seconds`
-- `plugin.environment.geoip.is_tor_exit_node`
-- `plugin.environment.geoip.is_known_vpn_exit`
-- `plugin.environment.geoip.is_community_vpn_exit`
-- `plugin.environment.geoip.is_public_proxy`
-- `plugin.environment.geoip.is_privacy_relay`
-- `plugin.environment.geoip.is_hosting_network`
-- `plugin.environment.geoip.is_shared_egress`
+- `plugin.geoip.matched`
+- `plugin.geoip.country_iso`
+- `plugin.geoip.country_name`
+- `plugin.geoip.city_name`
+- `plugin.geoip.asn`
+- `plugin.geoip.asn_org`
+- `plugin.geoip.asn_prefix`
+- `plugin.geoip.asn_registry`
+- `plugin.geoip.asn_country_iso`
+- `plugin.geoip.asn_allocated`
+- `plugin.geoip.asn_status`
+- `plugin.geoip.privacy_lookup_state`
+- `plugin.geoip.privacy_detected`
+- `plugin.geoip.privacy_classes`
+- `plugin.geoip.privacy_primary_class`
+- `plugin.geoip.privacy_confidence`
+- `plugin.geoip.privacy_source_authorities`
+- `plugin.geoip.privacy_data_stale`
+- `plugin.geoip.privacy_data_age_seconds`
+- `plugin.geoip.is_tor_exit_node`
+- `plugin.geoip.is_known_vpn_exit`
+- `plugin.geoip.is_community_vpn_exit`
+- `plugin.geoip.is_public_proxy`
+- `plugin.geoip.is_privacy_relay`
+- `plugin.geoip.is_hosting_network`
+- `plugin.geoip.is_shared_egress`
 
-The runtime delta is stored at `plugin.exchange.geoip` and contains only JSON-compatible values. Policy facts remain
-under `plugin.environment.geoip.*` because policy facts are the decision authority, while runtime exchange is the
-plan-local analytics surface for later post-action steps.
-The historical Lua `rt` table is not part of the native Go exchange standard; native consumers should use
-`plugin.exchange.geoip` and policy facts.
+The generic provider accepts only the already admitted `input.auth.client_ip` fact and supports the exact targets
+`authn/authenticate` and `authn/lookup_identity`. It receives no credential, raw transport, response, or scheduling
+authority. Candidate preparation cross-checks `authn/plugin.geoip.environment` and every selected `plugin.geoip.*`
+output against this registered descriptor.
 
-The same privacy suffixes are added to `plugin.exchange.geoip` without replacing location, ASN, or GUID values. The
-native ClickHouse plugin consumes the typed exchange values first and compatible policy facts second. Before deploying
-plugin artifacts that emit privacy values, apply the additive `geoip_privacy_*` and `geoip_is_*` columns from
-`contrib/clickhouse-kubernetes/schema.sql`; see
+The generic result contract carries facts and a safe error class only. It does not expose the old plugin-owned request
+log fields or runtime delta; policy diagnostics and request logging remain host-owned surfaces.
+
+The internal lookup preserves the existing redacted GeoIP value contract, but it is invoked only by the generic
+provider. No `plugin.environment.geoip.*` source and no `plugin.exchange.geoip` execution path is registered. Native
+analytics consumers project the already collected `plugin.geoip.*` facts into their typed GeoIP view. Their fallback
+recognition of the older `plugin.environment.geoip.*` and `plugin.exchange.geoip` shapes is consumer-side projection of
+the two public plugin API contracts, not a runtime alias, fact synthesis, or second GeoIP execution authority.
+
+Before deploying plugin artifacts that emit privacy values, apply the additive `geoip_privacy_*` and `geoip_is_*`
+columns from `contrib/clickhouse-kubernetes/schema.sql`; see
 [the Kubernetes ClickHouse guide](../../clickhouse-kubernetes/README.md) for schema-first ordering and verification SQL.
 
 ## Request-Time Tracing

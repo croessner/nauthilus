@@ -22,6 +22,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v3/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
@@ -57,23 +58,34 @@ type checkpointPlanSource interface {
 	Checkpoints(decision.Target) ([]CheckpointPlan, error)
 }
 
-type authnPolicySnapshotSource interface {
-	authnPolicySnapshot() *policyruntime.Snapshot
+type authorityModeSource interface {
+	AuthorityMode(decision.Target) (string, bool)
 }
 
 type runtimeGenerationDependencies struct {
-	authenticator callerAuthenticator
-	admission     admissionAuthority
-	evaluator     checkpointEvaluator
-	supervisor    effectsupervisor.Acceptor
+	material              policyruntime.DecisionServiceMaterial
+	authenticator         callerAuthenticator
+	admission             admissionAuthority
+	evaluator             checkpointEvaluator
+	supervisor            effectsupervisor.Acceptor
+	hostProviders         map[string]policyruntime.AuthnHostProvider
+	authnLuaFacts         []registry.AuthnLuaFactDeclaration
+	authnPolicyAttributes map[string]registry.AttributeDefinition
 }
 
 type runtimeGeneration struct {
-	authenticator callerAuthenticator
-	admission     admissionAuthority
-	evaluator     checkpointEvaluator
-	supervisor    effectsupervisor.Acceptor
-	id            uint64
+	messageResolver       policyruntime.MessageResolver
+	config                policyruntime.GenerationConfig
+	authenticator         callerAuthenticator
+	admission             admissionAuthority
+	evaluator             checkpointEvaluator
+	supervisor            effectsupervisor.Acceptor
+	authnHostProviders    map[string]policyruntime.AuthnHostProvider
+	authnLuaFacts         []registry.AuthnLuaFactDeclaration
+	authnPolicyAttributes map[string]registry.AttributeDefinition
+	internalPresentations map[string]decision.AuthenticationInput
+	apiAvailability       policyruntime.PolicyAPIAvailability
+	id                    uint64
 }
 
 // GenerationID returns the immutable server-state generation identity.
@@ -87,7 +99,7 @@ func (g *runtimeGeneration) GenerationID() uint64 {
 
 // newRuntimeGeneration constructs one complete immutable application authority generation.
 func newRuntimeGeneration(id uint64, deps runtimeGenerationDependencies) (Generation, error) {
-	if id == 0 ||
+	if id == 0 || deps.material.Validate() != nil ||
 		nilDependency(deps.authenticator) ||
 		nilDependency(deps.admission) ||
 		nilDependency(deps.evaluator) ||
@@ -96,11 +108,18 @@ func newRuntimeGeneration(id uint64, deps runtimeGenerationDependencies) (Genera
 	}
 
 	return &runtimeGeneration{
-		authenticator: deps.authenticator,
-		admission:     deps.admission,
-		evaluator:     deps.evaluator,
-		supervisor:    deps.supervisor,
-		id:            id,
+		messageResolver:       deps.material.MessageResolver(),
+		config:                deps.material.Config(),
+		authenticator:         deps.authenticator,
+		admission:             deps.admission,
+		evaluator:             deps.evaluator,
+		supervisor:            deps.supervisor,
+		authnHostProviders:    cloneAuthnHostProviders(deps.hostProviders),
+		authnLuaFacts:         cloneAuthnLuaFacts(deps.authnLuaFacts),
+		authnPolicyAttributes: cloneAuthnPolicyAttributes(deps.authnPolicyAttributes),
+		internalPresentations: cloneInternalPresentations(deps.material.InternalPresentations()),
+		apiAvailability:       deps.material.APIAvailability(),
+		id:                    id,
 	}, nil
 }
 
@@ -113,10 +132,66 @@ func (g *runtimeGeneration) decisionGeneration() *runtimeGeneration {
 func (g *runtimeGeneration) valid() bool {
 	return g != nil &&
 		g.id > 0 &&
+		!nilDependency(g.config) &&
+		g.apiAvailability.Configured &&
+		g.apiAvailability.MaxRequestBytes > 0 &&
+		!nilDependency(g.messageResolver) &&
 		!nilDependency(g.authenticator) &&
 		!nilDependency(g.admission) &&
 		!nilDependency(g.evaluator) &&
 		!nilDependency(g.supervisor)
+}
+
+// cloneAuthnHostProviders detaches the index while retaining immutable prepared owners.
+func cloneAuthnHostProviders(
+	input map[string]policyruntime.AuthnHostProvider,
+) map[string]policyruntime.AuthnHostProvider {
+	if len(input) == 0 {
+		return nil
+	}
+
+	result := make(map[string]policyruntime.AuthnHostProvider, len(input))
+	for id, provider := range input {
+		result[id] = provider
+	}
+
+	return result
+}
+
+// cloneAuthnLuaFacts deeply detaches generation-owned registry declarations.
+func cloneAuthnLuaFacts(input []registry.AuthnLuaFactDeclaration) []registry.AuthnLuaFactDeclaration {
+	result := make([]registry.AuthnLuaFactDeclaration, len(input))
+	for index, declaration := range input {
+		result[index] = declaration.Clone()
+	}
+
+	return result
+}
+
+// cloneAuthnPolicyAttributes deeply detaches generation-owned native auth declarations.
+func cloneAuthnPolicyAttributes(
+	input map[string]registry.AttributeDefinition,
+) map[string]registry.AttributeDefinition {
+	result := make(map[string]registry.AttributeDefinition, len(input))
+	for id, definition := range input {
+		result[id] = registry.CloneDefinition(definition)
+	}
+
+	return result
+}
+
+// cloneInternalPresentations owns the code-provisioned internal credential map.
+func cloneInternalPresentations(input map[string]decision.AuthenticationInput) map[string]decision.AuthenticationInput {
+	if len(input) == 0 {
+		return nil
+	}
+
+	result := make(map[string]decision.AuthenticationInput, len(input))
+	for id, presentation := range input {
+		result[id] = presentation
+	}
+
+	return result
 }
 
 // nilDependency rejects nil and typed-nil injected interface values.

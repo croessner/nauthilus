@@ -25,14 +25,12 @@ import (
 	"fmt"
 	"maps"
 	"math/big"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/frontend"
@@ -42,7 +40,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/idp/dcr"
 	"github.com/croessner/nauthilus/v3/server/idp/signing"
 	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
-	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/middleware/csrf"
 	"github.com/croessner/nauthilus/v3/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/v3/server/middleware/lua"
@@ -53,7 +50,6 @@ import (
 	"github.com/gin-gonic/gin"
 	jsoniter "github.com/json-iterator/go"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // formValue retrieves a request parameter from either the POST body or the URL
@@ -160,6 +156,7 @@ func oidcRequestValues(ctx *gin.Context, key string) []string {
 // OIDCHandler handles OIDC protocol requests.
 type OIDCHandler struct {
 	deps                             *deps.Deps
+	artifacts                        *config.ArtifactSnapshot
 	idp                              *idp.NauthilusIDP
 	storage                          *idp.RedisTokenStorage
 	deviceStore                      idp.DeviceCodeStore
@@ -207,6 +204,7 @@ func NewOIDCHandler(d *deps.Deps, idpInstance *idp.NauthilusIDP, frontendHandler
 
 	return &OIDCHandler{
 		deps:                d,
+		artifacts:           identityArtifactSnapshot(d.Cfg),
 		idp:                 idpInstance,
 		storage:             idp.NewRedisTokenStorageWithConfig(d.Redis, prefix, d.Cfg, registrationAuditor),
 		deviceStore:         idp.NewRedisDeviceCodeStoreWithConfig(d.Redis, prefix, d.Cfg),
@@ -878,7 +876,12 @@ func (h *OIDCHandler) oidcEndpointURL(path string) string {
 
 // buildClientVerifier creates a signing.Verifier for the client's public key.
 func (h *OIDCHandler) buildClientVerifier(client *config.OIDCClient) (signing.Verifier, error) {
-	pemData, err := client.GetClientPublicKey()
+	pemData, err := identityArtifactContent(
+		h.artifacts,
+		client.ClientPublicKey,
+		client.ClientPublicKeyFile,
+		"OIDC client public key",
+	)
 	if err != nil || pemData == "" {
 		return nil, fmt.Errorf("no public key configured for client %s", client.ClientID)
 	}
@@ -939,17 +942,6 @@ type tokenResponse struct {
 	expiresIn    time.Duration
 }
 
-type oidcTokenPostActionSubject struct {
-	Username     string
-	UniqueUserID string
-	DisplayName  string
-	MFACompleted bool
-	MFAMethod    string
-	UserFound    bool
-}
-
-const oidcTokenPostActionSubjectKey = "oidc_token_post_action_subject"
-
 // oidcTokenAuthMethod resolves the effective token endpoint client authentication method.
 func oidcTokenAuthMethod(ctx *gin.Context) string {
 	if ctx == nil || ctx.Request == nil {
@@ -987,15 +979,6 @@ func oidcTokenResult(httpStatus int) string {
 	}
 
 	return "failed"
-}
-
-func oidcTokenClientPort(remoteAddr string) string {
-	_, port, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		return ""
-	}
-
-	return port
 }
 
 func oidcTokenStatusMessage(result string, httpStatus int) string {
@@ -1049,219 +1032,9 @@ func oidcRefreshTokenFailureReason(err error) string {
 	}
 }
 
-func oidcTokenDataContext(ctx *gin.Context) *lualib.Context {
-	if ctx == nil {
-		return lualib.NewContext()
-	}
-
-	luaCtx, ok := ctx.Get(definitions.CtxDataExchangeKey)
-
-	contextData, _ := luaCtx.(*lualib.Context)
-	if !ok || contextData == nil {
-		return lualib.NewContext()
-	}
-
-	return contextData
-}
-
-func newOIDCTokenPostActionSubjectFromSession(session *idp.OIDCSession) *oidcTokenPostActionSubject {
-	if session == nil {
-		return nil
-	}
-
-	username := strings.TrimSpace(session.Username)
-	if username == "" {
-		username = strings.TrimSpace(session.UserID)
-	}
-
-	subject := &oidcTokenPostActionSubject{
-		Username:     username,
-		UniqueUserID: strings.TrimSpace(session.UserID),
-		DisplayName:  strings.TrimSpace(session.DisplayName),
-		MFACompleted: session.MFACompleted,
-		MFAMethod:    strings.TrimSpace(session.MFAMethod),
-	}
-
-	subject.UserFound = subject.Username != "" || subject.UniqueUserID != "" || subject.DisplayName != ""
-
-	return subject
-}
-
-func setOIDCTokenPostActionSubject(ctx *gin.Context, session *idp.OIDCSession) {
-	if ctx == nil {
-		return
-	}
-
-	subject := newOIDCTokenPostActionSubjectFromSession(session)
-	if subject == nil {
-		return
-	}
-
-	ctx.Set(oidcTokenPostActionSubjectKey, subject)
-}
-
-func oidcTokenPostActionSubjectFromContext(ctx *gin.Context) (*oidcTokenPostActionSubject, bool) {
-	if ctx == nil {
-		return nil, false
-	}
-
-	value, ok := ctx.Get(oidcTokenPostActionSubjectKey)
-	if !ok {
-		return nil, false
-	}
-
-	subject, ok := value.(*oidcTokenPostActionSubject)
-	if !ok || subject == nil {
-		return nil, false
-	}
-
-	return subject, true
-}
-
-// fillOIDCTokenPostActionAuthState copies AuthState fields into the Lua request.
-func fillOIDCTokenPostActionAuthState(ctx *gin.Context, auth *core.AuthState, service string, clientID string, request *lualib.CommonRequest) {
-	if auth == nil {
-		return
-	}
-
-	auth.Runtime.GUID = ctx.GetString(definitions.CtxGUIDKey)
-	auth.Request.Service = service
-	auth.SetStatusCodes(service)
-	auth.SetOIDCCID(clientID)
-	auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
-	auth.FillCommonRequest(request)
-}
-
-// fillOIDCTokenPostActionBase sets token-endpoint metadata for Lua post-actions.
-func (h *OIDCHandler) fillOIDCTokenPostActionBase(
-	ctx *gin.Context,
-	request *lualib.CommonRequest,
-	service string,
-	grantType string,
-	clientID string,
-	authMethod string,
-	httpStatus int,
-	result string,
-	latency time.Duration,
-) {
-	request.Debug = h.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	request.NoAuth = true
-	request.Authenticated = result == sloRequestOutcomeSuccess
-	request.UserFound = false
-	request.Service = service
-	request.Session = ctx.GetString(definitions.CtxGUIDKey)
-	request.ClientIP = util.RequestClientIPWithConfig(ctx, h.deps.Cfg, h.deps.Logger)
-	request.ClientPort = oidcTokenClientPort(ctx.Request.RemoteAddr)
-	request.ClientID = clientID
-	request.UserAgent = ctx.Request.UserAgent()
-	request.Protocol = definitions.ProtoOIDC
-	request.Method = authMethod
-	request.OIDCCID = clientID
-	request.GrantType = grantType
-	request.EnvironmentStageExpected = false
-	request.SubjectStageExpected = false
-	request.Latency = float64(latency.Milliseconds())
-	request.HTTPStatus = httpStatus
-}
-
-// applyOIDCTokenPostActionSubject copies resolved subject data into the request.
-func applyOIDCTokenPostActionSubject(ctx *gin.Context, request *lualib.CommonRequest) {
-	subject, ok := oidcTokenPostActionSubjectFromContext(ctx)
-	if !ok {
-		return
-	}
-
-	request.Username = subject.Username
-	request.UniqueUserID = subject.UniqueUserID
-	request.DisplayName = subject.DisplayName
-	request.UserFound = subject.UserFound
-	request.MFACompleted = subject.MFACompleted
-	request.MFAMethod = subject.MFAMethod
-}
-
-// applyOIDCTokenPostActionMFAOverrides applies explicit MFA context overrides.
-func applyOIDCTokenPostActionMFAOverrides(ctx *gin.Context, request *lualib.CommonRequest) {
-	if mfaCompleted, ok := ctx.Get(definitions.CtxMFACompletedKey); ok {
-		if value, ok := mfaCompleted.(bool); ok {
-			request.MFACompleted = value
-		}
-	}
-
-	if mfaMethod, ok := ctx.Get(definitions.CtxMFAMethodKey); ok {
-		if value, ok := mfaMethod.(string); ok {
-			request.MFAMethod = value
-		}
-	}
-}
-
-// buildOIDCTokenPostActionRequest creates the Lua request snapshot for OIDC
-// token endpoint post-actions without exposing token secrets.
-func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
-	ctx *gin.Context,
-	auth *core.AuthState,
-	service string,
-	grantType string,
-	clientID string,
-	authMethod string,
-	httpStatus int,
-	result string,
-	latency time.Duration,
-) lualib.CommonRequest {
-	request := lualib.CommonRequest{}
-
-	fillOIDCTokenPostActionAuthState(ctx, auth, service, clientID, &request)
-	h.fillOIDCTokenPostActionBase(ctx, &request, service, grantType, clientID, authMethod, httpStatus, result, latency)
-	applyOIDCTokenPostActionSubject(ctx, &request)
-	applyOIDCTokenPostActionMFAOverrides(ctx, &request)
-
-	return request
-}
-
-func (h *OIDCHandler) runOIDCTokenPostAction(
-	ctx *gin.Context,
-	grantType string,
-	clientID string,
-	authMethod string,
-	httpStatus int,
-	result string,
-	latency time.Duration,
-) {
-	if h == nil || h.deps == nil || h.deps.Cfg == nil || !h.deps.Cfg.HaveLuaActions() {
-		return
-	}
-
-	if ctx == nil || ctx.Request == nil {
-		return
-	}
-
-	authRaw := core.NewAuthStateFromContextWithDeps(ctx, h.deps.Auth())
-
-	auth, ok := authRaw.(*core.AuthState)
-	if !ok || auth == nil {
-		return
-	}
-
-	service := ctx.GetString(definitions.CtxServiceKey)
-	if service == "" {
-		service = definitions.ServIDP
-	}
-
-	failureReason := oidcTokenFailureReason(ctx)
-
-	auth.Request.Service = service
-
-	args := core.PostActionArgs{
-		Context:       oidcTokenDataContext(ctx),
-		HTTPRequest:   util.DetachedHTTPRequest(context.TODO(), ctx.Request),
-		ParentSpan:    trace.SpanContextFromContext(ctx.Request.Context()),
-		StatusMessage: oidcTokenStatusMessageWithReason(result, httpStatus, failureReason),
-		Request:       h.buildOIDCTokenPostActionRequest(ctx, auth, service, grantType, clientID, authMethod, httpStatus, result, latency),
-	}
-
-	auth.QueueLuaPostAction(args)
-}
-
-func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string, clientID string, startedAt time.Time) {
+// finishOIDCTokenRequest records the completed token request without dispatching
+// effects outside a generation-owned Decision Session.
+func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string, clientID string) {
 	if ctx == nil || ctx.Request == nil {
 		return
 	}
@@ -1298,20 +1071,6 @@ func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string,
 		definitions.DbgIdp,
 		keyvals...,
 	)
-
-	h.runOIDCTokenPostAction(ctx, grantType, clientID, authMethod, httpStatus, result, time.Since(startedAt))
-}
-
-func setOIDCTokenPostActionMFAOverrides(ctx *gin.Context, completed bool, method string) {
-	if ctx == nil {
-		return
-	}
-
-	ctx.Set(definitions.CtxMFACompletedKey, completed)
-
-	if method != "" {
-		ctx.Set(definitions.CtxMFAMethodKey, method)
-	}
 }
 
 // logTokenError logs a token issuance failure and responds with a server error.
@@ -1364,8 +1123,7 @@ func oidcMetricClientID(clientID string) string {
 }
 
 // beginOIDCTokenRequest captures common token request metadata.
-func (h *OIDCHandler) beginOIDCTokenRequest(ctx *gin.Context) (time.Time, string, string, string) {
-	startedAt := time.Now()
+func (h *OIDCHandler) beginOIDCTokenRequest(ctx *gin.Context) (string, string, string) {
 	grantType := formValue(ctx, oidcParamGrantType)
 
 	ctx.Set(definitions.CtxOIDCGrantTypeKey, grantType)
@@ -1379,7 +1137,7 @@ func (h *OIDCHandler) beginOIDCTokenRequest(ctx *gin.Context) (time.Time, string
 
 	h.logIncomingOIDCFlowRequest(ctx, flow, grantType, clientID)
 
-	return startedAt, grantType, clientID, flow
+	return grantType, clientID, flow
 }
 
 // authenticateOIDCTokenClient resolves the token endpoint client auth method.
@@ -1450,10 +1208,10 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 		return
 	}
 
-	startedAt, grantType, clientID, flow := h.beginOIDCTokenRequest(ctx)
+	grantType, clientID, flow := h.beginOIDCTokenRequest(ctx)
 	defer func() {
 		h.logCompletedOIDCFlowRequest(ctx, flow, grantType, clientID)
-		h.finishOIDCTokenRequest(ctx, grantType, clientID, startedAt)
+		h.finishOIDCTokenRequest(ctx, grantType, clientID)
 	}()
 
 	client, ok := h.authenticateOIDCTokenClient(ctx)

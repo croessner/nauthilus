@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
@@ -69,7 +70,6 @@ type factProviderBinding struct {
 
 type checkpointRuntimeConfig struct {
 	catalog           *policyruntime.TargetCatalog
-	policySnapshot    *policyruntime.Snapshot
 	factProviders     map[string]factProviderBinding
 	syncEffects       map[string]syncEffectBinding
 	postActions       map[string]postActionBinding
@@ -82,7 +82,6 @@ type checkpointRuntimeConfig struct {
 
 type checkpointRuntime struct {
 	catalog           *policyruntime.TargetCatalog
-	policySnapshot    *policyruntime.Snapshot
 	factProviders     map[string]factProviderBinding
 	syncEffects       map[string]syncEffectBinding
 	postActions       map[string]postActionBinding
@@ -96,15 +95,18 @@ type checkpointRuntime struct {
 type providerState string
 
 const (
-	providerStateCompleted providerState = "completed"
-	providerStateSkipped   providerState = "skipped"
-	providerStateFailed    providerState = "failed"
-	providerStateTimedOut  providerState = "timed_out"
+	providerStateCompleted   providerState = "completed"
+	providerStateSkipped     providerState = "skipped"
+	providerStateUnavailable providerState = "unavailable"
+	providerStateFailed      providerState = "failed"
+	providerStateTimedOut    providerState = "timed_out"
 )
 
 type providerRecord struct {
-	id    string
-	state providerState
+	id     string
+	use    string
+	reason string
+	state  providerState
 }
 
 type effectRecord struct {
@@ -132,6 +134,10 @@ func newCheckpointRuntime(config checkpointRuntimeConfig) (*checkpointRuntime, e
 		return nil, fmt.Errorf("%w: target catalog is required", ErrDecisionServiceDependencyMissing)
 	}
 
+	if err := validateHostProviderDependencies(config.catalog); err != nil {
+		return nil, err
+	}
+
 	timeout := config.evaluationTimeout
 	if timeout == 0 {
 		timeout = defaultEvaluationTimeout
@@ -153,7 +159,6 @@ func newCheckpointRuntime(config checkpointRuntimeConfig) (*checkpointRuntime, e
 
 	return &checkpointRuntime{
 		catalog:           config.catalog.Clone(),
-		policySnapshot:    config.policySnapshot.Clone(),
 		factProviders:     cloneFactProviderBindings(config.factProviders),
 		syncEffects:       cloneSyncEffectBindings(config.syncEffects),
 		postActions:       clonePostActionBindings(config.postActions),
@@ -165,13 +170,31 @@ func newCheckpointRuntime(config checkpointRuntimeConfig) (*checkpointRuntime, e
 	}, nil
 }
 
-// authnPolicySnapshot returns the exact legacy-view projection captured with this runtime.
-func (r *checkpointRuntime) authnPolicySnapshot() *policyruntime.Snapshot {
-	if r == nil {
-		return nil
+// validateHostProviderDependencies rejects schedules that require unavailable pre-evaluation state.
+func validateHostProviderDependencies(catalog *policyruntime.TargetCatalog) error {
+	for _, target := range catalog.Targets() {
+		for _, checkpoint := range target.DomainPlan().Checkpoints() {
+			for _, instance := range checkpoint.ProviderInstances() {
+				if !target.HostPreparesProvider(instance.Use()) {
+					continue
+				}
+
+				for _, dependencyName := range instance.Dependencies() {
+					dependency, exists := checkpoint.LookupProviderInstance(dependencyName)
+					if !exists || !target.HostPreparesProvider(dependency.Use()) {
+						return fmt.Errorf(
+							"%w: host provider %s depends on evaluator-owned provider %s",
+							ErrDecisionServiceDependencyMissing,
+							instance.Name(),
+							dependencyName,
+						)
+					}
+				}
+			}
+		}
 	}
 
-	return r.policySnapshot.Clone()
+	return nil
 }
 
 // Checkpoints returns the compiled target and provider order owned by this runtime candidate.
@@ -189,10 +212,38 @@ func (r *checkpointRuntime) Checkpoints(target decision.Target) ([]CheckpointPla
 
 	result := make([]CheckpointPlan, 0, len(checkpoints))
 	for _, checkpoint := range checkpoints {
-		result = append(result, newCheckpointPlan(checkpoint.Name(), checkpoint.ProviderIDs()))
+		instances := make([]CheckpointProviderInstance, 0, len(checkpoint.ProviderInstances()))
+		for _, instance := range checkpoint.ProviderInstances() {
+			instances = append(instances, checkpointProviderInstance(instance))
+		}
+
+		result = append(result, newCheckpointPlan(checkpoint.Name(), instances))
 	}
 
 	return result, nil
+}
+
+// checkpointProviderInstance projects exact compiled scheduling metadata into the session boundary.
+func checkpointProviderInstance(input policyruntime.CompiledProviderInstance) CheckpointProviderInstance {
+	return CheckpointProviderInstance{
+		actions: input.Actions(), after: input.After(), dependencies: input.Dependencies(), skipIf: input.SkipIf(),
+		name: input.Name(), use: input.Use(), runIfAuthState: input.RunIfAuthState(), output: input.Output(),
+		observeSafe: input.ObserveSafe(), observeSafeAuthored: input.ObserveSafeAuthored(),
+	}
+}
+
+// AuthorityMode returns the exact target mode owned by this compiled catalog.
+func (r *checkpointRuntime) AuthorityMode(target decision.Target) (string, bool) {
+	if r == nil || r.catalog == nil {
+		return "", false
+	}
+
+	compiled, ok := r.catalog.Lookup(target)
+	if !ok {
+		return "", false
+	}
+
+	return string(compiled.AuthorityMode()), true
 }
 
 // Evaluate executes one complete checkpoint lifecycle on captured generation state.
@@ -245,6 +296,9 @@ func (r *checkpointRuntime) Evaluate(ctx context.Context, input checkpointEvalua
 		checkpoint,
 		facts,
 		input.request.Caller(),
+		input.hostStates,
+		input.hostReasons,
+		input.authenticated,
 		&report,
 	)
 	report.facts = facts
@@ -359,12 +413,17 @@ func (r *checkpointRuntime) runProviders(
 	checkpoint policyruntime.CompiledCheckpoint,
 	facts decision.FactSet,
 	caller decision.CallerContext,
+	hostStates map[string]providerState,
+	hostReasons map[string]string,
+	authenticated bool,
 	report *runtimeReport,
 ) (decision.FactSet, bool) {
-	states := make(map[string]providerState)
+	states := cloneProviderStates(hostStates)
 
 	for _, level := range checkpoint.ProviderLevels() {
-		levelFacts, reliable := r.runProviderLevel(ctx, target, checkpoint, level, facts, caller, states, report)
+		levelFacts, reliable := r.runProviderLevel(
+			ctx, target, checkpoint, level, facts, caller, states, hostReasons, authenticated, report,
+		)
 		if !reliable {
 			return facts, false
 		}
@@ -384,6 +443,8 @@ func (r *checkpointRuntime) runProviders(
 
 type providerLevelResult struct {
 	id       string
+	use      string
+	reason   string
 	facts    []decision.Fact
 	state    providerState
 	failure  registry.ProviderFailureBehavior
@@ -399,12 +460,16 @@ func (r *checkpointRuntime) runProviderLevel(
 	facts decision.FactSet,
 	caller decision.CallerContext,
 	states map[string]providerState,
+	hostReasons map[string]string,
+	authenticated bool,
 	report *runtimeReport,
 ) ([]decision.Fact, bool) {
 	levelContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	results, pending := r.startProviderLevel(levelContext, target, checkpoint, level, facts, caller, states, report)
+	results, pending := r.startProviderLevel(
+		levelContext, target, checkpoint, level, facts, caller, states, hostReasons, authenticated, report,
+	)
 	ordered := make([]providerLevelResult, 0, len(pending))
 
 	for len(pending) > 0 {
@@ -446,6 +511,8 @@ func (r *checkpointRuntime) startProviderLevel(
 	facts decision.FactSet,
 	caller decision.CallerContext,
 	states map[string]providerState,
+	hostReasons map[string]string,
+	authenticated bool,
 	report *runtimeReport,
 ) (<-chan providerLevelResult, map[string]struct{}) {
 	results := make(chan providerLevelResult, len(level))
@@ -461,6 +528,8 @@ func (r *checkpointRuntime) startProviderLevel(
 			facts,
 			caller,
 			states,
+			hostReasons,
+			authenticated,
 			report,
 			results,
 			pending,
@@ -484,6 +553,8 @@ func (r *checkpointRuntime) startProviderInstance(
 	facts decision.FactSet,
 	caller decision.CallerContext,
 	states map[string]providerState,
+	hostReasons map[string]string,
+	authenticated bool,
 	report *runtimeReport,
 	results chan<- providerLevelResult,
 	pending map[string]struct{},
@@ -496,16 +567,47 @@ func (r *checkpointRuntime) startProviderInstance(
 		return
 	}
 
-	descriptor, exists := target.LookupProvider(instance.Use())
-	if !exists {
+	if target.HostPreparesProvider(instance.Use()) {
+		descriptor, found := target.LookupProvider(instance.Use())
+		if !found {
+			queueProviderStartFailure(instanceName, registry.ProviderFailureIndeterminate, results, pending, started)
+
+			return
+		}
+
+		r.queueHostProviderReceipt(
+			instance, descriptor, states, hostReasons, report, results, pending, started,
+		)
+
+		return
+	}
+
+	disposition, reason, err := r.providerDisposition(target, instance, hostScheduleInput{
+		facts: facts, states: states, checkpoint: checkpoint.Name(), authenticated: authenticated,
+	})
+	if err != nil {
 		queueProviderStartFailure(instanceName, registry.ProviderFailureIndeterminate, results, pending, started)
 
 		return
 	}
 
-	if providerDependencySkipped(instance.Dependencies(), states) {
-		states[instanceName] = providerStateSkipped
-		report.providers = append(report.providers, providerRecord{id: instanceName, state: providerStateSkipped})
+	if disposition == AuthnHostDispositionSkipped {
+		state := providerStateSkipped
+		if reason == AuthnHostReasonNotObserveSafe {
+			state = providerStateUnavailable
+		}
+
+		states[instanceName] = state
+		report.providers = append(report.providers, providerRecord{
+			id: instanceName, use: instance.Use(), reason: reason, state: state,
+		})
+
+		return
+	}
+
+	descriptor, exists := target.LookupProvider(instance.Use())
+	if !exists {
+		queueProviderStartFailure(instanceName, registry.ProviderFailureIndeterminate, results, pending, started)
 
 		return
 	}
@@ -533,6 +635,76 @@ func (r *checkpointRuntime) startProviderInstance(
 			caller,
 		)
 	}()
+}
+
+// queueHostProviderReceipt applies only the exact instance receipt admitted before evaluator entry.
+func (r *checkpointRuntime) queueHostProviderReceipt(
+	instance policyruntime.CompiledProviderInstance,
+	descriptor registry.ProviderDefinition,
+	states map[string]providerState,
+	hostReasons map[string]string,
+	report *runtimeReport,
+	results chan<- providerLevelResult,
+	pending map[string]struct{},
+	started chan<- struct{},
+) {
+	instanceName := instance.Name()
+	state, exists := states[instanceName]
+
+	reason := hostReasons[instanceName]
+	if !exists || !validHostReceiptStateReason(state, reason) {
+		queueProviderStartFailure(instanceName, registry.ProviderFailureIndeterminate, results, pending, started)
+
+		return
+	}
+
+	if state == providerStateSkipped || state == providerStateUnavailable {
+		report.providers = append(report.providers, providerRecord{
+			id: instanceName, use: instance.Use(), reason: reason, state: state,
+		})
+
+		return
+	}
+
+	if state == providerStateCompleted {
+		report.providers = append(report.providers, providerRecord{
+			id: instanceName, use: instance.Use(), reason: reason, state: state,
+		})
+
+		return
+	}
+
+	if state != providerStateFailed && state != providerStateTimedOut {
+		queueProviderStartFailure(instanceName, registry.ProviderFailureIndeterminate, results, pending, started)
+
+		return
+	}
+
+	pending[instanceName] = struct{}{}
+
+	started <- struct{}{}
+
+	results <- providerLevelResult{
+		id: instanceName, use: instance.Use(), reason: reason, state: state, failure: descriptor.Failure(),
+	}
+}
+
+// validHostReceiptStateReason ensures evaluator reconciliation uses the exact scheduler decision.
+func validHostReceiptStateReason(state providerState, reason string) bool {
+	switch state {
+	case providerStateCompleted, providerStateFailed, providerStateTimedOut:
+		return reason == AuthnHostReasonScheduled
+	case providerStateUnavailable:
+		return reason == AuthnHostReasonNotObserveSafe
+	case providerStateSkipped:
+		return reason == AuthnHostReasonAction ||
+			reason == AuthnHostReasonAuthState ||
+			reason == AuthnHostReasonDependency ||
+			strings.HasPrefix(reason, AuthnHostReasonSchedulerGuardPrefix) ||
+			reason == AuthnHostReasonTerminal
+	default:
+		return false
+	}
 }
 
 // queueProviderStartFailure records one provider instance that could not enter its execution goroutine.
@@ -625,7 +797,9 @@ func applyProviderResults(
 
 	for _, result := range ordered {
 		states[result.id] = result.state
-		report.providers = append(report.providers, providerRecord{id: result.id, state: result.state})
+		report.providers = append(report.providers, providerRecord{
+			id: result.id, use: result.use, reason: result.reason, state: result.state,
+		})
 
 		if !result.reliable && result.failure == registry.ProviderFailureIndeterminate {
 			levelReliable = false
@@ -658,7 +832,9 @@ func (r *checkpointRuntime) collectProvider(
 	facts decision.FactSet,
 	caller decision.CallerContext,
 ) providerLevelResult {
-	result := providerLevelResult{id: instance.Name(), failure: descriptor.Failure(), state: providerStateFailed}
+	result := providerLevelResult{
+		id: instance.Name(), use: instance.Use(), failure: descriptor.Failure(), state: providerStateFailed,
+	}
 
 	if nilDependency(binding.provider) {
 		return result
@@ -885,6 +1061,8 @@ func providerAliasStatus(state providerState) string {
 		return "completed"
 	case providerStateSkipped:
 		return "skipped"
+	case providerStateUnavailable:
+		return "unavailable"
 	case providerStateTimedOut:
 		return "timed_out"
 	default:

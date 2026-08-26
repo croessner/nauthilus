@@ -54,7 +54,7 @@ func TestWithSecurityTxt_RegistersConfiguredEndpoint(t *testing.T) {
 		},
 	}
 
-	router := NewRouter(cfg).WithSecurityTxt().Build()
+	router := newSecurityTxtTestRouter(t, cfg)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, securityTxtPath, nil)
 
@@ -104,16 +104,45 @@ func TestWithSecurityTxt_ServesConfiguredFiles(t *testing.T) {
 		},
 	}
 
-	router := NewRouter(cfg).WithSecurityTxt().Build()
+	router := newSecurityTxtTestRouter(t, cfg)
 	assertSecurityTxtFile(t, router, "/.well-known/security.asc", "application/pgp-keys", "PGP PUBLIC KEY")
 	assertSecurityTxtFile(t, router, "/.well-known/security-policy", "text/markdown; charset=utf-8", "Security Policy")
+}
+
+func TestWithSecurityTxt_ServesSealedFilesAfterLiveMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	directory := t.TempDir()
+	policyPath := filepath.Join(directory, "security-policy.md")
+	keyPath := filepath.Join(directory, "security.asc")
+
+	writeSecurityTxtTestFile(t, policyPath, []byte("captured policy\n"))
+	writeSecurityTxtTestFile(t, keyPath, []byte("captured key\n"))
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{SecurityTxt: config.SecurityTxt{
+		Enabled: true, Contacts: []string{"mailto:security@example.test"}, ExpiresAfter: time.Hour,
+		EncryptionFile: keyPath, EncryptionURI: "https://example.test/.well-known/security.asc",
+		PolicyFile: policyPath, PolicyURI: "https://example.test/.well-known/security-policy",
+	}}}
+
+	snapshot, err := config.CaptureArtifactSnapshot(config.ProductionArtifactSnapshotSpec(cfg))
+	if err != nil {
+		t.Fatalf("CaptureArtifactSnapshot() error = %v", err)
+	}
+
+	writeSecurityTxtTestFile(t, policyPath, []byte("mutated policy\n"))
+	writeSecurityTxtTestFile(t, keyPath, []byte("mutated key\n"))
+
+	router := NewRouter(cfg, snapshot).WithSecurityTxt().Build()
+	assertSecurityTxtFile(t, router, "/.well-known/security.asc", "application/pgp-keys", "captured key")
+	assertSecurityTxtFile(t, router, "/.well-known/security-policy", "text/markdown; charset=utf-8", "captured policy")
 }
 
 func TestWithSecurityTxt_SkipsEndpointWhenDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.FileSettings{Server: &config.ServerSection{}}
-	router := NewRouter(cfg).WithSecurityTxt().Build()
+	router := NewRouter(cfg, nil).WithSecurityTxt().Build()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, securityTxtPath, nil)
 
@@ -169,4 +198,16 @@ func writeSecurityTxtTestFile(t *testing.T, path string, content []byte) {
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatalf("os.WriteFile(%q) error = %v", path, err)
 	}
+}
+
+// newSecurityTxtTestRouter captures the configured static route inputs before registration.
+func newSecurityTxtTestRouter(t *testing.T, cfg config.File) http.Handler {
+	t.Helper()
+
+	snapshot, err := config.CaptureArtifactSnapshot(config.ProductionArtifactSnapshotSpec(cfg))
+	if err != nil {
+		t.Fatalf("CaptureArtifactSnapshot() error = %v", err)
+	}
+
+	return NewRouter(cfg, snapshot).WithSecurityTxt().Build()
 }

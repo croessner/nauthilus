@@ -26,6 +26,7 @@ import (
 // ConfiguredLuaGenerationInput carries standalone Lua configuration into one off-side candidate.
 type ConfiguredLuaGenerationInput struct {
 	PostActionAcceptance effectsupervisor.Acceptor
+	Artifacts            LuaArtifactReader
 	Policy               policyconfig.PolicyConfig
 	NativeModules        []policyruntime.NativeModuleBindingInput
 }
@@ -33,6 +34,7 @@ type ConfiguredLuaGenerationInput struct {
 type configuredGenerationBuilder struct {
 	ctx                 context.Context
 	acceptance          effectsupervisor.Acceptor
+	artifacts           LuaArtifactReader
 	policy              policyconfig.PolicyConfig
 	definitions         configuredDefinitionIndex
 	authorities         map[string]*configuredLuaAuthority
@@ -73,7 +75,7 @@ func PrepareConfiguredLuaGeneration(
 		return policyruntime.ExtensionPreparation{}, configuredPreparationError(ctx, "policy configuration was rejected")
 	}
 
-	builder := newConfiguredGenerationBuilder(ctx, normalized.Policy, input.PostActionAcceptance)
+	builder := newConfiguredGenerationBuilder(ctx, normalized.Policy, input.PostActionAcceptance, input.Artifacts)
 	if err = builder.indexDefinitions(normalized.Definitions); err != nil {
 		return policyruntime.ExtensionPreparation{}, err
 	}
@@ -90,9 +92,10 @@ func newConfiguredGenerationBuilder(
 	ctx context.Context,
 	policy policyconfig.PolicyConfig,
 	acceptance effectsupervisor.Acceptor,
+	artifacts LuaArtifactReader,
 ) *configuredGenerationBuilder {
 	return &configuredGenerationBuilder{
-		ctx: ctx, acceptance: acceptance, policy: policy,
+		ctx: ctx, acceptance: acceptance, artifacts: artifacts, policy: policy,
 		definitions:  newConfiguredDefinitionIndex(policy),
 		authorities:  make(map[string]*configuredLuaAuthority),
 		scripts:      make(map[string]*luaprovider.Script),
@@ -213,7 +216,13 @@ func (b *configuredGenerationBuilder) compiledScript(path string) (*luaprovider.
 		return script, nil
 	}
 
-	script, err := luaprovider.CompileScriptFile(path)
+	source, err := readCapturedLuaArtifact(b.artifacts, path, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(source)
+
+	script, err := luaprovider.CompileScript(path, source)
 	if err != nil {
 		return nil, err
 	}

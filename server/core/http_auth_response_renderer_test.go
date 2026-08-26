@@ -290,13 +290,50 @@ func TestHTTPAuthResponseRendererReplaysLocalizationAndHeaderMutations(t *testin
 	}
 }
 
-func TestHTTPAuthResponseRendererUsesCapturedResponseSettingsGeneration(t *testing.T) {
+func TestHTTPAuthResponseRendererUsesCapturedOutcomeResolver(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	previousBruteForceService := getBruteForceService()
+	captured := &httpAuthResponseRecordingResolver{
+		wantDefault: "de",
+		resolved: localization.ResolvedStatusMessage{
+			Text:     "Generation eins",
+			Language: "de",
+		},
+	}
+	fallback := &httpAuthResponseRecordingResolver{
+		wantDefault: "de",
+		resolved: localization.ResolvedStatusMessage{
+			Text:     "Generation zwei",
+			Language: "de",
+		},
+	}
+	deps := httpAuthResponseTestDeps()
+	deps.Resolver = fallback
+	renderer := NewHTTPAuthResponseRenderer(deps)
+	ctx, recorder := newHTTPAuthResponseTestContext(http.MethodPost, "/api/v1/auth/json")
+	outcome := &AuthOutcome{
+		MessageResolver:      captured,
+		ResponseSettings:     AuthResponseSettings{DefaultLanguage: "de", Captured: true},
+		Decision:             AuthDecisionFail,
+		Session:              "captured-resolver-session",
+		StatusMessage:        "Policy denial",
+		StatusMessageI18NKey: "auth.policy.denied",
+		HTTPStatus:           http.StatusForbidden,
+	}
 
-	RegisterBruteForceService(snapshotWaitBruteForceService{})
-	t.Cleanup(func() { RegisterBruteForceService(previousBruteForceService) })
+	renderer.RenderAuth(ctx, AuthInput{Mode: AuthModeAuthenticate, Service: definitions.ServJSON}, outcome)
+
+	if captured.calls != 1 || fallback.calls != 0 {
+		t.Fatalf("captured/fallback resolver calls = %d/%d, want 1/0", captured.calls, fallback.calls)
+	}
+
+	if got := recorder.Header().Get("Auth-Status"); got != "Generation eins" {
+		t.Fatalf("Auth-Status = %q, want captured-generation message", got)
+	}
+}
+
+func TestHTTPAuthResponseRendererUsesCapturedResponseSettingsGeneration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 
 	renderer := newCapturedSettingsTestRenderer()
 	settings := AuthResponseSettings{
@@ -319,6 +356,7 @@ func TestHTTPAuthResponseRendererUsesCapturedResponseSettingsGeneration(t *testi
 // newCapturedSettingsTestRenderer creates a renderer whose live settings differ from the captured generation.
 func newCapturedSettingsTestRenderer() *HTTPAuthResponseRenderer {
 	current := httpAuthResponseTestDeps()
+	current.WaitDelay = snapshotWaitBruteForceService{}.WaitDelay
 	current.Cfg = &config.FileSettings{Server: &config.ServerSection{
 		IMAPBackendAddress: "new.backend.test",
 		IMAPBackendPort:    2993,
@@ -657,6 +695,9 @@ func httpAuthResponseTestDeps() ResponseDeps {
 		}},
 		Env:    config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WaitDelay: func(maxWaitDelay, _ uint) int {
+			return int(maxWaitDelay)
+		},
 	}
 }
 

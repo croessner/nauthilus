@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 
@@ -35,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib/convert"
 	"github.com/croessner/nauthilus/v3/server/lualib/luamod"
 	"github.com/croessner/nauthilus/v3/server/lualib/luapool"
+	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
 	mdauth "github.com/croessner/nauthilus/v3/server/middleware/auth"
 	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
@@ -51,9 +51,6 @@ import (
 const luaHookResponseKeyError = "error"
 
 var (
-	// LuaScripts is a map that stores precompiled Lua scripts, allowing safe concurrent access and manipulation.
-	LuaScripts = make(map[string]*PrecompiledLuaScript)
-
 	// hookScopes is a map that associates each Location and HTTP method with its corresponding scopes.
 	hookScopes = make(map[string][]string)
 
@@ -75,6 +72,7 @@ var customLocation CustomLocation
 type PrecompiledLuaScript struct {
 	// luaScript is a pointers to a precompiled Lua script *lua.FunctionProto.,
 	luaScript *lua.FunctionProto
+	modules   *luaseal.Modules
 
 	// mu is a read/write mutex used to allow safe concurrent access to the luaScript.
 	mu sync.RWMutex
@@ -87,6 +85,7 @@ func (p *PrecompiledLuaScript) Replace(luaScript *PrecompiledLuaScript) {
 	defer p.mu.Unlock()
 
 	p.luaScript = luaScript.luaScript
+	p.modules = luaScript.modules
 }
 
 // GetPrecompiledScript retrieves the stored precompiled Lua script (*lua.FunctionProto) with read lock for thread safety.
@@ -98,15 +97,53 @@ func (p *PrecompiledLuaScript) GetPrecompiledScript() *lua.FunctionProto {
 	return p.luaScript
 }
 
-// NewLuaHook compiles a Lua script from the given file path and returns a PrecompiledLuaScript instance or an error.
-func NewLuaHook(filePath string) (*PrecompiledLuaScript, error) {
-	compiledScript, err := lualib.CompileLua(filePath)
+// prepared returns the entry prototype and module snapshot under one read lock.
+func (p *PrecompiledLuaScript) prepared() (*lua.FunctionProto, *luaseal.Modules) {
+	if p == nil {
+		return nil, nil
+	}
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	return p.luaScript, p.modules
+}
+
+// NewLuaHook compiles one exact script snapshot owned by the supplied config.
+func NewLuaHook(cfg config.File, filePath string) (*PrecompiledLuaScript, error) {
+	modules, err := luaseal.CaptureConfigured(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewLuaHookWithModules(cfg, filePath, modules)
+}
+
+// NewLuaHookWithModules compiles one hook and binds it to the boot-owned module snapshot.
+func NewLuaHookWithModules(cfg config.File, filePath string, modules *luaseal.Modules) (*PrecompiledLuaScript, error) {
+	if modules == nil {
+		return nil, fmt.Errorf("lua hook module snapshot is nil")
+	}
+
+	snapshot, err := config.ArtifactSnapshotFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("load sealed Lua hook %q: %w", filePath, err)
+	}
+
+	source, err := snapshot.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("load sealed Lua hook %q: %w", filePath, err)
+	}
+	defer clear(source)
+
+	compiledScript, err := lualib.CompileLuaSource(filePath, source)
 	if err != nil {
 		return nil, err
 	}
 
 	return &PrecompiledLuaScript{
 		luaScript: compiledScript,
+		modules:   modules,
 	}, nil
 }
 
@@ -546,64 +583,24 @@ func resolveHookPublic(location, method string, cfg config.File, logger *slog.Lo
 	return publicHook
 }
 
-// PreCompileLuaScript compiles a Lua script from the specified file path and manages the script in a thread-safe map.
-// Updates or removes entries in the LuaScripts map based on the configuration and compilation status.
-// Returns an error if the compilation fails or if the script cannot be managed properly.
-func PreCompileLuaScript(cfg config.File, filePath string) (err error) {
-	tr := monittrace.New("nauthilus/hooks")
-	ctx, sp := tr.Start(svcctx.Get(), "hooks.precompile_script",
-		attribute.String("file", filePath),
-	)
-
-	_ = ctx
-
-	defer func() {
-		if err != nil {
-			sp.RecordError(err)
-		}
-
-		sp.End()
-	}()
-
-	var luaScriptNew *PrecompiledLuaScript
-
-	mu.Lock()
-
-	defer mu.Unlock()
-
-	if _, found := LuaScripts[filePath]; !found {
-		LuaScripts[filePath] = &PrecompiledLuaScript{}
-	}
-
-	luaScriptNew, err = NewLuaHook(filePath)
-	if err != nil {
-		return err
-	}
-
-	LuaScripts[filePath].Replace(luaScriptNew)
-
-	// Get all init script paths
-	initScriptPaths := cfg.GetLuaInitScriptPaths()
-
-	for luaScriptName := range LuaScripts {
-		// Check if this script is one of the init scripts
-		isInitScript := slices.Contains(initScriptPaths, luaScriptName)
-
-		// If it's not an init script and has no compiled script, delete it
-		if !isInitScript {
-			if LuaScripts[luaScriptName].GetPrecompiledScript() == nil {
-				delete(LuaScripts, luaScriptName)
-			}
-		}
-	}
-
-	return nil
-}
-
 // PreCompileLuaHooks pre-compiles Lua hook scripts defined in the configuration and assigns them to specified locations and methods.
 // It also stores the scopes associated with each hook for access control.
 // Returns an error if the compilation or setup fails.
 func PreCompileLuaHooks(cfg config.File) error {
+	modules, err := luaseal.CaptureConfigured(cfg)
+	if err != nil {
+		return err
+	}
+
+	return PreCompileLuaHooksWithModules(cfg, modules)
+}
+
+// PreCompileLuaHooksWithModules publishes hooks only after every script shares one boot-owned module snapshot.
+func PreCompileLuaHooksWithModules(cfg config.File, modules *luaseal.Modules) error {
+	if modules == nil {
+		return fmt.Errorf("lua hook module snapshot is nil")
+	}
+
 	tr := monittrace.New("nauthilus/hooks")
 	ctx, sp := tr.Start(svcctx.Get(), "hooks.precompile_all",
 		attribute.Int("configured", func() int {
@@ -627,7 +624,7 @@ func PreCompileLuaHooks(cfg config.File) error {
 		for index := range cfg.GetLua().Hooks {
 			hook := cfg.GetLua().Hooks[index]
 
-			script, err := NewLuaHook(hook.ScriptPath)
+			script, err := NewLuaHookWithModules(cfg, hook.ScriptPath, modules)
 			if err != nil {
 				sp.RecordError(err)
 
@@ -657,10 +654,24 @@ func PreCompileLuaHooks(cfg config.File) error {
 	return nil
 }
 
-// runLuaCommonWrapper executes a precompiled Lua script associated with the given hook within a controlled Lua state context.
+// runCompiledLuaCommon executes one captured Lua prototype within a controlled Lua state context.
 // It applies the specified dynamic loader to register custom modules or functions, enforces a timeout for execution, and configures logging.
-// Returns an error if the script is not found or if execution fails.
-func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string, i18nRuntime *lualib.I18NRuntime) (err error) {
+// Returns an error if the captured prototype or execution dependencies are unavailable.
+func runCompiledLuaCommon(
+	ctx context.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	redis rediscli.Client,
+	tolerance tolerate.Tolerate,
+	hook string,
+	compiledScript *lua.FunctionProto,
+	modules *luaseal.Modules,
+	i18nRuntime *lualib.I18NRuntime,
+) (err error) {
+	if ctx == nil || cfg == nil || compiledScript == nil {
+		return fmt.Errorf("compiled Lua init dependencies are incomplete")
+	}
+
 	tr := monittrace.New("nauthilus/hooks")
 	cctx, csp := tr.Start(ctx, "hooks.execute_common",
 		attribute.String("hook", hook),
@@ -678,20 +689,10 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 		csp.End()
 	}()
 
-	script, err := commonLuaScript(hook)
-	if err != nil {
-		return err
-	}
-
 	luaCtx, luaCancel := context.WithTimeout(ctx, cfg.GetServer().GetTimeouts().GetLuaScript())
 	defer luaCancel()
 
-	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{
-		MaxVMs: cfg.GetLuaHookVMPoolSize(),
-		Config: cfg,
-	})
-
-	lease, acqErr := pool.AcquireLease(luaCtx)
+	lease, acqErr := acquireHookLease(luaCtx, cfg)
 	if acqErr != nil {
 		return acqErr
 	}
@@ -701,12 +702,16 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	L.SetContext(luaCtx)
 
-	bindCommonLuaModules(luaCtx, cfg, logger, redis, L, i18nRuntime)
+	if err = luaseal.PrepareProcess(L, modules); err != nil {
+		return err
+	}
+
+	bindCommonLuaModules(luaCtx, cfg, logger, redis, tolerance, L, i18nRuntime)
 
 	requestTable, cr := prepareCommonLuaRequest(L, cfg)
 	defer lualib.PutCommonRequest(cr)
 
-	_, err = executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), L, hook, requestTable)
+	_, err = executeAndHandleError(logger, compiledScript, modules, L, hook, requestTable)
 	if err != nil {
 		csp.RecordError(err)
 
@@ -716,11 +721,22 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	return nil
 }
 
+// acquireHookLease obtains one VM lease from the shared hook pool.
+func acquireHookLease(ctx context.Context, cfg config.File) (*vmpool.Lease, error) {
+	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{
+		MaxVMs: cfg.GetLuaHookVMPoolSize(),
+		Config: cfg,
+	})
+
+	return pool.AcquireLease(ctx)
+}
+
 func bindCommonLuaModules(
 	luaCtx context.Context,
 	cfg config.File,
 	logger *slog.Logger,
 	redis rediscli.Client,
+	tolerance tolerate.Tolerate,
 	L *lua.LState,
 	i18nRuntime *lualib.I18NRuntime,
 ) {
@@ -733,18 +749,9 @@ func bindCommonLuaModules(
 		i18nRuntime = lualib.DefaultI18NRuntime().NewCatalogSession()
 	}
 
-	modManager.BindAllDefault(luaCtx, L, lualib.NewContext(), tolerate.GetTolerate())
+	modManager.BindAllDefault(luaCtx, L, lualib.NewContext(), tolerance)
 	modManager.BindI18NRuntime(L, i18nRuntime, lualib.I18NModeStartup)
 	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
-}
-
-func commonLuaScript(hook string) (*PrecompiledLuaScript, error) {
-	script, found := LuaScripts[hook]
-	if !found || script == nil {
-		return nil, fmt.Errorf("lua script for hook %s not found", hook)
-	}
-
-	return script, nil
 }
 
 func prepareCommonLuaRequest(L *lua.LState, cfg config.File) (*lua.LTable, *lualib.CommonRequest) {
@@ -783,12 +790,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 
 	defer luaCancel()
 
-	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{
-		MaxVMs: cfg.GetLuaHookVMPoolSize(),
-		Config: cfg,
-	})
-
-	lease, acqErr := pool.AcquireLease(luaCtx)
+	lease, acqErr := acquireHookLease(luaCtx, cfg)
 	if acqErr != nil {
 		return nil, acqErr
 	}
@@ -797,12 +799,19 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	defer lease.ReleaseRecoveringOnError(&err)
 
 	L.SetContext(luaCtx)
+
+	prototype, modules := script.prepared()
+	if err = luaseal.PrepareProcess(L, modules); err != nil {
+		xsp.RecordError(err)
+
+		return nil, err
+	}
 	bindCustomLuaModules(luaCtx, ctx, cfg, logger, redis, L)
 
 	requestTable, cr := prepareCustomLuaRequest(ctx, cfg, L, guid)
 	defer lualib.PutCommonRequest(cr)
 
-	result, err = executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), L, hook, requestTable)
+	result, err = executeAndHandleError(logger, prototype, modules, L, hook, requestTable)
 	if err != nil {
 		xsp.RecordError(err)
 	}
@@ -911,19 +920,19 @@ func RunLuaHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, redis re
 	return runLuaCustomWrapper(ctx, cfg, logger, redis)
 }
 
-// RunLuaInit provides the exported RunLuaInit function.
-func RunLuaInit(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string) error {
-	i18nRuntime := lualib.DefaultI18NRuntime().NewCatalogSession()
-	if err := runLuaCommonWrapper(ctx, cfg, logger, redis, hook, i18nRuntime); err != nil {
-		return err
-	}
-
-	return i18nRuntime.CommitCatalogSession()
-}
-
-// RunLuaInitWithI18NRuntime executes one Lua init script with a shared i18n startup session.
-func RunLuaInitWithI18NRuntime(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string, i18nRuntime *lualib.I18NRuntime) error {
-	return runLuaCommonWrapper(ctx, cfg, logger, redis, hook, i18nRuntime)
+// RunCompiledLuaInitWithI18NRuntime executes one captured startup prototype with a shared i18n session.
+func RunCompiledLuaInitWithI18NRuntime(
+	ctx context.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	redis rediscli.Client,
+	tolerance tolerate.Tolerate,
+	hook string,
+	compiledScript *lua.FunctionProto,
+	modules *luaseal.Modules,
+	i18nRuntime *lualib.I18NRuntime,
+) error {
+	return runCompiledLuaCommon(ctx, cfg, logger, redis, tolerance, hook, compiledScript, modules, i18nRuntime)
 }
 
 // executeAndHandleError executes a Lua script, invoking a predefined hook and processing its results or errors.
@@ -934,8 +943,15 @@ func RunLuaInitWithI18NRuntime(ctx context.Context, cfg config.File, logger *slo
 //   - requestTable: Lua table for the request object.
 //
 // Returns a Gin-compatible result or an error encountered during execution.
-func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript *lua.FunctionProto, L *lua.LState, hook string, requestTable *lua.LTable) (result gin.H, err error) {
-	if err = lualib.PackagePath(L, cfg); err != nil {
+func executeAndHandleError(logger *slog.Logger, compiledScript *lua.FunctionProto, modules *luaseal.Modules, L *lua.LState, hook string, requestTable *lua.LTable) (result gin.H, err error) {
+	if compiledScript == nil || modules == nil {
+		err = fmt.Errorf("prepared Lua hook program is incomplete")
+		processError(logger, err, hook)
+
+		return nil, err
+	}
+
+	if err = luaseal.InstallProcess(L, modules); err != nil {
 		processError(logger, err, hook)
 
 		return nil, err

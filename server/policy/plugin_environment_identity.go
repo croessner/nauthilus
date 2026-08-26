@@ -20,15 +20,7 @@ import "strings"
 const (
 	pluginEnvironmentAttributePrefix = "auth.plugin.environment."
 	pluginEnvironmentCheckPrefix     = "plugin_environment_"
-	pluginEnvironmentRefSuffix       = ".environment"
 )
-
-// PluginEnvironmentModuleNameFromConfigRef returns the module selected by a native environment check.
-func PluginEnvironmentModuleNameFromConfigRef(configRef string) string {
-	moduleName, _ := pluginModuleNameFromConfigRef(configRef, pluginEnvironmentRefSuffix)
-
-	return moduleName
-}
 
 // PluginEnvironmentCheckName returns the scheduler-visible check name for one module.
 func PluginEnvironmentCheckName(moduleName string) string {
@@ -38,16 +30,6 @@ func PluginEnvironmentCheckName(moduleName string) string {
 	}
 
 	return pluginEnvironmentCheckPrefix + moduleName
-}
-
-// PluginEnvironmentConfigRef returns the module config reference for native environment checks.
-func PluginEnvironmentConfigRef(moduleName string) string {
-	moduleName = strings.TrimSpace(moduleName)
-	if moduleName == "" {
-		return ""
-	}
-
-	return pluginConfigRefPrefix + moduleName + pluginEnvironmentRefSuffix
 }
 
 // PluginEnvironmentAttributeID returns a generated native environment execution fact ID.

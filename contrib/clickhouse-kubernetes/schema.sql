@@ -1,5 +1,5 @@
 -- Nauthilus ClickHouse schema for Kubernetes deployments
--- Creates database and table used by server/lua-plugins.d/actions/clickhouse.lua
+-- Creates the database and table consumed by authn/plugin.clickhouse.post_action.
 -- ts uses DateTime64(3, 'UTC') for precise timestamps.
 -- Most textual columns with repeating values are LowCardinality(String) to deduplicate values efficiently.
 -- For existing installations, see the ALTER TABLE block at the end of this file.

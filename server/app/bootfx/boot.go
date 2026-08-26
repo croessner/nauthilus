@@ -17,7 +17,6 @@
 package bootfx
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	stdlog "log"
@@ -27,19 +26,15 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/internal/flagutil"
-	"github.com/croessner/nauthilus/v3/server/app/configfx"
-	"github.com/croessner/nauthilus/v3/server/app/policyfx"
-	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
+	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/log"
 	"github.com/croessner/nauthilus/v3/server/log/level"
-	"github.com/croessner/nauthilus/v3/server/lualib"
-	"github.com/croessner/nauthilus/v3/server/lualib/environment"
+	"github.com/croessner/nauthilus/v3/server/lualib/cacheflush"
 	"github.com/croessner/nauthilus/v3/server/lualib/hook"
-	"github.com/croessner/nauthilus/v3/server/lualib/subject"
+	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/stats"
 	"github.com/croessner/nauthilus/v3/server/util/keygen"
 
@@ -249,9 +244,8 @@ func GetConfigDumpFormat() config.DumpFormat {
 	return configDumpFormat
 }
 
-// SetupConfiguration initializes the environment, loads the configuration file,
-// optional language bundles, and configures logging.
-func SetupConfiguration() error {
+// PrepareConfiguration initializes process configuration and returns one unpublished candidate.
+func PrepareConfiguration() (config.File, error) {
 	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
 
 	config.NewEnvironmentConfig()
@@ -260,13 +254,13 @@ func SetupConfiguration() error {
 
 	if config.ConfigFilePath != "" {
 		if _, err := os.Stat(config.ConfigFilePath); os.IsNotExist(err) {
-			return fmt.Errorf("specified configuration file does not exist: %s", config.ConfigFilePath)
+			return nil, fmt.Errorf("specified configuration file does not exist: %s", config.ConfigFilePath)
 		}
 	}
 
 	file, err := config.PrepareFile()
 	if err != nil {
-		return fmt.Errorf("unable to load config file: %w", err)
+		return nil, fmt.Errorf("unable to load config file: %w", err)
 	}
 
 	log.SetupLogging(
@@ -282,20 +276,12 @@ func SetupConfiguration() error {
 
 	stdlog.SetOutput(&slogStdWriter{logger: log.GetLogger()})
 
-	if _, err := SetupGoPlugins(file, log.GetLogger()); err != nil {
-		return err
-	}
+	return file, nil
+}
 
-	coordinator, err := policyfx.NewCoordinator(log.GetLogger())
-	if err != nil {
-		return fmt.Errorf("unable to construct policy runtime coordinator: %w", err)
-	}
-
-	if err = coordinator.Apply(context.Background(), configfx.Snapshot{File: file, Version: 1}); err != nil {
-		return fmt.Errorf("unable to build policy runtime generation: %w", err)
-	}
-
-	return nil
+// SetupConfiguration validates and returns the unpublished configuration for command-only modes.
+func SetupConfiguration() (config.File, error) {
+	return PrepareConfiguration()
 }
 
 // SetupGoPlugins verifies native plugin artifacts and registers module descriptors.
@@ -305,12 +291,25 @@ func SetupGoPlugins(cfg config.File, logger *slog.Logger) (*pluginloader.State, 
 		plugins = cfg.GetPlugins()
 	}
 
-	verified, err := pluginloader.NewVerifier(pluginloader.WithVerificationLogger(logger)).Verify(plugins)
+	verifierOptions := []pluginloader.VerifierOption{pluginloader.WithVerificationLogger(logger)}
+	loaderOptions := []pluginloader.Option{pluginloader.WithLogger(logger)}
+
+	if plugins != nil && len(plugins.Modules) > 0 {
+		artifacts, err := config.ArtifactSnapshotFor(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("load native plugin artifact snapshot: %w", err)
+		}
+
+		verifierOptions = append(verifierOptions, pluginloader.WithArtifactReader(artifacts.ReadFile))
+		loaderOptions = append(loaderOptions, pluginloader.WithLoaderArtifactReader(artifacts.ReadFile))
+	}
+
+	verified, err := pluginloader.NewVerifier(verifierOptions...).Verify(plugins)
 	if err != nil {
 		return nil, fmt.Errorf("verify native plugin artifacts: %w", err)
 	}
 
-	state, err := pluginloader.NewLoader(pluginloader.WithLogger(logger)).Load(verified)
+	state, err := pluginloader.NewLoader(loaderOptions...).Load(verified)
 	if err != nil {
 		return state, fmt.Errorf("load native plugin modules: %w", err)
 	}
@@ -323,66 +322,30 @@ func SetupGoPlugins(cfg config.File, logger *slog.Logger) (*pluginloader.State, 
 		return state, fmt.Errorf("validate native plugin debug selectors: %w", err)
 	}
 
-	pluginloader.SetDefaultState(state)
-
 	return state, nil
 }
 
-// SetupLuaScripts pre-compiles Lua scripts for environment sources, subject sources, init scripts, and hooks.
-func SetupLuaScripts(cfg config.File, logger *slog.Logger) error {
-	if err := PreCompileEnvironmentSources(cfg, logger); err != nil {
+// SetupLuaScripts pre-compiles every restart-bound Lua program before workers start.
+func SetupLuaScripts(cfg config.File, _ *slog.Logger) error {
+	modules, err := luaseal.CaptureConfigured(cfg)
+	if err != nil {
 		return err
 	}
 
-	if err := PreCompileSubjectSources(cfg, logger); err != nil {
+	if err = backend.PrepareLuaBackendScriptsWithModules(cfg, modules); err != nil {
 		return err
 	}
 
-	if err := PreCompileInit(cfg); err != nil {
+	if err = cacheflush.PrepareConfiguredScriptWithModules(cfg, modules); err != nil {
 		return err
 	}
 
-	return PreCompileHooks(cfg)
-}
-
-// PreCompileEnvironmentSources pre-compiles Lua environment sources if enabled.
-func PreCompileEnvironmentSources(cfg config.File, logger *slog.Logger) error {
-	if cfg.HaveLuaEnvironmentSources() {
-		if err := environment.PreCompileLuaEnvironmentSources(cfg, logger); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// PreCompileSubjectSources pre-compiles Lua subject sources if enabled.
-func PreCompileSubjectSources(cfg config.File, _ *slog.Logger) error {
-	if cfg.HaveLuaSubjectSources() {
-		if err := subject.PreCompileLuaSubjectSources(cfg); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// PreCompileInit pre-compiles configured Lua init scripts.
-func PreCompileInit(cfg config.File) error {
-	if cfg.HaveLuaInit() {
-		for _, scriptPath := range cfg.GetLuaInitScriptPaths() {
-			if err := hook.PreCompileLuaScript(cfg, scriptPath); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
+	return PreCompileHooks(cfg, modules)
 }
 
 // PreCompileHooks refreshes the Lua hook registry from configuration.
-func PreCompileHooks(cfg config.File) error {
-	if err := hook.PreCompileLuaHooks(cfg); err != nil {
+func PreCompileHooks(cfg config.File, modules *luaseal.Modules) error {
+	if err := hook.PreCompileLuaHooksWithModules(cfg, modules); err != nil {
 		return err
 	}
 
@@ -431,37 +394,6 @@ func InitializeInstanceInfo(cfg config.File, version string) {
 	})
 
 	infoMetric.Set(1)
-}
-
-// RunLuaInitScript executes Lua init scripts (if configured).
-func RunLuaInitScript(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) {
-	if err := RunLuaInitScripts(ctx, cfg, logger, redis); err != nil {
-		_ = level.Error(logger).Log(definitions.LogKeyMsg, "Unable to run Lua init scripts", definitions.LogKeyError, err)
-	}
-}
-
-// RunLuaInitScripts executes configured Lua init scripts with one atomic i18n catalog session.
-func RunLuaInitScripts(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) error {
-	if !cfg.HaveLuaInit() {
-		return nil
-	}
-
-	i18nRuntime := lualib.DefaultI18NRuntime().NewCatalogSession()
-	for _, scriptPath := range cfg.GetLuaInitScriptPaths() {
-		if err := hook.RunLuaInitWithI18NRuntime(ctx, cfg, logger, redis, scriptPath, i18nRuntime); err != nil {
-			return err
-		}
-	}
-
-	return i18nRuntime.CommitCatalogSession()
-}
-
-// InitializeBruteForceTolerate starts the brute force tolerate housekeeping.
-func InitializeBruteForceTolerate(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) {
-	t := tolerate.NewTolerateWithDeps(cfg, logger, redis, cfg.GetBruteForce().GetToleratePercent())
-	tolerate.SetTolerate(t)
-
-	go t.StartHouseKeeping(ctx)
 }
 
 // setTimeZone configures the process time zone based on the TZ environment variable.

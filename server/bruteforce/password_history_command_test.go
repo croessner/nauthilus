@@ -488,7 +488,6 @@ func passwordHistoryCommandConfig(ipv6CIDR uint) config.File {
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
 	config.SetTestFile(cfg)
-	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 

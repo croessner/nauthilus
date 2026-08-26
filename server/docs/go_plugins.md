@@ -137,6 +137,9 @@ plugins:
 
 Request passwords are available only through the request-scoped `CredentialProvider`. Long-lived plugin credentials, such
 as SQL DSNs, should be referenced through files or another plugin-owned secret source rather than inline config values.
+Top-level Policy provider/effect `secrets` maps are therefore not passed to a Go
+plugin; a non-empty map is rejected during candidate validation until a typed,
+capability-gated contract exists.
 
 Host-managed mail is also capability-gated. When a module configuration enables SMTP/LMTP sends through `Host.Mail`, the
 module must allow `mail` as well as any other required capability:
@@ -272,18 +275,28 @@ Native plugins may register additive target-aware fact and effect capabilities t
 provider, select a decision or effect, mutate a catalog, or authorize a caller. Static operator policy configuration
 remains the sole activation authority.
 
-The standalone candidate configuration uses `kind: native`, the required configured module name, and a provider-local
+The production top-level configuration uses `kind: native`, the required configured module name, and a provider-local
 key. The resulting internal provider identity is `<namespace>/plugin.<module>.<local>`. Facts are qualified as
 `plugin.<module>.<local-output>`. An effect names the authored local provider key in the same namespace; candidate
 normalization resolves that reference to the same canonical native provider identity.
 
-The following shape documents isolated candidate preparation before the production top-level policy-root cutover. It is
-not yet a production activation example:
+The following shape is a production activation example. It becomes callable only when the same atomic generation also
+activates a compatible target, domain plan, schema, and policy set:
 
 ```yaml
 policy:
   namespaces:
     mail.security:
+      schema_contributions:
+        static:
+          evaluate:
+            versions:
+              v1:
+                facts:
+                  - attribute: plugin.mailguard.risk.score
+                    category: environment
+                    type: integer
+                    allowed_sources: [plugin]
       providers:
         risk:
           kind: native
@@ -315,6 +328,42 @@ policy:
               max_length: 128
               non_empty: true
               required: true
+      domain_plans:
+        default:
+          checkpoints:
+            final_decision:
+              providers:
+                - name: risk
+                  use: mail.security/plugin.mailguard.risk
+                  actions: [evaluate]
+      policy_sets:
+        default:
+          visibility: private
+          rules:
+            - name: notify_high_risk
+              checkpoint: final_decision
+              actions: [evaluate]
+              require_providers: [risk]
+              if:
+                attribute: plugin.mailguard.risk.score
+                gte: 50
+              then:
+                decision: permit
+                obligations:
+                  - id: mail.security/notify
+                    parameters:
+                      recipient: security@example.test
+  targets:
+    - namespace: mail.security
+      action: evaluate
+      schema: mail.security/evaluate/v1
+      domain_plan: mail.security/default
+      default_policy: mail.security/default
+      no_match: deny
+      timeouts: {evaluation: 2s, provider_default: 500ms}
+      plans:
+        final_decision:
+          policy_sets: [mail.security/default]
 ```
 
 Candidate preparation resolves every configured native provider against the capabilities registered by the named loaded
@@ -346,29 +395,35 @@ may have dispatched externally but cannot establish the remote result; the inter
 data, not a public idempotency key. Providers may implement domain-specific idempotency voluntarily, but it is outside
 the generic Policy API/provider contract and the runtime does not rely on it.
 
-Existing native environment, subject, backend, obligation, and post-action extensions keep their implicit `authn`
-binding and current configuration. Generic registration does not make those auth extensions callable for another
-target. Production publication of the standalone top-level `policy` root remains a later atomic cutover; the native
-generic provider implementation currently supports isolated candidate preparation and runtime validation only.
+Existing native environment, subject, backend, obligation, and post-action extensions keep their `authn` binding.
+Generic registration does not make those auth extensions callable for another target. The configured generic subset is
+resolved, validated, and published with the same active generation as the catalog and routes; a failed candidate leaves
+the previous complete generation active.
 
 ## Declarative Policy Initialization
 
 Policy response translations and per-account network exceptions are authoritative operator configuration. Native
 plugins do not receive mutation APIs for either surface.
 
+The following block is an excerpt: top-level `policy` owns localization, while the existing `auth.controls` paths
+supply the builtin soft allowlists. Use the linked complete example when checking the file independently.
+
 ```yaml
+policy:
+  namespaces:
+    authn:
+      localization:
+        catalogs:
+          - namespace: rns-auth
+            language: de
+            entries:
+              rns.account_disabled: "Das Konto ist deaktiviert."
+          - namespace: rns-auth
+            language: en
+            entries:
+              rns.account_disabled: "The account is disabled."
+
 auth:
-  policy:
-    localization:
-      catalogs:
-        - namespace: rns-auth
-          language: de
-          entries:
-            auth.policy.rns.account_disabled: "Das Konto ist deaktiviert."
-        - namespace: rns-auth
-          language: en
-          entries:
-            auth.policy.rns.account_disabled: "The account is disabled."
   controls:
     brute_force:
       allowlist:
@@ -386,42 +441,79 @@ precedence than the system catalog and startup Lua overlays. Reload builds the c
 it atomically; an invalid reload leaves the previously active catalog unchanged and does not discard Lua overlays.
 
 Soft allowlist values must be CIDR networks. They are canonicalized and deduplicated during config load. New HTTP and
-gRPC authentication requests take the current config snapshot, so successful reloads apply additions and removals
-without allowing Lua or plugins to mutate the declarations. Existing Lua initialization scripts remain supported as a
-legacy startup layer and are not rewritten or removed by this configuration surface.
+gRPC authentication requests use the allowlists captured by the active Policy generation, so successful reloads apply
+additions and removals without allowing Lua or plugins to mutate the declarations. Existing Lua initialization scripts
+remain process-lifecycle extensions; they do not own the authn provider schedule and are not rewritten or removed by
+this configuration surface.
 
-See `server/docs/examples/policy_localization_and_allowlists.yml` for a focused example.
+See the [complete non-secret production config-check example](examples/policy_localization_and_allowlists.yml).
 
 ## Mixed Lua And Native Subject Ordering
 
-Subject analysis keeps the established whole-Lua-then-native order unless policy configuration declares a Lua subject
-check after a native plugin subject check. This narrow form uses policy check names in `auth.policy.checks[].after`:
+Subject analysis keeps the established whole-Lua-then-native order unless a domain plan declares a Lua subject provider
+instance after a native plugin subject provider instance. The `after` edge uses checkpoint-local instance names:
 
 ```yaml
-auth:
-  policy:
-    checks:
-      - name: plugin_subject_example_auth_directory
-        type: plugin.subject
-        stage: subject_analysis
-        run_if:
-          auth_state: authenticated
-        config_ref: plugins.modules.example_auth.subject
-      - name: lua_subject_director_routing
-        type: lua.subject
-        stage: subject_analysis
-        run_if:
-          auth_state: authenticated
-        after:
-          - plugin_subject_example_auth_directory
-        config_ref: auth.policy.attribute_sources.lua.subject.director_routing
+policy:
+  namespaces:
+    authn:
+      schema_contributions:
+        lua:
+          registry_scripts:
+            - /etc/nauthilus/lua-plugins.d/policy/registry.lua
+      providers:
+        plugin.example_auth.subject.directory:
+          kind: plugin
+          module: example_auth
+          targets: [{action: authenticate}]
+          executions: [host_sync]
+        lua_subject_idp_policy:
+          kind: lua_subject
+          script_path: /etc/nauthilus/lua-plugins.d/subject/idp_policy.lua
+          targets: [{action: authenticate}]
+          executions: [host_sync]
+      domain_plans:
+        mixed_subjects:
+          checkpoints:
+            pre_auth:
+              providers:
+                - name: brute_force
+                  use: authn/builtin/brute_force
+                  actions: [authenticate]
+            auth_backend:
+              providers:
+                - name: ldap_backend
+                  use: authn/builtin/ldap_backend
+                  actions: [authenticate]
+            subject_analysis:
+              providers:
+                - name: plugin_subject_example_auth_directory
+                  use: authn/plugin.example_auth.subject.directory
+                  actions: [authenticate]
+                  run_if: {auth_state: authenticated}
+                - name: idp_policy
+                  use: authn/lua_subject_idp_policy
+                  actions: [authenticate]
+                  run_if: {auth_state: authenticated}
+                  after: [plugin_subject_example_auth_directory]
+            auth_decision:
+              providers: []
+  targets:
+    - namespace: authn
+      action: authenticate
+      schema: authn/authenticate/v1
+      domain_plan: authn/mixed_subjects
+      default_policy: authn/standard_auth
 ```
 
 For this topology the host executes non-deferred Lua subject checks first, then the native subject bridge, and finally
 the deferred Lua subject checks. Lua-only dependencies inside either side retain their deterministic policy order.
 `SourceDescriptor.Requires` and `SourceDescriptor.After` still address native plugin components only; they must not name
 Lua checks. The compiler rejects a graph that would require native execution again after deferred Lua execution. Reload
-uses the same compiler validation and leaves the previous policy snapshot active when the candidate graph is invalid.
+uses the same compiler validation and leaves the previous complete Policy generation active when the candidate graph is
+invalid. The Lua provider uses the checked-in `subject/idp_policy.lua` callback, which is preparation-tested against the
+production subject profile; it reads request-local IdP facts and emits registered Policy attributes without selecting a
+backend target.
 
 Some Lua helper families intentionally remain plugin-owned in the native contract:
 
@@ -559,8 +651,8 @@ policy obligations after the module is configured and loaded:
 
 | Lua action | Native module | Native effect ID | Example |
 | --- | --- | --- | --- |
-| `actions/clickhouse.lua` | `clickhouse` | `clickhouse.post_action` | `server/docs/examples/go_plugin_clickhouse.yml` |
-| `actions/haveibeenpwnd.lua` | `haveibeenpwnd` | `haveibeenpwnd.post_action` | `server/docs/examples/go_plugin_haveibeenpwnd.yml` |
+| `actions/clickhouse.lua` | `clickhouse` | `authn/plugin.clickhouse.post_action` | `server/docs/examples/go_plugin_clickhouse.yml` |
+| `actions/haveibeenpwnd.lua` | `haveibeenpwnd` | `authn/plugin.haveibeenpwnd.post_action` | `server/docs/examples/go_plugin_haveibeenpwnd.yml` |
 
 Config highlights:
 
@@ -589,9 +681,10 @@ Observability:
 
 Migration notes:
 
-- Replace policy effects that enqueue `actions/clickhouse.lua` with the native `clickhouse.post_action` effect after the
-  `clickhouse` module is configured.
-- Replace policy effects that enqueue `actions/haveibeenpwnd.lua` with `haveibeenpwnd.post_action` after the
+- Replace policy effects that enqueue `actions/clickhouse.lua` with the native
+  `authn/plugin.clickhouse.post_action` effect after the `clickhouse` module is configured.
+- Replace policy effects that enqueue `actions/haveibeenpwnd.lua` with
+  `authn/plugin.haveibeenpwnd.post_action` after the
   `haveibeenpwnd` module is configured and the required capabilities are allowed.
 - Adding or removing either module, changing the module name, or replacing the `.so` artifact requires a process restart.
   Changing `allow_capabilities` also requires restart. Config-only changes inside `plugins.modules[].config` can be
@@ -601,7 +694,7 @@ Migration notes:
   `PostActionEnqueueResult.RuntimeDelta` is host-validated and visible only to later post-action steps in that same
   plan. Post-action deltas do not mutate the already-selected policy decision, client response, response mutation state,
   or live request runtime after the plan finishes; invalid deltas are rejected with bounded diagnostics.
-- Order `haveibeenpwnd.post_action` before `clickhouse.post_action` when ClickHouse rows should include
+- Order `authn/plugin.haveibeenpwnd.post_action` before `authn/plugin.clickhouse.post_action` when ClickHouse rows should include
   `plugin.exchange.haveibeenpwnd.hash_info` as `pwnd_info`. If ClickHouse is ordered first, the row is written without
   that value. The ClickHouse plugin does not read or write `rt`, does not write the Lua `rt.post_clickhouse = true`
   marker back to live request runtime, and the HIBP plugin intentionally does not set the legacy

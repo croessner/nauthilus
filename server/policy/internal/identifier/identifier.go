@@ -111,6 +111,19 @@ func Qualified(value string) bool {
 	return Namespace(parts[0]) && Action(parts[1])
 }
 
+// AuthnPluginEffect reports whether value uses the narrow authn/plugin.<module>.<component> effect form.
+func AuthnPluginEffect(value string) bool {
+	const prefix = "authn/plugin."
+	if len(value) == 0 || len(value) > maximumQualifiedLength || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+
+	local := strings.TrimPrefix(value, prefix)
+	parts := strings.Split(local, ".")
+
+	return len(parts) == 2 && Provider(parts[0]) && Provider(parts[1])
+}
+
 // providerSlashIdentity validates the canonical owner/name provider form without mixed delimiters.
 func providerSlashIdentity(value string) bool {
 	if strings.Count(value, "/") != 1 || strings.Contains(value, ".") {

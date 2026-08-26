@@ -171,6 +171,56 @@ func TestNamedInternalProfileRemainsTargetConstrained(t *testing.T) {
 	}
 }
 
+func TestAdmissionDerivesInputFactCategoryFromExactSchema(t *testing.T) {
+	t.Parallel()
+
+	facts := append(admissionTestSchemaFacts(t), admissionTestFactSchema(
+		t,
+		"input.auth.username",
+		decision.FactCategorySubject,
+		decision.ValueKindString,
+		decision.FactSourceCaller,
+		64,
+		0,
+		0,
+	))
+	catalog, target, reference := admissionTestCatalog(t, facts)
+	configuration := admissionTestConfiguration(t, reference)
+	configuration.Profiles[0].AllowedInputAttributes = append(
+		configuration.Profiles[0].AllowedInputAttributes,
+		"auth.username",
+	)
+
+	prepared, err := Prepare(
+		configuration,
+		catalog,
+		admissionTestCredentials(t, []string{admissionTestPrincipal}),
+	)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	caller := admissionTestBearerCaller(t)
+	request := admissionTestRequest(t, caller, admissionTestRequestInput{
+		target: target,
+		input: map[string]decision.Value{
+			"auth.username": admissionTestStringValue(t, "alice"),
+		},
+	})
+
+	permit := admissionTestPermit(t, prepared.Authority, caller, request)
+	defer permit.Release()
+
+	fact, found := permit.Facts().Get("input.auth.username")
+	if !found {
+		t.Fatal("admitted input fact is missing")
+	}
+
+	if fact.Category() != decision.FactCategorySubject {
+		t.Fatalf("admitted input fact category = %q, want %q", fact.Category(), decision.FactCategorySubject)
+	}
+}
+
 func TestAdmissionRejectsDisallowedSubmittedFields(t *testing.T) {
 	t.Parallel()
 

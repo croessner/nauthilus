@@ -288,12 +288,6 @@ func (a *AuthState) skipBruteForceCheck(ctx *gin.Context, span trace.Span, cfg c
 		return true
 	}
 
-	if !a.policyCheckScheduled(ctx, bruteForcePolicySelector()) {
-		span.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "scheduler_guard"))
-
-		return true
-	}
-
 	return false
 }
 

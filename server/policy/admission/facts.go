@@ -24,10 +24,11 @@ import (
 )
 
 type submittedFactInput struct {
-	values   decision.ValueMap
-	allowed  map[string]struct{}
-	prefix   string
-	category decision.FactCategory
+	values         decision.ValueMap
+	allowed        map[string]struct{}
+	prefix         string
+	category       decision.FactCategory
+	schemaCategory bool
 }
 
 type trustedFactInput struct {
@@ -56,7 +57,7 @@ func buildAdmittedFacts(
 		{values: request.Subject().Attributes(), allowed: fields.subject, prefix: subjectFactPrefix, category: decision.FactCategorySubject},
 		{values: request.Resource().Attributes(), allowed: fields.resource, prefix: resourceFactPrefix, category: decision.FactCategoryResource},
 		{values: request.Environment().Attributes(), allowed: fields.environment, prefix: environmentFactPrefix, category: decision.FactCategoryEnvironment},
-		{values: request.Attributes(), allowed: fields.input, prefix: inputFactPrefix, category: decision.FactCategoryEnvironment},
+		{values: request.Attributes(), allowed: fields.input, prefix: inputFactPrefix, schemaCategory: true},
 	}
 
 	for _, input := range inputs {
@@ -113,12 +114,17 @@ func appendSubmittedFacts(
 		id := input.prefix + "." + key
 
 		definition, exists := definitions[id]
-		if !exists || definition.Category() != input.category ||
+		if !exists || (!input.schemaCategory && definition.Category() != input.category) ||
 			!sourceAllowed(definition, decision.FactSourceCaller) {
 			return admissionError(ErrInvalidRequest, "submitted field is not caller-owned by the selected exact schema")
 		}
 
-		fact, err := decision.NewFact(id, input.category, values[key], provenance)
+		category := input.category
+		if input.schemaCategory {
+			category = definition.Category()
+		}
+
+		fact, err := decision.NewFact(id, category, values[key], provenance)
 		if err != nil {
 			return admissionError(ErrInvalidRequest, "submitted field cannot be constructed as a caller fact")
 		}

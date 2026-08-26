@@ -4,11 +4,31 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/app/bootfx"
+	"github.com/croessner/nauthilus/v3/server/app/configfx"
+	"github.com/croessner/nauthilus/v3/server/app/policyfx"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
+	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
+
 	"go.uber.org/fx"
 )
+
+type initialGenerationCoordinatorStub struct {
+	apply func(configfx.Snapshot) error
+}
+
+// Apply records one startup generation candidate.
+func (c initialGenerationCoordinatorStub) Apply(_ context.Context, snapshot configfx.Snapshot) error {
+	return c.apply(snapshot)
+}
 
 type incompleteGenerationDrainTestError struct {
 	cause error
@@ -78,6 +98,143 @@ func TestFxOnStopHookRuns(t *testing.T) {
 
 	if !stopped.Load() {
 		t.Fatal("expected OnStop hook to be executed")
+	}
+}
+
+// TestInitialPolicyGenerationCapturesStartupCatalogBeforeCommit protects startup authority ordering.
+func TestInitialPolicyGenerationCapturesStartupCatalogBeforeCommit(t *testing.T) {
+	var generationCommitted atomic.Bool
+
+	prepared := &config.FileSettings{}
+	startup := policyfx.NewStartupCatalog()
+	coordinator := initialGenerationCoordinatorStub{apply: func(snapshot configfx.Snapshot) error {
+		if snapshot.File != prepared || snapshot.Version != 1 {
+			t.Fatalf("initial snapshot = %#v, want prepared version 1", snapshot)
+		}
+
+		if err := startup.Capture(prepared, bootfx.LuaInitCatalogPreparation{}); err == nil {
+			t.Fatal("coordinator ran before startup catalog capture")
+		}
+
+		generationCommitted.Store(true)
+
+		return nil
+	}}
+
+	if err := prepareInitialPolicyGeneration(
+		t.Context(),
+		configfx.Snapshot{File: prepared, Version: 1},
+		nil,
+		nil,
+		nil,
+		localization.NewMapCatalog(nil),
+		startup,
+		coordinator,
+	); err != nil {
+		t.Fatalf("prepareInitialPolicyGeneration() error = %v", err)
+	}
+
+	if !generationCommitted.Load() {
+		t.Fatal("initial generation was not committed")
+	}
+}
+
+// TestInitialLuaFailurePreventsStartupCaptureAndGenerationCommit protects fail-closed boot.
+func TestInitialLuaFailurePreventsStartupCaptureAndGenerationCommit(t *testing.T) {
+	configured := &config.FileSettings{Lua: &config.LuaSection{Config: &config.LuaConf{
+		InitScriptPaths: []string{"missing-precompiled-startup.lua"},
+	}}}
+	startup := policyfx.NewStartupCatalog()
+
+	var generationCommitted atomic.Bool
+
+	coordinator := initialGenerationCoordinatorStub{apply: func(configfx.Snapshot) error {
+		generationCommitted.Store(true)
+
+		return nil
+	}}
+
+	err := prepareInitialPolicyGeneration(
+		t.Context(),
+		configfx.Snapshot{File: configured, Version: 1},
+		nil,
+		nil,
+		nil,
+		localization.NewMapCatalog(nil),
+		startup,
+		coordinator,
+	)
+	if err == nil {
+		t.Fatal("prepareInitialPolicyGeneration() accepted a failed startup script")
+	}
+
+	if generationCommitted.Load() {
+		t.Fatal("initial generation committed after startup Lua failure")
+	}
+
+	if captureErr := startup.Capture(
+		&config.FileSettings{},
+		bootfx.LuaInitCatalogPreparation{},
+	); captureErr != nil {
+		t.Fatalf("failed startup attempt captured catalog state: %v", captureErr)
+	}
+}
+
+func TestInitialLuaMutationBetweenExecutionAndCapturePreventsGenerationCommit(t *testing.T) {
+	scriptPath := filepath.Join(t.TempDir(), "init.lua")
+	replacement := `function nauthilus_run_hook(request)
+	return {}
+end
+`
+
+	script := fmt.Sprintf(`function nauthilus_run_hook(request)
+	local output = assert(io.open(%q, "w"))
+	assert(output:write(%q))
+	assert(output:close())
+	return {}
+end
+`, scriptPath, replacement)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("write mutating startup script: %v", err)
+	}
+
+	configured := &config.FileSettings{Lua: &config.LuaSection{Config: &config.LuaConf{
+		InitScriptPaths: []string{scriptPath},
+	}}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	t.Cleanup(func() {
+		if err := vmpool.GetManager().Delete(vmpool.PoolKey("hook:default")); err != nil {
+			t.Errorf("retire hook VM pool: %v", err)
+		}
+	})
+
+	startup := policyfx.NewStartupCatalog()
+
+	var generationCommitted atomic.Bool
+
+	coordinator := initialGenerationCoordinatorStub{apply: func(configfx.Snapshot) error {
+		generationCommitted.Store(true)
+
+		return nil
+	}}
+
+	err := prepareInitialPolicyGeneration(
+		t.Context(),
+		configfx.Snapshot{File: configured, Version: 1},
+		logger,
+		nil,
+		nil,
+		localization.NewMapCatalog(nil),
+		startup,
+		coordinator,
+	)
+	if err == nil {
+		t.Fatal("prepareInitialPolicyGeneration() accepted startup script drift")
+	}
+
+	if generationCommitted.Load() {
+		t.Fatal("initial generation committed with mismatched startup overlays and source bytes")
 	}
 }
 

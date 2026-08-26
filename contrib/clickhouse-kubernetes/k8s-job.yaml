@@ -11,7 +11,7 @@ metadata:
     component: schema
 data:
   schema.sql: |
-    -- Creates database/table expected by server/lua-plugins.d/actions/clickhouse.lua
+    -- Creates the database/table consumed by authn/plugin.clickhouse.post_action.
     CREATE DATABASE IF NOT EXISTS nauthilus;
 
     CREATE TABLE IF NOT EXISTS nauthilus.logins (

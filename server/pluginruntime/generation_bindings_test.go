@@ -26,6 +26,8 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
+	policy "github.com/croessner/nauthilus/v3/server/policy"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
 // TestGenerationBindingsCaptureLoadedCapabilitiesImmutably proves detached native indexes.
@@ -51,6 +53,13 @@ func TestGenerationBindingsCaptureLoadedCapabilitiesImmutably(t *testing.T) {
 			Origin:        pluginregistry.ComponentOriginNative,
 			Value:         &struct{}{},
 		}},
+		PolicyAttributes: []policyregistry.AttributeDefinition{{
+			ID: "plugin.environment.native_test.score", Stage: policy.StagePreAuth,
+			Operations: []policy.Operation{policy.OperationAuthenticate},
+			Category:   policyregistry.AttributeCategoryEnvironment,
+			Type:       policyregistry.AttributeTypeNumber,
+			Source:     policyregistry.SourcePlugin,
+		}},
 		Capabilities:   []pluginapi.Capability{pluginapi.CapabilityCredentials},
 		ArtifactPath:   artifact,
 		ArtifactDigest: digest,
@@ -65,6 +74,7 @@ func TestGenerationBindingsCaptureLoadedCapabilitiesImmutably(t *testing.T) {
 
 	instances[0].Capabilities[0] = pluginapi.CapabilityMail
 	instances[0].Descriptors[0].QualifiedName = "mutated/source"
+	instances[0].PolicyAttributes[0].ID = "plugin.environment.mutated.score"
 
 	modules := bindings.Modules()
 	if len(modules) != 1 {
@@ -83,6 +93,16 @@ func TestGenerationBindingsCaptureLoadedCapabilitiesImmutably(t *testing.T) {
 	modules[0].Components()[0].QualifiedName = "caller/mutation"
 	if got := bindings.Modules()[0].Components()[0].QualifiedName; got != "native_test/source" {
 		t.Fatalf("generation binding mutated through accessor: %q", got)
+	}
+
+	attributes := modules[0].PolicyAttributes()
+	if len(attributes) != 1 || attributes[0].ID != "plugin.environment.native_test.score" {
+		t.Fatalf("captured policy attributes = %#v, want immutable native_test metadata", attributes)
+	}
+
+	attributes[0].ID = "plugin.environment.caller.score"
+	if got := bindings.Modules()[0].PolicyAttributes()[0].ID; got != "plugin.environment.native_test.score" {
+		t.Fatalf("generation policy attribute mutated through accessor: %q", got)
 	}
 }
 

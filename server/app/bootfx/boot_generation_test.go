@@ -23,9 +23,11 @@ import (
 )
 
 type setupConfigurationCalls struct {
-	foundSetup       bool
-	foundPrepare     bool
-	foundPublication bool
+	foundSetup             bool
+	foundPrepare           bool
+	foundPublication       bool
+	foundPluginPreparation bool
+	foundGenerationApply   bool
 }
 
 // TestSetupConfigurationUsesOffSideConfigPreparation prevents pre-generation config publication.
@@ -48,6 +50,42 @@ func TestSetupConfigurationUsesOffSideConfigPreparation(t *testing.T) {
 	if !calls.foundPrepare {
 		t.Fatal("SetupConfiguration does not prepare config off-side")
 	}
+
+	if calls.foundPluginPreparation {
+		t.Fatal("SetupConfiguration prepares native plugins before the Fx production dependencies exist")
+	}
+
+	if calls.foundGenerationApply {
+		t.Fatal("SetupConfiguration constructs or applies the policy generation before the Fx graph starts")
+	}
+}
+
+// TestSetupGoPluginsDoesNotPublishAmbientState protects explicit plugin dependency injection.
+func TestSetupGoPluginsDoesNotPublishAmbientState(t *testing.T) {
+	parsed, err := parser.ParseFile(token.NewFileSet(), "boot.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parser.ParseFile(boot.go): %v", err)
+	}
+
+	for _, declaration := range parsed.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Name.Name != "SetupGoPlugins" {
+			continue
+		}
+
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			call, isCall := node.(*ast.CallExpr)
+			if isCall && calledFunctionName(call.Fun) == "SetDefaultState" {
+				t.Error("SetupGoPlugins publishes pluginloader default state")
+			}
+
+			return true
+		})
+
+		return
+	}
+
+	t.Fatal("SetupGoPlugins declaration was not found")
 }
 
 // inspectSetupConfigurationCalls records config constructor calls in the boot owner.
@@ -56,13 +94,25 @@ func inspectSetupConfigurationCalls(parsed *ast.File) setupConfigurationCalls {
 
 	for _, declaration := range parsed.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name.Name != "SetupConfiguration" {
+		if !ok || function.Name.Name != "SetupConfiguration" && function.Name.Name != "PrepareConfiguration" {
 			continue
 		}
 
-		result.foundSetup = true
+		if function.Name.Name == "SetupConfiguration" {
+			result.foundSetup = true
+		}
 
 		ast.Inspect(function.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if ok {
+				switch calledFunctionName(call.Fun) {
+				case "SetupGoPlugins":
+					result.foundPluginPreparation = true
+				case "NewCoordinator", "NewProductionCoordinator", "Apply":
+					result.foundGenerationApply = true
+				}
+			}
+
 			switch configCallName(node) {
 			case "NewFile":
 				result.foundPublication = true
@@ -75,6 +125,18 @@ func inspectSetupConfigurationCalls(parsed *ast.File) setupConfigurationCalls {
 	}
 
 	return result
+}
+
+// calledFunctionName returns the terminal identifier of one call expression.
+func calledFunctionName(expression ast.Expr) string {
+	switch function := expression.(type) {
+	case *ast.Ident:
+		return function.Name
+	case *ast.SelectorExpr:
+		return function.Sel.Name
+	default:
+		return ""
+	}
 }
 
 // configCallName returns the selected config package function for one AST node.

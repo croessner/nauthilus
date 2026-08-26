@@ -346,7 +346,6 @@ func newRedisLuaTestState(t *testing.T) (*lua.LState, redismock.ClientMock) {
 
 	testFile := &config.FileSettings{Server: &config.ServerSection{}}
 	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	L := lua.NewState()

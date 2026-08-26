@@ -11,77 +11,56 @@ import (
 	"slices"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 )
 
 const (
-	factPrivacyLookupState       = "plugin.environment.geoip." + exchange.FieldPrivacyLookupState
-	factPrivacyDetected          = "plugin.environment.geoip." + exchange.FieldPrivacyDetected
-	factPrivacyClasses           = "plugin.environment.geoip." + exchange.FieldPrivacyClasses
-	factPrivacyPrimaryClass      = "plugin.environment.geoip." + exchange.FieldPrivacyPrimaryClass
-	factPrivacyConfidence        = "plugin.environment.geoip." + exchange.FieldPrivacyConfidence
-	factPrivacySourceAuthorities = "plugin.environment.geoip." + exchange.FieldPrivacySourceAuthorities
-	factPrivacyDataStale         = "plugin.environment.geoip." + exchange.FieldPrivacyDataStale
-	factPrivacyDataAgeSeconds    = "plugin.environment.geoip." + exchange.FieldPrivacyDataAgeSeconds
-	factIsTorExitNode            = "plugin.environment.geoip." + exchange.FieldIsTorExitNode
-	factIsKnownVPNExit           = "plugin.environment.geoip." + exchange.FieldIsKnownVPNExit
-	factIsCommunityVPNExit       = "plugin.environment.geoip." + exchange.FieldIsCommunityVPNExit
-	factIsPublicProxy            = "plugin.environment.geoip." + exchange.FieldIsPublicProxy
-	factIsPrivacyRelay           = "plugin.environment.geoip." + exchange.FieldIsPrivacyRelay
-	factIsHostingNetwork         = "plugin.environment.geoip." + exchange.FieldIsHostingNetwork
-	factIsSharedEgress           = "plugin.environment.geoip." + exchange.FieldIsSharedEgress
+	factPrivacyLookupState       = exchange.FieldPrivacyLookupState
+	factPrivacyDetected          = exchange.FieldPrivacyDetected
+	factPrivacyClasses           = exchange.FieldPrivacyClasses
+	factPrivacyPrimaryClass      = exchange.FieldPrivacyPrimaryClass
+	factPrivacyConfidence        = exchange.FieldPrivacyConfidence
+	factPrivacySourceAuthorities = exchange.FieldPrivacySourceAuthorities
+	factPrivacyDataStale         = exchange.FieldPrivacyDataStale
+	factPrivacyDataAgeSeconds    = exchange.FieldPrivacyDataAgeSeconds
+	factIsTorExitNode            = exchange.FieldIsTorExitNode
+	factIsKnownVPNExit           = exchange.FieldIsKnownVPNExit
+	factIsCommunityVPNExit       = exchange.FieldIsCommunityVPNExit
+	factIsPublicProxy            = exchange.FieldIsPublicProxy
+	factIsPrivacyRelay           = exchange.FieldIsPrivacyRelay
+	factIsHostingNetwork         = exchange.FieldIsHostingNetwork
+	factIsSharedEgress           = exchange.FieldIsSharedEgress
 )
 
 type privacyClassFact struct {
-	class     privacyClass
-	attribute string
-	key       string
+	class privacyClass
+	name  string
 }
 
 var privacyClassFacts = []privacyClassFact{
-	{class: privacyClassTor, attribute: factIsTorExitNode, key: exchange.FieldIsTorExitNode},
-	{class: privacyClassKnownVPN, attribute: factIsKnownVPNExit, key: exchange.FieldIsKnownVPNExit},
-	{class: privacyClassCommunityVPN, attribute: factIsCommunityVPNExit, key: exchange.FieldIsCommunityVPNExit},
-	{class: privacyClassPublicProxy, attribute: factIsPublicProxy, key: exchange.FieldIsPublicProxy},
-	{class: privacyClassRelay, attribute: factIsPrivacyRelay, key: exchange.FieldIsPrivacyRelay},
-	{class: privacyClassHosting, attribute: factIsHostingNetwork, key: exchange.FieldIsHostingNetwork},
-	{class: privacyClassSharedEgress, attribute: factIsSharedEgress, key: exchange.FieldIsSharedEgress},
+	{class: privacyClassTor, name: factIsTorExitNode},
+	{class: privacyClassKnownVPN, name: factIsKnownVPNExit},
+	{class: privacyClassCommunityVPN, name: factIsCommunityVPNExit},
+	{class: privacyClassPublicProxy, name: factIsPublicProxy},
+	{class: privacyClassRelay, name: factIsPrivacyRelay},
+	{class: privacyClassHosting, name: factIsHostingNetwork},
+	{class: privacyClassSharedEgress, name: factIsSharedEgress},
 }
 
-// enrichPrivacyResult adds privacy facts, public fields, and exchange values to one GeoIP result.
-func enrichPrivacyResult(result pluginapi.EnvironmentResult, lookup privacyLookupResult, publicLogs bool) pluginapi.EnvironmentResult {
-	values := privacyRuntimeValues(result)
-	values[exchange.FieldPrivacyLookupState] = lookup.State
-	values[exchange.FieldPrivacyDataStale] = lookup.Stale
+// enrichPrivacyResult adds generic privacy facts to one GeoIP result.
+func enrichPrivacyResult(result geoIPLookupResult, lookup privacyLookupResult) geoIPLookupResult {
 	result.Facts = append(result.Facts,
-		pluginapi.PolicyFact{Attribute: factPrivacyLookupState, Value: lookup.State},
-		pluginapi.PolicyFact{Attribute: factPrivacyDataStale, Value: lookup.Stale},
+		geoIPLookupFact{Name: factPrivacyLookupState, Value: lookup.State},
+		geoIPLookupFact{Name: factPrivacyDataStale, Value: lookup.Stale},
 	)
 
 	if privacyClassificationsAvailable(lookup.State) {
-		addPrivacyClassifications(&result, values, lookup)
+		addPrivacyClassifications(&result, lookup)
 	}
 
-	addPrivacyEvidenceDetails(&result, values, lookup)
-	result.RuntimeDelta = exchange.GeoIPRuntimeDelta(values)
-
-	if publicLogs {
-		result.Logs = append(result.Logs, publicPrivacyLogFields(lookup)...)
-	}
+	addPrivacyEvidenceDetails(&result, lookup)
 
 	return result
-}
-
-// privacyRuntimeValues copies the existing GeoIP exchange map before extending it.
-func privacyRuntimeValues(result pluginapi.EnvironmentResult) map[string]any {
-	if result.RuntimeDelta.Set == nil {
-		return make(map[string]any)
-	}
-
-	values, _ := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
-
-	return exchange.GeoIPValue(values)
 }
 
 // privacyClassificationsAvailable reports whether false values represent a valid lookup.
@@ -90,35 +69,30 @@ func privacyClassificationsAvailable(state string) bool {
 }
 
 // addPrivacyClassifications emits explicit positive or negative classification values.
-func addPrivacyClassifications(result *pluginapi.EnvironmentResult, values map[string]any, lookup privacyLookupResult) {
+func addPrivacyClassifications(result *geoIPLookupResult, lookup privacyLookupResult) {
 	classes := privacyClassStrings(lookup.Classes)
 	detected := slices.ContainsFunc(lookup.Classes, func(class privacyClass) bool { return class != privacyClassHosting })
 
 	result.Facts = append(result.Facts,
-		pluginapi.PolicyFact{Attribute: factPrivacyDetected, Value: detected},
-		pluginapi.PolicyFact{Attribute: factPrivacyClasses, Value: classes},
+		geoIPLookupFact{Name: factPrivacyDetected, Value: detected},
+		geoIPLookupFact{Name: factPrivacyClasses, Value: classes},
 	)
-	values[exchange.FieldPrivacyDetected] = detected
-	values[exchange.FieldPrivacyClasses] = classes
 
 	for _, definition := range privacyClassFacts {
 		matched := slices.Contains(lookup.Classes, definition.class)
-		result.Facts = append(result.Facts, pluginapi.PolicyFact{Attribute: definition.attribute, Value: matched})
-		values[definition.key] = matched
+		result.Facts = append(result.Facts, geoIPLookupFact{Name: definition.name, Value: matched})
 	}
 }
 
 // addPrivacyEvidenceDetails emits optional values only when evidence gives them meaning.
-func addPrivacyEvidenceDetails(result *pluginapi.EnvironmentResult, values map[string]any, lookup privacyLookupResult) {
+func addPrivacyEvidenceDetails(result *geoIPLookupResult, lookup privacyLookupResult) {
 	if lookup.PrimaryClass != "" {
 		primaryClass := string(lookup.PrimaryClass)
 		confidence := float64(lookup.Confidence)
 		result.Facts = append(result.Facts,
-			pluginapi.PolicyFact{Attribute: factPrivacyPrimaryClass, Value: primaryClass},
-			pluginapi.PolicyFact{Attribute: factPrivacyConfidence, Value: confidence},
+			geoIPLookupFact{Name: factPrivacyPrimaryClass, Value: primaryClass},
+			geoIPLookupFact{Name: factPrivacyConfidence, Value: confidence},
 		)
-		values[exchange.FieldPrivacyPrimaryClass] = primaryClass
-		values[exchange.FieldPrivacyConfidence] = confidence
 	}
 
 	if len(lookup.Authorities) == 0 {
@@ -128,37 +102,9 @@ func addPrivacyEvidenceDetails(result *pluginapi.EnvironmentResult, values map[s
 	authorities := privacyAuthorityStrings(lookup.Authorities)
 	ageSeconds := float64(max(lookup.DataAge/time.Second, 0))
 	result.Facts = append(result.Facts,
-		pluginapi.PolicyFact{Attribute: factPrivacySourceAuthorities, Value: authorities},
-		pluginapi.PolicyFact{Attribute: factPrivacyDataAgeSeconds, Value: ageSeconds},
+		geoIPLookupFact{Name: factPrivacySourceAuthorities, Value: authorities},
+		geoIPLookupFact{Name: factPrivacyDataAgeSeconds, Value: ageSeconds},
 	)
-	values[exchange.FieldPrivacySourceAuthorities] = authorities
-	values[exchange.FieldPrivacyDataAgeSeconds] = ageSeconds
-}
-
-// publicPrivacyLogFields returns only the approved bounded central log surface.
-func publicPrivacyLogFields(lookup privacyLookupResult) []pluginapi.LogField {
-	fields := make([]pluginapi.LogField, 0, 8)
-	if !privacyClassificationsAvailable(lookup.State) {
-		return fields
-	}
-
-	addPublicGeoIPLogField(&fields, exchange.FieldPrivacyPrimaryClass, string(lookup.PrimaryClass))
-
-	if lookup.PrimaryClass != "" {
-		addPublicGeoIPLogField(&fields, exchange.FieldPrivacyConfidence, float64(lookup.Confidence))
-	}
-
-	addPublicGeoIPLogField(&fields, exchange.FieldPrivacyDataStale, lookup.Stale)
-
-	for _, definition := range privacyClassFacts {
-		if definition.class == privacyClassCommunityVPN || definition.class == privacyClassRelay {
-			continue
-		}
-
-		addPublicGeoIPLogField(&fields, definition.key, slices.Contains(lookup.Classes, definition.class))
-	}
-
-	return fields
 }
 
 // privacyClassStrings converts stable internal class enums to policy-safe strings.

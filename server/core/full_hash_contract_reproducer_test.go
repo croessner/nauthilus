@@ -26,7 +26,6 @@ import (
 	internalpasswordhash "github.com/croessner/nauthilus/v3/server/internal/passwordhash"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/policy"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/croessner/nauthilus/v3/server/util"
 
@@ -70,28 +69,66 @@ func installFullHashContractVerifier(t *testing.T, verifier PasswordVerifier) {
 
 	previousVerifier := getPasswordVerifier()
 	previousSubject := getLuaSubject()
-	previousPost := getPostAction()
 
 	RegisterPasswordVerifier(verifier)
 	RegisterLuaSubject(testLuaSubject{})
-	RegisterPostAction(recordingPlanPostAction{})
 
 	t.Cleanup(func() {
 		RegisterPasswordVerifier(previousVerifier)
 		RegisterLuaSubject(previousSubject)
-		RegisterPostAction(previousPost)
 	})
 }
 
-// runFullHashContractRequest drives preprocessing and the complete authentication FSM.
+// runFullHashContractRequest drives the admitted candidate backend boundary.
 func runFullHashContractRequest(t *testing.T, auth *AuthState, ctx *gin.Context) {
 	t.Helper()
+	bindRegisteredAuthnHostServicesForTest(auth)
 
 	if auth.PreproccessAuthRequest(ctx) {
 		t.Fatal("request was rejected during preprocessing")
 	}
 
-	auth.runAuthPipelineFSM(ctx)
+	execution := &authnCandidateExecution{auth: auth, ginCtx: ctx}
+
+	terminal, err := execution.prepareBackendPlan(auth.buildBackendExecutionPlan())
+	if err != nil {
+		t.Fatalf("prepareBackendPlan() error = %v", err)
+	}
+
+	if !terminal {
+		if _, err = execution.prepareBuiltinSubjectProvider(); err != nil {
+			t.Fatalf("prepareBuiltinSubjectProvider() error = %v", err)
+		}
+	}
+
+	terminalMarker := policy.FSMEventMarkerAuthTempFail
+
+	switch execution.authResult {
+	case definitions.AuthResultOK:
+		terminalMarker = policy.FSMEventMarkerAuthPermit
+	case definitions.AuthResultFail, definitions.AuthResultEmptyPassword:
+		terminalMarker = policy.FSMEventMarkerAuthDeny
+	}
+
+	if err = auth.applyAuthFSMMarkers([]string{
+		policy.FSMEventMarkerParseOK,
+		policy.FSMEventMarkerPreAuthOK,
+		policy.FSMEventMarkerAuthEvaluated,
+		terminalMarker,
+	}); err != nil {
+		t.Fatalf("applyAuthFSMMarkers() error = %v", err)
+	}
+
+	switch execution.authResult {
+	case definitions.AuthResultOK:
+		auth.AuthOK(ctx)
+	case definitions.AuthResultFail, definitions.AuthResultEmptyPassword:
+		auth.AuthFail(ctx)
+	default:
+		auth.AuthTempFail(ctx, definitions.TempFailDefault)
+	}
+
+	execution.release()
 }
 
 // emptyNonceLegacyCandidate derives the bounded Redis legacy candidate explicitly.
@@ -184,12 +221,6 @@ func TestPositiveBackendAuthenticationCacheCredentialDigestSeparatesShortHashCol
 		t.Fatal("fixed collision contract requires an empty nonce and disabled developer mode")
 	}
 
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation:    506,
-		Mode:          "enforce",
-		DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-
 	verifierCalls := &atomic.Int32{}
 	installFullHashContractVerifier(t, fullHashContractVerifier{
 		calls:              verifierCalls,
@@ -235,12 +266,6 @@ func TestPositiveBackendAuthenticationCacheRejectsUnsupportedNamedContainers(t *
 			cfg := newCurrentBehaviorConfig(t)
 			cfg.Server.Redis.AccountLocalCache.Enabled = true
 
-			activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-				Generation:    507,
-				Mode:          "enforce",
-				DefaultPolicy: policy.BuiltinDefaultSet,
-			})
-
 			verifierCalls := &atomic.Int32{}
 			installFullHashContractVerifier(t, fullHashContractVerifier{
 				calls:              verifierCalls,
@@ -274,53 +299,6 @@ func TestPositiveBackendAuthenticationCacheRejectsUnsupportedNamedContainers(t *
 			}
 		})
 	}
-}
-
-func TestAuthenticateUserReentrantCallDoesNotReconsumePositiveBackendCache(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t)
-	cfg.Server.Redis.AccountLocalCache.Enabled = true
-
-	activatePositiveBackendAuthenticationPolicy(t)
-
-	verifierCalls := &atomic.Int32{}
-	subjectCalls := &atomic.Int32{}
-	policyBridge := &backendAuthenticationPolicyBridge{}
-
-	restore := installPositiveBackendAuthenticationServices(t, verifierCalls, subjectCalls, policyBridge)
-	defer restore()
-
-	auth, ctx := newRequestOwnedContractAuth(t, cfg, "reentrant@example.test", "credential", "reentrant")
-	cache := NewPositiveBackendAuthenticationCache(time.Now)
-	auth.deps.BackendAuthenticationCache = cache
-
-	if rejected := auth.PreproccessAuthRequest(ctx); rejected {
-		t.Fatal("first authentication was rejected during preprocessing")
-	}
-
-	auth.runAuthPipelineFSM(ctx)
-
-	if !auth.Runtime.Authenticated || auth.Runtime.AuthFSMTerminalState != string(authFSMStateAuthOK) {
-		t.Fatalf("first authentication state = authenticated:%t terminal:%q", auth.Runtime.Authenticated, auth.Runtime.AuthFSMTerminalState)
-	}
-
-	if got := auth.authenticateUser(ctx, auth.buildBackendExecutionPlan()); got != definitions.AuthResultOK {
-		t.Fatalf("second authenticateUser() = %q, want authenticated success", got)
-	}
-
-	if ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
-		t.Fatal("reentrant authenticated call consumed the positive backend cache")
-	}
-
-	if _, found := ctx.Get(cachedBackendAuthenticationContextKey); found {
-		t.Fatal("reentrant authenticated call materialized a cached backend snapshot")
-	}
-
-	assertPositiveCacheNamedCounts(t, map[string]int32{
-		"backend":      verifierCalls.Load(),
-		"subject":      subjectCalls.Load(),
-		"final policy": policyBridge.effectCalls.Load(),
-		"post":         policyBridge.postCalls.Load(),
-	}, map[string]int32{"backend": 1, "subject": 1, "final policy": 1, "post": 1})
 }
 
 func TestPositivePasswordCacheReadsLegacyShortHashAndWritesFullHash(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,21 @@ func TestEnsureBackchannelAuthConfigured(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assertBackchannelAuthConfig(t, tt)
 		})
+	}
+}
+
+func TestBackchannelNativeHooksUseOnlyInjectedRunner(t *testing.T) {
+	source, err := os.ReadFile("backchannel.go")
+	if err != nil {
+		t.Fatalf("read backchannel source: %v", err)
+	}
+
+	if strings.Contains(string(source), "DefaultRunner(") {
+		t.Fatal("backchannel retains ambient native plugin runner lookup")
+	}
+
+	if hooks := nativeHookBindings(nil); len(hooks) != 0 {
+		t.Fatalf("nil injected runner produced %d native hooks", len(hooks))
 	}
 }
 

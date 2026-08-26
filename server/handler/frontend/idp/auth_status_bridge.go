@@ -32,6 +32,7 @@ import (
 const idpGenericInvalidLoginMessage = "Invalid login or password"
 
 type idpAuthStatusBridge struct {
+	MessageResolver  localization.MessageResolver
 	StatusMessage    string
 	I18NKey          string
 	ResponseLanguage string
@@ -75,6 +76,7 @@ func idpAuthStatusBridgeFromError(err error) (idpAuthStatusBridge, bool) {
 	}
 
 	return idpAuthStatusBridge{
+		MessageResolver:  failure.Status.MessageResolver,
 		StatusMessage:    failure.Status.StatusMessage,
 		I18NKey:          failure.Status.I18NKey,
 		ResponseLanguage: failure.Status.ResponseLanguage,
@@ -92,11 +94,17 @@ func renderIDPAuthStatusBridgeMessage(
 	}
 
 	fallback := strings.TrimSpace(status.StatusMessage)
-	if d == nil || d.MessageResolver == nil {
+
+	resolver := status.MessageResolver
+	if resolver == nil && d != nil {
+		resolver = d.MessageResolver
+	}
+
+	if resolver == nil {
 		return idpFallbackStatusMessage(ctx, d, fallback, genericMessage)
 	}
 
-	resolved := d.MessageResolver.ResolveStatusMessage(
+	resolved := resolver.ResolveStatusMessage(
 		idpStatusMessageContext(ctx),
 		localization.StatusMessage{
 			Text:    fallback,

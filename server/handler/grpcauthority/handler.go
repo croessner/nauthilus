@@ -250,6 +250,7 @@ func localizedOutcomeStatus[T any](
 // authOutcomeStatusFields extracts localizable status-message fields from an auth outcome.
 func authOutcomeStatusFields(outcome *core.AuthOutcome) grpcStatusMessageFields {
 	return grpcStatusMessageFields{
+		resolver: outcome.MessageResolver,
 		text:     outcome.StatusMessage,
 		i18nKey:  outcome.StatusMessageI18NKey,
 		language: outcome.ResponseLanguage,
@@ -264,6 +265,7 @@ func setAuthOutcomeStatusMessage(outcome *core.AuthOutcome, statusMessage string
 // listAccountsOutcomeStatusFields extracts localizable status-message fields from a list outcome.
 func listAccountsOutcomeStatusFields(outcome *core.ListAccountsOutcome) grpcStatusMessageFields {
 	return grpcStatusMessageFields{
+		resolver: outcome.MessageResolver,
 		text:     outcome.StatusMessage,
 		i18nKey:  outcome.StatusMessageI18NKey,
 		language: outcome.ResponseLanguage,
@@ -276,6 +278,7 @@ func setListAccountsOutcomeStatusMessage(outcome *core.ListAccountsOutcome, stat
 }
 
 type grpcStatusMessageFields struct {
+	resolver localization.MessageResolver
 	text     string
 	i18nKey  string
 	language string
@@ -283,11 +286,17 @@ type grpcStatusMessageFields struct {
 
 func (h *Handler) resolvePolicyStatusMessage(ctx context.Context, fields grpcStatusMessageFields) (string, bool) {
 	key := strings.TrimSpace(fields.i18nKey)
-	if key == "" || h.resolver == nil {
+
+	resolver := fields.resolver
+	if resolver == nil {
+		resolver = h.resolver
+	}
+
+	if key == "" || resolver == nil {
 		return fields.text, false
 	}
 
-	resolved := h.resolver.ResolveStatusMessage(
+	resolved := resolver.ResolveStatusMessage(
 		ctx,
 		localization.StatusMessage{
 			Text:    fields.text,

@@ -20,7 +20,7 @@ import (
 	"encoding/base64"
 	stderrors "errors"
 	"net/http"
-	"path/filepath"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -304,7 +304,7 @@ func (h *FrontendHandler) renderExpiredSelfServiceSessionError(ctx *gin.Context)
 
 // Register adds frontend routes using only the canonical browser-session boundary.
 func (h *FrontendHandler) Register(router gin.IRouter) {
-	registerFrontendStaticAssets(router, h.frontendAssetBase())
+	registerFrontendStaticAssets(router, h.deps.RouteArtifacts)
 	registerIDPContextMiddleware(router)
 
 	middlewares := h.newFrontendRouteMiddlewares()
@@ -323,29 +323,56 @@ type frontendRouteMiddlewares struct {
 
 type frontendRouteChain func(frontendRouteMiddlewares, gin.HandlerFunc) []gin.HandlerFunc
 
-// frontendAssetBase resolves the directory that contains public frontend assets.
-func (h *FrontendHandler) frontendAssetBase() string {
-	staticPath := filepath.Clean(h.deps.Cfg.GetServer().Frontend.GetHTMLStaticContentPath())
-
-	return frontendAssetBase(staticPath)
-}
-
-// frontendAssetBase returns the asset root for a configured template/static path.
-func frontendAssetBase(staticPath string) string {
-	if filepath.Base(staticPath) == "templates" {
-		return filepath.Dir(staticPath)
+// registerFrontendStaticAssets registers frontend CSS, JavaScript, image, and font assets.
+func registerFrontendStaticAssets(router gin.IRouter, artifacts *core.RouteArtifacts) {
+	if router == nil || artifacts == nil {
+		return
 	}
 
-	return staticPath
+	assets := make(map[string][]byte)
+	for _, asset := range artifacts.FrontendAssets() {
+		assets[asset.RelativePath] = asset.Content
+	}
+
+	for _, directory := range [...]string{"css", "js", "img", "fonts"} {
+		handler := sealedFrontendTreeHandler(directory, assets)
+		router.GET("/static/"+directory+"/*assetPath", handler)
+		router.HEAD("/static/"+directory+"/*assetPath", handler)
+	}
+
+	if favicon, found := assets["img/favicon.ico"]; found {
+		handler := sealedFrontendAssetHandler(core.FrontendAsset{
+			RelativePath: "img/favicon.ico", Content: favicon,
+		})
+		router.GET("/favicon.ico", handler)
+		router.HEAD("/favicon.ico", handler)
+	}
 }
 
-// registerFrontendStaticAssets registers frontend CSS, JavaScript, image, and font assets.
-func registerFrontendStaticAssets(router gin.IRouter, assetBase string) {
-	router.StaticFile("/favicon.ico", filepath.Join(assetBase, "img", "favicon.ico"))
-	router.Static("/static/css", filepath.Join(assetBase, "css"))
-	router.Static("/static/js", filepath.Join(assetBase, "js"))
-	router.Static("/static/img", filepath.Join(assetBase, "img"))
-	router.Static("/static/fonts", filepath.Join(assetBase, "fonts"))
+// sealedFrontendTreeHandler resolves a wildcard request only against captured membership.
+func sealedFrontendTreeHandler(directory string, assets map[string][]byte) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		relative := directory + "/" + strings.TrimPrefix(path.Clean("/"+ctx.Param("assetPath")), "/")
+
+		content, found := assets[relative]
+		if !found {
+			ctx.Status(http.StatusNotFound)
+
+			return
+		}
+
+		http.ServeContent(ctx.Writer, ctx.Request, path.Base(relative), time.Time{}, bytes.NewReader(content))
+	}
+}
+
+// sealedFrontendAssetHandler serves one immutable captured byte stream for GET and HEAD.
+func sealedFrontendAssetHandler(asset core.FrontendAsset) gin.HandlerFunc {
+	content := bytes.Clone(asset.Content)
+	name := path.Base(asset.RelativePath)
+
+	return func(ctx *gin.Context) {
+		http.ServeContent(ctx.Writer, ctx.Request, name, time.Time{}, bytes.NewReader(content))
+	}
 }
 
 // registerIDPContextMiddleware annotates frontend requests with the IDP service context.

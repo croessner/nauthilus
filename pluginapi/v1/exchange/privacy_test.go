@@ -121,6 +121,34 @@ func TestGeoIPAnalyticsCarriesSharedEgressClassification(t *testing.T) {
 	}
 }
 
+func TestGeoIPAnalyticsProjectsCanonicalGenericFactsWithoutRuntime(t *testing.T) {
+	snapshot := NewSnapshotFromValues(nil, []pluginapi.PolicyFact{
+		{Attribute: genericGeoIPFact("matched"), Value: true},
+		{Attribute: genericGeoIPFact("country_iso"), Value: "DE"},
+		{Attribute: genericGeoIPFact("asn"), Value: int64(64500)},
+		{Attribute: genericGeoIPFact(FieldPrivacyLookupState), Value: "evaluated"},
+		{Attribute: genericGeoIPFact(FieldPrivacyDetected), Value: true},
+		{Attribute: genericGeoIPFact(FieldPrivacyClasses), Value: []string{"tor_exit"}},
+		{Attribute: genericGeoIPFact(FieldPrivacyConfidence), Value: float64(100)},
+		{Attribute: genericGeoIPFact(FieldIsTorExitNode), Value: true},
+	})
+
+	got := snapshot.GeoIPAnalytics()
+	if got.Fields["matched"] != true || got.Fields["country_iso"] != "DE" || got.Fields["asn"] != int64(64500) {
+		t.Fatalf("GeoIP fields = %#v, want canonical generic fact projection", got.Fields)
+	}
+
+	if got.Privacy.LookupState != "evaluated" || got.Privacy.Detected == nil || !*got.Privacy.Detected ||
+		got.Privacy.Confidence == nil || *got.Privacy.Confidence != 100 ||
+		got.Privacy.IsTorExitNode == nil || !*got.Privacy.IsTorExitNode {
+		t.Fatalf("GeoIP privacy = %#v, want canonical generic fact projection", got.Privacy)
+	}
+
+	if !reflect.DeepEqual(got.Privacy.Classes, []string{"tor_exit"}) {
+		t.Fatalf("GeoIP privacy classes = %#v, want tor_exit", got.Privacy.Classes)
+	}
+}
+
 func TestGeoIPAnalyticsReportsMalformedFactWithoutRawValue(t *testing.T) {
 	snapshot := NewSnapshotFromValues(nil, []pluginapi.PolicyFact{
 		{Attribute: privacyFact(FieldPrivacyLookupState), Value: "evaluated"},
@@ -148,4 +176,9 @@ func assertPrivacyMalformedFields(t *testing.T, got []string, want []string) {
 // privacyFact returns the native GeoIP policy fact ID for a field.
 func privacyFact(field string) string {
 	return "plugin.environment.geoip." + field
+}
+
+// genericGeoIPFact returns the canonical generic GeoIP fact ID for a field.
+func genericGeoIPFact(field string) string {
+	return "plugin.geoip." + field
 }

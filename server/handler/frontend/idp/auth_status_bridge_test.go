@@ -82,6 +82,41 @@ func TestIDPAuthFailureMessageUsesExplicitUILanguageBeforePolicyLanguage(t *test
 	}
 }
 
+func TestIDPAuthFailureMessageUsesCapturedOutcomeResolver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	captured := &recordingIDPStatusResolver{
+		resolved: localization.ResolvedStatusMessage{
+			Text:      "Generation eins",
+			Language:  "de",
+			Localized: true,
+			Key:       authStatusBridgeKey,
+		},
+	}
+	fallback := &recordingIDPStatusResolver{failOnCall: true}
+	d := authStatusBridgeDeps(fallback)
+	ctx := authStatusBridgeContext("/login", "de")
+	err := idpservice.NewAuthFailureError(
+		stderrors.New("policy rejected login"),
+		idpservice.AuthFailureStatus{
+			MessageResolver: captured,
+			StatusMessage:   authStatusBridgeFallback,
+			I18NKey:         authStatusBridgeKey,
+			PolicyTerminal:  true,
+		},
+	)
+
+	message := renderIDPAuthFailureMessage(ctx, d, err, authStatusBridgeGenericText)
+
+	if message != "Generation eins" {
+		t.Fatalf("message = %q, want captured-generation message", message)
+	}
+
+	if !captured.called || fallback.called {
+		t.Fatalf("captured/fallback resolver called = %t/%t, want true/false", captured.called, fallback.called)
+	}
+}
+
 func TestIDPAuthFailureMessageKeepsGenericFallbackWithoutPolicyI18N(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

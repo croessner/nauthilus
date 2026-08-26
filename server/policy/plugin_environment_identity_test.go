@@ -18,31 +18,8 @@ package policy
 import "testing"
 
 func TestPluginEnvironmentIdentity(t *testing.T) {
-	tests := []struct {
-		name       string
-		configRef  string
-		moduleName string
-	}{
-		{name: "valid", configRef: "plugins.modules.rns_auth.environment", moduleName: "rns_auth"},
-		{name: "trimmed", configRef: " plugins.modules.rns_auth.environment ", moduleName: "rns_auth"},
-		{name: "wrong suffix", configRef: "plugins.modules.rns_auth.subject"},
-		{name: "missing module", configRef: "plugins.modules..environment"},
-	}
-
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			if got := PluginEnvironmentModuleNameFromConfigRef(testCase.configRef); got != testCase.moduleName {
-				t.Fatalf("PluginEnvironmentModuleNameFromConfigRef() = %q, want %q", got, testCase.moduleName)
-			}
-		})
-	}
-
 	if got := PluginEnvironmentCheckName("rns_auth"); got != "plugin_environment_rns_auth" {
 		t.Fatalf("PluginEnvironmentCheckName() = %q", got)
-	}
-
-	if got := PluginEnvironmentConfigRef("rns_auth"); got != "plugins.modules.rns_auth.environment" {
-		t.Fatalf("PluginEnvironmentConfigRef() = %q", got)
 	}
 
 	if got := PluginEnvironmentAttributeID("rns_auth", "blocklist", "triggered"); got != "auth.plugin.environment.rns_auth.blocklist.triggered" {

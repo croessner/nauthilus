@@ -45,7 +45,7 @@ func TestOpenAPIDocumentResponsesMatchOpenAPIContract(t *testing.T) {
 	managementRouter := gin.New()
 	RegisterManagementOpenAPI(managementRouter.Group("/api/v1"))
 
-	idpRouter := NewRouter(nil).WithIDPOpenAPI().Build()
+	idpRouter := NewRouter(nil, nil).WithIDPOpenAPI().Build()
 
 	for _, tt := range openAPIResponseContractCases(t, managementRouter, idpRouter) {
 		t.Run(tt.name, func(t *testing.T) {

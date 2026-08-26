@@ -17,6 +17,8 @@ package rediscli
 
 import (
 	"context"
+	"crypto/tls"
+	"fmt"
 	"log/slog"
 	"math/rand"
 	"sync"
@@ -36,35 +38,13 @@ var (
 	clientMu sync.Mutex
 )
 
-// GetClient provides the exported GetClient function.
+// GetClient returns the client installed by dependency injection or a test seam.
+// It never constructs a client from ambient configuration.
 func GetClient() Client {
 	clientMu.Lock()
 	defer clientMu.Unlock()
 
-	if client == nil {
-		client = NewClient()
-	}
-
 	return client
-}
-
-// RebuildClient closes the currently configured global client (if any) and
-// replaces it with a freshly constructed client.
-//
-// This is intended for in-process restart/reload operations where Redis
-// configuration may have changed. Callers should treat this as best-effort and
-// handle downstream readiness checks separately.
-func RebuildClient() {
-	clientMu.Lock()
-	old := client
-	client = nil
-	clientMu.Unlock()
-
-	if old != nil {
-		old.Close()
-	}
-
-	_ = GetClient()
 }
 
 // Client defines an interface for interacting with a Redis client with methods for initialization and handle retrieval.
@@ -95,8 +75,9 @@ type Client interface {
 // redisClient represents a Redis client with separate handles for write and read operations.
 // It implements methods to initialize and retrieve these handles.
 type redisClient struct {
-	cfg    config.File
-	logger *slog.Logger
+	cfg       config.File
+	logger    *slog.Logger
+	tlsConfig *tls.Config
 
 	// writeHandle represents the primary Redis client used for write operations within the redisClient structure.
 	writeHandle redis.UniversalClient
@@ -110,31 +91,33 @@ type redisClient struct {
 
 var _ Client = (*redisClient)(nil)
 
-// NewClient creates and returns a new instance of a Redis client that implements the Client interface.
-func NewClient() Client {
-	return NewClientWithDeps(nil, nil)
-}
-
 // NewClientWithDeps creates and returns a new instance of a Redis client that implements the Client interface
 // using injected dependencies.
 //
 // This is the DI-owned construction path. It must not call
 // `config.GetFile()` or use `log.Logger` internally.
-func NewClientWithDeps(cfg config.File, logger *slog.Logger) Client {
-	newClient := &redisClient{
-		cfg:    cfg,
-		logger: logger,
-	}
-
+func NewClientWithDeps(cfg config.File, logger *slog.Logger) (Client, error) {
 	if cfg == nil {
-		return nil
+		return nil, fmt.Errorf("redis configuration is nil")
 	}
 
 	if logger == nil {
-		return nil
+		return nil, fmt.Errorf("redis logger is nil")
 	}
 
 	redisCfg := cfg.GetServer().GetRedis()
+
+	tlsConfig, err := redisTLSOptions(cfg, redisCfg.GetTLS())
+	if err != nil {
+		return nil, fmt.Errorf("build Redis TLS configuration: %w", err)
+	}
+
+	newClient := &redisClient{
+		cfg:       cfg,
+		logger:    logger,
+		tlsConfig: tlsConfig,
+	}
+
 	newClient.securityManager = NewSecurityManager(redisCfg.GetEncryptionSecret())
 	newClient.newRedisClient(redisCfg)
 	newClient.newRedisReplicaClient(redisCfg)
@@ -160,21 +143,21 @@ func NewClientWithDeps(cfg config.File, logger *slog.Logger) Client {
 		}
 	}
 
-	return newClient
+	return newClient, nil
 }
 
 // newRedisClient initializes the redisClient by setting its write handle based on the provided Redis configuration.
 func (clt *redisClient) newRedisClient(redisCfg *config.Redis) {
 	if len(redisCfg.GetCluster().GetAddresses()) > 0 {
-		clt.SetWriteHandle(newRedisClusterClient(clt.cfg, clt.logger, redisCfg))
+		clt.SetWriteHandle(newRedisClusterClient(clt.cfg, clt.logger, redisCfg, clt.tlsConfig))
 	} else if len(redisCfg.GetSentinel().GetAddresses()) > 0 && redisCfg.GetSentinel().GetMasterName() != "" {
-		clt.SetWriteHandle(newRedisFailoverClient(clt.cfg, clt.logger, redisCfg, false))
+		clt.SetWriteHandle(newRedisFailoverClient(clt.cfg, clt.logger, redisCfg, false, clt.tlsConfig))
 	} else {
 		if redisCfg.GetStandaloneMaster().GetAddress() == "" {
 			panic("no Redis master address provided")
 		}
 
-		clt.SetWriteHandle(newRedisClient(clt.cfg, clt.logger, redisCfg, redisCfg.Master.Address))
+		clt.SetWriteHandle(newRedisClient(clt.cfg, clt.logger, redisCfg, redisCfg.Master.Address, clt.tlsConfig))
 	}
 }
 
@@ -190,7 +173,7 @@ func (clt *redisClient) newRedisReplicaClient(redisCfg *config.Redis) {
 			clusterAddress := "cluster:" + clusterCfg.GetAddresses()[0]
 
 			// Create a new cluster client with ReadOnly set to true
-			readOnlyClient := newRedisClusterClientReadOnly(clt.cfg, clt.logger, redisCfg)
+			readOnlyClient := newRedisClusterClientReadOnly(clt.cfg, clt.logger, redisCfg, clt.tlsConfig)
 
 			// Add the read-only client as a read handle
 			clt.AddReadHandle(clusterAddress, readOnlyClient)
@@ -200,20 +183,20 @@ func (clt *redisClient) newRedisReplicaClient(redisCfg *config.Redis) {
 	}
 
 	if len(redisCfg.GetSentinel().GetAddresses()) > 1 && redisCfg.GetSentinel().GetMasterName() != "" {
-		clt.AddReadHandle(redisCfg.GetSentinel().GetAddresses()[0], newRedisFailoverClient(clt.cfg, clt.logger, redisCfg, true))
+		clt.AddReadHandle(redisCfg.GetSentinel().GetAddresses()[0], newRedisFailoverClient(clt.cfg, clt.logger, redisCfg, true, clt.tlsConfig))
 	}
 
 	// Deprecated
 	if redisCfg.GetStandaloneReplica().GetAddress() != "" {
 		if redisCfg.GetStandaloneMaster().GetAddress() != redisCfg.GetStandaloneReplica().GetAddress() {
-			clt.AddReadHandle(redisCfg.GetStandaloneReplica().GetAddress(), newRedisClient(clt.cfg, clt.logger, redisCfg, redisCfg.GetStandaloneReplica().GetAddress()))
+			clt.AddReadHandle(redisCfg.GetStandaloneReplica().GetAddress(), newRedisClient(clt.cfg, clt.logger, redisCfg, redisCfg.GetStandaloneReplica().GetAddress(), clt.tlsConfig))
 		}
 	}
 
 	if len(redisCfg.GetStandaloneReplica().GetAddresses()) > 0 {
 		for _, address := range redisCfg.GetStandaloneReplica().GetAddresses() {
 			if address != redisCfg.GetStandaloneMaster().GetAddress() {
-				clt.AddReadHandle(address, newRedisClient(clt.cfg, clt.logger, redisCfg, address))
+				clt.AddReadHandle(address, newRedisClient(clt.cfg, clt.logger, redisCfg, address, clt.tlsConfig))
 			}
 		}
 	}

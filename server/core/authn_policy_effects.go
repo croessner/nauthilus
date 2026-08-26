@@ -29,15 +29,12 @@ type authnPolicyEffectOwnerContextKey struct{}
 
 type authnPolicyEffectOwner interface {
 	executeAuthnPolicyEffect(report.EffectRequest) effectsupervisor.Result
-	prepareAuthnPostAction(report.EffectRequest, uint32) (effectsupervisor.ExecutableWork, error)
 }
 
 type authnPolicySyncEffectProvider struct{}
 
-type authnPolicyPostActionProvider struct{}
-
-// authnStandardEffectBindingMaps creates generation bindings from the immutable registry mapping.
-func authnStandardEffectBindingMaps() (
+// AuthnStandardEffectBindings creates detached generation bindings from the immutable registry mapping.
+func AuthnStandardEffectBindings() (
 	map[string]policyruntime.SyncEffectProvider,
 	map[string]policyruntime.PostActionProvider,
 ) {
@@ -48,8 +45,6 @@ func authnStandardEffectBindingMaps() (
 		switch binding.Execution {
 		case registry.ExecutionHostSync:
 			syncEffects[binding.Provider] = authnPolicySyncEffectProvider{}
-		case registry.ExecutionHostPostAction:
-			postActions[binding.Provider] = authnPolicyPostActionProvider{}
 		}
 	}
 
@@ -67,6 +62,11 @@ func contextWithAuthnPolicyEffectOwner(ctx context.Context, owner authnPolicyEff
 	}
 
 	return context.WithValue(ctx, authnPolicyEffectOwnerContextKey{}, owner)
+}
+
+// contextWithAuthnLuaActionOwner binds exact configured actions beside the builtin host owner.
+func contextWithAuthnLuaActionOwner(ctx context.Context, owner policyruntime.AuthnLuaActionHost) context.Context {
+	return policyruntime.ContextWithAuthnLuaActionHost(ctx, owner)
 }
 
 // authnPolicyEffectOwnerFromContext resolves the admitted request-local owner.
@@ -95,26 +95,7 @@ func (authnPolicySyncEffectProvider) Execute(
 	return owner.executeAuthnPolicyEffect(request)
 }
 
-// Prepare captures one standard-auth post-action for generic supervisor ownership.
-func (authnPolicyPostActionProvider) Prepare(
-	ctx context.Context,
-	execution policyruntime.EffectExecution,
-) (effectsupervisor.Work, error) {
-	owner := authnPolicyEffectOwnerFromContext(ctx)
-
-	request, err := authnPolicyEffectRequest(execution)
-	if err != nil {
-		return nil, err
-	}
-
-	if owner == nil {
-		return nil, fmt.Errorf("authn post-action owner is unavailable")
-	}
-
-	return owner.prepareAuthnPostAction(request, execution.Ordinal())
-}
-
-// authnPolicyEffectRequest restores the established request over strict captured parameters.
+// authnPolicyEffectRequest projects strict captured parameters without translating the canonical effect identity.
 func authnPolicyEffectRequest(execution policyruntime.EffectExecution) (report.EffectRequest, error) {
 	binding, ok := registry.BuiltinAuthEffectBindingForEffect(execution.EffectID())
 	if !ok || binding.Provider != execution.Provider() {
@@ -131,7 +112,7 @@ func authnPolicyEffectRequest(execution policyruntime.EffectExecution) (report.E
 		args[key] = projected
 	}
 
-	return report.EffectRequest{ID: binding.Selection, Args: args}, nil
+	return report.EffectRequest{ID: execution.EffectID(), Args: args}, nil
 }
 
 // executeAuthnPolicyEffect routes one synchronous effect through the existing executor seam.
@@ -151,23 +132,4 @@ func (e *authnCandidateExecution) executeAuthnPolicyEffect(request report.Effect
 	return effectsupervisor.Failed("authn_effect_failed")
 }
 
-// prepareAuthnPostAction captures one existing Lua or native step without accepting it twice.
-func (e *authnCandidateExecution) prepareAuthnPostAction(
-	request report.EffectRequest,
-	ordinal uint32,
-) (effectsupervisor.ExecutableWork, error) {
-	if e == nil || e.auth == nil || e.ginCtx == nil {
-		return nil, fmt.Errorf("authn post-action owner is unavailable")
-	}
-
-	if e.preparePost != nil {
-		return e.preparePost(request, ordinal)
-	}
-
-	return newPolicyObligationExecutor(e.auth).preparePostActionWork(e.ginCtx, request, ordinal)
-}
-
-var (
-	_ policyruntime.SyncEffectProvider = authnPolicySyncEffectProvider{}
-	_ policyruntime.PostActionProvider = authnPolicyPostActionProvider{}
-)
+var _ policyruntime.SyncEffectProvider = authnPolicySyncEffectProvider{}

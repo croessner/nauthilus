@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -38,7 +37,8 @@ var tls13CipherSuites = map[string]struct{}{
 	"TLS_CHACHA20_POLY1305_SHA256": {},
 }
 
-type tlsClientConfigProvider interface {
+// TLSClientConfigProvider exposes file-backed outbound TLS settings.
+type TLSClientConfigProvider interface {
 	GetCAFile() string
 	GetCert() string
 	GetKey() string
@@ -57,7 +57,7 @@ func (t *TLS) ToTLSConfig() *tls.Config {
 		return nil
 	}
 
-	config, err := buildClientTLSConfig(t)
+	config, err := buildClientTLSConfig(nil, t)
 	if err != nil {
 		return nil
 	}
@@ -72,7 +72,7 @@ func (t *HTTPClientTLS) ToTLSConfig() *tls.Config {
 		return nil
 	}
 
-	config, err := buildClientTLSConfig(t)
+	config, err := buildClientTLSConfig(nil, t)
 	if err != nil {
 		return nil
 	}
@@ -93,46 +93,110 @@ func (t *HTTPClientTLS) hasCustomSettings() bool {
 		len(t.CipherSuites) > 0
 }
 
-func buildClientTLSConfig(provider tlsClientConfigProvider) (*tls.Config, error) {
-	if provider == nil {
+// BuildClientTLSConfig constructs outbound TLS exclusively from one candidate's sealed artifacts.
+func BuildClientTLSConfig(configured File, provider TLSClientConfigProvider) (*tls.Config, error) {
+	return buildClientTLSConfig(configured, provider)
+}
+
+// buildClientTLSConfig parses trust and identity bytes owned by one immutable config snapshot.
+func buildClientTLSConfig(configured File, provider TLSClientConfigProvider) (*tls.Config, error) {
+	if !clientTLSProviderEnabled(provider) {
 		return nil, nil
 	}
 
-	var (
-		certs  []tls.Certificate
-		caPool *x509.CertPool
-	)
-
-	if provider.GetCAFile() != "" {
-		pem, err := os.ReadFile(provider.GetCAFile())
-		if err != nil {
-			return nil, fmt.Errorf("read CA file: %w", err)
-		}
-
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("parse CA file: invalid PEM data")
-		}
-
-		caPool = pool
+	caPool, err := loadClientRootCAs(configured, provider.GetCAFile())
+	if err != nil {
+		return nil, err
 	}
 
-	if provider.GetCert() != "" && provider.GetKey() != "" {
-		cert, err := tls.LoadX509KeyPair(provider.GetCert(), provider.GetKey())
-		if err != nil {
-			return nil, fmt.Errorf("load client certificate: %w", err)
-		}
-
-		certs = append(certs, cert)
+	certificates, err := loadClientCertificates(configured, provider.GetCert(), provider.GetKey())
+	if err != nil {
+		return nil, err
 	}
 
 	return &tls.Config{
-		Certificates:       certs,
+		Certificates:       certificates,
 		RootCAs:            caPool,
 		MinVersion:         TLSMinVersionValue(provider.GetMinTLSVersion()),
 		CipherSuites:       TLSCipherSuiteValues(provider.GetCipherSuites()),
 		InsecureSkipVerify: provider.GetSkipVerify(),
 	}, nil
+}
+
+// clientTLSProviderEnabled reports whether one supported provider requests custom TLS.
+func clientTLSProviderEnabled(provider TLSClientConfigProvider) bool {
+	if provider == nil {
+		return false
+	}
+
+	switch typed := provider.(type) {
+	case *TLS:
+		return typed.IsEnabled()
+	case *HTTPClientTLS:
+		return typed.hasCustomSettings()
+	default:
+		return true
+	}
+}
+
+// loadClientRootCAs parses one optional candidate-bound trust bundle.
+func loadClientRootCAs(configured File, path string) (*x509.CertPool, error) {
+	if path == "" {
+		return nil, nil
+	}
+
+	pemBytes, err := readSealedArtifact(configured, path)
+	if err != nil {
+		return nil, fmt.Errorf("read CA file: %w", err)
+	}
+	defer clear(pemBytes)
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		return nil, fmt.Errorf("parse CA file: invalid PEM data")
+	}
+
+	return pool, nil
+}
+
+// loadClientCertificates parses one optional candidate-bound certificate and key pair.
+func loadClientCertificates(configured File, certPath string, keyPath string) ([]tls.Certificate, error) {
+	if (certPath == "") != (keyPath == "") {
+		return nil, fmt.Errorf("client certificate and key must be configured together")
+	}
+
+	if certPath == "" {
+		return nil, nil
+	}
+
+	certificatePEM, err := readSealedArtifact(configured, certPath)
+	if err != nil {
+		return nil, fmt.Errorf("read client certificate: %w", err)
+	}
+	defer clear(certificatePEM)
+
+	keyPEM, err := readSealedArtifact(configured, keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("read client key: %w", err)
+	}
+	defer clear(keyPEM)
+
+	certificate, err := tls.X509KeyPair(certificatePEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("load client certificate: %w", err)
+	}
+
+	return []tls.Certificate{certificate}, nil
+}
+
+// readSealedArtifact returns one defensive copy from the candidate-bound snapshot.
+func readSealedArtifact(configured File, path string) ([]byte, error) {
+	snapshot, err := ArtifactSnapshotFor(configured)
+	if err != nil {
+		return nil, err
+	}
+
+	return snapshot.ReadFile(path)
 }
 
 // TLSMinVersionValue converts a configured TLS version label into the tls package constant.

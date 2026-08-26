@@ -321,26 +321,45 @@ func (m *PrometheusManager) touchCounter(L *lua.LState) int {
 
 // LoaderModPrometheus loads and initializes the Prometheus module with metric-related functions for use in Lua scripts.
 func LoaderModPrometheus(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return newPrometheusLoader(ctx, cfg, logger, true)
+}
+
+// LoaderModPrometheusRequest exposes updates to startup-registered metric vectors without registration.
+func LoaderModPrometheusRequest(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return newPrometheusLoader(ctx, cfg, logger, false)
+}
+
+// newPrometheusLoader builds either the process registration or request update surface.
+func newPrometheusLoader(
+	ctx context.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	allowRegistration bool,
+) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
 		manager := NewPrometheusManager(ctx, cfg, logger)
 
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnCreateSummaryVec:    manager.createSummaryVec,
-			definitions.LuaFnCreateCounterVec:    manager.createCounterVec,
-			definitions.LuaFnCreateHistogramVec:  manager.createHistogramVec,
+		functions := map[string]lua.LGFunction{
 			definitions.LuaFnStartSummaryTimer:   manager.startSumaryTimer,
 			definitions.LuaFnStartHistogramTimer: manager.startHistogramTimer,
 			definitions.LuaFnStopTimer:           manager.stopTimer,
 			definitions.LuaFnIncrementCounter:    manager.incrementCounter,
-			definitions.LuaFnCreateGaugeVec:      manager.createGaugeVec,
 			definitions.LuaFNAddGauge:            manager.addGauge,
 			definitions.LuaFnSubGauge:            manager.subGauge,
 			definitions.LuaFnSetGauge:            manager.setGauge,
 			definitions.LuaFnIncrementGauge:      manager.incrementGauge,
 			definitions.LuaFnDecrementGauge:      manager.decrementGauge,
 			definitions.LuaFnTouchCounter:        manager.touchCounter,
-		})
+		}
+		if allowRegistration {
+			functions[definitions.LuaFnCreateSummaryVec] = manager.createSummaryVec
+			functions[definitions.LuaFnCreateCounterVec] = manager.createCounterVec
+			functions[definitions.LuaFnCreateHistogramVec] = manager.createHistogramVec
+			functions[definitions.LuaFnCreateGaugeVec] = manager.createGaugeVec
+		}
+
+		mod := L.SetFuncs(L.NewTable(), functions)
 
 		return stack.PushResult(mod)
 	}

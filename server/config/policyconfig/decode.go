@@ -78,14 +78,21 @@ func SupportedFormats() []string {
 	return append([]string(nil), supportedFormats...)
 }
 
+// DecodeSettings parses one bounded supported document into detached raw settings.
+func DecodeSettings(format string, reader io.Reader) (map[string]any, error) {
+	format = strings.ToLower(strings.TrimSpace(format))
+	if !slices.Contains(supportedFormats, format) {
+		return nil, fmt.Errorf("unsupported format %q", format)
+	}
+
+	return decodeSettings(format, reader)
+}
+
 // Decode strictly decodes one standalone unified policy document.
 func Decode(format string, reader io.Reader) (Document, error) {
 	format = strings.ToLower(strings.TrimSpace(format))
-	if !slices.Contains(supportedFormats, format) {
-		return Document{}, newPathError("policy", ErrDecode, fmt.Sprintf("unsupported format %q", format))
-	}
 
-	settings, err := decodeSettings(format, reader)
+	settings, err := DecodeSettings(format, reader)
 	if err != nil {
 		var pathError *PathError
 		if errors.As(err, &pathError) {

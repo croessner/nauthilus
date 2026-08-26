@@ -58,7 +58,6 @@ func setupConnectionManagerTest() {
 				Timeout: 100 * time.Millisecond,
 			}}}
 	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	manager = GetConnectionManager()

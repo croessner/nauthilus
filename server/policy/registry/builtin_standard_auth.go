@@ -355,10 +355,7 @@ func builtinFixedStandardAuthRuleInputs() ([]builtinAuthRuleInput, error) {
 		return nil, err
 	}
 
-	tlsEffects, err := builtinLuaActionEffects(policy.LuaActionDispatchTLS, "", false)
-	if err != nil {
-		return nil, err
-	}
+	var tlsEffects []EffectUse
 
 	relayEffects, err := builtinLearningActionEffects(policy.LuaActionDispatchRelayDomains)
 	if err != nil {
@@ -963,22 +960,17 @@ func builtinAllBooleanExpression(children ...PolicyExpression) (PolicyExpression
 	return NewPolicyExpression(PolicyExpressionInput{Kind: ExpressionKindAll, Children: children})
 }
 
-// builtinBruteForceDenyEffects preserves bucket, sync action, and post-action order.
+// builtinBruteForceDenyEffects selects only the generation-owned bucket update.
 func builtinBruteForceDenyEffects() ([]EffectUse, error) {
 	update, err := NewEffectUse(builtinBruteForceEffect, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	actions, err := builtinLuaActionEffects(policy.LuaActionDispatchBruteForce, "", true)
-	if err != nil {
-		return nil, err
-	}
-
-	return append([]EffectUse{update}, actions...), nil
+	return []EffectUse{update}, nil
 }
 
-// builtinLearningActionEffects constructs the current learning update before its Lua action.
+// builtinLearningActionEffects constructs the current learning update.
 func builtinLearningActionEffects(action string) ([]EffectUse, error) {
 	update, err := builtinEffectUse(builtinBruteForceEffect, map[string]any{
 		policy.ObligationArgFeature: action, policy.ObligationArgEnvironment: action,
@@ -987,15 +979,10 @@ func builtinLearningActionEffects(action string) ([]EffectUse, error) {
 		return nil, err
 	}
 
-	actions, err := builtinLuaActionEffects(action, "", false)
-	if err != nil {
-		return nil, err
-	}
-
-	return append([]EffectUse{update}, actions...), nil
+	return []EffectUse{update}, nil
 }
 
-// builtinLuaEnvironmentEffects constructs learning and synchronous Lua effects for one script.
+// builtinLuaEnvironmentEffects constructs the learning update for one script.
 func builtinLuaEnvironmentEffects(name string, check string) ([]EffectUse, error) {
 	update, err := builtinEffectUse(builtinBruteForceEffect, map[string]any{
 		policy.ObligationArgFeature: policy.LuaActionDispatchLua, policy.ObligationArgEnvironment: name,
@@ -1004,73 +991,9 @@ func builtinLuaEnvironmentEffects(name string, check string) ([]EffectUse, error
 		return nil, err
 	}
 
-	actions, err := builtinLuaActionEffects(policy.LuaActionDispatchLua, check, false)
-	if err != nil {
-		return nil, err
-	}
+	_ = check
 
-	return append([]EffectUse{update}, actions...), nil
-}
-
-// builtinLuaActionEffects constructs one sync action and optional post-action.
-func builtinLuaActionEffects(action string, environment string, includePost bool) ([]EffectUse, error) {
-	parameters := map[string]any{
-		policy.ObligationArgAction:  action,
-		policy.ObligationArgFeature: action,
-	}
-	if environment != "" {
-		parameters[policy.ObligationArgEnvironment] = environment
-	}
-
-	syncUse, err := builtinEffectUse(builtinLuaActionEffect, parameters)
-	if err != nil {
-		return nil, err
-	}
-
-	result := []EffectUse{syncUse}
-	if !includePost {
-		return result, nil
-	}
-
-	postUse, err := builtinEffectUse(builtinPostActionEffect, parameters)
-	if err != nil {
-		return nil, err
-	}
-
-	return append(result, postUse), nil
-}
-
-// WithBuiltinAuthPostAction appends the implicit authentication post-action without duplicating it.
-func WithBuiltinAuthPostAction(uses []EffectUse) ([]EffectUse, error) {
-	result := append([]EffectUse(nil), uses...)
-	for _, use := range result {
-		if use.ID() == builtinPostActionEffect {
-			return result, nil
-		}
-	}
-
-	for _, use := range result {
-		if use.ID() != builtinLuaActionEffect {
-			continue
-		}
-
-		post, err := NewEffectUse(builtinPostActionEffect, use.Parameters().Values())
-		if err != nil {
-			return nil, err
-		}
-
-		return append(result, post), nil
-	}
-
-	post, err := builtinEffectUse(builtinPostActionEffect, map[string]any{
-		policy.ObligationArgAction:  policy.LuaActionDispatchLua,
-		policy.ObligationArgFeature: policy.LuaActionDispatchLua,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return append(result, post), nil
+	return []EffectUse{update}, nil
 }
 
 // builtinEffectUse converts one closed scalar parameter map to strict immutable values.

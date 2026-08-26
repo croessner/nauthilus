@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const headerDecodeLoopbackIP = "127.0.0.1"
+
 func newHeaderDecodeTestConfig() *config.FileSettings {
 	return &config.FileSettings{
 		Server: &config.ServerSection{
@@ -51,10 +53,6 @@ func TestHeaderBasedAuth_DecodesConfiguredRequestHeaders(t *testing.T) {
 
 	cfg := newHeaderDecodeTestConfig()
 	cfg.Server.TrustedProxies = []string{"198.51.100.10"}
-	SetDefaultConfigFile(cfg)
-	t.Cleanup(func() {
-		SetDefaultConfigFile(nil)
-	})
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -90,11 +88,6 @@ func TestHeaderBasedAuth_IgnoresConfiguredClientIPFromUntrustedPeer(t *testing.T
 	cfg := newHeaderDecodeTestConfig()
 	cfg.Server.TrustedProxies = []string{"198.51.100.10"}
 
-	SetDefaultConfigFile(cfg)
-	t.Cleanup(func() {
-		SetDefaultConfigFile(nil)
-	})
-
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
@@ -115,17 +108,12 @@ func TestHeaderBasedAuth_UsesTrustedForwardedClientIPWhenConfiguredHeaderIsMissi
 	gin.SetMode(gin.TestMode)
 
 	cfg := newHeaderDecodeTestConfig()
-	cfg.Server.TrustedProxies = []string{requestContextLoopbackIP}
-
-	SetDefaultConfigFile(cfg)
-	t.Cleanup(func() {
-		SetDefaultConfigFile(nil)
-	})
+	cfg.Server.TrustedProxies = []string{headerDecodeLoopbackIP}
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-	ctx.Request.RemoteAddr = requestContextLoopbackIP + ":54321"
+	ctx.Request.RemoteAddr = headerDecodeLoopbackIP + ":54321"
 	ctx.Request.Header.Set("X-Forwarded-For", "203.0.113.10")
 
 	auth := NewAuthStateFromContextWithDeps(ctx, AuthDeps{Cfg: cfg})

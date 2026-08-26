@@ -111,6 +111,13 @@ func newLuaHookAuthTestRouter(t *testing.T, testCfg luaHookAuthTestConfig) *gin.
 			},
 		},
 	}
+
+	snapshot, err := config.EnsureArtifactSnapshot(cfg)
+	if err != nil {
+		t.Fatalf("EnsureArtifactSnapshot() error = %v", err)
+	}
+
+	t.Cleanup(snapshot.Release)
 	config.SetTestFile(cfg)
 
 	if err := hook.PreCompileLuaHooks(cfg); err != nil {
@@ -118,7 +125,15 @@ func newLuaHookAuthTestRouter(t *testing.T, testCfg luaHookAuthTestConfig) *gin.
 	}
 
 	t.Cleanup(func() {
-		if err := hook.PreCompileLuaHooks(&config.FileSettings{}); err != nil {
+		empty := &config.FileSettings{}
+
+		emptySnapshot, err := config.EnsureArtifactSnapshot(empty)
+		if err != nil {
+			t.Fatalf("seal empty Lua hook registry: %v", err)
+		}
+		defer emptySnapshot.Release()
+
+		if err = hook.PreCompileLuaHooks(empty); err != nil {
 			t.Fatalf("reset Lua hook registry: %v", err)
 		}
 

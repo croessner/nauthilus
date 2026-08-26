@@ -81,11 +81,10 @@ type ServerSignals interface {
 // Parameters:
 //   - ctx: lifecycle context; cancellation triggers graceful shutdown
 //   - srv: configured net/http server (HTTP/1.1+2)
-//   - certFile, keyFile: TLS certificate and key file paths (only used if TLS enabled)
 //   - proxy: optional HAProxy PROXY v2 listener (nil if disabled)
 //   - signals: channels to signal server termination events
 type TransportRunner interface {
-	Serve(ctx context.Context, srv *http.Server, certFile, keyFile string, proxy *proxyproto.Listener, signals ServerSignals)
+	Serve(ctx context.Context, srv *http.Server, proxy *proxyproto.Listener, signals ServerSignals)
 }
 
 // Bootstrap initializes cross-cutting HTTP dependencies such as WebAuthn

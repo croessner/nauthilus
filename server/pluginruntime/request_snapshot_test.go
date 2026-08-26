@@ -266,6 +266,8 @@ func assertSnapshotRuntime(t *testing.T, snapshot pluginapi.RequestSnapshot) {
 	assertTrue(t, snapshot.Runtime.LocalRequest, "runtime local request")
 	assertTrue(t, snapshot.Runtime.Repeating, "runtime repeating")
 	assertTrue(t, snapshot.Runtime.RWP, "runtime rwp")
+	assertTrue(t, snapshot.Runtime.EnvironmentStageExpected, "runtime environment stage expected")
+	assertTrue(t, snapshot.Runtime.SubjectStageExpected, "runtime subject stage expected")
 }
 
 // assertSnapshotDiagnostics checks bounded diagnostic values on a request snapshot.

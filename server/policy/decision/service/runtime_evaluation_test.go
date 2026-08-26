@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -28,7 +29,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/lualib/policyprovider"
-	"github.com/croessner/nauthilus/v3/server/policy/compiler"
+	"github.com/croessner/nauthilus/v3/server/policy/catalogcompile"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
@@ -90,7 +91,9 @@ func TestDecisionRuntimeUsesCompiledRecurringTimeWindowSemantics(t *testing.T) {
 	}
 	evaluator := mustCheckpointRuntime(t, checkpointRuntimeConfig{
 		catalog: catalog, ids: &sequenceIDGenerator{}, evaluationTimeout: time.Second,
-		timeWindows: map[string]policyruntime.CompiledTimeWindow{"business_hours": window},
+		timeWindows: map[string]policyruntime.CompiledTimeWindow{
+			policyruntime.ConditionMaterialKey(target.Namespace(), "@time_window.business_hours"): window,
+		},
 	})
 
 	tests := []struct {
@@ -1556,7 +1559,7 @@ func mustBuiltinAuthnCheckpointRuntime(t *testing.T) (checkpointEvaluator, *sequ
 		t.Fatalf("TargetActivation.WithPolicy() error = %v", err)
 	}
 
-	catalog, err := compiler.NewTargetCatalogCompiler(
+	catalog, err := catalogcompile.NewTargetCatalogCompiler(
 		registry.NewBuiltinTargetContributor(&recordingEffectAcceptor{}),
 	).Compile(context.Background(), []registry.TargetActivation{activation})
 	if err != nil {
@@ -1831,8 +1834,12 @@ func decisionRuntimeCatalogFixture(
 
 	record := policyruntime.TargetCatalogRecord{
 		Target: target, Schema: schema, SourcePlan: plan, Providers: providers, Effects: effects,
-		Checkpoints: []policyruntime.CheckpointRecord{{Name: decision.CheckpointFinalDecision, ProviderIDs: providerIDs}},
-		NoMatch:     noMatch, AuthorityMode: registry.AuthorityModeEnforce,
+		Checkpoints: []policyruntime.CheckpointRecord{{
+			Name:              decision.CheckpointFinalDecision,
+			ProviderIDs:       providerIDs,
+			ProviderInstances: checkpoint.ProviderInstances(),
+		}},
+		NoMatch: noMatch, AuthorityMode: registry.AuthorityModeEnforce,
 	}
 	sets := make([]registry.PolicySetDefinition, 0, 1)
 
@@ -1984,11 +1991,18 @@ func decisionRuntimeLuaFailureBinding(
 ) (registry.ProviderDefinition, factProviderBinding) {
 	t.Helper()
 
-	script, err := policyprovider.CompileScriptFile(filepath.Join(
+	path := filepath.Join(
 		"..", "..", "..", "..", "testdata", "lua", "policyprovider", "scheduler_failure.lua",
-	))
+	)
+
+	source, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("CompileScriptFile() error = %v", err)
+		t.Fatalf("read scheduler failure fixture: %v", err)
+	}
+
+	script, err := policyprovider.CompileScript(path, source)
+	if err != nil {
+		t.Fatalf("CompileScript() error = %v", err)
 	}
 
 	collector, err := policyprovider.NewLuaFactCollector(t.Context(), script, policyprovider.FactProviderDescriptor{

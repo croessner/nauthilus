@@ -105,7 +105,9 @@ make guardrails
 - Test client documentation: [client/README.md](client/README.md)
 - Lua plugin notes: [server/lua-plugins.d/README.md](server/lua-plugins.d/README.md)
 - Backend health checks: [server/docs/backend_health_checks.md](server/docs/backend_health_checks.md)
-- Legacy config converter: [server/docs/config_v2_converter.md](server/docs/config_v2_converter.md)
+- Policy configuration hard-cut and manual migration guide: [server/docs/policy_configuration_migration.md](server/docs/policy_configuration_migration.md)
+- Policy HTTP client guide: [server/openapi/client/README.md](server/openapi/client/README.md)
+- Policy gRPC client guide: [api/policy/v1/README.md](api/policy/v1/README.md)
 
 ## Community
 

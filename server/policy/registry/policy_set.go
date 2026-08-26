@@ -286,7 +286,7 @@ type EffectUse struct {
 
 // NewEffectUse constructs one immutable effect selection.
 func NewEffectUse(id string, parameters map[string]decision.Value) (EffectUse, error) {
-	if !identifier.Qualified(id) {
+	if !validEffectID(id) {
 		return EffectUse{}, newValidationError(
 			ErrInvalidPolicySetDefinition,
 			"policy_rule.effects",
@@ -1211,7 +1211,7 @@ func cloneUniqueQualifiedIDs(values []string, path string) ([]string, error) {
 	return cloneValidatedUniqueStrings(
 		values,
 		path,
-		identifier.Qualified,
+		validEffectID,
 		ErrInvalidExportContract,
 		"must contain exact qualified identities",
 		"identity occurs more than once",
@@ -1345,7 +1345,7 @@ func cloneEffectUses(values []EffectUse) ([]EffectUse, error) {
 	seen := make(map[string]struct{}, len(values))
 
 	for _, value := range values {
-		if !identifier.Qualified(value.ID()) {
+		if !validEffectID(value.ID()) {
 			return nil, newValidationError(ErrInvalidPolicySetDefinition, "policy_rule.effects", value.ID(), "must be constructor validated")
 		}
 

@@ -150,15 +150,7 @@ func TestCaptureResponseWriter_TempFailCapturesOutcomeWithoutHTTPRendering(t *te
 	}
 }
 
-func TestCaptureResponseWriter_EnvironmentRejectionPreservesPostActionAndCapturesFail(t *testing.T) {
-	postAction := &countingPostAction{}
-	previousPostAction := getPostAction()
-
-	RegisterPostAction(postAction)
-	t.Cleanup(func() {
-		RegisterPostAction(previousPostAction)
-	})
-
+func TestCaptureResponseWriter_EnvironmentRejectionCapturesFail(t *testing.T) {
 	capture := NewCaptureResponseWriter(slog.New(&countingLogHandler{}))
 	auth, ctx, rec := newCaptureWriterTestState(t, "/api/v1/auth/json?mode=auth", capture)
 
@@ -172,10 +164,6 @@ func TestCaptureResponseWriter_EnvironmentRejectionPreservesPostActionAndCapture
 	}
 
 	assertNoHTTPRendering(t, rec)
-
-	if postAction.Count() != 1 {
-		t.Fatalf("expected one Lua post-action dispatch, got %d", postAction.Count())
-	}
 
 	outcome := capture.Outcome()
 	assertDecisionStatusAndFSMState(t, outcome, CapturedAuthDecisionFail, authFSMStateAuthFail, auth.Runtime.StatusCodeFail)
@@ -415,9 +403,10 @@ func newCaptureWriterTestState(
 	}
 
 	auth := NewAuthStateFromContextWithDeps(ctx, AuthDeps{
-		Cfg:    config.GetFile(),
-		Logger: logger,
-		Resp:   writer,
+		Cfg:          config.GetFile(),
+		Logger:       logger,
+		Resp:         writer,
+		HostServices: registeredAuthnHostServices(),
 	}).(*AuthState)
 
 	auth.Request.Service = definitions.ServJSON
@@ -519,18 +508,4 @@ func (h *countingLogHandler) WithGroup(string) slog.Handler {
 
 func (h *countingLogHandler) Count() int64 {
 	return h.count.Load()
-}
-
-type countingPostAction struct {
-	count atomic.Int64
-}
-
-func (p *countingPostAction) Run(PostActionInput) PostActionResult {
-	p.count.Add(1)
-
-	return PostActionSucceeded()
-}
-
-func (p *countingPostAction) Count() int64 {
-	return p.count.Load()
 }

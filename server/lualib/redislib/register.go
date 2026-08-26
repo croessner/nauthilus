@@ -28,9 +28,30 @@ import (
 // LoaderModRedis returns a function that can be used to load the Redis module into a Lua state.
 // It creates a new Lua table, sets the exported Redis functions, and pushes the table onto the stack.
 func LoaderModRedis(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
+	return newRedisLoader(ctx, cfg, client, true)
+}
+
+// LoaderModRedisRequest exposes Redis commands without process-global pool registration.
+func LoaderModRedisRequest(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
+	return newRedisLoader(ctx, cfg, client, false)
+}
+
+// newRedisLoader builds the Redis module for either process or Policy request ownership.
+func newRedisLoader(
+	ctx context.Context,
+	cfg config.File,
+	client rediscli.Client,
+	allowPoolRegistration bool,
+) lua.LGFunction {
 	return func(L *lua.LState) int {
 		rm := NewRedisManager(cfg, client)
-		mod := L.SetFuncs(L.NewTable(), redisModuleFunctions(rm))
+
+		functions := redisModuleFunctions(rm)
+		if !allowPoolRegistration {
+			functions = redisRequestModuleFunctions(rm)
+		}
+
+		mod := L.SetFuncs(L.NewTable(), functions)
 
 		if ctx != nil {
 			lualib.BindRequestRuntimeContext(ctx, L, mod)
@@ -42,9 +63,55 @@ func LoaderModRedis(ctx context.Context, cfg config.File, client rediscli.Client
 	}
 }
 
+// redisRequestModuleFunctions returns only read operations against the injected default client.
+func redisRequestModuleFunctions(rm *RedisManager) map[string]lua.LGFunction {
+	all := redisModuleFunctions(rm)
+
+	allowed := map[string]struct{}{
+		definitions.LuaFnRedisGetRedisConnection:  {},
+		definitions.LuaFnRedisPing:                {},
+		definitions.LuaFnRedisGet:                 {},
+		definitions.LuaFnRedisExists:              {},
+		definitions.LuaFnRedisEncrypt:             {},
+		definitions.LuaFnRedisDecrypt:             {},
+		definitions.LuaFnRedisIsEncryptionEnabled: {},
+		definitions.LuaFnRedisMGet:                {},
+		definitions.LuaFnRedisKeys:                {},
+		definitions.LuaFnRedisScan:                {},
+		definitions.LuaFnRedisHGet:                {},
+		definitions.LuaFnRedisHLen:                {},
+		definitions.LuaFnRedisHGetAll:             {},
+		definitions.LuaFnRedisHMGet:               {},
+		definitions.LuaFnRedisHExists:             {},
+		definitions.LuaFnRedisZRank:               {},
+		definitions.LuaFNRedisZRange:              {},
+		definitions.LuaFnRedisZRevRange:           {},
+		definitions.LuaFnRedisZRevRangeWithScores: {},
+		definitions.LuaFnRedisZRangeByScore:       {},
+		definitions.LuaFnRedisZCount:              {},
+		definitions.LuaFnRedisZScore:              {},
+		definitions.LuaFnRedisRedisZRevRank:       {},
+		definitions.LuaFnRedisLRange:              {},
+		definitions.LuaFnRedisLLen:                {},
+		definitions.LuaFnRedisPFCount:             {},
+		definitions.LuaFnRedisSIsMember:           {},
+		definitions.LuaFnRedisSMembers:            {},
+		definitions.LuaFnRedisSCard:               {},
+	}
+	for name := range all {
+		if _, keep := allowed[name]; !keep {
+			delete(all, name)
+		}
+	}
+
+	all[definitions.LuaFnRedisGetRedisConnection] = rm.getDefaultRedisConnection
+
+	return all
+}
+
 // redisModuleFunctions returns all Lua Redis module bindings.
 func redisModuleFunctions(rm *RedisManager) map[string]lua.LGFunction {
-	functions := redisConnectionFunctions()
+	functions := redisConnectionFunctions(rm.cfg)
 	mergeRedisFunctions(functions, redisKeyFunctions(rm))
 	mergeRedisFunctions(functions, redisScriptFunctions(rm))
 	mergeRedisFunctions(functions, redisHashFunctions(rm))
@@ -64,9 +131,9 @@ func mergeRedisFunctions(dst map[string]lua.LGFunction, src map[string]lua.LGFun
 }
 
 // redisConnectionFunctions returns pool and connection-management bindings.
-func redisConnectionFunctions() map[string]lua.LGFunction {
+func redisConnectionFunctions(configured config.File) map[string]lua.LGFunction {
 	return map[string]lua.LGFunction{
-		definitions.LuaFnRedisRegisterRedisPool:  RegisterRedisPool,
+		definitions.LuaFnRedisRegisterRedisPool:  registerRedisPool(configured),
 		definitions.LuaFnRedisGetRedisConnection: GetRedisConnection,
 	}
 }

@@ -131,7 +131,7 @@ func mustAuthnProfileAuthentication(t *testing.T, kind string, credential string
 	input, err := decision.NewAuthenticationInput(decision.AuthenticationEvidence{
 		Kind:          kind,
 		Credential:    []byte(credential),
-		TransportKind: "host-owned",
+		TransportKind: "internal",
 	})
 	if err != nil {
 		t.Fatalf("NewAuthenticationInput() error = %v", err)

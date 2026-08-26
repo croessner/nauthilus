@@ -20,8 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"unicode/utf8"
 
 	lua "github.com/yuin/gopher-lua"
@@ -75,26 +73,6 @@ func CompileScript(name string, source []byte) (*Script, error) {
 	}
 
 	return &Script{prototype: prototype}, nil
-}
-
-// CompileScriptFile reads and compiles one bounded configured Lua file.
-func CompileScriptFile(path string) (*Script, error) {
-	if !validScriptName(path) {
-		return nil, ErrScriptPreparation
-	}
-
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, ErrScriptPreparation
-	}
-	defer func() { _ = file.Close() }()
-
-	source, err := readBoundedScript(file)
-	if err != nil {
-		return nil, ErrScriptPreparation
-	}
-
-	return CompileScript(path, source)
 }
 
 // validateCallback checks one exact callback in an isolated restricted state.
@@ -257,16 +235,6 @@ func executeLuaPrototype(state *lua.LState, prototype *lua.FunctionProto) error 
 	function := state.NewFunctionFromProto(prototype)
 
 	return state.CallByParam(lua.P{Fn: function, NRet: 0, Protect: true})
-}
-
-// readBoundedScript reads at most one byte beyond the source limit for deterministic rejection.
-func readBoundedScript(reader io.Reader) ([]byte, error) {
-	source, err := io.ReadAll(io.LimitReader(reader, maximumLuaPolicyScriptBytes+1))
-	if err != nil || len(source) == 0 || len(source) > maximumLuaPolicyScriptBytes {
-		return nil, ErrScriptPreparation
-	}
-
-	return source, nil
 }
 
 // validScriptName checks the non-secret compiler source label bound.

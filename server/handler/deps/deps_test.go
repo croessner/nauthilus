@@ -22,7 +22,7 @@ func (p *mutableConfigProvider) Current() configfx.Snapshot {
 	return p.snapshot
 }
 
-func TestAuthUsesCurrentConfigSnapshotAtRequestBoundary(t *testing.T) {
+func TestAuthCapturesProviderSnapshotAtCompositionBoundary(t *testing.T) {
 	startup := &config.FileSettings{}
 	current := &config.FileSettings{}
 	provider := &mutableConfigProvider{snapshot: configfx.Snapshot{File: current, Version: 2}}

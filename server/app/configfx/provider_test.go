@@ -1,36 +1,15 @@
 package configfx
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
-
-// TestProviderNewProviderRequiresConfigLoaded preserves the pre-generation startup guard.
-func TestProviderNewProviderRequiresConfigLoaded(t *testing.T) {
-	// Ensure global config is not set.
-	config.SetTestFile(nil)
-
-	_, err := NewProvider()
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-
-	if _, ok := errors.AsType[config.ErrConfigNotLoaded](err); !ok {
-		t.Fatalf("expected ErrConfigNotLoaded, got %T", err)
-	}
-}
 
 // TestProviderVersionMonotonicOnCandidatePreparationFailure proves failed preparation is unpublished.
 func TestProviderVersionMonotonicOnCandidatePreparationFailure(t *testing.T) {
-	// Use a test file to avoid reading from disk.
-	config.SetTestFile(&config.FileSettings{})
-
-	p, err := NewProvider()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	p := NewProviderWithCandidate(&config.FileSettings{}, policyruntime.NewGenerationStore())
 
 	cur := p.Current()
 	if cur.Version != 1 {
@@ -38,7 +17,7 @@ func TestProviderVersionMonotonicOnCandidatePreparationFailure(t *testing.T) {
 	}
 
 	// Candidate preparation will fail because Viper has no config; ensure version does not change.
-	_, err = p.Prepare()
+	_, err := p.Prepare()
 	if err == nil {
 		t.Fatalf("expected reload error")
 	}
@@ -46,5 +25,26 @@ func TestProviderVersionMonotonicOnCandidatePreparationFailure(t *testing.T) {
 	after := p.Current()
 	if after.Version != cur.Version {
 		t.Fatalf("expected version to remain %d, got %d", cur.Version, after.Version)
+	}
+}
+
+// TestProviderWithCandidateCapturesBootstrapState protects the off-side bootstrap handoff.
+func TestProviderWithCandidateCapturesBootstrapState(t *testing.T) {
+	prepared := &config.FileSettings{}
+	store := policyruntime.NewGenerationStore()
+	reloader := NewProviderWithCandidate(prepared, store)
+
+	provider, ok := reloader.(*provider)
+	if !ok {
+		t.Fatalf("NewProviderWithCandidate() = %T, want *provider", reloader)
+	}
+
+	if provider.generations != store {
+		t.Fatal("provider does not retain the sole generation store")
+	}
+
+	before := provider.Current()
+	if before.File != prepared || before.Version != 1 {
+		t.Fatalf("prepared snapshot = %#v, want candidate version 1", before)
 	}
 }

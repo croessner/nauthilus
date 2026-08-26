@@ -17,7 +17,8 @@ import (
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/croessner/nauthilus/v3/server/policy/compiler"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
+	"github.com/croessner/nauthilus/v3/server/policy/catalogcompile"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
@@ -137,7 +138,7 @@ func compileConfiguredNativeTargetCatalog(
 		t.Fatalf("configured target activations = %v, want %s only", activations, nativeRuntimeTargetID)
 	}
 
-	catalog, err := compiler.NewTargetCatalogCompiler(contributors...).Compile(t.Context(), activations)
+	catalog, err := catalogcompile.NewTargetCatalogCompiler(contributors...).Compile(t.Context(), activations)
 	if err != nil {
 		t.Fatalf("Compile() error = %v", err)
 	}
@@ -295,12 +296,15 @@ func configuredNativeRuntimeSlots(
 
 	return policyruntime.PreparationSlots{
 		Policy: policyruntime.PolicyPreparationFunc(func(
-			_ context.Context,
+			ctx context.Context,
 			input policyruntime.PreparationInput,
 		) (policyruntime.PolicyPreparation, error) {
-			return policyruntime.PolicyPreparation{
-				Snapshot: &policyruntime.Snapshot{Generation: input.ID(), Mode: nativeRuntimePrincipal},
-			}, nil
+			prepared, err := PreparePolicy(ctx, input.ID(), policyconfig.PolicyConfig{})
+			if err != nil {
+				return policyruntime.PolicyPreparation{}, err
+			}
+
+			return policyruntime.PolicyPreparation{Policy: prepared}, nil
 		}),
 		Extensions: policyruntime.ExtensionPreparationFunc(func(
 			context.Context,
@@ -400,12 +404,15 @@ func configuredNativeRuntimeCatalogSlot(
 
 // configuredNativeRuntimeSettings returns bounded settings for one candidate generation.
 func configuredNativeRuntimeSettings() policyruntime.SettingsPreparation {
-	return policyruntime.SettingsPreparation{Settings: policyruntime.GenerationSettings{
-		Limits: policyruntime.DecisionLimits{
-			EvaluationTimeout: time.Second, PostActionBudget: time.Second, MaxDiagnosticsEntries: 64,
+	return policyruntime.SettingsPreparation{
+		MessageResolver: localization.NewResolver(localization.NewMapCatalog(nil), "en"),
+		Settings: policyruntime.GenerationSettings{
+			Limits: policyruntime.DecisionLimits{
+				EvaluationTimeout: time.Second, PostActionBudget: time.Second, MaxDiagnosticsEntries: 64,
+			},
+			Reports: policyruntime.DecisionReportSettings{MaxEntries: 64},
 		},
-		Reports: policyruntime.DecisionReportSettings{MaxEntries: 64},
-	}}
+	}
 }
 
 // mustConfiguredNativeRuntimeCaller constructs trusted authenticator output for the integration generation.

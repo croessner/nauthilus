@@ -51,7 +51,7 @@ func TestBruteForceUpdateObligationLearningGate(t *testing.T) {
 
 func TestBruteForceUpdateObligationFromEffect(t *testing.T) {
 	request, ok := bruteForceUpdateObligationFromEffect(policyEffectRequest(
-		policy.ObligationBruteForceUpdate,
+		policy.EffectBruteForceUpdate,
 		map[string]any{
 			policy.ObligationArgFeature:     definitions.ControlLua,
 			policy.ObligationArgEnvironment: "blocklist",
@@ -63,28 +63,6 @@ func TestBruteForceUpdateObligationFromEffect(t *testing.T) {
 
 	if request.featureName != definitions.ControlLua || request.environmentName != "blocklist" {
 		t.Fatalf("request = %#v, want lua/blocklist", request)
-	}
-}
-
-func TestLuaActionObligationDoesNotUpdateBruteForceState(t *testing.T) {
-	cfg := hardCutBruteForceConfig(t)
-	cfg.BruteForce.Learning = []*config.RuntimeModule{mustCurrentBehaviorModule(t, definitions.ControlLua)}
-	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-	auth.Runtime.AccountName = auth.Request.Username
-
-	ctx.Set(definitions.CtxRWPResultKey, false)
-
-	ok := auth.executeLuaActionObligation(ctx, luaActionObligation{
-		environmentName: "blocklist",
-		actionName:      definitions.ControlLua,
-		luaAction:       definitions.LuaActionLua,
-	})
-	if !ok {
-		t.Fatal("executeLuaActionObligation() rejected valid Lua action")
-	}
-
-	if auth.Runtime.BFRWP {
-		t.Fatal("Lua action dispatch updated brute-force RWP state")
 	}
 }
 

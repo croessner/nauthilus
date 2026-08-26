@@ -16,12 +16,66 @@
 package util
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/testing/testpki"
 )
+
+func TestNewHTTPClientUsesSealedCAAfterLiveMutation(t *testing.T) {
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, testpki.NewSelfSigned(t).CertificatePEM, 0o600); err != nil {
+		t.Fatalf("write captured outbound CA: %v", err)
+	}
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+
+	cfg.Server.HTTPClient.TLS = config.HTTPClientTLS{CAFile: caPath}
+	if _, err := config.EnsureArtifactSnapshot(cfg); err != nil {
+		t.Fatalf("EnsureArtifactSnapshot() error = %v", err)
+	}
+
+	if err := os.WriteFile(caPath, []byte("mutated invalid CA\n"), 0o600); err != nil {
+		t.Fatalf("mutate outbound CA: %v", err)
+	}
+
+	transport := requireHTTPTransport(t, NewHTTPClient(cfg))
+	if transport.TLSClientConfig == nil || transport.TLSClientConfig.RootCAs == nil {
+		t.Fatal("NewHTTPClient() did not retain the sealed outbound CA")
+	}
+}
+
+func TestNewHTTPClientFailsClosedWhenSealedTLSIsInvalid(t *testing.T) {
+	caPath := filepath.Join(t.TempDir(), "invalid-ca.pem")
+	if err := os.WriteFile(caPath, []byte("invalid CA\n"), 0o600); err != nil {
+		t.Fatalf("write invalid outbound CA: %v", err)
+	}
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+
+	cfg.Server.HTTPClient.TLS = config.HTTPClientTLS{CAFile: caPath}
+	if _, err := config.EnsureArtifactSnapshot(cfg); err != nil {
+		t.Fatalf("EnsureArtifactSnapshot() error = %v", err)
+	}
+
+	transport := requireHTTPTransport(t, NewHTTPClient(cfg))
+	if transport.TLSClientConfig == nil || transport.TLSClientConfig.RootCAs == nil {
+		t.Fatal("invalid sealed TLS did not install an empty fail-closed trust store")
+	}
+
+	if transport.DialTLSContext == nil {
+		t.Fatal("invalid sealed TLS did not install a direct-dial rejection")
+	}
+
+	if _, err := transport.DialTLSContext(context.Background(), "tcp", "example.test:443"); err == nil {
+		t.Fatal("DialTLSContext() error = nil, want sealed TLS rejection")
+	}
+}
 
 func TestNewHTTPClient_PreservesDefaultTransportBehavior(t *testing.T) {
 	cfg := &config.FileSettings{

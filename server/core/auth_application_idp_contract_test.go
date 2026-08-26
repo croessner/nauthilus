@@ -24,7 +24,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/report"
 )
 
 func TestAuthIDPContextOwnsDetachedBoundedValues(t *testing.T) {
@@ -232,11 +231,6 @@ func TestAuthOutcomeCapturesCompleteDetachedIDPProjection(t *testing.T) {
 		[]string{"employees"},
 		[]string{"cn=employees,dc=example,dc=test"},
 	)
-	storeConfiguredAuthDecision(ctx, &report.FinalDecision{
-		PolicyName: "idp-subject-deny", Stage: policy.StageAuthDecision,
-		Effect: policy.DecisionDeny, OutcomeMarker: "auth.outcome.subject_denied",
-	})
-
 	outcome := authOutcomeFromState(
 		ctx, auth, AuthDecisionTempFail, string(authFSMStateAuthTempFail),
 		"temporary failure", http.StatusInternalServerError, AuthResponseSettings{},
@@ -249,8 +243,8 @@ func TestAuthOutcomeCapturesCompleteDetachedIDPProjection(t *testing.T) {
 		t.Fatalf("backend projection = %q/%#v, want primary/%#v", outcome.BackendName, outcome.RemoteBackendRef, auth.Runtime.RemoteBackendRef)
 	}
 
-	if !outcome.PolicyTerminal {
-		t.Fatal("configured terminal policy decision was not classified")
+	if outcome.PolicyTerminal {
+		t.Fatal("compatibility host fabricated a policy-terminal outcome")
 	}
 
 	if outcome.Decision != AuthDecisionTempFail {
@@ -271,34 +265,15 @@ func TestAuthOutcomeCapturesCompleteDetachedIDPProjection(t *testing.T) {
 	}
 }
 
-func TestAuthOutcomeClassifiesIDPDelayedResponseAndPolicyTerminal(t *testing.T) {
+func TestAuthOutcomeClassifiesOnlyOrdinaryIDPDelayedResponse(t *testing.T) {
 	tests := []struct {
-		final       *report.FinalDecision
 		name        string
 		decision    AuthDecision
 		wantDelayed bool
-		wantPolicy  bool
 	}{
 		{
 			name: "ordinary unconfigured password failure", decision: AuthDecisionFail,
 			wantDelayed: true,
-		},
-		{
-			name: "configured ordinary password fallback", decision: AuthDecisionFail,
-			final: &report.FinalDecision{
-				PolicyName: "standard_auth_failure", Stage: policy.StageAuthDecision,
-				Effect: policy.DecisionDeny, OutcomeMarker: policy.OutcomeMarkerAuthFailure,
-				ResponseMarker: policy.ResponseMarkerFail,
-			},
-			wantDelayed: true, wantPolicy: true,
-		},
-		{
-			name: "configured subject denial", decision: AuthDecisionFail,
-			final: &report.FinalDecision{
-				PolicyName: "idp-subject-deny", Stage: policy.StageAuthDecision,
-				Effect: policy.DecisionDeny, OutcomeMarker: "auth.outcome.subject_denied",
-			},
-			wantPolicy: true,
 		},
 		{
 			name: "temporary failure", decision: AuthDecisionTempFail,
@@ -312,55 +287,14 @@ func TestAuthOutcomeClassifiesIDPDelayedResponseAndPolicyTerminal(t *testing.T) 
 			auth.SetMethod(definitions.AuthMethodPassword)
 			auth.SetNoAuth(false)
 
-			if test.final != nil {
-				storeConfiguredAuthDecision(ctx, test.final)
-			}
-
 			outcome := authOutcomeFromState(
 				ctx, auth, test.decision, authTerminalState(test.decision), "", http.StatusUnauthorized,
 				AuthResponseSettings{},
 			)
-			if outcome.DelayedResponseEligible != test.wantDelayed || outcome.PolicyTerminal != test.wantPolicy {
+			if outcome.DelayedResponseEligible != test.wantDelayed || outcome.PolicyTerminal {
 				t.Fatalf(
-					"delayed/policy classification = %t/%t, want %t/%t",
-					outcome.DelayedResponseEligible, outcome.PolicyTerminal, test.wantDelayed, test.wantPolicy,
-				)
-			}
-		})
-	}
-}
-
-func TestAuthOutcomeConfiguredFallbackStillRequiresIDPPasswordRequest(t *testing.T) {
-	tests := []struct {
-		mutate func(*AuthState)
-		name   string
-	}{
-		{name: "non-IDP service", mutate: func(auth *AuthState) { auth.Request.Service = definitions.ServJSON }},
-		{name: "non-password method", mutate: func(auth *AuthState) { auth.SetMethod(definitions.MFAMethodWebAuthn) }},
-		{name: "no-auth request", mutate: func(auth *AuthState) { auth.SetNoAuth(true) }},
-		{name: "list-accounts request", mutate: func(auth *AuthState) { auth.Request.ListAccounts = true }},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			auth, ctx, _ := newCaptureWriterTestState(t, "/login", NewCaptureResponseWriter(nil))
-			auth.Request.Service = definitions.ServIDP
-			auth.SetMethod(definitions.AuthMethodPassword)
-			test.mutate(auth)
-			storeConfiguredAuthDecision(ctx, &report.FinalDecision{
-				PolicyName: "standard_auth_failure", Stage: policy.StageAuthDecision,
-				Effect: policy.DecisionDeny, OutcomeMarker: policy.OutcomeMarkerAuthFailure,
-				ResponseMarker: policy.ResponseMarkerFail,
-			})
-
-			outcome := authOutcomeFromState(
-				ctx, auth, AuthDecisionFail, authTerminalState(AuthDecisionFail), "", http.StatusUnauthorized,
-				AuthResponseSettings{},
-			)
-			if outcome.DelayedResponseEligible || !outcome.PolicyTerminal {
-				t.Fatalf(
-					"delayed/policy classification = %t/%t, want false/true",
-					outcome.DelayedResponseEligible, outcome.PolicyTerminal,
+					"delayed/policy classification = %t/%t, want %t/false",
+					outcome.DelayedResponseEligible, outcome.PolicyTerminal, test.wantDelayed,
 				)
 			}
 		})

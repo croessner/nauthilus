@@ -15,7 +15,7 @@ func TestClusterReadOnlyTracingInstrumentationAndBatchingHook(t *testing.T) {
 	config.SetTestFile(cfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
-	client := newRedisClusterClientReadOnly(cfg, log.GetLogger(), &cfg.GetServer().Redis)
+	client := newRedisClusterClientReadOnly(cfg, log.GetLogger(), &cfg.GetServer().Redis, nil)
 
 	t.Cleanup(func() { _ = client.Close() })
 

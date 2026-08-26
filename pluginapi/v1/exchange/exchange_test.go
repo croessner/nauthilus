@@ -139,6 +139,70 @@ func TestDecisionSourcesIncludeGeoIPReputationFromStandardAndFacts(t *testing.T)
 	}
 }
 
+func TestFactProjectionPreservesLegacyAndGenericPluginContracts(t *testing.T) {
+	facts := factsByNamespace([]pluginapi.PolicyFact{
+		{Attribute: "plugin.subject.account_protection.active", Value: true},
+		{Attribute: "plugin.geoip.country_iso", Value: "DE"},
+		{Attribute: "plugin.geoip.subject.groups", Value: []string{"staff"}},
+	})
+
+	if facts["account_protection"]["active"] != true {
+		t.Fatalf("legacy plugin projection = %#v, want account_protection.active", facts)
+	}
+
+	if facts["geoip"]["country_iso"] != "DE" ||
+		!reflect.DeepEqual(facts["geoip"]["subject.groups"], []string{"staff"}) {
+		t.Fatalf("generic plugin projection = %#v, want geoip fields", facts)
+	}
+}
+
+func TestAuthenticationShapedFactProjectionUsesClosedProducerVocabulary(t *testing.T) {
+	tests := []struct {
+		attribute string
+		namespace string
+		key       string
+	}{
+		{attribute: "plugin.backend.customer_sql.authenticated", namespace: "customer_sql", key: "authenticated"},
+		{attribute: "plugin.environment.geoip.matched", namespace: "geoip", key: "matched"},
+		{attribute: "plugin.resource.denylist.applied", namespace: "denylist", key: "applied"},
+		{attribute: "plugin.subject.account_protection.active", namespace: "account_protection", key: "active"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.attribute, func(t *testing.T) {
+			namespace, key, ok := factNamespaceKey(test.attribute)
+			if !ok || namespace != test.namespace || key != test.key {
+				t.Fatalf(
+					"factNamespaceKey(%q) = %q/%q/%t, want %q/%q/true",
+					test.attribute,
+					namespace,
+					key,
+					ok,
+					test.namespace,
+					test.key,
+				)
+			}
+		})
+	}
+}
+
+func TestGenericDottedFactDoesNotSynthesizeLegacyFeatureNamespace(t *testing.T) {
+	fact := pluginapi.PolicyFact{Attribute: "plugin.risk.account_protection.active", Value: true}
+	facts := factsByNamespace([]pluginapi.PolicyFact{fact})
+
+	if facts["risk"]["account_protection.active"] != true {
+		t.Fatalf("generic plugin projection = %#v, want risk/account_protection.active", facts)
+	}
+
+	if _, exists := facts[FeatureAccountProtection]; exists {
+		t.Fatalf("generic plugin projection synthesized legacy namespace: %#v", facts)
+	}
+
+	if sources := NewSnapshotFromValues(nil, []pluginapi.PolicyFact{fact}).DecisionSources(); len(sources) != 0 {
+		t.Fatalf("DecisionSources() = %#v, want no synthesized account-protection source", sources)
+	}
+}
+
 func TestHIBPHashInfoReadsStandardMap(t *testing.T) {
 	snapshot := NewSnapshotFromValues(map[string]any{
 		KeyHaveIBeenPwned: HIBPValue(HIBPResult{HashInfo: "ABCDE42"}),

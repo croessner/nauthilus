@@ -26,7 +26,6 @@ import (
 	"math/rand"
 	"net"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +50,7 @@ type ldapConnectSettings struct {
 
 // ldapTargetConnector applies one LDAP transport policy to normal connections and probes.
 type ldapTargetConnector struct {
+	cfg  config.File
 	conf *config.LDAPConf
 }
 
@@ -672,7 +672,7 @@ func indexOfTarget(targets []string, target string) int {
 }
 
 // startHealthLoop periodically verifies the complete configured transport for each target.
-func startHealthLoop(pool string, ldapConf *config.LDAPConf) {
+func startHealthLoop(pool string, cfg config.File, ldapConf *config.LDAPConf) {
 	if ldapConf == nil {
 		return
 	}
@@ -683,7 +683,7 @@ func startHealthLoop(pool string, ldapConf *config.LDAPConf) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	connector := newLDAPTargetConnector(ldapConf)
+	connector := newLDAPTargetConnector(cfg, ldapConf)
 	probe := func(target string) {
 		setHealth(pool, target, connector.probe(target, probeTO) == nil)
 	}
@@ -701,8 +701,8 @@ func startHealthLoop(pool string, ldapConf *config.LDAPConf) {
 }
 
 // newLDAPTargetConnector creates a connector for one immutable LDAP target policy.
-func newLDAPTargetConnector(ldapConf *config.LDAPConf) *ldapTargetConnector {
-	return &ldapTargetConnector{conf: ldapConf}
+func newLDAPTargetConnector(cfg config.File, ldapConf *config.LDAPConf) *ldapTargetConnector {
+	return &ldapTargetConnector{cfg: cfg, conf: ldapConf}
 }
 
 // probe verifies the complete configured transport without sending bind credentials.
@@ -769,7 +769,7 @@ func (c *ldapTargetConnector) tlsConfig(target string) (*tls.Config, error) {
 		return nil, nil
 	}
 
-	return newLDAPTLSConfig(targetURL, c.conf)
+	return newLDAPTLSConfig(c.cfg, targetURL, c.conf)
 }
 
 // jitterBackoff applies exponential backoff with capped jitter to calculate the next retry duration.
@@ -804,13 +804,13 @@ type ldapConnectionState struct {
 }
 
 // newLDAPTLSConfig loads certificate material and creates the shared LDAP TLS policy.
-func newLDAPTLSConfig(u *url.URL, ldapConf *config.LDAPConf) (*tls.Config, error) {
-	caCertPool, err := loadLDAPRootCAs(ldapConf.TLSCAFile)
+func newLDAPTLSConfig(cfg config.File, u *url.URL, ldapConf *config.LDAPConf) (*tls.Config, error) {
+	caCertPool, err := loadLDAPRootCAs(cfg, ldapConf.TLSCAFile)
 	if err != nil {
 		return nil, err
 	}
 
-	certificates, err := loadLDAPClientCertificates(ldapConf)
+	certificates, err := loadLDAPClientCertificates(cfg, ldapConf)
 	if err != nil {
 		return nil, err
 	}
@@ -830,15 +830,21 @@ func newLDAPTLSConfig(u *url.URL, ldapConf *config.LDAPConf) (*tls.Config, error
 }
 
 // loadLDAPRootCAs loads an optional CA bundle for LDAP TLS.
-func loadLDAPRootCAs(caFile string) (*x509.CertPool, error) {
+func loadLDAPRootCAs(cfg config.File, caFile string) (*x509.CertPool, error) {
 	if caFile == "" {
 		return nil, nil
 	}
 
-	caCert, err := os.ReadFile(caFile)
+	snapshot, err := config.ArtifactSnapshotFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load sealed CA certificate: %w", err)
+	}
+
+	caCert, err := snapshot.ReadFile(caFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load CA certificate: %w", err)
 	}
+	defer clear(caCert)
 
 	caCertPool := x509.NewCertPool()
 	if !caCertPool.AppendCertsFromPEM(caCert) {
@@ -849,12 +855,33 @@ func loadLDAPRootCAs(caFile string) (*x509.CertPool, error) {
 }
 
 // loadLDAPClientCertificates loads the optional LDAP client certificate pair.
-func loadLDAPClientCertificates(ldapConf *config.LDAPConf) ([]tls.Certificate, error) {
-	if ldapConf.TLSClientCert == "" || ldapConf.TLSClientKey == "" {
+func loadLDAPClientCertificates(cfg config.File, ldapConf *config.LDAPConf) ([]tls.Certificate, error) {
+	if ldapConf.TLSClientCert == "" && ldapConf.TLSClientKey == "" {
 		return nil, nil
 	}
 
-	cert, err := tls.LoadX509KeyPair(ldapConf.TLSClientCert, ldapConf.TLSClientKey)
+	if ldapConf.TLSClientCert == "" || ldapConf.TLSClientKey == "" {
+		return nil, fmt.Errorf("LDAP client certificate and key must be configured together")
+	}
+
+	snapshot, err := config.ArtifactSnapshotFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load sealed client certificate and key: %w", err)
+	}
+
+	certificatePEM, err := snapshot.ReadFile(ldapConf.TLSClientCert)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client certificate: %w", err)
+	}
+	defer clear(certificatePEM)
+
+	keyPEM, err := snapshot.ReadFile(ldapConf.TLSClientKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client key: %w", err)
+	}
+	defer clear(keyPEM)
+
+	cert, err := tls.X509KeyPair(certificatePEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load client certificate and key: %w", err)
 	}
@@ -899,7 +926,7 @@ func validateLDAPPeerCertificates(certificates [][]byte, _ [][]*x509.Certificate
 
 // dialAndStartTLS establishes the configured LDAP transport and records StartTLS diagnostics.
 func (l *LDAPConnectionImpl) dialAndStartTLS(ctx context.Context, cfg config.File, logger *slog.Logger, guid string, ldapConf *config.LDAPConf, ldapCounter int) error {
-	connector := newLDAPTargetConnector(ldapConf)
+	connector := newLDAPTargetConnector(cfg, ldapConf)
 
 	connection, startedTLS, err := connector.dial(ldapConf.ServerURIs[ldapCounter], 0)
 	if err != nil {

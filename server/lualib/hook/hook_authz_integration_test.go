@@ -451,6 +451,7 @@ func TestPreCompileLuaHooks_RegistersAbsoluteAlias(t *testing.T) {
 			},
 		},
 	}
+	mustSealHookArtifacts(t, cfg)
 
 	if err := PreCompileLuaHooks(cfg); err != nil {
 		t.Fatalf("PreCompileLuaHooks() error = %v", err)
@@ -486,6 +487,7 @@ func TestPreCompileLuaHooks_RegistersExplicitPublicHook(t *testing.T) {
 			},
 		},
 	}
+	mustSealHookArtifacts(t, cfg)
 
 	if err := PreCompileLuaHooks(cfg); err != nil {
 		t.Fatalf("PreCompileLuaHooks() error = %v", err)
@@ -524,6 +526,7 @@ func TestPreCompileLuaHooks_ClearsRemovedAliases(t *testing.T) {
 			},
 		},
 	}
+	mustSealHookArtifacts(t, cfg)
 
 	if err := PreCompileLuaHooks(cfg); err != nil {
 		t.Fatalf("PreCompileLuaHooks() error = %v", err)
@@ -540,6 +543,15 @@ func TestPreCompileLuaHooks_ClearsRemovedAliases(t *testing.T) {
 
 	if _, found := ResolveAliasLocation("/external/hook", http.MethodPost); found {
 		t.Fatal("did not expect removed alias to resolve after refresh")
+	}
+}
+
+// mustSealHookArtifacts attaches the same immutable artifact source used in production.
+func mustSealHookArtifacts(t *testing.T, cfg config.File) {
+	t.Helper()
+
+	if _, err := config.EnsureArtifactSnapshot(cfg); err != nil {
+		t.Fatalf("EnsureArtifactSnapshot() error = %v", err)
 	}
 }
 

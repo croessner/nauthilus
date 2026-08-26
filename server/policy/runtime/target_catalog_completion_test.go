@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	policy "github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
@@ -660,42 +661,14 @@ func TestTargetCatalogRejectsConfiguredReplacementForBuiltinPlanProvider(t *test
 	}
 }
 
-func TestBuiltinEffectParametersRejectInvalidEstablishedValues(t *testing.T) {
+func TestBuiltinBruteForceEffectRejectsInvalidFeature(t *testing.T) {
 	record, _ := completionBuiltinAuthRuntimeRecord(t)
 
-	var (
-		luaEffect        registry.EffectDefinition
-		bruteForceEffect registry.EffectDefinition
-	)
+	var bruteForceEffect registry.EffectDefinition
 
 	for _, effect := range record.Effects {
-		switch effect.SelectionID() {
-		case "auth.obligation.lua_action.dispatch":
-			luaEffect = effect
-		case "auth.obligation.brute_force.update":
+		if effect.ID() == policy.EffectBruteForceUpdate {
 			bruteForceEffect = effect
-		}
-	}
-
-	tests := []map[string]decision.Value{
-		{
-			"action":  completionRuntimeStringValue(t, "smtp"),
-			"feature": completionRuntimeStringValue(t, "feature"),
-		},
-		{
-			"action":  completionRuntimeStringValue(t, "lua"),
-			"feature": completionRuntimeStringValue(t, ""),
-		},
-	}
-
-	for index, parameters := range tests {
-		use, err := registry.NewEffectUse(luaEffect.ID(), parameters)
-		if err != nil {
-			t.Fatalf("NewEffectUse(%d) error = %v", index, err)
-		}
-
-		if err = luaEffect.ValidateUse(use); err == nil {
-			t.Fatalf("ValidateUse(%d) accepted invalid established Lua parameters", index)
 		}
 	}
 
@@ -946,9 +919,12 @@ func completionBuiltinAuthRuntimeRecordForAction(
 
 	for _, checkpoint := range plan.Checkpoints() {
 		checkpoints = append(checkpoints, CheckpointRecord{
-			Name: checkpoint.Name(), PolicySetBindings: checkpoint.PolicySets(),
-			PolicySetIDs: []registry.PolicySetID{standardID}, ProviderIDs: checkpoint.Providers(),
-			Rules: completionRuntimeRulesForCheckpoint(t, target, checkpoint.Name(), standardID, policySets),
+			Name:              checkpoint.Name(),
+			PolicySetBindings: checkpoint.PolicySets(),
+			PolicySetIDs:      []registry.PolicySetID{standardID},
+			ProviderIDs:       checkpoint.Providers(),
+			ProviderInstances: checkpoint.ProviderInstances(),
+			Rules:             completionRuntimeRulesForCheckpoint(t, target, checkpoint.Name(), standardID, policySets),
 		})
 	}
 
@@ -1161,7 +1137,7 @@ func completionRuntimeAuthorizeRecord(t *testing.T, record TargetCatalogRecord) 
 	t.Helper()
 
 	checkpoints := make([]registry.CheckpointDefinition, 0, len(record.Checkpoints))
-	for _, checkpoint := range record.Checkpoints {
+	for index, checkpoint := range record.Checkpoints {
 		source, err := registry.NewCheckpointDefinition(
 			checkpoint.Name,
 			checkpoint.PolicySetBindings,
@@ -1172,6 +1148,8 @@ func completionRuntimeAuthorizeRecord(t *testing.T, record TargetCatalogRecord) 
 		}
 
 		checkpoints = append(checkpoints, source)
+		record.Checkpoints[index].ProviderInstances = source.ProviderInstances()
+		record.Checkpoints[index].ProviderIDs = source.Providers()
 	}
 
 	plan, err := registry.NewDomainPlanDefinition(record.Target, checkpoints)

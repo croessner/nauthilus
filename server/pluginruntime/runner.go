@@ -22,12 +22,10 @@ import (
 	"fmt"
 	"slices"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
@@ -57,8 +55,6 @@ var (
 	ErrRestartRequired = errors.New("plugin restart required")
 )
 
-var defaultRunner atomic.Value // stores *Runner
-
 const extensionPointPlugin = "plugin"
 
 // Option customizes a Runner.
@@ -73,8 +69,6 @@ type Runner struct {
 	host             pluginapi.Host
 	observer         Observer
 	registry         *pluginregistry.Registry
-	postActions      *core.PostActionSupervisor
-	effectBridge     *EffectBridge
 	pluginConfig     *config.PluginsSection
 	modules          []moduleRuntime
 	startedModules   []string
@@ -151,14 +145,6 @@ func NewRunnerFromInstances(
 		runner.pluginConfig = pluginSectionFromModules(runner.modules)
 	}
 
-	runner.postActions = core.NewPostActionSupervisor(context.Background())
-	runner.effectBridge = NewEffectBridge(runner)
-
-	core.RegisterPluginSubjectSourceBridge(NewSubjectSourceBridge(runner))
-	core.RegisterPluginEnvironmentSourceBridge(NewEnvironmentSourceBridge(runner))
-	core.RegisterPostActionSupervisor(runner.postActions)
-	core.RegisterPluginEffectBridge(runner.effectBridge)
-
 	return runner
 }
 
@@ -187,18 +173,6 @@ func WithPluginConfig(plugins *config.PluginsSection) Option {
 	}
 }
 
-// SetDefaultRunner publishes the current process plugin runtime runner.
-func SetDefaultRunner(runner *Runner) {
-	defaultRunner.Store(runner)
-}
-
-// DefaultRunner returns the current process plugin runtime runner.
-func DefaultRunner() (*Runner, bool) {
-	runner, ok := defaultRunner.Load().(*Runner)
-
-	return runner, ok && runner != nil
-}
-
 // Start runs plugin Start, registered init tasks, and finally marks request-time execution ready.
 func (r *Runner) Start(ctx context.Context) error {
 	if r == nil {
@@ -212,7 +186,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		return nil
 	}
 
-	if r.stopping || r.stopped || r.postActions == nil || r.postActions.IsShutdown() {
+	if r.stopping || r.stopped {
 		return ErrNotReady
 	}
 
@@ -252,10 +226,6 @@ func (r *Runner) Stop(ctx context.Context) error {
 	r.ready = false
 	r.stopping = true
 	r.mu.Unlock()
-
-	if err := r.postActions.Shutdown(ctx); err != nil {
-		return err
-	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -330,55 +300,6 @@ func (r *Runner) ModuleCapabilities(moduleName string) []pluginapi.Capability {
 	}
 
 	return slices.Clone(r.modules[index].instance.Capabilities)
-}
-
-// EvaluateEnvironment invokes one ready environment source behind the host panic boundary.
-func (r *Runner) EvaluateEnvironment(
-	ctx context.Context,
-	qualifiedName string,
-	request pluginapi.EnvironmentRequest,
-) (pluginapi.EnvironmentResult, error) {
-	return invokeTypedComponent(ctx, r, qualifiedName, pluginregistry.ComponentKindEnvironmentSource, "Evaluate", func(callCtx context.Context, source pluginapi.EnvironmentSource) (pluginapi.EnvironmentResult, error) {
-		return source.Evaluate(callCtx, request)
-	})
-}
-
-// EvaluateSubject invokes one ready subject source behind the host panic boundary.
-func (r *Runner) EvaluateSubject(
-	ctx context.Context,
-	qualifiedName string,
-	request pluginapi.SubjectRequest,
-) (pluginapi.SubjectResult, error) {
-	return invokeTypedComponent(ctx, r, qualifiedName, pluginregistry.ComponentKindSubjectSource, "Evaluate", func(callCtx context.Context, source pluginapi.SubjectSource) (pluginapi.SubjectResult, error) {
-		return source.Evaluate(callCtx, request)
-	})
-}
-
-// ExecuteObligation invokes one ready obligation target behind the host panic boundary.
-func (r *Runner) ExecuteObligation(
-	ctx context.Context,
-	qualifiedName string,
-	request pluginapi.ObligationRequest,
-) (pluginapi.ObligationResult, error) {
-	return invokeTypedComponent(ctx, r, qualifiedName, pluginregistry.ComponentKindObligationTarget, "Execute", func(callCtx context.Context, target pluginapi.ObligationTarget) (pluginapi.ObligationResult, error) {
-		return target.Execute(callCtx, request)
-	})
-}
-
-// EnqueuePostAction invokes one ready post-action target behind the host panic boundary.
-func (r *Runner) EnqueuePostAction(
-	ctx context.Context,
-	qualifiedName string,
-	request pluginapi.PostActionRequest,
-) (pluginapi.PostActionEnqueueResult, error) {
-	workers := &postActionWorkerGroup{}
-	ctx = withPostActionWorkerOwnership(ctx, workers)
-
-	result, err := invokeTypedComponent(ctx, r, qualifiedName, pluginregistry.ComponentKindPostActionTarget, "Enqueue", func(callCtx context.Context, target pluginapi.PostActionTarget) (pluginapi.PostActionEnqueueResult, error) {
-		return target.Enqueue(callCtx, request)
-	})
-
-	return result, errors.Join(err, workers.wait())
 }
 
 // ServeHook invokes one ready hook behind the host panic boundary.

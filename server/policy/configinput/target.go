@@ -14,6 +14,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	policy "github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
@@ -85,7 +86,11 @@ func (n *policyNormalizer) normalizeDomainPlan(target normalizedTarget) (registr
 		checkpoints = append(checkpoints, checkpoint)
 	}
 
-	guards, err := normalizeSchedulerGuards(planPath+".scheduler_guards", configured.SchedulerGuards)
+	guards, err := normalizeSchedulerGuards(
+		planPath+".scheduler_guards",
+		target.target,
+		configured.SchedulerGuards,
+	)
 	if err != nil {
 		return registry.DomainPlanDefinition{}, err
 	}
@@ -107,6 +112,7 @@ func (n *policyNormalizer) normalizeDomainPlan(target normalizedTarget) (registr
 // normalizeSchedulerGuards compiles plan-local guard expressions through the standalone expression authority.
 func normalizeSchedulerGuards(
 	path string,
+	target decision.Target,
 	configured map[string]policyconfig.SchedulerGuardConfig,
 ) ([]registry.SchedulerGuardDefinition, error) {
 	guards := make([]registry.SchedulerGuardDefinition, 0, len(configured))
@@ -118,6 +124,11 @@ func normalizeSchedulerGuards(
 		expression, err := normalizeExpression(guardPath+".if", guardConfig.If)
 		if err != nil {
 			return nil, err
+		}
+
+		expression, err = canonicalSchedulerGuardExpression(target, expression)
+		if err != nil {
+			return nil, atPath(guardPath+".if", err)
 		}
 
 		guard, err := registry.NewSchedulerGuardDefinition(registry.SchedulerGuardDefinitionInput{
@@ -132,6 +143,33 @@ func normalizeSchedulerGuards(
 	}
 
 	return guards, nil
+}
+
+// canonicalSchedulerGuardExpression maps authored host vocabulary into the selected exact authn schema.
+func canonicalSchedulerGuardExpression(
+	target decision.Target,
+	expression registry.PolicyExpression,
+) (registry.PolicyExpression, error) {
+	children := expression.Children()
+	for index := range children {
+		canonical, err := canonicalSchedulerGuardExpression(target, children[index])
+		if err != nil {
+			return registry.PolicyExpression{}, err
+		}
+
+		children[index] = canonical
+	}
+
+	factID := expression.FactID()
+	if target.Namespace() == policy.AuthnNamespace && factID == policy.AttributeRequestProtocol {
+		factID = policy.AuthnFactProtocol
+	}
+
+	return registry.NewPolicyExpression(registry.PolicyExpressionInput{
+		Kind: expression.Kind(), FactID: factID, FactKind: expression.FactKind(),
+		Operator: expression.Operator(), Reference: expression.Reference(),
+		Values: expression.Values(), Children: children,
+	})
 }
 
 // normalizedCheckpointNames returns exact configured topology in deterministic execution order.
@@ -269,7 +307,7 @@ func orderedProviderInstances(
 	return instances, nil
 }
 
-// validateApplicableProviderDependencies preserves old scheduler compatibility after action filtering.
+// validateApplicableProviderDependencies enforces scheduler safety after action filtering.
 func validateApplicableProviderDependencies(
 	path string,
 	action string,

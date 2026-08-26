@@ -143,6 +143,57 @@ func TestLeaseReleaseRecoveringReplacesAfterPanic(t *testing.T) {
 	}
 }
 
+func TestLeaseReleaseRecoveringReportsPanicToNamedError(t *testing.T) {
+	pool := newTestPool(t)
+
+	lease, err := pool.AcquireLease(context.Background())
+	if err != nil {
+		t.Fatalf("AcquireLease() error = %v", err)
+	}
+
+	var panicErr error
+
+	func() {
+		defer lease.ReleaseRecoveringOnError(&panicErr)
+
+		panic("simulated startup Lua host panic")
+	}()
+
+	if panicErr == nil {
+		t.Fatal("recovered Lua host panic was reported as success")
+	}
+}
+
+func TestManagerDeleteRetiresOnlyIdleExactPool(t *testing.T) {
+	manager := &Manager{pools: make(map[PoolKey]*Pool)}
+	key := PoolKey("authn:701:lua_subject:profile")
+	pool := manager.GetOrCreate(key, PoolOptions{MaxVMs: 1})
+
+	lease, err := pool.AcquireLease(context.Background())
+	if err != nil {
+		t.Fatalf("AcquireLease() error = %v", err)
+	}
+
+	if err = manager.Delete(key); err == nil {
+		t.Fatal("Delete() retired a pool with an active lease")
+	}
+
+	lease.Release()
+
+	if err = manager.Delete(key); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	replacement := manager.GetOrCreate(key, PoolOptions{MaxVMs: 1})
+	if replacement == pool {
+		t.Fatal("GetOrCreate() reused a retired generation pool")
+	}
+
+	if err = manager.Delete(key); err != nil {
+		t.Fatalf("Delete(replacement) error = %v", err)
+	}
+}
+
 func newTestPool(t *testing.T) *Pool {
 	t.Helper()
 

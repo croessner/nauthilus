@@ -2,6 +2,10 @@
 
 This directory contains Lua hook plugins for the Nauthilus authentication system. Hook plugins are executed at specific points in the system's lifecycle or in response to specific events, allowing for custom processing, administrative functions, and integration with external systems.
 
+These hooks are process-owned custom HTTP callbacks, not `policy.namespaces.authn` providers or effects. Their hook
+runtime may expose capabilities such as outbound HTTP or environment-backed process configuration; those capabilities
+do not exist in, and are not inherited by, the authentication Policy VM.
+
 ## Available Plugins
 
 ### distributed-brute-force-admin.lua
@@ -87,7 +91,8 @@ The plugin runs automatically when triggered by Dovecot session events. You can 
 - `CUSTOM_REDIS_POOL_NAME`: The name of the Redis pool to use (defaults to "default" if not specified)
 
 ### clickhouse-query.lua
-Provides a safe, read-only HTTP interface to query data stored in ClickHouse that was inserted by the clickhouse.lua post-action.
+Provides a constrained, read-only HTTP interface to query data stored in ClickHouse by the native
+`authn/plugin.clickhouse.post_action` effect. The historical Lua post-action is reference-only.
 
 Features:
 - Supports limited, whitelisted queries to prevent arbitrary SQL:

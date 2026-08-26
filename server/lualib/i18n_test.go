@@ -142,7 +142,41 @@ func TestI18NRegisterCatalogStartupMergesDeploymentOverlays(t *testing.T) {
 	assertCatalogText(t, runtime.Registry.Active(), "de", luaI18NKey, luaI18NDeploymentFinal)
 }
 
-func TestI18NRegisterCatalogRejectsRequestTimeMutation(t *testing.T) {
+func TestI18NCatalogSessionReturnsDetachedUnpublishedOverlays(t *testing.T) {
+	runtime := newI18NTestRuntime(t, localization.CatalogOverlay{})
+	session := runtime.NewCatalogSession()
+	L := newI18NTestState(t, session, I18NModeStartup)
+
+	err := L.DoString(`
+		local i18n = require("nauthilus_i18n")
+		i18n.register_catalog({
+			language = "de",
+			namespace = "startup",
+			entries = {
+				["auth.policy.company.account_blocked"] = "Startup German.",
+			},
+		})
+	`)
+	if err != nil {
+		t.Fatalf("run Lua: %v", err)
+	}
+
+	overlays := session.CatalogSessionOverlays()
+	if len(overlays) != 1 {
+		t.Fatalf("startup overlays = %d, want 1", len(overlays))
+	}
+
+	overlays[0].Entries["de"][luaI18NKey] = "mutated"
+
+	detached := session.CatalogSessionOverlays()
+	if got := detached[0].Entries["de"][luaI18NKey]; got != "Startup German." {
+		t.Fatalf("detached startup message = %q, want original", got)
+	}
+
+	assertCatalogText(t, runtime.Registry.Active(), "de", luaI18NKey, luaI18NGerman)
+}
+
+func TestI18NRegisterCatalogIsUnavailableAtRequestTime(t *testing.T) {
 	runtime := newI18NTestRuntime(t, localization.CatalogOverlay{
 		Namespace: "company",
 		Entries: map[string]map[string]string{
@@ -155,20 +189,10 @@ func TestI18NRegisterCatalogRejectsRequestTimeMutation(t *testing.T) {
 
 	err := L.DoString(`
 		local i18n = require("nauthilus_i18n")
-		i18n.register_catalog({
-			language = "de",
-			namespace = "company-request",
-			entries = {
-				["auth.policy.company.account_blocked"] = "Request-time mutation.",
-			},
-		})
+		assert(i18n.register_catalog == nil)
 	`)
-	if err == nil {
-		t.Fatal("request-time catalog registration succeeded")
-	}
-
-	if !strings.Contains(err.Error(), "register_catalog is only available during startup Lua execution") {
-		t.Fatalf("error = %q, want startup-only rejection", err.Error())
+	if err != nil {
+		t.Fatalf("request-time module surface: %v", err)
 	}
 
 	assertCatalogText(t, runtime.Registry.Active(), "de", luaI18NKey, luaI18NGerman)

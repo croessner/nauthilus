@@ -59,7 +59,7 @@ func TestStateDiscoveryUsesDescriptorsMetadataAndOmitsPluginConfig(t *testing.T)
 		}, nil
 	})
 
-	state, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	state, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(testPluginModuleName, artifact, func(module *config.PluginModule) {
 			module.Config = map[string]any{
 				discoverySecretConfigKey: discoverySecretConfigText,

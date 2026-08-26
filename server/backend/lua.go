@@ -17,14 +17,15 @@ package backend
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
-	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
@@ -33,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib/convert"
 	"github.com/croessner/nauthilus/v3/server/lualib/luamod"
 	"github.com/croessner/nauthilus/v3/server/lualib/luapool"
+	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
@@ -54,6 +56,16 @@ type luaRequestCommandSpec struct {
 	functionName string
 	returns      int
 }
+
+type preparedLuaBackendProgram struct {
+	prototype *lua.FunctionProto
+	modules   *luaseal.Modules
+	snapshot  *config.ArtifactSnapshot
+	path      string
+	digest    [sha256.Size]byte
+}
+
+var preparedLuaBackendPrograms sync.Map
 
 var luaRequestCommandSpecs = map[definitions.LuaCommand]luaRequestCommandSpec{
 	definitions.LuaCommandPassDB:                   {functionName: definitions.LuaFnBackendVerifyPassword, returns: 2},
@@ -104,7 +116,7 @@ func LoaderLDAPStateless() lua.LGFunction {
 func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, channel Channel, backendName string) (err error) {
 	runtimeConfig := resolveLuaBackendRuntimeConfig(cfg, backendName)
 
-	compiledScript, err := lualib.CompileLua(runtimeConfig.scriptPath)
+	program, err := preparedLuaBackendScript(cfg, backendName, runtimeConfig.scriptPath, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -129,7 +141,7 @@ func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, re
 	})
 
 	var wg sync.WaitGroup
-	startLuaBackendWorkers(ctx, cfg, logger, redisClient, backendName, runtimeConfig.numberOfWorkers, compiledScript, vmPool, &wg)
+	startLuaBackendWorkers(ctx, cfg, logger, redisClient, backendName, runtimeConfig.numberOfWorkers, program, vmPool, &wg)
 
 	go func() {
 		wg.Wait()
@@ -137,6 +149,117 @@ func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, re
 	}()
 
 	return
+}
+
+// PrepareLuaBackendScripts compiles every restart-bound backend before workers start.
+func PrepareLuaBackendScripts(cfg config.File) error {
+	modules, err := luaseal.CaptureConfigured(cfg)
+	if err != nil {
+		return err
+	}
+
+	return PrepareLuaBackendScriptsWithModules(cfg, modules)
+}
+
+// PrepareLuaBackendScriptsWithModules binds every restart-bound backend to one boot-owned module snapshot.
+func PrepareLuaBackendScriptsWithModules(cfg config.File, modules *luaseal.Modules) error {
+	if cfg == nil {
+		return fmt.Errorf("lua backend configuration is nil")
+	}
+
+	if modules == nil {
+		return fmt.Errorf("lua backend module snapshot is nil")
+	}
+
+	programs := make(map[string]string)
+	if path := cfg.GetLuaScriptPath(); path != "" {
+		programs[definitions.DefaultBackendName] = path
+	}
+
+	for name, optional := range cfg.GetLuaOptionalBackends() {
+		if optional != nil && optional.BackendScriptPath != "" {
+			programs[name] = optional.BackendScriptPath
+		}
+	}
+
+	names := make([]string, 0, len(programs))
+	for name := range programs {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	for _, name := range names {
+		if _, err := preparedLuaBackendScript(cfg, name, programs[name], modules); err != nil {
+			return fmt.Errorf("prepare Lua backend %q: %w", name, err)
+		}
+	}
+
+	return nil
+}
+
+// preparedLuaBackendScript returns the prototype cached for one sealed source identity.
+func preparedLuaBackendScript(
+	cfg config.File,
+	backendName string,
+	scriptPath string,
+	modules *luaseal.Modules,
+) (*preparedLuaBackendProgram, error) {
+	snapshot, err := config.ArtifactSnapshotFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("load sealed Lua backend source %q: %w", scriptPath, err)
+	}
+
+	digest, err := snapshot.Digest(scriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("load sealed Lua backend source %q: %w", scriptPath, err)
+	}
+
+	if cached, ok := preparedLuaBackendPrograms.Load(backendName); ok {
+		program := cached.(*preparedLuaBackendProgram)
+		if program.path == scriptPath && program.digest == digest && program.snapshot == snapshot {
+			return program, nil
+		}
+	}
+
+	if modules == nil {
+		modules, err = luaseal.CaptureConfigured(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	prototype, err := compileLuaBackendScript(cfg, scriptPath)
+	if err != nil {
+		return nil, err
+	}
+
+	program := &preparedLuaBackendProgram{
+		prototype: prototype,
+		modules:   modules,
+		snapshot:  snapshot,
+		path:      scriptPath,
+		digest:    digest,
+	}
+	preparedLuaBackendPrograms.Store(backendName, program)
+
+	return program, nil
+}
+
+// compileLuaBackendScript compiles the exact backend bytes sealed with the active config.
+func compileLuaBackendScript(cfg config.File, scriptPath string) (*lua.FunctionProto, error) {
+	snapshot, err := config.ArtifactSnapshotFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("load sealed Lua backend source %q: %w", scriptPath, err)
+	}
+
+	source, err := snapshot.ReadFile(scriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("load sealed Lua backend source %q: %w", scriptPath, err)
+	}
+	defer clear(source)
+
+	return lualib.CompileLuaSource(scriptPath, source)
 }
 
 // resolveLuaBackendRuntimeConfig resolves worker, script, and queue settings for one Lua backend.
@@ -199,13 +322,13 @@ func startLuaBackendWorkers(
 	redisClient rediscli.Client,
 	backendName string,
 	numberOfWorkers int,
-	compiledScript *lua.FunctionProto,
+	program *preparedLuaBackendProgram,
 	vmPool *vmpool.Pool,
 	wg *sync.WaitGroup,
 ) {
 	for i := 0; i < numberOfWorkers; i++ {
 		wg.Go(func() {
-			luaBackendWorkerLoop(ctx, cfg, logger, redisClient, backendName, compiledScript, vmPool)
+			luaBackendWorkerLoop(ctx, cfg, logger, redisClient, backendName, program, vmPool)
 		})
 	}
 }
@@ -217,7 +340,7 @@ func luaBackendWorkerLoop(
 	logger *slog.Logger,
 	redisClient rediscli.Client,
 	backendName string,
-	compiledScript *lua.FunctionProto,
+	program *preparedLuaBackendProgram,
 	vmPool *vmpool.Pool,
 ) {
 	for {
@@ -232,7 +355,7 @@ func luaBackendWorkerLoop(
 			return
 		}
 
-		handleLuaRequest(ctx, cfg, logger, redisClient, luaRequest, compiledScript, vmPool)
+		handleLuaRequest(ctx, cfg, logger, redisClient, luaRequest, program, vmPool)
 	}
 }
 
@@ -242,16 +365,9 @@ func luaBackendWorkerLoop(
 // - ctx: The context for the Lua execution, including cancellation and timeout.
 // - luaRequest: The LuaRequest object containing details about the script execution request.
 // - compiledScript: The precompiled Lua script to be executed.
-func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, luaRequest *bktype.LuaRequest, compiledScript *lua.FunctionProto, vmPool *vmpool.Pool) {
+func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, luaRequest *bktype.LuaRequest, program *preparedLuaBackendProgram, vmPool *vmpool.Pool) {
 	startTime := time.Now()
-	defer func() {
-		latency := time.Since(startTime)
-		level.Info(logger).Log(
-			definitions.LogKeyGUID, luaRequest.Session,
-			definitions.LogKeyMsg, "Lua backend handler latency",
-			definitions.LogKeyLatency, util.FormatDurationMs(latency),
-		)
-	}()
+	defer logLuaBackendLatency(logger, luaRequest.Session, startTime)
 
 	logs := new(lualib.CustomLogKeyValue)
 	luaCtx, luaCancel := context.WithTimeout(ctx, cfg.GetServer().GetTimeouts().GetLuaScript())
@@ -272,6 +388,19 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	defer lease.ReleaseRecoveringOnError(&leaseErr)
 
 	L.SetContext(luaCtx)
+
+	if program == nil || program.modules == nil {
+		leaseErr = fmt.Errorf("prepared Lua backend program is incomplete")
+		processError(cfg, logger, leaseErr, luaRequest, logs)
+
+		return
+	}
+
+	if leaseErr = luaseal.PrepareProcess(L, program.modules); leaseErr != nil {
+		processError(cfg, logger, leaseErr, luaRequest, logs)
+
+		return
+	}
 	luapool.PrepareRequestEnv(L)
 
 	bindLuaRequestModules(ctx, luaCtx, cfg, logger, redisClient, L, luaRequest)
@@ -280,7 +409,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	request := L.NewTable()
 	luaCommand, nret := setLuaRequestParameters(cfg, L, luaRequest, request)
 
-	err := executeAndHandleError(cfg, logger, compiledScript, luaCommand, luaRequest, L, request, nret, logs)
+	err := executeAndHandleError(cfg, logger, program, luaCommand, luaRequest, L, request, nret, logs)
 	if err != nil {
 		leaseErr = err
 	}
@@ -295,6 +424,15 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	}
 }
 
+// logLuaBackendLatency records one completed backend request duration.
+func logLuaBackendLatency(logger *slog.Logger, session string, startTime time.Time) {
+	level.Info(logger).Log(
+		definitions.LogKeyGUID, session,
+		definitions.LogKeyMsg, "Lua backend handler latency",
+		definitions.LogKeyLatency, util.FormatDurationMs(time.Since(startTime)),
+	)
+}
+
 // bindLuaRequestModules binds request-scoped modules into the Lua request environment.
 func bindLuaRequestModules(
 	ctx context.Context,
@@ -307,7 +445,7 @@ func bindLuaRequestModules(
 ) {
 	modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
 
-	modManager.BindAllDefault(luaRequest.HTTPClientContext, L, luaRequest.Context, tolerate.GetTolerate())
+	modManager.BindAllDefault(luaRequest.HTTPClientContext, L, luaRequest.Context, luaRequest.Tolerate)
 
 	if luaRequest.HTTPClientRequest != nil {
 		modManager.BindHTTP(L, lualib.NewHTTPMetaFromRequest(luaRequest.HTTPClientRequest))
@@ -355,50 +493,64 @@ func setLuaRequestParameters(cfg config.File, L *lua.LState, luaRequest *bktype.
 }
 
 // executeAndHandleError executes a Lua script, handles errors, and logs details. It runs initialization, execution, and cleanup steps.
-func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript *lua.FunctionProto, luaCommand string, luaRequest *bktype.LuaRequest, L *lua.LState, request *lua.LTable, nret int, logs *lualib.CustomLogKeyValue) (err error) {
+func executeAndHandleError(cfg config.File, logger *slog.Logger, program *preparedLuaBackendProgram, luaCommand string, luaRequest *bktype.LuaRequest, L *lua.LState, request *lua.LTable, nret int, logs *lualib.CustomLogKeyValue) (err error) {
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
 		logs.Set(fmt.Sprintf("backend_execute_%s_latency", luaCommand), util.FormatDurationMs(latency))
 	}()
 
-	if err = lualib.PackagePath(L, cfg); err != nil {
+	if program == nil || program.prototype == nil || program.modules == nil {
+		err = fmt.Errorf("prepared Lua backend program is incomplete")
 		processError(cfg, logger, err, luaRequest, logs)
 
 		return err
 	}
 
-	if err = lualib.DoCompiledFile(L, compiledScript); err != nil {
+	if err = luaseal.InstallProcess(L, program.modules); err != nil {
 		processError(cfg, logger, err, luaRequest, logs)
 
 		return err
 	}
 
-	var commandFunc = lua.LNil
+	if err = lualib.DoCompiledFile(L, program.prototype); err != nil {
+		processError(cfg, logger, err, luaRequest, logs)
 
-	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
-		if fn := L.GetField(v, luaCommand); fn != nil {
-			commandFunc = fn
-		}
+		return err
 	}
 
-	if commandFunc == lua.LNil {
-		commandFunc = L.GetGlobal(luaCommand)
-	}
+	if err = callLuaBackendCommand(L, luaCommand, request, nret); err != nil {
+		processError(cfg, logger, err, luaRequest, logs)
 
-	if commandFunc != nil && commandFunc.Type() == lua.LTFunction {
-		if err = L.CallByParam(lua.P{
-			Fn:      commandFunc,
-			NRet:    nret,
-			Protect: true,
-		}, request); err != nil {
-			processError(cfg, logger, err, luaRequest, logs)
-
-			return err
-		}
+		return err
 	}
 
 	return err
+}
+
+// callLuaBackendCommand resolves and invokes one request-scoped backend function.
+func callLuaBackendCommand(L *lua.LState, luaCommand string, request *lua.LTable, nret int) error {
+	commandFunc := luaBackendCommand(L, luaCommand)
+	if commandFunc == nil || commandFunc.Type() != lua.LTFunction {
+		return nil
+	}
+
+	return L.CallByParam(lua.P{
+		Fn:      commandFunc,
+		NRet:    nret,
+		Protect: true,
+	}, request)
+}
+
+// luaBackendCommand prefers the request environment and falls back to the process global.
+func luaBackendCommand(L *lua.LState, luaCommand string) lua.LValue {
+	if environment := L.GetGlobal("__NAUTH_REQ_ENV"); environment != nil && environment.Type() == lua.LTTable {
+		if command := L.GetField(environment, luaCommand); command != nil && command != lua.LNil {
+			return command
+		}
+	}
+
+	return L.GetGlobal(luaCommand)
 }
 
 // handleReturnTypes processes the return values of a Lua script and sends results to the LuaReplyChan of LuaRequest.

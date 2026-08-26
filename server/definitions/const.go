@@ -1423,8 +1423,16 @@ const (
 	LuaBackendServerTypeName = "nauthilus_backend_server"
 )
 
-// LuaPackagePath represents the path to search for Lua modules.
-const LuaPackagePath = "/usr/local/share/nauthilus/lua/?.lua"
+const (
+	// LuaPackagePathLocal is the administrator-installed Lua module pattern.
+	LuaPackagePathLocal = "/usr/local/share/nauthilus/lua/?.lua"
+	// LuaPackagePathDistribution is the distribution-installed Lua module pattern.
+	LuaPackagePathDistribution = "/usr/share/nauthilus/lua/?.lua"
+	// LuaPackagePathApplication is the container application Lua module pattern.
+	LuaPackagePathApplication = "/usr/app/lua-plugins.d/share/?.lua"
+	// LuaPackagePath is the historical default returned by the configuration getter.
+	LuaPackagePath = LuaPackagePathLocal
+)
 
 const (
 	// LuaCommandPassDB represents the command for passing database in Lua
@@ -1864,7 +1872,7 @@ const (
 	LuaFnScopedIP = "scoped_ip"
 
 	// LuaFnGeneratePasswordHash is the function name for generating the canonical full password hash
-	// used by Nauthilus (util.GetHash(util.PreparePassword(password))).
+	// used by Nauthilus after request-owned password preparation.
 	LuaFnGeneratePasswordHash = "generate_password_hash"
 
 	// LuaFnCreateSummaryVec represents the identifier for creating a Prometheus SummaryVec.

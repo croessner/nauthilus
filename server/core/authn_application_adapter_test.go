@@ -772,7 +772,7 @@ func mustAuthnCandidateAuthentication(t *testing.T) decision.AuthenticationInput
 	input, err := decision.NewAuthenticationInput(decision.AuthenticationEvidence{
 		Kind:          "test-internal-authn",
 		Credential:    []byte("test-only-authn-evidence"),
-		TransportKind: "test",
+		TransportKind: "internal",
 	})
 	if err != nil {
 		t.Fatalf("NewAuthenticationInput() error = %v", err)

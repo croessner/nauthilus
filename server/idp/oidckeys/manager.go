@@ -54,12 +54,15 @@ var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // Manager handles OIDC signing keys.
 type Manager struct {
-	deps *deps.Deps
+	deps      *deps.Deps
+	artifacts *config.ArtifactSnapshot
 }
 
 // NewManager creates a new Manager.
 func NewManager(d *deps.Deps) *Manager {
-	return &Manager{deps: d}
+	artifacts, _ := config.ArtifactSnapshotFor(d.Cfg)
+
+	return &Manager{deps: d, artifacts: artifacts}
 }
 
 func (m *Manager) redisReadContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -146,7 +149,7 @@ func (m *Manager) generatedEdDSASigner(ctx context.Context) (signing.Signer, err
 func (m *Manager) staticEdDSASigner() (signing.Signer, bool) {
 	for _, sk := range m.deps.Cfg.GetIDP().OIDC.SigningKeys {
 		if sk.Active && sk.GetAlgorithm() == signing.AlgorithmEdDSA {
-			content, err := config.GetContent(sk.Key, sk.KeyFile)
+			content, err := m.staticKeyContent(sk)
 			if err != nil {
 				continue
 			}
@@ -206,13 +209,11 @@ func (m *Manager) GetActiveKey(ctx context.Context) (*rsa.PrivateKey, string, er
 	}
 
 	// 3. Fallback to static configuration
-	oidcCfg := m.deps.Cfg.GetIDP().OIDC
-
-	signingKey, err := oidcCfg.GetSigningKey()
+	signingKey, signingKeyID, err := m.activeStaticKeyContent()
 	if err == nil && signingKey != "" {
 		key, err := m.pemToPrivateKey(signingKey)
 		if err == nil {
-			return key, oidcCfg.GetSigningKeyID(), nil
+			return key, signingKeyID, nil
 		}
 	}
 
@@ -231,7 +232,7 @@ func (m *Manager) GetAllKeys(ctx context.Context) (map[string]*rsa.PrivateKey, e
 			continue
 		}
 
-		content, err := config.GetContent(sk.Key, sk.KeyFile)
+		content, err := m.staticKeyContent(sk)
 		if err == nil {
 			key, err := m.pemToPrivateKey(content)
 			if err == nil {
@@ -261,7 +262,7 @@ func (m *Manager) GetAllEdKeys(ctx context.Context) (map[string]ed25519.PrivateK
 			continue
 		}
 
-		content, err := config.GetContent(sk.Key, sk.KeyFile)
+		content, err := m.staticKeyContent(sk)
 		if err == nil {
 			key, err := signing.ParseEd25519PrivateKeyPEM(content)
 			if err == nil {
@@ -367,10 +368,53 @@ func (m *Manager) staticKeyContentByID(kid string, algorithm string) (string, er
 			continue
 		}
 
-		return config.GetContent(sk.Key, sk.KeyFile)
+		return m.staticKeyContent(sk)
 	}
 
 	return "", fmt.Errorf("%s key with kid %s not found", algorithm, kid)
+}
+
+// activeStaticKeyContent returns the first active exact static signing key and its identifier.
+func (m *Manager) activeStaticKeyContent() (string, string, error) {
+	for _, key := range m.deps.Cfg.GetIDP().OIDC.SigningKeys {
+		if !key.Active {
+			continue
+		}
+
+		content, err := m.staticKeyContent(key)
+		if err != nil {
+			return "", "", err
+		}
+
+		return content, key.ID, nil
+	}
+
+	return "", "", fmt.Errorf("no signing key configured")
+}
+
+// staticKeyContent resolves inline material or immutable candidate-captured file bytes.
+func (m *Manager) staticKeyContent(key config.OIDCKey) (string, error) {
+	if !key.Key.IsZero() {
+		return config.GetContent(key.Key, "")
+	}
+
+	if key.KeyFile == "" {
+		return "", nil
+	}
+
+	if m == nil || m.artifacts == nil {
+		return "", fmt.Errorf("read OIDC signing key: %w", config.ErrArtifactNotCaptured)
+	}
+
+	raw, err := m.artifacts.ReadFile(key.KeyFile)
+	if err != nil {
+		return "", fmt.Errorf("read OIDC signing key: %w", err)
+	}
+
+	content := string(raw)
+	clear(raw)
+
+	return content, nil
 }
 
 // loadRSAKeysFromRedis loads RSA keys from Redis into the provided map.

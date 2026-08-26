@@ -631,7 +631,6 @@ type EffectDefinitionInput struct {
 type EffectDefinition struct {
 	id           string
 	provider     string
-	selectionID  string
 	diagnosticID string
 	targets      []decision.Target
 	parameters   []ParameterSchema
@@ -647,15 +646,6 @@ func NewEffectDefinition(input EffectDefinitionInput) (EffectDefinition, error) 
 
 // newEffectDefinition validates configured and immutable builtin descriptors.
 func newEffectDefinition(input EffectDefinitionInput, builtin bool) (EffectDefinition, error) {
-	return newEffectDefinitionWithSelection(input, builtin, "")
-}
-
-// newEffectDefinitionWithSelection validates one descriptor and optional immutable builtin selection binding.
-func newEffectDefinitionWithSelection(
-	input EffectDefinitionInput,
-	builtin bool,
-	selectionID string,
-) (EffectDefinition, error) {
 	if err := validateEffectDefinitionInput(input); err != nil {
 		return EffectDefinition{}, err
 	}
@@ -673,7 +663,6 @@ func newEffectDefinitionWithSelection(
 	return EffectDefinition{
 		id:           input.ID,
 		provider:     input.Provider,
-		selectionID:  selectionID,
 		diagnosticID: input.DiagnosticID,
 		targets:      targets,
 		parameters:   parameters,
@@ -685,7 +674,7 @@ func newEffectDefinitionWithSelection(
 
 // validateEffectDefinitionInput enforces class, ownership, and alias invariants.
 func validateEffectDefinitionInput(input EffectDefinitionInput) error {
-	if !identifier.Qualified(input.ID) || !input.Kind.valid() || !input.Execution.valid() || len(input.Targets) == 0 {
+	if !validEffectID(input.ID) || !input.Kind.valid() || !input.Execution.valid() || len(input.Targets) == 0 {
 		return newValidationError(
 			ErrInvalidEffectDefinition,
 			"effect",
@@ -743,11 +732,6 @@ func (d EffectDefinition) ID() string {
 // Provider returns the exact bound provider identity when host-owned.
 func (d EffectDefinition) Provider() string {
 	return d.provider
-}
-
-// SelectionID returns the immutable established builtin effect identity when present.
-func (d EffectDefinition) SelectionID() string {
-	return d.selectionID
 }
 
 // DiagnosticID returns the optional target-local public alias.
@@ -815,7 +799,7 @@ func (d EffectDefinition) clone() EffectDefinition {
 
 // validatedClone reconstructs one effect through its immutable constructor.
 func (d EffectDefinition) validatedClone() (EffectDefinition, error) {
-	return newEffectDefinitionWithSelection(d.input(), d.builtin, d.selectionID)
+	return newEffectDefinition(d.input(), d.builtin)
 }
 
 // ValidateUse validates one typed rule selection against the parameter schema.

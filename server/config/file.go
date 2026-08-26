@@ -27,12 +27,13 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
-	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
 	"github.com/croessner/nauthilus/v3/server/log"
@@ -42,7 +43,6 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
-	"golang.org/x/text/language"
 )
 
 // The configuration file is briefly documented in the markdown file Configuration-FileSettings.md.
@@ -153,15 +153,6 @@ type File interface {
 	/*
 		Lua-related methods
 	*/
-
-	// HaveLuaEnvironmentSources checks if Lua environment sources are available.
-	HaveLuaEnvironmentSources() bool
-
-	// HaveLuaSubjectSources checks if Lua subject sources are active.
-	HaveLuaSubjectSources() bool
-
-	// HaveLuaActions checks if Lua actions are enabled.
-	HaveLuaActions() bool
 
 	// HaveLuaHooks checks if Lua hooks are being used.
 	HaveLuaHooks() bool
@@ -385,18 +376,23 @@ type File interface {
 
 	// GetPlugins returns native plugin loader configuration.
 	GetPlugins() *PluginsSection
+
+	// GetPolicy returns the normalized unified policy configuration.
+	GetPolicy() policyconfig.PolicyConfig
 }
 
 // FileSettings represents a comprehensive configuration structure utilized to manage server settings, blackhole lists, brute force,
 // Lua scripting, OAuth2, LDAP, and other miscellaneous configurations. It includes synchronization via a mutex.
 type FileSettings struct {
-	rawSettings   map[string]any        `mapstructure:"-" validate:"-"`
-	Runtime       *RuntimeSection       `mapstructure:"runtime" validate:"omitempty"`
-	Observability *ObservabilitySection `mapstructure:"observability" validate:"omitempty"`
-	Storage       *StorageSection       `mapstructure:"storage" validate:"omitempty"`
-	Auth          *AuthSection          `mapstructure:"auth" validate:"omitempty"`
-	Identity      *IdentitySection      `mapstructure:"identity" validate:"omitempty"`
-	Plugins       *PluginsSection       `mapstructure:"plugins" validate:"omitempty"`
+	artifactSnapshot atomic.Pointer[ArtifactSnapshot] `mapstructure:"-" validate:"-"`
+	rawSettings      map[string]any                   `mapstructure:"-" validate:"-"`
+	Runtime          *RuntimeSection                  `mapstructure:"runtime" validate:"omitempty"`
+	Observability    *ObservabilitySection            `mapstructure:"observability" validate:"omitempty"`
+	Storage          *StorageSection                  `mapstructure:"storage" validate:"omitempty"`
+	Auth             *AuthSection                     `mapstructure:"auth" validate:"omitempty"`
+	Identity         *IdentitySection                 `mapstructure:"identity" validate:"omitempty"`
+	Plugins          *PluginsSection                  `mapstructure:"plugins" validate:"omitempty"`
+	Policy           policyconfig.PolicyConfig        `mapstructure:"policy" validate:"-"`
 
 	Server                  *ServerSection           `mapstructure:"-" validate:"-"`
 	RBLs                    *RBLSection              `mapstructure:"-" validate:"-"`
@@ -414,14 +410,39 @@ type FileSettings struct {
 
 var _ File = (*FileSettings)(nil)
 
-// GetConfigFileAsJSON returns the current configuration settings as a JSON string, ensuring thread safety with a mutex lock.
+// ArtifactSnapshot returns the immutable candidate-bound artifact source, when sealed.
+func (f *FileSettings) ArtifactSnapshot() *ArtifactSnapshot {
+	if f == nil {
+		return nil
+	}
+
+	return f.artifactSnapshot.Load()
+}
+
+// attachArtifactSnapshot installs exactly one immutable artifact source on this candidate.
+func (f *FileSettings) attachArtifactSnapshot(snapshot *ArtifactSnapshot) *ArtifactSnapshot {
+	if f == nil || snapshot == nil {
+		return nil
+	}
+
+	if f.artifactSnapshot.CompareAndSwap(nil, snapshot) {
+		return snapshot
+	}
+
+	snapshot.Release()
+
+	return f.artifactSnapshot.Load()
+}
+
+// GetConfigFileAsJSON returns this loaded snapshot without consulting ambient configuration state.
 func (f *FileSettings) GetConfigFileAsJSON() ([]byte, error) {
 	f.Mu.Lock()
 	defer f.Mu.Unlock()
 
 	allSettings := f.rawSettings
+
 	if allSettings == nil {
-		allSettings = viper.AllSettings()
+		allSettings = map[string]any{}
 	}
 
 	jsonBytes, err := json.Marshal(allSettings)
@@ -1308,36 +1329,6 @@ func (f *FileSettings) GetLuaOptionalBackends() map[string]*LuaConf {
 	return backends
 }
 
-// HaveLuaSubjectSources is a method on the FileSettings struct.
-// It checks if the FileSettings struct has Lua subject sources.
-// It returns true if there are Lua subject sources, and false otherwise.
-func (f *FileSettings) HaveLuaSubjectSources() bool {
-	if f == nil {
-		return false
-	}
-
-	if f.HaveLua() {
-		return len(f.GetLua().GetSubjectSources()) > 0
-	}
-
-	return false
-}
-
-// HaveLuaEnvironmentSources is a method on the FileSettings struct.
-// It checks if the FileSettings struct has Lua environment sources.
-// It returns true if there are Lua environment sources, and false otherwise.
-func (f *FileSettings) HaveLuaEnvironmentSources() bool {
-	if f == nil {
-		return false
-	}
-
-	if f.HaveLua() {
-		return len(f.GetLua().GetEnvironmentSources()) > 0
-	}
-
-	return false
-}
-
 // HaveLuaHooks returns true if the FileSettings instance has Lua hooks associated with it, otherwise returns false.
 func (f *FileSettings) HaveLuaHooks() bool {
 	if f == nil {
@@ -1346,21 +1337,6 @@ func (f *FileSettings) HaveLuaHooks() bool {
 
 	if f.HaveLua() {
 		return len(f.GetLua().GetHooks()) > 0
-	}
-
-	return false
-}
-
-// HaveLuaActions is a method on the FileSettings struct.
-// It checks if the FileSettings struct has Lua actions.
-// It returns true if the FileSettings struct has Lua actions, otherwise returns false.
-func (f *FileSettings) HaveLuaActions() bool {
-	if f == nil {
-		return false
-	}
-
-	if f.HaveLua() {
-		return len(f.GetLua().GetActions()) > 0
 	}
 
 	return false
@@ -2504,7 +2480,7 @@ func (f *FileSettings) validateFrontend() error {
 // Returns an error if any validation function fails, otherwise returns nil.
 func (f *FileSettings) validate() (err error) {
 	validators := []func() error{
-		f.validatePolicyInitialization,
+		f.validatePolicySoftAllowlists,
 		f.validateBruteForce,
 		f.validatePassDBBackends,
 		f.validateAddress,
@@ -3863,9 +3839,16 @@ func (f *FileSettings) handleFile(reader *viper.Viper) (err error) {
 	f.rawSettings = reader.AllSettings()
 	f.developerMode = reader.GetBool("developer_mode")
 
+	policyConfig, err := preparePolicyConfiguration(f.rawSettings)
+	if err != nil {
+		return err
+	}
+
 	if err = f.unmarshalAndNormalize(reader); err != nil {
 		return err
 	}
+
+	f.Policy = policyConfig
 
 	if err = validateUnknownConfigSettings(f.rawSettings); err != nil {
 		return err
@@ -3876,7 +3859,214 @@ func (f *FileSettings) handleFile(reader *viper.Viper) (err error) {
 		return err
 	}
 
-	return f.validateLoadedConfig(validate)
+	if err = f.validateLoadedConfig(validate); err != nil {
+		return err
+	}
+
+	artifacts, err := EnsureArtifactSnapshot(f)
+	if err != nil {
+		return err
+	}
+
+	if err = validateSealedIdentityAuthorityArtifacts(f, artifacts); err != nil {
+		artifacts.Release()
+
+		return err
+	}
+
+	return nil
+}
+
+// preparePolicyConfiguration strictly decodes and normalizes the sole production policy root.
+func preparePolicyConfiguration(settings map[string]any) (policyconfig.PolicyConfig, error) {
+	document, err := decodePolicyConfiguration(settings)
+	if err != nil {
+		return policyconfig.PolicyConfig{}, err
+	}
+
+	document = policyconfig.Normalize(document)
+	if err := policyconfig.Validate(document); err != nil {
+		return policyconfig.PolicyConfig{}, err
+	}
+
+	return document.Policy, nil
+}
+
+// decodePolicyConfiguration rejects removed roots and strictly owns the unified policy subtree.
+func decodePolicyConfiguration(settings map[string]any) (policyconfig.Document, error) {
+	if hasLegacyAuthPolicy(settings) {
+		return policyconfig.Document{}, NewValidationProblem(
+			"auth.policy",
+			"has been removed; use the top-level policy root",
+		)
+	}
+
+	policySettings, exists, err := findSolePolicyRoot(settings)
+	if err != nil {
+		return policyconfig.Document{}, err
+	}
+
+	if err = rejectRemovedPolicyAliases(policySettings); err != nil {
+		return policyconfig.Document{}, err
+	}
+
+	documentSettings := make(map[string]any, 1)
+	if exists {
+		documentSettings["policy"] = policySettings
+	}
+
+	encoded, err := json.Marshal(documentSettings)
+	if err != nil {
+		return policyconfig.Document{}, fmt.Errorf("encode policy configuration: %w", err)
+	}
+
+	document, err := policyconfig.Decode("json", bytes.NewReader(encoded))
+	if err != nil {
+		return policyconfig.Document{}, err
+	}
+
+	return document, nil
+}
+
+// rejectRemovedPolicyAliases rejects value aliases that strict field decoding cannot identify.
+func rejectRemovedPolicyAliases(policyRoot any) error {
+	policySettings, ok := policyRoot.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	rawTargets, exists := configMapValue(policySettings, "targets")
+	if !exists {
+		return nil
+	}
+
+	switch targets := rawTargets.(type) {
+	case []any:
+		for index, rawTarget := range targets {
+			if err := rejectRemovedTargetDefaultAlias(index, rawTarget); err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		for rawIndex, rawTarget := range targets {
+			index, err := strconv.Atoi(strings.TrimSpace(rawIndex))
+			if err != nil || index < 0 {
+				continue
+			}
+
+			if err = rejectRemovedTargetDefaultAlias(index, rawTarget); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// rejectRemovedTargetDefaultAlias rejects the unqualified legacy builtin at one structured or dotted target index.
+func rejectRemovedTargetDefaultAlias(index int, rawTarget any) error {
+	target, ok := rawTarget.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	rawDefaultPolicy, exists := configMapValue(target, "default_policy")
+	if !exists {
+		return nil
+	}
+
+	defaultPolicy, ok := rawDefaultPolicy.(string)
+	if !ok || strings.TrimSpace(defaultPolicy) != "standard_auth" {
+		return nil
+	}
+
+	return NewValidationProblem(
+		fmt.Sprintf("policy.targets[%d].default_policy", index),
+		"has been removed; use the exact authn/standard_auth identity",
+	)
+}
+
+// configMapValue resolves one case-insensitive config field without normalizing the source map.
+func configMapValue(settings map[string]any, name string) (any, bool) {
+	for rawKey, value := range settings {
+		if strings.EqualFold(strings.TrimSpace(rawKey), name) {
+			return value, true
+		}
+	}
+
+	return nil, false
+}
+
+// findSolePolicyRoot resolves Viper's case-insensitive root without allowing normalized duplicates.
+func findSolePolicyRoot(settings map[string]any) (any, bool, error) {
+	var policySettings any
+
+	found := false
+
+	for rawKey, value := range settings {
+		if !strings.EqualFold(strings.TrimSpace(rawKey), "policy") {
+			continue
+		}
+
+		if found {
+			return nil, false, NewValidationProblem(
+				"policy",
+				"must be declared exactly once after case normalization",
+			)
+		}
+
+		policySettings = value
+		found = true
+	}
+
+	return policySettings, found, nil
+}
+
+// hasLegacyAuthPolicy detects the removed nested authority before candidate decoding.
+func hasLegacyAuthPolicy(settings map[string]any) bool {
+	for rawKey, value := range settings {
+		if isConfigPathOrDescendant(rawKey, "auth.policy") {
+			return true
+		}
+
+		if !strings.EqualFold(strings.TrimSpace(rawKey), "auth") {
+			continue
+		}
+
+		if containsLegacyPolicyAtAuthRoot(value) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// containsLegacyPolicyAtAuthRoot inspects object or array-shaped auth roots without descending into unrelated fields.
+func containsLegacyPolicyAtAuthRoot(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for rawKey := range typed {
+			if isConfigPathOrDescendant(rawKey, "policy") {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if containsLegacyPolicyAtAuthRoot(item) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// isConfigPathOrDescendant compares one case-insensitive dotted config path with its authority root.
+func isConfigPathOrDescendant(rawPath string, root string) bool {
+	path := strings.ToLower(strings.TrimSpace(rawPath))
+	root = strings.ToLower(strings.TrimSpace(root))
+
+	return path == root || strings.HasPrefix(path, root+".")
 }
 
 // unmarshalAndNormalize loads explicit settings and applies alias normalization.
@@ -3885,11 +4075,30 @@ func (f *FileSettings) unmarshalAndNormalize(reader *viper.Viper) error {
 		return formatDecodeErrors(err)
 	}
 
-	f.normalizePolicyInitialization()
+	f.normalizePolicySoftAllowlists()
 	f.materializeLegacySections()
 	f.normalizeConfigAliases()
 
 	return nil
+}
+
+// normalizePolicySoftAllowlists canonicalizes declarative network allowlist entries.
+func (f *FileSettings) normalizePolicySoftAllowlists() {
+	if f == nil || f.Auth == nil {
+		return
+	}
+
+	if bruteForce := f.Auth.Controls.BruteForce; bruteForce != nil {
+		bruteForce.Allowlist.normalize()
+	}
+
+	if relayDomains := f.Auth.Controls.RelayDomains; relayDomains != nil {
+		relayDomains.Allowlist.normalize()
+	}
+
+	if rbl := f.Auth.Controls.RBL; rbl != nil {
+		rbl.Allowlist.normalize()
+	}
 }
 
 // validateUnknownConfigSettings converts unknown config keys into validation problems.
@@ -4009,117 +4218,12 @@ func registerValidation(validate *validator.Validate, tag string, fn validator.F
 	return nil
 }
 
-// normalizePolicyInitialization canonicalizes declarative policy initialization values.
-func (f *FileSettings) normalizePolicyInitialization() {
-	if f == nil || f.Auth == nil {
-		return
-	}
-
-	for index := range f.Auth.Policy.Localization.Catalogs {
-		catalog := &f.Auth.Policy.Localization.Catalogs[index]
-		catalog.Namespace = strings.TrimSpace(catalog.Namespace)
-
-		catalog.Language = strings.TrimSpace(catalog.Language)
-
-		if tag, err := language.Parse(catalog.Language); err == nil {
-			catalog.Language = tag.String()
-		}
-	}
-
-	if bruteForce := f.Auth.Controls.BruteForce; bruteForce != nil {
-		bruteForce.Allowlist.normalize()
-	}
-
-	if relayDomains := f.Auth.Controls.RelayDomains; relayDomains != nil {
-		relayDomains.Allowlist.normalize()
-	}
-
-	if rbl := f.Auth.Controls.RBL; rbl != nil {
-		rbl.Allowlist.normalize()
-	}
-}
-
-// validatePolicyInitialization checks operator catalogs and per-user network allowlists.
-func (f *FileSettings) validatePolicyInitialization() error {
+// validatePolicySoftAllowlists checks declarative network entries on each supported policy surface.
+func (f *FileSettings) validatePolicySoftAllowlists() error {
 	if f == nil || f.Auth == nil {
 		return nil
 	}
 
-	if err := validatePolicyLocalizationCatalogs(f.Auth.Policy.Localization.Catalogs); err != nil {
-		return err
-	}
-
-	return f.validatePolicySoftAllowlists()
-}
-
-// validatePolicyLocalizationCatalogs checks unique languages and bounded messages.
-func validatePolicyLocalizationCatalogs(catalogs []PolicyTranslationCatalogConfig) error {
-	seenCatalogs := make(map[string]struct{}, len(catalogs))
-	for index, catalog := range catalogs {
-		path := fmt.Sprintf("auth.policy.localization.catalogs[%d]", index)
-		identity := catalog.Namespace + "\x00" + catalog.Language
-
-		if _, exists := seenCatalogs[identity]; exists {
-			return NewValidationProblem(path, "duplicates an existing namespace and language catalog")
-		}
-
-		seenCatalogs[identity] = struct{}{}
-
-		if err := validatePolicyTranslationCatalog(path, catalog); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// validatePolicyTranslationCatalog checks one language tag and its entries.
-func validatePolicyTranslationCatalog(path string, catalog PolicyTranslationCatalogConfig) error {
-	if _, err := language.Parse(catalog.Language); err != nil {
-		return NewValidationProblem(path+".language", "must be a valid BCP 47 language tag")
-	}
-
-	keys := make([]string, 0, len(catalog.Entries))
-	for key := range catalog.Entries {
-		keys = append(keys, key)
-	}
-
-	sort.Strings(keys)
-
-	for _, key := range keys {
-		if err := validatePolicyTranslationEntry(path, key, catalog.Entries[key]); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// validatePolicyTranslationEntry checks one bounded non-empty key and message.
-func validatePolicyTranslationEntry(path string, key string, message string) error {
-	entryPath := path + ".entries." + key
-
-	if strings.TrimSpace(key) == "" {
-		return NewValidationProblem(path+".entries", "message key must not be blank")
-	}
-
-	if len(key) > 256 {
-		return NewValidationProblem(entryPath, "message key must not exceed 256 bytes")
-	}
-
-	if strings.TrimSpace(message) == "" {
-		return NewValidationProblem(entryPath, "message must not be blank")
-	}
-
-	if len(message) > 4096 {
-		return NewValidationProblem(entryPath, "message must not exceed 4096 bytes")
-	}
-
-	return nil
-}
-
-// validatePolicySoftAllowlists checks declarative network entries on each supported policy surface.
-func (f *FileSettings) validatePolicySoftAllowlists() error {
 	if bruteForce := f.Auth.Controls.BruteForce; bruteForce != nil {
 		if err := bruteForce.Allowlist.validate("auth.controls.brute_force.allowlist"); err != nil {
 			return err
@@ -4485,6 +4589,10 @@ func PrepareFile() (File, error) {
 func prepareFileWithReader(reader *viper.Viper) (File, error) {
 	mergedSettings, rootPath, err := loadMergedConfigSettings(ConfigFileType)
 	if err != nil {
+		return nil, err
+	}
+
+	if _, err = decodePolicyConfiguration(mergedSettings); err != nil {
 		return nil, err
 	}
 

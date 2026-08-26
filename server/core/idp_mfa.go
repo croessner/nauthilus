@@ -16,55 +16,18 @@
 package core
 
 import (
-	"bytes"
-	"context"
-	"net"
-	"net/http"
-
-	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/log/level"
-	"github.com/croessner/nauthilus/v3/server/lualib"
-	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/gin-gonic/gin"
-	"go.opentelemetry.io/otel/trace"
 )
 
-// IDPMFAProtocolContext binds MFA telemetry and post-actions to typed protocol state.
+// IDPMFAProtocolContext binds MFA audit telemetry to typed protocol state.
 type IDPMFAProtocolContext struct {
 	Protocol     string
 	OIDCClientID string
 	SAMLEntityID string
 	Request      IDPRequestContext
-}
-
-// QueueCompletedIDPMFAPostAction dispatches a dedicated Lua post action after a
-// successful second factor so Lua actions can observe the final MFA state.
-func QueueCompletedIDPMFAPostAction(
-	ctx *gin.Context,
-	deps AuthDeps,
-	user *backend.User,
-	protocolContext IDPMFAProtocolContext,
-) bool {
-	if ctx == nil || ctx.Request == nil || user == nil || deps.Cfg == nil || !deps.Cfg.HaveLuaActions() {
-		return false
-	}
-
-	auth := newCompletedIDPMFAPostActionAuth(ctx, deps, user, protocolContext)
-	if auth == nil {
-		return false
-	}
-
-	requestCopy := completedIDPMFAPostActionRequest(auth, user)
-
-	return auth.QueueLuaPostAction(PostActionArgs{
-		Context:       auth.Runtime.Context,
-		HTTPRequest:   util.DetachedHTTPRequest(context.TODO(), ctx.Request),
-		ParentSpan:    trace.SpanContextFromContext(ctx.Request.Context()),
-		StatusMessage: authStatusMessageOK,
-		Request:       requestCopy,
-	})
 }
 
 // LogIDPMFAuthResult writes a Notice log for the result of a second-factor verification
@@ -154,53 +117,6 @@ func normalizeMFAMethodForLogging(method string) string {
 	}
 }
 
-// newCompletedIDPMFAPostActionAuth builds the authenticated request state used
-// by Lua post-actions after a successful IDP MFA challenge.
-func newCompletedIDPMFAPostActionAuth(
-	ctx *gin.Context,
-	deps AuthDeps,
-	user *backend.User,
-	protocolContext IDPMFAProtocolContext,
-) *AuthState {
-	authRaw := NewAuthStateFromContextWithDeps(ctx, deps)
-
-	auth, ok := authRaw.(*AuthState)
-	if !ok || auth == nil {
-		return nil
-	}
-
-	service := ctx.GetString(definitions.CtxServiceKey)
-	if service == "" {
-		service = definitions.ServIDP
-	}
-
-	protocolContext = normalizeIDPMFAProtocolContext(protocolContext)
-	auth.Runtime.IDPContext = cloneIDPRequestContext(protocolContext.Request)
-
-	auth.Request.Service = service
-	auth.WithClientInfo(ctx)
-	auth.WithUserAgent(ctx)
-
-	if auth.Request.XClientPort == "" {
-		auth.Request.XClientPort = detachedRequestPort(ctx.Request.RemoteAddr)
-	}
-
-	auth.Runtime.GUID = ctx.GetString(definitions.CtxGUIDKey)
-	auth.Runtime.Context = idpPostActionLuaContext(ctx)
-	auth.Runtime.Authenticated = true
-	auth.Runtime.UserFound = true
-	auth.SetStatusCodes(service)
-	auth.SetUsername(user.Name)
-	auth.SetAccount(user.Name)
-	auth.SetOIDCCID(protocolContext.OIDCClientID)
-	auth.SetSAMLEntityID(protocolContext.SAMLEntityID)
-	auth.SetProtocol(config.NewProtocol(protocolContext.Protocol))
-	auth.ReplaceAllAttributes(user.Attributes)
-	auth.SetResolvedGroups(user.Groups, user.GroupDistinguishedNames)
-
-	return auth
-}
-
 func normalizeIDPMFAProtocolContext(protocolContext IDPMFAProtocolContext) IDPMFAProtocolContext {
 	protocolContext.Request.RequestedScopes = append([]string(nil), protocolContext.Request.RequestedScopes...)
 	switch protocolContext.Protocol {
@@ -221,56 +137,4 @@ func cloneIDPRequestContext(request IDPRequestContext) *IDPRequestContext {
 	request.RequestedScopes = append([]string(nil), request.RequestedScopes...)
 
 	return &request
-}
-
-func completedIDPMFAPostActionRequest(auth *AuthState, user *backend.User) lualib.CommonRequest {
-	requestCopy := lualib.CommonRequest{}
-	auth.FillCommonRequest(&requestCopy)
-	requestCopy.UserFound = true
-	requestCopy.Authenticated = true
-	requestCopy.EnvironmentStageExpected = false
-	requestCopy.SubjectStageExpected = false
-	requestCopy.HTTPStatus = http.StatusOK
-
-	if requestCopy.Account == "" {
-		requestCopy.Account = user.Name
-	}
-
-	if requestCopy.UniqueUserID == "" {
-		requestCopy.UniqueUserID = user.ID
-	}
-
-	if requestCopy.DisplayName == "" {
-		requestCopy.DisplayName = user.DisplayName
-	}
-
-	if len(requestCopy.Password) > 0 {
-		requestCopy.Password = bytes.Clone(requestCopy.Password)
-	}
-
-	return requestCopy
-}
-
-func idpPostActionLuaContext(ctx *gin.Context) *lualib.Context {
-	if ctx == nil {
-		return lualib.NewContext()
-	}
-
-	luaCtx, ok := ctx.Get(definitions.CtxDataExchangeKey)
-
-	contextData, _ := luaCtx.(*lualib.Context)
-	if !ok || contextData == nil {
-		return lualib.NewContext()
-	}
-
-	return contextData
-}
-
-func detachedRequestPort(remoteAddr string) string {
-	_, port, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		return ""
-	}
-
-	return port
 }

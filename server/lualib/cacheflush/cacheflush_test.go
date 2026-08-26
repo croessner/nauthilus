@@ -97,6 +97,7 @@ end
 			},
 		},
 	}
+	sealCacheFlushArtifacts(t, cfg)
 
 	db, _ := redismock.NewClientMock()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -138,6 +139,7 @@ end
 			},
 		},
 	}
+	sealCacheFlushArtifacts(t, cfg)
 
 	db, _ := redismock.NewClientMock()
 
@@ -315,4 +317,12 @@ func resetCompiledScriptForTest(t *testing.T) {
 		compiledScript = nil
 		compileMu.Unlock()
 	})
+}
+
+func sealCacheFlushArtifacts(t *testing.T, cfg config.File) {
+	t.Helper()
+
+	if _, err := config.EnsureArtifactSnapshot(cfg); err != nil {
+		t.Fatalf("EnsureArtifactSnapshot() error = %v", err)
+	}
 }

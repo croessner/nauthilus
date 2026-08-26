@@ -20,6 +20,8 @@ package vmpool
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	stdhttp "net/http"
 	"sync"
 	"sync/atomic"
@@ -38,6 +40,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+var errLuaVMExecutionPanic = errors.New("lua VM execution panicked")
+
 // PoolKey identifies a VM pool, e.g. "backend:default", "action:default", "hook:clickhouse".
 type PoolKey string
 
@@ -55,7 +59,9 @@ type Pool struct {
 	// httpClient is used by luapool.NewLuaState to preload glua_http once per VM.
 	httpClient *stdhttp.Client
 	// inUse tracks the number of VMs currently checked out from the pool.
-	inUse int64
+	inUse     int64
+	lifecycle sync.RWMutex
+	retired   bool
 }
 
 // Lease owns a single Lua VM checked out from a Pool.
@@ -93,6 +99,13 @@ func newPool(key PoolKey, opts PoolOptions) *Pool {
 
 // Acquire borrows a VM from the pool, respecting the provided context for deadline/cancellation.
 func (p *Pool) Acquire(ctx context.Context) (*lua.LState, error) {
+	p.lifecycle.RLock()
+	defer p.lifecycle.RUnlock()
+
+	if p.retired {
+		return nil, fmt.Errorf("lua VM pool %q is retired", p.key)
+	}
+
 	// Trace acquisition attempt
 	tr := monittrace.New("nauthilus/vmpool")
 	actx, asp := tr.Start(ctx, "vmpool.acquire",
@@ -168,6 +181,10 @@ func (l *Lease) Release() {
 func (l *Lease) ReleaseRecoveringOnError(errp *error) {
 	if recovered := recover(); recovered != nil {
 		l.markCorrupt()
+
+		if errp != nil {
+			*errp = errors.Join(*errp, errLuaVMExecutionPanic)
+		}
 	}
 
 	if errp != nil && *errp != nil {
@@ -260,10 +277,15 @@ func (p *Pool) Replace(L *lua.LState) {
 	xsp.SetAttributes(attribute.Int64("in_use_after", n))
 }
 
-// Manager provides global access to per-key pools.
+// Manager owns one isolated set of keyed Lua VM pools.
 type Manager struct {
 	mu    sync.Mutex
 	pools map[PoolKey]*Pool
+}
+
+// NewManager constructs one explicit isolated keyed-pool owner.
+func NewManager() *Manager {
+	return &Manager{pools: make(map[PoolKey]*Pool)}
 }
 
 var (
@@ -274,7 +296,7 @@ var (
 // GetManager returns the singleton Manager.
 func GetManager() *Manager {
 	mgrOnce.Do(func() {
-		mgr = &Manager{pools: make(map[PoolKey]*Pool)}
+		mgr = NewManager()
 	})
 
 	return mgr
@@ -293,6 +315,48 @@ func (m *Manager) GetOrCreate(key PoolKey, opts PoolOptions) *Pool {
 	m.pools[key] = p
 
 	return p
+}
+
+// Delete retires one exact idle pool and closes all of its Lua states.
+func (m *Manager) Delete(key PoolKey) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pool, exists := m.pools[key]
+	if !exists {
+		return nil
+	}
+
+	if err := pool.retire(); err != nil {
+		return err
+	}
+
+	delete(m.pools, key)
+
+	return nil
+}
+
+// retire prevents new acquisitions and releases every idle VM owned by the pool.
+func (p *Pool) retire() error {
+	p.lifecycle.Lock()
+	defer p.lifecycle.Unlock()
+
+	if p.retired {
+		return nil
+	}
+
+	if active := atomic.LoadInt64(&p.inUse); active != 0 {
+		return fmt.Errorf("lua VM pool %q still has %d active leases", p.key, active)
+	}
+
+	p.retired = true
+	close(p.states)
+
+	for state := range p.states {
+		state.Close()
+	}
+
+	return nil
 }
 
 // Delegate to the proven deep reset from luapool to avoid cross-request residue.

@@ -1,6 +1,7 @@
 # Have I Been Pwned Native Post-Action
 
-This plugin registers the native post-action target `haveibeenpwnd.post_action`.
+The generation-owned authn catalog exposes this plugin's authentication-shaped post-action only as
+`authn/plugin.haveibeenpwnd.post_action` for explicit Policy selection.
 It ports the Lua `haveibeenpwnd.lua` k-anonymity Redis/cache/HTTP behavior into a
 native Go plugin shape.
 
@@ -79,27 +80,25 @@ detached plan in final-obligation order, and this plugin publishes positive
 HIBP hits as `plugin.exchange.haveibeenpwnd` through
 `PostActionEnqueueResult.RuntimeDelta`. The exchange map contains `hash_info`
 and, for positive hits, the bounded `leaked` and `count` fields. Later
-post-action steps in the same plan, such as `clickhouse.post_action`, can read
-that standard value when policy orders HIBP before ClickHouse. Post-action
-deltas do not mutate the already-selected policy decision, client response, or
-live request runtime after the plan finishes.
+post-action steps in the same authentication-shaped plan, such as `authn/plugin.clickhouse.post_action`, can read
+that standard value when Policy orders `authn/plugin.haveibeenpwnd.post_action` before
+`authn/plugin.clickhouse.post_action`. Post-action deltas do not mutate the already-selected decision, client response,
+or live request runtime after the plan finishes.
 
 `rt` is historical Lua runtime state and is not the native Go exchange standard. This plugin does not write
 `rt.action_haveibeenpwnd`; native consumers should read `plugin.exchange.haveibeenpwnd.hash_info` instead.
 
-Policy migration:
+## Top-Level Policy Boundary
 
-```yaml
-then:
-  obligations:
-    - id: haveibeenpwnd.post_action
-```
+This component does not register `DecisionEffectProvider` and is never exposed to non-authn targets. Top-level `policy`
+may select the authn-only effect `authn/plugin.haveibeenpwnd.post_action`; the generation-owned adapter preserves its
+request-scoped `CredentialProvider`, account snapshot, plan-local exchange, and mail context without widening the
+generic `DecisionEffectRequest`.
 
-Use this native effect ID instead of a Lua action dispatch to `haveibeenpwnd.lua` after the module is configured and the
-required capabilities are allowed. Adding or removing the module, changing the module name, replacing the `.so` artifact,
-or changing `allow_capabilities` requires a process restart. Config-only changes inside `plugins.modules[].config` can be
-applied by SIGHUP when validation succeeds; invalid mail templates keep the previous working config. Enabling mail for a
-module that was registered with `mail.enabled: false` requires a restart so the module can acquire `CapabilityMail`.
+The registered `PostActionTarget` remains isolated behind the authentication-shaped generation binding. Adding or
+removing the module, changing its name or config, replacing the `.so` artifact, or changing `allow_capabilities`
+requires a process restart. A Policy reload may select or stop selecting the frozen canonical effect without changing
+the plugin object.
 
 Observability is host-integrated: the plugin registers the HIBP range API endpoint through
 `Host.ConnectionTargets("haveibeenpwnd")`, calls HIBP through `Host.HTTP("haveibeenpwnd")`, sends notification mail

@@ -48,19 +48,19 @@ policy:
       providers:
         lua_environment_shared:
           kind: lua_environment
-          script_path: /etc/nauthilus/lua/environment/shared.lua
+          script_path: testdata/policy_migration/environment.lua
           targets: [{action: authenticate}]
           executions: [host_sync]
         lua_subject_shared:
           kind: lua_subject
-          script_path: /etc/nauthilus/lua/subject/shared.lua
+          script_path: testdata/policy_migration/subject.lua
           targets: [{action: authenticate}]
           executions: [host_sync]
       effects:
         lua_action_notify:
           kind: lua_action
           action_type: lua
-          script_path: /etc/nauthilus/lua/actions/notify.lua
+          script_path: testdata/policy_migration/action.lua
           targets: [{action: authenticate}]
           execution: host_sync
         audit_reason:

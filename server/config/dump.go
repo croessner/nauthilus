@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/pelletier/go-toml/v2"
@@ -41,7 +42,6 @@ const (
 	configStringNil                 = "<nil>"
 	defaultLDAPServerURI            = "ldap://localhost"
 	defaultRedisKeyPrefix           = "nt:"
-	defaultPolicyModeEnforce        = "enforce"
 	defaultOIDCAccessTokenType      = "jwt"
 	defaultWebAuthnResidentKey      = "discouraged"
 	defaultWebAuthnUserVerification = "preferred"
@@ -185,6 +185,26 @@ func RenderNonDefaultConfigDumpWithFormat(settings map[string]any, format DumpFo
 	}
 
 	return renderStructuredConfigDump(format, false, rootMap)
+}
+
+// RenderNonDefaultConfigSnapshotDumpWithFormat renders one loaded immutable configuration view.
+func RenderNonDefaultConfigSnapshotDumpWithFormat(file File, format DumpFormat) (string, error) {
+	if file == nil {
+		return "", fmt.Errorf("configuration snapshot is nil")
+	}
+
+	rawSettings, err := file.GetConfigFileAsJSON()
+	if err != nil {
+		return "", fmt.Errorf("read configuration snapshot: %w", err)
+	}
+
+	settings := make(map[string]any)
+
+	if err = json.Unmarshal(rawSettings, &settings); err != nil {
+		return "", fmt.Errorf("decode configuration snapshot: %w", err)
+	}
+
+	return RenderNonDefaultConfigDumpWithFormat(settings, format)
 }
 
 func renderConfigDumpWithHeader(format DumpFormat, title string, note string, lines []string) string {
@@ -933,12 +953,42 @@ func shouldRedactConfigDumpValue(path string, value any) bool {
 		return true
 	}
 
+	if isPolicySecretMapPath(path) {
+		return true
+	}
+
 	switch configPathLeaf(path) {
 	case passwordConfigLeaf, passwordEncodedConfigLeaf, passwordNonceConfigLeaf, encryptionSecretConfigLeaf, bindPWConfigLeaf, clientSecretConfigLeaf, clientPrivateKeyConfigLeaf, connectionStringConfigLeaf, dataSourceNameConfigLeaf, dsnConfigLeaf, staticTokenConfigLeaf, testPasswordConfigLeaf:
 		return true
 	default:
 		return false
 	}
+}
+
+// isPolicySecretMapPath reports whether a value is owned by a configured provider or effect secret map.
+func isPolicySecretMapPath(path string) bool {
+	const (
+		policyNamespacesPrefix = "policy.namespaces."
+		secretsSegment         = ".secrets."
+	)
+
+	if !strings.HasPrefix(path, policyNamespacesPrefix) {
+		return false
+	}
+
+	for _, definitionSegment := range []string{".providers.", ".effects."} {
+		definitionIndex := strings.Index(path, definitionSegment)
+		if definitionIndex == -1 {
+			continue
+		}
+
+		secretIndex := strings.Index(path[definitionIndex+len(definitionSegment):], secretsSegment)
+		if secretIndex >= 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func configPathLeaf(path string) string {
@@ -1002,7 +1052,8 @@ func configDumpDefaultProviders() map[string]configDumpValueProvider {
 	addConfigDumpDefaultProviders(providers, configDumpBruteForceDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpBackendHealthCheckDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpLDAPDefaults())
-	addConfigDumpDefaultProviders(providers, configDumpAuthPolicyDefaults())
+	addConfigDumpDefaultProviders(providers, configDumpAuthDefaults())
+	addConfigDumpDefaultProviders(providers, configDumpPolicyDefaults())
 
 	return providers
 }
@@ -1060,23 +1111,26 @@ func configDumpRuntimeDefaults() map[string]configDumpValueProvider {
 	}
 }
 
-func configDumpAuthPolicyDefaults() map[string]configDumpValueProvider {
+func configDumpAuthDefaults() map[string]configDumpValueProvider {
 	return map[string]configDumpValueProvider{
-		"auth.backends.remote":                  func() any { return map[string]any{} },
-		"auth.policy.mode":                      func() any { return defaultPolicyModeEnforce },
-		"auth.policy.default_policy":            func() any { return defaultAuthPolicyName },
-		"auth.policy.localization.catalogs":     func() any { return []any{} },
-		"auth.policy.registry_scripts":          func() any { return []any{} },
-		"auth.policy.sets.networks":             func() any { return map[string]any{} },
-		"auth.policy.sets.strings":              func() any { return map[string]any{} },
-		"auth.policy.sets.time_windows":         func() any { return map[string]any{} },
-		"auth.policy.scheduler_guards":          func() any { return map[string]any{} },
-		"auth.policy.report.enabled":            func() any { return false },
-		"auth.policy.report.include_fsm":        func() any { return true },
-		"auth.policy.report.include_checks":     func() any { return true },
-		"auth.policy.report.include_attributes": func() any { return false },
-		"auth.policy.checks":                    func() any { return []any{} },
-		"auth.policy.policies":                  func() any { return []any{} },
+		"auth.backends.remote": func() any { return map[string]any{} },
+	}
+}
+
+// configDumpPolicyDefaults returns the frozen unified policy defaults.
+func configDumpPolicyDefaults() map[string]configDumpValueProvider {
+	policyDefaults := policyconfig.Normalize(policyconfig.Document{}).Policy
+
+	return map[string]configDumpValueProvider{
+		"policy.namespaces":                        func() any { return map[string]any{} },
+		"policy.targets":                           func() any { return []any{} },
+		"policy.api.clients":                       func() any { return []any{} },
+		"policy.api.limits.max_request_bytes":      func() any { return policyDefaults.API.Limits.MaxRequestBytes },
+		"policy.api.limits.max_facts":              func() any { return policyDefaults.API.Limits.MaxFacts },
+		"policy.api.limits.per_client_concurrency": func() any { return policyDefaults.API.Limits.PerClientConcurrency },
+		"policy.api.limits.per_client_requests_per_second": func() any {
+			return policyDefaults.API.Limits.PerClientRequestsPerSecond
+		},
 	}
 }
 

@@ -430,5 +430,9 @@ func parseLookupTimeout(value string) (time.Duration, error) {
 		return 0, fmt.Errorf("lookup_timeout must be positive")
 	}
 
+	if duration > pluginapi.MaximumDecisionFactProviderTimeout {
+		return 0, fmt.Errorf("lookup_timeout must not exceed %s", pluginapi.MaximumDecisionFactProviderTimeout)
+	}
+
 	return duration, nil
 }

@@ -72,12 +72,13 @@ func TestHookOnlyConfigurationStartsAndStopsWithoutBackends(t *testing.T) {
 	viper.SetConfigFile(configPath)
 	viper.SetConfigType("yaml")
 
-	if err := bootfx.SetupConfiguration(); err != nil {
+	prepared, err := bootfx.PrepareConfiguration()
+	if err != nil {
 		t.Fatalf("setup configuration: %v", err)
 	}
 
 	ctx, cancel := svcctx.GetCtxWithCancel()
-	app := newHookOnlyTestApp(ctx, cancel)
+	app := newHookOnlyTestApp(ctx, cancel, prepared)
 
 	startCtx, startCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer startCancel()
@@ -100,7 +101,7 @@ func TestHookOnlyConfigurationStartsAndStopsWithoutBackends(t *testing.T) {
 	}
 }
 
-func newHookOnlyTestApp(ctx context.Context, cancel context.CancelFunc) *fx.App {
+func newHookOnlyTestApp(ctx context.Context, cancel context.CancelFunc, prepared config.File) *fx.App {
 	return fx.New(
 		fx.WithLogger(func(logger *slog.Logger) fxevent.Logger {
 			if logger.Enabled(context.Background(), slog.LevelDebug) {
@@ -110,13 +111,18 @@ func newHookOnlyTestApp(ctx context.Context, cancel context.CancelFunc) *fx.App 
 			return fxevent.NopLogger
 		}),
 		rootContextOption(ctx, cancel),
-		fx.Provide(newBootstrapped),
+		bootstrapOption(prepared),
+		fx.Provide(newPolicyGenerationStore),
 		fx.Provide(newConfigDeps),
 		fx.Provide(newLogger),
 		fx.Provide(newDbgModuleMapping),
 		fx.Provide(newRedisDeps),
+		fx.Provide(newPluginState),
+		fx.Provide(newRouteArtifacts),
 		fx.Provide(newAccountCache),
 		fx.Provide(newBackendChannel),
+		fx.Provide(newBruteForceTolerate),
+		policyFactoryModule(),
 		envfx.Module(),
 		languagefx.Module(),
 		loopsfx.Module(),
@@ -124,7 +130,6 @@ func newHookOnlyTestApp(ctx context.Context, cancel context.CancelFunc) *fx.App 
 		policyfx.Module(),
 		reloadfx.Module(),
 		restartfx.Module(),
-		fx.Provide(newActionWorkers),
 		fx.Provide(newContextStoreForRuntime),
 		fx.Provide(newReloadOrchestrator),
 		fx.Provide(newRestartOrchestrator),

@@ -22,12 +22,15 @@ import (
 	"github.com/croessner/nauthilus/v3/server/app/configfx"
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
+	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
+	coreauth "github.com/croessner/nauthilus/v3/server/core/auth"
 	"github.com/croessner/nauthilus/v3/server/core/language"
 	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/handler/policyhttp"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v3/server/pluginruntime"
+	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -56,20 +59,24 @@ func (d *Deps) Auth() core.AuthDeps {
 		cfg = d.CfgProvider.Current().File
 	}
 
-	return core.AuthDeps{
-		Cfg: cfg,
-		CurrentConfig: func() config.File {
-			if d.CfgProvider == nil {
-				return d.Cfg
-			}
+	hostServices := d.HostServices
+	if !hostServices.Valid() {
+		hostServices = coreauth.NewDefaultHostServices()
+	}
 
-			return d.CfgProvider.Current().File
-		},
-		Env:          d.Env,
-		Logger:       d.Logger,
-		Redis:        d.Redis,
-		AccountCache: d.AccountCache,
-		Channel:      d.Channel,
+	return core.AuthDeps{
+		Cfg:                  cfg,
+		Env:                  d.Env,
+		Logger:               d.Logger,
+		Redis:                d.Redis,
+		AccountCache:         d.AccountCache,
+		Channel:              d.Channel,
+		Tolerate:             d.Tolerate,
+		PluginBackendFactory: pluginruntime.NewBackendManagerFactory(d.PluginRunner),
+		NativeRuntime:        pluginruntime.NewAuthnRequestRuntime(),
+		HostServices:         hostServices,
+		LDAPQueue:            d.LDAPQueue,
+		LDAPAuthQueue:        d.LDAPAuthQueue,
 	}
 }
 
@@ -99,7 +106,19 @@ type Deps struct {
 	// MessageResolver resolves policy-selected status messages for IDP UI rendering.
 	MessageResolver localization.MessageResolver
 	// PolicyDecision is the admission-enforcing application authority for Policy transports.
-	PolicyDecision decision.Service
+	PolicyDecision decisionservice.PreparedService
 	// PolicyTransport resolves trusted HTTP protection evidence for the Policy boundary.
 	PolicyTransport policyhttp.TransportEvidence
+	// PluginRunner is the explicit process-owned native hook and backend runtime.
+	PluginRunner *pluginruntime.Runner
+	// Tolerate is the explicit boot-lifetime brute-force tolerance owner.
+	Tolerate tolerate.Tolerate
+	// HostServices is the immutable host implementation bundle for authn requests.
+	HostServices core.AuthnHostServices
+	// LDAPQueue is the explicit process-owned LDAP lookup queue.
+	LDAPQueue core.LDAPRequestQueue
+	// LDAPAuthQueue is the explicit process-owned LDAP authentication queue.
+	LDAPAuthQueue core.LDAPAuthRequestQueue
+	// RouteArtifacts owns immutable listener, template, and public-file material prepared before startup commit.
+	RouteArtifacts *core.RouteArtifacts
 }

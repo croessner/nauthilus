@@ -104,7 +104,7 @@ func assertFrontendIDPImports(t *testing.T, file string, parsed *ast.File) {
 	}
 }
 
-// assertFrontendIDPCalls allows only specialized materializers and token post-actions to construct AuthState.
+// assertFrontendIDPCalls rejects direct authentication-state and policy ownership.
 func assertFrontendIDPCalls(t *testing.T, file string, fileSet *token.FileSet, parsed *ast.File) {
 	t.Helper()
 
@@ -130,7 +130,7 @@ func assertFrontendIDPCalls(t *testing.T, file string, fileSet *token.FileSet, p
 				t.Errorf("%s:%d function %s directly calls forbidden auth authority %s", file, position.Line, owner, name)
 			}
 
-			if frontendIDPAuthStateConstructor(name) && !frontendIDPAllowedSpecializedOwner(file, owner, name) {
+			if frontendIDPAuthStateConstructor(name) {
 				position := fileSet.Position(call.Pos())
 				t.Errorf("%s:%d function %s constructs AuthState outside an exact specialized owner", file, position.Line, owner)
 			}
@@ -191,18 +191,6 @@ func frontendIDPAuthStateConstructor(name string) bool {
 	switch name {
 	case "NewAuthState", "NewAuthStateFromContextWithDeps", "NewAuthStateWithSetup", "NewAuthStateWithSetupWithDeps",
 		"NewIDPSpecializedAuthState":
-		return true
-	default:
-		return false
-	}
-}
-
-// frontendIDPAllowedSpecializedOwner permits only protocol-owned token post-actions.
-func frontendIDPAllowedSpecializedOwner(file string, function string, call string) bool {
-	key := file + "|" + function + "|" + call
-
-	switch key {
-	case "oidc.go|OIDCHandler.runOIDCTokenPostAction|NewAuthStateFromContextWithDeps":
 		return true
 	default:
 		return false

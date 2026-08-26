@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
-	"os"
 
 	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
 	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
@@ -41,6 +40,7 @@ type Client interface {
 // ConnectionManagerOptions contains dependencies for an authority connection.
 type ConnectionManagerOptions struct {
 	Config            *config.NauthilusAuthorityClientSection
+	Artifacts         *config.ArtifactSnapshot
 	TokenSource       BearerTokenSource
 	StaticTokenSource BearerTokenSource
 	DialOptions       []grpc.DialOption
@@ -183,7 +183,7 @@ func NewConnectionManager(opts ConnectionManagerOptions) (*ConnectionManager, er
 
 	dialOptions := append([]grpc.DialOption{}, opts.DialOptions...)
 	if len(dialOptions) == 0 {
-		transport, err := transportCredentials(opts.Config)
+		transport, err := transportCredentials(opts.Config, opts.Artifacts)
 		if err != nil {
 			return nil, err
 		}
@@ -281,7 +281,10 @@ func (m *ConnectionManager) unaryInterceptor() grpc.UnaryClientInterceptor {
 	}
 }
 
-func transportCredentials(cfg *config.NauthilusAuthorityClientSection) (credentials.TransportCredentials, error) {
+func transportCredentials(
+	cfg *config.NauthilusAuthorityClientSection,
+	artifacts *config.ArtifactSnapshot,
+) (credentials.TransportCredentials, error) {
 	tlsConfig := cfg.GetTLS()
 	if !tlsConfig.IsEnabled() {
 		return insecure.NewCredentials(), nil
@@ -293,9 +296,9 @@ func transportCredentials(cfg *config.NauthilusAuthorityClientSection) (credenti
 	}
 
 	if tlsConfig.CA != "" {
-		raw, err := os.ReadFile(tlsConfig.CA)
+		raw, err := readSealedAuthorityArtifact(artifacts, tlsConfig.CA, "authority CA")
 		if err != nil {
-			return nil, fmt.Errorf("read authority CA: %w", err)
+			return nil, err
 		}
 
 		pool := x509.NewCertPool()
@@ -307,7 +310,17 @@ func transportCredentials(cfg *config.NauthilusAuthorityClientSection) (credenti
 	}
 
 	if tlsConfig.Cert != "" || tlsConfig.Key != "" {
-		cert, err := tls.LoadX509KeyPair(tlsConfig.Cert, tlsConfig.Key)
+		certificatePEM, err := readSealedAuthorityArtifact(artifacts, tlsConfig.Cert, "authority client certificate")
+		if err != nil {
+			return nil, err
+		}
+
+		keyPEM, err := readSealedAuthorityArtifact(artifacts, tlsConfig.Key, "authority client key")
+		if err != nil {
+			return nil, err
+		}
+
+		cert, err := tls.X509KeyPair(certificatePEM, keyPEM)
 		if err != nil {
 			return nil, fmt.Errorf("load authority client certificate: %w", err)
 		}
@@ -316,6 +329,24 @@ func transportCredentials(cfg *config.NauthilusAuthorityClientSection) (credenti
 	}
 
 	return credentials.NewTLS(conf), nil
+}
+
+// readSealedAuthorityArtifact returns only candidate-captured authority credential bytes.
+func readSealedAuthorityArtifact(
+	artifacts *config.ArtifactSnapshot,
+	path string,
+	label string,
+) ([]byte, error) {
+	if artifacts == nil {
+		return nil, fmt.Errorf("read %s: %w", label, config.ErrArtifactNotCaptured)
+	}
+
+	raw, err := artifacts.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", label, err)
+	}
+
+	return raw, nil
 }
 
 func tlsVersion(version string) uint16 {

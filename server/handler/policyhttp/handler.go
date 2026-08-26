@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/croessner/nauthilus/v3/server/config"
 	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
 	policy "github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/admission"
@@ -35,8 +36,14 @@ import (
 )
 
 const (
-	pathDecisions = "/policy/decisions"
-	noStore       = "no-store"
+	pathDecisions           = "/policy/decisions"
+	noStore                 = "no-store"
+	policyHTTPTransportKind = "http"
+)
+
+var (
+	errPolicyHTTPCredentialsRequired  = errors.New("policy HTTP credentials required")
+	errPolicyHTTPUnsupportedMediaType = errors.New("policy HTTP media type is unsupported")
 )
 
 // TransportEvidence resolves protected transport from server-observed HTTP evidence.
@@ -112,18 +119,13 @@ func (e TrustedProxyTransportEvidence) peerTrusted(remoteAddress string) bool {
 
 // Handler adapts strict HTTP requests to the admission-enforcing DecisionService.
 type Handler struct {
-	service   decision.Service
+	service   decisionservice.PreparedService
 	transport TransportEvidence
-	maxBody   int64
 }
 
 // New constructs the Policy HTTP adapter. A nil service remains fail-closed as 503.
-func New(service decision.Service, transport TransportEvidence) *Handler {
-	if transport == nil {
-		transport = DirectTLSTransportEvidence{}
-	}
-
-	return &Handler{service: service, transport: transport, maxBody: decision.MaximumOpaqueCredentialBytes}
+func New(service decisionservice.PreparedService, transport TransportEvidence) *Handler {
+	return &Handler{service: service, transport: transport}
 }
 
 // Register mounts only the unary Policy endpoint and its unconditional no-store response policy.
@@ -143,7 +145,7 @@ func noStoreMiddleware() gin.HandlerFunc {
 	}
 }
 
-// evaluate owns only bounded decoding, opaque presentation extraction, DTO conversion, and response adaptation.
+// evaluate captures and gates one generation before transport-owned request preparation.
 func (h *Handler) evaluate(ctx *gin.Context) {
 	if h == nil || h.service == nil {
 		h.writeError(ctx, http.StatusServiceUnavailable, "service_unavailable", "policy service unavailable")
@@ -151,37 +153,15 @@ func (h *Handler) evaluate(ctx *gin.Context) {
 		return
 	}
 
-	if !isJSONContentType(ctx.GetHeader("Content-Type")) {
-		h.writeError(ctx, http.StatusUnsupportedMediaType, "unsupported_media_type", "policy endpoint requires application/json")
-
-		return
-	}
-
-	body, err := util.ReadBoundedRequestBody(ctx.Request.Body, h.maxBody)
-	if err != nil {
-		h.writeBodyError(ctx, err)
-
-		return
-	}
-
-	request, err := decodeRequest(body)
-	if err != nil {
-		h.writeError(ctx, http.StatusBadRequest, "invalid_request", "invalid policy decision request")
-
-		return
-	}
-
-	authentication, err := h.authentication(ctx)
-	if err != nil {
-		h.writeError(ctx, http.StatusUnauthorized, "unauthenticated", "policy credentials required")
-
-		return
-	}
-
 	finalization := decision.NewEvaluationFinalization(effectsupervisor.BoundaryHTTPCommit)
-	invocation := decision.Invocation{Request: request, Authentication: authentication, Finalization: finalization}
 
-	response, err := h.service.Evaluate(ctx.Request.Context(), invocation)
+	response, err := h.service.EvaluatePrepared(
+		ctx.Request.Context(),
+		policyHTTPTransportKind,
+		func(captured config.File) (decision.Invocation, error) {
+			return h.prepareInvocation(ctx, captured, finalization)
+		},
+	)
 	if err != nil {
 		h.writeServiceError(ctx, err)
 
@@ -193,6 +173,50 @@ func (h *Handler) evaluate(ctx *gin.Context) {
 	finalization.Complete()
 }
 
+// prepareInvocation derives the bounded payload and credential evidence only after route activation passed.
+func (h *Handler) prepareInvocation(
+	ctx *gin.Context,
+	captured config.File,
+	finalization decision.EvaluationFinalization,
+) (decision.Invocation, error) {
+	if !isJSONContentType(ctx.GetHeader("Content-Type")) {
+		return decision.Invocation{}, errPolicyHTTPUnsupportedMediaType
+	}
+
+	maxRequestBytes := policyHTTPMaxRequestBytes(captured)
+	if maxRequestBytes <= 0 {
+		return decision.Invocation{}, decisionservice.ErrDecisionGenerationUnavailable
+	}
+
+	body, err := util.ReadBoundedRequestBody(ctx.Request.Body, maxRequestBytes)
+	if err != nil {
+		return decision.Invocation{}, err
+	}
+
+	request, err := decodeRequest(body)
+	if err != nil {
+		return decision.Invocation{}, decision.ErrInvalidRequest
+	}
+
+	authentication, err := h.authentication(ctx, captured)
+	if err != nil {
+		return decision.Invocation{}, fmt.Errorf("%w: %v", errPolicyHTTPCredentialsRequired, err)
+	}
+
+	return decision.Invocation{
+		Request: request, Authentication: authentication, Finalization: finalization,
+	}, nil
+}
+
+// policyHTTPMaxRequestBytes returns the captured generation's exact unary wire limit.
+func policyHTTPMaxRequestBytes(captured config.File) int64 {
+	if captured == nil {
+		return 0
+	}
+
+	return int64(captured.GetPolicy().API.Limits.MaxRequestBytes)
+}
+
 // isJSONContentType accepts only the OpenAPI-declared application/json media type.
 func isJSONContentType(contentType string) bool {
 	mediaType, _, err := mime.ParseMediaType(contentType)
@@ -202,7 +226,7 @@ func isJSONContentType(contentType string) bool {
 // authentication extracts opaque HTTP presentation without authenticating or admitting it.
 //
 //nolint:wsl_v5 // The credential parsing branches form one tightly coupled opaque-evidence adapter.
-func (h *Handler) authentication(ctx *gin.Context) (decision.AuthenticationInput, error) {
+func (h *Handler) authentication(ctx *gin.Context, captured config.File) (decision.AuthenticationInput, error) {
 	header := strings.TrimSpace(ctx.GetHeader("Authorization"))
 	scheme, credential, found := strings.Cut(header, " ")
 	if !found || strings.TrimSpace(credential) == "" {
@@ -231,30 +255,35 @@ func (h *Handler) authentication(ctx *gin.Context) (decision.AuthenticationInput
 		peer = ctx.Request.RemoteAddr
 	}
 
+	transport := h.transport
+	if transport == nil {
+		transport = DirectTLSTransportEvidence{}
+		if captured != nil && captured.GetServer() != nil {
+			transport = NewTrustedProxyTransportEvidence(captured.GetServer().GetTrustedProxies())
+		}
+	}
+
 	return decision.NewAuthenticationInput(decision.AuthenticationEvidence{
 		Kind:          kind,
 		Credential:    presentation,
-		TransportKind: "http",
+		TransportKind: policyHTTPTransportKind,
 		HTTPRoute:     "/api/v1/policy/decisions",
 		Peer:          peer,
-		Protected:     h.transport.Protected(ctx),
+		Protected:     transport.Protected(ctx),
 	})
-}
-
-// writeBodyError maps the global body limit without exposing parser details.
-func (h *Handler) writeBodyError(ctx *gin.Context, err error) {
-	if errors.Is(err, util.ErrRequestBodyTooLarge) {
-		h.writeError(ctx, http.StatusRequestEntityTooLarge, "request_too_large", "policy request exceeds body limit")
-
-		return
-	}
-
-	h.writeError(ctx, http.StatusBadRequest, "invalid_request", "invalid policy decision request")
 }
 
 // writeServiceError maps only application-boundary error categories to HTTP statuses.
 func (h *Handler) writeServiceError(ctx *gin.Context, err error) {
 	switch {
+	case errors.Is(err, decisionservice.ErrDecisionRouteUnavailable):
+		h.writeError(ctx, http.StatusNotFound, "not_found", "policy endpoint is disabled")
+	case errors.Is(err, errPolicyHTTPUnsupportedMediaType):
+		h.writeError(ctx, http.StatusUnsupportedMediaType, "unsupported_media_type", "policy endpoint requires application/json")
+	case errors.Is(err, util.ErrRequestBodyTooLarge):
+		h.writeError(ctx, http.StatusRequestEntityTooLarge, "request_too_large", "policy request exceeds body limit")
+	case errors.Is(err, errPolicyHTTPCredentialsRequired):
+		h.writeError(ctx, http.StatusUnauthorized, "unauthenticated", "policy credentials required")
 	case errors.Is(err, decision.ErrInvalidRequest):
 		h.writeError(ctx, http.StatusBadRequest, "invalid_request", "invalid policy decision request")
 	case errors.Is(err, decisionservice.ErrDecisionAuthentication):

@@ -62,7 +62,6 @@ func setupBruteForceListTestConfig(t *testing.T, bucketName string, banTime time
 	}
 
 	config.SetTestFile(cfg)
-	SetDefaultConfigFile(config.GetFile())
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	return cfg

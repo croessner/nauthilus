@@ -55,8 +55,9 @@ func TestDefaultRouterComposer_ApplyCoreMiddlewares_AppliesCORS(t *testing.T) {
 	}
 
 	composer := NewDefaultRouterComposer(HTTPDeps{
-		Cfg:    cfg,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Cfg:            cfg,
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		RouteArtifacts: prepareFrontendRouteArtifacts(t, cfg),
 	})
 
 	r := composer.ComposeEngine()
@@ -99,8 +100,9 @@ func TestDefaultRouterComposer_RegisterRoutes_RegistersPublicIDPOpenAPISpec(t *t
 	}
 
 	composer := NewDefaultRouterComposer(HTTPDeps{
-		Cfg:    cfg,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Cfg:            cfg,
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		RouteArtifacts: prepareFrontendRouteArtifacts(t, cfg),
 	})
 
 	r := composer.ComposeEngine()
@@ -129,8 +131,9 @@ func TestDefaultRouterComposer_RegisterRoutes_SkipsPublicIDPOpenAPIWithoutIDPSet
 	}
 
 	composer := NewDefaultRouterComposer(HTTPDeps{
-		Cfg:    cfg,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Cfg:            cfg,
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		RouteArtifacts: prepareFrontendRouteArtifacts(t, cfg),
 	})
 
 	r := composer.ComposeEngine()
@@ -153,4 +156,21 @@ func frontendTemplateDir(t *testing.T) string {
 	}
 
 	return path
+}
+
+// prepareFrontendRouteArtifacts parses the repository templates from one sealed test snapshot.
+func prepareFrontendRouteArtifacts(t *testing.T, cfg config.File) *RouteArtifacts {
+	t.Helper()
+
+	snapshot, err := config.CaptureArtifactSnapshot(config.ProductionArtifactSnapshotSpec(cfg))
+	if err != nil {
+		t.Fatalf("CaptureArtifactSnapshot() error = %v", err)
+	}
+
+	artifacts, err := PrepareRouteArtifacts(cfg, snapshot)
+	if err != nil {
+		t.Fatalf("PrepareRouteArtifacts() error = %v", err)
+	}
+
+	return artifacts
 }

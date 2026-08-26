@@ -50,22 +50,14 @@ type ldapManagerImpl struct {
 	deps     AuthDeps
 }
 
-// ldapQueue returns the configured LDAP request queue, falling back to the global queue.
+// ldapQueue returns the request queue injected into this manager.
 func (lm *ldapManagerImpl) ldapQueue() LDAPRequestQueue {
-	if lm.deps.LDAPQueue != nil {
-		return lm.deps.LDAPQueue
-	}
-
-	return priorityqueue.LDAPQueue
+	return lm.deps.LDAPQueue
 }
 
-// ldapAuthQueue returns the configured LDAP auth request queue, falling back to the global queue.
+// ldapAuthQueue returns the authentication queue injected into this manager.
 func (lm *ldapManagerImpl) ldapAuthQueue() LDAPAuthRequestQueue {
-	if lm.deps.LDAPAuthQueue != nil {
-		return lm.deps.LDAPAuthQueue
-	}
-
-	return priorityqueue.LDAPAuthQueue
+	return lm.deps.LDAPAuthQueue
 }
 
 // spanEnder closes a tracing span.

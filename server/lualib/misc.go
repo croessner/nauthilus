@@ -16,13 +16,11 @@
 package lualib
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
-	"fmt"
 	"log/slog"
 	"math/big"
-	"os"
 	"time"
 	"unicode"
 
@@ -65,6 +63,18 @@ func NewPasswordManager(ctx context.Context, cfg config.File, logger *slog.Logge
 func LoaderModMisc(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
 		return pushLuaModule(L, miscFunctions(NewMiscManager(ctx, cfg, logger)))
+	}
+}
+
+// LoaderModMiscRequest exposes deterministic helpers without unbounded request sleeps.
+func LoaderModMiscRequest(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return func(L *lua.LState) int {
+		manager := NewMiscManager(ctx, cfg, logger)
+
+		return pushLuaModule(L, map[string]lua.LGFunction{
+			definitions.LuaFnGetCountryName: manager.getCountryName,
+			definitions.LuaFnScopedIP:       manager.scopedIP,
+		})
 	}
 }
 
@@ -195,27 +205,14 @@ func getCryptoRandomInt(minValue, maxValue int64) (int64, error) {
 	return nBig.Int64() + minValue, nil
 }
 
-// CompileLua reads the passed lua file from disk and compiles it.
-func CompileLua(filePath string) (*lua.FunctionProto, error) {
-	file, err := os.Open(filePath)
+// CompileLuaSource compiles one caller-owned source snapshot under its configured name.
+func CompileLuaSource(name string, source []byte) (*lua.FunctionProto, error) {
+	chunk, err := parse.Parse(bytes.NewReader(append([]byte(nil), source...)), name)
 	if err != nil {
 		return nil, err
 	}
 
-	if file == nil {
-		return nil, fmt.Errorf("file %s not found", filePath)
-	}
-
-	defer func() { _ = file.Close() }()
-
-	reader := bufio.NewReader(file)
-
-	chunk, err := parse.Parse(reader, filePath)
-	if err != nil {
-		return nil, err
-	}
-
-	proto, err := lua.Compile(chunk, filePath)
+	proto, err := lua.Compile(chunk, name)
 	if err != nil {
 		return nil, err
 	}
@@ -223,8 +220,7 @@ func CompileLua(filePath string) (*lua.FunctionProto, error) {
 	return proto, nil
 }
 
-// DoCompiledFile takes a FunctionProto, as returned by CompileLua, and runs it in the LState. It is equivalent
-// to calling DoFile on the LState with the original source file.
+// DoCompiledFile runs a FunctionProto returned by CompileLuaSource in the supplied state.
 func DoCompiledFile(L *lua.LState, proto *lua.FunctionProto) error {
 	lfunc := L.NewFunctionFromProto(proto)
 
@@ -268,7 +264,13 @@ func (m *PasswordManager) generatePasswordHash(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	password := stack.CheckString(1)
 
-	hash := util.GetHash(util.PreparePassword(password))
+	prepared, ok := util.PreparePasswordBytesWithConfig([]byte(password), m.Cfg)
+	if !ok {
+		return stack.PushResults(lua.LNil, lua.LString("password configuration is unavailable"))
+	}
+	defer clear(prepared)
+
+	hash := util.GetHashBytes(prepared)
 
 	return stack.PushResults(lua.LString(hash), lua.LNil)
 }

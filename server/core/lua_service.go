@@ -16,285 +16,25 @@
 package core
 
 import (
-	"context"
-	"sync"
-
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	"github.com/croessner/nauthilus/v3/server/policy/report"
+	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
+	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
 	"github.com/gin-gonic/gin"
+	lua "github.com/yuin/gopher-lua"
 )
 
-// LuaSubject encapsulates the Lua subject source pipeline and returns an AuthResult.
-//
-//goland:nointerface
-type LuaSubject interface {
-	Analyze(ctx *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult
-}
-
-// ScheduledLuaSubject executes one explicit policy-selected Lua subject phase.
-//
-//goland:nointerface
-type ScheduledLuaSubject interface {
-	AnalyzeSchedule(ctx *gin.Context, view *StateView, result *PassDBResult, plan policycollection.ScriptSchedulePlan) definitions.AuthResult
-}
-
-// PluginSubjectSourceBridge adapts native post-backend subject sources without importing pluginruntime.
-//
-//goland:nointerface
-type PluginSubjectSourceBridge interface {
-	Analyze(ctx *gin.Context, view *StateView, result *PassDBResult, current definitions.AuthResult) (definitions.AuthResult, bool)
-}
-
-// MixedPluginSubjectSourceBridge coordinates Lua checks that explicitly depend on native subject checks.
-//
-//goland:nointerface
-type MixedPluginSubjectSourceBridge interface {
-	AnalyzeMixed(ctx *gin.Context, view *StateView, result *PassDBResult, lua ScheduledLuaSubject) (definitions.AuthResult, bool)
-}
-
-// PluginEnvironmentSourceBridge adapts native pre-auth environment sources without importing pluginruntime.
-//
-//goland:nointerface
-type PluginEnvironmentSourceBridge interface {
-	Evaluate(ctx *gin.Context, view *StateView) (triggered bool, abort bool, handled bool, err error)
-}
-
-// PostActionInput aggregates the minimal inputs required for the Lua post action.
-// It deliberately reduces dozens of parameters to a compact value object.
-type PostActionInput struct {
-	View                     *StateView
-	Result                   *PassDBResult
-	EnvironmentRejected      bool
-	EnvironmentStageExpected bool
-	SubjectStageExpected     bool
-}
-
-// PostAction encapsulates the asynchronous post-action dispatch to the Lua worker.
-//
-//goland:nointerface
-type PostAction interface {
-	Run(input PostActionInput) PostActionResult
-}
-
-// PostActionState classifies the synchronous preparation and acceptance boundary.
-type PostActionState string
-
-const (
-	// PostActionStateSucceeded includes accepted work and intentionally skipped work.
-	PostActionStateSucceeded PostActionState = "succeeded"
-	// PostActionStateAcceptanceRejected identifies a non-context supervisor rejection.
-	PostActionStateAcceptanceRejected PostActionState = "acceptance_rejected"
-	// PostActionStateCanceled identifies request cancellation before ownership transfer.
-	PostActionStateCanceled PostActionState = "canceled"
-	// PostActionStatePreparationFailed identifies invalid or incomplete work capture.
-	PostActionStatePreparationFailed PostActionState = "preparation_failed"
-)
-
-// PostActionResult carries a secret-safe synchronous post-action cause.
-type PostActionResult struct {
-	state PostActionState
-}
-
-// PostActionSucceeded returns an accepted or intentionally skipped result.
-func PostActionSucceeded() PostActionResult {
-	return PostActionResult{state: PostActionStateSucceeded}
-}
-
-// PostActionAcceptanceRejected returns an explicit supervisor rejection result.
-func PostActionAcceptanceRejected() PostActionResult {
-	return PostActionResult{state: PostActionStateAcceptanceRejected}
-}
-
-// PostActionCanceled returns a pre-acceptance context-cancellation result.
-func PostActionCanceled() PostActionResult {
-	return PostActionResult{state: PostActionStateCanceled}
-}
-
-// PostActionPreparationFailed returns a pre-acceptance capture failure result.
-func PostActionPreparationFailed() PostActionResult {
-	return PostActionResult{state: PostActionStatePreparationFailed}
-}
-
-// State returns the bounded result classification.
-func (r PostActionResult) State() PostActionState {
-	return r.state
-}
-
-// Succeeded reports accepted or intentionally skipped work.
-func (r PostActionResult) Succeeded() bool {
-	return r.state == PostActionStateSucceeded
-}
-
-// AcceptanceRejected reports only explicit supervisor rejection.
-func (r PostActionResult) AcceptanceRejected() bool {
-	return r.state == PostActionStateAcceptanceRejected
-}
-
-// Canceled reports request cancellation before ownership transfer.
-func (r PostActionResult) Canceled() bool {
-	return r.state == PostActionStateCanceled
-}
-
-// PostActionPlanInput supplies the supervisor-owned plan runtime to one Lua post-action step.
-type PostActionPlanInput struct {
-	Runtime map[string]any
-}
-
-// PostActionPlanPreparer captures request-bound Lua state before detached execution.
-type PostActionPlanPreparer interface {
-	PreparePlanStep(input PostActionInput) PostActionPlanRunner
-}
-
-// PostActionPlanRunner executes one already captured shared-plan step.
-type PostActionPlanRunner interface {
-	ValidatePlanStep() error
-	RunPlanStep(ctx context.Context, input PostActionPlanInput) (pluginapi.RuntimeDelta, effectsupervisor.Result)
-}
-
-// PostActionPlanStepKind identifies the executable post-action step type.
-type PostActionPlanStepKind string
-
-const (
-	// PostActionPlanStepNative identifies a native plugin post-action target.
-	PostActionPlanStepNative PostActionPlanStepKind = "native"
-
-	// PostActionPlanStepLua identifies the default Lua post-action dispatcher.
-	PostActionPlanStepLua PostActionPlanStepKind = "lua"
-)
-
-// PostActionPlanStep describes one ordered post-action step captured by the policy executor.
-type PostActionPlanStep struct {
-	release   *postActionPlanRelease
-	effect    report.EffectRequest
-	luaRunner PostActionPlanRunner
-	id        string
-	kind      PostActionPlanStepKind
-	ordinal   uint32
-}
-
-type postActionPlanRelease struct {
-	cleanup func()
-	once    sync.Once
-}
-
-// NewNativePostActionPlanStep creates a plan step for a native plugin post-action effect.
-func NewNativePostActionPlanStep(effect report.EffectRequest) PostActionPlanStep {
-	return PostActionPlanStep{
-		effect: effect,
-		id:     effect.ID,
-		kind:   PostActionPlanStepNative,
-	}
-}
-
-// NewLuaPostActionPlanStep creates a plan step for a Lua post-action dispatcher.
-func NewLuaPostActionPlanStep(id string, runner PostActionPlanRunner, cleanup func()) PostActionPlanStep {
-	return PostActionPlanStep{
-		release:   &postActionPlanRelease{cleanup: cleanup},
-		luaRunner: runner,
-		id:        id,
-		kind:      PostActionPlanStepLua,
-	}
-}
-
-// ID returns the policy effect identifier represented by the step.
-func (s PostActionPlanStep) ID() string {
-	return s.id
-}
-
-// Kind returns whether the step targets Lua or a native plugin.
-func (s PostActionPlanStep) Kind() PostActionPlanStepKind {
-	return s.kind
-}
-
-// EffectOrdinal returns the selected host-effect position within the decision.
-func (s PostActionPlanStep) EffectOrdinal() uint32 {
-	return s.ordinal
-}
-
-// WithEffectOrdinal returns a copied step with its decision-scoped ordinal.
-func (s PostActionPlanStep) WithEffectOrdinal(ordinal uint32) PostActionPlanStep {
-	s.ordinal = ordinal
-
-	return s
-}
-
-// NativeEffect returns the native effect carried by this step.
-func (s PostActionPlanStep) NativeEffect() (report.EffectRequest, bool) {
-	return s.effect, s.kind == PostActionPlanStepNative
-}
-
-// LuaStep returns the already captured Lua plan runner.
-func (s PostActionPlanStep) LuaStep() (PostActionPlanRunner, bool) {
-	return s.luaRunner, s.kind == PostActionPlanStepLua && s.luaRunner != nil
-}
-
-// Release frees resources owned by the captured plan step.
-func (s PostActionPlanStep) Release() {
-	if s.release != nil {
-		s.release.release()
-	}
-}
-
-// release invokes a shared copied-step cleanup exactly once.
-func (r *postActionPlanRelease) release() {
-	if r == nil {
-		return
-	}
-
-	r.once.Do(func() {
-		if r.cleanup != nil {
-			r.cleanup()
-		}
-	})
-}
-
-// ReleasePostActionPlanSteps releases resources owned by all captured plan steps.
-func ReleasePostActionPlanSteps(steps []PostActionPlanStep) {
-	for index := range steps {
-		steps[index].Release()
-	}
-}
-
-// PluginEffectBridge executes native policy-selected effects without importing pluginruntime.
-//
-//goland:nointerface
-type PluginEffectBridge interface {
-	// IsPostActionEffect reports whether an effect targets a native post-action component.
-	IsPostActionEffect(effect report.EffectRequest) bool
-
-	// EnqueuePostActionPlan starts one host-supervised ordered post-action plan.
-	EnqueuePostActionPlan(ctx *gin.Context, view *StateView, steps []PostActionPlanStep) (handled bool, ok bool)
-
-	// ExecutePolicyEffect runs a synchronous native policy effect.
-	ExecutePolicyEffect(ctx *gin.Context, view *StateView, effect report.EffectRequest) (handled bool, ok bool)
-}
-
-// PluginPostActionWorkPreparer captures one native effect for external supervisor ownership.
-type PluginPostActionWorkPreparer interface {
-	PreparePostActionWork(
+// CapturedLuaSubject executes one generation-owned precompiled subject source.
+type CapturedLuaSubject interface {
+	AnalyzeSource(
 		ctx *gin.Context,
 		view *StateView,
-		step PostActionPlanStep,
-	) (effectsupervisor.ExecutableWork, bool)
-}
-
-// EnvironmentEngine encapsulates the evaluation of Lua environment sources.
-// It returns whether an environment source was triggered, whether later sources should be aborted,
-// and optional logs plus a new StatusMessage.
-//
-//goland:nointerface
-type EnvironmentEngine interface {
-	Evaluate(ctx *gin.Context, view *StateView) (triggered bool, abort bool, logs []any, newStatus *string, err error)
-}
-
-// ActionDispatcher encapsulates triggering Lua actions (performAction).
-//
-//goland:nointerface
-type ActionDispatcher interface {
-	Dispatch(view *StateView, environmentName string, luaAction definitions.LuaAction)
+		result *PassDBResult,
+		name string,
+		prototype *lua.FunctionProto,
+		pools *vmpool.Manager,
+		poolKey vmpool.PoolKey,
+		modules *luaseal.Modules,
+	) definitions.AuthResult
 }
 
 // RBLService encapsulates RBL checking and aggregation.
@@ -303,9 +43,6 @@ type ActionDispatcher interface {
 type RBLService interface {
 	// Score computes the aggregated RBL score for the request.
 	Score(ctx *gin.Context, view *StateView) (int, error)
-
-	// Threshold returns the configured threshold at which an environment control is triggered.
-	Threshold() int
 }
 
 // RBLFactService computes the aggregated RBL score together with policy-visible facts.

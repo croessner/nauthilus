@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	policyv1 "github.com/croessner/nauthilus/v3/api/policy/v1"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
@@ -101,6 +103,7 @@ func TestPolicyGRPCMapsClosedApplicationErrors(t *testing.T) {
 		code codes.Code
 	}{
 		{name: "invalid", err: decision.ErrInvalidRequest, code: codes.InvalidArgument},
+		{name: "route disabled", err: decisionservice.ErrDecisionRouteUnavailable, code: codes.Unimplemented},
 		{name: "authentication", err: decisionservice.ErrDecisionAuthentication, code: codes.Unauthenticated},
 		{name: "admission", err: decisionservice.ErrDecisionAdmission, code: codes.PermissionDenied},
 		{name: "unavailable", err: decisionservice.ErrDecisionGenerationUnavailable, code: codes.Unavailable},
@@ -118,11 +121,42 @@ func TestPolicyGRPCMapsClosedApplicationErrors(t *testing.T) {
 }
 
 func TestPolicyGRPCHandlerRequiresInterceptorEvidence(t *testing.T) {
-	handler := New(policyRecordingService{err: errors.New("unexpected invocation")})
+	handler := New(&policyRecordingService{err: errors.New("unexpected invocation")}, contextAuthenticationEvidence)
 
 	_, err := handler.Evaluate(context.Background(), validPolicyRequest())
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("Evaluate() code = %s, want %s", status.Code(err), codes.Unauthenticated)
+	}
+}
+
+func TestPolicyGRPCDisabledRoutePrecedesRequestPreparation(t *testing.T) {
+	oversized := validPolicyRequest()
+	oversized.Attributes["oversized"] = &policyv1.Value{
+		Kind: &policyv1.Value_String_{String_: strings.Repeat("x", decision.MaximumOpaqueCredentialBytes)},
+	}
+
+	for _, testCase := range []struct {
+		request *policyv1.DecisionRequest
+		name    string
+	}{
+		{name: "missing credentials", request: validPolicyRequest()},
+		{name: "malformed request", request: &policyv1.DecisionRequest{}},
+		{name: "oversized request", request: oversized},
+		{name: "missing finalization gate", request: validPolicyRequest()},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			service := &policyRecordingService{err: decisionservice.ErrDecisionRouteUnavailable}
+			handler := New(service, contextAuthenticationEvidence)
+
+			_, err := handler.Evaluate(context.Background(), testCase.request)
+			if status.Code(err) != codes.Unimplemented {
+				t.Fatalf("Evaluate() code = %s, want %s", status.Code(err), codes.Unimplemented)
+			}
+
+			if service.transportKind != policyGRPCTransportKind {
+				t.Fatalf("transport kind = %q, want %q", service.transportKind, policyGRPCTransportKind)
+			}
+		})
 	}
 }
 
@@ -141,7 +175,7 @@ func TestPolicyGRPCAdapterCannotImportEvaluatorOrCaptureAGeneration(t *testing.T
 
 func TestPolicyGRPCHandlerKeepsFinalizationClosedUntilOuterUnaryBoundary(t *testing.T) {
 	service := &policyFinalizationService{}
-	handler := New(service)
+	handler := New(service, contextAuthenticationEvidence)
 	ctx, gate := core.ContextWithPostActionExecutionGate(context.Background())
 
 	authentication, err := decision.NewAuthenticationInput(decision.AuthenticationEvidence{
@@ -190,11 +224,31 @@ func validPolicyRequest() *policyv1.DecisionRequest {
 }
 
 type policyRecordingService struct {
-	err error
+	err           error
+	transportKind string
 }
 
-func (s policyRecordingService) Evaluate(context.Context, decision.Invocation) (decision.DecisionResponse, error) {
+func (s *policyRecordingService) Evaluate(context.Context, decision.Invocation) (decision.DecisionResponse, error) {
 	return decision.DecisionResponse{}, s.err
+}
+
+// EvaluatePrepared runs the recording service through capture-first preparation.
+func (s *policyRecordingService) EvaluatePrepared(
+	ctx context.Context,
+	transportKind string,
+	prepare func(config.File) (decision.Invocation, error),
+) (decision.DecisionResponse, error) {
+	s.transportKind = transportKind
+	if errors.Is(s.err, decisionservice.ErrDecisionRouteUnavailable) {
+		return decision.DecisionResponse{}, s.err
+	}
+
+	invocation, err := prepare(enabledGRPCPolicyConfig())
+	if err != nil {
+		return decision.DecisionResponse{}, err
+	}
+
+	return s.Evaluate(ctx, invocation)
 }
 
 type policyFinalizationService struct {
@@ -205,4 +259,27 @@ func (s *policyFinalizationService) Evaluate(_ context.Context, invocation decis
 	s.finalization = invocation.Finalization
 
 	return decision.DecisionResponse{}, nil
+}
+
+// EvaluatePrepared captures finalization only after transport preparation has completed.
+func (s *policyFinalizationService) EvaluatePrepared(
+	ctx context.Context,
+	_ string,
+	prepare func(config.File) (decision.Invocation, error),
+) (decision.DecisionResponse, error) {
+	invocation, err := prepare(enabledGRPCPolicyConfig())
+	if err != nil {
+		return decision.DecisionResponse{}, err
+	}
+
+	return s.Evaluate(ctx, invocation)
+}
+
+// enabledGRPCPolicyConfig supplies generation-owned gRPC activation and wire bounds to adapter fixtures.
+func enabledGRPCPolicyConfig() config.File {
+	return &config.FileSettings{Policy: policyconfig.PolicyConfig{API: policyconfig.APIConfig{
+		Enabled: true,
+		GRPC:    policyconfig.GRPCConfig{Enabled: true},
+		Limits:  policyconfig.APILimitsConfig{MaxRequestBytes: decision.MaximumOpaqueCredentialBytes},
+	}}}
 }

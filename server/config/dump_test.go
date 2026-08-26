@@ -226,6 +226,59 @@ func TestConfigDumpRedactsDSNLeaves(t *testing.T) {
 	}
 }
 
+func TestPolicyConfigDumpRedactsPolicyOwnedSecrets(t *testing.T) {
+	SetConfigDumpPrintSensitiveValues(false)
+
+	settings := map[string]any{
+		"policy": map[string]any{
+			"api": map[string]any{
+				"clients": []any{
+					map[string]any{
+						"authentication": map[string]any{
+							"basic": map[string]any{
+								"username": "Policy.User",
+								"password": "policy-basic-secret",
+							},
+						},
+					},
+				},
+			},
+			"namespaces": map[string]any{
+				"authn": map[string]any{
+					"providers": map[string]any{
+						"risk": map[string]any{
+							"secrets": map[string]any{"arbitrary_provider_key": "provider-secret"},
+						},
+					},
+					"effects": map[string]any{
+						"notify": map[string]any{
+							"secrets": map[string]any{"arbitrary_effect_key": "effect-secret"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, format := range []DumpFormat{DumpFormatCanonical, DumpFormatYAML, DumpFormatJSON, DumpFormatTOML} {
+		t.Run(string(format), func(t *testing.T) {
+			output, err := RenderNonDefaultConfigDumpWithFormat(settings, format)
+			if err != nil {
+				t.Fatalf("RenderNonDefaultConfigDumpWithFormat() error = %v", err)
+			}
+
+			if strings.Contains(output, "policy-basic-secret") || strings.Contains(output, "provider-secret") ||
+				strings.Contains(output, "effect-secret") {
+				t.Fatalf("Policy-owned secret leaked in %s dump", format)
+			}
+
+			if !strings.Contains(output, redactedConfigValue) {
+				t.Fatalf("Policy-owned secret was not redacted in %s dump: %q", format, output)
+			}
+		})
+	}
+}
+
 func TestRenderNonDefaultConfigDump_PrintsSensitiveValuesWhenEnabled(t *testing.T) {
 	SetConfigDumpPrintSensitiveValues(true)
 	t.Cleanup(func() {

@@ -34,9 +34,10 @@ The authentication boundary uses the target FSM marker vocabulary as the stable 
 - `auth.fsm.event.basic_auth_fail`
 - `auth.fsm.event.abort`
 
-`standard_auth` is the built-in default policy set. Configured policy sets live under `auth.policy` and use the same
-target markers, response markers, and decision effects as the default set. Observe mode compares a configured policy set
-with `standard_auth`; enforce mode applies the selected policy result without emitting migration comparison reports.
+`authn/standard_auth` is the built-in default policy set. Configured policy sets live under
+`policy.namespaces.authn.policy_sets` and use the same target markers, response markers, and decision effects as the
+default set. Observe mode compares a configured policy set with `authn/standard_auth`; enforce mode applies the selected
+policy result without emitting migration comparison reports.
 
 ## State Matrix
 

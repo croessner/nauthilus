@@ -21,7 +21,7 @@ import (
 	"testing"
 )
 
-func TestLegacyAuthApplicationExecutorPreservesHTTPMethod(t *testing.T) {
+func TestAuthApplicationHostPreservesHTTPMethod(t *testing.T) {
 	tests := []struct {
 		name      string
 		transport AuthTransportContext
@@ -58,11 +58,11 @@ func TestLegacyAuthApplicationExecutorPreservesHTTPMethod(t *testing.T) {
 		},
 	}
 
-	executor := newLegacyAuthApplicationExecutor()
+	host := newAuthApplicationHost()
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			ginCtx, err := executor.newContext(context.Background(), AuthInput{
+			ginCtx, err := host.newContext(context.Background(), AuthInput{
 				Context: AuthContext{Transport: test.transport},
 			})
 			if err != nil {

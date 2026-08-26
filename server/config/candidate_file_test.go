@@ -16,11 +16,50 @@
 package config
 
 import (
+	"errors"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/viper"
 )
+
+func TestBoundActiveFileSourceTracksGenerationProjectionAndRejectsIndependentPublication(t *testing.T) {
+	activeFileSource = atomic.Value{}
+
+	activeFileSourceBound.Store(false)
+	t.Cleanup(func() {
+		activeFileSource = atomic.Value{}
+
+		activeFileSourceBound.Store(false)
+		SetTestFile(nil)
+	})
+
+	first := &FileSettings{}
+	second := &FileSettings{}
+	current := File(first)
+
+	if err := BindActiveFileSource(func() File { return current }); err != nil {
+		t.Fatalf("BindActiveFileSource() error = %v", err)
+	}
+
+	if GetFile() != first {
+		t.Fatal("GetFile() did not project the first active generation config")
+	}
+
+	current = second
+	if GetFile() != second {
+		t.Fatal("GetFile() retained the boot config after generation replacement")
+	}
+
+	if err := BindActiveFileSource(func() File { return first }); err == nil {
+		t.Fatal("second active config source binding succeeded")
+	}
+
+	if err := ReloadConfigFile(); !errors.Is(err, ErrIndependentConfigPublication) {
+		t.Fatalf("ReloadConfigFile() error = %v, want independent-publication rejection", err)
+	}
+}
 
 // TestPrepareFileDoesNotPublishCandidateOrMutateAmbientViper proves off-side decoding.
 func TestPrepareFileDoesNotPublishCandidateOrMutateAmbientViper(t *testing.T) {

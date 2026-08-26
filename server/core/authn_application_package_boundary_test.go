@@ -16,10 +16,12 @@
 package core
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -62,12 +64,10 @@ func TestAuthnApplicationAdapterImportsOnlyDecisionServiceBoundary(t *testing.T)
 	}
 }
 
-func TestAuthnCandidateConstructorsHaveNoProductionWiringCallSite(t *testing.T) {
-	constructorNames := map[string]struct{}{
-		"NewAuthnCandidateApplicationService":                     {},
-		"NewAuthnCandidateApplicationServiceWithInternalProfiles": {},
-	}
-	callSites := make(map[string][]string, len(constructorNames))
+func TestProductionCompositionUsesAuthnDecisionServiceAdapter(t *testing.T) {
+	const constructorName = "NewProductionAuthApplicationService"
+
+	callSites := make([]string, 0, 1)
 
 	err := filepath.WalkDir("..", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -93,9 +93,8 @@ func TestAuthnCandidateConstructorsHaveNoProductionWiringCallSite(t *testing.T) 
 				return true
 			}
 
-			name := authnCandidateCallName(call.Fun)
-			if _, candidate := constructorNames[name]; candidate {
-				callSites[name] = append(callSites[name], path)
+			if authnCandidateCallName(call.Fun) == constructorName {
+				callSites = append(callSites, path)
 			}
 
 			return true
@@ -107,8 +106,8 @@ func TestAuthnCandidateConstructorsHaveNoProductionWiringCallSite(t *testing.T) 
 		t.Fatalf("scan production Go files: %v", err)
 	}
 
-	if len(callSites) != 0 {
-		t.Fatalf("candidate adapters have production wiring call sites: %v", callSites)
+	if len(callSites) != 1 || filepath.Clean(callSites[0]) != filepath.Clean("../server.go") {
+		t.Fatalf("production authn Decision Service adapter call sites = %v, want only ../server.go", callSites)
 	}
 }
 
@@ -120,27 +119,118 @@ func TestAuthApplicationServiceIsolatesGinCompatibilityImports(t *testing.T) {
 		}
 	}
 
-	legacyImports := authnBoundaryImportPaths(t, "auth_application_legacy_executor.go")
+	hostImports := authnBoundaryImportPaths(t, "auth_application_host.go")
 	for _, required := range []string{"github.com/gin-gonic/gin", "net/http/httptest"} {
-		if _, found := legacyImports[required]; !found {
-			t.Fatalf("legacy auth executor does not own expected compatibility dependency %q", required)
+		if _, found := hostImports[required]; !found {
+			t.Fatalf("captured auth host does not own expected compatibility dependency %q", required)
 		}
 	}
 
-	const legacyCallSite = "server/core/auth_application_legacy_executor.go|NewAuthStateFromContextWithDeps"
+	if _, err := fs.Stat(os.DirFS("."), "auth_application_legacy_executor.go"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("legacy auth executor source remains present: %v", err)
+	}
 
-	entry, classified := authStateCallSiteInventory[legacyCallSite]
-	if !classified || entry.owner != "isolated legacy FSM compatibility executor" {
-		t.Fatalf("legacy auth executor lacks explicit global classification: %#v", entry)
+	const hostCallSite = "server/core/auth_application_host.go|NewAuthStateFromContextWithDeps"
+
+	entry, classified := authStateCallSiteInventory[hostCallSite]
+	if !classified || entry.owner != "captured auth FSM host" {
+		t.Fatalf("captured auth host lacks explicit global classification: %#v", entry)
 	}
 
 	for _, disposition := range backchannelAuthStateDispositions {
-		if disposition.callSite == legacyCallSite && disposition.disposition == authStateDispositionRetained {
+		if disposition.callSite == hostCallSite && disposition.disposition == authStateDispositionRetained {
 			return
 		}
 	}
 
-	t.Fatalf("legacy auth executor lacks an explicit retained backchannel disposition")
+	t.Fatalf("captured auth host lacks an explicit retained backchannel disposition")
+}
+
+func TestAuthApplicationHostHasNoExportedRawAuthority(t *testing.T) {
+	parsed, err := parser.ParseFile(token.NewFileSet(), "auth_application_service.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse auth application service: %v", err)
+	}
+
+	for _, declaration := range parsed.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+
+		if function.Recv == nil && function.Name.Name == "NewAuthApplicationService" {
+			t.Fatal("exported raw auth application constructor remains")
+		}
+
+		if authnMethodReceiverName(function) != "authApplicationService" {
+			continue
+		}
+
+		switch function.Name.Name {
+		case "Authenticate", "LookupIdentity", "ListAccounts":
+			t.Fatalf("raw auth application host retains selectable %s authority", function.Name.Name)
+		}
+	}
+}
+
+func TestProductionAuthnHasNoMutableHostServiceRegistry(t *testing.T) {
+	if _, err := os.Stat("services_registry.go"); !os.IsNotExist(err) {
+		t.Fatalf("production service registry remains present: %v", err)
+	}
+
+	forbidden := []string{
+		"RegisterLuaSubject(",
+		"RegisterRBLService(",
+		"RegisterBruteForceService(",
+		"RegisterCacheService(",
+		"RegisterPasswordVerifier(",
+		"registeredAuthnHostServices(",
+		"withRegisteredAuthnHostServices(",
+	}
+
+	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+
+		source, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+
+		for _, symbol := range forbidden {
+			if strings.Contains(string(source), symbol) {
+				t.Errorf("production authn source %s retains mutable host-service registry symbol %q", path, symbol)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan production core sources: %v", err)
+	}
+}
+
+// authnMethodReceiverName returns the concrete receiver name for one method declaration.
+func authnMethodReceiverName(function *ast.FuncDecl) string {
+	if function == nil || function.Recv == nil || len(function.Recv.List) != 1 {
+		return ""
+	}
+
+	typeExpression := function.Recv.List[0].Type
+	if pointer, ok := typeExpression.(*ast.StarExpr); ok {
+		typeExpression = pointer.X
+	}
+
+	if identifier, ok := typeExpression.(*ast.Ident); ok {
+		return identifier.Name
+	}
+
+	return ""
 }
 
 // authnCandidateCallName returns the invoked identifier for direct and qualified calls.

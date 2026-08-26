@@ -117,7 +117,7 @@ func (h *FrontendHandler) LoginWebAuthnBegin(ctx *gin.Context) {
 
 // completeCanonicalWebAuthn verifies one typed ceremony and commits its step-up proof.
 //
-//nolint:gocyclo,funlen // WebAuthn completion keeps ceremony consume, step-up publication, post-action, and resume ordered.
+//nolint:gocyclo,funlen // WebAuthn completion keeps ceremony consume, step-up publication, and resume ordered.
 func (h *FrontendHandler) completeCanonicalWebAuthn(ctx *gin.Context) {
 	selection, err := h.canonicalWebAuthnSelection(ctx)
 	if err != nil {
@@ -138,7 +138,7 @@ func (h *FrontendHandler) completeCanonicalWebAuthn(ctx *gin.Context) {
 		finish = h.finishCanonicalWebAuthn
 	}
 
-	user, err := finish(ctx, selection, ceremony)
+	_, err = finish(ctx, selection, ceremony)
 	if err != nil {
 		h.observeCanonicalWebAuthn(ctx, selection, false, err)
 
@@ -197,15 +197,6 @@ func (h *FrontendHandler) completeCanonicalWebAuthn(ctx *gin.Context) {
 
 	h.observeCanonicalWebAuthn(ctx, selection, true, nil)
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
-
-	if user != nil {
-		core.QueueCompletedIDPMFAPostAction(
-			ctx,
-			h.deps.Auth(),
-			user,
-			canonicalMFAProtocolContext(selection, definitions.MFAMethodWebAuthn, true),
-		)
-	}
 
 	ctx.JSON(http.StatusOK, webAuthnFinishResponse{Redirect: target})
 }

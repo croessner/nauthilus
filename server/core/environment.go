@@ -23,6 +23,9 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/lualib"
 	"github.com/croessner/nauthilus/v3/server/lualib/environment"
+	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
+	"github.com/croessner/nauthilus/v3/server/lualib/pipeline"
+	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
 	"github.com/croessner/nauthilus/v3/server/stats"
@@ -30,13 +33,12 @@ import (
 
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
+	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
 const (
-	environmentDecisionAbort        = "abort_environment"
-	environmentDecisionLua          = "environment_lua"
 	environmentDecisionOK           = "ok"
 	environmentDecisionPlugin       = "environment_plugin"
 	environmentDecisionRBL          = "environment_rbl"
@@ -104,8 +106,32 @@ func environmentControlStringSet(value any) config.StringSet {
 	return controls
 }
 
-// EnvironmentLua runs Lua environment source scripts and returns a trigger result.
-func (a *AuthState) EnvironmentLua(ctx *gin.Context) (triggered bool, skipRemainingEnvironment bool, err error) {
+// EnvironmentLuaSource runs one generation-owned precompiled environment source.
+func (a *AuthState) EnvironmentLuaSource(
+	ctx *gin.Context,
+	name string,
+	prototype *lua.FunctionProto,
+	pools *vmpool.Manager,
+	poolKey vmpool.PoolKey,
+	modules *luaseal.Modules,
+) (triggered bool, skipRemainingEnvironment bool, err error) {
+	if name == "" || prototype == nil || pools == nil || poolKey == "" {
+		return false, false, fmt.Errorf("generation-owned Lua environment source is incomplete")
+	}
+
+	return a.environmentLuaSource(ctx, &environment.LuaEnvironmentSource{
+		Name: name, CompiledScript: prototype, Modules: modules,
+		Modes: pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated | pipeline.ModeNoAuth,
+	}, pools, poolKey)
+}
+
+// environmentLuaSource constructs request state for one generation-owned source.
+func (a *AuthState) environmentLuaSource(
+	ctx *gin.Context,
+	source *environment.LuaEnvironmentSource,
+	pools *vmpool.Manager,
+	poolKey vmpool.PoolKey,
+) (triggered bool, skipRemainingEnvironment bool, err error) {
 	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
 	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromEnvironment, definitions.ControlLua, resource)
 
@@ -136,23 +162,35 @@ func (a *AuthState) EnvironmentLua(ctx *gin.Context) (triggered bool, skipRemain
 		MasterUserMode:       a.Runtime.MasterUserMode,
 		AdditionalAttributes: a.Runtime.AdditionalAttributes,
 		CommonRequest:        cr,
+		Tolerate:             a.deps.Tolerate,
 		ScriptRecorder:       policycollection.NewScriptSink(policyCtx),
 		PolicyContext:        policyCtx,
 	}
 
-	triggered, skipRemainingEnvironment, err = fr.CallEnvironmentLua(ctx, a.Cfg(), a.Logger(), a.Redis())
+	triggered, skipRemainingEnvironment, err = fr.CallEnvironmentLuaSource(
+		ctx,
+		a.Cfg(),
+		a.Logger(),
+		a.Redis(),
+		source,
+		pools,
+		poolKey,
+	)
 	if err != nil {
 		return
 	}
 
 	a.Security.Logs = fr.Logs
+	if fr.StatusMessage != nil {
+		a.Runtime.StatusMessage = *fr.StatusMessage
+	}
 
 	return
 }
 
 // ControlTLSEncryption checks, if the remote client connection was secured.
 func (a *AuthState) ControlTLSEncryption(ctx *gin.Context) (triggered bool) {
-	if config.GetEnvironment().GetDevMode() {
+	if a.Env() != nil && a.Env().GetDevMode() {
 		return
 	}
 
@@ -305,7 +343,7 @@ func (a *AuthState) ControlRBL(ctx *gin.Context) (triggered bool, err error) {
 }
 
 func (a *AuthState) evaluateRBLService(ctx *gin.Context, span trace.Span) (bool, error) {
-	svc := GetRBLService()
+	svc := a.deps.HostServices.rbl
 	if svc == nil {
 		return false, nil
 	}
@@ -317,7 +355,14 @@ func (a *AuthState) evaluateRBLService(ctx *gin.Context, span trace.Span) (bool,
 		return false, err
 	}
 
-	matched := score >= svc.Threshold()
+	threshold := 0
+	if rbls := a.Cfg().GetRBLs(); rbls != nil {
+		threshold = rbls.GetThreshold()
+	}
+
+	a.Runtime.RBLPolicy.Threshold = threshold
+
+	matched := score >= threshold
 	span.SetAttributes(
 		attribute.Int("score", score),
 		attribute.Bool("matched", matched),
@@ -342,7 +387,6 @@ func (a *AuthState) scoreRBLService(ctx *gin.Context, svc RBLService) (int, erro
 
 	score, err := svc.Score(ctx, a.View())
 	a.Runtime.RBLPolicy.Score = score
-	a.Runtime.RBLPolicy.Threshold = svc.Threshold()
 
 	return score, err
 }
@@ -366,45 +410,6 @@ func (a *AuthState) checkEnvironmentControlWithAllowlist(environmentName string,
 	}
 }
 
-// checkLuaEnvironmentSource evaluates Lua environment sources for the given authentication context.
-// It determines if an environment control is triggered or if further processing should be aborted.
-// It uses a whitelist check and processes environment source actions if the Lua environment source is activated.
-// Returns triggered when a Lua environment source triggered and skipRemainingEnvironment when later server environment controls should be skipped.
-func (a *AuthState) checkLuaEnvironmentSource(ctx *gin.Context) (triggered bool, skipRemainingEnvironment bool, err error) {
-	tr := monittrace.New("nauthilus/auth")
-	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.environment.lua",
-		attribute.String("service", a.Request.Service),
-		attribute.String("username", a.Request.Username),
-	)
-
-	requestScope := a.scopeRequestContext(fctx, ctx)
-
-	defer requestScope.Restore()
-	defer fspan.End()
-
-	checkFunc := func() {
-		triggered, skipRemainingEnvironment, err = a.EnvironmentLua(ctx)
-		if err != nil {
-			a.Runtime.EnvironmentName = ""
-
-			return
-		}
-
-		if triggered {
-			a.processEnvironmentAction(ctx, definitions.ControlLua)
-		}
-
-		if skipRemainingEnvironment {
-			a.Runtime.EnvironmentName = ""
-			skipRemainingEnvironment = true
-		}
-	}
-
-	a.checkEnvironmentControlWithAllowlist(definitions.ControlLua, func() bool { return false }, checkFunc)
-
-	return
-}
-
 // checkTLSEncryptionEnvironment determines if the TLS encryption environment control should be processed for the current authentication state.
 // It uses a whitelist check to decide if the environment control action needs to be executed based on the current auth state.
 func (a *AuthState) checkTLSEncryptionEnvironment(ctx *gin.Context, record func(bool)) (triggered bool) {
@@ -425,10 +430,6 @@ func (a *AuthState) checkTLSEncryptionEnvironment(ctx *gin.Context, record func(
 	}()
 
 	checkFunc := func() {
-		if !a.policyCheckScheduled(ctx, tlsPolicySelector()) {
-			return
-		}
-
 		if triggered = a.ControlTLSEncryption(ctx); triggered {
 			a.processEnvironmentAction(ctx, definitions.ControlTLSEncryption)
 		}
@@ -475,10 +476,6 @@ func (a *AuthState) checkRelayDomainsEnvironment(ctx *gin.Context, record func(b
 	}
 
 	if a.cfg().ShouldRunControl(definitions.ControlRelayDomains, a.Request.NoAuth) {
-		if !a.policyCheckScheduled(ctx, relayDomainsPolicySelector()) {
-			return
-		}
-
 		if isWhitelisted() {
 			a.logEnvironmentControlAllowlisting(definitions.ControlRelayDomains)
 			a.Runtime.RelayDomainPolicy = a.relayDomainPolicyFact(a.handleMasterUserMode(), a.cfg().GetRelayDomains(), true)
@@ -526,10 +523,6 @@ func (a *AuthState) checkRBLEnvironment(ctx *gin.Context) (triggered bool, err e
 	}
 
 	if a.cfg().ShouldRunControl(definitions.ControlRBL, a.Request.NoAuth) {
-		if !a.policyCheckScheduled(ctx, rblPolicySelector()) {
-			return
-		}
-
 		if isWhitelisted() {
 			a.logEnvironmentControlAllowlisting(definitions.ControlRBL)
 
@@ -558,44 +551,18 @@ func (a *AuthState) processEnvironmentAction(ctx *gin.Context, environmentName s
 	a.Runtime.EnvironmentName = environmentName
 }
 
-// performAction triggers the execution of a specified Lua action if Lua actions are enabled in the configuration.
-// It initializes an account name if absent, sends the action request to the RequestChan channel,
-// and waits for the action to complete.
-func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName string) {
-	if !a.cfg().HaveLuaActions() {
-		return
-	}
-
-	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
-
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromAction, luaActionName, resource)
-	if stopTimer != nil {
-		defer stopTimer()
-	}
-
-	if a.GetAccount() == "" {
-		a.refreshUserAccount()
-	}
-
-	if disp := GetActionDispatcher(); disp != nil {
-		disp.Dispatch(a.View(), a.Runtime.EnvironmentName, luaAction)
-	}
-}
-
 type authnEnvironmentProviderPlan struct {
-	environment bool
-	tls         bool
-	relay       bool
-	rbl         bool
+	tls   bool
+	relay bool
+	rbl   bool
 }
 
 // HandleEnvironment processes the complete established environment provider sequence.
 func (a *AuthState) HandleEnvironment(ctx *gin.Context) definitions.AuthResult {
 	return a.handleEnvironmentProviders(ctx, authnEnvironmentProviderPlan{
-		environment: true,
-		tls:         true,
-		relay:       true,
-		rbl:         true,
+		tls:   true,
+		relay: true,
+		rbl:   true,
 	})
 }
 
@@ -614,22 +581,8 @@ func (a *AuthState) handleEnvironmentProviders(
 
 	defer requestScope.Restore()
 
-	if a.configuredPreAuthChecksSkipped(ctx) {
-		return finishPreAuthEnvironmentOK(fsp, true)
-	}
-
 	if !a.cfg().HasRuntimeModule(definitions.ControlBruteForce) {
 		a.refreshUserAccount()
-	}
-
-	if plan.environment {
-		if result, handled := a.handleLuaEnvironmentResult(ctx, fsp); handled {
-			return result
-		}
-
-		if result, handled := a.handlePluginEnvironmentResult(ctx, fsp); handled {
-			return result
-		}
 	}
 
 	if plan.tls {
@@ -662,93 +615,6 @@ func (a *AuthState) startEnvironmentEvaluation(ctx *gin.Context) (trace.Span, *r
 	requestScope := a.scopeRequestContext(fctx, ctx)
 
 	return fsp, requestScope
-}
-
-func (a *AuthState) handleLuaEnvironmentResult(ctx *gin.Context, span trace.Span) (definitions.AuthResult, bool) {
-	if triggered, skipRemainingEnvironment, err := a.checkLuaEnvironmentSource(ctx); err != nil {
-		span.RecordError(err)
-
-		if result, handled := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
-			current:  definitions.AuthResultTempFail,
-			decision: environmentDecisionTempFail,
-		}); handled {
-			return result, true
-		}
-
-		return definitions.AuthResultOK, true
-	} else if triggered {
-		if result, handled := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
-			current:                 definitions.AuthResultLuaEnvironment,
-			decision:                environmentDecisionLua,
-			reject:                  true,
-			continuePolicyAuthority: true,
-			markPolicyContinue:      true,
-		}); handled {
-			return result, true
-		}
-	} else if skipRemainingEnvironment {
-		if result, handled := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
-			current:  definitions.AuthResultOK,
-			decision: environmentDecisionAbort,
-		}); handled {
-			return result, true
-		}
-
-		return definitions.AuthResultOK, true
-	}
-
-	return definitions.AuthResultUnset, false
-}
-
-// handlePluginEnvironmentResult executes native environment sources and maps their outcome into pre-auth semantics.
-func (a *AuthState) handlePluginEnvironmentResult(ctx *gin.Context, span trace.Span) (definitions.AuthResult, bool) {
-	bridge := getPluginEnvironmentSourceBridge()
-	if bridge == nil {
-		return definitions.AuthResultUnset, false
-	}
-
-	triggered, abort, handled, err := bridge.Evaluate(ctx, a.View())
-	if !handled {
-		return definitions.AuthResultUnset, false
-	}
-
-	if err != nil {
-		span.RecordError(err)
-
-		if result, resolved := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
-			current:  definitions.AuthResultTempFail,
-			decision: environmentDecisionTempFail,
-		}); resolved {
-			return result, true
-		}
-
-		return definitions.AuthResultOK, true
-	}
-
-	if triggered {
-		if result, resolved := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
-			current:                 definitions.AuthResultLuaEnvironment,
-			decision:                environmentDecisionPlugin,
-			reject:                  true,
-			continuePolicyAuthority: true,
-			markPolicyContinue:      true,
-		}); resolved {
-			return result, true
-		}
-	}
-
-	if abort {
-		if result, resolved := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
-			current:  definitions.AuthResultOK,
-			decision: environmentDecisionAbort,
-		}); resolved {
-			return result, true
-		}
-
-		return definitions.AuthResultOK, true
-	}
-
-	return definitions.AuthResultUnset, false
 }
 
 func (a *AuthState) handleTLSEnvironmentResult(ctx *gin.Context, span trace.Span) (definitions.AuthResult, bool) {
@@ -845,7 +711,7 @@ func (a *AuthState) handleRBLEnvironmentResult(ctx *gin.Context, span trace.Span
 	return definitions.AuthResultOK
 }
 
-// resolvePreAuthEnvironmentOutcome delegates selection to the active request-local authority.
+// resolvePreAuthEnvironmentOutcome records the host result for generation-owned selection.
 func (a *AuthState) resolvePreAuthEnvironmentOutcome(
 	ctx *gin.Context,
 	span trace.Span,
@@ -860,31 +726,10 @@ func (a *AuthState) resolvePreAuthEnvironmentOutcome(
 		return outcome.current, true
 	}
 
-	if result, handled := a.configuredPolicyPreAuthResult(ctx, outcome.current); handled {
-		markEnvironmentRejected(ctx, outcome.reject)
-		span.End()
-
-		return result, true
-	}
-
-	if a.HasConfiguredPreAuthPolicyAuthority(ctx) {
-		if outcome.markPolicyContinue {
-			span.SetAttributes(attribute.String(policyContinueAttribute, policyContinueConfigured))
-		}
-
-		if outcome.continuePolicyAuthority {
-			return definitions.AuthResultOK, false
-		}
-
-		span.End()
-
-		return definitions.AuthResultOK, true
-	}
-
 	markEnvironmentRejected(ctx, outcome.reject)
 	span.End()
 
-	return a.defaultPolicyPreAuthResult(ctx, outcome.current), true
+	return outcome.current, true
 }
 
 func markEnvironmentRejected(ctx *gin.Context, reject bool) {

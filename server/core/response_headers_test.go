@@ -46,8 +46,7 @@ func setupMinimalConfig(t *testing.T) {
 	config.SetTestFile(cfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
-	// Ensure core default seams are initialized for legacy response/header paths.
-	corepkg.SetDefaultConfigFile(config.GetFile())
+	// Ensure non-policy response dependencies are initialized for this boundary.
 	corepkg.SetDefaultEnvironment(config.GetEnvironment())
 	corepkg.SetDefaultLogger(log.Logger)
 }

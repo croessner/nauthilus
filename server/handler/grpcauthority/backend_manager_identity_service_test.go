@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
+	_ "github.com/croessner/nauthilus/v3/server/pluginruntime"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/pquerna/otp/totp"
 	"google.golang.org/grpc/codes"
@@ -173,6 +174,43 @@ func TestBackendManagerIdentityServiceUsesBackchannelProfileForUnboundResolveUse
 
 	if lookupInput.Context.Transport.GRPCMethod != identityv1.IdentityBackendService_ResolveUser_FullMethodName {
 		t.Fatalf("unbound ResolveUser method = %q", lookupInput.Context.Transport.GRPCMethod)
+	}
+}
+
+func TestServerDepsPreservesPluginBackendFactoryForSpecializedIdentityOperation(t *testing.T) {
+	input := authorityMFATestInput("native/mfa", "plugin-user@example.test")
+	input.Backend.Type = definitions.BackendPluginName
+	input.Operation = AuthorityOperationBeginTOTPRegistration
+	outcome := authorityMFATestOutcome(input)
+
+	var (
+		factoryCalls int
+		backendName  string
+	)
+
+	factory := func(name string, deps core.AuthDeps) core.BackendManager {
+		factoryCalls++
+		backendName = name
+
+		return core.NewTestBackendManager(name, deps)
+	}
+	service := (ServerDeps{
+		Cfg:                  authorityMFATestAuthDeps().Cfg,
+		Env:                  config.NewTestEnvironmentConfig(),
+		PluginBackendFactory: factory,
+	}).authorityIdentityService(&recordingAuthorityMFAApplicationService{lookupOutcome: outcome})
+
+	result, err := service.BeginTOTPRegistration(context.Background(), input)
+	if err != nil {
+		t.Fatalf("BeginTOTPRegistration() error = %v", err)
+	}
+
+	if factoryCalls != 1 || backendName != input.Backend.Name {
+		t.Fatalf("plugin backend factory calls/name = %d/%q, want 1/%q", factoryCalls, backendName, input.Backend.Name)
+	}
+
+	if result == nil || result.PendingRegistrationID == "" {
+		t.Fatalf("BeginTOTPRegistration() result = %#v, want specialized operation result", result)
 	}
 }
 

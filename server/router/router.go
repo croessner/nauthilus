@@ -20,16 +20,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// StaticArtifactReader supplies exact bytes captured before route registration.
+type StaticArtifactReader interface {
+	ReadFile(path string) ([]byte, error)
+}
+
 // Router is a small builder around gin.Engine to assemble middlewares and routes
 // without leaking application-specific logic into this package.
 type Router struct {
-	Engine *gin.Engine
-	Cfg    config.File
+	Engine    *gin.Engine
+	Cfg       config.File
+	artifacts StaticArtifactReader
 }
 
-// NewRouter creates a new Router builder with a fresh gin.Engine.
-func NewRouter(cfg config.File) *Router {
-	return &Router{Engine: gin.New(), Cfg: cfg}
+// NewRouter creates a new Router builder with a fresh gin.Engine and its sealed static-file authority.
+func NewRouter(cfg config.File, artifacts StaticArtifactReader) *Router {
+	return &Router{Engine: gin.New(), Cfg: cfg, artifacts: artifacts}
 }
 
 // Build returns the underlying gin.Engine.

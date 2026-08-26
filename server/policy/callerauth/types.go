@@ -21,6 +21,7 @@ import (
 	"errors"
 	"reflect"
 
+	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/secret"
 )
 
@@ -30,6 +31,12 @@ var (
 
 	// ErrConfiguration identifies an invalid immutable caller-authentication generation.
 	ErrConfiguration = errors.New("invalid policy caller authentication configuration")
+
+	// ErrBasicThrottleLimit identifies a Policy-Basic identity whose bounded failure window is full.
+	ErrBasicThrottleLimit = errors.New("policy Basic authentication is throttled")
+
+	// ErrBasicThrottleState identifies malformed Policy-Basic failure state.
+	ErrBasicThrottleState = errors.New("invalid policy Basic throttle state")
 )
 
 // AccessTokenValidator returns only issuer-validated access-token evidence.
@@ -54,10 +61,28 @@ type Configuration struct {
 	RequireGRPCMTLS       bool
 }
 
+// RequiresBasicThrottler reports whether any candidate profile declares Policy-Basic material or kind.
+func (c Configuration) RequiresBasicThrottler() bool {
+	for _, profile := range c.ExternalProfiles {
+		if profile.Basic != nil {
+			return true
+		}
+
+		for _, kind := range profile.AuthenticationKinds {
+			if kind == policy.CallerAuthenticationKindBasic {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // TransportCapabilities declares enabled Policy transports capable of satisfying protection.
 type TransportCapabilities struct {
-	HTTPProtected bool
-	GRPCProtected bool
+	HTTPProtected                 bool
+	GRPCProtected                 bool
+	GRPCVerifiedClientCertificate bool
 }
 
 // ExternalProfile binds one exact OAuth principal to allowed primary authentication kinds.

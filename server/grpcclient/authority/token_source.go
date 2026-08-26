@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -29,6 +28,7 @@ type BearerTokenSource interface {
 // BearerTokenSourceOptions contains dependencies for a bearer token source.
 type BearerTokenSourceOptions struct {
 	Config           *config.AuthorityOIDCBearerSection
+	Artifacts        *config.ArtifactSnapshot
 	Redis            rediscli.Client
 	HTTPClient       *http.Client
 	Now              func() time.Time
@@ -38,13 +38,16 @@ type BearerTokenSourceOptions struct {
 }
 
 type bearerTokenSource struct {
-	cfg              *config.AuthorityOIDCBearerSection
-	redis            rediscli.Client
-	httpClient       *http.Client
-	now              func() time.Time
-	authorityName    string
-	strictSplitMode  bool
-	staticTokenFiles bool
+	cfg               *config.AuthorityOIDCBearerSection
+	redis             rediscli.Client
+	httpClient        *http.Client
+	now               func() time.Time
+	privateKeySigner  signing.Signer
+	preparationErr    error
+	authorityName     string
+	sealedStaticToken string
+	strictSplitMode   bool
+	staticTokenFiles  bool
 }
 
 type cachedBearerToken struct {
@@ -70,7 +73,7 @@ func NewBearerTokenSource(opts BearerTokenSourceOptions) BearerTokenSource {
 		httpClient = http.DefaultClient
 	}
 
-	return &bearerTokenSource{
+	source := &bearerTokenSource{
 		cfg:              opts.Config,
 		redis:            opts.Redis,
 		httpClient:       httpClient,
@@ -79,6 +82,9 @@ func NewBearerTokenSource(opts BearerTokenSourceOptions) BearerTokenSource {
 		strictSplitMode:  opts.StrictSplitMode,
 		staticTokenFiles: opts.StaticTokenFiles,
 	}
+	source.preparationErr = source.prepareSealedCredentials(opts.Artifacts)
+
+	return source
 }
 
 // Token returns a caller bearer token, refreshing it under a distributed lock when needed.
@@ -103,6 +109,10 @@ func (s *bearerTokenSource) Token(ctx context.Context) (string, error) {
 func (s *bearerTokenSource) validate() error {
 	if s == nil || s.cfg == nil {
 		return fmt.Errorf("authority bearer token source is not configured")
+	}
+
+	if s.preparationErr != nil {
+		return s.preparationErr
 	}
 
 	return nil
@@ -155,12 +165,7 @@ func (s *bearerTokenSource) staticToken() (string, error) {
 		return "", fmt.Errorf("authority static token files are not enabled")
 	}
 
-	raw, err := os.ReadFile(s.cfg.GetStaticTokenFile())
-	if err != nil {
-		return "", fmt.Errorf("read authority static token file: %w", err)
-	}
-
-	token := strings.TrimSpace(string(raw))
+	token := s.sealedStaticToken
 	if token == "" {
 		return "", fmt.Errorf("authority static token file is empty")
 	}
@@ -374,34 +379,13 @@ func (s *bearerTokenSource) cachedTokenFromResponse(tokenResponse tokenEndpointR
 }
 
 func (s *bearerTokenSource) privateKeyJWT() (string, error) {
-	raw, err := os.ReadFile(s.cfg.ClientPrivateKeyFile)
-	if err != nil {
-		return "", fmt.Errorf("read private_key_jwt key: %w", err)
-	}
-
-	alg := s.cfg.ClientAssertionAlg
-	if alg == "" {
-		alg = signing.AlgorithmRS256
-	}
-
-	var signer signing.Signer
-
-	switch alg {
-	case signing.AlgorithmEdDSA:
-		signer, err = signing.NewEdDSASignerFromPEM(string(raw), s.cfg.ClientKeyID)
-	case signing.AlgorithmRS256:
-		signer, err = signing.NewRS256SignerFromPEM(string(raw), s.cfg.ClientKeyID)
-	default:
-		err = fmt.Errorf("unsupported private_key_jwt algorithm %q", alg)
-	}
-
-	if err != nil {
-		return "", err
+	if s.privateKeySigner == nil {
+		return "", fmt.Errorf("private_key_jwt signer is not prepared")
 	}
 
 	now := s.now()
 
-	return signer.Sign(jwt.MapClaims{
+	return s.privateKeySigner.Sign(jwt.MapClaims{
 		"iss": s.cfg.GetClientID(),
 		"sub": s.cfg.GetClientID(),
 		"aud": s.jwtAudience(),
@@ -409,6 +393,54 @@ func (s *bearerTokenSource) privateKeyJWT() (string, error) {
 		"exp": now.Add(time.Minute).Unix(),
 		"jti": ksuid.New().String(),
 	})
+}
+
+// prepareSealedCredentials freezes token-file and private-key material during source construction.
+func (s *bearerTokenSource) prepareSealedCredentials(artifacts *config.ArtifactSnapshot) error {
+	if s == nil || s.cfg == nil {
+		return nil
+	}
+
+	if path := s.cfg.GetStaticTokenFile(); path != "" {
+		raw, err := readSealedAuthorityArtifact(artifacts, path, "authority static token file")
+		if err != nil {
+			return err
+		}
+
+		s.sealedStaticToken = strings.TrimSpace(string(raw))
+		clear(raw)
+	}
+
+	if !s.cfg.IsEnabled() || s.cfg.GetTokenEndpointAuthMethod() != clientauth.MethodPrivateKeyJWT {
+		return nil
+	}
+
+	raw, err := readSealedAuthorityArtifact(artifacts, s.cfg.ClientPrivateKeyFile, "private_key_jwt key")
+	if err != nil {
+		return err
+	}
+	defer clear(raw)
+
+	s.privateKeySigner, err = newAuthorityPrivateKeySigner(s.cfg, string(raw))
+
+	return err
+}
+
+// newAuthorityPrivateKeySigner parses one exact configured private_key_jwt key.
+func newAuthorityPrivateKeySigner(cfg *config.AuthorityOIDCBearerSection, pemData string) (signing.Signer, error) {
+	algorithm := cfg.ClientAssertionAlg
+	if algorithm == "" {
+		algorithm = signing.AlgorithmRS256
+	}
+
+	switch algorithm {
+	case signing.AlgorithmEdDSA:
+		return signing.NewEdDSASignerFromPEM(pemData, cfg.ClientKeyID)
+	case signing.AlgorithmRS256:
+		return signing.NewRS256SignerFromPEM(pemData, cfg.ClientKeyID)
+	default:
+		return nil, fmt.Errorf("unsupported private_key_jwt algorithm %q", algorithm)
+	}
 }
 
 func (s *bearerTokenSource) jwtAudience() string {

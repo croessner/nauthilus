@@ -19,6 +19,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -48,4 +50,61 @@ func registeredRoutes(router *gin.Engine) map[string]bool {
 	}
 
 	return routes
+}
+
+func TestProjectAuthOutcomeForHTTPPreservesDecisionWhileNormalizingSurface(t *testing.T) {
+	tests := []struct {
+		name           string
+		service        string
+		decision       core.AuthDecision
+		status         int
+		wantStatus     int
+		wantAttributes bool
+	}{
+		{
+			name:           "JSON success gets an empty attribute object",
+			service:        definitions.ServJSON,
+			decision:       core.AuthDecisionOK,
+			status:         http.StatusOK,
+			wantStatus:     http.StatusOK,
+			wantAttributes: true,
+		},
+		{
+			name:       "NGINX failure keeps its decision and uses auth-http status",
+			service:    definitions.ServNginx,
+			decision:   core.AuthDecisionFail,
+			status:     http.StatusForbidden,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "header failure keeps the application status",
+			service:    definitions.ServHeader,
+			decision:   core.AuthDecisionFail,
+			status:     http.StatusForbidden,
+			wantStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			original := &core.AuthOutcome{Decision: test.decision, HTTPStatus: test.status}
+			projected := projectAuthOutcomeForHTTP(core.AuthInput{Service: test.service}, original)
+
+			if projected.Decision != test.decision {
+				t.Fatalf("projected decision = %q, want %q", projected.Decision, test.decision)
+			}
+
+			if projected.HTTPStatus != test.wantStatus {
+				t.Fatalf("projected status = %d, want %d", projected.HTTPStatus, test.wantStatus)
+			}
+
+			if (projected.Attributes != nil) != test.wantAttributes {
+				t.Fatalf("projected attributes nil = %t, want attributes = %t", projected.Attributes == nil, test.wantAttributes)
+			}
+
+			if original.HTTPStatus != test.status || original.Attributes != nil {
+				t.Fatalf("projection mutated original outcome: %#v", original)
+			}
+		})
+	}
 }

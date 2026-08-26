@@ -19,6 +19,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/lualib"
@@ -71,6 +72,9 @@ type LuaRequest struct {
 
 	// PolicyContext carries the request-local policy collector for backend emissions.
 	PolicyContext *policycollection.DecisionContext
+
+	// Tolerate carries the request-owned brute-force tolerance authority.
+	Tolerate tolerate.Tolerate
 
 	// LuaReplyChan is a channel to receive the response from the Lua backend.
 	LuaReplyChan chan *lualib.LuaBackendResult

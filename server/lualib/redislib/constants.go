@@ -17,6 +17,8 @@ package redislib
 
 const (
 	redisLuaPoolDefault        = "default"
+	redisLuaPoolModeStandalone = "standalone"
+	redisLuaPoolModeCluster    = "cluster"
 	redisLuaPoolModeSentinel   = "sentinel"
 	redisLuaPoolModeSentinelRO = "sentinel_replica"
 )

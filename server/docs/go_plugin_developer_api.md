@@ -648,6 +648,11 @@ native Go plugin exchange standard. Native Go plugins should not read or write `
 Passwords are not present in the snapshot. Components that need request credentials must use the request-scoped
 `CredentialProvider` and must require the `credentials` capability during registration:
 
+Top-level Policy provider/effect `secrets` maps are not a plugin configuration
+channel. Production candidate validation rejects a non-empty map because the v1
+API has no typed carrier for it; use a file or plugin-owned external secret
+source for long-lived credentials.
+
 ```go
 secret, ok := request.Credentials.Password(ctx)
 if !ok || secret.IsZero() {
@@ -758,8 +763,8 @@ Evidence sources: `server/lualib/request.go`, `server/definitions/const.go`, bun
 | `Authenticated` | `authenticated` | `RequestSnapshot.Runtime.Authenticated`; `BackendResult.Authenticated`. | `exposed` | Populated by auth and hook adapters where metadata exists. |
 | `NoAuth` | `no_auth` | `RequestSnapshot.Runtime.NoAuth`; `RequestSnapshot.Runtime.LocalRequest`. | `exposed` | `LocalRequest` is kept as a compatibility alias for `NoAuth`. |
 | `EnvironmentRejected` | `environment_rejected` | `RequestSnapshot.Runtime.EnvironmentRejected`. | `exposed` | Populated from request context and hook metadata where known. |
-| `EnvironmentStageExpected` | `environment_stage_expected` | `RequestSnapshot.Runtime.EnvironmentStageExpected`. | `exposed` | Populated from configured Lua environment sources and hook metadata. |
-| `SubjectStageExpected` | `subject_stage_expected` | `RequestSnapshot.Runtime.SubjectStageExpected`. | `exposed` | Populated from configured Lua subject sources and hook metadata. |
+| `EnvironmentStageExpected` | `environment_stage_expected` | `RequestSnapshot.Runtime.EnvironmentStageExpected`. | `exposed` | Populated from the active Policy generation's Lua environment provider schedule and hook metadata. |
+| `SubjectStageExpected` | `subject_stage_expected` | `RequestSnapshot.Runtime.SubjectStageExpected`. | `exposed` | Populated from the active Policy generation's Lua subject provider schedule and hook metadata. |
 | `MFACompleted` | `mfa_completed` | `RequestSnapshot.IDP.MFACompleted`. | `exposed` | Populated from IDP session state and hook metadata. |
 
 ### Helper Modules And Script Families
@@ -834,13 +839,13 @@ WebAuthn credential values. These are documented differences, not claims that re
 
 ```mermaid
 flowchart TD
-    A["Pre-auth request"] --> B["Lua environment sources"]
+    A["Pre-auth request"] --> B["Generation-owned Lua environment providers"]
     B --> C["Go environment sources"]
     C --> D["Built-in pre-auth controls"]
     D --> E["Backend authentication"]
-    E --> F["Lua subject sources before native boundary"]
+    E --> F["Generation-owned Lua subject providers before native boundary"]
     F --> G["Go subject sources"]
-    G --> M["Lua subject sources deferred by policy after"]
+    G --> M["Generation-owned Lua subject providers deferred by domain-plan after"]
     M --> H["Policy decision"]
     H --> I["Synchronous obligations"]
     H --> J["Asynchronous post-actions"]
@@ -905,10 +910,10 @@ failure follows the shared `indeterminate|continue` scheduler semantics, includi
 schema, source, namespace, authority, and collision failures always fail closed. Logs, metrics, and traces must use
 bounded identities and classes rather than caller data, fact values, parameters, secrets, or raw errors.
 
-Existing native authentication components remain implicitly `authn`-only and retain their existing request/result
-contracts. Registering a generic decision provider does not widen or reroute those extensions. The generic native
-candidate machinery is available for isolated preparation and runtime tests; production publication of the standalone
-top-level `policy` root remains a later atomic cutover and is not active yet.
+Existing native authentication components remain `authn`-only and retain their existing request/result contracts.
+Registering a generic decision provider does not widen or reroute those extensions. The exact configured generic subset
+is prepared, validated, and frozen into the same production generation as the catalog and routes; a failed candidate
+leaves the previous generation active.
 
 ### Environment Sources
 
@@ -946,7 +951,8 @@ func (riskSource) Evaluate(ctx context.Context, request pluginapi.EnvironmentReq
 Register policy attributes for every fact you return. Unknown facts fail safely.
 
 Dependency scheduling uses `SourceDescriptor.Requires` and `SourceDescriptor.After` within the registered Go source set.
-The current implementation does not build one combined Lua and Go source graph.
+Those descriptor dependencies form only the native source subgraph. The active Policy generation owns the Lua provider
+schedule and the domain-plan boundary that orders generation-owned Lua providers around the native bridge.
 
 ### Subject Sources
 
@@ -1277,12 +1283,13 @@ Bundled action replacements use the same policy effect registry:
 
 | Native effect ID | Replaces | Notes |
 | --- | --- | --- |
-| `clickhouse.post_action` | `server/lua-plugins.d/actions/clickhouse.lua` | Uses host HTTP, Redis, cache, metrics, tracing, and connection-target facades. It reads `plugin.exchange.haveibeenpwnd.hash_info` from plan runtime when HIBP is ordered before ClickHouse, derives `decision_sources` from `plugin.exchange.*` and policy facts, and does not write the Lua `rt.post_clickhouse = true` marker back to live request runtime. |
-| `haveibeenpwnd.post_action` | `server/lua-plugins.d/actions/haveibeenpwnd.lua` | Requires the `credentials` capability and uses the request-scoped credential provider. When `mail.enabled: true`, it also requires `CapabilityMail` and sends SMTP/LMTP notifications through `Host.Mail("haveibeenpwnd")`. Positive hits publish `plugin.exchange.haveibeenpwnd` through plan runtime; the legacy `rt.action_haveibeenpwnd` marker remains intentionally omitted. |
+| `authn/plugin.clickhouse.post_action` | `server/lua-plugins.d/actions/clickhouse.lua` | Maps to the unchanged `clickhouse.post_action` component through the authn generation. It uses host HTTP, Redis, cache, metrics, tracing, and connection-target facades. It reads `plugin.exchange.haveibeenpwnd.hash_info` from plan runtime when HIBP is ordered before ClickHouse, derives `decision_sources` from `plugin.exchange.*` and policy facts, and does not write the Lua `rt.post_clickhouse = true` marker back to live request runtime. |
+| `authn/plugin.haveibeenpwnd.post_action` | `server/lua-plugins.d/actions/haveibeenpwnd.lua` | Maps to the unchanged `haveibeenpwnd.post_action` component through the authn generation. It requires the `credentials` capability and uses the request-scoped credential provider. When `mail.enabled: true`, it also requires `CapabilityMail` and sends SMTP/LMTP notifications through `Host.Mail("haveibeenpwnd")`. Positive hits publish `plugin.exchange.haveibeenpwnd` through plan runtime; the legacy `rt.action_haveibeenpwnd` marker remains intentionally omitted. |
 
-When porting a Lua action, keep the policy selection model unchanged: register a post-action target, configure the module,
-and reference `<module>.<component>` in policy obligations. Adding or removing the module, changing module identity, or
-replacing the `.so` artifact requires a process restart; config-only swaps can be implemented through `Reconfigure`.
+When porting a Lua action, keep the policy selection model unchanged: register a post-action target, configure the
+module, and reference `authn/plugin.<module>.<component>` in authn Policy obligations. The component remains internally
+qualified as `<module>.<component>`; no bare Policy alias exists. Adding or removing the module, changing module identity
+or config, or replacing the `.so` artifact requires a process restart.
 Capability acquisition happens during registration, so enabling a feature that was disabled at registration time may need
 a restart even when the config keys themselves live under the plugin-owned `config` block.
 
@@ -1400,15 +1407,16 @@ Use `ProducerTypes` for plugin-owned facts that may be emitted by any active com
 normal path for native environment, subject, backend, and account-provider facts because plugin code can know the check
 type contract without knowing the operator's local policy check names.
 
-Use `ProducerCheck` only when the plugin and operator intentionally agree on one compiled policy check name. The value
-must be the policy check name from `auth.policy.checks[].name`, such as `plugin_subject_example_auth_policy`; it is not
-the plugin component ID (`geoip.environment`, `example_auth.policy`) and Nauthilus does not normalize component IDs into
-check names.
+Use `ProducerCheck` only when the plugin and operator intentionally agree on one provider-instance name. The value must
+be the `name` below
+`policy.namespaces.authn.domain_plans.<plan>.checkpoints.<checkpoint>.providers[]`, such as
+`plugin_subject_example_auth_policy`; it is not the plugin component ID (`geoip.environment`, `example_auth.policy`),
+and Nauthilus does not normalize component IDs into provider-instance names.
 
 Facts returned from environment, subject, backend password verification, account-list operations, and obligations are
-validated against the active policy snapshot. Unknown attributes fail safely. Account-list facts are emitted as
-`account_provider` policy attributes after validation. Facts are policy evidence, not public logs. To intentionally
-expose a selected value in request logs, return `LogField` entries directly or use
+validated against the catalog captured by the active Policy generation. Unknown attributes fail safely. Account-list
+facts are emitted as `account_provider` policy attributes after validation. Facts are policy evidence, not public logs.
+To intentionally expose a selected value in request logs, return `LogField` entries directly or use
 `pluginapi.PublicPolicyFactLogField(namespace, key, value)`, which produces stable `policy_fact_<namespace>_<key>` log
 keys.
 
@@ -1530,7 +1538,7 @@ The following implementation notes are visible in the current codebase and shoul
 | Backend result patching | Subject sources can patch account, account field, auth flags, selected backend, and string attributes through `BackendResultPatch`. Identity metadata, groups, status, facts, and MFA values are outside the patch. | Return explicit value patches and keep plugin-owned state inside the module instance. |
 | LDAP results | `Host.LDAP().Search` returns an explicit `LDAPSearchResult`; `Modify` returns its error. Entry values are copied public `LDAPEntry` values and are not attached to backend-result state. | Call LDAP explicitly, handle errors, then deliberately return allowed plugin outputs. |
 | Response mutation | Subject sources and synchronous obligations can set or delete allowed response headers while the HTTP response is still mutable. Post-actions have no response mutation field. | Use result-bound `ResponseMutation`; do not expect async work, gRPC paths, already-written responses, or forbidden headers to mutate client output. |
-| Effect requests | Native obligations and post-actions receive policy-selected `Args` and validated Lua/native plugin `Facts` from the active decision context. | Keep effects policy-selected; use explicit logs for public output and register every fact before emission. Use `clickhouse.post_action` and `haveibeenpwnd.post_action` for the bundled native action replacements. |
+| Effect requests | Native obligations and post-actions receive policy-selected `Args` and validated Lua/native plugin `Facts` from the active decision context. | Keep effects policy-selected; use explicit logs for public output and register every fact before emission. Use `authn/plugin.clickhouse.post_action` and `authn/plugin.haveibeenpwnd.post_action` for the bundled native action replacements. |
 | Generic decision facts | An exact operator-configured subset of registered `DecisionFactProvider` capabilities is resolved and frozen during candidate-generation preparation. Calls use immutable redacted requests, context deadlines, the shared scheduler, and strict schema/source/namespace/authority validation. | Keep descriptors exact and bounded; emit only declared local outputs. Registration alone never activates a target or provider. |
 | Generic decision effects | Only selected, target-valid, parameter-valid `host_sync` and `host_post_action` effects reach `DecisionEffectProvider`. Post-actions use supervisor acceptance and the response-finalization gate; advice and `return_only` obligations never invoke a provider. | Treat each call as one at-most-once attempt. Report ambiguity as `outcome_unknown`; do not expect host retries or a public idempotency key. |
 | Generic generation lifecycle | Native provider references and their configured capability subset are immutable generation bindings. Config deactivation applies to a newly published generation while older leased generations drain; module or artifact addition, removal, or replacement remains restart-required. | Keep one loaded module instance safe for concurrent calls and do not interpret config reload as code replacement or unload. |
@@ -1546,10 +1554,10 @@ The following implementation notes are visible in the current codebase and shoul
 | Module `stop_timeout` | `plugins.modules[].stop_timeout` is applied to each module `Stop` call inside the outer shutdown context. | Keep `Stop` idempotent and bounded by its context. |
 | Host-supervised worker waiting | `Host.Go` launches supervised workers, logs panics, and `Runner.Stop` waits for workers after module stop until the shutdown context expires. | Start long-running plugin workers through `Host.Go` and exit promptly when the worker context is canceled. |
 | Plugin account listing | `plugin(<module>.<backend>)` account-provider configuration dispatches to plugin `Backend.ListAccounts`. | Return stable account names and use `AccountListResult.Facts` for registered account-provider policy facts. |
-| Account-list facts | `AccountListResult.Facts` are validated and emitted as `account_provider` policy attributes. | Register every account-provider fact before policy snapshots compile. |
+| Account-list facts | `AccountListResult.Facts` are validated and emitted as `account_provider` policy attributes. | Register every account-provider fact before candidate Policy generation preparation. |
 | Native hooks | `HookRequest` carries redacted headers, query values, path, method, body, and snapshot values; `HookResponse` maps status, safe headers, and body. HEAD responses write no body. | Keep route ownership in Nauthilus and return only API-level values. Use standard `net/http` status constants. |
 | Hook path collisions | Duplicate native hook canonical method/path keys and duplicate alias keys are rejected while building the native hook index. | Choose globally unique hook paths and aliases; ambiguous bindings are not routable. |
-| Mixed Lua and Go source scheduling | Subject checks normally retain the existing whole-Lua-then-native order. A `lua.subject` policy check may declare `after: [<plugin.subject check>]`; the host then executes non-deferred Lua checks, the native subject bridge, and the deferred Lua checks in that order. | Use policy check names for the cross-source dependency. `SourceDescriptor.Requires` and `SourceDescriptor.After` remain native-only. The compiler rejects graphs that would require a second native boundary after deferred Lua execution. |
+| Mixed Lua and Go source scheduling | In an active authn domain-plan checkpoint, Lua subject provider instances normally retain the whole-Lua-then-native order. A Lua subject provider instance may declare `after: [<native provider instance>]`; the generation scheduler then executes non-deferred Lua providers, the native subject bridge, and deferred Lua providers in that order. | Use checkpoint-local provider-instance names for the cross-source dependency. `SourceDescriptor.Requires` and `SourceDescriptor.After` remain native-only. Candidate generation rejects graphs that would require a second native boundary after deferred Lua execution. |
 | Plugin-owned libraries | SQL drivers, Telegram clients, template engines, custom mail stacks beyond `Host.Mail`, raw sockets, extra Redis pools, and the Lua GeoIP bridge are outside the host-managed v1 facades. | Own config, lifecycle, deadlines, retries, metrics, traces, and redaction inside the plugin module; expose only safe facts, logs, and status values to Nauthilus. |
 
 ## Developer Checklist

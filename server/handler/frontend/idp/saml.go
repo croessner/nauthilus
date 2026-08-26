@@ -54,6 +54,7 @@ import (
 // SAMLHandler handles SAML 2.0 protocol requests.
 type SAMLHandler struct {
 	deps                              *deps.Deps
+	artifacts                         *config.ArtifactSnapshot
 	idp                               samlIdentityProvider
 	tracer                            monittrace.Tracer
 	sloRateLimiter                    *limit.IPRateLimiter
@@ -171,6 +172,7 @@ func (l *samlLogger) Panicln(v ...any) {
 func NewSAMLHandler(d *deps.Deps, provider samlIdentityProvider) *SAMLHandler {
 	return &SAMLHandler{
 		deps:           d,
+		artifacts:      identityArtifactSnapshot(d.Cfg),
 		idp:            provider,
 		tracer:         monittrace.New("nauthilus/idp/saml"),
 		sloRateLimiter: newSLORateLimiter(d),
@@ -340,7 +342,7 @@ func (h *SAMLHandler) GetServiceProvider(_ *http.Request, serviceProviderID stri
 
 	// If SP certificate is configured, add KeyDescriptor for signature
 	// verification and assertion encryption.
-	keyDescriptors, err := buildSPKeyDescriptors(sp)
+	keyDescriptors, err := buildSPKeyDescriptors(h.artifacts, sp)
 	if err != nil {
 		return nil, err
 	}
@@ -357,8 +359,11 @@ func (h *SAMLHandler) GetServiceProvider(_ *http.Request, serviceProviderID stri
 
 // buildSPKeyDescriptors parses the SP certificate and returns KeyDescriptors
 // for the EntityDescriptor. Returns nil if no certificate is configured.
-func buildSPKeyDescriptors(sp *config.SAML2ServiceProvider) ([]saml.KeyDescriptor, error) {
-	certStr, err := sp.GetCert()
+func buildSPKeyDescriptors(
+	artifacts *config.ArtifactSnapshot,
+	sp *config.SAML2ServiceProvider,
+) ([]saml.KeyDescriptor, error) {
+	certStr, err := identityArtifactContent(artifacts, sp.Cert, sp.CertFile, "SAML SP certificate")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read SP certificate: %w", err)
 	}
@@ -391,12 +396,12 @@ func buildSPKeyDescriptors(sp *config.SAML2ServiceProvider) ([]saml.KeyDescripto
 func (h *SAMLHandler) getSAMLIDP() (*saml.IdentityProvider, error) {
 	samlCfg := h.deps.Cfg.GetIDP().SAML2
 
-	certStr, err := samlCfg.GetCert()
+	certStr, err := identityArtifactContent(h.artifacts, samlCfg.Cert, samlCfg.CertFile, "SAML IdP certificate")
 	if err != nil {
 		return nil, err
 	}
 
-	keyStr, err := samlCfg.GetKey()
+	keyStr, err := identityArtifactContent(h.artifacts, samlCfg.Key, samlCfg.KeyFile, "SAML IdP private key")
 	if err != nil {
 		return nil, err
 	}

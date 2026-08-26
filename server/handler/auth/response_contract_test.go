@@ -16,6 +16,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -132,11 +133,9 @@ func TestAuthHandlerResponsesMatchOpenAPIContract(t *testing.T) {
 func runAuthResponseContractCase(t *testing.T, tt authResponseContractCase) {
 	t.Helper()
 
-	router, mock, cfg := newAuthResponseContractRouter(t, authResponseContractBackendName+"_"+tt.name)
+	router, mock, _ := newAuthResponseContractRouter(t, authResponseContractBackendName+"_"+tt.name)
 	request := tt.request(t, tt.username)
 	recorder := httptest.NewRecorder()
-
-	expectAuthAccountMappingSync(mock, cfg, tt.username, tt.protocol, tt.username)
 
 	router.ServeHTTP(recorder, request)
 
@@ -202,7 +201,7 @@ func newAuthResponseHeaderRequest(path string) func(*testing.T, string) *http.Re
 func TestAuthNginxFailureResponseIncludesWaitHeader(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router, mock, cfg := newAuthResponseContractRouter(t, authResponseContractBackendName+"_nginx_failure")
+	router, mock, _ := newAuthResponseContractRouter(t, authResponseContractBackendName+"_nginx_failure")
 	username := "nginx-failure-response@example.test"
 	validator := requesttest.NewManagementValidator(t)
 
@@ -211,8 +210,6 @@ func TestAuthNginxFailureResponseIncludesWaitHeader(t *testing.T) {
 		authResponseContractHeaders(username, authResponseContractPassword, definitions.ProtoIMAP),
 	)
 	successRecorder := httptest.NewRecorder()
-
-	expectAuthAccountMappingSync(mock, cfg, username, definitions.ProtoIMAP, username)
 
 	router.ServeHTTP(successRecorder, successRequest)
 
@@ -234,9 +231,11 @@ func TestAuthNginxFailureResponseIncludesWaitHeader(t *testing.T) {
 	)
 	failureRecorder := httptest.NewRecorder()
 
-	expectAuthAccountMappingSync(mock, cfg, username, definitions.ProtoIMAP, username)
-
 	router.ServeHTTP(failureRecorder, failureRequest)
+
+	if failureRecorder.Code != http.StatusOK {
+		t.Fatalf("NGINX authentication failure status = %d, want 200", failureRecorder.Code)
+	}
 
 	requesttest.AssertRecorderResponse(t, validator, failureRequest, failureRecorder, requesttest.ResponseValidation{
 		ExpectedMediaType: authResponseMediaJSON,
@@ -288,10 +287,8 @@ func newAuthResponseContractRouter(t *testing.T, backendName string) (*gin.Engin
 
 	config.SetTestEnvironmentConfig(env)
 	config.SetTestFile(cfg)
-	core.SetDefaultConfigFile(cfg)
 	core.SetDefaultEnvironment(env)
 	core.SetDefaultLogger(logger)
-	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultEnvironment(env)
 	util.SetDefaultLogger(logger)
 
@@ -304,6 +301,7 @@ func newAuthResponseContractRouter(t *testing.T, backendName string) (*gin.Engin
 		Logger: logger,
 		Redis:  rediscli.NewTestClient(db),
 	}
+	deps.AuthApplication = authResponseContractApplication{}
 
 	router := gin.New()
 	router.Use(func(ctx *gin.Context) {
@@ -314,6 +312,41 @@ func newAuthResponseContractRouter(t *testing.T, backendName string) (*gin.Engin
 	New(deps).Register(router.Group("/api/v1"))
 
 	return router, mock, cfg
+}
+
+type authResponseContractApplication struct{}
+
+// Authenticate returns one deterministic admitted transport-contract result.
+func (authResponseContractApplication) Authenticate(_ context.Context, input core.AuthInput) (*core.AuthOutcome, error) {
+	outcome := recordingAuthOutcome(input)
+	outcome.BackendName = authResponseContractBackendName
+	outcome.Protocol = input.Context.Protocol
+
+	passwordMatches := false
+
+	input.Credentials.Password.WithString(func(password string) {
+		passwordMatches = password == authResponseContractPassword
+	})
+
+	if passwordMatches {
+		return outcome, nil
+	}
+
+	outcome.Decision = core.AuthDecisionFail
+	outcome.HTTPStatus = http.StatusForbidden
+	outcome.StatusMessage = definitions.PasswordFail
+
+	return outcome, nil
+}
+
+// LookupIdentity delegates to the deterministic contract response.
+func (s authResponseContractApplication) LookupIdentity(ctx context.Context, input core.AuthInput) (*core.AuthOutcome, error) {
+	return s.Authenticate(ctx, input)
+}
+
+// ListAccounts returns a deterministic empty result for interface completeness.
+func (authResponseContractApplication) ListAccounts(context.Context, core.AuthInput) (*core.ListAccountsOutcome, error) {
+	return &core.ListAccountsOutcome{Decision: core.AuthDecisionOK, HTTPStatus: http.StatusOK}, nil
 }
 
 func expectAuthAccountMappingSync(mock redismock.ClientMock, cfg config.File, username, protocol, account string) {
@@ -381,6 +414,22 @@ func assertAuthSuccessEnvelope(t *testing.T, document map[string]any) {
 		if _, ok := document[field]; !ok {
 			t.Fatalf("auth response field %q missing in %#v", field, document)
 		}
+	}
+
+	if !isNonNullAuthAttributeObject(document["attributes"]) {
+		t.Fatalf("auth response attributes = %#v, want a non-null object", document["attributes"])
+	}
+}
+
+// isNonNullAuthAttributeObject accepts the map representation produced by JSON and CBOR decoders.
+func isNonNullAuthAttributeObject(value any) bool {
+	switch attributes := value.(type) {
+	case map[string]any:
+		return attributes != nil
+	case map[any]any:
+		return attributes != nil
+	default:
+		return false
 	}
 }
 

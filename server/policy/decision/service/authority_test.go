@@ -703,6 +703,7 @@ func mustRuntimeGeneration(
 	t.Helper()
 
 	generation, err := newRuntimeGeneration(id, runtimeGenerationDependencies{
+		material:      mustRuntimeGenerationMaterial(t, testPolicyAPIConfig(true, true, true), nil),
 		authenticator: authenticator,
 		admission:     admission,
 		evaluator:     evaluator,
@@ -812,6 +813,14 @@ func evaluateSessionCheckpoints(t *testing.T, session DecisionSession, names []s
 	}
 
 	for _, name := range names {
+		if concrete, ok := session.(*decisionSession); ok {
+			if _, scheduled := concrete.generation.evaluator.(authnHostScheduler); scheduled {
+				evaluateAuthnCheckpoint(t, session, name)
+
+				continue
+			}
+		}
+
 		checkpoint, err := NewCheckpoint(name, facts)
 		if err != nil {
 			t.Fatalf("NewCheckpoint(%q) error = %v", name, err)

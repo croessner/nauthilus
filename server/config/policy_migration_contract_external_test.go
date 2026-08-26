@@ -15,15 +15,11 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	legacyconfig "github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/go-viper/mapstructure/v2"
-	"go.yaml.in/yaml/v3"
 )
 
 type migrationEvidenceClass uint8
@@ -397,7 +393,7 @@ var policyMigrationContractCases = []policyMigrationContractCase{
 `,
 		expectedPath:                   "policy.namespaces.authn.providers.lua_environment_<old-name>",
 		expectedDefaultOrIdentity:      "The exact provider identity is `authn/lua_environment_<old-name>`.",
-		validationRule:                 "The provider kind is `lua_environment`; strict standalone decoding accepts only the canonical `script_path` field, which standalone validation requires to be non-empty; file/source resolvability belongs to candidate compilation.",
+		validationRule:                 "The provider kind is `lua_environment`; strict production decoding accepts only the canonical `script_path` field, which production validation requires to be non-empty; file/source resolvability belongs to candidate compilation.",
 		canonicalPath:                  "policy.namespaces.authn.providers.lua_environment_risk.kind",
 		authorityPath:                  "policy.namespaces.<name>.providers.<name>.kind",
 		canonicalValue:                 "lua_environment",
@@ -435,7 +431,7 @@ var policyMigrationContractCases = []policyMigrationContractCase{
 `,
 		expectedPath:                   "policy.namespaces.authn.providers.lua_subject_<old-name>",
 		expectedDefaultOrIdentity:      "The exact provider identity is `authn/lua_subject_<old-name>`.",
-		validationRule:                 "The provider kind is `lua_subject`; strict standalone decoding accepts only the canonical `script_path` field, which standalone validation requires to be non-empty; file/source resolvability belongs to candidate compilation.",
+		validationRule:                 "The provider kind is `lua_subject`; strict production decoding accepts only the canonical `script_path` field, which production validation requires to be non-empty; file/source resolvability belongs to candidate compilation.",
 		canonicalPath:                  "policy.namespaces.authn.providers.lua_subject_risk.kind",
 		authorityPath:                  "policy.namespaces.<name>.providers.<name>.kind",
 		canonicalValue:                 "lua_subject",
@@ -760,10 +756,7 @@ func TestPolicyMigrationContractDocumentsEveryMappingFamily(t *testing.T) {
 
 			seenOldPaths[test.oldPath] = struct{}{}
 
-			legacy := decodeLegacyPolicyFixture(t, test.oldInput)
-			if got := legacyValueAtPath(t, legacy, test.legacyEvidencePath); !reflect.DeepEqual(got, test.legacyValue) {
-				t.Fatalf("legacy %s = %#v, want %#v", test.legacyEvidencePath, got, test.legacyValue)
-			}
+			assertRemovedPolicyFragmentRejected(t, test.oldInput)
 
 			document, err := policyconfig.Decode("yaml", strings.NewReader(test.newInput))
 			requireNoError(t, err)
@@ -772,7 +765,7 @@ func TestPolicyMigrationContractDocumentsEveryMappingFamily(t *testing.T) {
 			requireNoError(t, policyconfig.Validate(normalized))
 			assertPolicyMigrationDefaultOrIdentity(t, normalized, test)
 			assertPolicyMigrationInvalidMutation(t, test)
-			assertPolicyMigrationExecutableEvidence(t, legacy, normalized, test)
+			assertPolicyMigrationFrozenEvidence(t, normalized, test)
 
 			canonical, err := policyconfig.Canonical(normalized)
 			requireNoError(t, err)
@@ -788,6 +781,25 @@ func TestPolicyMigrationContractDocumentsEveryMappingFamily(t *testing.T) {
 			assertMigrationDocumentationEvidence(t, guide, test)
 			assertMigrationSecretRedaction(t, guide, canonical, test)
 		})
+	}
+}
+
+// assertRemovedPolicyFragmentRejected proves historical examples cannot execute as unified input.
+func assertRemovedPolicyFragmentRejected(t *testing.T, source string) {
+	t.Helper()
+
+	_, err := policyconfig.Decode("yaml", strings.NewReader(source))
+	if err == nil {
+		t.Fatal("removed auth.policy fragment decoded successfully")
+	}
+
+	var pathError *policyconfig.PathError
+	if !errors.As(err, &pathError) {
+		t.Fatalf("removed auth.policy fragment error = %v, want PathError", err)
+	}
+
+	if pathError.Path != "auth" {
+		t.Fatalf("removed auth.policy fragment path = %q, want auth", pathError.Path)
 	}
 }
 
@@ -929,14 +941,14 @@ func invalidGenericReportTarget() policyconfig.TargetConfig {
 func TestPolicyConfigRefMigrationIdentitiesAreDocumented(t *testing.T) {
 	guide := readPolicyMigrationGuide(t)
 
-	if len(legacyCheckMappings) != 12 {
-		t.Fatalf("config_ref identities = %d, want 12", len(legacyCheckMappings))
+	if len(cutoverCheckMappings) != 12 {
+		t.Fatalf("config_ref identities = %d, want 12", len(cutoverCheckMappings))
 	}
 
-	seenTypes := make(map[string]struct{}, len(legacyCheckMappings))
-	seenUses := make(map[string]struct{}, len(legacyCheckMappings))
+	seenTypes := make(map[string]struct{}, len(cutoverCheckMappings))
+	seenUses := make(map[string]struct{}, len(cutoverCheckMappings))
 
-	for _, test := range legacyCheckMappings {
+	for _, test := range cutoverCheckMappings {
 		t.Run(test.checkType, func(t *testing.T) {
 			if _, exists := seenTypes[test.checkType]; exists {
 				t.Fatalf("duplicate check type %q", test.checkType)
@@ -958,7 +970,7 @@ func TestPolicyConfigRefMigrationIdentitiesAreDocumented(t *testing.T) {
 }
 
 // missingConfigRefDocumentationEvidence returns the first absent field from one shared identity row.
-func missingConfigRefDocumentationEvidence(guide string, mapping legacyCheckMapping) string {
+func missingConfigRefDocumentationEvidence(guide string, mapping cutoverCheckMapping) string {
 	for _, evidence := range []string{
 		mapping.checkType,
 		mapping.acceptedOldForm,
@@ -974,7 +986,7 @@ func missingConfigRefDocumentationEvidence(guide string, mapping legacyCheckMapp
 }
 
 // documentedProviderUse renders the generic manual identity from one executable mapping row.
-func documentedProviderUse(mapping legacyCheckMapping) string {
+func documentedProviderUse(mapping cutoverCheckMapping) string {
 	switch mapping.kind {
 	case migrationReferenceFixed:
 		return mapping.canonicalUse
@@ -1004,14 +1016,19 @@ func TestPolicyMigrationNestedRulesAndHardCutAreDocumented(t *testing.T) {
 		"Equal old Lua names remain distinct",
 		"authn/lua_environment_shared",
 		"authn/lua_subject_shared",
-		"No runtime, startup, library, or offline translator from `auth.policy` to standalone policy exists",
-		"Production remains on the pre-cutover `auth.policy` authority",
+		"No runtime, startup, library, supported converter, or offline translator from",
+		"Top-level `policy` is the sole production configuration and runtime authority",
 		"## Paired old and new examples",
 		"### Old `auth.policy` input",
-		"### New standalone `policy` input",
+		"### New production `policy` input",
 		"Unresolvable old references",
-		"TestPolicyMigrationNormalizedInputParity",
-		"TestPolicyMigrationCompiledCheckIdentityParity",
+		"## Production loading and migration evidence",
+		"`nauthilus:policy`",
+		"`nauthilus:backchannel`",
+		"`invalid_scope` before token generation",
+		"two independently issued tokens",
+		"Policy-Basic",
+		"prepare -> validate -> commit",
 	}
 
 	for _, evidence := range requiredEvidence {
@@ -1062,7 +1079,7 @@ func assertPolicyMigrationCaseIsComplete(t *testing.T, test policyMigrationContr
 	}
 
 	if !strings.HasPrefix(test.newInput, "policy:\n") {
-		t.Fatal("new fixture must be an independently authored standalone-policy input")
+		t.Fatal("new fixture must be an independently authored production-policy input")
 	}
 
 	if test.oldInput == test.newInput {
@@ -1119,135 +1136,6 @@ func assertMigrationSecretRedaction(t *testing.T, guide string, canonical policy
 	if !strings.Contains(guide, documented) {
 		t.Fatalf("migration guide does not contain exact redaction evidence %q", documented)
 	}
-}
-
-// decodeLegacyPolicyFixture decodes one old-root fixture into the pre-cutover model for test evidence only.
-func decodeLegacyPolicyFixture(t *testing.T, source string) *legacyconfig.FileSettings {
-	t.Helper()
-
-	settings := make(map[string]any)
-	if err := yaml.Unmarshal([]byte(source), &settings); err != nil {
-		t.Fatalf("decode legacy YAML: %v", err)
-	}
-
-	result := &legacyconfig.FileSettings{}
-
-	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
-		DecodeHook:       mapstructure.StringToTimeDurationHookFunc(),
-		ErrorUnused:      true,
-		Result:           result,
-		TagName:          "mapstructure",
-		WeaklyTypedInput: true,
-	})
-	if err != nil {
-		t.Fatalf("create test-only legacy decoder: %v", err)
-	}
-
-	if err = decoder.Decode(settings); err != nil {
-		t.Fatalf("decode test-only legacy fixture: %v", err)
-	}
-
-	return result
-}
-
-// legacyValueAtPath reads one exact tagged legacy path without mapping it to the standalone model.
-func legacyValueAtPath(t *testing.T, root any, path string) any {
-	t.Helper()
-
-	current := reflect.ValueOf(root)
-
-	for _, rawSegment := range strings.Split(path, ".") {
-		name, index, indexed := parseLegacyPathSegment(t, rawSegment)
-		current = legacyChildValue(t, current, name, path)
-		current = indirectLegacyValue(current)
-
-		if indexed {
-			if current.Kind() != reflect.Slice && current.Kind() != reflect.Array {
-				t.Fatalf("legacy path %q segment %q is not indexable", path, rawSegment)
-			}
-
-			if index >= current.Len() {
-				t.Fatalf("legacy path %q index %d exceeds %d values", path, index, current.Len())
-			}
-
-			current = current.Index(index)
-		}
-	}
-
-	current = indirectLegacyValue(current)
-	if !current.IsValid() {
-		t.Fatalf("legacy path %q resolved to nil", path)
-	}
-
-	return current.Interface()
-}
-
-// parseLegacyPathSegment separates one optional slice index from a tagged path segment.
-func parseLegacyPathSegment(t *testing.T, segment string) (string, int, bool) {
-	t.Helper()
-
-	open := strings.IndexByte(segment, '[')
-	if open < 0 {
-		return segment, 0, false
-	}
-
-	if !strings.HasSuffix(segment, "]") {
-		t.Fatalf("legacy path segment %q has an unterminated index", segment)
-	}
-
-	index, err := strconv.Atoi(segment[open+1 : len(segment)-1])
-	if err != nil || index < 0 {
-		t.Fatalf("legacy path segment %q has an invalid index", segment)
-	}
-
-	return segment[:open], index, true
-}
-
-// legacyChildValue resolves one map key or mapstructure-tagged struct field.
-func legacyChildValue(t *testing.T, current reflect.Value, name string, path string) reflect.Value {
-	t.Helper()
-
-	current = indirectLegacyValue(current)
-	if !current.IsValid() {
-		t.Fatalf("legacy path %q reached nil before %q", path, name)
-	}
-
-	switch current.Kind() {
-	case reflect.Struct:
-		for index := range current.NumField() {
-			field := current.Type().Field(index)
-
-			tag, _, _ := strings.Cut(field.Tag.Get("mapstructure"), ",")
-			if tag == name {
-				return current.Field(index)
-			}
-		}
-	case reflect.Map:
-		key := reflect.ValueOf(name)
-		if key.Type().ConvertibleTo(current.Type().Key()) {
-			value := current.MapIndex(key.Convert(current.Type().Key()))
-			if value.IsValid() {
-				return value
-			}
-		}
-	}
-
-	t.Fatalf("legacy path %q does not contain %q", path, name)
-
-	return reflect.Value{}
-}
-
-// indirectLegacyValue unwraps pointers and interfaces used by the legacy model.
-func indirectLegacyValue(value reflect.Value) reflect.Value {
-	for value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) {
-		if value.IsNil() {
-			return reflect.Value{}
-		}
-
-		value = value.Elem()
-	}
-
-	return value
 }
 
 // readPolicyMigrationGuide loads the repository-owned manual migration authority.

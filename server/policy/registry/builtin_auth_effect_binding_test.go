@@ -17,10 +17,15 @@ package registry
 
 import (
 	"context"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
+)
 
-	"github.com/croessner/nauthilus/v3/server/policy"
+const (
+	retiredLuaActionEffect     = "authn/" + "lua_action_dispatch"
+	retiredLuaPostActionEffect = "authn/" + "lua_post_action_enqueue"
 )
 
 func TestBuiltinStandardAuthPolicySetOwnsExecutableRules(t *testing.T) {
@@ -53,6 +58,12 @@ func TestBuiltinStandardAuthPolicySetOwnsExecutableRules(t *testing.T) {
 	}
 	for _, rule := range rules {
 		delete(want, rule.Name())
+
+		for _, effect := range rule.Effects() {
+			if effect.ID() == retiredLuaActionEffect || effect.ID() == retiredLuaPostActionEffect {
+				t.Errorf("authn/standard_auth rule %q retains legacy Lua action effect %q", rule.Name(), effect.ID())
+			}
+		}
 	}
 
 	if len(want) != 0 {
@@ -60,25 +71,12 @@ func TestBuiltinStandardAuthPolicySetOwnsExecutableRules(t *testing.T) {
 	}
 }
 
-func TestBuiltinAuthEffectBindingsAreExactAndDetached(t *testing.T) {
+func TestBuiltinAuthEffectBindingsAreCanonicalAndDetached(t *testing.T) {
 	want := []BuiltinAuthEffectBinding{
 		{
-			Selection: policy.ObligationBruteForceUpdate,
 			EffectID:  builtinBruteForceEffect,
 			Provider:  builtinBruteForceProvider,
 			Execution: ExecutionHostSync,
-		},
-		{
-			Selection: policy.ObligationLuaActionDispatch,
-			EffectID:  builtinLuaActionEffect,
-			Provider:  builtinLuaActionProvider,
-			Execution: ExecutionHostSync,
-		},
-		{
-			Selection: policy.ObligationLuaPostActionEnqueue,
-			EffectID:  builtinPostActionEffect,
-			Provider:  builtinPostActionProvider,
-			Execution: ExecutionHostPostAction,
 		},
 	}
 
@@ -97,6 +95,49 @@ func TestBuiltinAuthEffectBindingsAreExactAndDetached(t *testing.T) {
 		resolved, ok := BuiltinAuthEffectBindingForEffect(binding.EffectID)
 		if !ok || resolved != binding {
 			t.Fatalf("binding for %q = %#v/%t, want %#v/true", binding.EffectID, resolved, ok, binding)
+		}
+	}
+
+	for _, retired := range []string{retiredLuaActionEffect, retiredLuaPostActionEffect} {
+		if binding, ok := BuiltinAuthEffectBindingForEffect(retired); ok {
+			t.Errorf("retired builtin action effect %q still resolves to %#v", retired, binding)
+		}
+	}
+}
+
+func TestLegacyEffectSelectionSourceIsAbsent(t *testing.T) {
+	for path, forbidden := range map[string][]string{
+		"effect_catalog.go": {
+			"selection" + "ID",
+			"Selection" + "ID",
+			"newEffectDefinitionWith" + "Selection",
+		},
+		"builtin_target_catalog.go": {
+			"Selection" + " string",
+			"BuiltinAuthEffect" + "SelectionIDs",
+			"builtinTargetsForEffect" + "Selection",
+		},
+		"../runtime/target_catalog.go": {
+			"effect" + "Selections",
+			"LookupEffect" + "Selection",
+			"claimEffect" + "Selections",
+		},
+		"../configinput/namespace.go": {
+			"ObligationLuaAction" + "Dispatch",
+			"ObligationLuaPostAction" + "Enqueue",
+			".Selec" + "tion",
+		},
+		"../types.go": {"auth." + "obligation."},
+	} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+
+		for _, token := range forbidden {
+			if strings.Contains(string(contents), token) {
+				t.Errorf("production source %s retains legacy effect selection %q", path, token)
+			}
 		}
 	}
 }

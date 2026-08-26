@@ -162,8 +162,8 @@ var redisInfoGaugeMetrics = []redisInfoGaugeMetric{
 	{infoKey: "instantaneous_output_kbps", gauge: redisInstantaneousOutputKbps},
 }
 
-// UpdateRedisServerMetrics periodically collects and updates Redis server metrics
-func UpdateRedisServerMetrics(ctx context.Context, cfg config.File, logger *slog.Logger) {
+// UpdateRedisServerMetrics periodically collects metrics through the injected Redis client.
+func UpdateRedisServerMetrics(ctx context.Context, cfg config.File, logger *slog.Logger, client Client) {
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
 
@@ -172,14 +172,13 @@ func UpdateRedisServerMetrics(ctx context.Context, cfg config.File, logger *slog
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			collectRedisServerMetrics(ctx, cfg, logger)
+			collectRedisServerMetrics(ctx, cfg, logger, client)
 		}
 	}
 }
 
-// collectRedisServerMetrics collects Redis server metrics using the INFO command
-func collectRedisServerMetrics(ctx context.Context, cfg config.File, logger *slog.Logger) {
-	client := GetClient()
+// collectRedisServerMetrics collects Redis server metrics through one explicit client.
+func collectRedisServerMetrics(ctx context.Context, cfg config.File, logger *slog.Logger, client Client) {
 	if client == nil {
 		return
 	}

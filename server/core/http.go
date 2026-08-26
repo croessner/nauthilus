@@ -18,7 +18,6 @@ package core
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"html/template"
@@ -56,11 +55,12 @@ import (
 
 // HTTPDeps describes the exported HTTPDeps type.
 type HTTPDeps struct {
-	Cfg          config.File
-	Logger       *slog.Logger
-	Env          config.Environment
-	Redis        rediscli.Client
-	AccountCache *accountcache.Manager
+	Cfg            config.File
+	Logger         *slog.Logger
+	Env            config.Environment
+	Redis          rediscli.Client
+	AccountCache   *accountcache.Manager
+	RouteArtifacts *RouteArtifacts
 }
 
 // DefaultBootstrap wires the existing bootstrapping functions.
@@ -92,16 +92,20 @@ func (b DefaultBootstrap) InitGinLogging() {
 
 // DefaultRouterComposer builds the gin.Engine and registers routes/middlewares in the exact order.
 type DefaultRouterComposer struct {
-	cfg          config.File
-	logger       *slog.Logger
-	env          config.Environment
-	redis        rediscli.Client
-	accountCache *accountcache.Manager
+	cfg            config.File
+	logger         *slog.Logger
+	env            config.Environment
+	redis          rediscli.Client
+	accountCache   *accountcache.Manager
+	routeArtifacts *RouteArtifacts
 }
 
 // NewDefaultRouterComposer provides the exported NewDefaultRouterComposer function.
 func NewDefaultRouterComposer(deps HTTPDeps) DefaultRouterComposer {
-	return DefaultRouterComposer{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis, accountCache: deps.AccountCache}
+	return DefaultRouterComposer{
+		cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis,
+		accountCache: deps.AccountCache, routeArtifacts: deps.RouteArtifacts,
+	}
 }
 
 // ComposeEngine creates a fresh gin.Engine without any default middleware.
@@ -187,7 +191,7 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 // proxies, request decompression, response compression, and metrics middleware
 // in the same order as before.
 func (c DefaultRouterComposer) ApplyCoreMiddlewares(r *gin.Engine) {
-	rb := approuter.NewRouter(c.cfg)
+	rb := approuter.NewRouter(c.cfg, c.routeArtifacts)
 	rb.Engine = r
 
 	mw := c.cfg.GetServer().GetMiddlewares()
@@ -232,14 +236,21 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 		setupMetrics(r)
 	}
 
-	rb := approuter.NewRouter(c.cfg)
+	rb := approuter.NewRouter(c.cfg, c.routeArtifacts)
 	rb.Engine = r
 	rb.WithSecurityTxt()
 
 	if c.cfg.GetServer().Frontend.Enabled {
-		r.SetFuncMap(defaultTemplateFuncMap())
+		if c.routeArtifacts == nil {
+			panic("prepared frontend route artifacts are unavailable")
+		}
 
-		r.LoadHTMLGlob(c.cfg.GetServer().Frontend.GetHTMLStaticContentPath() + "/*.html")
+		templates, err := c.routeArtifacts.FrontendTemplates()
+		if err != nil {
+			panic(err)
+		}
+
+		r.SetHTMLTemplate(templates)
 
 		if setupIDP != nil {
 			rb.WithIDPOpenAPI()
@@ -381,15 +392,19 @@ func (p HAProxyListenerProvider) Get() *proxyproto.Listener {
 
 // DefaultTLSConfigurator constructs tls.Config according to settings.
 type DefaultTLSConfigurator struct {
-	cfg    config.File
-	logger *slog.Logger
-	env    config.Environment
-	redis  rediscli.Client
+	cfg            config.File
+	logger         *slog.Logger
+	env            config.Environment
+	redis          rediscli.Client
+	routeArtifacts *RouteArtifacts
 }
 
 // NewDefaultTLSConfigurator provides the exported NewDefaultTLSConfigurator function.
 func NewDefaultTLSConfigurator(deps HTTPDeps) DefaultTLSConfigurator {
-	return DefaultTLSConfigurator{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
+	return DefaultTLSConfigurator{
+		cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis,
+		routeArtifacts: deps.RouteArtifacts,
+	}
 }
 
 // Build assembles a *tls.Config* honoring configured CA, cipher suites,
@@ -400,29 +415,22 @@ func (c DefaultTLSConfigurator) Build() *tls.Config {
 		return nil
 	}
 
-	var (
-		caCertPool    *x509.CertPool
-		cipherSuites  []uint16
-		minTLSVersion uint16
-	)
-
-	if c.cfg.GetServer().GetTLS().GetCAFile() != "" {
-		caCert, err := os.ReadFile(c.cfg.GetServer().GetTLS().GetCAFile())
-		if err != nil {
-			logAndExit(c.logger, "Failed to read CA certificate", err)
-		}
-
-		caCertPool = x509.NewCertPool()
-		if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
-			logAndExit(c.logger, "Failed to parse CA certificate", err)
-		}
+	if c.routeArtifacts == nil {
+		panic("prepared HTTP TLS route artifacts are unavailable")
 	}
 
-	minTLSVersion = config.TLSMinVersionValue(c.cfg.GetServer().GetTLS().GetMinTLSVersion())
+	certificate, err := c.routeArtifacts.HTTPServerCertificate()
+	if err != nil {
+		panic(err)
+	}
+
+	caCertPool := c.routeArtifacts.HTTPClientCAs()
+	minTLSVersion := config.TLSMinVersionValue(c.cfg.GetServer().GetTLS().GetMinTLSVersion())
 
 	preferredCiphers := c.cfg.GetServer().GetTLS().GetCipherSuites()
 
 	knownCipherSuites := config.TLSCipherSuiteValues(preferredCiphers)
+	cipherSuites := make([]uint16, 0, len(knownCipherSuites))
 	cipherSuites = append(cipherSuites, knownCipherSuites...)
 
 	if len(knownCipherSuites) != len(preferredCiphers) {
@@ -434,6 +442,7 @@ func (c DefaultTLSConfigurator) Build() *tls.Config {
 	}
 
 	tlsConfig := &tls.Config{
+		Certificates:       []tls.Certificate{certificate},
 		NextProtos:         []string{"h3", "h2", "http/1.1"},
 		MinVersion:         minTLSVersion,
 		RootCAs:            caCertPool,
@@ -497,7 +506,7 @@ func NewDefaultTransportRunner(deps HTTPDeps) DefaultTransportRunner {
 // Serve launches the HTTP/1.1+2 server (and optionally HTTP/3) and manages
 // graceful shutdown on context cancellation. Termination signals are forwarded
 // via the provided ServerSignals implementation to decouple consumers from globals.
-func (r DefaultTransportRunner) Serve(ctx context.Context, srv *http.Server, certFile, keyFile string, proxy *proxyproto.Listener, signals ServerSignals) {
+func (r DefaultTransportRunner) Serve(ctx context.Context, srv *http.Server, proxy *proxyproto.Listener, signals ServerSignals) {
 	// Graceful shutdown for HTTP/1.1/2
 	go func() {
 		<-ctx.Done()
@@ -520,7 +529,7 @@ func (r DefaultTransportRunner) Serve(ctx context.Context, srv *http.Server, cer
 	if r.cfg.GetServer().IsHTTP3Enabled() {
 		// Serve HTTP/1.1+2 concurrently
 		go func() {
-			serveHTTPInternal(r.logger, srv, certFile, keyFile, proxy, r.cfg.GetServer().GetTLS().IsEnabled())
+			serveHTTPInternal(r.logger, srv, proxy, r.cfg.GetServer().GetTLS().IsEnabled())
 		}()
 
 		h3 := &http3.Server{
@@ -543,7 +552,7 @@ func (r DefaultTransportRunner) Serve(ctx context.Context, srv *http.Server, cer
 			}
 		}()
 
-		if err := h3.ListenAndServeTLS(certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := h3.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logAndExit(r.logger, "HTTP/3 server error", err)
 		}
 
@@ -551,20 +560,18 @@ func (r DefaultTransportRunner) Serve(ctx context.Context, srv *http.Server, cer
 	}
 
 	// Only HTTP/1.1+2
-	serveHTTPInternal(r.logger, srv, certFile, keyFile, proxy, r.cfg.GetServer().GetTLS().IsEnabled())
+	serveHTTPInternal(r.logger, srv, proxy, r.cfg.GetServer().GetTLS().IsEnabled())
 }
 
-// serveHTTPInternal runs the HTTP/1.1+2 stack either directly on the TCP listener
-// or on the provided PROXY v2 listener. When TLS is enabled, it uses the given
-// certificate and key files.
-func serveHTTPInternal(logger *slog.Logger, srv *http.Server, certFile, keyFile string, proxy *proxyproto.Listener, tlsEnabled bool) {
+// serveHTTPInternal runs HTTP/1.1+2 with the already prepared server TLS identity.
+func serveHTTPInternal(logger *slog.Logger, srv *http.Server, proxy *proxyproto.Listener, tlsEnabled bool) {
 	if tlsEnabled {
 		if proxy == nil {
-			if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := srv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
 			}
 		} else {
-			if err := srv.ServeTLS(proxy, certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := srv.ServeTLS(proxy, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
 			}
 		}
@@ -660,15 +667,11 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 		logProxyHTTP3(a.cfg, a.logger)
 	}
 
-	var cert, key string
-
 	if a.cfg.GetServer().GetTLS().IsEnabled() {
 		srv.TLSConfig = a.TLSConfigurator.Build()
-		cert = a.cfg.GetServer().GetTLS().GetCert()
-		key = a.cfg.GetServer().GetTLS().GetKey()
 	}
 
-	a.TransportRunner.Serve(ctx, srv, cert, key, proxy, signals)
+	a.TransportRunner.Serve(ctx, srv, proxy, signals)
 }
 
 // Helper: customWriter logs Gin output using slog at configured level via the wrapper.

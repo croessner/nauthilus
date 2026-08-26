@@ -28,7 +28,7 @@ func TestSetupWorkersTreatsTestBackendAsNoop(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 
-	setupWorkers(context.Background(), &contextStore{}, nil, cfg, logger, nil, nil)
+	setupWorkers(context.Background(), &contextStore{}, cfg, logger, nil, nil)
 
 	if strings.Contains(logs.String(), "Unknown backend") {
 		t.Fatalf("test backend should not be logged as unknown: %s", logs.String())

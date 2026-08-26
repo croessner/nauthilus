@@ -16,10 +16,6 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/stats"
-	"github.com/croessner/nauthilus/v3/server/util"
-
 	"github.com/gin-gonic/gin"
 )
 
@@ -42,66 +38,4 @@ func setIdempotencyHeaders(ctx *gin.Context, idem string, replayed *bool) {
 			ctx.Header("Idempotency-Replayed", "false")
 		}
 	}
-}
-
-// Authenticator orchestrates the authentication flow.
-// It wires the previously extracted services and keeps behavior identical
-// to the legacy inline implementation in AuthState.HandlePassword.
-//
-// In this initial step, Authenticate delegates to existing helper methods
-// on AuthState to avoid any behavior changes.
-//
-// Future iterations can migrate more logic from AuthState into this type.
-//
-//goland:nointerface
-type Authenticator struct {
-	Decoder  any // placeholder for future RequestDecoder
-	Verifier PasswordVerifier
-	Cache    CacheService
-	BF       BruteForceService
-	Lua      LuaSubject
-	Post     PostAction
-	Resp     ResponseWriter
-}
-
-var defaultAuthenticator = Authenticator{
-	Verifier: getPasswordVerifier(),
-	Cache:    getCacheService(),
-	BF:       getBruteForceService(),
-	Lua:      getLuaSubject(),
-	Post:     getPostAction(),
-	Resp:     getDefaultResponseWriter(),
-}
-
-// Authenticate runs the full password authentication flow.
-// Behavior mirrors the legacy HandlePassword implementation exactly.
-func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authResult definitions.AuthResult) {
-	resource := util.RequestResource(ctx, ctx.Request, auth.Request.Service)
-
-	// Overall auth orchestration timer
-	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_overall_total", resource); stop != nil {
-		defer stop()
-	}
-
-	// Common validation checks
-	if authResult = auth.usernamePasswordChecks(); authResult != definitions.AuthResultUnset {
-		return
-	}
-
-	// Read idempotency key before backend selection so every password path echoes it.
-	idem := ctx.GetHeader(idempotencyHeaderName)
-
-	if idem != "" {
-		// Echo the idempotency key for observability (no replay decision yet)
-		setIdempotencyHeaders(ctx, idem, nil)
-	}
-
-	// Measure backend type resolution
-	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_handle_backend_types_total", resource); stop != nil {
-		defer stop()
-	}
-
-	backendPlan := auth.buildBackendExecutionPlan()
-
-	return auth.authenticateUser(ctx, backendPlan)
 }

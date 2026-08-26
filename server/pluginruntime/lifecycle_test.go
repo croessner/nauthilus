@@ -55,7 +55,7 @@ func TestRunner_StartsPluginBeforeInitTasksAndStopsInReverse(t *testing.T) {
 	}
 }
 
-func TestRunnerCannotRestartStoppedPostActionSupervisorGeneration(t *testing.T) {
+func TestRunnerCannotRestartStoppedGeneration(t *testing.T) {
 	runner := newTestRunner(t, &runtimePlugin{}, nil)
 
 	if err := runner.Start(context.Background()); err != nil {
@@ -73,37 +73,12 @@ func TestRunnerCannotRestartStoppedPostActionSupervisorGeneration(t *testing.T) 
 
 func TestRunner_RequestTimeComponentsUnavailableBeforeReady(t *testing.T) {
 	runner := newTestRunner(t, &runtimePlugin{}, func(registrar pluginapi.Registrar) error {
-		return registrar.RegisterEnvironmentSource(runtimeEnvironmentSource{name: testRuntimeEnvironment})
+		return registrar.RegisterHook(&runtimeHook{name: testRuntimeHookName})
 	})
 
-	_, err := runner.EvaluateEnvironment(context.Background(), testRuntimeModuleName+".environment", pluginapi.EnvironmentRequest{})
+	_, err := runner.ServeHook(context.Background(), testRuntimeHookQualified, pluginapi.HookRequest{})
 	if !errors.Is(err, ErrNotReady) {
-		t.Fatalf("EvaluateEnvironment() error = %v, want ErrNotReady", err)
-	}
-}
-
-func TestRunner_PanicBoundaryConvertsPanicToTechnicalError(t *testing.T) {
-	observer := &recordingObserver{}
-	runner := newTestRunner(
-		t,
-		&runtimePlugin{},
-		func(registrar pluginapi.Registrar) error {
-			return registrar.RegisterEnvironmentSource(runtimeEnvironmentSource{name: testRuntimeEnvironment, panicEvaluate: true})
-		},
-		WithObserver(observer),
-	)
-
-	if err := runner.Start(context.Background()); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-
-	_, err := runner.EvaluateEnvironment(context.Background(), testRuntimeModuleName+".environment", pluginapi.EnvironmentRequest{})
-	if !errors.Is(err, ErrPluginPanic) {
-		t.Fatalf("EvaluateEnvironment() error = %v, want ErrPluginPanic", err)
-	}
-
-	if !observer.sawPanic(testRuntimeEnvironment, "Evaluate") {
-		t.Fatalf("observer records = %#v, want panic for environment Evaluate", observer.records)
+		t.Fatalf("ServeHook() error = %v, want ErrNotReady", err)
 	}
 }
 
@@ -482,26 +457,6 @@ func (t *runtimeInitTask) Stop(context.Context) error {
 	}
 
 	return nil
-}
-
-type runtimeEnvironmentSource struct {
-	name          string
-	panicEvaluate bool
-}
-
-func (s runtimeEnvironmentSource) Descriptor() pluginapi.SourceDescriptor {
-	return pluginapi.SourceDescriptor{
-		Name:        s.name,
-		AbortPolicy: pluginapi.AbortPolicyNone,
-	}
-}
-
-func (s runtimeEnvironmentSource) Evaluate(context.Context, pluginapi.EnvironmentRequest) (pluginapi.EnvironmentResult, error) {
-	if s.panicEvaluate {
-		panic("environment failed")
-	}
-
-	return pluginapi.EnvironmentResult{Triggered: true}, nil
 }
 
 type recordingObserver struct {

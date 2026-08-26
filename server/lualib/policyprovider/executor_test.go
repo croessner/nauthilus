@@ -18,6 +18,7 @@ package policyprovider_test
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -211,9 +212,16 @@ func TestLuaFactCollectorHonorsCancellation(t *testing.T) {
 func mustCompileFixture(t *testing.T, name string) *policyprovider.Script {
 	t.Helper()
 
-	script, err := policyprovider.CompileScriptFile(policyProviderFixtureDirectory + name)
+	path := policyProviderFixtureDirectory + name
+
+	source, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("CompileScriptFile(%q) error = %v", name, err)
+		t.Fatalf("read policy provider fixture %q: %v", name, err)
+	}
+
+	script, err := policyprovider.CompileScript(path, source)
+	if err != nil {
+		t.Fatalf("CompileScript(%q) error = %v", name, err)
 	}
 
 	return script

@@ -286,7 +286,7 @@ func TestBuildSPKeyDescriptors(t *testing.T) {
 			ACSURL:   "https://sp.example.com/acs",
 		}
 
-		kds, err := buildSPKeyDescriptors(sp)
+		kds, err := buildSPKeyDescriptors(nil, sp)
 
 		assert.NoError(t, err)
 		assert.Nil(t, kds)
@@ -299,7 +299,7 @@ func TestBuildSPKeyDescriptors(t *testing.T) {
 			Cert:     string(certPEM),
 		}
 
-		kds, err := buildSPKeyDescriptors(sp)
+		kds, err := buildSPKeyDescriptors(nil, sp)
 
 		assert.NoError(t, err)
 		assert.Len(t, kds, 1)
@@ -314,7 +314,7 @@ func TestBuildSPKeyDescriptors(t *testing.T) {
 			Cert:     "not-a-valid-pem",
 		}
 
-		_, err := buildSPKeyDescriptors(sp)
+		_, err := buildSPKeyDescriptors(nil, sp)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse SP certificate PEM")

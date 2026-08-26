@@ -4,9 +4,9 @@ This directory contains Lua subject source plugins for the Nauthilus authenticat
 
 ## Policy Integration
 
-Configure these scripts as `lua.subject` checks under `auth.policy.checks`. Use
-`config_ref: auth.policy.attribute_sources.lua.subject.<name>` so the policy scheduler can select the configured script and apply its
-`after` dependencies. The decision layer records `auth.lua.subject.<name>.rejected` and
+Configure a compatible custom script below `policy.namespaces.authn.providers.lua_subject_<name>` with `kind: lua_subject`. A provider
+instance below the `subject_analysis` checkpoint selects the exact `authn/lua_subject_<name>` identity with `use` and
+applies its `after` dependencies. The decision layer records `auth.lua.subject.<name>.rejected` and
 `auth.lua.subject.<name>.error`; a status message set by the script becomes the public `status_message` detail on the
 rejected attribute.
 
@@ -15,9 +15,16 @@ registered by `../policy/registry.lua` and use IDs below `lua.plugin.*`, for exa
 `lua.plugin.geoip.rejected` or `lua.plugin.account_protection.active`. The same values remain available as
 request-local `policy_facts` for later actions and custom-log correlation.
 
-This subject-source contract is authentication compatibility behavior. It remains implicitly bound to `authn`, retains
-its established callback name and ordering, and never runs for a generic target. Standalone generic Lua fact providers
+This subject-source contract is authentication-specific behavior. It is explicitly bound to `authn`, retains its
+established callback name and ordering, and never runs for a generic target. Generic Lua fact providers
 use the separate `_G["policy.facts.collect"]` contract documented in [`../policy/README.md`](../policy/).
+
+## Bundled callback status
+
+Only `idp_policy.lua` is a supported operator example under the production Policy VM. The other operational scripts
+require Redis/cache mutation, outbound HTTP, backend targeting, subject-stage response mutation, or ambient tuning;
+`test_context_chain.lua` is test-only. The normative classification and exact reasons are in
+[`../POLICY_VM_COMPATIBILITY.md`](../POLICY_VM_COMPATIBILITY.md).
 
 ## Available Plugins
 
@@ -31,12 +38,12 @@ Monitors authentication attempts at the account level to detect potential distri
 - Detects distributed brute force attacks where many IPs target a single account
 - Adds suspicious accounts to a monitoring list for enhanced protection
 
-**Usage:**
-The plugin runs automatically on each authentication attempt. It uses the following thresholds by default:
+**Historical behavior:**
+The reference-only callback used the following thresholds:
 - `threshold_unique_ips`: 10 (alerts if more than 10 unique IPs try to access an account)
 - `threshold_ip_to_fail_ratio`: 0.8 (alerts if the ratio of unique IPs to failed attempts is high)
 
-You can optionally configure a custom Redis pool using the `CUSTOM_REDIS_POOL_NAME` environment variable.
+Its custom Redis pool and write/script requirements are not available in the Policy VM.
 
 ### geoip.lua
 Analyzes the geographic origin of authentication requests using IP geolocation to detect suspicious login attempts from unusual locations.
@@ -48,8 +55,8 @@ Analyzes the geographic origin of authentication requests using IP geolocation t
 - Supports whitelisting and blacklisting of countries and regions
 - Provides detailed logging of geographic access patterns
 
-**Usage:**
-Configure the plugin through environment variables or Nauthilus configuration:
+**Historical configuration:**
+The reference-only callback used the following ambient value:
 - `GEOIP_POLICY_URL`: URL endpoint for the geoip_policyd service
 
 The plugin connects to the geoip_policyd service to evaluate geographic access policies and determine if authentication should be allowed based on the client's location.
@@ -90,7 +97,7 @@ outcome updates Redis. They are intended for policies that must prove risk was
 already present, such as shared-egress brute-force enforcement. The original
 attributes retain their post-update semantics for compatibility and analytics.
 
-**Configuration:**
+**Historical configuration:**
 - `GEOIP_REPUTATION_ALPHA`: Beta smoothing factor, default `2`.
 - `GEOIP_REPUTATION_SATURATION`: Sample count where confidence starts saturating, default `20`.
 - `GEOIP_REPUTATION_TEMPERATURE`: Log-odds slope divisor, default `1.5`.
@@ -108,8 +115,8 @@ Provides comprehensive monitoring of authentication activities, system performan
 - Provides real-time visibility into system health
 - Supports integration with monitoring systems via metrics export
 
-**Usage:**
-The plugin runs automatically on each authentication attempt. You can configure monitoring thresholds and sensitivity through the Nauthilus configuration file:
+**Historical behavior:**
+The reference-only callback used the following monitoring values:
 - `monitoring_sensitivity`: Adjusts the sensitivity of anomaly detection (low, medium, high)
 - `monitoring_metrics_retention`: How long to retain detailed metrics (in days)
 
@@ -142,5 +149,5 @@ flows (Authorization Code Grant, Device Code, Client Credentials).
 - `request.allowed_client_grant_types` — Table of configured allowed grant types for the OIDC client
 
 **Usage:**
-Copy this file to your active subject-source directory and customize the policy rules (client IDs, group names, thresholds) to
-match your environment. The plugin is designed as a starting point — add, remove, or modify rules as needed.
+Use the top-level Policy example in [`../examples/policy-safe-idp.yml`](../examples/policy-safe-idp.yml), replace its
+relative artifact paths with deployment-absolute paths, and customize the captured rules before candidate preparation.

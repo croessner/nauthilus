@@ -31,8 +31,8 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 class GenerateVimSyntaxTest(unittest.TestCase):
     """Tests for the schema-driven Vim syntax generator."""
 
-    def test_generator_includes_nested_keys_from_schema(self) -> None:
-        """The generated syntax must include nested keys hidden by empty default lists."""
+    def generate_syntax(self) -> str:
+        """Generate one isolated syntax artifact and return its contents."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "nauthilus.vim"
             subprocess.run(
@@ -46,7 +46,11 @@ class GenerateVimSyntaxTest(unittest.TestCase):
                 check=True,
             )
 
-            generated = output_path.read_text(encoding="utf-8")
+            return output_path.read_text(encoding="utf-8")
+
+    def test_generator_includes_nested_keys_from_schema(self) -> None:
+        """The generated syntax must include nested keys hidden by empty default lists."""
+        generated = self.generate_syntax()
 
         self.assertIn(r"\zsscript_path\ze:", generated)
         self.assertNotIn(r"\zswhen_no_auth\ze:", generated)
@@ -56,22 +60,45 @@ class GenerateVimSyntaxTest(unittest.TestCase):
         self.assertIn(r"\zsname\ze:", generated)
         self.assertIn(r"\zsmappings\ze:", generated)
 
+    def test_generator_uses_only_the_top_level_policy_root(self) -> None:
+        """The hard cut must expose canonical policy keys without legacy aliases."""
+        generated = self.generate_syntax()
+
+        self.assertIn(r"syntax match nauthilusKeyL1 /^\zspolicy\ze:/", generated)
+        self.assertNotIn(
+            r"syntax match nauthilusKeyL2 /^  \zspolicy\ze:", generated
+        )
+
+        for key in (
+            "namespaces",
+            "targets",
+            "condition_sets",
+            "schema_contributions",
+            "fact_sources",
+            "providers",
+            "effects",
+            "domain_plans",
+            "policy_sets",
+            "checkpoints",
+            "checkpoint",
+            "require_providers",
+            "use",
+            "parameters",
+            "skip_remaining_checkpoint_providers",
+        ):
+            self.assertIn(rf"\zs{key}\ze:", generated)
+
+        for key in (
+            "stage",
+            "config_ref",
+            "require_checks",
+            "skip_remaining_stage_checks",
+        ):
+            self.assertNotIn(rf"\zs{key}\ze:", generated)
+
     def test_generator_highlights_config_env_placeholders_distinctly(self) -> None:
         """Environment placeholders must be distinct from Nauthilus macros."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "nauthilus.vim"
-            subprocess.run(
-                [
-                    "python3",
-                    "scripts/generate-vim-syntax.py",
-                    "--output",
-                    str(output_path),
-                ],
-                cwd=ROOT_DIR,
-                check=True,
-            )
-
-            generated = output_path.read_text(encoding="utf-8")
+        generated = self.generate_syntax()
 
         self.assertIn("nauthilusEnvVariable", generated)
         self.assertIn(r"\$\@<!\${[A-Za-z_][A-Za-z0-9_]*}", generated)

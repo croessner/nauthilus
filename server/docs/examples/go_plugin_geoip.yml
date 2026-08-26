@@ -2,6 +2,10 @@
 #
 # Replace paths and checksum values with the artifact produced by:
 #   GOEXPERIMENT=runtimesecret go build -buildmode=plugin -o /usr/lib/nauthilus/plugins/geoip.so ./contrib/plugins/geoip
+#
+# The module registers the generic provider `authn/plugin.geoip.environment`.
+# Candidate preparation cross-checks every configured `plugin.geoip.*` output
+# below against that exact immutable descriptor.
 
 plugins:
   verification_policy: when_present
@@ -36,7 +40,6 @@ plugins:
           lookup_timeout: 10ms
           max_snapshot_entries: 1000000
           max_download_bytes: 33554432
-          public_log_fields: true
           refresh:
             cache_dir: /var/lib/nauthilus/privacy/cache
             max_concurrent_downloads: 2
@@ -136,54 +139,115 @@ plugins:
               reason: trusted_corporate_egress
               expires_at: "2026-12-31T23:59:59Z"
 
-auth:
-  policy:
-    sets:
-      strings:
-        allowed_country_iso:
-          - DE
-          - AT
-          - CH
-    checks:
-      - name: plugin_environment_geoip
-        type: plugin.environment
-        stage: pre_auth
-        operations:
-          - authenticate
-          - lookup_identity
-        config_ref: plugins.modules.geoip.environment
-    policies:
-      - name: deny_current_tor_password_auth
-        stage: pre_auth
-        operations:
-          - authenticate
-        require_checks:
-          - plugin_environment_geoip
-        if:
-          all:
-            - attribute: plugin.environment.geoip.is_tor_exit_node
-              is: true
-            - attribute: plugin.environment.geoip.privacy_data_stale
-              is: false
-        then:
-          decision: deny
-          response_marker: auth.response.fail
-      - name: deny_unexpected_country
-        stage: pre_auth
-        operations:
-          - authenticate
-        require_checks:
-          - plugin_environment_geoip
-        if:
-          all:
-            - attribute: plugin.environment.geoip.matched
-              is: true
-            - attribute: plugin.environment.geoip.country_iso
-              not_in: "@string.allowed_country_iso"
-            - attribute: plugin.environment.geoip.asn_registry
-              not_in:
-                - ripencc
-                - arin
-        then:
-          decision: deny
-          response_marker: auth.response.fail
+policy:
+  namespaces:
+    authn:
+      condition_sets:
+        strings:
+          allowed_country_iso:
+            - DE
+            - AT
+            - CH
+      providers:
+        environment:
+          kind: native
+          module: geoip
+          targets:
+            - action: authenticate
+            - action: lookup_identity
+          produced_facts:
+            - plugin.geoip.matched
+            - plugin.geoip.country_iso
+            - plugin.geoip.country_name
+            - plugin.geoip.city_name
+            - plugin.geoip.asn
+            - plugin.geoip.asn_org
+            - plugin.geoip.asn_prefix
+            - plugin.geoip.asn_registry
+            - plugin.geoip.asn_country_iso
+            - plugin.geoip.asn_allocated
+            - plugin.geoip.asn_status
+            - plugin.geoip.privacy_lookup_state
+            - plugin.geoip.privacy_detected
+            - plugin.geoip.privacy_classes
+            - plugin.geoip.privacy_primary_class
+            - plugin.geoip.privacy_confidence
+            - plugin.geoip.privacy_source_authorities
+            - plugin.geoip.privacy_data_stale
+            - plugin.geoip.privacy_data_age_seconds
+            - plugin.geoip.is_tor_exit_node
+            - plugin.geoip.is_known_vpn_exit
+            - plugin.geoip.is_community_vpn_exit
+            - plugin.geoip.is_public_proxy
+            - plugin.geoip.is_privacy_relay
+            - plugin.geoip.is_hosting_network
+            - plugin.geoip.is_shared_egress
+          failure: indeterminate
+          timeout: 50ms
+      domain_plans:
+        geoip:
+          checkpoints:
+            pre_auth:
+              providers:
+                - name: brute_force
+                  use: authn/builtin/brute_force
+                  actions: [authenticate]
+                - name: plugin_environment_geoip
+                  use: authn/plugin.geoip.environment
+                  actions: [authenticate, lookup_identity]
+            auth_backend:
+              providers:
+                # Replace this binding when authentication uses another backend.
+                - name: ldap_backend
+                  use: authn/builtin/ldap_backend
+                  actions: [authenticate, lookup_identity]
+            auth_decision:
+              providers: []
+      policy_sets:
+        geoip:
+          visibility: private
+          rules:
+            - name: deny_current_tor_password_auth
+              checkpoint: pre_auth
+              actions: [authenticate]
+              require_providers: [plugin_environment_geoip]
+              if:
+                all:
+                  - attribute: plugin.geoip.is_tor_exit_node
+                    is: true
+                  - attribute: plugin.geoip.privacy_data_stale
+                    is: false
+              then:
+                decision: deny
+                response_marker: auth.response.fail
+            - name: deny_unexpected_country
+              checkpoint: pre_auth
+              actions: [authenticate]
+              require_providers: [plugin_environment_geoip]
+              if:
+                all:
+                  - attribute: plugin.geoip.matched
+                    is: true
+                  - attribute: plugin.geoip.country_iso
+                    not_in: "@string.allowed_country_iso"
+                  - attribute: plugin.geoip.asn_registry
+                    not_in:
+                      - ripencc
+                      - arin
+              then:
+                decision: deny
+                response_marker: auth.response.fail
+  targets:
+    - namespace: authn
+      action: authenticate
+      schema: authn/authenticate/v1
+      domain_plan: authn/geoip
+      default_policy: authn/standard_auth
+      plans:
+        pre_auth:
+          policy_sets: [authn/geoip]
+    - namespace: authn
+      action: lookup_identity
+      schema: authn/lookup_identity/v1
+      domain_plan: authn/geoip
+      default_policy: authn/standard_auth

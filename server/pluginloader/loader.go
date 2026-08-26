@@ -19,16 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	stdplugin "plugin"
-	"sync/atomic"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
+	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
 const pluginFactorySymbol = "NauthilusPlugin"
@@ -59,8 +57,6 @@ var (
 	ErrRequiredModuleFailed = errors.New("required plugin module failed")
 )
 
-var defaultState atomic.Value // stores *State
-
 // PluginHandle resolves symbols from one opened plugin artifact.
 type PluginHandle interface {
 	Lookup(symbol string) (any, error)
@@ -76,8 +72,9 @@ type Option func(*Loader)
 
 // Loader opens verified artifacts and records registered module instances.
 type Loader struct {
-	opener Opener
-	logger *slog.Logger
+	readArtifact func(string) ([]byte, error)
+	opener       Opener
+	logger       *slog.Logger
 }
 
 // ModuleStatus describes the registration state for one configured module.
@@ -98,6 +95,7 @@ type ModuleInstance struct {
 	Metadata          pluginapi.Metadata
 	Module            config.PluginModule
 	Descriptors       []pluginregistry.Component
+	PolicyAttributes  []policyregistry.AttributeDefinition
 	DebugModules      []pluginregistry.DebugModule
 	Capabilities      []pluginapi.Capability
 	ArtifactPath      string
@@ -146,7 +144,7 @@ func (e *ModuleError) Unwrap() error {
 	return e.Err
 }
 
-// NewLoader returns a plugin loader with production defaults.
+// NewLoader returns a plugin loader that requires an explicit reader for verified modules.
 func NewLoader(options ...Option) *Loader {
 	loader := &Loader{opener: stdlibOpener{}}
 	for _, option := range options {
@@ -154,6 +152,15 @@ func NewLoader(options ...Option) *Loader {
 	}
 
 	return loader
+}
+
+// WithLoaderArtifactReader binds staging to the same candidate-owned bytes verified earlier.
+func WithLoaderArtifactReader(reader func(string) ([]byte, error)) Option {
+	return func(loader *Loader) {
+		if reader != nil {
+			loader.readArtifact = reader
+		}
+	}
 }
 
 // WithOpener injects an opener, primarily for fake-backed loader tests.
@@ -185,7 +192,11 @@ func (l *Loader) Load(verified []VerifiedModule) (state *State, err error) {
 		return state, nil
 	}
 
-	stager, err := newVerifiedArtifactStager()
+	if l.readArtifact == nil {
+		return nil, ErrArtifactReaderRequired
+	}
+
+	stager, err := newVerifiedArtifactStager(l.readArtifact)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +207,14 @@ func (l *Loader) Load(verified []VerifiedModule) (state *State, err error) {
 	for _, verifiedModule := range verified {
 		l.logModuleLoadStart(verifiedModule)
 
-		instance, loadErr := l.loadModule(registry, stager, verifiedModule)
+		var instance ModuleInstance
+
+		loadErr := verifiedModule.VerificationError
+		if loadErr == nil {
+			instance, loadErr = l.loadModule(registry, stager, verifiedModule)
+		} else {
+			loadErr = moduleError(verifiedModule, "verification", loadErr)
+		}
 		if loadErr != nil {
 			failed := failedModuleInstance(verifiedModule, loadErr)
 			state.instances = append(state.instances, failed)
@@ -240,18 +258,6 @@ func (s *State) Instances() []ModuleInstance {
 	return instances
 }
 
-// SetDefaultState publishes the most recent plugin loader state for later runtime wiring.
-func SetDefaultState(state *State) {
-	defaultState.Store(state)
-}
-
-// DefaultState returns the most recent plugin loader state, if any.
-func DefaultState() (*State, bool) {
-	state, ok := defaultState.Load().(*State)
-
-	return state, ok && state != nil
-}
-
 // loadModule performs the verified artifact to registered module transition.
 func (l *Loader) loadModule(
 	registry *pluginregistry.Registry,
@@ -293,19 +299,20 @@ func (l *Loader) loadModule(
 	}
 
 	return ModuleInstance{
-		Plugin:         pluginObject,
-		Metadata:       metadata,
-		Module:         verified.Module,
-		Descriptors:    registrar.Components(),
-		DebugModules:   registry.DebugModulesByModule(verified.Module.Name),
-		Capabilities:   registrar.Capabilities(),
-		ArtifactPath:   verified.ArtifactPath,
-		SignaturePath:  verified.SignaturePath,
-		ArtifactDigest: artifact.digest,
-		VerifiedSigner: verifiedSignerID(verified.Signer),
-		ModuleName:     verified.Module.Name,
-		Status:         ModuleStatusRegistered,
-		Optional:       verified.Module.Optional,
+		Plugin:           pluginObject,
+		Metadata:         metadata,
+		Module:           verified.Module,
+		Descriptors:      registrar.Components(),
+		PolicyAttributes: registrar.PolicyAttributes(),
+		DebugModules:     registry.DebugModulesByModule(verified.Module.Name),
+		Capabilities:     registrar.Capabilities(),
+		ArtifactPath:     verified.ArtifactPath,
+		SignaturePath:    verified.SignaturePath,
+		ArtifactDigest:   artifact.digest,
+		VerifiedSigner:   verifiedSignerID(verified.Signer),
+		ModuleName:       verified.Module.Name,
+		Status:           ModuleStatusRegistered,
+		Optional:         verified.Module.Optional,
 	}, nil
 }
 
@@ -316,24 +323,6 @@ func verifiedSignerID(signer *config.PluginTrustSigner) string {
 	}
 
 	return signer.ID
-}
-
-// checkVerifiedArtifact makes sure the handoff path still points to a loadable .so file.
-func checkVerifiedArtifact(path string) error {
-	if path == "" || !filepath.IsAbs(path) || filepath.Ext(path) != ".so" {
-		return fmt.Errorf("%w: path %q is not an absolute .so path", ErrArtifactUnavailable, path)
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrArtifactUnavailable, err)
-	}
-
-	if info.IsDir() {
-		return fmt.Errorf("%w: %s is a directory", ErrArtifactUnavailable, path)
-	}
-
-	return nil
 }
 
 // lookupFactory resolves and type-checks the required NauthilusPlugin factory.

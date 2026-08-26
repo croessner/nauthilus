@@ -67,11 +67,11 @@ var authStateConstructionDispositions = []authStateDispositionEntry{
 		count:       0,
 	},
 	{
-		routeFamily: "Shared HTTP and gRPC auth application execution",
-		callSite:    "server/core/auth_application_legacy_executor.go|authApplicationService.newAuthState|NewAuthStateFromContextWithDeps",
-		owner:       "isolated legacy FSM compatibility executor",
+		routeFamily: "Captured HTTP, IdP, backchannel, and gRPC auth execution",
+		callSite:    "server/core/auth_application_host.go|authApplicationService.newAuthState|NewAuthStateFromContextWithDeps",
+		owner:       "captured auth FSM host",
 		disposition: authStateDispositionRetained,
-		rationale:   "The isolated non-policy compatibility executor owns the existing FSM until the later atomic runtime cutover.",
+		rationale:   "The host materializes the existing FSM only inside the admitted Decision Service session and uses its captured configuration.",
 		count:       1,
 	},
 	{
@@ -99,14 +99,6 @@ var authStateConstructionDispositions = []authStateDispositionEntry{
 		count:       1,
 	},
 	{
-		routeFamily: "IdP MFA detached post-action",
-		callSite:    "server/core/idp_mfa.go|newCompletedIDPMFAPostActionAuth|NewAuthStateFromContextWithDeps",
-		owner:       "IdP MFA post-action projection",
-		disposition: authStateDispositionRetained,
-		rationale:   "The helper prepares the legacy detached Lua post-action after MFA completion and does not own generic evaluation.",
-		count:       1,
-	},
-	{
 		routeFamily: "Admitted IdP specialized identity state",
 		callSite:    "server/core/idp_specialized_auth_state.go|NewIDPSpecializedAuthState|NewAuthStateFromContextWithDeps",
 		owner:       "IdP specialized outcome materializer",
@@ -125,10 +117,10 @@ var authStateConstructionDispositions = []authStateDispositionEntry{
 	{
 		routeFamily: "Optional build-tagged HTTP Basic auth",
 		callSite:    "server/handler/auth/basic_endpoint_enabled.go|Handler.processLegacyBasic|NewAuthStateWithSetupWithDeps",
-		owner:       "optional Basic endpoint compatibility",
-		disposition: authStateDispositionRetained,
-		rationale:   "The separately gated Basic credential handshake is outside the listed JSON, CBOR, header, and nginx response surfaces.",
-		count:       1,
+		owner:       "shared HTTP auth application adapter",
+		disposition: authStateDispositionMigrated,
+		rationale:   "The optional Basic surface decodes credentials and invokes the same admitted auth application service as every other HTTP surface.",
+		count:       0,
 	},
 	{
 		routeFamily: "IdP frontend MFA and WebAuthn backend data",
@@ -137,14 +129,6 @@ var authStateConstructionDispositions = []authStateDispositionEntry{
 		disposition: authStateDispositionMigrated,
 		rationale:   "The browser package must materialize specialized MFA and WebAuthn state only from an admitted identity outcome through the central specialized-state owner.",
 		count:       0,
-	},
-	{
-		routeFamily: "OIDC token detached post-action",
-		callSite:    "server/handler/frontend/idp/oidc.go|OIDCHandler.runOIDCTokenPostAction|NewAuthStateFromContextWithDeps",
-		owner:       "OIDC token post-action projection",
-		disposition: authStateDispositionRetained,
-		rationale:   "The token handler constructs legacy post-action projection state after the protocol result and does not evaluate authentication policy.",
-		count:       1,
 	},
 	{
 		routeFamily: "gRPC identity backend MFA and WebAuthn",

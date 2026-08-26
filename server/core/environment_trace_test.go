@@ -7,8 +7,6 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/policy"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/testing/tracetest"
 
 	"github.com/gin-gonic/gin"
@@ -48,8 +46,6 @@ func TestHandleEnvironment_PolicyCheckRemainsChildOfEnvironmentControl(t *testin
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 
-	activateTracePolicySnapshotForTest(t)
-
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
 	collector := tracetest.Setup(t)
 	requestSpan := attachRequestParentSpan(t, ctx, auth)
@@ -74,11 +70,21 @@ func TestHandleEnvironment_PolicyCheckRemainsChildOfEnvironmentControl(t *testin
 	requireParentSpanID(t, policySpan, tlsSpan.SpanContext().SpanID())
 }
 
+func TestControlTLSEncryptionUsesCapturedEnvironment(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
+	cfg.ClearTextList = nil
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
+	config.SetTestEnvironmentConfig(&config.EnvironmentSettings{DevMode: true})
+
+	if !auth.ControlTLSEncryption(ctx) {
+		t.Fatal("captured production-mode environment was replaced by the ambient developer-mode setting")
+	}
+}
+
 func TestHandleEnvironment_RBLLookupRemainsChildOfRBLEnvironment(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlRBL)
 	cfg.RBLs = &config.RBLSection{Threshold: 5}
-
-	activateTracePolicySnapshotForTest(t)
 
 	previous := GetRBLService()
 
@@ -125,8 +131,6 @@ func TestHandleEnvironment_RestoresRequestContextAfterEarlyEnvironmentReturn(t *
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 
-	activateTracePolicySnapshotForTest(t)
-
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
 	_ = tracetest.Setup(t)
 
@@ -139,55 +143,6 @@ func TestHandleEnvironment_RestoresRequestContextAfterEarlyEnvironmentReturn(t *
 	}
 
 	requireRequestContextsSpanID(t, ctx, auth, requestSpan.SpanContext().SpanID())
-}
-
-func TestAuthenticate_DoesNotInheritLastEnvironmentControlSpan(t *testing.T) {
-	auth, ctx, collector := newTraceParentedEnvironmentAuth(t)
-	auth.deps.BackendAuthenticationCache = NewPositiveBackendAuthenticationCache(time.Now)
-	requestSpan := attachRequestParentSpan(t, ctx, auth)
-
-	environmentResult := auth.HandleEnvironment(ctx)
-	if environmentResult != definitions.AuthResultOK {
-		t.Fatalf("HandleEnvironment() = %v, want %v", environmentResult, definitions.AuthResultOK)
-	}
-
-	restore := replaceBackendPlanTestServices(
-		t,
-		backendPlanPasswordVerifier{},
-		nil,
-		traceBruteForceService{},
-		backendPlanSubject{result: definitions.AuthResultOK},
-		currentBehaviorPostAction{},
-	)
-	defer restore()
-
-	auth.authenticateUser(ctx, backendExecutionPlan{
-		positions: map[definitions.Backend]int{definitions.BackendLDAP: 0},
-		passDBs:   []*PassDBMap{{backend: definitions.BackendLDAP}},
-	})
-	requireRequestContextsSpanID(t, ctx, auth, requestSpan.SpanContext().SpanID())
-	requestSpan.End()
-
-	spans := collector.Spans()
-	rblSpan := requireTraceSpan(t, spans, "auth.environment.rbl")
-	authSpan := requireTraceSpan(t, spans, "auth.authenticate")
-	localCacheSpan := requireTraceSpan(t, spans, "auth.local_cache")
-	verifySpan := requireTraceSpan(t, spans, "auth.verify")
-	historySpan := requireTraceSpan(t, spans, "bruteforce.load_all_password_histories")
-	subjectSpan := requireTraceSpan(t, spans, "auth.lua.subject")
-	cacheSpan := requireTraceSpan(t, spans, "auth.cache.process")
-
-	if got, stale := authSpan.Parent().SpanID(), rblSpan.SpanContext().SpanID(); got == stale {
-		t.Fatalf("%s parent = %s, must not inherit stale %s span %s", authSpan.Name(), got, rblSpan.Name(), stale)
-	}
-
-	requireParentSpanID(t, authSpan, requestSpan.SpanContext().SpanID())
-	requireParentSpanID(t, localCacheSpan, authSpan.SpanContext().SpanID())
-	requireParentSpanID(t, verifySpan, authSpan.SpanContext().SpanID())
-	requireParentSpanID(t, historySpan, authSpan.SpanContext().SpanID())
-	requireParentSpanID(t, subjectSpan, authSpan.SpanContext().SpanID())
-	requireParentSpanID(t, cacheSpan, authSpan.SpanContext().SpanID())
-	requireNoChildStartsAfterParentEnd(t, spans)
 }
 
 func TestPreprocessAuthRequest_RestoresParentAndKeepsChecksAsSiblings(t *testing.T) {
@@ -226,6 +181,7 @@ func TestPositivePasswordCacheTraceKeepsNestedParents(t *testing.T) {
 	previousVerifier := getPasswordVerifier()
 
 	RegisterPasswordVerifier(cacheTracePasswordVerifier{})
+	bindRegisteredAuthnHostServicesForTest(auth)
 	t.Cleanup(func() {
 		RegisterPasswordVerifier(previousVerifier)
 	})
@@ -281,38 +237,11 @@ func newTraceParentedEnvironmentAuth(t *testing.T) (*AuthState, *gin.Context, *t
 	}
 	cfg.Server.Redis.AccountLocalCache.Enabled = true
 
-	activateTracePolicySnapshotForTest(t)
-
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
 	auth.Request.XSSL = "TLSv1.3"
 	auth.AccountCache().Set(cfg, auth.Request.Username, auth.Request.Protocol.Get(), "", auth.Request.Username)
 
 	return auth, ctx, tracetest.Setup(t)
-}
-
-type traceBruteForceService struct{}
-
-func (traceBruteForceService) WaitDelay(_, _ uint) int {
-	return 0
-}
-
-func (traceBruteForceService) LoadHistories(ctx *gin.Context, _ *AuthState, _ string) {
-	_, span := otel.Tracer("nauthilus/core/environment_trace_test").Start(
-		ctx.Request.Context(),
-		"bruteforce.load_all_password_histories",
-	)
-	span.End()
-}
-
-// activateTracePolicySnapshotForTest installs a minimal snapshot so policy.check spans are recorded.
-func activateTracePolicySnapshotForTest(t *testing.T) {
-	t.Helper()
-
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation:    1,
-		Mode:          "enforce",
-		DefaultPolicy: policy.BuiltinDefaultSet,
-	})
 }
 
 // attachRequestParentSpan installs an explicit request parent span on both request holders.

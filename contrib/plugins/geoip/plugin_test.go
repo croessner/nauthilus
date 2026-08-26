@@ -31,7 +31,6 @@ import (
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/pluginregistry"
@@ -52,8 +51,6 @@ const (
 	testCountryDE            = "DE"
 	testCountryNameGermany   = "Germany"
 	testCountryUS            = "US"
-	testGeoIPSession         = "geoip-session"
-	testProtocolIMAP         = "imap"
 	testRegistryARIN         = "arin"
 	testRegistryRIPENCC      = "ripencc"
 	testRegistrySourceURL    = "https://registry.example.test/delegated"
@@ -72,29 +69,37 @@ func TestPluginMetadataAndAPIVersion(t *testing.T) {
 		t.Fatalf("metadata API version = %q, want %q", metadata.APIVersion, pluginapi.APIVersion)
 	}
 
-	if !slices.Contains(metadata.Features, pluginapi.Feature("environment_source")) {
-		t.Fatalf("metadata features = %#v, want environment_source", metadata.Features)
+	if !slices.Contains(metadata.Features, pluginapi.Feature("decision_fact_provider")) {
+		t.Fatalf("metadata features = %#v, want decision_fact_provider", metadata.Features)
+	}
+
+	if slices.Contains(metadata.Features, pluginapi.Feature("environment_source")) {
+		t.Fatalf("metadata features = %#v, must not advertise a second environment source", metadata.Features)
 	}
 }
 
-func TestPluginRegistersInitTaskEnvironmentSourceAndPolicyAttributes(t *testing.T) {
+func TestPluginRegistersExactlyOneGenericProviderOwner(t *testing.T) {
 	registry, plugin := registerTestPlugin(t, testModule(testDatabasePath(t, "geoip.json")))
 
 	if len(registry.InitTasks()) != 1 {
 		t.Fatalf("init tasks = %d, want 1", len(registry.InitTasks()))
 	}
 
-	if len(registry.EnvironmentSources()) != 1 {
-		t.Fatalf("environment sources = %d, want 1", len(registry.EnvironmentSources()))
+	if len(registry.DecisionFactProviders()) != 1 {
+		t.Fatalf("generic fact providers = %d, want 1", len(registry.DecisionFactProviders()))
 	}
 
-	attributes := registry.PolicyAttributes()
-	if len(attributes) != len(geoIPPolicyAttributes()) {
-		t.Fatalf("policy attributes = %d, want %d", len(attributes), len(geoIPPolicyAttributes()))
+	provider := registry.DecisionFactProviders()[0].DecisionFactProviderDescriptor
+	if provider.Namespace != "authn" || provider.Name != componentSource {
+		t.Fatalf("generic fact provider = %#v, want authn/plugin.%s.%s", provider, pluginName, componentSource)
 	}
 
-	if attributes[0].ID != factMatched {
-		t.Fatalf("first policy attribute = %q, want %q", attributes[0].ID, factMatched)
+	if len(registry.EnvironmentSources()) != 0 {
+		t.Fatalf("environment sources = %d, want no second component owner", len(registry.EnvironmentSources()))
+	}
+
+	if attributes := registry.PolicyAttributes(); len(attributes) != 0 {
+		t.Fatalf("legacy policy attributes = %d, want no second fact authority", len(attributes))
 	}
 
 	if plugin == nil {
@@ -102,29 +107,25 @@ func TestPluginRegistersInitTaskEnvironmentSourceAndPolicyAttributes(t *testing.
 	}
 }
 
-func TestEnvironmentSourceEmitsExpectedFactsRuntimeDeltaMetricsAndTrace(t *testing.T) {
-	runner, metrics, tracer := startedTestRunner(t, testModule(testDatabasePath(t, "geoip.json")))
+func TestPluginRejectsRegistrarWithoutGenericDecisionAuthority(t *testing.T) {
+	module := testModule(testDatabasePath(t, "geoip.json"))
+	registry := pluginregistry.NewRegistry()
+	registrar := legacyOnlyRegistrar{Registrar: registry.NewRegistrar(module)}
+
+	if err := NewPlugin().Register(registrar); err == nil {
+		t.Fatal("Register() error = nil, want required generic decision registrar rejection")
+	}
+}
+
+func TestInternalLookupEmitsExpectedGenericFactsMetricsAndTrace(t *testing.T) {
+	runner, plugin, metrics, tracer := startedTestRunnerWithPlugin(t, testModule(testDatabasePath(t, "geoip.json")))
 	defer stopRunner(t, runner)
 
-	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
-	if err != nil {
-		t.Fatalf("EvaluateEnvironment() error = %v", err)
-	}
+	result := lookupGeoIP(t, plugin, testClientIP)
 
 	assertFact(t, result.Facts, factMatched, true)
 	assertFact(t, result.Facts, factCountryISO, testCountryDE)
 	assertFact(t, result.Facts, factASN, 64500)
-	assertLogField(t, result.Logs, "policy_fact_geoip_country_iso", testCountryDE)
-	assertLogField(t, result.Logs, "policy_fact_geoip_asn", 64500)
-
-	runtimeValue := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
-	if runtimeValue["country_iso"] != testCountryDE || runtimeValue["asn"] != 64500 {
-		t.Fatalf("runtime delta = %#v, want DE/64500", runtimeValue)
-	}
-
-	if runtimeValue["guid"] != testGeoIPSession {
-		t.Fatalf("runtime guid = %#v, want %q", runtimeValue["guid"], testGeoIPSession)
-	}
 
 	if got := metrics.observationCount(metricLookupTotal, resultMatched); got != 1 {
 		t.Fatalf("matched counter observations = %d, want 1", got)
@@ -135,8 +136,8 @@ func TestEnvironmentSourceEmitsExpectedFactsRuntimeDeltaMetricsAndTrace(t *testi
 	}
 }
 
-func TestEnvironmentSourceTracesLookupSubsteps(t *testing.T) {
-	module := privacyModuleWithLocalTor(t, testClientIP, false)
+func TestInternalLookupTracesSubsteps(t *testing.T) {
+	module := privacyModuleWithLocalTor(t, testClientIP)
 	module.Config[testConfigASNDatabaseKey] = testDatabasePath(t, "geoip.json")
 	module.Config["asn_database_format"] = databaseFormatJSON
 
@@ -156,9 +157,9 @@ func TestEnvironmentSourceTracesLookupSubsteps(t *testing.T) {
 	plugin.asnRegistry = mustASNRegistrySnapshot(t, []byte(testRegistryARIN+"|"+testCountryUS+"|asn|64500|1|20240101|allocated\n"))
 	plugin.mu.Unlock()
 
-	_, err = runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
+	_, err = (geoIPLookupService{plugin: plugin}).evaluateClientIP(context.Background(), testClientIP)
 	if err != nil {
-		t.Fatalf("EvaluateEnvironment() error = %v", err)
+		t.Fatalf("evaluateClientIP() error = %v", err)
 	}
 
 	for _, spanName := range []string{
@@ -191,7 +192,7 @@ func TestMissingDatabaseFailsStartupForRequiredModule(t *testing.T) {
 
 func TestReconfigureSuccessSwapsDatabaseState(t *testing.T) {
 	module := testModule(testDatabasePath(t, "geoip.json"))
-	runner, _, _ := startedTestRunner(t, module)
+	runner, plugin, _, _ := startedTestRunnerWithPlugin(t, module)
 
 	defer stopRunner(t, runner)
 
@@ -200,10 +201,7 @@ func TestReconfigureSuccessSwapsDatabaseState(t *testing.T) {
 		t.Fatalf("Reconfigure() error = %v", err)
 	}
 
-	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
-	if err != nil {
-		t.Fatalf("EvaluateEnvironment() error = %v", err)
-	}
+	result := lookupGeoIP(t, plugin, testClientIP)
 
 	assertFact(t, result.Facts, factCountryISO, testReloadedCountry)
 	assertFact(t, result.Facts, factASN, testReloadedASN)
@@ -211,7 +209,7 @@ func TestReconfigureSuccessSwapsDatabaseState(t *testing.T) {
 
 func TestReconfigureFailureKeepsPreviousDatabaseState(t *testing.T) {
 	module := testModule(testDatabasePath(t, "geoip.json"))
-	runner, _, _ := startedTestRunner(t, module)
+	runner, plugin, _, _ := startedTestRunnerWithPlugin(t, module)
 
 	defer stopRunner(t, runner)
 
@@ -220,10 +218,7 @@ func TestReconfigureFailureKeepsPreviousDatabaseState(t *testing.T) {
 		t.Fatal("Reconfigure() error = nil, want missing database error")
 	}
 
-	result, evalErr := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
-	if evalErr != nil {
-		t.Fatalf("EvaluateEnvironment() error = %v", evalErr)
-	}
+	result := lookupGeoIP(t, plugin, testClientIP)
 
 	assertFact(t, result.Facts, factCountryISO, testCountryDE)
 	assertFact(t, result.Facts, factASN, 64500)
@@ -391,16 +386,13 @@ func TestPluginSupportsMMDBConfigThroughDatabaseLoader(t *testing.T) {
 	}
 	defer stopRunner(t, runner)
 
-	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
-	if err != nil {
-		t.Fatalf("EvaluateEnvironment() error = %v", err)
-	}
+	result := lookupGeoIP(t, plugin, testClientIP)
 
 	assertFact(t, result.Facts, factMatched, true)
 	assertFact(t, result.Facts, factASN, 64500)
 }
 
-func TestEnvironmentSourceUsesASNDatabaseForOrganization(t *testing.T) {
+func TestInternalLookupUsesASNDatabaseForOrganization(t *testing.T) {
 	primaryDatabasePath := testDatabasePath(t, "geoip-test.mmdb")
 	asnDatabasePath := testDatabasePath(t, "geoip-asn.mmdb")
 	module := testModule(primaryDatabasePath)
@@ -424,20 +416,13 @@ func TestEnvironmentSourceUsesASNDatabaseForOrganization(t *testing.T) {
 		t.Fatalf("loaded database paths = %#v, want ASN database path %q", loadedPaths, asnDatabasePath)
 	}
 
-	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
-	if err != nil {
-		t.Fatalf("EvaluateEnvironment() error = %v", err)
-	}
+	result := lookupGeoIP(t, plugin, testClientIP)
 
 	assertFact(t, result.Facts, factCountryISO, testCountryDE)
 	assertFact(t, result.Facts, factCityName, testCityNameBerlin)
 	assertFact(t, result.Facts, factASN, 64500)
 	assertFact(t, result.Facts, factASNOrg, testASNOrg)
 
-	runtimeValue := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
-	if runtimeValue["asn_org"] != testASNOrg {
-		t.Fatalf("runtime ASN org = %#v, want %q", runtimeValue["asn_org"], testASNOrg)
-	}
 }
 
 func TestASNLookupUsesLocalRoutingSnapshotLongestPrefix(t *testing.T) {
@@ -490,7 +475,7 @@ func TestASNLookupFetchesLatestCreationLogSnapshot(t *testing.T) {
 	}
 }
 
-func TestEnvironmentSourceUsesASNRoutingSnapshotForRecordsWithoutASN(t *testing.T) {
+func TestInternalLookupUsesASNRoutingSnapshotForRecordsWithoutASN(t *testing.T) {
 	module := testModule(testDatabasePath(t, "geoip-test.mmdb"))
 	module.Config["database_format"] = databaseFormatMMDB
 	module.Config["asn_lookup"] = map[string]any{
@@ -532,10 +517,7 @@ func TestEnvironmentSourceUsesASNRoutingSnapshotForRecordsWithoutASN(t *testing.
 	config, _ := plugin.currentConfig()
 	plugin.refreshASNLookupOnce(context.Background(), config.ASNLookup)
 
-	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
-	if err != nil {
-		t.Fatalf("EvaluateEnvironment() error = %v", err)
-	}
+	result := lookupGeoIP(t, plugin, testClientIP)
 
 	assertFact(t, result.Facts, factASN, 64500)
 	assertFact(t, result.Facts, factASNPrefix, testASNPrefix)
@@ -569,7 +551,7 @@ func TestASNRegistrySnapshotParsesDelegatedStats(t *testing.T) {
 	}
 }
 
-func TestEnvironmentSourceEmitsASNRegistryFacts(t *testing.T) {
+func TestInternalLookupEmitsASNRegistryFacts(t *testing.T) {
 	module := testModule(testDatabasePath(t, "geoip.json"))
 
 	runner, plugin, _, _ := startedTestRunnerWithPlugin(t, module)
@@ -579,16 +561,11 @@ func TestEnvironmentSourceEmitsASNRegistryFacts(t *testing.T) {
 	plugin.asnRegistry = mustASNRegistrySnapshot(t, []byte(testRegistryARIN+"|"+testCountryUS+"|asn|64500|1|20240101|allocated\n"))
 	plugin.mu.Unlock()
 
-	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
-	if err != nil {
-		t.Fatalf("EvaluateEnvironment() error = %v", err)
-	}
+	result := lookupGeoIP(t, plugin, testClientIP)
 
 	assertFact(t, result.Facts, factASNRegistry, testRegistryARIN)
 	assertFact(t, result.Facts, factASNCountryISO, testCountryUS)
 	assertFact(t, result.Facts, factASNAllocated, "20240101")
-	assertLogField(t, result.Logs, "policy_fact_geoip_country_iso", testCountryDE)
-	assertLogField(t, result.Logs, "policy_fact_geoip_asn_country_iso", testCountryUS)
 }
 
 func TestASNRegistryRefreshPublishesSnapshot(t *testing.T) {
@@ -904,53 +881,41 @@ func mustASNRegistrySnapshot(t *testing.T, raw []byte) *asnRegistrySnapshot {
 	return snapshot
 }
 
-// environmentRequest returns a minimal request snapshot for source evaluation.
-func environmentRequest(clientIP string) pluginapi.EnvironmentRequest {
-	runtimeContext, _ := pluginruntime.NewRuntimeContext(nil)
+// lookupGeoIP executes the internal lookup service used by the sole generic provider.
+func lookupGeoIP(t *testing.T, plugin *Plugin, clientIP string) geoIPLookupResult {
+	t.Helper()
 
-	return pluginapi.EnvironmentRequest{
-		Snapshot: pluginapi.RequestSnapshot{
-			Session:  testGeoIPSession,
-			ClientIP: clientIP,
-			Protocol: testProtocolIMAP,
-			Service:  testProtocolIMAP,
-		},
-		Runtime: runtimeContext,
+	result, err := (geoIPLookupService{plugin: plugin}).evaluateClientIP(
+		context.Background(),
+		clientIP,
+	)
+	if err != nil {
+		t.Fatalf("evaluateClientIP() error = %v", err)
 	}
+
+	return result
 }
 
-// assertFact checks one policy fact value by attribute ID.
-func assertFact(t *testing.T, facts []pluginapi.PolicyFact, attribute string, want any) {
+// legacyOnlyRegistrar exposes only the baseline registrar to prove the generic authority is mandatory.
+type legacyOnlyRegistrar struct {
+	pluginapi.Registrar
+}
+
+// assertFact checks one generic lookup fact by local name.
+func assertFact(t *testing.T, facts []geoIPLookupFact, name string, want any) {
 	t.Helper()
 
 	for _, fact := range facts {
-		if fact.Attribute == attribute {
+		if fact.Name == name {
 			if fact.Value != want {
-				t.Fatalf("fact %s = %#v, want %#v", attribute, fact.Value, want)
+				t.Fatalf("fact %s = %#v, want %#v", name, fact.Value, want)
 			}
 
 			return
 		}
 	}
 
-	t.Fatalf("fact %s missing in %#v", attribute, facts)
-}
-
-// assertLogField checks one public plugin log field by key.
-func assertLogField(t *testing.T, fields []pluginapi.LogField, key string, want any) {
-	t.Helper()
-
-	for _, field := range fields {
-		if field.Key == key {
-			if field.Value != want {
-				t.Fatalf("log field %s = %#v, want %#v", key, field.Value, want)
-			}
-
-			return
-		}
-	}
-
-	t.Fatalf("log field %s missing in %#v", key, fields)
+	t.Fatalf("fact %s missing in %#v", name, facts)
 }
 
 // goCommandEnv returns the environment for nested Go build commands.

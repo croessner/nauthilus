@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/compiler"
+	"github.com/croessner/nauthilus/v3/server/policy/catalogcompile"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
@@ -154,7 +154,9 @@ func TestAuthnCheckpointSessionRejectsOutOfOrderEvaluation(t *testing.T) {
 		detached := session.Checkpoints()
 		providers := detached[0].ProviderIDs()
 		providers[0] = "authn/tampered"
-		detached[0] = newCheckpointPlan("auth_decision", []string{"authn/tampered"})
+		detached[0] = newCheckpointPlan("auth_decision", []CheckpointProviderInstance{{
+			name: "tampered", use: "authn/tampered",
+		}})
 
 		if got := session.Checkpoints()[0].Name(); got != "pre_auth" {
 			t.Fatalf("mutated session checkpoint = %q, want pre_auth", got)
@@ -250,6 +252,30 @@ func evaluateAuthnCheckpoint(t *testing.T, session DecisionSession, name string)
 		t.Fatalf("NewFactSet() error = %v", err)
 	}
 
+	if scheduler, ok := session.(AuthnHostExecutionSession); ok {
+		for {
+			directive, found, scheduleErr := scheduler.NextAuthnHostProvider(AuthnHostScheduleInput{
+				Facts: facts, Checkpoint: name,
+			})
+			if scheduleErr != nil {
+				t.Fatalf("NextAuthnHostProvider(%q) error = %v", name, scheduleErr)
+			}
+
+			if !found {
+				break
+			}
+
+			if directive.Disposition() == AuthnHostDispositionRun {
+				recordErr := scheduler.RecordAuthnHostProvider(AuthnHostReceipt{
+					Checkpoint: name, Instance: directive.Instance().Name(), State: AuthnHostReceiptCompleted,
+				})
+				if recordErr != nil {
+					t.Fatalf("RecordAuthnHostProvider(%q) error = %v", name, recordErr)
+				}
+			}
+		}
+	}
+
 	checkpoint, err := decision.NewCheckpoint(name, facts)
 	if err != nil {
 		t.Fatalf("NewCheckpoint(%q) error = %v", name, err)
@@ -290,9 +316,13 @@ func evaluateAuthnRuntimeCheckpoint(
 		t.Fatalf("NewCheckpoint(%q) error = %v", checkpointName, err)
 	}
 
+	hostStates, hostReasons := completedHostProviderReceipts(t, evaluator, target, checkpointName)
+
 	outcome, err := evaluator.Evaluate(context.Background(), checkpointEvaluation{
 		request:      request,
 		checkpoint:   checkpoint,
+		hostStates:   hostStates,
+		hostReasons:  hostReasons,
 		finalization: decision.NewEvaluationFinalization(effectsupervisor.BoundaryHTTPCommit),
 		supervisor:   &recordingEffectAcceptor{},
 		generation:   17,
@@ -302,6 +332,43 @@ func evaluateAuthnRuntimeCheckpoint(
 	}
 
 	return outcome
+}
+
+// completedHostProviderReceipts supplies exact states and reasons for evaluator-only parity fixtures.
+func completedHostProviderReceipts(
+	t *testing.T,
+	evaluator checkpointEvaluator,
+	target decision.Target,
+	checkpointName string,
+) (map[string]providerState, map[string]string) {
+	t.Helper()
+
+	runtime, ok := evaluator.(*checkpointRuntime)
+	if !ok || runtime.catalog == nil {
+		return nil, nil
+	}
+
+	compiledTarget, ok := runtime.catalog.Lookup(target)
+	if !ok {
+		return nil, nil
+	}
+
+	checkpoint, ok := compiledTarget.DomainPlan().Checkpoint(checkpointName)
+	if !ok {
+		return nil, nil
+	}
+
+	states := make(map[string]providerState)
+	reasons := make(map[string]string)
+
+	for _, instance := range checkpoint.ProviderInstances() {
+		if compiledTarget.HostPreparesProvider(instance.Use()) {
+			states[instance.Name()] = providerStateCompleted
+			reasons[instance.Name()] = AuthnHostReasonScheduled
+		}
+	}
+
+	return states, reasons
 }
 
 // mustAuthnOperationPlanService compiles every requested builtin operation into one runtime.
@@ -331,7 +398,7 @@ func mustAuthnOperationPlanService(
 		activations = append(activations, activation)
 	}
 
-	catalog, err := compiler.NewTargetCatalogCompiler(
+	catalog, err := catalogcompile.NewTargetCatalogCompiler(
 		registry.NewBuiltinTargetContributor(&recordingEffectAcceptor{}),
 	).Compile(context.Background(), activations)
 	if err != nil {
@@ -366,7 +433,7 @@ func mustAuthnObserveCheckpointCatalog(
 	contribution := mustAuthnObserveContribution(t, target)
 	activation := mustAuthnObserveActivation(t, target)
 
-	catalog, err := compiler.NewTargetCatalogCompiler(
+	catalog, err := catalogcompile.NewTargetCatalogCompiler(
 		registry.NewBuiltinTargetContributor(&recordingEffectAcceptor{}),
 		staticAuthnCheckpointContributor{contribution: contribution},
 	).Compile(context.Background(), []registry.TargetActivation{activation})

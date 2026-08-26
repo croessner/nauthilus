@@ -20,6 +20,7 @@ import (
 	stderrors "errors"
 	"net/http"
 
+	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
@@ -40,12 +41,7 @@ func New(deps *handlerdeps.Deps) *Handler {
 		return &Handler{}
 	}
 
-	application := deps.AuthApplication
-	if application == nil {
-		application = core.NewAuthApplicationService(deps.Auth())
-	}
-
-	return NewWithApplicationService(deps, application)
+	return NewWithApplicationService(deps, deps.AuthApplication)
 }
 
 // NewWithApplicationService constructs an auth handler with an explicit application boundary.
@@ -194,10 +190,11 @@ func (h *Handler) responseDeps() core.ResponseDeps {
 	authDeps := h.deps.Auth()
 
 	return core.ResponseDeps{
-		Cfg:      authDeps.Cfg,
-		Env:      authDeps.Env,
-		Logger:   authDeps.Logger,
-		Resolver: h.deps.MessageResolver,
+		Cfg:       authDeps.Cfg,
+		Env:       authDeps.Env,
+		Logger:    authDeps.Logger,
+		Resolver:  h.deps.MessageResolver,
+		WaitDelay: authDeps.HostServices.WaitDelay,
 	}
 }
 
@@ -251,5 +248,22 @@ func (h *Handler) renderAuthOutcome(
 		ctx.Set(definitions.CtxAuthProtocolKey, outcome.Protocol)
 	}
 
-	renderer.RenderAuth(ctx, input, outcome)
+	renderer.RenderAuth(ctx, input, projectAuthOutcomeForHTTP(input, outcome))
+}
+
+// projectAuthOutcomeForHTTP applies surface-specific representation rules without changing the application decision.
+func projectAuthOutcomeForHTTP(input core.AuthInput, outcome *core.AuthOutcome) *core.AuthOutcome {
+	projected := *outcome
+
+	if input.Service == definitions.ServNginx {
+		projected.HTTPStatus = http.StatusOK
+	}
+
+	if projected.Decision == core.AuthDecisionOK &&
+		(input.Service == definitions.ServJSON || input.Service == definitions.ServCBOR) &&
+		projected.Attributes == nil {
+		projected.Attributes = make(bktype.AttributeMapping)
+	}
+
+	return &projected
 }

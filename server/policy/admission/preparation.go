@@ -65,9 +65,10 @@ type authority struct {
 }
 
 type fieldListInput struct {
-	values   []string
-	prefix   string
-	category decision.FactCategory
+	values         []string
+	prefix         string
+	category       decision.FactCategory
+	schemaCategory bool
 }
 
 // Prepare validates, detaches, and compiles one immutable generation-owned authority.
@@ -239,7 +240,7 @@ func compileFieldLists(profile Profile, grants map[string]compiledGrant) (compil
 		{values: profile.AllowedSubjectAttributes, prefix: subjectFactPrefix, category: decision.FactCategorySubject},
 		{values: profile.AllowedResourceAttributes, prefix: resourceFactPrefix, category: decision.FactCategoryResource},
 		{values: profile.AllowedEnvironmentAttributes, prefix: environmentFactPrefix, category: decision.FactCategoryEnvironment},
-		{values: profile.AllowedInputAttributes, prefix: inputFactPrefix, category: decision.FactCategoryEnvironment},
+		{values: profile.AllowedInputAttributes, prefix: inputFactPrefix, schemaCategory: true},
 	}
 	compiled := make([]map[string]struct{}, 0, len(inputs))
 
@@ -276,7 +277,7 @@ func compileFieldList(
 			return nil, configurationError("profile relative field is duplicated")
 		}
 
-		if !schemaUnionAllowsField(grants, input.prefix+"."+field, input.category) {
+		if !schemaUnionAllowsField(grants, input.prefix+"."+field, input.category, input.schemaCategory) {
 			return nil, configurationError("profile relative field is not a caller-owned schema field")
 		}
 
@@ -286,11 +287,12 @@ func compileFieldList(
 	return result, nil
 }
 
-// schemaUnionAllowsField reports whether any granted schema owns the field for the expected caller category.
+// schemaUnionAllowsField reports whether every schema declaration gives the field to the caller.
 func schemaUnionAllowsField(
 	grants map[string]compiledGrant,
 	id string,
 	category decision.FactCategory,
+	schemaCategory bool,
 ) bool {
 	found := false
 
@@ -302,7 +304,7 @@ func schemaUnionAllowsField(
 
 			found = true
 
-			if definition.Category() != category ||
+			if (!schemaCategory && definition.Category() != category) ||
 				!slices.Contains(definition.AllowedSources(), decision.FactSourceCaller) {
 				return false
 			}

@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	"github.com/croessner/nauthilus/v3/server/lualib/policyprovider"
 	"github.com/croessner/nauthilus/v3/server/policy/configinput"
@@ -118,8 +119,13 @@ func TestConfiguredLuaGenerationPreparesExactDefinitionsAndBindings(t *testing.T
 	before := configured.Namespaces["mail"].Providers["reputation"]
 	acceptor := &generationTestAcceptor{}
 
+	artifacts := captureConfiguredLuaArtifacts(t, configured)
+	if err := os.WriteFile(scriptPath, []byte("function broken("), 0o600); err != nil {
+		t.Fatalf("mutate configured Lua script: %v", err)
+	}
+
 	preparation, err := configinput.PrepareConfiguredLuaGeneration(t.Context(), configinput.ConfiguredLuaGenerationInput{
-		Policy: configured, PostActionAcceptance: acceptor,
+		Artifacts: artifacts, Policy: configured, PostActionAcceptance: acceptor,
 		NativeModules: []policyruntime.NativeModuleBindingInput{{
 			ModuleName: "native-fixture", ArtifactPath: "/loaded/native-fixture.so", ArtifactDigest: "sha256:fixture",
 		}},
@@ -141,7 +147,8 @@ func TestConfiguredLuaGenerationRejectsMissingCallbackWithoutLeakingPathOrScript
 	configured := decodeConfiguredLuaPolicy(t, configuredLuaPolicyYAML(secretPath))
 
 	_, err := configinput.PrepareConfiguredLuaGeneration(t.Context(), configinput.ConfiguredLuaGenerationInput{
-		Policy: configured, PostActionAcceptance: &generationTestAcceptor{},
+		Artifacts: captureConfiguredLuaArtifacts(t, configured),
+		Policy:    configured, PostActionAcceptance: &generationTestAcceptor{},
 	})
 	if !errors.Is(err, policyprovider.ErrInvalidGenerationRegistration) {
 		t.Fatalf("PrepareConfiguredLuaGeneration() error = %v, want invalid registration", err)
@@ -165,7 +172,8 @@ end
 `))
 
 	preparation, err := configinput.PrepareConfiguredLuaGeneration(t.Context(), configinput.ConfiguredLuaGenerationInput{
-		Policy: configured, PostActionAcceptance: &generationTestAcceptor{},
+		Artifacts: captureConfiguredLuaArtifacts(t, configured),
+		Policy:    configured, PostActionAcceptance: &generationTestAcceptor{},
 	})
 	if err != nil {
 		t.Fatalf("PrepareConfiguredLuaGeneration() error = %v", err)
@@ -188,7 +196,8 @@ end
 	configured.Namespaces["mail"] = namespace
 
 	_, err = configinput.PrepareConfiguredLuaGeneration(t.Context(), configinput.ConfiguredLuaGenerationInput{
-		Policy: configured, PostActionAcceptance: &generationTestAcceptor{},
+		Artifacts: captureConfiguredLuaArtifacts(t, configured),
+		Policy:    configured, PostActionAcceptance: &generationTestAcceptor{},
 	})
 	if !errors.Is(err, policyprovider.ErrInvalidGenerationRegistration) {
 		t.Fatalf("PrepareConfiguredLuaGeneration(mismatch) error = %v, want invalid registration", err)
@@ -203,7 +212,8 @@ func TestConfiguredLuaGenerationHonorsPreparationCancellation(t *testing.T) {
 	cancel()
 
 	_, err := configinput.PrepareConfiguredLuaGeneration(ctx, configinput.ConfiguredLuaGenerationInput{
-		Policy: configured, PostActionAcceptance: &generationTestAcceptor{},
+		Artifacts: captureConfiguredLuaArtifacts(t, configured),
+		Policy:    configured, PostActionAcceptance: &generationTestAcceptor{},
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("PrepareConfiguredLuaGeneration() error = %v, want cancellation", err)
@@ -217,7 +227,8 @@ func TestConfiguredLuaGenerationBoundsCallbackRegistration(t *testing.T) {
 	started := time.Now()
 
 	_, err := configinput.PrepareConfiguredLuaGeneration(t.Context(), configinput.ConfiguredLuaGenerationInput{
-		Policy: configured, PostActionAcceptance: &generationTestAcceptor{},
+		Artifacts: captureConfiguredLuaArtifacts(t, configured),
+		Policy:    configured, PostActionAcceptance: &generationTestAcceptor{},
 	})
 	if !errors.Is(err, policyprovider.ErrInvalidGenerationRegistration) {
 		t.Fatalf("PrepareConfiguredLuaGeneration() error = %v, want bounded registration failure", err)
@@ -226,6 +237,36 @@ func TestConfiguredLuaGenerationBoundsCallbackRegistration(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("callback registration took %s, want provider-local bound", elapsed)
 	}
+}
+
+// captureConfiguredLuaArtifacts seals all generic Lua scripts declared by one test policy.
+func captureConfiguredLuaArtifacts(t *testing.T, policy policyconfig.PolicyConfig) *config.ArtifactSnapshot {
+	t.Helper()
+
+	paths := make([]string, 0)
+
+	for _, namespace := range policy.Namespaces {
+		for _, provider := range namespace.Providers {
+			if provider.ScriptPath != "" {
+				paths = append(paths, provider.ScriptPath)
+			}
+		}
+
+		for _, effect := range namespace.Effects {
+			if effect.ScriptPath != "" {
+				paths = append(paths, effect.ScriptPath)
+			}
+		}
+	}
+
+	snapshot, err := config.CaptureArtifactSnapshot(config.ArtifactSnapshotSpec{Paths: paths})
+	if err != nil {
+		t.Fatalf("CaptureArtifactSnapshot() error = %v", err)
+	}
+
+	t.Cleanup(snapshot.Release)
+
+	return snapshot
 }
 
 // assertConfiguredLuaContribution verifies only authority-owned provider/effect definitions are returned.

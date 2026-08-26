@@ -40,6 +40,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/secret"
 
@@ -751,8 +752,10 @@ func TestLoggingTracingInterceptorUsesAuthDebugModule(t *testing.T) {
 
 func TestNewServerRegistersAuthService(t *testing.T) {
 	server, err := NewServer(ServerDeps{
-		Cfg:    grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
-		Logger: slog.Default(),
+		Cfg:           grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
+		Logger:        slog.Default(),
+		AuthService:   &recordingService{},
+		PolicyService: effectPolicyService{},
 	})
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
@@ -764,15 +767,36 @@ func TestNewServerRegistersAuthService(t *testing.T) {
 	}
 }
 
+func TestNewServerRejectsMissingAuthApplicationAuthority(t *testing.T) {
+	_, err := NewServer(ServerDeps{
+		Cfg:    grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
+		Logger: slog.Default(),
+	})
+	if !errors.Is(err, core.ErrAuthApplicationDependencyMissing) {
+		t.Fatalf("NewServer() error = %v, want missing auth application authority", err)
+	}
+}
+
+func TestNewServerRejectsMissingPolicyDecisionAuthority(t *testing.T) {
+	_, err := NewServer(ServerDeps{
+		Cfg:         grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
+		Logger:      slog.Default(),
+		AuthService: &recordingService{},
+	})
+	if !errors.Is(err, decisionservice.ErrDecisionServiceDependencyMissing) {
+		t.Fatalf("NewServer() error = %v, want missing Policy decision authority", err)
+	}
+}
+
 func TestBuildServerTLSConfigUsesConfiguredMinimumVersion(t *testing.T) {
 	certFile, keyFile := writeGRPCTestTLSKeyPair(t)
+	cfg := grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{})
+	cfg.Runtime.Servers.GRPC.Authority.TLS = config.RuntimeGRPCTLSSection{
+		Enabled: true, Cert: certFile, Key: keyFile, MinTLSVersion: "TLS1.3",
+	}
+	artifacts := prepareGRPCRouteArtifacts(t, cfg)
 
-	tlsConfig, err := buildServerTLSConfig(&config.RuntimeGRPCTLSSection{
-		Enabled:       true,
-		Cert:          certFile,
-		Key:           keyFile,
-		MinTLSVersion: "TLS1.3",
-	})
+	tlsConfig, err := buildServerTLSConfig(cfg.GetRuntimeGRPCAuthServer().GetTLS(), artifacts)
 	if err != nil {
 		t.Fatalf("buildServerTLSConfig() error = %v", err)
 	}
@@ -782,14 +806,64 @@ func TestBuildServerTLSConfigUsesConfiguredMinimumVersion(t *testing.T) {
 	}
 }
 
+func TestBuildServerTLSConfigKeepsSealedIdentityAndClientCAAfterLiveMutation(t *testing.T) {
+	capturedCertPath, capturedKeyPath := writeGRPCTestTLSKeyPair(t)
+	mutatedCertPath, mutatedKeyPath := writeGRPCTestTLSKeyPair(t)
+	capturedCert := readGRPCTestArtifact(t, capturedCertPath)
+	capturedKey := readGRPCTestArtifact(t, capturedKeyPath)
+	mutatedCert := readGRPCTestArtifact(t, mutatedCertPath)
+	mutatedKey := readGRPCTestArtifact(t, mutatedKeyPath)
+
+	cfg := grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{})
+	cfg.Runtime.Servers.GRPC.Authority.TLS = config.RuntimeGRPCTLSSection{
+		Enabled: true, Cert: capturedCertPath, Key: capturedKeyPath, ClientCA: capturedCertPath,
+		RequireClientCert: true,
+	}
+	artifacts := prepareGRPCRouteArtifacts(t, cfg)
+
+	writeGRPCTestArtifact(t, capturedCertPath, mutatedCert)
+	writeGRPCTestArtifact(t, capturedKeyPath, mutatedKey)
+
+	tlsConfig, err := buildServerTLSConfig(cfg.GetRuntimeGRPCAuthServer().GetTLS(), artifacts)
+	if err != nil {
+		t.Fatalf("buildServerTLSConfig() error = %v", err)
+	}
+
+	capturedPair, err := tls.X509KeyPair(capturedCert, capturedKey)
+	if err != nil {
+		t.Fatalf("tls.X509KeyPair(captured) error = %v", err)
+	}
+
+	if !bytes.Equal(tlsConfig.Certificates[0].Certificate[0], capturedPair.Certificate[0]) {
+		t.Fatal("gRPC TLS identity came from live mutated files, want sealed certificate")
+	}
+
+	if tlsConfig.ClientAuth != tls.RequireAndVerifyClientCert {
+		t.Fatalf("ClientAuth = %v, want %v", tlsConfig.ClientAuth, tls.RequireAndVerifyClientCert)
+	}
+
+	capturedLeaf, err := x509.ParseCertificate(capturedPair.Certificate[0])
+	if err != nil {
+		t.Fatalf("parse captured TLS certificate: %v", err)
+	}
+
+	if _, err = capturedLeaf.Verify(x509.VerifyOptions{
+		Roots: tlsConfig.ClientCAs, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+	}); err != nil {
+		t.Fatalf("sealed gRPC client CA does not trust captured certificate: %v", err)
+	}
+}
+
 func TestStartServerStopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	listener := newBlockingListener()
 
 	done, err := StartServer(ctx, ServerDeps{
-		Cfg:      grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
-		Logger:   slog.Default(),
-		Listener: listener,
+		Cfg:           grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
+		Logger:        slog.Default(),
+		AuthService:   &recordingService{},
+		PolicyService: effectPolicyService{},
+		Listener:      listener,
 	})
 	if err != nil {
 		t.Fatalf("StartServer() error = %v", err)
@@ -1065,9 +1139,10 @@ func newBufconnAuthServiceClient(t *testing.T, service core.AuthApplicationServi
 	listener := bufconn.Listen(1024 * 1024)
 
 	server, err := NewServer(ServerDeps{
-		Cfg:         grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
-		Logger:      slog.Default(),
-		AuthService: service,
+		Cfg:           grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
+		Logger:        slog.Default(),
+		AuthService:   service,
+		PolicyService: effectPolicyService{},
 	})
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
@@ -1192,6 +1267,44 @@ func writeGRPCTestTLSKeyPair(t *testing.T) (string, string) {
 	}
 
 	return certFile, keyFile
+}
+
+// prepareGRPCRouteArtifacts parses test listener material from one sealed snapshot.
+func prepareGRPCRouteArtifacts(t *testing.T, cfg config.File) *core.RouteArtifacts {
+	t.Helper()
+
+	snapshot, err := config.CaptureArtifactSnapshot(config.ProductionArtifactSnapshotSpec(cfg))
+	if err != nil {
+		t.Fatalf("CaptureArtifactSnapshot() error = %v", err)
+	}
+
+	artifacts, err := core.PrepareRouteArtifacts(cfg, snapshot)
+	if err != nil {
+		t.Fatalf("PrepareRouteArtifacts() error = %v", err)
+	}
+
+	return artifacts
+}
+
+// readGRPCTestArtifact returns exact bytes from one test-owned path.
+func readGRPCTestArtifact(t *testing.T, path string) []byte {
+	t.Helper()
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read gRPC test artifact %q: %v", path, err)
+	}
+
+	return content
+}
+
+// writeGRPCTestArtifact replaces one test-owned path.
+func writeGRPCTestArtifact(t *testing.T, path string, content []byte) {
+	t.Helper()
+
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write gRPC test artifact %q: %v", path, err)
+	}
 }
 
 func enableBruteForceControl(t *testing.T, cfg *config.FileSettings) {

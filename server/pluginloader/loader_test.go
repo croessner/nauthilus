@@ -22,13 +22,43 @@ const (
 	testLoaderModuleCustomerB       = "customer_b"
 )
 
+func TestLoaderRequiresExplicitArtifactReaderForVerifiedModules(t *testing.T) {
+	artifact := writeLoaderArtifact(t)
+	opener := fakeFactoryOpener(artifact, func() (pluginapi.Plugin, error) {
+		return fakePlugin{metadata: validLoaderMetadata()}, nil
+	})
+
+	_, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+		verifiedLoaderModule(testPluginModuleName, artifact, nil),
+	})
+	if !errors.Is(err, ErrArtifactReaderRequired) {
+		t.Fatalf("Load() error = %v, want ErrArtifactReaderRequired", err)
+	}
+}
+
+func TestVerifiedArtifactStagerRequiresExplicitReader(t *testing.T) {
+	stager, err := newVerifiedArtifactStager(nil)
+	if !errors.Is(err, ErrArtifactReaderRequired) {
+		_ = stager.close()
+
+		t.Fatalf("newVerifiedArtifactStager() error = %v, want ErrArtifactReaderRequired", err)
+	}
+}
+
+// newFilesystemLoader gives standalone loader tests an explicit mutable-file authority.
+func newFilesystemLoader(options ...Option) *Loader {
+	options = append([]Option{WithLoaderArtifactReader(os.ReadFile)}, options...)
+
+	return NewLoader(options...)
+}
+
 func TestLoader_RejectsMissingArtifactAfterValidationHandoff(t *testing.T) {
 	artifact := writeLoaderArtifact(t)
 	if err := os.Remove(artifact); err != nil {
 		t.Fatalf("remove verified artifact: %v", err)
 	}
 
-	_, err := NewLoader(WithOpener(fakeOpener{})).Load([]VerifiedModule{
+	_, err := newFilesystemLoader(WithOpener(fakeOpener{})).Load([]VerifiedModule{
 		verifiedLoaderModule(testPluginModuleName, artifact, nil),
 	})
 	if !errors.Is(err, ErrArtifactUnavailable) {
@@ -55,7 +85,7 @@ func TestGenerationLoaderRejectsArtifactReplacementAfterVerification(t *testing.
 		return fakePlugin{metadata: validLoaderMetadata()}, nil
 	})
 
-	_, err = NewLoader(WithOpener(opener)).Load([]VerifiedModule{verified})
+	_, err = newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{verified})
 	if !errors.Is(err, ErrArtifactUnavailable) {
 		t.Fatalf("Load() error = %v, want ErrArtifactUnavailable", err)
 	}
@@ -85,7 +115,7 @@ func TestGenerationLoaderOpensImmutableVerifiedArtifact(t *testing.T) {
 	verified := verifiedLoaderModule(testPluginModuleName, artifact, nil)
 	verified.ArtifactDigest = digest
 
-	state, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{verified})
+	state, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{verified})
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -110,7 +140,7 @@ func TestLoader_RejectsMissingFactorySymbol(t *testing.T) {
 		artifact: fakeHandle{lookupErr: errors.New("missing symbol")},
 	}
 
-	_, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	_, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(testPluginModuleName, artifact, nil),
 	})
 	if !errors.Is(err, ErrFactorySymbolMissing) {
@@ -124,7 +154,7 @@ func TestLoader_RejectsWrongFactorySymbolType(t *testing.T) {
 		artifact: fakeHandle{symbol: func() error { return nil }},
 	}
 
-	_, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	_, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(testPluginModuleName, artifact, nil),
 	})
 	if !errors.Is(err, ErrFactorySymbolInvalid) {
@@ -138,7 +168,7 @@ func TestLoader_RejectsFactoryError(t *testing.T) {
 		return nil, errors.New("factory failed")
 	})
 
-	_, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	_, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(testPluginModuleName, artifact, nil),
 	})
 	if !errors.Is(err, ErrFactoryFailed) {
@@ -152,7 +182,7 @@ func TestLoader_RejectsNilPluginFactoryResult(t *testing.T) {
 		return nil, nil
 	})
 
-	_, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	_, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(testPluginModuleName, artifact, nil),
 	})
 	if !errors.Is(err, ErrNilPlugin) {
@@ -170,7 +200,7 @@ func TestLoader_RejectsUnsupportedAPIVersion(t *testing.T) {
 		}}, nil
 	})
 
-	_, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	_, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(testPluginModuleName, artifact, nil),
 	})
 	if !errors.Is(err, pluginapi.ErrUnsupportedAPIVersion) {
@@ -193,7 +223,7 @@ func TestLoader_RejectsDuplicateComponentRegistration(t *testing.T) {
 		}, nil
 	})
 
-	_, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	_, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(testPluginModuleName, artifact, nil),
 	})
 	if !errors.Is(err, pluginregistry.ErrDuplicateComponent) {
@@ -207,7 +237,7 @@ func TestLoader_ReturnsErrorForRequiredModuleFailure(t *testing.T) {
 		return nil, errors.New("factory failed")
 	})
 
-	_, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	_, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(testPluginModuleName, artifact, nil),
 	})
 	if !errors.Is(err, ErrRequiredModuleFailed) {
@@ -221,7 +251,7 @@ func TestLoader_RecordsOptionalModuleFailure(t *testing.T) {
 		return nil, errors.New("factory failed")
 	})
 
-	state, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	state, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(testPluginModuleName, artifact, func(module *config.PluginModule) {
 			module.Optional = true
 		}),
@@ -255,7 +285,7 @@ func TestLoader_DoesNotCommitOptionalPartialRegistrationFailure(t *testing.T) {
 		}, nil
 	})
 
-	state, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	state, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(testPluginModuleName, artifact, func(module *config.PluginModule) {
 			module.Optional = true
 		}),
@@ -286,7 +316,7 @@ func TestLoader_SameArtifactPathCreatesSeparateModuleInstances(t *testing.T) {
 		}, nil
 	})
 
-	state, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	state, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(testLoaderModuleCustomerA, artifact, nil),
 		verifiedLoaderModule(testLoaderModuleCustomerB, artifact, nil),
 	})
@@ -439,7 +469,7 @@ func loadBackendPluginState(t *testing.T, moduleName string, backendName string,
 		}, nil
 	})
 
-	state, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	state, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(moduleName, artifact, func(module *config.PluginModule) {
 			module.Optional = failOptional
 		}),
@@ -468,7 +498,7 @@ func loadDebugPluginState(t *testing.T, moduleName string, debugName string, fai
 		}, nil
 	})
 
-	state, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{
+	state, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{
 		verifiedLoaderModule(moduleName, artifact, func(module *config.PluginModule) {
 			module.Optional = failOptional
 		}),

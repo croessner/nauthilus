@@ -21,14 +21,21 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
+	coreauth "github.com/croessner/nauthilus/v3/server/core/auth"
 	handlerauthority "github.com/croessner/nauthilus/v3/server/handler/grpcauthority"
+	"github.com/croessner/nauthilus/v3/server/pluginruntime"
+	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 func TestStartGRPCAuthorityForHTTPFailsInitialStartup(t *testing.T) {
 	startErr := errors.New("bind failed")
 	store := &contextStore{}
+	runtime := httpServerRuntime{store: store, logger: slog.Default()}
 
-	err := startGRPCAuthorityForHTTP(context.Background(), store, nil, nil, slog.Default(), httpServerStartOptions{
+	err := startGRPCAuthorityForHTTP(context.Background(), runtime, httpServerStartOptions{
 		grpcAuthorityStarter: failingGRPCAuthorityStarter(startErr),
 	})
 	if !errors.Is(err, startErr) {
@@ -41,8 +48,9 @@ func TestStartGRPCAuthorityForHTTPAllowsRestartFallback(t *testing.T) {
 	store := &contextStore{
 		grpcAuthorityDone: closedDoneChannel(),
 	}
+	runtime := httpServerRuntime{store: store, logger: slog.Default()}
 
-	err := startGRPCAuthorityForHTTP(context.Background(), store, nil, nil, slog.Default(), httpServerStartOptions{
+	err := startGRPCAuthorityForHTTP(context.Background(), runtime, httpServerStartOptions{
 		continueHTTPOnGRPCAuthorityError: true,
 		grpcAuthorityStarter:             failingGRPCAuthorityStarter(startErr),
 	})
@@ -52,6 +60,60 @@ func TestStartGRPCAuthorityForHTTPAllowsRestartFallback(t *testing.T) {
 
 	if store.grpcAuthorityDone != nil {
 		t.Fatal("grpcAuthorityDone was not cleared after tolerated gRPC start failure")
+	}
+}
+
+func TestStartGRPCAuthorityForHTTPInjectsSharedRuntimeAuthorities(t *testing.T) {
+	generationStore := policyruntime.NewGenerationStore()
+
+	source, err := decisionservice.NewStoreGenerationSource(generationStore)
+	if err != nil {
+		t.Fatalf("NewStoreGenerationSource() error = %v", err)
+	}
+
+	policyDecision, err := decisionservice.NewDecisionService(source)
+	if err != nil {
+		t.Fatalf("NewDecisionService() error = %v", err)
+	}
+
+	authApplication, err := core.NewProductionAuthApplicationService(core.AuthDeps{
+		Cfg: &config.FileSettings{Server: &config.ServerSection{}},
+		Env: config.NewTestEnvironmentConfig(), Logger: slog.Default(),
+		HostServices: coreauth.NewDefaultHostServices(),
+	}, policyDecision)
+	if err != nil {
+		t.Fatalf("NewProductionAuthApplicationService() error = %v", err)
+	}
+
+	routeArtifacts := &core.RouteArtifacts{}
+	runtime := httpServerRuntime{
+		store: &contextStore{pluginRunner: &pluginruntime.Runner{}}, logger: slog.Default(),
+		policyDecision: policyDecision, authApplication: authApplication, routeArtifacts: routeArtifacts,
+	}
+
+	var captured handlerauthority.ServerDeps
+
+	err = startGRPCAuthorityForHTTP(context.Background(), runtime, httpServerStartOptions{
+		grpcAuthorityStarter: func(_ context.Context, deps handlerauthority.ServerDeps) (<-chan struct{}, error) {
+			captured = deps
+
+			return closedDoneChannel(), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("startGRPCAuthorityForHTTP() error = %v", err)
+	}
+
+	if captured.AuthService != authApplication || captured.PolicyService != policyDecision {
+		t.Fatal("gRPC authority did not receive the runtime-owned auth and Policy authorities")
+	}
+
+	if captured.PluginBackendFactory == nil {
+		t.Fatal("gRPC authority did not receive the runner-bound plugin backend factory")
+	}
+
+	if captured.RouteArtifacts != routeArtifacts {
+		t.Fatal("gRPC authority did not receive the pre-commit route artifacts")
 	}
 }
 

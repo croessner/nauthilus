@@ -22,7 +22,7 @@ func TestLoaderPropagatesVerifiedSignerProvenance(t *testing.T) {
 	verified := verifiedLoaderModule("rns_auth", artifact, nil)
 	verified.Signer = &config.PluginTrustSigner{ID: "release_key"}
 
-	state, err := NewLoader(WithOpener(opener)).Load([]VerifiedModule{verified})
+	state, err := newFilesystemLoader(WithOpener(opener)).Load([]VerifiedModule{verified})
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}

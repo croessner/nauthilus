@@ -1,7 +1,7 @@
 # ClickHouse Native Post-Action Plugin
 
-This plugin replaces `server/lua-plugins.d/actions/clickhouse.lua` with the native effect
-`clickhouse.post_action` when the module is configured as `clickhouse`.
+When this plugin is configured as module `clickhouse`, the generation-owned authn catalog exposes its
+authentication-shaped post-action only as `authn/plugin.clickhouse.post_action` for explicit Policy selection.
 
 Builds from the stable and debug Dockerfiles bundle this plugin at
 `/usr/local/lib/nauthilus/plugins/clickhouse.so`. When `REQUIRE_PLUGIN_SIGNATURE=true`, the image build also writes
@@ -32,11 +32,12 @@ The plugin writes newline-delimited JSONEachRow payloads with the same row field
 module-scoped host cache for batching, the host Redis facade for authenticated request deduplication, and the host HTTP
 facade for inserts.
 
-Input runtime exchange values use the native Go standard `plugin.exchange.*` keyspace. The plugin reads
-`plugin.exchange.geoip`, `plugin.exchange.haveibeenpwnd`, standard feature markers, and policy facts to populate the
-existing ClickHouse row fields, including `decision_sources`. The old Lua-era `features` column is not written or
-supported by the native plugin; `decision_sources` is the supported analytics source list. The historical Lua `rt` table
-is not part of this native exchange standard and is not read by the plugin.
+The analytics consumer reads standard `plugin.exchange.*` values, standard feature markers, and policy facts to populate
+the existing ClickHouse row fields, including `decision_sources`. Canonical `plugin.geoip.*` facts alone populate the
+GeoIP location, ASN, and privacy columns; no `plugin.exchange.geoip` value or environment-source execution is required.
+The older `plugin.exchange.geoip` and `plugin.environment.geoip.*` shapes remain accepted only as consumer-side
+projections of their public plugin API contracts. The historical Lua `rt` table is not part of the native exchange
+standard and is not read by the plugin.
 
 The optional `deployment` and `instance` module config fields are serialized into each ClickHouse row so mixed writers
 can be separated in analytics. Kubernetes deployments should normally set them from `${NAUTHILUS_ENV}` and
@@ -45,38 +46,37 @@ can be separated in analytics. Kubernetes deployments should normally set them f
 `status_msg` is taken from the core request snapshot, which preserves selected policy/failure text and fills terminal
 success or authentication-failure defaults before native post-actions run. `client_net` is the brute-force client
 network selected by the core brute-force path, with post-action fallback from brute-force policy-report details.
-`geoip_guid` is populated from native GeoIP exchange data when the GeoIP plugin runs before ClickHouse.
+`geoip_guid` is populated only when an input exchange producer supplies that legacy analytics field; the generic GeoIP
+provider does not synthesize a request GUID.
 
-Privacy intelligence uses the same `plugin.exchange.geoip` snapshot. Valid typed exchange values take precedence over
-registered `plugin.environment.geoip.*` facts; malformed optional exchange values fall back to compatible facts and do
-not discard the login row. Nullable columns preserve unavailable versus explicit `false` or zero, while privacy classes
-and source authorities are always emitted as JSON arrays. Privacy evidence is observational and does not add itself to
-`decision_sources`.
+Privacy intelligence uses the same typed analytics projection. Valid exchange values take precedence over compatible
+canonical or older facts; malformed optional exchange values fall back to facts and do not discard the login row.
+Nullable columns preserve unavailable versus explicit `false` or zero, while privacy classes and source authorities are
+always emitted as JSON arrays. Privacy evidence is observational and does not add itself to `decision_sources`.
 
 The typed columns are `geoip_privacy_lookup_state`, `geoip_privacy_detected`, `geoip_privacy_classes`,
 `geoip_privacy_primary_class`, `geoip_privacy_confidence`, `geoip_privacy_source_authorities`,
 `geoip_privacy_data_stale`, `geoip_privacy_data_age_seconds`, `geoip_is_tor_exit_node`,
 `geoip_is_known_vpn_exit`, `geoip_is_community_vpn_exit`, `geoip_is_public_proxy`, `geoip_is_privacy_relay`, and
-`geoip_is_hosting_network`, and `geoip_is_shared_egress`. Unavailable scalar values remain SQL `NULL`; missing class and authority lists remain
-non-null empty arrays. Bounded mapping diagnostics contain only malformed field names and never raw values.
+`geoip_is_hosting_network`, and `geoip_is_shared_egress`. Unavailable scalar values remain SQL `NULL`; missing class and
+authority lists remain non-null empty arrays. Bounded mapping diagnostics contain only malformed field names and never
+raw values.
 
 Apply and verify the additive privacy columns from `contrib/clickhouse-kubernetes/schema.sql` before deploying a plugin
 version that emits them. ClickHouse can accept rows from the old plugin after the schema grows, while a new JSONEachRow
 writer can fail against an old schema. The Kubernetes ClickHouse README contains the schema and row readback queries.
 
-Policy migration:
+## Top-Level Policy Boundary
 
-```yaml
-then:
-  obligations:
-    - id: clickhouse.post_action
-```
+This component does not register `DecisionEffectProvider` and is never exposed to non-authn targets. Top-level `policy`
+may select the authn-only effect `authn/plugin.clickhouse.post_action`; the generation-owned adapter preserves the public
+`PostActionRequest` snapshot, credentials, and plan-local runtime exchange instead of translating it into the narrower
+generic `DecisionEffectRequest`.
 
-Use this native effect ID instead of a Lua action dispatch to `clickhouse.lua` after the module is configured. Adding or
-removing the module, changing the module name, or replacing the `.so` artifact requires a process restart. Config-only
-changes inside `plugins.modules[].config` can be applied by SIGHUP when validation succeeds.
-Nauthilus does not enqueue this external effect implicitly; add the obligation to each policy decision that should
-produce a ClickHouse row.
+The registered `PostActionTarget` remains isolated behind the authentication-shaped generation binding. Adding or
+removing the module, changing its name or config, changing its capabilities, or replacing the `.so` artifact requires a
+process restart. A Policy reload may select or stop selecting the frozen canonical effect without changing the plugin
+object.
 
 Observability is host-integrated: the plugin registers the remote ClickHouse endpoint through
 `Host.ConnectionTargets("clickhouse")`, sends inserts through `Host.HTTP("batch")`, and records bounded queue/flush
@@ -85,8 +85,10 @@ credentials.
 
 Known parity gaps:
 
-- Native and Lua post-actions can exchange runtime deltas with later steps in the same detached plan. Those deltas do
-  not mutate the already-selected policy decision, client response, or live request runtime after the plan finishes.
-- Order `haveibeenpwnd.post_action` before `clickhouse.post_action` when ClickHouse rows should include
-  `plugin.exchange.haveibeenpwnd.hash_info` as `pwnd_info`.
+- Authentication-shaped native and Lua post-actions can exchange runtime deltas with later steps in the same detached
+  plan. Those deltas do not mutate the already-selected decision, client response, or live request runtime after the
+  plan finishes.
+- In one Policy obligation list, order `authn/plugin.haveibeenpwnd.post_action` before
+  `authn/plugin.clickhouse.post_action` when rows should include `plugin.exchange.haveibeenpwnd.hash_info` as
+  `pwnd_info`.
 - The Lua read-only ClickHouse query hook is not implemented by this native action plugin.

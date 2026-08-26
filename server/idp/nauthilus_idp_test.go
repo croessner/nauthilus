@@ -33,7 +33,6 @@ import (
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/backend"
-	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
@@ -69,17 +68,17 @@ const (
 	idpLookupTOTPRecoveryField = "totpRecovery"
 )
 
-func TestNauthilusIDPCanonicalOIDCUserLookupUsesNativePluginNoAuthIdentity(t *testing.T) {
+func TestNauthilusIDPCanonicalOIDCUserLookupUsesExplicitNativeBackendWithoutLegacySubjectBridge(t *testing.T) {
 	const (
 		username = "lookup@example.test"
 		clientID = "lookup-client"
 	)
 
 	pluginBackend := &idpLookupPluginBackend{}
-	subjectSource := &idpLookupSubjectSource{}
+	legacySubjectCanary := &idpLegacySubjectSourceCanary{}
 
-	installIDPLookupPluginRunner(t, pluginBackend, subjectSource)
-	idp, ctx, mock := newIDPLookupTestIDP(t, username, clientID)
+	runner := installIDPLookupPluginRunner(t, pluginBackend, legacySubjectCanary)
+	idp, ctx, mock := newIDPLookupTestIDP(t, username, runner)
 
 	user, err := idp.GetUserByUsernameForOIDCClaimsCanonical(
 		ctx,
@@ -100,8 +99,12 @@ func TestNauthilusIDPCanonicalOIDCUserLookupUsesNativePluginNoAuthIdentity(t *te
 		t.Fatalf("native backend call = called:%t no_auth:%t, want true/true", pluginBackend.called, pluginBackend.sawNoAuth)
 	}
 
-	if !subjectSource.called || !subjectSource.sawIdentity {
-		t.Fatalf("native subject readback = called:%t identity:%t, want true/true", subjectSource.called, subjectSource.sawIdentity)
+	if legacySubjectCanary.called || legacySubjectCanary.sawIdentity {
+		t.Fatalf(
+			"legacy subject bridge = called:%t identity:%t, want false/false",
+			legacySubjectCanary.called,
+			legacySubjectCanary.sawIdentity,
+		)
 	}
 
 	assertIDPLookupUser(t, user)
@@ -109,16 +112,11 @@ func TestNauthilusIDPCanonicalOIDCUserLookupUsesNativePluginNoAuthIdentity(t *te
 }
 
 // installIDPLookupPluginRunner installs a credential-free native lookup plugin for the test.
-func installIDPLookupPluginRunner(t *testing.T, backend pluginapi.Backend, subjectSource pluginapi.SubjectSource) {
+func installIDPLookupPluginRunner(t *testing.T, backend pluginapi.Backend, subjectSource pluginapi.SubjectSource) *pluginruntime.Runner {
 	t.Helper()
 
 	runner := newIDPLookupPluginRunner(t, backend, subjectSource)
-	previousRunner, _ := pluginruntime.DefaultRunner()
-
-	pluginruntime.SetDefaultRunner(runner)
 	t.Cleanup(func() {
-		pluginruntime.SetDefaultRunner(previousRunner)
-
 		if err := runner.Stop(context.Background()); err != nil {
 			t.Errorf("plugin runner Stop() error = %v", err)
 		}
@@ -127,10 +125,16 @@ func installIDPLookupPluginRunner(t *testing.T, backend pluginapi.Backend, subje
 	if len(runner.ModuleCapabilities(idpLookupModuleName)) != 0 {
 		t.Fatal("IdP lookup plugin unexpectedly received credential capability")
 	}
+
+	return runner
 }
 
 // newIDPLookupTestIDP builds the IdP request context and Redis expectations for the lookup path.
-func newIDPLookupTestIDP(t *testing.T, username string, clientID string) (*NauthilusIDP, *gin.Context, redismock.ClientMock) {
+func newIDPLookupTestIDP(
+	t *testing.T,
+	username string,
+	runner *pluginruntime.Runner,
+) (*NauthilusIDP, *gin.Context, redismock.ClientMock) {
 	t.Helper()
 
 	backendSelector := &config.Backend{}
@@ -145,21 +149,25 @@ func newIDPLookupTestIDP(t *testing.T, username string, clientID string) (*Nauth
 	}}
 	db, mock := redismock.NewClientMock()
 	redisClient := rediscli.NewTestClient(db)
-	userKey := rediscli.GetUserHashKey(testRedisPrefix, username)
-	mappingField := accountcache.GetAccountMappingField(username, definitions.ProtoOIDC, clientID)
 
-	mock.ExpectHGet(userKey, mappingField).RedisNil()
-	mock.ExpectHGet(userKey, mappingField).RedisNil()
-	mock.ExpectHSet(userKey, mappingField, idpLookupAccount).SetVal(1)
-	mock.ExpectHGet(userKey, mappingField).SetVal(idpLookupAccount)
+	result, err := runner.VerifyPassword(context.Background(), idpLookupModuleName+"."+idpLookupBackendName, pluginapi.BackendAuthRequest{
+		Username: username,
+		Snapshot: pluginapi.RequestSnapshot{
+			Username: username,
+			Protocol: definitions.ProtoOIDC,
+			Runtime:  pluginapi.RuntimeFlags{NoAuth: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("explicit native backend lookup: %v", err)
+	}
+
+	application := newIDPLookupAuthApplication(result)
 
 	d := &deps.Deps{
-		Cfg:          cfg,
-		Env:          config.NewTestEnvironmentConfig(),
-		Redis:        redisClient,
-		AccountCache: accountcache.NewManager(cfg),
+		Cfg: cfg, Env: config.NewTestEnvironmentConfig(), Redis: redisClient,
+		PluginRunner: runner, AuthApplication: application,
 	}
-	d.AuthApplication = core.NewAuthApplicationService(d.Auth())
 	idp := NewNauthilusIDP(d)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 
@@ -169,7 +177,41 @@ func newIDPLookupTestIDP(t *testing.T, username string, clientID string) (*Nauth
 	return idp, ctx, mock
 }
 
-// newIDPLookupPluginRunner registers and starts one native backend for the IdP lookup acceptance path.
+// newIDPLookupAuthApplication converts one native result into the canonical application outcome.
+func newIDPLookupAuthApplication(result pluginapi.BackendResult) *recordingIDPAuthApplication {
+	attributes := make(bktype.AttributeMapping, len(result.Attributes))
+	for name, values := range result.Attributes {
+		attributes[name] = make([]any, len(values))
+		for index, value := range values {
+			attributes[name][index] = value
+		}
+	}
+
+	// The application boundary returns the canonical group sets installed by AuthState.SetResolvedGroups.
+	canonicalIdentity := &core.AuthState{}
+	canonicalIdentity.SetResolvedGroups(result.Identity.Groups, result.Identity.GroupDistinguishedNames)
+
+	return &recordingIDPAuthApplication{lookupResults: []applicationBoundaryResult{{outcome: &core.AuthOutcome{
+		Attributes:              attributes,
+		Decision:                core.AuthDecisionOK,
+		Account:                 result.Account,
+		AccountField:            result.AccountField,
+		DisplayName:             idpLookupDisplayName,
+		UniqueUserID:            idpLookupUniqueID,
+		TOTPSecretField:         result.Identity.TOTPSecretField,
+		TOTPRecoveryField:       result.Identity.TOTPRecoveryField,
+		UniqueUserIDField:       result.Identity.UniqueUserIDField,
+		DisplayNameField:        result.Identity.DisplayNameField,
+		Groups:                  canonicalIdentity.GetGroups(),
+		GroupDistinguishedNames: canonicalIdentity.GetGroupDistinguishedNames(),
+		Protocol:                definitions.ProtoOIDC,
+		Backend:                 definitions.BackendPlugin,
+		HTTPStatus:              200,
+		PolicyTerminal:          true,
+	}}}}
+}
+
+// newIDPLookupPluginRunner starts one explicit native backend with an inactive legacy-source canary.
 func newIDPLookupPluginRunner(
 	t *testing.T,
 	backend pluginapi.Backend,
@@ -233,7 +275,7 @@ func (p *idpLookupPlugin) Metadata() pluginapi.Metadata {
 	return pluginapi.Metadata{Name: idpLookupModuleName, Version: "test", APIVersion: pluginapi.APIVersion}
 }
 
-// Register exposes the synthetic lookup backend without credential capability.
+// Register exposes the explicit backend and a canary that must not receive ambient dispatch.
 func (p *idpLookupPlugin) Register(registrar pluginapi.Registrar) error {
 	if err := registrar.RegisterBackend(p.backend); err != nil {
 		return err
@@ -242,18 +284,18 @@ func (p *idpLookupPlugin) Register(registrar pluginapi.Registrar) error {
 	return registrar.RegisterSubjectSource(p.subjectSource)
 }
 
-type idpLookupSubjectSource struct {
+type idpLegacySubjectSourceCanary struct {
 	called      bool
 	sawIdentity bool
 }
 
-// Descriptor schedules the IdP lookup subject readback check.
-func (s *idpLookupSubjectSource) Descriptor() pluginapi.SourceDescriptor {
+// Descriptor identifies the legacy source that must remain inactive outside the generation catalog.
+func (s *idpLegacySubjectSourceCanary) Descriptor() pluginapi.SourceDescriptor {
 	return pluginapi.SourceDescriptor{Name: "identity_readback", AbortPolicy: pluginapi.AbortPolicyNone}
 }
 
-// Evaluate rejects lookup results that do not expose the complete safe identity value.
-func (s *idpLookupSubjectSource) Evaluate(_ context.Context, request pluginapi.SubjectRequest) (pluginapi.SubjectResult, error) {
+// Evaluate records any forbidden ambient legacy-source dispatch.
+func (s *idpLegacySubjectSourceCanary) Evaluate(_ context.Context, request pluginapi.SubjectRequest) (pluginapi.SubjectResult, error) {
 	s.called = true
 	identity := request.BackendResult.Identity
 	s.sawIdentity = identity.UniqueUserIDField == idpLookupUniqueIDField &&

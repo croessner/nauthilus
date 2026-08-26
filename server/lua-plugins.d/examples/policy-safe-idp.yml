@@ -1,0 +1,28 @@
+policy:
+  namespaces:
+    authn:
+      schema_contributions:
+        lua:
+          registry_scripts:
+            - policy/registry.lua
+      providers:
+        lua_subject_idp_policy:
+          kind: lua_subject
+          script_path: subject/idp_policy.lua
+          targets: [{action: authenticate}]
+          executions: [host_sync]
+      domain_plans:
+        safe_idp:
+          checkpoints:
+            subject_analysis:
+              providers:
+                - name: idp_policy
+                  use: authn/lua_subject_idp_policy
+                  actions: [authenticate]
+            auth_decision: {providers: []}
+  targets:
+    - namespace: authn
+      action: authenticate
+      schema: authn/authenticate/v1
+      domain_plan: authn/safe_idp
+      default_policy: authn/standard_auth

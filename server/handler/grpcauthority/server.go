@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -34,8 +33,10 @@ import (
 	policyv1 "github.com/croessner/nauthilus/v3/api/policy/v1"
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
+	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
+	coreauth "github.com/croessner/nauthilus/v3/server/core/auth"
 	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
@@ -47,6 +48,7 @@ import (
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	policy "github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v3/server/policy/transportsecurity"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/stats"
@@ -60,7 +62,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -74,20 +75,24 @@ const (
 
 // ServerDeps contains the dependencies required by the gRPC authority server.
 type ServerDeps struct {
-	Cfg             config.File
-	CurrentConfig   func() config.File
-	Env             config.Environment
-	Logger          *slog.Logger
-	Redis           rediscli.Client
-	AccountCache    *accountcache.Manager
-	Channel         backend.Channel
-	AuthService     core.AuthApplicationService
-	PolicyService   decision.Service
-	IdentityService AuthorityIdentityService
-	BackendRefs     BackendRefStore
-	MessageResolver localization.MessageResolver
-	OIDCValidator   oidcbearer.TokenValidator
-	Listener        net.Listener
+	Cfg                  config.File
+	Env                  config.Environment
+	Logger               *slog.Logger
+	Redis                rediscli.Client
+	AccountCache         *accountcache.Manager
+	Channel              backend.Channel
+	AuthService          core.AuthApplicationService
+	PolicyService        decisionservice.PreparedService
+	IdentityService      AuthorityIdentityService
+	BackendRefs          BackendRefStore
+	PluginBackendFactory core.BackendManagerFactory
+	LDAPQueue            core.LDAPRequestQueue
+	LDAPAuthQueue        core.LDAPAuthRequestQueue
+	Tolerate             tolerate.Tolerate
+	MessageResolver      localization.MessageResolver
+	OIDCValidator        oidcbearer.TokenValidator
+	Listener             net.Listener
+	RouteArtifacts       *core.RouteArtifacts
 }
 
 type grpcAuthorityServerConfigProvider interface {
@@ -146,13 +151,21 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 		return nil, err
 	}
 
+	if deps.AuthService == nil {
+		return nil, fmt.Errorf("%w: gRPC auth application authority", core.ErrAuthApplicationDependencyMissing)
+	}
+
+	if deps.PolicyService == nil {
+		return nil, fmt.Errorf("%w: gRPC Policy decision authority", decisionservice.ErrDecisionServiceDependencyMissing)
+	}
+
 	grpcAuthorityConfig := runtimeGRPCAuthorityServerConfig(deps.Cfg)
 	options := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(UnaryServerInterceptor(deps)),
 	}
 
 	if grpcAuthorityConfig.GetTLS().IsEnabled() {
-		tlsConfig, err := buildServerTLSConfig(grpcAuthorityConfig.GetTLS())
+		tlsConfig, err := buildServerTLSConfig(grpcAuthorityConfig.GetTLS(), deps.RouteArtifacts)
 		if err != nil {
 			return nil, err
 		}
@@ -165,7 +178,7 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 		return nil, err
 	}
 
-	authService := deps.authApplicationService()
+	authService := deps.AuthService
 
 	var identityService AuthorityIdentityService
 
@@ -186,9 +199,7 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 		identityv1.RegisterIdentityBackendServiceServer(server, handler)
 	}
 
-	if deps.PolicyService != nil {
-		policyv1.RegisterPolicyDecisionServiceServer(server, policygrpc.New(deps.PolicyService))
-	}
+	policyv1.RegisterPolicyDecisionServiceServer(server, policygrpc.New(deps.PolicyService, policyAuthenticationEvidence))
 
 	return server, nil
 }
@@ -209,7 +220,6 @@ func unaryServerInterceptor(deps ServerDeps, requestMetrics grpc.UnaryServerInte
 		traceContextInterceptor(),
 		loggingTracingInterceptor(deps),
 		mtlsInterceptor(deps),
-		policyMessageLimitInterceptor(),
 		backchannelAuthInterceptor(deps),
 	)
 }
@@ -221,20 +231,6 @@ func postActionResponseCompletionInterceptor() grpc.UnaryServerInterceptor {
 		defer gate.Complete()
 
 		return handler(requestContext, req)
-	}
-}
-
-// policyMessageLimitInterceptor applies the Policy API's request limit without changing Auth or Identity contracts.
-func policyMessageLimitInterceptor() grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if grpcFullMethod(info) == policyv1.PolicyDecisionService_Evaluate_FullMethodName {
-			message, ok := req.(proto.Message)
-			if !ok || proto.Size(message) > decision.MaximumOpaqueCredentialBytes {
-				return nil, status.Error(codes.ResourceExhausted, "Policy request exceeds the message limit")
-			}
-		}
-
-		return handler(ctx, req)
 	}
 }
 
@@ -290,22 +286,6 @@ func runtimeGRPCAuthorityServerConfig(cfg config.File) *config.RuntimeGRPCAuthSe
 	return provider.GetRuntimeGRPCAuthServer()
 }
 
-func (d ServerDeps) authApplicationService() core.AuthApplicationService {
-	if d.AuthService != nil {
-		return d.AuthService
-	}
-
-	return core.NewAuthApplicationService(core.AuthDeps{
-		Cfg:           d.Cfg,
-		CurrentConfig: d.CurrentConfig,
-		Env:           d.Env,
-		Logger:        d.effectiveLogger(),
-		Redis:         d.Redis,
-		AccountCache:  d.AccountCache,
-		Channel:       d.Channel,
-	})
-}
-
 // authorityIdentityService reuses the exact AuthService instance owned by the gRPC server.
 func (d ServerDeps) authorityIdentityService(authService core.AuthApplicationService) AuthorityIdentityService {
 	if d.IdentityService != nil {
@@ -315,13 +295,17 @@ func (d ServerDeps) authorityIdentityService(authService core.AuthApplicationSer
 	return NewBackendManagerIdentityService(BackendManagerIdentityServiceDeps{
 		AuthService: authService,
 		AuthDeps: core.AuthDeps{
-			Cfg:           d.Cfg,
-			CurrentConfig: d.CurrentConfig,
-			Env:           d.Env,
-			Logger:        d.effectiveLogger(),
-			Redis:         d.Redis,
-			AccountCache:  d.AccountCache,
-			Channel:       d.Channel,
+			Cfg:                  d.Cfg,
+			Env:                  d.Env,
+			Logger:               d.effectiveLogger(),
+			Redis:                d.Redis,
+			AccountCache:         d.AccountCache,
+			Channel:              d.Channel,
+			Tolerate:             d.Tolerate,
+			PluginBackendFactory: d.PluginBackendFactory,
+			HostServices:         coreauth.NewDefaultHostServices(),
+			LDAPQueue:            d.LDAPQueue,
+			LDAPAuthQueue:        d.LDAPAuthQueue,
 		},
 	})
 }
@@ -377,44 +361,17 @@ func (d ServerDeps) effectiveOIDCValidator() oidcbearer.TokenValidator {
 	return idp.NewNauthilusIDP(deps)
 }
 
-func buildServerTLSConfig(tlsSection *config.RuntimeGRPCTLSSection) (*tls.Config, error) {
+// buildServerTLSConfig applies listener settings to the pre-parsed sealed identity and trust material.
+func buildServerTLSConfig(tlsSection *config.RuntimeGRPCTLSSection, artifacts *core.RouteArtifacts) (*tls.Config, error) {
 	if tlsSection == nil || !tlsSection.IsEnabled() {
 		return nil, nil
 	}
 
-	cert, err := tls.LoadX509KeyPair(tlsSection.GetCert(), tlsSection.GetKey())
-	if err != nil {
-		return nil, fmt.Errorf("load runtime.servers.grpc.authority.tls certificate: %w", err)
+	if artifacts == nil {
+		return nil, fmt.Errorf("prepared gRPC route artifacts are unavailable")
 	}
 
-	var clientCAs *x509.CertPool
-
-	if tlsSection.GetClientCA() != "" {
-		pem, err := os.ReadFile(tlsSection.GetClientCA())
-		if err != nil {
-			return nil, fmt.Errorf("read runtime.servers.grpc.authority.tls.client_ca: %w", err)
-		}
-
-		clientCAs = x509.NewCertPool()
-		if !clientCAs.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("parse runtime.servers.grpc.authority.tls.client_ca: invalid PEM data")
-		}
-	}
-
-	clientAuth := tls.NoClientCert
-	if tlsSection.RequiresClientCert() {
-		clientAuth = tls.RequireAndVerifyClientCert
-	} else if clientCAs != nil {
-		clientAuth = tls.VerifyClientCertIfGiven
-	}
-
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		ClientAuth:   clientAuth,
-		ClientCAs:    clientCAs,
-		MinVersion:   config.TLSMinVersionValue(tlsSection.GetMinTLSVersion()),
-		NextProtos:   []string{"h2"},
-	}, nil
+	return artifacts.GRPCServerTLSConfig(tlsSection)
 }
 
 func chainUnaryInterceptors(interceptors ...grpc.UnaryServerInterceptor) grpc.UnaryServerInterceptor {
@@ -669,12 +626,7 @@ func backchannelAuthInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		fullMethod := grpcFullMethod(info)
 		if fullMethod == policyv1.PolicyDecisionService_Evaluate_FullMethodName {
-			policyContext, err := policyAuthenticationContext(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			return handler(policyContext, req)
+			return handler(ctx, req)
 		}
 
 		if !knownAuthorityMethod(fullMethod) {
@@ -696,16 +648,6 @@ func backchannelAuthInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 
 		return handler(ctx, req)
 	}
-}
-
-// policyAuthenticationContext attaches only interceptor-created opaque Policy evidence.
-func policyAuthenticationContext(ctx context.Context) (context.Context, error) {
-	authentication, err := policyAuthenticationEvidence(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return policygrpc.ContextWithAuthentication(ctx, authentication), nil
 }
 
 // policyAuthenticationEvidence extracts presentation and transport evidence without Policy validation.

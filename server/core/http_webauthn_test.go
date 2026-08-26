@@ -33,8 +33,6 @@ func TestInitWebAuthnSkipsWhenIDPAndFrontendDisabled(t *testing.T) {
 		Server: &config.ServerSection{},
 	}
 	config.SetTestFile(cfg)
-	SetDefaultConfigFile(config.GetFile())
-
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	deps := HTTPDeps{
 		Cfg:    config.GetFile(),

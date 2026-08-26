@@ -63,24 +63,13 @@ function nauthilus_util.exists_in_table(tbl, element)
     return false
 end
 
---- nauthilus_util.get_current_timestamp creates a timestamp string valid for logging purposes.
+--- nauthilus_util.get_current_timestamp creates a deterministic UTC timestamp for logging purposes.
 ---@return string
 function nauthilus_util.get_current_timestamp()
-    ---@type string tz
-    local tz = nauthilus_util.getenv("TZ", "UTC")
-
     ---@type string currentTime
     ---@type string err
-    local currentTime, err = time.format(time.unix(), "2006-01-02T15:04:05 -07:00", tz)
-
-    -- Fallback: if the configured time zone is unknown (e.g., tzdata missing), format in UTC instead of raising.
-    if err then
-        currentTime, err = time.format(time.unix(), "2006-01-02T15:04:05 -07:00", "UTC")
-        -- As a last resort, avoid crashing: build a simple UTC timestamp via os.date
-        if err then
-            currentTime = os.date("!%Y-%m-%dT%H:%M:%S +00:00")
-        end
-    end
+    local currentTime, err = time.format(time.unix(), "2006-01-02T15:04:05 -07:00", "UTC")
+    nauthilus_util.if_error_raise(err)
 
     return currentTime
 end

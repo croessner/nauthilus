@@ -17,17 +17,18 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/app/configfx"
 	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 
 	"github.com/go-redis/redismock/v9"
-	"github.com/spf13/viper"
 )
 
 func TestRuntimePluginHostProvidesProductionFacades(t *testing.T) {
@@ -36,25 +37,11 @@ func TestRuntimePluginHostProvidesProductionFacades(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	queue := priorityqueue.NewLDAPRequestQueue(logger)
 
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	viper.Set("plugins.modules", []map[string]any{
-		{
-			"name": "geoip",
-			"type": "go",
-			"path": "/tmp/geoip.so",
-			"config": map[string]any{
-				"enabled": true,
-			},
-		},
-	})
-
-	cfg := &config.FileSettings{}
+	cfg := loadRuntimePluginHostConfig(t)
 	host := newRuntimePluginHost(
 		context.Background(),
 		logger,
 		cfg,
-		configfx.NewProviderWithSnapshot(cfg),
 		redisClient,
 		queue,
 	)
@@ -74,4 +61,60 @@ func TestRuntimePluginHostProvidesProductionFacades(t *testing.T) {
 	if _, ok := host.Config().GetPath([]string{"plugins", "modules"}); !ok {
 		t.Fatal("config facade does not expose loaded plugin module settings")
 	}
+
+	if _, ok := host.Config().Get("policy"); ok {
+		t.Fatal("config facade exposes the policy authority subtree")
+	}
+
+	if _, ok := host.Config().GetPath([]string{"policy", "namespaces", "authn"}); ok {
+		t.Fatal("config facade resolves nested policy authority values")
+	}
+}
+
+// loadRuntimePluginHostConfig returns a production-decoded snapshot with no ambient Viper dependency.
+func loadRuntimePluginHostConfig(t *testing.T) config.File {
+	t.Helper()
+
+	directory := t.TempDir()
+
+	pluginPath := filepath.Join(directory, "geoip.so")
+	if err := os.WriteFile(pluginPath, []byte("fixture plugin artifact"), 0o600); err != nil {
+		t.Fatalf("write plugin artifact: %v", err)
+	}
+
+	configPath := filepath.Join(directory, "nauthilus.yaml")
+
+	contents := fmt.Sprintf(`
+plugins:
+  allowed_dirs: [%q]
+  modules:
+    - name: geoip
+      type: go
+      path: %q
+      config:
+        enabled: true
+policy:
+  api:
+    enabled: false
+`, directory, pluginPath)
+	if err := os.WriteFile(configPath, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	previousPath := config.ConfigFilePath
+	previousType := config.ConfigFileType
+	config.ConfigFilePath = configPath
+	config.ConfigFileType = "yaml"
+
+	t.Cleanup(func() {
+		config.ConfigFilePath = previousPath
+		config.ConfigFileType = previousType
+	})
+
+	loaded, err := config.PrepareFile()
+	if err != nil {
+		t.Fatalf("PrepareFile() error = %v", err)
+	}
+
+	return loaded
 }

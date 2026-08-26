@@ -10,7 +10,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/log"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/croessner/nauthilus/v3/server/testing/tracetest"
-	"github.com/croessner/nauthilus/v3/server/util"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -19,7 +18,6 @@ func TestLoadAllPasswordHistoriesPropagatesTraceContextToRedisReads(t *testing.T
 	collector := tracetest.Setup(t)
 	cfg := passwordHistoryTraceConfig()
 	config.SetTestFile(cfg)
-	util.SetDefaultConfigFile(cfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	readHandle := &passwordHistoryTraceReadHandle{}
@@ -43,8 +41,6 @@ func TestLoadAllPasswordHistoriesRestoresPreviousContext(t *testing.T) {
 
 	cfg := passwordHistoryTraceConfig()
 	config.SetTestFile(cfg)
-	util.SetDefaultConfigFile(cfg)
-
 	readHandle := &passwordHistoryTraceReadHandle{}
 	redisClient := &passwordHistoryTestRedisClient{readHandle: readHandle}
 	baseCtx := context.WithValue(context.Background(), passwordHistoryTraceContextKey{}, "original")
@@ -71,8 +67,6 @@ func TestLoadAllPasswordHistoriesRestoresPreviousContext(t *testing.T) {
 func TestLoadAllPasswordHistoriesSkipsWhenBruteForceControlDisabled(t *testing.T) {
 	cfg := passwordHistoryTraceConfigWithoutBruteForce()
 	config.SetTestFile(cfg)
-	util.SetDefaultConfigFile(cfg)
-
 	readHandle := &passwordHistoryTraceReadHandle{}
 	redisClient := &passwordHistoryTestRedisClient{readHandle: readHandle}
 

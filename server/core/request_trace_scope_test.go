@@ -71,7 +71,7 @@ func TestNewAuthStateWithSetup_RestoresRequestParentContext(t *testing.T) {
 func TestAuthApplicationServiceSetup_RestoresRequestParentContext(t *testing.T) {
 	deps, _ := setupPhase4AuthApplicationServiceTest(t, "test(trace_setup)")
 	collector := tracetest.Setup(t)
-	service := NewAuthApplicationService(deps).(*authApplicationService)
+	service := newRegisteredAuthApplicationServiceHost(deps)
 
 	parentCtx, requestSpan := otel.Tracer("nauthilus/core/request_trace_scope_test").Start(context.Background(), "request.parent")
 
@@ -266,6 +266,8 @@ func TestProcessVerifyPassword_UsesRequestOwnedStateAndRestoresContext(t *testin
 	auth.Request.HTTPClientRequest = auth.Request.HTTPClientRequest.WithContext(requestCtx)
 
 	verifier := installRequestOwnedTracePasswordVerifier(t)
+
+	bindRegisteredAuthnHostServicesForTest(auth)
 	waitContext, cancelWait := context.WithTimeout(context.Background(), time.Second)
 
 	defer cancelWait()

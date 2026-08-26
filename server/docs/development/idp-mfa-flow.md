@@ -33,19 +33,17 @@ it never stores identity, protocol requests, backend affinity, MFA state,
 assurance, consent, claims, redirect targets, or WebAuthn ceremony data.
 
 Authentication and identity lookups enter the common `AuthApplicationService`
-with an exact host-owned internal caller profile. Generation-backed candidate
-tests prove application-level admission and the common Decision Service
-checkpoints for those profiles; production still uses the current application
-executor until the atomic authority cutover. OIDC/SAML/device records,
+with an exact host-owned internal caller profile. The active generation admits
+those profiles and runs the common Decision Service checkpoints. OIDC/SAML/device records,
 delayed-response state, MFA and WebAuthn
 ceremonies, consent, and claim-release lifecycle remain domain-owned; adapters
 pass only the explicit operation, transport, client/SP, correlation,
 localization, requested-attribute, and existing backend-affinity facts needed
 for the current call.
 
-This convergence does not activate the standalone production Policy
-configuration; its configuration and runtime generation remain one later
-atomic server-state cutover.
+The top-level `policy` configuration, caller admission, catalog, extensions,
+and routes are committed as one generation. No IdP path retains a second
+evaluator or fallback policy authority.
 
 The `contrib/identity-proxy-e2e` profile has two relevant OIDC clients:
 
@@ -72,7 +70,7 @@ flowchart LR
   Anchor[(SessionAnchor)]
   EdgeRedis[(Typed Redis flow and ceremony stores)]
   App["Auth application"]
-  Decision["Candidate Decision Service (test proof; production inactive)"]
+  Decision["Shared Decision Service"]
   Authority["Authority backend/gRPC"]
 
   Browser -->|"OIDC/SAML/MFA HTTP"| Edge
@@ -80,7 +78,7 @@ flowchart LR
   Edge <-->|"identity, backend affinity, assurance, child indexes"| Anchor
   Edge <-->|"OIDC/SAML/MFA state, resume target, ceremony"| EdgeRedis
   Edge -->|"typed operation and explicit facts"| App
-  App -.->|"generation-backed admission/checkpoint proof only"| Decision
+  App -->|"generation-backed admission and checkpoints"| Decision
   App <-->|"auth, identity, credential and MFA backend work"| Authority
 
   Anchor <-->|"owns typed children"| EdgeRedis
@@ -94,7 +92,7 @@ sequenceDiagram
   participant Frontend as FrontendHandler
   participant IDP as NauthilusIDP
   participant App as AuthApplicationService
-  participant Decision as Candidate Decision Service
+  participant Decision as Shared Decision Service
   participant Authority
   participant Anchor as SessionAnchor
   participant FlowStore as Redis Flow Store
@@ -107,12 +105,12 @@ sequenceDiagram
   Browser->>Frontend: POST /login username/password
   Frontend->>IDP: Authenticate or delayed-response account lookup
   IDP->>App: Typed operation, internal profile, protocol/client/SP facts
-  opt Generation-backed candidate proof; production inactive
+  critical Active generation-backed policy evaluation
     App->>Decision: Admit and run shared authn checkpoints
   end
   App->>Authority: Resolve account, backend ref, attributes
   Authority-->>App: User, backend ref, MFA attributes/state
-  opt Generation-backed candidate proof; production inactive
+  critical Active generation-backed policy evaluation
     App->>Decision: Complete final checkpoint with detached backend outcome
     Decision-->>App: Terminal decision
   end
@@ -122,12 +120,12 @@ sequenceDiagram
   alt formatted Master-User login
     Frontend->>IDP: Resolve factor account
     IDP->>App: Lookup factor identity with exact internal profile
-    opt Generation-backed candidate proof; production inactive
+    critical Active generation-backed policy evaluation
       App->>Decision: Admit shared identity checkpoint
     end
     App->>Authority: Resolve Master-User factor backend ref
     Authority-->>App: Factor user and backend ref
-    opt Generation-backed candidate proof; production inactive
+    critical Active generation-backed policy evaluation
       App->>Decision: Complete identity checkpoint
       Decision-->>App: Terminal identity decision
     end
@@ -335,7 +333,7 @@ sequenceDiagram
   participant Frontend as FrontendHandler
   participant Core as core.CompleteCanonicalWebAuthnLogin
   participant App as AuthApplicationService
-  participant Decision as Candidate Decision Service
+  participant Decision as Shared Decision Service
   participant Authority
   participant Anchor as SessionAnchor
   participant CeremonyStore as Typed ceremony store
@@ -344,13 +342,13 @@ sequenceDiagram
   Browser->>JS: Click WebAuthn login
   JS->>Frontend: GET /login/webauthn/begin
   Frontend->>App: Look up exact identity/backend context
-  opt Generation-backed candidate proof; production inactive
+  critical Active generation-backed policy evaluation
     App->>Decision: Admit shared identity checkpoint
     Decision-->>App: Admitted checkpoint session
   end
   App->>Authority: Resolve factor identity and credential state
   Authority-->>App: Detached backend identity result
-  opt Generation-backed candidate proof; production inactive
+  critical Active generation-backed policy evaluation
     App->>Decision: Complete identity checkpoint
     Decision-->>App: Terminal identity decision
   end
@@ -522,19 +520,19 @@ sequenceDiagram
   participant Browser
   participant Edge
   participant App as AuthApplicationService
-  participant Decision as Candidate Decision Service
+  participant Decision as Shared Decision Service
   participant Anchor as SessionAnchor
   participant Authority
   participant FlowStore
 
   Browser->>Edge: Initial OIDC login for split-e2e-mfa
   Edge->>App: Authenticate with exact OIDC internal profile
-  opt Generation-backed candidate proof; production inactive
+  critical Active generation-backed policy evaluation
     App->>Decision: Admit and run shared authn checkpoints
   end
   App->>Authority: Verify password and resolve factor availability
   Authority-->>App: Password OK; factors missing
-  opt Generation-backed candidate proof; production inactive
+  critical Active generation-backed policy evaluation
     App->>Decision: Complete final checkpoint
     Decision-->>App: Terminal auth decision
   end
@@ -555,12 +553,12 @@ sequenceDiagram
 
   Browser->>Edge: Later login for same client
   Edge->>App: Authenticate with preserved backend affinity
-  opt Generation-backed candidate proof; production inactive
+  critical Active generation-backed policy evaluation
     App->>Decision: Admit shared authn checkpoints
   end
   App->>Authority: Verify password on the selected backend
   Authority-->>App: Password OK; all factors available
-  opt Generation-backed candidate proof; production inactive
+  critical Active generation-backed policy evaluation
     App->>Decision: Complete final checkpoint
     Decision-->>App: Terminal auth decision
   end

@@ -17,10 +17,14 @@ package redislib
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/testing/testpki"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -37,6 +41,134 @@ func TestRegisterRedisConnection(t *testing.T) {
 			runRegisterRedisConnectionCase(t, L, tt)
 		})
 	}
+}
+
+func TestRegisterRedisConnectionRejectsInvalidTLSMaterial(t *testing.T) {
+	configured := &config.FileSettings{Server: &config.ServerSection{}}
+	config.SetTestFile(configured)
+
+	if _, err := config.EnsureArtifactSnapshot(configured); err != nil {
+		t.Fatalf("EnsureArtifactSnapshot() error = %v", err)
+	}
+
+	invalidPath := filepath.Join(t.TempDir(), "invalid.pem")
+	if err := os.WriteFile(invalidPath, []byte("not TLS material\n"), 0o600); err != nil {
+		t.Fatalf("write invalid TLS material: %v", err)
+	}
+
+	state := lua.NewState()
+	defer state.Close()
+
+	state.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), configured, nil))
+	options := state.NewTable()
+	options.RawSetString("tls_enabled", lua.LBool(true))
+	options.RawSetString("tls_cert_file", lua.LString(invalidPath))
+	options.RawSetString("tls_key_file", lua.LString(invalidPath))
+	setRegisterRedisConnectionGlobals(state, []lua.LValue{
+		lua.LString("invalid-tls"),
+		lua.LString("standalone"),
+		options,
+	})
+
+	if !runRedisPoolLuaCall(t, state, false, registerRedisPoolLuaCode()) {
+		return
+	}
+
+	if result := state.GetGlobal("result"); result != lua.LNil {
+		t.Fatalf("register_redis_pool() result = %v, want nil", result)
+	}
+
+	errValue := state.GetGlobal("err")
+	if errValue.Type() != lua.LTString || !strings.Contains(errValue.String(), "TLS") {
+		t.Fatalf("register_redis_pool() error = %v, want bounded TLS failure", errValue)
+	}
+}
+
+func TestRegisterRedisConnectionUsesSealedTLSAfterLiveMutation(t *testing.T) {
+	configured, artifacts := sealedRedisTLSConfiguration(t)
+
+	state := lua.NewState()
+	defer state.Close()
+
+	state.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), configured, nil))
+	options := state.NewTable()
+	options.RawSetString("tls_enabled", lua.LBool(true))
+	options.RawSetString("tls_ca_file", lua.LString(artifacts.ca))
+	options.RawSetString("tls_cert_file", lua.LString(artifacts.cert))
+	options.RawSetString("tls_key_file", lua.LString(artifacts.key))
+
+	const poolName = "sealed-dynamic-tls"
+	setRegisterRedisConnectionGlobals(state, []lua.LValue{
+		lua.LString(poolName),
+		lua.LString("standalone"),
+		options,
+	})
+
+	if !runRedisPoolLuaCall(t, state, false, registerRedisPoolLuaCode()) {
+		return
+	}
+
+	if result := state.GetGlobal("result"); result.String() != "OK" {
+		t.Fatalf("register_redis_pool() result = %v, want OK", result)
+	}
+
+	client := redisPools[poolName]
+	if client == nil {
+		t.Fatal("registered Redis client is nil")
+	}
+
+	t.Cleanup(func() {
+		_ = client.Close()
+
+		delete(redisPools, poolName)
+	})
+
+	tlsConfig := client.Options().TLSConfig
+	if tlsConfig == nil || tlsConfig.RootCAs == nil || len(tlsConfig.Certificates) != 1 {
+		t.Fatalf("registered TLS config = %#v, want sealed CA and client identity", tlsConfig)
+	}
+}
+
+type redisTLSArtifacts struct {
+	ca   string
+	cert string
+	key  string
+}
+
+// sealedRedisTLSConfiguration captures valid Redis TLS files before mutating their live paths.
+func sealedRedisTLSConfiguration(t *testing.T) (*config.FileSettings, redisTLSArtifacts) {
+	t.Helper()
+
+	directory := t.TempDir()
+	artifacts := redisTLSArtifacts{
+		ca: filepath.Join(directory, "ca.pem"), cert: filepath.Join(directory, "client.pem"),
+		key: filepath.Join(directory, "client-key.pem"),
+	}
+
+	material := testpki.NewSelfSigned(t)
+	for path, content := range map[string][]byte{
+		artifacts.ca: material.CertificatePEM, artifacts.cert: material.CertificatePEM,
+		artifacts.key: material.PrivateKeyPEM,
+	} {
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatalf("write Redis TLS artifact %q: %v", path, err)
+		}
+	}
+
+	configured := &config.FileSettings{Server: &config.ServerSection{Redis: config.Redis{TLS: config.TLS{
+		Enabled: true, CAFile: artifacts.ca, Cert: artifacts.cert, Key: artifacts.key,
+	}}}}
+	if _, err := config.EnsureArtifactSnapshot(configured); err != nil {
+		t.Fatalf("EnsureArtifactSnapshot() error = %v", err)
+	}
+
+	for _, path := range []string{artifacts.ca, artifacts.cert, artifacts.key} {
+		if err := os.WriteFile(path, []byte("mutated invalid TLS material\n"), 0o600); err != nil {
+			t.Fatalf("mutate Redis TLS artifact %q: %v", path, err)
+		}
+	}
+
+	return configured, artifacts
 }
 
 type registerRedisConnectionCase struct {

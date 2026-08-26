@@ -65,10 +65,11 @@ type ResponseWriter interface {
 // ResponseDeps provides the dependencies required to write responses without using globals.
 // Migrates request paths to use these injected dependencies.
 type ResponseDeps struct {
-	Cfg      config.File
-	Env      config.Environment
-	Logger   *slog.Logger
-	Resolver localization.MessageResolver
+	Cfg       config.File
+	Env       config.Environment
+	Logger    *slog.Logger
+	Resolver  localization.MessageResolver
+	WaitDelay func(maxWaitDelay, loginAttempt uint) int
 }
 
 // stateResponseWriter renders AuthState outcomes through the shared HTTP projector.
@@ -223,7 +224,6 @@ func (w stateResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason 
 func (a *AuthState) AuthOK(ctx *gin.Context) {
 	a.responseWriter().OK(ctx, a.View())
 	a.markAuthenticationMetric(ctx, AuthDecisionOK)
-	a.observeConfiguredPolicyDecision(ctx)
 }
 
 // AuthFail handles the failure of authentication.
@@ -232,14 +232,12 @@ func (a *AuthState) AuthFail(ctx *gin.Context) {
 	a.increaseLoginAttempts()
 	a.responseWriter().Fail(ctx, a.View())
 	a.markAuthenticationMetric(ctx, AuthDecisionFail)
-	a.observeConfiguredPolicyDecision(ctx)
 }
 
 // AuthTempFail sends a temporary failure response with the provided reason and logs the error.
 func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 	a.responseWriter().TempFail(ctx, a.View(), reason)
 	a.markAuthenticationMetric(ctx, AuthDecisionTempFail)
-	a.observeConfiguredPolicyDecision(ctx)
 }
 
 // markAuthenticationMetric stores bounded terminal metadata for the outer transport observer.

@@ -83,6 +83,19 @@ func TestPrivacyFactsPopulateEveryMissingExchangeField(t *testing.T) {
 	assertStringField(t, row, "decision_sources", "")
 }
 
+func TestCanonicalGenericGeoIPFactsPopulateRowWithoutRuntimeExchange(t *testing.T) {
+	row := singleRowForRequest(t, requestOptions{facts: completeGenericGeoIPFacts()})
+
+	assertCompletePrivacyRow(t, row)
+	assertStringField(t, row, "geoip_country", "DE")
+	assertStringField(t, row, "geoip_country_name", "Germany")
+	assertStringField(t, row, "geoip_city_name", "Berlin")
+	assertNumberField(t, row, "geoip_asn", 64500)
+	assertStringField(t, row, "geoip_asn_org", "Example Access GmbH")
+	assertStringField(t, row, "geoip_status", "matched")
+	assertStringField(t, row, "geoip_source", "native_geoip")
+}
+
 func TestPrivacyMalformedExchangeFallsBackToFactsWithoutDiscardingRow(t *testing.T) {
 	row := singleRowForRequest(t, requestOptions{
 		runtimeValues: map[string]any{
@@ -189,6 +202,30 @@ func privacyFactAttribute(field string) string {
 
 // completePrivacyFacts returns one value for every privacy analytics field.
 func completePrivacyFacts() []pluginapi.PolicyFact {
+	return privacyFacts(privacyFactAttribute)
+}
+
+// completeGenericGeoIPFacts returns standard and privacy fields under the generic native authority.
+func completeGenericGeoIPFacts() []pluginapi.PolicyFact {
+	facts := []pluginapi.PolicyFact{
+		{Attribute: genericGeoIPFactAttribute("matched"), Value: true},
+		{Attribute: genericGeoIPFactAttribute("country_iso"), Value: "DE"},
+		{Attribute: genericGeoIPFactAttribute("country_name"), Value: "Germany"},
+		{Attribute: genericGeoIPFactAttribute("city_name"), Value: "Berlin"},
+		{Attribute: genericGeoIPFactAttribute("asn"), Value: int64(64500)},
+		{Attribute: genericGeoIPFactAttribute("asn_org"), Value: "Example Access GmbH"},
+	}
+
+	return append(facts, privacyFacts(genericGeoIPFactAttribute)...)
+}
+
+// genericGeoIPFactAttribute returns one canonical generic GeoIP fact ID.
+func genericGeoIPFactAttribute(field string) string {
+	return "plugin.geoip." + field
+}
+
+// privacyFacts returns the complete privacy contract under one fact authority.
+func privacyFacts(attribute func(string) string) []pluginapi.PolicyFact {
 	values := []struct {
 		field string
 		value any
@@ -212,7 +249,7 @@ func completePrivacyFacts() []pluginapi.PolicyFact {
 
 	facts := make([]pluginapi.PolicyFact, 0, len(values))
 	for _, value := range values {
-		facts = append(facts, pluginapi.PolicyFact{Attribute: privacyFactAttribute(value.field), Value: value.value})
+		facts = append(facts, pluginapi.PolicyFact{Attribute: attribute(value.field), Value: value.value})
 	}
 
 	return facts

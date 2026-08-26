@@ -170,8 +170,9 @@ func newAuthProtocolBenchmarkFixture(b *testing.B) *authProtocolBenchmarkFixture
 	core.InitPassDBResultPool()
 
 	deps := newAuthProtocolBenchmarkDeps(b)
+	service := authProtocolBenchmarkApplication{}
+	deps.AuthApplication = service
 	httpServer := newAuthProtocolHTTPServer(deps)
-	service := core.NewAuthApplicationService(deps.Auth())
 	certificate := httpServer.TLS.Certificates[0]
 	grpcWithoutRef := newAuthProtocolGRPCClient(b, service, nil, certificate)
 	backendRefs := NewRedisBackendRefStore(deps.Redis, RedisBackendRefStoreOptions{
@@ -191,6 +192,30 @@ func newAuthProtocolBenchmarkFixture(b *testing.B) *authProtocolBenchmarkFixture
 	b.Cleanup(httpServer.Close)
 
 	return fixture
+}
+
+type authProtocolBenchmarkApplication struct{}
+
+// Authenticate returns one deterministic admitted result for transport benchmarking.
+func (authProtocolBenchmarkApplication) Authenticate(_ context.Context, input core.AuthInput) (*core.AuthOutcome, error) {
+	return &core.AuthOutcome{
+		Decision:     core.AuthDecisionOK,
+		Session:      "auth-protocol-benchmark",
+		Account:      input.Credentials.Username,
+		AccountField: "uid",
+		Backend:      definitions.BackendTest,
+		HTTPStatus:   http.StatusOK,
+	}, nil
+}
+
+// LookupIdentity delegates to the deterministic benchmark result.
+func (s authProtocolBenchmarkApplication) LookupIdentity(ctx context.Context, input core.AuthInput) (*core.AuthOutcome, error) {
+	return s.Authenticate(ctx, input)
+}
+
+// ListAccounts returns a deterministic empty account result for interface completeness.
+func (authProtocolBenchmarkApplication) ListAccounts(context.Context, core.AuthInput) (*core.ListAccountsOutcome, error) {
+	return &core.ListAccountsOutcome{Decision: core.AuthDecisionOK, HTTPStatus: http.StatusOK}, nil
 }
 
 // newAuthProtocolBenchmarkDeps configures the shared in-memory backend and Redis test server.
@@ -255,10 +280,8 @@ func newAuthProtocolBenchmarkConfig(backend *config.Backend) *config.FileSetting
 func setAuthProtocolBenchmarkDefaults(cfg config.File, env config.Environment, logger *slog.Logger) {
 	config.SetTestEnvironmentConfig(env)
 	config.SetTestFile(cfg)
-	core.SetDefaultConfigFile(cfg)
 	core.SetDefaultEnvironment(env)
 	core.SetDefaultLogger(logger)
-	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultEnvironment(env)
 	util.SetDefaultLogger(logger)
 }

@@ -18,9 +18,6 @@
 package auth
 
 import (
-	"net/http"
-
-	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/gin-gonic/gin"
 )
@@ -33,27 +30,5 @@ func (h *Handler) registerBasicEndpoint(
 }
 
 func (h *Handler) basic(ctx *gin.Context) {
-	h.handleWithTraceAndProcess(
-		ctx,
-		h.deps.Cfg.GetServer().GetEndpoint().IsAuthBasicDisabled,
-		"rest.auth_basic",
-		h.processLegacyBasic,
-	)
-}
-
-// processLegacyBasic preserves the optional build-tagged endpoint until its credential handshake is migrated.
-func (h *Handler) processLegacyBasic(ctx *gin.Context) {
-	auth := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
-	if auth == nil {
-		ctx.AbortWithStatus(http.StatusBadRequest)
-
-		return
-	}
-
-	ctx.Set(definitions.CtxAuthProtocolKey, auth.GetProtocol().Get())
-	if reject := auth.PreproccessAuthRequest(ctx); reject {
-		return
-	}
-
-	auth.HandleAuthentication(ctx)
+	h.handleWithTrace(ctx, h.deps.Cfg.GetServer().GetEndpoint().IsAuthBasicDisabled, "rest.auth_basic")
 }

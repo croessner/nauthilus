@@ -16,9 +16,6 @@
 // Package policy contains shared vocabulary for the internal policy decision layer.
 package policy
 
-// BuiltinDefaultSet is the built-in policy set that preserves current auth behavior.
-const BuiltinDefaultSet = "standard_auth"
-
 const (
 	// ResponseSourceDefault selects the response marker's default message.
 	ResponseSourceDefault = "default"
@@ -351,14 +348,8 @@ const (
 )
 
 const (
-	// ObligationBruteForceUpdate identifies brute-force counter update enforcement.
-	ObligationBruteForceUpdate = "auth.obligation.brute_force.update"
-
-	// ObligationLuaActionDispatch identifies synchronous Lua action dispatch enforcement.
-	ObligationLuaActionDispatch = "auth.obligation.lua_action.dispatch"
-
-	// ObligationLuaPostActionEnqueue identifies Lua post-action enqueue enforcement.
-	ObligationLuaPostActionEnqueue = "auth.obligation.lua_post_action.enqueue"
+	// EffectBruteForceUpdate identifies canonical brute-force counter update enforcement.
+	EffectBruteForceUpdate = "authn/brute_force_update"
 )
 
 const (

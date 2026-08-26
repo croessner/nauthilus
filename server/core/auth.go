@@ -52,7 +52,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/report"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/secret"
 	"github.com/croessner/nauthilus/v3/server/stats"
@@ -285,19 +284,6 @@ type State interface {
 
 	// UpdateBruteForceBucketsCounter increments counters to track brute-force attack attempts for the associated client IP.
 	UpdateBruteForceBucketsCounter(ctx *gin.Context)
-
-	// HandleAuthentication processes the primary authentication logic based on the request context and service parameters.
-	HandleAuthentication(ctx *gin.Context)
-
-	// HandlePassword processes the password-based authentication for a user and returns the authentication result.
-	HandlePassword(ctx *gin.Context) definitions.AuthResult
-
-	// SubjectLua applies Lua-based subject analysis logic to the provided execution context and PassDBResult.
-	// It returns an AuthResult indicating the outcome of the subject analysis process.
-	SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult
-
-	// PostLuaAction performs actions or post-processing after executing Lua scripts during authentication workflow.
-	PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) bool
 
 	// WithDefaults configures the State with default values derived from the provided gin.Context.
 	WithDefaults(ctx *gin.Context) State
@@ -684,6 +670,11 @@ func (a *AuthState) Redis() rediscli.Client {
 	return a.deps.Redis
 }
 
+// Tolerate returns the request-owned brute-force tolerance authority.
+func (a *AuthState) Tolerate() tolerate.Tolerate {
+	return a.deps.Tolerate
+}
+
 func (a *AuthState) cfg() config.File {
 	return a.Cfg()
 }
@@ -884,6 +875,12 @@ func (a *AuthState) GetBackendManager(backendType definitions.Backend, backendNa
 		return NewLuaManager(backendName, a.deps)
 	case definitions.BackendTest:
 		return NewTestBackendManager(backendName, a.deps)
+	case definitions.BackendPlugin:
+		if a.deps.PluginBackendFactory == nil {
+			return nil
+		}
+
+		return a.deps.PluginBackendFactory(backendName, a.deps)
 	default:
 		return backendManagerFromFactory(backendType, backendName, a.deps)
 	}
@@ -1811,7 +1808,7 @@ func (a *AuthState) PurgeCacheFor(username string) {
 
 	a.AccountCache().Purge(username)
 
-	if cs := getCacheService(); cs != nil {
+	if cs := a.deps.HostServices.cache; cs != nil {
 		cs.Purge(a, username)
 	}
 }
@@ -1950,7 +1947,7 @@ func (a *AuthState) IsInNetwork(networkList []string) (matchIP bool) {
 // - passDBResult: a pointer to a PassDBResult struct which contains the authentication result
 // - err: an error that occurred during the verification process
 func (a *AuthState) verifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
-	if v := getPasswordVerifier(); v != nil {
+	if v := a.deps.HostServices.passwordVerifier; v != nil {
 		return v.Verify(ctx, a, passDBs)
 	}
 
@@ -2775,47 +2772,6 @@ func (a *AuthState) GetAccountField() string {
 	return a.Runtime.AccountField
 }
 
-// PostLuaAction executes a Lua post-action and reports whether ownership succeeded.
-func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) bool {
-	return a.postLuaActionResult(ctx, passDBResult).Succeeded()
-}
-
-// postLuaActionResult preserves the synchronous preparation and acceptance cause.
-func (a *AuthState) postLuaActionResult(ctx *gin.Context, passDBResult *PassDBResult) PostActionResult {
-	if disp := getPostAction(); disp != nil {
-		return disp.Run(a.newPostActionInput(ctx, passDBResult))
-	}
-
-	return PostActionSucceeded()
-}
-
-// newPostActionInput captures the request flags used by Lua post-actions.
-func (a *AuthState) newPostActionInput(ctx *gin.Context, passDBResult *PassDBResult) PostActionInput {
-	environmentRejected := false
-	environmentStageExpected := true
-	subjectStageExpected := true
-
-	if ctx != nil {
-		environmentRejected = ctx.GetBool(definitions.CtxEnvironmentRejectedKey)
-	}
-
-	if environmentRejected {
-		subjectStageExpected = false
-
-		if a.Runtime.EnvironmentName == definitions.ControlBruteForce {
-			environmentStageExpected = false
-		}
-	}
-
-	return PostActionInput{
-		View:                     a.View(),
-		Result:                   passDBResult,
-		EnvironmentRejected:      environmentRejected,
-		EnvironmentStageExpected: environmentStageExpected,
-		SubjectStageExpected:     subjectStageExpected,
-	}
-}
-
 func (a *AuthState) markEnvironmentRejected(ctx *gin.Context) {
 	if ctx == nil {
 		return
@@ -2835,27 +2791,6 @@ func (a *AuthState) SFKeyHash() string {
 	sum := sha1.Sum([]byte(a.generateSingleflightKey()))
 
 	return hex.EncodeToString(sum[:])
-}
-
-// HandlePassword handles the authentication process for the password flow.
-// Delegate orchestration to the Authenticator to keep responsibilities separated.
-func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.AuthResult) {
-	defer a.completePolicyStage(ctx, policy.StageAuthBackend)
-
-	authResult = defaultAuthenticator.Authenticate(ctx, a)
-	if authResult == definitions.AuthResultEmptyUsername || authResult == definitions.AuthResultEmptyPassword {
-		a.recordPolicyBackendResult(ctx, authResult, nil, nil)
-	}
-
-	if authnCandidateRuntimeOwnsPolicy(ctx) {
-		return authResult
-	}
-
-	if configuredResult, ok := a.configuredPolicyAuthResult(ctx, authResult); ok {
-		return configuredResult
-	}
-
-	return a.defaultPolicyAuthResult(ctx, authResult)
 }
 
 // usernamePasswordChecks performs checks on the Username and Password fields of the AuthState object.
@@ -2892,31 +2827,6 @@ func (a *AuthState) usernamePasswordChecks() definitions.AuthResult {
 	return definitions.AuthResultUnset
 }
 
-// handleLocalCache reconstructs the backend result and runs request-local subject work.
-func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
-	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_local_cache_path_total", resource); stop != nil {
-		defer stop()
-	}
-
-	a.SetOperationMode(ctx)
-
-	authentication, found := cachedBackendAuthenticationForRequest(ctx)
-	if !found {
-		return definitions.AuthResultTempFail
-	}
-
-	passDBResult, ok := authentication.passDBResult()
-	if !ok {
-		return definitions.AuthResultTempFail
-	}
-	defer PutPassDBResultToPool(passDBResult)
-
-	a.applyBackendResult(ctx, passDBResult)
-
-	return a.runPostBackendActions(ctx, passDBResult)
-}
-
 // buildBackendExecutionPlan converts the configured backend order into executable backends and side-effect metadata.
 func (a *AuthState) buildBackendExecutionPlan() backendExecutionPlan {
 	plan := backendExecutionPlan{
@@ -2932,6 +2842,45 @@ func (a *AuthState) buildBackendExecutionPlan() backendExecutionPlan {
 	}
 
 	return plan
+}
+
+// buildAuthnTypedBackendExecutionPlan selects only the backend family named by one captured Policy provider.
+func (a *AuthState) buildAuthnTypedBackendExecutionPlan(providerID string) (backendExecutionPlan, error) {
+	backendType, ok := authnTypedBackendForProvider(providerID)
+	if !ok {
+		return backendExecutionPlan{}, fmt.Errorf("unsupported typed authn backend provider %q", providerID)
+	}
+
+	plan := backendExecutionPlan{positions: make(map[definitions.Backend]int)}
+
+	for index, configured := range a.Cfg().GetServer().GetBackends() {
+		if configured == nil || configured.Get() != backendType {
+			continue
+		}
+
+		a.appendConfiguredBackend(&plan, configured)
+		plan.positions[backendType] = index
+	}
+
+	if len(plan.passDBs) == 0 {
+		return backendExecutionPlan{}, fmt.Errorf("typed authn backend provider %q has no executable backend", providerID)
+	}
+
+	return plan, nil
+}
+
+// authnTypedBackendForProvider maps the closed Policy provider vocabulary to one backend family.
+func authnTypedBackendForProvider(providerID string) (definitions.Backend, bool) {
+	switch providerID {
+	case policy.AuthnProviderLDAPBackend:
+		return definitions.BackendLDAP, true
+	case policy.AuthnProviderLuaBackend:
+		return definitions.BackendLua, true
+	case policy.AuthnProviderPluginBackendOrder:
+		return definitions.BackendPlugin, true
+	default:
+		return definitions.BackendUnknown, false
+	}
 }
 
 func (a *AuthState) appendConfiguredBackend(plan *backendExecutionPlan, backendType *config.Backend) {
@@ -3263,7 +3212,7 @@ func (a *AuthState) processPositivePasswordCache(ctx *gin.Context, authenticated
 		return nil
 	}
 
-	if cs := getCacheService(); cs != nil {
+	if cs := a.deps.HostServices.cache; cs != nil {
 		if authenticated {
 			if err := cs.OnSuccess(a, accountName); err != nil {
 				return err
@@ -3281,7 +3230,9 @@ func (a *AuthState) loadBruteForceHistories(ctx *gin.Context, accountName string
 		return
 	}
 
-	bfLoadHistories(ctx, a, accountName)
+	if service := a.deps.HostServices.bruteForce; service != nil {
+		service.LoadHistories(ctx, a, accountName)
+	}
 }
 
 func (a *AuthState) applyBackendResult(ctx *gin.Context, passDBResult *PassDBResult) {
@@ -3298,20 +3249,6 @@ func (a *AuthState) applyBackendResult(ctx *gin.Context, passDBResult *PassDBRes
 	a.recordPolicyBackendResult(ctx, definitions.AuthResultFail, passDBResult, nil)
 }
 
-func (a *AuthState) runPostBackendActions(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult {
-	authResult := a.SubjectLua(ctx, passDBResult)
-
-	if a.HasConfiguredAuthPolicyAuthority(ctx) {
-		a.storePolicyPostActionResult(ctx, passDBResult)
-	} else if result := a.postLuaActionResult(ctx, passDBResult); !result.Succeeded() {
-		markAuthnCandidatePostActionFailure(ctx, result)
-
-		return definitions.AuthResultTempFail
-	}
-
-	return authResult
-}
-
 func (a *AuthState) processFinalAuthCache(ctx *gin.Context, passDBResult *PassDBResult, authResult definitions.AuthResult, accountName string, plan backendExecutionPlan) error {
 	cacheAuthenticated := passDBResult.Authenticated && authResult == definitions.AuthResultOK
 	if err := a.processPositivePasswordCache(ctx, cacheAuthenticated, accountName, plan); err != nil {
@@ -3321,12 +3258,12 @@ func (a *AuthState) processFinalAuthCache(ctx *gin.Context, passDBResult *PassDB
 	return nil
 }
 
-// applyPositiveBackendAuthenticationCache applies a request-owned cached backend result.
-func (a *AuthState) applyPositiveBackendAuthenticationCache(ctx *gin.Context) (definitions.AuthResult, bool) {
+// takePositiveBackendAuthenticationCache transfers one request-owned cached backend result to the caller.
+func (a *AuthState) takePositiveBackendAuthenticationCache(ctx *gin.Context) (*PassDBResult, bool) {
 	if !a.GetFromLocalCache(ctx) {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
-		return definitions.AuthResultUnset, false
+		return nil, false
 	}
 
 	stats.GetMetrics().GetCacheHits().Inc()
@@ -3337,139 +3274,14 @@ func (a *AuthState) applyPositiveBackendAuthenticationCache(ctx *gin.Context) (d
 		setIdempotencyHeaders(ctx, idempotencyKey, &replayed)
 	}
 
-	return a.handleLocalCache(ctx), true
-}
-
-// resolveBackendAuthenticationShortcut handles outcomes that do not need another backend call.
-func (a *AuthState) resolveBackendAuthenticationShortcut(ctx *gin.Context) (definitions.AuthResult, bool) {
-	if a.Runtime.Authenticated {
-		return definitions.AuthResultOK, true
+	authentication, found := cachedBackendAuthenticationForRequest(ctx)
+	if !found {
+		return nil, false
 	}
 
-	if cachedResult, ok := a.applyPositiveBackendAuthenticationCache(ctx); ok {
-		return cachedResult, true
-	}
+	result, ok := authentication.passDBResult()
 
-	return definitions.AuthResultUnset, false
-}
-
-// authenticateUser runs backend verification and then applies post-backend side effects.
-// Positive password-cache writes are controlled by the backend order, while brute-force
-// history loading follows the resolved account independently from the cache backend.
-func (a *AuthState) authenticateUser(ctx *gin.Context, plan backendExecutionPlan) definitions.AuthResult {
-	tr := monittrace.New("nauthilus/auth")
-	actx, aspan := tr.Start(ctx.Request.Context(), "auth.authenticate",
-		attribute.String("service", a.Request.Service),
-		attribute.String("username", a.Request.Username),
-		attribute.Bool("positive_cache_configured", plan.hasPositivePasswordCache),
-	)
-
-	requestScope := a.scopeRequestContext(actx, ctx)
-
-	defer requestScope.Restore()
-	defer aspan.End()
-
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_authenticate_user_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
-		defer stop()
-	}
-
-	if cachedResult, ok := a.resolveBackendAuthenticationShortcut(ctx); ok {
-		return cachedResult
-	}
-
-	var (
-		accountName  string
-		authResult   definitions.AuthResult
-		passDBResult *PassDBResult
-		err          error
-	)
-
-	if passDBResult, err = a.processVerifyPassword(ctx, plan.passDBs); err != nil {
-		// tempfail: no backend decision could be made
-		a.Runtime.Authenticated = false
-		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
-
-		return definitions.AuthResultTempFail
-	}
-
-	defer PutPassDBResultToPool(passDBResult)
-
-	if accountName, err = a.processUserFound(passDBResult); err != nil || passDBResult == nil {
-		// treat as tempfail
-		a.Runtime.Authenticated = false
-		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
-
-		return definitions.AuthResultTempFail
-	}
-
-	a.loadBruteForceHistories(ctx, accountName)
-	a.applyBackendResult(ctx, passDBResult)
-	a.storePositiveBackendAuthentication(ctx, passDBResult)
-	authResult = a.runPostBackendActions(ctx, passDBResult)
-	aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
-
-	if err = a.processFinalAuthCache(ctx, passDBResult, authResult, accountName, plan); err != nil {
-		// tempfail during cache processing
-		a.Runtime.Authenticated = false
-		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
-
-		return definitions.AuthResultTempFail
-	}
-
-	return authResult
-}
-
-// SubjectLua calls Lua subject sources which can change the backend result.
-func (a *AuthState) SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult {
-	if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "subject.lua") {
-		return definitions.AuthResultTempFail
-	}
-
-	defer a.completePolicyStage(ctx, policy.StageSubjectAnalysis)
-
-	tr := monittrace.New("nauthilus/auth")
-	lctx, lspan := tr.Start(ctx.Request.Context(), "auth.lua.subject",
-		attribute.String("service", a.Request.Service),
-		attribute.String("username", a.Request.Username),
-	)
-
-	requestScope := a.scopeRequestContext(lctx, ctx)
-
-	defer requestScope.Restore()
-
-	defer lspan.End()
-
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_subject_lua_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
-		defer stop()
-	}
-
-	if lf := getLuaSubject(); lf != nil {
-		bridge := getPluginSubjectSourceBridge()
-		if scheduledLua, ok := lf.(ScheduledLuaSubject); ok {
-			if mixedBridge, mixed := bridge.(MixedPluginSubjectSourceBridge); mixed {
-				if result, handled := mixedBridge.AnalyzeMixed(ctx, a.View(), passDBResult, scheduledLua); handled {
-					lspan.SetAttributes(attribute.String("result", string(result)))
-
-					return result
-				}
-			}
-		}
-
-		res := lf.Analyze(ctx, a.View(), passDBResult)
-		if bridge != nil {
-			if next, handled := bridge.Analyze(ctx, a.View(), passDBResult, res); handled {
-				res = next
-			}
-		}
-
-		lspan.SetAttributes(attribute.String("result", string(res)))
-
-		return res
-	}
-
-	_ = level.Error(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, "LuaSubject not registered")
-
-	return definitions.AuthResultTempFail
+	return result, ok
 }
 
 // ListUserAccounts returns the list of all known users from the account databases.
@@ -3478,11 +3290,7 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	errSeen := false
 
 	defer func() {
-		if a.finishListAccountsPolicy(ginCtx, len(accountList), errSeen) {
-			return
-		}
-
-		a.observeConfiguredPolicyDecision(ginCtx)
+		a.finishListAccountsPolicy(ginCtx, len(accountList), errSeen)
 	}()
 
 	// Pre-allocate the accounts slice to avoid continuous reallocation
@@ -3596,51 +3404,10 @@ func (a *AuthState) logAccountDBError(err error) {
 	)
 }
 
-// finishListAccountsPolicy records account facts and applies the active decision owner.
-func (a *AuthState) finishListAccountsPolicy(ctx *gin.Context, count int, errSeen bool) bool {
+// finishListAccountsPolicy records account facts for generation-owned selection.
+func (a *AuthState) finishListAccountsPolicy(ctx *gin.Context, count int, errSeen bool) {
 	a.recordPolicyAccountProvider(ctx, count, errSeen)
 	a.completePolicyStage(ctx, policy.StageAccountProvider)
-
-	if authnCandidateRuntimeOwnsPolicy(ctx) {
-		return true
-	}
-
-	final, configured := a.listAccountsPolicyDecision(ctx)
-	if final == nil {
-		return false
-	}
-
-	if configured {
-		if listAccountsPolicyTerminates(final) {
-			a.applyPolicyDecision(ctx, final)
-
-			return true
-		}
-	}
-
-	if err := a.applySelectedAuthFSMMarkers(ctx, final); err != nil {
-		_ = level.Error(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, err.Error())
-	}
-
-	return false
-}
-
-func (a *AuthState) listAccountsPolicyDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
-	if final, ok := a.configuredPolicyAuthDecision(ctx); ok {
-		return final, true
-	}
-
-	final, _ := a.defaultPolicyAuthDecision(ctx)
-
-	return final, false
-}
-
-func listAccountsPolicyTerminates(final *report.FinalDecision) bool {
-	if final == nil {
-		return false
-	}
-
-	return final.Effect == policy.DecisionDeny || final.Effect == policy.DecisionTempFail
 }
 
 // String returns a human-readable representation of the PassDBResult.
@@ -3848,27 +3615,19 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 	}
 }
 
-// setupHeaderBasedAuth sets up the authentication based on the headers in the request.
-// It takes the context and the authentication object as parameters.
-// It retrieves the GUID value from the context using definitions.CtxGUIDKey and casts it to a string.
-// It retrieves the "Auth-User" and "Auth-Pass" headers from the request and assigns them to the username and password fields of the authentication object.
-// It sets the protocol field of the authentication object by calling the Set method on auth.Protocol with the value of the "Auth-Protocol" header.
-// It parses the "Auth-Login-Attempt" header as an integer and assigns it to the loginAttempts variable.
-// If there is an error parsing the header or the loginAttempts is negative, it sets loginAttempts to 0.
-// It assigns the loginAttempts value to the loginAttempts field of the authentication object using an immediately invoked function expression (IIFE).
-// It retrieves the "Auth-Method" header from the request and assigns it to the method variable.
-// It checks the "mode" query parameter in the context.
-// If it is set to "no-auth", it sets the NoAuth field of the authentication object to true.
-// If it is set to "list-accounts", it sets the ListAccounts field of the authentication object to true.
-// It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods on the authentication object to set additional fields based on the context.
+// setupHeaderBasedAuth decodes configured transport headers through the request-owned configuration.
 func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
-	cfg := getDefaultConfigFile()
-	if a, ok := auth.(*AuthState); ok {
-		cfg = a.cfg()
+	a, ok := auth.(*AuthState)
+	if !ok || a.Cfg() == nil {
+		_ = ctx.Error(fmt.Errorf("%w: request-owned header configuration", ErrAuthApplicationDependencyMissing))
+		ctx.Abort()
 
-		if stop := stats.PrometheusTimer(cfg, definitions.PromRequest, "request_headers_parse_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
-			defer stop()
-		}
+		return
+	}
+
+	cfg := a.Cfg()
+	if stop := stats.PrometheusTimer(cfg, definitions.PromRequest, "request_headers_parse_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
+		defer stop()
 	}
 
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
@@ -3903,25 +3662,21 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 		}
 	}
 
-	if a, ok := auth.(*AuthState); ok {
-		// Apply credentials and header-derived context in a consolidated manner
-		a.ApplyCredentials(NewCredentials(
-			WithUsername(usernameValue),
-			WithPassword(secret.FromBytes(passwordBytes)),
-		))
+	// Apply credentials and header-derived context in a consolidated manner.
+	a.ApplyCredentials(NewCredentials(
+		WithUsername(usernameValue),
+		WithPassword(secret.FromBytes(passwordBytes)),
+	))
 
-		a.ApplyContextData(NewAuthContext(
-			WithProtocol(getDecodedHeader(ctx, cfg.GetProtocol())),
-			WithMethod(getDecodedHeader(ctx, cfg.GetAuthMethod())),
-		))
-	}
+	a.ApplyContextData(NewAuthContext(
+		WithProtocol(getDecodedHeader(ctx, cfg.GetProtocol())),
+		WithMethod(getDecodedHeader(ctx, cfg.GetAuthMethod())),
+	))
 
 	clear(passwordBytes)
 
 	// Initialize login attempts from header using the centralized manager.
-	if a, ok := auth.(*AuthState); ok {
-		a.SyncLoginAttemptsFromHeader(getDecodedHeader(ctx, cfg.GetLoginAttempt()))
-	}
+	a.SyncLoginAttemptsFromHeader(getDecodedHeader(ctx, cfg.GetLoginAttempt()))
 }
 
 // processApplicationXWWWFormUrlencoded processes the application/x-www-form-urlencoded data from the request context and updates the AuthState object.
@@ -4605,40 +4360,14 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	return false
 }
 
-// handlePreAuthBruteForce applies configured and default brute-force decisions.
+// handlePreAuthBruteForce records a blocked request for generation-owned selection.
 func (a *AuthState) handlePreAuthBruteForce(ctx *gin.Context, span trace.Span) bool {
 	span.SetAttributes(attribute.Bool("bruteforce.blocked", true))
 
-	if a.applyConfiguredPreAuthDecision(ctx) {
-		span.SetAttributes(attribute.Bool("reject", true))
-
-		return true
-	}
-
-	if handled, accepted := a.applyConfiguredPreAuthControl(ctx); handled {
-		if !accepted {
-			a.AuthTempFail(ctx, definitions.TempFailDefault)
-			ctx.Abort()
-			span.SetAttributes(attribute.Bool("reject", true))
-
-			return true
-		}
-
-		span.SetAttributes(attribute.Bool("policy_skip_remaining", true))
-
-		return false
-	}
-
-	if a.HasConfiguredPreAuthPolicyAuthority(ctx) {
+	if authnCandidateRuntimeOwnsPolicy(ctx) {
 		span.SetAttributes(attribute.Bool("policy_continue", true))
 
 		return false
-	}
-
-	if a.applyDefaultPreAuthDecision(ctx) {
-		span.SetAttributes(attribute.Bool("reject", true))
-
-		return true
 	}
 
 	a.rejectDefaultPreAuthBruteForce(ctx, span)
@@ -4650,17 +4379,6 @@ func (a *AuthState) handlePreAuthBruteForce(ctx *gin.Context, span trace.Span) b
 func (a *AuthState) rejectDefaultPreAuthBruteForce(ctx *gin.Context, span trace.Span) {
 	a.markEnvironmentRejected(ctx)
 	a.UpdateBruteForceBucketsCounter(ctx)
-
-	result := GetPassDBResultFromPool()
-	accepted := a.PostLuaAction(ctx, result)
-	PutPassDBResultToPool(result)
-
-	if !accepted {
-		a.AuthTempFail(ctx, definitions.TempFailDefault)
-		span.SetAttributes(attribute.Bool("reject", true))
-
-		return
-	}
 
 	a.AuthFail(ctx)
 

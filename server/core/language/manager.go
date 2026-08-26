@@ -36,9 +36,10 @@ type Manager interface {
 }
 
 type manager struct {
-	bundle  *i18n.Bundle
-	matcher language.Matcher
-	tags    []language.Tag
+	bundle      *i18n.Bundle
+	matcher     language.Matcher
+	tags        []language.Tag
+	fingerprint SystemLocalizationFingerprint
 }
 
 // NewManager creates a new Manager instance and loads the language bundles.
@@ -49,36 +50,27 @@ func NewManager(cfg config.File, _ *slog.Logger) (Manager, error) {
 
 	m.bundle.RegisterUnmarshalFunc("json", json.Unmarshal)
 
-	langs := cfg.GetServer().Frontend.GetLanguages()
-	if len(langs) == 0 {
-		for _, tag := range config.DefaultLanguageTags {
-			langs = append(langs, tag.String())
-		}
+	fingerprint, resources, err := readSystemLocalizationSource(cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	m.tags = make([]language.Tag, 0, len(langs))
+	m.fingerprint = fingerprint
 
-	for _, lang := range langs {
-		tag := language.Make(lang)
+	m.tags = make([]language.Tag, 0, len(fingerprint.EffectiveLanguages))
+
+	for _, resource := range resources {
+		tag := language.Make(resource.language)
 		m.tags = append(m.tags, tag)
 
-		if err := m.loadLanguageBundle(cfg, lang); err != nil {
-			return nil, fmt.Errorf("failed to load language bundle for %s: %w", lang, err)
+		if _, err = m.bundle.ParseMessageFileBytes(resource.content, resource.path); err != nil {
+			return nil, fmt.Errorf("failed to load language bundle for %s: %w", resource.language, err)
 		}
 	}
 
 	m.matcher = language.NewMatcher(m.tags)
 
 	return m, nil
-}
-
-func (m *manager) loadLanguageBundle(cfg config.File, lang string) error {
-	resourcePath := cfg.GetServer().Frontend.GetLanguageResources()
-	if _, err := m.bundle.LoadMessageFile(resourcePath + "/" + lang + ".json"); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // GetBundle returns the i18n bundle.
@@ -94,4 +86,9 @@ func (m *manager) GetMatcher() language.Matcher {
 // GetTags returns the supported language tags.
 func (m *manager) GetTags() []language.Tag {
 	return m.tags
+}
+
+// GetSystemLocalizationFingerprint returns the detached source loaded into this manager.
+func (m *manager) GetSystemLocalizationFingerprint() SystemLocalizationFingerprint {
+	return m.fingerprint.Clone()
 }

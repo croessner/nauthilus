@@ -38,7 +38,7 @@ func TestRegisterManagementOpenAPI_ServesSpecDocuments(t *testing.T) {
 func TestWithIDPOpenAPI_ServesPublicSpecDocuments(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := NewRouter(nil).WithIDPOpenAPI().Build()
+	router := NewRouter(nil, nil).WithIDPOpenAPI().Build()
 
 	assertOpenAPIDocument(t, router, "/.well-known/openapi.yaml", "application/yaml; charset=utf-8", "Nauthilus IdP API")
 	assertOpenAPIDocument(t, router, "/.well-known/openapi.json", "application/json; charset=utf-8", `"title": "Nauthilus IdP API"`)

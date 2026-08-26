@@ -20,28 +20,78 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 
+	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	"github.com/go-viper/mapstructure/v2"
-	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 )
 
 const (
 	includeKey = "includes"
 	patchKey   = "patch"
 	envKey     = "env"
+	policyKey  = "policy"
 
 	patchOpAdd     = "add"
 	patchOpReplace = "replace"
 	patchOpRemove  = "remove"
+
+	maximumDottedPolicyArrayItems = 4096
 )
+
+var externalViperDecoderFormats = map[string]struct{}{
+	"properties": {},
+	"props":      {},
+	"prop":       {},
+	"hcl":        {},
+	"tfvars":     {},
+	"ini":        {},
+}
+
+type productionConfigDecoderRegistry struct {
+	delegate viper.DecoderRegistry `mapstructure:"-"`
+}
+
+type boundedConfigDecoder struct {
+	format string `mapstructure:"-"`
+}
+
+// Decoder selects the bounded fallback only for formats removed from Viper core.
+func (r productionConfigDecoderRegistry) Decoder(format string) (viper.Decoder, error) {
+	normalized := strings.ToLower(strings.TrimSpace(format))
+	if _, exists := externalViperDecoderFormats[normalized]; exists {
+		return boundedConfigDecoder{format: normalized}, nil
+	}
+
+	return r.delegate.Decoder(normalized)
+}
+
+// Decode parses a complete settings tree through the shared bounded raw decoder.
+func (d boundedConfigDecoder) Decode(data []byte, target map[string]any) error {
+	settings, err := policyconfig.DecodeSettings(d.format, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("decode %s config: %w", d.format, err)
+	}
+
+	maps.Copy(target, settings)
+
+	return nil
+}
+
+// newProductionConfigViper preserves Viper built-ins and supplies bounded removed-format decoders.
+func newProductionConfigViper() *viper.Viper {
+	registry := productionConfigDecoderRegistry{delegate: viper.NewCodecRegistry()}
+
+	return viper.NewWithOptions(viper.WithDecoderRegistry(registry))
+}
 
 // Reader loads configuration settings from a path.
 type Reader interface {
@@ -105,7 +155,11 @@ func (l *Loader) Load(path string, settings map[string]any) (map[string]any, err
 		return nil, err
 	}
 
-	if err := l.patchEngine.Apply(merged, patches); err != nil {
+	if err := validateConfigDocument(merged); err != nil {
+		return nil, fmt.Errorf("validate merged configuration before patches: %w", err)
+	}
+
+	if err := l.applyPatchesWithPolicyCutoverValidation(merged, patches); err != nil {
 		return nil, err
 	}
 
@@ -115,10 +169,262 @@ func (l *Loader) Load(path string, settings map[string]any) (map[string]any, err
 		}
 	}
 
+	if err := validateConfigDocument(merged); err != nil {
+		return nil, fmt.Errorf("validate expanded configuration: %w", err)
+	}
+
 	return merged, nil
 }
 
+// applyPatchesWithPolicyCutoverValidation rejects stale shapes at the operation that introduces them.
+func (l *Loader) applyPatchesWithPolicyCutoverValidation(
+	target map[string]any,
+	patches []PatchOperation,
+) error {
+	for index, patch := range patches {
+		if err := validatePatchPolicyCutover(patch); err != nil {
+			return fmt.Errorf("patch operation %d contains a removed policy shape: %w", index, err)
+		}
+
+		if err := l.patchEngine.Apply(target, []PatchOperation{patch}); err != nil {
+			return err
+		}
+
+		if err := validateConfigDocument(target); err != nil {
+			return fmt.Errorf("patch operation %d introduces a removed policy shape: %w", index, err)
+		}
+	}
+
+	return nil
+}
+
+// validatePatchPolicyCutover validates add and replace payloads at their declared path before patch semantics can wrap them.
+func validatePatchPolicyCutover(patch PatchOperation) error {
+	if patch.Op != patchOpAdd && patch.Op != patchOpReplace {
+		return nil
+	}
+
+	candidate := make(map[string]any)
+	probe := patch
+	probe.Op = patchOpReplace
+
+	if err := applyPatch(candidate, probe); err != nil {
+		return err
+	}
+
+	return validateConfigDocument(candidate)
+}
+
+// validateConfigDocument rejects raw and Viper-normalized policy cutover violations from one detached settings tree.
+func validateConfigDocument(settings map[string]any) error {
+	if _, err := decodePolicyConfiguration(settings); err != nil {
+		return err
+	}
+
+	policyRoot, exists, err := collectPolicySourceRoot(settings)
+	if err != nil {
+		return err
+	}
+
+	if exists {
+		if _, err = decodePolicyConfiguration(map[string]any{policyKey: policyRoot}); err != nil {
+			return err
+		}
+	}
+
+	normalized, err := normalizeConfigDocumentForValidation(settings)
+	if err != nil {
+		return err
+	}
+
+	_, err = decodePolicyConfiguration(normalized)
+
+	return err
+}
+
+type policyDeclarationTrie struct {
+	children map[string]*policyDeclarationTrie `mapstructure:"-"`
+	value    any                               `mapstructure:"-"`
+	terminal bool                              `mapstructure:"-"`
+}
+
+// collectPolicySourceRoot expands bounded top-level dotted declarations before Viper can fold or discard them.
+func collectPolicySourceRoot(settings map[string]any) (any, bool, error) {
+	root := &policyDeclarationTrie{}
+	found := false
+
+	for rawKey, value := range settings {
+		segments, isPolicy, err := policyDeclarationSegments(rawKey)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if !isPolicy {
+			continue
+		}
+
+		found = true
+
+		if !root.insert(segments, value) {
+			return nil, false, NewValidationProblem(
+				policyKey,
+				"must be declared exactly once after case and dotted-path normalization",
+			)
+		}
+	}
+
+	if !found {
+		return nil, false, nil
+	}
+
+	value, err := root.materialize(policyKey)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return value, true, nil
+}
+
+// policyDeclarationSegments returns normalized descendants for one exact or dotted policy source key.
+func policyDeclarationSegments(rawKey string) ([]string, bool, error) {
+	key := strings.ToLower(strings.TrimSpace(rawKey))
+	if key == policyKey {
+		return nil, true, nil
+	}
+
+	if !strings.HasPrefix(key, "policy.") {
+		return nil, false, nil
+	}
+
+	segments := strings.Split(strings.TrimPrefix(key, "policy."), ".")
+	for _, segment := range segments {
+		if segment == "" {
+			return nil, false, NewValidationProblem(
+				policyKey,
+				"contains an empty dotted-path declaration segment",
+			)
+		}
+	}
+
+	return segments, true, nil
+}
+
+// insert records one declaration and rejects duplicate or ancestor-descendant ambiguity.
+func (t *policyDeclarationTrie) insert(segments []string, value any) bool {
+	current := t
+	for _, segment := range segments {
+		if current.terminal {
+			return false
+		}
+
+		if current.children == nil {
+			current.children = make(map[string]*policyDeclarationTrie)
+		}
+
+		child := current.children[segment]
+		if child == nil {
+			child = &policyDeclarationTrie{}
+			current.children[segment] = child
+		}
+
+		current = child
+	}
+
+	if current.terminal || len(current.children) > 0 {
+		return false
+	}
+
+	current.terminal = true
+	current.value = value
+
+	return true
+}
+
+// materialize converts one conflict-free declaration subtree into bounded maps and indexed slices.
+func (t *policyDeclarationTrie) materialize(path string) (any, error) {
+	if t.terminal {
+		return t.value, nil
+	}
+
+	if len(t.children) == 0 {
+		return map[string]any{}, nil
+	}
+
+	indices := make(map[string]int, len(t.children))
+	maximumIndex := -1
+	allIndices := true
+
+	for segment := range t.children {
+		index, err := strconv.Atoi(segment)
+		if err != nil || index < 0 {
+			allIndices = false
+
+			break
+		}
+
+		if index >= maximumDottedPolicyArrayItems {
+			return nil, NewValidationProblem(path, "dotted array index exceeds the bounded configuration limit")
+		}
+
+		indices[segment] = index
+		maximumIndex = max(maximumIndex, index)
+	}
+
+	if allIndices {
+		values := make([]any, maximumIndex+1)
+
+		for segment, child := range t.children {
+			index := indices[segment]
+
+			value, err := child.materialize(fmt.Sprintf("%s[%d]", path, index))
+			if err != nil {
+				return nil, err
+			}
+
+			values[index] = value
+		}
+
+		return values, nil
+	}
+
+	values := make(map[string]any, len(t.children))
+	for segment, child := range t.children {
+		value, err := child.materialize(path + "." + segment)
+		if err != nil {
+			return nil, err
+		}
+
+		values[segment] = value
+	}
+
+	return values, nil
+}
+
+// normalizeConfigDocumentForValidation applies Viper's case and dotted-key rules without ambient defaults.
+func normalizeConfigDocumentForValidation(settings map[string]any) (map[string]any, error) {
+	encoded, err := jsonMarshal(settings)
+	if err != nil {
+		return nil, fmt.Errorf("encode config validation document: %w", err)
+	}
+
+	reader := viper.New()
+	reader.SetConfigType("json")
+
+	if err = reader.ReadConfig(bytes.NewReader(encoded)); err != nil {
+		return nil, fmt.Errorf("normalize config validation document: %w", err)
+	}
+
+	normalized := reader.AllSettings()
+	preserveEmptyConfigNodes(normalized, settings)
+
+	return normalized, nil
+}
+
 func (l *Loader) loadWithSettings(path string, settings map[string]any, visited map[string]struct{}) (map[string]any, []PatchOperation, error) {
+	if err := validateConfigDocument(settings); err != nil {
+		return nil, nil, fmt.Errorf("reject removed policy shape in config %q: %w", path, err)
+	}
+
 	cleanPath := filepath.Clean(path)
 	if _, ok := visited[cleanPath]; ok {
 		return nil, nil, fmt.Errorf("include cycle detected at %q", cleanPath)
@@ -510,43 +816,167 @@ func (MapMerger) Merge(target map[string]any, source map[string]any) {
 
 // ViperConfigReader reads configuration settings using Viper.
 type ViperConfigReader struct {
-	configType string `mapstructure:"-"`
+	afterSnapshot func(string) `mapstructure:"-"`
+	configType    string       `mapstructure:"-"`
 }
 
 // Read returns the settings from the config file at the given path.
 func (r *ViperConfigReader) Read(path string) (map[string]any, error) {
-	reader := viper.New()
-	reader.SetConfigType(r.configType)
-	reader.SetConfigFile(path)
+	document, rawSettings, err := readBoundedConfigDocument(path, r.configType)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(document)
 
-	if err := reader.ReadInConfig(); err != nil {
+	if err = validateConfigDocument(rawSettings); err != nil {
+		return nil, fmt.Errorf("reject removed policy shape in config %q: %w", path, err)
+	}
+
+	if r.afterSnapshot != nil {
+		r.afterSnapshot(path)
+	}
+
+	reader := newProductionConfigViper()
+	reader.SetConfigType(r.configType)
+
+	if err := reader.ReadConfig(bytes.NewReader(document)); err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
 
-	return reader.AllSettings(), nil
+	settings := reader.AllSettings()
+	preserveEmptyConfigNodes(settings, rawSettings)
+
+	if err = validateConfigDocument(settings); err != nil {
+		return nil, fmt.Errorf("reject normalized removed policy shape in config %q: %w", path, err)
+	}
+
+	return settings, nil
+}
+
+// readBoundedConfigSettings retains empty and nil nodes that Viper omits from AllSettings.
+func readBoundedConfigSettings(path string, format string) (map[string]any, error) {
+	_, settings, err := readBoundedConfigDocument(path, format)
+
+	return settings, err
+}
+
+// readBoundedConfigDocument captures the one byte stream shared by strict and Viper decoding.
+func readBoundedConfigDocument(path string, format string) ([]byte, map[string]any, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open config %q: %w", path, err)
+	}
+
+	document := &bytes.Buffer{}
+	settings, decodeErr := policyconfig.DecodeSettings(format, io.TeeReader(file, document))
+	closeErr := file.Close()
+
+	if decodeErr != nil {
+		return nil, nil, fmt.Errorf("decode config %q as %s: %w", path, format, decodeErr)
+	}
+
+	if closeErr != nil {
+		return nil, nil, fmt.Errorf("close config %q: %w", path, closeErr)
+	}
+
+	captured := bytes.Clone(document.Bytes())
+	clear(document.Bytes())
+
+	return captured, settings, nil
+}
+
+// preserveEmptyConfigNodes restores structurally significant empty and nil values after Viper decoding.
+func preserveEmptyConfigNodes(target map[string]any, source map[string]any) {
+	for key, sourceValue := range source {
+		sourceMap, isMap := sourceValue.(map[string]any)
+		if isMap {
+			targetMap, exists := target[key].(map[string]any)
+			if !exists {
+				if len(sourceMap) == 0 {
+					target[key] = map[string]any{}
+
+					continue
+				}
+
+				recovered := make(map[string]any)
+				preserveEmptyConfigNodes(recovered, sourceMap)
+
+				if len(recovered) > 0 {
+					target[key] = recovered
+				}
+
+				continue
+			}
+
+			preserveEmptyConfigNodes(targetMap, sourceMap)
+
+			continue
+		}
+
+		if _, exists := target[key]; exists {
+			continue
+		}
+
+		sourceSlice, isSlice := sourceValue.([]any)
+		if sourceValue == nil || (isSlice && len(sourceSlice) == 0) {
+			target[key] = sourceValue
+		}
+	}
 }
 
 func loadMergedConfigSettings(configType string) (map[string]any, string, error) {
-	rootViper := viper.New()
-	configureViper(rootViper, configType)
-
-	if err := rootViper.ReadInConfig(); err != nil {
+	rootPath, err := productionRootConfigPath(configType)
+	if err != nil {
 		return nil, "", err
-	}
-
-	rootPath := rootViper.ConfigFileUsed()
-	if rootPath == "" {
-		rootPath = ConfigFilePath
 	}
 
 	loader := NewConfigLoader(configType)
 
-	merged, err := loader.Load(rootPath, rootViper.AllSettings())
+	merged, err := loader.LoadFromFile(rootPath)
 	if err != nil {
 		return nil, "", err
 	}
 
 	return merged, rootPath, nil
+}
+
+// productionRootConfigPath locates the root without opening it before exact-byte decoding.
+func productionRootConfigPath(configType string) (string, error) {
+	if ConfigFilePath != "" {
+		return filepath.Clean(ConfigFilePath), nil
+	}
+
+	paths := []string{"."}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		paths = append(paths, filepath.Join(home, ".nauthilus"))
+	}
+
+	paths = append(paths, "/usr/local/etc/nauthilus", "/etc/nauthilus")
+
+	for _, directory := range paths {
+		for _, extension := range viper.SupportedExts {
+			path := filepath.Join(directory, "nauthilus."+extension)
+			if regularConfigFile(path) {
+				return filepath.Clean(path), nil
+			}
+		}
+
+		if strings.TrimSpace(configType) != "" {
+			path := filepath.Join(directory, "nauthilus")
+			if regularConfigFile(path) {
+				return filepath.Clean(path), nil
+			}
+		}
+	}
+
+	return "", &os.PathError{Op: "open", Path: "nauthilus", Err: fs.ErrNotExist}
+}
+
+// regularConfigFile reports whether one discovery candidate is an existing non-directory.
+func regularConfigFile(path string) bool {
+	info, err := os.Stat(path)
+
+	return err == nil && !info.IsDir()
 }
 
 // applyMergedConfigSettings decodes merged settings into the legacy global Viper owner.
@@ -561,12 +991,12 @@ func applyMergedConfigSettingsTo(
 	configType string,
 	rootPath string,
 ) error {
-	configBytes, err := encodeSettings(settings, configType)
+	configBytes, err := encodeMergedSettings(settings)
 	if err != nil {
 		return err
 	}
 
-	target.SetConfigType(configType)
+	target.SetConfigType("json")
 
 	if rootPath != "" {
 		target.SetConfigFile(rootPath)
@@ -576,21 +1006,14 @@ func applyMergedConfigSettingsTo(
 		return fmt.Errorf("read merged config: %w", err)
 	}
 
+	target.SetConfigType(configType)
+
 	return nil
 }
 
-func encodeSettings(settings map[string]any, configType string) ([]byte, error) {
-	format := strings.ToLower(strings.TrimSpace(configType))
-	switch format {
-	case "yaml", "yml", "":
-		return yaml.Marshal(settings)
-	case "json":
-		return jsonMarshal(settings)
-	case "toml":
-		return toml.Marshal(settings)
-	default:
-		return nil, fmt.Errorf("unsupported config type %q", configType)
-	}
+// encodeMergedSettings uses one format-independent intermediate representation for Viper publication.
+func encodeMergedSettings(settings map[string]any) ([]byte, error) {
+	return jsonMarshal(settings)
 }
 
 func jsonMarshal(value any) ([]byte, error) {
@@ -603,19 +1026,4 @@ func jsonMarshal(value any) ([]byte, error) {
 	}
 
 	return bytes.TrimSpace(buf.Bytes()), nil
-}
-
-func configureViper(target *viper.Viper, configType string) {
-	target.SetConfigType(configType)
-
-	if ConfigFilePath != "" {
-		target.SetConfigFile(ConfigFilePath)
-		return
-	}
-
-	target.SetConfigName("nauthilus")
-	target.AddConfigPath(".")
-	target.AddConfigPath("$HOME/.nauthilus")
-	target.AddConfigPath("/usr/local/etc/nauthilus/")
-	target.AddConfigPath("/etc/nauthilus/")
 }

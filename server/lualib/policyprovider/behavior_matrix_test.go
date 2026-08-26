@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/lualib/policyprovider"
-	"github.com/croessner/nauthilus/v3/server/policy/compiler"
+	"github.com/croessner/nauthilus/v3/server/policy/catalogcompile"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
@@ -264,7 +264,7 @@ func TestLuaCatalogRejectsTwoProvidersClaimingOneQualifiedFact(t *testing.T) {
 		"mail/lua.matrix.second-provider",
 	})
 	activation := mustBehaviorMatrixActivation(t)
-	catalogCompiler := compiler.NewTargetCatalogCompiler(
+	catalogCompiler := catalogcompile.NewTargetCatalogCompiler(
 		behaviorMatrixContributor{contribution: base},
 		behaviorMatrixContributor{contribution: preparation.Definitions[0]},
 	)

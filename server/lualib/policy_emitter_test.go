@@ -22,15 +22,15 @@ import (
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
+	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	lua "github.com/yuin/gopher-lua"
 )
 
 func TestPolicyEmitterRecordsRegisteredLuaAttribute(t *testing.T) {
-	policyCtx := policyEmitterTestContext(map[string]policyregistry.AttributeDefinition{
+	policyCtx := policyEmitterTestContext(t, map[string]policyregistry.AttributeDefinition{
 		"lua.plugin.blocklist.matched": {
 			ID:         "lua.plugin.blocklist.matched",
 			Stage:      policy.StagePreAuth,
@@ -86,7 +86,7 @@ policy.emit_attribute({
 }
 
 func TestPolicyEmitterRejectsUnknownLuaAttribute(t *testing.T) {
-	policyCtx := policyEmitterTestContext(nil)
+	policyCtx := policyEmitterTestContext(t, nil)
 
 	L := lua.NewState()
 	defer L.Close()
@@ -110,7 +110,7 @@ policy.emit_attribute({
 }
 
 func TestPolicyEmitterRejectsStageMismatch(t *testing.T) {
-	policyCtx := policyEmitterTestContext(map[string]policyregistry.AttributeDefinition{
+	policyCtx := policyEmitterTestContext(t, map[string]policyregistry.AttributeDefinition{
 		"lua.plugin.geoip.rejected": {
 			ID:         "lua.plugin.geoip.rejected",
 			Stage:      policy.StageSubjectAnalysis,
@@ -142,7 +142,7 @@ policy.emit_attribute({
 }
 
 func TestPolicyEmitterRecordsRegisteredLuaAttributesBatch(t *testing.T) {
-	policyCtx := policyEmitterTestContext(map[string]policyregistry.AttributeDefinition{
+	policyCtx := policyEmitterTestContext(t, map[string]policyregistry.AttributeDefinition{
 		"lua.plugin.batch.triggered": policyEmitterAttributeDefinition("lua.plugin.batch.triggered", policyregistry.AttributeTypeBool),
 		"lua.plugin.batch.count":     policyEmitterAttributeDefinition("lua.plugin.batch.count", policyregistry.AttributeTypeNumber),
 	})
@@ -173,7 +173,7 @@ policy.emit_attributes({
 }
 
 func TestPolicyEmitterBatchRejectsAtomically(t *testing.T) {
-	policyCtx := policyEmitterTestContext(map[string]policyregistry.AttributeDefinition{
+	policyCtx := policyEmitterTestContext(t, map[string]policyregistry.AttributeDefinition{
 		"lua.plugin.batch.triggered": policyEmitterAttributeDefinition("lua.plugin.batch.triggered", policyregistry.AttributeTypeBool),
 	})
 
@@ -203,7 +203,7 @@ policy.emit_attributes({
 }
 
 func TestPolicyEmitterRecordsMasterUserAttribute(t *testing.T) {
-	policyCtx := policyEmitterTestContext(map[string]policyregistry.AttributeDefinition{
+	policyCtx := policyEmitterTestContext(t, map[string]policyregistry.AttributeDefinition{
 		policy.AttributeMasterUserActive: {
 			ID:         policy.AttributeMasterUserActive,
 			Stage:      policy.StageAuthBackend,
@@ -255,14 +255,67 @@ policy.emit_master_user({
 	}
 }
 
-func policyEmitterTestContext(definitions map[string]policyregistry.AttributeDefinition) *policycollection.DecisionContext {
-	if definitions == nil {
-		definitions = map[string]policyregistry.AttributeDefinition{}
+func policyEmitterTestContext(
+	t *testing.T,
+	definitions map[string]policyregistry.AttributeDefinition,
+) *policycollection.DecisionContext {
+	t.Helper()
+
+	policyCtx := policycollection.NewDecisionContext(policy.OperationAuthenticate, nil, 1)
+
+	declarations := make([]policyregistry.AuthnLuaFactDeclaration, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.Source != policyregistry.SourceLua {
+			continue
+		}
+
+		kind, ok := policyEmitterValueKind(definition.Type)
+		if !ok {
+			t.Fatalf("unsupported policy emitter attribute type %q", definition.Type)
+		}
+
+		actions := make([]string, 0, len(definition.Operations))
+		for _, operation := range definition.Operations {
+			actions = append(actions, string(operation))
+		}
+
+		declaration, err := policyregistry.NewAuthnLuaFactDeclaration(
+			policyregistry.AuthnLuaFactDeclarationInput{
+				Details: definition.Details, ID: definition.ID, Description: definition.Description,
+				Stage: string(definition.Stage), Actions: actions,
+				Category: decision.FactCategoryEnvironment, Kind: kind, DeclaredType: definition.Type,
+			},
+		)
+		if err != nil {
+			t.Fatalf("NewAuthnLuaFactDeclaration(%s) error = %v", definition.ID, err)
+		}
+
+		declarations = append(declarations, declaration)
 	}
 
-	snapshot := &policyruntime.Snapshot{AttributeRegistry: definitions}
+	if err := policyCtx.AddAuthnLuaFactDeclarations(declarations); err != nil {
+		t.Fatalf("AddAuthnLuaFactDeclarations() error = %v", err)
+	}
 
-	return policycollection.NewDecisionContext(snapshot, policy.OperationAuthenticate, nil)
+	return policyCtx
+}
+
+// policyEmitterValueKind maps the closed Lua emitter type vocabulary into Decision facts.
+func policyEmitterValueKind(attributeType policyregistry.AttributeType) (decision.ValueKind, bool) {
+	switch attributeType {
+	case policyregistry.AttributeTypeBool:
+		return decision.ValueKindBoolean, true
+	case policyregistry.AttributeTypeString:
+		return decision.ValueKindString, true
+	case policyregistry.AttributeTypeStringList:
+		return decision.ValueKindStrings, true
+	case policyregistry.AttributeTypeNumber:
+		return decision.ValueKindDouble, true
+	case policyregistry.AttributeTypeDateTime:
+		return decision.ValueKindTimestamp, true
+	default:
+		return "", false
+	}
 }
 
 // policyEmitterAttributeDefinition builds a Lua-owned attribute definition for emitter tests.

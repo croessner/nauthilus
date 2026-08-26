@@ -39,7 +39,7 @@ fully integrated into the Nauthilus core, leveraging existing authentication and
 - **`server/core/auth_application_service.go`**: The transport-neutral authentication and identity application
   boundary. IdP adapters use its typed operations instead of constructing an independent authentication pipeline.
 - **`server/core/authn_application_adapter.go`** and **`server/policy/decision/service/`**: The generation-backed
-  candidate admission adapter and shared checkpoint runtime used by convergence proof tests. Every migrated IdP entry
+  production admission adapter and shared checkpoint runtime. Every IdP entry
   selects an exact host-owned internal caller profile and maps only protocol, transport, OIDC-client or SAML-SP,
   localization, correlation, requested-attribute, and backend-affinity facts needed by that operation.
 - **`server/handler/frontend/idp/`**: The browser-facing composition layer. Its sole route registrars install canonical
@@ -56,9 +56,9 @@ Handlers apply the detached application outcome to those typed records after eva
 captures the records themselves. Specialized ceremony and claim-release adapters are projections or side-effect
 boundaries, not second policy evaluators.
 
-The common application boundary is active, but production continues to use its current application executor. The
-candidate adapter and Decision Service remain inactive outside generation-backed proof tests until the new Policy root
-and runtime generation are activated together by the later atomic configuration cutover.
+The common application boundary, adapter, and Decision Service are active in one production generation. The top-level
+`policy` root supplies the sole catalog and admission authority, and publication replaces the complete generation only
+after preparation and validation succeed.
 
 ### Canonical Browser Session Model
 
@@ -146,9 +146,8 @@ fail-latched check.
 
 ## 2. Signal Flow Diagram
 
-The following diagram shows the convergence contract. The application and protocol-state path is active. The Decision
-Service interactions are a generation-backed candidate proof only; production does not construct that candidate before
-the later atomic authority cutover.
+The following diagram shows the production convergence contract. The application and protocol-state path enters the
+same active Decision Service generation used by the Policy transports.
 
 ```mermaid
 sequenceDiagram
@@ -159,7 +158,7 @@ sequenceDiagram
     participant F as Typed flow store
     participant I as IdP core
     participant P as Auth application
-    participant D as Candidate Decision Service
+    participant D as Shared Decision Service
     participant E as Selected backend
     B->>M: Request plus opaque envelope
     alt permitted protocol entry without an envelope
@@ -171,13 +170,13 @@ sequenceDiagram
     H->>F: Start or load a revision-bound typed record
     H->>I: Map protocol operation and explicit facts
     I->>P: Authenticate or look up identity
-    opt Generation-backed candidate proof; production inactive
+    critical Active generation-backed policy evaluation
         P->>D: Admit exact internal caller and open shared checkpoints
         D-->>P: Admitted checkpoint session
     end
     P->>E: Execute with explicit backend affinity
     E-->>P: Identity and attributes
-    opt Generation-backed candidate proof; production inactive
+    critical Active generation-backed policy evaluation
         P->>D: Complete final checkpoint with detached outcome
         D-->>P: Terminal decision
     end
@@ -207,7 +206,7 @@ sequenceDiagram
     participant I as IdP Core
     participant R as Redis
     participant P as Auth Application
-    participant D as Candidate Decision Service
+    participant D as Shared Decision Service
     Note over B, D: Initial Authorization Request
     B ->> H: GET /oidc/authorize?client_id=...&scope=openid...
     H ->> I: FindClient(clientID)
@@ -223,7 +222,7 @@ sequenceDiagram
     F ->> R: Reload revision-bound OIDCFlow
     F ->> I: Authenticate with typed protocol context
     I ->> P: Authenticate(AuthInput, OIDC internal profile)
-    opt Generation-backed candidate proof; production inactive
+    critical Active generation-backed policy evaluation
         P ->> D: Admit and run shared authn checkpoints
         D -->> P: Terminal auth decision
     end
@@ -677,7 +676,7 @@ sequenceDiagram
     participant I as IdP Core
     participant R as Redis
     participant P as Auth Application
-    participant D as Candidate Decision Service
+    participant D as Shared Decision Service
     Note over B, D: Initial SSO Request
     B -> H: GET /saml/sso?SAMLRequest=...
     H -> I: getSAMLIdP(ctx)
@@ -691,7 +690,7 @@ sequenceDiagram
     B -> F: POST /login
     F -> I: Authenticate with SAML SP and transport facts
     I -> P: Authenticate(AuthInput, SAML internal profile)
-    opt Generation-backed candidate proof; production inactive
+    critical Active generation-backed policy evaluation
         P -> D: Admit and run shared authn checkpoints
         D -->> P: Terminal auth decision
     end
@@ -700,7 +699,7 @@ sequenceDiagram
     B -> H: GET /saml/sso with canonical envelope and flow ticket
     H -> I: GetUserByUsernameForSAMLCanonical(...)
     I -> P: LookupIdentity(AuthInput, SAML claim-release profile)
-    opt Generation-backed candidate proof; production inactive
+    critical Active generation-backed policy evaluation
         P -> D: Admit and run shared identity checkpoint
         D -->> P: Terminal identity decision
     end
@@ -1057,8 +1056,8 @@ The `NauthilusIdP` struct is the central orchestrator. It holds references to:
 Key Methods:
 
 - `Authenticate`: Maps protocol input to the common `AuthApplicationService` operation and its exact internal caller
-  profile. Generation-backed candidate tests prove admission through the same Decision Service checkpoint runtime used
-  by other authentication entry paths; production retains the current application executor until the atomic cutover.
+  profile. Admission and checkpoints run through the same active Decision Service generation used by other
+  authentication entry paths.
 - `LookupIdentity`: Resolves identity and backend affinity through the same application boundary for claim release,
   SAML, delayed-response, device-code, and MFA-related lookups that require authentication-domain data.
 - `IssueTokens`: Generates ID tokens and Access tokens. It performs **Claim Mapping** by taking raw backend attributes
@@ -1681,8 +1680,8 @@ resources must request, cache, and rotate two independent tokens.
 
 The `openid` scope is not valid for `client_credentials`; requests that include it fail with `invalid_scope` because
 service tokens do not represent an end-user identity and cannot receive ID tokens or UserInfo claims. Resource-bound
-issuance does not activate the standalone production Policy configuration; that remains an atomic configuration
-cutover.
+issuance remains separate from Policy caller admission. The active top-level `policy` generation does not grant a
+backchannel token Policy authority or a Policy token backchannel authority.
 
 ### 8.4 Configuration
 
@@ -1807,7 +1806,7 @@ sequenceDiagram
     participant AS as Authorization Server
     participant F as Frontend Handler
     participant A as Auth Application
-    participant P as Candidate Decision Service
+    participant P as Shared Decision Service
     participant U as User (Browser)
     Note over D, U: Phase 1: Device Authorization Request
     D ->> AS: POST /oidc/device (client_id, scope)
@@ -1820,7 +1819,7 @@ sequenceDiagram
     AS ->> U: 303 Redirect to /login?flow=opaque-ticket
     U ->> F: Submit credentials through canonical login
     F ->> A: Authenticate(AuthInput, device internal profile)
-    opt Generation-backed candidate proof; production inactive
+    critical Active generation-backed policy evaluation
         A ->> P: Admit and run shared authn checkpoints
         P -->> A: Terminal auth decision
     end
@@ -1833,7 +1832,7 @@ sequenceDiagram
     F ->> U: Redirect to /oidc/device/consent?flow=opaque-ticket
     U ->> AS: POST consent decision and optional scopes
     AS ->> A: LookupIdentity(AuthInput, device claim-release profile)
-    opt Generation-backed candidate proof; production inactive
+    critical Active generation-backed policy evaluation
         A ->> P: Admit and run shared identity checkpoint
         P -->> A: Terminal identity decision
     end

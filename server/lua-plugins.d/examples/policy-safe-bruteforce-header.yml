@@ -1,0 +1,41 @@
+policy:
+  namespaces:
+    authn:
+      effects:
+        lua_action_bruteforce_header:
+          kind: lua_action
+          action_type: brute_force
+          script_path: actions/bruteforce_header.lua
+          targets: [{action: authenticate}]
+          execution: host_sync
+      domain_plans:
+        safe_bruteforce_header:
+          checkpoints:
+            pre_auth:
+              providers:
+                - name: brute_force
+                  use: authn/builtin/brute_force
+                  actions: [authenticate]
+            auth_decision: {providers: []}
+      policy_sets:
+        safe_bruteforce_header:
+          rules:
+            - name: annotate_bruteforce_rejection
+              checkpoint: auth_decision
+              actions: [authenticate]
+              if:
+                attribute: nauthilus.auth.brute_force.triggered
+                is: true
+              then:
+                decision: deny
+                obligations:
+                  - id: authn/lua_action_bruteforce_header
+  targets:
+    - namespace: authn
+      action: authenticate
+      schema: authn/authenticate/v1
+      domain_plan: authn/safe_bruteforce_header
+      default_policy: authn/standard_auth
+      plans:
+        auth_decision:
+          policy_sets: [authn/safe_bruteforce_header]

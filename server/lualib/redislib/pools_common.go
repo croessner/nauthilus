@@ -16,10 +16,10 @@
 package redislib
 
 import (
+	"crypto/tls"
 	"fmt"
 
 	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
 
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
@@ -148,13 +148,22 @@ func getConfigValues(conf *lua.LTable) *ConfigValues {
 	tlsEnabled := conf.RawGetString("tls_enabled")
 	if tlsEnabledVal, ok := tlsEnabled.(lua.LBool); ok {
 		configValues.RedisTLS = &config.TLS{
-			Enabled: bool(tlsEnabledVal),
-			Cert:    getStringValue(conf, "tls_cert_file"),
-			Key:     getStringValue(conf, "tls_key_file"),
+			Enabled:    bool(tlsEnabledVal),
+			SkipVerify: getBoolValue(conf, "tls_skip_verify"),
+			CAFile:     getStringValue(conf, "tls_ca_file"),
+			Cert:       getStringValue(conf, "tls_cert_file"),
+			Key:        getStringValue(conf, "tls_key_file"),
 		}
 	}
 
 	return configValues
+}
+
+// getBoolValue retrieves a boolean value or false when the Lua field is absent or mistyped.
+func getBoolValue(conf *lua.LTable, key string) bool {
+	value, ok := conf.RawGetString(key).(lua.LBool)
+
+	return ok && bool(value)
 }
 
 // getStringValue retrieves a string value associated with the given key from a Lua table.
@@ -193,7 +202,7 @@ func getLuaTableAsStringSlice(luaValue lua.LValue) []string {
 }
 
 // newRedisClient creates a new Redis client based on the provided configuration values.
-func newRedisClient(conf *ConfigValues) *redis.Client {
+func newRedisClient(conf *ConfigValues, tlsConfig *tls.Config) *redis.Client {
 	return redis.NewClient(&redis.Options{
 		Addr:         conf.Address,
 		Username:     conf.Username,
@@ -201,12 +210,12 @@ func newRedisClient(conf *ConfigValues) *redis.Client {
 		DB:           conf.DB,
 		PoolSize:     conf.PoolSize,
 		MinIdleConns: conf.MinIdleConns,
-		TLSConfig:    rediscli.RedisTLSOptions(conf.RedisTLS),
+		TLSConfig:    tlsConfig,
 	})
 }
 
 // newRedisFailoverClient creates a new Redis failover client using the provided configuration and read replica flag.
-func newRedisFailoverClient(conf *ConfigValues, readReplica bool) *redis.Client {
+func newRedisFailoverClient(conf *ConfigValues, readReplica bool, tlsConfig *tls.Config) *redis.Client {
 	return redis.NewFailoverClient(&redis.FailoverOptions{
 		MasterName:       conf.MasterName,
 		SentinelAddrs:    conf.Addresses,
@@ -217,33 +226,48 @@ func newRedisFailoverClient(conf *ConfigValues, readReplica bool) *redis.Client 
 		DB:               conf.DB,
 		PoolSize:         conf.PoolSize,
 		MinIdleConns:     conf.MinIdleConns,
-		TLSConfig:        rediscli.RedisTLSOptions(conf.RedisTLS),
+		TLSConfig:        tlsConfig,
 		ReplicaOnly:      readReplica,
 	})
 }
 
 // newRedisClusterClient creates a new Redis Cluster client using the provided configuration values.
-func newRedisClusterClient(conf *ConfigValues) *redis.ClusterClient {
+func newRedisClusterClient(conf *ConfigValues, tlsConfig *tls.Config) *redis.ClusterClient {
 	return redis.NewClusterClient(&redis.ClusterOptions{
 		Addrs:        conf.Addresses,
 		Username:     conf.Username,
 		Password:     conf.Password,
 		PoolSize:     conf.PoolSize,
 		MinIdleConns: conf.MinIdleConns,
-		TLSConfig:    rediscli.RedisTLSOptions(conf.RedisTLS),
+		TLSConfig:    tlsConfig,
 	})
 }
 
-// RegisterRedisPool registers a Redis connection pool based on the provided mode (`standalone`, `sentinel`, `sentinel_replica`, `cluster`).
-func RegisterRedisPool(L *lua.LState) int {
+// registerRedisPool binds process-global pool registration to one explicit configuration artifact owner.
+func registerRedisPool(configured config.File) lua.LGFunction {
+	return func(L *lua.LState) int {
+		return registerRedisPoolWithConfig(L, configured)
+	}
+}
+
+// registerRedisPoolWithConfig registers one pool without consulting ambient config or live TLS files.
+func registerRedisPoolWithConfig(L *lua.LState, configured config.File) int {
 	name := L.CheckString(1)
 	mode := L.CheckString(2)
 	conf := getConfigValues(L.CheckTable(3))
 
 	errMsg := fmt.Sprintf("A redis connection with name '%s' already exists", name)
+	if mode != redisLuaPoolModeStandalone && mode != redisLuaPoolModeSentinel && mode != redisLuaPoolModeSentinelRO && mode != redisLuaPoolModeCluster {
+		return pushRedisPoolError(L, fmt.Sprintf("Unknown mode: %s", mode))
+	}
+
+	tlsConfig, err := config.BuildClientTLSConfig(configured, conf.RedisTLS)
+	if err != nil {
+		return pushRedisPoolError(L, fmt.Sprintf("Redis TLS configuration failed: %v", err))
+	}
 
 	switch mode {
-	case "standalone":
+	case redisLuaPoolModeStandalone:
 		if _, okay := redisPools[name]; okay {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(errMsg))
@@ -251,7 +275,7 @@ func RegisterRedisPool(L *lua.LState) int {
 			return 2
 		}
 
-		redisPools[name] = newRedisClient(conf)
+		redisPools[name] = newRedisClient(conf, tlsConfig)
 	case redisLuaPoolModeSentinel, redisLuaPoolModeSentinelRO:
 		if _, okay := redisFailoverPools[failoverPool{name: name}]; okay {
 			L.Push(lua.LNil)
@@ -260,13 +284,10 @@ func RegisterRedisPool(L *lua.LState) int {
 			return 2
 		}
 
-		readOnly := false
-		if mode == redisLuaPoolModeSentinelRO {
-			readOnly = true
-		}
+		readOnly := mode == redisLuaPoolModeSentinelRO
 
-		redisFailoverPools[failoverPool{name: name, readOnly: readOnly}] = newRedisFailoverClient(conf, readOnly)
-	case "cluster":
+		redisFailoverPools[failoverPool{name: name, readOnly: readOnly}] = newRedisFailoverClient(conf, readOnly, tlsConfig)
+	case redisLuaPoolModeCluster:
 		if _, okay := redisClusterPools[name]; okay {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(errMsg))
@@ -274,16 +295,19 @@ func RegisterRedisPool(L *lua.LState) int {
 			return 2
 		}
 
-		redisClusterPools[name] = newRedisClusterClient(conf)
-	default:
-		L.Push(lua.LNil)
-		L.Push(lua.LString(fmt.Sprintf("Unknown mode: %s", mode)))
-
-		return 2
+		redisClusterPools[name] = newRedisClusterClient(conf, tlsConfig)
 	}
 
 	L.Push(lua.LString("OK"))
 	L.Push(lua.LNil)
+
+	return 2
+}
+
+// pushRedisPoolError returns one bounded registration error through the Lua result contract.
+func pushRedisPoolError(L *lua.LState, message string) int {
+	L.Push(lua.LNil)
+	L.Push(lua.LString(message))
 
 	return 2
 }

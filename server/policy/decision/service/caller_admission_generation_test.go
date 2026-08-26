@@ -377,6 +377,8 @@ func callerAdmissionGenerationAuthenticationSlot(
 		if input.ID() == 1 {
 			password = callerAdmissionGenerationOldSecret
 			throttler = assembly.authThrottler
+		} else {
+			throttler = &policyCallerAuthBlockingThrottler{}
 		}
 
 		prepared, err := callerauth.Prepare(policyCallerAuthBasicConfiguration(password, throttler, true))
@@ -428,7 +430,13 @@ func callerAdmissionGenerationApplicationSlot(
 			evaluator = assembly.firstEvaluator
 		}
 
+		material, materialErr := input.DecisionServiceMaterial()
+		if materialErr != nil {
+			return policyruntime.ApplicationPreparation{}, materialErr
+		}
+
 		generation, err := newRuntimeGeneration(input.ID(), runtimeGenerationDependencies{
+			material:      material,
 			authenticator: input.CallerAuthenticator(),
 			admission:     input.AdmissionAuthority(),
 			evaluator:     evaluator,

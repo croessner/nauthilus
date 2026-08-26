@@ -20,7 +20,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -96,11 +95,11 @@ var listAccountsAcceptNegotiationCases = []listAccountsAcceptNegotiationCase{
 	},
 }
 
-// TestHandleAuthentication_ListAccounts_AcceptNegotiation reproduces the
+// TestHTTPAuthResponseRenderer_ListAccounts_AcceptNegotiation reproduces the
 // content-negotiation behaviour expected for list-accounts responses. It
 // covers single values, multi-value Accept headers with quality values,
 // wildcards, and the empty-header default case.
-func TestHandleAuthentication_ListAccounts_AcceptNegotiation(t *testing.T) {
+func TestHTTPAuthResponseRenderer_ListAccounts_AcceptNegotiation(t *testing.T) {
 	for _, tt := range listAccountsAcceptNegotiationCases {
 		t.Run(tt.name, func(t *testing.T) {
 			assertListAccountsAcceptNegotiation(t, tt)
@@ -111,10 +110,7 @@ func TestHandleAuthentication_ListAccounts_AcceptNegotiation(t *testing.T) {
 func assertListAccountsAcceptNegotiation(t *testing.T, tt listAccountsAcceptNegotiationCase) {
 	t.Helper()
 
-	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
-
-	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -124,16 +120,12 @@ func assertListAccountsAcceptNegotiation(t *testing.T, tt listAccountsAcceptNego
 		ctx.Request.Header.Set("Accept", tt.accept)
 	}
 
-	auth := &AuthState{
-		deps: deps,
-		Request: AuthRequest{
-			ListAccounts: true,
-			Protocol:     new(config.Protocol),
-			Service:      definitions.ServCBOR,
-		},
-	}
-
-	auth.HandleAuthentication(ctx)
+	renderer := NewHTTPAuthResponseRenderer(ResponseDeps{})
+	renderer.RenderListAccounts(ctx, AuthInput{Service: definitions.ServCBOR}, &ListAccountsOutcome{
+		Decision:   AuthDecisionOK,
+		HTTPStatus: http.StatusOK,
+		Accounts:   AccountList{"alice@example.test"},
+	})
 
 	assert.Equal(t, tt.wantStatus, w.Code)
 

@@ -19,13 +19,13 @@
 --  - lua.plugin.<namespace>.<key> for emit*, set_public*, and status_message calls.
 
 local nauthilus_context = require("nauthilus_context")
+local nauthilus_policy = require("nauthilus_policy")
 
 local M = {}
 
 local CONTEXT_KEY = "policy_facts"
 local LOG_PREFIX = "policy_fact_"
 local ATTRIBUTE_PREFIX = "lua.plugin."
-local policy_module = nil
 
 local function normalize_segment(value)
     local segment = tostring(value or ""):lower()
@@ -70,26 +70,12 @@ local function add_public_log(namespace, key, value)
     nauthilus_builtin.custom_log_add(LOG_PREFIX .. namespace .. "_" .. key, stringify(value))
 end
 
-local function load_policy_module()
-    if policy_module ~= nil then
-        return policy_module
-    end
-
-    local ok, mod = pcall(require, "nauthilus_policy")
-    if not ok then
-        error("nauthilus_policy emitter is not available: " .. tostring(mod))
-    end
-
-    policy_module = mod
-    return policy_module
-end
-
 local function attribute_id(namespace, key)
     return ATTRIBUTE_PREFIX .. namespace .. "." .. key
 end
 
 local function emit_attribute(namespace, key, value, details)
-    load_policy_module().emit_attribute({
+    nauthilus_policy.emit_attribute({
         id = attribute_id(namespace, key),
         value = value,
         details = details,
@@ -97,9 +83,7 @@ local function emit_attribute(namespace, key, value, details)
 end
 
 local function emit_entries(entries)
-    local policy = load_policy_module()
-
-    if type(policy.emit_attributes) == "function" then
+    if type(nauthilus_policy.emit_attributes) == "function" then
         local attributes = {}
         for _, entry in ipairs(entries) do
             table.insert(attributes, {
@@ -108,7 +92,7 @@ local function emit_entries(entries)
             })
         end
 
-        policy.emit_attributes(attributes)
+        nauthilus_policy.emit_attributes(attributes)
         return
     end
 

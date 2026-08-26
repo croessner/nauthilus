@@ -23,6 +23,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/encoding/cborcodec"
 	servererrors "github.com/croessner/nauthilus/v3/server/errors"
 	"github.com/croessner/nauthilus/v3/server/log/level"
 
@@ -103,6 +104,25 @@ func (r *HTTPAuthResponseRenderer) RenderListAccounts(
 	default:
 		_ = ctx.Error(servererrors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
 		ctx.AbortWithStatus(http.StatusUnsupportedMediaType)
+	}
+}
+
+// writeCBORList encodes the account list as a single CBOR array body.
+func writeCBORList(ctx *gin.Context, accounts AccountList) {
+	body, err := cborcodec.Marshal(accounts)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return
+	}
+
+	ctx.Data(http.StatusOK, authMediaTypeCBOR, body)
+}
+
+// writeLineSeparated streams accounts as CRLF-separated entries.
+func writeLineSeparated(ctx *gin.Context, accounts AccountList, contentType string) {
+	for _, account := range accounts {
+		ctx.Data(http.StatusOK, contentType, []byte(account+"\r\n"))
 	}
 }
 
@@ -304,7 +324,11 @@ func (r *HTTPAuthResponseRenderer) renderWaitHeader(
 		return
 	}
 
-	ctx.Header("Auth-Wait", fmt.Sprintf("%d", bfWaitDelay(maximum, loginAttempts)))
+	if r.deps.WaitDelay == nil {
+		return
+	}
+
+	ctx.Header("Auth-Wait", fmt.Sprintf("%d", r.deps.WaitDelay(maximum, loginAttempts)))
 }
 
 // renderStatusMessage resolves policy-selected localization at the HTTP boundary.
@@ -312,11 +336,16 @@ func (r *HTTPAuthResponseRenderer) renderStatusMessage(ctx *gin.Context, outcome
 	fallback := outcome.StatusMessage
 	key := strings.TrimSpace(outcome.StatusMessageI18NKey)
 
-	if key == "" || r.deps.Resolver == nil {
+	resolver := outcome.MessageResolver
+	if resolver == nil {
+		resolver = r.deps.Resolver
+	}
+
+	if key == "" || resolver == nil {
 		return fallback
 	}
 
-	resolved := r.deps.Resolver.ResolveStatusMessage(
+	resolved := resolver.ResolveStatusMessage(
 		statusMessageContext(ctx),
 		localization.StatusMessage{Text: fallback, I18NKey: key},
 		localization.LanguagePreference{
@@ -368,6 +397,7 @@ func authOutcomeFromListAccountsOutcome(outcome *ListAccountsOutcome) *AuthOutco
 
 	return &AuthOutcome{
 		ResponseHeaders:         outcome.ResponseHeaders.Clone(),
+		MessageResolver:         outcome.MessageResolver,
 		ResponseHeaderDeletes:   append([]string(nil), outcome.ResponseHeaderDeletes...),
 		FSMEventPath:            append([]string(nil), outcome.FSMEventPath...),
 		ResponseSettings:        outcome.ResponseSettings,

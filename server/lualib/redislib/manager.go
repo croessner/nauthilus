@@ -66,6 +66,20 @@ func (rm *RedisManager) getConn(L *lua.LState, fallback redis.UniversalClient) r
 	return client
 }
 
+// getDefaultRedisConnection exposes only the injected read handle and rejects named ambient pools.
+func (rm *RedisManager) getDefaultRedisConnection(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	if stack.CheckString(1) != redisLuaPoolDefault || rm == nil || rm.client == nil {
+		return stack.PushResults(lua.LNil, lua.LString("only the injected default Redis connection is available"))
+	}
+
+	userData := L.NewUserData()
+	userData.Value = rm.client.GetReadHandle()
+	L.SetMetatable(userData, L.GetTypeMetatable("redis_client"))
+
+	return stack.PushResults(userData, lua.LNil)
+}
+
 // executeWithDeadline runs a Redis operation with a selected handle, counter, and deadline policy.
 func (rm *RedisManager) executeWithDeadline(
 	L *lua.LState,

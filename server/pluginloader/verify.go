@@ -37,6 +37,9 @@ import (
 )
 
 var (
+	// ErrArtifactReaderRequired is returned when runtime artifact access has no explicit byte authority.
+	ErrArtifactReaderRequired = errors.New("plugin artifact reader is required")
+
 	// ErrArtifactOutsideAllowedDirs is returned when a resolved artifact escapes the configured allowlist.
 	ErrArtifactOutsideAllowedDirs = errors.New("plugin artifact outside allowed directories")
 
@@ -66,11 +69,12 @@ type VerifierOption func(*Verifier)
 
 // VerifiedModule describes a module whose loader-owned artifact checks completed.
 type VerifiedModule struct {
-	Module         config.PluginModule
-	Signer         *config.PluginTrustSigner
-	ArtifactPath   string
-	SignaturePath  string
-	ArtifactDigest ArtifactDigest
+	Module            config.PluginModule
+	Signer            *config.PluginTrustSigner
+	VerificationError error
+	ArtifactPath      string
+	SignaturePath     string
+	ArtifactDigest    ArtifactDigest
 }
 
 // ArtifactDigest is the immutable SHA-256 identity of one loaded native artifact.
@@ -89,9 +93,9 @@ type detachedSignature struct {
 	trustedComment  string
 }
 
-// NewVerifier returns the default plugin artifact verifier.
+// NewVerifier returns a verifier that requires an explicit reader for non-empty plugin configuration.
 func NewVerifier(options ...VerifierOption) Verifier {
-	verifier := Verifier{readArtifact: os.ReadFile}
+	verifier := Verifier{}
 	for _, option := range options {
 		option(&verifier)
 	}
@@ -103,6 +107,15 @@ func NewVerifier(options ...VerifierOption) Verifier {
 func WithVerificationLogger(logger *slog.Logger) VerifierOption {
 	return func(verifier *Verifier) {
 		verifier.logger = logger
+	}
+}
+
+// WithArtifactReader binds every verifier byte read to one candidate-owned snapshot.
+func WithArtifactReader(reader func(string) ([]byte, error)) VerifierOption {
+	return func(verifier *Verifier) {
+		if reader != nil {
+			verifier.readArtifact = reader
+		}
 	}
 }
 
@@ -118,6 +131,10 @@ func (v Verifier) Verify(plugins *config.PluginsSection) ([]VerifiedModule, erro
 		return nil, nil
 	}
 
+	if v.readArtifact == nil {
+		return nil, ErrArtifactReaderRequired
+	}
+
 	allowedDirs, err := canonicalAllowedDirs(plugins.AllowedDirs)
 	if err != nil {
 		return nil, err
@@ -131,6 +148,16 @@ func (v Verifier) Verify(plugins *config.PluginsSection) ([]VerifiedModule, erro
 		module, err := v.verifyModule(plugins, allowedDirs, moduleConfig)
 		if err != nil {
 			v.logVerificationFailure(moduleConfig, err)
+
+			if moduleConfig.Optional {
+				verified = append(verified, VerifiedModule{
+					Module:            *moduleConfig,
+					VerificationError: err,
+					ArtifactPath:      filepath.Clean(moduleConfig.Path),
+				})
+
+				continue
+			}
 
 			return nil, err
 		}
@@ -148,6 +175,12 @@ func (v Verifier) verifyModule(
 	allowedDirs []string,
 	module *config.PluginModule,
 ) (VerifiedModule, error) {
+	artifactContent, err := v.artifactSnapshot(module.Path)
+	if err != nil {
+		return VerifiedModule{}, err
+	}
+	defer clear(artifactContent)
+
 	artifactPath, err := canonicalFilePath(module.Path)
 	if err != nil {
 		return VerifiedModule{}, err
@@ -155,11 +188,6 @@ func (v Verifier) verifyModule(
 
 	if !config.PluginPathWithinAllowedDirs(artifactPath, allowedDirs) {
 		return VerifiedModule{}, fmt.Errorf("%w: %s", ErrArtifactOutsideAllowedDirs, artifactPath)
-	}
-
-	artifactContent, err := v.artifactSnapshot(artifactPath)
-	if err != nil {
-		return VerifiedModule{}, err
 	}
 
 	digest := sha256.Sum256(artifactContent)
@@ -226,16 +254,17 @@ func (v Verifier) verifySignature(
 		return signaturePath, nil, fmt.Errorf("%w: trusted signer %q not configured", ErrSignatureVerificationFailed, module.Signer)
 	}
 
-	publicKey, err := loadDetachedPublicKey(*signer)
+	publicKey, err := v.loadDetachedPublicKey(*signer)
 	if err != nil {
 		return signaturePath, signer, err
 	}
 
-	if err := verifyDetachedSignature(
+	if err := v.verifyDetachedSignature(
 		signatureRef.Format,
 		artifactPath,
 		artifactContent,
 		signaturePath,
+		signatureRef.Path,
 		publicKey,
 	); err != nil {
 		return signaturePath, signer, err
@@ -244,8 +273,8 @@ func (v Verifier) verifySignature(
 	return signaturePath, signer, nil
 }
 
-// loadDetachedPublicKey reads the trusted signer key from inline text or file.
-func loadDetachedPublicKey(signer config.PluginTrustSigner) (detachedPublicKey, error) {
+// loadDetachedPublicKey reads the trusted signer key from inline text or the verifier snapshot.
+func (v Verifier) loadDetachedPublicKey(signer config.PluginTrustSigner) (detachedPublicKey, error) {
 	if signer.PublicKey != "" {
 		return parseDetachedPublicKey([]byte(signer.PublicKey))
 	}
@@ -255,10 +284,11 @@ func loadDetachedPublicKey(signer config.PluginTrustSigner) (detachedPublicKey, 
 		return detachedPublicKey{}, err
 	}
 
-	raw, err := os.ReadFile(keyPath)
+	raw, err := v.artifactReader()(signer.PublicKeyFile)
 	if err != nil {
 		return detachedPublicKey{}, fmt.Errorf("read plugin signer public key %q: %w", keyPath, err)
 	}
+	defer clear(raw)
 
 	return parseDetachedPublicKey(raw)
 }
@@ -281,17 +311,19 @@ func parseDetachedPublicKey(raw []byte) (detachedPublicKey, error) {
 }
 
 // verifyDetachedSignature dispatches verification by configured signature format.
-func verifyDetachedSignature(
+func (v Verifier) verifyDetachedSignature(
 	format string,
 	artifactPath string,
 	artifactContent []byte,
 	signaturePath string,
+	signatureSourcePath string,
 	publicKey detachedPublicKey,
 ) error {
-	raw, err := os.ReadFile(signaturePath)
+	raw, err := v.artifactReader()(signatureSourcePath)
 	if err != nil {
 		return fmt.Errorf("read plugin signature %q: %w", signaturePath, err)
 	}
+	defer clear(raw)
 
 	switch format {
 	case config.PluginSignatureFormatMinisign:
@@ -597,10 +629,12 @@ func DigestArtifact(path string) (ArtifactDigest, error) {
 	return digest, nil
 }
 
-// artifactReader returns the configured snapshot reader or the operating-system default.
+// artifactReader returns the configured authority or a fail-closed reader.
 func (v Verifier) artifactReader() func(string) ([]byte, error) {
 	if v.readArtifact == nil {
-		return os.ReadFile
+		return func(string) ([]byte, error) {
+			return nil, ErrArtifactReaderRequired
+		}
 	}
 
 	return v.readArtifact

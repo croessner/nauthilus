@@ -28,11 +28,15 @@ import (
 	"unicode/utf8"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 )
 
 const generationResourceCleanupTimeout = 30 * time.Second
+
+// MessageResolver is the runtime-owned name for immutable response localization authority.
+type MessageResolver = localization.MessageResolver
 
 var (
 	// ErrGenerationUnavailable identifies capture before initial publication.
@@ -148,6 +152,13 @@ type CandidateResource interface {
 	Dispose(context.Context) error
 }
 
+// PolicyModel is one immutable normalized policy candidate owned by a generation.
+type PolicyModel interface {
+	ClonePolicyModel() PolicyModel
+	ValidatePolicyModel() error
+	GenerationID() uint64
+}
+
 // DecisionLimits contains immutable per-generation evaluation bounds.
 type DecisionLimits struct {
 	EvaluationTimeout     time.Duration
@@ -165,6 +176,101 @@ type DecisionReportSettings struct {
 type GenerationSettings struct {
 	Limits  DecisionLimits
 	Reports DecisionReportSettings
+}
+
+// PolicyAPIAvailability is the immutable generation-owned transport activation view.
+type PolicyAPIAvailability struct {
+	MaxRequestBytes int
+	Configured      bool
+	Enabled         bool
+	HTTP            bool
+	GRPC            bool
+}
+
+// GenerationConfig is the runtime-owned name for one complete captured config snapshot.
+type GenerationConfig = config.File
+
+// DecisionServiceMaterial is the immutable config, API, and internal-presentation projection.
+type DecisionServiceMaterial struct {
+	messageResolver       MessageResolver
+	config                GenerationConfig
+	internalPresentations map[string]decision.AuthenticationInput
+	apiAvailability       PolicyAPIAvailability
+}
+
+// NewDecisionServiceMaterial projects mandatory Decision Service state from one candidate.
+func NewDecisionServiceMaterial(
+	configured GenerationConfig,
+	presentations map[string]decision.AuthenticationInput,
+	resolver MessageResolver,
+) (DecisionServiceMaterial, error) {
+	if nilInterface(configured) || nilInterface(resolver) {
+		return DecisionServiceMaterial{}, fmt.Errorf(
+			"%w: generation config and localization resolver are required",
+			ErrInvalidGeneration,
+		)
+	}
+
+	clonedPresentations := cloneAuthenticationInputs(presentations)
+	if len(clonedPresentations) != len(presentations) {
+		return DecisionServiceMaterial{}, fmt.Errorf("%w: internal presentation is invalid", ErrInvalidGeneration)
+	}
+
+	policyConfig := configured.GetPolicy()
+	material := DecisionServiceMaterial{
+		messageResolver:       resolver,
+		config:                configured,
+		internalPresentations: clonedPresentations,
+		apiAvailability: PolicyAPIAvailability{
+			MaxRequestBytes: policyConfig.API.Limits.MaxRequestBytes,
+			Configured:      true,
+			Enabled:         policyConfig.API.Enabled,
+			HTTP:            policyConfig.API.HTTP.Enabled,
+			GRPC:            policyConfig.API.GRPC.Enabled,
+		},
+	}
+
+	if err := material.Validate(); err != nil {
+		return DecisionServiceMaterial{}, err
+	}
+
+	return material, nil
+}
+
+// Validate rejects missing API authority and malformed code-owned presentations.
+func (m DecisionServiceMaterial) Validate() error {
+	if nilInterface(m.config) || nilInterface(m.messageResolver) ||
+		!m.apiAvailability.Configured || m.apiAvailability.MaxRequestBytes <= 0 {
+		return fmt.Errorf("%w: Decision Service config and API metadata are required", ErrInvalidGeneration)
+	}
+
+	for id, presentation := range m.internalPresentations {
+		if !validProfileID(id) || !validAuthenticationInput(presentation) {
+			return fmt.Errorf("%w: invalid internal presentation %q", ErrInvalidGeneration, id)
+		}
+	}
+
+	return nil
+}
+
+// MessageResolver returns the immutable generation-owned localization authority.
+func (m DecisionServiceMaterial) MessageResolver() MessageResolver {
+	return m.messageResolver
+}
+
+// Config returns the exact immutable generation config snapshot.
+func (m DecisionServiceMaterial) Config() GenerationConfig {
+	return m.config
+}
+
+// APIAvailability returns the exact external route activation and request bound.
+func (m DecisionServiceMaterial) APIAvailability() PolicyAPIAvailability {
+	return m.apiAvailability
+}
+
+// InternalPresentations returns detached code-owned authentication inputs.
+func (m DecisionServiceMaterial) InternalPresentations() map[string]decision.AuthenticationInput {
+	return cloneAuthenticationInputs(m.internalPresentations)
 }
 
 // Validate rejects settings that cannot safely bound request-time work.
@@ -229,7 +335,7 @@ func (p AdmissionProfiles) ValidateCredentials(credentials CredentialProfiles) e
 // Generation is the sole immutable policy-critical server-state publication unit.
 type Generation struct {
 	config             config.File
-	policy             *Snapshot
+	policy             PolicyModel
 	catalog            *TargetCatalog
 	authenticator      CallerAuthenticator
 	admission          AdmissionAuthority
@@ -262,13 +368,13 @@ func (g *Generation) Config() config.File {
 	return g.config
 }
 
-// PolicySnapshot returns a detached exact legacy policy view.
-func (g *Generation) PolicySnapshot() *Snapshot {
+// Policy returns a detached immutable normalized policy model.
+func (g *Generation) Policy() PolicyModel {
 	if g == nil {
 		return nil
 	}
 
-	return g.policy.Clone()
+	return g.policy.ClonePolicyModel()
 }
 
 // TargetCatalog returns a deeply detached exact target catalog.
@@ -453,6 +559,40 @@ func normalizedProfileIDs(ids []string) ([]string, error) {
 // validProfileID preserves exact bounded UTF-8 OAuth and internal profile identities.
 func validProfileID(id string) bool {
 	return id != "" && len(id) <= 512 && strings.TrimSpace(id) == id && utf8.ValidString(id)
+}
+
+// cloneAuthenticationInputs validates ownership through the transport-neutral constructor.
+func cloneAuthenticationInputs(input map[string]decision.AuthenticationInput) map[string]decision.AuthenticationInput {
+	if len(input) == 0 {
+		return nil
+	}
+
+	result := make(map[string]decision.AuthenticationInput, len(input))
+	for id, presentation := range input {
+		cloned, err := decision.NewAuthenticationInput(decision.AuthenticationEvidence{
+			Kind: presentation.Kind(), Credential: presentation.Credential(),
+			TransportKind: presentation.TransportKind(), Listener: presentation.Listener(),
+			HTTPRoute: presentation.HTTPRoute(), GRPCMethod: presentation.GRPCMethod(),
+			Peer: presentation.Peer(), MTLSIdentity: presentation.MTLSIdentity(),
+			Protected: presentation.Protected(),
+		})
+		if err == nil {
+			result[id] = cloned
+		}
+	}
+
+	return result
+}
+
+// validAuthenticationInput verifies one owned presentation has the complete constructor invariant.
+func validAuthenticationInput(input decision.AuthenticationInput) bool {
+	_, err := decision.NewAuthenticationInput(decision.AuthenticationEvidence{
+		Kind: input.Kind(), Credential: input.Credential(), TransportKind: input.TransportKind(),
+		Listener: input.Listener(), HTTPRoute: input.HTTPRoute(), GRPCMethod: input.GRPCMethod(),
+		Peer: input.Peer(), MTLSIdentity: input.MTLSIdentity(), Protected: input.Protected(),
+	})
+
+	return err == nil
 }
 
 // cloneDefinitionContributions rebuilds detached immutable contribution DTOs.

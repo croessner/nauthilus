@@ -4,7 +4,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -186,126 +185,6 @@ func assertBackendHealthCheckTargetOverrides(t *testing.T, monitoring *BackendSe
 
 	if got := monitoring.GetServerDeepTimeout(targets[0]); got != 500*time.Millisecond {
 		t.Fatalf("expected target deep timeout 500ms, got %s", got)
-	}
-}
-
-func TestHandleFile_LuaEnvironmentSourcesPopulateInternalList(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-
-	viper.Set("storage", map[string]any{
-		"redis": map[string]any{
-			"primary": map[string]any{
-				"address": "localhost:6379",
-			},
-			"password_nonce":    testRedisPasswordNonce,
-			"encryption_secret": testRedisEncryptionSecret,
-		},
-	})
-	viper.Set("auth", map[string]any{
-		"policy": map[string]any{
-			"attribute_sources": map[string]any{
-				"lua": map[string]any{
-					"environment": []any{
-						map[string]any{
-							"name":        "test_context_chain",
-							"script_path": testLuaEnvironmentScriptPath(t),
-						},
-					},
-				},
-			},
-		},
-	})
-
-	cfg := &FileSettings{}
-	if err := cfg.HandleFile(); err != nil {
-		t.Fatalf("handle file failed: %v", err)
-	}
-
-	if !cfg.HaveLuaEnvironmentSources() {
-		t.Fatal("expected Lua environment sources to populate the internal environment source list")
-	}
-
-	luaCfg := cfg.GetLua()
-	if len(luaCfg.GetEnvironmentSources()) != 1 {
-		t.Fatalf("expected one Lua environment source, got %d", len(luaCfg.GetEnvironmentSources()))
-	}
-
-	if luaCfg.GetEnvironmentSources()[0].Name != "test_context_chain" {
-		t.Fatalf("expected Lua environment source %q, got %q", "test_context_chain", luaCfg.GetEnvironmentSources()[0].Name)
-	}
-}
-
-func TestHandleFile_LuaAttributeSourcesRejectRemovedSchedulerKeys(t *testing.T) {
-	for _, testCase := range removedLuaSchedulerKeyCases() {
-		t.Run(testCase.name, func(t *testing.T) {
-			viper.Reset()
-			t.Cleanup(viper.Reset)
-
-			setRemovedLuaSchedulerKeyConfig(t, testCase)
-			assertRemovedLuaSchedulerKeyRejected(t, testCase)
-		})
-	}
-}
-
-type removedLuaSchedulerKeyCase struct {
-	name     string
-	category string
-	key      string
-	value    any
-	path     string
-}
-
-func removedLuaSchedulerKeyCases() []removedLuaSchedulerKeyCase {
-	return []removedLuaSchedulerKeyCase{
-		{name: "environment when_no_auth", category: "environment", key: "when_no_auth", value: true, path: "auth.policy.attribute_sources.lua.environment[0]"},
-		{name: "environment depends_on", category: "environment", key: "depends_on", value: []any{"context"}, path: "auth.policy.attribute_sources.lua.environment[0]"},
-		{name: "subject when_authenticated", category: "subject", key: "when_authenticated", value: true, path: "auth.policy.attribute_sources.lua.subject[0]"},
-		{name: "subject depends_on", category: "subject", key: "depends_on", value: []any{"context"}, path: "auth.policy.attribute_sources.lua.subject[0]"},
-	}
-}
-
-func setRemovedLuaSchedulerKeyConfig(t *testing.T, testCase removedLuaSchedulerKeyCase) {
-	t.Helper()
-
-	viper.Set("storage", map[string]any{
-		"redis": map[string]any{
-			"primary": map[string]any{
-				"address": "localhost:6379",
-			},
-			"password_nonce":    testRedisPasswordNonce,
-			"encryption_secret": testRedisEncryptionSecret,
-		},
-	})
-	viper.Set("auth", map[string]any{
-		"policy": map[string]any{
-			"attribute_sources": map[string]any{
-				"lua": map[string]any{
-					testCase.category: []any{
-						map[string]any{
-							"name":        "test_context_chain",
-							"script_path": testLuaEnvironmentScriptPath(t),
-							testCase.key:  testCase.value,
-						},
-					},
-				},
-			},
-		},
-	})
-}
-
-func assertRemovedLuaSchedulerKeyRejected(t *testing.T, testCase removedLuaSchedulerKeyCase) {
-	t.Helper()
-
-	cfg := &FileSettings{}
-
-	err := cfg.HandleFile()
-	if err == nil {
-		t.Fatal("HandleFile() error = nil, want removed scheduler key rejection")
-	}
-
-	if !strings.Contains(err.Error(), testCase.path) || !strings.Contains(err.Error(), testCase.key) {
-		t.Fatalf("HandleFile() error = %q, want path %q and key %q", err, testCase.path, testCase.key)
 	}
 }
 
@@ -501,17 +380,6 @@ func TestHandleFile_OptionalLDAPAndLuaBackendsInV2(t *testing.T) {
 	if len(cfg.GetLua().GetOptionalLuaBackends()) != 1 {
 		t.Fatalf("expected one optional Lua backend, got %d", len(cfg.GetLua().GetOptionalLuaBackends()))
 	}
-}
-
-func testLuaEnvironmentScriptPath(t *testing.T) string {
-	t.Helper()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-
-	return filepath.Join(wd, "..", "lua-plugins.d", "environment", "test_context_chain.lua")
 }
 
 func testLuaBackendScriptPath(t *testing.T) string {

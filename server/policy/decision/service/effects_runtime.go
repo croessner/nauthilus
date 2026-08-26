@@ -260,7 +260,7 @@ func appendSelectedUnstartedEffects(
 	ordinal := uint32(0)
 
 	for _, use := range uses {
-		definition, ok := target.LookupEffectSelection(use.ID())
+		definition, ok := target.LookupEffect(use.ID())
 		if !ok || definition.Execution() == registry.ExecutionReturnOnly {
 			continue
 		}
@@ -324,7 +324,7 @@ func (r *checkpointRuntime) prepareObligation(
 	use registry.EffectUse,
 	ordinal uint32,
 ) (plannedEffect, decision.EffectRequest, bool, error) {
-	definition, ok := target.LookupEffectSelection(use.ID())
+	definition, ok := target.LookupEffect(use.ID())
 	if !ok {
 		return plannedEffect{}, decision.EffectRequest{}, false, fmt.Errorf("selected effect %s is absent", use.ID())
 	}
@@ -390,7 +390,7 @@ func prepareAdvice(
 	projected := make([]decision.EffectRequest, 0, len(advice))
 
 	for _, use := range advice {
-		definition, ok := target.LookupEffectSelection(use.ID())
+		definition, ok := target.LookupEffect(use.ID())
 		if !ok || definition.Kind() != registry.EffectKindAdvice || definition.Execution() != registry.ExecutionReturnOnly {
 			return nil, fmt.Errorf("selected advice %s is invalid", use.ID())
 		}

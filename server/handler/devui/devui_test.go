@@ -19,9 +19,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
 	corelang "github.com/croessner/nauthilus/v3/server/core/language"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	"github.com/croessner/nauthilus/v3/server/util"
@@ -108,4 +111,56 @@ func TestDevUIHandler_Index(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "idp_login.html")
 	assert.Contains(t, w.Body.String(), "idp_saml_post.html")
 	assert.Contains(t, w.Body.String(), "12345")
+}
+
+func TestDevUIHandler_RenderTemplateUsesSealedTemplateAfterLiveMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	directory := t.TempDir()
+	templatePath := filepath.Join(directory, "preview.html")
+	writeDevUITemplateArtifact(t, templatePath, []byte(`{{ define "preview.html" }}sealed-preview{{ end }}`))
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{Frontend: config.Frontend{
+		Enabled: true, HTMLStaticContentPath: directory,
+	}}}
+
+	snapshot, err := config.CaptureArtifactSnapshot(config.ProductionArtifactSnapshotSpec(cfg))
+	if err != nil {
+		t.Fatalf("CaptureArtifactSnapshot() error = %v", err)
+	}
+
+	artifacts, err := core.PrepareRouteArtifacts(cfg, snapshot)
+	if err != nil {
+		t.Fatalf("PrepareRouteArtifacts() error = %v", err)
+	}
+
+	writeDevUITemplateArtifact(t, templatePath, []byte(`{{ define "preview.html" }}mutated-preview{{ end }}`))
+
+	env := config.NewTestEnvironmentConfig()
+	handler := &Handler{deps: &deps.Deps{
+		Cfg: cfg, Env: env, LangManager: &mockLangManager{}, RouteArtifacts: artifacts,
+	}}
+	router := gin.New()
+	router.GET("/render/:template", handler.RenderTemplate)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/render/preview.html", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET preview status = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	if got := response.Body.String(); got != "sealed-preview" {
+		t.Fatalf("GET preview body = %q, want sealed template", got)
+	}
+}
+
+// writeDevUITemplateArtifact replaces one test-owned preview template.
+func writeDevUITemplateArtifact(t *testing.T, path string, content []byte) {
+	t.Helper()
+
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write DevUI template %q: %v", path, err)
+	}
 }

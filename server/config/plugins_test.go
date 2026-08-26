@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -35,6 +36,7 @@ const (
 func TestPluginConfig_ValidMinimalModuleDefaultsTypeAndPreservesOpaqueConfig(t *testing.T) {
 	pluginDir := t.TempDir()
 	modulePath := pluginConfigArtifactPath(pluginDir)
+	writePluginConfigArtifact(t, modulePath)
 
 	cfg, err := loadPluginTestConfig(t, map[string]any{
 		pluginConfigKeyAllowedDirs: []string{pluginDir},
@@ -237,6 +239,7 @@ func TestPluginConfig_RejectsInvalidLifecycleTimeout(t *testing.T) {
 
 func TestPluginConfig_AcceptsMailCapabilityAllowlist(t *testing.T) {
 	pluginDir := t.TempDir()
+	writePluginConfigArtifact(t, pluginConfigArtifactPath(pluginDir))
 
 	cfg, err := loadPluginTestConfig(t, map[string]any{
 		pluginConfigKeyAllowedDirs: []string{pluginDir},
@@ -265,6 +268,7 @@ func TestPluginConfig_AcceptsMailCapabilityAllowlist(t *testing.T) {
 
 func TestPluginConfig_NormalizesHookRequiredScopes(t *testing.T) {
 	pluginDir := t.TempDir()
+	writePluginConfigArtifact(t, pluginConfigArtifactPath(pluginDir))
 
 	cfg, err := loadPluginTestConfig(t, map[string]any{
 		pluginConfigKeyAllowedDirs: []string{pluginDir},
@@ -423,4 +427,13 @@ func assertPluginConfigError(t *testing.T, err error, want string) {
 
 func pluginConfigArtifactPath(root string) string {
 	return root + "/geoip.so"
+}
+
+// writePluginConfigArtifact creates bounded module bytes for successful production-loading tests.
+func writePluginConfigArtifact(t *testing.T, path string) {
+	t.Helper()
+
+	if err := os.WriteFile(path, []byte("test plugin module\n"), 0o600); err != nil {
+		t.Fatalf("write plugin module artifact: %v", err)
+	}
 }

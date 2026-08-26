@@ -1789,7 +1789,8 @@ func validateThen(then ThenConfig, path string) error {
 // validateEffectSelections checks exact qualified selected effect identities.
 func validateEffectSelections(selections []EffectSelectionConfig, path string) error {
 	for index, selection := range selections {
-		if !validQualified(selection.ID) {
+		_, _, authnPluginEffect := ParseAuthnPluginEffectID(selection.ID)
+		if !validQualified(selection.ID) && !authnPluginEffect {
 			return invalid(fmt.Sprintf("%s[%d].id", path, index), "must be an exact qualified effect identity")
 		}
 	}
@@ -2532,31 +2533,9 @@ func validProviderLocalName(namespace string, name string, kind string) bool {
 
 // parseAuthnPluginProviderLocal extracts the module and binding family from one exact local identity.
 func parseAuthnPluginProviderLocal(value string) (string, string, bool) {
-	const prefix = "plugin."
-	if !strings.HasPrefix(value, prefix) {
-		return "", "", false
-	}
+	module, family, _, ok := ParseAuthnPluginProviderLocal(value)
 
-	local := strings.TrimPrefix(value, prefix)
-	if module, ok := strings.CutSuffix(local, "."+pluginBindingEnvironment); ok && validNamespace(module) {
-		return module, pluginBindingEnvironment, true
-	}
-
-	subjectSeparator := "." + pluginBindingSubject + "."
-	subject := strings.LastIndex(local, subjectSeparator)
-
-	if subject <= 0 {
-		return "", "", false
-	}
-
-	module := local[:subject]
-	name := local[subject+len(subjectSeparator):]
-
-	if !validNamespace(module) || !validAction(name) {
-		return "", "", false
-	}
-
-	return module, pluginBindingSubject, true
+	return module, family, ok
 }
 
 // providerUseResolvable enforces namespace-private configured providers and immutable host bindings.

@@ -22,44 +22,39 @@ import (
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 )
 
 const (
-	factASN           = "plugin.environment.geoip.asn"
-	factASNAllocated  = "plugin.environment.geoip.asn_allocated"
-	factASNCountryISO = "plugin.environment.geoip.asn_country_iso"
-	factASNOrg        = "plugin.environment.geoip.asn_org"
-	factASNPrefix     = "plugin.environment.geoip.asn_prefix"
-	factASNRegistry   = "plugin.environment.geoip.asn_registry"
-	factASNStatus     = "plugin.environment.geoip.asn_status"
-	factCityName      = "plugin.environment.geoip.city_name"
-	factCountryISO    = "plugin.environment.geoip.country_iso"
-	factCountryName   = "plugin.environment.geoip.country_name"
-	factMatched       = "plugin.environment.geoip.matched"
-	geoValueASN       = "asn"
-	geoValueASNCC     = "asn_country_iso"
-	geoValueAllocated = "asn_allocated"
-	geoValueCity      = "city_name"
-	geoValueCountry   = "country_iso"
-	geoValueName      = "country_name"
-	geoValueOrg       = "asn_org"
-	geoValuePrefix    = "asn_prefix"
-	geoValueRegistry  = "asn_registry"
-	geoValueStatus    = "asn_status"
-	logNamespaceGeoIP = "geoip"
-	policyProducer    = "plugin.environment"
+	factASN           = "asn"
+	factASNAllocated  = "asn_allocated"
+	factASNCountryISO = "asn_country_iso"
+	factASNOrg        = "asn_org"
+	factASNPrefix     = "asn_prefix"
+	factASNRegistry   = "asn_registry"
+	factASNStatus     = "asn_status"
+	factCityName      = "city_name"
+	factCountryISO    = "country_iso"
+	factCountryName   = "country_name"
+	factMatched       = "matched"
 )
 
 var _ pluginapi.InitTask = (*geoIPInitTask)(nil)
-var _ pluginapi.EnvironmentSource = (*geoIPEnvironmentSource)(nil)
 
 type geoIPInitTask struct {
 	plugin *Plugin
 }
 
-type geoIPEnvironmentSource struct {
+type geoIPLookupService struct {
 	plugin *Plugin
+}
+
+type geoIPLookupFact struct {
+	Value any
+	Name  string
+}
+
+type geoIPLookupResult struct {
+	Facts []geoIPLookupFact
 }
 
 // Name returns the lifecycle component name for database loading.
@@ -96,33 +91,18 @@ func (t geoIPInitTask) Stop(context.Context) error {
 	return nil
 }
 
-// Descriptor returns the dependency-scheduled environment source metadata.
-func (s geoIPEnvironmentSource) Descriptor() pluginapi.SourceDescriptor {
-	timeout := defaultLookupTimeout
-
-	if s.plugin != nil {
-		config, _ := s.plugin.currentConfig()
-		if config.LookupTimeout > 0 {
-			timeout = config.LookupTimeout
-		}
-	}
-
-	return pluginapi.SourceDescriptor{
-		Name:        componentSource,
-		Timeout:     timeout,
-		AbortPolicy: pluginapi.AbortPolicyNone,
-	}
-}
-
-// Evaluate enriches the request with local GeoIP and ASN facts.
-func (s geoIPEnvironmentSource) Evaluate(ctx context.Context, request pluginapi.EnvironmentRequest) (pluginapi.EnvironmentResult, error) {
+// evaluateClientIP executes the internal redacted lookup for the generic Policy provider.
+func (s geoIPLookupService) evaluateClientIP(
+	ctx context.Context,
+	clientIP string,
+) (geoIPLookupResult, error) {
 	if s.plugin == nil {
-		return pluginapi.EnvironmentResult{}, fmt.Errorf("geoip source has no plugin")
+		return geoIPLookupResult{}, fmt.Errorf("geoip lookup has no plugin")
 	}
 
 	config, ok := s.plugin.currentConfig()
 	if !ok {
-		return pluginapi.EnvironmentResult{}, fmt.Errorf("geoip database is not loaded")
+		return geoIPLookupResult{}, fmt.Errorf("geoip database is not loaded")
 	}
 
 	lookupCtx, cancel := context.WithTimeout(ctx, config.LookupTimeout)
@@ -133,37 +113,14 @@ func (s geoIPEnvironmentSource) Evaluate(ctx context.Context, request pluginapi.
 
 	start := time.Now()
 
-	addr, err := netip.ParseAddr(request.Snapshot.ClientIP)
+	addr, err := netip.ParseAddr(clientIP)
 	if err != nil {
-		s.plugin.recordLookup(spanCtx, resultInvalidIP, time.Since(start))
-
-		result := missResult()
-		if config.Privacy.Enabled {
-			result = enrichPrivacyResult(result, privacyLookupResult{State: privacyLookupStateInvalidIP}, config.Privacy.PublicLogs)
-		}
-
-		return result, nil
+		return s.invalidClientIPResult(spanCtx, config, start), nil
 	}
 
-	record, matched, err := s.plugin.lookupRecord(spanCtx, addr)
+	result, record, lookupResult, err := s.lookupGeoIPResult(spanCtx, span, addr, start)
 	if err != nil {
-		span.RecordError(err)
-		s.plugin.recordLookup(spanCtx, resultError, time.Since(start))
-
-		return pluginapi.EnvironmentResult{}, err
-	}
-
-	result := missResult()
-	lookupResult := resultMiss
-
-	if matched {
-		result = matchResult(record, request.Snapshot.Session)
-		lookupResult = resultMatched
-
-		span.SetAttributes(
-			pluginapi.TraceAttribute{Key: "geoip.matched", Value: true},
-			pluginapi.TraceAttribute{Key: "geoip.country_iso", Value: record.CountryISO},
-		)
+		return geoIPLookupResult{}, err
 	}
 
 	if config.Privacy.Enabled {
@@ -172,10 +129,10 @@ func (s geoIPEnvironmentSource) Evaluate(ctx context.Context, request pluginapi.
 			span.RecordError(privacyErr)
 			s.plugin.recordLookup(spanCtx, resultError, time.Since(start))
 
-			return pluginapi.EnvironmentResult{}, privacyErr
+			return geoIPLookupResult{}, privacyErr
 		}
 
-		result = enrichPrivacyResult(result, privacy, config.Privacy.PublicLogs)
+		result = enrichPrivacyResult(result, privacy)
 		span.SetAttributes(
 			pluginapi.TraceAttribute{Key: "geoip.privacy_lookup_state", Value: privacy.State},
 			pluginapi.TraceAttribute{Key: "geoip.privacy_primary_class", Value: string(privacy.PrimaryClass)},
@@ -188,8 +145,51 @@ func (s geoIPEnvironmentSource) Evaluate(ctx context.Context, request pluginapi.
 	return result, nil
 }
 
+// invalidClientIPResult records one invalid request and preserves the configured privacy fact vocabulary.
+func (s geoIPLookupService) invalidClientIPResult(
+	ctx context.Context,
+	config moduleConfig,
+	start time.Time,
+) geoIPLookupResult {
+	s.plugin.recordLookup(ctx, resultInvalidIP, time.Since(start))
+
+	result := missResult()
+	if config.Privacy.Enabled {
+		result = enrichPrivacyResult(result, privacyLookupResult{State: privacyLookupStateInvalidIP})
+	}
+
+	return result
+}
+
+// lookupGeoIPResult resolves the base database record and records lookup failures on the active span.
+func (s geoIPLookupService) lookupGeoIPResult(
+	ctx context.Context,
+	span pluginapi.Span,
+	addr netip.Addr,
+	start time.Time,
+) (geoIPLookupResult, geoRecord, string, error) {
+	record, matched, err := s.plugin.lookupRecord(ctx, addr)
+	if err != nil {
+		span.RecordError(err)
+		s.plugin.recordLookup(ctx, resultError, time.Since(start))
+
+		return geoIPLookupResult{}, geoRecord{}, "", err
+	}
+
+	if !matched {
+		return missResult(), record, resultMiss, nil
+	}
+
+	span.SetAttributes(
+		pluginapi.TraceAttribute{Key: "geoip.matched", Value: true},
+		pluginapi.TraceAttribute{Key: "geoip.country_iso", Value: record.CountryISO},
+	)
+
+	return matchResult(record), record, resultMatched, nil
+}
+
 // lookupPrivacy evaluates the immutable privacy index within its tighter request deadline.
-func (s geoIPEnvironmentSource) lookupPrivacy(ctx context.Context, config privacyConfig, addr netip.Addr, record geoRecord) (privacyLookupResult, error) {
+func (s geoIPLookupService) lookupPrivacy(ctx context.Context, config privacyConfig, addr netip.Addr, record geoRecord) (privacyLookupResult, error) {
 	lookupCtx, cancel := context.WithTimeout(ctx, config.LookupTimeout)
 	defer cancel()
 
@@ -220,7 +220,7 @@ func (s geoIPEnvironmentSource) lookupPrivacy(ctx context.Context, config privac
 }
 
 // startSpan creates a component-scoped child span for request-time lookup work.
-func (s geoIPEnvironmentSource) startSpan(ctx context.Context) (context.Context, pluginapi.Span) {
+func (s geoIPLookupService) startSpan(ctx context.Context) (context.Context, pluginapi.Span) {
 	s.plugin.mu.RLock()
 	tracer := s.plugin.tracer
 	s.plugin.mu.RUnlock()
@@ -238,152 +238,42 @@ func (s geoIPEnvironmentSource) startSpan(ctx context.Context) (context.Context,
 }
 
 // missResult returns a non-triggering result for unknown or unparseable client IPs.
-func missResult() pluginapi.EnvironmentResult {
-	return pluginapi.EnvironmentResult{
-		Facts: []pluginapi.PolicyFact{
-			{Attribute: factMatched, Value: false},
+func missResult() geoIPLookupResult {
+	return geoIPLookupResult{
+		Facts: []geoIPLookupFact{
+			{Name: factMatched, Value: false},
 		},
-		RuntimeDelta: exchange.GeoIPRuntimeDelta(map[string]any{
-			resultMatched: false,
-		}),
 	}
 }
 
-// matchResult returns all policy-visible and runtime-visible GeoIP data for a match.
-func matchResult(record geoRecord, session string) pluginapi.EnvironmentResult {
-	facts := []pluginapi.PolicyFact{
-		{Attribute: factMatched, Value: true},
-	}
-	values := map[string]any{
-		resultMatched: true,
-	}
-	if session != "" {
-		values["guid"] = session
-	}
+// matchResult returns all generic GeoIP facts for a match.
+func matchResult(record geoRecord) geoIPLookupResult {
+	facts := []geoIPLookupFact{{Name: factMatched, Value: true}}
 
-	addStringFact(&facts, values, factCountryISO, geoValueCountry, record.CountryISO)
-	addStringFact(&facts, values, factCountryName, geoValueName, record.CountryName)
-	addStringFact(&facts, values, factCityName, geoValueCity, record.CityName)
-	addStringFact(&facts, values, factASNOrg, geoValueOrg, record.ASNOrg)
-	addStringFact(&facts, values, factASNPrefix, geoValuePrefix, record.ASNPrefix)
-	addStringFact(&facts, values, factASNRegistry, geoValueRegistry, record.ASNRegistry)
-	addStringFact(&facts, values, factASNCountryISO, geoValueASNCC, record.ASNCountryISO)
-	addStringFact(&facts, values, factASNAllocated, geoValueAllocated, record.ASNAllocated)
-	addStringFact(&facts, values, factASNStatus, geoValueStatus, record.ASNStatus)
+	addStringFact(&facts, factCountryISO, record.CountryISO)
+	addStringFact(&facts, factCountryName, record.CountryName)
+	addStringFact(&facts, factCityName, record.CityName)
+	addStringFact(&facts, factASNOrg, record.ASNOrg)
+	addStringFact(&facts, factASNPrefix, record.ASNPrefix)
+	addStringFact(&facts, factASNRegistry, record.ASNRegistry)
+	addStringFact(&facts, factASNCountryISO, record.ASNCountryISO)
+	addStringFact(&facts, factASNAllocated, record.ASNAllocated)
+	addStringFact(&facts, factASNStatus, record.ASNStatus)
 
 	if record.ASN > 0 {
-		facts = append(facts, pluginapi.PolicyFact{Attribute: factASN, Value: record.ASN})
-		values[geoValueASN] = record.ASN
+		facts = append(facts, geoIPLookupFact{Name: factASN, Value: record.ASN})
 	}
 
-	return pluginapi.EnvironmentResult{
-		Logs:         publicGeoIPLogFields(record),
-		Facts:        facts,
-		RuntimeDelta: exchange.GeoIPRuntimeDelta(values),
-	}
+	return geoIPLookupResult{Facts: facts}
 }
 
-// addStringFact appends a string fact and runtime value when the value is present.
-func addStringFact(facts *[]pluginapi.PolicyFact, values map[string]any, attribute string, key string, value string) {
+// addStringFact appends one generic string fact when the value is present.
+func addStringFact(facts *[]geoIPLookupFact, name string, value string) {
 	if value == "" {
 		return
 	}
 
-	*facts = append(*facts, pluginapi.PolicyFact{Attribute: attribute, Value: value})
-	values[key] = value
-}
-
-// publicGeoIPLogFields returns intentionally public GeoIP values for central request logging.
-func publicGeoIPLogFields(record geoRecord) []pluginapi.LogField {
-	fields := make([]pluginapi.LogField, 0, 3)
-	addPublicGeoIPLogField(&fields, geoValueCountry, record.CountryISO)
-	addPublicGeoIPLogField(&fields, geoValueASNCC, record.ASNCountryISO)
-
-	if record.ASN > 0 {
-		addPublicGeoIPLogField(&fields, geoValueASN, record.ASN)
-	}
-
-	return fields
-}
-
-// addPublicGeoIPLogField appends one validated public GeoIP log field.
-func addPublicGeoIPLogField(fields *[]pluginapi.LogField, key string, value any) {
-	if text, ok := value.(string); ok && text == "" {
-		return
-	}
-
-	field, err := pluginapi.PublicPolicyFactLogField(logNamespaceGeoIP, key, value)
-	if err != nil {
-		return
-	}
-
-	*fields = append(*fields, field)
-}
-
-// registerPolicyAttributes declares all facts emitted by the GeoIP environment source.
-func registerPolicyAttributes(registrar pluginapi.Registrar) error {
-	for _, definition := range geoIPPolicyAttributes() {
-		if err := registrar.RegisterPolicyAttribute(definition); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// geoIPPolicyAttributes returns the stable plugin policy fact definitions.
-func geoIPPolicyAttributes() []pluginapi.AttributeDefinition {
-	operations := []pluginapi.PolicyOperation{
-		pluginapi.PolicyOperationAuthenticate,
-		pluginapi.PolicyOperationLookupIdentity,
-	}
-
-	return []pluginapi.AttributeDefinition{
-		environmentAttribute(factMatched, pluginapi.AttributeTypeBool, "Whether the client address matched the GeoIP database.", operations),
-		environmentAttribute(factCountryISO, pluginapi.AttributeTypeString, "ISO 3166 country code from the GeoIP database.", operations),
-		environmentAttribute(factCountryName, pluginapi.AttributeTypeString, "Country name from the GeoIP database.", operations),
-		environmentAttribute(factCityName, pluginapi.AttributeTypeString, "City name from the GeoIP database.", operations),
-		environmentAttribute(factASN, pluginapi.AttributeTypeNumber, "Autonomous system number from the GeoIP data or local ASN routing snapshot.", operations),
-		environmentAttribute(factASNOrg, pluginapi.AttributeTypeString, "Autonomous system organization from the GeoIP data.", operations),
-		environmentAttribute(factASNPrefix, pluginapi.AttributeTypeString, "Network prefix returned by the local ASN routing snapshot.", operations),
-		environmentAttribute(factASNRegistry, pluginapi.AttributeTypeString, "RIR registry that allocated or assigned the ASN.", operations),
-		environmentAttribute(factASNCountryISO, pluginapi.AttributeTypeString, "Country code from delegated RIR ASN registry data.", operations),
-		environmentAttribute(factASNAllocated, pluginapi.AttributeTypeString, "Allocation date from delegated RIR ASN registry data.", operations),
-		environmentAttribute(factASNStatus, pluginapi.AttributeTypeString, "Allocation status from delegated RIR ASN registry data.", operations),
-		environmentAttribute(factPrivacyLookupState, pluginapi.AttributeTypeString, "Privacy intelligence lookup state.", operations),
-		environmentAttribute(factPrivacyDetected, pluginapi.AttributeTypeBool, "Whether retained privacy evidence other than hosting matched.", operations),
-		environmentAttribute(factPrivacyClasses, pluginapi.AttributeTypeStringList, "Deterministic retained privacy classifications.", operations),
-		environmentAttribute(factPrivacyPrimaryClass, pluginapi.AttributeTypeString, "Highest-authority privacy presentation class.", operations),
-		environmentAttribute(factPrivacyConfidence, pluginapi.AttributeTypeNumber, "Evidence confidence for the primary privacy class.", operations),
-		environmentAttribute(factPrivacySourceAuthorities, pluginapi.AttributeTypeStringList, "Contributing privacy evidence authority categories.", operations),
-		environmentAttribute(factPrivacyDataStale, pluginapi.AttributeTypeBool, "Whether required or contributing privacy snapshots are stale.", operations),
-		environmentAttribute(factPrivacyDataAgeSeconds, pluginapi.AttributeTypeNumber, "Age in seconds of the oldest contributing privacy snapshot.", operations),
-		environmentAttribute(factIsTorExitNode, pluginapi.AttributeTypeBool, "Whether official Tor exit evidence matched.", operations),
-		environmentAttribute(factIsKnownVPNExit, pluginapi.AttributeTypeBool, "Whether official provider or operator VPN exit evidence matched.", operations),
-		environmentAttribute(factIsCommunityVPNExit, pluginapi.AttributeTypeBool, "Whether community VPN exit evidence matched.", operations),
-		environmentAttribute(factIsPublicProxy, pluginapi.AttributeTypeBool, "Whether attributed public proxy evidence matched.", operations),
-		environmentAttribute(factIsPrivacyRelay, pluginapi.AttributeTypeBool, "Whether another attributed privacy relay matched.", operations),
-		environmentAttribute(factIsHostingNetwork, pluginapi.AttributeTypeBool, "Whether hosting or cloud network evidence matched.", operations),
-		environmentAttribute(factIsSharedEgress, pluginapi.AttributeTypeBool, "Whether operator-approved shared public egress evidence matched.", operations),
-	}
-}
-
-// environmentAttribute builds one plugin.environment policy attribute definition.
-func environmentAttribute(
-	id string,
-	valueType pluginapi.AttributeType,
-	description string,
-	operations []pluginapi.PolicyOperation,
-) pluginapi.AttributeDefinition {
-	return pluginapi.AttributeDefinition{
-		ID:            id,
-		Description:   description,
-		Stage:         pluginapi.PolicyStagePreAuth,
-		Operations:    operations,
-		ProducerTypes: []string{policyProducer},
-		Category:      pluginapi.AttributeCategoryEnvironment,
-		Type:          valueType,
-	}
+	*facts = append(*facts, geoIPLookupFact{Name: name, Value: value})
 }
 
 type noopSpan struct{}

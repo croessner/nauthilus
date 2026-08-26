@@ -59,6 +59,11 @@ type testGenerationApplication struct {
 	id uint64
 }
 
+type testPolicyModel struct {
+	marker string
+	id     uint64
+}
+
 type testFactProvider struct{}
 
 type testSyncEffectProvider struct{}
@@ -92,6 +97,35 @@ func (a *rejectingTestAdmission) Admit(
 // GenerationID returns the immutable test application generation identity.
 func (a *testGenerationApplication) GenerationID() uint64 {
 	return a.id
+}
+
+// ClonePolicyModel returns one detached coordinator-test policy model.
+func (m *testPolicyModel) ClonePolicyModel() PolicyModel {
+	if m == nil {
+		return (*testPolicyModel)(nil)
+	}
+
+	cloned := *m
+
+	return &cloned
+}
+
+// ValidatePolicyModel verifies the coordinator-test identity and marker.
+func (m *testPolicyModel) ValidatePolicyModel() error {
+	if m == nil || m.id == 0 || m.marker == "" {
+		return ErrInvalidGeneration
+	}
+
+	return nil
+}
+
+// GenerationID returns the coordinator-test policy generation identity.
+func (m *testPolicyModel) GenerationID() uint64 {
+	if m == nil {
+		return 0
+	}
+
+	return m.id
 }
 
 // Collect returns no facts for the coordinator-only binding fake.
@@ -369,32 +403,6 @@ func TestGenerationCoordinatorRejectsStaleCandidateCommit(t *testing.T) {
 	}
 }
 
-// TestGenerationCommitMakesLegacySnapshotViewReadOnly rejects independent snapshot publication.
-func TestGenerationCommitMakesLegacySnapshotViewReadOnly(t *testing.T) {
-	store := NewGenerationStore()
-	fixture := newGenerationFixture(t, testOldMarker)
-	coordinator := fixture.coordinator(store)
-
-	if _, err := coordinator.Apply(context.Background(), PrepareInput{Config: &config.FileSettings{}, ID: 1}); err != nil {
-		t.Fatalf("Apply() error = %v", err)
-	}
-
-	legacy := NewSnapshotStore(&Snapshot{Generation: 99})
-	legacy.generationSource.Store(store)
-
-	if got := legacy.Active(); got == nil || got.Generation != 1 {
-		t.Fatalf("legacy Active() generation = %#v, want generation 1 projection", got)
-	}
-
-	if err := legacy.Activate(&Snapshot{Generation: 2}); !errors.Is(err, ErrIndependentSnapshotPublication) {
-		t.Fatalf("legacy Activate() error = %v, want ErrIndependentSnapshotPublication", err)
-	}
-
-	if got := store.Active().ID(); got != 1 {
-		t.Fatalf("independent activation changed generation to %d", got)
-	}
-}
-
 // newGenerationFixture constructs the complete fake preparation graph.
 func newGenerationFixture(t *testing.T, marker string) *generationFixture {
 	t.Helper()
@@ -428,13 +436,13 @@ func (f *generationFixture) coordinator(store *GenerationStore) *Coordinator {
 	return coordinator
 }
 
-// preparePolicy builds one marker-bearing exact policy snapshot.
+// preparePolicy builds one marker-bearing normalized policy model.
 func (f *generationFixture) preparePolicy(
 	_ context.Context,
 	input PreparationInput,
 ) (PolicyPreparation, error) {
 	result := PolicyPreparation{
-		Snapshot:  &Snapshot{Generation: input.ID(), Mode: f.marker},
+		Policy:    &testPolicyModel{id: input.ID(), marker: f.marker},
 		Resources: f.newResources("policy"),
 	}
 
@@ -714,7 +722,7 @@ func generationHasMarker(
 		return false
 	}
 
-	policy := generation.PolicySnapshot()
+	policy, _ := generation.Policy().(*testPolicyModel)
 	catalog := generation.TargetCatalog()
 	credentials := generation.CredentialProfiles().IDs()
 	admission := generation.AdmissionProfiles().IDs()
@@ -764,21 +772,21 @@ type generationMarkerObservation struct {
 }
 
 // policyMode returns an empty marker for a missing policy view.
-func policyMode(policy *Snapshot) string {
+func policyMode(policy *testPolicyModel) string {
 	if policy == nil {
 		return ""
 	}
 
-	return policy.Mode
+	return policy.marker
 }
 
 // policyGenerationID returns zero for a missing policy view.
-func policyGenerationID(policy *Snapshot) uint64 {
+func policyGenerationID(policy *testPolicyModel) uint64 {
 	if policy == nil {
 		return 0
 	}
 
-	return policy.Generation
+	return policy.id
 }
 
 // applicationGenerationID returns zero for a missing application authority.

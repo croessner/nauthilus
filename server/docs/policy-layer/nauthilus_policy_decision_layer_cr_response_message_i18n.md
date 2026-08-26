@@ -506,9 +506,12 @@ Function contract:
   namespace, and override status.
 - After init succeeds, the effective catalog is frozen and shared as immutable
   resolver input.
-- On config or Lua reload, build a new effective catalog and activate it
-  atomically only after the full reload succeeds. A failed reload must leave the
-  previous effective catalog active.
+- On config reload, reuse the frozen startup overlays and build a new effective
+  catalog with the candidate top-level Policy layer. Init-script path or content
+  drift is restart-bound. The system resource path, language selection and
+  order, default language, and selected resource bytes are pinned to the exact
+  source loaded by the process language manager; their drift is restart-bound
+  as well. A failed candidate must leave the previous effective catalog active.
 
 The Lua module should not be the primary bridge for final auth response
 localization. Final auth responses should prefer policy-selected

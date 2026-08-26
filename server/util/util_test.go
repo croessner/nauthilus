@@ -286,16 +286,22 @@ func assertComparePasswordResult(t *testing.T, testCase comparePasswordCase, out
 func TestPasswordHashHelpersMatchPublicImplementation(t *testing.T) {
 	const plainPassword = "s3cret"
 
-	SetDefaultConfigFile(&config.FileSettings{Server: &config.ServerSection{}})
 	SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
-	prepared := PreparePassword(plainPassword)
-	got := GetHash(prepared)
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+
+	prepared, ok := PreparePasswordBytesWithConfig([]byte(plainPassword), cfg)
+	if !ok {
+		t.Fatal("PreparePasswordBytesWithConfig rejected explicit config")
+	}
+	defer clear(prepared)
+
+	got := GetHashBytes(prepared)
 
 	want := password.GenerateHashString(plainPassword, password.HashOptions{})
 
 	if got != want {
-		t.Fatalf("GetHash(PreparePassword()) = %q, want public helper %q", got, want)
+		t.Fatalf("GetHashBytes(PreparePasswordBytesWithConfig()) = %q, want public helper %q", got, want)
 	}
 }
 

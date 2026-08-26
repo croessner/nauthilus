@@ -20,6 +20,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
+	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -28,57 +29,59 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+const policyGRPCTransportKind = "grpc"
+
+var (
+	errPolicyGRPCCredentialsRequired = errors.New("policy gRPC credentials required")
+	errPolicyGRPCRequestTooLarge     = errors.New("policy gRPC request is too large")
+)
+
 type authenticationContextKey struct{}
+
+// AuthenticationPreparer derives opaque caller evidence from server-observed gRPC transport state.
+type AuthenticationPreparer func(context.Context) (decision.AuthenticationInput, error)
 
 // Handler adapts one normalized gRPC Policy request to the application authority.
 type Handler struct {
 	policyv1.UnimplementedPolicyDecisionServiceServer
 
-	service decision.Service
+	service        decisionservice.PreparedService
+	authentication AuthenticationPreparer
 }
 
 // New constructs the Policy gRPC adapter with its mandatory application authority.
-func New(service decision.Service) *Handler {
-	return &Handler{service: service}
+func New(service decisionservice.PreparedService, authentication AuthenticationPreparer) *Handler {
+	return &Handler{service: service, authentication: authentication}
 }
 
-// ContextWithAuthentication attaches interceptor-created opaque evidence to one Policy RPC.
+// ContextWithAuthentication attaches opaque evidence for focused adapter tests.
 func ContextWithAuthentication(ctx context.Context, input decision.AuthenticationInput) context.Context {
 	return context.WithValue(ctx, authenticationContextKey{}, input)
 }
 
-// Evaluate strictly normalizes one protobuf request before invoking DecisionService.
+// contextAuthenticationEvidence resolves the focused test seam without transport globals.
+func contextAuthenticationEvidence(ctx context.Context) (decision.AuthenticationInput, error) {
+	authentication, ok := ctx.Value(authenticationContextKey{}).(decision.AuthenticationInput)
+	if !ok {
+		return decision.AuthenticationInput{}, errPolicyGRPCCredentialsRequired
+	}
+
+	return authentication, nil
+}
+
+// Evaluate gates one captured generation before protobuf or credential preparation.
 func (h *Handler) Evaluate(ctx context.Context, request *policyv1.DecisionRequest) (*policyv1.DecisionResponse, error) {
 	if h == nil || h.service == nil {
 		return nil, status.Error(codes.Unavailable, "policy service unavailable")
 	}
 
-	if err := requestContextError(ctx); err != nil {
-		return nil, err
-	}
-
-	input, err := requestInput(request)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid policy decision request")
-	}
-
-	authentication, ok := ctx.Value(authenticationContextKey{}).(decision.AuthenticationInput)
-	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "policy credentials required")
-	}
-
-	gate := core.PostActionFinalizationGateFromContext(ctx)
-	if gate == nil {
-		return nil, status.Error(codes.Unavailable, "policy response finalization is unavailable")
-	}
-
-	finalization := decision.NewExternalEvaluationFinalization(effectsupervisor.BoundaryGRPCUnaryReturn, gate.Done())
-
-	response, err := h.service.Evaluate(ctx, decision.Invocation{
-		Request:        input,
-		Authentication: authentication,
-		Finalization:   finalization,
-	})
+	response, err := h.service.EvaluatePrepared(
+		ctx,
+		policyGRPCTransportKind,
+		func(captured policyruntime.GenerationConfig) (decision.Invocation, error) {
+			return h.prepareInvocation(ctx, request, captured)
+		},
+	)
 	if err != nil {
 		return nil, grpcServiceError(err)
 	}
@@ -91,6 +94,60 @@ func (h *Handler) Evaluate(ctx context.Context, request *policyv1.DecisionReques
 	return converted, nil
 }
 
+// prepareInvocation derives the bounded request and caller evidence only after route activation passed.
+func (h *Handler) prepareInvocation(
+	ctx context.Context,
+	request *policyv1.DecisionRequest,
+	captured policyruntime.GenerationConfig,
+) (decision.Invocation, error) {
+	if err := requestContextError(ctx); err != nil {
+		return decision.Invocation{}, err
+	}
+
+	maxRequestBytes := policyGRPCMaxRequestBytes(captured)
+	if maxRequestBytes <= 0 {
+		return decision.Invocation{}, decisionservice.ErrDecisionGenerationUnavailable
+	}
+
+	if request != nil && proto.Size(request) > maxRequestBytes {
+		return decision.Invocation{}, errPolicyGRPCRequestTooLarge
+	}
+
+	input, err := requestInput(request)
+	if err != nil {
+		return decision.Invocation{}, decision.ErrInvalidRequest
+	}
+
+	if h.authentication == nil {
+		return decision.Invocation{}, errPolicyGRPCCredentialsRequired
+	}
+
+	authentication, err := h.authentication(ctx)
+	if err != nil {
+		return decision.Invocation{}, err
+	}
+
+	gate := core.PostActionFinalizationGateFromContext(ctx)
+	if gate == nil {
+		return decision.Invocation{}, decisionservice.ErrDecisionServiceDependencyMissing
+	}
+
+	finalization := decision.NewExternalEvaluationFinalization(effectsupervisor.BoundaryGRPCUnaryReturn, gate.Done())
+
+	return decision.Invocation{
+		Request: input, Authentication: authentication, Finalization: finalization,
+	}, nil
+}
+
+// policyGRPCMaxRequestBytes returns the captured generation's exact unary wire limit.
+func policyGRPCMaxRequestBytes(captured policyruntime.GenerationConfig) int {
+	if captured == nil {
+		return 0
+	}
+
+	return captured.GetPolicy().API.Limits.MaxRequestBytes
+}
+
 // requestContextError maps a deadline already observed before application evaluation.
 func requestContextError(ctx context.Context) error {
 	if ctx == nil {
@@ -98,11 +155,11 @@ func requestContextError(ctx context.Context) error {
 	}
 
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return status.Error(codes.DeadlineExceeded, "policy evaluation deadline exceeded")
+		return context.DeadlineExceeded
 	}
 
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return status.Error(codes.Canceled, "policy evaluation cancelled")
+		return context.Canceled
 	}
 
 	return nil
@@ -117,6 +174,12 @@ func grpcServiceError(err error) error {
 		return status.Error(codes.DeadlineExceeded, "policy evaluation deadline exceeded")
 	case errors.Is(err, decision.ErrInvalidRequest):
 		return status.Error(codes.InvalidArgument, "invalid policy decision request")
+	case errors.Is(err, decisionservice.ErrDecisionRouteUnavailable):
+		return status.Error(codes.Unimplemented, "policy endpoint is disabled")
+	case errors.Is(err, errPolicyGRPCRequestTooLarge), status.Code(err) == codes.ResourceExhausted:
+		return status.Error(codes.ResourceExhausted, "policy request exceeds the message limit")
+	case errors.Is(err, errPolicyGRPCCredentialsRequired), status.Code(err) == codes.Unauthenticated:
+		return status.Error(codes.Unauthenticated, "policy credentials required")
 	case errors.Is(err, decisionservice.ErrDecisionAuthentication):
 		return status.Error(codes.Unauthenticated, "policy credentials rejected")
 	case errors.Is(err, decisionservice.ErrDecisionAdmission):

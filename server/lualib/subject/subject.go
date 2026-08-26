@@ -27,20 +27,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/errors"
 	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/lualib"
-	bflib "github.com/croessner/nauthilus/v3/server/lualib/bruteforce"
-	"github.com/croessner/nauthilus/v3/server/lualib/connmgr"
+	"github.com/croessner/nauthilus/v3/server/lualib/luamod"
 	"github.com/croessner/nauthilus/v3/server/lualib/luapool"
+	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
 	"github.com/croessner/nauthilus/v3/server/lualib/pipeline"
-	"github.com/croessner/nauthilus/v3/server/lualib/policyschedule"
-	"github.com/croessner/nauthilus/v3/server/lualib/redislib"
 	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/v3/server/monitoring"
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
@@ -48,7 +45,6 @@ import (
 	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/croessner/nauthilus/v3/server/stats"
-	"github.com/croessner/nauthilus/v3/server/svcctx"
 	"github.com/croessner/nauthilus/v3/server/util"
 
 	"github.com/gin-gonic/gin"
@@ -57,9 +53,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// LuaSubjectSources holds pre-compiled Lua scripts for use across the application.
-// It allows faster access and execution of frequently used scripts.
-var LuaSubjectSources *PreCompiledLuaSubjectSources
+// errSubjectSourcePoolKeyMissing rejects generation-owned execution without an isolated pool identity.
+var errSubjectSourcePoolKeyMissing = stderrs.New("generation-owned Lua subject VM pool key is required")
+
+// errSubjectSourcePoolManagerMissing rejects execution without the generation-captured pool owner.
+var errSubjectSourcePoolManagerMissing = stderrs.New("generation-owned Lua subject VM pool manager is required")
 
 // BackendManager manages backend operations for Lua subject sources.
 type BackendManager struct {
@@ -131,56 +129,37 @@ func LoaderModBackendWithCurrent(ctx context.Context, cfg config.File, logger *s
 	}
 }
 
-// PreCompileLuaSubjectSources prepares and pre-compiles Lua subject sources based on the configuration, ensuring optimized subject source execution.
-// Returns an error if pre-compilation fails or configuration is missing.
-// Initializes or resets the global LuaSubjectSources container, adding compiled Lua subject sources sequentially.
-func PreCompileLuaSubjectSources(cfgFile config.File) (err error) {
-	tr := monittrace.New("nauthilus/subject")
-	ctx, sp := tr.Start(svcctx.Get(), "subject_sources.precompile_all",
-		attribute.Int("configured", func() int {
-			if cfgFile.HaveLuaSubjectSources() {
-				return len(cfgFile.GetLua().GetSubjectSources())
-			}
+// LoaderModBackendProjectionWithCurrent exposes only request-local backend-result transformations.
+func LoaderModBackendProjectionWithCurrent(
+	ctx context.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	request *Request,
+	backendResult **lualib.LuaBackendResult,
+	removeAttributes *[]string,
+	currentBackendResult *lualib.LuaBackendResult,
+	currentRemoveAttributes []string,
+) lua.LGFunction {
+	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewBackendManagerWithCurrent(
+			ctx,
+			cfg,
+			logger,
+			request,
+			backendResult,
+			removeAttributes,
+			currentBackendResult,
+			currentRemoveAttributes,
+		)
 
-			return 0
-		}()),
-	)
-
-	_ = ctx
-
-	defer sp.End()
-
-	if cfgFile.HaveLuaSubjectSources() {
-		if LuaSubjectSources == nil {
-			LuaSubjectSources = &PreCompiledLuaSubjectSources{}
-		} else {
-			LuaSubjectSources.Reset()
-		}
-
-		sources := cfgFile.GetLua().GetSubjectSources()
-		for index := range sources {
-			var luaSubjectSource *LuaSubjectSource
-
-			cfg := sources[index]
-
-			luaSubjectSource, err = NewLuaSubjectSource(cfg.Name, cfg.ScriptPath)
-			if err != nil {
-				sp.RecordError(err)
-
-				return err
-			}
-
-			LuaSubjectSources.Add(luaSubjectSource)
-		}
-
-		if err = LuaSubjectSources.RebuildPlans(); err != nil {
-			sp.RecordError(err)
-
-			return err
-		}
+		return stack.PushResult(L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			definitions.LuaFnGetCurrentBackendResult:     manager.getCurrentBackendResult,
+			definitions.LuaFnApplyBackendResult:          manager.applyBackendResult,
+			definitions.LuaFnRemoveFromBackendResult:     manager.removeFromBackendResult,
+			definitions.LuaFnGetRemovedBackendAttributes: manager.getRemovedBackendAttributes,
+		}))
 	}
-
-	return nil
 }
 
 // PreCompiledLuaSubjectSources represents a collection of precompiled Lua scripts
@@ -258,32 +237,10 @@ type LuaSubjectSource struct {
 	// CompiledScript is a pointer to a FunctionProto struct from the go-lua package.
 	// It represents a compiled Lua function that can be executed by a Lua VM.
 	CompiledScript *lua.FunctionProto
+	Modules        *luaseal.Modules
 
 	Dependencies []string
 	Modes        pipeline.ModeMask
-}
-
-// NewLuaSubjectSource creates a new LuaSubjectSource with the provided name and scriptPath by compiling the Lua script.
-// Returns an error if the name or scriptPath is empty, or if there is a failure during script compilation.
-func NewLuaSubjectSource(name string, scriptPath string) (*LuaSubjectSource, error) {
-	if name == "" {
-		return nil, errors.ErrSubjectSourceLuaNameMissing
-	}
-
-	if scriptPath == "" {
-		return nil, errors.ErrSubjectSourceLuaScriptPathEmpty
-	}
-
-	compiledScript, err := lualib.CompileLua(scriptPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return &LuaSubjectSource{
-		Name:           name,
-		CompiledScript: compiledScript,
-		Modes:          pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated,
-	}, nil
 }
 
 func subjectPipelineNodes(sources []*LuaSubjectSource) []pipeline.Node {
@@ -361,11 +318,10 @@ type Request struct {
 	// CommonRequest represents a common request object with various properties used in different functionalities.
 	*lualib.CommonRequest
 
+	// Tolerate is the request-owned brute-force tolerance authority.
+	Tolerate       tolerate.Tolerate
 	ScriptRecorder policycollection.ScriptRecorder
 	PolicyContext  *policycollection.DecisionContext
-
-	// ScriptScheduleOverride constrains execution to one host-coordinated mixed-source phase.
-	ScriptScheduleOverride *policycollection.ScriptSchedulePlan
 }
 
 // handleError logs Lua execution errors for subject sources with stacktrace when available,
@@ -646,11 +602,52 @@ func mergeSortedUniqueStrings(base []string, values ...[]string) []string {
 	return merged
 }
 
-// CallSubjectLua executes Lua subject source scripts in parallel. It merges backend results and remove-attributes
-// from all subject sources, returns action=true if any subject source requested action, and returns the first error if any.
+// CallSubjectLuaSource executes exactly one caller-owned precompiled source.
+func (r *Request) CallSubjectLuaSource(
+	ctx *gin.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	redisClient rediscli.Client,
+	source *LuaSubjectSource,
+	pools *vmpool.Manager,
+	poolKey vmpool.PoolKey,
+) (action bool, backendResult *lualib.LuaBackendResult, removeAttributes []string, err error) {
+	if pools == nil {
+		return false, nil, nil, errSubjectSourcePoolManagerMissing
+	}
+
+	if poolKey == "" {
+		return false, nil, nil, errSubjectSourcePoolKeyMissing
+	}
+
+	if source == nil || source.Name == "" || source.CompiledScript == nil {
+		return false, nil, nil, errors.ErrSubjectSourceLuaNameMissing
+	}
+
+	sources := &PreCompiledLuaSubjectSources{LuaScripts: []*LuaSubjectSource{source}}
+	if err = sources.RebuildPlans(); err != nil {
+		return false, nil, nil, err
+	}
+
+	return r.callSubjectLua(ctx, cfg, logger, redisClient, sources, pools, poolKey)
+}
+
+// callSubjectLua executes one immutable source collection without selecting ambient authority.
 //
 //nolint:gocyclo,funlen
-func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client) (action bool, backendResult *lualib.LuaBackendResult, removeAttributes []string, err error) {
+func (r *Request) callSubjectLua(
+	ctx *gin.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	redisClient rediscli.Client,
+	sources *PreCompiledLuaSubjectSources,
+	pools *vmpool.Manager,
+	poolKey vmpool.PoolKey,
+) (action bool, backendResult *lualib.LuaBackendResult, removeAttributes []string, err error) {
+	if pools == nil {
+		return false, nil, nil, errSubjectSourcePoolManagerMissing
+	}
+
 	tr := monittrace.New("nauthilus/subject")
 	fctx, fsp := tr.Start(ctx.Request.Context(), "subject_sources.call",
 		attribute.String("service", func() string {
@@ -668,8 +665,8 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 			return ""
 		}()),
 		attribute.Int("subject_sources", func() int {
-			if LuaSubjectSources != nil {
-				return len(LuaSubjectSources.LuaScripts)
+			if sources != nil {
+				return len(sources.LuaScripts)
 			}
 
 			return 0
@@ -704,22 +701,16 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 		r.Logs.Set(definitions.LogKeySubjectLatency, util.FormatDurationMs(latency))
 	}()
 
-	if LuaSubjectSources == nil || len(LuaSubjectSources.LuaScripts) == 0 {
+	if sources == nil || len(sources.LuaScripts) == 0 {
 		return false, nil, nil, errors.ErrNoSubjectSourcesDefined
 	}
 
-	LuaSubjectSources.Mu.RLock()
-	defer LuaSubjectSources.Mu.RUnlock()
+	sources.Mu.RLock()
+	defer sources.Mu.RUnlock()
 
 	modeMask := requestSubjectMode(r)
 	mode := subjectModeText(modeMask)
-	authState := requestPolicyAuthState(r)
-	scriptPlan := policySubjectScriptPlan(r, authState)
-
-	runnable := countSubjectSourcesForMode(LuaSubjectSources.LuaScripts, modeMask)
-	if scriptPlan.Configured {
-		runnable = len(scriptPlan.Schedules)
-	}
+	runnable := countSubjectSourcesForMode(sources.LuaScripts, modeMask)
 
 	// Trace selection of applicable subject sources for the current mode
 	sctx, selSpan := tr.Start(fctx, "subject_sources.select_applicable")
@@ -727,9 +718,8 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 
 	selSpan.SetAttributes(
 		attribute.String("mode", mode),
-		attribute.Int("configured_total", len(LuaSubjectSources.LuaScripts)),
+		attribute.Int("configured_total", len(sources.LuaScripts)),
 		attribute.Int("runnable", runnable),
-		attribute.Bool("policy_schedule", scriptPlan.Configured),
 	)
 	selSpan.End()
 
@@ -762,7 +752,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 	pctx, pspan := tr.Start(fctx, "subject_sources.plan.lookup")
 	_ = pctx
 
-	plan, cached, err := subjectPlanForScripts(scriptPlan, modeMask)
+	plan, cached, err := sources.planForMode(modeMask)
 	plannedCount := pipeline.PlannedNodeCount(plan)
 	pspan.SetAttributes(
 		attribute.Bool("cached", cached),
@@ -793,7 +783,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 
 	results := make([]*subjectResult, 0, plannedCount)
 
-	pool := vmpool.GetManager().GetOrCreate("subject:default", vmpool.PoolOptions{MaxVMs: cfg.GetLuaSubjectSourceVMPoolSize(), Config: cfg})
+	pool := pools.GetOrCreate(poolKey, vmpool.PoolOptions{MaxVMs: cfg.GetLuaSubjectSourceVMPoolSize(), Config: cfg})
 
 	mergedBackendResult := &lualib.LuaBackendResult{
 		Attributes:              make(map[any]any),
@@ -870,6 +860,10 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 
 				var localStatus *string
 
+				if err = luaseal.PreparePolicyProfile(Llocal, sc.Modules, luaseal.PolicyProfileSubject); err != nil {
+					return err
+				}
+
 				// Local backend result and remove-attributes that this subject source may set
 				localBackendResult := cloneLuaBackendResult(mergedBackendResult)
 				localRemoveAttrs := make([]string, 0)
@@ -915,17 +909,6 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					attribute.Int("level", levelIndex),
 				)
 				_ = envCtx
-
-				// 6) nauthilus_backend_result
-				lualib.LoaderModBackendResult(ctx, cfg, logger)(Llocal)
-
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					Llocal.SetGlobal(definitions.LuaBackendResultTypeName, mod)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaBackendResultTypeName, mod)
-				} else {
-					Llocal.Pop(1)
-				}
 
 				// Globals for this state
 				lualib.SetBuiltinTableForSubject(
@@ -977,150 +960,38 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 
 				luapool.PrepareRequestEnv(Llocal)
 
-				// Bind request-scoped modules into reqEnv so that require() resolves correctly.
-				// 1) nauthilus_context
-				if loader := lualib.LoaderModContext(localRequest.Context); loader != nil {
-					_ = loader(Llocal)
-
-					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-						Llocal.Pop(1)
-						luapool.BindModuleIntoReq(Llocal, definitions.LuaModContext, mod)
-					} else {
-						Llocal.Pop(1)
-					}
-				}
-
-				// 2) nauthilus_cbor
-				bindSubjectModuleIntoReq(Llocal, definitions.LuaModCBOR, lualib.LoaderModCBOR())
-
-				// 3) nauthilus_http_request
-				if ctx != nil && ctx.Request != nil {
-					loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request))
-					_ = loader(Llocal)
-
-					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-						Llocal.Pop(1)
-						luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPRequest, mod)
-					} else {
-						Llocal.Pop(1)
-					}
-				}
-
-				// 4) nauthilus_http_response
-				if ctx != nil {
-					loader := lualib.LoaderModHTTPResponse(ctx)
-					_ = loader(Llocal)
-
-					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-						Llocal.Pop(1)
-						luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPResponse, mod)
-					} else {
-						Llocal.Pop(1)
-					}
-				}
-
-				// 5) nauthilus_redis
-				if loader := redislib.LoaderModRedis(luaCtx, cfg, redisClient); loader != nil {
-					_ = loader(Llocal)
-
-					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-						Llocal.Pop(1)
-						luapool.BindModuleIntoReq(Llocal, definitions.LuaModRedis, mod)
-					} else {
-						Llocal.Pop(1)
-					}
-				}
-
-				// 6) nauthilus_ldap (optional)
-				if cfg.HaveLDAPBackend() {
-					loader := backend.LoaderModLDAP(luaCtx, cfg)
-					_ = loader(Llocal)
-
-					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-						Llocal.Pop(1)
-						luapool.BindModuleIntoReq(Llocal, definitions.LuaModLDAP, mod)
-					} else {
-						Llocal.Pop(1)
-					}
-				}
-
-				// 7) nauthilus_psnet (connection monitoring)
-				if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
-					_ = loader(Llocal)
-
-					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-						Llocal.Pop(1)
-						luapool.BindModuleIntoReq(Llocal, definitions.LuaModPsnet, mod)
-					} else {
-						Llocal.Pop(1)
-					}
-				}
-
-				// 8) nauthilus_dns (DNS lookups)
-				if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
-					_ = loader(Llocal)
-
-					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-						Llocal.Pop(1)
-						luapool.BindModuleIntoReq(Llocal, definitions.LuaModDNS, mod)
-					} else {
-						Llocal.Pop(1)
-					}
-				}
-
-				// 9) nauthilus_opentelemetry (OTel helpers for Lua)
-				{
-					var loader lua.LGFunction
-
-					if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
-						loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
-					} else {
-						loader = lualib.LoaderOTELStateless()
-					}
-
-					if loader != nil {
-						_ = loader(Llocal)
-						if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-							Llocal.Pop(1)
-							luapool.BindModuleIntoReq(Llocal, definitions.LuaModOpenTelemetry, mod)
-						} else {
-							Llocal.Pop(1)
-						}
-					}
-				}
-
-				// 10) nauthilus_brute_force (toleration and blocking helpers)
-				if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redisClient, tolerate.GetTolerate()); loader != nil {
-					_ = loader(Llocal)
-
-					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-						Llocal.Pop(1)
-						luapool.BindModuleIntoReq(Llocal, definitions.LuaModBruteForce, mod)
-					} else {
-						Llocal.Pop(1)
-					}
-				}
-
-				// 11) nauthilus_policy
+				// The result value constructor is local to the captured subject generation.
 				bindSubjectModuleIntoReq(
+					Llocal,
+					definitions.LuaBackendResultTypeName,
+					lualib.LoaderModBackendResult(ctx, cfg, logger),
+				)
+				bindSubjectModuleIntoReq(
+					Llocal,
+					definitions.LuaModBackend,
+					LoaderModBackendProjectionWithCurrent(
+						luaCtx,
+						cfg,
+						logger,
+						&localRequest,
+						&localBackendResult,
+						&localRemoveAttrs,
+						mergedBackendResult,
+						mergedRemoveAttributes.GetStringSlice(),
+					),
+				)
+
+				modManager := luamod.NewModuleManager(luaCtx, cfg, logger, redisClient)
+				modManager.BindAllPolicyRequest(luaCtx, Llocal, localRequest.Context, localRequest.Tolerate)
+				if ctx != nil && ctx.Request != nil {
+					modManager.BindHTTP(Llocal, lualib.NewHTTPMetaFromRequest(ctx.Request))
+				}
+
+				modManager.BindModule(
 					Llocal,
 					definitions.LuaModPolicy,
 					lualib.LoaderModPolicy(localRequest.PolicyContext, policy.StageSubjectAnalysis),
 				)
-
-				// 12) nauthilus_backend (preload stateless placeholder, then request-bound)
-				Llocal.PreloadModule(definitions.LuaModBackend, lualib.LoaderBackendStateless())
-				{
-					loader := LoaderModBackendWithCurrent(luaCtx, cfg, logger, &localRequest, &localBackendResult, &localRemoveAttrs, mergedBackendResult, mergedRemoveAttributes.GetStringSlice())
-					_ = loader(Llocal)
-
-					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-						Llocal.Pop(1)
-						luapool.BindModuleIntoReq(Llocal, definitions.LuaModBackend, mod)
-					} else {
-						Llocal.Pop(1)
-					}
-				}
 
 				mspan.End()
 				envSpan.End()
@@ -1134,9 +1005,9 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					attribute.Int("level", levelIndex),
 				)
 
-				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.package_path")
+				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.module_authority")
 
-				if e := lualib.PackagePath(Llocal, cfg); e != nil {
+				if e := luaseal.InstallPolicyProfile(Llocal, sc.Modules, luaseal.PolicyProfileSubject); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 					packagePathSpan.RecordError(e)
 					packagePathSpan.End()
@@ -1423,45 +1294,6 @@ func (r *Request) recordSubjectScriptResult(ctx context.Context, name string, ac
 	})
 }
 
-func subjectPlanForScripts(scriptPlan policycollection.ScriptSchedulePlan, mode pipeline.ModeMask) (pipeline.Plan, bool, error) {
-	if !scriptPlan.Configured {
-		return LuaSubjectSources.planForMode(mode)
-	}
-
-	plan, err := policyschedule.BuildPlan(subjectPipelineNodes(LuaSubjectSources.LuaScripts), scriptPlan, mode)
-
-	return plan, false, err
-}
-
-func policySubjectScriptPlan(r *Request, authState policycollection.AuthState) policycollection.ScriptSchedulePlan {
-	if r != nil && r.ScriptScheduleOverride != nil {
-		return cloneSubjectScriptSchedulePlan(*r.ScriptScheduleOverride)
-	}
-
-	if r == nil || r.ScriptRecorder == nil {
-		return policycollection.ScriptSchedulePlan{}
-	}
-
-	return r.ScriptRecorder.ScriptPlan(policycollection.ScriptKindSubject, authState)
-}
-
-// cloneSubjectScriptSchedulePlan returns an execution-local copy of a host schedule.
-func cloneSubjectScriptSchedulePlan(plan policycollection.ScriptSchedulePlan) policycollection.ScriptSchedulePlan {
-	clone := policycollection.ScriptSchedulePlan{
-		Schedules:  make([]policycollection.ScriptSchedule, 0, len(plan.Schedules)),
-		Configured: plan.Configured,
-	}
-
-	for _, schedule := range plan.Schedules {
-		clone.Schedules = append(clone.Schedules, policycollection.ScriptSchedule{
-			Name:  schedule.Name,
-			After: append([]string(nil), schedule.After...),
-		})
-	}
-
-	return clone
-}
-
 func countSubjectSourcesForMode(sources []*LuaSubjectSource, mode pipeline.ModeMask) int {
 	count := 0
 
@@ -1476,14 +1308,6 @@ func countSubjectSourcesForMode(sources []*LuaSubjectSource, mode pipeline.ModeM
 
 func subjectModeText(mode pipeline.ModeMask) string {
 	return pipeline.ModeText(mode)
-}
-
-func requestPolicyAuthState(r *Request) policycollection.AuthState {
-	if r != nil && r.CommonRequest != nil && r.Authenticated {
-		return policycollection.AuthStateAuthenticated
-	}
-
-	return policycollection.AuthStateUnauthenticated
 }
 
 func subjectStatusText(status *string) string {

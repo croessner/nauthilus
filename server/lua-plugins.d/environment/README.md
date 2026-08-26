@@ -4,8 +4,10 @@ This directory contains Lua environment source plugins for the Nauthilus authent
 
 ## Policy Integration
 
-Configure these scripts as `lua.environment` checks under `auth.policy.checks`. The check name controls scheduling, while
-`config_ref: auth.policy.attribute_sources.lua.environment.<name>` selects the configured Lua environment source. The decision layer records
+Configure a compatible custom script below `policy.namespaces.authn.providers.lua_environment_<name>` with
+`kind: lua_environment`. A provider instance below the owning domain plan selects the exact
+`authn/lua_environment_<name>` identity with `use`; its local `name` controls scheduling and its `after` dependencies.
+The decision layer records
 `auth.lua.environment.<name>.triggered`, `auth.lua.environment.<name>.abort`, and `auth.lua.environment.<name>.error`.
 
 Scripts that collect supporting signals can emit Lua-owned attributes through `nauthilus_policy_facts`. The bundled
@@ -13,9 +15,16 @@ environment source attributes are registered by `../policy/registry.lua` and use
 `lua.plugin.blocklist.matched` or `lua.plugin.failed_login_hotspot.triggered`. The same values remain available under
 `policy_facts` for later actions.
 
-This environment-source contract is authentication compatibility behavior. It remains implicitly bound to `authn`,
-retains its established callback name and ordering, and never runs for a generic target. Standalone generic Lua fact
+This environment-source contract is authentication-specific behavior. It is explicitly bound to `authn`, retains its
+established callback name and ordering, and never runs for a generic target. Generic Lua fact
 providers use the separate `_G["policy.facts.collect"]` contract documented in [`../policy/README.md`](../policy/).
+
+## Bundled callback status
+
+None of the operational examples in this directory is currently a supported production Policy callback: they require
+Redis writes/scripts/pipelines, outbound HTTP, or ambient tuning values. `test_context_chain.lua` is test-only. See the
+normative [`../POLICY_VM_COMPATIBILITY.md`](../POLICY_VM_COMPATIBILITY.md) table before authoring configuration. The
+descriptions below document historical behavior and migration intent, not activation instructions.
 
 ## Available Plugins
 
@@ -29,8 +38,8 @@ Implements IP and username blocklisting functionality to prevent authentication 
 - Provides automatic updates of blocklists
 - Logs detailed information about blocked authentication attempts
 
-**Usage:**
-Configure the plugin through environment variables:
+**Historical configuration:**
+This reference-only callback used the following environment variable outside the Policy VM:
 - `BLOCKLIST_URL`: URL of the blocklist service endpoint
 
 You can also manually add entries to the blocklist using the Nauthilus API.
@@ -46,12 +55,15 @@ Monitors global authentication patterns across the entire system to detect anoma
 - Provides detailed logging of global authentication patterns
 
 **Usage:**
-The plugin runs automatically on each authentication attempt. It stores metrics in Redis using keys with the prefix `ntc:multilayer:global:`. You can optionally configure a custom Redis pool using the `CUSTOM_REDIS_POOL_NAME` environment variable.
+The historical callback stored metrics in Redis using keys with the prefix `ntc:multilayer:global:` and optionally
+selected a custom Redis pool. Top-level Policy candidate preparation rejects those write and ambient-pool capabilities.
 
 The metrics collected by this plugin are used by other components like the dynamic_response.lua action plugin to detect and respond to suspicious activity.
 
 ### failed_login_hotspot.lua
-Derives an environment signal from the Redis ZSET `ntc:top_failed_logins` (maintained by actions/failed_login_tracker.lua). This plugin is read-only against Redis and enriches the runtime table (rt) so downstream actions can react.
+Derives an environment signal from the Redis ZSET `ntc:top_failed_logins` (maintained by
+`actions/failed_login_tracker.lua`). Most lookups are reads, but the callback also writes a Redis snapshot gate and
+enriches the legacy runtime table for downstream actions.
 
 **What it does:**
 - Looks up the current failed-login count (ZSCORE) and rank (ZREVRANK) for the request.username
@@ -77,25 +89,20 @@ Derives an environment signal from the Redis ZSET `ntc:top_failed_logins` (maint
 - `FAILED_LOGIN_SNAPSHOT_TOPN` (number, default: 10) – how many top usernames to snapshot
 - `CUSTOM_REDIS_POOL_NAME` (optional) – use a non-default Redis pool
 
-**Configuration (nauthilus.yml):**
-```yaml
-auth:
-  policy:
-    attribute_sources:
-      lua:
-        environment:
-          - name: "failed_login_hotspot"
-            script_path: "/etc/nauthilus/lua-plugins.d/environment/failed_login_hotspot.lua"
-```
+**Production status:** Reference-only. Its Redis snapshot gate writes state and its thresholds come from ambient
+environment variables, so it must not be configured as a top-level Policy provider.
 
 **Downstream integration:**
 - actions/analytics.lua increments `analytics_count{environment="failed_login_hotspot"}` when the environment flag is present in rt.
 - actions/telegram.lua sends a compact alert when `rt.environment_failed_login_hotspot` is set. It includes `failed_login_count` and `failed_login_rank` (if known) alongside the usual session/account context.
 
-Note: This environment source relies on the post-action `failed_login_tracker.lua` to maintain `ntc:top_failed_logins`. Ensure that action is enabled so the ZSET is populated.
+The historical environment source relied on the reference-only `failed_login_tracker.lua` action to maintain
+`ntc:top_failed_logins`; there is no supported production pairing under the Policy VM.
 
 ### security_metrics.lua
-Collects and exposes the security_* Prometheus metrics proposed in docs/attacker_detection_ideas.md. This environment source is read-only and safe to run in learning mode. It reads per-account and global data from Redis and updates gauges/counters.
+Historically collected the `security_*` Prometheus metrics proposed in `docs/attacker_detection_ideas.md`. It reads
+per-account and global Redis data, uses a Redis pipeline, and updates host-created gauges and counters; it is not a
+supported Policy VM learning-mode callback.
 
 **Metrics updated:**
 - `security_unique_ips_per_user{username,window}` (gauge; emission gated to avoid high cardinality)
@@ -124,16 +131,5 @@ subject/account_protection_mode.lua) and are protocol-scoped.
 - Global windows (24h/7d) provided by environment/global_pattern_monitoring.lua
 - Per-account long-window data provided by environment/account_longwindow_metrics.lua
 
-**Usage:**
-The plugin runs on each authentication attempt and updates Prometheus metrics. Optionally use a custom Redis pool via `CUSTOM_REDIS_POOL_NAME`.
-
-**Configuration (nauthilus.yml):**
-```yaml
-auth:
-  policy:
-    attribute_sources:
-      lua:
-        environment:
-          - name: "security_metrics"
-            script_path: "/etc/nauthilus/lua-plugins.d/environment/security_metrics.lua"
-```
+**Production status:** Reference-only. The callback requires a Redis pipeline and ambient cardinality/pool values,
+which candidate preparation does not expose.

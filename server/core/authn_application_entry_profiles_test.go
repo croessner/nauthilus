@@ -18,11 +18,18 @@ package core
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
+	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
+	"github.com/croessner/nauthilus/v3/server/rediscli"
+
+	"github.com/go-redis/redismock/v9"
 )
 
 type authnEntryProfileTestCase struct {
@@ -79,6 +86,44 @@ func TestAuthnEntryProfilesSelectExactHostOwnedPresentation(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestAuthnInternalProfileIDsReturnCompleteDetachedValidatedMatrix(t *testing.T) {
+	first, err := AuthnInternalProfileIDs()
+	if err != nil {
+		t.Fatalf("AuthnInternalProfileIDs() error = %v", err)
+	}
+
+	want := make(map[string]struct{}, len(authnEntryProfileTestCases()))
+	for _, test := range authnEntryProfileTestCases() {
+		profileID, profileErr := decisionservice.NewInternalProfileID(test.entryPoint.String(), string(test.operation))
+		if profileErr != nil {
+			t.Fatalf("construct expected profile %s/%s: %v", test.entryPoint, test.operation, profileErr)
+		}
+
+		want[profileID.String()] = struct{}{}
+	}
+
+	if len(first) != len(want) {
+		t.Fatalf("profile count = %d, want %d", len(first), len(want))
+	}
+
+	for _, profileID := range first {
+		if _, found := want[profileID.String()]; !found {
+			t.Fatalf("unexpected internal profile ID %q", profileID.String())
+		}
+	}
+
+	first[0] = decisionservice.InternalProfileID{}
+
+	second, err := AuthnInternalProfileIDs()
+	if err != nil {
+		t.Fatalf("second AuthnInternalProfileIDs() error = %v", err)
+	}
+
+	if second[0].String() == "" {
+		t.Fatal("mutating returned profile slice changed the authoritative matrix")
 	}
 }
 
@@ -197,12 +242,20 @@ func TestAuthnEntryProfilesNeverInferAuthorityFromRouteOrProtocolFacts(t *testin
 
 func TestAuthnIDPEntryProfilesTraverseOneRealDecisionRuntime(t *testing.T) {
 	profiles := mustAuthnEntryProfiles(t)
-	current := newRecordingAuthApplicationService()
-	runtime := newAuthnCandidateDecisionService(t, newCurrentBehaviorConfig(t), &authnCandidateAcceptAll{})
+	cfg := newCurrentBehaviorConfig(t)
+	db, _ := redismock.NewClientMock()
+	host := &authnCandidateInjectedHost{base: newRegisteredAuthApplicationServiceHost(AuthDeps{
+		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
+	})}
+
+	installAuthnCandidateServices(t, failingPasswordVerifier{}, testLuaSubject{})
+	runtime := newAuthnCandidateDecisionService(t, cfg, &authnCandidateAcceptAll{})
 	checkpoints := &authnCandidateCheckpointFactory{delegate: runtime, checkpoints: make(map[string][]string)}
 	recorder := &authnEntryInvocationFactory{delegate: checkpoints}
 
-	adapter, err := NewAuthnCandidateApplicationServiceWithInternalProfiles(current, recorder, profiles)
+	adapter, err := NewAuthnCandidateApplicationServiceWithInternalProfiles(host, recorder, profiles)
 	if err != nil {
 		t.Fatalf("NewAuthnCandidateApplicationServiceWithInternalProfiles() error = %v", err)
 	}
@@ -224,7 +277,6 @@ func TestAuthnIDPEntryProfilesTraverseOneRealDecisionRuntime(t *testing.T) {
 		}
 
 		invocation := recorder.invocations[len(recorder.invocations)-1]
-
 		if invocation.Authentication.Kind() != test.wantKind ||
 			string(invocation.Authentication.Credential()) != test.wantProof {
 			t.Fatalf(
@@ -242,10 +294,10 @@ func TestAuthnIDPEntryProfilesTraverseOneRealDecisionRuntime(t *testing.T) {
 		wantCalls++
 	}
 
-	if len(recorder.invocations) != wantCalls || current.totalCalls() != wantCalls {
+	if len(recorder.invocations) != wantCalls || host.calls.Load() != 0 {
 		t.Fatalf(
-			"real-runtime invocation/current calls = %d/%d, want %d/%d",
-			len(recorder.invocations), current.totalCalls(), wantCalls, wantCalls,
+			"real-runtime invocation/retired-aggregate calls = %d/%d, want %d/0",
+			len(recorder.invocations), host.calls.Load(), wantCalls,
 		)
 	}
 

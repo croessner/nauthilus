@@ -37,6 +37,20 @@ var (
 	ErrProviderContractViolation = errors.New("policy provider contract violation")
 )
 
+const (
+	// AuthnHostProviderKindLuaEnvironment identifies a compiled authn Lua environment source.
+	AuthnHostProviderKindLuaEnvironment = "lua_environment"
+
+	// AuthnHostProviderKindLuaSubject identifies a compiled authn Lua subject source.
+	AuthnHostProviderKindLuaSubject = "lua_subject"
+
+	// AuthnHostProviderKindNativeEnvironment identifies a captured native authn environment source.
+	AuthnHostProviderKindNativeEnvironment = "native_environment"
+
+	// AuthnHostProviderKindNativeSubject identifies a captured native authn subject source.
+	AuthnHostProviderKindNativeSubject = "native_subject"
+)
+
 // FactProviderInput is the immutable captured input supplied to one fact provider.
 type FactProviderInput struct {
 	facts      decision.FactSet
@@ -141,6 +155,12 @@ func (f ProvidedFact) Category() decision.FactCategory {
 // FactProvider collects facts from one generation-captured provider instance.
 type FactProvider interface {
 	Collect(context.Context, FactProviderInput) ([]ProvidedFact, error)
+}
+
+// AuthnHostProvider is one immutable source that must run in the captured authn host.
+type AuthnHostProvider interface {
+	ID() string
+	Kind() string
 }
 
 // FactProviderBinding binds host provenance to one prepared fact provider.
@@ -335,20 +355,30 @@ type generationExecutableWork struct {
 
 // BindingSetInput carries every prepared provider binding into one immutable set.
 type BindingSetInput struct {
-	FactProviders        map[string]FactProviderBinding
-	SyncEffects          map[string]SyncEffectProvider
-	PostActions          map[string]PostActionProvider
-	NativeModules        []NativeModuleBindingInput
-	PostActionAcceptance effectsupervisor.Acceptor
+	FactProviders         map[string]FactProviderBinding
+	SyncEffects           map[string]SyncEffectProvider
+	PostActions           map[string]PostActionProvider
+	AuthnHostProviders    map[string]AuthnHostProvider
+	ConditionSets         map[string][]decision.Value
+	TimeWindows           map[string]CompiledTimeWindow
+	AuthnLuaFacts         []registry.AuthnLuaFactDeclaration
+	AuthnPolicyAttributes map[string]registry.AttributeDefinition
+	NativeModules         []NativeModuleBindingInput
+	PostActionAcceptance  effectsupervisor.Acceptor
 }
 
 // BindingSet owns all prepared builtin, Lua, and native evaluation bindings.
 type BindingSet struct {
-	factProviders        map[string]FactProviderBinding
-	syncEffects          map[string]SyncEffectProvider
-	postActions          map[string]PostActionProvider
-	nativeModules        map[string]NativeModuleBinding
-	postActionAcceptance effectsupervisor.Acceptor
+	factProviders         map[string]FactProviderBinding
+	syncEffects           map[string]SyncEffectProvider
+	postActions           map[string]PostActionProvider
+	authnHostProviders    map[string]AuthnHostProvider
+	conditionSets         map[string][]decision.Value
+	timeWindows           map[string]CompiledTimeWindow
+	authnLuaFacts         []registry.AuthnLuaFactDeclaration
+	authnPolicyAttributes map[string]registry.AttributeDefinition
+	nativeModules         map[string]NativeModuleBinding
+	postActionAcceptance  effectsupervisor.Acceptor
 }
 
 // NewBindingSet validates and owns one complete prepared binding set.
@@ -372,17 +402,31 @@ func NewBindingSet(input BindingSetInput) (*BindingSet, error) {
 		return nil, err
 	}
 
+	authnHostProviders, err := cloneAuthnHostProviders(input.AuthnHostProviders)
+	if err != nil {
+		return nil, err
+	}
+
 	nativeModules, err := newNativeModuleBindings(input.NativeModules)
 	if err != nil {
 		return nil, err
 	}
 
+	if err = validateAuthnPolicyAttributes(input.AuthnPolicyAttributes); err != nil {
+		return nil, err
+	}
+
 	return &BindingSet{
-		factProviders:        factProviders,
-		syncEffects:          syncEffects,
-		postActions:          postActions,
-		nativeModules:        nativeModules,
-		postActionAcceptance: input.PostActionAcceptance,
+		factProviders:         factProviders,
+		syncEffects:           syncEffects,
+		postActions:           postActions,
+		authnHostProviders:    authnHostProviders,
+		conditionSets:         cloneBindingConditionSets(input.ConditionSets),
+		timeWindows:           cloneBindingTimeWindows(input.TimeWindows),
+		authnLuaFacts:         cloneAuthnLuaFacts(input.AuthnLuaFacts),
+		authnPolicyAttributes: cloneAuthnPolicyAttributes(input.AuthnPolicyAttributes),
+		nativeModules:         nativeModules,
+		postActionAcceptance:  input.PostActionAcceptance,
 	}, nil
 }
 
@@ -393,11 +437,16 @@ func (s *BindingSet) Clone() *BindingSet {
 	}
 
 	return &BindingSet{
-		factProviders:        cloneMapValues(s.factProviders),
-		syncEffects:          cloneMapValues(s.syncEffects),
-		postActions:          cloneMapValues(s.postActions),
-		nativeModules:        cloneNativeModuleBindings(s.nativeModules),
-		postActionAcceptance: s.postActionAcceptance,
+		factProviders:         cloneMapValues(s.factProviders),
+		syncEffects:           cloneMapValues(s.syncEffects),
+		postActions:           cloneMapValues(s.postActions),
+		authnHostProviders:    cloneMapValues(s.authnHostProviders),
+		conditionSets:         cloneBindingConditionSets(s.conditionSets),
+		timeWindows:           cloneBindingTimeWindows(s.timeWindows),
+		authnLuaFacts:         cloneAuthnLuaFacts(s.authnLuaFacts),
+		authnPolicyAttributes: cloneAuthnPolicyAttributes(s.authnPolicyAttributes),
+		nativeModules:         cloneNativeModuleBindings(s.nativeModules),
+		postActionAcceptance:  s.postActionAcceptance,
 	}
 }
 
@@ -665,6 +714,62 @@ func (s *BindingSet) PostActions() map[string]PostActionProvider {
 	return cloneMapValues(s.postActions)
 }
 
+// AuthnHostProvider returns one exact generation-owned host source.
+func (s *BindingSet) AuthnHostProvider(id string) (AuthnHostProvider, bool) {
+	if s == nil {
+		return nil, false
+	}
+
+	provider, found := s.authnHostProviders[id]
+
+	return provider, found
+}
+
+// AuthnHostProviders returns a detached exact host-source index.
+func (s *BindingSet) AuthnHostProviders() map[string]AuthnHostProvider {
+	if s == nil {
+		return nil
+	}
+
+	return cloneMapValues(s.authnHostProviders)
+}
+
+// AuthnLuaFacts returns detached registry-script fact declarations.
+func (s *BindingSet) AuthnLuaFacts() []registry.AuthnLuaFactDeclaration {
+	if s == nil {
+		return nil
+	}
+
+	return cloneAuthnLuaFacts(s.authnLuaFacts)
+}
+
+// AuthnPolicyAttributes returns detached metadata emitted only by scheduled public native auth sources.
+func (s *BindingSet) AuthnPolicyAttributes() map[string]registry.AttributeDefinition {
+	if s == nil {
+		return nil
+	}
+
+	return cloneAuthnPolicyAttributes(s.authnPolicyAttributes)
+}
+
+// ConditionSets returns detached namespace-scoped strict operand collections.
+func (s *BindingSet) ConditionSets() map[string][]decision.Value {
+	if s == nil {
+		return nil
+	}
+
+	return cloneBindingConditionSets(s.conditionSets)
+}
+
+// TimeWindows returns detached namespace-scoped recurring schedules.
+func (s *BindingSet) TimeWindows() map[string]CompiledTimeWindow {
+	if s == nil {
+		return nil
+	}
+
+	return cloneBindingTimeWindows(s.timeWindows)
+}
+
 // NativeModules returns detached native indexes over process-lifetime component owners.
 func (s *BindingSet) NativeModules() map[string]NativeModuleBinding {
 	if s == nil {
@@ -697,6 +802,106 @@ func (s *BindingSet) ValidateCatalog(catalog *TargetCatalog) error {
 		if err := s.validateTargetEffects(target); err != nil {
 			return err
 		}
+
+		if err := s.validateTargetConditionMaterial(target); err != nil {
+			return err
+		}
+	}
+
+	if err := s.validateAuthnHostProviders(catalog); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateTargetConditionMaterial resolves every reachable rule and guard reference in the binding set.
+func (s *BindingSet) validateTargetConditionMaterial(target CompiledTarget) error {
+	for _, guard := range target.DomainPlan().SchedulerGuards() {
+		if err := s.validateConditionExpression(target.Target().Namespace(), guard.Expression()); err != nil {
+			return fmt.Errorf(
+				"%w: target %s scheduler guard %s: %v",
+				ErrInvalidGenerationBinding,
+				target.Target().String(),
+				guard.Name(),
+				err,
+			)
+		}
+	}
+
+	validatedSets := make(map[string]struct{})
+
+	for _, checkpoint := range target.DomainPlan().Checkpoints() {
+		for _, setName := range checkpoint.PolicySetIDs() {
+			if _, exists := validatedSets[setName]; exists {
+				continue
+			}
+
+			setID, err := registry.ParsePolicySetID("compiled policy set", setName)
+			if err != nil {
+				return fmt.Errorf("%w: %v", ErrInvalidGenerationBinding, err)
+			}
+
+			set, exists := target.LookupPolicySet(setID)
+			if !exists {
+				return fmt.Errorf("%w: target %s lost policy set %s", ErrInvalidGenerationBinding, target.Target().String(), setName)
+			}
+
+			for _, rule := range set.Rules() {
+				if err = s.validateConditionExpression(target.Target().Namespace(), rule.Expression()); err != nil {
+					return fmt.Errorf(
+						"%w: target %s policy rule %s/%s: %v",
+						ErrInvalidGenerationBinding,
+						target.Target().String(),
+						setName,
+						rule.Name(),
+						err,
+					)
+				}
+			}
+
+			validatedSets[setName] = struct{}{}
+		}
+	}
+
+	return nil
+}
+
+// validateConditionExpression recursively proves referenced condition material is complete and type exact.
+func (s *BindingSet) validateConditionExpression(namespace string, expression registry.PolicyExpression) error {
+	for _, child := range expression.Children() {
+		if err := s.validateConditionExpression(namespace, child); err != nil {
+			return err
+		}
+	}
+
+	reference := expression.Reference()
+	if reference == "" {
+		return nil
+	}
+
+	key := ConditionMaterialKey(namespace, reference)
+	if key == "" {
+		return fmt.Errorf("condition reference %s has an invalid namespace", reference)
+	}
+
+	if strings.HasPrefix(reference, "@time_window.") {
+		if _, exists := s.timeWindows[key]; !exists {
+			return fmt.Errorf("time-window reference %s is unavailable", reference)
+		}
+
+		return nil
+	}
+
+	values, exists := s.conditionSets[key]
+	if !exists || len(values) == 0 {
+		return fmt.Errorf("condition-set reference %s is unavailable", reference)
+	}
+
+	for _, value := range values {
+		if value.Kind() != expression.FactKind() {
+			return fmt.Errorf("condition-set reference %s has value kind %s, want %s", reference, value.Kind(), expression.FactKind())
+		}
 	}
 
 	return nil
@@ -706,6 +911,35 @@ func (s *BindingSet) ValidateCatalog(catalog *TargetCatalog) error {
 func (s *BindingSet) validateTargetProviders(target CompiledTarget) error {
 	for _, checkpoint := range target.DomainPlan().Checkpoints() {
 		for _, providerID := range checkpoint.ProviderIDs() {
+			if target.HostPreparesProvider(providerID) {
+				descriptor, exists := target.LookupProvider(providerID)
+				if !exists {
+					return fmt.Errorf(
+						"%w: target %s checkpoint %s lost host provider %s",
+						ErrInvalidGenerationBinding,
+						target.Target().String(),
+						checkpoint.Name(),
+						providerID,
+					)
+				}
+
+				if descriptor.IsBuiltin() {
+					continue
+				}
+
+				if _, exists = s.authnHostProviders[providerID]; !exists {
+					return fmt.Errorf(
+						"%w: target %s checkpoint %s has no prepared authn host provider %s",
+						ErrInvalidGenerationBinding,
+						target.Target().String(),
+						checkpoint.Name(),
+						providerID,
+					)
+				}
+
+				continue
+			}
+
 			if _, exists := s.factProviders[providerID]; !exists {
 				return fmt.Errorf(
 					"%w: target %s checkpoint %s has no prepared fact provider %s",
@@ -715,6 +949,32 @@ func (s *BindingSet) validateTargetProviders(target CompiledTarget) error {
 					providerID,
 				)
 			}
+		}
+	}
+
+	return nil
+}
+
+// validateAuthnHostProviders rejects prepared sources absent from every activated exact target.
+func (s *BindingSet) validateAuthnHostProviders(catalog *TargetCatalog) error {
+	for id := range s.authnHostProviders {
+		activated := false
+
+		for _, target := range catalog.Targets() {
+			descriptor, exists := target.LookupProvider(id)
+			if exists && !descriptor.IsBuiltin() && target.HostPreparesProvider(id) {
+				activated = true
+
+				break
+			}
+		}
+
+		if !activated {
+			return fmt.Errorf(
+				"%w: prepared authn host provider %s is not activated",
+				ErrInvalidGenerationBinding,
+				id,
+			)
 		}
 	}
 
@@ -782,6 +1042,80 @@ func cloneProviderMap[T any](input map[string]T, kind string) (map[string]T, err
 	}
 
 	return result, nil
+}
+
+// cloneAuthnHostProviders validates the exact provider identity and closed source kind.
+func cloneAuthnHostProviders(input map[string]AuthnHostProvider) (map[string]AuthnHostProvider, error) {
+	result := make(map[string]AuthnHostProvider, len(input))
+	for id, provider := range input {
+		if strings.TrimSpace(id) == "" || nilInterface(provider) || provider.ID() != id {
+			return nil, fmt.Errorf("%w: authn host provider %q is incomplete", ErrInvalidGenerationBinding, id)
+		}
+
+		switch provider.Kind() {
+		case AuthnHostProviderKindLuaEnvironment, AuthnHostProviderKindLuaSubject,
+			AuthnHostProviderKindNativeEnvironment, AuthnHostProviderKindNativeSubject:
+		default:
+			return nil, fmt.Errorf("%w: authn host provider %q has an unknown kind", ErrInvalidGenerationBinding, id)
+		}
+
+		result[id] = provider
+	}
+
+	return result, nil
+}
+
+// cloneAuthnLuaFacts deeply detaches registry-script fact declarations.
+func cloneAuthnLuaFacts(input []registry.AuthnLuaFactDeclaration) []registry.AuthnLuaFactDeclaration {
+	result := make([]registry.AuthnLuaFactDeclaration, len(input))
+	for index, declaration := range input {
+		result[index] = declaration.Clone()
+	}
+
+	return result
+}
+
+// cloneAuthnPolicyAttributes deeply owns generated and public native auth policy metadata.
+func cloneAuthnPolicyAttributes(
+	input map[string]registry.AttributeDefinition,
+) map[string]registry.AttributeDefinition {
+	result := make(map[string]registry.AttributeDefinition, len(input))
+	for id, definition := range input {
+		result[id] = registry.CloneDefinition(definition)
+	}
+
+	return result
+}
+
+// validateAuthnPolicyAttributes rejects map-key drift before schema compilation owns the definitions.
+func validateAuthnPolicyAttributes(input map[string]registry.AttributeDefinition) error {
+	for id, definition := range input {
+		if strings.TrimSpace(id) == "" || definition.ID != id {
+			return fmt.Errorf("%w: authn policy attribute %q is incomplete", ErrInvalidGenerationBinding, id)
+		}
+	}
+
+	return nil
+}
+
+// cloneBindingConditionSets deeply owns referenced strict operands.
+func cloneBindingConditionSets(input map[string][]decision.Value) map[string][]decision.Value {
+	result := make(map[string][]decision.Value, len(input))
+	for id, values := range input {
+		result[id] = append([]decision.Value(nil), values...)
+	}
+
+	return result
+}
+
+// cloneBindingTimeWindows deeply owns namespace-scoped recurring schedules.
+func cloneBindingTimeWindows(input map[string]CompiledTimeWindow) map[string]CompiledTimeWindow {
+	result := make(map[string]CompiledTimeWindow, len(input))
+	for id, window := range input {
+		result[id] = window.Clone()
+	}
+
+	return result
 }
 
 // cloneMapValues returns a detached map that retains immutable prepared owners.

@@ -18,12 +18,8 @@ package devui
 
 import (
 	"html/template"
-	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -33,8 +29,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
 	handleridp "github.com/croessner/nauthilus/v3/server/handler/frontend/idp"
 	"github.com/croessner/nauthilus/v3/server/middleware/i18n"
-	"github.com/croessner/nauthilus/v3/server/middleware/securityheaders"
-	"github.com/fsnotify/fsnotify"
 	"github.com/gin-gonic/gin"
 )
 
@@ -178,54 +172,9 @@ type Handler struct {
 
 // New returns a new Handler.
 func New(deps *deps.Deps) *Handler {
-	h := &Handler{
+	return &Handler{
 		deps:    deps,
 		version: time.Now().UnixNano(),
-	}
-
-	h.startWatcher()
-
-	return h
-}
-
-func (h *Handler) startWatcher() {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		log.Printf("DevUI: failed to create watcher: %v", err)
-
-		return
-	}
-
-	go func() {
-		defer func() { _ = watcher.Close() }()
-
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-
-				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
-					h.mu.Lock()
-					h.version = time.Now().UnixNano()
-					h.mu.Unlock()
-				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-
-				log.Printf("DevUI: watcher error: %v", err)
-			}
-		}
-	}()
-
-	path := h.deps.Cfg.GetServer().Frontend.GetHTMLStaticContentPath()
-
-	err = watcher.Add(path)
-	if err != nil {
-		log.Printf("DevUI: failed to add path to watcher: %v", err)
 	}
 }
 
@@ -342,52 +291,26 @@ func (h *Handler) devUILanguages() []map[string]string {
 // RenderTemplate renders a specific template with dummy data.
 func (h *Handler) RenderTemplate(ctx *gin.Context) {
 	templateName := ctx.Param("template")
-	templatePath := filepath.Join(h.deps.Cfg.GetServer().Frontend.GetHTMLStaticContentPath(), templateName)
+	if h.deps.RouteArtifacts == nil {
+		ctx.String(http.StatusInternalServerError, "Prepared templates are unavailable")
 
-	if _, err := os.Stat(templatePath); os.IsNotExist(err) {
+		return
+	}
+
+	tmpl, err := h.deps.RouteArtifacts.FrontendTemplates()
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, "Template preparation error: %v", err)
+
+		return
+	}
+
+	if tmpl.Lookup(templateName) == nil {
 		ctx.String(http.StatusNotFound, "Template not found: %s", templateName)
 
 		return
 	}
 
 	data := h.devTemplateData(ctx, templateName)
-
-	// Functions used in templates
-	funcMap := template.FuncMap{
-		"int": func(v any) int {
-			switch x := v.(type) {
-			case int:
-				return x
-			case int32:
-				return int(x)
-			case int64:
-				return int(x)
-			case float32:
-				return int(x)
-			case float64:
-				return int(x)
-			default:
-				return 0
-			}
-		},
-		"upper": func(s string) string {
-			return strings.ToUpper(s)
-		},
-		"cspNonce": func(data any) string {
-			return securityheaders.NonceFromTemplateData(data)
-		},
-	}
-
-	// Load all templates in the directory to support nesting (header/footer)
-	tmpl := template.New(templateName).Funcs(funcMap)
-	pattern := filepath.Join(h.deps.Cfg.GetServer().Frontend.GetHTMLStaticContentPath(), "*.html")
-
-	tmpl, err := tmpl.ParseGlob(pattern)
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, "Template parse error: %v", err)
-
-		return
-	}
 
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 

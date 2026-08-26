@@ -247,7 +247,7 @@ func buildIDPContractRouter(t *testing.T) *gin.Engine {
 	cfg := routeContractConfig()
 	deps := routeContractDeps(t, cfg)
 
-	engine := approuter.NewRouter(cfg).WithIDPOpenAPI().Build()
+	engine := approuter.NewRouter(cfg, nil).WithIDPOpenAPI().Build()
 
 	canonicalRuntime, err := handleridp.NewCanonicalBrowserRuntime(deps)
 	if err != nil {

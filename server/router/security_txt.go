@@ -18,7 +18,6 @@ package router
 import (
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -92,20 +91,23 @@ func (r SecurityTxtRenderer) expiresValue() string {
 	return now().UTC().Add(expiresAfter).Format(time.RFC3339)
 }
 
+// registerSecurityTxtFile binds one public URI to content captured before route registration.
 func (r *Router) registerSecurityTxtFile(publicURI string, filePath string, contentType string) {
 	routePath := securityTxtRoutePath(publicURI)
 	if routePath == "" || strings.TrimSpace(filePath) == "" {
 		return
 	}
 
+	if r.artifacts == nil {
+		panic("prepared security.txt route artifacts are unavailable")
+	}
+
+	content, err := r.artifacts.ReadFile(filePath)
+	if err != nil {
+		panic(err)
+	}
+
 	r.Engine.GET(routePath, func(ctx *gin.Context) {
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			ctx.String(http.StatusNotFound, "404 - Page Not Found")
-
-			return
-		}
-
 		ctx.Header("X-Content-Type-Options", "nosniff")
 		ctx.Data(http.StatusOK, contentType, content)
 	})

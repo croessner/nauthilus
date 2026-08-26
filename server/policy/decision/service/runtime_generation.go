@@ -85,10 +85,11 @@ func (runtimeApplicationPreparationSlot) Prepare(
 
 	evaluator, err := newCheckpointRuntime(checkpointRuntimeConfig{
 		catalog:           input.TargetCatalog(),
-		policySnapshot:    input.PolicySnapshot(),
 		factProviders:     capturedFactProviderBindings(bindings),
 		syncEffects:       capturedSyncEffectBindings(bindings),
 		postActions:       capturedPostActionBindings(bindings),
+		conditionSets:     bindings.ConditionSets(),
+		timeWindows:       bindings.TimeWindows(),
 		evaluationTimeout: settings.Limits.EvaluationTimeout,
 		postActionBudget:  settings.Limits.PostActionBudget,
 	})
@@ -96,11 +97,20 @@ func (runtimeApplicationPreparationSlot) Prepare(
 		return policyruntime.ApplicationPreparation{}, err
 	}
 
+	material, err := input.DecisionServiceMaterial()
+	if err != nil {
+		return policyruntime.ApplicationPreparation{}, err
+	}
+
 	generation, err := newRuntimeGeneration(input.ID(), runtimeGenerationDependencies{
-		authenticator: input.CallerAuthenticator(),
-		admission:     input.AdmissionAuthority(),
-		evaluator:     evaluator,
-		supervisor:    bindings.PostActionAcceptance(),
+		material:              material,
+		authenticator:         input.CallerAuthenticator(),
+		admission:             input.AdmissionAuthority(),
+		evaluator:             evaluator,
+		supervisor:            bindings.PostActionAcceptance(),
+		hostProviders:         bindings.AuthnHostProviders(),
+		authnLuaFacts:         bindings.AuthnLuaFacts(),
+		authnPolicyAttributes: bindings.AuthnPolicyAttributes(),
 	})
 	if err != nil {
 		return policyruntime.ApplicationPreparation{}, err

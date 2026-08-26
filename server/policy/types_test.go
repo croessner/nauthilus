@@ -26,9 +26,6 @@ func TestCoreConstantsUseTargetVocabulary(t *testing.T) {
 		t.Fatalf("OperationAuthenticate = %q, want authenticate", OperationAuthenticate)
 	}
 
-	if BuiltinDefaultSet != "standard_auth" {
-		t.Fatalf("BuiltinDefaultSet = %q, want standard_auth", BuiltinDefaultSet)
-	}
 }
 
 func TestLuaActionDispatchActionsAreDetachedAndDriveValidation(t *testing.T) {

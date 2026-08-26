@@ -55,9 +55,15 @@ type policyCallerAuthReloadFixture struct {
 
 // BeforeAttempt blocks the first generation-specific Basic attempt after generation capture.
 func (t *policyCallerAuthBlockingThrottler) BeforeAttempt(ctx context.Context, _ callerauth.BasicThrottleKey) error {
-	t.once.Do(func() {
-		close(t.started)
-	})
+	if t.started != nil {
+		t.once.Do(func() {
+			close(t.started)
+		})
+	}
+
+	if t.release == nil {
+		return nil
+	}
 
 	select {
 	case <-t.release:
@@ -105,7 +111,11 @@ func newPolicyCallerAuthReloadFixture(t *testing.T) *policyCallerAuthReloadFixtu
 				&policyCallerAuthBlockingThrottler{started: started, release: release},
 				true,
 			),
-			2: policyCallerAuthBasicConfiguration(policyCallerAuthGenerationNew, nil, true),
+			2: policyCallerAuthBasicConfiguration(
+				policyCallerAuthGenerationNew,
+				&policyCallerAuthBlockingThrottler{},
+				true,
+			),
 		},
 		map[uint64]checkpointEvaluator{1: firstEvaluator, 2: secondEvaluator},
 	)
@@ -228,8 +238,16 @@ func TestPolicyBasicAuthenticationInvalidReloadPreservesActiveGeneration(t *test
 		t,
 		store,
 		map[uint64]callerauth.Configuration{
-			1: policyCallerAuthBasicConfiguration(policyCallerAuthGenerationOld, nil, true),
-			2: policyCallerAuthBasicConfiguration(policyCallerAuthGenerationNew, nil, false),
+			1: policyCallerAuthBasicConfiguration(
+				policyCallerAuthGenerationOld,
+				&policyCallerAuthBlockingThrottler{},
+				true,
+			),
+			2: policyCallerAuthBasicConfiguration(
+				policyCallerAuthGenerationNew,
+				&policyCallerAuthBlockingThrottler{},
+				false,
+			),
 		},
 		map[uint64]checkpointEvaluator{1: evaluator},
 	)
@@ -318,7 +336,13 @@ func newPolicyCallerAuthGenerationCoordinator(
 			return policyruntime.ApplicationPreparation{}, fmt.Errorf("missing test evaluator generation %d", input.ID())
 		}
 
+		material, materialErr := input.DecisionServiceMaterial()
+		if materialErr != nil {
+			return policyruntime.ApplicationPreparation{}, materialErr
+		}
+
 		generation, generationErr := newRuntimeGeneration(input.ID(), runtimeGenerationDependencies{
+			material:      material,
 			authenticator: input.CallerAuthenticator(),
 			admission:     input.AdmissionAuthority(),
 			evaluator:     evaluator,
@@ -395,7 +419,7 @@ func applyPolicyCallerAuthGeneration(t *testing.T, coordinator *policyruntime.Co
 	t.Helper()
 
 	if _, err := coordinator.Apply(context.Background(), policyruntime.PrepareInput{
-		Config: &config.FileSettings{},
+		Config: testPolicyAPIConfig(true, true, true),
 		ID:     id,
 	}); err != nil {
 		t.Fatalf("Apply(%d) error = %v", id, err)

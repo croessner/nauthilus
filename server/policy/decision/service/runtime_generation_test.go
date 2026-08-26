@@ -22,11 +22,45 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 type serviceGenerationResource struct {
 	disposals atomic.Int64
+}
+
+type servicePolicyModel struct {
+	id uint64
+}
+
+// ClonePolicyModel returns a detached service-test model.
+func (m *servicePolicyModel) ClonePolicyModel() policyruntime.PolicyModel {
+	if m == nil {
+		return (*servicePolicyModel)(nil)
+	}
+
+	clone := *m
+
+	return &clone
+}
+
+// ValidatePolicyModel validates the service-test generation identity.
+func (m *servicePolicyModel) ValidatePolicyModel() error {
+	if m == nil || m.id == 0 {
+		return policyruntime.ErrInvalidGeneration
+	}
+
+	return nil
+}
+
+// GenerationID returns the service-test generation identity.
+func (m *servicePolicyModel) GenerationID() uint64 {
+	if m == nil {
+		return 0
+	}
+
+	return m.id
 }
 
 // Dispose records final generation retirement.
@@ -227,7 +261,13 @@ func newTrackedServiceGenerationCoordinator(
 	) (policyruntime.ApplicationPreparation, error) {
 		entry := tracked[input.ID()]
 
+		material, materialErr := input.DecisionServiceMaterial()
+		if materialErr != nil {
+			return policyruntime.ApplicationPreparation{}, materialErr
+		}
+
 		generation, generationErr := newRuntimeGeneration(input.ID(), runtimeGenerationDependencies{
+			material:      material,
 			authenticator: input.CallerAuthenticator(),
 			admission:     input.AdmissionAuthority(),
 			evaluator:     entry.evaluator,
@@ -310,7 +350,7 @@ func prepareServicePolicy(
 	input policyruntime.PreparationInput,
 ) (policyruntime.PolicyPreparation, error) {
 	return policyruntime.PolicyPreparation{
-		Snapshot: &policyruntime.Snapshot{Generation: input.ID()},
+		Policy: &servicePolicyModel{id: input.ID()},
 	}, nil
 }
 
@@ -349,12 +389,15 @@ func prepareServiceSettings(
 	context.Context,
 	policyruntime.SettingsPreparationInput,
 ) (policyruntime.SettingsPreparation, error) {
-	return policyruntime.SettingsPreparation{Settings: policyruntime.GenerationSettings{
-		Limits: policyruntime.DecisionLimits{
-			EvaluationTimeout:     time.Second,
-			PostActionBudget:      time.Second,
-			MaxDiagnosticsEntries: 1,
+	return policyruntime.SettingsPreparation{
+		MessageResolver: localization.NewResolver(localization.NewMapCatalog(nil), "en"),
+		Settings: policyruntime.GenerationSettings{
+			Limits: policyruntime.DecisionLimits{
+				EvaluationTimeout:     time.Second,
+				PostActionBudget:      time.Second,
+				MaxDiagnosticsEntries: 1,
+			},
+			Reports: policyruntime.DecisionReportSettings{MaxEntries: 1},
 		},
-		Reports: policyruntime.DecisionReportSettings{MaxEntries: 1},
-	}}, nil
+	}, nil
 }

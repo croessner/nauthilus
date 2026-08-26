@@ -36,8 +36,6 @@ import (
 	"github.com/croessner/nauthilus/v3/server/bruteforce"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/encoding/cborcodec"
-	"github.com/croessner/nauthilus/v3/server/errors"
 	"github.com/croessner/nauthilus/v3/server/ipscoper"
 	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/lualib/cacheflush"
@@ -362,172 +360,6 @@ func (a *AuthState) handleMasterUserMode() string {
 	return identity.masterUser
 }
 
-// HandleAuthentication handles the authentication logic based on the selected service type.
-func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
-	if a.Request.ListAccounts {
-		a.writeListAccountsResponse(ctx)
-
-		level.Info(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMode, ctx.Query("mode"))
-	} else {
-		a.runAuthPipelineFSM(ctx)
-	}
-}
-
-// writeListAccountsResponse renders the account list using the response
-// media type negotiated from the Accept header. It dispatches to the
-// matching encoder and aborts with 415 when the client cannot be served
-// any of the supported types.
-func (a *AuthState) writeListAccountsResponse(ctx *gin.Context) {
-	accounts := a.ListUserAccounts()
-
-	if ctx.IsAborted() || ctx.Writer.Written() {
-		return
-	}
-
-	chosen := listAccountsNegotiator.BestMatch(ctx.GetHeader("Accept"))
-
-	switch chosen {
-	case "application/json":
-		ctx.JSON(http.StatusOK, accounts)
-	case "application/cbor":
-		writeCBORList(ctx, accounts)
-	case "text/plain":
-		writeLineSeparated(ctx, accounts, "text/plain")
-	case "application/x-www-form-urlencoded":
-		writeLineSeparated(ctx, accounts, "application/x-www-form-urlencoded")
-	default:
-		_ = ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
-		ctx.AbortWithStatus(http.StatusUnsupportedMediaType)
-	}
-}
-
-// writeCBORList encodes the account list as a single CBOR array body.
-func writeCBORList(ctx *gin.Context, accounts AccountList) {
-	body, err := cborcodec.Marshal(accounts)
-	if err != nil {
-		ctx.AbortWithStatus(http.StatusInternalServerError)
-
-		return
-	}
-
-	ctx.Data(http.StatusOK, "application/cbor", body)
-}
-
-// writeLineSeparated streams the account list as CRLF-separated entries with
-// the given content type. Used by both text/plain and form-urlencoded paths,
-// which differ only in the response Content-Type they advertise.
-func writeLineSeparated(ctx *gin.Context, accounts AccountList, contentType string) {
-	for _, account := range accounts {
-		ctx.Data(http.StatusOK, contentType, []byte(account+"\r\n"))
-	}
-}
-
-func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
-	current := authFSMStateInit
-
-	nextState, err := a.advanceAuthFSM(current, authFSMEventParseOK)
-	if err != nil {
-		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-
-		return
-	}
-
-	current = nextState
-
-	if a.abortAfterBasicEndpointPreprocess(ctx, current) {
-		return
-	}
-
-	if a.Request.Service == definitions.ServIDP {
-		a.handleMasterUserMode()
-	}
-
-	current, handled := a.runPreAuthFSMPhase(ctx, current)
-	if handled {
-		return
-	}
-
-	if handled := a.handleBasicEndpointAuthPhase(ctx, current); handled {
-		return
-	}
-
-	a.runPasswordFSMPhase(ctx, current)
-}
-
-// runPreAuthFSMPhase evaluates environment controls and applies pre-auth FSM outcomes.
-func (a *AuthState) runPreAuthFSMPhase(ctx *gin.Context, current authFSMState) (authFSMState, bool) {
-	preAuthResult := a.HandleEnvironment(ctx)
-
-	event, ok := mapPreAuthResultToFSMEvent(preAuthResult)
-	if !ok {
-		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-
-		return current, true
-	}
-
-	nextState, err := nextAuthFSMState(current, event)
-	if err != nil {
-		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-
-		return current, true
-	}
-
-	a.auditAuthFSMTransition(current, event, nextState)
-
-	if nextState != authFSMStatePreAuthChecked {
-		a.applyPreAuthFSMOutcome(ctx, nextState, preAuthResult)
-
-		return nextState, true
-	}
-
-	return nextState, false
-}
-
-// runPasswordFSMPhase evaluates password authentication and applies the terminal FSM outcome.
-func (a *AuthState) runPasswordFSMPhase(ctx *gin.Context, current authFSMState) {
-	passwordResult := a.HandlePassword(ctx)
-
-	nextState, err := nextAuthFSMState(current, authFSMEventAuthEvaluated)
-	if err != nil {
-		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-
-		return
-	}
-
-	a.auditAuthFSMTransition(current, authFSMEventAuthEvaluated, nextState)
-	current = nextState
-
-	event, ok := mapAuthPasswordResultToFSMEvent(passwordResult)
-	if !ok {
-		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-
-		return
-	}
-
-	nextState, err = nextAuthFSMState(current, event)
-	if err != nil {
-		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-
-		return
-	}
-
-	a.auditAuthFSMTransition(current, event, nextState)
-	a.applyPasswordFSMOutcome(ctx, nextState, passwordResult)
-}
-
-// abortAfterBasicEndpointPreprocess applies the abort FSM event for invalid basic endpoint input.
-func (a *AuthState) abortAfterBasicEndpointPreprocess(ctx *gin.Context, current authFSMState) bool {
-	if abort := a.preprocessBasicEndpointInput(ctx); !abort {
-		return false
-	}
-
-	if _, err := a.advanceAuthFSM(current, authFSMEventAbort); err != nil {
-		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-	}
-
-	return true
-}
-
 func (a *AuthState) auditAuthFSMTransition(from authFSMState, event authFSMEvent, to authFSMState) {
 	a.Runtime.AuthFSMEventPath = append(a.Runtime.AuthFSMEventPath, string(event))
 	if isAuthFSMTerminal(to) {
@@ -625,33 +457,11 @@ func (a *AuthState) applyPreAuthFSMOutcome(ctx *gin.Context, nextState authFSMSt
 
 	dispatchAuthFSMTerminalOutcome(nextState, authFSMTerminalHandlers{
 		onAuthFail: func() {
-			result := GetPassDBResultFromPool()
-			accepted := a.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
-
-			if !accepted {
-				a.AuthTempFail(ctx, definitions.TempFailDefault)
-				ctx.Abort()
-
-				return
-			}
-
 			a.AuthFail(ctx)
 			ctx.Abort()
 		},
 		onAuthTempFail: func() {
 			if preAuthResult == definitions.AuthResultPreAuthTLS {
-				result := GetPassDBResultFromPool()
-				accepted := a.PostLuaAction(ctx, result)
-				PutPassDBResultToPool(result)
-
-				if !accepted {
-					a.AuthTempFail(ctx, definitions.TempFailDefault)
-					ctx.Abort()
-
-					return
-				}
-
 				a.AuthTempFail(ctx, definitions.TempFailNoTLS)
 				ctx.Abort()
 

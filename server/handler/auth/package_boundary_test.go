@@ -26,6 +26,7 @@ func TestBackchannelHTTPPackageBoundaryForbidsAuthStateAndPolicyRuntimeOwnership
 
 	forbiddenCalls := map[string]struct{}{
 		"HandleAuthentication":            {},
+		"NewAuthApplicationService":       {},
 		"NewAuthState":                    {},
 		"NewAuthStateFromContextWithDeps": {},
 		"NewAuthStateWithSetup":           {},
@@ -72,10 +73,6 @@ func assertHTTPAuthFileBoundary(
 
 	fileSet := token.NewFileSet()
 	assertHTTPAuthImportsAllowed(t, fileSet, name, forbiddenImports)
-
-	if name == "basic_endpoint_enabled.go" {
-		return
-	}
 
 	assertHTTPAuthCallsAllowed(t, fileSet, name, forbiddenCalls)
 }

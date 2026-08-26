@@ -13,49 +13,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Package collection maps current auth mechanisms into policy check facts.
+// Package collection records request-local authentication observations.
 package collection
 
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/evaluation"
 	"github.com/croessner/nauthilus/v3/server/policy/observability"
 	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-)
-
-const (
-	modeEnforce                = "enforce"
-	modeObserve                = "observe"
-	runIfSkipReason            = "run_if"
-	schedulerGuardMissingRun   = "run"
-	schedulerGuardReasonPrefix = "scheduler_guard:"
-)
-
-// AuthState describes the scheduler-visible authentication state.
-type AuthState string
-
-const (
-	// AuthStateAny indicates that no auth-state restriction applies.
-	AuthStateAny AuthState = policy.RunIfAny
-
-	// AuthStateAuthenticated indicates that backend authentication succeeded.
-	AuthStateAuthenticated AuthState = policy.RunIfAuthenticated
-
-	// AuthStateUnauthenticated indicates that backend authentication has not succeeded.
-	AuthStateUnauthenticated AuthState = policy.RunIfUnauthenticated
 )
 
 // AttributeValue is the request-time policy attribute value shape.
@@ -77,48 +52,49 @@ type CheckResult struct {
 	Matched      bool
 }
 
-// CheckSelector locates the configured check that corresponds to a mechanism.
+// CheckSelector names one host observation without selecting policy execution.
 type CheckSelector struct {
 	CheckType string
 	Stage     policy.Stage
 	Name      string
-	ConfigRef string
 }
 
-// configuredDecisionEvaluator evaluates configured policy against request-owned state.
-type configuredDecisionEvaluator func(
-	context.Context,
-	*policyruntime.Snapshot,
-	*report.DecisionReport,
-	evaluation.CompareInput,
-) evaluation.Result
-
-// DecisionContext stores request-local collected policy facts.
+// DecisionContext stores request-local facts collected by authentication host adapters.
 type DecisionContext struct {
-	snapshot *policyruntime.Snapshot
-	recorder observability.Recorder
-	report   *report.DecisionReport
-	tracer   monittrace.Tracer
-	checks   map[string]policyruntime.CompiledCheck
-	mu       sync.Mutex
+	recorder    observability.Recorder
+	report      *report.DecisionReport
+	tracer      monittrace.Tracer
+	definitions map[string]policyregistry.AttributeDefinition
+	mu          sync.Mutex
+	generation  uint64
 }
 
-// NewDecisionContext creates a request-local collection context.
+// NewDecisionContext creates a request-local observation context from builtin host contracts.
 func NewDecisionContext(
-	snapshot *policyruntime.Snapshot,
 	operation policy.Operation,
 	recorder observability.Recorder,
+	generation uint64,
 ) *DecisionContext {
 	policyReport := report.NewDecisionReport()
 	policyReport.Operation = operation
 
 	return &DecisionContext{
-		snapshot: snapshot,
-		recorder: observability.SafeRecorder(recorder),
-		report:   policyReport,
-		tracer:   observability.NewTracer(),
-		checks:   make(map[string]policyruntime.CompiledCheck),
+		recorder:    observability.SafeRecorder(recorder),
+		report:      policyReport,
+		tracer:      observability.NewTracer(),
+		definitions: builtinDefinitions(),
+		generation:  generation,
 	}
+}
+
+// builtinDefinitions returns the immutable Go-owned host fact contract.
+func builtinDefinitions() map[string]policyregistry.AttributeDefinition {
+	registry, err := policyregistry.NewBuiltinAttributeRegistry()
+	if err != nil {
+		panic(fmt.Sprintf("build builtin policy attribute registry: %v", err))
+	}
+
+	return registry.Snapshot()
 }
 
 // Report returns the mutable request report owned by this context.
@@ -130,54 +106,22 @@ func (c *DecisionContext) Report() *report.DecisionReport {
 	return c.report
 }
 
-// evaluateConfigured runs one internal evaluator against the captured request state.
-func (c *DecisionContext) evaluateConfigured(
-	ctx context.Context,
-	evaluator configuredDecisionEvaluator,
-	input evaluation.CompareInput,
-) evaluation.Result {
-	if c == nil || c.snapshot == nil || c.report == nil || evaluator == nil {
-		return evaluation.Result{}
+// GenerationID returns the generation captured with this request-local context.
+func (c *DecisionContext) GenerationID() uint64 {
+	if c == nil {
+		return 0
 	}
 
-	return evaluator(ctx, c.snapshot, c.report, input)
+	return c.generation
 }
 
-// EvaluateConfiguredPreAuth evaluates configured pre-auth policy against the captured request state.
-func (c *DecisionContext) EvaluateConfiguredPreAuth(ctx context.Context, input evaluation.CompareInput) evaluation.Result {
-	return c.evaluateConfigured(ctx, evaluation.EvaluateConfiguredPreAuth, input)
-}
-
-// EvaluateConfiguredAuth evaluates configured final policy against the captured request state.
-func (c *DecisionContext) EvaluateConfiguredAuth(ctx context.Context, input evaluation.CompareInput) evaluation.Result {
-	return c.evaluateConfigured(ctx, evaluation.EvaluateConfiguredAuth, input)
-}
-
-// CompareCustomObserve compares configured observe policy against the captured request state.
-func (c *DecisionContext) CompareCustomObserve(ctx context.Context, input evaluation.CompareInput) evaluation.CompareResult {
-	if c == nil || c.snapshot == nil || c.report == nil {
-		return evaluation.CompareResult{}
-	}
-
-	return evaluation.CompareCustomObserve(ctx, c.snapshot, c.report, input)
-}
-
-// ReportSettings returns the immutable report settings captured for this request.
-func (c *DecisionContext) ReportSettings() policyruntime.ReportSettings {
-	if c == nil || c.snapshot == nil {
-		return policyruntime.ReportSettings{}
-	}
-
-	return c.snapshot.Report
-}
-
-// AttributeDefinition returns one detached definition from the request snapshot.
+// AttributeDefinition returns one detached builtin host definition.
 func (c *DecisionContext) AttributeDefinition(id string) (policyregistry.AttributeDefinition, bool) {
-	if c == nil || c.snapshot == nil || c.snapshot.AttributeRegistry == nil {
+	if c == nil {
 		return policyregistry.AttributeDefinition{}, false
 	}
 
-	definition, ok := c.snapshot.AttributeRegistry[id]
+	definition, ok := c.definitions[id]
 	if !ok {
 		return policyregistry.AttributeDefinition{}, false
 	}
@@ -185,334 +129,140 @@ func (c *DecisionContext) AttributeDefinition(id string) (policyregistry.Attribu
 	return policyregistry.CloneDefinition(definition), true
 }
 
-// SnapshotMetadata returns stable metadata for request-local comparison output.
-func (c *DecisionContext) SnapshotMetadata() (string, string, uint64) {
-	if c == nil || c.snapshot == nil {
-		return modeEnforce, policy.BuiltinDefaultSet, 0
-	}
-
-	mode := c.snapshot.Mode
-	if mode == "" {
-		mode = modeEnforce
-	}
-
-	defaultPolicy := c.snapshot.DefaultPolicy
-	if defaultPolicy == "" {
-		defaultPolicy = policy.BuiltinDefaultSet
-	}
-
-	return mode, defaultPolicy, c.snapshot.Generation
-}
-
-// BuiltinDefaultAuthoritative reports whether request handling may use the built-in default set as production authority.
-func (c *DecisionContext) BuiltinDefaultAuthoritative() bool {
-	if c == nil || c.snapshot == nil {
-		return false
-	}
-
-	defaultPolicy := c.snapshot.DefaultPolicy
-	if defaultPolicy == "" {
-		defaultPolicy = policy.BuiltinDefaultSet
-	}
-
-	if defaultPolicy != policy.BuiltinDefaultSet {
-		return false
-	}
-
-	if c.snapshot.Mode == modeObserve {
-		return true
-	}
-
-	return !hasConfiguredRules(c.snapshot.StagePlans)
-}
-
-// BuiltinDefaultAuthoritativeForStage reports whether the built-in default set owns one production stage.
-func (c *DecisionContext) BuiltinDefaultAuthoritativeForStage(stage policy.Stage) bool {
-	if c == nil || c.snapshot == nil || c.report == nil {
-		return false
-	}
-
-	defaultPolicy := c.snapshot.DefaultPolicy
-	if defaultPolicy == "" {
-		defaultPolicy = policy.BuiltinDefaultSet
-	}
-
-	if defaultPolicy != policy.BuiltinDefaultSet {
-		return false
-	}
-
-	if c.snapshot.Mode == modeObserve {
-		return true
-	}
-
-	return !hasConfiguredRulesForStage(c.snapshot.StagePlans, c.report.Operation, stage)
-}
-
-// ConfiguredPreAuthAuthoritative reports whether configured pre-auth policy rules decide production output.
-func (c *DecisionContext) ConfiguredPreAuthAuthoritative() bool {
-	return c.configuredAuthorityForStage(policy.StagePreAuth)
-}
-
-// ConfiguredAuthDecisionAuthoritative reports whether configured final auth rules decide production output.
-func (c *DecisionContext) ConfiguredAuthDecisionAuthoritative() bool {
-	return c.configuredAuthorityForStage(policy.StageAuthDecision)
-}
-
-func (c *DecisionContext) configuredAuthorityForStage(stage policy.Stage) bool {
-	if c == nil || c.snapshot == nil || c.report == nil {
-		return false
-	}
-
-	if c.snapshot.Mode == modeObserve {
-		return false
-	}
-
-	defaultPolicy := c.snapshot.DefaultPolicy
-	if defaultPolicy == "" {
-		defaultPolicy = policy.BuiltinDefaultSet
-	}
-
-	if defaultPolicy != policy.BuiltinDefaultSet {
-		return false
-	}
-
-	plan := c.snapshot.StagePlans[c.report.Operation][stage]
-
-	return len(plan.Policies) > 0
-}
-
-// ScriptScheduled reports whether a script should run for the current request state.
-func (c *DecisionContext) ScriptScheduled(selector CheckSelector, authState AuthState) bool {
-	if c == nil || c.snapshot == nil || c.report == nil {
-		return true
-	}
-
-	checks := c.stageChecks(selector.Stage)
-	if len(checks) == 0 {
-		return true
-	}
-
-	for _, check := range checks {
-		if !checkMatchesSelector(check, selector) {
-			continue
-		}
-
-		return c.compiledCheckSelected(check, authState)
-	}
-
-	return false
-}
-
-// CheckScheduled reports whether a configured check should run for the current request.
-func (c *DecisionContext) CheckScheduled(ctx context.Context, selector CheckSelector, authState AuthState) bool {
-	if c == nil || c.snapshot == nil || c.report == nil {
-		return true
-	}
-
-	check := c.resolveCheck(selector)
-	if check.Name == "" {
-		return true
-	}
-
-	return c.compiledCheckScheduled(ctx, check, authState)
-}
-
-func (c *DecisionContext) compiledCheckScheduled(ctx context.Context, check policyruntime.CompiledCheck, authState AuthState) bool {
-	if c == nil || c.snapshot == nil || c.report == nil || check.Name == "" {
-		return true
-	}
-
-	c.mu.Lock()
-	if existing, exists := c.report.Checks[check.Name]; exists {
-		c.mu.Unlock()
-
-		return existing.Status != policy.CheckStatusSkipped
-	}
-
-	reason, scheduled := c.checkScheduleLocked(check, authState)
-	if scheduled {
-		c.mu.Unlock()
-
-		return true
-	}
-
-	c.recordSkippedLocked(ctx, check, reason)
-	c.mu.Unlock()
-
-	return false
-}
-
-func (c *DecisionContext) compiledCheckSelected(check policyruntime.CompiledCheck, authState AuthState) bool {
-	if c == nil || c.snapshot == nil || c.report == nil || check.Name == "" {
-		return true
-	}
-
-	c.mu.Lock()
-	_, scheduled := c.checkScheduleLocked(check, authState)
-	c.mu.Unlock()
-
-	return scheduled
-}
-
-func (c *DecisionContext) checkScheduleLocked(check policyruntime.CompiledCheck, authState AuthState) (string, bool) {
-	if !runIfMatches(check.RunIf.AuthState, authState) {
-		return runIfSkipReason, false
-	}
-
-	if reason, matched := c.schedulerGuardSkipReasonLocked(check); matched {
-		return reason, false
-	}
-
-	return "", true
-}
-
-func (c *DecisionContext) schedulerGuardSkipReasonLocked(check policyruntime.CompiledCheck) (string, bool) {
-	if len(check.SkipIf) == 0 || c.snapshot == nil {
-		return "", false
-	}
-
-	for _, guardName := range check.SkipIf {
-		guard, exists := c.snapshot.SchedulerGuards[guardName]
-		if !exists {
-			continue
-		}
-
-		if schedulerGuardRunsOnMissing(guard) && c.guardHasMissingAttributeLocked(guard.Root) {
-			continue
-		}
-
-		if evaluation.ExprMatches(guard.Root, c.report) {
-			return schedulerGuardReasonPrefix + guardName, true
-		}
-	}
-
-	return "", false
-}
-
-func schedulerGuardRunsOnMissing(guard policyruntime.CompiledSchedulerGuard) bool {
-	return guard.OnMissingAttribute == "" || guard.OnMissingAttribute == schedulerGuardMissingRun
-}
-
-func (c *DecisionContext) guardHasMissingAttributeLocked(expr policyruntime.CompiledExpr) bool {
-	switch expr.Kind {
-	case policyruntime.ExprKindAttribute:
-		if expr.AttributeID == "" {
-			return false
-		}
-
-		value, exists := c.report.Attributes[expr.AttributeID]
-		if !exists {
-			return true
-		}
-
-		if expr.Detail == "" {
-			return false
-		}
-
-		_, exists = value.Details[expr.Detail]
-
-		return !exists
-	case policyruntime.ExprKindAll, policyruntime.ExprKindAny, policyruntime.ExprKindNot:
-		if slices.ContainsFunc(expr.Children, c.guardHasMissingAttributeLocked) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (c *DecisionContext) recordSkippedLocked(ctx context.Context, check policyruntime.CompiledCheck, reason string) {
-	c.recordLocked(CheckResult{
-		Status: policy.CheckStatusSkipped,
-		Reason: reason,
-	}, check)
-	c.recorder.RecordCheck(ctx, observability.CheckMeasurement{
-		Operation:  c.report.Operation,
-		Stage:      check.Stage,
-		Check:      check.Name,
-		CheckType:  check.Type,
-		Status:     policy.CheckStatusSkipped,
-		ReasonCode: reason,
-	})
-}
-
-// BeginCheck opens metric and tracing collection for one check adapter.
-func (c *DecisionContext) BeginCheck(ctx context.Context, selector CheckSelector) *ActiveCheck {
+// AddAuthnPolicyAttributes installs exact generation-owned extension definitions before host execution.
+func (c *DecisionContext) AddAuthnPolicyAttributes(
+	definitions map[string]policyregistry.AttributeDefinition,
+) error {
 	if c == nil {
-		return &ActiveCheck{}
+		return fmt.Errorf("policy decision context is unavailable")
 	}
 
-	check := c.resolveCheck(selector)
-	if check.Name == "" {
-		check = fallbackCheck(selector, c.report.Operation)
-	}
+	detached := make(map[string]policyregistry.AttributeDefinition, len(definitions))
+	for id, definition := range definitions {
+		if strings.TrimSpace(id) == "" || definition.ID != id {
+			return fmt.Errorf("captured authn Policy attribute %q has invalid identity", id)
+		}
 
-	c.mu.Lock()
-	if existing, exists := c.report.Checks[check.Name]; exists && existing.Status == policy.CheckStatusSkipped {
-		c.mu.Unlock()
-
-		return &ActiveCheck{finished: true}
-	}
-	c.mu.Unlock()
-
-	spanCtx, span := c.tracer.Start(ctx, "policy.check",
-		attribute.String("policy.operation", string(c.report.Operation)),
-		attribute.String("policy.stage", string(check.Stage)),
-		attribute.String("policy.check", check.Name),
-		attribute.String("policy.check_type", check.Type),
-	)
-
-	return &ActiveCheck{
-		ctx:      spanCtx,
-		parent:   c,
-		check:    check,
-		span:     span,
-		started:  time.Now(),
-		finished: false,
-	}
-}
-
-// CompleteStage records skipped and missing entries for configured checks not observed.
-func (c *DecisionContext) CompleteStage(stage policy.Stage, authState AuthState) {
-	if c == nil || c.snapshot == nil || c.report == nil {
-		return
+		detached[id] = policyregistry.CloneDefinition(definition)
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for _, check := range c.stageChecks(stage) {
-		if _, exists := c.report.Checks[check.Name]; exists {
-			continue
+	for id := range detached {
+		if _, exists := c.definitions[id]; exists {
+			return fmt.Errorf("captured authn Policy attribute %q is already registered", id)
+		}
+	}
+
+	for id, definition := range detached {
+		c.definitions[id] = definition
+	}
+
+	return nil
+}
+
+// AddAuthnLuaFactDeclarations atomically installs the exact registry-script facts captured by one generation.
+func (c *DecisionContext) AddAuthnLuaFactDeclarations(
+	declarations []policyregistry.AuthnLuaFactDeclaration,
+) error {
+	if c == nil {
+		return fmt.Errorf("policy decision context is unavailable")
+	}
+
+	definitions := make(map[string]policyregistry.AttributeDefinition, len(declarations))
+	for index, declaration := range declarations {
+		definition, err := authnLuaFactAttributeDefinition(declaration)
+		if err != nil {
+			return fmt.Errorf("captured authn Lua fact declaration %d: %w", index, err)
 		}
 
-		if !runIfMatches(check.RunIf.AuthState, authState) {
-			c.recordSkippedLocked(context.Background(), check, runIfSkipReason)
-
-			continue
+		if _, exists := definitions[definition.ID]; exists {
+			return fmt.Errorf("duplicate captured authn Lua fact declaration %q", definition.ID)
 		}
 
-		if reason, matched := c.schedulerGuardSkipReasonLocked(check); matched {
-			c.recordSkippedLocked(context.Background(), check, reason)
+		definitions[definition.ID] = definition
+	}
 
-			continue
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for id := range definitions {
+		if _, exists := c.definitions[id]; exists {
+			return fmt.Errorf("captured authn Lua fact declaration %q is already registered", id)
 		}
+	}
 
-		if c.observeMode() && !c.checkObserveSafe(check) {
-			c.recordUnavailableLocked(check, "not_observe_safe")
+	for id, definition := range definitions {
+		c.definitions[id] = policyregistry.CloneDefinition(definition)
+	}
 
-			continue
-		}
+	return nil
+}
 
-		if c.report.MissingChecks == nil {
-			c.report.MissingChecks = make(map[string]string)
-		}
+// authnLuaFactAttributeDefinition converts one immutable declaration into the host emitter contract.
+func authnLuaFactAttributeDefinition(
+	declaration policyregistry.AuthnLuaFactDeclaration,
+) (policyregistry.AttributeDefinition, error) {
+	if strings.TrimSpace(declaration.ID()) == "" || declaration.DeclaredType() == "" {
+		return policyregistry.AttributeDefinition{}, fmt.Errorf("declaration identity or type is unavailable")
+	}
 
-		c.report.MissingChecks[check.Name] = "not_recorded"
+	category := policyregistry.AttributeCategory(declaration.Category())
+	switch category {
+	case policyregistry.AttributeCategoryEnvironment,
+		policyregistry.AttributeCategorySubject,
+		policyregistry.AttributeCategoryResource:
+	default:
+		return policyregistry.AttributeDefinition{}, fmt.Errorf("declaration %q has invalid category", declaration.ID())
+	}
+
+	return policyregistry.AttributeDefinition{
+		ID:          declaration.ID(),
+		Description: declaration.Description(),
+		Stage:       declaration.Stage(),
+		Operations:  declaration.Actions(),
+		Category:    category,
+		Type:        declaration.DeclaredType(),
+		Source:      policyregistry.SourceLua,
+		Details:     declaration.Details(),
+	}, nil
+}
+
+// BeginCheck opens metric and tracing collection for one host adapter observation.
+func (c *DecisionContext) BeginCheck(ctx context.Context, selector CheckSelector) *ActiveCheck {
+	if c == nil || c.report == nil {
+		return &ActiveCheck{}
+	}
+
+	check := observedCheckFromSelector(selector)
+	spanCtx, span := c.tracer.Start(ctx, "policy.check",
+		attribute.String("policy.operation", string(c.report.Operation)),
+		attribute.String("policy.stage", string(check.stage)),
+		attribute.String("policy.check", check.name),
+		attribute.String("policy.check_type", check.checkType),
+	)
+
+	return &ActiveCheck{
+		ctx:     spanCtx,
+		parent:  c,
+		check:   check,
+		span:    span,
+		started: time.Now(),
 	}
 }
 
-// MarkUnavailable records a fact source that cannot run in the current mode.
+// observedCheckFromSelector assigns a stable fallback name for host observations.
+func observedCheckFromSelector(selector CheckSelector) observedCheck {
+	name := strings.TrimSpace(selector.Name)
+	if name == "" {
+		name = selector.CheckType
+	}
+
+	return observedCheck{name: name, checkType: selector.CheckType, stage: selector.Stage}
+}
+
+// MarkUnavailable records a host fact source that could not produce an observation.
 func (c *DecisionContext) MarkUnavailable(name string, reason string) {
 	if c == nil || c.report == nil || strings.TrimSpace(name) == "" {
 		return
@@ -526,70 +276,6 @@ func (c *DecisionContext) MarkUnavailable(name string, reason string) {
 	}
 
 	c.report.Unavailable[name] = report.UnavailableFact{Name: name, Reason: reason}
-}
-
-func (c *DecisionContext) recordUnavailableLocked(check policyruntime.CompiledCheck, reason string) {
-	if check.Name == "" {
-		return
-	}
-
-	if c.report.Unavailable == nil {
-		c.report.Unavailable = make(map[string]report.UnavailableFact)
-	}
-
-	c.report.Unavailable[check.Name] = report.UnavailableFact{Name: check.Name, Reason: reason}
-	c.recorder.RecordObserveUnavailable(context.Background(), observability.ObserveUnavailableMeasurement{
-		Operation:  c.report.Operation,
-		Stage:      check.Stage,
-		Check:      check.Name,
-		ReasonCode: reason,
-	})
-}
-
-// Record stores a completed check result.
-func (c *DecisionContext) Record(result CheckResult, check policyruntime.CompiledCheck) {
-	if c == nil || c.report == nil || check.Name == "" {
-		return
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.recordLocked(result, check)
-}
-
-func (c *DecisionContext) recordLocked(result CheckResult, check policyruntime.CompiledCheck) {
-	if result.Status == "" {
-		result.Status = policy.CheckStatusOK
-	}
-
-	if c.report.Checks == nil {
-		c.report.Checks = make(map[string]report.CheckResult)
-	}
-
-	attributeIDs := make([]string, 0, len(result.Attributes))
-	for _, value := range result.Attributes {
-		if value.ID == "" {
-			continue
-		}
-
-		attributeIDs = append(attributeIDs, value.ID)
-		c.recordAttributeLocked(value)
-	}
-
-	c.report.Checks[check.Name] = report.CheckResult{
-		Name:         check.Name,
-		Type:         check.Type,
-		Reason:       result.Reason,
-		Operation:    c.report.Operation,
-		Stage:        check.Stage,
-		Status:       result.Status,
-		DecisionHint: result.DecisionHint,
-		Matched:      result.Matched,
-		Attributes:   attributeIDs,
-	}
-
-	c.checks[check.Name] = check
 }
 
 // RecordAttribute stores one emitted policy attribute.
@@ -614,14 +300,13 @@ func (c *DecisionContext) RecordAttributes(values []AttributeValue) {
 	defer c.mu.Unlock()
 
 	for _, value := range values {
-		if value.ID == "" {
-			continue
+		if value.ID != "" {
+			c.recordAttributeLocked(value)
 		}
-
-		c.recordAttributeLocked(value)
 	}
 }
 
+// recordAttributeLocked stores one observation while the context mutex is held.
 func (c *DecisionContext) recordAttributeLocked(value AttributeValue) {
 	if c.report.Attributes == nil {
 		c.report.Attributes = make(map[string]report.AttributeValue)
@@ -630,128 +315,53 @@ func (c *DecisionContext) recordAttributeLocked(value AttributeValue) {
 	c.report.Attributes[value.ID] = value
 }
 
-func hasConfiguredRules(stagePlans map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan) bool {
-	for _, stages := range stagePlans {
-		for _, plan := range stages {
-			if len(plan.Policies) > 0 {
-				return true
-			}
-		}
+// recordCheck stores one completed host check and its emitted observations.
+func (c *DecisionContext) recordCheck(result CheckResult, check observedCheck) {
+	if c == nil || c.report == nil || check.name == "" {
+		return
 	}
 
-	return false
-}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-func hasConfiguredRulesForStage(
-	stagePlans map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan,
-	operation policy.Operation,
-	stage policy.Stage,
-) bool {
-	plan := stagePlans[operation][stage]
-
-	return len(plan.Policies) > 0
-}
-
-func (c *DecisionContext) resolveCheck(selector CheckSelector) policyruntime.CompiledCheck {
-	if c == nil || c.snapshot == nil || c.report == nil {
-		return policyruntime.CompiledCheck{}
+	if result.Status == "" {
+		result.Status = policy.CheckStatusOK
 	}
 
-	for _, check := range c.stageChecks(selector.Stage) {
-		if checkMatchesSelector(check, selector) {
-			return check
-		}
-	}
-
-	return policyruntime.CompiledCheck{}
-}
-
-// checkMatchesSelector compares runtime selectors with compiled checks without broad fallbacks.
-func checkMatchesSelector(check policyruntime.CompiledCheck, selector CheckSelector) bool {
-	if check.Type != selector.CheckType {
-		return false
-	}
-
-	if selector.ConfigRef != "" {
-		if check.ConfigRef != selector.ConfigRef {
-			return false
+	attributeIDs := make([]string, 0, len(result.Attributes))
+	for _, value := range result.Attributes {
+		if value.ID == "" {
+			continue
 		}
 
-		if selector.CheckType == policy.CheckTypePluginSubjectSource && selector.Name != "" {
-			return check.Name == selector.Name
-		}
-
-		return true
+		attributeIDs = append(attributeIDs, value.ID)
+		c.recordAttributeLocked(value)
 	}
 
-	return selector.Name == "" || check.Name == selector.Name
-}
-
-func (c *DecisionContext) stageChecks(stage policy.Stage) []policyruntime.CompiledCheck {
-	if c == nil || c.snapshot == nil || c.report == nil {
-		return nil
-	}
-
-	stages := c.snapshot.StagePlans[c.report.Operation]
-	if stages == nil {
-		return nil
-	}
-
-	plan, ok := stages[stage]
-	if !ok {
-		return nil
-	}
-
-	return plan.Checks
-}
-
-func (c *DecisionContext) observeMode() bool {
-	return c != nil && c.snapshot != nil && c.snapshot.Mode == modeObserve
-}
-
-func (c *DecisionContext) checkObserveSafe(check policyruntime.CompiledCheck) bool {
-	if check.ObserveSafe {
-		return true
-	}
-
-	if c == nil || c.snapshot == nil {
-		return false
-	}
-
-	definition, ok := c.snapshot.CheckTypeRegistry[check.Type]
-
-	return ok && definition.ObserveSafeDefault
-}
-
-func fallbackCheck(selector CheckSelector, operation policy.Operation) policyruntime.CompiledCheck {
-	name := selector.Name
-	if name == "" {
-		name = selector.CheckType
-	}
-
-	return policyruntime.CompiledCheck{
-		Name:       name,
-		Type:       selector.CheckType,
-		Stage:      selector.Stage,
-		ConfigRef:  selector.ConfigRef,
-		Operations: []policy.Operation{operation},
-		RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+	c.report.Checks[check.name] = report.CheckResult{
+		Name:         check.name,
+		Type:         check.checkType,
+		Reason:       result.Reason,
+		Operation:    c.report.Operation,
+		Stage:        check.stage,
+		Status:       result.Status,
+		DecisionHint: result.DecisionHint,
+		Matched:      result.Matched,
+		Attributes:   attributeIDs,
 	}
 }
 
-func runIfMatches(runIf string, authState AuthState) bool {
-	if runIf == "" || runIf == policy.RunIfAny {
-		return true
-	}
-
-	return runIf == string(authState)
+type observedCheck struct {
+	name      string
+	checkType string
+	stage     policy.Stage
 }
 
-// ActiveCheck tracks one running check adapter.
+// ActiveCheck tracks one running host observation.
 type ActiveCheck struct {
 	parent   *DecisionContext
 	span     trace.Span
-	check    policyruntime.CompiledCheck
+	check    observedCheck
 	ctx      context.Context
 	started  time.Time
 	finished bool
@@ -788,13 +398,13 @@ func (a *ActiveCheck) Finish(result CheckResult) {
 		}
 	}
 
-	a.parent.Record(result, a.check)
+	a.parent.recordCheck(result, a.check)
 	a.parent.recorder.RecordCheck(a.ctx, observability.CheckMeasurement{
 		Duration:   duration,
 		Operation:  a.parent.report.Operation,
-		Stage:      a.check.Stage,
-		Check:      a.check.Name,
-		CheckType:  a.check.Type,
+		Stage:      a.check.stage,
+		Check:      a.check.name,
+		CheckType:  a.check.checkType,
 		Status:     result.Status,
 		ReasonCode: result.Reason,
 	})
@@ -816,24 +426,18 @@ func BoolAttribute(
 	value bool,
 	details map[string]DetailValue,
 ) AttributeValue {
-	return AttributeValue{
-		ID:        id,
-		Stage:     stage,
-		Operation: operation,
-		Value:     value,
-		Details:   details,
-	}
+	return AttributeValue{ID: id, Stage: stage, Operation: operation, Value: value, Details: details}
 }
 
 // NumberAttribute creates a numeric policy attribute value.
-func NumberAttribute(id string, stage policy.Stage, operation policy.Operation, value float64, details map[string]DetailValue) AttributeValue {
-	return AttributeValue{
-		ID:        id,
-		Stage:     stage,
-		Operation: operation,
-		Value:     value,
-		Details:   details,
-	}
+func NumberAttribute(
+	id string,
+	stage policy.Stage,
+	operation policy.Operation,
+	value float64,
+	details map[string]DetailValue,
+) AttributeValue {
+	return AttributeValue{ID: id, Stage: stage, Operation: operation, Value: value, Details: details}
 }
 
 // StringListAttribute creates a string-list policy attribute value.
@@ -845,22 +449,14 @@ func StringListAttribute(
 	details map[string]DetailValue,
 ) AttributeValue {
 	return AttributeValue{
-		ID:        id,
-		Stage:     stage,
-		Operation: operation,
-		Value:     append([]string(nil), value...),
-		Details:   details,
+		ID: id, Stage: stage, Operation: operation,
+		Value: append([]string(nil), value...), Details: details,
 	}
 }
 
 // StringAttribute creates a string policy attribute value.
 func StringAttribute(id string, stage policy.Stage, operation policy.Operation, value string) AttributeValue {
-	return AttributeValue{
-		ID:        id,
-		Stage:     stage,
-		Operation: operation,
-		Value:     value,
-	}
+	return AttributeValue{ID: id, Stage: stage, Operation: operation, Value: value}
 }
 
 // StringAttributeWithDetails creates a string policy attribute value with details.
@@ -871,23 +467,12 @@ func StringAttributeWithDetails(
 	value string,
 	details map[string]DetailValue,
 ) AttributeValue {
-	return AttributeValue{
-		ID:        id,
-		Stage:     stage,
-		Operation: operation,
-		Value:     value,
-		Details:   details,
-	}
+	return AttributeValue{ID: id, Stage: stage, Operation: operation, Value: value, Details: details}
 }
 
 // TimeAttribute creates a timestamp policy attribute value.
 func TimeAttribute(id string, stage policy.Stage, operation policy.Operation, value time.Time) AttributeValue {
-	return AttributeValue{
-		ID:        id,
-		Stage:     stage,
-		Operation: operation,
-		Value:     value,
-	}
+	return AttributeValue{ID: id, Stage: stage, Operation: operation, Value: value}
 }
 
 // InternalDetail creates a redacted internal detail value.
@@ -898,12 +483,11 @@ func InternalDetail(value any) DetailValue {
 // PublicMessageDetail creates a public response-message candidate detail.
 func PublicMessageDetail(value string) DetailValue {
 	return DetailValue{
-		Value:       value,
-		Sensitivity: report.SensitivityPublic,
-		Purpose:     report.PurposeResponseMessage,
+		Value: value, Sensitivity: report.SensitivityPublic, Purpose: report.PurposeResponseMessage,
 	}
 }
 
+// scriptAttributeID returns the stable callback observation identity.
 func scriptAttributeID(kind ScriptKind, name string, suffix string) string {
 	return fmt.Sprintf("auth.lua.%s.%s.%s", kind.policySegment(), name, suffix)
 }

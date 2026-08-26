@@ -43,7 +43,6 @@ func TestMain(m *testing.M) {
 	// Setup log
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 	core.SetDefaultLogger(log.GetLogger())
-	core.SetDefaultConfigFile(cfg)
 	core.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	core.InitPassDBResultPool()
@@ -75,8 +74,11 @@ func TestNauthilusIDP_Authenticate_Integration(t *testing.T) {
 		Env:          config.NewTestEnvironmentConfig(),
 		Redis:        redisClient,
 		AccountCache: accountcache.NewManager(cfg),
+		AuthApplication: &recordingIDPAuthApplication{authenticateResults: []applicationBoundaryResult{
+			{outcome: &core.AuthOutcome{Decision: core.AuthDecisionFail}},
+			{outcome: &core.AuthOutcome{Decision: core.AuthDecisionFail}},
+		}},
 	}
-	d.AuthApplication = core.NewAuthApplicationService(d.Auth())
 	idp := NewNauthilusIDP(d)
 
 	for _, tc := range authIntegrationFlowCases() {

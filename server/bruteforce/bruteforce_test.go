@@ -80,7 +80,6 @@ func initTestConfig() config.File {
 				}}},
 	}
 	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 

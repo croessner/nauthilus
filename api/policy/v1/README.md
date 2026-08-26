@@ -40,6 +40,6 @@ caller and transport facts to the shared Decision Service; the protobuf
 contract exposes neither multi-resource token selection nor a bypass around
 application-level admission.
 
-This package contract does not activate the standalone production Policy
-configuration. Configuration, authenticator, catalog, and runtime publication
-remain one later atomic server-state cutover.
+The top-level `policy` configuration, caller authenticator, admission catalog,
+and runtime generation are published atomically. HTTP and gRPC adapters use the
+same active Decision Service and cannot fall back to another policy authority.

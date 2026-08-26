@@ -1,0 +1,87 @@
+# Policy Bearer tokens use the exact audience nauthilus:policy. Backchannel
+# tokens use nauthilus:backchannel and are never accepted by these transports.
+policy:
+  api:
+    enabled: true
+    http:
+      enabled: true
+    grpc:
+      enabled: true
+      require_mtls: true
+    limits:
+      provider_timeout: 500ms
+      evaluation_timeout: 2s
+      max_request_bytes: 1048576
+      max_facts: 512
+      max_string_bytes: 4096
+      max_list_items: 128
+      max_value_bytes: 65536
+      per_client_concurrency: 8
+      per_client_requests_per_second: 25
+      max_obligations: 32
+      max_advice: 32
+      max_parameter_bytes: 16384
+    clients:
+      # The issuer-owned client_id must equal this principal exactly.
+      - principal: policy-bearer-evaluator
+        authentication_kinds: [oidc_bearer]
+        targets:
+          - namespace: dkim2
+            actions: [sign-message]
+        allowed_schemas: [dkim2/sign-message/v1]
+        allowed_subject_attributes: [account, groups]
+        allowed_resource_attributes: [mail_from]
+        allowed_environment_attributes: [network.risk]
+        allowed_input_attributes: [request_id]
+        max_request_bytes: 262144
+        max_facts: 128
+        max_concurrency: 3
+        requests_per_second: 7
+        diagnostics: true
+        require_mtls: true
+      # Policy-Basic is dedicated to Policy and never reuses management Basic.
+      - principal: policy-basic-automation
+        authentication_kinds: [basic]
+        authentication:
+          basic:
+            username: policy-automation
+            password: ${POLICY_BASIC_PASSWORD}
+        targets:
+          - namespace: dkim2
+            actions: [sign-message]
+        allowed_schemas: [dkim2/sign-message/v1]
+        allowed_subject_attributes: [account]
+        allowed_resource_attributes: [mail_from]
+        allowed_environment_attributes: [network.risk]
+        allowed_input_attributes: [request_id]
+        max_request_bytes: 131072
+        max_facts: 64
+        max_concurrency: 2
+        requests_per_second: 5
+        diagnostics: false
+        require_mtls: false
+  namespaces:
+    dkim2:
+      schema_contributions:
+        static:
+          sign-message:
+            versions:
+              v1:
+                facts: []
+      policy_sets:
+        default:
+          visibility: private
+          rules: []
+  targets:
+    - namespace: dkim2
+      action: sign-message
+      schema: dkim2/sign-message/v1
+      mode: enforce
+      default_policy: dkim2/default
+      no_match: deny
+      timeouts:
+        evaluation: 2s
+        provider_default: 500ms
+      plans:
+        final_decision:
+          policy_sets: [dkim2/default]

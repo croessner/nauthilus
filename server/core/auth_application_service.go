@@ -23,9 +23,10 @@ import (
 	"net/http"
 
 	"github.com/croessner/nauthilus/v3/server/backend/bktype"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/log/level"
 	"github.com/croessner/nauthilus/v3/server/model/authdto"
+	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v3/server/util"
 )
 
@@ -173,6 +174,7 @@ type AuthResponseSettings struct {
 type authOutcomeProjection[D ~string] struct {
 	Attributes              bktype.AttributeMapping
 	ResponseHeaders         http.Header
+	MessageResolver         localization.MessageResolver
 	ResponseHeaderDeletes   []string
 	FSMEventPath            []string
 	ResponseSettings        AuthResponseSettings
@@ -217,6 +219,7 @@ func convertAuthOutcomeProjection[S ~string, D ~string](
 	return authOutcomeProjection[D]{
 		Attributes:              cloneAttributeMapping(input.Attributes),
 		ResponseHeaders:         input.ResponseHeaders.Clone(),
+		MessageResolver:         input.MessageResolver,
 		ResponseHeaderDeletes:   append([]string(nil), input.ResponseHeaderDeletes...),
 		FSMEventPath:            append([]string(nil), input.FSMEventPath...),
 		ResponseSettings:        input.ResponseSettings,
@@ -254,6 +257,7 @@ func convertAuthOutcomeProjection[S ~string, D ~string](
 // ListAccountsOutcome contains the account-provider response.
 type ListAccountsOutcome struct {
 	ResponseHeaders         http.Header
+	MessageResolver         localization.MessageResolver
 	ResponseHeaderDeletes   []string
 	FSMEventPath            []string
 	Accounts                AccountList
@@ -332,15 +336,15 @@ func (e *AuthPermissionDeniedError) Error() string {
 }
 
 type authApplicationService struct {
-	executor *legacyAuthApplicationExecutor
-	deps     AuthDeps
+	host *authApplicationHost
+	deps AuthDeps
 }
 
-// NewAuthApplicationService constructs the transport-neutral auth service.
-func NewAuthApplicationService(deps AuthDeps) AuthApplicationService {
+// newAuthApplicationServiceHost constructs the private admitted-execution host.
+func newAuthApplicationServiceHost(deps AuthDeps) *authApplicationService {
 	return &authApplicationService{
-		executor: newLegacyAuthApplicationExecutor(),
-		deps:     deps,
+		host: newAuthApplicationHost(),
+		deps: deps,
 	}
 }
 
@@ -376,89 +380,6 @@ func NewAuthInputFromStructuredRequest(service string, mode AuthMode, request au
 		Service:          service,
 		AuthLoginAttempt: request.AuthLoginAttempt,
 	}
-}
-
-// Authenticate runs the existing auth FSM and returns a captured outcome.
-func (s *authApplicationService) Authenticate(ctx context.Context, input AuthInput) (*AuthOutcome, error) {
-	return s.runAuthPipeline(ctx, input, AuthModeAuthenticate, validateAuthenticateInput)
-}
-
-// LookupIdentity runs the existing no-auth identity lookup path and returns a captured outcome.
-func (s *authApplicationService) LookupIdentity(ctx context.Context, input AuthInput) (*AuthOutcome, error) {
-	return s.runAuthPipeline(ctx, input, AuthModeLookupIdentity, validateLookupIdentityInput)
-}
-
-func (s *authApplicationService) runAuthPipeline(
-	ctx context.Context,
-	input AuthInput,
-	defaultMode AuthMode,
-	validate func(AuthInput) error,
-) (*AuthOutcome, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	input = normalizeAuthInput(input, defaultMode)
-	if err := validate(input); err != nil {
-		return nil, err
-	}
-
-	auth, ginCtx, capture, err := s.newAuthState(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-
-	if reject := auth.PreproccessAuthRequest(ginCtx); reject {
-		return authOutcomeFromCaptured(capture.Outcome()), nil
-	}
-
-	auth.HandleAuthentication(ginCtx)
-
-	outcome := authOutcomeFromCaptured(capture.Outcome())
-	if outcome.Decision == AuthDecisionUnset {
-		return nil, ErrAuthOutcomeMissing
-	}
-
-	return outcome, nil
-}
-
-// ListAccounts runs the existing account-provider backend path without HTTP rendering.
-func (s *authApplicationService) ListAccounts(ctx context.Context, input AuthInput) (*ListAccountsOutcome, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	input = normalizeAuthInput(input, AuthModeListAccounts)
-
-	auth, ginCtx, capture, err := s.newAuthState(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-
-	if !auth.Request.ListAccounts {
-		return nil, &AuthPermissionDeniedError{Reason: "missing required scope: " + definitions.ScopeListAccounts}
-	}
-
-	if reject := auth.PreproccessAuthRequest(ginCtx); reject {
-		return nil, &AuthPreprocessRejectedError{Outcome: authOutcomeFromCaptured(capture.Outcome())}
-	}
-
-	accounts := auth.ListUserAccounts()
-	_ = level.Info(auth.logger()).Log(definitions.LogKeyGUID, auth.Runtime.GUID, definitions.LogKeyMode, string(AuthModeListAccounts))
-
-	if captured := capture.Outcome(); captured.Decision != CapturedAuthDecisionUnset {
-		return listAccountsOutcomeFromCaptured(captured), nil
-	}
-
-	return listAccountsSuccessOutcome(auth, ginCtx, accounts), nil
 }
 
 // normalizeAuthInput applies operation defaults and detaches mutable IdP input values.
@@ -505,10 +426,11 @@ func validateUsernameInput(input AuthInput) error {
 	return nil
 }
 
-func (s *authApplicationService) effectiveDeps() (AuthDeps, error) {
+// effectiveDeps resolves configuration only from the captured session or the immutable constructor snapshot.
+func (s *authApplicationService) effectiveDeps(ctx context.Context) (AuthDeps, error) {
 	deps := s.deps
-	if deps.CurrentConfig != nil {
-		deps.Cfg = deps.CurrentConfig()
+	if captured, ok := decisionservice.CapturedConfigFromContext(ctx); ok {
+		deps.Cfg = captured
 	}
 
 	if deps.Cfg == nil {

@@ -86,6 +86,10 @@ func (b *httpAuthInputBuilder) surfaceInput(
 	mode core.AuthMode,
 ) (core.AuthInput, bool, bool) {
 	switch service {
+	case definitions.ServBasic:
+		input, ok := b.basicInput(ctx, service, mode)
+
+		return input, false, ok
 	case definitions.ServHeader, definitions.ServNginx:
 		input, ok := b.headerInput(ctx, service, mode)
 
@@ -99,6 +103,49 @@ func (b *httpAuthInputBuilder) surfaceInput(
 
 		return core.AuthInput{}, false, false
 	}
+}
+
+// basicInput decodes the optional Basic presentation once and removes it before metadata capture.
+func (b *httpAuthInputBuilder) basicInput(
+	ctx *gin.Context,
+	service string,
+	mode core.AuthMode,
+) (core.AuthInput, bool) {
+	header := strings.TrimSpace(ctx.GetHeader("Authorization"))
+	scheme, encoded, found := strings.Cut(header, " ")
+
+	ctx.Request.Header.Del("Authorization")
+
+	if !found || !strings.EqualFold(strings.TrimSpace(scheme), "basic") {
+		ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+		ctx.AbortWithStatus(http.StatusUnauthorized)
+
+		return core.AuthInput{}, false
+	}
+
+	presentation, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusBadRequest)
+
+		return core.AuthInput{}, false
+	}
+	defer clear(presentation)
+
+	separator := bytes.IndexByte(presentation, ':')
+	if separator < 0 {
+		ctx.AbortWithStatus(http.StatusBadRequest)
+
+		return core.AuthInput{}, false
+	}
+
+	return core.AuthInput{
+		Credentials: core.NewCredentials(
+			core.WithUsername(string(presentation[:separator])),
+			core.WithPassword(secret.FromBytes(presentation[separator+1:])),
+		),
+		Mode:    mode,
+		Service: service,
+	}, true
 }
 
 // bodyInput decodes JSON, CBOR, or form data without retaining the request credential body.

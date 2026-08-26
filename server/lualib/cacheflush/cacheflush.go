@@ -18,6 +18,7 @@ package cacheflush
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/lualib/convert"
 	"github.com/croessner/nauthilus/v3/server/lualib/luamod"
 	"github.com/croessner/nauthilus/v3/server/lualib/luapool"
+	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 
@@ -48,38 +50,153 @@ type Result struct {
 }
 
 var (
-	compiledScript *lua.FunctionProto
+	compiledScript *compiledCacheFlushScript
 	compileMu      sync.RWMutex
 )
 
-// compileScript compiles the Lua cache flush script and caches the result.
-func compileScript(scriptPath string) (*lua.FunctionProto, error) {
-	compileMu.RLock()
+type compiledCacheFlushScript struct {
+	prototype *lua.FunctionProto
+	modules   *luaseal.Modules
+	snapshot  *config.ArtifactSnapshot
+	path      string
+	digest    [sha256.Size]byte
+}
 
-	if compiledScript != nil {
-		defer compileMu.RUnlock()
-
-		return compiledScript, nil
+// PrepareConfiguredScript compiles the optional restart-bound cache-flush program before startup commit.
+func PrepareConfiguredScript(cfg config.File) error {
+	modules, err := luaseal.CaptureConfigured(cfg)
+	if err != nil {
+		return err
 	}
 
-	compileMu.RUnlock()
+	return PrepareConfiguredScriptWithModules(cfg, modules)
+}
+
+// PrepareConfiguredScriptWithModules binds the optional cache-flush callback to one boot-owned module snapshot.
+func PrepareConfiguredScriptWithModules(cfg config.File, modules *luaseal.Modules) error {
+	if cfg == nil {
+		return fmt.Errorf("cache flush configuration is nil")
+	}
+
+	if modules == nil {
+		return fmt.Errorf("cache flush module snapshot is nil")
+	}
+
+	scriptPath := cfg.GetLuaCacheFlushScriptPath()
+	if scriptPath == "" {
+		return nil
+	}
+
+	_, err := compileScript(cfg, scriptPath, modules)
+
+	return err
+}
+
+// compileScript compiles the sealed Lua cache-flush source and caches it by exact identity.
+func compileScript(cfg config.File, scriptPath string, modules *luaseal.Modules) (*compiledCacheFlushScript, error) {
+	snapshot, digest, err := cacheFlushScriptIdentity(cfg, scriptPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if cached := cachedCacheFlushScript(scriptPath, digest, snapshot); cached != nil {
+		return cached, nil
+	}
 
 	compileMu.Lock()
 	defer compileMu.Unlock()
 
 	// Double-check after acquiring write lock.
-	if compiledScript != nil {
+	if cacheFlushScriptMatches(compiledScript, scriptPath, digest, snapshot) {
 		return compiledScript, nil
 	}
 
-	proto, err := lualib.CompileLua(scriptPath)
+	if modules == nil {
+		modules, err = luaseal.CaptureConfigured(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	program, err := compileCacheFlushSource(snapshot, scriptPath, digest, modules)
+	if err != nil {
+		return nil, err
+	}
+
+	compiledScript = program
+
+	return compiledScript, nil
+}
+
+// cacheFlushScriptIdentity resolves the immutable artifact snapshot and source digest.
+func cacheFlushScriptIdentity(
+	cfg config.File,
+	scriptPath string,
+) (*config.ArtifactSnapshot, [sha256.Size]byte, error) {
+	snapshot, err := config.ArtifactSnapshotFor(cfg)
+	if err != nil {
+		return nil, [sha256.Size]byte{}, fmt.Errorf("load sealed cache flush script %s: %w", scriptPath, err)
+	}
+
+	digest, err := snapshot.Digest(scriptPath)
+	if err != nil {
+		return nil, [sha256.Size]byte{}, fmt.Errorf("load sealed cache flush script %s: %w", scriptPath, err)
+	}
+
+	return snapshot, digest, nil
+}
+
+// cachedCacheFlushScript returns the immutable cached program under the read lock.
+func cachedCacheFlushScript(
+	scriptPath string,
+	digest [sha256.Size]byte,
+	snapshot *config.ArtifactSnapshot,
+) *compiledCacheFlushScript {
+	compileMu.RLock()
+	defer compileMu.RUnlock()
+
+	if cacheFlushScriptMatches(compiledScript, scriptPath, digest, snapshot) {
+		return compiledScript
+	}
+
+	return nil
+}
+
+// cacheFlushScriptMatches compares one cached program with the exact sealed source identity.
+func cacheFlushScriptMatches(
+	program *compiledCacheFlushScript,
+	scriptPath string,
+	digest [sha256.Size]byte,
+	snapshot *config.ArtifactSnapshot,
+) bool {
+	return program != nil && program.path == scriptPath && program.digest == digest && program.snapshot == snapshot
+}
+
+// compileCacheFlushSource compiles one sealed source into an immutable cache program.
+func compileCacheFlushSource(
+	snapshot *config.ArtifactSnapshot,
+	scriptPath string,
+	digest [sha256.Size]byte,
+	modules *luaseal.Modules,
+) (*compiledCacheFlushScript, error) {
+	source, err := snapshot.ReadFile(scriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("load sealed cache flush script %s: %w", scriptPath, err)
+	}
+	defer clear(source)
+
+	proto, err := lualib.CompileLuaSource(scriptPath, source)
 	if err != nil {
 		return nil, fmt.Errorf("compiling cache flush script %s: %w", scriptPath, err)
 	}
 
-	compiledScript = proto
-
-	return compiledScript, nil
+	return &compiledCacheFlushScript{
+		prototype: proto,
+		modules:   modules,
+		snapshot:  snapshot,
+		digest:    digest,
+		path:      scriptPath,
+	}, nil
 }
 
 // RunCacheFlushScript executes the configured Lua cache flush script.
@@ -92,7 +209,7 @@ func RunCacheFlushScript(ctx context.Context, cfg config.File, logger *slog.Logg
 		return nil, nil
 	}
 
-	proto, err := compileScript(scriptPath)
+	program, err := compileScript(cfg, scriptPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +232,10 @@ func RunCacheFlushScript(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	L.SetContext(luaCtx)
 
+	if err = luaseal.PrepareProcess(L, program.modules); err != nil {
+		return nil, err
+	}
+
 	luapool.PrepareRequestEnv(L)
 
 	modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
@@ -136,7 +257,7 @@ func RunCacheFlushScript(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	requestTable := buildRequestTable(L, cfg, user, guid)
 
-	if err = executeCacheFlushScript(L, cfg, proto, requestTable, scriptPath); err != nil {
+	if err = executeCacheFlushScript(L, program, requestTable, scriptPath); err != nil {
 		logScriptError(logger, err, scriptPath)
 
 		return nil, err
@@ -170,12 +291,16 @@ func buildRequestTable(L *lua.LState, cfg config.File, user string, guid string)
 	return requestTable
 }
 
-func executeCacheFlushScript(L *lua.LState, cfg config.File, proto *lua.FunctionProto, requestTable *lua.LTable, scriptPath string) error {
-	if err := lualib.PackagePath(L, cfg); err != nil {
+func executeCacheFlushScript(L *lua.LState, program *compiledCacheFlushScript, requestTable *lua.LTable, scriptPath string) error {
+	if program == nil || program.prototype == nil || program.modules == nil {
+		return fmt.Errorf("prepared cache flush program is incomplete")
+	}
+
+	if err := luaseal.InstallProcess(L, program.modules); err != nil {
 		return err
 	}
 
-	if err := lualib.DoCompiledFile(L, proto); err != nil {
+	if err := lualib.DoCompiledFile(L, program.prototype); err != nil {
 		return err
 	}
 

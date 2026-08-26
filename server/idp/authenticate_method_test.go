@@ -1,64 +1,26 @@
 package idp
 
 import (
-	"log/slog"
 	"net/http/httptest"
 	"testing"
 
-	coreauth "github.com/croessner/nauthilus/v3/server/core/auth"
-
-	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redismock/v9"
 )
-
-type capturePasswordVerifier struct {
-	method          string
-	protocol        string
-	protocolContext *core.IDPRequestContext
-}
-
-func (v *capturePasswordVerifier) Verify(_ *gin.Context, auth *core.AuthState, _ []*core.PassDBMap) (*core.PassDBResult, error) {
-	v.method, v.protocol = auth.Request.Method, auth.GetProtocol().Get()
-	if auth.Runtime.IDPContext != nil {
-		protocolContext := *auth.Runtime.IDPContext
-		protocolContext.RequestedScopes = append([]string(nil), auth.Runtime.IDPContext.RequestedScopes...)
-		v.protocolContext = &protocolContext
-	}
-
-	result := core.GetPassDBResultFromPool()
-	result.Authenticated = true
-	result.UserFound = false
-	result.Account = "user1"
-	result.AccountField = definitions.MetaUserAccount
-	result.DisplayNameField = "User One"
-	result.UniqueUserIDField = "uid-1"
-	result.Backend = definitions.BackendLDAP
-
-	return result, nil
-}
 
 func TestNauthilusIDPAuthenticateWithBackendUsesTypedContextOverLegacyManager(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	verifier := &capturePasswordVerifier{}
-
-	core.RegisterPasswordVerifier(verifier)
-	defer core.RegisterPasswordVerifier(coreauth.DefaultPasswordVerifier{})
-
-	db, _ := redismock.NewClientMock()
-	cfg := &config.FileSettings{Server: &config.ServerSection{Redis: config.Redis{Prefix: "test:"}}}
-	d := &deps.Deps{
-		Cfg: cfg, Env: config.NewTestEnvironmentConfig(), Redis: rediscli.NewTestClient(db),
-		AccountCache: accountcache.NewManager(cfg), Logger: slog.Default(),
-	}
-	d.AuthApplication = core.NewAuthApplicationService(d.Auth())
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	application := &recordingIDPAuthApplication{authenticateResults: []applicationBoundaryResult{{
+		outcome: &core.AuthOutcome{Decision: core.AuthDecisionFail},
+	}}}
+	d := &deps.Deps{Cfg: cfg, Env: config.NewTestEnvironmentConfig(), AuthApplication: application}
 	idp := NewNauthilusIDP(d)
 
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -80,57 +42,42 @@ func TestNauthilusIDPAuthenticateWithBackendUsesTypedContextOverLegacyManager(t 
 	}
 	_, _ = idp.AuthenticateWithBackend(ctx, "user1", "pass1", "client1", "", typed)
 
-	if verifier.protocolContext == nil || verifier.protocolContext.GrantType != typed.GrantType ||
-		verifier.protocolContext.RedirectURI != typed.RedirectURI ||
-		len(verifier.protocolContext.RequestedScopes) != 2 ||
-		verifier.protocolContext.RequestedScopes[0] != "openid" ||
-		verifier.protocolContext.MFACompleted || verifier.protocolContext.MFAMethod != "" {
-		t.Fatalf("password verifier protocol context = %#v, want %#v", verifier.protocolContext, typed)
+	if len(application.authenticateInputs) != 1 {
+		t.Fatalf("application calls = %d, want 1", len(application.authenticateInputs))
+	}
+
+	input := application.authenticateInputs[0]
+	if input.IDP.Request.GrantType != typed.GrantType ||
+		input.IDP.Request.RedirectURI != typed.RedirectURI ||
+		len(input.IDP.Request.RequestedScopes) != 2 ||
+		input.IDP.Request.RequestedScopes[0] != "openid" {
+		t.Fatalf("application protocol context = %#v, want %#v", input.IDP.Request, typed)
 	}
 
 	if got := legacy.GetString(definitions.SessionKeyOIDCGrantType, ""); got != "legacy-grant" {
 		t.Fatalf("legacy manager was mutated: grant type = %q", got)
 	}
 
-	if verifier.protocol != definitions.ProtoOIDC {
-		t.Fatalf("password verifier protocol = %q, want %q", verifier.protocol, definitions.ProtoOIDC)
+	if input.Context.Protocol != definitions.ProtoOIDC {
+		t.Fatalf("application protocol = %q, want %q", input.Context.Protocol, definitions.ProtoOIDC)
 	}
 }
 
 func TestNauthilusIDPAuthenticateSetsPasswordMethodForIDPLogin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	verifier := &capturePasswordVerifier{}
-
-	core.RegisterPasswordVerifier(verifier)
-	defer core.RegisterPasswordVerifier(coreauth.DefaultPasswordVerifier{})
-
-	db, _ := redismock.NewClientMock()
-	redisClient := rediscli.NewTestClient(db)
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			Redis: config.Redis{
-				Prefix: "test:",
-			},
-		},
-	}
-
+	application := &recordingIDPAuthApplication{authenticateResults: []applicationBoundaryResult{{
+		outcome: &core.AuthOutcome{Decision: core.AuthDecisionFail},
+	}}}
 	d := &deps.Deps{
-		Cfg:          cfg,
-		Env:          config.NewTestEnvironmentConfig(),
-		Redis:        redisClient,
-		AccountCache: accountcache.NewManager(cfg),
-		Logger:       slog.Default(),
+		Cfg: &config.FileSettings{Server: &config.ServerSection{}},
+		Env: config.NewTestEnvironmentConfig(), AuthApplication: application,
 	}
-	d.AuthApplication = core.NewAuthApplicationService(d.Auth())
-
 	idp := NewNauthilusIDP(d)
 
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest("POST", "/login", nil)
 	ctx.Request.RemoteAddr = "192.168.1.100:12345"
-
 	setupMockContext(ctx, "test-idp-method-guid", definitions.ServIDP)
 
 	_, _ = idp.AuthenticateWithBackend(
@@ -142,7 +89,11 @@ func TestNauthilusIDPAuthenticateSetsPasswordMethodForIDPLogin(t *testing.T) {
 		core.IDPRequestContext{GrantType: definitions.OIDCFlowAuthorizationCode},
 	)
 
-	if verifier.method != "password" {
-		t.Fatalf("expected method to be %q, got %q", "password", verifier.method)
+	if len(application.authenticateInputs) != 1 {
+		t.Fatalf("application calls = %d, want 1", len(application.authenticateInputs))
+	}
+
+	if method := application.authenticateInputs[0].Context.Method; method != definitions.AuthMethodPassword {
+		t.Fatalf("expected method to be %q, got %q", definitions.AuthMethodPassword, method)
 	}
 }

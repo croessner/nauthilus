@@ -261,7 +261,6 @@ func TestGetUserBackendDataUsesRemoteAuthorityMFAStateWithoutLocalBackends(t *te
 	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
 	defer cleanup()
 
-	fixture.expectAccountMappings(backendDataUsername, definitions.ProtoIDP, backendDataUsername, 2)
 	fixture.expectSavedWebAuthnCache(t, &backend.User{
 		ID:          backendDataUniqueUserID,
 		Name:        backendDataUsername,
@@ -275,11 +274,10 @@ func TestGetUserBackendDataUsesRemoteAuthorityMFAStateWithoutLocalBackends(t *te
 	assert.Equal(t, http.StatusOK, statusCode)
 	assertBaselineBackendData(t, data, credential)
 	assert.Equal(t, remoteBackendDataBackendRef, data.AuthState.Runtime.RemoteBackendRef.OpaqueToken)
-	assert.Len(t, client.resolveUserRequests, 1)
 	assert.Len(t, client.mfaStateRequests, 1)
-	assert.Equal(t, backendDataUsername, client.resolveUserRequests[0].GetUsername())
 	assert.Equal(t, backendDataUsername, client.mfaStateRequests[0].GetUsername())
 	assert.True(t, client.mfaStateRequests[0].GetIncludeWebauthnCredentials())
+	assert.Empty(t, client.resolveUserRequests)
 	assert.Empty(t, client.lookupIdentityRequests)
 	assert.NoError(t, fixture.mock.ExpectationsWereMet())
 }
@@ -294,9 +292,6 @@ func TestCanonicalWebAuthnBackendDataUsesTargetBoundSessionAffinity(t *testing.T
 	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
 	defer cleanup()
 
-	fixture.expectAccountMappingsForClient(
-		backendDataUsername, definitions.ProtoOIDC, "client-a", backendDataUsername, 2,
-	)
 	fixture.expectSavedWebAuthnCache(t, &backend.User{
 		ID:          backendDataUniqueUserID,
 		Name:        backendDataUsername,
@@ -347,8 +342,8 @@ func TestCanonicalWebAuthnBackendDataUsesTargetBoundSessionAffinity(t *testing.T
 		assert.Equal(t, backendDataUniqueUserID, data.UniqueUserID)
 	}
 
-	if assert.Len(t, client.resolveUserRequests, 1) {
-		requestRef := client.resolveUserRequests[0].GetBackend().GetOpaqueToken()
+	if assert.Len(t, client.mfaStateRequests, 1) {
+		requestRef := client.mfaStateRequests[0].GetBackend().GetOpaqueToken()
 		assert.Equal(t, remoteBackendDataBackendRef, requestRef)
 		assert.NotEqual(t, delegatedTargetStaleBackendRef, requestRef)
 		assert.NotEqual(t, delegatedFactorBackendRef, requestRef)
@@ -369,7 +364,6 @@ func TestGetUserBackendDataPurgesStaleWebAuthnCacheWhenAuthorityHasNoCredentials
 	defer cleanup()
 
 	redisKey := fixture.cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + backendDataUniqueUserID
-	fixture.expectAccountMappings(backendDataUsername, definitions.ProtoIDP, backendDataUsername, 2)
 	fixture.mock.ExpectDel(redisKey).SetVal(1)
 
 	handler := newBackendDataFrontendHandler(fixture.backendDataBaseFixture)
@@ -461,7 +455,6 @@ func TestBackendDataLookupFromWebAuthnFinishUsesCanonicalRemoteAffinity(t *testi
 	cleanup := remote.SetAuthorityClientForTest(remoteBackendDataAuthority, client)
 	defer cleanup()
 
-	fixture.expectAccountMappings(backendDataUsername, definitions.ProtoOIDC, backendDataUsername, 2)
 	fixture.mock.ExpectDel(
 		fixture.cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + backendDataUniqueUserID,
 	).SetVal(0)
@@ -498,7 +491,8 @@ func TestBackendDataLookupFromWebAuthnFinishUsesCanonicalRemoteAffinity(t *testi
 		assert.Equal(t, backendDataUniqueUserID, data.UniqueUserID)
 	}
 
-	assert.Len(t, client.resolveUserRequests, 1)
+	assert.Len(t, client.mfaStateRequests, 1)
+	assert.Empty(t, client.resolveUserRequests)
 	assert.NoError(t, fixture.mock.ExpectationsWereMet())
 }
 
@@ -516,13 +510,15 @@ func newBackendDataTestCredential() mfa.PersistentCredential {
 
 func newBackendDataFrontendHandler(fixture *backendDataBaseFixture) *FrontendHandler {
 	d := &deps.Deps{
-		Cfg:          fixture.cfg,
-		Env:          config.NewTestEnvironmentConfig(),
-		Logger:       slog.Default(),
-		Redis:        fixture.redis,
-		AccountCache: accountcache.NewManager(fixture.cfg),
+		Cfg:             fixture.cfg,
+		Env:             config.NewTestEnvironmentConfig(),
+		Logger:          slog.Default(),
+		Redis:           fixture.redis,
+		AccountCache:    accountcache.NewManager(fixture.cfg),
+		LDAPQueue:       priorityqueue.LDAPQueue,
+		LDAPAuthQueue:   priorityqueue.LDAPAuthQueue,
+		AuthApplication: fixture.application,
 	}
-	d.AuthApplication = core.NewAuthApplicationService(d.Auth())
 
 	return &FrontendHandler{
 		deps: d,
@@ -749,9 +745,10 @@ func runWebAuthnFallbackRoute(run func(*gin.Context)) int {
 }
 
 type backendDataBaseFixture struct {
-	cfg   *config.FileSettings
-	redis rediscli.Client
-	mock  redismock.ClientMock
+	application core.AuthApplicationService
+	cfg         *config.FileSettings
+	redis       rediscli.Client
+	mock        redismock.ClientMock
 }
 
 type backendDataLDAPFixture struct {
@@ -776,7 +773,7 @@ func newBackendDataLDAPFixture(t *testing.T) *backendDataLDAPFixture {
 
 	priorityqueue.LDAPQueue.AddPoolName(backendDataPoolName)
 
-	return &backendDataLDAPFixture{
+	fixture := &backendDataLDAPFixture{
 		backendDataBaseFixture: &backendDataBaseFixture{
 			cfg:   cfg,
 			redis: rediscli.NewTestClient(db),
@@ -785,6 +782,25 @@ func newBackendDataLDAPFixture(t *testing.T) *backendDataLDAPFixture {
 		securityManager: security.NewManager(encryptionSecret),
 		poolName:        backendDataPoolName,
 	}
+	fixture.application = &recordingBackendDataApplication{outcome: &core.AuthOutcome{
+		Attributes:        fixture.backendIdentityReply(t),
+		Decision:          core.AuthDecisionOK,
+		Account:           backendDataUsername,
+		AccountField:      backendDataAttrUID,
+		DisplayName:       backendDataDisplayName,
+		UniqueUserID:      backendDataUniqueUserID,
+		TOTPSecretField:   backendDataAttrTOTPSecret,
+		TOTPRecoveryField: backendDataAttrRecoveryCode,
+		UniqueUserIDField: backendDataAttrUniqueUserID,
+		DisplayNameField:  backendDataAttrDisplayName,
+		BackendName:       backendDataPoolName,
+		Protocol:          definitions.ProtoIDP,
+		Backend:           definitions.BackendLDAP,
+		HTTPStatus:        http.StatusOK,
+		PolicyTerminal:    true,
+	}}
+
+	return fixture
 }
 
 func newBackendDataRemoteFixture(t *testing.T) *backendDataRemoteFixture {
@@ -796,13 +812,39 @@ func newBackendDataRemoteFixture(t *testing.T) *backendDataRemoteFixture {
 
 	db, mock := redismock.NewClientMock()
 
-	return &backendDataRemoteFixture{
+	fixture := &backendDataRemoteFixture{
 		backendDataBaseFixture: &backendDataBaseFixture{
 			cfg:   cfg,
 			redis: rediscli.NewTestClient(db),
 			mock:  mock,
 		},
 	}
+	fixture.application = &recordingBackendDataApplication{outcome: &core.AuthOutcome{
+		Attributes: bktype.AttributeMapping{
+			backendDataAttrUID:          {backendDataUsername},
+			backendDataAttrDisplayName:  {backendDataDisplayName},
+			backendDataAttrUniqueUserID: {backendDataUniqueUserID},
+		},
+		Decision:          core.AuthDecisionOK,
+		Account:           backendDataUsername,
+		AccountField:      backendDataAttrUID,
+		DisplayName:       backendDataDisplayName,
+		UniqueUserID:      backendDataUniqueUserID,
+		UniqueUserIDField: backendDataAttrUniqueUserID,
+		DisplayNameField:  backendDataAttrDisplayName,
+		BackendName:       remoteBackendDataAuthorityBackend,
+		Protocol:          definitions.ProtoIDP,
+		Backend:           definitions.BackendRemote,
+		HTTPStatus:        http.StatusOK,
+		PolicyTerminal:    true,
+		RemoteBackendRef: core.RemoteBackendRef{
+			Type: definitions.BackendLDAPName, Name: remoteBackendDataAuthorityBackend,
+			Protocol: definitions.ProtoIDP, Authority: remoteBackendDataAuthority,
+			OpaqueToken: remoteBackendDataBackendRef,
+		},
+	}}
+
+	return fixture
 }
 
 func newBackendDataLDAPConfig(t *testing.T, encryptionSecret secret.Value) *config.FileSettings {
@@ -870,7 +912,7 @@ func newBackendDataRemoteConfig(t *testing.T) *config.FileSettings {
 		Auth: &config.AuthSection{
 			Backends: config.AuthBackendsSection{
 				Remote: map[string]*config.RemoteBackendSection{
-					config.RemoteBackendDefaultName: {
+					remoteBackendDataAuthorityBackend: {
 						Authority: remoteBackendDataAuthority,
 						Mode:      config.RemoteBackendModeNauthilus,
 						AllowedOperations: []string{
@@ -931,9 +973,7 @@ func configureBackendDataGlobals(cfg *config.FileSettings, env config.Environmen
 	config.SetTestEnvironmentConfig(env)
 	config.SetTestFile(cfg)
 	core.InitPassDBResultPool()
-	core.SetDefaultConfigFile(cfg)
 	core.SetDefaultLogger(slog.Default())
-	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultLogger(slog.Default())
 	util.SetDefaultEnvironment(env)
 }
@@ -947,35 +987,6 @@ func (f *backendDataLDAPFixture) encrypt(t *testing.T, value string) string {
 	}
 
 	return encrypted
-}
-
-// expectAccountMappings records admission plus concurrent read-before-write account mapping.
-func (f *backendDataBaseFixture) expectAccountMappings(
-	username string,
-	protocol string,
-	account string,
-	count int,
-) {
-	f.expectAccountMappingsForClient(username, protocol, "", account, count)
-}
-
-// expectAccountMappingsForClient records admitted account mapping bound to an OIDC client.
-func (f *backendDataBaseFixture) expectAccountMappingsForClient(
-	username string,
-	protocol string,
-	clientID string,
-	account string,
-	count int,
-) {
-	key := rediscli.GetUserHashKey(f.cfg.GetServer().GetRedis().GetPrefix(), username)
-	field := accountcache.GetAccountMappingField(username, protocol, clientID)
-
-	f.mock.ExpectHGet(key, field).RedisNil()
-
-	for range count {
-		f.mock.ExpectHGet(key, field).RedisNil()
-		f.mock.ExpectHSet(key, field, account).SetVal(1)
-	}
 }
 
 func (f *backendDataLDAPFixture) expectEmptyWebAuthnCache(uniqueUserID string) {
@@ -1014,7 +1025,6 @@ func (f *backendDataLDAPFixture) expectSavedWebAuthnCache(t *testing.T, user *ba
 func (f *backendDataLDAPFixture) expectBackendDataRequestFlow(t *testing.T, credential mfa.PersistentCredential) {
 	t.Helper()
 
-	f.expectAccountMappings(backendDataUsername, definitions.ProtoIDP, backendDataUsername, 2)
 	f.expectEmptyWebAuthnCache(backendDataUniqueUserID)
 	f.expectSavedWebAuthnCache(t, &backend.User{
 		ID:          backendDataUniqueUserID,
@@ -1036,7 +1046,6 @@ func (f *backendDataLDAPFixture) replyToBackendDataSearches(
 	}
 
 	return f.replyToLDAPSearches(
-		f.backendIdentityReply(t),
 		bktype.AttributeMapping{
 			backendDataAttrWebAuthnCredential: {string(credentialJSON)},
 		},

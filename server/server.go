@@ -27,13 +27,13 @@ import (
 	"github.com/croessner/nauthilus/v3/server/backend"
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v3/server/backend/ldappool"
-	"github.com/croessner/nauthilus/v3/server/bruteforce"
+	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/core"
+	coreauth "github.com/croessner/nauthilus/v3/server/core/auth"
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/core/language"
-	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	handlerbackchannel "github.com/croessner/nauthilus/v3/server/handler/backchannel"
 	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
@@ -41,12 +41,10 @@ import (
 	handlerauthority "github.com/croessner/nauthilus/v3/server/handler/grpcauthority"
 	handlerhealth "github.com/croessner/nauthilus/v3/server/handler/health"
 	handlermetrics "github.com/croessner/nauthilus/v3/server/handler/metrics"
-	handlerpolicyhttp "github.com/croessner/nauthilus/v3/server/handler/policyhttp"
 	"github.com/croessner/nauthilus/v3/server/idp"
 	"github.com/croessner/nauthilus/v3/server/log/level"
-	"github.com/croessner/nauthilus/v3/server/lualib"
-	"github.com/croessner/nauthilus/v3/server/lualib/action"
 	"github.com/croessner/nauthilus/v3/server/lualib/redislib"
+	"github.com/croessner/nauthilus/v3/server/pluginruntime"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/rediscli"
@@ -68,7 +66,6 @@ type contextStore struct {
 	ldapLookup *contextTuple
 	ldapAuth   *contextTuple
 	lua        *contextTuple
-	action     *contextTuple
 	server     *contextTuple
 
 	// cfgProvider provides the current config snapshot for newly migrated code paths.
@@ -88,6 +85,21 @@ type contextStore struct {
 
 	// accountCache is the injected account cache manager for newly migrated code paths.
 	accountCache *accountcache.Manager
+
+	// policyStore is the sole injected runtime generation authority.
+	policyStore *policyruntime.GenerationStore
+
+	// policyDecision is the sole injected service over policyStore.
+	policyDecision *decisionservice.DecisionService
+
+	// routeArtifacts owns listener credentials and HTTP-served files parsed before the initial generation commit.
+	routeArtifacts *core.RouteArtifacts
+
+	// pluginRunner is the explicitly started process-owned native runtime.
+	pluginRunner *pluginruntime.Runner
+
+	// bruteForceTolerate is the explicitly constructed boot-lifetime tolerance owner.
+	bruteForceTolerate tolerate.Tolerate
 
 	// signals holds server lifecycle channels via the interface (no globals)
 	signals core.ServerSignals
@@ -111,13 +123,6 @@ func newContextTuple(ctx context.Context) *contextTuple {
 // stopContext cancels the context associated with the given contextTuple.
 func stopContext(tuple *contextTuple) {
 	tuple.cancel()
-}
-
-// startActionWorker starts the action workers concurrently to perform the specified actions using the provided context.
-func startActionWorker(actionWorkers []*action.Worker, act *contextTuple) {
-	for i := range actionWorkers {
-		go actionWorkers[i].Work(act.ctx)
-	}
 }
 
 func forEachConfiguredBackendName(cfg config.File, backendType definitions.Backend, fn func(name string)) {
@@ -177,25 +182,12 @@ func startLuaWorkers(store *contextStore, cfg config.File, logger *slog.Logger, 
 	})
 }
 
-// initializeActionWorkers creates and initializes a slice of action workers based on the maximum workers configuration.
-func initializeActionWorkers(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, env config.Environment) []*action.Worker {
-	var workers []*action.Worker
-
-	for i := 0; i < cfg.GetLuaActionNumberOfWorkers(); i++ {
-		workers = append(workers, action.NewWorker(cfg, logger, redisClient, env))
-	}
-
-	return workers
-}
-
-// setupWorkers initializes action workers and backend workers (LDAP, Lua, etc.) based on the provided configuration.
-func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, channel backend.Channel) {
+// setupWorkers initializes backend workers based on the provided configuration.
+func setupWorkers(ctx context.Context, store *contextStore, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, channel backend.Channel) {
 	var (
 		ldapStarted bool
 		luaStarted  bool
 	)
-
-	startActionWorker(actionWorkers, store.action)
 
 	for _, backendType := range cfg.GetServer().GetBackends() {
 		switch backendType.Get() {
@@ -283,7 +275,7 @@ func setupRedis(readinessCtx context.Context, runCtx context.Context, cfg config
 
 		if checkRedisConnections(readinessCtx, client) {
 			go core.UpdateRedisPoolStats(client)
-			go rediscli.UpdateRedisServerMetrics(runCtx, cfg, logger)
+			go rediscli.UpdateRedisServerMetrics(runCtx, cfg, logger, client)
 
 			// Upload all Lua scripts to Redis at startup
 			go func(uploadCtx context.Context) {
@@ -338,11 +330,14 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 }
 
 type httpServerRuntime struct {
-	store   *contextStore
-	cfg     config.File
-	env     config.Environment
-	logger  *slog.Logger
-	signals core.ServerSignals
+	store           *contextStore
+	cfg             config.File
+	env             config.Environment
+	logger          *slog.Logger
+	policyDecision  *decisionservice.DecisionService
+	authApplication core.AuthApplicationService
+	signals         core.ServerSignals
+	routeArtifacts  *core.RouteArtifacts
 }
 
 type httpSetupCallbacks struct {
@@ -360,14 +355,15 @@ func startHTTPServerWithOptions(ctx context.Context, store *contextStore, option
 
 	callbacks := buildHTTPSetupCallbacks(runtime)
 	app := core.NewDefaultHTTPApp(core.HTTPDeps{
-		Cfg:          runtime.cfg,
-		Logger:       runtime.logger,
-		Env:          runtime.env,
-		Redis:        runtime.store.redisClient,
-		AccountCache: runtime.store.accountCache,
+		Cfg:            runtime.cfg,
+		Logger:         runtime.logger,
+		Env:            runtime.env,
+		Redis:          runtime.store.redisClient,
+		AccountCache:   runtime.store.accountCache,
+		RouteArtifacts: runtime.routeArtifacts,
 	})
 
-	if err := startGRPCAuthorityForHTTP(runtime.store.server.ctx, runtime.store, runtime.cfg, runtime.env, runtime.logger, options); err != nil {
+	if err := startGRPCAuthorityForHTTP(runtime.store.server.ctx, runtime, options); err != nil {
 		return err
 	}
 
@@ -382,18 +378,40 @@ func prepareHTTPServerRuntime(ctx context.Context, store *contextStore) (httpSer
 		return httpServerRuntime{}, err
 	}
 
-	configureHTTPServerDefaults(store, cfg, env, logger)
+	hostServices := coreauth.NewDefaultHostServices()
+	configureHTTPServerDefaults(store, cfg, env, logger, hostServices)
 	logHTTPServerStart(logger)
 
 	store.server = newContextTuple(ctx)
 	store.signals = core.NewDefaultServerSignals(cfg.GetServer().IsHTTP3Enabled())
 
+	authApplication, err := core.NewProductionAuthApplicationService(core.AuthDeps{
+		Cfg:                  cfg,
+		Env:                  env,
+		Logger:               logger,
+		Redis:                store.redisClient,
+		AccountCache:         store.accountCache,
+		Channel:              store.channel,
+		Tolerate:             store.bruteForceTolerate,
+		PluginBackendFactory: pluginruntime.NewBackendManagerFactory(store.pluginRunner),
+		NativeRuntime:        pluginruntime.NewAuthnRequestRuntime(),
+		HostServices:         hostServices,
+		LDAPQueue:            priorityqueue.LDAPQueue,
+		LDAPAuthQueue:        priorityqueue.LDAPAuthQueue,
+	}, store.policyDecision)
+	if err != nil {
+		return httpServerRuntime{}, fmt.Errorf("create production auth application: %w", err)
+	}
+
 	return httpServerRuntime{
-		store:   store,
-		cfg:     cfg,
-		env:     env,
-		logger:  logger,
-		signals: store.signals,
+		store:           store,
+		cfg:             cfg,
+		env:             env,
+		logger:          logger,
+		policyDecision:  store.policyDecision,
+		authApplication: authApplication,
+		signals:         store.signals,
+		routeArtifacts:  store.routeArtifacts,
 	}, nil
 }
 
@@ -412,6 +430,18 @@ func validateHTTPServerStartStore(store *contextStore) (config.File, config.Envi
 
 	if store.cfgProvider == nil {
 		return nil, nil, nil, fmt.Errorf("config provider is nil")
+	}
+
+	if store.policyStore == nil {
+		return nil, nil, nil, fmt.Errorf("policy generation store is nil")
+	}
+
+	if store.policyDecision == nil {
+		return nil, nil, nil, fmt.Errorf("policy decision service is nil")
+	}
+
+	if store.routeArtifacts == nil {
+		return nil, nil, nil, fmt.Errorf("prepared route artifacts are nil")
 	}
 
 	snap := store.cfgProvider.Current()
@@ -433,43 +463,26 @@ func validateHTTPServerStartStore(store *contextStore) (config.File, config.Envi
 	return cfg, env, store.logger, nil
 }
 
-func configureHTTPServerDefaults(store *contextStore, cfg config.File, env config.Environment, logger *slog.Logger) {
+func configureHTTPServerDefaults(
+	store *contextStore,
+	cfg config.File,
+	env config.Environment,
+	logger *slog.Logger,
+	hostServices core.AuthnHostServices,
+) {
 	core.SetDefaultResponseWriter(core.NewDefaultResponseWriter(core.ResponseDeps{
-		Cfg:      cfg,
-		Env:      env,
-		Logger:   logger,
-		Resolver: newDefaultPolicyMessageResolver(cfg),
+		Cfg:       cfg,
+		Env:       env,
+		Logger:    logger,
+		WaitDelay: hostServices.WaitDelay,
 	}))
 	core.SetDefaultEnvironment(env)
-	core.SetDefaultConfigFile(cfg)
 	core.SetDefaultLogger(logger)
 	util.SetDefaultEnvironment(env)
-	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultLogger(logger)
 	ldappool.SetDefaultEnvironment(env)
-	action.SetDefaultEnvironment(env)
 	redislib.SetDefaultClient(store.redisClient)
-	backend.SetDefaultRedisClient(store.redisClient)
-	bruteforce.SetDefaultRedisClient(store.redisClient)
-	core.SetDefaultRedisClient(store.redisClient)
 	tolerate.SetDefaultClient(store.redisClient)
-}
-
-func newDefaultPolicyMessageResolver(cfg config.File) localization.MessageResolver {
-	runtime := lualib.DefaultI18NRuntime()
-	if runtime == nil || runtime.Registry == nil {
-		return nil
-	}
-
-	return localization.NewRegistryResolver(runtime.Registry, defaultPolicyMessageLanguage(cfg))
-}
-
-func defaultPolicyMessageLanguage(cfg config.File) string {
-	if cfg == nil || cfg.GetServer() == nil {
-		return ""
-	}
-
-	return cfg.GetServer().Frontend.GetDefaultLanguage()
 }
 
 func logHTTPServerStart(logger *slog.Logger) {
@@ -545,17 +558,18 @@ func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
 
 func frontendHandlerDeps(runtime httpServerRuntime) *handlerdeps.Deps {
 	deps := &handlerdeps.Deps{
-		Cfg:             runtime.cfg,
-		CfgProvider:     runtime.store.cfgProvider,
-		Env:             runtime.env,
-		Logger:          runtime.logger,
-		Redis:           runtime.store.redisClient,
-		Channel:         runtime.store.channel,
-		AccountCache:    runtime.store.accountCache,
-		LangManager:     runtime.store.langManager,
-		MessageResolver: newDefaultPolicyMessageResolver(runtime.cfg),
+		Cfg:            runtime.cfg,
+		Env:            runtime.env,
+		Logger:         runtime.logger,
+		Redis:          runtime.store.redisClient,
+		Channel:        runtime.store.channel,
+		AccountCache:   runtime.store.accountCache,
+		LangManager:    runtime.store.langManager,
+		RouteArtifacts: runtime.routeArtifacts,
+		LDAPQueue:      priorityqueue.LDAPQueue,
+		LDAPAuthQueue:  priorityqueue.LDAPAuthQueue,
 	}
-	deps.AuthApplication = core.NewAuthApplicationService(deps.Auth())
+	deps.AuthApplication = runtime.authApplication
 	deps.Svc = handlerdeps.NewDefaultServices(deps)
 
 	return deps
@@ -603,26 +617,22 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 	)
 
 	return func(e *gin.Engine) {
-		policyDecision, err := newPolicyDecisionService()
-		if err != nil {
-			_ = level.Error(runtime.logger).Log(definitions.LogKeyMsg, "Policy decision service initialization failed", definitions.LogKeyError, err)
-		}
-
 		deps := &handlerdeps.Deps{
 			Cfg:            runtime.cfg,
-			CfgProvider:    runtime.store.cfgProvider,
 			Env:            runtime.env,
 			Logger:         runtime.logger,
 			Redis:          runtime.store.redisClient,
 			LangManager:    runtime.store.langManager,
 			TokenFlusher:   tokenStorage,
-			PolicyDecision: policyDecision,
-			PolicyTransport: handlerpolicyhttp.NewTrustedProxyTransportEvidence(
-				runtime.cfg.GetServer().GetTrustedProxies(),
-			),
+			PolicyDecision: runtime.policyDecision,
+			PluginRunner:   runtime.store.pluginRunner,
+			Tolerate:       runtime.store.bruteForceTolerate,
+			RouteArtifacts: runtime.routeArtifacts,
+			LDAPQueue:      priorityqueue.LDAPQueue,
+			LDAPAuthQueue:  priorityqueue.LDAPAuthQueue,
 		}
 
-		deps.AuthApplication = core.NewAuthApplicationService(deps.Auth())
+		deps.AuthApplication = runtime.authApplication
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 		if err := handlerbackchannel.Setup(e, deps); err != nil {
 			_ = level.Error(runtime.logger).Log(definitions.LogKeyMsg, "Backchannel route setup failed", definitions.LogKeyError, err)
@@ -630,47 +640,31 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 	}
 }
 
-// newPolicyDecisionService connects each Policy transport to the generation-capturing application authority.
-func newPolicyDecisionService() (*decisionservice.DecisionService, error) {
-	source, err := decisionservice.NewStoreGenerationSource(policyruntime.DefaultGenerationStore())
-	if err != nil {
-		return nil, err
-	}
-
-	return decisionservice.NewDecisionService(source)
-}
-
 func startGRPCAuthorityForHTTP(
 	ctx context.Context,
-	store *contextStore,
-	cfg config.File,
-	env config.Environment,
-	logger *slog.Logger,
+	runtime httpServerRuntime,
 	options httpServerStartOptions,
 ) error {
-	policyDecision, policyErr := newPolicyDecisionService()
-	if policyErr != nil {
-		return fmt.Errorf("create Policy decision service: %w", policyErr)
-	}
-
 	grpcAuthorityDone, err := options.effectiveGRPCAuthorityStarter()(ctx, handlerauthority.ServerDeps{
-		Cfg: cfg,
-		CurrentConfig: func() config.File {
-			return store.cfgProvider.Current().File
-		},
-		Env:             env,
-		Logger:          logger,
-		Redis:           store.redisClient,
-		AccountCache:    store.accountCache,
-		Channel:         store.channel,
-		PolicyService:   policyDecision,
-		MessageResolver: newDefaultPolicyMessageResolver(cfg),
+		Cfg:                  runtime.cfg,
+		Env:                  runtime.env,
+		Logger:               runtime.logger,
+		Redis:                runtime.store.redisClient,
+		AccountCache:         runtime.store.accountCache,
+		Channel:              runtime.store.channel,
+		AuthService:          runtime.authApplication,
+		PolicyService:        runtime.policyDecision,
+		PluginBackendFactory: pluginruntime.NewBackendManagerFactory(runtime.store.pluginRunner),
+		Tolerate:             runtime.store.bruteForceTolerate,
+		RouteArtifacts:       runtime.routeArtifacts,
+		LDAPQueue:            priorityqueue.LDAPQueue,
+		LDAPAuthQueue:        priorityqueue.LDAPAuthQueue,
 	})
 	if err != nil {
-		store.grpcAuthorityDone = nil
+		runtime.store.grpcAuthorityDone = nil
 
 		if options.continueHTTPOnGRPCAuthorityError {
-			_ = level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to start gRPC authority server; continuing HTTP startup", definitions.LogKeyError, err)
+			_ = level.Warn(runtime.logger).Log(definitions.LogKeyMsg, "Unable to start gRPC authority server; continuing HTTP startup", definitions.LogKeyError, err)
 
 			return nil
 		}
@@ -678,7 +672,7 @@ func startGRPCAuthorityForHTTP(
 		return fmt.Errorf("start gRPC authority server: %w", err)
 	}
 
-	store.grpcAuthorityDone = grpcAuthorityDone
+	runtime.store.grpcAuthorityDone = grpcAuthorityDone
 
 	return nil
 }

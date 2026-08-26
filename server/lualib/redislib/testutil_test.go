@@ -50,7 +50,6 @@ func bindRedisRuntimeContextForTest(ctx context.Context, L *lua.LState) {
 func setupRedisLuaTestConfig() *config.FileSettings {
 	testFile := &config.FileSettings{Server: &config.ServerSection{}}
 	config.SetTestFile(testFile)
-	util.SetDefaultConfigFile(testFile)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	return testFile

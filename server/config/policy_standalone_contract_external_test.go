@@ -17,12 +17,14 @@ package config_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -44,6 +46,114 @@ type policyCutoverPathCase struct {
 	path     string
 	validate bool
 }
+
+type removedPolicyRootCase struct {
+	name   string
+	source string
+	want   bool
+}
+
+var removedPolicyRootCases = []removedPolicyRootCase{
+	{
+		name:   "policy is first auth child",
+		source: "auth:\n  policy: {}\n",
+		want:   true,
+	},
+	{
+		name: "policy follows another auth child",
+		source: `auth:
+  controls:
+    brute_force: {}
+  policy: {}
+`,
+		want: true,
+	},
+	{
+		name: "nested policy is not auth policy",
+		source: `auth:
+  controls:
+    policy: {}
+`,
+	},
+	{
+		name:   "top level policy is supported",
+		source: "auth: {}\npolicy: {}\n",
+	},
+	{
+		name:   "json sibling",
+		source: `{"auth":{"controls":{},"policy":{}}}`,
+		want:   true,
+	},
+	{
+		name:   "yaml case variant empty",
+		source: "Auth:\n  Policy: {}\n",
+		want:   true,
+	},
+	{
+		name:   "yaml mixed case null",
+		source: "auth:\n  Policy: null\npolicy: {}\n",
+		want:   true,
+	},
+	{
+		name:   "yaml quoted literal dotted empty",
+		source: "\"auth.policy\": {}\n",
+		want:   true,
+	},
+	{
+		name:   "json case variant null",
+		source: `{"policy":{},"Auth":{"Policy":null}}`,
+		want:   true,
+	},
+	{
+		name:   "json literal dotted empty",
+		source: `{"policy":{},"auth.policy":{}}`,
+		want:   true,
+	},
+	{
+		name:   "toml section",
+		source: "[auth.controls]\nenabled = true\n[auth.policy]\nmode = \"observe\"\n",
+		want:   true,
+	},
+	{
+		name:   "toml case variant section",
+		source: "[Auth.Policy]\nmode = \"observe\"\n",
+		want:   true,
+	},
+	{
+		name:   "toml quoted literal dotted empty",
+		source: "\"auth.policy\" = {}\n",
+		want:   true,
+	},
+	{
+		name:   "flat property",
+		source: "auth.controls.enabled=true\nauth.policy.mode=observe\n",
+		want:   true,
+	},
+	{
+		name:   "flat case variant property",
+		source: "Auth.Policy.mode=observe\n",
+		want:   true,
+	},
+	{
+		name:   "tfvars inline object",
+		source: `auth = { controls = {}, policy = { mode = "observe" } }`,
+		want:   true,
+	},
+	{
+		name:   "prose is not a structural root",
+		source: "The removed auth.policy owner is documented elsewhere.\n",
+	},
+	{
+		name:   "namespace identity is not a structural root",
+		source: "auth.policy.contract\n",
+	},
+}
+
+// policyRepositoryTextFilter selects repository files for one supported-surface scan.
+type policyRepositoryTextFilter func(relativePath string) bool
+
+// policyRepositoryTextVisitor inspects one selected repository text file.
+type policyRepositoryTextVisitor func(relativePath string, source []byte)
 
 func TestPolicyCutoverStandaloneDecoderRejectsRemovedShapes(t *testing.T) {
 	for _, test := range policyCutoverRemovedShapeCases() {
@@ -392,22 +502,540 @@ func TestPolicyCutoverRequiredCheckExercisesContract(t *testing.T) {
 	}
 }
 
-func TestPolicyCutoverStandalonePackagesRemainIsolatedFromProduction(t *testing.T) {
+func TestPolicyCutoverProductionFileSettingsOwnsUnifiedPolicy(t *testing.T) {
 	settingsType := reflect.TypeFor[config.FileSettings]()
-	if _, ok := settingsType.FieldByName("Policy"); ok {
-		t.Fatal("FileSettings.Policy exists, want standalone contract isolation")
+
+	field, ok := settingsType.FieldByName("Policy")
+	if !ok {
+		t.Fatal("FileSettings.Policy is missing")
 	}
 
+	if field.Type != reflect.TypeFor[policyconfig.PolicyConfig]() {
+		t.Fatalf("FileSettings.Policy type = %s, want policyconfig.PolicyConfig", field.Type)
+	}
+}
+
+func TestPolicyCutoverProductionContainsNoRemovedAuthority(t *testing.T) {
 	root := policyContractRepositoryRoot(t)
 
-	violations, err := policyContractIsolationViolations(root)
+	violations, err := policyProductionAuthorityViolations(root)
 	if err != nil {
-		t.Fatalf("scan production imports: %v", err)
+		t.Fatalf("scan production policy authority: %v", err)
 	}
 
 	if len(violations) != 0 {
-		t.Fatalf("standalone policy packages escaped their boundary: %s", strings.Join(violations, "; "))
+		t.Fatalf("removed production policy authority remains:\n%s", strings.Join(violations, "\n"))
 	}
+}
+
+func TestPolicyCutoverProductionAbsenceOracleClassifiesEveryAuthorityFamily(t *testing.T) {
+	const source = `package fixture
+import (
+    "github.com/croessner/nauthilus/v3/server/policy/compiler"
+    "github.com/croessner/nauthilus/v3/server/policy/evaluation"
+)
+type AuthPolicySection struct{}
+type SnapshotStore struct{}
+type CompiledStagePlan struct{}
+type closedAdmissionAuthority struct{}
+type authPolicyConfigProvider interface { GetAuthPolicy() AuthPolicySection }
+func build() { _ = compiler.NewCompiler; _ = evaluation.NewEvaluator }
+`
+
+	file, err := parser.ParseFile(token.NewFileSet(), "authority_fixture.go", source, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse production authority fixture: %v", err)
+	}
+
+	violations := policyProductionFileAuthorityViolations("server/core/authority_fixture.go", file)
+	for _, category := range []string{
+		"config-root", "old-compiler", "old-plan", "second-generation", "closed-authority",
+		"ambient-config", "direct-evaluator",
+	} {
+		if !slices.ContainsFunc(violations, func(violation string) bool {
+			return strings.HasPrefix(violation, category+":")
+		}) {
+			t.Fatalf("classified production violations = %v, want category %q", violations, category)
+		}
+	}
+}
+
+func TestPolicyCutoverHistoricalRootExamplesAreExplicitlyAllowlisted(t *testing.T) {
+	root := policyContractRepositoryRoot(t)
+	allowlist := map[string]string{
+		"server/config/testdata/policy_migration/old.yaml": "frozen rejected old fixture",
+		"server/docs/policy_configuration_migration.md":    "paired manual old/new guide",
+	}
+	archiveIndexPath := filepath.Join(root, "server", "docs", "policy-layer", "README.md")
+
+	archiveIndex, err := os.ReadFile(archiveIndexPath)
+	if err != nil {
+		t.Fatalf("read historical Policy archive index: %v", err)
+	}
+
+	for _, required := range []string{"historical", "not operator documentation", "top-level `policy` root"} {
+		if !strings.Contains(string(archiveIndex), required) {
+			t.Fatalf("historical Policy archive index is missing classification %q", required)
+		}
+	}
+
+	for relative, purpose := range allowlist {
+		source, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if readErr != nil {
+			t.Fatalf("read %s %s: %v", purpose, relative, readErr)
+		}
+
+		if !containsRemovedPolicyRoot(source) {
+			t.Fatalf("allowlisted %s %q has no structural auth.policy example", purpose, relative)
+		}
+	}
+
+	unexpected, err := policyRemovedRootSurfaceViolations(root, allowlist)
+	if err != nil {
+		t.Fatalf("scan supported policy surfaces: %v", err)
+	}
+
+	if len(unexpected) != 0 {
+		t.Fatalf("unclassified structural auth.policy examples remain: %v", unexpected)
+	}
+}
+
+func TestPolicyCutoverRemovedRootDetectorHandlesAuthSiblings(t *testing.T) {
+	for _, test := range removedPolicyRootCases {
+		t.Run(test.name, func(t *testing.T) {
+			if got := containsRemovedPolicyRoot([]byte(test.source)); got != test.want {
+				t.Fatalf("containsRemovedPolicyRoot() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestPolicyCutoverSupportedSurfaceScanHonorsClassifications(t *testing.T) {
+	root := t.TempDir()
+	allowlist := map[string]string{
+		"server/config/testdata/policy_migration/old.yaml": "frozen rejected old fixture",
+		"server/docs/policy_configuration_migration.md":    "paired manual old/new guide",
+	}
+	fixtures := map[string]string{
+		"contrib/examples/current.yml": `auth:
+  controls: {}
+  policy: {}
+`,
+		"server/config/testdata/policy_migration/old.yaml": "auth:\n  policy: {}\n",
+		"server/docs/policy_configuration_migration.md":    "auth:\n  policy: {}\n",
+		"server/docs/policy-layer/historical.md":           "auth:\n  policy: {}\n",
+		"temp/planning.md":                                 "auth:\n  policy: {}\n",
+		"vendor/example.test/dependency.yml":               "auth:\n  policy: {}\n",
+	}
+
+	writePolicyRepositoryTextFixtures(t, root, fixtures)
+
+	violations, err := policyRemovedRootSurfaceViolations(root, allowlist)
+	if err != nil {
+		t.Fatalf("scan supported surface fixtures: %v", err)
+	}
+
+	want := []string{"contrib/examples/current.yml"}
+
+	if !slices.Equal(violations, want) {
+		t.Fatalf("supported surface violations = %v, want %v", violations, want)
+	}
+}
+
+// writePolicyRepositoryTextFixtures writes hermetic repository-scan fixtures.
+func writePolicyRepositoryTextFixtures(t *testing.T, root string, fixtures map[string]string) {
+	t.Helper()
+
+	for relativePath, source := range fixtures {
+		path := filepath.Join(root, filepath.FromSlash(relativePath))
+
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatalf("create fixture directory for %s: %v", relativePath, err)
+		}
+
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatalf("write fixture %s: %v", relativePath, err)
+		}
+	}
+}
+
+// policyRemovedRootSurfaceViolations scans supported configuration and documentation surfaces.
+func policyRemovedRootSurfaceViolations(root string, allowlist map[string]string) ([]string, error) {
+	violations := make([]string, 0)
+
+	err := walkPolicyRepositoryTextFiles(root, isPolicySupportedSurfaceFile, func(relativePath string, source []byte) {
+		if _, allowed := allowlist[relativePath]; allowed {
+			return
+		}
+
+		if containsRemovedPolicyRoot(source) {
+			violations = append(violations, relativePath)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	slices.Sort(violations)
+
+	return slices.Compact(violations), nil
+}
+
+// walkPolicyRepositoryTextFiles visits repository-owned text files after shared exclusions.
+func walkPolicyRepositoryTextFiles(
+	root string,
+	include policyRepositoryTextFilter,
+	visit policyRepositoryTextVisitor,
+) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+
+		relative = filepath.ToSlash(relative)
+
+		if entry.IsDir() {
+			if policyRepositoryDirectoryExcluded(relative) {
+				return filepath.SkipDir
+			}
+
+			return nil
+		}
+
+		if !include(relative) {
+			return nil
+		}
+
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		visit(relative, source)
+
+		return nil
+	})
+}
+
+// policyRepositoryDirectoryExcluded classifies non-production and historical trees.
+func policyRepositoryDirectoryExcluded(relativePath string) bool {
+	if relativePath == "server/docs/policy-layer" {
+		return true
+	}
+
+	return slices.Contains([]string{
+		".agents",
+		".codex",
+		".git",
+		"node_modules",
+		"temp",
+		"vendor",
+	}, filepath.Base(relativePath))
+}
+
+// isPolicySupportedSurfaceFile selects configuration, template, example, and documentation text.
+func isPolicySupportedSurfaceFile(relativePath string) bool {
+	if policyRepositoryTestOracle(relativePath) {
+		return false
+	}
+
+	extension := strings.ToLower(filepath.Ext(relativePath))
+
+	return slices.Contains([]string{
+		".adoc",
+		".cfg",
+		".conf",
+		".env",
+		".gohtml",
+		".gotmpl",
+		".hcl",
+		".html",
+		".ini",
+		".json",
+		".md",
+		".markdown",
+		".prop",
+		".properties",
+		".props",
+		".rst",
+		".tfvars",
+		".toml",
+		".tpl",
+		".tmpl",
+		".txt",
+		".vim",
+		".yaml",
+		".yml",
+	}, extension)
+}
+
+// isPolicySupportedReferenceFile extends surface files with production source and scripts.
+func isPolicySupportedReferenceFile(relativePath string) bool {
+	if isPolicySupportedSurfaceFile(relativePath) {
+		return true
+	}
+
+	if policyRepositoryTestOracle(relativePath) {
+		return false
+	}
+
+	baseName := strings.ToLower(filepath.Base(relativePath))
+
+	if slices.Contains([]string{".dockerignore", ".gitignore", "dockerfile", "makefile"}, baseName) {
+		return true
+	}
+
+	extension := strings.ToLower(filepath.Ext(relativePath))
+
+	return slices.Contains([]string{
+		".bash",
+		".fish",
+		".go",
+		".mk",
+		".py",
+		".sh",
+		".zsh",
+	}, extension)
+}
+
+// policyRepositoryTestOracle excludes source files whose strings intentionally describe rejection cases.
+func policyRepositoryTestOracle(relativePath string) bool {
+	baseName := strings.ToLower(filepath.Base(relativePath))
+
+	return strings.HasSuffix(baseName, "_test.go") ||
+		(strings.HasPrefix(baseName, "test_") && strings.HasSuffix(baseName, ".py"))
+}
+
+// containsRemovedPolicyRoot recognizes structural old roots without matching identifiers or prose.
+func containsRemovedPolicyRoot(source []byte) bool {
+	if containsJSONRemovedPolicyRoot(source) {
+		return true
+	}
+
+	lines := strings.Split(strings.ReplaceAll(string(source), "\r\n", "\n"), "\n")
+	for index, line := range lines {
+		if containsFlatRemovedPolicyRoot(line) {
+			return true
+		}
+
+		if policyRootObjectLine(line, "auth") && authObjectContainsPolicy(lines, index) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// authObjectContainsPolicy reports whether one textual auth object owns a direct policy child.
+func authObjectContainsPolicy(lines []string, authIndex int) bool {
+	authIndent := policyLineIndent(lines[authIndex])
+	childIndent := -1
+
+	for next := authIndex + 1; next < len(lines); next++ {
+		trimmed := strings.TrimSpace(lines[next])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		indent := policyLineIndent(lines[next])
+		if indent <= authIndent {
+			return false
+		}
+
+		if childIndent == -1 || indent < childIndent {
+			childIndent = indent
+		}
+
+		if indent == childIndent && policyRootObjectLine(lines[next], "policy") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// containsJSONRemovedPolicyRoot detects the removed nested owner in complete JSON documents.
+func containsJSONRemovedPolicyRoot(source []byte) bool {
+	document := make(map[string]any)
+
+	if err := json.Unmarshal(source, &document); err != nil {
+		return false
+	}
+
+	for rawKey, value := range document {
+		key := strings.TrimSpace(rawKey)
+		if strings.EqualFold(key, "auth.policy") {
+			return true
+		}
+
+		if !strings.EqualFold(key, "auth") {
+			continue
+		}
+
+		auth, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		for authKey := range auth {
+			if strings.EqualFold(strings.TrimSpace(authKey), "policy") {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// containsFlatRemovedPolicyRoot detects exact flat-format roots and inline mappings.
+func containsFlatRemovedPolicyRoot(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	compact := strings.ToLower(strings.NewReplacer(" ", "", "\t", "").Replace(trimmed))
+	structural := strings.NewReplacer(`"`, "", `'`, "").Replace(compact)
+
+	if structural == "[auth.policy]" || hasPolicyPrefix(structural, []string{
+		"[auth.policy.", "auth.policy=", "auth.policy:",
+	}) {
+		return true
+	}
+
+	if strings.HasPrefix(structural, "auth.policy.") {
+		return strings.Contains(structural, "=") || strings.Contains(structural, ":")
+	}
+
+	return containsInlineRemovedPolicyRoot(structural)
+}
+
+// hasPolicyPrefix reports whether a structural config line has any exact prefix.
+func hasPolicyPrefix(structural string, prefixes []string) bool {
+	return slices.ContainsFunc(prefixes, func(prefix string) bool {
+		return strings.HasPrefix(structural, prefix)
+	})
+}
+
+// containsInlineRemovedPolicyRoot detects old inline auth mappings in bounded text formats.
+func containsInlineRemovedPolicyRoot(structural string) bool {
+	patterns := []struct {
+		prefix string
+		child  string
+	}{
+		{prefix: "auth:{", child: "policy:"},
+		{prefix: "auth{", child: "policy{"},
+		{prefix: "auth={", child: "policy="},
+	}
+
+	return slices.ContainsFunc(patterns, func(pattern struct {
+		prefix string
+		child  string
+	}) bool {
+		return strings.HasPrefix(structural, pattern.prefix) && strings.Contains(structural, pattern.child)
+	})
+}
+
+// policyRootObjectLine reports whether a line starts one exact object key.
+func policyRootObjectLine(line string, key string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(line))
+	key = strings.ToLower(strings.TrimSpace(key))
+
+	for _, prefix := range []string{
+		key + ":",
+		`"` + key + `":`,
+		`'` + key + `':`,
+		key + " {",
+		key + "{",
+		key + " = {",
+		key + "={",
+	} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// policyLineIndent counts leading horizontal whitespace for structural sibling detection.
+func policyLineIndent(line string) int {
+	indent := 0
+
+	for _, character := range line {
+		if character != ' ' && character != '\t' {
+			break
+		}
+
+		indent++
+	}
+
+	return indent
+}
+
+// policyProductionAuthorityViolations scans non-test server code for removed authority families.
+func policyProductionAuthorityViolations(root string) ([]string, error) {
+	return policyGoSourceViolations(
+		root,
+		[]string{filepath.Join(root, "server")},
+		parser.SkipObjectResolution,
+		policyProductionFileAuthorityViolations,
+	)
+}
+
+// policyProductionFileAuthorityViolations classifies exact legacy symbols and imports.
+func policyProductionFileAuthorityViolations(path string, file *ast.File) []string {
+	classified := map[string]string{
+		"AuthPolicySection":              "config-root",
+		"GetAuthPolicy":                  "config-root",
+		"NewCompiler":                    "old-compiler",
+		"CompileAndActivate":             "old-compiler",
+		"CompiledStagePlan":              "old-plan",
+		"CompiledCheck":                  "old-plan",
+		"CompiledPolicy":                 "old-plan",
+		"SnapshotStore":                  "second-generation",
+		"NewSnapshotStore":               "second-generation",
+		"DefaultStore":                   "second-generation",
+		"BindDefaultStoreToGeneration":   "second-generation",
+		"PolicySnapshot":                 "second-generation",
+		"PolicySnapshotFromContext":      "second-generation",
+		"ContextWithPolicySnapshot":      "second-generation",
+		"closedCallerAuthenticationSlot": "closed-authority",
+		"closedAdmissionSlot":            "closed-authority",
+		"closedCallerAuthenticator":      "closed-authority",
+		"closedAdmissionAuthority":       "closed-authority",
+		"authPolicyConfigProvider":       "ambient-config",
+		"policyConfigProvider":           "ambient-config",
+	}
+	violations := make([]string, 0)
+
+	for _, importSpec := range file.Imports {
+		importPath, err := strconv.Unquote(importSpec.Path.Value)
+		if err == nil && importPath == "github.com/croessner/nauthilus/v3/server/policy/evaluation" {
+			violations = append(violations, "direct-evaluator:"+path+" imports "+importPath)
+		}
+	}
+
+	ast.Inspect(file, func(node ast.Node) bool {
+		identifier, ok := node.(*ast.Ident)
+		if !ok {
+			return true
+		}
+
+		category, forbidden := classified[identifier.Name]
+		if !forbidden {
+			return true
+		}
+
+		violations = append(violations, category+":"+path+" references "+identifier.Name)
+
+		return true
+	})
+
+	slices.Sort(violations)
+
+	return slices.Compact(violations)
 }
 
 func TestPolicyMigrationStandaloneModelContainsNoLegacyRepresentation(t *testing.T) {
@@ -468,55 +1096,6 @@ var oldRoot = "auth.policy"
 	}
 }
 
-// policyContractIsolationViolations finds production imports that escape the standalone package boundary.
-func policyContractIsolationViolations(root string) ([]string, error) {
-	standaloneDirectories := []string{
-		filepath.Join(root, "server", "config", "policyconfig"),
-		filepath.Join(root, "server", "policy", "configinput"),
-	}
-	forbiddenImports := []string{
-		"github.com/croessner/nauthilus/v3/server/config/policyconfig",
-		"github.com/croessner/nauthilus/v3/server/policy/configinput",
-	}
-	violations := make([]string, 0)
-
-	err := filepath.WalkDir(filepath.Join(root, "server"), func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			return nil
-		}
-
-		for _, directory := range standaloneDirectories {
-			if pathInsideDirectory(path, directory) {
-				return nil
-			}
-		}
-
-		imports, parseErr := policyContractImports(path)
-		if parseErr != nil {
-			return parseErr
-		}
-
-		for _, importPath := range imports {
-			if slices.Contains(forbiddenImports, importPath) {
-				relative, relativeErr := filepath.Rel(root, path)
-				if relativeErr != nil {
-					return relativeErr
-				}
-
-				violations = append(violations, relative+" imports "+importPath)
-			}
-		}
-
-		return nil
-	})
-
-	return violations, err
-}
-
 // policyContractLegacyModelViolations walks the public standalone model without relying on source layout.
 func policyContractLegacyModelViolations(model reflect.Type, visited map[reflect.Type]bool) []string {
 	if visited == nil {
@@ -562,40 +1141,67 @@ func policyContractStandaloneSourceViolations(root string) ([]string, error) {
 		filepath.Join(root, "server", "config", "policyconfig"),
 		filepath.Join(root, "server", "policy", "configinput"),
 	}
+
+	return policyGoSourceViolations(root, directories, parser.ParseComments, policyContractFileSourceViolations)
+}
+
+// policyGoSourceViolations parses production Go files and returns sorted unique classifications.
+func policyGoSourceViolations(
+	root string,
+	directories []string,
+	mode parser.Mode,
+	classify func(string, *ast.File) []string,
+) ([]string, error) {
 	violations := make([]string, 0)
 
 	for _, directory := range directories {
-		err := filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-				return nil
-			}
-
-			file, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, parser.ParseComments)
-			if parseErr != nil {
-				return parseErr
-			}
-
-			relative, relativeErr := filepath.Rel(root, path)
-			if relativeErr != nil {
-				return relativeErr
-			}
-
-			violations = append(violations, policyContractFileSourceViolations(relative, file)...)
-
-			return nil
-		})
+		directoryViolations, err := policyGoDirectoryViolations(root, directory, mode, classify)
 		if err != nil {
 			return nil, err
 		}
+
+		violations = append(violations, directoryViolations...)
 	}
 
 	slices.Sort(violations)
 
-	return violations, nil
+	return slices.Compact(violations), nil
+}
+
+// policyGoDirectoryViolations scans one directory without duplicating source-walk mechanics.
+func policyGoDirectoryViolations(
+	root string,
+	directory string,
+	mode parser.Mode,
+	classify func(string, *ast.File) []string,
+) ([]string, error) {
+	violations := make([]string, 0)
+
+	err := filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			return nil
+		}
+
+		file, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, mode)
+		if parseErr != nil {
+			return parseErr
+		}
+
+		relative, relativeErr := filepath.Rel(root, path)
+		if relativeErr != nil {
+			return relativeErr
+		}
+
+		violations = append(violations, classify(relative, file)...)
+
+		return nil
+	})
+
+	return violations, err
 }
 
 // policyContractFileSourceViolations identifies only forbidden old-policy coupling in one standalone source file.
@@ -682,34 +1288,4 @@ func policyContractRepositoryRoot(t *testing.T) string {
 	}
 
 	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
-}
-
-// pathInsideDirectory reports whether path belongs to one standalone package directory.
-func pathInsideDirectory(path string, directory string) bool {
-	relative, err := filepath.Rel(directory, path)
-	if err != nil {
-		return false
-	}
-
-	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
-}
-
-// policyContractImports parses only imports from one production Go source file.
-func policyContractImports(path string) ([]string, error) {
-	file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
-	if err != nil {
-		return nil, err
-	}
-
-	imports := make([]string, 0, len(file.Imports))
-	for _, importSpec := range file.Imports {
-		importPath, unquoteErr := strconv.Unquote(importSpec.Path.Value)
-		if unquoteErr != nil {
-			return nil, unquoteErr
-		}
-
-		imports = append(imports, importPath)
-	}
-
-	return imports, nil
 }

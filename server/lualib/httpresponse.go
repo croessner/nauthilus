@@ -205,35 +205,7 @@ func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 		stack := luastack.NewManager(L)
 		manager := NewHTTPResponseManager()
 
-		mod := newLuaModuleTable(L, httpHeaderFunctions(manager), httpBodyFunctions(manager))
-
-		// Expose essential HTTP status codes as UPPER_CASE module variables
-		statusCodes := map[string]int{
-			"STATUS_OK":                     200,
-			"STATUS_CREATED":                201,
-			"STATUS_NO_CONTENT":             204,
-			"STATUS_MOVED_PERMANENTLY":      301,
-			"STATUS_FOUND":                  302,
-			"STATUS_SEE_OTHER":              303,
-			"STATUS_NOT_MODIFIED":           304,
-			"STATUS_BAD_REQUEST":            400,
-			"STATUS_UNAUTHORIZED":           401,
-			"STATUS_FORBIDDEN":              403,
-			"STATUS_NOT_FOUND":              404,
-			"STATUS_METHOD_NOT_ALLOWED":     405,
-			"STATUS_CONFLICT":               409,
-			"STATUS_UNSUPPORTED_MEDIA_TYPE": 415,
-			"STATUS_TOO_MANY_REQUESTS":      429,
-			"STATUS_INTERNAL_SERVER_ERROR":  500,
-			"STATUS_NOT_IMPLEMENTED":        501,
-			"STATUS_BAD_GATEWAY":            502,
-			"STATUS_SERVICE_UNAVAILABLE":    503,
-			"STATUS_GATEWAY_TIMEOUT":        504,
-		}
-
-		for k, v := range statusCodes {
-			mod.RawSetString(k, lua.LNumber(v))
-		}
+		mod := newHTTPResponseModule(L, httpHeaderFunctions(manager), httpBodyFunctions(manager))
 
 		if ctx != nil {
 			bindRequestValue(L, mod, luaHTTPResponseContextKey, ctx)
@@ -241,6 +213,63 @@ func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 
 		return stack.PushResult(mod)
 	}
+}
+
+// LoaderHTTPResponseValidation exposes the exact HTTP response API as side-effect-free functions.
+func LoaderHTTPResponseValidation() lua.LGFunction {
+	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewHTTPResponseManager()
+		functions := inertHTTPResponseFunctions(httpHeaderFunctions(manager), httpBodyFunctions(manager))
+
+		return stack.PushResult(newHTTPResponseModule(L, functions))
+	}
+}
+
+// newHTTPResponseModule builds the shared function and status-code surface.
+func newHTTPResponseModule(L *lua.LState, functionGroups ...map[string]lua.LGFunction) *lua.LTable {
+	mod := newLuaModuleTable(L, functionGroups...)
+	statusCodes := map[string]int{
+		"STATUS_OK":                     200,
+		"STATUS_CREATED":                201,
+		"STATUS_NO_CONTENT":             204,
+		"STATUS_MOVED_PERMANENTLY":      301,
+		"STATUS_FOUND":                  302,
+		"STATUS_SEE_OTHER":              303,
+		"STATUS_NOT_MODIFIED":           304,
+		"STATUS_BAD_REQUEST":            400,
+		"STATUS_UNAUTHORIZED":           401,
+		"STATUS_FORBIDDEN":              403,
+		"STATUS_NOT_FOUND":              404,
+		"STATUS_METHOD_NOT_ALLOWED":     405,
+		"STATUS_CONFLICT":               409,
+		"STATUS_UNSUPPORTED_MEDIA_TYPE": 415,
+		"STATUS_TOO_MANY_REQUESTS":      429,
+		"STATUS_INTERNAL_SERVER_ERROR":  500,
+		"STATUS_NOT_IMPLEMENTED":        501,
+		"STATUS_BAD_GATEWAY":            502,
+		"STATUS_SERVICE_UNAVAILABLE":    503,
+		"STATUS_GATEWAY_TIMEOUT":        504,
+	}
+
+	for name, code := range statusCodes {
+		mod.RawSetString(name, lua.LNumber(code))
+	}
+
+	return mod
+}
+
+// inertHTTPResponseFunctions retains exact function names while suppressing validation-time effects.
+func inertHTTPResponseFunctions(functionGroups ...map[string]lua.LGFunction) map[string]lua.LGFunction {
+	functions := make(map[string]lua.LGFunction)
+
+	for _, group := range functionGroups {
+		for name := range group {
+			functions[name] = func(*lua.LState) int { return 0 }
+		}
+	}
+
+	return functions
 }
 
 // httpHeaderFunctions returns Lua functions that mutate HTTP response headers and status.

@@ -79,9 +79,10 @@ func NewBackendManager(backendName string, deps core.AuthDeps) core.BackendManag
 		return &Manager{cfg: remoteCfg, backendName: backendName, authorityName: remoteCfg.GetAuthority()}
 	}
 
-	tokenSource := newAuthorityTokenSource(remoteCfg.GetAuthority(), authorityCfg, deps)
+	artifacts, _ := config.ArtifactSnapshotFor(deps.Cfg)
+	tokenSource := newAuthorityTokenSource(remoteCfg.GetAuthority(), authorityCfg, artifacts, deps)
 
-	client, err := authorityClientFor(remoteCfg.GetAuthority(), authorityCfg, tokenSource)
+	client, err := authorityClientFor(remoteCfg.GetAuthority(), authorityCfg, artifacts, tokenSource)
 	if err != nil {
 		return &Manager{cfg: remoteCfg, backendName: backendName, authorityName: remoteCfg.GetAuthority()}
 	}
@@ -97,6 +98,7 @@ func NewBackendManager(backendName string, deps core.AuthDeps) core.BackendManag
 func newAuthorityTokenSource(
 	authorityName string,
 	authorityCfg *config.NauthilusAuthorityClientSection,
+	artifacts *config.ArtifactSnapshot,
 	deps core.AuthDeps,
 ) authorityclient.BearerTokenSource {
 	oidc := authorityCfg.GetCallerAuth().OIDCBearer
@@ -106,6 +108,7 @@ func newAuthorityTokenSource(
 
 	return authorityclient.NewBearerTokenSource(authorityclient.BearerTokenSourceOptions{
 		AuthorityName:    authorityName,
+		Artifacts:        artifacts,
 		Config:           &oidc,
 		Redis:            deps.Redis,
 		StrictSplitMode:  authorityCfg.IsSplitStrictMode(),

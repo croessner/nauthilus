@@ -26,36 +26,26 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/compiler"
+	"github.com/croessner/nauthilus/v3/server/policy/catalogcompile"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	"github.com/croessner/nauthilus/v3/server/policy/evaluation"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 )
 
-func TestAuthnStandardAuthPostActionRejectionPreservesPriorSyncEffects(t *testing.T) {
+func TestAuthnStandardAuthBruteForceExecutesOnlyBucketUpdate(t *testing.T) {
 	log := &authnEffectOrderLog{}
 	source := &recordingAuthnDecisionSource{standard: standardAuthBruteForceReport()}
 	evaluator, target := mustAuthnEffectRuntime(t, log)
-	acceptor := &orderedFailingAuthnAcceptor{log: log, err: errors.New("capacity unavailable")}
+	acceptor := &recordingEffectAcceptor{}
 
 	outcome := evaluateAuthnSourceCheckpoint(t, evaluator, target, source, acceptor)
 
-	if outcome.response.Effect() != decision.EffectIndeterminate {
-		t.Fatalf("acceptance rejection effect = %q, want indeterminate", outcome.response.Effect())
+	if outcome.response.Effect() != decision.EffectDeny {
+		t.Fatalf("brute-force effect = %q, want deny", outcome.response.Effect())
 	}
 
-	if outcome.response.Status().Code() != decision.StatusCodeEffectAcceptanceRejected {
-		t.Fatalf("acceptance rejection status = %q, want %q", outcome.response.Status().Code(), decision.StatusCodeEffectAcceptanceRejected)
-	}
-
-	wantOrder := []string{
-		fmt.Sprintf("sync:%s:1", policy.AuthnProviderBruteForce),
-		"sync:authn/lua_action:2",
-		"prepare:authn/post_action:3",
-		"accept:authn/post_action:3",
-	}
+	wantOrder := []string{fmt.Sprintf("sync:%s:1", policy.AuthnProviderBruteForce)}
 	if got := log.entries(); !reflect.DeepEqual(got, wantOrder) {
 		t.Fatalf("effect order = %v, want %v", got, wantOrder)
 	}
@@ -63,10 +53,6 @@ func TestAuthnStandardAuthPostActionRejectionPreservesPriorSyncEffects(t *testin
 	wantStates := []effectsupervisor.State{
 		effectsupervisor.StateAttempted,
 		effectsupervisor.StateSucceeded,
-		effectsupervisor.StateAttempted,
-		effectsupervisor.StateSucceeded,
-		effectsupervisor.StateAttempted,
-		effectsupervisor.StateFailed,
 	}
 	if got := effectReportStates(outcome.report.runtime.effects); !reflect.DeepEqual(got, wantStates) {
 		t.Fatalf("partial effect states = %v, want %v", got, wantStates)
@@ -77,19 +63,11 @@ func TestAuthnStandardAuthPostActionRejectionPreservesPriorSyncEffects(t *testin
 		t.Fatalf("captured authn selection = %#v, want standard brute-force decision", captured)
 	}
 
-	wantObligations := []string{
-		policy.ObligationBruteForceUpdate,
-		policy.ObligationLuaActionDispatch,
-		policy.ObligationLuaPostActionEnqueue,
-	}
+	wantObligations := []string{policy.EffectBruteForceUpdate}
 	if got := authnEffectRequestIDs(captured.Obligations); !reflect.DeepEqual(got, wantObligations) {
 		t.Fatalf("captured authn obligation IDs = %v, want %v", got, wantObligations)
 	}
 
-	legacy := evaluation.EvaluateStandardPreAuth(standardAuthBruteForceReport()).Final
-	if !reflect.DeepEqual(captured, legacy) {
-		t.Fatalf("brute-force final report = %#v, want legacy %#v", captured, legacy)
-	}
 }
 
 func TestBuiltinStandardAuthCatalogPreservesSemanticPrecedence(t *testing.T) {
@@ -215,35 +193,6 @@ func authnEffectRequestIDs(requests []report.EffectRequest) []string {
 	return result
 }
 
-func TestAuthnStandardAuthPostActionCapturesStateAfterPriorSyncEffects(t *testing.T) {
-	state := &authnEffectState{}
-	evaluator, target := mustAuthnEffectRuntimeWithOverrides(
-		t,
-		&authnEffectOrderLog{},
-		map[string]syncEffectBinding{
-			"authn/lua_action": {provider: statefulAuthnSyncEffectProvider{state: state}},
-		},
-		map[string]postActionBinding{
-			"authn/post_action": {provider: statefulAuthnPostActionProvider{state: state}},
-		},
-	)
-
-	outcome := evaluateAuthnSourceCheckpoint(
-		t,
-		evaluator,
-		target,
-		&recordingAuthnDecisionSource{standard: standardAuthBruteForceReport()},
-		&recordingEffectAcceptor{},
-	)
-	if outcome.response.Effect() != decision.EffectDeny {
-		t.Fatalf("state-sensitive brute-force effect = %q, want deny", outcome.response.Effect())
-	}
-
-	if got := state.capturedValue(); got != "account-after-sync" {
-		t.Fatalf("post-action captured state = %q, want account-after-sync", got)
-	}
-}
-
 func TestAuthnStandardAuthRuntimeFailureCausesRemainDistinct(t *testing.T) {
 	for _, test := range authnRuntimeFailureCases() {
 		t.Run(test.name, func(t *testing.T) {
@@ -255,11 +204,9 @@ func TestAuthnStandardAuthRuntimeFailureCausesRemainDistinct(t *testing.T) {
 type authnRuntimeFailureMode string
 
 const (
-	authnRuntimeSyncFailure        authnRuntimeFailureMode = "sync_failure"
-	authnRuntimeOutcomeUnknown     authnRuntimeFailureMode = "outcome_unknown"
-	authnRuntimePreparationFailure authnRuntimeFailureMode = "preparation_failure"
-	authnRuntimeCancellation       authnRuntimeFailureMode = "cancellation"
-	authnRuntimeAcceptanceCancel   authnRuntimeFailureMode = "acceptance_cancellation"
+	authnRuntimeSyncFailure    authnRuntimeFailureMode = "sync_failure"
+	authnRuntimeOutcomeUnknown authnRuntimeFailureMode = "outcome_unknown"
+	authnRuntimeCancellation   authnRuntimeFailureMode = "cancellation"
 )
 
 type authnRuntimeFailureCase struct {
@@ -274,9 +221,7 @@ func authnRuntimeFailureCases() []authnRuntimeFailureCase {
 	return []authnRuntimeFailureCase{
 		{name: "synchronous failure", mode: authnRuntimeSyncFailure, wantCode: decision.StatusCodeEvaluationFailed},
 		{name: "outcome unknown", mode: authnRuntimeOutcomeUnknown, wantCode: decision.StatusCodeEffectOutcomeUnknown},
-		{name: "post-action preparation failure", mode: authnRuntimePreparationFailure, wantCode: decision.StatusCodeEvaluationFailed},
 		{name: "request cancellation", mode: authnRuntimeCancellation, wantCode: decision.StatusCodeEffectOutcomeUnknown, wantCancelled: true},
-		{name: "post-action acceptance cancellation", mode: authnRuntimeAcceptanceCancel, wantCode: decision.StatusCodeEvaluationFailed, wantCancelled: true},
 	}
 }
 
@@ -288,7 +233,6 @@ func assertAuthnRuntimeFailureCause(t *testing.T, test authnRuntimeFailureCase) 
 	defer cancel()
 
 	syncOverrides, postOverrides := authnRuntimeFailureBindings(test.mode, cancel)
-	acceptor := authnRuntimeFailureAcceptor(t, test.mode, cancel)
 	evaluator, target := mustAuthnEffectRuntimeWithOverrides(
 		t,
 		&authnEffectOrderLog{},
@@ -301,7 +245,7 @@ func assertAuthnRuntimeFailureCause(t *testing.T, test authnRuntimeFailureCase) 
 		evaluator,
 		target,
 		&recordingAuthnDecisionSource{standard: standardAuthBruteForceReport()},
-		acceptor,
+		&recordingEffectAcceptor{},
 	)
 
 	if outcome.response.Effect() != decision.EffectIndeterminate ||
@@ -323,38 +267,6 @@ func assertAuthnRuntimeFailureCause(t *testing.T, test authnRuntimeFailureCase) 
 	}
 }
 
-// authnRuntimeFailureAcceptor returns the real cancellation boundary for acceptance tests.
-func authnRuntimeFailureAcceptor(
-	t *testing.T,
-	mode authnRuntimeFailureMode,
-	cancel context.CancelFunc,
-) effectsupervisor.Acceptor {
-	t.Helper()
-
-	if mode != authnRuntimeAcceptanceCancel {
-		return &recordingEffectAcceptor{}
-	}
-
-	supervisor, err := effectsupervisor.New(
-		effectsupervisor.Config{Capacity: 1, Workers: 1},
-		effectsupervisor.ProviderBinding{Name: "authn/post_action", Provider: authnSupervisorProvider{}},
-	)
-	if err != nil {
-		t.Fatalf("effectsupervisor.New() error = %v", err)
-	}
-
-	t.Cleanup(func() {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
-		defer shutdownCancel()
-
-		if shutdownErr := supervisor.Shutdown(shutdownCtx); shutdownErr != nil {
-			t.Errorf("effect supervisor shutdown: %v", shutdownErr)
-		}
-	})
-
-	return cancelingAuthnSupervisorAcceptor{supervisor: supervisor, cancel: cancel}
-}
-
 // authnRuntimeFailureBindings replaces the exact owner that produces one failure cause.
 func authnRuntimeFailureBindings(
 	mode authnRuntimeFailureMode,
@@ -373,10 +285,6 @@ func authnRuntimeFailureBindings(
 				result: effectsupervisor.OutcomeUnknown("dispatch_ambiguous"),
 			}},
 		}, nil
-	case authnRuntimePreparationFailure:
-		return nil, map[string]postActionBinding{
-			"authn/post_action": {provider: failingAuthnPostActionProvider{}},
-		}
 	case authnRuntimeCancellation:
 		return map[string]syncEffectBinding{
 			policy.AuthnProviderBruteForce: {provider: cancelingAuthnSyncEffectProvider{cancel: cancel}},
@@ -677,15 +585,10 @@ type authnTerminalPreAuthEffectCase struct {
 	wantEffect decision.Effect
 }
 
-// authnTerminalPreAuthEffectCases covers every existing terminal host post-action branch.
+// authnTerminalPreAuthEffectCases proves default terminal rules do not inject Lua actions.
 func authnTerminalPreAuthEffectCases() []authnTerminalPreAuthEffectCase {
 	authenticated := authnBackendBooleanFact(policy.AuthnFactAuthenticated, true)
-	threeEffects := []string{
-		fmt.Sprintf("sync:%s:1", policy.AuthnProviderBruteForce),
-		"sync:authn/lua_action:2",
-		"prepare:authn/post_action:3",
-		"accept:authn/post_action:3",
-	}
+	learningOnly := []string{fmt.Sprintf("sync:%s:1", policy.AuthnProviderBruteForce)}
 
 	return []authnTerminalPreAuthEffectCase{
 		{
@@ -695,11 +598,7 @@ func authnTerminalPreAuthEffectCases() []authnTerminalPreAuthEffectCase {
 				authenticated,
 			},
 			wantEffect: decision.EffectIndeterminate,
-			wantOrder: []string{
-				"sync:authn/lua_action:1",
-				"prepare:authn/post_action:2",
-				"accept:authn/post_action:2",
-			},
+			wantOrder:  nil,
 		},
 		{
 			name: "relay deny", wantRule: "standard_relay_domain_reject",
@@ -708,7 +607,7 @@ func authnTerminalPreAuthEffectCases() []authnTerminalPreAuthEffectCase {
 				authnNauthilusBooleanFact(policy.AuthnFactRelayDomainKnown, decision.FactCategoryEnvironment, false),
 				authenticated,
 			},
-			wantEffect: decision.EffectDeny, wantOrder: threeEffects,
+			wantEffect: decision.EffectDeny, wantOrder: learningOnly,
 		},
 		{
 			name: "RBL deny", wantRule: "standard_rbl_reject",
@@ -716,7 +615,7 @@ func authnTerminalPreAuthEffectCases() []authnTerminalPreAuthEffectCase {
 				authnNauthilusBooleanFact(policy.AuthnFactRBLThresholdReached, decision.FactCategoryEnvironment, true),
 				authenticated,
 			},
-			wantEffect: decision.EffectDeny, wantOrder: threeEffects,
+			wantEffect: decision.EffectDeny, wantOrder: learningOnly,
 		},
 		{
 			name: "Lua environment deny", wantRule: "standard_lua_environment_precedence_trigger",
@@ -724,7 +623,7 @@ func authnTerminalPreAuthEffectCases() []authnTerminalPreAuthEffectCase {
 				authnNauthilusBooleanFact(policy.AuthnLuaEnvironmentFactID("precedence", "triggered"), decision.FactCategoryEnvironment, true),
 				authenticated,
 			},
-			wantEffect: decision.EffectDeny, wantOrder: threeEffects,
+			wantEffect: decision.EffectDeny, wantOrder: learningOnly,
 		},
 		{
 			name: "native environment deny", wantRule: "standard_plugin_environment_candidate_verdict_trigger",
@@ -733,10 +632,7 @@ func authnTerminalPreAuthEffectCases() []authnTerminalPreAuthEffectCase {
 				authenticated,
 			},
 			wantEffect: decision.EffectDeny,
-			wantOrder: []string{
-				"prepare:authn/post_action:1",
-				"accept:authn/post_action:1",
-			},
+			wantOrder:  nil,
 		},
 	}
 }
@@ -848,7 +744,7 @@ func mustAuthnEffectRuntimeWithPolicy(
 		t.Fatalf("TargetActivation.WithPolicy() error = %v", err)
 	}
 
-	catalog, err := compiler.NewTargetCatalogCompiler(
+	catalog, err := catalogcompile.NewTargetCatalogCompiler(
 		registry.NewBuiltinTargetContributorWithAuthnPolicy(attributes, &recordingEffectAcceptor{}),
 	).Compile(context.Background(), []registry.TargetActivation{activation})
 	if err != nil {
@@ -977,10 +873,13 @@ func evaluateAuthnSourceNamedCheckpointWithContext(
 	}
 
 	ctx = ContextWithAuthnDecisionSource(ctx, source)
+	hostStates, hostReasons := completedHostProviderReceipts(t, evaluator, target, checkpointName)
 
 	outcome, err := evaluator.Evaluate(ctx, checkpointEvaluation{
 		request:      request,
 		checkpoint:   checkpoint,
+		hostStates:   hostStates,
+		hostReasons:  hostReasons,
 		supervisor:   acceptor,
 		generation:   31,
 		finalization: decision.NewEvaluationFinalization(effectsupervisor.BoundaryGRPCUnaryReturn),

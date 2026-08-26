@@ -18,70 +18,67 @@ import (
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/pluginregistry"
 )
 
-func TestPrivacyPolicyAttributeContract(t *testing.T) {
-	want := map[string]pluginapi.AttributeType{
-		"plugin.environment.geoip.privacy_lookup_state":       pluginapi.AttributeTypeString,
-		"plugin.environment.geoip.privacy_detected":           pluginapi.AttributeTypeBool,
-		"plugin.environment.geoip.privacy_classes":            pluginapi.AttributeTypeStringList,
-		"plugin.environment.geoip.privacy_primary_class":      pluginapi.AttributeTypeString,
-		"plugin.environment.geoip.privacy_confidence":         pluginapi.AttributeTypeNumber,
-		"plugin.environment.geoip.privacy_source_authorities": pluginapi.AttributeTypeStringList,
-		"plugin.environment.geoip.privacy_data_stale":         pluginapi.AttributeTypeBool,
-		"plugin.environment.geoip.privacy_data_age_seconds":   pluginapi.AttributeTypeNumber,
-		"plugin.environment.geoip.is_tor_exit_node":           pluginapi.AttributeTypeBool,
-		"plugin.environment.geoip.is_known_vpn_exit":          pluginapi.AttributeTypeBool,
-		"plugin.environment.geoip.is_community_vpn_exit":      pluginapi.AttributeTypeBool,
-		"plugin.environment.geoip.is_public_proxy":            pluginapi.AttributeTypeBool,
-		"plugin.environment.geoip.is_privacy_relay":           pluginapi.AttributeTypeBool,
-		"plugin.environment.geoip.is_hosting_network":         pluginapi.AttributeTypeBool,
-		"plugin.environment.geoip.is_shared_egress":           pluginapi.AttributeTypeBool,
+func TestPrivacyDecisionOutputContract(t *testing.T) {
+	want := map[string]pluginapi.DecisionValueKind{
+		factPrivacyLookupState:       pluginapi.DecisionValueKindString,
+		factPrivacyDetected:          pluginapi.DecisionValueKindBoolean,
+		factPrivacyClasses:           pluginapi.DecisionValueKindStrings,
+		factPrivacyPrimaryClass:      pluginapi.DecisionValueKindString,
+		factPrivacyConfidence:        pluginapi.DecisionValueKindDouble,
+		factPrivacySourceAuthorities: pluginapi.DecisionValueKindStrings,
+		factPrivacyDataStale:         pluginapi.DecisionValueKindBoolean,
+		factPrivacyDataAgeSeconds:    pluginapi.DecisionValueKindDouble,
+		factIsTorExitNode:            pluginapi.DecisionValueKindBoolean,
+		factIsKnownVPNExit:           pluginapi.DecisionValueKindBoolean,
+		factIsCommunityVPNExit:       pluginapi.DecisionValueKindBoolean,
+		factIsPublicProxy:            pluginapi.DecisionValueKindBoolean,
+		factIsPrivacyRelay:           pluginapi.DecisionValueKindBoolean,
+		factIsHostingNetwork:         pluginapi.DecisionValueKindBoolean,
+		factIsSharedEgress:           pluginapi.DecisionValueKindBoolean,
 	}
 
-	definitions := geoIPPolicyAttributes()
-	for id, valueType := range want {
-		definition, found := findPolicyDefinition(definitions, id)
+	outputs := (geoIPDecisionFactProvider{}).Descriptor().Outputs
+	for name, kind := range want {
+		output, found := findDecisionOutput(outputs, name)
 		if !found {
-			t.Fatalf("policy attribute %q is not registered", id)
+			t.Fatalf("generic output %q is not registered", name)
 		}
 
-		if definition.Type != valueType || definition.Stage != pluginapi.PolicyStagePreAuth || definition.Category != pluginapi.AttributeCategoryEnvironment {
-			t.Fatalf("policy attribute %q = %#v, want type %q pre_auth environment", id, definition, valueType)
-		}
-
-		if !reflect.DeepEqual(definition.Operations, []pluginapi.PolicyOperation{pluginapi.PolicyOperationAuthenticate, pluginapi.PolicyOperationLookupIdentity}) {
-			t.Fatalf("policy attribute %q operations = %#v", id, definition.Operations)
-		}
-
-		if !reflect.DeepEqual(definition.ProducerTypes, []string{policyProducer}) || definition.ProducerCheck != "" {
-			t.Fatalf("policy attribute %q producer contract = %#v/%q", id, definition.ProducerTypes, definition.ProducerCheck)
+		if output.Kind != kind || output.Category != pluginapi.DecisionFactCategoryEnvironment {
+			t.Fatalf("generic output %q = %#v, want %q environment", name, output, kind)
 		}
 	}
 }
 
-func TestPrivacyEvaluatedNegativeEmitsTriStateFactsAndPreservesGeoIPExchange(t *testing.T) {
-	result := evaluatePrivacyFixture(t, privacyLookupResult{State: privacyLookupStateEvaluated}, geoRecord{CountryISO: testCountryDE, ASNOrg: testASNOrg, ASN: 64500}, true)
-
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.privacy_lookup_state", privacyLookupStateEvaluated)
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.privacy_detected", false)
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.privacy_classes", []string{})
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.is_tor_exit_node", false)
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.is_known_vpn_exit", false)
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.is_public_proxy", false)
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.is_hosting_network", false)
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.is_shared_egress", false)
-
-	values := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
-	if values[geoValueCountry] != testCountryDE || values[geoValueASN] != 64500 || values[exchange.FieldPrivacyDetected] != false {
-		t.Fatalf("runtime GeoIP exchange = %#v, want preserved GeoIP and explicit privacy negative", values)
+func TestGenericProviderRejectsEnvironmentOnlyPublicLogConfig(t *testing.T) {
+	_, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
+		"database_path": testDatabasePath(t, "geoip.json"),
+		"privacy_intelligence": map[string]any{
+			"public_log_fields": true,
+		},
+	}))
+	if err == nil {
+		t.Fatal("decodeModuleConfig() error = nil, want unsupported environment-only log field rejection")
 	}
+}
 
-	if result.Triggered || result.Abort {
-		t.Fatalf("privacy evidence triggered=%t abort=%t, want false/false", result.Triggered, result.Abort)
-	}
+func TestPrivacyEvaluatedNegativeEmitsTriStateFactsAndPreservesLocationFacts(t *testing.T) {
+	result := evaluatePrivacyFixture(t, privacyLookupResult{State: privacyLookupStateEvaluated}, geoRecord{CountryISO: testCountryDE, ASNOrg: testASNOrg, ASN: 64500})
+
+	assertPrivacyFact(t, result.Facts, factPrivacyLookupState, privacyLookupStateEvaluated)
+	assertPrivacyFact(t, result.Facts, factPrivacyDetected, false)
+	assertPrivacyFact(t, result.Facts, factPrivacyClasses, []string{})
+	assertPrivacyFact(t, result.Facts, factIsTorExitNode, false)
+	assertPrivacyFact(t, result.Facts, factIsKnownVPNExit, false)
+	assertPrivacyFact(t, result.Facts, factIsPublicProxy, false)
+	assertPrivacyFact(t, result.Facts, factIsHostingNetwork, false)
+	assertPrivacyFact(t, result.Facts, factIsSharedEgress, false)
+	assertPrivacyFact(t, result.Facts, factCountryISO, testCountryDE)
+	assertPrivacyFact(t, result.Facts, factASN, 64500)
 }
 
 func TestPrivacySharedEgressRemainsPolicyEvidenceOnly(t *testing.T) {
@@ -91,32 +88,21 @@ func TestPrivacySharedEgressRemainsPolicyEvidenceOnly(t *testing.T) {
 		PrimaryClass: privacyClassSharedEgress,
 		State:        privacyLookupStateEvaluated,
 		Confidence:   90,
-	}, geoRecord{}, true)
+	}, geoRecord{})
 
 	assertPrivacyFact(t, result.Facts, factIsSharedEgress, true)
 	assertPrivacyFact(t, result.Facts, factPrivacyDetected, true)
-	assertLogField(t, result.Logs, "policy_fact_geoip_is_shared_egress", true)
-
-	values := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
-	if values[exchange.FieldIsSharedEgress] != true {
-		t.Fatalf("runtime shared-egress value = %#v, want true", values[exchange.FieldIsSharedEgress])
-	}
-
-	if result.Triggered || result.Abort {
-		t.Fatalf("shared-egress evidence triggered=%t abort=%t, want false/false", result.Triggered, result.Abort)
-	}
 }
 
 func TestPrivacyUnavailableAndInvalidDoNotFabricateNegativeClassifications(t *testing.T) {
 	for _, state := range []string{privacyLookupStateUnavailable, privacyLookupStateInvalidIP, privacyLookupStateNoSources} {
 		t.Run(state, func(t *testing.T) {
-			result := evaluatePrivacyFixture(t, privacyLookupResult{State: state}, geoRecord{}, true)
+			result := evaluatePrivacyFixture(t, privacyLookupResult{State: state}, geoRecord{})
 
-			assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.privacy_lookup_state", state)
-			assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.privacy_data_stale", false)
-			assertPrivacyFactMissing(t, result.Facts, "plugin.environment.geoip.privacy_detected")
-			assertPrivacyFactMissing(t, result.Facts, "plugin.environment.geoip.is_tor_exit_node")
-			assertLogFieldMissing(t, result.Logs, "policy_fact_geoip_privacy_data_stale")
+			assertPrivacyFact(t, result.Facts, factPrivacyLookupState, state)
+			assertPrivacyFact(t, result.Facts, factPrivacyDataStale, false)
+			assertPrivacyFactMissing(t, result.Facts, factPrivacyDetected)
+			assertPrivacyFactMissing(t, result.Facts, factIsTorExitNode)
 		})
 	}
 }
@@ -130,17 +116,11 @@ func TestPrivacyOfficialTorAndStaleValuesRemainPolicyEvidenceOnly(t *testing.T) 
 		Confidence:   100,
 		DataAge:      2 * time.Hour,
 		Stale:        true,
-	}, geoRecord{}, true)
+	}, geoRecord{})
 
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.is_tor_exit_node", true)
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.privacy_data_stale", true)
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.privacy_confidence", float64(100))
-	assertLogField(t, result.Logs, "policy_fact_geoip_is_tor_exit_node", true)
-	assertLogField(t, result.Logs, "policy_fact_geoip_privacy_data_stale", true)
-
-	if result.Triggered || result.Abort {
-		t.Fatalf("Tor evidence triggered=%t abort=%t, want false/false", result.Triggered, result.Abort)
-	}
+	assertPrivacyFact(t, result.Facts, factIsTorExitNode, true)
+	assertPrivacyFact(t, result.Facts, factPrivacyDataStale, true)
+	assertPrivacyFact(t, result.Facts, factPrivacyConfidence, float64(100))
 }
 
 func TestPrivacyCommunityAndOperatorEvidenceUsesTypedBoundedValues(t *testing.T) {
@@ -151,7 +131,7 @@ func TestPrivacyCommunityAndOperatorEvidenceUsesTypedBoundedValues(t *testing.T)
 		State:        privacyLookupStateEvaluated,
 		Confidence:   80,
 		DataAge:      90 * time.Second,
-	}, geoRecord{}, true)
+	}, geoRecord{})
 
 	assertPrivacyFact(t, result.Facts, factIsKnownVPNExit, true)
 	assertPrivacyFact(t, result.Facts, factIsCommunityVPNExit, true)
@@ -159,27 +139,6 @@ func TestPrivacyCommunityAndOperatorEvidenceUsesTypedBoundedValues(t *testing.T)
 	assertPrivacyFact(t, result.Facts, factPrivacyClasses, []string{"known_vpn_exit", "community_vpn_exit", "privacy_relay"})
 	assertPrivacyFact(t, result.Facts, factPrivacySourceAuthorities, []string{"operator", "community"})
 	assertPrivacyFact(t, result.Facts, factPrivacyDataAgeSeconds, float64(90))
-
-	for _, forbidden := range []string{"provider", "source", "url", "override", "reason", "community_vpn_exit", "privacy_relay"} {
-		for _, field := range result.Logs {
-			if field.Key == "policy_fact_geoip_"+forbidden {
-				t.Fatalf("forbidden public evidence field %q present", field.Key)
-			}
-		}
-	}
-}
-
-func TestPrivacyPublicLogsAreOptionalWithoutRemovingFacts(t *testing.T) {
-	lookup := privacyLookupResult{Classes: []privacyClass{privacyClassPublicProxy}, PrimaryClass: privacyClassPublicProxy, State: privacyLookupStateEvaluated, Confidence: 70}
-	result := evaluatePrivacyFixture(t, lookup, geoRecord{}, false)
-
-	assertPrivacyFact(t, result.Facts, "plugin.environment.geoip.is_public_proxy", true)
-
-	for _, field := range result.Logs {
-		if field.Key == "policy_fact_geoip_is_public_proxy" {
-			t.Fatalf("privacy public log field present while disabled: %#v", result.Logs)
-		}
-	}
 }
 
 func TestPrivacyHostingRulesUseGeoIPASNAndOrganizationWithoutImplyingVPN(t *testing.T) {
@@ -206,7 +165,7 @@ func TestPrivacyHostingRulesUseGeoIPASNAndOrganizationWithoutImplyingVPN(t *test
 	} {
 		t.Run(name, func(t *testing.T) {
 			lookup := engine.LookupWithRecord(netip.MustParseAddr(testClientIP), record)
-			result := evaluatePrivacyFixture(t, lookup, geoRecord{}, true)
+			result := evaluatePrivacyFixture(t, lookup, geoRecord{})
 
 			assertPrivacyFact(t, result.Facts, factIsHostingNetwork, true)
 			assertPrivacyFact(t, result.Facts, factIsKnownVPNExit, false)
@@ -216,75 +175,65 @@ func TestPrivacyHostingRulesUseGeoIPASNAndOrganizationWithoutImplyingVPN(t *test
 	}
 }
 
-func TestEnvironmentPrivacyLookupUsesOneRuntimeMapForLocationAndTor(t *testing.T) {
-	module := privacyModuleWithLocalTor(t, testClientIP, true)
+func TestInternalPrivacyLookupCombinesLocationAndTorFacts(t *testing.T) {
+	module := privacyModuleWithLocalTor(t, testClientIP)
 
-	runner, _, _ := startedTestRunner(t, module)
+	runner, plugin, _, _ := startedTestRunnerWithPlugin(t, module)
 	defer stopRunner(t, runner)
 
-	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
-	if err != nil {
-		t.Fatalf("EvaluateEnvironment() error = %v", err)
-	}
+	result := lookupGeoIP(t, plugin, testClientIP)
 
-	values := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
-	if values[geoValueCountry] != testCountryDE || values[exchange.FieldIsTorExitNode] != true {
-		t.Fatalf("runtime GeoIP exchange = %#v, want location and Tor values", values)
-	}
+	assertPrivacyFact(t, result.Facts, factCountryISO, testCountryDE)
+	assertPrivacyFact(t, result.Facts, factIsTorExitNode, true)
 }
 
-func TestEnvironmentPrivacyInvalidIPStateOmitsClassificationBooleans(t *testing.T) {
-	runner, _, _ := startedTestRunner(t, privacyModuleWithLocalTor(t, testClientIP, true))
+func TestInternalPrivacyInvalidIPStateOmitsClassificationBooleans(t *testing.T) {
+	runner, plugin, _, _ := startedTestRunnerWithPlugin(t, privacyModuleWithLocalTor(t, testClientIP))
 	defer stopRunner(t, runner)
 
-	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest("not-an-ip"))
-	if err != nil {
-		t.Fatalf("EvaluateEnvironment() error = %v", err)
-	}
+	result := lookupGeoIP(t, plugin, "not-an-ip")
 
 	assertPrivacyFact(t, result.Facts, factPrivacyLookupState, privacyLookupStateInvalidIP)
 	assertPrivacyFactMissing(t, result.Facts, factIsTorExitNode)
-
-	values := result.RuntimeDelta.Set[exchange.KeyGeoIP].(map[string]any)
-	if _, found := values[exchange.FieldIsTorExitNode]; found {
-		t.Fatalf("invalid-IP runtime exchange fabricates Tor negative: %#v", values)
-	}
 }
 
 func TestPrivacyLookupHonorsExistingRequestDeadline(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	source := geoIPEnvironmentSource{plugin: &Plugin{privacy: &privacyEngine{}}}
+	lookup := geoIPLookupService{plugin: &Plugin{privacy: &privacyEngine{}}}
 
-	_, err := source.lookupPrivacy(ctx, privacyConfig{LookupTimeout: time.Second}, netip.MustParseAddr(testClientIP), geoRecord{})
+	_, err := lookup.lookupPrivacy(ctx, privacyConfig{LookupTimeout: time.Second}, netip.MustParseAddr(testClientIP), geoRecord{})
 	if err == nil {
 		t.Fatal("lookupPrivacy() error = nil, want canceled request deadline")
 	}
 }
 
-// findPolicyDefinition locates one policy attribute in a test definition slice.
-func findPolicyDefinition(definitions []pluginapi.AttributeDefinition, id string) (pluginapi.AttributeDefinition, bool) {
-	for _, definition := range definitions {
-		if definition.ID == id {
-			return definition, true
+// findDecisionOutput locates one generic descriptor output by local name.
+func findDecisionOutput(
+	outputs []pluginapi.DecisionFactOutputDescriptor,
+	name string,
+) (pluginapi.DecisionFactOutputDescriptor, bool) {
+	for _, output := range outputs {
+		if output.Name == name {
+			return output, true
 		}
 	}
 
-	return pluginapi.AttributeDefinition{}, false
+	return pluginapi.DecisionFactOutputDescriptor{}, false
 }
 
 // evaluatePrivacyFixture applies one privacy lookup to a deterministic base result.
-func evaluatePrivacyFixture(t *testing.T, lookup privacyLookupResult, record geoRecord, publicLogs bool) pluginapi.EnvironmentResult {
+func evaluatePrivacyFixture(t *testing.T, lookup privacyLookupResult, record geoRecord) geoIPLookupResult {
 	t.Helper()
 
-	result := matchResult(record, testGeoIPSession)
+	result := matchResult(record)
 
-	return enrichPrivacyResult(result, lookup, publicLogs)
+	return enrichPrivacyResult(result, lookup)
 }
 
 // privacyModuleWithLocalTor builds an enabled hermetic privacy module fixture.
-func privacyModuleWithLocalTor(t *testing.T, address string, publicLogs bool) config.PluginModule {
+func privacyModuleWithLocalTor(t *testing.T, address string) config.PluginModule {
 	t.Helper()
 
 	torPath := filepath.Join(t.TempDir(), "tor-exits.txt")
@@ -294,8 +243,7 @@ func privacyModuleWithLocalTor(t *testing.T, address string, publicLogs bool) co
 
 	module := testModule(testDatabasePath(t, "geoip.json"))
 	module.Config["privacy_intelligence"] = map[string]any{
-		"enabled":           true,
-		"public_log_fields": publicLogs,
+		"enabled": true,
 		"sources": []map[string]any{{
 			"id":        "tor_exit",
 			"kind":      "tor_exit_list",
@@ -308,37 +256,28 @@ func privacyModuleWithLocalTor(t *testing.T, address string, publicLogs bool) co
 	return module
 }
 
-// assertPrivacyFact compares one possibly composite policy fact value.
-func assertPrivacyFact(t *testing.T, facts []pluginapi.PolicyFact, attribute string, want any) {
+// assertPrivacyFact compares one possibly composite generic fact value.
+func assertPrivacyFact(t *testing.T, facts []geoIPLookupFact, name string, want any) {
 	t.Helper()
 
 	for _, fact := range facts {
-		if fact.Attribute == attribute {
+		if fact.Name == name {
 			if !reflect.DeepEqual(fact.Value, want) {
-				t.Fatalf("fact %s = %#v, want %#v", attribute, fact.Value, want)
+				t.Fatalf("fact %s = %#v, want %#v", name, fact.Value, want)
 			}
 
 			return
 		}
 	}
 
-	t.Fatalf("fact %s missing in %#v", attribute, facts)
+	t.Fatalf("fact %s missing in %#v", name, facts)
 }
 
 // assertPrivacyFactMissing verifies tri-state omissions.
-func assertPrivacyFactMissing(t *testing.T, facts []pluginapi.PolicyFact, attribute string) {
+func assertPrivacyFactMissing(t *testing.T, facts []geoIPLookupFact, name string) {
 	t.Helper()
 
-	if slices.ContainsFunc(facts, func(fact pluginapi.PolicyFact) bool { return fact.Attribute == attribute }) {
-		t.Fatalf("fact %s unexpectedly present in %#v", attribute, facts)
-	}
-}
-
-// assertLogFieldMissing verifies that unavailable privacy values stay out of public logs.
-func assertLogFieldMissing(t *testing.T, fields []pluginapi.LogField, key string) {
-	t.Helper()
-
-	if slices.ContainsFunc(fields, func(field pluginapi.LogField) bool { return field.Key == key }) {
-		t.Fatalf("log field %s unexpectedly present in %#v", key, fields)
+	if slices.ContainsFunc(facts, func(fact geoIPLookupFact) bool { return fact.Name == name }) {
+		t.Fatalf("fact %s unexpectedly present in %#v", name, facts)
 	}
 }

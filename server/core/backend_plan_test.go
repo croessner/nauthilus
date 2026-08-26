@@ -2,164 +2,69 @@ package core
 
 import (
 	"testing"
-	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/errors"
-	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redismock/v9"
+	"github.com/croessner/nauthilus/v3/server/policy"
 )
 
 const backendPlanAccountField = "uid"
 
-func TestAuthenticateUserLoadsBruteForceHistoriesWithoutCacheBackend(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
-	cfg.Server.Redis.AccountLocalCache.Enabled = true
-
-	auth, ctx, mock := newCurrentBehaviorAuthState(t, cfg)
-	auth.deps.BackendAuthenticationCache = NewPositiveBackendAuthenticationCache(time.Now)
-	auth.AccountCache().Set(cfg, auth.Request.Username, auth.Request.Protocol.Get(), "", auth.Request.Username)
-
-	bruteForce := &recordingBruteForceService{}
-
-	restore := replaceBackendPlanTestServices(
-		t,
-		backendPlanPasswordVerifier{},
-		nil,
-		bruteForce,
-		testLuaSubject{},
-		currentBehaviorPostAction{},
-	)
-	defer restore()
-
-	result := auth.authenticateUser(
-		ctx,
-		backendExecutionPlan{
-			positions: map[definitions.Backend]int{definitions.BackendLDAP: 0},
-			passDBs:   []*PassDBMap{{backend: definitions.BackendLDAP}},
-		},
-	)
-	if result != definitions.AuthResultOK {
-		t.Fatalf("authenticateUser() = %v, want %v", result, definitions.AuthResultOK)
+func TestBuildAuthnTypedBackendExecutionPlanSelectsOnlyExactProvider(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	cfg.Server.Backends = []*config.Backend{
+		mustBackendPlanConfig(t, definitions.BackendCacheName),
+		mustBackendPlanConfig(t, definitions.BackendLDAPName),
+		mustBackendPlanConfig(t, definitions.BackendLuaName),
+		mustBackendPlanConfig(t, "plugin(example.identity)"),
+	}
+	auth, _, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.deps.PluginBackendFactory = func(string, AuthDeps) BackendManager {
+		return &testBackendManagerImpl{}
 	}
 
-	if bruteForce.loadHistoriesCalls != 1 {
-		t.Fatalf("brute-force history loads = %d, want 1", bruteForce.loadHistoriesCalls)
-	}
-
-	if bruteForce.accountName != auth.Request.Username {
-		t.Fatalf("brute-force account name = %q, want %q", bruteForce.accountName, auth.Request.Username)
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("redis expectations: %v", err)
-	}
-}
-
-func TestAuthenticateUserStoresBackendAuthenticationBeforeSubjectAuthority(t *testing.T) {
-	testCases := []struct {
-		name             string
-		username         string
-		subjectResult    definitions.AuthResult
-		wantSuccessCalls int
-		wantFailureCalls int
+	tests := []struct {
+		name       string
+		providerID string
+		backend    definitions.Backend
 	}{
-		{name: "subject permit", username: "subject-ok@example.test", subjectResult: definitions.AuthResultOK, wantSuccessCalls: 1},
-		{name: "subject deny", username: "subject-fail@example.test", subjectResult: definitions.AuthResultFail, wantFailureCalls: 1},
+		{name: "LDAP", providerID: policy.AuthnProviderLDAPBackend, backend: definitions.BackendLDAP},
+		{name: "Lua", providerID: policy.AuthnProviderLuaBackend, backend: definitions.BackendLua},
+		{name: "plugin", providerID: policy.AuthnProviderPluginBackendOrder, backend: definitions.BackendPlugin},
 	}
 
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			auth, ctx, mock, cacheService := newBackendPlanCacheOrderingAuth(t, testCase.username)
-
-			restore := replaceBackendPlanTestServices(
-				t,
-				backendPlanPasswordVerifier{},
-				cacheService,
-				nil,
-				backendPlanSubject{result: testCase.subjectResult},
-				currentBehaviorPostAction{},
-			)
-			defer restore()
-
-			result := auth.authenticateUser(ctx, backendPlanPositiveCacheBeforeLDAP())
-			if result != testCase.subjectResult {
-				t.Fatalf("authenticateUser() = %v, want %v", result, testCase.subjectResult)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan, err := auth.buildAuthnTypedBackendExecutionPlan(test.providerID)
+			if err != nil {
+				t.Fatalf("buildAuthnTypedBackendExecutionPlan(%q) error = %v", test.providerID, err)
 			}
 
-			if cacheService.successCalls != testCase.wantSuccessCalls || cacheService.failureCalls != testCase.wantFailureCalls {
-				t.Fatalf("positive password cache calls = success:%d failure:%d, want success:%d failure:%d", cacheService.successCalls, cacheService.failureCalls, testCase.wantSuccessCalls, testCase.wantFailureCalls)
+			if len(plan.passDBs) != 1 || plan.passDBs[0].backend != test.backend {
+				t.Fatalf("typed plan %q backends = %#v, want only %s", test.providerID, plan.passDBs, test.backend)
 			}
 
-			if _, found := auth.backendAuthenticationCache().load(mustBuildBackendAuthenticationCacheKey(t, auth)); !found {
-				t.Fatal("positive backend authentication was not stored before subject authority")
-			}
-
-			if err := mock.ExpectationsWereMet(); err != nil {
-				t.Fatalf("redis expectations: %v", err)
+			if plan.hasPositivePasswordCache {
+				t.Fatalf("typed plan %q retained ambient positive-cache authority", test.providerID)
 			}
 		})
 	}
+
+	if _, err := auth.buildAuthnTypedBackendExecutionPlan(policy.AuthnProviderBackend); err == nil {
+		t.Fatal("typed backend plan accepted the aggregate backend provider")
+	}
 }
 
-func TestHandleLocalCacheRerunsPluginSubjectBridge(t *testing.T) {
-	auth, ctx, mock, _ := newBackendPlanCacheOrderingAuth(t, "local-cache-subject@example.test")
-	auth.Request.Service = definitions.ServNginx
-	auth.SetStatusCodes(auth.Request.Service)
-	enableBackendHealthChecksForCacheTest(t, auth)
+// mustBackendPlanConfig constructs one exact backend-order entry.
+func mustBackendPlanConfig(t *testing.T, value string) *config.Backend {
+	t.Helper()
 
-	bridge := &recordingPluginSubjectBridge{
-		address: "10.0.0.7",
-		port:    993,
+	backend := &config.Backend{}
+	if err := backend.Set(value); err != nil {
+		t.Fatalf("Backend.Set(%q) error = %v", value, err)
 	}
 
-	restore := replaceBackendPlanTestServices(
-		t,
-		backendPlanPasswordVerifier{},
-		nil,
-		nil,
-		backendPlanSubject{result: definitions.AuthResultOK},
-		currentBehaviorPostAction{},
-	)
-	defer restore()
-
-	restoreBridge := replacePluginSubjectBridgeForTest(t, bridge)
-	defer restoreBridge()
-
-	cached := backendPlanAuthenticatedCacheResult(auth)
-	updateAuthentication(ctx, auth, cached, nil)
-	auth.Runtime.Authenticated = true
-	auth.Runtime.Authorized = true
-	auth.Runtime.AuthFSMTerminalState = string(authFSMStateAuthOK)
-	auth.Runtime.UsedBackendIP = bridge.address
-	auth.Runtime.UsedBackendPort = bridge.port
-
-	if !auth.backendAuthenticationCache().StoreForRequest(ctx, auth, cached, auth.Cfg().GetServer().GetLocalCacheAuthTTL(), auth.Request.Username) {
-		t.Fatal("failed to seed positive backend authentication cache")
-	}
-
-	PutPassDBResultToPool(cached)
-
-	if found := auth.GetFromLocalCache(ctx); !found {
-		t.Fatal("GetFromLocalCache() = false, want true")
-	}
-
-	result := auth.handleLocalCache(ctx)
-	if result != definitions.AuthResultOK {
-		t.Fatalf("handleLocalCache() = %v, want %v", result, definitions.AuthResultOK)
-	}
-
-	if bridge.calls != 1 {
-		t.Fatalf("plugin subject bridge calls = %d, want 1", bridge.calls)
-	}
-
-	auth.AuthOK(ctx)
-	assertNginxBackendHeaders(t, ctx, bridge.address, "993")
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("redis expectations: %v", err)
-	}
+	return backend
 }
 
 func TestBackendExecutionPlanPositivePasswordCache(t *testing.T) {
@@ -259,226 +164,5 @@ func backendExecutionPlanPositivePasswordCacheDisabledCases() []backendExecution
 			},
 			usedBackend: definitions.BackendLDAP,
 		},
-	}
-}
-
-func newBackendPlanCacheOrderingAuth(
-	t *testing.T,
-	username string,
-) (*AuthState, *gin.Context, redismock.ClientMock, *recordingCacheService) {
-	t.Helper()
-
-	cfg := newCurrentBehaviorConfig(t)
-	cfg.Server.Redis.AccountLocalCache.Enabled = true
-
-	auth, ctx, mock := newCurrentBehaviorAuthState(t, cfg)
-	auth.Request.Username = username
-	auth.AccountCache().Set(cfg, auth.Request.Username, auth.Request.Protocol.Get(), "", auth.Request.Username)
-
-	auth.deps.BackendAuthenticationCache = NewPositiveBackendAuthenticationCache(time.Now)
-
-	return auth, ctx, mock, &recordingCacheService{}
-}
-
-func backendPlanPositiveCacheBeforeLDAP() backendExecutionPlan {
-	return backendExecutionPlan{
-		positions: map[definitions.Backend]int{
-			definitions.BackendCache: 0,
-			definitions.BackendLDAP:  1,
-		},
-		hasPositivePasswordCache: true,
-		passDBs: []*PassDBMap{
-			{backend: definitions.BackendLDAP},
-		},
-	}
-}
-
-type recordingBruteForceService struct {
-	loadHistoriesCalls int
-	accountName        string
-}
-
-func (s *recordingBruteForceService) WaitDelay(_, _ uint) int {
-	return 0
-}
-
-func (s *recordingBruteForceService) LoadHistories(_ *gin.Context, _ *AuthState, accountName string) {
-	s.loadHistoriesCalls++
-	s.accountName = accountName
-}
-
-type backendPlanPasswordVerifier struct{}
-
-func (backendPlanPasswordVerifier) Verify(ctx *gin.Context, auth *AuthState, passDBs []*PassDBMap) (*PassDBResult, error) {
-	if len(passDBs) == 0 {
-		return nil, errors.ErrNoPassDBResult
-	}
-
-	result := GetPassDBResultFromPool()
-	result.UserFound = true
-	result.Authenticated = true
-	result.AccountField = backendPlanAccountField
-	result.Account = auth.Request.Username
-	result.Backend = passDBs[0].backend
-	result.Attributes = map[string][]any{
-		backendPlanAccountField: {auth.Request.Username},
-	}
-
-	if err := ProcessPassDBResult(ctx, result, auth, passDBs[0]); err != nil {
-		PutPassDBResultToPool(result)
-
-		return nil, err
-	}
-
-	return result, nil
-}
-
-type recordingCacheService struct {
-	successCalls int
-	failureCalls int
-	accountName  string
-}
-
-func (s *recordingCacheService) OnSuccess(_ *AuthState, accountName string) error {
-	s.successCalls++
-	s.accountName = accountName
-
-	return nil
-}
-
-func (s *recordingCacheService) OnFailure(_ *AuthState, accountName string) {
-	s.failureCalls++
-	s.accountName = accountName
-}
-
-func (s *recordingCacheService) Purge(_ *AuthState, _ string) {}
-
-type backendPlanSubject struct {
-	result definitions.AuthResult
-}
-
-func (s backendPlanSubject) Analyze(_ *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult {
-	if result != nil && result.Authenticated && s.result == definitions.AuthResultOK {
-		view.Auth().Runtime.Authorized = true
-	}
-
-	return s.result
-}
-
-// assertNginxBackendHeaders verifies backend health response headers for Nginx auth.
-func assertNginxBackendHeaders(t *testing.T, ctx *gin.Context, address string, port string) {
-	t.Helper()
-
-	if got := ctx.Writer.Header().Get("Auth-Server"); got != address {
-		t.Fatalf("Auth-Server = %q, want %q", got, address)
-	}
-
-	if got := ctx.Writer.Header().Get("Auth-Port"); got != port {
-		t.Fatalf("Auth-Port = %q, want %q", got, port)
-	}
-}
-
-type recordingPluginSubjectBridge struct {
-	address string
-	port    int
-	calls   int
-}
-
-// Analyze records native subject bridge execution and simulates backend selection.
-func (b *recordingPluginSubjectBridge) Analyze(_ *gin.Context, view *StateView, result *PassDBResult, current definitions.AuthResult) (definitions.AuthResult, bool) {
-	b.calls++
-	view.Auth().Runtime.UsedBackendIP = b.address
-	view.Auth().Runtime.UsedBackendPort = b.port
-
-	result.BackendRef = RemoteBackendRef{
-		Type:        definitions.BackendPluginName,
-		Name:        "mailde_auth",
-		Protocol:    definitions.ProtoIMAP,
-		Authority:   b.address,
-		OpaqueToken: "mailde_auth:" + b.address,
-	}
-
-	return current, true
-}
-
-// backendPlanAuthenticatedCacheResult returns a cached positive PassDB result.
-func backendPlanAuthenticatedCacheResult(auth *AuthState) *PassDBResult {
-	return &PassDBResult{
-		UserFound:     true,
-		Authenticated: true,
-		AccountField:  backendPlanAccountField,
-		Account:       auth.Request.Username,
-		Backend:       definitions.BackendLDAP,
-		Attributes: map[string][]any{
-			backendPlanAccountField: {auth.Request.Username},
-		},
-	}
-}
-
-// enableBackendHealthChecksForCacheTest activates Nginx backend-health response headers.
-func enableBackendHealthChecksForCacheTest(t *testing.T, auth *AuthState) {
-	t.Helper()
-
-	feat := &config.RuntimeModule{}
-	if err := feat.Set(definitions.ServiceBackendHealthChecks); err != nil {
-		t.Fatalf("RuntimeModule.Set(%q) failed: %v", definitions.ServiceBackendHealthChecks, err)
-	}
-
-	cfg, ok := auth.Cfg().(*config.FileSettings)
-	if !ok {
-		t.Fatalf("auth config type = %T, want *config.FileSettings", auth.Cfg())
-	}
-
-	cfg.Server.RuntimeModules = []*config.RuntimeModule{feat}
-
-	previousServers := ListBackendServers()
-
-	BackendServers.Update([]*config.BackendServer{{Host: "127.0.0.1", Port: 993, Protocol: definitions.ProtoIMAP}})
-	t.Cleanup(func() {
-		BackendServers.Update(previousServers)
-	})
-}
-
-// replacePluginSubjectBridgeForTest installs a native subject bridge for one test.
-func replacePluginSubjectBridgeForTest(t *testing.T, bridge PluginSubjectSourceBridge) func() {
-	t.Helper()
-
-	previousBridge := getPluginSubjectSourceBridge()
-
-	RegisterPluginSubjectSourceBridge(bridge)
-
-	return func() {
-		RegisterPluginSubjectSourceBridge(previousBridge)
-	}
-}
-
-func replaceBackendPlanTestServices(
-	t *testing.T,
-	verifier PasswordVerifier,
-	cacheService CacheService,
-	bruteForceService BruteForceService,
-	luaSubject LuaSubject,
-	postAction PostAction,
-) func() {
-	t.Helper()
-
-	previousVerifier := getPasswordVerifier()
-	previousCacheService := getCacheService()
-	previousBruteForceService := getBruteForceService()
-	previousLuaSubject := getLuaSubject()
-	previousPostAction := getPostAction()
-
-	RegisterPasswordVerifier(verifier)
-	RegisterCacheService(cacheService)
-	RegisterBruteForceService(bruteForceService)
-	RegisterLuaSubject(luaSubject)
-	RegisterPostAction(postAction)
-
-	return func() {
-		RegisterPasswordVerifier(previousVerifier)
-		RegisterCacheService(previousCacheService)
-		RegisterBruteForceService(previousBruteForceService)
-		RegisterLuaSubject(previousLuaSubject)
-		RegisterPostAction(previousPostAction)
 	}
 }

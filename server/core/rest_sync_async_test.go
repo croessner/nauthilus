@@ -88,8 +88,6 @@ func setupTestConfigWithBackends(t *testing.T, backendNames ...string) {
 	}
 
 	config.SetTestFile(cfg)
-	SetDefaultConfigFile(config.GetFile())
-	util.SetDefaultConfigFile(cfg)
 
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 }

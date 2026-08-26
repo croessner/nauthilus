@@ -15,10 +15,17 @@
 
 package idp
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/croessner/nauthilus/v3/server/core/localization"
+)
 
 // AuthFailureStatus carries policy-selected status metadata across IDP auth boundaries.
 type AuthFailureStatus struct {
+	// MessageResolver is the immutable catalog captured with the Decision session.
+	MessageResolver localization.MessageResolver
+
 	// StatusMessage is the safe fallback text selected by policy.
 	StatusMessage string
 

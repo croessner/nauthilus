@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
 )
 
@@ -21,11 +22,35 @@ const (
 	testPluginContent      = "geoip plugin"
 )
 
+func TestVerifierRequiresExplicitArtifactReaderForConfiguredModules(t *testing.T) {
+	pluginDir := t.TempDir()
+	artifact := writePluginArtifact(t, pluginDir, testPluginArtifactName, []byte(testPluginContent))
+
+	_, err := NewVerifier().Verify(&config.PluginsSection{
+		AllowedDirs:        []string{pluginDir},
+		VerificationPolicy: config.PluginVerificationPolicyOff,
+		Modules: []config.PluginModule{{
+			Name: testPluginModuleName,
+			Path: artifact,
+		}},
+	})
+	if !errors.Is(err, ErrArtifactReaderRequired) {
+		t.Fatalf("Verify() error = %v, want ErrArtifactReaderRequired", err)
+	}
+}
+
+// newFilesystemVerifier gives standalone verifier tests an explicit mutable-file authority.
+func newFilesystemVerifier(options ...VerifierOption) Verifier {
+	options = append([]VerifierOption{WithArtifactReader(os.ReadFile)}, options...)
+
+	return NewVerifier(options...)
+}
+
 func TestVerifier_VerifiesChecksumSuccess(t *testing.T) {
 	pluginDir := t.TempDir()
 	artifact := writePluginArtifact(t, pluginDir, testPluginArtifactName, []byte(testPluginContent))
 
-	verified, err := NewVerifier().Verify(&config.PluginsSection{
+	verified, err := newFilesystemVerifier().Verify(&config.PluginsSection{
 		AllowedDirs:        []string{pluginDir},
 		VerificationPolicy: config.PluginVerificationPolicyChecksumRequired,
 		Modules: []config.PluginModule{
@@ -58,7 +83,7 @@ func TestVerifier_RejectsChecksumMismatch(t *testing.T) {
 	pluginDir := t.TempDir()
 	artifact := writePluginArtifact(t, pluginDir, testPluginArtifactName, []byte(testPluginContent))
 
-	_, err := NewVerifier().Verify(&config.PluginsSection{
+	_, err := newFilesystemVerifier().Verify(&config.PluginsSection{
 		AllowedDirs:        []string{pluginDir},
 		VerificationPolicy: config.PluginVerificationPolicyChecksumRequired,
 		Modules: []config.PluginModule{
@@ -84,7 +109,7 @@ func TestVerifier_RejectsArtifactOutsideAllowedDirs(t *testing.T) {
 		t.Fatalf("create plugin artifact symlink: %v", err)
 	}
 
-	_, err := NewVerifier().Verify(&config.PluginsSection{
+	_, err := newFilesystemVerifier().Verify(&config.PluginsSection{
 		AllowedDirs:        []string{pluginDir},
 		VerificationPolicy: config.PluginVerificationPolicyOff,
 		Modules: []config.PluginModule{
@@ -113,7 +138,7 @@ func TestVerifier_RejectsMissingRequiredVerificationMetadata(t *testing.T) {
 			pluginDir := t.TempDir()
 			artifact := writePluginArtifact(t, pluginDir, testPluginArtifactName, []byte(testPluginContent))
 
-			_, err := NewVerifier().Verify(&config.PluginsSection{
+			_, err := newFilesystemVerifier().Verify(&config.PluginsSection{
 				AllowedDirs:        []string{pluginDir},
 				VerificationPolicy: testCase.policy,
 				Modules: []config.PluginModule{
@@ -184,9 +209,8 @@ func TestGenerationVerifierUsesOneArtifactSnapshot(t *testing.T) {
 	secondArtifact := writePluginArtifact(t, pluginDir, "second.so", secondContent)
 	keyPath, signature := writeMinisignFixture(t, pluginDir, secondArtifact)
 	artifact := writePluginArtifact(t, pluginDir, testPluginArtifactName, firstContent)
-	reader := &sequenceArtifactReader{contents: [][]byte{firstContent, secondContent}}
-	verifier := NewVerifier()
-	verifier.readArtifact = reader.ReadFile
+	reader := &sequenceArtifactReader{target: artifact, contents: [][]byte{firstContent, secondContent}}
+	verifier := NewVerifier(WithArtifactReader(reader.ReadFile))
 
 	_, err := verifySignedModuleWithVerifier(
 		t,
@@ -206,13 +230,110 @@ func TestGenerationVerifierUsesOneArtifactSnapshot(t *testing.T) {
 	}
 }
 
+func TestSealedOptionalPluginAbsenceCannotLoadArtifactAppearingLater(t *testing.T) {
+	pluginDir := t.TempDir()
+	artifact := filepath.Join(pluginDir, testPluginArtifactName)
+
+	snapshot, err := config.CaptureArtifactSnapshot(config.ArtifactSnapshotSpec{
+		OptionalPaths: []string{artifact},
+	})
+	if err != nil {
+		t.Fatalf("CaptureArtifactSnapshot() error = %v", err)
+	}
+
+	t.Cleanup(snapshot.Release)
+
+	if err = os.WriteFile(artifact, []byte("appeared after seal"), 0o600); err != nil {
+		t.Fatalf("write late optional plugin: %v", err)
+	}
+
+	verified, err := NewVerifier(WithArtifactReader(snapshot.ReadFile)).Verify(&config.PluginsSection{
+		AllowedDirs:        []string{pluginDir},
+		VerificationPolicy: config.PluginVerificationPolicyOff,
+		Modules: []config.PluginModule{{
+			Name: testPluginModuleName, Path: artifact, Optional: true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Verify(optional absent) error = %v", err)
+	}
+
+	if len(verified) != 1 || !errors.Is(verified[0].VerificationError, config.ErrArtifactNotCaptured) {
+		t.Fatalf("verified optional absence = %#v, want captured failure", verified)
+	}
+
+	state, err := NewLoader(
+		WithOpener(fakeOpener{}),
+		WithLoaderArtifactReader(snapshot.ReadFile),
+	).Load(verified)
+	if err != nil {
+		t.Fatalf("Load(optional absent) error = %v", err)
+	}
+
+	instances := state.Instances()
+	if len(instances) != 1 || instances[0].Status != ModuleStatusFailed || !instances[0].Optional {
+		t.Fatalf("optional absent instance = %#v, want deterministic failed optional state", instances)
+	}
+}
+
+func TestSealedPluginVerificationAndStagingUseCapturedBytesAfterMutation(t *testing.T) {
+	pluginDir := t.TempDir()
+	captured := []byte("captured native plugin bytes")
+	artifact := writePluginArtifact(t, pluginDir, testPluginArtifactName, captured)
+
+	snapshot, err := config.CaptureArtifactSnapshot(config.ArtifactSnapshotSpec{Paths: []string{artifact}})
+	if err != nil {
+		t.Fatalf("CaptureArtifactSnapshot() error = %v", err)
+	}
+
+	t.Cleanup(snapshot.Release)
+
+	if err = os.WriteFile(artifact, []byte("mutated live plugin bytes"), 0o600); err != nil {
+		t.Fatalf("mutate plugin after seal: %v", err)
+	}
+
+	verified, err := NewVerifier(WithArtifactReader(snapshot.ReadFile)).Verify(&config.PluginsSection{
+		AllowedDirs:        []string{pluginDir},
+		VerificationPolicy: config.PluginVerificationPolicyChecksumRequired,
+		Modules: []config.PluginModule{{
+			Name: testPluginModuleName, Path: artifact, Checksum: checksumForBytes(captured),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Verify(sealed bytes) error = %v", err)
+	}
+
+	opener := &replacementDuringOpenOpener{
+		originalPath: artifact, verifiedContent: captured,
+		handle: fakeHandle{symbol: func() (pluginapi.Plugin, error) {
+			return fakePlugin{metadata: validLoaderMetadata()}, nil
+		}},
+	}
+
+	state, err := NewLoader(
+		WithOpener(opener),
+		WithLoaderArtifactReader(snapshot.ReadFile),
+	).Load(verified)
+	if err != nil {
+		t.Fatalf("Load(sealed bytes) error = %v", err)
+	}
+
+	if instances := state.Instances(); len(instances) != 1 || !instances[0].IsRegistered() {
+		t.Fatalf("sealed plugin instances = %#v, want one registered instance", instances)
+	}
+}
+
 type sequenceArtifactReader struct {
+	target   string
 	contents [][]byte
 	reads    int
 }
 
 // ReadFile returns one detached artifact identity per verifier read.
-func (r *sequenceArtifactReader) ReadFile(string) ([]byte, error) {
+func (r *sequenceArtifactReader) ReadFile(path string) ([]byte, error) {
+	if path != r.target {
+		return os.ReadFile(path)
+	}
 	if r.reads >= len(r.contents) {
 		return nil, errors.New("unexpected artifact snapshot read")
 	}
@@ -236,7 +357,7 @@ func verifySignedModule(
 
 	return verifySignedModuleWithVerifier(
 		t,
-		NewVerifier(),
+		newFilesystemVerifier(),
 		pluginDir,
 		artifact,
 		keyPath,

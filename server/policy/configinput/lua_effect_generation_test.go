@@ -60,8 +60,10 @@ end
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
+	configured := decodePolicy(t, fmt.Sprintf(configuredLuaEffectOnlyFixture, script)).Policy
 	preparation, err := PrepareConfiguredLuaGeneration(t.Context(), ConfiguredLuaGenerationInput{
-		Policy:               decodePolicy(t, fmt.Sprintf(configuredLuaEffectOnlyFixture, script)).Policy,
+		Artifacts:            capturePolicyLuaTestArtifacts(t, configured),
+		Policy:               configured,
 		PostActionAcceptance: &nativeGenerationAcceptor{},
 	})
 	if err != nil {

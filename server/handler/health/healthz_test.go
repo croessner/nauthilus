@@ -36,7 +36,6 @@ import (
 func TestReadinessCheckUsesTestBackend(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	core.InitPassDBResultPool()
-	util.SetDefaultConfigFile(&config.FileSettings{Server: &config.ServerSection{}})
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	recorder := httptest.NewRecorder()
@@ -92,7 +91,6 @@ func readinessInformationalDeps(t *testing.T) (HealthzDeps, redismock.ClientMock
 	core.InitPassDBResultPool()
 
 	cfg := readinessInformationalConfig(t)
-	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	redisDB, redisMock := redismock.NewClientMock()

@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -17,13 +18,16 @@ import (
 	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
 	policyv1 "github.com/croessner/nauthilus/v3/api/policy/v1"
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
 	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/handler/policygrpc"
 	"github.com/croessner/nauthilus/v3/server/handler/policyhttp"
 	policy "github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/admission"
 	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
+	"github.com/croessner/nauthilus/v3/server/policy/configinput"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
@@ -82,6 +86,54 @@ func TestBufconnPolicyEvaluateRejectsMissingCredentialsBeforeHandler(t *testing.
 	select {
 	case <-service.invocations:
 		t.Fatal("Policy handler was invoked without credentials")
+	default:
+	}
+}
+
+func TestBufconnPolicyDisabledRoutePrecedesTransportPreparation(t *testing.T) {
+	service := &recordingPolicyDecisionService{
+		invocations: make(chan decision.Invocation, 1),
+		err:         decisionservice.ErrDecisionRouteUnavailable,
+	}
+	client := newBufconnPolicyClient(t, service)
+
+	oversized := policyDecisionRequest()
+	oversized.Attributes = map[string]*policyv1.Value{
+		"oversized": {Kind: &policyv1.Value_String_{String_: strings.Repeat("x", decision.MaximumOpaqueCredentialBytes)}},
+	}
+
+	for _, testCase := range []struct {
+		ctx     context.Context
+		request *policyv1.DecisionRequest
+		name    string
+	}{
+		{name: "missing credentials", ctx: context.Background(), request: policyDecisionRequest()},
+		{
+			name: "oversized credentials",
+			ctx: metadata.NewOutgoingContext(context.Background(), metadata.Pairs(
+				authorizationMetadataKey,
+				"Bearer "+strings.Repeat("t", decision.MaximumOpaqueCredentialBytes+1),
+			)),
+			request: policyDecisionRequest(),
+		},
+		{name: "oversized payload", ctx: context.Background(), request: oversized},
+		{name: "malformed request", ctx: context.Background(), request: &policyv1.DecisionRequest{}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := client.Evaluate(testCase.ctx, testCase.request)
+			if status.Code(err) != codes.Unimplemented {
+				t.Fatalf("Evaluate() code = %s, want %s", status.Code(err), codes.Unimplemented)
+			}
+		})
+	}
+
+	if service.transportKind != grpcTransportKind {
+		t.Fatalf("transport kind = %q, want %q", service.transportKind, grpcTransportKind)
+	}
+
+	select {
+	case <-service.invocations:
+		t.Fatal("disabled Policy route reached invocation evaluation")
 	default:
 	}
 }
@@ -296,7 +348,7 @@ func TestPolicyBasicRequiresVerifiedGRPCMTLSBeforeRealDecisionService(t *testing
 	service, closeGeneration := newGRPCPolicyDecisionService(t)
 	t.Cleanup(closeGeneration)
 
-	handler := policygrpc.New(service)
+	handler := policygrpc.New(service, policyAuthenticationEvidence)
 	credential := "Basic " + base64.StdEncoding.EncodeToString([]byte("policy-grpc-basic:policy-grpc-basic-secret"))
 
 	for _, testCase := range []struct {
@@ -309,16 +361,10 @@ func TestPolicyBasicRequiresVerifiedGRPCMTLSBeforeRealDecisionService(t *testing
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			ctx := policyTLSContext(credential, testCase.verified)
-
-			ctx, err := policyAuthenticationContext(ctx)
-			if err != nil {
-				t.Fatalf("policy authentication context: %v", err)
-			}
-
 			ctx, gate := core.ContextWithPostActionExecutionGate(ctx)
 			defer gate.Complete()
 
-			_, err = handler.Evaluate(ctx, policyDecisionRequest())
+			_, err := handler.Evaluate(ctx, policyDecisionRequest())
 			if got := status.Code(err); got != testCase.want {
 				t.Fatalf("Evaluate() code = %s, want %s (%v)", got, testCase.want, err)
 			}
@@ -360,7 +406,7 @@ func TestPolicyAuthorityUnknownMethodDoesNotInheritAuthenticateScope(t *testing.
 	}
 }
 
-func newBufconnPolicyClient(t *testing.T, service decision.Service) policyv1.PolicyDecisionServiceClient {
+func newBufconnPolicyClient(t *testing.T, service decisionservice.PreparedService) policyv1.PolicyDecisionServiceClient {
 	t.Helper()
 
 	listener := bufconn.Listen(1024 * 1024)
@@ -371,6 +417,7 @@ func newBufconnPolicyClient(t *testing.T, service decision.Service) policyv1.Pol
 			Username: "management-client",
 			Password: secret.New("management-secret"),
 		}, config.OIDCAuth{}),
+		AuthService:   &recordingService{},
 		PolicyService: service,
 	})
 	if err != nil {
@@ -417,14 +464,34 @@ func policyDecisionRequest() *policyv1.DecisionRequest {
 }
 
 type recordingPolicyDecisionService struct {
-	invocations chan decision.Invocation
-	err         error
+	invocations   chan decision.Invocation
+	err           error
+	transportKind string
 }
 
 func (s *recordingPolicyDecisionService) Evaluate(_ context.Context, invocation decision.Invocation) (decision.DecisionResponse, error) {
 	s.invocations <- invocation
 
 	return decision.DecisionResponse{}, s.err
+}
+
+// EvaluatePrepared records one invocation prepared under a captured test configuration.
+func (s *recordingPolicyDecisionService) EvaluatePrepared(
+	ctx context.Context,
+	transportKind string,
+	prepare func(config.File) (decision.Invocation, error),
+) (decision.DecisionResponse, error) {
+	s.transportKind = transportKind
+	if errors.Is(s.err, decisionservice.ErrDecisionRouteUnavailable) {
+		return decision.DecisionResponse{}, s.err
+	}
+
+	invocation, err := prepare(enabledGRPCPolicyAuthorityConfig())
+	if err != nil {
+		return decision.DecisionResponse{}, err
+	}
+
+	return s.Evaluate(ctx, invocation)
 }
 
 type effectPolicyService struct {
@@ -443,9 +510,37 @@ func (s *parityPolicyService) Evaluate(_ context.Context, invocation decision.In
 	return s.response, nil
 }
 
+// EvaluatePrepared records transport parity under one captured test configuration.
+func (s *parityPolicyService) EvaluatePrepared(
+	ctx context.Context,
+	_ string,
+	prepare func(config.File) (decision.Invocation, error),
+) (decision.DecisionResponse, error) {
+	invocation, err := prepare(enabledGRPCPolicyAuthorityConfig())
+	if err != nil {
+		return decision.DecisionResponse{}, err
+	}
+
+	return s.Evaluate(ctx, invocation)
+}
+
 // Evaluate returns one constructor-validated fixture result through the complete gRPC adapter.
 func (s effectPolicyService) Evaluate(context.Context, decision.Invocation) (decision.DecisionResponse, error) {
 	return s.response, nil
+}
+
+// EvaluatePrepared returns one fixture result after capture-first transport preparation.
+func (s effectPolicyService) EvaluatePrepared(
+	ctx context.Context,
+	_ string,
+	prepare func(config.File) (decision.Invocation, error),
+) (decision.DecisionResponse, error) {
+	invocation, err := prepare(enabledGRPCPolicyAuthorityConfig())
+	if err != nil {
+		return decision.DecisionResponse{}, err
+	}
+
+	return s.Evaluate(ctx, invocation)
 }
 
 // grpcPolicyResponse builds a complete response for one closed effect fixture.
@@ -601,8 +696,13 @@ func newGRPCPolicyDecisionService(t *testing.T) (*decisionservice.DecisionServic
 	callerConfiguration, admissionConfiguration := grpcPolicyAuthorityConfiguration(reference)
 
 	coordinator, err := policyruntime.NewCoordinator(policyruntime.CoordinatorConfig{Store: store, Slots: policyruntime.PreparationSlots{
-		Policy: policyruntime.PolicyPreparationFunc(func(_ context.Context, input policyruntime.PreparationInput) (policyruntime.PolicyPreparation, error) {
-			return policyruntime.PolicyPreparation{Snapshot: &policyruntime.Snapshot{Generation: input.ID()}}, nil
+		Policy: policyruntime.PolicyPreparationFunc(func(ctx context.Context, input policyruntime.PreparationInput) (policyruntime.PolicyPreparation, error) {
+			prepared, prepareErr := configinput.PreparePolicy(ctx, input.ID(), input.Config().GetPolicy())
+			if prepareErr != nil {
+				return policyruntime.PolicyPreparation{}, prepareErr
+			}
+
+			return policyruntime.PolicyPreparation{Policy: prepared}, nil
 		}),
 		Extensions: policyruntime.ExtensionPreparationFunc(func(context.Context, policyruntime.PreparationInput) (policyruntime.ExtensionPreparation, error) {
 			return policyruntime.ExtensionPreparation{Bindings: bindings}, nil
@@ -617,7 +717,15 @@ func newGRPCPolicyDecisionService(t *testing.T) (*decisionservice.DecisionServic
 			return admission.Prepare(admissionConfiguration, input.TargetCatalog(), input.CredentialProfiles())
 		}),
 		Settings: policyruntime.SettingsPreparationFunc(func(context.Context, policyruntime.SettingsPreparationInput) (policyruntime.SettingsPreparation, error) {
-			return policyruntime.SettingsPreparation{Settings: policyruntime.GenerationSettings{Limits: policyruntime.DecisionLimits{EvaluationTimeout: time.Second, PostActionBudget: time.Second, MaxDiagnosticsEntries: 8}, Reports: policyruntime.DecisionReportSettings{MaxEntries: 8}}}, nil
+			return policyruntime.SettingsPreparation{
+				MessageResolver: localization.NewResolver(localization.NewMapCatalog(nil), "en"),
+				Settings: policyruntime.GenerationSettings{
+					Limits: policyruntime.DecisionLimits{
+						EvaluationTimeout: time.Second, PostActionBudget: time.Second, MaxDiagnosticsEntries: 8,
+					},
+					Reports: policyruntime.DecisionReportSettings{MaxEntries: 8},
+				},
+			}, nil
 		}),
 		Application: decisionservice.NewRuntimeApplicationPreparationSlot(),
 	}})
@@ -625,7 +733,7 @@ func newGRPCPolicyDecisionService(t *testing.T) (*decisionservice.DecisionServic
 		t.Fatalf("new coordinator: %v", err)
 	}
 
-	if _, err = coordinator.Apply(context.Background(), policyruntime.PrepareInput{Config: &config.FileSettings{}, ID: 1}); err != nil {
+	if _, err = coordinator.Apply(context.Background(), policyruntime.PrepareInput{Config: enabledGRPCPolicyAuthorityConfig(), ID: 1}); err != nil {
 		t.Fatalf("apply policy runtime: %v", err)
 	}
 
@@ -653,7 +761,10 @@ func grpcPolicyAuthorityConfiguration(reference registry.ClientAdmissionReferenc
 			{AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}, Principal: "policy-grpc"},
 			{Basic: &callerauth.BasicCredential{Username: "policy-grpc-basic", Password: secret.New("policy-grpc-basic-secret")}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}, Principal: "policy-grpc-basic", RequireMTLS: true},
 		},
-		TokenValidator: grpcPolicyTokenValidator{}, TransportCapabilities: callerauth.TransportCapabilities{GRPCProtected: true},
+		TokenValidator: grpcPolicyTokenValidator{}, Throttler: &grpcAcceptingPolicyBasicThrottler{}, TransportCapabilities: callerauth.TransportCapabilities{
+			GRPCProtected:                 true,
+			GRPCVerifiedClientCertificate: true,
+		},
 	}
 	admission := admission.Configuration{
 		GlobalLimits: admission.Limits{MaxRequestBytes: 4096, MaxFacts: 8, MaxConcurrency: 4, RequestsPerSecond: 1000},
@@ -664,4 +775,33 @@ func grpcPolicyAuthorityConfiguration(reference registry.ClientAdmissionReferenc
 	}
 
 	return caller, admission
+}
+
+type grpcAcceptingPolicyBasicThrottler struct{}
+
+// BeforeAttempt accepts one focused gRPC adapter-fixture verification attempt.
+func (*grpcAcceptingPolicyBasicThrottler) BeforeAttempt(context.Context, callerauth.BasicThrottleKey) error {
+	return nil
+}
+
+// RecordFailure accepts one focused gRPC adapter-fixture verification failure.
+func (*grpcAcceptingPolicyBasicThrottler) RecordFailure(context.Context, callerauth.BasicThrottleKey) error {
+	return nil
+}
+
+// RecordSuccess accepts one focused gRPC adapter-fixture verification success.
+func (*grpcAcceptingPolicyBasicThrottler) RecordSuccess(context.Context, callerauth.BasicThrottleKey) error {
+	return nil
+}
+
+// enabledGRPCPolicyAuthorityConfig supplies generation-owned gRPC activation and wire bounds to fixtures.
+func enabledGRPCPolicyAuthorityConfig() config.File {
+	return &config.FileSettings{
+		Server: &config.ServerSection{},
+		Policy: policyconfig.PolicyConfig{API: policyconfig.APIConfig{
+			Enabled: true,
+			GRPC:    policyconfig.GRPCConfig{Enabled: true},
+			Limits:  policyconfig.APILimitsConfig{MaxRequestBytes: decision.MaximumOpaqueCredentialBytes},
+		}},
+	}
 }

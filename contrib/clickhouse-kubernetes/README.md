@@ -1,7 +1,8 @@
 # Nauthilus ClickHouse setup for Kubernetes (namespace: auth)
 
-This contrib package helps you create the ClickHouse database and table required by the Lua action plugin
-`server/lua-plugins.d/actions/clickhouse.lua` and the native Go replacement `clickhouse.post_action`.
+This contrib package creates the ClickHouse database and table consumed by the native Go effect
+`authn/plugin.clickhouse.post_action`. The historical `server/lua-plugins.d/actions/clickhouse.lua` implementation is
+retained as reference material only.
 
 It assumes a standalone ClickHouse server is running inside your Kubernetes cluster, typically exposed as a Service named `clickhouse` in the `auth` namespace.
 
@@ -122,7 +123,7 @@ Notes:
 
 The bundled Docker images include `/usr/local/lib/nauthilus/plugins/clickhouse.so` and, when signature enforcement is
 enabled, `/usr/local/lib/nauthilus/plugins/clickhouse.so.minisig`. Configure the module under `plugins.modules[]` and
-reference the native policy effect ID `clickhouse.post_action`.
+reference the native policy effect ID `authn/plugin.clickhouse.post_action`.
 
 ```yaml
 plugins:
@@ -158,34 +159,17 @@ does not implement the optional Lua `clickhouse-query.lua` read-only hook, and n
 Adding or removing the module, changing the module name, or replacing the `.so` artifact requires a Nauthilus process
 restart. Config-only changes inside `plugins.modules[].config` can be applied by SIGHUP when validation succeeds.
 
-## Configure Nauthilus Lua plugin
+## Historical Lua action
 
-The action plugin batches insert rows to ClickHouse via HTTP. Configure environment variables for your Nauthilus deployment (e.g., in your Deployment manifest):
-
-- CLICKHOUSE_INSERT_URL: full HTTP endpoint including the INSERT and `FORMAT JSONEachRow`. Example:
-  `http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow`
-- CLICKHOUSE_USER / CLICKHOUSE_PASSWORD: optional; sent via `X-ClickHouse-User` and `X-ClickHouse-Key` headers if set.
-- CLICKHOUSE_BATCH_SIZE: optional (default 100)
-- CLICKHOUSE_CACHE_KEY: optional (default `clickhouse:batch:logins`)
-
-Example (Kubernetes container env):
-```yaml
-env:
-  - name: CLICKHOUSE_INSERT_URL
-    value: "http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow"
-  - name: CLICKHOUSE_USER
-    valueFrom:
-      secretKeyRef:
-        name: clickhouse-auth
-        key: username
-  - name: CLICKHOUSE_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: clickhouse-auth
-        key: password
-```
+`server/lua-plugins.d/actions/clickhouse.lua` is retained as reference material only. It requires ambient credentials,
+arbitrary outbound HTTP, Redis writes, and cache mutation, so the production authentication Policy VM rejects it during
+candidate preparation. Do not add its environment variables or configure it as a top-level Policy action. Use the
+native module and exact `authn/plugin.clickhouse.post_action` obligation above.
 
 ## Optional: Read-only query hook
+
+This custom HTTP hook has a separate process-owned lifecycle; its outbound HTTP and environment-backed configuration
+are not Policy VM capabilities.
 
 If you enable `server/lua-plugins.d/hooks/clickhouse-query.lua`, set:
 - CLICKHOUSE_SELECT_BASE: e.g. `http://clickhouse.auth.svc.cluster.local:8123`

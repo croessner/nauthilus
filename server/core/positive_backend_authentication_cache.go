@@ -259,7 +259,11 @@ func preparedCredentialDigest(auth *AuthState) string {
 			return
 		}
 
-		prepared := util.PreparePasswordBytes(value)
+		prepared, ok := util.PreparePasswordBytesWithConfig(value, auth.Cfg())
+		if !ok {
+			return
+		}
+
 		defer clear(prepared)
 
 		digest = util.GetHashBytes(prepared)

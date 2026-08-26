@@ -21,8 +21,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"reflect"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,17 +31,20 @@ import (
 
 	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
 	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
+	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/lualib"
+	"github.com/croessner/nauthilus/v3/server/lualib/luamod"
+	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
+	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/v3/server/model/authdto"
-	"github.com/croessner/nauthilus/v3/server/pluginloader"
 	"github.com/croessner/nauthilus/v3/server/policy"
-	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
-	"github.com/croessner/nauthilus/v3/server/policy/compiler"
+	"github.com/croessner/nauthilus/v3/server/policy/catalogcompile"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	"github.com/croessner/nauthilus/v3/server/policy/evaluation"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
@@ -48,102 +52,84 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
+	lua "github.com/yuin/gopher-lua"
 )
 
-const (
-	authnCandidateLuaAttributeID    = "auth.lua.environment.current_behavior_environment.triggered"
-	authnCandidateLuaFactID         = "nauthilus.auth.lua.environment.current_behavior_environment.triggered"
-	authnCandidateNativeAttributeID = "auth.plugin.environment.candidate.verdict.triggered"
-	authnCandidateNativeFactID      = "nauthilus.auth.plugin.environment.candidate.verdict.triggered"
-	authnCandidateNativeCheck       = "plugin_environment_candidate"
-	authnCandidateNativeProviderID  = "authn/candidate_native"
-	authnCandidateNativeEffectID    = "authn/candidate_native_effect"
-)
+// authnCandidatePolicyModel is test-owned opaque policy material for one generation.
+type authnCandidatePolicyModel struct {
+	AttributeRegistry map[string]registry.AttributeDefinition
+	Mode              string
+	Generation        uint64
+}
+
+// ClonePolicyModel returns a detached copy for generation ownership.
+func (m *authnCandidatePolicyModel) ClonePolicyModel() policyruntime.PolicyModel {
+	return m.clone()
+}
+
+// ValidatePolicyModel validates the minimum opaque generation identity.
+func (m *authnCandidatePolicyModel) ValidatePolicyModel() error {
+	if m == nil || m.Generation == 0 {
+		return fmt.Errorf("candidate policy model requires a positive generation")
+	}
+
+	return nil
+}
+
+// GenerationID returns the immutable candidate identity.
+func (m *authnCandidatePolicyModel) GenerationID() uint64 {
+	if m == nil {
+		return 0
+	}
+
+	return m.Generation
+}
+
+// clone returns a detached concrete policy model for test assembly.
+func (m *authnCandidatePolicyModel) clone() *authnCandidatePolicyModel {
+	if m == nil {
+		return nil
+	}
+
+	attributes := make(map[string]registry.AttributeDefinition, len(m.AttributeRegistry))
+	for id, definition := range m.AttributeRegistry {
+		attributes[id] = registry.CloneDefinition(definition)
+	}
+
+	return &authnCandidatePolicyModel{
+		AttributeRegistry: attributes,
+		Mode:              m.Mode,
+		Generation:        m.Generation,
+	}
+}
 
 // installAuthnCandidateServices installs one request-pipeline fixture and restores global seams.
 func installAuthnCandidateServices(
 	t *testing.T,
 	verifier PasswordVerifier,
-	subject LuaSubject,
-	postAction PostAction,
+	subject CapturedLuaSubject,
 ) {
 	t.Helper()
 
 	previousVerifier := getPasswordVerifier()
 	previousSubject := getLuaSubject()
-	previousPostAction := getPostAction()
 
 	RegisterPasswordVerifier(verifier)
 	RegisterLuaSubject(subject)
-	RegisterPostAction(postAction)
 	t.Cleanup(func() {
 		RegisterPasswordVerifier(previousVerifier)
 		RegisterLuaSubject(previousSubject)
-		RegisterPostAction(previousPostAction)
 	})
-}
-
-func TestAuthnCandidateBruteForceAcceptanceFailurePreservesSyncEffectsAndMapsTempFail(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation: 702, Mode: "enforce", DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-
-	db, _ := redismock.NewClientMock()
-	base := NewAuthApplicationService(AuthDeps{
-		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
-	}).(*authApplicationService)
-	log := &authnCandidateEffectLog{}
-	work := &authnCandidateEffectWork{}
-	host := &authnCandidateInjectedHost{
-		base: base,
-		configure: func(execution *authnCandidateExecution) {
-			snapshot := policyruntime.PolicySnapshotFromContext(execution.ginCtx.Request.Context())
-			if snapshot == nil || snapshot.Generation != 701 || snapshot.Mode != "enforce" {
-				t.Fatalf("captured policy snapshot = %#v, want generation 701 enforce", snapshot)
-			}
-
-			execution.preAuthReady = true
-			execution.auth.Security.BruteForceName = "candidate_block"
-			execution.auth.Runtime.EnvironmentName = definitions.ControlBruteForce
-			execution.auth.recordPolicyBruteForce(execution.ginCtx, true)
-			execution.executeEffect = func(effect report.EffectRequest) effectsupervisor.Result {
-				log.append("sync:" + effect.ID)
-
-				return effectsupervisor.Succeeded()
-			}
-			execution.preparePost = func(effect report.EffectRequest, ordinal uint32) (effectsupervisor.ExecutableWork, error) {
-				log.append(fmt.Sprintf("prepare:%s:%d", effect.ID, ordinal))
-
-				return work, nil
-			}
-		},
-	}
-	rejector := &authnCandidateRejectingAcceptor{log: log}
-	runtime := newAuthnCandidateDecisionService(t, cfg, rejector)
-
-	adapter, err := NewAuthnCandidateApplicationService(host, runtime, mustAuthnCandidateAuthentication(t))
-	if err != nil {
-		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
-	}
-
-	outcome := authenticateAuthnCandidate(
-		t, "brute-force acceptance rejection", adapter, authnApplicationTestInput(AuthModeAuthenticate),
-	)
-
-	assertAuthnCandidateRejectedPlan(t, outcome, log, host, work)
 }
 
 func TestAuthnCandidateSynchronousFailureClearsStaleLocalization(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
 	db, _ := redismock.NewClientMock()
-	base := NewAuthApplicationService(AuthDeps{
+	base := newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
-	}).(*authApplicationService)
+	})
 	host := &authnCandidateInjectedHost{
 		base: base,
 		configure: func(execution *authnCandidateExecution) {
@@ -156,12 +142,6 @@ func TestAuthnCandidateSynchronousFailureClearsStaleLocalization(t *testing.T) {
 			execution.auth.recordPolicyBruteForce(execution.ginCtx, true)
 			execution.executeEffect = func(report.EffectRequest) effectsupervisor.Result {
 				return effectsupervisor.Failed("synchronous_failure")
-			}
-			execution.preparePost = func(
-				report.EffectRequest,
-				uint32,
-			) (effectsupervisor.ExecutableWork, error) {
-				return &authnCandidateEffectWork{}, nil
 			}
 		},
 	}
@@ -189,47 +169,6 @@ func TestAuthnCandidateSynchronousFailureClearsStaleLocalization(t *testing.T) {
 			"synchronous failure localization = %q/%q, want empty",
 			outcome.StatusMessageI18NKey,
 			outcome.ResponseLanguage,
-		)
-	}
-}
-
-// assertAuthnCandidateRejectedPlan verifies ordered partial effects and the final tempfail surface.
-func assertAuthnCandidateRejectedPlan(
-	t *testing.T,
-	outcome *AuthOutcome,
-	log *authnCandidateEffectLog,
-	host *authnCandidateInjectedHost,
-	work *authnCandidateEffectWork,
-) {
-	t.Helper()
-
-	wantOrder := []string{
-		"sync:" + policy.ObligationBruteForceUpdate,
-		"sync:" + policy.ObligationLuaActionDispatch,
-		"prepare:" + policy.ObligationLuaPostActionEnqueue + ":3",
-		"accept:authn/post_action:3",
-	}
-	if got := log.entries(); !reflect.DeepEqual(got, wantOrder) {
-		t.Fatalf("candidate effect order = %v, want %v", got, wantOrder)
-	}
-
-	if outcome.Decision != AuthDecisionTempFail || outcome.TerminalState != string(authFSMStateAuthTempFail) {
-		t.Fatalf("candidate result = %q/%q, want tempfail/auth_tempfail", outcome.Decision, outcome.TerminalState)
-	}
-
-	if outcome.StatusMessage != definitions.TempFailDefault || outcome.HTTPStatus != 500 {
-		t.Fatalf("candidate tempfail presentation = %q/%d", outcome.StatusMessage, outcome.HTTPStatus)
-	}
-
-	wantFSM := []string{policy.FSMEventMarkerParseOK, policy.FSMEventMarkerPreAuthTempFail}
-	if !reflect.DeepEqual(outcome.FSMEventPath, wantFSM) {
-		t.Fatalf("candidate tempfail FSM = %v, want %v", outcome.FSMEventPath, wantFSM)
-	}
-
-	if host.calls.Load() != 0 || work.cleanupCalls.Load() != 1 || work.executeCalls.Load() != 0 {
-		t.Fatalf(
-			"current/cleanup/worker calls = %d/%d/%d, want 0/1/0",
-			host.calls.Load(), work.cleanupCalls.Load(), work.executeCalls.Load(),
 		)
 	}
 }
@@ -290,11 +229,11 @@ func prepareAuthnCandidateLocalizationExecution(
 	t.Helper()
 
 	db, _ := redismock.NewClientMock()
-	base := NewAuthApplicationService(AuthDeps{
+	base := newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
-	}).(*authApplicationService)
+	})
 	ctx, gate := authnCandidateTestContext(context.Background(), input)
 
 	execution, _, err := base.prepareAuthnCandidateExecution(ctx, input, policy.OperationAuthenticate)
@@ -338,159 +277,7 @@ func TestAuthnCandidateAcceptanceRejectionReplacesSelectedTempFailCause(t *testi
 	}
 }
 
-func TestAuthnCandidateRejectedExistingPostActionAcceptanceMapsPermitToTempFail(t *testing.T) {
-	outcome, execution, postAction := runAuthnCandidateExistingPostActionFailure(
-		t,
-		"rejected existing post-action",
-		"candidate-post-reject@example.test",
-		PostActionAcceptanceRejected(),
-	)
-
-	assertAuthnCandidateRejectedExistingPostAction(t, outcome, postAction)
-
-	if execution == nil || !authnCandidatePostActionAcceptanceFailed(execution.ginCtx) {
-		t.Fatal("explicit supervisor rejection did not retain the acceptance marker")
-	}
-}
-
-func TestAuthnCandidateCanceledExistingPostActionMapsTempFailWithoutAcceptanceMarker(t *testing.T) {
-	outcome, execution, postAction := runAuthnCandidateExistingPostActionFailure(
-		t,
-		"canceled existing post-action",
-		"candidate-post-canceled@example.test",
-		PostActionCanceled(),
-	)
-
-	assertAuthnCandidateRejectedExistingPostAction(t, outcome, postAction)
-
-	if execution == nil {
-		t.Fatal("candidate execution was not captured")
-	}
-
-	if authnCandidatePostActionAcceptanceFailed(execution.ginCtx) {
-		t.Fatal("post-action cancellation was mislabeled as acceptance rejection")
-	}
-}
-
-// runAuthnCandidateExistingPostActionFailure executes one cause-bearing existing seam failure.
-func runAuthnCandidateExistingPostActionFailure(
-	t *testing.T,
-	name string,
-	username string,
-	postActionResult PostActionResult,
-) (*AuthOutcome, *authnCandidateExecution, *authnCandidateClassifiedPostAction) {
-	t.Helper()
-
-	fixture := newAuthnCandidateExistingPostActionFixture(t, username, postActionResult)
-	input := NewAuthInputFromStructuredRequest(
-		definitions.ServGRPC,
-		AuthModeAuthenticate,
-		authdto.Request{
-			Username: username, Password: "candidate-secret", Protocol: definitions.ProtoIMAP,
-			ClientIP: "203.0.113.79", Method: "plain",
-		},
-	)
-	outcome := authenticateAuthnCandidate(t, name, fixture.adapter, input)
-
-	if fixture.verifierCalls.Load() != 1 || fixture.subjectCalls.Load() != 1 {
-		t.Fatalf(
-			"backend/subject calls = %d/%d, want 1/1",
-			fixture.verifierCalls.Load(),
-			fixture.subjectCalls.Load(),
-		)
-	}
-
-	return outcome, fixture.execution, fixture.postAction
-}
-
-type authnCandidateExistingPostActionFixture struct {
-	adapter       AuthApplicationService
-	execution     *authnCandidateExecution
-	postAction    *authnCandidateClassifiedPostAction
-	verifierCalls *atomic.Int32
-	subjectCalls  *atomic.Int32
-}
-
-// newAuthnCandidateExistingPostActionFixture assembles one classified existing post-action request.
-func newAuthnCandidateExistingPostActionFixture(
-	t *testing.T,
-	username string,
-	postActionResult PostActionResult,
-) *authnCandidateExistingPostActionFixture {
-	t.Helper()
-
-	cfg := newCurrentBehaviorConfig(t)
-	cfg.Server.Redis.AccountLocalCache.Enabled = true
-
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation: 708, Mode: "enforce", DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-
-	manager := accountcache.NewManager(cfg)
-	manager.Set(cfg, username, definitions.ProtoIMAP, "", username)
-
-	db, mock := redismock.NewClientMock()
-	current := NewAuthApplicationService(AuthDeps{
-		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Redis:  rediscli.NewTestClient(db), AccountCache: manager,
-		BackendAuthenticationCache: NewPositiveBackendAuthenticationCache(time.Now),
-	}).(*authApplicationService)
-	fixture := &authnCandidateExistingPostActionFixture{
-		postAction:    &authnCandidateClassifiedPostAction{result: postActionResult},
-		verifierCalls: &atomic.Int32{}, subjectCalls: &atomic.Int32{},
-	}
-	host := &authnCandidateInjectedHost{
-		base: current,
-		configure: func(execution *authnCandidateExecution) {
-			fixture.execution = execution
-		},
-	}
-
-	adapter, err := NewAuthnCandidateApplicationService(
-		host,
-		newAuthnCandidateDecisionService(t, cfg, &authnCandidateAcceptAll{}),
-		mustAuthnCandidateAuthentication(t),
-	)
-	if err != nil {
-		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
-	}
-
-	fixture.adapter = adapter
-	installAuthnCandidateServices(
-		t,
-		backendAuthenticationContractVerifier{calls: fixture.verifierCalls},
-		backendAuthenticationContractSubject{calls: fixture.subjectCalls},
-		fixture.postAction,
-	)
-	t.Cleanup(func() {
-		if expectationErr := mock.ExpectationsWereMet(); expectationErr != nil {
-			t.Errorf("unexpected Redis operation: %v", expectationErr)
-		}
-	})
-
-	return fixture
-}
-
-// assertAuthnCandidateRejectedExistingPostAction verifies complete host execution before rejection.
-func assertAuthnCandidateRejectedExistingPostAction(
-	t *testing.T,
-	outcome *AuthOutcome,
-	postAction *authnCandidateClassifiedPostAction,
-) {
-	t.Helper()
-
-	if outcome.Decision != AuthDecisionTempFail || outcome.TerminalState != string(authFSMStateAuthTempFail) ||
-		outcome.StatusMessage != definitions.TempFailDefault {
-		t.Fatalf("rejected existing post-action result = %#v, want complete tempfail", outcome)
-	}
-
-	if postAction.calls.Load() != 1 {
-		t.Fatalf("post-action calls = %d, want 1", postAction.calls.Load())
-	}
-}
-
-func TestAuthnPolicyEffectRequestRestoresExactLegacySelectionAndParameters(t *testing.T) {
+func TestAuthnPolicyEffectRequestPreservesCanonicalEffectAndParameters(t *testing.T) {
 	target, err := decision.NewTarget(policy.AuthnNamespace, string(policy.OperationAuthenticate))
 	if err != nil {
 		t.Fatalf("NewTarget() error = %v", err)
@@ -508,31 +295,21 @@ func TestAuthnPolicyEffectRequestRestoresExactLegacySelectionAndParameters(t *te
 		t.Fatalf("NewFactSet() error = %v", err)
 	}
 
-	action := policy.LuaActionDispatchBruteForce
 	environment := "candidate_environment"
-	wait := false
-	actionValue := mustAuthnStringValue(t, action)
 	environmentValue := mustAuthnStringValue(t, environment)
 
-	waitValue, err := decision.NewValue(decision.ValueInput{Boolean: &wait})
-	if err != nil {
-		t.Fatalf("NewValue(wait) error = %v", err)
+	bindings := registry.BuiltinAuthEffectBindings()
+	if len(bindings) != 1 || bindings[0].EffectID != policy.EffectBruteForceUpdate {
+		t.Fatalf("builtin auth effect bindings = %#v, want brute-force update only", bindings)
 	}
 
-	for ordinal, binding := range registry.BuiltinAuthEffectBindings() {
+	for ordinal, binding := range bindings {
 		parameters := map[string]decision.Value{policy.ObligationArgEnvironment: environmentValue}
 		wantArgs := map[string]any{policy.ObligationArgEnvironment: environment}
 
-		if binding.Selection != policy.ObligationBruteForceUpdate {
-			parameters[policy.ObligationArgAction] = actionValue
-			parameters[policy.ObligationArgWait] = waitValue
-			wantArgs[policy.ObligationArgAction] = action
-			wantArgs[policy.ObligationArgWait] = wait
-		}
-
 		valueMap, mapErr := decision.NewValueMap(parameters)
 		if mapErr != nil {
-			t.Fatalf("NewValueMap(%q) error = %v", binding.Selection, mapErr)
+			t.Fatalf("NewValueMap(%q) error = %v", binding.EffectID, mapErr)
 		}
 
 		execution, executionErr := policyruntime.NewEffectExecution(policyruntime.EffectExecutionInput{
@@ -542,79 +319,18 @@ func TestAuthnPolicyEffectRequestRestoresExactLegacySelectionAndParameters(t *te
 			Generation: 1, Ordinal: uint32(ordinal + 1),
 		})
 		if executionErr != nil {
-			t.Fatalf("NewEffectExecution(%q) error = %v", binding.Selection, executionErr)
+			t.Fatalf("NewEffectExecution(%q) error = %v", binding.EffectID, executionErr)
 		}
 
 		request, requestErr := authnPolicyEffectRequest(execution)
 		if requestErr != nil {
-			t.Fatalf("authnPolicyEffectRequest(%q) error = %v", binding.Selection, requestErr)
+			t.Fatalf("authnPolicyEffectRequest(%q) error = %v", binding.EffectID, requestErr)
 		}
 
-		if request.ID != binding.Selection || !reflect.DeepEqual(request.Args, wantArgs) {
-			t.Fatalf("restored effect = %#v, want %q/%#v", request, binding.Selection, wantArgs)
+		if request.ID != binding.EffectID || !reflect.DeepEqual(request.Args, wantArgs) {
+			t.Fatalf("restored effect = %#v, want %q/%#v", request, binding.EffectID, wantArgs)
 		}
 	}
-}
-
-func TestAuthnCandidateAcceptedPostActionWaitsForFinalizationAndLateFailureCannotMutateResult(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation: 703, Mode: "enforce", DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-
-	observer := &authnCandidateEffectObserver{}
-	supervisor := newAuthnCandidateTestSupervisor(t, observer)
-
-	db, _ := redismock.NewClientMock()
-	base := NewAuthApplicationService(AuthDeps{
-		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
-	}).(*authApplicationService)
-	work := &authnCandidateEffectWork{
-		started: make(chan struct{}),
-		result:  effectsupervisor.Failed("late_provider_failure"),
-	}
-	host := &authnCandidateInjectedHost{
-		base: base,
-		configure: func(execution *authnCandidateExecution) {
-			execution.preAuthReady = true
-			execution.auth.Security.BruteForceName = "candidate_block"
-			execution.auth.Runtime.EnvironmentName = definitions.ControlBruteForce
-			execution.auth.recordPolicyBruteForce(execution.ginCtx, true)
-			execution.executeEffect = func(report.EffectRequest) effectsupervisor.Result {
-				return effectsupervisor.Succeeded()
-			}
-			execution.preparePost = func(report.EffectRequest, uint32) (effectsupervisor.ExecutableWork, error) {
-				return work, nil
-			}
-		},
-	}
-	decisionRuntime := newAuthnCandidateDecisionService(t, cfg, supervisor)
-	factory := &authnCandidateFinalizationFactory{delegate: decisionRuntime, work: work}
-
-	adapter, err := NewAuthnCandidateApplicationService(host, factory, mustAuthnCandidateAuthentication(t))
-	if err != nil {
-		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
-	}
-
-	input := authnApplicationTestInput(AuthModeAuthenticate)
-	ctx, gate := authnCandidateTestContext(context.Background(), input)
-
-	outcome, err := adapter.Authenticate(ctx, input)
-	if err != nil {
-		t.Fatalf("Authenticate() error = %v", err)
-	}
-
-	select {
-	case <-work.started:
-		t.Fatal("accepted post-action started before the gRPC unary boundary")
-	default:
-	}
-
-	gate.Complete()
-
-	assertAuthnCandidateLatePostActionFailure(t, supervisor, work, observer, outcome)
 }
 
 // newAuthnCandidateTestSupervisor owns deterministic cleanup for one post-action test runtime.
@@ -644,58 +360,14 @@ func newAuthnCandidateTestSupervisor(
 	return supervisor
 }
 
-// assertAuthnCandidateLatePostActionFailure verifies finalization order and immutable response state.
-func assertAuthnCandidateLatePostActionFailure(
-	t *testing.T,
-	supervisor *effectsupervisor.Supervisor,
-	work *authnCandidateEffectWork,
-	observer *authnCandidateEffectObserver,
-	outcome *AuthOutcome,
-) {
-	t.Helper()
-
-	select {
-	case <-work.started:
-	case <-time.After(time.Second):
-		t.Fatal("accepted post-action did not execute after finalization")
-	}
-
-	waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	if err := supervisor.WaitIdle(waitCtx); err != nil {
-		t.Fatalf("WaitIdle() error = %v", err)
-	}
-
-	if work.startedBeforeFinalization.Load() {
-		t.Fatal("accepted post-action executed before the candidate finalization boundary")
-	}
-
-	if outcome.Decision != AuthDecisionFail || outcome.TerminalState != string(authFSMStateAuthFail) {
-		t.Fatalf("returned result after late failure = %q/%q, want fail/auth_fail", outcome.Decision, outcome.TerminalState)
-	}
-
-	if work.executeCalls.Load() != 1 || work.cleanupCalls.Load() != 1 {
-		t.Fatalf("worker execute/cleanup calls = %d/%d, want 1/1", work.executeCalls.Load(), work.cleanupCalls.Load())
-	}
-
-	if !observer.saw(effectsupervisor.PhaseExecution, effectsupervisor.StateFailed) {
-		t.Fatal("late provider failure was not observable as a failed execution event")
-	}
-}
-
 func TestAuthnCandidateObserveSuppressesStandardEffectsWithoutChangingDeny(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation: 704, Mode: "observe", DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-
 	db, _ := redismock.NewClientMock()
-	base := NewAuthApplicationService(AuthDeps{
+	base := newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
-	}).(*authApplicationService)
+	})
 	effectCalls := &atomic.Int32{}
 	host := &authnCandidateInjectedHost{
 		base: base,
@@ -709,18 +381,13 @@ func TestAuthnCandidateObserveSuppressesStandardEffectsWithoutChangingDeny(t *te
 
 				return effectsupervisor.Succeeded()
 			}
-			execution.preparePost = func(report.EffectRequest, uint32) (effectsupervisor.ExecutableWork, error) {
-				effectCalls.Add(1)
-
-				return &authnCandidateEffectWork{}, nil
-			}
 		},
 	}
-	runtime := newAuthnCandidateDecisionServiceWithSnapshot(
+	runtime := newAuthnCandidateDecisionServiceWithModel(
 		t,
 		cfg,
 		&authnCandidateAcceptAll{},
-		&policyruntime.Snapshot{Generation: 704, Mode: "observe", DefaultPolicy: policy.BuiltinDefaultSet},
+		&authnCandidatePolicyModel{Generation: 704, Mode: "observe"},
 	)
 
 	adapter, err := NewAuthnCandidateApplicationService(host, runtime, mustAuthnCandidateAuthentication(t))
@@ -746,25 +413,23 @@ func TestAuthnCandidateObserveSuppressesStandardEffectsWithoutChangingDeny(t *te
 	}
 }
 
-func TestAuthnCandidateCapturedGenerationIgnoresAmbientObserveSnapshot(t *testing.T) {
+func TestAuthnCandidateUsesCapturedModeWithoutAmbientAuthority(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation: 999, Mode: "observe", DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-
 	db, _ := redismock.NewClientMock()
-	base := NewAuthApplicationService(AuthDeps{
+	base := newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
-	}).(*authApplicationService)
+	})
 	effectCalls := &atomic.Int32{}
 	host := &authnCandidateInjectedHost{
 		base: base,
 		configure: func(execution *authnCandidateExecution) {
-			snapshot := policyruntime.PolicySnapshotFromContext(execution.ginCtx.Request.Context())
-			if snapshot == nil || snapshot.Generation != 701 || snapshot.Mode != "enforce" {
-				t.Fatalf("captured policy snapshot = %#v, want generation 701 enforce", snapshot)
+			generation, ok := policyruntime.GenerationFromContext(execution.ginCtx.Request.Context())
+
+			mode, modeOK := decisionservice.CapturedPolicyMode(execution.ginCtx.Request.Context())
+			if !ok || generation != 701 || !modeOK || mode != "enforce" {
+				t.Fatalf("captured generation = %#v mode=%q, want generation 701 enforce", generation, mode)
 			}
 
 			execution.preAuthReady = true
@@ -776,18 +441,13 @@ func TestAuthnCandidateCapturedGenerationIgnoresAmbientObserveSnapshot(t *testin
 
 				return effectsupervisor.Succeeded()
 			}
-			execution.preparePost = func(report.EffectRequest, uint32) (effectsupervisor.ExecutableWork, error) {
-				effectCalls.Add(1)
-
-				return &authnCandidateEffectWork{}, nil
-			}
 		},
 	}
-	captured := &policyruntime.Snapshot{
-		Generation: 701, Mode: "enforce", DefaultPolicy: policy.BuiltinDefaultSet,
+	captured := &authnCandidatePolicyModel{
+		Generation: 701, Mode: "enforce",
 	}
 	rejector := &authnCandidateRejectingAcceptor{log: &authnCandidateEffectLog{}}
-	runtime := newAuthnCandidateDecisionServiceWithSnapshot(t, cfg, rejector, captured)
+	runtime := newAuthnCandidateDecisionServiceWithModel(t, cfg, rejector, captured)
 
 	adapter, err := NewAuthnCandidateApplicationService(host, runtime, mustAuthnCandidateAuthentication(t))
 	if err != nil {
@@ -798,13 +458,136 @@ func TestAuthnCandidateCapturedGenerationIgnoresAmbientObserveSnapshot(t *testin
 		t, "captured generation", adapter, authnApplicationTestInput(AuthModeAuthenticate),
 	)
 
-	if effectCalls.Load() != 3 {
-		t.Fatalf("captured-generation effect calls = %d, want three enforce-mode owners", effectCalls.Load())
+	if effectCalls.Load() != 1 {
+		t.Fatalf("captured-generation effect calls = %d, want one enforce-mode owner", effectCalls.Load())
 	}
 
-	if outcome.Decision != AuthDecisionTempFail {
-		t.Fatalf("captured-generation decision = %q, want acceptance-failure tempfail", outcome.Decision)
+	if outcome.Decision != AuthDecisionFail {
+		t.Fatalf("captured-generation decision = %q, want captured enforce denial", outcome.Decision)
 	}
+}
+
+func TestAuthnOutcomesKeepCapturedResolverAcrossGenerationReload(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	acceptor := &authnCandidateAcceptAll{}
+	model := authnCandidateModelWithBuiltins(t, &authnCandidatePolicyModel{
+		Generation: 701, Mode: "enforce",
+	})
+	catalog := compileAuthnCandidateCatalogWithModel(t, acceptor, model)
+	runtime := newAuthnCandidateReloadableDecisionRuntime(t, cfg, acceptor, catalog, model, nil)
+	current := newAuthnResolverLeaseApplication(cfg)
+
+	installAuthnCandidateServices(t, failingPasswordVerifier{}, testLuaSubject{})
+
+	adapter, err := NewAuthnCandidateApplicationService(current, runtime.service, mustAuthnCandidateAuthentication(t))
+	if err != nil {
+		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
+	}
+
+	firstResult := startAuthnResolverLease(t, adapter)
+	waitForAuthnResolverLease(t, current, firstResult)
+
+	if _, err = runtime.coordinator.Apply(context.Background(), policyruntime.PrepareInput{Config: cfg, ID: 702}); err != nil {
+		t.Fatalf("second generation Apply() error = %v", err)
+	}
+
+	second := authenticateAuthnResolverGeneration(t, adapter)
+	accounts := listAuthnResolverGenerationAccounts(t, adapter)
+
+	close(current.release)
+
+	first := <-firstResult
+	if first.err != nil {
+		t.Fatalf("first-generation Authenticate() error = %v", first.err)
+	}
+
+	assertAuthnCapturedResolverMessage(t, first.outcome.MessageResolver, "generation-701 configured denial")
+	assertAuthnCapturedResolverMessage(t, second.MessageResolver, "generation-702 configured denial")
+	assertAuthnCapturedResolverMessage(t, accounts.MessageResolver, "generation-702 configured denial")
+
+	if got := current.localizedMessages(); !reflect.DeepEqual(got, []string{
+		"generation-701 configured denial",
+		"generation-702 configured denial",
+		"generation-702 configured denial",
+	}) {
+		t.Fatalf("request Lua localized messages = %v, want generation-owned 701/702/702 values", got)
+	}
+}
+
+// startAuthnResolverLease starts one authentication that remains bound to its admitted generation.
+func startAuthnResolverLease(
+	t *testing.T,
+	adapter AuthApplicationService,
+) <-chan authnResolverLeaseResult {
+	t.Helper()
+
+	input := authnApplicationTestInput(AuthModeAuthenticate)
+	ctx, gate := authnCandidateTestContext(context.Background(), input)
+	result := make(chan authnResolverLeaseResult, 1)
+
+	go func() {
+		outcome, err := adapter.Authenticate(ctx, input)
+
+		gate.Complete()
+
+		result <- authnResolverLeaseResult{outcome: outcome, err: err}
+	}()
+
+	return result
+}
+
+// waitForAuthnResolverLease verifies that the first admitted generation remains blocked in its host lease.
+func waitForAuthnResolverLease(
+	t *testing.T,
+	current *authnResolverLeaseApplication,
+	result <-chan authnResolverLeaseResult,
+) {
+	t.Helper()
+
+	select {
+	case <-current.started:
+	case early := <-result:
+		t.Fatalf("first-generation authentication completed before lease block: outcome=%#v error=%v", early.outcome, early.err)
+	case <-time.After(time.Second):
+		t.Fatal("first-generation authentication did not reach the lease block")
+	}
+}
+
+// authenticateAuthnResolverGeneration runs and completes one authentication in the current generation.
+func authenticateAuthnResolverGeneration(t *testing.T, adapter AuthApplicationService) *AuthOutcome {
+	t.Helper()
+
+	input := authnApplicationTestInput(AuthModeAuthenticate)
+	ctx, gate := authnCandidateTestContext(context.Background(), input)
+	outcome, err := adapter.Authenticate(ctx, input)
+
+	gate.Complete()
+
+	if err != nil {
+		t.Fatalf("current-generation Authenticate() error = %v", err)
+	}
+
+	return outcome
+}
+
+// listAuthnResolverGenerationAccounts runs and completes one account listing in the current generation.
+func listAuthnResolverGenerationAccounts(
+	t *testing.T,
+	adapter AuthApplicationService,
+) *ListAccountsOutcome {
+	t.Helper()
+
+	input := authnApplicationTestInput(AuthModeListAccounts)
+	ctx, gate := authnCandidateTestContext(context.Background(), input)
+	outcome, err := adapter.ListAccounts(ctx, input)
+
+	gate.Complete()
+
+	if err != nil {
+		t.Fatalf("current-generation ListAccounts() error = %v", err)
+	}
+
+	return outcome
 }
 
 func TestAuthnCandidateIndeterminateCausePreservesTruthfulTempFailMarker(t *testing.T) {
@@ -853,21 +636,17 @@ func TestAuthnCandidateConfiguredFinalPreservesResponseFSMAndDefaultPreAuth(t *t
 	cfg := newCurrentBehaviorConfig(t)
 	cfg.Server.Redis.AccountLocalCache.Enabled = true
 
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation: 707, Mode: "enforce", DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-
 	username := "candidate-configured@example.test"
 	manager := accountcache.NewManager(cfg)
 	manager.Set(cfg, username, definitions.ProtoIMAP, "", username)
 
 	db, mock := redismock.NewClientMock()
-	current := NewAuthApplicationService(AuthDeps{
+	current := newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: manager,
 		BackendAuthenticationCache: NewPositiveBackendAuthenticationCache(time.Now),
-	}).(*authApplicationService)
+	})
 	acceptor := &authnCandidateAcceptAll{}
 	catalog := compileAuthnCandidateConfiguredCatalog(t, acceptor)
 	runtime := newAuthnCandidateDecisionServiceFromCatalog(t, cfg, acceptor, catalog)
@@ -885,8 +664,8 @@ func TestAuthnCandidateConfiguredFinalPreservesResponseFSMAndDefaultPreAuth(t *t
 		t,
 		backendAuthenticationContractVerifier{calls: verifierCalls},
 		backendAuthenticationContractSubject{calls: subjectCalls},
-		recordingPlanPostAction{},
 	)
+	bindRegisteredAuthnApplicationHostServicesForTest(current)
 
 	input := NewAuthInputFromStructuredRequest(
 		definitions.ServGRPC,
@@ -936,16 +715,15 @@ func TestAuthnCandidateConfiguredPreAuthNoMatchContinuesToDefaultFinalDecision(t
 func TestAuthnCandidateDefaultBruteForceProtectionPrecedesConfiguredFinal(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
 	db, _ := redismock.NewClientMock()
-	base := NewAuthApplicationService(AuthDeps{
+	base := newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
-	}).(*authApplicationService)
+	})
 
 	var (
-		execution        *authnCandidateExecution
-		syncCalls        atomic.Int32
-		postPreparations atomic.Int32
+		execution *authnCandidateExecution
+		syncCalls atomic.Int32
 	)
 
 	host := &authnCandidateInjectedHost{
@@ -961,14 +739,6 @@ func TestAuthnCandidateDefaultBruteForceProtectionPrecedesConfiguredFinal(t *tes
 
 				return effectsupervisor.Succeeded()
 			}
-			current.preparePost = func(
-				report.EffectRequest,
-				uint32,
-			) (effectsupervisor.ExecutableWork, error) {
-				postPreparations.Add(1)
-
-				return &authnCandidateEffectWork{}, nil
-			}
 		},
 	}
 	acceptor := newAuthnCandidateTestSupervisor(t, nil)
@@ -981,8 +751,11 @@ func TestAuthnCandidateDefaultBruteForceProtectionPrecedesConfiguredFinal(t *tes
 		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
 	}
 
+	installAuthnCandidateServices(t, failingPasswordVerifier{}, testLuaSubject{})
+	bindRegisteredAuthnApplicationHostServicesForTest(base)
+
 	assertAuthnCandidateDefaultBruteForceResult(
-		t, adapter, acceptor, recorder, &execution, &syncCalls, &postPreparations,
+		t, adapter, acceptor, recorder, &execution, &syncCalls,
 	)
 }
 
@@ -994,7 +767,6 @@ func assertAuthnCandidateDefaultBruteForceResult(
 	recorder *authnCandidateCheckpointFactory,
 	execution **authnCandidateExecution,
 	syncCalls *atomic.Int32,
-	postPreparations *atomic.Int32,
 ) {
 	t.Helper()
 
@@ -1036,10 +808,10 @@ func assertAuthnCandidateDefaultBruteForceResult(
 		t.Fatalf("configured final unexpectedly selected = %#v", selected)
 	}
 
-	if current.finalReady || syncCalls.Load() != 2 || postPreparations.Load() != 1 {
+	if current.finalReady || syncCalls.Load() != 1 {
 		t.Fatalf(
-			"backend/sync/post execution = %t/%d/%d, want false/2/1",
-			current.finalReady, syncCalls.Load(), postPreparations.Load(),
+			"backend/sync execution = %t/%d, want false/1",
+			current.finalReady, syncCalls.Load(),
 		)
 	}
 }
@@ -1053,11 +825,11 @@ func assertAuthnCandidateConfiguredPreAuthNoMatch(
 
 	cfg := newCurrentBehaviorConfig(t)
 	db, _ := redismock.NewClientMock()
-	base := NewAuthApplicationService(AuthDeps{
+	base := newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
-	}).(*authApplicationService)
+	})
 
 	var execution *authnCandidateExecution
 
@@ -1086,6 +858,9 @@ func assertAuthnCandidateConfiguredPreAuthNoMatch(
 	if err != nil {
 		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
 	}
+
+	installAuthnCandidateServices(t, failingPasswordVerifier{}, testLuaSubject{})
+	bindRegisteredAuthnApplicationHostServicesForTest(base)
 
 	result, err := operation.runForDecision(
 		context.Background(),
@@ -1173,10 +948,364 @@ func TestAuthnCandidateCompiledPreAuthPlanStopsEnvironmentBeforeConfiguredDeny(t
 	}
 }
 
+func TestAuthnPolicyDispatcherExecutesCapturedLuaEnvironmentSource(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlLua)
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
+	prototype := compileAuthnCandidateLuaSource(t, "captured.lua", `
+function nauthilus_call_environment(_request)
+    nauthilus_builtin.status_message_set("captured environment status")
+    return nauthilus_builtin.ENVIRONMENT_TRIGGER_YES, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
+end
+`)
+
+	const providerID = "authn/lua_environment_captured"
+
+	session := &authnConfiguredHostSession{
+		recordingAuthnDecisionSession: newRecordingAuthnDecisionSession([]string{"pre_auth"}),
+		provider: authnConfiguredLuaSource{
+			id: providerID, kind: decisionservice.AuthnHostProviderKindLuaEnvironment,
+			name: "captured", prototype: prototype, pools: vmpool.NewManager(),
+		},
+	}
+	execution := &authnCandidateExecution{
+		auth: auth, ginCtx: ctx, selected: make(map[string]*report.FinalDecision),
+		operation: policy.OperationAuthenticate,
+	}
+
+	terminal, err := execution.prepareConfiguredHostProvider(session, providerID)
+	if err != nil {
+		t.Fatalf("prepareConfiguredHostProvider() error = %v", err)
+	}
+
+	if !terminal || execution.preAuthResult != definitions.AuthResultLuaEnvironment {
+		t.Fatalf("captured provider terminal=%t result=%q, want true/%q", terminal, execution.preAuthResult, definitions.AuthResultLuaEnvironment)
+	}
+
+	if !ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
+		t.Fatal("captured Lua environment trigger did not mark the request rejected")
+	}
+
+	if auth.Runtime.StatusMessage != "captured environment status" {
+		t.Fatalf("captured Lua environment status = %q, want exact script result", auth.Runtime.StatusMessage)
+	}
+}
+
+func TestAuthnPolicyDispatcherExecutesCapturedNativeEnvironmentSource(t *testing.T) {
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, newCurrentBehaviorConfig(t))
+	auth.deps.NativeRuntime = authnCapturedNativeRuntime{}
+	provider := &authnCapturedNativeEnvironmentSource{id: "authn/plugin.example.environment"}
+	session := &authnConfiguredHostSession{
+		recordingAuthnDecisionSession: newRecordingAuthnDecisionSession([]string{"pre_auth"}),
+		provider:                      provider,
+	}
+	execution := &authnCandidateExecution{
+		auth: auth, ginCtx: ctx, selected: make(map[string]*report.FinalDecision),
+		operation: policy.OperationAuthenticate,
+	}
+
+	terminal, err := execution.prepareConfiguredHostProvider(session, provider.id)
+	if err != nil {
+		t.Fatalf("prepareConfiguredHostProvider() error = %v", err)
+	}
+
+	if terminal {
+		t.Fatal("neutral captured native environment provider became terminal")
+	}
+
+	if provider.calls.Load() != 1 {
+		t.Fatalf("captured native environment provider calls = %d, want 1", provider.calls.Load())
+	}
+}
+
+func TestAuthnPolicyDispatcherExecutesCapturedNativeSubjectSource(t *testing.T) {
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, newCurrentBehaviorConfig(t))
+	auth.deps.NativeRuntime = authnCapturedNativeRuntime{}
+	provider := &authnCapturedNativeSubjectSource{id: "authn/plugin.example.subject.risk", rejected: true}
+	session := &authnConfiguredHostSession{
+		recordingAuthnDecisionSession: newRecordingAuthnDecisionSession([]string{"subject_analysis"}),
+		provider:                      provider,
+	}
+	backendResult := GetPassDBResultFromPool()
+	backendResult.Authenticated = true
+	backendResult.UserFound = true
+
+	execution := &authnCandidateExecution{
+		auth: auth, ginCtx: ctx, selected: make(map[string]*report.FinalDecision),
+		operation: policy.OperationAuthenticate, backendResult: backendResult, backendReady: true,
+	}
+	defer execution.release()
+
+	terminal, err := execution.prepareConfiguredHostProvider(session, provider.id)
+	if err != nil {
+		t.Fatalf("prepareConfiguredHostProvider() error = %v", err)
+	}
+
+	if !terminal || execution.authResult != definitions.AuthResultFail {
+		t.Fatalf(
+			"captured native subject terminal=%t result=%q, want true/%q",
+			terminal,
+			execution.authResult,
+			definitions.AuthResultFail,
+		)
+	}
+
+	if provider.calls.Load() != 1 {
+		t.Fatalf("captured native subject provider calls = %d, want 1", provider.calls.Load())
+	}
+}
+
+func TestAuthnPolicyDispatcherTreatsCapturedLuaEnvironmentAbortAsNonTerminal(t *testing.T) {
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, newCurrentBehaviorConfig(t, definitions.ControlLua))
+	prototype := compileAuthnCandidateLuaSource(t, "abort.lua", `
+function nauthilus_call_environment(_request)
+    return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_YES, nauthilus_builtin.ENVIRONMENT_RESULT_OK
+end
+`)
+
+	const providerID = "authn/lua_environment_abort"
+
+	session := &authnConfiguredHostSession{
+		recordingAuthnDecisionSession: newRecordingAuthnDecisionSession([]string{"pre_auth"}),
+		provider: authnConfiguredLuaSource{
+			id: providerID, kind: decisionservice.AuthnHostProviderKindLuaEnvironment,
+			name: "abort", prototype: prototype, pools: vmpool.NewManager(),
+		},
+	}
+	execution := &authnCandidateExecution{
+		auth: auth, ginCtx: ctx, selected: make(map[string]*report.FinalDecision),
+		operation: policy.OperationAuthenticate,
+	}
+
+	terminal, err := execution.prepareConfiguredHostProvider(session, providerID)
+	if err != nil {
+		t.Fatalf("prepareConfiguredHostProvider() error = %v", err)
+	}
+
+	if terminal || execution.preAuthResult != definitions.AuthResultOK {
+		t.Fatalf("captured abort terminal=%t result=%q, want false/%q", terminal, execution.preAuthResult, definitions.AuthResultOK)
+	}
+}
+
+func TestAuthnPolicyDispatcherExecutesCapturedLuaSubjectSource(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	prototype := compileAuthnCandidateLuaSource(t, "captured_subject.lua", `
+function nauthilus_call_subject(_request)
+    return nauthilus_builtin.SUBJECT_REJECT, nauthilus_builtin.SUBJECT_RESULT_OK
+end
+`)
+
+	runner := &authnCapturedSubjectRunner{}
+	previous := getLuaSubject()
+
+	RegisterLuaSubject(runner)
+	t.Cleanup(func() { RegisterLuaSubject(previous) })
+	bindRegisteredAuthnHostServicesForTest(auth)
+
+	backendResult := GetPassDBResultFromPool()
+	backendResult.Authenticated = true
+	backendResult.UserFound = true
+
+	const providerID = "authn/lua_subject_captured"
+
+	session := &authnConfiguredHostSession{
+		recordingAuthnDecisionSession: newRecordingAuthnDecisionSession([]string{"subject_analysis"}),
+		provider: authnConfiguredLuaSource{
+			id: providerID, kind: decisionservice.AuthnHostProviderKindLuaSubject,
+			name: "captured", prototype: prototype, pools: vmpool.NewManager(),
+		},
+	}
+
+	execution := &authnCandidateExecution{
+		auth: auth, ginCtx: ctx, selected: make(map[string]*report.FinalDecision),
+		operation: policy.OperationAuthenticate, backendResult: backendResult, backendReady: true,
+	}
+	defer execution.release()
+
+	terminal, err := execution.prepareConfiguredHostProvider(session, providerID)
+	if err != nil {
+		t.Fatalf("prepareConfiguredHostProvider() error = %v", err)
+	}
+
+	if !terminal || execution.authResult != definitions.AuthResultFail || runner.calls.Load() != 1 {
+		t.Fatalf(
+			"captured subject terminal=%t result=%q calls=%d, want true/%q/1",
+			terminal,
+			execution.authResult,
+			runner.calls.Load(),
+			definitions.AuthResultFail,
+		)
+	}
+}
+
+// compileAuthnCandidateLuaSource compiles one exact test-owned source.
+func compileAuthnCandidateLuaSource(t *testing.T, name string, source string) *lua.FunctionProto {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatalf("write captured Lua source: %v", err)
+	}
+
+	prototype, err := compileLuaTestFile(path)
+	if err != nil {
+		t.Fatalf("compileLuaTestFile() error = %v", err)
+	}
+
+	return prototype
+}
+
+type authnConfiguredHostSession struct {
+	*recordingAuthnDecisionSession
+	provider decisionservice.AuthnHostProvider
+}
+
+// AuthnHostProvider resolves the test generation's exact configured source.
+func (s *authnConfiguredHostSession) AuthnHostProvider(id string) (decisionservice.AuthnHostProvider, bool) {
+	if s == nil || s.provider == nil || s.provider.ID() != id {
+		return nil, false
+	}
+
+	return s.provider, true
+}
+
+type authnConfiguredLuaSource struct {
+	prototype *lua.FunctionProto
+	pools     *vmpool.Manager
+	id        string
+	kind      string
+	name      string
+}
+
+type authnCapturedNativeEnvironmentSource struct {
+	id    string
+	calls atomic.Int32
+}
+
+type authnCapturedNativeSubjectSource struct {
+	id       string
+	calls    atomic.Int32
+	rejected bool
+}
+
+type authnCapturedNativeRuntime struct{}
+
+// Capture returns one request-owned empty projection for exact provider tests.
+func (authnCapturedNativeRuntime) Capture(
+	context.Context,
+	AuthnNativeCaptureInput,
+) (AuthnNativeCapture, error) {
+	return AuthnNativeCapture{}, nil
+}
+
+// ApplyRuntimeDelta accepts only the empty result used by this provider fixture.
+func (authnCapturedNativeRuntime) ApplyRuntimeDelta(*AuthState, pluginapi.RuntimeDelta) error {
+	return nil
+}
+
+// ID returns the exact generation-owned native environment provider identity.
+func (s *authnCapturedNativeEnvironmentSource) ID() string { return s.id }
+
+// Kind identifies the captured public environment source family.
+func (*authnCapturedNativeEnvironmentSource) Kind() string {
+	return decisionservice.AuthnHostProviderKindNativeEnvironment
+}
+
+// Capabilities returns the detached grant captured with the provider.
+func (*authnCapturedNativeEnvironmentSource) Capabilities() []pluginapi.Capability { return nil }
+
+// EvaluateEnvironment records one exact session-yielded invocation.
+func (s *authnCapturedNativeEnvironmentSource) EvaluateEnvironment(
+	context.Context,
+	pluginapi.EnvironmentRequest,
+) (pluginapi.EnvironmentResult, error) {
+	s.calls.Add(1)
+
+	return pluginapi.EnvironmentResult{}, nil
+}
+
+// ID returns the exact generation-owned native subject provider identity.
+func (s *authnCapturedNativeSubjectSource) ID() string { return s.id }
+
+// Kind identifies the captured public subject source family.
+func (*authnCapturedNativeSubjectSource) Kind() string {
+	return decisionservice.AuthnHostProviderKindNativeSubject
+}
+
+// Capabilities returns the detached grant captured with the provider.
+func (*authnCapturedNativeSubjectSource) Capabilities() []pluginapi.Capability { return nil }
+
+// EvaluateSubject records one exact session-yielded invocation.
+func (s *authnCapturedNativeSubjectSource) EvaluateSubject(
+	context.Context,
+	pluginapi.SubjectRequest,
+) (pluginapi.SubjectResult, error) {
+	s.calls.Add(1)
+
+	return pluginapi.SubjectResult{Rejected: s.rejected}, nil
+}
+
+type authnCapturedSubjectRunner struct {
+	calls atomic.Int32
+}
+
+// Analyze rejects ambient subject execution in this generation-owned fixture.
+func (*authnCapturedSubjectRunner) Analyze(*gin.Context, *StateView, *PassDBResult) definitions.AuthResult {
+	return definitions.AuthResultTempFail
+}
+
+// AnalyzeSource records exact captured-source selection.
+func (r *authnCapturedSubjectRunner) AnalyzeSource(
+	_ *gin.Context,
+	_ *StateView,
+	_ *PassDBResult,
+	name string,
+	prototype *lua.FunctionProto,
+	_ *vmpool.Manager,
+	_ vmpool.PoolKey,
+	_ *luaseal.Modules,
+) definitions.AuthResult {
+	if name == "captured" && prototype != nil {
+		r.calls.Add(1)
+	}
+
+	return definitions.AuthResultFail
+}
+
+// ID returns the exact test provider identity.
+func (s authnConfiguredLuaSource) ID() string {
+	return s.id
+}
+
+// Kind returns the exact test host-provider kind.
+func (s authnConfiguredLuaSource) Kind() string {
+	return s.kind
+}
+
+// OpenCompiledLuaSource returns the detached test source capability.
+func (s authnConfiguredLuaSource) OpenCompiledLuaSource() (string, *lua.FunctionProto, error) {
+	return s.name, s.prototype, nil
+}
+
+// LuaPoolKey returns the test generation/source pool identity.
+func (s authnConfiguredLuaSource) LuaPoolKey() string {
+	return "test:authn:" + s.id
+}
+
+// LuaPoolManager returns the test generation's isolated VM pool owner.
+func (s authnConfiguredLuaSource) LuaPoolManager() *vmpool.Manager {
+	return s.pools
+}
+
+// SealedLuaModules returns the empty immutable module set for this source-only fixture.
+func (authnConfiguredLuaSource) SealedLuaModules() *luaseal.Modules {
+	return nil
+}
+
 type authnCandidateCompiledProviderFixture struct {
 	adapter   AuthApplicationService
 	acceptor  *effectsupervisor.Supervisor
-	bridge    *recordingAuthnCandidateEnvironmentBridge
 	execution *authnCandidateExecution
 }
 
@@ -1189,21 +1318,13 @@ func newAuthnCandidateCompiledProviderFixture(
 
 	cfg := newCurrentBehaviorConfig(t)
 	db, _ := redismock.NewClientMock()
-	base := NewAuthApplicationService(AuthDeps{
+	base := newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
-	}).(*authApplicationService)
-
-	fixture := &authnCandidateCompiledProviderFixture{
-		bridge: &recordingAuthnCandidateEnvironmentBridge{},
-	}
-	previousBridge := getPluginEnvironmentSourceBridge()
-
-	RegisterPluginEnvironmentSourceBridge(fixture.bridge)
-	t.Cleanup(func() {
-		RegisterPluginEnvironmentSourceBridge(previousBridge)
 	})
+
+	fixture := &authnCandidateCompiledProviderFixture{}
 
 	host := &authnCandidateInjectedHost{
 		base: base,
@@ -1213,7 +1334,8 @@ func newAuthnCandidateCompiledProviderFixture(
 	}
 	fixture.acceptor = newAuthnCandidateTestSupervisor(t, nil)
 
-	installAuthnCandidateServices(t, failingPasswordVerifier{}, testLuaSubject{}, recordingPlanPostAction{})
+	installAuthnCandidateServices(t, failingPasswordVerifier{}, testLuaSubject{})
+	bindRegisteredAuthnApplicationHostServicesForTest(base)
 
 	catalog := compileAuthnCandidateConfiguredCatalogFor(
 		t,
@@ -1263,9 +1385,8 @@ func assertAuthnCandidateCompiledPreAuthProviders(
 	assertAuthnCandidateCompiledProviderResult(
 		t,
 		result,
-		fixture.bridge,
 		fixture.execution,
-		wantEnvironment,
+		wantEnvironment > 0,
 		wantBruteForce,
 	)
 }
@@ -1274,9 +1395,8 @@ func assertAuthnCandidateCompiledPreAuthProviders(
 func assertAuthnCandidateCompiledProviderResult(
 	t *testing.T,
 	result authnMappedTestResult,
-	bridge *recordingAuthnCandidateEnvironmentBridge,
 	execution *authnCandidateExecution,
-	wantEnvironment int32,
+	wantEnvironment bool,
 	wantBruteForce bool,
 ) {
 	t.Helper()
@@ -1285,21 +1405,17 @@ func assertAuthnCandidateCompiledProviderResult(
 		t.Fatalf("candidate decision = %q, want fail", result.decision)
 	}
 
-	if got := bridge.calls.Load(); got != wantEnvironment {
-		t.Fatalf("environment provider calls = %d, want %d", got, wantEnvironment)
-	}
-
 	if execution == nil {
 		t.Fatal("candidate provider execution was not captured")
 	}
 
-	if execution.bruteForceRun != wantBruteForce || execution.environmentRun != (wantEnvironment > 0) {
+	if execution.bruteForceRun != wantBruteForce || execution.environmentRun != wantEnvironment {
 		t.Fatalf(
 			"provider execution brute_force=%t environment=%t, want %t/%t",
 			execution.bruteForceRun,
 			execution.environmentRun,
 			wantBruteForce,
-			wantEnvironment > 0,
+			wantEnvironment,
 		)
 	}
 }
@@ -1314,17 +1430,15 @@ func runAuthnCandidateConfiguredCheckpointParity(
 
 	cfg := newCurrentBehaviorConfig(t)
 	db, _ := redismock.NewClientMock()
-	base := NewAuthApplicationService(AuthDeps{
+	base := newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
-	}).(*authApplicationService)
+	})
 	host := newAuthnConfiguredCheckpointHost(base)
-	acceptor, supervisor, postAction, acceptance := authnCandidateConfiguredCheckpointAcceptor(
-		t,
-		operation.operation,
-		checkpoint,
-	)
+	acceptor := effectsupervisor.Acceptor(&authnCandidateAcceptAll{})
+
+	bindRegisteredAuthnApplicationHostServicesForTest(base)
 
 	catalog := compileAuthnCandidateConfiguredCatalogFor(t, acceptor, operation.operation, checkpoint)
 
@@ -1347,48 +1461,11 @@ func runAuthnCandidateConfiguredCheckpointParity(
 		t.Fatalf("candidate operation error = %v", err)
 	}
 
-	if supervisor != nil {
-		waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-
-		if err = supervisor.WaitIdle(waitCtx); err != nil {
-			t.Fatalf("configured checkpoint post-action wait: %v", err)
-		}
-
-		if postAction.preparations.Load() != 1 || acceptance.calls.Load() != 1 {
-			t.Fatalf(
-				"configured pre-auth post prepare/accept = %d/%d, want 1/1",
-				postAction.preparations.Load(),
-				acceptance.calls.Load(),
-			)
-		}
-	}
-
 	assertAuthnCandidateConfiguredTraversal(t, result, recorder, host, operation, checkpoint)
 }
 
-// authnCandidateConfiguredCheckpointAcceptor instruments terminal configured pre-auth post-actions.
-func authnCandidateConfiguredCheckpointAcceptor(
-	t *testing.T,
-	operation policy.Operation,
-	checkpoint policy.Stage,
-) (effectsupervisor.Acceptor, *effectsupervisor.Supervisor, *authnCandidateCountingPlanPostAction, *authnCandidateCountingAcceptor) {
-	t.Helper()
-
-	if checkpoint != policy.StagePreAuth || operation == policy.OperationListAccounts {
-		return &authnCandidateAcceptAll{}, nil, nil, nil
-	}
-
-	supervisor := newAuthnCandidateTestSupervisor(t, nil)
-	acceptance := &authnCandidateCountingAcceptor{delegate: supervisor}
-	postAction := &authnCandidateCountingPlanPostAction{}
-	installAuthnCandidateServices(t, failingPasswordVerifier{}, testLuaSubject{}, postAction)
-
-	return acceptance, supervisor, postAction, acceptance
-}
-
 // newAuthnConfiguredCheckpointHost returns deterministic current-pipeline state for every operation.
-func newAuthnConfiguredCheckpointHost(base *authApplicationService) *authnCandidateInjectedHost {
+func newAuthnConfiguredCheckpointHost(base authnCandidateHost) *authnCandidateInjectedHost {
 	return &authnCandidateInjectedHost{
 		base: base,
 		configure: func(execution *authnCandidateExecution) {
@@ -1468,793 +1545,6 @@ func assertAuthnCandidateConfiguredAuthority(
 	}
 }
 
-func TestAuthnCandidateLuaNativeFactAndEffectParity(t *testing.T) {
-	fixture := newAuthnCandidateLuaNativeFixture(t)
-	outcome := authenticateAuthnCandidate(
-		t,
-		"Lua/native authority and effect order",
-		fixture.adapter,
-		authnApplicationTestInput(AuthModeAuthenticate),
-	)
-
-	if outcome.Decision != AuthDecisionOK {
-		t.Fatalf("candidate decision = %q, want ok", outcome.Decision)
-	}
-
-	wantOrder := []string{
-		"lua:" + policy.ObligationLuaActionDispatch,
-		"native:" + authnCandidateNativeEffectID,
-	}
-	if got := fixture.log.entries(); !reflect.DeepEqual(got, wantOrder) {
-		t.Fatalf("Lua/native effect order = %v, want %v", got, wantOrder)
-	}
-
-	if err := fixture.bridge.validationError(); err != nil {
-		t.Fatalf("Lua/native fact authority: %v", err)
-	}
-
-	if fixture.environment.calls.Load() != 1 {
-		t.Fatalf("native environment collector calls = %d, want 1", fixture.environment.calls.Load())
-	}
-
-	if fixture.host.calls.Load() != 0 {
-		t.Fatalf("legacy aggregate calls = %d, want 0", fixture.host.calls.Load())
-	}
-}
-
-func TestAuthnCandidateNativeTerminalPreAuthParity(t *testing.T) {
-	operations := authnApplicationOperationCases()[:2]
-	outcomes := []authnCandidateNativeTerminalCase{
-		{
-			name: "trigger", triggered: true, wantDecision: AuthDecisionFail,
-			wantRuleSuffix: "trigger", wantFSM: policy.FSMEventMarkerPreAuthDeny,
-			wantPostActions: 1, wantStatus: "native environment denied",
-		},
-		{
-			name: "error", err: errors.New("native environment unavailable"),
-			wantDecision: AuthDecisionTempFail, wantRuleSuffix: "error",
-			wantFSM: policy.FSMEventMarkerPreAuthTempFail, wantStatus: definitions.TempFailDefault,
-		},
-	}
-
-	for _, operation := range operations {
-		for _, outcome := range outcomes {
-			t.Run(operation.name+"/"+outcome.name, func(t *testing.T) {
-				assertAuthnCandidateNativeTerminalResult(t, operation, outcome)
-			})
-		}
-	}
-}
-
-type authnCandidateNativeTerminalCase struct {
-	name            string
-	triggered       bool
-	err             error
-	wantDecision    AuthDecision
-	wantRuleSuffix  string
-	wantFSM         string
-	wantPostActions int32
-	wantStatus      string
-}
-
-// assertAuthnCandidateNativeTerminalResult verifies one operation and native terminal cause.
-func assertAuthnCandidateNativeTerminalResult(
-	t *testing.T,
-	operation authnApplicationOperationCase,
-	outcome authnCandidateNativeTerminalCase,
-) {
-	t.Helper()
-
-	fixture := newAuthnCandidateNativeTerminalFixture(t, operation, outcome.triggered, outcome.err)
-	result := runAuthnCandidateAuthOperation(t, fixture.adapter, operation)
-
-	waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	if err := fixture.supervisor.WaitIdle(waitCtx); err != nil {
-		t.Fatalf("native terminal post-action wait: %v", err)
-	}
-
-	assertAuthnCandidateNativeTerminalPresentation(t, result, outcome)
-	assertAuthnCandidateNativeTerminalAuthority(t, fixture, operation, outcome)
-}
-
-// assertAuthnCandidateNativeTerminalPresentation verifies the public result and FSM markers.
-func assertAuthnCandidateNativeTerminalPresentation(
-	t *testing.T,
-	result *AuthOutcome,
-	outcome authnCandidateNativeTerminalCase,
-) {
-	t.Helper()
-
-	if result.Decision != outcome.wantDecision || result.StatusMessage != outcome.wantStatus {
-		t.Fatalf(
-			"native terminal result = %q/%q, want %q/%q",
-			result.Decision, result.StatusMessage, outcome.wantDecision, outcome.wantStatus,
-		)
-	}
-
-	wantFSM := []string{policy.FSMEventMarkerParseOK, outcome.wantFSM}
-	if !reflect.DeepEqual(result.FSMEventPath, wantFSM) {
-		t.Fatalf("native terminal FSM = %v, want %v", result.FSMEventPath, wantFSM)
-	}
-}
-
-// assertAuthnCandidateNativeTerminalAuthority verifies selected rule and host effect ownership.
-func assertAuthnCandidateNativeTerminalAuthority(
-	t *testing.T,
-	fixture *authnCandidateNativeTerminalFixture,
-	operation authnApplicationOperationCase,
-	outcome authnCandidateNativeTerminalCase,
-) {
-	t.Helper()
-
-	checkpoint := string(policy.StagePreAuth)
-	if operation.operation == policy.OperationAuthenticate {
-		checkpoint = string(policy.StageAuthDecision)
-	}
-
-	selected := fixture.execution.selectedDecision(checkpoint)
-
-	wantRule := "standard_plugin_environment_candidate_verdict_" + outcome.wantRuleSuffix
-	if selected == nil || selected.PolicyName != wantRule || selected.Stage != policy.StagePreAuth {
-		t.Fatalf("native terminal selection = %#v, want %s at pre-auth", selected, wantRule)
-	}
-
-	if fixture.postAction.preparations.Load() != outcome.wantPostActions ||
-		fixture.acceptor.calls.Load() != outcome.wantPostActions {
-		t.Fatalf(
-			"native terminal post prepare/accept = %d/%d, want %d/%d",
-			fixture.postAction.preparations.Load(), fixture.acceptor.calls.Load(),
-			outcome.wantPostActions, outcome.wantPostActions,
-		)
-	}
-
-	if fixture.verifierCalls.Load() != 0 || fixture.host.calls.Load() != 0 {
-		t.Fatalf(
-			"native terminal backend/legacy calls = %d/%d, want 0/0",
-			fixture.verifierCalls.Load(), fixture.host.calls.Load(),
-		)
-	}
-}
-
-func TestAuthnCandidateNativeEnvironmentPreservesDependencyOrderAndFinalStatus(t *testing.T) {
-	operation := authnApplicationOperationCases()[0]
-	bridge := &authnCandidateNativeEnvironmentBridge{sources: []authnCandidateNativeEnvironmentOutcome{
-		{name: "alpha", triggered: true, status: "alpha denied"},
-		{name: "zeta", triggered: true, status: "zeta denied"},
-	}}
-	fixture := newAuthnCandidateNativeFixture(
-		t,
-		operation,
-		bridge,
-		authnCandidateCompilerEnvironmentSource{name: "zeta", after: []string{"alpha"}},
-		authnCandidateCompilerEnvironmentSource{name: "alpha"},
-	)
-	result := runAuthnCandidateAuthOperation(t, fixture.adapter, operation)
-
-	waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	if err := fixture.supervisor.WaitIdle(waitCtx); err != nil {
-		t.Fatalf("native ordered post-action wait: %v", err)
-	}
-
-	if result.Decision != AuthDecisionFail || result.StatusMessage != "zeta denied" {
-		t.Fatalf(
-			"native ordered result = %q/%q, want fail/zeta denied",
-			result.Decision,
-			result.StatusMessage,
-		)
-	}
-
-	selected := fixture.execution.selectedDecision(string(policy.StageAuthDecision))
-	if selected == nil || selected.PolicyName != "standard_plugin_environment_candidate_zeta_trigger" {
-		t.Fatalf("native ordered selection = %#v, want final dependency source", selected)
-	}
-
-	if fixture.postAction.preparations.Load() != 1 || fixture.acceptor.calls.Load() != 1 {
-		t.Fatalf(
-			"native ordered post prepare/accept = %d/%d, want 1/1",
-			fixture.postAction.preparations.Load(),
-			fixture.acceptor.calls.Load(),
-		)
-	}
-}
-
-func TestAuthnCandidateNativeSubjectPreservesDependencyOrderAndFinalStatus(t *testing.T) {
-	bridge := &authnCandidateNativeSubjectBridge{sources: []authnCandidateNativeSubjectOutcome{
-		{name: "alpha", rejected: true, status: "alpha subject denied"},
-		{name: "zeta", rejected: true, status: "zeta subject denied"},
-	}}
-	fixture := newAuthnCandidateNativeSubjectFixture(
-		t,
-		bridge,
-		authnCandidateCompilerSubjectSource{name: "zeta", after: []string{"alpha"}},
-		authnCandidateCompilerSubjectSource{name: "alpha"},
-	)
-	operation := authnApplicationOperationCases()[0]
-	result := runAuthnCandidateAuthOperation(t, fixture.adapter, operation)
-
-	if result.Decision != AuthDecisionFail || result.StatusMessage != "zeta subject denied" {
-		t.Fatalf(
-			"native ordered subject result = %q/%q, want fail/zeta subject denied",
-			result.Decision,
-			result.StatusMessage,
-		)
-	}
-
-	selected := fixture.execution.selectedDecision(string(policy.StageAuthDecision))
-	if selected == nil || selected.PolicyName != "standard_plugin_subject_candidate_zeta_reject" {
-		t.Fatalf("native ordered subject selection = %#v, want final dependency source", selected)
-	}
-
-	if fixture.verifierCalls.Load() != 1 || fixture.host.calls.Load() != 0 {
-		t.Fatalf(
-			"native ordered subject backend/legacy calls = %d/%d, want 1/0",
-			fixture.verifierCalls.Load(),
-			fixture.host.calls.Load(),
-		)
-	}
-}
-
-func TestAuthnCandidateLuaAbortContinuesToBackendResult(t *testing.T) {
-	for _, test := range []authnCandidateLuaAbortCase{
-		{
-			name: "success", verifier: currentBehaviorPasswordVerifier{},
-			subject:      testLuaSubject{},
-			wantDecision: AuthDecisionOK, wantPolicy: "standard_auth_success",
-			wantFSM: policy.FSMEventMarkerAuthPermit,
-		},
-		{
-			name: "failure", verifier: failingPasswordVerifier{}, subject: testLuaSubject{},
-			wantDecision: AuthDecisionFail, wantPolicy: "standard_auth_failure",
-			wantFSM: policy.FSMEventMarkerAuthDeny,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			assertAuthnCandidateLuaAbortResult(t, test)
-		})
-	}
-}
-
-type authnCandidateLuaAbortCase struct {
-	verifier     PasswordVerifier
-	subject      LuaSubject
-	name         string
-	wantDecision AuthDecision
-	wantPolicy   string
-	wantFSM      string
-}
-
-// assertAuthnCandidateLuaAbortResult verifies nonterminal control and the later backend selection.
-func assertAuthnCandidateLuaAbortResult(t *testing.T, test authnCandidateLuaAbortCase) {
-	t.Helper()
-
-	fixture := newAuthnCandidateRealLuaFixture(t, `
-function nauthilus_call_environment(request)
-    return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_YES, nauthilus_builtin.ENVIRONMENT_RESULT_OK
-end
-`, test.verifier, test.subject)
-	outcome := authenticateAuthnCandidate(
-		t,
-		"Lua abort "+test.name,
-		fixture.adapter,
-		authnApplicationTestInput(AuthModeAuthenticate),
-	)
-	fixture.waitPostActions(t)
-
-	if outcome.Decision != test.wantDecision {
-		t.Fatalf(
-			"Lua abort outcome = %#v, selected = %#v, report = %#v, want decision %q",
-			outcome,
-			fixture.execution.selectedDecision(string(policy.StageAuthDecision)),
-			fixture.execution.auth.policyReport(fixture.execution.ginCtx),
-			test.wantDecision,
-		)
-	}
-
-	selected := fixture.execution.selectedDecision(string(policy.StageAuthDecision))
-	if selected == nil || selected.PolicyName != test.wantPolicy {
-		t.Fatalf("Lua abort final selection = %#v, want %s", selected, test.wantPolicy)
-	}
-
-	assertAuthnCandidateFinalAndPoliciesParity(t, fixture.execution)
-
-	wantFSM := []string{
-		policy.FSMEventMarkerParseOK,
-		policy.FSMEventMarkerPreAuthOK,
-		policy.FSMEventMarkerAuthEvaluated,
-		test.wantFSM,
-	}
-	if !reflect.DeepEqual(outcome.FSMEventPath, wantFSM) {
-		t.Fatalf("Lua abort FSM = %v, want %v", outcome.FSMEventPath, wantFSM)
-	}
-
-	attribute := fixture.execution.auth.policyReport(fixture.execution.ginCtx).
-		Attributes["auth.lua.environment.current_behavior_environment.abort"]
-	if attribute.Value != true {
-		t.Fatalf("Lua abort fact = %#v, want true", attribute.Value)
-	}
-}
-
-func TestAuthnCandidateLuaResponseIsSanitizedBeforeSchemaValidation(t *testing.T) {
-	fixture := newAuthnCandidateRealLuaFixture(t, `
-function nauthilus_call_environment(request)
-    nauthilus_builtin.status_message_set("denied\n" .. string.rep("x", 300))
-    return nauthilus_builtin.ENVIRONMENT_TRIGGER_YES, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
-end
-`, failingPasswordVerifier{}, testLuaSubject{})
-
-	outcome := authenticateAuthnCandidate(
-		t,
-		"sanitized Lua response",
-		fixture.adapter,
-		authnApplicationTestInput(AuthModeAuthenticate),
-	)
-	fixture.waitPostActions(t)
-
-	wantMessage := "denied" + strings.Repeat("x", 250)
-	if outcome.Decision != AuthDecisionFail || outcome.StatusMessage != wantMessage {
-		t.Fatalf("sanitized Lua result = %q/%q, want fail/%q", outcome.Decision, outcome.StatusMessage, wantMessage)
-	}
-
-	if strings.ContainsAny(outcome.StatusMessage, "\r\n\x00") {
-		t.Fatalf("sanitized Lua response retains a forbidden control: %q", outcome.StatusMessage)
-	}
-
-	selected := fixture.execution.selectedDecision(string(policy.StageAuthDecision))
-	if selected == nil || selected.ResponseMessage == nil {
-		t.Fatalf("Lua response selection = %#v, want selected response", selected)
-	}
-
-	assertAuthnCandidateLuaResponseReportParity(t, fixture.execution)
-}
-
-func TestAuthnCandidateLuaControlOnlyResponsePreservesRawSelection(t *testing.T) {
-	fixture := newAuthnCandidateRealLuaFixture(t, `
-function nauthilus_call_environment(request)
-    nauthilus_builtin.status_message_set(string.char(1))
-    return nauthilus_builtin.ENVIRONMENT_TRIGGER_YES, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
-end
-`, failingPasswordVerifier{}, testLuaSubject{})
-
-	outcome := authenticateAuthnCandidate(
-		t,
-		"control-only Lua response",
-		fixture.adapter,
-		authnApplicationTestInput(AuthModeAuthenticate),
-	)
-	fixture.waitPostActions(t)
-
-	if outcome.Decision != AuthDecisionFail {
-		t.Fatalf("control-only Lua decision = %q, want fail", outcome.Decision)
-	}
-
-	selected := fixture.execution.selectedDecision(string(policy.StageAuthDecision))
-	if selected == nil || selected.ResponseMessage == nil || selected.ResponseMessage.Message != "" ||
-		selected.ResponseMessage.FallbackUsed {
-		t.Fatalf("control-only Lua response selection = %#v, want selected empty non-fallback", selected)
-	}
-
-	assertAuthnCandidateLuaResponseReportParity(t, fixture.execution)
-}
-
-// assertAuthnCandidateLuaResponseReportParity compares candidate metadata with the frozen legacy oracle.
-func assertAuthnCandidateLuaResponseReportParity(
-	t *testing.T,
-	execution *authnCandidateExecution,
-) {
-	t.Helper()
-
-	candidateReport, legacyReport := assertAuthnCandidateFinalAndPoliciesParity(t, execution)
-
-	attributeID := "auth.lua.environment.current_behavior_environment.triggered"
-	if !reflect.DeepEqual(candidateReport.Attributes[attributeID], legacyReport.Attributes[attributeID]) {
-		t.Fatalf(
-			"Lua response attribute report = %#v, want legacy %#v",
-			candidateReport.Attributes[attributeID],
-			legacyReport.Attributes[attributeID],
-		)
-	}
-}
-
-// assertAuthnCandidateFinalAndPoliciesParity compares catalog report projection with the test-only oracle.
-func assertAuthnCandidateFinalAndPoliciesParity(
-	t *testing.T,
-	execution *authnCandidateExecution,
-) (*report.DecisionReport, *report.DecisionReport) {
-	t.Helper()
-
-	candidateReport := execution.auth.policyReport(execution.ginCtx)
-	legacyReport := cloneAuthnCandidatePolicyInputs(candidateReport)
-	legacyFinal := evaluation.EvaluateStandardAuth(legacyReport).Final
-
-	selected := execution.selectedDecision(string(policy.StageAuthDecision))
-	if !reflect.DeepEqual(selected, legacyFinal) {
-		t.Fatalf("authn final report = %#v, want legacy %#v", selected, legacyFinal)
-	}
-
-	if !reflect.DeepEqual(candidateReport.Policies, legacyReport.Policies) {
-		t.Fatalf("authn policy reports = %#v, want legacy %#v", candidateReport.Policies, legacyReport.Policies)
-	}
-
-	return candidateReport, legacyReport
-}
-
-// cloneAuthnCandidatePolicyInputs detaches collected facts for the frozen legacy report oracle.
-func cloneAuthnCandidatePolicyInputs(source *report.DecisionReport) *report.DecisionReport {
-	cloned := report.NewDecisionReport()
-	if source == nil {
-		return cloned
-	}
-
-	cloned.SessionID = source.SessionID
-	cloned.Operation = source.Operation
-	cloned.Stage = source.Stage
-
-	for id, attribute := range source.Attributes {
-		attribute.Details = cloneAuthnCandidateDetails(attribute.Details)
-		cloned.Attributes[id] = attribute
-	}
-
-	for id, check := range source.Checks {
-		check.Attributes = append([]string(nil), check.Attributes...)
-		cloned.Checks[id] = check
-	}
-
-	for id, reason := range source.MissingChecks {
-		cloned.MissingChecks[id] = reason
-	}
-
-	for id, unavailable := range source.Unavailable {
-		cloned.Unavailable[id] = unavailable
-	}
-
-	return cloned
-}
-
-// cloneAuthnCandidateDetails detaches mutable response-detail selection metadata.
-func cloneAuthnCandidateDetails(source map[string]report.DetailValue) map[string]report.DetailValue {
-	if source == nil {
-		return nil
-	}
-
-	cloned := make(map[string]report.DetailValue, len(source))
-	for id, detail := range source {
-		detail.Selected = false
-		cloned[id] = detail
-	}
-
-	return cloned
-}
-
-type authnCandidateRealLuaFixture struct {
-	adapter    AuthApplicationService
-	execution  *authnCandidateExecution
-	supervisor *effectsupervisor.Supervisor
-}
-
-// waitPostActions waits until accepted Lua post-actions release their generation lease.
-func (f *authnCandidateRealLuaFixture) waitPostActions(t *testing.T) {
-	t.Helper()
-
-	waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	if err := f.supervisor.WaitIdle(waitCtx); err != nil {
-		t.Fatalf("Lua post-action wait: %v", err)
-	}
-}
-
-// newAuthnCandidateRealLuaFixture runs the actual environment collector under catalog authority.
-func newAuthnCandidateRealLuaFixture(
-	t *testing.T,
-	script string,
-	verifier PasswordVerifier,
-	subject LuaSubject,
-) *authnCandidateRealLuaFixture {
-	t.Helper()
-
-	cfg := newCurrentBehaviorConfig(t, definitions.ControlLua)
-	cfg.Server.Redis.AccountLocalCache.Enabled = true
-	cfg.Server.Backends = []*config.Backend{mustPolicyBackendForTest(t, definitions.BackendTest)}
-	scriptPath := withCurrentBehaviorLuaEnvironment(t, script)
-	cfg.Lua = &config.LuaSection{EnvironmentSources: []config.LuaEnvironmentSource{{
-		Name: "current_behavior_environment", ScriptPath: scriptPath,
-	}}}
-	snapshot := compileAuthnCandidateLegacySnapshot(t, cfg)
-	supervisor := newAuthnCandidateTestSupervisor(t, nil)
-	catalog := compileAuthnCandidateCatalogWithSnapshot(t, supervisor, snapshot)
-	runtime := newAuthnCandidateDecisionServiceFromCatalogAndSnapshot(t, cfg, supervisor, catalog, snapshot)
-
-	base := newAuthnCandidateRealCollectorBase(t, cfg)
-
-	fixture := &authnCandidateRealLuaFixture{supervisor: supervisor}
-	host := &authnCandidateInjectedHost{
-		base: base,
-		configure: func(current *authnCandidateExecution) {
-			fixture.execution = current
-			current.executeEffect = func(report.EffectRequest) effectsupervisor.Result {
-				return effectsupervisor.Succeeded()
-			}
-		},
-	}
-
-	installAuthnCandidateServices(t, verifier, subject, recordingPlanPostAction{})
-
-	adapter, err := NewAuthnCandidateApplicationService(host, runtime, mustAuthnCandidateAuthentication(t))
-	if err != nil {
-		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
-	}
-
-	fixture.adapter = adapter
-
-	return fixture
-}
-
-type authnCandidateLuaNativeFixture struct {
-	adapter     AuthApplicationService
-	host        *authnCandidateInjectedHost
-	bridge      *authnCandidateFactAwarePluginBridge
-	environment *authnCandidateNativeEnvironmentBridge
-	log         *authnCandidateEffectLog
-}
-
-type authnCandidateNativeTerminalFixture struct {
-	adapter       AuthApplicationService
-	host          *authnCandidateInjectedHost
-	execution     *authnCandidateExecution
-	acceptor      *authnCandidateCountingAcceptor
-	postAction    *authnCandidateCountingPlanPostAction
-	supervisor    *effectsupervisor.Supervisor
-	verifierCalls *atomic.Int32
-}
-
-// newAuthnCandidateNativeTerminalFixture runs the real native collector under builtin catalog authority.
-func newAuthnCandidateNativeTerminalFixture(
-	t *testing.T,
-	operation authnApplicationOperationCase,
-	triggered bool,
-	nativeErr error,
-) *authnCandidateNativeTerminalFixture {
-	t.Helper()
-
-	bridge := &authnCandidateNativeEnvironmentBridge{
-		triggered: triggered,
-		err:       nativeErr,
-		status:    "native environment denied",
-	}
-
-	return newAuthnCandidateNativeFixture(
-		t,
-		operation,
-		bridge,
-		authnCandidateCompilerEnvironmentSource{name: "verdict"},
-	)
-}
-
-// newAuthnCandidateNativeFixture installs captured native sources and their request-local bridge.
-func newAuthnCandidateNativeFixture(
-	t *testing.T,
-	operation authnApplicationOperationCase,
-	bridge PluginEnvironmentSourceBridge,
-	sources ...pluginapi.EnvironmentSource,
-) *authnCandidateNativeTerminalFixture {
-	t.Helper()
-
-	cfg := newAuthnCandidateNativeConfig(t)
-	publishAuthnCandidateNativeCompilerState(t, sources...)
-
-	snapshot := compileAuthnCandidateLegacySnapshot(t, cfg)
-	fixture := newAuthnCandidateNativeCapturedFixture(t, cfg, snapshot)
-	previousBridge := getPluginEnvironmentSourceBridge()
-
-	RegisterPluginEnvironmentSourceBridge(bridge)
-	t.Cleanup(func() {
-		RegisterPluginEnvironmentSourceBridge(previousBridge)
-	})
-
-	if operation.operation == policy.OperationListAccounts {
-		t.Fatal("native terminal fixture does not support list accounts")
-	}
-
-	return fixture
-}
-
-// newAuthnCandidateNativeSubjectFixture installs captured native subject sources and their bridge.
-func newAuthnCandidateNativeSubjectFixture(
-	t *testing.T,
-	bridge PluginSubjectSourceBridge,
-	sources ...pluginapi.SubjectSource,
-) *authnCandidateNativeTerminalFixture {
-	t.Helper()
-
-	cfg := newAuthnCandidateNativeConfig(t)
-	publishAuthnCandidateSubjectCompilerState(t, sources...)
-	snapshot := compileAuthnCandidateLegacySnapshot(t, cfg)
-	fixture := newAuthnCandidateNativeCapturedFixture(t, cfg, snapshot)
-	previousBridge := getPluginSubjectSourceBridge()
-
-	RegisterPluginSubjectSourceBridge(bridge)
-	t.Cleanup(func() {
-		RegisterPluginSubjectSourceBridge(previousBridge)
-	})
-
-	return fixture
-}
-
-// newAuthnCandidateNativeConfig returns one neutral Lua environment around native source tests.
-func newAuthnCandidateNativeConfig(t *testing.T) *config.FileSettings {
-	t.Helper()
-
-	cfg := newCurrentBehaviorConfig(t, definitions.ControlLua)
-	cfg.Server.Redis.AccountLocalCache.Enabled = true
-	cfg.Server.Backends = []*config.Backend{mustPolicyBackendForTest(t, definitions.BackendTest)}
-	scriptPath := withCurrentBehaviorLuaEnvironment(t, `
-function nauthilus_call_environment(request)
-    return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
-end
-`)
-	cfg.Lua = &config.LuaSection{EnvironmentSources: []config.LuaEnvironmentSource{{
-		Name: "current_behavior_environment", ScriptPath: scriptPath,
-	}}}
-
-	return cfg
-}
-
-// newAuthnCandidateNativeCapturedFixture binds one compiler snapshot to the public auth adapter.
-func newAuthnCandidateNativeCapturedFixture(
-	t *testing.T,
-	cfg config.File,
-	snapshot *policyruntime.Snapshot,
-) *authnCandidateNativeTerminalFixture {
-	t.Helper()
-
-	supervisor := newAuthnCandidateTestSupervisor(t, nil)
-	acceptor := &authnCandidateCountingAcceptor{delegate: supervisor}
-	catalog := compileAuthnCandidateCatalogWithSnapshot(t, acceptor, snapshot)
-	runtime := newAuthnCandidateDecisionServiceFromCatalogAndSnapshot(t, cfg, acceptor, catalog, snapshot)
-	fixture := &authnCandidateNativeTerminalFixture{
-		acceptor: acceptor, postAction: &authnCandidateCountingPlanPostAction{},
-		supervisor: supervisor, verifierCalls: &atomic.Int32{},
-	}
-	fixture.host = &authnCandidateInjectedHost{
-		base: newAuthnCandidateRealCollectorBase(t, cfg),
-		configure: func(execution *authnCandidateExecution) {
-			fixture.execution = execution
-		},
-	}
-
-	adapter, err := NewAuthnCandidateApplicationService(
-		fixture.host,
-		runtime,
-		mustAuthnCandidateAuthentication(t),
-	)
-	if err != nil {
-		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
-	}
-
-	fixture.adapter = adapter
-
-	installAuthnCandidateServices(
-		t,
-		backendAuthenticationContractVerifier{calls: fixture.verifierCalls},
-		backendAuthenticationContractSubject{calls: &atomic.Int32{}},
-		fixture.postAction,
-	)
-
-	return fixture
-}
-
-// compileAuthnCandidateLegacySnapshot captures the real legacy compiler view used by the catalog.
-func compileAuthnCandidateLegacySnapshot(t *testing.T, cfg config.File) *policyruntime.Snapshot {
-	t.Helper()
-
-	snapshot, err := compiler.NewCompiler().Compile(context.Background(), compiler.Input{
-		Config: cfg, Generation: 701,
-	})
-	if err != nil {
-		t.Fatalf("legacy policy snapshot Compile() error = %v", err)
-	}
-
-	return snapshot
-}
-
-// publishAuthnCandidateNativeCompilerState exposes the registered source to snapshot compilation.
-func publishAuthnCandidateNativeCompilerState(t *testing.T, sources ...pluginapi.EnvironmentSource) {
-	t.Helper()
-	publishAuthnCandidateCompilerState(t, sources, nil)
-}
-
-// publishAuthnCandidateSubjectCompilerState exposes registered subject sources to snapshot compilation.
-func publishAuthnCandidateSubjectCompilerState(t *testing.T, sources ...pluginapi.SubjectSource) {
-	t.Helper()
-	publishAuthnCandidateCompilerState(t, nil, sources)
-}
-
-// publishAuthnCandidateCompilerState owns the shared plugin registration and restoration lifecycle.
-func publishAuthnCandidateCompilerState(
-	t *testing.T,
-	environmentSources []pluginapi.EnvironmentSource,
-	subjectSources []pluginapi.SubjectSource,
-) {
-	t.Helper()
-
-	state, err := pluginloader.NewLoader().Load(nil)
-	if err != nil {
-		t.Fatalf("empty plugin state Load() error = %v", err)
-	}
-
-	registrar := state.Registry().NewRegistrar(config.PluginModule{
-		Name: "candidate", Type: config.PluginModuleTypeGo,
-	})
-	for _, source := range environmentSources {
-		if err = registrar.RegisterEnvironmentSource(source); err != nil {
-			t.Fatalf("RegisterEnvironmentSource() error = %v", err)
-		}
-	}
-
-	for _, source := range subjectSources {
-		if err = registrar.RegisterSubjectSource(source); err != nil {
-			t.Fatalf("RegisterSubjectSource() error = %v", err)
-		}
-	}
-
-	if err = registrar.Commit(); err != nil {
-		t.Fatalf("plugin registrar Commit() error = %v", err)
-	}
-
-	previous, hadPrevious := pluginloader.DefaultState()
-
-	pluginloader.SetDefaultState(state)
-	t.Cleanup(func() {
-		if hadPrevious {
-			pluginloader.SetDefaultState(previous)
-
-			return
-		}
-
-		pluginloader.SetDefaultState((*pluginloader.State)(nil))
-	})
-}
-
-type authnCandidateCompilerEnvironmentSource struct {
-	name  string
-	after []string
-}
-
-type authnCandidateCompilerSubjectSource struct {
-	name  string
-	after []string
-}
-
-// Descriptor identifies the source compiled into the captured default snapshot.
-func (s authnCandidateCompilerEnvironmentSource) Descriptor() pluginapi.SourceDescriptor {
-	return pluginapi.SourceDescriptor{Name: s.name, After: append([]string(nil), s.after...)}
-}
-
-// Evaluate is not called because the core collector bridge owns this public-flow fixture.
-func (authnCandidateCompilerEnvironmentSource) Evaluate(
-	context.Context,
-	pluginapi.EnvironmentRequest,
-) (pluginapi.EnvironmentResult, error) {
-	return pluginapi.EnvironmentResult{}, nil
-}
-
-// Descriptor identifies one subject source compiled into the captured default snapshot.
-func (s authnCandidateCompilerSubjectSource) Descriptor() pluginapi.SourceDescriptor {
-	return pluginapi.SourceDescriptor{Name: s.name, After: append([]string(nil), s.after...)}
-}
-
-// Evaluate is not called because the core collector bridge owns this public-flow fixture.
-func (authnCandidateCompilerSubjectSource) Evaluate(
-	context.Context,
-	pluginapi.SubjectRequest,
-) (pluginapi.SubjectResult, error) {
-	return pluginapi.SubjectResult{}, nil
-}
-
 // runAuthnCandidateAuthOperation returns the complete public auth outcome for one operation.
 func runAuthnCandidateAuthOperation(
 	t *testing.T,
@@ -2286,103 +1576,11 @@ func runAuthnCandidateAuthOperation(
 	return outcome
 }
 
-// newAuthnCandidateLuaNativeFixture assembles actual candidate Lua and native seams.
-func newAuthnCandidateLuaNativeFixture(t *testing.T) authnCandidateLuaNativeFixture {
-	t.Helper()
-
-	cfg := newCurrentBehaviorConfig(t, definitions.ControlLua)
-	cfg.Server.Redis.AccountLocalCache.Enabled = true
-	cfg.Server.Backends = []*config.Backend{mustPolicyBackendForTest(t, definitions.BackendTest)}
-	cfg.Lua = &config.LuaSection{Actions: []config.LuaAction{{
-		ActionType: policy.LuaActionDispatchTLS,
-		ScriptName: "candidate_tls_action",
-		ScriptPath: "/tmp/candidate-tls-action.lua",
-	}}}
-	snapshot := newAuthnCandidateLuaNativeSnapshot(t)
-	log := &authnCandidateEffectLog{}
-	dispatcher := &authnCandidateOrderedActionDispatcher{log: log}
-	bridge := &authnCandidateFactAwarePluginBridge{log: log}
-	environmentBridge := &authnCandidateNativeEnvironmentBridge{}
-
-	withCurrentBehaviorLuaEnvironment(t, `
-function nauthilus_call_environment(request)
-    return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
-end
-`)
-
-	installAuthnCandidateLuaNativeSeams(t, dispatcher, bridge, environmentBridge)
-
-	host := newAuthnCandidateLuaNativeHost(t, cfg)
-	acceptor := &authnCandidateAcceptAll{}
-	catalog := compileAuthnCandidateLuaNativeCatalog(t, acceptor, snapshot)
-	runtime := newAuthnCandidateDecisionServiceWithBindings(
-		t,
-		cfg,
-		acceptor,
-		catalog,
-		snapshot,
-		map[string]policyruntime.SyncEffectProvider{
-			authnCandidateNativeProviderID: authnCandidateNativeSyncEffectProvider{},
-		},
-	)
-
-	adapter, err := NewAuthnCandidateApplicationService(host, runtime, mustAuthnCandidateAuthentication(t))
-	if err != nil {
-		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
-	}
-
-	verifierCalls := &atomic.Int32{}
-	subjectCalls := &atomic.Int32{}
-	installAuthnCandidateServices(
-		t,
-		backendAuthenticationContractVerifier{calls: verifierCalls},
-		backendAuthenticationContractSubject{calls: subjectCalls},
-		recordingPlanPostAction{},
-	)
-
-	return authnCandidateLuaNativeFixture{
-		adapter: adapter, host: host, bridge: bridge, environment: environmentBridge, log: log,
-	}
-}
-
-// installAuthnCandidateLuaNativeSeams restores global extension seams after the fixture.
-func installAuthnCandidateLuaNativeSeams(
-	t *testing.T,
-	dispatcher ActionDispatcher,
-	bridge PluginEffectBridge,
-	environmentBridge PluginEnvironmentSourceBridge,
-) {
-	t.Helper()
-
-	previousDispatcher := getActionDispatcher()
-	previousBridge := getPluginEffectBridge()
-	previousEnvironmentBridge := getPluginEnvironmentSourceBridge()
-
-	RegisterActionDispatcher(dispatcher)
-	RegisterPluginEffectBridge(bridge)
-	RegisterPluginEnvironmentSourceBridge(environmentBridge)
-	t.Cleanup(func() {
-		RegisterActionDispatcher(previousDispatcher)
-		RegisterPluginEffectBridge(previousBridge)
-		RegisterPluginEnvironmentSourceBridge(previousEnvironmentBridge)
-	})
-}
-
-// newAuthnCandidateLuaNativeHost leaves fact collection to the real environment provider seams.
-func newAuthnCandidateLuaNativeHost(
-	t *testing.T,
-	cfg config.File,
-) *authnCandidateInjectedHost {
-	t.Helper()
-
-	return &authnCandidateInjectedHost{base: newAuthnCandidateRealCollectorBase(t, cfg)}
-}
-
 // newAuthnCandidateRealCollectorBase isolates account and positive-auth caches for real collector tests.
 func newAuthnCandidateRealCollectorBase(
 	t *testing.T,
 	cfg config.File,
-) *authApplicationService {
+) *registeredAuthApplicationTestHost {
 	t.Helper()
 
 	db, _ := redismock.NewClientMock()
@@ -2392,12 +1590,12 @@ func newAuthnCandidateRealCollectorBase(
 	backendCache := NewPositiveBackendAuthenticationCache(time.Now)
 	t.Cleanup(backendCache.Close)
 
-	return NewAuthApplicationService(AuthDeps{
+	return newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: manager,
 		BackendAuthenticationCache: backendCache,
-	}).(*authApplicationService)
+	})
 }
 
 // assertAuthnCandidateConfiguredParity verifies response, FSM, checkpoint, and provider parity.
@@ -2440,106 +1638,9 @@ func assertAuthnCandidateConfiguredParity(
 		t.Fatalf("configured/default checkpoints = %#v, want %#v", got, wantCheckpoints)
 	}
 
-	if verifierCalls.Load() != 1 || subjectCalls.Load() != 1 {
-		t.Fatalf("configured backend/subject calls = %d/%d, want 1/1", verifierCalls.Load(), subjectCalls.Load())
+	if verifierCalls.Load() != 1 || subjectCalls.Load() != 0 {
+		t.Fatalf("configured backend/ambient-subject calls = %d/%d, want 1/0", verifierCalls.Load(), subjectCalls.Load())
 	}
-}
-
-func TestAuthnCandidateCacheColdWarmParityKeepsRequestLocalStandardAuthority(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t)
-	cfg.Server.Redis.AccountLocalCache.Enabled = true
-
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation: 701, Mode: "enforce", DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-
-	username := "candidate-cache@example.test"
-	fixture := newAuthnCandidateCacheFixture(t, cfg, username)
-
-	input := NewAuthInputFromStructuredRequest(definitions.ServGRPC, AuthModeAuthenticate, authdto.Request{
-		Username: username, Password: "candidate-secret", ClientIP: "203.0.113.71",
-		Protocol: definitions.ProtoIMAP, Method: "plain",
-	})
-	cold := authenticateAuthnCandidate(t, "cold", fixture.adapter, input)
-
-	fixture.subject.rejected.Store(true)
-
-	warm := authenticateAuthnCandidate(t, "warm", fixture.adapter, input)
-
-	assertAuthnCandidateCacheExecutionParity(t, fixture, cold, warm)
-	assertAuthnCandidateColdCacheOutcome(t, cold)
-	assertAuthnCandidateWarmCacheOutcome(t, warm, fixture.execution)
-
-	if err := fixture.mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unexpected Redis cache ownership call: %v", err)
-	}
-}
-
-type authnCandidateCacheFixture struct {
-	adapter       AuthApplicationService
-	mock          redismock.ClientMock
-	verifierCalls *atomic.Int32
-	subject       *authnCandidateCacheSubject
-	execution     *authnCandidateExecution
-}
-
-// newAuthnCandidateCacheFixture assembles auth-specific cache owners without a decision cache.
-func newAuthnCandidateCacheFixture(
-	t *testing.T,
-	cfg config.File,
-	username string,
-) *authnCandidateCacheFixture {
-	t.Helper()
-
-	manager := accountcache.NewManager(cfg)
-	manager.Set(cfg, username, definitions.ProtoIMAP, "", username)
-
-	db, mock := redismock.NewClientMock()
-	current := NewAuthApplicationService(AuthDeps{
-		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Redis:  rediscli.NewTestClient(db), AccountCache: manager,
-		BackendAuthenticationCache: NewPositiveBackendAuthenticationCache(time.Now),
-	}).(*authApplicationService)
-	fixture := &authnCandidateCacheFixture{
-		mock: mock, verifierCalls: &atomic.Int32{}, subject: &authnCandidateCacheSubject{},
-	}
-
-	host := &authnCandidateInjectedHost{
-		base: current,
-		configure: func(execution *authnCandidateExecution) {
-			fixture.execution = execution
-		},
-	}
-	acceptor := &authnCandidateAcceptAll{}
-	snapshot := newAuthnCandidateScriptSnapshot(t, policycollection.ScriptKindSubject, "candidate_cache")
-	catalog := compileAuthnCandidateCatalogWithSnapshot(t, acceptor, snapshot)
-	decisionRuntime := newAuthnCandidateDecisionServiceFromCatalogAndSnapshot(
-		t,
-		cfg,
-		acceptor,
-		catalog,
-		snapshot,
-	)
-
-	adapter, err := NewAuthnCandidateApplicationService(
-		host,
-		decisionRuntime,
-		mustAuthnCandidateAuthentication(t),
-	)
-	if err != nil {
-		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
-	}
-
-	fixture.adapter = adapter
-	installAuthnCandidateServices(
-		t,
-		backendAuthenticationContractVerifier{calls: fixture.verifierCalls},
-		fixture.subject,
-		recordingPlanPostAction{},
-	)
-
-	return fixture
 }
 
 // authenticateAuthnCandidate runs one candidate authentication and requires a transport result.
@@ -2563,92 +1664,17 @@ func authenticateAuthnCandidate(
 	return outcome
 }
 
-// assertAuthnCandidateCacheExecutionParity verifies backend ownership across cold and warm requests.
-func assertAuthnCandidateCacheExecutionParity(
-	t *testing.T,
-	fixture *authnCandidateCacheFixture,
-	cold *AuthOutcome,
-	warm *AuthOutcome,
-) {
-	t.Helper()
-
-	if fixture.verifierCalls.Load() != 1 || fixture.subject.calls.Load() != 2 {
-		t.Fatalf(
-			"backend/subject calls = %d/%d, want 1/2",
-			fixture.verifierCalls.Load(), fixture.subject.calls.Load(),
-		)
-	}
-
-	if cold.Backend != definitions.BackendLDAP || warm.Backend != definitions.BackendLDAP ||
-		cold.AccountField != "uid" || warm.AccountField != "uid" {
-		t.Fatalf(
-			"cold/warm backend affinity = %s/%s fields=%q/%q, want LDAP/LDAP uid/uid",
-			cold.Backend, warm.Backend, cold.AccountField, warm.AccountField,
-		)
-	}
-}
-
-// assertAuthnCandidateColdCacheOutcome verifies successful cold-path response and localization.
-func assertAuthnCandidateColdCacheOutcome(t *testing.T, cold *AuthOutcome) {
-	t.Helper()
-
-	if cold.Decision != AuthDecisionOK || cold.TerminalState != string(authFSMStateAuthOK) {
-		t.Fatalf("cold decision/state = %q/%q, want ok/auth_ok", cold.Decision, cold.TerminalState)
-	}
-
-	if cold.StatusMessageI18NKey != "auth.success" || cold.ResponseLanguage != "de" {
-		t.Fatalf("cold localization = %q/%q, want auth.success/de", cold.StatusMessageI18NKey, cold.ResponseLanguage)
-	}
-}
-
-// assertAuthnCandidateWarmCacheOutcome verifies request-local denial and delayed-response markers.
-func assertAuthnCandidateWarmCacheOutcome(
-	t *testing.T,
-	warm *AuthOutcome,
-	execution *authnCandidateExecution,
-) {
-	t.Helper()
-
-	if warm.Decision != AuthDecisionFail || warm.TerminalState != string(authFSMStateAuthFail) {
-		t.Fatalf("warm decision/state = %q/%q, want fail/auth_fail", warm.Decision, warm.TerminalState)
-	}
-
-	if warm.StatusMessage != "warm subject rejected" {
-		t.Fatalf("warm localized status = %q, want request-local subject rejection", warm.StatusMessage)
-	}
-
-	wantFSM := []string{
-		policy.FSMEventMarkerParseOK,
-		policy.FSMEventMarkerPreAuthOK,
-		policy.FSMEventMarkerAuthEvaluated,
-		policy.FSMEventMarkerAuthDeny,
-	}
-	if !reflect.DeepEqual(warm.FSMEventPath, wantFSM) {
-		t.Fatalf("warm FSM path = %v, want %v", warm.FSMEventPath, wantFSM)
-	}
-
-	selected := execution.selectedDecision(string(policy.StageAuthDecision))
-	if selected == nil || selected.OutcomeMarker == policy.OutcomeMarkerAuthFailure ||
-		configuredPolicyAllowsIDPDelayedResponse(selected) {
-		t.Fatalf("warm delayed-response selection = %#v, want subject-specific failure to remain ineligible", selected)
-	}
-}
-
 func TestAuthnCandidateOrdinaryPasswordFailurePreservesDelayedResponseEligibility(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation: 706, Mode: "enforce", DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-
 	var capturedExecution *authnCandidateExecution
 
 	db, mock := redismock.NewClientMock()
 
-	base := NewAuthApplicationService(AuthDeps{
+	base := newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
-	}).(*authApplicationService)
+	})
 
 	host := &authnCandidateInjectedHost{
 		base: base,
@@ -2666,7 +1692,8 @@ func TestAuthnCandidateOrdinaryPasswordFailurePreservesDelayedResponseEligibilit
 		t.Fatalf("NewAuthnCandidateApplicationService() error = %v", err)
 	}
 
-	installAuthnCandidateServices(t, failingPasswordVerifier{}, testLuaSubject{}, recordingPlanPostAction{})
+	installAuthnCandidateServices(t, failingPasswordVerifier{}, testLuaSubject{})
+	bindRegisteredAuthnApplicationHostServicesForTest(base)
 
 	outcome := authenticateAuthnCandidate(
 		t, "ordinary password failure", adapter, authnApplicationTestInput(AuthModeAuthenticate),
@@ -2689,16 +1716,12 @@ func TestAuthnCandidateAllOperationsTraverseSharedRuntimeCheckpoints(t *testing.
 	cfg := newCurrentBehaviorConfig(t)
 	cfg.Server.Redis.AccountLocalCache.Enabled = true
 
-	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
-		Generation: 705, Mode: "enforce", DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-
 	manager := accountcache.NewManager(cfg)
 	manager.Set(cfg, "candidate-auth@example.test", definitions.ProtoIMAP, "", "candidate-auth@example.test")
 	manager.Set(cfg, "candidate-lookup@example.test", definitions.ProtoIMAP, "", "candidate-lookup@example.test")
 
 	db, mock := redismock.NewClientMock()
-	current := NewAuthApplicationService(AuthDeps{
+	current := newRegisteredAuthApplicationServiceHost(AuthDeps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Redis:  rediscli.NewTestClient(db), AccountCache: manager,
@@ -2719,8 +1742,8 @@ func TestAuthnCandidateAllOperationsTraverseSharedRuntimeCheckpoints(t *testing.
 		t,
 		backendAuthenticationContractVerifier{calls: verifierCalls},
 		backendAuthenticationContractSubject{calls: subjectCalls},
-		recordingPlanPostAction{},
 	)
+	bindRegisteredAuthnApplicationHostServicesForTest(current)
 
 	outcomes := runAuthnCandidateOperations(t, adapter)
 	assertAuthnCandidateOperationParity(t, outcomes, recorder, verifierCalls, subjectCalls)
@@ -2826,8 +1849,8 @@ func assertAuthnCandidateOperationParity(
 		t.Fatalf("shared runtime checkpoints = %#v, want %#v", got, want)
 	}
 
-	if verifierCalls.Load() != 2 || subjectCalls.Load() != 2 {
-		t.Fatalf("backend/subject calls = %d/%d, want 2/2", verifierCalls.Load(), subjectCalls.Load())
+	if verifierCalls.Load() != 2 || subjectCalls.Load() != 0 {
+		t.Fatalf("backend/ambient-subject calls = %d/%d, want 2/0", verifierCalls.Load(), subjectCalls.Load())
 	}
 }
 
@@ -2839,27 +1862,27 @@ func newAuthnCandidateDecisionService(
 ) *decisionservice.DecisionService {
 	t.Helper()
 
-	snapshot := authnCandidateSnapshotWithBuiltins(t, &policyruntime.Snapshot{
-		Generation: 701, Mode: "enforce", DefaultPolicy: policy.BuiltinDefaultSet,
+	model := authnCandidateModelWithBuiltins(t, &authnCandidatePolicyModel{
+		Generation: 701, Mode: "enforce",
 	})
-	catalog := compileAuthnCandidateCatalogWithSnapshot(t, acceptor, snapshot)
+	catalog := compileAuthnCandidateCatalogWithModel(t, acceptor, model)
 
-	return newAuthnCandidateDecisionServiceFromCatalogAndSnapshot(t, cfg, acceptor, catalog, snapshot)
+	return newAuthnCandidateDecisionServiceFromCatalogAndModel(t, cfg, acceptor, catalog, model)
 }
 
-// newAuthnCandidateDecisionServiceWithSnapshot assembles one exact captured legacy-view projection.
-func newAuthnCandidateDecisionServiceWithSnapshot(
+// newAuthnCandidateDecisionServiceWithModel assembles one exact captured policy model.
+func newAuthnCandidateDecisionServiceWithModel(
 	t *testing.T,
 	cfg config.File,
 	acceptor effectsupervisor.Acceptor,
-	snapshot *policyruntime.Snapshot,
+	model *authnCandidatePolicyModel,
 ) *decisionservice.DecisionService {
 	t.Helper()
 
-	snapshot = authnCandidateSnapshotWithBuiltins(t, snapshot)
-	catalog := compileAuthnCandidateCatalogWithSnapshot(t, acceptor, snapshot)
+	model = authnCandidateModelWithBuiltins(t, model)
+	catalog := compileAuthnCandidateCatalogWithModel(t, acceptor, model)
 
-	return newAuthnCandidateDecisionServiceFromCatalogAndSnapshot(t, cfg, acceptor, catalog, snapshot)
+	return newAuthnCandidateDecisionServiceFromCatalogAndModel(t, cfg, acceptor, catalog, model)
 }
 
 // newAuthnCandidateDecisionServiceFromCatalog assembles one test generation around an exact catalog.
@@ -2871,36 +1894,36 @@ func newAuthnCandidateDecisionServiceFromCatalog(
 ) *decisionservice.DecisionService {
 	t.Helper()
 
-	return newAuthnCandidateDecisionServiceFromCatalogAndSnapshot(
+	return newAuthnCandidateDecisionServiceFromCatalogAndModel(
 		t,
 		cfg,
 		acceptor,
 		catalog,
-		&policyruntime.Snapshot{Generation: 701, Mode: "enforce", DefaultPolicy: policy.BuiltinDefaultSet},
+		&authnCandidatePolicyModel{Generation: 701, Mode: "enforce"},
 	)
 }
 
-// newAuthnCandidateDecisionServiceFromCatalogAndSnapshot assembles one exact captured policy view.
-func newAuthnCandidateDecisionServiceFromCatalogAndSnapshot(
+// newAuthnCandidateDecisionServiceFromCatalogAndModel assembles one exact captured policy view.
+func newAuthnCandidateDecisionServiceFromCatalogAndModel(
 	t *testing.T,
 	cfg config.File,
 	acceptor effectsupervisor.Acceptor,
 	catalog *policyruntime.TargetCatalog,
-	snapshot *policyruntime.Snapshot,
+	model *authnCandidatePolicyModel,
 ) *decisionservice.DecisionService {
-	return newAuthnCandidateDecisionServiceWithBindings(t, cfg, acceptor, catalog, snapshot, nil)
+	return newAuthnCandidateDecisionServiceWithBindings(t, cfg, acceptor, catalog, model, nil)
 }
 
-// authnCandidateSnapshotWithBuiltins gives the fixture the same captured registry as production compilation.
-func authnCandidateSnapshotWithBuiltins(
+// authnCandidateModelWithBuiltins gives the fixture the same builtin registry as production compilation.
+func authnCandidateModelWithBuiltins(
 	t *testing.T,
-	snapshot *policyruntime.Snapshot,
-) *policyruntime.Snapshot {
+	model *authnCandidatePolicyModel,
+) *authnCandidatePolicyModel {
 	t.Helper()
 
-	captured := snapshot.Clone()
+	captured := model.clone()
 	if captured == nil {
-		captured = &policyruntime.Snapshot{}
+		captured = &authnCandidatePolicyModel{}
 	}
 
 	attributes, err := registry.NewBuiltinAttributeRegistry()
@@ -2921,70 +1944,50 @@ func authnCandidateSnapshotWithBuiltins(
 	return captured
 }
 
-// newAuthnCandidateScriptSnapshot registers one real script collector in the captured generation.
-func newAuthnCandidateScriptSnapshot(
-	t *testing.T,
-	kind policycollection.ScriptKind,
-	name string,
-) *policyruntime.Snapshot {
-	t.Helper()
-
-	snapshot := authnCandidateSnapshotWithBuiltins(t, &policyruntime.Snapshot{
-		Generation: 701, Mode: "enforce", DefaultPolicy: policy.BuiltinDefaultSet,
-	})
-	check := "lua_" + string(kind) + "_" + name
-	stage := policy.StagePreAuth
-	category := registry.AttributeCategoryEnvironment
-	suffixes := []string{"triggered", "abort", "error"}
-
-	if kind == policycollection.ScriptKindSubject {
-		stage = policy.StageSubjectAnalysis
-		category = registry.AttributeCategorySubject
-		suffixes = []string{"rejected", "error"}
-	}
-
-	for _, suffix := range suffixes {
-		definition := registry.AttributeDefinition{
-			ID:    "auth.lua." + string(kind) + "." + name + "." + suffix,
-			Stage: stage, Operations: []policy.Operation{policy.OperationAuthenticate},
-			ProducerCheck: check, Category: category, Type: registry.AttributeTypeBool,
-			Source: registry.SourceBuiltin,
-		}
-		if suffix == "triggered" || suffix == "rejected" {
-			definition.Details = map[string]registry.DetailDefinition{
-				"status_message": {
-					Type: registry.AttributeTypeString, Sensitivity: registry.DetailSensitivityPublic,
-					Purpose: registry.DetailPurposeResponseMessage, MaxLength: 256,
-				},
-			}
-		}
-
-		snapshot.AttributeRegistry[definition.ID] = definition
-	}
-
-	return snapshot
-}
-
 // newAuthnCandidateDecisionServiceWithBindings adds exact test-owned effect seams to one captured generation.
 func newAuthnCandidateDecisionServiceWithBindings(
 	t *testing.T,
 	cfg config.File,
 	acceptor effectsupervisor.Acceptor,
 	catalog *policyruntime.TargetCatalog,
-	snapshot *policyruntime.Snapshot,
+	model *authnCandidatePolicyModel,
 	extraSyncEffects map[string]policyruntime.SyncEffectProvider,
 ) *decisionservice.DecisionService {
-	t.Helper()
-	snapshot = authnCandidateSnapshotWithBuiltins(t, snapshot)
+	return newAuthnCandidateReloadableDecisionRuntime(
+		t,
+		cfg,
+		acceptor,
+		catalog,
+		model,
+		extraSyncEffects,
+	).service
+}
 
-	syncEffects, postActions := authnStandardEffectBindingMaps()
+type authnCandidateDecisionRuntime struct {
+	coordinator *policyruntime.Coordinator
+	service     *decisionservice.DecisionService
+	store       *policyruntime.GenerationStore
+}
+
+// newAuthnCandidateReloadableDecisionRuntime returns one test-owned coordinator, store, and service graph.
+func newAuthnCandidateReloadableDecisionRuntime(
+	t *testing.T,
+	cfg config.File,
+	acceptor effectsupervisor.Acceptor,
+	catalog *policyruntime.TargetCatalog,
+	model *authnCandidatePolicyModel,
+	extraSyncEffects map[string]policyruntime.SyncEffectProvider,
+) *authnCandidateDecisionRuntime {
+	t.Helper()
+	model = authnCandidateModelWithBuiltins(t, model)
+
+	syncEffects, postActions := AuthnStandardEffectBindings()
 	for providerID, provider := range extraSyncEffects {
 		syncEffects[providerID] = provider
 	}
 
 	bindings, err := policyruntime.NewBindingSet(policyruntime.BindingSetInput{
-		FactProviders: authnCandidateFactBindings(catalog),
-		SyncEffects:   syncEffects, PostActions: postActions, PostActionAcceptance: acceptor,
+		SyncEffects: syncEffects, PostActions: postActions, PostActionAcceptance: acceptor,
 	})
 	if err != nil {
 		t.Fatalf("NewBindingSet() error = %v", err)
@@ -2994,7 +1997,7 @@ func newAuthnCandidateDecisionServiceWithBindings(
 
 	coordinator, err := policyruntime.NewCoordinator(policyruntime.CoordinatorConfig{
 		Store: store,
-		Slots: authnCandidatePreparationSlots(t, catalog, bindings, snapshot),
+		Slots: authnCandidatePreparationSlots(t, catalog, bindings, model),
 	})
 	if err != nil {
 		t.Fatalf("NewCoordinator() error = %v", err)
@@ -3023,7 +2026,7 @@ func newAuthnCandidateDecisionServiceWithBindings(
 		t.Fatalf("NewDecisionService() error = %v", err)
 	}
 
-	return service
+	return &authnCandidateDecisionRuntime{coordinator: coordinator, service: service, store: store}
 }
 
 // compileAuthnCandidateConfiguredCatalog binds one final deny while leaving pre-auth on standard authority.
@@ -3075,7 +2078,7 @@ func compileAuthnCandidateConfiguredCatalogWithRule(
 	setID, contribution := newAuthnCandidateConfiguredContribution(t, rule)
 	activation := newAuthnCandidateConfiguredActivationFor(t, target, setID, checkpoint)
 
-	catalog, err := compiler.NewTargetCatalogCompiler(
+	catalog, err := catalogcompile.NewTargetCatalogCompiler(
 		registry.NewBuiltinTargetContributor(acceptor),
 		authnCandidateStaticContributor{contribution: contribution},
 	).Compile(context.Background(), []registry.TargetActivation{activation})
@@ -3084,177 +2087,6 @@ func compileAuthnCandidateConfiguredCatalogWithRule(
 	}
 
 	return catalog
-}
-
-// compileAuthnCandidateLuaNativeCatalog selects actual Lua and native host seams in one configured rule.
-func compileAuthnCandidateLuaNativeCatalog(
-	t *testing.T,
-	acceptor effectsupervisor.Acceptor,
-	snapshot *policyruntime.Snapshot,
-) *policyruntime.TargetCatalog {
-	t.Helper()
-
-	target, err := decision.NewTarget(policy.AuthnNamespace, string(policy.OperationAuthenticate))
-	if err != nil {
-		t.Fatalf("NewTarget() error = %v", err)
-	}
-
-	rule := newAuthnCandidateLuaNativeRule(t)
-	setID, baseContribution := newAuthnCandidateConfiguredContribution(t, rule)
-	provider, effect := newAuthnCandidateNativeEffectDefinitions(t, target)
-	contribution := extendAuthnCandidateContribution(t, baseContribution, provider, effect)
-	activation := newAuthnCandidateConfiguredActivation(t, target, setID)
-
-	catalog, err := compiler.NewTargetCatalogCompiler(
-		registry.NewBuiltinTargetContributorWithAuthnPolicy(snapshot.AttributeRegistry, acceptor),
-		authnCandidateStaticContributor{contribution: contribution},
-	).Compile(context.Background(), []registry.TargetActivation{activation})
-	if err != nil {
-		t.Fatalf("Lua/native authn catalog Compile() error = %v", err)
-	}
-
-	return catalog
-}
-
-// newAuthnCandidateLuaNativeRule selects neutral collector facts and orders both effect seams.
-func newAuthnCandidateLuaNativeRule(t *testing.T) registry.PolicyRule {
-	t.Helper()
-
-	luaUse, err := registry.NewEffectUse("authn/lua_action_dispatch", map[string]decision.Value{
-		policy.ObligationArgAction:  mustAuthnStringValue(t, policy.LuaActionDispatchTLS),
-		policy.ObligationArgFeature: mustAuthnStringValue(t, policy.LuaActionDispatchTLS),
-	})
-	if err != nil {
-		t.Fatalf("NewEffectUse(lua) error = %v", err)
-	}
-
-	nativeUse, err := registry.NewEffectUse(authnCandidateNativeEffectID, nil)
-	if err != nil {
-		t.Fatalf("NewEffectUse(native) error = %v", err)
-	}
-
-	luaNeutral, err := registry.NewPolicyExpression(registry.PolicyExpressionInput{
-		Kind: registry.ExpressionKindAttribute, FactID: authnCandidateLuaFactID,
-		FactKind: decision.ValueKindBoolean, Operator: registry.ExpressionOperatorIs,
-		Values: []decision.Value{mustAuthnBooleanValue(t, false)},
-	})
-	if err != nil {
-		t.Fatalf("NewPolicyExpression(lua fact) error = %v", err)
-	}
-
-	nativeNeutral, err := registry.NewPolicyExpression(registry.PolicyExpressionInput{
-		Kind: registry.ExpressionKindAttribute, FactID: authnCandidateNativeFactID,
-		FactKind: decision.ValueKindBoolean, Operator: registry.ExpressionOperatorIs,
-		Values: []decision.Value{mustAuthnBooleanValue(t, false)},
-	})
-	if err != nil {
-		t.Fatalf("NewPolicyExpression(native fact) error = %v", err)
-	}
-
-	expression, err := registry.NewPolicyExpression(registry.PolicyExpressionInput{
-		Kind: registry.ExpressionKindAll, Children: []registry.PolicyExpression{luaNeutral, nativeNeutral},
-	})
-	if err != nil {
-		t.Fatalf("NewPolicyExpression(combined facts) error = %v", err)
-	}
-
-	rule, err := registry.NewPolicyRule(registry.PolicyRuleInput{
-		Name: "configured_lua_native_permit", Checkpoint: string(policy.StageAuthDecision),
-		Expression: expression, Decision: decision.EffectPermit,
-		OutcomeMarker:  "auth.outcome.configured_lua_native_permit",
-		FSMEventMarker: policy.FSMEventMarkerAuthPermit, ResponseMarker: policy.ResponseMarkerOK,
-		Effects: []registry.EffectUse{luaUse, nativeUse},
-	})
-	if err != nil {
-		t.Fatalf("NewPolicyRule() error = %v", err)
-	}
-
-	return rule
-}
-
-// newAuthnCandidateNativeEffectDefinitions declares one configured synchronous plugin seam.
-func newAuthnCandidateNativeEffectDefinitions(
-	t *testing.T,
-	target decision.Target,
-) (registry.ProviderDefinition, registry.EffectDefinition) {
-	t.Helper()
-
-	provider, err := registry.NewProviderDefinition(registry.ProviderDefinitionInput{
-		ID: authnCandidateNativeProviderID, Targets: []decision.Target{target},
-		Executions: []registry.ExecutionClass{registry.ExecutionHostSync},
-	})
-	if err != nil {
-		t.Fatalf("NewProviderDefinition(native) error = %v", err)
-	}
-
-	effect, err := registry.NewEffectDefinition(registry.EffectDefinitionInput{
-		ID: authnCandidateNativeEffectID, Provider: provider.ID(), Targets: []decision.Target{target},
-		Kind: registry.EffectKindObligation, Execution: registry.ExecutionHostSync,
-	})
-	if err != nil {
-		t.Fatalf("NewEffectDefinition(native) error = %v", err)
-	}
-
-	return provider, effect
-}
-
-// extendAuthnCandidateContribution retains one set while adding its native effect owner.
-func extendAuthnCandidateContribution(
-	t *testing.T,
-	base registry.DefinitionContribution,
-	provider registry.ProviderDefinition,
-	effect registry.EffectDefinition,
-) registry.DefinitionContribution {
-	t.Helper()
-
-	contribution, err := registry.NewCompleteDefinitionContribution(registry.DefinitionContributionInput{
-		Ownership: base.Ownership(), PolicySets: base.PolicySets(),
-		Providers: []registry.ProviderDefinition{provider}, Effects: []registry.EffectDefinition{effect},
-	})
-	if err != nil {
-		t.Fatalf("NewCompleteDefinitionContribution(lua/native) error = %v", err)
-	}
-
-	return contribution
-}
-
-// newAuthnCandidateLuaNativeSnapshot registers real Lua and native collector facts in the captured generation.
-func newAuthnCandidateLuaNativeSnapshot(t *testing.T) *policyruntime.Snapshot {
-	t.Helper()
-
-	snapshot := newAuthnCandidateScriptSnapshot(
-		t,
-		policycollection.ScriptKindEnvironment,
-		"current_behavior_environment",
-	)
-
-	for _, suffix := range []string{"triggered", "abort", "error"} {
-		attributeID := "auth.plugin.environment.candidate.verdict." + suffix
-
-		definition := registry.AttributeDefinition{
-			ID: attributeID, Stage: policy.StagePreAuth,
-			Operations: []policy.Operation{
-				policy.OperationAuthenticate,
-				policy.OperationLookupIdentity,
-			},
-			ProducerCheck: authnCandidateNativeCheck,
-			Category:      registry.AttributeCategoryEnvironment,
-			Type:          registry.AttributeTypeBool,
-			Source:        registry.SourceBuiltin,
-		}
-		if suffix == "triggered" {
-			definition.Details = map[string]registry.DetailDefinition{
-				"status_message": {
-					Type: registry.AttributeTypeString, Sensitivity: registry.DetailSensitivityPublic,
-					Purpose: registry.DetailPurposeResponseMessage, MaxLength: 256,
-				},
-			}
-		}
-
-		snapshot.AttributeRegistry[attributeID] = definition
-	}
-
-	return snapshot
 }
 
 // newAuthnCandidateConfiguredRuleFor constructs one localized operation/checkpoint denial.
@@ -3426,29 +2258,11 @@ func newAuthnCandidateConfiguredActivationFor(
 	return activation
 }
 
-// authnCandidateFactBindings lets the request-local legacy collector retain builtin fact ownership.
-func authnCandidateFactBindings(catalog *policyruntime.TargetCatalog) map[string]policyruntime.FactProviderBinding {
-	bindings := make(map[string]policyruntime.FactProviderBinding)
-
-	for _, target := range catalog.Targets() {
-		for _, checkpoint := range target.DomainPlan().Checkpoints() {
-			for _, providerID := range checkpoint.ProviderIDs() {
-				bindings[providerID] = policyruntime.FactProviderBinding{
-					Provider: authnCandidateNoopFactProvider{}, Source: decision.FactSourceNauthilus,
-					Authority: "nauthilus", Component: providerID,
-				}
-			}
-		}
-	}
-
-	return bindings
-}
-
-// compileAuthnCandidateCatalogWithSnapshot binds standard rules to one captured attribute registry.
-func compileAuthnCandidateCatalogWithSnapshot(
+// compileAuthnCandidateCatalogWithModel binds standard rules to one captured attribute registry.
+func compileAuthnCandidateCatalogWithModel(
 	t *testing.T,
 	acceptor effectsupervisor.Acceptor,
-	snapshot *policyruntime.Snapshot,
+	model *authnCandidatePolicyModel,
 ) *policyruntime.TargetCatalog {
 	t.Helper()
 
@@ -3477,11 +2291,21 @@ func compileAuthnCandidateCatalogWithSnapshot(
 			t.Fatalf("TargetActivation.WithPolicy(%s) error = %v", operation, err)
 		}
 
+		mode := registry.AuthorityMode(model.Mode)
+		if !mode.Valid() {
+			mode = registry.AuthorityModeEnforce
+		}
+
+		activation, err = activation.WithAuthorityMode(mode)
+		if err != nil {
+			t.Fatalf("TargetActivation.WithAuthorityMode(%s) error = %v", operation, err)
+		}
+
 		activations = append(activations, activation)
 	}
 
-	catalog, err := compiler.NewTargetCatalogCompiler(
-		registry.NewBuiltinTargetContributorWithAuthnPolicy(snapshot.AttributeRegistry, acceptor),
+	catalog, err := catalogcompile.NewTargetCatalogCompiler(
+		registry.NewBuiltinTargetContributorWithAuthnPolicy(model.AttributeRegistry, acceptor),
 	).Compile(context.Background(), activations)
 	if err != nil {
 		t.Fatalf("authn catalog Compile() error = %v", err)
@@ -3495,7 +2319,7 @@ func authnCandidatePreparationSlots(
 	t *testing.T,
 	catalog *policyruntime.TargetCatalog,
 	bindings *policyruntime.BindingSet,
-	snapshot *policyruntime.Snapshot,
+	model *authnCandidatePolicyModel,
 ) policyruntime.PreparationSlots {
 	t.Helper()
 
@@ -3504,14 +2328,14 @@ func authnCandidatePreparationSlots(
 			_ context.Context,
 			input policyruntime.PreparationInput,
 		) (policyruntime.PolicyPreparation, error) {
-			captured := snapshot.Clone()
+			captured := model.clone()
 			if captured == nil {
-				captured = &policyruntime.Snapshot{}
+				captured = &authnCandidatePolicyModel{}
 			}
 
 			captured.Generation = input.ID()
 
-			return policyruntime.PolicyPreparation{Snapshot: captured}, nil
+			return policyruntime.PolicyPreparation{Policy: captured}, nil
 		}),
 		Extensions: policyruntime.ExtensionPreparationFunc(func(
 			context.Context,
@@ -3529,7 +2353,10 @@ func authnCandidatePreparationSlots(
 			context.Context,
 			policyruntime.AuthorityPreparationInput,
 		) (policyruntime.CallerAuthenticationPreparation, error) {
-			return policyruntime.CallerAuthenticationPreparation{Authenticator: authnCandidateAuthenticator{}}, nil
+			return policyruntime.CallerAuthenticationPreparation{
+				Authenticator:         authnCandidateAuthenticator{},
+				InternalPresentations: authnCandidateInternalPresentations(t),
+			}, nil
 		}),
 		Admission: policyruntime.AdmissionPreparationFunc(func(
 			context.Context,
@@ -3538,21 +2365,236 @@ func authnCandidatePreparationSlots(
 			return policyruntime.AdmissionPreparation{Authority: authnCandidateAdmission{}}, nil
 		}),
 		Settings: policyruntime.SettingsPreparationFunc(func(
-			context.Context,
-			policyruntime.SettingsPreparationInput,
+			_ context.Context,
+			input policyruntime.SettingsPreparationInput,
 		) (policyruntime.SettingsPreparation, error) {
-			return policyruntime.SettingsPreparation{Settings: policyruntime.GenerationSettings{
-				Limits: policyruntime.DecisionLimits{
-					EvaluationTimeout: time.Second, PostActionBudget: time.Second, MaxDiagnosticsEntries: 32,
+			return policyruntime.SettingsPreparation{
+				MessageResolver: authnCandidateMessageResolver(input.ID()),
+				Settings: policyruntime.GenerationSettings{
+					Limits: policyruntime.DecisionLimits{
+						EvaluationTimeout: time.Second, PostActionBudget: time.Second, MaxDiagnosticsEntries: 32,
+					},
+					Reports: policyruntime.DecisionReportSettings{MaxEntries: 32},
 				},
-				Reports: policyruntime.DecisionReportSettings{MaxEntries: 32},
-			}}, nil
+			}, nil
 		}),
 		Application: decisionservice.NewRuntimeApplicationPreparationSlot(),
 	}
 }
 
+// authnCandidateMessageResolver builds one immutable catalog owned by the fixture generation.
+func authnCandidateMessageResolver(generation uint64) localization.MessageResolver {
+	return localization.NewResolver(localization.NewMapCatalog(map[string]map[string]string{
+		"en": {
+			"auth.policy.configured_denial": fmt.Sprintf("generation-%d configured denial", generation),
+		},
+	}), "en")
+}
+
+type authnResolverLeaseApplication struct {
+	base     authnCandidateHost
+	cfg      config.File
+	logger   *slog.Logger
+	started  chan struct{}
+	release  chan struct{}
+	messages []string
+	mu       sync.Mutex
+	calls    atomic.Int32
+}
+
+type authnResolverLeaseResult struct {
+	outcome *AuthOutcome
+	err     error
+}
+
+// newAuthnResolverLeaseApplication blocks only its first authentication inside the captured session.
+func newAuthnResolverLeaseApplication(cfg config.File) *authnResolverLeaseApplication {
+	db, _ := redismock.NewClientMock()
+
+	return &authnResolverLeaseApplication{
+		base: newRegisteredAuthApplicationServiceHost(AuthDeps{
+			Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
+			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Redis:  rediscli.NewTestClient(db), AccountCache: accountcache.NewManager(cfg),
+		}),
+		cfg:     cfg,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+// prepareAuthnCandidateExecution holds the first exact Decision session while a successor publishes.
+func (s *authnResolverLeaseApplication) prepareAuthnCandidateExecution(
+	ctx context.Context,
+	input AuthInput,
+	operation policy.Operation,
+) (*authnCandidateExecution, context.Context, error) {
+	message, err := s.localizedMessage(ctx)
+	if err != nil {
+		return nil, ctx, err
+	}
+
+	s.mu.Lock()
+	s.messages = append(s.messages, message)
+	s.mu.Unlock()
+
+	if s.calls.Add(1) == 1 {
+		close(s.started)
+
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx, ctx.Err()
+		}
+	}
+
+	return s.base.prepareAuthnCandidateExecution(ctx, input, operation)
+}
+
+// localizedMessages returns detached request-Lua resolver evidence.
+func (s *authnResolverLeaseApplication) localizedMessages() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return append([]string(nil), s.messages...)
+}
+
+// Authenticate keeps the first generation leased until the test publishes its successor.
+func (s *authnResolverLeaseApplication) Authenticate(ctx context.Context, _ AuthInput) (*AuthOutcome, error) {
+	message, err := s.localizedMessage(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return newAuthnResolverLeaseOutcome(message), nil
+}
+
+// LookupIdentity returns a fresh outcome for the unused interface operation.
+func (s *authnResolverLeaseApplication) LookupIdentity(ctx context.Context, _ AuthInput) (*AuthOutcome, error) {
+	message, err := s.localizedMessage(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return newAuthnResolverLeaseOutcome(message), nil
+}
+
+// ListAccounts returns a fresh list outcome so resolver propagation covers both outcome types.
+func (s *authnResolverLeaseApplication) ListAccounts(
+	ctx context.Context,
+	_ AuthInput,
+) (*ListAccountsOutcome, error) {
+	message, err := s.localizedMessage(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ListAccountsOutcome{
+		Accounts:             AccountList{"lease@example.test"},
+		Decision:             AuthDecisionOK,
+		Session:              "resolver-lease-list",
+		StatusMessage:        message,
+		StatusMessageI18NKey: "auth.policy.configured_denial",
+	}, nil
+}
+
+// newAuthnResolverLeaseOutcome returns a detached response for generation annotation.
+func newAuthnResolverLeaseOutcome(message string) *AuthOutcome {
+	return &AuthOutcome{
+		Decision:             AuthDecisionOK,
+		Session:              "resolver-lease-auth",
+		StatusMessage:        message,
+		StatusMessageI18NKey: "auth.policy.configured_denial",
+	}
+}
+
+// localizedMessage executes the request Lua i18n module bound by the production default module manager.
+func (s *authnResolverLeaseApplication) localizedMessage(ctx context.Context) (string, error) {
+	L := lua.NewState()
+	defer L.Close()
+
+	L.SetContext(ctx)
+	manager := luamod.NewModuleManager(ctx, s.cfg, s.logger, nil)
+	manager.BindAllDefault(ctx, L, lualib.NewContext(), tolerate.GetTolerate())
+
+	if err := L.DoString(`
+		local i18n = require("nauthilus_i18n")
+		resolver_result = i18n.get_localized({
+			i18n_key = "auth.policy.configured_denial",
+			fallback = "configured denial",
+			language = "en",
+		})
+	`); err != nil {
+		return "", fmt.Errorf("run generation-owned Lua localization: %w", err)
+	}
+
+	result, ok := L.GetGlobal("resolver_result").(*lua.LTable)
+	if !ok {
+		return "", fmt.Errorf("generation-owned Lua localization returned no result table")
+	}
+
+	message, ok := L.GetField(result, "message").(lua.LString)
+	if !ok || message == "" {
+		return "", fmt.Errorf("generation-owned Lua localization returned no message")
+	}
+
+	return string(message), nil
+}
+
+// assertAuthnCapturedResolverMessage resolves one outcome through its exact generation catalog.
+func assertAuthnCapturedResolverMessage(
+	t *testing.T,
+	resolver localization.MessageResolver,
+	want string,
+) {
+	t.Helper()
+
+	if resolver == nil {
+		t.Fatal("captured outcome resolver is nil")
+	}
+
+	resolved := resolver.ResolveStatusMessage(
+		context.Background(),
+		localization.StatusMessage{
+			Text:    "configured denial",
+			I18NKey: "auth.policy.configured_denial",
+		},
+		localization.LanguagePreference{Default: "en"},
+	)
+	if resolved.Text != want {
+		t.Fatalf("resolved message = %q, want %q", resolved.Text, want)
+	}
+}
+
 type authnCandidateAuthenticator struct{}
+
+// authnCandidateInternalPresentations projects the authoritative production
+// entry-operation matrix into deterministic test-owned caller evidence.
+func authnCandidateInternalPresentations(t *testing.T) map[string]decision.AuthenticationInput {
+	t.Helper()
+
+	profileIDs, err := AuthnInternalProfileIDs()
+	if err != nil {
+		t.Fatalf("AuthnInternalProfileIDs() error = %v", err)
+	}
+
+	presentations := make(map[string]decision.AuthenticationInput, len(profileIDs))
+	for _, profileID := range profileIDs {
+		presentation, presentationErr := decision.NewAuthenticationInput(decision.AuthenticationEvidence{
+			Kind:          "internal",
+			Credential:    []byte("authn-policy-test:" + profileID.String()),
+			TransportKind: "internal",
+		})
+		if presentationErr != nil {
+			t.Fatalf("NewAuthenticationInput(%s) error = %v", profileID, presentationErr)
+		}
+
+		presentations[profileID.String()] = presentation
+	}
+
+	return presentations
+}
 
 type authnCandidateStaticContributor struct {
 	contribution registry.DefinitionContribution
@@ -3561,182 +2603,6 @@ type authnCandidateStaticContributor struct {
 // Contribute returns one immutable test-only configured authn policy set.
 func (c authnCandidateStaticContributor) Contribute(context.Context) (registry.DefinitionContribution, error) {
 	return c.contribution, nil
-}
-
-type authnCandidateCacheSubject struct {
-	calls    atomic.Int32
-	rejected atomic.Bool
-}
-
-type authnCandidateClassifiedPostAction struct {
-	result PostActionResult
-	calls  atomic.Int32
-}
-
-type authnCandidateCountingPlanPostAction struct {
-	preparations atomic.Int32
-}
-
-// Run preserves the synchronous compatibility seam when no plan owner is selected.
-func (*authnCandidateCountingPlanPostAction) Run(PostActionInput) PostActionResult {
-	return PostActionSucceeded()
-}
-
-// PreparePlanStep records immutable capture through the actual post-action adapter.
-func (a *authnCandidateCountingPlanPostAction) PreparePlanStep(PostActionInput) PostActionPlanRunner {
-	a.preparations.Add(1)
-
-	return recordingPlanPostAction{}
-}
-
-// Run records one preselected synchronous post-action cause.
-func (a *authnCandidateClassifiedPostAction) Run(PostActionInput) PostActionResult {
-	a.calls.Add(1)
-
-	return a.result
-}
-
-// Analyze records request-local subject authority on both cold and warm cache paths.
-func (s *authnCandidateCacheSubject) Analyze(
-	ctx *gin.Context,
-	view *StateView,
-	_ *PassDBResult,
-) definitions.AuthResult {
-	s.calls.Add(1)
-
-	auth := view.Auth()
-	rejected := s.rejected.Load()
-	auth.Runtime.Authorized = !rejected
-	auth.Runtime.StatusMessage = "authentication accepted"
-	auth.Runtime.StatusMessageI18NKey = "auth.success"
-	auth.Runtime.ResponseLanguage = "de"
-
-	if recorder := auth.PolicyScriptRecorder(ctx); recorder != nil {
-		recorder.RecordScriptResult(ctx.Request.Context(), policycollection.ScriptResult{
-			Kind: policycollection.ScriptKindSubject, Name: "candidate_cache",
-			Action: rejected, StatusMessage: "warm subject rejected",
-		})
-	}
-
-	if rejected {
-		return definitions.AuthResultFail
-	}
-
-	return definitions.AuthResultOK
-}
-
-type authnCandidateNoopFactProvider struct{}
-
-type authnCandidateNativeSyncEffectProvider struct{}
-
-type authnCandidateOrderedActionDispatcher struct {
-	log *authnCandidateEffectLog
-}
-
-type authnCandidateFactAwarePluginBridge struct {
-	log           *authnCandidateEffectLog
-	validationErr error
-	mu            sync.Mutex
-}
-
-// Collect leaves existing request-local auth facts under their established collectors.
-func (authnCandidateNoopFactProvider) Collect(
-	context.Context,
-	policyruntime.FactProviderInput,
-) ([]policyruntime.ProvidedFact, error) {
-	return nil, nil
-}
-
-// Execute routes one configured native selection through the actual core plugin bridge seam.
-func (authnCandidateNativeSyncEffectProvider) Execute(
-	ctx context.Context,
-	execution policyruntime.EffectExecution,
-) effectsupervisor.Result {
-	owner := authnPolicyEffectOwnerFromContext(ctx)
-	if owner == nil || execution.EffectID() != authnCandidateNativeEffectID {
-		return effectsupervisor.Failed("authn_native_effect_owner_unavailable")
-	}
-
-	return owner.executeAuthnPolicyEffect(report.EffectRequest{ID: execution.EffectID()})
-}
-
-// Dispatch records the actual Lua action seam in selected effect order.
-func (d *authnCandidateOrderedActionDispatcher) Dispatch(
-	_ *StateView,
-	_ string,
-	_ definitions.LuaAction,
-) {
-	d.log.append("lua:" + policy.ObligationLuaActionDispatch)
-}
-
-// IsPostActionEffect keeps the configured native fixture synchronous.
-func (*authnCandidateFactAwarePluginBridge) IsPostActionEffect(report.EffectRequest) bool {
-	return false
-}
-
-// EnqueuePostActionPlan rejects unexpected post-action use in the synchronous fixture.
-func (*authnCandidateFactAwarePluginBridge) EnqueuePostActionPlan(
-	*gin.Context,
-	*StateView,
-	[]PostActionPlanStep,
-) (bool, bool) {
-	return false, false
-}
-
-// ExecutePolicyEffect verifies captured Lua/native provenance at the actual native effect seam.
-func (b *authnCandidateFactAwarePluginBridge) ExecutePolicyEffect(
-	ctx *gin.Context,
-	view *StateView,
-	effect report.EffectRequest,
-) (bool, bool) {
-	b.log.append("native:" + effect.ID)
-
-	var validationErr error
-	if effect.ID != authnCandidateNativeEffectID || view == nil || view.Auth() == nil {
-		validationErr = fmt.Errorf("native effect request or state view is incomplete")
-	} else {
-		validationErr = validateAuthnCandidateExtensionFacts(ctx, view.Auth())
-	}
-
-	b.mu.Lock()
-	b.validationErr = validationErr
-	b.mu.Unlock()
-
-	return true, validationErr == nil
-}
-
-// validationError returns the fact-authority result recorded by the native seam.
-func (b *authnCandidateFactAwarePluginBridge) validationError() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	return b.validationErr
-}
-
-// validateAuthnCandidateExtensionFacts checks exact Lua/plugin owners and retained values.
-func validateAuthnCandidateExtensionFacts(ctx *gin.Context, auth *AuthState) error {
-	policyCtx := auth.requestPolicyContext(ctx)
-	if policyCtx == nil || policyCtx.Report() == nil {
-		return fmt.Errorf("request-local policy facts are unavailable")
-	}
-
-	wantSources := map[string]registry.AttributeSource{
-		authnCandidateLuaAttributeID:    registry.SourceBuiltin,
-		authnCandidateNativeAttributeID: registry.SourceBuiltin,
-	}
-	for factID, wantSource := range wantSources {
-		definition, exists := policyCtx.AttributeDefinition(factID)
-		if !exists || definition.Source != wantSource {
-			return fmt.Errorf("fact %s source = %q, want %q", factID, definition.Source, wantSource)
-		}
-
-		attribute, exists := policyCtx.Report().Attributes[factID]
-		if !exists || attribute.Value != false {
-			return fmt.Errorf("fact %s value = %#v, want false", factID, attribute.Value)
-		}
-	}
-
-	return nil
 }
 
 // Authenticate returns the explicit builtin internal caller used by the candidate adapter.
@@ -3808,7 +2674,7 @@ func (*authnCandidateAcceptAll) Accept(
 }
 
 type authnCandidateInjectedHost struct {
-	base      *authApplicationService
+	base      authnCandidateHost
 	configure func(*authnCandidateExecution)
 	calls     atomic.Int32
 }
@@ -3827,262 +2693,30 @@ func (h *authnCandidateInjectedHost) prepareAuthnCandidateExecution(
 	return execution, evaluationCtx, err
 }
 
-// Authenticate fails if the staged candidate accidentally invokes the legacy aggregate service.
+// Authenticate fails if the candidate accidentally invokes the retired aggregate service.
 func (h *authnCandidateInjectedHost) Authenticate(context.Context, AuthInput) (*AuthOutcome, error) {
 	h.calls.Add(1)
 
-	return nil, errors.New("legacy aggregate authenticate was invoked")
+	return nil, errors.New("retired aggregate authenticate was invoked")
 }
 
-// LookupIdentity fails if the staged candidate accidentally invokes the legacy aggregate service.
+// LookupIdentity fails if the candidate accidentally invokes the retired aggregate service.
 func (h *authnCandidateInjectedHost) LookupIdentity(context.Context, AuthInput) (*AuthOutcome, error) {
 	h.calls.Add(1)
 
-	return nil, errors.New("legacy aggregate lookup was invoked")
+	return nil, errors.New("retired aggregate lookup was invoked")
 }
 
-// ListAccounts fails if the staged candidate accidentally invokes the legacy aggregate service.
+// ListAccounts fails if the candidate accidentally invokes the retired aggregate service.
 func (h *authnCandidateInjectedHost) ListAccounts(context.Context, AuthInput) (*ListAccountsOutcome, error) {
 	h.calls.Add(1)
 
-	return nil, errors.New("legacy aggregate account listing was invoked")
+	return nil, errors.New("retired aggregate account listing was invoked")
 }
 
 type authnCandidateEffectLog struct {
 	values []string
 	mu     sync.Mutex
-}
-
-type recordingAuthnCandidateEnvironmentBridge struct {
-	calls atomic.Int32
-}
-
-type authnCandidateNativeEnvironmentBridge struct {
-	sources   []authnCandidateNativeEnvironmentOutcome
-	err       error
-	status    string
-	calls     atomic.Int32
-	triggered bool
-	abort     bool
-}
-
-type authnCandidateNativeEnvironmentOutcome struct {
-	err       error
-	name      string
-	status    string
-	triggered bool
-	abort     bool
-}
-
-type authnCandidateNativeSubjectBridge struct {
-	sources []authnCandidateNativeSubjectOutcome
-}
-
-type authnCandidateNativeSubjectOutcome struct {
-	err      error
-	name     string
-	status   string
-	rejected bool
-}
-
-// Evaluate records actual native environment collection without changing its outcome.
-func (b *recordingAuthnCandidateEnvironmentBridge) Evaluate(
-	*gin.Context,
-	*StateView,
-) (bool, bool, bool, error) {
-	b.calls.Add(1)
-
-	return false, false, true, nil
-}
-
-// Evaluate records native terminal facts through the same collector boundary as pluginruntime.
-func (b *authnCandidateNativeEnvironmentBridge) Evaluate(
-	ctx *gin.Context,
-	view *StateView,
-) (bool, bool, bool, error) {
-	b.calls.Add(1)
-
-	if view == nil || view.Auth() == nil {
-		return false, false, true, errors.New("native environment auth state is unavailable")
-	}
-
-	policyCtx := view.Auth().PolicyDecisionContext(ctx)
-	if policyCtx == nil {
-		return false, false, true, errors.New("native environment policy context is unavailable")
-	}
-
-	sources := b.sources
-	if len(sources) == 0 {
-		sources = []authnCandidateNativeEnvironmentOutcome{{
-			name: "verdict", status: b.status, triggered: b.triggered, abort: b.abort, err: b.err,
-		}}
-	}
-
-	var (
-		triggered bool
-		abort     bool
-	)
-
-	for _, source := range sources {
-		recordAuthnCandidateNativeEnvironmentOutcome(ctx, view.Auth(), policyCtx, source)
-
-		if source.err != nil {
-			return false, false, true, source.err
-		}
-
-		if source.status != "" {
-			view.Auth().Runtime.StatusMessage = source.status
-		}
-
-		triggered = triggered || source.triggered
-		abort = abort || source.abort
-	}
-
-	return triggered, abort, true, nil
-}
-
-// recordAuthnCandidateNativeEnvironmentOutcome mirrors the native collector's report boundary.
-func recordAuthnCandidateNativeEnvironmentOutcome(
-	ctx *gin.Context,
-	auth *AuthState,
-	policyCtx *policycollection.DecisionContext,
-	source authnCandidateNativeEnvironmentOutcome,
-) {
-	check := policyCtx.BeginCheck(ctx.Request.Context(), policycollection.CheckSelector{
-		CheckType: policy.CheckTypePluginEnvironment,
-		Stage:     policy.StagePreAuth,
-		Name:      authnCandidateNativeCheck,
-		ConfigRef: "plugins.modules.candidate.environment",
-	})
-
-	details := map[string]policycollection.DetailValue(nil)
-	if source.status != "" {
-		details = map[string]policycollection.DetailValue{
-			"status_message": {
-				Value: source.status, Sensitivity: report.SensitivityPublic,
-				Purpose: report.PurposeResponseMessage,
-			},
-		}
-	}
-
-	operation := auth.policyOperation()
-	attributePrefix := "auth.plugin.environment.candidate." + source.name
-	check.Finish(policycollection.CheckResult{
-		Err: source.err, Status: policy.CheckStatusOK, Matched: source.triggered,
-		DecisionHint: policyDecision(source.triggered, policy.DecisionDeny),
-		Attributes: []policycollection.AttributeValue{
-			policycollection.BoolAttribute(
-				attributePrefix+".triggered",
-				policy.StagePreAuth,
-				operation,
-				source.triggered,
-				details,
-			),
-			policycollection.BoolAttribute(
-				attributePrefix+".abort",
-				policy.StagePreAuth,
-				operation,
-				source.abort,
-				nil,
-			),
-			policycollection.BoolAttribute(
-				attributePrefix+".error",
-				policy.StagePreAuth,
-				operation,
-				source.err != nil,
-				nil,
-			),
-		},
-	})
-}
-
-// Analyze records ordered native subject facts through the same collector boundary as pluginruntime.
-func (b *authnCandidateNativeSubjectBridge) Analyze(
-	ctx *gin.Context,
-	view *StateView,
-	_ *PassDBResult,
-	current definitions.AuthResult,
-) (definitions.AuthResult, bool) {
-	if view == nil || view.Auth() == nil {
-		return definitions.AuthResultTempFail, true
-	}
-
-	policyCtx := view.Auth().PolicyDecisionContext(ctx)
-	if policyCtx == nil {
-		return definitions.AuthResultTempFail, true
-	}
-
-	var rejected bool
-
-	for _, source := range b.sources {
-		recordAuthnCandidateNativeSubjectOutcome(ctx, view.Auth(), policyCtx, source)
-
-		if source.err != nil {
-			view.Auth().Runtime.Authorized = false
-
-			return definitions.AuthResultTempFail, true
-		}
-
-		if source.status != "" {
-			view.Auth().Runtime.StatusMessage = source.status
-		}
-
-		rejected = rejected || source.rejected
-	}
-
-	if rejected {
-		view.Auth().Runtime.Authorized = false
-
-		return definitions.AuthResultFail, true
-	}
-
-	return current, true
-}
-
-// recordAuthnCandidateNativeSubjectOutcome mirrors the native subject collector report boundary.
-func recordAuthnCandidateNativeSubjectOutcome(
-	ctx *gin.Context,
-	auth *AuthState,
-	policyCtx *policycollection.DecisionContext,
-	source authnCandidateNativeSubjectOutcome,
-) {
-	details := map[string]policycollection.DetailValue(nil)
-	if source.status != "" {
-		details = map[string]policycollection.DetailValue{
-			"status_message": {
-				Value: source.status, Sensitivity: report.SensitivityPublic,
-				Purpose: report.PurposeResponseMessage,
-			},
-		}
-	}
-
-	attributePrefix := "auth.plugin.subject.candidate." + source.name
-	check := policyCtx.BeginCheck(ctx.Request.Context(), policycollection.CheckSelector{
-		CheckType: policy.CheckTypePluginSubjectSource,
-		Stage:     policy.StageSubjectAnalysis,
-		Name:      policy.PluginSubjectCheckName("candidate", source.name),
-		ConfigRef: "plugins.modules.candidate.subject",
-	})
-	check.Finish(policycollection.CheckResult{
-		Err: source.err, Status: policy.CheckStatusOK, Matched: source.rejected,
-		DecisionHint: policyDecision(source.rejected, policy.DecisionDeny),
-		Attributes: []policycollection.AttributeValue{
-			policycollection.BoolAttribute(
-				attributePrefix+".rejected",
-				policy.StageSubjectAnalysis,
-				auth.policyOperation(),
-				source.rejected,
-				details,
-			),
-			policycollection.BoolAttribute(
-				attributePrefix+".error",
-				policy.StageSubjectAnalysis,
-				auth.policyOperation(),
-				source.err != nil,
-				nil,
-			),
-		},
-	})
 }
 
 // append records one ordered candidate effect boundary.
@@ -4115,51 +2749,6 @@ func (a *authnCandidateRejectingAcceptor) Accept(
 	return effectsupervisor.Receipt{}, errors.New("candidate supervisor capacity unavailable")
 }
 
-type authnCandidateEffectWork struct {
-	finalization              decision.EvaluationFinalization
-	started                   chan struct{}
-	result                    effectsupervisor.Result
-	executeCalls              atomic.Int32
-	cleanupCalls              atomic.Int32
-	startedBeforeFinalization atomic.Bool
-}
-
-// Validate accepts the immutable test work.
-func (*authnCandidateEffectWork) Validate() error { return nil }
-
-// Execute records an unexpected worker start after rejected acceptance.
-func (w *authnCandidateEffectWork) Execute(context.Context) effectsupervisor.Result {
-	w.executeCalls.Add(1)
-
-	if w.finalization.Valid() {
-		select {
-		case <-w.finalization.Done():
-		default:
-			w.startedBeforeFinalization.Store(true)
-		}
-	}
-
-	if w.started != nil {
-		close(w.started)
-	}
-
-	if w.result.State() != "" {
-		return w.result
-	}
-
-	return effectsupervisor.Succeeded()
-}
-
-// Cleanup records release of rejected prepared work.
-func (w *authnCandidateEffectWork) Cleanup() {
-	w.cleanupCalls.Add(1)
-}
-
-type authnCandidateFinalizationFactory struct {
-	delegate decisionservice.DecisionSessionFactory
-	work     *authnCandidateEffectWork
-}
-
 type authnCandidateCheckpointFactory struct {
 	delegate    decisionservice.DecisionSessionFactory
 	checkpoints map[string][]string
@@ -4174,9 +2763,28 @@ func (f *authnCandidateCheckpointFactory) WithSession(
 ) error {
 	target := invocation.Request.Target.String()
 
-	return f.delegate.WithSession(ctx, invocation, func(session decisionservice.DecisionSession) error {
+	return f.delegate.WithSession(ctx, invocation, f.recordCheckpointSession(target, use))
+}
+
+// WithInternalSession records checkpoint traversal for one generation-owned internal profile.
+func (f *authnCandidateCheckpointFactory) WithInternalSession(
+	ctx context.Context,
+	input decisionservice.InternalSessionInput,
+	use func(decisionservice.DecisionSession) error,
+) error {
+	target := input.Request.Target.String()
+
+	return f.delegate.WithInternalSession(ctx, input, f.recordCheckpointSession(target, use))
+}
+
+// recordCheckpointSession wraps one admitted session with traversal evidence.
+func (f *authnCandidateCheckpointFactory) recordCheckpointSession(
+	target string,
+	use func(decisionservice.DecisionSession) error,
+) func(decisionservice.DecisionSession) error {
+	return func(session decisionservice.DecisionSession) error {
 		return use(&authnCandidateCheckpointSession{delegate: session, target: target, owner: f})
-	})
+	}
 }
 
 // snapshot returns detached operation/checkpoint traversal evidence.
@@ -4208,6 +2816,62 @@ func (s *authnCandidateCheckpointSession) RequestContext(ctx context.Context) co
 	return s.delegate.RequestContext(ctx)
 }
 
+// AuthnHostProvider preserves generation-owned source lookup through the recording wrapper.
+func (s *authnCandidateCheckpointSession) AuthnHostProvider(
+	id string,
+) (decisionservice.AuthnHostProvider, bool) {
+	providerSession, ok := s.delegate.(decisionservice.AuthnHostProviderSession)
+	if !ok {
+		return nil, false
+	}
+
+	return providerSession.AuthnHostProvider(id)
+}
+
+// AuthnLuaFacts preserves generation-owned registry declarations through the recording wrapper.
+func (s *authnCandidateCheckpointSession) AuthnLuaFacts() []decisionservice.AuthnLuaFactDeclaration {
+	factSession, ok := s.delegate.(decisionservice.AuthnLuaFactSession)
+	if !ok {
+		return nil
+	}
+
+	return factSession.AuthnLuaFacts()
+}
+
+// NextAuthnHostProvider preserves exact scheduler ownership through the recording wrapper.
+func (s *authnCandidateCheckpointSession) NextAuthnHostProvider(
+	input decisionservice.AuthnHostScheduleInput,
+) (decisionservice.AuthnHostDirective, bool, error) {
+	executionSession, ok := s.delegate.(decisionservice.AuthnHostExecutionSession)
+	if !ok {
+		return decisionservice.AuthnHostDirective{}, false, fmt.Errorf("authn host execution session is unavailable")
+	}
+
+	return executionSession.NextAuthnHostProvider(input)
+}
+
+// CompleteAuthnHostSchedule forwards terminal exhaustion to the captured scheduler.
+func (s *authnCandidateCheckpointSession) CompleteAuthnHostSchedule(checkpoint string) error {
+	executionSession, ok := s.delegate.(decisionservice.AuthnHostExecutionSession)
+	if !ok {
+		return fmt.Errorf("authn host execution session is unavailable")
+	}
+
+	return executionSession.CompleteAuthnHostSchedule(checkpoint)
+}
+
+// RecordAuthnHostProvider preserves exact receipt ownership through the recording wrapper.
+func (s *authnCandidateCheckpointSession) RecordAuthnHostProvider(
+	receipt decisionservice.AuthnHostReceipt,
+) error {
+	executionSession, ok := s.delegate.(decisionservice.AuthnHostExecutionSession)
+	if !ok {
+		return fmt.Errorf("authn host execution session is unavailable")
+	}
+
+	return executionSession.RecordAuthnHostProvider(receipt)
+}
+
 // Evaluate records one traversal before delegating to the shared runtime.
 func (s *authnCandidateCheckpointSession) Evaluate(
 	ctx context.Context,
@@ -4218,17 +2882,6 @@ func (s *authnCandidateCheckpointSession) Evaluate(
 	s.owner.mu.Unlock()
 
 	return s.delegate.Evaluate(ctx, checkpoint)
-}
-
-// WithSession records the exact gate later inspected by accepted work.
-func (f *authnCandidateFinalizationFactory) WithSession(
-	ctx context.Context,
-	invocation decision.Invocation,
-	use func(decisionservice.DecisionSession) error,
-) error {
-	f.work.finalization = invocation.Finalization
-
-	return f.delegate.WithSession(ctx, invocation, use)
 }
 
 type authnCandidateEffectObserver struct {

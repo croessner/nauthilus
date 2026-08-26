@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/croessner/nauthilus/v3/server/core/localization"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
@@ -88,11 +89,67 @@ func (e AuthnEntryPoint) String() string {
 	}
 }
 
-type authnCandidateApplicationService struct {
-	current  AuthApplicationService
-	sessions decisionservice.DecisionSessionFactory
-	profiles AuthnInternalCallerProfiles
-	facts    authnFactBuilder
+// AuthnInternalProfileIDs returns the complete detached set of production internal caller identities.
+func AuthnInternalProfileIDs() ([]decisionservice.InternalProfileID, error) {
+	entryPoints := []AuthnEntryPoint{
+		AuthnEntryBackchannel,
+		AuthnEntryIDPInternal,
+		AuthnEntryIDPOIDCAuthorizationCode,
+		AuthnEntryIDPOIDCDeviceCode,
+		AuthnEntryIDPSAML,
+		AuthnEntryIDPDelayedIdentity,
+		AuthnEntryIDPMasterFactor,
+		AuthnEntryIDPMFABackend,
+	}
+	operations := authnOperations()
+	profiles := make([]decisionservice.InternalProfileID, 0, len(entryPoints)*2)
+
+	for _, entryPoint := range entryPoints {
+		for _, operation := range operations {
+			if !entryPoint.supports(operation) {
+				continue
+			}
+
+			profileID, err := decisionservice.NewInternalProfileID(entryPoint.String(), string(operation))
+			if err != nil {
+				return nil, fmt.Errorf("build authn internal profile %s/%s: %w", entryPoint, operation, err)
+			}
+
+			profiles = append(profiles, profileID)
+		}
+	}
+
+	return profiles, nil
+}
+
+// authnOperations returns the detached closed operation set shared by production authn bindings.
+func authnOperations() []policy.Operation {
+	return []policy.Operation{
+		policy.OperationAuthenticate,
+		policy.OperationLookupIdentity,
+		policy.OperationListAccounts,
+	}
+}
+
+type authnPolicyApplicationService struct {
+	current          AuthApplicationService
+	host             authnCandidateHost
+	sessions         authnCandidateDecisionSessionFactory
+	internalSessions authnInternalDecisionSessionFactory
+	profiles         AuthnInternalCallerProfiles
+	facts            authnFactBuilder
+}
+
+type authnCandidateDecisionSessionFactory interface {
+	WithSession(context.Context, decision.Invocation, func(decisionservice.DecisionSession) error) error
+}
+
+type authnInternalDecisionSessionFactory interface {
+	WithInternalSession(
+		context.Context,
+		decisionservice.InternalSessionInput,
+		func(decisionservice.DecisionSession) error,
+	) error
 }
 
 type authnAuthenticationPresentation struct {
@@ -130,6 +187,21 @@ type AuthnInternalCallerProfiles struct {
 type authnApplicationResult struct {
 	auth     *AuthOutcome
 	accounts *ListAccountsOutcome
+}
+
+// attachMessageResolver carries the immutable Decision-generation catalog to response boundaries.
+func (r *authnApplicationResult) attachMessageResolver(resolver localization.MessageResolver) {
+	if r == nil || resolver == nil {
+		return
+	}
+
+	if r.auth != nil {
+		r.auth.MessageResolver = resolver
+	}
+
+	if r.accounts != nil {
+		r.accounts.MessageResolver = resolver
+	}
 }
 
 // NewAuthnInternalCallerProfiles constructs the complete candidate operation-profile bundle.
@@ -188,14 +260,10 @@ func NewAuthnInternalCallerProfilesWithEntries(
 	return profiles, nil
 }
 
-// NewAuthnCandidateApplicationService constructs an inactive authn Decision Service adapter.
-//
-// Production wiring intentionally continues to use NewAuthApplicationService until the
-// authority cutover activates the unified runtime. The caller supplies opaque host-created
-// admission evidence; the adapter never derives that authority from user credentials.
+// NewAuthnCandidateApplicationService constructs an explicit-evidence Decision Service adapter for tests.
 func NewAuthnCandidateApplicationService(
 	current AuthApplicationService,
-	sessions decisionservice.DecisionSessionFactory,
+	sessions authnCandidateDecisionSessionFactory,
 	authentication decision.AuthenticationInput,
 ) (AuthApplicationService, error) {
 	profiles, err := NewAuthnInternalCallerProfiles(authentication, authentication, authentication)
@@ -206,11 +274,10 @@ func NewAuthnCandidateApplicationService(
 	return NewAuthnCandidateApplicationServiceWithInternalProfiles(current, sessions, profiles)
 }
 
-// NewAuthnCandidateApplicationServiceWithInternalProfiles constructs an inactive adapter
-// that resolves an exact host-created admission presentation for every authn operation.
+// NewAuthnCandidateApplicationServiceWithInternalProfiles constructs an explicit-evidence test adapter.
 func NewAuthnCandidateApplicationServiceWithInternalProfiles(
 	current AuthApplicationService,
-	sessions decisionservice.DecisionSessionFactory,
+	sessions authnCandidateDecisionSessionFactory,
 	profiles AuthnInternalCallerProfiles,
 ) (AuthApplicationService, error) {
 	if nilAuthnCandidateDependency(current) || nilAuthnCandidateDependency(sessions) {
@@ -226,16 +293,71 @@ func NewAuthnCandidateApplicationServiceWithInternalProfiles(
 		return nil, fmt.Errorf("build authn candidate fact mapper: %w", err)
 	}
 
-	return &authnCandidateApplicationService{
+	service := &authnPolicyApplicationService{
 		current:  current,
 		sessions: sessions,
 		profiles: profiles,
 		facts:    facts,
+	}
+	if host, ok := current.(authnCandidateHost); ok {
+		service.host = host
+	}
+
+	return service, nil
+}
+
+// NewProductionAuthApplicationService constructs the sole generation-captured auth application authority.
+func NewProductionAuthApplicationService(
+	deps AuthDeps,
+	decisions *decisionservice.DecisionService,
+) (AuthApplicationService, error) {
+	if nilAuthnCandidateDependency(decisions) {
+		return nil, fmt.Errorf("%w: production Decision Service", ErrAuthApplicationDependencyMissing)
+	}
+
+	if err := deps.HostServices.validate(); err != nil {
+		return nil, err
+	}
+
+	if err := validateAuthApplicationLDAPQueues(deps); err != nil {
+		return nil, err
+	}
+
+	if _, err := AuthnInternalProfileIDs(); err != nil {
+		return nil, err
+	}
+
+	facts, err := newAuthnFactBuilder()
+	if err != nil {
+		return nil, fmt.Errorf("build production authn fact mapper: %w", err)
+	}
+
+	return &authnPolicyApplicationService{
+		host:             newAuthApplicationServiceHost(deps),
+		internalSessions: decisions,
+		facts:            facts,
 	}, nil
 }
 
-// Authenticate runs the current password pipeline within one admitted candidate session.
-func (s *authnCandidateApplicationService) Authenticate(
+// validateAuthApplicationLDAPQueues requires both process-owned queues when LDAP is configured.
+func validateAuthApplicationLDAPQueues(deps AuthDeps) error {
+	if deps.Cfg == nil || !deps.Cfg.HaveLDAPBackend() {
+		return nil
+	}
+
+	if deps.LDAPQueue == nil {
+		return fmt.Errorf("%w: LDAP lookup queue", ErrAuthApplicationDependencyMissing)
+	}
+
+	if deps.LDAPAuthQueue == nil {
+		return fmt.Errorf("%w: LDAP authentication queue", ErrAuthApplicationDependencyMissing)
+	}
+
+	return nil
+}
+
+// Authenticate runs the current password pipeline within one admitted Policy session.
+func (s *authnPolicyApplicationService) Authenticate(
 	ctx context.Context,
 	input AuthInput,
 ) (*AuthOutcome, error) {
@@ -247,8 +369,8 @@ func (s *authnCandidateApplicationService) Authenticate(
 	return result.auth, nil
 }
 
-// LookupIdentity runs the current identity lookup within one admitted candidate session.
-func (s *authnCandidateApplicationService) LookupIdentity(
+// LookupIdentity runs the current identity lookup within one admitted Policy session.
+func (s *authnPolicyApplicationService) LookupIdentity(
 	ctx context.Context,
 	input AuthInput,
 ) (*AuthOutcome, error) {
@@ -260,8 +382,8 @@ func (s *authnCandidateApplicationService) LookupIdentity(
 	return result.auth, nil
 }
 
-// ListAccounts runs the current account provider within one admitted candidate session.
-func (s *authnCandidateApplicationService) ListAccounts(
+// ListAccounts runs the current account provider within one admitted Policy session.
+func (s *authnPolicyApplicationService) ListAccounts(
 	ctx context.Context,
 	input AuthInput,
 ) (*ListAccountsOutcome, error) {
@@ -273,8 +395,8 @@ func (s *authnCandidateApplicationService) ListAccounts(
 	return result.accounts, nil
 }
 
-// run owns validation, session admission, current execution, and final candidate mapping.
-func (s *authnCandidateApplicationService) run(
+// run owns validation, session admission, current execution, and final Policy mapping.
+func (s *authnPolicyApplicationService) run(
 	ctx context.Context,
 	input AuthInput,
 	operation policy.Operation,
@@ -292,29 +414,26 @@ func (s *authnCandidateApplicationService) run(
 		return authnApplicationResult{}, err
 	}
 
-	authentication, err := s.profiles.authenticationFor(input.EntryPoint, operation)
-	if err != nil {
-		return authnApplicationResult{}, err
-	}
-
-	invocation, err := newAuthnCandidateInvocation(ctx, input, operation, s.facts, authentication)
-	if err != nil {
-		return authnApplicationResult{}, fmt.Errorf("build authn candidate invocation: %w", err)
-	}
-
 	var (
 		result    authnApplicationResult
 		execution *authnCandidateExecution
 	)
 
-	err = s.sessions.WithSession(ctx, invocation, func(session decisionservice.DecisionSession) error {
+	err := s.withAuthnSession(ctx, input, operation, func(session decisionservice.DecisionSession) error {
 		evaluationCtx := session.RequestContext(ctx)
+		messageResolver, _ := decisionservice.CapturedMessageResolverFromContext(evaluationCtx)
 
-		if host, ok := s.current.(authnCandidateHost); ok {
+		if s.host != nil {
 			var prepareErr error
 
-			execution, evaluationCtx, prepareErr = host.prepareAuthnCandidateExecution(evaluationCtx, input, operation)
+			execution, evaluationCtx, prepareErr = s.host.prepareAuthnCandidateExecution(evaluationCtx, input, operation)
 			if prepareErr != nil {
+				return prepareErr
+			}
+
+			defer execution.release()
+
+			if prepareErr = execution.installAuthnLuaFactDeclarations(session, s.internalSessions != nil); prepareErr != nil {
 				return prepareErr
 			}
 		}
@@ -322,11 +441,12 @@ func (s *authnCandidateApplicationService) run(
 		var traversalErr error
 
 		result, traversalErr = s.runCheckpointPlan(evaluationCtx, session, input, operation, execution)
+		result.attachMessageResolver(messageResolver)
 
 		return traversalErr
 	})
 	if err != nil {
-		return authnApplicationResult{}, fmt.Errorf("authn candidate decision session: %w", err)
+		return authnApplicationResult{}, fmt.Errorf("authn Policy decision session: %w", err)
 	}
 
 	if !result.validFor(operation) {
@@ -336,8 +456,46 @@ func (s *authnCandidateApplicationService) run(
 	return result, nil
 }
 
+// withAuthnSession selects generation-owned production admission or explicit-evidence test admission.
+func (s *authnPolicyApplicationService) withAuthnSession(
+	ctx context.Context,
+	input AuthInput,
+	operation policy.Operation,
+	use func(decisionservice.DecisionSession) error,
+) error {
+	if s.internalSessions != nil {
+		request, finalization, err := newAuthnInternalSessionRequest(ctx, input, operation, s.facts)
+		if err != nil {
+			return fmt.Errorf("build production authn invocation: %w", err)
+		}
+
+		profileID, err := decisionservice.NewInternalProfileID(input.EntryPoint.String(), string(operation))
+		if err != nil || input.EntryPoint == AuthnEntryDefault || !input.EntryPoint.supports(operation) {
+			return &AuthInputError{Field: authnInputFieldEntryPoint, Reason: authInputReasonUnsupported}
+		}
+
+		return s.internalSessions.WithInternalSession(ctx, decisionservice.InternalSessionInput{
+			ProfileID:    profileID,
+			Request:      request,
+			Finalization: finalization,
+		}, use)
+	}
+
+	authentication, err := s.profiles.authenticationFor(input.EntryPoint, operation)
+	if err != nil {
+		return err
+	}
+
+	invocation, err := newAuthnCandidateInvocation(ctx, input, operation, s.facts, authentication)
+	if err != nil {
+		return fmt.Errorf("build authn Policy invocation: %w", err)
+	}
+
+	return s.sessions.WithSession(ctx, invocation, use)
+}
+
 // runCheckpointPlan traverses the captured compiled order and runs host work before its final checkpoint.
-func (s *authnCandidateApplicationService) runCheckpointPlan(
+func (s *authnPolicyApplicationService) runCheckpointPlan(
 	ctx context.Context,
 	session decisionservice.DecisionSession,
 	input AuthInput,
@@ -346,7 +504,7 @@ func (s *authnCandidateApplicationService) runCheckpointPlan(
 ) (authnApplicationResult, error) {
 	checkpoints := session.Checkpoints()
 	if len(checkpoints) == 0 {
-		return authnApplicationResult{}, fmt.Errorf("authn candidate session has no compiled checkpoints")
+		return authnApplicationResult{}, fmt.Errorf("authn Policy session has no compiled checkpoints")
 	}
 
 	lastCheckpoint := len(checkpoints) - 1
@@ -354,58 +512,107 @@ func (s *authnCandidateApplicationService) runCheckpointPlan(
 
 	for index, checkpoint := range checkpoints {
 		final := index == lastCheckpoint
-		if execution != nil {
-			var err error
+		result, done, err := s.runCheckpoint(
+			ctx, session, checkpoint, input, operation, execution, current, final,
+		)
 
-			current, err = execution.prepareCheckpoint(checkpoint)
-			if err != nil {
-				return authnApplicationResult{}, err
-			}
-		} else if final {
-			var err error
-
-			current, err = s.runCurrent(ctx, input, operation)
-			if err != nil {
-				return authnApplicationResult{}, err
-			}
+		if err != nil || done {
+			return result, err
 		}
 
-		facts, err := s.checkpointFacts(input, operation, current, final)
-		if err != nil {
-			return authnApplicationResult{}, err
-		}
-
-		response, err := evaluateAuthnCandidateCheckpoint(ctx, session, checkpoint.Name(), facts)
-		if err != nil {
-			return authnApplicationResult{}, err
-		}
-
-		if final {
-			if execution != nil {
-				return execution.finalize(checkpoint.Name(), response, current)
-			}
-
-			return current.mapEffect(response.Effect())
-		}
-
-		if terminalAuthnCheckpointEffect(response.Effect()) {
-			if execution != nil {
-				return execution.finalize(checkpoint.Name(), response, current)
-			}
-
-			return newAuthnTerminalResult(operation, response.Effect())
-		}
-
-		if response.Effect() != decision.EffectNotApplicable {
-			return authnApplicationResult{}, fmt.Errorf("unsupported intermediate authn candidate effect %q", response.Effect())
-		}
+		current = result
 	}
 
 	return authnApplicationResult{}, ErrAuthOutcomeMissing
 }
 
+// runCheckpoint prepares host state, evaluates one checkpoint, and classifies terminal progress.
+func (s *authnPolicyApplicationService) runCheckpoint(
+	ctx context.Context,
+	session decisionservice.DecisionSession,
+	checkpoint decisionservice.CheckpointPlan,
+	input AuthInput,
+	operation policy.Operation,
+	execution *authnCandidateExecution,
+	current authnApplicationResult,
+	final bool,
+) (authnApplicationResult, bool, error) {
+	prepared, err := s.prepareCheckpointResult(ctx, session, checkpoint, input, operation, execution, current, final)
+	if err != nil {
+		return authnApplicationResult{}, true, err
+	}
+
+	facts, err := s.checkpointFacts(input, operation, prepared, final)
+	if err != nil {
+		return authnApplicationResult{}, true, err
+	}
+
+	response, err := evaluateAuthnCandidateCheckpoint(ctx, session, checkpoint.Name(), facts)
+	if err != nil {
+		return authnApplicationResult{}, true, err
+	}
+
+	return resolveAuthnCheckpointResult(checkpoint.Name(), operation, execution, prepared, response, final)
+}
+
+// prepareCheckpointResult runs only host work associated with the current compiled checkpoint.
+func (s *authnPolicyApplicationService) prepareCheckpointResult(
+	ctx context.Context,
+	session decisionservice.DecisionSession,
+	checkpoint decisionservice.CheckpointPlan,
+	input AuthInput,
+	operation policy.Operation,
+	execution *authnCandidateExecution,
+	current authnApplicationResult,
+	final bool,
+) (authnApplicationResult, error) {
+	if execution != nil {
+		return execution.prepareCheckpoint(session, checkpoint)
+	}
+
+	if final {
+		return s.runCurrent(ctx, input, operation)
+	}
+
+	return current, nil
+}
+
+// resolveAuthnCheckpointResult maps one evaluated effect to continued, final, or terminal host state.
+func resolveAuthnCheckpointResult(
+	checkpoint string,
+	operation policy.Operation,
+	execution *authnCandidateExecution,
+	current authnApplicationResult,
+	response decision.DecisionResponse,
+	final bool,
+) (authnApplicationResult, bool, error) {
+	if final || terminalAuthnCheckpointEffect(response.Effect()) {
+		if execution != nil {
+			result, err := execution.finalize(checkpoint, response, current)
+
+			return result, true, err
+		}
+
+		if final {
+			result, err := current.mapEffect(response.Effect())
+
+			return result, true, err
+		}
+
+		result, err := newAuthnTerminalResult(operation, response.Effect())
+
+		return result, true, err
+	}
+
+	if response.Effect() != decision.EffectNotApplicable {
+		return authnApplicationResult{}, true, fmt.Errorf("unsupported intermediate authn Policy effect %q", response.Effect())
+	}
+
+	return current, false, nil
+}
+
 // checkpointFacts keeps pre-backend checkpoints empty and maps current state only at the final boundary.
-func (s *authnCandidateApplicationService) checkpointFacts(
+func (s *authnPolicyApplicationService) checkpointFacts(
 	input AuthInput,
 	operation policy.Operation,
 	current authnApplicationResult,
@@ -414,7 +621,7 @@ func (s *authnCandidateApplicationService) checkpointFacts(
 	if !final {
 		facts, err := decision.NewFactSet(nil)
 		if err != nil {
-			return decision.FactSet{}, fmt.Errorf("build authn candidate checkpoint facts: %w", err)
+			return decision.FactSet{}, fmt.Errorf("build authn Policy checkpoint facts: %w", err)
 		}
 
 		return facts, nil
@@ -422,7 +629,7 @@ func (s *authnCandidateApplicationService) checkpointFacts(
 
 	facts, err := s.facts.Build(input, operation, current, decision.FactSet{})
 	if err != nil {
-		return decision.FactSet{}, fmt.Errorf("build authn candidate facts: %w", err)
+		return decision.FactSet{}, fmt.Errorf("build authn Policy facts: %w", err)
 	}
 
 	return facts, nil
@@ -437,7 +644,7 @@ func evaluateAuthnCandidateCheckpoint(
 ) (decision.DecisionResponse, error) {
 	checkpoint, err := decision.NewCheckpoint(name, facts)
 	if err != nil {
-		return decision.DecisionResponse{}, fmt.Errorf("build authn candidate checkpoint: %w", err)
+		return decision.DecisionResponse{}, fmt.Errorf("build authn Policy checkpoint: %w", err)
 	}
 
 	return session.Evaluate(ctx, checkpoint)
@@ -461,7 +668,7 @@ func newAuthnTerminalResult(
 	case decision.EffectIndeterminate:
 		mapped = AuthDecisionTempFail
 	default:
-		return authnApplicationResult{}, fmt.Errorf("unsupported terminal authn candidate effect %q", effect)
+		return authnApplicationResult{}, fmt.Errorf("unsupported terminal authn Policy effect %q", effect)
 	}
 
 	if operation == policy.OperationListAccounts {
@@ -472,11 +679,15 @@ func newAuthnTerminalResult(
 }
 
 // runCurrent invokes exactly one existing operation while the captured session remains open.
-func (s *authnCandidateApplicationService) runCurrent(
+func (s *authnPolicyApplicationService) runCurrent(
 	ctx context.Context,
 	input AuthInput,
 	operation policy.Operation,
 ) (authnApplicationResult, error) {
+	if nilAuthnCandidateDependency(s.current) {
+		return authnApplicationResult{}, fmt.Errorf("%w: test auth application", ErrAuthApplicationDependencyMissing)
+	}
+
 	switch operation {
 	case policy.OperationAuthenticate:
 		outcome, err := s.current.Authenticate(ctx, input)
@@ -511,7 +722,7 @@ func (r authnApplicationResult) mapEffect(effect decision.Effect) (authnApplicat
 	case decision.EffectIndeterminate:
 		mapped = AuthDecisionTempFail
 	default:
-		return authnApplicationResult{}, fmt.Errorf("unsupported authn candidate effect %q", effect)
+		return authnApplicationResult{}, fmt.Errorf("unsupported authn Policy effect %q", effect)
 	}
 
 	if r.auth != nil {
@@ -618,37 +829,7 @@ func newAuthnCandidateInvocation(
 	facts authnFactBuilder,
 	authentication authnAuthenticationPresentation,
 ) (decision.Invocation, error) {
-	requestAttributes, err := facts.RequestAttributes(input)
-	if err != nil {
-		return decision.Invocation{}, err
-	}
-
-	target, err := decision.NewTarget(policy.AuthnNamespace, string(operation))
-	if err != nil {
-		return decision.Invocation{}, err
-	}
-
-	subject, err := decision.NewEntity(decision.EntityInput{
-		Type: authnCandidateSubjectType,
-		ID:   input.Credentials.Username,
-	})
-	if err != nil {
-		return decision.Invocation{}, err
-	}
-
-	resource, err := decision.NewEntity(decision.EntityInput{
-		Type: authnCandidateResourceType,
-		ID:   input.Service,
-	})
-	if err != nil {
-		return decision.Invocation{}, err
-	}
-
-	environment, err := decision.NewEnvironment(decision.EnvironmentInput{
-		Service:    input.Service,
-		Protocol:   input.Context.Protocol,
-		Attributes: requestAttributes.environment,
-	})
+	request, finalization, err := newAuthnInternalSessionRequest(ctx, input, operation, facts)
 	if err != nil {
 		return decision.Invocation{}, err
 	}
@@ -658,23 +839,70 @@ func newAuthnCandidateInvocation(
 		return decision.Invocation{}, err
 	}
 
-	finalization := authnCandidateFinalization(ctx, input)
-	if !finalization.Valid() {
-		return decision.Invocation{}, fmt.Errorf("authn candidate finalization gate is unavailable")
-	}
-
 	return decision.Invocation{
-		Request: decision.DecisionRequestInput{
-			Version:     decision.ContractVersion,
-			Target:      target,
-			Subject:     subject,
-			Resource:    resource,
-			Environment: environment,
-			Attributes:  requestAttributes.input,
-		},
+		Request:        request,
 		Authentication: authenticationInput,
 		Finalization:   finalization,
 	}, nil
+}
+
+// newAuthnInternalSessionRequest maps one application operation without selecting caller authority.
+func newAuthnInternalSessionRequest(
+	ctx context.Context,
+	input AuthInput,
+	operation policy.Operation,
+	facts authnFactBuilder,
+) (decision.DecisionRequestInput, decision.EvaluationFinalization, error) {
+	requestAttributes, err := facts.RequestAttributes(input)
+	if err != nil {
+		return decision.DecisionRequestInput{}, decision.EvaluationFinalization{}, err
+	}
+
+	target, err := decision.NewTarget(policy.AuthnNamespace, string(operation))
+	if err != nil {
+		return decision.DecisionRequestInput{}, decision.EvaluationFinalization{}, err
+	}
+
+	subject, err := decision.NewEntity(decision.EntityInput{
+		Type: authnCandidateSubjectType,
+		ID:   input.Credentials.Username,
+	})
+	if err != nil {
+		return decision.DecisionRequestInput{}, decision.EvaluationFinalization{}, err
+	}
+
+	resource, err := decision.NewEntity(decision.EntityInput{
+		Type: authnCandidateResourceType,
+		ID:   input.Service,
+	})
+	if err != nil {
+		return decision.DecisionRequestInput{}, decision.EvaluationFinalization{}, err
+	}
+
+	environment, err := decision.NewEnvironment(decision.EnvironmentInput{
+		Service:    input.Service,
+		Protocol:   input.Context.Protocol,
+		Attributes: requestAttributes.environment,
+	})
+	if err != nil {
+		return decision.DecisionRequestInput{}, decision.EvaluationFinalization{}, err
+	}
+
+	finalization := authnCandidateFinalization(ctx, input)
+	if !finalization.Valid() {
+		return decision.DecisionRequestInput{}, decision.EvaluationFinalization{}, fmt.Errorf(
+			"authn finalization gate is unavailable",
+		)
+	}
+
+	return decision.DecisionRequestInput{
+		Version:     decision.ContractVersion,
+		Target:      target,
+		Subject:     subject,
+		Resource:    resource,
+		Environment: environment,
+		Attributes:  requestAttributes.input,
+	}, finalization, nil
 }
 
 // authnCandidateFinalization selects the immutable application-response boundary.

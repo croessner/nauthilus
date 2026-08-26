@@ -59,7 +59,7 @@ func NauthilusPlugin() (pluginapi.Plugin, error) {
 	return NewPlugin(), nil
 }
 
-// Plugin coordinates lifecycle, state, and environment source registration.
+// Plugin coordinates lifecycle, state, and generic Decision Fact registration.
 type Plugin struct {
 	databaseOwner  *geoDatabaseOwner
 	host           pluginapi.Host
@@ -106,7 +106,7 @@ func (p *Plugin) Metadata() pluginapi.Metadata {
 			"asn_routing_snapshot",
 			"asn_registry_refresh",
 			"asn_mmdb",
-			"environment_source",
+			"decision_fact_provider",
 			"init_task",
 			"maxmind_mmdb",
 			"reconfigure",
@@ -114,7 +114,7 @@ func (p *Plugin) Metadata() pluginapi.Metadata {
 	}
 }
 
-// Register declares the init task, environment source, and policy facts.
+// Register declares the init task, sole generic fact provider, and policy attributes.
 func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 	if registrar == nil {
 		return fmt.Errorf("registrar is nil")
@@ -129,7 +129,12 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 	p.config = config
 	p.mu.Unlock()
 
-	if err := registerPolicyAttributes(registrar); err != nil {
+	decisionRegistrar, ok := registrar.(pluginapi.DecisionRegistrar)
+	if !ok {
+		return fmt.Errorf("registrar does not support the required generic decision fact provider")
+	}
+
+	if err := decisionRegistrar.RegisterDecisionFactProvider(geoIPDecisionFactProvider{plugin: p}); err != nil {
 		return err
 	}
 
@@ -137,7 +142,7 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 		return err
 	}
 
-	return registrar.RegisterEnvironmentSource(geoIPEnvironmentSource{plugin: p})
+	return nil
 }
 
 // Start captures host facades and registers bounded plugin-owned metrics.

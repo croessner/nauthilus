@@ -180,7 +180,11 @@ func (auth *AuthState) cachePasswordHashCandidates() internalpasswordhash.RedisC
 			return
 		}
 
-		prepared := util.PreparePasswordBytes(value)
+		prepared, ok := util.PreparePasswordBytesWithConfig(value, auth.Cfg())
+		if !ok {
+			return
+		}
+
 		defer clear(prepared)
 
 		candidates = internalpasswordhash.DeriveRedisCompatibilityCandidates(prepared)

@@ -22,10 +22,10 @@ import (
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/report"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 )
 
 type authnDecisionSourceContextKey struct{}
+type capturedPolicyModeContextKey struct{}
 
 // AuthnDecisionSource supplies request-local standard-auth facts and receives the unified selection.
 //
@@ -49,15 +49,25 @@ func ContextWithAuthnDecisionSource(ctx context.Context, source AuthnDecisionSou
 
 // CapturedPolicyMode returns the immutable policy mode attached by the active DecisionSession.
 func CapturedPolicyMode(ctx context.Context) (string, bool) {
-	snapshot := policyruntime.PolicySnapshotFromContext(ctx)
-	if snapshot == nil {
+	if ctx == nil {
 		return "", false
 	}
 
-	return snapshot.Mode, true
+	mode, ok := ctx.Value(capturedPolicyModeContextKey{}).(string)
+
+	return mode, ok && mode != ""
 }
 
-// authnDecisionSourceFromContext returns the request-local compatibility source when present.
+// contextWithCapturedPolicyMode attaches catalog-owned authn authority metadata.
+func contextWithCapturedPolicyMode(ctx context.Context, mode string) context.Context {
+	if mode == "" {
+		return ctx
+	}
+
+	return context.WithValue(ctx, capturedPolicyModeContextKey{}, mode)
+}
+
+// authnDecisionSourceFromContext returns the request-local application source when present.
 func authnDecisionSourceFromContext(ctx context.Context) AuthnDecisionSource {
 	if ctx == nil {
 		return nil

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v3/server/policy/registry"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -53,7 +54,7 @@ func TestDebugFieldsIncludeValidatedComponent(t *testing.T) {
 func TestDecisionLogFieldsUseSafeKeysOnly(t *testing.T) {
 	fields := DecisionLogFields(DecisionLogEntry{
 		Mode:               "enforce",
-		Set:                policy.BuiltinDefaultSet,
+		Set:                registry.BuiltinStandardAuthPolicySet,
 		Name:               "standard_auth_success",
 		Operation:          policy.OperationAuthenticate,
 		Stage:              policy.StageAuthDecision,
@@ -143,7 +144,7 @@ func TestSafeRecorderIsNoopForNil(_ *testing.T) {
 	})
 	recorder.RecordObligation(context.Background(), ObligationMeasurement{
 		Duration:   time.Millisecond,
-		Obligation: "auth.obligation.brute_force.update",
+		Obligation: policy.EffectBruteForceUpdate,
 		Result:     ResultSuccess,
 	})
 	recorder.RecordAdvice(context.Background(), AdviceMeasurement{

@@ -149,6 +149,39 @@ func TestTargetCatalogRejectsProviderInstanceRecordDrift(t *testing.T) {
 	}
 }
 
+func TestTargetCatalogRejectsProviderIDsWithoutExactInstances(t *testing.T) {
+	target, schema := completionRuntimeTargetAndSchema(t)
+	provider := providerInstanceDefinition(t, target, "mail/shared", nil)
+
+	checkpoint, err := registry.NewCheckpointDefinition(
+		decision.CheckpointFinalDecision,
+		nil,
+		[]string{provider.ID()},
+	)
+	if err != nil {
+		t.Fatalf("NewCheckpointDefinition() error = %v", err)
+	}
+
+	plan, err := registry.NewDomainPlanDefinition(target, []registry.CheckpointDefinition{checkpoint})
+	if err != nil {
+		t.Fatalf("NewDomainPlanDefinition() error = %v", err)
+	}
+
+	record := TargetCatalogRecord{
+		Target: target, Schema: schema, SourcePlan: plan,
+		Providers: []registry.ProviderDefinition{provider},
+		Checkpoints: []CheckpointRecord{{
+			Name: decision.CheckpointFinalDecision, ProviderIDs: []string{provider.ID()},
+		}},
+		NoMatch: registry.NoMatchDeny, AuthorityMode: registry.AuthorityModeEnforce,
+	}
+
+	if _, err = NewTargetCatalog([]TargetCatalogRecord{record}); err == nil ||
+		!strings.Contains(err.Error(), "exact provider instances") {
+		t.Fatalf("NewTargetCatalog(provider-ID-only projection) error = %v", err)
+	}
+}
+
 func TestTargetCatalogRejectsAmbiguousDefinitionRequirementAcrossSharedUse(t *testing.T) {
 	target, schema := completionRuntimeTargetAndSchema(t)
 	shared := providerInstanceDefinition(t, target, "mail/shared", nil)
@@ -173,22 +206,18 @@ func TestRequiredProviderReferencesCompileToExactInstanceNames(t *testing.T) {
 	primary := providerInstance(t, "providers[0]", "primary", "mail/shared", nil)
 	alias := providerInstance(t, "providers[1]", "alias", "mail/shared", nil)
 
-	resolved, err := resolveRequiredProviderReferences([]string{"mail/shared"}, []registry.ProviderInstanceDefinition{primary})
-	if err != nil || !slices.Equal(resolved, []string{"primary"}) {
-		t.Fatalf("resolveRequiredProviderReferences(unique use) = %v, %v", resolved, err)
+	if _, err := resolveRequiredProviderReferences(
+		[]string{"mail/shared"},
+		[]registry.ProviderInstanceDefinition{primary},
+	); err == nil || !strings.Contains(err.Error(), "unscheduled provider instance") {
+		t.Fatalf("resolveRequiredProviderReferences(qualified use) error = %v", err)
 	}
 
-	resolved, err = resolveRequiredProviderReferences([]string{"alias"}, []registry.ProviderInstanceDefinition{primary, alias})
+	resolved, err := resolveRequiredProviderReferences([]string{"alias"}, []registry.ProviderInstanceDefinition{primary, alias})
 	if err != nil || !slices.Equal(resolved, []string{"alias"}) {
 		t.Fatalf("resolveRequiredProviderReferences(local name) = %v, %v", resolved, err)
 	}
 
-	if _, err = resolveRequiredProviderReferences(
-		[]string{"mail/shared"},
-		[]registry.ProviderInstanceDefinition{primary, alias},
-	); err == nil || !strings.Contains(err.Error(), "ambiguous provider use") {
-		t.Fatalf("resolveRequiredProviderReferences(ambiguous use) error = %v", err)
-	}
 }
 
 // providerInstanceNoError stops an instance test before zero-value access after constructor failure.

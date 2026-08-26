@@ -1,25 +1,29 @@
-# Policy configuration migration
+# Policy configuration hard cut and manual migration
 
-This guide is the manual hard-cut contract from the currently supported
-`auth.policy` configuration to the standalone namespace-owned policy model. It
-is deliberately field-complete: each old concept has one new owner, one decode
-path, one validation path, and one canonical dump path.
+This guide is the breaking-change and manual migration contract from the
+removed `auth.policy` configuration to the production namespace-owned policy
+model. It is deliberately field-complete: each old concept has one new owner,
+one decode path, one validation path, and one canonical dump path.
 
-The standalone model is preparation for the later atomic production cutover.
-Production remains on the pre-cutover `auth.policy` authority until that
-cutover is performed. In particular, production `FileSettings` does not yet
-contain a top-level `Policy` field and must not read both roots.
+Top-level `policy` is the sole production configuration and runtime authority
+for authentication, identity-provider, backchannel, Policy HTTP, and Policy
+gRPC decisions. Production `FileSettings` owns that top-level field and does
+not read `auth.policy`. Old-root and mixed-root inputs are rejected before
+candidate preparation.
 
-No runtime, startup, library, or offline translator from `auth.policy` to standalone policy exists. Operators must author the new configuration directly
-from this guide. The repository may use frozen old inputs and independently
-authored new inputs as test-only oracles, but those fixtures are not a decoder,
-converter, or migration API.
+No runtime, startup, library, supported converter, or offline translator from
+`auth.policy` to top-level `policy` exists. Operators must author the new
+configuration directly from this guide. The former configuration-converter
+surface has been removed and is not replaced. The repository may retain frozen
+old inputs and independently authored new inputs as test-only rejection and
+parity oracles, but those fixtures are not a decoder, converter, or migration
+API.
 
 ## Field-complete mapping
 
 The following seventeen rows are the complete B001-C2 mapping. Paths beginning
 with `auth.policy` describe removed input. Paths beginning with `policy` are the
-sole standalone representation.
+sole production representation.
 
 | Mapping family | Removed path | New owner and exact path | Default or identity | Validation contract |
 |---|---|---|---|---|
@@ -31,8 +35,8 @@ sole standalone representation.
 | Time-window condition sets | `auth.policy.sets.time_windows` | `policy.namespaces.authn.condition_sets.time_windows` | Default empty; `@time_window.<name>` references retain their meaning. | Each configured interval requires non-empty `start` and `end` values. |
 | Scheduler guards | `auth.policy.scheduler_guards` | `policy.namespaces.authn.domain_plans.<plan>.scheduler_guards` | Default empty; guards are visible only inside their exact domain plan. | `on_missing_attribute` is omitted or exactly `run`, preserving the legacy compiler contract. |
 | Report settings | `auth.policy.report` | `policy.targets[].report` on each activated authn target | Defaults are `enabled: false`, `include_fsm: true`, `include_checks: true`, and `include_attributes: false`. | Authn-only report detail fields are rejected on non-authn targets. |
-| Lua environment providers | `auth.policy.attribute_sources.lua.environment` | `policy.namespaces.authn.providers.lua_environment_<old-name>` | The exact provider identity is `authn/lua_environment_<old-name>`. | The provider kind is `lua_environment`; strict standalone decoding accepts only the canonical `script_path` field, which standalone validation requires to be non-empty; file/source resolvability belongs to candidate compilation. |
-| Lua subject providers | `auth.policy.attribute_sources.lua.subject` | `policy.namespaces.authn.providers.lua_subject_<old-name>` | The exact provider identity is `authn/lua_subject_<old-name>`. | The provider kind is `lua_subject`; strict standalone decoding accepts only the canonical `script_path` field, which standalone validation requires to be non-empty; file/source resolvability belongs to candidate compilation. |
+| Lua environment providers | `auth.policy.attribute_sources.lua.environment` | `policy.namespaces.authn.providers.lua_environment_<old-name>` | The exact provider identity is `authn/lua_environment_<old-name>`. | The provider kind is `lua_environment`; strict production decoding accepts only the canonical `script_path` field, which production validation requires to be non-empty; file/source resolvability belongs to candidate compilation. |
+| Lua subject providers | `auth.policy.attribute_sources.lua.subject` | `policy.namespaces.authn.providers.lua_subject_<old-name>` | The exact provider identity is `authn/lua_subject_<old-name>`. | The provider kind is `lua_subject`; strict production decoding accepts only the canonical `script_path` field, which production validation requires to be non-empty; file/source resolvability belongs to candidate compilation. |
 | Lua action effects | `auth.policy.obligation_targets.lua.actions` | `policy.namespaces.authn.effects.lua_action_<old-name>` | The exact effect identity is `authn/lua_action_<old-name>`, with mandatory `execution`. | `post` requires `host_post_action`; all other retained Lua action types require `host_sync`. |
 | Lua registry scripts | `auth.policy.registry_scripts` | `policy.namespaces.authn.schema_contributions.lua.registry_scripts` | Default empty; scripts contribute bounded authn-owned fact definitions only during candidate compilation. | Every configured registry-script path is non-empty. |
 | HTTP header fact sources | `auth.policy.request_headers` | `policy.namespaces.authn.fact_sources.http_headers` | Default empty; source, fact, normalization, visibility, and bounds retain their meaning. | Each entry requires a non-empty header and a canonical fact identity. |
@@ -51,15 +55,17 @@ not add an internal effect-provider binding. Builtin standard-auth effect
 descriptors and host bindings remain immutable catalog contributions.
 
 For Lua actions too, strict decoding accepts only the canonical `script_path`
-field and standalone validation requires a non-empty value. Opening the file,
+field and production validation requires a non-empty value. Opening the file,
 resolving the configured source, and binding its host implementation belong to
 candidate compilation. None of these checks translates an old configuration.
 
 Native and plugin provider definitions have no additional legacy storage in the
 new model. Configured definitions belong below
-`policy.namespaces.<namespace>.providers.<name>`; builtin and loaded-plugin
-bindings contribute their exact identities internally. A provider instance
-references that identity with `use` and never stores a Viper path.
+`policy.namespaces.<namespace>.providers.<name>`. Loaded descriptors contribute
+the real binding and exact output schemas; the matching configured definition
+declares the module, target actions, and execution modes. Neither side silently
+synthesizes the other. A provider instance references the resulting exact
+identity with `use` and never stores a Viper path.
 
 Target timeouts have no removed `auth.policy` source. Generic targets must
 provide positive `timeouts.evaluation` and `timeouts.provider_default` values;
@@ -68,9 +74,11 @@ target requirement, not a migrated eighteenth row.
 
 ## Generic Lua provider configuration
 
-Generic Lua providers likewise have no removed `auth.policy` source and do not add a mapping row. They use the
-standalone namespace-owned `kind: lua` path and remain inactive in production until the later atomic policy-root
-cutover. They must not be represented as `lua_environment`, `lua_subject`, or `lua_action`: those kinds preserve the
+Generic Lua providers likewise have no removed `auth.policy` source and do not
+add a mapping row. They use the production namespace-owned `kind: lua` path and
+are activated only when their target, schema, provider, and effect bindings all
+pass candidate-generation validation. They must not be represented as
+`lua_environment`, `lua_subject`, or `lua_action`: those kinds preserve the
 existing implicit `authn` behavior only.
 
 ```yaml
@@ -215,14 +223,17 @@ policy:
           policy_sets: [dkim2/default]
 ```
 
-This standalone example has no removed `auth.policy` source and does not add a mapping row. It remains pre-cutover
-configuration until the atomic policy-root cutover. `kind: native`, `module: reputation`, and the local key `risk`
-derive the exact fact-provider identity `dkim2/plugin.reputation.risk`; they do not name or load a shared object. The
-separate local key `notifier` derives the effect-provider identity `dkim2/plugin.reputation.notifier`, because one
-registered native component has one local identity and implements one generic provider boundary. The schema permits
-the `plugin` source, while `plugin.reputation.risk_score` fixes the module-owned fact authority and exact configured
-output. Each configured target, output shape, execution class, and typed effect parameter must match the loaded
-module's immutable capability descriptor.
+This production example has no removed `auth.policy` source and does not add a
+mapping row. `kind: native`, `module: reputation`, and the local key `risk`
+derive the exact fact-provider identity `dkim2/plugin.reputation.risk`; they do
+not name or load a shared object. The separate local key `notifier` derives the
+effect-provider identity `dkim2/plugin.reputation.notifier`, because one
+registered native component has one local identity and implements one generic
+provider boundary. The schema permits the `plugin` source, while
+`plugin.reputation.risk_score` fixes the module-owned fact authority and exact
+configured output. Each configured target, output shape, execution class, and
+typed effect parameter must match the loaded module's immutable capability
+descriptor.
 
 Registering a native descriptor advertises capability but does not activate it. Candidate-generation preparation
 resolves only configured provider identities against the already loaded module registry, validates their exact
@@ -287,6 +298,22 @@ bounds; and backend exports retain `name`, `attribute`, `type`, and
 set-reference, CIDR, regular-expression, existence, containment, and
 time-window operators.
 
+Request-time Policy localization is generation-owned. Its effective catalog is
+the immutable combination of the built-in system catalog, the startup Lua
+catalogs captured after every init script succeeds, and the catalogs under
+top-level `policy.namespaces.*.localization`, in that precedence order. Startup
+catalogs are process-lifetime input: changing an init-script path or its content
+requires a restart, while a successful config reload replaces only the final
+top-level Policy layer. The system catalog is process-lifetime input too: the
+configured resource path, configured and effective language order, default
+language, and exact selected JSON resource bytes are pinned to the source loaded
+by the language manager. Drift in any of those values is restart-bound and
+cannot publish a config-only generation over the live system catalog. Startup
+registration is never read through a global request-time fallback. Authn Lua
+code running inside a Decision session receives that session's captured
+resolver, so an in-flight request keeps its old translations across a successful
+reload.
+
 Checkpoint ordering is explicit and plan-local. Providers appear under the
 checkpoint that replaced their old `stage`; `after` and `skip_if` may refer
 only to valid instance names in that same plan and compatible checkpoint. Rules
@@ -313,6 +340,38 @@ complete deterministic `type + config_ref -> use` contract.
 | `plugin.subject` | `plugins.modules.<module>.subject` plus a derivable check-local suffix | `authn/plugin.<module>.subject.<local>` | Empty, non-canonical, non-derivable, or unresolvable references are rejected. |
 | `backend.account_provider` | empty or `auth.backends...` | `authn/builtin/account_provider` | Discard any suffix; the builtin binding owns typed backend selection. |
 
+### Plugin environment and subject provider declarations
+
+```yaml
+policy:
+  namespaces:
+    authn:
+      providers:
+        plugin.acme.environment:
+          kind: plugin
+          module: acme
+          targets: [{action: authenticate}]
+          executions: [host_sync]
+        plugin.acme.subject.risk:
+          kind: plugin
+          module: acme
+          targets: [{action: authenticate}]
+          executions: [host_sync]
+```
+
+The `plugin.environment` and `plugin.subject` mapping rows identify configured
+authn providers; mapping the old `config_ref` does not create those provider
+definitions. Declare each exact `kind: plugin` identity under `authn`, with the
+same module embedded in its local name. These legacy authn source bindings are
+not generic `kind: native` Decision Fact Providers. Their loaded plugin
+descriptors contribute the exact builtin-authn fact schemas, so operators must
+not add an authn `schema_contributions.static` override.
+
+The matching plan instances use `authn/plugin.acme.environment` and
+`authn/plugin.acme.subject.risk`. Candidate generation rejects a missing
+configured definition, missing real descriptor, module mismatch, unsupported
+target action, output-schema mismatch, or unavailable binding before commit.
+
 Empty references are therefore valid only in the rows that explicitly say
 `empty`. For builtin rows, an accepted canonical old prefix identifies the
 mechanism and any suffix is discarded. For Lua environment and subject rows,
@@ -324,7 +383,7 @@ Unresolvable old references are hard errors. A syntactically accepted old
 reference that never identified an existing source, module, subject, provider,
 or builtin binding must be corrected during manual migration. It is not copied,
 silently ignored, or retained as a no-op. Non-canonical spellings and every
-`config_ref` alias are rejected by the standalone decoder.
+`config_ref` alias are rejected by the production decoder.
 
 ### Lua name collision handling
 
@@ -354,7 +413,7 @@ No last-writer-wins map, unqualified lookup, or shared alias is involved.
 
 ## One path authority and redaction
 
-Each exact new path above is derived from the standalone model's tagged field
+Each exact new path above is derived from the production model's tagged field
 authority. It is simultaneously:
 
 - the strict decode path;
@@ -381,21 +440,71 @@ policy.namespaces.authn.providers.lua_subject_risk.secrets.token="***REDACTED***
 policy.namespaces.authn.effects.lua_action_security.secrets.token="***REDACTED***"
 ```
 
-## Executed test-only evidence
+The frozen model keeps these owner paths so every format, dump, and schema index
+redacts them consistently. The production cutover does not define a typed
+provider/effect secret carrier, however, so a candidate with any non-empty map
+at one of these paths is rejected before extension preparation. No Lua or native
+provider receives an inert or ambient copy of the value.
 
-`TestPolicyMigrationContractDocumentsEveryMappingFamily` independently decodes
-every old fixture into the pre-cutover `config.FileSettings` model through a
-test-only strict reader, reads the row's exact legacy semantic leaf, and pairs
-that evidence with standalone validation, `FieldPaths`, and canonical dump
-evidence. It does not expose a reusable old-to-new mapping function.
+## Separate Policy and backchannel credentials
 
-`TestPolicyMigrationNormalizedInputParity` compares the independently authored
-complete old and new fixtures at the normalized semantic boundary.
-`TestPolicyMigrationCompiledPlanParity` compiles both fixtures and compares the
-target, defaults, report, providers, effects, rules, and checkpoint ordering.
-`TestPolicyMigrationCompiledCheckIdentityParity` supplies compiled evidence for
-all twelve removed check identities. These oracles exist only in test files;
-production has no `auth.policy`-to-standalone decoder or translator.
+Policy and backchannel authentication are separate resource families. A
+client-credentials request containing one or both Policy scopes
+(`nauthilus:policy_evaluate` and `nauthilus:policy_diagnostics`) and no
+backchannel scope receives the exact single audience `nauthilus:policy`. A
+request with no Policy scope, including an empty request or one containing only
+existing non-Policy service scopes, receives the exact single audience
+`nauthilus:backchannel`.
+
+A request that mixes either Policy scope with any backchannel scope fails with
+`invalid_scope` before token generation and before any token, session, or flow
+state is persisted. If client filtering would remove or replace an explicitly
+requested resource family, issuance also fails with `invalid_scope` before
+persistence; filtering cannot silently turn a Policy request into a
+backchannel token or the reverse.
+
+Policy HTTP and gRPC require a normalized audience set exactly equal to
+`{nauthilus:policy}` and the issuer-validated, issuer-owned `client_id` admitted
+by the configured Policy client profile. Evaluation requires
+`nauthilus:policy_evaluate`; requested sanitized diagnostics additionally
+require `nauthilus:policy_diagnostics` and profile permission. Policy endpoints
+reject `nauthilus:backchannel` tokens. Authentication, identity, management,
+and MFA backchannel endpoints require the exact resource audience
+`{nauthilus:backchannel}` plus an issuer-owned, non-empty service `client_id`;
+they reject `nauthilus:policy` tokens and browser tokens with a colliding client
+audience. A client that uses both resources must obtain, cache, rotate, and
+present two independently issued tokens. External issuers must preserve the
+same exact resource separation.
+
+Policy-Basic is another Policy-only credential family. It has no OAuth scope,
+does not reuse management Basic credentials, and has no management-Basic
+fallback. It is accepted only for an exact enabled Policy client profile over
+the Policy transport's protected-transport boundary. Management Basic cannot
+grant Policy authority, and Policy-Basic cannot grant management or
+backchannel authority.
+
+See [`examples/policy_api.yml`](examples/policy_api.yml) for a complete
+top-level configuration with enabled HTTP and gRPC transports, global and
+per-client admission bounds, an mTLS-bound Policy Bearer profile, dedicated
+Policy-Basic credentials, target/schema grants, attribute allowlists, and
+diagnostics permission. The example's environment placeholder must resolve to
+a non-empty secret during production loading.
+
+## Production loading and migration evidence
+
+Production loading tests decode the independently authored top-level `policy`
+fixture through `config.FileSettings`, apply the same defaults and strict field
+rules used at startup and reload, and pass the result into candidate-generation
+validation. The canonical field-path and dump checks cover the exact new owners
+listed above, including secret redaction. They do not expose a reusable
+old-to-new mapping function.
+
+The frozen old fixture remains rejection and semantic-parity evidence only.
+Tests compare its independently recorded expectations with the new fixture's
+target, defaults, report, providers, effects, rules, checkpoint ordering, and
+all twelve exact check identities. Production never decodes that old fixture
+and has no `auth.policy` decoder, translator, fallback compiler, or migration
+API.
 
 ## Paired old and new examples
 
@@ -464,25 +573,25 @@ auth:
         type: string
         sensitivity: internal
     checks:
-      - name: risk
-        type: lua.environment
+      - name: rbl
+        type: builtin.rbl
         stage: pre_auth
-        config_ref: auth.policy.attribute_sources.lua.environment.risk
+        config_ref: auth.controls.rbl
         operations: [authenticate]
     policies:
-      - name: deny_risk
+      - name: deny_rbl
         stage: pre_auth
         operations: [authenticate]
-        require_checks: [risk]
+        require_checks: [rbl]
         if:
-          eq: high
-          attribute: auth.lua.environment.risk
+          is: true
+          attribute: auth.rbl.threshold_reached
         then:
           decision: deny
-          reason: risk
+          reason: rbl
 ```
 
-### New standalone `policy` input
+### New production `policy` input
 
 ```yaml
 policy:
@@ -554,32 +663,31 @@ policy:
             known_client:
               if:
                 exists: true
-                attribute: request.client_id
+                attribute: input.auth.client_id
               on_missing_attribute: run
           checkpoints:
             pre_auth:
               providers:
-                - name: risk
-                  use: authn/lua_environment_risk
+                - name: rbl
+                  use: authn/builtin/rbl
                   actions: [authenticate]
                   run_if:
                     auth_state: any
-                  observe_safe: true
                   output: nauthilus.auth.rbl.threshold_reached
       policy_sets:
         configured:
           visibility: private
           rules:
-            - name: deny_risk
+            - name: deny_rbl
               checkpoint: pre_auth
               actions: [authenticate]
-              require_providers: [risk]
+              require_providers: [rbl]
               if:
                 is: true
                 attribute: nauthilus.auth.rbl.threshold_reached
               then:
                 decision: deny
-                reason: risk
+                reason: rbl
   targets:
     - namespace: authn
       action: authenticate
@@ -597,21 +705,25 @@ policy:
         include_attributes: true
 ```
 
-Before using a new fixture, validate exact provider/effect resolution, target
-action and checkpoint compatibility, source fact types, policy-set imports, and
-secret-safe canonical output. Test-only parity suites compare the normalized new
-compiled authn plan with a frozen old plan oracle; production code never reads
-the old fixture to construct the new plan.
+Before deploying a new configuration, validate exact provider/effect
+resolution, target action and checkpoint compatibility, source fact types,
+policy-set imports, credential profiles, route enablement, and secret-safe
+canonical output. Production loading and generation compile the new authn plan
+directly; production code never reads the old fixture to construct it.
 
 ## Hard-cut boundary
 
-This guide does not authorize a dual-read phase. The later production cutover
-must atomically remove the old root and make the top-level `policy` model the
-only authority. Until then, the standalone decoder is isolated and production
-continues to expose only its pre-cutover root. The final cutover must reject old
-root, mixed root, removed aliases, and unresolved identities with actionable
-paths before preparing a runtime generation.
+The production hard cut has no compatibility window or dual-read phase.
+Top-level `policy` is the only accepted root. Production rejects old root,
+mixed roots, unqualified `standard_auth`, legacy `stage`, `config_ref`, every
+removed alias, and unresolved identities with actionable paths before candidate
+preparation.
 
-This contract proves compiled scheduling metadata and exact identities only.
-Production host dispatch and execution of standalone authn plans remain a later
-runtime-cutover responsibility and must not be activated here.
+Startup and reload use the same `prepare -> validate -> commit` boundary.
+Candidate generation validates credentials, client profiles, admission limits,
+catalog entries, extensions, targets, and route enablement before publication.
+Any failure leaves the previous complete generation and its routes active. A
+successful commit publishes configuration, credentials, profiles, catalog,
+extensions, plans, and HTTP/gRPC route state together; no second compiler,
+translator, plan map, evaluator authority, or partially activated generation
+remains.

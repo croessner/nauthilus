@@ -29,7 +29,6 @@ import (
 // AuthDeps bundles dependencies required by authentication request paths.
 type AuthDeps struct {
 	Cfg                        config.File
-	CurrentConfig              func() config.File
 	Logger                     *slog.Logger
 	Env                        config.Environment
 	Redis                      rediscli.Client
@@ -38,6 +37,9 @@ type AuthDeps struct {
 	AccountCache               *accountcache.Manager
 	Channel                    backend.Channel
 	Backend                    BackendManager
+	PluginBackendFactory       BackendManagerFactory
+	NativeRuntime              AuthnNativeRuntime
+	HostServices               AuthnHostServices
 	LDAPQueue                  LDAPRequestQueue
 	LDAPAuthQueue              LDAPAuthRequestQueue
 	BackendAuthenticationCache *PositiveBackendAuthenticationCache

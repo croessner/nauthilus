@@ -89,16 +89,15 @@ identity:
 OIDC authorization-code and device-code login, SAML authentication, delayed response, and the identity lookups needed
 by MFA, WebAuthn, backend affinity, and claim release use the common authentication application boundary. Each protocol
 adapter selects an exact host-owned internal caller profile and maps the operation's explicit transport, OIDC-client or
-SAML-SP, correlation, localization, requested-attribute, and existing backend-affinity facts. Generation-backed
-candidate tests prove that these profiles enter the shared Decision Service admission and checkpoint runtime. Production
-continues to use the current application executor; the candidate Decision Service is not constructed there before the
-later atomic authority cutover.
+SAML-SP, correlation, localization, requested-attribute, and existing backend-affinity facts. These profiles enter the
+shared production Decision Service admission and checkpoint runtime through the active generation. Authentication,
+identity, Policy HTTP, and Policy gRPC therefore use one catalog and one admission authority.
 
 Browser and protocol state stays with the IdP. The browser carries only an authenticated opaque session envelope and
 opaque local flow or ceremony handles. Identity, backend affinity, OIDC/SAML/device flows, delayed-response latches,
 MFA assurance, enrollment, WebAuthn ceremonies, consent, and claim-release lifecycle live in their typed server-side
 owners. These records are not copied into generic target evaluation; IdP handlers apply the detached authentication or
-identity outcome after the current application returns. The candidate checkpoint proof receives none of this state.
+identity outcome after the application returns. The Decision Service receives none of this state.
 
 ### 3.1 Important OIDC Terms for Administrators
 
@@ -155,8 +154,8 @@ request, cache, and rotate two independent tokens. Audience is an
 issuer-owned token/session property after issuance and is never inferred from scopes by a protected endpoint.
 
 The `openid` scope is rejected for `client_credentials` with `invalid_scope`; service tokens do not represent an
-end-user identity and cannot receive ID tokens or UserInfo claims. This resource contract does not activate the
-standalone production Policy configuration, which remains an atomic configuration-cutover concern.
+end-user identity and cannot receive ID tokens or UserInfo claims. The active top-level `policy` generation owns Policy
+caller admission independently of the backchannel authorization surface.
 
 #### KID (Signing Key ID)
 

@@ -4,194 +4,147 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 package config
 
 import (
-	"os"
-	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/croessner/nauthilus/v3/server/policy"
 
 	"github.com/spf13/viper"
 )
 
-const (
-	testPolicyConditionFieldAttribute     = "attribute"
-	testPolicySchedulerGuardTrustedSource = "trusted_source"
-	testPolicyStringSetEUCountries        = "eu_countries"
-	testPolicyStringSetReference          = "@string." + testPolicyStringSetEUCountries
-)
+type removedPolicyConfigCase struct {
+	settings map[string]any
+	name     string
+	wantPath string
+}
 
-func TestAuthPolicyConfigDecodesAndDumps(t *testing.T) {
-	t.Helper()
+var removedPolicyConfigCases = []removedPolicyConfigCase{
+	{
+		name:     "old root",
+		settings: map[string]any{"auth": map[string]any{"policy": map[string]any{"mode": "enforce"}}},
+		wantPath: "auth.policy",
+	},
+	{
+		name: "mixed roots",
+		settings: map[string]any{
+			"auth":   map[string]any{"policy": map[string]any{"mode": "enforce"}},
+			"policy": map[string]any{"api": map[string]any{"enabled": true}},
+		},
+		wantPath: "auth.policy",
+	},
+	{
+		name: "legacy stage alias",
+		settings: map[string]any{"policy": map[string]any{"namespaces": map[string]any{
+			"authn": map[string]any{"providers": map[string]any{
+				"risk": map[string]any{"kind": "lua", "stage": "pre_auth"},
+			}},
+		}}},
+		wantPath: "policy.namespaces.authn.providers.risk.stage",
+	},
+	{
+		name: "legacy config ref alias",
+		settings: map[string]any{"policy": map[string]any{"namespaces": map[string]any{
+			"authn": map[string]any{"providers": map[string]any{
+				"risk": map[string]any{"kind": "lua", "config_ref": "legacy"},
+			}},
+		}}},
+		wantPath: "policy.namespaces.authn.providers.risk.config_ref",
+	},
+	{
+		name: "unqualified standard auth",
+		settings: map[string]any{"policy": map[string]any{"targets": []any{map[string]any{
+			"namespace":      "authn",
+			"action":         "authenticate",
+			"schema":         "authn/authenticate/v1",
+			"mode":           "enforce",
+			"default_policy": "standard_auth",
+		}}}},
+		wantPath: "policy.targets[0].default_policy",
+	},
+	{
+		name: "legacy top-level Lua environment sources",
+		settings: map[string]any{"lua": map[string]any{
+			"environment_sources": []any{map[string]any{"name": "legacy", "script_path": "legacy.lua"}},
+		}},
+		wantPath: "lua",
+	},
+	{
+		name: "legacy top-level Lua subject sources",
+		settings: map[string]any{"lua": map[string]any{
+			"subject_sources": []any{map[string]any{"name": "legacy", "script_path": "legacy.lua"}},
+		}},
+		wantPath: "lua",
+	},
+	{
+		name: "legacy top-level Lua actions",
+		settings: map[string]any{"lua": map[string]any{
+			"actions": []any{map[string]any{"type": "lua", "name": "legacy", "script_path": "legacy.lua"}},
+		}},
+		wantPath: "lua",
+	},
+}
 
+func TestPolicyConfigDecodesNormalizesAndDumps(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
+	SetConfigDumpPrintSensitiveValues(false)
 
-	setPolicyConfigTestStorage()
-	viper.Set("auth.policy", policyConfigDecodeFixture(t))
+	viper.Set("policy.api.enabled", true)
+	viper.Set("policy.api.http.enabled", true)
+	viper.Set("policy.api.grpc.enabled", true)
+	viper.Set("policy.api.grpc.require_mtls", true)
+	viper.Set("policy.api.limits.max_facts", 64)
+	viper.Set("policy.api.clients", []map[string]any{
+		{
+			"principal":            "Policy.Client",
+			"authentication_kinds": []string{"oidc_bearer", "basic"},
+			"authentication": map[string]any{
+				"basic": map[string]any{
+					"username": "Policy.User",
+					"password": "policy-basic-secret",
+				},
+			},
+			"targets": []map[string]any{
+				{"namespace": "authn", "actions": []string{"authenticate"}},
+			},
+			"allowed_schemas": []string{"authn/authenticate/v1"},
+			"diagnostics":     true,
+			"require_mtls":    true,
+		},
+	})
 
 	cfg := &FileSettings{}
 	if err := cfg.HandleFile(); err != nil {
 		t.Fatalf("HandleFile() error = %v", err)
 	}
 
-	assertDecodedPolicyConfig(t, cfg)
+	policyConfig := cfg.GetPolicy()
+	if !policyConfig.API.Enabled {
+		t.Fatal("GetPolicy().API.Enabled = false, want true")
+	}
+
+	if got, want := policyConfig.API.Limits.MaxFacts, 64; got != want {
+		t.Fatalf("GetPolicy().API.Limits.MaxFacts = %d, want %d", got, want)
+	}
+
+	if got, want := policyConfig.API.Limits.MaxRequestBytes, 1<<20; got != want {
+		t.Fatalf("GetPolicy().API.Limits.MaxRequestBytes = %d, want %d", got, want)
+	}
+
+	if !policyConfig.API.HTTP.Enabled || !policyConfig.API.GRPC.Enabled || !policyConfig.API.GRPC.RequireMTLS {
+		t.Fatal("GetPolicy().API must enable HTTP and mTLS-required gRPC")
+	}
+
+	if len(policyConfig.API.Clients) != 1 || policyConfig.API.Clients[0].Authentication.Basic == nil {
+		t.Fatal("GetPolicy().API.Clients must contain one dedicated Basic-capable profile")
+	}
+
 	assertPolicyConfigDumps(t)
 }
 
-func policyConfigDecodeFixture(t *testing.T) map[string]any {
-	t.Helper()
-
-	registryScript := filepath.Join(t.TempDir(), "attrs.lua")
-	if err := os.WriteFile(registryScript, []byte(""), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	return map[string]any{
-		"mode":             "observe",
-		"default_policy":   policy.BuiltinDefaultSet,
-		"registry_scripts": []any{registryScript},
-		"sets":             policyConfigFixtureSets(),
-		"report":           policyConfigFixtureReport(),
-		"scheduler_guards": policyConfigFixtureSchedulerGuards(),
-		"checks":           policyConfigFixtureChecks(),
-		"policies":         policyConfigFixturePolicies(),
-	}
-}
-
-// policyConfigFixtureSets returns policy set fixtures.
-func policyConfigFixtureSets() map[string]any {
-	return map[string]any{
-		"networks": map[string]any{
-			"trusted": []any{"10.0.0.0/8"},
-		},
-		"strings": map[string]any{
-			testPolicyStringSetEUCountries: []any{"AT", "DE"},
-		},
-		"time_windows": map[string]any{
-			"office": map[string]any{
-				"timezone":  "Europe/Berlin",
-				"days":      []any{"mon"},
-				"intervals": []any{map[string]any{"start": "08:00", "end": "18:00"}},
-			},
-		},
-	}
-}
-
-// policyConfigFixtureReport returns report configuration fixtures.
-func policyConfigFixtureReport() map[string]any {
-	return map[string]any{
-		"enabled":            true,
-		"include_fsm":        true,
-		"include_checks":     true,
-		"include_attributes": false,
-	}
-}
-
-// policyConfigFixtureSchedulerGuards returns scheduler guard fixtures.
-func policyConfigFixtureSchedulerGuards() map[string]any {
-	return map[string]any{
-		testPolicySchedulerGuardTrustedSource: map[string]any{
-			"on_missing_attribute": "run",
-			"if": map[string]any{
-				testPolicyConditionFieldAttribute: "request.client.ip.trusted",
-				"is":                              true,
-			},
-		},
-	}
-}
-
-// policyConfigFixtureChecks returns check fixtures.
-func policyConfigFixtureChecks() []any {
-	return []any{
-		map[string]any{
-			"name":       "brute_force",
-			"type":       "builtin.brute_force",
-			"stage":      "pre_auth",
-			"config_ref": "auth.controls.brute_force",
-			"skip_if":    []any{testPolicySchedulerGuardTrustedSource},
-		},
-	}
-}
-
-// policyConfigFixturePolicies returns policy fixtures.
-func policyConfigFixturePolicies() []any {
-	return []any{
-		map[string]any{
-			"name":           "deny_bruteforce",
-			"stage":          "pre_auth",
-			"require_checks": []any{"brute_force"},
-			"if": map[string]any{
-				testPolicyConditionFieldAttribute: "auth.brute_force.triggered",
-				"is":                              true,
-			},
-			"then": map[string]any{
-				"decision":         "deny",
-				"fsm_event_marker": "auth.fsm.event.pre_auth_deny",
-				"response_marker":  "auth.response.fail",
-			},
-		},
-		map[string]any{
-			"name":  "deny_unexpected_protocol",
-			"stage": "pre_auth",
-			"if": map[string]any{
-				testPolicyConditionFieldAttribute: "request.protocol",
-				"not_in":                          testPolicyStringSetReference,
-			},
-			"then": map[string]any{
-				"decision":        "deny",
-				"response_marker": "auth.response.fail",
-			},
-		},
-	}
-}
-
-func assertDecodedPolicyConfig(t *testing.T, cfg *FileSettings) {
-	t.Helper()
-
-	if cfg.Auth == nil {
-		t.Fatal("auth config is nil")
-	}
-
-	if cfg.Auth.Policy.Mode != "observe" {
-		t.Fatalf("policy mode = %q, want observe", cfg.Auth.Policy.Mode)
-	}
-
-	if got := cfg.Auth.Policy.Sets.Networks["trusted"]; len(got) != 1 || got[0] != "10.0.0.0/8" {
-		t.Fatalf("network set = %#v, want configured CIDR", got)
-	}
-
-	if got := cfg.Auth.Policy.Sets.Strings[testPolicyStringSetEUCountries]; !reflect.DeepEqual(got, []string{"AT", "DE"}) {
-		t.Fatalf("string set = %#v, want configured ISO codes", got)
-	}
-
-	if got := cfg.Auth.Policy.Policies[1].If.NotIn; got != testPolicyStringSetReference {
-		t.Fatalf("not_in operand = %#v, want %q", got, testPolicyStringSetReference)
-	}
-
-	guard := cfg.Auth.Policy.SchedulerGuards[testPolicySchedulerGuardTrustedSource]
-	if guard.OnMissingAttribute != "run" || guard.If.Attribute != "request.client.ip.trusted" {
-		t.Fatalf("scheduler guard = %#v, want decoded trusted_source guard", guard)
-	}
-
-	if got := cfg.Auth.Policy.Checks[0].SkipIf; len(got) != 1 || got[0] != testPolicySchedulerGuardTrustedSource {
-		t.Fatalf("check skip_if = %#v, want trusted_source", got)
-	}
-}
-
+// assertPolicyConfigDumps verifies both canonical policy dump modes use the new root only.
 func assertPolicyConfigDumps(t *testing.T) {
 	t.Helper()
 
@@ -200,71 +153,77 @@ func assertPolicyConfigDumps(t *testing.T) {
 		t.Fatalf("RenderDefaultConfigDump() error = %v", err)
 	}
 
-	assertContainsAll(t, defaultDump, []string{
-		`auth.policy.mode = "enforce"`,
-		`auth.policy.default_policy = "standard_auth"`,
-		`auth.policy.registry_scripts = []`,
-		`auth.policy.sets.strings = {}`,
-		`auth.policy.scheduler_guards = {}`,
+	assertPolicyDumpContainsAll(t, defaultDump, []string{
+		`policy.api.enabled = false`,
+		`policy.api.http.enabled = false`,
+		`policy.api.grpc.enabled = false`,
+		`policy.api.grpc.require_mtls = false`,
+		`policy.api.clients = []`,
+		`policy.api.limits.max_request_bytes = 1048576`,
+		`policy.api.limits.max_facts = 512`,
+		`policy.api.limits.per_client_concurrency = 8`,
+		`policy.api.limits.per_client_requests_per_second = 25`,
 	})
+
+	if strings.Contains(defaultDump, "auth.policy") {
+		t.Fatalf("RenderDefaultConfigDump() contains removed auth.policy root: %q", defaultDump)
+	}
 
 	nonDefaultDump, err := RenderNonDefaultConfigDump(viper.AllSettings())
 	if err != nil {
 		t.Fatalf("RenderNonDefaultConfigDump() error = %v", err)
 	}
 
-	assertContainsAll(t, nonDefaultDump, []string{
-		`auth.policy.mode = "observe"`,
-		`auth.policy.checks[0].name = "brute_force"`,
-		`auth.policy.checks[0].skip_if = ["` + testPolicySchedulerGuardTrustedSource + `"]`,
-		`auth.policy.scheduler_guards.` + testPolicySchedulerGuardTrustedSource + `.if.attribute = "request.client.ip.trusted"`,
-		`auth.policy.scheduler_guards.` + testPolicySchedulerGuardTrustedSource + `.if.is = true`,
-		`auth.policy.scheduler_guards.` + testPolicySchedulerGuardTrustedSource + `.on_missing_attribute = "run"`,
-		`auth.policy.sets.strings.` + testPolicyStringSetEUCountries + ` = ["AT", "DE"]`,
-		`auth.policy.policies[1].if.not_in = "` + testPolicyStringSetReference + `"`,
-		`auth.policy.policies[0].then.fsm_event_marker = "auth.fsm.event.pre_auth_deny"`,
+	assertPolicyDumpContainsAll(t, nonDefaultDump, []string{
+		`policy.api.enabled = true`,
+		`policy.api.http.enabled = true`,
+		`policy.api.grpc.enabled = true`,
+		`policy.api.grpc.require_mtls = true`,
+		`policy.api.limits.max_facts = 64`,
+		`policy.api.clients = [`,
+		`"principal": "Policy.Client"`,
+		`"authentication_kinds": ["oidc_bearer", "basic"]`,
+		`"username": "Policy.User"`,
+		`"password": "***REDACTED***"`,
+		`"namespace": "authn"`,
+		`"actions": ["authenticate"]`,
+		`"allowed_schemas": ["authn/authenticate/v1"]`,
+		`"diagnostics": true`,
+		`"require_mtls": true`,
 	})
+
+	if strings.Contains(nonDefaultDump, "policy-basic-secret") {
+		t.Fatal("RenderNonDefaultConfigDump() exposed a Policy-Basic secret")
+	}
 }
 
-func TestAuthPolicyConfigRejectsRemovedSchedulerKeys(t *testing.T) {
+// assertPolicyDumpContainsAll verifies a compact set of required canonical dump lines.
+func assertPolicyDumpContainsAll(t *testing.T, dump string, expected []string) {
 	t.Helper()
 
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-
-	setPolicyConfigTestStorage()
-	viper.Set("auth.policy", map[string]any{
-		"checks": []any{
-			map[string]any{
-				"name":               "lua_subject",
-				"type":               "lua.subject",
-				"stage":              "subject_analysis",
-				"when_authenticated": true,
-			},
-		},
-	})
-
-	cfg := &FileSettings{}
-
-	err := cfg.HandleFile()
-	if err == nil {
-		t.Fatal("HandleFile() error = nil, want removed scheduler key rejection")
-	}
-
-	if !strings.Contains(err.Error(), "auth.policy.checks[0]") ||
-		!strings.Contains(err.Error(), "when_authenticated") {
-		t.Fatalf("HandleFile() error = %q, want removed scheduler key", err)
+	for _, line := range expected {
+		if !strings.Contains(dump, line) {
+			t.Fatalf("config dump missing %q in %q", line, dump)
+		}
 	}
 }
 
-func setPolicyConfigTestStorage() {
-	viper.Set("storage", map[string]any{
-		"redis": map[string]any{
-			"primary": map[string]any{
-				"address": "localhost:6379",
-			},
-			"password_nonce":    testRedisPasswordNonce,
-			"encryption_secret": testRedisEncryptionSecret,
-		},
-	})
+func TestPolicyConfigRejectsRemovedShapes(t *testing.T) {
+	for _, test := range removedPolicyConfigCases {
+		t.Run(test.name, func(t *testing.T) {
+			reader := viper.New()
+			if err := reader.MergeConfigMap(test.settings); err != nil {
+				t.Fatalf("MergeConfigMap() error = %v", err)
+			}
+
+			err := (&FileSettings{}).handleFile(reader)
+			if err == nil {
+				t.Fatal("handleFile() error = nil, want hard-cut rejection")
+			}
+
+			if !strings.Contains(err.Error(), test.wantPath) {
+				t.Fatalf("handleFile() error = %q, want path %q", err, test.wantPath)
+			}
+		})
+	}
 }

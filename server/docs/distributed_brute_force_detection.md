@@ -4,6 +4,13 @@
 
 This document outlines a comprehensive approach to detecting and mitigating distributed brute force attacks that bypass traditional IP-based brute force protection mechanisms. It addresses scenarios where attackers use a large number of unique IP addresses (potentially millions) with a small number of login attempts per IP to avoid triggering traditional brute force detection systems.
 
+> **Production status:** This is an architecture and threat-analysis document, not a current deployment runbook. The
+> Lua snippets and the bundled global-pattern, account-monitoring, and dynamic-response callbacks below require mutable
+> Redis, ambient configuration, mail, or other host capabilities that the generation-owned authentication Policy VM
+> deliberately does not expose. Do not place those scripts in top-level `policy`; candidate preparation rejects them.
+> See [`../lua-plugins.d/POLICY_VM_COMPATIBILITY.md`](../lua-plugins.d/POLICY_VM_COMPATIBILITY.md) for the normative
+> checked-in callback classification.
+
 ## Problem Statement
 
 Traditional brute force protection systems typically track failed login attempts by IP address and block IPs that exceed a certain threshold within a specified time period. However, sophisticated attackers can bypass this protection by:
@@ -179,91 +186,15 @@ end
 
 ## Integration with Existing Systems
 
-### Lua Script Integration
+### Historical Lua prototype mapping
 
-1. **Environment Sources**: Implement global pattern recognition as a Lua environment source
-2. **Subject Sources**: Implement account-centric monitoring as a Lua subject source
-3. **Post-Action Scripts**: Implement dynamic response mechanisms as post-actions
-4. **Custom Hooks**: Create custom endpoints for monitoring and administration
+The reference collection maps global recognition to `environment/global_pattern_monitoring.lua`, account evidence to
+`subject/account_centric_monitoring.lua`, and response experiments to `actions/dynamic_response.lua`. The custom admin
+and simulation hooks remain separate process-owned HTTP callbacks. This mapping documents the prototype; it is not a
+Policy activation surface.
 
-### Redis Integration
-
-1. **Sliding Window Counters**: Use Redis sorted sets for efficient sliding window counters
-2. **Distributed State**: Store global state information in Redis for cluster-wide visibility
-3. **Historical Patterns**: Maintain historical pattern data in Redis for anomaly detection
-
-## Implementation Plan
-
-### Phase 1: Monitoring and Data Collection
-
-1. ✅ Implement global pattern monitoring with Lua and Redis
-   - Implemented in `server/lua-plugins.d/environment/global_pattern_monitoring.lua`
-   - Tracks authentication attempts, unique IPs, and unique usernames in sliding windows
-   - Stores metrics for analysis and anomaly detection
-2. ✅ Collect baseline data for normal authentication patterns
-   - Historical metrics are stored in Redis with hourly granularity
-   - Metrics include attempts, unique IPs, unique users, and derived ratios
-
-### Phase 2: Detection Mechanisms
-
-1. ✅ Implement account-centric monitoring
-   - Implemented in `server/lua-plugins.d/subject/account_centric_monitoring.lua`
-   - Tracks IPs attempting to access specific accounts
-   - Detects when many unique IPs target a single account
-2. ✅ Develop anomaly detection algorithms for global patterns
-   - Implemented as part of the dynamic response mechanism
-   - Detects sudden spikes in authentication attempts and unique IPs
-
-### Phase 3: Response Mechanisms
-
-1. ✅ Implement dynamic response mechanisms
-   - Implemented in `server/lua-plugins.d/actions/dynamic_response.lua`
-   - Applies different countermeasures based on threat level
-   - Measures include captcha, rate limiting, and geographic filtering
-2. ✅ Create administrative interfaces for manual intervention
-   - Implemented in `server/lua-plugins.d/hooks/distributed-brute-force-admin.lua`
-   - Provides endpoints for viewing metrics and resetting protection measures
-   - Allows administrators to monitor and manage the protection system
-3. ✅ Develop automated testing tools to validate effectiveness
-   - Implemented in `server/lua-plugins.d/hooks/distributed-brute-force-test.lua`
-   - Provides tools to simulate distributed attacks and verify detection
-   - Includes comprehensive testing functionality with detailed reporting
-
-## Implementation Status
-
-The distributed brute force detection and mitigation system has been implemented with the following components:
-
-1. **Global Pattern Monitoring** (`server/lua-plugins.d/environment/global_pattern_monitoring.lua`)
-   - Tracks authentication attempts, unique IPs, and unique usernames in sliding windows
-   - Calculates and stores metrics like attempts per IP, attempts per user, and IPs per user
-   - Maintains historical data for anomaly detection
-   - Uses atomic Redis operations to prevent race conditions
-
-2. **Account-Centric Monitoring** (`server/lua-plugins.d/subject/account_centric_monitoring.lua`)
-   - Tracks IPs attempting to access specific accounts
-   - Detects when many unique IPs target a single account
-   - Identifies accounts under distributed brute force attack
-   - Keys are scoped by `request.protocol` to avoid cross-protocol impact
-   - Uses atomic Redis operations to prevent race conditions
-
-3. **Dynamic Response Mechanisms** (`server/lua-plugins.d/actions/dynamic_response.lua`)
-   - Calculates threat levels based on multiple factors
-   - Applies different countermeasures based on threat severity
-   - Implements progressive security measures like captcha, rate limiting, and geographic filtering
-   - Uses atomic Redis operations to prevent race conditions
-   - Sends email notifications to administrators about detected threats
-
-4. **Redis Lua Scripts for Atomic Operations** (uploaded during initialization)
-   - Implements Redis Lua scripts for atomic operations to prevent race conditions
-   - Ensures data consistency in high-concurrency scenarios
-   - Provides better performance by reducing the number of Redis round-trips
-   - Automatically uploads scripts during initialization
-
-### Race Condition Prevention
-
-To ensure data consistency in high-concurrency scenarios, we've implemented Redis Lua scripts for atomic operations. These scripts combine multiple Redis commands into a single atomic operation, preventing race conditions that could occur when multiple instances of Nauthilus are running concurrently.
-
-The following Redis Lua scripts have been implemented:
+The prototype stores sliding-window counters, distributed state, and historical patterns in Redis. It also contains
+atomic Redis scripts used to combine related mutations:
 
 1. **ZAddRemExpire**: Combines ZADD, ZREMRANGEBYSCORE, and EXPIRE operations
    - Used for tracking authentication attempts, unique IPs, and unique usernames in sliding windows
@@ -281,9 +212,10 @@ The following Redis Lua scripts have been implemented:
    - Used for storing historical metrics only if they don't already exist
    - Ensures that historical data is not overwritten by concurrent operations
 
-These scripts are automatically uploaded to Redis during standard initialization.
+The process-owned historical initialization script can upload those Redis programs when explicitly configured. That
+process lifecycle does not make any reference-only authentication callback selectable by top-level `policy`.
 
-### Pending Tasks
+### Future design work
 
 The following tasks are still pending:
 
@@ -344,162 +276,24 @@ scrape_configs:
       - targets: ['nauthilus:8080']
 ```
 
-## Integration Guide
+## Production integration boundary
 
-This section provides instructions for integrating the distributed brute force detection and mitigation system into your Nauthilus deployment.
+The built-in `authn/builtin/brute_force` provider remains available through an explicit top-level authn domain plan.
+The broader distributed detector described here is not a completed production feature under the hard-cut Policy
+runtime:
 
-### Configuration in nauthilus.yml
+- `environment/global_pattern_monitoring.lua` requires Redis scripts and writes;
+- `subject/account_centric_monitoring.lua` requires Redis scripts, writes, and ambient tuning values;
+- `actions/dynamic_response.lua` requires Redis writes/scripts, mail, and ambient SMTP/tuning values.
 
-To enable the distributed brute force detection and mitigation system, you need to add the following configuration to your `nauthilus.yml` file:
-
-```yaml
-auth:
-  policy:
-    attribute_sources:
-      lua:
-        # Add the environment source for global pattern monitoring
-        environment:
-          - name: "global_pattern_monitoring"
-            script_path: "/etc/nauthilus/lua-plugins.d/environment/global_pattern_monitoring.lua"
-
-        # Add the subject source for account-centric monitoring
-        subject:
-          - name: "account_centric_monitoring"
-            script_path: "/etc/nauthilus/lua-plugins.d/subject/account_centric_monitoring.lua"
-
-    obligation_targets:
-      lua:
-        # Add the action for dynamic response
-        actions:
-          - type: "post"
-            name: "dynamic_response"
-            script_path: "/etc/nauthilus/lua-plugins.d/actions/dynamic_response.lua"
-
-  backends:
-    lua:
-      backend:
-        default:
-          # If you're using a single init script
-          init_script_path: "/etc/nauthilus/lua-plugins.d/init/init.lua"
-
-          # If you're using multiple init scripts (v1.7.7+)
-          init_script_paths:
-            - "/etc/nauthilus/lua-plugins.d/init/init.lua"
-```
-
-### Required Environment Variables
-
-The dynamic response mechanism uses email notifications to alert administrators about detected threats. The following environment variables are required for email notifications:
-
-```bash
-# SMTP Configuration
-SMTP_USE_LMTP=false
-SMTP_SERVER=smtp.example.com
-SMTP_PORT=587
-SMTP_HELO_NAME=nauthilus.example.com
-SMTP_TLS=false
-SMTP_STARTTLS=true
-SMTP_USERNAME=notifications@example.com
-SMTP_PASSWORD=your-smtp-password
-SMTP_MAIL_FROM=notifications@example.com
-
-# Administrator Email Addresses (comma-separated list)
-ADMIN_EMAIL_ADDRESSES=admin1@example.com,admin2@example.com
-```
-
-### Redis Configuration
-
-The distributed brute force detection system relies heavily on Redis for storing metrics and state information. Ensure that your Redis configuration is properly set up in the `nauthilus.yml` file:
-
-```yaml
-storage:
-  redis:
-    # Redis connection settings
-    database_number: 0
-    prefix: "nauthilus:"
-    pool_size: 10
-    idle_pool_size: 2
-    positive_cache_ttl: 3600s
-    negative_cache_ttl: 3600s
-
-    # Redis server configuration
-    primary:
-      address: "127.0.0.1:6379"
-      username: ""
-      password: ""
-```
-
-
-### Deployment Steps
-
-1. **Copy Lua Scripts**: Copy all the Lua scripts to your Nauthilus server:
-   ```bash
-   cp -r server/lua-plugins.d/environment/global_pattern_monitoring.lua /etc/nauthilus/lua-plugins.d/environment/
-   cp -r server/lua-plugins.d/subject/account_centric_monitoring.lua /etc/nauthilus/lua-plugins.d/subject/
-   cp -r server/lua-plugins.d/actions/dynamic_response.lua /etc/nauthilus/lua-plugins.d/actions/
-   ```
-
-2. **Update Configuration**: Update your `nauthilus.yml` file with the configuration shown above.
-
-3. **Set Environment Variables**: Set the required environment variables for email notifications.
-
-4. **Restart Nauthilus**: Restart the Nauthilus service to apply the changes:
-   ```bash
-   systemctl restart nauthilus
-   ```
-
-5. **Verify Installation**: Check the Nauthilus logs to verify that the scripts are loaded and running correctly:
-   ```bash
-   journalctl -u nauthilus -f
-   ```
-
-### Cold-start safety and warm-up gating
-
-When Nauthilus is deployed in a new environment (e.g., first rollout with up to millions of users), the system avoids disruptive global actions until a minimal baseline has been observed. The dynamic_response.lua action implements a warm-up gate:
-
-- It records a first-seen timestamp in Redis and checks minimal baseline metrics.
-- Until all conditions are met, severe/high responses are downgraded to light measures. This prevents system-wide CAPTCHA/rate-limit flips on day 0.
-
-Warm-up is controlled via environment variables (defaults in parentheses):
-- DYNAMIC_RESPONSE_WARMUP_SECONDS (3600): Minimum time since first deployment.
-- DYNAMIC_RESPONSE_WARMUP_MIN_USERS (1000): Minimum unique users observed in the global metrics window.
-- DYNAMIC_RESPONSE_WARMUP_MIN_ATTEMPTS (10000): Minimum total auth attempts observed.
-
-During warm-up, the system still applies account-centric protections and monitoring, and notifies administrators with rate-limited alerts.
-
-### Monitoring and Tuning
-
-After deployment, monitor the system's performance and adjust the configuration as needed:
-
-1. **Threshold Tuning**: Adjust the thresholds in the account_centric_monitoring.lua script (threshold_unique_ips and threshold_ip_to_fail_ratio) based on your environment.
-
-2. **Neural Network Tuning**: ~~Adjust the neural network parameters in the nauthilus.yml file to optimize detection accuracy.~~ (Note: Neural Network functionality has been dropped in version 1.8.0)
-
-3. **Redis Performance**: Monitor Redis performance and adjust connection pool settings if needed.
-
-4. **Log Analysis**: Regularly review the Nauthilus logs to identify potential issues or areas for improvement.
+Those capabilities are intentionally absent from the request-owned Policy VM, so there is no supported YAML block,
+environment-variable recipe, copy step, or reload procedure for activating these three callbacks. A production
+implementation must first provide generation-owned native or builtin providers/effects with typed configuration,
+bounded targets, candidate validation, and explicit policy selection. Until such components exist and pass the normal
+prepare/validate/commit gate, this document supplies threat-model and algorithm material only.
 
 ## Conclusion
 
-Distributed brute force attacks represent a sophisticated threat that requires a multi-layered defense strategy. By combining global pattern recognition, account-centric monitoring, real-time anomaly detection, and dynamic response mechanisms, Nauthilus can effectively detect and mitigate these attacks.
-
-The implemented approach leverages Nauthilus's existing strengths—Lua extensibility and Redis integration—while adding new dimensions of analysis that focus on system-wide patterns and account-specific behaviors. Note that neural network capabilities mentioned in this document are no longer available as of version 1.8.0.
-
-With these enhancements, Nauthilus is now able to detect and respond to distributed brute force attacks that would otherwise bypass traditional IP-based protection mechanisms. The system provides a comprehensive defense against sophisticated attackers using large pools of IP addresses to conduct brute force attacks.
-
-
-## Automatic exit from Monitoring mode (adaptation)
-
-To avoid remaining permanently in monitoring mode, the dynamic response now implements a hysteresis/decay mechanism:
-
-- When the computed threat_level remains low (< 0.3) for a sustained period, the system increments an ok_streak counter in Redis.
-- If this streak reaches a configurable threshold and there are no accounts currently marked under distributed attack, monitoring_mode is explicitly turned off.
-- Additional benignity checks ensure that global ratios look normal (e.g., ips_per_user low, unique_ips small) to prevent flapping.
-
-Environment variable to tune the behavior:
-- MONITORING_OK_STREAK_MIN (default: 10) — number of consecutive low-threat evaluations required before monitoring_mode will be switched off automatically.
-
-Keys used (prefixed by your configured Redis prefix, default "nauthilus:"):
-- ntc:multilayer:global:ok_streak — counter with TTL used to track consecutive low-threat windows.
-
-This approach complements the existing TTL-based expiry by also actively clearing monitoring_mode after sustained normal conditions.
+Distributed brute force attacks require global and account-centric evidence in addition to per-source throttling. The
+algorithms above remain useful design input, but their historical Lua implementations are not production authority and
+must not be presented as deployed protection.

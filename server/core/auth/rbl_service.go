@@ -33,21 +33,6 @@ import (
 //goland:nointerface
 type DefaultRBLService struct{}
 
-// Threshold provides the exported Threshold method.
-func (DefaultRBLService) Threshold() int {
-	snap := core.GetDefaultConfigFile()
-	if snap == nil {
-		return 0
-	}
-
-	r := snap.GetRBLs()
-	if r == nil {
-		return 0
-	}
-
-	return r.GetThreshold()
-}
-
 // Score provides the exported Score method.
 func (DefaultRBLService) Score(ctx *gin.Context, view *core.StateView) (int, error) {
 	fact, err := DefaultRBLService{}.ScoreWithFacts(ctx, view)

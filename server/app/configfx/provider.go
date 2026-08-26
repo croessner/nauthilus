@@ -32,7 +32,7 @@ type Snapshot struct {
 
 // Provider provides the current config snapshot.
 //
-// Newly migrated components should prefer this over global `config.GetFile()`.
+// Components consume this immutable view instead of ambient configuration state.
 type Provider interface {
 	Current() Snapshot
 }
@@ -59,21 +59,14 @@ func NewProviderWithSnapshot(file config.File) Provider {
 	return p
 }
 
-// NewProvider constructs a Provider from an already loaded global config.
-//
-// It does not load configuration itself; the legacy startup path still calls `config.NewFile()`.
-func NewProvider() (Reloader, error) {
-	generations := policyruntime.DefaultGenerationStore()
-	if generations.Active() == nil && !config.IsFileLoaded() {
-		return nil, config.ErrConfigNotLoaded{}
-	}
-
+// NewProviderWithCandidate constructs the reload authority from one unpublished boot candidate.
+func NewProviderWithCandidate(file config.File, generations *policyruntime.GenerationStore) Reloader {
 	p := &provider{generations: generations}
-	if generations.Active() == nil {
-		p.snapshot.Store(Snapshot{File: config.GetFile(), Version: 1})
+	if file != nil {
+		p.snapshot.Store(Snapshot{File: file, Version: 1})
 	}
 
-	return p, nil
+	return p
 }
 
 // Current captures config and version through one generation load when available.

@@ -1,0 +1,43 @@
+{
+  "context": {
+    "username": "alice@example.test",
+    "account": "alice@example.test",
+    "client_ip": "192.0.2.44",
+    "protocol": "oauth2",
+    "session": "idp-policy-session",
+    "authenticated": true,
+    "no_auth": false
+  },
+  "policy": {
+    "expected_calls": [
+      {
+        "method": "emit_attribute",
+        "arg_contains": "lua.plugin.idp_policy.rejected"
+      },
+      {
+        "method": "emit_attribute",
+        "arg_contains": "lua.plugin.idp_policy.reason"
+      },
+      {
+        "method": "emit_attribute",
+        "arg_contains": "lua.plugin.idp_policy.oidc_cid"
+      },
+      {
+        "method": "emit_attribute",
+        "arg_contains": "lua.plugin.idp_policy.grant_type"
+      },
+      {
+        "method": "emit_attribute",
+        "arg_contains": "lua.plugin.idp_policy.status_message"
+      }
+    ]
+  },
+  "expected_output": {
+    "subject_rejected": true,
+    "subject_result": 0,
+    "status_message_contain": [
+      "Access denied"
+    ],
+    "error_expected": false
+  }
+}

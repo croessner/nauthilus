@@ -18,9 +18,7 @@ package rediscli
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"log/slog"
-	"os"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -32,63 +30,9 @@ import (
 	"github.com/redis/go-redis/v9/maintnotifications"
 )
 
-// RedisTLSOptions checks if Redis TLS is enabled in the configuration.
-// If TLS is enabled, it loads the X509 key pair and creates a tls.Config object.
-// The loaded certificate is added to the tls.Config object.
-// If an error occurs while loading the key pair, it logs the error and returns nil.
-// If Redis TLS is disabled, it returns nil.
-func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
-	if tlsCfg != nil && tlsCfg.IsEnabled() {
-		var (
-			certs      []tls.Certificate
-			caCertPool *x509.CertPool
-		)
-
-		if tlsCfg.GetCAFile() != "" {
-			caCert, err := os.ReadFile(tlsCfg.GetCAFile())
-			if err != nil {
-				level.Error(log.Logger).Log(
-					definitions.LogKeyMsg, "Failed to read CA certificate",
-					definitions.LogKeyError, err,
-				)
-			}
-
-			caCertPool = x509.NewCertPool()
-			if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
-				level.Error(log.Logger).Log(
-					definitions.LogKeyMsg, "Failed to append CA certificate",
-					definitions.LogKeyError, "Failed to append CA certificate",
-				)
-
-				return nil
-			}
-		}
-
-		if tlsCfg.GetCert() != "" && tlsCfg.GetKey() != "" {
-			cert, err := tls.LoadX509KeyPair(tlsCfg.GetCert(), tlsCfg.GetKey())
-			if err != nil {
-				level.Error(log.Logger).Log(
-					definitions.LogKeyMsg, "Failed to load X509 key pair",
-					definitions.LogKeyError, err,
-				)
-
-				return nil
-			}
-
-			certs = append(certs, cert)
-		}
-
-		// Create a tls.Config object to use
-		tlsConfig := &tls.Config{
-			Certificates:       certs,
-			RootCAs:            caCertPool,
-			InsecureSkipVerify: tlsCfg.GetSkipVerify(),
-		}
-
-		return tlsConfig
-	}
-
-	return nil
+// redisTLSOptions builds production Redis TLS from the candidate-bound artifact snapshot.
+func redisTLSOptions(cfg config.File, tlsCfg *config.TLS) (*tls.Config, error) {
+	return config.BuildClientTLSConfig(cfg, tlsCfg)
 }
 
 // newRedisFailoverClient creates a new failover client for Redis.
@@ -104,7 +48,7 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 // usage:
 //
 //	client := newRedisFailoverClient(true)
-func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, slavesOnly bool) (redisHandle *redis.Client) {
+func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, slavesOnly bool, tlsConfig *tls.Config) (redisHandle *redis.Client) {
 	sentinelPassword := ""
 
 	redisCfg.GetSentinel().GetPassword().WithString(func(value string) {
@@ -128,7 +72,7 @@ func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *conf
 		Password:         masterPassword,
 		PoolSize:         redisCfg.GetPoolSize(),
 		MinIdleConns:     redisCfg.GetIdlePoolSize(),
-		TLSConfig:        RedisTLSOptions(redisCfg.GetTLS()),
+		TLSConfig:        tlsConfig,
 
 		ContextTimeoutEnabled: false,
 		PoolTimeout:           redisCfg.GetPoolTimeout(),
@@ -167,7 +111,7 @@ func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *conf
 // The client is created using the redis.NewClient function from the "github.com/go-redis/redis" package.
 // The address is used to specify the network address of the Redis server.
 // The remaining configuration properties such as username, password, database number, pool size, and TLS options are obtained from the "config.GetFile().GetServer().Redis.Master" and
-func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, address string) *redis.Client {
+func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, address string, tlsConfig *tls.Config) *redis.Client {
 	masterPassword := ""
 
 	redisCfg.GetStandaloneMaster().GetPassword().WithString(func(value string) {
@@ -181,7 +125,7 @@ func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis
 		DB:           redisCfg.GetDatabaseNumber(),
 		PoolSize:     redisCfg.GetPoolSize(),
 		MinIdleConns: redisCfg.GetIdlePoolSize(),
-		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
+		TLSConfig:    tlsConfig,
 
 		ContextTimeoutEnabled: false,
 		PoolTimeout:           redisCfg.GetPoolTimeout(),
@@ -225,11 +169,11 @@ func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis
 // The cluster options include the addresses of the Redis cluster nodes, username, password, pool size, and minimum idle connections.
 // It also includes topology awareness capabilities like RouteByLatency, RouteRandomly, and RouteReadsToReplicas.
 // Additional options include MaxRedirects, ReadTimeout, and WriteTimeout for fine-tuning the cluster behavior.
-// The function includes the TLS configuration obtained from the RedisTLSOptions function.
+// The function receives TLS parsed from the candidate-bound artifact snapshot.
 // The newRedisClusterClient function returns a pointer to the redis.ClusterClient object.
-func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis) *redis.ClusterClient {
+func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, tlsConfig *tls.Config) *redis.ClusterClient {
 	clusterCfg := redisCfg.GetCluster()
-	options := newRedisClusterOptions(redisCfg, clusterCfg)
+	options := newRedisClusterOptions(redisCfg, clusterCfg, tlsConfig)
 
 	setRedisClusterMaintenanceNotifications(options, redisCfg)
 	setRedisClusterOptionalTimeouts(options, clusterCfg)
@@ -247,14 +191,14 @@ func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *confi
 }
 
 // newRedisClusterOptions builds the base Redis Cluster option set.
-func newRedisClusterOptions(redisCfg *config.Redis, clusterCfg *config.Cluster) *redis.ClusterOptions {
+func newRedisClusterOptions(redisCfg *config.Redis, clusterCfg *config.Cluster, tlsConfig *tls.Config) *redis.ClusterOptions {
 	return &redis.ClusterOptions{
 		Addrs:                 clusterCfg.GetAddresses(),
 		Username:              clusterCfg.GetUsername(),
 		Password:              redisClusterPassword(clusterCfg),
 		PoolSize:              redisCfg.GetPoolSize(),
 		MinIdleConns:          redisCfg.GetIdlePoolSize(),
-		TLSConfig:             RedisTLSOptions(redisCfg.GetTLS()),
+		TLSConfig:             tlsConfig,
 		ContextTimeoutEnabled: false,
 		PoolTimeout:           redisCfg.GetPoolTimeout(),
 		DialTimeout:           redisCfg.GetDialTimeout(),
@@ -331,67 +275,14 @@ func instrumentRedisIfEnabled(c redis.UniversalClient) {
 // read commands to replica nodes in the cluster rather than masters.
 // This function is used to create a separate client for read operations to improve performance
 // and reduce load on master nodes.
-func newRedisClusterClientReadOnly(cfg config.File, logger *slog.Logger, redisCfg *config.Redis) *redis.ClusterClient {
+func newRedisClusterClientReadOnly(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, tlsConfig *tls.Config) *redis.ClusterClient {
 	clusterCfg := redisCfg.GetCluster()
-	clusterPassword := ""
+	options := newRedisClusterOptions(redisCfg, clusterCfg, tlsConfig)
+	options.ReadOnly = true
 
-	clusterCfg.GetPassword().WithString(func(value string) {
-		clusterPassword = value
-	})
-
-	options := &redis.ClusterOptions{
-		Addrs:        clusterCfg.GetAddresses(),
-		Username:     clusterCfg.GetUsername(),
-		Password:     clusterPassword,
-		PoolSize:     redisCfg.GetPoolSize(),
-		MinIdleConns: redisCfg.GetIdlePoolSize(),
-		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
-
-		ContextTimeoutEnabled: false,
-		PoolTimeout:           redisCfg.GetPoolTimeout(),
-		DialTimeout:           redisCfg.GetDialTimeout(),
-		ReadTimeout:           redisCfg.GetReadTimeout(),
-		WriteTimeout:          redisCfg.GetWriteTimeout(),
-		PoolFIFO:              redisCfg.GetPoolFIFO(),
-		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
-		MaxRetries:            redisCfg.GetMaxRetries(),
-
-		// Topology awareness options - force ReadOnly to true
-		RouteByLatency: clusterCfg.GetRouteByLatency(),
-		RouteRandomly:  clusterCfg.GetRouteRandomly(),
-		ReadOnly:       true, // Always use replicas for read operations
-		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
-		DisableIdentity: !redisCfg.IsIdentityEnabled(),
-		// Ensure RESP version based on configuration and Redis capabilities.
-		Protocol: getProtocol(redisCfg),
-	}
-
-	// Maintenance Notifications for cluster read-only client: mirror primary setting.
-	if redisCfg.IsMaintNotificationsEnabled() {
-		options.MaintNotificationsConfig = &maintnotifications.Config{Mode: maintnotifications.ModeAuto}
-	} else {
-		options.MaintNotificationsConfig = &maintnotifications.Config{Mode: maintnotifications.ModeDisabled}
-	}
-
-	// Set optional parameters only if they have non-zero values
-	if maxRedirects := clusterCfg.GetMaxRedirects(); maxRedirects > 0 {
-		options.MaxRedirects = maxRedirects
-	}
-
-	if readTimeout := clusterCfg.GetReadTimeout(); readTimeout > 0 {
-		options.ReadTimeout = readTimeout
-	}
-
-	if writeTimeout := clusterCfg.GetWriteTimeout(); writeTimeout > 0 {
-		options.WriteTimeout = writeTimeout
-	}
-
-	// Enable CLIENT TRACKING on connection if configured
-	if ct := redisCfg.GetClientTracking(); ct.IsEnabled() {
-		options.OnConnect = func(ctx context.Context, cn *redis.Conn) error {
-			return enableClientTracking(ctx, cn, ct)
-		}
-	}
+	setRedisClusterMaintenanceNotifications(options, redisCfg)
+	setRedisClusterOptionalTimeouts(options, clusterCfg)
+	setRedisClusterClientTracking(options, redisCfg)
 
 	c := redis.NewClusterClient(options)
 

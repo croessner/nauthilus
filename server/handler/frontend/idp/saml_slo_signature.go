@@ -392,7 +392,7 @@ func (h *SAMLHandler) resolveConfiguredLogoutRequestSigningCerts(issuer string) 
 			continue
 		}
 
-		certStr, err := sp.GetCert()
+		certStr, err := identityArtifactContent(h.artifacts, sp.Cert, sp.CertFile, "SAML SP certificate")
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to read SP certificate for %q: %w", issuer, err)
 		}

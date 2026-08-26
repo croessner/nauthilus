@@ -235,9 +235,6 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 		return
 	}
 
-	setOIDCTokenPostActionSubject(ctx, session)
-	setOIDCTokenPostActionMFAOverrides(ctx, session.MFACompleted, session.MFAMethod)
-
 	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokens(ctx.Request.Context(), session)
 	if err != nil {
 		h.logTokenError(ctx, grantType, clientID, err)
@@ -270,7 +267,7 @@ func (h *OIDCHandler) handleRefreshTokenExchange(ctx *gin.Context, client *confi
 	clientID := client.ClientID
 	rt := formValue(ctx, oidcParamRefreshToken)
 
-	session, idToken, accessToken, refreshToken, expiresIn, err := h.idp.ExchangeRefreshToken(ctx.Request.Context(), rt, clientID)
+	_, idToken, accessToken, refreshToken, expiresIn, err := h.idp.ExchangeRefreshToken(ctx.Request.Context(), rt, clientID)
 	if err != nil {
 		if errors.Is(err, idp.ErrInvalidRefreshToken) || errors.Is(err, idp.ErrRefreshTokenClientMismatch) {
 			setOIDCTokenFailureReason(ctx, oidcRefreshTokenFailureReason(err))
@@ -283,9 +280,6 @@ func (h *OIDCHandler) handleRefreshTokenExchange(ctx *gin.Context, client *confi
 
 		return
 	}
-
-	setOIDCTokenPostActionSubject(ctx, session)
-	setOIDCTokenPostActionMFAOverrides(ctx, session.MFACompleted, session.MFAMethod)
 
 	h.sendTokenResponse(ctx, clientID, grantType, &tokenResponse{
 		idToken:      idToken,

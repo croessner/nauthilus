@@ -22,6 +22,8 @@ import (
 	"sync"
 
 	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
+	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/v3/server/policy"
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
@@ -29,11 +31,11 @@ import (
 	"github.com/croessner/nauthilus/v3/server/policy/report"
 
 	"github.com/gin-gonic/gin"
+	lua "github.com/yuin/gopher-lua"
 )
 
 const (
 	authnCandidateRuntimeOwnerKey                = "authn_candidate_runtime_owner"
-	authnCandidatePostActionFailureKey           = "authn_candidate_post_action_failure"
 	authnCandidateOutcomeEffectAcceptanceFailure = "auth.outcome.effect_acceptance_failure"
 	authnCandidateResponseSourceEffectAcceptance = "effect_acceptance"
 )
@@ -48,12 +50,14 @@ type authnCandidateHost interface {
 
 type authnCandidateExecution struct {
 	executeEffect  func(report.EffectRequest) effectsupervisor.Result
-	preparePost    func(report.EffectRequest, uint32) (effectsupervisor.ExecutableWork, error)
 	auth           *AuthState
+	backendResult  *PassDBResult
 	ginCtx         *gin.Context
 	capture        *CaptureResponseWriter
 	selected       map[string]*report.FinalDecision
 	accounts       AccountList
+	backendPlan    backendExecutionPlan
+	backendAccount string
 	operation      policy.Operation
 	mu             sync.Mutex
 	authResult     definitions.AuthResult
@@ -62,6 +66,9 @@ type authnCandidateExecution struct {
 	finalReady     bool
 	bruteForceRun  bool
 	environmentRun bool
+	backendReady   bool
+	backendCached  bool
+	subjectReady   bool
 }
 
 // prepareAuthnCandidateExecution creates request-local host state after Decision Service admission.
@@ -96,32 +103,110 @@ func (s *authApplicationService) prepareAuthnCandidateExecution(
 	}
 	hostCtx = decisionservice.ContextWithAuthnDecisionSource(hostCtx, execution)
 	hostCtx = contextWithAuthnPolicyEffectOwner(hostCtx, execution)
+	hostCtx = contextWithAuthnLuaActionOwner(hostCtx, execution)
+	hostCtx = decisionservice.ContextWithAuthnNativeEffectHost(hostCtx, execution)
 
 	return execution, hostCtx, nil
 }
 
+// installAuthnLuaFactDeclarations registers exact generation-owned script facts before any Lua callback runs.
+func (e *authnCandidateExecution) installAuthnLuaFactDeclarations(
+	session decisionservice.DecisionSession,
+	required bool,
+) error {
+	policyCtx := e.auth.requestPolicyContext(e.ginCtx)
+	if policyCtx == nil {
+		return fmt.Errorf("authn Policy context is unavailable")
+	}
+
+	attributeSession, attributesOK := session.(decisionservice.AuthnPolicyAttributeSession)
+	if !attributesOK {
+		if required {
+			return fmt.Errorf("authn Policy attribute session is unavailable")
+		}
+	} else if err := policyCtx.AddAuthnPolicyAttributes(attributeSession.AuthnPolicyAttributes()); err != nil {
+		return err
+	}
+
+	factSession, ok := session.(decisionservice.AuthnLuaFactSession)
+	if !ok {
+		if required {
+			return fmt.Errorf("authn Lua fact session is unavailable")
+		}
+
+		return nil
+	}
+
+	return policyCtx.AddAuthnLuaFactDeclarations(factSession.AuthnLuaFacts())
+}
+
 // prepareCheckpoint runs only the ordered host providers owned by one compiled checkpoint.
 func (e *authnCandidateExecution) prepareCheckpoint(
+	session decisionservice.DecisionSession,
 	checkpoint decisionservice.CheckpointPlan,
 ) (authnApplicationResult, error) {
 	if e == nil || e.auth == nil || e.ginCtx == nil {
 		return authnApplicationResult{}, ErrAuthOutcomeMissing
 	}
 
-	providers := checkpoint.ProviderIDs()
-	for index := 0; index < len(providers); {
-		next, terminal, err := e.prepareProviderGroup(providers, index)
+	hostSession, ok := session.(decisionservice.AuthnHostExecutionSession)
+	if !ok {
+		return authnApplicationResult{}, fmt.Errorf("authn host execution session is unavailable")
+	}
+
+	for {
+		facts, err := e.authnHostScheduleFacts(checkpoint.Name())
 		if err != nil {
+			return authnApplicationResult{}, fmt.Errorf("build authn host schedule facts: %w", err)
+		}
+
+		directive, found, err := hostSession.NextAuthnHostProvider(decisionservice.AuthnHostScheduleInput{
+			Checkpoint: checkpoint.Name(), Facts: facts, Authenticated: e.auth.Runtime.Authenticated,
+		})
+		if err != nil {
+			return authnApplicationResult{}, fmt.Errorf("schedule authn checkpoint %q: %w", checkpoint.Name(), err)
+		}
+
+		if !found {
+			break
+		}
+
+		if directive.Disposition() == decisionservice.AuthnHostDispositionSkipped {
+			continue
+		}
+
+		if directive.Disposition() != decisionservice.AuthnHostDispositionRun {
 			return authnApplicationResult{}, fmt.Errorf(
-				"prepare authn candidate checkpoint %q: %w",
+				"authn checkpoint %q returned unsupported host disposition %q",
 				checkpoint.Name(),
-				err,
+				directive.Disposition(),
 			)
 		}
 
-		index = next
+		instance := directive.Instance()
+		terminal, state, executeErr := e.prepareProviderInstance(session, instance.Use())
+
+		receiptErr := hostSession.RecordAuthnHostProvider(decisionservice.AuthnHostReceipt{
+			Checkpoint: checkpoint.Name(), Instance: instance.Name(), State: state,
+			Authenticated: e.auth.Runtime.Authenticated, Terminal: terminal,
+		})
+		if receiptErr != nil {
+			return authnApplicationResult{}, fmt.Errorf("record authn host provider %q: %w", instance.Name(), receiptErr)
+		}
+
+		if executeErr != nil {
+			return authnApplicationResult{}, fmt.Errorf("execute authn host provider %q: %w", instance.Name(), executeErr)
+		}
 
 		if terminal {
+			if completeErr := hostSession.CompleteAuthnHostSchedule(checkpoint.Name()); completeErr != nil {
+				return authnApplicationResult{}, fmt.Errorf(
+					"complete terminal authn checkpoint %q: %w",
+					checkpoint.Name(),
+					completeErr,
+				)
+			}
+
 			break
 		}
 	}
@@ -129,36 +214,240 @@ func (e *authnCandidateExecution) prepareCheckpoint(
 	return e.currentResult(), nil
 }
 
-// prepareProviderGroup executes one provider or one existing atomic host pipeline segment.
-func (e *authnCandidateExecution) prepareProviderGroup(
-	providers []string,
-	index int,
-) (int, bool, error) {
-	switch providers[index] {
+// authnHostScheduleFacts projects current request observations for the next plan-local guard.
+func (e *authnCandidateExecution) authnHostScheduleFacts(checkpoint string) (decision.FactSet, error) {
+	target, err := decision.NewTarget(policy.AuthnNamespace, string(e.operation))
+	if err != nil {
+		return decision.FactSet{}, err
+	}
+
+	return e.StandardAuthFacts(e.ginCtx.Request.Context(), target, checkpoint)
+}
+
+// prepareProviderInstance executes only the exact instance yielded by the captured scheduler.
+func (e *authnCandidateExecution) prepareProviderInstance(
+	session decisionservice.DecisionSession,
+	providerID string,
+) (bool, decisionservice.AuthnHostReceiptState, error) {
+	receipt := decisionservice.AuthnHostReceiptCompleted
+
+	var (
+		terminal bool
+		err      error
+	)
+
+	switch providerID {
 	case policy.AuthnProviderBruteForce:
-		return index + 1, e.prepareBruteForceProvider(), nil
+		terminal = e.prepareBruteForceProvider()
 	case policy.AuthnProviderEnvironment:
-		plan, next, err := authnEnvironmentPlanFromProviders(providers, index)
-		if err != nil {
-			return index, false, err
-		}
-
-		return next, e.prepareEnvironmentProviders(plan), nil
+		terminal = e.prepareBuiltinEnvironmentProvider()
+	case policy.AuthnProviderTLSEncryption:
+		terminal = e.prepareEnvironmentProviders(authnEnvironmentProviderPlan{tls: true})
+	case policy.AuthnProviderRelayDomains:
+		terminal = e.prepareEnvironmentProviders(authnEnvironmentProviderPlan{relay: true})
+	case policy.AuthnProviderRBL:
+		terminal = e.prepareEnvironmentProviders(authnEnvironmentProviderPlan{rbl: true})
 	case policy.AuthnProviderBackend:
-		if index+1 >= len(providers) || providers[index+1] != policy.AuthnProviderSubject {
-			return index, false, fmt.Errorf("backend provider is not followed by subject provider")
-		}
-
-		e.prepareBackendAndSubjectProviders()
-
-		return index + 2, false, nil
+		terminal, err = e.prepareBuiltinBackendProvider()
+	case policy.AuthnProviderLDAPBackend, policy.AuthnProviderLuaBackend, policy.AuthnProviderPluginBackendOrder:
+		terminal, err = e.prepareTypedBackendProvider(providerID)
+	case policy.AuthnProviderSubject:
+		terminal, err = e.prepareBuiltinSubjectProvider()
 	case policy.AuthnProviderAccount:
 		e.prepareAccountProvider()
-
-		return index + 1, false, nil
 	default:
-		return index, false, fmt.Errorf("unsupported or out-of-order host provider %q", providers[index])
+		terminal, err = e.prepareConfiguredHostProvider(session, providerID)
 	}
+
+	if err != nil {
+		receipt = decisionservice.AuthnHostReceiptFailed
+		if e.ginCtx.Request.Context().Err() == context.DeadlineExceeded {
+			receipt = decisionservice.AuthnHostReceiptTimedOut
+		}
+	}
+
+	return terminal, receipt, err
+}
+
+// prepareBuiltinEnvironmentProvider completes the code-owned environment slot without selecting legacy scripts.
+func (e *authnCandidateExecution) prepareBuiltinEnvironmentProvider() bool {
+	e.environmentRun = true
+
+	return false
+}
+
+type authnCompiledLuaSource interface {
+	OpenCompiledLuaSource() (string, *lua.FunctionProto, error)
+	LuaPoolKey() string
+	LuaPoolManager() *vmpool.Manager
+	SealedLuaModules() *luaseal.Modules
+}
+
+// prepareConfiguredHostProvider dispatches one exact generation-owned source binding.
+func (e *authnCandidateExecution) prepareConfiguredHostProvider(
+	session decisionservice.DecisionSession,
+	providerID string,
+) (bool, error) {
+	provider, err := resolveConfiguredAuthnHostProvider(session, providerID)
+	if err != nil {
+		return false, err
+	}
+
+	if terminal, handled, nativeErr := e.prepareConfiguredNativeHostProvider(providerID, provider); handled {
+		return terminal, nativeErr
+	}
+
+	return e.prepareConfiguredLuaHostProvider(providerID, provider)
+}
+
+// resolveConfiguredAuthnHostProvider selects one exact provider from the admitted generation session.
+func resolveConfiguredAuthnHostProvider(
+	session decisionservice.DecisionSession,
+	providerID string,
+) (decisionservice.AuthnHostProvider, error) {
+	hostSession, ok := session.(decisionservice.AuthnHostProviderSession)
+	if !ok {
+		return nil, fmt.Errorf("authn host provider session is unavailable")
+	}
+
+	provider, found := hostSession.AuthnHostProvider(providerID)
+	if !found || provider == nil || provider.ID() != providerID {
+		return nil, fmt.Errorf("configured authn host provider %q is unavailable", providerID)
+	}
+
+	return provider, nil
+}
+
+// prepareConfiguredNativeHostProvider dispatches native source kinds and reports whether it handled the provider.
+func (e *authnCandidateExecution) prepareConfiguredNativeHostProvider(
+	providerID string,
+	provider decisionservice.AuthnHostProvider,
+) (bool, bool, error) {
+	switch provider.Kind() {
+	case decisionservice.AuthnHostProviderKindNativeEnvironment:
+		native, ok := provider.(decisionservice.AuthnNativeEnvironmentProvider)
+		if !ok {
+			return false, true, fmt.Errorf("configured authn host provider %q has no native environment owner", providerID)
+		}
+
+		terminal, err := e.prepareNativeEnvironmentSource(providerID, native)
+
+		return terminal, true, err
+	case decisionservice.AuthnHostProviderKindNativeSubject:
+		native, ok := provider.(decisionservice.AuthnNativeSubjectProvider)
+		if !ok {
+			return false, true, fmt.Errorf("configured authn host provider %q has no native subject owner", providerID)
+		}
+
+		terminal, err := e.prepareNativeSubjectSource(providerID, native)
+
+		return terminal, true, err
+	default:
+		return false, false, nil
+	}
+}
+
+// prepareConfiguredLuaHostProvider opens and dispatches one compiled Lua source owner.
+func (e *authnCandidateExecution) prepareConfiguredLuaHostProvider(
+	providerID string,
+	provider decisionservice.AuthnHostProvider,
+) (bool, error) {
+	compiled, ok := provider.(authnCompiledLuaSource)
+	if !ok {
+		return false, fmt.Errorf("configured authn host provider %q has no compiled source", providerID)
+	}
+
+	name, prototype, err := compiled.OpenCompiledLuaSource()
+	if err != nil {
+		return false, fmt.Errorf("open configured authn host provider %q: %w", providerID, err)
+	}
+
+	poolKey := vmpool.PoolKey(compiled.LuaPoolKey())
+	pools := compiled.LuaPoolManager()
+
+	if name == "" || prototype == nil || poolKey == "" || pools == nil {
+		return false, fmt.Errorf("configured authn host provider %q is incomplete", providerID)
+	}
+
+	switch provider.Kind() {
+	case decisionservice.AuthnHostProviderKindLuaEnvironment:
+		return e.prepareLuaEnvironmentSource(name, prototype, pools, poolKey, compiled.SealedLuaModules())
+	case decisionservice.AuthnHostProviderKindLuaSubject:
+		return e.prepareLuaSubjectSource(name, prototype, pools, poolKey, compiled.SealedLuaModules())
+	default:
+		return false, fmt.Errorf(
+			"configured authn host provider %q has unsupported kind %q",
+			providerID,
+			provider.Kind(),
+		)
+	}
+}
+
+// prepareLuaEnvironmentSource applies one captured script result to request-local host state.
+func (e *authnCandidateExecution) prepareLuaEnvironmentSource(
+	name string,
+	prototype *lua.FunctionProto,
+	pools *vmpool.Manager,
+	poolKey vmpool.PoolKey,
+	modules *luaseal.Modules,
+) (bool, error) {
+	triggered, aborted, err := e.auth.EnvironmentLuaSource(e.ginCtx, name, prototype, pools, poolKey, modules)
+
+	e.environmentRun = true
+	if err != nil {
+		e.preAuthResult = definitions.AuthResultTempFail
+
+		return true, nil
+	}
+
+	if triggered {
+		e.auth.processEnvironmentAction(e.ginCtx, definitions.ControlLua)
+		markEnvironmentRejected(e.ginCtx, true)
+		e.preAuthResult = definitions.AuthResultLuaEnvironment
+
+		return true, nil
+	}
+
+	if aborted {
+		e.preAuthResult = definitions.AuthResultOK
+
+		return false, nil
+	}
+
+	return false, nil
+}
+
+// prepareLuaSubjectSource applies one captured subject script after backend state exists.
+func (e *authnCandidateExecution) prepareLuaSubjectSource(
+	name string,
+	prototype *lua.FunctionProto,
+	pools *vmpool.Manager,
+	poolKey vmpool.PoolKey,
+	modules *luaseal.Modules,
+) (bool, error) {
+	if e.backendResult == nil || !e.backendReady {
+		return false, fmt.Errorf("generation-owned Lua subject provider has no backend result")
+	}
+
+	subject := e.auth.deps.HostServices.subject
+	if subject == nil {
+		return false, fmt.Errorf("generation-owned Lua subject runner is unavailable")
+	}
+
+	e.authResult = subject.AnalyzeSource(
+		e.ginCtx,
+		e.auth.View(),
+		e.backendResult,
+		name,
+		prototype,
+		pools,
+		poolKey,
+		modules,
+	)
+	e.subjectReady = true
+	e.finishTypedBackendProvider()
+
+	return e.authResult != definitions.AuthResultOK && e.authResult != definitions.AuthResultUnset, nil
 }
 
 // prepareBruteForceProvider executes the request-local brute-force owner once.
@@ -179,7 +468,7 @@ func (e *authnCandidateExecution) prepareBruteForceProvider() bool {
 
 // prepareEnvironmentProviders executes the exact selected environment subplan once.
 func (e *authnCandidateExecution) prepareEnvironmentProviders(plan authnEnvironmentProviderPlan) bool {
-	if e.preAuthReady || e.environmentRun {
+	if e.preAuthReady {
 		return e.preAuthResult != definitions.AuthResultUnset && e.preAuthResult != definitions.AuthResultOK
 	}
 
@@ -189,14 +478,171 @@ func (e *authnCandidateExecution) prepareEnvironmentProviders(plan authnEnvironm
 	return e.preAuthResult != definitions.AuthResultOK
 }
 
-// prepareBackendAndSubjectProviders runs the existing cache/backend/subject owner once.
-func (e *authnCandidateExecution) prepareBackendAndSubjectProviders() {
+// prepareBuiltinBackendProvider executes the configured backend order without selecting legacy subject scripts.
+func (e *authnCandidateExecution) prepareBuiltinBackendProvider() (bool, error) {
+	return e.prepareBackendPlan(e.auth.buildBackendExecutionPlan())
+}
+
+// prepareTypedBackendProvider executes one exact backend family without running subject work.
+func (e *authnCandidateExecution) prepareTypedBackendProvider(providerID string) (bool, error) {
+	plan, err := e.auth.buildAuthnTypedBackendExecutionPlan(providerID)
+	if err != nil {
+		return false, err
+	}
+
+	return e.prepareBackendPlan(plan)
+}
+
+// prepareBackendPlan stages one request-owned backend result for the separate subject checkpoint.
+func (e *authnCandidateExecution) prepareBackendPlan(plan backendExecutionPlan) (bool, error) {
+	if e.backendReady || e.backendResult != nil {
+		return false, fmt.Errorf("authn backend provider already executed")
+	}
+
+	if result := e.auth.usernamePasswordChecks(); result != definitions.AuthResultUnset {
+		e.authResult = result
+
+		return true, nil
+	}
+
+	if e.prepareCachedBackendResult(plan) {
+		return false, nil
+	}
+
+	return e.prepareVerifiedBackendResult(plan)
+}
+
+// prepareCachedBackendResult installs one request-compatible positive cache hit.
+func (e *authnCandidateExecution) prepareCachedBackendResult(plan backendExecutionPlan) bool {
+	result, found := e.auth.takePositiveBackendAuthenticationCache(e.ginCtx)
+	if !found {
+		return false
+	}
+
+	e.auth.recordPolicyBackendResult(e.ginCtx, definitions.AuthResultOK, result, nil)
+	e.backendResult = result
+	e.backendPlan = plan
+	e.backendAccount = result.Account
+	e.backendReady = true
+	e.backendCached = true
+	e.authResult = definitions.AuthResultOK
+
+	return true
+}
+
+// prepareVerifiedBackendResult executes the selected backend plan and captures its request-owned result.
+func (e *authnCandidateExecution) prepareVerifiedBackendResult(plan backendExecutionPlan) (bool, error) {
+	result, err := e.auth.processVerifyPassword(e.ginCtx, plan.passDBs)
+	if err != nil {
+		e.recordBackendFailure(result, err)
+
+		return true, nil
+	}
+
+	if result == nil {
+		e.recordBackendFailure(nil, nil)
+
+		return true, nil
+	}
+
+	accountName, err := e.auth.processUserFound(result)
+	if err != nil {
+		PutPassDBResultToPool(result)
+
+		e.recordBackendFailure(nil, err)
+
+		return true, nil
+	}
+
+	e.installVerifiedBackendResult(plan, result, accountName)
+
+	return false, nil
+}
+
+// recordBackendFailure projects one backend failure onto request-local auth and Policy state.
+func (e *authnCandidateExecution) recordBackendFailure(result *PassDBResult, err error) {
+	e.auth.Runtime.Authenticated = false
+	e.auth.recordPolicyBackendResult(e.ginCtx, definitions.AuthResultTempFail, result, err)
+	e.authResult = definitions.AuthResultTempFail
+}
+
+// installVerifiedBackendResult completes the staged backend state after identity normalization succeeds.
+func (e *authnCandidateExecution) installVerifiedBackendResult(
+	plan backendExecutionPlan,
+	result *PassDBResult,
+	accountName string,
+) {
+	e.auth.loadBruteForceHistories(e.ginCtx, accountName)
+	e.auth.applyBackendResult(e.ginCtx, result)
+	e.auth.storePositiveBackendAuthentication(e.ginCtx, result)
+	e.backendResult = result
+	e.backendPlan = plan
+	e.backendAccount = accountName
+
+	e.backendReady = true
+	if result.Authenticated {
+		e.authResult = definitions.AuthResultOK
+	} else {
+		e.authResult = definitions.AuthResultFail
+	}
+}
+
+// prepareBuiltinSubjectProvider finalizes the exact backend result without selecting legacy subject scripts.
+func (e *authnCandidateExecution) prepareBuiltinSubjectProvider() (bool, error) {
 	if e.finalReady {
+		return false, nil
+	}
+
+	if !e.backendReady || e.backendResult == nil {
+		return false, fmt.Errorf("authn subject provider has no exact backend result")
+	}
+
+	e.subjectReady = true
+	e.finalReady = true
+	e.finishTypedBackendProvider()
+
+	return e.authResult != definitions.AuthResultOK && e.authResult != definitions.AuthResultUnset, nil
+}
+
+// finishTypedBackendProvider applies cache/post-action projection and releases the request-owned backend result.
+func (e *authnCandidateExecution) finishTypedBackendProvider() {
+	if e.backendResult == nil {
 		return
 	}
 
-	e.finalReady = true
-	e.authResult = e.auth.HandlePassword(e.ginCtx)
+	if !e.backendCached {
+		if err := e.auth.processFinalAuthCache(
+			e.ginCtx,
+			e.backendResult,
+			e.authResult,
+			e.backendAccount,
+			e.backendPlan,
+		); err != nil {
+			e.auth.Runtime.Authenticated = false
+			e.auth.recordPolicyBackendResult(e.ginCtx, definitions.AuthResultTempFail, e.backendResult, err)
+			e.authResult = definitions.AuthResultTempFail
+		}
+	}
+
+	e.auth.storePolicyPostActionResult(e.ginCtx, e.backendResult)
+	PutPassDBResultToPool(e.backendResult)
+	e.backendResult = nil
+}
+
+// release drops request-owned backend state when a terminal checkpoint prevents subject execution.
+func (e *authnCandidateExecution) release() {
+	if e == nil {
+		return
+	}
+
+	if e.backendResult != nil {
+		PutPassDBResultToPool(e.backendResult)
+		e.backendResult = nil
+	}
+
+	if result, owned := takePolicyPostActionResult(e.ginCtx); owned {
+		PutPassDBResultToPool(result)
+	}
 }
 
 // prepareAccountProvider runs the existing account provider once.
@@ -207,58 +653,6 @@ func (e *authnCandidateExecution) prepareAccountProvider() {
 
 	e.finalReady = true
 	e.accounts = e.auth.ListUserAccounts()
-}
-
-// authnEnvironmentPlanFromProviders validates one contiguous environment provider segment.
-func authnEnvironmentPlanFromProviders(
-	providers []string,
-	index int,
-) (authnEnvironmentProviderPlan, int, error) {
-	plan := authnEnvironmentProviderPlan{environment: true}
-	next := index + 1
-	lastRank := 0
-
-	for next < len(providers) {
-		rank := authnEnvironmentProviderRank(providers[next])
-		if rank == 0 {
-			return plan, next, nil
-		}
-
-		if rank <= lastRank {
-			return authnEnvironmentProviderPlan{}, index, fmt.Errorf(
-				"out-of-order environment provider %q",
-				providers[next],
-			)
-		}
-
-		switch providers[next] {
-		case policy.AuthnProviderTLSEncryption:
-			plan.tls = true
-		case policy.AuthnProviderRelayDomains:
-			plan.relay = true
-		case policy.AuthnProviderRBL:
-			plan.rbl = true
-		}
-
-		lastRank = rank
-		next++
-	}
-
-	return plan, next, nil
-}
-
-// authnEnvironmentProviderRank defines the canonical order within one environment segment.
-func authnEnvironmentProviderRank(providerID string) int {
-	switch providerID {
-	case policy.AuthnProviderTLSEncryption:
-		return 1
-	case policy.AuthnProviderRelayDomains:
-		return 2
-	case policy.AuthnProviderRBL:
-		return 3
-	default:
-		return 0
-	}
 }
 
 // currentResult projects collected host state without publishing a terminal response.
@@ -330,12 +724,6 @@ func (e *authnCandidateExecution) StandardAuthEffectsEnabled(
 
 	if checkpoint != string(policy.StagePreAuth) && checkpoint != string(policy.StageAuthDecision) {
 		return false
-	}
-
-	if policyCtx := existingPolicyContext(e.ginCtx); policyCtx != nil {
-		mode, _, _ := policyCtx.SnapshotMetadata()
-
-		return policyEffectsEnabled(mode)
 	}
 
 	mode, ok := decisionservice.CapturedPolicyMode(ctx)
@@ -571,31 +959,12 @@ func (e *authnCandidateExecution) finalizeUnselected(
 	return newAuthnTerminalResult(e.operation, effect)
 }
 
-// authnCandidatePresentation selects the explicit acceptance-failure response when required.
+// authnCandidatePresentation projects runtime failures onto the final response.
 func (e *authnCandidateExecution) authnCandidatePresentation(
 	response decision.DecisionResponse,
 	final *report.FinalDecision,
 ) (*report.FinalDecision, bool) {
-	presentation, acceptanceFailure := authnCandidateRuntimePresentation(response, final)
-
-	state, failed := authnCandidatePostActionFailure(e.ginCtx)
-	if !failed {
-		return presentation, acceptanceFailure
-	}
-
-	marker := "auth.outcome.post_action_preparation_failure"
-	source := "post_action_preparation"
-
-	switch state {
-	case PostActionStateAcceptanceRejected:
-		marker = authnCandidateOutcomeEffectAcceptanceFailure
-		source = authnCandidateResponseSourceEffectAcceptance
-	case PostActionStateCanceled:
-		marker = "auth.outcome.post_action_canceled"
-		source = "post_action_cancellation"
-	}
-
-	return authnCandidateTempFailDecision(final, marker, source), true
+	return authnCandidateRuntimePresentation(response, final)
 }
 
 // authnCandidateRuntimePresentation maps only runtime failures onto truthful tempfail metadata.
@@ -694,7 +1063,32 @@ func (e *authnCandidateExecution) capturedResult() authnApplicationResult {
 		return authnApplicationResult{accounts: listAccountsOutcomeFromCaptured(captured)}
 	}
 
-	return authnApplicationResult{auth: authOutcomeFromCaptured(captured)}
+	outcome := authOutcomeFromCaptured(captured)
+	selected := e.terminalDecision()
+
+	if outcome != nil && selected != nil {
+		outcome.PolicyTerminal = true
+		outcome.DelayedResponseEligible = authOutcomeIsIDPPasswordFailure(e.auth, outcome.Decision) &&
+			configuredPolicyAllowsIDPDelayedResponse(selected)
+	}
+
+	return authnApplicationResult{auth: outcome}
+}
+
+// terminalDecision returns the catalog-selected terminal presentation for the request.
+func (e *authnCandidateExecution) terminalDecision() *report.FinalDecision {
+	if e == nil {
+		return nil
+	}
+
+	for _, checkpoint := range []string{string(policy.StageAuthDecision), string(policy.StagePreAuth)} {
+		selected := e.selectedDecision(checkpoint)
+		if selected != nil && (selected.Effect == policy.DecisionDeny || selected.Effect == policy.DecisionTempFail) {
+			return selected
+		}
+	}
+
+	return nil
 }
 
 // permittedListResult preserves account payloads while applying selected localization metadata.
@@ -717,34 +1111,4 @@ func (e *authnCandidateExecution) permittedListResult(current authnApplicationRe
 // authnCandidateRuntimeOwnsPolicy reports whether the shared runtime owns selection and effects.
 func authnCandidateRuntimeOwnsPolicy(ctx *gin.Context) bool {
 	return ctx != nil && ctx.GetBool(authnCandidateRuntimeOwnerKey)
-}
-
-// markAuthnCandidatePostActionFailure retains one pre-finalization failure cause.
-func markAuthnCandidatePostActionFailure(ctx *gin.Context, result PostActionResult) {
-	if ctx != nil && authnCandidateRuntimeOwnsPolicy(ctx) && !result.Succeeded() {
-		ctx.Set(authnCandidatePostActionFailureKey, result.State())
-	}
-}
-
-// authnCandidatePostActionAcceptanceFailed reports existing supervisor rejection to final mapping.
-func authnCandidatePostActionAcceptanceFailed(ctx *gin.Context) bool {
-	state, failed := authnCandidatePostActionFailure(ctx)
-
-	return failed && state == PostActionStateAcceptanceRejected
-}
-
-// authnCandidatePostActionFailure returns the exact retained synchronous failure cause.
-func authnCandidatePostActionFailure(ctx *gin.Context) (PostActionState, bool) {
-	if ctx == nil {
-		return "", false
-	}
-
-	value, exists := ctx.Get(authnCandidatePostActionFailureKey)
-	if !exists {
-		return "", false
-	}
-
-	state, ok := value.(PostActionState)
-
-	return state, ok
 }

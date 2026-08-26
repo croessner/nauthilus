@@ -57,7 +57,6 @@ type privacyConfig struct {
 	Overrides     []privacyOverrideConfig
 	LookupTimeout time.Duration
 	Enabled       bool
-	PublicLogs    bool
 }
 
 type privacyRefreshConfig struct {
@@ -118,7 +117,6 @@ type rawPrivacyConfig struct {
 	Overrides     []rawPrivacyOverrideConfig `mapstructure:"overrides"`
 	LookupTimeout string                     `mapstructure:"lookup_timeout"`
 	Enabled       bool                       `mapstructure:"enabled"`
-	PublicLogs    bool                       `mapstructure:"public_log_fields"`
 	MaxEntries    int                        `mapstructure:"max_snapshot_entries"`
 	MaxBytes      int64                      `mapstructure:"max_download_bytes"`
 }
@@ -212,7 +210,7 @@ func parsePrivacyConfig(raw rawPrivacyConfig, parentLookupTimeout time.Duration)
 		return privacyConfig{}, fmt.Errorf("privacy_intelligence requires at least one source or hosting rules")
 	}
 
-	return privacyConfig{Refresh: refresh, Sources: sources, Hosting: hosting, Overrides: overrides, LookupTimeout: lookupTimeout, Enabled: raw.Enabled, PublicLogs: raw.PublicLogs}, nil
+	return privacyConfig{Refresh: refresh, Sources: sources, Hosting: hosting, Overrides: overrides, LookupTimeout: lookupTimeout, Enabled: raw.Enabled}, nil
 }
 
 // parsePrivacySizeLimits applies bounded snapshot and response defaults.
