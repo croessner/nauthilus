@@ -581,9 +581,16 @@ func prepareProtocolMFAAssuranceSession(mgr cookie.Manager, protocol string, cli
 	setProtocolMFAAssuranceIdentifier(mgr, clientID, samlEntityID)
 	core.StorePendingIDPMFAIdentity(mgr, user)
 	core.StorePendingIDPMFAFactor(mgr, user)
+	clearDuplicateMFAFactorDetails(mgr)
 	cookie.SetAuthResult(mgr, account, definitions.AuthResultOK)
 
 	return true
+}
+
+// clearDuplicateMFAFactorDetails keeps existing-session step-up cookies compact.
+func clearDuplicateMFAFactorDetails(mgr cookie.Manager) {
+	mgr.Delete(definitions.SessionKeyMFAFactorUniqueUserID)
+	mgr.Delete(definitions.SessionKeyMFAFactorDisplayName)
 }
 
 // setProtocolMFAAssuranceIdentifier records the active OIDC client or SAML SP.
