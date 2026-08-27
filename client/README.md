@@ -40,7 +40,7 @@ CSV delimiter: auto-detected from the header (comma/semicolon/tab). You can over
 
 ## Build
 
-Requirement: Go 1.26.x
+Requirement: Go 1.27.x
 
 ```
 cd client
@@ -124,7 +124,7 @@ curl -sS -X POST http://localhost:8080/api/v1/auth/json \
 ## Generate a large CSV (e.g., 10,000 rows)
 The client can generate the CSV directly. All columns are filled appropriately and the file `client/logins.csv` will be overwritten.
 
-Requirement: Go 1.26.x
+Requirement: Go 1.27.x
 
 Example (10,000 rows):
 ```

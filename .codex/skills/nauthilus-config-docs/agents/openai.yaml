@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nauthilus Config Docs"
+  short_description: "Maintain config, dumps, syntax, templates, docs."
+  default_prompt: "Use $nauthilus-config-docs to update Nauthilus configuration or generated documentation surfaces."

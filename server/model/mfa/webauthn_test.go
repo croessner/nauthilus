@@ -81,6 +81,45 @@ func TestPersistentCredentialUnmarshalLegacySignCount(t *testing.T) {
 	}
 }
 
+func TestPersistentCredentialRoundTripPreservesWebAuthnExtensions(t *testing.T) {
+	discoverable := true
+	prfEnabled := false
+	minimumPINLength := uint(6)
+	credential := PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte{0x01},
+			Extensions: webauthn.CredentialExtensions{
+				RK:           &discoverable,
+				MinPinLength: &minimumPINLength,
+				PRFEnabled:   &prfEnabled,
+			},
+		},
+		Name: "passkey",
+	}
+
+	data, err := jsoniter.ConfigFastest.Marshal(&credential)
+	if err != nil {
+		t.Fatalf("marshal credential: %v", err)
+	}
+
+	var decoded PersistentCredential
+	if err = jsoniter.ConfigFastest.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal credential: %v", err)
+	}
+
+	if decoded.Extensions.RK == nil || !*decoded.Extensions.RK {
+		t.Fatalf("expected discoverable credential extension, got %#v", decoded.Extensions.RK)
+	}
+
+	if decoded.Extensions.MinPinLength == nil || *decoded.Extensions.MinPinLength != minimumPINLength {
+		t.Fatalf("expected minimum PIN length %d, got %#v", minimumPINLength, decoded.Extensions.MinPinLength)
+	}
+
+	if decoded.Extensions.PRFEnabled == nil || *decoded.Extensions.PRFEnabled {
+		t.Fatalf("expected explicit false PRF support, got %#v", decoded.Extensions.PRFEnabled)
+	}
+}
+
 func TestPersistentCredentialNilReceiverMarshal(t *testing.T) {
 	var p *PersistentCredential
 

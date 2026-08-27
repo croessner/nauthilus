@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nauthilus Redis Runtime"
+  short_description: "Work on Redis, Lua scripts, and runtime state."
+  default_prompt: "Use $nauthilus-redis-runtime to change Redis-backed runtime behavior in Nauthilus."

@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/croessner/nauthilus/v3/server/definitions"
@@ -72,6 +73,31 @@ func countClusterOnNewNodeCallbacks(client any) int {
 func countRedisClientHooks(client any) int {
 	value := reflect.ValueOf(client).Elem()
 	hooksMixin := value.FieldByName("hooksMixin")
+	if hooks := hooksMixin.FieldByName("slice"); hooks.IsValid() {
+		return hooks.Len()
+	}
 
-	return hooksMixin.FieldByName("slice").Len()
+	state := hooksMixin.FieldByName("state")
+	if !state.IsValid() || state.IsNil() || !state.CanAddr() {
+		return 0
+	}
+
+	readableState := reflect.NewAt(state.Type(), unsafe.Pointer(state.UnsafeAddr())).Elem()
+	load := readableState.MethodByName("Load")
+
+	if !load.IsValid() {
+		return 0
+	}
+
+	result := load.Call(nil)
+	if len(result) != 1 || result[0].IsNil() {
+		return 0
+	}
+
+	hooks := result[0].Elem().FieldByName("slice")
+	if !hooks.IsValid() {
+		return 0
+	}
+
+	return hooks.Len()
 }

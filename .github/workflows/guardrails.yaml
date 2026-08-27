@@ -47,7 +47,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version: 1.26.6
+          go-version: 1.27.0
           check-latest: true
 
       - name: Enable Go Modules
@@ -72,6 +72,7 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: golangci/golangci-lint-action@v8
         with:
+          version: v2.13.1
           args: --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen ./...
           only-new-issues: true
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nauthilus API Contracts"
+  short_description: "Keep OpenAPI, gRPC, routes, and clients aligned."
+  default_prompt: "Use $nauthilus-api-contracts to update Nauthilus API contracts or generated clients."

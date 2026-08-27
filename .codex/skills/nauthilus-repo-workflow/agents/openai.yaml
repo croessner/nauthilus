@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nauthilus Repo Workflow"
+  short_description: "Follow Nauthilus coding and guardrail rules."
+  default_prompt: "Use $nauthilus-repo-workflow to make a scoped Nauthilus code or documentation change."

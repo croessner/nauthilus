@@ -220,3 +220,4 @@ correct, media-type-defined behavior.
   re-decoded with `UseNumber()` and re-styled. Numbers therefore retain
   their original precision, but the round-trip through JSON means struct
   field tags are honored (not raw Go field names).
+

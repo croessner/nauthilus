@@ -15,9 +15,9 @@ This document captures practical, project-specific details to build, configure, 
 - MUST: Document newly added or changed non-exported functions and methods with concise English comments that explain responsibility or non-obvious behavior.
 - MUST: Keep numbered rollout-stage terminology out of source code, tests, docs, filenames, branch names, tags, commit subjects, and commit bodies. Use domain-specific names such as `baseline`, `authority`, `identity`, or the concrete feature name instead.
 - MUST: Perform all development and editing work on the `features` branch. Never implement changes directly on another branch unless the user explicitly names an exception. Use `main` only for release integration after the intended changes have been committed and validated on `features`; do not edit code there.
-- MUST (CRITICAL, GO 1.26): ALWAYS prefix Go test commands with `GOEXPERIMENT=runtimesecret`.
+- MUST (CRITICAL, GO 1.27): ALWAYS prefix Go test commands with `GOEXPERIMENT=runtimesecret`.
     - Required form: `GOEXPERIMENT=runtimesecret go test ...`
-    - This is mandatory for every Go 1.26 test run and must never be skipped.
+    - This is mandatory for every Go 1.27 test run and must never be skipped.
 - Definition Of Done (required for every coding task):
     - [ ] Reproducer test added first for bugfixes (or explicit reason documented in PR).
     - [ ] DRY check completed; duplicate logic removed or intentionally shared.
@@ -30,7 +30,8 @@ This document captures practical, project-specific details to build, configure, 
 1. Build and configuration
 
 - Toolchain and modules
-  - Go version: the module sets go 1.25 (see go.mod). Use a recent Go 1.25 toolchain.
+  - Go version: the module sets go 1.27 (see go.mod). Use Go 1.27.0 or a newer stable Go 1.27 patch release.
+  - Lint version: local and CI guardrails require golangci-lint 2.13.1.
   - Vendor mode: the Makefile builds with -mod=vendor. Keep vendor/ in sync (go mod vendor) when updating deps.
 - Makefile targets (preferred workflow)
   - make build: builds server binary to nauthilus/bin/nauthilus with trimpath and ldflags that set main.version and main.buildTime.
@@ -58,7 +59,7 @@ This document captures practical, project-specific details to build, configure, 
 2. Testing
 
 - Running tests
-    - CRITICAL (Go 1.26): Always run tests with `GOEXPERIMENT=runtimesecret`.
+    - CRITICAL (Go 1.27): Always run tests with `GOEXPERIMENT=runtimesecret`.
   - Repository-wide unit tests (short):
       - `GOEXPERIMENT=runtimesecret make test` or `GOEXPERIMENT=runtimesecret go test -short ./...`
   - With the race detector:

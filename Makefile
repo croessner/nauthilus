@@ -17,6 +17,8 @@ GOLANGCI_NEW_FROM_REV ?= HEAD
 NAUTHILUS_CONF_DIR ?= /etc/nauthilus
 NAUTHILUS_PLUGINS_DIR ?= /usr/local/share/nauthilus/lua-plugins.d
 GOVULNCHECK ?= govulncheck
+GOLANGCI_LINT ?= golangci-lint
+GOLANGCI_LINT_VERSION ?= 2.13.1
 
 export GOEXPERIMENT := runtimesecret
 
@@ -177,6 +179,7 @@ makefile-package-scope-check: ## Verify package-wide Make targets exclude vendor
 	python3 scripts/test_makefile_package_scope.py
 
 guardrails: sync-prompts-check policy-check makefile-package-scope-check generate-vim-syntax-check generate-grpc-proto-check grpc-proto-compatibility-check generate-openapi-bindings-check ## Run mandatory local quality gates
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install it and rerun make guardrails"; exit 1; }
-	golangci-lint run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen --enable unused $(GO_PACKAGE_DIRS)
+	@command -v $(GOLANGCI_LINT) >/dev/null 2>&1 || { echo "golangci-lint $(GOLANGCI_LINT_VERSION) not found. Install it and rerun make guardrails"; exit 1; }
+	@$(GOLANGCI_LINT) version | grep -Eq 'version $(GOLANGCI_LINT_VERSION)([[:space:]]|$$)' || { echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required"; $(GOLANGCI_LINT) version; exit 1; }
+	$(GOLANGCI_LINT) run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen --enable unused $(GO_PACKAGE_DIRS)
 	go test -short $(GO_PACKAGES)

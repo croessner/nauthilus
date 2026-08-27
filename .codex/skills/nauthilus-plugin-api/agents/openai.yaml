@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nauthilus Plugin API"
+  short_description: "Design native Go plugin API boundaries."
+  default_prompt: "Use $nauthilus-plugin-api to evolve the native Go plugin API design or implementation."

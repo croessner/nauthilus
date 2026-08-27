@@ -6,11 +6,13 @@ package core
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/croessner/nauthilus/v3/server/sessionstate"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/redis/go-redis/v9"
 )
@@ -78,6 +80,29 @@ func TestCanonicalWebAuthnCeremonyIsBoundAndSingleUse(t *testing.T) {
 	indexed, err = stores.Session.Load(ctx, sessionstate.Reference{Session: session, Record: session})
 	if err != nil || len(indexed.Value.Ceremonies) != 0 {
 		t.Fatalf("ceremony anchor index after consume = %#v err=%v", indexed.Value.Ceremonies, err)
+	}
+}
+
+func TestWebAuthnSessionRoundTripPreservesTypedExtensions(t *testing.T) {
+	data := webauthn.SessionData{
+		Challenge: "opaque-challenge",
+		Extensions: protocol.SessionExtensions{
+			Requested: []string{protocol.ExtensionCredProps, protocol.ExtensionPRF},
+		},
+	}
+
+	payload, err := jsonIter.Marshal(&data)
+	if err != nil {
+		t.Fatalf("marshal WebAuthn session: %v", err)
+	}
+
+	var decoded webauthn.SessionData
+	if err = jsonIter.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("unmarshal WebAuthn session: %v", err)
+	}
+
+	if !slices.Equal(decoded.Extensions.Requested, data.Extensions.Requested) {
+		t.Fatalf("requested extensions = %#v, want %#v", decoded.Extensions.Requested, data.Extensions.Requested)
 	}
 }
 

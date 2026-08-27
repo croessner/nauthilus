@@ -1,4 +1,4 @@
-image: golang:1.25-alpine
+image: golang:1.27.0-alpine3.24
 
 variables:
   CGO_ENABLED: 0

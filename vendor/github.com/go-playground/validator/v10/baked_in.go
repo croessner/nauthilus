@@ -3510,3 +3510,4 @@ var (
 	errMethodReturnNoValues    = errors.New(`method return o values (void)`)
 	errMethodReturnInvalidType = errors.New(`method should return invalid type`)
 )
+

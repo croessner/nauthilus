@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nauthilus Auth Identity"
+  short_description: "Handle OIDC, SAML, MFA, WebAuthn, LDAP auth."
+  default_prompt: "Use $nauthilus-auth-identity to change authentication or identity-provider behavior in Nauthilus."

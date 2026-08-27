@@ -22,6 +22,7 @@ import (
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -62,5 +63,47 @@ func TestNewWebAuthnConfigCarriesAuthenticatorSelection(t *testing.T) {
 
 	if assert.NotNil(t, runtimeCfg.AuthenticatorSelection.RequireResidentKey) {
 		assert.False(t, *runtimeCfg.AuthenticatorSelection.RequireResidentKey)
+	}
+}
+
+func TestNewWebAuthnConfigUsesStrictWebAuthnPolicies(t *testing.T) {
+	idpCfg := &config.IDPSection{
+		WebAuthn: config.WebAuthn{RPDisplayName: "Nauthilus"},
+	}
+
+	tests := []struct {
+		name    string
+		rpID    string
+		origins []string
+		wantErr bool
+	}{
+		{
+			name:    "valid domain",
+			rpID:    "login.example.test",
+			origins: []string{"https://login.example.test"},
+		},
+		{
+			name:    "IP address",
+			rpID:    "127.0.0.1",
+			origins: []string{"http://127.0.0.1"},
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtimeCfg := newWebAuthnConfig(idpCfg, test.rpID, test.origins)
+
+			assert.Equal(t, protocol.UnsolicitedOutputPolicyReject, runtimeCfg.ExtensionsUnsolicitedOutputPolicy)
+
+			_, err := webauthn.New(runtimeCfg)
+			if test.wantErr {
+				assert.Error(t, err)
+
+				return
+			}
+
+			assert.NoError(t, err)
+		})
 	}
 }

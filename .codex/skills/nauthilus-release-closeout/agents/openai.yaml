@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nauthilus Release Closeout"
+  short_description: "Run guardrails, vendor sync, releases, commits."
+  default_prompt: "Use $nauthilus-release-closeout to validate, commit, push, or release Nauthilus changes."

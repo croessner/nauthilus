@@ -111,8 +111,8 @@ contrib/identity-proxy-e2e/.work/
 contrib/identity-proxy-e2e/node_modules/
 temp/*
 
-# Local Codex project skills and assistant-specific state.
-/.codex/skills/
+# Assistant-specific local state. Shared agent skills under `.codex/skills/`
+# and `.claude/skills/` are tracked on purpose.
 .cache/
 scripts/__pycache__/
 .venv-grpc-smoke/

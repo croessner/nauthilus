@@ -6,7 +6,7 @@
 [![CodeQL](https://github.com/croessner/nauthilus/actions/workflows/codeql.yml/badge.svg)](https://github.com/croessner/nauthilus/actions/workflows/codeql.yml)
 [![Docker Image](https://github.com/croessner/nauthilus/actions/workflows/docker-stable.yaml/badge.svg)](https://github.com/croessner/nauthilus/actions/workflows/docker-stable.yaml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go)](https://go.dev/)
 
 ![](static/img/logo_nauthilus.png "Logo Nauthilus")
 
@@ -75,7 +75,7 @@ Typical use cases include:
 
 ## Build and Test
 
-Requirement: Go 1.26
+Requirement: Go 1.27.0 and golangci-lint 2.13.1 for local guardrails
 
 Build the main binaries:
 

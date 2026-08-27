@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nauthilus Lua Policy"
+  short_description: "Work on Lua plugins, policy, and fixtures."
+  default_prompt: "Use $nauthilus-lua-policy to change Lua, policy, or plugin behavior in Nauthilus."
