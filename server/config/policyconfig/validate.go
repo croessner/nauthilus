@@ -48,6 +48,8 @@ const (
 	executionHostPostAction      = "host_post_action"
 	effectKindAdvice             = "advice"
 	keywordAny                   = "any"
+	keywordAll                   = "all"
+	keywordNone                  = "none"
 	keywordPlugin                = "plugin"
 	decisionDeny                 = "deny"
 	decisionNotApplicable        = "not_applicable"
@@ -1214,7 +1216,7 @@ func validateEffectParameters(parameters map[string]EffectParameterConfig, path 
 			return invalid(parameterPath, "must use a canonical parameter name")
 		}
 
-		if !validValueKind(parameter.Type) {
+		if !validValueKind(parameter.Type) || parameter.Type == staticValueKindRecords {
 			return invalid(parameterPath+".type", "must be an exact value kind")
 		}
 
@@ -1629,6 +1631,10 @@ func validatePolicyRule(rule PolicyRuleConfig, path string) error {
 
 // validateCondition requires one unambiguous logical or attribute expression.
 func validateCondition(condition ConditionConfig, path string) error {
+	if condition.Records != nil {
+		return validateRecordCondition(condition, path)
+	}
+
 	logicalForms := presentLogicalForms(condition)
 	operators := presentAttributeOperators(condition)
 
@@ -1637,6 +1643,57 @@ func validateCondition(condition ConditionConfig, path string) error {
 	}
 
 	return validateAttributeCondition(condition, path, operators)
+}
+
+// validateRecordCondition rejects mixed, nested, dynamic, and cross-record predicate shapes.
+func validateRecordCondition(condition ConditionConfig, path string) error {
+	withoutRecords := condition
+	withoutRecords.Records = nil
+
+	if recordConditionHasMixedForm(withoutRecords) {
+		return invalid(path+".records", "cannot be combined with another condition form")
+	}
+
+	records := condition.Records
+
+	if !validFact(records.Attribute) {
+		return invalid(path+".records.attribute", "must be one exact canonical records fact")
+	}
+
+	if !validRecordQuantifier(records.Quantifier) {
+		return invalid(path+".records.quantifier", "must be any, all, or none")
+	}
+
+	if !validAction(records.Field) {
+		return invalid(path+".records.field", "must be one static canonical local field name")
+	}
+
+	return validateRecordWhere(records.Where, path+".records.where")
+}
+
+// recordConditionHasMixedForm reports whether an outer record condition carries another expression form.
+func recordConditionHasMixedForm(condition ConditionConfig) bool {
+	return len(presentLogicalForms(condition)) > 0 || condition.Attribute != "" ||
+		condition.Detail != "" || len(presentAttributeOperators(condition)) > 0
+}
+
+// validRecordQuantifier reports whether value belongs to the closed flat quantifier vocabulary.
+func validRecordQuantifier(value string) bool {
+	return value == keywordAny || value == keywordAll || value == keywordNone
+}
+
+// validateRecordWhere requires exactly one flat record-local attribute operator.
+func validateRecordWhere(where ConditionConfig, path string) error {
+	if where.Records != nil || len(presentLogicalForms(where)) > 0 || where.Attribute != "" || where.Detail != "" {
+		return invalid(path, "must be one flat record-local attribute operator")
+	}
+
+	operators := presentAttributeOperators(where)
+	if len(operators) != 1 {
+		return invalid(path, "must declare exactly one record-local operator")
+	}
+
+	return nil
 }
 
 // validateLogicalCondition rejects mixed forms and validates the selected logical children.
@@ -1671,7 +1728,7 @@ func validateLogicalCondition(
 		return nil
 	case "not":
 		return validateCondition(*condition.Not, path+".not")
-	case "all":
+	case keywordAll:
 		return validateConditionChildren(condition.All, path+".all")
 	case keywordAny:
 		return validateConditionChildren(condition.Any, path+".any")
@@ -1732,7 +1789,7 @@ func presentLogicalForms(condition ConditionConfig) []string {
 	}
 
 	if condition.All != nil {
-		forms = append(forms, "all")
+		forms = append(forms, keywordAll)
 	}
 
 	if condition.Any != nil {
@@ -2610,7 +2667,7 @@ func printableASCII(value string) bool {
 // validValueKind reports whether value belongs to the compiler's closed kind set.
 func validValueKind(value string) bool {
 	switch value {
-	case valueTypeString, "boolean", "integer", "double", "strings", "bytes", "timestamp":
+	case valueTypeString, "boolean", "integer", "double", "strings", "bytes", "timestamp", "records":
 		return true
 	default:
 		return false

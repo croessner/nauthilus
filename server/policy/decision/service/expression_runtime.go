@@ -188,9 +188,85 @@ func (r *checkpointRuntime) expressionMatches(
 		return len(children) == 1 && !r.expressionMatches(namespace, children[0], facts)
 	case registry.ExpressionKindAttribute:
 		return r.attributeExpressionMatches(namespace, expression, facts)
+	case registry.ExpressionKindRecordQuantifier:
+		return r.recordExpressionMatches(namespace, expression, facts)
 	default:
 		return false
 	}
+}
+
+// recordExpressionMatches applies one flat predicate with explicit missing and empty semantics.
+func (r *checkpointRuntime) recordExpressionMatches(
+	namespace string,
+	expression registry.PolicyExpression,
+	facts decision.FactSet,
+) bool {
+	fact, exists := facts.Get(expression.FactID())
+	if !exists || fact.Value().Kind() != decision.ValueKindRecords {
+		return false
+	}
+
+	records, ok := fact.Value().Records()
+	if !ok {
+		return false
+	}
+
+	matched := 0
+	allRecords := records.Records()
+
+	for _, record := range allRecords {
+		if r.recordLocalPredicateMatches(namespace, expression, record) {
+			matched++
+		}
+	}
+
+	switch expression.Quantifier() {
+	case registry.RecordQuantifierAny:
+		return matched > 0
+	case registry.RecordQuantifierAll:
+		return matched == len(allRecords)
+	case registry.RecordQuantifierNone:
+		return matched == 0
+	default:
+		return false
+	}
+}
+
+// recordLocalPredicateMatches evaluates one exact field without cross-record state.
+func (r *checkpointRuntime) recordLocalPredicateMatches(
+	namespace string,
+	expression registry.PolicyExpression,
+	record decision.Record,
+) bool {
+	var fieldValue decision.RecordFieldValue
+
+	found := false
+
+	for _, field := range record.Fields() {
+		if field.Name() == expression.RecordField() {
+			fieldValue = field.Value()
+			found = true
+
+			break
+		}
+	}
+
+	if !found || fieldValue.Kind() != expression.RecordFieldKind() {
+		return false
+	}
+
+	value := fieldValue.Value()
+	if expression.Operator() == registry.ExpressionOperatorWithinTimeWindow {
+		return r.runtimeWithinTimeWindow(namespace, value, expression.Reference())
+	}
+
+	operands := expression.Values()
+	if expression.Reference() != "" {
+		key := policyruntime.ConditionMaterialKey(namespace, expression.Reference())
+		operands = append([]decision.Value(nil), r.conditionSets[key]...)
+	}
+
+	return matchAttributeOperator(expression.Operator(), value, operands)
 }
 
 // attributeExpressionMatches evaluates one strict typed fact predicate.

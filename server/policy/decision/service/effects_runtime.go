@@ -339,8 +339,13 @@ func (r *checkpointRuntime) prepareObligation(
 		return plannedEffect{}, projected, false, err
 	}
 
+	providerFacts, err := target.Schema().FactsForProvider(facts, definition.Provider())
+	if err != nil {
+		return plannedEffect{}, decision.EffectRequest{}, false, err
+	}
+
 	execution := effectExecution{
-		facts: facts, caller: input.request.Caller(), parameters: use.Parameters(),
+		facts: providerFacts, caller: input.request.Caller(), parameters: use.Parameters(),
 		target: target.Target(), effectID: definition.ID(), decisionID: decisionID,
 		provider: definition.Provider(), generation: input.generation, ordinal: ordinal,
 	}

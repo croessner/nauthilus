@@ -199,6 +199,10 @@ func NewEffectRequest(input EffectRequestInput) (EffectRequest, error) {
 		return EffectRequest{}, err
 	}
 
+	if valueMapContainsRecords(parameters) {
+		return EffectRequest{}, invalidResponse("effect.parameters", "record values are not permitted")
+	}
+
 	return EffectRequest{id: input.ID, parameters: parameters}, nil
 }
 
@@ -214,7 +218,18 @@ func (r EffectRequest) Parameters() ValueMap {
 
 // valid reports whether the effect request satisfies its constructor invariant.
 func (r EffectRequest) valid() bool {
-	return validQualifiedIdentity(r.id)
+	return validQualifiedIdentity(r.id) && !valueMapContainsRecords(r.parameters)
+}
+
+// valueMapContainsRecords keeps record collections outside obligation and advice parameters.
+func valueMapContainsRecords(values ValueMap) bool {
+	for _, value := range values.values {
+		if value.Kind() == ValueKindRecords {
+			return true
+		}
+	}
+
+	return false
 }
 
 // PolicyMetadata is bounded immutable selected-policy evidence.
@@ -287,6 +302,10 @@ func NewDiagnostics(entries map[string]Value) (Diagnostics, error) {
 		return Diagnostics{}, err
 	}
 
+	if valueMapContainsRecords(values) {
+		return Diagnostics{}, invalidResponse("diagnostics.entries", "record values are not permitted")
+	}
+
 	return Diagnostics{entries: values}, nil
 }
 
@@ -344,6 +363,10 @@ func NewDecisionResponse(input DecisionResponseInput) (DecisionResponse, error) 
 
 	if !validEffectRequests(input.Obligations) || !validEffectRequests(input.Advice) {
 		return DecisionResponse{}, invalidResponse("response.effects", "contains an invalid effect request")
+	}
+
+	if input.Diagnostics != nil && valueMapContainsRecords(input.Diagnostics.entries) {
+		return DecisionResponse{}, invalidResponse("response.diagnostics", "record values are not permitted")
 	}
 
 	return DecisionResponse{

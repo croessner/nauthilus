@@ -98,9 +98,15 @@ func normalizeStaticFacts(
 			sources = append(sources, decision.FactSource(configuredSource))
 		}
 
+		recordSchema, err := normalizeStaticRecordSchema(factPath+".record_schema", configuredFact.RecordSchema)
+		if err != nil {
+			return nil, err
+		}
+
 		fact, err := registry.NewFactSchema(registry.FactSchemaInput{
 			ID: configuredFact.Attribute, AllowedSources: sources,
-			Category: decision.FactCategory(configuredFact.Category), Kind: decision.ValueKind(configuredFact.Type),
+			RecordSchema: recordSchema,
+			Category:     decision.FactCategory(configuredFact.Category), Kind: decision.ValueKind(configuredFact.Type),
 			MaxLength: configuredFact.MaxLength, MaxItems: configuredFact.MaxItems, MaxBytes: configuredFact.MaxBytes,
 			Required: configuredFact.Required,
 		})
@@ -112,6 +118,42 @@ func normalizeStaticFacts(
 	}
 
 	return facts, nil
+}
+
+// normalizeStaticRecordSchema maps one optional closed record declaration into immutable registry values.
+func normalizeStaticRecordSchema(
+	path string,
+	configured *policyconfig.StaticRecordSchemaConfig,
+) (*registry.RecordSchema, error) {
+	if configured == nil {
+		return nil, nil
+	}
+
+	fields := make([]registry.RecordFieldSchema, 0, len(configured.Fields))
+	for index, configuredField := range configured.Fields {
+		field, err := registry.NewRecordFieldSchema(registry.RecordFieldSchemaInput{
+			Name: configuredField.Name, Kind: decision.ValueKind(configuredField.Type),
+			ProviderVisibility: configuredField.ProviderVisibility,
+			MaxLength:          configuredField.MaxLength, MaxItems: configuredField.MaxItems, MaxBytes: configuredField.MaxBytes,
+			Required: configuredField.Required, ExpressionVisible: configuredField.ExpressionVisible,
+		})
+		if err != nil {
+			return nil, atPath(fmt.Sprintf("%s.fields[%d]", path, index), err)
+		}
+
+		fields = append(fields, field)
+	}
+
+	schema, err := registry.NewRecordSchema(registry.RecordSchemaInput{
+		ID: configured.ID, Version: configured.Version, Fields: fields,
+		MinRecords: configured.MinRecords, MaxRecords: configured.MaxRecords,
+		MaxFields: configured.MaxFields, MaxAggregateBytes: configured.MaxAggregateBytes,
+	})
+	if err != nil {
+		return nil, atPath(path, err)
+	}
+
+	return &schema, nil
 }
 
 // validateConfiguredActivationSchemas prevents implicit empty or latest-version target schemas.

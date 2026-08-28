@@ -54,8 +54,51 @@ message StringList {
   repeated string values = 1;
 }
 
+// RecordList owns one ordered, schema-bound correlated resource collection.
+message RecordList {
+  repeated Record records = 1;
+}
+
+// Record owns ordered fields without map-induced duplicate-name ambiguity.
+message Record {
+  repeated RecordField fields = 1;
+}
+
+// RecordField binds one exact local name to one non-recursive leaf value.
+message RecordField {
+  string name = 1;
+  RecordFieldValue value = 2;
+}
+
+// RecordFieldValue carries one scalar, string-list, bytes, or timestamp member.
+message RecordFieldValue {
+  oneof kind {
+    string string = 1;
+    bool boolean = 2;
+    sint64 integer = 3;
+    double double = 4;
+    StringList strings = 5;
+    bytes bytes = 6;
+    google.protobuf.Timestamp timestamp = 7;
+  }
+}
+
 // Value carries exactly one typed public value member after protobuf normalization.
 message Value {
+  oneof kind {
+    string string = 1;
+    bool boolean = 2;
+    sint64 integer = 3;
+    double double = 4;
+    StringList strings = 5;
+    bytes bytes = 6;
+    google.protobuf.Timestamp timestamp = 7;
+    RecordList records = 8;
+  }
+}
+
+// ResponseValue carries one non-record value in diagnostics and return-only effects.
+message ResponseValue {
   oneof kind {
     string string = 1;
     bool boolean = 2;
@@ -103,16 +146,16 @@ message ValidationDetail {
 // Obligation is one return-only selected Policy obligation.
 message Obligation {
   string id = 1;
-  map<string, Value> parameters = 2;
+  map<string, ResponseValue> parameters = 2;
 }
 
 // Advice is one return-only selected Policy advice.
 message Advice {
   string id = 1;
-  map<string, Value> parameters = 2;
+  map<string, ResponseValue> parameters = 2;
 }
 
 // Diagnostics contains admitted bounded diagnostic entries.
 message Diagnostics {
-  map<string, Value> entries = 1;
+  map<string, ResponseValue> entries = 1;
 }

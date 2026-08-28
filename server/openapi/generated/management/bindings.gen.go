@@ -240,8 +240,8 @@ type OIDCSessions struct {
 
 // PolicyAdvice defines model for PolicyAdvice.
 type PolicyAdvice struct {
-	Id         string         `json:"id"`
-	Parameters PolicyValueMap `json:"parameters"`
+	Id         string                 `json:"id"`
+	Parameters PolicyResponseValueMap `json:"parameters"`
 }
 
 // PolicyDecisionRequest defines model for PolicyDecisionRequest.
@@ -274,7 +274,7 @@ type PolicyDecisionResponseEffect string
 
 // PolicyDiagnostics defines model for PolicyDiagnostics.
 type PolicyDiagnostics struct {
-	Entries PolicyValueMap `json:"entries"`
+	Entries PolicyResponseValueMap `json:"entries"`
 }
 
 // PolicyEntity defines model for PolicyEntity.
@@ -306,9 +306,59 @@ type PolicyEvaluationOptions struct {
 
 // PolicyObligation defines model for PolicyObligation.
 type PolicyObligation struct {
-	Id         string         `json:"id"`
-	Parameters PolicyValueMap `json:"parameters"`
+	Id         string                 `json:"id"`
+	Parameters PolicyResponseValueMap `json:"parameters"`
 }
+
+// PolicyRecord defines model for PolicyRecord.
+type PolicyRecord struct {
+	Fields []PolicyRecordField `json:"fields"`
+}
+
+// PolicyRecordField defines model for PolicyRecordField.
+type PolicyRecordField struct {
+	Name  string                 `json:"name"`
+	Value PolicyRecordFieldValue `json:"value"`
+}
+
+// PolicyRecordFieldValue defines model for PolicyRecordFieldValue.
+type PolicyRecordFieldValue struct {
+	Boolean   *bool      `json:"boolean,omitempty"`
+	Bytes     *[]byte    `json:"bytes,omitempty"`
+	Double    *float64   `json:"double,omitempty"`
+	Integer   *string    `json:"integer,omitempty"`
+	String    *string    `json:"string,omitempty"`
+	Strings   *[]string  `json:"strings,omitempty"`
+	Timestamp *time.Time `json:"timestamp,omitempty"`
+	union     json.RawMessage
+}
+
+// PolicyRecordFieldValue0 defines model for PolicyRecordFieldValue.0.
+type PolicyRecordFieldValue0 = interface{}
+
+// PolicyRecordFieldValue1 defines model for PolicyRecordFieldValue.1.
+type PolicyRecordFieldValue1 = interface{}
+
+// PolicyRecordFieldValue2 defines model for PolicyRecordFieldValue.2.
+type PolicyRecordFieldValue2 = interface{}
+
+// PolicyRecordFieldValue3 defines model for PolicyRecordFieldValue.3.
+type PolicyRecordFieldValue3 = interface{}
+
+// PolicyRecordFieldValue4 defines model for PolicyRecordFieldValue.4.
+type PolicyRecordFieldValue4 = interface{}
+
+// PolicyRecordFieldValue5 defines model for PolicyRecordFieldValue.5.
+type PolicyRecordFieldValue5 = interface{}
+
+// PolicyRecordFieldValue6 defines model for PolicyRecordFieldValue.6.
+type PolicyRecordFieldValue6 = interface{}
+
+// PolicyResponseValue defines model for PolicyResponseValue.
+type PolicyResponseValue = PolicyRecordFieldValue
+
+// PolicyResponseValueMap defines model for PolicyResponseValueMap.
+type PolicyResponseValueMap map[string]PolicyResponseValue
 
 // PolicyStatus defines model for PolicyStatus.
 type PolicyStatus struct {
@@ -332,13 +382,14 @@ type PolicyValidationDetail struct {
 
 // PolicyValue defines model for PolicyValue.
 type PolicyValue struct {
-	Boolean   *bool      `json:"boolean,omitempty"`
-	Bytes     *[]byte    `json:"bytes,omitempty"`
-	Double    *float64   `json:"double,omitempty"`
-	Integer   *string    `json:"integer,omitempty"`
-	String    *string    `json:"string,omitempty"`
-	Strings   *[]string  `json:"strings,omitempty"`
-	Timestamp *time.Time `json:"timestamp,omitempty"`
+	Boolean   *bool           `json:"boolean,omitempty"`
+	Bytes     *[]byte         `json:"bytes,omitempty"`
+	Double    *float64        `json:"double,omitempty"`
+	Integer   *string         `json:"integer,omitempty"`
+	Records   *[]PolicyRecord `json:"records,omitempty"`
+	String    *string         `json:"string,omitempty"`
+	Strings   *[]string       `json:"strings,omitempty"`
+	Timestamp *time.Time      `json:"timestamp,omitempty"`
 	union     json.RawMessage
 }
 
@@ -362,6 +413,9 @@ type PolicyValue5 = interface{}
 
 // PolicyValue6 defines model for PolicyValue.6.
 type PolicyValue6 = interface{}
+
+// PolicyValue7 defines model for PolicyValue.7.
+type PolicyValue7 = interface{}
 
 // PolicyValueMap defines model for PolicyValueMap.
 type PolicyValueMap map[string]PolicyValue
@@ -459,6 +513,316 @@ type EnqueueUserCacheFlushJSONRequestBody = CacheFlushRequest
 
 // EvaluatePolicyDecisionJSONRequestBody defines body for EvaluatePolicyDecision for application/json ContentType.
 type EvaluatePolicyDecisionJSONRequestBody = PolicyDecisionRequest
+
+// AsPolicyRecordFieldValue0 returns the union data inside the PolicyRecordFieldValue as a PolicyRecordFieldValue0
+func (t PolicyRecordFieldValue) AsPolicyRecordFieldValue0() (PolicyRecordFieldValue0, error) {
+	var body PolicyRecordFieldValue0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyRecordFieldValue0 overwrites any union data inside the PolicyRecordFieldValue as the provided PolicyRecordFieldValue0
+func (t *PolicyRecordFieldValue) FromPolicyRecordFieldValue0(v PolicyRecordFieldValue0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyRecordFieldValue0 performs a merge with any union data inside the PolicyRecordFieldValue, using the provided PolicyRecordFieldValue0
+func (t *PolicyRecordFieldValue) MergePolicyRecordFieldValue0(v PolicyRecordFieldValue0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyRecordFieldValue1 returns the union data inside the PolicyRecordFieldValue as a PolicyRecordFieldValue1
+func (t PolicyRecordFieldValue) AsPolicyRecordFieldValue1() (PolicyRecordFieldValue1, error) {
+	var body PolicyRecordFieldValue1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyRecordFieldValue1 overwrites any union data inside the PolicyRecordFieldValue as the provided PolicyRecordFieldValue1
+func (t *PolicyRecordFieldValue) FromPolicyRecordFieldValue1(v PolicyRecordFieldValue1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyRecordFieldValue1 performs a merge with any union data inside the PolicyRecordFieldValue, using the provided PolicyRecordFieldValue1
+func (t *PolicyRecordFieldValue) MergePolicyRecordFieldValue1(v PolicyRecordFieldValue1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyRecordFieldValue2 returns the union data inside the PolicyRecordFieldValue as a PolicyRecordFieldValue2
+func (t PolicyRecordFieldValue) AsPolicyRecordFieldValue2() (PolicyRecordFieldValue2, error) {
+	var body PolicyRecordFieldValue2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyRecordFieldValue2 overwrites any union data inside the PolicyRecordFieldValue as the provided PolicyRecordFieldValue2
+func (t *PolicyRecordFieldValue) FromPolicyRecordFieldValue2(v PolicyRecordFieldValue2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyRecordFieldValue2 performs a merge with any union data inside the PolicyRecordFieldValue, using the provided PolicyRecordFieldValue2
+func (t *PolicyRecordFieldValue) MergePolicyRecordFieldValue2(v PolicyRecordFieldValue2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyRecordFieldValue3 returns the union data inside the PolicyRecordFieldValue as a PolicyRecordFieldValue3
+func (t PolicyRecordFieldValue) AsPolicyRecordFieldValue3() (PolicyRecordFieldValue3, error) {
+	var body PolicyRecordFieldValue3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyRecordFieldValue3 overwrites any union data inside the PolicyRecordFieldValue as the provided PolicyRecordFieldValue3
+func (t *PolicyRecordFieldValue) FromPolicyRecordFieldValue3(v PolicyRecordFieldValue3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyRecordFieldValue3 performs a merge with any union data inside the PolicyRecordFieldValue, using the provided PolicyRecordFieldValue3
+func (t *PolicyRecordFieldValue) MergePolicyRecordFieldValue3(v PolicyRecordFieldValue3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyRecordFieldValue4 returns the union data inside the PolicyRecordFieldValue as a PolicyRecordFieldValue4
+func (t PolicyRecordFieldValue) AsPolicyRecordFieldValue4() (PolicyRecordFieldValue4, error) {
+	var body PolicyRecordFieldValue4
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyRecordFieldValue4 overwrites any union data inside the PolicyRecordFieldValue as the provided PolicyRecordFieldValue4
+func (t *PolicyRecordFieldValue) FromPolicyRecordFieldValue4(v PolicyRecordFieldValue4) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyRecordFieldValue4 performs a merge with any union data inside the PolicyRecordFieldValue, using the provided PolicyRecordFieldValue4
+func (t *PolicyRecordFieldValue) MergePolicyRecordFieldValue4(v PolicyRecordFieldValue4) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyRecordFieldValue5 returns the union data inside the PolicyRecordFieldValue as a PolicyRecordFieldValue5
+func (t PolicyRecordFieldValue) AsPolicyRecordFieldValue5() (PolicyRecordFieldValue5, error) {
+	var body PolicyRecordFieldValue5
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyRecordFieldValue5 overwrites any union data inside the PolicyRecordFieldValue as the provided PolicyRecordFieldValue5
+func (t *PolicyRecordFieldValue) FromPolicyRecordFieldValue5(v PolicyRecordFieldValue5) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyRecordFieldValue5 performs a merge with any union data inside the PolicyRecordFieldValue, using the provided PolicyRecordFieldValue5
+func (t *PolicyRecordFieldValue) MergePolicyRecordFieldValue5(v PolicyRecordFieldValue5) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPolicyRecordFieldValue6 returns the union data inside the PolicyRecordFieldValue as a PolicyRecordFieldValue6
+func (t PolicyRecordFieldValue) AsPolicyRecordFieldValue6() (PolicyRecordFieldValue6, error) {
+	var body PolicyRecordFieldValue6
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyRecordFieldValue6 overwrites any union data inside the PolicyRecordFieldValue as the provided PolicyRecordFieldValue6
+func (t *PolicyRecordFieldValue) FromPolicyRecordFieldValue6(v PolicyRecordFieldValue6) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyRecordFieldValue6 performs a merge with any union data inside the PolicyRecordFieldValue, using the provided PolicyRecordFieldValue6
+func (t *PolicyRecordFieldValue) MergePolicyRecordFieldValue6(v PolicyRecordFieldValue6) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t PolicyRecordFieldValue) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	object := make(map[string]json.RawMessage)
+	if t.union != nil {
+		err = json.Unmarshal(b, &object)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if t.Boolean != nil {
+		object["boolean"], err = json.Marshal(t.Boolean)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'boolean': %w", err)
+		}
+	}
+
+	if t.Bytes != nil {
+		object["bytes"], err = json.Marshal(t.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'bytes': %w", err)
+		}
+	}
+
+	if t.Double != nil {
+		object["double"], err = json.Marshal(t.Double)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'double': %w", err)
+		}
+	}
+
+	if t.Integer != nil {
+		object["integer"], err = json.Marshal(t.Integer)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'integer': %w", err)
+		}
+	}
+
+	if t.String != nil {
+		object["string"], err = json.Marshal(t.String)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'string': %w", err)
+		}
+	}
+
+	if t.Strings != nil {
+		object["strings"], err = json.Marshal(t.Strings)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'strings': %w", err)
+		}
+	}
+
+	if t.Timestamp != nil {
+		object["timestamp"], err = json.Marshal(t.Timestamp)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'timestamp': %w", err)
+		}
+	}
+	b, err = json.Marshal(object)
+	return b, err
+}
+
+func (t *PolicyRecordFieldValue) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	if err != nil {
+		return err
+	}
+	object := make(map[string]json.RawMessage)
+	err = json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["boolean"]; found {
+		err = json.Unmarshal(raw, &t.Boolean)
+		if err != nil {
+			return fmt.Errorf("error reading 'boolean': %w", err)
+		}
+	}
+
+	if raw, found := object["bytes"]; found {
+		err = json.Unmarshal(raw, &t.Bytes)
+		if err != nil {
+			return fmt.Errorf("error reading 'bytes': %w", err)
+		}
+	}
+
+	if raw, found := object["double"]; found {
+		err = json.Unmarshal(raw, &t.Double)
+		if err != nil {
+			return fmt.Errorf("error reading 'double': %w", err)
+		}
+	}
+
+	if raw, found := object["integer"]; found {
+		err = json.Unmarshal(raw, &t.Integer)
+		if err != nil {
+			return fmt.Errorf("error reading 'integer': %w", err)
+		}
+	}
+
+	if raw, found := object["string"]; found {
+		err = json.Unmarshal(raw, &t.String)
+		if err != nil {
+			return fmt.Errorf("error reading 'string': %w", err)
+		}
+	}
+
+	if raw, found := object["strings"]; found {
+		err = json.Unmarshal(raw, &t.Strings)
+		if err != nil {
+			return fmt.Errorf("error reading 'strings': %w", err)
+		}
+	}
+
+	if raw, found := object["timestamp"]; found {
+		err = json.Unmarshal(raw, &t.Timestamp)
+		if err != nil {
+			return fmt.Errorf("error reading 'timestamp': %w", err)
+		}
+	}
+
+	return err
+}
 
 // AsPolicyValue0 returns the union data inside the PolicyValue as a PolicyValue0
 func (t PolicyValue) AsPolicyValue0() (PolicyValue0, error) {
@@ -642,6 +1006,32 @@ func (t *PolicyValue) MergePolicyValue6(v PolicyValue6) error {
 	return err
 }
 
+// AsPolicyValue7 returns the union data inside the PolicyValue as a PolicyValue7
+func (t PolicyValue) AsPolicyValue7() (PolicyValue7, error) {
+	var body PolicyValue7
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPolicyValue7 overwrites any union data inside the PolicyValue as the provided PolicyValue7
+func (t *PolicyValue) FromPolicyValue7(v PolicyValue7) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePolicyValue7 performs a merge with any union data inside the PolicyValue, using the provided PolicyValue7
+func (t *PolicyValue) MergePolicyValue7(v PolicyValue7) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t PolicyValue) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	if err != nil {
@@ -680,6 +1070,13 @@ func (t PolicyValue) MarshalJSON() ([]byte, error) {
 		object["integer"], err = json.Marshal(t.Integer)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling 'integer': %w", err)
+		}
+	}
+
+	if t.Records != nil {
+		object["records"], err = json.Marshal(t.Records)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'records': %w", err)
 		}
 	}
 
@@ -743,6 +1140,13 @@ func (t *PolicyValue) UnmarshalJSON(b []byte) error {
 		err = json.Unmarshal(raw, &t.Integer)
 		if err != nil {
 			return fmt.Errorf("error reading 'integer': %w", err)
+		}
+	}
+
+	if raw, found := object["records"]; found {
+		err = json.Unmarshal(raw, &t.Records)
+		if err != nil {
+			return fmt.Errorf("error reading 'records': %w", err)
 		}
 	}
 

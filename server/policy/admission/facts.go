@@ -61,7 +61,7 @@ func buildAdmittedFacts(
 	}
 
 	for _, input := range inputs {
-		if err := appendSubmittedFacts(&facts, input, definitions, provenance); err != nil {
+		if err := appendSubmittedFacts(&facts, input, definitions, schema, provenance); err != nil {
 			return decision.FactSet{}, err
 		}
 	}
@@ -97,6 +97,7 @@ func appendSubmittedFacts(
 	facts *[]decision.Fact,
 	input submittedFactInput,
 	definitions map[string]registry.FactSchema,
+	schema policyruntime.CompiledSchema,
 	provenance decision.Provenance,
 ) error {
 	values := input.values.Values()
@@ -124,7 +125,12 @@ func appendSubmittedFacts(
 			category = definition.Category()
 		}
 
-		fact, err := decision.NewFact(id, category, values[key], provenance)
+		normalized, err := schema.NormalizeValue(id, values[key])
+		if err != nil {
+			return admissionError(ErrInvalidRequest, "submitted field violates its exact schema")
+		}
+
+		fact, err := decision.NewFact(id, category, normalized, provenance)
 		if err != nil {
 			return admissionError(ErrInvalidRequest, "submitted field cannot be constructed as a caller fact")
 		}

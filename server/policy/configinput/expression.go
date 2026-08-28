@@ -23,6 +23,8 @@ import (
 // normalizeExpression recursively maps the closed standalone condition vocabulary.
 func normalizeExpression(path string, configured policyconfig.ConditionConfig) (registry.PolicyExpression, error) {
 	switch {
+	case configured.Records != nil:
+		return normalizeRecordExpression(path+".records", *configured.Records)
 	case configured.Not != nil:
 		child, err := normalizeExpression(path+".not", *configured.Not)
 		if err != nil {
@@ -39,6 +41,27 @@ func normalizeExpression(path string, configured policyconfig.ConditionConfig) (
 	default:
 		return normalizeAttributeExpression(path, configured)
 	}
+}
+
+// normalizeRecordExpression maps one flat record-local predicate without introducing a child expression.
+func normalizeRecordExpression(
+	path string,
+	configured policyconfig.RecordConditionConfig,
+) (registry.PolicyExpression, error) {
+	where := configured.Where
+	where.Attribute = "record.field"
+
+	leaf, err := normalizeAttributeExpression(path+".where", where)
+	if err != nil {
+		return registry.PolicyExpression{}, err
+	}
+
+	return newExpression(path, registry.PolicyExpressionInput{
+		Kind: registry.ExpressionKindRecordQuantifier, FactID: configured.Attribute,
+		FactKind: decision.ValueKindRecords, Operator: leaf.Operator(), Reference: leaf.Reference(), Values: leaf.Values(),
+		RecordField: configured.Field, RecordFieldKind: leaf.FactKind(),
+		Quantifier: registry.RecordQuantifier(configured.Quantifier),
+	})
 }
 
 // normalizeExpressionChildren constructs one ordered all/any node.

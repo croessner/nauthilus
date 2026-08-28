@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -270,7 +271,15 @@ func TestPolicyHTTPGRPCAndInternalNormalizedParity(t *testing.T) {
 	client := newBufconnPolicyClient(t, service)
 	grpcRequest := &policyv1.DecisionRequest{
 		Version: "1", Target: &policyv1.Target{Namespace: "mail", Action: "submit"},
-		Attributes: map[string]*policyv1.Value{"key": {Kind: &policyv1.Value_String_{String_: "value"}}},
+		Attributes: map[string]*policyv1.Value{
+			"key": {Kind: &policyv1.Value_String_{String_: "value"}},
+			"chain": {Kind: &policyv1.Value_Records{Records: &policyv1.RecordList{Records: []*policyv1.Record{{
+				Fields: []*policyv1.RecordField{
+					{Name: "sequence", Value: &policyv1.RecordFieldValue{Kind: &policyv1.RecordFieldValue_Integer{Integer: 1}}},
+					{Name: "result", Value: &policyv1.RecordFieldValue{Kind: &policyv1.RecordFieldValue_String_{String_: "pass"}}},
+				},
+			}}}}},
+		},
 	}
 	grpcContext := metadata.NewOutgoingContext(context.Background(), metadata.Pairs(authorizationMetadataKey, "Bearer parity-token"))
 
@@ -284,7 +293,9 @@ func TestPolicyHTTPGRPCAndInternalNormalizedParity(t *testing.T) {
 	engine := gin.New()
 	policyhttp.New(service, policyhttp.DirectTLSTransportEvidence{}).Register(engine.Group("/api/v1"))
 
-	httpRequest := httptest.NewRequest(http.MethodPost, "/api/v1/policy/decisions", strings.NewReader(`{"version":"1","target":{"namespace":"mail","action":"submit"},"attributes":{"key":{"string":"value"}}}`))
+	httpRequest := httptest.NewRequest(http.MethodPost, "/api/v1/policy/decisions", strings.NewReader(
+		`{"version":"1","target":{"namespace":"mail","action":"submit"},"attributes":{"key":{"string":"value"},"chain":{"records":[{"fields":[{"name":"sequence","value":{"integer":"1"}},{"name":"result","value":{"string":"pass"}}]}]}}}`,
+	))
 	httpRequest.Header.Set("Authorization", "Bearer parity-token")
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.TLS = &tls.ConnectionState{HandshakeComplete: true}
@@ -341,6 +352,13 @@ func assertNormalizedRequestParity(t *testing.T, grpcRequest, httpRequest decisi
 	httpValue, httpOK := httpRequest.Attributes["key"].StringValue()
 	if !grpcOK || !httpOK || grpcValue != httpValue {
 		t.Fatalf("normalized attributes differ: grpc=%q/%t http=%q/%t", grpcValue, grpcOK, httpValue, httpOK)
+	}
+
+	grpcRecords, grpcRecordsOK := grpcRequest.Attributes["chain"].Records()
+	httpRecords, httpRecordsOK := httpRequest.Attributes["chain"].Records()
+
+	if !grpcRecordsOK || !httpRecordsOK || !reflect.DeepEqual(grpcRecords.Records(), httpRecords.Records()) {
+		t.Fatalf("normalized record attributes differ: grpc=%#v/%t http=%#v/%t", grpcRecords, grpcRecordsOK, httpRecords, httpRecordsOK)
 	}
 }
 

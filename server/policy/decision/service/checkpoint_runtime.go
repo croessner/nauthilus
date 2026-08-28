@@ -285,6 +285,11 @@ func (r *checkpointRuntime) Evaluate(ctx context.Context, input checkpointEvalua
 		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
 	}
 
+	facts, err = target.Schema().NormalizeFacts(facts)
+	if err != nil {
+		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
+	}
+
 	if err = validateAdmittedFacts(facts, target, checkpoint); err != nil {
 		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{facts: facts}), nil
 	}
@@ -582,8 +587,15 @@ func (r *checkpointRuntime) startProviderInstance(
 		return
 	}
 
+	providerFacts, err := target.Schema().FactsForProvider(facts, instance.Use())
+	if err != nil {
+		queueProviderStartFailure(instanceName, registry.ProviderFailureIndeterminate, results, pending, started)
+
+		return
+	}
+
 	disposition, reason, err := r.providerDisposition(target, instance, hostScheduleInput{
-		facts: facts, states: states, checkpoint: checkpoint.Name(), authenticated: authenticated,
+		facts: providerFacts, states: states, checkpoint: checkpoint.Name(), authenticated: authenticated,
 	})
 	if err != nil {
 		queueProviderStartFailure(instanceName, registry.ProviderFailureIndeterminate, results, pending, started)
@@ -631,7 +643,7 @@ func (r *checkpointRuntime) startProviderInstance(
 			instance,
 			descriptor,
 			binding,
-			facts,
+			providerFacts,
 			caller,
 		)
 	}()
@@ -876,7 +888,14 @@ func (r *checkpointRuntime) collectProvider(
 			return result
 		}
 
-		fact, factErr := decision.NewFact(output.id, output.category, output.value, provenance)
+		normalized, normalizeErr := target.Schema().NormalizeValue(output.id, output.value)
+		if normalizeErr != nil {
+			result.failure = registry.ProviderFailureIndeterminate
+
+			return result
+		}
+
+		fact, factErr := decision.NewFact(output.id, output.category, normalized, provenance)
 		if factErr != nil {
 			result.failure = registry.ProviderFailureIndeterminate
 

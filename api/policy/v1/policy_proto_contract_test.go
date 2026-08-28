@@ -26,6 +26,25 @@ func TestPolicyDescriptorRemainsUnaryAndHasNoForbiddenSurface(t *testing.T) {
 	assertNoForbiddenPolicyDescriptorSurface(t, File_api_policy_v1_policy_proto)
 }
 
+func TestPolicyResponseValueContractsExcludeRecords(t *testing.T) {
+	for _, contract := range []struct {
+		message string
+		field   string
+	}{
+		{message: "Obligation", field: "parameters"},
+		{message: "Advice", field: "parameters"},
+		{message: "Diagnostics", field: "entries"},
+	} {
+		message := File_api_policy_v1_policy_proto.Messages().ByName(protoreflect.Name(contract.message))
+		field := message.Fields().ByName(protoreflect.Name(contract.field))
+		value := field.MapValue().Message()
+
+		if value == nil || value.Name() == "Value" || value.Fields().ByName("records") != nil {
+			t.Fatalf("%s.%s admits fact-only records through %v", contract.message, contract.field, value)
+		}
+	}
+}
+
 func assertNoForbiddenPolicyDescriptorSurface(t *testing.T, file protoreflect.FileDescriptor) {
 	t.Helper()
 

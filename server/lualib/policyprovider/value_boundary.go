@@ -126,6 +126,30 @@ func buildTypedValueTable(state *lua.LState, value decision.Value) *lua.LTable {
 	case decision.ValueKindTimestamp:
 		member, _ := value.Timestamp()
 		result.RawSetString("value", lua.LString(member.UTC().Format(time.RFC3339Nano)))
+	case decision.ValueKindRecords:
+		member, _ := value.Records()
+		result.RawSetString("value", buildRecordListTable(state, member))
+	}
+
+	return result
+}
+
+// buildRecordListTable preserves record and field order through dense Lua arrays.
+func buildRecordListTable(state *lua.LState, input decision.RecordList) *lua.LTable {
+	result := state.NewTable()
+	for _, record := range input.Records() {
+		recordTable := state.NewTable()
+		fields := state.NewTable()
+
+		for _, field := range record.Fields() {
+			fieldTable := state.NewTable()
+			fieldTable.RawSetString("name", lua.LString(field.Name()))
+			fieldTable.RawSetString("value", buildTypedValueTable(state, field.Value().Value()))
+			fields.Append(fieldTable)
+		}
+
+		recordTable.RawSetString("fields", fields)
+		result.Append(recordTable)
 	}
 
 	return result
@@ -272,9 +296,96 @@ func parseTypedValue(value lua.LValue) (decision.Value, error) {
 		return parseBytesValue(member)
 	case decision.ValueKindTimestamp:
 		return parseTimestampValue(member)
+	case decision.ValueKindRecords:
+		return parseRecordsValue(member)
 	default:
 		return decision.Value{}, ErrInvalidResult
 	}
+}
+
+// parseRecordsValue reconstructs one bounded flat record collection from dense ordered arrays.
+func parseRecordsValue(value lua.LValue) (decision.Value, error) {
+	entries, err := luaArray(value, maximumCallbackListItems)
+	if err != nil {
+		return decision.Value{}, err
+	}
+
+	records := make([]decision.Record, 0, len(entries))
+	for _, entry := range entries {
+		recordTable, tableErr := closedTable(entry, "fields")
+		if tableErr != nil {
+			return decision.Value{}, tableErr
+		}
+
+		fieldEntries, arrayErr := luaArray(recordTable.RawGetString("fields"), maximumCallbackListItems)
+		if arrayErr != nil || len(fieldEntries) == 0 {
+			return decision.Value{}, ErrInvalidResult
+		}
+
+		fields := make([]decision.RecordField, 0, len(fieldEntries))
+		for _, fieldEntry := range fieldEntries {
+			field, fieldErr := parseRecordField(fieldEntry)
+			if fieldErr != nil {
+				return decision.Value{}, fieldErr
+			}
+
+			fields = append(fields, field)
+		}
+
+		record, recordErr := decision.NewRecord(fields)
+		if recordErr != nil {
+			return decision.Value{}, ErrInvalidResult
+		}
+
+		records = append(records, record)
+	}
+
+	owned, err := decision.NewRecordList(records)
+	if err != nil {
+		return decision.Value{}, ErrInvalidResult
+	}
+
+	return constructCallbackValue(decision.ValueInput{Records: &owned})
+}
+
+// parseRecordField rejects recursive value kinds before constructing one local field.
+func parseRecordField(value lua.LValue) (decision.RecordField, error) {
+	entry, err := closedTable(value, "name", "value")
+	if err != nil {
+		return decision.RecordField{}, err
+	}
+
+	name, ok := entry.RawGetString("name").(lua.LString)
+	if !ok {
+		return decision.RecordField{}, ErrInvalidResult
+	}
+
+	valueTable, err := closedTable(entry.RawGetString("value"), "kind", "value")
+	if err != nil {
+		return decision.RecordField{}, err
+	}
+
+	kind, ok := valueTable.RawGetString("kind").(lua.LString)
+	if !ok || decision.ValueKind(kind) == decision.ValueKindRecords {
+		return decision.RecordField{}, ErrInvalidResult
+	}
+
+	leaf, err := parseTypedValue(valueTable)
+	if err != nil {
+		return decision.RecordField{}, err
+	}
+
+	fieldValue, err := decision.NewRecordFieldValueFromValue(leaf)
+	if err != nil {
+		return decision.RecordField{}, ErrInvalidResult
+	}
+
+	field, err := decision.NewRecordField(string(name), fieldValue)
+	if err != nil {
+		return decision.RecordField{}, ErrInvalidResult
+	}
+
+	return field, nil
 }
 
 // parseStringValue constructs one bounded UTF-8 string member.

@@ -95,6 +95,19 @@ func (s *logicalSizer) addValue(value decision.Value) {
 
 		s.add(logicalLengthBytes)
 		s.add(len(member))
+	case decision.ValueKindRecords:
+		records, _ := value.Records()
+
+		s.add(logicalLengthBytes)
+
+		for _, record := range records.Records() {
+			s.add(logicalLengthBytes)
+
+			for _, field := range record.Fields() {
+				s.addString(field.Name())
+				s.addValue(field.Value().Value())
+			}
+		}
 	default:
 		s.total = math.MaxInt
 	}

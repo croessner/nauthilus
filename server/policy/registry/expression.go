@@ -57,7 +57,29 @@ const (
 
 	// ExpressionKindAlways matches without reading a fact.
 	ExpressionKindAlways ExpressionKind = "always"
+
+	// ExpressionKindRecordQuantifier evaluates one record-local predicate over one exact records fact.
+	ExpressionKindRecordQuantifier ExpressionKind = "record_quantifier"
 )
+
+// RecordQuantifier identifies one closed record-local collection predicate.
+type RecordQuantifier string
+
+const (
+	// RecordQuantifierAny matches when at least one record-local predicate matches.
+	RecordQuantifierAny RecordQuantifier = "any"
+
+	// RecordQuantifierAll matches when every admitted record-local predicate matches.
+	RecordQuantifierAll RecordQuantifier = "all"
+
+	// RecordQuantifierNone matches when no admitted record-local predicate matches.
+	RecordQuantifierNone RecordQuantifier = "none"
+)
+
+// IsValid reports whether the quantifier belongs to the closed vocabulary.
+func (q RecordQuantifier) IsValid() bool {
+	return q == RecordQuantifierAny || q == RecordQuantifierAll || q == RecordQuantifierNone
+}
 
 // ExpressionOperator is the closed executable source-expression vocabulary.
 type ExpressionOperator string
@@ -123,36 +145,45 @@ const (
 
 // PolicyExpressionInput carries one complete executable condition-tree node into its constructor.
 type PolicyExpressionInput struct {
-	Kind      ExpressionKind
-	FactID    string
-	FactKind  decision.ValueKind
-	Operator  ExpressionOperator
-	Reference string
-	Values    []decision.Value
-	Children  []PolicyExpression
+	Kind            ExpressionKind
+	FactID          string
+	FactKind        decision.ValueKind
+	Operator        ExpressionOperator
+	Reference       string
+	Values          []decision.Value
+	Children        []PolicyExpression
+	RecordField     string
+	RecordFieldKind decision.ValueKind
+	Quantifier      RecordQuantifier
 }
 
 // PolicyExpression is one immutable executable condition-tree node.
 type PolicyExpression struct {
-	factID    string
-	reference string
-	values    []decision.Value
-	children  []PolicyExpression
-	kind      ExpressionKind
-	operator  ExpressionOperator
-	factKind  decision.ValueKind
+	factID          string
+	reference       string
+	values          []decision.Value
+	children        []PolicyExpression
+	kind            ExpressionKind
+	operator        ExpressionOperator
+	factKind        decision.ValueKind
+	recordField     string
+	recordFieldKind decision.ValueKind
+	quantifier      RecordQuantifier
 }
 
 // NewPolicyExpression validates and deeply owns one complete executable condition tree.
 func NewPolicyExpression(input PolicyExpressionInput) (PolicyExpression, error) {
 	expression := PolicyExpression{
-		factID:    input.FactID,
-		reference: input.Reference,
-		values:    append([]decision.Value(nil), input.Values...),
-		children:  clonePolicyExpressions(input.Children),
-		kind:      inferredExpressionKind(input),
-		operator:  input.Operator,
-		factKind:  input.FactKind,
+		factID:          input.FactID,
+		reference:       input.Reference,
+		values:          append([]decision.Value(nil), input.Values...),
+		children:        clonePolicyExpressions(input.Children),
+		kind:            inferredExpressionKind(input),
+		operator:        input.Operator,
+		factKind:        input.FactKind,
+		recordField:     input.RecordField,
+		recordFieldKind: input.RecordFieldKind,
+		quantifier:      input.Quantifier,
 	}
 
 	if expression.kind == ExpressionKindAlways && expression.operator == "" {
@@ -161,6 +192,10 @@ func NewPolicyExpression(input PolicyExpressionInput) (PolicyExpression, error) 
 
 	if expression.kind == ExpressionKindAttribute && !expression.factKind.IsValid() {
 		expression.factKind = inferredFactKind(expression.operator, expression.values)
+	}
+
+	if expression.kind == ExpressionKindRecordQuantifier {
+		expression.factKind = decision.ValueKindRecords
 	}
 
 	state := expressionValidationState{}
@@ -206,9 +241,24 @@ func (e PolicyExpression) Children() []PolicyExpression {
 	return clonePolicyExpressions(e.children)
 }
 
+// RecordField returns the exact schema-owned record-local field name.
+func (e PolicyExpression) RecordField() string {
+	return e.recordField
+}
+
+// RecordFieldKind returns the exact non-recursive field kind.
+func (e PolicyExpression) RecordFieldKind() decision.ValueKind {
+	return e.recordFieldKind
+}
+
+// Quantifier returns the closed record-list quantifier.
+func (e PolicyExpression) Quantifier() RecordQuantifier {
+	return e.quantifier
+}
+
 // FactContract returns the exact leaf fact/type requirement when this node is an attribute.
 func (e PolicyExpression) FactContract() (FactContract, bool) {
-	if e.kind != ExpressionKindAttribute {
+	if e.kind != ExpressionKindAttribute && e.kind != ExpressionKindRecordQuantifier {
 		return FactContract{}, false
 	}
 
@@ -248,6 +298,7 @@ func (e PolicyExpression) clone() PolicyExpression {
 func (e PolicyExpression) Equal(other PolicyExpression) bool {
 	if e.kind != other.kind || e.factID != other.factID || e.factKind != other.factKind ||
 		e.operator != other.operator || e.reference != other.reference ||
+		e.recordField != other.recordField || e.recordFieldKind != other.recordFieldKind || e.quantifier != other.quantifier ||
 		!equalDecisionValues(e.values, other.values) || len(e.children) != len(other.children) {
 		return false
 	}
@@ -276,6 +327,10 @@ func (e PolicyExpression) validate(depth int, state *expressionValidationState) 
 
 	if e.kind == ExpressionKindAttribute {
 		return e.validateAttribute(state)
+	}
+
+	if e.kind == ExpressionKindRecordQuantifier {
+		return e.validateRecordQuantifier(state)
 	}
 
 	if err := e.validateLogical(); err != nil {
@@ -334,7 +389,8 @@ func (e PolicyExpression) validateNot() error {
 
 // validateAttribute enforces exact operator and operand compatibility.
 func (e PolicyExpression) validateAttribute(state *expressionValidationState) error {
-	if !identifier.Fact(e.factID) || !e.factKind.IsValid() || len(e.children) != 0 {
+	if !identifier.Fact(e.factID) || !e.factKind.IsValid() || len(e.children) != 0 ||
+		e.recordField != "" || e.recordFieldKind != "" || e.quantifier != "" {
 		return invalidExpression(e.factID, "attribute nodes require one canonical typed fact and no children")
 	}
 
@@ -355,14 +411,43 @@ func (e PolicyExpression) validateAttribute(state *expressionValidationState) er
 	return nil
 }
 
+// validateRecordQuantifier enforces one flat record-local predicate without child state.
+func (e PolicyExpression) validateRecordQuantifier(state *expressionValidationState) error {
+	if !identifier.Fact(e.factID) || e.factKind != decision.ValueKindRecords ||
+		!identifier.Action(e.recordField) || !e.recordFieldKind.IsValid() ||
+		e.recordFieldKind == decision.ValueKindRecords || !e.quantifier.IsValid() || len(e.children) != 0 {
+		return invalidExpression(e.factID, "record quantifiers require one exact records fact and one non-recursive local field")
+	}
+
+	if state.facts == nil {
+		state.facts = make(map[string]decision.ValueKind)
+	}
+
+	if current, exists := state.facts[e.factID]; exists && current != decision.ValueKindRecords {
+		return invalidExpression(e.factID, "fact has incompatible kinds inside one condition tree")
+	}
+
+	state.facts[e.factID] = decision.ValueKindRecords
+	leaf := e
+	leaf.kind = ExpressionKindAttribute
+	leaf.factKind = e.recordFieldKind
+	leaf.recordField = ""
+	leaf.recordFieldKind = ""
+	leaf.quantifier = ""
+
+	return validateExpressionOperands(leaf)
+}
+
 // logicalFieldsEmpty reports whether a logical node carries no leaf-only state.
 func (e PolicyExpression) logicalFieldsEmpty() bool {
-	return e.factID == "" && e.factKind == "" && e.operator == "" && e.reference == "" && len(e.values) == 0
+	return e.factID == "" && e.factKind == "" && e.operator == "" && e.reference == "" && len(e.values) == 0 &&
+		e.recordField == "" && e.recordFieldKind == "" && e.quantifier == ""
 }
 
 // logicalFieldsEmptyExceptOperator supports the immutable always marker.
 func (e PolicyExpression) logicalFieldsEmptyExceptOperator() bool {
-	return e.factID == "" && e.factKind == "" && e.reference == "" && len(e.values) == 0
+	return e.factID == "" && e.factKind == "" && e.reference == "" && len(e.values) == 0 &&
+		e.recordField == "" && e.recordFieldKind == "" && e.quantifier == ""
 }
 
 type expressionOperandValidator func(PolicyExpression) error

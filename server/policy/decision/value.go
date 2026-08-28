@@ -49,6 +49,9 @@ const (
 
 	// ValueKindTimestamp identifies an instant normalized to UTC.
 	ValueKindTimestamp ValueKind = "timestamp"
+
+	// ValueKindRecords identifies one schema-bound ordered record collection.
+	ValueKindRecords ValueKind = "records"
 )
 
 // IsValid reports whether the kind is a closed contract member.
@@ -60,7 +63,8 @@ func (k ValueKind) IsValid() bool {
 		ValueKindDouble,
 		ValueKindStrings,
 		ValueKindBytes,
-		ValueKindTimestamp:
+		ValueKindTimestamp,
+		ValueKindRecords:
 		return true
 	default:
 		return false
@@ -76,6 +80,7 @@ type ValueInput struct {
 	Timestamp *time.Time
 	Strings   []string
 	Bytes     []byte
+	Records   *RecordList
 }
 
 // Value is a deeply owned strict one-of policy value.
@@ -83,6 +88,7 @@ type Value struct {
 	stringValue string
 	strings     []string
 	bytes       []byte
+	records     RecordList
 	timestamp   time.Time
 	kind        ValueKind
 	integer     int64
@@ -111,6 +117,12 @@ func NewValue(input ValueInput) (Value, error) {
 		return Value{kind: ValueKindBytes, bytes: append([]byte(nil), input.Bytes...)}, nil
 	case input.Timestamp != nil:
 		return Value{kind: ValueKindTimestamp, timestamp: input.Timestamp.Round(0).UTC()}, nil
+	case input.Records != nil:
+		if !input.Records.valid() {
+			return Value{}, invalidValue("value.records", "must be a constructed record list")
+		}
+
+		return Value{kind: ValueKindRecords, records: input.Records.clone()}, nil
 	default:
 		return Value{}, invalidValue("value", "must contain exactly one active kind")
 	}
@@ -174,6 +186,15 @@ func (v Value) Timestamp() (time.Time, bool) {
 	return v.timestamp, v.kind == ValueKindTimestamp
 }
 
+// Records returns a deeply detached record list when active.
+func (v Value) Records() (RecordList, bool) {
+	if v.kind != ValueKindRecords {
+		return RecordList{}, false
+	}
+
+	return v.records.clone(), true
+}
+
 // Any returns a detached member in the closed policy-value vocabulary.
 func (v Value) Any() (any, bool) {
 	switch v.kind {
@@ -191,6 +212,8 @@ func (v Value) Any() (any, bool) {
 		return append([]byte(nil), v.bytes...), true
 	case ValueKindTimestamp:
 		return v.timestamp, true
+	case ValueKindRecords:
+		return v.records.clone(), true
 	default:
 		return nil, false
 	}
@@ -209,6 +232,8 @@ func (v Value) valid() bool {
 		return validUTF8Strings(v.strings)
 	case ValueKindBytes, ValueKindTimestamp:
 		return true
+	case ValueKindRecords:
+		return v.records.valid()
 	default:
 		return false
 	}
@@ -280,6 +305,7 @@ func activeValueMembers(input ValueInput) int {
 		input.Strings != nil,
 		input.Bytes != nil,
 		input.Timestamp != nil,
+		input.Records != nil,
 	} {
 		if active {
 			count++
@@ -287,6 +313,20 @@ func activeValueMembers(input ValueInput) int {
 	}
 
 	return count
+}
+
+// cloneValue deeply copies every mutable strict-value branch.
+func cloneValue(input Value) Value {
+	switch input.kind {
+	case ValueKindStrings:
+		input.strings = append([]string(nil), input.strings...)
+	case ValueKindBytes:
+		input.bytes = append([]byte(nil), input.bytes...)
+	case ValueKindRecords:
+		input.records = input.records.clone()
+	}
+
+	return input
 }
 
 // newStringValue validates UTF-8 text before construction.

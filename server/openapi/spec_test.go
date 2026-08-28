@@ -199,7 +199,7 @@ func TestManagementSpecPolicyBoundaryUsesDedicatedSecurityAndSafeSurfaces(t *tes
 
 	for _, schemaName := range []string{
 		"PolicyDecisionRequest", "PolicyDecisionResponse", "PolicyDiagnostics", "PolicyError",
-		"PolicyObligation", "PolicyAdvice", "PolicyStatus", "PolicyTarget", "PolicyValue",
+		"PolicyObligation", "PolicyAdvice", "PolicyStatus", "PolicyTarget", "PolicyValue", "PolicyResponseValue",
 	} {
 		schema, exists := doc.Components.Schemas[schemaName]
 		if !exists {
@@ -215,6 +215,22 @@ func TestManagementSpecPolicyBoundaryUsesDedicatedSecurityAndSafeSurfaces(t *tes
 
 	if format := requireSchemaProperty(t, doc, "PolicyValue", "double").Format; format != "double" {
 		t.Fatalf("PolicyValue.double format = %q, want double", format)
+	}
+
+	if _, exists := doc.Components.Schemas["PolicyResponseValue"].Properties["records"]; exists {
+		t.Fatal("PolicyResponseValue exposes fact-only records")
+	}
+
+	for schemaName, propertyName := range map[string]string{
+		"PolicyObligation":  "parameters",
+		"PolicyAdvice":      "parameters",
+		"PolicyDiagnostics": "entries",
+	} {
+		property := requireSchemaProperty(t, doc, schemaName, propertyName)
+
+		if property.Ref != "#/components/schemas/PolicyResponseValueMap" {
+			t.Fatalf("%s.%s ref = %q, want response-only values", schemaName, propertyName, property.Ref)
+		}
 	}
 }
 
@@ -460,6 +476,7 @@ type openAPISchema struct {
 type openAPIProperty struct {
 	Enum   []string `json:"enum" yaml:"enum"`
 	Format string   `json:"format" yaml:"format"`
+	Ref    string   `json:"$ref" yaml:"$ref"`
 }
 
 type openAPIServer struct {

@@ -382,14 +382,9 @@ func validateFactOutput(output FactOutputDescriptor) error {
 		return invalidDescriptor("fact output %q must be a local name without an authority prefix", output.Name)
 	}
 
-	_, err := registry.NewFactSchema(registry.FactSchemaInput{
-		ID:             "lua.provider." + output.Name,
-		AllowedSources: []decision.FactSource{decision.FactSourceLua},
-		Category:       output.Category,
-		Kind:           output.Kind,
-		MaxLength:      output.MaxLength,
-		MaxItems:       output.MaxItems,
-		MaxBytes:       output.MaxBytes,
+	_, err := registry.NewProviderFactOutput(registry.ProviderFactOutputInput{
+		ID: "lua.provider." + output.Name, Category: output.Category, Kind: output.Kind,
+		MaxLength: output.MaxLength, MaxItems: output.MaxItems, MaxBytes: output.MaxBytes,
 	})
 	if err != nil {
 		return invalidDescriptor("fact output %q has an invalid category, kind, or bounds: %v", output.Name, err)

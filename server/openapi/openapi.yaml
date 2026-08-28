@@ -1253,7 +1253,7 @@ components:
           type: string
           maxLength: 512
         parameters:
-          $ref: "#/components/schemas/PolicyValueMap"
+          $ref: "#/components/schemas/PolicyResponseValueMap"
     PolicyDecisionRequest:
       type: object
       additionalProperties: false
@@ -1306,7 +1306,7 @@ components:
       required: [entries]
       properties:
         entries:
-          $ref: "#/components/schemas/PolicyValueMap"
+          $ref: "#/components/schemas/PolicyResponseValueMap"
     PolicyEntity:
       type: object
       additionalProperties: false
@@ -1362,7 +1362,7 @@ components:
           type: string
           maxLength: 512
         parameters:
-          $ref: "#/components/schemas/PolicyValueMap"
+          $ref: "#/components/schemas/PolicyResponseValueMap"
     PolicyStatus:
       type: object
       additionalProperties: false
@@ -1409,6 +1409,7 @@ components:
         - required: [strings]
         - required: [bytes]
         - required: [timestamp]
+        - required: [records]
       properties:
         string:
           type: string
@@ -1430,6 +1431,67 @@ components:
         timestamp:
           type: string
           format: date-time
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyRecord"
+    PolicyRecord:
+      type: object
+      additionalProperties: false
+      required: [fields]
+      properties:
+        fields:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PolicyRecordField"
+    PolicyRecordField:
+      type: object
+      additionalProperties: false
+      required: [name, value]
+      properties:
+        name:
+          type: string
+        value:
+          $ref: "#/components/schemas/PolicyRecordFieldValue"
+    PolicyRecordFieldValue:
+      type: object
+      additionalProperties: false
+      oneOf:
+        - required: [string]
+        - required: [boolean]
+        - required: [integer]
+        - required: [double]
+        - required: [strings]
+        - required: [bytes]
+        - required: [timestamp]
+      properties:
+        string:
+          type: string
+        boolean:
+          type: boolean
+        integer:
+          type: string
+          pattern: "^-?(0|[1-9][0-9]*)$"
+        double:
+          type: number
+          format: double
+        strings:
+          type: array
+          items:
+            type: string
+        bytes:
+          type: string
+          contentEncoding: base64
+        timestamp:
+          type: string
+          format: date-time
+    PolicyResponseValue:
+      $ref: "#/components/schemas/PolicyRecordFieldValue"
+    PolicyResponseValueMap:
+      type: object
+      additionalProperties:
+        $ref: "#/components/schemas/PolicyResponseValue"
     PolicyValueMap:
       type: object
       additionalProperties:

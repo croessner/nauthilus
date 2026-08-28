@@ -22,6 +22,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/v3/server/config"
 	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
@@ -39,6 +40,14 @@ const (
 	pathDecisions           = "/policy/decisions"
 	noStore                 = "no-store"
 	policyHTTPTransportKind = "http"
+	policyValueString       = "string"
+	policyValueBoolean      = "boolean"
+	policyValueInteger      = "integer"
+	policyValueDouble       = "double"
+	policyValueStrings      = "strings"
+	policyValueBytes        = "bytes"
+	policyValueTimestamp    = "timestamp"
+	policyValueRecords      = "records"
 )
 
 var (
@@ -168,7 +177,14 @@ func (h *Handler) evaluate(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, responseDTO(response))
+	dto, err := responseDTO(response)
+	if err != nil {
+		h.writeError(ctx, http.StatusInternalServerError, "response_projection_failed", "policy response projection failed")
+
+		return
+	}
+
+	ctx.JSON(http.StatusOK, dto)
 	ctx.Writer.WriteHeaderNow()
 	finalization.Complete()
 }
@@ -405,9 +421,100 @@ func validatePolicyValueObject(raw json.RawMessage) error {
 
 	for member := range value {
 		switch member {
-		case "string", "boolean", "integer", "double", "strings", "bytes", "timestamp":
+		case policyValueString, policyValueBoolean, policyValueInteger, policyValueDouble,
+			policyValueStrings, policyValueBytes, policyValueTimestamp, policyValueRecords:
 		default:
 			return fmt.Errorf("unknown PolicyValue member %q", member)
+		}
+	}
+
+	if records, exists := value[policyValueRecords]; exists {
+		return validatePolicyRecords(records)
+	}
+
+	return nil
+}
+
+// validatePolicyRecords rejects empty records, duplicate field names, and unknown nested members.
+func validatePolicyRecords(raw json.RawMessage) error {
+	var records []json.RawMessage
+	if err := json.Unmarshal(raw, &records); err != nil {
+		return err
+	}
+
+	for recordIndex, rawRecord := range records {
+		var record map[string]json.RawMessage
+		if err := json.Unmarshal(rawRecord, &record); err != nil {
+			return err
+		}
+
+		if len(record) != 1 || record["fields"] == nil {
+			return fmt.Errorf("records[%d] must contain only fields", recordIndex)
+		}
+
+		var fields []json.RawMessage
+		if err := json.Unmarshal(record["fields"], &fields); err != nil {
+			return err
+		}
+
+		if len(fields) == 0 {
+			return fmt.Errorf("records[%d] must not be empty", recordIndex)
+		}
+
+		seen := make(map[string]struct{}, len(fields))
+		for fieldIndex, rawField := range fields {
+			name, value, err := validatePolicyRecordField(rawField)
+			if err != nil {
+				return fmt.Errorf("records[%d].fields[%d]: %w", recordIndex, fieldIndex, err)
+			}
+
+			if _, exists := seen[name]; exists {
+				return fmt.Errorf("records[%d].fields[%d]: duplicate field name %q", recordIndex, fieldIndex, name)
+			}
+
+			seen[name] = struct{}{}
+
+			if err = validatePolicyRecordFieldValue(value); err != nil {
+				return fmt.Errorf("records[%d].fields[%d].value: %w", recordIndex, fieldIndex, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// validatePolicyRecordField returns the exact name and raw leaf value from one closed field object.
+func validatePolicyRecordField(raw json.RawMessage) (string, json.RawMessage, error) {
+	var field map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &field); err != nil {
+		return "", nil, err
+	}
+
+	if len(field) != 2 || field["name"] == nil || field["value"] == nil {
+		return "", nil, errors.New("must contain only name and value")
+	}
+
+	var name string
+	if err := json.Unmarshal(field["name"], &name); err != nil || name == "" {
+		return "", nil, errors.New("name must be a non-empty string")
+	}
+
+	return name, field["value"], nil
+}
+
+// validatePolicyRecordFieldValue enforces the non-recursive leaf-value vocabulary.
+func validatePolicyRecordFieldValue(raw json.RawMessage) error {
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return err
+	}
+
+	for member := range value {
+		switch member {
+		case policyValueString, policyValueBoolean, policyValueInteger, policyValueDouble,
+			policyValueStrings, policyValueBytes, policyValueTimestamp:
+		default:
+			return fmt.Errorf("unknown PolicyRecordFieldValue member %q", member)
 		}
 	}
 
@@ -503,30 +610,99 @@ func valueMap(dto *management.PolicyValueMap) (map[string]decision.Value, error)
 
 // valueInput enforces exactly one public PolicyValue member after strict DTO decoding.
 func valueInput(dto management.PolicyValue) (decision.Value, error) {
-	if dto.Double != nil && (math.IsNaN(float64(*dto.Double)) || math.IsInf(float64(*dto.Double), 0)) {
-		return decision.Value{}, errors.New("non-finite double")
+	input, err := strictLeafValueInput(dto.String, dto.Boolean, dto.Double, dto.Integer, dto.Strings, dto.Bytes, dto.Timestamp)
+	if err != nil {
+		return decision.Value{}, err
 	}
 
-	input := decision.ValueInput{String: dto.String, Boolean: dto.Boolean, Strings: sliceValue(dto.Strings), Bytes: bytesValue(dto.Bytes), Timestamp: dto.Timestamp}
-	if dto.Double != nil {
-		value := float64(*dto.Double)
-		input.Double = &value
-	}
-
-	if dto.Integer != nil {
-		if !validPolicyInteger(*dto.Integer) {
-			return decision.Value{}, errors.New("invalid integer")
+	if dto.Records != nil {
+		records, recordsErr := recordListInput(*dto.Records)
+		if recordsErr != nil {
+			return decision.Value{}, recordsErr
 		}
 
-		value, err := strconv.ParseInt(*dto.Integer, 10, 64)
+		input.Records = &records
+	}
+
+	return decision.NewValue(input)
+}
+
+// strictLeafValueInput centralizes parsing for top-level and record-field leaf values.
+func strictLeafValueInput(
+	stringValue *string,
+	booleanValue *bool,
+	doubleValue *float64,
+	integerValue *string,
+	stringsValue *[]string,
+	bytesMember *[]byte,
+	timestampValue *time.Time,
+) (decision.ValueInput, error) {
+	if doubleValue != nil && (math.IsNaN(*doubleValue) || math.IsInf(*doubleValue, 0)) {
+		return decision.ValueInput{}, errors.New("non-finite double")
+	}
+
+	input := decision.ValueInput{
+		String: stringValue, Boolean: booleanValue, Double: doubleValue,
+		Strings: sliceValue(stringsValue), Bytes: bytesValue(bytesMember), Timestamp: timestampValue,
+	}
+
+	if integerValue != nil {
+		if !validPolicyInteger(*integerValue) {
+			return decision.ValueInput{}, errors.New("invalid integer")
+		}
+
+		value, err := strconv.ParseInt(*integerValue, 10, 64)
 		if err != nil {
-			return decision.Value{}, err
+			return decision.ValueInput{}, err
 		}
 
 		input.Integer = &value
 	}
 
-	return decision.NewValue(input)
+	return input, nil
+}
+
+// recordListInput constructs one ordered non-recursive internal record collection.
+func recordListInput(input []management.PolicyRecord) (decision.RecordList, error) {
+	records := make([]decision.Record, 0, len(input))
+	for _, dtoRecord := range input {
+		fields := make([]decision.RecordField, 0, len(dtoRecord.Fields))
+		for _, dtoField := range dtoRecord.Fields {
+			leaf, err := strictLeafValueInput(
+				dtoField.Value.String, dtoField.Value.Boolean, dtoField.Value.Double, dtoField.Value.Integer,
+				dtoField.Value.Strings, dtoField.Value.Bytes, dtoField.Value.Timestamp,
+			)
+			if err != nil {
+				return decision.RecordList{}, err
+			}
+
+			value, err := decision.NewValue(leaf)
+			if err != nil {
+				return decision.RecordList{}, err
+			}
+
+			fieldValue, err := decision.NewRecordFieldValueFromValue(value)
+			if err != nil {
+				return decision.RecordList{}, err
+			}
+
+			field, err := decision.NewRecordField(dtoField.Name, fieldValue)
+			if err != nil {
+				return decision.RecordList{}, err
+			}
+
+			fields = append(fields, field)
+		}
+
+		record, err := decision.NewRecord(fields)
+		if err != nil {
+			return decision.RecordList{}, err
+		}
+
+		records = append(records, record)
+	}
+
+	return decision.NewRecordList(records)
 }
 
 // validPolicyInteger matches the canonical signed-integer lexical form declared by PolicyValue.
@@ -585,26 +761,41 @@ func bytesValue(value *[]byte) []byte {
 // responseDTO projects only public DecisionResponse fields into generated management DTOs.
 //
 //nolint:wsl_v5 // The generated DTO projection retains one ordered public-surface mapping.
-func responseDTO(response decision.DecisionResponse) management.PolicyDecisionResponse {
+func responseDTO(response decision.DecisionResponse) (management.PolicyDecisionResponse, error) {
 	status := response.Status()
 	result := management.PolicyDecisionResponse{DecisionId: response.DecisionID().String(), Effect: management.PolicyDecisionResponseEffect(response.Effect()), Status: management.PolicyStatus{Code: string(status.Code()), Message: status.Message(), Retryable: status.Retryable()}}
 	if details := status.Details(); len(details) > 0 {
 		result.Status.Details = policyDetails(details)
 	}
 
-	if obligations := effectRequests(response.Obligations()); len(obligations) > 0 {
+	obligations, err := effectRequests(response.Obligations())
+	if err != nil {
+		return management.PolicyDecisionResponse{}, err
+	}
+
+	if len(obligations) > 0 {
 		result.Obligations = &obligations
 	}
 
-	if advice := adviceRequests(response.Advice()); len(advice) > 0 {
+	advice, err := adviceRequests(response.Advice())
+	if err != nil {
+		return management.PolicyDecisionResponse{}, err
+	}
+
+	if len(advice) > 0 {
 		result.Advice = &advice
 	}
 
 	if diagnostics := response.Diagnostics(); diagnostics != nil {
-		result.Diagnostics = &management.PolicyDiagnostics{Entries: management.PolicyValueMap(policyValues(diagnostics.Entries().Values()))}
+		entries, err := policyResponseValues(diagnostics.Entries().Values())
+		if err != nil {
+			return management.PolicyDecisionResponse{}, err
+		}
+
+		result.Diagnostics = &management.PolicyDiagnostics{Entries: entries}
 	}
 
-	return result
+	return result, nil
 }
 
 // policyDetails converts safe application validation details.
@@ -618,23 +809,50 @@ func policyDetails(details []decision.ValidationDetail) *[]management.PolicyVali
 }
 
 // effectRequests converts return-only effect selections.
-func effectRequests(requests []decision.EffectRequest) []management.PolicyObligation {
-	result := make([]management.PolicyObligation, 0, len(requests))
-	for _, request := range requests {
-		result = append(result, management.PolicyObligation{Id: request.ID(), Parameters: management.PolicyValueMap(policyValues(request.Parameters().Values()))})
-	}
-
-	return result
+func effectRequests(requests []decision.EffectRequest) ([]management.PolicyObligation, error) {
+	return projectResponseEffectRequests(requests, func(id string, parameters management.PolicyResponseValueMap) management.PolicyObligation {
+		return management.PolicyObligation{Id: id, Parameters: parameters}
+	})
 }
 
 // adviceRequests converts return-only advice selections without reusing obligation DTO types.
-func adviceRequests(requests []decision.EffectRequest) []management.PolicyAdvice {
-	result := make([]management.PolicyAdvice, 0, len(requests))
+func adviceRequests(requests []decision.EffectRequest) ([]management.PolicyAdvice, error) {
+	return projectResponseEffectRequests(requests, func(id string, parameters management.PolicyResponseValueMap) management.PolicyAdvice {
+		return management.PolicyAdvice{Id: id, Parameters: parameters}
+	})
+}
+
+// projectResponseEffectRequests shares record-free response parameter conversion across effect DTOs.
+func projectResponseEffectRequests[T any](
+	requests []decision.EffectRequest,
+	factory func(string, management.PolicyResponseValueMap) T,
+) ([]T, error) {
+	result := make([]T, 0, len(requests))
 	for _, request := range requests {
-		result = append(result, management.PolicyAdvice{Id: request.ID(), Parameters: management.PolicyValueMap(policyValues(request.Parameters().Values()))})
+		parameters, err := policyResponseValues(request.Parameters().Values())
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, factory(request.ID(), parameters))
 	}
 
-	return result
+	return result, nil
+}
+
+// policyResponseValues converts constructor-validated record-free values to restricted response DTOs.
+func policyResponseValues(values map[string]decision.Value) (management.PolicyResponseValueMap, error) {
+	result := make(management.PolicyResponseValueMap, len(values))
+	for key, value := range values {
+		leaf, err := decision.NewRecordFieldValueFromValue(value)
+		if err != nil {
+			return nil, err
+		}
+
+		result[key] = policyRecordFieldValue(leaf)
+	}
+
+	return result, nil
 }
 
 // policyValues converts the strict internal Value vocabulary to generated transport DTOs.
@@ -668,9 +886,62 @@ func policyValues(values map[string]decision.Value) map[string]management.Policy
 		case decision.ValueKindTimestamp:
 			timestamp, _ := value.Timestamp()
 			converted.Timestamp = &timestamp
+		case decision.ValueKindRecords:
+			records, _ := value.Records()
+			convertedRecords := policyRecords(records)
+			converted.Records = &convertedRecords
 		}
 
 		result[key] = converted
+	}
+
+	return result
+}
+
+// policyRecords projects ordered internal records without map-induced field ambiguity.
+func policyRecords(input decision.RecordList) []management.PolicyRecord {
+	records := make([]management.PolicyRecord, 0, len(input.Records()))
+	for _, record := range input.Records() {
+		fields := make([]management.PolicyRecordField, 0, len(record.Fields()))
+		for _, field := range record.Fields() {
+			fields = append(fields, management.PolicyRecordField{
+				Name: field.Name(), Value: policyRecordFieldValue(field.Value()),
+			})
+		}
+
+		records = append(records, management.PolicyRecord{Fields: fields})
+	}
+
+	return records
+}
+
+// policyRecordFieldValue maps the closed non-recursive internal leaf vocabulary.
+func policyRecordFieldValue(input decision.RecordFieldValue) management.PolicyRecordFieldValue {
+	result := management.PolicyRecordFieldValue{}
+
+	switch input.Kind() {
+	case decision.ValueKindString:
+		value, _ := input.StringValue()
+		result.String = &value
+	case decision.ValueKindBoolean:
+		value, _ := input.Boolean()
+		result.Boolean = &value
+	case decision.ValueKindInteger:
+		value, _ := input.Integer()
+		text := strconv.FormatInt(value, 10)
+		result.Integer = &text
+	case decision.ValueKindDouble:
+		value, _ := input.Double()
+		result.Double = &value
+	case decision.ValueKindStrings:
+		value, _ := input.Strings()
+		result.Strings = &value
+	case decision.ValueKindBytes:
+		value, _ := input.Bytes()
+		result.Bytes = &value
+	case decision.ValueKindTimestamp:
+		value, _ := input.Timestamp()
+		result.Timestamp = &value
 	}
 
 	return result

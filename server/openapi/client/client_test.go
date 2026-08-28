@@ -132,6 +132,38 @@ func TestSupportedPolicyClientUsesDedicatedCredentials(t *testing.T) {
 	}
 }
 
+func TestSupportedPolicyClientPreservesOrderedRecords(t *testing.T) {
+	integer := "1"
+	result := "pass"
+	attributes := management.PolicyValueMap{
+		"chain": {Records: &[]management.PolicyRecord{{Fields: []management.PolicyRecordField{
+			{Name: "result", Value: management.PolicyRecordFieldValue{String: &result}},
+			{Name: "sequence", Value: management.PolicyRecordFieldValue{Integer: &integer}},
+		}}}},
+	}
+	request := management.EvaluatePolicyDecisionJSONRequestBody{
+		Version: management.N1, Target: management.PolicyTarget{Namespace: "mail", Action: "submit"},
+		Attributes: &attributes,
+	}
+	responseBody := management.PolicyDecisionResponse{
+		DecisionId: "decision-record-client", Effect: management.Permit,
+		Status: management.PolicyStatus{Code: "permit", Message: "permitted"},
+	}
+	doer := requesttest.NewClientSmokeDoer(t, requesttest.ClientSmokeRoute{
+		Request: request, Response: responseBody, Method: http.MethodPost, Path: "/api/v1/policy/decisions", Status: http.StatusOK,
+		Headers: map[string]string{authorizationHeader: "Bearer " + supportedClientBearerToken},
+	})
+
+	client, err := NewPolicyClient(supportedClientBaseURL, PolicyBearerToken(supportedClientBearerToken), management.WithHTTPClient(doer))
+	if err != nil {
+		t.Fatalf("new record Policy client: %v", err)
+	}
+
+	if _, err = client.Evaluate(context.Background(), request); err != nil {
+		t.Fatalf("evaluate record Policy request: %v", err)
+	}
+}
+
 func TestSupportedPolicyClientUsesDedicatedBasicCredentials(t *testing.T) {
 	request := management.EvaluatePolicyDecisionJSONRequestBody{
 		Version: management.N1,

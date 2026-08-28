@@ -35,6 +35,7 @@ const (
 type FactSchemaInput struct {
 	ID             string
 	AllowedSources []decision.FactSource
+	RecordSchema   *RecordSchema
 	Category       decision.FactCategory
 	Kind           decision.ValueKind
 	MaxLength      int
@@ -47,6 +48,7 @@ type FactSchemaInput struct {
 type FactSchema struct {
 	id             string
 	allowedSources []decision.FactSource
+	recordSchema   *RecordSchema
 	category       decision.FactCategory
 	kind           decision.ValueKind
 	maxLength      int
@@ -83,9 +85,31 @@ func NewFactSchema(input FactSchemaInput) (FactSchema, error) {
 		return FactSchema{}, err
 	}
 
+	if input.Kind == decision.ValueKindRecords {
+		if input.RecordSchema == nil || !input.RecordSchema.valid() {
+			return FactSchema{}, newValidationError(
+				ErrInvalidFactSchema, "schema.facts."+input.ID+".record_schema", input.ID,
+				"records facts must own one constructor-validated closed record schema",
+			)
+		}
+	} else if input.RecordSchema != nil {
+		return FactSchema{}, newValidationError(
+			ErrInvalidFactSchema, "schema.facts."+input.ID+".record_schema", input.ID,
+			"record schema is legal only for records facts",
+		)
+	}
+
+	var recordSchema *RecordSchema
+
+	if input.RecordSchema != nil {
+		owned := input.RecordSchema.clone()
+		recordSchema = &owned
+	}
+
 	return FactSchema{
 		id:             input.ID,
 		allowedSources: append([]decision.FactSource(nil), input.AllowedSources...),
+		recordSchema:   recordSchema,
 		category:       input.Category,
 		kind:           input.Kind,
 		maxLength:      input.MaxLength,
@@ -135,9 +159,22 @@ func (f FactSchema) Required() bool {
 	return f.required
 }
 
+// RecordSchema returns the owned closed record schema when this is a records fact.
+func (f FactSchema) RecordSchema() (RecordSchema, bool) {
+	if f.recordSchema == nil {
+		return RecordSchema{}, false
+	}
+
+	return f.recordSchema.clone(), true
+}
+
 // clone returns a detached immutable fact schema value.
 func (f FactSchema) clone() FactSchema {
 	f.allowedSources = append([]decision.FactSource(nil), f.allowedSources...)
+	if f.recordSchema != nil {
+		owned := f.recordSchema.clone()
+		f.recordSchema = &owned
+	}
 
 	return f
 }
@@ -154,7 +191,11 @@ func (f FactSchema) valid() bool {
 		}
 	}
 
-	return f.maxLength >= 0 && f.maxItems >= 0 && f.maxBytes >= 0
+	if f.kind == decision.ValueKindRecords {
+		return f.recordSchema != nil && f.recordSchema.valid() && f.maxLength == 0 && f.maxItems == 0 && f.maxBytes == 0
+	}
+
+	return f.recordSchema == nil && f.maxLength >= 0 && f.maxItems >= 0 && f.maxBytes >= 0
 }
 
 // SchemaDefinition is one immutable contributed exact schema version.
@@ -656,6 +697,8 @@ func validateFactBounds(input FactSchemaInput) error {
 		return requireFactBounds(input, validStringListFactBounds(input))
 	case decision.ValueKindBytes:
 		return requireFactBounds(input, validBytesFactBounds(input))
+	case decision.ValueKindRecords:
+		return requireFactBounds(input, validScalarFactBounds(input))
 	default:
 		return requireFactBounds(input, validScalarFactBounds(input))
 	}

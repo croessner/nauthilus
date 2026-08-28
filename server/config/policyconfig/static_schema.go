@@ -16,6 +16,7 @@ const (
 	staticValueKindString  = "string"
 	staticValueKindStrings = "strings"
 	staticValueKindBytes   = "bytes"
+	staticValueKindRecords = "records"
 )
 
 // StaticTargetSchemaConfig owns exact schema versions for one namespace-local target action.
@@ -30,14 +31,38 @@ type StaticSchemaVersionConfig struct {
 
 // StaticFactSchemaConfig declares one typed and source-bounded schema fact.
 type StaticFactSchemaConfig struct {
-	Attribute      string   `mapstructure:"attribute"`
-	Category       string   `mapstructure:"category"`
-	Type           string   `mapstructure:"type"`
-	AllowedSources []string `mapstructure:"allowed_sources"`
-	MaxLength      int      `mapstructure:"max_length"`
-	MaxItems       int      `mapstructure:"max_items"`
-	MaxBytes       int      `mapstructure:"max_bytes"`
-	Required       bool     `mapstructure:"required"`
+	RecordSchema   *StaticRecordSchemaConfig `mapstructure:"record_schema"`
+	Attribute      string                    `mapstructure:"attribute"`
+	Category       string                    `mapstructure:"category"`
+	Type           string                    `mapstructure:"type"`
+	AllowedSources []string                  `mapstructure:"allowed_sources"`
+	MaxLength      int                       `mapstructure:"max_length"`
+	MaxItems       int                       `mapstructure:"max_items"`
+	MaxBytes       int                       `mapstructure:"max_bytes"`
+	Required       bool                      `mapstructure:"required"`
+}
+
+// StaticRecordSchemaConfig declares one closed ordered schema-owned record collection.
+type StaticRecordSchemaConfig struct {
+	ID                string                          `mapstructure:"id"`
+	Version           string                          `mapstructure:"version"`
+	Fields            []StaticRecordFieldSchemaConfig `mapstructure:"fields"`
+	MinRecords        int                             `mapstructure:"min_records"`
+	MaxRecords        int                             `mapstructure:"max_records"`
+	MaxFields         int                             `mapstructure:"max_fields"`
+	MaxAggregateBytes int                             `mapstructure:"max_aggregate_bytes"`
+}
+
+// StaticRecordFieldSchemaConfig declares one non-recursive record field.
+type StaticRecordFieldSchemaConfig struct {
+	Name               string   `mapstructure:"name"`
+	Type               string   `mapstructure:"type"`
+	ProviderVisibility []string `mapstructure:"provider_visibility"`
+	MaxLength          int      `mapstructure:"max_length"`
+	MaxItems           int      `mapstructure:"max_items"`
+	MaxBytes           int      `mapstructure:"max_bytes"`
+	Required           bool     `mapstructure:"required"`
+	ExpressionVisible  bool     `mapstructure:"expression_visible"`
 }
 
 // validateStaticSchemas enforces exact version, fact, source, and builtin ownership contracts.
@@ -107,9 +132,132 @@ func validateStaticFacts(facts []StaticFactSchemaConfig, path string) error {
 		if !validStaticBounds(fact) {
 			return invalid(factPath, "bounds must match the exact value kind")
 		}
+
+		if err := validateStaticRecordSchema(fact, factPath); err != nil {
+			return err
+		}
 	}
 
 	return nil
+}
+
+// validateStaticRecordSchema binds records to one closed schema and forbids it on all other kinds.
+func validateStaticRecordSchema(fact StaticFactSchemaConfig, path string) error {
+	if fact.Type != staticValueKindRecords {
+		if fact.RecordSchema != nil {
+			return invalid(path+".record_schema", "is legal only for records facts")
+		}
+
+		return nil
+	}
+
+	if fact.RecordSchema == nil {
+		return invalid(path+".record_schema", "records facts must own one closed record schema")
+	}
+
+	schema := fact.RecordSchema
+
+	if err := validateStaticRecordSchemaBounds(schema, path); err != nil {
+		return err
+	}
+
+	return validateStaticRecordFields(schema, path)
+}
+
+// validateStaticRecordSchemaBounds checks schema identity and collection-wide limits.
+func validateStaticRecordSchemaBounds(schema *StaticRecordSchemaConfig, path string) error {
+	if !validAction(schema.ID) || !validExactVersion(schema.Version) {
+		return invalid(path+".record_schema", "id and version must be exact canonical values")
+	}
+
+	if len(schema.Fields) == 0 || schema.MinRecords < 0 || schema.MaxRecords <= 0 ||
+		schema.MinRecords > schema.MaxRecords || schema.MaxFields <= 0 ||
+		schema.MaxFields > len(schema.Fields) || schema.MaxAggregateBytes <= 0 {
+		return invalid(path+".record_schema", "must declare positive bounded record, field, and aggregate limits")
+	}
+
+	return nil
+}
+
+// validateStaticRecordFields checks exact ordered fields and the required-field budget.
+func validateStaticRecordFields(schema *StaticRecordSchemaConfig, path string) error {
+	seen := make(map[string]struct{}, len(schema.Fields))
+	required := 0
+
+	for index, field := range schema.Fields {
+		fieldPath := fmt.Sprintf("%s.record_schema.fields[%d]", path, index)
+
+		if err := validateStaticRecordField(field, fieldPath, seen); err != nil {
+			return err
+		}
+
+		seen[field.Name] = struct{}{}
+
+		if field.Required {
+			required++
+		}
+	}
+
+	if required > schema.MaxFields {
+		return invalid(path+".record_schema.max_fields", "must admit every required field")
+	}
+
+	return nil
+}
+
+// validateStaticRecordField checks one non-recursive field declaration.
+func validateStaticRecordField(
+	field StaticRecordFieldSchemaConfig,
+	path string,
+	seen map[string]struct{},
+) error {
+	if !validAction(field.Name) {
+		return invalid(path+".name", "must be a canonical local field name")
+	}
+
+	if _, exists := seen[field.Name]; exists {
+		return invalid(path+".name", "must be unique within the record schema")
+	}
+
+	if !validValueKind(field.Type) || field.Type == staticValueKindRecords {
+		return invalid(path+".type", "must be a non-recursive record-field value kind")
+	}
+
+	if !validStaticRecordFieldBounds(field) {
+		return invalid(path, "bounds must match the exact record-field value kind")
+	}
+
+	return validateStaticProviderVisibility(field.ProviderVisibility, path+".provider_visibility")
+}
+
+// validateStaticProviderVisibility checks one duplicate-free exact provider allowlist.
+func validateStaticProviderVisibility(providerIDs []string, path string) error {
+	seen := make(map[string]struct{}, len(providerIDs))
+
+	for index, providerID := range providerIDs {
+		providerPath := fmt.Sprintf("%s[%d]", path, index)
+
+		if !validProviderUse(providerID) {
+			return invalid(providerPath, "must be an exact provider identity")
+		}
+
+		if _, exists := seen[providerID]; exists {
+			return invalid(providerPath, "must be unique")
+		}
+
+		seen[providerID] = struct{}{}
+	}
+
+	return nil
+}
+
+// validStaticRecordFieldBounds mirrors the registry's existing leaf-value bounds.
+func validStaticRecordFieldBounds(field StaticRecordFieldSchemaConfig) bool {
+	fact := StaticFactSchemaConfig{
+		Type: field.Type, MaxLength: field.MaxLength, MaxItems: field.MaxItems, MaxBytes: field.MaxBytes,
+	}
+
+	return validStaticBounds(fact)
 }
 
 // validateStaticSources enforces the closed collision-free source vocabulary.
@@ -147,6 +295,8 @@ func validStaticBounds(fact StaticFactSchemaConfig) bool {
 		return validStaticStringListBounds(fact)
 	case staticValueKindBytes:
 		return validStaticByteBounds(fact)
+	case staticValueKindRecords:
+		return validStaticScalarBounds(fact)
 	default:
 		return validStaticScalarBounds(fact)
 	}

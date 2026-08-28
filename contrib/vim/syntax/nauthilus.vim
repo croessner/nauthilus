@@ -279,6 +279,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsexpires_after\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsexport_contract\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsexporter\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsexpose_headers\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsexpression_visible\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsexternal_session_id\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsfact_sources\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsfacts\ze:/
@@ -286,6 +287,8 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsfailed_requests\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsfailure\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsfailure_threshold\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsfallback\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsfield\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsfields\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsfilter\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsfilter_by_oidc_cid\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsfilter_by_protocol\ze:/
@@ -406,6 +409,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmaster_user\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmatches\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_advice\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_age\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_aggregate_bytes\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_batch_size\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_bytes\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_concurrency\ze:/
@@ -414,6 +418,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_connections_per_host
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_depth\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_entries\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_facts\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_fields\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_idle_connections\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_idle_connections_per_host\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_items\ze:/
@@ -423,6 +428,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_login_attempts\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_obligations\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_parameter_bytes\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_participants\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_records\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_redirects\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_request_bytes\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_retries\ze:/
@@ -436,6 +442,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmetrics\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmfa_policy\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmiddlewares\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmin_length\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmin_records\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmin_tls_version\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmin_tolerate_percent\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmode\ze:/
@@ -521,6 +528,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsprotocols\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsprovider\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsprovider_default\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsprovider_timeout\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsprovider_visibility\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsproviders\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsproxy\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspublic\ze:/
@@ -528,6 +536,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspublic_id\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspublic_key\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspublic_key_file\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspw_history_for_known_accounts\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsquantifier\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsqueue_capacity\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsqueue_length\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsrate\ze:/
@@ -536,6 +545,8 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsrbl\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsread_only\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsread_timeout\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsreason\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsrecord_schema\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsrecords\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsrecovery\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsrecovery_threshold\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsrecursive\ze:/
@@ -715,6 +726,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsuser_code_length\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsuser_format\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsuser_verification\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsusername\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsversion\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsversions\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsvisibility\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zswait_delay\ze:/
@@ -722,6 +734,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zswebauthn\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zswebauthn_credential_field\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zswebauthn_object_class\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsweight\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zswhere\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zswithin_time_window\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zswrite_timeout\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsx_content_type_options\ze:/

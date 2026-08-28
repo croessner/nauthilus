@@ -326,14 +326,9 @@ func validateFactView(fact FactView) (int, error) {
 		return 0, ErrCallbackInput
 	}
 
-	_, err := registry.NewFactSchema(registry.FactSchemaInput{
-		ID:             fact.ID,
-		AllowedSources: []decision.FactSource{decision.FactSourceNauthilus},
-		Category:       fact.Category,
-		Kind:           fact.Value.Kind(),
-		MaxLength:      maximumLength,
-		MaxItems:       maximumItems,
-		MaxBytes:       maximumBytes,
+	_, err := registry.NewProviderFactOutput(registry.ProviderFactOutputInput{
+		ID: fact.ID, Category: fact.Category, Kind: fact.Value.Kind(),
+		MaxLength: maximumLength, MaxItems: maximumItems, MaxBytes: maximumBytes,
 	})
 	if err != nil {
 		return 0, ErrCallbackInput
@@ -540,6 +535,30 @@ func strictValueBounds(value decision.Value) (int, int, int, int, bool) {
 		_, ok := value.Timestamp()
 
 		return 0, 0, 0, 16, ok
+	case decision.ValueKindRecords:
+		records, ok := value.Records()
+		if !ok || len(records.Records()) > maximumCallbackListItems {
+			return 0, 0, 0, 0, false
+		}
+
+		totalBytes := 0
+
+		for _, record := range records.Records() {
+			if len(record.Fields()) > maximumCallbackListItems {
+				return 0, 0, 0, 0, false
+			}
+
+			for _, field := range record.Fields() {
+				_, _, _, memberBytes, memberOK := strictValueBounds(field.Value().Value())
+				if !memberOK || len(field.Name())+memberBytes > maximumCallbackInputBytes-totalBytes {
+					return 0, 0, 0, 0, false
+				}
+
+				totalBytes += len(field.Name()) + memberBytes
+			}
+		}
+
+		return 0, 0, 0, totalBytes, true
 	default:
 		return 0, 0, 0, 0, false
 	}

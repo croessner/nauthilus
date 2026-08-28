@@ -684,6 +684,15 @@ type TargetCatalog struct {
 // NewTargetCatalog validates and deeply owns activated target records.
 func NewTargetCatalog(records []TargetCatalogRecord, policySetGroups ...[]registry.PolicySetDefinition) (*TargetCatalog, error) {
 	targets := make(map[string]CompiledTarget, len(records))
+	schemaDefinitions := make([]registry.SchemaDefinition, 0, len(records))
+
+	for _, record := range records {
+		schemaDefinitions = append(schemaDefinitions, record.Schema)
+	}
+
+	if err := registry.ValidateRecordSchemaIdentities(schemaDefinitions); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidCompiledTarget, err)
+	}
 
 	policySets, err := policySetIndex(policySetGroups)
 	if err != nil {
@@ -2433,6 +2442,15 @@ func validateCompiledFactBounds(definition registry.FactSchema, value decision.V
 		bytesValue, _ := value.Bytes()
 		if len(bytesValue) > definition.MaxBytes() {
 			return fmt.Errorf("bytes exceed maximum size %d", definition.MaxBytes())
+		}
+	case decision.ValueKindRecords:
+		recordSchema, exists := definition.RecordSchema()
+		if !exists {
+			return fmt.Errorf("records fact has no closed record schema")
+		}
+
+		if _, err := normalizeRecordValue(recordSchema, value); err != nil {
+			return err
 		}
 	}
 

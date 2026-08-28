@@ -231,7 +231,7 @@ func validateDecisionEffectParameters(parameters []DecisionEffectParameterDescri
 
 // validateDecisionEffectParameter checks one typed bounded parameter declaration.
 func validateDecisionEffectParameter(parameter DecisionEffectParameterDescriptor, field string) error {
-	if !validDecisionAction(parameter.Name) || !parameter.Kind.IsValid() {
+	if !validDecisionAction(parameter.Name) || !parameter.Kind.IsValid() || parameter.Kind == DecisionValueKindRecords {
 		return invalidDecisionContract(field, "contains an invalid parameter name or kind")
 	}
 
@@ -343,7 +343,8 @@ func validDecisionValueBounds(kind DecisionValueKind, maxLength int, maxItems in
 	case DecisionValueKindBoolean,
 		DecisionValueKindInteger,
 		DecisionValueKindDouble,
-		DecisionValueKindTimestamp:
+		DecisionValueKindTimestamp,
+		DecisionValueKindRecords:
 		return validDecisionScalarBounds(maxLength, maxItems, maxBytes)
 	default:
 		return false

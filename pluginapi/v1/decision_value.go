@@ -46,6 +46,9 @@ const (
 
 	// DecisionValueKindTimestamp identifies an instant normalized to UTC.
 	DecisionValueKindTimestamp DecisionValueKind = "timestamp"
+
+	// DecisionValueKindRecords identifies one schema-bound ordered record collection.
+	DecisionValueKindRecords DecisionValueKind = "records"
 )
 
 // IsValid reports whether the kind belongs to the closed value vocabulary.
@@ -57,7 +60,8 @@ func (k DecisionValueKind) IsValid() bool {
 		DecisionValueKindDouble,
 		DecisionValueKindStrings,
 		DecisionValueKindBytes,
-		DecisionValueKindTimestamp:
+		DecisionValueKindTimestamp,
+		DecisionValueKindRecords:
 		return true
 	default:
 		return false
@@ -73,6 +77,7 @@ type DecisionValueInput struct {
 	Timestamp *time.Time
 	Strings   []string
 	Bytes     []byte
+	Records   *DecisionRecordList
 }
 
 // DecisionValue is a deeply owned strict one-of value.
@@ -80,6 +85,7 @@ type DecisionValue struct {
 	stringValue string
 	strings     []string
 	bytes       []byte
+	records     DecisionRecordList
 	timestamp   time.Time
 	kind        DecisionValueKind
 	integer     int64
@@ -108,6 +114,12 @@ func NewDecisionValue(input DecisionValueInput) (DecisionValue, error) {
 		return DecisionValue{kind: DecisionValueKindBytes, bytes: append([]byte(nil), input.Bytes...)}, nil
 	case input.Timestamp != nil:
 		return DecisionValue{kind: DecisionValueKindTimestamp, timestamp: input.Timestamp.Round(0).UTC()}, nil
+	case input.Records != nil:
+		if !input.Records.valid() {
+			return DecisionValue{}, invalidDecisionContract("value.records", "must be a constructed record list")
+		}
+
+		return DecisionValue{kind: DecisionValueKindRecords, records: input.Records.clone()}, nil
 	default:
 		return DecisionValue{}, invalidDecisionContract("value", "must contain exactly one active kind")
 	}
@@ -161,6 +173,15 @@ func (v DecisionValue) Timestamp() (time.Time, bool) {
 	return v.timestamp, v.kind == DecisionValueKindTimestamp
 }
 
+// Records returns a deeply detached record collection when active.
+func (v DecisionValue) Records() (DecisionRecordList, bool) {
+	if v.kind != DecisionValueKindRecords {
+		return DecisionRecordList{}, false
+	}
+
+	return v.records.clone(), true
+}
+
 // Any returns one detached member in the closed policy-value vocabulary.
 func (v DecisionValue) Any() (any, bool) {
 	switch v.kind {
@@ -178,6 +199,8 @@ func (v DecisionValue) Any() (any, bool) {
 		return append([]byte(nil), v.bytes...), true
 	case DecisionValueKindTimestamp:
 		return v.timestamp, true
+	case DecisionValueKindRecords:
+		return v.records.clone(), true
 	default:
 		return nil, false
 	}
@@ -196,6 +219,8 @@ func (v DecisionValue) valid() bool {
 		return validDecisionUTF8Strings(v.strings)
 	case DecisionValueKindBytes, DecisionValueKindTimestamp:
 		return true
+	case DecisionValueKindRecords:
+		return v.records.valid()
 	default:
 		return false
 	}
@@ -213,6 +238,7 @@ func activeDecisionValueMembers(input DecisionValueInput) int {
 		input.Strings != nil,
 		input.Bytes != nil,
 		input.Timestamp != nil,
+		input.Records != nil,
 	} {
 		if active {
 			count++
@@ -220,6 +246,20 @@ func activeDecisionValueMembers(input DecisionValueInput) int {
 	}
 
 	return count
+}
+
+// cloneDecisionValue deeply copies every mutable public strict-value branch.
+func cloneDecisionValue(input DecisionValue) DecisionValue {
+	switch input.kind {
+	case DecisionValueKindStrings:
+		input.strings = append([]string(nil), input.strings...)
+	case DecisionValueKindBytes:
+		input.bytes = append([]byte(nil), input.bytes...)
+	case DecisionValueKindRecords:
+		input.records = input.records.clone()
+	}
+
+	return input
 }
 
 // newDecisionStringValue validates UTF-8 text before construction.

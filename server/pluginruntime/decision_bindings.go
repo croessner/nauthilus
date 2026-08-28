@@ -839,6 +839,15 @@ func nativeDecisionParameters(input decision.ValueMap) (map[string]pluginapi.Dec
 
 // pluginDecisionValue translates one internal strict value through the public constructor.
 func pluginDecisionValue(input decision.Value) (pluginapi.DecisionValue, error) {
+	if records, ok := input.Records(); ok {
+		converted, err := pluginDecisionRecordList(records)
+		if err != nil {
+			return pluginapi.DecisionValue{}, errDecisionProviderContract
+		}
+
+		return pluginapi.NewDecisionValue(pluginapi.DecisionValueInput{Records: &converted})
+	}
+
 	member, present := input.Any()
 
 	projection, err := newNativeDecisionValueProjection(member, present)
@@ -851,6 +860,15 @@ func pluginDecisionValue(input decision.Value) (pluginapi.DecisionValue, error) 
 
 // nativeDecisionValue translates one public strict value through the internal constructor.
 func nativeDecisionValue(input pluginapi.DecisionValue) (decision.Value, error) {
+	if records, ok := input.Records(); ok {
+		converted, err := nativeDecisionRecordList(records)
+		if err != nil {
+			return decision.Value{}, errDecisionProviderContract
+		}
+
+		return decision.NewValue(decision.ValueInput{Records: &converted})
+	}
+
 	member, present := input.Any()
 
 	projection, err := newNativeDecisionValueProjection(member, present)
@@ -859,6 +877,102 @@ func nativeDecisionValue(input pluginapi.DecisionValue) (decision.Value, error) 
 	}
 
 	return projection.nativeValue()
+}
+
+// pluginDecisionRecordList converts one internal record collection through public constructors.
+func pluginDecisionRecordList(input decision.RecordList) (pluginapi.DecisionRecordList, error) {
+	return convertDecisionRecordList(
+		input.Records(),
+		func(record decision.Record) []decision.RecordField { return record.Fields() },
+		pluginDecisionRecordField,
+		pluginapi.NewDecisionRecord,
+		pluginapi.NewDecisionRecordList,
+	)
+}
+
+// nativeDecisionRecordList converts one public record collection through internal constructors.
+func nativeDecisionRecordList(input pluginapi.DecisionRecordList) (decision.RecordList, error) {
+	return convertDecisionRecordList(
+		input.Records(),
+		func(record pluginapi.DecisionRecord) []pluginapi.DecisionRecordField { return record.Fields() },
+		nativeDecisionRecordField,
+		decision.NewRecord,
+		decision.NewRecordList,
+	)
+}
+
+// pluginDecisionRecordField converts one internal field through the public leaf constructors.
+func pluginDecisionRecordField(input decision.RecordField) (pluginapi.DecisionRecordField, error) {
+	leaf, err := pluginDecisionValue(input.Value().Value())
+	if err != nil {
+		return pluginapi.DecisionRecordField{}, err
+	}
+
+	value, err := pluginapi.NewDecisionRecordFieldValue(leaf)
+	if err != nil {
+		return pluginapi.DecisionRecordField{}, err
+	}
+
+	return pluginapi.NewDecisionRecordField(input.Name(), value)
+}
+
+// nativeDecisionRecordField converts one public field through the internal leaf constructors.
+func nativeDecisionRecordField(input pluginapi.DecisionRecordField) (decision.RecordField, error) {
+	leaf, err := nativeDecisionValue(input.Value().Value())
+	if err != nil {
+		return decision.RecordField{}, err
+	}
+
+	value, err := decision.NewRecordFieldValueFromValue(leaf)
+	if err != nil {
+		return decision.RecordField{}, err
+	}
+
+	return decision.NewRecordField(input.Name(), value)
+}
+
+// convertDecisionRecordList shares ordered record traversal across both native boundary directions.
+func convertDecisionRecordList[
+	SourceRecord any,
+	SourceField any,
+	TargetField any,
+	TargetRecord any,
+	TargetList any,
+](
+	sourceRecords []SourceRecord,
+	fieldsFor func(SourceRecord) []SourceField,
+	convertField func(SourceField) (TargetField, error),
+	newRecord func([]TargetField) (TargetRecord, error),
+	newList func([]TargetRecord) (TargetList, error),
+) (TargetList, error) {
+	records := make([]TargetRecord, 0, len(sourceRecords))
+
+	for _, sourceRecord := range sourceRecords {
+		sourceFields := fieldsFor(sourceRecord)
+		fields := make([]TargetField, 0, len(sourceFields))
+
+		for _, sourceField := range sourceFields {
+			field, err := convertField(sourceField)
+			if err != nil {
+				var zero TargetList
+
+				return zero, err
+			}
+
+			fields = append(fields, field)
+		}
+
+		record, err := newRecord(fields)
+		if err != nil {
+			var zero TargetList
+
+			return zero, err
+		}
+
+		records = append(records, record)
+	}
+
+	return newList(records)
 }
 
 // newNativeDecisionValueProjection normalizes one closed strict-value member for either boundary constructor.

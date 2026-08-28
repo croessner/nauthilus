@@ -352,29 +352,38 @@ type PolicyRuleConfig struct {
 
 // ConditionConfig is the standalone recursive policy condition tree.
 type ConditionConfig struct {
-	Not              *ConditionConfig  `mapstructure:"not"`
-	Always           *bool             `mapstructure:"always"`
-	Attribute        string            `mapstructure:"attribute"`
-	Detail           string            `mapstructure:"detail"`
-	Matches          string            `mapstructure:"matches"`
-	CIDRContains     string            `mapstructure:"cidr_contains"`
-	WithinTimeWindow string            `mapstructure:"within_time_window"`
-	Is               any               `mapstructure:"is"`
-	Eq               any               `mapstructure:"eq"`
-	Ne               any               `mapstructure:"ne"`
-	In               any               `mapstructure:"in"`
-	NotIn            any               `mapstructure:"not_in"`
-	Exists           *bool             `mapstructure:"exists"`
-	Contains         any               `mapstructure:"contains"`
-	ContainsAny      []any             `mapstructure:"contains_any"`
-	ContainsAll      []any             `mapstructure:"contains_all"`
-	ContainsNone     []any             `mapstructure:"contains_none"`
-	GT               any               `mapstructure:"gt"`
-	GTE              any               `mapstructure:"gte"`
-	LT               any               `mapstructure:"lt"`
-	LTE              any               `mapstructure:"lte"`
-	All              []ConditionConfig `mapstructure:"all"`
-	Any              []ConditionConfig `mapstructure:"any"`
+	Not              *ConditionConfig       `mapstructure:"not"`
+	Records          *RecordConditionConfig `mapstructure:"records"`
+	Always           *bool                  `mapstructure:"always"`
+	Attribute        string                 `mapstructure:"attribute"`
+	Detail           string                 `mapstructure:"detail"`
+	Matches          string                 `mapstructure:"matches"`
+	CIDRContains     string                 `mapstructure:"cidr_contains"`
+	WithinTimeWindow string                 `mapstructure:"within_time_window"`
+	Is               any                    `mapstructure:"is"`
+	Eq               any                    `mapstructure:"eq"`
+	Ne               any                    `mapstructure:"ne"`
+	In               any                    `mapstructure:"in"`
+	NotIn            any                    `mapstructure:"not_in"`
+	Exists           *bool                  `mapstructure:"exists"`
+	Contains         any                    `mapstructure:"contains"`
+	ContainsAny      []any                  `mapstructure:"contains_any"`
+	ContainsAll      []any                  `mapstructure:"contains_all"`
+	ContainsNone     []any                  `mapstructure:"contains_none"`
+	GT               any                    `mapstructure:"gt"`
+	GTE              any                    `mapstructure:"gte"`
+	LT               any                    `mapstructure:"lt"`
+	LTE              any                    `mapstructure:"lte"`
+	All              []ConditionConfig      `mapstructure:"all"`
+	Any              []ConditionConfig      `mapstructure:"any"`
+}
+
+// RecordConditionConfig declares one flat predicate over one exact records fact.
+type RecordConditionConfig struct {
+	Attribute  string          `mapstructure:"attribute"`
+	Quantifier string          `mapstructure:"quantifier"`
+	Field      string          `mapstructure:"field"`
+	Where      ConditionConfig `mapstructure:"where"`
 }
 
 // ThenConfig declares the selected decision, public response markers, and effects.

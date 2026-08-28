@@ -424,6 +424,15 @@ func compileActivatedRecords(
 
 // validateCatalogDefinitions cross-validates global imports, exports, and effect bindings.
 func validateCatalogDefinitions(definitions collectedCatalogDefinitions) error {
+	schemaDefinitions := make([]registry.SchemaDefinition, 0, len(definitions.schemas))
+	for _, identity := range sortedMapKeys(definitions.schemas) {
+		schemaDefinitions = append(schemaDefinitions, definitions.schemas[identity].definition)
+	}
+
+	if err := registry.ValidateRecordSchemaIdentities(schemaDefinitions); err != nil {
+		return err
+	}
+
 	if err := validatePolicySetImportGraph(definitions.policySets); err != nil {
 		return err
 	}
@@ -1084,6 +1093,10 @@ func validatePolicyRuleTarget(
 		}
 	}
 
+	if err := validateRecordExpressionFields(rule.Expression(), facts); err != nil {
+		return fmt.Errorf("%w: set %s rule %s: %v", ErrPolicyRuleFactMismatch, set.ID().String(), rule.Name(), err)
+	}
+
 	for _, providerID := range rule.RequiredProviders() {
 		if !slices.Contains(checkpointProviders, providerID) {
 			return fmt.Errorf(
@@ -1101,6 +1114,37 @@ func validatePolicyRuleTarget(
 	}
 
 	return validateRuleEffectUses(set, rule, target, rule.Advice(), registry.EffectKindAdvice, effects, usedEffects)
+}
+
+// validateRecordExpressionFields binds every record-local predicate to one visible exact schema field.
+func validateRecordExpressionFields(
+	expression registry.PolicyExpression,
+	facts map[string]registry.FactSchema,
+) error {
+	if expression.Kind() == registry.ExpressionKindRecordQuantifier {
+		fact, exists := facts[expression.FactID()]
+		if !exists || fact.Kind() != decision.ValueKindRecords {
+			return fmt.Errorf("fact %s is not a records fact", expression.FactID())
+		}
+
+		recordSchema, exists := fact.RecordSchema()
+		if !exists {
+			return fmt.Errorf("fact %s has no closed record schema", expression.FactID())
+		}
+
+		field, exists := recordSchema.LookupField(expression.RecordField())
+		if !exists || !field.ExpressionVisible() || field.Kind() != expression.RecordFieldKind() {
+			return fmt.Errorf("fact %s field %s is absent, hidden, or has an incompatible kind", expression.FactID(), expression.RecordField())
+		}
+	}
+
+	for _, child := range expression.Children() {
+		if err := validateRecordExpressionFields(child, facts); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // validateRuleEffectUses resolves one ordered obligation or advice selection class.

@@ -452,6 +452,312 @@ func (x *StringList) GetValues() []string {
 	return nil
 }
 
+// RecordList owns one ordered, schema-bound correlated resource collection.
+type RecordList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Records       []*Record              `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecordList) Reset() {
+	*x = RecordList{}
+	mi := &file_api_policy_v1_policy_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecordList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecordList) ProtoMessage() {}
+
+func (x *RecordList) ProtoReflect() protoreflect.Message {
+	mi := &file_api_policy_v1_policy_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecordList.ProtoReflect.Descriptor instead.
+func (*RecordList) Descriptor() ([]byte, []int) {
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *RecordList) GetRecords() []*Record {
+	if x != nil {
+		return x.Records
+	}
+	return nil
+}
+
+// Record owns ordered fields without map-induced duplicate-name ambiguity.
+type Record struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Fields        []*RecordField         `protobuf:"bytes,1,rep,name=fields,proto3" json:"fields,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Record) Reset() {
+	*x = Record{}
+	mi := &file_api_policy_v1_policy_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Record) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Record) ProtoMessage() {}
+
+func (x *Record) ProtoReflect() protoreflect.Message {
+	mi := &file_api_policy_v1_policy_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Record.ProtoReflect.Descriptor instead.
+func (*Record) Descriptor() ([]byte, []int) {
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *Record) GetFields() []*RecordField {
+	if x != nil {
+		return x.Fields
+	}
+	return nil
+}
+
+// RecordField binds one exact local name to one non-recursive leaf value.
+type RecordField struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Value         *RecordFieldValue      `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecordField) Reset() {
+	*x = RecordField{}
+	mi := &file_api_policy_v1_policy_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecordField) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecordField) ProtoMessage() {}
+
+func (x *RecordField) ProtoReflect() protoreflect.Message {
+	mi := &file_api_policy_v1_policy_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecordField.ProtoReflect.Descriptor instead.
+func (*RecordField) Descriptor() ([]byte, []int) {
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *RecordField) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *RecordField) GetValue() *RecordFieldValue {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+// RecordFieldValue carries one scalar, string-list, bytes, or timestamp member.
+type RecordFieldValue struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Kind:
+	//
+	//	*RecordFieldValue_String_
+	//	*RecordFieldValue_Boolean
+	//	*RecordFieldValue_Integer
+	//	*RecordFieldValue_Double
+	//	*RecordFieldValue_Strings
+	//	*RecordFieldValue_Bytes
+	//	*RecordFieldValue_Timestamp
+	Kind          isRecordFieldValue_Kind `protobuf_oneof:"kind"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecordFieldValue) Reset() {
+	*x = RecordFieldValue{}
+	mi := &file_api_policy_v1_policy_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecordFieldValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecordFieldValue) ProtoMessage() {}
+
+func (x *RecordFieldValue) ProtoReflect() protoreflect.Message {
+	mi := &file_api_policy_v1_policy_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecordFieldValue.ProtoReflect.Descriptor instead.
+func (*RecordFieldValue) Descriptor() ([]byte, []int) {
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *RecordFieldValue) GetKind() isRecordFieldValue_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return nil
+}
+
+func (x *RecordFieldValue) GetString_() string {
+	if x != nil {
+		if x, ok := x.Kind.(*RecordFieldValue_String_); ok {
+			return x.String_
+		}
+	}
+	return ""
+}
+
+func (x *RecordFieldValue) GetBoolean() bool {
+	if x != nil {
+		if x, ok := x.Kind.(*RecordFieldValue_Boolean); ok {
+			return x.Boolean
+		}
+	}
+	return false
+}
+
+func (x *RecordFieldValue) GetInteger() int64 {
+	if x != nil {
+		if x, ok := x.Kind.(*RecordFieldValue_Integer); ok {
+			return x.Integer
+		}
+	}
+	return 0
+}
+
+func (x *RecordFieldValue) GetDouble() float64 {
+	if x != nil {
+		if x, ok := x.Kind.(*RecordFieldValue_Double); ok {
+			return x.Double
+		}
+	}
+	return 0
+}
+
+func (x *RecordFieldValue) GetStrings() *StringList {
+	if x != nil {
+		if x, ok := x.Kind.(*RecordFieldValue_Strings); ok {
+			return x.Strings
+		}
+	}
+	return nil
+}
+
+func (x *RecordFieldValue) GetBytes() []byte {
+	if x != nil {
+		if x, ok := x.Kind.(*RecordFieldValue_Bytes); ok {
+			return x.Bytes
+		}
+	}
+	return nil
+}
+
+func (x *RecordFieldValue) GetTimestamp() *timestamppb.Timestamp {
+	if x != nil {
+		if x, ok := x.Kind.(*RecordFieldValue_Timestamp); ok {
+			return x.Timestamp
+		}
+	}
+	return nil
+}
+
+type isRecordFieldValue_Kind interface {
+	isRecordFieldValue_Kind()
+}
+
+type RecordFieldValue_String_ struct {
+	String_ string `protobuf:"bytes,1,opt,name=string,proto3,oneof"`
+}
+
+type RecordFieldValue_Boolean struct {
+	Boolean bool `protobuf:"varint,2,opt,name=boolean,proto3,oneof"`
+}
+
+type RecordFieldValue_Integer struct {
+	Integer int64 `protobuf:"zigzag64,3,opt,name=integer,proto3,oneof"`
+}
+
+type RecordFieldValue_Double struct {
+	Double float64 `protobuf:"fixed64,4,opt,name=double,proto3,oneof"`
+}
+
+type RecordFieldValue_Strings struct {
+	Strings *StringList `protobuf:"bytes,5,opt,name=strings,proto3,oneof"`
+}
+
+type RecordFieldValue_Bytes struct {
+	Bytes []byte `protobuf:"bytes,6,opt,name=bytes,proto3,oneof"`
+}
+
+type RecordFieldValue_Timestamp struct {
+	Timestamp *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=timestamp,proto3,oneof"`
+}
+
+func (*RecordFieldValue_String_) isRecordFieldValue_Kind() {}
+
+func (*RecordFieldValue_Boolean) isRecordFieldValue_Kind() {}
+
+func (*RecordFieldValue_Integer) isRecordFieldValue_Kind() {}
+
+func (*RecordFieldValue_Double) isRecordFieldValue_Kind() {}
+
+func (*RecordFieldValue_Strings) isRecordFieldValue_Kind() {}
+
+func (*RecordFieldValue_Bytes) isRecordFieldValue_Kind() {}
+
+func (*RecordFieldValue_Timestamp) isRecordFieldValue_Kind() {}
+
 // Value carries exactly one typed public value member after protobuf normalization.
 type Value struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -464,6 +770,7 @@ type Value struct {
 	//	*Value_Strings
 	//	*Value_Bytes
 	//	*Value_Timestamp
+	//	*Value_Records
 	Kind          isValue_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -471,7 +778,7 @@ type Value struct {
 
 func (x *Value) Reset() {
 	*x = Value{}
-	mi := &file_api_policy_v1_policy_proto_msgTypes[6]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -483,7 +790,7 @@ func (x *Value) String() string {
 func (*Value) ProtoMessage() {}
 
 func (x *Value) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policy_v1_policy_proto_msgTypes[6]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -496,7 +803,7 @@ func (x *Value) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Value.ProtoReflect.Descriptor instead.
 func (*Value) Descriptor() ([]byte, []int) {
-	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{6}
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Value) GetKind() isValue_Kind {
@@ -569,6 +876,15 @@ func (x *Value) GetTimestamp() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Value) GetRecords() *RecordList {
+	if x != nil {
+		if x, ok := x.Kind.(*Value_Records); ok {
+			return x.Records
+		}
+	}
+	return nil
+}
+
 type isValue_Kind interface {
 	isValue_Kind()
 }
@@ -601,6 +917,10 @@ type Value_Timestamp struct {
 	Timestamp *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=timestamp,proto3,oneof"`
 }
 
+type Value_Records struct {
+	Records *RecordList `protobuf:"bytes,8,opt,name=records,proto3,oneof"`
+}
+
 func (*Value_String_) isValue_Kind() {}
 
 func (*Value_Boolean) isValue_Kind() {}
@@ -614,6 +934,171 @@ func (*Value_Strings) isValue_Kind() {}
 func (*Value_Bytes) isValue_Kind() {}
 
 func (*Value_Timestamp) isValue_Kind() {}
+
+func (*Value_Records) isValue_Kind() {}
+
+// ResponseValue carries one non-record value in diagnostics and return-only effects.
+type ResponseValue struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Kind:
+	//
+	//	*ResponseValue_String_
+	//	*ResponseValue_Boolean
+	//	*ResponseValue_Integer
+	//	*ResponseValue_Double
+	//	*ResponseValue_Strings
+	//	*ResponseValue_Bytes
+	//	*ResponseValue_Timestamp
+	Kind          isResponseValue_Kind `protobuf_oneof:"kind"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResponseValue) Reset() {
+	*x = ResponseValue{}
+	mi := &file_api_policy_v1_policy_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResponseValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResponseValue) ProtoMessage() {}
+
+func (x *ResponseValue) ProtoReflect() protoreflect.Message {
+	mi := &file_api_policy_v1_policy_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResponseValue.ProtoReflect.Descriptor instead.
+func (*ResponseValue) Descriptor() ([]byte, []int) {
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ResponseValue) GetKind() isResponseValue_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return nil
+}
+
+func (x *ResponseValue) GetString_() string {
+	if x != nil {
+		if x, ok := x.Kind.(*ResponseValue_String_); ok {
+			return x.String_
+		}
+	}
+	return ""
+}
+
+func (x *ResponseValue) GetBoolean() bool {
+	if x != nil {
+		if x, ok := x.Kind.(*ResponseValue_Boolean); ok {
+			return x.Boolean
+		}
+	}
+	return false
+}
+
+func (x *ResponseValue) GetInteger() int64 {
+	if x != nil {
+		if x, ok := x.Kind.(*ResponseValue_Integer); ok {
+			return x.Integer
+		}
+	}
+	return 0
+}
+
+func (x *ResponseValue) GetDouble() float64 {
+	if x != nil {
+		if x, ok := x.Kind.(*ResponseValue_Double); ok {
+			return x.Double
+		}
+	}
+	return 0
+}
+
+func (x *ResponseValue) GetStrings() *StringList {
+	if x != nil {
+		if x, ok := x.Kind.(*ResponseValue_Strings); ok {
+			return x.Strings
+		}
+	}
+	return nil
+}
+
+func (x *ResponseValue) GetBytes() []byte {
+	if x != nil {
+		if x, ok := x.Kind.(*ResponseValue_Bytes); ok {
+			return x.Bytes
+		}
+	}
+	return nil
+}
+
+func (x *ResponseValue) GetTimestamp() *timestamppb.Timestamp {
+	if x != nil {
+		if x, ok := x.Kind.(*ResponseValue_Timestamp); ok {
+			return x.Timestamp
+		}
+	}
+	return nil
+}
+
+type isResponseValue_Kind interface {
+	isResponseValue_Kind()
+}
+
+type ResponseValue_String_ struct {
+	String_ string `protobuf:"bytes,1,opt,name=string,proto3,oneof"`
+}
+
+type ResponseValue_Boolean struct {
+	Boolean bool `protobuf:"varint,2,opt,name=boolean,proto3,oneof"`
+}
+
+type ResponseValue_Integer struct {
+	Integer int64 `protobuf:"zigzag64,3,opt,name=integer,proto3,oneof"`
+}
+
+type ResponseValue_Double struct {
+	Double float64 `protobuf:"fixed64,4,opt,name=double,proto3,oneof"`
+}
+
+type ResponseValue_Strings struct {
+	Strings *StringList `protobuf:"bytes,5,opt,name=strings,proto3,oneof"`
+}
+
+type ResponseValue_Bytes struct {
+	Bytes []byte `protobuf:"bytes,6,opt,name=bytes,proto3,oneof"`
+}
+
+type ResponseValue_Timestamp struct {
+	Timestamp *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=timestamp,proto3,oneof"`
+}
+
+func (*ResponseValue_String_) isResponseValue_Kind() {}
+
+func (*ResponseValue_Boolean) isResponseValue_Kind() {}
+
+func (*ResponseValue_Integer) isResponseValue_Kind() {}
+
+func (*ResponseValue_Double) isResponseValue_Kind() {}
+
+func (*ResponseValue_Strings) isResponseValue_Kind() {}
+
+func (*ResponseValue_Bytes) isResponseValue_Kind() {}
+
+func (*ResponseValue_Timestamp) isResponseValue_Kind() {}
 
 // DecisionResponse is the complete successful application decision result.
 type DecisionResponse struct {
@@ -630,7 +1115,7 @@ type DecisionResponse struct {
 
 func (x *DecisionResponse) Reset() {
 	*x = DecisionResponse{}
-	mi := &file_api_policy_v1_policy_proto_msgTypes[7]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -642,7 +1127,7 @@ func (x *DecisionResponse) String() string {
 func (*DecisionResponse) ProtoMessage() {}
 
 func (x *DecisionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policy_v1_policy_proto_msgTypes[7]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -655,7 +1140,7 @@ func (x *DecisionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DecisionResponse.ProtoReflect.Descriptor instead.
 func (*DecisionResponse) Descriptor() ([]byte, []int) {
-	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{7}
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *DecisionResponse) GetDecisionId() string {
@@ -713,7 +1198,7 @@ type Status struct {
 
 func (x *Status) Reset() {
 	*x = Status{}
-	mi := &file_api_policy_v1_policy_proto_msgTypes[8]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -725,7 +1210,7 @@ func (x *Status) String() string {
 func (*Status) ProtoMessage() {}
 
 func (x *Status) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policy_v1_policy_proto_msgTypes[8]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -738,7 +1223,7 @@ func (x *Status) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Status.ProtoReflect.Descriptor instead.
 func (*Status) Descriptor() ([]byte, []int) {
-	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{8}
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Status) GetCode() string {
@@ -780,7 +1265,7 @@ type ValidationDetail struct {
 
 func (x *ValidationDetail) Reset() {
 	*x = ValidationDetail{}
-	mi := &file_api_policy_v1_policy_proto_msgTypes[9]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -792,7 +1277,7 @@ func (x *ValidationDetail) String() string {
 func (*ValidationDetail) ProtoMessage() {}
 
 func (x *ValidationDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policy_v1_policy_proto_msgTypes[9]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -805,7 +1290,7 @@ func (x *ValidationDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidationDetail.ProtoReflect.Descriptor instead.
 func (*ValidationDetail) Descriptor() ([]byte, []int) {
-	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{9}
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ValidationDetail) GetField() string {
@@ -824,16 +1309,16 @@ func (x *ValidationDetail) GetReason() string {
 
 // Obligation is one return-only selected Policy obligation.
 type Obligation struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Parameters    map[string]*Value      `protobuf:"bytes,2,rep,name=parameters,proto3" json:"parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	Id            string                    `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Parameters    map[string]*ResponseValue `protobuf:"bytes,2,rep,name=parameters,proto3" json:"parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Obligation) Reset() {
 	*x = Obligation{}
-	mi := &file_api_policy_v1_policy_proto_msgTypes[10]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -845,7 +1330,7 @@ func (x *Obligation) String() string {
 func (*Obligation) ProtoMessage() {}
 
 func (x *Obligation) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policy_v1_policy_proto_msgTypes[10]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -858,7 +1343,7 @@ func (x *Obligation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Obligation.ProtoReflect.Descriptor instead.
 func (*Obligation) Descriptor() ([]byte, []int) {
-	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{10}
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Obligation) GetId() string {
@@ -868,7 +1353,7 @@ func (x *Obligation) GetId() string {
 	return ""
 }
 
-func (x *Obligation) GetParameters() map[string]*Value {
+func (x *Obligation) GetParameters() map[string]*ResponseValue {
 	if x != nil {
 		return x.Parameters
 	}
@@ -877,16 +1362,16 @@ func (x *Obligation) GetParameters() map[string]*Value {
 
 // Advice is one return-only selected Policy advice.
 type Advice struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Parameters    map[string]*Value      `protobuf:"bytes,2,rep,name=parameters,proto3" json:"parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	Id            string                    `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Parameters    map[string]*ResponseValue `protobuf:"bytes,2,rep,name=parameters,proto3" json:"parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Advice) Reset() {
 	*x = Advice{}
-	mi := &file_api_policy_v1_policy_proto_msgTypes[11]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -898,7 +1383,7 @@ func (x *Advice) String() string {
 func (*Advice) ProtoMessage() {}
 
 func (x *Advice) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policy_v1_policy_proto_msgTypes[11]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -911,7 +1396,7 @@ func (x *Advice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Advice.ProtoReflect.Descriptor instead.
 func (*Advice) Descriptor() ([]byte, []int) {
-	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{11}
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Advice) GetId() string {
@@ -921,7 +1406,7 @@ func (x *Advice) GetId() string {
 	return ""
 }
 
-func (x *Advice) GetParameters() map[string]*Value {
+func (x *Advice) GetParameters() map[string]*ResponseValue {
 	if x != nil {
 		return x.Parameters
 	}
@@ -930,15 +1415,15 @@ func (x *Advice) GetParameters() map[string]*Value {
 
 // Diagnostics contains admitted bounded diagnostic entries.
 type Diagnostics struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Entries       map[string]*Value      `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	Entries       map[string]*ResponseValue `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Diagnostics) Reset() {
 	*x = Diagnostics{}
-	mi := &file_api_policy_v1_policy_proto_msgTypes[12]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -950,7 +1435,7 @@ func (x *Diagnostics) String() string {
 func (*Diagnostics) ProtoMessage() {}
 
 func (x *Diagnostics) ProtoReflect() protoreflect.Message {
-	mi := &file_api_policy_v1_policy_proto_msgTypes[12]
+	mi := &file_api_policy_v1_policy_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -963,10 +1448,10 @@ func (x *Diagnostics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Diagnostics.ProtoReflect.Descriptor instead.
 func (*Diagnostics) Descriptor() ([]byte, []int) {
-	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{12}
+	return file_api_policy_v1_policy_proto_rawDescGZIP(), []int{17}
 }
 
-func (x *Diagnostics) GetEntries() map[string]*Value {
+func (x *Diagnostics) GetEntries() map[string]*ResponseValue {
 	if x != nil {
 		return x.Entries
 	}
@@ -1019,8 +1504,35 @@ const file_api_policy_v1_policy_proto_rawDesc = "" +
 	"\x13include_diagnostics\x18\x01 \x01(\bR\x12includeDiagnostics\"$\n" +
 	"\n" +
 	"StringList\x12\x16\n" +
-	"\x06values\x18\x01 \x03(\tR\x06values\"\x8c\x02\n" +
+	"\x06values\x18\x01 \x03(\tR\x06values\"C\n" +
+	"\n" +
+	"RecordList\x125\n" +
+	"\arecords\x18\x01 \x03(\v2\x1b.nauthilus.policy.v1.RecordR\arecords\"B\n" +
+	"\x06Record\x128\n" +
+	"\x06fields\x18\x01 \x03(\v2 .nauthilus.policy.v1.RecordFieldR\x06fields\"^\n" +
+	"\vRecordField\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12;\n" +
+	"\x05value\x18\x02 \x01(\v2%.nauthilus.policy.v1.RecordFieldValueR\x05value\"\x97\x02\n" +
+	"\x10RecordFieldValue\x12\x18\n" +
+	"\x06string\x18\x01 \x01(\tH\x00R\x06string\x12\x1a\n" +
+	"\aboolean\x18\x02 \x01(\bH\x00R\aboolean\x12\x1a\n" +
+	"\ainteger\x18\x03 \x01(\x12H\x00R\ainteger\x12\x18\n" +
+	"\x06double\x18\x04 \x01(\x01H\x00R\x06double\x12;\n" +
+	"\astrings\x18\x05 \x01(\v2\x1f.nauthilus.policy.v1.StringListH\x00R\astrings\x12\x16\n" +
+	"\x05bytes\x18\x06 \x01(\fH\x00R\x05bytes\x12:\n" +
+	"\ttimestamp\x18\a \x01(\v2\x1a.google.protobuf.TimestampH\x00R\ttimestampB\x06\n" +
+	"\x04kind\"\xc9\x02\n" +
 	"\x05Value\x12\x18\n" +
+	"\x06string\x18\x01 \x01(\tH\x00R\x06string\x12\x1a\n" +
+	"\aboolean\x18\x02 \x01(\bH\x00R\aboolean\x12\x1a\n" +
+	"\ainteger\x18\x03 \x01(\x12H\x00R\ainteger\x12\x18\n" +
+	"\x06double\x18\x04 \x01(\x01H\x00R\x06double\x12;\n" +
+	"\astrings\x18\x05 \x01(\v2\x1f.nauthilus.policy.v1.StringListH\x00R\astrings\x12\x16\n" +
+	"\x05bytes\x18\x06 \x01(\fH\x00R\x05bytes\x12:\n" +
+	"\ttimestamp\x18\a \x01(\v2\x1a.google.protobuf.TimestampH\x00R\ttimestamp\x12;\n" +
+	"\arecords\x18\b \x01(\v2\x1f.nauthilus.policy.v1.RecordListH\x00R\arecordsB\x06\n" +
+	"\x04kind\"\x94\x02\n" +
+	"\rResponseValue\x12\x18\n" +
 	"\x06string\x18\x01 \x01(\tH\x00R\x06string\x12\x1a\n" +
 	"\aboolean\x18\x02 \x01(\bH\x00R\aboolean\x12\x1a\n" +
 	"\ainteger\x18\x03 \x01(\x12H\x00R\ainteger\x12\x18\n" +
@@ -1044,29 +1556,29 @@ const file_api_policy_v1_policy_proto_rawDesc = "" +
 	"\tretryable\x18\x04 \x01(\bR\tretryable\"@\n" +
 	"\x10ValidationDetail\x12\x14\n" +
 	"\x05field\x18\x01 \x01(\tR\x05field\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xc8\x01\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xd0\x01\n" +
 	"\n" +
 	"Obligation\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12O\n" +
 	"\n" +
 	"parameters\x18\x02 \x03(\v2/.nauthilus.policy.v1.Obligation.ParametersEntryR\n" +
-	"parameters\x1aY\n" +
+	"parameters\x1aa\n" +
 	"\x0fParametersEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
-	"\x05value\x18\x02 \x01(\v2\x1a.nauthilus.policy.v1.ValueR\x05value:\x028\x01\"\xc0\x01\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x128\n" +
+	"\x05value\x18\x02 \x01(\v2\".nauthilus.policy.v1.ResponseValueR\x05value:\x028\x01\"\xc8\x01\n" +
 	"\x06Advice\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12K\n" +
 	"\n" +
 	"parameters\x18\x02 \x03(\v2+.nauthilus.policy.v1.Advice.ParametersEntryR\n" +
-	"parameters\x1aY\n" +
+	"parameters\x1aa\n" +
 	"\x0fParametersEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
-	"\x05value\x18\x02 \x01(\v2\x1a.nauthilus.policy.v1.ValueR\x05value:\x028\x01\"\xae\x01\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x128\n" +
+	"\x05value\x18\x02 \x01(\v2\".nauthilus.policy.v1.ResponseValueR\x05value:\x028\x01\"\xb6\x01\n" +
 	"\vDiagnostics\x12G\n" +
-	"\aentries\x18\x01 \x03(\v2-.nauthilus.policy.v1.Diagnostics.EntriesEntryR\aentries\x1aV\n" +
+	"\aentries\x18\x01 \x03(\v2-.nauthilus.policy.v1.Diagnostics.EntriesEntryR\aentries\x1a^\n" +
 	"\fEntriesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
-	"\x05value\x18\x02 \x01(\v2\x1a.nauthilus.policy.v1.ValueR\x05value:\x028\x01*y\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x128\n" +
+	"\x05value\x18\x02 \x01(\v2\".nauthilus.policy.v1.ResponseValueR\x05value:\x028\x01*y\n" +
 	"\x06Effect\x12\x16\n" +
 	"\x12EFFECT_UNSPECIFIED\x10\x00\x12\x11\n" +
 	"\rEFFECT_PERMIT\x10\x01\x12\x0f\n" +
@@ -1089,7 +1601,7 @@ func file_api_policy_v1_policy_proto_rawDescGZIP() []byte {
 }
 
 var file_api_policy_v1_policy_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_api_policy_v1_policy_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_api_policy_v1_policy_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_api_policy_v1_policy_proto_goTypes = []any{
 	(Effect)(0),                   // 0: nauthilus.policy.v1.Effect
 	(*DecisionRequest)(nil),       // 1: nauthilus.policy.v1.DecisionRequest
@@ -1098,54 +1610,67 @@ var file_api_policy_v1_policy_proto_goTypes = []any{
 	(*Environment)(nil),           // 4: nauthilus.policy.v1.Environment
 	(*EvaluationOptions)(nil),     // 5: nauthilus.policy.v1.EvaluationOptions
 	(*StringList)(nil),            // 6: nauthilus.policy.v1.StringList
-	(*Value)(nil),                 // 7: nauthilus.policy.v1.Value
-	(*DecisionResponse)(nil),      // 8: nauthilus.policy.v1.DecisionResponse
-	(*Status)(nil),                // 9: nauthilus.policy.v1.Status
-	(*ValidationDetail)(nil),      // 10: nauthilus.policy.v1.ValidationDetail
-	(*Obligation)(nil),            // 11: nauthilus.policy.v1.Obligation
-	(*Advice)(nil),                // 12: nauthilus.policy.v1.Advice
-	(*Diagnostics)(nil),           // 13: nauthilus.policy.v1.Diagnostics
-	nil,                           // 14: nauthilus.policy.v1.DecisionRequest.AttributesEntry
-	nil,                           // 15: nauthilus.policy.v1.Entity.AttributesEntry
-	nil,                           // 16: nauthilus.policy.v1.Environment.AttributesEntry
-	nil,                           // 17: nauthilus.policy.v1.Obligation.ParametersEntry
-	nil,                           // 18: nauthilus.policy.v1.Advice.ParametersEntry
-	nil,                           // 19: nauthilus.policy.v1.Diagnostics.EntriesEntry
-	(*timestamppb.Timestamp)(nil), // 20: google.protobuf.Timestamp
+	(*RecordList)(nil),            // 7: nauthilus.policy.v1.RecordList
+	(*Record)(nil),                // 8: nauthilus.policy.v1.Record
+	(*RecordField)(nil),           // 9: nauthilus.policy.v1.RecordField
+	(*RecordFieldValue)(nil),      // 10: nauthilus.policy.v1.RecordFieldValue
+	(*Value)(nil),                 // 11: nauthilus.policy.v1.Value
+	(*ResponseValue)(nil),         // 12: nauthilus.policy.v1.ResponseValue
+	(*DecisionResponse)(nil),      // 13: nauthilus.policy.v1.DecisionResponse
+	(*Status)(nil),                // 14: nauthilus.policy.v1.Status
+	(*ValidationDetail)(nil),      // 15: nauthilus.policy.v1.ValidationDetail
+	(*Obligation)(nil),            // 16: nauthilus.policy.v1.Obligation
+	(*Advice)(nil),                // 17: nauthilus.policy.v1.Advice
+	(*Diagnostics)(nil),           // 18: nauthilus.policy.v1.Diagnostics
+	nil,                           // 19: nauthilus.policy.v1.DecisionRequest.AttributesEntry
+	nil,                           // 20: nauthilus.policy.v1.Entity.AttributesEntry
+	nil,                           // 21: nauthilus.policy.v1.Environment.AttributesEntry
+	nil,                           // 22: nauthilus.policy.v1.Obligation.ParametersEntry
+	nil,                           // 23: nauthilus.policy.v1.Advice.ParametersEntry
+	nil,                           // 24: nauthilus.policy.v1.Diagnostics.EntriesEntry
+	(*timestamppb.Timestamp)(nil), // 25: google.protobuf.Timestamp
 }
 var file_api_policy_v1_policy_proto_depIdxs = []int32{
 	2,  // 0: nauthilus.policy.v1.DecisionRequest.target:type_name -> nauthilus.policy.v1.Target
 	3,  // 1: nauthilus.policy.v1.DecisionRequest.subject:type_name -> nauthilus.policy.v1.Entity
 	3,  // 2: nauthilus.policy.v1.DecisionRequest.resource:type_name -> nauthilus.policy.v1.Entity
 	4,  // 3: nauthilus.policy.v1.DecisionRequest.environment:type_name -> nauthilus.policy.v1.Environment
-	14, // 4: nauthilus.policy.v1.DecisionRequest.attributes:type_name -> nauthilus.policy.v1.DecisionRequest.AttributesEntry
+	19, // 4: nauthilus.policy.v1.DecisionRequest.attributes:type_name -> nauthilus.policy.v1.DecisionRequest.AttributesEntry
 	5,  // 5: nauthilus.policy.v1.DecisionRequest.options:type_name -> nauthilus.policy.v1.EvaluationOptions
-	15, // 6: nauthilus.policy.v1.Entity.attributes:type_name -> nauthilus.policy.v1.Entity.AttributesEntry
-	16, // 7: nauthilus.policy.v1.Environment.attributes:type_name -> nauthilus.policy.v1.Environment.AttributesEntry
-	6,  // 8: nauthilus.policy.v1.Value.strings:type_name -> nauthilus.policy.v1.StringList
-	20, // 9: nauthilus.policy.v1.Value.timestamp:type_name -> google.protobuf.Timestamp
-	0,  // 10: nauthilus.policy.v1.DecisionResponse.effect:type_name -> nauthilus.policy.v1.Effect
-	9,  // 11: nauthilus.policy.v1.DecisionResponse.status:type_name -> nauthilus.policy.v1.Status
-	11, // 12: nauthilus.policy.v1.DecisionResponse.obligations:type_name -> nauthilus.policy.v1.Obligation
-	12, // 13: nauthilus.policy.v1.DecisionResponse.advice:type_name -> nauthilus.policy.v1.Advice
-	13, // 14: nauthilus.policy.v1.DecisionResponse.diagnostics:type_name -> nauthilus.policy.v1.Diagnostics
-	10, // 15: nauthilus.policy.v1.Status.details:type_name -> nauthilus.policy.v1.ValidationDetail
-	17, // 16: nauthilus.policy.v1.Obligation.parameters:type_name -> nauthilus.policy.v1.Obligation.ParametersEntry
-	18, // 17: nauthilus.policy.v1.Advice.parameters:type_name -> nauthilus.policy.v1.Advice.ParametersEntry
-	19, // 18: nauthilus.policy.v1.Diagnostics.entries:type_name -> nauthilus.policy.v1.Diagnostics.EntriesEntry
-	7,  // 19: nauthilus.policy.v1.DecisionRequest.AttributesEntry.value:type_name -> nauthilus.policy.v1.Value
-	7,  // 20: nauthilus.policy.v1.Entity.AttributesEntry.value:type_name -> nauthilus.policy.v1.Value
-	7,  // 21: nauthilus.policy.v1.Environment.AttributesEntry.value:type_name -> nauthilus.policy.v1.Value
-	7,  // 22: nauthilus.policy.v1.Obligation.ParametersEntry.value:type_name -> nauthilus.policy.v1.Value
-	7,  // 23: nauthilus.policy.v1.Advice.ParametersEntry.value:type_name -> nauthilus.policy.v1.Value
-	7,  // 24: nauthilus.policy.v1.Diagnostics.EntriesEntry.value:type_name -> nauthilus.policy.v1.Value
-	1,  // 25: nauthilus.policy.v1.PolicyDecisionService.Evaluate:input_type -> nauthilus.policy.v1.DecisionRequest
-	8,  // 26: nauthilus.policy.v1.PolicyDecisionService.Evaluate:output_type -> nauthilus.policy.v1.DecisionResponse
-	26, // [26:27] is the sub-list for method output_type
-	25, // [25:26] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	20, // 6: nauthilus.policy.v1.Entity.attributes:type_name -> nauthilus.policy.v1.Entity.AttributesEntry
+	21, // 7: nauthilus.policy.v1.Environment.attributes:type_name -> nauthilus.policy.v1.Environment.AttributesEntry
+	8,  // 8: nauthilus.policy.v1.RecordList.records:type_name -> nauthilus.policy.v1.Record
+	9,  // 9: nauthilus.policy.v1.Record.fields:type_name -> nauthilus.policy.v1.RecordField
+	10, // 10: nauthilus.policy.v1.RecordField.value:type_name -> nauthilus.policy.v1.RecordFieldValue
+	6,  // 11: nauthilus.policy.v1.RecordFieldValue.strings:type_name -> nauthilus.policy.v1.StringList
+	25, // 12: nauthilus.policy.v1.RecordFieldValue.timestamp:type_name -> google.protobuf.Timestamp
+	6,  // 13: nauthilus.policy.v1.Value.strings:type_name -> nauthilus.policy.v1.StringList
+	25, // 14: nauthilus.policy.v1.Value.timestamp:type_name -> google.protobuf.Timestamp
+	7,  // 15: nauthilus.policy.v1.Value.records:type_name -> nauthilus.policy.v1.RecordList
+	6,  // 16: nauthilus.policy.v1.ResponseValue.strings:type_name -> nauthilus.policy.v1.StringList
+	25, // 17: nauthilus.policy.v1.ResponseValue.timestamp:type_name -> google.protobuf.Timestamp
+	0,  // 18: nauthilus.policy.v1.DecisionResponse.effect:type_name -> nauthilus.policy.v1.Effect
+	14, // 19: nauthilus.policy.v1.DecisionResponse.status:type_name -> nauthilus.policy.v1.Status
+	16, // 20: nauthilus.policy.v1.DecisionResponse.obligations:type_name -> nauthilus.policy.v1.Obligation
+	17, // 21: nauthilus.policy.v1.DecisionResponse.advice:type_name -> nauthilus.policy.v1.Advice
+	18, // 22: nauthilus.policy.v1.DecisionResponse.diagnostics:type_name -> nauthilus.policy.v1.Diagnostics
+	15, // 23: nauthilus.policy.v1.Status.details:type_name -> nauthilus.policy.v1.ValidationDetail
+	22, // 24: nauthilus.policy.v1.Obligation.parameters:type_name -> nauthilus.policy.v1.Obligation.ParametersEntry
+	23, // 25: nauthilus.policy.v1.Advice.parameters:type_name -> nauthilus.policy.v1.Advice.ParametersEntry
+	24, // 26: nauthilus.policy.v1.Diagnostics.entries:type_name -> nauthilus.policy.v1.Diagnostics.EntriesEntry
+	11, // 27: nauthilus.policy.v1.DecisionRequest.AttributesEntry.value:type_name -> nauthilus.policy.v1.Value
+	11, // 28: nauthilus.policy.v1.Entity.AttributesEntry.value:type_name -> nauthilus.policy.v1.Value
+	11, // 29: nauthilus.policy.v1.Environment.AttributesEntry.value:type_name -> nauthilus.policy.v1.Value
+	12, // 30: nauthilus.policy.v1.Obligation.ParametersEntry.value:type_name -> nauthilus.policy.v1.ResponseValue
+	12, // 31: nauthilus.policy.v1.Advice.ParametersEntry.value:type_name -> nauthilus.policy.v1.ResponseValue
+	12, // 32: nauthilus.policy.v1.Diagnostics.EntriesEntry.value:type_name -> nauthilus.policy.v1.ResponseValue
+	1,  // 33: nauthilus.policy.v1.PolicyDecisionService.Evaluate:input_type -> nauthilus.policy.v1.DecisionRequest
+	13, // 34: nauthilus.policy.v1.PolicyDecisionService.Evaluate:output_type -> nauthilus.policy.v1.DecisionResponse
+	34, // [34:35] is the sub-list for method output_type
+	33, // [33:34] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_api_policy_v1_policy_proto_init() }
@@ -1153,7 +1678,16 @@ func file_api_policy_v1_policy_proto_init() {
 	if File_api_policy_v1_policy_proto != nil {
 		return
 	}
-	file_api_policy_v1_policy_proto_msgTypes[6].OneofWrappers = []any{
+	file_api_policy_v1_policy_proto_msgTypes[9].OneofWrappers = []any{
+		(*RecordFieldValue_String_)(nil),
+		(*RecordFieldValue_Boolean)(nil),
+		(*RecordFieldValue_Integer)(nil),
+		(*RecordFieldValue_Double)(nil),
+		(*RecordFieldValue_Strings)(nil),
+		(*RecordFieldValue_Bytes)(nil),
+		(*RecordFieldValue_Timestamp)(nil),
+	}
+	file_api_policy_v1_policy_proto_msgTypes[10].OneofWrappers = []any{
 		(*Value_String_)(nil),
 		(*Value_Boolean)(nil),
 		(*Value_Integer)(nil),
@@ -1161,6 +1695,16 @@ func file_api_policy_v1_policy_proto_init() {
 		(*Value_Strings)(nil),
 		(*Value_Bytes)(nil),
 		(*Value_Timestamp)(nil),
+		(*Value_Records)(nil),
+	}
+	file_api_policy_v1_policy_proto_msgTypes[11].OneofWrappers = []any{
+		(*ResponseValue_String_)(nil),
+		(*ResponseValue_Boolean)(nil),
+		(*ResponseValue_Integer)(nil),
+		(*ResponseValue_Double)(nil),
+		(*ResponseValue_Strings)(nil),
+		(*ResponseValue_Bytes)(nil),
+		(*ResponseValue_Timestamp)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1168,7 +1712,7 @@ func file_api_policy_v1_policy_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_policy_v1_policy_proto_rawDesc), len(file_api_policy_v1_policy_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   19,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

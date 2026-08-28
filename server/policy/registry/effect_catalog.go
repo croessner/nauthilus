@@ -125,7 +125,7 @@ type ParameterSchema struct {
 
 // NewParameterSchema validates one exact bounded effect parameter.
 func NewParameterSchema(input ParameterSchemaInput) (ParameterSchema, error) {
-	if !identifier.Action(input.Name) || !input.Kind.IsValid() ||
+	if !identifier.Action(input.Name) || !input.Kind.IsValid() || input.Kind == decision.ValueKindRecords ||
 		input.MaxLength < 0 || input.MaxItems < 0 || input.MaxBytes < 0 {
 		return ParameterSchema{}, newValidationError(
 			ErrInvalidEffectDefinition,

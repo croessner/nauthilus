@@ -367,32 +367,150 @@ func valueInput(value *policyv1.Value) (decision.Value, error) {
 		return decision.Value{}, errors.New("value is required")
 	}
 
-	switch typed := value.GetKind().(type) {
+	if typed, ok := value.GetKind().(*policyv1.Value_Records); ok {
+		if typed.Records == nil {
+			return decision.Value{}, errors.New("records value is required")
+		}
+
+		records, err := recordListInput(typed.Records)
+		if err != nil {
+			return decision.Value{}, err
+		}
+
+		return decision.NewValue(decision.ValueInput{Records: &records})
+	}
+
+	return protoLeafValue(value.GetKind())
+}
+
+// protoLeafValue centralizes public protobuf leaf conversion for values and record fields.
+func protoLeafValue(kind any) (decision.Value, error) {
+	if value, handled, err := protoScalarLeafValue(kind); handled {
+		return value, err
+	}
+
+	return protoCollectionLeafValue(kind)
+}
+
+// protoScalarLeafValue converts scalar protobuf members shared by top-level and record values.
+func protoScalarLeafValue(kind any) (decision.Value, bool, error) {
+	switch typed := kind.(type) {
 	case *policyv1.Value_String_:
-		return decision.NewValue(decision.ValueInput{String: &typed.String_})
+		value, err := decision.NewValue(decision.ValueInput{String: &typed.String_})
+
+		return value, true, err
+	case *policyv1.RecordFieldValue_String_:
+		value, err := decision.NewValue(decision.ValueInput{String: &typed.String_})
+
+		return value, true, err
 	case *policyv1.Value_Boolean:
-		return decision.NewValue(decision.ValueInput{Boolean: &typed.Boolean})
+		value, err := decision.NewValue(decision.ValueInput{Boolean: &typed.Boolean})
+
+		return value, true, err
+	case *policyv1.RecordFieldValue_Boolean:
+		value, err := decision.NewValue(decision.ValueInput{Boolean: &typed.Boolean})
+
+		return value, true, err
 	case *policyv1.Value_Integer:
-		return decision.NewValue(decision.ValueInput{Integer: &typed.Integer})
+		value, err := decision.NewValue(decision.ValueInput{Integer: &typed.Integer})
+
+		return value, true, err
+	case *policyv1.RecordFieldValue_Integer:
+		value, err := decision.NewValue(decision.ValueInput{Integer: &typed.Integer})
+
+		return value, true, err
 	case *policyv1.Value_Double:
-		if math.IsNaN(typed.Double) || math.IsInf(typed.Double, 0) {
-			return decision.Value{}, errors.New("double must be finite")
-		}
+		value, err := protoDoubleValue(typed.Double)
 
-		return decision.NewValue(decision.ValueInput{Double: &typed.Double})
+		return value, true, err
+	case *policyv1.RecordFieldValue_Double:
+		value, err := protoDoubleValue(typed.Double)
+
+		return value, true, err
+	default:
+		return decision.Value{}, false, nil
+	}
+}
+
+// protoCollectionLeafValue converts bounded leaf collections and timestamps.
+func protoCollectionLeafValue(kind any) (decision.Value, error) {
+	switch typed := kind.(type) {
 	case *policyv1.Value_Strings:
-		if typed.Strings == nil {
-			return decision.Value{}, errors.New("strings value is required")
-		}
-
-		return decision.NewValue(decision.ValueInput{Strings: append([]string(nil), typed.Strings.GetValues()...)})
+		return protoStringsValue(typed.Strings)
+	case *policyv1.RecordFieldValue_Strings:
+		return protoStringsValue(typed.Strings)
 	case *policyv1.Value_Bytes:
 		return decision.NewValue(decision.ValueInput{Bytes: append([]byte(nil), typed.Bytes...)})
+	case *policyv1.RecordFieldValue_Bytes:
+		return decision.NewValue(decision.ValueInput{Bytes: append([]byte(nil), typed.Bytes...)})
 	case *policyv1.Value_Timestamp:
+		return timestampValue(typed.Timestamp)
+	case *policyv1.RecordFieldValue_Timestamp:
 		return timestampValue(typed.Timestamp)
 	default:
 		return decision.Value{}, errors.New("value kind is required")
 	}
+}
+
+// protoDoubleValue rejects non-finite protobuf doubles.
+func protoDoubleValue(value float64) (decision.Value, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return decision.Value{}, errors.New("double must be finite")
+	}
+
+	return decision.NewValue(decision.ValueInput{Double: &value})
+}
+
+// protoStringsValue requires a present ordered string-list wrapper.
+func protoStringsValue(value *policyv1.StringList) (decision.Value, error) {
+	if value == nil {
+		return decision.Value{}, errors.New("strings value is required")
+	}
+
+	return decision.NewValue(decision.ValueInput{Strings: append([]string(nil), value.GetValues()...)})
+}
+
+// recordListInput constructs one ordered internal record collection from repeated messages.
+func recordListInput(input *policyv1.RecordList) (decision.RecordList, error) {
+	records := make([]decision.Record, 0, len(input.GetRecords()))
+	for _, protoRecord := range input.GetRecords() {
+		if protoRecord == nil {
+			return decision.RecordList{}, errors.New("record is required")
+		}
+
+		fields := make([]decision.RecordField, 0, len(protoRecord.GetFields()))
+		for _, protoField := range protoRecord.GetFields() {
+			if protoField == nil || protoField.GetValue() == nil {
+				return decision.RecordList{}, errors.New("record field and value are required")
+			}
+
+			leaf, err := protoLeafValue(protoField.GetValue().GetKind())
+			if err != nil {
+				return decision.RecordList{}, err
+			}
+
+			fieldValue, err := decision.NewRecordFieldValueFromValue(leaf)
+			if err != nil {
+				return decision.RecordList{}, err
+			}
+
+			field, err := decision.NewRecordField(protoField.GetName(), fieldValue)
+			if err != nil {
+				return decision.RecordList{}, err
+			}
+
+			fields = append(fields, field)
+		}
+
+		record, err := decision.NewRecord(fields)
+		if err != nil {
+			return decision.RecordList{}, err
+		}
+
+		records = append(records, record)
+	}
+
+	return decision.NewRecordList(records)
 }
 
 // timestampValue validates a public protobuf timestamp before UTC normalization in the model constructor.
@@ -408,14 +526,14 @@ func timestampValue(value *timestamppb.Timestamp) (decision.Value, error) {
 
 // responseProto projects a completed internal result into the public protobuf response.
 func responseProto(response decision.DecisionResponse) (*policyv1.DecisionResponse, error) {
-	obligations, err := effectRequestsProto(response.Obligations(), func(id string, parameters map[string]*policyv1.Value) *policyv1.Obligation {
+	obligations, err := effectRequestsProto(response.Obligations(), func(id string, parameters map[string]*policyv1.ResponseValue) *policyv1.Obligation {
 		return &policyv1.Obligation{Id: id, Parameters: parameters}
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	advice, err := effectRequestsProto(response.Advice(), func(id string, parameters map[string]*policyv1.Value) *policyv1.Advice {
+	advice, err := effectRequestsProto(response.Advice(), func(id string, parameters map[string]*policyv1.ResponseValue) *policyv1.Advice {
 		return &policyv1.Advice{Id: id, Parameters: parameters}
 	})
 	if err != nil {
@@ -437,7 +555,7 @@ func responseProto(response decision.DecisionResponse) (*policyv1.DecisionRespon
 	}
 
 	if diagnostics := response.Diagnostics(); diagnostics != nil {
-		entries, err := valueMapProto(diagnostics.Entries().Values())
+		entries, err := responseValueMapProto(diagnostics.Entries().Values())
 		if err != nil {
 			return nil, err
 		}
@@ -475,10 +593,10 @@ func validationDetails(details []decision.ValidationDetail) []*policyv1.Validati
 }
 
 // effectRequestsProto projects return-only effect selections through one typed DTO factory.
-func effectRequestsProto[T any](values []decision.EffectRequest, factory func(string, map[string]*policyv1.Value) *T) ([]*T, error) {
+func effectRequestsProto[T any](values []decision.EffectRequest, factory func(string, map[string]*policyv1.ResponseValue) *T) ([]*T, error) {
 	result := make([]*T, 0, len(values))
 	for _, value := range values {
-		parameters, err := valueMapProto(value.Parameters().Values())
+		parameters, err := responseValueMapProto(value.Parameters().Values())
 		if err != nil {
 			return nil, err
 		}
@@ -487,6 +605,57 @@ func effectRequestsProto[T any](values []decision.EffectRequest, factory func(st
 	}
 
 	return result, nil
+}
+
+// responseValueMapProto converts record-free response values to their restricted generated DTO.
+func responseValueMapProto(values map[string]decision.Value) (map[string]*policyv1.ResponseValue, error) {
+	result := make(map[string]*policyv1.ResponseValue, len(values))
+	for key, value := range values {
+		converted, err := responseValueProto(value)
+		if err != nil {
+			return nil, err
+		}
+
+		result[key] = converted
+	}
+
+	return result, nil
+}
+
+// responseValueProto maps one non-record internal value to the response-only protobuf oneof.
+func responseValueProto(value decision.Value) (*policyv1.ResponseValue, error) {
+	switch value.Kind() {
+	case decision.ValueKindString:
+		member, _ := value.StringValue()
+
+		return &policyv1.ResponseValue{Kind: &policyv1.ResponseValue_String_{String_: member}}, nil
+	case decision.ValueKindBoolean:
+		member, _ := value.Boolean()
+
+		return &policyv1.ResponseValue{Kind: &policyv1.ResponseValue_Boolean{Boolean: member}}, nil
+	case decision.ValueKindInteger:
+		member, _ := value.Integer()
+
+		return &policyv1.ResponseValue{Kind: &policyv1.ResponseValue_Integer{Integer: member}}, nil
+	case decision.ValueKindDouble:
+		member, _ := value.Double()
+
+		return &policyv1.ResponseValue{Kind: &policyv1.ResponseValue_Double{Double: member}}, nil
+	case decision.ValueKindStrings:
+		member, _ := value.Strings()
+
+		return &policyv1.ResponseValue{Kind: &policyv1.ResponseValue_Strings{Strings: &policyv1.StringList{Values: member}}}, nil
+	case decision.ValueKindBytes:
+		member, _ := value.Bytes()
+
+		return &policyv1.ResponseValue{Kind: &policyv1.ResponseValue_Bytes{Bytes: member}}, nil
+	case decision.ValueKindTimestamp:
+		member, _ := value.Timestamp()
+
+		return &policyv1.ResponseValue{Kind: &policyv1.ResponseValue_Timestamp{Timestamp: timestamppb.New(member)}}, nil
+	default:
+		return nil, errors.New("response value kind is invalid")
+	}
 }
 
 // valueMapProto converts constructor-validated internal values to the generated oneof DTO.
@@ -535,7 +704,59 @@ func valueProto(value decision.Value) (*policyv1.Value, error) {
 		member, _ := value.Timestamp()
 
 		return &policyv1.Value{Kind: &policyv1.Value_Timestamp{Timestamp: timestamppb.New(member)}}, nil
+	case decision.ValueKindRecords:
+		member, _ := value.Records()
+
+		return &policyv1.Value{Kind: &policyv1.Value_Records{Records: recordListProto(member)}}, nil
 	default:
 		return nil, errors.New("internal value kind is invalid")
 	}
+}
+
+// recordListProto preserves logical record and field order through repeated messages.
+func recordListProto(input decision.RecordList) *policyv1.RecordList {
+	result := &policyv1.RecordList{Records: make([]*policyv1.Record, 0, len(input.Records()))}
+	for _, record := range input.Records() {
+		converted := &policyv1.Record{Fields: make([]*policyv1.RecordField, 0, len(record.Fields()))}
+		for _, field := range record.Fields() {
+			converted.Fields = append(converted.Fields, &policyv1.RecordField{
+				Name: field.Name(), Value: recordFieldValueProto(field.Value()),
+			})
+		}
+
+		result.Records = append(result.Records, converted)
+	}
+
+	return result
+}
+
+// recordFieldValueProto maps the closed non-recursive leaf vocabulary.
+func recordFieldValueProto(input decision.RecordFieldValue) *policyv1.RecordFieldValue {
+	result := &policyv1.RecordFieldValue{}
+
+	switch input.Kind() {
+	case decision.ValueKindString:
+		value, _ := input.StringValue()
+		result.Kind = &policyv1.RecordFieldValue_String_{String_: value}
+	case decision.ValueKindBoolean:
+		value, _ := input.Boolean()
+		result.Kind = &policyv1.RecordFieldValue_Boolean{Boolean: value}
+	case decision.ValueKindInteger:
+		value, _ := input.Integer()
+		result.Kind = &policyv1.RecordFieldValue_Integer{Integer: value}
+	case decision.ValueKindDouble:
+		value, _ := input.Double()
+		result.Kind = &policyv1.RecordFieldValue_Double{Double: value}
+	case decision.ValueKindStrings:
+		value, _ := input.Strings()
+		result.Kind = &policyv1.RecordFieldValue_Strings{Strings: &policyv1.StringList{Values: value}}
+	case decision.ValueKindBytes:
+		value, _ := input.Bytes()
+		result.Kind = &policyv1.RecordFieldValue_Bytes{Bytes: value}
+	case decision.ValueKindTimestamp:
+		value, _ := input.Timestamp()
+		result.Kind = &policyv1.RecordFieldValue_Timestamp{Timestamp: timestamppb.New(value)}
+	}
+
+	return result
 }
