@@ -8,13 +8,87 @@
 package policygrpc
 
 import (
+	"context"
 	"testing"
 
 	policyv1 "github.com/croessner/nauthilus/v3/api/policy/v1"
+	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v3/server/core"
+	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v3/server/policy/testsupport"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestTrackedDKIM2RspamdGRPCParityWithDirectDecisionFixture(t *testing.T) {
+	wire := &policyv1.DecisionRequest{}
+	if err := protojson.Unmarshal(testsupport.TrackedDKIM2ProtoJSON(t), wire); err != nil {
+		t.Fatalf("protojson.Unmarshal(tracked DKIM2 fixture) error = %v", err)
+	}
+
+	service := &trackedDKIM2GRPCService{response: testsupport.DirectPermitResponse(t)}
+	handler := New(service, contextAuthenticationEvidence)
+	ctx, gate := core.ContextWithPostActionExecutionGate(context.Background())
+
+	authentication, err := decision.NewAuthenticationInput(decision.AuthenticationEvidence{
+		Kind: "basic", Credential: []byte("opaque-policy-basic-proof"), TransportKind: "grpc", Protected: true,
+	})
+	if err != nil {
+		t.Fatalf("NewAuthenticationInput() error = %v", err)
+	}
+
+	response, err := handler.Evaluate(ContextWithAuthentication(ctx, authentication), wire)
+	if err != nil {
+		t.Fatalf("Evaluate(tracked DKIM2 fixture) error = %v", err)
+	}
+	defer gate.Complete()
+
+	if service.calls != 1 {
+		t.Fatalf("gRPC DecisionService calls = %d, want 1", service.calls)
+	}
+
+	testsupport.AssertTrackedDKIM2RequestInput(t, service.invocation.Request)
+
+	resourceRoundTrip, err := valueMapProto(service.invocation.Request.Resource.Attributes().Values())
+	if err != nil || len(resourceRoundTrip) != 24 {
+		t.Fatalf("gRPC tracked resource round trip = %d attributes, error %v", len(resourceRoundTrip), err)
+	}
+
+	if response.GetEffect() != policyv1.Effect_EFFECT_PERMIT || response.GetStatus().GetCode() != "permit" ||
+		response.GetStatus().GetRetryable() {
+		t.Fatalf("gRPC response semantics = %#v, want permit/non-retryable", response)
+	}
+}
+
+type trackedDKIM2GRPCService struct {
+	response   decision.DecisionResponse
+	invocation decision.Invocation
+	calls      int
+}
+
+// Evaluate captures the exact invocation delivered by the real gRPC handler boundary.
+func (s *trackedDKIM2GRPCService) Evaluate(_ context.Context, invocation decision.Invocation) (decision.DecisionResponse, error) {
+	s.calls++
+	s.invocation = invocation
+
+	return s.response, nil
+}
+
+// EvaluatePrepared executes transport preparation with the enabled gRPC generation snapshot.
+func (s *trackedDKIM2GRPCService) EvaluatePrepared(
+	ctx context.Context,
+	_ string,
+	prepare func(config.File) (decision.Invocation, error),
+) (decision.DecisionResponse, error) {
+	invocation, err := prepare(enabledGRPCPolicyConfig())
+	if err != nil {
+		return decision.DecisionResponse{}, err
+	}
+
+	return s.Evaluate(ctx, invocation)
+}
 
 func TestPolicyGRPCRecordRawWireRejection(t *testing.T) {
 	t.Run("absent field oneof", func(t *testing.T) {

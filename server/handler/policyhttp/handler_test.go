@@ -368,6 +368,7 @@ type recordingService struct {
 	response                    decision.DecisionResponse
 	err                         error
 	captured                    config.File
+	invocation                  decision.Invocation
 	authentication              decision.AuthenticationInput
 	finalization                *decision.EvaluationFinalization
 	gatePendingDuringEvaluation bool
@@ -380,6 +381,7 @@ type recordingService struct {
 //nolint:wsl_v5 // The observation sequence must remain adjacent to one invocation capture.
 func (s *recordingService) Evaluate(_ context.Context, invocation decision.Invocation) (decision.DecisionResponse, error) {
 	s.calls++
+	s.invocation = invocation
 	s.authentication = invocation.Authentication
 	s.finalization = &invocation.Finalization
 	select {

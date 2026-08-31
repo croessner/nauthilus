@@ -17,6 +17,8 @@ package observability
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,6 +92,27 @@ func TestDecisionLogFieldsUseSafeKeysOnly(t *testing.T) {
 
 	if !fieldPairExistsValue(fields, "snapshot_generation", uint64(7)) {
 		t.Fatalf("snapshot_generation missing from %#v", fields)
+	}
+}
+
+func TestDKIM2DecisionLogFieldsDoNotLeakRequestIdentities(t *testing.T) {
+	const (
+		smtpPeerIP   = "203.0.113.77"
+		signerDomain = "sensitive-signer.example"
+	)
+
+	for _, outcome := range []policy.Decision{policy.DecisionPermit, policy.DecisionDeny} {
+		fields := DecisionLogFields(DecisionLogEntry{
+			Mode: "enforce", Set: "dkim2_verifier", Name: "final_decision",
+			Operation: policy.OperationAuthenticate, Stage: policy.StageAuthDecision, Decision: outcome,
+		})
+		serialized := fmt.Sprint(fields)
+
+		for _, secret := range []string{smtpPeerIP, signerDomain} {
+			if strings.Contains(serialized, secret) {
+				t.Fatalf("%s log fields leak %q: %s", outcome, secret, serialized)
+			}
+		}
 	}
 }
 
@@ -184,6 +207,40 @@ func TestPrometheusRecorderUsesBoundedLabels(t *testing.T) {
 					t.Fatalf("forbidden label %q found on metric %q", label.GetName(), family.GetName())
 				}
 			}
+		}
+	}
+}
+
+func TestDKIM2DecisionMetricsDoNotLeakRequestIdentities(t *testing.T) {
+	const (
+		smtpPeerIP   = "203.0.113.77"
+		signerDomain = "sensitive-signer.example"
+	)
+
+	metricRegistry := prometheus.NewRegistry()
+
+	recorder, err := NewPrometheusRecorder(metricRegistry)
+	if err != nil {
+		t.Fatalf("NewPrometheusRecorder returned error: %v", err)
+	}
+
+	for _, outcome := range []policy.Decision{policy.DecisionPermit, policy.DecisionDeny} {
+		recorder.RecordDecision(context.Background(), DecisionMeasurement{
+			Mode: "enforce", Operation: policy.OperationAuthenticate, Stage: policy.StageAuthDecision,
+			Decision: outcome, PolicyName: "dkim2_verifier", ResponseMarker: "dkim2.response",
+			FSMEventMarker: "dkim2.final",
+		})
+	}
+
+	families, err := metricRegistry.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+
+	serialized := fmt.Sprint(families)
+	for _, secret := range []string{smtpPeerIP, signerDomain} {
+		if strings.Contains(serialized, secret) {
+			t.Fatalf("metric labels leak %q: %s", secret, serialized)
 		}
 	}
 }

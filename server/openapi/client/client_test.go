@@ -28,6 +28,7 @@ import (
 	generatedidp "github.com/croessner/nauthilus/v3/server/openapi/generated/idp"
 	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
 	"github.com/croessner/nauthilus/v3/server/openapi/requesttest"
+	"github.com/croessner/nauthilus/v3/server/policy/testsupport"
 )
 
 const (
@@ -219,6 +220,36 @@ func TestSupportedPolicyClientCarriesDKIM2RspamdProjectionAndSMTPPeer(t *testing
 	if response.StatusCode() != http.StatusOK || response.JSON200 == nil || response.JSON200.Effect != management.Permit {
 		t.Fatalf("DKIM2 Policy response = %#v", response)
 	}
+}
+
+func TestSupportedPolicyClientCarriesCompleteTrackedDKIM2RequestAndDirectResponse(t *testing.T) {
+	request := testsupport.TrackedDKIM2ManagementRequest(t)
+	want := testsupport.ManagementPermitResponse()
+	header := "Basic " + base64.StdEncoding.EncodeToString([]byte("rspamd-verifier:"+supportedClientBasicPassword))
+	doer := requesttest.NewClientSmokeDoer(t, requesttest.ClientSmokeRoute{
+		Request: request, Response: want, Method: http.MethodPost, Path: "/api/v1/policy/decisions", Status: http.StatusOK,
+		Headers: map[string]string{authorizationHeader: header},
+	})
+
+	client, err := NewPolicyClient(
+		supportedClientBaseURL,
+		PolicyBasicCredentials("rspamd-verifier", supportedClientBasicPassword),
+		management.WithHTTPClient(doer),
+	)
+	if err != nil {
+		t.Fatalf("new tracked DKIM2 Policy client: %v", err)
+	}
+
+	response, err := client.Evaluate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("evaluate tracked DKIM2 Policy request: %v", err)
+	}
+
+	if response.StatusCode() != http.StatusOK || response.JSON200 == nil {
+		t.Fatalf("tracked DKIM2 Policy response = %#v, want %#v", response, want)
+	}
+
+	testsupport.AssertManagementPermitResponse(t, *response.JSON200)
 }
 
 func TestSupportedPolicyClientUsesDedicatedBasicCredentials(t *testing.T) {

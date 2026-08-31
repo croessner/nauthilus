@@ -83,6 +83,37 @@ func TestDecisionReportRedactionExcludesSensitiveDetails(t *testing.T) {
 	}
 }
 
+func TestDKIM2DecisionReportRedactionExcludesRequestIdentities(t *testing.T) {
+	const (
+		smtpPeerIP   = "203.0.113.77"
+		signerDomain = "sensitive-signer.example"
+	)
+
+	for _, outcome := range []string{"permit", "provider_failure"} {
+		t.Run(outcome, func(t *testing.T) {
+			report := NewDecisionReport()
+			report.Attributes["dkim2.assessment"] = AttributeValue{
+				ID: "dkim2.assessment", Stage: policy.StageAuthDecision, Value: outcome,
+				Details: map[string]DetailValue{
+					"smtp_peer_ip":  {Value: smtpPeerIP, Sensitivity: SensitivitySecret},
+					"signer_domain": {Value: signerDomain, Sensitivity: SensitivityInternal},
+				},
+			}
+
+			payload, err := json.Marshal(report.Redacted())
+			if err != nil {
+				t.Fatalf("marshal redacted report: %v", err)
+			}
+
+			for _, secret := range []string{smtpPeerIP, signerDomain} {
+				if containsString(payload, secret) {
+					t.Fatalf("%s report leaks %q: %s", outcome, secret, payload)
+				}
+			}
+		})
+	}
+}
+
 func TestCloneFinalDecisionOwnsMutableEffectArguments(t *testing.T) {
 	strings := []string{"first", "second"}
 	bytes := []byte("payload")

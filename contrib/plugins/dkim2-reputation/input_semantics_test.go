@@ -120,26 +120,5 @@ func replaceRequestStringFact(
 ) pluginapi.DecisionFactRequest {
 	t.Helper()
 
-	facts := request.Facts()
-	found := false
-
-	for index, fact := range facts {
-		if fact.ID() != id {
-			continue
-		}
-
-		facts[index] = testFact(t, id, fact.Category(), testStringValue(t, value))
-		found = true
-	}
-
-	if !found {
-		t.Fatalf("fact %s is missing from test request", id)
-	}
-
-	result, err := pluginapi.NewDecisionFactRequest(request.Target(), request.Caller(), facts)
-	if err != nil {
-		t.Fatalf("NewDecisionFactRequest() error = %v", err)
-	}
-
-	return result
+	return replaceRequestFact(t, request, id, testStringValue(t, value))
 }

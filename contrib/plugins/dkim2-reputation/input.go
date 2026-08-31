@@ -913,10 +913,11 @@ func recordDigest(fields map[string]pluginapi.DecisionRecordFieldValue, name str
 	return value, nil
 }
 
-// parseCanonicalClientIP rejects aliases and addresses unsuitable as an SMTP peer identity.
+// parseCanonicalClientIP rejects aliases and local-only addresses unsuitable as an SMTP peer identity.
 func parseCanonicalClientIP(value string) (netip.Addr, error) {
 	address, err := netip.ParseAddr(value)
-	if err != nil || address.String() != value || address.Is4In6() || address.IsUnspecified() || address.IsMulticast() {
+	if err != nil || address.String() != value || address.Is4In6() || address.IsUnspecified() ||
+		address.IsMulticast() || address.IsLoopback() || address.IsLinkLocalUnicast() {
 		return netip.Addr{}, fmt.Errorf("smtp_client_ip must be a canonical unicast IPv4 or IPv6 address")
 	}
 

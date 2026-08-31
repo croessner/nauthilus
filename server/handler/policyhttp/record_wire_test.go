@@ -7,7 +7,32 @@
 
 package policyhttp
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"testing"
+
+	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
+	"github.com/croessner/nauthilus/v3/server/policy/testsupport"
+)
+
+func TestTrackedDKIM2RspamdHTTPParityWithDirectDecisionFixture(t *testing.T) {
+	payload := testsupport.TrackedDKIM2RequestBytes(t)
+	service := &recordingService{response: testsupport.DirectPermitResponse(t)}
+
+	wireResponse := servePolicyRequest(policyEngine(service), string(payload), "Basic cnNwYW1kLXZlcmlmaWVyOnRlc3Q=")
+	if wireResponse.Code != http.StatusOK || service.calls != 1 {
+		t.Fatalf("HTTP route status/service calls = %d/%d, want 200/1", wireResponse.Code, service.calls)
+	}
+
+	var response management.PolicyDecisionResponse
+	if err := json.Unmarshal(wireResponse.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode tracked HTTP response: %v", err)
+	}
+
+	testsupport.AssertManagementPermitResponse(t, response)
+	testsupport.AssertTrackedDKIM2RequestInput(t, service.invocation.Request)
+}
 
 func TestDKIM2RspamdHTTPWirePreservesLocalNestedAttributeKeys(t *testing.T) {
 	t.Parallel()
