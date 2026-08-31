@@ -227,6 +227,25 @@ func testDecisionValueOwnsStrings(t *testing.T) {
 	}
 }
 
+func TestDecisionValuePreservesPresentEmptyStrings(t *testing.T) {
+	value, err := NewDecisionValue(DecisionValueInput{Strings: []string{}})
+	if err != nil {
+		t.Fatalf("NewDecisionValue(empty strings) error = %v", err)
+	}
+
+	stringsValue, ok := value.Strings()
+	if !ok || stringsValue == nil || len(stringsValue) != 0 {
+		t.Fatalf("Strings() = %#v, %t, want non-nil empty list", stringsValue, ok)
+	}
+
+	anyValue, ok := value.Any()
+
+	anyStrings, typed := anyValue.([]string)
+	if !ok || !typed || anyStrings == nil || len(anyStrings) != 0 {
+		t.Fatalf("Any() = %#v, %t, want non-nil empty string list", anyValue, ok)
+	}
+}
+
 // testDecisionValueOwnsBytes checks input and accessor copies for bytes.
 func testDecisionValueOwnsBytes(t *testing.T) {
 	bytesValue := []byte("secret-free")

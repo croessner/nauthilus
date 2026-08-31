@@ -1,0 +1,384 @@
+# DKIM2 verification remains verifier-owned. Rspamd transports the sealed
+# projection and supplies current SMTP observations; the native assessor owns
+# the correlated assessed_chain result. Replace the credential placeholders.
+# Rspamd calls this target only for complete PASS/chain results whose existing
+# local verdict and disposition are accept or continue. Existing reject and
+# tempfail outcomes remain in the normal filter and never enter Policy.
+# This is the isolated Policy section of the server configuration. Build and
+# load the `dkim2_reputation` native module with the operator-owned reputation
+# snapshot documented in contrib/plugins/dkim2-reputation/README.md before
+# activating this target.
+policy:
+  api:
+    enabled: true
+    http: {enabled: true}
+    grpc: {enabled: true, require_mtls: true}
+    limits:
+      provider_timeout: 500ms
+      evaluation_timeout: 2s
+      max_request_bytes: 524288
+      max_facts: 64
+      max_string_bytes: 4096
+      max_list_items: 128
+      max_value_bytes: 262144
+      per_client_concurrency: 16
+      per_client_requests_per_second: 50
+      max_obligations: 0
+      max_advice: 0
+      max_parameter_bytes: 0
+    clients:
+      - principal: rspamd-verifier
+        authentication_kinds: [basic]
+        authentication:
+          basic:
+            username: rspamd-verifier
+            password: ${POLICY_DKIM2_RSPAMD_PASSWORD}
+        targets:
+          - namespace: dkim2
+            actions: [accept-message-instance]
+        allowed_schemas: [dkim2/accept-message-instance/v1]
+        allowed_subject_attributes: []
+        # These keys are relative to resource.attributes on the wire.
+        allowed_resource_attributes:
+          - dkim2.projection_schema
+          - dkim2.draft
+          - dkim2.projection_binding_algorithm
+          - dkim2.projection_binding
+          - dkim2.verification_state
+          - dkim2.verification_reason
+          - dkim2.scope
+          - dkim2.historical_content
+          - dkim2.historical_signatures
+          - dkim2.custody_structure
+          - dkim2.target_sequence
+          - dkim2.target_message_instance
+          - dkim2.claimed_hop_count
+          - dkim2.authentication_state
+          - dkim2.authentication_reason
+          - dkim2.replay_class
+          - dkim2.local_policy_mode
+          - dkim2.local_policy_verdict
+          - dkim2.local_policy_reason
+          - dkim2.do_not_modify_state
+          - dkim2.do_not_explode_state
+          - dkim2.dns_testing_effective
+          - dkim2.disposition
+          - dkim2.chain
+        # These keys are relative to environment.attributes on the wire.
+        allowed_environment_attributes:
+          - rspamd.scan_action_before_policy
+          - rspamd.metric_score
+          - rspamd.reject_threshold
+          - rspamd.greylist_threshold
+          - rspamd.normalized_signals
+          - rspamd.smtp_client_ip
+          - rspamd.client_class
+          - rspamd.mail_from_class
+          - rspamd.recipient_classes
+          - rspamd.smtp_authenticated
+          - rspamd.recipient_count
+          - rspamd.message_size
+          - rspamd.message_fidelity
+        allowed_input_attributes: []
+        max_request_bytes: 524288
+        max_facts: 48
+        max_concurrency: 16
+        requests_per_second: 50
+        diagnostics: false
+        require_mtls: false
+  namespaces:
+    dkim2:
+      schema_contributions:
+        static:
+          accept-message-instance:
+            versions:
+              v1:
+                facts:
+                  - {attribute: resource.dkim2.projection_schema, category: resource, type: string, allowed_sources: [caller], max_length: 64, required: true}
+                  - {attribute: resource.dkim2.draft, category: resource, type: string, allowed_sources: [caller], max_length: 64, required: true}
+                  - {attribute: resource.dkim2.projection_binding_algorithm, category: resource, type: string, allowed_sources: [caller], max_length: 16, required: true}
+                  - {attribute: resource.dkim2.projection_binding, category: resource, type: bytes, allowed_sources: [caller], max_bytes: 32, required: true}
+                  - {attribute: resource.dkim2.verification_state, category: resource, type: string, allowed_sources: [caller], max_length: 16, required: true}
+                  - {attribute: resource.dkim2.verification_reason, category: resource, type: string, allowed_sources: [caller], max_length: 64, required: true}
+                  - {attribute: resource.dkim2.scope, category: resource, type: string, allowed_sources: [caller], max_length: 16, required: true}
+                  - {attribute: resource.dkim2.historical_content, category: resource, type: string, allowed_sources: [caller], max_length: 24, required: true}
+                  - {attribute: resource.dkim2.historical_signatures, category: resource, type: string, allowed_sources: [caller], max_length: 24, required: true}
+                  - {attribute: resource.dkim2.custody_structure, category: resource, type: string, allowed_sources: [caller], max_length: 32, required: true}
+                  - {attribute: resource.dkim2.target_sequence, category: resource, type: integer, allowed_sources: [caller], required: true}
+                  - {attribute: resource.dkim2.target_message_instance, category: resource, type: integer, allowed_sources: [caller], required: true}
+                  - {attribute: resource.dkim2.claimed_hop_count, category: resource, type: integer, allowed_sources: [caller], required: true}
+                  - {attribute: resource.dkim2.authentication_state, category: resource, type: string, allowed_sources: [caller], max_length: 16, required: true}
+                  - {attribute: resource.dkim2.authentication_reason, category: resource, type: string, allowed_sources: [caller], max_length: 64, required: true}
+                  - {attribute: resource.dkim2.replay_class, category: resource, type: string, allowed_sources: [caller], max_length: 24, required: true}
+                  - {attribute: resource.dkim2.local_policy_mode, category: resource, type: string, allowed_sources: [caller], max_length: 16, required: true}
+                  - {attribute: resource.dkim2.local_policy_verdict, category: resource, type: string, allowed_sources: [caller], max_length: 16, required: true}
+                  - {attribute: resource.dkim2.local_policy_reason, category: resource, type: string, allowed_sources: [caller], max_length: 64, required: true}
+                  - {attribute: resource.dkim2.do_not_modify_state, category: resource, type: string, allowed_sources: [caller], max_length: 32, required: true}
+                  - {attribute: resource.dkim2.do_not_explode_state, category: resource, type: string, allowed_sources: [caller], max_length: 32, required: true}
+                  - {attribute: resource.dkim2.dns_testing_effective, category: resource, type: boolean, allowed_sources: [caller], required: true}
+                  - {attribute: resource.dkim2.disposition, category: resource, type: string, allowed_sources: [caller], max_length: 16, required: true}
+                  - attribute: resource.dkim2.chain
+                    category: resource
+                    type: records
+                    allowed_sources: [caller]
+                    required: true
+                    record_schema:
+                      id: verifier_chain
+                      version: v1
+                      min_records: 1
+                      max_records: 128
+                      max_fields: 23
+                      max_aggregate_bytes: 196608
+                      fields:
+                        - {name: sequence, type: integer, required: true, expression_visible: true}
+                        - {name: message_instance, type: integer, required: true, expression_visible: true}
+                        - {name: hop_binding, type: bytes, max_bytes: 32, required: true, provider_visibility: [dkim2/plugin.dkim2_reputation.assessment]}
+                        - {name: signer_domain, type: string, max_length: 253, required: true, expression_visible: true}
+                        - {name: signature_algorithms, type: strings, max_length: 32, max_items: 4, required: true, expression_visible: true}
+                        - {name: signature_state, type: string, max_length: 16, required: true, expression_visible: true}
+                        - {name: custody_transition, type: string, max_length: 32, required: true, expression_visible: true}
+                        - {name: do_not_modify, type: boolean, required: true, expression_visible: true}
+                        - {name: do_not_explode, type: boolean, required: true, expression_visible: true}
+                        - {name: feedback, type: boolean, required: true, expression_visible: true}
+                        - {name: feed_here, type: boolean, required: true, expression_visible: true}
+                        - {name: exploded, type: boolean, required: true, expression_visible: true}
+                        - {name: recipe_mode, type: string, max_length: 16, required: true, expression_visible: true}
+                        - {name: recipe_has_header_changes, type: boolean, required: true, expression_visible: true}
+                        - {name: recipe_body_mode, type: string, max_length: 16, required: true, expression_visible: true}
+                        - {name: recipe_digest, type: bytes, max_bytes: 32, required: true, provider_visibility: [dkim2/plugin.dkim2_reputation.assessment]}
+                        - {name: change_classes, type: strings, max_length: 64, max_items: 2, required: true, expression_visible: true}
+                        - {name: affected_headers, type: strings, max_length: 64, max_items: 128, required: true}
+                        - {name: history_header_state, type: string, max_length: 16, required: true, expression_visible: true}
+                        - {name: history_body_state, type: string, max_length: 16, required: true, expression_visible: true}
+                        - {name: body_availability, type: string, max_length: 16, required: true, expression_visible: true}
+                        - {name: change_count, type: integer, required: true, expression_visible: true}
+                        - {name: affected_header_count, type: integer, required: true, expression_visible: true}
+                  # Closed adapter values: no action, accept, add header, rewrite subject, greylist, soft reject, reject, quarantine, discard.
+                  - {attribute: environment.rspamd.scan_action_before_policy, category: environment, type: string, allowed_sources: [caller], max_length: 32, required: true}
+                  - {attribute: environment.rspamd.metric_score, category: environment, type: double, allowed_sources: [caller], required: true}
+                  - {attribute: environment.rspamd.reject_threshold, category: environment, type: double, allowed_sources: [caller], required: true}
+                  - {attribute: environment.rspamd.greylist_threshold, category: environment, type: double, allowed_sources: [caller], required: true}
+                  - {attribute: environment.rspamd.normalized_signals, category: environment, type: strings, allowed_sources: [caller], max_length: 32, max_items: 20, required: true}
+                  - {attribute: environment.rspamd.smtp_client_ip, category: environment, type: string, allowed_sources: [caller], max_length: 45, required: true}
+                  - {attribute: environment.rspamd.client_class, category: environment, type: string, allowed_sources: [caller], max_length: 16, required: true}
+                  - {attribute: environment.rspamd.mail_from_class, category: environment, type: string, allowed_sources: [caller], max_length: 16, required: true}
+                  - {attribute: environment.rspamd.recipient_classes, category: environment, type: strings, allowed_sources: [caller], max_length: 16, max_items: 3, required: true}
+                  - {attribute: environment.rspamd.smtp_authenticated, category: environment, type: boolean, allowed_sources: [caller], required: true}
+                  - {attribute: environment.rspamd.recipient_count, category: environment, type: integer, allowed_sources: [caller], required: true}
+                  - {attribute: environment.rspamd.message_size, category: environment, type: integer, allowed_sources: [caller], required: true}
+                  - {attribute: environment.rspamd.message_fidelity, category: environment, type: string, allowed_sources: [caller], max_length: 32, required: true}
+                  - attribute: plugin.dkim2_reputation.assessed_chain
+                    category: resource
+                    type: records
+                    allowed_sources: [plugin]
+                    required: false
+                    record_schema:
+                      id: assessed_chain
+                      version: v1
+                      min_records: 1
+                      max_records: 128
+                      max_fields: 10
+                      max_aggregate_bytes: 131072
+                      fields:
+                        - {name: sequence, type: integer, required: true, expression_visible: true}
+                        - {name: message_instance, type: integer, required: true, expression_visible: true}
+                        - {name: hop_binding, type: bytes, max_bytes: 32, required: true}
+                        - {name: signer_reputation, type: string, max_length: 16, required: true, expression_visible: true}
+                        - {name: smtp_peer_reputation, type: string, max_length: 16, required: true, expression_visible: true}
+                        - {name: contract_state, type: string, max_length: 24, required: true, expression_visible: true}
+                        - {name: recipe_authorization, type: string, max_length: 24, required: true, expression_visible: true}
+                        - {name: assessment_complete, type: boolean, required: true, expression_visible: true}
+                        - {name: acceptable, type: boolean, required: true, expression_visible: true}
+                        - {name: violation_classes, type: strings, max_length: 64, max_items: 14, required: true, expression_visible: true}
+      providers:
+        assessment:
+          kind: native
+          module: dkim2_reputation
+          targets: [{action: accept-message-instance}]
+          produced_facts: [plugin.dkim2_reputation.assessed_chain]
+          failure: indeterminate
+          timeout: 400ms
+          diagnostics: {public_id: dkim2-chain-assessment}
+      domain_plans:
+        verifier:
+          scheduler_guards:
+            nonpass_verifier_state:
+              if: {attribute: resource.dkim2.verification_state, not_in: [PASS]}
+              on_missing_attribute: run
+          checkpoints:
+            final_decision:
+              providers:
+                - {name: assessment, use: dkim2/assessment, skip_if: [nonpass_verifier_state]}
+      policy_sets:
+        verifier:
+          visibility: private
+          rules:
+            - name: deny_nonpass_verifier_state
+              checkpoint: final_decision
+              if: {attribute: resource.dkim2.verification_state, not_in: [PASS]}
+              then: {decision: deny, reason: dkim2_verification_not_pass}
+            - name: deny_replay
+              checkpoint: final_decision
+              if: {attribute: resource.dkim2.replay_class, in: [replayed, indeterminate]}
+              then: {decision: deny, reason: dkim2_replay_rejected}
+            - name: deny_terminal_nd
+              checkpoint: final_decision
+              if: {attribute: resource.dkim2.custody_structure, eq: terminal_nd_requires_oob}
+              then: {decision: deny, reason: dkim2_terminal_nd_not_permitted}
+            - name: deny_noncontinuable_disposition
+              checkpoint: final_decision
+              if: {attribute: resource.dkim2.disposition, not_in: [continue, accept]}
+              then: {decision: deny, reason: dkim2_disposition_not_permitted}
+            - name: deny_incomplete_assessment
+              checkpoint: final_decision
+              require_providers: [assessment]
+              if:
+                records:
+                  attribute: plugin.dkim2_reputation.assessed_chain
+                  quantifier: any
+                  field: assessment_complete
+                  where: {eq: false}
+              then: {decision: deny, reason: dkim2_assessment_incomplete}
+            - name: deny_reputation_assessment
+              checkpoint: final_decision
+              require_providers: [assessment]
+              if:
+                any:
+                  - records:
+                      attribute: plugin.dkim2_reputation.assessed_chain
+                      quantifier: any
+                      field: signer_reputation
+                      where: {in: [blocked, unknown]}
+                  - records:
+                      attribute: plugin.dkim2_reputation.assessed_chain
+                      quantifier: any
+                      field: smtp_peer_reputation
+                      where: {in: [blocked, unknown]}
+              then: {decision: deny, reason: dkim2_reputation_denied}
+            - name: deny_contract_or_recipe_assessment
+              checkpoint: final_decision
+              require_providers: [assessment]
+              if:
+                any:
+                  - records:
+                      attribute: plugin.dkim2_reputation.assessed_chain
+                      quantifier: any
+                      field: contract_state
+                      where: {in: [missing, peer_mismatch]}
+                  - records:
+                      attribute: plugin.dkim2_reputation.assessed_chain
+                      quantifier: any
+                      field: recipe_authorization
+                      where: {in: [denied, uncontracted]}
+              then: {decision: deny, reason: dkim2_contract_or_recipe_denied}
+            - name: deny_assessment_violation
+              checkpoint: final_decision
+              require_providers: [assessment]
+              if:
+                records:
+                  attribute: plugin.dkim2_reputation.assessed_chain
+                  quantifier: any
+                  field: violation_classes
+                  where:
+                    contains_any:
+                      - authentication_not_pass
+                      - body_unavailable
+                      - contract_missing
+                      - contract_peer_mismatch
+                      - do_not_explode_violated
+                      - do_not_modify_violated
+                      - history_not_matched
+                      - recipe_not_authorized
+                      - signer_reputation_blocked
+                      - signer_reputation_unknown
+                      - smtp_peer_reputation_blocked
+                      - smtp_peer_reputation_unknown
+                      - terminal_oob_required
+                      - upstream_nonpermittable
+              then: {decision: deny, reason: dkim2_assessment_violation}
+            - name: deny_unacceptable_assessment
+              checkpoint: final_decision
+              require_providers: [assessment]
+              if:
+                records:
+                  attribute: plugin.dkim2_reputation.assessed_chain
+                  quantifier: any
+                  field: acceptable
+                  where: {eq: false}
+              then: {decision: deny, reason: dkim2_assessment_denied}
+            - name: permit_strict_pass
+              checkpoint: final_decision
+              require_providers: [assessment]
+              if:
+                all:
+                  - {attribute: resource.dkim2.verification_state, eq: PASS}
+                  - {attribute: resource.dkim2.authentication_state, eq: PASS}
+                  - {attribute: resource.dkim2.scope, eq: chain}
+                  - {attribute: resource.dkim2.historical_content, eq: complete}
+                  - {attribute: resource.dkim2.historical_signatures, eq: complete}
+                  - {attribute: resource.dkim2.custody_structure, in: [not_present, nd_links_evaluated]}
+                  - {attribute: resource.dkim2.replay_class, in: [first_seen, exploded]}
+                  - {attribute: resource.dkim2.local_policy_verdict, in: [accept, continue]}
+                  - {attribute: resource.dkim2.disposition, in: [accept, continue]}
+                  - records:
+                      attribute: plugin.dkim2_reputation.assessed_chain
+                      quantifier: all
+                      field: assessment_complete
+                      where: {eq: true}
+                  - records:
+                      attribute: plugin.dkim2_reputation.assessed_chain
+                      quantifier: all
+                      field: acceptable
+                      where: {eq: true}
+                  - records:
+                      attribute: plugin.dkim2_reputation.assessed_chain
+                      quantifier: all
+                      field: signer_reputation
+                      where: {in: [trusted, neutral]}
+                  - records:
+                      attribute: plugin.dkim2_reputation.assessed_chain
+                      quantifier: all
+                      field: smtp_peer_reputation
+                      where: {in: [trusted, neutral]}
+                  - records:
+                      attribute: plugin.dkim2_reputation.assessed_chain
+                      quantifier: all
+                      field: contract_state
+                      where: {eq: matched}
+                  - records:
+                      attribute: plugin.dkim2_reputation.assessed_chain
+                      quantifier: all
+                      field: recipe_authorization
+                      where: {eq: permitted}
+                  - records:
+                      attribute: plugin.dkim2_reputation.assessed_chain
+                      quantifier: all
+                      field: violation_classes
+                      where:
+                        contains_none:
+                          - authentication_not_pass
+                          - body_unavailable
+                          - contract_missing
+                          - contract_peer_mismatch
+                          - do_not_explode_violated
+                          - do_not_modify_violated
+                          - history_not_matched
+                          - recipe_not_authorized
+                          - signer_reputation_blocked
+                          - signer_reputation_unknown
+                          - smtp_peer_reputation_blocked
+                          - smtp_peer_reputation_unknown
+                          - terminal_oob_required
+                          - upstream_nonpermittable
+              then: {decision: permit, reason: dkim2_chain_permitted}
+  targets:
+    - namespace: dkim2
+      action: accept-message-instance
+      schema: dkim2/accept-message-instance/v1
+      mode: enforce
+      domain_plan: dkim2/verifier
+      default_policy: dkim2/verifier
+      no_match: deny
+      timeouts: {evaluation: 2s, provider_default: 500ms}
+      plans:
+        final_decision: {policy_sets: [dkim2/verifier]}

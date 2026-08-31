@@ -165,6 +165,25 @@ func TestValueDeeplyOwnsBytesAndStringLists(t *testing.T) {
 	}
 }
 
+func TestValuePreservesPresentEmptyStrings(t *testing.T) {
+	value, err := decision.NewValue(decision.ValueInput{Strings: []string{}})
+	if err != nil {
+		t.Fatalf("NewValue(empty strings) error = %v", err)
+	}
+
+	stringsValue, ok := value.Strings()
+	if !ok || stringsValue == nil || len(stringsValue) != 0 {
+		t.Fatalf("Strings() = %#v, %t, want non-nil empty list", stringsValue, ok)
+	}
+
+	anyValue, ok := value.Any()
+
+	anyStrings, typed := anyValue.([]string)
+	if !ok || !typed || anyStrings == nil || len(anyStrings) != 0 {
+		t.Fatalf("Any() = %#v, %t, want non-nil empty string list", anyValue, ok)
+	}
+}
+
 func TestValueMapDeeplyOwnsInputAndAccessorCopies(t *testing.T) {
 	stringsValue, err := decision.NewValue(decision.ValueInput{Strings: []string{"mx01", "mx02"}})
 	if err != nil {

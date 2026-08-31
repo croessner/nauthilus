@@ -1,0 +1,291 @@
+{
+  "version": "1",
+  "request_id": "019d10c4-3858-7c2a-a5d1-2b3d57e641f2",
+  "target": {
+    "namespace": "dkim2",
+    "action": "accept-message-instance"
+  },
+  "resource": {
+    "type": "dkim2-message-instance",
+    "attributes": {
+      "dkim2.projection_schema": {
+        "string": "dkim2.verifier-projection.v1"
+      },
+      "dkim2.draft": {
+        "string": "draft-ietf-dkim-dkim2-spec-06"
+      },
+      "dkim2.projection_binding_algorithm": {
+        "string": "sha-256"
+      },
+      "dkim2.projection_binding": {
+        "bytes": "mOBskY9a9xU6WI7KYvu5516JdfNHyHP1w5rdLkwslZk="
+      },
+      "dkim2.verification_state": {
+        "string": "PASS"
+      },
+      "dkim2.verification_reason": {
+        "string": "none"
+      },
+      "dkim2.scope": {
+        "string": "chain"
+      },
+      "dkim2.historical_content": {
+        "string": "complete"
+      },
+      "dkim2.historical_signatures": {
+        "string": "complete"
+      },
+      "dkim2.custody_structure": {
+        "string": "not_present"
+      },
+      "dkim2.target_sequence": {
+        "integer": "1"
+      },
+      "dkim2.target_message_instance": {
+        "integer": "2"
+      },
+      "dkim2.claimed_hop_count": {
+        "integer": "1"
+      },
+      "dkim2.authentication_state": {
+        "string": "PASS"
+      },
+      "dkim2.authentication_reason": {
+        "string": "none"
+      },
+      "dkim2.replay_class": {
+        "string": "first_seen"
+      },
+      "dkim2.local_policy_mode": {
+        "string": "strict"
+      },
+      "dkim2.local_policy_verdict": {
+        "string": "accept"
+      },
+      "dkim2.local_policy_reason": {
+        "string": "protocol_pass"
+      },
+      "dkim2.do_not_modify_state": {
+        "string": "not_requested"
+      },
+      "dkim2.do_not_explode_state": {
+        "string": "indeterminate"
+      },
+      "dkim2.dns_testing_effective": {
+        "boolean": false
+      },
+      "dkim2.disposition": {
+        "string": "accept"
+      },
+      "dkim2.chain": {
+        "records": [
+          {
+            "fields": [
+              {
+                "name": "sequence",
+                "value": {
+                  "integer": "1"
+                }
+              },
+              {
+                "name": "message_instance",
+                "value": {
+                  "integer": "2"
+                }
+              },
+              {
+                "name": "hop_binding",
+                "value": {
+                  "bytes": "G0pGpIzm4NVVQUBEh0QBSGLYV/bnVho93IxzWA/jm9U="
+                }
+              },
+              {
+                "name": "signer_domain",
+                "value": {
+                  "string": "example.test"
+                }
+              },
+              {
+                "name": "signature_algorithms",
+                "value": {
+                  "strings": [
+                    "ed25519-sha256",
+                    "rsa-sha256"
+                  ]
+                }
+              },
+              {
+                "name": "signature_state",
+                "value": {
+                  "string": "pass"
+                }
+              },
+              {
+                "name": "custody_transition",
+                "value": {
+                  "string": "origin"
+                }
+              },
+              {
+                "name": "do_not_modify",
+                "value": {
+                  "boolean": false
+                }
+              },
+              {
+                "name": "do_not_explode",
+                "value": {
+                  "boolean": true
+                }
+              },
+              {
+                "name": "feedback",
+                "value": {
+                  "boolean": true
+                }
+              },
+              {
+                "name": "feed_here",
+                "value": {
+                  "boolean": false
+                }
+              },
+              {
+                "name": "exploded",
+                "value": {
+                  "boolean": false
+                }
+              },
+              {
+                "name": "recipe_mode",
+                "value": {
+                  "string": "applied"
+                }
+              },
+              {
+                "name": "recipe_has_header_changes",
+                "value": {
+                  "boolean": true
+                }
+              },
+              {
+                "name": "recipe_body_mode",
+                "value": {
+                  "string": "steps"
+                }
+              },
+              {
+                "name": "recipe_digest",
+                "value": {
+                  "bytes": "sciPR7Tn1MkjmO+sjFlTgwkNuFWcwbygwqnUTvzXqu4="
+                }
+              },
+              {
+                "name": "change_classes",
+                "value": {
+                  "strings": [
+                    "body.rewrite",
+                    "header.rewrite"
+                  ]
+                }
+              },
+              {
+                "name": "affected_headers",
+                "value": {
+                  "strings": [
+                    "subject",
+                    "x-trace"
+                  ]
+                }
+              },
+              {
+                "name": "history_header_state",
+                "value": {
+                  "string": "matched"
+                }
+              },
+              {
+                "name": "history_body_state",
+                "value": {
+                  "string": "matched"
+                }
+              },
+              {
+                "name": "body_availability",
+                "value": {
+                  "string": "known"
+                }
+              },
+              {
+                "name": "change_count",
+                "value": {
+                  "integer": "2"
+                }
+              },
+              {
+                "name": "affected_header_count",
+                "value": {
+                  "integer": "2"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "environment": {
+    "service": "rspamd",
+    "instance": "mx01.example.net",
+    "protocol": "milter",
+    "attributes": {
+      "rspamd.scan_action_before_policy": {
+        "string": "greylist"
+      },
+      "rspamd.metric_score": {
+        "double": 6.2
+      },
+      "rspamd.reject_threshold": {
+        "double": 15.0
+      },
+      "rspamd.greylist_threshold": {
+        "double": 4.0
+      },
+      "rspamd.normalized_signals": {
+        "strings": [
+          "dmarc.fail",
+          "spf.softfail"
+        ]
+      },
+      "rspamd.client_class": {
+        "string": "untrusted"
+      },
+      "rspamd.smtp_client_ip": {
+        "string": "203.0.113.7"
+      },
+      "rspamd.mail_from_class": {
+        "string": "external"
+      },
+      "rspamd.recipient_classes": {
+        "strings": [
+          "local"
+        ]
+      },
+      "rspamd.smtp_authenticated": {
+        "boolean": false
+      },
+      "rspamd.recipient_count": {
+        "integer": "1"
+      },
+      "rspamd.message_size": {
+        "integer": "48312"
+      },
+      "rspamd.message_fidelity": {
+        "string": "milter_reconstructed_crlf"
+      }
+    }
+  },
+  "options": {
+    "include_diagnostics": false
+  }
+}

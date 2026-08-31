@@ -119,6 +119,54 @@ func TestPolicyGRPCRecordRoundTripPreservesRepeatedOrder(t *testing.T) {
 	}
 }
 
+func TestDKIM2RspamdGRPCWirePreservesLocalNestedAttributeKeys(t *testing.T) {
+	t.Parallel()
+
+	request := &policyv1.DecisionRequest{
+		Version: "1",
+		Target:  &policyv1.Target{Namespace: "dkim2", Action: "accept-message-instance"},
+		Resource: &policyv1.Entity{Type: "dkim2-message-instance", Attributes: map[string]*policyv1.Value{
+			"dkim2.projection_schema": {Kind: &policyv1.Value_String_{String_: "dkim2.verifier-projection.v1"}},
+			"dkim2.chain": recordListValue(&policyv1.RecordList{Records: []*policyv1.Record{{Fields: []*policyv1.RecordField{
+				{Name: "sequence", Value: &policyv1.RecordFieldValue{Kind: &policyv1.RecordFieldValue_Integer{Integer: 1}}},
+				{Name: "signer_domain", Value: &policyv1.RecordFieldValue{Kind: &policyv1.RecordFieldValue_String_{String_: "origin.example"}}},
+			}}}}),
+		}},
+		Environment: &policyv1.Environment{
+			Service: "rspamd", Instance: "mx01.example.net", Protocol: "milter",
+			Attributes: map[string]*policyv1.Value{
+				"rspamd.smtp_client_ip": {Kind: &policyv1.Value_String_{String_: "192.0.2.25"}},
+			},
+		},
+	}
+
+	converted, err := requestInput(request)
+	if err != nil {
+		t.Fatalf("requestInput() error = %v", err)
+	}
+
+	resource := converted.Resource.Attributes().Values()
+	if _, ok := resource["dkim2.chain"]; !ok {
+		t.Fatalf("resource attributes = %v, want local dkim2.chain", resource)
+	}
+
+	if _, ok := resource["resource.dkim2.chain"]; ok {
+		t.Fatal("gRPC wire retained an incorrectly pre-prefixed resource key")
+	}
+
+	environment := converted.Environment.Attributes().Values()
+
+	ip, ok := environment["rspamd.smtp_client_ip"]
+	if !ok {
+		t.Fatalf("environment attributes = %v, want local rspamd.smtp_client_ip", environment)
+	}
+
+	address, _ := ip.StringValue()
+	if address != "192.0.2.25" {
+		t.Fatalf("SMTP peer = %q", address)
+	}
+}
+
 // recordValue wraps one field value in the smallest valid repeated record shape.
 func recordValue(value *policyv1.RecordFieldValue) *policyv1.Value {
 	return recordListValue(&policyv1.RecordList{

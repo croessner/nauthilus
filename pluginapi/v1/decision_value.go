@@ -156,7 +156,7 @@ func (v DecisionValue) Strings() ([]string, bool) {
 		return nil, false
 	}
 
-	return append([]string(nil), v.strings...), true
+	return append([]string{}, v.strings...), true
 }
 
 // Bytes returns an owned copy of the bytes member when active.
@@ -194,7 +194,7 @@ func (v DecisionValue) Any() (any, bool) {
 	case DecisionValueKindDouble:
 		return v.double, true
 	case DecisionValueKindStrings:
-		return append([]string(nil), v.strings...), true
+		return append([]string{}, v.strings...), true
 	case DecisionValueKindBytes:
 		return append([]byte(nil), v.bytes...), true
 	case DecisionValueKindTimestamp:

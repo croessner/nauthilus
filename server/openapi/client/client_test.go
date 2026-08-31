@@ -164,6 +164,63 @@ func TestSupportedPolicyClientPreservesOrderedRecords(t *testing.T) {
 	}
 }
 
+func TestSupportedPolicyClientCarriesDKIM2RspamdProjectionAndSMTPPeer(t *testing.T) {
+	t.Parallel()
+
+	projection := "dkim2.verifier-projection.v1"
+	sequence := "1"
+	signer := "origin.example"
+	smtpIP := "2001:db8::25"
+	resourceType := "dkim2-message-instance"
+	service := "rspamd"
+	instance := "mx01.example.net"
+	protocol := "milter"
+	resourceAttributes := management.PolicyValueMap{
+		"dkim2.projection_schema": {String: &projection},
+		"dkim2.chain": {Records: &[]management.PolicyRecord{{Fields: []management.PolicyRecordField{
+			{Name: "sequence", Value: management.PolicyRecordFieldValue{Integer: &sequence}},
+			{Name: "signer_domain", Value: management.PolicyRecordFieldValue{String: &signer}},
+		}}}},
+	}
+	environmentAttributes := management.PolicyValueMap{
+		"rspamd.smtp_client_ip": {String: &smtpIP},
+	}
+	request := management.EvaluatePolicyDecisionJSONRequestBody{
+		Version:  management.N1,
+		Target:   management.PolicyTarget{Namespace: "dkim2", Action: "accept-message-instance"},
+		Resource: &management.PolicyEntity{Type: &resourceType, Attributes: &resourceAttributes},
+		Environment: &management.PolicyEnvironment{
+			Service: &service, Instance: &instance, Protocol: &protocol, Attributes: &environmentAttributes,
+		},
+	}
+	responseBody := management.PolicyDecisionResponse{
+		DecisionId: "decision-dkim2-rspamd", Effect: management.Permit,
+		Status: management.PolicyStatus{Code: "permit", Message: "permitted"},
+	}
+	doer := requesttest.NewClientSmokeDoer(t, requesttest.ClientSmokeRoute{
+		Request: request, Response: responseBody, Method: http.MethodPost, Path: "/api/v1/policy/decisions", Status: http.StatusOK,
+		Headers: map[string]string{authorizationHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte(supportedClientBasicUser+":"+supportedClientBasicPassword))},
+	})
+
+	client, err := NewPolicyClient(
+		supportedClientBaseURL,
+		PolicyBasicCredentials(supportedClientBasicUser, supportedClientBasicPassword),
+		management.WithHTTPClient(doer),
+	)
+	if err != nil {
+		t.Fatalf("new DKIM2 Policy client: %v", err)
+	}
+
+	response, err := client.Evaluate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("evaluate DKIM2 Policy request: %v", err)
+	}
+
+	if response.StatusCode() != http.StatusOK || response.JSON200 == nil || response.JSON200.Effect != management.Permit {
+		t.Fatalf("DKIM2 Policy response = %#v", response)
+	}
+}
+
 func TestSupportedPolicyClientUsesDedicatedBasicCredentials(t *testing.T) {
 	request := management.EvaluatePolicyDecisionJSONRequestBody{
 		Version: management.N1,

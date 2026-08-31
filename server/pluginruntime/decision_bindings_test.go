@@ -161,6 +161,33 @@ func TestNativeDecisionFactBindingBuildsBoundedTargetAwareRequest(t *testing.T) 
 	assertNativeDecisionFactObservation(t, observer)
 }
 
+func TestNativeDecisionValueAdapterPreservesPresentEmptyStrings(t *testing.T) {
+	pluginValue, err := pluginapi.NewDecisionValue(pluginapi.DecisionValueInput{Strings: []string{}})
+	if err != nil {
+		t.Fatalf("NewDecisionValue(empty strings) error = %v", err)
+	}
+
+	internal, err := nativeDecisionValue(pluginValue)
+	if err != nil {
+		t.Fatalf("nativeDecisionValue(empty strings) error = %v", err)
+	}
+
+	internalStrings, ok := internal.Strings()
+	if !ok || internalStrings == nil || len(internalStrings) != 0 {
+		t.Fatalf("internal Strings() = %#v, %t, want non-nil empty list", internalStrings, ok)
+	}
+
+	roundTrip, err := pluginDecisionValue(internal)
+	if err != nil {
+		t.Fatalf("pluginDecisionValue(empty strings) error = %v", err)
+	}
+
+	pluginStrings, ok := roundTrip.Strings()
+	if !ok || pluginStrings == nil || len(pluginStrings) != 0 {
+		t.Fatalf("round-trip Strings() = %#v, %t, want non-nil empty list", pluginStrings, ok)
+	}
+}
+
 // assertNativeDecisionFactBinding verifies frozen internal provenance authority.
 func assertNativeDecisionFactBinding(t *testing.T, binding policyruntime.FactProviderBinding) {
 	t.Helper()
