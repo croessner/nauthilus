@@ -114,7 +114,7 @@ func NewValue(input ValueInput) (Value, error) {
 	case input.Strings != nil:
 		return newStringsValue(input.Strings)
 	case input.Bytes != nil:
-		return Value{kind: ValueKindBytes, bytes: append([]byte(nil), input.Bytes...)}, nil
+		return Value{kind: ValueKindBytes, bytes: append([]byte{}, input.Bytes...)}, nil
 	case input.Timestamp != nil:
 		return Value{kind: ValueKindTimestamp, timestamp: input.Timestamp.Round(0).UTC()}, nil
 	case input.Records != nil:
@@ -178,7 +178,7 @@ func (v Value) Bytes() ([]byte, bool) {
 		return nil, false
 	}
 
-	return append([]byte(nil), v.bytes...), true
+	return append([]byte{}, v.bytes...), true
 }
 
 // Timestamp returns the UTC-normalized timestamp member when active.
@@ -209,7 +209,7 @@ func (v Value) Any() (any, bool) {
 	case ValueKindStrings:
 		return append([]string{}, v.strings...), true
 	case ValueKindBytes:
-		return append([]byte(nil), v.bytes...), true
+		return append([]byte{}, v.bytes...), true
 	case ValueKindTimestamp:
 		return v.timestamp, true
 	case ValueKindRecords:
@@ -321,7 +321,7 @@ func cloneValue(input Value) Value {
 	case ValueKindStrings:
 		input.strings = append([]string(nil), input.strings...)
 	case ValueKindBytes:
-		input.bytes = append([]byte(nil), input.bytes...)
+		input.bytes = append([]byte{}, input.bytes...)
 	case ValueKindRecords:
 		input.records = input.records.clone()
 	}

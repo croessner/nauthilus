@@ -166,21 +166,47 @@ func TestValueDeeplyOwnsBytesAndStringLists(t *testing.T) {
 }
 
 func TestValuePreservesPresentEmptyStrings(t *testing.T) {
-	value, err := decision.NewValue(decision.ValueInput{Strings: []string{}})
+	assertPresentEmptyCollection(t, decision.ValueInput{Strings: []string{}}, func(value decision.Value) (any, bool) {
+		return value.Strings()
+	}, func(value any) bool {
+		member, ok := value.([]string)
+
+		return ok && member != nil && len(member) == 0
+	})
+}
+
+func TestValuePreservesPresentEmptyBytes(t *testing.T) {
+	assertPresentEmptyCollection(t, decision.ValueInput{Bytes: []byte{}}, func(value decision.Value) (any, bool) {
+		return value.Bytes()
+	}, func(value any) bool {
+		member, ok := value.([]byte)
+
+		return ok && member != nil && len(member) == 0
+	})
+}
+
+// assertPresentEmptyCollection verifies constructor, typed accessor, and generic accessor presence.
+func assertPresentEmptyCollection(
+	t *testing.T,
+	input decision.ValueInput,
+	accessor func(decision.Value) (any, bool),
+	valid func(any) bool,
+) {
+	t.Helper()
+
+	value, err := decision.NewValue(input)
 	if err != nil {
-		t.Fatalf("NewValue(empty strings) error = %v", err)
+		t.Fatalf("NewValue(present empty collection) error = %v", err)
 	}
 
-	stringsValue, ok := value.Strings()
-	if !ok || stringsValue == nil || len(stringsValue) != 0 {
-		t.Fatalf("Strings() = %#v, %t, want non-nil empty list", stringsValue, ok)
+	direct, ok := accessor(value)
+	if !ok || !valid(direct) {
+		t.Fatalf("typed accessor = %#v/%t, want present non-nil empty collection", direct, ok)
 	}
 
-	anyValue, ok := value.Any()
-
-	anyStrings, typed := anyValue.([]string)
-	if !ok || !typed || anyStrings == nil || len(anyStrings) != 0 {
-		t.Fatalf("Any() = %#v, %t, want non-nil empty string list", anyValue, ok)
+	generic, ok := value.Any()
+	if !ok || !valid(generic) {
+		t.Fatalf("Any() = %#v/%t, want present non-nil empty collection", generic, ok)
 	}
 }
 

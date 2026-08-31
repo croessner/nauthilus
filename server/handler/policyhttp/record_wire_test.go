@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
+	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	"github.com/croessner/nauthilus/v3/server/policy/testsupport"
 )
 
@@ -32,6 +33,50 @@ func TestTrackedDKIM2RspamdHTTPParityWithDirectDecisionFixture(t *testing.T) {
 
 	testsupport.AssertManagementPermitResponse(t, response)
 	testsupport.AssertTrackedDKIM2RequestInput(t, service.invocation.Request)
+}
+
+func TestPolicyHTTPActualInvocationPreservesPresentEmptyStringsAndBytes(t *testing.T) {
+	service := &recordingService{response: testsupport.DirectPermitResponse(t)}
+	body := `{"version":"1","target":{"namespace":"mail","action":"submit"},"attributes":{"empty_strings":{"strings":[]},"empty_bytes":{"bytes":""}}}`
+
+	wireResponse := servePolicyRequest(policyEngine(service), body, "Bearer opaque")
+	if wireResponse.Code != http.StatusOK || service.calls != 1 {
+		t.Fatalf("HTTP route status/service calls = %d/%d, want 200/1", wireResponse.Code, service.calls)
+	}
+
+	stringsValue, exists := service.invocation.Request.Attributes["empty_strings"]
+	assertHTTPPresentEmptyStrings(t, stringsValue, exists)
+
+	bytesMember, exists := service.invocation.Request.Attributes["empty_bytes"]
+	assertHTTPPresentEmptyBytes(t, bytesMember, exists)
+}
+
+// assertHTTPPresentEmptyStrings verifies the transport retained the active empty list member.
+func assertHTTPPresentEmptyStrings(t *testing.T, value decision.Value, exists bool) {
+	t.Helper()
+
+	if !exists || value.Kind() != "strings" {
+		t.Fatalf("empty strings value = %#v/%t, want present strings", value, exists)
+	}
+
+	member, ok := value.Strings()
+	if !ok || member == nil || len(member) != 0 {
+		t.Fatalf("empty strings member = %#v/%t, want present non-nil empty list", member, ok)
+	}
+}
+
+// assertHTTPPresentEmptyBytes verifies the transport retained the active empty byte member.
+func assertHTTPPresentEmptyBytes(t *testing.T, value decision.Value, exists bool) {
+	t.Helper()
+
+	if !exists || value.Kind() != "bytes" {
+		t.Fatalf("empty bytes value = %#v/%t, want present bytes", value, exists)
+	}
+
+	member, ok := value.Bytes()
+	if !ok || member == nil || len(member) != 0 {
+		t.Fatalf("empty bytes member = %#v/%t, want present non-nil empty bytes", member, ok)
+	}
 }
 
 func TestDKIM2RspamdHTTPWirePreservesLocalNestedAttributeKeys(t *testing.T) {
