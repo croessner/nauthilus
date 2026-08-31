@@ -23,7 +23,7 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 const maximumCallbackListItems = 4096

@@ -23,13 +23,13 @@ import (
 	"slices"
 	"sync"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/lualib/smtp"
-	"github.com/croessner/nauthilus/v3/server/pluginloader"
-	"github.com/croessner/nauthilus/v3/server/pluginregistry"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/core"
+	"github.com/croessner/nauthilus/v4/server/lualib/smtp"
+	"github.com/croessner/nauthilus/v4/server/pluginloader"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 
 	"github.com/prometheus/client_golang/prometheus"
 )

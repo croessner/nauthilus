@@ -16,9 +16,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	"github.com/croessner/nauthilus/v3/server/idp/signing"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/handler/deps"
+	"github.com/croessner/nauthilus/v4/server/idp/signing"
 )
 
 func TestManagerUsesSealedOIDCSigningKeyBytes(t *testing.T) {

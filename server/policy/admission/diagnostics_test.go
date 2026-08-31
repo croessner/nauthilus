@@ -20,9 +20,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 type admissionDiagnosticsCase struct {

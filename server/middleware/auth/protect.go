@@ -18,7 +18,7 @@ package auth
 import (
 	"log/slog"
 
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/gin-gonic/gin"
 )
 

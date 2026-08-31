@@ -18,7 +18,7 @@ package config
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
 )

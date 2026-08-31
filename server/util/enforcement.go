@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	rootModulePrefix  = "github.com/croessner/nauthilus/v3/"
+	rootModulePrefix  = "github.com/croessner/nauthilus/v4/"
 	forbiddenConfig   = rootModulePrefix + "server/config"
 	forbiddenRedis    = rootModulePrefix + "server/rediscli"
 	forbiddenLog      = rootModulePrefix + "server/log"

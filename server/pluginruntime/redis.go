@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 
 	"github.com/redis/go-redis/v9"
 )

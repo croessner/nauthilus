@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/sessionstate"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/sessionstate"
 )
 
 func TestEnvelopeCodecAcceptsOnlyCanonicalVersionAndEpoch(t *testing.T) {

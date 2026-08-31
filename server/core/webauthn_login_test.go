@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/backend"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/model/mfa"
+	"github.com/croessner/nauthilus/v4/server/backend"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/model/mfa"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/stretchr/testify/assert"

@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 
 	"go.uber.org/fx/fxevent"
 )

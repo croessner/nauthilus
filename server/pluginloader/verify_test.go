@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
 )
 
 const (

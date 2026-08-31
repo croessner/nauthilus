@@ -12,9 +12,9 @@ import (
 	"net/http"
 	"testing"
 
-	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/testsupport"
+	management "github.com/croessner/nauthilus/v4/server/openapi/generated/management"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/testsupport"
 )
 
 func TestTrackedDKIM2RspamdHTTPParityWithDirectDecisionFixture(t *testing.T) {

@@ -20,7 +20,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/openapi/requesttest"
+	"github.com/croessner/nauthilus/v4/server/openapi/requesttest"
 )
 
 const (

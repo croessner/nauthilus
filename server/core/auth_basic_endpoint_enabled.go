@@ -20,12 +20,12 @@ package core
 import (
 	"net/http"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/errors"
-	"github.com/croessner/nauthilus/v3/server/log/level"
-	mdauth "github.com/croessner/nauthilus/v3/server/middleware/auth"
-	"github.com/croessner/nauthilus/v3/server/secret"
-	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/errors"
+	"github.com/croessner/nauthilus/v4/server/log/level"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
+	"github.com/croessner/nauthilus/v4/server/secret"
+	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/gin-gonic/gin"
 )
 

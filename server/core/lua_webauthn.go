@@ -19,13 +19,13 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/croessner/nauthilus/v3/server/backend/bktype"
-	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/localcache"
-	"github.com/croessner/nauthilus/v3/server/lualib"
-	"github.com/croessner/nauthilus/v3/server/model/mfa"
-	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v4/server/backend/bktype"
+	"github.com/croessner/nauthilus/v4/server/backend/priorityqueue"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/localcache"
+	"github.com/croessner/nauthilus/v4/server/lualib"
+	"github.com/croessner/nauthilus/v4/server/model/mfa"
+	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"go.opentelemetry.io/otel/attribute"
 )
 

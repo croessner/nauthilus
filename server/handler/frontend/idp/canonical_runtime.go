@@ -8,9 +8,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
-	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	"github.com/croessner/nauthilus/v3/server/sessionstate"
+	"github.com/croessner/nauthilus/v4/server/core/cookie"
+	"github.com/croessner/nauthilus/v4/server/handler/deps"
+	"github.com/croessner/nauthilus/v4/server/sessionstate"
 )
 
 const canonicalBrowserEnvelopeKeyEpoch uint16 = 1

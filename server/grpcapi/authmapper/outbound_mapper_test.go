@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
-	"github.com/croessner/nauthilus/v3/server/model/authdto"
+	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
+	"github.com/croessner/nauthilus/v4/server/model/authdto"
 )
 
 func TestDTOOutboundMappersRoundTripSharedRequestFields(t *testing.T) {

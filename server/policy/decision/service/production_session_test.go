@@ -12,11 +12,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core/localization"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/core/localization"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 // TestInternalSessionCapturesPresentationAndConfigTogether proves internal authority is generation-owned.

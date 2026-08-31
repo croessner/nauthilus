@@ -23,7 +23,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
 type configSchemaKind uint8

@@ -12,8 +12,8 @@ import (
 	"math"
 	"slices"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 // NormalizeValue validates one fact value and returns a schema-ordered detached snapshot.

@@ -20,10 +20,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/backend/bktype"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/backend/bktype"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 func TestAuthIDPContextOwnsDetachedBoundedValues(t *testing.T) {

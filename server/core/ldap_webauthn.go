@@ -20,14 +20,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/backend/bktype"
-	"github.com/croessner/nauthilus/v3/server/backend/priorityqueue"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/errors"
-	"github.com/croessner/nauthilus/v3/server/model/mfa"
-	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
-	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/croessner/nauthilus/v4/server/backend/bktype"
+	"github.com/croessner/nauthilus/v4/server/backend/priorityqueue"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/errors"
+	"github.com/croessner/nauthilus/v4/server/model/mfa"
+	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v4/server/util"
 	"go.opentelemetry.io/otel/attribute"
 )
 

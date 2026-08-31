@@ -12,10 +12,10 @@ import (
 	"errors"
 	"testing"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/pluginloader"
-	"github.com/croessner/nauthilus/v3/server/testing/tracetest"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/pluginloader"
+	"github.com/croessner/nauthilus/v4/server/testing/tracetest"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"slices"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/pluginregistry"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
 )
 
 // HookRequestMetadata contains host-owned caller metadata for HTTP hooks.

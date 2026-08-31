@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
 func TestOIDCDynamicClientRegistrationSecureDefaults(t *testing.T) {

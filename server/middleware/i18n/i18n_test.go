@@ -18,7 +18,7 @@ package i18n
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/stretchr/testify/assert"
 )
 

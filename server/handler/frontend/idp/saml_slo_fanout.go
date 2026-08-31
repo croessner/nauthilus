@@ -30,9 +30,9 @@ import (
 
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
-	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	slodomain "github.com/croessner/nauthilus/v4/server/idp/slo"
+	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/segmentio/ksuid"
 )
 

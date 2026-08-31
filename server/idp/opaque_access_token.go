@@ -22,8 +22,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/idp/dcr"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/idp/dcr"
 	"github.com/golang-jwt/jwt/v5"
 )
 

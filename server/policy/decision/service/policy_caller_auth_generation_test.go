@@ -23,12 +23,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/callerauth"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
 const (

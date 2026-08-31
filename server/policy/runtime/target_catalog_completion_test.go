@@ -21,10 +21,10 @@ import (
 	"strings"
 	"testing"
 
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 type directRuntimeRecordCase struct {

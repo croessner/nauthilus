@@ -21,8 +21,8 @@ import (
 	"errors"
 	"time"
 
-	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 var (

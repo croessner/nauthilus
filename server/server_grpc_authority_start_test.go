@@ -21,13 +21,13 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core"
-	coreauth "github.com/croessner/nauthilus/v3/server/core/auth"
-	handlerauthority "github.com/croessner/nauthilus/v3/server/handler/grpcauthority"
-	"github.com/croessner/nauthilus/v3/server/pluginruntime"
-	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/core"
+	coreauth "github.com/croessner/nauthilus/v4/server/core/auth"
+	handlerauthority "github.com/croessner/nauthilus/v4/server/handler/grpcauthority"
+	"github.com/croessner/nauthilus/v4/server/pluginruntime"
+	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 func TestStartGRPCAuthorityForHTTPFailsInitialStartup(t *testing.T) {

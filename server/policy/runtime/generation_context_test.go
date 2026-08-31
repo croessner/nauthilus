@@ -19,7 +19,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/testing/tracetest"
+	"github.com/croessner/nauthilus/v4/server/testing/tracetest"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"

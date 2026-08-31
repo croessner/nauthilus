@@ -17,14 +17,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/croessner/nauthilus/v3/server/lualib/policyprovider"
-	"github.com/croessner/nauthilus/v3/server/policy/configinput"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/lualib/policyprovider"
+	"github.com/croessner/nauthilus/v4/server/policy/configinput"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 const configuredLuaCallbacks = `

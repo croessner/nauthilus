@@ -19,12 +19,12 @@ import (
 	"context"
 	"testing"
 
-	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
-	"github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
+	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
+	"github.com/croessner/nauthilus/v4/server/core"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"

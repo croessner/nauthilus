@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/lualib/policyprovider"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/lualib/policyprovider"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 const policyProviderFixtureDirectory = "../../../testdata/lua/policyprovider/"

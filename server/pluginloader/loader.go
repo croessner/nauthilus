@@ -21,12 +21,12 @@ import (
 	"log/slog"
 	stdplugin "plugin"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/log/level"
-	"github.com/croessner/nauthilus/v3/server/pluginregistry"
-	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/log/level"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 const pluginFactorySymbol = "NauthilusPlugin"

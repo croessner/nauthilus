@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pelletier/go-toml/v2"
 	"go.yaml.in/yaml/v3"

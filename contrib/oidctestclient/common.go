@@ -31,7 +31,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/croessner/nauthilus/v4/server/util"
 	"golang.org/x/oauth2"
 )
 

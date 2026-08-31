@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"testing"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
 //nolint:funlen // The single table keeps the complete negative provider boundary reviewable.

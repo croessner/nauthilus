@@ -10,8 +10,8 @@ package service
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 func TestRecordQuantifiersUseExplicitMissingEmptyAndMultipleRecordSemantics(t *testing.T) {

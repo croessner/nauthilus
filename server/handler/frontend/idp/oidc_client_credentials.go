@@ -19,8 +19,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	oidcserver "github.com/croessner/nauthilus/v3/server/idp"
+	"github.com/croessner/nauthilus/v4/server/config"
+	oidcserver "github.com/croessner/nauthilus/v4/server/idp"
 	"github.com/gin-gonic/gin"
 )
 

@@ -7,7 +7,7 @@
 
 package registry
 
-import "github.com/croessner/nauthilus/v3/server/policy/internal/identifier"
+import "github.com/croessner/nauthilus/v4/server/policy/internal/identifier"
 
 // validEffectID preserves the general namespace/action grammar plus one authn-only native extension form.
 func validEffectID(value string) bool {

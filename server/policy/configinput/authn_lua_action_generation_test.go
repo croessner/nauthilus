@@ -16,13 +16,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/lualib"
-	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
-	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/lualib"
+	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
+	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 
 	lua "github.com/yuin/gopher-lua"
 )

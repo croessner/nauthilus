@@ -15,7 +15,7 @@
 
 package callerauth
 
-import policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+import policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 
 // Prepare compiles one generation-owned authenticator and detached profile metadata.
 func Prepare(configuration Configuration) (policyruntime.CallerAuthenticationPreparation, error) {

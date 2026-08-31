@@ -14,17 +14,17 @@ import (
 	"testing"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/croessner/nauthilus/v3/server/core/localization"
-	"github.com/croessner/nauthilus/v3/server/policy/catalogcompile"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	"github.com/croessner/nauthilus/v3/server/policy/nativebinding"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/core/localization"
+	"github.com/croessner/nauthilus/v4/server/policy/catalogcompile"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v4/server/policy/nativebinding"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 const (

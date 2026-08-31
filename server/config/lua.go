@@ -18,8 +18,8 @@ package config
 import (
 	"fmt"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/errors"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/errors"
 )
 
 // LuaSection describes the exported LuaSection type.

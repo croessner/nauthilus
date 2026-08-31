@@ -25,13 +25,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/backend/bktype"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/backend/bktype"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v4/server/secret"
 
 	"github.com/gin-gonic/gin"
 )

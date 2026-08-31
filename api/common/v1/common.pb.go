@@ -375,7 +375,7 @@ const file_api_common_v1_common_proto_rawDesc = "" +
 	"\x19OPERATION_RESULT_TEMPFAIL\x10\x03\x12\x1b\n" +
 	"\x17OPERATION_RESULT_DENIED\x10\x04\x12\x1e\n" +
 	"\x1aOPERATION_RESULT_NOT_FOUND\x10\x05\x12\x1d\n" +
-	"\x19OPERATION_RESULT_CONFLICT\x10\x06B:Z8github.com/croessner/nauthilus/v3/api/common/v1;commonv1b\x06proto3"
+	"\x19OPERATION_RESULT_CONFLICT\x10\x06B:Z8github.com/croessner/nauthilus/v4/api/common/v1;commonv1b\x06proto3"
 
 var (
 	file_api_common_v1_common_proto_rawDescOnce sync.Once

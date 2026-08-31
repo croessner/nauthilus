@@ -23,9 +23,9 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/croessner/nauthilus/v3/server/idp/clientauth"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/idp/clientauth"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/redis/go-redis/v9"
 	"pgregory.net/rapid"
 )

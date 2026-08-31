@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	commonv1 "github.com/croessner/nauthilus/v4/api/common/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 
 	"github.com/go-redis/redismock/v9"
 )

@@ -19,7 +19,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/gin-gonic/gin"
 )
 

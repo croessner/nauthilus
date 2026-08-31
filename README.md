@@ -104,6 +104,7 @@ make guardrails
 - Integrated IdP manual: [IDP.md](IDP.md)
 - Test client documentation: [client/README.md](client/README.md)
 - Lua plugin notes: [server/lua-plugins.d/README.md](server/lua-plugins.d/README.md)
+- v4 module and consumer migration: [server/docs/v4_module_migration.md](server/docs/v4_module_migration.md)
 - Backend health checks: [server/docs/backend_health_checks.md](server/docs/backend_health_checks.md)
 - Policy configuration hard-cut and manual migration guide: [server/docs/policy_configuration_migration.md](server/docs/policy_configuration_migration.md)
 - Policy Decision Service operations guide: [server/docs/policy_operations.md](server/docs/policy_operations.md)

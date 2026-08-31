@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/internal/identifier"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/internal/identifier"
 )
 
 const (

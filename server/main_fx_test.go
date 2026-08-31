@@ -11,12 +11,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/app/bootfx"
-	"github.com/croessner/nauthilus/v3/server/app/configfx"
-	"github.com/croessner/nauthilus/v3/server/app/policyfx"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core/localization"
-	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/v4/server/app/bootfx"
+	"github.com/croessner/nauthilus/v4/server/app/configfx"
+	"github.com/croessner/nauthilus/v4/server/app/policyfx"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/core/localization"
+	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
 
 	"go.uber.org/fx"
 )

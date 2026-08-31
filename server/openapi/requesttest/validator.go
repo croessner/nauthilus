@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/openapi/requestvalidation"
+	"github.com/croessner/nauthilus/v4/server/openapi/requestvalidation"
 )
 
 const (

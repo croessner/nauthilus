@@ -21,12 +21,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/encoding/cborcodec"
-	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
-	"github.com/croessner/nauthilus/v3/server/model/authdto"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/core"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/encoding/cborcodec"
+	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
+	"github.com/croessner/nauthilus/v4/server/model/authdto"
 	"github.com/gin-gonic/gin"
 )
 

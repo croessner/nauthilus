@@ -14,12 +14,12 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
-	"github.com/croessner/nauthilus/v3/server/backend"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
-	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
-	"github.com/croessner/nauthilus/v3/server/sessionstate"
+	"github.com/croessner/nauthilus/v4/server/backend"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/core"
+	"github.com/croessner/nauthilus/v4/server/core/cookie"
+	flowdomain "github.com/croessner/nauthilus/v4/server/idp/flow"
+	"github.com/croessner/nauthilus/v4/server/sessionstate"
 	"github.com/gin-gonic/gin"
 )
 

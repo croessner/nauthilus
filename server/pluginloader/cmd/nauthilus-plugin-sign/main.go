@@ -28,7 +28,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/pluginloader"
+	"github.com/croessner/nauthilus/v4/server/pluginloader"
 )
 
 const (

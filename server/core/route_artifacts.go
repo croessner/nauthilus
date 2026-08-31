@@ -17,7 +17,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 )
 
 const grpcHTTP2NextProtocol = "h2"

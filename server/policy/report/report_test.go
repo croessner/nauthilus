@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy"
 )
 
 func TestNewDecisionReportStartsEmpty(t *testing.T) {

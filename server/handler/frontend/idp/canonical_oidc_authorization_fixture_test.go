@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	"github.com/croessner/nauthilus/v3/server/idp"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/handler/deps"
+	"github.com/croessner/nauthilus/v4/server/idp"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/go-redis/redismock/v9"
 )
 

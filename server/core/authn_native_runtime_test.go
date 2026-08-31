@@ -12,12 +12,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 const (

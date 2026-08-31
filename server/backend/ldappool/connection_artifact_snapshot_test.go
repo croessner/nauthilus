@@ -12,7 +12,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 )
 
 func TestLDAPTLSConfigUsesSealedMaterialAfterLiveMutation(t *testing.T) {

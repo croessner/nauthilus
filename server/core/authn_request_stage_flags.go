@@ -7,7 +7,7 @@
 
 package core
 
-import "github.com/croessner/nauthilus/v3/server/definitions"
+import "github.com/croessner/nauthilus/v4/server/definitions"
 
 // AuthnRequestStageFlags describes request-observed authn stage availability.
 type AuthnRequestStageFlags struct {

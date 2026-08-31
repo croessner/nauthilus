@@ -16,8 +16,8 @@
 package authmapper
 
 import (
-	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
-	"github.com/croessner/nauthilus/v3/server/model/authdto"
+	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
+	"github.com/croessner/nauthilus/v4/server/model/authdto"
 )
 
 // DTOToAuthRequest maps the shared auth DTO to a gRPC authentication request.

@@ -25,11 +25,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/presentation"
-	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
-	"github.com/croessner/nauthilus/v3/server/policy/report"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/presentation"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/policy/report"
 )
 
 // StandardAuthFacts projects request-local host observations into the captured catalog vocabulary.

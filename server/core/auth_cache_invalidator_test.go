@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/localcache"
+	"github.com/croessner/nauthilus/v4/server/localcache"
 )
 
 type recordingAuthCacheInvalidator struct {

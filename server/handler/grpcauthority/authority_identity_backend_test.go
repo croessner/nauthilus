@@ -23,12 +23,12 @@ import (
 	"testing"
 	"time"
 
-	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
-	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
-	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/model/mfa"
+	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
+	commonv1 "github.com/croessner/nauthilus/v4/api/common/v1"
+	identityv1 "github.com/croessner/nauthilus/v4/api/identity/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/model/mfa"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"google.golang.org/grpc"

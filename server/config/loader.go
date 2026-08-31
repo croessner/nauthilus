@@ -29,7 +29,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 )

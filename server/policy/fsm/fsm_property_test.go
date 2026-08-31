@@ -21,7 +21,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy"
 	"pgregory.net/rapid"
 )
 

@@ -10,14 +10,14 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/frontend"
-	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
-	"github.com/croessner/nauthilus/v3/server/idp/mfastate"
-	"github.com/croessner/nauthilus/v3/server/middleware/csrf"
-	"github.com/croessner/nauthilus/v3/server/sessionstate"
+	"github.com/croessner/nauthilus/v4/server/core"
+	"github.com/croessner/nauthilus/v4/server/core/cookie"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/frontend"
+	flowdomain "github.com/croessner/nauthilus/v4/server/idp/flow"
+	"github.com/croessner/nauthilus/v4/server/idp/mfastate"
+	"github.com/croessner/nauthilus/v4/server/middleware/csrf"
+	"github.com/croessner/nauthilus/v4/server/sessionstate"
 	"github.com/gin-gonic/gin"
 )
 

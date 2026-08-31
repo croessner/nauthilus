@@ -25,8 +25,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/app/bootfx"
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/app/bootfx"
+	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/spf13/viper"
 )
 

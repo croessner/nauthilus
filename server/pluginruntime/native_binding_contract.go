@@ -15,7 +15,7 @@
 
 package pluginruntime
 
-import "github.com/croessner/nauthilus/v3/server/policy/nativebinding"
+import "github.com/croessner/nauthilus/v4/server/policy/nativebinding"
 
 var (
 	// ErrInvalidDecisionBinding identifies a configured selection outside frozen native capabilities.

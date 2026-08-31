@@ -11,10 +11,10 @@ import (
 	"fmt"
 	"slices"
 
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 // AuthnHostDisposition is the generation-owned instruction for one exact host instance.

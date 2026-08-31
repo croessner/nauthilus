@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/go-redis/redismock/v9"
 	lua "github.com/yuin/gopher-lua"
 )

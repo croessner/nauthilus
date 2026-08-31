@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/idp/signing"
+	"github.com/croessner/nauthilus/v4/server/idp/signing"
 )
 
 type sealedCredentialValidator struct {

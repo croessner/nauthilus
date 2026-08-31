@@ -23,11 +23,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
-	"github.com/croessner/nauthilus/v3/server/openapi/requesttest"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
+	"github.com/croessner/nauthilus/v4/server/openapi/requesttest"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 )

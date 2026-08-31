@@ -15,16 +15,16 @@ import (
 	"testing"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/croessner/nauthilus/v3/server/pluginloader"
-	"github.com/croessner/nauthilus/v3/server/pluginregistry"
-	"github.com/croessner/nauthilus/v3/server/pluginruntime"
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/pluginloader"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
+	"github.com/croessner/nauthilus/v4/server/pluginruntime"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 const boundNativeAuthnPolicyFixture = `policy:

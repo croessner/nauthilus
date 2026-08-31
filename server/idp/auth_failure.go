@@ -18,7 +18,7 @@ package idp
 import (
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/core/localization"
+	"github.com/croessner/nauthilus/v4/server/core/localization"
 )
 
 // AuthFailureStatus carries policy-selected status metadata across IDP auth boundaries.

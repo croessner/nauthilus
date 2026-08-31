@@ -62,8 +62,8 @@ var forbiddenProductionPolicyAuthority = []string{
 	"CheckScheduled(",
 	"policyCheckScheduled(",
 	"ApplySchedule(",
-	`"github.com/croessner/nauthilus/v3/server/lualib/policyschedule"`,
-	`"github.com/croessner/nauthilus/v3/server/policy/evaluation"`,
+	`"github.com/croessner/nauthilus/v4/server/lualib/policyschedule"`,
+	`"github.com/croessner/nauthilus/v4/server/policy/evaluation"`,
 }
 
 func TestLegacyProductionPolicyAuthorityIsAbsent(t *testing.T) {

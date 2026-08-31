@@ -10,7 +10,7 @@ package runtime
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 func TestGenericProviderBindingInputsOwnCallerAndFactViews(t *testing.T) {

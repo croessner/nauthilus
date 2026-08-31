@@ -19,8 +19,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	apilog "github.com/croessner/nauthilus/v3/server/log"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	apilog "github.com/croessner/nauthilus/v4/server/log"
 )
 
 // TestMain initializes global logging exactly once for this package before tests run.

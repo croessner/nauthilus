@@ -22,10 +22,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	"github.com/croessner/nauthilus/v3/server/idp"
-	"github.com/croessner/nauthilus/v3/server/middleware/oidcbearer"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/handler/deps"
+	"github.com/croessner/nauthilus/v4/server/idp"
+	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )

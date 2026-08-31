@@ -13,13 +13,13 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core/localization"
-	"github.com/croessner/nauthilus/v3/server/lualib"
-	"github.com/croessner/nauthilus/v3/server/lualib/hook"
-	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/bruteforce/tolerate"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/core/localization"
+	"github.com/croessner/nauthilus/v4/server/lualib"
+	"github.com/croessner/nauthilus/v4/server/lualib/hook"
+	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 
 	lua "github.com/yuin/gopher-lua"
 )

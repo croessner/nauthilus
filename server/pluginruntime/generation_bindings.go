@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"slices"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/pluginloader"
-	"github.com/croessner/nauthilus/v3/server/pluginregistry"
-	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/pluginloader"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 // GenerationBindings is an immutable native module view captured from process-lifetime plugins.

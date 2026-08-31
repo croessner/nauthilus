@@ -1,7 +1,7 @@
 // Package util provides util functionality.
 package util
 
-import "github.com/croessner/nauthilus/v3/server/config"
+import "github.com/croessner/nauthilus/v4/server/config"
 
 // Test-only default environment.
 //

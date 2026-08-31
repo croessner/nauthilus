@@ -23,11 +23,11 @@ import (
 	"sync"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/backend/bktype"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/localcache"
-	"github.com/croessner/nauthilus/v3/server/util"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/backend/bktype"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/localcache"
+	"github.com/croessner/nauthilus/v4/server/util"
 
 	"github.com/gin-gonic/gin"
 )

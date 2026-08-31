@@ -3,8 +3,8 @@ package configfx
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/config"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 // TestProviderVersionMonotonicOnCandidatePreparationFailure proves failed preparation is unpublished.

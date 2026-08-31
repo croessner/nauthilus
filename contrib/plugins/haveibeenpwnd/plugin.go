@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/croessner/nauthilus/v3/contrib/plugins/internal/pluginutil"
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/pluginutil"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
 const (

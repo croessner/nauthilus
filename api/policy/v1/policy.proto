@@ -4,7 +4,7 @@ package nauthilus.policy.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/croessner/nauthilus/v3/api/policy/v1;policyv1";
+option go_package = "github.com/croessner/nauthilus/v4/api/policy/v1;policyv1";
 
 // PolicyDecisionService evaluates one admitted Policy request per unary call.
 service PolicyDecisionService {

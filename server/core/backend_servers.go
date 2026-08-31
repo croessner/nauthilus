@@ -16,7 +16,7 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 )
 
 // ListBackendServers returns the current slice of configured backend servers.

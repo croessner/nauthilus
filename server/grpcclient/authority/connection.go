@@ -8,9 +8,9 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
-	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
+	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
+	identityv1 "github.com/croessner/nauthilus/v4/api/identity/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"

@@ -16,7 +16,7 @@
 // Package bktype provides bktype functionality.
 package bktype
 
-import "github.com/croessner/nauthilus/v3/server/definitions"
+import "github.com/croessner/nauthilus/v4/server/definitions"
 
 // PositivePasswordCache is a container that stores all kinds of user information upon a successful authentication. It
 // is used for Redis as a short cache object and as a proxy structure between Nauthilus instances. The cache object is not

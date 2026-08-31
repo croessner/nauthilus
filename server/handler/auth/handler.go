@@ -20,12 +20,12 @@ import (
 	stderrors "errors"
 	"net/http"
 
-	"github.com/croessner/nauthilus/v3/server/backend/bktype"
-	"github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	handlerdeps "github.com/croessner/nauthilus/v3/server/handler/deps"
-	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
-	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/croessner/nauthilus/v4/server/backend/bktype"
+	"github.com/croessner/nauthilus/v4/server/core"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
+	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/gin-gonic/gin"
 )
 

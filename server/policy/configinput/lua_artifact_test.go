@@ -10,8 +10,8 @@ package configinput
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
 )
 
 // capturePolicyLuaTestArtifacts seals every script path declared by one test policy.

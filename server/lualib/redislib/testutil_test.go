@@ -21,10 +21,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
-	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/util"
 
 	"github.com/go-redis/redismock/v9"
 	"github.com/redis/go-redis/v9"

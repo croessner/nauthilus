@@ -18,7 +18,7 @@ package idp
 import (
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 )
 
 func consentTTLForClient(cfg config.File, client *config.OIDCClient) time.Duration {

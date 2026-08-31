@@ -19,9 +19,9 @@ import (
 	"context"
 	"time"
 
-	authv1 "github.com/croessner/nauthilus/v3/api/auth/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/monitoring/authmetrics"
+	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/monitoring/authmetrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

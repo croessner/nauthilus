@@ -18,7 +18,7 @@ package core_test
 import (
 	"testing"
 
-	coreauth "github.com/croessner/nauthilus/v3/server/core/auth"
+	coreauth "github.com/croessner/nauthilus/v4/server/core/auth"
 )
 
 func TestWaitDelayMonotonicAndBounded(t *testing.T) {

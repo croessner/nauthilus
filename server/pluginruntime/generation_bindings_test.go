@@ -22,12 +22,12 @@ import (
 	"slices"
 	"testing"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/pluginloader"
-	"github.com/croessner/nauthilus/v3/server/pluginregistry"
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/pluginloader"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 // TestGenerationBindingsCaptureLoadedCapabilitiesImmutably proves detached native indexes.

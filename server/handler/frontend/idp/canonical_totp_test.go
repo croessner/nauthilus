@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
-	"github.com/croessner/nauthilus/v3/server/idp/mfastate"
-	"github.com/croessner/nauthilus/v3/server/middleware/csrf"
-	"github.com/croessner/nauthilus/v3/server/sessionstate"
+	"github.com/croessner/nauthilus/v4/server/core/cookie"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	flowdomain "github.com/croessner/nauthilus/v4/server/idp/flow"
+	"github.com/croessner/nauthilus/v4/server/idp/mfastate"
+	"github.com/croessner/nauthilus/v4/server/middleware/csrf"
+	"github.com/croessner/nauthilus/v4/server/sessionstate"
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 )

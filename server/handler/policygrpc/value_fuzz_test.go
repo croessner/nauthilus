@@ -10,7 +10,7 @@ package policygrpc
 import (
 	"testing"
 
-	policyv1 "github.com/croessner/nauthilus/v3/api/policy/v1"
+	policyv1 "github.com/croessner/nauthilus/v4/api/policy/v1"
 
 	"google.golang.org/protobuf/proto"
 )

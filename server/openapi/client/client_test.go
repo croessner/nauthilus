@@ -24,11 +24,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	generatedidp "github.com/croessner/nauthilus/v3/server/openapi/generated/idp"
-	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
-	"github.com/croessner/nauthilus/v3/server/openapi/requesttest"
-	"github.com/croessner/nauthilus/v3/server/policy/testsupport"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	generatedidp "github.com/croessner/nauthilus/v4/server/openapi/generated/idp"
+	management "github.com/croessner/nauthilus/v4/server/openapi/generated/management"
+	"github.com/croessner/nauthilus/v4/server/openapi/requesttest"
+	"github.com/croessner/nauthilus/v4/server/policy/testsupport"
 )
 
 const (

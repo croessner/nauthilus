@@ -25,9 +25,9 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
-	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
-	"github.com/croessner/nauthilus/v3/server/middleware/limit"
+	"github.com/croessner/nauthilus/v4/server/handler/deps"
+	slodomain "github.com/croessner/nauthilus/v4/server/idp/slo"
+	"github.com/croessner/nauthilus/v4/server/middleware/limit"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"

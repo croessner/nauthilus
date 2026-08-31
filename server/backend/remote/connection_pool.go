@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	authorityclient "github.com/croessner/nauthilus/v3/server/grpcclient/authority"
+	"github.com/croessner/nauthilus/v4/server/config"
+	authorityclient "github.com/croessner/nauthilus/v4/server/grpcclient/authority"
 )
 
 var (

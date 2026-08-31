@@ -21,9 +21,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/policy"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
 const (

@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"slices"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 const nativeDecisionFactSource = "plugin"

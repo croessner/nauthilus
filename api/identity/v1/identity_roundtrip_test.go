@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
+	commonv1 "github.com/croessner/nauthilus/v4/api/common/v1"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"

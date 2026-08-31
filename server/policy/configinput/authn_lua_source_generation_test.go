@@ -12,12 +12,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/croessner/nauthilus/v3/server/lualib"
-	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
-	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/lualib"
+	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
+	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 	lua "github.com/yuin/gopher-lua"
 )
 

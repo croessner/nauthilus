@@ -19,7 +19,7 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"

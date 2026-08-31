@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/client/engine"
-	"github.com/croessner/nauthilus/v3/internal/flagutil"
+	"github.com/croessner/nauthilus/v4/client/engine"
+	"github.com/croessner/nauthilus/v4/internal/flagutil"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )

@@ -11,7 +11,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 type nopDecisionObserver struct{}

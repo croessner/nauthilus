@@ -18,11 +18,11 @@ package bruteforce
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	model "github.com/croessner/nauthilus/v3/server/model/bruteforce"
-	restdto "github.com/croessner/nauthilus/v3/server/model/rest"
-	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
-	"github.com/croessner/nauthilus/v3/server/openapi/requesttest"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	model "github.com/croessner/nauthilus/v4/server/model/bruteforce"
+	restdto "github.com/croessner/nauthilus/v4/server/model/rest"
+	management "github.com/croessner/nauthilus/v4/server/openapi/generated/management"
+	"github.com/croessner/nauthilus/v4/server/openapi/requesttest"
 )
 
 const (

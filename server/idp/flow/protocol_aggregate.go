@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/sessionstate"
+	"github.com/croessner/nauthilus/v4/server/sessionstate"
 )
 
 // ProtocolAggregate is the sole request composition boundary for OIDC and SAML flow records.

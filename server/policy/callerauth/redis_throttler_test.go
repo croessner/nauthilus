@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 	redismock "github.com/go-redis/redismock/v9"
 	"github.com/redis/go-redis/v9"
 )

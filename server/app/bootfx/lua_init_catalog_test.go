@@ -17,10 +17,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core/localization"
-	"github.com/croessner/nauthilus/v3/server/lualib"
-	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/core/localization"
+	"github.com/croessner/nauthilus/v4/server/lualib"
+	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
 
 	"golang.org/x/text/language"
 )

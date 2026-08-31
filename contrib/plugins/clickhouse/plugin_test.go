@@ -29,13 +29,13 @@ import (
 	"testing"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/pluginloader"
-	"github.com/croessner/nauthilus/v3/server/pluginregistry"
-	"github.com/croessner/nauthilus/v3/server/pluginruntime"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/pluginapi/v1/exchange"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/pluginloader"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
+	"github.com/croessner/nauthilus/v4/server/pluginruntime"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 
 	"github.com/go-redis/redismock/v9"
 )

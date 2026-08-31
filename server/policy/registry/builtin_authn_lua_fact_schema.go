@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"slices"
 
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 // AuthnLuaFactDeclarationInput carries one registry-script declaration into immutable candidate material.

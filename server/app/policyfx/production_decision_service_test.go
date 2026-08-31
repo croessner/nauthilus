@@ -13,17 +13,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/app/configfx"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/croessner/nauthilus/v3/server/core/localization"
-	"github.com/croessner/nauthilus/v3/server/pluginloader"
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/app/configfx"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/core/localization"
+	"github.com/croessner/nauthilus/v4/server/pluginloader"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/callerauth"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 const productionNonAuthDecisionFixture = `policy:

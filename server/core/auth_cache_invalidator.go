@@ -15,7 +15,7 @@
 
 package core
 
-import "github.com/croessner/nauthilus/v3/server/localcache"
+import "github.com/croessner/nauthilus/v4/server/localcache"
 
 // AuthCacheInvalidator removes local authentication state by public identity.
 type AuthCacheInvalidator interface {

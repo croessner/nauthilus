@@ -12,9 +12,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/policy/callerauth"
+	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
 func TestPolicyCallerAuthProjectionCapturesBasicAndBearerProfiles(t *testing.T) {

@@ -23,12 +23,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/frontend"
-	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	handleridp "github.com/croessner/nauthilus/v3/server/handler/frontend/idp"
-	"github.com/croessner/nauthilus/v3/server/middleware/i18n"
+	"github.com/croessner/nauthilus/v4/server/core/cookie"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/frontend"
+	"github.com/croessner/nauthilus/v4/server/handler/deps"
+	handleridp "github.com/croessner/nauthilus/v4/server/handler/frontend/idp"
+	"github.com/croessner/nauthilus/v4/server/middleware/i18n"
 	"github.com/gin-gonic/gin"
 )
 

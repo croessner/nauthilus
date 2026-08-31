@@ -3,7 +3,7 @@
 
 package sessionstate
 
-import "github.com/croessner/nauthilus/v3/server/definitions"
+import "github.com/croessner/nauthilus/v4/server/definitions"
 
 // Owner is the sole future persistence owner of legacy browser-session state.
 type Owner string

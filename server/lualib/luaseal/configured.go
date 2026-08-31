@@ -10,7 +10,7 @@ package luaseal
 import (
 	"fmt"
 
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 )
 
 // CaptureConfigured compiles the canonical module search order from one candidate-bound artifact snapshot.

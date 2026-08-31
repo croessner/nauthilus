@@ -19,7 +19,7 @@ import (
 	"context"
 	"net/http"
 
-	generatedidp "github.com/croessner/nauthilus/v3/server/openapi/generated/idp"
+	generatedidp "github.com/croessner/nauthilus/v4/server/openapi/generated/idp"
 )
 
 // SupportedIDPDiscoveryClient is the production-supported generated IDP

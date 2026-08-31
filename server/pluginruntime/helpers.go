@@ -19,9 +19,9 @@ import (
 	"os"
 	"strings"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/pluginapi/v1/helpers"
-	"github.com/croessner/nauthilus/v3/server/config"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/pluginapi/v1/helpers"
+	"github.com/croessner/nauthilus/v4/server/config"
 )
 
 var _ pluginapi.DeterministicHelpers = (*deterministicHelperFacade)(nil)

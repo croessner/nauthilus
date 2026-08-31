@@ -19,8 +19,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 )
 
 // IdentityAttributeRequest describes backend identity data needed by edge-side claim materialization.

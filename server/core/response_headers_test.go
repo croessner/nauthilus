@@ -22,11 +22,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	corepkg "github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/encoding/cborcodec"
-	"github.com/croessner/nauthilus/v3/server/log"
+	"github.com/croessner/nauthilus/v4/server/config"
+	corepkg "github.com/croessner/nauthilus/v4/server/core"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/encoding/cborcodec"
+	"github.com/croessner/nauthilus/v4/server/log"
 
 	"github.com/gin-gonic/gin"
 )

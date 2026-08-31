@@ -28,8 +28,8 @@ import (
 	"strings"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/pluginapi/v1/exchange"
 
 	"github.com/redis/go-redis/v9"
 )

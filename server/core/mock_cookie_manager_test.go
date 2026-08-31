@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
+	"github.com/croessner/nauthilus/v4/server/core/cookie"
 	"github.com/gin-gonic/gin"
 )
 

@@ -18,8 +18,8 @@ package core
 import (
 	"context"
 
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	"github.com/croessner/nauthilus/v3/server/svcctx"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v4/server/svcctx"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/trace"
 )

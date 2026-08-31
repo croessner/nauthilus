@@ -24,10 +24,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/core/localization"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/handler/deps"
-	idpservice "github.com/croessner/nauthilus/v3/server/idp"
+	"github.com/croessner/nauthilus/v4/server/core/localization"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/handler/deps"
+	idpservice "github.com/croessner/nauthilus/v4/server/idp"
 	"github.com/gin-gonic/gin"
 )
 

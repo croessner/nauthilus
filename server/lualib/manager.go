@@ -19,7 +19,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 	lua "github.com/yuin/gopher-lua"
 )
 

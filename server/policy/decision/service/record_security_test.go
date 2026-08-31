@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 func TestSelectedEffectReceivesSchemaFilteredRecordFacts(t *testing.T) {

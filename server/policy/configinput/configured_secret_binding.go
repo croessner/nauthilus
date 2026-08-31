@@ -10,7 +10,7 @@ package configinput
 import (
 	"fmt"
 
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
 )
 
 // validateConfiguredSecretBindings rejects credentials without an explicit typed execution boundary.

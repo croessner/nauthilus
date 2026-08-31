@@ -18,7 +18,7 @@ package ldappool
 import (
 	"sync/atomic"
 
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 )
 
 // Environment injection seam for the LDAP pool package.

@@ -20,12 +20,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/log"
-	"github.com/croessner/nauthilus/v3/server/log/level"
-	"github.com/croessner/nauthilus/v3/server/lualib/convert"
-	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/log"
+	"github.com/croessner/nauthilus/v4/server/log/level"
+	"github.com/croessner/nauthilus/v4/server/lualib/convert"
+	"github.com/croessner/nauthilus/v4/server/lualib/luastack"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )

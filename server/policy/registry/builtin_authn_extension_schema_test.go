@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 func TestExtendBuiltinAuthnSchemasAddsBoundOutputsOnlyToExactActions(t *testing.T) {

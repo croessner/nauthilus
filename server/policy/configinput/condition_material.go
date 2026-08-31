@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 // PrepareConditionMaterial compiles namespace-scoped set operands and time windows for one generation.

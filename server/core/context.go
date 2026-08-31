@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
 // Credentials captures user-supplied credentials (username/password, optional MFA).

@@ -25,8 +25,8 @@ import (
 	"testing"
 
 	"github.com/andybalholm/brotli"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/klauspost/compress/zstd"
 )

@@ -22,12 +22,12 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/croessner/nauthilus/v3/server/backend/bktype"
-	"github.com/croessner/nauthilus/v3/server/core/localization"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/model/authdto"
-	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
-	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/croessner/nauthilus/v4/server/backend/bktype"
+	"github.com/croessner/nauthilus/v4/server/core/localization"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/model/authdto"
+	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
+	"github.com/croessner/nauthilus/v4/server/util"
 )
 
 // AuthMode describes the application-level auth operation.

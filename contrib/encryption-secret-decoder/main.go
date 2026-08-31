@@ -26,8 +26,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/croessner/nauthilus/v3/server/secret"
-	"github.com/croessner/nauthilus/v3/server/security"
+	"github.com/croessner/nauthilus/v4/server/secret"
+	"github.com/croessner/nauthilus/v4/server/security"
 )
 
 const (

@@ -21,7 +21,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 )
 
 // BruteForceSection describes the exported BruteForceSection type.

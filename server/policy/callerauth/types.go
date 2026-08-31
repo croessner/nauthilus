@@ -21,8 +21,8 @@ import (
 	"errors"
 	"reflect"
 
-	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
 var (

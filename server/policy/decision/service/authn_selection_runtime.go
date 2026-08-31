@@ -19,12 +19,12 @@ import (
 	"context"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/presentation"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
-	"github.com/croessner/nauthilus/v3/server/policy/report"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/presentation"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/policy/report"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 // resolveAuthnDecisionSelection evaluates the catalog-selected authn authority into one plan.

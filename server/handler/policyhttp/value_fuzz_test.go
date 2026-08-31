@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/openapi/generated/management"
+	"github.com/croessner/nauthilus/v4/server/openapi/generated/management"
 )
 
 func FuzzPolicyHTTPValueConversion(f *testing.F) {

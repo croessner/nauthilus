@@ -19,11 +19,11 @@ package health
 import (
 	"log/slog"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/gin-gonic/gin"
 
-	approuter "github.com/croessner/nauthilus/v3/server/router"
+	approuter "github.com/croessner/nauthilus/v4/server/router"
 )
 
 // Handler registers the health endpoints.

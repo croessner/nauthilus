@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"

@@ -4,6 +4,9 @@ This directory owns the public unary Policy gRPC API.
 
 `PolicyDecisionService.Evaluate` is the only RPC. Generated Go bindings are
 committed and are produced exclusively through `make generate-grpc-proto`.
+The `grpc-proto-compatibility-check` target compares this contract with its
+frozen Policy baseline after normalizing Go package ownership metadata. A Go
+module major migration therefore does not weaken wire-compatibility checks.
 
 ## Authentication And Resource Contract
 

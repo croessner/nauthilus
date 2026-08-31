@@ -18,11 +18,11 @@ package auth
 import (
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/backend"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v4/server/backend"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/core"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 )
 
 // DefaultCacheService implements core.CacheService in the auth subpackage.

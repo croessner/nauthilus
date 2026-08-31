@@ -33,10 +33,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/croessner/nauthilus/v3/server/policy/configinput"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/policy/configinput"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 // policyCutoverPathCase binds one standalone source to its authoritative error path.
@@ -531,8 +531,8 @@ func TestPolicyCutoverProductionContainsNoRemovedAuthority(t *testing.T) {
 func TestPolicyCutoverProductionAbsenceOracleClassifiesEveryAuthorityFamily(t *testing.T) {
 	const source = `package fixture
 import (
-    "github.com/croessner/nauthilus/v3/server/policy/compiler"
-    "github.com/croessner/nauthilus/v3/server/policy/evaluation"
+    "github.com/croessner/nauthilus/v4/server/policy/compiler"
+    "github.com/croessner/nauthilus/v4/server/policy/evaluation"
 )
 type AuthPolicySection struct{}
 type SnapshotStore struct{}
@@ -1012,7 +1012,7 @@ func policyProductionFileAuthorityViolations(path string, file *ast.File) []stri
 
 	for _, importSpec := range file.Imports {
 		importPath, err := strconv.Unquote(importSpec.Path.Value)
-		if err == nil && importPath == "github.com/croessner/nauthilus/v3/server/policy/evaluation" {
+		if err == nil && importPath == "github.com/croessner/nauthilus/v4/server/policy/evaluation" {
 			violations = append(violations, "direct-evaluator:"+path+" imports "+importPath)
 		}
 	}
@@ -1067,7 +1067,7 @@ func TestPolicyMigrationAbsenceOracleRejectsLegacyTranslatorFixture(t *testing.T
 	}
 
 	const source = `package policyconfig
-import "github.com/croessner/nauthilus/v3/server/config"
+import "github.com/croessner/nauthilus/v4/server/config"
 type LegacyPolicyDecoder struct{}
 func migrateAuthPolicy(old config.AuthPolicySection) {}
 var oldRoot = "auth.policy"
@@ -1210,7 +1210,7 @@ func policyContractFileSourceViolations(path string, file *ast.File) []string {
 
 	for _, importSpec := range file.Imports {
 		importPath, err := strconv.Unquote(importSpec.Path.Value)
-		if err == nil && importPath == "github.com/croessner/nauthilus/v3/server/config" {
+		if err == nil && importPath == "github.com/croessner/nauthilus/v4/server/config" {
 			violations = append(violations, path+" imports production server/config")
 		}
 	}

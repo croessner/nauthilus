@@ -19,10 +19,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
-	"github.com/croessner/nauthilus/v3/server/policy/report"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/policy/report"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 type authnPolicyEffectOwnerContextKey struct{}

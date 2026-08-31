@@ -21,11 +21,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/core/localization"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/encoding/cborcodec"
-	servererrors "github.com/croessner/nauthilus/v3/server/errors"
-	"github.com/croessner/nauthilus/v3/server/log/level"
+	"github.com/croessner/nauthilus/v4/server/core/localization"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/encoding/cborcodec"
+	servererrors "github.com/croessner/nauthilus/v4/server/errors"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 
 	"github.com/gin-gonic/gin"
 	jsoniter "github.com/json-iterator/go"

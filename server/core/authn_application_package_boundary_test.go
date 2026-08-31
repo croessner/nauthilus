@@ -56,7 +56,7 @@ func TestAuthnApplicationAdapterImportsOnlyDecisionServiceBoundary(t *testing.T)
 			}
 
 			for _, forbidden := range forbiddenImports {
-				if strings.HasPrefix(path, "github.com/croessner/nauthilus/v3"+forbidden) {
+				if strings.HasPrefix(path, "github.com/croessner/nauthilus/v4"+forbidden) {
 					t.Fatalf("%s imports forbidden policy implementation %q", filename, path)
 				}
 			}

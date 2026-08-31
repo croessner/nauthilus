@@ -22,10 +22,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/app/configfx"
-	"github.com/croessner/nauthilus/v3/server/backendmonitoring"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/app/configfx"
+	"github.com/croessner/nauthilus/v4/server/backendmonitoring"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 )
 
 // BackendMonitoringService provides functionality to monitor backend services at specified intervals.

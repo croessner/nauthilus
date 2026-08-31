@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/sessionstate"
+	"github.com/croessner/nauthilus/v4/server/sessionstate"
 )
 
 // StepUpCompletion identifies the parent protocol flow released by one committed proof.

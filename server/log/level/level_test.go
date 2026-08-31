@@ -21,7 +21,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/testing/oteltest"
+	"github.com/croessner/nauthilus/v4/server/testing/oteltest"
 
 	"go.opentelemetry.io/otel"
 )

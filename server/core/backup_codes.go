@@ -16,8 +16,8 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/v3/server/model/mfa"
-	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/croessner/nauthilus/v4/server/model/mfa"
+	"github.com/croessner/nauthilus/v4/server/util"
 )
 
 const (

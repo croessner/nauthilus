@@ -16,8 +16,8 @@
 package identitymapper
 
 import (
-	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
-	"github.com/croessner/nauthilus/v3/server/model/authdto"
+	identityv1 "github.com/croessner/nauthilus/v4/api/identity/v1"
+	"github.com/croessner/nauthilus/v4/server/model/authdto"
 )
 
 // DTOToRequestContext maps the shared auth DTO to an identity request context.

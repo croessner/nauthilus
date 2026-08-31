@@ -15,7 +15,7 @@
 
 package envfx
 
-import "github.com/croessner/nauthilus/v3/server/config"
+import "github.com/croessner/nauthilus/v4/server/config"
 
 // Environment is the environment configuration type used for DI.
 type Environment = config.Environment

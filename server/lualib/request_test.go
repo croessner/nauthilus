@@ -18,8 +18,8 @@ package lualib
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 	lua "github.com/yuin/gopher-lua"
 )
 

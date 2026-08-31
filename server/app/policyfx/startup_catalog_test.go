@@ -23,11 +23,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/app/bootfx"
-	"github.com/croessner/nauthilus/v3/server/config"
-	corelanguage "github.com/croessner/nauthilus/v3/server/core/language"
-	"github.com/croessner/nauthilus/v3/server/pluginruntime"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/app/bootfx"
+	"github.com/croessner/nauthilus/v4/server/config"
+	corelanguage "github.com/croessner/nauthilus/v4/server/core/language"
+	"github.com/croessner/nauthilus/v4/server/pluginruntime"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 type systemLocalizationDriftMutation struct {

@@ -22,10 +22,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/lualib"
-	monittrace "github.com/croessner/nauthilus/v3/server/monitoring/trace"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/lualib"
+	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 
 	"github.com/gin-gonic/gin"
 	"github.com/segmentio/ksuid"

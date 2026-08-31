@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/app/opsfx"
+	"github.com/croessner/nauthilus/v4/server/app/opsfx"
 )
 
 type restartRecorder struct {

@@ -22,11 +22,11 @@ import (
 	"fmt"
 	"sync"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 var _ decision.Service = (*DecisionService)(nil)

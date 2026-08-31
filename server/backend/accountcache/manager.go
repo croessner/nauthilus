@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/localcache"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/localcache"
 )
 
 // Manager provides an in-process cache for username -> accountName mapping.

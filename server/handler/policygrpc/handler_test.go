@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	policyv1 "github.com/croessner/nauthilus/v3/api/policy/v1"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
+	policyv1 "github.com/croessner/nauthilus/v4/api/policy/v1"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/core"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

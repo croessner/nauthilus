@@ -20,8 +20,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 type runtimeApplicationPreparationSlot struct{}

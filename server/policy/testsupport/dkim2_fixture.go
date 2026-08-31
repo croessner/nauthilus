@@ -16,8 +16,8 @@ import (
 	"runtime"
 	"testing"
 
-	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	management "github.com/croessner/nauthilus/v4/server/openapi/generated/management"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 const (

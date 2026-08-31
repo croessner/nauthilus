@@ -10,9 +10,9 @@ package collection
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 func TestDecisionContextAddsCapturedAuthnLuaFactDeclarations(t *testing.T) {

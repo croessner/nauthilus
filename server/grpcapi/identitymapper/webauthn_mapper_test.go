@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	identityv1 "github.com/croessner/nauthilus/v3/api/identity/v1"
-	"github.com/croessner/nauthilus/v3/server/model/mfa"
+	identityv1 "github.com/croessner/nauthilus/v4/api/identity/v1"
+	"github.com/croessner/nauthilus/v4/server/model/mfa"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 

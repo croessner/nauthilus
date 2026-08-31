@@ -31,7 +31,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 	ber "github.com/go-asn1-ber/asn1-ber"
 )
 

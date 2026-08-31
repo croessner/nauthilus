@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
 
 	"github.com/prometheus/client_golang/prometheus"
 )

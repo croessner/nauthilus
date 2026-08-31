@@ -18,7 +18,7 @@ package admission
 import (
 	"math"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 const logicalLengthBytes = 8

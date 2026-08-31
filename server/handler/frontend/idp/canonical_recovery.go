@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/croessner/nauthilus/v3/server/core"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/frontend"
-	"github.com/croessner/nauthilus/v3/server/middleware/csrf"
-	"github.com/croessner/nauthilus/v3/server/model/mfa"
-	"github.com/croessner/nauthilus/v3/server/sessionstate"
+	"github.com/croessner/nauthilus/v4/server/core"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/frontend"
+	"github.com/croessner/nauthilus/v4/server/middleware/csrf"
+	"github.com/croessner/nauthilus/v4/server/model/mfa"
+	"github.com/croessner/nauthilus/v4/server/sessionstate"
 	"github.com/gin-gonic/gin"
 )
 

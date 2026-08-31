@@ -18,11 +18,11 @@ package cache
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/model/admin"
-	restdto "github.com/croessner/nauthilus/v3/server/model/rest"
-	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
-	"github.com/croessner/nauthilus/v3/server/openapi/requesttest"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/model/admin"
+	restdto "github.com/croessner/nauthilus/v4/server/model/rest"
+	management "github.com/croessner/nauthilus/v4/server/openapi/generated/management"
+	"github.com/croessner/nauthilus/v4/server/openapi/requesttest"
 )
 
 const (

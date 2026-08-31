@@ -35,6 +35,21 @@ fi
 
 IFS='.' read -r major minor patch <<< "${base_version}"
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+module_path="$(sed -n 's/^module[[:space:]][[:space:]]*//p' "${repo_root}/go.mod")"
+
+if [[ "${module_path}" =~ /v([2-9]|[1-9][0-9]+)$ ]]; then
+  module_major="${BASH_REMATCH[1]}"
+else
+  module_major=1
+fi
+
+if [[ "${major}" != "${module_major}" ]]; then
+  echo "Release tag '${tag}' has major v${major}, but go.mod declares module major v${module_major}." >&2
+  exit 1
+fi
+
 printf 'tag=%s\n' "${tag}"
 printf 'version=%s\n' "${version}"
 printf 'base_version=%s\n' "${base_version}"
@@ -46,3 +61,4 @@ printf 'tag_patch=%s\n' "${base_tag}"
 printf 'major=%s\n' "${major}"
 printf 'minor=%s\n' "${minor}"
 printf 'patch=%s\n' "${patch}"
+printf 'module_major=%s\n' "${module_major}"

@@ -18,7 +18,7 @@ package decision_test
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 func TestDecisionServiceAuthenticationInputOwnsOpaqueEvidence(t *testing.T) {

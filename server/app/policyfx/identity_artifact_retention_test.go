@@ -17,10 +17,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/app/configfx"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/pluginruntime"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/app/configfx"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/pluginruntime"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
 func TestProductionCoordinatorRetainsGenerationOnIdentityAuthorityArtifactMutation(t *testing.T) {

@@ -29,8 +29,8 @@ Verify the committed output without modifying the worktree:
 make generate-grpc-proto-check
 ```
 
-Verify common, auth, and identity wire descriptors against the frozen,
-reviewed public API baseline:
+Verify common, auth, identity, and Policy wire descriptors against their
+frozen, reviewed public API baselines:
 
 ```sh
 make grpc-proto-compatibility-check

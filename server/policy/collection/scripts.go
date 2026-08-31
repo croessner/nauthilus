@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy"
 )
 
 // ScriptKind identifies the callback family observed by the host adapter.

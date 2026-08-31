@@ -17,12 +17,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
-	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
-	"github.com/croessner/nauthilus/v3/server/policy/configinput"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
+	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/v4/server/policy/configinput"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
 )
 
 var (

@@ -21,8 +21,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/croessner/nauthilus/v3/server/core/localization"
-	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/core/localization"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 
 	lua "github.com/yuin/gopher-lua"
 )

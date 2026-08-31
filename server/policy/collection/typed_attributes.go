@@ -18,7 +18,7 @@ package collection
 import (
 	"net/netip"
 
-	"github.com/croessner/nauthilus/v3/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy"
 )
 
 // IPAttribute creates an IP policy attribute value.

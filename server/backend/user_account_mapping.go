@@ -18,9 +18,9 @@ package backend
 import (
 	"context"
 
-	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/backend/accountcache"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 )
 
 // SetUserAccountMapping writes/updates the username → account mapping in Redis.

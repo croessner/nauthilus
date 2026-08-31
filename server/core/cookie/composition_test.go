@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/idp/mfastate"
-	"github.com/croessner/nauthilus/v3/server/sessionstate"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/idp/mfastate"
+	"github.com/croessner/nauthilus/v4/server/sessionstate"
 )
 
 func TestCanonicalSessionExposesBoundedIdentityAndAssuranceAggregates(t *testing.T) {

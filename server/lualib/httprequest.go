@@ -22,9 +22,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/lualib/luastack"
-	"github.com/croessner/nauthilus/v3/server/util"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/lualib/luastack"
+	"github.com/croessner/nauthilus/v4/server/util"
 
 	lua "github.com/yuin/gopher-lua"
 )

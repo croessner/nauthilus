@@ -19,8 +19,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/lualib/convert"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/lualib/convert"
 	lua "github.com/yuin/gopher-lua"
 )
 

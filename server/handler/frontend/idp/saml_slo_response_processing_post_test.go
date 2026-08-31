@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
-	"github.com/croessner/nauthilus/v3/server/config"
-	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
+	"github.com/croessner/nauthilus/v4/server/config"
+	slodomain "github.com/croessner/nauthilus/v4/server/idp/slo"
 	"github.com/gin-gonic/gin"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/stretchr/testify/assert"

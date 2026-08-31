@@ -19,7 +19,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 )
 
 // ErrClientCredentialsOpenIDScope reports an identity scope on a service-token grant.

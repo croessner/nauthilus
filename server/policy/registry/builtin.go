@@ -15,7 +15,7 @@
 
 package registry
 
-import "github.com/croessner/nauthilus/v3/server/policy"
+import "github.com/croessner/nauthilus/v4/server/policy"
 
 const (
 	detailBackend             = "backend"

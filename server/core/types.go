@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/model/mfa"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/model/mfa"
 )
 
 // ErrMFAProofRejected reports a valid MFA operation whose submitted proof did not verify.

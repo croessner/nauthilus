@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"slices"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 
 	"github.com/prometheus/client_golang/prometheus"
 )

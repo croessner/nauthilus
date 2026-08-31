@@ -10,7 +10,7 @@ package idp
 import (
 	"fmt"
 
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/server/config"
 )
 
 // identityArtifactContent resolves inline material or immutable candidate-captured file bytes.

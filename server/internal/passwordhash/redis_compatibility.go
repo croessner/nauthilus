@@ -16,7 +16,7 @@
 // Package passwordhash contains bounded server-internal Redis hash compatibility.
 package passwordhash
 
-import pluginpassword "github.com/croessner/nauthilus/v3/pluginapi/v1/password"
+import pluginpassword "github.com/croessner/nauthilus/v4/pluginapi/v1/password"
 
 // RedisCompatibilityCandidates holds one canonical digest and its exact legacy read candidate.
 type RedisCompatibilityCandidates struct {

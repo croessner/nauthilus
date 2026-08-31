@@ -1596,7 +1596,7 @@ const file_api_policy_v1_policy_proto_rawDesc = "" +
 	"\x15EFFECT_NOT_APPLICABLE\x10\x03\x12\x18\n" +
 	"\x14EFFECT_INDETERMINATE\x10\x042p\n" +
 	"\x15PolicyDecisionService\x12W\n" +
-	"\bEvaluate\x12$.nauthilus.policy.v1.DecisionRequest\x1a%.nauthilus.policy.v1.DecisionResponseB:Z8github.com/croessner/nauthilus/v3/api/policy/v1;policyv1b\x06proto3"
+	"\bEvaluate\x12$.nauthilus.policy.v1.DecisionRequest\x1a%.nauthilus.policy.v1.DecisionResponseB:Z8github.com/croessner/nauthilus/v4/api/policy/v1;policyv1b\x06proto3"
 
 var (
 	file_api_policy_v1_policy_proto_rawDescOnce sync.Once

@@ -18,9 +18,9 @@ package policyprovider_test
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/lualib/policyprovider"
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/lualib/policyprovider"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 func TestLuaContributionAdapterBuildsOnlyProviderAndEffectDefinitions(t *testing.T) {

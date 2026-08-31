@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	slodomain "github.com/croessner/nauthilus/v3/server/idp/slo"
+	slodomain "github.com/croessner/nauthilus/v4/server/idp/slo"
 	"github.com/stretchr/testify/assert"
 )
 

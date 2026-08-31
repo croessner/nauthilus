@@ -16,7 +16,7 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/v3/server/objpool"
+	"github.com/croessner/nauthilus/v4/server/objpool"
 )
 
 // InitPassDBResultPool initializes the PassDBResultPool in the objpool package

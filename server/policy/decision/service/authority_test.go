@@ -22,8 +22,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
 )
 
 // Test aliases keep explicit fakes focused on the application package boundary.

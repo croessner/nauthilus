@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/croessner/nauthilus/v3/server/sessionstate"
+	"github.com/croessner/nauthilus/v4/server/sessionstate"
 )
 
 const (

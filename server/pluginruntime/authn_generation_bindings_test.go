@@ -11,11 +11,11 @@ import (
 	"context"
 	"testing"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/pluginregistry"
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	policyregistry "github.com/croessner/nauthilus/v3/server/policy/registry"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
 // TestPrepareAuthenticationBindingsCapturesExactAuthSources proves auth-shaped native sources become generation owners.

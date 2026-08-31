@@ -28,7 +28,7 @@ import (
 	"testing"
 )
 
-const serverImportSegment = "github.com/croessner/nauthilus/v3/server/"
+const serverImportSegment = "github.com/croessner/nauthilus/v4/server/"
 
 func TestPublicProtobufLayout(t *testing.T) {
 	t.Parallel()

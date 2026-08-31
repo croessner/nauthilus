@@ -1,4 +1,4 @@
-module github.com/croessner/nauthilus/v3
+module github.com/croessner/nauthilus/v4
 
 go 1.27
 

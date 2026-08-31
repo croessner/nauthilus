@@ -12,7 +12,7 @@ import (
 	"errors"
 	"net/http"
 
-	management "github.com/croessner/nauthilus/v3/server/openapi/generated/management"
+	management "github.com/croessner/nauthilus/v4/server/openapi/generated/management"
 )
 
 // ErrInvalidPolicyAuth reports incomplete dedicated Policy client credentials.

@@ -10,7 +10,7 @@ package decision
 import (
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/policy/internal/identifier"
+	"github.com/croessner/nauthilus/v4/server/policy/internal/identifier"
 )
 
 // RecordFieldValueInput carries one non-recursive record-field value.

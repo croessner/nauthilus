@@ -1,7 +1,7 @@
 # Native Go Plugin Developer API
 
 This document explains how to write native Go plugins for Nauthilus. It focuses on the developer contract exposed by
-`github.com/croessner/nauthilus/v3/pluginapi/v1`, the runtime behavior that plugin authors can rely on, and the current
+`github.com/croessner/nauthilus/v4/pluginapi/v1`, the runtime behavior that plugin authors can rely on, and the current
 implementation limits that matter when designing production plugins.
 
 For operator-facing loader configuration, artifact verification, and deployment examples, see
@@ -203,7 +203,7 @@ The factory must be exported from a `main` package:
 ```go
 package main
 
-import pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
+import pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 
 func NauthilusPlugin() (pluginapi.Plugin, error) {
     return NewPlugin(), nil
@@ -638,7 +638,7 @@ return pluginapi.EnvironmentResult{
 
 Runtime values must be JSON-compatible scalar, map, or list values. Use stable namespaces. Cross-plugin analytics and
 post-action handoff values must use the standard `plugin.exchange.*` keyspace from
-`github.com/croessner/nauthilus/v3/pluginapi/v1/exchange`. Producer plugins should set only the exchange keys they own,
+`github.com/croessner/nauthilus/v4/pluginapi/v1/exchange`. Producer plugins should set only the exchange keys they own,
 for example `plugin.exchange.geoip`, `plugin.exchange.haveibeenpwnd`, or `plugin.exchange.feature.<name>`.
 
 `rt` is historical Lua runtime state. It may still appear in Lua scripts for Lua-only compatibility, but it is not the
@@ -665,7 +665,7 @@ err := secret.WithBytes(func(password []byte) error {
 ```
 
 Never store the byte slice passed to `WithBytes`, never log it, and clear plugin-owned copies immediately after use.
-For Nauthilus-compatible password verification, import `github.com/croessner/nauthilus/v3/pluginapi/v1/password` and call
+For Nauthilus-compatible password verification, import `github.com/croessner/nauthilus/v4/pluginapi/v1/password` and call
 `password.CompareHash(hash, secret)`. The same package exposes `GenerateHash` and `GenerateHashString` for the
 canonical lowercase 64-hex SHA-256 digest used by Lua `nauthilus_password.generate_password_hash`. The server-side
 nonce remains host-owned, so plugin-owned hashes must pass the same `password.HashOptions` when they need exact

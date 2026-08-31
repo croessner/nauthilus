@@ -12,7 +12,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
 )
 
 func TestEffectiveLuaPackagePatternsPreserveLegacyFirstMatchOrder(t *testing.T) {

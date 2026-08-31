@@ -21,14 +21,14 @@ import (
 	"strings"
 	"time"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	"github.com/croessner/nauthilus/v3/server/bruteforce"
-	"github.com/croessner/nauthilus/v3/server/bruteforce/tolerate"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/policy"
-	policycollection "github.com/croessner/nauthilus/v3/server/policy/collection"
-	"github.com/croessner/nauthilus/v3/server/policy/observability"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/bruteforce"
+	"github.com/croessner/nauthilus/v4/server/bruteforce/tolerate"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/policy"
+	policycollection "github.com/croessner/nauthilus/v4/server/policy/collection"
+	"github.com/croessner/nauthilus/v4/server/policy/observability"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 
 	"github.com/gin-gonic/gin"
 )

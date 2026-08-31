@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 )
 
 func TestRuntimeModuleSet_BackendMonitoringAliasIsRejected(t *testing.T) {

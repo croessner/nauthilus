@@ -24,8 +24,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	logcolor "github.com/croessner/nauthilus/v3/server/log/color"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	logcolor "github.com/croessner/nauthilus/v4/server/log/color"
 
 	"go.opentelemetry.io/otel/trace"
 )

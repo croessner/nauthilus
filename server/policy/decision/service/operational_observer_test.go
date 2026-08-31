@@ -16,9 +16,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
-	"github.com/croessner/nauthilus/v3/server/policy/observability"
-	"github.com/croessner/nauthilus/v3/server/testing/tracetest"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/observability"
+	"github.com/croessner/nauthilus/v4/server/testing/tracetest"
 
 	"github.com/prometheus/client_golang/prometheus"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"

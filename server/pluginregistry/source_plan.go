@@ -15,7 +15,7 @@
 
 package pluginregistry
 
-import "github.com/croessner/nauthilus/v3/server/lualib/pipeline"
+import "github.com/croessner/nauthilus/v4/server/lualib/pipeline"
 
 // BuildSourcePlan derives the shared dependency and registration-order execution plan.
 func BuildSourcePlan(components []Component, mode pipeline.ModeMask) (pipeline.Plan, error) {

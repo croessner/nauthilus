@@ -356,7 +356,7 @@ func TestSmokeRunnerUsesGeneratedOpenAPIManagementClient(t *testing.T) {
 
 	source := string(raw)
 	for _, marker := range []string{
-		`openapiclient "github.com/croessner/nauthilus/v3/server/openapi/client"`,
+		`openapiclient "github.com/croessner/nauthilus/v4/server/openapi/client"`,
 		`openapiclient.NewManagementClient`,
 		`management.EnqueueUserCacheFlushJSONRequestBody`,
 		`GetAsyncJobStatus`,

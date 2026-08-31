@@ -20,8 +20,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/croessner/nauthilus/v3/server/core/cookie"
-	flowdomain "github.com/croessner/nauthilus/v3/server/idp/flow"
+	"github.com/croessner/nauthilus/v4/server/core/cookie"
+	flowdomain "github.com/croessner/nauthilus/v4/server/idp/flow"
 	"github.com/gin-gonic/gin"
 )
 

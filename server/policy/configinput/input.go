@@ -15,15 +15,15 @@ import (
 	"reflect"
 	"slices"
 
-	"github.com/croessner/nauthilus/v3/server/config/policyconfig"
-	policy "github.com/croessner/nauthilus/v3/server/policy"
-	"github.com/croessner/nauthilus/v3/server/policy/admission"
-	"github.com/croessner/nauthilus/v3/server/policy/callerauth"
-	"github.com/croessner/nauthilus/v3/server/policy/catalogcompile"
-	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
-	"github.com/croessner/nauthilus/v3/server/policy/registry"
-	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
-	"github.com/croessner/nauthilus/v3/server/secret"
+	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/admission"
+	"github.com/croessner/nauthilus/v4/server/policy/callerauth"
+	"github.com/croessner/nauthilus/v4/server/policy/catalogcompile"
+	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
+	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
 var builtinAuthnTargets = []struct {

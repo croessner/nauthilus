@@ -16,9 +16,9 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
-	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
+	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 )

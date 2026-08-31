@@ -18,8 +18,8 @@ package prototest_test
 import (
 	"testing"
 
-	commonv1 "github.com/croessner/nauthilus/v3/api/common/v1"
-	"github.com/croessner/nauthilus/v3/server/grpcapi/internal/prototest"
+	commonv1 "github.com/croessner/nauthilus/v4/api/common/v1"
+	"github.com/croessner/nauthilus/v4/server/grpcapi/internal/prototest"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 )

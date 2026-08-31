@@ -19,8 +19,8 @@ package ipscoper
 import (
 	"net"
 
-	"github.com/croessner/nauthilus/v3/pluginapi/v1/helpers"
-	"github.com/croessner/nauthilus/v3/server/config"
+	"github.com/croessner/nauthilus/v4/pluginapi/v1/helpers"
+	"github.com/croessner/nauthilus/v4/server/config"
 )
 
 // ScopeContext identifies the control/context in which IP scoping is applied.

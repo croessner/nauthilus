@@ -11,7 +11,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/pluginapi/v1/exchange"
+	"github.com/croessner/nauthilus/v4/pluginapi/v1/exchange"
 )
 
 const (

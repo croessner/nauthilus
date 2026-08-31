@@ -15,7 +15,7 @@
 
 package decision
 
-import "github.com/croessner/nauthilus/v3/server/policy/internal/identifier"
+import "github.com/croessner/nauthilus/v4/server/policy/internal/identifier"
 
 // Target identifies one exact policy namespace/action pair.
 type Target struct {

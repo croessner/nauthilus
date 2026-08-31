@@ -16,7 +16,7 @@
 // Package mfa provides mfa functionality.
 package mfa
 
-import "github.com/croessner/nauthilus/v3/server/config"
+import "github.com/croessner/nauthilus/v4/server/config"
 
 // MFA is an interface that stores some information for multi factor authentication.
 type MFA interface {

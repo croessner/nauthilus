@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 )
 
 // DerivePolicySetCapability derives one exact transitive capability from source definitions.

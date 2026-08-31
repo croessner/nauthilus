@@ -25,9 +25,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/idp/dcr"
-	"github.com/croessner/nauthilus/v3/server/stats"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/idp/dcr"
+	"github.com/croessner/nauthilus/v4/server/stats"
 	"github.com/gin-gonic/gin"
 )
 

@@ -11,12 +11,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/croessner/nauthilus/v3/server/backend/accountcache"
-	"github.com/croessner/nauthilus/v3/server/config"
-	"github.com/croessner/nauthilus/v3/server/definitions"
-	"github.com/croessner/nauthilus/v3/server/lualib/luaseal"
-	"github.com/croessner/nauthilus/v3/server/lualib/vmpool"
-	"github.com/croessner/nauthilus/v3/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/backend/accountcache"
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
+	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"

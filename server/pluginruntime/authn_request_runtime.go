@@ -10,9 +10,9 @@ package pluginruntime
 import (
 	"context"
 
-	pluginapi "github.com/croessner/nauthilus/v3/pluginapi/v1"
-	pluginpassword "github.com/croessner/nauthilus/v3/pluginapi/v1/password"
-	"github.com/croessner/nauthilus/v3/server/core"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	pluginpassword "github.com/croessner/nauthilus/v4/pluginapi/v1/password"
+	"github.com/croessner/nauthilus/v4/server/core"
 )
 
 // AuthnRequestRuntime projects public request values without selecting plugin components.
