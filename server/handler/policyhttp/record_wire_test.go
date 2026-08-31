@@ -35,6 +35,35 @@ func TestTrackedDKIM2RspamdHTTPParityWithDirectDecisionFixture(t *testing.T) {
 	testsupport.AssertTrackedDKIM2RequestInput(t, service.invocation.Request)
 }
 
+func TestPolicyHTTPResponseReturnsInternalRequestCorrelation(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		requestID string
+		body      string
+	}{
+		{name: "supplied request ID", requestID: "caller-request", body: `{"version":"1","request_id":"caller-request","target":{"namespace":"mail","action":"submit"}}`},
+		{name: "omitted request ID", requestID: "generated-request", body: `{"version":"1","target":{"namespace":"mail","action":"submit"}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := &recordingService{response: testsupport.PermitResponseWithRequestID(t, test.requestID)}
+
+			wireResponse := servePolicyRequest(policyEngine(service), test.body, "Bearer opaque")
+			if wireResponse.Code != http.StatusOK || service.calls != 1 {
+				t.Fatalf("HTTP route status/service calls = %d/%d, want 200/1", wireResponse.Code, service.calls)
+			}
+
+			var payload map[string]any
+			if err := json.Unmarshal(wireResponse.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode Policy HTTP response: %v", err)
+			}
+
+			if payload["request_id"] != service.response.RequestID().String() {
+				t.Fatalf("HTTP response request_id = %#v, want internal correlation %q", payload["request_id"], service.response.RequestID())
+			}
+		})
+	}
+}
+
 func TestPolicyHTTPActualInvocationPreservesPresentEmptyStringsAndBytes(t *testing.T) {
 	service := &recordingService{response: testsupport.DirectPermitResponse(t)}
 	body := `{"version":"1","target":{"namespace":"mail","action":"submit"},"attributes":{"empty_strings":{"strings":[]},"empty_bytes":{"bytes":""}}}`

@@ -769,7 +769,7 @@ func bytesValue(value *[]byte) []byte {
 //nolint:wsl_v5 // The generated DTO projection retains one ordered public-surface mapping.
 func responseDTO(response decision.DecisionResponse) (management.PolicyDecisionResponse, error) {
 	status := response.Status()
-	result := management.PolicyDecisionResponse{DecisionId: response.DecisionID().String(), Effect: management.PolicyDecisionResponseEffect(response.Effect()), Status: management.PolicyStatus{Code: string(status.Code()), Message: status.Message(), Retryable: status.Retryable()}}
+	result := management.PolicyDecisionResponse{RequestId: response.RequestID().String(), DecisionId: response.DecisionID().String(), Effect: management.PolicyDecisionResponseEffect(response.Effect()), Status: management.PolicyStatus{Code: string(status.Code()), Message: status.Message(), Retryable: status.Retryable()}}
 	if details := status.Details(); len(details) > 0 {
 		result.Status.Details = policyDetails(details)
 	}

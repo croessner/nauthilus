@@ -1280,8 +1280,11 @@ components:
     PolicyDecisionResponse:
       type: object
       additionalProperties: false
-      required: [decision_id, effect, status]
+      required: [request_id, decision_id, effect, status]
       properties:
+        request_id:
+          type: string
+          maxLength: 128
         decision_id:
           type: string
           maxLength: 128

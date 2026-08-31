@@ -156,6 +156,11 @@ func assertTrackedDKIM2Chain(t testing.TB, resource map[string]decision.Value) {
 
 // DirectPermitResponse constructs the public semantics selected by the real direct-service fixture.
 func DirectPermitResponse(t testing.TB) decision.DecisionResponse {
+	return PermitResponseWithRequestID(t, trackedDKIM2RequestID)
+}
+
+// PermitResponseWithRequestID constructs generic public permit semantics with exact request correlation.
+func PermitResponseWithRequestID(t testing.TB, requestID string) decision.DecisionResponse {
 	t.Helper()
 
 	status, err := decision.NewStatus(decision.StatusCodePermit, "permitted", nil)
@@ -169,7 +174,7 @@ func DirectPermitResponse(t testing.TB) decision.DecisionResponse {
 	}
 
 	response, err := decision.NewDecisionResponse(decision.DecisionResponseInput{
-		RequestID: trackedDKIM2RequestID, DecisionID: trackedDKIM2DecisionID,
+		RequestID: requestID, DecisionID: trackedDKIM2DecisionID,
 		Effect: decision.EffectPermit, Status: status, Policy: metadata,
 	})
 	if err != nil {
@@ -182,7 +187,7 @@ func DirectPermitResponse(t testing.TB) decision.DecisionResponse {
 // ManagementPermitResponse returns the transport-visible subset of the direct-service permit.
 func ManagementPermitResponse() management.PolicyDecisionResponse {
 	return management.PolicyDecisionResponse{
-		DecisionId: trackedDKIM2DecisionID, Effect: management.Permit,
+		RequestId: trackedDKIM2RequestID, DecisionId: trackedDKIM2DecisionID, Effect: management.Permit,
 		Status: management.PolicyStatus{Code: "permit", Message: "permitted", Retryable: false},
 	}
 }

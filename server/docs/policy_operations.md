@@ -85,7 +85,10 @@ Normal logs, controlled audit, traces, reports, diagnostics, metrics, and error
 bodies must not contain credentials, raw mail or envelope content, exact Recipe
 payloads, SMTP peer IPs, signer domains, provider-only record fields, or cache
 state. Request and Decision IDs are correlation values, not public idempotency
-keys.
+keys. Every successful HTTP and gRPC decision response includes both values.
+The returned Request ID is the effective internal correlation: it either
+preserves the admitted caller value or reports the value generated when the
+request omitted one.
 
 ## Logs, audit, metrics, and tracing
 

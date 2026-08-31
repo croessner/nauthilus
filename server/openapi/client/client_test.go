@@ -105,6 +105,7 @@ func TestSupportedPolicyClientUsesDedicatedCredentials(t *testing.T) {
 		Target:  management.PolicyTarget{Namespace: "dkim2", Action: "sign-message"},
 	}
 	responseBody := management.PolicyDecisionResponse{
+		RequestId:  "request-client",
 		DecisionId: "decision-client",
 		Effect:     management.Permit,
 		Status:     management.PolicyStatus{Code: "permit", Message: "permitted"},
@@ -147,6 +148,7 @@ func TestSupportedPolicyClientPreservesOrderedRecords(t *testing.T) {
 		Attributes: &attributes,
 	}
 	responseBody := management.PolicyDecisionResponse{
+		RequestId:  "request-record-client",
 		DecisionId: "decision-record-client", Effect: management.Permit,
 		Status: management.PolicyStatus{Code: "permit", Message: "permitted"},
 	}
@@ -195,6 +197,7 @@ func TestSupportedPolicyClientCarriesDKIM2RspamdProjectionAndSMTPPeer(t *testing
 		},
 	}
 	responseBody := management.PolicyDecisionResponse{
+		RequestId:  "request-dkim2-rspamd",
 		DecisionId: "decision-dkim2-rspamd", Effect: management.Permit,
 		Status: management.PolicyStatus{Code: "permit", Message: "permitted"},
 	}
@@ -252,12 +255,60 @@ func TestSupportedPolicyClientCarriesCompleteTrackedDKIM2RequestAndDirectRespons
 	testsupport.AssertManagementPermitResponse(t, *response.JSON200)
 }
 
+func TestSupportedPolicyClientReturnsEffectiveRequestCorrelation(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		responseRequestID string
+		supplyRequestID   bool
+	}{
+		{name: "supplied request ID", responseRequestID: "caller-request", supplyRequestID: true},
+		{name: "omitted request ID", responseRequestID: "generated-request"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := management.EvaluatePolicyDecisionJSONRequestBody{
+				Version: management.N1, Target: management.PolicyTarget{Namespace: "mail", Action: "submit"},
+			}
+			if test.supplyRequestID {
+				request.RequestId = &test.responseRequestID
+			}
+
+			responseBody := management.PolicyDecisionResponse{
+				RequestId: test.responseRequestID, DecisionId: "decision-correlation", Effect: management.Permit,
+				Status: management.PolicyStatus{Code: "permit", Message: "permitted"},
+			}
+			doer := requesttest.NewClientSmokeDoer(t, requesttest.ClientSmokeRoute{
+				Request: request, Response: responseBody, Method: http.MethodPost, Path: "/api/v1/policy/decisions", Status: http.StatusOK,
+				Headers: map[string]string{authorizationHeader: "Bearer " + supportedClientBearerToken},
+			})
+
+			client, err := NewPolicyClient(
+				supportedClientBaseURL,
+				PolicyBearerToken(supportedClientBearerToken),
+				management.WithHTTPClient(doer),
+			)
+			if err != nil {
+				t.Fatalf("new correlation Policy client: %v", err)
+			}
+
+			response, err := client.Evaluate(context.Background(), request)
+			if err != nil {
+				t.Fatalf("evaluate correlation Policy request: %v", err)
+			}
+
+			if response.JSON200 == nil || response.JSON200.RequestId != test.responseRequestID {
+				t.Fatalf("Policy client request_id = %#v, want %q", response.JSON200, test.responseRequestID)
+			}
+		})
+	}
+}
+
 func TestSupportedPolicyClientUsesDedicatedBasicCredentials(t *testing.T) {
 	request := management.EvaluatePolicyDecisionJSONRequestBody{
 		Version: management.N1,
 		Target:  management.PolicyTarget{Namespace: "dkim2", Action: "sign-message"},
 	}
 	responseBody := management.PolicyDecisionResponse{
+		RequestId:  "request-basic-client",
 		DecisionId: "decision-basic-client",
 		Effect:     management.Deny,
 		Status:     management.PolicyStatus{Code: "policy_denied", Message: "denied"},

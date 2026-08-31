@@ -118,6 +118,7 @@ message DecisionResponse {
   repeated Obligation obligations = 4;
   repeated Advice advice = 5;
   Diagnostics diagnostics = 6;
+  string request_id = 7;
 }
 
 // Effect is the closed evaluated Policy result set.

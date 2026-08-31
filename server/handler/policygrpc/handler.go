@@ -542,6 +542,7 @@ func responseProto(response decision.DecisionResponse) (*policyv1.DecisionRespon
 
 	statusValue := response.Status()
 	result := &policyv1.DecisionResponse{
+		RequestId:  response.RequestID().String(),
 		DecisionId: response.DecisionID().String(),
 		Effect:     effectProto(response.Effect()),
 		Status: &policyv1.Status{

@@ -35,6 +35,7 @@ const (
 	keyEffect      = "nauthilus.policy.effect"
 	keyStatusCode  = "nauthilus.policy.status_code"
 	keyResultClass = "nauthilus.policy.result_class"
+	unadmitted     = "unadmitted"
 )
 
 // DecisionServiceObserver emits correlated logs, controlled audit, spans, and bounded metrics.
@@ -80,9 +81,6 @@ func (o *DecisionServiceObserver) Start(
 ) (context.Context, func(decision.ObservationResult)) {
 	started := time.Now()
 	ctx, span := NewTracer().Start(ctx, DecisionSpanName,
-		attribute.String(KeyRequestID, observation.RequestID),
-		attribute.String(keyNamespace, observation.Namespace),
-		attribute.String(keyAction, observation.Action),
 		attribute.String(keyTransport, observation.Transport),
 		attribute.String("nauthilus.policy.authentication_kind", observation.AuthenticationKind),
 		attribute.Int64(keyGeneration, int64(observation.Generation)),
@@ -102,13 +100,23 @@ func (o *DecisionServiceObserver) finish(
 	observation decision.Observation,
 	result decision.ObservationResult,
 ) {
+	projection := newDecisionObservationProjection(result)
 	span.SetAttributes(
-		attribute.String(KeyDecisionID, result.DecisionID),
+		attribute.String(keyNamespace, projection.namespace),
+		attribute.String(keyAction, projection.action),
 		attribute.String(keyEffect, result.Effect),
 		attribute.String(keyStatusCode, result.StatusCode),
 		attribute.String(keyResultClass, string(result.Class)),
 		attribute.Bool("nauthilus.policy.admitted", result.Admitted),
 	)
+
+	if projection.requestID != "" {
+		span.SetAttributes(attribute.String(KeyRequestID, projection.requestID))
+	}
+
+	if projection.decisionID != "" {
+		span.SetAttributes(attribute.String(KeyDecisionID, projection.decisionID))
+	}
 
 	if result.Class != decision.ObservationResultCompleted {
 		span.SetStatus(codes.Error, string(result.Class))
@@ -118,7 +126,7 @@ func (o *DecisionServiceObserver) finish(
 
 	if o.decisions != nil {
 		o.decisions.WithLabelValues(
-			observation.Namespace, observation.Action, observation.Transport,
+			projection.namespace, projection.action, observation.Transport,
 			result.Effect, result.StatusCode, string(result.Class),
 		).Inc()
 	}
@@ -127,7 +135,7 @@ func (o *DecisionServiceObserver) finish(
 		return
 	}
 
-	attributes := decisionLogAttributes(started, observation, result)
+	attributes := decisionLogAttributes(started, observation, result, projection)
 	o.logger.LogAttrs(ctx, slog.LevelInfo, "Policy decision evaluated", attributes...)
 	auditAttributes := append(
 		[]slog.Attr{slog.String("audit_class", "policy_decision")},
@@ -136,17 +144,37 @@ func (o *DecisionServiceObserver) finish(
 	o.logger.LogAttrs(ctx, slog.LevelInfo, "Policy decision audit", auditAttributes...)
 }
 
+type decisionObservationProjection struct {
+	requestID  string
+	decisionID string
+	namespace  string
+	action     string
+}
+
+// newDecisionObservationProjection exposes admitted typed values or bounded rejection dimensions.
+func newDecisionObservationProjection(result decision.ObservationResult) decisionObservationProjection {
+	projection := decisionObservationProjection{
+		requestID: result.RequestID.String(), decisionID: result.DecisionID.String(),
+		namespace: unadmitted, action: unadmitted,
+	}
+	if result.Admitted && result.Target.Namespace() != "" && result.Target.Action() != "" {
+		projection.namespace = result.Target.Namespace()
+		projection.action = result.Target.Action()
+	}
+
+	return projection
+}
+
 // decisionLogAttributes constructs the safe normal-log projection.
 func decisionLogAttributes(
 	started time.Time,
 	observation decision.Observation,
 	result decision.ObservationResult,
+	projection decisionObservationProjection,
 ) []slog.Attr {
-	return []slog.Attr{
-		slog.String(KeyRequestID, observation.RequestID),
-		slog.String(KeyDecisionID, result.DecisionID),
-		slog.String(keyNamespace, observation.Namespace),
-		slog.String(keyAction, observation.Action),
+	attributes := []slog.Attr{
+		slog.String(keyNamespace, projection.namespace),
+		slog.String(keyAction, projection.action),
 		slog.String(keyTransport, observation.Transport),
 		slog.Uint64(keyGeneration, observation.Generation),
 		slog.String(keyEffect, result.Effect),
@@ -155,6 +183,15 @@ func decisionLogAttributes(
 		slog.Bool("nauthilus.policy.retryable", result.Retryable),
 		slog.Int64("nauthilus.policy.duration_ms", time.Since(started).Milliseconds()),
 	}
+	if projection.requestID != "" {
+		attributes = append(attributes, slog.String(KeyRequestID, projection.requestID))
+	}
+
+	if projection.decisionID != "" {
+		attributes = append(attributes, slog.String(KeyDecisionID, projection.decisionID))
+	}
+
+	return attributes
 }
 
 // decisionAuditAttributes adds identity and admission fields only to controlled audit.

@@ -79,7 +79,7 @@ func decisionObservationResult(
 	details decision.ObservationResult,
 ) decision.ObservationResult {
 	if response.Status().Code() != "" {
-		details.DecisionID = response.DecisionID().String()
+		details.DecisionID = response.DecisionID()
 		details.PolicyID = response.Policy().PolicySet()
 		details.Effect = string(response.Effect())
 		details.StatusCode = string(response.Status().Code())
@@ -95,6 +95,8 @@ func decisionObservationResult(
 		resultClass = decision.ObservationResultAuthenticationFailure
 	} else if errors.Is(err, ErrDecisionAdmission) {
 		resultClass = decision.ObservationResultAdmissionFailure
+	} else if errors.Is(err, decision.ErrInvalidRequest) {
+		resultClass = decision.ObservationResultRequestValidationFailure
 	}
 
 	details.Class = resultClass

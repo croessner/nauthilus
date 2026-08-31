@@ -8,12 +8,134 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
+	"github.com/croessner/nauthilus/v3/server/policy/observability"
+	"github.com/croessner/nauthilus/v3/server/testing/tracetest"
+
+	"github.com/prometheus/client_golang/prometheus"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
+
+func TestRejectedTargetsUseBoundedMetricDimensions(t *testing.T) {
+	tests := []struct {
+		name              string
+		authenticationErr error
+		admissionErr      error
+	}{
+		{name: "pre-authentication", authenticationErr: errors.New("rejected")},
+		{name: "authenticated but unadmitted", admissionErr: errors.New("unadmitted")},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			registry := prometheus.NewRegistry()
+
+			observer, err := observability.NewDecisionServiceObserver(nil, registry)
+			if err != nil {
+				t.Fatalf("NewDecisionServiceObserver() error = %v", err)
+			}
+
+			target, err := decision.NewTarget("attacker_namespace_491", "attacker_action_917")
+			if err != nil {
+				t.Fatalf("NewTarget() error = %v", err)
+			}
+
+			invocation := mustAuthorityInvocation(t, false)
+			invocation.Request.Target = target
+			authenticator := &recordingCallerAuthenticator{
+				caller: mustAuthorityCaller(t, false), err: test.authenticationErr,
+			}
+			generation := mustRuntimeGeneration(t, 51, authenticator,
+				&recordingAdmissionAuthority{err: test.admissionErr}, &recordingCheckpointEvaluator{})
+			service := mustObservedDecisionService(t, &replaceableGenerationSource{generation: generation}, observer)
+
+			_, _ = service.Evaluate(t.Context(), invocation)
+
+			metrics := gatherDecisionMetrics(t, registry)
+			if strings.Contains(metrics, "attacker_namespace_491") || strings.Contains(metrics, "attacker_action_917") {
+				t.Fatalf("rejected target reached metric labels: %s", metrics)
+			}
+
+			if strings.Count(metrics, `value:"unadmitted"`) != 2 {
+				t.Fatalf("bounded rejection dimensions are missing: %s", metrics)
+			}
+		})
+	}
+}
+
+func TestInvalidRequestIDNeverReachesObserverSurfaces(t *testing.T) {
+	var logs bytes.Buffer
+
+	collector := tracetest.Setup(t)
+
+	observer, err := observability.NewDecisionServiceObserver(
+		slog.New(slog.NewJSONHandler(&logs, nil)), prometheus.NewRegistry(),
+	)
+	if err != nil {
+		t.Fatalf("NewDecisionServiceObserver() error = %v", err)
+	}
+
+	generation := mustRuntimeGeneration(t, 52,
+		&recordingCallerAuthenticator{caller: mustAuthorityCaller(t, false)},
+		&recordingAdmissionAuthority{}, &recordingCheckpointEvaluator{})
+	service := mustObservedDecisionService(t, &replaceableGenerationSource{generation: generation}, observer)
+
+	invalidRequestIDs := []string{
+		"invalid request identifier with spaces",
+		strings.Repeat("x", 129),
+	}
+	for _, invalidRequestID := range invalidRequestIDs {
+		invocation := mustAuthorityInvocation(t, false)
+		invocation.Request.RequestID = invalidRequestID
+
+		_, err = service.Evaluate(t.Context(), invocation)
+		if !errors.Is(err, decision.ErrInvalidRequest) {
+			t.Fatalf("Evaluate() error = %v, want ErrInvalidRequest", err)
+		}
+
+		if strings.Contains(logs.String(), invalidRequestID) ||
+			spansContainValue(collector.Spans(), invalidRequestID) {
+			t.Fatalf("invalid request ID reached observer surfaces: %s", logs.String())
+		}
+	}
+
+	if !strings.Contains(logs.String(), string(decision.ObservationResultRequestValidationFailure)) {
+		t.Fatalf("bounded validation outcome is missing: %s", logs.String())
+	}
+}
+
+// spansContainValue reports whether any span attribute contains exact caller text.
+func spansContainValue(spans []sdktrace.ReadOnlySpan, value string) bool {
+	for _, span := range spans {
+		for _, field := range span.Attributes() {
+			if fmt.Sprint(field.Value.AsInterface()) == value {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// gatherDecisionMetrics serializes one isolated observer registry.
+func gatherDecisionMetrics(t *testing.T, registry *prometheus.Registry) string {
+	t.Helper()
+
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+
+	return fmt.Sprint(families)
+}
 
 func TestDecisionServiceObservesCorrelationAndFailureClasses(t *testing.T) {
 	tests := []decisionObservationCase{
@@ -58,9 +180,8 @@ func runDecisionObservationCase(t *testing.T, test decisionObservationCase) {
 	_, _ = service.Evaluate(context.Background(), mustAuthorityInvocation(t, false))
 
 	observation, result := observer.single(t)
-	if observation.RequestID != "request-authority" || observation.Namespace != "dkim2" ||
-		observation.Action != "sign-message-instance" ||
-		observation.Generation != 41 || result.Class != test.wantClass || result.DecisionID != test.wantDecision {
+	if observation.Generation != 41 || result.Class != test.wantClass ||
+		result.DecisionID.String() != test.wantDecision {
 		t.Fatalf("observation/result = %#v/%#v", observation, result)
 	}
 
@@ -70,6 +191,11 @@ func runDecisionObservationCase(t *testing.T, test decisionObservationCase) {
 
 	if test.wantAdmitted && result.Principal != "test-authority" {
 		t.Fatalf("successful audit fields = %#v", result)
+	}
+
+	if test.wantAdmitted && (result.RequestID.String() != "request-authority" ||
+		result.Target.Namespace() != "dkim2" || result.Target.Action() != "sign-message-instance") {
+		t.Fatalf("admitted correlation = %#v", result)
 	}
 
 	if test.wantDecision != "" && result.PolicyID != "authn/standard_auth" {

@@ -19,15 +19,14 @@ const (
 	ObservationResultAuthenticationFailure ObservationResultClass = "authentication_failure"
 	// ObservationResultAdmissionFailure identifies rejected caller or request authority.
 	ObservationResultAdmissionFailure ObservationResultClass = "admission_failure"
+	// ObservationResultRequestValidationFailure identifies invalid caller request data.
+	ObservationResultRequestValidationFailure ObservationResultClass = "request_validation_failure"
 	// ObservationResultEvaluationFailure identifies an internal evaluation failure without a response.
 	ObservationResultEvaluationFailure ObservationResultClass = "evaluation_failure"
 )
 
 // Observation contains bounded correlation known before evaluation.
 type Observation struct {
-	RequestID            string
-	Namespace            string
-	Action               string
 	Transport            string
 	AuthenticationKind   string
 	Generation           uint64
@@ -36,7 +35,9 @@ type Observation struct {
 
 // ObservationResult contains bounded terminal correlation and status.
 type ObservationResult struct {
-	DecisionID          string
+	RequestID           RequestID
+	DecisionID          DecisionID
+	Target              Target
 	Principal           string
 	PolicyID            string
 	Effect              string

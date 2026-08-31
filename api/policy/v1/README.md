@@ -44,6 +44,12 @@ The top-level `policy` configuration, caller authenticator, admission catalog,
 and runtime generation are published atomically. HTTP and gRPC adapters use the
 same active Decision Service and cannot fall back to another policy authority.
 
+Every successful `DecisionResponse` returns both `request_id` and
+`decision_id`. `request_id` is the effective internal correlation identifier:
+it preserves a valid caller-supplied value or contains the identifier generated
+by the service when the request omitted one. The field is correlation-only and
+does not provide idempotency or replay authority.
+
 See the [Policy Decision Service operations guide](../../../server/docs/policy_operations.md)
 for unary collection semantics, credentials, limits, observability, failure
 handling, deployment, and reconciliation.

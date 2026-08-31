@@ -36,14 +36,9 @@ func TestDecisionServiceObserverCorrelatesWithoutMetricOrPayloadLeaks(t *testing
 	}
 
 	ctx, finish := observer.Start(context.Background(), decision.Observation{
-		RequestID: "request-correlation", Namespace: "mail", Action: "evaluate",
 		Transport: "http", AuthenticationKind: "bearer", Generation: 17, DiagnosticsRequested: true,
 	})
-	finish(decision.ObservationResult{
-		DecisionID: "decision-correlation", Principal: "policy-client", PolicyID: "mail/default",
-		Effect: "permit", StatusCode: "permit", Class: decision.ObservationResultCompleted,
-		Admitted: true, DiagnosticsReleased: true,
-	})
+	finish(mustSuccessfulObservationResult(t))
 
 	normalLog, auditLog := decodeDecisionLogLines(t, logs.String())
 	logOutput := logs.String()
@@ -73,14 +68,15 @@ func TestDecisionServiceObserverUsesBoundedFailureStatus(t *testing.T) {
 	}
 
 	_, finish := observer.Start(context.Background(), decision.Observation{
-		RequestID: "failed-request", Namespace: "mail", Action: "evaluate", Transport: "grpc",
+		Transport: "grpc",
 	})
 	finish(decision.ObservationResult{Class: decision.ObservationResultAdmissionFailure})
 
 	spans := collector.Spans()
 
 	span, ok := tracetest.FindByNameAndAttributes(spans, DecisionSpanName,
-		attribute.String(KeyRequestID, "failed-request"),
+		attribute.String(keyNamespace, unadmitted),
+		attribute.String(keyAction, unadmitted),
 	)
 	if !ok {
 		t.Fatalf("failure span is missing: %#v", spans)
@@ -88,6 +84,61 @@ func TestDecisionServiceObserverUsesBoundedFailureStatus(t *testing.T) {
 
 	if span.Status().Code != codes.Error || span.Status().Description != string(decision.ObservationResultAdmissionFailure) {
 		t.Fatalf("failure status = %#v", span.Status())
+	}
+}
+
+func TestDecisionServiceObserverOmitsAbsentRequestCorrelation(t *testing.T) {
+	var logs bytes.Buffer
+
+	collector := tracetest.Setup(t)
+
+	observer, err := NewDecisionServiceObserver(
+		slog.New(slog.NewJSONHandler(&logs, nil)), prometheus.NewRegistry(),
+	)
+	if err != nil {
+		t.Fatalf("NewDecisionServiceObserver() error = %v", err)
+	}
+
+	result := mustSuccessfulObservationResult(t)
+	result.RequestID = decision.RequestID{}
+	_, finish := observer.Start(context.Background(), decision.Observation{Transport: "http"})
+	finish(result)
+
+	if strings.Contains(logs.String(), KeyRequestID) || !strings.Contains(logs.String(), "decision-correlation") {
+		t.Fatalf("omitted request correlation projection is invalid: %s", logs.String())
+	}
+
+	if _, ok := tracetest.FindByNameAndAttributes(collector.Spans(), DecisionSpanName,
+		attribute.String(KeyDecisionID, "decision-correlation"),
+	); !ok {
+		t.Fatalf("Decision ID correlation is missing: %#v", collector.Spans())
+	}
+}
+
+// mustSuccessfulObservationResult constructs typed admitted correlation for observer tests.
+func mustSuccessfulObservationResult(t *testing.T) decision.ObservationResult {
+	t.Helper()
+
+	requestID, err := decision.NewRequestID("request-correlation")
+	if err != nil {
+		t.Fatalf("NewRequestID() error = %v", err)
+	}
+
+	decisionID, err := decision.NewDecisionID("decision-correlation")
+	if err != nil {
+		t.Fatalf("NewDecisionID() error = %v", err)
+	}
+
+	target, err := decision.NewTarget("mail", "evaluate")
+	if err != nil {
+		t.Fatalf("NewTarget() error = %v", err)
+	}
+
+	return decision.ObservationResult{
+		RequestID: requestID, DecisionID: decisionID, Target: target,
+		Principal: "policy-client", PolicyID: "mail/default",
+		Effect: "permit", StatusCode: "permit", Class: decision.ObservationResultCompleted,
+		Admitted: true, DiagnosticsReleased: true,
 	}
 }
 

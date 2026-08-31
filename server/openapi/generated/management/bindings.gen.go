@@ -266,6 +266,7 @@ type PolicyDecisionResponse struct {
 	Diagnostics *PolicyDiagnostics           `json:"diagnostics,omitempty"`
 	Effect      PolicyDecisionResponseEffect `json:"effect"`
 	Obligations *[]PolicyObligation          `json:"obligations,omitempty"`
+	RequestId   string                       `json:"request_id"`
 	Status      PolicyStatus                 `json:"status"`
 }
 

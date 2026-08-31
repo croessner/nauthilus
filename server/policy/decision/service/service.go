@@ -351,8 +351,6 @@ func (s *DecisionService) evaluateRouteValidated(
 ) (decision.DecisionResponse, error) {
 	generationCtx := policyruntime.ContextWithGeneration(normalizeContext(ctx), generation.id)
 	observedCtx, finish := startDecisionObservation(generationCtx, s.observer, decision.Observation{
-		RequestID: invocation.Request.RequestID, Namespace: invocation.Request.Target.Namespace(),
-		Action:    invocation.Request.Target.Action(),
 		Transport: invocation.Authentication.TransportKind(), AuthenticationKind: invocation.Authentication.Kind(),
 		Generation: generation.id, DiagnosticsRequested: invocation.Request.Options.IncludeDiagnostics,
 	})
@@ -377,6 +375,8 @@ func (s *DecisionService) evaluateObservedRoute(
 	}
 	defer session.close()
 
+	details.RequestID = session.request.RequestID()
+	details.Target = session.request.Target()
 	details.Principal = session.request.Caller().Principal()
 	details.Admitted = true
 

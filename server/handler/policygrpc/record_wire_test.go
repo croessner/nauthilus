@@ -62,6 +62,44 @@ func TestTrackedDKIM2RspamdGRPCParityWithDirectDecisionFixture(t *testing.T) {
 	}
 }
 
+func TestPolicyGRPCResponseReturnsInternalRequestCorrelation(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		requestID     string
+		wireRequestID string
+	}{
+		{name: "supplied request ID", requestID: "caller-request", wireRequestID: "caller-request"},
+		{name: "omitted request ID", requestID: "generated-request"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := &trackedDKIM2GRPCService{response: testsupport.PermitResponseWithRequestID(t, test.requestID)}
+			handler := New(service, contextAuthenticationEvidence)
+
+			ctx, gate := core.ContextWithPostActionExecutionGate(context.Background())
+			defer gate.Complete()
+
+			authentication, err := decision.NewAuthenticationInput(decision.AuthenticationEvidence{
+				Kind: "basic", Credential: []byte("opaque-policy-basic-proof"), TransportKind: "grpc", Protected: true,
+			})
+			if err != nil {
+				t.Fatalf("NewAuthenticationInput() error = %v", err)
+			}
+
+			request := validPolicyRequest()
+			request.RequestId = test.wireRequestID
+
+			response, err := handler.Evaluate(ContextWithAuthentication(ctx, authentication), request)
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+
+			if response.GetRequestId() != service.response.RequestID().String() {
+				t.Fatalf("gRPC response request_id = %q, want internal correlation %q", response.GetRequestId(), service.response.RequestID())
+			}
+		})
+	}
+}
+
 type trackedDKIM2GRPCService struct {
 	response   decision.DecisionResponse
 	invocation decision.Invocation
