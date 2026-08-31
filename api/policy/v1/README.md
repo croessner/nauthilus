@@ -43,3 +43,7 @@ application-level admission.
 The top-level `policy` configuration, caller authenticator, admission catalog,
 and runtime generation are published atomically. HTTP and gRPC adapters use the
 same active Decision Service and cannot fall back to another policy authority.
+
+See the [Policy Decision Service operations guide](../../../server/docs/policy_operations.md)
+for unary collection semantics, credentials, limits, observability, failure
+handling, deployment, and reconciliation.

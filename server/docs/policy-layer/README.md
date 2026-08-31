@@ -8,6 +8,7 @@ production Policy configuration hard cut.
 They are not operator documentation and must not be used as a current
 configuration reference. The supported production contract is documented in
 the [Policy configuration breaking-change guide](../policy_configuration_migration.md),
+the [Policy Decision Service operations guide](../policy_operations.md),
 the [Policy HTTP client guide](../../openapi/client/README.md), and the
 [Policy gRPC guide](../../../api/policy/v1/README.md).
 

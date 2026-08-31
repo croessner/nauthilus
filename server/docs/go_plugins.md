@@ -4,6 +4,10 @@ Nauthilus can load trusted in-process Go plugins built as `.so` artifacts with G
 run inside the Nauthilus process, so operators should treat them like privileged server code: pin artifacts with checksums
 where practical, keep artifacts in allowlisted directories, and restart the process for loader or artifact changes.
 
+Generic Policy provider activation, operational limits, correlation,
+at-most-once effect handling, and reconciliation are summarized in the
+[Policy Decision Service operations guide](policy_operations.md).
+
 ## Build
 
 Build plugins as a `main` package with `-buildmode=plugin` and the same Go toolchain, build tags, module sources, and

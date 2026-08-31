@@ -42,6 +42,7 @@ import (
 	"github.com/croessner/nauthilus/v3/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v3/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v3/server/policy/effectsupervisor"
+	"github.com/croessner/nauthilus/v3/server/policy/observability"
 	"github.com/croessner/nauthilus/v3/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v3/server/policy/runtime"
 	"github.com/croessner/nauthilus/v3/server/secret"
@@ -245,13 +246,18 @@ func provideCoordinator(
 }
 
 // provideDecisionService exposes every transport and internal-session view over one captured store source.
-func provideDecisionService(store *policyruntime.GenerationStore) (decisionServiceOutput, error) {
+func provideDecisionService(store *policyruntime.GenerationStore, logger *slog.Logger) (decisionServiceOutput, error) {
 	source, err := decisionservice.NewStoreGenerationSource(store)
 	if err != nil {
 		return decisionServiceOutput{}, err
 	}
 
-	service, err := decisionservice.NewDecisionService(source)
+	observer, err := observability.NewDecisionServiceObserver(logger, nil)
+	if err != nil {
+		return decisionServiceOutput{}, err
+	}
+
+	service, err := decisionservice.NewDecisionService(source, decisionservice.WithDecisionObserver(observer))
 	if err != nil {
 		return decisionServiceOutput{}, err
 	}

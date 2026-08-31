@@ -251,15 +251,28 @@ func cloneCheckpointProviderInstances(input []CheckpointProviderInstance) []Chec
 // DecisionService is the sole callable policy decision application authority.
 type DecisionService struct {
 	generations GenerationSource
+	observer    decision.Observer
 }
 
 // NewDecisionService constructs the authority with a mandatory generation source.
-func NewDecisionService(generations GenerationSource) (*DecisionService, error) {
+func NewDecisionService(generations GenerationSource, options ...DecisionServiceOption) (*DecisionService, error) {
 	if nilDependency(generations) {
 		return nil, fmt.Errorf("%w: generation source is required", ErrDecisionServiceDependencyMissing)
 	}
 
-	return &DecisionService{generations: generations}, nil
+	service := &DecisionService{generations: generations, observer: nopDecisionObserver{}}
+
+	for _, option := range options {
+		if option == nil {
+			return nil, fmt.Errorf("%w: service option is required", ErrDecisionServiceDependencyMissing)
+		}
+
+		if err := option(service); err != nil {
+			return nil, fmt.Errorf("%w: invalid service option", err)
+		}
+	}
+
+	return service, nil
 }
 
 // Evaluate authenticates and admits one unary invocation before one final checkpoint.
@@ -337,12 +350,35 @@ func (s *DecisionService) evaluateRouteValidated(
 	invocation decision.Invocation,
 ) (decision.DecisionResponse, error) {
 	generationCtx := policyruntime.ContextWithGeneration(normalizeContext(ctx), generation.id)
+	observedCtx, finish := startDecisionObservation(generationCtx, s.observer, decision.Observation{
+		RequestID: invocation.Request.RequestID, Namespace: invocation.Request.Target.Namespace(),
+		Action:    invocation.Request.Target.Action(),
+		Transport: invocation.Authentication.TransportKind(), AuthenticationKind: invocation.Authentication.Kind(),
+		Generation: generation.id, DiagnosticsRequested: invocation.Request.Options.IncludeDiagnostics,
+	})
 
-	session, err := s.openSession(generationCtx, generation, invocation, false)
+	details := decision.ObservationResult{}
+	response, err := s.evaluateObservedRoute(observedCtx, generation, invocation, &details)
+	finish(decisionObservationResult(response, err, details))
+
+	return response, err
+}
+
+// evaluateObservedRoute authenticates, admits, and evaluates one already observed invocation.
+func (s *DecisionService) evaluateObservedRoute(
+	ctx context.Context,
+	generation *runtimeGeneration,
+	invocation decision.Invocation,
+	details *decision.ObservationResult,
+) (decision.DecisionResponse, error) {
+	session, err := s.openSession(ctx, generation, invocation, false)
 	if err != nil {
 		return decision.DecisionResponse{}, err
 	}
 	defer session.close()
+
+	details.Principal = session.request.Caller().Principal()
+	details.Admitted = true
 
 	facts, err := decision.NewFactSet(nil)
 	if err != nil {

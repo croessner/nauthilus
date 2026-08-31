@@ -51,6 +51,10 @@ not assignable to `BackchannelAuth`; Policy Bearer tokens and Policy-Basic
 credentials are accepted only by `/api/v1/policy/decisions` and must never be
 used to imply management/backchannel access.
 
+Complete curl examples, bounded-runtime guidance, correlation fields, and
+failure handling are in the
+[Policy Decision Service operations guide](../../docs/policy_operations.md).
+
 ## Exact Resource Authentication
 
 `BearerToken` is for the management/backchannel resource and requires an access
