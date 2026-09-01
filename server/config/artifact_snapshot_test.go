@@ -355,6 +355,45 @@ func TestArtifactSnapshotRejectsSymlinkedLuaModule(t *testing.T) {
 	}
 }
 
+func TestArtifactSnapshotAcceptsKubernetesProjectedLuaModule(t *testing.T) {
+	root := t.TempDir()
+	generation := filepath.Join(root, "..2026_09_01_13_03_10")
+
+	if err := os.Mkdir(generation, 0o700); err != nil {
+		t.Fatalf("create projected generation: %v", err)
+	}
+
+	target := filepath.Join(generation, "shared.lua")
+	if err := os.WriteFile(target, []byte("return {}\n"), 0o600); err != nil {
+		t.Fatalf("write projected Lua module: %v", err)
+	}
+
+	if err := os.Symlink(filepath.Base(generation), filepath.Join(root, "..data")); err != nil {
+		t.Fatalf("create projected data symlink: %v", err)
+	}
+
+	modulePath := filepath.Join(root, "shared.lua")
+	if err := os.Symlink(filepath.Join("..data", "shared.lua"), modulePath); err != nil {
+		t.Fatalf("create projected Lua module symlink: %v", err)
+	}
+
+	pattern := filepath.Join(root, "?.lua")
+
+	snapshot, err := CaptureArtifactSnapshot(ArtifactSnapshotSpec{LuaPackagePatterns: []string{pattern}})
+	if err != nil {
+		t.Fatalf("CaptureArtifactSnapshot() error = %v", err)
+	}
+
+	files, err := snapshot.FilesForLuaPackagePattern(pattern)
+	if err != nil {
+		t.Fatalf("FilesForLuaPackagePattern() error = %v", err)
+	}
+
+	if len(files) != 1 || files[0].Path != modulePath || string(files[0].Content) != "return {}\n" {
+		t.Fatalf("FilesForLuaPackagePattern() = %#v, want projected Lua module", files)
+	}
+}
+
 func TestArtifactSnapshotRejectsGenericCaptureBounds(t *testing.T) {
 	t.Run("too many files", func(t *testing.T) {
 		paths := make([]string, maximumArtifactCount+1)

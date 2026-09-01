@@ -29,6 +29,8 @@ const (
 	maximumLuaModuleCount     = 1_024
 	maximumLuaModuleSize      = 4 << 20
 	maximumLuaModuleTotalSize = 32 << 20
+	kubernetesDataDirectory   = "..data"
+	parentDirectory           = ".."
 )
 
 var (
@@ -429,17 +431,21 @@ func (m *artifactLuaPackageMembership) visit(path string, entry fs.DirEntry, wal
 		return walkErr
 	}
 
-	if entry.IsDir() || !strings.HasPrefix(path, m.prefix) || !strings.HasSuffix(path, m.suffix) {
+	if entry.IsDir() {
+		if strings.HasPrefix(entry.Name(), "..") {
+			return filepath.SkipDir
+		}
+
 		return nil
 	}
 
-	if entry.Type()&os.ModeSymlink != 0 {
-		return fmt.Errorf("lua module %q must not be a symbolic link", path)
+	if !strings.HasPrefix(path, m.prefix) || !strings.HasSuffix(path, m.suffix) {
+		return nil
 	}
 
-	info, err := entry.Info()
+	info, err := inspectArtifactPath(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("inspect lua module %q: %w", path, err)
 	}
 
 	if err = m.validateModule(path, info); err != nil {
@@ -482,13 +488,9 @@ func inspectArtifactCapturePlan(paths []string) error {
 	var totalSize int64
 
 	for _, path := range paths {
-		info, err := os.Lstat(path)
+		info, err := inspectArtifactPath(path)
 		if err != nil {
 			return fmt.Errorf("inspect configuration artifact %q: %w", path, err)
-		}
-
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("configuration artifact %q must not be a symbolic link", path)
 		}
 
 		if !info.Mode().IsRegular() {
@@ -538,12 +540,12 @@ func readArtifactFileBounded(path string) ([]byte, error) {
 
 // inspectArtifactFile validates a path before it is opened for bounded reading.
 func inspectArtifactFile(path string) (fs.FileInfo, error) {
-	info, err := os.Lstat(path)
+	info, err := inspectArtifactPath(path)
 	if err != nil {
 		return nil, err
 	}
 
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("artifact is not a regular file")
 	}
 
@@ -552,6 +554,60 @@ func inspectArtifactFile(path string) (fs.FileInfo, error) {
 	}
 
 	return info, nil
+}
+
+// inspectArtifactPath accepts only regular paths or Kubernetes projected-volume links confined to their mount root.
+func inspectArtifactPath(path string) (fs.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+
+	if info.Mode()&os.ModeSymlink == 0 {
+		return info, nil
+	}
+
+	return inspectProjectedArtifactPath(path)
+}
+
+// inspectProjectedArtifactPath validates one Kubernetes projected-volume file link and its confined target.
+func inspectProjectedArtifactPath(path string) (fs.FileInfo, error) {
+	target, err := os.Readlink(path)
+	if err != nil {
+		return nil, err
+	}
+
+	expectedTarget := filepath.Join(kubernetesDataDirectory, filepath.Base(path))
+	if filepath.IsAbs(target) || filepath.Clean(target) != expectedTarget {
+		return nil, fmt.Errorf("artifact path must not be a symbolic link")
+	}
+
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+
+	root, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return nil, err
+	}
+
+	relative, err := filepath.Rel(root, resolved)
+	if err != nil || relative == parentDirectory || strings.HasPrefix(relative, parentDirectory+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("artifact path must not be a symbolic link")
+	}
+
+	return os.Stat(path)
 }
 
 // readStableArtifactFile reads one opened file and proves that its metadata stayed stable.
