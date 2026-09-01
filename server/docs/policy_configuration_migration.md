@@ -705,6 +705,13 @@ policy:
         include_attributes: true
 ```
 
+Generic policy namespaces accept `permit` and `deny` as configured rule
+decisions. The `authn` namespace additionally accepts the operator outcomes
+`tempfail` and `neutral`. Nauthilus retains those auth-specific meanings while
+mapping them to the policy runtime's `indeterminate` and `not_applicable`
+effects respectively. Configuration must not use those internal effect names
+as authn rule decisions.
+
 Before deploying a new configuration, validate exact provider/effect
 resolution, target action and checkpoint compatibility, source fact types,
 policy-set imports, credential profiles, route enablement, and secret-safe

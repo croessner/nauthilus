@@ -51,7 +51,10 @@ const (
 	keywordAll                   = "all"
 	keywordNone                  = "none"
 	keywordPlugin                = "plugin"
+	decisionPermit               = "permit"
 	decisionDeny                 = "deny"
+	decisionTempFail             = "tempfail"
+	decisionNeutral              = "neutral"
 	decisionNotApplicable        = "not_applicable"
 	requestHeaderFactPrefix      = "request.header."
 	requestMetadataFactPrefix    = "request.metadata."
@@ -1531,7 +1534,7 @@ func validatePolicySets(namespace string, policySets map[string]PolicySetConfig,
 			return invalid(setPath, "authn/standard_auth is supplied only by the builtin contribution")
 		}
 
-		if err := validatePolicySet(policySet, setPath); err != nil {
+		if err := validatePolicySet(namespace, policySet, setPath); err != nil {
 			return err
 		}
 	}
@@ -1540,7 +1543,7 @@ func validatePolicySets(namespace string, policySets map[string]PolicySetConfig,
 }
 
 // validatePolicySet enforces private/exported ownership and validates ordered rules.
-func validatePolicySet(policySet PolicySetConfig, path string) error {
+func validatePolicySet(namespace string, policySet PolicySetConfig, path string) error {
 	if policySet.Visibility != VisibilityPrivate && policySet.Visibility != VisibilityExported {
 		return invalid(path+".visibility", "must be private or exported")
 	}
@@ -1564,7 +1567,7 @@ func validatePolicySet(policySet PolicySetConfig, path string) error {
 	}
 
 	for index, rule := range policySet.Rules {
-		if err := validatePolicyRule(rule, fmt.Sprintf("%s.rules[%d]", path, index)); err != nil {
+		if err := validatePolicyRule(namespace, rule, fmt.Sprintf("%s.rules[%d]", path, index)); err != nil {
 			return err
 		}
 	}
@@ -1605,7 +1608,7 @@ func validateExportContract(contract ExportContractConfig, path string) error {
 }
 
 // validatePolicyRule validates exact checkpoint selection and qualified effects.
-func validatePolicyRule(rule PolicyRuleConfig, path string) error {
+func validatePolicyRule(namespace string, rule PolicyRuleConfig, path string) error {
 	if !validAction(rule.Name) {
 		return invalid(path+".name", "must be a canonical rule name")
 	}
@@ -1626,7 +1629,7 @@ func validatePolicyRule(rule PolicyRuleConfig, path string) error {
 		return err
 	}
 
-	return validateThen(rule.Then, path+".then")
+	return validateThen(namespace, rule.Then, path+".then")
 }
 
 // validateCondition requires one unambiguous logical or attribute expression.
@@ -1830,10 +1833,14 @@ func appendConditionOperator(operators *[]string, name string, present bool) {
 	}
 }
 
-// validateThen checks closed decisions and exact effect references.
-func validateThen(then ThenConfig, path string) error {
-	if then.Decision != "" && then.Decision != "permit" && then.Decision != decisionDeny && then.Decision != providerFailureIndeterminate && then.Decision != decisionNotApplicable {
-		return invalid(path+".decision", "must be a registered decision")
+// validateThen checks namespace-owned decisions and exact effect references.
+func validateThen(namespace string, then ThenConfig, path string) error {
+	if !validPolicyRuleDecision(namespace, then.Decision) {
+		if namespace == authnNamespace {
+			return invalid(path+".decision", "must be permit, deny, tempfail, or neutral for authn rules")
+		}
+
+		return invalid(path+".decision", "must be permit or deny")
 	}
 
 	if err := validateEffectSelections(then.Obligations, path+".obligations"); err != nil {
@@ -1841,6 +1848,15 @@ func validateThen(then ThenConfig, path string) error {
 	}
 
 	return validateEffectSelections(then.Advice, path+".advice")
+}
+
+// validPolicyRuleDecision retains operator outcomes within their owning namespace.
+func validPolicyRuleDecision(namespace string, value string) bool {
+	if value == decisionPermit || value == decisionDeny {
+		return true
+	}
+
+	return namespace == authnNamespace && (value == decisionTempFail || value == decisionNeutral)
 }
 
 // validateEffectSelections checks exact qualified selected effect identities.

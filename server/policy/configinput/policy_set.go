@@ -155,7 +155,7 @@ func (n *policyNormalizer) normalizePolicyRule(
 		return registry.PolicyRule{}, err
 	}
 
-	selectedDecision, err := normalizeDecision(rule.Then.Decision)
+	selectedDecision, err := normalizePolicyRuleDecision(namespace, rule.Then.Decision)
 	if err != nil {
 		return registry.PolicyRule{}, atPath(path+".then.decision", err)
 	}
@@ -170,13 +170,21 @@ func (n *policyNormalizer) normalizePolicyRule(
 		requiredProviders = append(requiredProviders, resolved)
 	}
 
-	definition, err := registry.NewPolicyRule(registry.PolicyRuleInput{
+	ruleInput := registry.PolicyRuleInput{
 		Name: rule.Name, Checkpoint: rule.Checkpoint, Actions: rule.Actions, RequiredProviders: requiredProviders,
 		Expression: expression, Effects: effects, Advice: advice, Decision: selectedDecision, Reason: rule.Then.Reason,
 		OutcomeMarker: rule.Then.OutcomeMarker, FSMEventMarker: rule.Then.FSMEventMarker,
 		ResponseMarker: rule.Then.ResponseMarker, ResponseMessage: message, ResponseLanguage: language,
 		SkipRemainingCheckpointProviders: rule.Then.Control.SkipRemainingCheckpointProviders,
-	})
+	}
+
+	var definition registry.PolicyRule
+
+	if namespace == policy.AuthnNamespace {
+		definition, err = registry.NewAuthnPolicyRule(ruleInput)
+	} else {
+		definition, err = registry.NewPolicyRule(ruleInput)
+	}
 	if err != nil {
 		return registry.PolicyRule{}, atPath(path, err)
 	}
@@ -372,5 +380,22 @@ func normalizeDecision(value string) (decision.Effect, error) {
 		return decision.EffectDeny, nil
 	default:
 		return "", fmt.Errorf("must be permit or deny")
+	}
+}
+
+// normalizePolicyRuleDecision maps namespace-owned operator outcomes onto runtime effects.
+func normalizePolicyRuleDecision(namespace string, value string) (decision.Effect, error) {
+	selected, err := normalizeDecision(value)
+	if err == nil || namespace != policy.AuthnNamespace {
+		return selected, err
+	}
+
+	switch value {
+	case string(policy.DecisionTempFail):
+		return decision.EffectIndeterminate, nil
+	case string(policy.DecisionNeutral):
+		return decision.EffectNotApplicable, nil
+	default:
+		return "", fmt.Errorf("must be permit, deny, tempfail, or neutral for authn rules")
 	}
 }

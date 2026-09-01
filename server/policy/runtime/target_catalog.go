@@ -2029,7 +2029,10 @@ func validateCompiledRuleRecord(
 	}
 
 	set := policySets[record.PolicySetID.String()]
-	if !runtimeRuleDecisionAllowed(record.Decision, set.IsBuiltinStandardAuth()) {
+	if !runtimeRuleDecisionAllowed(
+		record.Decision,
+		target.Namespace() == authnNamespace && set.ID().Namespace() == authnNamespace,
+	) {
 		return fmt.Errorf("%w: rule %s has reserved result %s", ErrInvalidCompiledTarget, record.Name, record.Decision)
 	}
 
@@ -2077,13 +2080,13 @@ func newCompiledRule(record CompiledRuleRecord, requiredProviders []string) Comp
 	return CompiledRule{record: record}
 }
 
-// runtimeRuleDecisionAllowed retains reserved outcomes only for authenticated builtin standard rules.
-func runtimeRuleDecisionAllowed(effect decision.Effect, builtinStandardAuth bool) bool {
+// runtimeRuleDecisionAllowed retains authn outcomes only within the authn target and policy-set boundary.
+func runtimeRuleDecisionAllowed(effect decision.Effect, authn bool) bool {
 	if effect == decision.EffectPermit || effect == decision.EffectDeny {
 		return true
 	}
 
-	return builtinStandardAuth && (effect == decision.EffectIndeterminate || effect == decision.EffectNotApplicable)
+	return authn && (effect == decision.EffectIndeterminate || effect == decision.EffectNotApplicable)
 }
 
 // runtimeSchemaContainsFact resolves one exact response metadata fact contract.

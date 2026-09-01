@@ -595,17 +595,23 @@ type PolicyRule struct {
 	responseMessage                  PolicyResponseMessage
 	responseLanguage                 PolicyResponseLanguage
 	skipRemainingCheckpointProviders bool
+	authn                            bool
 	builtinAuth                      bool
 }
 
 // NewPolicyRule validates one exact target-aware rule descriptor.
 func NewPolicyRule(input PolicyRuleInput) (PolicyRule, error) {
-	return newPolicyRule(input, false)
+	return newPolicyRule(input, false, false)
 }
 
-// newPolicyRule constructs configured or explicitly trusted builtin auth rules.
-func newPolicyRule(input PolicyRuleInput, builtinAuth bool) (PolicyRule, error) {
-	if err := validatePolicyRuleInput(input, builtinAuth); err != nil {
+// NewAuthnPolicyRule validates one configured authn rule with explicit operator outcomes.
+func NewAuthnPolicyRule(input PolicyRuleInput) (PolicyRule, error) {
+	return newPolicyRule(input, true, false)
+}
+
+// newPolicyRule constructs generic, configured authn, or immutable builtin auth rules.
+func newPolicyRule(input PolicyRuleInput, authn bool, builtinAuth bool) (PolicyRule, error) {
+	if err := validatePolicyRuleInput(input, authn); err != nil {
 		return PolicyRule{}, err
 	}
 
@@ -630,14 +636,15 @@ func newPolicyRule(input PolicyRuleInput, builtinAuth bool) (PolicyRule, error) 
 		responseMessage:                  input.ResponseMessage,
 		responseLanguage:                 input.ResponseLanguage,
 		skipRemainingCheckpointProviders: input.SkipRemainingCheckpointProviders,
+		authn:                            authn,
 		builtinAuth:                      builtinAuth,
 	}, nil
 }
 
 // validatePolicyRuleInput validates one rule's scalar and retained output metadata.
-func validatePolicyRuleInput(input PolicyRuleInput, builtinAuth bool) error {
+func validatePolicyRuleInput(input PolicyRuleInput, authn bool) error {
 	if !identifier.Action(input.Name) || !validCheckpoint(input.Checkpoint) || !input.Expression.valid() ||
-		!validPolicyRuleDecision(input.Decision, builtinAuth) {
+		!validPolicyRuleDecision(input.Decision, authn) {
 		return newValidationError(
 			ErrInvalidPolicySetDefinition,
 			"policy_rule",
@@ -662,7 +669,7 @@ func validatePolicyRuleInput(input PolicyRuleInput, builtinAuth bool) error {
 
 // newBuiltinAuthPolicyRule constructs one immutable standard-auth catalog rule.
 func newBuiltinAuthPolicyRule(input PolicyRuleInput, presentationStage string) (PolicyRule, error) {
-	rule, err := newPolicyRule(input, true)
+	rule, err := newPolicyRule(input, true, true)
 	if err != nil {
 		return PolicyRule{}, err
 	}
@@ -805,7 +812,7 @@ func (r PolicyRule) FactContracts() []FactContract {
 // valid reports whether a source rule satisfies its constructor invariant.
 func (r PolicyRule) valid() bool {
 	if !identifier.Action(r.name) || !validCheckpoint(r.checkpoint) || !r.expression.valid() ||
-		!validPolicyRuleDecision(r.decision, r.builtinAuth) ||
+		!validPolicyRuleDecision(r.decision, r.authn) ||
 		(r.presentationStage != "" && !validCheckpoint(r.presentationStage)) {
 		return false
 	}
@@ -1330,13 +1337,13 @@ func ruleDecision(value decision.Effect) bool {
 	return value == decision.EffectPermit || value == decision.EffectDeny
 }
 
-// validPolicyRuleDecision permits runtime-only outcomes solely for immutable builtin auth rules.
-func validPolicyRuleDecision(value decision.Effect, builtinAuth bool) bool {
+// validPolicyRuleDecision permits authn outcomes only on rules owned by the authn namespace.
+func validPolicyRuleDecision(value decision.Effect, authn bool) bool {
 	if ruleDecision(value) {
 		return true
 	}
 
-	return builtinAuth && (value == decision.EffectIndeterminate || value == decision.EffectNotApplicable)
+	return authn && (value == decision.EffectIndeterminate || value == decision.EffectNotApplicable)
 }
 
 // cloneEffectUses deeply owns selected typed effects.
