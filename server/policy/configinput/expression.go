@@ -371,18 +371,12 @@ func normalizeUnsigned(configured any) (decision.Value, error) {
 	return decision.NewValue(decision.ValueInput{Integer: &integer})
 }
 
-// normalizeFloat canonicalizes whole transport numbers as integers across formats.
+// normalizeFloat preserves an explicitly floating transport value as a double.
 func normalizeFloat(value float64) (decision.Value, error) {
-	if math.Trunc(value) == value && value >= math.MinInt64 && value <= math.MaxInt64 {
-		integer := int64(value)
-
-		return decision.NewValue(decision.ValueInput{Integer: &integer})
-	}
-
 	return decision.NewValue(decision.ValueInput{Double: &value})
 }
 
-// normalizeJSONNumber preserves exact integer spelling before falling back to double.
+// normalizeJSONNumber preserves integer and floating JSON spelling as distinct kinds.
 func normalizeJSONNumber(value json.Number) (decision.Value, error) {
 	if integer, err := value.Int64(); err == nil {
 		return decision.NewValue(decision.ValueInput{Integer: &integer})
