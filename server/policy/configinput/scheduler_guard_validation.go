@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/policy"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	"github.com/croessner/nauthilus/v4/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
@@ -206,13 +207,16 @@ func validateHostSchedulerGuardSources(
 	return nil
 }
 
-// hostSchedulerNauthilusFactAvailable identifies authenticator facts admitted before host execution.
+// hostSchedulerNauthilusFactAvailable identifies prepared host facts admitted before host execution.
 func hostSchedulerNauthilusFactAvailable(factID string) bool {
 	switch factID {
 	case decision.FactCallerPrincipal,
 		decision.FactCallerClientID,
 		decision.FactCallerAuthenticationKind,
-		decision.FactCallerScopes:
+		decision.FactCallerScopes,
+		policy.AuthnFactRequestClientIP,
+		policy.AuthnFactRequestClientIPPresent,
+		policy.AuthnFactRequestClientIPTrusted:
 		return true
 	default:
 		return false

@@ -158,6 +158,22 @@ func TestHostSchedulerGuardRejectsUnavailableFactSources(t *testing.T) {
 	}
 }
 
+// TestHostSchedulerGuardAllowsPreparedClientIPFacts protects trusted proxy scheduling guards.
+func TestHostSchedulerGuardAllowsPreparedClientIPFacts(t *testing.T) {
+	for _, factID := range []string{
+		policy.AuthnFactRequestClientIP,
+		policy.AuthnFactRequestClientIPPresent,
+		policy.AuthnFactRequestClientIPTrusted,
+	} {
+		t.Run(factID, func(t *testing.T) {
+			assertHostSchedulerGuardSource(t, schedulerGuardSourceTestCase{
+				name: factID, factID: factID,
+				sources: []decision.FactSource{decision.FactSourceNauthilus},
+			})
+		})
+	}
+}
+
 // assertHostSchedulerGuardSource checks one exact fact-source combination.
 func assertHostSchedulerGuardSource(t *testing.T, test schedulerGuardSourceTestCase) {
 	t.Helper()
