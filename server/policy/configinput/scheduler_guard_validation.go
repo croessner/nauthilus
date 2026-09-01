@@ -274,7 +274,8 @@ func validateCandidateExpression(
 		return fmt.Errorf("fact %s is absent from the selected schema", expression.FactID())
 	}
 
-	if expression.Operator() != registry.ExpressionOperatorExists && fact.Kind() != expression.FactKind() {
+	if expression.Operator() != registry.ExpressionOperatorExists &&
+		!decision.ValueKindsCompatible(fact.Kind(), expression.FactKind()) {
 		return fmt.Errorf(
 			"fact %s has kind %s, guard requires %s",
 			expression.FactID(),
