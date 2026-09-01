@@ -595,6 +595,10 @@ func (t CompiledTarget) HostPreparesProvider(id string) bool {
 		return true
 	}
 
+	if provider.Scheduled() {
+		return false
+	}
+
 	return strings.HasPrefix(id, authnNamespace+"/lua_environment_") ||
 		strings.HasPrefix(id, authnNamespace+"/lua_subject_") ||
 		authnNativeSourceProvider(id)
