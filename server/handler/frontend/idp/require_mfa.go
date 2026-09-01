@@ -380,7 +380,7 @@ func (h *FrontendHandler) startCanonicalRequiredMFAEnrollment(
 	}
 	if err = mfastate.NewAggregate(session.Stores, session.Handle, canonicalEnrollmentTTL).
 		BeginEnrollment(ctx.Request.Context(), record); err != nil {
-		ctx.AbortWithStatus(canonicalMFAStateWriteStatus(err))
+		ctx.AbortWithStatus(canonicalStateWriteStatus(err))
 
 		return false
 	}
@@ -433,7 +433,7 @@ func (h *FrontendHandler) startCanonicalMFAAssuranceStepUp(
 	}
 	if err = mfastate.NewAggregate(session.Stores, session.Handle, canonicalStepUpTTL).
 		BeginStepUp(ctx.Request.Context(), record); err != nil {
-		ctx.AbortWithStatus(canonicalMFAStateWriteStatus(err))
+		ctx.AbortWithStatus(canonicalStateWriteStatus(err))
 
 		return false
 	}
@@ -443,9 +443,10 @@ func (h *FrontendHandler) startCanonicalMFAAssuranceStepUp(
 	return true
 }
 
-// canonicalMFAStateWriteStatus preserves typed CAS conflicts without masking storage failures.
-func canonicalMFAStateWriteStatus(err error) int {
-	if errors.Is(err, sessionstate.ErrRevisionConflict) || errors.Is(err, sessionstate.ErrRevoked) {
+// canonicalStateWriteStatus preserves stale-state conflicts without masking storage failures.
+func canonicalStateWriteStatus(err error) int {
+	if errors.Is(err, sessionstate.ErrRevisionConflict) || errors.Is(err, sessionstate.ErrRevoked) ||
+		errors.Is(err, sessionstate.ErrNotFound) {
 		return http.StatusConflict
 	}
 

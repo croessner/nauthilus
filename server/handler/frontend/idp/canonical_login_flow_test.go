@@ -226,8 +226,8 @@ func TestCanonicalRequiredMFAEnrollmentPersistsTypedParentBindingBeforeRedirect(
 	}
 }
 
-// TestCanonicalMFAStateWriteStatusPreservesConflictSemantics proves CAS losers remain retry-safe conflicts.
-func TestCanonicalMFAStateWriteStatusPreservesConflictSemantics(t *testing.T) {
+// TestCanonicalStateWriteStatusPreservesConflictSemantics proves stale writers remain retry-safe conflicts.
+func TestCanonicalStateWriteStatusPreservesConflictSemantics(t *testing.T) {
 	tests := []struct {
 		err  error
 		want int
@@ -235,13 +235,14 @@ func TestCanonicalMFAStateWriteStatusPreservesConflictSemantics(t *testing.T) {
 	}{
 		{name: "revision conflict", err: sessionstate.ErrRevisionConflict, want: http.StatusConflict},
 		{name: "revoked", err: sessionstate.ErrRevoked, want: http.StatusConflict},
+		{name: "missing stale state", err: sessionstate.ErrNotFound, want: http.StatusConflict},
 		{name: "storage failure", err: errors.New("storage unavailable"), want: http.StatusServiceUnavailable},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := canonicalMFAStateWriteStatus(test.err); got != test.want {
-				t.Fatalf("canonicalMFAStateWriteStatus() = %d, want %d", got, test.want)
+			if got := canonicalStateWriteStatus(test.err); got != test.want {
+				t.Fatalf("canonicalStateWriteStatus() = %d, want %d", got, test.want)
 			}
 		})
 	}

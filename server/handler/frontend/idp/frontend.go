@@ -1434,11 +1434,7 @@ func (h *FrontendHandler) storeSuccessfulPostLoginSession(
 		RememberTTL: time.Duration(credentials.rememberMeTTL) * time.Second,
 	})
 	if err != nil {
-		if stderrors.Is(err, sessionstate.ErrRevisionConflict) || stderrors.Is(err, sessionstate.ErrRevoked) {
-			ctx.AbortWithStatus(http.StatusConflict)
-		} else {
-			ctx.AbortWithStatus(http.StatusServiceUnavailable)
-		}
+		ctx.AbortWithStatus(canonicalStateWriteStatus(err))
 
 		return false
 	}
