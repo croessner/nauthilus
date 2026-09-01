@@ -24,6 +24,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/core/localization"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/policy"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
@@ -552,7 +553,49 @@ func (s *authnPolicyApplicationService) runCheckpoint(
 		return authnApplicationResult{}, true, err
 	}
 
+	logAuthnDecisionFailure(execution, checkpoint.Name(), response)
+
 	return resolveAuthnCheckpointResult(checkpoint.Name(), operation, execution, prepared, response, final)
+}
+
+// logAuthnDecisionFailure records bounded diagnostics for fail-closed internal evaluations.
+func logAuthnDecisionFailure(
+	execution *authnCandidateExecution,
+	checkpoint string,
+	response decision.DecisionResponse,
+) {
+	if execution == nil || execution.auth == nil || response.Effect() != decision.EffectIndeterminate {
+		return
+	}
+
+	fields := []any{
+		definitions.LogKeyGUID, execution.auth.Runtime.GUID,
+		definitions.LogKeyMsg, "Authn policy evaluation indeterminate",
+		"checkpoint", checkpoint,
+		"status_code", response.Status().Code(),
+		"policy_set", response.Policy().PolicySet(),
+		"policy_rule", response.Policy().Rule(),
+	}
+
+	if diagnostics := response.Diagnostics(); diagnostics != nil {
+		fields = append(fields, "diagnostics", authnDecisionDiagnostics(diagnostics.Entries()))
+	}
+
+	level.Debug(execution.auth.Logger()).Log(fields...)
+}
+
+// authnDecisionDiagnostics converts bounded strict values into structured log fields.
+func authnDecisionDiagnostics(entries decision.ValueMap) map[string]any {
+	values := entries.Values()
+	result := make(map[string]any, len(values))
+
+	for key, value := range values {
+		if member, ok := value.Any(); ok {
+			result[key] = member
+		}
+	}
+
+	return result
 }
 
 // prepareCheckpointResult runs only host work associated with the current compiled checkpoint.
@@ -902,6 +945,7 @@ func newAuthnInternalSessionRequest(
 		Resource:    resource,
 		Environment: environment,
 		Attributes:  requestAttributes.input,
+		Options:     decision.EvaluationOptions{IncludeDiagnostics: true},
 	}, finalization, nil
 }
 

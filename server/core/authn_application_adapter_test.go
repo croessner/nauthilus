@@ -676,6 +676,10 @@ func checkpointNames(checkpoints []decision.Checkpoint) []string {
 func assertAuthnRequestAssertions(t *testing.T, request decision.DecisionRequestInput, input AuthInput) {
 	t.Helper()
 
+	if !request.Options.IncludeDiagnostics {
+		t.Fatal("internal authn request must enable bounded decision diagnostics")
+	}
+
 	assertAuthnRequestString(t, request.Attributes, "auth.username", input.Credentials.Username)
 	assertAuthnRequestString(t, request.Environment.Attributes().Values(), "protocol", input.Context.Protocol)
 
