@@ -444,6 +444,34 @@ func TestViperConfigReaderDecodesTheExactBytesAcceptedByBoundedParsing(t *testin
 	}
 }
 
+func TestViperConfigReaderPreservesCanonicalDottedPolicyMapKeys(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "root.yaml", `policy:
+  namespaces:
+    authn:
+      providers:
+        plugin.example.environment:
+          kind: plugin
+          module: example
+          targets: [{action: authenticate}]
+          executions: [host_sync]
+`)
+	reader := &ViperConfigReader{configType: "yaml"}
+
+	settings, err := reader.Read(path)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+
+	policySettings := requireMapSetting(t, settings, "policy", "policy")
+	namespaceSettings := requireMapSetting(t, policySettings, "namespaces", "policy.namespaces")
+	authnSettings := requireMapSetting(t, namespaceSettings, "authn", "policy.namespaces.authn")
+	providerSettings := requireMapSetting(t, authnSettings, "providers", "policy.namespaces.authn.providers")
+
+	if _, exists := providerSettings["plugin.example.environment"]; !exists {
+		t.Fatalf("providers = %#v, want canonical dotted provider identity", providerSettings)
+	}
+}
+
 func TestConfigLoaderUsesOneAcceptedSnapshotForRootAndEachInclude(t *testing.T) {
 	directory := t.TempDir()
 	includePath := writeConfigFile(t, directory, "base.yaml", `policy:

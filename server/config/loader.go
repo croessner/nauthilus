@@ -415,6 +415,7 @@ func normalizeConfigDocumentForValidation(settings map[string]any) (map[string]a
 	}
 
 	normalized := reader.AllSettings()
+	preserveCanonicalPolicyTree(normalized, settings)
 	preserveEmptyConfigNodes(normalized, settings)
 
 	return normalized, nil
@@ -844,6 +845,7 @@ func (r *ViperConfigReader) Read(path string) (map[string]any, error) {
 	}
 
 	settings := reader.AllSettings()
+	preserveCanonicalPolicyTree(settings, rawSettings)
 	preserveEmptyConfigNodes(settings, rawSettings)
 
 	if err = validateConfigDocument(settings); err != nil {
@@ -851,6 +853,23 @@ func (r *ViperConfigReader) Read(path string) (map[string]any, error) {
 	}
 
 	return settings, nil
+}
+
+// preserveCanonicalPolicyTree keeps namespace-owned map identities opaque to Viper's dotted-key expansion.
+func preserveCanonicalPolicyTree(target map[string]any, source map[string]any) {
+	if policySettings, exists := source[policyKey]; exists {
+		target[policyKey] = policySettings
+
+		return
+	}
+
+	for key, policySettings := range source {
+		if strings.EqualFold(strings.TrimSpace(key), policyKey) {
+			target[policyKey] = policySettings
+
+			return
+		}
+	}
 }
 
 // readBoundedConfigSettings retains empty and nil nodes that Viper omits from AllSettings.
