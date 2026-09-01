@@ -198,6 +198,31 @@ func TestLoginCompletionOldRevokeConflictRollsBackNewSessionAndEmitsNoCookie(t *
 	}
 }
 
+// TestLoginCompletionStaleRotationLoserReturnsConflict preserves replay-safe parallel login semantics.
+func TestLoginCompletionStaleRotationLoserReturnsConflict(t *testing.T) {
+	t.Parallel()
+
+	fixture := newLoginCompletionFixture(t)
+	seedLoginCompletionProtocolFlows(t, fixture)
+	fixture.refreshSession(t)
+
+	stale := *fixture.session
+	generator := fixture.runtime.generator.(*loginCompletionGenerator)
+	generator.handles = append(generator.handles, sessionstate.Handle(strings.Repeat("C", 43)))
+
+	if _, err := fixture.session.CompleteLogin(
+		context.Background(), httptest.NewRecorder(), fixture.input(0),
+	); err != nil {
+		t.Fatalf("winning completion: %v", err)
+	}
+
+	if _, err := stale.CompleteLogin(
+		context.Background(), httptest.NewRecorder(), fixture.input(0),
+	); !errors.Is(err, sessionstate.ErrRevisionConflict) {
+		t.Fatalf("stale completion error = %v, want %v", err, sessionstate.ErrRevisionConflict)
+	}
+}
+
 func TestLoginCompletionPermitsSuccessLoggingOnlyAfterEnvelopeCommit(t *testing.T) {
 	t.Parallel()
 

@@ -59,6 +59,10 @@ func (s *CanonicalSession) CompleteLogin(
 
 	prepared, err := s.prepareLoginCompletion(ctx, input)
 	if err != nil {
+		if errors.Is(err, sessionstate.ErrParentMissing) {
+			return nil, sessionstate.ErrRevisionConflict
+		}
+
 		return nil, err
 	}
 
