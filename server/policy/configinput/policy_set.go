@@ -335,13 +335,16 @@ func normalizeResponseMessage(
 	}
 
 	maximumLength := 0
+	factID := configured.Attribute
+
 	if configured.From == "attribute_detail" {
 		maximumLength = 4096
+		factID = policy.AuthnResponseDetailFactID(configured.Attribute, configured.Detail)
 	}
 
 	message, err := registry.NewPolicyResponseMessage(registry.PolicyResponseMessageInput{
 		From: configured.From, Text: configured.Text, I18NKey: configured.I18NKey,
-		FactID: configured.Attribute, Detail: configured.Detail, Fallback: configured.Fallback,
+		FactID: factID, Detail: configured.Detail, Fallback: configured.Fallback,
 		MaxLength: maximumLength,
 	})
 	if err != nil {
