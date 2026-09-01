@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/gin-gonic/gin"
@@ -226,7 +227,22 @@ func (h *Handler) renderApplicationError(
 		return
 	}
 
+	h.logInternalApplicationError(ctx, err)
+
 	ctx.AbortWithStatus(http.StatusInternalServerError)
+}
+
+// logInternalApplicationError preserves the exact fail-closed cause and request correlation.
+func (h *Handler) logInternalApplicationError(ctx *gin.Context, err error) {
+	if h == nil || h.deps == nil || h.deps.Logger == nil || ctx == nil || err == nil {
+		return
+	}
+
+	level.Error(h.deps.Logger).Log(
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Authentication application failed",
+		definitions.LogKeyError, err,
+	)
 }
 
 // renderAuthOutcome publishes terminal metric metadata before rendering the HTTP response.
