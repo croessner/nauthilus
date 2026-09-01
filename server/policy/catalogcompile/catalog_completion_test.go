@@ -858,16 +858,32 @@ func mustCatalogEffect(t *testing.T, input registry.EffectDefinitionInput) regis
 	return effect
 }
 
+// mustCatalogTargetAndSchema constructs the default string-backed fixture schema.
 func mustCatalogTargetAndSchema(t *testing.T, target decision.Target) (registry.TargetDefinition, registry.SchemaDefinition) {
+	targets, schemas := mustCatalogTargetAndSchemaWithFactKind(t, target, decision.ValueKindString)
+
+	return targets[0], schemas[0]
+}
+
+// mustCatalogTargetAndSchemaWithFactKind constructs one fixture target and schema for the selected primitive kind.
+func mustCatalogTargetAndSchemaWithFactKind(
+	t *testing.T,
+	target decision.Target,
+	kind decision.ValueKind,
+) ([]registry.TargetDefinition, []registry.SchemaDefinition) {
 	t.Helper()
 
-	fact, err := registry.NewFactSchema(registry.FactSchemaInput{
+	factInput := registry.FactSchemaInput{
 		ID:             "input.domain",
 		AllowedSources: []decision.FactSource{decision.FactSourceCaller},
 		Category:       decision.FactCategoryEnvironment,
-		Kind:           decision.ValueKindString,
-		MaxLength:      255,
-	})
+		Kind:           kind,
+	}
+	if kind == decision.ValueKindString {
+		factInput.MaxLength = 255
+	}
+
+	fact, err := registry.NewFactSchema(factInput)
 	if err != nil {
 		t.Fatalf("NewFactSchema() error = %v", err)
 	}
@@ -887,7 +903,7 @@ func mustCatalogTargetAndSchema(t *testing.T, target decision.Target) (registry.
 		t.Fatalf("NewTargetDefinition() error = %v", err)
 	}
 
-	return targetDefinition, schema
+	return []registry.TargetDefinition{targetDefinition}, []registry.SchemaDefinition{schema}
 }
 
 func mustCatalogActivation(t *testing.T, path string, namespace string, action string, schema string, defaultSet string, noMatch string) registry.TargetActivation {

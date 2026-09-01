@@ -16,6 +16,7 @@
 package service
 
 import (
+	"math/big"
 	"net/netip"
 	"regexp"
 	"slices"
@@ -365,7 +366,9 @@ func matchRuntimeContainsOperator(
 // equalRuntimeValue compares exact constructed values by active member.
 func equalRuntimeValue(left decision.Value, right decision.Value) bool {
 	if left.Kind() != right.Kind() {
-		return false
+		comparison, ok := compareRuntimeValue(left, right)
+
+		return ok && comparison == 0
 	}
 
 	switch left.Kind() {
@@ -485,7 +488,7 @@ func orderedRuntimeValue(
 // compareRuntimeValue returns one strict ordered comparison.
 func compareRuntimeValue(left decision.Value, right decision.Value) (int, bool) {
 	if left.Kind() != right.Kind() {
-		return 0, false
+		return compareMixedRuntimeNumbers(left, right)
 	}
 
 	switch left.Kind() {
@@ -507,6 +510,35 @@ func compareRuntimeValue(left decision.Value, right decision.Value) (int, bool) 
 	default:
 		return 0, false
 	}
+}
+
+// compareMixedRuntimeNumbers compares exact integer and IEEE-754 values without precision loss.
+func compareMixedRuntimeNumbers(left decision.Value, right decision.Value) (int, bool) {
+	if !decision.ValueKindsCompatible(left.Kind(), right.Kind()) {
+		return 0, false
+	}
+
+	leftNumber, leftOK := runtimeNumber(left)
+
+	rightNumber, rightOK := runtimeNumber(right)
+	if !leftOK || !rightOK {
+		return 0, false
+	}
+
+	return leftNumber.Cmp(rightNumber), true
+}
+
+// runtimeNumber projects either supported numeric value into an exact rational representation.
+func runtimeNumber(value decision.Value) (*big.Rat, bool) {
+	if integer, ok := value.Integer(); ok {
+		return new(big.Rat).SetInt64(integer), true
+	}
+
+	if double, ok := value.Double(); ok {
+		return new(big.Rat).SetFloat64(double), true
+	}
+
+	return nil, false
 }
 
 // compareOrdered normalizes one ordered primitive comparison.

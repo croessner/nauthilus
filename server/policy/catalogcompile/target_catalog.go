@@ -1017,7 +1017,7 @@ func validateImportedCapability(
 
 	for _, required := range contract.Facts() {
 		fact, exists := facts[required.ID()]
-		if !exists || fact.Kind() != required.Kind() {
+		if !exists || !decision.ValueKindsCompatible(fact.Kind(), required.Kind()) {
 			return fmt.Errorf(
 				"%w: import %s fact %s",
 				ErrPolicyRuleFactMismatch,
@@ -1088,7 +1088,7 @@ func validatePolicyRuleTarget(
 ) error {
 	for _, fact := range rule.FactContracts() {
 		definition, exists := facts[fact.ID()]
-		if !exists || definition.Kind() != fact.Kind() {
+		if !exists || !decision.ValueKindsCompatible(definition.Kind(), fact.Kind()) {
 			return fmt.Errorf("%w: set %s rule %s fact %s", ErrPolicyRuleFactMismatch, set.ID().String(), rule.Name(), fact.ID())
 		}
 	}

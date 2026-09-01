@@ -398,7 +398,7 @@ func (e PolicyExpression) validateAttribute(state *expressionValidationState) er
 		state.facts = make(map[string]decision.ValueKind)
 	}
 
-	if current, exists := state.facts[e.factID]; exists && current != e.factKind {
+	if current, exists := state.facts[e.factID]; exists && !decision.ValueKindsCompatible(current, e.factKind) {
 		return invalidExpression(e.factID, "fact has incompatible kinds inside one condition tree")
 	}
 

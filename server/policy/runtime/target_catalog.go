@@ -1937,7 +1937,7 @@ func validateRuntimeImportCapability(
 
 	for _, required := range contract.Facts() {
 		fact, exists := facts[required.ID()]
-		if !exists || fact.Kind() != required.Kind() {
+		if !exists || !decision.ValueKindsCompatible(fact.Kind(), required.Kind()) {
 			return fmt.Errorf("fact %s is absent or has an incompatible kind", required.ID())
 		}
 	}
@@ -2174,7 +2174,7 @@ func validateRuntimeRuleExpression(schema registry.SchemaDefinition, expression 
 
 	for _, required := range expression.FactContracts() {
 		fact, exists := facts[required.ID()]
-		if !exists || fact.Kind() != required.Kind() {
+		if !exists || !decision.ValueKindsCompatible(fact.Kind(), required.Kind()) {
 			return fmt.Errorf("fact %s is absent or has an incompatible kind", required.ID())
 		}
 	}

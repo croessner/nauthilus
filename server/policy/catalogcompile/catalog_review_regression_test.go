@@ -516,6 +516,43 @@ func TestCatalogRejectsCompositeExpressionFactOutsideExactSchema(t *testing.T) {
 	}
 }
 
+func TestCatalogAcceptsIntegerThresholdForNumberFact(t *testing.T) {
+	fixture := newCatalogCompletionFixture(t, registry.PolicySetVisibilityExported, false)
+	integerContract := mustCatalogFactContract(t, "input.domain", decision.ValueKindInteger)
+	contract := mustCatalogContract(
+		t,
+		decisionPoint,
+		[]registry.FactContract{integerContract},
+		[]decision.Effect{decision.EffectDeny},
+		[]string{testEffectID},
+	)
+	threshold := int64(10)
+
+	value, err := decision.NewValue(decision.ValueInput{Integer: &threshold})
+	if err != nil {
+		t.Fatalf("NewValue(integer threshold) error = %v", err)
+	}
+
+	expression := mustCatalogExpression(t, "input.domain", registry.ExpressionOperatorGTE, value)
+	fixture.sharedSet = mustCatalogPolicySet(t, registry.PolicySetDefinitionInput{
+		ID:             mustCatalogSetID(t, testSharedSetID),
+		Visibility:     registry.PolicySetVisibilityExported,
+		ExportContract: &contract,
+		Rules: []registry.PolicyRule{
+			mustCatalogExpressionRule(t, "whole_number_threshold", decisionPoint, expression, decision.EffectDeny),
+		},
+	})
+	fixture.rootSet = mustCatalogPolicySet(t, registry.PolicySetDefinitionInput{
+		ID:      testRootSetIDValue(t),
+		Imports: []registry.PolicySetImport{mustCatalogImport(t, testSharedSetID, fixture.target, decisionPoint, contract)},
+	})
+	fixture.baseTargets, fixture.baseSchemas = mustCatalogTargetAndSchemaWithFactKind(t, fixture.target, decision.ValueKindDouble)
+
+	if _, err = fixture.tryCompile(); err != nil {
+		t.Fatalf("Compile(integer threshold for number fact) error = %v", err)
+	}
+}
+
 func TestCatalogRetainsCompleteRuleDecisionMetadata(t *testing.T) {
 	fixture := newCatalogCompletionFixture(t, registry.PolicySetVisibilityExported, false)
 

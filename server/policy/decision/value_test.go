@@ -46,6 +46,25 @@ func TestValueRequiresExactlyOneKind(t *testing.T) {
 	}
 }
 
+func TestValueKindsCompatibleRestrictsCoercionToNumbers(t *testing.T) {
+	tests := []struct {
+		left  decision.ValueKind
+		right decision.ValueKind
+		want  bool
+	}{
+		{left: decision.ValueKindString, right: decision.ValueKindString, want: true},
+		{left: decision.ValueKindInteger, right: decision.ValueKindDouble, want: true},
+		{left: decision.ValueKindDouble, right: decision.ValueKindInteger, want: true},
+		{left: decision.ValueKindString, right: decision.ValueKindInteger, want: false},
+	}
+
+	for _, test := range tests {
+		if got := decision.ValueKindsCompatible(test.left, test.right); got != test.want {
+			t.Fatalf("ValueKindsCompatible(%s, %s) = %t, want %t", test.left, test.right, got, test.want)
+		}
+	}
+}
+
 func TestValueAcceptsStrictScalarKinds(t *testing.T) {
 	text := "mail"
 	boolean := true

@@ -71,6 +71,16 @@ func (k ValueKind) IsValid() bool {
 	}
 }
 
+// ValueKindsCompatible accepts exact kinds and the two interoperable numeric representations.
+func ValueKindsCompatible(left ValueKind, right ValueKind) bool {
+	if left == right {
+		return true
+	}
+
+	return (left == ValueKindInteger || left == ValueKindDouble) &&
+		(right == ValueKindInteger || right == ValueKindDouble)
+}
+
 // ValueInput is the constructor input for one strict value.
 type ValueInput struct {
 	String    *string
