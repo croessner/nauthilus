@@ -43,6 +43,10 @@ description: Use for any code, documentation, config, dependency, test, review, 
 - Use `GOEXPERIMENT=runtimesecret make test` for the repo test lane.
 - Use `GOEXPERIMENT=runtimesecret make race` for race coverage.
 - Use package-scoped runs while iterating, for example `GOEXPERIMENT=runtimesecret go test -run TestName ./server/...`.
+- Use Delve (`dlv`) when a focused local reproducer needs call-stack, goroutine, state, or breakpoint inspection beyond
+  logs and assertions. Preserve `GOEXPERIMENT=runtimesecret`, use sanitized local inputs, and never attach to a
+  production process without explicit operator approval.
+- Treat debugger evidence as supplemental; retain useful reproducer tests and still run the normal validation gates.
 - Use a local `GOCACHE` only when the sandbox cache is not writable.
 - Avoid real Redis in unit tests; use redismock and `rediscli.NewTestClient`.
 - Keep Lua tests hermetic with `lua.NewState`, module preloaders, and JSON fixtures.

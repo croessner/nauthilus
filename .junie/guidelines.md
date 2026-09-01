@@ -213,6 +213,14 @@ We verified this flow by temporarily adding a trivial test under server/util and
   - Viper drives configuration loading. -config and -config-format flags steer source and format. Many features are optional (RBLs, brute force, OAuth2, LDAP). Use config.GetFile().<Feature>() getters rather than accessing raw Viper state.
   - Lua initialization: if configured, init scripts are loaded via hook.RunLuaInit for each path found in the config file.
 - Testing tips specific to this repo
+  - Delve (`dlv`) is the preferred optional debugger when a focused reproducer needs state, call-stack, goroutine, or
+    breakpoint inspection beyond logs and assertions. Start from a focused local test or sanitized local server
+    configuration; do not attach to production processes without explicit operator approval.
+  - Preserve the Go 1.27 experiment when debugging tests or binaries, for example
+    `GOEXPERIMENT=runtimesecret dlv test ./server/package -- -test.run TestName -test.count=1` or
+    `GOEXPERIMENT=runtimesecret dlv debug ./server -- -config /path/to/local.yml`.
+  - Keep the reproducer test as regression coverage when it adds value. A successful debugger session supplements but
+    does not replace the focused test, normal validation, or release guardrails.
   - When adding code that depends on Redis, prefer writing the logic against an interface and redirect rediscli.GetClient() calls to test clients via rediscli.NewTestClient.
   - For Lua bridges, ensure module names match definitions (definitions.LuaModXYZ). Preload all modules you call from Lua in tests; otherwise DoString will fail.
   - Some packages do not have tests (handlers, router); create tests at the boundary with httptest and fake config states.
