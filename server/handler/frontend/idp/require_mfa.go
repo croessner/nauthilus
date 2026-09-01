@@ -17,6 +17,7 @@ package idp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -379,7 +380,7 @@ func (h *FrontendHandler) startCanonicalRequiredMFAEnrollment(
 	}
 	if err = mfastate.NewAggregate(session.Stores, session.Handle, canonicalEnrollmentTTL).
 		BeginEnrollment(ctx.Request.Context(), record); err != nil {
-		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+		ctx.AbortWithStatus(canonicalMFAStateWriteStatus(err))
 
 		return false
 	}
@@ -432,7 +433,7 @@ func (h *FrontendHandler) startCanonicalMFAAssuranceStepUp(
 	}
 	if err = mfastate.NewAggregate(session.Stores, session.Handle, canonicalStepUpTTL).
 		BeginStepUp(ctx.Request.Context(), record); err != nil {
-		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+		ctx.AbortWithStatus(canonicalMFAStateWriteStatus(err))
 
 		return false
 	}
@@ -440,6 +441,15 @@ func (h *FrontendHandler) startCanonicalMFAAssuranceStepUp(
 	ctx.Redirect(http.StatusFound, flowdomain.AppendTicket(h.getMFASelectPath(ctx), string(handle)))
 
 	return true
+}
+
+// canonicalMFAStateWriteStatus preserves typed CAS conflicts without masking storage failures.
+func canonicalMFAStateWriteStatus(err error) int {
+	if errors.Is(err, sessionstate.ErrRevisionConflict) || errors.Is(err, sessionstate.ErrRevoked) {
+		return http.StatusConflict
+	}
+
+	return http.StatusServiceUnavailable
 }
 
 func canonicalRequiredMFARegistrationTarget(method string) string {

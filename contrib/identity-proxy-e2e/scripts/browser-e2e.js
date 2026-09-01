@@ -2443,7 +2443,8 @@ async function submitParallelPasswordLogin(page, user, secret) {
   for (const [index, response] of responses.entries()) {
     assert.ok(
       response.status === 200 || response.status === 409,
-      `parallel initial login ${index + 1} must either win or fail with a revision conflict`,
+      `parallel initial login ${index + 1} must either win or fail with a revision conflict; ` +
+        `received status ${response.status} at ${response.url}`,
     );
     const target = new URL(response.url);
     if (response.status === 200) {
