@@ -87,6 +87,9 @@ func builtinStandardAuthFactSchemaInputs(action string) []FactSchemaInput {
 			policy.AuthnFactBackendTempFail,
 			policy.AuthnFactBackendEmptyUsername,
 			policy.AuthnFactBackendEmptyPassword,
+			policy.AuthnFactMasterUserActive,
+			policy.AuthnFactBruteForceTolerationCustom,
+			policy.AuthnFactBruteForceTolerationSuppressedBlock,
 		}
 	case builtinActionLookupIdentity:
 		ids = []string{
@@ -111,7 +114,7 @@ func builtinStandardAuthFactSchemaInputs(action string) []FactSchemaInput {
 // builtinStandardFactCategory preserves the established category of each mapped host fact.
 func builtinStandardFactCategory(id string) decision.FactCategory {
 	switch id {
-	case policy.AuthnFactBackendEmptyUsername, policy.AuthnFactBackendEmptyPassword:
+	case policy.AuthnFactBackendEmptyUsername, policy.AuthnFactBackendEmptyPassword, policy.AuthnFactMasterUserActive:
 		return decision.FactCategorySubject
 	case policy.AuthnFactBackendTempFail, policy.AuthnFactAccountProviderTempFail:
 		return decision.FactCategoryResource
@@ -206,6 +209,12 @@ func builtinAuthnPolicyFactSchemaForAttribute(
 
 // builtinStandardFixedFact reports whether the static schema already owns one mapped fact.
 func builtinStandardFixedFact(id string) bool {
+	for _, input := range builtinAuthnCommonFactSchemaInputs() {
+		if input.ID == id {
+			return true
+		}
+	}
+
 	for _, action := range builtinAuthnActions() {
 		for _, input := range builtinStandardAuthFactSchemaInputs(action) {
 			if input.ID == id {

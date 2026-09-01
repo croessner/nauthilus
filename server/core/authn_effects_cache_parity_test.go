@@ -1609,7 +1609,12 @@ func assertAuthnCandidateConfiguredParity(
 	t.Helper()
 
 	if outcome.Decision != AuthDecisionFail || outcome.TerminalState != string(authFSMStateAuthFail) {
-		t.Fatalf("configured result = %q/%q, want fail/auth_fail", outcome.Decision, outcome.TerminalState)
+		t.Fatalf(
+			"configured result = %q/%q with error %q, want fail/auth_fail",
+			outcome.Decision,
+			outcome.TerminalState,
+			outcome.Error,
+		)
 	}
 
 	if outcome.StatusMessage != "configured denial" ||

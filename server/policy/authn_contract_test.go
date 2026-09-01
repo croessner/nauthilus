@@ -66,3 +66,34 @@ func TestPolicyMigrationBuiltinProviderIdentitiesRemainExact(t *testing.T) {
 		t.Fatal("unknown builtin provider identity was accepted")
 	}
 }
+
+func TestAuthnCanonicalFactIdentityPreservesHostOwnedPolicyFacts(t *testing.T) {
+	tests := []struct {
+		attribute string
+		want      string
+	}{
+		{attribute: AttributeRequestClientIP, want: "nauthilus.request.client.ip"},
+		{attribute: AttributeMasterUserActive, want: "nauthilus.auth.master_user.active"},
+		{
+			attribute: AttributeBruteForceTolerationSuppressedBlock,
+			want:      "nauthilus.auth.brute_force.toleration.suppressed_block",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.attribute, func(t *testing.T) {
+			factID, authority, exists := AuthnCanonicalFactIdentity(test.attribute, "builtin")
+			if !exists || factID != test.want || authority != authnAuthorityNauthilus {
+				t.Fatalf(
+					"AuthnCanonicalFactIdentity(%q, builtin) = (%q, %q, %t), want (%q, %q, true)",
+					test.attribute,
+					factID,
+					authority,
+					exists,
+					test.want,
+					authnAuthorityNauthilus,
+				)
+			}
+		})
+	}
+}

@@ -50,6 +50,18 @@ func TestBuiltinAuthnSchemasDeclareAdapterFactsWithExactSources(t *testing.T) {
 			assertAuthnFactSchema(t, facts, decision.FactTransportGRPCMethod, decision.ValueKindString, decision.FactSourceTransport)
 			assertAuthnFactSchema(t, facts, test.operationFact, authnOperationFactKind(test.action), decision.FactSourceBackend)
 
+			if test.action == policy.OperationAuthenticate {
+				assertAuthnFactSchema(t, facts, "nauthilus.request.client.ip", decision.ValueKindString, decision.FactSourceNauthilus)
+				assertAuthnFactSchema(t, facts, "nauthilus.auth.master_user.active", decision.ValueKindBoolean, decision.FactSourceNauthilus)
+				assertAuthnFactSchema(
+					t,
+					facts,
+					"nauthilus.auth.brute_force.toleration.suppressed_block",
+					decision.ValueKindBoolean,
+					decision.FactSourceNauthilus,
+				)
+			}
+
 			if test.action == policy.OperationListAccounts {
 				assertAuthnFactSchema(t, facts, policy.AuthnFactAccountProviderCompleted, decision.ValueKindBoolean, decision.FactSourceBackend)
 			} else {

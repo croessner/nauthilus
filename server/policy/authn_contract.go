@@ -50,6 +50,20 @@ const (
 	AuthnFactService = "nauthilus.auth.service"
 	// AuthnFactCurrentDecision records the current pipeline outcome before candidate mapping.
 	AuthnFactCurrentDecision = "nauthilus.auth.current_decision"
+	// AuthnFactRequestClientIP records the host-normalized end-client address.
+	AuthnFactRequestClientIP = "nauthilus.request.client.ip"
+	// AuthnFactRequestClientIPPresent records whether a normalized end-client address exists.
+	AuthnFactRequestClientIPPresent = "nauthilus.request.client.ip.present"
+	// AuthnFactRequestClientIPTrusted records whether the normalized end-client path is trusted.
+	AuthnFactRequestClientIPTrusted = "nauthilus.request.client.ip.trusted"
+	// AuthnFactRequestCallerIP records the host-observed direct caller address.
+	AuthnFactRequestCallerIP = "nauthilus.request.caller.ip"
+	// AuthnFactRequestCallerIPPresent records whether a direct caller address exists.
+	AuthnFactRequestCallerIPPresent = "nauthilus.request.caller.ip.present"
+	// AuthnFactRequestLocalIP records the host-normalized local endpoint address.
+	AuthnFactRequestLocalIP = "nauthilus.request.local.ip"
+	// AuthnFactRequestLocalIPPresent records whether a normalized local endpoint address exists.
+	AuthnFactRequestLocalIPPresent = "nauthilus.request.local.ip.present"
 
 	// AuthnFactUsername identifies the caller-asserted authentication subject.
 	AuthnFactUsername = "input.auth.username"
@@ -116,6 +130,12 @@ const (
 	AuthnFactBackendEmptyUsername = "nauthilus.auth.backend.empty_username"
 	// AuthnFactBackendEmptyPassword records an empty authentication credential.
 	AuthnFactBackendEmptyPassword = "nauthilus.auth.backend.empty_password"
+	// AuthnFactMasterUserActive records host-validated master-user mode.
+	AuthnFactMasterUserActive = "nauthilus.auth.master_user.active"
+	// AuthnFactBruteForceTolerationCustom records whether custom toleration is active.
+	AuthnFactBruteForceTolerationCustom = "nauthilus.auth.brute_force.toleration.custom"
+	// AuthnFactBruteForceTolerationSuppressedBlock records a suppressed brute-force block.
+	AuthnFactBruteForceTolerationSuppressedBlock = "nauthilus.auth.brute_force.toleration.suppressed_block"
 	// AuthnFactAccountProviderTempFail records an unreliable account-provider result.
 	AuthnFactAccountProviderTempFail = "nauthilus.auth.account_provider.tempfail"
 )
@@ -229,6 +249,19 @@ var authnBuiltinAttributeFacts = map[string]string{
 	AttributeAccountProviderTempFail: AuthnFactAccountProviderTempFail,
 }
 
+var authnHostOwnedAttributeFacts = map[string]string{
+	AttributeRequestClientIP:                     AuthnFactRequestClientIP,
+	AttributeRequestClientIPPresent:              AuthnFactRequestClientIPPresent,
+	AttributeRequestClientIPTrusted:              AuthnFactRequestClientIPTrusted,
+	AttributeRequestCallerIP:                     AuthnFactRequestCallerIP,
+	AttributeRequestCallerIPPresent:              AuthnFactRequestCallerIPPresent,
+	AttributeRequestLocalIP:                      AuthnFactRequestLocalIP,
+	AttributeRequestLocalIPPresent:               AuthnFactRequestLocalIPPresent,
+	AttributeMasterUserActive:                    AuthnFactMasterUserActive,
+	AttributeBruteForceTolerationCustom:          AuthnFactBruteForceTolerationCustom,
+	AttributeBruteForceTolerationSuppressedBlock: AuthnFactBruteForceTolerationSuppressedBlock,
+}
+
 const authnAuthorityNauthilus = "nauthilus"
 
 // AuthnCanonicalFactIdentity maps one established auth attribute to its strict fact owner.
@@ -288,8 +321,12 @@ func AuthnLuaSubjectFactID(name string, suffix string) string {
 	return "nauthilus.auth.lua.subject." + name + "." + suffix
 }
 
-// authnGeneratedExecutionFact maps host-recorded Lua/native execution attributes.
+// authnGeneratedExecutionFact maps selected host-owned and generated execution attributes.
 func authnGeneratedExecutionFact(attributeID string) (string, string, bool) {
+	if factID, exists := authnHostOwnedAttributeFacts[attributeID]; exists {
+		return factID, authnAuthorityNauthilus, true
+	}
+
 	for _, prefix := range []string{
 		"auth.lua.environment.",
 		"auth.lua.subject.",
