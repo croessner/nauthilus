@@ -70,6 +70,13 @@ func PrepareConfiguredLuaGeneration(
 		)
 	}
 
+	if !hasConfiguredLuaProviders(input.Policy) {
+		return configuredExtensionPreparation(configuredExtensionPreparationInput{
+			acceptance: input.PostActionAcceptance,
+			reject:     invalidGenerationRegistration,
+		})
+	}
+
 	normalized, err := Normalize(ctx, policyconfig.Document{Policy: input.Policy})
 	if err != nil {
 		return policyruntime.ExtensionPreparation{}, configuredPreparationError(ctx, "policy configuration was rejected")
@@ -85,6 +92,19 @@ func PrepareConfiguredLuaGeneration(
 	}
 
 	return builder.extensionPreparation(input.NativeModules)
+}
+
+// hasConfiguredLuaProviders reports whether this isolated generation owns any generic Lua provider.
+func hasConfiguredLuaProviders(policy policyconfig.PolicyConfig) bool {
+	for _, namespace := range policy.Namespaces {
+		for _, provider := range namespace.Providers {
+			if provider.Kind == policyconfig.ProviderKindLua {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // newConfiguredGenerationBuilder initializes isolated indexes for one normalized policy snapshot.

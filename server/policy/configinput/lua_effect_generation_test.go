@@ -50,6 +50,47 @@ const configuredLuaEffectOnlyFixture = `policy:
         final_decision: {policy_sets: [mail/default]}
 `
 
+const configuredNativeFactsWithoutLuaFixture = `policy:
+  namespaces:
+    mail:
+      schema_contributions:
+        static:
+          filter:
+            versions:
+              v1: {facts: []}
+      providers:
+        risk:
+          kind: native
+          module: reputation
+          targets: [{action: filter}]
+          produced_facts: [plugin.reputation.risk_score]
+          failure: indeterminate
+          timeout: 50ms
+      domain_plans:
+        default:
+          checkpoints:
+            final_decision:
+              providers:
+                - name: risk
+                  use: mail/plugin.reputation.risk
+      policy_sets:
+        default:
+          rules:
+            - name: native_risk
+              if: {attribute: plugin.reputation.risk_score, gte: 10}
+              then: {decision: deny}
+  targets:
+    - namespace: mail
+      action: filter
+      schema: mail/filter/v1
+      domain_plan: mail/default
+      default_policy: mail/default
+      no_match: deny
+      timeouts: {evaluation: 2s, provider_default: 500ms}
+      plans:
+        final_decision: {policy_sets: [mail/default]}
+`
+
 func TestConfiguredLuaEffectProviderContributionDoesNotGainFactSchedule(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "effect.lua")
 	if err := os.WriteFile(script, []byte(`
@@ -74,5 +115,22 @@ end
 	if len(providers) != 1 || providers[0].Scheduled() || providers[0].Timeout() != 0 ||
 		providers[0].Failure() != "" {
 		t.Fatalf("Lua effect-only provider retained fact schedule metadata: %#v", providers)
+	}
+}
+
+// TestConfiguredLuaGenerationSkipsUnownedNativeFacts proves empty Lua preparation does not validate native owners.
+func TestConfiguredLuaGenerationSkipsUnownedNativeFacts(t *testing.T) {
+	configured := decodePolicy(t, configuredNativeFactsWithoutLuaFixture).Policy
+
+	preparation, err := PrepareConfiguredLuaGeneration(t.Context(), ConfiguredLuaGenerationInput{
+		Policy:               configured,
+		PostActionAcceptance: &nativeGenerationAcceptor{},
+	})
+	if err != nil {
+		t.Fatalf("PrepareConfiguredLuaGeneration() error = %v", err)
+	}
+
+	if len(preparation.Definitions) != 0 || len(preparation.Resources) != 0 {
+		t.Fatalf("Lua preparation = %#v, want no unowned native material", preparation)
 	}
 }
