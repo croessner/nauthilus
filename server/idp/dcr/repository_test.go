@@ -16,7 +16,9 @@
 package dcr
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -200,6 +202,36 @@ func TestRepositoryTouchesOnlyExplicitSuccessfulUse(t *testing.T) {
 	wantScore := float64(repository.now().Add(policy.GetLifecycle().InactivityTTL).UnixMilli())
 	if score != wantScore {
 		t.Fatalf("active score = %f, want %f", score, wantScore)
+	}
+}
+
+func TestEncodeTouchedRecordPreservesLargeDurationInteger(t *testing.T) {
+	now := time.Now().UTC()
+	record := &DynamicClientRecord{
+		ClientID:        "dcr_duration-client",
+		RefreshTokenTTL: 720 * time.Hour,
+	}
+
+	encoded, err := encodeTouchedRecord(record, now)
+	if err != nil {
+		t.Fatalf("encodeTouchedRecord() error = %v", err)
+	}
+
+	if bytes.Contains(bytes.ToLower(encoded), []byte("e+")) {
+		t.Fatalf("encodeTouchedRecord() used exponential notation: %s", encoded)
+	}
+
+	decoded := &DynamicClientRecord{}
+	if err := json.Unmarshal(encoded, decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	if decoded.RefreshTokenTTL != record.RefreshTokenTTL {
+		t.Fatalf("RefreshTokenTTL = %s, want %s", decoded.RefreshTokenTTL, record.RefreshTokenTTL)
+	}
+
+	if !decoded.FirstUsedAt.Equal(now) || !decoded.LastUsedAt.Equal(now) {
+		t.Fatalf("touch timestamps = %s/%s, want %s", decoded.FirstUsedAt, decoded.LastUsedAt, now)
 	}
 }
 

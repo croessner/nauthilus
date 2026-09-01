@@ -49,15 +49,11 @@ return 1
 `
 
 const touchScript = `
-local score = redis.call('ZSCORE', KEYS[2], ARGV[4])
+local score = redis.call('ZSCORE', KEYS[2], ARGV[3])
 if not score or tonumber(score) <= tonumber(ARGV[1]) then return 0 end
-local encoded = redis.call('GET', KEYS[1])
-if not encoded then return 0 end
-local record = cjson.decode(encoded)
-if not record.first_used_at or record.first_used_at == '' then record.first_used_at = ARGV[2] end
-record.last_used_at = ARGV[2]
-redis.call('SET', KEYS[1], cjson.encode(record), 'KEEPTTL')
-redis.call('ZADD', KEYS[2], ARGV[3], ARGV[4])
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+redis.call('SET', KEYS[1], ARGV[4], 'KEEPTTL')
+redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
 return 1
 `
 
@@ -255,6 +251,11 @@ func (r *Repository) Touch(ctx context.Context, clientID string) error {
 		activeUntil = absoluteExpiry
 	}
 
+	encoded, err := encodeTouchedRecord(record, now)
+	if err != nil {
+		return err
+	}
+
 	handle, err := r.writeHandle()
 	if err != nil {
 		return err
@@ -265,9 +266,9 @@ func (r *Repository) Touch(ctx context.Context, clientID string) error {
 		touchScript,
 		[]string{r.clientKey(clientID), r.registryKey("active")},
 		now.UnixMilli(),
-		now.UTC().Format(time.RFC3339Nano),
 		activeUntil.UnixMilli(),
 		clientID,
+		encoded,
 	).Int64()
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
@@ -278,6 +279,22 @@ func (r *Repository) Touch(ctx context.Context, clientID string) error {
 	}
 
 	return nil
+}
+
+// encodeTouchedRecord updates lifecycle timestamps and preserves integer metadata encoding.
+func encodeTouchedRecord(record *DynamicClientRecord, now time.Time) ([]byte, error) {
+	if record.FirstUsedAt.IsZero() {
+		record.FirstUsedAt = now
+	}
+
+	record.LastUsedAt = now
+
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return nil, fmt.Errorf("%w: encode touched record: %v", ErrCorrupt, err)
+	}
+
+	return encoded, nil
 }
 
 // writeHandle returns the sole permitted handle for security-sensitive DCR state.
