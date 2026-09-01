@@ -25,6 +25,7 @@ import (
 	"sync"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/monitoring/prometheusutil"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -474,61 +475,7 @@ func registeredCollector[T prometheus.Collector](
 	reuse bool,
 	validateExisting func(T) error,
 ) (T, error) {
-	var zero T
-
-	if registerer == nil {
-		return collector, nil
-	}
-
-	if err := registerer.Register(collector); err != nil {
-		var already prometheus.AlreadyRegisteredError
-		if reuse && errors.As(err, &already) {
-			if !sameCollectorDescriptors(already.ExistingCollector, collector) {
-				return zero, errors.New("existing plugin metric descriptor differs from requested contract")
-			}
-
-			existing, ok := already.ExistingCollector.(T)
-			if !ok {
-				return zero, err
-			}
-
-			if validateExisting != nil {
-				if validateErr := validateExisting(existing); validateErr != nil {
-					return zero, validateErr
-				}
-			}
-
-			return existing, nil
-		}
-
-		return zero, err
-	}
-
-	return collector, nil
-}
-
-// sameCollectorDescriptors compares complete ordered descriptor strings for strict compatibility reuse.
-func sameCollectorDescriptors(left prometheus.Collector, right prometheus.Collector) bool {
-	return slices.Equal(collectorDescriptorStrings(left), collectorDescriptorStrings(right))
-}
-
-// collectorDescriptorStrings drains and sorts immutable collector descriptor representations.
-func collectorDescriptorStrings(collector prometheus.Collector) []string {
-	descriptors := make(chan *prometheus.Desc)
-
-	go func() {
-		collector.Describe(descriptors)
-		close(descriptors)
-	}()
-
-	result := make([]string, 0)
-	for descriptor := range descriptors {
-		result = append(result, descriptor.String())
-	}
-
-	slices.Sort(result)
-
-	return result
+	return prometheusutil.RegisterCollector(registerer, collector, reuse, validateExisting)
 }
 
 // validateHistogramBuckets rejects reuse when Prometheus descriptors match but bucket boundaries differ.

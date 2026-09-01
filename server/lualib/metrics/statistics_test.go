@@ -153,3 +153,38 @@ func TestCreateAndUseGaugeVec(t *testing.T) {
 	value := testutil.ToFloat64(gauge.WithLabelValues("value1", "value2"))
 	assert.Equal(t, 5.5, value, "Gauge value should be 5.5")
 }
+
+func TestCreateGaugeVecReusesCompatiblePluginCollector(t *testing.T) {
+	const metricName = "test_plugin_compatible_gauge"
+
+	existing := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: metricName,
+		Help: "Compatible plugin gauge",
+	}, []string{"service"})
+	prometheus.MustRegister(existing)
+	t.Cleanup(func() {
+		prometheus.Unregister(existing)
+		delete(gauges, metricName)
+	})
+
+	L := lua.NewState()
+	defer L.Close()
+
+	L.PreloadModule("prometheus", LoaderModPrometheus(context.TODO(), nil, nil))
+
+	err := runLuaCode(L, `
+		local prometheus = require("prometheus")
+		prometheus.create_gauge_vec(
+			"test_plugin_compatible_gauge",
+			"Compatible plugin gauge",
+			{"service"}
+		)
+		prometheus.set_gauge("test_plugin_compatible_gauge", 3, {service = "rspamd"})
+	`)
+	if err != nil {
+		t.Fatalf("Lua code execution failed: %v", err)
+	}
+
+	assert.Same(t, existing, gauges[metricName])
+	assert.Equal(t, float64(3), testutil.ToFloat64(existing.WithLabelValues("rspamd")))
+}

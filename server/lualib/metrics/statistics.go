@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/lualib"
 	"github.com/croessner/nauthilus/v4/server/lualib/luastack"
+	"github.com/croessner/nauthilus/v4/server/monitoring/prometheusutil"
 	"github.com/prometheus/client_golang/prometheus"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -93,14 +94,21 @@ func labelValuesFromTable(labels *lua.LTable) prometheus.Labels {
 }
 
 // registerMetricVec registers a metric vector once and stores it in its registry.
-func registerMetricVec[T prometheus.Collector](registry map[string]T, name string, build func() T) int {
+func registerMetricVec[T prometheus.Collector](L *lua.LState, registry map[string]T, name string, build func() T) int {
 	if _, exists := registry[name]; exists {
 		return 0
 	}
 
 	metric := build()
-	prometheus.MustRegister(metric)
-	registry[name] = metric
+
+	registered, err := prometheusutil.RegisterCollector(prometheus.DefaultRegisterer, metric, true, nil)
+	if err != nil {
+		L.RaiseError("register Prometheus metric %q: %v", name, err)
+
+		return 0
+	}
+
+	registry[name] = registered
 
 	return 0
 }
@@ -184,7 +192,7 @@ func (m *PrometheusManager) createSummaryVec(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	name, help, labelNames := metricVecArgs(stack)
 
-	return registerMetricVec(summaries, name, func() *prometheus.SummaryVec {
+	return registerMetricVec(L, summaries, name, func() *prometheus.SummaryVec {
 		return prometheus.NewSummaryVec(prometheus.SummaryOpts{
 			Name: name,
 			Help: help,
@@ -197,7 +205,7 @@ func (m *PrometheusManager) createCounterVec(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	name, help, labelNames := metricVecArgs(stack)
 
-	return registerMetricVec(counters, name, func() *prometheus.CounterVec {
+	return registerMetricVec(L, counters, name, func() *prometheus.CounterVec {
 		return prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: name,
 			Help: help,
@@ -210,7 +218,7 @@ func (m *PrometheusManager) createHistogramVec(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	name, help, labelNames := metricVecArgs(stack)
 
-	return registerMetricVec(histograms, name, func() *prometheus.HistogramVec {
+	return registerMetricVec(L, histograms, name, func() *prometheus.HistogramVec {
 		return prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    name,
 			Help:    help,
@@ -224,7 +232,7 @@ func (m *PrometheusManager) createGaugeVec(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	name, help, labelNames := metricVecArgs(stack)
 
-	return registerMetricVec(gauges, name, func() *prometheus.GaugeVec {
+	return registerMetricVec(L, gauges, name, func() *prometheus.GaugeVec {
 		return prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: name,
 			Help: help,
