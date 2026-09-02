@@ -140,6 +140,53 @@ func TestRedisStoresEnforceCASIsolationExpiryAndParentBinding(t *testing.T) {
 	}
 }
 
+func TestCommitIndexedFlowPrunesExpiredSiblingBeforeAddingCurrentFlow(t *testing.T) {
+	t.Parallel()
+
+	fixture := newRedisStoresFixture(t)
+	ctx := context.Background()
+	session := Handle("PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP")
+	expiredHandle := Handle("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")
+	currentHandle := Handle("RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR")
+	anchorReference := Reference{Session: session, Record: session}
+
+	anchor := SessionAnchor{
+		Record: Record{Handle: session}, CreatedAt: fixture.clock.Now(),
+		IdleExpiresAt: fixture.clock.Now().Add(30 * time.Minute), AbsoluteExpiresAt: fixture.clock.Now().Add(time.Hour),
+	}
+	if _, err := fixture.stores.Session.Commit(ctx, CommitRequest[SessionAnchor]{
+		Reference: anchorReference, Value: anchor, TTL: time.Hour,
+	}); err != nil {
+		t.Fatalf("commit anchor: %v", err)
+	}
+
+	if _, err := fixture.stores.CommitOIDCFlow(ctx, CommitRequest[OIDCFlow]{
+		Reference: Reference{Session: session, Record: expiredHandle},
+		Value:     OIDCFlow{Record: Record{Handle: expiredHandle}, Session: session}, TTL: time.Minute,
+	}); err != nil {
+		t.Fatalf("commit expiring OIDC flow: %v", err)
+	}
+
+	fixture.redis.FastForward(2 * time.Minute)
+	fixture.clock.Advance(2 * time.Minute)
+
+	if _, err := fixture.stores.CommitOIDCFlow(ctx, CommitRequest[OIDCFlow]{
+		Reference: Reference{Session: session, Record: currentHandle},
+		Value:     OIDCFlow{Record: Record{Handle: currentHandle}, Session: session}, TTL: 10 * time.Minute,
+	}); err != nil {
+		t.Fatalf("commit current OIDC flow: %v", err)
+	}
+
+	indexed, err := fixture.stores.Session.Load(ctx, anchorReference)
+	if err != nil {
+		t.Fatalf("load reconciled anchor: %v", err)
+	}
+
+	if len(indexed.Value.OIDCFlows) != 1 || indexed.Value.OIDCFlows[0] != currentHandle {
+		t.Fatalf("reconciled OIDC index = %#v, want only current flow", indexed.Value.OIDCFlows)
+	}
+}
+
 func TestCeremonyRepositoryConsumesExactlyOnce(t *testing.T) {
 	t.Parallel()
 

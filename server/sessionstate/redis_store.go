@@ -952,6 +952,10 @@ func commitIndexedFlow[T any](
 			return 0, err
 		}
 
+		if err = reconcileIndexedChildren(ctx, s, &anchor.Value); err != nil {
+			return 0, err
+		}
+
 		if err = appendIndex(&anchor.Value, request.Reference.Record); err != nil {
 			return 0, err
 		}
@@ -975,6 +979,67 @@ func commitIndexedFlow[T any](
 	}
 
 	return 0, ErrRevisionConflict
+}
+
+// reconcileIndexedChildren drops only missing or expired child references before a new indexed commit.
+func reconcileIndexedChildren(ctx context.Context, stores *RedisStores, anchor *SessionAnchor) error {
+	if stores == nil || anchor == nil || anchor.Handle == "" {
+		return ErrBindingMismatch
+	}
+
+	families := []func() error{
+		func() error { return reconcileIndexedFamily(ctx, stores.OIDC, anchor.Handle, &anchor.OIDCFlows) },
+		func() error { return reconcileIndexedFamily(ctx, stores.SAML, anchor.Handle, &anchor.SAMLFlows) },
+		func() error {
+			return reconcileIndexedFamily(ctx, stores.SelfService, anchor.Handle, &anchor.SelfServiceFlows)
+		},
+		func() error {
+			return reconcileIndexedFamily(ctx, stores.Enrollment, anchor.Handle, &anchor.Enrollments)
+		},
+		func() error { return reconcileIndexedFamily(ctx, stores.StepUp, anchor.Handle, &anchor.StepUps) },
+		func() error { return reconcileIndexedFamily(ctx, stores.Ceremony, anchor.Handle, &anchor.Ceremonies) },
+		func() error {
+			return reconcileIndexedFamily(ctx, stores.TOTPRecovery, anchor.Handle, &anchor.TOTPRecovery)
+		},
+		func() error { return reconcileIndexedFamily(ctx, stores.Logout, anchor.Handle, &anchor.LogoutIndexes) },
+	}
+	for _, reconcile := range families {
+		if err := reconcile(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// reconcileIndexedFamily retains live children and fails closed on every error except absence or expiry.
+func reconcileIndexedFamily[T any](
+	ctx context.Context,
+	repository *RedisRepository[T],
+	session Handle,
+	handles *[]Handle,
+) error {
+	if repository == nil || handles == nil {
+		return ErrBindingMismatch
+	}
+
+	retained := make([]Handle, 0, len(*handles))
+	for _, handle := range *handles {
+		_, err := repository.Load(ctx, Reference{Session: session, Record: handle})
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrExpired) {
+			continue
+		}
+
+		if err != nil {
+			return err
+		}
+
+		retained = append(retained, handle)
+	}
+
+	*handles = retained
+
+	return nil
 }
 
 func appendOIDCIndex(anchor *SessionAnchor, handle Handle) error {
