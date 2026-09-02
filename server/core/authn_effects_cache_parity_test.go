@@ -1055,6 +1055,47 @@ func TestAuthnPolicyDispatcherExecutesCapturedNativeSubjectSource(t *testing.T) 
 	}
 }
 
+func TestAuthnPolicyDispatcherRetainsBackendAcrossNativeSubjectSources(t *testing.T) {
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, newCurrentBehaviorConfig(t))
+	auth.deps.NativeRuntime = authnCapturedNativeRuntime{}
+	backendResult := GetPassDBResultFromPool()
+	backendResult.Authenticated = true
+	backendResult.UserFound = true
+
+	execution := &authnCandidateExecution{
+		auth: auth, ginCtx: ctx, selected: make(map[string]*report.FinalDecision),
+		operation: policy.OperationAuthenticate, backendResult: backendResult, backendReady: true,
+	}
+	defer execution.release()
+
+	providers := []*authnCapturedNativeSubjectSource{
+		{id: "authn/plugin.example.subject.first"},
+		{id: "authn/plugin.example.subject.second"},
+	}
+
+	for _, provider := range providers {
+		session := &authnConfiguredHostSession{
+			recordingAuthnDecisionSession: newRecordingAuthnDecisionSession([]string{"subject_analysis"}),
+			provider:                      provider,
+		}
+
+		terminal, err := execution.prepareConfiguredHostProvider(session, provider.id)
+		if err != nil {
+			t.Fatalf("prepareConfiguredHostProvider(%q) error = %v", provider.id, err)
+		}
+
+		if terminal {
+			t.Fatalf("neutral native subject provider %q became terminal", provider.id)
+		}
+	}
+
+	for _, provider := range providers {
+		if provider.calls.Load() != 1 {
+			t.Fatalf("native subject provider %q calls = %d, want 1", provider.id, provider.calls.Load())
+		}
+	}
+}
+
 func TestAuthnPolicyDispatcherTreatsCapturedLuaEnvironmentAbortAsNonTerminal(t *testing.T) {
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, newCurrentBehaviorConfig(t, definitions.ControlLua))
 	prototype := compileAuthnCandidateLuaSource(t, "abort.lua", `

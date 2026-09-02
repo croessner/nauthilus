@@ -333,8 +333,6 @@ func (e *authnCandidateExecution) prepareNativeSubjectSource(
 	}
 
 	e.subjectReady = true
-
-	e.finalReady = true
 	if result.Rejected {
 		e.auth.Runtime.Authorized = false
 		e.auth.Runtime.Authenticated = false
@@ -346,8 +344,6 @@ func (e *authnCandidateExecution) prepareNativeSubjectSource(
 		e.auth.Runtime.Authorized = false
 		e.authResult = definitions.AuthResultFail
 	}
-
-	e.finishTypedBackendProvider()
 
 	return e.authResult != definitions.AuthResultOK && e.authResult != definitions.AuthResultUnset, nil
 }

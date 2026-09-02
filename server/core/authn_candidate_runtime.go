@@ -211,6 +211,10 @@ func (e *authnCandidateExecution) prepareCheckpoint(
 		}
 	}
 
+	if checkpoint.Name() == string(policy.StageSubjectAnalysis) {
+		e.completeSubjectCheckpoint()
+	}
+
 	return e.currentResult(), nil
 }
 
@@ -445,7 +449,6 @@ func (e *authnCandidateExecution) prepareLuaSubjectSource(
 		modules,
 	)
 	e.subjectReady = true
-	e.finishTypedBackendProvider()
 
 	return e.authResult != definitions.AuthResultOK && e.authResult != definitions.AuthResultUnset, nil
 }
@@ -587,21 +590,26 @@ func (e *authnCandidateExecution) installVerifiedBackendResult(
 	}
 }
 
-// prepareBuiltinSubjectProvider finalizes the exact backend result without selecting legacy subject scripts.
+// prepareBuiltinSubjectProvider records exact backend subject state without selecting legacy scripts.
 func (e *authnCandidateExecution) prepareBuiltinSubjectProvider() (bool, error) {
-	if e.finalReady {
-		return false, nil
-	}
-
 	if !e.backendReady || e.backendResult == nil {
 		return false, fmt.Errorf("authn subject provider has no exact backend result")
 	}
 
 	e.subjectReady = true
-	e.finalReady = true
-	e.finishTypedBackendProvider()
 
 	return e.authResult != definitions.AuthResultOK && e.authResult != definitions.AuthResultUnset, nil
+}
+
+// completeSubjectCheckpoint finalizes backend ownership after every selected subject provider has run.
+func (e *authnCandidateExecution) completeSubjectCheckpoint() {
+	if !e.backendReady || e.backendResult == nil {
+		return
+	}
+
+	e.subjectReady = true
+	e.finalReady = true
+	e.finishTypedBackendProvider()
 }
 
 // finishTypedBackendProvider applies cache/post-action projection and releases the request-owned backend result.
